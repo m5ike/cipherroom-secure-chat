@@ -1,0 +1,195 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --button-outline: rgba(0, 0, 0, 0.1);
+  --badge-outline: rgba(0, 0, 0, 0.05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(0, 0, 0, 0.03);
+  --elevate-2: rgba(0, 0, 0, 0.08);
+  --background: 42 26% 96%;
+  --foreground: 214 31% 11%;
+  --border: 214 18% 84%;
+  --card: 0 0% 100%;
+  --card-foreground: 214 31% 11%;
+  --card-border: 214 20% 88%;
+  --sidebar: 42 26% 94%;
+  --sidebar-foreground: 214 31% 11%;
+  --sidebar-border: 214 18% 84%;
+  --sidebar-primary: 183 96% 22%;
+  --sidebar-primary-foreground: 0 0% 98%;
+  --sidebar-accent: 183 32% 92%;
+  --sidebar-accent-foreground: 214 31% 11%;
+  --sidebar-ring: 183 96% 22%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 214 31% 11%;
+  --popover-border: 214 20% 88%;
+  --primary: 183 96% 22%;
+  --primary-foreground: 0 0% 98%;
+  --secondary: 42 18% 91%;
+  --secondary-foreground: 214 31% 11%;
+  --muted: 42 18% 91%;
+  --muted-foreground: 215 12% 42%;
+  --accent: 184 30% 92%;
+  --accent-foreground: 214 31% 11%;
+  --destructive: 344 62% 38%;
+  --destructive-foreground: 0 0% 98%;
+  --input: 214 16% 76%;
+  --ring: 183 96% 22%;
+  --chart-1: 183 96% 22%;
+  --chart-2: 197 61% 34%;
+  --chart-3: 29 74% 38%;
+  --chart-4: 143 42% 31%;
+  --chart-5: 320 46% 43%;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-serif: ui-serif, Georgia, serif;
+  --font-mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace;
+  --radius: 1.125rem;
+  --shadow-2xs: 0 1px 1px hsl(214 31% 11% / 0.03);
+  --shadow-xs: 0 1px 2px hsl(214 31% 11% / 0.05);
+  --shadow-sm: 0 1px 2px hsl(214 31% 11% / 0.06), 0 1px 3px hsl(214 31% 11% / 0.05);
+  --shadow: 0 4px 16px hsl(214 31% 11% / 0.08);
+  --shadow-md: 0 10px 30px hsl(214 31% 11% / 0.1);
+  --shadow-lg: 0 18px 45px hsl(214 31% 11% / 0.14);
+  --shadow-xl: 0 24px 70px hsl(214 31% 11% / 0.18);
+  --shadow-2xl: 0 32px 100px hsl(214 31% 11% / 0.22);
+  --tracking-normal: 0em;
+  --spacing: 0.25rem;
+  --sidebar-primary-border: hsl(var(--sidebar-primary));
+  --sidebar-accent-border: hsl(var(--sidebar-accent));
+  --primary-border: hsl(var(--primary));
+  --secondary-border: hsl(var(--secondary));
+  --muted-border: hsl(var(--muted));
+  --accent-border: hsl(var(--accent));
+  --destructive-border: hsl(var(--destructive));
+}
+
+.dark {
+  --button-outline: rgba(255, 255, 255, 0.1);
+  --badge-outline: rgba(255, 255, 255, 0.05);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(255, 255, 255, 0.04);
+  --elevate-2: rgba(255, 255, 255, 0.09);
+  --background: 210 22% 7%;
+  --foreground: 190 20% 92%;
+  --border: 201 16% 20%;
+  --card: 210 20% 10%;
+  --card-foreground: 190 20% 92%;
+  --card-border: 201 16% 18%;
+  --sidebar: 210 18% 10%;
+  --sidebar-foreground: 190 20% 92%;
+  --sidebar-border: 201 16% 20%;
+  --sidebar-primary: 188 48% 53%;
+  --sidebar-primary-foreground: 210 22% 7%;
+  --sidebar-accent: 190 23% 16%;
+  --sidebar-accent-foreground: 190 20% 92%;
+  --sidebar-ring: 188 48% 53%;
+  --popover: 210 20% 10%;
+  --popover-foreground: 190 20% 92%;
+  --popover-border: 201 16% 18%;
+  --primary: 188 48% 53%;
+  --primary-foreground: 210 22% 7%;
+  --secondary: 211 14% 17%;
+  --secondary-foreground: 190 20% 92%;
+  --muted: 211 14% 17%;
+  --muted-foreground: 206 10% 64%;
+  --accent: 190 23% 16%;
+  --accent-foreground: 190 20% 92%;
+  --destructive: 344 70% 56%;
+  --destructive-foreground: 0 0% 98%;
+  --input: 201 16% 29%;
+  --ring: 188 48% 53%;
+  --chart-1: 188 48% 53%;
+  --chart-2: 197 61% 58%;
+  --chart-3: 29 74% 59%;
+  --chart-4: 143 42% 48%;
+  --chart-5: 320 46% 62%;
+  --shadow-2xs: 0 1px 1px hsl(0 0% 0% / 0.16);
+  --shadow-xs: 0 1px 2px hsl(0 0% 0% / 0.2);
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.24), 0 1px 3px hsl(0 0% 0% / 0.18);
+  --shadow: 0 8px 24px hsl(0 0% 0% / 0.28);
+  --shadow-md: 0 14px 36px hsl(0 0% 0% / 0.32);
+  --shadow-lg: 0 20px 58px hsl(0 0% 0% / 0.38);
+  --shadow-xl: 0 30px 78px hsl(0 0% 0% / 0.42);
+  --shadow-2xl: 0 40px 110px hsl(0 0% 0% / 0.46);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    -moz-text-size-adjust: none;
+    -webkit-text-size-adjust: none;
+    text-size-adjust: none;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    min-height: 100dvh;
+    font-feature-settings:
+      "cv02" 1,
+      "cv03" 1,
+      "cv04" 1,
+      "tnum" 1;
+  }
+
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 3px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.18);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  input[type="search"]::-webkit-search-cancel-button {
+    @apply hidden;
+  }
+
+  [contenteditable][data-placeholder]:empty::before {
+    content: attr(data-placeholder);
+    color: hsl(var(--muted-foreground));
+    pointer-events: none;
+  }
+
+  .bg-chat-grid {
+    background:
+      linear-gradient(hsl(var(--border) / 0.18) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.18) 1px, transparent 1px),
+      hsl(var(--background));
+    background-size: 28px 28px;
+  }
+}
