@@ -58,6 +58,7 @@ type PeerHandle = {
 };
 
 const PORT_BASE = "__PORT_5000__";
+const EXTERNAL_SIGNALING_URL = import.meta.env.VITE_SIGNALING_URL as string | undefined;
 const RTC_CONFIG: RTCConfiguration = {
   iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
   iceTransportPolicy: "all",
@@ -96,6 +97,10 @@ function fromBase64(value: string) {
 }
 
 function wsUrl() {
+  if (EXTERNAL_SIGNALING_URL?.trim()) {
+    return EXTERNAL_SIGNALING_URL.trim();
+  }
+
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   if (PORT_BASE.startsWith("__")) {
     return `${protocol}//${window.location.host}/ws`;

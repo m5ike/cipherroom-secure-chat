@@ -1,0 +1,16 @@
+name: cipherroom-secure-chat
+region: fra
+services:
+  - name: web
+    dockerfile_path: Dockerfile
+    source_dir: /
+    http_port: 5000
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-0.5gb
+    health_check:
+      http_path: /api/health
+    envs:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "5000"
