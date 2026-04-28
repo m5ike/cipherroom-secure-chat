@@ -1,0 +1,30 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "cipherroom_lite": {
+      "$room": {
+        ".read": "$room.matches(/^[A-Za-z0-9_-]{43}$/)",
+        ".write": "$room.matches(/^[A-Za-z0-9_-]{43}$/)",
+        "peers": {
+          "$peer": {
+            ".validate": "$peer.matches(/^[a-f0-9-]{36}$/) && newData.hasChildren(['name','ts']) && newData.childrenCount() <= 2",
+            "name": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 32"
+            },
+            "ts": {
+              ".validate": "newData.isNumber()"
+            }
+          }
+        },
+        "signals": {
+          "$targetPeer": {
+            "$signalId": {
+              ".validate": "newData.hasChildren(['from','name','secret','type','ts']) && newData.child('from').isString() && newData.child('name').isString() && newData.child('name').val().length <= 32 && newData.child('secret').isString() && newData.child('secret').val().length == 43 && newData.child('type').isString() && newData.child('type').val().matches(/^(offer|answer|ice)$/) && newData.child('ts').isNumber()"
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="cs">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Cache-Control"
+      content="no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+    />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+    <meta
+      name="description"
+      content="Browser-only šifrovaný P2P chat přes WebRTC s Firebase Realtime Database signalingem."
+    />
+    <meta name="robots" content="noindex,nofollow" />
+    <title>CipherRoom Lite - Browser-only Firebase P2P chat</title>
+    <link rel="preconnect" href="https://api.fontshare.com" />
+    <link
+      href="https://api.fontshare.com/v2/css?f[]=satoshi@400,500,700&f[]=general-sans@500,600,700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#app">Přeskočit na aplikaci</a>
+    <div class="app-shell" id="app">
+      <header class="topbar">
+        <a class="brand" href="./index.html" aria-label="CipherRoom Lite">
+          <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+            <path d="M20 4 32 11v18l-12 7-12-7V11L20 4Z" />
+            <path d="M14 19.5h12M16 24h8M15.5 16a4.5 4.5 0 0 1 9 0v3h-9v-3Z" />
+          </svg>
+          <span>
+            <strong>CipherRoom Lite</strong>
+            <small>browser-only WebRTC</small>
+          </span>
+        </a>
+        <div class="topbar-actions">
+          <span class="signal-pill" id="signalState" data-testid="status-signal">offline</span>
+          <button class="icon-button" type="button" id="themeToggle" data-testid="button-theme" aria-label="Přepnout motiv">
+            <span aria-hidden="true">◐</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="main-grid">
+        <section class="setup-panel" aria-labelledby="setupTitle">
+          <div class="panel-heading">
+            <p class="eyebrow">Žádný vlastní server</p>
+            <h1 id="setupTitle">P2P chat pouze v prohlížeči</h1>
+            <p>
+              Firebase Realtime Database slouží jen jako dočasná signalizace pro WebRTC.
+              Zprávy se posílají přes přímý DataChannel a před odesláním se šifrují v prohlížeči.
+            </p>
+          </div>
+
+          <form class="setup-form" id="setupForm" autocomplete="off" data-testid="form-setup">
+            <fieldset>
+              <legend>Firebase Realtime Database</legend>
+              <label for="firebaseConfig">Firebase web config jako JSON</label>
+              <textarea
+                id="firebaseConfig"
+                name="firebaseConfig"
+                rows="7"
+                spellcheck="false"
+                data-testid="input-firebase-config"
+                placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"https://...firebaseio.com","projectId":"...","appId":"..."}'
+              ></textarea>
+              <p class="hint">
+                Nic se neukládá. Config zůstává jen v paměti aktuálního tabu. Firebase API key není tajný klíč;
+                přístup omezují databázová pravidla níže.
+              </p>
+            </fieldset>
+
+            <fieldset class="split-fields">
+              <div>
+                <label for="displayName">Jméno v místnosti</label>
+                <input id="displayName" name="displayName" data-testid="input-name" maxlength="32" placeholder="např. mike" required />
+              </div>
+              <div>
+                <label for="roomName">Místnost</label>
+                <input id="roomName" name="roomName" data-testid="input-room" maxlength="80" placeholder="tajna-room" required />
+              </div>
+            </fieldset>
+
+            <fieldset>
+              <label for="passphrase">Sdílená fráze pro room + šifrování</label>
+              <input
+                id="passphrase"
+                name="passphrase"
+                data-testid="input-passphrase"
+                type="password"
+                minlength="10"
+                autocomplete="new-password"
+                placeholder="min. 10 znaků"
+                required
+              />
+              <p class="hint">
+                Název místnosti i fráze se hashují do neuhodnutelné Firebase cesty. Stejná fráze je použita pro AES-GCM klíč zpráv.
+              </p>
+            </fieldset>
+
+            <div class="action-row">
+              <button class="primary-button" type="submit" data-testid="button-connect">Připojit místnost</button>
+              <button class="secondary-button" type="button" id="demoConfig" data-testid="button-demo">Vložit šablonu configu</button>
+            </div>
+          </form>
+
+          <details class="rules-card">
+            <summary>Firebase Realtime Database rules</summary>
+            <pre><code id="rulesSnippet"></code></pre>
+            <button class="secondary-button compact" type="button" id="copyRules" data-testid="button-copy-rules">Kopírovat rules</button>
+          </details>
+        </section>
+
+        <section class="chat-panel" aria-labelledby="chatTitle">
+          <div class="chat-header">
+            <div>
+              <p class="eyebrow">Místnost</p>
+              <h2 id="chatTitle" data-testid="text-room-title">Nepřipojeno</h2>
+            </div>
+            <button class="danger-button" type="button" id="leaveButton" data-testid="button-leave" disabled>Odpojit</button>
+          </div>
+
+          <div class="status-grid" aria-label="Stav spojení">
+            <article>
+              <span>Peers</span>
+              <strong id="peerCount" data-testid="text-peer-count">0</strong>
+            </article>
+            <article>
+              <span>P2P kanály</span>
+              <strong id="channelCount" data-testid="text-channel-count">0</strong>
+            </article>
+            <article>
+              <span>Zprávy</span>
+              <strong id="messageCount" data-testid="text-message-count">0</strong>
+            </article>
+          </div>
+
+          <div class="peer-list" id="peerList" data-testid="list-peers">
+            <div class="empty-state">
+              <strong>Čekám na připojení</strong>
+              <span>Otevři stejný soubor v druhém prohlížeči, vlož stejný Firebase config, místnost a frázi.</span>
+            </div>
+          </div>
+
+          <div class="messages" id="messages" data-testid="list-messages" aria-live="polite"></div>
+
+          <form class="composer" id="messageForm" autocomplete="off">
+            <label class="sr-only" for="messageInput">Zpráva</label>
+            <textarea id="messageInput" data-testid="input-message" rows="2" maxlength="2000" placeholder="Zpráva se pošle P2P přes WebRTC..." disabled></textarea>
+            <button class="primary-button" type="submit" data-testid="button-send" disabled>Odeslat</button>
+          </form>
+
+          <div class="log-panel">
+            <button class="secondary-button compact" type="button" id="clearLog" data-testid="button-clear-log">Vyčistit log</button>
+            <pre id="eventLog" data-testid="text-event-log" aria-live="polite"></pre>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footnote">
+        <span>Cache: app nic neukládá do localStorage, sessionStorage, cookies ani IndexedDB.</span>
+        <span>Signaling: Firebase RTDB. Transport zpráv: WebRTC DataChannel. Crypto: Web Crypto AES-GCM.</span>
+      </footer>
+    </div>
+
+    <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script defer src="https://www.gstatic.com/firebasejs/10.12.5/firebase-database-compat.js"></script>
+    <script defer src="./app.js"></script>
+  </body>
+</html>
