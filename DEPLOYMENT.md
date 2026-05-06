@@ -12,6 +12,22 @@ CipherRoom needs a long-running process because `/ws` is a persistent WebSocket 
 
 ## Commands
 
+One-line Linux/Docker install:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh | sudo -E bash
+```
+
+With custom domain/port:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh | sudo env DOMAIN=chat.example.com HOST_PORT=5000 bash
+```
+
+The installer clones or updates this Git repository, installs Docker when missing, writes a managed `docker-compose.yml`, builds the included `Dockerfile`, starts the app, and prints Nginx reverse-proxy instructions with WebSocket upgrade headers.
+
+By default the container binds to `127.0.0.1` for reverse-proxy deployment. For a direct public Docker port use `BIND_ADDRESS=0.0.0.0 FIREWALL_OPEN=1`.
+
 Local production:
 
 ```bash
