@@ -24,9 +24,37 @@ With custom domain/port:
 curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh | sudo env DOMAIN=chat.example.com HOST_PORT=5000 bash
 ```
 
-The installer clones or updates this Git repository, installs Docker when missing, writes a managed `docker-compose.yml`, builds the included `Dockerfile`, starts the app, and prints Nginx reverse-proxy instructions with WebSocket upgrade headers.
+The installer clones or updates this Git repository, installs Docker when missing, writes a managed `docker-compose.yml`, builds the included `Dockerfile`, starts the app, and can install/configure Nginx with WebSocket upgrade headers.
 
 By default the container binds to `127.0.0.1` for reverse-proxy deployment. For a direct public Docker port use `BIND_ADDRESS=0.0.0.0 FIREWALL_OPEN=1`.
+
+Debian/Ubuntu with Nginx reverse proxy:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh \
+  | sudo env DOMAIN=chat.example.com ENABLE_NGINX=1 bash
+```
+
+Debian/Ubuntu with Nginx + Let's Encrypt HTTPS/WSS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh \
+  | sudo env DOMAIN=chat.example.com ENABLE_NGINX=1 ENABLE_TLS=1 ACME_EMAIL=admin@example.com bash
+```
+
+Nginx support in `install.sh`:
+
+- Installs `nginx` on Debian/Ubuntu when `ENABLE_NGINX=1`, or automatically when `DOMAIN` is set.
+- Installs `certbot python3-certbot-nginx` and runs `certbot --nginx` when `ENABLE_TLS=1`.
+- Writes `/etc/nginx/sites-available/<SERVICE_NAME>.conf` and enables it in `sites-enabled`.
+- Preserves non-managed Nginx configs unless `FORCE_NGINX=1`.
+- Proxies `/` and `/ws` to `127.0.0.1:<HOST_PORT>`.
+- Sets `Upgrade`/`Connection` headers, `proxy_http_version 1.1`, `proxy_buffering off`, and 3600s WebSocket timeouts.
+- Adds no-cache headers.
+
+WebRTC note:
+
+Nginx handles only the HTTP app and WebSocket signaling endpoint. WebRTC DataChannel traffic is negotiated through `/ws` but then flows browser-to-browser through ICE. HTTPS/WSS is recommended because WebRTC APIs require a secure context outside `localhost`. For restrictive NAT/firewall environments, add a TURN server to the app ICE server configuration.
 
 Local production:
 

@@ -11,12 +11,20 @@ APP_PORT="${APP_PORT:-5000}"
 HOST_PORT="${HOST_PORT:-5000}"
 BIND_ADDRESS="${BIND_ADDRESS:-127.0.0.1}"
 DOMAIN="${DOMAIN:-}"
+ENABLE_NGINX="${ENABLE_NGINX:-auto}"
+ENABLE_TLS="${ENABLE_TLS:-0}"
+ACME_EMAIL="${ACME_EMAIL:-}"
+FORCE_NGINX="${FORCE_NGINX:-0}"
+NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-${DOMAIN}}"
 SKIP_DOCKER_INSTALL="${SKIP_DOCKER_INSTALL:-0}"
 FORCE_RECLONE="${FORCE_RECLONE:-0}"
 FIREWALL_OPEN="${FIREWALL_OPEN:-0}"
 
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 MANAGED_MARKER="# Managed by CipherRoom install.sh"
+NGINX_MARKER="# Managed by CipherRoom install.sh"
+NGINX_SITE_AVAILABLE="/etc/nginx/sites-available/${SERVICE_NAME}.conf"
+NGINX_SITE_ENABLED="/etc/nginx/sites-enabled/${SERVICE_NAME}.conf"
 
 log() { printf '\033[1;32m[+]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[!]\033[0m %s\n' "$*" >&2; }
@@ -37,7 +45,12 @@ Environment variables:
   APP_PORT              Container app port. Default: ${APP_PORT}
   HOST_PORT             Host port. Default: ${HOST_PORT}
   BIND_ADDRESS          Host bind address. Default: ${BIND_ADDRESS}
-  DOMAIN                Optional domain for Nginx reverse proxy instructions.
+  DOMAIN                Domain for Nginx reverse proxy and TLS.
+  ENABLE_NGINX          auto|1|0. auto enables Nginx when DOMAIN is set. Default: ${ENABLE_NGINX}
+  ENABLE_TLS            Set 1 to enable Let's Encrypt via certbot --nginx. Default: ${ENABLE_TLS}
+  ACME_EMAIL            Optional Let's Encrypt email.
+  FORCE_NGINX           Set 1 to overwrite a non-managed Nginx site config. Default: ${FORCE_NGINX}
+  NGINX_SERVER_NAME     Override Nginx server_name. Default: DOMAIN.
   SKIP_DOCKER_INSTALL   Set 1 to skip Docker installation.
   FORCE_RECLONE         Set 1 to remove INSTALL_DIR and clone fresh.
   FIREWALL_OPEN         Set 1 to open HOST_PORT in ufw/firewalld when available.
@@ -53,6 +66,7 @@ Commands:
 
 Examples:
   DOMAIN=chat.example.com HOST_PORT=5000 sudo -E ./install.sh
+  DOMAIN=chat.example.com ENABLE_NGINX=1 ENABLE_TLS=1 ACME_EMAIL=admin@example.com sudo -E ./install.sh
   INSTALL_DIR=/srv/chat BRANCH=main FIREWALL_OPEN=1 BIND_ADDRESS=0.0.0.0 sudo -E ./install.sh
   curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh | sudo env DOMAIN=chat.example.com HOST_PORT=5000 bash
   sudo -E ./install.sh --logs
@@ -240,12 +254,135 @@ open_firewall() {
   if command -v ufw >/dev/null 2>&1; then
     log "Opening TCP ${HOST_PORT} via ufw."
     ufw allow "${HOST_PORT}/tcp" || true
+    if should_enable_nginx; then
+      ufw allow 80/tcp || true
+      ufw allow 443/tcp || true
+    fi
   elif command -v firewall-cmd >/dev/null 2>&1; then
     log "Opening TCP ${HOST_PORT} via firewalld."
     firewall-cmd --add-port="${HOST_PORT}/tcp" --permanent || true
+    if should_enable_nginx; then
+      firewall-cmd --add-service=http --permanent || true
+      firewall-cmd --add-service=https --permanent || true
+    fi
     firewall-cmd --reload || true
   else
     warn "No ufw/firewalld found. Open TCP ${HOST_PORT} manually if needed."
+  fi
+}
+
+should_enable_nginx() {
+  if [[ "${ENABLE_NGINX}" == "1" ]]; then
+    return 0
+  fi
+  if [[ "${ENABLE_NGINX}" == "auto" && -n "${DOMAIN}" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+ensure_nginx_packages() {
+  should_enable_nginx || return 0
+  [[ -n "${NGINX_SERVER_NAME}" ]] || die "DOMAIN or NGINX_SERVER_NAME is required when ENABLE_NGINX=1."
+
+  if ! command -v apt-get >/dev/null 2>&1; then
+    die "Automatic Nginx/TLS setup is currently supported on Debian/Ubuntu apt systems. Install Nginx manually or set ENABLE_NGINX=0."
+  fi
+
+  local packages=(nginx)
+  if [[ "${ENABLE_TLS}" == "1" ]]; then
+    packages+=(certbot python3-certbot-nginx)
+  fi
+
+  log "Installing Nginx packages: ${packages[*]}"
+  pkg_update_and_install "${packages[@]}"
+  systemctl enable --now nginx 2>/dev/null || service nginx start
+}
+
+write_nginx_site() {
+  should_enable_nginx || return 0
+  [[ -n "${NGINX_SERVER_NAME}" ]] || die "DOMAIN or NGINX_SERVER_NAME is required for Nginx."
+
+  if [[ -f "${NGINX_SITE_AVAILABLE}" ]] && ! grep -qF "${NGINX_MARKER}" "${NGINX_SITE_AVAILABLE}" && [[ "${FORCE_NGINX}" != "1" ]]; then
+    die "${NGINX_SITE_AVAILABLE} exists and is not managed by this installer. Set FORCE_NGINX=1 to replace it."
+  fi
+
+  if [[ -f "${NGINX_SITE_AVAILABLE}" ]]; then
+    cp "${NGINX_SITE_AVAILABLE}" "${NGINX_SITE_AVAILABLE}.bak.$(date +%Y%m%d%H%M%S)"
+  fi
+
+  log "Writing Nginx reverse proxy site for ${NGINX_SERVER_NAME}."
+  cat > "${NGINX_SITE_AVAILABLE}" <<EOF
+${NGINX_MARKER}
+server {
+    listen 80;
+    listen [::]:80;
+    server_name ${NGINX_SERVER_NAME};
+
+    access_log /var/log/nginx/${SERVICE_NAME}.access.log;
+    error_log /var/log/nginx/${SERVICE_NAME}.error.log;
+
+    client_max_body_size 2m;
+
+    location / {
+        proxy_pass http://127.0.0.1:${HOST_PORT};
+        proxy_http_version 1.1;
+
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_connect_timeout 60s;
+        proxy_buffering off;
+        proxy_request_buffering off;
+
+        add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0" always;
+        add_header Pragma "no-cache" always;
+        add_header Expires "0" always;
+        add_header X-Robots-Tag "noindex, nofollow" always;
+    }
+}
+EOF
+
+  ln -sfn "${NGINX_SITE_AVAILABLE}" "${NGINX_SITE_ENABLED}"
+  nginx -t
+  systemctl reload nginx 2>/dev/null || service nginx reload
+}
+
+enable_tls() {
+  should_enable_nginx || return 0
+  [[ "${ENABLE_TLS}" == "1" ]] || return 0
+  [[ -n "${NGINX_SERVER_NAME}" ]] || die "DOMAIN or NGINX_SERVER_NAME is required for TLS."
+
+  local -a email_args
+  if [[ -n "${ACME_EMAIL}" ]]; then
+    email_args=(--email "${ACME_EMAIL}")
+  else
+    email_args=(--register-unsafely-without-email)
+  fi
+
+  log "Requesting Let's Encrypt certificate for ${NGINX_SERVER_NAME}."
+  certbot --nginx \
+    --non-interactive \
+    --agree-tos \
+    --redirect \
+    "${email_args[@]}" \
+    -d "${NGINX_SERVER_NAME}"
+
+  systemctl reload nginx 2>/dev/null || service nginx reload
+}
+
+remove_nginx_site() {
+  if [[ -f "${NGINX_SITE_AVAILABLE}" ]] && grep -qF "${NGINX_MARKER}" "${NGINX_SITE_AVAILABLE}"; then
+    rm -f "${NGINX_SITE_ENABLED}" "${NGINX_SITE_AVAILABLE}"
+    nginx -t && (systemctl reload nginx 2>/dev/null || service nginx reload) || true
+    log "Removed managed Nginx site ${SERVICE_NAME}."
   fi
 }
 
@@ -284,6 +421,8 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
         proxy_buffering off;
         add_header Cache-Control "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0" always;
         add_header Pragma "no-cache" always;
@@ -293,6 +432,22 @@ server {
 
 Then enable TLS, for example:
   certbot --nginx -d ${DOMAIN}
+EOF
+  fi
+
+  if should_enable_nginx; then
+    cat <<EOF
+
+Nginx:
+  site: ${NGINX_SITE_AVAILABLE}
+  enabled: ${NGINX_SITE_ENABLED}
+  ws endpoint: ws://${NGINX_SERVER_NAME}/ws
+  wss endpoint after TLS: wss://${NGINX_SERVER_NAME}/ws
+
+WebRTC:
+  Nginx proxies only the signaling endpoint /ws. Browser-to-browser media/data uses WebRTC ICE directly.
+  HTTPS/WSS is recommended because WebRTC APIs require a secure context outside localhost.
+  If peers are behind restrictive NAT/firewalls, add a TURN server to the app ICE configuration.
 EOF
   fi
 }
@@ -322,6 +477,7 @@ stop_cmd() {
 uninstall_cmd() {
   [[ -f "${COMPOSE_FILE}" ]] || die "Compose file not found: ${COMPOSE_FILE}"
   compose down
+  remove_nginx_site
   log "Stopped Docker stack. Project files remain in ${INSTALL_DIR}."
 }
 
@@ -333,6 +489,9 @@ install_cmd() {
   chmod +x "${INSTALL_DIR}/install.sh" || true
   write_compose_file
   start_app
+  ensure_nginx_packages
+  write_nginx_site
+  enable_tls
   open_firewall
   print_reverse_proxy_hint
 }
