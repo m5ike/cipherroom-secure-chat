@@ -97,6 +97,28 @@ DigitalOcean App Platform:
 Create App -> GitHub repo -> Dockerfile deploy, or use .do/app.yaml as the app spec.
 ```
 
+## Optional environment variables
+
+These are all optional. The app works without them — they only enable the
+server-enhanced mode features.
+
+- `DATABASE_URL` — connection string for an event-logging backend. When unset, events fall back to an in-memory ring buffer (cleared on restart). Only opaque metadata is logged; message contents never leave the encrypted DataChannel.
+- `LOG_EVENTS` — set `1` to enable event logging. Default off.
+- `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` — VAPID key pair for web push notifications. Both must be set for `/api/push/subscribe` to accept subscriptions.
+
+Generate VAPID keys with `npx web-push generate-vapid-keys` before passing them to the installer or the container.
+
+Endpoints exposed for embedders:
+
+- `GET /api/health` — health probe.
+- `GET /api/modules` — module manifest (modes, features, push, events).
+- `GET /api/push/status` — whether push is configured and the public VAPID key.
+- `POST /api/push/subscribe` — accepts a `{subscription}` body when push is configured.
+- `POST /api/events` — records an event when `LOG_EVENTS=1`.
+- `GET /api/events/recent` — returns the recent ring buffer when logging is on.
+
+The frontend exposes `window.CipherRoomAPI` with `capabilities`, `modules()`, `pushStatus()`, `recordEvent()`, and `on()` for downstream embedders.
+
 ## Netlify/Vercel note
 
 Netlify and Vercel are good for the static frontend, but not this full app as-is because the signaling server requires persistent WebSocket connections. If you must use Netlify/Vercel, deploy only the frontend there and set `VITE_SIGNALING_URL=wss://your-backend.example/ws` at build time, with the backend running on one of the long-running hosts above.

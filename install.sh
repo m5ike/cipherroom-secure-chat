@@ -19,6 +19,10 @@ NGINX_SERVER_NAME="${NGINX_SERVER_NAME:-${DOMAIN}}"
 SKIP_DOCKER_INSTALL="${SKIP_DOCKER_INSTALL:-0}"
 FORCE_RECLONE="${FORCE_RECLONE:-0}"
 FIREWALL_OPEN="${FIREWALL_OPEN:-0}"
+DATABASE_URL="${DATABASE_URL:-}"
+LOG_EVENTS="${LOG_EVENTS:-0}"
+VAPID_PUBLIC_KEY="${VAPID_PUBLIC_KEY:-}"
+VAPID_PRIVATE_KEY="${VAPID_PRIVATE_KEY:-}"
 
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 MANAGED_MARKER="# Managed by CipherRoom install.sh"
@@ -54,6 +58,10 @@ Environment variables:
   SKIP_DOCKER_INSTALL   Set 1 to skip Docker installation.
   FORCE_RECLONE         Set 1 to remove INSTALL_DIR and clone fresh.
   FIREWALL_OPEN         Set 1 to open HOST_PORT in ufw/firewalld when available.
+  DATABASE_URL          Optional database URL for event logging. Falls back to in-memory ring buffer.
+  LOG_EVENTS            Set 1 to enable opaque event metadata logging (default off).
+  VAPID_PUBLIC_KEY      Optional VAPID public key for web push notifications.
+  VAPID_PRIVATE_KEY     Optional VAPID private key. Required together with VAPID_PUBLIC_KEY.
 
 Commands:
   --install             Install or update and start. Default.
@@ -219,6 +227,10 @@ services:
     environment:
       NODE_ENV: production
       PORT: "${APP_PORT}"
+      DATABASE_URL: "${DATABASE_URL}"
+      LOG_EVENTS: "${LOG_EVENTS}"
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY}"
     ports:
       - "${BIND_ADDRESS}:${HOST_PORT}:${APP_PORT}"
     healthcheck:
