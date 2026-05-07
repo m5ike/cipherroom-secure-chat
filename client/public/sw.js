@@ -12,7 +12,7 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("push", (event) => {
-  let data = { title: "CipherRoom", body: "Nová aktivita v místnosti." };
+  let data = { title: "M5cet", body: "New activity in your room." };
   try {
     if (event.data) {
       const parsed = event.data.json();
@@ -27,8 +27,8 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
-      icon: "/favicon.ico",
-      tag: "cipherroom",
+      icon: "/icon-192.svg",
+      tag: "m5cet",
     }),
   );
 });

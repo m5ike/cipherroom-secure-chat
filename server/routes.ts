@@ -21,7 +21,29 @@ const rooms = new Map<string, Map<string, PeerClient>>();
 
 // In-memory push subscription store. The intent here is the API stub —
 // real push delivery requires a worker that holds the VAPID private key.
-const pushSubscriptions = new Map<string, { endpoint: string; createdAt: number }>();
+const pushSubscriptions = new Map<string, { endpoint: string; createdAt: number; deviceId?: string }>();
+
+// Per-device server-side preference sync. In-memory only — production deployments
+// should mount a real KV / DB through the API surface in docs/api.md.
+type DeviceSettings = {
+  deviceId: string;
+  updatedAt: number;
+  payload: Record<string, unknown>;
+};
+const deviceSettings = new Map<string, DeviceSettings>();
+const deviceAuditLog = new Map<string, Array<{ kind: string; at: number; meta?: Record<string, unknown> }>>();
+
+// Analytics consent ledger. Only fields the client explicitly opted into are kept.
+type ConsentRecord = { deviceId: string; analyticsConsent: boolean; updatedAt: number };
+const consentLedger = new Map<string, ConsentRecord>();
+
+function safeDeviceId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (trimmed.length < 4 || trimmed.length > 64) return null;
+  if (!/^[a-zA-Z0-9_-]+$/.test(trimmed)) return null;
+  return trimmed;
+}
 
 function safeString(value: unknown, fallback: string, max = 96) {
   if (typeof value !== "string") return fallback;
@@ -187,9 +209,67 @@ export async function registerRoutes(
     }
     const endpoint = subscription.endpoint.slice(0, 512);
     const id = crypto.randomUUID();
-    pushSubscriptions.set(id, { endpoint, createdAt: Date.now() });
+    const deviceId = safeDeviceId(body.deviceId) || undefined;
+    pushSubscriptions.set(id, { endpoint, createdAt: Date.now(), deviceId });
     eventStore.record({ kind: "push-subscribe", meta: { count: pushSubscriptions.size } });
     res.json({ ok: true, id });
+  });
+
+  // ---------- Settings sync (server-enhanced mode) ----------
+  app.get("/api/settings", (req: Request, res: Response) => {
+    const deviceId = safeDeviceId(req.query.deviceId);
+    if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
+    const record = deviceSettings.get(deviceId);
+    res.json({ ok: true, deviceId, settings: record?.payload ?? null, updatedAt: record?.updatedAt ?? null });
+  });
+
+  app.post("/api/settings", (req: Request, res: Response) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const deviceId = safeDeviceId(body.deviceId);
+    if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
+    const payload = (body.settings && typeof body.settings === "object" ? body.settings : {}) as Record<string, unknown>;
+    deviceSettings.set(deviceId, { deviceId, payload, updatedAt: Date.now() });
+    eventStore.record({ kind: "settings-sync", meta: { deviceId } });
+    res.json({ ok: true });
+  });
+
+  // ---------- Audit purge ----------
+  app.post("/api/audit/purge", (req: Request, res: Response) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const deviceId = safeDeviceId(body.deviceId);
+    if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
+    deviceSettings.delete(deviceId);
+    deviceAuditLog.delete(deviceId);
+    consentLedger.delete(deviceId);
+    Array.from(pushSubscriptions.entries()).forEach(([id, sub]) => {
+      if (sub.deviceId === deviceId) pushSubscriptions.delete(id);
+    });
+    eventStore.record({ kind: "audit-purge", meta: { deviceId } });
+    res.json({ ok: true, message: "Server data purged for this device." });
+  });
+
+  app.get("/api/audit/log", (req: Request, res: Response) => {
+    const deviceId = safeDeviceId(req.query.deviceId);
+    if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
+    const entries = deviceAuditLog.get(deviceId) || [];
+    res.json({ ok: true, deviceId, entries });
+  });
+
+  // ---------- Analytics consent ----------
+  app.post("/api/analytics/consent", (req: Request, res: Response) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const deviceId = safeDeviceId(body.deviceId);
+    if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
+    const opt = body.analyticsConsent === true;
+    consentLedger.set(deviceId, { deviceId, analyticsConsent: opt, updatedAt: Date.now() });
+    eventStore.record({ kind: "analytics-consent", meta: { deviceId, opt } });
+    res.json({ ok: true, analyticsConsent: opt });
+  });
+
+  app.get("/api/analytics/consent", (req: Request, res: Response) => {
+    const deviceId = safeDeviceId(req.query.deviceId);
+    if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
+    res.json({ ok: true, record: consentLedger.get(deviceId) ?? null });
   });
 
   const wss = new WebSocketServer({

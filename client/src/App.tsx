@@ -16,6 +16,7 @@ import {
   LogOut,
   Mic,
   MicOff,
+  Menu as MenuIcon,
   Moon,
   Paperclip,
   PhoneOff,
@@ -25,9 +26,15 @@ import {
   Smile,
   Sun,
   Trash2,
-  Users,
+  UserCircle2,
+  Settings as SettingsIcon,
+  Eye,
+  Cloud,
+  Languages,
+  Bell as BellIcon,
   Wifi,
   WifiOff,
+  Users,
 } from "lucide-react";
 import {
   ChangeEvent,
@@ -39,10 +46,23 @@ import {
   useState,
 } from "react";
 import { detectCapabilities } from "./lib/capabilities";
-import { clearPreferences, loadPreferences, savePreferences, type Preferences } from "./lib/preferences";
+import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURITY, type Preferences } from "./lib/preferences";
 import { linkify } from "./lib/linkify";
 import { fetchPushStatus, subscribeToPush, ensureServiceWorker } from "./lib/push";
 import { dispatchInternal, installPublicAPI } from "./lib/cipherroom-api";
+import { applyTheme, applyFont, applyEffects } from "./lib/themes";
+import { detectLang, t, type Lang } from "./lib/i18n";
+import { M5Logo } from "./components/M5Logo";
+import {
+  AnalyticsPanel,
+  EncryptionPanel,
+  NotificationsPanel,
+  PrivacyPanel,
+  ProfilePanel,
+  RoomSecurityPanel,
+  SettingsPanel,
+  TemplatesPanel,
+} from "./components/panels";
 
 type PeerStatus = "connecting" | "open" | "closed";
 type AudioStatus = "off" | "joining" | "live" | "muted";
@@ -72,6 +92,7 @@ type ChatMessage = {
   mine: boolean;
   secure: boolean;
   attachment?: AttachmentMeta;
+  expiresAt?: number;
 };
 
 type SignalFrame =
@@ -93,6 +114,7 @@ type DecryptedPayload =
       senderId: string;
       senderName: string;
       attachment?: AttachmentMeta;
+      ttlMinutes?: number;
     }
   | {
       kind: "audio-status";
@@ -191,11 +213,7 @@ async function encryptEnvelope(key: CryptoKey, payload: unknown): Promise<DataCh
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = encoder.encode(JSON.stringify(payload));
   const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext));
-
-  return {
-    iv: toBase64(iv),
-    ciphertext: toBase64(ciphertext),
-  };
+  return { iv: toBase64(iv), ciphertext: toBase64(ciphertext) };
 }
 
 async function decryptEnvelope<T>(key: CryptoKey, envelope: DataChannelEnvelope): Promise<T> {
@@ -207,12 +225,17 @@ async function decryptEnvelope<T>(key: CryptoKey, envelope: DataChannelEnvelope)
   return JSON.parse(decoder.decode(plaintext)) as T;
 }
 
-function formatTime(value: number) {
-  return new Intl.DateTimeFormat("cs-CZ", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(value));
+function formatTime(value: number, lang: Lang, timezone: string) {
+  try {
+    return new Intl.DateTimeFormat(lang === "cs" ? "cs-CZ" : lang === "de" ? "de-DE" : "en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZone: timezone || undefined,
+    }).format(new Date(value));
+  } catch {
+    return new Date(value).toLocaleTimeString();
+  }
 }
 
 function formatBytes(value: number) {
@@ -223,7 +246,7 @@ function formatBytes(value: number) {
 
 async function fileToAttachment(file: File): Promise<AttachmentMeta> {
   if (file.size > ATTACHMENT_LIMIT) {
-    throw new Error(`Soubor je větší než ${formatBytes(ATTACHMENT_LIMIT)}.`);
+    throw new Error(`File exceeds ${formatBytes(ATTACHMENT_LIMIT)}.`);
   }
   const buffer = new Uint8Array(await file.arrayBuffer());
   const dataUrl = `data:${file.type || "application/octet-stream"};base64,${toBase64(buffer)}`;
@@ -236,25 +259,13 @@ async function fileToAttachment(file: File): Promise<AttachmentMeta> {
   };
 }
 
-function CipherLogo() {
-  return (
-    <svg aria-label="CipherRoom logo" viewBox="0 0 36 36" className="h-9 w-9" fill="none">
-      <rect x="6" y="11" width="24" height="18" rx="6" stroke="currentColor" strokeWidth="2.2" />
-      <path d="M12 11V8.8C12 5.6 14.6 3 17.8 3h.4C21.4 3 24 5.6 24 8.8V11" stroke="currentColor" strokeWidth="2.2" />
-      <path d="M13.5 19h9M13.5 23h5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" />
-      <circle cx="26" cy="23" r="2" fill="currentColor" />
-    </svg>
-  );
-}
-
 function UnsupportedBanner({ reasons }: { reasons: string[] }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
       <div className="max-w-lg rounded-3xl border border-border bg-card p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">CipherRoom — prohlížeč není podporován</h1>
+        <h1 className="text-xl font-semibold">M5cet — browser unsupported</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Tato aplikace potřebuje moderní šifrování a P2P přenos přímo v prohlížeči. Internet Explorer není
-          podporován. Použij prosím Edge, Chrome, Firefox nebo Safari.
+          This app needs modern browser crypto and WebRTC. Use a recent Edge, Chrome, Firefox, or Safari.
         </p>
         <ul className="mt-4 space-y-1 text-sm">
           {reasons.map((reason) => (
@@ -269,17 +280,32 @@ function UnsupportedBanner({ reasons }: { reasons: string[] }) {
   );
 }
 
+type PanelKey =
+  | "profile"
+  | "settings"
+  | "templates"
+  | "privacy"
+  | "encryption"
+  | "notifications"
+  | "analytics"
+  | "roomSecurity"
+  | "join"
+  | "peers"
+  | "audio"
+  | null;
+
 function ChatApp() {
   const capabilitiesRef = useRef(detectCapabilities());
   const capabilities = capabilitiesRef.current;
-  const initialPrefs = useMemo<Preferences>(() => loadPreferences(), []);
+  const initialPrefs = useMemo<Preferences>(() => {
+    const loaded = loadPreferences();
+    if (!loaded.lang) loaded.lang = detectLang(undefined);
+    return loaded;
+  }, []);
 
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    if (initialPrefs.theme === "dark") return "dark";
-    if (initialPrefs.theme === "light") return "light";
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  });
-  const [mode, setMode] = useState<"light" | "server">(initialPrefs.mode);
+  const [prefs, setPrefsState] = useState<Preferences>(initialPrefs);
+  const lang = prefs.lang;
+
   const [name, setName] = useState(
     () => initialPrefs.name || `peer-${Math.floor(1000 + Math.random() * 9000)}`,
   );
@@ -292,14 +318,13 @@ function ChatApp() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [peers, setPeers] = useState<PeerView[]>([]);
   const [copied, setCopied] = useState(false);
-  const [notice, setNotice] = useState(
-    "Zprávy se neukládají. Server dělá pouze signalizaci pro WebRTC.",
-  );
+  const [notice, setNotice] = useState<string>("");
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [audioStatus, setAudioStatus] = useState<AudioStatus>("off");
   const [pushAvailable, setPushAvailable] = useState(false);
   const [pushVapidKey, setPushVapidKey] = useState<string | null>(null);
-  const [notificationsEnabled, setNotificationsEnabled] = useState(initialPrefs.notificationsEnabled);
+  const [activePanel, setActivePanel] = useState<PanelKey>(null);
+  const [now, setNow] = useState(Date.now());
 
   const socketRef = useRef<WebSocket | null>(null);
   const peersRef = useRef<Map<string, PeerHandle>>(new Map());
@@ -312,18 +337,50 @@ function ChatApp() {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const messageEndRef = useRef<HTMLDivElement | null>(null);
   const audioStatusRef = useRef<AudioStatus>("off");
-  const notificationsEnabledRef = useRef(notificationsEnabled);
+  const notificationsEnabledRef = useRef(initialPrefs.notificationsEnabled);
 
   const openPeerCount = useMemo(() => peers.filter((peer) => peer.status === "open").length, [peers]);
   const audioPeerCount = useMemo(
     () => peers.filter((peer) => peer.audio === "live" || peer.audio === "muted").length,
     [peers],
   );
+
+  const visibleMessages = useMemo(() => {
+    const filtered = messages.filter((message) => !message.expiresAt || message.expiresAt > now);
+    const sec = (room && prefs.roomSecurity[room]) || DEFAULT_ROOM_SECURITY;
+    if (sec.sort === "desc") return [...filtered].reverse();
+    return filtered;
+  }, [messages, now, prefs.roomSecurity, room]);
+
   const canSend = status === "joined" && openPeerCount > 0 && messageInput.trim().length > 0;
 
+  function setPrefs(next: Partial<Preferences>) {
+    setPrefsState((current) => {
+      const merged = { ...current, ...next };
+      savePreferences(merged);
+      return merged;
+    });
+  }
+
+  // Apply theme/font/effects whenever they change.
   useEffect(() => {
-    document.documentElement.classList.toggle("dark", theme === "dark");
-  }, [theme]);
+    applyTheme(prefs.theme);
+  }, [prefs.theme]);
+  useEffect(() => {
+    applyFont(prefs.font, prefs.fontSize);
+  }, [prefs.font, prefs.fontSize]);
+  useEffect(() => {
+    applyEffects(prefs.effects);
+  }, [prefs.effects]);
+  useEffect(() => {
+    document.documentElement.setAttribute("lang", prefs.lang);
+  }, [prefs.lang]);
+
+  useEffect(() => {
+    if (!notice) setNotice(t(lang, "chat.empty.body"));
+    // intentionally no deps for first render only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     nameRef.current = name;
@@ -334,16 +391,17 @@ function ChatApp() {
   }, [audioStatus]);
 
   useEffect(() => {
-    notificationsEnabledRef.current = notificationsEnabled;
-  }, [notificationsEnabled]);
+    notificationsEnabledRef.current = prefs.notificationsEnabled;
+  }, [prefs.notificationsEnabled]);
 
   useEffect(() => {
     if (!capabilities.localStorage) return;
-    savePreferences({ theme, mode, name, lastRoom: roomInput, notificationsEnabled });
-  }, [theme, mode, name, roomInput, notificationsEnabled, capabilities.localStorage]);
+    setPrefs({ name, lastRoom: roomInput });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name, roomInput]);
 
   useEffect(() => {
-    if (mode !== "server") return;
+    if (prefs.mode !== "server") return;
     let cancelled = false;
     void (async () => {
       const remote = await fetchPushStatus();
@@ -355,7 +413,7 @@ function ChatApp() {
     return () => {
       cancelled = true;
     };
-  }, [mode, capabilities.serviceWorker]);
+  }, [prefs.mode, capabilities.serviceWorker]);
 
   useEffect(() => {
     installPublicAPI();
@@ -363,7 +421,16 @@ function ChatApp() {
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
-  }, [messages.length]);
+  }, [visibleMessages.length]);
+
+  // Tick once a second to evict expired messages.
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setNow(Date.now());
+      setMessages((current) => current.filter((message) => !message.expiresAt || message.expiresAt > Date.now()));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   function setPeerView(id: string, update: Partial<PeerView> & { name?: string; initiator?: boolean }) {
     setPeers((current) => {
@@ -390,7 +457,7 @@ function ChatApp() {
       {
         id: newId("system"),
         senderId: "system",
-        senderName: "CipherRoom",
+        senderName: "M5cet",
         text,
         createdAt: Date.now(),
         mine: false,
@@ -415,7 +482,7 @@ function ChatApp() {
           peer.channel.send(serialized);
           sent += 1;
         } catch {
-          // ignore individual peer send errors
+          // ignore
         }
       }
     });
@@ -460,6 +527,21 @@ function ChatApp() {
     handle.audioElement = undefined;
   }
 
+  function ttlForRoom(): { perMessage: number; absolute: number } {
+    const override = roomRef.current ? prefs.roomTtl[roomRef.current] : undefined;
+    const perMessage = override?.defaultMinutes && override.defaultMinutes > 0 ? override.defaultMinutes : prefs.ttlDefaultMinutes;
+    const absolute = override?.absoluteMinutes ?? 0;
+    return { perMessage, absolute };
+  }
+
+  function computeExpiry(ttlMinutes: number | undefined, createdAt: number) {
+    const { absolute } = ttlForRoom();
+    const candidates: number[] = [];
+    if (typeof ttlMinutes === "number" && ttlMinutes > 0) candidates.push(createdAt + ttlMinutes * 60 * 1000);
+    if (absolute > 0) candidates.push(createdAt + absolute * 60 * 1000);
+    return candidates.length === 0 ? undefined : Math.min(...candidates);
+  }
+
   function wireDataChannel(peerId: string, channel: RTCDataChannel) {
     const handle = peersRef.current.get(peerId);
     if (handle) {
@@ -469,13 +551,15 @@ function ChatApp() {
     channel.binaryType = "arraybuffer";
     channel.onopen = () => {
       setPeerView(peerId, { status: "open" });
-      setNotice("P2P data kanál je otevřený. Texty už nejdou přes server.");
+      setNotice(lang === "cs"
+        ? "P2P data kanál je otevřený."
+        : lang === "de" ? "P2P-Datenkanal offen." : "P2P data channel is open.");
       void broadcastAudioStatus(audioStatusRef.current);
     };
     channel.onclose = () => setPeerView(peerId, { status: "closed", audio: "off" });
     channel.onerror = () => {
       setPeerView(peerId, { status: "closed" });
-      systemMessage(`Spojení s ${handle?.name || peerId.slice(-6)} spadlo.`);
+      systemMessage(`Connection with ${handle?.name || peerId.slice(-6)} dropped.`);
     };
     channel.onmessage = async (event) => {
       try {
@@ -489,6 +573,7 @@ function ChatApp() {
           return;
         }
 
+        const expiresAt = computeExpiry(plaintext.ttlMinutes, plaintext.createdAt);
         setMessages((current) => [
           ...current,
           {
@@ -500,6 +585,7 @@ function ChatApp() {
             attachment: plaintext.attachment,
             mine: plaintext.senderId === myIdRef.current,
             secure: true,
+            expiresAt,
           },
         ]);
         dispatchInternal("message", { senderId: plaintext.senderId });
@@ -512,16 +598,19 @@ function ChatApp() {
           Notification.permission === "granted"
         ) {
           try {
-            new Notification(`CipherRoom · ${plaintext.senderName}`, {
-              body: plaintext.text || "(příloha)",
-              tag: "cipherroom",
+            new Notification(`M5cet · ${plaintext.senderName}`, {
+              body: plaintext.text || "(attachment)",
+              tag: "m5cet",
             });
           } catch {
-            // some browsers require ServiceWorkerRegistration.showNotification — ignore
+            // ignore
           }
         }
       } catch {
-        systemMessage("Přišla zpráva, ale nejde dešifrovat. Druhá strana má pravděpodobně jiný klíč místnosti.");
+        systemMessage(lang === "cs"
+          ? "Přišla zpráva, ale nejde dešifrovat. Druhá strana má pravděpodobně jiný klíč."
+          : lang === "de" ? "Nachricht konnte nicht entschlüsselt werden — andere Seite hat anderen Schlüssel."
+            : "A message arrived but could not be decrypted. The other side likely has a different room key.");
       }
     };
   }
@@ -565,7 +654,7 @@ function ChatApp() {
     }
 
     if (initiator) {
-      const channel = pc.createDataChannel("cipherroom", { ordered: true });
+      const channel = pc.createDataChannel("m5cet", { ordered: true });
       wireDataChannel(peerId, channel);
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
@@ -599,7 +688,7 @@ function ChatApp() {
   async function connect(event?: FormEvent) {
     event?.preventDefault();
     if (!passphrase.trim()) {
-      setNotice("Zadej klíč místnosti. Bez něj by šifrování nemělo smysl.");
+      setNotice(lang === "cs" ? "Zadej klíč místnosti." : lang === "de" ? "Bitte Raum-Schlüssel eingeben." : "Enter the room key.");
       return;
     }
 
@@ -614,7 +703,6 @@ function ChatApp() {
     keyRef.current = await deriveRoomKey(nextRoom, passphrase);
     setMessages([]);
     setPeers([]);
-    setNotice("Klíč je odvozený lokálně v prohlížeči. Připojuji WebSocket signalizaci.");
     setStatus("connecting");
 
     const socket = new WebSocket(wsUrl());
@@ -628,11 +716,11 @@ function ChatApp() {
 
       if (frame.type === "joined") {
         setStatus("joined");
-        systemMessage(`Připojeno do místnosti ${frame.room}. Nalezeno peerů: ${frame.peers.length}.`);
+        systemMessage(`Joined ${frame.room}. Peers: ${frame.peers.length}.`);
         for (const peer of frame.peers) {
           await createPeer(peer.peerId, peer.name, true);
         }
-        if (mode === "server") {
+        if (prefs.mode === "server" && prefs.analyticsConsent) {
           void fetch("/api/events", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -640,15 +728,17 @@ function ChatApp() {
               kind: "client-join",
               room: nextRoom,
               peerId: nextPeerId,
-              meta: { peers: frame.peers.length },
+              meta: { peers: frame.peers.length, deviceId: prefs.deviceId },
             }),
           }).catch(() => undefined);
         }
+        // Close the join modal once we are in.
+        setActivePanel((current) => (current === "join" ? null : current));
       }
 
       if (frame.type === "peer-joined") {
         setPeerView(frame.peerId, { name: frame.name, status: "connecting", initiator: false });
-        systemMessage(`${frame.name} vstoupil do místnosti.`);
+        systemMessage(`${frame.name} entered the room.`);
       }
 
       if (frame.type === "peer-left") {
@@ -658,7 +748,7 @@ function ChatApp() {
         handle?.pc.close();
         peersRef.current.delete(frame.peerId);
         setPeers((current) => current.filter((peer) => peer.id !== frame.peerId));
-        systemMessage(`Peer ${frame.peerId.slice(-6)} odešel.`);
+        systemMessage(`Peer ${frame.peerId.slice(-6)} left.`);
       }
 
       if (frame.type === "signal") {
@@ -674,7 +764,7 @@ function ChatApp() {
     };
     socket.onerror = () => {
       setStatus("offline");
-      setNotice("WebSocket signalizace není dostupná.");
+      setNotice(lang === "cs" ? "WebSocket signalizace není dostupná." : lang === "de" ? "WebSocket-Signalisierung nicht erreichbar." : "WebSocket signaling unavailable.");
     };
   }
 
@@ -697,13 +787,19 @@ function ChatApp() {
     setAudioStatus("off");
     setStatus("idle");
     if (showMessage) {
-      systemMessage("Lokální session ukončena. Klíč i WebRTC spojení jsou zahozena.");
+      systemMessage(lang === "cs"
+        ? "Lokální session ukončena. Klíč i WebRTC spojení jsou zahozena."
+        : lang === "de" ? "Lokale Session beendet. Schlüssel und WebRTC-Verbindungen verworfen."
+          : "Local session ended. Key and WebRTC connections discarded.");
     }
   }
 
   async function sendChatPayload(text: string, attachment?: AttachmentMeta) {
     const key = keyRef.current;
     if (!key) return;
+    const { perMessage } = ttlForRoom();
+    const ttlMinutes = perMessage > 0 ? perMessage : undefined;
+
     const payload = {
       id: newId("msg"),
       text,
@@ -711,11 +807,13 @@ function ChatApp() {
       senderId: myIdRef.current,
       senderName: nameRef.current,
       attachment,
+      ttlMinutes,
     };
     const envelope = await encryptEnvelope(key, payload);
     const sent = await broadcastEnvelope(envelope);
 
     if (sent > 0) {
+      const expiresAt = computeExpiry(ttlMinutes, payload.createdAt);
       setMessages((current) => [
         ...current,
         {
@@ -727,11 +825,12 @@ function ChatApp() {
           attachment: payload.attachment,
           mine: true,
           secure: true,
+          expiresAt,
         },
       ]);
       setMessageInput("");
     } else {
-      setNotice("Zatím není otevřený žádný P2P data kanál.");
+      setNotice(lang === "cs" ? "Zatím není otevřený žádný P2P data kanál." : lang === "de" ? "Noch kein offener P2P-Kanal." : "No open P2P data channel yet.");
     }
   }
 
@@ -761,7 +860,7 @@ function ChatApp() {
 
   async function startAudio() {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setNotice("getUserMedia není dostupné v tomto prohlížeči.");
+      setNotice("getUserMedia unavailable.");
       return;
     }
     try {
@@ -784,10 +883,10 @@ function ChatApp() {
       });
       setAudioStatus("live");
       await broadcastAudioStatus("live");
-      systemMessage("Audio konference: tvůj mikrofon je živý.");
+      systemMessage("Audio: your microphone is live.");
     } catch (err) {
       setAudioStatus("off");
-      setNotice(`Mikrofon selhal: ${(err as Error).message}`);
+      setNotice(`Microphone failed: ${(err as Error).message}`);
     }
   }
 
@@ -808,7 +907,7 @@ function ChatApp() {
     });
     setAudioStatus("off");
     await broadcastAudioStatus("off");
-    systemMessage("Audio konference: opustil/a jsi hovor.");
+    systemMessage("Audio: left the call.");
   }
 
   async function toggleMute() {
@@ -824,7 +923,7 @@ function ChatApp() {
   }
 
   async function copyRoom() {
-    const text = `Room: ${room || normalizeRoom(roomInput)}\nKey: ${passphrase ? "(pošli mimo tento chat)" : "(není zadán)"}`;
+    const text = `Room: ${room || normalizeRoom(roomInput)}\nKey: ${passphrase ? "(share out-of-band)" : "(none)"}`;
     await navigator.clipboard?.writeText(text);
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1400);
@@ -833,36 +932,54 @@ function ChatApp() {
   async function enableNotifications() {
     if (!pushAvailable || !pushVapidKey) {
       if (!("Notification" in window)) {
-        setNotice("Notifikace nejsou v tomto prohlížeči dostupné.");
+        setNotice("Notifications API unavailable.");
         return;
       }
       const permission = await Notification.requestPermission();
       if (permission !== "granted") {
-        setNotice("Oprávnění k notifikacím nebylo uděleno.");
+        setNotice("Notification permission not granted.");
         return;
       }
-      setNotificationsEnabled(true);
-      systemMessage("Lokální notifikace zapnuty (server-side push není konfigurován).");
+      setPrefs({ notificationsEnabled: true });
+      systemMessage("Local notifications enabled.");
       return;
     }
 
     const result = await subscribeToPush(pushVapidKey);
     if (result.ok) {
-      setNotificationsEnabled(true);
-      systemMessage("Push notifikace přihlášené.");
+      setPrefs({ notificationsEnabled: true });
+      systemMessage("Push subscribed.");
     } else {
-      setNotice(result.reason || "Push subscribe selhal.");
+      setNotice(result.reason || "Push subscribe failed.");
     }
   }
 
   function disableNotifications() {
-    setNotificationsEnabled(false);
-    systemMessage("Notifikace lokálně vypnuté.");
+    setPrefs({ notificationsEnabled: false });
+    systemMessage("Notifications disabled locally.");
   }
 
   function clearLocalData() {
     clearPreferences();
-    setNotice("Lokální preference smazány. Klíč i zprávy zůstávají jen v paměti tabu.");
+    setPrefsState((current) => ({ ...current })); // trigger re-render
+    setNotice(lang === "cs" ? "Lokální preference smazány." : lang === "de" ? "Lokale Einstellungen gelöscht." : "Local preferences purged.");
+  }
+
+  async function purgeServer() {
+    try {
+      const response = await fetch("/api/audit/purge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId: prefs.deviceId }),
+      });
+      if (response.ok) {
+        const json = await response.json().catch(() => ({}));
+        return { ok: true, message: typeof json.message === "string" ? json.message : "Server data purged for this device." };
+      }
+      return { ok: false, message: `Server returned ${response.status}.` };
+    } catch (err) {
+      return { ok: false, message: (err as Error).message };
+    }
   }
 
   function handleMessageKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -879,382 +996,161 @@ function ChatApp() {
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground lg:h-dvh lg:overflow-hidden">
-      <section className="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-4 py-4 sm:px-6 lg:h-dvh lg:min-h-0 lg:box-border lg:px-8">
-        <header className="flex flex-col gap-4 rounded-3xl border border-border/70 bg-card/90 p-4 shadow-sm backdrop-blur md:flex-row md:items-center md:justify-between">
-          <div className="flex items-center gap-3">
-            <div className="rounded-2xl bg-primary/10 p-2 text-primary">
-              <CipherLogo />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold tracking-tight">CipherRoom</h1>
-              <p className="text-sm text-muted-foreground">P2P místnostní chat, žádné ukládání, žádná cache.</p>
-            </div>
+    <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground safe-pt safe-pb safe-px">
+      {/* Top motorsport stripe */}
+      <div className="m5-stripe h-1 w-full" aria-hidden="true" />
+
+      {/* Top app bar */}
+      <header className="flex items-center gap-2 border-b border-border bg-card/80 px-3 py-2 backdrop-blur sm:px-4">
+        <button
+          type="button"
+          onClick={() => setActivePanel("join")}
+          aria-label={t(lang, "menu.room")}
+          className="inline-flex items-center gap-2 rounded-2xl px-2 py-1 hover:bg-accent"
+          data-testid="button-brand"
+        >
+          <M5Logo size={32} className="text-primary" />
+          <div className="hidden text-left sm:block">
+            <div className="text-sm font-bold leading-tight">{t(lang, "app.name")}</div>
+            <div className="text-[11px] leading-tight text-muted-foreground">{t(lang, "app.tagline")}</div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span
-              data-testid="status-connection"
-              className="inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-2 text-sm"
-            >
-              {status === "joined" ? <Wifi className="h-4 w-4 text-emerald-600" /> : <WifiOff className="h-4 w-4 text-muted-foreground" />}
-              {status === "joined" ? `${openPeerCount} P2P` : status}
-            </span>
-            <button
-              data-testid="button-theme"
-              className="inline-flex min-h-11 items-center gap-2 rounded-full border border-border bg-background px-3 py-2 text-sm hover:bg-accent"
-              onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-              type="button"
-              aria-label="Přepnout motiv"
-            >
-              {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-              {theme === "dark" ? "Light" : "Dark"}
-            </button>
-          </div>
-        </header>
+        </button>
 
-        <div className="grid flex-1 gap-4 py-4 lg:min-h-0 lg:grid-cols-[360px_minmax(0,1fr)]">
-          <aside className="flex min-h-0 flex-col gap-4 lg:overflow-y-auto lg:pr-1">
-            <form
-              data-testid="form-join"
-              onSubmit={connect}
-              className="rounded-3xl border border-border bg-card p-4 shadow-sm"
-              autoComplete="off"
-            >
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-semibold">Místnost</h2>
-                  <p className="text-sm text-muted-foreground">Identita a klíč žijí jen v paměti tabu.</p>
-                </div>
-                <Lock className="h-5 w-5 text-primary" />
-              </div>
+        <span
+          data-testid="status-connection"
+          className="ml-2 inline-flex items-center gap-2 rounded-full border border-border bg-background px-3 py-1 text-xs"
+        >
+          {status === "joined" ? <Wifi className="h-3.5 w-3.5 text-emerald-500" /> : <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />}
+          <span className="hidden sm:inline">{status === "joined" ? `${openPeerCount} P2P · ${room}` : t(lang, `status.${status}`)}</span>
+          <span className="sm:hidden">{status === "joined" ? `${openPeerCount}` : status[0]}</span>
+        </span>
 
-              <fieldset className="mb-3 grid grid-cols-2 gap-2 rounded-2xl border border-input bg-background p-1">
-                <label
-                  className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-xs ${
-                    mode === "light" ? "bg-primary text-primary-foreground" : "hover:bg-accent"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="mode"
-                    className="sr-only"
-                    checked={mode === "light"}
-                    onChange={() => setMode("light")}
-                    data-testid="radio-mode-light"
-                  />
-                  <span className="font-semibold">Light · P2P</span>
-                  <span className="opacity-80">Jen WebRTC, server jenom signalizuje.</span>
-                </label>
-                <label
-                  className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-xs ${
-                    mode === "server" ? "bg-primary text-primary-foreground" : "hover:bg-accent"
-                  }`}
-                >
-                  <input
-                    type="radio"
-                    name="mode"
-                    className="sr-only"
-                    checked={mode === "server"}
-                    onChange={() => setMode("server")}
-                    data-testid="radio-mode-server"
-                  />
-                  <span className="font-semibold">Server-enhanced</span>
-                  <span className="opacity-80">Volitelné push a metadata logy.</span>
-                </label>
-              </fieldset>
+        <div className="ml-auto flex items-center gap-1">
+          <ToolbarButton testId="btn-templates" label={t(lang, "menu.templates")} onClick={() => setActivePanel("templates")} icon={<Palette />} />
+          <ToolbarButton testId="btn-settings" label={t(lang, "menu.settings")} onClick={() => setActivePanel("settings")} icon={<SettingsIcon />} />
+          <ToolbarButton testId="btn-encryption" label={t(lang, "menu.encryption")} onClick={() => setActivePanel("encryption")} icon={<KeyRound />} />
+          <ToolbarButton testId="btn-room-security" label={t(lang, "room.security.title")} onClick={() => setActivePanel("roomSecurity")} icon={<ShieldCheck />} />
+          <ToolbarButton testId="btn-privacy" label={t(lang, "menu.privacy")} onClick={() => setActivePanel("privacy")} icon={<Eye />} />
+          <ToolbarButton testId="btn-notifications" label={t(lang, "menu.notifications")} onClick={() => setActivePanel("notifications")} icon={<BellIcon />} />
+          <ToolbarButton testId="btn-analytics" label={t(lang, "menu.analytics")} onClick={() => setActivePanel("analytics")} icon={<Activity />} />
+          <ToolbarButton testId="btn-profile" label={t(lang, "menu.profile")} onClick={() => setActivePanel("profile")} icon={<UserCircle2 />} />
+          <ToolbarButton testId="btn-peers" label={t(lang, "menu.peers")} onClick={() => setActivePanel("peers")} icon={<Users />} />
+          <ToolbarButton testId="btn-audio" label={t(lang, "menu.audio")} onClick={() => setActivePanel("audio")} icon={<Mic />} />
+          <ToolbarButton testId="btn-language" label={t(lang, "common.language")} onClick={() => setActivePanel("settings")} icon={<Languages />} />
+        </div>
+      </header>
 
-              <label className="grid gap-2 text-sm font-medium">
-                Jméno
-                <input
-                  data-testid="input-name"
-                  className="min-h-11 rounded-2xl border border-input bg-background px-3 text-base outline-none focus:ring-2 focus:ring-ring"
-                  value={name}
-                  onChange={(event) => setName(event.target.value)}
-                  maxLength={42}
-                />
-              </label>
-
-              <label className="mt-3 grid gap-2 text-sm font-medium">
-                Room ID
-                <input
-                  data-testid="input-room"
-                  className="min-h-11 rounded-2xl border border-input bg-background px-3 font-mono text-base outline-none focus:ring-2 focus:ring-ring"
-                  value={roomInput}
-                  onChange={(event) => setRoomInput(event.target.value)}
-                  maxLength={48}
-                />
-              </label>
-
-              <label className="mt-3 grid gap-2 text-sm font-medium">
-                Klíč místnosti
-                <input
-                  data-testid="input-passphrase"
-                  className="min-h-11 rounded-2xl border border-input bg-background px-3 text-base outline-none focus:ring-2 focus:ring-ring"
-                  value={passphrase}
-                  onChange={(event) => setPassphrase(event.target.value)}
-                  type="password"
-                  placeholder="sdílej bokem, neposílá se serveru"
-                  autoComplete="new-password"
-                />
-              </label>
-
-              <div className="mt-4 grid grid-cols-[1fr_auto] gap-2">
-                <button
-                  data-testid="button-connect"
-                  className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
-                  type="submit"
-                  disabled={status === "deriving" || status === "connecting"}
-                >
-                  <Radio className="h-4 w-4" />
-                  {status === "joined" ? "Reconnect" : "Připojit"}
-                </button>
-                <button
-                  data-testid="button-copy-room"
-                  className="inline-flex min-h-11 items-center justify-center rounded-2xl border border-border bg-background px-3 hover:bg-accent"
-                  type="button"
-                  onClick={copyRoom}
-                  aria-label="Kopírovat místnost"
-                >
-                  <Copy className="h-4 w-4" />
-                </button>
-              </div>
-              {copied ? <p className="mt-2 text-sm text-emerald-700 dark:text-emerald-400">Room info zkopírováno.</p> : null}
-              {status === "joined" ? (
-                <button
-                  data-testid="button-disconnect"
-                  className="mt-2 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-border bg-background px-4 text-sm font-semibold hover:bg-accent"
-                  type="button"
-                  onClick={() => disconnect()}
-                >
-                  <LogOut className="h-4 w-4" />
-                  Odpojit a zahodit klíč
-                </button>
-              ) : null}
-            </form>
-
-            <section className="rounded-3xl border border-border bg-card p-4 shadow-sm" data-testid="section-audio">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Audio konference</h2>
-                <span className="text-xs text-muted-foreground">{audioPeerCount} v hovoru</span>
-              </div>
-              <p className="mb-3 text-sm text-muted-foreground">
-                Hlas jde stejným WebRTC spojením jako data kanál. Server hlas neslyší.
+      {/* Full-screen chat area */}
+      <main className="relative flex flex-1 min-h-0 flex-col chat-canvas">
+        <div className="flex flex-1 min-h-0 flex-col">
+          <div className="flex-shrink-0 border-b border-border bg-card/60 px-3 py-2 sm:px-4">
+            <div className="flex items-center justify-between gap-3 text-xs">
+              <p data-testid="text-notice" className="truncate text-muted-foreground">
+                {notice}
               </p>
-              <div className="flex flex-wrap gap-2">
-                {audioStatus === "off" || audioStatus === "joining" ? (
+              <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+                <span>{room ? `room:${room}` : t(lang, "status.idle")}</span>
+                <span className="hidden sm:inline">·</span>
+                <span className="hidden sm:inline">{myId.slice(-10)}</span>
+                {status === "joined" ? (
+                  <button type="button" onClick={() => disconnect()} className="ml-1 inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 hover:bg-accent">
+                    <LogOut className="h-3 w-3" />
+                    {t(lang, "common.disconnect")}
+                  </button>
+                ) : null}
+                <button type="button" onClick={copyRoom} className="ml-1 inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 hover:bg-accent">
+                  <Copy className="h-3 w-3" />
+                  {copied ? t(lang, "common.copied") : t(lang, "common.copy")}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div data-testid="list-messages" className="flex-1 overflow-y-auto bg-chat-grid p-3 sm:p-5">
+            {visibleMessages.length === 0 ? (
+              <div className="flex h-full min-h-[60dvh] items-center justify-center">
+                <div className="max-w-md rounded-3xl border border-border bg-card/90 p-6 text-center shadow-sm">
+                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                    <Lock className="h-6 w-6" />
+                  </div>
+                  <h3 className="text-lg font-semibold">{t(lang, "chat.empty.title")}</h3>
+                  <p className="mt-2 text-sm text-muted-foreground">{t(lang, "chat.empty.body")}</p>
                   <button
                     type="button"
-                    data-testid="button-audio-join"
-                    className="inline-flex min-h-11 items-center gap-2 rounded-2xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-                    onClick={() => void startAudio()}
-                    disabled={status !== "joined" || audioStatus === "joining"}
+                    onClick={() => setActivePanel("join")}
+                    className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-primary-foreground"
+                    data-testid="button-open-join"
                   >
-                    <Mic className="h-4 w-4" />
-                    {audioStatus === "joining" ? "Připojuji..." : "Připojit hlas"}
+                    <Radio className="h-4 w-4" />
+                    {t(lang, "join.connect")}
                   </button>
-                ) : (
-                  <>
-                    <button
-                      type="button"
-                      data-testid="button-audio-mute"
-                      className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-border bg-background px-3 text-sm hover:bg-accent"
-                      onClick={() => void toggleMute()}
-                    >
-                      {audioStatus === "muted" ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-                      {audioStatus === "muted" ? "Unmute" : "Mute"}
-                    </button>
-                    <button
-                      type="button"
-                      data-testid="button-audio-leave"
-                      className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-border bg-background px-3 text-sm hover:bg-accent"
-                      onClick={() => void leaveAudio()}
-                    >
-                      <PhoneOff className="h-4 w-4" />
-                      Opustit hovor
-                    </button>
-                  </>
-                )}
+                </div>
               </div>
-            </section>
-
-            <section className="rounded-3xl border border-border bg-card p-4 shadow-sm">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-lg font-semibold">Peers</h2>
-                <Users className="h-5 w-5 text-muted-foreground" />
-              </div>
-              <div className="space-y-2" data-testid="list-peers">
-                {peers.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted-foreground">
-                    Připoj druhý tab nebo pošli Room ID dalšímu uživateli. Zprávy se zobrazí až po otevření P2P kanálu.
-                  </div>
-                ) : (
-                  peers.map((peer) => (
-                    <div key={peer.id} className="flex items-center justify-between gap-3 rounded-2xl bg-background p-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium" data-testid={`text-peer-${peer.id}`}>
-                          {peer.name}
+            ) : (
+              <div className="mx-auto w-full max-w-4xl space-y-3">
+                {visibleMessages.map((message) => (
+                  <article
+                    key={message.id}
+                    data-testid={`message-${message.id}`}
+                    className={`flex ${message.mine ? "justify-end" : "justify-start"}`}
+                  >
+                    <div
+                      className={`max-w-[88%] rounded-3xl px-4 py-3 shadow-sm ${
+                        message.senderId === "system"
+                          ? "border border-border bg-card text-muted-foreground"
+                          : message.mine
+                            ? "bg-primary text-primary-foreground"
+                            : "border border-border bg-card"
+                      }`}
+                    >
+                      <div className="mb-1 flex items-center gap-2 text-xs opacity-80">
+                        <span className="font-semibold">{message.senderName}</span>
+                        <span>{formatTime(message.createdAt, lang, prefs.timezone)}</span>
+                        {message.secure ? <Lock className="h-3 w-3" /> : null}
+                        {message.expiresAt ? (
+                          <span className="rounded-full bg-amber-500/20 px-1.5 text-[10px] uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                            TTL
+                          </span>
+                        ) : null}
+                      </div>
+                      {message.text ? (
+                        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                          {linkify(message.text)}
                         </p>
-                        <p className="font-mono text-xs text-muted-foreground">{peer.id.slice(-12)}</p>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {peer.audio === "live" ? (
-                          <Mic className="h-4 w-4 text-emerald-600" aria-label="audio live" />
-                        ) : peer.audio === "muted" ? (
-                          <MicOff className="h-4 w-4 text-amber-600" aria-label="audio muted" />
-                        ) : null}
-                        <span
-                          className={`rounded-full px-2 py-1 text-xs ${
-                            peer.status === "open"
-                              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
-                              : peer.status === "connecting"
-                                ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
-                                : "bg-muted text-muted-foreground"
-                          }`}
-                        >
-                          {peer.status}
-                        </span>
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-
-            <section className="rounded-3xl border border-border bg-card p-4 shadow-sm">
-              <h2 className="mb-3 text-lg font-semibold">Předvolby</h2>
-              <div className="space-y-2 text-sm">
-                <button
-                  type="button"
-                  data-testid="button-notifications"
-                  className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-border bg-background px-3 hover:bg-accent"
-                  onClick={() => (notificationsEnabled ? disableNotifications() : void enableNotifications())}
-                >
-                  {notificationsEnabled ? <BellOff className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
-                  {notificationsEnabled ? "Vypnout notifikace" : "Zapnout notifikace"}
-                </button>
-                <p className="text-xs text-muted-foreground">
-                  {pushAvailable
-                    ? "Server-side push je nakonfigurován (VAPID)."
-                    : "Server-side push není konfigurován. Použijí se lokální notifikace v tabu."}
-                </p>
-                <button
-                  type="button"
-                  data-testid="button-clear-prefs"
-                  className="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-border bg-background px-3 hover:bg-accent"
-                  onClick={clearLocalData}
-                >
-                  <Trash2 className="h-4 w-4" />
-                  Smazat lokální předvolby
-                </button>
-              </div>
-            </section>
-
-            <section className="rounded-3xl border border-border bg-card p-4 shadow-sm">
-              <h2 className="mb-3 text-lg font-semibold">Bezpečnost</h2>
-              <div className="space-y-3 text-sm text-muted-foreground">
-                <p className="flex gap-2">
-                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  AES-GCM nad WebRTC DataChannel. Server nevidí plaintext zpráv.
-                </p>
-                <p className="flex gap-2">
-                  <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  Klíč je PBKDF2 odvozený lokálně a nikam se neposílá.
-                </p>
-                <p className="flex gap-2">
-                  <Activity className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                  HTTP odpovědi mají no-store hlavičky, bez cookies a storage.
-                </p>
-              </div>
-            </section>
-          </aside>
-
-          <section className="flex min-h-[620px] flex-col overflow-hidden rounded-3xl border border-border bg-card shadow-sm lg:min-h-0">
-            <div className="border-b border-border p-4">
-              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                <div>
-                  <h2 className="text-lg font-semibold">Šifrovaný kanál</h2>
-                  <p data-testid="text-notice" className="text-sm text-muted-foreground">
-                    {notice}
-                  </p>
-                </div>
-                <div className="font-mono text-xs text-muted-foreground">
-                  {room ? `room:${room}` : "not joined"} · {myId.slice(-10)}
-                </div>
-              </div>
-            </div>
-
-            <div data-testid="list-messages" className="flex-1 overflow-y-auto bg-chat-grid p-4">
-              {messages.length === 0 ? (
-                <div className="flex h-full min-h-[420px] items-center justify-center">
-                  <div className="max-w-sm rounded-3xl border border-border bg-card/90 p-6 text-center shadow-sm">
-                    <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                      <Lock className="h-6 w-6" />
-                    </div>
-                    <h3 className="text-lg font-semibold">Čistá ephemeral místnost</h3>
-                    <p className="mt-2 text-sm text-muted-foreground">
-                      Žádná historie, žádné ukládání, žádný serverový relay textů. Pošli první zprávu, až bude peer ve stavu open.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {messages.map((message) => (
-                    <article
-                      key={message.id}
-                      data-testid={`message-${message.id}`}
-                      className={`flex ${message.mine ? "justify-end" : "justify-start"}`}
-                    >
-                      <div
-                        className={`max-w-[82%] rounded-3xl px-4 py-3 shadow-sm ${
-                          message.senderId === "system"
-                            ? "border border-border bg-card text-muted-foreground"
-                            : message.mine
-                              ? "bg-primary text-primary-foreground"
-                              : "border border-border bg-card"
-                        }`}
-                      >
-                        <div className="mb-1 flex items-center gap-2 text-xs opacity-80">
-                          <span className="font-semibold">{message.senderName}</span>
-                          <span>{formatTime(message.createdAt)}</span>
-                          {message.secure ? <Lock className="h-3 w-3" /> : null}
-                        </div>
-                        {message.text ? (
-                          <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                            {linkify(message.text)}
-                          </p>
-                        ) : null}
-                        {message.attachment ? (
-                          <div className="mt-2 rounded-2xl border border-border/60 bg-background/40 p-2 text-xs">
-                            {message.attachment.kind === "image" ? (
-                              <img
-                                src={message.attachment.dataUrl}
-                                alt={message.attachment.name}
-                                className="max-h-72 w-full rounded-xl object-contain"
-                              />
-                            ) : (
-                              <a
-                                href={message.attachment.dataUrl}
-                                download={message.attachment.name}
-                                className="inline-flex items-center gap-2 underline decoration-dotted"
-                              >
-                                <Paperclip className="h-3 w-3" />
-                                {message.attachment.name}
-                              </a>
-                            )}
-                            <div className="mt-1 text-[11px] opacity-70">
-                              {message.attachment.mime} · {formatBytes(message.attachment.size)}
-                            </div>
+                      ) : null}
+                      {message.attachment ? (
+                        <div className="mt-2 rounded-2xl border border-border/60 bg-background/40 p-2 text-xs">
+                          {message.attachment.kind === "image" ? (
+                            <img
+                              src={message.attachment.dataUrl}
+                              alt={message.attachment.name}
+                              className="max-h-72 w-full rounded-xl object-contain"
+                            />
+                          ) : (
+                            <a
+                              href={message.attachment.dataUrl}
+                              download={message.attachment.name}
+                              className="inline-flex items-center gap-2 underline decoration-dotted"
+                            >
+                              <Paperclip className="h-3 w-3" />
+                              {message.attachment.name}
+                            </a>
+                          )}
+                          <div className="mt-1 text-[11px] opacity-70">
+                            {message.attachment.mime} · {formatBytes(message.attachment.size)}
                           </div>
-                        ) : null}
-                      </div>
-                    </article>
-                  ))}
-                  <div ref={messageEndRef} />
-                </div>
-              )}
-            </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  </article>
+                ))}
+                <div ref={messageEndRef} />
+              </div>
+            )}
+          </div>
 
-            <form onSubmit={sendMessage} className="border-t border-border bg-card p-4">
+          <form onSubmit={sendMessage} className="border-t border-border bg-card/80 p-3 sm:p-4 backdrop-blur">
+            <div className="mx-auto w-full max-w-4xl">
               <div className="mb-2 flex flex-wrap items-center gap-2">
                 <button
                   type="button"
@@ -1264,7 +1160,7 @@ function ChatApp() {
                   aria-expanded={emojiOpen}
                 >
                   <Smile className="h-4 w-4" />
-                  Emoji
+                  {t(lang, "chat.emoji")}
                 </button>
                 <button
                   type="button"
@@ -1274,7 +1170,7 @@ function ChatApp() {
                   disabled={openPeerCount === 0}
                 >
                   <Paperclip className="h-4 w-4" />
-                  Soubor
+                  {t(lang, "chat.attach.file")}
                 </button>
                 <button
                   type="button"
@@ -1284,24 +1180,11 @@ function ChatApp() {
                   disabled={openPeerCount === 0}
                 >
                   <ImageIcon className="h-4 w-4" />
-                  Obrázek
+                  {t(lang, "chat.attach.image")}
                 </button>
-                <span className="text-xs text-muted-foreground">Max {formatBytes(ATTACHMENT_LIMIT)} / příloha.</span>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  className="hidden"
-                  onChange={handleAttachmentChange}
-                  data-testid="input-file"
-                />
-                <input
-                  ref={imageInputRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={handleAttachmentChange}
-                  data-testid="input-image"
-                />
+                <span className="text-xs text-muted-foreground">Max {formatBytes(ATTACHMENT_LIMIT)}.</span>
+                <input ref={fileInputRef} type="file" className="hidden" onChange={handleAttachmentChange} data-testid="input-file" />
+                <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleAttachmentChange} data-testid="input-image" />
               </div>
 
               {emojiOpen ? (
@@ -1320,14 +1203,12 @@ function ChatApp() {
               ) : null}
 
               <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                <label className="sr-only" htmlFor="message">
-                  Zpráva
-                </label>
+                <label className="sr-only" htmlFor="message">Message</label>
                 <textarea
                   data-testid="input-message"
                   id="message"
                   className="min-h-14 resize-none rounded-2xl border border-input bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring"
-                  placeholder={openPeerCount > 0 ? "Napiš šifrovanou zprávu..." : "Čekám na otevřený P2P kanál..."}
+                  placeholder={openPeerCount > 0 ? t(lang, "chat.placeholder") : t(lang, "chat.placeholder.waiting")}
                   value={messageInput}
                   onChange={(event) => setMessageInput(event.target.value)}
                   onKeyDown={handleMessageKeyDown}
@@ -1339,14 +1220,208 @@ function ChatApp() {
                   disabled={!canSend}
                 >
                   <Send className="h-4 w-4" />
-                  Odeslat
+                  {t(lang, "common.send")}
                 </button>
               </div>
-            </form>
-          </section>
+            </div>
+          </form>
         </div>
-      </section>
-    </main>
+      </main>
+
+      {/* Modal panels */}
+      <ProfilePanel open={activePanel === "profile"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
+      <SettingsPanel open={activePanel === "settings"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
+      <TemplatesPanel open={activePanel === "templates"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
+      <EncryptionPanel open={activePanel === "encryption"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
+      <RoomSecurityPanel open={activePanel === "roomSecurity"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} room={room} />
+      <PrivacyPanel
+        open={activePanel === "privacy"}
+        onClose={() => setActivePanel(null)}
+        prefs={prefs}
+        setPrefs={setPrefs}
+        lang={lang}
+        onLocalPurge={clearLocalData}
+        onServerPurge={purgeServer}
+      />
+      <NotificationsPanel
+        open={activePanel === "notifications"}
+        onClose={() => setActivePanel(null)}
+        prefs={prefs}
+        setPrefs={setPrefs}
+        lang={lang}
+        onEnable={enableNotifications}
+        onDisable={disableNotifications}
+        pushAvailable={pushAvailable}
+      />
+      <AnalyticsPanel open={activePanel === "analytics"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
+
+      {/* Peers modal */}
+      {activePanel === "peers" ? (
+        <SimpleModal title={t(lang, "menu.peers")} onClose={() => setActivePanel(null)}>
+          <PeerList peers={peers} lang={lang} />
+        </SimpleModal>
+      ) : null}
+
+      {/* Audio modal */}
+      {activePanel === "audio" ? (
+        <SimpleModal title={t(lang, "menu.audio")} onClose={() => setActivePanel(null)}>
+          <AudioControls
+            audioStatus={audioStatus}
+            audioPeerCount={audioPeerCount}
+            connected={status === "joined"}
+            onJoin={() => void startAudio()}
+            onLeave={() => void leaveAudio()}
+            onToggleMute={() => void toggleMute()}
+            lang={lang}
+          />
+        </SimpleModal>
+      ) : null}
+
+      {/* Join modal */}
+      {activePanel === "join" ? (
+        <SimpleModal title={t(lang, "menu.room")} onClose={() => setActivePanel(null)}>
+          <form
+            data-testid="form-join"
+            onSubmit={(event) => {
+              void connect(event);
+            }}
+            className="space-y-3"
+            autoComplete="off"
+          >
+            <fieldset className="grid grid-cols-2 gap-2 rounded-2xl border border-input bg-background p-1">
+              <label className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-xs ${prefs.mode === "light" ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}>
+                <input type="radio" name="mode" className="sr-only" checked={prefs.mode === "light"} onChange={() => setPrefs({ mode: "light" })} data-testid="radio-mode-light" />
+                <span className="font-semibold">Light · P2P</span>
+                <span className="opacity-80">{lang === "cs" ? "Jen WebRTC, server jenom signalizuje." : lang === "de" ? "Nur WebRTC, Server signalisiert." : "WebRTC only, server only signals."}</span>
+              </label>
+              <label className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-xs ${prefs.mode === "server" ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}>
+                <input type="radio" name="mode" className="sr-only" checked={prefs.mode === "server"} onChange={() => setPrefs({ mode: "server" })} data-testid="radio-mode-server" />
+                <span className="font-semibold">Server-enhanced</span>
+                <span className="opacity-80">{lang === "cs" ? "Volitelné push a metadata logy." : lang === "de" ? "Optional Push und Metadaten-Log." : "Optional push and metadata logs."}</span>
+              </label>
+            </fieldset>
+
+            <label className="grid gap-1 text-sm font-medium">
+              {t(lang, "join.name")}
+              <input data-testid="input-name" className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none focus:ring-2 focus:ring-ring" value={name} onChange={(event) => setName(event.target.value)} maxLength={42} />
+            </label>
+            <label className="grid gap-1 text-sm font-medium">
+              {t(lang, "join.room")}
+              <input data-testid="input-room" className="min-h-11 rounded-xl border border-input bg-background px-3 font-mono text-base outline-none focus:ring-2 focus:ring-ring" value={roomInput} onChange={(event) => setRoomInput(event.target.value)} maxLength={48} />
+            </label>
+            <label className="grid gap-1 text-sm font-medium">
+              {t(lang, "join.passphrase")}
+              <input data-testid="input-passphrase" className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none focus:ring-2 focus:ring-ring" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} type="password" autoComplete="new-password" />
+            </label>
+            <div className="flex gap-2">
+              <button data-testid="button-connect" className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50" type="submit" disabled={status === "deriving" || status === "connecting"}>
+                <Radio className="h-4 w-4" />
+                {status === "joined" ? t(lang, "join.reconnect") : t(lang, "join.connect")}
+              </button>
+              {status === "joined" ? (
+                <button type="button" onClick={() => disconnect()} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-border bg-background px-3 text-sm hover:bg-accent">
+                  <LogOut className="h-4 w-4" />
+                  {t(lang, "common.disconnect")}
+                </button>
+              ) : null}
+            </div>
+          </form>
+        </SimpleModal>
+      ) : null}
+    </div>
+  );
+}
+
+function ToolbarButton({ icon, label, onClick, testId }: { icon: React.ReactNode; label: string; onClick: () => void; testId: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={label}
+      aria-label={label}
+      data-testid={testId}
+      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-foreground hover:border-border hover:bg-accent sm:w-auto sm:gap-2 sm:px-3"
+    >
+      <span className="h-4 w-4 [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
+      <span className="hidden text-xs sm:inline">{label}</span>
+    </button>
+  );
+}
+
+function SimpleModal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  return (
+    <div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-40 flex items-stretch justify-center bg-black/45 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="my-auto flex max-h-[92dvh] w-full max-w-xl flex-col modal-shell" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="flex items-center justify-between border-b border-border px-5 py-3">
+          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-accent">×</button>
+        </header>
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function PeerList({ peers, lang }: { peers: PeerView[]; lang: Lang }) {
+  if (peers.length === 0) {
+    return <div className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted-foreground">{lang === "cs" ? "Zatím žádný peer." : lang === "de" ? "Noch keine Peers." : "No peers yet."}</div>;
+  }
+  return (
+    <div className="space-y-2" data-testid="list-peers">
+      {peers.map((peer) => (
+        <div key={peer.id} className="flex items-center justify-between gap-3 rounded-2xl bg-background p-3">
+          <div className="min-w-0">
+            <p className="truncate text-sm font-medium" data-testid={`text-peer-${peer.id}`}>{peer.name}</p>
+            <p className="font-mono text-xs text-muted-foreground">{peer.id.slice(-12)}</p>
+          </div>
+          <div className="flex items-center gap-1">
+            {peer.audio === "live" ? <Mic className="h-4 w-4 text-emerald-500" aria-label="audio live" /> : peer.audio === "muted" ? <MicOff className="h-4 w-4 text-amber-500" aria-label="audio muted" /> : null}
+            <span className={`rounded-full px-2 py-1 text-xs ${peer.status === "open" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : peer.status === "connecting" ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>{peer.status}</span>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function AudioControls({ audioStatus, audioPeerCount, connected, onJoin, onLeave, onToggleMute, lang }: { audioStatus: AudioStatus; audioPeerCount: number; connected: boolean; onJoin: () => void; onLeave: () => void; onToggleMute: () => void; lang: Lang }) {
+  return (
+    <div className="space-y-3">
+      <div className="text-sm text-muted-foreground">{lang === "cs" ? "Hlas jde stejným WebRTC spojením jako data kanál." : lang === "de" ? "Audio nutzt dieselbe WebRTC-Verbindung wie der Datenkanal." : "Voice rides the same WebRTC connection as the data channel."}</div>
+      <div className="text-xs text-muted-foreground">{audioPeerCount} {lang === "cs" ? "v hovoru" : lang === "de" ? "im Anruf" : "on call"}</div>
+      <div className="flex flex-wrap gap-2">
+        {audioStatus === "off" || audioStatus === "joining" ? (
+          <button type="button" data-testid="button-audio-join" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60" onClick={onJoin} disabled={!connected || audioStatus === "joining"}>
+            <Mic className="h-4 w-4" />
+            {audioStatus === "joining" ? "..." : (lang === "cs" ? "Připojit hlas" : lang === "de" ? "Sprache verbinden" : "Join voice")}
+          </button>
+        ) : (
+          <>
+            <button type="button" data-testid="button-audio-mute" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent" onClick={onToggleMute}>
+              {audioStatus === "muted" ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              {audioStatus === "muted" ? "Unmute" : "Mute"}
+            </button>
+            <button type="button" data-testid="button-audio-leave" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent" onClick={onLeave}>
+              <PhoneOff className="h-4 w-4" />
+              {lang === "cs" ? "Opustit" : lang === "de" ? "Verlassen" : "Leave"}
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Local Palette icon shim to avoid extra import noise
+function Palette(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <circle cx="13.5" cy="6.5" r="1.5" />
+      <circle cx="17.5" cy="10.5" r="1.5" />
+      <circle cx="6.5" cy="12.5" r="1.5" />
+      <circle cx="8.5" cy="7.5" r="1.5" />
+      <path d="M12 22a10 10 0 1 1 10-10c0 2-1.5 3-3 3h-2c-1.5 0-3 1-3 2.5S15 22 12 22z" />
+    </svg>
   );
 }
 
