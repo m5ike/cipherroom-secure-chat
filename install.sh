@@ -36,6 +36,11 @@ DATABASE_URL="${DATABASE_URL:-}"
 LOG_EVENTS="${LOG_EVENTS:-0}"
 VAPID_PUBLIC_KEY="${VAPID_PUBLIC_KEY:-}"
 VAPID_PRIVATE_KEY="${VAPID_PRIVATE_KEY:-}"
+VAPID_SUBJECT="${VAPID_SUBJECT:-mailto:admin@example.org}"
+ENABLE_ADMIN="${ENABLE_ADMIN:-0}"
+ADMIN_PORT="${ADMIN_PORT:-5050}"
+ADMIN_UI_PORT="${ADMIN_UI_PORT:-5051}"
+ADMIN_API_TOKEN="${ADMIN_API_TOKEN:-}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/m5cet}"
 SKIP_TESTS="${SKIP_TESTS:-0}"
 NON_INTERACTIVE="${NON_INTERACTIVE:-0}"
@@ -512,6 +517,7 @@ services:
       LOG_EVENTS: "${LOG_EVENTS}"
       VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY}"
       VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY}"
+      VAPID_SUBJECT: "${VAPID_SUBJECT}"
     ports:
       - "${BIND_ADDRESS}:${HOST_PORT}:${APP_PORT}"
     healthcheck:
@@ -526,6 +532,43 @@ services:
         max-size: "10m"
         max-file: "5"
 EOF
+
+  if [[ "${ENABLE_ADMIN}" == "1" ]]; then
+    cat >> "${COMPOSE_FILE}" <<EOF
+
+  ${SERVICE_NAME}-admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    image: ${SERVICE_NAME}-admin:local
+    container_name: ${SERVICE_NAME}-admin
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      ENABLE_ADMIN: "1"
+      ADMIN_PORT: "${ADMIN_PORT}"
+      ADMIN_API_TOKEN: "${ADMIN_API_TOKEN}"
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY}"
+      VAPID_SUBJECT: "${VAPID_SUBJECT}"
+    ports:
+      - "${BIND_ADDRESS}:${ADMIN_PORT}:${ADMIN_PORT}"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  ${SERVICE_NAME}-admin-ui:
+    image: nginx:alpine
+    container_name: ${SERVICE_NAME}-admin-ui
+    restart: unless-stopped
+    volumes:
+      - ./admin-ui/public:/usr/share/nginx/html:ro
+    ports:
+      - "${BIND_ADDRESS}:${ADMIN_UI_PORT}:80"
+EOF
+  fi
 }
 
 compose() {

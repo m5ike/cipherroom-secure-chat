@@ -48,6 +48,10 @@ export type Preferences = {
   roomSecurity: Record<string, RoomSecurity>;
   // Device id for sync (random, no PII)
   deviceId: string;
+  // Keepalive strategy for the signaling connection
+  keepaliveStrategy: "conservative" | "balanced" | "aggressive";
+  // Max attachment size in bytes for chunked DataChannel transfer
+  maxAttachmentBytes: number;
 };
 
 const STORAGE_KEY = "m5cet:prefs:v2";
@@ -80,6 +84,8 @@ const DEFAULTS: Preferences = {
   roomTtl: {},
   roomSecurity: {},
   deviceId: "",
+  keepaliveStrategy: "balanced",
+  maxAttachmentBytes: 100 * 1024 * 1024, // 100 MB
 };
 
 export const DEFAULT_ROOM_SECURITY: RoomSecurity = {
@@ -158,6 +164,8 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     roomTtl: typeof parsed.roomTtl === "object" && parsed.roomTtl ? parsed.roomTtl as Preferences["roomTtl"] : base.roomTtl,
     roomSecurity: typeof parsed.roomSecurity === "object" && parsed.roomSecurity ? parsed.roomSecurity as Preferences["roomSecurity"] : base.roomSecurity,
     deviceId: typeof parsed.deviceId === "string" && parsed.deviceId.length > 4 ? parsed.deviceId.slice(0, 64) : base.deviceId,
+    keepaliveStrategy: parsed.keepaliveStrategy === "conservative" || parsed.keepaliveStrategy === "aggressive" ? parsed.keepaliveStrategy : base.keepaliveStrategy,
+    maxAttachmentBytes: typeof parsed.maxAttachmentBytes === "number" && parsed.maxAttachmentBytes > 0 && parsed.maxAttachmentBytes <= 4 * 1024 * 1024 * 1024 ? Math.floor(parsed.maxAttachmentBytes) : base.maxAttachmentBytes,
   };
 }
 

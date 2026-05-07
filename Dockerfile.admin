@@ -1,0 +1,29 @@
+# Admin API + GUI service.
+# Build:  docker build -f Dockerfile.admin -t m5cet-admin .
+# Run:    docker run --rm -p 5050:5050 -e ENABLE_ADMIN=1 -e ADMIN_API_TOKEN=change-me m5cet-admin
+
+FROM node:20-slim AS base
+WORKDIR /app
+ENV NODE_ENV=production
+
+FROM base AS deps
+ENV NODE_ENV=development
+COPY package.json package-lock.json ./
+RUN npm ci
+
+FROM deps AS build
+COPY . .
+RUN npm run check && npm run build
+RUN npm prune --omit=dev
+
+FROM base AS runtime
+COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/admin-ui ./admin-ui
+ENV ADMIN_PORT=5050
+ENV ENABLE_ADMIN=1
+EXPOSE 5050
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:' + (process.env.ADMIN_PORT||5050) + '/admin/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "dist/admin.cjs"]

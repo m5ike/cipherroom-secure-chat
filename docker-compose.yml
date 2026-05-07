@@ -1,0 +1,53 @@
+version: "3.9"
+
+# Two-service deployment:
+#   - app:    main signaling + WebRTC client (port 5000)
+#   - admin:  admin API + GUI (port 5050) — gated by ADMIN_API_TOKEN
+#
+# Override env via .env or docker-compose.override.yml. Start admin only
+# when ENABLE_ADMIN=1 (the default in the admin image is on, but the
+# service refuses requests without ADMIN_API_TOKEN set).
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: m5cet-app:latest
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      NODE_ENV: production
+      PORT: 5000
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.org}
+      LOG_EVENTS: ${LOG_EVENTS:-0}
+
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    image: m5cet-admin:latest
+    restart: unless-stopped
+    profiles: ["admin"]
+    ports:
+      - "${ADMIN_PORT:-5050}:5050"
+    environment:
+      NODE_ENV: production
+      ENABLE_ADMIN: "1"
+      ADMIN_PORT: "5050"
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.org}
+
+  admin-ui:
+    image: nginx:alpine
+    profiles: ["admin"]
+    restart: unless-stopped
+    ports:
+      - "${ADMIN_UI_PORT:-5051}:80"
+    volumes:
+      - ./admin-ui/public:/usr/share/nginx/html:ro

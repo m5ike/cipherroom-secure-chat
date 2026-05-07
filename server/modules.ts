@@ -34,11 +34,18 @@ export function buildModuleManifest(eventsBackend: "disabled" | "memory" | "data
       },
     ],
     features: {
-      audio: { enabled: true, reason: "WebRTC audio uses the existing peer connection." },
-      attachments: { enabled: true, reason: "Files up to 512 kB travel over the encrypted DataChannel." },
+      audio: { enabled: true, reason: "WebRTC audio uses the existing peer connection (DTLS-SRTP)." },
+      video: { enabled: true, reason: "WebRTC video uses the existing peer connection (DTLS-SRTP)." },
+      attachments: { enabled: true, reason: "Inline data-URL up to 512 kB; chunked AES-GCM transfer for larger files." },
+      chunkedFiles: { enabled: true, reason: "Files split into 32 KiB AES-GCM chunks over DataChannel; per-user max configurable." },
       emoji: { enabled: true },
       linkify: { enabled: true },
       preferences: { enabled: true, reason: "Stored only in this browser's localStorage." },
+      connectionKeeper: { enabled: true, reason: "Configurable heartbeat strategy + reconnect with exponential backoff." },
+      adminCommands: { enabled: true, reason: "Allowlisted admin → client commands delivered over signaling channel." },
+      maps: { enabled: true, reason: "OpenStreetMap link sharing and continuous geolocation; no Leaflet bundle." },
+      nfc: { enabled: true, reason: "Web NFC read/write encrypted with PBKDF2/AES-GCM. Android Chrome only." },
+      speech: { enabled: true, reason: "Browser Web Speech API for TTS/STT and pitch-based revoice." },
       push: pushReady
         ? { enabled: true }
         : { enabled: false, reason: "Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable push." },

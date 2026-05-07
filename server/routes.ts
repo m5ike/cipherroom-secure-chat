@@ -3,6 +3,13 @@ import type { Server } from 'node:http';
 import { WebSocketServer, WebSocket } from "ws";
 import { eventStore } from "./events";
 import { buildModuleManifest } from "./modules";
+import { sendWebPush, isWebPushReady } from "./push";
+import {
+  adminCommandAudit,
+  pushSubscriptions,
+  drain as drainQueue,
+  type AdminCommand,
+} from "./routes-admin-shared";
 
 type PeerClient = {
   id: string;
@@ -15,13 +22,16 @@ type PeerClient = {
 type ClientMessage =
   | { type: "join"; room: string; peerId: string; name?: string }
   | { type: "signal"; target: string; payload: unknown }
+  | { type: "ping"; t: number }
+  | { type: "command-poll"; deviceId?: string }
+  | { type: "command-ack"; commandId: string; result?: string }
   | { type: "leave" };
 
 const rooms = new Map<string, Map<string, PeerClient>>();
 
-// In-memory push subscription store. The intent here is the API stub —
-// real push delivery requires a worker that holds the VAPID private key.
-const pushSubscriptions = new Map<string, { endpoint: string; createdAt: number; deviceId?: string }>();
+// pushSubscriptions and admin command queue live in routes-admin-shared.ts
+// so that the standalone admin API service can read and enqueue against
+// the same in-memory state when it is imported into the same process.
 
 // Per-device server-side preference sync. In-memory only — production deployments
 // should mount a real KV / DB through the API surface in docs/api.md.
@@ -36,6 +46,16 @@ const deviceAuditLog = new Map<string, Array<{ kind: string; at: number; meta?: 
 // Analytics consent ledger. Only fields the client explicitly opted into are kept.
 type ConsentRecord = { deviceId: string; analyticsConsent: boolean; updatedAt: number };
 const consentLedger = new Map<string, ConsentRecord>();
+
+function drainAdminCommands(socket: WebSocket, deviceId: string) {
+  const pending = drainQueue(deviceId);
+  if (pending.length === 0) return;
+  pending.forEach((cmd: AdminCommand) => {
+    send(socket, { type: "admin-command", command: cmd });
+    adminCommandAudit.push({ ts: Date.now(), kind: "deliver", commandId: cmd.id, deviceId });
+  });
+  if (adminCommandAudit.length > 1000) adminCommandAudit.splice(0, adminCommandAudit.length - 1000);
+}
 
 function safeDeviceId(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -208,11 +228,41 @@ export async function registerRoutes(
       return res.status(400).json({ ok: false, message: "Invalid subscription." });
     }
     const endpoint = subscription.endpoint.slice(0, 512);
+    const keys = (subscription as Record<string, unknown>).keys as Record<string, unknown> | undefined;
+    const p256dh = typeof keys?.p256dh === "string" ? String(keys.p256dh).slice(0, 256) : undefined;
+    const auth = typeof keys?.auth === "string" ? String(keys.auth).slice(0, 128) : undefined;
     const id = crypto.randomUUID();
     const deviceId = safeDeviceId(body.deviceId) || undefined;
-    pushSubscriptions.set(id, { endpoint, createdAt: Date.now(), deviceId });
+    pushSubscriptions.set(id, {
+      endpoint,
+      keys: p256dh && auth ? { p256dh, auth } : undefined,
+      createdAt: Date.now(),
+      deviceId,
+    });
     eventStore.record({ kind: "push-subscribe", meta: { count: pushSubscriptions.size } });
     res.json({ ok: true, id });
+  });
+
+  // Self-test endpoint: any subscriber can trigger a push to themselves.
+  app.post("/api/push/test", async (req: Request, res: Response) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const id = typeof body.id === "string" ? body.id : null;
+    if (!isWebPushReady()) {
+      return res.status(503).json({ ok: false, message: "Push not configured (set VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY)." });
+    }
+    const targets = id
+      ? (pushSubscriptions.has(id) ? [pushSubscriptions.get(id)!] : [])
+      : Array.from(pushSubscriptions.values()).slice(0, 1);
+    if (targets.length === 0) return res.status(404).json({ ok: false, message: "No subscriptions yet." });
+    const title = typeof body.title === "string" ? body.title.slice(0, 64) : "M5cet · test";
+    const text = typeof body.body === "string" ? body.body.slice(0, 200) : "Push test from this device.";
+    const results: Array<{ endpoint: string; ok: boolean; error?: string }> = [];
+    for (const sub of targets) {
+      const r = await sendWebPush(sub, { title, body: text });
+      results.push({ endpoint: sub.endpoint.slice(0, 80), ok: r.ok, error: r.error });
+    }
+    eventStore.record({ kind: "push-test", meta: { count: results.length } });
+    res.json({ ok: true, results });
   });
 
   // ---------- Settings sync (server-enhanced mode) ----------
@@ -300,6 +350,29 @@ export async function registerRoutes(
 
         if (message.type === "signal") {
           forwardSignal(client, message);
+          return;
+        }
+
+        if (message.type === "ping") {
+          const t = typeof message.t === "number" ? message.t : Date.now();
+          send(socket, { type: "pong", t, serverTs: Date.now() });
+          return;
+        }
+
+        if (message.type === "command-poll") {
+          const deviceId = safeDeviceId(message.deviceId);
+          if (deviceId) drainAdminCommands(socket, deviceId);
+          return;
+        }
+
+        if (message.type === "command-ack") {
+          adminCommandAudit.push({
+            ts: Date.now(),
+            kind: "ack",
+            commandId: String(message.commandId).slice(0, 64),
+            peerId: client.id,
+            result: typeof message.result === "string" ? message.result.slice(0, 256) : undefined,
+          });
           return;
         }
 

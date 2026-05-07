@@ -6,10 +6,35 @@
 > auto-migrates older installs.
 
 M5cet is a browser-first, end-to-end encrypted workspace for ad-hoc rooms. Two or
-more peers exchange messages, files (≤512 kB), audio, and presence over a WebRTC
-DataChannel; the only thing the server ever sees is opaque signaling traffic on
-`/ws` and a small set of optional metadata endpoints under `/api`. Nothing is
-persisted server-side by default.
+more peers exchange text, files (chunked, configurable cap, 100 MB default),
+audio, video, and presence over a WebRTC DataChannel; the only thing the server
+ever sees is opaque signaling traffic on `/ws` and a small set of optional
+metadata endpoints under `/api`. Nothing is persisted server-side by default.
+
+### What's new on this branch (`feature/m5cet-realtime-admin-media-modules`)
+
+- **Connection keeper** — heartbeat over the signaling WS, three strategies
+  (conservative / balanced / aggressive), exponential reconnect with jitter,
+  visibility/online hooks. See [docs/connection-keeper.md](docs/connection-keeper.md).
+- **Real Web Push** when `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` are set, plus
+  service-worker click/focus handling and UI test buttons. See [docs/push.md](docs/push.md).
+- **Audio + video calls** via WebRTC + `getUserMedia`, encrypted with
+  DTLS-SRTP. See [docs/calls.md](docs/calls.md).
+- **Speech module** (TTS / STT / revoice) using Web Speech API. See
+  [docs/speech.md](docs/speech.md).
+- **Chunked encrypted file transfer** removes the legacy 512 kB cap; default
+  100 MB, configurable in Settings. See [docs/files.md](docs/files.md).
+- **Admin API + GUI** as a separate Node service guarded by
+  `ADMIN_API_TOKEN`. See [docs/admin.md](docs/admin.md).
+- **Allowlisted client commands** dispatched over the existing signaling
+  channel — `refresh-settings`, `reconnect`, `purge-local`,
+  `show-notification`, `run-diagnostic`, `download-file-from-admin`.
+- **Maps / location** via Geolocation + OpenStreetMap deep links. See
+  [docs/maps-location.md](docs/maps-location.md).
+- **Web NFC** (Android Chrome) read/write encrypted with PIN +
+  PBKDF2/AES-GCM, plus a plug-in registry for hardware readers. See
+  [docs/nfc.md](docs/nfc.md).
+- **Browser limitations** documented in [docs/browser-limitations.md](docs/browser-limitations.md).
 
 ## Quick install (Linux / Docker)
 

@@ -317,11 +317,16 @@ export function NotificationsPanel({
   onEnable,
   onDisable,
   pushAvailable,
+  onTestPush,
+  onTestLocal,
 }: PanelBaseProps & {
   onEnable: () => Promise<void>;
   onDisable: () => void;
   pushAvailable: boolean;
+  onTestPush?: () => Promise<{ ok: boolean; reason?: string }>;
+  onTestLocal?: () => Promise<{ ok: boolean; reason?: string }>;
 }) {
+  const [testResult, setTestResult] = useState<string>("");
   return (
     <Modal open={open} onClose={onClose} title={t(lang, "notif.title")}>
       <Section title={t(lang, "notif.title")} icon={<BellRing className="h-4 w-4" />}>
@@ -332,7 +337,7 @@ export function NotificationsPanel({
             : lang === "cs" ? "Push není konfigurován — použijí se lokální notifikace v tabu."
               : lang === "de" ? "Push nicht konfiguriert — lokale Benachrichtigungen im Tab." : "Push not configured — falling back to in-tab notifications."}
         </p>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {prefs.notificationsEnabled ? (
             <button
               type="button"
@@ -352,7 +357,31 @@ export function NotificationsPanel({
               {t(lang, "common.enable")}
             </button>
           )}
+          {onTestLocal ? (
+            <button
+              type="button"
+              data-testid="button-notif-test-local"
+              onClick={async () => {
+                const r = await onTestLocal();
+                setTestResult(r.ok ? "Local test sent." : `Local test failed: ${r.reason}`);
+              }}
+              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent"
+            >Test local notification</button>
+          ) : null}
+          {onTestPush ? (
+            <button
+              type="button"
+              data-testid="button-notif-test-push"
+              onClick={async () => {
+                const r = await onTestPush();
+                setTestResult(r.ok ? "Push test sent." : `Push test failed: ${r.reason}`);
+              }}
+              disabled={!pushAvailable}
+              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60"
+            >Test web push</button>
+          ) : null}
         </div>
+        {testResult ? <p className="text-xs text-muted-foreground" data-testid="text-notif-test-result">{testResult}</p> : null}
       </Section>
     </Modal>
   );
