@@ -13,7 +13,7 @@ VERSION="2.1.0-rc.1"
 # Configuration (env-overridable)
 # ---------------------------------------------------------------------------
 REPO_URL="${REPO_URL:-https://github.com/m5ike/cipherroom-secure-chat.git}"
-BRANCH="${BRANCH:-feature/m5cet-fullscreen-secure-workspace}"
+BRANCH="${BRANCH:-release/m5cet-v-next-hardening}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/m5cet}"
 LEGACY_INSTALL_DIRS_DEFAULT="/opt/cipherroom-secure-chat /opt/cipherroom /srv/cipherroom"
 LEGACY_INSTALL_DIRS="${LEGACY_INSTALL_DIRS:-${LEGACY_INSTALL_DIRS_DEFAULT}}"
@@ -548,6 +548,14 @@ services:
 EOF
 
   if [[ "${ENABLE_ADMIN}" == "1" ]]; then
+    # Defensive guard: the admin service builds from Dockerfile.admin, which
+    # was added on release/m5cet-v-next-hardening. Older feature branches do
+    # not ship it. Refuse to write a compose file that references a missing
+    # Dockerfile so the build error surfaces here with a useful hint, not as
+    # a confusing BuildKit failure later.
+    if [[ ! -f "${INSTALL_DIR}/Dockerfile.admin" ]]; then
+      die "ENABLE_ADMIN=1 but ${INSTALL_DIR}/Dockerfile.admin is missing. Re-run with BRANCH=release/m5cet-v-next-hardening (the default) or set ENABLE_ADMIN=0."
+    fi
     cat >> "${COMPOSE_FILE}" <<EOF
 
   ${SERVICE_NAME}-admin:
