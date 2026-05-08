@@ -94,7 +94,32 @@ Náprava: oba uživatelé znovu zadají passphrase. Nový klíč nahradí starý
   ```
 - Bez tokenu vidíte pouze `/admin/health`. UI zobrazuje login.
 
-### 10. Po updatu nesedí verze v `/api/health`
+### 10. `target m5cet-admin: failed to read dockerfile: open Dockerfile.admin: no such file or directory`
+
+Build admin služby selže, protože pracovní strom neobsahuje
+`Dockerfile.admin`. Soubor přibyl až na `release/m5cet-v-next-hardening`;
+starší feature větve ho neobsahují.
+
+Náprava (nová instalace):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/release/m5cet-v-next-hardening/install.sh \
+  | sudo -E ENABLE_ADMIN=1 ADMIN_API_TOKEN=change-me bash -s -- --install
+```
+
+Náprava (existující checkout v `/opt/m5cet`):
+
+```bash
+sudo git -C /opt/m5cet fetch origin release/m5cet-v-next-hardening
+sudo git -C /opt/m5cet checkout -B release/m5cet-v-next-hardening origin/release/m5cet-v-next-hardening
+sudo -E /opt/m5cet/install.sh --update
+```
+
+Instalátor 2.1.0-rc.1+ tuhle situaci zachytí předem a odmítne zapsat
+compose s admin službou, pokud `Dockerfile.admin` chybí. Zpráva:
+`ENABLE_ADMIN=1 but /opt/m5cet/Dockerfile.admin is missing`.
+
+### 11. Po updatu nesedí verze v `/api/health`
 
 - Po `install.sh --update` proběhne `docker compose up -d --build`.
 - Když se kontejner nepřebalil, `--no-cache` lze vynutit:
