@@ -1,3 +1,16 @@
+// Single-file React client for M5cet. Owns the WebSocket signaling lifecycle,
+// the per-peer RTCPeerConnection mesh, the encryption envelope, the
+// connection-keeper integration, and the modular Settings panels.
+//
+// Architectural notes:
+//   - Encryption helpers (deriveRoomKey/encryptEnvelope/decryptEnvelope)
+//     live below — see their JSDoc for the crypto contract.
+//   - Optional features (calls, speech, file transfer, push, NFC, maps)
+//     are isolated under client/src/lib/<module>.ts so the bundle stays
+//     small and tree-shakable. App.tsx only orchestrates them.
+//   - Anything that touches the network goes through deriveRoomKey or the
+//     /api surface in cipherroom-api.ts. The server never sees plaintext.
+
 import { Switch, Route, Router } from "wouter";
 import { useHashLocation } from "wouter/use-hash-location";
 import { queryClient } from "./lib/queryClient";
@@ -209,6 +222,15 @@ function wsUrl() {
   return url.toString();
 }
 
+/**
+ * Derive the per-room AES-GCM 256 key from the room id + user-supplied
+ * passphrase. PBKDF2-SHA256, 250 000 iterations, salt `CipherRoom:v1:<room>`.
+ *
+ * The room id participates in the salt so reusing the same passphrase across
+ * rooms still yields independent keys. The key is non-extractable; the
+ * server never sees it. Salt v1 is intentionally fixed — changing it is a
+ * breaking key-format migration and must bump the prefix.
+ */
 async function deriveRoomKey(room: string, passphrase: string) {
   const material = await crypto.subtle.importKey("raw", encoder.encode(passphrase), "PBKDF2", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
@@ -225,6 +247,13 @@ async function deriveRoomKey(room: string, passphrase: string) {
   );
 }
 
+/**
+ * Wrap a plaintext payload in an AES-GCM envelope with a fresh random 12-byte
+ * IV. The IV/ciphertext pair is base64-encoded and shipped over the WebRTC
+ * DataChannel. Reusing an IV with the same key would catastrophically break
+ * GCM, so callers MUST NOT cache `iv` — `crypto.getRandomValues` is the only
+ * source.
+ */
 async function encryptEnvelope(key: CryptoKey, payload: unknown): Promise<DataChannelEnvelope> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const plaintext = encoder.encode(JSON.stringify(payload));
@@ -232,6 +261,12 @@ async function encryptEnvelope(key: CryptoKey, payload: unknown): Promise<DataCh
   return { iv: toBase64(iv), ciphertext: toBase64(ciphertext) };
 }
 
+/**
+ * Inverse of {@link encryptEnvelope}. Throws if the ciphertext was tampered
+ * with or if the receiver derived a different key (different passphrase).
+ * The caller surfaces the failure to the user as "different room key" rather
+ * than as a crash.
+ */
 async function decryptEnvelope<T>(key: CryptoKey, envelope: DataChannelEnvelope): Promise<T> {
   const plaintext = await crypto.subtle.decrypt(
     { name: "AES-GCM", iv: fromBase64(envelope.iv) },

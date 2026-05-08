@@ -1,3 +1,22 @@
+// Main HTTP + WebSocket signaling routes for M5cet.
+//
+// Responsibilities:
+//   - WSS /ws         WebRTC signaling broker (join/signal/ping/command-poll/leave)
+//   - GET  /api/health             liveness + sanity flags
+//   - GET  /api/modules            module manifest (see modules.ts)
+//   - GET  /api/push/status        VAPID public key + readiness
+//   - POST /api/push/subscribe     register a Web Push endpoint
+//   - POST /api/push/test          server-pushed test notification (auth-gated)
+//   - GET  /api/events*            opt-in metadata feed (LOG_EVENTS=1)
+//   - GET/POST /api/settings/*     device-scoped preferences sync (in-memory)
+//   - POST /api/audit/purge        wipe device-scoped server state
+//   - POST /api/admin/commands/*   token-protected enqueue + audit (mirrored
+//                                  by the standalone admin service in admin.ts)
+//
+// Security model: the server is a relay. It never sees plaintext message
+// bodies or room keys. Persistence defaults to "none". Optional metadata
+// logging is gated by LOG_EVENTS and only stores opaque ids + timestamps.
+
 import type { Express, Request, Response } from "express";
 import type { Server } from 'node:http';
 import { WebSocketServer, WebSocket } from "ws";

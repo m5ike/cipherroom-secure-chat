@@ -1,3 +1,16 @@
+// Main M5cet server entry point.
+//
+// Boots Express, attaches the WebSocket signaling broker (see routes.ts),
+// and serves the static client bundle in production / wires the Vite dev
+// middleware in development.
+//
+// Hardening applied at this layer (not in routes.ts):
+//   - Cache-Control: no-store on every response so intermediaries cannot
+//     cache encrypted payloads or even the HTML shell.
+//   - X-Content-Type-Options / Referrer-Policy / Permissions-Policy.
+//   - express.json verify hook stashes the raw body for any future
+//     signature-validation needs (today no endpoint requires it).
+
 import "dotenv/config";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';

@@ -1,3 +1,7 @@
+// Generic dialog primitive used by every settings/admin panel. Renders
+// either a centered card (`side="center"`) or a slide-out drawer
+// (`side="right"`). Closes on Escape and on backdrop click.
+
 import { ReactNode, useEffect } from "react";
 import { X } from "lucide-react";
 

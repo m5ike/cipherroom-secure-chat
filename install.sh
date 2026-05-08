@@ -7,7 +7,7 @@ set -Eeuo pipefail
 
 trap 'rc=$?; printf "\033[1;31m[x] line %s exited %s\033[0m\n" "$LINENO" "$rc" >&2' ERR
 
-VERSION="2.0.0"
+VERSION="2.1.0-rc.1"
 
 # ---------------------------------------------------------------------------
 # Configuration (env-overridable)
@@ -129,12 +129,17 @@ USAGE
 
 COMMANDS
   --install              Install or upgrade and start (default).
+  --update, --upgrade    Pull new code, regenerate managed compose, redeploy.
+                         Keeps existing .env / data / nginx site untouched.
   --status               Show service status and health.
   --logs                 Follow container logs.
   --restart              Restart the service.
   --stop                 Stop the service.
   --uninstall            Stop and remove the managed Docker stack and Nginx site (project files kept).
   --doctor, --self-test  Read-only environment + post-install health checks. Never modifies state.
+  --test, --health       Alias for --doctor (read-only health probes).
+  --gui, --menu          Interactive numeric menu — wraps the commands above.
+  --version, -V          Print installer version and exit.
   --help, -h             Show this help.
 
 FLAGS
@@ -208,7 +213,16 @@ parse_args() {
       --install|--status|--logs|--restart|--stop|--uninstall)
         INSTALL_MODE_ARG="${1#--}"
         ;;
-      --doctor|--self-test) DOCTOR=1; INSTALL_MODE_ARG="doctor" ;;
+      # --update is an alias for install: clone_or_update + restart compose,
+      # preserving the existing .env / data / nginx site untouched.
+      --update|--upgrade) INSTALL_MODE_ARG="update" ;;
+      # --test is a friendly alias for the read-only doctor probes.
+      --test|--health|--self-test|--doctor) DOCTOR=1; INSTALL_MODE_ARG="doctor" ;;
+      # --gui drops into a numeric menu so admins do not have to memorise
+      # every flag. It still ends up calling the same install/status/...
+      # commands underneath.
+      --gui|--menu) INSTALL_MODE_ARG="gui" ;;
+      --version|-V) printf 'M5cet installer v%s\n' "${VERSION}"; exit 0 ;;
       --help|-h) usage; exit 0 ;;
       --yes|-y) ASSUME_YES=1 ;;
       --non-interactive) NON_INTERACTIVE=1; ASSUME_YES=1 ;;
@@ -1028,6 +1042,74 @@ install_cmd() {
   print_summary
 }
 
+# Update path: keep existing .env / data / nginx config, only refresh code
+# and bounce the stack. Falls back to the full install_cmd when no install
+# is detected at INSTALL_DIR.
+update_cmd() {
+  step "M5cet update v${VERSION}"
+  detect_os
+  if [[ ! -d "${INSTALL_DIR}/.git" ]]; then
+    warn "No existing install at ${INSTALL_DIR} — falling back to fresh install."
+    install_cmd
+    return
+  fi
+  ensure_base_packages
+  ensure_docker
+  clone_or_update_repo
+  if [[ "${DRY_RUN}" != "1" ]]; then
+    cp "$0" "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+    chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+  fi
+  # Only rewrite compose if the existing one is managed by us; never clobber
+  # an operator-customised file unless FORCE_COMPOSE=1.
+  write_compose_file
+  start_app
+  if ! run_post_install_tests; then
+    warn "Post-update tests reported failures."
+  fi
+  print_summary
+}
+
+# Friendly numeric menu for admins who do not want to memorise every flag.
+# Each option dispatches to the same *_cmd functions used by direct flags,
+# so behaviour is identical.
+gui_cmd() {
+  while true; do
+    cat <<MENU
+
+  ┌─────────────────────────────────────────────┐
+  │      M5cet installer (v${VERSION})           │
+  ├─────────────────────────────────────────────┤
+  │  1) Install / first-time setup              │
+  │  2) Update (pull new code, redeploy)        │
+  │  3) Test / doctor (read-only health probes) │
+  │  4) Status                                  │
+  │  5) Logs (follow)                           │
+  │  6) Restart                                 │
+  │  7) Stop                                    │
+  │  8) Uninstall (keep project files)          │
+  │  9) Help                                    │
+  │  0) Quit                                    │
+  └─────────────────────────────────────────────┘
+MENU
+    local choice
+    read -r -p "Select [0-9]: " choice || { echo; return 0; }
+    case "${choice}" in
+      1) require_root "$@"; install_cmd ;;
+      2) require_root "$@"; update_cmd ;;
+      3) doctor_cmd ;;
+      4) status_cmd ;;
+      5) logs_cmd ;;
+      6) require_root "$@"; restart_cmd ;;
+      7) require_root "$@"; stop_cmd ;;
+      8) require_root "$@"; uninstall_cmd ;;
+      9) usage ;;
+      0|q|Q) return 0 ;;
+      *) warn "Unknown choice: ${choice}" ;;
+    esac
+  done
+}
+
 # ---------------------------------------------------------------------------
 # Entry
 # ---------------------------------------------------------------------------
@@ -1035,12 +1117,14 @@ main() {
   parse_args "$@"
   case "${INSTALL_MODE_ARG}" in
     install)   require_root "$@"; install_cmd ;;
+    update)    require_root "$@"; update_cmd ;;
     status)    status_cmd ;;
     logs)      logs_cmd ;;
     restart)   require_root "$@"; restart_cmd ;;
     stop)      require_root "$@"; stop_cmd ;;
     uninstall) require_root "$@"; uninstall_cmd ;;
     doctor)    doctor_cmd ;;
+    gui)       gui_cmd ;;
     *) usage; die "Unknown command: ${INSTALL_MODE_ARG}" ;;
   esac
 }
