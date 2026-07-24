@@ -1,14 +1,21 @@
-// Public, namespaced helper for embedders. Exposed as window.CipherRoomAPI.
-// Read-only surface: capability info, module manifest, and tiny dispatchers.
+// Public API pro embeddery. Vystaveno jako window.CipherRoomAPI (first-install-wins).
+//
+// Obsahuje jednoduchý interní event bus, který může UI použít k notifikaci
+// embedderů o událostech (message / peer / transfer).
 
 import { detectCapabilities } from "./capabilities";
 import { fetchPushStatus } from "./push";
 
 export type ModuleManifest = {
   modes: { id: string; label: string; description: string }[];
-  features: Record<string, { enabled: boolean; reason?: string }>;
-  push: { enabled: boolean; vapidPublicKey: string | null };
+  features: Record<string, { enabled: boolean; reason?: string; details?: string }>;
+  push: { enabled: boolean; vapidPublicKey: string | null; deliveryImplemented: boolean };
   events: { enabled: boolean; backend: string };
+  limits: {
+    maxPeersPerRoom: number;
+    frameBudgetPerSec: number;
+    maxAttachmentBytes: number;
+  };
 };
 
 type Listener = (detail: unknown) => void;
@@ -57,14 +64,13 @@ async function recordEvent(payload: { kind: string; meta?: Record<string, unknow
 export function installPublicAPI() {
   if (typeof window === "undefined") return;
   const api = {
-    version: "1.0.0",
+    version: "1.1.0",
     capabilities: detectCapabilities(),
     modules: fetchModules,
     pushStatus: fetchPushStatus,
     recordEvent,
     on,
   };
-  // Avoid clobbering — first install wins.
   if (!(window as unknown as Record<string, unknown>).CipherRoomAPI) {
     (window as unknown as Record<string, unknown>).CipherRoomAPI = api;
   }

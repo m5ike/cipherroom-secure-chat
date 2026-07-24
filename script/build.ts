@@ -2,34 +2,6 @@ import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "node:fs/promises";
 
-// server deps to bundle to reduce openat(2) syscalls
-// which helps cold start times
-const allowlist = [
-  "@google/generative-ai",
-  "axios",
-  "cors",
-  "date-fns",
-  "drizzle-orm",
-  "drizzle-zod",
-  "express",
-  "express-rate-limit",
-  "express-session",
-  "jsonwebtoken",
-  "memorystore",
-  "multer",
-  "nanoid",
-  "nodemailer",
-  "openai",
-  "passport",
-  "passport-local",
-  "stripe",
-  "uuid",
-  "ws",
-  "xlsx",
-  "zod",
-  "zod-validation-error",
-];
-
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
@@ -37,6 +9,17 @@ async function buildAll() {
   await viteBuild();
 
   console.log("building server...");
+  // Bundle jen moduly, které chceme mít in-process (pro rychlý cold-start).
+  // Zbytek (express, ws, better-sqlite3) zůstává externí — typicky je pro Node
+  // lepší je ponechat jako CommonJS require.
+  const allowlist = [
+    "express",
+    "ws",
+    "better-sqlite3",
+    "dotenv",
+    "wouter",
+  ];
+
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));
   const allDeps = [
     ...Object.keys(pkg.dependencies || {}),

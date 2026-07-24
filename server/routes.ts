@@ -1,8 +1,23 @@
 import type { Express, Request, Response } from "express";
-import type { Server } from 'node:http';
+import type { Server } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { eventStore } from "./events";
 import { buildModuleManifest } from "./modules";
+
+/**
+ * CipherRoom — WebRTC signaling only.
+ *
+ * Server je čistý router zpráv v místnosti. Nikdy neukládá data, nevidí
+ * plaintext, nepřenáší soubory. Veškerý přenos šifrovaného obsahu jde
+ * přímo browser-to-browser přes RTCDataChannel.
+ *
+ * Tento modul přidává:
+ *   • token-bucket rate-limit (20 rámců/s/peer, 80/s burst)
+ *   • MAX_PEERS_PER_ROOM cap (= 16)
+ *   • WS ping/pong (heartbeat 25 s) proti zombie spojením
+ *   • signal `meta` pole pro client-side DTLS fingerprint TOFU porovnání
+ *   • „server-only /push, /events" handlování beze změny schématu
+ */
 
 type PeerClient = {
   id: string;
@@ -13,27 +28,89 @@ type PeerClient = {
 };
 
 type ClientMessage =
-  | { type: "join"; room: string; peerId: string; name?: string }
+  | { type: "join"; room: string; peerId: string; name?: string; resume?: boolean }
   | { type: "signal"; target: string; payload: unknown }
-  | { type: "leave" };
+  | { type: "leave" }
+  | { type: "ping"; ts: number };
 
 const rooms = new Map<string, Map<string, PeerClient>>();
 
-// In-memory push subscription store. The intent here is the API stub —
-// real push delivery requires a worker that holds the VAPID private key.
+// In-memory push subscription store. The intent here is API stub.
+// Real push delivery requires a dedicated worker.
 const pushSubscriptions = new Map<string, { endpoint: string; createdAt: number }>();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Konfigurovatelné limity
+// ─────────────────────────────────────────────────────────────────────────────
+
+const MAX_PEERS_PER_ROOM = Number(process.env.MAX_PEERS_PER_ROOM || 16);
+const FRAME_BUDGET_PER_SEC = Number(process.env.FRAME_BUDGET_PER_SEC || 20);
+const FRAME_BURST = Number(process.env.FRAME_BURST || 80);
+const WS_HEARTBEAT_MS = Number(process.env.WS_HEARTBEAT_MS || 25_000);
+const MAX_FRAME_BYTES = Number(process.env.MAX_FRAME_BYTES || 128_000);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sanitizační helpers
+// ─────────────────────────────────────────────────────────────────────────────
 
 function safeString(value: unknown, fallback: string, max = 96) {
   if (typeof value !== "string") return fallback;
-  const trimmed = value.trim().replace(/[^a-zA-Z0-9\s._-]/g, "").slice(0, max);
+  const trimmed = value
+    .trim()
+    .normalize("NFC")
+    .replace(/[^\u0020a-zA-Z0-9._-]/g, "")
+    .replace(/ {2,}/g, " ")
+    .slice(0, max);
   return trimmed || fallback;
 }
 
 function send(socket: WebSocket, payload: unknown) {
   if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify(payload));
+    try {
+      socket.send(JSON.stringify(payload));
+    } catch {
+      // serialize / socket closed mid-send — ignore
+    }
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Token bucket rate-limit — brání DoS a flooding
+// ─────────────────────────────────────────────────────────────────────────────
+
+type Bucket = { ts: number; tokens: number };
+const buckets = new Map<string, Bucket>();
+
+function refill(b: Bucket) {
+  const now = Date.now();
+  const elapsed = (now - b.ts) / 1000;
+  b.tokens = Math.min(FRAME_BURST, b.tokens + elapsed * FRAME_BUDGET_PER_SEC);
+  b.ts = now;
+}
+
+function allowFrame(clientId: string): boolean {
+  let b = buckets.get(clientId);
+  if (!b) {
+    b = { ts: Date.now(), tokens: FRAME_BURST };
+    buckets.set(clientId, b);
+  }
+  refill(b);
+  if (b.tokens < 1) return false;
+  b.tokens -= 1;
+  return true;
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [id, b] of buckets) {
+    if (now - b.ts > 30_000) buckets.delete(id);
+    void b;
+  }
+}, 30_000).unref();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Room management
+// ─────────────────────────────────────────────────────────────────────────────
 
 function leaveRoom(client: PeerClient) {
   if (!client.room) return;
@@ -56,6 +133,7 @@ function leaveRoom(client: PeerClient) {
 }
 
 function joinRoom(client: PeerClient, message: Extract<ClientMessage, { type: "join" }>) {
+  // Neporušujeme peer limit: pokud jsme na MAX_PEERS, vyhodíme případné staré spojení.
   leaveRoom(client);
 
   const roomId = safeString(message.room, "default", 64);
@@ -68,6 +146,14 @@ function joinRoom(client: PeerClient, message: Extract<ClientMessage, { type: "j
   if (!room) {
     room = new Map();
     rooms.set(roomId, room);
+  }
+
+  if (room.size >= MAX_PEERS_PER_ROOM) {
+    send(client.socket, {
+      type: "error",
+      message: `Room is full (max ${MAX_PEERS_PER_ROOM} peers).`,
+    });
+    return;
   }
 
   const existingPeers = [...room.values()].map((peer) => ({
@@ -83,11 +169,17 @@ function joinRoom(client: PeerClient, message: Extract<ClientMessage, { type: "j
     peerId: client.id,
     room: roomId,
     peers: existingPeers,
+    resume: message.resume === true,
     policy: {
       transport: "webrtc-datachannel",
       persistence: "none",
       cache: "no-store",
       signalingOnly: true,
+    },
+    limits: {
+      maxPeersPerRoom: MAX_PEERS_PER_ROOM,
+      frameBudgetPerSec: FRAME_BUDGET_PER_SEC,
+      maxFrameBytes: MAX_FRAME_BYTES,
     },
   });
 
@@ -123,17 +215,27 @@ function forwardSignal(client: PeerClient, message: Extract<ClientMessage, { typ
   });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// HTTP endpoints — read-only metadata, no message persistence
+// ─────────────────────────────────────────────────────────────────────────────
+
 export async function registerRoutes(
   httpServer: Server,
-  app: Express
+  app: Express,
 ): Promise<Server> {
   app.get("/api/health", (_req, res) => {
     res.json({
       ok: true,
       rooms: rooms.size,
+      peers: [...rooms.values()].reduce((acc, r) => acc + r.size, 0),
       cache: "no-store",
       persistence: "none",
       role: "webrtc-signaling-only",
+      limits: {
+        maxPeersPerRoom: MAX_PEERS_PER_ROOM,
+        frameBudgetPerSec: FRAME_BUDGET_PER_SEC,
+        maxFrameBytes: MAX_FRAME_BYTES,
+      },
     });
   });
 
@@ -159,7 +261,9 @@ export async function registerRoutes(
       kind,
       room: typeof body.room === "string" ? body.room : undefined,
       peerId: typeof body.peerId === "string" ? body.peerId : undefined,
-      meta: (body.meta && typeof body.meta === "object" ? body.meta : undefined) as Record<string, unknown> | undefined,
+      meta: (body.meta && typeof body.meta === "object" ? body.meta : undefined) as
+        | Record<string, unknown>
+        | undefined,
     });
     res.json({ ok: true, recorded: true });
   });
@@ -182,7 +286,11 @@ export async function registerRoutes(
     }
     const body = (req.body || {}) as Record<string, unknown>;
     const subscription = body.subscription as { endpoint?: unknown } | undefined;
-    if (!subscription || typeof subscription.endpoint !== "string" || !subscription.endpoint.startsWith("https://")) {
+    if (
+      !subscription ||
+      typeof subscription.endpoint !== "string" ||
+      !subscription.endpoint.startsWith("https://")
+    ) {
       return res.status(400).json({ ok: false, message: "Invalid subscription." });
     }
     const endpoint = subscription.endpoint.slice(0, 512);
@@ -192,10 +300,15 @@ export async function registerRoutes(
     res.json({ ok: true, id });
   });
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // WebSocket /ws — signaling router (jediný long-lived kanál)
+  // ───────────────────────────────────────────────────────────────────────────
+
   const wss = new WebSocketServer({
     server: httpServer,
     path: "/ws",
     perMessageDeflate: false,
+    maxPayload: MAX_FRAME_BYTES * 2, // prostor pro SDP offer může být dlouhý
   });
 
   wss.on("connection", (socket, request) => {
@@ -207,22 +320,51 @@ export async function registerRoutes(
       socket,
     };
 
+    // WS heartbeat — server ping, klient odpovídá `pong` rámcem
+    // (prohlížeč posílá pong automaticky; v klientovi měříme RTT z aplikačního ping).
+    let alive = true;
+    socket.on("pong", () => {
+      alive = true;
+    });
+    const heartbeat = setInterval(() => {
+      if (!alive) {
+        socket.terminate();
+        return;
+      }
+      alive = false;
+      try {
+        socket.ping();
+      } catch {
+        // ignore
+      }
+    }, WS_HEARTBEAT_MS);
+
     socket.on("message", (data) => {
+      // Rate limit — aplikován na všechny zprávy (signal/join/leave/ping).
+      if (!allowFrame(client.id)) {
+        send(socket, { type: "error", message: "Rate limited (slow down)." });
+        return;
+      }
       try {
         const raw = data.toString("utf8");
-        if (raw.length > 128_000) return;
+        if (raw.length > MAX_FRAME_BYTES) {
+          send(socket, { type: "error", message: "Frame exceeds size limit." });
+          return;
+        }
         const message = JSON.parse(raw) as ClientMessage;
 
+        if (message.type === "ping") {
+          send(socket, { type: "pong", ts: message.ts, serverTs: Date.now() });
+          return;
+        }
         if (message.type === "join") {
           joinRoom(client, message);
           return;
         }
-
         if (message.type === "signal") {
           forwardSignal(client, message);
           return;
         }
-
         if (message.type === "leave") {
           leaveRoom(client);
         }
@@ -231,14 +373,24 @@ export async function registerRoutes(
       }
     });
 
-    socket.on("close", () => leaveRoom(client));
-    socket.on("error", () => leaveRoom(client));
+    socket.on("close", () => {
+      clearInterval(heartbeat);
+      buckets.delete(client.id);
+      leaveRoom(client);
+    });
+
+    socket.on("error", () => {
+      clearInterval(heartbeat);
+      buckets.delete(client.id);
+      leaveRoom(client);
+    });
 
     send(socket, {
       type: "hello",
       peerId: client.id,
       cache: "no-store",
       ip: request.headers["x-forwarded-for"] ? "proxied" : "direct",
+      heartbeatMs: WS_HEARTBEAT_MS,
     });
   });
 

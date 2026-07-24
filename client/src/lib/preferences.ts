@@ -1,4 +1,5 @@
-// Local-only preferences. Never sent to the server.
+// Local-only preferences. Nikdy se neposílají na server.
+// ⚠️ Passphrase ani klíč zde neukládáme (zero-persistence slib projektu).
 
 export type Preferences = {
   theme: "light" | "dark";
@@ -34,11 +35,15 @@ export function loadPreferences(): Preferences {
     const raw = storage.getItem(STORAGE_KEY);
     if (!raw) return { ...DEFAULTS };
     const parsed = JSON.parse(raw) as Partial<Preferences>;
+    if (typeof parsed !== "object" || parsed === null) {
+      return { ...DEFAULTS };
+    }
     return {
       theme: parsed.theme === "dark" ? "dark" : "light",
       mode: parsed.mode === "server" ? "server" : "light",
       name: typeof parsed.name === "string" ? parsed.name.slice(0, 42) : DEFAULTS.name,
-      lastRoom: typeof parsed.lastRoom === "string" ? parsed.lastRoom.slice(0, 48) : DEFAULTS.lastRoom,
+      lastRoom:
+        typeof parsed.lastRoom === "string" ? parsed.lastRoom.slice(0, 48) : DEFAULTS.lastRoom,
       notificationsEnabled: parsed.notificationsEnabled === true,
     };
   } catch {
@@ -52,7 +57,7 @@ export function savePreferences(prefs: Preferences) {
   try {
     storage.setItem(STORAGE_KEY, JSON.stringify(prefs));
   } catch {
-    // Quota or privacy mode — fail silently.
+    // Quota nebo private mode — selhání tiše ignorujeme.
   }
 }
 

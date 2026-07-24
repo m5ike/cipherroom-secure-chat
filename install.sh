@@ -23,6 +23,15 @@ DATABASE_URL="${DATABASE_URL:-}"
 LOG_EVENTS="${LOG_EVENTS:-0}"
 VAPID_PUBLIC_KEY="${VAPID_PUBLIC_KEY:-}"
 VAPID_PRIVATE_KEY="${VAPID_PRIVATE_KEY:-}"
+# --- CipherRoom v1.1+ doplňky ---
+MAX_PEERS_PER_ROOM="${MAX_PEERS_PER_ROOM:-16}"
+FRAME_BUDGET_PER_SEC="${FRAME_BUDGET_PER_SEC:-20}"
+MAX_FRAME_BYTES="${MAX_FRAME_BYTES:-131072}"
+MAX_ATTACHMENT_BYTES="${MAX_ATTACHMENT_BYTES:-2147483648}" # 2 GB default
+# Doporučené TURN credentials (volitelné) — pokud self-hosted coturn
+# VITE_TURN_URL=""           # turn:turn.example.com:3478
+# VITE_TURN_USERNAME=""
+# VITE_TURN_CREDENTIAL=""
 
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 MANAGED_MARKER="# Managed by CipherRoom install.sh"
