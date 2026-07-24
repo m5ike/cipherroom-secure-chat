@@ -307,3 +307,47 @@ Statické kontroly v Pythonu (bez `node`):
 **Bezpečnost**: ✅ všechny v1.0 P0–P4 opraveny.
 **Quality**: ✅ Vitest + ESLint + Prettier + CI nastaveny.
 **Cleanup**: ✅ dependencies ze 71 → 14 (prod) + 19 (dev).
+
+---
+
+## 11. v1.1.1 hotfix — Universalní `install.sh` pro všechny distribuce
+
+Při nasazení na uživatelově distribuci selhal `install.sh` s chybou **„Unsupported Linux package manager. Install dependencies manually: ca-certificates"**. Problém byl v tom, že:
+
+1. Skript znal jen 6 package managerů (apt, dnf, yum, pacman, zypper, apk) — nestačí pro **Void, Alpine, Fedora Atomic, Gentoo, Sabayon, Clear Linux**.
+2. `ca-certificates` se pokoušel volat jako binárku — ale je to Debian meta-package, ne binárka.
+3. Na Alpine/SUSE/Fedora Atomic se předpokládal systemd → nebootoval `rc-service`/`dinit`/`s6`.
+4. Nginx config měl `client_max_body_size 2m` → 2 GB soubory blokovány.
+5. Žádný pre-flight diagnostický report (kernel/space/init).
+
+### Opravy v `install.sh` (528 → 1012 LOC)
+
+| Problém | Řešení |
+| --- | --- |
+| 6 PMs | **12+ PMs**: apt, dnf, microdnf, yum, pacman, zypper, apk, xbps-install, swupd, emerge, equo, rpm-ostree |
+| Vyhledá `ca-certificates` jako binárku | Kontroluje `/etc/ssl/certs` NEBO `openssl`; mapuje na správný balíček pro každou family |
+| systemd-only | 5 init systémů: `systemd`, `OpenRC`, `runit`, `dinit`, `s6` |
+| Hardcoded `die "Unsupported..."` | Komplexní fallback zpráva: 6 konkrétních `apt-get/dnf/pacman/zypper/apk/xbps` příkazů + návod na `SKIP_DOCKER_INSTALL=1` |
+| Nginx 2m limit | `client_max_body_size 2147483648` (2 GB) s `map $http_upgrade` pro WebSocket |
+| Žádné --no-* flagy | `--no-docker --no-nginx --no-tls --no-firewall --skip-base --purge` |
+| Bez pre-flight | vypisuje kernel/OS/init/memory/disk |
+
+### Verifikace
+
+```bash
+bash -n install.sh              # OK
+PATH=/tmp/empty-path bash install.sh
+# [!] Pre-flight environment check
+# [!]   Package manager: <none> (family=?)
+# [*] Installing: git curl
+# [!] No supported package manager found automatically on this system.
+# Distribution detected: ...
+# Supported package managers: apt-get|apt, dnf, yum, microdnf, pacman, zypper, apk,
+#                            xbps-install, swupd, emerge, equo, rpm-ostree
+# To install Docker manually:
+#   Debian/Ubuntu: sudo apt-get update && sudo apt-get install -y docker.io ...
+#   ...
+# Then re-run with SKIP_DOCKER_INSTALL=1 to proceed
+```
+
+Vitest + 13 install.sh-specifických testů = **5 test files / 39 tests passed**.
