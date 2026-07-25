@@ -50,8 +50,15 @@ export type Preferences = {
   deviceId: string;
   // Keepalive strategy for the signaling connection
   keepaliveStrategy: "conservative" | "balanced" | "aggressive";
-  // Max attachment size in bytes for chunked DataChannel transfer
+  // Max attachment size in bytes for chunked DataChannel transfer.
+  // Unlimited by setting to Number.MAX_SAFE_INTEGER (default).
   maxAttachmentBytes: number;
+  // Toolbar display mode for the top-bar menu buttons:
+  //   "inline"    — icon + label side by side (sm:inline label)
+  //   "tooltip"   — icon only, label visible as native title / curl tip
+  //   "speeddial" — three horizontal bars button → opens a floating
+  //                 panel with the same entries vertically.
+  menuDisplay: "inline" | "tooltip" | "speeddial";
 };
 
 const STORAGE_KEY = "m5cet:prefs:v2";
@@ -85,7 +92,9 @@ const DEFAULTS: Preferences = {
   roomSecurity: {},
   deviceId: "",
   keepaliveStrategy: "balanced",
-  maxAttachmentBytes: 100 * 1024 * 1024, // 100 MB
+  // Unlimited by default — operator sets MAX_BYTES server-side.
+  maxAttachmentBytes: Number.MAX_SAFE_INTEGER,
+  menuDisplay: "inline",
 };
 
 export const DEFAULT_ROOM_SECURITY: RoomSecurity = {
@@ -165,7 +174,12 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     roomSecurity: typeof parsed.roomSecurity === "object" && parsed.roomSecurity ? parsed.roomSecurity as Preferences["roomSecurity"] : base.roomSecurity,
     deviceId: typeof parsed.deviceId === "string" && parsed.deviceId.length > 4 ? parsed.deviceId.slice(0, 64) : base.deviceId,
     keepaliveStrategy: parsed.keepaliveStrategy === "conservative" || parsed.keepaliveStrategy === "aggressive" ? parsed.keepaliveStrategy : base.keepaliveStrategy,
-    maxAttachmentBytes: typeof parsed.maxAttachmentBytes === "number" && parsed.maxAttachmentBytes > 0 && parsed.maxAttachmentBytes <= 4 * 1024 * 1024 * 1024 ? Math.floor(parsed.maxAttachmentBytes) : base.maxAttachmentBytes,
+    // Accept any positive integer up to MAX_SAFE_INTEGER so that
+    // prefs.maxAttachmentBytes === Number.MAX_SAFE_INTEGER represents
+    // an "unlimited" config (essentially capped only by RAM + server
+    // proxy memory).
+    maxAttachmentBytes: typeof parsed.maxAttachmentBytes === "number" && parsed.maxAttachmentBytes > 0 && parsed.maxAttachmentBytes <= Number.MAX_SAFE_INTEGER ? Math.floor(parsed.maxAttachmentBytes) : base.maxAttachmentBytes,
+    menuDisplay: parsed.menuDisplay === "tooltip" || parsed.menuDisplay === "speeddial" ? parsed.menuDisplay : base.menuDisplay,
   };
 }
 

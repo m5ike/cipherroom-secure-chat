@@ -7,10 +7,18 @@
 // reliable byte-pipe that forwards encrypted chunks between endpoints
 // identified by (roomId, peerId, transferId).
 //
-// Default chunk size is 32 KiB. Maximum hard cap is 10 GiB.
-
+// Default chunk size is 32 KiB. There is no client-side explicit hard
+// cap; per-chunk streaming + IndexedDB buffering allow essentially
+// unbounded sizes. The server proxy still enforces its own MEMORY cap
+// (single in-memory buffer per transfer) so very large files should
+// normally go through P2P; the server may still refuse a proxy stream
+// when its bytes-per-transfer memory budget is exhausted.
+//
+// Privacy: server never sees plaintext. File is split into chunks,
+// each chunk is AES-GCM 256-encrypted with a per-chunk IV.
 export const DEFAULT_CHUNK_SIZE = 32 * 1024; // 32 KiB
-export const MAX_FILE_BYTES = 10 * 1024 * 1024 * 1024; // 10 GiB
+export const MAX_FILE_BYTES = Number.MAX_SAFE_INTEGER; // effectively unlimited
+
 
 export type FileTransport = "p2p" | "proxy";
 
@@ -205,8 +213,17 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
   const total = opts.file.size;
   const totalChunks = Math.max(1, Math.ceil(total / chunkSize));
 
-  if (total > MAX_FILE_BYTES) {
-    return { ok: false, transferId: "", transport: "p2p", reason: `File exceeds the 10 GiB hard limit (${total} bytes).` };
+  // Upper bound on what the runtime can address. Number.MAX_SAFE_INTEGER
+  // is the largest representable integer; above this arithmetic on byte
+  // counters would silently degrade. We refuse anything larger — the
+  // browser will not have the file backing it anyway.
+  if (!Number.isFinite(total) || total < 0 || total > Number.MAX_SAFE_INTEGER) {
+    return {
+      ok: false,
+      transferId: "",
+      transport: opts.forceTransport ?? "p2p",
+      reason: `Unrepresentable file size (${total} bytes).`,
+    };
   }
 
   // Decide transport: P2P if at least one channel is open AND opted in by the caller.

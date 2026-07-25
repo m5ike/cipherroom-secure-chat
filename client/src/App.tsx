@@ -88,6 +88,7 @@ import { detectSpeechCaps, listVoices, speak, stopSpeaking, startRecognition, ty
 import { deriveRoomKey, encryptEnvelope, decryptEnvelope, toBase64, type DataChannelEnvelope } from "./lib/crypto";
 import { newId } from "./lib/id";
 import { TransferCard } from "./components/TransferCard";
+import { MainMenu } from "./components/MainMenu";
 import { formatTime, formatBytes } from "./lib/format";
 import { RTC_CONFIG, turnConfigPromise } from "./lib/rtc";
 import { M5Logo } from "./components/M5Logo";
@@ -255,7 +256,7 @@ function UnsupportedBanner({ reasons }: { reasons: string[] }) {
   );
 }
 
-type PanelKey =
+export type PanelKey =
   | "profile"
   | "settings"
   | "templates"
@@ -1563,13 +1564,11 @@ function ChatApp() {
       setNotice(lang === "cs" ? "Není odvozen klíč místnosti." : "Missing room key.");
       return;
     }
-    // 10 GiB hard cap is enforced inside sendFile as well — the central
-    // check protects against accidentally raising this client-side.
-    if (file.size > 10 * 1024 * 1024 * 1024) {
-      setNotice(`Soubor přesahuje hard-cap 10 GiB.`);
-      return;
-    }
-    if (file.size > prefs.maxAttachmentBytes) {
+    // File size limit is now per-user (`prefs.maxAttachmentBytes`); there
+    // is no longer a hard-coded cap. The default 100 MB still applies
+    // until the user raises it in Settings. Server proxy has its own
+    // MAX_BYTES server-side cap that we honour below.
+    if (file.size > prefs.maxAttachmentBytes && prefs.maxAttachmentBytes < Number.MAX_SAFE_INTEGER - 1) {
       setNotice(`Soubor přesahuje limit ${formatBytes(prefs.maxAttachmentBytes)}.`);
       return;
     }
@@ -1774,26 +1773,7 @@ function ChatApp() {
           <span className="sm:hidden">{status === "joined" ? `${openPeerCount}` : status[0]}</span>
         </span>
 
-        <div className="ml-auto flex items-center gap-1">
-          <ToolbarButton testId="btn-templates" label={t(lang, "menu.templates")} onClick={() => setActivePanel("templates")} icon={<Palette />} />
-          <ToolbarButton testId="btn-settings" label={t(lang, "menu.settings")} onClick={() => setActivePanel("settings")} icon={<SettingsIcon />} />
-          <ToolbarButton testId="btn-encryption" label={t(lang, "menu.encryption")} onClick={() => setActivePanel("encryption")} icon={<KeyRound />} />
-          <ToolbarButton testId="btn-room-security" label={t(lang, "room.security.title")} onClick={() => setActivePanel("roomSecurity")} icon={<ShieldCheck />} />
-          <ToolbarButton testId="btn-trust" label={lang === "cs" ? "Důvěra" : "Trust"} onClick={() => setActivePanel("trust")} icon={<ShieldCheck />} />
-          <ToolbarButton testId="btn-privacy" label={t(lang, "menu.privacy")} onClick={() => setActivePanel("privacy")} icon={<Eye />} />
-          <ToolbarButton testId="btn-notifications" label={t(lang, "menu.notifications")} onClick={() => setActivePanel("notifications")} icon={<BellIcon />} />
-          <ToolbarButton testId="btn-analytics" label={t(lang, "menu.analytics")} onClick={() => setActivePanel("analytics")} icon={<Activity />} />
-          <ToolbarButton testId="btn-profile" label={t(lang, "menu.profile")} onClick={() => setActivePanel("profile")} icon={<UserCircle2 />} />
-          <ToolbarButton testId="btn-peers" label={t(lang, "menu.peers")} onClick={() => setActivePanel("peers")} icon={<Users />} />
-          <ToolbarButton testId="btn-audio" label={t(lang, "menu.audio")} onClick={() => setActivePanel("audio")} icon={<Mic />} />
-          <ToolbarButton testId="btn-video" label="Video" onClick={() => setActivePanel("video")} icon={<VideoIcon />} />
-          <ToolbarButton testId="btn-files" label="Files" onClick={() => setActivePanel("files")} icon={<Paperclip />} />
-          <ToolbarButton testId="btn-location" label="Location" onClick={() => setActivePanel("location")} icon={<MapPinIcon />} />
-          <ToolbarButton testId="btn-nfc" label="NFC" onClick={() => setActivePanel("nfc")} icon={<NfcIcon />} />
-          <ToolbarButton testId="btn-speech" label="Speech" onClick={() => setActivePanel("speech")} icon={<Mic />} />
-          <ToolbarButton testId="btn-connection" label="Connection" onClick={() => setActivePanel("connection")} icon={<Activity />} />
-          <ToolbarButton testId="btn-language" label={t(lang, "common.language")} onClick={() => setActivePanel("settings")} icon={<Languages />} />
-        </div>
+        <MainMenu mode={prefs.menuDisplay} lang={lang} onOpen={(panel) => setActivePanel(panel)} />
       </header>
 
       {/* Full-screen chat area */}
@@ -2180,22 +2160,6 @@ function ChatApp() {
         </SimpleModal>
       ) : null}
     </div>
-  );
-}
-
-function ToolbarButton({ icon, label, onClick, testId }: { icon: React.ReactNode; label: string; onClick: () => void; testId: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      title={label}
-      aria-label={label}
-      data-testid={testId}
-      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-transparent text-foreground hover:border-border hover:bg-accent sm:w-auto sm:gap-2 sm:px-3"
-    >
-      <span className="h-4 w-4 [&>svg]:h-4 [&>svg]:w-4">{icon}</span>
-      <span className="hidden text-xs sm:inline">{label}</span>
-    </button>
   );
 }
 

@@ -109,15 +109,14 @@ describe("handleIncomingFrame (file-meta/chunk/end)", () => {
     expect(errors.length).toBe(1);
   });
 
-  it("enforces the 10 GiB hard cap", async () => {
+  it("rejects unrepresentable (non-finite) file sizes", async () => {
     const key = await fixtureKey();
-    // Build a synthetic File whose size is just under the cap to avoid
-    // actually allocating 10 GiB of memory.
-    const oversized = { name: "huge.bin", size: MAX_FILE_BYTES + 1, type: "application/octet-stream" } as unknown as File;
-    // Stub arrayBuffer so sendFile does not allocate the whole file.
+    // MAX_FILE_BYTES is now Number.MAX_SAFE_INTEGER; a file with size
+    // exceeding it (e.g. Number.MAX_VALUE or Infinity) is rejected.
+    const weird = { name: "weird.bin", size: Number.POSITIVE_INFINITY, type: "application/octet-stream" } as unknown as File;
     const result = await sendFile({
       key,
-      file: oversized,
+      file: weird,
       senderId: "s",
       senderName: "S",
       channels: [],
@@ -126,7 +125,30 @@ describe("handleIncomingFrame (file-meta/chunk/end)", () => {
       onStats: () => undefined,
     });
     expect(result.ok).toBe(false);
-    expect(result.reason).toMatch(/10 GiB/);
+    expect(result.reason).toMatch(/Unrepresentable/);
+  });
+
+  it("accepts arbitrarily large finite sizes including values >= 10 GiB", async () => {
+    const key = await fixtureKey();
+    // A 12 GiB synthetic file — used to be rejected; now accepted.
+    const file = { name: "huge.bin", size: 12 * 1024 ** 3, type: "application/octet-stream" } as unknown as File;
+    // Stub arrayBuffer so we don't actually allocate 12 GiB.
+    (file as unknown as { arrayBuffer(): Promise<ArrayBuffer> }).arrayBuffer = async () => new Uint8Array(0).buffer;
+    const sendProxy = vi.fn(() => true);
+    const result = await sendFile({
+      key,
+      file,
+      senderId: "s",
+      senderName: "S",
+      channels: [],
+      sendProxy,
+      onProgress: () => undefined,
+      onStats: () => undefined,
+    });
+    // We expect the call to *succeed* sending the meta frame; the loop
+    // over chunks will exit early because no chunks remain.
+    expect(result.ok).toBe(true);
+    expect(sendProxy).toHaveBeenCalled();
   });
 
   it("falls back to proxy transport when no P2P channel is open", async () => {

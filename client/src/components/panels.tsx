@@ -174,6 +174,42 @@ export function SettingsPanel({ open, onClose, prefs, setPrefs, lang }: PanelBas
           />
         </label>
       </Section>
+      <Section title={t(lang, "settings.menu.title")} icon={<Palette className="h-4 w-4" />}>
+        <Row label={t(lang, "settings.menu.display")} hint={t(lang, "settings.menu.display.hint")}>
+          <select
+            className={selectClass}
+            value={prefs.menuDisplay}
+            onChange={(event) => setPrefs({ menuDisplay: event.target.value as Preferences["menuDisplay"] })}
+            data-testid="select-menu-display"
+          >
+            <option value="inline">{t(lang, "settings.menu.inline")}</option>
+            <option value="tooltip">{t(lang, "settings.menu.tooltip")}</option>
+            <option value="speeddial">{t(lang, "settings.menu.speeddial")}</option>
+          </select>
+        </Row>
+        <Row label={t(lang, "settings.maxAttachment.title")} hint={t(lang, "settings.maxAttachment.hint")}>
+          <select
+            className={selectClass}
+            value={prefs.maxAttachmentBytes === Number.MAX_SAFE_INTEGER ? "unlimited" : String(prefs.maxAttachmentBytes)}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (value === "unlimited") {
+                setPrefs({ maxAttachmentBytes: Number.MAX_SAFE_INTEGER });
+              } else {
+                const n = Number(value);
+                if (!Number.isNaN(n) && n > 0) setPrefs({ maxAttachmentBytes: n });
+              }
+            }}
+            data-testid="select-max-attachment"
+          >
+            <option value={100 * 1024 * 1024}>100 MB</option>
+            <option value={500 * 1024 * 1024}>500 MB</option>
+            <option value={1024 * 1024 * 1024}>1 GB</option>
+            <option value={10 * 1024 * 1024 * 1024}>10 GB</option>
+            <option value="unlimited">{t(lang, "settings.maxAttachment.unlimited")}</option>
+          </select>
+        </Row>
+      </Section>
     </Modal>
   );
 }
