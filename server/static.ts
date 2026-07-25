@@ -1,3 +1,7 @@
+// Production static handler. Serves the Vite-built client from dist/public
+// with strict no-cache headers, falling back to index.html so that the
+// PWA can hydrate any deep link without server-side routing.
+
 import express from 'express';
 import type { Express } from 'express';
 import fs from "node:fs";

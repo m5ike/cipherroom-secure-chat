@@ -1,6 +1,12 @@
-# CipherRoom deployment options
+# M5cet deployment options
 
-CipherRoom needs a long-running process because `/ws` is a persistent WebSocket signaling endpoint for WebRTC. Static-only hosts can serve the frontend, but they cannot run this backend unless you add a separate realtime service.
+> Successor to the original CipherRoom deployment guide. The repo, image, and
+> systemd service have been renamed to **M5cet**. The interactive installer
+> auto-detects and migrates older CipherRoom installs.
+
+M5cet needs a long-running process because `/ws` is a persistent WebSocket
+signaling endpoint for WebRTC. Static-only hosts can serve the frontend, but
+they cannot run this backend unless you add a separate realtime service.
 
 ## Best options
 
@@ -8,59 +14,106 @@ CipherRoom needs a long-running process because `/ws` is a persistent WebSocket 
 2. Railway: import the repo; `railway.json` defines build, start, and health check.
 3. Render: import the repo; `render.yaml` defines the web service.
 4. Fly.io: run `fly launch --no-deploy`, keep the included `fly.toml`, then `fly deploy`.
-5. Cloudflare Workers + Durable Objects: good architecture for WebSocket signaling, but it requires rewriting `server/routes.ts` into a Worker/Durable Object.
+5. Cloudflare Workers + Durable Objects: viable for WebSocket signaling, but
+   requires rewriting `server/routes.ts` into a Worker / Durable Object.
 
-## Commands
-
-One-line Linux/Docker install:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh | sudo -E bash
-```
-
-With custom domain/port and **2 GB file transfer**:
+## One-line interactive install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh | sudo env \
-  DOMAIN=chat.example.com HOST_PORT=5000 \
-  MAX_ATTACHMENT_BYTES=2147483648 \
-  MAX_PEERS_PER_ROOM=16 \
-  bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
+  | sudo -E bash -s -- --install
 ```
 
-The installer clones or updates this Git repository, installs Docker when missing, writes a managed `docker-compose.yml`, builds the included `Dockerfile`, starts the app, and can install/configure Nginx with WebSocket upgrade headers.
+The installer:
 
-By default the container binds to `127.0.0.1` for reverse-proxy deployment. For a direct public Docker port use `BIND_ADDRESS=0.0.0.0 FIREWALL_OPEN=1`.
+- Detects an old CipherRoom checkout at `/opt/cipherroom-secure-chat`,
+  `/opt/cipherroom`, or `/srv/cipherroom`.
+- Stops the legacy compose stack (project names `cipherroom`,
+  `cipherroom-secure-chat`).
+- Snapshots `.env`, `data/`, `docker-compose.yml`, and any matching Nginx site
+  to `/var/backups/m5cet/<timestamp>/`.
+- Migrates the directory in-place to `/opt/m5cet` (overrideable with
+  `INSTALL_DIR=...`).
+- Installs Docker Engine + Compose plugin if missing.
+- Writes a managed `docker-compose.yml` (or asks before overwriting an unmanaged
+  one), builds, and starts the service.
+- Optionally installs Nginx + certbot and provisions WSS via Let's Encrypt.
+- Runs post-install probes against `/api/health`, `/api/modules`,
+  `/api/push/status`, optionally `/api/events/recent`, plus a WebSocket
+  upgrade handshake on `/ws`.
+
+### Modes
+
+- **Default (interactive)** — confirms install dir, branch, port, domain, and
+  Nginx/TLS choices.
+- **`--yes`** — accepts every yes/no prompt; values still prompt for input.
+- **`--non-interactive`** — never prompts; uses defaults / env vars only.
+- **`--dry-run`** — prints planned actions, touches nothing on disk.
+- **`--doctor` / `--self-test`** — read-only environment + health probes.
+- **Subcommands** — `--status`, `--logs`, `--restart`, `--stop`, `--uninstall`.
+
+### Common variants
+
+Custom domain, public Docker port:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
+  | sudo env DOMAIN=chat.example.com BIND_ADDRESS=0.0.0.0 FIREWALL_OPEN=1 \
+    bash -s -- --non-interactive --yes
+```
 
 Debian/Ubuntu with Nginx reverse proxy:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh \
-  | sudo env DOMAIN=chat.example.com ENABLE_NGINX=1 bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
+  | sudo env DOMAIN=chat.example.com \
+    bash -s -- --non-interactive --yes --enable-nginx
 ```
 
-Debian/Ubuntu with Nginx + Let's Encrypt HTTPS/WSS:
+Debian/Ubuntu with Nginx + Let's Encrypt HTTPS / WSS:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh \
-  | sudo env DOMAIN=chat.example.com ENABLE_NGINX=1 ENABLE_TLS=1 ACME_EMAIL=admin@example.com bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
+  | sudo env DOMAIN=chat.example.com ACME_EMAIL=admin@example.com \
+    bash -s -- --non-interactive --yes --enable-nginx --enable-tls
 ```
 
-Nginx support in `install.sh`:
+Dry run (preview the upgrade without touching the host):
 
-- Installs `nginx` on Debian/Ubuntu when `ENABLE_NGINX=1`, or automatically when `DOMAIN` is set.
-- Installs `certbot python3-certbot-nginx` and runs `certbot --nginx` when `ENABLE_TLS=1`.
-- Writes `/etc/nginx/sites-available/<SERVICE_NAME>.conf` and enables it in `sites-enabled`.
-- Preserves non-managed Nginx configs unless `FORCE_NGINX=1`.
-- Proxies `/` and `/ws` to `127.0.0.1:<HOST_PORT>`.
-- Sets `Upgrade`/`Connection` headers, `proxy_http_version 1.1`, `proxy_buffering off`, and 3600s WebSocket timeouts.
-- Adds no-cache headers.
+```bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
+  | sudo -E bash -s -- --dry-run --yes
+```
 
-WebRTC note:
+Doctor (read-only diagnostics on an existing install):
 
-Nginx handles only the HTTP app and WebSocket signaling endpoint. WebRTC DataChannel traffic is negotiated through `/ws` but then flows browser-to-browser through ICE. HTTPS/WSS is recommended because WebRTC APIs require a secure context outside `localhost`. For restrictive NAT/firewall environments, add a TURN server to the app ICE server configuration — see `VITE_TURN_*` below.
+```bash
+sudo -E /opt/m5cet/install.sh --doctor
+```
 
-Local production:
+### Nginx behavior in `install.sh`
+
+- Installs `nginx` on Debian/Ubuntu when `--enable-nginx` is passed (or
+  automatically when `DOMAIN` is set and `ENABLE_NGINX=auto`).
+- Installs `certbot python3-certbot-nginx` and runs `certbot --nginx` when
+  `--enable-tls` (or `ENABLE_TLS=1`) is set.
+- Writes `/etc/nginx/sites-available/m5cet.conf` and enables it in
+  `sites-enabled`.
+- Preserves non-managed configs unless `FORCE_NGINX=1` (or you confirm at the
+  prompt). A timestamped `.bak` is taken before any overwrite.
+- Proxies `/` and `/ws` to `127.0.0.1:<HOST_PORT>` with
+  `Upgrade`/`Connection` headers, `proxy_http_version 1.1`,
+  `proxy_buffering off`, and 3600s WebSocket timeouts.
+- Adds no-cache and `X-Robots-Tag: noindex, nofollow` headers.
+
+### WebRTC note
+
+Nginx handles only the HTTP app and the `/ws` signaling endpoint. WebRTC
+DataChannel and media are negotiated through `/ws` but flow browser-to-browser
+through ICE. HTTPS / WSS is required outside of `localhost`. For restrictive
+NAT/firewall environments add a TURN server to the app ICE config.
+
+### Local production
 
 ```bash
 npm ci
@@ -69,33 +122,33 @@ npm run build
 PORT=5000 npm start
 ```
 
-Docker:
+### Docker (manual)
 
 ```bash
-docker build -t cipherroom .
-docker run --rm -p 5000:5000 -e PORT=5000 -e MAX_ATTACHMENT_BYTES=2147483648 cipherroom
+docker build -t m5cet .
+docker run --rm -p 5000:5000 -e PORT=5000 m5cet
 ```
 
-Render:
+### Render
 
 ```text
 Connect GitHub repo -> New Web Service -> Render reads render.yaml.
 ```
 
-Railway:
+### Railway
 
 ```text
 Connect GitHub repo -> Deploy. Railway reads railway.json.
 ```
 
-Fly.io:
+### Fly.io
 
 ```bash
-fly launch --no-deploy --name cipherroom-secure-chat --region fra
+fly launch --no-deploy --name m5cet --region fra
 fly deploy
 ```
 
-DigitalOcean App Platform:
+### DigitalOcean App Platform
 
 ```text
 Create App -> GitHub repo -> Dockerfile deploy, or use .do/app.yaml as the app spec.
@@ -103,79 +156,39 @@ Create App -> GitHub repo -> Dockerfile deploy, or use .do/app.yaml as the app s
 
 ## Optional environment variables
 
-Všechny jsou volitelné. Aplikace funguje i bez nich — pouze povolují rozšířený režim.
+These are all optional. The app works without them — they only enable the
+server-enhanced mode features.
 
-| Proměnná | Default | Popis |
-| --- | --- | --- |
-| `DATABASE_URL` | unset | `sqlite:./path` — perzistentní event log přes `better-sqlite3`. |
-| `LOG_EVENTS` | `0` | `1` = povolí zápis eventů do DB nebo paměti. |
-| `MAX_ATTACHMENT_BYTES` | `2147483648` (2 GB) | Maximální velikost jedné přílohy v B. |
-| `MAX_PEERS_PER_ROOM` | `16` | Hard cap na počet peerů v jedné místnosti. |
-| `FRAME_BUDGET_PER_SEC` | `20` | Token-bucket rate-limit: zpráv/s na peer. |
-| `MAX_FRAME_BYTES` | `131072` | Maximální velikost jednoho signaling rámce. |
-| `WS_HEARTBEAT_MS` | `25000` | WS ping interval pro detekci mrtvých spojení. |
-| `VAPID_PUBLIC_KEY` | unset | VAPID klíč pro web push subscribe endpoint. |
-| `VAPID_PRIVATE_KEY` | unset | VAPID klíč pro web push subscribe endpoint. |
+- `DATABASE_URL` — connection string for an event-logging backend. When unset,
+  events fall back to an in-memory ring buffer (cleared on restart). Only opaque
+  metadata is logged; message contents never leave the encrypted DataChannel.
+- `LOG_EVENTS` — set `1` to enable event logging. Default off.
+- `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` — VAPID key pair for web push
+  notifications. Both must be set for `/api/push/subscribe` to accept
+  subscriptions.
 
-### Frontend (`VITE_*` build proměnné)
+Generate VAPID keys with `npx web-push generate-vapid-keys` before passing
+them to the installer or the container.
 
-| Proměnná | Default | Popis |
-| --- | --- | --- |
-| `VITE_SIGNALING_URL` | autodetect | Externí WS URL pro statický frontend. |
-| `VITE_TURN_URL` | unset | `turn:host:3478` — TURN relay fallback. |
-| `VITE_TURN_USERNAME` | unset | TURN uživatel. |
-| `VITE_TURN_CREDENTIAL` | unset | TURN heslo/credential. |
-| `VITE_MAX_ATTACHMENT_BYTES` | `2147483648` | Limit pro klientskou kontrolu (musí ≤ server). |
+Endpoints exposed for embedders:
 
-Generate VAPID keys with `npx web-push generate-vapid-keys` before passing them to the installer or the container.
-
-For TURN server: self-hosted `coturn` je doporučený. Příklad na Ubuntu:
-
-```bash
-sudo apt-get install -y coturn
-# /etc/turnserver.conf:
-listening-port=3478
-realm=turn.example.com
-use-auth-secret
-static-auth-secret=replace-me
-```
-
-A nastav v `install.sh`:
-
-```bash
-VITE_TURN_URL="turn:turn.example.com:3478?transport=tcp" \
-VITE_TURN_USERNAME="$(date +%s):cipherroom" \
-VITE_TURN_CREDENTIAL="$(echo -n "$(date +%s):cipherroom:replace-me" | openssl dgst -binary -sha1 | base64)" \
-bash install.sh
-```
-
-## HTTP endpoints (no message persistence, read-only metadata)
-
-- `GET /api/health` — health probe + counts (rooms/peers).
+- `GET /api/health` — health probe.
 - `GET /api/modules` — module manifest (modes, features, push, events).
-- `GET /api/push/status` — VAPID status.
-- `POST /api/push/subscribe` — uloží subscription pokud má VAPID klíče.
-- `POST /api/events` — zapíše event (jen metadata), když `LOG_EVENTS=1`.
-- `GET /api/events/recent` — posledních N eventů (z DB nebo paměti).
+- `GET /api/push/status` — whether push is configured and the public VAPID key.
+- `POST /api/push/subscribe` — accepts a `{subscription}` body when push is
+  configured.
+- `POST /api/events` — records an event when `LOG_EVENTS=1`.
+- `GET /api/events/recent` — returns the recent ring buffer when logging is on.
+- `GET /WSS /ws` — the WebRTC signaling endpoint (101 Switching Protocols).
 
-## WebSocket signaling endpoint (`/ws`)
+The frontend exposes `window.CipherRoomAPI` (kept under that name for
+compatibility) with `capabilities`, `modules()`, `pushStatus()`, `recordEvent()`,
+and `on()` for downstream embedders.
 
-- Binární/textový WebSocket protokol.
-- Heartbeat: server posílá WS ping každých 25 s.
-- Aplikační heartbeat: klient může poslat `{"type":"ping","ts":…}` a dostane `{"type":"pong",…}`.
-- **Auto-reconnect**: klient automaticky naváže znovu při ztrátě spojení s exponenciálním backoff 0.5–30 s.
+## Netlify / Vercel note
 
-## Frontend embed API
-
-Vystaveno jako `window.CipherRoomAPI`:
-
-- `version: "1.1.0"`
-- `capabilities` — runtime feature detection.
-- `modules(): Promise<ModuleManifest>` — info o server-side feature.
-- `pushStatus(): Promise<…>`
-- `recordEvent({kind, meta})` — log vlastní události (jen s `LOG_EVENTS=1`).
-- `on(event, fn)` — subscribe na interní eventy (`message`, …).
-
-## Netlify/Vercel note
-
-Netlify a Vercel jsou vhodné pro statický frontend. Pro signaling backend použijte jednoho z long-running hostů výše. Frontend lze nasměrovat na `VITE_SIGNALING_URL=wss://your-backend.example/ws`.
+Netlify and Vercel are good for the static frontend, but not this full app
+as-is because the signaling server requires persistent WebSocket connections.
+If you must use Netlify / Vercel, deploy only the frontend there and set
+`VITE_SIGNALING_URL=wss://your-backend.example/ws` at build time, with the
+backend running on one of the long-running hosts above.

@@ -2,6 +2,25 @@ import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
 import { rm, readFile } from "node:fs/promises";
 
+// Server deps to bundle to reduce openat(2) syscalls, which helps cold start
+// times. Keep this list in sync with package.json dependencies actually used
+// by the server. Do not add packages that are not declared dependencies.
+const allowlist = [
+  "date-fns",
+  "drizzle-orm",
+  "drizzle-zod",
+  "express",
+  "express-rate-limit",
+  "express-session",
+  "memorystore",
+  "passport",
+  "passport-local",
+  "web-push",
+  "ws",
+  "zod",
+  "zod-validation-error",
+];
+
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
@@ -9,17 +28,6 @@ async function buildAll() {
   await viteBuild();
 
   console.log("building server...");
-  // Bundle jen moduly, které chceme mít in-process (pro rychlý cold-start).
-  // Zbytek (express, ws, better-sqlite3) zůstává externí — typicky je pro Node
-  // lepší je ponechat jako CommonJS require.
-  const allowlist = [
-    "express",
-    "ws",
-    "better-sqlite3",
-    "dotenv",
-    "wouter",
-  ];
-
   const pkg = JSON.parse(await readFile("package.json", "utf-8"));
   const allDeps = [
     ...Object.keys(pkg.dependencies || {}),
@@ -33,6 +41,21 @@ async function buildAll() {
     bundle: true,
     format: "cjs",
     outfile: "dist/index.cjs",
+    define: {
+      "process.env.NODE_ENV": '"production"',
+    },
+    minify: true,
+    external: externals,
+    logLevel: "info",
+  });
+
+  console.log("building admin api...");
+  await esbuild({
+    entryPoints: ["server/admin.ts"],
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    outfile: "dist/admin.cjs",
     define: {
       "process.env.NODE_ENV": '"production"',
     },

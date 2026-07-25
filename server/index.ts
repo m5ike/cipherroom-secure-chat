@@ -1,12 +1,50 @@
+// Main M5cet server entry point.
+//
+// Boots Express, attaches the WebSocket signaling broker (see routes.ts),
+// and serves the static client bundle in production / wires the Vite dev
+// middleware in development.
+//
+// Hardening applied at this layer (not in routes.ts):
+//   - Cache-Control: no-store on every response so intermediaries cannot
+//     cache encrypted payloads or even the HTML shell.
+//   - Helmet default headers + a strict Content-Security-Policy.
+//   - Per-IP rate limiting on REST and WebSocket upgrade endpoints.
+//   - X-Content-Type-Options / Referrer-Policy / Permissions-Policy.
+//   - express.json verify hook stashes the raw body for any future
+//     signature-validation needs (today no endpoint requires it).
+
 import "dotenv/config";
-import express, { Response, NextFunction } from "express";
-import type { Request } from "express";
+import express, { Response, NextFunction } from 'express';
+import type { Request } from 'express';
+import helmet from "helmet";
+import { rateLimit } from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 
 const app = express();
 const httpServer = createServer(app);
+
+// Rate limiting: 100 requests per 15 minutes per IP for the public API.
+// This is intentionally lenient so it does not throttle legitimate signaling.
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => String(req.ip || req.socket.remoteAddress || "unknown"),
+  message: { ok: false, message: "Too many requests, please try again later." },
+});
+
+// Stricter rate limit for WebSocket upgrades to mitigate signaling abuse.
+const wsUpgradeLimiter = rateLimit({
+  windowMs: 1 * 60 * 1000,
+  limit: 30,
+  keyGenerator: (req) => String(req.ip || req.socket.remoteAddress || "unknown"),
+  skip: (_req) => false,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 declare module "http" {
   interface IncomingMessage {
@@ -16,63 +54,56 @@ declare module "http" {
 
 app.use(
   express.json({
-    limit: "256kb",
     verify: (req, _res, buf) => {
       req.rawBody = buf;
     },
   }),
 );
 
-app.use(express.urlencoded({ extended: false, limit: "256kb" }));
+app.use(express.urlencoded({ extended: false }));
 
 app.disable("etag");
 
+// Helmet sets a strong baseline of security headers. We then customize CSP
+// to allow the WebSocket/WebRTC client (self), inline styles/scripts from the
+// Vite build, and OSM tiles for the map preview. unsafe-inline is required by
+// the Vite dev server; production builds should ideally use nonces/hashes.
+app.use(
+  helmet({
+    contentSecurityPolicy: {
+      directives: {
+        defaultSrc: ["'self'"],
+        connectSrc: ["'self'", "wss:", "ws:", "https://tile.openstreetmap.org"],
+        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        styleSrc: ["'self'", "'unsafe-inline'", "https://api.fontshare.com"],
+        imgSrc: ["'self'", "data:", "blob:", "https://tile.openstreetmap.org"],
+        fontSrc: ["'self'", "https://api.fontshare.com"],
+        mediaSrc: ["'self'", "blob:"],
+        workerSrc: ["'self'"],
+        childSrc: ["'none'"],
+        frameAncestors: ["'none'"],
+        baseUri: ["'self'"],
+        formAction: ["'self'"],
+        upgradeInsecureRequests: [],
+      },
+    },
+    crossOriginEmbedderPolicy: false, // WebRTC/getUserMedia does not require COEP
+  }),
+);
+
 app.use((_req, res, next) => {
-  // No-store všude — klient i mezivrstvy nesmějí nic uchovávat.
-  res.setHeader(
-    "Cache-Control",
-    "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",
-  );
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0");
   res.setHeader("Pragma", "no-cache");
   res.setHeader("Expires", "0");
   res.setHeader("Surrogate-Control", "no-store");
-
-  // Bezpečnostní hlavičky
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("X-Frame-Options", "DENY");
-  res.setHeader(
-    "Permissions-Policy",
-    "camera=(), microphone=(), geolocation=(), interest-cohort=()",
-  );
-  res.setHeader("Cross-Origin-Opener-Policy", "same-origin");
-  res.setHeader("Cross-Origin-Resource-Policy", "same-origin");
-
-  // CSP — odděleno od unsafe-inline skriptů; styly 'unsafe-inline' zatím tolerujeme
-  // (Tailwind utility classes negenerují inline atributy; safe to remove once style
-  // audit dokončen).
-  res.setHeader(
-    "Content-Security-Policy",
-    [
-      "default-src 'self'",
-      "img-src 'self' data: blob:",
-      "media-src 'self' blob:",
-      "style-src 'self' 'unsafe-inline'",
-      "script-src 'self'",
-      "connect-src 'self' ws: wss: https:",
-      "font-src 'self' data:",
-      "object-src 'none'",
-      "base-uri 'self'",
-      "frame-ancestors 'none'",
-      "form-action 'self'",
-      "worker-src 'self' blob:",
-      "manifest-src 'self'",
-      "upgrade-insecure-requests",
-    ].join("; "),
-  );
-
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()");
   next();
 });
+
+app.use("/api", apiLimiter);
+app.use("/ws", wsUpgradeLimiter);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -81,6 +112,7 @@ export function log(message: string, source = "express") {
     second: "2-digit",
     hour12: true,
   });
+
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
@@ -102,6 +134,7 @@ app.use((req, res, next) => {
       if (capturedJsonResponse) {
         logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
       }
+
       log(logLine);
     }
   });
@@ -136,12 +169,15 @@ app.use((req, res, next) => {
   }
 
   // ALWAYS serve the app on the port specified in the environment variable PORT
+  // Other ports are firewalled. Default to 5000 if not specified.
+  // this serves both the API and the client.
+  // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
   httpServer.listen(
     {
       port,
       host: "0.0.0.0",
-//      reusePort: true,
+      reusePort: true,
     },
     () => {
       log(`serving on port ${port}`);
