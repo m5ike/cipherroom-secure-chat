@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>M5cet · admin</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background:#0f1217; color:#e7eaf0; }
+    header { background:#10141b; padding: 12px 18px; border-bottom: 1px solid #1f2733; display:flex; align-items:center; gap:10px;}
+    header h1 { font-size: 16px; margin: 0; flex:1; letter-spacing: .02em; }
+    main { padding: 18px; max-width: 1100px; margin: 0 auto; display:grid; gap:18px; }
+    section { background:#151a23; border:1px solid #1f2733; border-radius: 12px; padding: 14px; }
+    section h2 { font-size: 14px; margin: 0 0 10px 0; color:#9aa6b8; text-transform: uppercase; letter-spacing: .08em; }
+    label { display:block; font-size: 12px; margin-top: 8px; color:#9aa6b8; }
+    input, select, textarea { width: 100%; box-sizing: border-box; background:#0c1018; color:#e7eaf0; border:1px solid #2a3242; border-radius:8px; padding: 8px 10px; font: inherit; }
+    button { background:#3358d4; color:#fff; border:0; border-radius:8px; padding: 8px 12px; cursor:pointer; font: inherit; }
+    button.secondary { background:#2a3242; }
+    pre { background:#0c1018; color:#cad2dd; border-radius:8px; padding: 10px; overflow:auto; max-height: 320px; font-size: 12px; }
+    .row { display:flex; gap: 8px; flex-wrap: wrap; align-items:center; }
+    .ok { color:#7adb96; }
+    .err { color:#ff7d7d; }
+    code { font-family: ui-monospace, SFMono-Regular, monospace; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>M5cet · admin</h1>
+    <span id="status">disconnected</span>
+  </header>
+  <main>
+    <section>
+      <h2>Authentication</h2>
+      <label>Admin API base URL</label>
+      <input id="base" placeholder="http://localhost:5050" value="" />
+      <label>Bearer token (ADMIN_API_TOKEN)</label>
+      <input id="token" type="password" placeholder="set ADMIN_API_TOKEN env var" />
+      <div class="row" style="margin-top:10px;">
+        <button id="btnConnect">Connect</button>
+        <button class="secondary" id="btnHealth">Health</button>
+      </div>
+      <pre id="healthOut"></pre>
+    </section>
+
+    <section>
+      <h2>Metrics</h2>
+      <div class="row"><button id="btnMetrics">Refresh</button><button class="secondary" id="btnLogs">Recent logs</button><button class="secondary" id="btnClients">Clients</button></div>
+      <pre id="metricsOut"></pre>
+    </section>
+
+    <section>
+      <h2>Enqueue command</h2>
+      <label>Device ID</label>
+      <input id="devId" placeholder="e.g. abc123-deviceid" />
+      <label>Command</label>
+      <select id="cmdKind">
+        <option>refresh-settings</option>
+        <option>reconnect</option>
+        <option>purge-local</option>
+        <option>show-notification</option>
+        <option>run-diagnostic</option>
+        <option>download-file-from-admin</option>
+      </select>
+      <label>Payload JSON (optional)</label>
+      <textarea id="cmdPayload" rows="4" placeholder='{"title":"Hello","body":"From admin"}'></textarea>
+      <div class="row" style="margin-top:10px;">
+        <button id="btnEnqueue">Enqueue</button>
+        <button class="secondary" id="btnAudit">Show audit</button>
+      </div>
+      <pre id="cmdOut"></pre>
+    </section>
+
+    <section>
+      <h2>Push notifications</h2>
+      <label>Notification title</label>
+      <input id="pushTitle" value="M5cet · admin" />
+      <label>Body</label>
+      <input id="pushBody" value="Test push from admin GUI" />
+      <div class="row" style="margin-top:10px;">
+        <button id="btnTestPush">Send test push to all subscribers</button>
+      </div>
+      <pre id="pushOut"></pre>
+    </section>
+
+    <section>
+      <h2>Plugins</h2>
+      <button id="btnPlugins">Inspect plugins</button>
+      <pre id="pluginOut"></pre>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const STORAGE_KEY = "m5cet:admin:cfg";
+
+    function loadCfg() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch { return {}; }
+    }
+    function saveCfg(cfg) {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch {}
+    }
+
+    const cfg = loadCfg();
+    if (!cfg.base) cfg.base = window.location.origin;
+    $("base").value = cfg.base || "";
+    $("token").value = cfg.token || "";
+
+    async function api(path, opts = {}) {
+      const base = $("base").value.trim().replace(/\/$/, "");
+      const token = $("token").value.trim();
+      const res = await fetch(base + path, {
+        ...opts,
+        headers: {
+          "Content-Type": "application/json",
+          ...(opts.headers || {}),
+          ...(token ? { Authorization: "Bearer " + token } : {}),
+        },
+      });
+      const text = await res.text();
+      let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
+      return { ok: res.ok, status: res.status, json };
+    }
+
+    function show(el, data) {
+      $(el).textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    }
+
+    $("btnConnect").onclick = async () => {
+      saveCfg({ base: $("base").value.trim(), token: $("token").value.trim() });
+      const r = await api("/admin/health");
+      $("status").textContent = r.ok ? "connected" : "auth/connect failed (" + r.status + ")";
+      $("status").className = r.ok ? "ok" : "err";
+      show("healthOut", r.json);
+    };
+
+    $("btnHealth").onclick = async () => show("healthOut", (await api("/admin/health")).json);
+    $("btnMetrics").onclick = async () => show("metricsOut", (await api("/admin/metrics")).json);
+    $("btnLogs").onclick = async () => show("metricsOut", (await api("/admin/logs/recent?limit=30")).json);
+    $("btnClients").onclick = async () => show("metricsOut", (await api("/admin/clients")).json);
+    $("btnAudit").onclick = async () => show("cmdOut", (await api("/admin/commands/audit?limit=50")).json);
+    $("btnPlugins").onclick = async () => show("pluginOut", (await api("/admin/plugins/debug")).json);
+
+    $("btnEnqueue").onclick = async () => {
+      let payload = undefined;
+      const raw = $("cmdPayload").value.trim();
+      if (raw) {
+        try { payload = JSON.parse(raw); } catch (e) { return show("cmdOut", "Invalid JSON: " + e.message); }
+      }
+      const r = await api("/admin/commands/enqueue", {
+        method: "POST",
+        body: JSON.stringify({ kind: $("cmdKind").value, deviceId: $("devId").value.trim(), payload }),
+      });
+      show("cmdOut", r.json);
+    };
+
+    $("btnTestPush").onclick = async () => {
+      const r = await api("/admin/test/push", {
+        method: "POST",
+        body: JSON.stringify({ title: $("pushTitle").value, body: $("pushBody").value }),
+      });
+      show("pushOut", r.json);
+    };
+  </script>
+</body>
+</html>

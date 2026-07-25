@@ -1,95 +1,89 @@
-// Module manifest publikovaný na /api/modules.
-// Frontend (window.CipherRoomAPI) z něj zjišťuje, které volitelné featury
-// operátor povolil, bez odhalení tajemství.
+// Module manifest published at /api/modules.
+// Lets the frontend (window.CipherRoomAPI) discover which optional features
+// the operator has enabled without exposing secrets.
 
 export type ModuleManifest = {
   modes: { id: string; label: string; description: string }[];
-  features: Record<string, { enabled: boolean; reason?: string; details?: string }>;
+  features: Record<string, { enabled: boolean; reason?: string }>;
   push: {
     enabled: boolean;
     vapidPublicKey: string | null;
-    deliveryImplemented: boolean;
   };
   events: {
     enabled: boolean;
     backend: "disabled" | "memory" | "database";
   };
-  limits: {
-    maxPeersPerRoom: number;
-    frameBudgetPerSec: number;
-    maxAttachmentBytes: number;
+  turn: {
+    enabled: boolean;
+    // Public endpoint the client can call to receive TURN credentials.
+    // Credentials are only returned if the operator configured them server-side.
+    credentialUrl: string | null;
   };
 };
 
-export function buildModuleManifest(
-  eventsBackend: "disabled" | "memory" | "database",
-): ModuleManifest {
+export function buildModuleManifest(eventsBackend: "disabled" | "memory" | "database"): ModuleManifest {
   const vapidPublic = process.env.VAPID_PUBLIC_KEY?.trim() || "";
   const vapidPrivate = process.env.VAPID_PRIVATE_KEY?.trim() || "";
   const pushReady = vapidPublic.length > 0 && vapidPrivate.length > 0;
-  const maxAttachmentBytes = Number(process.env.MAX_ATTACHMENT_BYTES || 2 * 1024 ** 3); // 2 GB default
 
   return {
     modes: [
       {
         id: "light",
-        label: "Light · P2P",
+        label: "Light / P2P",
         description: "Pure WebRTC P2P. Server only forwards signaling frames.",
       },
       {
         id: "server",
         label: "Server-enhanced",
-        description: "Adds optional event metadata logging and push metadata.",
+        description: "Adds optional event metadata logging and push delivery.",
       },
     ],
     features: {
-      audio: {
-        enabled: true,
-        reason: "WebRTC audio uses the existing peer connection.",
-      },
-      attachments: {
-        enabled: true,
-        reason: "Files up to manifest.limits.maxAttachmentBytes travel encrypted via the DataChannel (chunked, no server).",
-        details: "Server acts only as signaling router; ciphertext never leaves the browser.",
-      },
+      audio: { enabled: true, reason: "WebRTC audio uses the existing peer connection (DTLS-SRTP)." },
+      video: { enabled: true, reason: "WebRTC video uses the existing peer connection (DTLS-SRTP)." },
+      attachments: { enabled: true, reason: "Inline data-URL up to 512 kB; chunked AES-GCM transfer for larger files." },
+      chunkedFiles: { enabled: true, reason: "Files split into 32 KiB AES-GCM chunks over DataChannel; per-user max configurable." },
       emoji: { enabled: true },
       linkify: { enabled: true },
-      preferences: {
-        enabled: true,
-        reason: "Stored only in this browser's localStorage.",
-      },
-      autoReconnect: {
-        enabled: true,
-        reason: "WebSocket signaling re-establishes automatically on transient drops.",
-      },
+      preferences: { enabled: true, reason: "Stored only in this browser's localStorage." },
+      connectionKeeper: { enabled: true, reason: "Configurable heartbeat strategy + reconnect with exponential backoff." },
+      adminCommands: { enabled: true, reason: "Allowlisted admin → client commands delivered over signaling channel." },
+      maps: { enabled: true, reason: "OpenStreetMap link sharing and continuous geolocation; no Leaflet bundle." },
+      nfc: { enabled: true, reason: "Web NFC read/write encrypted with PBKDF2/AES-GCM. Android Chrome only." },
+      speech: { enabled: true, reason: "Browser Web Speech API for TTS/STT and pitch-based revoice." },
       push: pushReady
-        ? { enabled: true, reason: "VAPID ready. Subscribe endpoint accepts registrations, but delivery worker is not part of this codebase." }
+        ? { enabled: true }
         : { enabled: false, reason: "Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable push." },
       eventLogging: {
         enabled: eventsBackend !== "disabled",
         reason:
           eventsBackend === "database"
-            ? "Events persist via SQLite (DATABASE_URL=sqlite:./path)."
+            ? "Events go to the configured DATABASE_URL backend."
             : eventsBackend === "memory"
-              ? "Events live in-memory only (no SQLite backend, no DATABASE_URL)."
+              ? "Events live in-memory only (no DATABASE_URL configured)."
               : "Set LOG_EVENTS=1 to enable.",
       },
+      turn: hasTurn()
+        ? { enabled: true, reason: "TURN server is configured for restrictive NAT/firewall environments." }
+        : { enabled: false, reason: "Set TURN_SERVER_URL (and credentials) to enable relay." },
     },
     push: {
       enabled: pushReady,
       vapidPublicKey: pushReady ? vapidPublic : null,
-      // První verze push delivery workeru NENÍ součástí tohoto kódu.
-      // Pravda = lze uložit subscription, ale doručení push vyžaduje extra service.
-      deliveryImplemented: false,
     },
     events: {
       enabled: eventsBackend !== "disabled",
       backend: eventsBackend,
     },
-    limits: {
-      maxPeersPerRoom: Number(process.env.MAX_PEERS_PER_ROOM || 16),
-      frameBudgetPerSec: Number(process.env.FRAME_BUDGET_PER_SEC || 20),
-      maxAttachmentBytes,
+    turn: {
+      enabled: hasTurn(),
+      credentialUrl: hasTurn() ? "/api/turn" : null,
     },
   };
+}
+
+function hasTurn() {
+  const url = process.env.TURN_SERVER_URL?.trim() || "";
+  return url.length > 0;
 }

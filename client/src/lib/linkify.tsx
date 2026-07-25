@@ -1,7 +1,6 @@
 import { Fragment, type ReactNode } from "react";
 
-// Povolujeme jen https:// — ftp:// je dnes nedůvěryhodný, chrome ho ani neotevře.
-const URL_PATTERN = /\b((?:https):\/\/[^\s<>"]+|www\.[^\s<>"]+)/gi;
+const URL_PATTERN = /\b((?:https?|ftp):\/\/[^\s<>"]+|www\.[^\s<>"]+)/gi;
 
 export function linkify(text: string): ReactNode {
   if (!text) return text;
