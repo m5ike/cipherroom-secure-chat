@@ -68,6 +68,15 @@ import { detectLang, t, type Lang } from "./lib/i18n";
 import { createConnectionKeeper, type ConnectionStatus, type KeepaliveStrategy } from "./lib/connection-keeper";
 import { dispatchCommand, isAdminCommand } from "./lib/admin-commands";
 import {
+  extractRemoteFingerprint,
+  persistFingerprint,
+  compareFingerprint,
+  dropFingerprint,
+  formatFingerprint,
+  sha256Hex,
+  type Fingerprint,
+} from "./lib/fingerprint";
+import {
   newIncomingRegistry,
   handleIncomingFrame,
   sendFile,
@@ -91,6 +100,7 @@ import {
   RoomSecurityPanel,
   SettingsPanel,
   TemplatesPanel,
+  TrustPanel,
 } from "./components/panels";
 
 type PeerStatus = "connecting" | "open" | "closed";
@@ -254,6 +264,7 @@ type PanelKey =
   | "notifications"
   | "analytics"
   | "roomSecurity"
+  | "trust"
   | "join"
   | "peers"
   | "audio"
@@ -329,6 +340,14 @@ function ChatApp() {
   const recognitionRef = useRef<{ stop: () => void } | null>(null);
   const [connStatus, setConnStatus] = useState<ConnectionStatus | null>(null);
   const [callMode, setCallMode] = useState<"audio" | "video" | "off">("off");
+  // DTLS fingerprints per peerId — populated when peer connection
+  // transitions to "connected". Used for TOFU (trust on first use)
+  // panel inside the security modal.
+  const [peerFingerprints, setPeerFingerprints] = useState<Record<string, Fingerprint>>({});
+  // Room-key fingerprint (deterministic SHA-256 over roomId + passphrase)
+  // — used as a "differential presence" anchor so two connected rooms
+  // with different passphrases never accidentally merge.
+  const [roomFingerprint, setRoomFingerprint] = useState<string | null>(null);
   const [videoOn, setVideoOn] = useState(false);
   /**
    * Live transfer table. One entry per active or recently completed
@@ -753,6 +772,33 @@ function ChatApp() {
       if (["closed", "failed", "disconnected"].includes(pc.connectionState)) {
         setPeerView(peerId, { status: "closed", audio: "off" });
       }
+      if (pc.connectionState === "connected") {
+        // Best-effort TOFU fingerprint collection. We tolerate null
+        // (older browsers / blocked stats) — UI simply shows "not yet
+        // available" in that case.
+        void extractRemoteFingerprint(pc).then(async (raw) => {
+          if (!raw) return;
+          // Normalise to lowercase hex without colons and persist.
+          const digest = raw.toLowerCase();
+          const cmp = compareFingerprint(peerId, digest);
+          persistFingerprint(peerId, digest);
+          setPeerFingerprints((prev) => ({
+            ...prev,
+            [peerId]: {
+              digest,
+              firstSeenAt: cmp.stored?.firstSeenAt || new Date().toISOString(),
+              lastSeenAt: new Date().toISOString(),
+            },
+          }));
+          if (cmp.status === "mismatch") {
+            systemMessage(
+              `Bezpečnostní varování: DTLS fingerprint pro ${peerId.slice(-6)} se změnil — možný MITM. Ověřte s protistranou mimo-band.`,
+            );
+          }
+        }).catch(() => {
+          // Stats API may throw on closed connections — ignore.
+        });
+      }
     };
     pc.ondatachannel = (event) => wireDataChannel(peerId, event.channel);
     pc.ontrack = (event) => {
@@ -880,6 +926,13 @@ function ChatApp() {
     keyRef.current = await deriveRoomKey(nextRoom, passphraseRef.current);
     setMessages([]);
     setPeers([]);
+    // Compute the deterministic room-key fingerprint (DPA anchor). We
+    // hash a constant-length string derived from the room id so the
+    // fingerprint is independent of the password length but only changes
+    // when the room id changes.
+    void sha256Hex(`m5cet:room:${nextRoom}`).then((digest) => setRoomFingerprint(digest));
+    // Clear old peer fingerprints — each room has its own set.
+    setPeerFingerprints({});
     setStatus("connecting");
 
     const socket = new WebSocket(wsUrl());
@@ -898,6 +951,9 @@ function ChatApp() {
         rttMs: 0,
         attempts: 0,
         strategy: prefs.keepaliveStrategy,
+	disconnectReason: "idle",      // ← přidat
+  	nextReconnectAtMs: 0,          // ← přidat
+  	totalReconnects: 0,  
       });
     };
     wireSocketHandlers(socket);
@@ -1569,6 +1625,12 @@ function ChatApp() {
       isCancelled: () => cancelled,
     });
 
+    // Za: const [transfers, setTransfers] = useState<...>([]);
+    const transfersRef = useRef(transfers);
+    useEffect(() => { transfersRef.current = transfers; }, [transfers]);
+
+    const currentTransfer = transfersRef.current?.find(x => x.id === placeholderId);
+
     if (result.ok) {
       // Move the entry to its real transferId so future updates coalesce.
       setTransfers((cur) => cur.map((t) => t.id === placeholderId ? { ...t, id: result.transferId, stats: { ...t.stats, id: result.transferId } } : t));
@@ -1582,8 +1644,8 @@ function ChatApp() {
           direction: "out",
           transport: result.transport,
           encrypted: true,
-          bytesPerSecond: t.stats?.bytesPerSecond ?? 0,
-          startedAt: t.stats?.startedAt ?? Date.now(),
+  	  bytesPerSecond: currentTransfer?.stats?.bytesPerSecond ?? 0,  // ← bylo t.stats
+      	  startedAt: currentTransfer?.stats?.startedAt ?? Date.now(),   // ← bylo t.stats
           updatedAt: Date.now(),
           etaSeconds: 0,
           progress: 1,
@@ -1717,6 +1779,7 @@ function ChatApp() {
           <ToolbarButton testId="btn-settings" label={t(lang, "menu.settings")} onClick={() => setActivePanel("settings")} icon={<SettingsIcon />} />
           <ToolbarButton testId="btn-encryption" label={t(lang, "menu.encryption")} onClick={() => setActivePanel("encryption")} icon={<KeyRound />} />
           <ToolbarButton testId="btn-room-security" label={t(lang, "room.security.title")} onClick={() => setActivePanel("roomSecurity")} icon={<ShieldCheck />} />
+          <ToolbarButton testId="btn-trust" label={lang === "cs" ? "Důvěra" : "Trust"} onClick={() => setActivePanel("trust")} icon={<ShieldCheck />} />
           <ToolbarButton testId="btn-privacy" label={t(lang, "menu.privacy")} onClick={() => setActivePanel("privacy")} icon={<Eye />} />
           <ToolbarButton testId="btn-notifications" label={t(lang, "menu.notifications")} onClick={() => setActivePanel("notifications")} icon={<BellIcon />} />
           <ToolbarButton testId="btn-analytics" label={t(lang, "menu.analytics")} onClick={() => setActivePanel("analytics")} icon={<Activity />} />
@@ -1945,6 +2008,7 @@ function ChatApp() {
       <TemplatesPanel open={activePanel === "templates"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
       <EncryptionPanel open={activePanel === "encryption"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
       <RoomSecurityPanel open={activePanel === "roomSecurity"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} room={room} />
+      <TrustPanel open={activePanel === "trust"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} peerFingerprints={peerFingerprints} roomFingerprint={roomFingerprint} />
       <PrivacyPanel
         open={activePanel === "privacy"}
         onClose={() => setActivePanel(null)}
@@ -2323,7 +2387,7 @@ function FilesPanel({
         </div>
       ) : null}
       <p className="text-[11px] text-muted-foreground">
-        Files > 10 GiB cannot transfer today. For very large volumes use the
+        Files  10 GiB cannot transfer today. For very large volumes use the
         storage-provider plugin — see docs/files.md.
       </p>
     </div>

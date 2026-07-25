@@ -20,6 +20,7 @@ import { Modal } from "./Modal";
 import { THEMES, FONT_FAMILIES, type ThemeId } from "@/lib/themes";
 import { langLabel, SUPPORTED_LANGS, t, type Lang } from "@/lib/i18n";
 import { DEFAULT_ROOM_SECURITY, type Preferences, type RoomSecurity } from "@/lib/preferences";
+import { Fingerprint, formatFingerprint, loadFingerprints } from "@/lib/fingerprint";
 
 type PanelBaseProps = {
   open: boolean;
@@ -499,6 +500,80 @@ export function RoomSecurityPanel({
           </Section>
         </>
       )}
+    </Modal>
+  );
+}
+
+// -----------------------------------------------------------------------
+// Trust panel — shows DTLS fingerprints per peer (TOFU) plus room DPA.
+// -----------------------------------------------------------------------
+type TrustPanelProps = PanelBaseProps & {
+  peerFingerprints: Record<string, Fingerprint>;
+  roomFingerprint?: string | null;
+};
+
+export function TrustPanel({ open, onClose, peerFingerprints, roomFingerprint, lang }: TrustPanelProps) {
+  const stored = loadFingerprints();
+  const entries = Object.entries({ ...stored, ...peerFingerprints });
+  return (
+    <Modal open={open} onClose={onClose} title={lang === "cs" ? "Důvěra & DTLS otisky" : lang === "de" ? "Vertrauen & DTLS-Fingerprints" : "Trust & DTLS fingerprints"}>
+      <Section
+        title={lang === "cs" ? "DTLS fingerprint TOFU" : "DTLS fingerprint TOFU"}
+        description={lang === "cs"
+          ? "Každý peer připojení má jedinečný SHA-256 otisk. Při prvním spojení se uloží. Při změně otisku dostanete varování — ověřte s protistranou přes Signal, telefon nebo osobně."
+          : "Each peer connection has a unique SHA-256 fingerprint. The first observed fingerprint is stored. If it later changes you get a warning — verify out of band."}
+        icon={<ShieldCheck className="h-4 w-4" />}
+      >
+        {entries.length === 0 ? (
+          <p className="text-sm text-muted-foreground" data-testid="trust-empty">
+            {lang === "cs" ? "Zatím žádné otisky — připojte se k místnosti." : "No fingerprints yet — join a room."}
+          </p>
+        ) : (
+          <ul className="space-y-3" data-testid="trust-list">
+            {entries.map(([peerId, fp]) => (
+              <li key={peerId} className="rounded-xl border border-border bg-background p-3 font-mono text-xs">
+                <div className="flex items-center justify-between">
+                  <span className="truncate font-semibold">{peerId.slice(-12)}</span>
+                  <span className="text-muted-foreground">
+                    {lang === "cs" ? "uloženo" : "stored"}: {fp.firstSeenAt.slice(0, 10)}
+                  </span>
+                </div>
+                <div className="mt-1 break-all text-[11px] leading-relaxed text-foreground" data-testid="trust-fingerprint">
+                  {formatFingerprint(fp.digest)}
+                </div>
+                <div className="mt-1 text-[10px] text-muted-foreground">
+                  {lang === "cs" ? "SHA-256 indikátor: " : "SHA-256 indicator: "}{fp.digest.slice(0, 8)}…{fp.digest.slice(-4)}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+      <Section
+        title={lang === "cs" ? "Detekce přítomnosti (DPA)" : "Presence detection (DPA)"}
+        description={lang === "cs"
+          ? "Room-key otisk slouží jako anti-spam. Identifikátor místnosti je deterministický z `roomId + passphrase`; změna hesla změní room-key."
+          : "Room-key fingerprint acts as a DPA anchor. The room id is deterministic from roomId + passphrase; rotating the passphrase rotates the room key."}
+        icon={<KeyRound className="h-4 w-4" />}
+      >
+        {roomFingerprint ? (
+          <>
+            <p className="text-xs text-muted-foreground">
+              {lang === "cs" ? "Room-key otisk (deterministický, ne fingerprint RTC)" : "Room-key fingerprint (deterministic, non-RTC)"}
+            </p>
+            <div
+              data-testid="room-fingerprint"
+              className="break-all rounded-xl border border-border bg-background p-3 font-mono text-xs"
+            >
+              {formatFingerprint(roomFingerprint)}
+            </div>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            {lang === "cs" ? "Připojte se k místnosti pro výpočet room-key otisku." : "Join a room to compute the room-key fingerprint."}
+          </p>
+        )}
+      </Section>
     </Modal>
   );
 }

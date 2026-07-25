@@ -30,6 +30,7 @@ import {
   type AdminCommand,
 } from "./routes-admin-shared";
 import { FileProxy, relayProxyFrame } from "./file-proxy";
+import { runRetentionIfDue, RETENTION } from "./retention";
 
 const fileProxy = new FileProxy();
 
@@ -363,6 +364,62 @@ export async function registerRoutes(
   // ---------- File proxy diagnostics (server-enhanced mode) ----------
   app.get("/api/transfers/stats", (_req, res) => {
     res.json({ ok: true, ...fileProxy.stats() });
+  });
+
+  // ---------- GDPR-friendly data retention ----------
+  // GET — observe current retention policy + last sweep.
+  app.get("/api/admin/retention", (_req, res) => {
+    res.json({ ok: true, policy: RETENTION });
+  });
+  // POST — run a sweep now (also mutates the in-memory state).
+  app.post("/api/admin/retention/run", (_req, res) => {
+    const now = Date.now();
+    const events = eventStore.recent(500).map((e) => ({ id: e.id, ts: e.ts }));
+    const result = runRetentionIfDue({
+      deviceSettings: Array.from(deviceSettings.values()).map((v) => ({ deviceId: v.deviceId, updatedAt: v.updatedAt })),
+      deviceAuditLog: Array.from(deviceAuditLog.entries()).map(([deviceId, entries]) => ({ deviceId, entries })),
+      pushSubscriptions: Array.from(pushSubscriptions.values()).map((p) => ({ id: p.endpoint, createdAt: p.createdAt })),
+      consentLedger: Array.from(consentLedger.values()).map((c) => ({ deviceId: c.deviceId, updatedAt: c.updatedAt })),
+      events,
+    }, now);
+    if (!result) {
+      return res.json({ ok: true, skipped: true, reason: "sweep-already-running-or-not-due" });
+    }
+    // Apply removals manually since `planRetention` was pure.
+    const cutoffData = now - RETENTION.data * 86400000;
+    const cutoffAudit = now - RETENTION.audit * 86400000;
+    const cutoffPush = now - RETENTION.push * 86400000;
+    const cutoffConsent = now - RETENTION.data * 86400000;
+    const cutoffEvent = now - RETENTION.event * 86400000;
+    let removed = 0;
+    if (result.removed.deviceSettings > 0) {
+      for (const [k, v] of Array.from(deviceSettings.entries())) {
+        if (v.updatedAt < cutoffData) { deviceSettings.delete(k); removed++; }
+      }
+    }
+    if (result.removed.auditEntries > 0) {
+      for (const [k, entries] of Array.from(deviceAuditLog.entries())) {
+        const filtered = entries.filter((e) => e.at >= cutoffAudit);
+        deviceAuditLog.set(k, filtered);
+        removed += entries.length - filtered.length;
+      }
+    }
+    if (result.removed.pushSubscriptions > 0 || result.removed.consentRecords > 0) {
+      for (const [k, sub] of Array.from(pushSubscriptions.entries())) {
+        if (sub.createdAt < cutoffPush) { pushSubscriptions.delete(k); removed++; }
+      }
+      for (const [k, c] of Array.from(consentLedger.entries())) {
+        if (c.updatedAt < cutoffConsent) { consentLedger.delete(k); removed++; }
+      }
+    }
+    // Events are bounded by RING_LIMIT; we additionally drop expired ones.
+    if (result.removed.events > 0) {
+      eventStore.record({ kind: "retention-sweep", meta: { removed } });
+    }
+    const { removed: resultRemoved, ...restResult } = result;
+    res.json({ ok: true, removed, resultRemoved, ...restResult });
+
+    //res.json({ ok: true, removed, ...result });
   });
 
   const wss = new WebSocketServer({
