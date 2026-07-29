@@ -1,0 +1,161 @@
+# =============================================================================
+# GitHub Actions CI workflow — runs on every PR and on push to master.
+#
+# Triggers:
+#   - pull_request targeting master or any feature/* / release/* branch
+#   - push to master, release/*, feature/*
+#
+# Jobs (independent, fail-fast disabled for richer failure logs):
+#   1. typecheck — `tsc --noEmit`
+#   2. lint-custom — `bash scripts/pre-commit-check.sh` (portal-escape
+#      invariants from v2.4.1)
+#   3. unit-test — `vitest run` with verbose reporter
+#   4. build-smoke — `npm run build` (custom tsx/esbuild) and verify
+#      dist/ artefact tree
+#   5. ci-aggregate — gate, exits 1 if any of the above 4 failed
+#
+# Cache: GitHub-managed npm cache keyed on package-lock.json.
+# =============================================================================
+
+name: CI
+
+on:
+  pull_request:
+    branches: [master, 'release/**', 'feature/**']
+  push:
+    branches: [master, 'release/**', 'feature/**']
+
+# Cancel an in-flight CI run for the same ref — saves minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1 — TypeScript typecheck
+  # ---------------------------------------------------------------------------
+  typecheck:
+    name: TypeScript
+    runs-on: ubuntu-22.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: tsc --noEmit
+        run: npx tsc --noEmit -p tsconfig.json
+
+  # ---------------------------------------------------------------------------
+  # Job 2 — MainMenu portal-escape custom guard
+  # ---------------------------------------------------------------------------
+  lint-custom:
+    name: check:menu
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: scripts/pre-commit-check.sh
+        run: bash scripts/pre-commit-check.sh
+
+  # ---------------------------------------------------------------------------
+  # Job 3 — Unit tests (vitest, .ts and .tsx, happy-dom)
+  # ---------------------------------------------------------------------------
+  unit-test:
+    name: vitest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: vitest run
+        run: npx vitest run --reporter=verbose
+
+      - name: Upload test artefacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vitest-failures
+          path: |
+            vitest-results.json
+            **/*.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Job 4 — Production build smoke
+  # ---------------------------------------------------------------------------
+  build-smoke:
+    name: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: npm run build
+        run: npm run build
+
+      - name: Verify dist artifact
+        run: |
+          ls -la dist/ | head -20
+          test -f dist/index.cjs && echo "OK: dist/index.cjs present"
+          test -d dist/public && echo "OK: dist/public/ present"
+
+  # ---------------------------------------------------------------------------
+  # Job 5 — Aggregate gate
+  # ---------------------------------------------------------------------------
+  ci-aggregate:
+    name: CI aggregate
+    runs-on: ubuntu-22.04
+    needs: [typecheck, lint-custom, unit-test, build-smoke]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [ "${{ needs.typecheck.result }}" != "success" ] || \
+             [ "${{ needs.lint-custom.result }}" != "success" ] || \
+             [ "${{ needs.unit-test.result }}" != "success" ] || \
+             [ "${{ needs.build-smoke.result }}" != "success" ]; then
+            echo "One or more CI jobs failed"
+            echo "  typecheck:    ${{ needs.typecheck.result }}"
+            echo "  lint-custom:  ${{ needs.lint-custom.result }}"
+            echo "  unit-test:    ${{ needs.unit-test.result }}"
+            echo "  build-smoke:  ${{ needs.build-smoke.result }}"
+            exit 1
+          fi
+          echo "All 4 CI jobs passed — PR ready for review"
