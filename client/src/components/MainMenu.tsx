@@ -313,6 +313,7 @@ function SpeedDial(props: {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const toggleBtnRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const previouslyFocused = useRef<HTMLElement | null>(null);
 
@@ -327,9 +328,19 @@ function SpeedDial(props: {
 
     function onPointerDown(event: PointerEvent | MouseEvent | TouchEvent) {
       if (!wrapperRef.current) return;
-      if (!wrapperRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      const target = event.target as Node | null;
+      if (!target) return;
+      // Toggle button: clicks inside the wrapperRef (e.g. on the toggle
+      // itself) are not outside-clicks.
+      if (wrapperRef.current.contains(target)) return;
+      // Portaled panel: since createPortal(..., document.body) puts the
+      // panel OUT of the wrapperRef subtree, wrapperRef.contains(target)
+      // is always false for panel clicks. Without this guard, the capture-
+      // phase pointerdown listener would call setOpen(false) before the
+      // <button onClick={...}> could run onOpen(...) in the bubble phase,
+      // so menu items would appear unresponsive on touch / mobile.
+      if (panelRef.current?.contains(target)) return;
+      setOpen(false);
     }
     function onKey(event: KeyboardEvent) {
       if (event.key === "Escape") {
@@ -441,6 +452,7 @@ function SpeedDial(props: {
       {open && typeof document !== "undefined"
         ? createPortal(
             <div
+              ref={panelRef}
               role="menu"
               id={menuId}
               aria-labelledby={triggerId}
