@@ -14,3 +14,9 @@ data.db-journal
 
 *.log
 .DS_Store
+
+# Tilde backups from editors / shell append-to-filename files
+*~
+# Common editor swap files
+.*.swp
+*.bak

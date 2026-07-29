@@ -5,6 +5,14 @@
 /* ---------------- Default (Glass Light) ---------------- */
 :root,
 :root[data-theme="glass"] {
+  /* === M5cet — stacking-context tokens (v2.4.1 release) ===
+     z-index hierarchy for the speed-dial panel so it always renders
+     in the top layer regardless of parent stacking context. */
+  --z-shell: 0;
+  --z-header: 40;
+  --z-menu-toggle: 60;
+  --z-menu-overlay: 9999;
+  --z-menu: 10000;
   --button-outline: rgba(0, 0, 0, 0.08);
   --badge-outline: rgba(0, 0, 0, 0.05);
   --opaque-button-border-intensity: -8;
@@ -153,6 +161,16 @@
 
   button, input, textarea, select { font: inherit; }
   button { cursor: pointer; }
+  /* Remove 300 ms tap delay on touch devices; see MDN. */
+  button, a, [role="button"], [tabindex="0"] {
+    touch-action: manipulation;
+  }
+  /* Prevent iOS callouts and accidental selection on long-press of toolbar items. */
+  nav[role="menubar"] button {
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
 
   :focus-visible {
     outline: 2px solid hsl(var(--ring));
@@ -245,9 +263,40 @@
   }
 
   /* Safe area insets for PWA */
-  .safe-px { padding-left: max(env(safe-area-inset-left), 0px); padding-right: max(env(safe-area-inset-right), 0px); }
-  .safe-pt { padding-top: max(env(safe-area-inset-top), 0px); }
-  .safe-pb { padding-bottom: max(env(safe-area-inset-bottom), 0px); }
+  /* Safe area insets for PWA — with fallback for iOS Safari < 11.2. */
+  @supports (padding: env(safe-area-inset-left)) {
+    .safe-px { padding-left: max(env(safe-area-inset-left), 0.5rem); padding-right: max(env(safe-area-inset-right), 0.5rem); }
+    .safe-pt { padding-top: max(env(safe-area-inset-top), 0.5rem); }
+    .safe-pb { padding-bottom: max(env(safe-area-inset-bottom), 0.5rem); }
+  }
+  .safe-px { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .safe-pt { padding-top: 0.5rem; }
+  .safe-pb { padding-bottom: 0.5rem; }
+
+  /* Speed-dial panel: make sure it never overflows the screen on any device.
+     On < 380px width we expand to near-full viewport. We also prepare for
+     the RTL edge-left positioning via the menu-panel rules below. */
+  .menu-panel {
+    --menu-max-height: min(80dvh, 36rem);
+    max-height: var(--menu-max-height);
+    /* Internal overflow is handled by .menu-panel ul[role="none"] below;
+       keep the panel itself visible to the toolbar. */
+    overflow: visible;
+    display: flex;
+    flex-direction: column;
+    /* contain: paint REMOVED — was creating a stacking context that trapped
+       the panel under the .toolbar / .app-header backdrop-filter layer.
+       v2.4.1 release: portal-escape fix. */
+    contain: layout style;
+  }
+  /* On very old browsers without CSS env() / dvh we degrade gracefully. */
+  @supports not (height: 1dvh) {
+    .menu-panel { --menu-max-height: 30rem; }
+  }
+  /* On small mobile screens, use maximum available vertical space. */
+  @media (max-height: 600px) {
+    .menu-panel { --menu-max-height: 95dvh; }
+  }
 
   /* ---------- Modernized utilities ---------- */
 
@@ -405,6 +454,100 @@
     .toolbar button > span:not(.sr-only):not([aria-hidden]) {
       display: none;
     }
+  }
+
+  /* ---------- Speed-dial menu (v2 rewrite) ----------
+     Hard-coded transforms/GPU layers are avoided unless the device
+     actually shows the floating panel. Animations are condensed to
+     a single opacity + transform property transition. */
+
+  /* The panel uses `position: fixed` with inline top/left/width set from
+     useElementRect hook. These utility classes only handle the visual
+     surface and entry rows.
+     v2.4.1 release: portal-escape fix — explicit position:fixed + z-index
+     so the panel escapes ANY parent stacking context (toolbar,
+     app-header backdrop-filter, app-shell). */
+  .menu-panel {
+    position: fixed !important;
+    z-index: var(--z-menu) !important;
+    isolation: auto !important;
+    border-radius: 1rem;
+    box-shadow:
+      0 4px 6px -1px hsl(0 0% 0% / 0.12),
+      0 12px 24px -8px hsl(0 0% 0% / 0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    .menu-panel {
+      box-shadow:
+        0 4px 6px -1px hsl(0 0% 0% / 0.32),
+        0 12px 24px -8px hsl(0 0% 0% / 0.40);
+    }
+  }
+
+  /* Entry row: 44 px touch target, gentle hover, current row gets a
+     tinted background. The accent dot is rendered only when the row is
+     currently active (aria-current="page"). */
+  .menu-panel button[role="menuitem"] {
+    min-height: 2.75rem;
+    line-height: 1.2;
+    text-align: start; /* logical prop → respects RTL */
+  }
+  .menu-panel button[role="menuitem"][aria-current="page"] {
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+
+  /* Subtle entrance — 1 transition property, short duration. Honors
+     reduced-motion automatically via @media query in `prefers-reduced-motion`. */
+  .menu-panel[data-motion="on"] {
+    opacity: 1;
+    transform: translate3d(0, 0, 0) scale(1);
+    transition: opacity 120ms ease-out, transform 120ms ease-out;
+  }
+  /* Initial state (when opening) — applied via inline style="--menu-init".
+     This CSS rule scopes the from-state to the first frame so anim works. */
+  .menu-panel[data-motion="on"][data-open="opening"],
+  .menu-panel[data-motion="on"][data-state="enter"] {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0) scale(0.98);
+  }
+
+  /* The toggle button rotates 90° when the menu is open (chevron-down
+     → chevron-up affordance). On reduced-motion the rotation is instant. */
+  .menu-toggle-rotate {
+    transition: transform 120ms ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .menu-toggle-rotate { transition: none; }
+  }
+
+  /* List viewport: scrollable, but never scrolls the page underneath. */
+  .menu-panel ul[role="none"] {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch; /* iOS momentum scroll */
+  }
+
+  /* Header chip ("Navigace" / current panel name) — slender, no chrome. */
+  .menu-panel header {
+    background: linear-gradient(
+      to bottom,
+      hsl(var(--card) / 0.4),
+      transparent
+    );
+  }
+
+  /* Close button: respects touch target minimum height. */
+  .menu-panel button[aria-label] {
+    min-height: 2.25rem;
+    min-width: 2.25rem;
+  }
+
+  /* RTL — when parent doc is rtl, mirror the speed-dial panel. */
+  [dir="rtl"] .menu-panel {
+    direction: rtl;
+  }
+  [dir="rtl"] .menu-toggle-bar-1 {
+    transform-origin: end;
   }
 }
 

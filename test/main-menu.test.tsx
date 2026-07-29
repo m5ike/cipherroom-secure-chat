@@ -136,4 +136,59 @@ describe("MainMenu", () => {
     fireEvent.mouseDown(document.body);
     expect(screen.queryByTestId("speeddial-menu")).toBeNull();
   });
+
+  // ---- v2.4.1 portal-escape invariants ----
+
+  it("speed-dial panel renders via createPortal into document.body", () => {
+    const onOpen = vi.fn();
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={onOpen} />);
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    const panel = screen.getByTestId("speeddial-menu");
+    expect(panel).toBeTruthy();
+    // Portal target: panel must be a direct child of <body>,
+    // NOT a descendant of the toggle's parent wrapper.
+    expect(document.body.contains(panel)).toBe(true);
+    const wrapper = screen.getByTestId("btn-menu-speeddial").parentElement;
+    expect(wrapper?.contains(panel)).toBe(false);
+  });
+
+  it("panel has the CSS --z-menu stacking token resolved to a high z-index", () => {
+    // Read index.css as raw text and assert --z-menu is defined
+    // with a numeric value >= 9999.
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const cssPath = path.resolve(
+      __dirname,
+      "..",
+      "client",
+      "src",
+      "index.css",
+    );
+    const css = fs.readFileSync(cssPath, "utf8");
+    const rootMatch = css.match(/:root[^{]*\{[^}]*--z-menu:\s*(\d+)/);
+    expect(rootMatch).not.toBeNull();
+    const zValue = Number(rootMatch![1]);
+    expect(zValue).toBeGreaterThanOrEqual(9999);
+  });
+
+  it(".menu-panel CSS rule explicitly declares position: fixed", () => {
+    // Static guard: the CSS rule must opt the panel into position:fixed.
+    // Otherwise it would inherit from the relative wrapper and be clipped
+    // by .toolbar.
+    const fs = require("fs") as typeof import("fs");
+    const path = require("path") as typeof import("path");
+    const cssPath = path.resolve(
+      __dirname,
+      "..",
+      "client",
+      "src",
+      "index.css",
+    );
+    const css = fs.readFileSync(cssPath, "utf8");
+    // Find every ".menu-panel {" block and require position:fixed in AT LEAST one
+    const menuPanelBlocks = css.match(/\.menu-panel\s*\{[^}]*\}/g) ?? [];
+    expect(menuPanelBlocks.length).toBeGreaterThan(0);
+    const hasFixed = menuPanelBlocks.some((b) => /position:\s*fixed/i.test(b));
+    expect(hasFixed).toBe(true);
+  });
 });
