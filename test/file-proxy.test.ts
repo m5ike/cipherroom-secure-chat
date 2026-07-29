@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { FileProxy, FILE_PROXY_MAX_BYTES } from "../server/file-proxy";
+import { FileProxy, FILE_PROXY_MAX_BYTES, relayProxyFrame } from "../server/file-proxy";
 
 describe("FileProxy", () => {
   function makeTransferId(seed: number): string {
@@ -82,14 +82,14 @@ describe("FileProxy", () => {
     const proxy = new FileProxy();
     const forward = vi.fn();
     const id = makeTransferId(7);
-    const beginR = require("../server/file-proxy").relayProxyFrame(proxy, "peer-A", {
+    const beginR = relayProxyFrame(proxy, "peer-A", {
       kind: "proxy-meta",
       transferId: id,
       iv: "A",
       ciphertext: "B",
     }, forward);
     expect(beginR.ok).toBe(true);
-    const pushR = require("../server/file-proxy").relayProxyFrame(proxy, "peer-A", {
+    const pushR = relayProxyFrame(proxy, "peer-A", {
       kind: "proxy-chunk",
       transferId: id,
       seq: 0,
@@ -97,7 +97,7 @@ describe("FileProxy", () => {
       ciphertext: "B",
     }, forward);
     expect(pushR.ok).toBe(true);
-    const endR = require("../server/file-proxy").relayProxyFrame(proxy, "peer-A", {
+    const endR = relayProxyFrame(proxy, "peer-A", {
       kind: "proxy-end",
       transferId: id,
     }, forward);

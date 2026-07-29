@@ -1,6 +1,7 @@
 node_modules/
 dist/
 .vite/
+package-lock.json
 
 # SQLite database files — never commit; exposes demo data at rest
 data.db
@@ -14,9 +15,3 @@ data.db-journal
 
 *.log
 .DS_Store
-
-# Tilde backups from editors / shell append-to-filename files
-*~
-# Common editor swap files
-.*.swp
-*.bak

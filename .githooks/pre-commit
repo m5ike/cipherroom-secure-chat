@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# =============================================================================
+# .githooks/pre-commit — thin wrapper to invoke scripts/pre-commit-check.sh
+# -----------------------------------------------------------------------------
+# Activate with:
+#   git config core.hooksPath .githooks
+# Bypass with:
+#   git commit --no-verify   (NOT recommended)
+# =============================================================================
+
+exec bash "$(git rev-parse --show-toplevel)/scripts/pre-commit-check.sh" "$@"

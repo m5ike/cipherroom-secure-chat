@@ -18,7 +18,9 @@
     "db:push": "drizzle-kit push",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "vitest run --config vitest.e2e.config.ts"
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "check:menu": "bash scripts/pre-commit-check.sh",
+    "check:menu:verbose": "bash -x scripts/pre-commit-check.sh"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

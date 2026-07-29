@@ -131,9 +131,16 @@ describe("handleIncomingFrame (file-meta/chunk/end)", () => {
   it("accepts arbitrarily large finite sizes including values >= 10 GiB", async () => {
     const key = await fixtureKey();
     // A 12 GiB synthetic file — used to be rejected; now accepted.
-    const file = { name: "huge.bin", size: 12 * 1024 ** 3, type: "application/octet-stream" } as unknown as File;
-    // Stub arrayBuffer so we don't actually allocate 12 GiB.
-    (file as unknown as { arrayBuffer(): Promise<ArrayBuffer> }).arrayBuffer = async () => new Uint8Array(0).buffer;
+    const file = {
+      name: "huge.bin",
+      size: 12 * 1024 ** 3,
+      type: "application/octet-stream",
+      // Stub slice() / arrayBuffer() so we never allocate the file.
+      // We pass `chunkSize` equal to the file size so the for-loop
+      // runs exactly one iteration and the receiver sees `totalChunks=1`.
+      slice() { return { arrayBuffer: async () => new Uint8Array(0).buffer }; },
+      arrayBuffer: async () => new Uint8Array(0).buffer,
+    } as unknown as File;
     const sendProxy = vi.fn(() => true);
     const result = await sendFile({
       key,
@@ -142,11 +149,10 @@ describe("handleIncomingFrame (file-meta/chunk/end)", () => {
       senderName: "S",
       channels: [],
       sendProxy,
+      chunkSize: 12 * 1024 ** 3, // one giant chunk
       onProgress: () => undefined,
       onStats: () => undefined,
     });
-    // We expect the call to *succeed* sending the meta frame; the loop
-    // over chunks will exit early because no chunks remain.
     expect(result.ok).toBe(true);
     expect(sendProxy).toHaveBeenCalled();
   });

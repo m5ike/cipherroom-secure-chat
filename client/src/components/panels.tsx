@@ -174,20 +174,114 @@ export function SettingsPanel({ open, onClose, prefs, setPrefs, lang }: PanelBas
           />
         </label>
       </Section>
-      <Section title={t(lang, "settings.menu.title")} icon={<Palette className="h-4 w-4" />}>
-        <Row label={t(lang, "settings.menu.display")} hint={t(lang, "settings.menu.display.hint")}>
-          <select
-            className={selectClass}
-            value={prefs.menuDisplay}
-            onChange={(event) => setPrefs({ menuDisplay: event.target.value as Preferences["menuDisplay"] })}
-            data-testid="select-menu-display"
-          >
-            <option value="inline">{t(lang, "settings.menu.inline")}</option>
-            <option value="tooltip">{t(lang, "settings.menu.tooltip")}</option>
-            <option value="speeddial">{t(lang, "settings.menu.speeddial")}</option>
-          </select>
-        </Row>
-        <Row label={t(lang, "settings.maxAttachment.title")} hint={t(lang, "settings.maxAttachment.hint")}>
+      <Section
+        title={t(lang, "settings.menu.title")}
+        description={t(lang, "settings.menu.display.hint")}
+        icon={<Palette className="h-4 w-4" />}
+      >
+        {(
+          [
+            { id: "icons",          iconOnly: true,  inline: false, tooltip: false },
+            { id: "text",           iconOnly: false, inline: false, tooltip: false },
+            { id: "icons-text",     iconOnly: false, inline: true,  tooltip: false },
+            { id: "icons-tooltip",  iconOnly: true,  inline: false, tooltip: true  },
+          ] as const
+        ).map((opt) => {
+          const selected = prefs.menuDisplay === opt.id;
+          const labelKey =
+            opt.id === "icons"         ? "settings.menu.icons"
+          : opt.id === "text"          ? "settings.menu.text"
+          : opt.id === "icons-text"    ? "settings.menu.iconsText"
+          :                                 "settings.menu.iconsTooltip";
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              onClick={() => setPrefs({ menuDisplay: opt.id as Preferences["menuDisplay"] })}
+              data-testid={`menu-display-${opt.id}`}
+              data-mode={opt.id}
+              data-current={selected ? "true" : undefined}
+              aria-pressed={selected}
+              className={`mb-2 grid w-full grid-cols-[1fr_auto] items-center gap-3 rounded-2xl border px-3 py-3 text-left transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${
+                selected
+                  ? "border-primary bg-primary/10 shadow-inner"
+                  : "border-border bg-background hover:bg-accent"
+              }`}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <span data-testid={`menu-display-title-${opt.id}`}>
+                    {t(lang, labelKey)}
+                  </span>
+                  {selected ? (
+                    <span
+                      className="inline-flex items-center gap-1 rounded-full bg-primary px-2 text-[10px] font-bold uppercase tracking-wide text-primary-foreground"
+                      aria-label={t(lang, "common.enable")}
+                    >
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" aria-hidden="true">
+                        <path d="M5 12l5 5L20 7" />
+                      </svg>
+                      {t(lang, "common.enable")}
+                    </span>
+                  ) : null}
+                </div>
+                <div className="mt-0.5 text-[11px] text-muted-foreground">
+                  {opt.id === "icons" && (lang === "cs"
+                    ? "Jen ikony — minimální šířka, ideální pro malé displeje."
+                    : lang === "de"
+                    ? "Nur Symbole — minimale Breite, ideal für kleine Bildschirme."
+                    : "Icons only — minimal width, ideal for small displays.")}
+                  {opt.id === "text" && (lang === "cs"
+                    ? "Jen text — přístupné popisky bez ikon."
+                    : lang === "de"
+                    ? "Nur Text — zugängliche Beschriftungen ohne Symbole."
+                    : "Text only — accessible labels without icons.")}
+                  {opt.id === "icons-text" && (lang === "cs"
+                    ? "Ikony i popisky vedle sebe — přehledný panel."
+                    : lang === "de"
+                    ? "Symbole und Beschriftungen nebeneinander — übersichtliches Panel."
+                    : "Icons + labels side-by-side — clear panel layout.")}
+                  {opt.id === "icons-tooltip" && (lang === "cs"
+                    ? "Ikony s popiskem při najetí — kompaktní ale přístupné."
+                    : lang === "de"
+                    ? "Symbole mit Hover-Beschriftung — kompakt aber zugänglich."
+                    : "Icons with hover labels — compact yet accessible.")}
+                </div>
+              </div>
+              {/* Live visual preview of the mode */}
+              <div
+                aria-hidden="true"
+                className="flex h-9 items-center gap-1 rounded-xl border border-border bg-card/60 px-1.5"
+              >
+                {opt.iconOnly ? (
+                  <>
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-muted/60" />
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-muted/60" />
+                    <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-muted/60" />
+                  </>
+                ) : (
+                  <>
+                    {opt.iconOnly ? null : (
+                      opt.iconOnly === false && !opt.inline && (
+                        <span className="px-2 text-[10px] font-mono">{lang === "cs" ? "Text" : "Text"}</span>
+                      )
+                    )}
+                    {opt.inline && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="9" /></svg>}
+                  </>
+                )}
+                {opt.tooltip && (
+                  <span className="rounded-md bg-muted/60 px-1.5 py-0.5 text-[9px] font-mono text-muted-foreground">tooltip</span>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </Section>
+      <Section
+        title={t(lang, "settings.maxAttachment.title")}
+        description={t(lang, "settings.maxAttachment.hint")}
+      >
+        <Row label={t(lang, "settings.maxAttachment.title")}>
           <select
             className={selectClass}
             value={prefs.maxAttachmentBytes === Number.MAX_SAFE_INTEGER ? "unlimited" : String(prefs.maxAttachmentBytes)}

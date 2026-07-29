@@ -1722,13 +1722,11 @@ function ChatApp() {
         }`}
         aria-hidden="true"
       />
-      {/* Top motorsport stripe */}
-      <div className="m5-stripe h-1 w-full" aria-hidden="true" />
-      {/* Top motorsport stripe */}
+      {/* Motorsport stripe */}
       <div className="m5-stripe h-1 w-full" aria-hidden="true" />
 
       {/* Top app bar */}
-      <header className="flex items-center gap-2 border-b border-border bg-card/80 px-3 py-2 backdrop-blur sm:px-4">
+      <header className="toolbar relative flex min-h-[3rem] flex-wrap items-center gap-2 border-b border-border bg-card/85 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/70 sm:px-4">
         <button
           type="button"
           onClick={() => setActivePanel("join")}
@@ -1773,7 +1771,12 @@ function ChatApp() {
           <span className="sm:hidden">{status === "joined" ? `${openPeerCount}` : status[0]}</span>
         </span>
 
-        <MainMenu mode={prefs.menuDisplay} lang={lang} onOpen={(panel) => setActivePanel(panel)} />
+        <MainMenu
+          mode={prefs.menuDisplay}
+          lang={lang}
+          currentPanel={activePanel}
+          onOpen={(panel) => setActivePanel(panel)}
+        />
       </header>
 
       {/* Full-screen chat area */}

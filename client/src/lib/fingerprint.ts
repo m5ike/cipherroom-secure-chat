@@ -61,7 +61,11 @@ export async function sha256Hex(buf: ArrayBuffer | Uint8Array | string): Promise
  */
 export function formatFingerprint(digest: string): string {
   if (!digest) return "";
-  const clean = digest.toLowerCase().replace(/[^0-9a-f]/g, "").padStart(64, "0");
+  // Strip whitespace, then whitelist lowercase hex. We do NOT
+  // pad short inputs — a fingerprint that lost prefix bytes must
+  // not silently turn into zeros (that would create ambiguous
+  // collision risk with an authentic empty-prefix digest).
+  const clean = digest.trim().toLowerCase().replace(/[^0-9a-f]/g, "");
   return clean.toUpperCase().match(/.{2}/g)?.join(":") ?? clean;
 }
 
