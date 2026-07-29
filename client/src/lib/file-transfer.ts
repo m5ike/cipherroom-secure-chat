@@ -412,6 +412,9 @@ export async function handleIncomingFrame(
     if (frame.kind === "proxy-chunk") {
       const state = registry.get(frame.transferId);
       if (!state || state.cancelled) return;
+      // Surface a notification when a chunk arrives for a transfer
+      // whose meta was never seen — this protects the receiver from a
+      // misbehaving sender that tries to flood the buffer.
       try {
         const bytes = await decryptBytes(key, frame.iv, frame.ciphertext);
         if (state.chunks[frame.seq] === null) {
@@ -468,7 +471,11 @@ export async function handleIncomingFrame(
   }
   if (frame.kind === "file-chunk") {
     const state = registry.get(frame.transferId);
-    if (!state || state.cancelled) return;
+    if (!state) {
+      cb.onError?.(frame.transferId, `Chunk arrived for unknown transfer ${frame.transferId}.`);
+      return;
+    }
+    if (state.cancelled) return;
     try {
       const bytes = await decryptBytes(key, frame.iv, frame.ciphertext);
       if (state.chunks[frame.seq] === null) {

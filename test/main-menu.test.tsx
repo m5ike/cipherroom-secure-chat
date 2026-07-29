@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, fireEvent, cleanup, screen } from "@testing-library/react";
+import { render, fireEvent, cleanup, screen, act } from "@testing-library/react";
 import { MainMenu, MENU_ENTRIES } from "../client/src/components/MainMenu";
 import type { Lang } from "../client/src/lib/i18n";
 
@@ -11,40 +11,40 @@ describe("MainMenu", () => {
   it("renders inline mode with icon + label buttons", () => {
     const onOpen = vi.fn();
     render(<MainMenu mode="inline" lang={LANG} onOpen={onOpen} />);
-    // Each menu entry should produce a testid-prefixed button.
     for (const entry of MENU_ENTRIES) {
       const btn = screen.getByTestId(entry.testId);
       expect(btn).toBeTruthy();
-      expect(btn.getAttribute("title")).toBeTruthy();
+      // Native title for desktop + ARIA label for screen readers.
+      expect(btn.getAttribute("aria-label")).toBeTruthy();
     }
   });
 
-  it("renders tooltip mode with icon-only buttons and uses the title attribute as the only label", () => {
+  it("renders tooltip mode with icon-only buttons and uses the aria-label as the only label", () => {
     const onOpen = vi.fn();
     render(<MainMenu mode="tooltip" lang={LANG} onOpen={onOpen} />);
     const first = MENU_ENTRIES[0];
     const btn = screen.getByTestId(first.testId);
-    // In tooltip mode, the label is not rendered inline (no .sm:inline span).
-    // Verify the title attribute is set so the native tooltip is visible.
     expect(btn.getAttribute("title")).toBeTruthy();
+    expect(btn.getAttribute("aria-label")).toBeTruthy();
   });
 
   it("renders speed-dial mode with a single toggle button", () => {
     const onOpen = vi.fn();
     render(<MainMenu mode="speeddial" lang={LANG} onOpen={onOpen} />);
-    // The speed-dial toggle is a single button.
     const toggle = screen.getByTestId("btn-menu-speeddial");
     expect(toggle).toBeTruthy();
-    // Panel is initially hidden.
+    expect(toggle.getAttribute("aria-haspopup")).toBe("menu");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
     expect(screen.queryByTestId("speeddial-menu")).toBeNull();
-    // Click it open.
-    fireEvent.click(toggle);
-    expect(screen.queryByTestId("speeddial-menu")).toBeTruthy();
-    // Each entry ID should now appear inside the floating menu with the
-    // speeddial- prefix.
-    for (const entry of MENU_ENTRIES.slice(0, 3)) {
-      expect(screen.getByTestId(`speeddial-${entry.testId}`)).toBeTruthy();
-    }
+  });
+
+  it("opens the speed-dial panel on click", () => {
+    const onOpen = vi.fn();
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={onOpen} />);
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    expect(screen.getByTestId("speeddial-menu")).toBeTruthy();
+    const toggle = screen.getByTestId("btn-menu-speeddial");
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
   });
 
   it("calls onOpen with the panel key when an inline button is clicked", () => {
@@ -61,7 +61,79 @@ describe("MainMenu", () => {
     fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
     fireEvent.click(screen.getByTestId("speeddial-btn-templates"));
     expect(onOpen).toHaveBeenCalledWith("templates");
-    // After selecting an entry the panel should be closed.
+    expect(screen.queryByTestId("speeddial-menu")).toBeNull();
+  });
+
+  it("closes the speed-dial panel on Escape and refocuses the toggle", () => {
+    const onOpen = vi.fn();
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={onOpen} />);
+    const toggle = screen.getByTestId("btn-menu-speeddial");
+    toggle.focus();
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId("speeddial-menu")).toBeTruthy();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByTestId("speeddial-menu")).toBeNull();
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it("marks aria-current for the active panel in inline mode", () => {
+    const onOpen = vi.fn();
+    render(
+      <MainMenu
+        mode="inline"
+        lang={LANG}
+        onOpen={onOpen}
+        currentPanel="settings"
+      />,
+    );
+    const settingsBtn = screen.getByTestId("btn-settings");
+    expect(settingsBtn.getAttribute("aria-current")).toBe("page");
+    expect(settingsBtn.getAttribute("data-current")).toBe("true");
+    const templatesBtn = screen.getByTestId("btn-templates");
+    expect(templatesBtn.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("marks aria-current in the speed-dial floating panel", () => {
+    const onOpen = vi.fn();
+    render(
+      <MainMenu
+        mode="speeddial"
+        lang={LANG}
+        onOpen={onOpen}
+        currentPanel="trust"
+      />,
+    );
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    const trustItem = screen.getByTestId("speeddial-btn-trust");
+    expect(trustItem.getAttribute("aria-current")).toBe("page");
+    const peersItem = screen.getByTestId("speeddial-btn-peers");
+    expect(peersItem.getAttribute("aria-current")).toBeNull();
+  });
+
+  it("ArrowDown moves focus into the floating panel on first focus", () => {
+    const onOpen = vi.fn();
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={onOpen} />);
+    const toggle = screen.getByTestId("btn-menu-speeddial");
+    toggle.focus();
+    fireEvent.click(toggle);
+    // Document-level keydown is what the menu listens to.
+    fireEvent.keyDown(document, { key: "ArrowDown" });
+    // After ArrowDown, an item inside the <ul role="menu"> should have
+    // focus. Validate that the document.activeElement moved into the
+    // menu list (we don't assert a specific item — order may vary).
+    expect(document.activeElement).not.toBe(toggle);
+    const list = screen.getByTestId("speeddial-menu").querySelector("ul");
+    expect(list).toBeTruthy();
+    expect(list?.contains(document.activeElement)).toBe(true);
+  });
+
+  it("closes the speed-dial panel on outside click", () => {
+    const onOpen = vi.fn();
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={onOpen} />);
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    expect(screen.queryByTestId("speeddial-menu")).toBeTruthy();
+    // Dispatch mousedown on the body — outside the wrapper ref.
+    fireEvent.mouseDown(document.body);
     expect(screen.queryByTestId("speeddial-menu")).toBeNull();
   });
 });

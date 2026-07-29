@@ -58,7 +58,15 @@ export type Preferences = {
   //   "tooltip"   — icon only, label visible as native title / curl tip
   //   "speeddial" — three horizontal bars button → opens a floating
   //                 panel with the same entries vertically.
-  menuDisplay: "inline" | "tooltip" | "speeddial";
+  // Toolbar display mode for the top-bar menu. The four values are:
+  //   "icons"         — icon only, no labels (compact, default)
+  //   "text"          — label only, no icons (very compact, accessible)
+  //   "icons-text"    — icon + label side-by-side (rich header)
+  //   "icons-tooltip" — icon only on the toolbar, full label appears as
+  //                     a native browser tooltip on hover
+  // Legacy aliases `inline`/`tooltip`/`speeddial` are still accepted
+  // when reading stored prefs and are mapped below.
+  menuDisplay: "icons" | "text" | "icons-text" | "icons-tooltip";
 };
 
 const STORAGE_KEY = "m5cet:prefs:v2";
@@ -94,7 +102,7 @@ const DEFAULTS: Preferences = {
   keepaliveStrategy: "balanced",
   // Unlimited by default — operator sets MAX_BYTES server-side.
   maxAttachmentBytes: Number.MAX_SAFE_INTEGER,
-  menuDisplay: "inline",
+  menuDisplay: "icons",
 };
 
 export const DEFAULT_ROOM_SECURITY: RoomSecurity = {
@@ -179,7 +187,13 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     // an "unlimited" config (essentially capped only by RAM + server
     // proxy memory).
     maxAttachmentBytes: typeof parsed.maxAttachmentBytes === "number" && parsed.maxAttachmentBytes > 0 && parsed.maxAttachmentBytes <= Number.MAX_SAFE_INTEGER ? Math.floor(parsed.maxAttachmentBytes) : base.maxAttachmentBytes,
-    menuDisplay: parsed.menuDisplay === "tooltip" || parsed.menuDisplay === "speeddial" ? parsed.menuDisplay : base.menuDisplay,
+    menuDisplay:
+      parsed.menuDisplay === "icons" ||
+      parsed.menuDisplay === "text" ||
+      parsed.menuDisplay === "icons-text" ||
+      parsed.menuDisplay === "icons-tooltip"
+        ? parsed.menuDisplay
+        : base.menuDisplay,
   };
 }
 

@@ -328,12 +328,83 @@
     border-radius: 8px;
   }
 
-  /* Glassmorphism for cards */
+  /* Glassmorphism for cards — auto-fallback to solid on browsers without
+     backdrop-filter support. */
   .glass-card {
     background: linear-gradient(180deg, hsl(var(--card) / 0.86), hsl(var(--card) / 0.66));
     backdrop-filter: blur(12px) saturate(140%);
     -webkit-backdrop-filter: blur(12px) saturate(140%);
     border: 1px solid hsl(var(--border) / 0.6);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .glass-card {
+      background: hsl(var(--card) / 0.96);
+    }
+  }
+
+  /* ---------- MainMenu (toolbar + speed-dial) ---------- */
+
+  /* Menu panel: solid + glassmorphism, positioned right under the toggle. */
+  .menu-panel {
+    background: hsl(var(--card) / 0.96);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+  }
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    .menu-panel {
+      background: hsl(var(--card));
+    }
+  }
+
+  /* RTL-safe alignment. When the document is right-to-left, the panel
+     should anchor to the left edge of the toggle. */
+  [dir="rtl"] .menu-panel {
+    right: auto;
+    left: 0;
+  }
+
+  /* Mobile-first: on very narrow screens, the speed-dial panel sticks
+     to the right edge but still respects 0.5 rem padding safety. */
+  @media (max-width: 380px) {
+    .menu-panel {
+      width: calc(100vw - 1rem);
+      max-width: 20rem;
+    }
+  }
+
+  /* Header toolbar: flex-wrap so very narrow screens push the menu onto
+     the next line instead of overflowing. */
+  .toolbar {
+    column-gap: 0.5rem;
+    row-gap: 0.25rem;
+    /* Use logical properties for RTL support. */
+    padding-inline-start: max(env(safe-area-inset-left), 0.75rem);
+    padding-inline-end: max(env(safe-area-inset-right), 0.75rem);
+  }
+  /* Group the speed-dial toggle from the inner brand chip so the layout
+     reads better even when the menu wraps. */
+  .toolbar > [data-testid="speeddial"] { margin-inline-start: auto; }
+
+  /* On tall, narrow viewports (portrait phones) we hide the brand tagline
+     to keep header height low. This is a progressive enhancement — the
+     tagline is preserved on landscape / wider displays. */
+  @media (max-width: 480px) and (max-aspect-ratio: 4/5) {
+    .toolbar [data-testid="button-brand"] .sm\:block { display: none; }
+  }
+
+  /* Buttons inside the toolbar get a min touch-target at all viewports. */
+  .toolbar button {
+    min-height: 2.75rem;
+    min-width: 2.75rem;
+  }
+
+  /* Hide tooltip inline labels when the screen is very narrow —
+     this is also the path MainMenu uses internally for `speeddial`
+     auto-switching. */
+  @media (max-width: 359px) {
+    .toolbar button > span:not(.sr-only):not([aria-hidden]) {
+      display: none;
+    }
   }
 }
 
@@ -342,7 +413,33 @@
   .pulse-dot::after,
   .marquee > div,
   .shimmer,
-  .effects-on :where(.chat-canvas)::after {
+  .effects-on :where(.chat-canvas)::after,
+  [data-testid="speeddial-menu"] {
     animation: none !important;
+    transition: none !important;
+  }
+  /* Disable active-scale tap feedback on touch devices. */
+  button:active {
+    transform: none !important;
+  }
+}
+
+/* ---------- Forced-colors (Windows high-contrast / Forced Colors mode) ----------
+   The browser replaces author colours with system palette; we harden the
+   toolbar so focus rings and active rows remain visible. */
+@media (forced-colors: active) {
+  .menu-panel,
+  .glass-card {
+    border-width: 2px;
+    border-style: solid;
+    border-color: CanvasText;
+  }
+  [data-testid="speeddial-menu"] button[aria-current="page"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+  button:focus-visible {
+    outline: 3px solid Highlight;
+    outline-offset: 2px;
   }
 }

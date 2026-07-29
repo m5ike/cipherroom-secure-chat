@@ -9,8 +9,14 @@
  */
 export function safeString(value: unknown, fallback: string, max = 96): string {
   if (typeof value !== "string") return fallback;
-  const trimmed = value.replace(/[^a-zA-Z0-9 ._-]/g, "").slice(0, max);
-  return trimmed || fallback;
+  // Allow only printable ASCII alphanumerics, single space, dot, dash,
+  // underscore. We intentionally reject every other whitespace
+  // (newline/tab/etc) for response-splitting safety. If the result is
+  // empty after sanitisation — or contains only spaces — return the
+  // fallback instead.
+  const cleaned = value.replace(/[^a-zA-Z0-9 ._-]/g, "").slice(0, max);
+  const compact = cleaned.trim();
+  return compact.length === 0 ? fallback : cleaned;
 }
 
 /**
@@ -50,11 +56,16 @@ export function sanitizeMeta(input: Record<string, unknown> | undefined): Record
 }
 
 /**
- * Whitelist an opaque id (room id, peer id, kind). Returns undefined if the input
- * is not a string after sanitization.
+ * Whitelist an opaque id (room id, peer id, kind). Returns undefined if the
+ * sanitisation yields an empty string OR a string with no alphanumeric
+ * characters (i.e. the id is composed solely of separators — a value
+ * like `"---"` carries no identifying information and is rejected to
+ * prevent collision with empty-prefix authentic ids).
  */
 export function safeId(value: unknown, max = 64): string | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.replace(/[^a-zA-Z0-9._-]/g, "").slice(0, max);
-  return trimmed || undefined;
+  if (!trimmed) return undefined;
+  if (!/[a-zA-Z0-9]/.test(trimmed)) return undefined;
+  return trimmed;
 }
