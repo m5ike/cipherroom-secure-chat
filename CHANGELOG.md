@@ -5,6 +5,50 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [2.4.2] – 2026-07-29
+
+### Opraveno
+- `MainMenu` (speed-dial): menuitems se po kliknutí nereagovaly na
+  dotykových zařízeních / úzkých viewportech. Capture-phase listener
+  `pointerdown` v `SpeedDial` zavíral portálovaný panel dříve, než
+  React stihnul doručit `onClick` handlery. Přidán `panelRef` pro
+  portálovaný container a do listeneru přidána kontrola
+  `panelRef.current?.contains(target)`, takže klik uvnitř portálu
+  nechal panel otevřený a forwardoval do Reactu.
+
+### Přidáno
+- `.github/workflows/ci.yml` — 4-job pipeline (typecheck, custom
+  guard `pre-commit-check.sh`, vitest s `.tsx` soubory, build
+  smoke + explicit aggregate gate) pro všechny PR a push na
+  master / release / feature větve.
+- `vitest.config.ts` — rozšíření `include` o `.tsx` soubory
+  (`{ts,tsx}`) a přidání `node_modules/**` do `exclude`.
+
+## [2.4.1] – 2026-07-29
+
+### Přidáno
+- Speed-dial panel pro `MainMenu`: integrace `createPortal(...)` z
+  `react-dom` pro render plovoucího menu do `document.body`,
+  `position: fixed !important` + `z-index: var(--z-menu)` (10000)
+  v `index.css`. Tím panel uniká ze stacking-contextu rodičů
+  (`.app-shell isolation: isolate`, `.app-header backdrop-filter`,
+  `.toolbar overflow: hidden`).
+- Nové CSS tokeny v `:root`: `--z-shell`, `--z-header`,
+  `--z-menu-toggle`, `--z-menu-overlay`, `--z-menu`.
+- Pre-commit guard `scripts/pre-commit-check.sh` — sedm invariant
+  + „Known gaps" reminder sekce, brání regresi fixu.
+- Vite hook `.githooks/pre-commit` — tenký wrapper na guard.
+- Tři nové invariant testy v `test/main-menu.test.tsx`:
+  panel v portálu, `--z-menu >= 9999`, `.menu-panel { position: fixed }`.
+
+### Změněno
+- `package.json` — přidány skripty `check:menu`,
+  `check:menu:verbose`.
+- `client/src/components/MainMenu.tsx` — reindent těla panelu
+  o +2 mezery pro konzistenci s novou strukturou v portálu.
+- `client/src/index.css` — `.menu-panel { contain: layout style }`
+  (bez `paint`), `overflow: visible` pro panel.
+
 ## [2.1.0-rc.1] – 2026-05-08
 
 Release-hardening kandidát na M5cet 2.1. Zaměřuje se na komentáře, dokumentaci
