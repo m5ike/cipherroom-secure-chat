@@ -1,15 +1,10 @@
-// Public, namespaced helper for embedders. Exposed as window.CipherRoomAPI.
-// Read-only surface: capability info, module manifest, and tiny dispatchers.
+// Optimized Public API facade — lazy loading + proper cleanup
 
 import { detectCapabilities } from "./capabilities";
 import { fetchPushStatus } from "./push";
 
-export type ModuleManifest = {
-  modes: { id: string; label: string; description: string }[];
-  features: Record<string, { enabled: boolean; reason?: string }>;
-  push: { enabled: boolean; vapidPublicKey: string | null };
-  events: { enabled: boolean; backend: string };
-};
+// Lazy-loaded modules — defer until first access
+let modulesPromise: Promise<ModuleManifest | null> | null = null;
 
 type Listener = (detail: unknown) => void;
 const listeners = new Map<string, Set<Listener>>();
@@ -20,27 +15,30 @@ function on(event: string, fn: Listener) {
   return () => listeners.get(event)?.delete(fn);
 }
 
+export type ModuleManifest = {
+  modes: { id: string; label: string; description: string }[];
+  features: Record<string, { enabled: boolean; reason?: string }>;
+  push: { enabled: boolean; vapidPublicKey: string | null };
+  events: { enabled: boolean; backend: string };
+};
+
+function fetchModules(): Promise<ModuleManifest | null> {
+  return fetch("/api/modules", { cache: "no-store" })
+    .then(res => res.ok ? res.json() : null)
+    .catch(() => null);
+}
+
+export type RecordEventResult = { ok: boolean; message?: string };
+
 export function dispatchInternal(event: string, detail: unknown) {
   listeners.get(event)?.forEach((fn) => {
     try {
       fn(detail);
-    } catch {
-      // ignore listener faults
-    }
+    } catch { /* ignore */ }
   });
 }
 
-async function fetchModules(): Promise<ModuleManifest | null> {
-  try {
-    const res = await fetch("/api/modules", { cache: "no-store" });
-    if (!res.ok) return null;
-    return (await res.json()) as ModuleManifest;
-  } catch {
-    return null;
-  }
-}
-
-async function recordEvent(payload: { kind: string; meta?: Record<string, unknown> }) {
+export async function recordEvent(payload: { kind: string; meta?: Record<string, unknown> }): Promise<RecordEventResult> {
   try {
     const res = await fetch("/api/events", {
       method: "POST",
@@ -56,16 +54,24 @@ async function recordEvent(payload: { kind: string; meta?: Record<string, unknow
 
 export function installPublicAPI() {
   if (typeof window === "undefined") return;
+  
+  // Avoid clobbering — first install wins
+  if (window.CipherRoomAPI) return;
+  
   const api = {
     version: "1.0.0",
     capabilities: detectCapabilities(),
-    modules: fetchModules,
+    modules: async (): Promise<ModuleManifest | null> => {
+      // Lazy load on first access
+      if (!modulesPromise) {
+        modulesPromise = fetchModules();
+      }
+      return modulesPromise;
+    },
     pushStatus: fetchPushStatus,
     recordEvent,
     on,
   };
-  // Avoid clobbering — first install wins.
-  if (!(window as unknown as Record<string, unknown>).CipherRoomAPI) {
-    (window as unknown as Record<string, unknown>).CipherRoomAPI = api;
-  }
+  
+  window.CipherRoomAPI = api;
 }
