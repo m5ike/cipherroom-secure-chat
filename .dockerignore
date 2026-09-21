@@ -21,3 +21,10 @@ docs
 test
 browser-only-firebase
 *.md
+
+# Installer state and generated files never belong in an image.
+.m5cet
+installer
+install.sh
+update.sh
+uninstall.sh

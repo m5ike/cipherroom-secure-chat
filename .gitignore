@@ -20,3 +20,6 @@ data.db-journal
 # Common editor swap files
 .*.swp
 *.bak
+
+# Written by install.sh inside an install directory
+.m5cet/

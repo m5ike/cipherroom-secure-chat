@@ -177,15 +177,18 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+  // HOST lets a native (non-container) install bind to loopback only when a
+  // reverse proxy sits in front. Default stays 0.0.0.0 (containers, PaaS).
+  const host = process.env.HOST?.trim() || "0.0.0.0";
   // No `reusePort`: it throws ENOTSUP on macOS, and sharing the port between
   // processes would split a room's peers across separate in-memory states.
   httpServer.listen(
     {
       port,
-      host: "0.0.0.0",
+      host,
     },
     () => {
-      log(`serving on port ${port}`);
+      log(`serving on ${host}:${port}`);
     },
   );
 })();
