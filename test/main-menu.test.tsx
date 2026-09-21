@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, cleanup, screen, act } from "@testing-library/react";
-import { MainMenu, MENU_ENTRIES } from "../client/src/components/MainMenu";
+import { MainMenu, MENU_ENTRIES, MENU_GROUPS, avatarGlyph } from "../client/src/components/MainMenu";
 import type { Lang } from "../client/src/lib/i18n";
 
 const LANG: Lang = "en";
@@ -50,8 +50,9 @@ describe("MainMenu", () => {
   it("calls onOpen with the panel key when an inline button is clicked", () => {
     const onOpen = vi.fn();
     render(<MainMenu mode="inline" lang={LANG} onOpen={onOpen} />);
-    const btn = screen.getByTestId(MENU_ENTRIES[1].testId); // settings
-    fireEvent.click(btn);
+    // Look the entry up by panel key: the display order is free to change.
+    const settings = MENU_ENTRIES.find((entry) => entry.panel === "settings")!;
+    fireEvent.click(screen.getByTestId(settings.testId));
     expect(onOpen).toHaveBeenCalledWith("settings");
   });
 
@@ -135,6 +136,61 @@ describe("MainMenu", () => {
     // Dispatch mousedown on the body — outside the wrapper ref.
     fireEvent.mouseDown(document.body);
     expect(screen.queryByTestId("speeddial-menu")).toBeNull();
+  });
+
+  // ---- grouping + user chip ----
+
+  it("keeps every entry in exactly one known group, contiguously", () => {
+    const known = MENU_GROUPS.map((g) => g.id);
+    const seen: string[] = [];
+    for (const entry of MENU_ENTRIES) {
+      expect(known).toContain(entry.group);
+      if (seen[seen.length - 1] !== entry.group) {
+        // a group may start only once — otherwise dividers/headings would repeat
+        expect(seen).not.toContain(entry.group);
+        seen.push(entry.group);
+      }
+    }
+    expect(seen).toEqual(known);
+  });
+
+  it("separates the toolbar clusters with dividers and renders profile as the user chip", () => {
+    render(<MainMenu mode="icons" lang={LANG} onOpen={vi.fn()} user={{ name: "Alice", avatar: "🦊" }} />);
+    const nav = screen.getByTestId("main-nav");
+    // one divider between each pair of groups + one in front of the user chip
+    expect(nav.querySelectorAll('[role="separator"]').length).toBe(MENU_GROUPS.length);
+    const chip = screen.getByTestId("btn-profile");
+    expect(chip.className).toContain("user-chip");
+    expect(chip.textContent).toContain("Alice");
+    expect(chip.textContent).toContain("🦊");
+    expect(chip.getAttribute("aria-label")).toContain("Alice");
+  });
+
+  it("opens the profile panel from the user chip", () => {
+    const onOpen = vi.fn();
+    render(<MainMenu mode="icons" lang={LANG} onOpen={onOpen} user={{ name: "Alice" }} />);
+    fireEvent.click(screen.getByTestId("btn-profile"));
+    expect(onOpen).toHaveBeenCalledWith("profile");
+  });
+
+  it("shows the user and one heading per group inside the speed-dial panel", () => {
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={vi.fn()} user={{ name: "Alice" }} />);
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    const panel = screen.getByTestId("speeddial-menu");
+    expect(screen.getByTestId("speeddial-user").textContent).toContain("Alice");
+    expect(panel.querySelectorAll(".menu-group-label").length).toBe(MENU_GROUPS.length);
+    // headings must not become focus stops: every menuitem is still a button
+    expect(panel.querySelectorAll('[role="menuitem"]').length).toBe(MENU_ENTRIES.length);
+  });
+
+  it("never turns an avatar URL into a glyph (no remote fetch, no spoofed text)", () => {
+    expect(avatarGlyph({ name: "Alice", avatar: "🦊" })).toBe("🦊");
+    expect(avatarGlyph({ name: "alice" })).toBe("A");
+    expect(avatarGlyph({ name: "Alice", avatar: "https://evil.example/x.png" })).toBe("A");
+    expect(avatarGlyph({ name: "Alice", avatar: "data:image/png;base64,AAAA" })).toBe("A");
+    expect(avatarGlyph({ name: "Alice", avatar: "a-long-word" })).toBe("A");
+    expect(avatarGlyph({ name: "" })).toBe("?");
+    expect(avatarGlyph(undefined)).toBe("?");
   });
 
   // ---- v2.4.1 portal-escape invariants ----

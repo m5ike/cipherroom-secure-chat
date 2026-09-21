@@ -24,21 +24,8 @@
   --card: 0 0% 100%;
   --card-foreground: 222 28% 14%;
   --card-border: 214 20% 88%;
-  --sidebar: 210 40% 96%;
-  --sidebar-foreground: 222 28% 14%;
-  --sidebar-border: 214 18% 84%;
-  --sidebar-primary: 220 90% 56%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 220 60% 95%;
-  --sidebar-accent-foreground: 222 28% 14%;
-  --sidebar-ring: 220 90% 56%;
-  --popover: 0 0% 100%;
-  --popover-foreground: 222 28% 14%;
-  --popover-border: 214 20% 88%;
   --primary: 220 90% 56%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 210 28% 92%;
-  --secondary-foreground: 222 28% 14%;
   --muted: 210 28% 92%;
   --muted-foreground: 220 12% 42%;
   --accent: 220 60% 95%;
@@ -47,11 +34,6 @@
   --destructive-foreground: 0 0% 98%;
   --input: 214 16% 76%;
   --ring: 220 90% 56%;
-  --chart-1: 220 90% 56%;
-  --chart-2: 197 61% 34%;
-  --chart-3: 29 74% 38%;
-  --chart-4: 143 42% 31%;
-  --chart-5: 320 46% 43%;
   --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --font-serif: ui-serif, Georgia, serif;
   --font-mono: "SFMono-Regular", "Cascadia Code", "Liberation Mono", Menlo, monospace;
@@ -75,21 +57,8 @@
   --card: 220 26% 9%;
   --card-foreground: 210 16% 95%;
   --card-border: 220 18% 16%;
-  --sidebar: 220 28% 7%;
-  --sidebar-foreground: 210 16% 95%;
-  --sidebar-border: 220 16% 18%;
-  --sidebar-primary: 0 86% 52%;
-  --sidebar-primary-foreground: 0 0% 100%;
-  --sidebar-accent: 220 22% 14%;
-  --sidebar-accent-foreground: 210 16% 95%;
-  --sidebar-ring: 0 86% 52%;
-  --popover: 220 26% 9%;
-  --popover-foreground: 210 16% 95%;
-  --popover-border: 220 18% 16%;
   --primary: 0 86% 52%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 220 22% 14%;
-  --secondary-foreground: 210 16% 95%;
   --muted: 220 22% 13%;
   --muted-foreground: 215 14% 70%;
   --accent: 220 22% 16%;
@@ -111,21 +80,8 @@
   --card: 145 32% 6%;
   --card-foreground: 142 86% 78%;
   --card-border: 142 30% 16%;
-  --sidebar: 145 32% 5%;
-  --sidebar-foreground: 142 86% 78%;
-  --sidebar-border: 142 30% 18%;
-  --sidebar-primary: 142 86% 50%;
-  --sidebar-primary-foreground: 145 30% 4%;
-  --sidebar-accent: 142 30% 12%;
-  --sidebar-accent-foreground: 142 86% 78%;
-  --sidebar-ring: 142 86% 50%;
-  --popover: 145 32% 6%;
-  --popover-foreground: 142 86% 78%;
-  --popover-border: 142 30% 16%;
   --primary: 142 86% 50%;
   --primary-foreground: 145 30% 4%;
-  --secondary: 142 30% 12%;
-  --secondary-foreground: 142 86% 78%;
   --muted: 142 22% 10%;
   --muted-foreground: 142 30% 56%;
   --accent: 142 30% 14%;
@@ -454,6 +410,156 @@
     .toolbar button > span:not(.sr-only):not([aria-hidden]) {
       display: none;
     }
+  }
+
+  /* ---------- Toolbar groups + user chip ----------
+     Entries are clustered (room / talk / tools / app); a hairline divider
+     separates the clusters so 17 icons read as four short runs. */
+  .menu-divider {
+    align-self: center;
+    width: 1px;
+    height: 1.5rem;
+    margin-inline: 0.25rem;
+    background: hsl(var(--border));
+    flex: none;
+  }
+
+  /* The "user space": who you are in this room, distinct from the tools. */
+  .user-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    max-width: 12rem;
+    padding: 0.25rem 0.75rem 0.25rem 0.25rem;
+    border: 1px solid hsl(var(--border));
+    border-radius: 9999px;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-size: 0.8125rem;
+    font-weight: 600;
+    transition: background-color 150ms ease-out, border-color 150ms ease-out;
+  }
+  .user-chip:hover { background: hsl(var(--accent)); }
+  .user-chip:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+  .user-chip.is-current { border-color: hsl(var(--primary) / 0.6); background: hsl(var(--primary) / 0.12); }
+  .user-chip__avatar {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    flex: none;
+    border-radius: 9999px;
+    background: hsl(var(--primary) / 0.18);
+    color: hsl(var(--primary));
+    font-size: 0.875rem;
+    font-weight: 700;
+    line-height: 1;
+  }
+  .user-chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  @media (max-width: 900px) {
+    .user-chip { padding-inline-end: 0.25rem; }
+    .user-chip__name { display: none; }
+  }
+
+  /* Speed-dial panel: who is signed in, then one heading per cluster. */
+  .menu-user {
+    display: flex;
+    align-items: center;
+    gap: 0.625rem;
+    padding: 0.5rem 0.75rem 0.625rem;
+    border-bottom: 1px solid hsl(var(--border));
+    margin-bottom: 0.25rem;
+  }
+  .menu-group-label {
+    padding: 0.625rem 0.75rem 0.25rem;
+    font-size: 0.6875rem;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: hsl(var(--muted-foreground));
+  }
+
+  /* ---------- Composer ----------
+     One input bar: icon actions, a growing field, a compact round send
+     button. Replaces the 56 px tall / full-width-on-mobile send block. */
+  .composer {
+    padding: 0.625rem max(env(safe-area-inset-right), 0.75rem) max(env(safe-area-inset-bottom), 0.625rem) max(env(safe-area-inset-left), 0.75rem);
+  }
+  .composer-bar {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.25rem;
+    padding: 0.25rem;
+    border: 1px solid hsl(var(--input));
+    border-radius: 1.5rem;
+    background: hsl(var(--background));
+    transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
+  }
+  .composer-bar:focus-within {
+    border-color: hsl(var(--ring));
+    box-shadow: 0 0 0 2px hsl(var(--ring) / 0.35);
+  }
+  .composer-actions { display: flex; flex: none; }
+  .composer-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    flex: none;
+    border-radius: 9999px;
+    color: hsl(var(--muted-foreground));
+    transition: background-color 150ms ease-out, color 150ms ease-out;
+  }
+  .composer-icon-btn:hover:not(:disabled) { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+  .composer-icon-btn:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; }
+  .composer-icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .composer-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 2.5rem;
+    max-height: 9rem;
+    padding: 0.5rem 0.5rem;
+    border: 0;
+    outline: none;
+    resize: none;
+    background: transparent;
+    color: inherit;
+    /* 16px keeps iOS Safari from zooming the page when the field is focused */
+    font-size: 1rem;
+    line-height: 1.5rem;
+    field-sizing: content;
+  }
+  .composer-send {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    flex: none;
+    border-radius: 9999px;
+    background: hsl(var(--primary));
+    color: hsl(var(--primary-foreground));
+    transition: background-color 150ms ease-out, transform 100ms ease-out, opacity 150ms ease-out;
+  }
+  .composer-send:hover:not(:disabled) { background: hsl(var(--primary) / 0.9); }
+  .composer-send:active:not(:disabled) { transform: scale(0.94); }
+  .composer-send:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+  .composer-send:disabled { opacity: 0.4; cursor: not-allowed; }
+  .composer-hint {
+    margin: 0.375rem 0.75rem 0;
+    font-size: 0.6875rem;
+    line-height: 1rem;
+    color: hsl(var(--muted-foreground));
+  }
+  /* On phones every vertical pixel belongs to the conversation. */
+  @media (max-width: 640px) {
+    .composer-hint { display: none; }
+  }
+  /* Touch keyboards already have an emoji key; spend the width on the field. */
+  @media (pointer: coarse), (max-width: 400px) {
+    .composer-actions [data-testid="button-emoji"] { display: none; }
   }
 
   /* ---------- Speed-dial menu (v2 rewrite) ----------

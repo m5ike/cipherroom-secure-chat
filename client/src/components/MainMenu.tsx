@@ -49,6 +49,7 @@
 //                        narrow viewport regardless of pref.
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useId,
@@ -58,21 +59,16 @@ import {
   useState,
   type CSSProperties,
   type KeyboardEvent as ReactKeyboardEvent,
-  type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
 import {
   Activity,
   Bell,
-  ChevronLeft,
-  ChevronRight,
-  Compass,
   Eye,
   FileText,
   KeyRound,
   MapPin,
   Menu as MenuIcon,
-  MessageSquare,
   Mic,
   Nfc,
   Palette,
@@ -84,7 +80,6 @@ import {
   Users,
   Video,
   Volume2,
-  Wallet,
   X,
 } from "lucide-react";
 import type { PanelKey } from "../App";
@@ -94,28 +89,41 @@ import { t } from "../lib/i18n";
 export type MenuEntry = {
   panel: PanelKey;
   testId: string;
+  group: MenuGroup;
   labelKey: string;
   Icon: React.ComponentType<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
 };
 
+export type MenuGroup = "room" | "talk" | "tools" | "app";
+
+/** Display order of the groups; each gets a divider (toolbar) or a heading
+ *  (speed-dial panel). `profile` closes the list: in the toolbar it renders
+ *  as the user chip, visually separate from the tool icons. */
+export const MENU_GROUPS: ReadonlyArray<{ id: MenuGroup; labelKey: string }> = [
+  { id: "room",  labelKey: "menu.group.room" },
+  { id: "talk",  labelKey: "menu.group.talk" },
+  { id: "tools", labelKey: "menu.group.tools" },
+  { id: "app",   labelKey: "menu.group.app" },
+];
+
 export const MENU_ENTRIES: MenuEntry[] = [
-  { panel: "templates", testId: "btn-templates", labelKey: "menu.templates", Icon: Palette },
-  { panel: "settings", testId: "btn-settings", labelKey: "menu.settings", Icon: SettingsIcon },
-  { panel: "encryption", testId: "btn-encryption", labelKey: "menu.encryption", Icon: KeyRound },
-  { panel: "roomSecurity", testId: "btn-room-security", labelKey: "room.security.title", Icon: ShieldCheck },
-  { panel: "trust", testId: "btn-trust", labelKey: "menu.trust", Icon: Shield },
-  { panel: "privacy", testId: "btn-privacy", labelKey: "menu.privacy", Icon: Eye },
-  { panel: "notifications", testId: "btn-notifications", labelKey: "menu.notifications", Icon: Bell },
-  { panel: "analytics", testId: "btn-analytics", labelKey: "menu.analytics", Icon: Activity },
-  { panel: "profile", testId: "btn-profile", labelKey: "menu.profile", Icon: User },
-  { panel: "peers", testId: "btn-peers", labelKey: "menu.peers", Icon: Users },
-  { panel: "audio", testId: "btn-audio", labelKey: "menu.audio", Icon: Mic },
-  { panel: "video", testId: "btn-video", labelKey: "menu.video", Icon: Video },
-  { panel: "files", testId: "btn-files", labelKey: "menu.files", Icon: FileText },
-  { panel: "location", testId: "btn-location", labelKey: "menu.location", Icon: MapPin },
-  { panel: "nfc", testId: "btn-nfc", labelKey: "menu.nfc", Icon: Nfc },
-  { panel: "speech", testId: "btn-speech", labelKey: "menu.speech", Icon: Volume2 },
-  { panel: "connection", testId: "btn-connection", labelKey: "menu.connection", Icon: Radio },
+  { group: "room",  panel: "roomSecurity", testId: "btn-room-security", labelKey: "room.security.title", Icon: ShieldCheck },
+  { group: "room",  panel: "encryption", testId: "btn-encryption", labelKey: "menu.encryption", Icon: KeyRound },
+  { group: "room",  panel: "trust", testId: "btn-trust", labelKey: "menu.trust", Icon: Shield },
+  { group: "room",  panel: "peers", testId: "btn-peers", labelKey: "menu.peers", Icon: Users },
+  { group: "room",  panel: "connection", testId: "btn-connection", labelKey: "menu.connection", Icon: Radio },
+  { group: "talk",  panel: "audio", testId: "btn-audio", labelKey: "menu.audio", Icon: Mic },
+  { group: "talk",  panel: "video", testId: "btn-video", labelKey: "menu.video", Icon: Video },
+  { group: "talk",  panel: "files", testId: "btn-files", labelKey: "menu.files", Icon: FileText },
+  { group: "talk",  panel: "location", testId: "btn-location", labelKey: "menu.location", Icon: MapPin },
+  { group: "tools", panel: "speech", testId: "btn-speech", labelKey: "menu.speech", Icon: Volume2 },
+  { group: "tools", panel: "nfc", testId: "btn-nfc", labelKey: "menu.nfc", Icon: Nfc },
+  { group: "app",   panel: "templates", testId: "btn-templates", labelKey: "menu.templates", Icon: Palette },
+  { group: "app",   panel: "settings", testId: "btn-settings", labelKey: "menu.settings", Icon: SettingsIcon },
+  { group: "app",   panel: "notifications", testId: "btn-notifications", labelKey: "menu.notifications", Icon: Bell },
+  { group: "app",   panel: "privacy", testId: "btn-privacy", labelKey: "menu.privacy", Icon: Eye },
+  { group: "app",   panel: "analytics", testId: "btn-analytics", labelKey: "menu.analytics", Icon: Activity },
+  { group: "app",   panel: "profile", testId: "btn-profile", labelKey: "menu.profile", Icon: User },
 ];
 
 export type MenuDisplayMode =
@@ -128,12 +136,26 @@ export type MenuDisplayMode =
   | "tooltip"     // → maps to "icons-tooltip"
   | "speeddial";
 
+export type MenuUser = { name: string; avatar?: string };
+
 export type MainMenuProps = {
   mode: MenuDisplayMode;
   lang: Lang;
   currentPanel?: PanelKey | null;
   onOpen: (panel: PanelKey) => void;
+  /** Shown as the user chip (toolbar) / panel header (speed-dial). */
+  user?: MenuUser;
 };
+
+/** One glyph for the avatar circle: a short emoji avatar if the user set one,
+ *  otherwise the initial. URLs are never rendered (CSP blocks remote images
+ *  anyway, and a peer-supplied URL must not trigger requests). */
+export function avatarGlyph(user: MenuUser | undefined): string {
+  const avatar = user?.avatar?.trim() ?? "";
+  if (avatar && !/[/:.]/.test(avatar) && Array.from(avatar).length <= 2) return avatar;
+  const initial = Array.from(user?.name?.trim() ?? "")[0];
+  return initial ? initial.toUpperCase() : "?";
+}
 
 /* ---------- Environment helpers (SSR-safe) ---------- */
 
@@ -241,6 +263,36 @@ function ToolbarEntry(props: {
   );
 }
 
+/* ---------- User chip: the "user space" of the header ---------- */
+
+function UserChip(props: {
+  entry: MenuEntry;
+  lang: Lang;
+  onOpen: (panel: PanelKey) => void;
+  user?: MenuUser;
+  isCurrent: boolean;
+}) {
+  const { entry, lang, onOpen, user, isCurrent } = props;
+  const label = t(lang, entry.labelKey);
+  const name = user?.name?.trim() || label;
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(entry.panel)}
+      title={label}
+      aria-label={`${label}: ${name}`}
+      aria-current={isCurrent ? "page" : undefined}
+      data-testid={entry.testId}
+      data-panel={entry.panel}
+      data-current={isCurrent ? "true" : undefined}
+      className={"user-chip" + (isCurrent ? " is-current" : "")}
+    >
+      <span className="user-chip__avatar" aria-hidden="true">{avatarGlyph(user)}</span>
+      <span className="user-chip__name">{name}</span>
+    </button>
+  );
+}
+
 /* ---------- Speed-dial (3 bars → floating panel) ---------- */
 
 // Hook for RTL detection. We prefer the document.documentElement.dir
@@ -311,8 +363,9 @@ function SpeedDial(props: {
   onOpen: (p: PanelKey) => void;
   currentPanel?: PanelKey | null;
   reducedMotion: boolean;
+  user?: MenuUser;
 }) {
-  const { lang, onOpen, currentPanel, reducedMotion } = props;
+  const { lang, onOpen, currentPanel, reducedMotion, user } = props;
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const toggleBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -499,15 +552,26 @@ function SpeedDial(props: {
                 aria-labelledby={`${menuId}-title`}
                 onKeyDown={onListKeyDown}
               >
-                {MENU_ENTRIES.map((entry) => (
-                  <SpeedDialItem
-                    key={entry.testId}
-                    entry={entry}
-                    lang={lang}
-                    onOpen={onOpen}
-                    close={closeMenu}
-                    isCurrent={currentPanel === entry.panel}
-                  />
+                {user?.name ? (
+                  <li role="none" className="menu-user" data-testid="speeddial-user">
+                    <span className="user-chip__avatar" aria-hidden="true">{avatarGlyph(user)}</span>
+                    <span className="truncate text-sm font-semibold">{user.name}</span>
+                  </li>
+                ) : null}
+                {MENU_GROUPS.map((group) => (
+                  <Fragment key={group.id}>
+                    <li role="presentation" className="menu-group-label">{t(lang, group.labelKey)}</li>
+                    {MENU_ENTRIES.filter((entry) => entry.group === group.id).map((entry) => (
+                      <SpeedDialItem
+                        key={entry.testId}
+                        entry={entry}
+                        lang={lang}
+                        onOpen={onOpen}
+                        close={closeMenu}
+                        isCurrent={currentPanel === entry.panel}
+                      />
+                    ))}
+                  </Fragment>
                 ))}
               </ul>
             </div>,
@@ -556,7 +620,7 @@ function SpeedDialItem(props: {
 
 /* ---------- Root component ---------- */
 
-export function MainMenu ({ mode, lang, onOpen, currentPanel = null }: MainMenuProps) {
+export function MainMenu ({ mode, lang, onOpen, currentPanel = null, user }: MainMenuProps) {
   // Resolve the "best" presentation per viewport. We force `speeddial`
   // on touch-primary / narrow viewports regardless of user pref because
   // 14 inline icons do not fit a 360 px phone.
@@ -596,6 +660,7 @@ export function MainMenu ({ mode, lang, onOpen, currentPanel = null }: MainMenuP
       onOpen={onOpen}
       currentPanel={currentPanel}
       reducedMotion={reducedMotion}
+      user={user}
     />;
   }
 
@@ -606,59 +671,22 @@ export function MainMenu ({ mode, lang, onOpen, currentPanel = null }: MainMenuP
       data-testid="main-nav"
       role="menubar"
     >
-      {MENU_ENTRIES.map((entry) => (
-        <ToolbarEntry
-          key={entry.testId}
-          entry={entry}
-          lang={lang}
-          onOpen={onOpen}
-          mode={effectiveMode}
-          isCurrent={currentPanel === entry.panel}
-        />
-      ))}
+      {MENU_ENTRIES.map((entry, index) => {
+        const startsGroup = index > 0 && MENU_ENTRIES[index - 1].group !== entry.group;
+        const isCurrent = currentPanel === entry.panel;
+        return (
+          <Fragment key={entry.testId}>
+            {startsGroup || entry.panel === "profile" ? (
+              <span role="separator" aria-orientation="vertical" className="menu-divider" />
+            ) : null}
+            {entry.panel === "profile" ? (
+              <UserChip entry={entry} lang={lang} onOpen={onOpen} user={user} isCurrent={isCurrent} />
+            ) : (
+              <ToolbarEntry entry={entry} lang={lang} onOpen={onOpen} mode={effectiveMode} isCurrent={isCurrent} />
+            )}
+          </Fragment>
+        );
+      })}
     </nav>
   );
 }
-
-/* Default props for testing / Storybook. */
-export const DEFAULT_MAIN_MENU_PROPS: MainMenuProps = {
-  mode: "icons",
-  lang: "en",
-  currentPanel: null,
-  onOpen: () => undefined,
-};
-
-// Re-export custom icons used by App.tsx so build is consistent.
-// Trigger a HMR type-check by referencing the exports below.
-// (These names are not exported externally but the imports above
-// intentionally exercise every icon used elsewhere.)
-export const __icons_used__: ReadonlyArray<string> = [
-  Activity.displayName ?? "Activity",
-  Bell.displayName ?? "Bell",
-  Compass.displayName ?? "Compass",
-  Eye.displayName ?? "Eye",
-  FileText.displayName ?? "FileText",
-  KeyRound.displayName ?? "KeyRound",
-  MapPin.displayName ?? "MapPin",
-  MenuIcon.displayName ?? "Menu",
-  MessageSquare.displayName ?? "MessageSquare",
-  Mic.displayName ?? "Mic",
-  Nfc.displayName ?? "Nfc",
-  Palette.displayName ?? "Palette",
-  Radio.displayName ?? "Radio",
-  SettingsIcon.displayName ?? "Settings",
-  Shield.displayName ?? "Shield",
-  ShieldCheck.displayName ?? "ShieldCheck",
-  User.displayName ?? "User",
-  Users.displayName ?? "Users",
-  Video.displayName ?? "Video",
-  Volume2.displayName ?? "Volume2",
-  Wallet.displayName ?? "Wallet",
-];
-
-// Hint to Vite/TS that the unused imports above are intentional; the
-// re-export is preserved so a grep on the bundle still finds the names.
-export const __consumed_icons__: ReadonlyArray<ReactNode> = [
-  <ChevronLeft key="cl" aria-hidden="true" />,
-  <ChevronRight key="cr" aria-hidden="true" />,
-];

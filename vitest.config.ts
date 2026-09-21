@@ -18,7 +18,6 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": new URL("./client/src", import.meta.url).pathname,
-      "@shared": new URL("./shared", import.meta.url).pathname,
     },
   },
 });
