@@ -151,6 +151,21 @@ Náprava: oba uživatelé znovu zadají passphrase. Nový klíč nahradí starý
 - TypeScript 7 `baseUrl` nezná. Aliasy patří do `paths` s cestami relativními
   k `tsconfig.json` (`"@/*": ["./client/src/*"]`).
 
+### 16. Pozvánka nefunguje
+
+- *„Pozvánka neplatí"* — vypršela, vyčerpal se počet připojení, byla
+  zneplatněna, **nebo se restartoval server** (pozvánky jsou jen v paměti).
+- *„Příliš mnoho špatných pokusů"* — po 5 špatných kódech se odkaz zničí;
+  vytvořte nový.
+- Odkaz po otevření zmizí z adresního řádku — to je záměr, ne chyba.
+
+### 17. Po reloadu se aplikace nepřipojila sama
+
+- Karta byla mezitím zavřená, uplynula hodina bez aktivity, nebo byl naposledy
+  stisknut *Odpojit* (pak stačí *Místnost → Připojit*, klíč je předvyplněný).
+- V anonymním okně některé prohlížeče IndexedDB omezují — klíč cache se pak
+  drží jen v paměti a reload ho nepřežije.
+
 ## Diagnostické logy
 
 ```bash

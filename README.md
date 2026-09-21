@@ -1,6 +1,6 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **2.6.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **2.7.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
@@ -77,7 +77,12 @@ místnosti.
   PIN + PBKDF2/AES-GCM. Plug-in registry pro hardware čtečky.
 - **Privacy panel + TTL** — automatické mazání starších zpráv, audit purge
   endpoint.
-- **3 témata** — Motorsport (dark), Glass (light), Terminal (mono CRT).
+- **6 šablon × 6 barevných variací × 4 rozvržení** — Motorsport, Glass,
+  Terminal, Midnight, Paper, Kontrast.
+- **Relace a pozvánky** — šifrovaná session cache (reload = automatické
+  připojení, konec se zavřením karty nebo po hodině nečinnosti), pozvánka
+  odkazem + 12místným kódem s limitem použití, „Smazat vše a odejít".
+  Viz [`docs/session-and-sharing.md`](docs/session-and-sharing.md).
 - **i18n** — čeština / English / Deutsch.
 - **PWA** — manifest + service worker, instalace bez App Store.
 
@@ -454,7 +459,8 @@ v [`docs/security-model.md`](docs/security-model.md#známé-mezery-stav-250).
 - Panel „Důvěra" (TOFU) je klíčovaný náhodným ID relace — změnu protistrany
   nezachytí.
 - Settings sync, consent, push subskripce a event log žijí jen v paměti procesu.
-- `App.tsx` (~2 600 řádků) nemá unit testy; pokrývá ho jen e2e test dvou peerů.
+- `App.tsx` (~2 800 řádků) nemá unit testy; pokrývají ho jen e2e testy.
+- Historii prohlížeče web smazat neumí; pozvánky nepřežijí restart serveru.
 
 ---
 
@@ -556,7 +562,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 2.6.0        | aktuální — instalační sada, oprava odesílání souborů, nové menu a kompozér |
+| 2.7.0        | aktuální — šifrovaná relace, pozvánky s kódem, Smazat vše a odejít, nové šablony |
+| 2.6.0        | instalační sada, oprava odesílání souborů, nové menu a kompozér |
 | 2.5.0        | modernizace toolchainu, úklid závislostí, opravy |
 | 2.4.2        | oprava speed-dial menu na dotykových zařízeních, CI |
 | 2.4.1        | speed-dial panel přes portál, pre-commit guard |
@@ -591,6 +598,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`INSTALL.md`](INSTALL.md)                              | `install.sh` / `update.sh` / `uninstall.sh`: režimy, parametry, zálohy, rollback |
 | [`CHANGELOG.md`](CHANGELOG.md)                          | Historie verzí                                 |
 | [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |
+| [`docs/session-and-sharing.md`](docs/session-and-sharing.md) | Session cache, vynucený stav, pozvánky s kódem, Smazat vše a odejít |
 | [`docs/knowledge-base.md`](docs/knowledge-base.md)      | Znalostní báze: mapa kódu, co server vidí, známé mezery |
 | [`docs/optimizations.md`](docs/optimizations.md)        | Změřené optimalizace a jak je reprodukovat     |
 

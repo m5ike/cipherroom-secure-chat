@@ -31,6 +31,9 @@ signalizační relé (WebSocket `/ws`) a nic neukládá na disk.
 | Přenos souborů | `client/src/lib/file-transfer.ts` | chunky, backpressure, P2P/proxy rámce |
 | ICE / TURN | `client/src/lib/rtc.ts` | `RTC_CONFIG`, `loadTurnConfig()` → `GET /api/turn` |
 | Otisky peerů | `client/src/lib/fingerprint.ts` | DTLS otisk z `getStats()`, localStorage |
+| Session cache | `client/src/lib/session-cache.ts` | šifrovaná, po kartách, 1 h nečinnosti; požadovaný stav |
+| Pozvánky | `client/src/lib/share-link.ts`, `components/SharePanel.tsx`, `server/share.ts` | split-key + 12místný kód, limity na serveru |
+| Úplné smazání | `client/src/lib/wipe.ts` + `GET /goodbye` | `Clear-Site-Data`; historii smazat nelze |
 | Preference | `client/src/lib/preferences.ts` | klíč `m5cet:prefs:v2`, migrace z `cipherroom:prefs:v1` |
 | Admin příkazy (klient) | `client/src/lib/admin-commands.ts` | allowlist + validace |
 | Plugin API | `client/src/lib/cipherroom-api.ts` | `window.CipherRoomAPI` — jen registry a event bus |

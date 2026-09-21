@@ -93,6 +93,22 @@ Neznámá cesta pod `/api/` vrací `index.html` (SPA fallback), ne `404`.
 - `GET  /api/audit/log?deviceId=...` → `{ ok, deviceId, entries }`. Do logu zatím
   nic nezapisuje, vrací vždy prázdné pole.
 
+### Pozvánky (split-key, viz [`session-and-sharing.md`](session-and-sharing.md))
+
+- `POST /api/share/create` → body `{ id, proof, revokeToken, serverKey, iv, ciphertext, maxUses?, ttlSec? }`
+  (base64url pevných délek; `maxUses` 1–50, `ttlSec` 300–604800). `201 { ok, expiresAt, maxUses, maxAttempts }`.
+- `POST /api/share/redeem` → body `{ id, proof }`. Správně: `{ ok, serverKey, iv, ciphertext, usesLeft }`.
+  Špatný kód `403 { reason: "wrong-code", attemptsLeft }`, po 5. pokusu `410 burned`;
+  neznámé, vadné i prošlé ID shodně `404`. **Jen `POST`** — `GET` nic nespotřebuje.
+- `POST /api/share/revoke` → body `{ id, revokeToken }` → `{ ok }`.
+
+Server nikdy nedostane klíč z fragmentu URL, takže uložená data nerozšifruje.
+Vše je v paměti procesu.
+
+### Odchod
+
+- `GET /goodbye` → statická stránka s `Clear-Site-Data: "cache", "cookies", "storage", "executionContexts"`.
+
 ### Retence
 
 - `GET  /api/admin/retention` → aktuální politika (dny) z `*_RETENTION_DAYS`.

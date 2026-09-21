@@ -52,6 +52,19 @@ prohlížeči. **Server-enhanced** navíc umí Web Push upozornění, když je k
 zavřená. Obsah zpráv server nevidí ani v jednom režimu. Podrobně
 [`modes.md`](modes.md).
 
+### Relace, pozvánky a úplné smazání
+- **Reload = zpět v místnosti.** Dokud kartu nezavřete (a nejdéle hodinu bez
+  aktivity), aplikace si šifrovaně pamatuje místnost i klíč a po obnovení
+  stránky se připojí sama. **Odpojit** to vypne; připojit se pak dá jedním klikem.
+- **Sdílet** (okno *Místnost*): vytvoří odkaz a k němu kód `XXXX-XXXX-XXXX`.
+  Odkaz pošlete messengerem, **kód jinou cestou** (hlasem, SMS). Platí pro
+  zvolený počet připojení; po 5 špatných kódech se zničí.
+- **Smazat vše a odejít** (dole v menu ☰): smaže klíče, nastavení, cache,
+  cookies i push. Historii prohlížeče web smazat neumí — tu smažete
+  v nastavení prohlížeče.
+
+Podrobně [`session-and-sharing.md`](session-and-sharing.md).
+
 ### Notifikace
 Lišta → zvonek. Pokud server má nakonfigurované VAPID klíče, použije se Web Push.
 Jinak fallback na lokální notifikace v tabu.
