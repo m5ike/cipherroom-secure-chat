@@ -145,9 +145,6 @@ jobs:
     name: installer
     runs-on: ubuntu-22.04
     timeout-minutes: 12
-    env:
-      XDG_CONFIG_HOME: ${{ runner.temp }}/xdg
-      M5_DIR: ${{ runner.temp }}/m5cet
     steps:
       - uses: actions/checkout@v4
 
@@ -156,6 +153,13 @@ jobs:
         with:
           node-version: '24.x'
           cache: 'npm'
+
+      # The `runner` context is not available in job-level `env`, so the
+      # scratch paths are exported from a step instead.
+      - name: Scratch paths
+        run: |
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg" >> "$GITHUB_ENV"
+          echo "M5_DIR=$RUNNER_TEMP/m5cet" >> "$GITHUB_ENV"
 
       - name: shellcheck
         run: shellcheck -x -S warning install.sh update.sh uninstall.sh installer/lib/*.sh scripts/pre-commit-check.sh
