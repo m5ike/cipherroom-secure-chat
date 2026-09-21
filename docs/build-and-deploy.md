@@ -30,7 +30,8 @@ PORT=5173 npm run dev  # macOS: port 5000 drží AirPlay Receiver
 ## Sanity checks
 
 - `npm run check` — `tsc --noEmit`
-- `npm test` — vitest (9 souborů / 95 testů)
+- `npm test` — vitest (10 souborů / 106 testů)
+- `npm run test:e2e` — Playwright, 10 testů (UI smoke + dva peeři)
 - `npm run check:menu` — guard invariantů MainMenu
 - `bash -n install.sh` — syntax-only validace instalátoru
 - `npm run build` — kompletní build

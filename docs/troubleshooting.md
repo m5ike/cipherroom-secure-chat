@@ -57,6 +57,12 @@ Náprava: oba uživatelé znovu zadají passphrase. Nový klíč nahradí starý
 
 ### 5. Soubor nelze odeslat / přerušení uprostřed
 
+- *„File exceeds inline cap of 512.0 kB; use chunked transfer"* — chyba verzí
+  < 2.6.0: tlačítka u zprávy uměla jen inline cestu. Od 2.6.0 se větší soubor
+  pošle po částech automaticky.
+- *„Soubor nelze odeslat: není připojen žádný peer"* — přenos jde jen přímým
+  P2P kanálem; počkejte, až stavový štítek ukáže `1 P2P`.
+
 - Zkontrolujte `Preferences.maxAttachmentBytes` (výchozí neomezeno; v Nastavení
   lze zvolit nižší strop, např. 100 MB).
 - Přenos funguje **jen s otevřeným DataChannelem**. Záložní „proxy" režim přes
@@ -134,7 +140,7 @@ Náprava: oba uživatelé znovu zadají passphrase. Nový klíč nahradí starý
 
 ### 14. Testy „prošly", ale je jich podezřele málo
 
-- `npm test` má hlásit **9 souborů / 95 testů**. Pokud chybí `.tsx` soubory,
+- `npm test` má hlásit **10 souborů / 106 testů**. Pokud chybí `.tsx` soubory,
   zkontrolujte `"jsx": "react-jsx"` v `tsconfig.json` a plugin
   `@vitejs/plugin-react` ve `vitest.config.ts` — s `"preserve"` testy tiše
   spadnou už při transformaci.

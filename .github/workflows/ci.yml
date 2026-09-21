@@ -13,7 +13,8 @@
 #   4. build-smoke — `npm run build` (custom tsx/esbuild) and verify
 #      dist/ artefact tree
 #   5. installer — shellcheck + a real install -> update -> uninstall cycle
-#   6. ci-aggregate — gate, exits 1 if any of the above 5 failed
+#   6. e2e — Playwright: UI smoke + two peers (message, inline + chunked file)
+#   7. ci-aggregate — gate, exits 1 if any of the above 6 failed
 #
 # Cache: GitHub-managed npm cache keyed on package-lock.json.
 # =============================================================================
@@ -182,12 +183,35 @@ jobs:
           test ! -e "$XDG_CONFIG_HOME/m5cet/install-dir"
 
   # ---------------------------------------------------------------------------
-  # Job 6 — Aggregate gate
+  # Job 6 — End to end: UI smoke + two real browsers against the real server
+  # The image tag must match the `playwright` version in package-lock.json.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: e2e
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: vitest (e2e config)
+        run: npx vitest run --config vitest.e2e.config.ts --reporter=verbose
+
+  # ---------------------------------------------------------------------------
+  # Job 7 — Aggregate gate
   # ---------------------------------------------------------------------------
   ci-aggregate:
     name: CI aggregate
     runs-on: ubuntu-22.04
-    needs: [typecheck, lint-custom, unit-test, build-smoke, installer]
+    needs: [typecheck, lint-custom, unit-test, build-smoke, installer, e2e]
     if: always()
     steps:
       - name: Check all jobs passed
@@ -196,13 +220,15 @@ jobs:
              [ "${{ needs.lint-custom.result }}" != "success" ] || \
              [ "${{ needs.unit-test.result }}" != "success" ] || \
              [ "${{ needs.build-smoke.result }}" != "success" ] || \
-             [ "${{ needs.installer.result }}" != "success" ]; then
+             [ "${{ needs.installer.result }}" != "success" ] || \
+             [ "${{ needs.e2e.result }}" != "success" ]; then
             echo "One or more CI jobs failed"
             echo "  typecheck:    ${{ needs.typecheck.result }}"
             echo "  lint-custom:  ${{ needs.lint-custom.result }}"
             echo "  unit-test:    ${{ needs.unit-test.result }}"
             echo "  build-smoke:  ${{ needs.build-smoke.result }}"
             echo "  installer:    ${{ needs.installer.result }}"
+            echo "  e2e:          ${{ needs.e2e.result }}"
             exit 1
           fi
-          echo "All 5 CI jobs passed — PR ready for review"
+          echo "All 6 CI jobs passed — PR ready for review"

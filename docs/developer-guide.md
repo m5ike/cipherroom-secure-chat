@@ -12,16 +12,12 @@ Stručná mapa kódu, build flow a konvence pro nové přispěvatele.
 │       ├── App.tsx          hlavní komponenta (signaling, mesh, šifrování)
 │       ├── main.tsx         vstupní bod
 │       ├── components/      Modal, panels, MainMenu, TransferCard, M5Logo
-│       │   └── ui/          jen používané shadcn primitivy: card, toast,
-│       │                    toaster, tooltip (další: npx shadcn add <název>)
-│       ├── hooks/           use-toast
 │       ├── lib/             feature moduly:
 │       │   ├── crypto.ts            odvození klíče, AES-GCM obálka, base64 kodek
 │       │   ├── connection-keeper.ts heartbeat + reconnect signalizace
 │       │   ├── file-transfer.ts     chunked šifrovaný přenos (P2P / proxy)
 │       │   ├── fingerprint.ts       TOFU otisky peerů
-│       │   └── calls, push, nfc, speech, maps, preferences, i18n, themes, ...
-│       └── pages/           not-found
+│       │   └── rtc, push, nfc, speech, maps, preferences, i18n, themes, ...
 ├── server/                  Express + WS backend
 │   ├── env.ts               načtení .env (process.loadEnvFile) — vždy 1. import
 │   ├── index.ts             entry pro hlavní službu
@@ -35,18 +31,17 @@ Stručná mapa kódu, build flow a konvence pro nové přispěvatele.
 │   ├── events.ts            optional metadata logging
 │   ├── static.ts            production static handler
 │   └── vite.ts              dev middleware
-├── shared/schema.ts         cross-cut typy
 ├── admin-ui/public/         Admin GUI (single-page HTML)
 ├── docs/                    tato dokumentace
 ├── test/                    vitest (*.test.ts, *.test.tsx) + e2e/ (Playwright)
-├── scripts/                 pre-commit-check.sh (guard MainMenu), release runbook
+├── scripts/                 pre-commit-check.sh (guard MainMenu)
 ├── .githooks/pre-commit     wrapper guardu (git config core.hooksPath .githooks)
 ├── .github/workflows/ci.yml typecheck · guard · vitest · build
 ├── script/build.ts          Vite + esbuild orchestrátor
-├── install.sh               interaktivní installer
-├── docker-compose.yml       app + admin + admin-ui
-├── Dockerfile               app image
-└── Dockerfile.admin         admin image
+├── install.sh / update.sh / uninstall.sh   instalační sada (viz INSTALL.md)
+├── installer/lib/           sdílená knihovna skriptů (bash >= 3.2)
+├── docker-compose.yml       referenční: app + admin (profil) ze stejného image
+└── Dockerfile               jediný image; admin = jiný command
 ```
 
 ## Toolchain
@@ -57,12 +52,16 @@ Stručná mapa kódu, build flow a konvence pro nové přispěvatele.
   `"jsx": "react-jsx"` je povinné (hlídá ho pre-commit guard).
 - **Vite 8** (rolldown + oxc minifikace) pro klienta, **esbuild 0.28** pro
   server bundly, **Vitest 5** + happy-dom + Testing Library pro testy.
-- **React 19**, Wouter (router), TanStack Query, Tailwind 3.4, lucide-react 1.x,
-  Radix UI jen `react-toast` a `react-tooltip`.
+- **React 19**, Tailwind 3.4 (bez pluginů), lucide-react 1.x. Žádný router,
+  žádná knihovna na fetch/cache, žádné Radix ani shadcn komponenty — aplikace
+  je jedna obrazovka s modálními panely a vlastními třídami v `index.css`.
 - **Express 5** + `ws` 8 + Helmet 8 + express-rate-limit 8 + web-push.
 - Bez `dotenv`: `.env` čte `server/env.ts` přes `process.loadEnvFile()`.
 
-Runtime závislostí je záměrně jen 16. Express 5 poznámka: holé `"*"` v cestě
+Runtime závislostí je záměrně jen **8**: `express`, `express-rate-limit`,
+`helmet`, `web-push`, `ws`, `react`, `react-dom`, `lucide-react`. Novou
+přidávejte jen s důvodem; nepoužitý kód v `client/src` navíc nafukuje CSS,
+protože Tailwind skenuje názvy tříd ve všech souborech. Express 5 poznámka: holé `"*"` v cestě
 vyhazuje výjimku — catch-all se píše `"/{*path}"`.
 
 ## Skripty
@@ -73,7 +72,9 @@ npm run dev           # dev server: tsx server/index.ts + Vite middleware
 npm run check         # tsc --noEmit
 npm test              # vitest run — unit + komponentové testy
 npm run test:watch    # vitest watch
-npm run test:e2e      # Playwright smoke (npx playwright install chromium)
+npm run test:e2e      # Playwright: UI smoke + dva peeři proti reálnému serveru
+                      # (nejdřív npm run build; Chromium: npx playwright install chromium,
+                      #  nebo image mcr.microsoft.com/playwright — viz CI)
 npm run check:menu    # guard invariantů MainMenu (= pre-commit hook)
 npm run build         # client (Vite) + oba server bundly (esbuild), souběžně
 npm start             # node dist/index.cjs (production)
@@ -109,12 +110,17 @@ npm run health        # curl /api/health, exit 1 on fail
 ### Styly
 
 - Tailwind utilities, žádné CSS-in-JS.
-- Sdílené UI primitivy v `client/src/components/ui/*` (shadcn-style).
+- Vlastní komponentové třídy (`.composer-*`, `.user-chip`, `.menu-*`) žijí
+  v `client/src/index.css` a berou barvy z tokenů tématu (`hsl(var(--…))`),
+  takže fungují ve všech třech tématech bez úprav.
 - Témata jsou data-attribute na `<html>`, viz `lib/themes.ts`.
 
 ### State
 
-- Žádné Redux. `useState` + custom hooks + `@tanstack/react-query` pro fetch.
+- Žádné Redux ani query knihovna. `useState` + refy; `fetch` přímo.
+- **Hooky jen na úrovni komponenty.** Asynchronní handlery čtou aktuální stav
+  přes ref (`transfersRef`), ne voláním hooku uvnitř handleru — to za běhu
+  vyhodí výjimku (skutečná chyba, kterou odhalil až e2e test).
 - WebSocket ref a peer mapa žije v `App.tsx` (single component).
 
 ### Crypto
@@ -198,6 +204,18 @@ Browser smoke (manuální):
 5. Doplnit user-facing string do `lib/i18n.ts` (cs/en/de).
 6. Připsat sekci do README a vlastní `docs/<feature>.md`.
 
+## Pravidla, která se vyplatila
+
+- **Tvrzení o výkonu jen s měřením** — viz [`optimizations.md`](optimizations.md).
+- **Krypto se nepřepisuje „pro rychlost".** Kontrakt `lib/crypto.ts` hlídají
+  testy wire formátu; změna soli nebo tvaru obálky je verzovaná migrace.
+- **Dokumentace se ověřuje proti kódu, ne naopak.** Ukázky kódu v docs nejsou
+  zdroj pravdy.
+- **Zelené testy nestačí, když se nespouští.** `.tsx` testy i celá e2e sada
+  dlouho tiše neběžely. Sledujte *počet* testů, ne jen „passed".
+- **Commit podle přečteného seznamu souborů**, ne `git add -A` — v pracovním
+  stromu mohou být cizí rozpracované změny.
+
 ## Branching
 
 - `master` — stabilní release line.
@@ -207,7 +225,9 @@ Browser smoke (manuální):
 ## Kontrolní seznam před PR
 
 - [ ] `npm run check` čistý.
-- [ ] `npm test` zelené — a **počet** souborů/testů neklesl (aktuálně 9 / 95).
+- [ ] `npm test` zelené — a **počet** souborů/testů neklesl (aktuálně 10 / 106).
+- [ ] `npm run test:e2e` zelené (10 testů), pokud se měnil `App.tsx`.
+- [ ] `shellcheck -x -S warning install.sh update.sh uninstall.sh installer/lib/*.sh`, pokud se měnil instalátor.
 - [ ] `npm run check:menu` 8/8.
 - [ ] `npm run build` prochází.
 - [ ] Smoke `/api/health` 200, `/admin/health` 200.

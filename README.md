@@ -1,6 +1,6 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **2.5.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **2.6.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
@@ -255,7 +255,7 @@ Spolu s tím běží `lib/connection-keeper.ts`:
 
 ```mermaid
 flowchart LR
-    Admin[Admin GUI<br/>:5051 nebo :5050/]
+    Admin[Admin GUI<br/>:5050/]
     Token{ADMIN_API_TOKEN?}
     AdminAPI[Admin API<br/>:5050]
     Queue[(In-memory<br/>command queue<br/>+ audit log)]
@@ -377,11 +377,13 @@ flowchart LR
     User --> Read --> Chunk --> Enc --> DC --> Recv --> Blob --> Save
 ```
 
+- Tlačítka *Soubor* / *Obrázek* u zprávy volí cestu sama: do 512 KiB inline,
+  větší automaticky po šifrovaných 32 KiB částech.
 - Strop velikosti je výchozí **neomezený**; v Settings lze zvolit nižší
   (`Preferences.maxAttachmentBytes`, např. 100 MB).
 - Inline (data-URL) cap pro malé přílohy: 512 KiB.
-- Přenos vyžaduje otevřený DataChannel. Záložní „proxy" režim přes server
-  data zatím nedoručuje.
+- Přenos vyžaduje připojeného peera (otevřený DataChannel); bez něj se
+  nespustí a aplikace to řekne. Serverová „proxy" cesta data nedoručuje.
 - Velké soubory drží paměťovou stopu — prohlížeč rozhoduje o limitech.
 
 Viz [`docs/files.md`](docs/files.md).
@@ -452,7 +454,7 @@ v [`docs/security-model.md`](docs/security-model.md#známé-mezery-stav-250).
 - Panel „Důvěra" (TOFU) je klíčovaný náhodným ID relace — změnu protistrany
   nezachytí.
 - Settings sync, consent, push subskripce a event log žijí jen v paměti procesu.
-- `App.tsx` (~2 600 řádků) nemá automatické testy.
+- `App.tsx` (~2 600 řádků) nemá unit testy; pokrývá ho jen e2e test dvou peerů.
 
 ---
 
@@ -461,7 +463,7 @@ v [`docs/security-model.md`](docs/security-model.md#známé-mezery-stav-250).
 ### Linux / Docker (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh \
   | sudo -E bash -s -- --install
 ```
 
@@ -487,21 +489,17 @@ flowchart TB
     Nginx -- ne --> Doctor --> Done
 ```
 
-> ⚠️ Instalátor ve výchozím stavu nasazuje větev
-> `feature/m5cet-fullscreen-secure-workspace`, která je za `master` pozadu.
-> Pro aktuální kód spusťte s `BRANCH=master` — viz [`INSTALL.md`](INSTALL.md).
-
 Detaily: [`INSTALL.md`](INSTALL.md).
 
 ```bash
-sudo -E /opt/m5cet/install.sh --status     # stav služby
-sudo -E /opt/m5cet/install.sh --logs       # follow logů
-sudo -E /opt/m5cet/install.sh --restart    # restart
-sudo -E /opt/m5cet/install.sh --update     # pull + redeploy
-sudo -E /opt/m5cet/install.sh --test       # alias pro --doctor
-sudo -E /opt/m5cet/install.sh --gui        # interaktivní menu
-sudo -E /opt/m5cet/install.sh --uninstall  # zastaví stack, files zachová
-sudo -E /opt/m5cet/install.sh --help       # všechny flagy
+sudo /opt/m5cet/install.sh --status | --logs | --restart | --doctor
+sudo /opt/m5cet/install.sh --menu                 # hlavní menu (--gui = whiptail/dialog)
+sudo /opt/m5cet/update.sh                         # nové zdrojáky + rebuild, při chybě sám vrátí zálohu
+sudo /opt/m5cet/update.sh --set APP_PORT=8080     # změna parametru
+sudo /opt/m5cet/update.sh --set INSTALL_MODE=native   # přepnutí docker <-> native
+sudo /opt/m5cet/update.sh --repair                # oprava rozbité instalace
+sudo /opt/m5cet/uninstall.sh [--keep-files|--purge]
+./install.sh --list-params                        # všechny parametry
 ```
 
 ---
@@ -558,7 +556,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 2.5.0        | aktuální — modernizace toolchainu, úklid závislostí, opravy |
+| 2.6.0        | aktuální — instalační sada, oprava odesílání souborů, nové menu a kompozér |
+| 2.5.0        | modernizace toolchainu, úklid závislostí, opravy |
 | 2.4.2        | oprava speed-dial menu na dotykových zařízeních, CI |
 | 2.4.1        | speed-dial panel přes portál, pre-commit guard |
 | 2.1.0-rc.1   | release-hardening RC   |
@@ -578,7 +577,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/user-help.md`](docs/user-help.md)                | Uživatelská nápověda (CZ + EN)                 |
 | [`docs/developer-guide.md`](docs/developer-guide.md)    | Vývojářský průvodce, build, struktura          |
 | [`docs/security-model.md`](docs/security-model.md)      | Bezpečnostní model, threat model               |
-| [`docs/deployment.md`](docs/deployment.md)              | Nasazení, hosting, TLS, reverse proxy          |
+| [`docs/deployment.md`](docs/deployment.md)              | Ruční nasazení, PaaS (DO / Railway / Render / Fly.io), TLS, reverse proxy |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md)    | Řešení potíží                                  |
 | [`docs/calls.md`](docs/calls.md)                        | Audio / video volání                           |
 | [`docs/connection-keeper.md`](docs/connection-keeper.md)| Heartbeat + reconnect                          |
@@ -589,13 +588,11 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/speech.md`](docs/speech.md)                      | Web Speech API                                 |
 | [`docs/browser-limitations.md`](docs/browser-limitations.md) | Co prohlížeč (ne)umí                       |
 | [`docs/build-and-deploy.md`](docs/build-and-deploy.md)  | npm workflow, PWA, sanity checky               |
-| [`INSTALL.md`](INSTALL.md)                              | Detailní průvodce instalací                    |
-| [`DEPLOYMENT.md`](DEPLOYMENT.md)                        | DigitalOcean / Railway / Render / Fly.io / Nginx |
+| [`INSTALL.md`](INSTALL.md)                              | `install.sh` / `update.sh` / `uninstall.sh`: režimy, parametry, zálohy, rollback |
 | [`CHANGELOG.md`](CHANGELOG.md)                          | Historie verzí                                 |
-| [`KNOWLEDGE_BASE.md`](KNOWLEDGE_BASE.md)                | Znalostní báze projektu (mapa kódu, rozhodnutí) |
-| [`CLIENT_OPTIMIZATIONS.md`](CLIENT_OPTIMIZATIONS.md)    | Změřené optimalizace a jak je reprodukovat     |
-| [`PROGRESS.md`](PROGRESS.md)                            | Aktuální stav a otevřené body                  |
-| [`WORKFLOW.md`](WORKFLOW.md)                            | Vývojový workflow (check → test → guard → build) |
+| [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |
+| [`docs/knowledge-base.md`](docs/knowledge-base.md)      | Znalostní báze: mapa kódu, co server vidí, známé mezery |
+| [`docs/optimizations.md`](docs/optimizations.md)        | Změřené optimalizace a jak je reprodukovat     |
 
 ---
 

@@ -8,7 +8,7 @@
 > týkat (`file-transfer.ts`, `push.ts`, `rtc.ts`, `nfc.ts`, `install.sh`, …),
 > byly bajt po bajtu shodné s větví `master`. Tvrzení byla odstraněna.
 
-Stav k verzi **2.5.0** (2026-09-21), měřeno na macOS / Node 24.20.
+Stav k verzi **2.6.0** (2026-09-21), měřeno na macOS / Node 24.20.
 
 ## 1. Base64 kodek — horká cesta šifrovaného přenosu
 
@@ -55,33 +55,41 @@ Po jejich odstranění CSS kleslo na polovinu.
 
 **Reprodukce:** `npm run build` — Vite vypíše velikosti.
 
-## 3. Závislosti: 68 → 16 runtime, strom 562 → 349 balíčků
+## 3. Závislosti: 68 → 8 runtime
 
-Statická analýza importů ukázala, že živý kód používá 16 z 68 runtime
-závislostí. Odebráno 58 balíčků (52 runtime + 6 dev). Přínos: rychlejší
+Ve dvou krocích. Nejdřív statická analýza *importů*: živý kód používal 16
+z 68 runtime závislostí → odebráno 58 balíčků (52 runtime + 6 dev), strom
+v lockfile 562 → 349. Potom analýza *použití* (viz §4): dalších 9 balíčků
+bylo importovaných, ale nevolaných → runtime 16 → **8**. Přínos: rychlejší
 `npm ci` v CI a Dockeru, menší útočná plocha dodavatelského řetězce a žádné
 vynucené major migrace (zod 4, recharts 3, …) pro kód, který nikdy neběží.
-JS bundle se tím **nezměnil** — nepoužitý kód se do něj nedostával ani předtím.
+První krok JS bundle **nezměnil** (neimportovaný kód se do něj nedostával);
+druhý ho zmenšil o čtvrtinu.
 
 Ověřeno, že nic z odebraného se nenačítá dynamicky: jediný dynamický import
 na serveru je `web-push` (používá se); SQLite backend v `server/events.ts` je
 podle vlastního komentáře no-op stub.
 
-## 4. Klientský JS: 468,4 → 495,2 kB (+5,7 %) — zhoršení, vysvětlené
+## 4. Klientský JS: 468 → 495 → **373 kB**
 
-| Krok                                   | JS (raw / gzip)         |
-|----------------------------------------|-------------------------|
-| výchozí stav                           | 468,36 / 148,06 kB      |
-| po upgradu knihoven (minifikace esbuild) | 501,32 / 158,21 kB    |
-| po přepnutí na minifikátor oxc         | **495,21 / 153,29 kB**  |
+| Krok                                          | JS (raw / gzip)        |
+|-----------------------------------------------|------------------------|
+| výchozí stav (2.4.2)                          | 468,36 / 148,06 kB     |
+| po upgradu knihoven (React 19.3 aj.)          | 501,32 / 158,21 kB     |
+| + minifikátor oxc místo esbuild               | 495,21 / 153,29 kB     |
+| + odstranění nepoužitých obalů šablony (2.6.0) | **372,65 / 113,25 kB** |
 
-Nárůst pochází z upstreamu: `react-dom-client.production.js` narostl mezi
-19.2.8 a 19.3.0 z 536 016 na 625 168 B (nezminifikováno). Přepnutí na výchozí
-minifikátor Vite 8 (oxc) vrátilo ~6 kB. Je to cena za „nejnovější React",
-ne regrese v kódu aplikace.
+Nárůst v druhém řádku je z upstreamu: `react-dom-client.production.js` narostl
+mezi 19.2.8 a 19.3.0 z 536 016 na 625 168 B (nezminifikováno).
 
-Co s tím dál (neprovedeno): `React.lazy` pro modální panely (`panels.tsx`,
-NFC, speech, mapy), které se otevírají až na vyžádání.
+Největší úspora přišla z analýzy *použití*, ne importů: aplikace byla zabalená
+do `QueryClientProvider` › `TooltipProvider` › `Toaster` › hash `Router`, ale
+nikdo nevolal `useQuery`, `toast()`, žádný `<Tooltip>` a router měl jedinou
+trasu. Statická analýza importů je hlásila jako „použité", protože je
+`App.tsx` importoval. Po odstranění: −122 kB JS (−25 %), CSS 39,7 → 33,7 kB,
+runtime závislosti 16 → 8.
+
+Další krok (neprovedeno): `React.lazy` pro modální panely.
 
 ## 5. Build a image
 

@@ -11,6 +11,19 @@
   The receiver assembles them into a `Blob`, attaches it to the message,
   and exposes a download link.
 
+## From the composer
+
+The **File** / **Image** buttons next to the message field pick the path
+themselves: up to 512 KiB the file rides inside the message, anything larger
+is handed to the chunked transfer automatically (text typed alongside is
+sent as its own message). The **Files** panel uses the same chunked sender.
+Until 2.6.0 the composer only knew the inline path and answered larger files
+with *"File exceeds inline cap of 512.0 kB; use chunked transfer"*.
+
+A transfer needs at least one connected peer. Without an open DataChannel it
+does not start and the app says so — the alternative would be the server
+"proxy" path below, which does not deliver.
+
 ## Configurable cap
 
 `Preferences.maxAttachmentBytes` — **default is unlimited**

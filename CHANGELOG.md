@@ -5,6 +5,78 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [2.6.0] – 2026-09-21
+
+Větev `clean-installation`: nová instalační sada, oprava odesílání souborů,
+přepracované menu a kompozér, úklid repozitáře. Wire formát beze změny.
+
+### Přidáno
+- **Instalační sada** `install.sh` / `update.sh` / `uninstall.sh` +
+  `installer/lib/` (bash ≥ 3.2). Zjistí systém, doinstaluje závislosti,
+  průvodce v textu nebo `whiptail`/`dialog` (cs/en), bezobslužný režim
+  a soubor odpovědí. Dva způsoby nasazení — **native** (systemd / proces)
+  a **docker** — přepínatelné za běhu. Volby v `.m5cet/install.conf`, tajemství
+  v `.env`; zálohy a **automatický rollback** při neúspěšné aktualizaci;
+  `--repair`, `--doctor`. Podrobně [`INSTALL.md`](INSTALL.md).
+- Generovaný web Nginx omezuje WebSocket spojení na klienta — změřeno 60
+  souběžných upgradů: 20 × `101` + 40 × `503` přes proxy, 60 × `101` přímo na
+  aplikaci (jejíž vlastní WS limiter se nespouští).
+- Server: proměnná `HOST` — nativní instalace může poslouchat jen na loopbacku.
+- Menu seskupené do čtyř skupin (místnost / komunikace / nástroje / aplikace)
+  a **uživatelský prvek** (avatar + jméno → profil) v liště i mobilním panelu.
+- `docs/modes.md`: režimy Light / Server-enhanced, jejich parametry a soubory,
+  odpověď na otázku Firebase (hlavní aplikace ho nepoužívá).
+- E2E test dvou peerů (`test/e2e/two-peers.test.ts`) — první test pokrývající
+  `App.tsx`; unit test `linkify`; CI joby `installer` a `e2e`.
+
+### Opraveno
+- **„File exceeds inline cap of 512.0 kB; use chunked transfer."** Tlačítka
+  Soubor/Obrázek u zprávy uměla jen inline cestu. Větší soubory se nyní
+  pošlou automaticky šifrovaně po částech.
+- **Chunked odesílání padalo po posledním chunku**: `useRef`/`useEffect` byly
+  volány uvnitř asynchronního handleru za `await`. Karta přenosu zůstávala
+  „běží" a hláška o úspěchu se nezobrazila.
+- Bez připojeného peera se přenos nespustí — dřív spadl do serverové „proxy"
+  cesty, která data nedoručuje, a přesto hlásil úspěch.
+- Mobilní stavový štítek ukazoval první písmeno interního stavu („i").
+- E2E sada: tři chybné testy (očekávání 60 znaků v poli s limitem 42; test
+  „linkify", který si odkaz `javascript:` vložil sám; test API proti
+  statickému serveru).
+
+### Změněno
+- Kompozér je jedna lišta s ikonami a **kulatým tlačítkem Odeslat 40 px**
+  místo bloku vysokého 56 px (na mobilu přes celou šířku).
+- `Dockerfile.admin` odstraněn: admin běží ze stejného image s jiným
+  `command` a své GUI servíruje sám; odpadl i kontejner `admin-ui` (nginx).
+- Výchozí větev instalátoru je `master` (dřív zastaralá feature větev).
+- Kořen repozitáře má tři dokumenty (`README`, `INSTALL`, `CHANGELOG`);
+  `KNOWLEDGE_BASE` a `CLIENT_OPTIMIZATIONS` přesunuty do `docs/`, `DEPLOYMENT`
+  sloučen do `docs/deployment.md`, pravidla z `WORKFLOW` do vývojářského
+  průvodce, `PROGRESS` zrušen.
+
+### Odebráno
+- Nepoužité obaly šablony: `QueryClientProvider`, `TooltipProvider`, `Toaster`
+  a hash router s jedinou trasou. S nimi 9 balíčků (runtime závislosti
+  **16 → 8**), `components/ui`, `use-toast`, `queryClient`, `utils`,
+  `calls.ts`, `shared/schema.ts`, `server/storage.ts`, `components.json`,
+  mrtvé Tailwind tokeny. **JS 495 → 373 kB** (gzip 153 → 113), CSS 39,7 → 33,7 kB.
+- Jednorázové skripty `merge-and-tag-v2.4.1.sh`, `notes-to-patch.sh`, `.memory/`.
+
+### Bezpečnost
+- Instalátor nezapisuje tajemství do compose souboru ani do chybových hlášek;
+  konfiguraci parsuje proti seznamu klíčů, nikdy ji nenačítá přes `source`.
+- ⚠️ Commit `fb31919d` (2.5.0) omylem zahrnul `browser-only-firebase/conf.json`
+  a úpravu `app.js` se skutečnou webovou konfigurací Firebase a byl odeslán do
+  veřejného repozitáře. Nejde o serverové tajemství, ale zveřejnění nebylo
+  záměrné — doporučeno omezit API klíč na referrery domény / zapnout App Check.
+
+### Otestováno
+- `tsc` čisté · 106 unit testů · 10 e2e testů · guard 8/8 · build OK ·
+  `shellcheck` čistý. Instalátor: viz „Co je ověřeno" v `INSTALL.md`.
+- Vzhled: desktop a 375 px ve všech třech tématech.
+- **Neověřeno:** unit pod skutečným systemd, certbot/TLS, ufw/firewalld,
+  dnf/yum/pacman/zypper/apk; skutečný hovor mezi dvěma zařízeními.
+
 ## [2.5.0] – 2026-09-21
 
 Modernizace toolchainu, úklid závislostí a oprava regresí z větve
@@ -245,7 +317,7 @@ změn vůči `2.0.x`.
 - Production hosting konfigurace (DigitalOcean, Railway, Render, Fly.io,
   Nginx + TLS).
 
-[2.5.0]: https://github.com/m5ike/cipherroom-secure-chat/compare/v2.4.2...HEAD
+[2.6.0]: https://github.com/m5ike/cipherroom-secure-chat/compare/v2.4.2...HEAD
 [2.4.2]: https://github.com/m5ike/cipherroom-secure-chat/releases/tag/v2.4.2
 [2.1.0-rc.1]: https://github.com/m5ike/cipherroom-secure-chat/releases/tag/v2.1.0-rc.1
 [2.0.0]: https://github.com/m5ike/cipherroom-secure-chat/releases/tag/v2.0.0

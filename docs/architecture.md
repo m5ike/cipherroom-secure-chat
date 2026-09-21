@@ -56,7 +56,7 @@
 | IV + ciphertext chunků souboru       | jen v proxy režimu přenosu (v paměti, zkráceně) |
 | Push subscription endpoint            | jen po explicitním subscribe    |
 
-Reverse proxy (nginx, Cloudflare) může logovat IP. Viz `DEPLOYMENT.md` a `install.sh`.
+Reverse proxy (nginx, Cloudflare) může logovat IP. Viz [`deployment.md`](deployment.md) a [`INSTALL.md`](../INSTALL.md).
 
 ## Klientská architektura
 
@@ -85,7 +85,8 @@ Reverse proxy (nginx, Cloudflare) může logovat IP. Viz `DEPLOYMENT.md` a `inst
   protokol je TODO (pro tuto fázi se neposílají zprávy o psaní).
 - `e2ee` mezi více než dvěma peers vyžaduje sdílený passphrase — v této fázi
   nemáme klíč-per-peer výměnu.
-- Testy (Vitest, 95 testů) pokrývají `lib/*`, server utility, file proxy,
-  retention a komponenty `MainMenu` / `TransferCard`. **Nepokrývají `App.tsx`**
-  (signaling + mesh + zprávy, ~2 600 řádků) — ten ověřuje jen ruční
-  dvouokenní smoke test.
+- Testy: 106 unit/komponentových (Vitest) pokrývá `lib/*`, server utility, file
+  proxy, retention, `linkify`, `MainMenu` a `TransferCard`. `App.tsx`
+  (signaling + mesh + zprávy, ~2 600 řádků) nemá unit testy; end to end ho
+  ověřuje `test/e2e/two-peers.test.ts` — dva skutečné prohlížeče, zpráva,
+  inline i chunked soubor s kontrolou SHA-256.

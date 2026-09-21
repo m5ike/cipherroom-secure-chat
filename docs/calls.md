@@ -20,7 +20,12 @@ modal:
 
 ## Device selection
 
-`client/src/lib/calls.ts` exports `listDevices()` which returns
+> Not implemented. An earlier `client/src/lib/calls.ts` helper described
+> below was never imported by the app and has been removed; `App.tsx` calls
+> `getUserMedia` directly with the OS default devices. A device picker would
+> start from `navigator.mediaDevices.enumerateDevices()`.
+
+The removed helper exported `listDevices()` which returned
 `audioInputs`, `videoInputs`, `audioOutputs` from
 `navigator.mediaDevices.enumerateDevices()`. Pass `audioDeviceId` /
 `videoDeviceId` to `getCallStream(...)` to pin a specific device. The

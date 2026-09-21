@@ -18,7 +18,7 @@ signalizační relé (WebSocket `/ws`) a nic neukládá na disk.
 
 - Balíček `cipherroom-secure-chat`, značka **M5cet** (rebrand CipherRoom).
 - Node ≥ 22 (CI/Docker 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
-  · ws 8 · Tailwind 3.4 · Vitest 5. Runtime závislostí je 16.
+  · ws 8 · Tailwind 3.4 · Vitest 5. Runtime závislostí je 8.
 - `browser-only-firebase/` je samostatná statická varianta bez buildu;
   s hlavní aplikací nesdílí kód.
 
@@ -137,5 +137,5 @@ Ověřeno revizí 2026-09-21; nic z toho není ve 2.5.0 opraveno.
 ## 8. Kam dál
 
 `README.md` (přehled + diagramy) · `docs/*.md` (po oblastech) ·
-`CHANGELOG.md` · `PROGRESS.md` (stav a TODO) · `WORKFLOW.md` (postup) ·
-`CLIENT_OPTIMIZATIONS.md` (měření).
+`CHANGELOG.md` · [`INSTALL.md`](../INSTALL.md) · [`modes.md`](modes.md) ·
+[`developer-guide.md`](developer-guide.md) · [`optimizations.md`](optimizations.md).

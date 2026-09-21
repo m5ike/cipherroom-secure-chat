@@ -22,7 +22,6 @@ npm run admin:dev       # development (tsx)
 | `ADMIN_PORT`       | `5050`     | Bind port for the admin API.             |
 | `ADMIN_BIND`       | `127.0.0.1` | Bind address (docker-compose sets `0.0.0.0` inside the container and publishes the port on host loopback only). |
 | `ADMIN_API_TOKEN`  | (unset)    | Bearer token for every endpoint except `/admin/health`. |
-| `ADMIN_UI_PORT`    | `5051`     | Used by docker-compose to expose the static GUI via nginx. |
 
 ## Read this first — process isolation
 

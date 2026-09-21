@@ -1,11 +1,14 @@
 # M5cet — deployment / nasazení
 
-Tento dokument popisuje produkční nasazení mimo `install.sh` happy path.
-Pro happy path je `install.sh --install` jediný krok; tady jsou recepty pro
-prostředí, kde si chcete řídit reverse proxy / TLS / orchestraci ručně.
+Běžná cesta je [`install.sh`](../install.sh) — viz [`INSTALL.md`](../INSTALL.md):
+zjistí systém, doinstaluje závislosti, nasadí (native nebo docker), nastaví
+Nginx/TLS a uloží konfiguraci pro `update.sh` a `uninstall.sh`. Tento dokument
+je pro případy, kdy si reverse proxy, TLS nebo orchestraci řídíte ručně, a pro
+hostované platformy.
 
-> Detaily k jednotlivým platformám viz [`DEPLOYMENT.md`](../DEPLOYMENT.md)
-> (DigitalOcean, Railway, Render, Fly.io).
+M5cet potřebuje **dlouho běžící proces**: `/ws` je trvalé WebSocket spojení pro
+signalizaci WebRTC. Čistě statický hosting umí obsloužit frontend, ale ne
+backend.
 
 ## Topologie
 
@@ -26,6 +29,27 @@ flowchart LR
     Admin -. read-only .-> DB
 ```
 
+## Hostované platformy (PaaS)
+
+Konfigurace jsou v repozitáři; všechny staví z `Dockerfile` nebo přes
+`npm ci && npm run check && npm run build` a hlídají `GET /api/health`.
+
+| Platforma | Soubor | Postup |
+|---|---|---|
+| DigitalOcean App Platform | [`.do/app.yaml`](../.do/app.yaml) | Create App → GitHub repo → Dockerfile, nebo použít app spec |
+| Railway | [`railway.json`](../railway.json) | Connect repo → Deploy |
+| Render | [`render.yaml`](../render.yaml) | New Web Service → Render načte `render.yaml` |
+| Fly.io | [`fly.toml`](../fly.toml) | `fly launch --no-deploy --name m5cet --region fra && fly deploy` |
+
+Proměnné prostředí (VAPID, TURN, `LOG_EVENTS`, …) nastavte v administraci
+platformy — viz [`modes.md`](modes.md) a `install.sh --list-params`. Verzi
+Node určuje `engines` v `package.json` (≥ 22).
+
+**Netlify / Vercel** se hodí jen pro statický frontend. Backend pak musí běžet
+jinde a frontend se sestaví s `VITE_SIGNALING_URL=wss://backend.example/ws`.
+**Cloudflare Workers + Durable Objects** by signalizaci zvládly, ale
+vyžadovaly by přepis `server/routes.ts`.
+
 ## Minimální požadavky
 
 - 1 vCPU, 512 MB RAM, 1 GB disk pro hlavní službu.
@@ -38,7 +62,10 @@ flowchart LR
 
 ### Nginx (referenční)
 
-`install.sh` zapisuje toto, pokud `--enable-nginx`:
+`install.sh` generuje vlastní web včetně omezení počtu WebSocket spojení na
+klienta (`limit_req` / `limit_conn` pro `/ws`) — to je podstatné, protože
+limiter uvnitř aplikace se při WS upgradu nespouští. Ruční minimum vypadá takto
+(doplňte si stejné limity):
 
 ```nginx
 # Managed by M5cet install.sh
@@ -115,14 +142,18 @@ Auto-renewal je ošetřený certbot timerem.
 
 ## Docker Compose
 
-`docker-compose.yml` má tři služby:
+Referenční `docker-compose.yml` v kořeni má dvě služby ze **stejného image**
+(admin je jen jiný `command` a své GUI servíruje sám na `/`):
 
 ```yaml
 services:
-  app:        # main signaling, port 5000
-  admin:      # admin API, port 5050, profile=admin
-  admin-ui:   # static GUI, port 5051, profile=admin
+  app:        # signalizace, 127.0.0.1:${APP_PORT:-5005} -> 5000
+  admin:      # admin API + GUI, 127.0.0.1:${ADMIN_PORT:-5050}, profile=admin
 ```
+
+Obě běží s `read_only`, `cap_drop: ALL` a `no-new-privileges`. Produkční
+instalace si generuje vlastní soubor do `<dir>/.m5cet/docker-compose.yml`
+a tajemství předává přes `env_file`, ne v compose souboru.
 
 Spuštění:
 
@@ -137,8 +168,8 @@ docker compose --profile admin up -d
 Override portů přes `.env`:
 
 ```dotenv
+APP_PORT=15000
 ADMIN_PORT=15050
-ADMIN_UI_PORT=15051
 ADMIN_API_TOKEN=<32+B random>
 VAPID_PUBLIC_KEY=...
 VAPID_PRIVATE_KEY=...
@@ -147,10 +178,13 @@ VAPID_PRIVATE_KEY=...
 ## Bare-metal (bez Dockeru)
 
 ```bash
+# Doporučeno: sudo ./install.sh --mode native  — vytvoří uživatele, unit
+# s hardeningem, .env s právy 0640 a uloží konfiguraci pro update/uninstall.
+# Ručně:
 git clone https://github.com/m5ike/cipherroom-secure-chat /opt/m5cet
 cd /opt/m5cet
 npm ci
-npm run build
+npm run build          # dist/ je soběstačné; node_modules pak lze smazat
 
 # systemd unit
 sudo tee /etc/systemd/system/m5cet.service >/dev/null <<'EOF'
@@ -192,8 +226,10 @@ sudo systemctl enable --now m5cet
 - `.env` (`ADMIN_API_TOKEN`, VAPID, `DATABASE_URL`).
 - Konfiguraci Nginx a TLS certifikáty.
 
-`install.sh` automatický backup dělá při každém upgrade pod
-`/var/backups/m5cet/<timestamp>/`.
+`update.sh` zálohuje před každou změnou do `BACKUP_ROOT`
+(`/var/backups/m5cet/<čas>-<akce>/`, u uživatelské instalace
+`<dir>/.m5cet/backups/`) a drží posledních `BACKUP_KEEP` (5) záloh;
+`update.sh --rollback` se k poslední vrátí.
 
 ## Hardening checklist
 
