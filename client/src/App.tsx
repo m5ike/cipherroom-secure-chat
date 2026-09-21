@@ -85,6 +85,10 @@ import { MainMenu } from "./components/MainMenu";
 import { formatTime, formatBytes } from "./lib/format";
 import { RTC_CONFIG, turnConfigPromise } from "./lib/rtc";
 import { M5Logo } from "./components/M5Logo";
+import { InvitePrompt, ShareSection } from "./components/SharePanel";
+import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
+import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
+import { leaveToGoodbye, wipeEverything } from "./lib/wipe";
 import {
   AnalyticsPanel,
   EncryptionPanel,
@@ -259,6 +263,7 @@ export type PanelKey =
   | "analytics"
   | "roomSecurity"
   | "trust"
+  | "invite"
   | "join"
   | "peers"
   | "audio"
@@ -295,6 +300,14 @@ function ChatApp() {
   const [peers, setPeers] = useState<PeerView[]>([]);
   const [copied, setCopied] = useState(false);
   const [notice, setNotice] = useState<string>("");
+  // The state the user asked for. "connected" is enforced: the app keeps
+  // retrying until it holds; only the Disconnect button (or the idle limit,
+  // or Clear & Quit) sets it back. Mirrors intentRef for rendering.
+  const [desired, setDesired] = useState<DesiredState>("disconnected");
+  const [connLog, setConnLog] = useState<Array<{ at: number; attempt: number; event: ConnLogEvent; delayMs?: number }>>([]);
+  const [inviteParts, setInviteParts] = useState<ShareLinkParts | null>(null);
+  const [sessionPassphrase, setSessionPassphrase] = useState("");
+  const sessionCacheRef = useRef(createSessionCache());
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [audioStatus, setAudioStatus] = useState<AudioStatus>("off");
   const [pushAvailable, setPushAvailable] = useState(false);
@@ -418,8 +431,8 @@ function ChatApp() {
 
   // Apply theme/font/effects whenever they change.
   useEffect(() => {
-    applyTheme(prefs.theme);
-  }, [prefs.theme]);
+    applyTheme(prefs.theme, prefs.accent, prefs.layout);
+  }, [prefs.theme, prefs.accent, prefs.layout]);
   useEffect(() => {
     applyFont(prefs.font, prefs.fontSize);
   }, [prefs.font, prefs.fontSize]);
@@ -898,6 +911,7 @@ function ChatApp() {
     // Full-jitter — picks a random delay in [0, exp]. This avoids
     // many clients synchronising after a global outage.
     const delay = Math.random() * exp;
+    logConn("retry", attempt, delay);
     setNotice(lang === "cs"
       ? `Server odpojen — automatický reconnect za ${(delay / 1000).toFixed(1)}s (pokus #${attempt}).`
       : lang === "de" ? `Server unterbrochen — automatischer Reconnect in ${(delay / 1000).toFixed(1)}s (Versuch #${attempt}).`
@@ -905,8 +919,26 @@ function ChatApp() {
     reconnectTimerRef.current = window.setTimeout(() => {
       reconnectTimerRef.current = null;
       if (!intentRef.current) return;
-      void doConnect();
+      void attemptConnect();
     }, delay);
+  }
+
+  function logConn(event: ConnLogEvent, attempt = reconnectAttemptsRef.current, delayMs?: number) {
+    const entry = { at: Date.now(), attempt, event, delayMs };
+    // Kept in memory only, newest first, bounded.
+    setConnLog((cur) => [entry, ...cur].slice(0, 50));
+    console.info(`[m5cet] connection ${event} (attempt #${attempt}${delayMs !== undefined ? `, next in ${(delayMs / 1000).toFixed(1)}s` : ""})`);
+  }
+
+  /** One attempt that can never kill the loop: a throw schedules the next one. */
+  async function attemptConnect() {
+    try {
+      await doConnect();
+    } catch (err) {
+      logConn("failed");
+      console.warn("[m5cet] connect attempt threw", err);
+      if (intentRef.current) { setStatus("offline"); scheduleReconnect(); }
+    }
   }
 
   async function doConnect() {
@@ -932,11 +964,13 @@ function ChatApp() {
     // Clear old peer fingerprints — each room has its own set.
     setPeerFingerprints({});
     setStatus("connecting");
+    logConn("connecting", reconnectAttemptsRef.current + 1);
 
     const socket = new WebSocket(wsUrl());
     socketRef.current = socket;
 
     socket.onopen = () => {
+      logConn("open", reconnectAttemptsRef.current + 1);
       reconnectAttemptsRef.current = 0;
       socket.send(JSON.stringify({ type: "join", room: nextRoom, peerId: nextPeerId, name: nameRef.current }));
       socket.send(JSON.stringify({ type: "command-poll", deviceId: prefs.deviceId }));
@@ -1161,6 +1195,7 @@ function ChatApp() {
       //   2. Anything else (server kicked us, NAT rebind, Wi-Fi blip, browser
       //      suspend) → reconnect until the user explicitly leaves.
       if (!clientStoppedRef.current) {
+        logConn("closed");
         setStatus("offline");
         setConnStatus((s) => s ? { ...s, state: "reconnecting" } : s);
         scheduleReconnect();
@@ -1195,12 +1230,35 @@ function ChatApp() {
     disconnect(false);
     // The user explicitly asked to (re)join; re-arm the persistent
     // connection so any later network blip will silently reconnect.
+    await startSession(name, roomInput, passphrase);
+  }
+
+  /** Desired state := connected. Used by the form, a restored session and invites. */
+  async function startSession(nextName: string, nextRoom: string, nextPassphrase: string) {
     intentRef.current = true;
     clientStoppedRef.current = false;
     reconnectAttemptsRef.current = 0;
-    passphraseRef.current = passphrase;
-    roomInputRef.current = roomInput;
-    await doConnect();
+    passphraseRef.current = nextPassphrase;
+    roomInputRef.current = nextRoom;
+    nameRef.current = nextName;
+    setDesired("connected");
+    setSessionPassphrase(nextPassphrase);
+    void sessionCacheRef.current.save({ name: nextName, room: nextRoom, passphrase: nextPassphrase, desired: "connected" }).catch(() => undefined);
+    await attemptConnect();
+  }
+
+  /** Desired state := disconnected. The session stays cached (until the tab
+   *  closes, an hour of idling, or Clear & Quit) so reconnecting is one click. */
+  function userDisconnect() {
+    const hadSession = passphraseRef.current;
+    // Synchronous on purpose: a reload or a closed lid right after the click
+    // must already find "disconnected" (the encrypted save below is async).
+    sessionCacheRef.current.forceDisconnected();
+    disconnect();
+    logConn("stopped", 0);
+    if (hadSession) {
+      void sessionCacheRef.current.save({ name: nameRef.current, room: roomInputRef.current, passphrase: hadSession, desired: "disconnected" }).catch(() => undefined);
+    }
   }
 
   function disconnect(showMessage = true) {
@@ -1209,6 +1267,7 @@ function ChatApp() {
     // the Disconnect button. Everywhere else we keep reconnecting.
     intentRef.current = false;
     clientStoppedRef.current = true;
+    setDesired("disconnected");
     if (reconnectTimerRef.current !== null) {
       window.clearTimeout(reconnectTimerRef.current);
       reconnectTimerRef.current = null;
@@ -1715,6 +1774,67 @@ function ChatApp() {
 
   useEffect(() => () => disconnect(false), []);
 
+  // --- startup: an invite link wins, otherwise restore this tab's session ---
+  useEffect(() => {
+    const parts = parseShareFragment(window.location.hash);
+    if (window.location.hash) {
+      // Scrub the fragment at once: the link key must not linger in the
+      // address bar, in this history entry, or in anything copied from it.
+      window.history.replaceState(null, "", window.location.pathname + window.location.search);
+    }
+    if (parts) { setInviteParts(parts); setActivePanel("invite"); return; }
+    let cancelled = false;
+    void sessionCacheRef.current.load().then((saved) => {
+      if (cancelled || !saved) return;
+      setName(saved.name); setRoomInput(saved.room); setPassphrase(saved.passphrase);
+      passphraseRef.current = saved.passphrase;
+      setSessionPassphrase(saved.passphrase);
+      if (saved.desired === "connected") {
+        systemMessage(t(lang, "session.restored"));
+        void startSession(saved.name, saved.room, saved.passphrase);
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- activity keeps the session alive; an hour without any ends it ---
+  useEffect(() => {
+    const cache = sessionCacheRef.current;
+    let last = 0;
+    const onActivity = () => { const n = Date.now(); if (n - last > 15_000) { last = n; cache.touch(); } };
+    const events = ["pointerdown", "keydown", "touchstart", "wheel"] as const;
+    events.forEach((e) => window.addEventListener(e, onActivity, { passive: true }));
+    const timer = window.setInterval(() => {
+      const idle = cache.idleMs();
+      if (idle !== null && idle > SESSION_IDLE_LIMIT_MS) {
+        disconnect(false);
+        void cache.clear();
+        setPassphrase(""); setSessionPassphrase(""); passphraseRef.current = "";
+        setNotice(t(lang, "session.expired"));
+        systemMessage(t(lang, "session.expired"));
+      }
+    }, 60_000);
+    return () => { events.forEach((e) => window.removeEventListener(e, onActivity)); window.clearInterval(timer); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function acceptInvite(payload: SharePayload) {
+    setInviteParts(null);
+    setActivePanel(null);
+    setName(payload.name); setRoomInput(payload.room); setPassphrase(payload.passphrase);
+    await startSession(payload.name, payload.room, payload.passphrase);
+  }
+
+  async function clearAndQuit() {
+    if (!window.confirm(t(lang, "clear.confirm"))) return;
+    setNotice(t(lang, "clear.working"));
+    disconnect(false);
+    await sessionCacheRef.current.clear().catch(() => undefined);
+    await wipeEverything({ deviceId: prefs.deviceId });
+    leaveToGoodbye();
+  }
+
   if (!capabilities.supported) {
     return <UnsupportedBanner reasons={capabilities.unsupportedReasons} />;
   }
@@ -1786,13 +1906,14 @@ function ChatApp() {
           currentPanel={activePanel}
           onOpen={(panel) => setActivePanel(panel)}
           user={{ name: prefs.name, avatar: prefs.avatar }}
+          onClearQuit={() => void clearAndQuit()}
         />
       </header>
 
       {/* Full-screen chat area */}
       <main className="relative flex flex-1 min-h-0 flex-col chat-canvas">
         <div className="flex flex-1 min-h-0 flex-col">
-          <div className="flex-shrink-0 border-b border-border bg-card/60 px-3 py-2 sm:px-4">
+          <div data-layout-hide="focus" className="flex-shrink-0 border-b border-border bg-card/60 px-3 py-2 sm:px-4">
             <div className="flex items-center justify-between gap-3 text-xs">
               <p data-testid="text-notice" className="truncate text-muted-foreground">
                 {notice}
@@ -1801,8 +1922,8 @@ function ChatApp() {
                 <span>{room ? `room:${room}` : t(lang, "status.idle")}</span>
                 <span className="hidden sm:inline">·</span>
                 <span className="hidden sm:inline">{myId.slice(-10)}</span>
-                {status === "joined" ? (
-                  <button type="button" onClick={() => disconnect()} className="ml-1 inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 hover:bg-accent">
+                {desired === "connected" ? (
+                  <button type="button" data-testid="button-disconnect-bar" onClick={() => userDisconnect()} className="ml-1 inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 hover:bg-accent">
                     <LogOut className="h-3 w-3" />
                     {t(lang, "common.disconnect")}
                   </button>
@@ -2121,7 +2242,7 @@ function ChatApp() {
       {/* Connection panel */}
       {activePanel === "connection" ? (
         <SimpleModal title="Connection" onClose={() => setActivePanel(null)}>
-          <ConnectionPanel status={connStatus} prefs={prefs} setPrefs={setPrefs} />
+          <ConnectionPanel status={connStatus} prefs={prefs} setPrefs={setPrefs} lang={lang} desired={desired} log={connLog} />
         </SimpleModal>
       ) : null}
 
@@ -2166,14 +2287,31 @@ function ChatApp() {
                 <Radio className="h-4 w-4" />
                 {status === "joined" ? t(lang, "join.reconnect") : t(lang, "join.connect")}
               </button>
-              {status === "joined" ? (
-                <button type="button" onClick={() => disconnect()} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-border bg-background px-3 text-sm hover:bg-accent">
+              {desired === "connected" ? (
+                <button type="button" data-testid="button-disconnect" onClick={() => userDisconnect()} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-border bg-background px-3 text-sm hover:bg-accent">
                   <LogOut className="h-4 w-4" />
                   {t(lang, "common.disconnect")}
                 </button>
               ) : null}
             </div>
           </form>
+          <ShareSection
+            lang={lang}
+            room={normalizeRoom(roomInputRef.current || roomInput)}
+            passphrase={sessionPassphrase}
+            ready={desired === "connected" && sessionPassphrase.length > 0}
+          />
+        </SimpleModal>
+      ) : null}
+
+      {activePanel === "invite" && inviteParts ? (
+        <SimpleModal title={t(lang, "invite.title")} onClose={() => { setInviteParts(null); setActivePanel(null); }}>
+          <InvitePrompt
+            lang={lang}
+            parts={inviteParts}
+            onAccept={(payload) => void acceptInvite(payload)}
+            onDismiss={() => { setInviteParts(null); setActivePanel(null); }}
+          />
         </SimpleModal>
       ) : null}
     </div>
@@ -2181,6 +2319,14 @@ function ChatApp() {
 }
 
 function SimpleModal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  // A modal dialog must be dismissable from the keyboard.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const onKey = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") onCloseRef.current(); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   return (
     <div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-40 flex items-stretch justify-center bg-black/45 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="my-auto flex max-h-[92dvh] w-full max-w-xl flex-col modal-shell" onMouseDown={(event) => event.stopPropagation()}>
@@ -2551,15 +2697,24 @@ function SpeechPanel({
   );
 }
 
+type ConnLogEvent = "connecting" | "open" | "closed" | "retry" | "failed" | "stopped";
+
 function ConnectionPanel({
-  status, prefs, setPrefs,
+  status, prefs, setPrefs, lang, desired, log,
 }: {
   status: ConnectionStatus | null;
   prefs: Preferences;
   setPrefs: (p: Partial<Preferences>) => void;
+  lang: Lang;
+  desired: DesiredState;
+  log: Array<{ at: number; attempt: number; event: ConnLogEvent; delayMs?: number }>;
 }) {
   return (
     <div className="space-y-3">
+      <div className="rounded-xl border border-border bg-background p-2 text-xs" data-testid="conn-desired" data-desired={desired}>
+        <span className="font-semibold">{t(lang, "conn.desired")}:</span>{" "}
+        {t(lang, desired === "connected" ? "conn.desired.connected" : "conn.desired.disconnected")}
+      </div>
       <p className="text-xs text-muted-foreground">Heartbeat strategy controls how often the client pings signaling and how aggressively it reconnects after a drop. Browsers throttle background timers; mobile may suspend WebSockets entirely when tab is hidden.</p>
       <label className="grid gap-1 text-sm font-medium">Strategy
         <select
@@ -2581,6 +2736,23 @@ function ConnectionPanel({
           <div>last pong: {status.lastPongAt ? new Date(status.lastPongAt).toLocaleTimeString() : "—"}</div>
         </div>
       ) : <p className="text-xs text-muted-foreground">Not connected.</p>}
+      <div>
+        <h3 className="mb-1 text-xs font-semibold">{t(lang, "conn.log.title")}</h3>
+        {log.length === 0 ? (
+          <p className="text-xs text-muted-foreground">{t(lang, "conn.log.empty")}</p>
+        ) : (
+          <ol className="max-h-40 overflow-y-auto rounded-xl border border-border bg-background p-2 font-mono text-[11px] leading-5" data-testid="conn-log">
+            {log.map((entry, i) => (
+              <li key={`${entry.at}-${i}`}>
+                {new Date(entry.at).toLocaleTimeString()} · #{entry.attempt} ·{" "}
+                {entry.event === "retry"
+                  ? t(lang, "conn.log.retry").replace("{s}", ((entry.delayMs ?? 0) / 1000).toFixed(1))
+                  : t(lang, `conn.log.${entry.event}`)}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
     </div>
   );
 }

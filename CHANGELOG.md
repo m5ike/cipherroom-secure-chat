@@ -5,6 +5,55 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [2.7.0] – 2026-09-21
+
+Relace, pozvánky, úplné smazání stop, menu pod ikonou a nové šablony.
+Wire formát zpráv beze změny. Podrobně
+[`docs/session-and-sharing.md`](docs/session-and-sharing.md).
+
+### Přidáno
+- **Šifrovaná session cache** (`lib/session-cache.ts`): jméno, room ID, klíč
+  místnosti a požadovaný stav; AES-GCM pod neexportovatelným klíčem
+  v IndexedDB, šifrovaný text v `sessionStorage`. Platí do zavření karty,
+  po hodině nečinnosti se smaže. Po reloadu se aplikace sama připojí.
+- **Vynucený požadovaný stav**: „Připojit" → aplikace spojení drží a po výpadku
+  zkouší znovu s prodlevou; pokusy se logují (*Spojení → Pokusy o spojení*).
+  „Odpojit" je dostupné i během navazování a zapisuje se synchronně.
+- **Pozvánka odkazem + 12místný kód `XXXX-XXXX-XXXX`** (*Místnost → Sdílet*):
+  klíč rozdělený mezi fragment URL, server a kód; 5 špatných kódů odkaz zničí,
+  limit X připojení, platnost 1 h – 7 dní, zneplatnění. `GET` od robotů
+  a náhledů nic nespotřebuje; příjemci se odkaz ihned smaže z adresy.
+  Sdílení: WhatsApp, Telegram, Viber, Signal, Messenger, iMessage, SMS, e-mail,
+  QR (lokálně), kopírování, systémový dialog. Endpointy `/api/share/*`.
+- **„Smazat vše a odejít"** na konci menu: smaže úložiště, IndexedDB, cache,
+  service worker, push, cookies a serverová data zařízení, pak `/goodbye`
+  s hlavičkou `Clear-Site-Data`.
+- **Šablony** Midnight, Paper a Kontrast (celkem 6), ke každé **6 barevných
+  variací** a **4 rozvržení** (klasické, široké, kompaktní, soustředěné).
+- Modální okna se zavírají klávesou Escape.
+
+### Změněno
+- **Menu se otevírá ikonou ☰** (tři čáry) jako výchozí; dřívější uložená volba
+  se jednou převede, ostatní režimy zůstávají v Nastavení.
+- Pokus o připojení, který skončí výjimkou, už smyčku opakování neukončí.
+
+### Bezpečnost — co je potřeba vědět
+- Klíč místnosti se nově **ukládá** (šifrovaně, jen po dobu života karty).
+  Do 2.6.0 se neukládal vůbec. Nechrání před kódem běžícím v originu stránky
+  ani před forenzním čtením profilu prohlížeče.
+- **Historii prohlížeče web smazat neumí.** „Smazat vše a odejít" odstraní vše
+  ostatní a do historie nic tajného nedává.
+- Pozvánky jsou v paměti serveru — restart je zneplatní.
+- Nová závislost `uqr` (QR, MIT, bez závislostí), načítaná až na vyžádání.
+
+### Otestováno
+- 139 unit testů (nově session cache, pozvánky klient + server), **20 e2e
+  testů** ve skutečných prohlížečích, třikrát po sobě bez selhání: reload →
+  automatické připojení, „odpojen" přežije reload, celý tok pozvánky včetně
+  špatného kódu a limitu použití, úplné smazání po „Smazat vše a odejít".
+- **Neověřeno:** deep linky do messengerů na reálných zařízeních,
+  `Clear-Site-Data` v Safari a Firefoxu, chování při zavření karty na iOS.
+
 ## [2.6.0] – 2026-09-21
 
 Větev `clean-installation`: nová instalační sada, oprava odesílání souborů,
@@ -317,7 +366,7 @@ změn vůči `2.0.x`.
 - Production hosting konfigurace (DigitalOcean, Railway, Render, Fly.io,
   Nginx + TLS).
 
-[2.6.0]: https://github.com/m5ike/cipherroom-secure-chat/compare/v2.4.2...HEAD
+[2.7.0]: https://github.com/m5ike/cipherroom-secure-chat/compare/v2.4.2...HEAD
 [2.4.2]: https://github.com/m5ike/cipherroom-secure-chat/releases/tag/v2.4.2
 [2.1.0-rc.1]: https://github.com/m5ike/cipherroom-secure-chat/releases/tag/v2.1.0-rc.1
 [2.0.0]: https://github.com/m5ike/cipherroom-secure-chat/releases/tag/v2.0.0

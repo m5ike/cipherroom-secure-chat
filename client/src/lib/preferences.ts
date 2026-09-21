@@ -2,7 +2,7 @@
 // triggers a sync via the consented Server-enhanced mode.
 
 import type { Lang } from "./i18n";
-import type { ThemeId } from "./themes";
+import { isAccentId, isLayoutId, isThemeId, type AccentId, type LayoutId, type ThemeId } from "./themes";
 
 export type FontSize = "sm" | "md" | "lg";
 
@@ -30,6 +30,9 @@ export type Preferences = {
   lastRoom: string;
   // Theme/visual
   theme: ThemeId;
+  /** Colour variation of the template and conversation layout. */
+  accent: AccentId;
+  layout: LayoutId;
   font: string;
   fontSize: FontSize;
   effects: boolean;
@@ -66,7 +69,11 @@ export type Preferences = {
   //                     a native browser tooltip on hover
   // Legacy aliases `inline`/`tooltip`/`speeddial` are still accepted
   // when reading stored prefs and are mapped below.
-  menuDisplay: "icons" | "text" | "icons-text" | "icons-tooltip";
+  // "speeddial" (default) keeps the header clean: the whole menu opens from
+  // the three-bars button.
+  menuDisplay: "icons" | "text" | "icons-text" | "icons-tooltip" | "speeddial";
+  /** Bumped when a default changes and stored values must follow once. */
+  menuRev: number;
 };
 
 const STORAGE_KEY = "m5cet:prefs:v2";
@@ -88,6 +95,8 @@ const DEFAULTS: Preferences = {
   avatar: "",
   lastRoom: "brno-secure",
   theme: "motorsport",
+  accent: "default",
+  layout: "classic",
   font: "system",
   fontSize: "md",
   effects: true,
@@ -102,7 +111,8 @@ const DEFAULTS: Preferences = {
   keepaliveStrategy: "balanced",
   // Unlimited by default — operator sets MAX_BYTES server-side.
   maxAttachmentBytes: Number.MAX_SAFE_INTEGER,
-  menuDisplay: "icons",
+  menuDisplay: "speeddial",
+  menuRev: 2,
 };
 
 export const DEFAULT_ROOM_SECURITY: RoomSecurity = {
@@ -157,10 +167,7 @@ export function loadPreferences(): Preferences {
 
 function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Preferences> {
   const lang: Lang = parsed.lang === "en" || parsed.lang === "de" || parsed.lang === "cs" ? parsed.lang : base.lang;
-  const theme: ThemeId =
-    parsed.theme === "motorsport" || parsed.theme === "glass" || parsed.theme === "terminal"
-      ? parsed.theme
-      : base.theme;
+  const theme: ThemeId = isThemeId(parsed.theme) ? parsed.theme : base.theme;
   const fontSize: FontSize =
     parsed.fontSize === "sm" || parsed.fontSize === "md" || parsed.fontSize === "lg" ? parsed.fontSize : base.fontSize;
   return {
@@ -170,6 +177,8 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     avatar: typeof parsed.avatar === "string" ? parsed.avatar.slice(0, 256) : base.avatar,
     lastRoom: typeof parsed.lastRoom === "string" ? parsed.lastRoom.slice(0, 48) : base.lastRoom,
     theme,
+    accent: isAccentId(parsed.accent) ? parsed.accent : base.accent,
+    layout: isLayoutId(parsed.layout) ? parsed.layout : base.layout,
     font: typeof parsed.font === "string" ? parsed.font : base.font,
     fontSize,
     effects: parsed.effects === false ? false : true,
@@ -187,13 +196,18 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     // an "unlimited" config (essentially capped only by RAM + server
     // proxy memory).
     maxAttachmentBytes: typeof parsed.maxAttachmentBytes === "number" && parsed.maxAttachmentBytes > 0 && parsed.maxAttachmentBytes <= Number.MAX_SAFE_INTEGER ? Math.floor(parsed.maxAttachmentBytes) : base.maxAttachmentBytes,
+    // Rev 2 made the three-bars menu the default. Values stored before that
+    // follow once; a choice made afterwards is respected.
     menuDisplay:
-      parsed.menuDisplay === "icons" ||
-      parsed.menuDisplay === "text" ||
-      parsed.menuDisplay === "icons-text" ||
-      parsed.menuDisplay === "icons-tooltip"
+      parsed.menuRev === 2 && (
+        parsed.menuDisplay === "icons" ||
+        parsed.menuDisplay === "text" ||
+        parsed.menuDisplay === "icons-text" ||
+        parsed.menuDisplay === "icons-tooltip" ||
+        parsed.menuDisplay === "speeddial")
         ? parsed.menuDisplay
         : base.menuDisplay,
+    menuRev: 2,
   };
 }
 

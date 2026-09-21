@@ -17,7 +17,7 @@ import {
   Lock,
 } from "lucide-react";
 import { Modal } from "./Modal";
-import { THEMES, FONT_FAMILIES, type ThemeId } from "@/lib/themes";
+import { ACCENTS, FONT_FAMILIES, LAYOUTS, THEMES, type ThemeId } from "@/lib/themes";
 import { langLabel, SUPPORTED_LANGS, t, type Lang } from "@/lib/i18n";
 import { DEFAULT_ROOM_SECURITY, type Preferences, type RoomSecurity } from "@/lib/preferences";
 import { Fingerprint, formatFingerprint, loadFingerprints } from "@/lib/fingerprint";
@@ -181,6 +181,7 @@ export function SettingsPanel({ open, onClose, prefs, setPrefs, lang }: PanelBas
       >
         {(
           [
+            { id: "speeddial",      iconOnly: true,  inline: false, tooltip: false },
             { id: "icons",          iconOnly: true,  inline: false, tooltip: false },
             { id: "text",           iconOnly: false, inline: false, tooltip: false },
             { id: "icons-text",     iconOnly: false, inline: true,  tooltip: false },
@@ -189,7 +190,8 @@ export function SettingsPanel({ open, onClose, prefs, setPrefs, lang }: PanelBas
         ).map((opt) => {
           const selected = prefs.menuDisplay === opt.id;
           const labelKey =
-            opt.id === "icons"         ? "settings.menu.icons"
+            opt.id === "speeddial"     ? "settings.menu.speeddial"
+          : opt.id === "icons"         ? "settings.menu.icons"
           : opt.id === "text"          ? "settings.menu.text"
           : opt.id === "icons-text"    ? "settings.menu.iconsText"
           :                                 "settings.menu.iconsTooltip";
@@ -309,14 +311,23 @@ export function SettingsPanel({ open, onClose, prefs, setPrefs, lang }: PanelBas
 }
 
 export function TemplatesPanel({ open, onClose, prefs, setPrefs, lang }: PanelBaseProps) {
+  const blurb: Record<ThemeId, [string, string, string]> = {
+    motorsport: ["Tmavé, sportovní, ostré akcenty.", "Dark, sporty, sharp accents.", "Dunkel, sportlich, scharfe Akzente."],
+    glass: ["Světlé, sklovité panely, čistý layout.", "Light, glassy panels, clean layout.", "Hell, gläsern, klarer Aufbau."],
+    terminal: ["Konzolový styl, monospace, tmavě zelená.", "Console style, monospace, dark green.", "Konsolen-Stil, monospace, dunkelgrün."],
+    midnight: ["Hluboká modrofialová, měkké zaoblení.", "Deep blue-violet, soft rounded shapes.", "Tiefes Blauviolett, weiche Rundungen."],
+    paper: ["Teplý papír, patkové písmo, klidné čtení.", "Warm paper, serif type, calm reading.", "Warmes Papier, Serifenschrift, ruhiges Lesen."],
+    contrast: ["Maximální kontrast, bez průhlednosti.", "Maximum contrast, no translucency.", "Maximaler Kontrast, keine Transparenz."],
+  };
+  const li = lang === "cs" ? 0 : lang === "de" ? 2 : 1;
   return (
     <Modal open={open} onClose={onClose} title={t(lang, "menu.templates")}>
       <p className="mb-4 text-sm text-muted-foreground">
-        {prefs.lang === "cs"
-          ? "Zvol vizuální šablonu. Změna je okamžitá a uloží se lokálně."
-          : prefs.lang === "de"
-            ? "Wähle eine Vorlage. Wirkt sofort und wird lokal gespeichert."
-            : "Pick a template. Applied instantly and stored locally."}
+        {lang === "cs"
+          ? "Šablona, její barevná variace a rozvržení. Změna je okamžitá a uloží se lokálně."
+          : lang === "de"
+            ? "Vorlage, Farbvariante und Layout. Wirkt sofort und wird lokal gespeichert."
+            : "Template, its colour variation and the layout. Applied instantly and stored locally."}
       </p>
       <div className="grid gap-3 sm:grid-cols-3">
         {THEMES.map((theme) => (
@@ -324,7 +335,8 @@ export function TemplatesPanel({ open, onClose, prefs, setPrefs, lang }: PanelBa
             key={theme.id}
             type="button"
             data-testid={`template-${theme.id}`}
-            onClick={() => setPrefs({ theme: theme.id as ThemeId })}
+            aria-pressed={prefs.theme === theme.id}
+            onClick={() => setPrefs({ theme: theme.id })}
             className={`rounded-3xl border p-4 text-left transition ${
               prefs.theme === theme.id
                 ? "border-primary bg-primary/10"
@@ -333,11 +345,42 @@ export function TemplatesPanel({ open, onClose, prefs, setPrefs, lang }: PanelBa
           >
             <div className="mb-3 h-2 w-full rounded-full m5-stripe" />
             <div className="text-sm font-semibold">{t(lang, theme.labelKey)}</div>
-            <div className="mt-1 text-xs text-muted-foreground">
-              {theme.id === "motorsport" && (lang === "cs" ? "Tmavé, sportovní, ostré akcenty." : lang === "de" ? "Dunkel, sportlich, scharfe Akzente." : "Dark, sporty, sharp accents.")}
-              {theme.id === "glass" && (lang === "cs" ? "Světlé, sklovité panely, čistý layout." : lang === "de" ? "Hell, gläsern, klarer Aufbau." : "Light, glassy panels, clean layout.")}
-              {theme.id === "terminal" && (lang === "cs" ? "Konzolový styl, monospace, tmavě zelená." : lang === "de" ? "Konsolen-Stil, monospace, dunkelgrün." : "Console style, monospace, dark green.")}
-            </div>
+            <div className="mt-1 text-xs text-muted-foreground">{blurb[theme.id][li]}</div>
+          </button>
+        ))}
+      </div>
+
+      <h3 className="mb-2 mt-5 text-sm font-semibold">{t(lang, "templates.accent")}</h3>
+      <div className="flex flex-wrap gap-2" role="group" aria-label={t(lang, "templates.accent")}>
+        {ACCENTS.map((accent) => (
+          <button
+            key={accent.id}
+            type="button"
+            data-testid={`accent-${accent.id}`}
+            aria-pressed={prefs.accent === accent.id}
+            aria-label={accent.id}
+            title={accent.id}
+            onClick={() => setPrefs({ accent: accent.id })}
+            className="accent-swatch"
+            style={{ background: accent.swatch }}
+          />
+        ))}
+      </div>
+
+      <h3 className="mb-2 mt-5 text-sm font-semibold">{t(lang, "templates.layout")}</h3>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="group" aria-label={t(lang, "templates.layout")}>
+        {LAYOUTS.map((layout) => (
+          <button
+            key={layout.id}
+            type="button"
+            data-testid={`layout-${layout.id}`}
+            aria-pressed={prefs.layout === layout.id}
+            onClick={() => setPrefs({ layout: layout.id })}
+            className={`rounded-2xl border px-3 py-2 text-sm transition ${
+              prefs.layout === layout.id ? "border-primary bg-primary/10 font-semibold" : "border-border hover:bg-accent"
+            }`}
+          >
+            {t(lang, layout.labelKey)}
           </button>
         ))}
       </div>

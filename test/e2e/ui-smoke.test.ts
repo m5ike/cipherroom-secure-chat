@@ -142,7 +142,8 @@ describe("UI smoke — sandboxed page load", () => {
     await page.waitForSelector("[data-testid=button-brand]");
 
     // Open settings via toolbar button.
-    await page.click("[data-testid=btn-settings]");
+    await page.click("[data-testid=btn-menu-speeddial]");
+    await page.click("[data-testid=speeddial-btn-settings]");
     await page.waitForSelector("select");
     await page.selectOption("select", "de");
     await page.click("body"); // close any popovers
@@ -150,7 +151,8 @@ describe("UI smoke — sandboxed page load", () => {
     // Reload and check that the language persisted (via localStorage).
     await page.reload();
     await page.waitForSelector("[data-testid=button-brand]");
-    await page.click("[data-testid=btn-settings]");
+    await page.click("[data-testid=btn-menu-speeddial]");
+    await page.click("[data-testid=speeddial-btn-settings]");
     const lang = await page.inputValue("select");
     expect(["de", "en", "cs"]).toContain(lang);
     await ctx.close();
@@ -163,7 +165,8 @@ describe("UI smoke — Trust panel reachable", () => {
     await page.goto("/");
     await page.waitForSelector("[data-testid=button-brand]");
     // The toolbar contains a btn-trust button. Click it and look for the panel.
-    await page.click("[data-testid=btn-trust]");
+    await page.click("[data-testid=btn-menu-speeddial]");
+    await page.click("[data-testid=speeddial-btn-trust]");
     // The panel should reveal either the empty state or a fingerprint.
     // We accept either because isolation may differ between rooms.
     await page.waitForSelector("[data-testid=trust-list], [data-testid=trust-empty], [data-testid=room-fingerprint]", { timeout: 5_000 });

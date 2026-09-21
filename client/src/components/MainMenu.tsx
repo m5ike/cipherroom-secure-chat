@@ -67,6 +67,7 @@ import {
   Eye,
   FileText,
   KeyRound,
+  LogOut,
   MapPin,
   Menu as MenuIcon,
   Mic,
@@ -145,6 +146,8 @@ export type MainMenuProps = {
   onOpen: (panel: PanelKey) => void;
   /** Shown as the user chip (toolbar) / panel header (speed-dial). */
   user?: MenuUser;
+  /** Renders the highlighted "Clear & Quit" action at the end of the menu. */
+  onClearQuit?: () => void;
 };
 
 /** One glyph for the avatar circle: a short emoji avatar if the user set one,
@@ -364,8 +367,9 @@ function SpeedDial(props: {
   currentPanel?: PanelKey | null;
   reducedMotion: boolean;
   user?: MenuUser;
+  onClearQuit?: () => void;
 }) {
-  const { lang, onOpen, currentPanel, reducedMotion, user } = props;
+  const { lang, onOpen, currentPanel, reducedMotion, user, onClearQuit } = props;
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const toggleBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -574,6 +578,19 @@ function SpeedDial(props: {
                   </Fragment>
                 ))}
               </ul>
+              {onClearQuit ? (
+                <footer className="menu-footer">
+                  <button
+                    type="button"
+                    className="menu-clear"
+                    data-testid="speeddial-clear-quit"
+                    onClick={() => { closeMenu(); onClearQuit(); }}
+                  >
+                    <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>{t(lang, "menu.clearQuit")}</span>
+                  </button>
+                </footer>
+              ) : null}
             </div>,
             document.body
           )
@@ -620,7 +637,7 @@ function SpeedDialItem(props: {
 
 /* ---------- Root component ---------- */
 
-export function MainMenu ({ mode, lang, onOpen, currentPanel = null, user }: MainMenuProps) {
+export function MainMenu ({ mode, lang, onOpen, currentPanel = null, user, onClearQuit }: MainMenuProps) {
   // Resolve the "best" presentation per viewport. We force `speeddial`
   // on touch-primary / narrow viewports regardless of user pref because
   // 14 inline icons do not fit a 360 px phone.
@@ -661,6 +678,7 @@ export function MainMenu ({ mode, lang, onOpen, currentPanel = null, user }: Mai
       currentPanel={currentPanel}
       reducedMotion={reducedMotion}
       user={user}
+      onClearQuit={onClearQuit}
     />;
   }
 
@@ -687,6 +705,21 @@ export function MainMenu ({ mode, lang, onOpen, currentPanel = null, user }: Mai
           </Fragment>
         );
       })}
+      {onClearQuit ? (
+        <>
+          <span role="separator" aria-orientation="vertical" className="menu-divider" />
+          <button
+            type="button"
+            onClick={onClearQuit}
+            title={t(lang, "menu.clearQuit")}
+            aria-label={t(lang, "menu.clearQuit")}
+            data-testid="btn-clear-quit"
+            className={`${BTN_ICON} border-destructive/50 bg-destructive/10 text-destructive hover:bg-destructive hover:text-destructive-foreground`}
+          >
+            <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
+          </button>
+        </>
+      ) : null}
     </nav>
   );
 }

@@ -31,6 +31,7 @@ import {
 } from "./routes-admin-shared";
 import { FileProxy, relayProxyFrame } from "./file-proxy";
 import { runRetentionIfDue, RETENTION } from "./retention";
+import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 
 const fileProxy = new FileProxy();
 
@@ -189,6 +190,10 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Invite links (split-key, code-gated) and the Clear & Quit landing page.
+  registerShareRoutes(app);
+  registerGoodbyeRoute(app);
+
   app.get("/api/health", (_req, res) => {
     res.json({
       ok: true,

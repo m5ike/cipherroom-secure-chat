@@ -153,6 +153,21 @@ se uživatele dál ptá při každém prvním použití.
 7. **Reverse proxy timeout** dimenzovat na delší WebSocket session
    (`proxy_read_timeout 3600s` v Nginx — viz `install.sh`).
 
+## Relace a pozvánky (od 2.7.0)
+
+Podrobně v [`session-and-sharing.md`](session-and-sharing.md). Pro model hrozeb
+je podstatné:
+
+- **A3 (passphrase) se nově ukládá** — šifrovaně (AES-GCM, neexportovatelný
+  klíč v IndexedDB), jen v `sessionStorage` dané karty a nejdéle hodinu bez
+  aktivity. Proti adversářům 4 a 6 (kompromitovaný endpoint, rozšíření) to
+  nechrání o nic víc než zbytek aplikace.
+- **Pozvánky**: klíč k datům je `HKDF(klíč z fragmentu URL ‖ klíč na serveru ‖
+  PBKDF2(12místný kód))`. Server sám data nerozšifruje; držitel odkazu má na
+  kód 5 pokusů. Odkaz a kód se mají posílat různými kanály.
+- **„Smazat vše a odejít"** odstraní úložiště, cookies (přes `Clear-Site-Data`
+  i HttpOnly), cache a service worker. **Historii prohlížeče smazat nelze.**
+
 ## Známé mezery (stav 2.5.0)
 
 Zjištěno revizí kódu a měřením 2026-09-21. Nejsou opravené — většina
