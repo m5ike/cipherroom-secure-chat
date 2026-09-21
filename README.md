@@ -1,8 +1,7 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Aktuální vývojová větev: `feature/m5cet-realtime-admin-media-modules`
-> Release-hardening větev: `release/m5cet-v-next-hardening`
-> Verze: **2.1.0-rc.1** (release candidate)
+> Verze: **2.6.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -47,11 +46,12 @@ místnosti.
 14. [NFC](#nfc)
 15. [Privacy / audit erase / TTL](#privacy--audit-erase--ttl)
 16. [Omezení prohlížečů](#omezení-prohlížečů)
-17. [Rychlá instalace](#rychlá-instalace)
-18. [Lokální vývoj](#lokální-vývoj)
-19. [Verzování](#verzování)
-20. [Další dokumentace](#další-dokumentace)
-21. [Licence](#licence)
+17. [Známá omezení](#známá-omezení)
+18. [Rychlá instalace](#rychlá-instalace)
+19. [Lokální vývoj](#lokální-vývoj)
+20. [Verzování](#verzování)
+21. [Další dokumentace](#další-dokumentace)
+22. [Licence](#licence)
 
 ---
 
@@ -63,13 +63,15 @@ místnosti.
 - **Audio/video hovory** — `getUserMedia` + WebRTC, šifrované DTLS-SRTP.
 - **Speech modul** — TTS / STT / "revoice" (rozpoznat → znovu syntetizovat)
   v prohlížeči, Web Speech API.
-- **Soubory** — chunked šifrovaný přenos po DataChannel, default 100 MB,
-  konfigurovatelný strop, žádný 512 kB inline cap.
-- **Connection keeper** — heartbeat na signalizační WS, exponential backoff,
-  tři strategie (conservative / balanced / aggressive), online/visibility hooks.
+- **Soubory** — chunked šifrovaný přenos po DataChannel (32 KiB chunky),
+  volitelný strop velikosti (výchozí neomezeno), malé přílohy ≤ 512 KiB inline.
+- **Udržování spojení** — heartbeat na signalizační WS, full-jitter exponential
+  backoff, tři strategie (conservative / balanced / aggressive),
+  online/visibility hooks.
 - **Web Push** — `web-push` server-side, VAPID, service worker, click/focus.
-- **Admin API + GUI** — samostatný Node service za `ADMIN_API_TOKEN`, telemetrie,
-  whitelisted příkazy přes signalizační kanál.
+- **Admin API + GUI** — samostatný Node service za `ADMIN_API_TOKEN`: health,
+  metriky procesu, allowlist příkazů. *Doručování příkazů klientům zatím
+  nefunguje napříč procesy — viz [Známá omezení](#známá-omezení).*
 - **Mapy / lokace** — Geolocation + OSM deep linky, žádný bundling Leafletu.
 - **Web NFC** — Android Chrome, číst/zapisovat zašifrované konfigurace na tag,
   PIN + PBKDF2/AES-GCM. Plug-in registry pro hardware čtečky.
@@ -253,7 +255,7 @@ Spolu s tím běží `lib/connection-keeper.ts`:
 
 ```mermaid
 flowchart LR
-    Admin[Admin GUI<br/>:5051 nebo :5050/]
+    Admin[Admin GUI<br/>:5050/]
     Token{ADMIN_API_TOKEN?}
     AdminAPI[Admin API<br/>:5050]
     Queue[(In-memory<br/>command queue<br/>+ audit log)]
@@ -278,7 +280,11 @@ flowchart LR
   `download-file-from-admin`. Cokoli mimo seznam je odmítnuto s `400`.
 - `download-file-from-admin` na klientovi **vyžaduje uživatelské potvrzení** —
   žádné tiché stahování.
-- Token chrání všechno kromě `/admin/health`. Bez tokenu = `503`.
+- Token chrání všechno pod `/admin/*` kromě `/admin/health` (porovnání
+  v konstantním čase). Bez tokenu = `503`, špatný token = `401`.
+- ⚠️ Diagram výše popisuje **cílový stav**. Dnes je fronta Map v paměti admin
+  procesu a hlavní služba (jiný proces) ji nevidí, takže příkaz ke klientovi
+  nedorazí. Viz [`docs/admin.md`](docs/admin.md).
 
 Detaily v [`docs/admin.md`](docs/admin.md).
 
@@ -371,8 +377,13 @@ flowchart LR
     User --> Read --> Chunk --> Enc --> DC --> Recv --> Blob --> Save
 ```
 
-- Default strop 100 MB, lze měnit v Settings (`Preferences.maxAttachmentBytes`).
-- Inline (data-URL) cap pro malé přílohy: 512 kB.
+- Tlačítka *Soubor* / *Obrázek* u zprávy volí cestu sama: do 512 KiB inline,
+  větší automaticky po šifrovaných 32 KiB částech.
+- Strop velikosti je výchozí **neomezený**; v Settings lze zvolit nižší
+  (`Preferences.maxAttachmentBytes`, např. 100 MB).
+- Inline (data-URL) cap pro malé přílohy: 512 KiB.
+- Přenos vyžaduje připojeného peera (otevřený DataChannel); bez něj se
+  nespustí a aplikace to řekne. Serverová „proxy" cesta data nedoručuje.
 - Velké soubory drží paměťovou stopu — prohlížeč rozhoduje o limitech.
 
 Viz [`docs/files.md`](docs/files.md).
@@ -429,12 +440,30 @@ Plný přehled: [`docs/browser-limitations.md`](docs/browser-limitations.md).
 
 ---
 
+## Známá omezení
+
+Projekt je poctivý v tom, co (zatím) neumí. Ověřeno revizí 2.5.0; podrobně
+v [`docs/security-model.md`](docs/security-model.md#známé-mezery-stav-250).
+
+- Rate limit WebSocket upgradu se nespouští; REST limiter ano, ale bez
+  `trust proxy` ho za reverse proxy sdílí všichni uživatelé.
+- Proxy relay souborů nedoručuje data — soubory jen přes otevřený DataChannel.
+- Admin příkazy, `/admin/clients` a `/admin/logs/recent` nevidí stav hlavní
+  služby (oddělené procesy, stav jen v paměti).
+- `POST /api/push/test` a `/api/admin/retention*` jsou bez autentizace.
+- Panel „Důvěra" (TOFU) je klíčovaný náhodným ID relace — změnu protistrany
+  nezachytí.
+- Settings sync, consent, push subskripce a event log žijí jen v paměti procesu.
+- `App.tsx` (~2 600 řádků) nemá unit testy; pokrývá ho jen e2e test dvou peerů.
+
+---
+
 ## Rychlá instalace
 
 ### Linux / Docker (one-liner)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh \
   | sudo -E bash -s -- --install
 ```
 
@@ -463,26 +492,44 @@ flowchart TB
 Detaily: [`INSTALL.md`](INSTALL.md).
 
 ```bash
-sudo -E /opt/m5cet/install.sh --status     # stav služby
-sudo -E /opt/m5cet/install.sh --logs       # follow logů
-sudo -E /opt/m5cet/install.sh --restart    # restart
-sudo -E /opt/m5cet/install.sh --update     # pull + redeploy
-sudo -E /opt/m5cet/install.sh --test       # alias pro --doctor
-sudo -E /opt/m5cet/install.sh --gui        # interaktivní menu
-sudo -E /opt/m5cet/install.sh --uninstall  # zastaví stack, files zachová
-sudo -E /opt/m5cet/install.sh --help       # všechny flagy
+sudo /opt/m5cet/install.sh --status | --logs | --restart | --doctor
+sudo /opt/m5cet/install.sh --menu                 # hlavní menu (--gui = whiptail/dialog)
+sudo /opt/m5cet/update.sh                         # nové zdrojáky + rebuild, při chybě sám vrátí zálohu
+sudo /opt/m5cet/update.sh --set APP_PORT=8080     # změna parametru
+sudo /opt/m5cet/update.sh --set INSTALL_MODE=native   # přepnutí docker <-> native
+sudo /opt/m5cet/update.sh --repair                # oprava rozbité instalace
+sudo /opt/m5cet/uninstall.sh [--keep-files|--purge]
+./install.sh --list-params                        # všechny parametry
 ```
 
 ---
 
 ## Lokální vývoj
 
+Požadavky: **Node.js ≥ 22** (Node 20 je od dubna 2026 EOL; CI i Docker běží na 24 LTS).
+
 ```bash
 npm ci
-npm run check    # tsc --noEmit
-npm run dev      # tsx server/index.ts + Vite middleware
-npm run build    # client (Vite) + server (esbuild --minify)
+npm run check        # tsc --noEmit (TypeScript 7)
+npm test             # vitest — unit + komponentové testy (happy-dom)
+npm run check:menu   # guard invariantů MainMenu (stejný běží v pre-commit hooku)
+npm run dev          # tsx server/index.ts + Vite middleware
+npm run build        # client (Vite/oxc) + oba server bundly (esbuild), souběžně
 PORT=5000 npm start
+npm run test:e2e     # Playwright smoke; jednorázově: npx playwright install chromium
+```
+
+> **macOS:** port `5000` obvykle drží *AirPlay Receiver* (proces ControlCenter).
+> Spouštěj s jiným portem, např. `PORT=5173 npm run dev`.
+
+Konfigurace se čte z `.env` v kořeni projektu vestavěným
+`process.loadEnvFile()` (balíček `dotenv` už není potřeba); proměnné ze
+skutečného prostředí mají přednost před souborem.
+
+Pre-commit hook (volitelné, jednorázově v každém klonu):
+
+```bash
+git config core.hooksPath .githooks
 ```
 
 Admin API samostatně:
@@ -509,8 +556,12 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 2.1.0-rc.1   | aktuální RC (this branch) |
-| 2.0.0        | stable, předchozí      |
+| 2.6.0        | aktuální — instalační sada, oprava odesílání souborů, nové menu a kompozér |
+| 2.5.0        | modernizace toolchainu, úklid závislostí, opravy |
+| 2.4.2        | oprava speed-dial menu na dotykových zařízeních, CI |
+| 2.4.1        | speed-dial panel přes portál, pre-commit guard |
+| 2.1.0-rc.1   | release-hardening RC   |
+| 2.0.0        | stable                 |
 | 1.0.0        | initial public        |
 
 ---
@@ -526,7 +577,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/user-help.md`](docs/user-help.md)                | Uživatelská nápověda (CZ + EN)                 |
 | [`docs/developer-guide.md`](docs/developer-guide.md)    | Vývojářský průvodce, build, struktura          |
 | [`docs/security-model.md`](docs/security-model.md)      | Bezpečnostní model, threat model               |
-| [`docs/deployment.md`](docs/deployment.md)              | Nasazení, hosting, TLS, reverse proxy          |
+| [`docs/deployment.md`](docs/deployment.md)              | Ruční nasazení, PaaS (DO / Railway / Render / Fly.io), TLS, reverse proxy |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md)    | Řešení potíží                                  |
 | [`docs/calls.md`](docs/calls.md)                        | Audio / video volání                           |
 | [`docs/connection-keeper.md`](docs/connection-keeper.md)| Heartbeat + reconnect                          |
@@ -537,9 +588,11 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/speech.md`](docs/speech.md)                      | Web Speech API                                 |
 | [`docs/browser-limitations.md`](docs/browser-limitations.md) | Co prohlížeč (ne)umí                       |
 | [`docs/build-and-deploy.md`](docs/build-and-deploy.md)  | npm workflow, PWA, sanity checky               |
-| [`INSTALL.md`](INSTALL.md)                              | Detailní průvodce instalací                    |
-| [`DEPLOYMENT.md`](DEPLOYMENT.md)                        | DigitalOcean / Railway / Render / Fly.io / Nginx |
+| [`INSTALL.md`](INSTALL.md)                              | `install.sh` / `update.sh` / `uninstall.sh`: režimy, parametry, zálohy, rollback |
 | [`CHANGELOG.md`](CHANGELOG.md)                          | Historie verzí                                 |
+| [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |
+| [`docs/knowledge-base.md`](docs/knowledge-base.md)      | Znalostní báze: mapa kódu, co server vidí, známé mezery |
+| [`docs/optimizations.md`](docs/optimizations.md)        | Změřené optimalizace a jak je reprodukovat     |
 
 ---
 

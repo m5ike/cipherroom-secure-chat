@@ -5,8 +5,10 @@ chránit nemůže**. Je psán pro ty, kdo M5cet nasazují nebo auditují.
 
 ## TL;DR
 
-- Server vidí pouze signalizační rámce (SDP/ICE) a (volitelně) opaque
-  metadata. **Nikdy** plaintext, IV, ciphertext zprávy, ani klíč.
+- Server vidí signalizační rámce (SDP/ICE) a (volitelně) opaque metadata.
+  **Nikdy** plaintext ani klíč. Chatové zprávy přes server nejdou vůbec (ani
+  jako ciphertext). **Výjimka:** soubory v *proxy* režimu posílají přes `/ws`
+  IV a ciphertext chunků — viz „Známé mezery".
 - Šifrování: AES-GCM 256, IV 12 B per frame, klíč PBKDF2-SHA256
   (250 000 iter), salt obsahuje `room id`. Klíč je `extractable: false`.
 - WebRTC media: standardní DTLS-SRTP, řešený prohlížečem.
@@ -124,11 +126,18 @@ Bezpečnostní vlastnosti:
 | Cache-Control                | `no-store, no-cache, must-revalidate, ...` |
 | X-Content-Type-Options       | `nosniff`                                  |
 | Referrer-Policy              | `no-referrer`                              |
-| Permissions-Policy           | `camera=(), microphone=(), geolocation=(), interest-cohort=()` |
+| Permissions-Policy           | `camera=(self), microphone=(self), geolocation=(self), interest-cohort=()` |
 | X-Robots-Tag (Nginx)         | `noindex, nofollow`                        |
 
-`Permissions-Policy` je úmyslně restriktivní; appka si je sama volá inline
-přes user gesture.
+`Permissions-Policy` povoluje kameru, mikrofon a polohu **jen vlastnímu
+originu** (`self`); jakýkoli vložený cizí iframe je má zakázané. Prohlížeč
+se uživatele dál ptá při každém prvním použití.
+
+> Do verze 2.4.x zde bylo `camera=()` atd. Prázdný allowlist ale funkci
+> zakazuje i samotnému dokumentu a user gesture to nepřebije — `getUserMedia`
+> a geolokace selhaly bez dotazu (ověřeno: `document.featurePolicy
+> .allowsFeature("camera") === false`). Hovory, STT a sdílení polohy proto
+> při servírování tímto serverem nefungovaly. Opraveno ve 2.5.0.
 
 ## Doporučení pro nasazení
 
@@ -137,9 +146,36 @@ přes user gesture.
 3. **`ADMIN_PORT` na private síti** nebo za reverse proxy s IP allowlistem.
 4. **`LOG_EVENTS=0`** dokud kompliance opravdu nevyžaduje opak.
 5. **`DATABASE_URL`** mít na šifrovaném disku (full-disk encryption).
-6. **Aktualizovat OS i Docker base image** — viz `Dockerfile`.
+6. **Aktualizovat OS i Docker base image** — viz `Dockerfile` (`node:24-slim`,
+   runtime běží jako `USER node` a neobsahuje `node_modules`).
+   `.env` je v `.dockerignore`: tajemství (`ADMIN_API_TOKEN`, VAPID privátní
+   klíč, TURN údaje) nesmí skončit ve vrstvě image — předávejte je prostředím.
 7. **Reverse proxy timeout** dimenzovat na delší WebSocket session
    (`proxy_read_timeout 3600s` v Nginx — viz `install.sh`).
+
+## Známé mezery (stav 2.5.0)
+
+Zjištěno revizí kódu a měřením 2026-09-21. Nejsou opravené — většina
+vyžaduje návrhové rozhodnutí. Berte je v úvahu při nasazení i auditu.
+
+| # | Mezera | Dopad | Doporučení |
+|---|--------|-------|------------|
+| 1 | Rate limit WS upgradu se nikdy nespustí (Express middleware není na cestě `upgrade`; změřeno 45/45 přijato při limitu 30/min) | neomezený počet spojení z jedné IP | limitovat v `verifyClient` / vlastním `upgrade` handleru, nebo v reverse proxy (`limit_conn`) |
+| 2 | Není nastaveno `trust proxy` | za Nginx mají všichni IP proxy → společný limit 100 req / 15 min; `hello.ip` je nepřesné | konfigurovatelné `TRUST_PROXY` (počet hopů), ne slepé `true` |
+| 3 | `POST /api/push/test`, `GET|POST /api/admin/retention*` bez autentizace | kdokoli rozešle testovací push všem / spustí sweep | přesunout za admin token |
+| 4 | `GET /api/turn` vydává statické TURN údaje komukoli | zneužití TURN relaye | efemérní údaje (coturn `use-auth-secret`) |
+| 5 | Proxy relay souborů: server drží IV + ciphertext (prvních 256 znaků) v paměti, ale data nedoručuje | funkce nefunguje; metadata o přenosu (počet chunků ≈ velikost) jsou serveru viditelná | dokončit relay, nebo proxy režim vypnout |
+| 6 | TOFU otisky klíčované náhodným `peerId` relace; při neshodě se přepíší | panel „Důvěra" nikdy nezachytí změnu protistrany — **nespoléhat na něj** | klíčovat stabilní identitou; při neshodě nepřepisovat bez potvrzení |
+| 7 | „Otisk místnosti" = SHA-256 jen z room ID | neověřuje shodu klíče/passphrase | odvodit z klíče (např. HKDF → krátký kód k porovnání) |
+| 8 | CSP `script-src unsafe-inline unsafe-eval` | oslabená obrana proti XSS | pro produkci zpřísnit (nonce/hash), ponechat jen pro dev |
+| 9 | Admin služba nemá Helmet ani rate limit | brute-force tokenu není brzděn | držet na loopbacku / za proxy s allowlistem; token ≥ 32 B |
+| 10 | `download-file-from-admin`: potvrzovací dialog ukazuje jen název, ne URL | uživatel nevidí, odkud stahuje | zobrazit i origin |
+
+Co naopak ověřeno **je**: obálka obsahuje jen `iv` + `ciphertext`, IV má 12 B
+a je náhodné pro každý rámec i chunk, klíč je neexportovatelný, špatná
+passphrase i pozměněný ciphertext se odmítnou, admin token se porovnává
+v konstantním čase, příkaz mimo allowlist vrací `400`, `.env` se nedostává
+do Docker image.
 
 ## Reportování zranitelností
 

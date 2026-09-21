@@ -5,3 +5,26 @@ dist
 qa-*.png
 tool_calls
 .DS_Store
+
+# Secrets must never enter a build layer (ADMIN_API_TOKEN, VAPID private key,
+# TURN credentials). Runtime config comes from the container environment.
+.env
+.env.*
+!.env.example
+
+# Not needed to build the image.
+.claude
+.memory
+.github
+.githooks
+docs
+test
+browser-only-firebase
+*.md
+
+# Installer state and generated files never belong in an image.
+.m5cet
+installer
+install.sh
+update.sh
+uninstall.sh

@@ -57,7 +57,17 @@ Náprava: oba uživatelé znovu zadají passphrase. Nový klíč nahradí starý
 
 ### 5. Soubor nelze odeslat / přerušení uprostřed
 
-- Zkontrolujte `Preferences.maxAttachmentBytes` (default 100 MB).
+- *„File exceeds inline cap of 512.0 kB; use chunked transfer"* — chyba verzí
+  < 2.6.0: tlačítka u zprávy uměla jen inline cestu. Od 2.6.0 se větší soubor
+  pošle po částech automaticky.
+- *„Soubor nelze odeslat: není připojen žádný peer"* — přenos jde jen přímým
+  P2P kanálem; počkejte, až stavový štítek ukáže `1 P2P`.
+
+- Zkontrolujte `Preferences.maxAttachmentBytes` (výchozí neomezeno; v Nastavení
+  lze zvolit nižší strop, např. 100 MB).
+- Přenos funguje **jen s otevřeným DataChannelem**. Záložní „proxy" režim přes
+  server data zatím nedoručuje (viz [`files.md`](files.md)) — když se P2P
+  nespojí, soubor nedorazí, i když odesílatel vidí průběh.
 - Velmi velké soubory blízko hranice browser RAM = `QuotaExceededError`.
   Snižte cap a soubor rozdělte mimo aplikaci.
 - Když `RTCDataChannel.readyState !== "open"`, klient čeká. Zkontrolujte ICE
@@ -65,8 +75,10 @@ Náprava: oba uživatelé znovu zadají passphrase. Nový klíč nahradí starý
 
 ### 6. Admin příkaz nedoražil ke klientovi
 
-- `command-poll` se posílá při `join` i při `visibilitychange`. Klient v
-  pozadí stažený nemusí ihned polovat.
+- **Ve výchozím dvouprocesovém nasazení příkazy nedorazí nikdy:** fronta žije
+  v paměti admin procesu, klienti se ptají hlavní služby (viz
+  [`admin.md`](admin.md)).
+- `command-poll` se posílá jednou po otevření signalizačního socketu.
 - `/admin/commands/audit` ukáže timestamp `enqueue` a (pokud klient ackoval)
   `ack`. Když ack chybí, klient nedostal zprávu.
 - Chyba `deviceId must be 4-64 [a-zA-Z0-9_-].` znamená, že enqueue body
@@ -102,6 +114,43 @@ Náprava: oba uživatelé znovu zadají passphrase. Nový klíč nahradí starý
   cd /opt/m5cet && docker compose build --no-cache && docker compose up -d
   ```
 
+### 11. `npm run dev` / `npm start` hned spadne na macOS
+
+- `Error: listen EADDRINUSE :::5000` — port 5000 drží *AirPlay Receiver*
+  (proces ControlCenter). Spusťte `PORT=5173 npm run dev`, nebo AirPlay
+  Receiver vypněte v Nastavení → Obecné → AirDrop a Handoff.
+- `Error: listen ENOTSUP` — verze < 2.5.0 volaly `listen({ reusePort: true })`,
+  což macOS nepodporuje. Opraveno ve 2.5.0.
+
+### 12. Hovor / mikrofon / poloha selže okamžitě, bez dotazu prohlížeče
+
+- Ve verzích < 2.5.0 to způsobovala hlavička `Permissions-Policy: camera=()…`
+  (viz [`security-model.md`](security-model.md)). Ověření v konzoli:
+  `document.featurePolicy.allowsFeature("camera")` musí vrátit `true`.
+- Stejný efekt má reverse proxy, která hlavičku **přepisuje** vlastní
+  restriktivní hodnotou — zkontrolujte `add_header Permissions-Policy` v Nginx.
+- Mimo `localhost` je nutný secure context (HTTPS).
+
+### 13. `git commit` odmítne pre-commit hook
+
+- Spusťte `npm run check:menu:verbose` a podívejte se, která z 8 kontrol padá.
+- Hook se zapíná jednorázově: `git config core.hooksPath .githooks`.
+- Verze < 2.5.0 na macOS padaly vždy na kontrole 3 (`\s` v BSD awk) — nešlo
+  o chybu v CSS. Opraveno.
+
+### 14. Testy „prošly", ale je jich podezřele málo
+
+- `npm test` má hlásit **10 souborů / 106 testů**. Pokud chybí `.tsx` soubory,
+  zkontrolujte `"jsx": "react-jsx"` v `tsconfig.json` a plugin
+  `@vitejs/plugin-react` ve `vitest.config.ts` — s `"preserve"` testy tiše
+  spadnou už při transformaci.
+- E2E: `npx playwright install chromium` a poté `npm run test:e2e`.
+
+### 15. `error TS5102: Option baseUrl has been removed`
+
+- TypeScript 7 `baseUrl` nezná. Aliasy patří do `paths` s cestami relativními
+  k `tsconfig.json` (`"@/*": ["./client/src/*"]`).
+
 ## Diagnostické logy
 
 ```bash
@@ -117,7 +166,7 @@ docker compose --profile admin logs -f admin
 
 Otevřete issue s:
 
-1. Verzí (`npm pkg get version`).
+1. Verzí (`npm pkg get version`) a verzí Node (`node --version`, nutné ≥ 22).
 2. Browser + OS.
 3. `curl /api/health` výstupem.
 4. Reprodukcí (kroky → očekávané → skutečné).

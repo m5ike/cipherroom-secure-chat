@@ -47,7 +47,7 @@ export function saveFingerprints(map: Record<string, Fingerprint>): void {
 }
 
 /** Compute SHA-256 hash of a buffer, returning lowercase hex. */
-export async function sha256Hex(buf: ArrayBuffer | Uint8Array | string): Promise<string> {
+export async function sha256Hex(buf: ArrayBuffer | Uint8Array<ArrayBuffer> | string): Promise<string> {
   const bytes = typeof buf === "string" ? new TextEncoder().encode(buf) : (buf instanceof Uint8Array ? buf : new Uint8Array(buf));
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
   let hex = "";

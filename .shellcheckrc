@@ -1,0 +1,5 @@
+# Installer parameters (INSTALL_MODE, APP_PORT, …) are assigned in one file and
+# read in another through indirect expansion (${!key}) in installer/lib/config.sh,
+# which shellcheck cannot follow — so "appears unused" is noise for this codebase.
+disable=SC2034
+external-sources=true

@@ -84,7 +84,7 @@ describe("TransferCard", () => {
     expect(thermo?.getAttribute("aria-valuenow")).toBe("50");
   });
 
-  it("marks the running state with `data-status`”, () => {
+  it("marks the running state with `data-status`", () => {
     const { container } = render(
       <TransferCard
         id="xfer-1"

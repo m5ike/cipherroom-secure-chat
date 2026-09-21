@@ -12,7 +12,9 @@
 #   3. unit-test — `vitest run` with verbose reporter
 #   4. build-smoke — `npm run build` (custom tsx/esbuild) and verify
 #      dist/ artefact tree
-#   5. ci-aggregate — gate, exits 1 if any of the above 4 failed
+#   5. installer — shellcheck + a real install -> update -> uninstall cycle
+#   6. e2e — Playwright: UI smoke + two peers (message, inline + chunked file)
+#   7. ci-aggregate — gate, exits 1 if any of the above 6 failed
 #
 # Cache: GitHub-managed npm cache keyed on package-lock.json.
 # =============================================================================
@@ -21,9 +23,9 @@ name: CI
 
 on:
   pull_request:
-    branches: [master, 'release/**', 'feature/**']
+    branches: [master, 'release/**', 'feature/**', 'clean-installation']
   push:
-    branches: [master, 'release/**', 'feature/**']
+    branches: [master, 'release/**', 'feature/**', 'clean-installation']
 
 # Cancel an in-flight CI run for the same ref — saves minutes.
 concurrency:
@@ -44,7 +46,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
@@ -66,7 +68,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
@@ -88,7 +90,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
@@ -121,7 +123,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20.x'
+          node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
@@ -137,12 +139,83 @@ jobs:
           test -d dist/public && echo "OK: dist/public/ present"
 
   # ---------------------------------------------------------------------------
-  # Job 5 — Aggregate gate
+  # Job 5 — Installer: lint + a real install -> update -> uninstall cycle
+  # ---------------------------------------------------------------------------
+  installer:
+    name: installer
+    runs-on: ubuntu-22.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+
+      # The `runner` context is not available in job-level `env`, so the
+      # scratch paths are exported from a step instead.
+      - name: Scratch paths
+        run: |
+          echo "XDG_CONFIG_HOME=$RUNNER_TEMP/xdg" >> "$GITHUB_ENV"
+          echo "M5_DIR=$RUNNER_TEMP/m5cet" >> "$GITHUB_ENV"
+
+      - name: shellcheck
+        run: shellcheck -x -S warning install.sh update.sh uninstall.sh installer/lib/*.sh scripts/pre-commit-check.sh
+
+      - name: Dry run (docker mode)
+        run: ./install.sh --dry-run -n --lang en --user-scope --mode docker --dir "$M5_DIR" --skip-deps
+
+      - name: Install (native, user scope, local sources)
+        run: |
+          ./install.sh -n --lang en --user-scope --mode native --source-path "$PWD" \
+            --dir "$M5_DIR" --port 5190 --enable-admin --set ADMIN_PORT=5191 --enable-push
+          curl -fsS http://127.0.0.1:5190/api/health
+          test "$(stat -c %a "$M5_DIR/.env")" = "600"
+          ! grep -qE 'TOKEN|PRIVATE|CREDENTIAL' "$M5_DIR/.m5cet/install.conf"
+
+      - name: Update (change a parameter, reuse the build)
+        run: |
+          "$M5_DIR/update.sh" -y --lang en --config-only --set APP_PORT=5192
+          curl -fsS http://127.0.0.1:5192/api/health
+
+      - name: Uninstall (purge) leaves nothing behind
+        run: |
+          "$M5_DIR/uninstall.sh" -y --lang en --purge
+          test ! -e "$M5_DIR"
+          test ! -e "$XDG_CONFIG_HOME/m5cet/install-dir"
+
+  # ---------------------------------------------------------------------------
+  # Job 6 — End to end: UI smoke + two real browsers against the real server
+  # The image tag must match the `playwright` version in package-lock.json.
+  # ---------------------------------------------------------------------------
+  e2e:
+    name: e2e
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    container:
+      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      options: --ipc=host
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Build
+        run: npm run build
+
+      - name: vitest (e2e config)
+        run: npx vitest run --config vitest.e2e.config.ts --reporter=verbose
+
+  # ---------------------------------------------------------------------------
+  # Job 7 — Aggregate gate
   # ---------------------------------------------------------------------------
   ci-aggregate:
     name: CI aggregate
     runs-on: ubuntu-22.04
-    needs: [typecheck, lint-custom, unit-test, build-smoke]
+    needs: [typecheck, lint-custom, unit-test, build-smoke, installer, e2e]
     if: always()
     steps:
       - name: Check all jobs passed
@@ -150,12 +223,16 @@ jobs:
           if [ "${{ needs.typecheck.result }}" != "success" ] || \
              [ "${{ needs.lint-custom.result }}" != "success" ] || \
              [ "${{ needs.unit-test.result }}" != "success" ] || \
-             [ "${{ needs.build-smoke.result }}" != "success" ]; then
+             [ "${{ needs.build-smoke.result }}" != "success" ] || \
+             [ "${{ needs.installer.result }}" != "success" ] || \
+             [ "${{ needs.e2e.result }}" != "success" ]; then
             echo "One or more CI jobs failed"
             echo "  typecheck:    ${{ needs.typecheck.result }}"
             echo "  lint-custom:  ${{ needs.lint-custom.result }}"
             echo "  unit-test:    ${{ needs.unit-test.result }}"
             echo "  build-smoke:  ${{ needs.build-smoke.result }}"
+            echo "  installer:    ${{ needs.installer.result }}"
+            echo "  e2e:          ${{ needs.e2e.result }}"
             exit 1
           fi
-          echo "All 4 CI jobs passed — PR ready for review"
+          echo "All 6 CI jobs passed — PR ready for review"

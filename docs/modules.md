@@ -20,6 +20,10 @@ CipherRoomAPI.on("message" | "peer-joined" | "peer-left", handler)
 
 Plugin nesmí dostat klíč ani plaintext — handler `message` dostává jen `senderId`.
 
+Skutečný tvar `window.CipherRoomAPI` dnes: `{ version, capabilities, modules(),
+pushStatus(), recordEvent(), on() }`. `registerWindow` / `openWindow` výše jsou
+plánované rozhraní, v kódu zatím nejsou.
+
 ## 2. Server moduly
 
 `server/modules.ts` exportuje manifest publikovaný na `GET /api/modules`. Operátor
@@ -28,11 +32,13 @@ pole zapne přes env vars:
 | Modul        | Toggle                                  | Status v této fázi |
 |--------------|------------------------------------------|--------------------|
 | audio        | vždy zapnuto (WebRTC)                   | hotové             |
-| attachments  | vždy zapnuto (DataChannel ≤ 512 kB)     | hotové             |
-| push         | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | subscribe stub; reálné delivery TODO |
-| eventLogging | `LOG_EVENTS=1`, `DATABASE_URL` (volit.) | hotové (memory/SQLite) |
+| attachments  | vždy zapnuto                             | hotové přes DataChannel: inline ≤ 512 KiB, větší po 32 KiB chuncích; záložní proxy relay přes server **nedoručuje** (viz `files.md`) |
+| push         | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | hotové — reálné doručení přes `web-push`; subskripce jen v paměti, chybí unsubscribe |
+| turn         | `TURN_SERVER_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL` | hotové — `GET /api/turn` (statické údaje) |
+| eventLogging | `LOG_EVENTS=1`                           | hotové — **jen in-memory ring (500 záznamů)**; `DATABASE_URL` přepne štítek backendu na `database`, ale zápis do DB je no-op stub (`server/events.ts`) |
 | settingsSync | vždy zapnuto                            | in-memory stub     |
-| audit/consent| vždy zapnuto                            | in-memory stub     |
+| audit/consent| vždy zapnuto                            | in-memory stub; `audit/log` nemá zapisovatele (vrací `[]`), klient consent/settings endpointy nevolá |
+| retention    | `*_RETENTION_DAYS`                      | politika hotová; sweep jen ručně přes `POST /api/admin/retention/run` (bez timeru, bez autentizace) |
 
 ## 3. Storage / cloud providery (interface skeleton)
 

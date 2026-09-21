@@ -2,24 +2,37 @@
 
 ## Production build (minified)
 
+Požadavek: **Node.js ≥ 22** (CI a Docker používají 24 LTS).
+
 ```
-npm install
-npm run build          # spustí Vite build (klient) + esbuild --minify (server)
+npm ci
+npm run build          # Vite (klient) + esbuild (dist/index.cjs, dist/admin.cjs), souběžně
 NODE_ENV=production npm start
 ```
 
-Vite produkuje minifikované JS+CSS do `dist/public`. esbuild v `script/build.ts`
-volá `minify: true` pro server bundle (`dist/index.cjs`). Žádný extra krok není potřeba.
+Vite 8 produkuje minifikované JS+CSS do `dist/public` (minifikátor oxc).
+`script/build.ts` staví oba server bundly jedním voláním esbuild
+(`minify: true`, `target: node22`). Bundly obsahují všechny serverové
+závislosti (`express`, `ws`, `helmet`, `express-rate-limit`, `web-push`),
+takže **`dist/` běží i bez `node_modules`** — runtime stage v `Dockerfile`
+je proto nekopíruje.
+
+Orientační velikosti (2.5.0): JS 495 kB (gzip 153 kB), CSS 39,7 kB
+(gzip 8,6 kB), `index.cjs` 1 017 kB, `admin.cjs` 905 kB.
 
 ## Dev
 
 ```
 npm run dev            # tsx server/index.ts s vite middleware na /
+PORT=5173 npm run dev  # macOS: port 5000 drží AirPlay Receiver
 ```
 
 ## Sanity checks
 
 - `npm run check` — `tsc --noEmit`
+- `npm test` — vitest (10 souborů / 106 testů)
+- `npm run test:e2e` — Playwright, 10 testů (UI smoke + dva peeři)
+- `npm run check:menu` — guard invariantů MainMenu
 - `bash -n install.sh` — syntax-only validace instalátoru
 - `npm run build` — kompletní build
 
@@ -33,6 +46,11 @@ Safe-area inset třídy (`safe-px`, `safe-pt`, `safe-pb`) v `index.css` nastavuj
 horní/spodní odsazení pro iOS notch a Android gesture bar.
 
 ## Env vars
+
+`.env` v pracovním adresáři načítá `server/env.ts` vestavěným
+`process.loadEnvFile()`. Chybějící soubor je v pořádku (kontejnery);
+proměnné ze skutečného prostředí mají přednost. `.env` je v `.dockerignore`
+— do image se tajemství dostávají výhradně přes prostředí kontejneru.
 
 | Name                       | Effect                                                |
 |----------------------------|-------------------------------------------------------|

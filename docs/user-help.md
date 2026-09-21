@@ -40,6 +40,18 @@ texty/přílohy, PBKDF2 pro odvození klíče. Žádné „100 % bezpečné" sli
   pokud je nenulová.
 - **Absolutní TTL místnosti**: tvrdší limit shora (kratší ze dvou se použije).
 
+### Soubory a obrázky
+Ikony sponky a obrázku vlevo od pole zprávy. Malé soubory (do 512 kB) dorazí
+jako součást zprávy, větší se samy pošlou po šifrovaných částech — nemusíte
+nic přepínat. Druhá strana musí být připojená (štítek nahoře ukazuje `1 P2P`).
+Velikostní strop si nastavíte v *Nastavení*.
+
+### Režim Light / Server-enhanced
+Volí se v dialogu *Připojit*. **Light** (výchozí) = jen přímé spojení mezi
+prohlížeči. **Server-enhanced** navíc umí Web Push upozornění, když je karta
+zavřená. Obsah zpráv server nevidí ani v jednom režimu. Podrobně
+[`modes.md`](modes.md).
+
 ### Notifikace
 Lišta → zvonek. Pokud server má nakonfigurované VAPID klíče, použije se Web Push.
 Jinak fallback na lokální notifikace v tabu.

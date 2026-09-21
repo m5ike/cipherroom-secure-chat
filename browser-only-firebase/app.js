@@ -89,11 +89,14 @@
   els.demoConfig.addEventListener('click', () => {
     els.firebaseConfig.value = JSON.stringify(
       {
-        apiKey: 'AIza...',
-        authDomain: 'tvuj-projekt.firebaseapp.com',
-        databaseURL: 'https://tvuj-projekt-default-rtdb.europe-west1.firebasedatabase.app',
-        projectId: 'tvuj-projekt',
-        appId: '1:000000000000:web:0000000000000000000000',
+ apiKey: "AIzaSyCNZSupD7OZQK2e3gBvsEiLYMqNkvOsUcQ",
+  authDomain: "cmessenger-87da0.firebaseapp.com",
+  projectId: "cmessenger-87da0",
+  storageBucket: "cmessenger-87da0.firebasestorage.app",
+  messagingSenderId: "499152133540",
+  appId: "1:499152133540:web:320d3f23ef6dd0be9f7531",
+  measurementId: "G-GRJR6ZG959",
+    databaseURL: "https://cmessenger-87da0-default-rtdb.europe-west1.firebasedatabase.app"
       },
       null,
       2,

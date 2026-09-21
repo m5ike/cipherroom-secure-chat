@@ -20,11 +20,17 @@ Endpoints exposed by `server/routes.ts`:
 | ------ | --------------------- | -------------------------------------------- |
 | GET    | `/api/push/status`    | reports `enabled`, `vapidPublicKey`, count   |
 | POST   | `/api/push/subscribe` | accepts `{ subscription, deviceId }`         |
-| POST   | `/api/push/test`      | sends a real push to one or all subscribers  |
+| POST   | `/api/push/test`      | sends a real push to one or all subscribers — **unauthenticated**, guarded only by the REST rate limit |
 
 The full `PushSubscription` (endpoint + p256dh + auth keys) is stored
-**in memory only**. Restart the server and the table is empty. Use
-the admin API (`/admin/test/push`) to send arbitrary admin messages.
+**in memory only**. Restart the server and the table is empty. There is no
+unsubscribe endpoint; entries leave via `/api/audit/purge`, a retention run
+or a restart.
+
+The VAPID **private** key never leaves the server; clients receive only the
+public key. `/admin/test/push` lives in the separate admin process, which
+has its own empty subscriber table (see `docs/admin.md`), so use
+`/api/push/test` for end-to-end checks.
 
 ## Client side
 

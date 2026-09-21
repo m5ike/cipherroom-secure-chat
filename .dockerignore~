@@ -1,8 +1,0 @@
-package-lock.json
-.git
-node_modules
-dist
-*.log
-qa-*.png
-tool_calls
-.DS_Store

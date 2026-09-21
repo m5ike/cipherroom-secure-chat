@@ -11,13 +11,6 @@
 //   - Anything that touches the network goes through deriveRoomKey or the
 //     /api surface in cipherroom-api.ts. The server never sees plaintext.
 
-import { Switch, Route, Router } from "wouter";
-import { useHashLocation } from "wouter/use-hash-location";
-import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "@/components/ui/toaster";
-import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
 import {
   Activity,
   Bell,
@@ -65,7 +58,7 @@ import { fetchPushStatus, subscribeToPush, ensureServiceWorker, sendTestPush, sh
 import { dispatchInternal, installPublicAPI } from "./lib/cipherroom-api";
 import { applyTheme, applyFont, applyEffects } from "./lib/themes";
 import { detectLang, t, type Lang } from "./lib/i18n";
-import { createConnectionKeeper, type ConnectionStatus, type KeepaliveStrategy } from "./lib/connection-keeper";
+import type { ConnectionStatus, KeepaliveStrategy } from "./lib/connection-keeper";
 import { dispatchCommand, isAdminCommand } from "./lib/admin-commands";
 import {
   extractRemoteFingerprint,
@@ -365,6 +358,10 @@ function ChatApp() {
     stats: import("./lib/file-transfer").TransferStats;
     errorMessage?: string;
   }>>([]);
+  // Async handlers outlive the render that created them; they read the latest
+  // list through this ref instead of a stale closure.
+  const transfersRef = useRef(transfers);
+  useEffect(() => { transfersRef.current = transfers; }, [transfers]);
   const [pushBusy, setPushBusy] = useState(false);
   const remoteVideosRef = useRef<HTMLDivElement | null>(null);
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -1303,6 +1300,14 @@ function ChatApp() {
     event.target.value = "";
     if (!file) return;
     try {
+      if (file.size > INLINE_ATTACHMENT_LIMIT) {
+        // Too big to embed in a chat envelope: same encrypted channel, sent in
+        // 32 KiB chunks. Text typed alongside goes out as its own message.
+        const text = messageInput.trim();
+        if (text) await sendChatPayload(text);
+        await sendLargeFileToAll(file);
+        return;
+      }
       const attachment = await fileToAttachment(file);
       await sendChatPayload(messageInput.trim(), attachment);
     } catch (err) {
@@ -1565,9 +1570,9 @@ function ChatApp() {
       return;
     }
     // File size limit is now per-user (`prefs.maxAttachmentBytes`); there
-    // is no longer a hard-coded cap. The default 100 MB still applies
-    // until the user raises it in Settings. Server proxy has its own
-    // MAX_BYTES server-side cap that we honour below.
+    // is no longer a hard-coded cap. The default is unlimited
+    // (Number.MAX_SAFE_INTEGER, see preferences.ts); Settings offers lower
+    // caps such as 100 MB. Chunks are held in RAM until the transfer ends.
     if (file.size > prefs.maxAttachmentBytes && prefs.maxAttachmentBytes < Number.MAX_SAFE_INTEGER - 1) {
       setNotice(`Soubor přesahuje limit ${formatBytes(prefs.maxAttachmentBytes)}.`);
       return;
@@ -1576,6 +1581,14 @@ function ChatApp() {
     const channels = Array.from(peersRef.current.values())
       .map((p) => p.channel)
       .filter((c): c is RTCDataChannel => Boolean(c) && c!.readyState === "open");
+
+    // Files travel peer-to-peer only. The server "proxy" fallback stores the
+    // frames but never forwards them, so starting it would report success
+    // for a file nobody receives.
+    if (channels.length === 0) {
+      setNotice(t(lang, "files.noPeer"));
+      return;
+    }
 
     // Reserve an outgoing transfer card before the network work starts so
     // the UI shows the file immediately, even if sendFile kicks off async.
@@ -1624,11 +1637,7 @@ function ChatApp() {
       isCancelled: () => cancelled,
     });
 
-    // Za: const [transfers, setTransfers] = useState<...>([]);
-    const transfersRef = useRef(transfers);
-    useEffect(() => { transfersRef.current = transfers; }, [transfers]);
-
-    const currentTransfer = transfersRef.current?.find(x => x.id === placeholderId);
+    const currentTransfer = transfersRef.current.find((x) => x.id === placeholderId);
 
     if (result.ok) {
       // Move the entry to its real transferId so future updates coalesce.
@@ -1643,8 +1652,8 @@ function ChatApp() {
           direction: "out",
           transport: result.transport,
           encrypted: true,
-  	  bytesPerSecond: currentTransfer?.stats?.bytesPerSecond ?? 0,  // ← bylo t.stats
-      	  startedAt: currentTransfer?.stats?.startedAt ?? Date.now(),   // ← bylo t.stats
+          bytesPerSecond: currentTransfer?.stats?.bytesPerSecond ?? 0,
+          startedAt: currentTransfer?.stats?.startedAt ?? Date.now(),
           updatedAt: Date.now(),
           etaSeconds: 0,
           progress: 1,
@@ -1768,7 +1777,7 @@ function ChatApp() {
                 ? `${t(lang, "status.offline")} · auto-reconnect`
                 : t(lang, `status.${status}`)}
           </span>
-          <span className="sm:hidden">{status === "joined" ? `${openPeerCount}` : status[0]}</span>
+          {status === "joined" ? <span className="sm:hidden">{openPeerCount}</span> : null}
         </span>
 
         <MainMenu
@@ -1776,6 +1785,7 @@ function ChatApp() {
           lang={lang}
           currentPanel={activePanel}
           onOpen={(panel) => setActivePanel(panel)}
+          user={{ name: prefs.name, avatar: prefs.avatar }}
         />
       </header>
 
@@ -1906,44 +1916,8 @@ function ChatApp() {
             )}
           </div>
 
-          <form onSubmit={sendMessage} className="border-t border-border bg-card/80 p-3 sm:p-4 backdrop-blur">
+          <form onSubmit={sendMessage} className="composer border-t border-border bg-card/80 backdrop-blur">
             <div className="mx-auto w-full max-w-4xl">
-              <div className="mb-2 flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  data-testid="button-emoji"
-                  className="inline-flex min-h-9 items-center gap-1 rounded-full border border-border bg-background px-3 text-sm hover:bg-accent"
-                  onClick={() => setEmojiOpen((current) => !current)}
-                  aria-expanded={emojiOpen}
-                >
-                  <Smile className="h-4 w-4" />
-                  {t(lang, "chat.emoji")}
-                </button>
-                <button
-                  type="button"
-                  data-testid="button-attach-file"
-                  className="inline-flex min-h-9 items-center gap-1 rounded-full border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-50"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={openPeerCount === 0}
-                >
-                  <Paperclip className="h-4 w-4" />
-                  {t(lang, "chat.attach.file")}
-                </button>
-                <button
-                  type="button"
-                  data-testid="button-attach-image"
-                  className="inline-flex min-h-9 items-center gap-1 rounded-full border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-50"
-                  onClick={() => imageInputRef.current?.click()}
-                  disabled={openPeerCount === 0}
-                >
-                  <ImageIcon className="h-4 w-4" />
-                  {t(lang, "chat.attach.image")}
-                </button>
-                <span className="text-xs text-muted-foreground">Max {formatBytes(INLINE_ATTACHMENT_LIMIT)}.</span>
-                <input ref={fileInputRef} type="file" className="hidden" onChange={handleAttachmentChange} data-testid="input-file" />
-                <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleAttachmentChange} data-testid="input-image" />
-              </div>
-
               {emojiOpen ? (
                 <div className="mb-2 flex flex-wrap gap-1 rounded-2xl border border-border bg-background p-2" data-testid="picker-emoji">
                   {QUICK_EMOJI.map((emoji) => (
@@ -1959,12 +1933,48 @@ function ChatApp() {
                 </div>
               ) : null}
 
-              <div className="grid gap-3 md:grid-cols-[1fr_auto]">
-                <label className="sr-only" htmlFor="message">Message</label>
+              <div className="composer-bar">
+                <div className="composer-actions">
+                  <button
+                    type="button"
+                    data-testid="button-emoji"
+                    className="composer-icon-btn"
+                    onClick={() => setEmojiOpen((current) => !current)}
+                    aria-expanded={emojiOpen}
+                    aria-label={t(lang, "chat.emoji")}
+                    title={t(lang, "chat.emoji")}
+                  >
+                    <Smile className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="button-attach-file"
+                    className="composer-icon-btn"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={openPeerCount === 0}
+                    aria-label={t(lang, "chat.attach.file")}
+                    title={t(lang, "chat.attach.file")}
+                  >
+                    <Paperclip className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="button-attach-image"
+                    className="composer-icon-btn"
+                    onClick={() => imageInputRef.current?.click()}
+                    disabled={openPeerCount === 0}
+                    aria-label={t(lang, "chat.attach.image")}
+                    title={t(lang, "chat.attach.image")}
+                  >
+                    <ImageIcon className="h-5 w-5" aria-hidden="true" />
+                  </button>
+                </div>
+                <label className="sr-only" htmlFor="message">{t(lang, "chat.placeholder")}</label>
                 <textarea
                   data-testid="input-message"
                   id="message"
-                  className="min-h-14 resize-none rounded-2xl border border-input bg-background px-4 py-3 text-base outline-none focus:ring-2 focus:ring-ring"
+                  rows={1}
+                  className="composer-input"
                   placeholder={openPeerCount > 0 ? t(lang, "chat.placeholder") : t(lang, "chat.placeholder.waiting")}
                   value={messageInput}
                   onChange={(event) => setMessageInput(event.target.value)}
@@ -1972,14 +1982,18 @@ function ChatApp() {
                 />
                 <button
                   data-testid="button-send"
-                  className="inline-flex min-h-14 items-center justify-center gap-2 rounded-2xl bg-primary px-6 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="composer-send"
                   type="submit"
                   disabled={!canSend}
+                  aria-label={t(lang, "common.send")}
+                  title={t(lang, "common.send")}
                 >
-                  <Send className="h-4 w-4" />
-                  {t(lang, "common.send")}
+                  <Send className="h-4 w-4" aria-hidden="true" />
                 </button>
               </div>
+              <p className="composer-hint">{t(lang, "composer.attachHint")}</p>
+              <input ref={fileInputRef} type="file" className="hidden" onChange={handleAttachmentChange} data-testid="input-file" />
+              <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleAttachmentChange} data-testid="input-image" />
             </div>
           </form>
         </div>
@@ -2553,9 +2567,9 @@ function ConnectionPanel({
           onChange={(e) => setPrefs({ keepaliveStrategy: e.target.value as KeepaliveStrategy })}
           className="min-h-10 rounded-xl border border-input bg-background px-2"
         >
-          <option value="conservative">Conservative (45s ping, 30s max backoff)</option>
-          <option value="balanced">Balanced (25s ping, 15s max backoff)</option>
-          <option value="aggressive">Aggressive (12s ping, 8s max backoff)</option>
+          <option value="conservative">Conservative (45s ping, reconnect from 1.5s)</option>
+          <option value="balanced">Balanced (25s ping, reconnect from 1s)</option>
+          <option value="aggressive">Aggressive (12s ping, reconnect from 0.5s)</option>
         </select>
       </label>
       {status ? (
@@ -2584,26 +2598,6 @@ function Palette(props: React.SVGProps<SVGSVGElement>) {
   );
 }
 
-function AppRouter() {
-  return (
-    <Switch>
-      <Route path="/" component={ChatApp} />
-      <Route component={NotFound} />
-    </Switch>
-  );
-}
-
-function App() {
-  return (
-    <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router hook={useHashLocation}>
-          <AppRouter />
-        </Router>
-      </TooltipProvider>
-    </QueryClientProvider>
-  );
-}
-
-export default App;
+// Single-screen app: no router, no data-fetching cache, no toast layer. Those
+// template wrappers were mounted but never used by anything.
+export default ChatApp;
