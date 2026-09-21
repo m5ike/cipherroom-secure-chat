@@ -38,7 +38,10 @@ const STORAGE_KEY = "m5cet:session:v1";
 const DB_NAME = "m5cet-session";
 const STORE = "keys";
 
-type StoredRecord = { v: 1; id: string; iv: string; ct: string; touchedAt: number };
+// `off` is the only field outside the ciphertext that affects behaviour, and
+// it can only LOWER the desired state to "disconnected". Forging it cannot
+// make the app connect; it exists so that Disconnect takes effect at once.
+type StoredRecord = { v: 1; id: string; iv: string; ct: string; touchedAt: number; off?: boolean };
 
 /** Where the wrapping key lives. IndexedDB in browsers; injectable for tests. */
 export interface KeyVault {
@@ -104,6 +107,8 @@ export type SessionCache = {
   save(data: SessionData): Promise<void>;
   /** null when there is nothing, it expired, or it cannot be decrypted (then it is wiped). */
   load(): Promise<SessionData | null>;
+  /** Synchronously pin the desired state to "disconnected" (see StoredRecord.off). */
+  forceDisconnected(): void;
   /** Record user activity; cheap, call it often. */
   touch(): void;
   /** Milliseconds since the last activity, or null without a session. */
@@ -146,6 +151,11 @@ export function createSessionCache(opts: { vault?: KeyVault; storage?: Storage; 
   return {
     async save(data) {
       if (!storage) return;
+      // Asking for "connected" lifts the pin right away, before any await…
+      if (data.desired === "connected") {
+        const cur = read();
+        if (cur?.off) { delete cur.off; try { storage.setItem(STORAGE_KEY, JSON.stringify(cur)); } catch { /* ignore */ } }
+      }
       // Reuse this tab's key; mint one on first save.
       let id = read()?.id ?? "";
       let key = id ? await vault.get(id).catch(() => null) : null;
@@ -159,6 +169,9 @@ export function createSessionCache(opts: { vault?: KeyVault; storage?: Storage; 
         { name: "AES-GCM", iv, additionalData: aad(id) }, key, encoder.encode(JSON.stringify(data)),
       ));
       const rec: StoredRecord = { v: 1, id, iv: toBase64(iv), ct: toBase64(ct), touchedAt: now() };
+      // …so a pin found here was set by a Disconnect that arrived while we
+      // were encrypting. The later click wins over this older snapshot.
+      if (data.desired === "disconnected" || read()?.off === true) rec.off = true;
       storage.setItem(STORAGE_KEY, JSON.stringify(rec));
     },
 
@@ -178,11 +191,18 @@ export function createSessionCache(opts: { vault?: KeyVault; storage?: Storage; 
         const data = JSON.parse(decoder.decode(plain)) as Partial<SessionData>;
         if (typeof data.name !== "string" || typeof data.room !== "string" || typeof data.passphrase !== "string"
           || (data.desired !== "connected" && data.desired !== "disconnected")) throw new Error("bad shape");
-        return { name: data.name, room: data.room, passphrase: data.passphrase, desired: data.desired };
+        return { name: data.name, room: data.room, passphrase: data.passphrase, desired: rec.off ? "disconnected" : data.desired };
       } catch {
         await clear();
         return null;
       }
+    },
+
+    forceDisconnected() {
+      const rec = read();
+      if (!rec || !storage) return;
+      rec.off = true;
+      try { storage.setItem(STORAGE_KEY, JSON.stringify(rec)); } catch { /* ignore */ }
     },
 
     touch() {

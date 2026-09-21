@@ -1,17 +1,51 @@
-// Three radically different visual themes. Switching swaps a data-theme attribute
-// on <html>; CSS variables in index.css drive the actual look.
+// Visual system: three independent axes, each a data-* attribute on <html>.
+//
+//   data-theme   the template — surfaces, typography, radius, mood
+//   data-accent  a colour variation of that template (primary / ring / stripe)
+//   data-layout  how the conversation is laid out (width, density)
+//
+// CSS variables in index.css do the work; this file only lists what exists
+// and flips the attributes.
 
-export type ThemeId = "motorsport" | "glass" | "terminal";
+export type ThemeId = "motorsport" | "glass" | "terminal" | "midnight" | "paper" | "contrast";
+export type AccentId = "default" | "red" | "orange" | "green" | "blue" | "violet";
+export type LayoutId = "classic" | "wide" | "compact" | "focus";
 
 export const THEMES: { id: ThemeId; tone: "dark" | "light"; labelKey: string }[] = [
   { id: "motorsport", tone: "dark", labelKey: "themes.motorsport" },
   { id: "glass", tone: "light", labelKey: "themes.glass" },
   { id: "terminal", tone: "dark", labelKey: "themes.terminal" },
+  { id: "midnight", tone: "dark", labelKey: "themes.midnight" },
+  { id: "paper", tone: "light", labelKey: "themes.paper" },
+  { id: "contrast", tone: "dark", labelKey: "themes.contrast" },
 ];
 
-export function applyTheme(id: ThemeId) {
+/** `swatch` is only for the picker; the real colours live in index.css. */
+export const ACCENTS: { id: AccentId; swatch: string }[] = [
+  { id: "default", swatch: "hsl(var(--theme-primary))" },
+  { id: "red", swatch: "hsl(356 82% 52%)" },
+  { id: "orange", swatch: "hsl(27 92% 52%)" },
+  { id: "green", swatch: "hsl(146 62% 40%)" },
+  { id: "blue", swatch: "hsl(214 88% 54%)" },
+  { id: "violet", swatch: "hsl(265 78% 60%)" },
+];
+
+export const LAYOUTS: { id: LayoutId; labelKey: string }[] = [
+  { id: "classic", labelKey: "layout.classic" },
+  { id: "wide", labelKey: "layout.wide" },
+  { id: "compact", labelKey: "layout.compact" },
+  { id: "focus", labelKey: "layout.focus" },
+];
+
+export const isThemeId = (v: unknown): v is ThemeId => THEMES.some((t) => t.id === v);
+export const isAccentId = (v: unknown): v is AccentId => ACCENTS.some((a) => a.id === v);
+export const isLayoutId = (v: unknown): v is LayoutId => LAYOUTS.some((l) => l.id === v);
+
+export function applyTheme(id: ThemeId, accent: AccentId = "default", layout: LayoutId = "classic") {
   const root = document.documentElement;
   root.setAttribute("data-theme", id);
+  root.setAttribute("data-accent", accent);
+  root.setAttribute("data-layout", layout);
   const theme = THEMES.find((entry) => entry.id === id);
   if (theme) {
     root.classList.toggle("dark", theme.tone === "dark");
