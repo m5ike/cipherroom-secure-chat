@@ -1,306 +1,141 @@
-# CipherRoom Secure Chat v2 — KNOWLEDGE BASE
+# M5cet (CipherRoom) — znalostní báze
 
-## 1. Čo je CipherRoom v2
+Rychlá a **ověřená** mapa projektu pro vývojáře, operátory i AI asistenty.
+Stav k verzi 2.5.0 (2026-09-21).
 
-M5cet — end-to-end encrypted WebRTC P2P workspace (chat, calls, files, speech, NFC, maps, push) s WebSocket signaling. Žádná persistence zpráv. Verze 2.2.0, Node 20.x, React 19, Vite.
+> **Jak tento dokument číst.** Každé tvrzení bylo ověřeno proti kódu nebo
+> spuštěním. Záměrně zde **nejsou ukázky implementace** — zdrojem pravdy je
+> kód na uvedených cestách, ne tento text. Předchozí verze souboru obsahovala
+> smyšlené ukázky (odvození klíče jedním SHA-256 bez PBKDF2, opakované IV pro
+> všechny chunky souboru, prohozené VAPID klíče) a byla proto nahrazena.
+> Když se dokument a kód rozcházejí, platí kód — a dokument se má opravit.
 
-**Dva klienti:**
-- `cipherroom-secure-chat` (v2) — WebRTC P2P, AES-GCM 256, DTLS-SRTP calls, server jenom pro signaling + file-relay fallback
-- `cipherroom-secure-chat-v2` (v1, legacy) — stejný koncept, ale starší verze s problémy (chyběl TURN, O(n²) broadcast)
+## 1. Co to je
 
-## 2. Architektura
+End-to-end šifrovaný workspace v prohlížeči: text, soubory, audio/video,
+poloha, NFC, TTS/STT. Peeři spolu mluví přímo přes WebRTC; server je
+signalizační relé (WebSocket `/ws`) a nic neukládá na disk.
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         CipherRoom v2 — Client                        │
-│  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │  App.tsx — WebSocket lifecycle + RTCPeerConnection mesh          │ │
-│  │  - deriveRoomKey (PBKDF2-SHA256, 250k it) → AES-GCM envelope     │ │
-│  │  - broadcastEnvelope (P2P DataChannel)                           │ │
-│  │  - connection-keeper (heartbeat, reconnect)                      │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-│                              │                                        │
-│  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │  lib/crypto.ts — encrypt/decrypt envelope, toBase64              │ │
-│  │  lib/connection-keeper.ts — createConnectionKeeper              │ │
-│  │  lib/file-transfer.ts — chunked DataChannel transfer             │ │
-│  │  lib/push.ts — Web Push VAPID subscription                       │ │
-│  │  lib/nfc.ts, lib/speech.ts, lib/maps.ts                          │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         cipherroom-api.ts                            │
-│  - createConnectionKeeper(…) — factory hook                         │
-│  - dispatchCommand, dispatchInternal — event bus                     │
-│  - isAdminCommand, handleIncomingFrame — frame routing              │
-│  - extractRemoteFingerprint, persistFingerprint — TOFU              │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                         CipherRoom v2 — Server                       │
-│  ┌─────────────────────────────────────────────────────────────────┐ │
-│  │  index.ts (routes) — WS signaling + HTTP API                    │ │
-│  │  - /ws — WebSocket handler (join, signal, leave)               │ │
-│  │  - /api/health, /api/modules, /api/push/status                 │ │
-│  │  - /api/events — metadata logging (opt-in)                      │ │
-│  │  - /api/audit/purge — server-side data cleanup                  │ │
-│  └─────────────────────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        _cipherroom-db_ (SQLite, ephemeral)           │
-│  - events, metadata (nikdy ne zprávy)                               │
-└─────────────────────────────────────────────────────────────────────┘
-```
+- Balíček `cipherroom-secure-chat`, značka **M5cet** (rebrand CipherRoom).
+- Node ≥ 22 (CI/Docker 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+  · ws 8 · Tailwind 3.4 · Vitest 5. Runtime závislostí je 16.
+- `browser-only-firebase/` je samostatná statická varianta bez buildu;
+  s hlavní aplikací nesdílí kód.
 
-## 3. Klíčové komponenty
+## 2. Mapa kódu
 
-### 3.1 Šifrování (AES-GCM 256)
+| Oblast | Soubor | Poznámka |
+|---|---|---|
+| Orchestrace klienta | `client/src/App.tsx` (~2 600 ř.) | signaling socket, mesh `RTCPeerConnection`, zprávy, TTL, panely. **Bez testů.** |
+| Šifrování | `client/src/lib/crypto.ts` | `deriveRoomKey`, `encryptEnvelope`, `decryptEnvelope`, `toBase64`/`fromBase64`, typ `Bytes` |
+| Přenos souborů | `client/src/lib/file-transfer.ts` | chunky, backpressure, P2P/proxy rámce |
+| ICE / TURN | `client/src/lib/rtc.ts` | `RTC_CONFIG`, `loadTurnConfig()` → `GET /api/turn` |
+| Otisky peerů | `client/src/lib/fingerprint.ts` | DTLS otisk z `getStats()`, localStorage |
+| Preference | `client/src/lib/preferences.ts` | klíč `m5cet:prefs:v2`, migrace z `cipherroom:prefs:v1` |
+| Admin příkazy (klient) | `client/src/lib/admin-commands.ts` | allowlist + validace |
+| Plugin API | `client/src/lib/cipherroom-api.ts` | `window.CipherRoomAPI` — jen registry a event bus |
+| Keeper (knihovna) | `client/src/lib/connection-keeper.ts` | **nezapojeno** — viz §6 |
+| Menu | `client/src/components/MainMenu.tsx` | speed-dial přes `createPortal`; hlídá pre-commit guard |
+| Server vstup | `server/index.ts` | Helmet/CSP, hlavičky, REST limiter, `listen` |
+| Signalizace + REST | `server/routes.ts` | `/ws`, `/api/*` |
+| Relay souborů | `server/file-proxy.ts` | **nedokončeno** — viz §6 |
+| Admin služba | `server/admin.ts` | samostatný proces `dist/admin.cjs` |
+| Sdílený stav adminu | `server/routes-admin-shared.ts` | allowlist, fronta, push subskripce (Mapy v paměti) |
+| Event log | `server/events.ts` | ring 500 záznamů; DB backend je no-op |
+| Retence | `server/retention.ts` | politika z env; spouští se jen ručně |
+| Env | `server/env.ts` | `process.loadEnvFile()`; musí být 1. import |
+| Build | `script/build.ts` | Vite + esbuild souběžně |
+| Guard | `scripts/pre-commit-check.sh` | 8 kontrol invariantů MainMenu |
 
-```typescript
-// lib/crypto.ts
-export async function deriveRoomKey(roomId: string, passphrase: string): Promise<CryptoKey> {
-  const enc = new TextEncoder();
-  const hash = await crypto.subtle.digest('SHA-256', enc.encode(`${roomId}:${passphrase}`));
-  const keyData = new Uint8Array(hash);
-  return await crypto.subtle.importKey('raw', keyData, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-}
+## 3. Kryptografie (ověřeno testy `test/crypto.test.ts`)
 
-export async function encryptEnvelope(key: CryptoKey, payload: unknown): Promise<DataChannelEnvelope> {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, JSON.stringify(payload));
-  return { kind: 'encrypted', iv, ciphertext: toBase64(encrypted) };
-}
-```
+- **Klíč místnosti:** PBKDF2-SHA-256, **250 000 iterací**, sůl
+  `CipherRoom:v1:<room>`, výstup AES-GCM 256, `extractable: false`.
+  Odvozuje se **jednou za join**, drží se v `keyRef`; necachuje se.
+- **Obálka:** přesně `{ iv, ciphertext }`, obojí standardní base64. IV je
+  **12 náhodných bajtů na každé volání** (`crypto.getRandomValues`). GCM tag
+  (16 B) je součástí ciphertextu. Nic dalšího v obálce být nesmí.
+- **Soubory:** každý chunk i metadata se šifrují stejným klíčem místnosti,
+  každý s vlastním čerstvým IV (`encryptBytes` / `encryptJSON`).
+- **NFC:** vlastní schéma — PIN 4–16 číslic, PBKDF2 × 200 000, sůl 16 B + IV
+  12 B na tag, prefix `m5cet:nfc:v1:`. S klíčem místnosti nesouvisí.
+- **Média:** DTLS-SRTP, řeší prohlížeč.
+- **VAPID:** *privátní* klíč zůstává na **serveru**; klient dostává jen
+  *veřejný* klíč přes `GET /api/push/status`.
+- Změna prefixu soli nebo tvaru obálky = breaking migrace (verzovat `v2:`).
 
-### 3.2 WebSocket signaling (App.tsx)
+## 4. Co server vidí
 
-```typescript
-// Connection lifecycle — hook 9+×
-- useEffect: browser reconnect (online/offline/pageshow/visibilitychange)
-- useEffect: heartbeat (aggressive/balanced/conservative)
-- useEffect: TOFU fingerprint collection (peer connected → extractRemoteFingerprint)
-- useEffect: room rejoin (new roomId → reset state, clear old peers)
-- useEffect: audio status broadcasting (live/off/muted)
-```
+| Data | Vidí server? |
+|---|---|
+| Plaintext zpráv, souborů, klíč, passphrase | **ne** |
+| Ciphertext chatových zpráv | **ne** — jdou jen DataChannelem |
+| Ciphertext + IV chunků souboru | **ano, v proxy režimu** (jdou přes `/ws`); v paměti drží prvních 256 znaků |
+| Název / typ / velikost souboru, jméno odesílatele | ne — jsou uvnitř šifrovaných metadat; počet chunků ale prozradí přibližnou velikost |
+| Room ID, peer ID, jméno (≤ 48 zn.), IP, SDP/ICE | ano, po dobu spojení |
+| Push subskripce (endpoint + klíče) | ano, jen v paměti procesu |
 
-### 3.3 P2P DataChannel transfer (chunked)
+## 5. Rozhraní (souhrn; detail v `docs/api.md`)
 
-```typescript
-// lib/file-transfer.ts
-export async function sendFile({ key, file, senderId, senderName, channels, sendProxy,
-  onTransport, onProgress, onStats, isCancelled }: FileTransferOptions): Promise<
-  { ok: boolean; transferId: string; reason?: string; transport: 'p2p' | 'proxy' }
-> {
-  const maxChans = 3;
-  const [first, ...rest] = channels.slice(0, maxChans);
-  const channel = first ? first : null;
-  if (!channel) {
-    onTransport?.('proxy');
-    const transferId = newId('transfer');
-    const iv = crypto.getRandomValues(new Uint8Array(16));
-    const encrypted = await encryptForTag(passphrase, { kind: 'file-meta', transferId, senderId, senderName, name: file.name, size: file.size, createdAt: Date.now(), mimeType: file.type || 'application/octet-stream', bytesSent: 0, totalBytes: file.size, iv });
-    await sendProxy({ type: 'proxy-meta', transferId, iv, ciphertext: encrypted });
-    if (isCancelled()) return { ok: false, reason: 'cancelled', transport: 'proxy' };
-    const chunks = Math.max(1, Math.ceil(file.size / (1024 * 1024 / 4)));
-    const perChunk = Math.floor(file.size / chunks);
-    for (let i = 1; i <= chunks; i++) {
-      const slice = file.slice((i - 1) * perChunk, Math.min(i * perChunk, file.size));
-      const chunkData = new Uint8Array(await slice.arrayBuffer());
-      const chunkEncrypted = await encryptForTag(passphrase, { kind: 'file-chunk', transferId, seq: i, totalChunks: chunks, iv, ciphertext: chunkData, createdAt: Date.now() });
-      await sendProxy({ type: 'proxy-chunk', transferId, seq: i, totalChunks: chunks, iv, ciphertext: chunkEncrypted });
-      if (isCancelled()) return { ok: false, reason: 'cancelled', transport: 'proxy' };
-      onProgress?.(i, file.size, { progress: i / chunks, bytesSent: slice.size });
-    }
-    const finalEncrypted = await encryptForTag(passphrase, { kind: 'file-end', transferId, iv, createdAt: Date.now() });
-    await sendProxy({ type: 'proxy-end', transferId, iv, ciphertext: finalEncrypted });
-    if (isCancelled()) return { ok: false, reason: 'cancelled', transport: 'proxy' };
-    return { ok: true, transferId, transport: 'proxy' };
-  }
-  // P2P path — encrypt per-frame with current room key
-  const transferId = newId('transfer');
-  const iv = crypto.getRandomValues(new Uint8Array(16));
-  await sendProxy({ type: 'proxy-meta', transferId, iv, ciphertext: await encryptForTag(passphrase, { kind: 'file-meta', transferId, senderId, senderName, name: file.name, size: file.size, createdAt: Date.now(), mimeType: file.type || 'application/octet-stream', bytesSent: 0, totalBytes: file.size, iv })};
-  if (isCancelled()) return { ok: false, reason: 'cancelled', transport: 'p2p' };
-  const chunks = Math.max(1, Math.ceil(file.size / (1024 * 1024 / 4)));
-  const perChunk = Math.floor(file.size / chunks);
-  for (let i = 1; i <= chunks; i++) {
-    const slice = file.slice((i - 1) * perChunk, Math.min(i * perChunk, file.size));
-    const chunkData = new Uint8Array(await slice.arrayBuffer());
-    const chunkEncrypted = await encryptForTag(passphrase, { kind: 'file-chunk', transferId, seq: i, totalChunks: chunks, iv, ciphertext: chunkData, createdAt: Date.now() });
-    await channel.send(chunkEncrypted);
-    if (isCancelled()) return { ok: false, reason: 'cancelled', transport: 'p2p' };
-    onProgress?.(i, file.size, { progress: i / chunks, bytesSent: slice.size });
-  }
-  const finalEncrypted = await encryptForTag(passphrase, { kind: 'file-end', transferId, iv, createdAt: Date.now() });
-  await channel.send(finalEncrypted);
-  if (isCancelled()) return { ok: false, reason: 'cancelled', transport: 'p2p' };
-  return { ok: true, transferId, transport: 'p2p' };
-}
-```
+- **WS `/ws`** klient → server: `join`, `signal`, `ping`, `leave`,
+  `command-poll`, `command-ack`, `proxy-meta|chunk|end|cancel`.
+  Server → klient: `hello`, `joined`, `peer-joined`, `peer-left`, `signal`,
+  `pong`, `admin-command`, `proxy-ack`, `proxy-end|cancel`, `error`.
+  Rámce nad 128 000 znaků se tiše zahazují. Strop peerů na místnost není.
+- **REST** `/api/health`, `/api/modules`, `/api/turn`, `/api/events(/recent)`,
+  `/api/push/status|subscribe|test`, `/api/settings`, `/api/audit/purge|log`,
+  `/api/analytics/consent`, `/api/transfers/stats`, `/api/admin/retention(/run)`.
+- **Admin** (`:5050`, Bearer `ADMIN_API_TOKEN`, bez tokenu `503`):
+  `/admin/health` (veřejné), `/admin/metrics`, `/admin/logs/recent`,
+  `/admin/clients`, `/admin/modules`, `/admin/commands/enqueue|audit`,
+  `/admin/test/push`, `/admin/plugins/debug`. GUI ze `admin-ui/public`.
+- **Env:** `PORT`, `NODE_ENV`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`,
+  `VAPID_SUBJECT`, `LOG_EVENTS`, `DATABASE_URL` (jen štítek), `TURN_SERVER_URL`,
+  `TURN_USERNAME`, `TURN_CREDENTIAL`, `*_RETENTION_DAYS`, `ENABLE_ADMIN`,
+  `ADMIN_PORT`, `ADMIN_BIND` (výchozí `127.0.0.1`), `ADMIN_API_TOKEN`; klient
+  `VITE_SIGNALING_URL`. Proměnná `KEEPALIVE_STRATEGY` **neexistuje** —
+  strategie je uživatelská preference v prohlížeči.
 
-### 3.4 TOFU fingerprint (DTLS)
+## 6. Známé mezery — čti před tím, než na tyhle části spolehneš
 
-```typescript
-// lib/fingerprint.ts
-export async function extractRemoteFingerprint(pc: RTCPeerConnection): Promise<string | null> {
-  try {
-    const stats = await pc.getStats();
-    const report = Array.from(stats).find(r => r.type === 'remoteCandidate' && r.selected && r.sdpFingerpr
-```
+Ověřeno revizí 2026-09-21; nic z toho není ve 2.5.0 opraveno.
 
-## 4. Deploy & CI/CD
+1. **WS rate limit nefunguje** — Express middleware na `/ws` se při upgradu
+   nevolá (změřeno 45/45 přijato při limitu 30/min). REST limiter funguje.
+2. **Chybí `trust proxy`** — za reverse proxy mají všichni stejnou `req.ip`
+   a sdílejí jeden limit 100 požadavků / 15 min.
+3. **Proxy relay souborů nedoručuje** — server chunky ukládá, ale
+   nepřeposílá; rozesílá jen `proxy-end`/`proxy-cancel`. Soubory fungují jen
+   s otevřeným DataChannelem. Sloty se po `end` neuvolní (až TTL 10 min).
+4. **Admin ↔ hlavní služba nesdílí stav** — fronta příkazů, push subskripce
+   i event ring jsou Mapy v paměti *každého* procesu. Příkaz zařazený v admin
+   procesu se ke klientovi hlavní služby nedostane.
+5. **Neautentizované endpointy:** `POST /api/push/test`,
+   `GET|POST /api/admin/retention*`. `GET /api/turn` vrací statické TURN údaje.
+6. **TOFU otisky** jsou klíčované náhodným `peerId` nové relace → vždy
+   „první použití"; při neshodě se otisk přepíše. „Otisk místnosti" je hash
+   jen z room ID, ne z klíče.
+7. **`connection-keeper.ts` není zapojený.** `App.tsx` má vlastní socket,
+   heartbeat (45/25/12 s) a reconnect (start 1,5/1/0,5 s, full-jitter, strop
+   120 s, bez inactivity timeoutu). Popisky v UI (30/15/8 s) odpovídají
+   nezapojené knihovně.
+8. **Stuby v paměti:** settings sync, consent, push subskripce; `audit/log`
+   nemá žádného zapisovatele (vrací vždy `[]`). Retence neběží na timeru
+   a události nemaže.
+9. **`maxAttachmentBytes` je výchozí neomezené** (`MAX_SAFE_INTEGER`), ne
+   100 MB; 100 MB je jen volba v Nastavení. Chunky se drží v RAM.
+10. **CSP** povoluje `script-src 'unsafe-inline' 'unsafe-eval'`.
 
-### 4.1 One-liner instalace
+## 7. Provoz
 
-```bash
-# První instalace (interaktivní)
-curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
-  | sudo -E bash -s -- --install
+- Instalace: `install.sh` (Docker + volitelně Nginx/certbot), viz `INSTALL.md`.
+- Docker: `node:24-slim`, runtime bez `node_modules`, `USER node`; `.env` není
+  v build kontextu. Admin stack: `docker compose --profile admin up -d`.
+- Health: `GET /api/health`, `GET /admin/health`.
+- macOS: port 5000 drží AirPlay → `PORT=5173`.
 
-# Non-interactive (pro CI / headless)
-curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
-  | sudo -E bash -s -- --non-interactive --yes
+## 8. Kam dál
 
-# Behind Nginx + TLS (certbot)
-curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/feature/m5cet-fullscreen-secure-workspace/install.sh \
-  | sudo -E DOMAIN=chat.example.com ACME_EMAIL=admin@example.com \
-    bash -s -- --non-interactive --yes --enable-nginx --enable-tls
-```
-
-### 4.2 Režimy instalátoru
-
-```
---install     # první instalace / upgrade
---update      # pull + redeploy
---test        # read-only health probes (doctor)
---gui         # interaktivní menu
---logs        # follow docker logs
---restart     # restart
---stop        # stop
---uninstall   # remove app, keep project files
-```
-
-### 4.3 Konfigurace (`.env` + ENV flagy)
-
-```typescript
-// Klíčové proměnné — default v package.json / install.sh
-INSTALL_DIR=/opt/m5cet
-BRANCH=feature/m5cet-fullscreen-secure-workspace
-APP_PORT=5000
-HOST_PORT=5000
-BIND_ADDRESS=127.0.0.1      # 0.0.0.0 pro public
-DOMAIN=chat.example.com
-ENABLE_NGINX=auto           # 1 / 0 / auto
-ENABLE_TLS=0                # 1 pro certbot
-ACME_EMAIL=admin@example.com
-ADMIN_API_TOKEN=<32B random>
-VAPID_SUBJECT=mailto:admin@example.org
-LOG_EVENTS=0                # metadata logging (opt-in)
-KEEPALIVE_STRATEGY=balanced # aggressive | balanced | conservative
-```
-
-### 4.4 Pre-commit guard
-
-```bash
-# scripts/pre-commit-check.sh
-#!/bin/bash
-set -e
-npm run check              # TypeScript strict
-npm run test               # Vitest
-npm run check:menu         # pre-commit-check.sh self
-npm run test:e2e -- --reporter=verbose --grep="menu"
-```
-
-## 5. Workflow
-
-### 5.1 Git + release
-
-```bash
-# Tag-and-push workflow — 5 kroků
-1. git checkout master && git pull --ff-only origin master
-2. npm run build && npm run test
-3. git add package.json package-lock.json CHANGELOG.md
-4. git commit -m "chore: bump $VERSION — sync + patch"
-5. git push origin master
-   git tag -a v$VERSION -m "Release $VERSION"
-   git push origin v$VERSION
-```
-
-### 5.2 Debugging
-
-```bash
-# Health probe (read-only)
-sudo -E /opt/m5cet/install.sh --test
-
-# Follow logs
-sudo -E /opt/m5cet/install.sh --logs
-
-# Force Nginx site override
-FORCE_NGINX=1 sudo -E /opt/m5cet/install.sh --update
-
-# Force full reinstall
-sudo -E /opt/m5cet/install.sh --install --force-reclone --yes
-```
-
-## 6. Bezpečnost
-
-- PBKDF2-SHA256 (250k it) → AES-GCM 256
-- DTLS-SRTP (WebRTC) — fingerprint TOFU
-- Web Push VAPID — server-side public key + client-side private key
-- Zero plaintext persistence — ephemeral events metadata only
-- Per-frame per-peer encryption (room key + per-peer nonce)
-- Server proxy relay — end-to-end encrypted chunks (AES-GCM)
-
-## 7. Architektura detailů
-
-### 7.1 Connection Keeper (reconnect)
-
-```typescript
-// Reconnect strategy — full-jitter exponential backoff
-const initial = prefs.keepaliveStrategy === "aggressive" ? 500 : prefs.keepaliveStrategy === "conservative" ? 1500 : 1000;
-const max = 120_000; // hard 2 min cap
-const exp = Math.min(max, initial * Math.pow(2, Math.min(attempt, 12)));
-const delay = Math.random() * exp; // full-jitter
-```
-
-### 7.2 Per-peer per-frame encryption
-
-- Room key je AES-GCM
-- Každý DataChannel frame má vlastní IV (nonce)
-- Per-peer nonce counter (jako v legacy `connection-keeper.ts`)
-
-### 7.3 File transfer — chunked
-
-- Default: 100 MB per message (user-configurable v Settings)
-- Server proxy: 10 GB hard cap (server-side)
-- Per-frame encryption (AES-GCM) + IV per chunk
-
-## 8. Volitelné features
-
-- **Push** — Web Push VAPID, service worker
-- **Calls** — WebRTC audio + video (DTLS-SRTP)
-- **Speech** — TTS/STT (Chrome/Edge only)
-- **NFC** — Android Chrome Web NFC (tag write/read)
-- **Maps** — OpenStreetMap osmLink, GPS watch
-- **Location** — one-time / continuous sharing
-
-## 9. Zdroje
-
-- `/Users/m5ike/CodeAgent/workspaces/cipherroom-secure-chat-v2/INSTALL.md` — kompletní instalace
-- `/Users/m5ike/CodeAgent/workspaces/cipherroom-secure-chat-v2/docs/deployment.md` — deploy, Nginx, TLS
-- `/Users/m5ike/CodeAgent/workspaces/cipherroom-secure-chat-v2/docs/troubleshooting.md` — řešení problémů
-- `/Users/m5ike/CodeAgent/workspaces/cipherroom-secure-chat-v2/docs/security-model.md` — šifrování, Threat Model
-
-## 10. Verze a legacy
-
-- **cipherroom-secure-chat v2** — WebRTC P2P, AES-GCM, DTLS-SRTP, server jenom signaling + file-relay
-- **cipherroom-secure-chat v1** — legacy, problémy (chyběl TURN, O(n²) broadcast, mass-broadcast bez ratchetingu)
-
----
-
-Tento dokument slouží jako rychlý referenční manuál pro vývojáře, operátory i uživatele CipherRoom v2.
+`README.md` (přehled + diagramy) · `docs/*.md` (po oblastech) ·
+`CHANGELOG.md` · `PROGRESS.md` (stav a TODO) · `WORKFLOW.md` (postup) ·
+`CLIENT_OPTIMIZATIONS.md` (měření).

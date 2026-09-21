@@ -20,13 +20,35 @@ npm run admin:dev       # development (tsx)
 | ------------------ | ---------- | --------------------------------------- |
 | `ENABLE_ADMIN`     | `0`        | If `1`, the admin service listens.       |
 | `ADMIN_PORT`       | `5050`     | Bind port for the admin API.             |
-| `ADMIN_BIND`       | `0.0.0.0`  | Bind address.                            |
+| `ADMIN_BIND`       | `127.0.0.1` | Bind address (docker-compose sets `0.0.0.0` inside the container and publishes the port on host loopback only). |
 | `ADMIN_API_TOKEN`  | (unset)    | Bearer token for every endpoint except `/admin/health`. |
 | `ADMIN_UI_PORT`    | `5051`     | Used by docker-compose to expose the static GUI via nginx. |
 
+## Read this first — process isolation
+
+The admin service is a **separate process** (`dist/admin.cjs`, its own
+container in docker-compose). The command queue, push-subscriber table,
+command audit and event ring are plain in-memory Maps *per process*, and the
+main service never imports the admin module. Consequences today:
+
+- A command accepted by `/admin/commands/enqueue` is queued in the admin
+  process only. Clients poll the **main** service, so the command is never
+  delivered.
+- `/admin/clients` and `/admin/logs/recent` show the admin process's own
+  (normally empty) state, not the main service's subscribers or events.
+- `/admin/test/push` can only reach subscriptions made against the admin
+  process — i.e. none.
+
+What does work: health, process metrics, auth, allowlist validation and the
+GUI shell. Making the rest work needs shared state (one process, or an
+external store) — a design decision that has not been made yet.
+
 ## Endpoints
 
-All except `/admin/health` require `Authorization: Bearer ${ADMIN_API_TOKEN}`.
+All `/admin/*` routes except `/admin/health` require
+`Authorization: Bearer ${ADMIN_API_TOKEN}` (compared in constant time).
+Without the env var they answer `503`; with a wrong token `401`. The GUI at
+`/` is static and unauthenticated — it holds no data until a token is entered.
 
 | Method | Path                             | Purpose                                    |
 | ------ | -------------------------------- | ------------------------------------------ |
@@ -49,11 +71,14 @@ anything else with HTTP 400.
 The client enforces the same allowlist again before acting (see
 `client/src/lib/admin-commands.ts`). `download-file-from-admin`
 **always** requires explicit user consent via `window.confirm` before
-the file is fetched.
+the file is fetched. Note the prompt shows the file *name* only, not the
+URL. The client polls for commands once per socket open (`command-poll`),
+not periodically, and acknowledges with `command-ack` regardless of the
+handler's result.
 
 ## GUI
 
-`admin-ui/dist/index.html` is a single-page static GUI. It reads the
+`admin-ui/public/index.html` is a single-page static GUI. It reads the
 admin API base URL and bearer token from `localStorage`. Serve it
 either:
 
@@ -61,8 +86,9 @@ either:
 - via a separate nginx container (`docker-compose up admin-ui`), or
 - via any static file host.
 
-To rebuild a richer GUI (Vite/React) just replace the contents of
-`admin-ui/dist/`. The Node service serves whatever lives there.
+To ship a richer GUI, replace the contents of `admin-ui/public/` (the
+service also looks in `admin-ui/dist/` as a fallback). The Node service
+serves whatever lives there.
 
 ## Security model
 

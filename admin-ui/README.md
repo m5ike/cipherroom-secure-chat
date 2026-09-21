@@ -13,6 +13,10 @@ token from `ADMIN_API_TOKEN`. Treat the GUI host like any other admin
 console: protect it with TLS and IP/auth restrictions appropriate to your
 deployment.
 
+> The admin API runs as its own process and keeps its state in memory, so
+> today it cannot see the main service's clients, events or push
+> subscribers, and queued commands are not delivered — see `docs/admin.md`.
+
 To customise, edit `public/index.html`. Build tooling is intentionally
 omitted to keep the footprint small; replace with Vite/React if you need
 a richer UX.

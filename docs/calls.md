@@ -29,10 +29,17 @@ device picker is left as a small follow-up.
 
 ## Limitations / privacy notes
 
-- The current STUN config uses Google's public server
-  (`stun:stun.l.google.com:19302`). For privacy-conscious deployments,
-  point at your own STUN/TURN. Add `iceServers` to `RTC_CONFIG` in
-  `App.tsx`.
+- ICE config lives in `client/src/lib/rtc.ts`. The default is Google's
+  public STUN (`stun:stun.l.google.com:19302`). To add TURN set
+  `TURN_SERVER_URL`, `TURN_USERNAME` and `TURN_CREDENTIAL` on the server:
+  the client fetches `GET /api/turn` at load and replaces its `iceServers`.
+  Those credentials are static and served to any caller, so use a
+  TURN-only account (or put coturn's ephemeral `use-auth-secret` scheme in
+  front). The Google STUN entry is hardcoded on both sides; self-hosting
+  STUN currently means editing `rtc.ts` and `routes.ts`.
+- Calls need `Permissions-Policy` to allow `camera`/`microphone` for the
+  app's own origin. Releases before 2.5.0 sent `camera=()` and calls could
+  not start; check any reverse proxy does not re-add such a header.
 - WebRTC does not protect IP addresses from peers; either use a
   TURN-only policy or accept that peers can learn your public IP.
 - DTLS-SRTP fingerprints are exchanged in the SDP and verified on the

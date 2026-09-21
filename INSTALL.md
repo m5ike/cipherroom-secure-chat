@@ -27,6 +27,28 @@ Linux / Docker / Debian-Ubuntu / generic.
 
 ---
 
+## ⚠️ Která větev se nasazuje
+
+`install.sh` má výchozí `BRANCH=feature/m5cet-fullscreen-secure-workspace`.
+Ta je k 2026-09-21 **o 19 commitů pozadu za `master`** (chybí jí mj. opravy
+2.4.1 / 2.4.2 a celé 2.5.0). Nová instalace i `--update` proto bez zásahu
+nasadí starší kód. Pro aktuální verzi zadejte větev výslovně:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/m5ike/cipherroom-secure-chat/master/install.sh \
+  | sudo -E BRANCH=master bash -s -- --install
+# existující instalace: přidejte BRANCH=master do /opt/m5cet/.env a spusťte --update
+```
+
+Pozor: `--update` dělá `git reset --hard origin/<BRANCH>` — změna větve na
+běžícím serveru je vědomé rozhodnutí provozovatele, proto výchozí hodnota
+ve skriptu zatím zůstává beze změny.
+
+Od 2.5.0 vyžaduje build **Node ≥ 22**; Docker image používá `node:24-slim`,
+takže na hostiteli Node potřeba není. Runtime image neobsahuje `node_modules`
+a běží jako neprivilegovaný uživatel `node`. `.env` se do image nekopíruje —
+hodnoty se předávají přes `environment:` v `docker-compose.yml`.
+
 ## Požadavky
 
 - Linux 64-bit (Debian 11+, Ubuntu 22.04+, Fedora 38+, Alpine 3.18+,

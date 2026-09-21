@@ -2,7 +2,7 @@
 
 ## Two paths
 
-- **Inline (legacy)**: anything ≤ 512 kB is base64-encoded into a data
+- **Inline (legacy)**: anything ≤ 512 KiB (`INLINE_ATTACHMENT_LIMIT`, `App.tsx`) is base64-encoded into a data
   URL and embedded directly in the chat envelope. Same code path as
   before. Easy and quick.
 - **Chunked**: anything larger goes through `client/src/lib/file-transfer.ts`.
@@ -13,17 +13,37 @@
 
 ## Configurable cap
 
-`Preferences.maxAttachmentBytes` (default 100 MB). Settable per device
-via the chat **Settings** modal — it is the receiver-side hard limit.
-Setting it to `4 * 1024 * 1024 * 1024` (4 GB) is allowed, but be aware
-of browser memory limits: chunks stay in RAM until the transfer
+`Preferences.maxAttachmentBytes` — **default is unlimited**
+(`Number.MAX_SAFE_INTEGER`); the **Settings** modal offers lower caps such
+as 100 MB. It is enforced on the sender before starting and on the
+receiver when the metadata frame arrives. Be aware of browser memory
+limits: chunks stay in RAM until the transfer
 completes. For multi-GB files we recommend a storage-provider plug-in
 (see below).
 
+## Transport selection — and a known gap
+
+The sender uses **P2P** when at least one DataChannel is open, otherwise
+it falls back to **proxy** frames (`proxy-meta` / `proxy-chunk` /
+`proxy-end`) over the signaling WebSocket. Chunks are encrypted with the
+room key *before* either path, so the server never sees plaintext, file
+name, type or exact size — only `transferId`, sequence numbers, IVs and
+ciphertext (from which the approximate size can be inferred).
+
+> **The proxy path does not deliver files today.** `server/file-proxy.ts`
+> stores incoming `proxy-meta` / `proxy-chunk` frames (truncated to 256
+> characters, in memory, 10 min TTL) but never forwards them to the other
+> peers; only `proxy-end` and `proxy-cancel` are broadcast. A receiver that
+> gets `proxy-end` for a transfer it never saw ignores it. In practice file
+> transfer works only while a DataChannel is open. Also, finished transfers
+> keep their slot until the TTL sweep (4 per peer, 64 total), and a single
+> WebSocket frame is capped at 128 000 characters.
+
 ## Backpressure
 
-Each `RTCDataChannel` has a `bufferedAmount` watermark. The sender
-awaits `bufferedamountlow` before pushing more chunks. This keeps
+P2P only. The sender pauses when `bufferedAmount` exceeds 1 MiB and
+resumes on `bufferedamountlow` (threshold 512 KiB), with a 1.5 s safety
+timeout. This keeps
 slower receivers from being overwhelmed and avoids the SCTP queue
 ballooning past 1 MiB.
 
@@ -51,11 +71,19 @@ footprint minimal.
 
 ```ts
 type FileTransferEnvelope =
+  // transport: "p2p" (DataChannel)
   | { kind: "file-meta";   transferId; iv; ciphertext; }   // encrypted FileMetaPlain
   | { kind: "file-chunk";  transferId; seq; iv; ciphertext; }
   | { kind: "file-end";    transferId; }
   | { kind: "file-cancel"; transferId; }
+  // transport: "proxy" (signaling WebSocket)
+  | { kind: "proxy-meta" | "proxy-chunk" | "proxy-end" | "proxy-cancel"; ... }
+  | { kind: "proxy-ack";   transferId; accepted; reason?; }
 ```
+
+Every `iv` is a fresh random 12-byte value; base64 goes through the shared
+codec in `lib/crypto.ts`. `file-progress` / `proxy-progress` are declared
+in the type but not produced or handled.
 
 `FileMetaPlain` carries `name`, `mime`, `size`, `totalChunks`,
 `chunkSize`, `senderId`, `senderName`, `createdAt`.

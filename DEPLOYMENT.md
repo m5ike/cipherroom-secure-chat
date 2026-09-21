@@ -116,10 +116,12 @@ NAT/firewall environments add a TURN server to the app ICE config.
 ### Local production
 
 ```bash
+# Node.js >= 22 (doporučeno 24 LTS)
 npm ci
 npm run check
+npm test
 npm run build
-PORT=5000 npm start
+PORT=5000 npm start      # dist/ je soběstačné, node_modules za běhu nepotřebuje
 ```
 
 ### Docker (manual)

@@ -1,7 +1,7 @@
 # M5cet — architektura / Architecture
 
-> Tento dokument popisuje stav po prvním buildable phase rebrandingu CipherRoom → M5cet
-> (větev `feature/m5cet-fullscreen-secure-workspace`). Některé části jsou stále stubs.
+> Stav k verzi 2.5.0. Některé serverové části jsou stále stuby — viz
+> „Limitace" na konci.
 
 ## Vysoká úroveň
 
@@ -52,7 +52,8 @@
 | WSS handshake (IP, User-Agent)       | vždy (pokud není proxy s `X-Forwarded-For`) |
 | Room ID, peer ID, name (max 48 znaků)| vždy v paměti během připojení   |
 | Plaintext zpráv                       | nikdy                           |
-| Logy `kind/peerId/room` v DB         | volitelně, při `LOG_EVENTS=1`   |
+| Logy `kind/peerId/room`              | volitelně, při `LOG_EVENTS=1`; jen ring 500 záznamů v paměti |
+| IV + ciphertext chunků souboru       | jen v proxy režimu přenosu (v paměti, zkráceně) |
 | Push subscription endpoint            | jen po explicitním subscribe    |
 
 Reverse proxy (nginx, Cloudflare) může logovat IP. Viz `DEPLOYMENT.md` a `install.sh`.
@@ -66,6 +67,8 @@ Reverse proxy (nginx, Cloudflare) může logovat IP. Viz `DEPLOYMENT.md` a `inst
 - `client/src/lib/i18n.ts` — slovníky cs/en/de.
 - `client/src/lib/themes.ts` — Motorsport Dark / Glass Light / Terminal Secure.
 - `client/src/lib/preferences.ts` — schema preferencí v2; deviceId, TTL, room security.
+- `client/src/lib/crypto.ts` — odvození klíče, AES-GCM obálka, base64 kodek.
+- `client/src/lib/connection-keeper.ts` — heartbeat a reconnect signalizace.
 - `client/src/lib/cipherroom-api.ts` — `window.CipherRoomAPI` registry (pluginy/widgets).
 
 ## Limitace tohoto buildable phase
@@ -74,9 +77,15 @@ Reverse proxy (nginx, Cloudflare) může logovat IP. Viz `DEPLOYMENT.md` a `inst
   sniffer, TTL nepomůže — je to UX vrstva.
 - Sync settings, audit log, analytics consent, push delivery worker jsou **stuby**
   v paměti procesu. Restart serveru = ztráta dat.
-- Storage providers (S3/GCS/Spaces/Azure) jsou jen rozhraní v `docs/modules.md`.
+- Storage providers (S3/GCS/Spaces/Azure) jsou jen rozhraní v `docs/modules.md`;
+  `DATABASE_URL` zatím jen mění štítek backendu, do DB se nezapisuje.
+- Proxy relay souborů, doručování admin příkazů mezi procesy, WS rate limit
+  a TOFU otisky mají známé mezery — viz `docs/security-model.md`.
 - Read receipts / typing indicator UI jsou v room security panelu, ale vlastní
   protokol je TODO (pro tuto fázi se neposílají zprávy o psaní).
 - `e2ee` mezi více než dvěma peers vyžaduje sdílený passphrase — v této fázi
   nemáme klíč-per-peer výměnu.
-- Žádné automatické testy neběží — repo má jen `tsc` a Vite build.
+- Testy (Vitest, 95 testů) pokrývají `lib/*`, server utility, file proxy,
+  retention a komponenty `MainMenu` / `TransferCard`. **Nepokrývají `App.tsx`**
+  (signaling + mesh + zprávy, ~2 600 řádků) — ten ověřuje jen ruční
+  dvouokenní smoke test.

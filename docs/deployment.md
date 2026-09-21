@@ -29,7 +29,7 @@ flowchart LR
 ## Minimální požadavky
 
 - 1 vCPU, 512 MB RAM, 1 GB disk pro hlavní službu.
-- Node 20.x (pokud běžíte bez Dockeru).
+- Node.js ≥ 22, doporučeno 24 LTS (pokud běžíte bez Dockeru). Node 20 je EOL.
 - Public IPv4 nebo CDN front. WebRTC potřebuje secure context (HTTPS / WSS).
 - Pokud máte symetrický NAT / carrier-grade NAT na klientech, doplňte vlastní
   TURN server (např. `coturn`) a propagujte ho přes `iceServers` v App.tsx.
