@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { deriveRoomKey, encryptEnvelope, decryptEnvelope } from "../client/src/lib/crypto";
+import { deriveRoomKey, encryptEnvelope, decryptEnvelope, toBase64, fromBase64 } from "../client/src/lib/crypto";
 
 describe("deriveRoomKey", () => {
   it("returns a non-extractable AES-GCM 256 key", async () => {
@@ -55,6 +55,36 @@ describe("encryptEnvelope / decryptEnvelope", () => {
     expect(enc1.ciphertext).not.toBe(enc2.ciphertext);
   });
 
+  // Regression guards for the wire format. An envelope that carries anything
+  // besides { iv, ciphertext } would put plaintext next to the ciphertext.
+  it("emits only iv + ciphertext — never any plaintext field", async () => {
+    const key = await deriveRoomKey("room", "pass");
+    const payload = { id: "m1", text: "top secret", senderId: "x", senderName: "Alice", createdAt: 1 };
+    const enc = await encryptEnvelope(key, payload);
+    expect(Object.keys(enc).sort()).toEqual(["ciphertext", "iv"]);
+    const wire = JSON.stringify(enc);
+    expect(wire).not.toContain("top secret");
+    expect(wire).not.toContain("Alice");
+  });
+
+  it("uses an IV of exactly 12 bytes", async () => {
+    const key = await deriveRoomKey("room", "pass");
+    const enc = await encryptEnvelope(key, { a: 1 });
+    expect(fromBase64(enc.iv).byteLength).toBe(12);
+  });
+
+  it("round-trips non-ASCII text (UTF-8 safe)", async () => {
+    const key = await deriveRoomKey("room", "pass");
+    const payload = { text: "Příliš žluťoučký kůň úpěl ďábelské ódy — 日本語 🔐" };
+    expect(await decryptEnvelope(key, await encryptEnvelope(key, payload))).toEqual(payload);
+  });
+
+  it("round-trips a 512 kB inline attachment without overflowing the stack", async () => {
+    const key = await deriveRoomKey("room", "pass");
+    const payload = { attachment: { dataUrl: "data:application/octet-stream;base64," + "A".repeat(512 * 1024) } };
+    expect(await decryptEnvelope(key, await encryptEnvelope(key, payload))).toEqual(payload);
+  });
+
   it("rejects tampered ciphertext", async () => {
     const key = await deriveRoomKey("room", "pass");
     const enc = await encryptEnvelope(key, { secret: "value" });
@@ -63,5 +93,41 @@ describe("encryptEnvelope / decryptEnvelope", () => {
     const replacement = firstChar === "A" ? "B" : "A";
     const tampered = { ...enc, ciphertext: replacement + enc.ciphertext.slice(1) };
     await expect(decryptEnvelope(key, tampered)).rejects.toThrow();
+  });
+});
+
+describe("toBase64 / fromBase64", () => {
+  // Reference: the per-byte implementation this codec replaced.
+  const reference = (bytes: Uint8Array) => {
+    let binary = "";
+    bytes.forEach((b) => { binary += String.fromCharCode(b); });
+    return btoa(binary);
+  };
+  const random = (n: number) => {
+    const out = new Uint8Array(n);
+    for (let i = 0; i < n; i += 65536) crypto.getRandomValues(out.subarray(i, Math.min(i + 65536, n)));
+    return out;
+  };
+
+  it("is byte-identical to the reference encoder across chunk boundaries", () => {
+    for (const n of [0, 1, 2, 3, 4, 12, 255, 0x7fff, 0x8000, 0x8001, 0x10000 + 7]) {
+      const bytes = random(n);
+      expect(toBase64(bytes)).toBe(reference(bytes));
+    }
+  });
+
+  it("round-trips 1 MiB without overflowing the stack", () => {
+    const bytes = random(1024 * 1024);
+    expect(fromBase64(toBase64(bytes))).toEqual(bytes);
+  });
+
+  it("decodes to an ArrayBuffer-backed view usable by WebCrypto", () => {
+    const out = fromBase64(toBase64(random(12)));
+    expect(out).toBeInstanceOf(Uint8Array);
+    expect(out.buffer).toBeInstanceOf(ArrayBuffer);
+  });
+
+  it("throws on malformed input", () => {
+    expect(() => fromBase64("not*valid*base64!")).toThrow();
   });
 });

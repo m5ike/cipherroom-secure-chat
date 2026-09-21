@@ -112,7 +112,7 @@ export type FileMetaPlain = {
 
 export type IncomingFileState = {
   meta: FileMetaPlain;
-  chunks: Array<Uint8Array | null>;
+  chunks: Array<Bytes | null>;
   received: number; // bytes
   cancelled: boolean;
   transport: FileTransport;
@@ -138,24 +138,17 @@ export type TransferStats = {
   progress: number; // 0..1
 };
 
+import { toBase64, fromBase64, type Bytes } from "./crypto";
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-function toBase64(bytes: Uint8Array) {
-  let binary = "";
-  bytes.forEach((b) => { binary += String.fromCharCode(b); });
-  return btoa(binary);
-}
-function fromBase64(value: string) {
-  return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
-}
-
-export async function encryptBytes(key: CryptoKey, data: Uint8Array): Promise<{ iv: string; ciphertext: string }> {
+export async function encryptBytes(key: CryptoKey, data: Bytes): Promise<{ iv: string; ciphertext: string }> {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data));
   return { iv: toBase64(iv), ciphertext: toBase64(ct) };
 }
-export async function decryptBytes(key: CryptoKey, iv: string, ct: string): Promise<Uint8Array> {
+export async function decryptBytes(key: CryptoKey, iv: string, ct: string): Promise<Bytes> {
   const out = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(iv) }, key, fromBase64(ct));
   return new Uint8Array(out);
 }
@@ -172,7 +165,7 @@ export async function decryptJSON<T>(key: CryptoKey, iv: string, ct: string): Pr
  * Used as a tamper-detection hint in FileMetaPlain without forcing the
  * receiver to hash a multi-gigabyte stream up front.
  */
-export async function shortSha256(bytes: Uint8Array): Promise<string | undefined> {
+export async function shortSha256(bytes: Bytes): Promise<string | undefined> {
   try {
     // Avoid hashing multi-GB files at send time. For small files we can
     // include a 16-char prefix for free; for larger ones the receiver
@@ -398,7 +391,7 @@ export async function handleIncomingFrame(
         }
         registry.set(meta.transferId, {
           meta,
-          chunks: new Array<Uint8Array | null>(meta.totalChunks).fill(null),
+          chunks: new Array<Bytes | null>(meta.totalChunks).fill(null),
           received: 0,
           cancelled: false,
           transport: "proxy",
@@ -434,7 +427,7 @@ export async function handleIncomingFrame(
         cb.onError?.(frame.transferId, "Missing chunks at end-of-transfer.");
         return;
       }
-      const blob = new Blob(state.chunks as Uint8Array[], { type: state.meta.mime });
+      const blob = new Blob(state.chunks as Bytes[], { type: state.meta.mime });
       cb.onComplete?.(frame.transferId, blob, state.meta, "proxy");
       registry.delete(frame.transferId);
       return;
@@ -458,7 +451,7 @@ export async function handleIncomingFrame(
       }
       registry.set(meta.transferId, {
         meta,
-        chunks: new Array<Uint8Array | null>(meta.totalChunks).fill(null),
+        chunks: new Array<Bytes | null>(meta.totalChunks).fill(null),
         received: 0,
         cancelled: false,
         transport: "p2p",
@@ -495,7 +488,7 @@ export async function handleIncomingFrame(
       cb.onError?.(frame.transferId, "Missing chunks at end-of-transfer.");
       return;
     }
-    const blob = new Blob(state.chunks as Uint8Array[], { type: state.meta.mime });
+    const blob = new Blob(state.chunks as Bytes[], { type: state.meta.mime });
     cb.onComplete?.(frame.transferId, blob, state.meta, "p2p");
     registry.delete(frame.transferId);
     return;

@@ -12,6 +12,8 @@
 // implemented here for safety reasons; metadata-only profiles can be
 // surfaced via these modules.
 
+import { toBase64 as toB64, fromBase64 as fromB64, type Bytes } from "./crypto";
+
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -29,7 +31,7 @@ export function isValidPin(pin: string): boolean {
   return /^[0-9]{4,16}$/.test(pin);
 }
 
-async function deriveKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
+async function deriveKey(pin: string, salt: Bytes): Promise<CryptoKey> {
   const material = await crypto.subtle.importKey("raw", encoder.encode(pin), "PBKDF2", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
     { name: "PBKDF2", salt, iterations: 200_000, hash: "SHA-256" },
@@ -38,15 +40,6 @@ async function deriveKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
     false,
     ["encrypt", "decrypt"],
   );
-}
-
-function toB64(bytes: Uint8Array): string {
-  let bin = "";
-  bytes.forEach((b) => { bin += String.fromCharCode(b); });
-  return btoa(bin);
-}
-function fromB64(value: string): Uint8Array {
-  return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
 }
 
 export type NfcPayload = Record<string, unknown>;

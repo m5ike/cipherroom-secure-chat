@@ -13,7 +13,7 @@
 //   - express.json verify hook stashes the raw body for any future
 //     signature-validation needs (today no endpoint requires it).
 
-import "dotenv/config";
+import "./env";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import helmet from "helmet";
@@ -98,7 +98,11 @@ app.use((_req, res, next) => {
   res.setHeader("Surrogate-Control", "no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
-  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), interest-cohort=()");
+  // (self), not (): an empty allowlist disables the feature for this document
+  // too — getUserMedia / geolocation then fail without ever prompting, which
+  // breaks calls, speech-to-text and location sharing. (self) still blocks
+  // every embedded third-party frame, and the browser prompt still applies.
+  res.setHeader("Permissions-Policy", "camera=(self), microphone=(self), geolocation=(self), interest-cohort=()");
   next();
 });
 
@@ -173,11 +177,12 @@ app.use((req, res, next) => {
   // this serves both the API and the client.
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
+  // No `reusePort`: it throws ENOTSUP on macOS, and sharing the port between
+  // processes would split a room's peers across separate in-memory states.
   httpServer.listen(
     {
       port,
       host: "0.0.0.0",
-      reusePort: true,
     },
     () => {
       log(`serving on port ${port}`);

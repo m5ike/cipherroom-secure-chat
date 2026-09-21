@@ -215,7 +215,10 @@ function ToolbarEntry(props: {
 
   const ariaCurrent = isCurrent ? "page" as const : undefined;
   const title = mode === "icons" || mode === "icons-tooltip" ? label : undefined;
-  const ariaLabel = mode === "icons-text" ? undefined : label;
+  // Always name the button: in icons-text mode the visible <span> is
+  // `hidden sm:inline` (display:none below sm), which would otherwise leave
+  // the button without an accessible name on narrow viewports.
+  const ariaLabel = label;
 
   return (
     <button
@@ -360,6 +363,16 @@ function SpeedDial(props: {
           event.preventDefault();
           first.focus();
         }
+      } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        // The panel is portaled to <body>, so it is not next to the toggle in
+        // tab order. While focus is still outside the list, arrows pull it in
+        // (WAI-ARIA menu button pattern). Inside the list, onListKeyDown owns
+        // the arrows and has already run by the time this bubbles here.
+        if (listRef.current?.contains(document.activeElement)) return;
+        const items = listRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
+        if (!items || items.length === 0) return;
+        event.preventDefault();
+        (event.key === "ArrowDown" ? items[0] : items[items.length - 1]).focus();
       }
     }
     document.addEventListener("pointerdown", onPointerDown, true);
@@ -380,21 +393,27 @@ function SpeedDial(props: {
     toggleBtnRef.current?.focus();
   }, []);
 
-  function moveFocus(delta: number) {
+  // `to` is a step (+1 / -1, wrapping) or an absolute edge.
+  function moveFocus(to: 1 | -1 | "first" | "last") {
     const items = listRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR);
     if (!items || items.length === 0) return;
-    const active = document.activeElement as HTMLElement | null;
-    const idx = active ? Array.prototype.indexOf.call(items, active) : 0;
-    const safeIdx = idx < 0 ? 0 : idx;
-    const next = (safeIdx + delta + items.length) % items.length;
+    let next: number;
+    if (to === "first") next = 0;
+    else if (to === "last") next = items.length - 1;
+    else {
+      const active = document.activeElement as HTMLElement | null;
+      const idx = active ? Array.prototype.indexOf.call(items, active) : 0;
+      const safeIdx = idx < 0 ? 0 : idx;
+      next = (safeIdx + to + items.length) % items.length;
+    }
     items[next].focus();
   }
 
   function onListKeyDown(event: ReactKeyboardEvent<HTMLUListElement>) {
     if (event.key === "ArrowDown") { event.preventDefault(); moveFocus(+1); }
     else if (event.key === "ArrowUp")   { event.preventDefault(); moveFocus(-1); }
-    else if (event.key === "Home")     { event.preventDefault(); moveFocus(-9999); }
-    else if (event.key === "End")      { event.preventDefault(); moveFocus(+9999); }
+    else if (event.key === "Home")     { event.preventDefault(); moveFocus("first"); }
+    else if (event.key === "End")      { event.preventDefault(); moveFocus("last"); }
   }
 
   // Determine panel position — clamp to viewport so we never overflow.

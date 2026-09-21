@@ -10,10 +10,11 @@
 // have read-only access to in-memory event metadata, push subscription
 // counts, and write access to enqueue allowlisted client commands.
 
-import "dotenv/config";
+import "./env";
 import express, { Request, Response, NextFunction } from "express";
 import path from "node:path";
 import fs from "node:fs";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { eventStore } from "./events";
 import { sendWebPush, isWebPushReady } from "./push";
@@ -33,13 +34,19 @@ app.disable("etag");
 // ---- Auth middleware ---------------------------------------------------
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN?.trim() || "";
 
+// Constant-time comparison. Hashing first gives both sides equal length
+// (timingSafeEqual requires it) without leaking the token length either.
+const sha256 = (value: string) => createHash("sha256").update(value).digest();
+const EXPECTED_AUTH_DIGEST = sha256(`Bearer ${ADMIN_API_TOKEN}`);
+
 function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!ADMIN_API_TOKEN) {
     return res.status(503).json({ ok: false, message: "ADMIN_API_TOKEN env var is not set." });
   }
   const header = req.header("authorization") || "";
-  const expected = `Bearer ${ADMIN_API_TOKEN}`;
-  if (header !== expected) return res.status(401).json({ ok: false, message: "Unauthorized." });
+  if (!timingSafeEqual(sha256(header), EXPECTED_AUTH_DIGEST)) {
+    return res.status(401).json({ ok: false, message: "Unauthorized." });
+  }
   next();
 }
 

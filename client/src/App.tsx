@@ -65,7 +65,7 @@ import { fetchPushStatus, subscribeToPush, ensureServiceWorker, sendTestPush, sh
 import { dispatchInternal, installPublicAPI } from "./lib/cipherroom-api";
 import { applyTheme, applyFont, applyEffects } from "./lib/themes";
 import { detectLang, t, type Lang } from "./lib/i18n";
-import { createConnectionKeeper, type ConnectionStatus, type KeepaliveStrategy } from "./lib/connection-keeper";
+import type { ConnectionStatus, KeepaliveStrategy } from "./lib/connection-keeper";
 import { dispatchCommand, isAdminCommand } from "./lib/admin-commands";
 import {
   extractRemoteFingerprint,
@@ -1565,9 +1565,9 @@ function ChatApp() {
       return;
     }
     // File size limit is now per-user (`prefs.maxAttachmentBytes`); there
-    // is no longer a hard-coded cap. The default 100 MB still applies
-    // until the user raises it in Settings. Server proxy has its own
-    // MAX_BYTES server-side cap that we honour below.
+    // is no longer a hard-coded cap. The default is unlimited
+    // (Number.MAX_SAFE_INTEGER, see preferences.ts); Settings offers lower
+    // caps such as 100 MB. Chunks are held in RAM until the transfer ends.
     if (file.size > prefs.maxAttachmentBytes && prefs.maxAttachmentBytes < Number.MAX_SAFE_INTEGER - 1) {
       setNotice(`Soubor přesahuje limit ${formatBytes(prefs.maxAttachmentBytes)}.`);
       return;
@@ -2553,9 +2553,9 @@ function ConnectionPanel({
           onChange={(e) => setPrefs({ keepaliveStrategy: e.target.value as KeepaliveStrategy })}
           className="min-h-10 rounded-xl border border-input bg-background px-2"
         >
-          <option value="conservative">Conservative (45s ping, 30s max backoff)</option>
-          <option value="balanced">Balanced (25s ping, 15s max backoff)</option>
-          <option value="aggressive">Aggressive (12s ping, 8s max backoff)</option>
+          <option value="conservative">Conservative (45s ping, reconnect from 1.5s)</option>
+          <option value="balanced">Balanced (25s ping, reconnect from 1s)</option>
+          <option value="aggressive">Aggressive (12s ping, reconnect from 0.5s)</option>
         </select>
       </label>
       {status ? (

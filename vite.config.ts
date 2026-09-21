@@ -21,7 +21,8 @@ export default defineConfig({
     cssCodeSplit: true,
     reportCompressedSize: true,
     sourcemap: false,
-    minify: "esbuild",
+    // Vite 8 default (oxc): measurably smaller output than esbuild here.
+    minify: true,
     rollupOptions: {
       output: {
         // cache-friendly filenames; subasset names hashed via content.

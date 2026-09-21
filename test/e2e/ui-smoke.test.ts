@@ -54,7 +54,8 @@ beforeAll(async () => {
       const app = express();
       const root = path.resolve(process.cwd(), 'dist', 'public');
       app.use(express.static(root));
-      app.get('*', (_req, res) => res.sendFile(path.join(root, 'index.html')));
+      // Express 5 (path-to-regexp v8) rejects a bare '*'; same form as server/static.ts.
+      app.use('/{*path}', (_req, res) => res.sendFile(path.join(root, 'index.html')));
       app.listen(${PORT}, '127.0.0.1', () => console.log('READY'));
     `,
   ], { cwd: process.cwd(), env: { ...process.env, NODE_ENV: "production" } });
