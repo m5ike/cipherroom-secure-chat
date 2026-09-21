@@ -173,7 +173,12 @@ jobs:
             --dir "$M5_DIR" --port 5190 --enable-admin --set ADMIN_PORT=5191 --enable-push
           curl -fsS http://127.0.0.1:5190/api/health
           test "$(stat -c %a "$M5_DIR/.env")" = "600"
-          ! grep -qE 'TOKEN|PRIVATE|CREDENTIAL' "$M5_DIR/.m5cet/install.conf"
+          # Explicit if/exit: `! grep …` is ignored by `bash -e`, so it would
+          # pass even with a secret in the file.
+          if grep -qE 'TOKEN|PRIVATE|CREDENTIAL' "$M5_DIR/.m5cet/install.conf"; then
+            echo "secrets leaked into install.conf"; exit 1
+          fi
+          grep -q '^ADMIN_API_TOKEN=' "$M5_DIR/.env"
 
       - name: Update (change a parameter, reuse the build)
         run: |

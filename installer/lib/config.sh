@@ -186,9 +186,9 @@ _kv_parse() {
   return 0
 }
 
-conf_file()  { printf '%s/.m5cet/install.conf' "${1:-${INSTALL_DIR}}"; }
-env_file()   { printf '%s/.env' "${1:-${INSTALL_DIR}}"; }
-state_dir()  { printf '%s/.m5cet' "${1:-${INSTALL_DIR}}"; }
+conf_file()  { printf '%s/.m5cet/install.conf' "${INSTALL_DIR}"; }
+env_file()   { printf '%s/.env' "${INSTALL_DIR}"; }
+state_dir()  { printf '%s/.m5cet' "${INSTALL_DIR}"; }
 
 # conf_load FILE [override]
 #   override=1  file values replace current ones (update / uninstall)
