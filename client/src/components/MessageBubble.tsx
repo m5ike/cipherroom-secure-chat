@@ -1,0 +1,239 @@
+// One chat bubble. Handles alignment (mine → right, theirs → left), the avatar
+// header, per-user styling, the "private vs everyone" distinction, and the
+// three optional message kinds:
+//
+//   tap     hold-to-reveal curtain
+//   vanish  a TTL border-"thermometer": a full 2 px ring at the start that
+//           shrinks as the visible time runs out, leaving a 1 px dotted grey
+//           edge, then a tombstone. Time only advances while the bubble is
+//           genuinely visible (tab focused, in view, and — for a tap message —
+//           while it is being held open).
+//   sealed  a locked body that needs a per-message code to read.
+
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Lock, Timer, ScrollText, EyeOff, Users, Paperclip } from "lucide-react";
+import { t, type Lang } from "../lib/i18n";
+import { openSealed, type MsgFlags } from "../lib/message-kinds";
+
+export type BubbleAttachment = { kind: "file" | "image"; name: string; mime: string; size: number; dataUrl: string };
+
+export type MessageBubbleProps = {
+  id: string;
+  senderId: string;
+  senderName: string;
+  mine: boolean;
+  isSystem: boolean;
+  secure: boolean;
+  createdAt: number;
+  timeLabel: string;
+  text: string; // ciphertext when sealed && !mine
+  attachment?: BubbleAttachment;
+  flags?: MsgFlags;
+  ownPlaintext?: string; // sender's original text for a sealed message
+  sealCode?: string; // sender's code, to display so they can share it
+  vanished?: boolean;
+  vanishedAt?: number;
+  onVanish: (id: string) => void;
+  to?: string[]; // present → private message, only to these names
+  bubbleStyle?: CSSProperties;
+  badge: ReactNode; // <UserBadge/> (others) or plain name label (self/system)
+  lang: Lang;
+  renderText: (s: string) => ReactNode;
+  formatSize: (n: number) => string;
+};
+
+function useTabVisible(): boolean {
+  const [v, setV] = useState(() => typeof document === "undefined" || document.visibilityState !== "hidden");
+  useEffect(() => {
+    const on = () => setV(document.visibilityState !== "hidden");
+    document.addEventListener("visibilitychange", on);
+    return () => document.removeEventListener("visibilitychange", on);
+  }, []);
+  return v;
+}
+
+function useInView(ref: React.RefObject<HTMLElement | null>): boolean {
+  const [v, setV] = useState(true);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((es) => setV(es[0]?.isIntersecting ?? true), { threshold: 0.35 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [ref]);
+  return v;
+}
+
+/** Returns remaining fraction (1→0). Advances only while `active`. Calls
+ *  onDone once the visible time reaches the TTL. */
+function useVanishRing(totalSec: number | undefined, active: boolean, onDone: () => void): number {
+  const [remaining, setRemaining] = useState(1);
+  const accRef = useRef(0);
+  const lastRef = useRef<number | null>(null);
+  const shownRef = useRef(1);
+  const doneRef = useRef(false);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
+  useEffect(() => {
+    if (!totalSec || doneRef.current) return;
+    if (typeof requestAnimationFrame === "undefined") return;
+    const totalMs = totalSec * 1000;
+    let raf = 0;
+    lastRef.current = null;
+    const loop = (ts: number) => {
+      if (doneRef.current) return;
+      if (active) {
+        if (lastRef.current !== null) accRef.current += ts - lastRef.current;
+        lastRef.current = ts;
+      } else {
+        lastRef.current = null;
+      }
+      const rem = Math.max(0, 1 - accRef.current / totalMs);
+      if (Math.abs(rem - shownRef.current) > 0.008 || rem === 0) { shownRef.current = rem; setRemaining(rem); }
+      if (accRef.current >= totalMs) { doneRef.current = true; onDoneRef.current(); return; }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
+  }, [totalSec, active]);
+  return remaining;
+}
+
+export function MessageBubble(props: MessageBubbleProps) {
+  const { flags, mine, isSystem, lang, id } = props;
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const tabVisible = useTabVisible();
+  const inView = useInView(rootRef);
+
+  const [holding, setHolding] = useState(false); // tap: finger down
+  const [sealText, setSealText] = useState<string | null>(props.mine && props.ownPlaintext !== undefined ? props.ownPlaintext : null);
+  const [codeInput, setCodeInput] = useState("");
+  const [codeError, setCodeError] = useState(false);
+
+  const sealed = Boolean(flags?.sealed);
+  const sealedOpen = !sealed || sealText !== null;
+  const tap = Boolean(flags?.tap);
+  const revealed = sealedOpen && (!tap || holding);
+
+  // Vanish counts only while the reader can actually see the content.
+  const counting = Boolean(flags?.vanishSeconds) && tabVisible && inView && revealed && !props.vanished;
+  const remaining = useVanishRing(flags?.vanishSeconds, counting, () => props.onVanish(id));
+
+  async function submitCode() {
+    if (!flags?.sealed) return;
+    try {
+      const opened = await openSealed(props.text, flags.sealed, codeInput.trim());
+      setSealText(opened);
+      setCodeError(false);
+    } catch {
+      setCodeError(true);
+    }
+  }
+
+  const isPrivate = Array.isArray(props.to) && props.to.length > 0;
+  const bodyText = sealed ? (sealedOpen ? sealText ?? "" : "") : props.text;
+
+  const wrapCls = `flex ${mine ? "justify-end" : "justify-start"}`;
+  const bubbleCls = [
+    "msg-bubble",
+    isSystem ? "msg-bubble--system" : mine ? "msg-bubble--mine" : "msg-bubble--theirs",
+    isPrivate ? "msg-bubble--private" : "",
+    flags?.vanishSeconds ? "vanish-ring" : "",
+    props.vanished ? "msg-bubble--vanished" : "",
+  ].filter(Boolean).join(" ");
+
+  const style: CSSProperties = { ...(props.bubbleStyle ?? {}) };
+  if (flags?.vanishSeconds) (style as Record<string, string>)["--vp"] = String(remaining);
+
+  return (
+    <article ref={rootRef} data-testid={`message-${id}`} className={wrapCls}>
+      <div className={bubbleCls} style={style} data-private={isPrivate ? "1" : undefined}>
+        <div className="msg-bubble__head">
+          {props.badge}
+          <span className="msg-bubble__time">{props.timeLabel}</span>
+          {props.secure ? <Lock className="h-3 w-3 opacity-70" aria-label={t(lang, "userinfo.secure")} /> : null}
+          {tap ? <Timer className="h-3 w-3 opacity-70" aria-label={t(lang, "msgkind.tap")} /> : null}
+          {flags?.vanishSeconds ? <EyeOff className="h-3 w-3 opacity-70" aria-label={t(lang, "msgkind.vanish")} /> : null}
+          {sealed ? <ScrollText className="h-3 w-3 opacity-70" aria-label={t(lang, "msgkind.sealed")} /> : null}
+        </div>
+
+        {isPrivate ? (
+          <div className="msg-bubble__private-tag"><Lock className="h-3 w-3" /> {t(lang, "recipients.privateTo")}: {props.to!.join(", ")}</div>
+        ) : null}
+
+        {props.vanished ? (
+          <p className="msg-bubble__tombstone">
+            {t(lang, "msgkind.vanish.gone")}
+            {props.vanishedAt ? ` · ${new Date(props.vanishedAt).toLocaleString(lang)}` : ""}
+          </p>
+        ) : sealed && !sealedOpen ? (
+          <div className="msg-seal">
+            <p className="msg-seal__hint"><ScrollText className="h-4 w-4" /> {t(lang, "msgkind.sealed.locked")}</p>
+            <div className="msg-seal__row">
+              <input
+                className="msg-seal__input"
+                value={codeInput}
+                onChange={(e) => { setCodeInput(e.target.value); setCodeError(false); }}
+                onKeyDown={(e) => { if (e.key === "Enter") void submitCode(); }}
+                placeholder={t(lang, "msgkind.sealed.code")}
+                data-testid={`seal-code-${id}`}
+                autoComplete="off"
+              />
+              <button type="button" className="msg-seal__btn" onClick={() => void submitCode()}>{t(lang, "msgkind.sealed.unlock")}</button>
+            </div>
+            {codeError ? <p className="msg-seal__err">{t(lang, "msgkind.sealed.wrong")}</p> : null}
+          </div>
+        ) : (
+          <>
+            {tap && !revealed ? (
+              <button
+                type="button"
+                className="msg-tap"
+                onPointerDown={() => setHolding(true)}
+                onPointerUp={() => setHolding(false)}
+                onPointerLeave={() => setHolding(false)}
+                onPointerCancel={() => setHolding(false)}
+                data-testid={`tap-${id}`}
+              >
+                <Timer className="h-4 w-4" /> {t(lang, "msgkind.tap.hold")}
+              </button>
+            ) : (
+              <div
+                onPointerDown={tap ? () => setHolding(true) : undefined}
+                onPointerUp={tap ? () => setHolding(false) : undefined}
+                onPointerLeave={tap ? () => setHolding(false) : undefined}
+                onPointerCancel={tap ? () => setHolding(false) : undefined}
+              >
+                {bodyText ? <p className="msg-bubble__text">{props.renderText(bodyText)}</p> : null}
+                {props.attachment ? (
+                  <div className="msg-bubble__attach">
+                    {props.attachment.kind === "image" ? (
+                      <img src={props.attachment.dataUrl} alt={props.attachment.name} className="msg-bubble__img" />
+                    ) : props.attachment.mime.startsWith("audio/") ? (
+                      <audio controls src={props.attachment.dataUrl} className="msg-bubble__audio" />
+                    ) : (
+                      <a href={props.attachment.dataUrl} download={props.attachment.name} className="msg-bubble__file">
+                        <Paperclip className="h-3 w-3" /> {props.attachment.name}
+                      </a>
+                    )}
+                    <div className="msg-bubble__meta">{props.attachment.mime} · {props.formatSize(props.attachment.size)}</div>
+                  </div>
+                ) : null}
+              </div>
+            )}
+            {sealed && mine && props.sealCode ? (
+              <p className="msg-seal__code">{t(lang, "msgkind.sealed.yourcode")}: <strong>{props.sealCode}</strong></p>
+            ) : null}
+          </>
+        )}
+      </div>
+    </article>
+  );
+}
+
+/** The little recipient hint shown by the composer for the current selection. */
+export function RecipientHint({ names, everyone, lang }: { names: string[]; everyone: boolean; lang: Lang }) {
+  if (everyone) return <span className="recipient-hint"><Users className="h-3 w-3" /> {t(lang, "recipients.everyone")}</span>;
+  if (names.length === 0) return <span className="recipient-hint is-warn">{t(lang, "recipients.none")}</span>;
+  return <span className="recipient-hint is-private"><Lock className="h-3 w-3" /> {names.join(", ")}</span>;
+}

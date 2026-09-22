@@ -52,6 +52,12 @@ export function buildModuleManifest(eventsBackend: "disabled" | "memory" | "data
       maps: { enabled: true, reason: "OpenStreetMap link sharing and continuous geolocation; no Leaflet bundle." },
       nfc: { enabled: true, reason: "Web NFC read/write encrypted with PBKDF2/AES-GCM. Android Chrome only." },
       speech: { enabled: true, reason: "Browser Web Speech API for TTS/STT and pitch-based revoice." },
+      serverSpeech: hasServerSpeech()
+        ? { enabled: true, reason: "Server TTS/STT connectors are configured (ENABLE_SPEECH=1)." }
+        : { enabled: false, reason: "Set ENABLE_SPEECH=1 and configure a provider (e.g. OPENAI_API_KEY, ELEVENLABS_API_KEY)." },
+      ai: hasAi()
+        ? { enabled: true, reason: "Server AI connector is configured (ENABLE_AI=1)." }
+        : { enabled: false, reason: "Set ENABLE_AI=1 and configure a provider (e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY, OLLAMA_URL)." },
       push: pushReady
         ? { enabled: true }
         : { enabled: false, reason: "Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable push." },
@@ -86,4 +92,14 @@ export function buildModuleManifest(eventsBackend: "disabled" | "memory" | "data
 function hasTurn() {
   const url = process.env.TURN_SERVER_URL?.trim() || "";
   return url.length > 0;
+}
+
+function hasAi() {
+  if (process.env.ENABLE_AI?.trim() !== "1") return false;
+  return ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "HF_API_KEY", "OLLAMA_URL"].some((k) => (process.env[k]?.trim() || "").length > 0);
+}
+
+function hasServerSpeech() {
+  if (process.env.ENABLE_SPEECH?.trim() !== "1") return false;
+  return ["OPENAI_API_KEY", "ELEVENLABS_API_KEY", "HF_API_KEY"].some((k) => (process.env[k]?.trim() || "").length > 0);
 }

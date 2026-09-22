@@ -71,3 +71,32 @@ export function applyEffects(enabled: boolean) {
   document.documentElement.classList.toggle("effects-on", enabled);
   document.documentElement.classList.toggle("effects-off", !enabled);
 }
+
+export type ChatSurface = {
+  bgColor: string; // "" or #hex
+  bgImage: string; // "" or data: URL
+  saturation: number; // 0.5 – 1.5
+  opacity: number; // 0 – 1
+  pattern: "grid" | "dots" | "plain";
+  width: "sm" | "md" | "lg" | "full";
+};
+
+const CHAT_WIDTHS: Record<ChatSurface["width"], string> = {
+  sm: "36rem",
+  md: "56rem", // matches the previous max-w-4xl column
+  lg: "72rem",
+  full: "100%",
+};
+
+/** Drive the conversation surface from user choices. All values become CSS
+ *  custom properties on <html>; index.css reads them. The image is only ever a
+ *  same-origin data: URL (validated in preferences.ts). */
+export function applyChatSurface(s: ChatSurface) {
+  const root = document.documentElement.style;
+  root.setProperty("--chat-bg-color", s.bgColor ? s.bgColor : "transparent");
+  root.setProperty("--chat-bg-image", s.bgImage ? `url("${s.bgImage}")` : "none");
+  root.setProperty("--chat-saturate", String(s.saturation));
+  root.setProperty("--chat-pattern-opacity", String(s.opacity));
+  root.setProperty("--chat-max-width", CHAT_WIDTHS[s.width] ?? CHAT_WIDTHS.md);
+  document.documentElement.setAttribute("data-chat-pattern", s.pattern);
+}

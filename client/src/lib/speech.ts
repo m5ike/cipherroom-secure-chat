@@ -119,6 +119,67 @@ export type RecognitionCallbacks = {
   onEnd?: () => void;
 };
 
+// ---------- Optional server-side speech (Server-enhanced mode) ----------
+// When the operator enables ENABLE_SPEECH and configures a provider, richer
+// voices (ElevenLabs, OpenAI, …) and cloud transcription become available via
+// the server. Without that, everything above still works fully in-browser.
+
+export type ServerVoiceInfo = { id: string; label: string };
+export type ServerSpeechStatus = {
+  tts: { enabled: boolean; connectors: ServerVoiceInfo[] };
+  stt: { enabled: boolean; connectors: ServerVoiceInfo[] };
+};
+
+export async function fetchServerSpeechStatus(): Promise<ServerSpeechStatus> {
+  const empty: ServerSpeechStatus = { tts: { enabled: false, connectors: [] }, stt: { enabled: false, connectors: [] } };
+  try {
+    const res = await fetch("/api/speech/status", { headers: { Accept: "application/json" } });
+    if (!res.ok) return empty;
+    const json = await res.json() as Partial<ServerSpeechStatus>;
+    return {
+      tts: { enabled: Boolean(json.tts?.enabled), connectors: json.tts?.connectors ?? [] },
+      stt: { enabled: Boolean(json.stt?.enabled), connectors: json.stt?.connectors ?? [] },
+    };
+  } catch {
+    return empty;
+  }
+}
+
+/** Server text-to-speech: returns an <audio>-playable object URL, or an error. */
+export async function serverTts(text: string, opts: { connector?: string; voice?: string } = {}): Promise<{ ok: true; url: string; mime: string } | { ok: false; message: string }> {
+  try {
+    const res = await fetch("/api/speech/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, connector: opts.connector, voice: opts.voice }),
+    });
+    const json = await res.json().catch(() => ({})) as { ok?: boolean; audioBase64?: string; mime?: string; message?: string };
+    if (!res.ok || !json.ok || !json.audioBase64) return { ok: false, message: json.message || `HTTP ${res.status}` };
+    const bytes = Uint8Array.from(atob(json.audioBase64), (c) => c.charCodeAt(0));
+    const url = URL.createObjectURL(new Blob([bytes], { type: json.mime || "audio/mpeg" }));
+    return { ok: true, url, mime: json.mime || "audio/mpeg" };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
+/** Server speech-to-text: raw audio bytes in, transcript out. */
+export async function serverStt(blob: Blob, opts: { connector?: string } = {}): Promise<{ ok: true; text: string } | { ok: false; message: string }> {
+  try {
+    const qs = opts.connector ? `?connector=${encodeURIComponent(opts.connector)}` : "";
+    const res = await fetch(`/api/speech/stt${qs}`, {
+      method: "POST",
+      headers: { "Content-Type": blob.type || "audio/webm" },
+      body: blob,
+    });
+    const json = await res.json().catch(() => ({})) as { ok?: boolean; text?: string; message?: string };
+    if (!res.ok || !json.ok) return { ok: false, message: json.message || `HTTP ${res.status}` };
+    return { ok: true, text: json.text || "" };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
 export function startRecognition(lang: string, cb: RecognitionCallbacks, continuous = true): RecognitionHandle | null {
   const W = window as unknown as Record<string, new () => AnyRecognition>;
   const Ctor = (W.SpeechRecognition || W.webkitSpeechRecognition) as (new () => AnyRecognition) | undefined;

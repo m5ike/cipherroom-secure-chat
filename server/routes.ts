@@ -32,6 +32,8 @@ import {
 import { FileProxy, relayProxyFrame } from "./file-proxy";
 import { runRetentionIfDue, RETENTION } from "./retention";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
+import { registerPluginRoutes } from "./plugins/routes";
+import { registerPasskeyRoutes } from "./passkey";
 
 const fileProxy = new FileProxy();
 
@@ -193,6 +195,10 @@ export async function registerRoutes(
   // Invite links (split-key, code-gated) and the Clear & Quit landing page.
   registerShareRoutes(app);
   registerGoodbyeRoute(app);
+  // Optional AI + speech modules (gated by ENABLE_AI / ENABLE_SPEECH).
+  registerPluginRoutes(app);
+  // Zero-knowledge PassKey-encrypted profile storage.
+  registerPasskeyRoutes(app);
 
   app.get("/api/health", (_req, res) => {
     res.json({

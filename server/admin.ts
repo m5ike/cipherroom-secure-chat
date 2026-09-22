@@ -18,6 +18,9 @@ import { createHash, timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { eventStore } from "./events";
 import { sendWebPush, isWebPushReady } from "./push";
+import { registrySnapshot, getAi, getTts, getStt } from "./plugins/registry";
+import { pluginLog } from "./plugins/log";
+import { base64ToBytes } from "./plugins/types";
 import {
   ADMIN_COMMAND_ALLOWLIST,
   pushSubscriptions,
@@ -173,10 +176,67 @@ app.post("/admin/test/push", async (req, res) => {
   res.json({ ok: true, results });
 });
 
-// Plugin debug endpoint stub. Real plugins should register themselves on
-// boot and expose their own /admin/plugins/<id>/... routes.
+// ---- AI / speech plugin console -----------------------------------------
+// Snapshot of every connector and its config state (never secrets).
+app.get("/admin/plugins", (_req, res) => {
+  res.json({ ok: true, ...registrySnapshot() });
+});
+
+// Real-time test of one connector. Logs to the plugin log (visible on the
+// live stream). TTS returns the audio so the admin can play it back.
+app.post("/admin/plugins/test", async (req, res) => {
+  const body = (req.body || {}) as Record<string, unknown>;
+  const kind = String(body.kind || "");
+  const id = typeof body.id === "string" ? body.id : undefined;
+  const text = typeof body.text === "string" ? body.text : "";
+  try {
+    if (kind === "ai") {
+      const c = getAi(id);
+      if (!c) return res.status(404).json({ ok: false, message: "Unknown AI connector." });
+      const result = await pluginLog.time("ai", c.id, "admin-test", () => c.complete({ messages: [{ role: "user", content: text || "Reply with a short friendly greeting." }], maxTokens: 96 }));
+      return res.json({ ok: true, kind, result });
+    }
+    if (kind === "tts") {
+      const c = getTts(id);
+      if (!c) return res.status(404).json({ ok: false, message: "Unknown TTS connector." });
+      const result = await pluginLog.time("tts", c.id, "admin-test", () => c.synthesize({ text: text || "This is a M5cet server speech test." }));
+      return res.json({ ok: true, kind, result });
+    }
+    if (kind === "stt") {
+      const c = getStt(id);
+      if (!c) return res.status(404).json({ ok: false, message: "Unknown STT connector." });
+      if (typeof body.audioBase64 !== "string") return res.status(400).json({ ok: false, message: "audioBase64 required for an STT test." });
+      const result = await pluginLog.time("stt", c.id, "admin-test", () => c.transcribe({ audio: base64ToBytes(body.audioBase64 as string), mime: typeof body.mime === "string" ? body.mime : "audio/webm" }));
+      return res.json({ ok: true, kind, result });
+    }
+    return res.status(400).json({ ok: false, message: "kind must be ai | tts | stt." });
+  } catch (err) {
+    res.status(502).json({ ok: false, message: (err as Error).message });
+  }
+});
+
+// Recent plugin log entries (metadata only).
+app.get("/admin/plugins/logs", (req, res) => {
+  const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
+  res.json({ ok: true, entries: pluginLog.recent(limit) });
+});
+
+// Live plugin log via Server-Sent Events.
+app.get("/admin/logs/stream", (req, res) => {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Connection", "keep-alive");
+  (res as unknown as { flushHeaders?: () => void }).flushHeaders?.();
+  for (const entry of pluginLog.recent(50)) res.write(`data: ${JSON.stringify(entry)}\n\n`);
+  const onEntry = (entry: unknown) => { try { res.write(`data: ${JSON.stringify(entry)}\n\n`); } catch { /* client gone */ } };
+  pluginLog.emitter.on("entry", onEntry);
+  const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch { /* ignore */ } }, 25_000);
+  req.on("close", () => { clearInterval(ping); pluginLog.emitter.off("entry", onEntry); });
+});
+
+// Legacy stub kept for compatibility.
 app.get("/admin/plugins/debug", (_req, res) => {
-  res.json({ ok: true, plugins: [], notes: "Register plugins via server-side module registry. See docs/admin.md." });
+  res.json({ ok: true, plugins: [], notes: "See GET /admin/plugins for the live connector snapshot." });
 });
 
 // Static admin GUI: when admin-ui/dist exists, serve it.

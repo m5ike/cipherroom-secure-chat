@@ -21,6 +21,7 @@ import { ACCENTS, FONT_FAMILIES, LAYOUTS, THEMES, type ThemeId } from "@/lib/the
 import { langLabel, SUPPORTED_LANGS, t, type Lang } from "@/lib/i18n";
 import { DEFAULT_ROOM_SECURITY, type Preferences, type RoomSecurity } from "@/lib/preferences";
 import { Fingerprint, formatFingerprint, loadFingerprints } from "@/lib/fingerprint";
+import { passkeySupported, registerProfileWithPasskey, unlockProfileWithPasskey, saveProfileWithPasskey, lockServerProfile } from "@/lib/passkey";
 
 type PanelBaseProps = {
   open: boolean;
@@ -92,7 +93,87 @@ export function ProfilePanel({ open, onClose, prefs, setPrefs, lang }: PanelBase
           />
         </Row>
       </Section>
+      <PasskeyProfileSection prefs={prefs} setPrefs={setPrefs} lang={lang} />
     </Modal>
+  );
+}
+
+const PROFILE_KEYS: (keyof Preferences)[] = [
+  "name", "bio", "avatar", "theme", "accent", "layout", "font", "fontSize", "effects",
+  "lang", "timezone", "chatBgColor", "chatBgImage", "chatBgSaturation", "chatBgOpacity",
+  "chatPattern", "chatWidth", "messageStyles", "menuDisplay",
+];
+const CRED_KEY = "m5cet:passkey:cred";
+
+function profileFromPrefs(prefs: Preferences): Partial<Preferences> {
+  const out: Record<string, unknown> = {};
+  for (const k of PROFILE_KEYS) out[k] = prefs[k];
+  return out as Partial<Preferences>;
+}
+
+function PasskeyProfileSection({ prefs, setPrefs, lang }: { prefs: Preferences; setPrefs: (p: Partial<Preferences>) => void; lang: Lang }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [cred, setCred] = useState<string>(() => { try { return localStorage.getItem(CRED_KEY) || ""; } catch { return ""; } });
+  const supported = passkeySupported();
+  const serverMode = prefs.mode === "server";
+
+  function remember(id: string) { setCred(id); try { localStorage.setItem(CRED_KEY, id); } catch { /* ignore */ } }
+
+  async function onRegister() {
+    setBusy(true); setMsg("");
+    try {
+      const { credentialId } = await registerProfileWithPasskey(profileFromPrefs(prefs), prefs.name || "M5cet");
+      remember(credentialId);
+      setMsg(t(lang, "passkey.saved"));
+    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  }
+  async function onUnlock() {
+    setBusy(true); setMsg("");
+    try {
+      const { credentialId, profile } = await unlockProfileWithPasskey<Partial<Preferences>>(cred || undefined);
+      remember(credentialId);
+      setPrefs(profile);
+      setMsg(t(lang, "passkey.loaded"));
+    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  }
+  async function onSave() {
+    setBusy(true); setMsg("");
+    try {
+      const { credentialId } = await saveProfileWithPasskey(profileFromPrefs(prefs), cred || undefined);
+      remember(credentialId);
+      setMsg(t(lang, "passkey.saved"));
+    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  }
+  async function onLock() {
+    if (cred) await lockServerProfile(cred);
+    setCred(""); try { localStorage.removeItem(CRED_KEY); } catch { /* ignore */ }
+    setMsg(t(lang, "passkey.locked"));
+  }
+
+  return (
+    <Section title={t(lang, "passkey.title")} icon={<KeyRound className="h-4 w-4" />}>
+      <p className="text-xs text-muted-foreground">{t(lang, "passkey.desc")}</p>
+      {!serverMode ? (
+        <p className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{t(lang, "passkey.needServer")}</p>
+      ) : !supported ? (
+        <p className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{t(lang, "passkey.unsupported")}</p>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {!cred ? (
+            <button type="button" disabled={busy} onClick={() => void onRegister()} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-60" data-testid="passkey-register">{t(lang, "passkey.create")}</button>
+          ) : (
+            <button type="button" disabled={busy} onClick={() => void onSave()} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-60" data-testid="passkey-save">{t(lang, "passkey.save")}</button>
+          )}
+          <button type="button" disabled={busy} onClick={() => void onUnlock()} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60" data-testid="passkey-unlock">{t(lang, "passkey.unlock")}</button>
+          {cred ? (
+            <button type="button" onClick={() => void onLock()} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">{t(lang, "passkey.lock")}</button>
+          ) : null}
+        </div>
+      )}
+      {msg ? <p className="text-xs" data-testid="passkey-msg">{msg}</p> : null}
+      {cred ? <p className="text-[11px] text-muted-foreground">{t(lang, "passkey.active")}: <code>{cred.slice(0, 12)}…</code></p> : null}
+    </Section>
   );
 }
 
@@ -383,6 +464,97 @@ export function TemplatesPanel({ open, onClose, prefs, setPrefs, lang }: PanelBa
             {t(lang, layout.labelKey)}
           </button>
         ))}
+      </div>
+
+      <h3 className="mb-2 mt-5 text-sm font-semibold">{t(lang, "templates.width")}</h3>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="group" aria-label={t(lang, "templates.width")}>
+        {(["sm", "md", "lg", "full"] as const).map((w) => (
+          <button
+            key={w}
+            type="button"
+            data-testid={`chatwidth-${w}`}
+            aria-pressed={prefs.chatWidth === w}
+            onClick={() => setPrefs({ chatWidth: w })}
+            className={`rounded-2xl border px-3 py-2 text-sm transition ${
+              prefs.chatWidth === w ? "border-primary bg-primary/10 font-semibold" : "border-border hover:bg-accent"
+            }`}
+          >
+            {t(lang, `templates.width.${w}`)}
+          </button>
+        ))}
+      </div>
+
+      <h3 className="mb-2 mt-5 text-sm font-semibold">{t(lang, "templates.surface")}</h3>
+      <div className="space-y-3 rounded-2xl border border-border p-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="color"
+              className="h-8 w-10 rounded border border-input bg-background p-0"
+              value={/^#[0-9a-fA-F]{6}$/.test(prefs.chatBgColor) ? prefs.chatBgColor : "#0e1116"}
+              onChange={(e) => setPrefs({ chatBgColor: e.target.value })}
+              aria-label={t(lang, "templates.bg.color")}
+            />
+            {t(lang, "templates.bg.color")}
+          </label>
+          {prefs.chatBgColor ? (
+            <button type="button" className="text-xs underline decoration-dotted" onClick={() => setPrefs({ chatBgColor: "" })}>
+              {t(lang, "userstyle.default")}
+            </button>
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="inline-flex cursor-pointer items-center gap-2 rounded-xl border border-border px-3 py-1.5 text-sm hover:bg-accent">
+            {t(lang, "templates.bg.image")}
+            <input
+              type="file"
+              accept="image/*"
+              className="hidden"
+              data-testid="chatbg-image"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (!file) return;
+                if (file.size > 3_500_000) return; // keep prefs small
+                const reader = new FileReader();
+                reader.onload = () => { if (typeof reader.result === "string") setPrefs({ chatBgImage: reader.result }); };
+                reader.readAsDataURL(file);
+              }}
+            />
+          </label>
+          {prefs.chatBgImage ? (
+            <button type="button" className="text-xs underline decoration-dotted" onClick={() => setPrefs({ chatBgImage: "" })}>
+              {t(lang, "templates.bg.image.clear")}
+            </button>
+          ) : null}
+        </div>
+
+        <label className="block text-sm">
+          <span className="flex justify-between"><span>{t(lang, "templates.bg.saturation")}</span><span>{Math.round(prefs.chatBgSaturation * 100)} %</span></span>
+          <input type="range" min={0.5} max={1.5} step={0.05} value={prefs.chatBgSaturation} onChange={(e) => setPrefs({ chatBgSaturation: Number(e.target.value) })} className="w-full" />
+        </label>
+        <label className="block text-sm">
+          <span className="flex justify-between"><span>{t(lang, "templates.bg.opacity")}</span><span>{Math.round(prefs.chatBgOpacity * 100)} %</span></span>
+          <input type="range" min={0} max={1} step={0.05} value={prefs.chatBgOpacity} onChange={(e) => setPrefs({ chatBgOpacity: Number(e.target.value) })} className="w-full" />
+        </label>
+
+        <div className="grid grid-cols-3 gap-2" role="group" aria-label={t(lang, "templates.pattern")}>
+          {(["grid", "dots", "plain"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              data-testid={`pattern-${p}`}
+              aria-pressed={prefs.chatPattern === p}
+              onClick={() => setPrefs({ chatPattern: p })}
+              className={`rounded-xl border px-2 py-1.5 text-xs transition ${
+                prefs.chatPattern === p ? "border-primary bg-primary/10 font-semibold" : "border-border hover:bg-accent"
+              }`}
+            >
+              {t(lang, `templates.pattern.${p}`)}
+            </button>
+          ))}
+        </div>
       </div>
     </Modal>
   );

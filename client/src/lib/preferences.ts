@@ -3,8 +3,20 @@
 
 import type { Lang } from "./i18n";
 import { isAccentId, isLayoutId, isThemeId, type AccentId, type LayoutId, type ThemeId } from "./themes";
+import { sanitizeStyleMap, type PerUserStyle } from "./message-styles";
 
 export type FontSize = "sm" | "md" | "lg";
+
+export type ChatPattern = "grid" | "dots" | "plain";
+export type ChatWidth = "sm" | "md" | "lg" | "full";
+
+/** Floating recipients widget: position + collapsed state + room-broadcast toggle. */
+export type WidgetState = {
+  x: number;
+  y: number;
+  minimized: boolean;
+  autoRoom: boolean;
+};
 
 export type RoomSecurity = {
   sort: "asc" | "desc";
@@ -36,6 +48,18 @@ export type Preferences = {
   font: string;
   fontSize: FontSize;
   effects: boolean;
+  /** Conversation surface: colour tint, optional image, saturation, pattern
+   *  intensity ("plnost") and the active reading width. */
+  chatBgColor: string; // "" = template default, else #rgb / #rrggbb
+  chatBgImage: string; // "" = none, else data: URL
+  chatBgSaturation: number; // 0.5 – 1.5
+  chatBgOpacity: number; // 0 – 1 (pattern / tint intensity)
+  chatPattern: ChatPattern;
+  chatWidth: ChatWidth;
+  /** Per-participant bubble styling, keyed by styleKeyFor(name, id). */
+  messageStyles: Record<string, PerUserStyle>;
+  /** Floating recipients widget layout + behaviour. */
+  widget: WidgetState;
   // Locale
   lang: Lang;
   timezone: string;
@@ -100,6 +124,14 @@ const DEFAULTS: Preferences = {
   font: "system",
   fontSize: "md",
   effects: true,
+  chatBgColor: "",
+  chatBgImage: "",
+  chatBgSaturation: 1,
+  chatBgOpacity: 1,
+  chatPattern: "grid",
+  chatWidth: "md",
+  messageStyles: {},
+  widget: { x: 0, y: 0, minimized: false, autoRoom: true },
   lang: "cs",
   timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC",
   notificationsEnabled: false,
@@ -114,6 +146,17 @@ const DEFAULTS: Preferences = {
   menuDisplay: "speeddial",
   menuRev: 2,
 };
+
+function sanitizeWidget(raw: unknown, base: WidgetState): WidgetState {
+  const w = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const num = (v: unknown, dflt: number) => (typeof v === "number" && Number.isFinite(v) ? v : dflt);
+  return {
+    x: Math.max(-4000, Math.min(4000, num(w.x, base.x))),
+    y: Math.max(-4000, Math.min(4000, num(w.y, base.y))),
+    minimized: w.minimized === true,
+    autoRoom: w.autoRoom === false ? false : true,
+  };
+}
 
 export const DEFAULT_ROOM_SECURITY: RoomSecurity = {
   sort: "asc",
@@ -182,6 +225,16 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     font: typeof parsed.font === "string" ? parsed.font : base.font,
     fontSize,
     effects: parsed.effects === false ? false : true,
+    chatBgColor: typeof parsed.chatBgColor === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(parsed.chatBgColor) ? parsed.chatBgColor : base.chatBgColor,
+    // Accept only same-origin data: images so a synced/pasted value can never
+    // trigger an outbound request.
+    chatBgImage: typeof parsed.chatBgImage === "string" && parsed.chatBgImage.startsWith("data:image/") && parsed.chatBgImage.length < 4_000_000 ? parsed.chatBgImage : base.chatBgImage,
+    chatBgSaturation: typeof parsed.chatBgSaturation === "number" && Number.isFinite(parsed.chatBgSaturation) ? Math.max(0.5, Math.min(1.5, parsed.chatBgSaturation)) : base.chatBgSaturation,
+    chatBgOpacity: typeof parsed.chatBgOpacity === "number" && Number.isFinite(parsed.chatBgOpacity) ? Math.max(0, Math.min(1, parsed.chatBgOpacity)) : base.chatBgOpacity,
+    chatPattern: parsed.chatPattern === "dots" || parsed.chatPattern === "plain" ? parsed.chatPattern : base.chatPattern,
+    chatWidth: parsed.chatWidth === "sm" || parsed.chatWidth === "lg" || parsed.chatWidth === "full" ? parsed.chatWidth : base.chatWidth,
+    messageStyles: sanitizeStyleMap(parsed.messageStyles),
+    widget: sanitizeWidget(parsed.widget, base.widget),
     lang,
     timezone: typeof parsed.timezone === "string" ? parsed.timezone.slice(0, 64) : base.timezone,
     notificationsEnabled: parsed.notificationsEnabled === true,
