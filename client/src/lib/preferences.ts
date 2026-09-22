@@ -7,6 +7,7 @@ import { sanitizeStyleMap, type PerUserStyle } from "./message-styles";
 import { isFontId } from "./fonts";
 import { isHexColor } from "./color";
 import type { DeviceLayoutPref } from "./device";
+import { isChatRetention, type ChatRetention } from "./chat-history";
 
 export type FontSize = "sm" | "md" | "lg";
 
@@ -98,6 +99,10 @@ export type Preferences = {
   messageStyles: Record<string, PerUserStyle>;
   /** Floating recipients widget layout + behaviour. */
   widget: WidgetState;
+  /** What happens to the conversation and its logs (see chat-history.ts):
+   *  "ephemeral" a new connection clears it · "session" it lives until the
+   *  session ends · "server" it lives in the passkey account's vault. */
+  chatRetention: ChatRetention;
   // Locale
   lang: Lang;
   timezone: string;
@@ -184,7 +189,8 @@ const DEFAULTS: Preferences = {
   chatPattern: "grid",
   chatWidth: "md",
   messageStyles: {},
-  widget: { x: 0, y: 0, minimized: false, autoRoom: true, locked: false, width: 240, opacity: 1, fontScale: 1, zoom: 1, accent: "" },
+  widget: { x: 0, y: 0, minimized: false, autoRoom: true, locked: true, width: 240, opacity: 1, fontScale: 1, zoom: 1, accent: "" },
+  chatRetention: "ephemeral",
   lang: "cs",
   timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC",
   notificationsEnabled: false,
@@ -209,7 +215,8 @@ function sanitizeWidget(raw: unknown, base: WidgetState): WidgetState {
     y: Math.max(-4000, Math.min(4000, num(w.y, base.y))),
     minimized: w.minimized === true,
     autoRoom: w.autoRoom === false ? false : true,
-    locked: w.locked === true,
+    // Docked (next to the menu button) unless the user moved it away.
+    locked: w.locked === false ? false : true,
     width: clamp(w.width, 180, 420, base.width),
     opacity: clamp(w.opacity, 0.3, 1, base.opacity),
     fontScale: clamp(w.fontScale, 0.8, 1.4, base.fontScale),
@@ -318,6 +325,7 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     chatWidth: parsed.chatWidth === "sm" || parsed.chatWidth === "lg" || parsed.chatWidth === "full" ? parsed.chatWidth : base.chatWidth,
     messageStyles: sanitizeStyleMap(parsed.messageStyles),
     widget: sanitizeWidget(parsed.widget, base.widget),
+    chatRetention: isChatRetention(parsed.chatRetention) ? parsed.chatRetention : base.chatRetention,
     lang,
     timezone: typeof parsed.timezone === "string" ? parsed.timezone.slice(0, 64) : base.timezone,
     notificationsEnabled: parsed.notificationsEnabled === true,

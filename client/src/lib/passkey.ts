@@ -1,18 +1,19 @@
-// PassKey-backed encrypted profile.
+// PassKey primitives: the WebAuthn ceremonies and the key they yield.
 //
-// The user creates a PassKey (WebAuthn discoverable credential). Its WebAuthn
-// PRF extension yields a stable per-credential secret that only that
-// authenticator + user verification can reproduce. We derive an AES-GCM key
-// from that secret and encrypt the profile (settings + identity) LOCALLY; the
-// server only ever stores ciphertext, keyed by the opaque credential id. On
-// "log out" the client drops the key and the server blob stays sealed —
-// unreadable without the PassKey.
+// The user's passkey does two jobs at once:
+//   1. it proves who they are to the server — the server verifies the
+//      signature over its own challenge (server/accounts/webauthn.ts);
+//   2. it produces, through the WebAuthn PRF extension, a stable per-credential
+//      secret that never leaves the device. HKDF turns that secret into an
+//      AES-GCM key, and everything the server stores for the account (profile
+//      and chat history) is sealed with it before it is uploaded.
 //
-// Honesty: the server does not verify WebAuthn signatures (no attestation); it
-// treats the credential id as an opaque storage key. The real protection is the
-// PRF-derived key, which the server never sees. PRF requires a recent browser +
-// platform authenticator; passkeySupported()/prf availability is checked and a
-// clear error is surfaced when unavailable, never a silent fallback.
+// So the server authenticates the account but cannot read the account's data:
+// it holds ciphertext keyed by an account id. Losing the passkey means losing
+// the data — that is the point of the trade.
+//
+// PRF needs a recent browser and a platform authenticator; when it is absent
+// we say so instead of silently falling back to something weaker.
 
 import { toBase64, fromBase64 } from "./crypto";
 
@@ -23,7 +24,7 @@ const PRF_SALT = new Uint8Array(enc.encode("m5cet:passkey:prf:v1"));
 const HKDF_INFO = new Uint8Array(enc.encode("m5cet:profile:v1"));
 
 type PrfExtension = { prf?: { eval?: { first: BufferSource } } };
-type PrfResults = { prf?: { results?: { first?: ArrayBuffer } } };
+type PrfResults = { prf?: { enabled?: boolean; results?: { first?: ArrayBuffer } } };
 
 export function passkeySupported(): boolean {
   return typeof window !== "undefined"
@@ -32,10 +33,11 @@ export function passkeySupported(): boolean {
     && Boolean(navigator.credentials);
 }
 
-function b64url(bytes: Uint8Array): string {
+export function b64url(bytes: Uint8Array): string {
   return toBase64(bytes).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
-function fromB64url(value: string): Uint8Array {
+
+export function fromB64url(value: string): Uint8Array {
   const pad = value.length % 4 === 0 ? "" : "=".repeat(4 - (value.length % 4));
   return fromBase64(value.replace(/-/g, "+").replace(/_/g, "/") + pad);
 }
@@ -68,95 +70,135 @@ export async function openProfile<T>(ciphertext: string, key: CryptoKey): Promis
   return JSON.parse(dec.decode(plain)) as T;
 }
 
-async function createCredential(userName: string): Promise<Uint8Array> {
-  const publicKey: PublicKeyCredentialCreationOptions = {
-    challenge: crypto.getRandomValues(new Uint8Array(32)),
-    rp: { name: "M5cet", id: location.hostname },
-    user: { id: crypto.getRandomValues(new Uint8Array(16)), name: userName || "m5cet-user", displayName: userName || "M5cet user" },
-    pubKeyCredParams: [{ type: "public-key", alg: -7 }, { type: "public-key", alg: -257 }],
-    authenticatorSelection: { residentKey: "required", userVerification: "required" },
-    timeout: 60_000,
-    attestation: "none",
-    extensions: { prf: {} } as AuthenticationExtensionsClientInputs & PrfExtension,
-  };
-  const cred = await navigator.credentials.create({ publicKey }) as PublicKeyCredential | null;
-  if (!cred) throw new Error("PassKey creation was cancelled.");
-  return new Uint8Array(cred.rawId);
+/* --------------------------------------------------------- server options */
+
+/** What POST /api/account/register/options answers (base64url challenge). */
+export type ServerCreationOptions = {
+  challenge: string;
+  rp: { id: string; name: string };
+  user: { id: string; name: string; displayName: string };
+  pubKeyCredParams: Array<{ type: "public-key"; alg: number }>;
+  authenticatorSelection?: AuthenticatorSelectionCriteria;
+  attestation?: AttestationConveyancePreference;
+  timeout?: number;
+};
+
+/** What POST /api/account/signin/options answers. */
+export type ServerRequestOptions = {
+  challenge: string;
+  rpId: string;
+  userVerification?: UserVerificationRequirement;
+  timeout?: number;
+  allowCredentials?: Array<{ id: string; type: "public-key" }>;
+};
+
+export type RegistrationResponseJSON = {
+  id: string;
+  rawId: string;
+  type: string;
+  response: { clientDataJSON: string; attestationObject: string };
+};
+
+export type AssertionResponseJSON = {
+  id: string;
+  rawId: string;
+  type: string;
+  response: { clientDataJSON: string; authenticatorData: string; signature: string; userHandle?: string | null };
+};
+
+const prfInput = () => ({ prf: { eval: { first: PRF_SALT } } }) as AuthenticationExtensionsClientInputs & PrfExtension;
+
+function prfSecret(credential: PublicKeyCredential): ArrayBuffer | null {
+  const results = credential.getClientExtensionResults() as AuthenticationExtensionsClientOutputs & PrfResults;
+  return results?.prf?.results?.first ?? null;
 }
 
-/** Run a WebAuthn assertion asking for the PRF secret. Returns the used
- *  credential id + the derived key. */
-async function assertPrf(credentialId?: Uint8Array): Promise<{ credentialId: Uint8Array; key: CryptoKey }> {
+/** Creates the passkey the server asked for, and derives the vault key.
+ *  Most browsers do not hand out the PRF secret at creation time, so we
+ *  immediately assert with the fresh credential to get it. */
+export async function createPasskey(options: ServerCreationOptions): Promise<{ response: RegistrationResponseJSON; key: CryptoKey }> {
+  if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
+  const publicKey: PublicKeyCredentialCreationOptions = {
+    challenge: new Uint8Array(fromB64url(options.challenge)),
+    rp: options.rp,
+    user: {
+      id: new Uint8Array(fromB64url(options.user.id)),
+      name: options.user.name,
+      displayName: options.user.displayName,
+    },
+    pubKeyCredParams: options.pubKeyCredParams,
+    authenticatorSelection: options.authenticatorSelection ?? { residentKey: "required", userVerification: "required" },
+    attestation: options.attestation ?? "none",
+    timeout: options.timeout ?? 60_000,
+    extensions: prfInput(),
+  };
+  const credential = await navigator.credentials.create({ publicKey }) as PublicKeyCredential | null;
+  if (!credential) throw new Error("PassKey creation was cancelled.");
+  const attestation = credential.response as AuthenticatorAttestationResponse;
+  const response: RegistrationResponseJSON = {
+    id: credential.id,
+    rawId: b64url(new Uint8Array(credential.rawId)),
+    type: credential.type,
+    response: {
+      clientDataJSON: b64url(new Uint8Array(attestation.clientDataJSON)),
+      attestationObject: b64url(new Uint8Array(attestation.attestationObject)),
+    },
+  };
+  const direct = prfSecret(credential);
+  const key = direct
+    ? await deriveKey(new Uint8Array(direct))
+    : (await derivePrfKey(new Uint8Array(credential.rawId))).key;
+  return { response, key };
+}
+
+/** Signs the server's challenge and derives the same vault key. */
+export async function assertPasskey(options: ServerRequestOptions): Promise<{ response: AssertionResponseJSON; key: CryptoKey }> {
+  if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
+  const publicKey: PublicKeyCredentialRequestOptions = {
+    challenge: new Uint8Array(fromB64url(options.challenge)),
+    rpId: options.rpId,
+    userVerification: options.userVerification ?? "required",
+    timeout: options.timeout ?? 60_000,
+    ...(options.allowCredentials?.length
+      ? { allowCredentials: options.allowCredentials.map((c) => ({ id: new Uint8Array(fromB64url(c.id)), type: "public-key" as const })) }
+      : {}),
+    extensions: prfInput(),
+  };
+  const credential = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
+  if (!credential) throw new Error("PassKey sign-in was cancelled.");
+  const assertion = credential.response as AuthenticatorAssertionResponse;
+  const secret = prfSecret(credential);
+  if (!secret) throw new Error("This authenticator does not support the WebAuthn PRF extension, so the encrypted data cannot be unlocked here.");
+  return {
+    response: {
+      id: credential.id,
+      rawId: b64url(new Uint8Array(credential.rawId)),
+      type: credential.type,
+      response: {
+        clientDataJSON: b64url(new Uint8Array(assertion.clientDataJSON)),
+        authenticatorData: b64url(new Uint8Array(assertion.authenticatorData)),
+        signature: b64url(new Uint8Array(assertion.signature)),
+        userHandle: assertion.userHandle ? b64url(new Uint8Array(assertion.userHandle)) : null,
+      },
+    },
+    key: await deriveKey(new Uint8Array(secret)),
+  };
+}
+
+/** A PRF-only assertion (no server ceremony) — used right after creating a
+ *  credential, when the browser withheld the secret. */
+async function derivePrfKey(credentialId: Uint8Array): Promise<{ key: CryptoKey }> {
   const publicKey: PublicKeyCredentialRequestOptions = {
     challenge: crypto.getRandomValues(new Uint8Array(32)),
     userVerification: "required",
     timeout: 60_000,
-    ...(credentialId ? { allowCredentials: [{ id: new Uint8Array(credentialId), type: "public-key" as const }] } : {}),
-    extensions: { prf: { eval: { first: PRF_SALT } } } as AuthenticationExtensionsClientInputs & PrfExtension,
+    allowCredentials: [{ id: new Uint8Array(credentialId), type: "public-key" as const }],
+    extensions: prfInput(),
   };
   const assertion = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
-  if (!assertion) throw new Error("PassKey sign-in was cancelled.");
-  const results = assertion.getClientExtensionResults() as AuthenticationExtensionsClientOutputs & PrfResults;
-  const first = results?.prf?.results?.first;
-  if (!first) throw new Error("This authenticator does not support the WebAuthn PRF extension; the encrypted profile cannot be unlocked here.");
-  return { credentialId: new Uint8Array(assertion.rawId), key: await deriveKey(new Uint8Array(first)) };
-}
-
-async function putProfile(credentialId: string, ciphertext: string): Promise<void> {
-  const res = await fetch("/api/passkey/profile", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ credentialId, ciphertext }),
-  });
-  if (!res.ok) throw new Error(`Server refused to store the profile (${res.status}).`);
-}
-
-async function fetchProfile(credentialId: string): Promise<string | null> {
-  const res = await fetch(`/api/passkey/profile?credentialId=${encodeURIComponent(credentialId)}`);
-  if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`Server error ${res.status}.`);
-  const json = await res.json() as { ok?: boolean; ciphertext?: string };
-  return json.ciphertext || null;
-}
-
-/** Create a PassKey, encrypt `profile` under its PRF secret, store it. */
-export async function registerProfileWithPasskey<T>(profile: T, userName: string): Promise<{ credentialId: string }> {
-  if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
-  const rawId = await createCredential(userName);
-  const { credentialId, key } = await assertPrf(rawId);
-  const ciphertext = await sealProfile(profile, key);
-  const id = b64url(credentialId);
-  await putProfile(id, ciphertext);
-  return { credentialId: id };
-}
-
-/** Sign in with a PassKey and return the decrypted profile. */
-export async function unlockProfileWithPasskey<T>(credentialId?: string): Promise<{ credentialId: string; profile: T }> {
-  if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
-  const { credentialId: rawId, key } = await assertPrf(credentialId ? fromB64url(credentialId) : undefined);
-  const id = b64url(rawId);
-  const ciphertext = await fetchProfile(id);
-  if (!ciphertext) throw new Error("No stored profile for this PassKey.");
-  const profile = await openProfile<T>(ciphertext, key);
-  return { credentialId: id, profile };
-}
-
-/** Re-encrypt and store an updated profile for an existing PassKey. */
-export async function saveProfileWithPasskey<T>(profile: T, credentialId?: string): Promise<{ credentialId: string }> {
-  if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
-  const { credentialId: rawId, key } = await assertPrf(credentialId ? fromB64url(credentialId) : undefined);
-  const id = b64url(rawId);
-  await putProfile(id, await sealProfile(profile, key));
-  return { credentialId: id };
-}
-
-/** Lock (delete) the server-side profile. */
-export async function lockServerProfile(credentialId: string): Promise<void> {
-  await fetch("/api/passkey/profile", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ credentialId }),
-  }).catch(() => undefined);
+  const secret = assertion ? prfSecret(assertion) : null;
+  if (!secret) throw new Error("This authenticator does not support the WebAuthn PRF extension, so encrypted data cannot be stored for it.");
+  return { key: await deriveKey(new Uint8Array(secret)) };
 }
 
 // Exposed for tests: derive a key from a raw secret without WebAuthn.

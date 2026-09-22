@@ -11,10 +11,14 @@ Frame format: JSON. Rámce delší než **128 000 znaků** server tiše zahodí
 (bez chybové odpovědi). Klient → server:
 
 ```json
-{ "type": "join",   "room": "string", "peerId": "string", "name": "string?" }
+{ "type": "join",   "room": "string", "peerId": "string", "name": "string?",
+  "auth": "účet-token?", "away": true }
 { "type": "signal", "target": "peerId", "payload": { ... } }
 { "type": "ping",   "t": 1700000000000 }
-{ "type": "leave" }
+{ "type": "leave",  "away": true }
+{ "type": "relay",     "messageId": "...", "to": ["accountId"], "envelope": { "iv", "ciphertext" } }
+{ "type": "relay-ack", "ids": ["mailId"] }
+{ "type": "receipt",   "to": { "peerId?", "accountId?" }, "messageIds": ["..."], "state": "delivered|read" }
 { "type": "command-poll", "deviceId": "string?" }
 { "type": "command-ack",  "commandId": "string", "result": "string?" }
 { "type": "proxy-meta",  "kind": "proxy-meta",  "transferId": "...", "iv": "...", "ciphertext": "..." }
@@ -26,13 +30,26 @@ Sanitizace při `join`: `room` ≤ 64 znaků (fallback `default`), `peerId` ≤ 
 `name` ≤ 48 (fallback `Anonymous`), znaková sada `[a-zA-Z0-9 ._-]`. Strop
 počtu peerů na místnost není.
 
+`auth` + `away` zapínají **stav away**: přihlášený uživatel (passkey účet)
+zůstane v místnosti i po ztrátě socketu a server za něj přebírá zprávy
+(`relay` → schránka → `relay-deliver` po návratu). Jeden socket smí poslat
+120 `relay` rámců za minutu. Podrobně
+[`accounts-away.md`](accounts-away.md).
+
 Server odpovídá:
 
 ```json
 { "type": "hello",       "peerId": "...", "cache": "no-store", "ip": "proxied|direct" }
-{ "type": "joined",      "peerId": "...", "room": "...", "peers": [{ "peerId", "name", "joinedAt" }], "policy": { ... } }
-{ "type": "peer-joined", "peerId": "...", "name": "...", "joinedAt": 0 }
+{ "type": "joined",      "peerId": "...", "room": "...", "peers": [{ "peerId", "name", "joinedAt", "accountId?" }],
+  "away": [{ "accountId", "name", "since" }], "account": { "id", "away" } | { "invalid": true } | null, "policy": { ... } }
+{ "type": "peer-joined", "peerId": "...", "name": "...", "joinedAt": 0, "accountId?": "..." }
 { "type": "peer-left",   "peerId": "..." }
+{ "type": "peer-away",   "accountId": "...", "peerId": "...", "name": "...", "since": 0 }
+{ "type": "peer-back",   "accountId": "...", "peerId": "...", "name": "..." }
+{ "type": "peer-gone",   "accountId": "..." }
+{ "type": "relay-deliver", "items": [{ "id", "kind", "messageId", "from", "envelope?", "status?", "storedAt" }] }
+{ "type": "relay-status",  "messageId": "...", "recipient": { "accountId", "name" },
+  "state": "stored|forwarded|delivered|read|rejected", "at": 0, "reason?": "..." }
 { "type": "signal",      "source": "peerId", "payload": { ... } }
 { "type": "pong",        "t": 0, "serverTs": 0 }
 { "type": "admin-command", "command": { "id", "kind", "createdAt", "payload?" } }
@@ -127,6 +144,32 @@ Vše je v paměti procesu.
 ### Odchod
 
 - `GET /goodbye` → statická stránka s `Clear-Site-Data: "cache", "cookies", "storage", "executionContexts"`.
+
+### Účty s passkey (`/api/account/*`)
+
+Ověření podpisem WebAuthn, data zapečetěná klíčem z PRF rozšíření — server
+drží jen šifrový text. Celé to popisuje
+[`accounts-away.md`](accounts-away.md).
+
+| Metoda a cesta | Autorizace | Co dělá |
+| --- | --- | --- |
+| `GET /api/account/status` | — | dostupnost, `rpId`, `persistent` |
+| `POST /api/account/register/options` \| `/verify` | — (výzva) | vytvoření účtu |
+| `POST /api/account/signin/options` \| `/verify` | — (výzva) | přihlášení |
+| `GET /api/account/me` | `Bearer <token>` | velikosti, data, počty, audit |
+| `GET \| PUT /api/account/vault` | `Bearer <token>` | zapečetěný profil + chat |
+| `POST /api/account/event` | `Bearer <token>` | `decrypt-ok`, `decrypt-failed`, `data-loaded`, `data-cleared`, `chat-restored` |
+| `POST /api/account/push` | `Bearer <token>` | propojení Web Push odběru |
+| `POST /api/account/signout` | `Bearer <token>` | zneplatnění tokenu (`everywhere`) |
+| `DELETE /api/account` | `Bearer <token>` | smazání účtu, trezoru i schránky |
+
+Limity: ceremonie 30 / 10 min na IP, trezor 300 / 15 min (mimo veřejný limit
+100 / 15 min), tělo trezoru do 8 MB, profil 128 000 znaků, chat 6 000 000
+znaků. Výzva je jednorázová, platnost 2 minuty. Tokeny žijí 12 h a jen
+v paměti — restart odhlásí.
+
+Proměnné prostředí: `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `ACCOUNTS_DIR`
+(jinak `$DATA_DIR/accounts`), `RELAY_RETENTION_DAYS` (30).
 
 ### Retence
 

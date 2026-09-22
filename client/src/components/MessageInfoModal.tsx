@@ -50,6 +50,11 @@ const STATE_LABEL: Record<string, string> = {
   decrypted: "msginfo.state.decrypted",
   displayed: "msginfo.state.displayed",
   discarded: "msginfo.state.discarded",
+  // Away relay (a signed-in recipient who was not connected).
+  stored: "msginfo.state.stored",
+  forwarded: "msginfo.state.forwarded",
+  delivered: "msginfo.state.delivered",
+  read: "msginfo.state.read",
 };
 
 export function MessageInfoView({ info, lang, onForward }: { info: MessageInfo; lang: Lang; onForward: () => void }) {

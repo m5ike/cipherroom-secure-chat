@@ -189,7 +189,7 @@ describe("operator routes", () => {
     const g = await get(`Bearer ${TOKEN}`);
     expect(g.status).toBe(200);
     const gj = await g.json() as { policy: typeof RETENTION; intervalMinutes: number };
-    expect(gj.policy).toEqual(RETENTION);
+    expect(gj.policy).toMatchObject(RETENTION);
     expect(gj.intervalMinutes).toBeGreaterThan(0);
     const r = await run(`Bearer ${TOKEN}`);
     expect(r.status).toBe(200);

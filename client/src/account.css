@@ -1,0 +1,99 @@
+/* Signed-in user: the top-bar badge, the account window and the chat
+   retention options. Loaded by components/AccountPanel.tsx. */
+
+.signed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 1.75rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 9999px;
+  border: 1px solid hsl(146 62% 45% / 0.5);
+  background: linear-gradient(180deg, hsl(146 62% 45% / 0.22), hsl(146 62% 38% / 0.14));
+  color: hsl(146 62% 30%);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.signed-badge:hover { background: hsl(146 62% 45% / 0.28); }
+.dark .signed-badge { color: hsl(146 62% 72%); }
+.signed-badge__label { text-transform: uppercase; }
+.signed-badge__name { font-weight: 600; opacity: 0.85; max-width: 8rem; overflow: hidden; text-overflow: ellipsis; }
+.signed-badge__count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1.1rem; height: 1.1rem; padding: 0 0.25rem;
+  border-radius: 9999px; background: hsl(var(--primary)); color: hsl(var(--primary-foreground));
+  font-size: 0.65rem;
+}
+/* On a phone the badge shrinks to the key + the count. */
+@media (max-width: 560px) {
+  .signed-badge__label, .signed-badge__name { display: none; }
+}
+
+.acc-card {
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.75rem;
+  background: hsl(var(--background));
+  padding: 0.6rem 0.75rem;
+}
+.acc-card__title {
+  display: flex; align-items: center; gap: 0.4rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  color: hsl(var(--muted-foreground));
+}
+.acc-row {
+  display: flex; justify-content: space-between; gap: 1rem;
+  padding: 0.3rem 0;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+  font-size: 0.82rem;
+}
+.acc-row:last-child { border-bottom: 0; }
+.acc-row__label { color: hsl(var(--muted-foreground)); }
+.acc-row__value { font-weight: 600; text-align: right; word-break: break-all; }
+
+.acc-log { max-height: 13rem; overflow-y: auto; display: grid; gap: 0.2rem; }
+.acc-log li { display: grid; grid-template-columns: minmax(7rem, auto) 1fr; gap: 0.5rem; font-size: 0.75rem; align-items: baseline; }
+.acc-log time { color: hsl(var(--muted-foreground)); font-variant-numeric: tabular-nums; }
+.acc-log em { grid-column: 2; font-style: normal; color: hsl(var(--muted-foreground)); font-size: 0.7rem; }
+
+.acc-btn {
+  display: inline-flex; align-items: center; gap: 0.4rem;
+  min-height: 2.25rem; padding: 0 0.7rem;
+  border: 1px solid hsl(var(--border)); border-radius: 0.75rem;
+  background: hsl(var(--background));
+  font-size: 0.8rem; font-weight: 600;
+}
+.acc-btn:hover:not(:disabled) { background: hsl(var(--accent)); }
+.acc-btn:disabled { opacity: 0.55; }
+.acc-btn--danger { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / 0.4); }
+.acc-btn--danger:hover:not(:disabled) { background: hsl(var(--destructive) / 0.12); }
+
+.retention-option {
+  display: flex; gap: 0.6rem; align-items: flex-start;
+  border: 1px solid hsl(var(--border)); border-radius: 0.75rem;
+  padding: 0.55rem 0.7rem;
+  cursor: pointer;
+}
+.retention-option.is-active { border-color: hsl(var(--primary)); background: hsl(var(--primary) / 0.08); }
+.retention-option.is-disabled { opacity: 0.6; cursor: not-allowed; }
+.retention-option input { margin-top: 0.25rem; }
+.retention-option span { display: grid; gap: 0.15rem; }
+.retention-option strong { font-size: 0.85rem; }
+.retention-option em { font-style: normal; font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+
+/* An away participant in the recipients list: present, but answered for. */
+.recip-row.is-away { opacity: 0.9; }
+.recip-row.is-away .recip-name { font-style: italic; }
+.recip-away-tag {
+  display: inline-flex; align-items: center; gap: 0.2rem;
+  font-size: 0.65rem; font-weight: 700; text-transform: uppercase;
+  color: hsl(221 83% 60%);
+}
+
+/* Delivery mark on my own bubble: sent → stored → delivered → read. */
+.msg-delivery { display: inline-flex; align-items: center; opacity: 0.75; }
+.msg-delivery.is-stored { color: hsl(38 92% 50%); opacity: 1; }
+.msg-delivery.is-delivered { opacity: 0.95; }
+.msg-delivery.is-read { color: hsl(221 83% 60%); opacity: 1; }

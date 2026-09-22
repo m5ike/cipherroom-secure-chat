@@ -11,8 +11,9 @@
 //   sealed  a locked body that needs a per-message code to read.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Lock, Timer, ScrollText, EyeOff, Users, Paperclip, Info, Reply, Forward, CornerUpLeft } from "lucide-react";
+import { Lock, Timer, ScrollText, EyeOff, Users, Paperclip, Info, Reply, Forward, CornerUpLeft, Check, CheckCheck, Clock } from "lucide-react";
 import { t, type Lang } from "../lib/i18n";
+import type { MsgState } from "../lib/chat-types";
 import { openSealed, type MsgFlags } from "../lib/message-kinds";
 
 export type BubbleAttachment = { kind: "file" | "image"; name: string; mime: string; size: number; dataUrl: string };
@@ -51,7 +52,26 @@ export type MessageBubbleProps = {
   systemCollapseAfterSec?: number;
   /** …and stay unfolded for N s after a hover/click. */
   systemExpandForSec?: number;
+  /** How far my own message got (away relay): stored → delivered → read. */
+  deliveryState?: MsgState;
 };
+
+/** The single status mark on my own bubble. */
+function DeliveryMark({ state, lang }: { state: MsgState; lang: Lang }) {
+  const label = t(lang, `msginfo.state.${state}`);
+  const icon = state === "stored"
+    ? <Clock className="h-3 w-3" />
+    : state === "read"
+      ? <CheckCheck className="h-3 w-3" />
+      : state === "delivered"
+        ? <CheckCheck className="h-3 w-3" />
+        : <Check className="h-3 w-3" />;
+  return (
+    <span className={`msg-delivery is-${state}`} title={label} aria-label={label} data-testid="msg-delivery">
+      {icon}
+    </span>
+  );
+}
 
 function useTabVisible(): boolean {
   const [v, setV] = useState(() => typeof document === "undefined" || document.visibilityState !== "hidden");
@@ -204,6 +224,7 @@ export function MessageBubble(props: MessageBubbleProps) {
           {tap ? <Timer className="h-3 w-3 opacity-70" aria-label={t(lang, "msgkind.tap")} /> : null}
           {flags?.vanishSeconds ? <EyeOff className="h-3 w-3 opacity-70" aria-label={t(lang, "msgkind.vanish")} /> : null}
           {sealed ? <ScrollText className="h-3 w-3 opacity-70" aria-label={t(lang, "msgkind.sealed")} /> : null}
+          {mine && props.deliveryState ? <DeliveryMark state={props.deliveryState} lang={lang} /> : null}
         </div>
 
         {props.forwardedFrom ? (

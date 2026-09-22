@@ -2,6 +2,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./index.css";
 import "./mobile.css";
+import "./account.css";
 import { applyDeviceAttributes, captureInstallPrompt, deviceInfo, startViewportSync, watchFullscreen } from "./lib/device";
 import { startStyleRuntime } from "./lib/style-editor";
 import { loadPreferences } from "./lib/preferences";

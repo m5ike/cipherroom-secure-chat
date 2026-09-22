@@ -20,7 +20,8 @@ import { Modal } from "./Modal";
 import { langLabel, SUPPORTED_LANGS, t, type Lang } from "@/lib/i18n";
 import { DEFAULT_ROOM_SECURITY, type Preferences, type RoomSecurity } from "@/lib/preferences";
 import { Fingerprint, formatFingerprint, loadFingerprints } from "@/lib/fingerprint";
-import { passkeySupported, registerProfileWithPasskey, unlockProfileWithPasskey, saveProfileWithPasskey, lockServerProfile } from "@/lib/passkey";
+import { passkeySupported } from "@/lib/passkey";
+import { currentAccount, loadVault, registerAccount, saveVault, signInWithPasskey, signOutAccount, type AccountSummary } from "@/lib/account";
 
 type PanelBaseProps = {
   open: boolean;
@@ -97,16 +98,18 @@ export function ProfilePanel({ open, onClose, prefs, setPrefs, lang }: PanelBase
   );
 }
 
-const PROFILE_KEYS: (keyof Preferences)[] = [
+/** What the passkey vault keeps: identity, appearance and the layout the
+ *  user expects to find again on another device. */
+export const PROFILE_KEYS: (keyof Preferences)[] = [
   "name", "bio", "avatar", "theme", "accent", "layout", "font", "fontSize", "effects",
   "lang", "timezone", "chatBgColor", "chatBgImage", "chatBgSaturation", "chatBgOpacity",
   "chatPattern", "chatWidth", "messageStyles", "menuDisplay",
   "chatFont", "monoFont", "textSize", "fontWeight", "lineHeight", "letterSpacing", "chatScale",
   "accentColor", "bubbleMine", "bubbleTheirs", "uiRadius", "bubbleRadius", "googleFonts", "deviceLayout",
+  "widget", "chatRetention", "ttlDefaultMinutes", "roomSecurity",
 ];
-const CRED_KEY = "m5cet:passkey:cred";
 
-function profileFromPrefs(prefs: Preferences): Partial<Preferences> {
+export function profileFromPrefs(prefs: Preferences): Partial<Preferences> {
   const out: Record<string, unknown> = {};
   for (const k of PROFILE_KEYS) out[k] = prefs[k];
   return out as Partial<Preferences>;
@@ -115,42 +118,43 @@ function profileFromPrefs(prefs: Preferences): Partial<Preferences> {
 function PasskeyProfileSection({ prefs, setPrefs, lang }: { prefs: Preferences; setPrefs: (p: Partial<Preferences>) => void; lang: Lang }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [cred, setCred] = useState<string>(() => { try { return localStorage.getItem(CRED_KEY) || ""; } catch { return ""; } });
+  const [account, setAccount] = useState<AccountSummary | null>(() => currentAccount());
   const supported = passkeySupported();
   const serverMode = prefs.mode === "server";
 
-  function remember(id: string) { setCred(id); try { localStorage.setItem(CRED_KEY, id); } catch { /* ignore */ } }
+  async function run(work: () => Promise<string>) {
+    setBusy(true); setMsg("");
+    try { setMsg(await work()); } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  }
 
-  async function onRegister() {
-    setBusy(true); setMsg("");
-    try {
-      const { credentialId } = await registerProfileWithPasskey(profileFromPrefs(prefs), prefs.name || "M5cet");
-      remember(credentialId);
-      setMsg(t(lang, "passkey.saved"));
-    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
-  }
-  async function onUnlock() {
-    setBusy(true); setMsg("");
-    try {
-      const { credentialId, profile } = await unlockProfileWithPasskey<Partial<Preferences>>(cred || undefined);
-      remember(credentialId);
-      setPrefs(profile);
-      setMsg(t(lang, "passkey.loaded"));
-    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
-  }
-  async function onSave() {
-    setBusy(true); setMsg("");
-    try {
-      const { credentialId } = await saveProfileWithPasskey(profileFromPrefs(prefs), cred || undefined);
-      remember(credentialId);
-      setMsg(t(lang, "passkey.saved"));
-    } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
-  }
-  async function onLock() {
-    if (cred) await lockServerProfile(cred);
-    setCred(""); try { localStorage.removeItem(CRED_KEY); } catch { /* ignore */ }
-    setMsg(t(lang, "passkey.locked"));
-  }
+  const onRegister = () => run(async () => {
+    const acc = await registerAccount(prefs.name || "M5cet");
+    setAccount(acc);
+    await saveVault({ profile: profileFromPrefs(prefs) });
+    return t(lang, "passkey.saved");
+  });
+
+  const onUnlock = () => run(async () => {
+    const acc = await signInWithPasskey();
+    setAccount(acc);
+    const { profile } = await loadVault<Partial<Preferences>>();
+    if (profile) setPrefs(profile);
+    return profile ? t(lang, "passkey.loaded") : t(lang, "acc.signedInAs").replace("{name}", acc.userName);
+  });
+
+  const onSave = () => run(async () => {
+    await saveVault({ profile: profileFromPrefs(prefs) });
+    setAccount(currentAccount());
+    return t(lang, "passkey.saved");
+  });
+
+  const onLock = () => run(async () => {
+    await signOutAccount();
+    setAccount(null);
+    return t(lang, "passkey.locked");
+  });
+
+  const cred = account?.credentialId ?? "";
 
   return (
     <Section title={t(lang, "passkey.title")} icon={<KeyRound className="h-4 w-4" />}>

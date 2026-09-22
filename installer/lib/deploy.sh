@@ -174,6 +174,12 @@ Type=simple
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
 WorkingDirectory=${INSTALL_DIR}
+# Writable state (passkey accounts, telephony trunks, layout) — the install
+# directory itself stays read-only under ProtectSystem=strict. A DATA_DIR in
+# .env overrides this default.
+StateDirectory=m5cet
+StateDirectoryMode=0700
+Environment=DATA_DIR=/var/lib/m5cet
 EnvironmentFile=${INSTALL_DIR}/.env
 ExecStart=${node_bin} ${INSTALL_DIR}/dist/${script}
 Restart=always

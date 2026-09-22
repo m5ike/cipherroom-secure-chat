@@ -1,18 +1,20 @@
-// Floating "who receives my messages" widget. It can be dragged anywhere,
-// minimised to a single button, LOCKED (docked to a fixed corner next to the
-// menu), and restyled (size / opacity / colour / font / zoom) from its gear
-// menu. Layout persists in Preferences.widget (which syncs to the server in
+// Floating "who receives my messages" widget. It can be dragged anywhere
+// (the minimised button too — dragging it undocks it), minimised to a single
+// button, LOCKED (docked on the right, next to the menu button), and
+// restyled (size / opacity / colour / font / zoom) from its gear menu. Layout persists in Preferences.widget (which syncs to the server in
 // Server-enhanced mode). Each connected peer shows an avatar, a latency meter,
 // an info button and a recipient checkbox; offline peers sink to the bottom of
 // the list and render disabled. A final Room row toggles "send to everyone".
 
 import { useEffect, useRef, useState } from "react";
-import { Users, Info, Check, X, Radio, Minus, GripHorizontal, Lock, LockOpen, Settings2 } from "lucide-react";
+import { Users, Info, Check, X, Radio, Minus, GripHorizontal, Lock, LockOpen, Settings2, Moon } from "lucide-react";
 import { t, type Lang } from "../lib/i18n";
 import { Avatar } from "./UserBadge";
 import type { WidgetState } from "../lib/preferences";
 
-export type WidgetPeer = { id: string; name: string; status: "connecting" | "open" | "closed"; rttMs?: number; avatar?: string };
+/** "away": signed in, not connected right now — the server holds messages
+ *  for them (server/accounts/relay.ts), so they stay selectable. */
+export type WidgetPeer = { id: string; name: string; status: "connecting" | "open" | "closed" | "away"; rttMs?: number; avatar?: string; since?: number };
 
 function LatencyMeter({ rttMs, open }: { rttMs?: number; open: boolean }) {
   const bars = 4;
@@ -48,6 +50,9 @@ export function RecipientsWidget({
   lang: Lang;
 }) {
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
+  const startRef = useRef<{ x: number; y: number } | null>(null);
+  /** A pointer that travelled: then it was a drag, not a click. */
+  const movedRef = useRef(false);
   const [dragging, setDragging] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
   const anchored = !state.locked && state.x === 0 && state.y === 0;
@@ -58,15 +63,35 @@ export function RecipientsWidget({
     const move = (e: PointerEvent) => {
       const off = dragRef.current;
       if (!off) return;
+      const from = startRef.current;
+      if (from && Math.abs(e.clientX - from.x) + Math.abs(e.clientY - from.y) > 4) movedRef.current = true;
       const x = Math.max(4, Math.min(window.innerWidth - 60, e.clientX - off.dx));
       const y = Math.max(4, Math.min(window.innerHeight - 40, e.clientY - off.dy));
       onMove(x, y);
     };
-    const up = () => { setDragging(false); dragRef.current = null; };
+    const up = () => {
+      setDragging(false);
+      dragRef.current = null;
+      startRef.current = null;
+      // Let the click that follows a drag fall through as a no-op.
+      window.setTimeout(() => { movedRef.current = false; }, 0);
+    };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
     return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
   }, [dragging, onMove]);
+
+  /** Dragging the minimised button moves it — and undocks it, so its place
+   *  is remembered (Preferences.widget, which the account vault syncs). */
+  function startFabDrag(e: React.PointerEvent) {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
+    movedRef.current = false;
+    startRef.current = { x: e.clientX, y: e.clientY };
+    if (state.locked) onUpdate({ locked: false, x: rect.left, y: rect.top });
+    else if (anchored) onMove(rect.left, rect.top);
+    setDragging(true);
+  }
 
   function startDrag(e: React.PointerEvent) {
     if (state.locked) return; // docked → no dragging
@@ -79,9 +104,11 @@ export function RecipientsWidget({
     setDragging(true);
   }
 
-  // Docked → fixed top-left, next to the menu. Floating → x/y or bottom-right.
+  // Docked → top right, under the menu button. `--m5-dock-top` is the bottom
+  // edge of the header + status bar (App measures it), so the widget never
+  // covers the controls there. Floating → x/y or bottom-right.
   const posStyle: React.CSSProperties = state.locked
-    ? { left: 8, top: 60, transformOrigin: "top left" }
+    ? { right: 8, top: "var(--m5-dock-top, 96px)", transformOrigin: "top right" }
     : anchored
       ? { right: 12, bottom: 88, transformOrigin: "bottom right" }
       : { left: state.x, top: state.y, transformOrigin: "top left" };
@@ -96,18 +123,30 @@ export function RecipientsWidget({
   };
 
   const openPeers = peers.filter((p) => p.status === "open");
+  const awayPeers = peers.filter((p) => p.status === "away");
 
   if (state.minimized) {
     return (
-      <button type="button" className="recip-fab" style={posStyle} onClick={() => onMinimize(false)} data-testid="recip-fab" title={widgetTitle}>
+      <button
+        type="button"
+        className="recip-fab"
+        style={posStyle}
+        onPointerDown={startFabDrag}
+        onClick={() => { if (!movedRef.current) onMinimize(false); }}
+        data-testid="recip-fab"
+        title={widgetTitle}
+        aria-label={widgetTitle}
+      >
         <Users className="h-5 w-5" />
-        <span className="recip-fab__count">{openPeers.length}</span>
+        <span className="recip-fab__count">{openPeers.length + awayPeers.length}</span>
       </button>
     );
   }
 
   // Online first, offline (not open) sunk to the bottom and disabled.
-  const ordered = [...peers].sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1));
+  // Connected first, away next (the server answers for them), gone last.
+  const rank = (p: WidgetPeer) => (p.status === "open" ? 0 : p.status === "away" ? 1 : 2);
+  const ordered = [...peers].sort((a, b) => rank(a) - rank(b));
 
   return (
     <div className={`recip-widget${state.locked ? " is-locked" : ""}`} style={appearance} data-testid="recip-widget" role="group" aria-label={widgetTitle}>
@@ -154,13 +193,20 @@ export function RecipientsWidget({
         ) : (
           <ul className="recip-list">
             {ordered.map((p) => {
+              const away = p.status === "away";
               const online = p.status === "open";
-              const checked = online && (state.autoRoom || selected.has(p.id));
-              const disabled = !online || state.autoRoom;
+              // An away member is reachable through the server, so they can be
+              // selected just like a connected peer.
+              const reachable = online || away;
+              const checked = reachable && (state.autoRoom || selected.has(p.id));
+              const disabled = !reachable || state.autoRoom;
               return (
-                <li key={p.id} className={`recip-row${online ? "" : " is-offline"}`} data-testid={`recip-${p.id}`}>
+                <li key={p.id} className={`recip-row${reachable ? "" : " is-offline"}${away ? " is-away" : ""}`} data-testid={`recip-${p.id}`}>
                   <Avatar name={p.name} avatar={p.avatar} size={26} />
-                  <span className="recip-name">{p.name}{online ? "" : ` · ${t(lang, "recipients.offline")}`}</span>
+                  <span className="recip-name">
+                    {p.name}
+                    {away ? <span className="recip-away-tag"><Moon className="h-3 w-3" />{t(lang, "away.badge")}</span> : online ? "" : ` · ${t(lang, "recipients.offline")}`}
+                  </span>
                   <LatencyMeter rttMs={p.rttMs} open={online} />
                   <button type="button" className="recip-info" onClick={() => onPeerInfo(p.id)} aria-label={t(lang, "userstyle.info")}>
                     <Info className="h-4 w-4" />

@@ -12,6 +12,13 @@
 //   - POST /api/audit/purge        wipe device-scoped server state
 //   - /api/admin/retention*        retention policy + sweep, admin token
 //                                  (retention-routes.ts; a timer also sweeps)
+//   - /api/account/*               passkey accounts: sign-in, encrypted vault,
+//                                  audit (accounts/routes.ts)
+//
+// Signed-in users (join with their account token and away: true) stay in a
+// room as AWAY when their socket goes; others relay room-key ciphertext to
+// the server, which stores it, answers "stored" and wakes them with a push
+// (accounts/relay.ts).
 //
 // Admin commands are enqueued only by the standalone admin service
 // (admin.ts, /admin/commands/*); this process delivers them over /ws.
@@ -37,7 +44,10 @@ import { registerPushRoutes } from "./push-routes";
 import { consentLedger, deviceAuditLog, deviceSettings } from "./device-state";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 import { registerPluginRoutes } from "./plugins/routes";
-import { registerPasskeyRoutes } from "./passkey";
+import { accountStore } from "./accounts/store";
+import { AwayRelay } from "./accounts/relay";
+import { registerAccountRoutes } from "./accounts/routes";
+import { sendWebPush } from "./push";
 import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
@@ -51,15 +61,23 @@ type PeerClient = {
   name: string;
   joinedAt: number;
   socket: WebSocket;
+  /** Signed-in (passkey account) — set by join with a valid token. */
+  accountId?: string;
+  /** Stay in the room as away when the socket goes (chat kept on the server). */
+  awayEnabled?: boolean;
 };
 
 type ClientMessage =
-  | { type: "join"; room: string; peerId: string; name?: string }
+  | { type: "join"; room: string; peerId: string; name?: string; auth?: string; away?: boolean }
   | { type: "signal"; target: string; payload: unknown }
   | { type: "ping"; t: number }
   | { type: "command-poll"; deviceId?: string }
   | { type: "command-ack"; commandId: string; result?: string }
-  | { type: "leave" }
+  | { type: "leave"; away?: boolean }
+  // Away relay (signed-in users): see accounts/relay.ts.
+  | { type: "relay"; messageId: string; to: string[]; envelope: { iv: string; ciphertext: string } }
+  | { type: "relay-ack"; ids: string[] }
+  | { type: "receipt"; to: { peerId?: string; accountId?: string }; messageIds: string[]; state: "delivered" | "read" }
   // Server-side proxy mode for file transfer: clients that cannot
   // successfully establish a direct P2P connection can fall back to the
   // signaling WebSocket as a relay. The server never sees the plaintext
@@ -68,9 +86,13 @@ type ClientMessage =
   | { type: "proxy-chunk"; transferId: string; seq: number; iv: string; ciphertext: string }
   | { type: "proxy-end"; transferId: string }
   | { type: "proxy-cancel"; transferId: string }
+  // Receiver → sender: repeat these chunks (see lib/file-transfer.ts).
+  | { type: "proxy-need"; transferId: string; seqs: number[] }
   | { type: "proxy-progress"; transferId: string; received: number };
 
 const rooms = new Map<string, Map<string, PeerClient>>();
+
+const relay = new AwayRelay(accountStore, rooms, send, (target, payload) => sendWebPush(target, payload));
 
 // pushSubscriptions and admin command queue live in routes-admin-shared.ts
 // so that the standalone admin API service can read and enqueue against
@@ -97,7 +119,9 @@ function send(socket: WebSocket, payload: unknown) {
   }
 }
 
-function leaveRoom(client: PeerClient) {
+/** `wantsAway`: a signed-in client with away enabled stays in the room as
+ *  away (socket lost, or Disconnect) instead of leaving. */
+function leaveRoom(client: PeerClient, wantsAway = false) {
   if (!client.room) return;
   const roomId = client.room;
   const room = rooms.get(roomId);
@@ -115,6 +139,7 @@ function leaveRoom(client: PeerClient) {
   }
   eventStore.record({ kind: "peer-left", room: roomId, peerId: client.id });
   client.room = null;
+  relay.onLeave(client, roomId, wantsAway);
 }
 
 function joinRoom(client: PeerClient, message: Extract<ClientMessage, { type: "join" }>) {
@@ -125,6 +150,9 @@ function joinRoom(client: PeerClient, message: Extract<ClientMessage, { type: "j
   client.id = peerId;
   client.name = safeString(message.name, "Anonymous", 48);
   client.room = roomId;
+  const account = message.auth ? accountStore.resolveToken(message.auth) : null;
+  client.accountId = account?.id;
+  client.awayEnabled = Boolean(account && message.away === true);
 
   let room = rooms.get(roomId);
   if (!room) {
@@ -136,6 +164,7 @@ function joinRoom(client: PeerClient, message: Extract<ClientMessage, { type: "j
     peerId: peer.id,
     name: peer.name,
     joinedAt: peer.joinedAt,
+    ...(peer.accountId ? { accountId: peer.accountId } : {}),
   }));
 
   room.set(client.id, client);
@@ -145,6 +174,9 @@ function joinRoom(client: PeerClient, message: Extract<ClientMessage, { type: "j
     peerId: client.id,
     room: roomId,
     peers: existingPeers,
+    // Signed-in members who are away: messages to them go through the relay.
+    away: relay.awayList(roomId).filter((a) => a.accountId !== client.accountId),
+    account: account ? { id: account.id, away: client.awayEnabled } : message.auth ? { invalid: true } : null,
     policy: {
       transport: "webrtc-datachannel",
       persistence: "none",
@@ -160,9 +192,13 @@ function joinRoom(client: PeerClient, message: Extract<ClientMessage, { type: "j
         peerId: client.id,
         name: client.name,
         joinedAt: client.joinedAt,
+        ...(client.accountId ? { accountId: client.accountId } : {}),
       });
     }
   });
+
+  // Back from away (peer-back) + everything that waited in the mailbox.
+  relay.onJoin(client);
 
   eventStore.record({
     kind: "peer-joined",
@@ -194,8 +230,9 @@ export async function registerRoutes(
   registerGoodbyeRoute(app);
   // Optional AI + speech modules (gated by ENABLE_AI / ENABLE_SPEECH).
   registerPluginRoutes(app);
-  // Zero-knowledge PassKey-encrypted profile storage.
-  registerPasskeyRoutes(app);
+  // Passkey accounts: WebAuthn sign-in, zero-knowledge vault, audit log.
+  // Signing out / deleting ends the away status in every room.
+  registerAccountRoutes(app, accountStore, { onSignOut: (accountId) => relay.forget(accountId) });
   // Optional telephony (voice + SMS via Twilio/Telnyx/Vonage, SIP trunk config),
   // gated by ENABLE_TELEPHONY.
   registerTelephonyRoutes(app);
@@ -393,7 +430,21 @@ export async function registerRoutes(
         }
 
         if (message.type === "leave") {
-          leaveRoom(client);
+          leaveRoom(client, message.away === true);
+          return;
+        }
+
+        // ---------- Away relay (signed-in users) ----------
+        if (message.type === "relay") {
+          void relay.relay(client, message);
+          return;
+        }
+        if (message.type === "relay-ack") {
+          relay.ack(client, message.ids);
+          return;
+        }
+        if (message.type === "receipt") {
+          relay.receipt(client, message);
           return;
         }
 
@@ -402,7 +453,8 @@ export async function registerRoutes(
           message.type === "proxy-meta" ||
           message.type === "proxy-chunk" ||
           message.type === "proxy-end" ||
-          message.type === "proxy-cancel"
+          message.type === "proxy-cancel" ||
+          message.type === "proxy-need"
         ) {
           if (!client.room) return;
           const result = relayProxyFrame(
@@ -441,8 +493,10 @@ export async function registerRoutes(
       }
     });
 
-    socket.on("close", () => leaveRoom(client));
-    socket.on("error", () => leaveRoom(client));
+    // Losing the socket (tab closed, network gone) is not a goodbye: a
+    // signed-in user with away enabled stays reachable through the relay.
+    socket.on("close", () => leaveRoom(client, true));
+    socket.on("error", () => leaveRoom(client, true));
 
     send(socket, {
       type: "hello",

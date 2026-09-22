@@ -115,6 +115,14 @@ import { M5Logo } from "./components/M5Logo";
 import { InvitePrompt, ShareSection } from "./components/SharePanel";
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
 import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
+import type { AttachmentMeta, ChatMessage, MessageAudit, MsgState } from "./lib/chat-types";
+import { AccountInfoModal, ChatRetentionSection, SignedInBadge } from "./components/AccountPanel";
+import {
+  accountStatus, accountSupported, accountToken, currentAccount, deleteAccount as deleteServerAccount,
+  linkPushSubscription, loadVault, logAccountEvent, refreshAccount, registerAccount, restoreSession, saveVault,
+  signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
+} from "./lib/account";
+import { createHistoryStore, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
 import { leaveToGoodbye, wipeEverything } from "./lib/wipe";
 import {
   AnalyticsPanel,
@@ -125,6 +133,7 @@ import {
   RoomSecurityPanel,
   SettingsPanel,
   TrustPanel,
+  profileFromPrefs,
 } from "./components/panels";
 
 type PeerStatus = "connecting" | "open" | "closed";
@@ -138,50 +147,27 @@ type PeerView = {
   audio: AudioStatus;
 };
 
-type AttachmentMeta = {
-  kind: "file" | "image";
-  name: string;
-  mime: string;
-  size: number;
-  dataUrl: string;
-};
-
-type ChatMessage = {
-  id: string;
-  senderId: string;
-  senderName: string;
-  text: string;
-  createdAt: number;
-  mine: boolean;
-  secure: boolean;
-  attachment?: AttachmentMeta;
-  expiresAt?: number;
-  // Optional message kinds (see lib/message-kinds.ts).
-  flags?: MsgFlags;
-  /** Recipient names when the message was sent privately (not to everyone). */
-  to?: string[];
-  /** Sender-only: original text + code for a sealed message, kept locally. */
-  sealPlain?: string;
-  sealCode?: string;
-  /** "Mizející" message that has fully elapsed. */
-  vanished?: boolean;
-  vanishedAt?: number;
-  /** Lifecycle audit trail (created → encrypted → sent → received → …). */
-  audit?: MessageAudit[];
-  /** The on-wire ciphertext, for the message-info view. */
-  cipher?: string;
-  /** Quoted message this one replies to (original text capped to 200 chars). */
-  replyTo?: { id: string; senderName: string; text: string };
-  /** Original author when this message was forwarded. */
-  forwardedFrom?: string;
-};
-
-export type MsgState = "created" | "encrypted" | "sent" | "received" | "decrypted" | "displayed" | "discarded";
-export type MessageAudit = { state: MsgState; at: number; meta?: string };
+// The message shapes live in lib/chat-types.ts so the history store and the
+// account vault can talk about them without importing the whole app.
+export type { MsgState, MessageAudit } from "./lib/chat-types";
 
 type SignalFrame =
-  | { type: "joined"; peerId: string; room: string; peers: Array<{ peerId: string; name: string; joinedAt: number }> }
-  | { type: "peer-joined"; peerId: string; name: string; joinedAt: number }
+  | {
+      type: "joined";
+      peerId: string;
+      room: string;
+      peers: Array<{ peerId: string; name: string; joinedAt: number; accountId?: string }>;
+      // Signed-in members the server answers for while they are gone.
+      away?: AwayPeer[];
+      account?: { id: string; away: boolean } | { invalid: true } | null;
+    }
+  | { type: "peer-joined"; peerId: string; name: string; joinedAt: number; accountId?: string }
+  // Away relay (see server/accounts/relay.ts)
+  | { type: "peer-away"; accountId: string; peerId: string; name: string; since: number }
+  | { type: "peer-back"; accountId: string; peerId: string; name: string }
+  | { type: "peer-gone"; accountId: string }
+  | { type: "relay-deliver"; items: RelayItem[] }
+  | { type: "relay-status"; messageId: string; recipient: { accountId: string; name: string }; state: MsgState | "rejected"; at: number; reason?: string }
   | { type: "peer-left"; peerId: string }
   | { type: "signal"; source: string; payload: RTCSessionDescriptionInit | RTCIceCandidateInit }
   | { type: "hello"; peerId: string }
@@ -194,7 +180,8 @@ type SignalFrame =
   | { type: "proxy-end"; transferId: string; transport: "proxy" }
   | { type: "proxy-cancel"; transferId: string; transport: "proxy" }
   | { type: "proxy-progress"; transferId: string; received: number; transport: "proxy" }
-  | { type: "proxy-ack"; transferId: string; accepted: boolean; reason?: string; transport: "proxy" };
+  | { type: "proxy-ack"; transferId: string; accepted: boolean; reason?: string; transport: "proxy" }
+  | { type: "proxy-need"; transferId: string; seqs: number[] };
 
 
 
@@ -221,6 +208,21 @@ type DecryptedPayload =
       senderName: string;
       status: AudioStatus;
     };
+
+/** A signed-in participant who is not connected right now: the server takes
+ *  their messages and hands them over when they come back. */
+type AwayPeer = { accountId: string; name: string; since: number };
+
+/** One item out of the away mailbox. */
+type RelayItem = {
+  id: string;
+  kind: "message" | "status";
+  messageId: string;
+  from: { peerId: string; accountId?: string; name: string };
+  envelope?: { iv: string; ciphertext: string };
+  status?: { state: "delivered" | "read"; at: number; recipientName: string };
+  storedAt: number;
+};
 
 type PeerHandle = {
   id: string;
@@ -394,6 +396,24 @@ function ChatApp() {
   // Selected private recipients (peerIds). Empty + autoRoom off => nothing sends.
   const [recipients, setRecipients] = useState<Set<string>>(new Set());
   const [widget, setWidget] = useState<WidgetState>(initialPrefs.widget);
+
+  // --- signed-in user (passkey account) + away relay ---
+  const [account, setAccount] = useState<AccountSummary | null>(null);
+  const [accStatus, setAccStatus] = useState<AccountStatus | null>(null);
+  const [accBusy, setAccBusy] = useState(false);
+  const [accMsg, setAccMsg] = useState("");
+  const [showAccount, setShowAccount] = useState(false);
+  /** Signed-in members of the room the server is currently answering for. */
+  const [awayPeers, setAwayPeers] = useState<AwayPeer[]>([]);
+  const accountRef = useRef<AccountSummary | null>(null);
+  const awayPeersRef = useRef<AwayPeer[]>([]);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  const retentionRef = useRef<ChatRetention>(initialPrefs.chatRetention);
+  const historyRef = useRef(createHistoryStore());
+  const lastVaultSaveRef = useRef(0);
+  /** Who sent a relayed message, so a read receipt can find its way back. */
+  const relaySendersRef = useRef<Map<string, { peerId: string; accountId?: string }>>(new Map());
+  const prefsRef = useRef(initialPrefs);
   // Which participant's info modal is open (peerId, or "self").
   const [userInfoFor, setUserInfoFor] = useState<string | null>(null);
   // Which message's info/audit modal is open (message id).
@@ -449,6 +469,10 @@ function ChatApp() {
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
   const incomingFilesRef = useRef(newIncomingRegistry());
+  /** Bottom edge of the header + status bar: where a docked panel may start. */
+  const dockAnchorRef = useRef<HTMLDivElement | null>(null);
+  /** Files we sent, by transferId: how to repeat the chunks a receiver lost. */
+  const resendableRef = useRef(new Map<string, (seqs: number[]) => Promise<void>>());
   const passphraseRef = useRef("");
   const roomInputRef = useRef("");
   const locationWatcherRef = useRef<LocationWatcher | null>(null);
@@ -527,7 +551,8 @@ function ChatApp() {
     return filtered;
   }, [messages, now, prefs.roomSecurity, room]);
 
-  const canSend = status === "joined" && openPeerCount > 0 && messageInput.trim().length > 0;
+  // Away members count as reachable: the server takes the message for them.
+  const canSend = status === "joined" && (openPeerCount > 0 || awayPeers.length > 0) && messageInput.trim().length > 0;
 
   function setPrefs(next: Partial<Preferences>) {
     setPrefsState((current) => {
@@ -634,10 +659,301 @@ function ChatApp() {
   }
   function selectAllRecipients() {
     updateWidget({ autoRoom: false });
-    setRecipients(new Set(Array.from(peersRef.current.values()).filter((p) => p.channel?.readyState === "open").map((p) => p.id)));
+    setRecipients(new Set([
+      ...Array.from(peersRef.current.values()).filter((p) => p.channel?.readyState === "open").map((p) => p.id),
+      ...awayPeersRef.current.map((a) => awayKey(a.accountId)),
+    ]));
   }
   function selectNoRecipients() { setRecipients(new Set()); }
   function setAutoRoom(auto: boolean) { updateWidget({ autoRoom: auto }); if (auto) setRecipients(new Set()); }
+
+  // ---------------------------------------------------------------------
+  // The signed-in user: their passkey account, the encrypted vault and the
+  // away relay the server runs for them (server/accounts/*).
+  // ---------------------------------------------------------------------
+
+  useEffect(() => { accountRef.current = account; }, [account]);
+  useEffect(() => { awayPeersRef.current = awayPeers; }, [awayPeers]);
+  useEffect(() => { messagesRef.current = messages; }, [messages]);
+  useEffect(() => { retentionRef.current = prefs.chatRetention; }, [prefs.chatRetention]);
+  useEffect(() => { prefsRef.current = prefs; }, [prefs]);
+
+  /** Away members appear in the recipients list under this id. */
+  const awayKey = (accountId: string) => `away:${accountId}`;
+
+  /** Merge restored / relayed messages into the conversation, by id and time. */
+  function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
+    if (incoming.length === 0) return current;
+    const byId = new Map(current.map((m) => [m.id, m]));
+    for (const m of incoming) if (!byId.has(m.id)) byId.set(m.id, m);
+    return Array.from(byId.values()).sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  /** What the vault keeps for this conversation (trimmed, never the cipher). */
+  function chatVaultPayload() {
+    return {
+      messages: prepareHistory(messagesRef.current),
+      rooms: roomRef.current ? [roomRef.current] : [],
+      savedAt: Date.now(),
+    };
+  }
+
+  /** Stores the conversation where the chosen retention mode says it goes.
+   *  Coalesced to once every 30 s unless `force`. */
+  async function persistChat(force = false) {
+    const mode = retentionRef.current;
+    const currentRoom = roomRef.current;
+    if (!currentRoom || mode === "ephemeral") return;
+    if (mode === "session") { await historyRef.current.save(currentRoom, messagesRef.current); return; }
+    if (!accountRef.current) return;
+    const at = Date.now();
+    if (!force && at - lastVaultSaveRef.current < 30_000) return;
+    lastVaultSaveRef.current = at;
+    try {
+      const summary = await saveVault({ chat: chatVaultPayload(), profile: profileFromPrefs(prefsRef.current) });
+      if (summary) setAccount(summary);
+    } catch (err) {
+      setAccMsg((err as Error).message);
+    }
+  }
+
+  /** Opens the server-side vault and brings its contents into the app. */
+  async function applyVault(announce = false): Promise<number> {
+    try {
+      const { profile, chat } = await loadVault<Partial<Preferences>>();
+      if (profile) setPrefs(profile);
+      const restored = chat ? sanitizeRestored(chat.messages, myIdRef.current) : [];
+      if (restored.length) setMessages((cur) => mergeMessages(cur, restored));
+      void logAccountEvent("decrypt-ok", { messages: restored.length, profile: Boolean(profile) });
+      void logAccountEvent("data-loaded", { messages: restored.length });
+      if (restored.length) void logAccountEvent("chat-restored", { messages: restored.length });
+      if (announce) systemMessage(t(lang, "acc.loaded").replace("{n}", String(restored.length)));
+      return restored.length;
+    } catch (err) {
+      void logAccountEvent("decrypt-failed");
+      setAccMsg(t(lang, "acc.decryptFailed"));
+      throw err;
+    }
+  }
+
+  /** Hands this device's push subscription to the account so the server can
+   *  wake it while the user is away. */
+  async function linkPushForAccount() {
+    try {
+      if (!("serviceWorker" in navigator)) return;
+      const registration = await navigator.serviceWorker.getRegistration();
+      const subscription = await registration?.pushManager.getSubscription();
+      if (subscription) await linkPushSubscription(subscription);
+    } catch { /* notifications are optional */ }
+  }
+
+  /** Tell the server who we are on the open socket (away relay + presence). */
+  function announceAccountToServer() {
+    const socket = socketRef.current;
+    if (socket?.readyState !== WebSocket.OPEN || !roomRef.current) return;
+    socket.send(JSON.stringify({
+      type: "join",
+      room: roomRef.current,
+      peerId: myIdRef.current,
+      name: nameRef.current,
+      ...(accountToken() ? { auth: accountToken() } : {}),
+      away: retentionRef.current === "server" && Boolean(accountRef.current),
+    }));
+  }
+
+  async function runAccountTask(work: () => Promise<void>) {
+    setAccBusy(true);
+    setAccMsg("");
+    try { await work(); } catch (err) { setAccMsg((err as Error).message); } finally { setAccBusy(false); }
+  }
+
+  function signInToAccount() {
+    return runAccountTask(async () => {
+      const acc = await signInWithPasskey();
+      setAccount(acc);
+      setPrefs({ chatRetention: "server" });
+      retentionRef.current = "server";
+      setAccMsg(t(lang, "acc.signedInAs").replace("{name}", acc.userName));
+      systemMessage(t(lang, "acc.signedInAs").replace("{name}", acc.userName));
+      await applyVault(true);
+      await linkPushForAccount();
+      announceAccountToServer();
+    });
+  }
+
+  function createAccount() {
+    return runAccountTask(async () => {
+      const acc = await registerAccount(prefs.name || "M5cet");
+      setAccount(acc);
+      setPrefs({ chatRetention: "server" });
+      retentionRef.current = "server";
+      await saveVault({ profile: profileFromPrefs(prefsRef.current), chat: chatVaultPayload() });
+      setAccount(currentAccount());
+      setAccMsg(t(lang, "acc.signedInAs").replace("{name}", acc.userName));
+      await linkPushForAccount();
+      announceAccountToServer();
+    });
+  }
+
+  /** "Sign out — wipe the session and its data": the server keeps the sealed
+   *  vault, this browser keeps nothing. */
+  function signOutAndWipe() {
+    return runAccountTask(async () => {
+      if (accountRef.current) {
+        await persistChat(true).catch(() => undefined);
+        void logAccountEvent("data-cleared");
+        await signOutAccount();
+      }
+      await historyRef.current.clear();
+      await sessionCacheRef.current.clear();
+      setAccount(null);
+      setAwayPeers([]);
+      setMessages([]);
+      setShowAccount(false);
+      userDisconnect();
+      systemMessage(t(lang, "data.cleared"));
+      setAccMsg(t(lang, "data.cleared"));
+    });
+  }
+
+  function deleteAccountForever() {
+    if (!window.confirm(t(lang, "acc.delete.confirm"))) return;
+    void runAccountTask(async () => {
+      await deleteServerAccount();
+      await historyRef.current.clear();
+      setAccount(null);
+      setAwayPeers([]);
+      setMessages([]);
+      setShowAccount(false);
+      setPrefs({ chatRetention: "ephemeral" });
+      retentionRef.current = "ephemeral";
+      systemMessage(t(lang, "acc.deleted"));
+    });
+  }
+
+  function saveAccountDataNow() {
+    void runAccountTask(async () => {
+      await persistChat(true);
+      const fresh = await refreshAccount();
+      if (fresh) setAccount(fresh);
+      setAccMsg(t(lang, "acc.saved"));
+    });
+  }
+
+  /** Away members the next message should also reach. */
+  function awayTargets(): AwayPeer[] {
+    const list = awayPeersRef.current;
+    if (list.length === 0) return [];
+    if (widget.autoRoom) return list;
+    return list.filter((a) => recipients.has(awayKey(a.accountId)));
+  }
+
+  /** Hands an already-encrypted envelope to the server for away members. */
+  function relayToAway(messageId: string, envelope: DataChannelEnvelope, targets: AwayPeer[]): number {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || targets.length === 0) return 0;
+    socket.send(JSON.stringify({ type: "relay", messageId, to: targets.map((a) => a.accountId), envelope }));
+    return targets.length;
+  }
+
+  /** A status the server reports for a message we sent to an away member. */
+  function applyRelayStatus(frame: { messageId: string; recipient: { accountId: string; name: string }; state: MsgState | "rejected"; at: number; reason?: string }) {
+    if (frame.state === "rejected") {
+      systemMessage(`${frame.recipient.name}: ${frame.reason ?? "relay rejected"}`);
+      return;
+    }
+    const state = frame.state;
+    if (state === "stored") systemMessage(t(lang, "away.stored").replace("{name}", frame.recipient.name));
+    setMessages((cur) => cur.map((m) => {
+      if (m.id !== frame.messageId) return m;
+      if (m.audit?.some((a) => a.state === state && a.meta === frame.recipient.name)) return m;
+      return { ...m, audit: [...(m.audit ?? []), { state, at: frame.at, meta: frame.recipient.name }] };
+    }));
+  }
+
+  /** The mailbox the server kept while we were away. */
+  async function handleRelayDelivery(items: RelayItem[]) {
+    const key = keyRef.current;
+    if (!key || items.length === 0) return;
+    const handled: string[] = [];
+    const incoming: ChatMessage[] = [];
+    for (const item of items) {
+      if (item.kind === "status" && item.status) {
+        applyRelayStatus({
+          messageId: item.messageId,
+          recipient: { accountId: item.from.accountId ?? "", name: item.status.recipientName },
+          state: item.status.state,
+          at: item.status.at,
+        });
+        handled.push(item.id);
+        continue;
+      }
+      if (!item.envelope) continue;
+      try {
+        const plaintext = await decryptEnvelope<DecryptedPayload>(key, item.envelope);
+        handled.push(item.id);
+        if (plaintext.kind === "audio-status") continue;
+        if (messagesRef.current.some((m) => m.id === plaintext.id)) continue;
+        relaySendersRef.current.set(plaintext.id, { peerId: item.from.peerId, accountId: item.from.accountId });
+        incoming.push({
+          id: plaintext.id,
+          senderId: plaintext.senderId,
+          senderName: plaintext.senderName,
+          text: plaintext.text,
+          createdAt: plaintext.createdAt,
+          attachment: plaintext.attachment,
+          mine: plaintext.senderId === myIdRef.current,
+          secure: true,
+          expiresAt: computeExpiry(plaintext.ttlMinutes, plaintext.createdAt),
+          flags: plaintext.flags,
+          to: plaintext.to,
+          replyTo: plaintext.replyTo,
+          forwardedFrom: plaintext.forwardedFrom,
+          audit: [
+            { state: "created", at: plaintext.createdAt },
+            { state: "stored", at: item.storedAt, meta: "server" },
+            { state: "received", at: Date.now(), meta: "relay" },
+            { state: "decrypted", at: Date.now() },
+          ],
+        });
+      } catch {
+        // Not our room key (another room, or a stale message) — leave it.
+      }
+    }
+    if (incoming.length > 0) {
+      setMessages((cur) => mergeMessages(cur, incoming));
+      systemMessage(t(lang, "away.received").replace("{n}", String(incoming.length)));
+      void logAccountEvent("decrypt-ok", { messages: incoming.length });
+    }
+    const socket = socketRef.current;
+    if (handled.length > 0 && socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: "relay-ack", ids: handled }));
+    }
+  }
+
+  /** The furthest a message of mine got, for the mark on its bubble. */
+  function deliveryStateOf(message: ChatMessage): MsgState | undefined {
+    if (!message.mine) return undefined;
+    const sec = (room && prefs.roomSecurity[room]) || DEFAULT_ROOM_SECURITY;
+    if (!sec.messageStatus) return undefined;
+    const order: MsgState[] = ["sent", "stored", "forwarded", "delivered", "read"];
+    let best: MsgState | undefined;
+    for (const entry of message.audit ?? []) {
+      if (order.indexOf(entry.state) > order.indexOf(best ?? "sent")) best = entry.state;
+      else if (!best && entry.state === "sent") best = "sent";
+    }
+    return best;
+  }
+
+  /** Read receipt for a message the server relayed to us. */
+  function sendReadReceipt(messageId: string) {
+    const sender = relaySendersRef.current.get(messageId);
+    const socket = socketRef.current;
+    if (!sender || socket?.readyState !== WebSocket.OPEN) return;
+    const sec = (roomRef.current && prefsRef.current.roomSecurity[roomRef.current]) || DEFAULT_ROOM_SECURITY;
+    if (!sec.readReceipts) return;
+    socket.send(JSON.stringify({ type: "receipt", to: sender, messageIds: [messageId], state: "read" }));
+  }
 
   useEffect(() => {
     if (!notice) setNotice(t(lang, "chat.empty.body"));
@@ -840,6 +1156,19 @@ function ChatApp() {
         if (!key) throw new Error("Missing room key");
 
         // File transfer frames bypass the normal envelope decode.
+        // The receiver lost a few chunks and asks for them again.
+        if (raw && (raw as { kind?: string }).kind === "file-need") {
+          const need = raw as { transferId: string; seqs: number[] };
+          const repeat = resendableRef.current.get(need.transferId);
+          if (repeat) {
+            systemMessage(lang === "cs"
+              ? `Posílám znovu ${need.seqs.length} chybějících částí souboru.`
+              : `Re-sending ${need.seqs.length} missing file chunks.`);
+            void repeat(need.seqs).catch(() => undefined);
+          }
+          return;
+        }
+
         if (raw && typeof (raw as { kind?: string }).kind === "string" && (
           (raw as { kind: string }).kind === "file-meta" ||
           (raw as { kind: string }).kind === "file-chunk" ||
@@ -857,6 +1186,15 @@ function ChatApp() {
                 systemMessage(
                   `Přijímám soubor ${meta.name} (${formatBytes(meta.size)}) od ${meta.senderName} přes ${transport === "p2p" ? "P2P" : "server proxy"}.`,
                 );
+              },
+              onNeed: (transferId, seqs, _transport, round) => {
+                // Do not throw away a file that is all but delivered.
+                try {
+                  channel.send(JSON.stringify({ kind: "file-need", transferId, seqs, transport: "p2p" }));
+                  systemMessage(lang === "cs"
+                    ? `Chybí ${seqs.length} částí souboru — žádám o jejich zopakování (pokus ${round}).`
+                    : `${seqs.length} file chunks missing — asking the sender to repeat them (attempt ${round}).`);
+                } catch { /* channel gone: the end-of-transfer error follows */ }
               },
               onProgress: (id, recv, total, stats) => {
                 updateTransfer(id, { stats: { ...stats, received: recv, size: total } });
@@ -1173,8 +1511,20 @@ function ChatApp() {
     myIdRef.current = nextPeerId;
     roomRef.current = nextRoom;
     keyRef.current = await deriveRoomKey(nextRoom, passphraseRef.current);
-    setMessages([]);
+    // "A new connection clears the chat" is one of three choices now: the
+    // session and server modes keep the conversation (chat-history.ts).
+    if (retentionRef.current === "ephemeral") {
+      setMessages([]);
+      relaySendersRef.current.clear();
+    } else if (retentionRef.current === "session") {
+      const restored = await historyRef.current.load(nextRoom);
+      if (restored.length > 0) {
+        setMessages((cur) => mergeMessages(cur, restored.map((m) => ({ ...m, mine: m.senderId === nextPeerId }))));
+        systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
+      }
+    }
     setPeers([]);
+    setAwayPeers([]);
     // Compute the deterministic room-key fingerprint (DPA anchor). We
     // hash a constant-length string derived from the room id so the
     // fingerprint is independent of the password length but only changes
@@ -1191,7 +1541,16 @@ function ChatApp() {
     socket.onopen = () => {
       logConn("open", reconnectAttemptsRef.current + 1);
       reconnectAttemptsRef.current = 0;
-      socket.send(JSON.stringify({ type: "join", room: nextRoom, peerId: nextPeerId, name: nameRef.current }));
+      // A signed-in user with server-side history joins with their account
+      // token and asks the server to stay in the room for them (away relay).
+      socket.send(JSON.stringify({
+        type: "join",
+        room: nextRoom,
+        peerId: nextPeerId,
+        name: nameRef.current,
+        ...(accountToken() ? { auth: accountToken() } : {}),
+        away: retentionRef.current === "server" && Boolean(accountRef.current),
+      }));
       socket.send(JSON.stringify({ type: "command-poll", deviceId: prefs.deviceId }));
       startHeartbeat();
       setConnStatus({
@@ -1277,6 +1636,13 @@ function ChatApp() {
       if (frame.type === "joined") {
         setStatus("joined");
         systemMessage(`Joined ${frame.room}. Peers: ${frame.peers.length}.`);
+        setAwayPeers(frame.away ?? []);
+        if (frame.account && "invalid" in frame.account) {
+          // The token did not outlive the server: sign in again to get the
+          // vault and the relay back.
+          setAccount(null);
+          void restoreSession().then((acc) => { if (acc) { setAccount(acc); announceAccountToServer(); } });
+        }
         for (const peer of frame.peers) {
           await createPeer(peer.peerId, peer.name, true);
         }
@@ -1300,6 +1666,27 @@ function ChatApp() {
         systemMessage(`${frame.name} entered the room.`);
       }
 
+      if (frame.type === "peer-away") {
+        setAwayPeers((cur) => [...cur.filter((a) => a.accountId !== frame.accountId), { accountId: frame.accountId, name: frame.name, since: frame.since }]);
+        systemMessage(t(lang, "away.peer").replace("{name}", frame.name));
+        return;
+      }
+
+      if (frame.type === "peer-back" || frame.type === "peer-gone") {
+        setAwayPeers((cur) => cur.filter((a) => a.accountId !== frame.accountId));
+        return;
+      }
+
+      if (frame.type === "relay-deliver") {
+        await handleRelayDelivery(frame.items);
+        return;
+      }
+
+      if (frame.type === "relay-status") {
+        applyRelayStatus(frame);
+        return;
+      }
+
       if (frame.type === "peer-left") {
         const handle = peersRef.current.get(frame.peerId);
         handle?.channel?.close();
@@ -1319,6 +1706,17 @@ function ChatApp() {
       }
 
       // ---------- Server-relayed file transfer (proxy mode) ----------
+      if (frame.type === "proxy-need") {
+        const repeat = resendableRef.current.get(frame.transferId);
+        if (repeat) {
+          systemMessage(lang === "cs"
+            ? `Posílám znovu ${frame.seqs.length} chybějících částí souboru.`
+            : `Re-sending ${frame.seqs.length} missing file chunks.`);
+          void repeat(frame.seqs).catch(() => undefined);
+        }
+        return;
+      }
+
       if (frame.type === "proxy-ack") {
         if (!frame.accepted) {
           setNotice(
@@ -1359,6 +1757,14 @@ function ChatApp() {
             systemMessage(
               `Přijímám soubor ${meta.name} (${formatBytes(meta.size)}) od ${meta.senderName} přes ${transport === "p2p" ? "P2P" : "server proxy"}.`,
             );
+          },
+          onNeed: (transferId, seqs, _transport, round) => {
+            const socket = socketRef.current;
+            if (socket?.readyState !== WebSocket.OPEN) return;
+            socket.send(JSON.stringify({ type: "proxy-need", kind: "proxy-need", transferId, seqs }));
+            systemMessage(lang === "cs"
+              ? `Chybí ${seqs.length} částí souboru — žádám o jejich zopakování (pokus ${round}).`
+              : `${seqs.length} file chunks missing — asking the sender to repeat them (attempt ${round}).`);
           },
           onProgress: (id, recv, total, stats) => updateTransfer(id, { stats: { ...stats, received: recv, size: total } }),
           onComplete: (id, blob, meta, transport) => {
@@ -1506,7 +1912,10 @@ function ChatApp() {
       reconnectTimerRef.current = null;
     }
     stopHeartbeat();
-    try { socketRef.current?.send(JSON.stringify({ type: "leave" })); } catch { /* ignore */ }
+    // Leaving on purpose while the server keeps our history: stay in the room
+    // as away so messages still reach us (server/accounts/relay.ts).
+    const stayAway = retentionRef.current === "server" && Boolean(accountRef.current);
+    try { socketRef.current?.send(JSON.stringify({ type: "leave", away: stayAway })); } catch { /* ignore */ }
     socketRef.current?.close();
     socketRef.current = null;
     peersRef.current.forEach((peer) => {
@@ -1545,6 +1954,8 @@ function ChatApp() {
     opts: {
       attachment?: AttachmentMeta; send?: SendState; targets?: Set<string>; toNames?: string[];
       replyTo?: { id: string; senderName: string; text: string }; forwardedFrom?: string;
+      /** Signed-in members the server holds this message for. */
+      away?: AwayPeer[];
     } = {},
   ) {
     const key = keyRef.current;
@@ -1589,9 +2000,13 @@ function ChatApp() {
     const envelope = await encryptEnvelope(key, payload);
     audit.push({ state: "encrypted", at: Date.now() });
     const sent = await broadcastEnvelope(envelope, opts.targets);
-    audit.push({ state: "sent", at: Date.now(), meta: `${sent} ${sent === 1 ? "příjemce" : "příjemců"}` });
+    // Away members are not on a data channel: the server takes the ciphertext
+    // for them and answers with "stored" / "delivered".
+    const away = opts.away ?? [];
+    const relayed = relayToAway(payload.id, envelope, away);
+    audit.push({ state: "sent", at: Date.now(), meta: `${sent + relayed} ${sent + relayed === 1 ? "příjemce" : "příjemců"}` });
 
-    if (sent > 0) {
+    if (sent > 0 || relayed > 0) {
       const expiresAt = computeExpiry(ttlMinutes, payload.createdAt);
       setMessages((current) => [
         ...current,
@@ -1624,12 +2039,13 @@ function ChatApp() {
 
   /** Resolve the current recipient selection into concrete targets + names.
    *  Returns null when a private send has no recipients (caller shows a notice). */
-  function resolveRecipients(): { targets?: Set<string>; toNames?: string[] } | null {
-    if (widget.autoRoom) return {}; // everyone
+  function resolveRecipients(): { targets?: Set<string>; toNames?: string[]; away: AwayPeer[] } | null {
+    const away = awayTargets();
+    if (widget.autoRoom) return { away }; // everyone, present or away
     const ids = new Set(Array.from(recipients).filter((id) => peersRef.current.get(id)?.channel?.readyState === "open"));
-    if (ids.size === 0) return null;
-    const toNames = Array.from(ids, (id) => peersRef.current.get(id)?.name || id.slice(-4));
-    return { targets: ids, toNames };
+    if (ids.size === 0 && away.length === 0) return null;
+    const toNames = [...Array.from(ids, (id) => peersRef.current.get(id)?.name || id.slice(-4)), ...away.map((a) => a.name)];
+    return { targets: ids, toNames, away };
   }
 
   async function sendMessage(event?: FormEvent) {
@@ -1638,7 +2054,7 @@ function ChatApp() {
     if (!text) return;
     const rec = resolveRecipients();
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
-    await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, replyTo: replyingTo ?? undefined });
+    await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: replyingTo ?? undefined });
   }
 
   function onMessageVanished(id: string) {
@@ -1649,6 +2065,8 @@ function ChatApp() {
   function onMessageDisplayed(id: string) {
     setMessages((cur) => cur.map((m) => {
       if (m.id !== id || m.audit?.some((a) => a.state === "displayed")) return m;
+      // A message the server relayed to us: tell the sender it was read.
+      sendReadReceipt(id);
       return { ...m, audit: [...(m.audit ?? []), { state: "displayed" as const, at: Date.now() }] };
     }));
   }
@@ -1668,6 +2086,7 @@ function ChatApp() {
       send: DEFAULT_SEND_STATE,
       targets: rec.targets,
       toNames: rec.toNames,
+      away: rec.away,
       forwardedFrom: m.forwardedFrom || m.senderName,
     });
     setNotice(lang === "cs" ? "Přeposláno." : lang === "de" ? "Weitergeleitet." : "Forwarded.");
@@ -2083,6 +2502,16 @@ function ChatApp() {
 
     const currentTransfer = transfersRef.current.find((x) => x.id === placeholderId);
 
+    if (result.ok && result.resend) {
+      // Keep the file reachable for a while: a receiver whose channel
+      // hiccuped can still ask for the chunks it lost.
+      const repeat = result.resend;
+      resendableRef.current.set(result.transferId, repeat);
+      window.setTimeout(() => {
+        if (resendableRef.current.get(result.transferId) === repeat) resendableRef.current.delete(result.transferId);
+      }, 10 * 60 * 1000);
+    }
+
     if (result.ok) {
       // Move the entry to its real transferId so future updates coalesce.
       setTransfers((cur) => cur.map((t) => t.id === placeholderId ? { ...t, id: result.transferId, stats: { ...t.stats, id: result.transferId } } : t));
@@ -2158,6 +2587,84 @@ function ChatApp() {
   }
 
   useEffect(() => () => disconnect(false), []);
+
+  // The docked recipients widget sits below the header and the status bar —
+  // otherwise it covers Disconnect and the room id. Both change height when
+  // the window (or the notice) changes, so measure rather than guess.
+  useEffect(() => {
+    const el = dockAnchorRef.current;
+    if (!el) return;
+    const apply = () => {
+      const bottom = Math.round(el.getBoundingClientRect().bottom);
+      if (bottom > 0) document.documentElement.style.setProperty("--m5-dock-top", `${bottom + 8}px`);
+    };
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(el);
+    window.addEventListener("resize", apply);
+    return () => { observer.disconnect(); window.removeEventListener("resize", apply); };
+  });
+
+  // --- the signed-in user: what this server offers, and who we already are ---
+  useEffect(() => {
+    void accountStatus().then((st) => setAccStatus(st));
+    void restoreSession().then((acc) => {
+      if (!acc) return;
+      setAccount(acc);
+      if (retentionRef.current === "server") announceAccountToServer();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- /signin: arrive from a push notification straight into the session ---
+  useEffect(() => {
+    if (!window.location.pathname.startsWith("/signin")) return;
+    // Scrub the path at once so a reload does not repeat the ceremony.
+    window.history.replaceState(null, "", "/");
+    let cancelled = false;
+    void (async () => {
+      const restored = await restoreSession();
+      if (cancelled) return;
+      if (restored) {
+        setAccount(restored);
+        setPrefs({ chatRetention: "server" });
+        retentionRef.current = "server";
+        systemMessage(t(lang, "acc.signedInAs").replace("{name}", restored.userName));
+        await applyVault(true);
+        await linkPushForAccount();
+        announceAccountToServer();
+        return;
+      }
+      // No live session in this tab. The passkey ceremony usually needs a
+      // gesture, so when the browser refuses we ask for one click instead.
+      setAccMsg(t(lang, "acc.signinRunning"));
+      await signInToAccount();
+      if (cancelled) return;
+      if (!currentAccount()) {
+        setActivePanel("connection");
+        setAccMsg((cur) => cur || t(lang, "acc.signinPrompt"));
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // --- keep the conversation where the retention mode says it belongs ---
+  useEffect(() => {
+    if (prefs.chatRetention === "ephemeral") return;
+    const timer = window.setInterval(() => { void persistChat(); }, 30_000);
+    const onHidden = () => { if (document.visibilityState === "hidden") void persistChat(true); };
+    const onLeaving = () => { void persistChat(true); };
+    document.addEventListener("visibilitychange", onHidden);
+    window.addEventListener("pagehide", onLeaving);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onHidden);
+      window.removeEventListener("pagehide", onLeaving);
+      void persistChat(true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.chatRetention]);
 
   // --- startup: an invite link wins, otherwise restore this tab's session ---
   useEffect(() => {
@@ -2295,6 +2802,10 @@ function ChatApp() {
           {status === "joined" ? <span className="sm:hidden">{openPeerCount}</span> : null}
         </span>
 
+        {account ? (
+          <SignedInBadge account={account} onClick={() => { setAccMsg(""); setShowAccount(true); void refreshAccount().then((fresh) => { if (fresh) setAccount(fresh); }); }} lang={lang} />
+        ) : null}
+
         <MainMenu
           mode={prefs.menuDisplay}
           lang={lang}
@@ -2326,7 +2837,7 @@ function ChatApp() {
       {/* Full-screen chat area */}
       <main className="relative flex flex-1 min-h-0 flex-col chat-canvas">
         <div className="flex flex-1 min-h-0 flex-col">
-          <div data-layout-hide="focus" className="flex-shrink-0 border-b border-border bg-card/60 px-3 py-2 sm:px-4">
+          <div ref={dockAnchorRef} data-layout-hide="focus" className="flex-shrink-0 border-b border-border bg-card/60 px-3 py-2 sm:px-4">
             <div className="flex items-center justify-between gap-3 text-xs">
               <p data-testid="text-notice" className="truncate text-muted-foreground">
                 {notice}
@@ -2450,6 +2961,7 @@ function ChatApp() {
                       onInfo={isSystem ? undefined : (mid) => setMsgInfoFor(mid)}
                       onReply={isSystem || !layout.flags.showActions ? undefined : () => startReply(message)}
                       onForward={isSystem || !layout.flags.showActions ? undefined : () => void forwardMessage(message)}
+                      deliveryState={deliveryStateOf(message)}
                       onDisplayed={onMessageDisplayed}
                       onReplyJump={scrollToMessage}
                       systemCollapseAfterSec={layout.flags.systemCollapseAfterSec}
@@ -2727,7 +3239,22 @@ function ChatApp() {
       {/* Connection panel */}
       {activePanel === "connection" ? (
         <SimpleModal title="Connection" onClose={() => setActivePanel(null)}>
-          <ConnectionPanel status={connStatus} prefs={prefs} setPrefs={setPrefs} lang={lang} desired={desired} log={connLog} />
+          <div className="space-y-5">
+            <ChatRetentionSection
+              value={prefs.chatRetention}
+              onChange={(next) => { setPrefs({ chatRetention: next }); retentionRef.current = next; if (next !== "server") void historyRef.current.clear(); announceAccountToServer(); }}
+              account={account}
+              status={accStatus}
+              supported={accountSupported()}
+              busy={accBusy}
+              message={accMsg}
+              lang={lang}
+              onSignIn={() => void signInToAccount()}
+              onRegister={() => void createAccount()}
+              onSignOutAndWipe={() => void signOutAndWipe()}
+            />
+            <ConnectionPanel status={connStatus} prefs={prefs} setPrefs={setPrefs} lang={lang} desired={desired} log={connLog} />
+          </div>
         </SimpleModal>
       ) : null}
 
@@ -2807,7 +3334,11 @@ function ChatApp() {
       {/* Floating recipients widget — who receives the next message */}
       {status === "joined" ? (
         <RecipientsWidget
-          peers={peers.map((p): WidgetPeer => ({ id: p.id, name: p.name, status: p.status, rttMs: p.status === "open" ? connStatus?.rttMs : undefined }))}
+          peers={[
+            ...peers.map((p): WidgetPeer => ({ id: p.id, name: p.name, status: p.status, rttMs: p.status === "open" ? connStatus?.rttMs : undefined })),
+            // Signed-in members the server answers for: still addressable.
+            ...awayPeers.map((a): WidgetPeer => ({ id: awayKey(a.accountId), name: a.name, status: "away", since: a.since })),
+          ]}
           room={room}
           state={widget}
           selected={recipients}
@@ -2823,6 +3354,23 @@ function ChatApp() {
           title={renderTemplate(layout.templates.widgetTitle, { title: t(lang, "recipients.title"), peerCount: String(openPeerCount), room }, layout.partials)}
           lang={lang}
         />
+      ) : null}
+
+      {/* The signed-in user: what the server holds for them */}
+      {showAccount && account ? (
+        <SimpleModal title={t(lang, "acc.title")} onClose={() => setShowAccount(false)}>
+          <AccountInfoModal
+            account={account}
+            status={accStatus}
+            busy={accBusy}
+            message={accMsg}
+            lang={lang}
+            onRefresh={() => void runAccountTask(async () => { const fresh = await refreshAccount(); if (fresh) setAccount(fresh); })}
+            onSaveNow={saveAccountDataNow}
+            onSignOut={() => void signOutAndWipe()}
+            onDelete={deleteAccountForever}
+          />
+        </SimpleModal>
       ) : null}
 
       {/* Participant info modal */}

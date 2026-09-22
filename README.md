@@ -79,6 +79,15 @@ místnosti.
   endpoint.
 - **6 šablon × 6 barevných variací × 4 rozvržení** — Motorsport, Glass,
   Terminal, Midnight, Paper, Kontrast.
+- **Data a historie chatu** — tři volby: nové připojení vše smaže (výchozí),
+  chat žije do konce sezení (šifrovaně v prohlížeči), nebo leží na serveru
+  zašifrovaný **passkeyem**. Server ověří podpis WebAuthn, ale obsah nepřečte.
+- **Přihlášený uživatel a stav away** — odznak „přihlášen" s oknem účtu
+  (velikosti, data, počty, serverový log), adresa `/signin` pro automatické
+  přihlášení, a relay: když je přihlášený účastník pryč, server jeho zprávy
+  podrží, probudí ho push zprávou a po návratu doručí — s potvrzením
+  *doručeno* / *přečteno* u odesílatele.
+  Viz [`docs/accounts-away.md`](docs/accounts-away.md).
 - **Relace a pozvánky** — šifrovaná session cache (reload = automatické
   připojení, konec se zavřením karty nebo po hodině nečinnosti), pozvánka
   odkazem + 12místným kódem s limitem použití, „Smazat vše a odejít".
@@ -156,6 +165,7 @@ Operátor zapne kombinaci:
 | Web Push          | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`      | endpoint URL, p256dh/auth keys   |
 | Admin API         | `ADMIN_API_TOKEN`, `ENABLE_ADMIN=1`           | jen co je vyjmenované v `/admin` |
 | Settings sync     | `POST /api/settings/sync` (opt-in v UI)        | per-device JSON preferences      |
+| Passkey účty      | `WEBAUTHN_RP_ID`, zapisovatelný `DATA_DIR`     | veřejný klíč, velikosti, časy, ciphertext trezoru a schránky |
 
 **Žádný režim** nikdy neumožní serveru číst obsah zpráv — to je nemožné z
 podstaty (klíč je odvozen v prohlížeči).
@@ -596,6 +606,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/maps-location.md`](docs/maps-location.md)        | Mapy / lokace                                  |
 | [`docs/nfc.md`](docs/nfc.md)                            | Web NFC + plugin čtečky                        |
 | [`docs/push.md`](docs/push.md)                          | Web Push                                       |
+| [`docs/accounts-away.md`](docs/accounts-away.md)        | Passkey účty, data chatu, stav away + relay    |
 | [`docs/speech.md`](docs/speech.md)                      | Web Speech API                                 |
 | [`docs/browser-limitations.md`](docs/browser-limitations.md) | Co prohlížeč (ne)umí                       |
 | [`docs/build-and-deploy.md`](docs/build-and-deploy.md)  | npm workflow, PWA, sanity checky               |

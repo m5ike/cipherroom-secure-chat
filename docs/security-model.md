@@ -7,8 +7,10 @@ chránit nemůže**. Je psán pro ty, kdo M5cet nasazují nebo auditují.
 
 - Server vidí signalizační rámce (SDP/ICE) a (volitelně) opaque metadata.
   **Nikdy** plaintext ani klíč. Chatové zprávy přes server nejdou vůbec (ani
-  jako ciphertext). **Výjimka:** soubory v *proxy* režimu posílají přes `/ws`
-  IV a ciphertext chunků — viz „Známé mezery".
+  jako ciphertext). **Výjimky:** soubory v *proxy* režimu posílají přes `/ws`
+  IV a ciphertext chunků (viz „Známé mezery") a zprávy pro účastníka ve stavu
+  **away** (viz níže) — v obou případech jen ciphertext klíčem místnosti,
+  který server nemá.
 - Šifrování: AES-GCM 256, IV 12 B per frame, klíč PBKDF2-SHA256
   (250 000 iter), salt obsahuje `room id`. Klíč je `extractable: false`.
 - WebRTC media: standardní DTLS-SRTP, řešený prohlížečem.
@@ -167,6 +169,38 @@ je podstatné:
   kód 5 pokusů. Odkaz a kód se mají posílat různými kanály.
 - **„Smazat vše a odejít"** odstraní úložiště, cookies (přes `Clear-Site-Data`
   i HttpOnly), cache a service worker. **Historii prohlížeče smazat nelze.**
+
+## Účty s passkey a stav away (od 2.9.0)
+
+Podrobně v [`accounts-away.md`](accounts-away.md). Pro model hrozeb:
+
+- **Ověření identity.** Server kontroluje podpis WebAuthn nad vlastní
+  jednorázovou výzvou (2 min), rpId hash, origin, user presence + user
+  verification a čítač podpisů (klesající = klonovaný autentikátor →
+  odmítnuto). Token relace je náhodných 32 B, uložený jen jako SHA-256 otisk
+  v paměti procesu; restart odhlásí všechny.
+- **Nová aktiva na serveru**: trezor (profil + historie chatu) a schránka
+  zpráv. Obojí je **ciphertext** — trezor zapečetěný klíčem z PRF rozšíření
+  passkeye (HKDF → AES-GCM), schránka klíčem místnosti. Server zná metadata:
+  velikosti, počty, jména v místnosti, časy, zkrácenou IP (/24, /48) a třídu
+  prohlížeče u přihlášení.
+- **Nové riziko ztráty dat.** Kdo přijde o passkey, přijde o trezor — server
+  ho odemknout neumí a záložní cesta neexistuje. Vědomá výměna.
+- **Away relay** znamená, že ciphertext zpráv pro nepřítomného účastníka
+  **projde serverem a leží tam** (výchozí 30 dní, `RELAY_RETENTION_DAYS`,
+  500 položek / 4 MB na účet). Adversář se serverovým přístupem tedy vidí
+  objem a metadata komunikace i zpětně — u přímého P2P to neplatilo. Volba
+  je per-uživatel a vypnutá, dokud si nezvolí *data na serveru*.
+- **Kdo smí poslat do schránky**: kdokoli v téže místnosti (jméno místnosti
+  je jediná vstupenka — stejně jako u signalizace). Zprávy, které nesedí na
+  klíč místnosti, klient zahodí; limity schránky a 120 relay rámců za minutu
+  na socket omezují zahlcení.
+- **Probouzecí push** nese jen `<jméno odesílatele> · <místnost>` a odkaz na
+  `/signin` — žádný obsah.
+- **Klient**: token v `sessionStorage` karty, klíč trezoru jako
+  neexportovatelný `CryptoKey` v IndexedDB. Proti adversáři 4 a 6
+  (kompromitovaný endpoint, rozšíření) to nechrání — může požádat o
+  dešifrování stejně jako aplikace.
 
 ## Známé mezery (stav 2.5.0)
 
