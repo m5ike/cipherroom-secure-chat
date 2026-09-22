@@ -83,7 +83,10 @@ jobs:
   unit-test:
     name: vitest
     runs-on: ubuntu-22.04
-    timeout-minutes: 10
+    # The SQLCipher module compiles from source when no prebuilt binary
+    # matches this runner's Node version, which takes several minutes of an
+    # otherwise two-minute job.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -198,7 +201,7 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     container:
       image: mcr.microsoft.com/playwright:v1.63.0-noble
       options: --ipc=host
