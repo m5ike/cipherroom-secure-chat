@@ -16,6 +16,8 @@ export type ConnectorStatus = {
   configured: boolean;
   /** Human reason when not configured (which env var to set). */
   reason?: string;
+  /** Advisory shown next to a configured connector (e.g. a JWT that will expire). */
+  note?: string;
   /** Names of the env vars this connector reads (never their values). */
   needs: string[];
 };

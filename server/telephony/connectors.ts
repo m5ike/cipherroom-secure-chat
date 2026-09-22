@@ -8,8 +8,8 @@
 // those URLs into the provider's own configuration so inbound SMS / calls and
 // delivery receipts reach us too.
 
-import { readFileSync } from "node:fs";
 import { signJwtRS256 } from "./jwt";
+import { resolveVonageCredential } from "./vonage-key";
 import {
   TelephonyNotConfiguredError,
   type SmsConnector, type SmsInput, type SmsResult,
@@ -178,22 +178,33 @@ function vonageAppId() { return env("VONAGE_APPLICATION_ID"); }
 /** Vonage numbers are digits only (no "+"); alphanumeric sender ids pass through. */
 const vonageNumber = (n: string) => n.replace(/^\+/, "");
 
-/** The application's RSA private key: VONAGE_JWT_KEY (PEM; "\n" escapes allowed),
- *  VONAGE_PRIVATE_KEY (alias) or VONAGE_PRIVATE_KEY_PATH (file). */
-export function vonagePrivateKey(): string {
-  const inline = env("VONAGE_JWT_KEY") || env("VONAGE_PRIVATE_KEY");
-  if (inline) return inline.includes("\\n") ? inline.replace(/\\n/g, "\n") : inline;
-  const path = env("VONAGE_PRIVATE_KEY_PATH");
-  if (path) { try { return readFileSync(path, "utf8"); } catch { return ""; } }
-  return "";
+const VONAGE_VOICE_SETUP = "Set VONAGE_APPLICATION_ID and VONAGE_JWT_KEY (the application's private key: PEM in double quotes or on one line with \\n escapes; or VONAGE_PRIVATE_KEY_PATH=/path/to/private.key).";
+
+/** Voice readiness without touching the network: app id present and the key
+ *  (VONAGE_JWT_KEY / VONAGE_PRIVATE_KEY / VONAGE_PRIVATE_KEY_PATH) actually
+ *  parses — see vonage-key.ts for every accepted shape. */
+export function vonageVoiceReadiness(): { ok: true; note?: string } | { ok: false; reason: string } {
+  const cred = resolveVonageCredential();
+  if (cred.kind === "missing") return { ok: false, reason: VONAGE_VOICE_SETUP };
+  if (cred.kind === "invalid") return { ok: false, reason: cred.reason };
+  if (cred.kind === "token") {
+    // The token carries its own application_id; VONAGE_APPLICATION_ID is optional here.
+    const until = cred.expiresAt ? ` until ${new Date(cred.expiresAt * 1000).toISOString()}` : "";
+    return { ok: true, note: `${cred.source} is a pre-generated JWT, valid${until}. Prefer the private key: the server then mints a fresh token per call.` };
+  }
+  if (!vonageAppId()) return { ok: false, reason: "Set VONAGE_APPLICATION_ID (the private key itself parses fine)." };
+  return { ok: true };
 }
 
 /** Mint a short-lived Vonage application JWT (the Voice API bearer token). */
 export function vonageJwt(ttlSec = 900): string {
-  const key = vonagePrivateKey();
+  const cred = resolveVonageCredential();
   const appId = vonageAppId();
-  if (!key || !appId) throw new TelephonyNotConfiguredError("vonage", "Set VONAGE_APPLICATION_ID and VONAGE_JWT_KEY.");
-  return signJwtRS256({ application_id: appId }, key, ttlSec);
+  if (cred.kind === "missing") throw new TelephonyNotConfiguredError("vonage", VONAGE_VOICE_SETUP);
+  if (cred.kind === "invalid") throw new TelephonyNotConfiguredError("vonage", cred.reason);
+  if (cred.kind === "token") return cred.token;
+  if (!appId) throw new TelephonyNotConfiguredError("vonage", "Set VONAGE_APPLICATION_ID.");
+  return signJwtRS256({ application_id: appId }, cred.key, ttlSec);
 }
 
 export class VonageSmsConnector implements SmsConnector {
@@ -229,11 +240,10 @@ export class VonageVoiceConnector implements VoiceConnector {
   readonly label = "Vonage (Nexmo) Voice";
   readonly needs = ["VONAGE_APPLICATION_ID", "VONAGE_JWT_KEY", "VONAGE_FROM"];
   status(): ConnectorStatus {
-    const ok = vonageAppId().length > 0 && vonagePrivateKey().length > 0;
-    return {
-      id: this.id, kind: this.kind, label: this.label, configured: ok, needs: this.needs,
-      reason: ok ? undefined : "Set VONAGE_APPLICATION_ID and VONAGE_JWT_KEY (the application's private key PEM; or VONAGE_PRIVATE_KEY_PATH).",
-    };
+    const r = vonageVoiceReadiness();
+    return r.ok
+      ? { id: this.id, kind: this.kind, label: this.label, configured: true, needs: this.needs, note: r.note }
+      : { id: this.id, kind: this.kind, label: this.label, configured: false, needs: this.needs, reason: r.reason };
   }
   async placeCall(input: VoiceInput): Promise<VoiceResult> {
     const from = input.from || vonageFrom();
@@ -252,6 +262,9 @@ export class VonageVoiceConnector implements VoiceConnector {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
     });
+    if (res.status === 401) {
+      throw new Error(`Vonage Voice 401: token rejected — the private key does not belong to application ${vonageAppId() || "(VONAGE_APPLICATION_ID)"}, or the application has no Voice capability. ${(await res.text()).slice(0, 160)}`);
+    }
     if (!res.ok) throw new Error(`Vonage Voice ${res.status}: ${(await res.text()).slice(0, 200)}`);
     const json = await res.json() as { uuid?: string };
     return { id: json.uuid || "", provider: this.id };

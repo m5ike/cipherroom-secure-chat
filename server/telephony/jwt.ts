@@ -7,7 +7,7 @@
 //                  over the account's signature secret) — verifying inbound
 //                  events, and producing test tokens in the test-suite.
 
-import { createHmac, createSign, createVerify, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, createSign, createVerify, randomUUID, timingSafeEqual, type KeyObject } from "node:crypto";
 
 export function b64url(input: Buffer | string): string {
   return Buffer.from(input).toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -28,11 +28,11 @@ function withStandardClaims(claims: Record<string, unknown>, ttlSec: number): Re
   return { iat: now, exp: now + ttlSec, jti: randomUUID(), ...claims };
 }
 
-export function signJwtRS256(claims: Record<string, unknown>, privateKeyPem: string, ttlSec = 900): string {
+export function signJwtRS256(claims: Record<string, unknown>, privateKey: string | KeyObject, ttlSec = 900): string {
   const signingInput = encodeParts({ alg: "RS256", typ: "JWT" }, withStandardClaims(claims, ttlSec));
   const signer = createSign("RSA-SHA256");
   signer.update(signingInput);
-  const sig = signer.sign(privateKeyPem);
+  const sig = signer.sign(privateKey);
   return `${signingInput}.${b64url(sig)}`;
 }
 

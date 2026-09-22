@@ -50,7 +50,32 @@ VONAGE_JWT_KEY="-----BEGIN PRIVATE KEY-----\nMIIEvQ...\n-----END PRIVATE KEY----
 VONAGE_FROM=447700900000
 ```
 
-(`VONAGE_PRIVATE_KEY` je alias pro `VONAGE_JWT_KEY`.) Hovor se zakládá přes
+(`VONAGE_PRIVATE_KEY` je alias pro `VONAGE_JWT_KEY`.)
+
+**Pozor na víceřádkový klíč v `.env` bez uvozovek.** Parser `.env` (i systemd
+`EnvironmentFile`) si z něj nechá jen první řádek `-----BEGIN PRIVATE KEY-----`
+a hovor pak padal na `502 … error:1E08010C:DECODER routines::unsupported`.
+Od teď se klíč kontroluje už ve stavu konektoru: admin (Telephony) i
+`/api/telephony/call` hlásí přesnou příčinu (`VONAGE_JWT_KEY holds only the PEM
+header line …`, `… is a public key …`, `… passphrase-protected`, `… cannot be
+read: ENOENT` …) a volání vrátí 503 dřív, než cokoli odejde k Vonage.
+Přijímané tvary: PEM v uvozovkách, jeden řádek s `\n` (i `\\n`, `\r\n`),
+PEM slitý do řádku s mezerami, PKCS#1 `RSA PRIVATE KEY`, base64 celého PEM,
+holé base64 tělo, cesta k souboru (i přímo ve `VONAGE_JWT_KEY`) a hotový JWT
+z Vonage „JWT generatoru" (použije se, dokud nevyprší — lepší je klíč, token
+se pak razí pro každý hovor zvlášť). Nejjednodušší a nejspolehlivější je
+soubor:
+
+```bash
+install -m 0640 -o root -g m5cet private.key /etc/m5cet/vonage-private.key
+# .env
+VONAGE_PRIVATE_KEY_PATH=/etc/m5cet/vonage-private.key
+```
+
+(v Dockeru soubor namountovat do kontejneru). Odpověď Vonage `401` znamená,
+že klíč nepatří k `VONAGE_APPLICATION_ID`, nebo aplikace nemá zapnutou Voice.
+
+Hovor se zakládá přes
 `POST https://api.nexmo.com/v1/calls` s `Authorization: Bearer <jwt>`; když je
 nastaven `PUBLIC_BASE_URL`, předá se `answer_url` = `/wh/vonage/answer` (vrátí
 NCCO) a `event_url` = `/wh/vonage/events`, jinak inline NCCO `talk`.

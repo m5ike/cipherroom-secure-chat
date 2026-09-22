@@ -21,9 +21,14 @@ import { rateLimit } from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
+import { applyTrustProxy } from "./trust-proxy";
 
 const app = express();
 const httpServer = createServer(app);
+
+// Before the limiters: behind nginx the real client is in X-Forwarded-For;
+// without this every visitor shares nginx's 127.0.0.1 rate-limit bucket.
+const trustProxy = applyTrustProxy(app);
 
 // Rate limiting: 100 requests per 15 minutes per IP for the public API.
 // This is intentionally lenient so it does not throttle legitimate signaling.
@@ -186,7 +191,7 @@ app.use((req, res, next) => {
       host,
     },
     () => {
-      log(`serving on ${host}:${port}`);
+      log(`serving on ${host}:${port} (trust proxy: ${JSON.stringify(trustProxy)})`);
     },
   );
 })();

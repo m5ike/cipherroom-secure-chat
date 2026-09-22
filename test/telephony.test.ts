@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { generateKeyPairSync } from "node:crypto";
 import { TelephonyNotConfiguredError, isE164 } from "../server/telephony/types";
 import { TwilioSmsConnector, buildVoiceConnectors } from "../server/telephony/connectors";
 import { SipTrunkStore, SIP_LIMITS } from "../server/telephony/sip";
@@ -70,7 +71,13 @@ describe("telephony registry gating + status", () => {
     expect(vonage?.status().configured).toBe(false);
     expect(vonage?.status().reason).toMatch(/VONAGE_JWT_KEY/);
     process.env.VONAGE_APPLICATION_ID = "app-1234";
+    // A damaged key is NOT "configured" — it used to be, and then failed at
+    // call time with OpenSSL's "DECODER routines::unsupported".
     process.env.VONAGE_JWT_KEY = "-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----";
+    expect(vonage?.status().configured).toBe(false);
+    expect(vonage?.status().reason).toMatch(/VONAGE_JWT_KEY could not be parsed/);
+    process.env.VONAGE_JWT_KEY = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey
+      .export({ type: "pkcs8", format: "pem" }).toString().replace(/\n/g, "\\n");
     expect(vonage?.status().configured).toBe(true);
   });
 });

@@ -46,6 +46,34 @@ dev`) ukončit. Od verze 2.8 dev server navíc povoluje i reálnou cestu repa
 (symlinky) a zamítá jen skutečná tajemství (`.env*`, `.git`, `.m5cet`, `*.key`,
 `*.pem`), takže případný lokální vývoj za proxy už 403 nedává.
 
+### `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` v logu (za nginx)
+
+`The 'X-Forwarded-For' header is set but the Express 'trust proxy' setting is
+false` — za reverzní proxy byl každý návštěvník pro server `127.0.0.1` (nginx),
+takže **všichni sdíleli jeden rate-limit**: 100 požadavků na `/api` za 15 min
+pro celý web, 10 telefonních akcí za 10 min pro všechny dohromady (náhodné
+`429 Too many requests`). Opraveno proměnnou `TRUST_PROXY`:
+
+| Hodnota | Kdy |
+|---|---|
+| *(nenastaveno)* | `loopback` — nginx na stejném stroji (nativní instalace); v kontejneru navíc privátní rozsahy (host proxy přichází přes Docker gateway) |
+| `false` / `0` | aplikace je vystavená přímo, bez proxy |
+| `1`, `2`, … | počet důvěryhodných skoků (např. `2` = Cloudflare → nginx → app) |
+| `loopback, 10.0.0.0/8, …` | výčet IP / CIDR / presetů (`loopback`, `linklocal`, `uniquelocal`) |
+
+Start loguje použitou hodnotu: `serving on 127.0.0.1:5000 (trust proxy: "loopback")`.
+Podvržený `X-Forwarded-For` od klienta nepomůže — nginx
+(`$proxy_add_x_forwarded_for`) připojí adresu, kterou skutečně viděl, a ta se použije.
+
+### Hovor přes Vonage: `502 … error:1E08010C:DECODER routines::unsupported`
+
+`VONAGE_JWT_KEY` neobsahuje použitelný privátní klíč — typicky víceřádkový PEM
+vložený do `.env` **bez uvozovek**, ze kterého zbyl jen řádek
+`-----BEGIN PRIVATE KEY-----`. Nové verze to hlásí přímo v adminu (Telephony →
+Vonage Voice) a vrací 503 s přesnou příčinou. Náprava: `VONAGE_PRIVATE_KEY_PATH=
+/etc/m5cet/vonage-private.key`, nebo klíč v dvojitých uvozovkách / na jednom
+řádku s `\n` — viz [telephony.md](telephony.md#vonage-voice--jwt-aplikace).
+
 ### 1. "Zpráva přišla, ale nedá se rozšifrovat"
 
 Druhá strana má **jiný klíč místnosti**. Zkontrolujte:

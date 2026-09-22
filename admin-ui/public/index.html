@@ -369,7 +369,7 @@
         $("whList").innerHTML = ""; return;
       }
       const src = (k) => (s.defaultsSource && s.defaultsSource[k]) || '—';
-      const conn = (c) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span><b>' + esc((c.kind || '').toUpperCase()) + '</b> ' + esc(c.label) + (c.configured ? ' — <span class="ok">configured</span>' : ' — <span class="err">' + esc(c.reason || 'not configured') + '</span>') + '</span></div>';
+      const conn = (c) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span><b>' + esc((c.kind || '').toUpperCase()) + '</b> ' + esc(c.label) + (c.configured ? ' — <span class="ok">configured</span>' + (c.note ? ' <span style="color:#8b98a9">(' + esc(c.note) + ')</span>' : '') : ' — <span class="err">' + esc(c.reason || 'not configured') + '</span>') + '</span></div>';
       const trunk = (tk) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span>☎ <b>' + esc(tk.id) + '</b> ' + esc(tk.label || '') + ' · ' + esc(tk.host || '?') + ':' + esc(tk.port || 5060) + ' · DIDs: ' + esc((tk.didNumbers || []).join(', ') || '—') + (tk.hasPassword ? ' · 🔒' : '') + (tk.source === 'env' ? ' · <span class="ok">from .env (read-only)</span>' : '') + '</span></div>';
       const p = s.persistence || {};
       const persist = p.writable

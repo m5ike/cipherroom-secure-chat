@@ -23,6 +23,7 @@ import { pluginLog } from "./plugins/log";
 import { base64ToBytes } from "./plugins/types";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerAdminLayoutRoutes } from "./layout";
+import { applyTrustProxy } from "./trust-proxy";
 import {
   ADMIN_COMMAND_ALLOWLIST,
   pushSubscriptions,
@@ -33,6 +34,8 @@ import {
 } from "./routes-admin-shared";
 
 const app = express();
+// Same proxy trust as the main app, so req.ip is the client and not nginx.
+applyTrustProxy(app);
 app.use(express.json({ limit: "256kb" }));
 app.disable("etag");
 
