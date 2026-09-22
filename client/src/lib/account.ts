@@ -11,6 +11,10 @@
 // in, vault load and save, decryption results, away / relay activity.
 
 import { assertPasskey, createPasskey, openProfile, passkeySupported, sealProfile, type ServerCreationOptions, type ServerRequestOptions } from "./passkey";
+import {
+  forgetDatabaseKey, openUserDatabase, promoteSessionToAccount, recallDatabaseKey,
+  rememberDatabaseKey, setStorageToken, storageSessionId,
+} from "./storage-client";
 
 export type AccountAudit = { at: number; kind: string; meta?: Record<string, string | number | boolean> };
 
@@ -143,36 +147,51 @@ export function isSignedIn(): boolean {
   return session !== null;
 }
 
-/** Creates a passkey account on this server and signs in with it. */
+/** Creates a passkey account on this server and signs in with it.
+ *
+ *  The passkey has to produce an encryption key (WebAuthn PRF) before the
+ *  account is created: an account whose data nobody could ever decrypt is
+ *  worse than none, and this way a device without PRF leaves nothing
+ *  behind on the server. */
 export async function registerAccount(userName: string): Promise<AccountSummary> {
   const options = await api<{ publicKey: ServerCreationOptions }>("/api/account/register/options", {
     method: "POST",
     body: JSON.stringify({ userName }),
   });
-  const { response, key } = await createPasskey(options.publicKey);
+  const { response, key, databaseKey } = await createPasskey(options.publicKey);
   const result = await api<{ token: string; account: AccountSummary }>("/api/account/register/verify", {
     method: "POST",
     body: JSON.stringify({ credential: response }),
   });
   await adopt(result.token, result.account, key);
+  // Whatever this browser stored as an anonymous session becomes theirs.
+  const hadSession = Boolean(storageSessionId());
+  await rememberDatabaseKey(databaseKey, key);
+  if (hadSession) await promoteSessionToAccount(databaseKey);
+  else await openUserDatabase(databaseKey);
   return result.account;
 }
 
 /** Signs in with an existing passkey (the browser picks the credential). */
 export async function signInWithPasskey(): Promise<AccountSummary> {
   const options = await api<{ publicKey: ServerRequestOptions }>("/api/account/signin/options", { method: "POST", body: JSON.stringify({}) });
-  const { response, key } = await assertPasskey(options.publicKey);
+  const { response, key, databaseKey } = await assertPasskey(options.publicKey);
   const result = await api<{ token: string; account: AccountSummary }>("/api/account/signin/verify", {
     method: "POST",
     body: JSON.stringify({ credential: response }),
   });
   await adopt(result.token, result.account, key);
+  await rememberDatabaseKey(databaseKey, key);
+  // The key opens the SQLCipher database on the server for this session.
+  if (storageSessionId()) await promoteSessionToAccount(databaseKey);
+  else await openUserDatabase(databaseKey);
   return result.account;
 }
 
 async function adopt(token: string, account: AccountSummary, key: CryptoKey): Promise<void> {
   session = { token, accountId: account.id, key, account };
   writeToken(token, account.id);
+  setStorageToken(token);
   await rememberKey(account.id, key);
 }
 
@@ -187,6 +206,11 @@ export async function restoreSession(): Promise<AccountSummary | null> {
   try {
     const me = await api<{ account: AccountSummary }>("/api/account/me", {}, stored.token);
     session = { token: stored.token, accountId: stored.accountId, key, account: me.account };
+    setStorageToken(stored.token);
+    // The server keeps database keys in memory only, so after a restart it
+    // needs ours again — this tab kept it wrapped with the vault key.
+    const databaseKey = await recallDatabaseKey(key);
+    if (databaseKey) await openUserDatabase(databaseKey);
     return me.account;
   } catch {
     dropToken();
@@ -265,6 +289,8 @@ export async function signOutAccount(everywhere = false): Promise<void> {
   const current = session;
   session = null;
   dropToken();
+  setStorageToken(null);
+  forgetDatabaseKey();
   if (!current) return;
   await forgetKey(current.accountId);
   try { await api("/api/account/signout", { method: "POST", body: JSON.stringify({ everywhere }) }, current.token); } catch { /* already gone */ }
@@ -276,13 +302,21 @@ export async function deleteAccount(): Promise<void> {
   if (!current) return;
   session = null;
   dropToken();
+  forgetDatabaseKey();
   await forgetKey(current.accountId);
   await api("/api/account", { method: "DELETE" }, current.token);
+  setStorageToken(null);
 }
 
 /** Test seam: drop the in-memory session and keep keys in a plain map. */
 export function _resetAccountForTests(keys: Map<string, CryptoKey> | null = null): void {
   session = null;
   keyStore = keys;
+  setStorageToken(null);
   dropToken();
+}
+
+/** The vault key of the current session, for wrapping the database key. */
+export function vaultKey(): CryptoKey | null {
+  return session?.key ?? null;
 }

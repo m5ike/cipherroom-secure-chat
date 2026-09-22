@@ -123,6 +123,11 @@ import {
   signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
 } from "./lib/account";
 import { createHistoryStore, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
+import {
+  addStorageEvent, attachStorageSocket, forgetServerData, putMessages as putServerMessages,
+  readMessages as readServerMessages, recordTransfer as recordServerTransfer, sendLog as sendServerLog,
+  startStorageSession, storageSessionId, storageStatus, type StorageStatus,
+} from "./lib/storage-client";
 import { leaveToGoodbye, wipeEverything } from "./lib/wipe";
 import {
   AnalyticsPanel,
@@ -411,6 +416,10 @@ function ChatApp() {
   const retentionRef = useRef<ChatRetention>(initialPrefs.chatRetention);
   const historyRef = useRef(createHistoryStore());
   const lastVaultSaveRef = useRef(0);
+  /** What the server offers as storage, and the session store of a browser
+   *  that has no passkey (server-enhanced mode). */
+  const [serverStorage, setServerStorage] = useState<StorageStatus | null>(null);
+  const serverStorageRef = useRef<StorageStatus | null>(null);
   /** Who sent a relayed message, so a read receipt can find its way back. */
   const relaySendersRef = useRef<Map<string, { peerId: string; accountId?: string }>>(new Map());
   const prefsRef = useRef(initialPrefs);
@@ -705,7 +714,25 @@ function ChatApp() {
     const currentRoom = roomRef.current;
     if (!currentRoom || mode === "ephemeral") return;
     if (mode === "session") { await historyRef.current.save(currentRoom, messagesRef.current); return; }
-    if (!accountRef.current) return;
+    if (!accountRef.current) {
+      // No passkey: the server-enhanced session store takes it, with a
+      // one-day life (server/storage/service.ts).
+      if (!storageSessionId()) return;
+      const at = Date.now();
+      if (!force && at - lastVaultSaveRef.current < 30_000) return;
+      lastVaultSaveRef.current = at;
+      await putServerMessages(prepareHistory(messagesRef.current).map((m) => ({
+        id: m.id,
+        room: currentRoom,
+        createdAt: m.createdAt,
+        senderId: m.senderId,
+        senderName: m.senderName,
+        mine: m.mine,
+        expiresAt: m.expiresAt ?? 0,
+        payload: m,
+      })));
+      return;
+    }
     const at = Date.now();
     if (!force && at - lastVaultSaveRef.current < 30_000) return;
     lastVaultSaveRef.current = at;
@@ -1188,6 +1215,7 @@ function ChatApp() {
                 );
               },
               onNeed: (transferId, seqs, _transport, round) => {
+                void sendServerLog("warn", "transfer.chunks-missing", { transferId, missing: seqs.length, round });
                 // Do not throw away a file that is all but delivered.
                 try {
                   channel.send(JSON.stringify({ kind: "file-need", transferId, seqs, transport: "p2p" }));
@@ -1522,6 +1550,14 @@ function ChatApp() {
         setMessages((cur) => mergeMessages(cur, restored.map((m) => ({ ...m, mine: m.senderId === nextPeerId }))));
         systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
       }
+    } else if (retentionRef.current === "server" && !accountRef.current && storageSessionId()) {
+      // The server kept this session's conversation (no passkey yet).
+      const rows = await readServerMessages({ room: nextRoom });
+      const restored = sanitizeRestored(rows.map((r) => r.payload), nextPeerId);
+      if (restored.length > 0) {
+        setMessages((cur) => mergeMessages(cur, restored));
+        systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
+      }
     }
     setPeers([]);
     setAwayPeers([]);
@@ -1537,6 +1573,9 @@ function ChatApp() {
 
     const socket = new WebSocket(wsUrl());
     socketRef.current = socket;
+    // Storage operations ride on this socket rather than opening their own
+    // connection (lib/storage-client.ts).
+    attachStorageSocket(socket);
 
     socket.onopen = () => {
       logConn("open", reconnectAttemptsRef.current + 1);
@@ -2502,6 +2541,19 @@ function ChatApp() {
 
     const currentTransfer = transfersRef.current.find((x) => x.id === placeholderId);
 
+    // One row per transfer in the server's table: what went where, how big,
+    // over which transport and how it ended. The room name is hashed, the
+    // file name only reaches the detail column, which is sealed.
+    void recordServerTransfer({
+      id: result.transferId || placeholderId,
+      direction: "out",
+      transport: result.transport,
+      status: result.ok ? "completed" : result.reason === "cancelled" ? "cancelled" : "failed",
+      bytes: file.size,
+      finishedAt: Date.now(),
+      detail: { name: file.name, mime: file.type, ...(result.reason ? { reason: result.reason } : {}) },
+    });
+
     if (result.ok && result.resend) {
       // Keep the file reachable for a while: a receiver whose channel
       // hiccuped can still ask for the chunks it lost.
@@ -2604,6 +2656,24 @@ function ChatApp() {
     window.addEventListener("resize", apply);
     return () => { observer.disconnect(); window.removeEventListener("resize", apply); };
   });
+
+  // --- server-side storage: what this server offers, and where our data goes ---
+  useEffect(() => {
+    let cancelled = false;
+    void storageStatus().then(async (status) => {
+      if (cancelled || !status) return;
+      setServerStorage(status);
+      serverStorageRef.current = status;
+      // Server-enhanced without a passkey: the server keeps a database for
+      // this session, encrypted with a key it generates, for one day.
+      if (status.available && status.caller !== "account" && prefsRef.current.mode === "server") {
+        const session = await startStorageSession();
+        if (session) void sendServerLog("info", "session.started", { mode: "server-enhanced" });
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefs.mode]);
 
   // --- the signed-in user: what this server offers, and who we already are ---
   useEffect(() => {
@@ -2723,6 +2793,10 @@ function ChatApp() {
     setNotice(t(lang, "clear.working"));
     disconnect(false);
     await sessionCacheRef.current.clear().catch(() => undefined);
+    await historyRef.current.clear().catch(() => undefined);
+    // Whatever this browser left on the server — a session database or a
+    // signed-in user's own — goes with it.
+    await forgetServerData().catch(() => undefined);
     await wipeEverything({ deviceId: prefs.deviceId });
     leaveToGoodbye();
   }

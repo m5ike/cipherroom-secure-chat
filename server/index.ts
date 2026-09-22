@@ -37,8 +37,8 @@ const apiLimiter = rateLimit({
   limit: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  // The signed-in user's vault has its own, larger bucket (see below).
-  skip: (req) => req.originalUrl.startsWith("/api/account/vault"),
+  // The vault and the storage API have their own, larger buckets (below).
+  skip: (req) => req.originalUrl.startsWith("/api/account/vault") || req.originalUrl.startsWith("/api/storage"),
   message: { ok: false, message: "Too many requests, please try again later." },
 });
 
@@ -61,6 +61,9 @@ declare module "http" {
 // larger than a signaling payload, so it gets its own parser and its own
 // rate-limit bucket (autosave would eat the public API budget).
 app.use("/api/account/vault", express.json({ limit: "8mb" }));
+// Same for the server-side storage: conversations arrive in batches, and
+// this parser has to come before the global one to win.
+app.use("/api/storage", express.json({ limit: "12mb" }));
 app.use(
   "/api/account/vault",
   rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many vault requests." } }),

@@ -7,14 +7,16 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { _deriveKeyForTest, openProfile } from "../client/src/lib/passkey";
 
 const passkeyKey = vi.hoisted(() => ({ current: null as CryptoKey | null }));
+/** The second key a passkey derives: it opens the database on the server. */
+const DB_KEY = vi.hoisted(() => "a".repeat(64));
 
 vi.mock("../client/src/lib/passkey", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../client/src/lib/passkey")>();
   return {
     ...actual,
     passkeySupported: () => true,
-    createPasskey: vi.fn(async () => ({ response: { id: "cred", rawId: "cred", type: "public-key", response: { clientDataJSON: "c", attestationObject: "a" } }, key: passkeyKey.current! })),
-    assertPasskey: vi.fn(async () => ({ response: { id: "cred", rawId: "cred", type: "public-key", response: { clientDataJSON: "c", authenticatorData: "a", signature: "s" } }, key: passkeyKey.current! })),
+    createPasskey: vi.fn(async () => ({ response: { id: "cred", rawId: "cred", type: "public-key", response: { clientDataJSON: "c", attestationObject: "a" } }, key: passkeyKey.current!, databaseKey: DB_KEY })),
+    assertPasskey: vi.fn(async () => ({ response: { id: "cred", rawId: "cred", type: "public-key", response: { clientDataJSON: "c", authenticatorData: "a", signature: "s" } }, key: passkeyKey.current!, databaseKey: DB_KEY })),
   };
 });
 
@@ -91,14 +93,17 @@ describe("registration and sign-in", () => {
     expect(account.userName).toBe("Alice");
     expect(isSignedIn()).toBe(true);
     expect(currentAccount()?.id).toBe(SUMMARY.id);
-    expect(urls()).toEqual(["POST /api/account/register/options", "POST /api/account/register/verify"]);
+    // Registration also opens the user's database on the server, with the
+    // key the passkey derived — never with the vault key.
+    expect(urls()).toEqual(["POST /api/account/register/options", "POST /api/account/register/verify", "POST /api/storage/open"]);
+    expect(calls.at(-1)).toMatchObject({ body: { key: DB_KEY }, auth: "Bearer session-token-abcdefghijkl" });
     expect(sessionStorage.getItem("m5cet:account:v1")).toContain("session-token-abcdefghijkl");
     expect(keys.get(SUMMARY.id)).toBeDefined();
   });
 
   it("signs in with an existing passkey", async () => {
     await signInWithPasskey();
-    expect(urls()).toEqual(["POST /api/account/signin/options", "POST /api/account/signin/verify"]);
+    expect(urls()).toEqual(["POST /api/account/signin/options", "POST /api/account/signin/verify", "POST /api/storage/open"]);
     expect(isSignedIn()).toBe(true);
   });
 
@@ -116,7 +121,10 @@ describe("restoring a session", () => {
     const restored = await restoreSession();
     expect(restored?.loginCount).toBe(4);
     expect(isSignedIn()).toBe(true);
-    expect(calls.at(-1)).toMatchObject({ url: "/api/account/me", auth: "Bearer session-token-abcdefghijkl" });
+    expect(calls.map((c) => c.url)).toContain("/api/account/me");
+    // …and the database key this tab kept goes back to the server, in case
+    // it restarted and forgot it.
+    expect(calls.at(-1)).toMatchObject({ url: "/api/storage/open", body: { key: DB_KEY } });
   });
 
   it("gives up quietly when the key or the token is gone", async () => {

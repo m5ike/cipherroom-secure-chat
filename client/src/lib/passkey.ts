@@ -22,9 +22,22 @@ const dec = new TextDecoder();
 // Fresh copies are Uint8Array<ArrayBuffer>, which WebCrypto's BufferSource wants.
 const PRF_SALT = new Uint8Array(enc.encode("m5cet:passkey:prf:v1"));
 const HKDF_INFO = new Uint8Array(enc.encode("m5cet:profile:v1"));
+// A second, independent key from the same PRF secret: this one opens the
+// user's SQLCipher database on the server, so unlike the vault key it does
+// leave the browser. Separate info string = neither key tells you the other.
+const DB_INFO = new Uint8Array(enc.encode("m5cet:userdb:v1"));
 
 type PrfExtension = { prf?: { eval?: { first: BufferSource } } };
 type PrfResults = { prf?: { enabled?: boolean; results?: { first?: ArrayBuffer } } };
+
+/** The authenticator cannot produce a key, so there is nothing to encrypt
+ *  with. Thrown rather than silently falling back to something weaker. */
+export class PrfUnsupportedError extends Error {
+  constructor() {
+    super("This passkey cannot produce an encryption key (no WebAuthn PRF support). Use a passkey stored in the browser, iCloud Keychain or Google Password Manager, or a security key that supports the PRF / hmac-secret extension.");
+    this.name = "PrfUnsupportedError";
+  }
+}
 
 export function passkeySupported(): boolean {
   return typeof window !== "undefined"
@@ -51,6 +64,13 @@ async function deriveKey(secret: Uint8Array): Promise<CryptoKey> {
     false,
     ["encrypt", "decrypt"],
   );
+}
+
+/** Raw 32 bytes for the server-side database, derived from the same secret. */
+async function deriveDatabaseKey(secret: Uint8Array): Promise<string> {
+  const base = await crypto.subtle.importKey("raw", new Uint8Array(secret), "HKDF", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: PRF_SALT, info: DB_INFO }, base, 256);
+  return Array.from(new Uint8Array(bits), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 export async function sealProfile<T>(profile: T, key: CryptoKey): Promise<string> {
@@ -116,7 +136,7 @@ function prfSecret(credential: PublicKeyCredential): ArrayBuffer | null {
 /** Creates the passkey the server asked for, and derives the vault key.
  *  Most browsers do not hand out the PRF secret at creation time, so we
  *  immediately assert with the fresh credential to get it. */
-export async function createPasskey(options: ServerCreationOptions): Promise<{ response: RegistrationResponseJSON; key: CryptoKey }> {
+export async function createPasskey(options: ServerCreationOptions): Promise<{ response: RegistrationResponseJSON; key: CryptoKey; databaseKey: string }> {
   if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
   const publicKey: PublicKeyCredentialCreationOptions = {
     challenge: new Uint8Array(fromB64url(options.challenge)),
@@ -144,15 +164,16 @@ export async function createPasskey(options: ServerCreationOptions): Promise<{ r
       attestationObject: b64url(new Uint8Array(attestation.attestationObject)),
     },
   };
+  // Most browsers hand the PRF secret over at creation time; the ones that
+  // do not need a second ceremony, which we run straight away — the click
+  // that created the passkey still counts as the user's gesture.
   const direct = prfSecret(credential);
-  const key = direct
-    ? await deriveKey(new Uint8Array(direct))
-    : (await derivePrfKey(new Uint8Array(credential.rawId))).key;
-  return { response, key };
+  const secret = direct ? new Uint8Array(direct) : await prfSecretFor(new Uint8Array(credential.rawId));
+  return { response, key: await deriveKey(secret), databaseKey: await deriveDatabaseKey(secret) };
 }
 
 /** Signs the server's challenge and derives the same vault key. */
-export async function assertPasskey(options: ServerRequestOptions): Promise<{ response: AssertionResponseJSON; key: CryptoKey }> {
+export async function assertPasskey(options: ServerRequestOptions): Promise<{ response: AssertionResponseJSON; key: CryptoKey; databaseKey: string }> {
   if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
   const publicKey: PublicKeyCredentialRequestOptions = {
     challenge: new Uint8Array(fromB64url(options.challenge)),
@@ -168,7 +189,8 @@ export async function assertPasskey(options: ServerRequestOptions): Promise<{ re
   if (!credential) throw new Error("PassKey sign-in was cancelled.");
   const assertion = credential.response as AuthenticatorAssertionResponse;
   const secret = prfSecret(credential);
-  if (!secret) throw new Error("This authenticator does not support the WebAuthn PRF extension, so the encrypted data cannot be unlocked here.");
+  if (!secret) throw new PrfUnsupportedError();
+  const bytes = new Uint8Array(secret);
   return {
     response: {
       id: credential.id,
@@ -181,13 +203,14 @@ export async function assertPasskey(options: ServerRequestOptions): Promise<{ re
         userHandle: assertion.userHandle ? b64url(new Uint8Array(assertion.userHandle)) : null,
       },
     },
-    key: await deriveKey(new Uint8Array(secret)),
+    key: await deriveKey(bytes),
+    databaseKey: await deriveDatabaseKey(bytes),
   };
 }
 
 /** A PRF-only assertion (no server ceremony) — used right after creating a
  *  credential, when the browser withheld the secret. */
-async function derivePrfKey(credentialId: Uint8Array): Promise<{ key: CryptoKey }> {
+async function prfSecretFor(credentialId: Uint8Array): Promise<Uint8Array> {
   const publicKey: PublicKeyCredentialRequestOptions = {
     challenge: crypto.getRandomValues(new Uint8Array(32)),
     userVerification: "required",
@@ -197,8 +220,8 @@ async function derivePrfKey(credentialId: Uint8Array): Promise<{ key: CryptoKey 
   };
   const assertion = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
   const secret = assertion ? prfSecret(assertion) : null;
-  if (!secret) throw new Error("This authenticator does not support the WebAuthn PRF extension, so encrypted data cannot be stored for it.");
-  return { key: await deriveKey(new Uint8Array(secret)) };
+  if (!secret) throw new PrfUnsupportedError();
+  return new Uint8Array(secret);
 }
 
 // Exposed for tests: derive a key from a raw secret without WebAuthn.

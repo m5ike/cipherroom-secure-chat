@@ -5,6 +5,53 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [2.10.0] – 2026-09-22
+
+Server konečně má vlastní úložiště — a každý uživatel v něm svou šifrovanou
+databázi. Viz [`docs/storage.md`](docs/storage.md).
+
+### Přidáno
+- **Globální SQLite databáze** pro server: registrovaní uživatelé, jejich
+  passkeys (jen veřejný klíč), **index všech šifrovaných databází** (kdo je
+  vlastní, jak je klíčovaná, kdy vyprší, jak je velká), tabulka logů a
+  ladění a tabulka všech přenosů — detailně. Sloupce `detail` u logů i
+  přenosů jsou zapečetěné master klíčem, místnost jen jako hash.
+- **SQLCipher databáze pro každého uživatele.** Přihlášený passkeyem: klíč
+  se počítá z passkey (PRF → HKDF) v prohlížeči, server ho drží jen v paměti
+  po dobu sezení — po restartu i po odhlášení je soubor neotevíratelný.
+  Data jsou perzistentní a mažou se jen na příkaz uživatele.
+- **Dočasné úložiště pro nepřihlášené** v režimu server-enhanced: klíč
+  vygeneruje server na začátku sezení a drží ho zabalený master klíčem, data
+  žijí **jeden den** a tlačítko „Smazat vše a odejít" je smaže hned.
+- **Převod po registraci passkey**: data z dočasné databáze se překopírují do
+  nové, klíčované passkeyem, původní se i s klíčem smaže a prohlížeč dostane
+  id nové databáze, kam od té chvíle zapisuje.
+- **Sada API funkcí pro celé úložiště** (`/api/storage/*`): stav, relace,
+  otevření databáze klíčem, převod, souhrn, hodnoty, zprávy, místnosti,
+  schránka, události, logy, přenosy a smazání všeho. Úplně stejné operace
+  jdou i **přes signalizační WebSocket** (`{"type":"storage","op":…}`) —
+  bez dalšího spojení a bez round tripu navíc.
+- Operátorské pohledy za admin tokenem: `GET /api/admin/storage` (index,
+  uživatelé, statistiky), `…/logs`, `…/transfers`.
+- Proměnné `STORAGE_DIR` a `STORAGE_MASTER_KEY`; bez druhé se vygeneruje
+  `storage.key` (0600) v adresáři úložiště.
+
+### Opraveno
+- **Vytvoření účtu a přihlášení passkeyem.** Klíč se nově odvodí **dřív**,
+  než účet na serveru vznikne, takže po neúspěchu nezůstane osiřelý účet.
+  Passkey bez rozšíření PRF (řada USB klíčů, starší platformy) teď dostane
+  jasnou hlášku, co s tím — dřív skončil obecnou chybou. Trezor a databáze
+  navíc používají dva nezávislé klíče odvozené z téhož PRF tajemství.
+
+### Změněno
+- Trezor přihlášeného uživatele se ukládá do jeho SQLCipher databáze (pořád
+  zapečetěný prohlížečem — tedy dvojitě), soubor vedle indexu účtů slouží už
+  jen jako záloha pro server bez úložiště.
+- Přenosy se zapisují do serverové tabulky (směr, transport, stav, bajty,
+  chunky, zopakované chunky); chybějící chunky se hlásí do logu.
+- Nová nativní závislost `better-sqlite3-multiple-ciphers` (SQLCipher).
+  Když se nenačte, server běží dál a úložiště hlásí `available: false`.
+
 ## [2.9.0] – 2026-09-22
 
 Konverzace, která může zůstat — a uživatel, za kterého server odpoví.

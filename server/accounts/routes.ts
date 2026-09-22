@@ -89,6 +89,10 @@ const CLIENT_EVENTS = new Set(["decrypt-ok", "decrypt-failed", "data-loaded", "d
 export type AccountHooks = {
   /** Signed out or deleted: stop answering for the account (away relay). */
   onSignOut?: (accountId: string) => void;
+  /** A ceremony succeeded — the storage mirrors it into its tables. */
+  onAuthenticated?: (accountId: string, event: "register" | "sign-in", meta: Record<string, string | number | boolean>) => void;
+  /** The account was deleted for good. */
+  onDeleted?: (accountId: string) => void;
 };
 
 export function registerAccountRoutes(app: Express, store: AccountStore = defaultStore, hooks: AccountHooks = {}): void {
@@ -163,6 +167,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     const created = store.create(r.credential, issued.userName ?? "M5cet");
     if (!created.ok) return res.status(409).json({ ok: false, message: created.reason });
     store.addAudit(created.account.id, "sign-in", { ...clientInfo(req), via: "register" });
+    hooks.onAuthenticated?.(created.account.id, "register", clientInfo(req));
     const token = store.issueToken(created.account.id);
     eventStore.record({ kind: "account-register", meta: { accountId: created.account.id } });
     res.json({ ok: true, token, account: store.summary(created.account.id) });
@@ -194,6 +199,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       return res.status(401).json({ ok: false, message: `Passkey verification failed: ${r.error}` });
     }
     store.recordSignIn(account.id, r.signCount, clientInfo(req));
+    hooks.onAuthenticated?.(account.id, "sign-in", clientInfo(req));
     const token = store.issueToken(account.id);
     eventStore.record({ kind: "account-signin", meta: { accountId: account.id } });
     res.json({ ok: true, token, account: store.summary(account.id) });
@@ -279,6 +285,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     const id = req.account!.id;
     hooks.onSignOut?.(id);
     store.deleteAccount(id);
+    hooks.onDeleted?.(id);
     eventStore.record({ kind: "account-deleted", meta: { accountId: id } });
     res.json({ ok: true });
   });

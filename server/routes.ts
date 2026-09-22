@@ -45,6 +45,10 @@ import { consentLedger, deviceAuditLog, deviceSettings } from "./device-state";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 import { registerPluginRoutes } from "./plugins/routes";
 import { accountStore } from "./accounts/store";
+import { storage } from "./storage/service";
+import { registerStorageRoutes } from "./storage/routes";
+import { connectAccountsToStorage, forgetAccount, recordAccount } from "./storage/bridge";
+import { handleStorageFrame, isStorageFrame, newStorageSocketState, type StorageFrame, type StorageSocketState } from "./storage/ws";
 import { AwayRelay } from "./accounts/relay";
 import { registerAccountRoutes } from "./accounts/routes";
 import { sendWebPush } from "./push";
@@ -78,6 +82,8 @@ type ClientMessage =
   | { type: "relay"; messageId: string; to: string[]; envelope: { iv: string; ciphertext: string } }
   | { type: "relay-ack"; ids: string[] }
   | { type: "receipt"; to: { peerId?: string; accountId?: string }; messageIds: string[]; state: "delivered" | "read" }
+  // Server-side storage over this socket (see storage/ws.ts).
+  | StorageFrame
   // Server-side proxy mode for file transfer: clients that cannot
   // successfully establish a direct P2P connection can fall back to the
   // signaling WebSocket as a relay. The server never sees the plaintext
@@ -230,9 +236,32 @@ export async function registerRoutes(
   registerGoodbyeRoute(app);
   // Optional AI + speech modules (gated by ENABLE_AI / ENABLE_SPEECH).
   registerPluginRoutes(app);
+  // Server-side storage: one SQLite database for the server, one encrypted
+  // SQLCipher database per user or session (storage/*). Boots before the
+  // routes so /api/storage/status can answer honestly either way.
+  const storageReady = await storage.init();
+  if (!storageReady.ok) {
+    console.warn(`[storage] running without server-side storage: ${storageReady.reason ?? "unknown reason"}`);
+  }
+  registerStorageRoutes(app, storage, accountStore);
+  // The vault moves into the user's own database, and the global tables
+  // learn about the accounts that already exist.
+  connectAccountsToStorage(storage, accountStore);
+
   // Passkey accounts: WebAuthn sign-in, zero-knowledge vault, audit log.
-  // Signing out / deleting ends the away status in every room.
-  registerAccountRoutes(app, accountStore, { onSignOut: (accountId) => relay.forget(accountId) });
+  // Signing out / deleting ends the away status in every room, and closes
+  // the user's database so the file is opaque again.
+  registerAccountRoutes(app, accountStore, {
+    onSignOut: (accountId) => {
+      relay.forget(accountId);
+      storage.releaseAccount(accountId);
+    },
+    onAuthenticated: (accountId, event, meta) => {
+      const account = accountStore.get(accountId);
+      if (account) recordAccount(storage, account, event, meta);
+    },
+    onDeleted: (accountId) => forgetAccount(storage, accountId),
+  });
   // Optional telephony (voice + SMS via Twilio/Telnyx/Vonage, SIP trunk config),
   // gated by ENABLE_TELEPHONY.
   registerTelephonyRoutes(app);
@@ -382,6 +411,8 @@ export async function registerRoutes(
   });
 
   wss.on("connection", (socket, request) => {
+    // Per-socket storage identity + rate window (storage/ws.ts).
+    const storageState: StorageSocketState = newStorageSocketState();
     const client: PeerClient = {
       id: crypto.randomUUID(),
       room: null,
@@ -395,6 +426,11 @@ export async function registerRoutes(
         const raw = data.toString("utf8");
         if (raw.length > 128_000) return;
         const message = JSON.parse(raw) as ClientMessage;
+
+        if (isStorageFrame(message)) {
+          handleStorageFrame(socket, storageState, message, send);
+          return;
+        }
 
         if (message.type === "join") {
           joinRoom(client, message);

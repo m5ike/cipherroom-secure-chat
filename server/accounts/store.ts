@@ -68,6 +68,25 @@ export type MailItem = {
 };
 
 type VaultFile = { profile?: { ct: string; updatedAt: number }; chat?: { ct: string; updatedAt: number } };
+
+/**
+ * Where a user's sealed vault lives. By default it is a file next to the
+ * account index; when the SQLCipher storage is running and the user's own
+ * database is open, server/storage/bridge.ts points this at that database
+ * instead. The blob is sealed by the browser either way — this only decides
+ * which encrypted container holds it.
+ */
+export type VaultBackend = {
+  read(accountId: string): VaultFile | null;
+  write(accountId: string, vault: VaultFile): boolean;
+  erase(accountId: string): void;
+};
+
+let vaultBackend: VaultBackend | null = null;
+
+export function setVaultBackend(backend: VaultBackend | null): void {
+  vaultBackend = backend;
+}
 type Session = { accountId: string; createdAt: number; expiresAt: number };
 
 const env = (name: string) => process.env[name]?.trim() || "";
@@ -184,6 +203,12 @@ export class AccountStore {
     return ID.test(accountId) ? this.accounts.get(accountId) ?? null : null;
   }
 
+  /** Every account, for anything that needs to walk them (storage index). */
+  all(): AccountRecord[] {
+    this.load();
+    return Array.from(this.accounts.values());
+  }
+
   findByCredential(credentialId: string): AccountRecord | null {
     this.load();
     const id = this.byCredential.get(credentialId);
@@ -259,7 +284,8 @@ export class AccountStore {
   /* --------------------------------------------------------------- vault */
 
   getVault(accountId: string): VaultFile {
-    return this.get(accountId) ? this.read<VaultFile>(this.vaultPath(accountId), {}) : {};
+    if (!this.get(accountId)) return {};
+    return vaultBackend?.read(accountId) ?? this.read<VaultFile>(this.vaultPath(accountId), {});
   }
 
   putVault(
@@ -291,7 +317,8 @@ export class AccountStore {
       acc.vault.messageBytes = n(patch.chat.messageBytes);
       acc.vault.rooms = n(patch.chat.rooms);
     }
-    this.write(this.vaultPath(accountId), vault);
+    // The user's own encrypted database when it is open, the file otherwise.
+    if (!vaultBackend?.write(accountId, vault)) this.write(this.vaultPath(accountId), vault);
     this.persist();
     return { ok: true };
   }
@@ -410,6 +437,7 @@ export class AccountStore {
     this.accounts.delete(accountId);
     this.byCredential.delete(acc.credential.credentialId);
     this.revokeAll(accountId);
+    vaultBackend?.erase(accountId);
     this.remove(this.vaultPath(accountId));
     this.remove(this.mailboxPath(accountId));
     this.persist();

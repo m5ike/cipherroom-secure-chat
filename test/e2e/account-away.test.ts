@@ -14,7 +14,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -182,6 +182,25 @@ describe("passkey account and the away relay", () => {
     expect(vault.length).toBeGreaterThan(100);
     await alice.page.keyboard.press("Escape");
   }, 180_000);
+
+  it("keeps the user's data in an encrypted database of their own", async () => {
+    // The passkey opened a SQLCipher database on the server: the index knows
+    // it is keyed by the passkey, and the file itself is unreadable.
+    const status = await alice.page.evaluate(async () => {
+      const raw = sessionStorage.getItem("m5cet:account:v1");
+      const token = raw ? (JSON.parse(raw) as { token: string }).token : "";
+      const res = await fetch("/api/storage/status", { headers: { Authorization: `Bearer ${token}` } });
+      return await res.json() as { available: boolean; caller: string; locked: boolean; stats: { databases: number } };
+    });
+    expect(status).toMatchObject({ available: true, caller: "account", locked: false });
+    expect(status.stats.databases).toBeGreaterThanOrEqual(1);
+
+    const files = readdirSync(join(dataDir, "storage", "db")).filter((f) => f.endsWith(".db"));
+    expect(files).toHaveLength(1);
+    const raw = readFileSync(join(dataDir, "storage", "db", files[0]));
+    expect(raw.subarray(0, 15).toString("utf8")).not.toContain("SQLite format");
+    expect(raw.includes(Buffer.from("poznámka do trezoru"))).toBe(false);
+  }, 60_000);
 
   it("holds a message while the signed-in user is away, then delivers it", async () => {
     await expect.poll(async () => bob.page.getByTestId("recip-widget").innerText(), { timeout: 30_000 }).toContain("alice");

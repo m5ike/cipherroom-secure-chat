@@ -79,6 +79,12 @@ místnosti.
   endpoint.
 - **6 šablon × 6 barevných variací × 4 rozvržení** — Motorsport, Glass,
   Terminal, Midnight, Paper, Kontrast.
+- **Serverové úložiště** — globální SQLite databáze pro server (uživatelé,
+  passkeys, index šifrovaných databází, logy, přenosy) a **SQLCipher
+  databáze pro každého uživatele**: klíč z passkey u přihlášených, klíč
+  serveru s jednodenním TTL u ostatních. Po registraci passkey se data
+  z dočasné databáze převedou do nové, klíčované passkeyem.
+  Viz [`docs/storage.md`](docs/storage.md).
 - **Data a historie chatu** — tři volby: nové připojení vše smaže (výchozí),
   chat žije do konce sezení (šifrovaně v prohlížeči), nebo leží na serveru
   zašifrovaný **passkeyem**. Server ověří podpis WebAuthn, ale obsah nepřečte.
@@ -166,6 +172,7 @@ Operátor zapne kombinaci:
 | Admin API         | `ADMIN_API_TOKEN`, `ENABLE_ADMIN=1`           | jen co je vyjmenované v `/admin` |
 | Settings sync     | `POST /api/settings/sync` (opt-in v UI)        | per-device JSON preferences      |
 | Passkey účty      | `WEBAUTHN_RP_ID`, zapisovatelný `DATA_DIR`     | veřejný klíč, velikosti, časy, ciphertext trezoru a schránky |
+| Úložiště          | `STORAGE_MASTER_KEY` (volitelně), `DATA_DIR`   | šifrované databáze, index, logy, přenosy (detaily zapečetěné) |
 
 **Žádný režim** nikdy neumožní serveru číst obsah zpráv — to je nemožné z
 podstaty (klíč je odvozen v prohlížeči).
@@ -607,6 +614,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/nfc.md`](docs/nfc.md)                            | Web NFC + plugin čtečky                        |
 | [`docs/push.md`](docs/push.md)                          | Web Push                                       |
 | [`docs/accounts-away.md`](docs/accounts-away.md)        | Passkey účty, data chatu, stav away + relay    |
+| [`docs/storage.md`](docs/storage.md)                    | Serverové úložiště: SQLite + SQLCipher, API    |
 | [`docs/speech.md`](docs/speech.md)                      | Web Speech API                                 |
 | [`docs/browser-limitations.md`](docs/browser-limitations.md) | Co prohlížeč (ne)umí                       |
 | [`docs/build-and-deploy.md`](docs/build-and-deploy.md)  | npm workflow, PWA, sanity checky               |

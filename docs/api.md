@@ -16,6 +16,7 @@ Frame format: JSON. Rámce delší než **128 000 znaků** server tiše zahodí
 { "type": "signal", "target": "peerId", "payload": { ... } }
 { "type": "ping",   "t": 1700000000000 }
 { "type": "leave",  "away": true }
+{ "type": "storage",   "id": "42", "op": "kv.put", "payload": { ... }, "auth": "token?", "session": "id?" }
 { "type": "relay",     "messageId": "...", "to": ["accountId"], "envelope": { "iv", "ciphertext" } }
 { "type": "relay-ack", "ids": ["mailId"] }
 { "type": "receipt",   "to": { "peerId?", "accountId?" }, "messageIds": ["..."], "state": "delivered|read" }
@@ -48,6 +49,7 @@ Server odpovídá:
 { "type": "peer-back",   "accountId": "...", "peerId": "...", "name": "..." }
 { "type": "peer-gone",   "accountId": "..." }
 { "type": "relay-deliver", "items": [{ "id", "kind", "messageId", "from", "envelope?", "status?", "storedAt" }] }
+{ "type": "storage-result", "id": "42", "ok": true, "data": { ... } }
 { "type": "relay-status",  "messageId": "...", "recipient": { "accountId", "name" },
   "state": "stored|forwarded|delivered|read|rejected", "at": 0, "reason?": "..." }
 { "type": "signal",      "source": "peerId", "payload": { ... } }
@@ -144,6 +146,34 @@ Vše je v paměti procesu.
 ### Odchod
 
 - `GET /goodbye` → statická stránka s `Clear-Site-Data: "cache", "cookies", "storage", "executionContexts"`.
+
+### Úložiště (`/api/storage/*`)
+
+Jedna globální SQLite databáze pro server, jedna SQLCipher databáze pro
+každého uživatele (klíč z passkey) nebo pro anonymní relaci (klíč serveru,
+TTL 1 den). Kompletní přehled včetně tabulek a operací přes WebSocket je v
+[`storage.md`](storage.md).
+
+| Metoda a cesta | Autorizace | Co dělá |
+| --- | --- | --- |
+| `GET /api/storage/status` | — | dostupnost, engine, statistiky |
+| `POST /api/storage/session` | — | založí/obnoví relaci bez passkey |
+| `POST /api/storage/open` | `Bearer` | otevře databázi účtu klíčem z passkey |
+| `POST /api/storage/promote` | `Bearer` | převede data relace pod účet |
+| `GET /api/storage/summary` | účet \| relace | velikosti, místnosti, schránka |
+| `GET \| PUT \| DELETE /api/storage/kv` | účet \| relace | hodnoty (nastavení, trezor) |
+| `GET \| POST \| DELETE /api/storage/messages` | účet \| relace | zprávy |
+| `GET /api/storage/rooms` | účet \| relace | místnosti |
+| `GET /api/storage/mailbox`, `POST /api/storage/mailbox/take` | účet \| relace | schránka |
+| `GET \| POST /api/storage/events` | účet \| relace | auditní stopa uživatele |
+| `POST /api/storage/log` | účet \| relace | log / ladicí řádek |
+| `GET \| POST /api/storage/transfers` | účet \| relace | přenosy |
+| `DELETE /api/storage` | účet \| relace | smaže vše, co volajícímu patří |
+| `GET /api/admin/storage`, `…/logs`, `…/transfers` | admin token | index, uživatelé, logy, přenosy |
+
+Relace se identifikuje hlavičkou `X-M5cet-Session`. Limity: 600 požadavků /
+15 min (vlastní kbelík), tělo do 12 MB, 600 rámců za minutu na socket.
+Proměnné: `STORAGE_DIR`, `STORAGE_MASTER_KEY`.
 
 ### Účty s passkey (`/api/account/*`)
 

@@ -202,6 +202,34 @@ Podrobně v [`accounts-away.md`](accounts-away.md). Pro model hrozeb:
   (kompromitovaný endpoint, rozšíření) to nechrání — může požádat o
   dešifrování stejně jako aplikace.
 
+## Serverové úložiště (od 2.10.0)
+
+Podrobně v [`storage.md`](storage.md). Pro model hrozeb:
+
+- **Nové aktivum: databáze na serveru.** Data uživatele leží v SQLCipher
+  databázi (šifrovaný celý soubor, včetně indexů). Klíč přihlášeného
+  uživatele se počítá z jeho passkey (PRF → HKDF) v prohlížeči a server ho
+  drží **jen v paměti** po dobu sezení — po restartu nebo odhlášení je soubor
+  neotevíratelný, dokud se uživatel znovu nepřihlásí.
+- **Server ale klíč po dobu sezení vidí.** To je rozdíl proti trezoru, který
+  je pečetěný druhým, nezávislým klíčem a zůstává nečitelný i s otevřenou
+  databází. Kdo kompromituje běžící server, přečte, co je v ten okamžik
+  otevřené (kromě trezoru); kdo získá jen disk, nepřečte nic.
+- **Relace bez passkey** mají klíč od serveru, zabalený master klíčem
+  (`STORAGE_MASTER_KEY`, jinak soubor `storage.key` 0600). Server je tedy
+  otevřít umí — proto mají TTL jeden den, proto je „Smazat vše a odejít"
+  maže okamžitě a proto se po registraci passkey data převedou do databáze
+  klíčované passkeyem a dočasná se smaže i s klíčem.
+- **Globální databáze je nešifrovaná**, ale drží jen veřejné klíče, id,
+  časy, velikosti a hash místnosti; `detail` u logů a přenosů je zapečetěný
+  master klíčem. Ztráta master klíče znamená nečitelné relace a nečitelné
+  detaily — ne ztrátu účtů.
+- **Passkey bez PRF účet nezaloží.** Zamezí to datům, která by nikdo
+  neodemkl; cenou je, že na části autentikátorů (část USB klíčů, starší
+  platformy) účet vytvořit nelze.
+- **Nová závislost**: nativní modul `better-sqlite3-multiple-ciphers`. Když
+  se nenačte, úložiště se vypne a server relayuje dál.
+
 ## Známé mezery (stav 2.5.0)
 
 Zjištěno revizí kódu a měřením 2026-09-21. Opravené řádky jsou označené

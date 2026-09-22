@@ -211,6 +211,27 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now m5cet
 ```
 
+## Úložiště (od 2.10.0)
+
+Server ukládá data do `$DATA_DIR/storage` (SQLite + SQLCipher, viz
+[`storage.md`](storage.md)). Adresář **musí být zapisovatelný** — systemd
+unit z instalátoru proto má `StateDirectory=m5cet` a `DATA_DIR=/var/lib/m5cet`.
+U starší instalace doplňte do unitu:
+
+```ini
+StateDirectory=m5cet
+StateDirectoryMode=0700
+Environment=DATA_DIR=/var/lib/m5cet
+```
+
+SQLCipher přináší nativní modul `better-sqlite3-multiple-ciphers`. Většinou
+se stáhne předkompilovaný; jinak ho `npm ci` přeloží (`build-essential`,
+`python3`). Když se modul nenačte, server běží dál bez úložiště a
+`GET /api/storage/status` vrací `available: false`.
+
+Doporučeno nastavit `STORAGE_MASTER_KEY` (32 bajtů hex/base64) v `.env` a
+zálohovat ho; jinak si server vygeneruje `storage.key` v adresáři úložiště.
+
 ## Observability
 
 - `GET /api/health` pro liveness probe.
