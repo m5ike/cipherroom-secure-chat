@@ -288,7 +288,6 @@ const whLimiter = rateLimit({
   limit: 300,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => String(req.ip || "unknown"),
   message: { ok: false, message: "Too many webhook requests." },
 });
 

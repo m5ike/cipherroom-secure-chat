@@ -21,7 +21,6 @@ const heavyLimiter = rateLimit({
   limit: 20,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => String(req.ip || "unknown"),
   message: { ok: false, message: "Too many AI/speech requests; slow down." },
 });
 

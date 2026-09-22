@@ -15,7 +15,7 @@
 
 import { buildSmsConnectors, buildVoiceConnectors, providerWebhookSpecs, publicBaseUrl } from "./connectors";
 import { sipEnvSeed, sipStore, type SipTrunk } from "./sip";
-import { dataFileMtime, loadTelephonyFile, persistenceStatus, saveTelephonyFile, type PersistedSettings } from "./store";
+import { dataFileSignature, loadTelephonyFile, persistenceStatus, saveTelephonyFile, type PersistedSettings } from "./store";
 import { isProvider, PROVIDERS, type ConnectorStatus, type SmsConnector, type TelephonyProvider, type VoiceConnector, type WebhookSpec, type WebhookVerify } from "./types";
 import { webhookVerificationStatus } from "./webhooks";
 
@@ -28,15 +28,15 @@ const voiceConnectors = buildVoiceConnectors();
 
 /* ------------------------------------------- admin-chosen defaults (file) */
 
-let settingsCache: { settings: PersistedSettings; mtime: number; file: string } | null = null;
+let settingsCache: { settings: PersistedSettings; sig: string; file: string } | null = null;
 
 /** Persisted admin choices; re-read whenever the data file changes. */
 export function getSettings(): PersistedSettings {
   const status = persistenceStatus();
-  const mtime = dataFileMtime();
-  if (!settingsCache || settingsCache.mtime !== mtime || settingsCache.file !== status.file) {
+  const sig = dataFileSignature();
+  if (!settingsCache || settingsCache.sig !== sig || settingsCache.file !== status.file) {
     const { data } = loadTelephonyFile();
-    settingsCache = { settings: { ...data.settings }, mtime, file: status.file };
+    settingsCache = { settings: { ...data.settings }, sig, file: status.file };
   }
   return settingsCache.settings;
 }

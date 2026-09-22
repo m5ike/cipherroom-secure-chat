@@ -10,7 +10,8 @@
 // templates — never markup. The app and admin are separate processes: the
 // admin writes, the app re-reads when the file's mtime changes.
 
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Express, Request, Response } from "express";
 import { DEFAULT_LAYOUT, sanitizeLayout, type LayoutConfig } from "../client/src/lib/layout-config";
@@ -24,22 +25,23 @@ export function layoutFilePath(): string {
   return dir ? resolve(dir, "layout.json") : resolve(process.cwd(), ".m5cet", "layout.json");
 }
 
-function fileMtime(): number {
-  try { return statSync(layoutFilePath()).mtimeMs; } catch { return 0; }
+/** Content signature ("" when missing) — mtime alone misses same-tick writes. */
+function fileSig(): string {
+  try { return createHash("sha1").update(readFileSync(layoutFilePath())).digest("hex"); } catch { return ""; }
 }
 
 export class LayoutStore {
-  private cache: { layout: LayoutConfig; mtime: number; file: string } | null = null;
+  private cache: { layout: LayoutConfig; sig: string; file: string } | null = null;
   private lastSaveError = "";
 
   /** Current layout (defaults when nothing is stored); reloads on file change. */
   get(): LayoutConfig {
     const file = layoutFilePath();
-    const mtime = fileMtime();
-    if (this.cache && this.cache.mtime === mtime && this.cache.file === file) return this.cache.layout;
+    const sig = fileSig();
+    if (this.cache && this.cache.sig === sig && this.cache.file === file) return this.cache.layout;
     let layout = DEFAULT_LAYOUT;
     try { layout = sanitizeLayout(JSON.parse(readFileSync(file, "utf8"))); } catch { /* missing or corrupt → defaults */ }
-    this.cache = { layout, mtime, file };
+    this.cache = { layout, sig, file };
     return layout;
   }
 

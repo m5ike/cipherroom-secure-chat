@@ -13,6 +13,7 @@
 // If the location is not writable (e.g. a read-only container without a
 // volume) the store keeps working in memory and reports `writable: false`.
 
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, accessSync, constants } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -49,6 +50,17 @@ export function dataFilePath(): string {
 export function dataFileMtime(): number {
   try { return statSync(dataFilePath()).mtimeMs; } catch { return 0; }
 }
+
+/**
+ * Change detection by CONTENT, not mtime: two writes within the same
+ * filesystem timestamp tick (ms on ext4) would otherwise look identical and a
+ * reader would keep stale data. The files are a few KB, so hashing on each
+ * check is cheap. "" when the file is missing.
+ */
+export function fileSignature(path: string): string {
+  try { return createHash("sha1").update(readFileSync(path)).digest("hex"); } catch { return ""; }
+}
+export const dataFileSignature = (): string => fileSignature(dataFilePath());
 
 /** Never throws: a missing or corrupt file yields the empty document. */
 export function loadTelephonyFile(): { data: TelephonyFile; mtimeMs: number; exists: boolean } {

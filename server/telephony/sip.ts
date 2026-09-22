@@ -19,7 +19,7 @@
 //         reloads the file when its mtime changes.
 
 import { randomUUID } from "node:crypto";
-import { dataFileMtime, loadTelephonyFile, saveTelephonyFile, type PersistedTrunk } from "./store";
+import { dataFileSignature, loadTelephonyFile, saveTelephonyFile, type PersistedTrunk } from "./store";
 
 export const SIP_LIMITS = {
   maxTrunks: 100,
@@ -78,7 +78,7 @@ function clean(v: unknown, max: number = SIP_LIMITS.maxStringChars): string {
 export class SipTrunkStore {
   private map = new Map<string, StoredTrunk>();
   private persist = false;
-  private loadedMtime = 0;
+  private loadedSig = ""; // content signature of the file as last loaded/saved
   private lastSaveError = "";
 
   private normPort(p: unknown): number | null {
@@ -161,20 +161,20 @@ export class SipTrunkStore {
 
   /** Replace all file-sourced trunks with the file contents (env trunks stay). */
   private reload(): void {
-    const { data, mtimeMs } = loadTelephonyFile();
+    const { data } = loadTelephonyFile();
     for (const [id, t] of this.map) if (t.source === "file") this.map.delete(id);
     for (const p of data.trunks) {
       if (this.map.has(p.id)) continue; // an env trunk with the same id wins
       const r = this.build({ ...p }, "file", p.id);
       if (r.ok) { r.rec.updatedAt = typeof p.updatedAt === "number" ? p.updatedAt : r.rec.updatedAt; this.map.set(r.rec.id, r.rec); }
     }
-    this.loadedMtime = mtimeMs;
+    this.loadedSig = dataFileSignature();
   }
 
   /** Cheap mtime check so the app process sees admin edits without a restart. */
   reloadIfChanged(): void {
     if (!this.persist) return;
-    if (dataFileMtime() !== this.loadedMtime) this.reload();
+    if (dataFileSignature() !== this.loadedSig) this.reload();
   }
 
   private save(): void {
@@ -188,7 +188,7 @@ export class SipTrunkStore {
     }));
     const r = saveTelephonyFile({ ...data, trunks });
     this.lastSaveError = r.ok ? "" : r.message;
-    if (r.ok) this.loadedMtime = dataFileMtime();
+    if (r.ok) this.loadedSig = dataFileSignature();
   }
 
   /** Last persistence failure (e.g. read-only container without a volume), or "". */

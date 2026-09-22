@@ -36,7 +36,8 @@ const telephonyLimiter = rateLimit({
   limit: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => String(req.ip || "unknown"),
+  // Default key = client IP with correct IPv6 handling (a custom req.ip key
+  // would let IPv6 clients rotate addresses to dodge the limit).
   message: { ok: false, message: "Too many telephony requests; slow down." },
 });
 
