@@ -18,14 +18,18 @@ export async function setupVite(server: Server, app: Express) {
   const vite = await createViteServer({
     ...viteConfig,
     configFile: false,
+    // Log only. Vite reports request-level problems (e.g. a denied /@fs path:
+    // "outside of Vite serving allow list") through this same channel, so
+    // exiting here turned every 403 into a dead dev server. Compile errors
+    // still surface via Vite's overlay and the console.
     customLogger: {
       ...viteLogger,
-      error: (msg, options) => {
-        viteLogger.error(msg, options);
-        process.exit(1);
-      },
+      error: (msg, options) => { viteLogger.error(msg, options); },
     },
-    server: serverOptions,
+    // Merge, don't replace: vite.config.ts carries server.fs (allow/deny) and
+    // the dev security headers; dropping them silently ran Vite with its
+    // defaults, whose allow-list breaks on symlinked/relocated installs.
+    server: { ...(viteConfig.server ?? {}), ...serverOptions },
     appType: "custom",
   });
 

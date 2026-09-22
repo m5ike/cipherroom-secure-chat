@@ -1,6 +1,13 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "node:path";
+import fs from "node:fs";
+
+// Dev-server file serving: allow the repo root — and its real path, so a
+// symlinked install (e.g. /opt/m5cet -> /srv/m5cet-2.8) still serves
+// node_modules/.vite/deps and client/ — while denying only real secrets.
+const repoRoot = path.resolve(import.meta.dirname);
+const repoRootReal = (() => { try { return fs.realpathSync(repoRoot); } catch { return repoRoot; } })();
 
 export default defineConfig({
   plugins: [react()],
@@ -33,7 +40,10 @@ export default defineConfig({
   server: {
     fs: {
       strict: true,
-      deny: ["**/.*"],
+      allow: Array.from(new Set([repoRoot, repoRootReal])),
+      // Only genuine secrets/state — a blanket "**/.*" would also hit
+      // node_modules/.vite (the optimized-deps cache) once these rules apply.
+      deny: [".env", ".env.*", "**/.git/**", "**/.m5cet/**", "*.key", "*.pem"],
     },
     headers: {
       "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",

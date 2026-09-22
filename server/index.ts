@@ -32,7 +32,6 @@ const apiLimiter = rateLimit({
   limit: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => String(req.ip || req.socket.remoteAddress || "unknown"),
   message: { ok: false, message: "Too many requests, please try again later." },
 });
 
@@ -40,7 +39,6 @@ const apiLimiter = rateLimit({
 const wsUpgradeLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
   limit: 30,
-  keyGenerator: (req) => String(req.ip || req.socket.remoteAddress || "unknown"),
   skip: (_req) => false,
   standardHeaders: true,
   legacyHeaders: false,

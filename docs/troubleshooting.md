@@ -19,6 +19,33 @@ sudo -E /opt/m5cet/install.sh --test    # alias pro --doctor
 
 ## Časté problémy
 
+### Za doménou běží vývojový server (403 na `/@fs/…`, HMR websocket padá)
+
+Příznaky v konzoli prohlížeče: `GET https://<doména>/@fs/opt/m5cet/node_modules/.vite/deps/… 403`,
+`[vite] connecting…`, `WebSocket connection to 'wss://<doména>/vite-hmr' failed`,
+`(browser) <doména>/ <--[HTTP]--> localhost:5173/ (server)`.
+
+Příčina: nginx proxuje na **`npm run dev`** (Vite dev server, typicky port 5173),
+ne na produkční build. Dev server v produkci nepatří — bez minifikace, s HMR
+socketem, který přes proxy neprojde a koliduje s `/ws`, a s přísným „fs
+strict" servírováním, které při symlinkovaném/přesunutém adresáři odmítá
+`/@fs/…` (odtud 403).
+
+Náprava:
+
+```bash
+cd /opt/m5cet
+npm run build
+```
+
+a spustit produkční proces (`NODE_ENV=production node dist/index.cjs`, resp.
+systemd unit / `./update.sh` / Docker), a v nginx nasměrovat `/api`, `/ws`,
+`/wh`, `/goodbye` na **produkční port** (výchozí 5000, `APP_PORT`) — viz
+[deploy/nginx/m5cet.conf](../deploy/nginx/m5cet.conf). Dev server (`npm run
+dev`) ukončit. Od verze 2.8 dev server navíc povoluje i reálnou cestu repa
+(symlinky) a zamítá jen skutečná tajemství (`.env*`, `.git`, `.m5cet`, `*.key`,
+`*.pem`), takže případný lokální vývoj za proxy už 403 nedává.
+
 ### 1. "Zpráva přišla, ale nedá se rozšifrovat"
 
 Druhá strana má **jiný klíč místnosti**. Zkontrolujte:
