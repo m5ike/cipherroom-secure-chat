@@ -27,7 +27,6 @@ import {
   Paperclip,
   PhoneOff,
   Radio,
-  Send,
   ShieldCheck,
   Smile,
   Sun,
@@ -46,17 +45,31 @@ import {
   ChangeEvent,
   FormEvent,
   KeyboardEvent,
+  Suspense,
+  lazy,
   useEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { detectCapabilities } from "./lib/capabilities";
-import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURITY, type Preferences } from "./lib/preferences";
+import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURITY, type Preferences, type WidgetState } from "./lib/preferences";
 import { linkify } from "./lib/linkify";
 import { fetchPushStatus, subscribeToPush, ensureServiceWorker, sendTestPush, showLocalTestNotification } from "./lib/push";
 import { dispatchInternal, installPublicAPI } from "./lib/cipherroom-api";
-import { applyTheme, applyFont, applyEffects } from "./lib/themes";
+import { applyTheme, applyFont, applyEffects, applyChatSurface } from "./lib/themes";
+import { styleKeyFor, bubbleStyleFrom, sanitizePerUserStyle, isEmptyStyle, type PerUserStyle } from "./lib/message-styles";
+import { sealText, generateSealCode, type MsgFlags } from "./lib/message-kinds";
+import { MessageBubble, RecipientHint } from "./components/MessageBubble";
+import { UserBadge, Avatar } from "./components/UserBadge";
+import { SendOptions, DEFAULT_SEND_STATE, type SendState } from "./components/SendOptions";
+import { RecipientsWidget, type WidgetPeer } from "./components/RecipientsWidget";
+import { AudioRecorder } from "./components/AudioRecorder";
+import { UserInfoView, type UserInfo } from "./components/UserInfoModal";
+// The NFC / smart-card workbench pulls in the transport + card-parsing tree;
+// load it only when the panel opens so the initial bundle stays lean.
+const NfcWorkbench = lazy(() => import("./components/NfcWorkbench").then((m) => ({ default: m.NfcWorkbench })));
+import { AiPanel } from "./components/AiPanel";
 import { detectLang, t, type Lang } from "./lib/i18n";
 import type { ConnectionStatus, KeepaliveStrategy } from "./lib/connection-keeper";
 import { dispatchCommand, isAdminCommand } from "./lib/admin-commands";
@@ -76,8 +89,7 @@ import {
   type FileTransferEnvelope,
 } from "./lib/file-transfer";
 import { detectGeolocation, getCurrentPosition, watchPosition, osmLink, type LatLng, type LocationWatcher } from "./lib/maps";
-import { detectNfc, encryptForTag, decryptFromTag, scanOnce, writeBlob, isValidPin } from "./lib/nfc";
-import { detectSpeechCaps, listVoices, speak, stopSpeaking, startRecognition, type VoicePreset } from "./lib/speech";
+import { detectSpeechCaps, listVoices, speak, stopSpeaking, startRecognition, fetchServerSpeechStatus, serverTts, type VoicePreset, type ServerVoiceInfo } from "./lib/speech";
 import { deriveRoomKey, encryptEnvelope, decryptEnvelope, toBase64, type DataChannelEnvelope } from "./lib/crypto";
 import { newId } from "./lib/id";
 import { TransferCard } from "./components/TransferCard";
@@ -130,6 +142,16 @@ type ChatMessage = {
   secure: boolean;
   attachment?: AttachmentMeta;
   expiresAt?: number;
+  // Optional message kinds (see lib/message-kinds.ts).
+  flags?: MsgFlags;
+  /** Recipient names when the message was sent privately (not to everyone). */
+  to?: string[];
+  /** Sender-only: original text + code for a sealed message, kept locally. */
+  sealPlain?: string;
+  sealCode?: string;
+  /** "Mizející" message that has fully elapsed. */
+  vanished?: boolean;
+  vanishedAt?: number;
 };
 
 type SignalFrame =
@@ -161,6 +183,8 @@ type DecryptedPayload =
       senderName: string;
       attachment?: AttachmentMeta;
       ttlMinutes?: number;
+      flags?: MsgFlags;
+      to?: string[];
     }
   | {
       kind: "audio-status";
@@ -182,6 +206,7 @@ type PeerHandle = {
   outgoingAudioSenders: RTCRtpSender[];
 };
 
+const APP_VERSION = "2.8.0";
 const PORT_BASE = "__PORT_5000__";
 const EXTERNAL_SIGNALING_URL = import.meta.env.VITE_SIGNALING_URL as string | undefined;
 // Inline (data-URL) attachment cap. Anything larger goes through the
@@ -232,6 +257,26 @@ async function fileToAttachment(file: File): Promise<AttachmentMeta> {
   };
 }
 
+/** Read the in-use ICE candidate pair to learn the peer's remote address and
+ *  how media is routed (direct host/reflexive vs TURN relay). Best-effort:
+ *  returns null when getStats is blocked or the pair is not yet nominated. */
+async function extractPeerAddress(pc: RTCPeerConnection): Promise<{ ip?: string; candidateType?: string } | null> {
+  try {
+    const stats = await pc.getStats();
+    let pairId: string | null = null;
+    const remotes = new Map<string, RTCIceCandidate & { address?: string; ip?: string; candidateType?: string }>();
+    stats.forEach((r: { type?: string; state?: string; selected?: boolean; nominated?: boolean; remoteCandidateId?: string; id?: string; address?: string; ip?: string; candidateType?: string }) => {
+      if (r.type === "candidate-pair" && (r.selected || r.nominated || r.state === "succeeded")) pairId = r.remoteCandidateId ?? null;
+      if (r.type === "remote-candidate" && r.id) remotes.set(r.id, r as never);
+    });
+    const remote = pairId ? remotes.get(pairId) : undefined;
+    if (!remote) return null;
+    return { ip: remote.address || remote.ip, candidateType: remote.candidateType };
+  } catch {
+    return null;
+  }
+}
+
 function UnsupportedBanner({ reasons }: { reasons: string[] }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
@@ -272,6 +317,7 @@ export type PanelKey =
   | "location"
   | "nfc"
   | "speech"
+  | "ai"
   | "connection"
   | null;
 
@@ -314,6 +360,18 @@ function ChatApp() {
   const [pushVapidKey, setPushVapidKey] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<PanelKey>(null);
   const [now, setNow] = useState(Date.now());
+
+  // --- message kinds + recipient selection ---
+  const [sendOpts, setSendOpts] = useState<SendState>(DEFAULT_SEND_STATE);
+  // Selected private recipients (peerIds). Empty + autoRoom off => nothing sends.
+  const [recipients, setRecipients] = useState<Set<string>>(new Set());
+  const [widget, setWidget] = useState<WidgetState>(initialPrefs.widget);
+  // Which participant's info modal is open (peerId, or "self").
+  const [userInfoFor, setUserInfoFor] = useState<string | null>(null);
+  // Per-peer byte counters + network facts, for the info modal.
+  const peerStatsRef = useRef<Map<string, { sent: number; recv: number; openedAt: number }>>(new Map());
+  const peerNetRef = useRef<Map<string, { ip?: string; candidateType?: string }>>(new Map());
+  const widgetPersistRef = useRef<number | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const peersRef = useRef<Map<string, PeerHandle>>(new Map());
@@ -440,8 +498,71 @@ function ChatApp() {
     applyEffects(prefs.effects);
   }, [prefs.effects]);
   useEffect(() => {
+    applyChatSurface({
+      bgColor: prefs.chatBgColor,
+      bgImage: prefs.chatBgImage,
+      saturation: prefs.chatBgSaturation,
+      opacity: prefs.chatBgOpacity,
+      pattern: prefs.chatPattern,
+      width: prefs.chatWidth,
+    });
+  }, [prefs.chatBgColor, prefs.chatBgImage, prefs.chatBgSaturation, prefs.chatBgOpacity, prefs.chatPattern, prefs.chatWidth]);
+  useEffect(() => {
     document.documentElement.setAttribute("lang", prefs.lang);
   }, [prefs.lang]);
+
+  // Persist widget layout, debounced so a drag does not thrash localStorage.
+  function updateWidget(patch: Partial<WidgetState>) {
+    setWidget((cur) => {
+      const next = { ...cur, ...patch };
+      if (widgetPersistRef.current !== null) window.clearTimeout(widgetPersistRef.current);
+      widgetPersistRef.current = window.setTimeout(() => setPrefs({ widget: next }), 400);
+      return next;
+    });
+  }
+
+  // --- per-user message styling ---
+  function setMessageStyle(key: string, patch: PerUserStyle) {
+    setPrefsState((cur) => {
+      const merged = sanitizePerUserStyle({ ...(cur.messageStyles[key] ?? {}), ...patch });
+      const styles = { ...cur.messageStyles };
+      if (isEmptyStyle(merged)) delete styles[key]; else styles[key] = merged;
+      const next = { ...cur, messageStyles: styles };
+      savePreferences(next);
+      return next;
+    });
+  }
+  function resetMessageStyle(key: string) {
+    setPrefsState((cur) => {
+      if (!cur.messageStyles[key]) return cur;
+      const styles = { ...cur.messageStyles };
+      delete styles[key];
+      const next = { ...cur, messageStyles: styles };
+      savePreferences(next);
+      return next;
+    });
+  }
+
+  // --- recipient selection (drives the floating widget + composer hint) ---
+  function togglePeerRecipient(peerId: string) {
+    if (widget.autoRoom) {
+      // Switching from "everyone" to a private subset: start with just this one.
+      updateWidget({ autoRoom: false });
+      setRecipients(new Set([peerId]));
+      return;
+    }
+    setRecipients((cur) => {
+      const next = new Set(cur);
+      if (next.has(peerId)) next.delete(peerId); else next.add(peerId);
+      return next;
+    });
+  }
+  function selectAllRecipients() {
+    updateWidget({ autoRoom: false });
+    setRecipients(new Set(Array.from(peersRef.current.values()).filter((p) => p.channel?.readyState === "open").map((p) => p.id)));
+  }
+  function selectNoRecipients() { setRecipients(new Set()); }
+  function setAutoRoom(auto: boolean) { updateWidget({ autoRoom: auto }); if (auto) setRecipients(new Set()); }
 
   useEffect(() => {
     if (!notice) setNotice(t(lang, "chat.empty.body"));
@@ -540,14 +661,19 @@ function ChatApp() {
     }
   }
 
-  async function broadcastEnvelope(envelope: DataChannelEnvelope) {
+  /** Send an envelope to every open peer, or only to `targets` (peerIds). */
+  async function broadcastEnvelope(envelope: DataChannelEnvelope, targets?: Set<string>) {
     const serialized = JSON.stringify(envelope);
+    const bytes = serialized.length;
     let sent = 0;
     peersRef.current.forEach((peer) => {
+      if (targets && !targets.has(peer.id)) return;
       if (peer.channel?.readyState === "open") {
         try {
           peer.channel.send(serialized);
           sent += 1;
+          const st = peerStatsRef.current.get(peer.id);
+          if (st) st.sent += bytes;
         } catch {
           // ignore
         }
@@ -617,6 +743,7 @@ function ChatApp() {
 
     channel.binaryType = "arraybuffer";
     channel.onopen = () => {
+      peerStatsRef.current.set(peerId, { sent: 0, recv: 0, openedAt: Date.now() });
       setPeerView(peerId, { status: "open" });
       setNotice(lang === "cs"
         ? "P2P data kanál je otevřený."
@@ -630,7 +757,10 @@ function ChatApp() {
     };
     channel.onmessage = async (event) => {
       try {
-        const raw = JSON.parse(String(event.data)) as DataChannelEnvelope | FileTransferEnvelope;
+        const dataStr = String(event.data);
+        const st = peerStatsRef.current.get(peerId);
+        if (st) st.recv += dataStr.length;
+        const raw = JSON.parse(dataStr) as DataChannelEnvelope | FileTransferEnvelope;
         const key = keyRef.current;
         if (!key) throw new Error("Missing room key");
 
@@ -730,6 +860,8 @@ function ChatApp() {
             mine: plaintext.senderId === myIdRef.current,
             secure: true,
             expiresAt,
+            flags: plaintext.flags,
+            to: plaintext.to,
           },
         ]);
         dispatchInternal("message", { senderId: plaintext.senderId });
@@ -809,6 +941,9 @@ function ChatApp() {
         }).catch(() => {
           // Stats API may throw on closed connections — ignore.
         });
+        // Best-effort: read the selected candidate pair so the user-info modal
+        // can show the peer's remote address + how the media is routed.
+        void extractPeerAddress(pc).then((net) => { if (net) peerNetRef.current.set(peerId, net); }).catch(() => undefined);
       }
     };
     pc.ondatachannel = (event) => wireDataChannel(peerId, event.channel);
@@ -1307,23 +1442,47 @@ function ChatApp() {
     }
   }
 
-  async function sendChatPayload(text: string, attachment?: AttachmentMeta) {
+  async function sendChatPayload(
+    text: string,
+    opts: { attachment?: AttachmentMeta; send?: SendState; targets?: Set<string>; toNames?: string[] } = {},
+  ) {
     const key = keyRef.current;
     if (!key) return;
     const { perMessage } = ttlForRoom();
     const ttlMinutes = perMessage > 0 ? perMessage : undefined;
 
+    // Build the optional message-kind flags from the send options.
+    const send = opts.send;
+    const flags: MsgFlags = {};
+    if (send?.tap) flags.tap = true;
+    if (send?.vanishSeconds && send.vanishSeconds > 0) flags.vanishSeconds = send.vanishSeconds;
+
+    let wireText = text;
+    let sealPlain: string | undefined;
+    let sealCode: string | undefined;
+    // Sealing applies to the text body (a per-message code, out of band).
+    if (send?.sealed && text) {
+      sealCode = (send.sealCode || "").trim() || generateSealCode();
+      const { meta, ciphertext } = await sealText(text, sealCode);
+      flags.sealed = meta;
+      wireText = ciphertext;
+      sealPlain = text;
+    }
+    const flagsOut = flags.tap || flags.vanishSeconds || flags.sealed ? flags : undefined;
+
     const payload = {
       id: newId("msg"),
-      text,
+      text: wireText,
       createdAt: Date.now(),
       senderId: myIdRef.current,
       senderName: nameRef.current,
-      attachment,
+      attachment: opts.attachment,
       ttlMinutes,
+      flags: flagsOut,
+      to: opts.toNames,
     };
     const envelope = await encryptEnvelope(key, payload);
-    const sent = await broadcastEnvelope(envelope);
+    const sent = await broadcastEnvelope(envelope, opts.targets);
 
     if (sent > 0) {
       const expiresAt = computeExpiry(ttlMinutes, payload.createdAt);
@@ -1339,6 +1498,10 @@ function ChatApp() {
           mine: true,
           secure: true,
           expiresAt,
+          flags: flagsOut,
+          to: opts.toNames,
+          sealPlain,
+          sealCode,
         },
       ]);
       setMessageInput("");
@@ -1347,31 +1510,84 @@ function ChatApp() {
     }
   }
 
+  /** Resolve the current recipient selection into concrete targets + names.
+   *  Returns null when a private send has no recipients (caller shows a notice). */
+  function resolveRecipients(): { targets?: Set<string>; toNames?: string[] } | null {
+    if (widget.autoRoom) return {}; // everyone
+    const ids = new Set(Array.from(recipients).filter((id) => peersRef.current.get(id)?.channel?.readyState === "open"));
+    if (ids.size === 0) return null;
+    const toNames = Array.from(ids, (id) => peersRef.current.get(id)?.name || id.slice(-4));
+    return { targets: ids, toNames };
+  }
+
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
     const text = messageInput.trim();
     if (!text) return;
-    await sendChatPayload(text);
+    const rec = resolveRecipients();
+    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+    await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames });
+  }
+
+  function onMessageVanished(id: string) {
+    setMessages((cur) => cur.map((m) => (m.id === id ? { ...m, vanished: true, vanishedAt: m.vanishedAt ?? Date.now() } : m)));
+  }
+
+  /** Assemble the info shown when a participant's avatar/name is clicked. */
+  function buildUserInfo(target: string): UserInfo {
+    const self = target === "self" || target === myIdRef.current;
+    if (self) {
+      return {
+        name: nameRef.current || prefs.name, peerId: myIdRef.current, self: true,
+        connectedForMs: null, transport: "self", appType: "M5cet Web",
+        usesServer: prefs.mode === "server", sentBytes: 0, recvBytes: 0,
+        security: "AES-GCM 256 (E2EE)",
+      };
+    }
+    const handle = peersRef.current.get(target);
+    const st = peerStatsRef.current.get(target);
+    const net = peerNetRef.current.get(target);
+    const fp = peerFingerprints[target]?.digest;
+    const open = handle?.channel?.readyState === "open";
+    const transport: UserInfo["transport"] = !open ? "connecting" : net?.candidateType === "relay" ? "p2p-relay" : "p2p-direct";
+    return {
+      name: handle?.name || target.slice(-6), peerId: target, self: false,
+      connectedForMs: st ? Date.now() - st.openedAt : null,
+      ip: net?.ip, candidateType: net?.candidateType, transport,
+      appType: "M5cet Web", usesServer: prefs.mode === "server",
+      sentBytes: st?.sent ?? 0, recvBytes: st?.recv ?? 0,
+      security: fp ? "DTLS-SRTP + AES-GCM 256" : "AES-GCM 256 (E2EE)",
+      fingerprint: fp ? formatFingerprint(fp) : undefined,
+    };
+  }
+
+  /** Send a chosen or recorded file to the current recipients. */
+  async function sendPickedFile(file: File) {
+    const rec = resolveRecipients();
+    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+    // Sealing a binary body is not supported yet; tap/vanish still apply.
+    const attachOpts: SendState = { ...sendOpts, sealed: false, sealCode: "" };
+    try {
+      if (file.size > INLINE_ATTACHMENT_LIMIT) {
+        // Too big to embed in a chat envelope: same encrypted channel, sent in
+        // 32 KiB chunks. Text typed alongside goes out as its own message.
+        const text = messageInput.trim();
+        if (text) await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames });
+        await sendLargeFileToAll(file);
+        return;
+      }
+      const attachment = await fileToAttachment(file);
+      await sendChatPayload(messageInput.trim(), { attachment, send: attachOpts, targets: rec.targets, toNames: rec.toNames });
+    } catch (err) {
+      setNotice((err as Error).message);
+    }
   }
 
   async function handleAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    try {
-      if (file.size > INLINE_ATTACHMENT_LIMIT) {
-        // Too big to embed in a chat envelope: same encrypted channel, sent in
-        // 32 KiB chunks. Text typed alongside goes out as its own message.
-        const text = messageInput.trim();
-        if (text) await sendChatPayload(text);
-        await sendLargeFileToAll(file);
-        return;
-      }
-      const attachment = await fileToAttachment(file);
-      await sendChatPayload(messageInput.trim(), attachment);
-    } catch (err) {
-      setNotice((err as Error).message);
-    }
+    await sendPickedFile(file);
   }
 
   function insertEmoji(emoji: string) {
@@ -1936,7 +2152,7 @@ function ChatApp() {
             </div>
           </div>
 
-          <div data-testid="list-messages" className="flex-1 overflow-y-auto bg-chat-grid p-3 sm:p-5">
+          <div data-testid="list-messages" className="flex-1 overflow-y-auto chat-surface p-3 sm:p-5">
             {/* Live file-transfer cards — show progress, transport, encryption, ETA */}
             {transfers.length > 0 ? (
               <div className="mx-auto mb-4 grid w-full max-w-4xl grid-cols-1 gap-2 md:grid-cols-2">
@@ -1975,70 +2191,65 @@ function ChatApp() {
                 </div>
               </div>
             ) : (
-              <div className="mx-auto w-full max-w-4xl space-y-3">
-                {visibleMessages.map((message) => (
-                  <article
-                    key={message.id}
-                    data-testid={`message-${message.id}`}
-                    className={`flex ${message.mine ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[88%] rounded-3xl px-4 py-3 shadow-sm ${
-                        message.senderId === "system"
-                          ? "border border-border bg-card text-muted-foreground"
-                          : message.mine
-                            ? "bg-primary text-primary-foreground"
-                            : "border border-border bg-card"
-                      }`}
-                    >
-                      <div className="mb-1 flex items-center gap-2 text-xs opacity-80">
-                        <span className="font-semibold">{message.senderName}</span>
-                        <span>{formatTime(message.createdAt, lang, prefs.timezone)}</span>
-                        {message.secure ? <Lock className="h-3 w-3" /> : null}
-                        {message.expiresAt ? (
-                          <span className="rounded-full bg-amber-500/20 px-1.5 text-[10px] uppercase tracking-wide text-amber-700 dark:text-amber-300">
-                            TTL
-                          </span>
-                        ) : null}
-                      </div>
-                      {message.text ? (
-                        <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                          {linkify(message.text)}
-                        </p>
-                      ) : null}
-                      {message.attachment ? (
-                        <div className="mt-2 rounded-2xl border border-border/60 bg-background/40 p-2 text-xs">
-                          {message.attachment.kind === "image" ? (
-                            <img
-                              src={message.attachment.dataUrl}
-                              alt={message.attachment.name}
-                              className="max-h-72 w-full rounded-xl object-contain"
-                            />
-                          ) : (
-                            <a
-                              href={message.attachment.dataUrl}
-                              download={message.attachment.name}
-                              className="inline-flex items-center gap-2 underline decoration-dotted"
-                            >
-                              <Paperclip className="h-3 w-3" />
-                              {message.attachment.name}
-                            </a>
-                          )}
-                          <div className="mt-1 text-[11px] opacity-70">
-                            {message.attachment.mime} · {formatBytes(message.attachment.size)}
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  </article>
-                ))}
+              <div className="chat-column mx-auto w-full space-y-3">
+                {visibleMessages.map((message) => {
+                  const isSystem = message.senderId === "system";
+                  const styleKey = styleKeyFor(message.senderName, message.senderId);
+                  const perStyle = isSystem ? undefined : prefs.messageStyles[styleKey];
+                  const badge = isSystem ? (
+                    <span className="msg-bubble__label">{message.senderName}</span>
+                  ) : message.mine ? (
+                    <span className="msg-bubble__label inline-flex items-center gap-1.5">
+                      <Avatar name={message.senderName} avatar={prefs.avatar} size={20} />
+                      {message.senderName}
+                    </span>
+                  ) : (
+                    <UserBadge
+                      name={message.senderName}
+                      senderId={message.senderId}
+                      mine={false}
+                      style={perStyle}
+                      onChangeStyle={(patch) => setMessageStyle(styleKey, patch)}
+                      onResetStyle={() => resetMessageStyle(styleKey)}
+                      onInfo={() => setUserInfoFor(message.senderId)}
+                      lang={lang}
+                    />
+                  );
+                  return (
+                    <MessageBubble
+                      key={message.id}
+                      id={message.id}
+                      senderId={message.senderId}
+                      senderName={message.senderName}
+                      mine={message.mine}
+                      isSystem={isSystem}
+                      secure={message.secure}
+                      createdAt={message.createdAt}
+                      timeLabel={formatTime(message.createdAt, lang, prefs.timezone)}
+                      text={message.text}
+                      attachment={message.attachment}
+                      flags={message.flags}
+                      ownPlaintext={message.mine && message.flags?.sealed ? message.sealPlain : undefined}
+                      sealCode={message.mine ? message.sealCode : undefined}
+                      vanished={message.vanished}
+                      vanishedAt={message.vanishedAt}
+                      onVanish={onMessageVanished}
+                      to={message.to}
+                      bubbleStyle={bubbleStyleFrom(perStyle)}
+                      badge={badge}
+                      lang={lang}
+                      renderText={linkify}
+                      formatSize={formatBytes}
+                    />
+                  );
+                })}
                 <div ref={messageEndRef} />
               </div>
             )}
           </div>
 
           <form onSubmit={sendMessage} className="composer border-t border-border bg-card/80 backdrop-blur">
-            <div className="mx-auto w-full max-w-4xl">
+            <div className="chat-column mx-auto w-full">
               {emojiOpen ? (
                 <div className="mb-2 flex flex-wrap gap-1 rounded-2xl border border-border bg-background p-2" data-testid="picker-emoji">
                   {QUICK_EMOJI.map((emoji) => (
@@ -2089,6 +2300,12 @@ function ChatApp() {
                   >
                     <ImageIcon className="h-5 w-5" aria-hidden="true" />
                   </button>
+                  <AudioRecorder
+                    lang={lang}
+                    disabled={openPeerCount === 0}
+                    onRecorded={(file) => void sendPickedFile(file)}
+                    onError={(msg) => setNotice(msg)}
+                  />
                 </div>
                 <label className="sr-only" htmlFor="message">{t(lang, "chat.placeholder")}</label>
                 <textarea
@@ -2101,18 +2318,22 @@ function ChatApp() {
                   onChange={(event) => setMessageInput(event.target.value)}
                   onKeyDown={handleMessageKeyDown}
                 />
-                <button
-                  data-testid="button-send"
-                  className="composer-send"
-                  type="submit"
-                  disabled={!canSend}
-                  aria-label={t(lang, "common.send")}
-                  title={t(lang, "common.send")}
-                >
-                  <Send className="h-4 w-4" aria-hidden="true" />
-                </button>
+                <SendOptions
+                  value={sendOpts}
+                  onChange={setSendOpts}
+                  onSend={() => void sendMessage()}
+                  canSend={canSend}
+                  lang={lang}
+                />
               </div>
-              <p className="composer-hint">{t(lang, "composer.attachHint")}</p>
+              <div className="composer-foot">
+                <RecipientHint
+                  everyone={widget.autoRoom}
+                  names={Array.from(recipients, (id) => peersRef.current.get(id)?.name || id.slice(-4))}
+                  lang={lang}
+                />
+                <p className="composer-hint">{t(lang, "composer.attachHint")}</p>
+              </div>
               <input ref={fileInputRef} type="file" className="hidden" onChange={handleAttachmentChange} data-testid="input-file" />
               <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleAttachmentChange} data-testid="input-image" />
             </div>
@@ -2222,10 +2443,22 @@ function ChatApp() {
         </SimpleModal>
       ) : null}
 
-      {/* NFC modal */}
+      {/* NFC / smart-card workbench */}
       {activePanel === "nfc" ? (
-        <SimpleModal title="NFC tag (Android Chrome)" onClose={() => setActivePanel(null)}>
-          <NfcPanel onSystem={systemMessage} />
+        <SimpleModal title={t(lang, "menu.nfc")} onClose={() => setActivePanel(null)}>
+          <Suspense fallback={<div className="p-6 text-center text-sm text-muted-foreground">…</div>}>
+            <NfcWorkbench
+              lang={lang}
+              appVersion={APP_VERSION}
+              session={status === "joined" && sessionPassphrase && room ? { room, passphrase: sessionPassphrase, name: nameRef.current } : null}
+              onSystem={systemMessage}
+              onConnect={(p) => {
+                setRoomInput(p.room); setPassphrase(p.passphrase); if (p.name) setName(p.name);
+                setActivePanel(null);
+                void startSession(p.name || nameRef.current, p.room, p.passphrase);
+              }}
+            />
+          </Suspense>
         </SimpleModal>
       ) : null}
 
@@ -2235,7 +2468,17 @@ function ChatApp() {
           <SpeechPanel
             recognitionRef={recognitionRef}
             onSendText={(text) => void sendChatPayload(text)}
+            onInsertText={(text) => setMessageInput((cur) => (cur ? `${cur} ${text}` : text))}
+            serverMode={prefs.mode === "server"}
+            lang={lang}
           />
+        </SimpleModal>
+      ) : null}
+
+      {/* AI assistant modal (server-enhanced) */}
+      {activePanel === "ai" ? (
+        <SimpleModal title={t(lang, "menu.ai")} onClose={() => setActivePanel(null)}>
+          <AiPanel lang={lang} onInsert={(text) => { setMessageInput((cur) => (cur ? `${cur} ${text}` : text)); setActivePanel(null); }} />
         </SimpleModal>
       ) : null}
 
@@ -2312,6 +2555,32 @@ function ChatApp() {
             onAccept={(payload) => void acceptInvite(payload)}
             onDismiss={() => { setInviteParts(null); setActivePanel(null); }}
           />
+        </SimpleModal>
+      ) : null}
+
+      {/* Floating recipients widget — who receives the next message */}
+      {status === "joined" ? (
+        <RecipientsWidget
+          peers={peers.map((p): WidgetPeer => ({ id: p.id, name: p.name, status: p.status, rttMs: p.status === "open" ? connStatus?.rttMs : undefined }))}
+          room={room}
+          state={widget}
+          selected={recipients}
+          onTogglePeer={togglePeerRecipient}
+          onToggleAuto={setAutoRoom}
+          onSelectAll={selectAllRecipients}
+          onSelectNone={selectNoRecipients}
+          onPeerInfo={(id) => setUserInfoFor(id)}
+          onRoomInfo={() => setActivePanel("connection")}
+          onMove={(x, y) => updateWidget({ x, y })}
+          onMinimize={(min) => updateWidget({ minimized: min })}
+          lang={lang}
+        />
+      ) : null}
+
+      {/* Participant info modal */}
+      {userInfoFor ? (
+        <SimpleModal title={t(lang, "userinfo.title")} onClose={() => setUserInfoFor(null)}>
+          <UserInfoView info={buildUserInfo(userInfoFor)} lang={lang} />
         </SimpleModal>
       ) : null}
     </div>
@@ -2555,67 +2824,15 @@ function LocationPanel({
   );
 }
 
-function NfcPanel({ onSystem }: { onSystem: (msg: string) => void }) {
-  const caps = detectNfc();
-  const [pin, setPin] = useState("");
-  const [payloadJson, setPayloadJson] = useState('{"hello":"world"}');
-  const [decoded, setDecoded] = useState<string>("");
-
-  async function onWrite() {
-    try {
-      if (!isValidPin(pin)) { onSystem("PIN must be 4-16 digits."); return; }
-      const obj = JSON.parse(payloadJson);
-      const blob = await encryptForTag(pin, obj);
-      const r = await writeBlob(blob);
-      onSystem(r.ok ? "NFC tag written." : `NFC write failed: ${r.reason}`);
-    } catch (err) {
-      onSystem(`NFC write error: ${(err as Error).message}`);
-    }
-  }
-  async function onRead() {
-    try {
-      const r = await scanOnce();
-      if (!r.ok) { onSystem(`NFC scan failed: ${r.reason}`); return; }
-      const obj = await decryptFromTag(pin, r.blob);
-      setDecoded(JSON.stringify(obj, null, 2));
-      onSystem("NFC tag read and decrypted.");
-    } catch (err) {
-      onSystem(`NFC read error: ${(err as Error).message}`);
-    }
-  }
-
-  return (
-    <div className="space-y-3">
-      {!caps.available ? (
-        <p className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
-          {caps.reason} — Web NFC is currently Android Chrome only. Desktop and iOS browsers do not expose this API.
-        </p>
-      ) : null}
-      <label className="grid gap-1 text-sm font-medium">
-        PIN (4–16 digits)
-        <input value={pin} onChange={(e) => setPin(e.target.value)} className="min-h-11 rounded-xl border border-input bg-background px-3" inputMode="numeric" />
-      </label>
-      <label className="grid gap-1 text-sm font-medium">
-        Payload JSON
-        <textarea value={payloadJson} onChange={(e) => setPayloadJson(e.target.value)} className="min-h-24 rounded-xl border border-input bg-background px-3 py-2 font-mono text-xs" />
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={onWrite} disabled={!caps.available} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">Write tag</button>
-        <button type="button" onClick={onRead} disabled={!caps.available} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60">Read tag</button>
-      </div>
-      {decoded ? (
-        <pre className="max-h-40 overflow-auto rounded-xl border border-border bg-background p-2 text-xs">{decoded}</pre>
-      ) : null}
-      <p className="text-[11px] text-muted-foreground">Hardware reader plug-ins (RFID/EMV) live behind a separate registry — see docs/nfc.md. EMV card-data is intentionally not exposed.</p>
-    </div>
-  );
-}
 
 function SpeechPanel({
-  recognitionRef, onSendText,
+  recognitionRef, onSendText, onInsertText, serverMode, lang,
 }: {
   recognitionRef: React.MutableRefObject<{ stop: () => void } | null>;
   onSendText: (text: string) => void;
+  onInsertText: (text: string) => void;
+  serverMode: boolean;
+  lang: Lang;
 }) {
   const caps = detectSpeechCaps();
   const [text, setText] = useState("");
@@ -2625,6 +2842,11 @@ function SpeechPanel({
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [partial, setPartial] = useState("");
   const [revoice, setRevoice] = useState(false);
+  // Server voices (ElevenLabs / OpenAI …), only in Server-enhanced mode.
+  const [serverVoices, setServerVoices] = useState<ServerVoiceInfo[]>([]);
+  const [serverVoice, setServerVoice] = useState<string>("");
+  const [serverBusy, setServerBusy] = useState(false);
+  const serverAudioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     function load() { setVoices(listVoices()); }
@@ -2634,6 +2856,28 @@ function SpeechPanel({
       return () => window.speechSynthesis.removeEventListener("voiceschanged", load);
     }
   }, []);
+
+  useEffect(() => {
+    if (!serverMode) return;
+    let cancelled = false;
+    void fetchServerSpeechStatus().then((s) => {
+      if (cancelled) return;
+      if (s.tts.enabled) { setServerVoices(s.tts.connectors); if (s.tts.connectors[0]) setServerVoice(s.tts.connectors[0].id); }
+    });
+    return () => { cancelled = true; };
+  }, [serverMode]);
+
+  async function speakServer() {
+    if (!text.trim() || !serverVoice) return;
+    setServerBusy(true);
+    const r = await serverTts(text, { connector: serverVoice });
+    setServerBusy(false);
+    if (r.ok) {
+      if (!serverAudioRef.current) serverAudioRef.current = new Audio();
+      serverAudioRef.current.src = r.url;
+      void serverAudioRef.current.play();
+    }
+  }
 
   function startStt() {
     setPartial("");
@@ -2689,9 +2933,23 @@ function SpeechPanel({
           <input type="checkbox" checked={revoice} onChange={(e) => setRevoice(e.target.checked)} />
           Revoice (STT → TTS)
         </label>
+        <button type="button" disabled={!text.trim()} onClick={() => { onInsertText(text); setText(""); }} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60" data-testid="speech-insert">{t(lang, "speech.insert")}</button>
         <button type="button" onClick={() => { onSendText(text); setText(""); }} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">Send to chat</button>
       </div>
       {partial ? <div className="rounded-xl border border-border bg-background p-2 text-xs italic">{partial}</div> : null}
+      {serverMode && serverVoices.length > 0 ? (
+        <div className="rounded-xl border border-border bg-background p-2 text-xs">
+          <div className="mb-1 font-semibold">{t(lang, "speech.server")}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={serverVoice} onChange={(e) => setServerVoice(e.target.value)} className="min-h-9 rounded-lg border border-input bg-background px-2">
+              {serverVoices.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
+            </select>
+            <button type="button" disabled={serverBusy || !text.trim()} onClick={() => void speakServer()} className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-60">
+              {serverBusy ? "…" : t(lang, "speech.server.speak")}
+            </button>
+          </div>
+        </div>
+      ) : null}
       {!caps.sttAvailable ? <p className="text-[11px] text-muted-foreground">Speech recognition is Chrome/Edge/Android only. Voice cloning of arbitrary samples is intentionally not implemented — see docs/speech.md.</p> : null}
     </div>
   );

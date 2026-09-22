@@ -83,9 +83,20 @@
     </section>
 
     <section>
-      <h2>Plugins</h2>
-      <button id="btnPlugins">Inspect plugins</button>
+      <h2>AI &amp; Speech connectors</h2>
+      <div class="row"><button id="btnPlugins">Refresh connectors</button></div>
+      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Configure keys via server env (never here). Test runs live against the provider.</p>
+      <label>Test prompt / text</label>
+      <input id="pluginTestText" placeholder="Reply with a short greeting." />
+      <div id="connectorList"></div>
+      <audio id="ttsPlayer" controls style="display:none;width:100%;margin-top:10px;"></audio>
       <pre id="pluginOut"></pre>
+    </section>
+
+    <section>
+      <h2>Live plugin log</h2>
+      <div class="row"><button id="btnLiveLog">Start live log</button><button class="secondary" id="btnLiveStop">Stop</button><button class="secondary" id="btnLiveClear">Clear</button></div>
+      <pre id="liveLog" style="max-height:280px;"></pre>
     </section>
   </main>
 
@@ -138,7 +149,70 @@
     $("btnLogs").onclick = async () => show("metricsOut", (await api("/admin/logs/recent?limit=30")).json);
     $("btnClients").onclick = async () => show("metricsOut", (await api("/admin/clients")).json);
     $("btnAudit").onclick = async () => show("cmdOut", (await api("/admin/commands/audit?limit=50")).json);
-    $("btnPlugins").onclick = async () => show("pluginOut", (await api("/admin/plugins/debug")).json);
+    function connectorRow(c) {
+      const badge = c.configured ? '<span class="ok">configured</span>' : '<span class="err">' + (c.reason || 'not configured') + '</span>';
+      const model = c.model ? ' · <code>' + c.model + '</code>' : '';
+      return '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:6px 0;">'
+        + '<span><b>' + c.kind.toUpperCase() + '</b> ' + c.label + model + ' — ' + badge + '</span>'
+        + '<button data-kind="' + c.kind + '" data-id="' + c.id + '" class="secondary btnTestConn"' + (c.configured ? '' : ' disabled') + '>Test</button>'
+        + '</div>';
+    }
+    $("btnPlugins").onclick = async () => {
+      const r = await api("/admin/plugins");
+      if (!r.ok) return show("pluginOut", r.json);
+      const s = r.json;
+      const all = [].concat(s.ai || [], s.tts || [], s.stt || []);
+      $("connectorList").innerHTML =
+        '<p style="font-size:12px;color:#9aa6b8;">AI: ' + (s.enabled.ai ? 'ENABLED' : 'disabled') + ' · Speech: ' + (s.enabled.speech ? 'ENABLED' : 'disabled') + '</p>'
+        + all.map(connectorRow).join("");
+      document.querySelectorAll(".btnTestConn").forEach((b) => b.onclick = () => testConnector(b.dataset.kind, b.dataset.id));
+      show("pluginOut", { defaults: s.defaults, enabled: s.enabled });
+    };
+    async function testConnector(kind, id) {
+      show("pluginOut", "Testing " + kind + "/" + id + "…");
+      const r = await api("/admin/plugins/test", { method: "POST", body: JSON.stringify({ kind, id, text: $("pluginTestText").value.trim() || undefined }) });
+      if (r.ok && kind === "tts" && r.json.result && r.json.result.audioBase64) {
+        const p = $("ttsPlayer");
+        p.src = "data:" + (r.json.result.mime || "audio/mpeg") + ";base64," + r.json.result.audioBase64;
+        p.style.display = "block";
+        const clone = Object.assign({}, r.json.result); delete clone.audioBase64; r.json.result = Object.assign(clone, { audioBase64: "[" + r.json.result.audioBase64.length + " b64 chars]" });
+      }
+      show("pluginOut", r.json);
+    }
+
+    let liveCtrl = null;
+    $("btnLiveLog").onclick = async () => {
+      if (liveCtrl) liveCtrl.abort();
+      liveCtrl = new AbortController();
+      const base = $("base").value.trim().replace(/\/$/, "");
+      const token = $("token").value.trim();
+      try {
+        const res = await fetch(base + "/admin/logs/stream", { headers: token ? { Authorization: "Bearer " + token } : {}, signal: liveCtrl.signal });
+        if (!res.ok || !res.body) { $("liveLog").textContent = "stream failed (" + res.status + ")"; return; }
+        $("liveLog").textContent = "";
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          const parts = buf.split("\n\n"); buf = parts.pop() || "";
+          for (const part of parts) {
+            const line = part.split("\n").find((l) => l.startsWith("data:"));
+            if (!line) continue;
+            try {
+              const e = JSON.parse(line.slice(5).trim());
+              const t = new Date(e.ts).toLocaleTimeString();
+              $("liveLog").textContent += t + "  [" + e.level + "] " + e.kind + (e.connector ? "/" + e.connector : "") + "  " + e.message + (e.ms != null ? " (" + e.ms + "ms)" : "") + "\n";
+              $("liveLog").scrollTop = $("liveLog").scrollHeight;
+            } catch {}
+          }
+        }
+      } catch (e) { if (e.name !== "AbortError") $("liveLog").textContent += "\n[stream error] " + e.message; }
+    };
+    $("btnLiveStop").onclick = () => { if (liveCtrl) { liveCtrl.abort(); liveCtrl = null; } };
+    $("btnLiveClear").onclick = () => { $("liveLog").textContent = ""; };
 
     $("btnEnqueue").onclick = async () => {
       let payload = undefined;
