@@ -57,7 +57,7 @@ beforeAll(async () => {
     setTimeout(() => resolve(), 10_000); // fail-open if no banner
   });
 
-  browser = await chromium.launch({ headless: true, args: ["--no-sandbox"] });
+  browser = await chromium.launch({ headless: true, args: ["--no-sandbox"], ...(process.env.PW_CHANNEL ? { channel: process.env.PW_CHANNEL } : {}) });
 }, 30_000);
 
 afterAll(async () => {

@@ -30,7 +30,7 @@
 ## Komponenty
 
 - **Klient (Vite + React)** — fullscreen workspace, modální panely (Profil, Nastavení,
-  Šifrování, Privacy/Audit, Notifikace, Analytika, Šablony/Themy, Room Security).
+  Šifrování, Privacy/Audit, Notifikace, Analytika, Vzhled (šablona, písma, barvy, zobrazení, Edit Mode — [appearance.md](appearance.md)), Room Security).
 - **Server (Express)** — signalizace přes `WebSocketServer` (`/ws`), REST stuby pro push,
   events, settings sync, audit purge a analytics consent.
 - **Storage providers** — viz `docs/modules.md`. Zatím stuby; reálné S3/GCS/Spaces/Azure

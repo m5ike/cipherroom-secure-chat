@@ -201,6 +201,10 @@
     @apply bg-background font-sans text-foreground antialiased;
     min-height: 100dvh;
     font-feature-settings: "cv02" 1, "cv03" 1, "cv04" 1, "tnum" 1;
+    /* Appearance → Typography (applyTypography); unset = template defaults. */
+    font-weight: var(--font-weight-base, 400);
+    line-height: var(--line-height-base, 1.5);
+    letter-spacing: var(--letter-spacing-base, normal);
   }
 
   button, input, textarea, select { font: inherit; }
@@ -306,16 +310,17 @@
     @apply rounded-3xl border border-border bg-card shadow-md;
   }
 
-  /* Safe area insets for PWA */
-  /* Safe area insets for PWA — with fallback for iOS Safari < 11.2. */
+  /* Safe area insets (notch, rounded corners, home indicator). The plain
+     fallback must come FIRST: after the @supports block it overrode the
+     env() values, so the insets were never applied on iPhone. */
+  .safe-px { padding-left: 0.5rem; padding-right: 0.5rem; }
+  .safe-pt { padding-top: 0.5rem; }
+  .safe-pb { padding-bottom: 0.5rem; }
   @supports (padding: env(safe-area-inset-left)) {
     .safe-px { padding-left: max(env(safe-area-inset-left), 0.5rem); padding-right: max(env(safe-area-inset-right), 0.5rem); }
     .safe-pt { padding-top: max(env(safe-area-inset-top), 0.5rem); }
     .safe-pb { padding-bottom: max(env(safe-area-inset-bottom), 0.5rem); }
   }
-  .safe-px { padding-left: 0.5rem; padding-right: 0.5rem; }
-  .safe-pt { padding-top: 0.5rem; }
-  .safe-pb { padding-bottom: 0.5rem; }
 
   /* Speed-dial panel: make sure it never overflows the screen on any device.
      On < 380px width we expand to near-full viewport. We also prepare for
@@ -871,7 +876,7 @@
 }
 
 /* ---------- Conversation surface ---------- */
-.chat-surface { position: relative; isolation: isolate; background-color: var(--c-chat-bg, hsl(var(--background))); color: var(--c-chat-fg, inherit); font-size: var(--c-chat-fs, inherit); opacity: var(--c-chat-opacity, 1); }
+.chat-surface { position: relative; isolation: isolate; background-color: var(--c-chat-bg, hsl(var(--background))); color: var(--c-chat-fg, inherit); font-size: var(--c-chat-fs, inherit); opacity: var(--c-chat-opacity, 1); font-family: var(--font-chat, inherit); }
 .chat-surface::before {
   content: ""; position: absolute; inset: 0; z-index: -2; pointer-events: none;
   background-color: var(--chat-bg-color, transparent);
@@ -892,6 +897,9 @@
 :root[data-chat-pattern="dots"] .chat-surface::after {
   background-image: radial-gradient(hsl(var(--border) / 0.32) 1.2px, transparent 1.4px);
   background-size: 20px 20px;
+}
+:root[data-chat-pattern="diagonal"] .chat-surface::after {
+  background-image: repeating-linear-gradient(45deg, hsl(var(--border) / 0.2) 0 1px, transparent 1px 14px);
 }
 :root[data-chat-pattern="plain"] .chat-surface::after { background: none; }
 
@@ -944,19 +952,19 @@
    with the template default as fallback. Incoming = a subtle primary tint so it
    reads apart from the muted system notices. */
 .msg-bubble--theirs {
-  background: var(--c-in-bg, hsl(var(--primary) / 0.09));
-  color: var(--c-in-fg, hsl(var(--foreground)));
-  border-color: var(--c-in-border, hsl(var(--primary) / 0.28));
+  background: var(--u-in-bg, var(--c-in-bg, hsl(var(--primary) / 0.09)));
+  color: var(--u-in-fg, var(--c-in-fg, hsl(var(--foreground))));
+  border-color: var(--u-in-border, var(--c-in-border, hsl(var(--primary) / 0.28)));
   border-style: var(--c-in-bstyle, solid); border-width: var(--c-in-bwidth, 1px);
-  border-radius: var(--c-in-radius, 1.5rem); font-size: var(--c-in-fs, 0.9rem);
+  border-radius: var(--u-bubble-radius, var(--c-in-radius, 1.5rem)); font-size: var(--c-in-fs, 0.9rem);
   opacity: var(--c-in-opacity, 1); padding: var(--c-in-pad, 0.6rem 0.9rem); box-shadow: var(--c-in-shadow, var(--shadow-sm));
 }
 .msg-bubble--mine {
-  background: var(--c-out-bg, hsl(var(--primary)));
-  color: var(--c-out-fg, hsl(var(--primary-foreground)));
+  background: var(--u-out-bg, var(--c-out-bg, hsl(var(--primary))));
+  color: var(--u-out-fg, var(--c-out-fg, hsl(var(--primary-foreground))));
   border-color: var(--c-out-border, transparent);
   border-style: var(--c-out-bstyle, solid); border-width: var(--c-out-bwidth, 1px);
-  border-radius: var(--c-out-radius, 1.5rem); font-size: var(--c-out-fs, 0.9rem);
+  border-radius: var(--u-bubble-radius, var(--c-out-radius, 1.5rem)); font-size: var(--c-out-fs, 0.9rem);
   opacity: var(--c-out-opacity, 1); padding: var(--c-out-pad, 0.6rem 0.9rem); box-shadow: var(--c-out-shadow, var(--shadow-sm));
 }
 /* System notices: quiet by default — translucent, dashed, muted text. */
@@ -974,7 +982,7 @@
 .msg-bubble__head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; font-size: 0.72rem; opacity: 0.9; }
 .msg-bubble__label { font-weight: 600; }
 .msg-bubble__time { opacity: 0.7; }
-.msg-bubble__text { white-space: pre-wrap; word-break: break-word; font-size: 1em; line-height: 1.45; }
+.msg-bubble__text { white-space: pre-wrap; word-break: break-word; font-size: calc(1em * var(--chat-font-scale, 1)); line-height: var(--line-height-base, 1.45); }
 .msg-bubble__attach { margin-top: 0.5rem; border: 1px solid hsl(var(--border) / 0.6); border-radius: 1rem; padding: 0.4rem; background: hsl(var(--background) / 0.4); font-size: 0.75rem; }
 .msg-bubble__img { max-height: 18rem; width: 100%; border-radius: 0.75rem; object-fit: contain; }
 .msg-bubble__file { display: inline-flex; align-items: center; gap: 0.4rem; text-decoration: underline dotted; }

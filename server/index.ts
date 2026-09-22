@@ -78,9 +78,10 @@ app.use(
         defaultSrc: ["'self'"],
         connectSrc: ["'self'", "wss:", "ws:", "https://tile.openstreetmap.org"],
         scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
-        styleSrc: ["'self'", "'unsafe-inline'", "https://api.fontshare.com"],
+        // Google Fonts: only fetched after the user opts in (Appearance → Typography).
+        styleSrc: ["'self'", "'unsafe-inline'", "https://api.fontshare.com", "https://fonts.googleapis.com"],
         imgSrc: ["'self'", "data:", "blob:", "https://tile.openstreetmap.org"],
-        fontSrc: ["'self'", "https://api.fontshare.com"],
+        fontSrc: ["'self'", "https://api.fontshare.com", "https://fonts.gstatic.com"],
         mediaSrc: ["'self'", "blob:"],
         workerSrc: ["'self'"],
         childSrc: ["'none'"],

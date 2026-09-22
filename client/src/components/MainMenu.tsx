@@ -123,7 +123,7 @@ export const MENU_ENTRIES: MenuEntry[] = [
   { group: "tools", panel: "ai", testId: "btn-ai", labelKey: "menu.ai", Icon: Sparkles },
   { group: "tools", panel: "phone", testId: "btn-phone", labelKey: "menu.phone", Icon: Phone },
   { group: "tools", panel: "nfc", testId: "btn-nfc", labelKey: "menu.nfc", Icon: Nfc },
-  { group: "app",   panel: "templates", testId: "btn-templates", labelKey: "menu.templates", Icon: Palette },
+  { group: "app",   panel: "appearance", testId: "btn-appearance", labelKey: "menu.appearance", Icon: Palette },
   { group: "app",   panel: "settings", testId: "btn-settings", labelKey: "menu.settings", Icon: SettingsIcon },
   { group: "app",   panel: "notifications", testId: "btn-notifications", labelKey: "menu.notifications", Icon: Bell },
   { group: "app",   panel: "privacy", testId: "btn-privacy", labelKey: "menu.privacy", Icon: Eye },

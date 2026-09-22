@@ -74,6 +74,21 @@ Vonage Voice) a vrací 503 s přesnou příčinou. Náprava: `VONAGE_PRIVATE_KEY
 /etc/m5cet/vonage-private.key`, nebo klíč v dvojitých uvozovkách / na jednom
 řádku s `\n` — viz [telephony.md](telephony.md#vonage-voice--jwt-aplikace).
 
+### Úprava z Edit Mode rozbila vzhled / nejde ovládat
+
+Otevřete aplikaci s `?nostyles` v adrese (např. `https://chat.example.org/?nostyles`)
+— pro toto načtení se nepoužije žádná uložená úprava ani vlastní CSS. Pak
+*Vzhled → Editor* a problematické pravidlo vypněte nebo smažte (případně
+*Smazat všechny úpravy*). Inspektor sám je v Shadow DOM, uživatelské CSS ho
+nezasáhne.
+
+### Písma Google se nenačítají
+
+Musí být povolená (*Vzhled → Písmo → Povolit Google Fonts*). Za vlastní reverzní
+proxy s CSP přidejte `https://fonts.googleapis.com` do `style-src` a
+`https://fonts.gstatic.com` do `font-src` (viz
+[deploy/nginx/m5cet.conf](../deploy/nginx/m5cet.conf)).
+
 ### 1. "Zpráva přišla, ale nedá se rozšifrovat"
 
 Druhá strana má **jiný klíč místnosti**. Zkontrolujte:

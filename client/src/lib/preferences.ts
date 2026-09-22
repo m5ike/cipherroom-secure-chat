@@ -4,10 +4,13 @@
 import type { Lang } from "./i18n";
 import { isAccentId, isLayoutId, isThemeId, type AccentId, type LayoutId, type ThemeId } from "./themes";
 import { sanitizeStyleMap, type PerUserStyle } from "./message-styles";
+import { isFontId } from "./fonts";
+import { isHexColor } from "./color";
+import type { DeviceLayoutPref } from "./device";
 
 export type FontSize = "sm" | "md" | "lg";
 
-export type ChatPattern = "grid" | "dots" | "plain";
+export type ChatPattern = "grid" | "dots" | "diagonal" | "plain";
 export type ChatWidth = "sm" | "md" | "lg" | "full";
 
 /** Floating recipients widget: position, collapsed/locked state, room-broadcast
@@ -53,8 +56,35 @@ export type Preferences = {
   /** Colour variation of the template and conversation layout. */
   accent: AccentId;
   layout: LayoutId;
+  /** UI font (id from fonts.ts; "theme" = the template's own font). */
   font: string;
+  /** Legacy S/M/L; textSize is authoritative since the Appearance screen. */
   fontSize: FontSize;
+  /** Messages font ("" = same as the UI font) and the code/monospace font. */
+  chatFont: string;
+  monoFont: string;
+  /** Base text size in px (12–22). */
+  textSize: number;
+  /** Base weight (300–700), line height (1.1–2.2), letter spacing (em). */
+  fontWeight: number;
+  lineHeight: number;
+  letterSpacing: number;
+  /** Message text scale relative to the UI (0.8–1.5). */
+  chatScale: number;
+  /** Custom accent (#hex) — overrides the preset `accent` when set. */
+  accentColor: string;
+  /** My / others' bubble colours (#hex or "" = template). */
+  bubbleMine: string;
+  bubbleTheirs: string;
+  /** UI corner radius in rem (-1 = template), bubble radius in px (-1 = template). */
+  uiRadius: number;
+  bubbleRadius: number;
+  /** Consent to fetch Google Fonts (reveals the IP address to Google). */
+  googleFonts: boolean;
+  /** Force a phone / tablet / desktop layout instead of the detected one. */
+  deviceLayout: DeviceLayoutPref;
+  /** Element style editor (Edit Mode) switched on. */
+  editMode: boolean;
   effects: boolean;
   /** Conversation surface: colour tint, optional image, saturation, pattern
    *  intensity ("plnost") and the active reading width. */
@@ -129,8 +159,23 @@ const DEFAULTS: Preferences = {
   theme: "motorsport",
   accent: "default",
   layout: "classic",
-  font: "system",
+  font: "theme",
   fontSize: "md",
+  chatFont: "",
+  monoFont: "mono",
+  textSize: 15.5,
+  fontWeight: 400,
+  lineHeight: 1.5,
+  letterSpacing: 0,
+  chatScale: 1,
+  accentColor: "",
+  bubbleMine: "",
+  bubbleTheirs: "",
+  uiRadius: -1,
+  bubbleRadius: -1,
+  googleFonts: false,
+  deviceLayout: "auto",
+  editMode: false,
   effects: true,
   chatBgColor: "",
   chatBgImage: "",
@@ -223,6 +268,13 @@ export function loadPreferences(): Preferences {
   }
 }
 
+const LEGACY_SIZE_PX: Record<FontSize, number> = { sm: 14, md: 15.5, lg: 17 };
+
+/** A finite number clamped to [lo, hi]; anything else → dflt. */
+function num(v: unknown, lo: number, hi: number, dflt: number): number {
+  return typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt;
+}
+
 function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Preferences> {
   const lang: Lang = parsed.lang === "en" || parsed.lang === "de" || parsed.lang === "cs" ? parsed.lang : base.lang;
   const theme: ThemeId = isThemeId(parsed.theme) ? parsed.theme : base.theme;
@@ -237,8 +289,24 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     theme,
     accent: isAccentId(parsed.accent) ? parsed.accent : base.accent,
     layout: isLayoutId(parsed.layout) ? parsed.layout : base.layout,
-    font: typeof parsed.font === "string" ? parsed.font : base.font,
+    font: isFontId(parsed.font) ? parsed.font : base.font,
     fontSize,
+    chatFont: parsed.chatFont === "" || isFontId(parsed.chatFont) ? (parsed.chatFont as string) : base.chatFont,
+    monoFont: isFontId(parsed.monoFont) ? parsed.monoFont : base.monoFont,
+    // Older stores only had S/M/L: carry that choice over once.
+    textSize: num(parsed.textSize, 12, 22, LEGACY_SIZE_PX[fontSize] ?? base.textSize),
+    fontWeight: Math.round(num(parsed.fontWeight, 300, 700, base.fontWeight) / 50) * 50,
+    lineHeight: num(parsed.lineHeight, 1.1, 2.2, base.lineHeight),
+    letterSpacing: num(parsed.letterSpacing, -0.05, 0.2, base.letterSpacing),
+    chatScale: num(parsed.chatScale, 0.8, 1.5, base.chatScale),
+    accentColor: isHexColor(parsed.accentColor) ? parsed.accentColor : "",
+    bubbleMine: isHexColor(parsed.bubbleMine) ? parsed.bubbleMine : "",
+    bubbleTheirs: isHexColor(parsed.bubbleTheirs) ? parsed.bubbleTheirs : "",
+    uiRadius: parsed.uiRadius === -1 ? -1 : num(parsed.uiRadius, 0, 2, base.uiRadius),
+    bubbleRadius: parsed.bubbleRadius === -1 ? -1 : num(parsed.bubbleRadius, 0, 32, base.bubbleRadius),
+    googleFonts: parsed.googleFonts === true,
+    deviceLayout: parsed.deviceLayout === "phone" || parsed.deviceLayout === "tablet" || parsed.deviceLayout === "desktop" ? parsed.deviceLayout : "auto",
+    editMode: parsed.editMode === true,
     effects: parsed.effects === false ? false : true,
     chatBgColor: typeof parsed.chatBgColor === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(parsed.chatBgColor) ? parsed.chatBgColor : base.chatBgColor,
     // Accept only same-origin data: images so a synced/pasted value can never
@@ -246,7 +314,7 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     chatBgImage: typeof parsed.chatBgImage === "string" && parsed.chatBgImage.startsWith("data:image/") && parsed.chatBgImage.length < 4_000_000 ? parsed.chatBgImage : base.chatBgImage,
     chatBgSaturation: typeof parsed.chatBgSaturation === "number" && Number.isFinite(parsed.chatBgSaturation) ? Math.max(0.5, Math.min(1.5, parsed.chatBgSaturation)) : base.chatBgSaturation,
     chatBgOpacity: typeof parsed.chatBgOpacity === "number" && Number.isFinite(parsed.chatBgOpacity) ? Math.max(0, Math.min(1, parsed.chatBgOpacity)) : base.chatBgOpacity,
-    chatPattern: parsed.chatPattern === "dots" || parsed.chatPattern === "plain" ? parsed.chatPattern : base.chatPattern,
+    chatPattern: parsed.chatPattern === "dots" || parsed.chatPattern === "diagonal" || parsed.chatPattern === "plain" ? parsed.chatPattern : base.chatPattern,
     chatWidth: parsed.chatWidth === "sm" || parsed.chatWidth === "lg" || parsed.chatWidth === "full" ? parsed.chatWidth : base.chatWidth,
     messageStyles: sanitizeStyleMap(parsed.messageStyles),
     widget: sanitizeWidget(parsed.widget, base.widget),
@@ -278,6 +346,17 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     menuRev: 2,
   };
 }
+
+/** The appearance defaults, for "reset appearance". */
+export const APPEARANCE_DEFAULTS: Partial<Preferences> = {
+  theme: DEFAULTS.theme, accent: DEFAULTS.accent, layout: DEFAULTS.layout,
+  font: DEFAULTS.font, fontSize: DEFAULTS.fontSize, chatFont: DEFAULTS.chatFont, monoFont: DEFAULTS.monoFont,
+  textSize: DEFAULTS.textSize, fontWeight: DEFAULTS.fontWeight, lineHeight: DEFAULTS.lineHeight,
+  letterSpacing: DEFAULTS.letterSpacing, chatScale: DEFAULTS.chatScale, accentColor: "", bubbleMine: "",
+  bubbleTheirs: "", uiRadius: -1, bubbleRadius: -1, effects: DEFAULTS.effects, chatBgColor: "",
+  chatBgImage: "", chatBgSaturation: DEFAULTS.chatBgSaturation, chatBgOpacity: DEFAULTS.chatBgOpacity,
+  chatPattern: DEFAULTS.chatPattern, chatWidth: DEFAULTS.chatWidth, deviceLayout: "auto",
+};
 
 export function savePreferences(prefs: Preferences) {
   const storage = safeGet();

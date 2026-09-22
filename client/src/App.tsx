@@ -41,6 +41,8 @@ import {
   Wifi,
   WifiOff,
   Users,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import {
   ChangeEvent,
@@ -58,7 +60,11 @@ import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURI
 import { linkify } from "./lib/linkify";
 import { fetchPushStatus, subscribeToPush, ensureServiceWorker, sendTestPush, showLocalTestNotification } from "./lib/push";
 import { dispatchInternal, installPublicAPI } from "./lib/cipherroom-api";
-import { applyTheme, applyFont, applyEffects, applyChatSurface } from "./lib/themes";
+import { applyTheme, applyTypography, applyColorOverrides, applyEffects, applyChatSurface } from "./lib/themes";
+import { ensureFonts, GOOGLE_FONTS } from "./lib/fonts";
+import { applyDeviceAttributes, deviceInfo, fullscreenSupported, toggleFullscreen, watchFullscreen } from "./lib/device";
+import { buildStylesheet } from "./lib/style-overrides";
+import { useStyleOverrides } from "./lib/style-editor";
 import { styleKeyFor, bubbleStyleFrom, sanitizePerUserStyle, isEmptyStyle, type PerUserStyle } from "./lib/message-styles";
 import { sealText, generateSealCode, type MsgFlags } from "./lib/message-kinds";
 import { MessageBubble, RecipientHint } from "./components/MessageBubble";
@@ -71,6 +77,9 @@ import { MessageInfoView, type MessageInfo } from "./components/MessageInfoModal
 // The NFC / smart-card workbench pulls in the transport + card-parsing tree;
 // load it only when the panel opens so the initial bundle stays lean.
 const NfcWorkbench = lazy(() => import("./components/NfcWorkbench").then((m) => ({ default: m.NfcWorkbench })));
+// Loaded on first use: the Appearance screen and the Edit Mode inspector.
+const AppearancePanel = lazy(() => import("./components/AppearancePanel").then((m) => ({ default: m.AppearancePanel })));
+const StyleInspector = lazy(() => import("./components/StyleInspector").then((m) => ({ default: m.StyleInspector })));
 const PhonePanel = lazy(() => import("./components/PhonePanel").then((m) => ({ default: m.PhonePanel })));
 import { AiPanel } from "./components/AiPanel";
 import { detectLang, t, type Lang } from "./lib/i18n";
@@ -114,7 +123,6 @@ import {
   ProfilePanel,
   RoomSecurityPanel,
   SettingsPanel,
-  TemplatesPanel,
   TrustPanel,
 } from "./components/panels";
 
@@ -319,7 +327,7 @@ function UnsupportedBanner({ reasons }: { reasons: string[] }) {
 export type PanelKey =
   | "profile"
   | "settings"
-  | "templates"
+  | "appearance"
   | "privacy"
   | "encryption"
   | "notifications"
@@ -533,8 +541,30 @@ function ChatApp() {
     applyTheme(prefs.theme, prefs.accent, prefs.layout);
   }, [prefs.theme, prefs.accent, prefs.layout]);
   useEffect(() => {
-    applyFont(prefs.font, prefs.fontSize);
-  }, [prefs.font, prefs.fontSize]);
+    applyTypography({
+      font: prefs.font, chatFont: prefs.chatFont, monoFont: prefs.monoFont, sizePx: prefs.textSize,
+      weight: prefs.fontWeight, lineHeight: prefs.lineHeight, letterSpacing: prefs.letterSpacing, chatScale: prefs.chatScale,
+    });
+  }, [prefs.font, prefs.chatFont, prefs.monoFont, prefs.textSize, prefs.fontWeight, prefs.lineHeight, prefs.letterSpacing, prefs.chatScale]);
+  useEffect(() => {
+    applyColorOverrides({
+      accentColor: prefs.accentColor, bubbleMine: prefs.bubbleMine, bubbleTheirs: prefs.bubbleTheirs,
+      uiRadius: prefs.uiRadius, bubbleRadius: prefs.bubbleRadius,
+    });
+  }, [prefs.accentColor, prefs.bubbleMine, prefs.bubbleTheirs, prefs.uiRadius, prefs.bubbleRadius, prefs.theme, prefs.accent]);
+  useEffect(() => {
+    applyDeviceAttributes(deviceInfo(), prefs.deviceLayout);
+  }, [prefs.deviceLayout]);
+  // Google fonts in use — the UI / messages / code fonts and any family an
+  // Edit Mode rule names — load only with consent (the request reveals the IP).
+  const styleOverrides = useStyleOverrides();
+  useEffect(() => {
+    const css = buildStylesheet(styleOverrides);
+    const inRules = GOOGLE_FONTS.filter((f) => f.google && css.includes(`'${f.google.family}'`)).map((f) => f.id);
+    ensureFonts([prefs.font, prefs.chatFont, prefs.monoFont, ...inRules], prefs.googleFonts);
+  }, [prefs.font, prefs.chatFont, prefs.monoFont, prefs.googleFonts, styleOverrides]);
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => watchFullscreen(setFullscreen), []);
   useEffect(() => {
     applyEffects(prefs.effects);
   }, [prefs.effects]);
@@ -2191,7 +2221,7 @@ function ChatApp() {
   }
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-app-shell text-foreground safe-pt safe-pb safe-px transition-colors">
+    <div className="app-shell flex h-dvh flex-col overflow-hidden bg-app-shell text-foreground safe-pt safe-pb safe-px transition-colors">
       {/* Connection status stripe — color reflects the WS state */}
       <div
         data-testid="stripe-connection"
@@ -2259,6 +2289,21 @@ function ChatApp() {
           user={{ name: prefs.name, avatar: prefs.avatar }}
           onClearQuit={() => void clearAndQuit()}
         />
+        {/* Fullscreen through the browser viewport (Android, iPad, desktop
+            touch screens). iPhone has no element fullscreen: there it is
+            Add to Home Screen — see Appearance → Display. */}
+        {fullscreenSupported() && deviceInfo().touch && !deviceInfo().standalone ? (
+          <button
+            type="button"
+            onClick={() => void toggleFullscreen()}
+            aria-label={fullscreen ? t(lang, "ap.device.exitFullscreen") : t(lang, "ap.device.enterFullscreen")}
+            title={fullscreen ? t(lang, "ap.device.exitFullscreen") : t(lang, "ap.device.enterFullscreen")}
+            className="inline-flex items-center justify-center rounded-2xl hover:bg-accent"
+            data-testid="btn-toolbar-fullscreen"
+          >
+            {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+          </button>
+        ) : null}
       </header>
 
       {/* Full-screen chat area */}
@@ -2510,8 +2555,12 @@ function ChatApp() {
 
       {/* Modal panels */}
       <ProfilePanel open={activePanel === "profile"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
-      <SettingsPanel open={activePanel === "settings"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
-      <TemplatesPanel open={activePanel === "templates"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
+      <SettingsPanel open={activePanel === "settings"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} onOpenAppearance={() => setActivePanel("appearance")} />
+      {activePanel === "appearance" ? (
+        <Suspense fallback={null}>
+          <AppearancePanel open onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
+        </Suspense>
+      ) : null}
       <EncryptionPanel open={activePanel === "encryption"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
       <RoomSecurityPanel open={activePanel === "roomSecurity"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} room={room} />
       <TrustPanel open={activePanel === "trust"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} peerFingerprints={peerFingerprints} roomFingerprint={roomFingerprint} />
@@ -2776,6 +2825,13 @@ function ChatApp() {
           </SimpleModal>
         );
       })() : null}
+
+      {/* Edit Mode: element picker + style inspector (own Shadow DOM) */}
+      {prefs.editMode ? (
+        <Suspense fallback={null}>
+          <StyleInspector active lang={lang} onExit={() => setPrefs({ editMode: false })} allowGoogleFonts={prefs.googleFonts} />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
@@ -2790,13 +2846,13 @@ function SimpleModal({ title, onClose, children }: { title: string; onClose: () 
     return () => document.removeEventListener("keydown", onKey);
   }, []);
   return (
-    <div role="dialog" aria-modal="true" aria-label={title} className="fixed inset-0 z-40 flex items-stretch justify-center bg-black/45 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="my-auto flex max-h-[92dvh] w-full max-w-xl flex-col modal-shell" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="flex items-center justify-between border-b border-border px-5 py-3">
+    <div role="dialog" aria-modal="true" aria-label={title} className="modal-root fixed inset-0 z-40 flex items-stretch justify-center bg-black/45 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
+      <div className="modal-shell modal-shell--center my-auto flex max-h-[92dvh] w-full max-w-xl flex-col" onMouseDown={(event) => event.stopPropagation()}>
+        <header className="modal-head flex items-center justify-between border-b border-border px-5 py-3">
           <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-accent">×</button>
+          <button type="button" onClick={onClose} aria-label="Close" className="modal-close inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-accent">×</button>
         </header>
-        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className="modal-body flex-1 overflow-y-auto px-5 py-4">{children}</div>
       </div>
     </div>
   );

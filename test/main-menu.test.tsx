@@ -60,8 +60,8 @@ describe("MainMenu", () => {
     const onOpen = vi.fn();
     render(<MainMenu mode="speeddial" lang={LANG} onOpen={onOpen} />);
     fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
-    fireEvent.click(screen.getByTestId("speeddial-btn-templates"));
-    expect(onOpen).toHaveBeenCalledWith("templates");
+    fireEvent.click(screen.getByTestId("speeddial-btn-appearance"));
+    expect(onOpen).toHaveBeenCalledWith("appearance");
     expect(screen.queryByTestId("speeddial-menu")).toBeNull();
   });
 
@@ -90,8 +90,8 @@ describe("MainMenu", () => {
     const settingsBtn = screen.getByTestId("btn-settings");
     expect(settingsBtn.getAttribute("aria-current")).toBe("page");
     expect(settingsBtn.getAttribute("data-current")).toBe("true");
-    const templatesBtn = screen.getByTestId("btn-templates");
-    expect(templatesBtn.getAttribute("aria-current")).toBeNull();
+    const appearanceBtn = screen.getByTestId("btn-appearance");
+    expect(appearanceBtn.getAttribute("aria-current")).toBeNull();
   });
 
   it("marks aria-current in the speed-dial floating panel", () => {

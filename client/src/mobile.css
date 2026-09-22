@@ -1,0 +1,158 @@
+/* ============================================================
+   Device-aware layout. lib/device.ts classifies the device before
+   the first paint and publishes it on <html>:
+     data-os / data-browser / data-engine / data-form (phone|tablet|desktop)
+     data-input (touch|mouse) / data-standalone / data-fullscreen
+     data-keyboard (open|closed) + --app-h / --app-top / --kb (visualViewport)
+   Desktop is the baseline in index.css; everything here only refines
+   phones, tablets, touch input and specific engines.
+   ============================================================ */
+
+/* ------------------------------------------------ fullscreen app shell */
+.app-shell { height: 100vh; height: 100dvh; }
+
+/* iOS / iPadOS: the keyboard does not shrink the layout viewport and 100dvh
+   ignores it, so the composer would sit under the keyboard. Pin the shell to
+   the *visual* viewport instead (kept current by startViewportSync). */
+:root:is([data-os="ios"], [data-os="ipados"]) .app-shell {
+  position: fixed;
+  inset-inline: 0;
+  top: var(--app-top, 0px);
+  height: var(--app-h, 100dvh);
+}
+:root:is([data-os="ios"], [data-os="ipados"]),
+:root:is([data-os="ios"], [data-os="ipados"]) body { height: 100%; overflow: hidden; }
+
+/* Android Chrome with interactive-widget=resizes-content resizes the layout
+   viewport for the keyboard itself, so 100dvh is exact there. */
+
+/* No rubber-band / pull-to-refresh on the app chrome; lists scroll on their own. */
+:root[data-input="touch"],
+:root[data-input="touch"] body { overscroll-behavior: none; }
+:root[data-input="touch"] body {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation; /* keeps pan + pinch zoom, drops double-tap zoom delay */
+}
+[data-testid="list-messages"] {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scroll-padding-bottom: 1rem;
+}
+
+/* Fixed backgrounds are ignored (iOS) or janky (Android) on touch devices. */
+:root[data-input="touch"] .bg-app-shell { background-attachment: scroll; }
+
+/* ------------------------------------------------ iOS input zoom guard
+   Safari zooms the whole page when a focused field is under 16px. */
+:root:is([data-os="ios"], [data-os="ipados"]) :is(
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]),
+  select,
+  textarea
+) { font-size: max(16px, 1em); }
+
+/* ------------------------------------------------ touch ergonomics
+   44 px targets, and nothing that only appears on :hover. */
+:root[data-input="touch"] .composer-icon-btn,
+:root[data-input="touch"] .composer-send { width: 2.75rem; height: 2.75rem; }
+:root[data-input="touch"] .composer-opts { height: 2.75rem; width: 2.1rem; }
+:root[data-input="touch"] .composer-input { min-height: 2.75rem; padding-block: 0.625rem; }
+:root[data-input="touch"] .msg-actions { opacity: 0.85; }
+:root[data-input="touch"] .msg-act { min-height: 2rem; padding: 0.3rem 0.6rem; font-size: 0.74rem; }
+:root[data-input="touch"] .msg-info-btn { width: 1.9rem; height: 1.9rem; opacity: 0.6; }
+:root[data-input="touch"] .user-badge { min-height: 1.9rem; }
+:root[data-input="touch"] .recip-check,
+:root[data-input="touch"] .recip-info,
+:root[data-input="touch"] .recip-widget__min { width: 2.25rem; height: 2.25rem; }
+:root[data-input="touch"] .recip-row { min-height: 2.5rem; }
+:root[data-input="touch"] .modal-close { width: 2.75rem; height: 2.75rem; }
+
+/* ------------------------------------------------ phones */
+:root[data-form="phone"] .toolbar { min-height: 2.75rem; padding-block: 0.25rem; }
+:root[data-form="phone"] .m5-stripe,
+:root[data-form="phone"] [data-testid="stripe-connection"] { height: 3px; }
+:root[data-form="phone"] [data-testid="list-messages"] { padding: 0.625rem 0.5rem; }
+:root[data-form="phone"] .chat-column > * + * { margin-top: 0.5rem; }
+:root[data-form="phone"] .msg-bubble { max-width: 90%; }
+:root[data-form="phone"] .composer {
+  padding: 0.4rem max(env(safe-area-inset-right), 0.5rem) max(env(safe-area-inset-bottom), 0.4rem) max(env(safe-area-inset-left), 0.5rem);
+}
+:root[data-form="phone"] .composer-foot { margin-inline: 0.5rem; }
+:root[data-form="phone"] .recip-widget { max-width: calc(100vw - 1rem); }
+
+/* Typing on a phone: every pixel goes to the conversation. */
+:root[data-form="phone"][data-keyboard="open"] [data-layout-hide="focus"],
+:root[data-form="phone"][data-keyboard="open"] .composer-foot,
+:root[data-form="phone"][data-keyboard="open"] .m5-stripe { display: none; }
+:root[data-keyboard="open"] .safe-pb { padding-bottom: 0; }
+:root[data-keyboard="open"] .composer { padding-bottom: 0.35rem; }
+
+/* Landscape phone: the height is precious. */
+@media (orientation: landscape) and (max-height: 500px) {
+  :root[data-form="phone"] [data-layout-hide="focus"],
+  :root[data-form="phone"] .m5-stripe,
+  :root[data-form="phone"] .composer-foot { display: none; }
+  :root[data-form="phone"] .toolbar { min-height: 2.5rem; }
+}
+
+/* Dialogs become bottom sheets on phones, sized to the visual viewport so
+   the keyboard never covers a field, clear of notch and home indicator. */
+:root[data-form="phone"] .modal-root {
+  align-items: flex-end;
+  padding: env(safe-area-inset-top, 0px) 0 0;
+}
+:root[data-form="phone"]:is([data-os="ios"], [data-os="ipados"]) .modal-root {
+  bottom: auto;
+  top: var(--app-top, 0px);
+  height: var(--app-h, 100dvh);
+}
+:root[data-form="phone"] .modal-shell--center {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  max-height: calc(var(--app-h, 100dvh) - env(safe-area-inset-top, 0px) - 0.75rem);
+  border-radius: 1.25rem 1.25rem 0 0;
+  border-bottom: 0;
+  animation: m5-sheet-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+:root[data-form="phone"] .modal-shell--drawer { max-width: none; border-radius: 0; }
+:root[data-form="phone"] .modal-head { position: relative; padding-top: 1rem; }
+:root[data-form="phone"] .modal-shell--center .modal-head::before {
+  content: ""; position: absolute; top: 0.4rem; left: 50%; width: 2.5rem; height: 0.3rem;
+  transform: translateX(-50%); border-radius: 9999px; background: hsl(var(--border));
+}
+:root[data-form="phone"] .modal-body {
+  padding-inline: 1rem;
+  padding-bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+  overscroll-behavior: contain;
+}
+:root[data-form="phone"][data-keyboard="open"] .modal-body { padding-bottom: 1rem; }
+@keyframes m5-sheet-in { from { transform: translateY(24px); opacity: 0.4; } to { transform: none; opacity: 1; } }
+
+/* ------------------------------------------------ tablets */
+:root[data-form="tablet"] .msg-bubble { max-width: 76%; }
+:root[data-form="tablet"] .modal-shell--center { max-height: calc(var(--app-h, 100dvh) - 3rem); }
+
+/* ------------------------------------------------ installed app / fullscreen
+   Status bar is transparent (black-translucent): the safe area pads it. */
+:root[data-standalone="yes"] .toolbar { padding-top: 0.25rem; }
+:root[data-fullscreen="yes"] .app-shell { height: 100vh; height: 100dvh; }
+
+/* ------------------------------------------------ engines / browsers */
+/* Big backdrop blurs cost frames on mid-range Android GPUs. */
+:root[data-os="android"] .menu-panel,
+:root[data-os="android"] .toolbar,
+:root[data-os="android"] .composer { -webkit-backdrop-filter: none; backdrop-filter: none; }
+:root[data-os="android"] .toolbar { background: hsl(var(--card)); }
+:root[data-os="android"] .composer { background: hsl(var(--card)); }
+/* Firefox Android has no field-sizing yet: keep the composer from growing a scrollbar. */
+:root[data-engine="gecko"] .composer-input { overflow-y: auto; }
+
+/* ------------------------------------------------ Edit Mode
+   A long press picks an element: no iOS callout, no text selection. */
+.m5-edit-mode body { -webkit-touch-callout: none; }
+:root[data-input="touch"].m5-edit-mode body { -webkit-user-select: none; user-select: none; }
+:root[data-input="touch"].m5-edit-mode :is(input, textarea, [contenteditable="true"]) { -webkit-user-select: text; user-select: text; }
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-form="phone"] .modal-shell--center { animation: none; }
+}

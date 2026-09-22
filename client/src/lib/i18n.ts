@@ -1,3 +1,4 @@
+import { APPEARANCE_I18N } from "./i18n-appearance";
 // Simple i18n. Strings live in this file; no extra deps. Add keys as needed.
 
 export type Lang = "cs" | "en" | "de";
@@ -66,7 +67,6 @@ const cs: Dict = {
   "menu.settings": "Nastavení",
   "menu.privacy": "Soukromí & audit",
   "menu.encryption": "Šifrování",
-  "menu.templates": "Šablony / Themy",
   "menu.notifications": "Notifikace",
   "menu.analytics": "Analytika",
   "menu.room": "Místnost",
@@ -398,7 +398,6 @@ const en: Dict = {
   "menu.settings": "Settings",
   "menu.privacy": "Privacy & audit",
   "menu.encryption": "Encryption",
-  "menu.templates": "Templates / Themes",
   "menu.notifications": "Notifications",
   "menu.analytics": "Analytics",
   "menu.room": "Room",
@@ -730,7 +729,6 @@ const de: Dict = {
   "menu.settings": "Einstellungen",
   "menu.privacy": "Datenschutz & Audit",
   "menu.encryption": "Verschlüsselung",
-  "menu.templates": "Vorlagen / Designs",
   "menu.notifications": "Benachrichtigungen",
   "menu.analytics": "Analyse",
   "menu.room": "Raum",
@@ -1002,7 +1000,11 @@ const de: Dict = {
   "templates.width.full": "Voll",
 };
 
-const dicts: Record<Lang, Dict> = { cs, en, de };
+const dicts: Record<Lang, Dict> = {
+  cs: { ...cs, ...APPEARANCE_I18N.cs },
+  en: { ...en, ...APPEARANCE_I18N.en },
+  de: { ...de, ...APPEARANCE_I18N.de },
+};
 
 export function detectLang(stored: string | undefined): Lang {
   if (stored === "cs" || stored === "en" || stored === "de") return stored;
