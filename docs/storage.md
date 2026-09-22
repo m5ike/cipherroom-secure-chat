@@ -132,11 +132,18 @@ Operátorské cesty (admin token): `GET /api/admin/storage` (index + uživatelé
 | `DATA_DIR` | společný adresář dat (systemd unit z instalátoru: `/var/lib/m5cet`) |
 
 SQLCipher přináší nativní modul `better-sqlite3-multiple-ciphers`, vedený
-jako **volitelná závislost** — instalace tedy nikdy nespadne kvůli němu. Má
-předkompilované binárky; když pro danou platformu a verzi Node chybí, `npm
-ci` ho přeloží (potřebuje `build-essential` a `python3`). **Když modul není,
-server běží dál** — jen `GET /api/storage/status` hlásí `available: false`,
-data se neukládají a účty se chovají jako dřív (trezor v souboru).
+jako **volitelná závislost** — instalace kvůli němu nikdy nespadne.
+
+V balíčku jsou **předkompilované binárky pro všechny běžné platformy**
+(`prebuilds/linux-x64.node` a spol.), takže na serveru není potřeba
+překladač: ověřeno, že modul funguje i když se jeho build skript nepovede a
+žádné `build/` nevznikne. `npm ci` se přesto o překlad pokusí (a s
+`build-essential` + `python3` uspěje) — trvá to pár minut, ale ani neúspěch
+nic nerozbije.
+
+**Když modul chybí úplně, server běží dál** — jen `GET /api/storage/status`
+hlásí `available: false`, data se neukládají a účty se chovají jako dřív
+(trezor v souboru).
 
 Po nasazení zkontrolujte:
 

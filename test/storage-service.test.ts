@@ -9,7 +9,7 @@
 // database keyed by that passkey and leaves nothing behind.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -253,7 +253,10 @@ describe("the global database", () => {
 
 describe("when the driver or the directory is missing", () => {
   it("says storage is off instead of throwing at the caller", async () => {
-    const broken = new StorageService("/proc/definitely-not-writable/m5cet");
+    // A file where the directory should be: portable, and nothing to clean up.
+    const blocked = join(dir, "blocked");
+    writeFileSync(blocked, "not a directory");
+    const broken = new StorageService(join(blocked, "storage"));
     const started = await broken.init();
     expect(started.ok).toBe(false);
     expect(broken.isAvailable).toBe(false);

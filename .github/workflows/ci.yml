@@ -99,8 +99,12 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      # One file at a time: the SQLCipher tests open real databases, and a
+      # two-core runner running fifty files at once turned that into a
+      # wall-clock problem. Serial is a few seconds slower and legible when
+      # something stalls.
       - name: vitest run
-        run: npx vitest run --reporter=verbose
+        run: npx vitest run --reporter=verbose --no-file-parallelism
 
       - name: Upload test artefacts on failure
         if: failure()

@@ -20,6 +20,7 @@ import { createServer, type Server } from "node:http";
 import { rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { registerRoutes } from "../server/routes";
+import { storage } from "../server/storage/service";
 import { accountStore } from "../server/accounts/store";
 import { FakeAuthenticator } from "./helpers/authenticator";
 import { WsClient, type Frame } from "./helpers/ws-client";
@@ -43,6 +44,8 @@ beforeAll(async () => {
 afterAll(async () => {
   server.closeAllConnections?.();
   await new Promise((r) => server.close(r));
+  // registerRoutes opened the storage; give the databases back.
+  storage.close();
   rmSync(process.env.ACCOUNTS_DIR!, { recursive: true, force: true });
 });
 
