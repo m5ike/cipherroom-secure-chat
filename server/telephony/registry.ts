@@ -100,6 +100,8 @@ export type ProviderWebhookInfo = {
 };
 
 export type TelephonyRegistrySnapshot = {
+  /** Bumped when the snapshot shape changes; the admin GUI refuses to render an older backend. */
+  apiVersion: 2;
   enabled: boolean;
   defaults: { sms: string; voice: string };
   defaultsSource: { sms: DefaultSource; voice: DefaultSource };
@@ -115,6 +117,7 @@ export type TelephonyRegistrySnapshot = {
 
 export function registrySnapshot(): TelephonyRegistrySnapshot {
   return {
+    apiVersion: 2,
     enabled: telephonyEnabled(),
     defaults: defaultIds(),
     defaultsSource: defaultsSource(),

@@ -150,6 +150,21 @@ WebRTC klientem a SIP trunkem vyžaduje externí bránu (Asterisk / FreeSWITCH /
 Janus / Kamailio). `POST /api/telephony/call` vrací id hovoru u poskytovatele a
 tuto poznámku.
 
+## Po aktualizaci: přebuildovat a restartovat admin
+
+Admin GUI (`admin-ui/public/index.html`) se čte z disku, ale API běží ze
+sestaveného `dist/admin.cjs`. Po `git pull` proto **starý admin proces servíruje
+novou stránku** — ta pak ukazuje `(—)` u zdroje defaultů a „NOT writable" bez
+důvodu (chybí `apiVersion`, `persistence`, `defaultsSource`). GUI to od této verze
+hlásí jako nesoulad verzí. Náprava:
+
+- nativně: `npm run build` a restart admin služby (nebo `./update.sh`),
+- Docker: `docker compose --profile admin up -d --build` — nový compose zároveň
+  mountuje volume `m5cet-data` na `/data`, bez něj je úložiště v read‑only
+  kontejneru opravdu nezapisovatelné.
+
+Stejně tak `PUBLIC_BASE_URL` se nastavuje v `.env` (a je potřeba restart).
+
 ## 5. Endpointy
 
 Klient (jen s `ENABLE_TELEPHONY=1`, tvrdý limit 10 / 10 min / IP, E.164):

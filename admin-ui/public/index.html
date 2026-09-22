@@ -360,6 +360,14 @@
       const r = await api("/admin/telephony");
       if (!r.ok) return show("telList", r.json);
       const s = r.json;
+      // This page is read from disk, the API from dist/admin.cjs — after an
+      // update they can disagree. Refuse to render misleading values then.
+      if (s.apiVersion !== 2) {
+        $("telList").innerHTML = '<p class="err" style="font-size:13px;"><b>Admin backend is older than this page.</b> The running <code>dist/admin.cjs</code> predates the telephony persistence / webhook release (missing <code>apiVersion</code>, <code>persistence</code>, <code>defaultsSource</code>). Rebuild and restart the admin service:<br>'
+          + '• native: <code>npm run build</code> then restart the admin unit/process (or run <code>./update.sh</code>)<br>'
+          + '• docker: <code>docker compose --profile admin up -d --build</code> (the new compose also mounts the <code>m5cet-data</code> volume for persistence)</p>';
+        $("whList").innerHTML = ""; return;
+      }
       const src = (k) => (s.defaultsSource && s.defaultsSource[k]) || '—';
       const conn = (c) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span><b>' + esc((c.kind || '').toUpperCase()) + '</b> ' + esc(c.label) + (c.configured ? ' — <span class="ok">configured</span>' : ' — <span class="err">' + esc(c.reason || 'not configured') + '</span>') + '</span></div>';
       const trunk = (tk) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span>☎ <b>' + esc(tk.id) + '</b> ' + esc(tk.label || '') + ' · ' + esc(tk.host || '?') + ':' + esc(tk.port || 5060) + ' · DIDs: ' + esc((tk.didNumbers || []).join(', ') || '—') + (tk.hasPassword ? ' · 🔒' : '') + (tk.source === 'env' ? ' · <span class="ok">from .env (read-only)</span>' : '') + '</span></div>';
@@ -372,7 +380,7 @@
         '<p style="font-size:12px;color:#9aa6b8;">Telephony: ' + (s.enabled ? 'ENABLED' : 'disabled')
         + ' · SMS default: <b>' + esc(s.defaults && s.defaults.sms || '—') + '</b> (' + esc(src('sms')) + ')'
         + ' · Voice default: <b>' + esc(s.defaults && s.defaults.voice || '—') + '</b> (' + esc(src('voice')) + ')'
-        + ' · PUBLIC_BASE_URL: ' + (s.publicBaseUrl ? '<code>' + esc(s.publicBaseUrl) + '</code>' : '<span class="err">not set</span>') + '</p>'
+        + ' · PUBLIC_BASE_URL: ' + (s.publicBaseUrl ? '<code>' + esc(s.publicBaseUrl) + '</code>' : '<span class="err">not set</span> — add <code>PUBLIC_BASE_URL=https://your.domain</code> to <code>.env</code> and restart (needed for webhooks + Twilio signature check)') + '</p>'
         + '<p style="font-size:12px;color:#9aa6b8;">Storage: ' + persist + '</p>'
         + [].concat(s.sms || [], s.voice || []).map(conn).join('')
         + '<h2 style="margin-top:10px;">Configured trunks</h2>'
@@ -538,7 +546,7 @@
       lbPreview();
     }
     function lbFillAll() { lbFillStyleForm(); lbFillTemplates(); lbFillPartials(); lbFillFlags(); lbPreview(); }
-    $("lbLoad").onclick = async () => { const r = await api("/admin/layout"); if (!r.ok) return show("lbOut", r.json); lb = r.json.layout; lbFillAll(); show("lbOut", { file: r.json.file, updatedAt: lb.updatedAt ? new Date(lb.updatedAt).toLocaleString() : "(defaults)", lastSaveError: r.json.lastSaveError || null }); };
+    $("lbLoad").onclick = async () => { const r = await api("/admin/layout"); if (r.status === 404) return show("lbOut", "The running admin backend has no /admin/layout — it predates the layout builder. Rebuild (npm run build) and restart the admin service, or `docker compose --profile admin up -d --build`."); if (!r.ok) return show("lbOut", r.json); lb = r.json.layout; lbFillAll(); show("lbOut", { file: r.json.file, updatedAt: lb.updatedAt ? new Date(lb.updatedAt).toLocaleString() : "(defaults)", lastSaveError: r.json.lastSaveError || null }); };
     $("lbSave").onclick = async () => { const r = await api("/admin/layout", { method: "PUT", body: JSON.stringify({ layout: lb }) }); show("lbOut", r.ok ? { saved: true, updatedAt: new Date(r.json.layout.updatedAt).toLocaleString() } : r.json); if (r.ok) { lb = r.json.layout; lbFillAll(); } };
     $("lbReset").onclick = async () => { if (!confirm("Reset layout to defaults for all clients?")) return; const r = await api("/admin/layout/reset", { method: "POST" }); if (r.ok) { lb = r.json.layout; lbFillAll(); } show("lbOut", r.json); };
     $("lbExport").onclick = () => { const a = document.createElement("a"); a.href = "data:application/json," + encodeURIComponent(JSON.stringify(lb, null, 2)); a.download = "m5cet-layout.json"; a.click(); };
