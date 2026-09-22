@@ -27,6 +27,7 @@ import {
 import { requestInspect, styleStore, stylesSuspended, useStyleOverrides } from "@/lib/style-editor";
 import { exportOverrides, importOverrides, sanitizeCssText, EMPTY_OVERRIDES, type StyleOverrides } from "@/lib/style-overrides";
 import { removeGoogleFonts } from "@/lib/fonts";
+import { APP_BUILT_AT, buildLabel } from "@/lib/build-info";
 import "../appearance.css";
 
 type Props = {
@@ -457,6 +458,7 @@ function DisplayTab({ prefs, setPrefs, lang }: TabProps) {
     [t(lang, "ap.device.input"), info.touch ? t(lang, "ap.device.touch") : t(lang, "ap.device.mouse")],
     [t(lang, "ap.device.standalone"), info.standalone ? t(lang, "common.yes") : t(lang, "common.no")],
     [t(lang, "ap.device.fullscreen"), fullscreenSupported() ? t(lang, "common.yes") : t(lang, "common.no")],
+    [t(lang, "ap.device.build"), `${buildLabel()}${APP_BUILT_AT ? ` · ${new Date(APP_BUILT_AT).toLocaleString()}` : ""}`],
   ];
   return (
     <>

@@ -5,6 +5,50 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [2.8.0] – 2026-09-22
+
+Vzhled, mobilní layout, Edit Mode, druhy zpráv, telefonie a admin layout
+builder. Wire formát zpráv je zpětně kompatibilní (nová pole jsou volitelná).
+
+### Přidáno
+- **Obrazovka Vzhled** (*☰ → Vzhled*, nahoře v menu rychlý přístup):
+  šablona, 71 Google Fonts + systémová písma (rozhraní / zprávy / kód, velikost,
+  tloušťka, řádkování, prostrkání; Google až po souhlasu), paleta 116 barev +
+  vlastní barva s kontrastem (akcent, bubliny, zaoblení, pozadí), zobrazení
+  a zařízení, editor. Viz [`docs/appearance.md`](docs/appearance.md).
+- **Edit Mode** (přepínač ✓/✗ ve Vzhledu i nahoře v menu): výběr libovolného
+  prvku Ctrl + pravým tlačítkem nebo dlouhým stiskem; inspektor ve Shadow DOM
+  (selektor, stavy :hover/:active/:focus/:visited/::before…, zařízení,
+  !important, řádky i zdroj, zdrojový kód tříd, přidání/odebrání tříd, box
+  model); trvalé uložení, export/import, `?nostyles`.
+- **Mobilní layout podle zařízení a prohlížeče** (`data-os/-browser/-form/-input`):
+  iOS klávesnice (visual viewport), spodní panely, 16px pole, 44px cíle,
+  celá obrazovka, instalace, `theme-color`.
+- **Verze a build v aplikaci** (patička menu, Vzhled → Zobrazení,
+  `/api/health`) a upozornění „nová verze — Obnovit" pro karty otevřené před
+  nasazením (`dist/public/build.json`).
+- Druhy zpráv: klikací (odkrytí podržením), mizející (4 s – 2 h, teploměr na
+  okraji) a zapečetěné (vlastní kód); hlasové zprávy s přepisem; AI panel;
+  NFC workbench; PassKey profil na serveru; plovoucí widget příjemců
+  (ukotvení, nastavení); info o zprávě s auditní stopou; odpověď a přeposlání;
+  avatary a styl bubliny pro každého uživatele.
+- Telefonie: SMS a hovory přes Twilio / Telnyx / Vonage (Vonage Voice JWT),
+  SIP trunky (perzistentní + `SIP_TRUNKS` v `.env`), webhooky
+  `/wh/{provider}/{typ}` s ověřením podpisů, konzole v adminu.
+- Admin **Layout / template builder** (styly komponent, šablony se zástupnými
+  parametry a includes, živý náhled); systémové zprávy s monochromatickým
+  logem, plným datem a sbalováním.
+- `TRUST_PROXY`: reálné IP klientů za reverzní proxy (rate limit na
+  návštěvníka, ne na nginx).
+
+### Opraveno
+- Bezpečné okraje (výřez, home indikátor) se na iPhonu nikdy neuplatnily.
+- Vonage klíč: poškozený / neúplný PEM se hlásí srozumitelně (dřív 502
+  `DECODER routines::unsupported`).
+- Dev server za doménou: 403 na `/@fs/…`, pád po zamítnutém požadavku.
+- Detekce změn konfiguračních souborů podle obsahu (ne mtime).
+- `/api/turn` bez TURN serveru vracel 404 (červená chyba v konzoli).
+
 ## [2.7.0] – 2026-09-21
 
 Relace, pozvánky, úplné smazání stop, menu pod ikonou a nové šablony.

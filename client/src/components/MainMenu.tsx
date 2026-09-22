@@ -64,6 +64,7 @@ import { createPortal } from "react-dom";
 import {
   Activity,
   Bell,
+  Check,
   Eye,
   FileText,
   KeyRound,
@@ -73,6 +74,7 @@ import {
   Mic,
   Nfc,
   Palette,
+  PencilRuler,
   Radio,
   Phone,
   Settings as SettingsIcon,
@@ -152,7 +154,38 @@ export type MainMenuProps = {
   user?: MenuUser;
   /** Renders the highlighted "Clear & Quit" action at the end of the menu. */
   onClearQuit?: () => void;
+  /** Edit Mode quick switch (top of the menu). Omitted → no switch. */
+  editMode?: boolean;
+  onToggleEditMode?: () => void;
+  /** "M5cet 2.8.0 · build abc123" in the menu footer. */
+  buildLabel?: string;
 };
+
+/** Edit Mode switch used in the menu: green check when on, red cross when off. */
+function EditModeQuick({ on, onToggle, lang, testId, compact }: { on: boolean; onToggle: () => void; lang: Lang; testId: string; compact?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={on}
+      onClick={onToggle}
+      data-testid={testId}
+      title={t(lang, "ap.edit.toggleHint")}
+      aria-label={`Edit Mode: ${on ? "ON" : "OFF"}`}
+      className={`menu-edit ${on ? "is-on" : "is-off"} ${compact ? "is-compact" : ""}`}
+    >
+      <span className="menu-edit__icon" aria-hidden="true">
+        {on ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : <X className="h-3.5 w-3.5" strokeWidth={3} />}
+      </span>
+      {compact ? <PencilRuler className="h-4 w-4" aria-hidden="true" /> : (
+        <>
+          <span className="menu-edit__label">Edit Mode</span>
+          <span className="menu-edit__state">{on ? "ON" : "OFF"}</span>
+        </>
+      )}
+    </button>
+  );
+}
 
 /** One glyph for the avatar circle: a short emoji avatar if the user set one,
  *  otherwise the initial. URLs are never rendered (CSP blocks remote images
@@ -372,8 +405,11 @@ function SpeedDial(props: {
   reducedMotion: boolean;
   user?: MenuUser;
   onClearQuit?: () => void;
+  editMode?: boolean;
+  onToggleEditMode?: () => void;
+  buildLabel?: string;
 }) {
-  const { lang, onOpen, currentPanel, reducedMotion, user, onClearQuit } = props;
+  const { lang, onOpen, currentPanel, reducedMotion, user, onClearQuit, editMode, onToggleEditMode, buildLabel } = props;
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const toggleBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -566,6 +602,23 @@ function SpeedDial(props: {
                     <span className="truncate text-sm font-semibold">{user.name}</span>
                   </li>
                 ) : null}
+                {/* Quick access, always visible without scrolling: the
+                    Appearance screen and the Edit Mode switch. */}
+                <li role="none" className="menu-quick" data-testid="speeddial-quick">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="menu-quick__btn"
+                    onClick={() => { onOpen("appearance"); closeMenu(); }}
+                    data-testid="speeddial-quick-appearance"
+                  >
+                    <Palette className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>{t(lang, "menu.appearance")}</span>
+                  </button>
+                  {onToggleEditMode ? (
+                    <EditModeQuick on={Boolean(editMode)} onToggle={() => { onToggleEditMode(); closeMenu(); }} lang={lang} testId="speeddial-quick-editmode" />
+                  ) : null}
+                </li>
                 {MENU_GROUPS.map((group) => (
                   <Fragment key={group.id}>
                     <li role="presentation" className="menu-group-label">{t(lang, group.labelKey)}</li>
@@ -593,7 +646,10 @@ function SpeedDial(props: {
                     <LogOut className="h-4 w-4 shrink-0" aria-hidden="true" />
                     <span>{t(lang, "menu.clearQuit")}</span>
                   </button>
+                  {buildLabel ? <p className="menu-build" data-testid="menu-build">{buildLabel}</p> : null}
                 </footer>
+              ) : buildLabel ? (
+                <footer className="menu-footer"><p className="menu-build" data-testid="menu-build">{buildLabel}</p></footer>
               ) : null}
             </div>,
             document.body
@@ -641,7 +697,7 @@ function SpeedDialItem(props: {
 
 /* ---------- Root component ---------- */
 
-export function MainMenu ({ mode, lang, onOpen, currentPanel = null, user, onClearQuit }: MainMenuProps) {
+export function MainMenu ({ mode, lang, onOpen, currentPanel = null, user, onClearQuit, editMode, onToggleEditMode, buildLabel }: MainMenuProps) {
   // Resolve the "best" presentation per viewport. We force `speeddial`
   // on touch-primary / narrow viewports regardless of user pref because
   // 14 inline icons do not fit a 360 px phone.
@@ -683,6 +739,9 @@ export function MainMenu ({ mode, lang, onOpen, currentPanel = null, user, onCle
       reducedMotion={reducedMotion}
       user={user}
       onClearQuit={onClearQuit}
+      editMode={editMode}
+      onToggleEditMode={onToggleEditMode}
+      buildLabel={buildLabel}
     />;
   }
 
@@ -709,6 +768,9 @@ export function MainMenu ({ mode, lang, onOpen, currentPanel = null, user, onCle
           </Fragment>
         );
       })}
+      {onToggleEditMode ? (
+        <EditModeQuick on={Boolean(editMode)} onToggle={onToggleEditMode} lang={lang} testId="btn-edit-mode" compact />
+      ) : null}
       {onClearQuit ? (
         <>
           <span role="separator" aria-orientation="vertical" className="menu-divider" />

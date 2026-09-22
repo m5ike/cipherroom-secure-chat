@@ -65,6 +65,7 @@ import { ensureFonts, GOOGLE_FONTS } from "./lib/fonts";
 import { applyDeviceAttributes, deviceInfo, fullscreenSupported, toggleFullscreen, watchFullscreen } from "./lib/device";
 import { buildStylesheet } from "./lib/style-overrides";
 import { useStyleOverrides } from "./lib/style-editor";
+import { buildLabel, watchForNewVersion, type DeployedBuild } from "./lib/build-info";
 import { styleKeyFor, bubbleStyleFrom, sanitizePerUserStyle, isEmptyStyle, type PerUserStyle } from "./lib/message-styles";
 import { sealText, generateSealCode, type MsgFlags } from "./lib/message-kinds";
 import { MessageBubble, RecipientHint } from "./components/MessageBubble";
@@ -565,6 +566,9 @@ function ChatApp() {
   }, [prefs.font, prefs.chatFont, prefs.monoFont, prefs.googleFonts, styleOverrides]);
   const [fullscreen, setFullscreen] = useState(false);
   useEffect(() => watchFullscreen(setFullscreen), []);
+  // A tab opened before a deploy keeps the old bundle: offer a reload.
+  const [newBuild, setNewBuild] = useState<DeployedBuild | null>(null);
+  useEffect(() => watchForNewVersion(setNewBuild), []);
   useEffect(() => {
     applyEffects(prefs.effects);
   }, [prefs.effects]);
@@ -2235,6 +2239,16 @@ function ChatApp() {
       {/* Motorsport stripe */}
       <div className="m5-stripe h-1 w-full" aria-hidden="true" />
 
+      {newBuild ? (
+        <div className="update-banner" role="status" data-testid="update-banner">
+          <span>{t(lang, "app.update.available").replace("{v}", `${newBuild.version} · ${newBuild.build}`)}</span>
+          <button type="button" className="update-banner__btn" onClick={() => window.location.reload()} data-testid="update-reload">
+            {t(lang, "app.update.reload")}
+          </button>
+          <button type="button" className="update-banner__x" onClick={() => setNewBuild(null)} aria-label={t(lang, "common.close")}>×</button>
+        </div>
+      ) : null}
+
       {/* Top app bar */}
       <header className="toolbar relative flex min-h-[3rem] flex-wrap items-center gap-2 border-b border-border bg-card/85 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/70 sm:px-4">
         <button
@@ -2288,6 +2302,9 @@ function ChatApp() {
           onOpen={(panel) => setActivePanel(panel)}
           user={{ name: prefs.name, avatar: prefs.avatar }}
           onClearQuit={() => void clearAndQuit()}
+          editMode={prefs.editMode}
+          onToggleEditMode={() => setPrefs({ editMode: !prefs.editMode })}
+          buildLabel={buildLabel()}
         />
         {/* Fullscreen through the browser viewport (Android, iPad, desktop
             touch screens). iPhone has no element fullscreen: there it is

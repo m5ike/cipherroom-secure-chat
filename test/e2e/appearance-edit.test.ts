@@ -135,6 +135,24 @@ describe("Edit Mode", () => {
   });
 });
 
+describe("Findability + version", () => {
+  it("Edit Mode is switchable from the first row of the ☰ menu; the running build matches build.json", async () => {
+    const { ctx, page } = await makeContext();
+    await page.goto("/");
+    await page.waitForSelector("[data-testid=button-brand]");
+    const deployed = await page.evaluate(async () => (await (await fetch("./build.json", { cache: "no-store" })).json()) as { version: string; build: string });
+    expect(deployed.build).toMatch(/^([0-9a-f]{8}(-dirty)?|t[0-9a-z]+|.+)$/);
+    await page.click("[data-testid=btn-menu-speeddial]");
+    const label = await page.textContent("[data-testid=menu-build]");
+    expect(label).toBe(`M5cet ${deployed.version} · build ${deployed.build}`);
+    expect(await page.isVisible("[data-testid=speeddial-quick-editmode]")).toBe(true); // visible without scrolling
+    await page.click("[data-testid=speeddial-quick-editmode]");
+    await page.waitForSelector("[data-testid=inspector]");
+    expect(await page.locator("[data-testid=update-banner]").count()).toBe(0); // same build → no "new version" notice
+    await ctx.close();
+  });
+});
+
 describe("Phones", () => {
   it("iPhone: detected as iOS phone, dialogs are bottom sheets, inputs never trigger zoom", async () => {
     const { ctx, page } = await makeContext({ ...devices["iPhone 13"] });

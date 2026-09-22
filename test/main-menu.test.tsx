@@ -179,8 +179,12 @@ describe("MainMenu", () => {
     const panel = screen.getByTestId("speeddial-menu");
     expect(screen.getByTestId("speeddial-user").textContent).toContain("Alice");
     expect(panel.querySelectorAll(".menu-group-label").length).toBe(MENU_GROUPS.length);
-    // headings must not become focus stops: every menuitem is still a button
-    expect(panel.querySelectorAll('[role="menuitem"]').length).toBe(MENU_ENTRIES.length);
+    // headings must not become focus stops: every menuitem is still a button —
+    // one per entry, plus the Appearance shortcut in the quick row on top.
+    const items = Array.from(panel.querySelectorAll('[role="menuitem"]'));
+    expect(items.length).toBe(MENU_ENTRIES.length + 1);
+    expect(items.every((el) => el.tagName === "BUTTON")).toBe(true);
+    expect(panel.querySelectorAll('[role="menuitem"][data-panel]').length).toBe(MENU_ENTRIES.length);
   });
 
   it("never turns an avatar URL into a glyph (no remote fetch, no spoofed text)", () => {
@@ -246,5 +250,44 @@ describe("MainMenu", () => {
     expect(menuPanelBlocks.length).toBeGreaterThan(0);
     const hasFixed = menuPanelBlocks.some((b) => /position:\s*fixed/i.test(b));
     expect(hasFixed).toBe(true);
+  });
+});
+
+describe("MainMenu — quick access (Appearance + Edit Mode) and build label", () => {
+  beforeEach(() => { cleanup(); });
+
+  it("the first row of the ☰ menu opens Appearance and toggles Edit Mode, no scrolling needed", () => {
+    const onOpen = vi.fn();
+    const onToggle = vi.fn();
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={onOpen} editMode={false} onToggleEditMode={onToggle} buildLabel="M5cet 2.8.0 · build abc12345" />);
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    const menu = screen.getByTestId("speeddial-menu");
+    const quick = screen.getByTestId("speeddial-quick");
+    // Quick row comes before every group heading.
+    const firstGroup = menu.querySelector(".menu-group-label")!;
+    expect(quick.compareDocumentPosition(firstGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const edit = screen.getByTestId("speeddial-quick-editmode");
+    expect(edit.getAttribute("aria-checked")).toBe("false");
+    expect(edit.textContent).toContain("OFF");
+    expect(screen.getByTestId("menu-build").textContent).toBe("M5cet 2.8.0 · build abc12345");
+    fireEvent.click(edit);
+    expect(onToggle).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("speeddial-menu")).toBeNull(); // closes so picking can start
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    fireEvent.click(screen.getByTestId("speeddial-quick-appearance"));
+    expect(onOpen).toHaveBeenCalledWith("appearance");
+  });
+
+  it("shows ON with a check when Edit Mode is active; inline toolbars get the switch too", () => {
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={vi.fn()} editMode onToggleEditMode={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    const edit = screen.getByTestId("speeddial-quick-editmode");
+    expect(edit.getAttribute("aria-checked")).toBe("true");
+    expect(edit.className).toContain("is-on");
+    cleanup();
+    const onToggle = vi.fn();
+    render(<MainMenu mode="icons-text" lang={LANG} onOpen={vi.fn()} editMode={false} onToggleEditMode={onToggle} />);
+    fireEvent.click(screen.getByTestId("btn-edit-mode"));
+    expect(onToggle).toHaveBeenCalled();
   });
 });

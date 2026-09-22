@@ -4,6 +4,9 @@
 type Dict = Record<string, string>;
 
 const cs: Dict = {
+  "app.update.available": "Na serveru je nová verze aplikace ({v}).",
+  "app.update.reload": "Obnovit",
+  "ap.device.build": "Verze aplikace",
   "menu.appearance": "Vzhled",
   "settings.appearanceMoved": "Téma, písma, barvy, rozvržení, zobrazení menu a Edit Mode jsou nově na jedné obrazovce Vzhled.",
   "settings.openAppearance": "Otevřít Vzhled",
@@ -205,6 +208,9 @@ const cs: Dict = {
 };
 
 const en: Dict = {
+  "app.update.available": "A new version of the app is deployed ({v}).",
+  "app.update.reload": "Reload",
+  "ap.device.build": "App version",
   "menu.appearance": "Appearance",
   "settings.appearanceMoved": "Theme, fonts, colours, layout, menu display and Edit Mode now live on a single Appearance screen.",
   "settings.openAppearance": "Open Appearance",
@@ -406,6 +412,9 @@ const en: Dict = {
 };
 
 const de: Dict = {
+  "app.update.available": "Eine neue App-Version ist verfügbar ({v}).",
+  "app.update.reload": "Neu laden",
+  "ap.device.build": "App-Version",
   "menu.appearance": "Darstellung",
   "settings.appearanceMoved": "Design, Schriften, Farben, Layout, Menüanzeige und Edit Mode befinden sich jetzt auf einem einzigen Bildschirm „Darstellung“.",
   "settings.openAppearance": "Darstellung öffnen",

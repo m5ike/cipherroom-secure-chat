@@ -37,6 +37,7 @@ import { registerPasskeyRoutes } from "./passkey";
 import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
+import { buildInfo } from "./build-info";
 
 const fileProxy = new FileProxy();
 
@@ -212,12 +213,17 @@ export async function registerRoutes(
   registerLayoutRoutes(app);
 
   app.get("/api/health", (_req, res) => {
+    const b = buildInfo();
     res.json({
       ok: true,
       rooms: rooms.size,
       cache: "no-store",
       persistence: "none",
       role: "webrtc-signaling-only",
+      // Which client build this server serves (dist/public/build.json).
+      version: b.version,
+      build: b.build,
+      builtAt: b.builtAt,
     });
   });
 
@@ -228,7 +234,9 @@ export async function registerRoutes(
   app.get("/api/turn", (_req, res) => {
     const url = process.env.TURN_SERVER_URL?.trim() || "";
     if (!url) {
-      return res.status(404).json({ ok: false, message: "TURN is not configured." });
+      // Not an error: most rooms work over STUN. (A 404 here printed a red
+      // "Failed to load resource" line in every visitor's console.)
+      return res.json({ ok: true, configured: false, iceServers: [] });
     }
     const username = process.env.TURN_USERNAME?.trim() || "";
     const credential = process.env.TURN_CREDENTIAL?.trim() || "";

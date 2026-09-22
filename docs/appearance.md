@@ -1,7 +1,9 @@
 # Vzhled, mobilní layout a Edit Mode
 
 Vše vizuální je na **jedné obrazovce** *Menu → Vzhled* (dřív rozděleno mezi
-*Nastavení* a *Šablony*). Změny se projeví okamžitě a ukládají se jen do
+*Nastavení* a *Šablony*). **Rychlý přístup:** hned první řádek menu ☰ má
+tlačítko **Vzhled** a přepínač **Edit Mode ✓/✗** (bez rolování); v režimu
+ikon v liště je přepínač ikonou s tužkou. Změny se projeví okamžitě a ukládají se jen do
 zařízení (`localStorage`); styly z Edit Mode zvlášť pod
 `m5cet:style-overrides:v1`.
 
@@ -99,6 +101,18 @@ vrátí uložený stav, *Ukončit* vypne Edit Mode (s dotazem na neuložené zm�
 ho nerozbije. Ukládané CSS se čistí: žádný `@import`, žádné `url()` mimo
 `data:`, žádné `</style>`, omezené velikosti. **Nouzové vypnutí** všech úprav
 pro jedno načtení: přidejte `?nostyles` do adresy.
+
+## Verze a nasazení
+
+Patička menu ☰ i *Vzhled → Zobrazení* ukazují `M5cet <verze> · build <commit>`
+(`-dirty` = sestaveno s necommitnutými změnami). Server totéž vrací
+v `/api/health` (`version`, `build`, `builtAt`) a build zapisuje do
+`dist/public/build.json`. Karta otevřená před nasazením nové verze to pozná
+(při návratu do karty, focusu a každých 10 min) a nabídne **Obnovit**.
+
+```bash
+curl -s https://chat.example.org/api/health    # která verze na serveru opravdu běží
+```
 
 ## Soubory
 

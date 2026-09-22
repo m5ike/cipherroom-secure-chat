@@ -74,6 +74,18 @@ Vonage Voice) a vrací 503 s přesnou příčinou. Náprava: `VONAGE_PRIVATE_KEY
 /etc/m5cet/vonage-private.key`, nebo klíč v dvojitých uvozovkách / na jednom
 řádku s `\n` — viz [telephony.md](telephony.md#vonage-voice--jwt-aplikace).
 
+### Nevidím nové funkce (Vzhled, Edit Mode …)
+
+1. Běží na serveru nový build? `curl -s https://<doména>/api/health` vrací
+   `version` a `build` (git commit) — porovnejte s `git log -1 --oneline` na
+   GitHubu. Starý build = na serveru `git pull && npm run build` a restart
+   (`systemctl restart m5cet m5cet-admin`, resp. `docker compose up -d --build`).
+2. Karta otevřená před nasazením běží na starém kódu, dokud se neobnoví —
+   nové verze nabízejí *Obnovit* samy, u starších stačí jednou obnovit stránku
+   (instalovanou PWA zavřít a znovu otevřít).
+3. Kde to je: menu ☰ → první řádek **Vzhled** a **Edit Mode**; verze je
+   v patičce menu.
+
 ### Úprava z Edit Mode rozbila vzhled / nejde ovládat
 
 Otevřete aplikaci s `?nostyles` v adrese (např. `https://chat.example.org/?nostyles`)
