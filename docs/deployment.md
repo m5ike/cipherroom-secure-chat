@@ -224,10 +224,11 @@ StateDirectoryMode=0700
 Environment=DATA_DIR=/var/lib/m5cet
 ```
 
-SQLCipher přináší nativní modul `better-sqlite3-multiple-ciphers`. Většinou
-se stáhne předkompilovaný; jinak ho `npm ci` přeloží (`build-essential`,
-`python3`). Když se modul nenačte, server běží dál bez úložiště a
-`GET /api/storage/status` vrací `available: false`.
+SQLCipher přináší nativní modul `better-sqlite3-multiple-ciphers`, vedený
+jako volitelná závislost. Většinou se stáhne předkompilovaný; jinak ho `npm
+ci` přeloží (`build-essential`, `python3`). Když modul chybí, server běží dál
+bez úložiště a `GET /api/storage/status` vrací `available: false` — takže po
+nasazení stojí za to se na ten endpoint podívat.
 
 Doporučeno nastavit `STORAGE_MASTER_KEY` (32 bajtů hex/base64) v `.env` a
 zálohovat ho; jinak si server vygeneruje `storage.key` v adresáři úložiště.

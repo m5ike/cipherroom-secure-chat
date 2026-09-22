@@ -205,6 +205,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # SQLCipher (better-sqlite3-multiple-ciphers) is a native module. The
+      # Playwright image has no compiler, so when no prebuilt binary matches
+      # its Node version, npm falls back to node-gyp and needs these. The
+      # dependency is optional — without it the server runs without storage —
+      # but e2e is where the storage is actually exercised.
+      - name: Build tools for the native SQLCipher module
+        run: apt-get update && apt-get install -y --no-install-recommends build-essential python3
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 

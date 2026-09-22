@@ -131,11 +131,18 @@ Operátorské cesty (admin token): `GET /api/admin/storage` (index + uživatelé
 | `STORAGE_MASTER_KEY` | 32 bajtů (hex nebo base64). Bez ní se vygeneruje `storage.key` v adresáři úložiště |
 | `DATA_DIR` | společný adresář dat (systemd unit z instalátoru: `/var/lib/m5cet`) |
 
-SQLCipher přináší nativní modul `better-sqlite3-multiple-ciphers`. Má
-předkompilované binárky; když pro danou platformu chybí, `npm ci` ho přeloží
-(potřebuje `build-essential` a `python3`). **Když se modul nenačte, server
-běží dál** — jen `GET /api/storage/status` hlásí `available: false` a data se
-neukládají.
+SQLCipher přináší nativní modul `better-sqlite3-multiple-ciphers`, vedený
+jako **volitelná závislost** — instalace tedy nikdy nespadne kvůli němu. Má
+předkompilované binárky; když pro danou platformu a verzi Node chybí, `npm
+ci` ho přeloží (potřebuje `build-essential` a `python3`). **Když modul není,
+server běží dál** — jen `GET /api/storage/status` hlásí `available: false`,
+data se neukládají a účty se chovají jako dřív (trezor v souboru).
+
+Po nasazení zkontrolujte:
+
+```bash
+curl -s https://<host>/api/storage/status | grep -o '"available":[a-z]*'
+```
 
 Zálohy: `m5cet.db` + celý adresář `db/` + `storage.key`. Bez master klíče
 jsou databáze relací nečitelné; databáze uživatelů neotevřete tak jako tak

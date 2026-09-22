@@ -49,8 +49,9 @@ databázi. Viz [`docs/storage.md`](docs/storage.md).
   jen jako záloha pro server bez úložiště.
 - Přenosy se zapisují do serverové tabulky (směr, transport, stav, bajty,
   chunky, zopakované chunky); chybějící chunky se hlásí do logu.
-- Nová nativní závislost `better-sqlite3-multiple-ciphers` (SQLCipher).
-  Když se nenačte, server běží dál a úložiště hlásí `available: false`.
+- Nová **volitelná** nativní závislost `better-sqlite3-multiple-ciphers`
+  (SQLCipher) — instalace kvůli ní nespadne. Když modul chybí, server běží
+  dál a `GET /api/storage/status` hlásí `available: false`.
 
 ## [2.9.0] – 2026-09-22
 
