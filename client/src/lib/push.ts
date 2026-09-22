@@ -5,7 +5,10 @@
 //   fetchPushStatus()       — GET /api/push/status
 //   ensureServiceWorker()   — register /sw.js
 //   subscribeToPush(key)    — full register + subscribe + POST to server
-//   sendTestPush(id?)       — POST /api/push/test (real push if VAPID ok)
+//   sendTestPush()          — POST /api/push/test { id } — a real push to THIS
+//                             device's own subscription (id from subscribe,
+//                             localStorage "m5cet:push:id"); broadcasting to
+//                             all subscribers is operator-only (admin token)
 //   showLocalTestNotification() — bypasses push service, useful for QA
 
 function urlBase64ToUint8Array(base64String: string) {
@@ -90,15 +93,23 @@ export async function subscribeToPush(
 export async function sendTestPush(): Promise<{ ok: boolean; reason?: string }> {
   let id: string | null = null;
   try { id = localStorage.getItem(SUBSCRIPTION_ID_KEY); } catch { /* ignore */ }
+  // The test only ever targets this device's own subscription; without one
+  // there is nothing to test (and the server refuses id-less requests).
+  if (!id) return { ok: false, reason: "Toto zařízení nemá odběr push notifikací — nejdřív je povolte." };
   try {
     const res = await fetch("/api/push/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id, title: "M5cet · test", body: "Push delivery test" }),
+      body: JSON.stringify({ id }),
     });
+    if (res.status === 404) {
+      // Subscriptions live in server memory: after a restart the id is gone.
+      try { localStorage.removeItem(SUBSCRIPTION_ID_KEY); } catch { /* ignore */ }
+      return { ok: false, reason: "Server tento odběr nezná (restart serveru?) — povolte notifikace znovu." };
+    }
     if (!res.ok) {
-      const json = (await res.json().catch(() => ({}))) as { message?: string };
-      return { ok: false, reason: json.message || `Server vrátil ${res.status}` };
+      const json = (await res.json().catch(() => ({}))) as { message?: string; error?: string };
+      return { ok: false, reason: json.message || json.error || `Server vrátil ${res.status}` };
     }
     return { ok: true };
   } catch (err) {

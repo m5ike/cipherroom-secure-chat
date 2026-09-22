@@ -101,20 +101,25 @@ signalizační relé (WebSocket `/ws`) a nic neukládá na disk.
 
 ## 6. Známé mezery — čti před tím, než na tyhle části spolehneš
 
-Ověřeno revizí 2026-09-21; nic z toho není ve 2.5.0 opraveno.
+Ověřeno revizí 2026-09-21. Stav 2.8.1: body 2 a 5 (část o autentizaci)
+a retence v bodě 8 jsou opravené — viz CHANGELOG.
 
 1. **WS rate limit nefunguje** — Express middleware na `/ws` se při upgradu
    nevolá (změřeno 45/45 přijato při limitu 30/min). REST limiter funguje.
-2. **Chybí `trust proxy`** — za reverse proxy mají všichni stejnou `req.ip`
-   a sdílejí jeden limit 100 požadavků / 15 min.
+2. ~~**Chybí `trust proxy`**~~ — **opraveno ve 2.8.0**: `TRUST_PROXY`
+   (výchozí loopback) → limity jsou per návštěvník.
 3. **Proxy relay souborů nedoručuje** — server chunky ukládá, ale
    nepřeposílá; rozesílá jen `proxy-end`/`proxy-cancel`. Soubory fungují jen
    s otevřeným DataChannelem. Sloty se po `end` neuvolní (až TTL 10 min).
 4. **Admin ↔ hlavní služba nesdílí stav** — fronta příkazů, push subskripce
    i event ring jsou Mapy v paměti *každého* procesu. Příkaz zařazený v admin
-   procesu se ke klientovi hlavní služby nedostane.
-5. **Neautentizované endpointy:** `POST /api/push/test`,
-   `GET|POST /api/admin/retention*`. `GET /api/turn` vrací statické TURN údaje.
+   procesu se ke klientovi hlavní služby nedostane. Proto operátorské akce
+   nad tímto stavem (retence, push broadcast) běží v **hlavní** službě za
+   stejným admin tokenem (`server/admin-auth.ts`), ne v admin procesu.
+5. **Autentizace (2.8.1):** `POST /api/push/test` bez tokenu jen self-test
+   na vlastní id odběru (pevný text); broadcast a `/api/admin/retention*`
+   vyžadují `ADMIN_API_TOKEN` (`503` bez něj, `401` špatný). Zůstává:
+   `GET /api/turn` vrací statické TURN údaje.
 6. **TOFU otisky** jsou klíčované náhodným `peerId` nové relace → vždy
    „první použití"; při neshodě se otisk přepíše. „Otisk místnosti" je hash
    jen z room ID, ne z klíče.
@@ -123,8 +128,9 @@ Ověřeno revizí 2026-09-21; nic z toho není ve 2.5.0 opraveno.
    120 s, bez inactivity timeoutu). Popisky v UI (30/15/8 s) odpovídají
    nezapojené knihovně.
 8. **Stuby v paměti:** settings sync, consent, push subskripce; `audit/log`
-   nemá žádného zapisovatele (vrací vždy `[]`). Retence neběží na timeru
-   a události nemaže.
+   nemá žádného zapisovatele (vrací vždy `[]`). Retence (2.8.1) běží sama
+   každých `RETENTION_SWEEP_MINUTES` (výchozí 60) a maže i události z ringu;
+   settings podle `SETTINGS_RETENTION_DAYS` (dřív omylem podle `DATA_…`).
 9. **`maxAttachmentBytes` je výchozí neomezené** (`MAX_SAFE_INTEGER`), ne
    100 MB; 100 MB je jen volba v Nastavení. Chunky se drží v RAM.
 10. **CSP** povoluje `script-src 'unsafe-inline' 'unsafe-eval'`.

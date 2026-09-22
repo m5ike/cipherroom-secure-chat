@@ -170,14 +170,15 @@ je podstatné:
 
 ## Známé mezery (stav 2.5.0)
 
-Zjištěno revizí kódu a měřením 2026-09-21. Nejsou opravené — většina
-vyžaduje návrhové rozhodnutí. Berte je v úvahu při nasazení i auditu.
+Zjištěno revizí kódu a měřením 2026-09-21. Opravené řádky jsou označené
+verzí; ostatní vyžadují návrhové rozhodnutí. Berte je v úvahu při nasazení
+i auditu.
 
 | # | Mezera | Dopad | Doporučení |
 |---|--------|-------|------------|
 | 1 | Rate limit WS upgradu se nikdy nespustí (Express middleware není na cestě `upgrade`; změřeno 45/45 přijato při limitu 30/min) | neomezený počet spojení z jedné IP | limitovat v `verifyClient` / vlastním `upgrade` handleru, nebo v reverse proxy (`limit_conn`) |
-| 2 | Není nastaveno `trust proxy` | za Nginx mají všichni IP proxy → společný limit 100 req / 15 min; `hello.ip` je nepřesné | konfigurovatelné `TRUST_PROXY` (počet hopů), ne slepé `true` |
-| 3 | `POST /api/push/test`, `GET|POST /api/admin/retention*` bez autentizace | kdokoli rozešle testovací push všem / spustí sweep | přesunout za admin token |
+| 2 | ~~Není nastaveno `trust proxy`~~ **opraveno ve 2.8.0** | IP klienta z `X-Forwarded-For` jen od důvěryhodné proxy; limity jsou per návštěvník | `TRUST_PROXY` (výchozí loopback, v kontejneru i privátní rozsahy; počet hopů / seznam) |
+| 3 | ~~`POST /api/push/test`, `GET|POST /api/admin/retention*` bez autentizace~~ **opraveno ve 2.8.1** | bez tokenu už jen self-test push na vlastní id odběru (pevný text); broadcast a retence jen s `ADMIN_API_TOKEN` (`503` bez něj, `401` se špatným; porovnání v konstantním čase, `server/admin-auth.ts`) | routy zůstávají v hlavní službě — stav, na který působí, žije v její paměti; admin proces má prázdné kopie (viz ř. 9 a `docs/admin.md`). Token ≥ 32 B. |
 | 4 | `GET /api/turn` vydává statické TURN údaje komukoli | zneužití TURN relaye | efemérní údaje (coturn `use-auth-secret`) |
 | 5 | Proxy relay souborů: server drží IV + ciphertext (prvních 256 znaků) v paměti, ale data nedoručuje | funkce nefunguje; metadata o přenosu (počet chunků ≈ velikost) jsou serveru viditelná | dokončit relay, nebo proxy režim vypnout |
 | 6 | TOFU otisky klíčované náhodným `peerId` relace; při neshodě se přepíší | panel „Důvěra" nikdy nezachytí změnu protistrany — **nespoléhat na něj** | klíčovat stabilní identitou; při neshodě nepřepisovat bez potvrzení |

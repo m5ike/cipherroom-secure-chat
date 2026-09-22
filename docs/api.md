@@ -51,16 +51,27 @@ idle timeout.
 ## REST
 
 Všechny `/api/*` cesty: **100 požadavků / 15 min na IP** (`429` s JSON
-zprávou). Bez `trust proxy` je za reverse proxy „IP" adresa proxy — limit pak
-sdílí všichni uživatelé. Žádný endpoint hlavní služby nevyžaduje autentizaci.
+zprávou). Za reverse proxy se IP klienta bere z `X-Forwarded-For` jen od
+důvěryhodné proxy (`TRUST_PROXY`, výchozí loopback) — viz
+[`troubleshooting.md`](troubleshooting.md).
+
+**Operátorské cesty** vyžadují admin token (`Authorization: Bearer
+$ADMIN_API_TOKEN`, porovnání v konstantním čase — `server/admin-auth.ts`):
+`GET|POST /api/admin/retention*` a broadcast přes `POST /api/push/test`.
+Bez nastaveného `ADMIN_API_TOKEN` vracejí `503`, bez tokenu / se špatným
+`401` (s `WWW-Authenticate: Bearer`). Ostatní endpointy autentizaci nemají.
+Jsou v hlavní službě, ne v admin procesu, protože stav, se kterým pracují,
+žije v paměti hlavní služby (admin proces má vlastní, prázdné kopie).
 Neznámá cesta pod `/api/` vrací `index.html` (SPA fallback), ne `404`.
 
 ### Health & meta
 
-- `GET /api/health` → `{ ok, rooms, cache, persistence, role }`
+- `GET /api/health` → `{ ok, rooms, cache, persistence, role, version, build, builtAt }`
+  (`build` = git commit sestavení z `dist/public/build.json`)
 - `GET /api/modules` → `{ modes[], features{}, push{}, events{}, turn{ enabled, credentialUrl } }`
 - `GET /api/turn` → `{ ok, iceServers[] }` včetně TURN `username`/`credential`.
-  `404` bez `TURN_SERVER_URL`, `503` když chybí údaje. Údaje jsou **statické**
+  Bez `TURN_SERVER_URL` `200 { ok: true, configured: false, iceServers: [] }`
+  (klient použije jen STUN), `503` když chybí údaje. Údaje jsou **statické**
   a vydají se komukoli — používejte účet vyhrazený jen pro TURN.
 - `GET /api/transfers/stats` → `{ ok, totalActive, totalByPeer, maxParallel, capBytes, ttlMs }`
 
@@ -69,8 +80,16 @@ Neznámá cesta pod `/api/` vrací `index.html` (SPA fallback), ne `404`.
 - `GET /api/push/status` → `{ enabled, vapidPublicKey, subscribers }`
 - `POST /api/push/subscribe` → body `{ subscription, deviceId? }`. Vrací `{ ok, id }`.
   `503` bez VAPID, `400` pokud endpoint není `https://`.
-- `POST /api/push/test` → body `{ id?, title?, body? }`; pošle push jedné nebo
-  všem subskripcím. **Není autentizovaný** (chrání ho jen REST limiter).
+- `POST /api/push/test` — dva režimy (limit 10 / min na IP navíc k REST limitu):
+  - **self-test**, bez tokenu: body `{ id }` = vlastní id odběru z
+    `subscribe` (klient ho drží v `localStorage` `m5cet:push:id`). Pošle
+    **pevný** text („M5cet · test") jen na tuto subskripci; `title`/`body`
+    se ignorují. `200 { ok, mode: "self" }`, `404` neznámé id (např. po
+    restartu serveru), `502` když push služba doručení odmítne, `503` bez VAPID.
+  - **broadcast**, jen s admin tokenem: body `{ broadcast: true, title?, body? }`
+    (i požadavek **bez `id`** se bere jako broadcast). Pošle text všem
+    subskripcím → `{ ok, mode: "broadcast", sent, failed, results[] }`.
+    Bez tokenu `401` / `503` (kontroluje se dřív než cokoli jiného).
 - Odhlášení (`unsubscribe`) neexistuje; subskripce mizí přes `/api/audit/purge`,
   retenci nebo restart.
 
@@ -111,12 +130,30 @@ Vše je v paměti procesu.
 
 ### Retence
 
-- `GET  /api/admin/retention` → aktuální politika (dny) z `*_RETENTION_DAYS`.
-- `POST /api/admin/retention/run` → okamžitý sweep (max. 1× za 60 s).
+Obě cesty vyžadují **admin token** (`503` bez `ADMIN_API_TOKEN`, `401` bez
+něj / se špatným).
 
-Oba endpointy jsou **bez autentizace** a sweep se jinak nikdy nespustí —
-server nemá žádný timer. Maže prošlé settings, audit, push subskripce
-a consent; události z event logu nemaže.
+- `GET  /api/admin/retention` → `{ ok, policy, intervalMinutes, scheduled,
+  nextSweepAt, lastSweep }` — politika v dnech z `*_RETENTION_DAYS`,
+  plán a výsledek posledního sweepu (`trigger: "timer" | "manual"`).
+- `POST /api/admin/retention/run` → sweep hned → `{ ok, removed{…}, total, ranAt, trigger }`.
+
+Sweep běží i **sám**: hlavní služba ho spouští každých `RETENTION_SWEEP_MINUTES`
+(výchozí 60, rozsah 1–1440) na `unref`-nutém timeru. Každá kategorie se
+maže podle **svého** okna:
+
+| Kategorie | Proměnná | Výchozí |
+|---|---|---|
+| settings sync | `SETTINGS_RETENTION_DAYS` | 30 dní |
+| audit (`/api/audit/log`) | `AUDIT_RETENTION_DAYS` | 60 dní |
+| push subskripce | `PUSH_RETENTION_DAYS` | 90 dní |
+| analytics consent | `DATA_RETENTION_DAYS` | 30 dní |
+| události (event ring, `LOG_EVENTS=1`) | `EVENT_RETENTION_DAYS` | 7 dní |
+
+```bash
+curl -s -H "Authorization: Bearer $ADMIN_API_TOKEN" https://chat.example.org/api/admin/retention
+curl -s -X POST -H "Authorization: Bearer $ADMIN_API_TOKEN" https://chat.example.org/api/admin/retention/run
+```
 
 ### Analytics consent (in-memory stub; klient ho zatím nevolá)
 

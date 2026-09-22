@@ -450,15 +450,19 @@ Plný přehled: [`docs/browser-limitations.md`](docs/browser-limitations.md).
 Projekt je poctivý v tom, co (zatím) neumí. Ověřeno revizí 2.5.0; podrobně
 v [`docs/security-model.md`](docs/security-model.md#známé-mezery-stav-250).
 
-- Rate limit WebSocket upgradu se nespouští; REST limiter ano, ale bez
-  `trust proxy` ho za reverse proxy sdílí všichni uživatelé.
+- Rate limit WebSocket upgradu se nespouští; REST limiter ano (za reverse
+  proxy per návštěvník díky `TRUST_PROXY`).
 - Proxy relay souborů nedoručuje data — soubory jen přes otevřený DataChannel.
 - Admin příkazy, `/admin/clients` a `/admin/logs/recent` nevidí stav hlavní
   služby (oddělené procesy, stav jen v paměti).
-- `POST /api/push/test` a `/api/admin/retention*` jsou bez autentizace.
+- Operátorské cesty hlavní služby (retence, push broadcast) chrání jen
+  `ADMIN_API_TOKEN` a REST limiter — žádné role ani víc tokenů; bez
+  nastaveného tokenu jsou vypnuté (`503`). Test push bez tokenu jde jen na
+  vlastní odběr zařízení.
 - Panel „Důvěra" (TOFU) je klíčovaný náhodným ID relace — změnu protistrany
   nezachytí.
-- Settings sync, consent, push subskripce a event log žijí jen v paměti procesu.
+- Settings sync, consent, push subskripce a event log žijí jen v paměti procesu
+  (retenční sweep je maže průběžně, restart úplně).
 - `App.tsx` (~2 800 řádků) nemá unit testy; pokrývají ho jen e2e testy.
 - Historii prohlížeče web smazat neumí; pozvánky nepřežijí restart serveru.
 

@@ -5,6 +5,42 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [2.8.1] – 2026-09-22
+
+Operátorské cesty hlavní služby za admin tokenem, retence, která opravdu
+běží a maže. Viz [`docs/api.md`](docs/api.md) (Push, Retence).
+
+### Zabezpečení
+- **`POST /api/push/test` už nerozešle push bez autentizace.** Bez tokenu jen
+  self-test: `{ id }` = vlastní id odběru z `/api/push/subscribe`, pevný text,
+  jen na tuto subskripci (`404` neznámé id). Broadcast všem (`{ broadcast: true }`,
+  i požadavek bez `id`) jen s `Authorization: Bearer $ADMIN_API_TOKEN`.
+  Dřív požadavek bez `id` poslal text volajícího na cizí zařízení. Navíc
+  limit 10 testů / min na IP.
+- **`GET|POST /api/admin/retention*` vyžadují admin token** (`503` bez
+  nastaveného `ADMIN_API_TOKEN`, `401` bez tokenu / se špatným, s
+  `WWW-Authenticate: Bearer`).
+- Kontrola tokenu v konstantním čase je jeden sdílený helper
+  (`server/admin-auth.ts`) pro admin službu i hlavní službu. Routy zůstávají
+  v hlavní službě, protože push subskripce, settings, audit, consent i event
+  ring žijí v její paměti — admin proces má vlastní prázdné kopie.
+
+### Opraveno
+- Retence se **spouští sama**: `unref` timer v hlavní službě každých
+  `RETENTION_SWEEP_MINUTES` (výchozí 60, 1–1440; nová proměnná, i v
+  instalátoru). Dřív jen ručně přes neautentizovaný endpoint.
+- Settings sync se maže podle `SETTINGS_RETENTION_DAYS` (dřív omylem podle
+  `DATA_RETENTION_DAYS`).
+- Prošlé události se opravdu mažou z ringu (`EVENT_RETENTION_DAYS`); dřív se
+  cutoff spočítal a nepoužil.
+- Vyprázdněné per-device audit logy se odstraní celé.
+- `GET /api/admin/retention` vrací i plán a poslední sweep (`lastSweep`,
+  `nextSweepAt`, `intervalMinutes`); ruční sweep už nepřeskakuje „not due".
+- Komentář v `server/retention.ts` sliboval 24h výchozí hodnotu; skutečné
+  výchozí hodnoty jsou 30/60/90/7/30 dní — opraveno.
+- Tlačítko *Test web push* posílá jen vlastní id; bez odběru poradí povolit
+  notifikace, po `404` (restart serveru) zapomene neplatné id.
+
 ## [2.8.0] – 2026-09-22
 
 Vzhled, mobilní layout, Edit Mode, druhy zpráv, telefonie a admin layout

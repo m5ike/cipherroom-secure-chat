@@ -33,12 +33,12 @@ pole zapne přes env vars:
 |--------------|------------------------------------------|--------------------|
 | audio        | vždy zapnuto (WebRTC)                   | hotové             |
 | attachments  | vždy zapnuto                             | hotové přes DataChannel: inline ≤ 512 KiB, větší po 32 KiB chuncích; záložní proxy relay přes server **nedoručuje** (viz `files.md`) |
-| push         | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | hotové — reálné doručení přes `web-push`; subskripce jen v paměti, chybí unsubscribe |
+| push         | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | hotové — reálné doručení přes `web-push`; test push jen na vlastní id odběru, broadcast jen s admin tokenem; subskripce jen v paměti, chybí unsubscribe |
 | turn         | `TURN_SERVER_URL`, `TURN_USERNAME`, `TURN_CREDENTIAL` | hotové — `GET /api/turn` (statické údaje) |
 | eventLogging | `LOG_EVENTS=1`                           | hotové — **jen in-memory ring (500 záznamů)**; `DATABASE_URL` přepne štítek backendu na `database`, ale zápis do DB je no-op stub (`server/events.ts`) |
 | settingsSync | vždy zapnuto                            | in-memory stub     |
 | audit/consent| vždy zapnuto                            | in-memory stub; `audit/log` nemá zapisovatele (vrací `[]`), klient consent/settings endpointy nevolá |
-| retention    | `*_RETENTION_DAYS`                      | politika hotová; sweep jen ručně přes `POST /api/admin/retention/run` (bez timeru, bez autentizace) |
+| retention    | `*_RETENTION_DAYS`, `RETENTION_SWEEP_MINUTES` | hotové — sweep sám každých `RETENTION_SWEEP_MINUTES` (výchozí 60, `unref` timer) + ručně `POST /api/admin/retention/run` (admin token); maže settings, audit, push, consent i události, každou kategorii podle jejího okna |
 
 ## 3. Storage / cloud providery (interface skeleton)
 

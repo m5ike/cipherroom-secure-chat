@@ -65,6 +65,18 @@ class EventStore {
     const clamped = Math.max(1, Math.min(RING_LIMIT, Math.floor(limit) || 50));
     return this.ring.slice(-clamped);
   }
+
+  /** Retention: drop every event recorded before `cutoff` (ms). Returns how
+   *  many went. The ring is append-ordered by ts, so this trims its head. */
+  pruneOlderThan(cutoff: number): number {
+    const before = this.ring.length;
+    this.ring = this.ring.filter((e) => e.ts >= cutoff);
+    return before - this.ring.length;
+  }
+
+  get size(): number {
+    return this.ring.length;
+  }
 }
 
 export const eventStore = new EventStore();

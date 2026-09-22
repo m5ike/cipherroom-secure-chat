@@ -30,7 +30,7 @@ FIREWALL_RULES DEPS_INSTALLED SERVICE_USER_CREATED"
 ENV_KEYS="LOG_EVENTS DATABASE_URL VAPID_PUBLIC_KEY VAPID_PRIVATE_KEY VAPID_SUBJECT \
 TURN_SERVER_URL TURN_USERNAME TURN_CREDENTIAL ADMIN_API_TOKEN \
 DATA_RETENTION_DAYS AUDIT_RETENTION_DAYS PUSH_RETENTION_DAYS EVENT_RETENTION_DAYS \
-SETTINGS_RETENTION_DAYS"
+SETTINGS_RETENTION_DAYS RETENTION_SWEEP_MINUTES"
 ENV_DERIVED_KEYS="NODE_ENV HOST PORT ENABLE_ADMIN ADMIN_PORT ADMIN_BIND"
 ENV_SECRET_KEYS="VAPID_PRIVATE_KEY TURN_CREDENTIAL ADMIN_API_TOKEN DATABASE_URL"
 
@@ -97,7 +97,7 @@ conf_validate() {
     ACME_EMAIL)      [ -z "${v}" ] || printf '%s' "${v}" | grep -Eq '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' || { echo "not a valid e-mail address"; return 1; } ;;
     ENABLE_TLS|FIREWALL_OPEN|ENABLE_ADMIN|ENABLE_PUSH|KEEP_NODE_MODULES|LOG_EVENTS)
                      _is_bool "${v}" || { echo "must be 0 or 1"; return 1; } ;;
-    BACKUP_KEEP|DATA_RETENTION_DAYS|AUDIT_RETENTION_DAYS|PUSH_RETENTION_DAYS|EVENT_RETENTION_DAYS|SETTINGS_RETENTION_DAYS)
+    BACKUP_KEEP|DATA_RETENTION_DAYS|AUDIT_RETENTION_DAYS|PUSH_RETENTION_DAYS|EVENT_RETENTION_DAYS|SETTINGS_RETENTION_DAYS|RETENTION_SWEEP_MINUTES)
                      [ -z "${v}" ] || _is_uint "${v}" || { echo "must be a non-negative integer"; return 1; } ;;
     BRANCH)          printf '%s' "${v}" | grep -Eq '^[A-Za-z0-9._/-]{1,200}$' || { echo "not a valid git ref name"; return 1; } ;;
     REPO_URL)        printf '%s' "${v}" | grep -Eq '^(https://|git@|ssh://|file://|/)' || { echo "must be an https/ssh/file URL or an absolute path"; return 1; } ;;

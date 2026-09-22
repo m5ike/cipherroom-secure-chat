@@ -1,28 +1,25 @@
-// GDPR-friendly data retention policy.
+// GDPR-friendly data retention for the main service's in-memory state.
 //
-// Enforces maximum lifetimes for all per-device server-side state:
-//   - Settings sync records (`/api/settings`)
-//   - Audit log (`/api/audit/log` + admin command audit)
-//   - Push subscriptions (in `routes-admin-shared.ts`)
-//   - Analytics consent ledger
-//   - Event store metadata (already capped, but we also expire old rows)
+// Maximum lifetimes (days, env overrides):
+//   SETTINGS_RETENTION_DAYS  settings sync records (/api/settings)       default 30
+//   AUDIT_RETENTION_DAYS     per-device audit entries (/api/audit/log)   default 60
+//   PUSH_RETENTION_DAYS      Web Push subscriptions                      default 90
+//   DATA_RETENTION_DAYS      analytics consent ledger                    default 30
+//   EVENT_RETENTION_DAYS     event metadata ring (LOG_EVENTS=1)          default 7
 //
-// All checks are purely runtime; data structures are kept in-memory and
-// bounded by 24-hour default unless the operator overrides via env vars.
+// The main service sweeps on an unref'd timer every RETENTION_SWEEP_MINUTES
+// (default 60, 1 – 1440) and on demand via the token-protected
+// POST /api/admin/retention/run (retention-routes.ts). Everything lives in
+// memory, so a restart also clears it — the sweep bounds how long data can
+// survive in a long-running process.
 //
-// Environment overrides (in days):
-//   DATA_RETENTION_DAYS      — global default (default 30)
-//   AUDIT_RETENTION_DAYS     — admin audit (default 60, longer for compliance)
-//   PUSH_RETENTION_DAYS      — push subscriptions (default 90)
-//   EVENT_RETENTION_DAYS     — server event metadata (default 7)
-//   SETTINGS_RETENTION_DAYS  — settings sync (default 30)
-//
-// The retention sweep is `O(N)` over each container but only runs at
-// most once per process and is bounded by a lastSweepAt timestamp.
+// planRetention() only counts (pure, used for dry runs and tests);
+// sweepRetention() deletes. Both use retentionCutoffs(), the single source
+// of the cutoffs, so what is reported and what is deleted cannot drift.
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
-function envDays(name: string, fallback: number): number {
+function envNumber(name: string, fallback: number): number {
   const raw = process.env[name]?.trim();
   if (!raw) return fallback;
   const n = Number(raw);
@@ -31,34 +28,24 @@ function envDays(name: string, fallback: number): number {
 }
 
 export const RETENTION = {
-  data: envDays("DATA_RETENTION_DAYS", 30),
-  audit: envDays("AUDIT_RETENTION_DAYS", 60),
-  push: envDays("PUSH_RETENTION_DAYS", 90),
-  event: envDays("EVENT_RETENTION_DAYS", 7),
-  settings: envDays("SETTINGS_RETENTION_DAYS", 30),
+  data: envNumber("DATA_RETENTION_DAYS", 30),
+  audit: envNumber("AUDIT_RETENTION_DAYS", 60),
+  push: envNumber("PUSH_RETENTION_DAYS", 90),
+  event: envNumber("EVENT_RETENTION_DAYS", 7),
+  settings: envNumber("SETTINGS_RETENTION_DAYS", 30),
 };
 
-/**
- * Runs every collection sweep step. Call this after any mutation that
- * could introduce expired data.
- *
- * The sweep is intentionally incremental — we never walk the entire map
- * on the hot path, and the slow path runs at most every 60 s.
- */
-let lastSweepAt = 0;
-let sweepBusy = false;
+/** Anything older than (strictly before) these timestamps is expired. */
+export type RetentionCutoffs = { settings: number; audit: number; push: number; consent: number; event: number };
 
-export function shouldSweep(now = Date.now()): boolean {
-  return now - lastSweepAt > 60_000;
-}
-
-/**
- * Cacheable age predicate so callers can hot-check whether a single
- * entry is expired without re-parsing env.
- */
-function isExpired(ts: number, days: number, now = Date.now()): boolean {
-  const maxAgeMs = days * MS_PER_DAY;
-  return now - ts > maxAgeMs;
+export function retentionCutoffs(now = Date.now()): RetentionCutoffs {
+  return {
+    settings: now - RETENTION.settings * MS_PER_DAY,
+    audit: now - RETENTION.audit * MS_PER_DAY,
+    push: now - RETENTION.push * MS_PER_DAY,
+    consent: now - RETENTION.data * MS_PER_DAY,
+    event: now - RETENTION.event * MS_PER_DAY,
+  };
 }
 
 export interface RetentionTargets {
@@ -70,99 +57,98 @@ export interface RetentionTargets {
   pushSubscriptions?: Iterable<{ id: string; createdAt: number }>;
   /** Analytics consent ledger (keyed by deviceId). */
   consentLedger?: Iterable<{ deviceId: string; updatedAt: number }>;
-  /** Event store entries (already capped to length 500). */
+  /** Event store entries. */
   events?: Iterable<{ id: string; ts: number }>;
 }
 
+export type RemovedCounts = {
+  deviceSettings: number;
+  auditEntries: number;
+  pushSubscriptions: number;
+  consentRecords: number;
+  events: number;
+};
+
 export interface RetentionResult {
-  removed: {
-    deviceSettings: number;
-    auditEntries: number;
-    pushSubscriptions: number;
-    consentRecords: number;
-    events: number;
-  };
+  removed: RemovedCounts;
   ranAt: number;
 }
 
-/**
- * Pure function that returns counts of items that should be removed.
- * Callers are responsible for actually mutating their collections.
- */
+/** Pure: counts what a sweep at `now` would remove. Mutates nothing. */
 export function planRetention(targets: RetentionTargets, now = Date.now()): RetentionResult {
-  const auditAgeDays = RETENTION.audit;
-  const pushAgeDays = RETENTION.push;
-  const settingsAgeDays = RETENTION.settings;
-  const consentAgeDays = RETENTION.data;
-  const eventAgeDays = RETENTION.event;
-
-  let settingsRemoved = 0;
-  let auditEntriesRemoved = 0;
-  let pushRemoved = 0;
-  let consentRemoved = 0;
-  let eventsRemoved = 0;
-
-  if (targets.deviceSettings) {
-    for (const e of targets.deviceSettings) {
-      if (isExpired(e.updatedAt, settingsAgeDays, now)) settingsRemoved++;
-    }
+  const c = retentionCutoffs(now);
+  const removed: RemovedCounts = { deviceSettings: 0, auditEntries: 0, pushSubscriptions: 0, consentRecords: 0, events: 0 };
+  for (const e of targets.deviceSettings ?? []) if (e.updatedAt < c.settings) removed.deviceSettings++;
+  for (const block of targets.deviceAuditLog ?? []) {
+    for (const entry of block.entries ?? []) if (entry.at < c.audit) removed.auditEntries++;
   }
-  if (targets.deviceAuditLog) {
-    for (const block of targets.deviceAuditLog) {
-      if (!block.entries || block.entries.length === 0) continue;
-      const cutoff = now - auditAgeDays * MS_PER_DAY;
-      for (const entry of block.entries) {
-        if (entry.at < cutoff) auditEntriesRemoved++;
-      }
-    }
-  }
-  if (targets.pushSubscriptions) {
-    for (const p of targets.pushSubscriptions) {
-      if (isExpired(p.createdAt, pushAgeDays, now)) pushRemoved++;
-    }
-  }
-  if (targets.consentLedger) {
-    for (const c of targets.consentLedger) {
-      if (isExpired(c.updatedAt, consentAgeDays, now)) consentRemoved++;
-    }
-  }
-  if (targets.events) {
-    for (const ev of targets.events) {
-      if (isExpired(ev.ts, eventAgeDays, now)) eventsRemoved++;
-    }
-  }
-  return {
-    removed: {
-      deviceSettings: settingsRemoved,
-      auditEntries: auditEntriesRemoved,
-      pushSubscriptions: pushRemoved,
-      consentRecords: consentRemoved,
-      events: eventsRemoved,
-    },
-    ranAt: now,
-  };
+  for (const p of targets.pushSubscriptions ?? []) if (p.createdAt < c.push) removed.pushSubscriptions++;
+  for (const r of targets.consentLedger ?? []) if (r.updatedAt < c.consent) removed.consentRecords++;
+  for (const ev of targets.events ?? []) if (ev.ts < c.event) removed.events++;
+  return { removed, ranAt: now };
 }
 
-/**
- * Periodically run the sweep. Idempotent — callers can call this freely.
- */
-export function runRetentionIfDue(targets: RetentionTargets, now = Date.now()): RetentionResult | null {
-  if (sweepBusy) return null;
-  if (!shouldSweep(now) && lastSweepAt !== 0) return null;
-  sweepBusy = true;
-  try {
-    const r = planRetention(targets, now);
-    lastSweepAt = now;
-    return r;
-  } finally {
-    sweepBusy = false;
-  }
+/** The live collections a sweep prunes (see retention-routes.ts). */
+export interface RetentionStores {
+  deviceSettings: Map<string, { updatedAt: number }>;
+  deviceAuditLog: Map<string, Array<{ at: number }>>;
+  pushSubscriptions: Map<string, { createdAt: number }>;
+  consentLedger: Map<string, { updatedAt: number }>;
+  events?: { pruneOlderThan(cutoff: number): number };
 }
 
-/**
- * Reset sweep cache (test helper).
- */
+export type SweepResult = RetentionResult & { total: number; trigger: "timer" | "manual" };
+
+let lastSweep: SweepResult | null = null;
+
+/** Deletes everything older than its category's cutoff; returns what went. */
+export function sweepRetention(stores: RetentionStores, now = Date.now(), trigger: SweepResult["trigger"] = "manual"): SweepResult {
+  const c = retentionCutoffs(now);
+  const removed: RemovedCounts = { deviceSettings: 0, auditEntries: 0, pushSubscriptions: 0, consentRecords: 0, events: 0 };
+
+  for (const [key, record] of Array.from(stores.deviceSettings)) {
+    if (record.updatedAt < c.settings) { stores.deviceSettings.delete(key); removed.deviceSettings++; }
+  }
+  for (const [key, entries] of Array.from(stores.deviceAuditLog)) {
+    const kept = entries.filter((e) => e.at >= c.audit);
+    removed.auditEntries += entries.length - kept.length;
+    if (kept.length === 0) stores.deviceAuditLog.delete(key);
+    else if (kept.length < entries.length) entries.splice(0, entries.length, ...kept); // in place, keeps the element type
+  }
+  for (const [key, sub] of Array.from(stores.pushSubscriptions)) {
+    if (sub.createdAt < c.push) { stores.pushSubscriptions.delete(key); removed.pushSubscriptions++; }
+  }
+  for (const [key, record] of Array.from(stores.consentLedger)) {
+    if (record.updatedAt < c.consent) { stores.consentLedger.delete(key); removed.consentRecords++; }
+  }
+  removed.events = stores.events ? stores.events.pruneOlderThan(c.event) : 0;
+
+  const total = Object.values(removed).reduce((a, b) => a + b, 0);
+  lastSweep = { removed, ranAt: now, total, trigger };
+  return lastSweep;
+}
+
+export function getLastSweep(): SweepResult | null {
+  return lastSweep;
+}
+
+/** Sweep period: RETENTION_SWEEP_MINUTES (default 60), clamped to 1 min – 24 h. */
+export function retentionIntervalMs(): number {
+  const minutes = Math.min(24 * 60, Math.max(1, envNumber("RETENTION_SWEEP_MINUTES", 60)));
+  return Math.round(minutes * 60 * 1000);
+}
+
+/** Runs `run` every `intervalMs` on an unref'd timer (never keeps the process
+ *  alive). A throwing sweep is logged and the schedule continues. */
+export function startRetentionTimer(run: () => void, intervalMs = retentionIntervalMs()): () => void {
+  const timer = setInterval(() => {
+    try { run(); } catch (err) { console.error("[retention] sweep failed:", err); }
+  }, intervalMs);
+  (timer as unknown as { unref?: () => void }).unref?.();
+  return () => clearInterval(timer);
+}
+
+/** Test helper: forget the last sweep. */
 export function __resetRetentionForTests() {
-  lastSweepAt = 0;
-  sweepBusy = false;
+  lastSweep = null;
 }
