@@ -75,6 +75,16 @@ async function joinRoom(name: string): Promise<{ page: Page; errors: string[] }>
   if (!browser) throw new Error("browser not initialised");
   const ctx = await browser.newContext({ baseURL: BASE, viewport: { width: 1280, height: 800 } });
   contexts.push(ctx);
+  // System notices flash at the top by default (2.11.0); this test is
+  // about what the app *says*, so ask for them in the conversation too.
+  await ctx.addInitScript(() => {
+    try {
+      const raw = localStorage.getItem("m5cet:prefs:v2");
+      const prefs = raw ? JSON.parse(raw) as Record<string, unknown> : {};
+      localStorage.setItem("m5cet:prefs:v2", JSON.stringify({ ...prefs, showSystemInChat: true }));
+    } catch { /* private mode */ }
+  });
+
   const page = await ctx.newPage();
   const errors: string[] = [];
   page.on("pageerror", (err) => errors.push(err.message));

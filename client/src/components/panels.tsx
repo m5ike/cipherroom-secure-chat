@@ -107,6 +107,7 @@ export const PROFILE_KEYS: (keyof Preferences)[] = [
   "chatFont", "monoFont", "textSize", "fontWeight", "lineHeight", "letterSpacing", "chatScale",
   "accentColor", "bubbleMine", "bubbleTheirs", "uiRadius", "bubbleRadius", "googleFonts", "deviceLayout",
   "widget", "chatRetention", "ttlDefaultMinutes", "roomSecurity",
+  "showSystemInChat", "flash",
 ];
 
 export function profileFromPrefs(prefs: Preferences): Partial<Preferences> {

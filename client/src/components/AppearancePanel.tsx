@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Check, Download, Eye, EyeOff, LayoutTemplate, Maximize2, Minimize2, MonitorSmartphone, Palette, PencilRuler,
+  Bell, Check, Download, Eye, EyeOff, LayoutTemplate, Maximize2, Minimize2, MonitorSmartphone, Palette, PencilRuler,
   RotateCcw, Smartphone, Trash2, Type, Undo2, Upload, X,
 } from "lucide-react";
 import { Modal } from "./Modal";
@@ -215,7 +215,7 @@ export function AppearancePanel({ open, onClose, prefs, setPrefs, lang }: Props)
           {tab === "theme" ? <ThemeTab prefs={prefs} setPrefs={setPrefs} lang={lang} /> : null}
           {tab === "type" ? <TypeTab prefs={prefs} setPrefs={setPrefs} lang={lang} onConsent={consent} /> : null}
           {tab === "color" ? <ColorTab prefs={prefs} setPrefs={setPrefs} lang={lang} /> : null}
-          {tab === "display" ? <DisplayTab prefs={prefs} setPrefs={setPrefs} lang={lang} /> : null}
+          {tab === "display" ? <DisplayTab prefs={prefs} setPrefs={setPrefs} lang={lang} onConsent={consent} /> : null}
           {tab === "editor" ? <EditorTab prefs={prefs} setPrefs={setPrefs} lang={lang} onClose={onClose} /> : null}
         </div>
 
@@ -445,7 +445,7 @@ function ColorTab({ prefs, setPrefs, lang }: TabProps) {
 
 /* --------------------------------------------------------------- display */
 
-function DisplayTab({ prefs, setPrefs, lang }: TabProps) {
+function DisplayTab({ prefs, setPrefs, lang, onConsent }: TabProps & { onConsent: () => void }) {
   const info = deviceInfo();
   const [fs, setFs] = useState(isFullscreen());
   const [installable, setInstallable] = useState(canPromptInstall());
@@ -478,6 +478,7 @@ function DisplayTab({ prefs, setPrefs, lang }: TabProps) {
           testIdPrefix="device-layout"
         />
       </Section>
+      <FlashSection prefs={prefs} setPrefs={setPrefs} lang={lang} onConsent={onConsent} />
       <Section title={t(lang, "ap.device.fullscreenTitle")}>
         {fullscreenSupported() ? (
           <button type="button" className="ap-btn ap-btn--primary" onClick={() => void toggleFullscreen()} data-testid="btn-fullscreen">
@@ -494,6 +495,74 @@ function DisplayTab({ prefs, setPrefs, lang }: TabProps) {
         {info.standalone ? <p className="ap-note">{t(lang, "ap.device.standaloneOn")}</p> : null}
       </Section>
     </>
+  );
+}
+
+/* ----------------------------------------------------------- notices */
+
+/** System notices: whether they also land in the chat, and how the flash
+ *  at the top of the screen looks. */
+function FlashSection({ prefs, setPrefs, lang, onConsent }: TabProps & { onConsent: () => void }) {
+  const flash = prefs.flash;
+  const set = (patch: Partial<Preferences["flash"]>) => setPrefs({ flash: { ...flash, ...patch } });
+  return (
+    <Section title={t(lang, "flash.settings")} icon={<Bell className="h-4 w-4" />}>
+      <Toggle
+        label={t(lang, "chat.systemInChat")}
+        hint={t(lang, "chat.systemInChat.hint")}
+        checked={prefs.showSystemInChat}
+        onChange={(showSystemInChat) => setPrefs({ showSystemInChat })}
+        testId="toggle-system-in-chat"
+      />
+      <Toggle
+        label={t(lang, "flash.enabled")}
+        checked={flash.enabled}
+        onChange={(enabled) => set({ enabled })}
+        testId="toggle-flash"
+      />
+      {flash.enabled ? (
+        <>
+          <Slider
+            label={t(lang, "flash.seconds")}
+            value={flash.seconds}
+            min={3}
+            max={60}
+            step={1}
+            onChange={(seconds) => set({ seconds })}
+            format={(v) => `${v} s`}
+            testId="flash-seconds"
+          />
+          <Segmented<Preferences["flash"]["position"]>
+            label={t(lang, "flash.position")}
+            value={flash.position}
+            options={(["top", "top-left", "top-right"] as const).map((id) => ({ id, label: t(lang, `flash.position.${id}`) }))}
+            onChange={(position) => set({ position })}
+            testIdPrefix="flash-position"
+          />
+          <Segmented<Preferences["flash"]["animation"]>
+            label={t(lang, "flash.animation")}
+            value={flash.animation}
+            options={(["fade", "slide", "none"] as const).map((id) => ({ id, label: t(lang, `flash.animation.${id}`) }))}
+            onChange={(animation) => set({ animation })}
+            testIdPrefix="flash-animation"
+          />
+          <Toggle label={t(lang, "flash.icon")} checked={flash.icon} onChange={(icon) => set({ icon })} testId="toggle-flash-icon" />
+          <Slider label={t(lang, "flash.size")} value={flash.size} min={11} max={20} step={0.5} onChange={(size) => set({ size })} format={(v) => `${v} px`} testId="flash-size" />
+          <Slider label={t(lang, "flash.radius")} value={flash.radius} min={0} max={28} step={1} onChange={(radius) => set({ radius })} format={(v) => `${v} px`} testId="flash-radius" />
+          <ColorField label={t(lang, "flash.background")} value={flash.background} onChange={(background) => set({ background })} lang={lang} allowEmpty testId="flash-background" />
+          <ColorField label={t(lang, "flash.color")} value={flash.color} onChange={(color) => set({ color })} lang={lang} allowEmpty testId="flash-color" />
+          <FontPicker
+            label={t(lang, "flash.font")}
+            value={flash.font}
+            onChange={(font) => set({ font })}
+            lang={lang}
+            allowGoogle={prefs.googleFonts}
+            onConsent={onConsent}
+            testId="flash-font"
+          />
+        </>
+      ) : null}
+    </Section>
   );
 }
 

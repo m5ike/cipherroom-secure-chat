@@ -19,6 +19,7 @@ Frame format: JSON. Rámce delší než **128 000 znaků** server tiše zahodí
 { "type": "storage",   "id": "42", "op": "kv.put", "payload": { ... }, "auth": "token?", "session": "id?" }
 { "type": "relay",     "messageId": "...", "to": ["accountId"], "envelope": { "iv", "ciphertext" } }
 { "type": "relay-ack", "ids": ["mailId"] }
+{ "type": "presence",  "away": true }
 { "type": "receipt",   "to": { "peerId?", "accountId?" }, "messageIds": ["..."], "state": "delivered|read" }
 { "type": "command-poll", "deviceId": "string?" }
 { "type": "command-ack",  "commandId": "string", "result": "string?" }
@@ -30,6 +31,11 @@ Frame format: JSON. Rámce delší než **128 000 znaků** server tiše zahodí
 Sanitizace při `join`: `room` ≤ 64 znaků (fallback `default`), `peerId` ≤ 64,
 `name` ≤ 48 (fallback `Anonymous`), znaková sada `[a-zA-Z0-9 ._-]`. Strop
 počtu peerů na místnost není.
+
+Rámec `presence` hlásí, že prohlížeč stránku odložil (nebo vrátil), aniž by
+klient opouštěl místnost: server pro něj začne (nebo přestane) přebírat
+zprávy a po návratu hned pošle, co nasbíral. Viz
+[`lifecycle-and-notices.md`](lifecycle-and-notices.md).
 
 `auth` + `away` zapínají **stav away**: přihlášený uživatel (passkey účet)
 zůstane v místnosti i po ztrátě socketu a server za něj přebírá zprávy
@@ -50,6 +56,7 @@ Server odpovídá:
 { "type": "peer-gone",   "accountId": "..." }
 { "type": "relay-deliver", "items": [{ "id", "kind", "messageId", "from", "envelope?", "status?", "storedAt" }] }
 { "type": "storage-result", "id": "42", "ok": true, "data": { ... } }
+{ "type": "presence-ack", "away": true }
 { "type": "relay-status",  "messageId": "...", "recipient": { "accountId", "name" },
   "state": "stored|forwarded|delivered|read|rejected", "at": 0, "reason?": "..." }
 { "type": "signal",      "source": "peerId", "payload": { ... } }

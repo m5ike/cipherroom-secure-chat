@@ -81,6 +81,9 @@ type ClientMessage =
   // Away relay (signed-in users): see accounts/relay.ts.
   | { type: "relay"; messageId: string; to: string[]; envelope: { iv: string; ciphertext: string } }
   | { type: "relay-ack"; ids: string[] }
+  // The page was put aside / handed back by the browser: stay in the room,
+  // but let the server answer meanwhile (see accounts/relay.ts).
+  | { type: "presence"; away: boolean }
   | { type: "receipt"; to: { peerId?: string; accountId?: string }; messageIds: string[]; state: "delivered" | "read" }
   // Server-side storage over this socket (see storage/ws.ts).
   | StorageFrame
@@ -477,6 +480,13 @@ export async function registerRoutes(
         }
         if (message.type === "relay-ack") {
           relay.ack(client, message.ids);
+          return;
+        }
+        if (message.type === "presence") {
+          const away = relay.setPresence(client, message.away === true);
+          send(socket, { type: "presence-ack", away });
+          // Back at the keyboard: hand over whatever arrived meanwhile.
+          if (!away) relay.deliver(client);
           return;
         }
         if (message.type === "receipt") {

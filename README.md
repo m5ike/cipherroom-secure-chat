@@ -79,6 +79,17 @@ místnosti.
   endpoint.
 - **6 šablon × 6 barevných variací × 4 rozvržení** — Motorsport, Glass,
   Terminal, Midnight, Paper, Kontrast.
+- **Pozastavení a probuzení okna** — přepnutí na jinou záložku či aplikaci,
+  zamrznutí i back/forward cache hlásí jeden pár hooků. Při odložení se
+  uloží stav a server (u přihlášených) přebírá zprávy; při návratu se
+  spojení vrátí do stejného stavu a čekající zprávy dorazí najednou.
+- **Systémové zprávy jako flash oznámení** — v chatu je jen komunikace
+  lidí; hlášení bliknou nahoře po jednom, 10 s, kliknutím se zavřou a
+  naskočí další. Vše nastavitelné (čas, pozice, barvy, písmo, ikona,
+  animace), volitelně je lze psát i do chatu.
+- **Fronta odchozích zpráv v light režimu** — když příjemce není online,
+  zpráva čeká, bublina ukazuje *odesílá se* a pokusy běží dál.
+  Viz [`docs/lifecycle-and-notices.md`](docs/lifecycle-and-notices.md).
 - **Serverové úložiště** — globální SQLite databáze pro server (uživatelé,
   passkeys, index šifrovaných databází, logy, přenosy) a **SQLCipher
   databáze pro každého uživatele**: klíč z passkey u přihlášených, klíč
@@ -615,6 +626,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/push.md`](docs/push.md)                          | Web Push                                       |
 | [`docs/accounts-away.md`](docs/accounts-away.md)        | Passkey účty, data chatu, stav away + relay    |
 | [`docs/storage.md`](docs/storage.md)                    | Serverové úložiště: SQLite + SQLCipher, API    |
+| [`docs/lifecycle-and-notices.md`](docs/lifecycle-and-notices.md) | Pozastavení okna, flash oznámení, fronta zpráv |
 | [`docs/speech.md`](docs/speech.md)                      | Web Speech API                                 |
 | [`docs/browser-limitations.md`](docs/browser-limitations.md) | Co prohlížeč (ne)umí                       |
 | [`docs/build-and-deploy.md`](docs/build-and-deploy.md)  | npm workflow, PWA, sanity checky               |

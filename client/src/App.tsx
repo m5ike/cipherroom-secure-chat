@@ -44,17 +44,7 @@ import {
   Maximize2,
   Minimize2,
 } from "lucide-react";
-import {
-  ChangeEvent,
-  FormEvent,
-  KeyboardEvent,
-  Suspense,
-  lazy,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { detectCapabilities } from "./lib/capabilities";
 import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURITY, type Preferences, type WidgetState } from "./lib/preferences";
 import { linkify } from "./lib/linkify";
@@ -123,6 +113,10 @@ import {
   signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
 } from "./lib/account";
 import { createHistoryStore, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
+import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
+import { createFlashQueue, kindForText, type FlashMessage } from "./lib/flash";
+import { createOutbox, type QueuedMessage } from "./lib/outbox";
+import { FlashMessages } from "./components/FlashMessages";
 import {
   addStorageEvent, attachStorageSocket, forgetServerData, putMessages as putServerMessages,
   readMessages as readServerMessages, recordTransfer as recordServerTransfer, sendLog as sendServerLog,
@@ -478,6 +472,21 @@ function ChatApp() {
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
   const incomingFilesRef = useRef(newIncomingRegistry());
+  // --- notices at the top of the screen, and messages waiting to be sent ---
+  const flashRef = useRef(createFlashQueue({ durationMs: initialPrefs.flash.seconds * 1000 }));
+  const [flash, setFlash] = useState<{ current: FlashMessage | null; queued: number }>({ current: null, queued: 0 });
+  /** Light mode has no server to hold a message: it waits here instead. */
+  const outboxRef = useRef(createOutbox<DataChannelEnvelope>(async (entry) => {
+    const targets = entry.targets.length > 0 ? new Set(entry.targets) : undefined;
+    return broadcastEnvelopeRef.current(entry.envelope, targets);
+  }));
+  /** Set once broadcastEnvelope exists (it is declared further down). */
+  const broadcastEnvelopeRef = useRef<(envelope: DataChannelEnvelope, targets?: Set<string>) => Promise<number>>(async () => 0);
+  /** Same for the flush, which a freshly opened channel wants to trigger. */
+  const flushOutboxRef = useRef<(reason: string) => Promise<void>>(async () => undefined);
+  const [queuedIds, setQueuedIds] = useState<Set<string>>(new Set());
+  /** What the connection looked like when the browser put the page aside. */
+  const suspendedStateRef = useRef<{ desired: DesiredState; room: string; away: boolean } | null>(null);
   /** Bottom edge of the header + status bar: where a docked panel may start. */
   const dockAnchorRef = useRef<HTMLDivElement | null>(null);
   /** Files we sent, by transferId: how to repeat the chunks a receiver lost. */
@@ -961,6 +970,7 @@ function ChatApp() {
   /** The furthest a message of mine got, for the mark on its bubble. */
   function deliveryStateOf(message: ChatMessage): MsgState | undefined {
     if (!message.mine) return undefined;
+    if (queuedIds.has(message.id)) return "queued";
     const sec = (room && prefs.roomSecurity[room]) || DEFAULT_ROOM_SECURITY;
     if (!sec.messageStatus) return undefined;
     const order: MsgState[] = ["sent", "stored", "forwarded", "delivered", "read"];
@@ -1057,7 +1067,17 @@ function ChatApp() {
     });
   }
 
-  function systemMessage(text: string) {
+  /**
+   * A notice from the app itself. It flashes at the top of the screen, and
+   * lands in the conversation only when the user asked for that — the chat
+   * is for what people said (Preferences.showSystemInChat).
+   */
+  function systemMessage(text: string, opts: { detail?: string; kind?: FlashMessage["kind"]; chatOnly?: boolean } = {}) {
+    const prefsNow = prefsRef.current;
+    if (!opts.chatOnly && prefsNow.flash.enabled) {
+      flashRef.current.push({ text, detail: opts.detail, kind: opts.kind ?? kindForText(text) });
+    }
+    if (!prefsNow.showSystemInChat && !opts.chatOnly) return;
     setMessages((current) => [
       ...current,
       {
@@ -1080,7 +1100,7 @@ function ChatApp() {
   }
 
   /** Send an envelope to every open peer, or only to `targets` (peerIds). */
-  async function broadcastEnvelope(envelope: DataChannelEnvelope, targets?: Set<string>) {
+  async function broadcastEnvelope(envelope: DataChannelEnvelope, targets?: Set<string>): Promise<number> {
     const serialized = JSON.stringify(envelope);
     const bytes = serialized.length;
     let sent = 0;
@@ -1169,6 +1189,8 @@ function ChatApp() {
       void broadcastAudioStatus(audioStatusRef.current);
     };
     channel.onclose = () => setPeerView(peerId, { status: "closed", audio: "off" });
+    // Someone came online: whatever was waiting for them can go now.
+    channel.addEventListener("open", () => { void flushOutboxRef.current("kanál otevřen"); });
     channel.onerror = () => {
       setPeerView(peerId, { status: "closed" });
       systemMessage(`Connection with ${handle?.name || peerId.slice(-6)} dropped.`);
@@ -2043,9 +2065,24 @@ function ChatApp() {
     // for them and answers with "stored" / "delivered".
     const away = opts.away ?? [];
     const relayed = relayToAway(payload.id, envelope, away);
-    audit.push({ state: "sent", at: Date.now(), meta: `${sent + relayed} ${sent + relayed === 1 ? "příjemce" : "příjemců"}` });
+    // Nobody could take it: in light mode it waits in the outbox and the
+    // bubble shows it as sending, rather than the message being refused.
+    const queued = sent === 0 && relayed === 0
+      && outboxRef.current.add({
+        messageId: payload.id,
+        room: roomRef.current ?? "",
+        envelope,
+        targets: opts.targets ? Array.from(opts.targets) : [],
+        toNames: opts.toNames ?? [],
+        createdAt: createdAt,
+        expiresAt: computeExpiry(ttlMinutes, createdAt) ?? 0,
+      }) !== null;
+    audit.push(queued
+      ? { state: "queued", at: Date.now(), meta: opts.toNames?.join(", ") }
+      : { state: "sent", at: Date.now(), meta: `${sent + relayed} ${sent + relayed === 1 ? "příjemce" : "příjemců"}` });
+    if (queued) setQueuedIds((cur) => new Set(cur).add(payload.id));
 
-    if (sent > 0 || relayed > 0) {
+    if (sent > 0 || relayed > 0 || queued) {
       const expiresAt = computeExpiry(ttlMinutes, payload.createdAt);
       setMessages((current) => [
         ...current,
@@ -2071,8 +2108,14 @@ function ChatApp() {
       ]);
       setMessageInput("");
       setReplyingTo(null);
+      if (queued) {
+        systemMessage(lang === "cs"
+          ? "Zpráva čeká na příjemce — odešle se, jakmile bude online."
+          : lang === "de" ? "Nachricht wartet auf den Empfänger — sie geht raus, sobald er online ist."
+            : "The message is waiting for its recipient — it goes out as soon as they are online.");
+      }
     } else {
-      setNotice(lang === "cs" ? "Zatím není otevřený žádný P2P data kanál." : lang === "de" ? "Noch kein offener P2P-Kanal." : "No open P2P data channel yet.");
+      setNotice(lang === "cs" ? "Zprávu se nepodařilo zařadit k odeslání." : "The message could not be queued for sending.");
     }
   }
 
@@ -2378,35 +2421,125 @@ function ChatApp() {
       setStatus("offline");
       setConnStatus((s) => s ? { ...s, state: "offline" } : s);
     }
-    function onVisibility() {
-      if (!document.hidden && intentRef.current && socketRef.current?.readyState !== WebSocket.OPEN) {
-        // Re-arm intent in case the user closed by accident. We respect
-        // explicit user disconnect via clientStoppedRef.
-        if (!clientStoppedRef.current) {
-          reconnectAttemptsRef.current = 0;
-          void doConnect();
-        }
-      }
-    }
-    function onPageShow() {
-      // Returning from bfcache / background OS resume
-      if (intentRef.current && !clientStoppedRef.current && socketRef.current?.readyState !== WebSocket.OPEN) {
-        reconnectAttemptsRef.current = 0;
-        void doConnect();
-      }
-    }
     window.addEventListener("online", onOnline);
     window.addEventListener("offline", onOffline);
-    document.addEventListener("visibilitychange", onVisibility);
-    window.addEventListener("pageshow", onPageShow);
     return () => {
       window.removeEventListener("online", onOnline);
       window.removeEventListener("offline", onOffline);
-      document.removeEventListener("visibilitychange", onVisibility);
-      window.removeEventListener("pageshow", onPageShow);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // The outbox sends through the same path as a fresh message.
+  useEffect(() => { broadcastEnvelopeRef.current = broadcastEnvelope; });
+
+  /** Tries the waiting messages; a delivered one stops looking like a draft. */
+  const flushOutbox = useCallback(async (reason: string) => {
+    const outbox = outboxRef.current;
+    if (outbox.size() === 0) return;
+    const before = outbox.list().map((e) => e.messageId);
+    const result = await outbox.flush();
+    const stillWaiting = new Set(outbox.list().map((e) => e.messageId));
+    const gone = before.filter((id) => !stillWaiting.has(id));
+    if (gone.length > 0) {
+      setQueuedIds((cur) => {
+        const next = new Set(cur);
+        gone.forEach((id) => next.delete(id));
+        return next;
+      });
+      setMessages((cur) => cur.map((m) => (gone.includes(m.id)
+        ? { ...m, audit: [...(m.audit ?? []).filter((a) => a.state !== "queued"), { state: "sent" as const, at: Date.now(), meta: reason }] }
+        : m)));
+    }
+    if (result.delivered > 0) {
+      systemMessage(lang === "cs"
+        ? `Odesláno ${result.delivered} čekajících zpráv.`
+        : `Sent ${result.delivered} queued message${result.delivered === 1 ? "" : "s"}.`);
+    }
+  }, [lang]);
+
+  /* ---------------------------------------------------------------------
+   * The browser putting the page aside, and handing it back.
+   *
+   * Every way that happens — another tab, another application, a freeze, a
+   * trip through the back/forward cache — arrives here as one suspend and
+   * one resume (lib/lifecycle.ts). Suspending tells the room we are away
+   * so the server starts collecting for us; resuming puts the connection
+   * back exactly as it was and asks for everything that piled up.
+   * ------------------------------------------------------------------- */
+
+  const onPageSuspend = useCallback((event: SuspendEvent) => {
+    const socket = socketRef.current;
+    const connected = socket?.readyState === WebSocket.OPEN;
+    suspendedStateRef.current = {
+      desired: intentRef.current && !clientStoppedRef.current ? "connected" : "disconnected",
+      room: roomRef.current ?? "",
+      away: false,
+    };
+    // Save first: a freeze or a pagehide may be the last code we run.
+    void persistChat(true).catch(() => undefined);
+    if (!connected) return;
+    // Server-enhanced and signed in: ask the server to answer for us.
+    if (accountRef.current && retentionRef.current === "server") {
+      try {
+        socket!.send(JSON.stringify({ type: "presence", away: true }));
+        suspendedStateRef.current.away = true;
+      } catch { /* the socket went first */ }
+    }
+    void sendServerLog("debug", "page.suspended", { reason: event.reason, final: event.final });
+  }, []);
+
+  const onPageResume = useCallback((event: ResumeEvent) => {
+    const wanted = suspendedStateRef.current;
+    suspendedStateRef.current = null;
+    const socket = socketRef.current;
+    const connected = socket?.readyState === WebSocket.OPEN;
+
+    // The page was thrown away and rebuilt: the startup effects restore the
+    // session from the cache, so there is nothing to repair here.
+    if (event.wasDiscarded) return;
+
+    if (wanted?.desired === "connected" && !clientStoppedRef.current) {
+      if (!connected) {
+        // The socket did not survive: rebuild it and rejoin the same room.
+        reconnectAttemptsRef.current = 0;
+        void doConnect();
+      } else {
+        // Still connected: tell the server we are back. It answers with
+        // everything it took for us while we were away (relay-deliver),
+        // and the room sees peer-back.
+        if (wanted.away) {
+          try { socket!.send(JSON.stringify({ type: "presence", away: false })); } catch { /* ignore */ }
+        }
+        // Same session: settings and data stay; make sure the account is
+        // still announced and the heartbeat is running.
+        announceAccountToServer();
+        startHeartbeat();
+      }
+    }
+    // Light mode: whatever could not be delivered tries again now.
+    void flushOutbox(lang === "cs" ? "po návratu" : "on resume");
+    void sendServerLog("debug", "page.resumed", { reason: event.reason, awayMs: event.awayMs, fromCache: event.fromCache });
+  }, [flushOutbox, lang]);
+
+  useEffect(() => {
+    const watcher = watchLifecycle({ onSuspend: onPageSuspend, onResume: onPageResume });
+    // While the page is merely hidden the browser still lets a timer run
+    // (about once a minute); use it to notice a dead socket and to retry
+    // what is waiting. A frozen page runs nothing — that is what the push
+    // wake-up is for (docs/accounts-away.md).
+    const tick = startBackgroundTick(() => {
+      if (clientStoppedRef.current || !intentRef.current) return;
+      if (socketRef.current?.readyState !== WebSocket.OPEN) {
+        reconnectAttemptsRef.current = 0;
+        void doConnect();
+        return;
+      }
+      void flushOutbox(lang === "cs" ? "opakování" : "retry");
+    }, 60_000);
+    return () => { watcher.stop(); tick.stop(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onPageSuspend, onPageResume]);
 
   async function startVideoCall() {
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -2639,6 +2772,21 @@ function ChatApp() {
   }
 
   useEffect(() => () => disconnect(false), []);
+
+  useEffect(() => { flushOutboxRef.current = flushOutbox; }, [flushOutbox]);
+
+  // Notices at the top: subscribe once, and rebuild the queue when the
+  // user changes how long they should stay.
+  useEffect(() => {
+    const queue = flashRef.current;
+    return queue.subscribe((current, queued) => setFlash({ current, queued }));
+  }, []);
+  useEffect(() => {
+    const previous = flashRef.current;
+    if (previous) previous.stop();
+    flashRef.current = createFlashQueue({ durationMs: prefs.flash.seconds * 1000 });
+    return flashRef.current.subscribe((current, queued) => setFlash({ current, queued }));
+  }, [prefs.flash.seconds]);
 
   // The docked recipients widget sits below the header and the status bar —
   // otherwise it covers Disconnect and the room id. Both change height when
@@ -3464,6 +3612,15 @@ function ChatApp() {
           </SimpleModal>
         );
       })() : null}
+
+      {/* System notices, one at a time, at the top of the screen */}
+      <FlashMessages
+        message={flash.current}
+        queued={flash.queued}
+        settings={prefs.flash}
+        onDismiss={(id) => flashRef.current.dismiss(id)}
+        label={t(lang, "flash.dismiss")}
+      />
 
       {/* Edit Mode: element picker + style inspector (own Shadow DOM) */}
       {prefs.editMode ? (

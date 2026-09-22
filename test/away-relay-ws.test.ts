@@ -118,6 +118,44 @@ describe("away relay", () => {
     await Promise.all([a2.client.close(), bob.client.close()]);
   });
 
+  it("goes away and comes back without leaving the room, when the browser suspends the page", async () => {
+    const mia = await account("Mia");
+    const room = `presence-${Date.now()}`;
+    const her = await join(room, "Mia", { auth: mia.token, away: true });
+    const watcher = await join(room, "Watcher");
+
+    // The tab went to the background: the socket stays, the room is told.
+    her.client.send({ type: "presence", away: true });
+    expect(await her.client.next("presence-ack")).toMatchObject({ away: true });
+    expect(await watcher.client.next("peer-away")).toMatchObject({ accountId: mia.accountId, name: "Mia" });
+    expect(accountStore.isAway(mia.accountId, room)).toBe(true);
+
+    // Someone writes while she is away; the server takes it.
+    watcher.client.send({ type: "relay", messageId: "msg-p", to: [mia.accountId], envelope: ENVELOPE });
+    expect(await watcher.client.next("relay-status")).toMatchObject({ state: "stored" });
+
+    // She comes back to the tab: no rejoin, and the mailbox arrives at once.
+    her.client.send({ type: "presence", away: false });
+    expect(await her.client.next("presence-ack")).toMatchObject({ away: false });
+    const items = (await her.client.next("relay-deliver")).items as Array<{ id: string; messageId: string }>;
+    expect(items.map((i) => i.messageId)).toEqual(["msg-p"]);
+    expect(await watcher.client.next("peer-back")).toMatchObject({ accountId: mia.accountId });
+
+    her.client.send({ type: "relay-ack", ids: items.map((i) => i.id) });
+    expect(await watcher.client.next("relay-status")).toMatchObject({ messageId: "msg-p", state: "delivered" });
+    expect(accountStore.isAway(mia.accountId, room)).toBe(false);
+
+    await Promise.all([her.client.close(), watcher.client.close()]);
+  });
+
+  it("ignores a presence frame from someone who did not ask the server to cover for them", async () => {
+    const room = `presence-guest-${Date.now()}`;
+    const guest = await join(room, "Guest");
+    guest.client.send({ type: "presence", away: true });
+    expect(await guest.client.next("presence-ack")).toMatchObject({ away: false });
+    await guest.client.close();
+  });
+
   it("lists away members in the joined frame so a newcomer can address them", async () => {
     const carol = await account("Carol");
     const room = `list-${Date.now()}`;

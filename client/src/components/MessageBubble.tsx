@@ -11,7 +11,7 @@
 //   sealed  a locked body that needs a per-message code to read.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Lock, Timer, ScrollText, EyeOff, Users, Paperclip, Info, Reply, Forward, CornerUpLeft, Check, CheckCheck, Clock } from "lucide-react";
+import { Lock, Timer, ScrollText, EyeOff, Users, Paperclip, Info, Reply, Forward, CornerUpLeft, Check, CheckCheck, Clock, SendHorizontal } from "lucide-react";
 import { t, type Lang } from "../lib/i18n";
 import type { MsgState } from "../lib/chat-types";
 import { openSealed, type MsgFlags } from "../lib/message-kinds";
@@ -59,11 +59,11 @@ export type MessageBubbleProps = {
 /** The single status mark on my own bubble. */
 function DeliveryMark({ state, lang }: { state: MsgState; lang: Lang }) {
   const label = t(lang, `msginfo.state.${state}`);
-  const icon = state === "stored"
-    ? <Clock className="h-3 w-3" />
-    : state === "read"
-      ? <CheckCheck className="h-3 w-3" />
-      : state === "delivered"
+  const icon = state === "queued"
+    ? <SendHorizontal className="h-3 w-3" />
+    : state === "stored"
+      ? <Clock className="h-3 w-3" />
+      : state === "read" || state === "delivered"
         ? <CheckCheck className="h-3 w-3" />
         : <Check className="h-3 w-3" />;
   return (
@@ -193,6 +193,8 @@ export function MessageBubble(props: MessageBubbleProps) {
   const bubbleCls = [
     "msg-bubble",
     isSystem ? "msg-bubble--system" : mine ? "msg-bubble--mine" : "msg-bubble--theirs",
+    // Still waiting for its recipient: lighter, and marked as sending.
+    props.deliveryState === "queued" ? "msg-bubble--queued" : "",
     isPrivate ? "msg-bubble--private" : "",
     flags?.vanishSeconds ? "vanish-ring" : "",
     props.vanished ? "msg-bubble--vanished" : "",

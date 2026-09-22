@@ -5,6 +5,46 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [2.11.0] – 2026-09-23
+
+Okno, které se vrátí přesně tam, kde bylo — a chat, ve kterém je jen to, co
+si lidé napsali. Viz [`docs/lifecycle-and-notices.md`](docs/lifecycle-and-notices.md).
+
+### Přidáno
+- **Hooky na pozastavení a probuzení aplikace.** Přepnutí záložky, přepnutí
+  do jiné aplikace, `freeze`/`resume`, back/forward cache, zahození stránky
+  i výpadek sítě — všechno se sjednotí do jednoho *pozastaveno* a jednoho
+  *obnoveno* (`lib/lifecycle.ts`), s rozumnými odklady (přeblik na jinou
+  záložku na dvě vteřiny nic nehlásí, `freeze` se hlásí okamžitě).
+- **Při pozastavení** se uloží stav a u přihlášeného uživatele jde na server
+  rámec `presence: away` — server od té chvíle zprávy přebírá a drží, i když
+  socket ještě žije (pozastavená stránka nemusí spustit nic). Ostatní v
+  místnosti vidí `peer-away`.
+- **Při probuzení** se spojení vrátí do stejného stavu: pokud socket nepřežil,
+  znovu se připojí do téže místnosti; jinak pošle `presence: back`, dostane
+  vše, co server mezitím nasbíral, potvrdí to a odesílatelé vidí *doručeno*.
+  Je to **totéž sezení** — data ani nastavení se nezahazují.
+- **Flash oznámení**: systémové zprávy se nově zobrazují nahoře nad chatem —
+  jedna naráz, max dva řádky, fade-in, 10 s, fade-out, kliknutím zavřít a
+  hned naskočí další z fronty (s počtem čekajících). Nastavitelné je
+  umístění, doba, animace, ikona, velikost písma, zaoblení, barvy i písmo.
+- **Fronta odchozích zpráv pro light režim**: když nikdo není online, zpráva
+  neselže — čeká zašifrovaná ve frontě, bublina má stav *odesílá se*
+  (světlejší čárkované pozadí a ikona) a odeslání se zkouší při otevření
+  kanálu, po návratu do okna a jednou za minutu. Limity: 200 zpráv, 60
+  pokusů, 24 h, respektuje TTL zprávy.
+- **Tik na pozadí** z Web Workeru (jednou za minutu) pro skrytou stránku:
+  všimne si mrtvého socketu a zkusí frontu. Dokumentace poctivě popisuje, co
+  prohlížeč umožňuje a co ne (zamrzlá stránka nespustí nic — od toho je Web
+  Push).
+
+### Změněno
+- **V chatu jsou nově jen zprávy lidí.** Systémová hlášení jdou do flash
+  oznámení; přepínač *Vzhled → Zobrazení → Oznámení → „Systémové zprávy i v
+  chatu"* je vrátí i do konverzace v časové posloupnosti.
+- Server ukládá zprávu pro away účet i tehdy, když jeho socket ještě žije —
+  dřív by ji poslal na pozastavenou stránku, která ji nemusí zpracovat.
+
 ## [2.10.0] – 2026-09-22
 
 Server konečně má vlastní úložiště — a každý uživatel v něm svou šifrovanou

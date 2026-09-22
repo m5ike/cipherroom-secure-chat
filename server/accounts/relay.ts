@@ -85,6 +85,28 @@ export class AwayRelay {
     return items.length;
   }
 
+  /** The client is still connected but the browser put its page aside (or
+   *  handed it back). Away here means the same as a lost socket — the
+   *  server collects for them — except the socket stays, so coming back is
+   *  instant and needs no rejoin. */
+  setPresence(client: RelayPeer, away: boolean): boolean {
+    if (!client.accountId || !client.room) return false;
+    const room = client.room;
+    if (away) {
+      if (!client.awayEnabled) return false;
+      if (this.store.isAway(client.accountId, room)) return true;
+      this.store.setAway(client.accountId, room, client.name, this.now());
+      this.broadcast(room, { type: "peer-away", accountId: client.accountId, peerId: client.id, name: client.name, since: this.now() }, client);
+      return true;
+    }
+    if (this.store.clearAway(client.accountId, room, this.now())) {
+      this.broadcast(room, { type: "peer-back", accountId: client.accountId, peerId: client.id, name: client.name }, client);
+    }
+    // The caller answers first and then asks for the backlog (deliver), so
+    // the client hears "you are back" before the messages arrive.
+    return false;
+  }
+
   /** A client left `room` (explicitly or by losing the socket). Returns true
    *  when the account is now away there. */
   onLeave(client: RelayPeer, room: string, wantsAway: boolean): boolean {
@@ -141,7 +163,10 @@ export class AwayRelay {
         });
       if (!acc) { status("rejected", { reason: "unknown recipient" }); continue; }
 
-      const here = this.present(room, accountId);
+      // A page the browser put aside may not run anything, and its socket
+      // can go at any moment: once an account is away, the server takes the
+      // message even though the connection is still there.
+      const here = this.store.isAway(accountId, room) ? [] : this.present(room, accountId);
       if (here.length > 0) {
         // Online but without a direct channel (P2P failed): forward now; the
         // recipient's relay-ack turns into "delivered".
@@ -152,6 +177,7 @@ export class AwayRelay {
         continue;
       }
       if (!this.store.isAway(accountId, room)) { status("rejected", { reason: "recipient is not in this room" }); continue; }
+      // Away: store it, answer on their behalf, and try to wake them.
 
       const r = this.store.addMail(accountId, { room, kind: "message", from, messageId, envelope: { iv: env.iv, ciphertext: env.ciphertext } }, this.now());
       if (!r.ok) { status("rejected", { reason: r.reason }); continue; }

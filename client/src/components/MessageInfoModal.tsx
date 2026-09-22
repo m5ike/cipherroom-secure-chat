@@ -50,6 +50,7 @@ const STATE_LABEL: Record<string, string> = {
   decrypted: "msginfo.state.decrypted",
   displayed: "msginfo.state.displayed",
   discarded: "msginfo.state.discarded",
+  queued: "msginfo.state.queued",
   // Away relay (a signed-in recipient who was not connected).
   stored: "msginfo.state.stored",
   forwarded: "msginfo.state.forwarded",

@@ -30,6 +30,27 @@ export type WidgetState = {
   accent: string; // "" = theme card, else #hex
 };
 
+/** How the notices at the top of the screen look and behave. */
+export type FlashSettings = {
+  /** Show system notices as flash messages at all. */
+  enabled: boolean;
+  /** Seconds on screen before the fade-out (3–60). */
+  seconds: number;
+  position: "top" | "top-left" | "top-right";
+  /** "" = follow the theme, else #hex. */
+  background: string;
+  color: string;
+  /** Font id from fonts.ts, "" = the UI font. */
+  font: string;
+  /** Text size in px (11–20). */
+  size: number;
+  /** Corner radius in px (0–28). */
+  radius: number;
+  /** Show the little icon that says what kind of notice it is. */
+  icon: boolean;
+  animation: "fade" | "slide" | "none";
+};
+
 export type RoomSecurity = {
   sort: "asc" | "desc";
   deliveryReceipts: boolean;
@@ -99,6 +120,11 @@ export type Preferences = {
   messageStyles: Record<string, PerUserStyle>;
   /** Floating recipients widget layout + behaviour. */
   widget: WidgetState;
+  /** Keep system notices in the conversation as well. Off by default: the
+   *  chat shows what people said, notices flash at the top instead. */
+  showSystemInChat: boolean;
+  /** The flash notices themselves. */
+  flash: FlashSettings;
   /** What happens to the conversation and its logs (see chat-history.ts):
    *  "ephemeral" a new connection clears it · "session" it lives until the
    *  session ends · "server" it lives in the passkey account's vault. */
@@ -190,6 +216,8 @@ const DEFAULTS: Preferences = {
   chatWidth: "md",
   messageStyles: {},
   widget: { x: 0, y: 0, minimized: false, autoRoom: true, locked: true, width: 240, opacity: 1, fontScale: 1, zoom: 1, accent: "" },
+  showSystemInChat: false,
+  flash: { enabled: true, seconds: 10, position: "top", background: "", color: "", font: "", size: 14, radius: 14, icon: true, animation: "fade" },
   chatRetention: "ephemeral",
   lang: "cs",
   timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC",
@@ -222,6 +250,25 @@ function sanitizeWidget(raw: unknown, base: WidgetState): WidgetState {
     fontScale: clamp(w.fontScale, 0.8, 1.4, base.fontScale),
     zoom: clamp(w.zoom, 0.7, 1.4, base.zoom),
     accent: typeof w.accent === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(w.accent) ? w.accent : base.accent,
+  };
+}
+
+function sanitizeFlash(raw: unknown, base: FlashSettings): FlashSettings {
+  const f = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const num = (v: unknown, lo: number, hi: number, dflt: number) =>
+    (typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, v)) : dflt);
+  const hex = (v: unknown) => (typeof v === "string" && isHexColor(v) ? v : "");
+  return {
+    enabled: f.enabled === false ? false : true,
+    seconds: num(f.seconds, 3, 60, base.seconds),
+    position: f.position === "top-left" || f.position === "top-right" ? f.position : "top",
+    background: hex(f.background),
+    color: hex(f.color),
+    font: typeof f.font === "string" && isFontId(f.font) ? f.font : "",
+    size: num(f.size, 11, 20, base.size),
+    radius: num(f.radius, 0, 28, base.radius),
+    icon: f.icon === false ? false : true,
+    animation: f.animation === "slide" || f.animation === "none" ? f.animation : "fade",
   };
 }
 
@@ -325,6 +372,8 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     chatWidth: parsed.chatWidth === "sm" || parsed.chatWidth === "lg" || parsed.chatWidth === "full" ? parsed.chatWidth : base.chatWidth,
     messageStyles: sanitizeStyleMap(parsed.messageStyles),
     widget: sanitizeWidget(parsed.widget, base.widget),
+    showSystemInChat: parsed.showSystemInChat === true,
+    flash: sanitizeFlash(parsed.flash, base.flash),
     chatRetention: isChatRetention(parsed.chatRetention) ? parsed.chatRetention : base.chatRetention,
     lang,
     timezone: typeof parsed.timezone === "string" ? parsed.timezone.slice(0, 64) : base.timezone,

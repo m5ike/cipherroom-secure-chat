@@ -19,6 +19,8 @@ export type AttachmentMeta = {
  *  recipient opened it (read). */
 export type MsgState =
   | "created" | "encrypted" | "sent" | "received" | "decrypted" | "displayed" | "discarded"
+  /** Waiting in the local outbox for a recipient to come online (light mode). */
+  | "queued"
   | "stored" | "forwarded" | "delivered" | "read";
 
 export type MessageAudit = { state: MsgState; at: number; meta?: string };
