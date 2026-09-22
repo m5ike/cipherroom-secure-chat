@@ -55,6 +55,13 @@ export type FileTransferEnvelope =
       received: number;
       transport: "p2p";
     }
+  | {
+      /** Receiver → sender: these chunks never arrived, send them again. */
+      kind: "file-need";
+      transferId: string;
+      seqs: number[];
+      transport: "p2p";
+    }
   // Proxy frame envelopes (transmitted over the signaling WebSocket)
   | {
       kind: "proxy-meta";
@@ -74,6 +81,12 @@ export type FileTransferEnvelope =
   | {
       kind: "proxy-end";
       transferId: string;
+      transport: "proxy";
+    }
+  | {
+      kind: "proxy-need";
+      transferId: string;
+      seqs: number[];
       transport: "proxy";
     }
   | {
@@ -116,7 +129,12 @@ export type IncomingFileState = {
   received: number; // bytes
   cancelled: boolean;
   transport: FileTransport;
+  /** How many times we already asked the sender to repeat lost chunks. */
+  resendRounds?: number;
 };
+
+/** How often a receiver may ask for missing chunks before giving up. */
+export const MAX_RESEND_ROUNDS = 3;
 
 /**
  * Live statistics emitted to the UI while a file transfer is in flight.
@@ -198,6 +216,9 @@ export type TransferResult = {
   transferId: string;
   transport: FileTransport;
   reason?: string;
+  /** Sends the given chunks again (answer to a "file-need" request) and
+   *  repeats the end frame. Present once the file went out. */
+  resend?: (seqs: number[]) => Promise<void>;
 };
 
 export async function sendFile(opts: SendOptions): Promise<TransferResult> {
@@ -306,15 +327,14 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
 
       if (transport === "p2p") {
         // Backpressure: wait if any channel buffer is large.
-        await Promise.all(opts.channels.map((ch) => waitForBuffer(ch)));
+        await Promise.all(opts.channels.map((ch) => waitForBuffer(ch, DRAIN_TIMEOUT_MS)));
       }
       const frame: FileTransferEnvelope = transport === "p2p"
         ? { kind: "file-chunk", transferId, seq: i, transport: "p2p", iv: enc.iv, ciphertext: enc.ciphertext }
         : { kind: "proxy-chunk", transferId, seq: i, transport: "proxy", iv: enc.iv, ciphertext: enc.ciphertext };
-      const ok = transport === "p2p"
-        ? (() => { broadcastP2P(opts.channels, frame); return true; })()
-        : (opts.sendProxy?.(frame) ?? false);
-      if (!ok && transport === "proxy") {
+      if (transport === "p2p") {
+        await sendChunkP2P(opts.channels, frame); // throws rather than dropping
+      } else if (!(opts.sendProxy?.(frame) ?? false)) {
         return { ok: false, transferId, transport, reason: "proxy-channel-closed" };
       }
       sent = end;
@@ -336,9 +356,28 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
   else opts.sendProxy?.(endFrame);
 
   pushStats(total);
-  return { ok: true, transferId, transport };
+
+  /** The receiver missed a few chunks: read, encrypt and send just those. */
+  const resend = async (seqs: number[]): Promise<void> => {
+    const wanted = Array.from(new Set(seqs)).filter((seq) => Number.isInteger(seq) && seq >= 0 && seq < totalChunks);
+    for (const seq of wanted) {
+      const start = seq * chunkSize;
+      const enc = await encryptBytes(opts.key, new Uint8Array(await opts.file.slice(start, Math.min(start + chunkSize, total)).arrayBuffer()));
+      const frame: FileTransferEnvelope = transport === "p2p"
+        ? { kind: "file-chunk", transferId, seq, transport: "p2p", iv: enc.iv, ciphertext: enc.ciphertext }
+        : { kind: "proxy-chunk", transferId, seq, transport: "proxy", iv: enc.iv, ciphertext: enc.ciphertext };
+      if (transport === "p2p") await sendChunkP2P(opts.channels, frame);
+      else opts.sendProxy?.(frame);
+    }
+    // Repeat the end frame so the receiver checks again.
+    if (transport === "p2p") broadcastP2P(opts.channels, endFrame);
+    else opts.sendProxy?.(endFrame);
+  };
+
+  return { ok: true, transferId, transport, resend };
 }
 
+/** Meta / end / cancel: best effort to every open channel. */
 function broadcastP2P(channels: RTCDataChannel[], frame: FileTransferEnvelope) {
   const payload = JSON.stringify(frame);
   channels.forEach((ch) => {
@@ -348,16 +387,85 @@ function broadcastP2P(channels: RTCDataChannel[], frame: FileTransferEnvelope) {
   });
 }
 
+/**
+ * A chunk, unlike a control frame, MUST NOT be dropped: one lost chunk only
+ * shows up at the very end, as "Missing chunks at end-of-transfer", after
+ * the whole file has been pushed. `send()` throws once the browser's send
+ * queue is full (Chrome: 16 MiB), so back off, let the buffer drain and try
+ * again; give up loudly rather than silently delivering a hole.
+ */
+async function sendChunkP2P(channels: RTCDataChannel[], frame: FileTransferEnvelope): Promise<void> {
+  const payload = JSON.stringify(frame);
+  for (const ch of channels) {
+    if (ch.readyState !== "open") continue;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < SEND_ATTEMPTS; attempt += 1) {
+      try {
+        ch.send(payload);
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        await waitForBuffer(ch, DRAIN_TIMEOUT_MS);
+        if (ch.readyState !== "open") { lastError = null; break; } // gone: nothing to deliver
+      }
+    }
+    if (lastError) {
+      throw new Error(`Chunk ${"seq" in frame ? frame.seq : "?"} could not be sent: ${(lastError as Error).message || String(lastError)}`);
+    }
+  }
+}
+
 const HIGH_WATERMARK = 1024 * 1024; // 1 MiB
-function waitForBuffer(ch: RTCDataChannel): Promise<void> {
+const SEND_ATTEMPTS = 6;
+const DRAIN_TIMEOUT_MS = 10_000;
+
+/** Resolves once the channel has room again (or is gone / the wait times out). */
+function waitForBuffer(ch: RTCDataChannel, timeoutMs = 2_000): Promise<void> {
   if (ch.readyState !== "open") return Promise.resolve();
   if (ch.bufferedAmount < HIGH_WATERMARK) return Promise.resolve();
   return new Promise<void>((resolve) => {
-    const onLow = () => { ch.removeEventListener("bufferedamountlow", onLow); resolve(); };
+    const deadline = Date.now() + timeoutMs;
+    let poll = 0;
+    const done = () => {
+      ch.removeEventListener("bufferedamountlow", onLow);
+      clearInterval(poll);
+      resolve();
+    };
+    const onLow = () => done();
     try { ch.bufferedAmountLowThreshold = HIGH_WATERMARK / 2; } catch { /* ignore */ }
     ch.addEventListener("bufferedamountlow", onLow);
-    setTimeout(onLow, 1500); // safety timeout in case event doesn't fire
+    // The event does not fire in every engine (and never when the channel
+    // closes), so poll as well and stop at the deadline either way.
+    poll = setInterval(() => {
+      if (ch.readyState !== "open" || ch.bufferedAmount < HIGH_WATERMARK || Date.now() >= deadline) done();
+    }, 50) as unknown as number;
   });
+}
+
+function missingChunksMessage(missing: number, total: number): string {
+  return `Missing chunks at end-of-transfer (${missing} of ${total}).`;
+}
+
+function missingChunkSeqs(state: IncomingFileState): number[] {
+  const out: number[] = [];
+  state.chunks.forEach((chunk, seq) => { if (chunk === null) out.push(seq); });
+  return out;
+}
+
+/** Asks the sender for `seqs`. Returns false once we have asked enough. */
+function requestResend(
+  transferId: string,
+  state: IncomingFileState,
+  seqs: number[],
+  transport: FileTransport,
+  cb: IncomingCallbacks,
+): boolean {
+  const round = (state.resendRounds ?? 0) + 1;
+  if (!cb.onNeed || round > MAX_RESEND_ROUNDS) return false;
+  state.resendRounds = round;
+  cb.onNeed(transferId, seqs, transport, round);
+  return true;
 }
 
 // Receiver-side helpers
@@ -366,13 +474,48 @@ export function newIncomingRegistry(): IncomingRegistry { return new Map(); }
 
 export type IncomingCallbacks = {
   onMeta?: (meta: FileMetaPlain, transport: FileTransport) => void;
+  /** Chunks that never arrived; the caller sends the request to the sender. */
+  onNeed?: (transferId: string, seqs: number[], transport: FileTransport, round: number) => void;
   onProgress?: (transferId: string, received: number, total: number, stats: TransferStats) => void;
   onComplete?: (transferId: string, blob: Blob, meta: FileMetaPlain, transport: FileTransport) => void;
   onCancel?: (transferId: string) => void;
   onError?: (transferId: string, message: string) => void;
 };
 
-export async function handleIncomingFrame(
+/**
+ * Frames of one transfer have to be PROCESSED in the order they arrived,
+ * not merely received in order. Every frame is decrypted asynchronously and
+ * the DataChannel handler fires each one in its own async call, so without a
+ * queue the first chunks can overtake the meta frame they belong to ("chunk
+ * arrived for unknown transfer") and the end frame can overtake the last
+ * chunks — which surfaced as "Missing chunks at end-of-transfer" on an
+ * otherwise perfectly delivered file.
+ */
+const frameQueues = new WeakMap<IncomingRegistry, Map<string, Promise<void>>>();
+
+export function handleIncomingFrame(
+  key: CryptoKey,
+  registry: IncomingRegistry,
+  frame: FileTransferEnvelope,
+  hardLimitBytes: number,
+  cb: IncomingCallbacks,
+): Promise<void> {
+  let queues = frameQueues.get(registry);
+  if (!queues) { queues = new Map(); frameQueues.set(registry, queues); }
+  const transferId = String(frame.transferId);
+  const previous = queues.get(transferId) ?? Promise.resolve();
+  const current = previous
+    .catch(() => undefined)
+    .then(() => processIncomingFrame(key, registry, frame, hardLimitBytes, cb));
+  queues.set(transferId, current);
+  // Drop the queue once this transfer goes quiet, so the map cannot grow.
+  void current.catch(() => undefined).then(() => {
+    if (queues!.get(transferId) === current) queues!.delete(transferId);
+  });
+  return current;
+}
+
+async function processIncomingFrame(
   key: CryptoKey,
   registry: IncomingRegistry,
   frame: FileTransferEnvelope,
@@ -423,8 +566,11 @@ export async function handleIncomingFrame(
     if (frame.kind === "proxy-end") {
       const state = registry.get(frame.transferId);
       if (!state) return;
-      if (state.chunks.some((c) => c === null)) {
-        cb.onError?.(frame.transferId, "Missing chunks at end-of-transfer.");
+      const missingSeqs = missingChunkSeqs(state);
+      if (missingSeqs.length > 0) {
+        if (requestResend(frame.transferId, state, missingSeqs, "proxy", cb)) return;
+        cb.onError?.(frame.transferId, missingChunksMessage(missingSeqs.length, state.chunks.length));
+        registry.delete(frame.transferId);
         return;
       }
       const blob = new Blob(state.chunks as Bytes[], { type: state.meta.mime });
@@ -484,8 +630,14 @@ export async function handleIncomingFrame(
   if (frame.kind === "file-end") {
     const state = registry.get(frame.transferId);
     if (!state) return;
-    if (state.chunks.some((c) => c === null)) {
-      cb.onError?.(frame.transferId, "Missing chunks at end-of-transfer.");
+    const missingSeqs = missingChunkSeqs(state);
+    if (missingSeqs.length > 0) {
+      // A chunk can still go missing for honest reasons — the channel
+      // dropped and came back, the relay hiccuped. Ask for those few again
+      // instead of throwing away a file that is 99 % delivered.
+      if (requestResend(frame.transferId, state, missingSeqs, "p2p", cb)) return;
+      cb.onError?.(frame.transferId, missingChunksMessage(missingSeqs.length, state.chunks.length));
+      registry.delete(frame.transferId);
       return;
     }
     const blob = new Blob(state.chunks as Bytes[], { type: state.meta.mime });

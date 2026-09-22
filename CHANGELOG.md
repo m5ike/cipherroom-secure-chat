@@ -5,6 +5,72 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [2.9.0] – 2026-09-22
+
+Konverzace, která může zůstat — a uživatel, za kterého server odpoví.
+Viz [`docs/accounts-away.md`](docs/accounts-away.md).
+
+### Přidáno
+- **Data a historie chatu** (Menu → Spojení): tři volby — *nové připojení
+  smaže chat a logy* (výchozí), *chat a logy do konce sezení* (šifrovaně
+  v prohlížeči, tlačítko **Odhlásit — smazat sezení a data**), *chat a logy
+  na serveru* (zašifrované passkeyem, vyžaduje registrovaný passkey).
+- **Účet ověřený passkeyem** (`/api/account/*`): server ověřuje podpis
+  WebAuthn (ES256 / Ed25519 / RS256, rpId, origin, UV, čítač) vlastním kódem
+  nad `node:crypto` — bez nové závislosti. Klíč z rozšíření **PRF** zapečetí
+  profil i historii, takže server drží jen šifrový text a metadata.
+- **`/signin`**: návštěva se pokusí přihlásit uloženým passkeyem, dešifruje
+  data, nahraje je do aplikace a cestu hned uklidí zpět na `/`. Sem míří i
+  probouzecí push.
+- **Odznak „přihlášen"** vedle loga s ikonou odemčeného klíče; po kliknutí
+  okno účtu: přihlašovací údaje, velikost sezení na serveru, datum vzniku a
+  posledního přihlášení, počet a velikost zpráv, čekající schránka, zařízení
+  pro upozornění a **serverový log aktivity** (přihlášení, dešifrování,
+  načtení a uložení dat, away, relay, push).
+- **Stav away a relay**: přihlášenému uživateli, který se odpojí, zůstane
+  místo v místnosti. Ostatní posílají dál — server šifrový text uloží,
+  odpoví za něj (`stored`) a zkusí probudit prohlížeč push zprávou. Po
+  návratu doručí vše najednou, klient potvrdí a odesílatel vidí *doručeno*
+  (a *přečteno*, pokud je potvrzování zapnuté). Stav zprávy je i značkou
+  v bublině a s časy v detailu zprávy.
+- Seznam **Příjemci** je nově ukotvený **vpravo u tlačítka menu** (ne vlevo
+  pod logem, a pod stavovou lištou, aby nepřekrýval Odpojit — výšku lišty
+  měří aplikace), jeho tlačítko jde přetáhnout kamkoli a pozice se pamatuje
+  (u přihlášeného uživatele i na serveru). Away účastníci jsou v seznamu
+  vidět a dají se vybrat jako příjemci.
+- Instalátor dává službě zapisovatelný `StateDirectory=m5cet`
+  (`DATA_DIR=/var/lib/m5cet`), aby účty přežily restart pod
+  `ProtectSystem=strict`.
+
+### Opraveno
+- **„File transfer failed: Missing chunks at end-of-transfer."** Tři příčiny,
+  všechny se projevily až na konci jinak zdravého přenosu:
+  - Příjemce zpracovával rámce **souběžně** — každý se dešifruje asynchronně
+    a přichází ve vlastním volání handleru, takže první chunky předběhly
+    `meta` (a spadly jako „unknown transfer") a `end` předběhl poslední
+    chunky. Rámce se nově řadí do fronty podle `transferId`.
+  - Odesílatel **tiše zahazoval** chunk, jehož `send()` prohlížeč odmítl
+    (plná fronta, v Chrome 16 MiB). Nově počká, až se buffer vyprázdní, a
+    zkusí to znovu (6 pokusů); když to nejde, přenos skončí chybou, místo
+    aby dorazil děravý soubor. Čekání na buffer se navíc nevzdává po 1,5 s.
+  - Když se chunk přesto ztratí (kanál se rozpadl a vrátil, výpadek relay),
+    příjemce si o chybějící části **řekne** (`file-need` / `proxy-need`) a
+    odesílatel je zopakuje — až tři kola, pak teprve chyba (nově s počtem
+    chybějících částí). Viz [`docs/files.md`](docs/files.md).
+- **Přenos přes server relay vůbec nedoručoval.** Server přeposílal jen
+  `proxy-end`; `proxy-meta` a `proxy-chunk` si nechával pro sebe (a ukládal
+  je oříznuté na 256 znaků). Nově přeposílá všechny rámce a těla chunků
+  neukládá vůbec — jen počítá, co prošlo, kvůli limitu.
+
+### Změněno
+- `POST /api/passkey/profile` (neautentizované úložiště profilu podle id
+  credentialu) **je pryč**; nahradil ho účet s ověřeným podpisem. Profil se
+  ukládá do trezoru účtu.
+- Retenční úklid maže i nedoručené položky schránky (`RELAY_RETENTION_DAYS`,
+  výchozí 30) a staré záznamy auditu účtů.
+- Psát jde i tehdy, když je protějšek ve stavu away (dřív bylo tlačítko
+  Odeslat zašedlé, dokud nikdo nebyl připojený).
+
 ## [2.8.1] – 2026-09-22
 
 Operátorské cesty hlavní služby za admin tokenem, retence, která opravdu

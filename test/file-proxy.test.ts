@@ -78,6 +78,31 @@ describe("FileProxy", () => {
     expect(proxy.stats().totalActive).toBe(0);
   });
 
+  it("forwards meta and chunks to the room — not only the end frame", () => {
+    // Without this the recipient never learns the transfer exists: the
+    // chunks are dropped as "unknown transfer" and the file never arrives.
+    const proxy = new FileProxy();
+    const forward = vi.fn();
+    const id = makeTransferId(8);
+    relayProxyFrame(proxy, "peer-A", { kind: "proxy-meta", transferId: id, iv: "A", ciphertext: "B" }, forward);
+    relayProxyFrame(proxy, "peer-A", { kind: "proxy-chunk", transferId: id, seq: 0, iv: "A", ciphertext: "B" }, forward);
+    relayProxyFrame(proxy, "peer-A", { kind: "proxy-end", transferId: id }, forward);
+
+    expect(forward.mock.calls.map(([target, frame]) => [target, (frame as { kind: string }).kind])).toEqual([
+      ["__broadcast__", "proxy-meta"],
+      ["__broadcast__", "proxy-chunk"],
+      ["__broadcast__", "proxy-end"],
+    ]);
+  });
+
+  it("does not forward a chunk it refused", () => {
+    const proxy = new FileProxy();
+    const forward = vi.fn();
+    const r = relayProxyFrame(proxy, "peer-A", { kind: "proxy-chunk", transferId: makeTransferId(9), seq: 0, iv: "A", ciphertext: "B" }, forward);
+    expect(r.ok).toBe(false);
+    expect(forward).not.toHaveBeenCalled();
+  });
+
   it("relayProxyFrame dispatches begin / chunk / end by kind", () => {
     const proxy = new FileProxy();
     const forward = vi.fn();

@@ -31,7 +31,9 @@ type ProxyTransferState = {
   plaintextSize: number; // extracted from decrypted meta on sender side, just for capping
   createdAt: number;
   lastActivityAt: number;
-  chunks: Map<number, { iv: string; ciphertext: string }>;
+  /** Sequence numbers seen — the bodies are forwarded, never stored. */
+  seqs: Set<number>;
+  bytes: number;
   cancelled: boolean;
 };
 
@@ -70,7 +72,8 @@ export class FileProxy {
       plaintextSize: plaintextSizeHint,
       createdAt: now,
       lastActivityAt: now,
-      chunks: new Map(),
+      seqs: new Set(),
+      bytes: 0,
       cancelled: false,
     };
     this.byTransfer.set(transferId, state);
@@ -88,12 +91,16 @@ export class FileProxy {
     if (state.cancelled) return { ok: false, reason: "cancelled" };
     const seq = Math.floor(Number(frame.seq) || 0);
     if (seq < 0 || !Number.isFinite(seq) || seq > 1_000_000) return { ok: false, reason: "bad-seq" };
-    state.chunks.set(seq, {
-      iv: String(frame.iv).slice(0, 256),
-      ciphertext: String(frame.ciphertext).slice(0, 256),
-    });
+    // The chunk body is forwarded to the recipient, not kept here: a copy
+    // would put every transfer in this process's memory for nothing (and
+    // the truncated copy this used to keep was unusable anyway). We only
+    // count what went through, to enforce the cap.
+    const bytes = Math.floor((String(frame.ciphertext || "").length * 3) / 4);
+    if (state.bytes + bytes > MAX_BYTES) return { ok: false, reason: "too-large" };
+    state.seqs.add(seq);
+    state.bytes += bytes;
     state.lastActivityAt = Date.now();
-    return { ok: true, total: state.chunks.size };
+    return { ok: true, total: state.seqs.size };
   }
 
   end(senderClientId: string, transferId: string): { ok: boolean; reason?: string } {
@@ -181,20 +188,32 @@ export function relayProxyFrame(
   if (typeof payload.ciphertext === "string") {
     plaintextSizeHint = Math.floor((payload.ciphertext.length * 3) / 4);
   }
-  switch (payload.kind) {
-    case "proxy-meta":
-      return proxy.begin(senderClientId, {
+  // Clients put the frame kind in `kind` and repeat it as the wire `type`;
+  // accept either so a frame built by hand (or by an older client) still
+  // routes instead of silently going nowhere.
+  const kind = String(payload.kind ?? payload.type ?? "");
+  switch (kind) {
+    case "proxy-meta": {
+      const begun = proxy.begin(senderClientId, {
         transferId: id,
         iv: String(payload.iv || ""),
         ciphertext: String(payload.ciphertext || ""),
       }, plaintextSizeHint);
-    case "proxy-chunk":
-      return proxy.pushChunk(senderClientId, {
+      // Without this the recipient never learns the transfer exists, so the
+      // chunks that follow are dropped and the file never arrives.
+      if (begun.ok) forward("__broadcast__", { ...payload });
+      return begun;
+    }
+    case "proxy-chunk": {
+      const pushed = proxy.pushChunk(senderClientId, {
         transferId: id,
         seq: Number(payload.seq || 0),
         iv: String(payload.iv || ""),
         ciphertext: String(payload.ciphertext || ""),
       });
+      if (pushed.ok) forward("__broadcast__", { ...payload });
+      return pushed;
+    }
     case "proxy-end":
       proxy.end(senderClientId, id);
       // Forward to recipient peers; in a real impl we would also know the
@@ -206,6 +225,16 @@ export function relayProxyFrame(
       proxy.cancel(id);
       forward("__broadcast__", { ...payload });
       return { ok: true };
+    case "proxy-need": {
+      // A receiver asking the sender to repeat the chunks it lost. Bounded
+      // so a peer cannot use it to make the room shout at each other.
+      const seqs = Array.isArray(payload.seqs)
+        ? payload.seqs.filter((n): n is number => typeof n === "number" && Number.isInteger(n) && n >= 0 && n <= 1_000_000).slice(0, 5_000)
+        : [];
+      if (seqs.length === 0) return { ok: false, reason: "bad-seqs" };
+      forward("__broadcast__", { kind: "proxy-need", transferId: id, seqs });
+      return { ok: true };
+    }
     default:
       return { ok: false, reason: "unknown-kind" };
   }

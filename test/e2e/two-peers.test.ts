@@ -154,6 +154,22 @@ describe("two peers in one room", () => {
       .toEqual(expect.arrayContaining([expect.stringMatching(/Odesláno: big\.bin/)]));
   }, 120_000);
 
+  // Regression: "File transfer failed: Missing chunks at end-of-transfer."
+  // A big file arrives as a long burst of frames — enough to expose both the
+  // receiver's frame ordering and the sender's backpressure handling, which
+  // used to lose chunks silently until the end frame complained.
+  it("delivers a 10 MB file without losing a chunk", async () => {
+    const body = randomBytes(10 * 1024 * 1024); // ~320 chunks
+    await alice.page.getByTestId("input-file").setInputFiles({ name: "burst.bin", mimeType: "application/octet-stream", buffer: body });
+
+    const got = await sha256OfDownload(bob.page, "burst.bin");
+    expect(got.size).toBe(body.byteLength);
+    expect(got.sha256).toBe(createHash("sha256").update(body).digest("hex"));
+
+    const notices = await bob.page.locator('[data-testid^="message-"]').allInnerTexts();
+    expect(notices.join(" ")).not.toMatch(/Missing chunks/i);
+  }, 180_000);
+
   it("raised no uncaught page errors on either side", () => {
     expect(alice.errors).toEqual([]);
     expect(bob.errors).toEqual([]);

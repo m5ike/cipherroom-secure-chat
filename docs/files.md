@@ -34,7 +34,7 @@ limits: chunks stay in RAM until the transfer
 completes. For multi-GB files we recommend a storage-provider plug-in
 (see below).
 
-## Transport selection — and a known gap
+## Transport selection
 
 The sender uses **P2P** when at least one DataChannel is open, otherwise
 it falls back to **proxy** frames (`proxy-meta` / `proxy-chunk` /
@@ -43,22 +43,43 @@ room key *before* either path, so the server never sees plaintext, file
 name, type or exact size — only `transferId`, sequence numbers, IVs and
 ciphertext (from which the approximate size can be inferred).
 
-> **The proxy path does not deliver files today.** `server/file-proxy.ts`
-> stores incoming `proxy-meta` / `proxy-chunk` frames (truncated to 256
-> characters, in memory, 10 min TTL) but never forwards them to the other
-> peers; only `proxy-end` and `proxy-cancel` are broadcast. A receiver that
-> gets `proxy-end` for a transfer it never saw ignores it. In practice file
-> transfer works only while a DataChannel is open. Also, finished transfers
-> keep their slot until the TTL sweep (4 per peer, 64 total), and a single
-> WebSocket frame is capped at 128 000 characters.
+The relay forwards every frame of a transfer (`proxy-meta`, `proxy-chunk`,
+`proxy-end`, `proxy-cancel`, `proxy-need`) to the room and keeps no chunk
+bodies of its own — it only counts what passed through, to enforce the cap.
+Until 2.9.0 it forwarded the end frame alone, so a file sent this way never
+arrived. Finished transfers keep their slot until the TTL sweep (4 per peer,
+64 total), and a single WebSocket frame is capped at 128 000 characters.
+
+## Order of arrival
+
+Frames must be **processed** in the order they arrived, not merely received
+in it: each frame is decrypted asynchronously and the DataChannel handler
+fires every one in its own call. `handleIncomingFrame` therefore queues
+frames per `transferId`. Without that queue the first chunks could overtake
+the meta frame they belong to ("chunk arrived for unknown transfer") and the
+end frame could overtake the last chunks — which surfaced as
+**"Missing chunks at end-of-transfer"** on a file that had been delivered in
+full (fixed in 2.9.0).
+
+## When a chunk is lost anyway
+
+A channel can drop and come back, and the relay can hiccup. Rather than
+discarding a file that is 99 % delivered, the receiver answers the end frame
+with `file-need` / `proxy-need` listing the sequence numbers it is missing;
+the sender re-reads exactly those slices, encrypts them again and repeats
+the end frame. At most `MAX_RESEND_ROUNDS` (3) rounds, then the transfer
+fails with the number of chunks still missing. The sender keeps the ability
+to repeat a transfer for 10 minutes after it finished.
 
 ## Backpressure
 
-P2P only. The sender pauses when `bufferedAmount` exceeds 1 MiB and
-resumes on `bufferedamountlow` (threshold 512 KiB), with a 1.5 s safety
-timeout. This keeps
-slower receivers from being overwhelmed and avoids the SCTP queue
-ballooning past 1 MiB.
+P2P only. The sender pauses when `bufferedAmount` exceeds 1 MiB and resumes
+on `bufferedamountlow` (threshold 512 KiB); because that event does not fire
+in every engine, the wait also polls and gives up at a deadline. A chunk
+whose `send()` is refused (the browser's send queue is full — Chrome stops
+at 16 MiB) is retried after the buffer drains, up to 6 attempts, and the
+whole transfer fails loudly if it still cannot go out. It used to be
+swallowed, which left a hole that only surfaced at the very end.
 
 ## Cancellation
 
@@ -89,8 +110,10 @@ type FileTransferEnvelope =
   | { kind: "file-chunk";  transferId; seq; iv; ciphertext; }
   | { kind: "file-end";    transferId; }
   | { kind: "file-cancel"; transferId; }
+  | { kind: "file-need";   transferId; seqs: number[]; }   // receiver → sender
   // transport: "proxy" (signaling WebSocket)
   | { kind: "proxy-meta" | "proxy-chunk" | "proxy-end" | "proxy-cancel"; ... }
+  | { kind: "proxy-need";  transferId; seqs: number[]; }
   | { kind: "proxy-ack";   transferId; accepted; reason?; }
 ```
 
