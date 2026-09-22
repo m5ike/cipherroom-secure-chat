@@ -16,6 +16,7 @@ import {
   Bell,
   BellOff,
   Copy,
+  CornerUpLeft,
   Image as ImageIcon,
   KeyRound,
   Lock,
@@ -66,9 +67,11 @@ import { SendOptions, DEFAULT_SEND_STATE, type SendState } from "./components/Se
 import { RecipientsWidget, type WidgetPeer } from "./components/RecipientsWidget";
 import { AudioRecorder } from "./components/AudioRecorder";
 import { UserInfoView, type UserInfo } from "./components/UserInfoModal";
+import { MessageInfoView, type MessageInfo } from "./components/MessageInfoModal";
 // The NFC / smart-card workbench pulls in the transport + card-parsing tree;
 // load it only when the panel opens so the initial bundle stays lean.
 const NfcWorkbench = lazy(() => import("./components/NfcWorkbench").then((m) => ({ default: m.NfcWorkbench })));
+const PhonePanel = lazy(() => import("./components/PhonePanel").then((m) => ({ default: m.PhonePanel })));
 import { AiPanel } from "./components/AiPanel";
 import { detectLang, t, type Lang } from "./lib/i18n";
 import type { ConnectionStatus, KeepaliveStrategy } from "./lib/connection-keeper";
@@ -152,7 +155,18 @@ type ChatMessage = {
   /** "Mizející" message that has fully elapsed. */
   vanished?: boolean;
   vanishedAt?: number;
+  /** Lifecycle audit trail (created → encrypted → sent → received → …). */
+  audit?: MessageAudit[];
+  /** The on-wire ciphertext, for the message-info view. */
+  cipher?: string;
+  /** Quoted message this one replies to (original text capped to 200 chars). */
+  replyTo?: { id: string; senderName: string; text: string };
+  /** Original author when this message was forwarded. */
+  forwardedFrom?: string;
 };
+
+export type MsgState = "created" | "encrypted" | "sent" | "received" | "decrypted" | "displayed" | "discarded";
+export type MessageAudit = { state: MsgState; at: number; meta?: string };
 
 type SignalFrame =
   | { type: "joined"; peerId: string; room: string; peers: Array<{ peerId: string; name: string; joinedAt: number }> }
@@ -185,6 +199,8 @@ type DecryptedPayload =
       ttlMinutes?: number;
       flags?: MsgFlags;
       to?: string[];
+      replyTo?: { id: string; senderName: string; text: string };
+      forwardedFrom?: string;
     }
   | {
       kind: "audio-status";
@@ -318,6 +334,7 @@ export type PanelKey =
   | "nfc"
   | "speech"
   | "ai"
+  | "phone"
   | "connection"
   | null;
 
@@ -368,6 +385,10 @@ function ChatApp() {
   const [widget, setWidget] = useState<WidgetState>(initialPrefs.widget);
   // Which participant's info modal is open (peerId, or "self").
   const [userInfoFor, setUserInfoFor] = useState<string | null>(null);
+  // Which message's info/audit modal is open (message id).
+  const [msgInfoFor, setMsgInfoFor] = useState<string | null>(null);
+  // The message currently being replied to (shown as a composer preview).
+  const [replyingTo, setReplyingTo] = useState<{ id: string; senderName: string; text: string } | null>(null);
   // Per-peer byte counters + network facts, for the info modal.
   const peerStatsRef = useRef<Map<string, { sent: number; recv: number; openedAt: number }>>(new Map());
   const peerNetRef = useRef<Map<string, { ip?: string; candidateType?: string }>>(new Map());
@@ -840,6 +861,7 @@ function ChatApp() {
         }
 
         const envelope = raw as DataChannelEnvelope;
+        const receivedAt = Date.now();
         const plaintext = await decryptEnvelope<DecryptedPayload>(key, envelope);
 
         if (plaintext.kind === "audio-status") {
@@ -862,6 +884,14 @@ function ChatApp() {
             expiresAt,
             flags: plaintext.flags,
             to: plaintext.to,
+            replyTo: plaintext.replyTo,
+            forwardedFrom: plaintext.forwardedFrom,
+            cipher: envelope.ciphertext,
+            audit: [
+              { state: "created", at: plaintext.createdAt },
+              { state: "received", at: receivedAt, meta: peerId.slice(-6) },
+              { state: "decrypted", at: Date.now() },
+            ],
           },
         ]);
         dispatchInternal("message", { senderId: plaintext.senderId });
@@ -1368,6 +1398,20 @@ function ChatApp() {
     await startSession(name, roomInput, passphrase);
   }
 
+  /** "Reconnect" = fire the Disconnect action, wait 1–2 s, then fire Connect —
+   *  a full teardown + fresh join rather than an in-place reconnect. */
+  async function reconnectViaButtons() {
+    if (!passphrase.trim() && !passphraseRef.current) {
+      setNotice(lang === "cs" ? "Zadej klíč místnosti." : lang === "de" ? "Bitte Raum-Schlüssel eingeben." : "Enter the room key.");
+      return;
+    }
+    setNotice(lang === "cs" ? "Reconnect: odpojuji…" : lang === "de" ? "Reconnect: trenne…" : "Reconnect: disconnecting…");
+    userDisconnect();
+    await new Promise((resolve) => window.setTimeout(resolve, 1500));
+    setNotice(lang === "cs" ? "Reconnect: připojuji…" : lang === "de" ? "Reconnect: verbinde…" : "Reconnect: connecting…");
+    await connect();
+  }
+
   /** Desired state := connected. Used by the form, a restored session and invites. */
   async function startSession(nextName: string, nextRoom: string, nextPassphrase: string) {
     intentRef.current = true;
@@ -1444,12 +1488,17 @@ function ChatApp() {
 
   async function sendChatPayload(
     text: string,
-    opts: { attachment?: AttachmentMeta; send?: SendState; targets?: Set<string>; toNames?: string[] } = {},
+    opts: {
+      attachment?: AttachmentMeta; send?: SendState; targets?: Set<string>; toNames?: string[];
+      replyTo?: { id: string; senderName: string; text: string }; forwardedFrom?: string;
+    } = {},
   ) {
     const key = keyRef.current;
     if (!key) return;
     const { perMessage } = ttlForRoom();
     const ttlMinutes = perMessage > 0 ? perMessage : undefined;
+    const createdAt = Date.now();
+    const audit: MessageAudit[] = [{ state: "created", at: createdAt }];
 
     // Build the optional message-kind flags from the send options.
     const send = opts.send;
@@ -1473,16 +1522,20 @@ function ChatApp() {
     const payload = {
       id: newId("msg"),
       text: wireText,
-      createdAt: Date.now(),
+      createdAt,
       senderId: myIdRef.current,
       senderName: nameRef.current,
       attachment: opts.attachment,
       ttlMinutes,
       flags: flagsOut,
       to: opts.toNames,
+      replyTo: opts.replyTo,
+      forwardedFrom: opts.forwardedFrom,
     };
     const envelope = await encryptEnvelope(key, payload);
+    audit.push({ state: "encrypted", at: Date.now() });
     const sent = await broadcastEnvelope(envelope, opts.targets);
+    audit.push({ state: "sent", at: Date.now(), meta: `${sent} ${sent === 1 ? "příjemce" : "příjemců"}` });
 
     if (sent > 0) {
       const expiresAt = computeExpiry(ttlMinutes, payload.createdAt);
@@ -1502,9 +1555,14 @@ function ChatApp() {
           to: opts.toNames,
           sealPlain,
           sealCode,
+          audit,
+          cipher: envelope.ciphertext,
+          replyTo: opts.replyTo,
+          forwardedFrom: opts.forwardedFrom,
         },
       ]);
       setMessageInput("");
+      setReplyingTo(null);
     } else {
       setNotice(lang === "cs" ? "Zatím není otevřený žádný P2P data kanál." : lang === "de" ? "Noch kein offener P2P-Kanal." : "No open P2P data channel yet.");
     }
@@ -1526,11 +1584,68 @@ function ChatApp() {
     if (!text) return;
     const rec = resolveRecipients();
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
-    await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames });
+    await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, replyTo: replyingTo ?? undefined });
   }
 
   function onMessageVanished(id: string) {
-    setMessages((cur) => cur.map((m) => (m.id === id ? { ...m, vanished: true, vanishedAt: m.vanishedAt ?? Date.now() } : m)));
+    setMessages((cur) => cur.map((m) => (m.id === id ? { ...m, vanished: true, vanishedAt: m.vanishedAt ?? Date.now(), audit: [...(m.audit ?? []), { state: "discarded" as const, at: Date.now() }] } : m)));
+  }
+
+  /** Record that a message became visible (adds a "displayed" audit event once). */
+  function onMessageDisplayed(id: string) {
+    setMessages((cur) => cur.map((m) => {
+      if (m.id !== id || m.audit?.some((a) => a.state === "displayed")) return m;
+      return { ...m, audit: [...(m.audit ?? []), { state: "displayed" as const, at: Date.now() }] };
+    }));
+  }
+
+  /** Start replying to a message (composer shows a quoted preview). */
+  function startReply(m: ChatMessage) {
+    setReplyingTo({ id: m.id, senderName: m.senderName, text: (m.text || (m.attachment ? `📎 ${m.attachment.name}` : "")).slice(0, 200) });
+  }
+
+  /** Forward a message: re-send its text/attachment tagged with its author. */
+  async function forwardMessage(m: ChatMessage) {
+    const rec = resolveRecipients();
+    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+    const body = m.flags?.sealed && m.mine ? (m.sealPlain ?? "") : m.text;
+    await sendChatPayload(body, {
+      attachment: m.attachment,
+      send: DEFAULT_SEND_STATE,
+      targets: rec.targets,
+      toNames: rec.toNames,
+      forwardedFrom: m.forwardedFrom || m.senderName,
+    });
+    setNotice(lang === "cs" ? "Přeposláno." : lang === "de" ? "Weitergeleitet." : "Forwarded.");
+  }
+
+  /** Scroll the conversation to a message by id (reply source jump). */
+  function scrollToMessage(id: string) {
+    const el = document.querySelector(`[data-testid="message-${id}"]`);
+    if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("msg-flash"); window.setTimeout(() => el.classList.remove("msg-flash"), 1200); }
+  }
+
+  /** Assemble the info + audit trail shown for a single message. */
+  function buildMessageInfo(m: ChatMessage): MessageInfo {
+    const peer = m.mine ? undefined : peersRef.current.get(m.senderId);
+    const net = m.mine ? undefined : peerNetRef.current.get(m.senderId);
+    const plain = m.flags?.sealed ? (m.mine ? m.sealPlain : undefined) : m.text;
+    return {
+      id: m.id,
+      mine: m.mine,
+      sender: m.senderName,
+      senderId: m.senderId,
+      recipients: m.to && m.to.length > 0 ? m.to : [t(lang, "recipients.everyone")],
+      ip: net?.ip,
+      route: m.mine ? "P2P (odchozí)" : net?.candidateType === "relay" ? "P2P přes TURN relay" : peer ? "přímé P2P" : "—",
+      createdAt: m.createdAt,
+      secure: m.secure,
+      cipher: m.cipher,
+      plaintext: plain,
+      flags: [m.flags?.tap ? t(lang, "msgkind.tap") : "", m.flags?.vanishSeconds ? t(lang, "msgkind.vanish") : "", m.flags?.sealed ? t(lang, "msgkind.sealed") : ""].filter(Boolean),
+      audit: m.audit ?? [{ state: m.mine ? "created" : "received", at: m.createdAt }],
+      attachment: m.attachment ? { name: m.attachment.name, mime: m.attachment.mime, size: m.attachment.size, url: m.attachment.dataUrl } : undefined,
+    };
   }
 
   /** Assemble the info shown when a participant's avatar/name is clicked. */
@@ -2235,11 +2350,18 @@ function ChatApp() {
                       vanishedAt={message.vanishedAt}
                       onVanish={onMessageVanished}
                       to={message.to}
+                      replyTo={message.replyTo}
+                      forwardedFrom={message.forwardedFrom}
                       bubbleStyle={bubbleStyleFrom(perStyle)}
                       badge={badge}
                       lang={lang}
                       renderText={linkify}
                       formatSize={formatBytes}
+                      onInfo={isSystem ? undefined : (mid) => setMsgInfoFor(mid)}
+                      onReply={isSystem ? undefined : () => startReply(message)}
+                      onForward={isSystem ? undefined : () => void forwardMessage(message)}
+                      onDisplayed={onMessageDisplayed}
+                      onReplyJump={scrollToMessage}
                     />
                   );
                 })}
@@ -2250,6 +2372,18 @@ function ChatApp() {
 
           <form onSubmit={sendMessage} className="composer border-t border-border bg-card/80 backdrop-blur">
             <div className="chat-column mx-auto w-full">
+              {replyingTo ? (
+                <div className="composer-reply" data-testid="composer-reply">
+                  <button type="button" className="composer-reply__jump" onClick={() => scrollToMessage(replyingTo.id)}>
+                    <CornerUpLeft className="h-3.5 w-3.5" />
+                    <span className="composer-reply__inner">
+                      <span className="composer-reply__name">{t(lang, "msginfo.replyingTo")} {replyingTo.senderName}</span>
+                      <span className="composer-reply__text">{replyingTo.text}</span>
+                    </span>
+                  </button>
+                  <button type="button" className="composer-reply__x" onClick={() => setReplyingTo(null)} aria-label={t(lang, "common.close")}>×</button>
+                </div>
+              ) : null}
               {emojiOpen ? (
                 <div className="mb-2 flex flex-wrap gap-1 rounded-2xl border border-border bg-background p-2" data-testid="picker-emoji">
                   {QUICK_EMOJI.map((emoji) => (
@@ -2482,6 +2616,15 @@ function ChatApp() {
         </SimpleModal>
       ) : null}
 
+      {/* Telephony / SMS modal (server-enhanced) */}
+      {activePanel === "phone" ? (
+        <SimpleModal title={t(lang, "menu.phone")} onClose={() => setActivePanel(null)}>
+          <Suspense fallback={<div className="p-6 text-center text-sm text-muted-foreground">…</div>}>
+            <PhonePanel lang={lang} onSystem={systemMessage} />
+          </Suspense>
+        </SimpleModal>
+      ) : null}
+
       {/* Connection panel */}
       {activePanel === "connection" ? (
         <SimpleModal title="Connection" onClose={() => setActivePanel(null)}>
@@ -2495,7 +2638,11 @@ function ChatApp() {
           <form
             data-testid="form-join"
             onSubmit={(event) => {
-              void connect(event);
+              event.preventDefault();
+              // Already joined → the button reads "Reconnect": disconnect, wait,
+              // reconnect. Otherwise a normal connect.
+              if (status === "joined") void reconnectViaButtons();
+              else void connect(event);
             }}
             className="space-y-3"
             autoComplete="off"
@@ -2573,6 +2720,7 @@ function ChatApp() {
           onRoomInfo={() => setActivePanel("connection")}
           onMove={(x, y) => updateWidget({ x, y })}
           onMinimize={(min) => updateWidget({ minimized: min })}
+          onUpdate={(patch) => updateWidget(patch)}
           lang={lang}
         />
       ) : null}
@@ -2583,6 +2731,17 @@ function ChatApp() {
           <UserInfoView info={buildUserInfo(userInfoFor)} lang={lang} />
         </SimpleModal>
       ) : null}
+
+      {/* Message info + audit trail modal */}
+      {msgInfoFor ? (() => {
+        const m = messages.find((x) => x.id === msgInfoFor);
+        if (!m) return null;
+        return (
+          <SimpleModal title={t(lang, "msginfo.title")} onClose={() => setMsgInfoFor(null)}>
+            <MessageInfoView info={buildMessageInfo(m)} lang={lang} onForward={() => { setMsgInfoFor(null); void forwardMessage(m); }} />
+          </SimpleModal>
+        );
+      })() : null}
     </div>
   );
 }

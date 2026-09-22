@@ -11,7 +11,7 @@
 //   sealed  a locked body that needs a per-message code to read.
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { Lock, Timer, ScrollText, EyeOff, Users, Paperclip } from "lucide-react";
+import { Lock, Timer, ScrollText, EyeOff, Users, Paperclip, Info, Reply, Forward, CornerUpLeft } from "lucide-react";
 import { t, type Lang } from "../lib/i18n";
 import { openSealed, type MsgFlags } from "../lib/message-kinds";
 
@@ -35,11 +35,18 @@ export type MessageBubbleProps = {
   vanishedAt?: number;
   onVanish: (id: string) => void;
   to?: string[]; // present → private message, only to these names
+  replyTo?: { id: string; senderName: string; text: string };
+  forwardedFrom?: string;
   bubbleStyle?: CSSProperties;
   badge: ReactNode; // <UserBadge/> (others) or plain name label (self/system)
   lang: Lang;
   renderText: (s: string) => ReactNode;
   formatSize: (n: number) => string;
+  onInfo?: (id: string) => void;
+  onReply?: () => void;
+  onForward?: () => void;
+  onDisplayed?: (id: string) => void;
+  onReplyJump?: (id: string) => void;
 };
 
 function useTabVisible(): boolean {
@@ -119,6 +126,13 @@ export function MessageBubble(props: MessageBubbleProps) {
   const counting = Boolean(flags?.vanishSeconds) && tabVisible && inView && revealed && !props.vanished;
   const remaining = useVanishRing(flags?.vanishSeconds, counting, () => props.onVanish(id));
 
+  // Record "displayed" once the bubble is genuinely on screen.
+  const displayedRef = useRef(false);
+  useEffect(() => {
+    if (!isSystem && tabVisible && inView && !displayedRef.current) { displayedRef.current = true; props.onDisplayed?.(id); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tabVisible, inView, isSystem, id]);
+
   async function submitCode() {
     if (!flags?.sealed) return;
     try {
@@ -148,6 +162,11 @@ export function MessageBubble(props: MessageBubbleProps) {
   return (
     <article ref={rootRef} data-testid={`message-${id}`} className={wrapCls}>
       <div className={bubbleCls} style={style} data-private={isPrivate ? "1" : undefined}>
+        {!isSystem && props.onInfo ? (
+          <button type="button" className="msg-info-btn" onClick={() => props.onInfo!(id)} aria-label={t(lang, "msginfo.title")} title={t(lang, "msginfo.title")} data-testid={`msg-info-${id}`}>
+            <Info className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
         <div className="msg-bubble__head">
           {props.badge}
           <span className="msg-bubble__time">{props.timeLabel}</span>
@@ -156,6 +175,20 @@ export function MessageBubble(props: MessageBubbleProps) {
           {flags?.vanishSeconds ? <EyeOff className="h-3 w-3 opacity-70" aria-label={t(lang, "msgkind.vanish")} /> : null}
           {sealed ? <ScrollText className="h-3 w-3 opacity-70" aria-label={t(lang, "msgkind.sealed")} /> : null}
         </div>
+
+        {props.forwardedFrom ? (
+          <div className="msg-fwd"><Forward className="h-3 w-3" /> {t(lang, "msginfo.forwardedFrom")}: {props.forwardedFrom}</div>
+        ) : null}
+
+        {props.replyTo ? (
+          <button type="button" className="msg-quote" onClick={() => props.onReplyJump?.(props.replyTo!.id)} data-testid={`msg-quote-${id}`}>
+            <CornerUpLeft className="h-3 w-3" />
+            <span className="msg-quote__inner">
+              <span className="msg-quote__name">{props.replyTo.senderName}</span>
+              <span className="msg-quote__text">{props.replyTo.text}</span>
+            </span>
+          </button>
+        ) : null}
 
         {isPrivate ? (
           <div className="msg-bubble__private-tag"><Lock className="h-3 w-3" /> {t(lang, "recipients.privateTo")}: {props.to!.join(", ")}</div>
@@ -226,6 +259,17 @@ export function MessageBubble(props: MessageBubbleProps) {
             ) : null}
           </>
         )}
+
+        {!isSystem && !props.vanished && (props.onReply || props.onForward) ? (
+          <div className="msg-actions">
+            {props.onReply ? (
+              <button type="button" className="msg-act" onClick={props.onReply} data-testid={`msg-reply-${id}`}><Reply className="h-3.5 w-3.5" /> {t(lang, "msginfo.reply")}</button>
+            ) : null}
+            {props.onForward ? (
+              <button type="button" className="msg-act" onClick={props.onForward} data-testid={`msg-forward-${id}`}><Forward className="h-3.5 w-3.5" /> {t(lang, "msginfo.forward")}</button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </article>
   );

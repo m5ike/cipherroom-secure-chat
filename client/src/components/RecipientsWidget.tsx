@@ -1,16 +1,13 @@
 // Floating "who receives my messages" widget. It can be dragged anywhere,
-// minimised to a single button, and remembers its place (Preferences.widget,
-// which syncs to the server in Server-enhanced mode). Each connected peer has:
-//   • an avatar circle + name
-//   • a graphical latency meter
-//   • an info button (opens the same modal as the bubble avatar)
-//   • a recipient checkbox (green check = receives, red cross = excluded)
-// A final Room row toggles "send to everyone automatically". When it is off,
-// at least one peer must be checked. The composer shows, unmistakably, whether
-// the next message goes to everyone or privately to a subset.
+// minimised to a single button, LOCKED (docked to a fixed corner next to the
+// menu), and restyled (size / opacity / colour / font / zoom) from its gear
+// menu. Layout persists in Preferences.widget (which syncs to the server in
+// Server-enhanced mode). Each connected peer shows an avatar, a latency meter,
+// an info button and a recipient checkbox; offline peers sink to the bottom of
+// the list and render disabled. A final Room row toggles "send to everyone".
 
 import { useEffect, useRef, useState } from "react";
-import { Users, Info, Check, X, Radio, Minus, GripHorizontal } from "lucide-react";
+import { Users, Info, Check, X, Radio, Minus, GripHorizontal, Lock, LockOpen, Settings2 } from "lucide-react";
 import { t, type Lang } from "../lib/i18n";
 import { Avatar } from "./UserBadge";
 import type { WidgetState } from "../lib/preferences";
@@ -18,7 +15,6 @@ import type { WidgetState } from "../lib/preferences";
 export type WidgetPeer = { id: string; name: string; status: "connecting" | "open" | "closed"; rttMs?: number; avatar?: string };
 
 function LatencyMeter({ rttMs, open }: { rttMs?: number; open: boolean }) {
-  // 4 bars; green < 80 ms, amber < 200 ms, red otherwise.
   const bars = 4;
   const q = !open ? 0 : rttMs === undefined ? 2 : rttMs < 60 ? 4 : rttMs < 120 ? 3 : rttMs < 250 ? 2 : 1;
   const tone = q >= 4 ? "good" : q >= 2 ? "ok" : q >= 1 ? "bad" : "off";
@@ -32,7 +28,7 @@ function LatencyMeter({ rttMs, open }: { rttMs?: number; open: boolean }) {
 }
 
 export function RecipientsWidget({
-  peers, room, state, selected, onTogglePeer, onToggleAuto, onSelectAll, onSelectNone, onPeerInfo, onRoomInfo, onMove, onMinimize, lang,
+  peers, room, state, selected, onTogglePeer, onToggleAuto, onSelectAll, onSelectNone, onPeerInfo, onRoomInfo, onMove, onMinimize, onUpdate, lang,
 }: {
   peers: WidgetPeer[];
   room: string;
@@ -46,11 +42,13 @@ export function RecipientsWidget({
   onRoomInfo: () => void;
   onMove: (x: number, y: number) => void;
   onMinimize: (min: boolean) => void;
+  onUpdate: (patch: Partial<WidgetState>) => void;
   lang: Lang;
 }) {
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const [dragging, setDragging] = useState(false);
-  const anchored = state.x === 0 && state.y === 0;
+  const [showConfig, setShowConfig] = useState(false);
+  const anchored = !state.locked && state.x === 0 && state.y === 0;
 
   useEffect(() => {
     if (!dragging) return;
@@ -68,16 +66,32 @@ export function RecipientsWidget({
   }, [dragging, onMove]);
 
   function startDrag(e: React.PointerEvent) {
+    if (state.locked) return; // docked → no dragging
     const host = (e.currentTarget as HTMLElement).closest(".recip-widget") as HTMLElement | null;
     const rect = host?.getBoundingClientRect();
     if (rect) {
       dragRef.current = { dx: e.clientX - rect.left, dy: e.clientY - rect.top };
-      if (anchored) onMove(rect.left, rect.top); // switch from anchored to absolute at grab point
+      if (anchored) onMove(rect.left, rect.top);
     }
     setDragging(true);
   }
 
-  const posStyle: React.CSSProperties = anchored ? { right: 12, bottom: 88 } : { left: state.x, top: state.y };
+  // Docked → fixed top-left, next to the menu. Floating → x/y or bottom-right.
+  const posStyle: React.CSSProperties = state.locked
+    ? { left: 8, top: 60, transformOrigin: "top left" }
+    : anchored
+      ? { right: 12, bottom: 88, transformOrigin: "bottom right" }
+      : { left: state.x, top: state.y, transformOrigin: "top left" };
+
+  const appearance: React.CSSProperties = {
+    ...posStyle,
+    width: state.width,
+    opacity: state.opacity,
+    transform: `scale(${state.zoom})`,
+    fontSize: `${state.fontScale}rem`,
+    ...(state.accent ? { background: state.accent } : {}),
+  };
+
   const openPeers = peers.filter((p) => p.status === "open");
 
   if (state.minimized) {
@@ -89,29 +103,62 @@ export function RecipientsWidget({
     );
   }
 
+  // Online first, offline (not open) sunk to the bottom and disabled.
+  const ordered = [...peers].sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1));
+
   return (
-    <div className="recip-widget" style={posStyle} data-testid="recip-widget" role="group" aria-label={t(lang, "recipients.title")}>
+    <div className={`recip-widget${state.locked ? " is-locked" : ""}`} style={appearance} data-testid="recip-widget" role="group" aria-label={t(lang, "recipients.title")}>
       <div className="recip-widget__head" onPointerDown={startDrag} data-testid="recip-drag">
-        <GripHorizontal className="h-4 w-4 opacity-60" />
+        {state.locked ? <Lock className="h-4 w-4 opacity-70" /> : <GripHorizontal className="h-4 w-4 opacity-60" />}
         <span className="recip-widget__title">{t(lang, "recipients.title")}</span>
+        <button type="button" className="recip-widget__min" onClick={() => setShowConfig((v) => !v)} aria-label={t(lang, "recipients.settings")} title={t(lang, "recipients.settings")} data-testid="recip-config-toggle">
+          <Settings2 className="h-4 w-4" />
+        </button>
+        <button
+          type="button"
+          className="recip-widget__min"
+          onClick={() => onUpdate({ locked: !state.locked })}
+          aria-label={state.locked ? t(lang, "recipients.unlock") : t(lang, "recipients.lock")}
+          title={state.locked ? t(lang, "recipients.unlock") : t(lang, "recipients.lock")}
+          data-testid="recip-lock"
+        >
+          {state.locked ? <LockOpen className="h-4 w-4" /> : <Lock className="h-4 w-4" />}
+        </button>
         <button type="button" className="recip-widget__min" onClick={() => onMinimize(true)} aria-label={t(lang, "recipients.minimize")}>
           <Minus className="h-4 w-4" />
         </button>
       </div>
+
+      {showConfig ? (
+        <div className="recip-config" data-testid="recip-config">
+          <ConfigRow label={t(lang, "recipients.cfg.width")} min={180} max={420} step={10} value={state.width} onChange={(v) => onUpdate({ width: v })} suffix="px" />
+          <ConfigRow label={t(lang, "recipients.cfg.opacity")} min={0.3} max={1} step={0.05} value={state.opacity} onChange={(v) => onUpdate({ opacity: v })} percent />
+          <ConfigRow label={t(lang, "recipients.cfg.font")} min={0.8} max={1.4} step={0.05} value={state.fontScale} onChange={(v) => onUpdate({ fontScale: v })} suffix="×" />
+          <ConfigRow label={t(lang, "recipients.cfg.zoom")} min={0.7} max={1.4} step={0.05} value={state.zoom} onChange={(v) => onUpdate({ zoom: v })} suffix="×" />
+          <label className="recip-cfg-row">
+            <span>{t(lang, "recipients.cfg.color")}</span>
+            <span className="flex items-center gap-2">
+              <input type="color" className="h-6 w-8 rounded border-0 bg-transparent p-0" value={/^#[0-9a-fA-F]{6}$/.test(state.accent) ? state.accent : "#151a23"} onChange={(e) => onUpdate({ accent: e.target.value })} />
+              {state.accent ? <button type="button" className="text-[10px] underline" onClick={() => onUpdate({ accent: "" })}>{t(lang, "userstyle.default")}</button> : null}
+            </span>
+          </label>
+        </div>
+      ) : null}
 
       <div className="recip-widget__body">
         {peers.length === 0 ? (
           <p className="recip-empty">{t(lang, "recipients.nopeers")}</p>
         ) : (
           <ul className="recip-list">
-            {peers.map((p) => {
-              const checked = state.autoRoom || selected.has(p.id);
-              const disabled = state.autoRoom || p.status !== "open";
+            {ordered.map((p) => {
+              const online = p.status === "open";
+              const checked = online && (state.autoRoom || selected.has(p.id));
+              const disabled = !online || state.autoRoom;
               return (
-                <li key={p.id} className="recip-row" data-testid={`recip-${p.id}`}>
+                <li key={p.id} className={`recip-row${online ? "" : " is-offline"}`} data-testid={`recip-${p.id}`}>
                   <Avatar name={p.name} avatar={p.avatar} size={26} />
-                  <span className="recip-name">{p.name}</span>
-                  <LatencyMeter rttMs={p.rttMs} open={p.status === "open"} />
+                  <span className="recip-name">{p.name}{online ? "" : ` · ${t(lang, "recipients.offline")}`}</span>
+                  <LatencyMeter rttMs={p.rttMs} open={online} />
                   <button type="button" className="recip-info" onClick={() => onPeerInfo(p.id)} aria-label={t(lang, "userstyle.info")}>
                     <Info className="h-4 w-4" />
                   </button>
@@ -158,5 +205,19 @@ export function RecipientsWidget({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function ConfigRow({ label, min, max, step, value, onChange, suffix, percent }: {
+  label: string; min: number; max: number; step: number; value: number; onChange: (v: number) => void; suffix?: string; percent?: boolean;
+}) {
+  return (
+    <label className="recip-cfg-row">
+      <span>{label}</span>
+      <span className="flex items-center gap-2">
+        <input type="range" min={min} max={max} step={step} value={value} onChange={(e) => onChange(Number(e.target.value))} />
+        <span className="recip-cfg-val">{percent ? `${Math.round(value * 100)}%` : `${value}${suffix ?? ""}`}</span>
+      </span>
+    </label>
   );
 }

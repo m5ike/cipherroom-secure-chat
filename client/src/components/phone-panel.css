@@ -1,0 +1,249 @@
+/* Telephony panel. Scoped under .phone so it never leaks into the rest of the
+   app. Colours come from the app theme tokens defined in index.css
+   (hsl(var(--…))) so the panel follows every theme + dark mode. */
+
+.phone {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+  color: hsl(var(--foreground));
+}
+
+.phone__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.phone__section {
+  border: 1px solid hsl(var(--card-border));
+  background: hsl(var(--card));
+  border-radius: 0.75rem;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.phone__section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.8125rem;
+  letter-spacing: -0.01em;
+}
+
+.phone__hint {
+  font-size: 0.6875rem;
+  line-height: 1.35;
+  color: hsl(var(--muted-foreground));
+}
+.phone__hint--err { color: hsl(var(--destructive)); }
+
+.phone__note {
+  font-size: 0.6875rem;
+  line-height: 1.4;
+  color: hsl(var(--muted-foreground));
+}
+
+.phone__label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+/* number display */
+.phone__display {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.phone__number {
+  flex: 1;
+  min-height: 3rem;
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border-radius: 0.75rem;
+  padding: 0 0.75rem;
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  letter-spacing: 0.04em;
+  outline: none;
+}
+.phone__number:focus { box-shadow: 0 0 0 2px hsl(var(--ring) / 0.5); }
+
+.phone__bs {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 3rem;
+  min-height: 3rem;
+  border-radius: 0.75rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+.phone__bs:hover { background: hsl(var(--accent)); }
+
+/* dial pad */
+.phone__pad {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.375rem;
+}
+.phone__key {
+  min-height: 3rem;
+  border-radius: 0.625rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 1.125rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.phone__key:hover { background: hsl(var(--accent)); }
+.phone__key:active { background: hsl(var(--primary) / 0.15); }
+.phone__key--plus { grid-column: 2 / 3; }
+
+/* tabs */
+.phone__tabs { display: flex; gap: 0.25rem; }
+.phone__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  flex: 1;
+  justify-content: center;
+  padding: 0.4375rem 0.625rem;
+  border-radius: 0.5rem;
+  border: 1px solid transparent;
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.8125rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.phone__tab[aria-selected="true"] {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+  border-color: hsl(var(--border));
+}
+
+/* inputs */
+.phone__select,
+.phone__textarea {
+  min-height: 2.5rem;
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  border-radius: 0.625rem;
+  padding: 0.5rem 0.625rem;
+  font-size: 0.8125rem;
+  outline: none;
+}
+.phone__textarea { resize: vertical; line-height: 1.4; }
+.phone__select:focus,
+.phone__textarea:focus { box-shadow: 0 0 0 2px hsl(var(--ring) / 0.5); }
+
+.phone__count {
+  font-size: 0.6875rem;
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+
+/* action buttons */
+.phone__btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  min-height: 2.75rem;
+  padding: 0 1rem;
+  border-radius: 0.625rem;
+  border: 1px solid transparent;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, opacity 0.12s ease;
+}
+.phone__btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.phone__btn--call {
+  width: 100%;
+  background: hsl(142 60% 40%);
+  color: #fff;
+}
+.phone__btn--call:hover:not(:disabled) { background: hsl(142 60% 36%); }
+.phone__btn--send {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+.phone__btn--send:hover:not(:disabled) { background: hsl(var(--primary) / 0.9); }
+
+.phone__link {
+  background: none;
+  border: none;
+  color: hsl(var(--primary));
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+/* history */
+.phone__hist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 12rem;
+  overflow: auto;
+}
+.phone__hist-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  padding: 0.25rem 0;
+  border-top: 1px dashed hsl(var(--border));
+}
+.phone__hist-item:first-child { border-top: none; }
+.phone__hist-to { font-family: var(--font-mono); font-weight: 600; }
+.phone__hist-detail {
+  margin-left: auto;
+  color: hsl(var(--muted-foreground));
+  font-family: var(--font-mono);
+  word-break: break-all;
+  text-align: right;
+}
+.phone__hist-item--err .phone__hist-detail { color: hsl(var(--destructive)); }
+
+/* disabled banner */
+.phone__banner {
+  border-radius: 0.625rem;
+  padding: 0.75rem;
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  border: 1px solid;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.phone__banner p { margin: 0; }
+.phone__banner-head { display: flex; align-items: center; gap: 0.375rem; }
+.phone__banner--warn {
+  background: hsl(38 92% 50% / 0.12);
+  border-color: hsl(38 92% 50% / 0.4);
+  color: hsl(32 70% 32%);
+}
+:root[data-theme="motorsport"] .phone__banner--warn,
+:root[data-theme="terminal"] .phone__banner--warn { color: hsl(38 90% 66%); }

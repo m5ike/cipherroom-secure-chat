@@ -58,6 +58,9 @@ export function buildModuleManifest(eventsBackend: "disabled" | "memory" | "data
       ai: hasAi()
         ? { enabled: true, reason: "Server AI connector is configured (ENABLE_AI=1)." }
         : { enabled: false, reason: "Set ENABLE_AI=1 and configure a provider (e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY, OLLAMA_URL)." },
+      telephony: hasTelephony()
+        ? { enabled: true, reason: "Telephony is configured (ENABLE_TELEPHONY=1). Voice + SMS via the operator's provider." }
+        : { enabled: false, reason: "Set ENABLE_TELEPHONY=1 and configure a provider (Twilio/Telnyx/Vonage). Voice media path needs an external SIP↔WebRTC gateway." },
       push: pushReady
         ? { enabled: true }
         : { enabled: false, reason: "Set VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY to enable push." },
@@ -102,4 +105,9 @@ function hasAi() {
 function hasServerSpeech() {
   if (process.env.ENABLE_SPEECH?.trim() !== "1") return false;
   return ["OPENAI_API_KEY", "ELEVENLABS_API_KEY", "HF_API_KEY"].some((k) => (process.env[k]?.trim() || "").length > 0);
+}
+
+function hasTelephony() {
+  if (process.env.ENABLE_TELEPHONY?.trim() !== "1") return false;
+  return ["TWILIO_ACCOUNT_SID", "TELNYX_API_KEY", "VONAGE_API_KEY"].some((k) => (process.env[k]?.trim() || "").length > 0);
 }

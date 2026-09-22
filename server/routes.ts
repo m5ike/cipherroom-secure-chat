@@ -34,6 +34,7 @@ import { runRetentionIfDue, RETENTION } from "./retention";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 import { registerPluginRoutes } from "./plugins/routes";
 import { registerPasskeyRoutes } from "./passkey";
+import { registerTelephonyRoutes } from "./telephony/routes";
 
 const fileProxy = new FileProxy();
 
@@ -199,6 +200,9 @@ export async function registerRoutes(
   registerPluginRoutes(app);
   // Zero-knowledge PassKey-encrypted profile storage.
   registerPasskeyRoutes(app);
+  // Optional telephony (voice + SMS via Twilio/Telnyx/Vonage, SIP trunk config),
+  // gated by ENABLE_TELEPHONY.
+  registerTelephonyRoutes(app);
 
   app.get("/api/health", (_req, res) => {
     res.json({

@@ -1058,3 +1058,68 @@
 .ai-msg--assistant { align-self: flex-start; border: 1px solid hsl(var(--border)); background: hsl(var(--card)); }
 .ai-chip { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.72rem; padding: 0.3rem 0.55rem; border-radius: 0.6rem; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); }
 .ai-chip:hover { background: hsl(var(--accent)); }
+
+/* ---------- Recipients widget: lock/dock, config, offline ---------- */
+.recip-widget.is-locked { box-shadow: 0 0 0 2px hsl(var(--primary) / 0.4), var(--shadow-md); }
+.recip-widget__head .recip-widget__min { flex: none; }
+.recip-config { padding: 0.5rem 0.6rem; border-bottom: 1px solid hsl(var(--border)); background: hsl(var(--muted) / 0.5); display: flex; flex-direction: column; gap: 0.35rem; }
+.recip-cfg-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; font-size: 0.72rem; }
+.recip-cfg-row input[type="range"] { width: 6.5rem; }
+.recip-cfg-val { min-width: 2.4rem; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.75; }
+.recip-row.is-offline { opacity: 0.5; }
+.recip-row.is-offline .recip-name { font-style: italic; }
+
+/* ---------- Message info button / actions / reply / forward ---------- */
+.msg-bubble { position: relative; }
+.msg-info-btn {
+  position: absolute; top: 0.3rem; right: 0.3rem; display: inline-flex; align-items: center; justify-content: center;
+  width: 1.35rem; height: 1.35rem; border-radius: 9999px; color: inherit; opacity: 0.45;
+  background: hsl(var(--background) / 0.35);
+}
+.msg-info-btn:hover { opacity: 1; background: hsl(var(--background) / 0.7); }
+.msg-bubble--mine .msg-info-btn { background: hsl(0 0% 100% / 0.15); }
+.msg-bubble--mine .msg-info-btn:hover { background: hsl(0 0% 100% / 0.3); }
+
+.msg-fwd { display: inline-flex; align-items: center; gap: 0.3rem; margin-bottom: 0.3rem; font-size: 0.68rem; font-style: italic; opacity: 0.8; }
+
+/* Reply = a split bubble: quoted original on top, the reply below. */
+.msg-quote {
+  display: flex; align-items: flex-start; gap: 0.35rem; width: 100%; text-align: start;
+  margin-bottom: 0.4rem; padding: 0.35rem 0.5rem; border-radius: 0.6rem;
+  border-inline-start: 3px solid hsl(var(--primary));
+  background: hsl(var(--primary) / 0.1);
+}
+.msg-bubble--mine .msg-quote { background: hsl(0 0% 100% / 0.16); border-inline-start-color: hsl(0 0% 100% / 0.8); }
+.msg-quote:hover { background: hsl(var(--primary) / 0.18); }
+.msg-quote__inner { display: flex; flex-direction: column; min-width: 0; }
+.msg-quote__name { font-size: 0.66rem; font-weight: 700; opacity: 0.85; }
+.msg-quote__text { font-size: 0.76rem; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.msg-actions { display: flex; gap: 0.4rem; margin-top: 0.4rem; opacity: 0.55; }
+.msg-bubble:hover .msg-actions { opacity: 1; }
+.msg-act { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.68rem; padding: 0.15rem 0.4rem; border-radius: 0.4rem; color: inherit; }
+.msg-act:hover { background: hsl(var(--background) / 0.4); }
+.msg-bubble--mine .msg-act:hover { background: hsl(0 0% 100% / 0.18); }
+
+.msg-flash { animation: msg-flash 1.2s ease-out; }
+@keyframes msg-flash { 0% { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.6); } 100% { box-shadow: 0 0 0 0 transparent; } }
+
+/* Audit timeline */
+.msg-audit { display: flex; flex-direction: column; gap: 0.25rem; }
+.msg-audit li { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; }
+.msg-audit__dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; background: hsl(var(--primary)); flex: none; }
+.msg-audit__state { font-weight: 600; }
+.msg-audit__time { margin-inline-start: auto; font-variant-numeric: tabular-nums; opacity: 0.7; }
+.msg-data { border: 1px solid hsl(var(--border)); border-radius: 0.6rem; padding: 0.4rem 0.6rem; }
+.msg-data summary { cursor: pointer; font-size: 0.78rem; font-weight: 600; }
+.msg-data__row { display: flex; align-items: flex-start; gap: 0.5rem; margin-top: 0.4rem; }
+.msg-attach-actions { border-top: 1px solid hsl(var(--border)); padding-top: 0.6rem; display: flex; flex-direction: column; gap: 0.4rem; }
+
+/* Composer reply preview */
+.composer-reply { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; padding: 0.35rem 0.5rem; border-radius: 0.6rem; border-inline-start: 3px solid hsl(var(--primary)); background: hsl(var(--primary) / 0.08); }
+.composer-reply__jump { display: flex; align-items: center; gap: 0.4rem; flex: 1; min-width: 0; text-align: start; }
+.composer-reply__inner { display: flex; flex-direction: column; min-width: 0; }
+.composer-reply__name { font-size: 0.66rem; font-weight: 700; color: hsl(var(--primary)); }
+.composer-reply__text { font-size: 0.76rem; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-reply__x { flex: none; width: 1.6rem; height: 1.6rem; border-radius: 9999px; font-size: 1.1rem; line-height: 1; }
+.composer-reply__x:hover { background: hsl(var(--accent)); }

@@ -10,12 +10,20 @@ export type FontSize = "sm" | "md" | "lg";
 export type ChatPattern = "grid" | "dots" | "plain";
 export type ChatWidth = "sm" | "md" | "lg" | "full";
 
-/** Floating recipients widget: position + collapsed state + room-broadcast toggle. */
+/** Floating recipients widget: position, collapsed/locked state, room-broadcast
+ *  toggle, and its user-tunable appearance (size, opacity, colour, zoom). */
 export type WidgetState = {
   x: number;
   y: number;
   minimized: boolean;
   autoRoom: boolean;
+  /** Docked (fixed top-left) when true; floating + draggable when false. */
+  locked: boolean;
+  width: number; // px
+  opacity: number; // 0.3–1
+  fontScale: number; // 0.8–1.4
+  zoom: number; // 0.7–1.4 overall scale
+  accent: string; // "" = theme card, else #hex
 };
 
 export type RoomSecurity = {
@@ -131,7 +139,7 @@ const DEFAULTS: Preferences = {
   chatPattern: "grid",
   chatWidth: "md",
   messageStyles: {},
-  widget: { x: 0, y: 0, minimized: false, autoRoom: true },
+  widget: { x: 0, y: 0, minimized: false, autoRoom: true, locked: false, width: 240, opacity: 1, fontScale: 1, zoom: 1, accent: "" },
   lang: "cs",
   timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC",
   notificationsEnabled: false,
@@ -150,11 +158,18 @@ const DEFAULTS: Preferences = {
 function sanitizeWidget(raw: unknown, base: WidgetState): WidgetState {
   const w = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const num = (v: unknown, dflt: number) => (typeof v === "number" && Number.isFinite(v) ? v : dflt);
+  const clamp = (v: unknown, lo: number, hi: number, dflt: number) => Math.max(lo, Math.min(hi, num(v, dflt)));
   return {
     x: Math.max(-4000, Math.min(4000, num(w.x, base.x))),
     y: Math.max(-4000, Math.min(4000, num(w.y, base.y))),
     minimized: w.minimized === true,
     autoRoom: w.autoRoom === false ? false : true,
+    locked: w.locked === true,
+    width: clamp(w.width, 180, 420, base.width),
+    opacity: clamp(w.opacity, 0.3, 1, base.opacity),
+    fontScale: clamp(w.fontScale, 0.8, 1.4, base.fontScale),
+    zoom: clamp(w.zoom, 0.7, 1.4, base.zoom),
+    accent: typeof w.accent === "string" && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(w.accent) ? w.accent : base.accent,
   };
 }
 

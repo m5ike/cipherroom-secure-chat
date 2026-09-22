@@ -98,6 +98,53 @@
       <div class="row"><button id="btnLiveLog">Start live log</button><button class="secondary" id="btnLiveStop">Stop</button><button class="secondary" id="btnLiveClear">Clear</button></div>
       <pre id="liveLog" style="max-height:280px;"></pre>
     </section>
+
+    <section>
+      <h2>Telephony &amp; SIP console</h2>
+      <div class="row"><button id="btnTel">Refresh telephony</button></div>
+      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Voice + SMS via Twilio / Telnyx / Vonage. Keys come from server env (ENABLE_TELEPHONY=1). The audio/media path needs an external SIP↔WebRTC gateway — this console manages providers + trunk config + DID routing.</p>
+      <div id="telList"></div>
+
+      <h2 style="margin-top:14px;">Send test SMS / place test call</h2>
+      <div class="row">
+        <select id="telKind"><option value="sms">SMS</option><option value="call">Call</option></select>
+        <input id="telTo" placeholder="+420777123456 (E.164)" style="flex:1;" />
+      </div>
+      <label>Text (SMS)</label>
+      <input id="telText" placeholder="Test from M5cet admin" />
+      <div class="row" style="margin-top:8px;"><button id="btnTelTest">Run test</button></div>
+      <pre id="telOut"></pre>
+
+      <h2 style="margin-top:14px;">SIP trunks</h2>
+      <div class="row">
+        <input id="sipId" placeholder="trunk id (a-z0-9_-)" />
+        <input id="sipLabel" placeholder="label" />
+      </div>
+      <div class="row">
+        <input id="sipHost" placeholder="sip host" />
+        <input id="sipPort" placeholder="5060" style="max-width:90px;" />
+      </div>
+      <div class="row">
+        <input id="sipUser" placeholder="username" />
+        <input id="sipPass" type="password" placeholder="password (stored, never returned)" />
+      </div>
+      <div class="row">
+        <input id="sipDids" placeholder="DIDs comma-separated e.g. +420123,+420456" style="flex:1;" />
+      </div>
+      <div class="row">
+        <input id="sipCidName" placeholder="CallerID name" />
+        <input id="sipCidNum" placeholder="CallerID number" />
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnSipSave">Save trunk</button>
+        <button class="secondary" id="btnSipDelete">Delete trunk (by id)</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <input id="sipDid" placeholder="inbound DID to route" />
+        <button class="secondary" id="btnSipRoute">Route DID</button>
+      </div>
+      <pre id="sipOut"></pre>
+    </section>
   </main>
 
   <script>
@@ -213,6 +260,49 @@
     };
     $("btnLiveStop").onclick = () => { if (liveCtrl) { liveCtrl.abort(); liveCtrl = null; } };
     $("btnLiveClear").onclick = () => { $("liveLog").textContent = ""; };
+
+    // ---- Telephony & SIP console ----
+    $("btnTel").onclick = async () => {
+      const r = await api("/admin/telephony");
+      if (!r.ok) return show("telList", r.json);
+      const s = r.json;
+      const conn = (c) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span><b>' + (c.kind || '').toUpperCase() + '</b> ' + c.label + (c.configured ? ' — <span class="ok">configured</span>' : ' — <span class="err">' + (c.reason || 'not configured') + '</span>') + '</span></div>';
+      const trunk = (tk) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span>☎ <b>' + tk.id + '</b> ' + (tk.label || '') + ' · ' + (tk.host || '?') + ':' + (tk.port || 5060) + ' · DIDs: ' + ((tk.didNumbers || []).join(', ') || '—') + (tk.hasPassword ? ' · 🔒' : '') + '</span></div>';
+      $("telList").innerHTML =
+        '<p style="font-size:12px;color:#9aa6b8;">Telephony: ' + (s.enabled ? 'ENABLED' : 'disabled') + ' · defaults sms=' + (s.defaults && s.defaults.sms || '—') + ' voice=' + (s.defaults && s.defaults.voice || '—') + '</p>'
+        + [].concat(s.sms || [], s.voice || []).map(conn).join('')
+        + '<h2 style="margin-top:10px;">Configured trunks</h2>' + ((s.sip && s.sip.length ? s.sip.map(trunk).join('') : '<p style="font-size:12px;color:#9aa6b8;">no trunks</p>'));
+    };
+    $("btnTelTest").onclick = async () => {
+      const kind = $("telKind").value;
+      const body = { kind, to: $("telTo").value.trim(), text: $("telText").value.trim() || undefined };
+      show("telOut", "Testing " + kind + "…");
+      const r = await api("/admin/telephony/test", { method: "POST", body: JSON.stringify(body) });
+      show("telOut", r.json);
+    };
+    $("btnSipSave").onclick = async () => {
+      const body = {
+        id: $("sipId").value.trim(), label: $("sipLabel").value.trim(),
+        host: $("sipHost").value.trim(), port: Number($("sipPort").value.trim()) || 5060,
+        username: $("sipUser").value.trim(), password: $("sipPass").value,
+        didNumbers: $("sipDids").value.split(",").map(s => s.trim()).filter(Boolean),
+        callerIdName: $("sipCidName").value.trim(), callerIdNumber: $("sipCidNum").value.trim(),
+      };
+      const r = await api("/admin/telephony/sip/trunks", { method: "PUT", body: JSON.stringify(body) });
+      show("sipOut", r.json);
+      $("btnTel").click();
+    };
+    $("btnSipDelete").onclick = async () => {
+      const id = $("sipId").value.trim();
+      if (!id) return show("sipOut", "Enter trunk id to delete.");
+      const r = await api("/admin/telephony/sip/trunks", { method: "DELETE", body: JSON.stringify({ id }) });
+      show("sipOut", r.json);
+      $("btnTel").click();
+    };
+    $("btnSipRoute").onclick = async () => {
+      const r = await api("/admin/telephony/sip/route", { method: "POST", body: JSON.stringify({ did: $("sipDid").value.trim() }) });
+      show("sipOut", r.json);
+    };
 
     $("btnEnqueue").onclick = async () => {
       let payload = undefined;
