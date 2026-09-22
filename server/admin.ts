@@ -24,6 +24,7 @@ import { base64ToBytes } from "./plugins/types";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerAdminLayoutRoutes } from "./layout";
 import { applyTrustProxy } from "./trust-proxy";
+import { buildInfo } from "./build-info";
 import {
   ADMIN_COMMAND_ALLOWLIST,
   pushSubscriptions,
@@ -73,7 +74,10 @@ app.get("/admin/health", (_req, res) => {
     pushReady: isWebPushReady(),
     eventsBackend: eventStore.backend,
     uptimeSec: Math.round(process.uptime()),
-    version: process.env.npm_package_version || "dev",
+    // dist/public/build.json — npm_package_version only exists under `npm start`,
+    // so systemd / Docker (node dist/admin.cjs) always reported "dev".
+    version: buildInfo().version,
+    build: buildInfo().build,
   });
 });
 
