@@ -143,7 +143,9 @@ describe("Phones", () => {
     const attrs = await page.evaluate(() => ({ ...document.documentElement.dataset }));
     expect(attrs).toMatchObject({ os: "ios", browser: "safari", engine: "webkit", form: "phone", input: "touch" });
     await openAppearance(page);
-    const sheet = await page.$eval(".modal-shell--center", (el) => {
+    // Measure after the 220 ms slide-in animation, not in the middle of it.
+    const sheet = await page.$eval(".modal-shell--center", async (el) => {
+      await Promise.all(el.getAnimations().map((a) => a.finished));
       const r = el.getBoundingClientRect();
       return { bottom: Math.round(r.bottom), width: Math.round(r.width), vw: innerWidth, vh: innerHeight };
     });
