@@ -21,6 +21,20 @@
     .ok { color:#7adb96; }
     .err { color:#ff7d7d; }
     code { font-family: ui-monospace, SFMono-Regular, monospace; }
+    /* Layout builder preview: same --c-<id>-<prop> variables the app consumes. */
+    .lb-preview { background: var(--c-chat-bg, #0f1217); color: var(--c-chat-fg, #e7eaf0); font-size: var(--c-chat-fs, 14px); opacity: var(--c-chat-opacity, 1); border: 1px solid #1f2733; border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
+    .lb-preview > div { max-width: 78%; }
+    .lb-sys { background: var(--c-sys-bg, rgba(42,50,66,.45)); color: var(--c-sys-fg, rgba(154,166,184,.9)); border: var(--c-sys-bwidth, 1px) var(--c-sys-bstyle, dashed) var(--c-sys-border, rgba(42,50,66,.7)); border-radius: var(--c-sys-radius, 12px); font-size: var(--c-sys-fs, 12px); opacity: var(--c-sys-opacity, .9); padding: var(--c-sys-pad, 6px 12px); box-shadow: var(--c-sys-shadow, none); }
+    .lb-in { background: var(--c-in-bg, rgba(51,88,212,.12)); color: var(--c-in-fg, #e7eaf0); border: var(--c-in-bwidth, 1px) var(--c-in-bstyle, solid) var(--c-in-border, rgba(51,88,212,.35)); border-radius: var(--c-in-radius, 18px); font-size: var(--c-in-fs, 14px); opacity: var(--c-in-opacity, 1); padding: var(--c-in-pad, 8px 14px); box-shadow: var(--c-in-shadow, 0 1px 2px rgba(0,0,0,.3)); }
+    .lb-out { background: var(--c-out-bg, #3358d4); color: var(--c-out-fg, #fff); border: var(--c-out-bwidth, 1px) var(--c-out-bstyle, solid) var(--c-out-border, transparent); border-radius: var(--c-out-radius, 18px); font-size: var(--c-out-fs, 14px); opacity: var(--c-out-opacity, 1); padding: var(--c-out-pad, 8px 14px); box-shadow: var(--c-out-shadow, 0 1px 2px rgba(0,0,0,.3)); justify-self: end; }
+    .lb-widget { background: var(--c-widget-bg, #151a23); color: var(--c-widget-fg, #e7eaf0); border: var(--c-widget-bwidth, 1px) var(--c-widget-bstyle, solid) var(--c-widget-border, #2a3242); border-radius: var(--c-widget-radius, 14px); font-size: var(--c-widget-fs, 13px); opacity: var(--c-widget-opacity, 1); padding: 8px 12px; box-shadow: var(--c-widget-shadow, 0 4px 12px rgba(0,0,0,.3)); }
+    .lb-menu { background: var(--c-menu-bg, rgba(21,26,35,.96)); color: var(--c-menu-fg, #e7eaf0); border: var(--c-menu-bwidth, 0px) var(--c-menu-bstyle, solid) var(--c-menu-border, transparent); border-radius: var(--c-menu-radius, 14px); font-size: var(--c-menu-fs, 13px); opacity: var(--c-menu-opacity, 1); padding: 8px 12px; }
+    .lb-composer { background: var(--c-composer-bg, #0c1018); color: var(--c-composer-fg, #e7eaf0); border: var(--c-composer-bwidth, 1px) var(--c-composer-bstyle, solid) var(--c-composer-border, #2a3242); border-radius: var(--c-composer-radius, 22px); font-size: var(--c-composer-fs, 14px); opacity: var(--c-composer-opacity, 1); padding: 10px 14px; max-width: 100% !important; }
+    .lb-meta { font-size: 11px; opacity: .8; margin-bottom: 3px; }
+    .lb-av { display: inline-flex; width: 16px; height: 16px; border-radius: 999px; background: rgba(255,255,255,.2); align-items: center; justify-content: center; font-size: 9px; }
+    .lb-logo { display: inline-block; margin-right: 6px; opacity: .85; }
+    .lb-tpl { display: grid; grid-template-columns: 180px 1fr; gap: 6px; align-items: center; margin-top: 6px; font-size: 12px; }
+    .lb-chip { display: inline-block; background: #2a3242; border-radius: 6px; padding: 1px 6px; font-size: 11px; margin-left: 4px; cursor: pointer; }
   </style>
 </head>
 <body>
@@ -100,10 +114,89 @@
     </section>
 
     <section>
+      <h2>Layout / template builder</h2>
+      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Shape every client's chat: per-component colours/borders/fonts and short text templates with <code>{{placeholders}}</code> and <code>{{> includes}}</code> (named partials). Templates render as TEXT only — no markup can reach other users. Saved server-side; clients pick it up on load (and every 5 min).</p>
+      <div class="row"><button id="lbLoad">Load</button><button id="lbSave">Save</button><button class="secondary" id="lbReset">Reset to defaults</button><button class="secondary" id="lbExport">Export JSON</button><label class="secondary" style="display:inline-block;background:#2a3242;padding:8px 12px;border-radius:8px;cursor:pointer;margin:0;color:#fff;font-size:inherit;">Import JSON <input id="lbImport" type="file" accept="application/json" style="display:none;" /></label></div>
+
+      <h2 style="margin-top:14px;">Component style</h2>
+      <div class="row">
+        <select id="lbComp">
+          <option value="chat">Main chat window</option><option value="in">Incoming message</option><option value="sys">Incoming system message</option>
+          <option value="out">Outgoing message</option><option value="widget">Recipients widget</option><option value="menu">Menu</option><option value="composer">Send panel (composer)</option>
+        </select>
+        <button class="secondary" id="lbClearComp">Clear this component</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <label style="margin:0;">Background <input id="lbBg" type="color" style="width:48px;padding:2px;" /> <input id="lbBgOn" type="checkbox" /></label>
+        <label style="margin:0;">Text <input id="lbFg" type="color" style="width:48px;padding:2px;" /> <input id="lbFgOn" type="checkbox" /></label>
+        <label style="margin:0;">Border <input id="lbBorder" type="color" style="width:48px;padding:2px;" /> <input id="lbBorderOn" type="checkbox" /></label>
+        <label style="margin:0;">Border style <select id="lbBstyle"><option value="">(default)</option><option>solid</option><option>dashed</option><option>dotted</option><option>double</option><option>none</option></select></label>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <label style="margin:0;">Border px <input id="lbBwidth" type="number" min="0" max="8" step="1" style="width:70px;" /></label>
+        <label style="margin:0;">Radius px <input id="lbRadius" type="number" min="0" max="48" step="1" style="width:70px;" /></label>
+        <label style="margin:0;">Font px <input id="lbFs" type="number" min="10" max="28" step="1" style="width:70px;" /></label>
+        <label style="margin:0;">Opacity <input id="lbOpacity" type="number" min="0.2" max="1" step="0.05" style="width:80px;" /></label>
+        <label style="margin:0;">Padding px <input id="lbPad" type="number" min="0" max="40" step="1" style="width:70px;" /></label>
+        <label style="margin:0;">Shadow <select id="lbShadow"><option value="">(default)</option><option value="true">on</option><option value="false">off</option></select></label>
+      </div>
+
+      <h2 style="margin-top:14px;">Templates</h2>
+      <div id="lbTemplates"></div>
+
+      <h2 style="margin-top:14px;">Includes (partials) — use as <code>{{> name}}</code></h2>
+      <div class="row"><input id="lbPartName" placeholder="name (a-z0-9_-)" style="max-width:180px;" /><input id="lbPartBody" placeholder="text with {{placeholders}}" style="flex:1;" /><button class="secondary" id="lbPartAdd">Add / update</button></div>
+      <div id="lbPartials" style="font-size:12px;margin-top:6px;"></div>
+
+      <h2 style="margin-top:14px;">Behaviour flags</h2>
+      <div class="row">
+        <label style="margin:0;"><input id="lfAvatars" type="checkbox" /> avatars</label>
+        <label style="margin:0;"><input id="lfTime" type="checkbox" /> time</label>
+        <label style="margin:0;"><input id="lfLock" type="checkbox" /> lock icon</label>
+        <label style="margin:0;"><input id="lfActions" type="checkbox" /> reply/forward</label>
+        <label style="margin:0;"><input id="lfSysLogo" type="checkbox" /> logo in system msgs</label>
+        <label style="margin:0;"><input id="lfSysDate" type="checkbox" /> full date in system msgs</label>
+        <label style="margin:0;">fold system after s <input id="lfCollapse" type="number" min="0" max="3600" style="width:80px;" /></label>
+        <label style="margin:0;">stay open s <input id="lfExpand" type="number" min="3" max="600" style="width:80px;" /></label>
+      </div>
+
+      <h2 style="margin-top:14px;">Live preview (test)</h2>
+      <div id="lbPreview" class="lb-preview">
+        <div class="lb-sys"><span class="lb-logo">⬢</span><b id="pvSysHead"></b><div id="pvSysBody">Joined room. Peers: 2. Second line of a longer system notice that folds after a while…</div></div>
+        <div class="lb-in"><div class="lb-meta"><span class="lb-av">A</span> Alice · <span id="pvInMeta"></span></div>Hi! Incoming message preview.</div>
+        <div class="lb-out"><div class="lb-meta">You · <span id="pvOutMeta"></span></div>Outgoing message preview.</div>
+        <div class="lb-widget"><b id="pvWidget"></b><div style="font-size:11px;opacity:.7;">Alice ✓ · Bob ✓ · Room ✓</div></div>
+        <div class="lb-menu"><b>Navigace</b><div style="font-size:11px;opacity:.7;">Místnost · Šifrování · Nástroje…</div></div>
+        <div class="lb-composer"><span id="pvComposer" style="opacity:.6;"></span></div>
+      </div>
+      <pre id="lbOut"></pre>
+    </section>
+
+    <section>
       <h2>Telephony &amp; SIP console</h2>
       <div class="row"><button id="btnTel">Refresh telephony</button></div>
-      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Voice + SMS via Twilio / Telnyx / Vonage. Keys come from server env (ENABLE_TELEPHONY=1). The audio/media path needs an external SIP↔WebRTC gateway — this console manages providers + trunk config + DID routing.</p>
+      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Voice + SMS via Twilio / Telnyx / Vonage. Keys come from server env (ENABLE_TELEPHONY=1). The audio/media path needs an external SIP↔WebRTC gateway — this console manages providers, webhooks, trunk config + DID routing.</p>
       <div id="telList"></div>
+
+      <h2 style="margin-top:14px;">Default providers</h2>
+      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Which provider handles SMS and which handles voice. Order: request → this choice (persisted) → SMS_PROVIDER / VOICE_PROVIDER in .env → first configured.</p>
+      <div class="row">
+        <label style="margin:0;">SMS</label>
+        <select id="defSms"><option value="">(env / auto)</option><option value="twilio">twilio</option><option value="telnyx">telnyx</option><option value="vonage">vonage</option></select>
+        <label style="margin:0;">Voice</label>
+        <select id="defVoice"><option value="">(env / auto)</option><option value="twilio">twilio</option><option value="telnyx">telnyx</option><option value="vonage">vonage</option></select>
+        <button id="btnTelDefaults">Save defaults</button>
+      </div>
+      <pre id="telDefaultsOut"></pre>
+
+      <h2 style="margin-top:14px;">Webhooks (/wh/{provider}/{type})</h2>
+      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Served by the main app. Set PUBLIC_BASE_URL so the URLs are absolute, then "Install" pushes them into the provider. Signatures are verified when TWILIO_AUTH_TOKEN / TELNYX_PUBLIC_KEY / VONAGE_SIGNATURE_SECRET are set.</p>
+      <div id="whList"></div>
+      <pre id="whOut"></pre>
+
+      <h2 style="margin-top:14px;">Inbound / status events</h2>
+      <div class="row"><button class="secondary" id="btnTelEvents">Refresh events</button><button class="secondary" id="btnTelEventsClear">Clear</button></div>
+      <pre id="telEvents" style="max-height:240px;"></pre>
 
       <h2 style="margin-top:14px;">Send test SMS / place test call</h2>
       <div class="row">
@@ -262,17 +355,62 @@
     $("btnLiveClear").onclick = () => { $("liveLog").textContent = ""; };
 
     // ---- Telephony & SIP console ----
+    const esc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
     $("btnTel").onclick = async () => {
       const r = await api("/admin/telephony");
       if (!r.ok) return show("telList", r.json);
       const s = r.json;
-      const conn = (c) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span><b>' + (c.kind || '').toUpperCase() + '</b> ' + c.label + (c.configured ? ' — <span class="ok">configured</span>' : ' — <span class="err">' + (c.reason || 'not configured') + '</span>') + '</span></div>';
-      const trunk = (tk) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span>☎ <b>' + tk.id + '</b> ' + (tk.label || '') + ' · ' + (tk.host || '?') + ':' + (tk.port || 5060) + ' · DIDs: ' + ((tk.didNumbers || []).join(', ') || '—') + (tk.hasPassword ? ' · 🔒' : '') + '</span></div>';
+      const src = (k) => (s.defaultsSource && s.defaultsSource[k]) || '—';
+      const conn = (c) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span><b>' + esc((c.kind || '').toUpperCase()) + '</b> ' + esc(c.label) + (c.configured ? ' — <span class="ok">configured</span>' : ' — <span class="err">' + esc(c.reason || 'not configured') + '</span>') + '</span></div>';
+      const trunk = (tk) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span>☎ <b>' + esc(tk.id) + '</b> ' + esc(tk.label || '') + ' · ' + esc(tk.host || '?') + ':' + esc(tk.port || 5060) + ' · DIDs: ' + esc((tk.didNumbers || []).join(', ') || '—') + (tk.hasPassword ? ' · 🔒' : '') + (tk.source === 'env' ? ' · <span class="ok">from .env (read-only)</span>' : '') + '</span></div>';
+      const p = s.persistence || {};
+      const persist = p.writable
+        ? '<span class="ok">persistent</span> → <code>' + esc(p.file) + '</code>' + (p.lastSaveError ? ' <span class="err">' + esc(p.lastSaveError) + '</span>' : '')
+        : '<span class="err">NOT writable</span> (' + esc(p.reason || 'mount a volume / set DATA_DIR') + ') — trunks saved in memory only';
+      const envT = s.envTrunks || { loaded: 0, errors: [] };
       $("telList").innerHTML =
-        '<p style="font-size:12px;color:#9aa6b8;">Telephony: ' + (s.enabled ? 'ENABLED' : 'disabled') + ' · defaults sms=' + (s.defaults && s.defaults.sms || '—') + ' voice=' + (s.defaults && s.defaults.voice || '—') + '</p>'
+        '<p style="font-size:12px;color:#9aa6b8;">Telephony: ' + (s.enabled ? 'ENABLED' : 'disabled')
+        + ' · SMS default: <b>' + esc(s.defaults && s.defaults.sms || '—') + '</b> (' + esc(src('sms')) + ')'
+        + ' · Voice default: <b>' + esc(s.defaults && s.defaults.voice || '—') + '</b> (' + esc(src('voice')) + ')'
+        + ' · PUBLIC_BASE_URL: ' + (s.publicBaseUrl ? '<code>' + esc(s.publicBaseUrl) + '</code>' : '<span class="err">not set</span>') + '</p>'
+        + '<p style="font-size:12px;color:#9aa6b8;">Storage: ' + persist + '</p>'
         + [].concat(s.sms || [], s.voice || []).map(conn).join('')
-        + '<h2 style="margin-top:10px;">Configured trunks</h2>' + ((s.sip && s.sip.length ? s.sip.map(trunk).join('') : '<p style="font-size:12px;color:#9aa6b8;">no trunks</p>'));
+        + '<h2 style="margin-top:10px;">Configured trunks</h2>'
+        + ((s.sip && s.sip.length ? s.sip.map(trunk).join('') : '<p style="font-size:12px;color:#9aa6b8;">no trunks</p>'))
+        + (envT.errors && envT.errors.length ? '<p class="err" style="font-size:12px;">SIP_TRUNKS errors: ' + esc(envT.errors.join('; ')) + '</p>' : '');
+      $("defSms").value = (s.settings && s.settings.smsProvider) || '';
+      $("defVoice").value = (s.settings && s.settings.voiceProvider) || '';
+      renderWebhooks(s.webhooks || [], s.publicBaseUrl);
     };
+    $("btnTelDefaults").onclick = async () => {
+      const r = await api("/admin/telephony/settings", { method: "PUT", body: JSON.stringify({ smsProvider: $("defSms").value, voiceProvider: $("defVoice").value }) });
+      show("telDefaultsOut", r.json);
+      $("btnTel").click();
+    };
+    function renderWebhooks(list, baseUrl) {
+      $("whList").innerHTML = list.map((p) => {
+        const v = p.verification || {};
+        const rows = (p.specs || []).map((w) => '<div style="font-size:12px;padding:2px 0;"><code>' + esc(w.method) + ' ' + esc(w.url || w.path) + '</code> — ' + esc(w.description) + '</div>').join('');
+        return '<div style="border-bottom:1px solid #1f2733;padding:8px 0;">'
+          + '<div class="row" style="justify-content:space-between;"><span><b>' + esc(p.provider) + '</b> · verification: ' + (v.configured ? '<span class="ok">' + esc(v.verify) + ' (enforced)</span>' : '<span class="err">not verified — set ' + esc(v.needs) + '</span>') + '</span>'
+          + '<button class="secondary btnWhInstall" data-provider="' + esc(p.provider) + '"' + (baseUrl ? '' : ' disabled title="set PUBLIC_BASE_URL"') + '>Install in ' + esc(p.provider) + '</button></div>'
+          + rows + '</div>';
+      }).join('');
+      document.querySelectorAll(".btnWhInstall").forEach((b) => b.onclick = async () => {
+        show("whOut", "Installing webhooks in " + b.dataset.provider + "…");
+        const r = await api("/admin/telephony/webhooks/install", { method: "POST", body: JSON.stringify({ provider: b.dataset.provider }) });
+        show("whOut", r.json);
+      });
+    }
+    $("btnTelEvents").onclick = async () => {
+      const r = await api("/admin/telephony/events?limit=100");
+      if (!r.ok) return show("telEvents", r.json);
+      $("telEvents").textContent = (r.json.events || []).slice().reverse().map((e) =>
+        new Date(e.ts).toLocaleTimeString() + '  ' + e.provider + '/' + e.type + '  [' + e.direction + ']  ' + e.summary
+        + (e.status ? '  status=' + e.status : '') + (e.route ? '  → trunk ' + e.route.trunkId : '') + (e.verified ? '' : '  (UNVERIFIED)')
+      ).join('\n') || '(no events yet)';
+    };
+    $("btnTelEventsClear").onclick = async () => { await api("/admin/telephony/events", { method: "DELETE" }); $("btnTelEvents").click(); };
     $("btnTelTest").onclick = async () => {
       const kind = $("telKind").value;
       const body = { kind, to: $("telTo").value.trim(), text: $("telText").value.trim() || undefined };
@@ -324,6 +462,93 @@
       });
       show("pushOut", r.json);
     };
+
+    // ---- Layout / template builder ----
+    // Mirrors client/src/lib/layout-config.ts (renderTemplate + css var mapping);
+    // the server re-validates everything on save.
+    const LB_COMPS = ["chat", "in", "sys", "out", "widget", "menu", "composer"];
+    const LB_TPL = {
+      systemHeader: ["appName", "date", "time", "room"], incomingMeta: ["sender", "time", "date", "room"], outgoingMeta: ["sender", "time", "date", "room"],
+      composerPlaceholder: ["placeholder", "room", "peerCount"], widgetTitle: ["title", "peerCount", "room"], chatEmptyTitle: ["title", "appName"], chatEmptyBody: ["body", "appName"],
+    };
+    const LB_DEFAULT_TPL = { systemHeader: "{{appName}} · {{date}}", incomingMeta: "{{time}}", outgoingMeta: "{{time}}", composerPlaceholder: "{{placeholder}}", widgetTitle: "{{title}}", chatEmptyTitle: "{{title}}", chatEmptyBody: "{{body}}" };
+    let lb = { version: 1, styles: {}, templates: { ...LB_DEFAULT_TPL }, partials: {}, flags: { showAvatars: true, showTime: true, showLockIcon: true, showActions: true, showSystemLogo: true, systemFullDate: true, systemCollapseAfterSec: 60, systemExpandForSec: 20 } };
+    function lbRender(tpl, vars, partials, depth) {
+      depth = depth || 0;
+      let out = String(tpl || "").replace(/\{\{>\s*([a-zA-Z0-9_-]+)\s*\}\}/g, (_m, n) => (depth >= 3 || !partials[n]) ? "" : lbRender(partials[n], vars, partials, depth + 1));
+      return out.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, n) => (n in vars ? String(vars[n]) : ""));
+    }
+    function lbPreview() {
+      const pv = $("lbPreview");
+      LB_COMPS.forEach((c) => ["bg", "fg", "border", "bstyle", "bwidth", "radius", "fs", "opacity", "pad", "shadow"].forEach((p) => pv.style.removeProperty("--c-" + c + "-" + p)));
+      for (const c of LB_COMPS) {
+        const s = lb.styles[c] || {};
+        for (const p of Object.keys(s)) {
+          const v = s[p]; let css = String(v);
+          if (["bwidth", "radius", "fs", "pad"].includes(p)) css = v + "px";
+          if (p === "shadow") css = v ? "0 1px 2px rgba(0,0,0,.3)" : "none";
+          pv.style.setProperty("--c-" + c + "-" + p, css);
+        }
+      }
+      const now = new Date();
+      const vars = { appName: "M5cet", sender: "Alice", time: now.toLocaleTimeString(), date: now.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) + ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), room: "brno-secure", peerCount: "2", placeholder: "Napiš šifrovanou zprávu…", title: "Příjemci", body: "Žádná historie, žádné ukládání." };
+      const t = lb.templates, p = lb.partials;
+      $("pvSysHead").textContent = lbRender(t.systemHeader, { ...vars, date: lb.flags.systemFullDate ? vars.date : vars.time }, p);
+      document.querySelector("#lbPreview .lb-logo").style.display = lb.flags.showSystemLogo ? "inline-block" : "none";
+      $("pvInMeta").textContent = lb.flags.showTime ? lbRender(t.incomingMeta, vars, p) : "";
+      $("pvOutMeta").textContent = lb.flags.showTime ? lbRender(t.outgoingMeta, vars, p) : "";
+      $("pvWidget").textContent = lbRender(t.widgetTitle, vars, p);
+      $("pvComposer").textContent = lbRender(t.composerPlaceholder, vars, p);
+      document.querySelector("#lbPreview .lb-av").style.display = lb.flags.showAvatars ? "inline-flex" : "none";
+    }
+    function lbFillStyleForm() {
+      const s = lb.styles[$("lbComp").value] || {};
+      const col = (id, key) => { $(id + "On").checked = !!s[key]; $(id).value = s[key] || "#3358d4"; };
+      col("lbBg", "bg"); col("lbFg", "fg"); col("lbBorder", "border");
+      $("lbBstyle").value = s.bstyle || ""; $("lbBwidth").value = s.bwidth ?? ""; $("lbRadius").value = s.radius ?? ""; $("lbFs").value = s.fs ?? "";
+      $("lbOpacity").value = s.opacity ?? ""; $("lbPad").value = s.pad ?? ""; $("lbShadow").value = s.shadow === undefined ? "" : String(s.shadow);
+    }
+    function lbReadStyleForm() {
+      const c = $("lbComp").value; const s = {};
+      if ($("lbBgOn").checked) s.bg = $("lbBg").value; if ($("lbFgOn").checked) s.fg = $("lbFg").value; if ($("lbBorderOn").checked) s.border = $("lbBorder").value;
+      if ($("lbBstyle").value) s.bstyle = $("lbBstyle").value;
+      const n = (id) => ($(id).value === "" ? undefined : Number($(id).value));
+      if (n("lbBwidth") !== undefined) s.bwidth = n("lbBwidth"); if (n("lbRadius") !== undefined) s.radius = n("lbRadius"); if (n("lbFs") !== undefined) s.fs = n("lbFs");
+      if (n("lbOpacity") !== undefined) s.opacity = n("lbOpacity"); if (n("lbPad") !== undefined) s.pad = n("lbPad");
+      if ($("lbShadow").value) s.shadow = $("lbShadow").value === "true";
+      if (Object.keys(s).length) lb.styles[c] = s; else delete lb.styles[c];
+      lbPreview();
+    }
+    function lbFillTemplates() {
+      $("lbTemplates").innerHTML = Object.keys(LB_TPL).map((k) => '<div class="lb-tpl"><span>' + k + '<br>' + LB_TPL[k].map((v) => '<span class="lb-chip" data-ins="{{' + v + '}}" data-for="' + k + '">{{' + v + '}}</span>').join("") + '</span><input data-tpl="' + k + '" value="' + esc(lb.templates[k] || "") + '" /></div>').join("");
+      document.querySelectorAll("[data-tpl]").forEach((i) => i.oninput = () => { lb.templates[i.dataset.tpl] = i.value; lbPreview(); });
+      document.querySelectorAll(".lb-chip").forEach((ch) => ch.onclick = () => { const i = document.querySelector('[data-tpl="' + ch.dataset.for + '"]'); i.value += ch.dataset.ins; lb.templates[ch.dataset.for] = i.value; lbPreview(); });
+    }
+    function lbFillPartials() {
+      const names = Object.keys(lb.partials);
+      $("lbPartials").innerHTML = names.length ? names.map((n) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:3px 0;"><span><code>{{&gt; ' + esc(n) + '}}</code> = ' + esc(lb.partials[n]) + '</span><button class="secondary" data-del="' + esc(n) + '">remove</button></div>').join("") : '<span style="color:#9aa6b8;">no partials</span>';
+      document.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => { delete lb.partials[b.dataset.del]; lbFillPartials(); lbPreview(); });
+    }
+    function lbFillFlags() {
+      const f = lb.flags; $("lfAvatars").checked = f.showAvatars; $("lfTime").checked = f.showTime; $("lfLock").checked = f.showLockIcon; $("lfActions").checked = f.showActions;
+      $("lfSysLogo").checked = f.showSystemLogo; $("lfSysDate").checked = f.systemFullDate; $("lfCollapse").value = f.systemCollapseAfterSec; $("lfExpand").value = f.systemExpandForSec;
+    }
+    function lbReadFlags() {
+      lb.flags = { showAvatars: $("lfAvatars").checked, showTime: $("lfTime").checked, showLockIcon: $("lfLock").checked, showActions: $("lfActions").checked, showSystemLogo: $("lfSysLogo").checked, systemFullDate: $("lfSysDate").checked, systemCollapseAfterSec: Number($("lfCollapse").value) || 0, systemExpandForSec: Number($("lfExpand").value) || 20 };
+      lbPreview();
+    }
+    function lbFillAll() { lbFillStyleForm(); lbFillTemplates(); lbFillPartials(); lbFillFlags(); lbPreview(); }
+    $("lbLoad").onclick = async () => { const r = await api("/admin/layout"); if (!r.ok) return show("lbOut", r.json); lb = r.json.layout; lbFillAll(); show("lbOut", { file: r.json.file, updatedAt: lb.updatedAt ? new Date(lb.updatedAt).toLocaleString() : "(defaults)", lastSaveError: r.json.lastSaveError || null }); };
+    $("lbSave").onclick = async () => { const r = await api("/admin/layout", { method: "PUT", body: JSON.stringify({ layout: lb }) }); show("lbOut", r.ok ? { saved: true, updatedAt: new Date(r.json.layout.updatedAt).toLocaleString() } : r.json); if (r.ok) { lb = r.json.layout; lbFillAll(); } };
+    $("lbReset").onclick = async () => { if (!confirm("Reset layout to defaults for all clients?")) return; const r = await api("/admin/layout/reset", { method: "POST" }); if (r.ok) { lb = r.json.layout; lbFillAll(); } show("lbOut", r.json); };
+    $("lbExport").onclick = () => { const a = document.createElement("a"); a.href = "data:application/json," + encodeURIComponent(JSON.stringify(lb, null, 2)); a.download = "m5cet-layout.json"; a.click(); };
+    $("lbImport").onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { const j = JSON.parse(await f.text()); lb = j.layout || j; lbFillAll(); show("lbOut", "Imported — press Save to apply."); } catch (err) { show("lbOut", "Invalid JSON: " + err.message); } e.target.value = ""; };
+    $("lbComp").onchange = lbFillStyleForm;
+    $("lbClearComp").onclick = () => { delete lb.styles[$("lbComp").value]; lbFillStyleForm(); lbPreview(); };
+    ["lbBg", "lbBgOn", "lbFg", "lbFgOn", "lbBorder", "lbBorderOn", "lbBstyle", "lbBwidth", "lbRadius", "lbFs", "lbOpacity", "lbPad", "lbShadow"].forEach((id) => { $(id).oninput = lbReadStyleForm; $(id).onchange = lbReadStyleForm; });
+    ["lfAvatars", "lfTime", "lfLock", "lfActions", "lfSysLogo", "lfSysDate", "lfCollapse", "lfExpand"].forEach((id) => { $(id).onchange = lbReadFlags; });
+    $("lbPartAdd").onclick = () => { const n = $("lbPartName").value.trim(); if (!/^[a-zA-Z0-9_-]{1,32}$/.test(n)) return show("lbOut", "partial name: a-z, 0-9, _ or -"); lb.partials[n] = $("lbPartBody").value; $("lbPartName").value = ""; $("lbPartBody").value = ""; lbFillPartials(); lbPreview(); };
+    lbFillAll();
   </script>
 </body>
 </html>

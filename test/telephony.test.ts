@@ -9,10 +9,11 @@ import {
 // Every env var any connector or the registry reads. Saved/cleared per test so
 // the suite is hermetic and never actually contacts a provider.
 const TEL_ENV = [
-  "ENABLE_TELEPHONY", "SMS_PROVIDER", "VOICE_PROVIDER",
+  "ENABLE_TELEPHONY", "SMS_PROVIDER", "VOICE_PROVIDER", "PUBLIC_BASE_URL",
   "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "TWILIO_FROM", "TWILIO_VOICE_URL",
-  "TELNYX_API_KEY", "TELNYX_FROM", "TELNYX_CONNECTION_ID",
+  "TELNYX_API_KEY", "TELNYX_FROM", "TELNYX_CONNECTION_ID", "TELNYX_MESSAGING_PROFILE_ID",
   "VONAGE_API_KEY", "VONAGE_API_SECRET", "VONAGE_FROM", "VONAGE_APPLICATION_ID",
+  "VONAGE_JWT_KEY", "VONAGE_PRIVATE_KEY", "VONAGE_PRIVATE_KEY_PATH",
 ];
 
 describe("isE164", () => {
@@ -64,10 +65,13 @@ describe("telephony registry gating + status", () => {
     expect(getSms()?.id).toBe("telnyx");
   });
 
-  it("reports the Vonage voice stub as unconfigured with an honest reason", () => {
+  it("reports Vonage voice unconfigured until VONAGE_APPLICATION_ID + VONAGE_JWT_KEY are set", () => {
     const vonage = buildVoiceConnectors().find((c) => c.id === "vonage");
     expect(vonage?.status().configured).toBe(false);
-    expect(vonage?.status().reason).toMatch(/JWT/);
+    expect(vonage?.status().reason).toMatch(/VONAGE_JWT_KEY/);
+    process.env.VONAGE_APPLICATION_ID = "app-1234";
+    process.env.VONAGE_JWT_KEY = "-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----";
+    expect(vonage?.status().configured).toBe(true);
   });
 });
 
@@ -86,9 +90,18 @@ describe("connector refuses to run unconfigured", () => {
     }
   });
 
-  it("Vonage voice stub throws TelephonyNotConfiguredError when invoked", async () => {
-    const vonage = buildVoiceConnectors().find((c) => c.id === "vonage");
-    await expect(vonage!.placeCall({ to: "+14155550123" })).rejects.toBeInstanceOf(TelephonyNotConfiguredError);
+  it("Vonage voice throws TelephonyNotConfiguredError when invoked without app id / JWT key", async () => {
+    const keys = ["VONAGE_APPLICATION_ID", "VONAGE_JWT_KEY", "VONAGE_PRIVATE_KEY", "VONAGE_PRIVATE_KEY_PATH"];
+    const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+    keys.forEach((k) => delete process.env[k]);
+    process.env.VONAGE_FROM = "447700900000";
+    try {
+      const vonage = buildVoiceConnectors().find((c) => c.id === "vonage");
+      await expect(vonage!.placeCall({ to: "+14155550123" })).rejects.toBeInstanceOf(TelephonyNotConfiguredError);
+    } finally {
+      delete process.env.VONAGE_FROM;
+      keys.forEach((k) => { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; });
+    }
   });
 });
 

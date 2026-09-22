@@ -35,6 +35,8 @@ import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 import { registerPluginRoutes } from "./plugins/routes";
 import { registerPasskeyRoutes } from "./passkey";
 import { registerTelephonyRoutes } from "./telephony/routes";
+import { registerWebhookRoutes } from "./telephony/webhooks";
+import { registerLayoutRoutes } from "./layout";
 
 const fileProxy = new FileProxy();
 
@@ -203,6 +205,11 @@ export async function registerRoutes(
   // Optional telephony (voice + SMS via Twilio/Telnyx/Vonage, SIP trunk config),
   // gated by ENABLE_TELEPHONY.
   registerTelephonyRoutes(app);
+  // Provider webhooks (/wh/{provider}/{type}): signature-verified, always
+  // mounted so delivery receipts / inbound SMS / call events can reach us.
+  registerWebhookRoutes(app);
+  // Admin-edited layout / templates for every client (GET /api/layout).
+  registerLayoutRoutes(app);
 
   app.get("/api/health", (_req, res) => {
     res.json({

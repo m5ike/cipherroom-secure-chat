@@ -599,6 +599,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`CHANGELOG.md`](CHANGELOG.md)                          | Historie verzí                                 |
 | [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |
 | [`docs/session-and-sharing.md`](docs/session-and-sharing.md) | Session cache, vynucený stav, pozvánky s kódem, Smazat vše a odejít |
+| [`docs/telephony.md`](docs/telephony.md)                | Hovory a SMS (Twilio / Telnyx / Vonage vč. JWT), volba providera, perzistentní SIP trunky + `.env`, webhooky `/wh/*` s ověřením podpisů |
+| [`docs/layout-builder.md`](docs/layout-builder.md)      | Admin Layout / template builder: styly komponent, šablony se zástupnými parametry a includes, živý náhled, sbalování systémových zpráv |
 | [`docs/knowledge-base.md`](docs/knowledge-base.md)      | Znalostní báze: mapa kódu, co server vidí, známé mezery |
 | [`docs/optimizations.md`](docs/optimizations.md)        | Změřené optimalizace a jak je reprodukovat     |
 

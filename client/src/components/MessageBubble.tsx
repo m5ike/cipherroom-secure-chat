@@ -47,6 +47,10 @@ export type MessageBubbleProps = {
   onForward?: () => void;
   onDisplayed?: (id: string) => void;
   onReplyJump?: (id: string) => void;
+  /** System notices only: fold to the first line after N s (0 = never)… */
+  systemCollapseAfterSec?: number;
+  /** …and stay unfolded for N s after a hover/click. */
+  systemExpandForSec?: number;
 };
 
 function useTabVisible(): boolean {
@@ -133,6 +137,24 @@ export function MessageBubble(props: MessageBubbleProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabVisible, inView, isSystem, id]);
 
+  // System notices fold to their first line after a while; hover/click unfolds
+  // them briefly, then they fade back.
+  const [sysCollapsed, setSysCollapsed] = useState(false);
+  const sysArmedRef = useRef(false);
+  const sysTimerRef = useRef<number | null>(null);
+  useEffect(() => {
+    const after = props.systemCollapseAfterSec ?? 0;
+    if (!isSystem || after <= 0) return;
+    const t = window.setTimeout(() => { sysArmedRef.current = true; setSysCollapsed(true); }, after * 1000);
+    return () => { window.clearTimeout(t); if (sysTimerRef.current !== null) window.clearTimeout(sysTimerRef.current); };
+  }, [isSystem, props.systemCollapseAfterSec]);
+  function sysUnfold() {
+    if (!isSystem || !sysArmedRef.current) return;
+    setSysCollapsed(false);
+    if (sysTimerRef.current !== null) window.clearTimeout(sysTimerRef.current);
+    sysTimerRef.current = window.setTimeout(() => setSysCollapsed(true), (props.systemExpandForSec ?? 20) * 1000);
+  }
+
   async function submitCode() {
     if (!flags?.sealed) return;
     try {
@@ -154,6 +176,7 @@ export function MessageBubble(props: MessageBubbleProps) {
     isPrivate ? "msg-bubble--private" : "",
     flags?.vanishSeconds ? "vanish-ring" : "",
     props.vanished ? "msg-bubble--vanished" : "",
+    sysCollapsed ? "msg-bubble--sys-collapsed" : "",
   ].filter(Boolean).join(" ");
 
   const style: CSSProperties = { ...(props.bubbleStyle ?? {}) };
@@ -161,7 +184,14 @@ export function MessageBubble(props: MessageBubbleProps) {
 
   return (
     <article ref={rootRef} data-testid={`message-${id}`} className={wrapCls}>
-      <div className={bubbleCls} style={style} data-private={isPrivate ? "1" : undefined}>
+      <div
+        className={bubbleCls}
+        style={style}
+        data-private={isPrivate ? "1" : undefined}
+        data-collapsed={sysCollapsed ? "1" : undefined}
+        onMouseEnter={isSystem ? sysUnfold : undefined}
+        onClick={isSystem ? sysUnfold : undefined}
+      >
         {!isSystem && props.onInfo ? (
           <button type="button" className="msg-info-btn" onClick={() => props.onInfo!(id)} aria-label={t(lang, "msginfo.title")} title={t(lang, "msginfo.title")} data-testid={`msg-info-${id}`}>
             <Info className="h-3.5 w-3.5" />
@@ -232,12 +262,13 @@ export function MessageBubble(props: MessageBubbleProps) {
               </button>
             ) : (
               <div
+                className={isSystem ? "msg-sys__body" : undefined}
                 onPointerDown={tap ? () => setHolding(true) : undefined}
                 onPointerUp={tap ? () => setHolding(false) : undefined}
                 onPointerLeave={tap ? () => setHolding(false) : undefined}
                 onPointerCancel={tap ? () => setHolding(false) : undefined}
               >
-                {bodyText ? <p className="msg-bubble__text">{props.renderText(bodyText)}</p> : null}
+                {bodyText ? <p className="msg-bubble__text">{props.renderText(bodyText)}{isSystem ? <span className="msg-sys__more" aria-hidden="true">…</span> : null}</p> : null}
                 {props.attachment ? (
                   <div className="msg-bubble__attach">
                     {props.attachment.kind === "image" ? (

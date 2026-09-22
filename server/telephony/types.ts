@@ -46,6 +46,27 @@ export interface VoiceConnector extends BaseConnector {
 
 export type AnyTelephonyConnector = SmsConnector | VoiceConnector;
 
+export type TelephonyProvider = "twilio" | "telnyx" | "vonage";
+export const PROVIDERS: readonly TelephonyProvider[] = ["twilio", "telnyx", "vonage"] as const;
+export const isProvider = (v: unknown): v is TelephonyProvider => PROVIDERS.includes(v as TelephonyProvider);
+
+/** How an inbound webhook for a provider is authenticated. */
+export type WebhookVerify = "twilio-hmac" | "telnyx-ed25519" | "vonage-jwt" | "vonage-sig" | "none";
+
+/** One webhook endpoint the app serves for a provider, at /wh/{provider}/{type}. */
+export type WebhookSpec = {
+  provider: TelephonyProvider;
+  type: string;
+  path: string; // e.g. /wh/vonage/events
+  url: string; // absolute when PUBLIC_BASE_URL is set, else ""
+  method: "POST" | "GET" | "ANY";
+  description: string;
+  verify: WebhookVerify;
+};
+
+/** Outcome of pushing our webhook URLs into the provider's configuration. */
+export type InstallResult = { ok: boolean; provider: TelephonyProvider; message: string; details: string[] };
+
 /** Thrown when a connector is invoked without its required configuration. */
 export class TelephonyNotConfiguredError extends Error {
   constructor(public connectorId: string, reason: string) {

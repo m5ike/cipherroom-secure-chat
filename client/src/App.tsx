@@ -97,7 +97,9 @@ import { deriveRoomKey, encryptEnvelope, decryptEnvelope, toBase64, type DataCha
 import { newId } from "./lib/id";
 import { TransferCard } from "./components/TransferCard";
 import { MainMenu } from "./components/MainMenu";
-import { formatTime, formatBytes } from "./lib/format";
+import { formatTime, formatFullDate, formatBytes } from "./lib/format";
+import { fetchLayoutConfig, applyLayoutStyles, loadCachedLayout } from "./lib/layout-client";
+import { renderTemplate, type LayoutConfig } from "./lib/layout-config";
 import { RTC_CONFIG, turnConfigPromise } from "./lib/rtc";
 import { M5Logo } from "./components/M5Logo";
 import { InvitePrompt, ShareSection } from "./components/SharePanel";
@@ -393,6 +395,24 @@ function ChatApp() {
   const peerStatsRef = useRef<Map<string, { sent: number; recv: number; openedAt: number }>>(new Map());
   const peerNetRef = useRef<Map<string, { ip?: string; candidateType?: string }>>(new Map());
   const widgetPersistRef = useRef<number | null>(null);
+  // Admin-edited layout / templates (styles → CSS vars, text templates → labels).
+  // Starts from the cached copy for an instant first paint, then refreshes.
+  const [layout, setLayout] = useState<LayoutConfig>(() => loadCachedLayout());
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => { void fetchLayoutConfig().then((cfg) => { if (!cancelled) setLayout(cfg); }); };
+    load();
+    const timer = window.setInterval(load, 5 * 60 * 1000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, []);
+  useEffect(() => { applyLayoutStyles(layout); }, [layout]);
+  const tplVars = (message: { senderName: string; createdAt: number }) => ({
+    sender: message.senderName,
+    time: formatTime(message.createdAt, lang, prefs.timezone),
+    date: formatFullDate(message.createdAt, lang, prefs.timezone),
+    room,
+    appName: "M5cet",
+  });
 
   const socketRef = useRef<WebSocket | null>(null);
   const peersRef = useRef<Map<string, PeerHandle>>(new Map());
@@ -2292,8 +2312,8 @@ function ChatApp() {
                   <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
                     <Lock className="h-6 w-6" />
                   </div>
-                  <h3 className="text-lg font-semibold">{t(lang, "chat.empty.title")}</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">{t(lang, "chat.empty.body")}</p>
+                  <h3 className="text-lg font-semibold">{renderTemplate(layout.templates.chatEmptyTitle, { title: t(lang, "chat.empty.title"), appName: "M5cet" }, layout.partials)}</h3>
+                  <p className="mt-2 text-sm text-muted-foreground">{renderTemplate(layout.templates.chatEmptyBody, { body: t(lang, "chat.empty.body"), appName: "M5cet" }, layout.partials)}</p>
                   <button
                     type="button"
                     onClick={() => setActivePanel("join")}
@@ -2311,11 +2331,19 @@ function ChatApp() {
                   const isSystem = message.senderId === "system";
                   const styleKey = styleKeyFor(message.senderName, message.senderId);
                   const perStyle = isSystem ? undefined : prefs.messageStyles[styleKey];
+                  const vars = tplVars(message);
                   const badge = isSystem ? (
-                    <span className="msg-bubble__label">{message.senderName}</span>
+                    <span className="msg-bubble__label">
+                      {layout.flags.showSystemLogo ? <M5Logo mono size={16} className="msg-sys-logo" /> : null}
+                      {renderTemplate(layout.templates.systemHeader, {
+                        ...vars,
+                        appName: message.senderName,
+                        date: layout.flags.systemFullDate ? vars.date : vars.time,
+                      }, layout.partials)}
+                    </span>
                   ) : message.mine ? (
                     <span className="msg-bubble__label inline-flex items-center gap-1.5">
-                      <Avatar name={message.senderName} avatar={prefs.avatar} size={20} />
+                      {layout.flags.showAvatars ? <Avatar name={message.senderName} avatar={prefs.avatar} size={20} /> : null}
                       {message.senderName}
                     </span>
                   ) : (
@@ -2338,9 +2366,9 @@ function ChatApp() {
                       senderName={message.senderName}
                       mine={message.mine}
                       isSystem={isSystem}
-                      secure={message.secure}
+                      secure={message.secure && layout.flags.showLockIcon}
                       createdAt={message.createdAt}
-                      timeLabel={formatTime(message.createdAt, lang, prefs.timezone)}
+                      timeLabel={isSystem || !layout.flags.showTime ? "" : renderTemplate(message.mine ? layout.templates.outgoingMeta : layout.templates.incomingMeta, vars, layout.partials)}
                       text={message.text}
                       attachment={message.attachment}
                       flags={message.flags}
@@ -2358,10 +2386,12 @@ function ChatApp() {
                       renderText={linkify}
                       formatSize={formatBytes}
                       onInfo={isSystem ? undefined : (mid) => setMsgInfoFor(mid)}
-                      onReply={isSystem ? undefined : () => startReply(message)}
-                      onForward={isSystem ? undefined : () => void forwardMessage(message)}
+                      onReply={isSystem || !layout.flags.showActions ? undefined : () => startReply(message)}
+                      onForward={isSystem || !layout.flags.showActions ? undefined : () => void forwardMessage(message)}
                       onDisplayed={onMessageDisplayed}
                       onReplyJump={scrollToMessage}
+                      systemCollapseAfterSec={layout.flags.systemCollapseAfterSec}
+                      systemExpandForSec={layout.flags.systemExpandForSec}
                     />
                   );
                 })}
@@ -2447,7 +2477,10 @@ function ChatApp() {
                   id="message"
                   rows={1}
                   className="composer-input"
-                  placeholder={openPeerCount > 0 ? t(lang, "chat.placeholder") : t(lang, "chat.placeholder.waiting")}
+                  placeholder={renderTemplate(layout.templates.composerPlaceholder, {
+                    placeholder: openPeerCount > 0 ? t(lang, "chat.placeholder") : t(lang, "chat.placeholder.waiting"),
+                    room, peerCount: String(openPeerCount),
+                  }, layout.partials)}
                   value={messageInput}
                   onChange={(event) => setMessageInput(event.target.value)}
                   onKeyDown={handleMessageKeyDown}
@@ -2721,6 +2754,7 @@ function ChatApp() {
           onMove={(x, y) => updateWidget({ x, y })}
           onMinimize={(min) => updateWidget({ minimized: min })}
           onUpdate={(patch) => updateWidget(patch)}
+          title={renderTemplate(layout.templates.widgetTitle, { title: t(lang, "recipients.title"), peerCount: String(openPeerCount), room }, layout.partials)}
           lang={lang}
         />
       ) : null}

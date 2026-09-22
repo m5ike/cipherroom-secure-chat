@@ -7,19 +7,23 @@
 //
 // Admin routes (registerAdminTelephonyRoutes) are exported SEPARATELY so the
 // parent can mount them AFTER admin auth. They expose the full connector
-// snapshot, a real test action, and the SIP trunk console (config only).
+// snapshot, default-provider selection (persisted), a real test action, the
+// provider webhook list + one-click install, the inbound event log, and the
+// SIP trunk console (persistent config only — no media).
 //
-// Logging reuses the shared pluginLog with an existing kind ("admin") and puts
-// "sms"/"call" in the message — per task, log.ts must not be edited.
+// Provider webhooks themselves live in webhooks.ts and are mounted on the MAIN
+// app (registerWebhookRoutes) at /wh/{provider}/{type}.
 
 import { type Express, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { pluginLog } from "../plugins/log";
+import { installProviderWebhooks } from "./connectors";
 import {
-  telephonyEnabled, getSms, getVoice, publicStatus, registrySnapshot,
+  telephonyEnabled, getSms, getVoice, publicStatus, registrySnapshot, setDefaultProviders,
 } from "./registry";
 import { sipStore, type SipTrunkInput } from "./sip";
-import { TelephonyNotConfiguredError, isE164 } from "./types";
+import { TelephonyNotConfiguredError, isE164, isProvider } from "./types";
+import { telephonyEvents } from "./webhooks";
 
 const MAX_SMS_CHARS = 1600;   // ~10 GSM segments; a hard body cap
 const MAX_NUMBER_CHARS = 20;
@@ -90,9 +94,21 @@ export function registerTelephonyRoutes(app: Express): void {
 // Mount AFTER admin auth in the parent (e.g. app.use("/admin", requireAuth)).
 
 export function registerAdminTelephonyRoutes(app: Express): void {
-  // Full snapshot: every connector + config state (never secrets) + SIP trunks.
+  // Full snapshot: connectors + config state (never secrets), defaults and
+  // where they come from, persistence status, SIP trunks, webhook URLs.
   app.get("/admin/telephony", (_req, res) => {
     res.json({ ok: true, ...registrySnapshot() });
+  });
+
+  // Choose which provider is the default for SMS / voice (persisted; beats
+  // SMS_PROVIDER / VOICE_PROVIDER from .env). Empty string clears the choice.
+  app.put("/admin/telephony/settings", (req: Request, res: Response) => {
+    const body = (req.body || {}) as Record<string, unknown>;
+    const pick = (v: unknown): string | null | undefined => (v === undefined ? undefined : v === null ? null : typeof v === "string" ? v.trim() : undefined);
+    const r = setDefaultProviders({ sms: pick(body.smsProvider), voice: pick(body.voiceProvider) });
+    if (!r.ok) return res.status(400).json({ ok: false, message: r.message });
+    pluginLog.record({ level: "info", kind: "admin", message: `telephony defaults set: sms=${r.settings.smsProvider ?? "(env/auto)"} voice=${r.settings.voiceProvider ?? "(env/auto)"}` });
+    res.json({ ok: true, settings: r.settings, ...(({ defaults, defaultsSource }) => ({ defaults, defaultsSource }))(registrySnapshot()) });
   });
 
   // Real test of one connector; logs to the shared plugin log stream.
@@ -123,23 +139,46 @@ export function registerAdminTelephonyRoutes(app: Express): void {
     }
   });
 
-  // ---- SIP trunk console (config + routing only; no media) ----------------
+  // ---- Webhooks: what to point each provider at, and one-click install -----
+  app.get("/admin/telephony/webhooks", (_req, res) => {
+    const snap = registrySnapshot();
+    res.json({ ok: true, publicBaseUrl: snap.publicBaseUrl, providers: snap.webhooks });
+  });
+
+  app.post("/admin/telephony/webhooks/install", async (req: Request, res: Response) => {
+    const provider = String(((req.body || {}) as Record<string, unknown>).provider || "");
+    if (!isProvider(provider)) return res.status(400).json({ ok: false, message: "provider must be twilio | telnyx | vonage." });
+    const result = await installProviderWebhooks(provider);
+    pluginLog.record({ level: result.ok ? "info" : "warn", kind: "admin", connector: provider, message: `webhook install: ${result.message}` });
+    res.status(result.ok ? 200 : 400).json(result);
+  });
+
+  // ---- Inbound / status events received on /wh/* ----------------------------
+  app.get("/admin/telephony/events", (req, res) => {
+    const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
+    res.json({ ok: true, events: telephonyEvents.recent(limit) });
+  });
+  app.delete("/admin/telephony/events", (_req, res) => {
+    telephonyEvents.clear();
+    res.json({ ok: true });
+  });
+
+  // ---- SIP trunk console (persistent config + routing only; no media) -------
   app.get("/admin/telephony/sip/trunks", (_req, res) => {
-    res.json({ ok: true, trunks: sipStore.list() });
+    res.json({ ok: true, trunks: sipStore.list(), persistent: sipStore.persistent, lastSaveError: sipStore.saveError });
   });
 
   // PUT upserts: an existing id updates that trunk, a new (or absent) id creates
   // one — so an operator can name trunks (e.g. "prague1") from the SIP console.
+  // Trunks that come from SIP_TRUNKS in .env are read-only here.
   app.put("/admin/telephony/sip/trunks", (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
     const id = typeof body.id === "string" ? body.id : "";
-    if (id && sipStore.get(id)) {
-      const r = sipStore.update(id, body as unknown as Partial<SipTrunkInput>);
-      if (!r.ok) return res.status(400).json({ ok: false, message: r.message });
-      return res.json({ ok: true, trunk: r.trunk });
-    }
-    const r = sipStore.create(body as unknown as SipTrunkInput);
-    if (!r.ok) return res.status(400).json({ ok: false, message: r.message });
+    const r = id && sipStore.get(id)
+      ? sipStore.update(id, body as unknown as Partial<SipTrunkInput>)
+      : sipStore.create(body as unknown as SipTrunkInput);
+    if (!r.ok) return res.status(r.message.includes(".env") ? 409 : 400).json({ ok: false, message: r.message });
+    if (sipStore.saveError) return res.status(200).json({ ok: true, trunk: r.trunk, warning: `saved in memory only — ${sipStore.saveError}` });
     res.json({ ok: true, trunk: r.trunk });
   });
 
@@ -147,7 +186,9 @@ export function registerAdminTelephonyRoutes(app: Express): void {
     const body = (req.body || {}) as Record<string, unknown>;
     const id = typeof body.id === "string" && body.id ? body.id : String(req.query.id ?? "");
     if (!id) return res.status(400).json({ ok: false, message: "id required." });
-    if (!sipStore.remove(id)) return res.status(404).json({ ok: false, message: "not found" });
+    const r = sipStore.remove(id);
+    if (r === "readonly") return res.status(409).json({ ok: false, message: "trunk is defined in .env (SIP_TRUNKS); remove it there and restart" });
+    if (!r) return res.status(404).json({ ok: false, message: "not found" });
     res.json({ ok: true });
   });
 

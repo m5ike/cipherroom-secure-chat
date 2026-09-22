@@ -23,3 +23,7 @@ data.db-journal
 
 # Written by install.sh inside an install directory
 .m5cet/
+
+# Private keys / certificates (e.g. Vonage application key) — never commit
+*.key
+*.pem

@@ -28,7 +28,7 @@ function LatencyMeter({ rttMs, open }: { rttMs?: number; open: boolean }) {
 }
 
 export function RecipientsWidget({
-  peers, room, state, selected, onTogglePeer, onToggleAuto, onSelectAll, onSelectNone, onPeerInfo, onRoomInfo, onMove, onMinimize, onUpdate, lang,
+  peers, room, state, selected, onTogglePeer, onToggleAuto, onSelectAll, onSelectNone, onPeerInfo, onRoomInfo, onMove, onMinimize, onUpdate, title, lang,
 }: {
   peers: WidgetPeer[];
   room: string;
@@ -43,12 +43,15 @@ export function RecipientsWidget({
   onMove: (x: number, y: number) => void;
   onMinimize: (min: boolean) => void;
   onUpdate: (patch: Partial<WidgetState>) => void;
+  /** Rendered title (admin Layout builder template); falls back to the i18n label. */
+  title?: string;
   lang: Lang;
 }) {
   const dragRef = useRef<{ dx: number; dy: number } | null>(null);
   const [dragging, setDragging] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
   const anchored = !state.locked && state.x === 0 && state.y === 0;
+  const widgetTitle = title ?? t(lang, "recipients.title");
 
   useEffect(() => {
     if (!dragging) return;
@@ -96,7 +99,7 @@ export function RecipientsWidget({
 
   if (state.minimized) {
     return (
-      <button type="button" className="recip-fab" style={posStyle} onClick={() => onMinimize(false)} data-testid="recip-fab" title={t(lang, "recipients.title")}>
+      <button type="button" className="recip-fab" style={posStyle} onClick={() => onMinimize(false)} data-testid="recip-fab" title={widgetTitle}>
         <Users className="h-5 w-5" />
         <span className="recip-fab__count">{openPeers.length}</span>
       </button>
@@ -107,10 +110,10 @@ export function RecipientsWidget({
   const ordered = [...peers].sort((a, b) => (a.status === "open" ? 0 : 1) - (b.status === "open" ? 0 : 1));
 
   return (
-    <div className={`recip-widget${state.locked ? " is-locked" : ""}`} style={appearance} data-testid="recip-widget" role="group" aria-label={t(lang, "recipients.title")}>
+    <div className={`recip-widget${state.locked ? " is-locked" : ""}`} style={appearance} data-testid="recip-widget" role="group" aria-label={widgetTitle}>
       <div className="recip-widget__head" onPointerDown={startDrag} data-testid="recip-drag">
         {state.locked ? <Lock className="h-4 w-4 opacity-70" /> : <GripHorizontal className="h-4 w-4 opacity-60" />}
-        <span className="recip-widget__title">{t(lang, "recipients.title")}</span>
+        <span className="recip-widget__title">{widgetTitle}</span>
         <button type="button" className="recip-widget__min" onClick={() => setShowConfig((v) => !v)} aria-label={t(lang, "recipients.settings")} title={t(lang, "recipients.settings")} data-testid="recip-config-toggle">
           <Settings2 className="h-4 w-4" />
         </button>

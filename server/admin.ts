@@ -22,6 +22,7 @@ import { registrySnapshot, getAi, getTts, getStt } from "./plugins/registry";
 import { pluginLog } from "./plugins/log";
 import { base64ToBytes } from "./plugins/types";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
+import { registerAdminLayoutRoutes } from "./layout";
 import {
   ADMIN_COMMAND_ALLOWLIST,
   pushSubscriptions,
@@ -78,6 +79,8 @@ app.use("/admin", requireAuth);
 
 // Telephony + SIP console (all under /admin, so behind the auth middleware).
 registerAdminTelephonyRoutes(app);
+// Layout / template builder (persisted, served to clients via /api/layout).
+registerAdminLayoutRoutes(app);
 
 app.get("/admin/metrics", (_req, res) => {
   const mem = process.memoryUsage();

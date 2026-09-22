@@ -4,9 +4,15 @@
 #   docker compose up -d --build                  # app only
 #   docker compose --profile admin up -d --build  # app + admin API
 #
-# Values come from a .env file next to this one (never committed). The admin
-# service is the SAME image with a different entry point, and it serves its
-# own GUI at "/", so no extra image or web server is needed.
+# Values come from a .env file next to this one (never committed): the whole
+# file is passed to both services (env_file), so every module — push, TURN,
+# AI/speech, telephony (ENABLE_TELEPHONY, PUBLIC_BASE_URL, TWILIO_* …), SIP
+# trunks (SIP_TRUNKS) — is configured there. The admin service is the SAME
+# image with a different entry point and serves its own GUI at "/".
+#
+# Persistent state (SIP trunks created in the admin console, default-provider
+# choice) lives in the shared `m5cet-data` volume at /data (DATA_DIR), so it
+# survives restarts and the app sees what the admin saved.
 
 services:
   app:
@@ -15,11 +21,15 @@ services:
       dockerfile: Dockerfile
     image: m5cet:local
     restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "127.0.0.1:${APP_PORT:-5005}:5000"
     environment:
       NODE_ENV: production
       PORT: "5000"
+      DATA_DIR: /data
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.org}
@@ -27,6 +37,8 @@ services:
       TURN_SERVER_URL: ${TURN_SERVER_URL:-}
       TURN_USERNAME: ${TURN_USERNAME:-}
       TURN_CREDENTIAL: ${TURN_CREDENTIAL:-}
+    volumes:
+      - m5cet-data:/data
     read_only: true
     tmpfs: [/tmp]
     cap_drop: [ALL]
@@ -38,6 +50,9 @@ services:
     restart: unless-stopped
     depends_on: [app]
     command: ["node", "dist/admin.cjs"]
+    env_file:
+      - path: .env
+        required: false
     ports:
       - "127.0.0.1:${ADMIN_PORT:-5050}:5050"
     environment:
@@ -45,10 +60,13 @@ services:
       ENABLE_ADMIN: "1"
       ADMIN_PORT: "5050"
       ADMIN_BIND: "0.0.0.0"
+      DATA_DIR: /data
       ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:-}
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
       VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@example.org}
+    volumes:
+      - m5cet-data:/data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5050/admin/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -59,3 +77,6 @@ services:
     tmpfs: [/tmp]
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
+
+volumes:
+  m5cet-data: {}

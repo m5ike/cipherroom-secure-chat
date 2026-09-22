@@ -439,7 +439,11 @@
 
   /* Menu panel: solid + glassmorphism, positioned right under the toggle. */
   .menu-panel {
-    background: hsl(var(--card) / 0.96);
+    background: var(--c-menu-bg, hsl(var(--card) / 0.96));
+    color: var(--c-menu-fg, inherit);
+    font-size: var(--c-menu-fs, inherit);
+    opacity: var(--c-menu-opacity, 1);
+    border: var(--c-menu-bwidth, 0px) var(--c-menu-bstyle, solid) var(--c-menu-border, transparent);
     backdrop-filter: blur(20px) saturate(160%);
     -webkit-backdrop-filter: blur(20px) saturate(160%);
   }
@@ -647,9 +651,12 @@
     align-items: flex-end;
     gap: 0.25rem;
     padding: 0.25rem;
-    border: 1px solid hsl(var(--input));
-    border-radius: 1.5rem;
-    background: hsl(var(--background));
+    border: var(--c-composer-bwidth, 1px) var(--c-composer-bstyle, solid) var(--c-composer-border, hsl(var(--input)));
+    border-radius: var(--c-composer-radius, 1.5rem);
+    background: var(--c-composer-bg, hsl(var(--background)));
+    color: var(--c-composer-fg, inherit);
+    font-size: var(--c-composer-fs, inherit);
+    opacity: var(--c-composer-opacity, 1);
     transition: border-color 150ms ease-out, box-shadow 150ms ease-out;
   }
   .composer-bar:focus-within {
@@ -864,7 +871,7 @@
 }
 
 /* ---------- Conversation surface ---------- */
-.chat-surface { position: relative; isolation: isolate; background-color: hsl(var(--background)); }
+.chat-surface { position: relative; isolation: isolate; background-color: var(--c-chat-bg, hsl(var(--background))); color: var(--c-chat-fg, inherit); font-size: var(--c-chat-fs, inherit); opacity: var(--c-chat-opacity, 1); }
 .chat-surface::before {
   content: ""; position: absolute; inset: 0; z-index: -2; pointer-events: none;
   background-color: var(--chat-bg-color, transparent);
@@ -933,16 +940,41 @@
   max-width: 88%; border-radius: 1.5rem; padding: 0.6rem 0.9rem;
   box-shadow: var(--shadow-sm); border: 1px solid transparent; overflow-wrap: anywhere;
 }
-.msg-bubble--theirs { border-color: hsl(var(--border)); background: hsl(var(--card)); }
-.msg-bubble--mine { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
-.msg-bubble--system { border-color: hsl(var(--border)); background: hsl(var(--card)); color: hsl(var(--muted-foreground)); font-size: 0.85em; }
+/* Each variant reads the admin Layout builder's CSS variables (--c-<id>-<prop>)
+   with the template default as fallback. Incoming = a subtle primary tint so it
+   reads apart from the muted system notices. */
+.msg-bubble--theirs {
+  background: var(--c-in-bg, hsl(var(--primary) / 0.09));
+  color: var(--c-in-fg, hsl(var(--foreground)));
+  border-color: var(--c-in-border, hsl(var(--primary) / 0.28));
+  border-style: var(--c-in-bstyle, solid); border-width: var(--c-in-bwidth, 1px);
+  border-radius: var(--c-in-radius, 1.5rem); font-size: var(--c-in-fs, 0.9rem);
+  opacity: var(--c-in-opacity, 1); padding: var(--c-in-pad, 0.6rem 0.9rem); box-shadow: var(--c-in-shadow, var(--shadow-sm));
+}
+.msg-bubble--mine {
+  background: var(--c-out-bg, hsl(var(--primary)));
+  color: var(--c-out-fg, hsl(var(--primary-foreground)));
+  border-color: var(--c-out-border, transparent);
+  border-style: var(--c-out-bstyle, solid); border-width: var(--c-out-bwidth, 1px);
+  border-radius: var(--c-out-radius, 1.5rem); font-size: var(--c-out-fs, 0.9rem);
+  opacity: var(--c-out-opacity, 1); padding: var(--c-out-pad, 0.6rem 0.9rem); box-shadow: var(--c-out-shadow, var(--shadow-sm));
+}
+/* System notices: quiet by default — translucent, dashed, muted text. */
+.msg-bubble--system {
+  background: var(--c-sys-bg, hsl(var(--muted) / 0.45));
+  color: var(--c-sys-fg, hsl(var(--muted-foreground) / 0.85));
+  border-color: var(--c-sys-border, hsl(var(--border) / 0.7));
+  border-style: var(--c-sys-bstyle, dashed); border-width: var(--c-sys-bwidth, 1px);
+  border-radius: var(--c-sys-radius, 1rem); font-size: var(--c-sys-fs, 0.8rem);
+  opacity: var(--c-sys-opacity, 0.9); padding: var(--c-sys-pad, 0.45rem 0.8rem); box-shadow: var(--c-sys-shadow, none);
+}
 .msg-bubble--private { box-shadow: 0 0 0 2px hsl(var(--ring) / 0.4), var(--shadow-sm); }
 .msg-bubble--mine.msg-bubble--private { box-shadow: 0 0 0 2px hsl(0 0% 100% / 0.55), var(--shadow-sm); }
 .msg-bubble--vanished { opacity: 0.8; }
 .msg-bubble__head { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.25rem; font-size: 0.72rem; opacity: 0.9; }
 .msg-bubble__label { font-weight: 600; }
 .msg-bubble__time { opacity: 0.7; }
-.msg-bubble__text { white-space: pre-wrap; word-break: break-word; font-size: 0.9rem; line-height: 1.45; }
+.msg-bubble__text { white-space: pre-wrap; word-break: break-word; font-size: 1em; line-height: 1.45; }
 .msg-bubble__attach { margin-top: 0.5rem; border: 1px solid hsl(var(--border) / 0.6); border-radius: 1rem; padding: 0.4rem; background: hsl(var(--background) / 0.4); font-size: 0.75rem; }
 .msg-bubble__img { max-height: 18rem; width: 100%; border-radius: 0.75rem; object-fit: contain; }
 .msg-bubble__file { display: inline-flex; align-items: center; gap: 0.4rem; text-decoration: underline dotted; }
@@ -1006,7 +1038,7 @@
 .recipient-hint.is-warn { color: hsl(var(--destructive)); font-weight: 600; }
 
 /* ---------- Floating recipients widget ---------- */
-.recip-widget { position: fixed; z-index: 9990; width: 15rem; max-width: calc(100vw - 1.5rem); border-radius: 1rem; border: 1px solid hsl(var(--border)); background: hsl(var(--card)); box-shadow: var(--shadow-md); overflow: hidden; }
+.recip-widget { position: fixed; z-index: 9990; width: 15rem; max-width: calc(100vw - 1.5rem); border-radius: var(--c-widget-radius, 1rem); border: var(--c-widget-bwidth, 1px) var(--c-widget-bstyle, solid) var(--c-widget-border, hsl(var(--border))); background: var(--c-widget-bg, hsl(var(--card))); color: var(--c-widget-fg, inherit); font-size: var(--c-widget-fs, inherit); opacity: var(--c-widget-opacity, 1); box-shadow: var(--c-widget-shadow, var(--shadow-md)); overflow: hidden; }
 .recip-widget__head { display: flex; align-items: center; gap: 0.4rem; padding: 0.4rem 0.5rem; background: hsl(var(--muted)); cursor: grab; touch-action: none; user-select: none; }
 .recip-widget__head:active { cursor: grabbing; }
 .recip-widget__title { flex: 1; font-size: 0.78rem; font-weight: 700; }
@@ -1123,3 +1155,17 @@
 .composer-reply__text { font-size: 0.76rem; opacity: 0.8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .composer-reply__x { flex: none; width: 1.6rem; height: 1.6rem; border-radius: 9999px; font-size: 1.1rem; line-height: 1; }
 .composer-reply__x:hover { background: hsl(var(--accent)); }
+
+/* ---------- System notices: logo, folding, menu radius ----------
+   After systemCollapseAfterSec the notice folds to its first line; hover or
+   click unfolds it for systemExpandForSec, then it fades back. */
+.msg-sys-logo { display: inline-block; vertical-align: -0.2em; margin-inline-end: 0.3rem; opacity: 0.85; }
+.msg-bubble--system .msg-bubble__label { display: inline-flex; align-items: center; font-weight: 600; letter-spacing: 0.01em; }
+.msg-bubble--system .msg-sys__body { max-height: 40rem; opacity: 1; overflow: hidden; transition: max-height 600ms ease, opacity 600ms ease; }
+.msg-bubble--sys-collapsed { cursor: pointer; }
+.msg-bubble--sys-collapsed .msg-sys__body { max-height: 1.45em; opacity: 0.7; }
+.msg-bubble--sys-collapsed .msg-sys__body .msg-bubble__text { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; white-space: normal; }
+.msg-bubble--sys-collapsed .msg-sys__more { display: inline; }
+.msg-sys__more { display: none; margin-inline-start: 0.35rem; font-size: 0.68rem; opacity: 0.6; }
+.msg-bubble--system .msg-actions { display: none; }
+.menu-panel { border-radius: var(--c-menu-radius, 1rem) !important; }

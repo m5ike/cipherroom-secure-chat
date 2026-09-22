@@ -3,13 +3,17 @@
 // blue/purple/red (not blue/violet/red of BMW M, and at a different ratio),
 // the "M" is rendered as two diverging speed slashes forming a chevron, the
 // container is a hexagonal shield, and there is a numeric "5" stamped in.
+//
+// `mono` renders everything in currentColor (no gradients, no fixed colours) —
+// used inline in system messages so the mark inherits the muted text colour.
 
 type Props = {
   size?: number;
   className?: string;
+  mono?: boolean;
 };
 
-export function M5Logo({ size = 36, className }: Props) {
+export function M5Logo({ size = 36, className, mono = false }: Props) {
   return (
     <svg
       role="img"
@@ -20,25 +24,28 @@ export function M5Logo({ size = 36, className }: Props) {
       xmlns="http://www.w3.org/2000/svg"
       className={className}
     >
-      <defs>
-        <linearGradient id="m5-stripe" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor="#1c5fd6" />
-          <stop offset="33%" stopColor="#1c5fd6" />
-          <stop offset="33%" stopColor="#4b2bcd" />
-          <stop offset="66%" stopColor="#4b2bcd" />
-          <stop offset="66%" stopColor="#d61c2f" />
-          <stop offset="100%" stopColor="#d61c2f" />
-        </linearGradient>
-        <linearGradient id="m5-shell" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="currentColor" stopOpacity="0.18" />
-          <stop offset="100%" stopColor="currentColor" stopOpacity="0.04" />
-        </linearGradient>
-      </defs>
+      {mono ? null : (
+        <defs>
+          <linearGradient id="m5-stripe" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#1c5fd6" />
+            <stop offset="33%" stopColor="#1c5fd6" />
+            <stop offset="33%" stopColor="#4b2bcd" />
+            <stop offset="66%" stopColor="#4b2bcd" />
+            <stop offset="66%" stopColor="#d61c2f" />
+            <stop offset="100%" stopColor="#d61c2f" />
+          </linearGradient>
+          <linearGradient id="m5-shell" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="currentColor" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="currentColor" stopOpacity="0.04" />
+          </linearGradient>
+        </defs>
+      )}
 
       {/* Hex shield */}
       <path
         d="M32 3 L57 17 L57 47 L32 61 L7 47 L7 17 Z"
-        fill="url(#m5-shell)"
+        fill={mono ? "currentColor" : "url(#m5-shell)"}
+        fillOpacity={mono ? 0.1 : undefined}
         stroke="currentColor"
         strokeWidth="2.2"
         strokeLinejoin="round"
@@ -47,7 +54,8 @@ export function M5Logo({ size = 36, className }: Props) {
       {/* Motorsport stripe band across the lower third */}
       <path
         d="M9 41 H55 L52 49 H12 Z"
-        fill="url(#m5-stripe)"
+        fill={mono ? "currentColor" : "url(#m5-stripe)"}
+        fillOpacity={mono ? 0.4 : undefined}
       />
 
       {/* Diverging speed slashes — abstract "M" / chevron */}
@@ -68,7 +76,7 @@ export function M5Logo({ size = 36, className }: Props) {
         fontFamily="system-ui, -apple-system, 'Segoe UI', sans-serif"
         fontWeight="800"
         fontSize="8"
-        fill="#ffffff"
+        fill={mono ? "currentColor" : "#ffffff"}
         letterSpacing="0.5"
       >
         5

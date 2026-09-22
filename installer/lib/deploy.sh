@@ -308,6 +308,10 @@ services:
     restart: unless-stopped
     env_file:
       - ../.env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - ${SERVICE_NAME}-data:/data
     ports:
       - "${BIND_ADDRESS}:${APP_PORT}:${CONTAINER_PORT}"
     read_only: true
@@ -337,6 +341,10 @@ EOF
     command: ["node", "dist/admin.cjs"]
     env_file:
       - ../.env
+    environment:
+      DATA_DIR: /data
+    volumes:
+      - ${SERVICE_NAME}-data:/data
     ports:
       - "127.0.0.1:${ADMIN_PORT}:${ADMIN_PORT}"
     healthcheck:
@@ -359,6 +367,13 @@ EOF
         max-file: "5"
 EOF
     fi
+    # Persistent state shared by app + admin (SIP trunks from the admin
+    # console, default-provider choice) — survives restarts and read-only roots.
+    cat <<EOF
+
+volumes:
+  ${SERVICE_NAME}-data: {}
+EOF
   } | write_file "$(compose_file)" 0644
 }
 
