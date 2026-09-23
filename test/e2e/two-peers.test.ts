@@ -127,6 +127,11 @@ describe("two peers in one room", () => {
     await alice.page.getByTestId("button-send").click();
     await expect.poll(async () => bob.page.locator('[data-testid^="message-"]').allInnerTexts(), { timeout: 20_000 })
       .toEqual(expect.arrayContaining([expect.stringContaining(text)]));
+    // 3.1: a live room message goes with Alice's sender key (forward
+    // secret), not with the room key.
+    const received = bob.page.locator('[data-testid^="message-"]', { hasText: "žluťoučký" }).first();
+    expect(await received.getAttribute("data-sealed")).toBe("sender-key");
+    expect(await alice.page.locator('[data-testid^="message-"]', { hasText: "žluťoučký" }).first().getAttribute("data-sealed")).toBe("sender-key");
   }, 60_000);
 
   it("only ever links safe schemes in a received message", async () => {

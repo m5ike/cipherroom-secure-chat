@@ -33,8 +33,21 @@
 //
 // Version 1 envelopes are still read (the v1 key is derived on first need),
 // so an old client in the room is not cut off mid-conversation.
+//
+// Version 3 (M5cet 3.1) changes the first step and adds two things:
+//   - Argon2id (64 MiB, 3 passes; kdf.ts, in a Web Worker) instead of
+//     PBKDF2 — memory-hard, so guessing a weak passphrase on a GPU costs
+//     far more. Envelopes carry v: 3; v: 2 ones (queued by 3.0) are opened
+//     with the PBKDF2 keys, derived when the first one arrives;
+//   - a BLIND ROOM ID: HKDF(room secret, "room-id"). The server routes by
+//     it and never learns the room's name; two people with different
+//     passphrases never even meet in the same room;
+//   - live messages between peers use sender keys (sender-keys.ts): a
+//     ratchet per sender, so a key leaked later does not open what was
+//     already said, and leaving members stop receiving new keys.
 
 import { deriveRoomKey as deriveLegacyRoomKey, fromBase64, toBase64, type Bytes } from "./crypto";
+import { ARGON2_PARAMS, PBKDF2_ITERATIONS, runKdf } from "./kdf";
 import type { Identity } from "./identity";
 import { verifyDeviceCert, verifySignature } from "./identity";
 
@@ -61,8 +74,11 @@ function concat(a: Bytes, b: Bytes): Bytes {
 const hex = (buf: ArrayBuffer) => Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
 
 export type RoomKeys = {
-  version: 2;
+  /** 3: Argon2id-derived (3.1); 2: PBKDF2-derived (3.0). */
+  version: 2 | 3;
   room: string;
+  /** What the server sees instead of the room's name (base64url). */
+  roomId: string;
   message: CryptoKey;
   signal: CryptoKey;
   /** HKDF key; fileKey() derives one AES key per transfer from it. */
@@ -71,34 +87,56 @@ export type RoomKeys = {
   check: string;
   /** The version 1 key, derived on first use (old peers, old envelopes). */
   legacy(): Promise<CryptoKey>;
+  /** The version 2 keys (PBKDF2), derived on first use — for v2 envelopes
+   *  under v3 keys. Null when these keys already are version 2. */
+  previous(): Promise<RoomKeys> | null;
+  /** HKDF from the room secret, for sub-keys other modules need. */
+  derive(info: string, bits?: number): Promise<Uint8Array<ArrayBuffer>>;
 };
 
-export async function deriveRoomKeys(room: string, passphrase: string, opts: { iterations?: number } = {}): Promise<RoomKeys> {
-  const material = await crypto.subtle.importKey("raw", utf8(passphrase.normalize("NFC")), "PBKDF2", false, ["deriveBits"]);
-  const seed = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", salt: utf8(`m5cet:room:v2:${room}`), iterations: opts.iterations ?? ROOM_KDF_ITERATIONS, hash: "SHA-256" },
-    material,
-    256,
-  );
+export type DeriveOptions = {
+  /** "argon2id" (default, v3) or "pbkdf2" (v2). */
+  kdf?: "argon2id" | "pbkdf2";
+  /** PBKDF2 iterations (tests use few). Implies kdf "pbkdf2". */
+  iterations?: number;
+  /** Argon2id cost (tests use little). */
+  memoryKiB?: number;
+  passes?: number;
+};
+
+export async function deriveRoomKeys(room: string, passphrase: string, opts: DeriveOptions = {}): Promise<RoomKeys> {
+  const kdf = opts.kdf ?? (opts.iterations ? "pbkdf2" : "argon2id");
+  const password = passphrase.normalize("NFC");
+  const seed = kdf === "argon2id"
+    ? await runKdf({ kdf: "argon2id", password, salt: `m5cet:room:v3:${room}`, memoryKiB: opts.memoryKiB ?? ARGON2_PARAMS.memoryKiB, passes: opts.passes ?? ARGON2_PARAMS.passes })
+    : await runKdf({ kdf: "pbkdf2", password, salt: `m5cet:room:v2:${room}`, iterations: opts.iterations ?? PBKDF2_ITERATIONS });
+  const version: 2 | 3 = kdf === "argon2id" ? 3 : 2;
   const root = await crypto.subtle.importKey("raw", seed, "HKDF", false, ["deriveKey", "deriveBits"]);
+  seed.fill(0);
   const hkdf = (info: string) => ({ name: "HKDF", hash: "SHA-256", salt: HKDF_SALT, info: utf8(info) });
   const aes = (info: string) => crypto.subtle.deriveKey(hkdf(info), root, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-  const [message, signal, filesBits, checkBits] = await Promise.all([
+  const [message, signal, filesBits, checkBits, roomIdBits] = await Promise.all([
     aes("message"),
     aes("signal"),
     crypto.subtle.deriveBits(hkdf("files"), root, 256),
     crypto.subtle.deriveBits(hkdf("check"), root, 64),
+    crypto.subtle.deriveBits(hkdf("room-id"), root, 192),
   ]);
   const files = await crypto.subtle.importKey("raw", filesBits, "HKDF", false, ["deriveKey"]);
   let legacy: Promise<CryptoKey> | null = null;
+  let previous: Promise<RoomKeys> | null = null;
   return {
-    version: 2,
+    version,
     room,
+    // v2 keys keep the plain name (3.0 servers and peers route by it).
+    roomId: version === 3 ? `r3.${toBase64(new Uint8Array(roomIdBits)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")}` : room,
     message,
     signal,
     files,
     check: hex(checkBits),
     legacy: () => (legacy ??= deriveLegacyRoomKey(room, passphrase)),
+    previous: () => (version === 3 ? (previous ??= deriveRoomKeys(room, passphrase, { kdf: "pbkdf2" })) : null),
+    derive: async (info: string, bits = 256) => new Uint8Array(await crypto.subtle.deriveBits(hkdf(info), root, bits)),
   };
 }
 
@@ -115,7 +153,7 @@ export type Signer = {
   account?: { publicKey: string; valid: boolean };
 };
 
-async function signBody(body: string, ctx: Bytes, identity?: Identity | null): Promise<string> {
+export async function signBody(body: string, ctx: Bytes, identity?: Identity | null): Promise<string> {
   const inner: SignedBody = { b: body };
   if (identity) {
     inner.pk = identity.publicKey;
@@ -128,7 +166,7 @@ async function signBody(body: string, ctx: Bytes, identity?: Identity | null): P
   return JSON.stringify(inner);
 }
 
-async function readBody(plain: string, ctx: Bytes): Promise<{ body: string; signer: Signer | null }> {
+export async function readBody(plain: string, ctx: Bytes): Promise<{ body: string; signer: Signer | null }> {
   const inner = JSON.parse(plain) as Partial<SignedBody>;
   if (!inner || typeof inner.b !== "string") throw new Error("malformed body");
   if (typeof inner.pk === "string" && typeof inner.s === "string") {
@@ -156,26 +194,34 @@ async function decrypt(key: CryptoKey, iv: string, ciphertext: string, ad?: Byte
 
 /* ---------------------------------------------------------------- messages */
 
-/** A chat envelope. Version 1 had only iv + ciphertext. */
-export type Envelope = { v?: 2; id?: string; iv: string; ciphertext: string };
+/** A chat envelope. Version 1 had only iv + ciphertext; 3 adds the sender
+ *  key id and chain index when the message is sealed with a sender key. */
+export type Envelope = { v?: 2 | 3; id?: string; iv: string; ciphertext: string; sk?: string; n?: number };
 
-export type Opened<T> = { payload: T; version: 1 | 2; signer: Signer | null };
+export type Opened<T> = { payload: T; version: 1 | 2 | 3; signer: Signer | null };
 
+/** Sealed with the room's message key (relayed, queued, and 3.0 peers). */
 export async function sealMessage(keys: RoomKeys, id: string, payload: unknown, identity?: Identity | null): Promise<Envelope> {
   const ctx = context("msg", keys.room, id);
   const plain = await signBody(JSON.stringify(payload), ctx, identity);
-  return { v: 2, id, ...(await encrypt(keys.message, utf8(plain), ctx)) };
+  return { v: keys.version, id, ...(await encrypt(keys.message, utf8(plain), ctx)) };
 }
 
 export async function openMessage<T>(keys: RoomKeys, envelope: Envelope): Promise<Opened<T>> {
-  if (envelope.v === 2) {
+  if (envelope.v === 2 && keys.version === 3) {
+    // Queued before the upgrade: the PBKDF2 keys of the same passphrase.
+    const previous = await keys.previous()!;
+    return openMessage<T>(previous, envelope);
+  }
+  if (envelope.v === 2 || envelope.v === 3) {
+    if (envelope.v !== keys.version) throw new Error("envelope from another key version");
     if (typeof envelope.id !== "string" || !envelope.id) throw new Error("envelope without id");
     const ctx = context("msg", keys.room, envelope.id);
     const { body, signer } = await readBody(await decrypt(keys.message, envelope.iv, envelope.ciphertext, ctx), ctx);
     const payload = JSON.parse(body) as T;
     // The id inside must be the id the envelope was bound to.
     if ((payload as { id?: unknown })?.id !== envelope.id) throw new Error("envelope id mismatch");
-    return { payload, version: 2, signer };
+    return { payload, version: envelope.v, signer };
   }
   const plain = await decrypt(await keys.legacy(), envelope.iv, envelope.ciphertext);
   return { payload: JSON.parse(plain) as T, version: 1, signer: null };

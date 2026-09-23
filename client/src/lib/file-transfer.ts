@@ -204,7 +204,9 @@ import { safeFileName, safeMime } from "./validate";
 export type TransferKey = CryptoKey | RoomKeys;
 
 export function isRoomKeys(key: TransferKey): key is RoomKeys {
-  return (key as RoomKeys).version === 2;
+  // Version 2 (3.0) and 3 (3.1) room keys both carry the per-file HKDF key.
+  const version = (key as RoomKeys).version;
+  return (version === 2 || version === 3) && Boolean((key as RoomKeys).files);
 }
 
 /** Chunk sizes a sender may choose, and how many chunks one file may have

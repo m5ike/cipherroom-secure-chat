@@ -181,3 +181,8 @@
 .acc-code { display: grid; gap: 8px; padding: 10px; border-radius: 12px; border: 1px dashed hsl(var(--primary) / 0.6); background: hsl(var(--primary) / 0.06); }
 .acc-code code { font-size: 15px; letter-spacing: 0.06em; word-break: break-all; user-select: all; }
 .acc-link { background: none; border: 0; padding: 0; color: hsl(var(--primary)); cursor: pointer; text-decoration: underline; justify-self: start; }
+
+/* 3.1 — safety numbers */
+.userinfo-safety { display: grid; gap: 8px; padding-top: 8px; border-top: 1px solid hsl(var(--border)); }
+.userinfo-sn { font-size: 13px; letter-spacing: 0.08em; word-spacing: 0.3em; line-height: 1.8; }
+.userinfo-scan { width: 100%; max-height: 240px; border-radius: 12px; background: #000; object-fit: cover; }

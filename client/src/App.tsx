@@ -100,7 +100,8 @@ import {
   createReplayGuard, deriveRoomKeys, isSealedSignal, openMessage, openSignal, sealMessage, sealSignal,
   type Envelope as DataChannelEnvelope, type RoomKeys, type Signer,
 } from "./lib/envelope";
-import { createPinStore, keyFingerprint, keyId, loadIdentity, type Identity } from "./lib/identity";
+import { createPinStore, keyFingerprint, keyId, loadIdentity, safetyNumber, type Identity } from "./lib/identity";
+import { envelopeKind, SenderKeyStore, type Hello } from "./lib/sender-keys";
 import { validatePayload, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
 import { newId } from "./lib/id";
 import { APP_VERSION } from "./lib/build-info";
@@ -472,6 +473,10 @@ function ChatApp() {
   const signalInRef = useRef(new Map<string, Promise<void>>());
   /** Peers whose crypto we already warned about (legacy, unsealed, key mismatch). */
   const warnedPeersRef = useRef(new Set<string>());
+  /** Pair keys with each peer and the sender-key ratchets (3.1). */
+  const senderKeysRef = useRef(new SenderKeyStore());
+  /** Device keys this user excluded from the conversation (this session). */
+  const excludedRef = useRef(new Set<string>());
   const roomRef = useRef("");
   const nameRef = useRef(name);
   const myIdRef = useRef(myId);
@@ -758,7 +763,7 @@ function ChatApp() {
       const sealer = serverSealerRef.current;
       const rows = await Promise.all(prepareHistory(messagesRef.current).map(async (m) => {
         const payload = await sealer.seal(m);
-        return payload ? { id: m.id, room: currentRoom, createdAt: m.createdAt, senderId: "", senderName: "", mine: m.mine, expiresAt: m.expiresAt ?? 0, payload } : null;
+        return payload ? { id: m.id, room: keyRef.current?.roomId ?? currentRoom, createdAt: m.createdAt, senderId: "", senderName: "", mine: m.mine, expiresAt: m.expiresAt ?? 0, payload } : null;
       }));
       await putServerMessages(rows.filter((r): r is NonNullable<typeof r> => r !== null));
       return;
@@ -984,7 +989,7 @@ function ChatApp() {
       warnOnce(`changed:${kid}`, t(lang, "sec.identity.changedFlash").replace("{name}", senderName), "error");
       return { state: "changed", kid, fingerprint, account: byAccount };
     }
-    return { state: "verified", kid, fingerprint, account: byAccount };
+    return { state: "verified", kid, fingerprint, account: byAccount, checked: pinsRef.current.isVerified(roomRef.current, senderName, kid) };
   }
 
   /** A security notice, once per subject per session. */
@@ -1224,6 +1229,54 @@ function ChatApp() {
     return sealMessage(keys, payload.id, payload, identityRef.current);
   }
 
+  /**
+   * Hands a chat message to the open peers (or `targets`) with the best key
+   * each can open: our sender key for a room message (forward secret), a
+   * pair key for a private one, the room key for a peer without a pair yet.
+   * Returns how many took it and the ciphertext to show in the info view.
+   */
+  async function deliverToPeers(payload: { id: string }, roomEnvelope: DataChannelEnvelope, targets?: Set<string>): Promise<{ sent: number; cipher: string; kinds: Set<string> }> {
+    const keys = keyRef.current;
+    const store = senderKeysRef.current;
+    const me = myIdRef.current;
+    const identity = identityRef.current;
+    const privateSend = Boolean(targets);
+    let live: DataChannelEnvelope | null = null;
+    let sent = 0;
+    let cipher = roomEnvelope.ciphertext;
+    const kinds = new Set<string>();
+    for (const peer of peersRef.current.values()) {
+      if (targets && !targets.has(peer.id)) continue;
+      const channel = peer.channel;
+      if (channel?.readyState !== "open") continue;
+      let envelope = roomEnvelope;
+      if (keys && store.hasPair(peer.id)) {
+        if (privateSend) {
+          envelope = (await store.sealPrivate(keys, payload.id, payload, me, peer.id, identity)) ?? roomEnvelope;
+        } else {
+          // A peer that has not got our current chain gets it first (the
+          // channel is ordered, so it arrives before the message).
+          if (!store.hasOurKey(peer.id)) {
+            const sk = await store.senderKeyFor(keys, me, peer.id);
+            if (sk) { try { channel.send(JSON.stringify(sk)); } catch { /* closing */ } }
+          }
+          live ??= await store.sealLive(keys, payload.id, payload, identity);
+          envelope = live;
+        }
+      }
+      try {
+        const text = JSON.stringify(envelope);
+        channel.send(text);
+        sent += 1;
+        kinds.add(envelopeKind(envelope));
+        if (envelope !== roomEnvelope) cipher = envelope.ciphertext;
+        const st = peerStatsRef.current.get(peer.id);
+        if (st) st.sent += text.length;
+      } catch { /* the next channel */ }
+    }
+    return { sent, cipher, kinds };
+  }
+
   /** Send an envelope to every open peer, or only to `targets` (peerIds). */
   async function broadcastEnvelope(envelope: DataChannelEnvelope, targets?: Set<string>): Promise<number> {
     const serialized = JSON.stringify(envelope);
@@ -1386,11 +1439,16 @@ function ChatApp() {
       setNotice(lang === "cs"
         ? "P2P data kanál je otevřený."
         : lang === "de" ? "P2P-Datenkanal offen." : "P2P data channel is open.");
-      // Crypto v2: both sides compare key check values first, so a wrong
-      // passphrase shows up as exactly that instead of undecryptable noise.
+      // Crypto v3: a signed hello — key check value, device key and a DH key
+      // for the pair key (sender-keys.ts). A wrong passphrase shows up as
+      // exactly that instead of undecryptable noise.
       const keys = keyRef.current;
       if (keys) {
-        try { channel.send(JSON.stringify({ kind: "key-check", v: 2, check: keys.check })); } catch { /* closing */ }
+        void (async () => {
+          const identity = identityRef.current ?? (identityRef.current = await loadIdentity());
+          const hello = await senderKeysRef.current.hello(keys, identity, myIdRef.current, peerId);
+          try { channel.send(JSON.stringify(hello)); } catch { /* closing */ }
+        })();
       }
       void broadcastAudioStatus(audioStatusRef.current);
     };
@@ -1412,7 +1470,26 @@ function ChatApp() {
       if (!keys) return;
 
       if (raw.kind === "key-check") {
+        // A 3.0 peer (PBKDF2 keys): it cannot share keys with a 3.1 one.
         if (raw.check !== keys.check) warnOnce(`mismatch:${peerId}`, t(lang, "sec.keyMismatch").replace("{name}", peerName()), "error");
+        return;
+      }
+
+      if (raw.kind === "hello") {
+        const hello = raw as unknown as Hello;
+        if (excludedRef.current.has(String(hello.pk))) { try { channel.close(); } catch { /* ignore */ } return; }
+        const identity = identityRef.current ?? (identityRef.current = await loadIdentity());
+        const refused = await senderKeysRef.current.acceptHello(keys, identity, hello, peerId, myIdRef.current);
+        if (refused === "key-mismatch") { warnOnce(`mismatch:${peerId}`, t(lang, "sec.keyMismatch").replace("{name}", peerName()), "error"); return; }
+        if (refused) { warnOnce(`badhello:${peerId}`, t(lang, "sec.identity.invalidFlash").replace("{name}", peerName()), "error"); return; }
+        // Our current chain, so they can read what we say from now on.
+        const sk = await senderKeysRef.current.senderKeyFor(keys, myIdRef.current, peerId);
+        if (sk) { try { channel.send(JSON.stringify(sk)); } catch { /* closing */ } }
+        return;
+      }
+
+      if (raw.kind === "sender-key") {
+        await senderKeysRef.current.acceptSenderKey(keys, raw as { iv: string; ct: string }, peerId, myIdRef.current);
         return;
       }
 
@@ -1443,9 +1520,15 @@ function ChatApp() {
 
       const envelope = raw as unknown as DataChannelEnvelope;
       const receivedAt = Date.now();
+      const sealedWith = envelopeKind(envelope);
       let opened: Awaited<ReturnType<typeof openMessage<unknown>>>;
       try {
-        opened = await openMessage<unknown>(keys, envelope);
+        // A sender key (live, forward secret), a pair key (private), or the room key.
+        opened = sealedWith === "sender-key"
+          ? { ...(await senderKeysRef.current.openLive<unknown>(keys, envelope, peerId)), version: 3 }
+          : sealedWith === "pair"
+            ? { ...(await senderKeysRef.current.openPrivate<unknown>(keys, envelope, peerId, myIdRef.current)), version: 3 }
+            : await openMessage<unknown>(keys, envelope);
       } catch {
         systemMessage(lang === "cs"
           ? "Přišla zpráva, ale nejde dešifrovat. Druhá strana má pravděpodobně jiný klíč."
@@ -1476,6 +1559,7 @@ function ChatApp() {
         chatMessageFrom(plaintext, {
           cipher: envelope.ciphertext,
           cryptoVersion: opened.version,
+          sealedWith,
           identity,
           audit: [
             { state: "created", at: plaintext.createdAt },
@@ -1740,9 +1824,11 @@ function ChatApp() {
     // and passphrase, not on every reconnect.
     const keyFor = `${nextRoom}\u0000${passphraseRef.current}`;
     if (!keyRef.current || keyForRef.current !== keyFor) {
+      // Argon2id in a worker (kdf.ts): the page stays responsive meanwhile.
       keyRef.current = await deriveRoomKeys(nextRoom, passphraseRef.current);
       keyForRef.current = keyFor;
       replayRef.current.clear();
+      senderKeysRef.current.clear();
     }
     identityRef.current ??= await loadIdentity().catch(() => null);
     // "A new connection clears the chat" is one of three choices now: the
@@ -1758,7 +1844,11 @@ function ChatApp() {
       }
     } else if (retentionRef.current === "server" && !accountRef.current && storageSessionId()) {
       // The server kept this session's conversation (no passkey yet).
-      const rows = await readServerMessages({ room: nextRoom });
+      const blind = keyRef.current?.roomId;
+      const rows = [
+        ...(blind && blind !== nextRoom ? await readServerMessages({ room: blind }) : []),
+        ...await readServerMessages({ room: nextRoom }), // written by 3.0 under the plain name
+      ];
       const opened = await Promise.all(rows.map((r) => serverSealerRef.current.open(r.id, r.payload)));
       const restored = sanitizeRestored(opened.filter((m) => m !== null), nextPeerId);
       if (restored.length > 0) {
@@ -1792,7 +1882,8 @@ function ChatApp() {
       socket.send(JSON.stringify({
         type: "join",
         protocol: 2,
-        room: nextRoom,
+        // The server routes by the blind id and never learns the room's name.
+        room: keyRef.current?.roomId ?? nextRoom,
         peerId: nextPeerId,
         ...(resume ? { resume: resume.secret } : {}),
         name: nameRef.current,
@@ -1893,9 +1984,9 @@ function ChatApp() {
           myIdRef.current = frame.peerId;
           setMyId(frame.peerId);
         }
-        resumeRef.current = frame.resume ? { room: frame.room, peerId: frame.peerId, secret: frame.resume } : null;
+        resumeRef.current = frame.resume ? { room: roomRef.current, peerId: frame.peerId, secret: frame.resume } : null;
         setStatus("joined");
-        systemMessage(`Joined ${frame.room}. Peers: ${frame.peers.length}.`);
+        systemMessage(`Joined ${roomRef.current}. Peers: ${frame.peers.length}.`);
         setAwayPeers((frame.away ?? []).map((a) => ({ accountId: accountRefOf(a), name: a.name, since: a.since })).filter((a) => a.accountId));
         if (frame.account && "invalid" in frame.account) {
           // The token did not outlive the server: sign in again to get the
@@ -1999,6 +2090,8 @@ function ChatApp() {
       }
 
       if (frame.type === "peer-left") {
+        // They take no key with them: our next message starts a new chain.
+        senderKeysRef.current.forgetPeer(frame.peerId);
         const handle = peersRef.current.get(frame.peerId);
         handle?.channel?.close();
         if (handle) detachAudioElement(handle);
@@ -2181,6 +2274,7 @@ function ChatApp() {
     peersRef.current.clear();
     keyRef.current = null;
     keyForRef.current = "";
+    senderKeysRef.current.clear();
     signalOutRef.current.clear();
     signalInRef.current.clear();
     if (localAudioStreamRef.current) {
@@ -2254,10 +2348,13 @@ function ChatApp() {
       replyTo: opts.replyTo,
       forwardedFrom: opts.forwardedFrom,
     };
+    // The room-key copy is for away members (relay) and the outbox; peers
+    // online get their own, stronger copy (deliverToPeers).
     const envelope = await sealForRoom(payload);
     if (!envelope) return;
     audit.push({ state: "encrypted", at: Date.now() });
-    const sent = await broadcastEnvelope(envelope, opts.targets);
+    const delivered = await deliverToPeers(payload, envelope, opts.targets);
+    const sent = delivered.sent;
     // Away members are not on a data channel: the server takes the ciphertext
     // for them and answers with "stored" / "delivered".
     const away = opts.away ?? [];
@@ -2298,7 +2395,8 @@ function ChatApp() {
           sealPlain,
           sealCode,
           audit,
-          cipher: envelope.ciphertext,
+          cipher: delivered.cipher,
+          sealedWith: delivered.kinds.has("pair") ? "pair" : delivered.kinds.has("sender-key") ? "sender-key" : "room",
           replyTo: opts.replyTo,
           forwardedFrom: opts.forwardedFrom,
         },
@@ -2386,14 +2484,15 @@ function ChatApp() {
       ? (identityRef.current ? { text: `${t(lang, "sec.myFingerprint")} · ${identityRef.current.fingerprint}`, tone: "ok" as const } : undefined)
       : m.identity
         ? {
-            text: t(lang, m.identity.state === "verified" && m.identity.account ? "sec.identity.account" : `sec.identity.${m.identity.state}`).replace("{fp}", m.identity.fingerprint ?? ""),
+            text: t(lang, m.identity.state === "verified" && m.identity.checked ? "sec.identity.checked" : m.identity.state === "verified" && m.identity.account ? "sec.identity.account" : `sec.identity.${m.identity.state}`).replace("{fp}", m.identity.fingerprint ?? ""),
             tone: m.identity.state === "verified" ? "ok" as const : m.identity.state === "unsigned" ? "muted" as const : "warn" as const,
           }
         : undefined;
     return {
       id: m.id,
       identity,
-      cryptoVersion: m.mine ? 2 : m.cryptoVersion,
+      cryptoVersion: m.mine ? 3 : m.cryptoVersion,
+      sealedWith: m.sealedWith,
       mine: m.mine,
       sender: m.senderName,
       senderId: m.senderId,
@@ -2425,6 +2524,7 @@ function ChatApp() {
     const st = peerStatsRef.current.get(target);
     const net = peerNetRef.current.get(target);
     const fp = peerFingerprints[target]?.digest;
+    const pair = senderKeysRef.current.pairOf(target);
     const open = handle?.channel?.readyState === "open";
     const transport: UserInfo["transport"] = !open ? "connecting" : net?.candidateType === "relay" ? "p2p-relay" : "p2p-direct";
     return {
@@ -2435,7 +2535,41 @@ function ChatApp() {
       sentBytes: st?.sent ?? 0, recvBytes: st?.recv ?? 0,
       security: fp ? "DTLS-SRTP + AES-GCM 256" : "AES-GCM 256 (E2EE)",
       fingerprint: fp ? formatFingerprint(fp) : undefined,
+      ...(pair && identityRef.current ? {
+        safety: {
+          mine: identityRef.current.publicKey,
+          theirs: pair.peerPublicKey,
+          verified: safetyVerified[pair.peerPublicKey] === true,
+          onVerified: () => { void markSafetyVerified(handle?.name || target, pair.peerPublicKey); },
+          onExclude: () => excludePeer(target),
+        },
+      } : {}),
     };
+  }
+
+  const [safetyVerified, setSafetyVerified] = useState<Record<string, boolean>>({});
+
+  /** Safety numbers compared: pin this device key for the name, as checked. */
+  async function markSafetyVerified(name: string, publicKey: string) {
+    pinsRef.current.markVerified(roomRef.current, name, await keyId(publicKey));
+    setSafetyVerified((cur) => ({ ...cur, [publicKey]: true }));
+  }
+
+  /** "Exclude from my messages": end the connection, remember the device key
+   *  for this session, and start a new sender chain they will not get. */
+  function excludePeer(peerId: string) {
+    const pair = senderKeysRef.current.pairOf(peerId);
+    const handle = peersRef.current.get(peerId);
+    if (pair) excludedRef.current.add(pair.peerPublicKey);
+    senderKeysRef.current.forgetPeer(peerId);
+    senderKeysRef.current.rotate();
+    try { handle?.channel?.close(); } catch { /* ignore */ }
+    try { handle?.pc.close(); } catch { /* ignore */ }
+    if (handle) detachAudioElement(handle);
+    peersRef.current.delete(peerId);
+    setPeers((current) => current.filter((p) => p.id !== peerId));
+    setUserInfoFor(null);
+    systemMessage(t(lang, "sec.excluded").replace("{name}", handle?.name || peerId.slice(-6)), { kind: "warning" });
   }
 
   /** Send a chosen or recorded file to the current recipients. */
@@ -3367,6 +3501,7 @@ function ChatApp() {
                     <MessageBubble
                       key={message.id}
                       id={message.id}
+                      sealedWith={message.sealedWith}
                       senderId={message.senderId}
                       senderName={message.senderName}
                       mine={message.mine}

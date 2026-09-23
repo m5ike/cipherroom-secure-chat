@@ -32,6 +32,8 @@ export type MessageBubbleProps = {
   flags?: MsgFlags;
   ownPlaintext?: string; // sender's original text for a sealed message
   sealCode?: string; // sender's code, to display so they can share it
+  /** Which key sealed it (sender key / pair key / room key) — a data attribute for tests and styling. */
+  sealedWith?: "sender-key" | "pair" | "room";
   vanished?: boolean;
   vanishedAt?: number;
   onVanish: (id: string) => void;
@@ -205,7 +207,7 @@ export function MessageBubble(props: MessageBubbleProps) {
   if (flags?.vanishSeconds) (style as Record<string, string>)["--vp"] = String(remaining);
 
   return (
-    <article ref={rootRef} data-testid={`message-${id}`} className={wrapCls}>
+    <article ref={rootRef} data-testid={`message-${id}`} data-sealed={props.sealedWith} className={wrapCls}>
       <div
         className={bubbleCls}
         style={style}

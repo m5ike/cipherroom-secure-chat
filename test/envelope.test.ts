@@ -175,3 +175,44 @@ describe("files, version 2", () => {
     expect(errors).toEqual(["Too many chunks."]);
   });
 });
+
+describe("version 3 keys (Argon2id)", () => {
+  const LIGHT = { memoryKiB: 1024, passes: 1 };
+
+  it("give a blind room id, the same for the same passphrase and different for another", async () => {
+    const a = await deriveRoomKeys("alpha", "correct horse", LIGHT);
+    const b = await deriveRoomKeys("alpha", "correct horse", LIGHT);
+    const other = await deriveRoomKeys("alpha", "wrong horse", LIGHT);
+    expect(a.version).toBe(3);
+    expect(a.roomId).toMatch(/^r3\.[A-Za-z0-9_-]{32}$/);
+    expect(a.roomId).toBe(b.roomId);
+    expect(a.roomId).not.toBe(other.roomId);
+    expect(a.roomId).not.toContain("alpha");
+    expect(a.check).toBe(b.check);
+  });
+
+  it("seal v3 envelopes and still open a v2 one queued by 3.0 with the same passphrase", async () => {
+    const v3 = await deriveRoomKeys("alpha", "correct horse", LIGHT);
+    const payload = { id: "m-3", text: "hi" };
+    const env = await sealMessage(v3, "m-3", payload);
+    expect(env.v).toBe(3);
+    expect((await openMessage(v3, env)).payload).toEqual(payload);
+    // What a 3.0 client sealed (PBKDF2 keys of the same passphrase).
+    const v2 = await deriveRoomKeys("alpha", "correct horse", { kdf: "pbkdf2" });
+    const old = await sealMessage(v2, "m-2", { id: "m-2", text: "queued" });
+    expect(old.v).toBe(2);
+    expect((await openMessage(v3, old)).payload).toMatchObject({ text: "queued" });
+  }, 30_000);
+
+  it("carry files with the v3 keys", async () => {
+    const v3 = await deriveRoomKeys("alpha", "correct horse", LIGHT);
+    const frames: FileTransferEnvelope[] = [];
+    const ch = { readyState: "open", bufferedAmount: 0, send: (s: string) => frames.push(JSON.parse(s)), addEventListener() {}, removeEventListener() {} } as unknown as RTCDataChannel;
+    const file = new File([new Uint8Array(3000).fill(5)], "a.bin");
+    expect((await sendFile({ key: v3, file, senderId: "p", senderName: "A", chunkSize: 1024, channels: [ch] })).ok).toBe(true);
+    let done = 0;
+    const registry = newIncomingRegistry();
+    for (const f of frames) await handleIncomingFrame(v3, registry, f, 1e9, { onComplete: (_i, blob) => { done = blob.size; } });
+    expect(done).toBe(3000);
+  });
+});

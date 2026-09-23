@@ -4,6 +4,20 @@
 type Dict = Record<string, string>;
 
 const cs: Dict = {
+  "sec.identity.checked": "Ověřeno bezpečnostním číslem · {fp}",
+  "sec.sealed": "Klíč zprávy",
+  "sec.sealed.sender-key": "Klíč odesílatele s ratchetem (forward secrecy)",
+  "sec.sealed.pair": "Párový klíč (jen pro tohoto příjemce)",
+  "sec.sealed.room": "Klíč místnosti",
+  "sec.safety": "Bezpečnostní číslo",
+  "sec.safety.desc": "Stejné číslo musí vidět oba. Porovnejte ho mimo aplikaci (osobně, telefonem) nebo naskenujte QR kód druhého.",
+  "sec.safety.scan": "Naskenovat jeho kód",
+  "sec.safety.confirm": "Čísla se shodují — potvrdit",
+  "sec.safety.verified": "Ověřeno: toto zařízení patří tomu, s kým jste čísla porovnali.",
+  "sec.safety.mismatch": "Čísla se NESHODUJÍ — nejde o stejné zařízení.",
+  "sec.exclude": "Vyloučit z mých zpráv",
+  "sec.exclude.confirm": "Vyloučit tohoto člena? Spojení s ním se ukončí, vaše další zprávy (nový klíč odesílatele) už neuvidí. Ostatní ho musí vyloučit sami.",
+  "sec.excluded": "{name} je vyloučen z vašich zpráv. Váš klíč odesílatele byl vyměněn.",
   "sec.identity": "Identita odesílatele",
   "sec.identity.verified": "Ověřeno podpisem · {fp}",
   "sec.identity.account": "Ověřený účet (potvrzuje i toto zařízení) · {fp}",
@@ -26,6 +40,20 @@ const cs: Dict = {
 };
 
 const en: Dict = {
+  "sec.identity.checked": "Verified by safety number · {fp}",
+  "sec.sealed": "Message key",
+  "sec.sealed.sender-key": "Sender key with a ratchet (forward secrecy)",
+  "sec.sealed.pair": "Pair key (this recipient only)",
+  "sec.sealed.room": "Room key",
+  "sec.safety": "Safety number",
+  "sec.safety.desc": "Both of you must see the same number. Compare it outside the app (in person, on a call) or scan the other's QR code.",
+  "sec.safety.scan": "Scan their code",
+  "sec.safety.confirm": "The numbers match — confirm",
+  "sec.safety.verified": "Verified: this device belongs to the person you compared numbers with.",
+  "sec.safety.mismatch": "The numbers do NOT match — this is not the same device.",
+  "sec.exclude": "Exclude from my messages",
+  "sec.exclude.confirm": "Exclude this member? The connection with them ends and they will not see your further messages (a new sender key). Others must exclude them themselves.",
+  "sec.excluded": "{name} is excluded from your messages. Your sender key was replaced.",
   "sec.identity": "Sender identity",
   "sec.identity.verified": "Verified by signature · {fp}",
   "sec.identity.account": "Verified account (vouches for this device) · {fp}",
@@ -48,6 +76,20 @@ const en: Dict = {
 };
 
 const de: Dict = {
+  "sec.identity.checked": "Per Sicherheitsnummer bestätigt · {fp}",
+  "sec.sealed": "Nachrichtenschlüssel",
+  "sec.sealed.sender-key": "Absenderschlüssel mit Ratchet (Forward Secrecy)",
+  "sec.sealed.pair": "Paarschlüssel (nur dieser Empfänger)",
+  "sec.sealed.room": "Raumschlüssel",
+  "sec.safety": "Sicherheitsnummer",
+  "sec.safety.desc": "Beide müssen dieselbe Nummer sehen. Außerhalb der App vergleichen (persönlich, am Telefon) oder den QR-Code des anderen scannen.",
+  "sec.safety.scan": "Seinen Code scannen",
+  "sec.safety.confirm": "Die Nummern stimmen — bestätigen",
+  "sec.safety.verified": "Bestätigt: Dieses Gerät gehört der Person, mit der Sie die Nummer verglichen haben.",
+  "sec.safety.mismatch": "Die Nummern stimmen NICHT überein — es ist nicht dasselbe Gerät.",
+  "sec.exclude": "Von meinen Nachrichten ausschließen",
+  "sec.exclude.confirm": "Dieses Mitglied ausschließen? Die Verbindung endet, und es sieht Ihre weiteren Nachrichten nicht (neuer Absenderschlüssel). Andere müssen es selbst ausschließen.",
+  "sec.excluded": "{name} ist von Ihren Nachrichten ausgeschlossen. Ihr Absenderschlüssel wurde erneuert.",
   "sec.identity": "Identität des Absenders",
   "sec.identity.verified": "Per Signatur bestätigt · {fp}",
   "sec.identity.account": "Bestätigtes Konto (bürgt für dieses Gerät) · {fp}",

@@ -54,7 +54,10 @@ export type ChatMessage = {
   /** Original author when this message was forwarded. */
   forwardedFrom?: string;
   /** Crypto version the message arrived in (envelope.ts). */
-  cryptoVersion?: 1 | 2;
+  cryptoVersion?: 1 | 2 | 3;
+  /** Which key sealed it: a sender key (forward secret), a pair key
+   *  (private), or the room key (sender-keys.ts). */
+  sealedWith?: "sender-key" | "pair" | "room";
   /** Who signed it, and how that compares with what we saw before. */
   identity?: MessageIdentity;
 };
@@ -62,4 +65,4 @@ export type ChatMessage = {
 /** verified: signed, key as pinned (or first seen) · changed: signed, but
  *  another key than before for this name · invalid: signature fails ·
  *  unsigned: an older client, no signature at all. */
-export type MessageIdentity = { state: "verified" | "changed" | "invalid" | "unsigned"; kid?: string; fingerprint?: string; account?: boolean };
+export type MessageIdentity = { state: "verified" | "changed" | "invalid" | "unsigned"; kid?: string; fingerprint?: string; account?: boolean; checked?: boolean };

@@ -39,6 +39,10 @@ export type Attestation = { accountKey: string; cert: string };
 export type Identity = {
   /** SPKI, base64. */
   publicKey: string;
+  /** ECDH P-256 public key (SPKI, base64) for pairwise keys (3.1). */
+  dhPublicKey: string;
+  /** Derives the raw shared secret with a peer's ECDH public key. */
+  sharedSecret(peerDhPublicKey: string): Promise<Uint8Array<ArrayBuffer>>;
   /** Set while signed in to an account: the account key and its certificate for this device. */
   attestation?: Attestation | null;
   /** Short stable id of the public key (base64url of SHA-256, 16 chars). */
@@ -49,7 +53,14 @@ export type Identity = {
   sign(data: Bytes): Promise<string>;
 };
 
-type StoredPair = { id: string; privateKey: CryptoKey; publicKey: string; createdAt: number };
+type StoredPair = { id: string; privateKey: CryptoKey; publicKey: string; createdAt: number; dhPrivateKey?: CryptoKey; dhPublicKey?: string };
+
+const ECDH = { name: "ECDH", namedCurve: "P-256" } as const;
+
+async function generateDh(): Promise<{ dhPrivateKey: CryptoKey; dhPublicKey: string }> {
+  const pair = await crypto.subtle.generateKey(ECDH, false, ["deriveBits"]) as CryptoKeyPair;
+  return { dhPrivateKey: pair.privateKey, dhPublicKey: toBase64(new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey))) };
+}
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -84,9 +95,14 @@ export async function keyFingerprint(publicKey: string): Promise<string> {
   return hexed.match(/.{4}/g)!.join(" ");
 }
 
-async function fromPair(privateKey: CryptoKey, publicKey: string, persistent: boolean): Promise<Identity> {
+async function fromPair(privateKey: CryptoKey, publicKey: string, persistent: boolean, dh: { dhPrivateKey: CryptoKey; dhPublicKey: string }): Promise<Identity> {
   return {
     publicKey,
+    dhPublicKey: dh.dhPublicKey,
+    async sharedSecret(peerDhPublicKey) {
+      const peer = await crypto.subtle.importKey("spki", fromBase64(peerDhPublicKey), ECDH, false, []);
+      return new Uint8Array(await crypto.subtle.deriveBits({ name: "ECDH", public: peer }, dh.dhPrivateKey, 256));
+    },
     kid: await keyId(publicKey),
     fingerprint: await keyFingerprint(publicKey),
     persistent,
@@ -110,16 +126,23 @@ export function loadIdentity(): Promise<Identity> {
     try {
       const row = await idb<StoredPair>("readonly", (s) => s.get(KEY_ID));
       if (row?.privateKey && typeof row.publicKey === "string") {
-        const identity = await fromPair(row.privateKey, row.publicKey, true);
+        // Identities from 3.0 get their ECDH half on first load.
+        let dh = row.dhPrivateKey && row.dhPublicKey ? { dhPrivateKey: row.dhPrivateKey, dhPublicKey: row.dhPublicKey } : null;
+        if (!dh) {
+          dh = await generateDh();
+          await idb("readwrite", (s) => { s.put({ ...row, ...dh }); });
+        }
+        const identity = await fromPair(row.privateKey, row.publicKey, true, dh);
         identity.attestation = await storedAttestation(row.publicKey);
         return identity;
       }
       const fresh = await generate();
-      await idb("readwrite", (s) => s.put({ id: KEY_ID, privateKey: fresh.privateKey, publicKey: fresh.publicKey, createdAt: Date.now() } satisfies StoredPair));
-      return fromPair(fresh.privateKey, fresh.publicKey, true);
+      const dh = await generateDh();
+      await idb("readwrite", (s) => s.put({ id: KEY_ID, privateKey: fresh.privateKey, publicKey: fresh.publicKey, createdAt: Date.now(), ...dh } satisfies StoredPair));
+      return fromPair(fresh.privateKey, fresh.publicKey, true, dh);
     } catch {
       const fresh = await generate();
-      return fromPair(fresh.privateKey, fresh.publicKey, false);
+      return fromPair(fresh.privateKey, fresh.publicKey, false, await generateDh());
     }
   })());
 }
@@ -252,7 +275,7 @@ export async function safetyNumber(a: string, b: string): Promise<string> {
 /* --------------------------------------------------------------------- pins */
 
 export type PinVerdict = "new" | "match" | "changed";
-type PinMap = Record<string, { kid: string; firstSeen: number; lastSeen: number }>;
+type PinMap = Record<string, { kid: string; firstSeen: number; lastSeen: number; verified?: boolean }>;
 
 const PIN_KEY = "m5cet:pins:v1";
 const MAX_PINS = 2_000;
@@ -301,6 +324,16 @@ export function createPinStore(storage: Storage | null = (() => { try { return l
     },
     pinned(room: string, name: string): string | null {
       return read()[slot(room, name)]?.kid ?? null;
+    },
+    /** The two people compared safety numbers (or scanned each other's QR). */
+    markVerified(room: string, name: string, kid: string, now = Date.now()): void {
+      const map = read();
+      map[slot(room, name)] = { kid, firstSeen: map[slot(room, name)]?.firstSeen ?? now, lastSeen: now, verified: true };
+      write(map);
+    },
+    isVerified(room: string, name: string, kid: string): boolean {
+      const pin = read()[slot(room, name)];
+      return Boolean(pin && pin.kid === kid && pin.verified);
     },
     clear(): void {
       memory = {};

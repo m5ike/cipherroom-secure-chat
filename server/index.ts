@@ -138,7 +138,9 @@ app.use(
       directives: {
         defaultSrc: ["'self'"],
         connectSrc: ["'self'", "wss:", "ws:", "https://tile.openstreetmap.org"],
-        scriptSrc: DEV ? ["'self'", "'unsafe-inline'", "'unsafe-eval'"] : ["'self'"],
+        // 'wasm-unsafe-eval' lets WebAssembly compile (Argon2id, kdf.ts) —
+        // it does not allow eval() or inline script.
+        scriptSrc: DEV ? ["'self'", "'unsafe-inline'", "'unsafe-eval'"] : ["'self'", "'wasm-unsafe-eval'"],
         objectSrc: ["'none'"],
         // Google Fonts: only fetched after the user opts in (Appearance → Typography).
         styleSrc: ["'self'", "'unsafe-inline'", "https://api.fontshare.com", "https://fonts.googleapis.com"],
