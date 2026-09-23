@@ -12,8 +12,10 @@ export class WsClient {
   private waiters: Array<() => void> = [];
 
   private constructor(readonly socket: WebSocket) {
-    socket.on("message", (data) => {
-      try { this.buffer.push(JSON.parse(data.toString("utf8")) as Frame); } catch { return; }
+    socket.on("message", (data, isBinary) => {
+      // Binary messages (file chunks) are kept as { type: "binary", data }.
+      if (isBinary) this.buffer.push({ type: "binary", data: Buffer.from(data as Buffer) });
+      else try { this.buffer.push(JSON.parse(data.toString("utf8")) as Frame); } catch { return; }
       this.waiters.splice(0).forEach((w) => w());
     });
   }
@@ -32,6 +34,10 @@ export class WsClient {
 
   send(frame: Record<string, unknown>): void {
     this.socket.send(JSON.stringify(frame));
+  }
+
+  sendBinary(data: ArrayBuffer | Uint8Array): void {
+    this.socket.send(data, { binary: true });
   }
 
   /** The next frame of this type that no earlier `next()` has taken. */

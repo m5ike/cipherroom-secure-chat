@@ -220,23 +220,17 @@ export function startBackgroundTick(onTick: (source: TickSource) => void, interv
 
   // A worker's timer keeps a steadier beat than the page's own while the
   // page is hidden, so prefer it and fall back to a plain interval.
+  const fallBack = () => {
+    worker = null;
+    if (stopped || timer !== null) return;
+    timer = setInterval(fire, intervalMs);
+    source = "interval";
+  };
   try {
-    const code = `let id = null;
-      self.onmessage = (event) => {
-        const data = event.data || {};
-        if (data.type === "start") {
-          if (id !== null) clearInterval(id);
-          id = setInterval(() => self.postMessage({ type: "tick" }), Math.max(1000, data.intervalMs || 30000));
-        } else if (data.type === "stop") {
-          if (id !== null) clearInterval(id);
-          id = null;
-          self.close();
-        }
-      };`;
-    const url = URL.createObjectURL(new Blob([code], { type: "text/javascript" }));
-    worker = new Worker(url);
-    URL.revokeObjectURL(url);
+    worker = new Worker(new URL("./tick.worker.ts", import.meta.url), { type: "module" });
     worker.onmessage = (event: MessageEvent<{ type?: string }>) => { if (event.data?.type === "tick") fire(); };
+    // A worker that cannot start (CSP, a missing file) only says so here.
+    worker.onerror = () => { try { worker?.terminate(); } catch { /* gone */ } fallBack(); };
     worker.postMessage({ type: "start", intervalMs });
     source = "worker";
   } catch {

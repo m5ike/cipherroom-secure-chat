@@ -51,8 +51,9 @@ export type FileTransferEnvelope =
       kind: "file-chunk";
       transferId: string;
       seq: number;
-      iv: string;
-      ciphertext: string;
+      /** base64 in a JSON frame, raw bytes in a binary one (binary-frames.ts). */
+      iv: ChunkField;
+      ciphertext: ChunkField;
       transport: "p2p";
       v?: number;
     }
@@ -96,8 +97,8 @@ export type FileTransferEnvelope =
       kind: "proxy-chunk";
       transferId: string;
       seq: number;
-      iv: string;
-      ciphertext: string;
+      iv: ChunkField;
+      ciphertext: ChunkField;
       transport: "proxy";
       v?: number;
     }
@@ -194,9 +195,10 @@ export type TransferStats = {
 
 import { toBase64, fromBase64, type Bytes } from "./crypto";
 import {
-  chunkDigest, digestList, fileContext, fileKey, openChunk, openFileBody, sealChunk, sealFileBody,
-  type RoomKeys, type Signer,
+  chunkDigest, digestList, fileContext, fileKey, openChunk, openFileBody, sealChunkBytes, sealFileBody,
+  type ChunkField, type RoomKeys, type Signer,
 } from "./envelope";
+import { decodeChunk, encodeChunk, FRAME_P2P_CHUNK, FRAME_PROXY_CHUNK } from "./binary-frames";
 import type { Identity } from "./identity";
 import { safeFileName, safeMime } from "./validate";
 
@@ -224,9 +226,48 @@ export async function encryptBytes(key: CryptoKey, data: Bytes): Promise<{ iv: s
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, data));
   return { iv: toBase64(iv), ciphertext: toBase64(ct) };
 }
-export async function decryptBytes(key: CryptoKey, iv: string, ct: string): Promise<Bytes> {
-  const out = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(iv) }, key, fromBase64(ct));
+export async function decryptBytes(key: CryptoKey, iv: ChunkField, ct: ChunkField): Promise<Bytes> {
+  const bytes = (v: ChunkField) => (typeof v === "string" ? fromBase64(v) : v);
+  const out = await crypto.subtle.decrypt({ name: "AES-GCM", iv: bytes(iv) }, key, bytes(ct));
   return new Uint8Array(out);
+}
+
+/* ------------------------------------------------------------ wire forms */
+
+/** What the server counts for a chunk: its base64 length. */
+const wireLength = (v: ChunkField) => (typeof v === "string" ? v.length : Math.ceil(v.length / 3) * 4);
+
+type ChunkFrame = Extract<FileTransferEnvelope, { kind: "file-chunk" | "proxy-chunk" }>;
+
+/** The frame as JSON can carry it: chunk bytes become base64. */
+export function wireFrame(frame: FileTransferEnvelope): FileTransferEnvelope {
+  if (frame.kind !== "file-chunk" && frame.kind !== "proxy-chunk") return frame;
+  const b64 = (v: ChunkField) => (typeof v === "string" ? v : toBase64(v));
+  return { ...frame, iv: b64(frame.iv), ciphertext: b64(frame.ciphertext) };
+}
+
+/** A chunk frame as one binary message; null for every other frame. */
+export function binaryFrame(frame: FileTransferEnvelope): ArrayBuffer | null {
+  if (frame.kind !== "file-chunk" && frame.kind !== "proxy-chunk") return null;
+  const raw = (v: ChunkField) => (typeof v === "string" ? fromBase64(v) : v);
+  return encodeChunk({
+    type: frame.kind === "file-chunk" ? FRAME_P2P_CHUNK : FRAME_PROXY_CHUNK,
+    version: frame.v ?? 1,
+    transferId: frame.transferId,
+    seq: frame.seq,
+    iv: raw(frame.iv),
+    data: raw(frame.ciphertext),
+  });
+}
+
+/** A binary message back into the chunk frame it carried; null if it is not one. */
+export function frameFromBinary(data: ArrayBuffer | Uint8Array): ChunkFrame | null {
+  const chunk = decodeChunk(data);
+  if (!chunk) return null;
+  const common = { transferId: chunk.transferId, seq: chunk.seq, iv: chunk.iv, ciphertext: chunk.data, ...(chunk.version > 1 ? { v: chunk.version } : {}) };
+  return chunk.type === FRAME_PROXY_CHUNK
+    ? { kind: "proxy-chunk", transport: "proxy", ...common }
+    : { kind: "file-chunk", transport: "p2p", ...common };
 }
 export async function encryptJSON(key: CryptoKey, payload: unknown) {
   return encryptBytes(key, encoder.encode(JSON.stringify(payload)));
@@ -263,7 +304,14 @@ export type SendOptions = {
   senderName: string;
   chunkSize?: number;
   channels: RTCDataChannel[]; // for P2P transport
-  sendProxy?: (frame: FileTransferEnvelope) => boolean; // for proxy transport
+  /** Channels whose peer reads binary chunk frames (it said so in its hello). */
+  binary?: (channel: RTCDataChannel) => boolean;
+  /** Proxy transport. Chunk frames carry raw bytes: send them with
+   *  binaryFrame(), or wireFrame() for JSON. */
+  sendProxy?: (frame: FileTransferEnvelope) => boolean;
+  /** Proxy transport: resolves when a chunk of this many (base64) bytes may
+   *  go, so the sender stays inside the server's rate limits (Pacer). */
+  paceProxy?: (bytes: number) => Promise<void>;
   forceTransport?: FileTransport;
   onProgress?: (sent: number, total: number, stats: TransferStats) => void;
   isCancelled?: () => boolean;
@@ -362,10 +410,10 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
   const key = v2 ? await fileKey(opts.key as RoomKeys, transferId) : (opts.key as CryptoKey);
   const versionField = v2 ? { v: 2 } : {};
   const digests: Array<Bytes | null> = new Array(totalChunks).fill(null);
-  const encryptChunk = async (seq: number, slice: Bytes) => {
+  const encryptChunk = async (seq: number, slice: Bytes): Promise<{ iv: ChunkField; ciphertext: ChunkField }> => {
     if (!v2) return encryptBytes(key, slice);
     digests[seq] = await chunkDigest(slice);
-    return sealChunk(key, fileContext.chunk(transferId, seq, totalChunks), slice);
+    return sealChunkBytes(key, fileContext.chunk(transferId, seq, totalChunks), slice);
   };
   const metaEnc = v2 ? await sealFileBody(key, fileContext.meta(transferId), meta, opts.identity) : await encryptJSON(key, meta);
 
@@ -398,12 +446,14 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
       if (transport === "p2p") {
         // Backpressure: wait if any channel buffer is large.
         await Promise.all(opts.channels.map((ch) => waitForBuffer(ch, DRAIN_TIMEOUT_MS)));
+      } else {
+        await opts.paceProxy?.(wireLength(enc.ciphertext));
       }
       const frame: FileTransferEnvelope = transport === "p2p"
         ? { kind: "file-chunk", transferId, seq: i, transport: "p2p", ...versionField, iv: enc.iv, ciphertext: enc.ciphertext }
         : { kind: "proxy-chunk", transferId, seq: i, transport: "proxy", ...versionField, iv: enc.iv, ciphertext: enc.ciphertext };
       if (transport === "p2p") {
-        await sendChunkP2P(opts.channels, frame); // throws rather than dropping
+        await sendChunkP2P(opts.channels, frame, opts.binary); // throws rather than dropping
       } else if (!(opts.sendProxy?.(frame) ?? false)) {
         return { ok: false, transferId, transport, reason: "proxy-channel-closed" };
       }
@@ -441,8 +491,11 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
       const frame: FileTransferEnvelope = transport === "p2p"
         ? { kind: "file-chunk", transferId, seq, transport: "p2p", ...versionField, iv: enc.iv, ciphertext: enc.ciphertext }
         : { kind: "proxy-chunk", transferId, seq, transport: "proxy", ...versionField, iv: enc.iv, ciphertext: enc.ciphertext };
-      if (transport === "p2p") await sendChunkP2P(opts.channels, frame);
-      else opts.sendProxy?.(frame);
+      if (transport === "p2p") await sendChunkP2P(opts.channels, frame, opts.binary);
+      else {
+        await opts.paceProxy?.(wireLength(enc.ciphertext));
+        opts.sendProxy?.(frame);
+      }
     }
     // Repeat the end frame so the receiver checks again.
     if (transport === "p2p") broadcastP2P(opts.channels, endFrame);
@@ -450,6 +503,48 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
   };
 
   return { ok: true, transferId, transport, resend };
+}
+
+/**
+ * Token buckets for the proxy transport, mirroring the server's per-socket
+ * limits (server/signaling/limits.ts, announced in its hello): a sender that
+ * overruns them has chunks refused and, persisting, its socket closed.
+ * `drain` waits for the socket's own send buffer as well.
+ */
+export class Pacer {
+  private bytes: number;
+  private frames: number;
+  private at: number;
+  constructor(
+    private readonly limits: { bytesPerSec: number; burstBytes: number; framesPerSec: number; burstFrames: number },
+    private readonly drain: () => Promise<void> = async () => undefined,
+    private readonly now: () => number = () => Date.now(),
+    private readonly sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+  ) {
+    this.bytes = limits.burstBytes;
+    this.frames = limits.burstFrames;
+    this.at = now();
+  }
+
+  async take(bytes: number): Promise<void> {
+    const need = Math.min(bytes, this.limits.burstBytes);
+    for (;;) {
+      const t = this.now();
+      const dt = Math.max(0, t - this.at) / 1000;
+      this.at = t;
+      this.bytes = Math.min(this.limits.burstBytes, this.bytes + dt * this.limits.bytesPerSec);
+      this.frames = Math.min(this.limits.burstFrames, this.frames + dt * this.limits.framesPerSec);
+      if (this.bytes >= need && this.frames >= 1) break;
+      const wait = Math.max(
+        this.bytes >= need ? 0 : ((need - this.bytes) / this.limits.bytesPerSec) * 1000,
+        this.frames >= 1 ? 0 : ((1 - this.frames) / this.limits.framesPerSec) * 1000,
+      );
+      await this.sleep(Math.max(5, Math.ceil(wait)));
+    }
+    this.bytes -= need;
+    this.frames -= 1;
+    await this.drain();
+  }
 }
 
 /** Meta / end / cancel: best effort to every open channel. */
@@ -469,14 +564,19 @@ function broadcastP2P(channels: RTCDataChannel[], frame: FileTransferEnvelope) {
  * queue is full (Chrome: 16 MiB), so back off, let the buffer drain and try
  * again; give up loudly rather than silently delivering a hole.
  */
-async function sendChunkP2P(channels: RTCDataChannel[], frame: FileTransferEnvelope): Promise<void> {
-  const payload = JSON.stringify(frame);
+async function sendChunkP2P(channels: RTCDataChannel[], frame: FileTransferEnvelope, binary?: (channel: RTCDataChannel) => boolean): Promise<void> {
+  let json: string | null = null;
+  let bin: ArrayBuffer | null = null;
   for (const ch of channels) {
     if (ch.readyState !== "open") continue;
+    const payload = binary?.(ch)
+      ? (bin ??= binaryFrame(frame) ?? new ArrayBuffer(0))
+      : (json ??= JSON.stringify(wireFrame(frame)));
     let lastError: unknown = null;
     for (let attempt = 0; attempt < SEND_ATTEMPTS; attempt += 1) {
       try {
-        ch.send(payload);
+        if (typeof payload === "string") ch.send(payload);
+        else ch.send(payload);
         lastError = null;
         break;
       } catch (err) {
@@ -676,7 +776,7 @@ async function processIncomingFrame(
   }
 
   if (kind === "file-chunk") {
-    const f = frame as { seq: number; iv: string; ciphertext: string };
+    const f = frame as { seq: number; iv: ChunkField; ciphertext: ChunkField };
     const state = registry.get(transferId);
     if (!state) {
       // A proxy chunk can overtake nothing (the server keeps order), so an

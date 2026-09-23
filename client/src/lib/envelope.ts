@@ -282,8 +282,18 @@ export async function sealChunk(key: CryptoKey, ctx: Bytes, data: Bytes): Promis
   return encrypt(key, data, ctx);
 }
 
-export async function openChunk(key: CryptoKey, ctx: Bytes, iv: string, ciphertext: string): Promise<Bytes> {
-  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(iv), additionalData: ctx }, key, fromBase64(ciphertext)));
+/** As sealChunk, but the raw bytes — for binary frames (binary-frames.ts). */
+export async function sealChunkBytes(key: CryptoKey, ctx: Bytes, data: Bytes): Promise<{ iv: Bytes; ciphertext: Bytes }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  return { iv, ciphertext: new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: ctx }, key, data)) };
+}
+
+/** A chunk's IV and ciphertext: base64 from a JSON frame, bytes from a binary one. */
+export type ChunkField = string | Bytes;
+const chunkBytes = (v: ChunkField): Bytes => (typeof v === "string" ? fromBase64(v) : v);
+
+export async function openChunk(key: CryptoKey, ctx: Bytes, iv: ChunkField, ciphertext: ChunkField): Promise<Bytes> {
+  return new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: chunkBytes(iv), additionalData: ctx }, key, chunkBytes(ciphertext)));
 }
 
 /** SHA-256 over the concatenated per-chunk digests: the file's fingerprint,

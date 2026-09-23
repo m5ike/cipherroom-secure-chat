@@ -84,7 +84,7 @@ export class FileProxy {
     return { ok: true };
   }
 
-  pushChunk(senderClientId: string, frame: { transferId: string; seq: number; iv: string; ciphertext: string }): { ok: boolean; reason?: string; total?: number } {
+  pushChunk(senderClientId: string, frame: { transferId: string; seq: number; iv?: string; ciphertext?: string; bytes?: number }): { ok: boolean; reason?: string; total?: number } {
     const state = this.byTransfer.get(frame.transferId);
     if (!state) return { ok: false, reason: "not-found" };
     if (state.senderPeerId !== senderClientId) return { ok: false, reason: "wrong-sender" };
@@ -95,7 +95,7 @@ export class FileProxy {
     // would put every transfer in this process's memory for nothing (and
     // the truncated copy this used to keep was unusable anyway). We only
     // count what went through, to enforce the cap.
-    const bytes = Math.floor((String(frame.ciphertext || "").length * 3) / 4);
+    const bytes = frame.bytes ?? Math.floor((String(frame.ciphertext || "").length * 3) / 4);
     if (state.bytes + bytes > MAX_BYTES) return { ok: false, reason: "too-large" };
     state.seqs.add(seq);
     state.bytes += bytes;

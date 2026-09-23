@@ -89,6 +89,10 @@ import {
   newIncomingRegistry,
   handleIncomingFrame,
   sendFile,
+  binaryFrame,
+  frameFromBinary,
+  wireFrame,
+  Pacer,
   type FileTransferEnvelope,
   type IncomingCallbacks,
 } from "./lib/file-transfer";
@@ -190,7 +194,7 @@ type SignalFrame =
   | { type: "peer-left"; peerId: string }
   | { type: "signal"; source: string; payload: unknown }
   | { type: "signal-undeliverable"; target: string }
-  | { type: "hello"; peerId: string; protocol?: number }
+  | { type: "hello"; peerId: string; protocol?: number; features?: string[]; limits?: { proxy?: ProxyLimits } }
   | { type: "pong"; t: number; serverTs: number }
   | { type: "presence-ack"; away: boolean }
   | ({ type: "auth-result"; ok: boolean; invalid?: boolean; account: ({ away: boolean } & AccountRefFields) | null })
@@ -256,6 +260,26 @@ function normalizeRoom(value: string) {
       .replace(/^-+|-+$/g, "")
       .slice(0, 48) || "secure-room"
   );
+}
+
+/** The server's per-socket budget for relayed file chunks (hello.limits.proxy). */
+type ProxyLimits = { bytesPerSec: number; burstBytes: number; framesPerSec: number; burstFrames: number };
+const DEFAULT_PROXY_LIMITS: ProxyLimits = { bytesPerSec: 2 * 1024 * 1024, burstBytes: 8 * 1024 * 1024, framesPerSec: 60, burstFrames: 400 };
+
+/** Paces a relayed transfer at 80 % of the server's budget and keeps the
+ *  socket's own send buffer short, so the relay never refuses a chunk. */
+function proxyPacer(limits: ProxyLimits, socket: () => WebSocket | null): (bytes: number) => Promise<void> {
+  const pacer = new Pacer(
+    { bytesPerSec: limits.bytesPerSec * 0.8, burstBytes: limits.burstBytes / 2, framesPerSec: limits.framesPerSec * 0.8, burstFrames: limits.burstFrames / 2 },
+    async () => {
+      for (let i = 0; i < 400; i++) {
+        const sock = socket();
+        if (!sock || sock.readyState !== WebSocket.OPEN || sock.bufferedAmount < 1024 * 1024) return;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+    },
+  );
+  return (bytes) => pacer.take(bytes);
 }
 
 function wsUrl() {
@@ -477,6 +501,11 @@ function ChatApp() {
   const senderKeysRef = useRef(new SenderKeyStore());
   /** Device keys this user excluded from the conversation (this session). */
   const excludedRef = useRef(new Set<string>());
+  // Binary file chunks (lib/binary-frames.ts): data channels whose peer said
+  // it reads them, and whether this server does.
+  const binaryChannelsRef = useRef(new WeakSet<RTCDataChannel>());
+  const serverBinaryRef = useRef(false);
+  const proxyLimitsRef = useRef<ProxyLimits>(DEFAULT_PROXY_LIMITS);
   const roomRef = useRef("");
   const nameRef = useRef(name);
   const myIdRef = useRef(myId);
@@ -1447,7 +1476,7 @@ function ChatApp() {
         void (async () => {
           const identity = identityRef.current ?? (identityRef.current = await loadIdentity());
           const hello = await senderKeysRef.current.hello(keys, identity, myIdRef.current, peerId);
-          try { channel.send(JSON.stringify(hello)); } catch { /* closing */ }
+          try { channel.send(JSON.stringify({ ...hello, caps: ["bin"] })); } catch { /* closing */ }
         })();
       }
       void broadcastAudioStatus(audioStatusRef.current);
@@ -1460,6 +1489,21 @@ function ChatApp() {
       systemMessage(`Connection with ${peerName()} dropped.`);
     };
     channel.onmessage = async (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        // A binary file chunk; nothing else travels as binary.
+        const st = peerStatsRef.current.get(peerId);
+        if (st) st.recv += event.data.byteLength;
+        const chunk = frameFromBinary(event.data);
+        const keys = keyRef.current;
+        if (!chunk || chunk.kind !== "file-chunk" || !keys) return;
+        await handleIncomingFrame(keys, incomingFilesRef.current, chunk, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
+          try {
+            channel.send(JSON.stringify({ kind: "file-need", transferId, seqs, transport: "p2p" }));
+            return true;
+          } catch { return false; }
+        }));
+        return;
+      }
       const dataStr = String(event.data);
       const st = peerStatsRef.current.get(peerId);
       if (st) st.recv += dataStr.length;
@@ -1478,6 +1522,7 @@ function ChatApp() {
       if (raw.kind === "hello") {
         const hello = raw as unknown as Hello;
         if (excludedRef.current.has(String(hello.pk))) { try { channel.close(); } catch { /* ignore */ } return; }
+        if (Array.isArray(raw.caps) && raw.caps.includes("bin")) binaryChannelsRef.current.add(channel);
         const identity = identityRef.current ?? (identityRef.current = await loadIdentity());
         const refused = await senderKeysRef.current.acceptHello(keys, identity, hello, peerId, myIdRef.current);
         if (refused === "key-mismatch") { warnOnce(`mismatch:${peerId}`, t(lang, "sec.keyMismatch").replace("{name}", peerName()), "error"); return; }
@@ -1869,6 +1914,8 @@ function ChatApp() {
     logConn("connecting", reconnectAttemptsRef.current + 1);
 
     const socket = new WebSocket(wsUrl());
+    socket.binaryType = "arraybuffer";
+    serverBinaryRef.current = false;
     socketRef.current = socket;
     // Storage operations ride on this socket rather than opening their own
     // connection (lib/storage-client.ts).
@@ -1889,6 +1936,7 @@ function ChatApp() {
         name: nameRef.current,
         ...(accountToken() ? { auth: accountToken() } : {}),
         away: retentionRef.current === "server" && Boolean(accountRef.current),
+        features: ["bin"],
       }));
       socket.send(JSON.stringify({ type: "command-poll", deviceId: prefs.deviceId }));
       startHeartbeat();
@@ -1910,6 +1958,19 @@ function ChatApp() {
 
   function wireSocketHandlers(socket: WebSocket) {
     socket.onmessage = async (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        // A relayed file chunk in binary form (the only binary frame).
+        const chunk = frameFromBinary(event.data);
+        const keys = keyRef.current;
+        if (!chunk || chunk.kind !== "proxy-chunk" || !keys) return;
+        await handleIncomingFrame(keys, incomingFilesRef.current, chunk, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
+          const sock = socketRef.current;
+          if (sock?.readyState !== WebSocket.OPEN) return false;
+          sock.send(JSON.stringify({ type: "proxy-need", transferId, seqs }));
+          return true;
+        }));
+        return;
+      }
       let frame: SignalFrame;
       try { frame = JSON.parse(String(event.data)) as SignalFrame; } catch { return; }
 
@@ -2075,7 +2136,14 @@ function ChatApp() {
         return;
       }
 
-      if (frame.type === "presence-ack" || frame.type === "signal-undeliverable" || frame.type === "replaced" || frame.type === "hello") {
+      if (frame.type === "hello") {
+        serverBinaryRef.current = Array.isArray(frame.features) && frame.features.includes("bin");
+        const pl = frame.limits?.proxy;
+        proxyLimitsRef.current = pl && [pl.bytesPerSec, pl.burstBytes, pl.framesPerSec, pl.burstFrames].every((n) => typeof n === "number" && n > 0)
+          ? pl : DEFAULT_PROXY_LIMITS;
+        return;
+      }
+      if (frame.type === "presence-ack" || frame.type === "signal-undeliverable" || frame.type === "replaced") {
         return;
       }
 
@@ -2959,10 +3027,11 @@ function ChatApp() {
       .map((p) => p.channel)
       .filter((c): c is RTCDataChannel => Boolean(c) && c!.readyState === "open");
 
-    // Files travel peer-to-peer only. The server "proxy" fallback stores the
-    // frames but never forwards them, so starting it would report success
-    // for a file nobody receives.
-    if (channels.length === 0) {
+    // Files go peer-to-peer. When no direct channel came up (a strict NAT
+    // without TURN) but somebody is in the room, the server relays the
+    // encrypted chunks instead (proxy transport; it cannot read them).
+    const relayed = channels.length === 0;
+    if (relayed && (peersRef.current.size === 0 || socketRef.current?.readyState !== WebSocket.OPEN)) {
       setNotice(t(lang, "files.noPeer"));
       return;
     }
@@ -2979,8 +3048,9 @@ function ChatApp() {
       // ClientMessage type ("proxy-meta" etc) that routes.ts expects.
       const sock = socketRef.current;
       if (!sock || sock.readyState !== WebSocket.OPEN) return false;
-      const wireKind = String(frame.kind);
-      sock.send(JSON.stringify({ type: wireKind, ...frame }));
+      const binary = serverBinaryRef.current ? binaryFrame(frame) : null;
+      if (binary) sock.send(binary);
+      else sock.send(JSON.stringify({ type: String(frame.kind), ...wireFrame(frame) }));
       return true;
     };
 
@@ -2991,7 +3061,9 @@ function ChatApp() {
       senderId: myIdRef.current,
       senderName: nameRef.current,
       channels,
+      binary: (channel) => binaryChannelsRef.current.has(channel),
       sendProxy,
+      paceProxy: relayed ? proxyPacer(proxyLimitsRef.current, () => socketRef.current) : undefined,
       onTransport: (transport) => {
         // Re-key the tracking entry to the real transferId emitted by
         // sendFile; cheer the user with which transport was picked.

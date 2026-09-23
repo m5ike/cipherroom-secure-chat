@@ -40,8 +40,9 @@ import { audit } from "../monitor/audit";
 import { classifyFrame, hashRoom, traffic, truncateIp } from "../monitor/traffic";
 import type { StorageFrame, StorageSocketState } from "../storage/ws";
 import type { TrustProxyValue } from "../trust-proxy";
-import { isFrameError, MAX_FRAME_BYTES, parseFrame, PROTOCOL_VERSION, type ClientFrame } from "./frames";
-import { ConnectionGate, limitClassOf, SocketLimiter } from "./limits";
+import { isBinaryError, parseBinaryChunk, type BinaryProxyChunk } from "./binary";
+import { isFrameError, KNOWN_FEATURES, MAX_FRAME_BYTES, parseFrame, PROTOCOL_VERSION, type ClientFrame } from "./frames";
+import { ConnectionGate, limitClassOf, LIMITS, PROXY_BYTES, SocketLimiter } from "./limits";
 import { accountRef } from "./refs";
 import { AwayRelay, type RelayPeer } from "./relay";
 
@@ -57,6 +58,8 @@ export type HubClient = RelayPeer & {
   closed: boolean;
   /** Set by command-poll: operator commands for this device come here. */
   deviceId?: string;
+  /** Joined with the "bin" feature: gets file chunks as binary messages. */
+  binary?: boolean;
 };
 
 type PushFn = (target: PushTarget, payload: { title: string; body: string; url: string; tag: string; kind?: string }) => Promise<{ ok: boolean; error?: string }>;
@@ -194,7 +197,9 @@ export class SignalingHub {
   send(socket: WebSocket, payload: unknown, client?: HubClient): boolean {
     if (socket.readyState !== WebSocket.OPEN) return false;
     const target = client ?? this.bySocket(socket);
-    const type = typeof (payload as { type?: unknown })?.type === "string" ? (payload as { type: string }).type : "unknown";
+    // A Buffer is a binary proxy chunk, the only binary message (binary.ts).
+    const type = payload instanceof Buffer ? "proxy-chunk"
+      : typeof (payload as { type?: unknown })?.type === "string" ? (payload as { type: string }).type : "unknown";
     if (socket.bufferedAmount > HARD_BACKPRESSURE_BYTES) {
       if (target && !target.closed) {
         audit.add({ category: "network", level: "warn", event: "ws.slow-consumer", peerId: target.id, ip: truncateIp(target.ip), bytes: socket.bufferedAmount });
@@ -206,13 +211,19 @@ export class SignalingHub {
       traffic.record({ channel: "ws", direction: "out", cls: "file-proxy", type, bytes: 0, conn: target?.connId, peerId: target?.id, status: "dropped", note: "backpressure" });
       return false;
     }
-    const data = JSON.stringify(payload);
-    socket.send(data);
+    const data = payload instanceof Buffer ? payload : JSON.stringify(payload);
+    socket.send(data, { binary: typeof data !== "string" });
     traffic.record({
-      channel: "ws", direction: "out", cls: classifyFrame(type), type, bytes: Buffer.byteLength(data),
+      channel: "ws", direction: "out", cls: classifyFrame(type), type, bytes: typeof data === "string" ? Buffer.byteLength(data) : data.length,
       conn: target?.connId, peerId: target?.id, accountId: target?.accountId, roomHash: hashRoom(target?.room),
     });
     return true;
+  }
+
+  /** A binary proxy chunk: verbatim to peers that read binary, as JSON to the rest. */
+  private sendChunk(peer: HubClient, chunk: BinaryProxyChunk, json: () => Record<string, unknown>): boolean {
+    if (peer.binary) return this.send(peer.socket, chunk.raw, peer);
+    return this.send(peer.socket, json(), peer);
   }
 
   private socketIndex = new WeakMap<WebSocket, HubClient>();
@@ -256,7 +267,7 @@ export class SignalingHub {
 
     socket.on("pong", () => { client.alive = true; });
     socket.on("message", (data, isBinary) => {
-      if (isBinary) return this.error(client, "invalid-frame", "binary frames are not part of the protocol");
+      if (isBinary) return this.onBinary(client, Buffer.isBuffer(data) ? data : Buffer.concat(Array.isArray(data) ? data : [Buffer.from(data as ArrayBuffer)]));
       this.onFrame(client, data as Buffer);
     });
     socket.on("close", (code) => this.closed(client, code));
@@ -268,7 +279,8 @@ export class SignalingHub {
       peerId: client.id,
       connId: client.connId,
       serverTime: Date.now(),
-      limits: { maxFrameBytes: MAX_FRAME_BYTES },
+      limits: { maxFrameBytes: MAX_FRAME_BYTES, proxy: { bytesPerSec: PROXY_BYTES.refillPerSec, burstBytes: PROXY_BYTES.capacity, framesPerSec: LIMITS.proxy.refillPerSec, burstFrames: LIMITS.proxy.capacity } },
+      features: [...KNOWN_FEATURES],
       cache: "no-store",
     }, client);
   }
@@ -334,6 +346,39 @@ export class SignalingHub {
     }
   }
 
+  /** The only binary message: a file chunk for the proxy (binary.ts). */
+  private onBinary(client: HubClient, data: Buffer): void {
+    client.alive = true;
+    const parsed = parseBinaryChunk(data, MAX_FRAME_BYTES);
+    traffic.record({
+      channel: "ws", direction: "in", cls: isBinaryError(parsed) ? "error" : "file-proxy", type: isBinaryError(parsed) ? "invalid" : "proxy-chunk", bytes: data.length,
+      conn: client.connId, peerId: client.id, accountId: client.accountId, roomHash: hashRoom(client.room),
+      status: isBinaryError(parsed) ? "error" : "ok",
+    });
+    if (isBinaryError(parsed)) {
+      client.limiter.allow("other");
+      this.error(client, "invalid-frame", parsed.error);
+      if (client.limiter.abusive) this.kick(client, "too many invalid frames");
+      return;
+    }
+    // Rate limits count the base64 length, as for the JSON frame.
+    if (!client.limiter.allow("proxy", Math.ceil(parsed.ciphertext.length / 3) * 4)) {
+      this.send(client.socket, { type: "rate-limited", frame: "proxy-chunk", retryAfterMs: client.limiter.retryAfter("proxy") }, client);
+      if (client.limiter.abusive) this.kick(client, "rate limits exceeded");
+      return;
+    }
+    const room = client.room;
+    if (!room) return this.error(client, "not-in-room", "join a room first");
+    const pushed = this.proxy.pushChunk(client.connId, { transferId: parsed.transferId, seq: parsed.seq, bytes: parsed.ciphertext.length });
+    if (!pushed.ok) return this.error(client, "proxy-refused", pushed.reason ?? "refused", { transferId: parsed.transferId });
+    let json: Record<string, unknown> | null = null;
+    const asJson = () => (json ??= {
+      kind: "proxy-chunk", type: "proxy-chunk", transferId: parsed.transferId, transport: "proxy", from: client.id,
+      ...(parsed.v ? { v: parsed.v } : {}), seq: parsed.seq, iv: parsed.iv.toString("base64"), ciphertext: parsed.ciphertext.toString("base64"),
+    });
+    for (const peer of this.members(room)) if (peer !== client) this.sendChunk(peer, parsed, asJson);
+  }
+
   private kick(client: HubClient, reason: string): void {
     audit.add({ category: "security", level: "warn", event: "ws.kicked", peerId: client.id, accountId: client.accountId, ip: truncateIp(client.ip), status: reason });
     try { client.socket.close(1008, reason); } catch { /* ignore */ }
@@ -393,6 +438,7 @@ export class SignalingHub {
   private join(client: HubClient, frame: Extract<ClientFrame, { type: "join" }>): void {
     this.leaveRoom(client, false);
     client.protocol = frame.protocol;
+    client.binary = frame.features?.includes("bin") ?? false;
     client.name = frame.name;
 
     const room = frame.room;

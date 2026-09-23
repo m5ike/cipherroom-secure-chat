@@ -10,6 +10,10 @@ export const PROTOCOL_VERSION = 2;
 /** Largest frame we accept, in bytes (the ws maxPayload is set to this). */
 export const MAX_FRAME_BYTES = 256 * 1024;
 
+/** What a client may announce in join.features, and the server in hello:
+ *  "bin" — file chunks as binary messages (binary.ts). */
+export const KNOWN_FEATURES = new Set(["bin"]);
+
 export type IceCandidate = { candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null; usernameFragment?: string | null };
 export type SessionDescription = { type: "offer" | "answer" | "pranswer" | "rollback"; sdp: string };
 /** SDP / ICE sealed with the room's signal key (crypto v2): opaque here. */
@@ -17,7 +21,7 @@ export type SealedSignal = { sealed: { v: 2; iv: string; ciphertext: string } };
 export type Envelope = Record<string, string | number>;
 
 export type ClientFrame =
-  | { type: "join"; protocol: number; room: string; name: string; peerId?: string; resume?: string; auth?: string; away: boolean }
+  | { type: "join"; protocol: number; room: string; name: string; peerId?: string; resume?: string; auth?: string; away: boolean; features?: string[] }
   | { type: "auth"; token: string | null; away: boolean }
   | { type: "leave"; away: boolean }
   | { type: "signal"; target: string; payload: SessionDescription | IceCandidate | SealedSignal }
@@ -160,6 +164,11 @@ export function parseFrame(raw: string | Buffer): ClientFrame | FrameError {
       if (resume) frame.resume = resume;
       const auth = text(f.auth, 200);
       if (auth) frame.auth = auth;
+      // Optional abilities of the client; only the ones this server knows.
+      if (Array.isArray(f.features)) {
+        const features = f.features.filter((x): x is string => typeof x === "string" && KNOWN_FEATURES.has(x)).slice(0, 8);
+        if (features.length) frame.features = [...new Set(features)];
+      }
       return frame;
     }
     case "auth": {
