@@ -1,5 +1,9 @@
 # Účty s passkey, data chatu a stav „away"
 
+> **Od 3.1.0:** účet může mít víc passkeys a obnovovací kód (kořen účtu je pro každý zapečetěný),
+> relace přežijí restart serveru a okno účtu ukazuje zařízení; položky fronty mají zapečetěného
+> odesílatele, účtenky fungují i po restartu (`relay_ledger`) a text probuzení je neutrální —
+> viz [dokumentace › Účty a passkeys](site/index.html#ucty).
 > **Od 3.0.0** (viz [dokumentace 3.0](site/index.html#fronta)): členy s účtem místnost vidí pod
 > pseudonymem `account` platným jen pro ni (ne pod ID účtu); fronta pro nepřítomné je tabulka
 > SQLite s pořadím, deduplikací, lease a potvrzením (`relay-ack`), dead-letter a kvótami;

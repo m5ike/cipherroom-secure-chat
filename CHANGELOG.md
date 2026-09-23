@@ -5,6 +5,108 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [3.1.0] – 2026-09-23
+
+Zapracované návrhy z roadmapy 3.0: forward secrecy a párové klíče, slepá ID
+místností, Argon2id, E2EE hovorů, více instancí serveru, binární přenos
+souborů přes relay, účty s více passkeys a obnovou, role v administraci,
+neměnný audit, zálohy, metriky a alerty. **Klienti 3.0 a 3.1 se v místnosti
+nepotkají** (jiné klíče i ID místnosti) — po nasazení obnovte všechna okna.
+Dokumentace (HTML + PDF): [`docs/site/`](docs/site/index.html).
+
+### Kryptografie v3 (`client/src/lib/envelope.ts`, `kdf.ts`, `sender-keys.ts`)
+- **Argon2id** (64 MiB, 3 průchody, WASM) místo PBKDF2 — ve **Web Workeru**,
+  stránka nezamrzne. CSP povoluje `'wasm-unsafe-eval'`.
+- **Slepé ID místnosti** `r3.<HKDF>`: server název místnosti nezná; historie
+  na serveru se čte pod slepým ID (se zpětnou cestou pro data 3.0).
+- **Klíče odesílatele s ratchetem** (forward secrecy): řetěz HMAC, klíč zprávy
+  se po použití zahodí, rotace po 500 zprávách, hodině nebo odchodu člena;
+  **vyloučení člena** z vlastních zpráv bez změny hesla.
+- **Párové klíče** (ECDH P-256 + HKDF, podepsané `hello`): soukromé zprávy
+  jsou zapečetěné jen pro vybrané příjemce.
+- **Identita svázaná s účtem**: klíč zařízení podepsaný klíčem účtu
+  (Ed25519 odvozený z kořene účtu); pinování podle účtu, ne jména.
+- **Bezpečnostní čísla s QR kódem** (zobrazení i skenování kamerou) a
+  potvrzení „ověřeno“; zprávy ukazují, čím byly zapečetěné.
+- Obálky v2 (fronta z 3.0) se dál otevřou.
+
+### Soubory a hovory
+- **Binární rámce** pro kusy souborů (DataChannel i server): o třetinu méně
+  dat než base64 v JSON; schopnost si strany sdělí (`caps`, `features`),
+  starší klient dostane JSON.
+- **Šifrovaný relay souborů, když P2P selže** (striktní NAT bez TURN) — dřív
+  aplikace přenos rovnou odmítla. Odesílatel se **řídí limity**, které server
+  ohlásí (80 % rozpočtu), takže ho relay neodmítne ani neodpojí.
+- **E2EE hovorů**: každý rámec zvuku a obrazu je v workeru
+  (`RTCRtpScriptTransform`) zapečetěný AES-GCM klíčem páru pro daný směr;
+  hlavička kodeku zůstává čitelná a autentizovaná (připraveno pro SFU). Panel
+  hlasu ukazuje, zda byla za poslední sekundu zapečetěná každá zpráva.
+- **TURN s krátkodobými přístupy** (`TURN_SECRET`, TURN REST API).
+
+### Protokol a více instancí (`server/cluster/*`, `server/signaling/cluster.ts`)
+- **Cluster přes Redis pub/sub** (`REDIS_URL`): místnost se rozprostře přes
+  instance — členství, signály, relayované soubory (binárně i JSON), žádosti o
+  opakování, `resume` na jiné instanci, odvolání relací a stav nepřítomnosti.
+  Zprávy clusteru podepsané HMAC (`CLUSTER_SECRET`), padělky se zahodí.
+  Vlastní RESP klient bez závislostí (TLS, AUTH, reconnect, resubscribe).
+- Účty ve sdíleném adresáři: instance si načtou, co zapsala jiná.
+- Limity brány spojení z prostředí (`WS_CONNECTS_PER_MINUTE`,
+  `WS_CONNECTIONS_PER_CLIENT`, `WS_CONNECTIONS_TOTAL`).
+
+### Fronta a doručování
+- **Trvalá evidence relayovaných zpráv** (`relay_ledger`): účtenky fungují i po
+  restartu. Odesílatel a stav položky jsou v DB **zapečetěné** master klíčem.
+- **Neutrální text probuzení** push — žádné jméno ani místnost na zamčené
+  obrazovce.
+
+### Účty
+- **Více passkeys na účet** a **obnovovací kód** (130 bitů): kořen účtu je
+  zapečetěný pro každý passkey i pro kód; ztráta zařízení už neznamená ztrátu
+  trezoru a databáze.
+- **Relace přežijí restart** (hash tokenu na disku), klouzavá platnost 12 h,
+  nejdéle 7 dní, **seznam zařízení** s odhlášením.
+
+### Administrace a provoz
+- **Role** vlastník / operátor / auditor, jmenné tokeny (`ADMIN_TOKENS`,
+  správa v konzoli), **přihlášení do konzole passkey**; auditor jen čte.
+- **Neměnný audit**: hash řetěz přes záznamy + podepsané kontrolní body
+  (Ed25519), ověření z konzole.
+- **Zálohy** (online backup SQLite, kopie šifrovaných DB, manifest se SHA-256,
+  rotace; `BACKUP_DIR`), kontrola integrity, `VACUUM`.
+- **Prometheus `/metrics`** (`METRICS_TOKEN`) a **alerty** s webhookem
+  (`ALERT_WEBHOOK_URL`, prahy `ALERT_<PRAVIDLO>`), stav clusteru v konzoli.
+
+### Klient
+- `App.tsx` rozdělený do modulů (panely, ovládání hovorů, dialog, pomocné
+  funkce); **error boundary** kolem aplikace i každého dialogu.
+- **Menší bundle**: dialogy se načtou až při otevření, React ve vlastním
+  chunku, KDF worker 216 → 29 kB; hlavní chunk 685 → 440 kB.
+- Dlouhé konverzace: vykreslí se posledních 200 zpráv (další na požádání),
+  zprávy mimo obrazovku se nepočítají (`content-visibility`).
+- **Kompletní i18n** hlášek chatu (cs/en/de) + test úplnosti překladů.
+
+### Testy a nástroje
+- Fuzz/property testy (rámce, binární kusy, RESP, payloady, metadata souborů),
+  zátěžový skript `npm run load-test`, test upgradu dat z 3.0, E2E: soubory
+  přes relay, šifrovaný hovor, obnova účtu kódem, role v konzoli, cluster s
+  reálným Redisem. Celkem 795 unit a 48 E2E testů.
+
+### Opraveno
+- Worker „background tick“ vznikal z `blob:` URL, kterou produkční CSP tiše
+  blokovala — skrytá záložka neudržovala spojení (od 2.11.0).
+- Do hovoru, ke kterému se připojil druhý ten, kdo spojení nezahajoval, nešel
+  jeho zvuk (chyběla renegociace) — nyní „perfect negotiation“.
+- Dva E2E testy sdílely port 5931 a při paralelním běhu mluvily s cizím
+  serverem.
+
+### Upgrade z 3.0
+1. `git pull`, `npm ci` (nová závislost `hash-wasm`), `npm run build`.
+2. nginx: CSP `script-src 'self' 'wasm-unsafe-eval'` (viz
+   `deploy/nginx/m5cet.conf`); `nginx -t && systemctl reload nginx`.
+3. Volitelně: `TURN_SECRET`, `METRICS_TOKEN`, `ALERT_WEBHOOK_URL`, `BACKUP_DIR`,
+   `ADMIN_TOKENS`, pro více instancí `REDIS_URL` + `CLUSTER_SECRET`.
+4. Restart; otevřená okna obnovit (klient 3.0 se s 3.1 nepotká).
+
 ## [3.0.0] – 2026-09-23
 
 Profesionální komunikační platforma: nový protokol, nové šifrování, nová

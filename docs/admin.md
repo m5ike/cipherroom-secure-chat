@@ -1,5 +1,11 @@
 # Admin API + GUI
 
+> **Since 3.1.0** administrators are named, with a role — `owner`, `operator` or `auditor`
+> (read-only) — from `ADMIN_API_TOKEN` (owner), `ADMIN_TOKENS` or the console's Administrators
+> panel, and may sign in to the console with a passkey. The audit journal is hash-chained with
+> signed checkpoints; backups, integrity checks, `/metrics` and alert rules with a webhook are
+> in the console. See [documentation › Administrace](site/index.html#administrace) and
+> [› Monitoring a audit](site/index.html#audit).
 > **Since 3.0.0** the operator console lives at `/console/` and reads all live state (traffic,
 > connections, users, queue, storage, audit, commands, push) from the main service's
 > `/api/admin/*`; the admin service keeps the layout, telephony and AI tools and forwards

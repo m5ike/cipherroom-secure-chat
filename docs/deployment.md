@@ -63,9 +63,14 @@ vyžadovaly by přepis `server/routes.ts`.
 ### Nginx (referenční)
 
 `install.sh` generuje vlastní web včetně omezení počtu WebSocket spojení na
-klienta (`limit_req` / `limit_conn` pro `/ws`) — to je podstatné, protože
-limiter uvnitř aplikace se při WS upgradu nespouští. Ruční minimum vypadá takto
-(doplňte si stejné limity):
+klienta (`limit_req` / `limit_conn` pro `/ws`). Od 3.0 má i aplikace vlastní
+bránu spojení (`WS_CONNECTS_PER_MINUTE`, `WS_CONNECTIONS_PER_CLIENT`,
+`WS_CONNECTIONS_TOTAL`); limity v proxy jsou druhá vrstva. Posílá-li proxy
+vlastní `Content-Security-Policy`, musí od 3.1 obsahovat
+`script-src 'self' 'wasm-unsafe-eval'` (Argon2id) — viz
+[`deploy/nginx/m5cet.conf`](../deploy/nginx/m5cet.conf). Více instancí za
+jedním upstreamem: [dokumentace › Více instancí](site/index.html#cluster).
+Ruční minimum vypadá takto (doplňte si stejné limity):
 
 ```nginx
 # Managed by M5cet install.sh
@@ -236,17 +241,32 @@ zálohovat ho; jinak si server vygeneruje `storage.key` v adresáři úložišt�
 
 ## Observability
 
-- `GET /api/health` pro liveness probe.
-- `GET /admin/metrics` (token) pro RAM, uptime, push subscribers, events
-  backend.
-- Standard Node `process.memoryUsage()` přístupný přes admin metrics.
-- Pro Prometheus přidejte sidecar exportér; M5cet sám expozici nedělá
-  (záměrně, ať server má minimum surface).
+- `GET /api/health` pro liveness probe (verze, build, protokol, `cluster`).
+- `GET /metrics` — Prometheus text (od 3.1); token `METRICS_TOKEN` nebo
+  administrátor. Scrape config:
+
+  ```yaml
+  - job_name: m5cet
+    scheme: https
+    authorization: { credentials: "<METRICS_TOKEN>" }
+    static_configs: [{ targets: ["chat.example.com"] }]
+  ```
+- Alerty (bezpečnostní varování, chyby, event loop, heap, mrtvé položky
+  fronty, selhání zálohy/integrity/auditu) s webhookem `ALERT_WEBHOOK_URL`;
+  prahy `ALERT_<PRAVIDLO>` nebo v konzoli.
+- Konzole `/console/` ukazuje živý provoz, audit a zdraví (včetně clusteru).
 
 ## Backup
 
-- `data/` (pokud používáte SQLite events backend).
-- `.env` (`ADMIN_API_TOKEN`, VAPID, `DATABASE_URL`).
+- Od 3.1 zálohuje server sám: s `BACKUP_DIR` každých
+  `BACKUP_INTERVAL_HOURS` (24) hodin, drží `BACKUP_KEEP` (7) záloh — globální
+  DB (online backup), šifrované DB uživatelů, účty, administrátory a
+  `manifest.json` se SHA-256; ručně z konzole (Úložiště). Obnova: zastavit
+  službu, zkopírovat obsah zálohy zpět do `$DATA_DIR`, ověřit
+  `sha256sum` proti manifestu, spustit.
+- **Master klíč úložiště** (`storage.key` / `STORAGE_MASTER_KEY`) a
+  `audit-signing.key` zálohujte zvlášť — v záloze záměrně nejsou.
+- `.env` (`ADMIN_API_TOKEN`, VAPID, `TURN_SECRET`, `CLUSTER_SECRET`).
 - Konfiguraci Nginx a TLS certifikáty.
 
 `update.sh` zálohuje před každou změnou do `BACKUP_ROOT`

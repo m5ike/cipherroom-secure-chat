@@ -1,6 +1,6 @@
 # M5cet — architektura / Architecture
 
-> **Aktuální architektura 3.0.0:** [dokumentace 3.0 › Architektura](site/index.html#architektura).
+> **Aktuální architektura 3.1.0:** [dokumentace › Architektura](site/index.html#architektura), více instancí v [› Více instancí](site/index.html#cluster).
 
 > Stav k verzi 2.5.0. Některé serverové části jsou stále stuby — viz
 > „Limitace" na konci.

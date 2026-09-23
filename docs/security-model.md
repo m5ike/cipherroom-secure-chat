@@ -1,5 +1,10 @@
 # M5cet — bezpečnostní model
 
+> **Od 3.1.0** platí šifrování v3: Argon2id (64 MiB) ve Web Workeru, slepé ID místnosti (server
+> nezná název), živé zprávy pod klíči odesílatelů s ratchetem (forward secrecy, vyloučení člena),
+> soukromé zprávy pod párovými klíči (ECDH), identita zařízení potvrzená účtem (Ed25519),
+> bezpečnostní čísla s QR a E2EE rámců hovoru — viz
+> [dokumentace › Šifrování v3](site/index.html#sifrovani-v3) a [› Soubory, relay a hovory](site/index.html#prenosy).
 > **Od 3.0.0** platí šifrování v2 (klíče podle účelu z PBKDF2 600 000 + HKDF, associated data,
 > zapečetěná signalizace, podpisy ECDSA uvnitř šifrování, ověřené soubory) — viz
 > [dokumentace 3.0 › Šifrování](site/index.html#sifrovani) a [› Bezpečnost serveru](site/index.html#bezpecnost).

@@ -1,5 +1,8 @@
 # File transfer
 
+> **Since 3.1.0** chunks travel as binary frames (DataChannel and socket), and when no direct
+> channel opens the file goes through the encrypted server relay, paced to the relay's limits —
+> see [documentation › Soubory, relay a hovory](site/index.html#prenosy).
 ## Two paths
 
 - **Inline (legacy)**: anything ≤ 512 KiB (`INLINE_ATTACHMENT_LIMIT`, `App.tsx`) is base64-encoded into a data

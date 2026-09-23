@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <meta name="referrer" content="no-referrer" />
-<title>M5cet 3.0 — dokumentace</title>
+<title>M5cet 3.1 — dokumentace</title>
 <meta name="description" content="Dokumentace M5cet 3.0: architektura, protokol v2, šifrování v2, fronta zpráv, účty a passkeys, úložiště, administrace, audit, API, nasazení a návrhy." />
 <style>
 :root {
@@ -161,7 +161,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
 </head>
 <body>
 <header class="top">
-  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 3.0.0</small></a>
+  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 3.1.0</small></a>
   <div class="search" role="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" placeholder="Hledat v dokumentaci…" autocomplete="off" aria-label="Hledat v dokumentaci" />
@@ -169,21 +169,21 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <div class="results" id="results" role="listbox"></div>
   </div>
   <button class="btn" id="theme" type="button" title="Světlý / tmavý motiv">◐</button>
-  <a class="btn" href="m5cet-dokumentace-3.0.0.pdf" download>PDF</a>
+  <a class="btn" href="m5cet-dokumentace-3.1.0.pdf" download>PDF</a>
 </header>
 <div class="layout">
 <nav class="toc" id="toc" aria-label="Obsah"></nav>
 <main id="content">
 <section class="doc cover" id="uvod" data-group="Začínáme">
   <div class="hero">
-    <h1>M5cet 3.0</h1>
+    <h1>M5cet 3.1</h1>
     <p class="lead">Šifrovaná komunikace peer-to-peer v prohlížeči: zprávy, soubory, hovory a sdílení polohy mezi lidmi, kteří znají společné heslo místnosti. Server zprostředkuje spojení, podrží zprávy pro nepřítomné a nikdy nevidí obsah.</p>
-    <p>Tato dokumentace popisuje verzi <b>3.0.0</b>: nový signalizační protokol v2, šifrování v2 s identitou zařízení, spolehlivou frontu zpráv, novou administraci s živým sledováním provozu a auditem.</p>
-    <div class="pills"><span class="pill">Node.js 24</span><span class="pill">TypeScript 7</span><span class="pill">React 19</span><span class="pill">WebRTC DataChannel</span><span class="pill">AES-GCM 256</span><span class="pill">ECDSA P-256</span><span class="pill">WebAuthn + PRF</span><span class="pill">SQLite + SQLCipher</span></div>
+    <p>Tato dokumentace popisuje verzi <b>3.1.0</b>: signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
+    <div class="pills"><span class="pill">Node.js 24</span><span class="pill">TypeScript 7</span><span class="pill">React 19</span><span class="pill">WebRTC DataChannel</span><span class="pill">AES-GCM 256</span><span class="pill">ECDSA / ECDH P-256</span><span class="pill">Argon2id</span><span class="pill">Ed25519</span><span class="pill">WebAuthn + PRF</span><span class="pill">SQLite + SQLCipher</span></div>
   </div>
   <div class="grid2">
     <div class="card"><h4>Pro koho je co</h4><p><b>Uživatel</b> — <a href="#rezimy">režimy</a>, <a href="#sifrovani">co šifrování chrání</a>. <b>Vývojář</b> — <a href="#architektura">architektura</a>, <a href="#protokol">protokol v2</a>, <a href="#api">API</a>. <b>Provozovatel</b> — <a href="#nasazeni">nasazení</a>, <a href="#administrace">administrace</a>, <a href="#audit">audit</a>, <a href="#bezpecnost">bezpečnost</a>.</p></div>
-    <div class="card"><h4>Co je nového ve 3.0</h4><p>Validované rámce a limity, pseudonymy účtů, zapečetěná signalizace (ochrana hovorů před serverem), podepsané zprávy a soubory, fronta s lease a dead-letter, konzole s živým provozem a auditem. Plný přehled v <a href="#zmeny">seznamu změn</a>.</p></div>
+    <div class="card"><h4>Co je nového ve 3.1</h4><p><a href="#sifrovani-v3">Šifrování v3</a> s forward secrecy a slepým ID místnosti, <a href="#prenosy">binární přenos, relay souborů a E2EE hovorů</a>, <a href="#cluster">více instancí</a>, <a href="#ucty">více passkeys a obnovovací kód</a>, <a href="#role">role</a>, <a href="#neměnný-audit">neměnný audit</a>, <a href="#metriky">metriky a alerty</a>. Přehled v <a href="#zmeny-31">seznamu změn 3.1</a>.</p></div>
   </div>
   <div class="note"><b>Vyhledávání:</b> stiskněte <kbd>/</kbd> a pište — výsledky se hledají v nadpisech i textu, <kbd>↑</kbd> <kbd>↓</kbd> a <kbd>Enter</kbd> skočí na místo. Tlačítko <b>PDF</b> stáhne tutéž dokumentaci k tisku.</div>
 </section>
@@ -217,8 +217,8 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
   <div class="grid2">
     <div class="card"><h4>Zprávy</h4><p>Místnost i soukromí příjemci, odpovědi, přeposílání, stav (odesláno → uloženo → doručeno → přečteno), zprávy <i>klikací</i>, <i>mizející</i> a <i>zapečetěné</i> vlastním kódem.</p></div>
     <div class="card"><h4>Soubory</h4><p>Malé přímo ve zprávě, velké po kusech po DataChannelu; když P2P nejde, přes šifrovanou proxy serveru. Opakování ztracených kusů, ověření otisku celého souboru.</p></div>
-    <div class="card"><h4>Hovory a média</h4><p>Audio a video přes WebRTC; DTLS otisky chráněné zapečetěnou signalizací. Sdílení polohy, NFC, přepis řeči, AI asistent a telefonie jako volitelné moduly.</p></div>
-    <div class="card"><h4>Účty</h4><p>Passkey (WebAuthn) s rozšířením PRF: z něj se v prohlížeči odvodí klíč trezoru i klíč vlastní databáze. Server nezná žádný z nich.</p></div>
+    <div class="card"><h4>Hovory a média</h4><p>Audio a video přes WebRTC; DTLS otisky chráněné zapečetěnou signalizací a každý rámec navíc šifrovaný klíčem páru (<a href="#e2ee-hovoru">E2EE hovorů</a>). Sdílení polohy, NFC, přepis řeči, AI asistent a telefonie jako volitelné moduly.</p></div>
+    <div class="card"><h4>Účty</h4><p>Passkey (WebAuthn) s rozšířením PRF: z něj se v prohlížeči odvodí klíč trezoru i klíč vlastní databáze. Server nezná žádný z nich. Více passkeys a obnovovací kód pro případ ztráty zařízení.</p></div>
   </div>
 </section>
 
@@ -538,14 +538,117 @@ setInterval(() =&gt; ws.send(JSON.stringify({ type: <span class="s">"ping"</span
       <tr><td>Obsah zpráv, souborů, hovorů</td><td><span class="badge b-ok">ne</span></td><td><span class="badge b-warn">ano</span> (má klíč)</td><td><span class="badge b-ok">ne</span></td></tr>
       <tr><td>Kdo zprávu napsal (podpis)</td><td><span class="badge b-ok">ne</span></td><td><span class="badge b-warn">ano</span>, ověřeně</td><td><span class="badge b-ok">ne</span></td></tr>
       <tr><td>SDP / ICE, DTLS otisky</td><td><span class="badge b-ok">ne</span> (zapečetěno)</td><td><span class="badge b-warn">ano</span></td><td><span class="badge b-ok">ne</span></td></tr>
-      <tr><td>Název místnosti</td><td><span class="badge b-warn">ano</span> (směrování)</td><td><span class="badge b-warn">ano</span></td><td><span class="badge b-ok">ne</span> (TLS)</td></tr>
+      <tr><td>Název místnosti</td><td><span class="badge b-warn">ano</span> (směrování) — <b>od 3.1 ne</b> (slepé ID)</td><td><span class="badge b-warn">ano</span></td><td><span class="badge b-ok">ne</span> (TLS)</td></tr>
       <tr><td>Kdo je v místnosti, kdy, IP</td><td><span class="badge b-warn">ano</span> (monitor ukládá IP zkrácenou)</td><td><span class="badge b-warn">jména</span></td><td><span class="badge b-warn">IP spojení</span></td></tr>
       <tr><td>Kdo komu píše přes relay</td><td><span class="badge b-warn">ano</span> — do auditu jen se zapnutým auditem komunikace</td><td>—</td><td><span class="badge b-ok">ne</span></td></tr>
       <tr><td>Heslo místnosti, klíče, passkey</td><td><span class="badge b-ok">nikdy</span></td><td>heslo ano</td><td><span class="badge b-ok">ne</span></td></tr>
     </tbody>
   </table>
-  <div class="note"><b>Omezení, které 3.0 neřeší:</b> klíč místnosti je sdílený a statický — kdo heslo zná (nebo ho později získá), přečte i starší zachycený provoz. Forward secrecy a vyloučení člena bez změny hesla řeší až <a href="#navrhy">návrhy</a> (sender keys / MLS).</div>
+  <div class="note"><b>Ve 3.0 otevřené, ve 3.1 vyřešené:</b> klíč místnosti byl sdílený a statický — kdo heslo zná (nebo ho později získá), přečetl by i starší zachycený provoz. Verze 3.1 šifruje živé zprávy klíči odesílatelů s ratchetem a umí vyloučit člena bez změny hesla — viz <a href="#sifrovani-v3">Šifrování v3</a>.</div>
 </section>
+<section class="doc" id="sifrovani-v3" data-group="Bezpečnost">
+  <h2>Šifrování v3 <span class="badge b-acc">3.1</span><a class="anchor" href="#sifrovani-v3">#</a></h2>
+  <p class="lead">Verze 3.1 mění první krok (Argon2id), skrývá před serverem název místnosti a živé zprávy už nešifruje sdíleným klíčem místnosti, ale klíči odesílatelů s ratchetem a párovými klíči. Vše z kapitoly <a href="#sifrovani">Šifrování v2</a> (AAD, podpisy, ověřené soubory) platí dál.</p>
+  <figure>
+  <svg viewBox="0 0 960 420" role="img" aria-label="Klíče šifrování v3">
+    <defs><marker id="k3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
+    <rect x="20" y="40" width="150" height="64" rx="12" class="box-warn"/><text x="95" y="68" text-anchor="middle" class="t">heslo místnosti</text><text x="95" y="88" text-anchor="middle" class="t2">NFC</text>
+    <path d="M170 72 L215 72" class="ln" marker-end="url(#k3)"/>
+    <rect x="215" y="28" width="200" height="88" rx="12" class="box"/><text x="315" y="54" text-anchor="middle" class="t">Argon2id</text><text x="315" y="74" text-anchor="middle" class="t2">64 MiB · 3 průchody · Web Worker</text><text x="315" y="94" text-anchor="middle" class="tm">salt m5cet:room:v3:&lt;místnost&gt;</text>
+    <path d="M415 72 L460 72" class="ln" marker-end="url(#k3)"/>
+    <rect x="460" y="36" width="150" height="72" rx="12" class="box-vio"/><text x="535" y="64" text-anchor="middle" class="t">tajemství</text><text x="535" y="84" text-anchor="middle" class="t2">HKDF-SHA256</text>
+    <path d="M610 60 L680 22" class="ln" marker-end="url(#k3)"/><path d="M610 68 L680 70" class="ln" marker-end="url(#k3)"/><path d="M610 80 L680 118" class="ln" marker-end="url(#k3)"/>
+    <rect x="680" y="4" width="260" height="40" rx="10" class="box-ok"/><text x="694" y="29" class="t">„room-id“ → slepé ID r3.…</text>
+    <rect x="680" y="52" width="260" height="40" rx="10" class="box-acc"/><text x="694" y="77" class="t">zprávy · signalizace · soubory</text>
+    <rect x="680" y="100" width="260" height="40" rx="10" class="box"/><text x="694" y="125" class="t">kontrolní hodnota klíče</text>
+
+    <rect x="20" y="200" width="200" height="80" rx="12" class="box-warn"/><text x="120" y="228" text-anchor="middle" class="t">identita zařízení</text><text x="120" y="248" text-anchor="middle" class="t2">ECDSA + ECDH P-256</text><text x="120" y="266" text-anchor="middle" class="tm">IndexedDB, neexportovatelné</text>
+    <path d="M220 240 L270 240" class="ln" marker-end="url(#k3)"/>
+    <rect x="270" y="200" width="200" height="80" rx="12" class="box"/><text x="370" y="228" text-anchor="middle" class="t">podepsaný hello</text><text x="370" y="248" text-anchor="middle" class="t2">check · pk · dh · sig</text><text x="370" y="266" text-anchor="middle" class="tm">přes DataChannel</text>
+    <path d="M470 240 L520 240" class="ln" marker-end="url(#k3)"/>
+    <rect x="520" y="200" width="150" height="80" rx="12" class="box-vio"/><text x="595" y="230" text-anchor="middle" class="t">ECDH → HKDF</text><text x="595" y="250" text-anchor="middle" class="t2">salt = místnost</text>
+    <path d="M670 220 L700 180" class="ln" marker-end="url(#k3)"/><path d="M670 240 L700 240" class="ln" marker-end="url(#k3)"/><path d="M670 262 L700 300" class="ln" marker-end="url(#k3)"/>
+    <rect x="700" y="158" width="240" height="44" rx="10" class="box-acc"/><text x="714" y="178" class="t">párový klíč</text><text x="714" y="195" class="t2">soukromé zprávy, doručení klíčů</text>
+    <rect x="700" y="218" width="240" height="44" rx="10" class="box-ok"/><text x="714" y="238" class="t">klíč odesílatele (ratchet)</text><text x="714" y="255" class="t2">živé zprávy do místnosti</text>
+    <rect x="700" y="278" width="240" height="44" rx="10" class="box"/><text x="714" y="298" class="t">klíče médií A→B, B→A</text><text x="714" y="315" class="t2">rámce hovoru</text>
+    <rect x="20" y="330" width="200" height="64" rx="12" class="box-ok"/><text x="120" y="356" text-anchor="middle" class="t">kořen účtu (passkey PRF)</text><text x="120" y="376" text-anchor="middle" class="t2">HKDF → Ed25519</text>
+    <path d="M220 362 L270 362" class="ln" marker-end="url(#k3)"/>
+    <rect x="270" y="330" width="260" height="64" rx="12" class="box"/><text x="400" y="356" text-anchor="middle" class="t">certifikát zařízení</text><text x="400" y="376" text-anchor="middle" class="tm">m5cet/device-cert/1|&lt;SPKI zařízení&gt;</text>
+  </svg>
+  <figcaption>Obr. 3b — Klíče místnosti (nahoře), klíče párů a odesílatelů (uprostřed), identita účtu (dole).</figcaption>
+  </figure>
+
+  <h3 id="argon2">Argon2id ve Web Workeru</h3>
+  <p>PBKDF2 ztěžuje hádání hesla jen časem; grafická karta ho spočítá paralelně. Argon2id (64 MiB paměti, 3 průchody, <code>hash-wasm</code>) stojí útočníka paměť na každý pokus. Výpočet běží v <code>kdf.worker.ts</code>, stránka nezamrzne; kde worker nejde spustit, poběží v hlavním vlákně. WebAssembly potřebuje v CSP <code>'wasm-unsafe-eval'</code> (nic jiného se nepovoluje). Obálky v2 (PBKDF2, např. zprávy čekající ve frontě z 3.0) se otevřou klíči odvozenými při první potřebě.</p>
+
+  <h3 id="slepe-id">Slepé ID místnosti</h3>
+  <p>Klient se připojuje pod <code>r3.&lt;base64url(HKDF(tajemství, "room-id"), 192 b)&gt;</code>. Server tak směruje podle hodnoty, ze které název nezjistí; lidé se stejným názvem a jiným heslem se ani nepotkají. Historie na serveru se čte pod slepým ID, se zpětnou cestou pro data uložená 3.0 pod názvem.</p>
+
+  <h3 id="hello">Hello a párové klíče</h3>
+  <div class="dgram"><div class="dgram__title"><code>hello</code><span class="dir">DataChannel, po otevření</span></div>
+    <div class="dgram__row"><div class="f f--hdr"><b>kind</b><i>"hello"</i></div><div class="f f--hdr"><b>v</b><i>3</i></div><div class="f f--sec"><b>check</b><i>kontrolní hodnota</i></div><div class="f f--sec" style="--w:2"><b>pk</b><i>ECDSA klíč zařízení (SPKI)</i></div><div class="f f--sec" style="--w:2"><b>dh</b><i>ECDH P-256 klíč</i></div><div class="f f--ct" style="--w:2"><b>sig</b><i>podpis m5cet/hello/1|místnost|od|pro|check|dh</i></div><div class="f f--hdr f--opt"><b>caps</b><i>bin, media</i></div></div></div>
+  <p>Podpis váže DH klíč na klíč zařízení, který si protistrany pinují. Jiná kontrolní hodnota = jiné heslo (aplikace to řekne), neplatný podpis = varování. Párový klíč = <code>HKDF(ECDH, salt = místnost, info = "m5cet/pair/1|" + oba klíče zařízení seřazené)</code> — znají ho právě tato dvě zařízení. Soukromá zpráva vybraným příjemcům se zapečetí pro každého zvlášť (<code>sk: "pair"</code>); jiný člen místnosti ji neotevře ani s heslem.</p>
+
+  <h3 id="sender-keys">Klíče odesílatele a forward secrecy</h3>
+  <p>Každý odesílatel drží řetězový klíč <code>CK</code> a po každé zprávě ho posune:</p>
+<pre><code>MK<sub>n</sub>   = HMAC(CK<sub>n</sub>, 0x01)      <span class="c">// klíč zprávy n (AES-GCM), po použití se zahodí</span>
+CK<sub>n+1</sub> = HMAC(CK<sub>n</sub>, 0x02)      <span class="c">// další článek; starý se přepíše</span>
+obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
+  <ul>
+    <li>Aktuální <code>CK</code> dostane každý peer zapečetěný <b>párovým klíčem</b> (<code>{kind:"sender-key", iv, ct}</code>) — server ho nevidí, jiný člen ho nepřečte.</li>
+    <li>Kdo později získá heslo, <b>starší zachycené zprávy nepřečte</b>: klíče už přečtených zpráv nejdou z ničeho v paměti znovu spočítat.</li>
+    <li>Řetěz se vymění po <b>500 zprávách</b>, <b>hodině</b>, nebo když někdo <b>odejde</b>; nový dostanou jen ti, kdo zůstali. Mimo pořadí se přijme až 1 000 přeskočených zpráv.</li>
+    <li><b>Vyloučit z mých zpráv</b> (Informace o účastníkovi): spojení skončí, klíč zařízení se na relaci zablokuje a řetěz se vymění.</li>
+    <li>Klíčem místnosti se dál šifrují zprávy pro <b>nepřítomné</b> (relay), fronta odchozích zpráv, stav mikrofonu, signalizace a soubory — tam příjemce párový kanál mít nemusí.</li>
+  </ul>
+
+  <h3 id="identita-uctu">Identita účtu a bezpečnostní čísla</h3>
+  <ul>
+    <li>Z kořene účtu (PRF passkey) se odvodí podpisový klíč <b>Ed25519</b> (<code>HKDF info "m5cet:account-sign:v1"</code>). Podepíše klíč zařízení (<code>m5cet/device-cert/1|&lt;SPKI&gt;</code>); podepsané zprávy nesou klíč účtu i certifikát.</li>
+    <li>Pin se od 3.1 váže na <b>účet</b>, ne na jméno: nové zařízení téhož účtu nevyvolá varování, cizí klíč pod stejným jménem ano. Odznak zprávy: <span class="badge b-ok">ověřený účet</span>, <span class="badge b-ok">ověřeno bezpečnostním číslem</span>.</li>
+    <li><b>Bezpečnostní číslo</b> (60 číslic) se dá porovnat i jako <b>QR kód</b> (<code>M5CET-SN:1:&lt;číslice&gt;</code>) — zobrazit, naskenovat kamerou druhého (<code>BarcodeDetector</code>), potvrdit „ověřeno“.</li>
+    <li>Každá zpráva v detailu říká, čím byla zapečetěná: klíčem odesílatele, párovým klíčem, nebo klíčem místnosti.</li>
+  </ul>
+
+  <h3 id="model-hrozeb-3">Co kdo vidí ve 3.1</h3>
+  <table>
+    <thead><tr><th>Údaj</th><th>3.0</th><th>3.1</th></tr></thead>
+    <tbody>
+      <tr><td>Název místnosti pro server</td><td>ano</td><td><span class="badge b-ok">ne</span> — slepé ID</td></tr>
+      <tr><td>Starší provoz po úniku hesla</td><td>čitelný</td><td><span class="badge b-ok">nečitelný</span> (živé zprávy; relay a fronta dál pod klíčem místnosti)</td></tr>
+      <tr><td>Soukromá zpráva pro ostatní členy</td><td>čitelná s heslem</td><td><span class="badge b-ok">nečitelná</span> — párový klíč</td></tr>
+      <tr><td>Rámce hovoru pro prvek, který ukončí SRTP (SFU, relay)</td><td>čitelné</td><td><span class="badge b-ok">nečitelné</span> — E2EE rámců</td></tr>
+      <tr><td>Kdo komu psal (fronta v DB)</td><td>čitelně v globální DB</td><td><span class="badge b-ok">zapečetěné</span> master klíčem, odesílatel jen jako hash</td></tr>
+      <tr><td>Text probuzení na zamčené obrazovce</td><td>jméno, místnost</td><td><span class="badge b-ok">neutrální</span></td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="doc" id="prenosy" data-group="Doručování">
+  <h2>Soubory, relay a hovory <span class="badge b-acc">3.1</span><a class="anchor" href="#prenosy">#</a></h2>
+  <h3 id="binarni-ramce">Binární rámce</h3>
+  <p>Kus souboru už necestuje jako JSON s base64 (o třetinu víc dat a práce na obou stranách), ale jako jedna binární zpráva — po DataChannelu i po signalizačním socketu:</p>
+  <div class="dgram"><div class="dgram__title"><code>binary chunk</code><span class="dir">client/src/lib/binary-frames.ts · server/signaling/binary.ts</span></div>
+    <div class="dgram__row"><div class="f f--hdr"><b>0x4D</b><i>„M“</i></div><div class="f f--hdr"><b>type</b><i>0x01 P2P · 0x11 relay</i></div><div class="f f--hdr"><b>version</b></div><div class="f f--hdr"><b>L</b><i>délka ID</i></div><div class="f f--hdr" style="--w:2"><b>transferId</b><i>L bajtů</i></div><div class="f f--hdr"><b>seq</b><i>u32 BE</i></div><div class="f f--sec"><b>IV</b><i>12 B</i></div><div class="f f--ct" style="--w:3"><b>ciphertext + tag</b><i>AES-GCM, AAD chunk|přenos|seq|počet</i></div></div></div>
+  <p>Schopnost si strany sdělí: peer v <code>hello</code> (<code>caps: ["bin"]</code>), klient v <code>join</code> (<code>features: ["bin"]</code>), server v úvodním <code>hello</code> (<code>features</code> a <code>limits.proxy</code>). Starší klient dostane tentýž kus jako JSON — server ho převede, ale neotevře.</p>
+
+  <h3 id="relay-souboru">Relay souborů, když P2P nejde</h3>
+  <p>Za striktním NAT bez TURN se DataChannel neotevře. Aplikace pak pošle soubor šifrovaně přes server (<code>proxy</code> transport) — dřív přenos rovnou odmítla. Server kusy jen předává (žádná kopie v paměti), hlídá vlastnictví přenosu a strop 64 souběžných přenosů. Odesílatel se řídí rozpočtem, který server ohlásí (2 MiB/s, 60 rámců/s na socket, s rezervou): posílá na <b>80 %</b>, polovinu burstu, a čeká, dokud vlastní buffer socketu neklesne pod 1 MiB. Relay tak kus nikdy neodmítne ani spojení neodpojí.</p>
+
+  <h3 id="e2ee-hovoru">E2EE hovorů</h3>
+  <p>Hovor běží DTLS-SRTP mezi prohlížeči a signalizace, která ho sestavuje, je zapečetěná. Navíc se <b>každý zakódovaný rámec</b> zvuku i obrazu zapečetí v workeru (<code>RTCRtpScriptTransform</code>) klíčem páru pro daný směr — <code>HKDF(ECDH, info "m5cet/media/1|odesílatel|příjemce")</code>. Rámec projde i prvkem, který SRTP ukončí (SFU, záznamový relay), a zůstane nečitelný.</p>
+  <div class="dgram"><div class="dgram__title"><code>rámec hovoru</code><span class="dir">client/src/lib/media-frames.ts</span></div>
+    <div class="dgram__row"><div class="f f--hdr" style="--w:2"><b>čitelný prefix</b><i>Opus 1 B · VP8 10 / 3 B (klíčový / delta)</i></div><div class="f f--ct" style="--w:4"><b>AES-GCM ciphertext + tag</b><i>AAD = prefix</i></div><div class="f f--sec"><b>IV</b><i>sůl 4 B + čítač 8 B</i></div><div class="f f--hdr"><b>n</b><i>délka prefixu</i></div><div class="f f--hdr"><b>0x6D 0xE3</b><i>značka</i></div></div></div>
+  <ul>
+    <li>Transformace odesílání i příjmu se nastaví <b>na celý transceiver najednou</b> (při přidání stopy nebo příchodu cizí) — Chrome pozdější transformaci druhého směru tiše ignoruje.</li>
+    <li>Bez klíče rámec projde beze změny (hovor chrání DTLS-SRTP); rámec, který nejde otevřít, se zahodí. Panel <i>Hlas</i> ukazuje stav za poslední sekundu: <span class="badge b-ok">E2EE</span> jen když byl každý rámec oběma směry zapečetěný a otevřený.</li>
+    <li>Do hovoru se může přidat kterákoli strana: vyjednávání je „perfect negotiation“ (kolizi nabídek vyhraje iniciátor spojení).</li>
+  </ul>
+
+  <h3 id="turn">TURN s krátkodobými přístupy</h3>
+  <p>S <code>TURN_SECRET</code> (coturn <code>use-auth-secret</code>) vydá <code>/api/turn</code> jméno <code>&lt;expirace&gt;:&lt;náhoda&gt;</code> a heslo <code>base64(HMAC-SHA1(secret, jméno))</code>, platné <code>TURN_TTL_SECONDS</code> (výchozí hodina). Klient si je obnoví 5 minut před koncem. Statické <code>TURN_USERNAME</code> / <code>TURN_CREDENTIAL</code> dál fungují, ale server při startu varuje — jsou čitelné pro každého návštěvníka.</p>
+</section>
+
 <section class="doc" id="fronta" data-group="Doručování">
   <h2>Fronta zpráv pro nepřítomné<a class="anchor" href="#fronta">#</a></h2>
   <p class="lead">Když člen s účtem (passkey) a zapnutým uchováním na serveru odejde nebo odloží stránku, zůstane v místnosti jako <i>nepřítomný</i>. Ostatní mu dál píší; server šifrovou obálku uloží, odpoví „uloženo“, probudí ho Web Push a po návratu mu vše předá — v pořadí a s potvrzením.</p>
@@ -619,19 +722,24 @@ setInterval(() =&gt; ws.send(JSON.stringify({ type: <span class="s">"ping"</span
 
 <section class="doc" id="ucty" data-group="Doručování">
   <h2>Účty a passkeys<a class="anchor" href="#ucty">#</a></h2>
-  <p>Účet je passkey (WebAuthn) — žádné heslo. Server uloží jen veřejný klíč a počítadlo podpisů; bez rozšíření <b>PRF</b> účet nevznikne, protože z něj prohlížeč odvozuje klíče:</p>
+  <p>Účet je passkey (WebAuthn) — žádné heslo. Server uloží jen veřejné klíče a počítadla podpisů; bez rozšíření <b>PRF</b> účet nevznikne, protože z něj prohlížeč odvozuje <b>kořen účtu</b> a z něj klíče:</p>
   <ul>
-    <li><code>HKDF(PRF, "m5cet:profile:v1")</code> → klíč trezoru (profil + historie chatu, zapečetěné před odesláním),</li>
-    <li><code>HKDF(PRF, "m5cet:userdb:v1")</code> → klíč vlastní SQLCipher databáze; server ho drží jen v paměti, dokud je uživatel přihlášený.</li>
+    <li><code>HKDF(kořen, "m5cet:profile:v1")</code> → klíč trezoru (profil + historie chatu, zapečetěné před odesláním),</li>
+    <li><code>HKDF(kořen, "m5cet:userdb:v1")</code> → klíč vlastní SQLCipher databáze; server ho drží jen v paměti, dokud je uživatel přihlášený,</li>
+    <li><code>HKDF(kořen, "m5cet:account-sign:v1")</code> → podpisový klíč účtu Ed25519 (<a href="#identita-uctu">identita účtu</a>).</li>
   </ul>
+  <h3 id="vice-passkeys">Více passkeys a obnovovací kód <span class="badge b-acc">3.1</span></h3>
+  <p>Kořenem je PRF prvního passkey. Pro každý další passkey (max. 10) i pro obnovovací kód uloží server kořen <b>zapečetěný</b> (AES-GCM, AAD <code>m5cet:account-root:v1</code>, klíč <code>HKDF(PRF nebo tajemství kódu, "m5cet:root-wrap:passkey:v1" | "…recovery:v1")</code>) — přečíst ho umí jen ten, kdo passkey nebo kód drží. Přidání passkey i vytvoření kódu nejdřív potvrdí stávající passkey.</p>
   <table>
     <thead><tr><th>Mechanismus</th><th>Chování</th></tr></thead>
     <tbody>
-      <tr><td>Výzvy</td><td>náhodné, jednorázové, 2 minuty, vázané na obřad (registrace / přihlášení)</td></tr>
-      <tr><td>Relace</td><td>náhodný token (32 B), na serveru jen SHA-256, platnost 12 h, jen v paměti — restart znamená nové přihlášení (klient to udělá sám)</td></tr>
-      <tr><td>Odvolání</td><td>odhlášení (jedno zařízení), „všude“, smazání účtu, zásah operátora → <code>account-revoked</code> na všech dotčených socketech, relay pro účet končí, databáze se pro toto zařízení zamkne (poslední držitel ji zavře úplně)</td></tr>
+      <tr><td>Obnovovací kód</td><td>26 znaků Crockford base32 (130 bitů), zobrazí se jednou; z kódu se odvodí ID, důkaz a tajemství (HMAC). Server zná jen ID a <code>SHA-256(důkaz)</code>. Obnova: <code>recovery/start</code> (10 pokusů za hodinu z adresy) vydá lístek na 10 minut a zapečetěný kořen, prohlížeč ho otevře, zaregistruje <b>nový passkey</b> a <code>recovery/finish</code> ho přidá k účtu.</td></tr>
+      <tr><td>Relace</td><td>náhodný token (32 B), na serveru jen SHA-256 v <code>sessions.json</code> — <b>přežijí restart</b>; klouzavá platnost 12 h od posledního použití, nejdéle 7 dní, max. 20 na účet</td></tr>
+      <tr><td>Zařízení</td><td>okno účtu ukazuje relace (klient, adresa /24, poslední použití) a každou jde ukončit; aktuální je označená</td></tr>
+      <tr><td>Výzvy</td><td>náhodné, jednorázové, 2 minuty, vázané na obřad (registrace, přihlášení, přidání passkey, obnova)</td></tr>
+      <tr><td>Odvolání</td><td>odhlášení (jedno zařízení), „všude“, smazání účtu, zásah operátora → <code>account-revoked</code> na všech dotčených socketech (i na jiných instancích), relay pro účet končí, databáze se pro toto zařízení zamkne</td></tr>
       <tr><td>RP ID</td><td><code>WEBAUTHN_RP_ID</code>, jinak host z <code>PUBLIC_BASE_URL</code>, jinak hlavička Host (v produkci server varuje)</td></tr>
-      <tr><td>Push</td><td>jen endpointy známých služeb (FCM, Mozilla, Windows, Apple; rozšíření <code>PUSH_ENDPOINT_HOSTS</code>)</td></tr>
+      <tr><td>Push</td><td>jen endpointy známých služeb (FCM, Mozilla, Windows, Apple; rozšíření <code>PUSH_ENDPOINT_HOSTS</code>); text probuzení je neutrální</td></tr>
     </tbody>
   </table>
 </section>
@@ -654,7 +762,7 @@ setInterval(() =&gt; ws.send(JSON.stringify({ type: <span class="s">"ping"</span
 </section>
 <section class="doc" id="administrace" data-group="Provoz">
   <h2>Administrace<a class="anchor" href="#administrace">#</a></h2>
-  <p class="lead">Konzole operátora na <code>https://&lt;doména&gt;/console/</code>. Živá data bere z hlavní služby (<code>/api/admin/*</code>), nástroje layoutu, telefonie a AI z admin služby (<code>/admin/*</code>). Vše chrání <code>ADMIN_API_TOKEN</code>.</p>
+  <p class="lead">Konzole operátora na <code>https://&lt;doména&gt;/console/</code>. Živá data bere z hlavní služby (<code>/api/admin/*</code>), nástroje layoutu, telefonie a AI z admin služby (<code>/admin/*</code>). Přístup mají jmenovití administrátoři s rolí; <code>ADMIN_API_TOKEN</code> zůstává jako vlastník „admin“.</p>
   <figure><img src="img/console-overview.png" alt="Přehled konzole" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 6 — Přehled: KPI, provoz za 2 minuty, paměť za 30 minut, provoz podle tříd, zdraví, poslední varování.</figcaption></figure>
   <table>
     <thead><tr><th>Panel</th><th>Co ukazuje a co umí</th></tr></thead>
@@ -677,6 +785,20 @@ setInterval(() =&gt; ws.send(JSON.stringify({ type: <span class="s">"ping"</span
     <figure><img src="img/console-traffic.png" alt="Živý provoz" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 7 — Živý provoz.</figcaption></figure>
     <figure><img src="img/console-audit.png" alt="Audit" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 8 — Auditní žurnál.</figcaption></figure>
   </div>
+  <h3 id="role">Role a přístupy <span class="badge b-acc">3.1</span></h3>
+  <table>
+    <thead><tr><th>Role</th><th>Smí</th></tr></thead>
+    <tbody>
+      <tr><td><b>auditor</b></td><td>číst všechno (přehled, provoz, spojení, uživatele, frontu, úložiště, audit a jeho ověření, metriky, alerty); spravovat vlastní passkey. Tlačítka, která něco mění, má zašedlá — a server je odmítne (403).</td></tr>
+      <tr><td><b>operátor</b></td><td>navíc zasahovat: odpojit spojení, odhlásit nebo smazat účet, obnovit položku fronty, příkazy a testovací push, retence, zálohy a kontrola integrity, prahy alertů, kontrolní bod auditu</td></tr>
+      <tr><td><b>vlastník</b></td><td>navíc spravovat administrátory a jejich tokeny, <code>VACUUM</code></td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><b>Odkud se berou:</b> <code>ADMIN_API_TOKEN</code> (vlastník), <code>ADMIN_TOKENS="alice:operator:token,bob:auditor:token"</code> v prostředí, a administrátoři založení v konzoli (panel <i>Administrátoři</i>) s pojmenovanými tokeny — v <code>admin-users.json</code> jen jejich hashe.</li>
+    <li><b>Přihlášení passkey:</b> administrátor si v konzoli zaregistruje passkey (<i>Můj passkey</i>) a příště se přihlásí bez tokenu; relace konzole platí 8 h.</li>
+    <li>Každý zásah se v auditu zapíše <b>jménem</b> administrátora (<code>actor</code>), ne „admin“.</li>
+  </ul>
   <h3 id="konzole-bezpecnost">Bezpečnost konzole</h3>
   <ul>
     <li>Token je jen v paměti záložky (volitelně v <code>sessionStorage</code>), <b>nikdy v <code>localStorage</code></b> — starý klíč <code>m5cet:admin:cfg</code> konzole při načtení smaže.</li>
@@ -726,6 +848,27 @@ data: {<span class="s">"id"</span>:<span class="n">77</span>,<span class="s">"ca
 <span class="c">event: tick</span>   <span class="c">(každé 2 s)</span>
 data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<span class="s">"framesIn"</span>:<span class="n">12</span>,<span class="s">"framesOut"</span>:<span class="n">15</span>,<span class="s">"http"</span>:<span class="n">1</span>,…},<span class="s">"system"</span>:{<span class="s">"rss"</span>:…,<span class="s">"loopP99"</span>:<span class="n">1.4</span>}}</code></pre>
   <p>Konzoli, která nestíhá (víc než 1 MB ve frontě odpovědi), server záznamy zahazuje — nikdy kvůli ní nehromadí paměť.</p>
+
+  <h3 id="neměnný-audit">Neměnný audit <span class="badge b-acc">3.1</span></h3>
+  <p>Každý záznam v databázi nese <code>hash = SHA-256(kanonický JSON [hash předchozího, čas, kategorie, úroveň, událost, …, detail])</code>. Každých 500 záznamů, před promazáním starých a na požádání se hlava řetězu <b>podepíše</b> (Ed25519, <code>m5cet/audit-checkpoint/1|poslední id|hash|čas</code>; klíč <code>audit-signing.key</code> vedle master klíče). Ověření (konzole › Audit › <i>Ověřit integritu</i>, <code>GET /api/admin/audit/verify</code>) přepočítá řetěz a řekne, kde byl záznam změněn, odstraněn nebo kontrolní bod přepodepsán. Záznamy z doby před 3.1 hlásí jako „před řetězem“.</p>
+
+  <h3 id="metriky">Metriky a alerty <span class="badge b-acc">3.1</span></h3>
+  <p><code>GET /metrics</code> (token <code>METRICS_TOKEN</code> nebo administrátor) vrací Prometheus text: spojení, místnosti, členy, účty a relace, rámce a bajty po třídách, frontu, heap, event loop, CPU, audit, zálohy, cluster (<code>m5cet_cluster_*</code>) a počet spuštěných alertů.</p>
+  <table>
+    <thead><tr><th>Pravidlo</th><th>Výchozí práh</th><th>Proměnná</th></tr></thead>
+    <tbody>
+      <tr><td>bezpečnostní varování za minutu</td><td>20</td><td><code>ALERT_SECURITY_WARNINGS</code></td></tr>
+      <tr><td>chyby za minutu</td><td>120</td><td><code>ALERT_HTTP_ERRORS</code></td></tr>
+      <tr><td>event loop p99</td><td>200 ms</td><td><code>ALERT_EVENT_LOOP</code></td></tr>
+      <tr><td>heap z limitu</td><td>85 %</td><td><code>ALERT_HEAP</code></td></tr>
+      <tr><td>mrtvé položky fronty</td><td>1</td><td><code>ALERT_DEAD_LETTERS</code></td></tr>
+      <tr><td>selhání zálohy, integrity nebo řetězu auditu</td><td>1</td><td><code>ALERT_STORAGE</code></td></tr>
+    </tbody>
+  </table>
+  <p>Alert se spustí a vyřeší jednou (žádné opakování každou minutu); s <code>ALERT_WEBHOOK_URL</code> ho server pošle jako JSON (Slack/Teams/vlastní přijímač). Prahy jde měnit v konzoli (panel <i>Alerty</i>, uloží se do <code>alert-rules.json</code>).</p>
+
+  <h3 id="zalohy">Zálohy a integrita <span class="badge b-acc">3.1</span></h3>
+  <p>Záloha je adresář <code>$BACKUP_DIR/m5cet-&lt;čas&gt;/</code>: globální databáze zkopírovaná online backup API SQLite (za běhu konzistentní), kopie šifrovaných databází uživatelů (zůstávají šifrované), index účtů se zapečetěnými trezory, administrátoři (jen hashe tokenů) a <code>manifest.json</code> s velikostí a SHA-256 každého souboru. <b>Master klíč do zálohy nepatří</b> — uložte ho zvlášť. S <code>BACKUP_DIR</code> běží zálohy samy (<code>BACKUP_INTERVAL_HOURS</code>, výchozí 24; drží se <code>BACKUP_KEEP</code>, výchozí 7) a s nimi <code>PRAGMA quick_check</code>; jinak na požádání z konzole (Úložiště). Tamtéž optimalizace a <code>VACUUM</code> (jen vlastník).</p>
 </section>
 <section class="doc" id="api" data-group="Reference">
   <h2>API reference<a class="anchor" href="#api">#</a></h2>
@@ -735,11 +878,15 @@ data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<spa
     <tbody>
       <tr><td><code>GET /api/health</code></td><td>živost, verze, build, <code>protocol</code>, počet místností</td><td>—</td></tr>
       <tr><td><code>GET /api/modules</code></td><td>manifest volitelných modulů</td><td>—</td></tr>
-      <tr><td><code>GET /api/turn</code></td><td>ICE servery (TURN, je-li nastaven)</td><td>—</td></tr>
+      <tr><td><code>GET /api/turn</code></td><td>ICE servery; s <code>TURN_SECRET</code> krátkodobé přístupy a <code>expiresAt</code></td><td>—</td></tr>
+      <tr><td><code>GET /metrics</code> <span class="badge b-acc">3.1</span></td><td>Prometheus metriky</td><td><code>METRICS_TOKEN</code> nebo administrátor</td></tr>
       <tr><td><code>GET /api/layout</code></td><td>vzhled a šablony od operátora</td><td>—</td></tr>
       <tr><td><code>POST /api/share/create|redeem|revoke</code></td><td>pozvánky (split-key, kód 12 číslic); limit 30 / 40 za 15 min</td><td>—</td></tr>
       <tr><td><code>GET /api/push/status</code>, <code>POST /api/push/subscribe|test</code></td><td>Web Push pro zařízení bez účtu (jen známé push služby)</td><td>test sobě bez tokenu, všem s admin tokenem</td></tr>
       <tr><td><code>/api/account/*</code></td><td>registrace a přihlášení passkey, <code>me</code>, trezor, push, odhlášení, smazání</td><td>Bearer token relace</td></tr>
+      <tr><td><code>POST /api/account/passkeys/options|verify</code>, <code>GET passkeys/:id/wrapped</code>, <code>DELETE passkeys/:id</code> <span class="badge b-acc">3.1</span></td><td>další passkey účtu, jeho zapečetěný kořen, odebrání (poslední nejde)</td><td>token relace</td></tr>
+      <tr><td><code>PUT|DELETE /api/account/recovery</code>, <code>POST recovery/start|finish</code> <span class="badge b-acc">3.1</span></td><td>obnovovací kód: nastavit, zrušit, obnovit účet (10 pokusů / h)</td><td>token relace / důkaz z kódu</td></tr>
+      <tr><td><code>GET /api/account/sessions</code>, <code>DELETE sessions/:id</code>, <code>PUT identity</code> <span class="badge b-acc">3.1</span></td><td>zařízení účtu a jejich odhlášení; veřejný klíč účtu (Ed25519)</td><td>token relace</td></tr>
       <tr><td><code>/api/storage/*</code></td><td>úložiště (i přes WebSocket rámec <code>storage</code>)</td><td>relace účtu nebo <code>X-M5cet-Session</code></td></tr>
       <tr><td><code>GET|POST /api/settings</code>, <code>POST /api/audit/purge</code>, <code>/api/analytics/consent</code></td><td>nastavení a souhlasy vázané na <code>deviceId</code></td><td>znalost <code>deviceId</code></td></tr>
       <tr><td><code>/api/ai/*</code>, <code>/api/speech/*</code>, <code>/api/telephony/*</code></td><td>volitelné moduly (<code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>, <code>ENABLE_TELEPHONY</code>)</td><td>limity na IP</td></tr>
@@ -747,7 +894,7 @@ data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<spa
     </tbody>
   </table>
   <h3 id="api-admin">Operátorské API (<code>/api/admin/*</code>)</h3>
-  <p>Všechny cesty vyžadují <code>Authorization: Bearer &lt;ADMIN_API_TOKEN&gt;</code>.</p>
+  <p>Všechny cesty vyžadují <code>Authorization: Bearer &lt;token administrátora&gt;</code> (nebo relaci konzole po přihlášení passkey). Čtení (<code>GET</code>) stačí auditorovi, změny operátorovi, správa administrátorů vlastníkovi — viz <a href="#role">Role</a>.</p>
   <table>
     <thead><tr><th>Metoda a cesta</th><th>Popis</th></tr></thead>
     <tbody>
@@ -769,6 +916,12 @@ data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<spa
       <tr><td><code>GET events</code></td><td>metadata událostí (<code>LOG_EVENTS=1</code>)</td></tr>
       <tr><td><code>GET retention</code>, <code>POST retention/run</code></td><td>politika uchovávání, ruční běh</td></tr>
       <tr><td><code>GET storage</code>, <code>GET storage/logs</code></td><td>index a statistika úložiště, tabulka logů</td></tr>
+      <tr><td><code>GET whoami</code> <span class="badge b-acc">3.1</span></td><td>kdo jsem a s jakou rolí</td></tr>
+      <tr><td><code>GET|POST admins</code>, <code>PATCH|DELETE admins/:name</code>, <code>POST|DELETE admins/:name/tokens[/:id]</code> <span class="badge b-acc">3.1</span></td><td>administrátoři, role, pojmenované tokeny (vlastník)</td></tr>
+      <tr><td><code>POST me/passkeys/options|verify</code>, <code>POST auth/passkey/options|verify|signout</code> <span class="badge b-acc">3.1</span></td><td>vlastní passkey administrátora; přihlášení do konzole passkey</td></tr>
+      <tr><td><code>GET audit/verify</code>, <code>POST audit/checkpoint</code> <span class="badge b-acc">3.1</span></td><td>ověření hash řetězu a podpisů; podepsat hlavu teď</td></tr>
+      <tr><td><code>GET|POST backups</code>, <code>POST db/integrity</code>, <code>POST db/optimize</code> <span class="badge b-acc">3.1</span></td><td>zálohy, kontrola integrity, optimalizace (<code>{vacuum:true}</code> jen vlastník)</td></tr>
+      <tr><td><code>GET metrics</code>, <code>GET alerts</code>, <code>PUT alerts/rules/:id</code> <span class="badge b-acc">3.1</span></td><td>metriky; pravidla, spuštěné alerty, historie; práh a zapnutí pravidla</td></tr>
     </tbody>
   </table>
 <pre><code><span class="c"># export auditu bezpečnostních událostí od úrovně warn do CSV</span>
@@ -781,6 +934,55 @@ curl -X POST -H <span class="s">"Authorization: Bearer $ADMIN_API_TOKEN"</span> 
   https://chat.example.com/api/admin/commands</code></pre>
   <h3 id="api-admin-sluzba">Admin služba (<code>/admin/*</code>)</h3>
   <p>Layout builder (<code>/admin/layout</code>), telefonie a SIP (<code>/admin/telephony/*</code> včetně <code>sip/trunks</code>), AI a řeč (<code>/admin/plugins*</code>, <code>/admin/logs/stream</code>). Dřívější <code>/admin/commands/*</code>, <code>/admin/clients</code>, <code>/admin/test/push</code>, <code>/admin/metrics</code> a <code>/admin/logs/recent</code> dnes přeposílají na hlavní službu — ve 2.x četly prázdnou kopii stavu v jiném procesu, takže příkazy nikdy nedorazily.</p>
+</section>
+
+<section class="doc" id="cluster" data-group="Provoz">
+  <h2>Více instancí <span class="badge b-acc">3.1</span><a class="anchor" href="#cluster">#</a></h2>
+  <p class="lead">S <code>REDIS_URL</code> se místnost rozprostře přes všechny instance za load balancerem: lidé na různých instancích se vidí, spojí a pošlou si soubor přes relay.</p>
+  <figure>
+  <svg viewBox="0 0 960 250" role="img" aria-label="Cluster">
+    <defs><marker id="kc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
+    <rect x="20" y="20" width="140" height="50" rx="10" class="box-warn"/><text x="90" y="50" text-anchor="middle" class="t">Alice</text>
+    <rect x="20" y="170" width="140" height="50" rx="10" class="box-warn"/><text x="90" y="200" text-anchor="middle" class="t">Bob</text>
+    <rect x="220" y="95" width="150" height="60" rx="12" class="box"/><text x="295" y="122" text-anchor="middle" class="t">nginx</text><text x="295" y="142" text-anchor="middle" class="t2">sticky (ip_hash)</text>
+    <path d="M160 45 L220 110" class="ln" marker-end="url(#kc)"/><path d="M160 195 L220 140" class="ln" marker-end="url(#kc)"/>
+    <rect x="440" y="20" width="180" height="70" rx="12" class="box-acc"/><text x="530" y="50" text-anchor="middle" class="t">instance A</text><text x="530" y="70" text-anchor="middle" class="t2">hub · Alice</text>
+    <rect x="440" y="160" width="180" height="70" rx="12" class="box-acc"/><text x="530" y="190" text-anchor="middle" class="t">instance B</text><text x="530" y="210" text-anchor="middle" class="t2">hub · Bob</text>
+    <path d="M370 115 L440 60" class="ln" marker-end="url(#kc)"/><path d="M370 135 L440 190" class="ln" marker-end="url(#kc)"/>
+    <rect x="700" y="90" width="220" height="70" rx="12" class="box-vio"/><text x="810" y="118" text-anchor="middle" class="t">Redis pub/sub</text><text x="810" y="138" text-anchor="middle" class="tm">m5cet:cluster · HMAC</text>
+    <path d="M620 55 L700 110" class="ln" marker-end="url(#kc)"/><path d="M620 195 L700 140" class="ln" marker-end="url(#kc)"/>
+    <text x="440" y="130" class="t2">sdílený DATA_DIR (účty, SQLite)</text>
+  </svg>
+  <figcaption>Obr. 9 — Dvě instance, jedna místnost: členství, signály a relay jdou přes Redis.</figcaption>
+  </figure>
+  <table>
+    <thead><tr><th>Zpráva</th><th>Kdy</th><th>Co udělá druhá instance</th></tr></thead>
+    <tbody>
+      <tr><td><code>join</code> / <code>leave</code> / <code>update</code></td><td>člen vstoupí, odejde, přihlásí se</td><td><code>peer-joined</code> / <code>peer-left</code> / <code>peer-updated</code> svým socketům; reference účtů si spočítá sama</td></tr>
+      <tr><td><code>hello</code> → <code>state</code></td><td>start instance, obnovené spojení s Redisem</td><td>pošle seznam svých členů po místnostech</td></tr>
+      <tr><td><code>beat</code> / <code>bye</code></td><td>každých 5 s / při zastavení</td><td>instance tichá 20 s (nebo s <code>bye</code>) zmizí i s členy</td></tr>
+      <tr><td><code>signal</code></td><td>SDP/ICE pro člena jinde</td><td>doručí adresátovi</td></tr>
+      <tr><td><code>room</code> / <code>chunk</code></td><td>rámec relay pro celou místnost</td><td>rozešle; binární kus binárně, starším klientům JSON</td></tr>
+      <tr><td><code>to-sender</code></td><td><code>proxy-need</code> / <code>proxy-cancel</code> od příjemce</td><td>předá odesílateli přenosu, je-li u ní</td></tr>
+      <tr><td><code>evict</code></td><td>tentýž klient se vrátil (resume) na jinou instanci</td><td>starému socketu pošle <code>replaced</code></td></tr>
+      <tr><td><code>revoke</code> / <code>away</code></td><td>odhlášení, smazání účtu / nepřítomnost</td><td>ukončí relace na svých socketech / srovná stav relay</td></tr>
+    </tbody>
+  </table>
+  <div class="grid2">
+    <div class="card"><h4>Podpis zpráv</h4><p>S <code>CLUSTER_SECRET</code> nese každá zpráva HMAC-SHA256; nepodepsané a padělané se zahodí (počítadlo <code>dropped</code>). Kdo smí do Redisu publikovat, bez tajemství místnosti neovládne. Bez tajemství server při startu varuje.</p></div>
+    <div class="card"><h4>Sdílená data</h4><p>Instance sdílejí <code>DATA_DIR</code> (jeden hostitel nebo sdílený svazek): SQLite úložiště a fronta jsou bezpečné pro více procesů (WAL), účty jsou JSON — instance si před každou operací načte, co zapsala jiná, a zapisuje hned.</p></div>
+    <div class="card"><h4>Redis klient</h4><p>Vlastní RESP klient bez závislostí: <code>redis://</code> i <code>rediss://</code> (TLS), <code>AUTH</code>, <code>SELECT</code>, reconnect s backoffem, znovu-přihlášení k odběru; zprávy odeslané při výpadku se po návratu odešlou (max. 1 000).</p></div>
+    <div class="card"><h4>Omezení</h4><p>Limity spojení a rámců jsou na instanci. Dvě instance měnící tentýž účet ve stejné milisekundě mohou jednu změnu ztratit — sticky sessions to prakticky vyloučí.</p></div>
+  </div>
+<pre><code><span class="c"># nginx: dvě instance, sticky podle adresy klienta</span>
+upstream m5cet_app {
+    ip_hash;
+    server 127.0.0.1:5000;
+    server 127.0.0.1:5001;
+}
+<span class="c"># každá instance</span>
+REDIS_URL=redis://:heslo@127.0.0.1:6379/0  CLUSTER_SECRET=$(openssl rand -base64 32)  DATA_DIR=/var/lib/m5cet</code></pre>
+  <p>Stav clusteru ukazuje konzole (Přehled › Zdraví) a metriky <code>m5cet_cluster_*</code>.</p>
 </section>
 
 <section class="doc" id="nasazeni" data-group="Provoz">
@@ -803,7 +1005,14 @@ curl -X POST -H <span class="s">"Authorization: Bearer $ADMIN_API_TOKEN"</span> 
       <tr><td><code>WEBAUTHN_RP_ID</code>, <code>WEBAUTHN_ORIGINS</code>, <code>PUBLIC_BASE_URL</code></td><td>—</td><td>doména passkeys a povolené originy; bez nich produkce varuje</td></tr>
       <tr><td><code>STORAGE_DIR</code>, <code>STORAGE_MASTER_KEY</code>, <code>STORAGE_KEY_FILE</code></td><td>—</td><td>úložiště a jeho master klíč</td></tr>
       <tr><td><code>ACCOUNTS_DIR</code>, <code>RELAY_RETENTION_DAYS</code></td><td>—, 30</td><td>účty; jak dlouho čeká položka fronty bez vlastního TTL</td></tr>
-      <tr><td><code>TURN_SERVER_URL</code>, <code>TURN_USERNAME</code>, <code>TURN_CREDENTIAL</code></td><td>—</td><td>TURN pro striktní NAT</td></tr>
+      <tr><td><code>TURN_SERVER_URL</code>, <code>TURN_USERNAME</code>, <code>TURN_CREDENTIAL</code></td><td>—</td><td>TURN pro striktní NAT (statické přístupy — server varuje)</td></tr>
+      <tr><td><code>TURN_SECRET</code>, <code>TURN_TTL_SECONDS</code>, <code>STUN_URLS</code> <span class="badge b-acc">3.1</span></td><td>—, 3600, Google STUN</td><td>krátkodobé TURN přístupy (coturn <code>use-auth-secret</code>); vlastní STUN servery</td></tr>
+      <tr><td><code>ADMIN_TOKENS</code> <span class="badge b-acc">3.1</span></td><td>—</td><td>další administrátoři: <code>jméno:role:token,…</code> (role <code>owner</code>, <code>operator</code>, <code>auditor</code>)</td></tr>
+      <tr><td><code>METRICS_TOKEN</code> <span class="badge b-acc">3.1</span></td><td>—</td><td>token pro <code>/metrics</code> (Prometheus); bez něj jen administrátor</td></tr>
+      <tr><td><code>ALERT_WEBHOOK_URL</code>, <code>ALERT_&lt;PRAVIDLO&gt;</code> <span class="badge b-acc">3.1</span></td><td>—</td><td>kam posílat alerty; prahy pravidel (<a href="#metriky">tabulka</a>)</td></tr>
+      <tr><td><code>BACKUP_DIR</code>, <code>BACKUP_INTERVAL_HOURS</code>, <code>BACKUP_KEEP</code> <span class="badge b-acc">3.1</span></td><td>—, 24, 7</td><td>plánované zálohy a kontroly integrity</td></tr>
+      <tr><td><code>REDIS_URL</code>, <code>CLUSTER_SECRET</code>, <code>CLUSTER_CHANNEL</code> <span class="badge b-acc">3.1</span></td><td>—, —, <code>m5cet:cluster</code></td><td>více instancí (<a href="#cluster">cluster</a>); tajemství pro podpis zpráv</td></tr>
+      <tr><td><code>WS_CONNECTS_PER_MINUTE</code>, <code>WS_CONNECTIONS_PER_CLIENT</code>, <code>WS_CONNECTIONS_TOTAL</code> <span class="badge b-acc">3.1</span></td><td>30, 20, 5000</td><td>brána WebSocket spojení (na adresu klienta / celkem)</td></tr>
       <tr><td><code>LOG_EVENTS</code></td><td>vypnuto</td><td>metadata událostí (<code>/api/admin/events</code>)</td></tr>
       <tr><td><code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>, <code>ENABLE_TELEPHONY</code> + klíče poskytovatelů</td><td>vypnuto</td><td>volitelné moduly</td></tr>
     </tbody>
@@ -823,6 +1032,14 @@ curl -X POST -H <span class="s">"Authorization: Bearer $ADMIN_API_TOKEN"</span> 
     proxy_cache off;
     proxy_read_timeout 3600s;
 }</code></pre>
+  <h3 id="upgrade-31">Upgrade z 3.0 na 3.1</h3>
+  <ol>
+    <li><code>git pull</code>, <code>npm ci</code> (nová závislost <code>hash-wasm</code>), <code>npm run build</code> (nebo <code>./update.sh</code>).</li>
+    <li>nginx: v hlavičce CSP <code>script-src 'self' 'wasm-unsafe-eval'</code> (hotová konfigurace v <code>deploy/nginx/m5cet.conf</code>); <code>nginx -t &amp;&amp; systemctl reload nginx</code>. Bez toho Argon2id neběží a nikdo se nepřipojí.</li>
+    <li>Doporučeno: <code>TURN_SECRET</code> místo statických TURN přístupů, <code>BACKUP_DIR</code>, <code>METRICS_TOKEN</code>, <code>ALERT_WEBHOOK_URL</code>; jmenovití administrátoři místo sdíleného tokenu.</li>
+    <li>Restart <code>m5cet</code> a <code>m5cet-admin</code>. Migrace proběhnou samy: fronta dostane evidenci relayovaných zpráv a zapečetěná metadata (staré položky se dál přečtou), audit hash řetěz (staré záznamy „před řetězem“), účty nová pole.</li>
+    <li><b>Všechna okna obnovit.</b> Klient 3.1 se připojuje pod slepým ID a jinými klíči — s klientem 3.0 se v místnosti nepotká. Zprávy čekající ve frontě z 3.0 se otevřou. Relace z 3.0 byly jen v paměti, takže se každý jednou znovu přihlásí passkey.</li>
+  </ol>
   <h3 id="upgrade">Upgrade z 2.x na 3.0</h3>
   <ol>
     <li><code>git pull</code>, <code>npm ci</code>, <code>npm run build</code> (nebo <code>./update.sh</code>).</li>
@@ -834,16 +1051,17 @@ curl -X POST -H <span class="s">"Authorization: Bearer $ADMIN_API_TOKEN"</span> 
   </ol>
   <h3 id="overeni">Ověření</h3>
 <pre><code>npm run check            <span class="c"># TypeScript</span>
-npm test -- --no-file-parallelism   <span class="c"># 700+ unit testů</span>
+npm test -- --no-file-parallelism   <span class="c"># ~800 unit testů (vč. fuzz, upgrade z 3.0, cluster s Redisem)</span>
 npm run build
-npm run test:e2e         <span class="c"># dva prohlížeče, účty a relay, konzole, lifecycle…</span>
-curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"protocol":2,"version":"3.0.0",…}</span></code></pre>
+npm run test:e2e         <span class="c"># 48 testů: zprávy, soubory P2P i relay, šifrovaný hovor, účty a obnova, konzole a role…</span>
+npm run load-test -- --url ws://127.0.0.1:5000/ws --clients 500   <span class="c"># zátěž (zvednout WS_* limity na testovacím serveru)</span>
+curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"protocol":2,"version":"3.1.0","cluster":"local",…}</span></code></pre>
 </section>
 
 <section class="doc" id="bezpecnost" data-group="Bezpečnost">
   <h2>Bezpečnostní opatření serveru<a class="anchor" href="#bezpecnost">#</a></h2>
   <div class="grid2">
-    <div class="card"><h4>HTTP</h4><p>Helmet, CSP v produkci <code>script-src 'self'</code> a <code>object-src 'none'</code>; <code>Cache-Control: no-store</code> všude; limity <b>před</b> parsery těl (veřejné API 100 / 15 min, trezor 300, úložiště 1 200, admin 30 odmítnutí / 15 min); JSON do 256 KB (trezor 8 MB, úložiště 12 MB); chyby 500 bez interních detailů.</p></div>
+    <div class="card"><h4>HTTP</h4><p>Helmet, CSP v produkci <code>script-src 'self' 'wasm-unsafe-eval'</code> (jen WebAssembly pro Argon2id, žádný <code>eval</code>) a <code>object-src 'none'</code>, workery jen z vlastního originu; <code>Cache-Control: no-store</code> všude; limity <b>před</b> parsery těl (veřejné API 100 / 15 min, trezor 300, úložiště 1 200, admin 30 odmítnutí / 15 min); JSON do 256 KB (trezor 8 MB, úložiště 12 MB); chyby 500 bez interních detailů.</p></div>
     <div class="card"><h4>Logy</h4><p>Řádek požadavku = metoda, cesta, stav, doba, velikost. <b>Nikdy těla</b> — odpovědi nesou session tokeny a šifrové texty (2.x je logovala). Surové tělo se drží jen pro webhooky poskytovatelů kvůli podpisům.</p></div>
     <div class="card"><h4>WebSocket</h4><p>Origin, brána spojení, maxPayload 256 KB, validace rámců, limity tříd, vyhazování opakovaných narušitelů, heartbeat, zpětný tlak, vlastnictví přenosů, rozesílání jen ověřených polí.</p></div>
     <div class="card"><h4>Identita a soukromí</h4><p>Pseudonymy účtů v místnosti, obecná odmítnutí relay, IP v monitoru zkrácené na /24 (/48), místnosti jako hash, audit komunikace jen na vyžádání, zapečetěné detaily v databázi.</p></div>
@@ -853,79 +1071,67 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
 </section>
 <section class="doc" id="navrhy" data-group="Plán">
   <h2>Návrhy a roadmapa<a class="anchor" href="#navrhy">#</a></h2>
-  <p class="lead">Co bych v jakém modulu změnil nebo optimalizoval dál. Priorita <span class="badge b-err">P1</span> = nejvyšší přínos pro bezpečnost či spolehlivost, náročnost S / M / L.</p>
+  <p class="lead">Návrhy z dokumentace 3.0 a jak dopadly ve 3.1; na konci to, co zbývá. Priorita <span class="badge b-err">P1</span> = nejvyšší přínos pro bezpečnost či spolehlivost, náročnost S / M / L.</p>
 
-  <h3 id="navrhy-krypto">Kryptografie</h3>
+  <h3 id="navrhy-stav">Stav návrhů z 3.0</h3>
   <table>
-    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
+    <thead><tr><th>Oblast</th><th>Návrh</th><th>Stav</th><th>Kde</th></tr></thead>
     <tbody>
-      <tr><td><b>Forward secrecy a odebrání člena</b> — Sender Keys (řetěz klíčů na odesílatele, distribuce párově přes X25519) nebo MLS (RFC 9420) pro skupiny</td><td>Dnes je klíč místnosti statický: kdo heslo zná nebo získá, přečte i zachycený starší provoz, a člena nejde vyloučit bez změny hesla.</td><td><span class="badge b-err">P1</span></td><td>L</td></tr>
-      <tr><td><b>Slepá ID místností</b> — server dostane <code>HMAC(klíč místnosti, název)</code> místo názvu</td><td>Server by přestal znát názvy místností; pozvánky i join fungují stejně, protože heslo znají všichni členové.</td><td><span class="badge b-err">P1</span></td><td>S</td></tr>
-      <tr><td><b>Párové šifrování soukromých zpráv</b> (ECDH X25519 mezi identitami)</td><td>Zpráva pro vybrané příjemce je dnes šifrovaná klíčem místnosti; párový klíč ji omezí jen na ně i kryptograficky.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
-      <tr><td><b>Identita svázaná s účtem</b> — veřejný klíč zařízení podepsaný v rámci účtu (passkey), seznam zařízení</td><td>Ověřený odznak „účet X“ napříč zařízeními místo TOFU podle jména.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
-      <tr><td><b>Argon2id</b> (WASM) místo PBKDF2 pro heslo místnosti</td><td>Paměťově náročná KDF výrazně zdraží útok GPU na slabá hesla; vyžaduje CSP <code>'wasm-unsafe-eval'</code>.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
-      <tr><td><b>Ověření QR kódem</b> bezpečnostního čísla</td><td>Pohodlnější a spolehlivější než diktování 60 číslic.</td><td><span class="badge">P3</span></td><td>S</td></tr>
+      <tr><td rowspan="6">Kryptografie</td><td>Forward secrecy a odebrání člena</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>klíče odesílatele s ratchetem, rotace, <i>Vyloučit z mých zpráv</i> — <a href="#sender-keys">Šifrování v3</a>. MLS zůstává v plánu pro velké skupiny.</td></tr>
+      <tr><td>Slepá ID místností</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>HKDF místo HMAC názvu, <a href="#slepe-id">r3.…</a></td></tr>
+      <tr><td>Párové šifrování soukromých zpráv</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>ECDH P-256 (WebCrypto nemá X25519 všude), <a href="#hello">podepsaný hello</a></td></tr>
+      <tr><td>Identita svázaná s účtem</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>Ed25519 z kořene účtu, certifikát zařízení, pin podle účtu</td></tr>
+      <tr><td>Argon2id</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>64 MiB / 3 průchody ve Web Workeru, CSP <code>'wasm-unsafe-eval'</code></td></tr>
+      <tr><td>Ověření QR kódem</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>zobrazení i skenování (<code>BarcodeDetector</code>), potvrzení</td></tr>
+      <tr><td rowspan="4">Protokol</td><td>Více instancí</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>Redis pub/sub, podepsané zprávy — <a href="#cluster">Více instancí</a>; fronta dál v SQLite (sdílený disk)</td></tr>
+      <tr><td>Binární rámce</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>vlastní binární formát kusů (jednodušší než CBOR) po DataChannelu i socketu; WebTransport zatím ne</td></tr>
+      <tr><td>SFU s E2EE</td><td><span class="badge b-warn">částečně</span></td><td>rámce hovoru jsou šifrované end-to-end a připravené pro SFU; SFU samotné součástí není</td></tr>
+      <tr><td>TURN s krátkodobými přístupy</td><td><span class="badge b-ok">hotovo 3.1</span></td><td><code>TURN_SECRET</code>, obnova před vypršením</td></tr>
+      <tr><td rowspan="3">Fronta</td><td>Trvalá evidence účtenek</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>tabulka <code>relay_ledger</code></td></tr>
+      <tr><td>Neutrální text probuzení</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>push bez jména a místnosti</td></tr>
+      <tr><td>Metadata fronty</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>odesílatel a stav zapečetěné master klíčem, odesílatel jen jako hash (v globální DB — do DB uživatele se zapisovat nedá, když je zamčená)</td></tr>
+      <tr><td rowspan="3">Účty</td><td>Více passkeys a obnovovací klíč</td><td><span class="badge b-ok">hotovo 3.1</span></td><td><a href="#vice-passkeys">zapečetěný kořen</a> pro každý passkey i kód</td></tr>
+      <tr><td>Relace přežívající restart, seznam zařízení</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>hashe v <code>sessions.json</code>, klouzavá platnost</td></tr>
+      <tr><td>Zálohy a integrita</td><td><span class="badge b-ok">hotovo 3.1</span></td><td><a href="#zalohy">online backup, manifest, quick_check, VACUUM</a></td></tr>
+      <tr><td rowspan="3">Administrace</td><td>Role, jmenné přístupy, přihlášení passkey</td><td><span class="badge b-ok">hotovo 3.1</span></td><td><a href="#role">vlastník / operátor / auditor</a>; OIDC zatím ne</td></tr>
+      <tr><td>Neměnný audit</td><td><span class="badge b-ok">hotovo 3.1</span></td><td><a href="#neměnný-audit">hash řetěz + podepsané body</a></td></tr>
+      <tr><td>Prometheus, OpenTelemetry, alerty</td><td><span class="badge b-warn">částečně</span></td><td><code>/metrics</code> a alerty s webhookem ano; trasování OpenTelemetry ne</td></tr>
+      <tr><td rowspan="4">Klient</td><td>Rozdělit <code>App.tsx</code>, error boundary</td><td><span class="badge b-warn">částečně</span></td><td>panely, ovládání hovorů, dialog a pomocné funkce v modulech, error boundary; hooky spojení a peerů zbývají</td></tr>
+      <tr><td>Kryptografie ve Web Workeru</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>KDF ve workeru, rámce hovoru ve workeru</td></tr>
+      <tr><td>Rozdělení bundlu, dlouhé seznamy</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>hlavní chunk 685 → 440 kB, React zvlášť; okno 200 zpráv + <code>content-visibility</code></td></tr>
+      <tr><td>Dokončit i18n</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>hlášky chatu cs/en/de + test úplnosti</td></tr>
+      <tr><td rowspan="3">Testy</td><td>Fuzzing a property testy</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>vlastní seedovaný generátor (bez závislosti); našel chybu v RESP parseru</td></tr>
+      <tr><td>Zátěžové testy</td><td><span class="badge b-ok">hotovo 3.1</span></td><td><code>npm run load-test</code> (1 000 klientů lokálně: RTT p99 3 ms)</td></tr>
+      <tr><td>E2E konzole v CI, test upgradu</td><td><span class="badge b-ok">hotovo 3.1</span></td><td>konzole s rolemi, obnova účtu, relay souborů, hovor; upgrade dat z 3.0</td></tr>
     </tbody>
   </table>
 
-  <h3 id="navrhy-protokol">Protokol a signalizace</h3>
+  <h3 id="navrhy-dalsi">Co dál</h3>
   <table>
     <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
     <tbody>
-      <tr><td><b>Více instancí</b> — stav místností přes Redis/NATS pub-sub, sticky sessions, fronta v Postgresu</td><td>Hub drží místnosti v paměti jednoho procesu; škálování a zero-downtime deploy potřebují sdílený stav.</td><td><span class="badge b-warn">P2</span></td><td>L</td></tr>
-      <tr><td><b>Binární rámce</b> (CBOR) pro proxy souborů, případně WebTransport</td><td>Base64 v JSON přidává 33 % k datům a zátěž CPU na serveru i klientech.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
-      <tr><td><b>SFU pro skupinové hovory</b> s E2EE (SFrame / insertable streams)</td><td>Mesh WebRTC se nad 4–5 účastníků neškáluje (upload roste s počtem lidí).</td><td><span class="badge">P3</span></td><td>L</td></tr>
-      <tr><td><b>TURN s krátkodobými přístupy</b> (TURN REST API, HMAC)</td><td>Statické přihlašovací údaje k TURN jsou čitelné v klientovi a zneužitelné jako otevřený relay.</td><td><span class="badge b-err">P1</span></td><td>S</td></tr>
+      <tr><td><b>Relay a fronta pod klíči odesílatelů</b> — předem rozeslané řetězy nebo prekeys (X3DH) pro nepřítomné</td><td>Zprávy pro nepřítomné a fronta odchozích jsou dnes pod klíčem místnosti: forward secrecy pro ně neplatí.</td><td><span class="badge b-err">P1</span></td><td>L</td></tr>
+      <tr><td><b>Účty v SQLite</b> místo JSON souborů</td><td>Bezpečné souběžné zápisy více instancí bez spoléhání na sticky sessions; transakce.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
+      <tr><td><b>SFU pro skupinové hovory</b> (mediasoup / LiveKit) s již šifrovanými rámci</td><td>Mesh se nad 4–5 účastníků neškáluje; rámce jsou připravené.</td><td><span class="badge b-warn">P2</span></td><td>L</td></tr>
+      <tr><td><b>Hooky spojení a WebRTC peerů</b> z <code>App.tsx</code> + jejich unit testy; stavový automat spojení</td><td>Zbytek logiky chatu je testovaný jen end-to-end.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
+      <tr><td><b>MLS (RFC 9420)</b> pro velké místnosti</td><td>Párová distribuce klíčů odesílatelů roste s n²; MLS s n log n.</td><td><span class="badge">P3</span></td><td>L</td></tr>
+      <tr><td><b>Seznam zařízení účtu viditelný protistranám</b> (podepsaný účtem, transparentní změny)</td><td>Upozornit, když účet získá nové zařízení, ne až když napíše.</td><td><span class="badge">P3</span></td><td>M</td></tr>
+      <tr><td><b>OIDC pro konzoli</b>, <b>OpenTelemetry</b> trasování</td><td>Napojení na firemní identitu a tracing.</td><td><span class="badge">P3</span></td><td>M</td></tr>
+      <tr><td><b>Fronta v Postgresu</b>, WebTransport</td><td>Cluster přes více hostitelů bez sdíleného disku; nižší latence relay.</td><td><span class="badge">P3</span></td><td>L</td></tr>
+      <tr><td><b>Post-kvantový hybrid</b> (ML-KEM + ECDH) pro párové klíče</td><td>„Sklidit teď, rozšifrovat později“; až to WebCrypto nabídne nativně.</td><td><span class="badge">P3</span></td><td>M</td></tr>
     </tbody>
   </table>
+</section>
 
-  <h3 id="navrhy-fronta">Fronta a doručování</h3>
-  <table>
-    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
-    <tbody>
-      <tr><td><b>Trvalá evidence účtenek</b> (tabulka v globální DB)</td><td>Po restartu se dnes ztratí možnost poslat „přečteno“ ke zprávám relayovaným před ním (doručení přežije, je ve frontě).</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
-      <tr><td><b>Neutrální text probuzení</b> — jméno a místnost ukázat až po odemčení aplikace</td><td>Obsah push je šifrovaný pro prohlížeč (RFC 8291), push služba ho nepřečte; na zamčené obrazovce je ale dnes vidět jméno odesílatele a název místnosti.</td><td><span class="badge">P3</span></td><td>S</td></tr>
-      <tr><td><b>Metadata fronty do databáze uživatele</b> (jméno odesílatele, místnost) — v globální DB jen směrovací minimum</td><td>Šifrový text je chráněný, ale kdo komu psal leží v globální DB čitelně pro server.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
-    </tbody>
-  </table>
-
-  <h3 id="navrhy-ucty">Účty a úložiště</h3>
-  <table>
-    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
-    <tbody>
-      <tr><td><b>Více passkeys na účet a obnovovací klíč</b></td><td>Ztráta jediného passkey dnes znamená ztrátu trezoru i databáze.</td><td><span class="badge b-err">P1</span></td><td>M</td></tr>
-      <tr><td><b>Relace přežívající restart</b> (hash tokenů v DB, obnovování, seznam zařízení s odhlášením)</td><td>Tokeny jsou jen v paměti: restart serveru odhlásí všechny a každý se musí znovu přihlásit passkey.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
-      <tr><td><b>Zálohy a kontrola integrity</b> (SQLite backup API, <code>PRAGMA integrity_check</code>, plánovaný VACUUM)</td><td>Provozní jistota a obnova po havárii disku.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
-    </tbody>
-  </table>
-
-  <h3 id="navrhy-admin">Administrace a provoz</h3>
-  <table>
-    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
-    <tbody>
-      <tr><td><b>Role a jmenné přístupy</b> (auditor jen pro čtení / operátor), přihlášení do konzole passkey nebo OIDC</td><td>Jeden sdílený token neřekne, kdo co udělal, a nejde ho odebrat jednomu člověku.</td><td><span class="badge b-err">P1</span></td><td>M</td></tr>
-      <tr><td><b>Neměnný audit</b> — hash řetěz přes záznamy a podepsané kontrolní body</td><td>Pozdější úprava nebo smazání záznamu by byla odhalitelná.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
-      <tr><td><b>Prometheus <code>/metrics</code></b>, OpenTelemetry, pravidla alertů (např. víc než N bezpečnostních varování za minutu)</td><td>Napojení na existující monitoring a upozornění mimo otevřenou konzoli.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
-    </tbody>
-  </table>
-
-  <h3 id="navrhy-klient">Klient</h3>
-  <table>
-    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
-    <tbody>
-      <tr><td><b>Rozdělit <code>App.tsx</code></b> (4 000+ řádků) — hook spojení a signalizace, správce WebRTC peerů, úložiště zpráv (reducer), řadič přenosů; stavový automat spojení; error boundary</td><td>Testovatelnost a menší riziko regresí; dnes je většina logiky testovaná jen end-to-end.</td><td><span class="badge b-err">P1</span></td><td>L</td></tr>
-      <tr><td><b>Kryptografie ve Web Workeru</b></td><td>PBKDF2 se 600 000 iteracemi zablokuje hlavní vlákno až na sekundu na slabším telefonu.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
-      <tr><td><b>Rozdělení bundlu</b> (hlavní chunk 635 KB) a virtualizovaný seznam zpráv</td><td>Rychlejší první načtení a plynulost u dlouhých historií.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
-      <tr><td><b>Dokončit i18n</b> — v <code>App.tsx</code> jsou natvrdo české a anglické řetězce</td><td>Konzistentní jazyk podle volby uživatele.</td><td><span class="badge">P3</span></td><td>S</td></tr>
-    </tbody>
-  </table>
-
-  <h3 id="navrhy-testy">Testování</h3>
-  <ul>
-    <li><b>Fuzzing a property-based testy</b> parseru rámců, metadat souborů a validace payloadů (fast-check).</li>
-    <li><b>Zátěžové testy hubu</b> (k6 / artillery): tisíce socketů, bouře relay, velké přenosy přes proxy — ověřit limity a zpětný tlak.</li>
-    <li><b>E2E konzole v CI</b> (test <code>admin-console.test.ts</code> už existuje) a test upgradu 2.x → 3.0 s daty.</li>
-  </ul>
+<section class="doc" id="zmeny-31" data-group="Plán">
+  <h2>Změny ve 3.1.0<a class="anchor" href="#zmeny-31">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>Přidáno</h4><p>Šifrování v3 (Argon2id ve workeru, slepá ID místností, klíče odesílatelů s ratchetem, párové klíče, identita účtu, QR bezpečnostní čísla), binární přenos kusů, relay souborů při selhání P2P s řízením rychlosti, E2EE rámců hovoru, krátkodobé TURN přístupy, cluster přes Redis, více passkeys a obnovovací kód, trvalé relace a seznam zařízení, role a přihlášení passkey do konzole, neměnný audit, zálohy, <code>/metrics</code> a alerty, error boundary, dělení bundlu, kompletní i18n, fuzz / zátěžové / upgrade testy.</p></div>
+    <div class="card"><h4>Opraveno</h4><p>Worker „background tick“ z <code>blob:</code> URL blokovaný produkční CSP (skrytá záložka neudržovala spojení); zvuk toho, kdo se k hovoru připojil druhý a nebyl iniciátorem, se nikdy nevyjednal; soubor bez P2P spojení nešel poslat vůbec; dva E2E testy sdílely port.</p></div>
+    <div class="card"><h4>Změněno</h4><p>Živé zprávy už nešifruje klíč místnosti; server zná jen slepé ID; metadata fronty zapečetěná; push probuzení neutrální; relace 12 h klouzavě (max. 7 dní) místo pevných 12 h v paměti; CSP povoluje WebAssembly.</p></div>
+    <div class="card"><h4>Nekompatibilní</h4><p>Klient 3.0 a 3.1 se v místnosti nepotkají (jiné ID i klíče) — po nasazení obnovit všechna okna. nginx potřebuje <code>'wasm-unsafe-eval'</code> v CSP.</p></div>
+  </div>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 3.1.0.</p>
 </section>
 
 <section class="doc" id="zmeny" data-group="Plán">
@@ -936,7 +1142,7 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
     <div class="card"><h4>Změněno</h4><p>Veřejný status úložiště bez statistik ostatních, metadata endpointy jen s tokenem, kód zapečetěné zprávy 12 znaků, transfer log bez jmen souborů, historie serveru bez passkey šifrovaná v prohlížeči.</p></div>
     <div class="card"><h4>Nekompatibilní</h4><p>Klienti 2.x se s 3.0 nespojí (nezapečetěná signalizace) a nepřečtou obálky v2. Po nasazení obnovit všechna okna; přidat blok nginx <code>/api/admin/</code>.</p></div>
   </div>
-  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 3.0.0.</p>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>.</p>
 </section>
 </main>
 </div>

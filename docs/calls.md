@@ -1,5 +1,9 @@
 # Audio / video calls
 
+> **Since 3.1.0** every encoded audio and video frame is additionally sealed end to end in a
+> worker (`RTCRtpScriptTransform`) with the pair's per-direction media key, and either side can
+> add a track (perfect negotiation) — see
+> [documentation › E2EE hovorů](site/index.html#e2ee-hovoru).
 Calls share the same `RTCPeerConnection` instances created for the chat
 DataChannel. Adding/removing tracks triggers a fresh SDP offer/answer
 exchange over the signaling WebSocket. All media traffic is encrypted

@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **3.0.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **3.1.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 3.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-3.0.0.pdf`](docs/site/m5cet-dokumentace-3.0.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 3.1 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-3.1.0.pdf`](docs/site/m5cet-dokumentace-3.1.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -59,21 +59,29 @@ místnosti.
 
 ## Hlavní vlastnosti
 
-- **End-to-end šifrované zprávy** — AES-GCM 256 s IV 12 B na frame, klíč odvozen
-  PBKDF2-SHA-256 (250 000 iterací) lokálně v prohlížeči.
+- **End-to-end šifrované zprávy** (šifrování v3) — heslo místnosti →
+  **Argon2id** (64 MiB, ve Web Workeru) → HKDF klíče podle účelu; živé zprávy
+  pod **klíči odesílatele s ratchetem** (forward secrecy), soukromé zprávy
+  **párovými klíči** (ECDH), podpisy zařízení svázané s **účtem**,
+  bezpečnostní čísla s **QR kódem**. Server zná jen **slepé ID** místnosti.
 - **WebRTC DataChannel mesh** — text, JSON eventy a metadata po DTLS.
-- **Audio/video hovory** — `getUserMedia` + WebRTC, šifrované DTLS-SRTP.
+- **Audio/video hovory** — `getUserMedia` + WebRTC (DTLS-SRTP) a navíc
+  **E2EE každého rámce** klíčem páru (`RTCRtpScriptTransform`).
 - **Speech modul** — TTS / STT / "revoice" (rozpoznat → znovu syntetizovat)
   v prohlížeči, Web Speech API.
-- **Soubory** — chunked šifrovaný přenos po DataChannel (32 KiB chunky),
+- **Soubory** — chunked šifrovaný přenos po DataChannel (32 KiB chunky,
+  **binární rámce**), když P2P nejde, **šifrovaně přes relay serveru**;
   volitelný strop velikosti (výchozí neomezeno), malé přílohy ≤ 512 KiB inline.
 - **Udržování spojení** — heartbeat na signalizační WS, full-jitter exponential
   backoff, tři strategie (conservative / balanced / aggressive),
   online/visibility hooks.
 - **Web Push** — `web-push` server-side, VAPID, service worker, click/focus.
-- **Admin API + GUI** — samostatný Node service za `ADMIN_API_TOKEN`: health,
-  metriky procesu, allowlist příkazů. *Doručování příkazů klientům zatím
-  nefunguje napříč procesy — viz [Známá omezení](#známá-omezení).*
+- **Operátorská konzole** (`/console/`) — živý provoz, spojení, místnosti,
+  uživatelé, fronta, úložiště, audit; **role** vlastník / operátor / auditor,
+  přihlášení **passkey**, **neměnný audit** (hash řetěz + podepsané body),
+  **zálohy**, **Prometheus `/metrics`** a **alerty** s webhookem.
+- **Více instancí** — místnosti přes Redis pub/sub (`REDIS_URL`), podepsané
+  zprávy clusteru.
 - **Mapy / lokace** — Geolocation + OSM deep linky, žádný bundling Leafletu.
 - **Web NFC** — Android Chrome, číst/zapisovat zašifrované konfigurace na tag,
   PIN + PBKDF2/AES-GCM. Plug-in registry pro hardware čtečky.
@@ -101,6 +109,8 @@ místnosti.
 - **Data a historie chatu** — tři volby: nové připojení vše smaže (výchozí),
   chat žije do konce sezení (šifrovaně v prohlížeči), nebo leží na serveru
   zašifrovaný **passkeyem**. Server ověří podpis WebAuthn, ale obsah nepřečte.
+- **Účty s více passkeys a obnovovacím kódem**, relace přežívající restart
+  a seznam zařízení.
 - **Přihlášený uživatel a stav away** — odznak „přihlášen" s oknem účtu
   (velikosti, data, počty, serverový log), adresa `/signin` pro automatické
   přihlášení, a relay: když je přihlášený účastník pryč, server jeho zprávy
@@ -194,43 +204,43 @@ podstaty (klíč je odvozen v prohlížeči).
 
 ## Šifrovací model
 
+Šifrování v3 (od 3.1.0; podrobně v [dokumentaci › Šifrování v3](docs/site/index.html#sifrovani-v3)):
+
 ```mermaid
 flowchart TB
-    subgraph Klient
-        ROOM[room id<br/>např. "alfa-bravo"]
-        PWD[passphrase<br/>uživatel zadá ručně]
-        SALT["salt = 'CipherRoom:v1:' || roomId"]
-        PBKDF2[PBKDF2-SHA256<br/>250 000 iter]
-        K[AES-GCM 256<br/>non-extractable]
-        IV[IV 12 B<br/>crypto.getRandomValues]
-        PT[Plaintext JSON]
-        CT[Ciphertext + tag]
-        PWD --> PBKDF2
-        ROOM --> SALT --> PBKDF2
-        PBKDF2 --> K
-        IV --> AES
-        PT --> AES[AES-GCM encrypt]
-        K --> AES
-        AES --> CT
-    end
-    CT --> Wire[Wire: { iv: base64, ciphertext: base64 }]
+    PWD[heslo místnosti] --> NFC[NFC normalizace]
+    ROOM[název místnosti] --> SALT["sůl m5cet:room:v3:‹místnost›"]
+    NFC --> ARGON["Argon2id — 64 MiB, 3 průchody<br/>(Web Worker, WASM)"]
+    SALT --> ARGON
+    ARGON --> HKDF[HKDF-SHA256]
+    HKDF --> RID["slepé ID místnosti r3.… (jediné, co vidí server)"]
+    HKDF --> KM[klíč zpráv místnosti]
+    HKDF --> KS[klíč signalizace]
+    HKDF --> KF[klíč souborů → klíč pro každý přenos]
+    HKDF --> CHK[kontrolní hodnota klíče]
+    ID["identita zařízení<br/>ECDSA + ECDH P-256 (IndexedDB)"] --> HELLO["podepsaný hello<br/>(kontrolní hodnota + DH klíč)"]
+    HELLO --> PAIR["párový klíč ECDH+HKDF<br/>soukromé zprávy"]
+    HELLO --> MEDIA["klíče médií pro každý směr<br/>E2EE rámců hovoru"]
+    PAIR --> SK["klíč odesílatele (řetěz HMAC)<br/>rozeslaný párově → forward secrecy"]
 ```
 
 Důležité:
 
-- **Salt prefix `CipherRoom:v1:`** je součástí formátu. Změna = breaking
-  migrace, prefix se musí povýšit na `v2:` a klient i druhá strana to musí
-  vědět. (Viz `client/src/App.tsx` JSDoc nad `deriveRoomKey`.)
-- **IV se nikdy necachuje.** Vždy `crypto.getRandomValues(new Uint8Array(12))`.
-  Reuse IV se stejným klíčem GCM zcela rozbije.
-- **Klíč je `extractable: false`.** Web Crypto neumožní `exportKey`, takže
-  ani malicious extension uvnitř page-scopu si jej nepřečte (až na komplexní
-  útoky na běžící process).
-- **Ověření integrity** — GCM tag je 16 B součástí ciphertextu. Změna kteréhokoli
-  bytu = `OperationError` při dekrypci. UI to převádí na hlášku
-  *"zpráva přišla, ale nedá se rozšifrovat — druhá strana má jiný klíč"*.
-- **Sdílení klíče** — passphrase se sdílí **mimo M5cet** (Signal, papír, ústně).
-  Server tu možnost nemá poskytnout.
+- **Každá zpráva má vlastní klíč** z řetězu odesílatele; klíč se po použití
+  zahodí a řetěz se po 500 zprávách, hodině nebo odchodu člena vymění — kdo
+  později získá heslo, starší zachycený provoz nepřečte.
+- **Associated data** všude (místnost + ID zprávy, odesílatel + příjemce
+  signálu, přenos + pořadí chunku, prefix kodeku u rámců hovoru): šifrový text
+  nejde přesunout jinam.
+- **IV se nikdy neopakuje** (náhodný, u rámců hovoru sůl + čítač); **klíče
+  jsou neexportovatelné** (`extractable: false`).
+- **Podpisy uvnitř šifrování**: zprávy i soubory podepisuje klíč zařízení,
+  ten je potvrzený klíčem účtu; změnu klíče aplikace ohlásí a bezpečnostní
+  číslo (60 číslic / QR) ji dovolí ověřit mimo aplikaci.
+- **Heslo se sdílí mimo M5cet** (osobně, jiným kanálem, pozvánkou s kódem).
+  Server ho nikdy nedostane — ani název místnosti.
+- Obálky v2 (PBKDF2, fronta z 3.0) se dál otevřou; klienti 3.0 a 3.1 se v
+  místnosti nepotkají (jiné ID i klíče).
 
 ---
 
@@ -477,23 +487,23 @@ Plný přehled: [`docs/browser-limitations.md`](docs/browser-limitations.md).
 
 ## Známá omezení
 
-Projekt je poctivý v tom, co (zatím) neumí. Ověřeno revizí 2.5.0; podrobně
-v [`docs/security-model.md`](docs/security-model.md#známé-mezery-stav-250).
+Projekt je poctivý v tom, co (zatím) neumí. Stav 3.1.0; co zbývá z plánu,
+je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
 
-- Rate limit WebSocket upgradu se nespouští; REST limiter ano (za reverse
-  proxy per návštěvník díky `TRUST_PROXY`).
-- Proxy relay souborů nedoručuje data — soubory jen přes otevřený DataChannel.
-- Admin příkazy, `/admin/clients` a `/admin/logs/recent` nevidí stav hlavní
-  služby (oddělené procesy, stav jen v paměti).
-- Operátorské cesty hlavní služby (retence, push broadcast) chrání jen
-  `ADMIN_API_TOKEN` a REST limiter — žádné role ani víc tokenů; bez
-  nastaveného tokenu jsou vypnuté (`503`). Test push bez tokenu jde jen na
-  vlastní odběr zařízení.
-- Panel „Důvěra" (TOFU) je klíčovaný náhodným ID relace — změnu protistrany
-  nezachytí.
-- Settings sync, consent, push subskripce a event log žijí jen v paměti procesu
-  (retenční sweep je maže průběžně, restart úplně).
-- `App.tsx` (~2 800 řádků) nemá unit testy; pokrývají ho jen e2e testy.
+- **Skupinové hovory jsou mesh** (každý s každým): nad 4–5 účastníků roste
+  upload. Rámce hovoru jsou šifrované end-to-end tak, aby prošly SFU, ale SFU
+  součástí není.
+- **E2EE rámců hovoru** potřebuje `RTCRtpScriptTransform`; jinde hovor chrání
+  „jen“ DTLS-SRTP (panel hlasu to ukáže).
+- **Více instancí**: účty jsou JSON soubory ve sdíleném adresáři — dvě
+  instance měnící účet ve stejné milisekundě mohou jednu změnu ztratit
+  (pomohou sticky sessions). Limity spojení a rámců platí pro každou instanci
+  zvlášť. SQLite úložiště sdílejí instance na jednom hostiteli.
+- **Relay souborů**: nejvýš 64 souběžných přenosů na instanci a ~2 MiB/s na
+  socket; velké soubory patří na P2P nebo TURN.
+- Settings sync, consent, push subskripce anonymních zařízení a event log žijí
+  jen v paměti procesu (retenční sweep je maže průběžně, restart úplně).
+- `App.tsx` (~4 000 řádků) pokrývají hlavně e2e testy.
 - Historii prohlížeče web smazat neumí; pozvánky nepřežijí restart serveru.
 
 ---
@@ -596,7 +606,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 3.0.0        | aktuální — protokol v2, šifrování v2 (podpisy, zapečetěná signalizace, ověřené soubory), fronta s lease, nová administrace s živým provozem a auditem |
+| 3.1.0        | aktuální — šifrování v3 (Argon2id, slepé ID místností, klíče odesílatele, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role, neměnný audit, zálohy, metriky a alerty |
+| 3.0.0        | protokol v2, šifrování v2 (podpisy, zapečetěná signalizace, ověřené soubory), fronta s lease, nová administrace s živým provozem a auditem |
 | 2.7.0 – 2.11.0 | šifrovaná relace, pozvánky s kódem, passkey účty, úložiště SQLCipher, lifecycle a flash oznámení |
 | 2.6.0        | instalační sada, oprava odesílání souborů, nové menu a kompozér |
 | 2.5.0        | modernizace toolchainu, úklid závislostí, opravy |

@@ -1,5 +1,9 @@
 # M5cet — API surface
 
+> **Od 3.1.0:** nové cesty účtů (`passkeys`, `recovery`, `sessions`, `identity`), `/metrics`,
+> krátkodobé TURN přístupy v `/api/turn`, operátorské `whoami`, `admins`, `audit/verify`,
+> `backups`, `alerts`; binární rámce kusů souborů na `/ws` — viz
+> [dokumentace › API reference](site/index.html#api) a [› Binární rámce](site/index.html#binarni-ramce).
 > **Od 3.0.0:** WebSocket běží na protokolu v2 — rámce, validace, limity a chybové kódy popisuje
 > [dokumentace 3.0 › Protokol](site/index.html#protokol); operátorské API `/api/admin/*`
 > [› API reference](site/index.html#api-admin). `/api/events/recent` a `/api/transfers/stats`
