@@ -112,6 +112,31 @@ describe("invite end to end (client crypto + server gate)", () => {
   }, 60_000);
 });
 
+describe("sharing a saved connection", () => {
+  it("names the guest and carries another signaling server, normalized", async () => {
+    const store = new ShareStore(); const fetcher = fetcherFor(store);
+    const share = await createShare({ ...ROOM, name: "Bob", server: "https://chat-eu.example.org/" }, { maxUses: 3, ttlSec: 3600 }, { origin: "https://h", fetcher });
+    const out = await redeemShare(parseShareFragment(new URL(share.url).hash)!, share.code, { fetcher });
+    expect(out.ok && out.payload).toMatchObject({ room: "brno-secure", name: "Bob", server: "wss://chat-eu.example.org" });
+  }, 30_000);
+
+  it("leaves the server out for this one, and refuses an address that is not wss://", async () => {
+    const store = new ShareStore(); const fetcher = fetcherFor(store);
+    const share = await createShare(ROOM, { maxUses: 1, ttlSec: 3600 }, { origin: "https://h", fetcher });
+    const out = await redeemShare(parseShareFragment(new URL(share.url).hash)!, share.code, { fetcher });
+    expect(out.ok && "server" in out.payload).toBe(false);
+    await expect(createShare({ ...ROOM, server: "http://evil.example" }, { maxUses: 1, ttlSec: 3600 }, { origin: "https://h", fetcher })).rejects.toThrow();
+  }, 30_000);
+
+  it("an invitation whose sealed server is not a clean wss:// address does not open", async () => {
+    const id = "C".repeat(22);
+    const linkKey = crypto.getRandomValues(new Uint8Array(32)); const serverKey = crypto.getRandomValues(new Uint8Array(32));
+    const payload = { v: 1 as const, room: "r", passphrase: "p", name: "n", createdAt: 1, server: "wss://user:pw@evil.example/?x=1" };
+    const sealed = await sealPayload("123456789012", id, linkKey, serverKey, payload);
+    await expect(openPayload("123456789012", id, linkKey, serverKey, sealed.iv, sealed.ciphertext)).rejects.toThrow(/bad payload/);
+  }, 30_000);
+});
+
 describe("share targets and names", () => {
   it("puts only the link into messenger deep links — never the code", () => {
     const targets = shareTargets("https://h/#j=abc", "Pozvánka");

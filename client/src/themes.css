@@ -552,3 +552,55 @@
   background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border-color: transparent;
 }
 :root:is([data-theme="ios"], [data-theme="windows"]) :is(.ap-btn--primary, .cx-btn--primary):hover:not(:disabled) { background: hsl(var(--primary) / 0.9); }
+
+/* ------------------------------------------------ Room window (room.css) */
+/* iOS 27: a capsule segmented control in the sheet's navigation bar, inset
+   grouped rows with a blue check, capsule buttons. */
+:root[data-theme="ios"] .rd-tabs { border-radius: 9999px; padding: 0.15rem; background: rgb(118 118 128 / 0.12); }
+:root[data-theme="ios"][data-tone="dark"] .rd-tabs { background: rgb(118 118 128 / 0.24); }
+:root[data-theme="ios"] .rd-tab { border-radius: 9999px; font-weight: 600; }
+:root[data-theme="ios"] .rd-tab[aria-selected="true"] { box-shadow: 0 3px 8px rgb(0 0 0 / 0.12), 0 3px 1px rgb(0 0 0 / 0.04); }
+:root[data-theme="ios"][data-tone="dark"] .rd-tab[aria-selected="true"] { background: rgb(99 99 102); }
+:root[data-theme="ios"] :is(.rd-input, .sc-input) { border: 0; border-radius: 0.75rem; background: hsl(var(--muted)); }
+:root[data-theme="ios"] .rd-item { border: 0; border-radius: 0.875rem; background: hsl(var(--card)); }
+:root[data-theme="ios"] .rd-item--manual { background: transparent; box-shadow: inset 0 0 0 1px hsl(var(--border)); }
+:root[data-theme="ios"] .rd-item[aria-checked="true"] { background: hsl(var(--card)); box-shadow: inset 0 0 0 2px hsl(var(--primary)); }
+:root[data-theme="ios"] .rd-item__check { border-width: 1.5px; width: 1.4rem; height: 1.4rem; }
+:root[data-theme="ios"] :is(.rd-btn, .sc-create, .sc-done, .sc-pill, .rd-gear) { border-radius: 9999px; }
+:root[data-theme="ios"] :is(.rd-btn, .sc-done) { border: 0; background: hsl(var(--primary) / 0.12); color: hsl(var(--primary)); }
+:root[data-theme="ios"] :is(.rd-btn--primary, .sc-create) { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); box-shadow: none; }
+:root[data-theme="ios"] .rd-gear { border: 0; background: hsl(var(--muted)); }
+:root[data-theme="ios"] :is(.rd-need, .sc-card) { border: 0; border-radius: 0.875rem; }
+:root[data-theme="ios"] .rd-actions { border-top: 0; padding-top: 0.25rem; }
+
+/* Windows 11: a SelectorBar in the dialog's title area (the selected item
+   gets the short accent pill underneath), list rows with the selection pill
+   on the left, 4 px controls with the elevation border. */
+:root[data-theme="windows"] .rd-tabs { gap: 0.15rem; padding: 0; border-radius: 0; background: transparent; }
+:root[data-theme="windows"] .rd-tab { min-height: 2.4rem; border-radius: 0.25rem; font-weight: 400; }
+:root[data-theme="windows"] .rd-tab:hover:not(:disabled) { background: var(--win-control-hover); }
+:root[data-theme="windows"] .rd-tab[aria-selected="true"] { background: transparent; box-shadow: none; font-weight: 600; }
+:root[data-theme="windows"] .rd-tab[aria-selected="true"]::after {
+  content: ""; position: absolute; bottom: 0.1rem; left: 50%; width: 1rem; height: 3px; margin-left: -0.5rem;
+  border-radius: 9999px; background: hsl(var(--primary));
+}
+:root[data-theme="windows"] :is(.rd-input, .sc-input) {
+  border-radius: 0.25rem; border-color: var(--win-stroke); border-bottom-color: var(--win-stroke-strong); background: var(--win-control);
+}
+:root[data-theme="windows"] :is(.rd-input, .sc-input):focus { border-bottom-color: hsl(var(--primary)); box-shadow: inset 0 -1px 0 hsl(var(--primary)); background: hsl(var(--card)); }
+:root[data-theme="windows"] .rd-item { border-radius: 0.375rem; border-color: var(--win-stroke); background: var(--win-control); }
+:root[data-theme="windows"] .rd-item:hover:not(:disabled) { border-color: var(--win-stroke); background: var(--win-control-hover); }
+:root[data-theme="windows"] .rd-item[aria-checked="true"] { border-color: var(--win-stroke); background: hsl(var(--accent)); box-shadow: none; }
+:root[data-theme="windows"] .rd-item[aria-checked="true"]::before {
+  content: ""; position: absolute; inset-inline-start: 0; top: 50%; width: 3px; height: 1.1rem; margin-top: -0.55rem;
+  border-radius: 9999px; background: hsl(var(--primary));
+}
+:root[data-theme="windows"] .rd-item__check { border-radius: 0.25rem; }
+:root[data-theme="windows"] :is(.rd-btn, .sc-create, .sc-done, .sc-pill, .rd-gear) {
+  border-radius: 0.25rem; border-color: var(--win-stroke); border-bottom-color: var(--win-stroke-strong); background: var(--win-control); font-weight: 400;
+}
+:root[data-theme="windows"] :is(.rd-btn--primary, .sc-create, .sc-pill[aria-checked="true"]) {
+  border-color: transparent; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.2);
+}
+:root[data-theme="windows"] :is(.rd-need, .sc-card, .rd-empty) { border-radius: 0.5rem; }
+:root[data-theme="windows"] .rd-actions { border-top-color: var(--win-stroke); }

@@ -4,7 +4,8 @@
 //
 // Everything after "#" stays in the browser: it is not sent to our server, to
 // crawlers, or to the link-preview fetchers of messengers. The payload (room,
-// room key, suggested name) is AES-GCM encrypted under
+// room key, suggested name and — for a saved connection that uses another
+// signaling server — that server's address) is AES-GCM encrypted under
 //
 //   HKDF( linkKey ‖ serverKey ‖ PBKDF2(code) )
 //
@@ -13,13 +14,18 @@
 // different channel than the link.
 
 import { toBase64, fromBase64, type Bytes } from "./crypto";
+import { normalizeServerUrl } from "./client-config";
 
 export const CODE_DIGITS = 12;
 const PBKDF2_ITERATIONS = 200_000;
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-export type SharePayload = { v: 1; room: string; passphrase: string; name: string; createdAt: number };
+export type SharePayload = {
+  v: 1; room: string; passphrase: string; name: string; createdAt: number;
+  /** The signaling server to join through (wss://); absent = the server that serves the link. */
+  server?: string;
+};
 export type ShareLinkParts = { id: string; linkKey: Bytes };
 export type ShareOptions = { maxUses: number; ttlSec: number };
 export type CreatedShare = {
@@ -121,7 +127,11 @@ export async function openPayload(code: string, id: string, linkKey: Bytes, serv
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64Url(iv), additionalData: encoder.encode(id) }, key, fromBase64Url(ciphertext));
   const data = JSON.parse(decoder.decode(plain)) as Partial<SharePayload>;
   if (data.v !== 1 || typeof data.room !== "string" || typeof data.passphrase !== "string" || typeof data.name !== "string") throw new Error("bad payload");
-  return { v: 1, room: data.room, passphrase: data.passphrase, name: data.name, createdAt: Number(data.createdAt) || 0 };
+  // A server that is not a clean wss:// address is refused outright: joining
+  // the room elsewhere than the sender meant would silently fail.
+  const server = data.server === undefined || data.server === "" ? "" : normalizeServerUrl(data.server);
+  if (server === null) throw new Error("bad payload");
+  return { v: 1, room: data.room, passphrase: data.passphrase, name: data.name, createdAt: Number(data.createdAt) || 0, ...(server ? { server } : {}) };
 }
 
 // --- random guest names -----------------------------------------------------
@@ -140,7 +150,7 @@ export function randomGuestName(): string {
 type Fetcher = typeof fetch;
 
 export async function createShare(
-  input: { room: string; passphrase: string; name?: string }, options: ShareOptions,
+  input: { room: string; passphrase: string; name?: string; server?: string }, options: ShareOptions,
   env: { origin?: string; fetcher?: Fetcher } = {},
 ): Promise<CreatedShare> {
   const fetcher = env.fetcher ?? fetch;
@@ -149,7 +159,12 @@ export async function createShare(
   const serverKey = randomBytes(32);
   const revokeToken = toBase64Url(randomBytes(32));
   const code = generateCode();
-  const payload: SharePayload = { v: 1, room: input.room, passphrase: input.passphrase, name: input.name || randomGuestName(), createdAt: Date.now() };
+  const server = input.server ? normalizeServerUrl(input.server) : "";
+  if (server === null) throw new Error("bad server address");
+  const payload: SharePayload = {
+    v: 1, room: input.room, passphrase: input.passphrase, name: input.name?.trim() || randomGuestName(), createdAt: Date.now(),
+    ...(server ? { server } : {}),
+  };
   const sealed = await sealPayload(code, id, linkKey, serverKey, payload);
   const res = await fetcher("/api/share/create", {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",

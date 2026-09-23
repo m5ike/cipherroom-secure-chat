@@ -18,6 +18,7 @@ const PORT = 5937;
 const BASE = `http://localhost:${PORT}`;
 const ROOM = `cx-${randomBytes(3).toString("hex")}`;
 const ROOM_KEY = `key-${randomBytes(8).toString("hex")}`;
+const ROOM2 = `cx2-${randomBytes(3).toString("hex")}`;
 
 let server: ChildProcess | null = null;
 let browser: Browser | null = null;
@@ -148,6 +149,72 @@ describe("saved connections", () => {
     await expect.poll(async () => alice.page.getByTestId("status-connection").innerText(), { timeout: 15_000 }).not.toContain(ROOM);
     await alice.page.reload();
     await expect.poll(async () => alice.page.getByTestId("status-connection").innerText(), { timeout: 45_000 }).toContain(ROOM);
+  }, 120_000);
+
+  it("the Room window lists them on Server-enhanced; while connected the others wait", async () => {
+    const page = alice.page;
+    await page.getByTestId("button-brand").click();
+    await page.getByTestId("room-dialog").waitFor();
+    // A saved connection is in use: the window opens on Server-enhanced, locked.
+    expect(await page.getByTestId("room-tab-server").getAttribute("aria-selected")).toBe("true");
+    expect(await page.getByTestId("room-tab-light").isDisabled()).toBe(true);
+    const first = page.locator('[data-testid="room-item"]', { hasText: "Tým Brno" });
+    expect(await first.getAttribute("aria-checked")).toBe("true");
+    await first.getByTestId("room-item-live").waitFor();
+    // No connect / edit / delete on the rows.
+    expect(await first.locator("button").count()).toBe(0);
+
+    // The gear opens My connections above the window; a second one is added there.
+    await page.getByTestId("room-manage").click();
+    await page.getByTestId("cx-add").click();
+    await page.getByTestId("cx-f-label").fill("Druhá");
+    await page.getByTestId("cx-f-room").fill(ROOM2);
+    await page.getByTestId("cx-f-name").fill("alice");
+    await page.getByTestId("cx-f-generate").click();
+    await page.getByTestId("cx-f-save").click();
+    await page.getByTestId("cx-list").waitFor();
+    await page.keyboard.press("Escape"); // only My connections closes
+    await page.getByTestId("room-list").waitFor();
+    const second = page.locator('[data-testid="room-item"]', { hasText: "Druhá" });
+    expect(await second.isDisabled()).toBe(true);
+
+    // Disconnect frees the choice; the second one connects with the same button.
+    await page.getByTestId("button-disconnect").click();
+    await expect.poll(async () => second.isDisabled()).toBe(false);
+    await second.click();
+    expect(await second.getAttribute("aria-checked")).toBe("true");
+    await page.getByTestId("button-connect").click();
+    await expect.poll(async () => page.getByTestId("status-connection").innerText(), { timeout: 45_000 }).toContain(ROOM2);
+  }, 120_000);
+
+  it("shares a saved connection: an invitation a guest joins with the code", async () => {
+    const page = alice.page;
+    await openMenuEntry(page, "btn-connections");
+    await page.locator('[data-testid="cx-item"]', { hasText: "Tým Brno" }).getByTestId("cx-share").click();
+    const dialog = page.getByTestId("share-connection-dialog");
+    await dialog.waitFor();
+    await page.getByTestId("sc-uses-2").click();
+    await page.getByTestId("sc-guest").fill("host-karel");
+    await page.getByTestId("sc-create").click();
+    const url = await page.getByTestId("share-url").inputValue();
+    const code = (await page.getByTestId("share-code").innerText()).replace(/\D/g, "");
+    expect(url).toMatch(/#j=/);
+    expect(code).toHaveLength(12);
+    // The link and the code carry nothing readable.
+    expect(url).not.toContain(ROOM);
+    await page.keyboard.press("Escape"); // the share window closes, My connections stays
+    await page.getByTestId("cx-list").waitFor();
+    await page.keyboard.press("Escape");
+
+    // A guest without an account opens the link and types the code.
+    const guest = await tab(false);
+    // A fresh load: the app reads an invitation from the address once, at start.
+    await guest.page.goto("about:blank");
+    await guest.page.goto(url);
+    await guest.page.getByTestId("input-invite-code").fill(code);
+    await guest.page.getByTestId("button-invite-join").click();
+    await expect.poll(async () => guest.page.getByTestId("status-connection").innerText(), { timeout: 45_000 }).toContain(ROOM);
+    expect(guest.errors).toEqual([]);
     expect(alice.errors).toEqual([]);
   }, 120_000);
 });

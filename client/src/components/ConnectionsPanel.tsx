@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  BarChart3, Check, Eye, EyeOff, KeyRound, Pencil, Plug, PlugZap, Plus, RefreshCw, Save, Server, Settings2, Star, Trash2, Undo2,
+  BarChart3, Check, Eye, EyeOff, KeyRound, Pencil, Plug, PlugZap, Plus, RefreshCw, Save, Server, Settings2, Share2, Star, Trash2, Undo2,
 } from "lucide-react";
 import { t, tf, type Lang } from "../lib/i18n";
 import { formatBytes, formatFullDate, formatLogTime } from "../lib/format";
@@ -16,6 +16,8 @@ import {
   type EditResult, type Keepalive, type LogEntry, type ProfileInput,
 } from "../lib/connections";
 import type { ChatRetention } from "../lib/chat-history";
+import { SimpleModal } from "./SimpleModal";
+import { ShareConnection } from "./SharePanel";
 // The switches, segmented controls and hints share the Appearance screen's styles.
 import "../appearance.css";
 import "../connections.css";
@@ -40,6 +42,8 @@ export type ConnectionsPanelProps = {
   onClearLog: (id: string) => void;
   onSignIn: () => void;
   onEnableServerMode: () => void;
+  /** Open straight on a new connection (the Room window's "Create a connection"). */
+  startWith?: "new";
 };
 
 type View = { kind: "list" } | { kind: "edit"; id?: string; draft?: ProfileInput } | { kind: "detail"; id: string } | { kind: "settings" };
@@ -77,7 +81,10 @@ function Switch({ label, checked, onChange, hint, disabled, testId }: { label: s
 
 export function ConnectionsPanel(props: ConnectionsPanelProps) {
   const { lang, state, policy, eligible } = props;
-  const [view, setView] = useState<View>({ kind: "list" });
+  const [view, setView] = useState<View>(props.startWith === "new" ? { kind: "edit" } : { kind: "list" });
+  // Share a connection: a window of its own, above this one.
+  const [sharing, setSharing] = useState<string | null>(null);
+  const shared = sharing ? state.profiles.find((p) => p.id === sharing) ?? null : null;
 
   if (!eligible.enabled || !eligible.signedIn || !eligible.serverMode) {
     return (
@@ -110,17 +117,22 @@ export function ConnectionsPanel(props: ConnectionsPanelProps) {
           <Settings2 className="h-4 w-4" />{t(lang, "cx.tab.settings")}
         </button>
       </nav>
-      {view.kind === "list" ? <ListView {...props} onEdit={(id, draft) => setView({ kind: "edit", id, draft })} onDetail={(id) => setView({ kind: "detail", id })} /> : null}
+      {view.kind === "list" ? <ListView {...props} onEdit={(id, draft) => setView({ kind: "edit", id, draft })} onDetail={(id) => setView({ kind: "detail", id })} onShare={setSharing} /> : null}
       {view.kind === "edit" ? <EditView {...props} id={view.id} draft={view.draft} onDone={() => setView({ kind: "list" })} /> : null}
       {view.kind === "detail" ? <DetailView {...props} id={view.id} onBack={() => setView({ kind: "list" })} onEdit={() => setView({ kind: "edit", id: view.id })} /> : null}
       {view.kind === "settings" ? <SettingsView {...props} /> : null}
+      {shared ? (
+        <SimpleModal title={t(lang, "sc.title")} onClose={() => setSharing(null)} testId="share-connection-dialog">
+          <ShareConnection lang={lang} connection={shared} onDone={() => setSharing(null)} />
+        </SimpleModal>
+      ) : null}
     </div>
   );
 }
 
 /* ---------------------------------------------------------------- list */
 
-function ListView(props: ConnectionsPanelProps & { onEdit: (id?: string, draft?: ProfileInput) => void; onDetail: (id: string) => void }) {
+function ListView(props: ConnectionsPanelProps & { onEdit: (id?: string, draft?: ProfileInput) => void; onDetail: (id: string) => void; onShare: (id: string) => void }) {
   const { lang, state, activeId, connected, current, policy } = props;
   const full = state.profiles.length >= policy.maxProfiles;
   const alreadySaved = current ? state.profiles.some((p) => p.room === current.room && p.passphrase === current.passphrase) : true;
@@ -167,6 +179,7 @@ function ListView(props: ConnectionsPanelProps & { onEdit: (id?: string, draft?:
                 <button type="button" className="cx-icon" title={t(lang, "cx.edit")} aria-label={t(lang, "cx.edit")} onClick={() => props.onEdit(p.id)} data-testid="cx-edit"><Pencil className="h-4 w-4" /></button>
                 <button type="button" className="cx-icon" title={t(lang, "cx.details")} aria-label={t(lang, "cx.details")} onClick={() => props.onDetail(p.id)} data-testid="cx-details"><BarChart3 className="h-4 w-4" /></button>
                 <button type="button" className="cx-icon" title={t(lang, "cx.makeDefault")} aria-label={t(lang, "cx.makeDefault")} aria-pressed={isDefault} onClick={() => props.onDefault(isDefault ? null : p.id)} data-testid="cx-make-default"><Star className="h-4 w-4" /></button>
+                <button type="button" className="cx-icon" title={t(lang, "cx.share")} aria-label={t(lang, "cx.share")} onClick={() => props.onShare(p.id)} data-testid="cx-share"><Share2 className="h-4 w-4" /></button>
                 <button type="button" className="cx-icon cx-icon--danger" title={t(lang, "cx.delete")} aria-label={t(lang, "cx.delete")} data-testid="cx-delete"
                   onClick={() => { if (window.confirm(tf(lang, "cx.delete.confirm", { name: p.label }))) props.onDelete(p.id); }}>
                   <Trash2 className="h-4 w-4" />

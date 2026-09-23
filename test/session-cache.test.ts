@@ -22,6 +22,13 @@ describe("session cache", () => {
     expect(await createSessionCache({ storage, vault }).load()).toEqual(DATA);
   });
 
+  it("remembers another signaling server and the saved connection a session came from", async () => {
+    const storage = memoryStorage(); const vault = createMemoryVault();
+    const withOrigin: SessionData = { ...DATA, server: "wss://chat-eu.example.org", profileId: "cx-abc123def" };
+    await createSessionCache({ storage, vault }).save(withOrigin);
+    expect(await createSessionCache({ storage, vault }).load()).toEqual(withOrigin);
+  });
+
   it("keeps nothing readable in storage — no name, room or key in the clear", async () => {
     const storage = memoryStorage();
     await createSessionCache({ storage, vault: createMemoryVault() }).save(DATA);

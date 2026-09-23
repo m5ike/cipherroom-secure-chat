@@ -1258,3 +1258,7 @@
 }
 .cx-switcher select { max-width: 10rem; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; outline: none; }
 @media (max-width: 520px) { .cx-switcher { max-width: 8.5rem; } .cx-switcher select { max-width: 6rem; } }
+
+/* A dialog opened on top of another dims the screen only a little more. */
+:root .modal-root.modal-root--stacked { background: rgb(0 0 0 / 0.14); }
+.modal-head--custom { padding-block: 0.6rem; }

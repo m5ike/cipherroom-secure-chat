@@ -116,6 +116,7 @@ import { ConnectionsStore, findProfile, startupProfile, normalizeRoomName, type 
 import { effectiveAppearance, serverAllowed, signalingUrl } from "./lib/client-config";
 import { fetchClientConfig, loadCachedClientConfig } from "./lib/client-config-client";
 import { SimpleModal } from "./components/SimpleModal";
+import { RoomDialog, RoomTabs, type RoomTab, type RoomTarget } from "./components/RoomDialog";
 import { AudioControls, PeerList, VideoControls } from "./components/CallPanels";
 import { ConnectionPanel, FilesPanel, LocationPanel, SpeechPanel, type ConnLogEvent } from "./components/ToolPanels";
 import {
@@ -494,6 +495,12 @@ function ChatApp() {
   const activeProfileRef = useRef<ConnectionProfile | null>(null);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const activeServerRef = useRef("");
+  /** A restored session's saved connection, bound once the vault opens. */
+  const pendingProfileIdRef = useRef<string | null>(null);
+  /** The Room window's tab when the user picked one; otherwise it follows the session. */
+  const [roomTabPick, setRoomTabPick] = useState<RoomTab | null>(null);
+  /** My connections opened from the Room window, above it ("new" = straight to the form). */
+  const [manageFromRoom, setManageFromRoom] = useState<null | "list" | "new">(null);
   /** The last few rooms' derived keys (memory only; Argon2id costs ~1 s on a phone). */
   const derivedKeysRef = useRef(new Map<string, RoomKeys>());
   /** Names the room told us, by peer id (a signal can arrive before the name). */
@@ -776,10 +783,23 @@ function ChatApp() {
       store.load(raw ?? {});
       connectionsReadyRef.current = true;
       setCxReady(true);
+      // A session restored after a reload came from this saved connection.
+      const pending = pendingProfileIdRef.current;
+      pendingProfileIdRef.current = null;
+      const bound = pending && !activeProfileRef.current ? findProfile(store.get(), pending) : null;
+      if (bound) { activeProfileRef.current = bound; setActiveProfileId(bound.id); }
     }).catch(() => { /* not readable (wrong key, offline): stay read-only, never overwrite */ });
     return () => { live = false; };
   }, [account?.id, clientConfig.connections.enabled]);
-  const cxEligible = Boolean(account) && cxReady && prefs.mode === "server" && clientConfig.connections.enabled;
+  // Server-enhanced picked — or a saved connection in use (its own mode may be light).
+  const cxServerSide = prefs.mode === "server" || activeProfileId !== null;
+  const cxEligible = Boolean(account) && cxReady && cxServerSide && clientConfig.connections.enabled;
+  // The Room window: its tab follows the session — a saved connection lives on
+  // Server-enhanced, whatever its own mode — until the user picks one. While a
+  // connection is up (or on its way) nothing in it can be switched.
+  const roomLocked = desired === "connected";
+  const roomTab: RoomTab = roomTabPick ?? (activeProfileId ? "server" : prefs.mode);
+  useEffect(() => { if (activePanel !== "join") setRoomTabPick(null); }, [activePanel]);
   // Signed in: the default connection (or the last one) connects by itself —
   // once per page, and only when nothing else is connected or on its way.
   useEffect(() => {
@@ -1200,6 +1220,24 @@ function ChatApp() {
     return !activeServerRef.current;
   }
 
+  /** A tab in the Room window picks the connection type (= the mode). */
+  function pickRoomTab(tab: RoomTab) {
+    if (roomLocked) return;
+    setRoomTabPick(tab);
+    if (prefs.mode !== tab) setPrefs({ mode: tab });
+  }
+
+  /** Connect in the Room window: the saved connection picked, or the room typed in. */
+  async function connectRoomTarget(target: RoomTarget) {
+    if (target.kind === "profile") { await connectProfile(target.id); return; }
+    // Typed in: the tab says which mode (a saved connection may have left another).
+    if (prefs.mode !== roomTab) {
+      setPrefs({ mode: roomTab });
+      prefsRef.current = { ...prefsRef.current, mode: roomTab };
+    }
+    await connect();
+  }
+
   /** Joins a saved connection: its room, key and name, and how the session behaves. */
   async function connectProfile(id: string, opts: { auto?: boolean } = {}) {
     const store = connectionsRef.current!;
@@ -1232,6 +1270,7 @@ function ChatApp() {
     disconnect(false);
     closeJoinPanelRef.current = true;
     setActivePanel(null);
+    setManageFromRoom(null);
     await startSession(userName, profile.room, profile.passphrase);
   }
 
@@ -2539,7 +2578,8 @@ function ChatApp() {
   /** "Reconnect" = fire the Disconnect action, wait 1–2 s, then fire Connect —
    *  a full teardown + fresh join rather than an in-place reconnect. */
   async function reconnectViaButtons() {
-    if (!passphrase.trim() && !passphraseRef.current) {
+    const profile = activeProfileRef.current;
+    if (!profile && !passphrase.trim() && !passphraseRef.current) {
       setNotice(t(lang, "app.enterRoomKey"));
       return;
     }
@@ -2547,7 +2587,9 @@ function ChatApp() {
     userDisconnect();
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
     setNotice(t(lang, "app.reconnect.connecting"));
-    await connect();
+    // A saved connection comes back as itself — on its own server too.
+    if (profile) await connectProfile(profile.id, { auto: true });
+    else await connect();
   }
 
   /** Desired state := connected. Used by the form, a restored session and invites. */
@@ -2560,7 +2602,7 @@ function ChatApp() {
     nameRef.current = nextName;
     setDesired("connected");
     setSessionPassphrase(nextPassphrase);
-    void sessionCacheRef.current.save({ name: nextName, room: nextRoom, passphrase: nextPassphrase, desired: "connected" }).catch(() => undefined);
+    void sessionCacheRef.current.save({ name: nextName, room: nextRoom, passphrase: nextPassphrase, desired: "connected", ...sessionOrigin() }).catch(() => undefined);
     await attemptConnect();
   }
 
@@ -2574,8 +2616,16 @@ function ChatApp() {
     disconnect();
     logConn("stopped", 0);
     if (hadSession) {
-      void sessionCacheRef.current.save({ name: nameRef.current, room: roomInputRef.current, passphrase: hadSession, desired: "disconnected" }).catch(() => undefined);
+      void sessionCacheRef.current.save({ name: nameRef.current, room: roomInputRef.current, passphrase: hadSession, desired: "disconnected", ...sessionOrigin() }).catch(() => undefined);
     }
+  }
+
+  /** Where the session came from, for the session cache: another server, a saved connection. */
+  function sessionOrigin(): { server?: string; profileId?: string } {
+    return {
+      ...(activeServerRef.current ? { server: activeServerRef.current } : {}),
+      ...(activeProfileRef.current ? { profileId: activeProfileRef.current.id } : {}),
+    };
   }
 
   function disconnect(showMessage = true) {
@@ -3572,6 +3622,11 @@ function ChatApp() {
       setName(saved.name); setRoomInput(saved.room); setPassphrase(saved.passphrase);
       passphraseRef.current = saved.passphrase;
       setSessionPassphrase(saved.passphrase);
+      // The same server as before the reload — if the operator still allows it.
+      const serverOk = !saved.server || serverAllowed(clientConfig.connections, saved.server);
+      if (saved.server && serverOk) activeServerRef.current = saved.server;
+      if (saved.profileId) pendingProfileIdRef.current = saved.profileId;
+      if (!serverOk) { setNotice(t(lang, "cx.err.server")); return; }
       if (saved.desired === "connected") {
         systemMessage(t(lang, "session.restored"));
         void startSession(saved.name, saved.room, saved.passphrase);
@@ -3603,8 +3658,18 @@ function ChatApp() {
   }, []);
 
   async function acceptInvite(payload: SharePayload) {
+    // An invitation to a saved connection on another signaling server joins
+    // there — only when this server's operator allows that server.
+    if (payload.server && !serverAllowed(clientConfig.connections, payload.server)) {
+      setNotice(t(lang, "cx.err.server"));
+      return;
+    }
     setInviteParts(null);
     setActivePanel(null);
+    disconnect(false);
+    activeProfileRef.current = null;
+    setActiveProfileId(null);
+    activeServerRef.current = payload.server ?? "";
     setName(payload.name); setRoomInput(payload.room); setPassphrase(payload.passphrase);
     await startSession(payload.name, payload.room, payload.passphrase);
   }
@@ -4105,14 +4170,15 @@ function ChatApp() {
       ) : null}
 
       {/* Connection panel */}
-      {activePanel === "connections" ? (
-        <SimpleModal title={t(lang, "cx.title")} onClose={() => setActivePanel(null)}>
+      {activePanel === "connections" || manageFromRoom ? (
+        <SimpleModal title={t(lang, "cx.title")} onClose={() => { if (manageFromRoom) setManageFromRoom(null); else setActivePanel(null); }}>
           <ConnectionsPanel
+            startWith={manageFromRoom === "new" ? "new" : undefined}
             lang={lang}
             timezone={prefs.timezone}
             state={cxState}
             policy={clientConfig.connections}
-            eligible={{ enabled: clientConfig.connections.enabled, signedIn: Boolean(account) && cxReady, serverMode: prefs.mode === "server" }}
+            eligible={{ enabled: clientConfig.connections.enabled, signedIn: Boolean(account) && cxReady, serverMode: cxServerSide || manageFromRoom !== null }}
             activeId={activeProfileId}
             connected={status === "joined"}
             current={status === "joined" && sessionPassphrase ? { room, passphrase: sessionPassphrase, userName: nameRef.current } : null}
@@ -4156,64 +4222,50 @@ function ChatApp() {
         </SimpleModal>
       ) : null}
 
-      {/* Join modal */}
+      {/* The Room window: connection type as tabs in the header, the tab's
+          content, and Connect / Disconnect / Share always underneath. */}
       {activePanel === "join" ? (
-        <SimpleModal title={t(lang, "menu.room")} onClose={() => setActivePanel(null)}>
-          <form
-            data-testid="form-join"
-            onSubmit={(event) => {
-              event.preventDefault();
-              // Already joined → the button reads "Reconnect": disconnect, wait,
-              // reconnect. Otherwise a normal connect.
-              if (status === "joined") void reconnectViaButtons();
-              else void connect(event);
-            }}
-            className="space-y-3"
-            autoComplete="off"
-          >
-            <fieldset className="grid grid-cols-2 gap-2 rounded-2xl border border-input bg-background p-1">
-              <label className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-xs ${prefs.mode === "light" ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}>
-                <input type="radio" name="mode" className="sr-only" checked={prefs.mode === "light"} onChange={() => setPrefs({ mode: "light" })} data-testid="radio-mode-light" />
-                <span className="font-semibold">Light · P2P</span>
-                <span className="opacity-80">{t(lang, "app.mode.p2p.hint")}</span>
-              </label>
-              <label className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-xs ${prefs.mode === "server" ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}>
-                <input type="radio" name="mode" className="sr-only" checked={prefs.mode === "server"} onChange={() => setPrefs({ mode: "server" })} data-testid="radio-mode-server" />
-                <span className="font-semibold">Server-enhanced</span>
-                <span className="opacity-80">{t(lang, "app.mode.server.hint")}</span>
-              </label>
-            </fieldset>
-
-            <label className="grid gap-1 text-sm font-medium">
-              {t(lang, "join.name")}
-              <input data-testid="input-name" className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none focus:ring-2 focus:ring-ring" value={name} onChange={(event) => setName(event.target.value)} maxLength={42} />
-            </label>
-            <label className="grid gap-1 text-sm font-medium">
-              {t(lang, "join.room")}
-              <input data-testid="input-room" className="min-h-11 rounded-xl border border-input bg-background px-3 font-mono text-base outline-none focus:ring-2 focus:ring-ring" value={roomInput} onChange={(event) => setRoomInput(event.target.value)} maxLength={48} />
-            </label>
-            <label className="grid gap-1 text-sm font-medium">
-              {t(lang, "join.passphrase")}
-              <input data-testid="input-passphrase" className="min-h-11 rounded-xl border border-input bg-background px-3 text-base outline-none focus:ring-2 focus:ring-ring" value={passphrase} onChange={(event) => setPassphrase(event.target.value)} type="password" autoComplete="new-password" />
-            </label>
-            <div className="flex gap-2">
-              <button data-testid="button-connect" className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50" type="submit" disabled={status === "deriving" || status === "connecting"}>
-                <Radio className="h-4 w-4" />
-                {status === "joined" ? t(lang, "join.reconnect") : t(lang, "join.connect")}
-              </button>
-              {desired === "connected" ? (
-                <button type="button" data-testid="button-disconnect" onClick={() => userDisconnect()} className="inline-flex min-h-11 items-center gap-2 rounded-2xl border border-border bg-background px-3 text-sm hover:bg-accent">
-                  <LogOut className="h-4 w-4" />
-                  {t(lang, "common.disconnect")}
-                </button>
-              ) : null}
-            </div>
-          </form>
-          <ShareSection
+        <SimpleModal
+          title={t(lang, "menu.room")}
+          onClose={() => setActivePanel(null)}
+          testId="room-dialog"
+          className="room-dialog"
+          header={<RoomTabs lang={lang} tab={roomTab} locked={roomLocked} onTab={pickRoomTab} />}
+        >
+          <RoomDialog
             lang={lang}
-            room={normalizeRoom(roomInputRef.current || roomInput)}
-            passphrase={sessionPassphrase}
-            ready={desired === "connected" && sessionPassphrase.length > 0}
+            tab={roomTab}
+            locked={roomLocked}
+            joined={status === "joined"}
+            busy={status === "deriving" || status === "connecting"}
+            fields={{ name, room: roomInput, passphrase }}
+            onField={(patch) => {
+              if (patch.name !== undefined) setName(patch.name);
+              if (patch.room !== undefined) setRoomInput(patch.room);
+              if (patch.passphrase !== undefined) setPassphrase(patch.passphrase);
+            }}
+            saved={{
+              enabled: clientConfig.connections.enabled,
+              signedIn: Boolean(account),
+              ready: cxReady,
+              state: cxState,
+              activeId: activeProfileId,
+            }}
+            onConnect={(target) => void connectRoomTarget(target)}
+            onReconnect={() => void reconnectViaButtons()}
+            onDisconnect={() => userDisconnect()}
+            onManage={() => setManageFromRoom("list")}
+            onCreate={() => setManageFromRoom("new")}
+            onSignIn={() => setActivePanel("connection")}
+            share={(
+              <ShareSection
+                lang={lang}
+                room={normalizeRoom(roomInputRef.current || roomInput)}
+                passphrase={sessionPassphrase}
+                ready={desired === "connected" && sessionPassphrase.length > 0}
+                server={activeServerRef.current || undefined}
+              />
+            )}
           />
         </SimpleModal>
       ) : null}

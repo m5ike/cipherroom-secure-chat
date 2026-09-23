@@ -31,6 +31,10 @@ export type SessionData = {
   room: string;
   passphrase: string;
   desired: DesiredState;
+  /** A saved connection's other signaling server (wss://); absent = this one. */
+  server?: string;
+  /** The saved connection the session came from, so its statistics go on. */
+  profileId?: string;
 };
 
 export const SESSION_IDLE_LIMIT_MS = 60 * 60 * 1000;
@@ -191,7 +195,11 @@ export function createSessionCache(opts: { vault?: KeyVault; storage?: Storage; 
         const data = JSON.parse(decoder.decode(plain)) as Partial<SessionData>;
         if (typeof data.name !== "string" || typeof data.room !== "string" || typeof data.passphrase !== "string"
           || (data.desired !== "connected" && data.desired !== "disconnected")) throw new Error("bad shape");
-        return { name: data.name, room: data.room, passphrase: data.passphrase, desired: rec.off ? "disconnected" : data.desired };
+        return {
+          name: data.name, room: data.room, passphrase: data.passphrase, desired: rec.off ? "disconnected" : data.desired,
+          ...(typeof data.server === "string" && data.server ? { server: data.server } : {}),
+          ...(typeof data.profileId === "string" && data.profileId ? { profileId: data.profileId } : {}),
+        };
       } catch {
         await clear();
         return null;

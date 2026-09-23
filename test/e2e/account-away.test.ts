@@ -232,7 +232,9 @@ describe("passkey account and the away relay", () => {
     await alice.page.goto("/signin");
     await alice.page.getByTestId("signed-in-badge").waitFor({ state: "visible", timeout: 30_000 });
     expect(new URL(alice.page.url()).pathname).toBe("/");
-    await joinRoom(alice.page, "alice");
+    // The tab's session cache brings her back into the room by itself (the
+    // Room window stays locked while that connection is up).
+    await expect.poll(async () => alice.page.getByTestId("status-connection").innerText(), { timeout: 45_000 }).toContain(ROOM);
     await expect.poll(async () => alice.page.locator('[data-testid^="message-"]').allInnerTexts(), { timeout: 30_000 })
       .toEqual(expect.arrayContaining([
         expect.stringContaining("zpráva pro nepřítomnou Alici"),
