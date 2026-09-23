@@ -144,10 +144,13 @@ class PeerChain {
 /* ----------------------------------------------------------- the store */
 
 export type Hello = { kind: "hello"; v: 3; check: string; pk: string; dh: string; sig: string };
-export type Pair = { key: CryptoKey; peerPublicKey: string };
+/** `mediaSend` / `mediaRecv`: one key per direction for call frames (media-e2ee.ts). */
+export type Pair = { key: CryptoKey; peerPublicKey: string; mediaSend: CryptoKey; mediaRecv: CryptoKey };
 
 const helloContext = (room: string, from: string, to: string, check: string, dh: string) => utf8(["m5cet/hello/1", room, from, to, check, dh].join("|"));
 const pairInfo = (a: string, b: string) => utf8(`m5cet/pair/1|${[a, b].sort().join("|")}`);
+/** Media keys are directional: sender's device key first. */
+const mediaInfo = (from: string, to: string) => utf8(`m5cet/media/1|${from}|${to}`);
 
 export class SenderKeyStore {
   private own: OwnSenderKey | null = null;
@@ -174,11 +177,16 @@ export class SenderKeyStore {
     const secret = await identity.sharedSecret(hello.dh);
     const base = await crypto.subtle.importKey("raw", secret, "HKDF", false, ["deriveKey"]);
     secret.fill(0);
-    const key = await crypto.subtle.deriveKey(
-      { name: "HKDF", hash: "SHA-256", salt: utf8(keys.room), info: pairInfo(identity.publicKey, hello.pk) },
+    const derive = (info: Uint8Array<ArrayBuffer>) => crypto.subtle.deriveKey(
+      { name: "HKDF", hash: "SHA-256", salt: utf8(keys.room), info },
       base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],
     );
-    this.pairs.set(from, { key, peerPublicKey: hello.pk });
+    const [key, mediaSend, mediaRecv] = await Promise.all([
+      derive(pairInfo(identity.publicKey, hello.pk)),
+      derive(mediaInfo(identity.publicKey, hello.pk)),
+      derive(mediaInfo(hello.pk, identity.publicKey)),
+    ]);
+    this.pairs.set(from, { key, peerPublicKey: hello.pk, mediaSend, mediaRecv });
     this.sentTo.delete(from);
     return null;
   }

@@ -106,6 +106,7 @@ import {
 } from "./lib/envelope";
 import { createPinStore, keyFingerprint, keyId, loadIdentity, safetyNumber, type Identity } from "./lib/identity";
 import { envelopeKind, SenderKeyStore, type Hello } from "./lib/sender-keys";
+import { MediaE2ee } from "./lib/media-e2ee";
 import { validatePayload, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
 import { newId } from "./lib/id";
 import { APP_VERSION } from "./lib/build-info";
@@ -241,6 +242,10 @@ type PeerHandle = {
   audio: AudioStatus;
   audioElement?: HTMLAudioElement;
   outgoingAudioSenders: RTCRtpSender[];
+  /** Perfect negotiation (see createPeer): an offer of ours is in flight,
+   *  and whether we ignored the peer's colliding one. */
+  makingOffer?: boolean;
+  ignoreOffer?: boolean;
 };
 
 const PORT_BASE = "__PORT_5000__";
@@ -499,6 +504,14 @@ function ChatApp() {
   const warnedPeersRef = useRef(new Set<string>());
   /** Pair keys with each peer and the sender-key ratchets (3.1). */
   const senderKeysRef = useRef(new SenderKeyStore());
+  // Call frames sealed with per-direction pair keys (lib/media-e2ee.ts).
+  const mediaE2eeRef = useRef(new MediaE2ee());
+  const [mediaStates, setMediaStates] = useState<Record<string, "e2ee" | "partial" | "off">>({});
+  useEffect(() => mediaE2eeRef.current.onStats((stats) => {
+    const next: Record<string, "e2ee" | "partial" | "off"> = {};
+    for (const peerId of Object.keys(stats)) next[peerId] = mediaE2eeRef.current.stateFor(peerId);
+    setMediaStates((cur) => (JSON.stringify(cur) === JSON.stringify(next) ? cur : next));
+  }), []);
   /** Device keys this user excluded from the conversation (this session). */
   const excludedRef = useRef(new Set<string>());
   // Binary file chunks (lib/binary-frames.ts): data channels whose peer said
@@ -1476,7 +1489,8 @@ function ChatApp() {
         void (async () => {
           const identity = identityRef.current ?? (identityRef.current = await loadIdentity());
           const hello = await senderKeysRef.current.hello(keys, identity, myIdRef.current, peerId);
-          try { channel.send(JSON.stringify({ ...hello, caps: ["bin"] })); } catch { /* closing */ }
+          const caps = mediaE2eeRef.current.supported ? ["bin", "media"] : ["bin"];
+          try { channel.send(JSON.stringify({ ...hello, caps })); } catch { /* closing */ }
         })();
       }
       void broadcastAudioStatus(audioStatusRef.current);
@@ -1527,6 +1541,9 @@ function ChatApp() {
         const refused = await senderKeysRef.current.acceptHello(keys, identity, hello, peerId, myIdRef.current);
         if (refused === "key-mismatch") { warnOnce(`mismatch:${peerId}`, t(lang, "sec.keyMismatch").replace("{name}", peerName()), "error"); return; }
         if (refused) { warnOnce(`badhello:${peerId}`, t(lang, "sec.identity.invalidFlash").replace("{name}", peerName()), "error"); return; }
+        // Both sides seal call frames: hand the pair's media keys to the worker.
+        const pair = senderKeysRef.current.pairOf(peerId);
+        if (pair && Array.isArray(raw.caps) && raw.caps.includes("media")) mediaE2eeRef.current.setKeys(peerId, pair.mediaSend, pair.mediaRecv);
         // Our current chain, so they can read what we say from now on.
         const sk = await senderKeysRef.current.senderKeyFor(keys, myIdRef.current, peerId);
         if (sk) { try { channel.send(JSON.stringify(sk)); } catch { /* closing */ } }
@@ -1693,6 +1710,7 @@ function ChatApp() {
     };
     pc.ondatachannel = (event) => wireDataChannel(peerId, event.channel);
     pc.ontrack = (event) => {
+      mediaE2eeRef.current.protectTransceiver(event.transceiver, peerId);
       const [stream] = event.streams;
       if (!stream) return;
       attachAudioTrack(handle, stream);
@@ -1715,16 +1733,29 @@ function ChatApp() {
     if (localAudioStreamRef.current) {
       localAudioStreamRef.current.getAudioTracks().forEach((track) => {
         const sender = pc.addTrack(track, localAudioStreamRef.current!);
+        mediaE2eeRef.current.protectSender(pc, sender, peerId);
         handle.outgoingAudioSenders.push(sender);
       });
     }
 
+    // Perfect negotiation: whichever side changes the session (the data
+    // channel, a microphone, a camera) makes the offer; when both do at
+    // once, the initiator's wins and the other side rolls back.
+    pc.onnegotiationneeded = async () => {
+      try {
+        handle.makingOffer = true;
+        await pc.setLocalDescription();
+        if (pc.localDescription) sendSignal(peerId, pc.localDescription.toJSON() as RTCSessionDescriptionInit);
+      } catch (err) {
+        console.warn("[m5cet] negotiation with", peerId.slice(-6), "failed:", (err as Error)?.message ?? err);
+      } finally {
+        handle.makingOffer = false;
+      }
+    };
+
     if (initiator) {
       const channel = pc.createDataChannel("m5cet", { ordered: true });
       wireDataChannel(peerId, channel);
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      sendSignal(peerId, offer);
     }
   }
 
@@ -1765,17 +1796,25 @@ function ChatApp() {
     if (!handle) return;
 
     if ("type" in desc && (desc.type === "offer" || desc.type === "answer")) {
+      // Both offered at once: the initiator ignores the other offer, the
+      // other side rolls its own back (setRemoteDescription does that).
+      const collision = desc.type === "offer" && (handle.makingOffer || handle.pc.signalingState !== "stable");
+      handle.ignoreOffer = handle.initiator && collision;
+      if (handle.ignoreOffer) return;
       await handle.pc.setRemoteDescription(desc);
       if (desc.type === "offer") {
-        const answer = await handle.pc.createAnswer();
-        await handle.pc.setLocalDescription(answer);
-        sendSignal(source, answer);
+        await handle.pc.setLocalDescription();
+        if (handle.pc.localDescription) sendSignal(source, handle.pc.localDescription.toJSON() as RTCSessionDescriptionInit);
       }
       return;
     }
 
     if ("candidate" in desc && desc.candidate) {
-      await handle.pc.addIceCandidate(desc);
+      try {
+        await handle.pc.addIceCandidate(desc);
+      } catch (err) {
+        if (!handle.ignoreOffer) throw err; // candidates of an offer we ignored
+      }
     }
   }
 
@@ -2160,6 +2199,7 @@ function ChatApp() {
       if (frame.type === "peer-left") {
         // They take no key with them: our next message starts a new chain.
         senderKeysRef.current.forgetPeer(frame.peerId);
+        mediaE2eeRef.current.forget(frame.peerId);
         const handle = peersRef.current.get(frame.peerId);
         handle?.channel?.close();
         if (handle) detachAudioElement(handle);
@@ -2343,6 +2383,8 @@ function ChatApp() {
     keyRef.current = null;
     keyForRef.current = "";
     senderKeysRef.current.clear();
+    mediaE2eeRef.current.close();
+    setMediaStates({});
     signalOutRef.current.clear();
     signalInRef.current.clear();
     if (localAudioStreamRef.current) {
@@ -2630,6 +2672,7 @@ function ChatApp() {
     const handle = peersRef.current.get(peerId);
     if (pair) excludedRef.current.add(pair.peerPublicKey);
     senderKeysRef.current.forgetPeer(peerId);
+    mediaE2eeRef.current.forget(peerId);
     senderKeysRef.current.rotate();
     try { handle?.channel?.close(); } catch { /* ignore */ }
     try { handle?.pc.close(); } catch { /* ignore */ }
@@ -2687,15 +2730,10 @@ function ChatApp() {
       peersRef.current.forEach((peer) => {
         tracks.forEach((track) => {
           const sender = peer.pc.addTrack(track, stream);
+          mediaE2eeRef.current.protectSender(peer.pc, sender, peer.id);
           peer.outgoingAudioSenders.push(sender);
         });
-        if (peer.initiator) {
-          void (async () => {
-            const offer = await peer.pc.createOffer();
-            await peer.pc.setLocalDescription(offer);
-            sendSignal(peer.id, offer);
-          })();
-        }
+        // Either side may add a track: negotiationneeded sends the offer.
       });
       setAudioStatus("live");
       await broadcastAudioStatus("live");
@@ -2967,15 +3005,9 @@ function ChatApp() {
       peersRef.current.forEach((peer) => {
         tracks.forEach((track) => {
           const sender = peer.pc.addTrack(track, stream);
+          mediaE2eeRef.current.protectSender(peer.pc, sender, peer.id);
           if (track.kind === "audio") peer.outgoingAudioSenders.push(sender);
         });
-        if (peer.initiator) {
-          void (async () => {
-            const offer = await peer.pc.createOffer();
-            await peer.pc.setLocalDescription(offer);
-            sendSignal(peer.id, offer);
-          })();
-        }
       });
       setAudioStatus("live");
       setVideoOn(true);
@@ -3773,6 +3805,8 @@ function ChatApp() {
           <AudioControls
             audioStatus={audioStatus}
             audioPeerCount={audioPeerCount}
+            media={mediaE2eeRef.current.supported ? mediaStates : null}
+            mediaDetail={Object.keys(mediaStates).map((id) => { const r = mediaE2eeRef.current.recentFor(id); return `${id.slice(-4)}: sealed ${r.sealed}, opened ${r.opened}, clear in ${r.clearIn}, clear out ${r.clearOut}, failed ${r.failed}`; }).join("; ")}
             connected={status === "joined"}
             onJoin={() => void startAudio()}
             onLeave={() => void leaveAudio()}
@@ -4095,26 +4129,35 @@ function PeerList({ peers, lang }: { peers: PeerView[]; lang: Lang }) {
   );
 }
 
-function AudioControls({ audioStatus, audioPeerCount, connected, onJoin, onLeave, onToggleMute, lang }: { audioStatus: AudioStatus; audioPeerCount: number; connected: boolean; onJoin: () => void; onLeave: () => void; onToggleMute: () => void; lang: Lang }) {
+function AudioControls({ audioStatus, audioPeerCount, connected, onJoin, onLeave, onToggleMute, lang, media, mediaDetail }: { audioStatus: AudioStatus; audioPeerCount: number; connected: boolean; onJoin: () => void; onLeave: () => void; onToggleMute: () => void; lang: Lang; media: Record<string, "e2ee" | "partial" | "off"> | null; mediaDetail?: string }) {
+  const states = Object.values(media ?? {});
+  const sealed = states.filter((s) => s === "e2ee").length;
+  const mediaState = media === null ? "unsupported" : states.length > 0 && sealed === states.length ? "e2ee" : states.some((s) => s !== "off") ? "partial" : "off";
   return (
     <div className="space-y-3">
-      <div className="text-sm text-muted-foreground">{lang === "cs" ? "Hlas jde stejným WebRTC spojením jako data kanál." : lang === "de" ? "Audio nutzt dieselbe WebRTC-Verbindung wie der Datenkanal." : "Voice rides the same WebRTC connection as the data channel."}</div>
-      <div className="text-xs text-muted-foreground">{audioPeerCount} {lang === "cs" ? "v hovoru" : lang === "de" ? "im Anruf" : "on call"}</div>
+      <div className="text-sm text-muted-foreground">{t(lang, "audio.hint")}</div>
+      <div className="text-xs text-muted-foreground">{t(lang, "audio.onCall").replace("{n}", String(audioPeerCount))}</div>
+      {audioStatus !== "off" ? (
+        <div data-testid="media-e2ee" data-state={mediaState} data-detail={mediaDetail} className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs ${mediaState === "e2ee" ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300" : "border-border text-muted-foreground"}`}>
+          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span>{t(lang, `sec.media.${mediaState}`).replace("{n}", String(sealed)).replace("{total}", String(states.length))}</span>
+        </div>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {audioStatus === "off" || audioStatus === "joining" ? (
           <button type="button" data-testid="button-audio-join" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60" onClick={onJoin} disabled={!connected || audioStatus === "joining"}>
             <Mic className="h-4 w-4" />
-            {audioStatus === "joining" ? "..." : (lang === "cs" ? "Připojit hlas" : lang === "de" ? "Sprache verbinden" : "Join voice")}
+            {audioStatus === "joining" ? "..." : t(lang, "audio.join")}
           </button>
         ) : (
           <>
             <button type="button" data-testid="button-audio-mute" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent" onClick={onToggleMute}>
               {audioStatus === "muted" ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              {audioStatus === "muted" ? "Unmute" : "Mute"}
+              {audioStatus === "muted" ? t(lang, "audio.unmute") : t(lang, "audio.mute")}
             </button>
             <button type="button" data-testid="button-audio-leave" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent" onClick={onLeave}>
               <PhoneOff className="h-4 w-4" />
-              {lang === "cs" ? "Opustit" : lang === "de" ? "Verlassen" : "Leave"}
+              {t(lang, "audio.leave")}
             </button>
           </>
         )}

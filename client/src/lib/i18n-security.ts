@@ -4,6 +4,16 @@
 type Dict = Record<string, string>;
 
 const cs: Dict = {
+  "audio.hint": "Hlas jde stejným WebRTC spojením jako data kanál.",
+  "audio.onCall": "{n} v hovoru",
+  "audio.join": "Připojit hlas",
+  "audio.mute": "Ztlumit",
+  "audio.unmute": "Zapnout mikrofon",
+  "audio.leave": "Opustit",
+  "sec.media.e2ee": "Hovor je šifrovaný end-to-end: každý rámec klíčem, který znáte jen vy dva ({n}/{total}).",
+  "sec.media.partial": "Šifrování rámců se zapíná ({n}/{total}) — zbytek hovoru chrání DTLS-SRTP.",
+  "sec.media.off": "Hovor chrání DTLS-SRTP. Šifrování rámců se zapne, jakmile ho podporují obě strany.",
+  "sec.media.unsupported": "Tento prohlížeč neumí šifrovat rámce hovoru (RTCRtpScriptTransform); hovor chrání DTLS-SRTP.",
   "sec.identity.checked": "Ověřeno bezpečnostním číslem · {fp}",
   "sec.sealed": "Klíč zprávy",
   "sec.sealed.sender-key": "Klíč odesílatele s ratchetem (forward secrecy)",
@@ -40,6 +50,16 @@ const cs: Dict = {
 };
 
 const en: Dict = {
+  "audio.hint": "Voice rides the same WebRTC connection as the data channel.",
+  "audio.onCall": "{n} on call",
+  "audio.join": "Join voice",
+  "audio.mute": "Mute",
+  "audio.unmute": "Unmute",
+  "audio.leave": "Leave",
+  "sec.media.e2ee": "The call is end-to-end encrypted: every frame under a key only the two of you know ({n}/{total}).",
+  "sec.media.partial": "Frame encryption is starting ({n}/{total}) — DTLS-SRTP protects the rest of the call.",
+  "sec.media.off": "DTLS-SRTP protects the call. Frame encryption starts once both sides support it.",
+  "sec.media.unsupported": "This browser cannot encrypt call frames (RTCRtpScriptTransform); DTLS-SRTP protects the call.",
   "sec.identity.checked": "Verified by safety number · {fp}",
   "sec.sealed": "Message key",
   "sec.sealed.sender-key": "Sender key with a ratchet (forward secrecy)",
@@ -76,6 +96,16 @@ const en: Dict = {
 };
 
 const de: Dict = {
+  "audio.hint": "Audio nutzt dieselbe WebRTC-Verbindung wie der Datenkanal.",
+  "audio.onCall": "{n} im Anruf",
+  "audio.join": "Sprache verbinden",
+  "audio.mute": "Stummschalten",
+  "audio.unmute": "Mikrofon an",
+  "audio.leave": "Verlassen",
+  "sec.media.e2ee": "Der Anruf ist Ende-zu-Ende verschlüsselt: jeder Frame mit einem Schlüssel, den nur ihr beide kennt ({n}/{total}).",
+  "sec.media.partial": "Frame-Verschlüsselung startet ({n}/{total}) — DTLS-SRTP schützt den Rest des Anrufs.",
+  "sec.media.off": "DTLS-SRTP schützt den Anruf. Frame-Verschlüsselung startet, sobald beide Seiten sie unterstützen.",
+  "sec.media.unsupported": "Dieser Browser kann Anruf-Frames nicht verschlüsseln (RTCRtpScriptTransform); DTLS-SRTP schützt den Anruf.",
   "sec.identity.checked": "Per Sicherheitsnummer bestätigt · {fp}",
   "sec.sealed": "Nachrichtenschlüssel",
   "sec.sealed.sender-key": "Absenderschlüssel mit Ratchet (Forward Secrecy)",
