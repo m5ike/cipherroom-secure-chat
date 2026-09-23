@@ -637,6 +637,14 @@
     checks.push([storage.available ? "ok" : "warn", "Server-side storage", storage.available ? `${storage.engine}, ${num(storage.openDatabases)} open databases` : (storage.reason || "not available")]);
     checks.push([health.queuePersistent ? "ok" : "warn", "Offline queue", health.queuePersistent ? "persistent (SQLite)" : "in memory — lost on restart"]);
     checks.push(["ok", "Signaling protocol", `version ${health.protocol || "?"}`]);
+    const cluster = (health.signaling && health.signaling.cluster) || null;
+    if (cluster && cluster.kind !== "local") {
+      const others = (cluster.instances || []).length;
+      checks.push([cluster.connected ? (cluster.signed ? "ok" : "warn") : "err", "Cluster",
+        `${cluster.kind}, ${cluster.connected ? "connected" : "DISCONNECTED"} · ${others} other instance${others === 1 ? "" : "s"} · ${cluster.signed ? "signed" : "UNSIGNED (set CLUSTER_SECRET)"}${cluster.dropped ? ` · ${num(cluster.dropped)} dropped` : ""}`]);
+    } else if (cluster) {
+      checks.push(["ok", "Cluster", "single instance"]);
+    }
     if (latest) checks.push([latest.loopP99 > 200 ? "err" : latest.loopP99 > 50 ? "warn" : "ok", "Event loop", `p99 ${latest.loopP99 ?? 0} ms, mean ${latest.loopMean ?? 0} ms`]);
     if (mem.heapLimit) {
       const share = mem.heapUsed / mem.heapLimit;

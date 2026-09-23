@@ -64,6 +64,7 @@ import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
 import { buildInfo } from "./build-info";
 import { turnAnswer } from "./turn";
+import { clusterBus } from "./cluster/bus";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { safeDeviceId } from "./util";
 
@@ -163,7 +164,12 @@ export async function registerRoutes(
     newStorageState: (ip) => newStorageSocketState(ip),
     trustProxy: resolveTrustProxy(process.env.TRUST_PROXY).value,
     allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean),
+    // REDIS_URL: rooms span every instance behind the load balancer.
+    cluster: clusterBus(),
   });
+  if (hub.cluster) {
+    audit.add({ category: "system", level: "notice", event: "cluster.joined", detail: { instance: hub.cluster.instanceId, bus: hub.cluster.bus.kind, signed: hub.cluster.bus.status().signed } });
+  }
   const signaling = hub;
   system.start();
 
@@ -203,6 +209,7 @@ export async function registerRoutes(
     storage,
     queue: offlineQueue,
     health: () => ({ signaling: signaling.stats(), queuePersistent: offlineQueue().persistent, protocol: PROTOCOL_VERSION }),
+    cluster: () => signaling.stats().cluster,
     deliverCommands: (deviceId) => signaling.deliverCommands(deviceId),
     backups,
   };
@@ -248,6 +255,7 @@ export async function registerRoutes(
       cache: "no-store",
       persistence: "none",
       role: "webrtc-signaling-only",
+      cluster: signaling.cluster ? signaling.cluster.bus.kind : "local",
       // Which client build this server serves (dist/public/build.json).
       version: b.version,
       build: b.build,

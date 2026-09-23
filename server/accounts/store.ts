@@ -24,7 +24,7 @@
 // (`wrapped`). The server keeps blobs it cannot open.
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { accessSync, constants as fsConstants, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { accessSync, constants as fsConstants, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { StoredCredential } from "./webauthn";
 
@@ -178,9 +178,33 @@ export class AccountStore {
 
   constructor(private readonly dir: string = accountsDir()) {}
 
+  /** Several instances use this directory (see shareDisk). */
+  private shared = false;
+  /** path → mtime/size/inode as this instance last read or wrote it. */
+  private stamps = new Map<string, string>();
+
+  /**
+   * Several server instances use this directory (a cluster on one host, or
+   * a shared volume): before every operation read again what another
+   * instance wrote, and write changes at once instead of coalescing them.
+   * Two instances changing the store in the very same millisecond can
+   * still lose one change — sticky sessions at the load balancer keep a
+   * user's requests on one instance and make that rarer still.
+   */
+  shareDisk(): void {
+    this.shared = true;
+    if (this.persistTimer) this.persist();
+    if (this.sessionsTimer) this.persistSessionsSoon(true);
+  }
+
+  private stampOf(path: string): string {
+    try { const st = statSync(path); return `${st.mtimeMs}:${st.size}:${st.ino}`; } catch { return "none"; }
+  }
+
   private write(path: string, value: unknown): void {
     try {
       writeJsonAtomic(path, value);
+      if (this.shared) this.stamps.set(path, this.stampOf(path));
       this.memory.delete(path);
     } catch (err) {
       this.memory.set(path, value);
@@ -210,7 +234,10 @@ export class AccountStore {
   private mailboxPath(id: string) { return join(this.dir, "mailbox", `${id}.json`); }
 
   private load() {
-    if (this.loaded) return;
+    if (this.loaded) {
+      if (this.shared) this.refresh();
+      return;
+    }
     this.loaded = true;
     try {
       mkdirSync(this.dir, { recursive: true, mode: 0o700 });
@@ -218,7 +245,23 @@ export class AccountStore {
     } catch (err) {
       this.writeError = (err as Error).message;
     }
-    const data = readJson<{ accounts?: Record<string, AccountRecord> }>(this.indexPath(), {});
+    this.readAccounts();
+    this.readSessions();
+  }
+
+  /** Shared directory: another instance changed a file since we saw it. */
+  private refresh(): void {
+    const index = this.stampOf(this.indexPath());
+    if (index !== this.stamps.get(this.indexPath())) this.readAccounts();
+    const sessions = this.stampOf(this.sessionsPath());
+    if (sessions !== this.stamps.get(this.sessionsPath())) this.readSessions();
+  }
+
+  private readAccounts(): void {
+    this.stamps.set(this.indexPath(), this.stampOf(this.indexPath()));
+    this.accounts.clear();
+    this.byCredential.clear();
+    const data = this.read<{ accounts?: Record<string, AccountRecord> }>(this.indexPath(), {});
     for (const rec of Object.values(data.accounts ?? {})) {
       if (!rec || typeof rec.id !== "string" || !rec.credential?.credentialId) continue;
       rec.push ??= [];
@@ -228,9 +271,14 @@ export class AccountStore {
       this.byCredential.set(rec.credential.credentialId, rec.id);
       for (const extra of rec.credentials ?? []) this.byCredential.set(extra.credentialId, rec.id);
     }
-    // Sessions survive a restart: hashes only, and only live ones.
+  }
+
+  /** Sessions survive a restart: hashes only, and only live ones. */
+  private readSessions(): void {
+    this.stamps.set(this.sessionsPath(), this.stampOf(this.sessionsPath()));
+    this.sessions.clear();
     const now = Date.now();
-    const stored = readJson<{ sessions?: Record<string, Session> }>(this.sessionsPath(), {});
+    const stored = this.read<{ sessions?: Record<string, Session> }>(this.sessionsPath(), {});
     for (const [hash, sess] of Object.entries(stored.sessions ?? {})) {
       if (/^[0-9a-f]{64}$/.test(hash) && sess && this.accounts.has(sess.accountId) && sess.expiresAt > now) this.sessions.set(hash, sess);
     }
@@ -244,7 +292,7 @@ export class AccountStore {
       this.sessionsTimer = null;
       this.write(this.sessionsPath(), { v: 1, sessions: Object.fromEntries(this.sessions) });
     };
-    if (immediately) {
+    if (immediately || this.shared) {
       if (this.sessionsTimer) clearTimeout(this.sessionsTimer);
       write();
       return;
@@ -261,6 +309,7 @@ export class AccountStore {
 
   /** Audit lines are frequent (one per relayed message): coalesce their writes. */
   private persistSoon() {
+    if (this.shared) return this.persist();
     if (this.persistTimer) return;
     this.persistTimer = setTimeout(() => { this.persistTimer = null; this.persist(); }, 400);
     this.persistTimer.unref?.();
@@ -364,9 +413,11 @@ export class AccountStore {
       return null;
     }
     // Sliding: every use buys another 12 hours, up to the maximum age.
+    // (A shared directory is written at once, so only once a minute.)
+    const moved = now - (s.lastUsedAt ?? 0) > 60_000;
     s.lastUsedAt = now;
     s.expiresAt = Math.min(now + ACCOUNT_LIMITS.tokenTtlMs, s.createdAt + ACCOUNT_LIMITS.tokenMaxAgeMs);
-    this.persistSessionsSoon();
+    if (moved || !this.shared) this.persistSessionsSoon();
     return this.get(s.accountId);
   }
 

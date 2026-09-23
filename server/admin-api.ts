@@ -84,6 +84,8 @@ export type AdminProviders = {
   deliverCommands?: (deviceId: string) => number;
   /** Backups and integrity checks (storage/backup.ts), when storage runs. */
   backups?: BackupManager | null;
+  /** The cluster bus and the other instances (signaling/cluster.ts). */
+  cluster?: () => { kind: string; connected?: boolean; published?: number; received?: number; dropped?: number; instances: Array<{ id: string; lastSeen: number; members: number }> };
 };
 
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -632,6 +634,20 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
   });
 }
 
+function clusterMetrics(deps: AdminProviders): Metric[] {
+  const c = deps.cluster?.();
+  if (!c || c.kind === "local") return [];
+  return [
+    gauge("m5cet_cluster_connected", "1 while the cluster bus is connected.", c.connected ? 1 : 0, { bus: c.kind }),
+    gauge("m5cet_cluster_instances", "Other instances heard from in the last 20 s.", c.instances.length),
+    { name: "m5cet_cluster_messages_total", help: "Cluster bus messages.", type: "counter", samples: [
+      { labels: { direction: "published" }, value: c.published ?? 0 },
+      { labels: { direction: "received" }, value: c.received ?? 0 },
+      { labels: { direction: "dropped" }, value: c.dropped ?? 0 },
+    ] },
+  ];
+}
+
 /** Everything the monitors count, as Prometheus metrics. */
 export function metricsText(deps: AdminProviders): string {
   const t = traffic.summary();
@@ -668,6 +684,7 @@ export function metricsText(deps: AdminProviders): string {
     gauge("m5cet_cpu_percent", "Process CPU, % of one core, over the last sample.", latest?.cpu ?? 0),
     gauge("m5cet_storage_available", "1 when server-side storage runs.", deps.storage.isAvailable ? 1 : 0),
     gauge("m5cet_alerts_firing", "Alert rules currently firing.", alerts.active().length),
+    ...clusterMetrics(deps),
   ];
   return renderMetrics(metrics);
 }

@@ -50,12 +50,20 @@ type PushFn = (target: PushTarget, payload: { title: string; body: string; url: 
 
 type AwayEntry = { name: string; since: number };
 
+/** Other instances (signaling/cluster.ts): away notices reach their sockets
+ *  too, and the away state is the same everywhere. */
+export type RelayCluster = {
+  broadcast(room: string, payload: Record<string, unknown>, exceptPeerId?: string): void;
+  away(room: string, accountId: string, entry: AwayEntry | null): void;
+};
+
 const PUSH_THROTTLE_MS = 30_000;
 const DELIVER_BATCH = 50;
 
 export class AwayRelay {
   /** room → accountId → away entry. The truth lives here, not on disk. */
   private awayByRoom = new Map<string, Map<string, AwayEntry>>();
+  cluster: RelayCluster | null = null;
   private lastPush = new Map<string, number>();
 
   constructor(
@@ -88,8 +96,20 @@ export class AwayRelay {
     return this.members(room).filter((p) => p !== except && p.accountId === accountId && !p.suspended);
   }
 
-  private broadcast(room: string, payload: unknown, except?: RelayPeer): void {
+  private broadcast(room: string, payload: Record<string, unknown>, except?: RelayPeer): void {
     for (const p of this.members(room)) if (p !== except) this.send(p.socket, payload);
+    this.cluster?.broadcast(room, payload, except?.id);
+  }
+
+  /** Another instance marked an account away (entry) or back (null). */
+  applyRemoteAway(room: string, accountId: string, entry: AwayEntry | null): void {
+    let map = this.awayByRoom.get(room);
+    if (entry) {
+      if (!map) { map = new Map(); this.awayByRoom.set(room, map); }
+      map.set(accountId, entry);
+    } else if (map?.delete(accountId) && map.size === 0) {
+      this.awayByRoom.delete(room);
+    }
   }
 
   isAway(accountId: string, room: string): boolean {
@@ -102,6 +122,7 @@ export class AwayRelay {
     if (map.has(accountId)) return false;
     const since = this.now();
     map.set(accountId, { name, since });
+    this.cluster?.away(room, accountId, { name, since });
     this.accounts.noteAway(accountId, room, name, since);
     this.accounts.addAudit(accountId, "away", { room: hashRoom(room) ?? "" });
     this.broadcast(room, { type: "peer-away", ...this.refs(room, accountId), name, since });
@@ -113,6 +134,7 @@ export class AwayRelay {
     const map = this.awayByRoom.get(room);
     if (!map?.delete(accountId)) return false;
     if (map.size === 0) this.awayByRoom.delete(room);
+    this.cluster?.away(room, accountId, null);
     this.accounts.noteBack(accountId, room);
     this.accounts.addAudit(accountId, "back", { room: hashRoom(room) ?? "" });
     this.broadcast(room, { type: "peer-back", ...this.refs(room, accountId), ...(back ? { peerId: back.id, name: back.name } : {}) }, back);
@@ -334,13 +356,16 @@ export class AwayRelay {
   /* ------------------------------------------------------------ signing out */
 
   /** The account signed out everywhere or was deleted: stop covering for it. */
-  forget(accountId: string): void {
+  /** `echo` false: another instance forgets the account too and tells its own sockets. */
+  forget(accountId: string, echo = true): void {
     for (const [room, map] of this.awayByRoom) {
       if (!map.delete(accountId)) continue;
       if (map.size === 0) this.awayByRoom.delete(room);
-      this.broadcast(room, { type: "peer-gone", ...this.refs(room, accountId) });
+      const payload = { type: "peer-gone", ...this.refs(room, accountId) };
+      if (echo) this.broadcast(room, payload);
+      else for (const p of this.members(room)) this.send(p.socket, payload);
     }
-    this.accounts.clearAllAway(accountId);
+    if (echo) this.accounts.clearAllAway(accountId);
   }
 
   /* ---------------------------------------------------------------- wake */

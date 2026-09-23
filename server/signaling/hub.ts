@@ -41,6 +41,8 @@ import { classifyFrame, hashRoom, traffic, truncateIp } from "../monitor/traffic
 import type { StorageFrame, StorageSocketState } from "../storage/ws";
 import type { TrustProxyValue } from "../trust-proxy";
 import { isBinaryError, parseBinaryChunk, type BinaryProxyChunk } from "./binary";
+import type { ClusterBus } from "../cluster/bus";
+import { ClusterRooms, type MemberView } from "./cluster";
 import { isFrameError, KNOWN_FEATURES, MAX_FRAME_BYTES, parseFrame, PROTOCOL_VERSION, type ClientFrame } from "./frames";
 import { ConnectionGate, limitClassOf, LIMITS, PROXY_BYTES, SocketLimiter } from "./limits";
 import { accountRef } from "./refs";
@@ -74,6 +76,8 @@ export type HubOptions = {
   trustProxy?: TrustProxyValue;
   /** Extra origins allowed to open /ws (ALLOWED_ORIGINS, comma-separated). */
   allowedOrigins?: string[];
+  /** Other instances (REDIS_URL): rooms span them (cluster.ts). */
+  cluster?: ClusterBus;
   path?: string;
   heartbeatMs?: number;
   gate?: ConnectionGate;
@@ -137,6 +141,8 @@ export class SignalingHub {
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private readonly unsubscribe: () => void;
   private readonly path: string;
+  /** Members on other instances, and the routes to them; null when alone. */
+  readonly cluster: ClusterRooms | null;
 
   constructor(private readonly opts: HubOptions) {
     this.path = opts.path ?? "/ws";
@@ -150,7 +156,74 @@ export class SignalingHub {
       opts.push,
     );
     this.relay.restore(opts.accounts.allAway());
-    this.unsubscribe = opts.accounts.onRevoke((accountId, hash, reason) => this.onRevoke(accountId, hash, reason));
+    this.unsubscribe = opts.accounts.onRevoke((accountId, hash, reason) => {
+      this.onRevoke(accountId, hash, reason);
+      this.cluster?.revoke(accountId, hash, reason);
+    });
+    this.cluster = opts.cluster && opts.cluster.kind !== "local" ? this.joinCluster(opts.cluster) : null;
+  }
+
+  /* -------------------------------------------------------------- cluster */
+
+  private joinCluster(bus: ClusterBus): ClusterRooms {
+    // Account state is in files every instance reads: see what the others wrote.
+    this.opts.accounts.shareDisk();
+    const cluster = new ClusterRooms(bus, {
+      localRooms: () => [...this.rooms].map(([room, members]) => ({ room, members: [...members.values()].map((m) => this.memberView(m)) })),
+      joined: (room, m) => this.broadcast(room, { type: "peer-joined", ...this.publicView(room, m) }),
+      updated: (room, m) => this.broadcast(room, { type: "peer-updated", peerId: m.peerId, name: m.name, ...(m.accountId ? this.refFields(room, m.accountId) : { account: null, accountId: null }) }),
+      toLocal: (room, payload, except) => {
+        for (const peer of this.members(room)) if (peer.id !== except) this.send(peer.socket, payload, peer);
+      },
+      chunkToLocal: (room, raw, json, except) => {
+        for (const peer of this.members(room)) if (peer.id !== except) this.send(peer.socket, peer.binary ? raw : json, peer);
+      },
+      toLocalPeer: (room, peerId, payload) => {
+        const peer = this.rooms.get(room)?.get(peerId);
+        return peer ? this.send(peer.socket, payload, peer) : false;
+      },
+      toTransferSender: (room, transferId, payload) => {
+        const key = this.proxy.senderOf(transferId);
+        const sender = key ? this.clients.get(key) : undefined;
+        if (sender && sender.room === room) this.send(sender.socket, payload, sender);
+      },
+      evictLocal: (room, peerId) => {
+        const holder = this.rooms.get(room)?.get(peerId);
+        if (!holder) return;
+        this.send(holder.socket, { type: "replaced", reason: "the same client connected again" }, holder);
+        this.leaveRoom(holder, false, true);
+        try { holder.socket.close(4001, "replaced"); } catch { /* ignore */ }
+      },
+      revoke: (accountId, hash, reason) => this.onRevoke(accountId, hash, reason as Parameters<SignalingHub["onRevoke"]>[2], true),
+      away: (room, accountId, entry) => this.relay.applyRemoteAway(room, accountId, entry),
+    });
+    this.relay.cluster = {
+      broadcast: (room, payload, except) => cluster.broadcast(room, payload, except),
+      away: (room, accountId, entry) => cluster.away(room, accountId, entry),
+    };
+    cluster.start();
+    return cluster;
+  }
+
+  /** What other instances learn about a member (never leaves the servers). */
+  private memberView(peer: HubClient): MemberView {
+    return {
+      peerId: peer.id, name: peer.name, joinedAt: peer.joinedAt,
+      ...(peer.accountId ? { accountId: peer.accountId } : {}),
+      ...(peer.resumeHash ? { resumeHash: peer.resumeHash } : {}),
+      ...(peer.binary ? { binary: true } : {}),
+    };
+  }
+
+  /** What a client learns about a member: account ids become room-scoped references. */
+  private publicView(room: string, m: MemberView) {
+    return { peerId: m.peerId, name: m.name, joinedAt: m.joinedAt, ...(m.accountId ? this.refFields(room, m.accountId) : {}) };
+  }
+
+  /** A frame for the room on this instance and on the others. */
+  private broadcastAll(room: string, payload: Record<string, unknown>, except?: HubClient): void {
+    this.broadcast(room, payload, except);
+    this.cluster?.broadcast(room, payload, except?.id);
   }
 
   /* --------------------------------------------------------------- wiring */
@@ -185,6 +258,7 @@ export class SignalingHub {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = null;
     this.unsubscribe();
+    this.cluster?.stop();
     for (const client of this.clients.values()) {
       try { client.socket.close(1012, reason); } catch { /* ignore */ }
     }
@@ -377,6 +451,7 @@ export class SignalingHub {
       ...(parsed.v ? { v: parsed.v } : {}), seq: parsed.seq, iv: parsed.iv.toString("base64"), ciphertext: parsed.ciphertext.toString("base64"),
     });
     for (const peer of this.members(room)) if (peer !== client) this.sendChunk(peer, parsed, asJson);
+    this.cluster?.chunk(room, parsed.raw, asJson(), client.id);
   }
 
   private kick(client: HubClient, reason: string): void {
@@ -449,7 +524,17 @@ export class SignalingHub {
     // same client coming back (resume secret) takes its place instead.
     const wanted = frame.peerId;
     let peerId = client.id;
-    if (wanted) {
+    const remoteHolder = wanted ? this.cluster?.member(room, wanted) : undefined;
+    if (wanted && remoteHolder && !members.has(wanted)) {
+      // Held on another instance: only the same client (resume secret) takes it over.
+      const held = Buffer.from(remoteHolder.resumeHash ?? "", "base64url");
+      if (frame.resume && held.length === 32 && timingSafeEqual(sha(frame.resume), held)) {
+        peerId = wanted;
+        this.cluster!.evict(room, wanted);
+      } else {
+        audit.add({ category: "security", level: "notice", event: "join.peer-id-taken", peerId: wanted, roomHash: hashRoom(room), ip: truncateIp(client.ip) });
+      }
+    } else if (wanted) {
       const holder = members.get(wanted);
       if (!holder) {
         peerId = wanted;
@@ -476,6 +561,7 @@ export class SignalingHub {
       ...(peer.accountId ? this.refFields(room, peer.accountId) : {}),
     });
     const existing = [...members.values()].map(view);
+    for (const m of this.cluster?.members(room) ?? []) if (m.peerId !== client.id) existing.push(this.publicView(room, m));
     members.set(client.id, client);
     traffic.updateConnection(client.connId, { peerId: client.id, room, name: client.name, accountId: client.accountId, protocol: client.protocol });
 
@@ -495,6 +581,7 @@ export class SignalingHub {
     }, client);
 
     this.broadcast(room, { type: "peer-joined", ...view(client) }, client);
+    this.cluster?.join(room, this.memberView(client));
     this.relay.onJoin(client);
 
     eventStore.record({ kind: "peer-joined", room, peerId: client.id, meta: { peerCount: members.size } });
@@ -535,6 +622,7 @@ export class SignalingHub {
       return;
     }
     this.broadcast(room, { type: "peer-updated", peerId: client.id, name: client.name, ...(accountId ? this.refFields(room, accountId) : { account: null, accountId: null }) }, client);
+    this.cluster?.update(room, this.memberView(client));
     if (accountId) this.relay.onJoin(client);
     audit.add({ category: "account", event: accountId ? "auth.bound" : "auth.dropped", peerId: client.id, accountId: accountId ?? before, roomHash: hashRoom(room) });
   }
@@ -548,7 +636,10 @@ export class SignalingHub {
     if (members?.get(client.id) === client) members.delete(client.id);
     client.room = null;
     if (members && members.size === 0) this.rooms.delete(room);
-    if (!quiet) this.broadcast(room, { type: "peer-left", peerId: client.id });
+    if (!quiet) {
+      this.broadcast(room, { type: "peer-left", peerId: client.id });
+      this.cluster?.leave(room, client.id);
+    }
     this.relay.release(client);
     if (!quiet) this.relay.onLeave(client, room, wantsAway);
     traffic.updateConnection(client.connId, { room: undefined, roomHash: undefined });
@@ -560,6 +651,7 @@ export class SignalingHub {
     if (!client.room) return this.error(client, "not-in-room", "join a room first");
     const peer = this.rooms.get(client.room)?.get(frame.target);
     if (!peer) {
+      if (this.cluster?.signal(client.room, frame.target, { type: "signal", source: client.id, payload: frame.payload })) return;
       this.send(client.socket, { type: "signal-undeliverable", target: frame.target }, client);
       return;
     }
@@ -578,37 +670,39 @@ export class SignalingHub {
     switch (frame.type) {
       case "proxy-meta": {
         const begun = this.proxy.begin(client.connId, frame, Math.floor((frame.ciphertext.length * 3) / 4));
-        if (begun.ok) this.broadcast(room, { ...base, ...(frame.v ? { v: frame.v } : {}), iv: frame.iv, ciphertext: frame.ciphertext }, client);
+        if (begun.ok) this.broadcastAll(room, { ...base, ...(frame.v ? { v: frame.v } : {}), iv: frame.iv, ciphertext: frame.ciphertext }, client);
         this.send(client.socket, { type: "proxy-ack", transferId: frame.transferId, transport: "proxy", accepted: begun.ok, ...(begun.reason ? { reason: begun.reason } : {}) }, client);
         return;
       }
       case "proxy-chunk": {
         const pushed = this.proxy.pushChunk(client.connId, frame);
         if (!pushed.ok) return this.error(client, "proxy-refused", pushed.reason ?? "refused", { transferId: frame.transferId });
-        this.broadcast(room, { ...base, ...(frame.v ? { v: frame.v } : {}), seq: frame.seq, iv: frame.iv, ciphertext: frame.ciphertext }, client);
+        this.broadcastAll(room, { ...base, ...(frame.v ? { v: frame.v } : {}), seq: frame.seq, iv: frame.iv, ciphertext: frame.ciphertext }, client);
         return;
       }
       case "proxy-end": {
         const ended = this.proxy.end(client.connId, frame.transferId);
         if (!ended.ok) return this.error(client, "proxy-refused", ended.reason ?? "refused", { transferId: frame.transferId });
-        this.broadcast(room, { ...base, ...(frame.v ? { v: frame.v } : {}), ...(frame.iv && frame.ciphertext ? { iv: frame.iv, ciphertext: frame.ciphertext } : {}) }, client);
+        this.broadcastAll(room, { ...base, ...(frame.v ? { v: frame.v } : {}), ...(frame.iv && frame.ciphertext ? { iv: frame.iv, ciphertext: frame.ciphertext } : {}) }, client);
         eventStore.record({ kind: "proxy-end", meta: { transferId: frame.transferId, room } });
         return;
       }
       case "proxy-cancel": {
         if (isSender) {
           this.proxy.cancel(frame.transferId);
-          this.broadcast(room, base, client);
+          this.broadcastAll(room, base, client);
         } else {
           // A receiver declining: only the sender needs to know.
           const sender = senderKey ? this.clients.get(senderKey) : undefined;
           if (sender && sender.room === room) this.send(sender.socket, base, sender);
+          else if (!senderKey) this.cluster?.toSender(room, frame.transferId, base);
         }
         return;
       }
       case "proxy-need": {
         // Receiver → sender only: repeat these chunks.
         const sender = senderKey ? this.clients.get(senderKey) : undefined;
+        if (!senderKey) return this.cluster?.toSender(room, frame.transferId, { ...base, seqs: frame.seqs });
         if (!sender || sender.room !== room || isSender) return;
         this.send(sender.socket, { ...base, seqs: frame.seqs }, sender);
         return;
@@ -620,13 +714,14 @@ export class SignalingHub {
     const ids = this.proxy.dropSender(client.connId);
     if (!client.room) return;
     for (const transferId of ids) {
-      this.broadcast(client.room, { kind: "proxy-cancel", type: "proxy-cancel", transferId, transport: "proxy", from: client.id, reason: "sender disconnected" }, client);
+      this.broadcastAll(client.room, { kind: "proxy-cancel", type: "proxy-cancel", transferId, transport: "proxy", from: client.id, reason: "sender disconnected" }, client);
     }
   }
 
   /* ------------------------------------------------------------ revocation */
 
-  private onRevoke(accountId: string, hash: string | null, reason: string): void {
+  /** `remote`: another instance ended the session; it wrote the audit line. */
+  private onRevoke(accountId: string, hash: string | null, reason: string, remote = false): void {
     for (const client of this.clients.values()) {
       if (client.accountId !== accountId) continue;
       if (hash !== null && client.tokenHash !== hash) continue;
@@ -638,7 +733,8 @@ export class SignalingHub {
       this.send(client.socket, { type: "account-revoked", reason }, client);
       if (client.room) this.broadcast(client.room, { type: "peer-updated", peerId: client.id, name: client.name, account: null, accountId: null }, client);
     }
-    if (hash === null) this.relay.forget(accountId);
+    if (hash === null) this.relay.forget(accountId, !remote);
+    if (remote) return;
     audit.add({ category: "account", level: "notice", event: "session.revoked", accountId, status: reason, detail: { scope: hash === null ? "all" : "one" } });
   }
 
@@ -690,6 +786,9 @@ export class SignalingHub {
   stats() {
     let members = 0;
     for (const m of this.rooms.values()) members += m.size;
-    return { connections: this.clients.size, rooms: this.rooms.size, members, gate: this.gate.stats(), relay: this.relay.stats(), proxy: this.proxy.stats() };
+    return {
+      connections: this.clients.size, rooms: this.rooms.size, members, gate: this.gate.stats(), relay: this.relay.stats(), proxy: this.proxy.stats(),
+      cluster: this.cluster ? { ...this.cluster.bus.status(), instances: this.cluster.instances() } : { kind: "local" as const, instances: [] },
+    };
   }
 }

@@ -25,6 +25,7 @@ import type { Request } from 'express';
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { registerRoutes, signalingHub } from "./routes";
+import { clusterBus } from "./cluster/bus";
 import { accountStore } from "./accounts/store";
 import { storage } from "./storage/service";
 import { audit } from "./monitor/audit";
@@ -250,6 +251,7 @@ async function shutdown(signal: string): Promise<void> {
   force.unref();
   try {
     await signalingHub()?.shutdown("server restarting");
+    await clusterBus().close();
     system.stop();
     accountStore.flush();
     storage.close();

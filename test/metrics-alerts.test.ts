@@ -26,6 +26,23 @@ describe("metrics", () => {
   });
 });
 
+describe("the /metrics body", () => {
+  it("includes the cluster when there is one", async () => {
+    const { metricsText } = await import("../server/admin-api");
+    const { AccountStore } = await import("../server/accounts/store");
+    const deps = {
+      rooms: () => [], closeConnection: () => false, accounts: new AccountStore(tmp()),
+      storage: { isAvailable: false } as never, queue: () => null,
+      cluster: () => ({ kind: "redis", connected: true, published: 3, received: 5, dropped: 1, instances: [{ id: "b", lastSeen: 0, members: 2 }] }),
+    };
+    const text = metricsText(deps);
+    expect(text).toContain('m5cet_cluster_connected{bus="redis"} 1');
+    expect(text).toContain("m5cet_cluster_instances 1");
+    expect(text).toContain('m5cet_cluster_messages_total{direction="dropped"} 1');
+    expect(metricsText({ ...deps, cluster: () => ({ kind: "local", instances: [] }) })).not.toContain("m5cet_cluster_");
+  });
+});
+
 describe("alerts", () => {
   const quiet = { securityWarningsPerMin: 0, errorsPerMin: 0, loopP99: 1, heapRatio: 0.1, deadLetters: 0 };
 
