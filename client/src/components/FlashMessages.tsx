@@ -74,6 +74,7 @@ export function FlashMessages({
         title={label}
         aria-label={`${shown.text}. ${label}`}
         data-testid="flash-message"
+        data-flash-id={shown.id}
         data-kind={shown.kind}
       >
         {settings.icon ? <Icon className="flash__icon" aria-hidden="true" /> : null}

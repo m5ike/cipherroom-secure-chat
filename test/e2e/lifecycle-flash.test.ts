@@ -107,14 +107,18 @@ describe("notices and the page lifecycle", () => {
     await joinRoom(page, "bob");
     const first = page.getByTestId("flash-message");
     await first.waitFor({ state: "visible", timeout: 15_000 });
-    const before = await first.innerText();
+    // By identity, not text: a notice queued behind may say the same thing
+    // (a second "joined" after a reconnect on a busy machine).
+    const before = await first.getAttribute("data-flash-id");
+    expect(before).toBeTruthy();
 
     await first.click();
     // Either the next notice appears, or the layer empties — never the same one.
     await expect.poll(async () => {
-      const count = await page.getByTestId("flash-message").count();
-      if (count === 0) return "gone";
-      return await page.getByTestId("flash-message").innerText();
+      const shown = page.getByTestId("flash-message");
+      if (await shown.count() === 0) return "gone";
+      // The dismissed one fades out for a moment: look at the one that stays.
+      return await shown.last().getAttribute("data-flash-id");
     }, { timeout: 10_000 }).not.toBe(before);
   }, 90_000);
 
