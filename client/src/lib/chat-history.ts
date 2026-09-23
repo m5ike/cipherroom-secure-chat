@@ -6,7 +6,10 @@
 //               Stored encrypted in sessionStorage, the key is a
 //               non-extractable CryptoKey in IndexedDB (as session-cache.ts).
 //   server      kept in the signed-in user's vault, sealed with the passkey
-//               key before upload (account.ts).
+//               key before upload (account.ts). Without a passkey, in the
+//               server's session store — sealed here first, with a key only
+//               this browser holds (createServerSealer): the server keeps
+//               the rows, it cannot read them.
 //
 // In every mode the history is trimmed before it is stored: the on-wire
 // ciphertext is dropped (it is reproducible noise), a big attachment becomes
@@ -69,15 +72,26 @@ export function historyStats(messages: ChatMessage[]): { messages: number; bytes
   };
 }
 
-/** Messages restored from storage, keeping only ones that still make sense. */
+/** Messages restored from storage, keeping only ones that still make sense.
+ *  A message is ours if it was stored as ours, or carries our current peer
+ *  id — ids change between page loads, so comparing ids alone made our own
+ *  earlier messages look like someone else's. */
 export function sanitizeRestored(value: unknown, myPeerId?: string): ChatMessage[] {
   if (!Array.isArray(value)) return [];
   const now = Date.now();
   return value
     .filter((m): m is ChatMessage => Boolean(m) && typeof m === "object" && typeof (m as ChatMessage).id === "string" && typeof (m as ChatMessage).createdAt === "number")
+    .filter((m) => typeof m.text === "string" || m.attachment)
     .filter((m) => !m.expiresAt || m.expiresAt > now)
     .slice(-HISTORY_LIMITS.maxMessages)
-    .map((m) => ({ ...m, mine: myPeerId ? m.senderId === myPeerId : m.mine }));
+    .map((m) => ({ ...m, text: typeof m.text === "string" ? m.text : "", mine: m.mine === true || Boolean(myPeerId && m.senderId === myPeerId) }));
+}
+
+/** A message as it may leave this browser for a store it does not control:
+ *  never the plaintext or the code of a sealed message, never the cipher. */
+export function withoutSecrets(message: ChatMessage): ChatMessage {
+  const { sealPlain: _plain, sealCode: _code, cipher: _cipher, ...rest } = message;
+  return rest;
 }
 
 /* ------------------------------------------------- session-scoped storage */
@@ -117,30 +131,75 @@ function tx<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequ
   }));
 }
 
+/** A non-extractable AES key kept in IndexedDB under `id` (or in a map,
+ *  for tests). Null when the browser refuses storage. */
+function browserKey(id: string, memoryKeys: Map<string, CryptoKey> | null) {
+  return async (create: boolean): Promise<CryptoKey | null> => {
+    if (memoryKeys) {
+      const existing = memoryKeys.get(id);
+      if (existing || !create) return existing ?? null;
+      const fresh = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+      memoryKeys.set(id, fresh);
+      return fresh;
+    }
+    try {
+      const row = await tx<{ id: string; key: CryptoKey }>("readonly", (s) => s.get(id));
+      const found = (row as { key?: CryptoKey } | undefined)?.key ?? null;
+      if (found || !create) return found;
+      const fresh = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
+      await tx("readwrite", (s) => s.put({ id, key: fresh }));
+      return fresh;
+    } catch { return null; }
+  };
+}
+
+/** A row sealed for the server's session store. */
+export type SealedRow = { sealed: 1; iv: string; ct: string };
+
+/**
+ * Seals message payloads before they go to the server's session store (a
+ * browser without a passkey, server-enhanced mode). The server seals rows
+ * again with its own key, but that key is the server's: without this step
+ * it could read every message it was asked to keep. The key never leaves
+ * this browser, so the history comes back here and nowhere else — which is
+ * what a one-day session store is for.
+ */
+export function createServerSealer(opts: { keys?: Map<string, CryptoKey> } = {}) {
+  const key = browserKey("server", opts.keys ?? null);
+  const context = (id: string) => new Uint8Array(encoder.encode(`m5cet:server-row:v1:${id}`));
+  return {
+    async seal(message: ChatMessage): Promise<SealedRow | null> {
+      const k = await key(true);
+      if (!k) return null;
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = new Uint8Array(await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv, additionalData: context(message.id) }, k,
+        encoder.encode(JSON.stringify(withoutSecrets(message))),
+      ));
+      return { sealed: 1, iv: toBase64(iv), ct: toBase64(ct) };
+    },
+    /** Opens a sealed row (bound to its message id); a row written before
+     *  sealing existed is returned as it is. Null when it does not open. */
+    async open(id: string, value: unknown): Promise<unknown | null> {
+      const row = value as Partial<SealedRow> | null;
+      if (!row || row.sealed !== 1) return value;
+      const k = await key(false);
+      if (!k || typeof row.iv !== "string" || typeof row.ct !== "string") return null;
+      try {
+        const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(row.iv), additionalData: context(id) }, k, fromBase64(row.ct));
+        return JSON.parse(decoder.decode(plain));
+      } catch { return null; }
+    },
+  };
+}
+
 /** Per-session encrypted history. Falls back to doing nothing when the
  *  browser denies storage (private mode) — never throws at the caller. */
 export function createHistoryStore(opts: { storage?: Storage; keys?: Map<string, CryptoKey> } = {}): HistoryStore {
   let storage: Storage | null = null;
   try { storage = opts.storage ?? (typeof sessionStorage !== "undefined" ? sessionStorage : null); } catch { storage = null; }
   const memoryKeys = opts.keys ?? null;
-
-  async function key(create: boolean): Promise<CryptoKey | null> {
-    if (memoryKeys) {
-      const existing = memoryKeys.get(KEY_ID);
-      if (existing || !create) return existing ?? null;
-      const fresh = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-      memoryKeys.set(KEY_ID, fresh);
-      return fresh;
-    }
-    try {
-      const row = await tx<{ id: string; key: CryptoKey }>("readonly", (s) => s.get(KEY_ID));
-      const found = (row as { key?: CryptoKey } | undefined)?.key ?? null;
-      if (found || !create) return found;
-      const fresh = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
-      await tx("readwrite", (s) => s.put({ id: KEY_ID, key: fresh }));
-      return fresh;
-    } catch { return null; }
-  }
+  const key = browserKey(KEY_ID, memoryKeys);
 
   return {
     async save(room, messages) {

@@ -16,6 +16,21 @@
 //
 // Privacy: server never sees plaintext. File is split into chunks,
 // each chunk is AES-GCM 256-encrypted with a per-chunk IV.
+//
+// Crypto version 2 (envelope.ts), used when the caller passes RoomKeys:
+//   - one AES key per transfer (HKDF from the room secret, salt = transfer id)
+//   - every frame bound to its place as associated data: the meta to the
+//     transfer, each chunk to (transfer, seq, chunk count) — a chunk cannot
+//     be moved to another position or another file
+//   - the sender hashes each chunk as it goes and sends the digest of the
+//     digests, signed with its device identity, in the end frame; the
+//     receiver recomputes it before handing the file over
+// A plain CryptoKey still means version 1 (no AAD), for old peers.
+//
+// The receiver trusts nothing in the meta: the name is made harmless, the
+// MIME type is reduced to one that is safe to open from a blob: URL in this
+// origin (an HTML "attachment" would otherwise run as a page of this app),
+// and sizes / chunk counts must be consistent before anything is allocated.
 export const DEFAULT_CHUNK_SIZE = 32 * 1024; // 32 KiB
 export const MAX_FILE_BYTES = Number.MAX_SAFE_INTEGER; // effectively unlimited
 
@@ -30,6 +45,7 @@ export type FileTransferEnvelope =
       iv: string;
       ciphertext: string;
       transport: "p2p";
+      v?: number;
     }
   | {
       kind: "file-chunk";
@@ -38,11 +54,16 @@ export type FileTransferEnvelope =
       iv: string;
       ciphertext: string;
       transport: "p2p";
+      v?: number;
     }
   | {
       kind: "file-end";
       transferId: string;
       transport: "p2p";
+      /** v2: sealed { root, totalChunks, size }, signed by the sender. */
+      v?: number;
+      iv?: string;
+      ciphertext?: string;
     }
   | {
       kind: "file-cancel";
@@ -69,6 +90,7 @@ export type FileTransferEnvelope =
       iv: string;
       ciphertext: string;
       transport: "proxy";
+      v?: number;
     }
   | {
       kind: "proxy-chunk";
@@ -77,11 +99,15 @@ export type FileTransferEnvelope =
       iv: string;
       ciphertext: string;
       transport: "proxy";
+      v?: number;
     }
   | {
       kind: "proxy-end";
       transferId: string;
       transport: "proxy";
+      v?: number;
+      iv?: string;
+      ciphertext?: string;
     }
   | {
       kind: "proxy-need";
@@ -131,7 +157,17 @@ export type IncomingFileState = {
   transport: FileTransport;
   /** How many times we already asked the sender to repeat lost chunks. */
   resendRounds?: number;
+  /** Crypto version of the transfer and the key its frames use. */
+  version: 1 | 2;
+  key: CryptoKey;
+  /** v2: SHA-256 of each chunk, to check the sender's signed root. */
+  digests?: Array<Bytes | null>;
+  /** v2: who signed the meta (the end frame must come from the same key). */
+  signer?: Signer | null;
 };
+
+/** What the receiver learns about a finished file besides its bytes. */
+export type FileProof = { version: 1 | 2; verified: boolean; signer: Signer | null };
 
 /** How often a receiver may ask for missing chunks before giving up. */
 export const MAX_RESEND_ROUNDS = 3;
@@ -157,6 +193,26 @@ export type TransferStats = {
 };
 
 import { toBase64, fromBase64, type Bytes } from "./crypto";
+import {
+  chunkDigest, digestList, fileContext, fileKey, openChunk, openFileBody, sealChunk, sealFileBody,
+  type RoomKeys, type Signer,
+} from "./envelope";
+import type { Identity } from "./identity";
+import { safeFileName, safeMime } from "./validate";
+
+/** RoomKeys (crypto v2) or a bare AES key (v1). */
+export type TransferKey = CryptoKey | RoomKeys;
+
+export function isRoomKeys(key: TransferKey): key is RoomKeys {
+  return (key as RoomKeys).version === 2;
+}
+
+/** Chunk sizes a sender may choose, and how many chunks one file may have
+ *  (2 M × the 32 KiB default = 64 GiB) — the receiver allocates a slot per
+ *  chunk, so a meta claiming billions of them must not get that far. */
+const MIN_CHUNK = 1;
+const MAX_CHUNK = 1024 * 1024;
+export const MAX_TOTAL_CHUNKS = 2_000_000;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -197,7 +253,9 @@ export async function shortSha256(bytes: Bytes): Promise<string | undefined> {
 }
 
 export type SendOptions = {
-  key: CryptoKey;
+  key: TransferKey;
+  /** Signs the meta and the end frame (crypto v2). */
+  identity?: Identity | null;
   file: File;
   senderId: string;
   senderName: string;
@@ -297,13 +355,23 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
     opts.onStats?.(stats);
   }
 
-  const metaEnc = await encryptJSON(opts.key, meta);
+  // v2: a key of its own for this file, each frame bound to its place.
+  const v2 = isRoomKeys(opts.key);
+  const key = v2 ? await fileKey(opts.key as RoomKeys, transferId) : (opts.key as CryptoKey);
+  const versionField = v2 ? { v: 2 } : {};
+  const digests: Array<Bytes | null> = new Array(totalChunks).fill(null);
+  const encryptChunk = async (seq: number, slice: Bytes) => {
+    if (!v2) return encryptBytes(key, slice);
+    digests[seq] = await chunkDigest(slice);
+    return sealChunk(key, fileContext.chunk(transferId, seq, totalChunks), slice);
+  };
+  const metaEnc = v2 ? await sealFileBody(key, fileContext.meta(transferId), meta, opts.identity) : await encryptJSON(key, meta);
 
   if (transport === "p2p") {
-    const metaFrame: FileTransferEnvelope = { kind: "file-meta", transferId, transport: "p2p", ...metaEnc };
+    const metaFrame: FileTransferEnvelope = { kind: "file-meta", transferId, transport: "p2p", ...versionField, ...metaEnc };
     broadcastP2P(opts.channels, metaFrame);
   } else {
-    const metaFrame: FileTransferEnvelope = { kind: "proxy-meta", transferId, transport: "proxy", ...metaEnc };
+    const metaFrame: FileTransferEnvelope = { kind: "proxy-meta", transferId, transport: "proxy", ...versionField, ...metaEnc };
     if (!opts.sendProxy?.(metaFrame)) {
       return { ok: false, transferId, transport, reason: "proxy-channel-unavailable" };
     }
@@ -323,15 +391,15 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
       const start = i * chunkSize;
       const end = Math.min(start + chunkSize, total);
       const slice = new Uint8Array(await opts.file.slice(start, end).arrayBuffer());
-      const enc = await encryptBytes(opts.key, slice);
+      const enc = await encryptChunk(i, slice);
 
       if (transport === "p2p") {
         // Backpressure: wait if any channel buffer is large.
         await Promise.all(opts.channels.map((ch) => waitForBuffer(ch, DRAIN_TIMEOUT_MS)));
       }
       const frame: FileTransferEnvelope = transport === "p2p"
-        ? { kind: "file-chunk", transferId, seq: i, transport: "p2p", iv: enc.iv, ciphertext: enc.ciphertext }
-        : { kind: "proxy-chunk", transferId, seq: i, transport: "proxy", iv: enc.iv, ciphertext: enc.ciphertext };
+        ? { kind: "file-chunk", transferId, seq: i, transport: "p2p", ...versionField, iv: enc.iv, ciphertext: enc.ciphertext }
+        : { kind: "proxy-chunk", transferId, seq: i, transport: "proxy", ...versionField, iv: enc.iv, ciphertext: enc.ciphertext };
       if (transport === "p2p") {
         await sendChunkP2P(opts.channels, frame); // throws rather than dropping
       } else if (!(opts.sendProxy?.(frame) ?? false)) {
@@ -349,9 +417,14 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
     return { ok: false, transferId, transport, reason: (err as Error).message || "send-error" };
   }
 
+  // v2: the digest of every chunk's digest, signed — the receiver checks the
+  // whole file against it before handing it over.
+  const endBody = v2
+    ? await sealFileBody(key, fileContext.end(transferId), { root: await digestList(digests as Bytes[]), totalChunks, size: total }, opts.identity)
+    : null;
   const endFrame: FileTransferEnvelope = transport === "p2p"
-    ? { kind: "file-end", transferId, transport: "p2p" }
-    : { kind: "proxy-end", transferId, transport: "proxy" };
+    ? { kind: "file-end", transferId, transport: "p2p", ...(endBody ? { v: 2, ...endBody } : {}) }
+    : { kind: "proxy-end", transferId, transport: "proxy", ...(endBody ? { v: 2, ...endBody } : {}) };
   if (transport === "p2p") broadcastP2P(opts.channels, endFrame);
   else opts.sendProxy?.(endFrame);
 
@@ -362,10 +435,10 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
     const wanted = Array.from(new Set(seqs)).filter((seq) => Number.isInteger(seq) && seq >= 0 && seq < totalChunks);
     for (const seq of wanted) {
       const start = seq * chunkSize;
-      const enc = await encryptBytes(opts.key, new Uint8Array(await opts.file.slice(start, Math.min(start + chunkSize, total)).arrayBuffer()));
+      const enc = await encryptChunk(seq, new Uint8Array(await opts.file.slice(start, Math.min(start + chunkSize, total)).arrayBuffer()));
       const frame: FileTransferEnvelope = transport === "p2p"
-        ? { kind: "file-chunk", transferId, seq, transport: "p2p", iv: enc.iv, ciphertext: enc.ciphertext }
-        : { kind: "proxy-chunk", transferId, seq, transport: "proxy", iv: enc.iv, ciphertext: enc.ciphertext };
+        ? { kind: "file-chunk", transferId, seq, transport: "p2p", ...versionField, iv: enc.iv, ciphertext: enc.ciphertext }
+        : { kind: "proxy-chunk", transferId, seq, transport: "proxy", ...versionField, iv: enc.iv, ciphertext: enc.ciphertext };
       if (transport === "p2p") await sendChunkP2P(opts.channels, frame);
       else opts.sendProxy?.(frame);
     }
@@ -477,7 +550,7 @@ export type IncomingCallbacks = {
   /** Chunks that never arrived; the caller sends the request to the sender. */
   onNeed?: (transferId: string, seqs: number[], transport: FileTransport, round: number) => void;
   onProgress?: (transferId: string, received: number, total: number, stats: TransferStats) => void;
-  onComplete?: (transferId: string, blob: Blob, meta: FileMetaPlain, transport: FileTransport) => void;
+  onComplete?: (transferId: string, blob: Blob, meta: FileMetaPlain, transport: FileTransport, proof: FileProof) => void;
   onCancel?: (transferId: string) => void;
   onError?: (transferId: string, message: string) => void;
 };
@@ -494,7 +567,7 @@ export type IncomingCallbacks = {
 const frameQueues = new WeakMap<IncomingRegistry, Map<string, Promise<void>>>();
 
 export function handleIncomingFrame(
-  key: CryptoKey,
+  key: TransferKey,
   registry: IncomingRegistry,
   frame: FileTransferEnvelope,
   hardLimitBytes: number,
@@ -515,141 +588,161 @@ export function handleIncomingFrame(
   return current;
 }
 
+/** Checks the sender's meta before anything is allocated for it. Returns
+ *  the meta with a harmless name and a safe MIME type, or why it is refused. */
+export function checkMeta(raw: unknown, transferId: string, hardLimitBytes: number): FileMetaPlain | string {
+  if (!raw || typeof raw !== "object") return "Malformed file meta.";
+  const m = raw as Record<string, unknown>;
+  if (m.transferId !== transferId) return "File meta does not belong to this transfer.";
+  const size = m.size;
+  const chunkSize = m.chunkSize;
+  const totalChunks = m.totalChunks;
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) return "Invalid file size.";
+  if (size > hardLimitBytes) return `File too large (${size} > ${hardLimitBytes} bytes).`;
+  if (typeof chunkSize !== "number" || !Number.isInteger(chunkSize) || chunkSize < MIN_CHUNK || chunkSize > MAX_CHUNK) return "Invalid chunk size.";
+  if (totalChunks !== Math.max(1, Math.ceil(size / chunkSize))) return "Chunk count does not match the file size.";
+  if (totalChunks > MAX_TOTAL_CHUNKS) return "Too many chunks.";
+  const senderId = typeof m.senderId === "string" ? m.senderId.slice(0, 96) : "";
+  // eslint-disable-next-line no-control-regex
+  const senderName = typeof m.senderName === "string" ? m.senderName.replace(/[\u0000-\u001f\u007f]/g, "").slice(0, 48) : "";
+  return {
+    transferId,
+    name: safeFileName(m.name),
+    mime: safeMime(m.mime),
+    size,
+    totalChunks: totalChunks as number,
+    chunkSize,
+    senderId,
+    senderName: senderName || `peer-${senderId.slice(-4)}`,
+    createdAt: typeof m.createdAt === "number" && Number.isFinite(m.createdAt) ? Math.min(m.createdAt, Date.now() + 300_000) : Date.now(),
+  };
+}
+
 async function processIncomingFrame(
-  key: CryptoKey,
+  key: TransferKey,
   registry: IncomingRegistry,
   frame: FileTransferEnvelope,
   hardLimitBytes: number,
   cb: IncomingCallbacks,
 ): Promise<void> {
-  // Normalise to "kind" we recognise; proxy-meta/chunk/end/cancel/progress
-  // share the same lifecycle as p2p-meta/chunk/etc — we map them below.
-  if (frame.transport === "proxy") {
-    if (frame.kind === "proxy-meta") {
-      try {
-        const meta = await decryptJSON<FileMetaPlain>(key, frame.iv, frame.ciphertext);
-        if (meta.size > hardLimitBytes) {
-          cb.onError?.(frame.transferId, `File too large (${meta.size} > ${hardLimitBytes} bytes).`);
-          return;
-        }
-        registry.set(meta.transferId, {
-          meta,
-          chunks: new Array<Bytes | null>(meta.totalChunks).fill(null),
-          received: 0,
-          cancelled: false,
-          transport: "proxy",
-        });
-        cb.onMeta?.(meta, "proxy");
-      } catch (err) {
-        cb.onError?.(frame.transferId, (err as Error).message);
-      }
-      return;
-    }
-    if (frame.kind === "proxy-chunk") {
-      const state = registry.get(frame.transferId);
-      if (!state || state.cancelled) return;
-      // Surface a notification when a chunk arrives for a transfer
-      // whose meta was never seen — this protects the receiver from a
-      // misbehaving sender that tries to flood the buffer.
-      try {
-        const bytes = await decryptBytes(key, frame.iv, frame.ciphertext);
-        if (state.chunks[frame.seq] === null) {
-          state.chunks[frame.seq] = bytes;
-          state.received += bytes.byteLength;
-          cb.onProgress?.(frame.transferId, state.received, state.meta.size, buildIncomingStats(state, "in"));
-        }
-      } catch (err) {
-        cb.onError?.(frame.transferId, (err as Error).message);
-      }
-      return;
-    }
-    if (frame.kind === "proxy-end") {
-      const state = registry.get(frame.transferId);
-      if (!state) return;
-      const missingSeqs = missingChunkSeqs(state);
-      if (missingSeqs.length > 0) {
-        if (requestResend(frame.transferId, state, missingSeqs, "proxy", cb)) return;
-        cb.onError?.(frame.transferId, missingChunksMessage(missingSeqs.length, state.chunks.length));
-        registry.delete(frame.transferId);
-        return;
-      }
-      const blob = new Blob(state.chunks as Bytes[], { type: state.meta.mime });
-      cb.onComplete?.(frame.transferId, blob, state.meta, "proxy");
-      registry.delete(frame.transferId);
-      return;
-    }
-    if (frame.kind === "proxy-cancel") {
-      const state = registry.get(frame.transferId);
-      if (state) state.cancelled = true;
-      registry.delete(frame.transferId);
-      cb.onCancel?.(frame.transferId);
-      return;
-    }
-    return;
-  }
+  const transport: FileTransport = frame.transport === "proxy" ? "proxy" : "p2p";
+  // proxy-* and file-* frames share one lifecycle.
+  const kind = frame.kind.replace(/^proxy-/, "file-");
+  const transferId = frame.transferId;
 
-  if (frame.kind === "file-meta") {
+  if (kind === "file-meta") {
+    const f = frame as { iv: string; ciphertext: string; v?: number };
+    if (registry.has(transferId)) return; // a repeated meta changes nothing
     try {
-      const meta = await decryptJSON<FileMetaPlain>(key, frame.iv, frame.ciphertext);
-      if (meta.size > hardLimitBytes) {
-        cb.onError?.(frame.transferId, `File too large (${meta.size} > ${hardLimitBytes} bytes).`);
+      const v2 = f.v === 2 && isRoomKeys(key);
+      let fk: CryptoKey;
+      let raw: unknown;
+      let signer: Signer | null = null;
+      if (v2) {
+        fk = await fileKey(key as RoomKeys, transferId);
+        const opened = await openFileBody<unknown>(fk, fileContext.meta(transferId), f.iv, f.ciphertext);
+        raw = opened.value;
+        signer = opened.signer;
+      } else {
+        fk = isRoomKeys(key) ? await key.legacy() : key;
+        raw = await decryptJSON<unknown>(fk, f.iv, f.ciphertext);
+      }
+      const meta = checkMeta(raw, transferId, hardLimitBytes);
+      if (typeof meta === "string") {
+        cb.onError?.(transferId, meta);
         return;
       }
-      registry.set(meta.transferId, {
+      if (signer && !signer.valid) {
+        cb.onError?.(transferId, "The file's signature does not verify.");
+        return;
+      }
+      registry.set(transferId, {
         meta,
         chunks: new Array<Bytes | null>(meta.totalChunks).fill(null),
         received: 0,
         cancelled: false,
-        transport: "p2p",
+        transport,
+        version: v2 ? 2 : 1,
+        key: fk,
+        ...(v2 ? { digests: new Array<Bytes | null>(meta.totalChunks).fill(null), signer } : {}),
       });
-      cb.onMeta?.(meta, "p2p");
+      cb.onMeta?.(meta, transport);
     } catch (err) {
-      cb.onError?.(frame.transferId, (err as Error).message);
+      cb.onError?.(transferId, (err as Error).message || "File meta could not be decrypted.");
     }
     return;
   }
-  if (frame.kind === "file-chunk") {
-    const state = registry.get(frame.transferId);
+
+  if (kind === "file-chunk") {
+    const f = frame as { seq: number; iv: string; ciphertext: string };
+    const state = registry.get(transferId);
     if (!state) {
-      cb.onError?.(frame.transferId, `Chunk arrived for unknown transfer ${frame.transferId}.`);
+      // A proxy chunk can overtake nothing (the server keeps order), so an
+      // unknown one is noise; over P2P it means the meta was lost.
+      if (transport === "p2p") cb.onError?.(transferId, `Chunk arrived for unknown transfer ${transferId}.`);
       return;
     }
     if (state.cancelled) return;
+    const seq = f.seq;
+    if (!Number.isInteger(seq) || seq < 0 || seq >= state.chunks.length || state.chunks[seq] !== null) return;
     try {
-      const bytes = await decryptBytes(key, frame.iv, frame.ciphertext);
-      if (state.chunks[frame.seq] === null) {
-        state.chunks[frame.seq] = bytes;
-        state.received += bytes.byteLength;
-        cb.onProgress?.(frame.transferId, state.received, state.meta.size, buildIncomingStats(state, "in"));
-      }
+      const bytes = state.version === 2
+        ? await openChunk(state.key, fileContext.chunk(transferId, seq, state.meta.totalChunks), f.iv, f.ciphertext)
+        : await decryptBytes(state.key, f.iv, f.ciphertext);
+      if (bytes.byteLength > state.meta.chunkSize) throw new Error(`Chunk ${seq} is larger than the announced chunk size.`);
+      state.chunks[seq] = bytes;
+      if (state.digests) state.digests[seq] = await chunkDigest(bytes);
+      state.received += bytes.byteLength;
+      cb.onProgress?.(transferId, state.received, state.meta.size, buildIncomingStats(state, "in"));
     } catch (err) {
-      cb.onError?.(frame.transferId, (err as Error).message);
+      cb.onError?.(transferId, (err as Error).message || `Chunk ${seq} could not be decrypted.`);
     }
     return;
   }
-  if (frame.kind === "file-end") {
-    const state = registry.get(frame.transferId);
+
+  if (kind === "file-end") {
+    const f = frame as { v?: number; iv?: string; ciphertext?: string };
+    const state = registry.get(transferId);
     if (!state) return;
     const missingSeqs = missingChunkSeqs(state);
     if (missingSeqs.length > 0) {
       // A chunk can still go missing for honest reasons — the channel
       // dropped and came back, the relay hiccuped. Ask for those few again
       // instead of throwing away a file that is 99 % delivered.
-      if (requestResend(frame.transferId, state, missingSeqs, "p2p", cb)) return;
-      cb.onError?.(frame.transferId, missingChunksMessage(missingSeqs.length, state.chunks.length));
-      registry.delete(frame.transferId);
+      if (requestResend(transferId, state, missingSeqs, transport, cb)) return;
+      cb.onError?.(transferId, missingChunksMessage(missingSeqs.length, state.chunks.length));
+      registry.delete(transferId);
       return;
     }
+    const fail = (message: string) => {
+      cb.onError?.(transferId, message);
+      registry.delete(transferId);
+    };
+    if (state.received !== state.meta.size) return fail(`Received ${state.received} bytes, the sender announced ${state.meta.size}.`);
+    let proof: FileProof = { version: state.version, verified: false, signer: state.signer ?? null };
+    if (state.version === 2) {
+      if (typeof f.iv !== "string" || typeof f.ciphertext !== "string") return fail("The end of the file carries no digest.");
+      try {
+        const { value, signer } = await openFileBody<{ root?: unknown; totalChunks?: unknown; size?: unknown }>(state.key, fileContext.end(transferId), f.iv, f.ciphertext);
+        if (value.totalChunks !== state.meta.totalChunks || value.size !== state.meta.size) return fail("The file's end does not match its meta.");
+        if (value.root !== await digestList(state.digests as Bytes[])) return fail("The file does not match the sender's digest.");
+        if (state.signer && (!signer || !signer.valid || signer.publicKey !== state.signer.publicKey)) return fail("The file's end was not signed by its sender.");
+        proof = { version: 2, verified: true, signer: state.signer ?? null };
+      } catch {
+        return fail("The file's digest could not be decrypted.");
+      }
+    }
     const blob = new Blob(state.chunks as Bytes[], { type: state.meta.mime });
-    cb.onComplete?.(frame.transferId, blob, state.meta, "p2p");
-    registry.delete(frame.transferId);
+    cb.onComplete?.(transferId, blob, state.meta, transport, proof);
+    registry.delete(transferId);
     return;
   }
-  if (frame.kind === "file-cancel") {
-    const state = registry.get(frame.transferId);
+
+  if (kind === "file-cancel") {
+    const state = registry.get(transferId);
     if (state) state.cancelled = true;
-    registry.delete(frame.transferId);
-    cb.onCancel?.(frame.transferId);
+    registry.delete(transferId);
+    cb.onCancel?.(transferId);
   }
 }
 

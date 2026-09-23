@@ -20,6 +20,7 @@
 // else the request host. Origins: WEBAUTHN_ORIGINS (exact list) or any https
 // origin on the rpId (+ http://localhost for development).
 
+import { isAllowedPushEndpoint } from "../push";
 import { randomBytes } from "node:crypto";
 import type { Express, NextFunction, Request, Response } from "express";
 import { rateLimit } from "express-rate-limit";
@@ -264,6 +265,8 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
 
   app.post("/api/account/push", requireAccount, (req: AuthedRequest, res: Response) => {
     const sub = ((req.body || {}) as { subscription?: { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } } }).subscription;
+    // Only real push services: the server will POST to this address.
+    if (!isAllowedPushEndpoint(sub?.endpoint)) return res.status(400).json({ ok: false, message: "not a known push service endpoint" });
     const r = store.addPush(req.account!.id, {
       endpoint: String(sub?.endpoint ?? ""),
       keys: { p256dh: String(sub?.keys?.p256dh ?? ""), auth: String(sub?.keys?.auth ?? "") },

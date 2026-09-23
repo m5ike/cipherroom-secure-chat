@@ -1,5 +1,6 @@
 import { APPEARANCE_I18N } from "./i18n-appearance";
 import { ACCOUNT_I18N } from "./i18n-account";
+import { SECURITY_I18N } from "./i18n-security";
 // Simple i18n. Strings live in this file; no extra deps. Add keys as needed.
 
 export type Lang = "cs" | "en" | "de";
@@ -1002,9 +1003,9 @@ const de: Dict = {
 };
 
 const dicts: Record<Lang, Dict> = {
-  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs },
-  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en },
-  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de },
+  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs },
+  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en },
+  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de },
 };
 
 export function detectLang(stored: string | undefined): Lang {

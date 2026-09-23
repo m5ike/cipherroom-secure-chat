@@ -7,18 +7,29 @@
 // Hardening applied at this layer (not in routes.ts):
 //   - Cache-Control: no-store on every response so intermediaries cannot
 //     cache encrypted payloads or even the HTML shell.
-//   - Helmet default headers + a strict Content-Security-Policy.
-//   - Per-IP rate limiting on REST and WebSocket upgrade endpoints.
+//   - Helmet default headers + a Content-Security-Policy that is strict in
+//     production (script-src 'self'; the Vite dev server needs more).
+//   - Per-IP rate limiting on the REST API, applied BEFORE the body parsers
+//     so a flood of large bodies is refused without being parsed. (WebSocket
+//     upgrades never pass through Express: signaling/hub.ts gates them.)
 //   - X-Content-Type-Options / Referrer-Policy / Permissions-Policy.
-//   - express.json verify hook stashes the raw body for any future
-//     signature-validation needs (today no endpoint requires it).
+//   - The request log carries method, route, status, time and size — never
+//     bodies: responses hold session tokens and ciphertext. Every request
+//     also lands in the traffic monitor (monitor/traffic.ts) for the console.
+//   - SIGTERM / SIGINT close sockets, flush the account store and the
+//     databases before exiting.
 
 import "./env";
 import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
-import { registerRoutes } from "./routes";
+import { registerRoutes, signalingHub } from "./routes";
+import { accountStore } from "./accounts/store";
+import { storage } from "./storage/service";
+import { audit } from "./monitor/audit";
+import { system } from "./monitor/system";
+import { classifyRoute, traffic, truncateIp } from "./monitor/traffic";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { applyTrustProxy } from "./trust-proxy";
@@ -38,17 +49,8 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   // The vault and the storage API have their own, larger buckets (below).
-  skip: (req) => req.originalUrl.startsWith("/api/account/vault") || req.originalUrl.startsWith("/api/storage"),
+  skip: (req) => req.originalUrl.startsWith("/api/account/vault") || req.originalUrl.startsWith("/api/storage") || req.originalUrl.startsWith("/api/admin"),
   message: { ok: false, message: "Too many requests, please try again later." },
-});
-
-// Stricter rate limit for WebSocket upgrades to mitigate signaling abuse.
-const wsUpgradeLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  limit: 30,
-  skip: (_req) => false,
-  standardHeaders: true,
-  legacyHeaders: false,
 });
 
 declare module "http" {
@@ -57,22 +59,65 @@ declare module "http" {
   }
 }
 
+// Traffic monitor + request log. First, so refused requests count too.
+const LOG_HTTP = process.env.LOG_HTTP === "1" || process.env.NODE_ENV !== "production";
+let requestSeq = 0;
+app.use((req, res, next) => {
+  const start = Date.now();
+  const path = req.path;
+  res.on("finish", () => {
+    const durationMs = Date.now() - start;
+    const isApi = path.startsWith("/api") || path.startsWith("/wh/");
+    const bytes = Number(res.getHeader("content-length") ?? 0) || 0;
+    if (isApi) {
+      traffic.record({
+        channel: "http", direction: "in", cls: classifyRoute(req.method, path),
+        // Ids in paths (/api/admin/users/<id>) would make every route unique.
+        type: `${req.method} ${path.replace(/\/[A-Za-z0-9_-]{16,}(?=\/|$)/g, "/:id")}`,
+        bytes: Number(req.headers["content-length"] ?? 0) + bytes,
+        conn: `h-${(requestSeq = (requestSeq + 1) % 1_000_000)}`,
+        ip: truncateIp(req.ip), status: res.statusCode, durationMs,
+      });
+      if (res.statusCode === 429) audit.add({ category: "security", level: "notice", event: "http.rate-limited", ip: truncateIp(req.ip), status: `${req.method} ${path}` });
+    }
+    if (isApi && (LOG_HTTP || res.statusCode >= 500)) log(`${req.method} ${path} ${res.statusCode} in ${durationMs}ms${bytes ? ` (${bytes} B)` : ""}`);
+  });
+  next();
+});
+
+// Limits first, parsers after: a refused request is never parsed.
+app.use("/api", apiLimiter);
 // The encrypted vault of a signed-in user (profile + chat history) is far
-// larger than a signaling payload, so it gets its own parser and its own
-// rate-limit bucket (autosave would eat the public API budget).
-app.use("/api/account/vault", express.json({ limit: "8mb" }));
-// Same for the server-side storage: conversations arrive in batches, and
-// this parser has to come before the global one to win.
-app.use("/api/storage", express.json({ limit: "12mb" }));
+// larger than a signaling payload, so it gets its own bucket and parser
+// (autosave would eat the public API budget); so does the storage API.
 app.use(
   "/api/account/vault",
   rateLimit({ windowMs: 15 * 60 * 1000, limit: 300, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many vault requests." } }),
 );
+app.use(
+  "/api/storage",
+  rateLimit({ windowMs: 15 * 60 * 1000, limit: 1_200, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many storage requests." } }),
+);
+app.use("/api/account/vault", express.json({ limit: "8mb" }));
+// Conversations arrive in batches; this parser has to come before the
+// global one to win.
+app.use("/api/storage", express.json({ limit: "12mb" }));
+// The operator console: a busy operator is not a flood, a wrong token is.
+// Refused requests count against a small budget (token guessing), all
+// requests against a generous one.
+app.use(
+  "/api/admin",
+  rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many refused admin requests." } }),
+  rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many admin requests." } }),
+);
 
 app.use(
   express.json({
+    limit: "256kb",
+    // Provider webhooks verify signatures over the exact bytes; nothing
+    // else needs a second copy of every body.
     verify: (req, _res, buf) => {
-      req.rawBody = buf;
+      if (req.url?.startsWith("/wh/")) req.rawBody = buf;
     },
   }),
 );
@@ -82,16 +127,19 @@ app.use(express.urlencoded({ extended: false }));
 app.disable("etag");
 
 // Helmet sets a strong baseline of security headers. We then customize CSP
-// to allow the WebSocket/WebRTC client (self), inline styles/scripts from the
-// Vite build, and OSM tiles for the map preview. unsafe-inline is required by
-// the Vite dev server; production builds should ideally use nonces/hashes.
+// to allow the WebSocket/WebRTC client (self) and OSM tiles for the map
+// preview. The production bundle has no inline script and no eval, so its
+// script-src is 'self' alone; the Vite dev server injects inline modules
+// and needs 'unsafe-inline' / 'unsafe-eval'.
+const DEV = process.env.NODE_ENV !== "production";
 app.use(
   helmet({
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
         connectSrc: ["'self'", "wss:", "ws:", "https://tile.openstreetmap.org"],
-        scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'"],
+        scriptSrc: DEV ? ["'self'", "'unsafe-inline'", "'unsafe-eval'"] : ["'self'"],
+        objectSrc: ["'none'"],
         // Google Fonts: only fetched after the user opts in (Appearance → Typography).
         styleSrc: ["'self'", "'unsafe-inline'", "https://api.fontshare.com", "https://fonts.googleapis.com"],
         imgSrc: ["'self'", "data:", "blob:", "https://tile.openstreetmap.org"],
@@ -124,8 +172,6 @@ app.use((_req, res, next) => {
   next();
 });
 
-app.use("/api", apiLimiter);
-app.use("/ws", wsUpgradeLimiter);
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -138,46 +184,24 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
-app.use((req, res, next) => {
-  const start = Date.now();
-  const path = req.path;
-  let capturedJsonResponse: Record<string, any> | undefined = undefined;
-
-  const originalResJson = res.json;
-  res.json = function (bodyJson, ...args) {
-    capturedJsonResponse = bodyJson;
-    return originalResJson.apply(res, [bodyJson, ...args]);
-  };
-
-  res.on("finish", () => {
-    const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      log(logLine);
-    }
-  });
-
-  next();
-});
-
 (async () => {
   await registerRoutes(httpServer, app);
 
-  app.use((err: any, _req: Request, res: Response, next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
-
-    console.error("Internal Server Error:", err);
+    // Parser errors (400/413) are the client's; their message is safe to
+    // return. A 500's message may name internals: log it, answer generically.
+    const message = status < 500 ? err.message || "Bad request" : "Internal Server Error";
+    if (status >= 500) {
+      console.error("Internal Server Error:", err);
+      audit.add({ category: "system", level: "error", event: "http.error", status: `${req.method} ${req.path}`, detail: { error: String(err?.message ?? err).slice(0, 300) } });
+    }
 
     if (res.headersSent) {
       return next(err);
     }
 
-    return res.status(status).json({ message });
+    return res.status(status).json({ ok: false, message });
   });
 
   // importantly only setup vite in development and after
@@ -207,6 +231,32 @@ app.use((req, res, next) => {
     },
     () => {
       log(`serving on ${host}:${port} (trust proxy: ${JSON.stringify(trustProxy)})`);
+      audit.add({ category: "system", level: "notice", event: "server.start", detail: { port, host, node: process.version } });
     },
   );
 })();
+
+// A deploy or restart: close the sockets (clients reconnect and resume),
+// write what is pending, close the databases, then exit.
+let stopping = false;
+async function shutdown(signal: string): Promise<void> {
+  if (stopping) return;
+  stopping = true;
+  log(`${signal}: shutting down`);
+  audit.add({ category: "system", level: "notice", event: "server.stop", status: signal });
+  const force = setTimeout(() => process.exit(1), 8_000);
+  force.unref();
+  try {
+    await signalingHub()?.shutdown("server restarting");
+    system.stop();
+    accountStore.flush();
+    storage.close();
+  } catch (err) {
+    console.error("shutdown:", err);
+  }
+  httpServer.close(() => process.exit(0));
+  // Keep-alive connections would hold close() open until they time out.
+  httpServer.closeAllConnections?.();
+}
+process.once("SIGTERM", () => void shutdown("SIGTERM"));
+process.once("SIGINT", () => void shutdown("SIGINT"));

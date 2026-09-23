@@ -1,6 +1,6 @@
 // REST surface of the storage API (the operations live in api.ts).
 //
-//   GET    /api/storage/status                what this server offers
+//   GET    /api/storage/status                what this server offers (no paths or counts)
 //   POST   /api/storage/session               start / resume an anonymous store
 //   POST   /api/storage/open                  open the account database (key)
 //   POST   /api/storage/promote               session data → passkey database
@@ -8,7 +8,9 @@
 //   GET    /api/storage/kv       ?key=        read one value (or list keys)
 //   PUT    /api/storage/kv                    write one value
 //   DELETE /api/storage/kv       ?key=        drop one value
-//   GET    /api/storage/messages ?room=…      read the conversation
+//   GET    /api/storage/messages ?room=&since=&afterSeq=&limit=
+//                                             read the conversation (a cursor
+//                                             returns the oldest rows after it)
 //   POST   /api/storage/messages              append / replace messages
 //   DELETE /api/storage/messages ?room=       forget a conversation
 //   GET    /api/storage/rooms
@@ -24,13 +26,17 @@
 //
 // The body limit is generous (messages arrive in batches) but its own, so a
 // storage write cannot eat the public API budget.
+//
+// A session id travels in the X-M5cet-Session header (or the JSON body) —
+// never in the URL, where it would end up in access logs and history.
 
 import express, { type Express, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { requireAdminToken } from "../admin-auth";
 import { accountStore, type AccountStore } from "../accounts/store";
 import { storage as defaultStorage, type StorageService } from "./service";
-import { apiContext, isStorageOp, resolveCaller, runStorageOp, type ApiResult, type Caller } from "./api";
+import { apiContext, clientKeyFor, isStorageOp, resolveCaller, runStorageOp, type ApiResult, type Caller, type OpMeta } from "./api";
+import { holderForToken } from "./keys";
 
 export const SESSION_HEADER = "x-m5cet-session";
 
@@ -43,9 +49,17 @@ function sessionOf(req: Request): string {
   const header = req.header(SESSION_HEADER) || "";
   if (header) return header.trim();
   const body = (req.body ?? {}) as { sessionId?: unknown };
-  if (typeof body.sessionId === "string") return body.sessionId.trim();
-  const query = req.query.session;
-  return typeof query === "string" ? query.trim() : "";
+  return typeof body.sessionId === "string" ? body.sessionId.trim() : "";
+}
+
+/** The caller's client identity (for the new-session cap) and, when signed
+ *  in, who holds their key open (the hash of their token). */
+function metaOf(req: Request): OpMeta {
+  const token = bearer(req);
+  return {
+    clientKey: clientKeyFor(req.ip ?? req.socket?.remoteAddress ?? ""),
+    ...(token ? { holder: holderForToken(token) } : {}),
+  };
 }
 
 function send(res: Response, result: ApiResult): void {
@@ -66,7 +80,7 @@ export function registerStorageRoutes(
   const run = (req: Request, res: Response, op: string, payload: Record<string, unknown>) => {
     if (!isStorageOp(op)) return send(res, { ok: false, status: 400, error: `unknown operation ${op}` });
     try {
-      send(res, runStorageOp(ctx, caller(req), op, payload));
+      send(res, runStorageOp(ctx, caller(req), op, payload, metaOf(req)));
     } catch (err) {
       storage.log({ level: "error", source: "server", event: "storage.api.error", detail: { op, error: (err as Error).message } });
       send(res, { ok: false, status: 500, error: "storage operation failed" });
@@ -100,6 +114,7 @@ export function registerStorageRoutes(
   app.get("/api/storage/messages", (req, res) => run(req, res, "messages.read", {
     room: req.query.room,
     since: Number(req.query.since) || undefined,
+    afterSeq: typeof req.query.afterSeq === "string" && req.query.afterSeq !== "" ? Number(req.query.afterSeq) : undefined,
     limit: Number(req.query.limit) || undefined,
   }));
   app.post("/api/storage/messages", (req, res) => run(req, res, "messages.put", (req.body ?? {}) as Record<string, unknown>));
@@ -128,6 +143,7 @@ export function registerStorageRoutes(
 
   const operatorOnly = requireAdminToken();
 
+  // The full picture — directory, counts, the index — is for the operator.
   app.get("/api/admin/storage", operatorOnly, (_req, res) => {
     const status = storage.status();
     res.json({
@@ -135,6 +151,7 @@ export function registerStorageRoutes(
       ...status,
       databases: status.available ? storage.global.listDatabases(200) : [],
       users: status.available ? storage.global.listUsers(200) : [],
+      queue: status.available ? storage.queue()?.stats() ?? null : null,
     });
   });
 

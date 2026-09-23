@@ -25,6 +25,9 @@ export type MessageInfo = {
   flags: string[];
   audit: MsgAuditItem[];
   attachment?: { name: string; mime: string; size: number; url: string };
+  /** Sender identity line (crypto v2), already worded. */
+  identity?: { text: string; tone: "ok" | "warn" | "muted" };
+  cryptoVersion?: 1 | 2;
 };
 
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
@@ -79,7 +82,13 @@ export function MessageInfoView({ info, lang, onForward }: { info: MessageInfo; 
         <Row label={t(lang, "msginfo.route")} value={info.route} />
         <Row label={t(lang, "userinfo.ip")} value={info.ip || t(lang, "userinfo.ip.unknown")} />
         <Row label={t(lang, "msginfo.created")} value={new Date(info.createdAt).toLocaleString(lang)} />
-        <Row label={t(lang, "userinfo.security")} value={<span className="inline-flex items-center gap-1">{info.secure ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />} {info.secure ? "AES-GCM 256" : t(lang, "msginfo.insecure")}</span>} />
+        <Row label={t(lang, "userinfo.security")} value={<span className="inline-flex items-center gap-1">{info.secure ? <Lock className="h-3.5 w-3.5" /> : <LockOpen className="h-3.5 w-3.5" />} {info.secure ? t(lang, "sec.cipher").replace("{v}", String(info.cryptoVersion ?? 1)) : t(lang, "msginfo.insecure")}</span>} />
+        {info.identity ? (
+          <Row
+            label={t(lang, "sec.identity")}
+            value={<span data-testid="msginfo-identity" className={info.identity.tone === "warn" ? "font-semibold text-destructive" : info.identity.tone === "ok" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>{info.identity.text}</span>}
+          />
+        ) : null}
         {info.flags.length > 0 ? <Row label={t(lang, "msginfo.kinds")} value={info.flags.join(" · ")} /> : null}
       </div>
 

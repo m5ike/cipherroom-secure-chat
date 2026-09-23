@@ -6,17 +6,30 @@
 //
 // All endpoints (except /admin/health) require Bearer auth using
 // ADMIN_API_TOKEN. The admin service does NOT have access to peer chat
-// content — encryption keys are derived per-room in the browser. It does
-// have read-only access to in-memory event metadata, push subscription
-// counts, and write access to enqueue allowlisted client commands.
+// content — encryption keys are derived per-room in the browser.
+//
+// What lives where:
+//   this process   the operator console (admin-ui/public, served at "/"),
+//                  the layout builder, telephony / SIP settings and the
+//                  AI / speech connectors (/admin/*)
+//   main service   everything with live state — sockets, rooms, accounts,
+//                  the offline queue, storage, traffic, audit, commands and
+//                  push subscriptions (/api/admin/*, admin-api.ts)
+// Requests for /api/admin/* that reach this process (development, or a
+// setup without nginx) are forwarded to MAIN_URL (default
+// http://127.0.0.1:$PORT). The old /admin/commands/*, /admin/clients,
+// /admin/test/push, /admin/metrics and /admin/logs/recent endpoints read this
+// process's own, empty copies of that state — commands queued there never
+// reached a device. They now forward to the main service too.
 
 import "./env";
 import express from "express";
+import { rateLimit } from "express-rate-limit";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { eventStore } from "./events";
-import { sendWebPush, isWebPushReady } from "./push";
+import { isWebPushReady } from "./push";
 import { registrySnapshot, getAi, getTts, getStt } from "./plugins/registry";
 import { pluginLog } from "./plugins/log";
 import { base64ToBytes } from "./plugins/types";
@@ -25,20 +38,53 @@ import { registerAdminLayoutRoutes } from "./layout";
 import { applyTrustProxy } from "./trust-proxy";
 import { buildInfo } from "./build-info";
 import { requireAdminToken } from "./admin-auth";
-import {
-  ADMIN_COMMAND_ALLOWLIST,
-  pushSubscriptions,
-  adminCommandAudit,
-  enqueue,
-  type AdminCommand,
-  type AdminCommandKind,
-} from "./routes-admin-shared";
+import { ADMIN_COMMAND_ALLOWLIST } from "./routes-admin-shared";
 
 const app = express();
 // Same proxy trust as the main app, so req.ip is the client and not nginx.
 applyTrustProxy(app);
-app.use(express.json({ limit: "256kb" }));
 app.disable("etag");
+
+// ---- The main service ----------------------------------------------------
+const MAIN_URL = (process.env.MAIN_URL?.trim() || `http://127.0.0.1:${process.env.PORT || 5000}`).replace(/\/$/, "");
+
+/** Passes a request to the main service and streams the answer back (the
+ *  live console feed is Server-Sent Events). The token travels as it came. */
+async function forward(req: express.Request, res: express.Response, path: string): Promise<void> {
+  const controller = new AbortController();
+  // The response's close, not the request's: a request "closes" as soon as
+  // its body has been read, which aborted every forwarded POST at once.
+  res.on("close", () => { if (!res.writableFinished) controller.abort(); });
+  const headers: Record<string, string> = { accept: String(req.headers.accept ?? "application/json") };
+  if (req.headers.authorization) headers.authorization = String(req.headers.authorization);
+  let body: string | undefined;
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    headers["content-type"] = "application/json";
+    body = JSON.stringify(req.body ?? {});
+  }
+  try {
+    const upstream = await fetch(`${MAIN_URL}${path}`, { method: req.method, headers, body, signal: controller.signal });
+    res.status(upstream.status);
+    for (const name of ["content-type", "content-disposition", "cache-control"]) {
+      const value = upstream.headers.get(name);
+      if (value) res.setHeader(name, value);
+    }
+    if (!upstream.body) { res.end(); return; }
+    res.flushHeaders?.();
+    for await (const chunk of upstream.body as unknown as AsyncIterable<Uint8Array>) {
+      if (!res.write(chunk)) await new Promise((r) => res.once("drain", r));
+    }
+    res.end();
+  } catch (err) {
+    if (controller.signal.aborted) return;
+    if (!res.headersSent) res.status(502).json({ ok: false, message: `The main service is not reachable at ${MAIN_URL} (${(err as Error).message}).` });
+    else res.end();
+  }
+}
+
+app.use(express.json({ limit: "256kb" }));
+// The console's API: live state is in the main service.
+app.use("/api/admin", (req, res) => { void forward(req, res, req.originalUrl); });
 
 // ---- Auth middleware ---------------------------------------------------
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN?.trim() || "";
@@ -51,6 +97,10 @@ app.use((_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("Referrer-Policy", "no-referrer");
+  // The console runs only its own scripts: no inline script, no eval, no
+  // third-party origin. (Inline styles stay for the layout builder.)
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'");
+  res.setHeader("X-Frame-Options", "DENY");
   next();
 });
 
@@ -70,6 +120,8 @@ app.get("/admin/health", (_req, res) => {
 });
 
 // ---- Authenticated endpoints ------------------------------------------
+// A wrong token is what gets counted: 30 refusals per 15 minutes per address.
+app.use("/admin", rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many refused admin requests." } }));
 app.use("/admin", requireAuth);
 
 // Telephony + SIP console (all under /admin, so behind the auth middleware).
@@ -77,105 +129,16 @@ registerAdminTelephonyRoutes(app);
 // Layout / template builder (persisted, served to clients via /api/layout).
 registerAdminLayoutRoutes(app);
 
-app.get("/admin/metrics", (_req, res) => {
-  const mem = process.memoryUsage();
-  res.json({
-    ok: true,
-    metrics: {
-      uptimeSec: Math.round(process.uptime()),
-      rssMb: Math.round(mem.rss / (1024 * 1024)),
-      heapUsedMb: Math.round(mem.heapUsed / (1024 * 1024)),
-      pushSubscribers: pushSubscriptions.size,
-      eventsBackend: eventStore.backend,
-    },
-  });
-});
-
-app.get("/admin/logs/recent", (req, res) => {
-  const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
-  res.json({ ok: true, backend: eventStore.backend, events: eventStore.recent(limit) });
-});
-
-app.get("/admin/clients", (_req, res) => {
-  const subs = Array.from(pushSubscriptions.entries()).map(([id, sub]) => ({
-    id,
-    endpoint: sub.endpoint.slice(0, 80),
-    deviceId: sub.deviceId || null,
-    createdAt: sub.createdAt,
-  }));
-  res.json({ ok: true, subscribers: subs });
-});
-
+// These used to read this process's own copies of live state. The state is
+// in the main service; ask it.
+app.get("/admin/metrics", (req, res) => { void forward(req, res, "/api/admin/system"); });
+app.get("/admin/logs/recent", (req, res) => { void forward(req, res, `/api/admin/events?limit=${encodeURIComponent(String(req.query.limit ?? 100))}`); });
+app.get("/admin/clients", (req, res) => { void forward(req, res, "/api/admin/push"); });
+app.post("/admin/test/push", (req, res) => { void forward(req, res, "/api/admin/push/test"); });
+app.post("/admin/commands/enqueue", (req, res) => { void forward(req, res, "/api/admin/commands"); });
+app.get("/admin/commands/audit", (req, res) => { void forward(req, res, `/api/admin/commands?limit=${encodeURIComponent(String(req.query.limit ?? 100))}`); });
 app.get("/admin/modules", (_req, res) => {
-  res.json({
-    ok: true,
-    moduleAllowlist: ADMIN_COMMAND_ALLOWLIST,
-    pushReady: isWebPushReady(),
-    eventsBackend: eventStore.backend,
-  });
-});
-
-app.post("/admin/commands/enqueue", (req, res) => {
-  const body = (req.body || {}) as Record<string, unknown>;
-  const kind = String(body.kind || "");
-  const deviceId = String(body.deviceId || "");
-  if (!(ADMIN_COMMAND_ALLOWLIST as readonly string[]).includes(kind)) {
-    return res.status(400).json({ ok: false, message: `Unknown command. Allowed: ${ADMIN_COMMAND_ALLOWLIST.join(", ")}` });
-  }
-  if (!/^[a-zA-Z0-9_-]{4,64}$/.test(deviceId)) {
-    return res.status(400).json({ ok: false, message: "deviceId must be 4-64 [a-zA-Z0-9_-]." });
-  }
-  // Validate download-file-from-admin payload server-side so the admin cannot
-  // force the client to fetch an arbitrary URL without oversight.
-  if (kind === "download-file-from-admin") {
-    const payload = body.payload && typeof body.payload === "object" ? (body.payload as Record<string, unknown>) : undefined;
-    const url = typeof payload?.url === "string" ? payload.url : "";
-    const name = typeof payload?.name === "string" ? payload.name : "";
-    if (!url || !/^https?:\/\/.{1,512}$/.test(url)) {
-      return res.status(400).json({ ok: false, message: "download-file-from-admin requires a valid http(s) URL." });
-    }
-    if (name.length > 200 || /[\x00-\x1f\\/:*?"<>|]/.test(name)) {
-      return res.status(400).json({ ok: false, message: "download-file-from-admin name is invalid." });
-    }
-  }
-  const cmd: AdminCommand = {
-    id: `cmd-${(globalThis.crypto as Crypto).randomUUID()}`,
-    kind: kind as AdminCommandKind,
-    createdAt: Date.now(),
-    payload: (body.payload && typeof body.payload === "object" ? (body.payload as Record<string, unknown>) : undefined),
-  };
-  // Use the shared queue exported from routes-admin-shared; the main app
-  // and this admin service share the same module instance when run in
-  // the same process. When run standalone, this enqueue still records
-  // an audit entry but the consumer is responsible for polling.
-  enqueue(deviceId, cmd);
-  adminCommandAudit.push({ ts: Date.now(), kind: "enqueue", commandId: cmd.id, deviceId });
-  if (adminCommandAudit.length > 1000) adminCommandAudit.splice(0, adminCommandAudit.length - 1000);
-  eventStore.record({ kind: "admin-enqueue", meta: { command: kind } });
-  res.json({ ok: true, command: cmd });
-});
-
-app.get("/admin/commands/audit", (req, res) => {
-  const limit = Math.max(1, Math.min(500, Number(req.query.limit) || 100));
-  res.json({ ok: true, audit: adminCommandAudit.slice(-limit) });
-});
-
-app.post("/admin/test/push", async (req, res) => {
-  if (!isWebPushReady()) return res.status(503).json({ ok: false, message: "VAPID keys not configured." });
-  const body = (req.body || {}) as Record<string, unknown>;
-  const id = typeof body.id === "string" ? body.id : null;
-  const title = typeof body.title === "string" ? body.title.slice(0, 64) : "M5cet · admin";
-  const text = typeof body.body === "string" ? body.body.slice(0, 200) : "Admin test push.";
-  const targets = id
-    ? (pushSubscriptions.has(id) ? [pushSubscriptions.get(id)!] : [])
-    : Array.from(pushSubscriptions.values());
-  if (targets.length === 0) return res.status(404).json({ ok: false, message: "No subscriptions." });
-  const results = [];
-  for (const sub of targets) {
-    const r = await sendWebPush(sub, { title, body: text });
-    results.push({ endpoint: sub.endpoint.slice(0, 80), ok: r.ok, error: r.error });
-  }
-  res.json({ ok: true, results });
+  res.json({ ok: true, moduleAllowlist: ADMIN_COMMAND_ALLOWLIST, pushReady: isWebPushReady(), eventsBackend: eventStore.backend, mainUrl: MAIN_URL });
 });
 
 // ---- AI / speech plugin console -----------------------------------------

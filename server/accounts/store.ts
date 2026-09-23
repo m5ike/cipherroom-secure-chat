@@ -110,6 +110,14 @@ function readJson<T>(path: string, fallback: T): T {
 }
 
 const sha256hex = (s: string) => createHash("sha256").update(s).digest("hex");
+
+/** How a session token is known inside the server (never the token itself). */
+export function tokenHash(token: string): string {
+  return sha256hex(token);
+}
+
+/** Told when sessions end: one token (its hash), or every session of the account (null). */
+export type RevokeListener = (accountId: string, tokenHash: string | null, reason: "sign-out" | "sign-out-everywhere" | "deleted" | "admin") => void;
 const ID = /^[A-Za-z0-9_-]{10,64}$/;
 
 /** Stable, non-reversible account id derived from the credential id. */
@@ -126,6 +134,8 @@ export class AccountStore {
   /** Files the disk refused (read-only install): kept in memory instead. */
   private memory = new Map<string, unknown>();
   private writeError: string | null = null;
+  private revokeListeners = new Set<RevokeListener>();
+  private queueStats: ((accountId: string) => { pending: number; bytes: number }) | null = null;
 
   constructor(private readonly dir: string = accountsDir()) {}
 
@@ -274,11 +284,45 @@ export class AccountStore {
   }
 
   revokeToken(token: string): void {
-    this.sessions.delete(sha256hex(token));
+    const key = sha256hex(token);
+    const s = this.sessions.get(key);
+    this.sessions.delete(key);
+    if (s) this.emitRevoke(s.accountId, key, "sign-out");
   }
 
-  revokeAll(accountId: string): void {
+  revokeAll(accountId: string, reason: "sign-out-everywhere" | "deleted" | "admin" = "sign-out-everywhere"): void {
     for (const [k, s] of this.sessions) if (s.accountId === accountId) this.sessions.delete(k);
+    this.emitRevoke(accountId, null, reason);
+  }
+
+  /** Open sessions (valid tokens), for one account or all of them. */
+  sessionCount(accountId?: string, now = Date.now()): number {
+    let n = 0;
+    for (const s of this.sessions.values()) if (s.expiresAt >= now && (!accountId || s.accountId === accountId)) n += 1;
+    return n;
+  }
+
+  /** Whether the session behind `hash` is still valid. */
+  sessionAlive(hash: string, now = Date.now()): boolean {
+    const s = this.sessions.get(hash);
+    return Boolean(s && s.expiresAt >= now && this.accounts.has(s.accountId));
+  }
+
+  /** Sockets that authenticated with a token listen here to end with it. */
+  onRevoke(listener: RevokeListener): () => void {
+    this.revokeListeners.add(listener);
+    return () => this.revokeListeners.delete(listener);
+  }
+
+  private emitRevoke(accountId: string, hash: string | null, reason: Parameters<RevokeListener>[2]): void {
+    for (const listener of this.revokeListeners) {
+      try { listener(accountId, hash, reason); } catch (err) { console.warn(`[accounts] revoke listener failed: ${(err as Error).message}`); }
+    }
+  }
+
+  /** Where summary() reads the mailbox size once the offline queue runs. */
+  setQueueStats(fn: ((accountId: string) => { pending: number; bytes: number }) | null): void {
+    this.queueStats = fn;
   }
 
   /* --------------------------------------------------------------- vault */
@@ -392,6 +436,31 @@ export class AccountStore {
     return rooms;
   }
 
+  /** The relay's record of an away room: cheap, written to disk shortly. */
+  noteAway(accountId: string, room: string, name: string, since = Date.now()): void {
+    const acc = this.get(accountId);
+    if (!acc) return;
+    acc.away = acc.away.filter((a) => a.room !== room);
+    acc.away.push({ room, name: name.slice(0, 48), since });
+    if (acc.away.length > ACCOUNT_LIMITS.maxAwayRooms) acc.away.splice(0, acc.away.length - ACCOUNT_LIMITS.maxAwayRooms);
+    this.persistSoon();
+  }
+
+  noteBack(accountId: string, room: string): void {
+    const acc = this.get(accountId);
+    if (!acc || !acc.away.some((a) => a.room === room)) return;
+    acc.away = acc.away.filter((a) => a.room !== room);
+    this.persistSoon();
+  }
+
+  /** Every away record, to restore the relay after a restart. */
+  allAway(): Array<{ accountId: string; room: string; name: string; since: number }> {
+    this.load();
+    const out: Array<{ accountId: string; room: string; name: string; since: number }> = [];
+    for (const acc of this.accounts.values()) for (const a of acc.away) out.push({ accountId: acc.id, room: a.room, name: a.name, since: a.since });
+    return out;
+  }
+
   isAway(accountId: string, room: string): boolean {
     return Boolean(this.get(accountId)?.away.some((a) => a.room === room));
   }
@@ -436,7 +505,7 @@ export class AccountStore {
     if (!acc) return false;
     this.accounts.delete(accountId);
     this.byCredential.delete(acc.credential.credentialId);
-    this.revokeAll(accountId);
+    this.revokeAll(accountId, "deleted");
     vaultBackend?.erase(accountId);
     this.remove(this.vaultPath(accountId));
     this.remove(this.mailboxPath(accountId));
@@ -483,7 +552,7 @@ export class AccountStore {
       lastLoginAt: acc.lastLoginAt,
       loginCount: acc.loginCount,
       vault: { ...acc.vault },
-      mailbox: this.mailboxStats(acc.id),
+      mailbox: this.queueStats ? this.queueStats(acc.id) : this.mailboxStats(acc.id),
       away: acc.away.map((a) => ({ ...a })),
       pushDevices: acc.push.length,
       audit: acc.audit.slice(-60).reverse(),

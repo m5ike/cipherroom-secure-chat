@@ -200,10 +200,12 @@ describe("passkey account and the away relay", () => {
       const raw = sessionStorage.getItem("m5cet:account:v1");
       const token = raw ? (JSON.parse(raw) as { token: string }).token : "";
       const res = await fetch("/api/storage/status", { headers: { Authorization: `Bearer ${token}` } });
-      return await res.json() as { available: boolean; caller: string; locked: boolean; stats: { databases: number } };
+      return await res.json() as Record<string, unknown>;
     });
     expect(status).toMatchObject({ available: true, caller: "account", locked: false });
-    expect(status.stats.databases).toBeGreaterThanOrEqual(1);
+    // The public status says nothing about the server's other users.
+    expect(status).not.toHaveProperty("stats");
+    expect(status).not.toHaveProperty("openDatabases");
 
     const files = readdirSync(join(dataDir, "storage", "db")).filter((f) => f.endsWith(".db"));
     expect(files).toHaveLength(1);

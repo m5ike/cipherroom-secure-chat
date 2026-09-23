@@ -1,121 +1,248 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>M5cet · admin</title>
-  <style>
-    :root { color-scheme: light dark; }
-    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; background:#0f1217; color:#e7eaf0; }
-    header { background:#10141b; padding: 12px 18px; border-bottom: 1px solid #1f2733; display:flex; align-items:center; gap:10px;}
-    header h1 { font-size: 16px; margin: 0; flex:1; letter-spacing: .02em; }
-    main { padding: 18px; max-width: 1100px; margin: 0 auto; display:grid; gap:18px; }
-    section { background:#151a23; border:1px solid #1f2733; border-radius: 12px; padding: 14px; }
-    section h2 { font-size: 14px; margin: 0 0 10px 0; color:#9aa6b8; text-transform: uppercase; letter-spacing: .08em; }
-    label { display:block; font-size: 12px; margin-top: 8px; color:#9aa6b8; }
-    input, select, textarea { width: 100%; box-sizing: border-box; background:#0c1018; color:#e7eaf0; border:1px solid #2a3242; border-radius:8px; padding: 8px 10px; font: inherit; }
-    button { background:#3358d4; color:#fff; border:0; border-radius:8px; padding: 8px 12px; cursor:pointer; font: inherit; }
-    button.secondary { background:#2a3242; }
-    pre { background:#0c1018; color:#cad2dd; border-radius:8px; padding: 10px; overflow:auto; max-height: 320px; font-size: 12px; }
-    .row { display:flex; gap: 8px; flex-wrap: wrap; align-items:center; }
-    .ok { color:#7adb96; }
-    .err { color:#ff7d7d; }
-    code { font-family: ui-monospace, SFMono-Regular, monospace; }
-    /* Layout builder preview: same --c-<id>-<prop> variables the app consumes. */
-    .lb-preview { background: var(--c-chat-bg, #0f1217); color: var(--c-chat-fg, #e7eaf0); font-size: var(--c-chat-fs, 14px); opacity: var(--c-chat-opacity, 1); border: 1px solid #1f2733; border-radius: 12px; padding: 12px; display: grid; gap: 8px; }
-    .lb-preview > div { max-width: 78%; }
-    .lb-sys { background: var(--c-sys-bg, rgba(42,50,66,.45)); color: var(--c-sys-fg, rgba(154,166,184,.9)); border: var(--c-sys-bwidth, 1px) var(--c-sys-bstyle, dashed) var(--c-sys-border, rgba(42,50,66,.7)); border-radius: var(--c-sys-radius, 12px); font-size: var(--c-sys-fs, 12px); opacity: var(--c-sys-opacity, .9); padding: var(--c-sys-pad, 6px 12px); box-shadow: var(--c-sys-shadow, none); }
-    .lb-in { background: var(--c-in-bg, rgba(51,88,212,.12)); color: var(--c-in-fg, #e7eaf0); border: var(--c-in-bwidth, 1px) var(--c-in-bstyle, solid) var(--c-in-border, rgba(51,88,212,.35)); border-radius: var(--c-in-radius, 18px); font-size: var(--c-in-fs, 14px); opacity: var(--c-in-opacity, 1); padding: var(--c-in-pad, 8px 14px); box-shadow: var(--c-in-shadow, 0 1px 2px rgba(0,0,0,.3)); }
-    .lb-out { background: var(--c-out-bg, #3358d4); color: var(--c-out-fg, #fff); border: var(--c-out-bwidth, 1px) var(--c-out-bstyle, solid) var(--c-out-border, transparent); border-radius: var(--c-out-radius, 18px); font-size: var(--c-out-fs, 14px); opacity: var(--c-out-opacity, 1); padding: var(--c-out-pad, 8px 14px); box-shadow: var(--c-out-shadow, 0 1px 2px rgba(0,0,0,.3)); justify-self: end; }
-    .lb-widget { background: var(--c-widget-bg, #151a23); color: var(--c-widget-fg, #e7eaf0); border: var(--c-widget-bwidth, 1px) var(--c-widget-bstyle, solid) var(--c-widget-border, #2a3242); border-radius: var(--c-widget-radius, 14px); font-size: var(--c-widget-fs, 13px); opacity: var(--c-widget-opacity, 1); padding: 8px 12px; box-shadow: var(--c-widget-shadow, 0 4px 12px rgba(0,0,0,.3)); }
-    .lb-menu { background: var(--c-menu-bg, rgba(21,26,35,.96)); color: var(--c-menu-fg, #e7eaf0); border: var(--c-menu-bwidth, 0px) var(--c-menu-bstyle, solid) var(--c-menu-border, transparent); border-radius: var(--c-menu-radius, 14px); font-size: var(--c-menu-fs, 13px); opacity: var(--c-menu-opacity, 1); padding: 8px 12px; }
-    .lb-composer { background: var(--c-composer-bg, #0c1018); color: var(--c-composer-fg, #e7eaf0); border: var(--c-composer-bwidth, 1px) var(--c-composer-bstyle, solid) var(--c-composer-border, #2a3242); border-radius: var(--c-composer-radius, 22px); font-size: var(--c-composer-fs, 14px); opacity: var(--c-composer-opacity, 1); padding: 10px 14px; max-width: 100% !important; }
-    .lb-meta { font-size: 11px; opacity: .8; margin-bottom: 3px; }
-    .lb-av { display: inline-flex; width: 16px; height: 16px; border-radius: 999px; background: rgba(255,255,255,.2); align-items: center; justify-content: center; font-size: 9px; }
-    .lb-logo { display: inline-block; margin-right: 6px; opacity: .85; }
-    .lb-tpl { display: grid; grid-template-columns: 180px 1fr; gap: 6px; align-items: center; margin-top: 6px; font-size: 12px; }
-    .lb-chip { display: inline-block; background: #2a3242; border-radius: 6px; padding: 1px 6px; font-size: 11px; margin-left: 4px; cursor: pointer; }
-  </style>
+  <meta name="referrer" content="no-referrer" />
+  <title>M5cet · Operator console</title>
+  <link rel="stylesheet" href="console.css" />
 </head>
 <body>
-  <header>
-    <h1>M5cet · admin</h1>
-    <span id="status">disconnected</span>
-  </header>
-  <main>
-    <section>
-      <h2>Authentication</h2>
-      <label>Admin API base URL</label>
-      <input id="base" placeholder="http://localhost:5050" value="" />
-      <label>Bearer token (ADMIN_API_TOKEN)</label>
-      <input id="token" type="password" placeholder="set ADMIN_API_TOKEN env var" />
-      <div class="row" style="margin-top:10px;">
-        <button id="btnConnect">Connect</button>
-        <button class="secondary" id="btnHealth">Health</button>
+  <!-- ============================== sign-in ============================== -->
+  <div class="login" id="login">
+    <form class="login__card" id="loginForm" autocomplete="off">
+      <div class="brand brand--login">
+        <div class="brand__mark">M5</div>
+        <div><div class="brand__name">M5cet operator console</div><div class="brand__sub">Live traffic · audit · users · storage</div></div>
       </div>
-      <pre id="healthOut"></pre>
-    </section>
-
-    <section>
-      <h2>Metrics</h2>
-      <div class="row"><button id="btnMetrics">Refresh</button><button class="secondary" id="btnLogs">Recent logs</button><button class="secondary" id="btnClients">Clients</button></div>
-      <pre id="metricsOut"></pre>
-    </section>
-
-    <section>
-      <h2>Enqueue command</h2>
-      <label>Device ID</label>
-      <input id="devId" placeholder="e.g. abc123-deviceid" />
-      <label>Command</label>
-      <select id="cmdKind">
-        <option>refresh-settings</option>
-        <option>reconnect</option>
-        <option>purge-local</option>
-        <option>show-notification</option>
-        <option>run-diagnostic</option>
-        <option>download-file-from-admin</option>
-      </select>
-      <label>Payload JSON (optional)</label>
-      <textarea id="cmdPayload" rows="4" placeholder='{"title":"Hello","body":"From admin"}'></textarea>
-      <div class="row" style="margin-top:10px;">
-        <button id="btnEnqueue">Enqueue</button>
-        <button class="secondary" id="btnAudit">Show audit</button>
+      <div class="field">
+        <label for="loginBase">Service address</label>
+        <input class="input mono" id="loginBase" placeholder="https://chat.example.com" />
       </div>
-      <pre id="cmdOut"></pre>
-    </section>
-
-    <section>
-      <h2>Push notifications</h2>
-      <label>Notification title</label>
-      <input id="pushTitle" value="M5cet · admin" />
-      <label>Body</label>
-      <input id="pushBody" value="Test push from admin GUI" />
-      <div class="row" style="margin-top:10px;">
-        <button id="btnTestPush">Send test push to all subscribers</button>
+      <div class="field">
+        <label for="loginToken">Admin token (ADMIN_API_TOKEN)</label>
+        <input class="input mono" id="loginToken" type="password" required />
       </div>
-      <pre id="pushOut"></pre>
-    </section>
+      <label class="switch"><input type="checkbox" id="loginRemember" /> Keep the token for this browser tab</label>
+      <button class="btn btn--primary" type="submit">Sign in</button>
+      <p class="login__err err small" id="loginError" hidden></p>
+      <p class="login__note">The token stays in this tab's memory (or its session storage, if you tick the box) and is never written to local storage. Every action you take here is recorded in the audit journal.</p>
+    </form>
+  </div>
 
-    <section>
-      <h2>AI &amp; Speech connectors</h2>
-      <div class="row"><button id="btnPlugins">Refresh connectors</button></div>
-      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Configure keys via server env (never here). Test runs live against the provider.</p>
-      <label>Test prompt / text</label>
-      <input id="pluginTestText" placeholder="Reply with a short greeting." />
-      <div id="connectorList"></div>
-      <audio id="ttsPlayer" controls style="display:none;width:100%;margin-top:10px;"></audio>
-      <pre id="pluginOut"></pre>
-    </section>
+  <!-- ============================== console ============================== -->
+  <div class="shell" id="shell" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand__mark">M5</div>
+        <div><div class="brand__name">M5cet</div><div class="brand__sub" id="brandVersion">operator console</div></div>
+      </div>
+      <nav class="nav" id="nav">
+        <div class="nav__group">Monitor</div>
+        <button class="nav__item" data-route="overview"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Overview</button>
+        <button class="nav__item" data-route="traffic"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Live traffic<span class="nav__badge" id="navRate"></span></button>
+        <button class="nav__item" data-route="connections"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14 0M8.5 16.1a6 6 0 0 1 7 0M12 20h.01M2 8.8a15 15 0 0 1 20 0"/></svg>Connections<span class="nav__badge" id="navConn"></span></button>
+        <button class="nav__item" data-route="rooms"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Rooms<span class="nav__badge" id="navRooms"></span></button>
+        <div class="nav__group">Users &amp; data</div>
+        <button class="nav__item" data-route="users"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Users &amp; passkeys<span class="nav__badge" id="navUsers"></span></button>
+        <button class="nav__item" data-route="queue"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Message queue<span class="nav__badge" id="navQueue"></span></button>
+        <button class="nav__item" data-route="storage"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>Storage &amp; databases</button>
+        <div class="nav__group">Audit &amp; system</div>
+        <button class="nav__item" data-route="audit"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>Audit log<span class="nav__badge" id="navAudit"></span></button>
+        <button class="nav__item" data-route="system"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9zM9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/></svg>System &amp; memory</button>
+        <button class="nav__item" data-route="retention"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Retention</button>
+        <div class="nav__group">Tools</div>
+        <button class="nav__item" data-route="layout"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 9h18"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>Layout builder</button>
+        <button class="nav__item" data-route="telephony"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Telephony &amp; SIP</button>
+        <button class="nav__item" data-route="plugins"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>AI &amp; speech</button>
+        <button class="nav__item" data-route="commands"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 17 6-6-6-6M12 19h8"/></svg>Commands &amp; push</button>
+      </nav>
+      <div class="sidebar__foot">
+        <div id="footBuild" class="mono small"></div>
+        <div id="footUptime" class="small"></div>
+      </div>
+    </aside>
 
-    <section>
-      <h2>Live plugin log</h2>
-      <div class="row"><button id="btnLiveLog">Start live log</button><button class="secondary" id="btnLiveStop">Stop</button><button class="secondary" id="btnLiveClear">Clear</button></div>
-      <pre id="liveLog" style="max-height:280px;"></pre>
-    </section>
+    <div class="main">
+      <header class="topbar">
+        <div>
+          <div class="topbar__title" id="pageTitle">Overview</div>
+          <div class="topbar__crumb" id="pageCrumb">Everything at a glance</div>
+        </div>
+        <div class="topbar__spacer"></div>
+        <span class="live" id="liveState"><span class="live__dot"></span><span id="liveText">offline</span></span>
+        <button class="btn btn--sm" id="btnTheme" title="Light / dark">◐</button>
+        <button class="btn btn--sm" id="btnSignOut">Sign out</button>
+      </header>
 
-    <section>
-      <h2>Layout / template builder</h2>
-      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Shape every client's chat: per-component colours/borders/fonts and short text templates with <code>{{placeholders}}</code> and <code>{{> includes}}</code> (named partials). Templates render as TEXT only — no markup can reach other users. Saved server-side; clients pick it up on load (and every 5 min).</p>
+      <main class="content">
+        <!-- ============================ overview ============================ -->
+        <section data-panel="overview" class="stack">
+          <div class="grid grid--kpi" id="kpis"></div>
+          <div class="grid grid--2">
+            <div class="card">
+              <div class="card__head"><div class="card__title">Traffic · last 2 minutes</div><div class="card__actions legend" id="trafficLegend"></div></div>
+              <svg class="chart" id="chartTraffic"></svg>
+            </div>
+            <div class="card">
+              <div class="card__head"><div class="card__title">Memory · last 30 minutes</div><div class="card__actions legend" id="memLegend"></div></div>
+              <svg class="chart" id="chartMemory"></svg>
+            </div>
+          </div>
+          <div class="grid grid--3">
+            <div class="card"><div class="card__head"><div class="card__title">Traffic by class</div></div><div class="bars" id="classBars"></div></div>
+            <div class="card"><div class="card__head"><div class="card__title">Health</div></div><div id="healthChecks"></div></div>
+            <div class="card"><div class="card__head"><div class="card__title">Latest warnings &amp; errors</div><div class="card__actions"><button class="btn btn--sm" data-go="audit">Open log</button></div></div><div id="recentProblems" class="stack small"></div></div>
+          </div>
+        </section>
+
+        <!-- ============================ traffic ============================ -->
+        <section data-panel="traffic" class="stack" hidden>
+          <div class="card">
+            <div class="card__head">
+              <div class="card__title">Live traffic</div>
+              <div class="card__hint">Metadata only — the server relays ciphertext and never sees message content.</div>
+              <div class="card__actions">
+                <button class="btn btn--sm" id="trafficPause">Pause</button>
+                <button class="btn btn--sm" id="trafficClear">Clear</button>
+              </div>
+            </div>
+            <div class="toolbar">
+              <select class="input" id="fCls"><option value="">All classes</option><option>signaling</option><option>presence</option><option>relay</option><option>storage</option><option>file-proxy</option><option>account</option><option>admin</option><option>push</option><option>api</option><option>static</option><option>error</option><option>other</option></select>
+              <select class="input" id="fChannel"><option value="">WS + HTTP</option><option value="ws">WebSocket</option><option value="http">HTTP</option></select>
+              <select class="input" id="fDir"><option value="">In + out</option><option value="in">Inbound</option><option value="out">Outbound</option></select>
+              <input class="input" id="fText" placeholder="Filter: type, peer, account, conn, IP…" />
+              <label class="switch small"><input type="checkbox" id="fErrors" /> errors only</label>
+              <span class="spacer"></span>
+              <span class="muted small" id="trafficCount"></span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="t" id="trafficTable">
+              <thead><tr><th>Time</th><th>Ch</th><th>Dir</th><th>Class</th><th>Type</th><th class="num">Bytes</th><th>Peer / account</th><th>Room</th><th>Conn</th><th>Status</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Throughput</div><div class="card__actions legend" id="trafficLegend2"></div></div>
+            <svg class="chart chart--tall" id="chartTraffic2"></svg>
+          </div>
+        </section>
+
+        <!-- ============================ connections ============================ -->
+        <section data-panel="connections" class="stack" hidden>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Live WebSocket connections</div><div class="card__hint">Address truncated to /24 (/48 for IPv6). Client is the browser and OS family.</div><div class="card__actions"><button class="btn btn--sm" data-refresh="connections">Refresh</button></div></div>
+            <div class="table-wrap">
+              <table class="t" id="connTable">
+                <thead><tr><th>Conn</th><th>Name</th><th>Peer</th><th>Account</th><th>Room</th><th>Client</th><th>Address</th><th class="num">In</th><th class="num">Out</th><th>Connected</th><th>Last seen</th><th></th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================ rooms ============================ -->
+        <section data-panel="rooms" class="stack" hidden>
+          <div class="grid grid--kpi" id="roomKpis"></div>
+          <div id="roomCards" class="grid grid--2"></div>
+        </section>
+
+        <!-- ============================ users ============================ -->
+        <section data-panel="users" class="stack" hidden>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Accounts</div><div class="card__hint">Signed in with a passkey. The server holds public keys only; vault contents are sealed in the browser.</div>
+              <div class="card__actions"><input class="input" id="userFilter" placeholder="Search name or id…" /><button class="btn btn--sm" data-refresh="users">Refresh</button></div></div>
+            <div class="table-wrap">
+              <table class="t" id="userTable">
+                <thead><tr><th>Name</th><th>Account</th><th>Created</th><th>Last sign-in</th><th class="num">Sign-ins</th><th>Passkey</th><th>Database</th><th class="num">Vault</th><th class="num">Queue</th><th>Away</th><th class="num">Sessions</th></tr></thead>
+                <tbody></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================ queue ============================ -->
+        <section data-panel="queue" class="stack" hidden>
+          <div class="grid grid--kpi" id="queueKpis"></div>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Mailboxes</div><div class="card__hint">Messages the server holds for signed-in users who are away — room-key ciphertext, delivered in order, removed only on acknowledgement.</div><div class="card__actions"><button class="btn btn--sm" data-refresh="queue">Refresh</button></div></div>
+            <div class="table-wrap table-wrap--short">
+              <table class="t" id="queueTable"><thead><tr><th>Account</th><th class="num">Queued</th><th class="num">Delivering</th><th class="num">Dead</th><th class="num">Bytes</th><th class="num">Rooms</th><th>Oldest</th></tr></thead><tbody></tbody></table>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Dead letters</div><div class="card__hint">Expired, or delivered too often without an acknowledgement.</div></div>
+            <div class="table-wrap table-wrap--short">
+              <table class="t" id="deadTable"><thead><tr><th>Stored</th><th>Account</th><th>Room</th><th>From</th><th>Kind</th><th class="num">Attempts</th><th>Reason</th><th></th></tr></thead><tbody></tbody></table>
+            </div>
+          </div>
+        </section>
+
+        <!-- ============================ storage ============================ -->
+        <section data-panel="storage" class="stack" hidden>
+          <div class="grid grid--kpi" id="dbKpis"></div>
+          <div class="grid grid--2">
+            <div class="card"><div class="card__head"><div class="card__title">Global database</div><div class="card__actions"><button class="btn btn--sm" data-refresh="storage">Refresh</button></div></div><dl class="kv" id="dbGlobal"></dl></div>
+            <div class="card"><div class="card__head"><div class="card__title">Tables</div></div><div class="table-wrap table-wrap--short"><table class="t" id="dbTables"><thead><tr><th>Table</th><th class="num">Rows</th></tr></thead><tbody></tbody></table></div></div>
+          </div>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Encrypted databases</div><div class="card__hint">One SQLCipher file per account (key from the passkey, held in memory only) or per anonymous session (key wrapped by the master key, one-day TTL).</div></div>
+            <div class="table-wrap"><table class="t" id="dbIndex"><thead><tr><th>Database</th><th>Owner</th><th>Kind</th><th>Key</th><th class="num">Size</th><th>Created</th><th>Last opened</th><th>Expires</th></tr></thead><tbody></tbody></table></div>
+          </div>
+        </section>
+
+        <!-- ============================ audit ============================ -->
+        <section data-panel="audit" class="stack" hidden>
+          <div class="card">
+            <div class="card__head">
+              <div class="card__title">Audit journal</div>
+              <div class="card__actions">
+                <label class="switch small" title="Record who reached whom (metadata only). Off by default."><input type="checkbox" id="auditComm" /> Communication auditing</label>
+                <a class="btn btn--sm" id="auditCsv">Export CSV</a>
+                <a class="btn btn--sm" id="auditJson">Export JSON</a>
+              </div>
+            </div>
+            <div class="toolbar">
+              <select class="input" id="aCat"><option value="">All categories</option><option>security</option><option>account</option><option>communication</option><option>storage</option><option>admin</option><option>network</option><option>system</option></select>
+              <select class="input" id="aLevel"><option value="">Any level</option><option value="info">info +</option><option value="notice">notice +</option><option value="warn">warn +</option><option value="error">error</option></select>
+              <input class="input" id="aText" placeholder="Search events, actors, details…" />
+              <div class="seg" id="aSource"><button aria-pressed="true" data-src="memory">Live</button><button data-src="db">Database</button></div>
+              <span class="spacer"></span>
+              <span class="muted small" id="auditCount"></span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="t" id="auditTable"><thead><tr><th>Time</th><th>Level</th><th>Category</th><th>Event</th><th>Actor</th><th>Target</th><th>Room</th><th class="num">Bytes</th><th>Status</th></tr></thead><tbody></tbody></table>
+          </div>
+        </section>
+
+        <!-- ============================ system ============================ -->
+        <section data-panel="system" class="stack" hidden>
+          <div class="grid grid--kpi" id="sysKpis"></div>
+          <div class="grid grid--2">
+            <div class="card"><div class="card__head"><div class="card__title">Heap &amp; RSS</div><div class="card__actions legend" id="sysMemLegend"></div></div><svg class="chart chart--tall" id="chartSysMem"></svg></div>
+            <div class="card"><div class="card__head"><div class="card__title">Event loop &amp; CPU</div><div class="card__actions legend" id="sysLoopLegend"></div></div><svg class="chart chart--tall" id="chartSysLoop"></svg></div>
+          </div>
+          <div class="grid grid--2">
+            <div class="card"><div class="card__head"><div class="card__title">Process</div></div><dl class="kv" id="sysProcess"></dl></div>
+            <div class="card"><div class="card__head"><div class="card__title">Open resources</div></div><div class="bars" id="sysResources"></div></div>
+          </div>
+        </section>
+
+        <!-- ============================ retention ============================ -->
+        <section data-panel="retention" class="stack" hidden>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Retention policy</div><div class="card__actions"><button class="btn btn--primary btn--sm" id="retentionRun">Sweep now</button></div></div>
+            <dl class="kv" id="retentionPolicy"></dl>
+          </div>
+          <div class="card"><div class="card__head"><div class="card__title">Last sweep</div></div><pre class="code" id="retentionLast">—</pre></div>
+        </section>
+
+        <!-- ============================ tools (ported) ============================ -->
+        <section data-panel="layout" class="stack legacy" hidden><div class="card"><div class="card__head"><div class="card__title">Layout / template builder</div></div>
+
+      <p style="font-size:12px;margin:6px 0;">Shape every client's chat: per-component colours/borders/fonts and short text templates with <code>{{placeholders}}</code> and <code>{{> includes}}</code> (named partials). Templates render as TEXT only — no markup can reach other users. Saved server-side; clients pick it up on load (and every 5 min).</p>
       <div class="row"><button id="lbLoad">Load</button><button id="lbSave">Save</button><button class="secondary" id="lbReset">Reset to defaults</button><button class="secondary" id="lbExport">Export JSON</button><label class="secondary" style="display:inline-block;background:#2a3242;padding:8px 12px;border-radius:8px;cursor:pointer;margin:0;color:#fff;font-size:inherit;">Import JSON <input id="lbImport" type="file" accept="application/json" style="display:none;" /></label></div>
 
       <h2 style="margin-top:14px;">Component style</h2>
@@ -170,16 +297,15 @@
         <div class="lb-composer"><span id="pvComposer" style="opacity:.6;"></span></div>
       </div>
       <pre id="lbOut"></pre>
-    </section>
+    </div></section>
+        <section data-panel="telephony" class="stack legacy" hidden><div class="card"><div class="card__head"><div class="card__title">Telephony &amp; SIP console</div></div>
 
-    <section>
-      <h2>Telephony &amp; SIP console</h2>
       <div class="row"><button id="btnTel">Refresh telephony</button></div>
-      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Voice + SMS via Twilio / Telnyx / Vonage. Keys come from server env (ENABLE_TELEPHONY=1). The audio/media path needs an external SIP↔WebRTC gateway — this console manages providers, webhooks, trunk config + DID routing.</p>
+      <p style="font-size:12px;margin:6px 0;">Voice + SMS via Twilio / Telnyx / Vonage. Keys come from server env (ENABLE_TELEPHONY=1). The audio/media path needs an external SIP↔WebRTC gateway — this console manages providers, webhooks, trunk config + DID routing.</p>
       <div id="telList"></div>
 
       <h2 style="margin-top:14px;">Default providers</h2>
-      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Which provider handles SMS and which handles voice. Order: request → this choice (persisted) → SMS_PROVIDER / VOICE_PROVIDER in .env → first configured.</p>
+      <p style="font-size:12px;margin:6px 0;">Which provider handles SMS and which handles voice. Order: request → this choice (persisted) → SMS_PROVIDER / VOICE_PROVIDER in .env → first configured.</p>
       <div class="row">
         <label style="margin:0;">SMS</label>
         <select id="defSms"><option value="">(env / auto)</option><option value="twilio">twilio</option><option value="telnyx">telnyx</option><option value="vonage">vonage</option></select>
@@ -190,7 +316,7 @@
       <pre id="telDefaultsOut"></pre>
 
       <h2 style="margin-top:14px;">Webhooks (/wh/{provider}/{type})</h2>
-      <p style="font-size:12px;color:#9aa6b8;margin:6px 0;">Served by the main app. Set PUBLIC_BASE_URL so the URLs are absolute, then "Install" pushes them into the provider. Signatures are verified when TWILIO_AUTH_TOKEN / TELNYX_PUBLIC_KEY / VONAGE_SIGNATURE_SECRET are set.</p>
+      <p style="font-size:12px;margin:6px 0;">Served by the main app. Set PUBLIC_BASE_URL so the URLs are absolute, then "Install" pushes them into the provider. Signatures are verified when TWILIO_AUTH_TOKEN / TELNYX_PUBLIC_KEY / VONAGE_SIGNATURE_SECRET are set.</p>
       <div id="whList"></div>
       <pre id="whOut"></pre>
 
@@ -237,326 +363,54 @@
         <button class="secondary" id="btnSipRoute">Route DID</button>
       </div>
       <pre id="sipOut"></pre>
-    </section>
-  </main>
+    </div></section>
+        <section data-panel="plugins" class="stack legacy" hidden><div class="card"><div class="card__head"><div class="card__title">AI &amp; Speech connectors</div></div>
 
-  <script>
-    const $ = (id) => document.getElementById(id);
-    const STORAGE_KEY = "m5cet:admin:cfg";
+      <div class="row"><button id="btnPlugins">Refresh connectors</button></div>
+      <p style="font-size:12px;margin:6px 0;">Configure keys via server env (never here). Test runs live against the provider.</p>
+      <label>Test prompt / text</label>
+      <input id="pluginTestText" placeholder="Reply with a short greeting." />
+      <div id="connectorList"></div>
+      <audio id="ttsPlayer" controls style="display:none;width:100%;margin-top:10px;"></audio>
+      <pre id="pluginOut"></pre>
+    </div><div class="card"><div class="card__head"><div class="card__title">Live plugin log</div></div>
 
-    function loadCfg() {
-      try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch { return {}; }
-    }
-    function saveCfg(cfg) {
-      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg)); } catch {}
-    }
+      <div class="row"><button id="btnLiveLog">Start live log</button><button class="secondary" id="btnLiveStop">Stop</button><button class="secondary" id="btnLiveClear">Clear</button></div>
+      <pre id="liveLog" style="max-height:280px;"></pre>
+    </div></section>
+        <section data-panel="commands" class="stack" hidden>
+          <div class="grid grid--2">
+            <div class="card">
+              <div class="card__head"><div class="card__title">Send a command to a device</div><div class="card__hint">Delivered at once when the device is connected, otherwise on its next connection. The user is asked before anything is downloaded.</div></div>
+              <form id="cmdForm" class="stack">
+                <div class="field"><label for="cmdDevice">Device id</label><input class="input mono" id="cmdDevice" required pattern="[A-Za-z0-9_\-]{4,64}" placeholder="e.g. dev-3f9c0a…" /></div>
+                <div class="field"><label for="cmdKindNew">Command</label><select class="input" id="cmdKindNew"></select></div>
+                <div class="field"><label for="cmdPayloadNew">Payload (JSON, optional)</label><textarea class="input" id="cmdPayloadNew" placeholder='{"title":"Hello","body":"From the operator"}'></textarea></div>
+                <div class="row"><button class="btn btn--primary" type="submit">Send</button><span class="muted small" id="cmdResult"></span></div>
+              </form>
+            </div>
+            <div class="card">
+              <div class="card__head"><div class="card__title">Web Push</div><div class="card__actions"><button class="btn btn--sm" type="button" data-refresh="commands">Refresh</button></div></div>
+              <dl class="kv" id="pushStatus"></dl>
+              <form id="pushForm" class="stack">
+                <div class="field"><label for="pushTitleNew">Title</label><input class="input" id="pushTitleNew" value="M5cet · admin" maxlength="64" /></div>
+                <div class="field"><label for="pushBodyNew">Body</label><input class="input" id="pushBodyNew" value="Test push from the operator console" maxlength="200" /></div>
+                <div class="row"><button class="btn" type="submit">Send a test push to every subscriber</button><span class="muted small" id="pushResult"></span></div>
+              </form>
+            </div>
+          </div>
+          <div class="card"><div class="card__head"><div class="card__title">Waiting commands</div></div><div class="table-wrap table-wrap--short"><table class="t" id="cmdPending"><thead><tr><th>Device</th><th>Command</th><th>Queued</th><th>Id</th></tr></thead><tbody></tbody></table></div></div>
+          <div class="card"><div class="card__head"><div class="card__title">Delivery log</div><div class="card__hint">enqueue → deliver (the socket took it) → ack (the app ran it)</div></div><div class="table-wrap table-wrap--short"><table class="t" id="cmdAudit"><thead><tr><th>Time</th><th>Step</th><th>Command</th><th>Device</th><th>Peer</th><th>Result</th></tr></thead><tbody></tbody></table></div></div>
+          <div class="card"><div class="card__head"><div class="card__title">Push subscribers (devices without an account)</div></div><div class="table-wrap table-wrap--short"><table class="t" id="pushSubs"><thead><tr><th>Id</th><th>Push service</th><th>Device</th><th>Since</th><th>Keys</th><th></th></tr></thead><tbody></tbody></table></div></div>
+        </section>
+      </main>
+    </div>
+  </div>
 
-    const cfg = loadCfg();
-    if (!cfg.base) cfg.base = window.location.origin;
-    $("base").value = cfg.base || "";
-    $("token").value = cfg.token || "";
-
-    async function api(path, opts = {}) {
-      const base = $("base").value.trim().replace(/\/$/, "");
-      const token = $("token").value.trim();
-      const res = await fetch(base + path, {
-        ...opts,
-        headers: {
-          "Content-Type": "application/json",
-          ...(opts.headers || {}),
-          ...(token ? { Authorization: "Bearer " + token } : {}),
-        },
-      });
-      const text = await res.text();
-      let json; try { json = JSON.parse(text); } catch { json = { raw: text }; }
-      return { ok: res.ok, status: res.status, json };
-    }
-
-    function show(el, data) {
-      $(el).textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
-    }
-
-    $("btnConnect").onclick = async () => {
-      saveCfg({ base: $("base").value.trim(), token: $("token").value.trim() });
-      const r = await api("/admin/health");
-      $("status").textContent = r.ok ? "connected" : "auth/connect failed (" + r.status + ")";
-      $("status").className = r.ok ? "ok" : "err";
-      show("healthOut", r.json);
-    };
-
-    $("btnHealth").onclick = async () => show("healthOut", (await api("/admin/health")).json);
-    $("btnMetrics").onclick = async () => show("metricsOut", (await api("/admin/metrics")).json);
-    $("btnLogs").onclick = async () => show("metricsOut", (await api("/admin/logs/recent?limit=30")).json);
-    $("btnClients").onclick = async () => show("metricsOut", (await api("/admin/clients")).json);
-    $("btnAudit").onclick = async () => show("cmdOut", (await api("/admin/commands/audit?limit=50")).json);
-    function connectorRow(c) {
-      const badge = c.configured ? '<span class="ok">configured</span>' : '<span class="err">' + (c.reason || 'not configured') + '</span>';
-      const model = c.model ? ' · <code>' + c.model + '</code>' : '';
-      return '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:6px 0;">'
-        + '<span><b>' + c.kind.toUpperCase() + '</b> ' + c.label + model + ' — ' + badge + '</span>'
-        + '<button data-kind="' + c.kind + '" data-id="' + c.id + '" class="secondary btnTestConn"' + (c.configured ? '' : ' disabled') + '>Test</button>'
-        + '</div>';
-    }
-    $("btnPlugins").onclick = async () => {
-      const r = await api("/admin/plugins");
-      if (!r.ok) return show("pluginOut", r.json);
-      const s = r.json;
-      const all = [].concat(s.ai || [], s.tts || [], s.stt || []);
-      $("connectorList").innerHTML =
-        '<p style="font-size:12px;color:#9aa6b8;">AI: ' + (s.enabled.ai ? 'ENABLED' : 'disabled') + ' · Speech: ' + (s.enabled.speech ? 'ENABLED' : 'disabled') + '</p>'
-        + all.map(connectorRow).join("");
-      document.querySelectorAll(".btnTestConn").forEach((b) => b.onclick = () => testConnector(b.dataset.kind, b.dataset.id));
-      show("pluginOut", { defaults: s.defaults, enabled: s.enabled });
-    };
-    async function testConnector(kind, id) {
-      show("pluginOut", "Testing " + kind + "/" + id + "…");
-      const r = await api("/admin/plugins/test", { method: "POST", body: JSON.stringify({ kind, id, text: $("pluginTestText").value.trim() || undefined }) });
-      if (r.ok && kind === "tts" && r.json.result && r.json.result.audioBase64) {
-        const p = $("ttsPlayer");
-        p.src = "data:" + (r.json.result.mime || "audio/mpeg") + ";base64," + r.json.result.audioBase64;
-        p.style.display = "block";
-        const clone = Object.assign({}, r.json.result); delete clone.audioBase64; r.json.result = Object.assign(clone, { audioBase64: "[" + r.json.result.audioBase64.length + " b64 chars]" });
-      }
-      show("pluginOut", r.json);
-    }
-
-    let liveCtrl = null;
-    $("btnLiveLog").onclick = async () => {
-      if (liveCtrl) liveCtrl.abort();
-      liveCtrl = new AbortController();
-      const base = $("base").value.trim().replace(/\/$/, "");
-      const token = $("token").value.trim();
-      try {
-        const res = await fetch(base + "/admin/logs/stream", { headers: token ? { Authorization: "Bearer " + token } : {}, signal: liveCtrl.signal });
-        if (!res.ok || !res.body) { $("liveLog").textContent = "stream failed (" + res.status + ")"; return; }
-        $("liveLog").textContent = "";
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = "";
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const parts = buf.split("\n\n"); buf = parts.pop() || "";
-          for (const part of parts) {
-            const line = part.split("\n").find((l) => l.startsWith("data:"));
-            if (!line) continue;
-            try {
-              const e = JSON.parse(line.slice(5).trim());
-              const t = new Date(e.ts).toLocaleTimeString();
-              $("liveLog").textContent += t + "  [" + e.level + "] " + e.kind + (e.connector ? "/" + e.connector : "") + "  " + e.message + (e.ms != null ? " (" + e.ms + "ms)" : "") + "\n";
-              $("liveLog").scrollTop = $("liveLog").scrollHeight;
-            } catch {}
-          }
-        }
-      } catch (e) { if (e.name !== "AbortError") $("liveLog").textContent += "\n[stream error] " + e.message; }
-    };
-    $("btnLiveStop").onclick = () => { if (liveCtrl) { liveCtrl.abort(); liveCtrl = null; } };
-    $("btnLiveClear").onclick = () => { $("liveLog").textContent = ""; };
-
-    // ---- Telephony & SIP console ----
-    const esc = (v) => String(v == null ? '' : v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
-    $("btnTel").onclick = async () => {
-      const r = await api("/admin/telephony");
-      if (!r.ok) return show("telList", r.json);
-      const s = r.json;
-      // This page is read from disk, the API from dist/admin.cjs — after an
-      // update they can disagree. Refuse to render misleading values then.
-      if (s.apiVersion !== 2) {
-        $("telList").innerHTML = '<p class="err" style="font-size:13px;"><b>Admin backend is older than this page.</b> The running <code>dist/admin.cjs</code> predates the telephony persistence / webhook release (missing <code>apiVersion</code>, <code>persistence</code>, <code>defaultsSource</code>). Rebuild and restart the admin service:<br>'
-          + '• native: <code>npm run build</code> then restart the admin unit/process (or run <code>./update.sh</code>)<br>'
-          + '• docker: <code>docker compose --profile admin up -d --build</code> (the new compose also mounts the <code>m5cet-data</code> volume for persistence)</p>';
-        $("whList").innerHTML = ""; return;
-      }
-      const src = (k) => (s.defaultsSource && s.defaultsSource[k]) || '—';
-      const conn = (c) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span><b>' + esc((c.kind || '').toUpperCase()) + '</b> ' + esc(c.label) + (c.configured ? ' — <span class="ok">configured</span>' + (c.note ? ' <span style="color:#8b98a9">(' + esc(c.note) + ')</span>' : '') : ' — <span class="err">' + esc(c.reason || 'not configured') + '</span>') + '</span></div>';
-      const trunk = (tk) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:5px 0;"><span>☎ <b>' + esc(tk.id) + '</b> ' + esc(tk.label || '') + ' · ' + esc(tk.host || '?') + ':' + esc(tk.port || 5060) + ' · DIDs: ' + esc((tk.didNumbers || []).join(', ') || '—') + (tk.hasPassword ? ' · 🔒' : '') + (tk.source === 'env' ? ' · <span class="ok">from .env (read-only)</span>' : '') + '</span></div>';
-      const p = s.persistence || {};
-      const persist = p.writable
-        ? '<span class="ok">persistent</span> → <code>' + esc(p.file) + '</code>' + (p.lastSaveError ? ' <span class="err">' + esc(p.lastSaveError) + '</span>' : '')
-        : '<span class="err">NOT writable</span> (' + esc(p.reason || 'mount a volume / set DATA_DIR') + ') — trunks saved in memory only';
-      const envT = s.envTrunks || { loaded: 0, errors: [] };
-      $("telList").innerHTML =
-        '<p style="font-size:12px;color:#9aa6b8;">Telephony: ' + (s.enabled ? 'ENABLED' : 'disabled')
-        + ' · SMS default: <b>' + esc(s.defaults && s.defaults.sms || '—') + '</b> (' + esc(src('sms')) + ')'
-        + ' · Voice default: <b>' + esc(s.defaults && s.defaults.voice || '—') + '</b> (' + esc(src('voice')) + ')'
-        + ' · PUBLIC_BASE_URL: ' + (s.publicBaseUrl ? '<code>' + esc(s.publicBaseUrl) + '</code>' : '<span class="err">not set</span> — add <code>PUBLIC_BASE_URL=https://your.domain</code> to <code>.env</code> and restart (needed for webhooks + Twilio signature check)') + '</p>'
-        + '<p style="font-size:12px;color:#9aa6b8;">Storage: ' + persist + '</p>'
-        + [].concat(s.sms || [], s.voice || []).map(conn).join('')
-        + '<h2 style="margin-top:10px;">Configured trunks</h2>'
-        + ((s.sip && s.sip.length ? s.sip.map(trunk).join('') : '<p style="font-size:12px;color:#9aa6b8;">no trunks</p>'))
-        + (envT.errors && envT.errors.length ? '<p class="err" style="font-size:12px;">SIP_TRUNKS errors: ' + esc(envT.errors.join('; ')) + '</p>' : '');
-      $("defSms").value = (s.settings && s.settings.smsProvider) || '';
-      $("defVoice").value = (s.settings && s.settings.voiceProvider) || '';
-      renderWebhooks(s.webhooks || [], s.publicBaseUrl);
-    };
-    $("btnTelDefaults").onclick = async () => {
-      const r = await api("/admin/telephony/settings", { method: "PUT", body: JSON.stringify({ smsProvider: $("defSms").value, voiceProvider: $("defVoice").value }) });
-      show("telDefaultsOut", r.json);
-      $("btnTel").click();
-    };
-    function renderWebhooks(list, baseUrl) {
-      $("whList").innerHTML = list.map((p) => {
-        const v = p.verification || {};
-        const rows = (p.specs || []).map((w) => '<div style="font-size:12px;padding:2px 0;"><code>' + esc(w.method) + ' ' + esc(w.url || w.path) + '</code> — ' + esc(w.description) + '</div>').join('');
-        return '<div style="border-bottom:1px solid #1f2733;padding:8px 0;">'
-          + '<div class="row" style="justify-content:space-between;"><span><b>' + esc(p.provider) + '</b> · verification: ' + (v.configured ? '<span class="ok">' + esc(v.verify) + ' (enforced)</span>' : '<span class="err">not verified — set ' + esc(v.needs) + '</span>') + '</span>'
-          + '<button class="secondary btnWhInstall" data-provider="' + esc(p.provider) + '"' + (baseUrl ? '' : ' disabled title="set PUBLIC_BASE_URL"') + '>Install in ' + esc(p.provider) + '</button></div>'
-          + rows + '</div>';
-      }).join('');
-      document.querySelectorAll(".btnWhInstall").forEach((b) => b.onclick = async () => {
-        show("whOut", "Installing webhooks in " + b.dataset.provider + "…");
-        const r = await api("/admin/telephony/webhooks/install", { method: "POST", body: JSON.stringify({ provider: b.dataset.provider }) });
-        show("whOut", r.json);
-      });
-    }
-    $("btnTelEvents").onclick = async () => {
-      const r = await api("/admin/telephony/events?limit=100");
-      if (!r.ok) return show("telEvents", r.json);
-      $("telEvents").textContent = (r.json.events || []).slice().reverse().map((e) =>
-        new Date(e.ts).toLocaleTimeString() + '  ' + e.provider + '/' + e.type + '  [' + e.direction + ']  ' + e.summary
-        + (e.status ? '  status=' + e.status : '') + (e.route ? '  → trunk ' + e.route.trunkId : '') + (e.verified ? '' : '  (UNVERIFIED)')
-      ).join('\n') || '(no events yet)';
-    };
-    $("btnTelEventsClear").onclick = async () => { await api("/admin/telephony/events", { method: "DELETE" }); $("btnTelEvents").click(); };
-    $("btnTelTest").onclick = async () => {
-      const kind = $("telKind").value;
-      const body = { kind, to: $("telTo").value.trim(), text: $("telText").value.trim() || undefined };
-      show("telOut", "Testing " + kind + "…");
-      const r = await api("/admin/telephony/test", { method: "POST", body: JSON.stringify(body) });
-      show("telOut", r.json);
-    };
-    $("btnSipSave").onclick = async () => {
-      const body = {
-        id: $("sipId").value.trim(), label: $("sipLabel").value.trim(),
-        host: $("sipHost").value.trim(), port: Number($("sipPort").value.trim()) || 5060,
-        username: $("sipUser").value.trim(), password: $("sipPass").value,
-        didNumbers: $("sipDids").value.split(",").map(s => s.trim()).filter(Boolean),
-        callerIdName: $("sipCidName").value.trim(), callerIdNumber: $("sipCidNum").value.trim(),
-      };
-      const r = await api("/admin/telephony/sip/trunks", { method: "PUT", body: JSON.stringify(body) });
-      show("sipOut", r.json);
-      $("btnTel").click();
-    };
-    $("btnSipDelete").onclick = async () => {
-      const id = $("sipId").value.trim();
-      if (!id) return show("sipOut", "Enter trunk id to delete.");
-      const r = await api("/admin/telephony/sip/trunks", { method: "DELETE", body: JSON.stringify({ id }) });
-      show("sipOut", r.json);
-      $("btnTel").click();
-    };
-    $("btnSipRoute").onclick = async () => {
-      const r = await api("/admin/telephony/sip/route", { method: "POST", body: JSON.stringify({ did: $("sipDid").value.trim() }) });
-      show("sipOut", r.json);
-    };
-
-    $("btnEnqueue").onclick = async () => {
-      let payload = undefined;
-      const raw = $("cmdPayload").value.trim();
-      if (raw) {
-        try { payload = JSON.parse(raw); } catch (e) { return show("cmdOut", "Invalid JSON: " + e.message); }
-      }
-      const r = await api("/admin/commands/enqueue", {
-        method: "POST",
-        body: JSON.stringify({ kind: $("cmdKind").value, deviceId: $("devId").value.trim(), payload }),
-      });
-      show("cmdOut", r.json);
-    };
-
-    $("btnTestPush").onclick = async () => {
-      const r = await api("/admin/test/push", {
-        method: "POST",
-        body: JSON.stringify({ title: $("pushTitle").value, body: $("pushBody").value }),
-      });
-      show("pushOut", r.json);
-    };
-
-    // ---- Layout / template builder ----
-    // Mirrors client/src/lib/layout-config.ts (renderTemplate + css var mapping);
-    // the server re-validates everything on save.
-    const LB_COMPS = ["chat", "in", "sys", "out", "widget", "menu", "composer"];
-    const LB_TPL = {
-      systemHeader: ["appName", "date", "time", "room"], incomingMeta: ["sender", "time", "date", "room"], outgoingMeta: ["sender", "time", "date", "room"],
-      composerPlaceholder: ["placeholder", "room", "peerCount"], widgetTitle: ["title", "peerCount", "room"], chatEmptyTitle: ["title", "appName"], chatEmptyBody: ["body", "appName"],
-    };
-    const LB_DEFAULT_TPL = { systemHeader: "{{appName}} · {{date}}", incomingMeta: "{{time}}", outgoingMeta: "{{time}}", composerPlaceholder: "{{placeholder}}", widgetTitle: "{{title}}", chatEmptyTitle: "{{title}}", chatEmptyBody: "{{body}}" };
-    let lb = { version: 1, styles: {}, templates: { ...LB_DEFAULT_TPL }, partials: {}, flags: { showAvatars: true, showTime: true, showLockIcon: true, showActions: true, showSystemLogo: true, systemFullDate: true, systemCollapseAfterSec: 60, systemExpandForSec: 20 } };
-    function lbRender(tpl, vars, partials, depth) {
-      depth = depth || 0;
-      let out = String(tpl || "").replace(/\{\{>\s*([a-zA-Z0-9_-]+)\s*\}\}/g, (_m, n) => (depth >= 3 || !partials[n]) ? "" : lbRender(partials[n], vars, partials, depth + 1));
-      return out.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, n) => (n in vars ? String(vars[n]) : ""));
-    }
-    function lbPreview() {
-      const pv = $("lbPreview");
-      LB_COMPS.forEach((c) => ["bg", "fg", "border", "bstyle", "bwidth", "radius", "fs", "opacity", "pad", "shadow"].forEach((p) => pv.style.removeProperty("--c-" + c + "-" + p)));
-      for (const c of LB_COMPS) {
-        const s = lb.styles[c] || {};
-        for (const p of Object.keys(s)) {
-          const v = s[p]; let css = String(v);
-          if (["bwidth", "radius", "fs", "pad"].includes(p)) css = v + "px";
-          if (p === "shadow") css = v ? "0 1px 2px rgba(0,0,0,.3)" : "none";
-          pv.style.setProperty("--c-" + c + "-" + p, css);
-        }
-      }
-      const now = new Date();
-      const vars = { appName: "M5cet", sender: "Alice", time: now.toLocaleTimeString(), date: now.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) + ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), room: "brno-secure", peerCount: "2", placeholder: "Napiš šifrovanou zprávu…", title: "Příjemci", body: "Žádná historie, žádné ukládání." };
-      const t = lb.templates, p = lb.partials;
-      $("pvSysHead").textContent = lbRender(t.systemHeader, { ...vars, date: lb.flags.systemFullDate ? vars.date : vars.time }, p);
-      document.querySelector("#lbPreview .lb-logo").style.display = lb.flags.showSystemLogo ? "inline-block" : "none";
-      $("pvInMeta").textContent = lb.flags.showTime ? lbRender(t.incomingMeta, vars, p) : "";
-      $("pvOutMeta").textContent = lb.flags.showTime ? lbRender(t.outgoingMeta, vars, p) : "";
-      $("pvWidget").textContent = lbRender(t.widgetTitle, vars, p);
-      $("pvComposer").textContent = lbRender(t.composerPlaceholder, vars, p);
-      document.querySelector("#lbPreview .lb-av").style.display = lb.flags.showAvatars ? "inline-flex" : "none";
-    }
-    function lbFillStyleForm() {
-      const s = lb.styles[$("lbComp").value] || {};
-      const col = (id, key) => { $(id + "On").checked = !!s[key]; $(id).value = s[key] || "#3358d4"; };
-      col("lbBg", "bg"); col("lbFg", "fg"); col("lbBorder", "border");
-      $("lbBstyle").value = s.bstyle || ""; $("lbBwidth").value = s.bwidth ?? ""; $("lbRadius").value = s.radius ?? ""; $("lbFs").value = s.fs ?? "";
-      $("lbOpacity").value = s.opacity ?? ""; $("lbPad").value = s.pad ?? ""; $("lbShadow").value = s.shadow === undefined ? "" : String(s.shadow);
-    }
-    function lbReadStyleForm() {
-      const c = $("lbComp").value; const s = {};
-      if ($("lbBgOn").checked) s.bg = $("lbBg").value; if ($("lbFgOn").checked) s.fg = $("lbFg").value; if ($("lbBorderOn").checked) s.border = $("lbBorder").value;
-      if ($("lbBstyle").value) s.bstyle = $("lbBstyle").value;
-      const n = (id) => ($(id).value === "" ? undefined : Number($(id).value));
-      if (n("lbBwidth") !== undefined) s.bwidth = n("lbBwidth"); if (n("lbRadius") !== undefined) s.radius = n("lbRadius"); if (n("lbFs") !== undefined) s.fs = n("lbFs");
-      if (n("lbOpacity") !== undefined) s.opacity = n("lbOpacity"); if (n("lbPad") !== undefined) s.pad = n("lbPad");
-      if ($("lbShadow").value) s.shadow = $("lbShadow").value === "true";
-      if (Object.keys(s).length) lb.styles[c] = s; else delete lb.styles[c];
-      lbPreview();
-    }
-    function lbFillTemplates() {
-      $("lbTemplates").innerHTML = Object.keys(LB_TPL).map((k) => '<div class="lb-tpl"><span>' + k + '<br>' + LB_TPL[k].map((v) => '<span class="lb-chip" data-ins="{{' + v + '}}" data-for="' + k + '">{{' + v + '}}</span>').join("") + '</span><input data-tpl="' + k + '" value="' + esc(lb.templates[k] || "") + '" /></div>').join("");
-      document.querySelectorAll("[data-tpl]").forEach((i) => i.oninput = () => { lb.templates[i.dataset.tpl] = i.value; lbPreview(); });
-      document.querySelectorAll(".lb-chip").forEach((ch) => ch.onclick = () => { const i = document.querySelector('[data-tpl="' + ch.dataset.for + '"]'); i.value += ch.dataset.ins; lb.templates[ch.dataset.for] = i.value; lbPreview(); });
-    }
-    function lbFillPartials() {
-      const names = Object.keys(lb.partials);
-      $("lbPartials").innerHTML = names.length ? names.map((n) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid #1f2733;padding:3px 0;"><span><code>{{&gt; ' + esc(n) + '}}</code> = ' + esc(lb.partials[n]) + '</span><button class="secondary" data-del="' + esc(n) + '">remove</button></div>').join("") : '<span style="color:#9aa6b8;">no partials</span>';
-      document.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => { delete lb.partials[b.dataset.del]; lbFillPartials(); lbPreview(); });
-    }
-    function lbFillFlags() {
-      const f = lb.flags; $("lfAvatars").checked = f.showAvatars; $("lfTime").checked = f.showTime; $("lfLock").checked = f.showLockIcon; $("lfActions").checked = f.showActions;
-      $("lfSysLogo").checked = f.showSystemLogo; $("lfSysDate").checked = f.systemFullDate; $("lfCollapse").value = f.systemCollapseAfterSec; $("lfExpand").value = f.systemExpandForSec;
-    }
-    function lbReadFlags() {
-      lb.flags = { showAvatars: $("lfAvatars").checked, showTime: $("lfTime").checked, showLockIcon: $("lfLock").checked, showActions: $("lfActions").checked, showSystemLogo: $("lfSysLogo").checked, systemFullDate: $("lfSysDate").checked, systemCollapseAfterSec: Number($("lfCollapse").value) || 0, systemExpandForSec: Number($("lfExpand").value) || 20 };
-      lbPreview();
-    }
-    function lbFillAll() { lbFillStyleForm(); lbFillTemplates(); lbFillPartials(); lbFillFlags(); lbPreview(); }
-    $("lbLoad").onclick = async () => { const r = await api("/admin/layout"); if (r.status === 404) return show("lbOut", "The running admin backend has no /admin/layout — it predates the layout builder. Rebuild (npm run build) and restart the admin service, or `docker compose --profile admin up -d --build`."); if (!r.ok) return show("lbOut", r.json); lb = r.json.layout; lbFillAll(); show("lbOut", { file: r.json.file, updatedAt: lb.updatedAt ? new Date(lb.updatedAt).toLocaleString() : "(defaults)", lastSaveError: r.json.lastSaveError || null }); };
-    $("lbSave").onclick = async () => { const r = await api("/admin/layout", { method: "PUT", body: JSON.stringify({ layout: lb }) }); show("lbOut", r.ok ? { saved: true, updatedAt: new Date(r.json.layout.updatedAt).toLocaleString() } : r.json); if (r.ok) { lb = r.json.layout; lbFillAll(); } };
-    $("lbReset").onclick = async () => { if (!confirm("Reset layout to defaults for all clients?")) return; const r = await api("/admin/layout/reset", { method: "POST" }); if (r.ok) { lb = r.json.layout; lbFillAll(); } show("lbOut", r.json); };
-    $("lbExport").onclick = () => { const a = document.createElement("a"); a.href = "data:application/json," + encodeURIComponent(JSON.stringify(lb, null, 2)); a.download = "m5cet-layout.json"; a.click(); };
-    $("lbImport").onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { const j = JSON.parse(await f.text()); lb = j.layout || j; lbFillAll(); show("lbOut", "Imported — press Save to apply."); } catch (err) { show("lbOut", "Invalid JSON: " + err.message); } e.target.value = ""; };
-    $("lbComp").onchange = lbFillStyleForm;
-    $("lbClearComp").onclick = () => { delete lb.styles[$("lbComp").value]; lbFillStyleForm(); lbPreview(); };
-    ["lbBg", "lbBgOn", "lbFg", "lbFgOn", "lbBorder", "lbBorderOn", "lbBstyle", "lbBwidth", "lbRadius", "lbFs", "lbOpacity", "lbPad", "lbShadow"].forEach((id) => { $(id).oninput = lbReadStyleForm; $(id).onchange = lbReadStyleForm; });
-    ["lfAvatars", "lfTime", "lfLock", "lfActions", "lfSysLogo", "lfSysDate", "lfCollapse", "lfExpand"].forEach((id) => { $(id).onchange = lbReadFlags; });
-    $("lbPartAdd").onclick = () => { const n = $("lbPartName").value.trim(); if (!/^[a-zA-Z0-9_-]{1,32}$/.test(n)) return show("lbOut", "partial name: a-z, 0-9, _ or -"); lb.partials[n] = $("lbPartBody").value; $("lbPartName").value = ""; $("lbPartBody").value = ""; lbFillPartials(); lbPreview(); };
-    lbFillAll();
-  </script>
+  <!-- shared by the ported tools -->
+  <input type="hidden" id="base" /><input type="hidden" id="token" />
+  <div class="toasts" id="toasts"></div>
+  <script src="console.js"></script>
+  <script src="legacy-tools.js"></script>
 </body>
 </html>

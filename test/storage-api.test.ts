@@ -22,11 +22,11 @@ import { randomBytes } from "node:crypto";
 import type { AddressInfo } from "node:net";
 import { WebSocketServer, type WebSocket } from "ws";
 import { AccountStore } from "../server/accounts/store";
-import { StorageService } from "../server/storage/service";
+import { StorageService, type StorageOptions } from "../server/storage/service";
 import { registerStorageRoutes } from "../server/storage/routes";
 import { handleStorageFrame, newStorageSocketState, type StorageSocketState } from "../server/storage/ws";
-import { apiContext } from "../server/storage/api";
-import { _resetMasterKeyForTests } from "../server/storage/keys";
+import { apiContext, clientKeyFor } from "../server/storage/api";
+import { _resetMasterKeyForTests, holderForToken } from "../server/storage/keys";
 import { WsClient } from "./helpers/ws-client";
 import type { StoredCredential } from "../server/accounts/webauthn";
 
@@ -296,5 +296,165 @@ describe("the same API over the socket", () => {
     client.send({ type: "storage", id: "2", op: "kv.put", session: started.data.sessionId, payload: { key: "draft", value: "x" } });
     expect(await client.next("storage-result")).toMatchObject({ ok: true });
     await client.close();
+  });
+});
+
+/* ---------------------------------------------------------------------- */
+/* The hardening, as a client sees it                                      */
+/* ---------------------------------------------------------------------- */
+
+/** Another server, with its own storage limits, on the same account store. */
+async function serveWith(options: StorageOptions) {
+  const svc = new StorageService(join(dir, `svc-${randomBytes(4).toString("hex")}`), options);
+  expect((await svc.init()).ok).toBe(true);
+  const app = express();
+  registerStorageRoutes(app, svc, accounts);
+  const srv = createServer(app);
+  srv.listen(0, "127.0.0.1");
+  await new Promise((r) => srv.once("listening", r));
+  const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+  const request = async (path: string, opts: Options = {}) => {
+    const saved = base;
+    base = url;
+    try { return await call(path, opts); } finally { base = saved; }
+  };
+  const close = async () => {
+    srv.closeAllConnections?.();
+    await new Promise((r) => srv.close(r));
+    svc.close();
+  };
+  return { svc, request, close };
+}
+
+describe("what the public status tells", () => {
+  it("answers availability and identity only — no directory, no counts", async () => {
+    for (const opts of [{}, { token }]) {
+      const body = (await call("/api/storage/status", opts)).body;
+      expect(Object.keys(body).sort()).toEqual(opts.token ? ["available", "caller", "engine", "locked", "ok"] : ["available", "caller", "engine", "ok"]);
+    }
+    const asOperator = await fetch(`${base}/api/admin/storage`, { headers: { authorization: "Bearer storage-operator-token" } });
+    expect(await asOperator.json()).toMatchObject({ dir: expect.any(String), stats: expect.any(Object) });
+  });
+});
+
+describe("session ids", () => {
+  it("are not accepted in the URL", async () => {
+    const started = await call("/api/storage/session", { body: {} });
+    const session = String(started.body.sessionId);
+    await call("/api/storage/kv", { session, method: "PUT", body: { key: "draft", value: "x" } });
+    expect((await call(`/api/storage/kv?key=draft&session=${encodeURIComponent(session)}`)).status).toBe(401);
+  });
+
+  it("are capped per client (429) and per server (503)", async () => {
+    const capped = await serveWith({ limits: { sessionsPerClientPerHour: 2, maxLiveSessions: 10 } });
+    try {
+      expect((await capped.request("/api/storage/session", { body: {} })).status).toBe(200);
+      expect((await capped.request("/api/storage/session", { body: {} })).status).toBe(200);
+      const third = await capped.request("/api/storage/session", { body: {} });
+      expect(third).toMatchObject({ status: 429, body: { code: "rate-limit" } });
+    } finally {
+      await capped.close();
+    }
+    const full = await serveWith({ limits: { maxLiveSessions: 1 } });
+    try {
+      expect((await full.request("/api/storage/session", { body: {} })).status).toBe(200);
+      expect(await full.request("/api/storage/session", { body: {} })).toMatchObject({ status: 503, body: { code: "capacity" } });
+    } finally {
+      await full.close();
+    }
+  });
+});
+
+describe("the vault key", () => {
+  it("cannot be written, deleted or listed through the settings API", async () => {
+    await openAccountDb();
+    expect(await call("/api/storage/kv", { token, method: "PUT", body: { key: "vault", value: { profile: "forged" } } })).toMatchObject({ status: 400, body: { code: "reserved" } });
+    expect((await call("/api/storage/kv?key=vault", { token, method: "DELETE" })).status).toBe(400);
+    expect((await call("/api/storage/kv", { token })).body.keys).toEqual([]);
+  });
+});
+
+describe("log lines and transfer records", () => {
+  it("need an account or a live session", async () => {
+    expect(await call("/api/storage/log", { body: { level: "info", event: "anon" } })).toMatchObject({ status: 401, body: { code: "no-caller" } });
+    expect((await call("/api/storage/transfers", { body: { id: "x1" } })).status).toBe(401);
+    expect(await call("/api/storage/log", { session: "sess-made-up-identifier-000", body: { level: "info", event: "fake" } })).toMatchObject({ status: 404, body: { code: "no-session" } });
+
+    const session = String((await call("/api/storage/session", { body: {} })).body.sessionId);
+    expect((await call("/api/storage/log", { session, body: { level: "info", event: "real", detail: { big: "d".repeat(5_000) } } })).status).toBe(200);
+    const logged = storage.global.readLogs({ sessionId: session });
+    expect(logged[0]).toMatchObject({ event: "real", detail: { truncated: true } });
+  });
+
+  it("have an hourly quota per caller", async () => {
+    const capped = await serveWith({ limits: { logLinesPerHour: 2, transfersPerHour: 1 } });
+    try {
+      for (let i = 0; i < 2; i += 1) expect((await capped.request("/api/storage/log", { token, body: { level: "info", event: `l${i}` } })).status).toBe(200);
+      expect(await capped.request("/api/storage/log", { token, body: { level: "info", event: "one too many" } })).toMatchObject({ status: 429, body: { code: "rate-limit" } });
+      expect((await capped.request("/api/storage/transfers", { token, body: { id: "x1", status: "started" } })).status).toBe(200);
+      expect((await capped.request("/api/storage/transfers", { token, body: { id: "x1", status: "completed" } })).status).toBe(429);
+    } finally {
+      await capped.close();
+    }
+  });
+
+  it("cannot overwrite somebody else's transfer", async () => {
+    await openAccountDb();
+    const session = String((await call("/api/storage/session", { body: {} })).body.sessionId);
+    await call("/api/storage/transfers", { session, body: { id: "shared-id", status: "started", bytes: 5 } });
+    await call("/api/storage/transfers", { token, body: { id: "shared-id", status: "failed", bytes: 0 } });
+    expect((await call("/api/storage/transfers", { session })).body.transfers).toMatchObject([{ id: "shared-id", status: "started", bytes: 5 }]);
+    expect((await call("/api/storage/transfers", { token })).body.transfers).toMatchObject([{ id: "shared-id", status: "failed" }]);
+  });
+});
+
+describe("limits a client can hit", () => {
+  it("answers 413 quota when the database is full", async () => {
+    const tight = await serveWith({ limits: { sessionQuotaBytes: 300 * 1024 } });
+    try {
+      const session = String((await tight.request("/api/storage/session", { body: {} })).body.sessionId);
+      let last = { status: 200, body: {} as Record<string, unknown> };
+      for (let i = 0; i < 20 && last.status === 200; i += 1) {
+        last = await tight.request("/api/storage/kv", { session, method: "PUT", body: { key: `k${i}`, value: "v".repeat(50_000) } });
+      }
+      expect(last).toMatchObject({ status: 413, body: { code: "quota" } });
+    } finally {
+      await tight.close();
+    }
+  });
+
+  it("pages messages by the server's sequence number", async () => {
+    await openAccountDb();
+    await call("/api/storage/messages", { token, body: { messages: [1, 2, 3].map((n) => ({ id: `m${n}`, room: "alpha", createdAt: Date.now() - 10_000 + n, payload: { n } })) } });
+    const first = await call("/api/storage/messages?afterSeq=0&limit=2", { token });
+    expect((first.body.messages as Array<{ id: string }>).map((m) => m.id)).toEqual(["m1", "m2"]);
+    expect(first.body.more).toBe(true);
+    const rest = await call(`/api/storage/messages?afterSeq=${first.body.lastSeq}&limit=2`, { token });
+    expect((rest.body.messages as Array<{ id: string }>).map((m) => m.id)).toEqual(["m3"]);
+    expect(rest.body.more).toBe(false);
+  });
+});
+
+describe("one account, several devices", () => {
+  it("keeps the database open until the last device signs out", async () => {
+    const second = accounts.issueToken(accountId);
+    const key = dbKey();
+    expect((await call("/api/storage/open", { token, body: { key } })).status).toBe(200);
+    expect((await call("/api/storage/open", { token: second, body: { key } })).status).toBe(200);
+
+    storage.releaseAccount(accountId, holderForToken(token));        // the laptop signs out
+    expect((await call("/api/storage/status", { token: second })).body).toMatchObject({ locked: false });
+    storage.releaseAccount(accountId, holderForToken(second));       // and the phone
+    expect((await call("/api/storage/status", { token: second })).body).toMatchObject({ locked: true });
+  });
+});
+
+describe("client identity for the caps", () => {
+  it("uses the address, an IPv6 one cut to its /64", () => {
+    expect(clientKeyFor("::ffff:198.51.100.7")).toBe("ip:198.51.100.7");
+    expect(clientKeyFor("2001:db8:1:2:aaaa:bbbb:cccc:dddd")).toBe(clientKeyFor("2001:0db8:0001:0002::1"));
+    expect(clientKeyFor("2001:db8:1:2::1")).toBe("ip6:2001:db8:1:2::/64");
+    expect(clientKeyFor("2001:db8:1:3::1")).not.toBe(clientKeyFor("2001:db8:1:2::1"));
+    expect(newStorageSocketState("::ffff:198.51.100.7").clientKey).toBe("ip:198.51.100.7");
   });
 });

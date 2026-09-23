@@ -10,11 +10,15 @@
 //
 // `auth` / `session` may be sent per frame, or once — the socket remembers
 // the last identity it was given, so a chatty client does not repeat it.
-// Rate limited per socket: storage is cheap, but not free.
+// Rate limited per socket: storage is cheap, but not free. The socket's
+// remote address (given to newStorageSocketState) caps how many new
+// sessions it may start, like the REST route does.
 
+import { randomBytes } from "node:crypto";
 import type { WebSocket } from "ws";
-import { apiContext, isStorageOp, resolveCaller, runStorageOp, type ApiContext } from "./api";
+import { apiContext, clientKeyFor, isStorageOp, resolveCaller, runStorageOp, type ApiContext } from "./api";
 import { accountStore } from "../accounts/store";
+import { holderForToken } from "./keys";
 import { storage as defaultStorage, type StorageService } from "./service";
 
 const PER_MINUTE = 600;
@@ -22,6 +26,8 @@ const PER_MINUTE = 600;
 export type StorageSocketState = {
   token?: string;
   sessionId?: string;
+  /** Who this connection is for the new-session cap (see clientKeyFor). */
+  clientKey?: string;
   windowStart: number;
   count: number;
 };
@@ -68,8 +74,10 @@ export function handleStorageFrame(
   }
 
   const caller = resolveCaller(ctx, { token: state.token, sessionId: state.sessionId });
+  state.clientKey ??= `socket:${randomBytes(9).toString("base64url")}`;
+  const meta = { clientKey: state.clientKey, ...(state.token ? { holder: holderForToken(state.token) } : {}) };
   try {
-    const result = runStorageOp(ctx, caller, frame.op, frame.payload ?? {});
+    const result = runStorageOp(ctx, caller, frame.op, frame.payload ?? {}, meta);
     if (result.ok) reply({ ok: true, op: frame.op, data: result.data ?? null });
     else reply({ ok: false, op: frame.op, message: result.error, ...(result.code ? { code: result.code } : {}) });
   } catch (err) {
@@ -78,6 +86,13 @@ export function handleStorageFrame(
   }
 }
 
-export function newStorageSocketState(): StorageSocketState {
-  return { windowStart: Date.now(), count: 0 };
+/** Per-socket state. Pass the connection's remote address (the proxy-aware
+ *  one if there is a proxy) so the new-session cap counts per client; without
+ *  it, each socket counts on its own. */
+export function newStorageSocketState(remoteAddress?: string | null): StorageSocketState {
+  return {
+    windowStart: Date.now(),
+    count: 0,
+    ...(remoteAddress ? { clientKey: clientKeyFor(remoteAddress) } : {}),
+  };
 }

@@ -53,4 +53,13 @@ export type ChatMessage = {
   replyTo?: { id: string; senderName: string; text: string };
   /** Original author when this message was forwarded. */
   forwardedFrom?: string;
+  /** Crypto version the message arrived in (envelope.ts). */
+  cryptoVersion?: 1 | 2;
+  /** Who signed it, and how that compares with what we saw before. */
+  identity?: MessageIdentity;
 };
+
+/** verified: signed, key as pinned (or first seen) · changed: signed, but
+ *  another key than before for this name · invalid: signature fails ·
+ *  unsigned: an older client, no signature at all. */
+export type MessageIdentity = { state: "verified" | "changed" | "invalid" | "unsigned"; kid?: string; fingerprint?: string };

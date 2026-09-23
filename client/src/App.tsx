@@ -90,11 +90,20 @@ import {
   handleIncomingFrame,
   sendFile,
   type FileTransferEnvelope,
+  type IncomingCallbacks,
 } from "./lib/file-transfer";
 import { detectGeolocation, getCurrentPosition, watchPosition, osmLink, type LatLng, type LocationWatcher } from "./lib/maps";
 import { detectSpeechCaps, listVoices, speak, stopSpeaking, startRecognition, fetchServerSpeechStatus, serverTts, type VoicePreset, type ServerVoiceInfo } from "./lib/speech";
-import { deriveRoomKey, encryptEnvelope, decryptEnvelope, toBase64, type DataChannelEnvelope } from "./lib/crypto";
+import { toBase64 } from "./lib/crypto";
+// Crypto v2: per-purpose keys, bound contexts, signed bodies (envelope.ts).
+import {
+  createReplayGuard, deriveRoomKeys, isSealedSignal, openMessage, openSignal, sealMessage, sealSignal,
+  type Envelope as DataChannelEnvelope, type RoomKeys, type Signer,
+} from "./lib/envelope";
+import { createPinStore, keyFingerprint, keyId, loadIdentity, type Identity } from "./lib/identity";
+import { validatePayload, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
 import { newId } from "./lib/id";
+import { APP_VERSION } from "./lib/build-info";
 import { TransferCard } from "./components/TransferCard";
 import { MainMenu } from "./components/MainMenu";
 import { formatTime, formatFullDate, formatBytes } from "./lib/format";
@@ -105,14 +114,15 @@ import { M5Logo } from "./components/M5Logo";
 import { InvitePrompt, ShareSection } from "./components/SharePanel";
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
 import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
-import type { AttachmentMeta, ChatMessage, MessageAudit, MsgState } from "./lib/chat-types";
+import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgState } from "./lib/chat-types";
+import { isInlineImage } from "./lib/validate";
 import { AccountInfoModal, ChatRetentionSection, SignedInBadge } from "./components/AccountPanel";
 import {
   accountStatus, accountSupported, accountToken, currentAccount, deleteAccount as deleteServerAccount,
   linkPushSubscription, loadVault, logAccountEvent, refreshAccount, registerAccount, restoreSession, saveVault,
   signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
 } from "./lib/account";
-import { createHistoryStore, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
+import { createHistoryStore, createServerSealer, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
 import { createFlashQueue, kindForText, type FlashMessage } from "./lib/flash";
 import { createOutbox, type QueuedMessage } from "./lib/outbox";
@@ -150,66 +160,60 @@ type PeerView = {
 // account vault can talk about them without importing the whole app.
 export type { MsgState, MessageAudit } from "./lib/chat-types";
 
+/** Room-scoped reference of a signed-in member (protocol v2 `account`; v1
+ *  servers called it `accountId`, and v2 still sends that alias). */
+type AccountRefFields = { account?: string | null; accountId?: string | null };
+const accountRefOf = (f: AccountRefFields): string => f.account ?? f.accountId ?? "";
+
 type SignalFrame =
   | {
       type: "joined";
+      protocol?: number;
       peerId: string;
       room: string;
-      peers: Array<{ peerId: string; name: string; joinedAt: number; accountId?: string }>;
+      /** Proves on a reconnect that we are the same client (keeps the peer id). */
+      resume?: string;
+      peers: Array<{ peerId: string; name: string; joinedAt: number } & AccountRefFields>;
       // Signed-in members the server answers for while they are gone.
-      away?: AwayPeer[];
-      account?: { id: string; away: boolean } | { invalid: true } | null;
+      away?: Array<{ name: string; since: number } & AccountRefFields>;
+      account?: ({ away: boolean } & AccountRefFields) | { invalid: true } | null;
     }
-  | { type: "peer-joined"; peerId: string; name: string; joinedAt: number; accountId?: string }
-  // Away relay (see server/accounts/relay.ts)
-  | { type: "peer-away"; accountId: string; peerId: string; name: string; since: number }
-  | { type: "peer-back"; accountId: string; peerId: string; name: string }
-  | { type: "peer-gone"; accountId: string }
+  | ({ type: "peer-joined"; peerId: string; name: string; joinedAt: number } & AccountRefFields)
+  // Away relay (see server/signaling/relay.ts)
+  | ({ type: "peer-away"; peerId?: string; name: string; since: number } & AccountRefFields)
+  | ({ type: "peer-back"; peerId?: string; name?: string } & AccountRefFields)
+  | ({ type: "peer-gone" } & AccountRefFields)
+  | ({ type: "peer-updated"; peerId: string; name: string } & AccountRefFields)
   | { type: "relay-deliver"; items: RelayItem[] }
-  | { type: "relay-status"; messageId: string; recipient: { accountId: string; name: string }; state: MsgState | "rejected"; at: number; reason?: string }
+  | { type: "relay-status"; messageId: string; recipient: { name: string } & AccountRefFields; state: MsgState | "rejected" | "duplicate"; at: number; reason?: string }
   | { type: "peer-left"; peerId: string }
-  | { type: "signal"; source: string; payload: RTCSessionDescriptionInit | RTCIceCandidateInit }
-  | { type: "hello"; peerId: string }
+  | { type: "signal"; source: string; payload: unknown }
+  | { type: "signal-undeliverable"; target: string }
+  | { type: "hello"; peerId: string; protocol?: number }
   | { type: "pong"; t: number; serverTs: number }
+  | { type: "presence-ack"; away: boolean }
+  | ({ type: "auth-result"; ok: boolean; invalid?: boolean; account: ({ away: boolean } & AccountRefFields) | null })
+  | { type: "account-revoked"; reason: string }
+  | { type: "rate-limited"; frame: string; retryAfterMs: number }
+  | { type: "replaced"; reason: string }
+  | { type: "closed-by-server"; reason: string }
   | { type: "admin-command"; command: { id: string; kind: string; createdAt: number; payload?: Record<string, unknown> } }
-  | { type: "error"; message: string }
+  | { type: "error"; message: string; code?: string }
   // Server-relayed file transfer (only when direct P2P cannot be established)
-  | { type: "proxy-meta"; transferId: string; iv: string; ciphertext: string; transport: "proxy" }
-  | { type: "proxy-chunk"; transferId: string; seq: number; iv: string; ciphertext: string; transport: "proxy" }
-  | { type: "proxy-end"; transferId: string; transport: "proxy" }
-  | { type: "proxy-cancel"; transferId: string; transport: "proxy" }
+  | { type: "proxy-meta"; transferId: string; iv: string; ciphertext: string; transport: "proxy"; v?: number; from?: string }
+  | { type: "proxy-chunk"; transferId: string; seq: number; iv: string; ciphertext: string; transport: "proxy"; v?: number; from?: string }
+  | { type: "proxy-end"; transferId: string; transport: "proxy"; v?: number; iv?: string; ciphertext?: string; from?: string }
+  | { type: "proxy-cancel"; transferId: string; transport: "proxy"; from?: string }
   | { type: "proxy-progress"; transferId: string; received: number; transport: "proxy" }
   | { type: "proxy-ack"; transferId: string; accepted: boolean; reason?: string; transport: "proxy" }
-  | { type: "proxy-need"; transferId: string; seqs: number[] };
+  | { type: "proxy-need"; transferId: string; seqs: number[]; from?: string };
 
-
-
-type DecryptedPayload =
-  | {
-      kind?: undefined | "text";
-      id: string;
-      text: string;
-      createdAt: number;
-      senderId: string;
-      senderName: string;
-      attachment?: AttachmentMeta;
-      ttlMinutes?: number;
-      flags?: MsgFlags;
-      to?: string[];
-      replyTo?: { id: string; senderName: string; text: string };
-      forwardedFrom?: string;
-    }
-  | {
-      kind: "audio-status";
-      id: string;
-      createdAt: number;
-      senderId: string;
-      senderName: string;
-      status: AudioStatus;
-    };
+/** A decrypted payload after validate.ts: a chat message or an audio status. */
+type DecryptedPayload = ChatPayload | AudioStatusPayload;
 
 /** A signed-in participant who is not connected right now: the server takes
- *  their messages and hands them over when they come back. */
+ *  their messages and hands them over when they come back. `accountId` holds
+ *  the room-scoped reference the server gave us, never a real account id. */
 type AwayPeer = { accountId: string; name: string; since: number };
 
 /** One item out of the away mailbox. */
@@ -217,8 +221,8 @@ type RelayItem = {
   id: string;
   kind: "message" | "status";
   messageId: string;
-  from: { peerId: string; accountId?: string; name: string };
-  envelope?: { iv: string; ciphertext: string };
+  from: { peerId: string; name: string } & AccountRefFields;
+  envelope?: DataChannelEnvelope;
   status?: { state: "delivered" | "read"; at: number; recipientName: string };
   storedAt: number;
 };
@@ -234,7 +238,6 @@ type PeerHandle = {
   outgoingAudioSenders: RTCRtpSender[];
 };
 
-const APP_VERSION = "2.8.0";
 const PORT_BASE = "__PORT_5000__";
 const EXTERNAL_SIGNALING_URL = import.meta.env.VITE_SIGNALING_URL as string | undefined;
 // Inline (data-URL) attachment cap. Anything larger goes through the
@@ -409,6 +412,8 @@ function ChatApp() {
   const messagesRef = useRef<ChatMessage[]>([]);
   const retentionRef = useRef<ChatRetention>(initialPrefs.chatRetention);
   const historyRef = useRef(createHistoryStore());
+  /** Seals what the server's session store keeps, with a key only this browser has. */
+  const serverSealerRef = useRef(createServerSealer());
   const lastVaultSaveRef = useRef(0);
   /** What the server offers as storage, and the session store of a browser
    *  that has no passkey (server-enhanced mode). */
@@ -448,7 +453,25 @@ function ChatApp() {
 
   const socketRef = useRef<WebSocket | null>(null);
   const peersRef = useRef<Map<string, PeerHandle>>(new Map());
-  const keyRef = useRef<CryptoKey | null>(null);
+  /** The room's keys (crypto v2) while connected. */
+  const keyRef = useRef<RoomKeys | null>(null);
+  /** This device's signing identity (identity.ts), loaded once. */
+  const identityRef = useRef<Identity | null>(null);
+  /** Trust-on-first-use pins: room + name → key id. */
+  const pinsRef = useRef(createPinStore());
+  /** Message ids already accepted — a replay is dropped. */
+  const replayRef = useRef(createReplayGuard());
+  /** From our last `joined`: lets a reconnect keep the same peer id. */
+  const resumeRef = useRef<{ room: string; peerId: string; secret: string } | null>(null);
+  /** Which room + passphrase keyRef was derived for. */
+  const keyForRef = useRef("");
+  /** The next `joined` answers the user's own Connect: close the join form. */
+  const closeJoinPanelRef = useRef(false);
+  /** Per peer: the order signals go out / are handled in (sealing is async). */
+  const signalOutRef = useRef(new Map<string, Promise<void>>());
+  const signalInRef = useRef(new Map<string, Promise<void>>());
+  /** Peers whose crypto we already warned about (legacy, unsealed, key mismatch). */
+  const warnedPeersRef = useRef(new Set<string>());
   const roomRef = useRef("");
   const nameRef = useRef(name);
   const myIdRef = useRef(myId);
@@ -730,16 +753,14 @@ function ChatApp() {
       const at = Date.now();
       if (!force && at - lastVaultSaveRef.current < 30_000) return;
       lastVaultSaveRef.current = at;
-      await putServerMessages(prepareHistory(messagesRef.current).map((m) => ({
-        id: m.id,
-        room: currentRoom,
-        createdAt: m.createdAt,
-        senderId: m.senderId,
-        senderName: m.senderName,
-        mine: m.mine,
-        expiresAt: m.expiresAt ?? 0,
-        payload: m,
-      })));
+      // Sealed here first: the server keeps rows it cannot read, and no
+      // names or ids beyond what ordering and expiry need.
+      const sealer = serverSealerRef.current;
+      const rows = await Promise.all(prepareHistory(messagesRef.current).map(async (m) => {
+        const payload = await sealer.seal(m);
+        return payload ? { id: m.id, room: currentRoom, createdAt: m.createdAt, senderId: "", senderName: "", mine: m.mine, expiresAt: m.expiresAt ?? 0, payload } : null;
+      }));
+      await putServerMessages(rows.filter((r): r is NonNullable<typeof r> => r !== null));
       return;
     }
     const at = Date.now();
@@ -783,16 +804,16 @@ function ChatApp() {
     } catch { /* notifications are optional */ }
   }
 
-  /** Tell the server who we are on the open socket (away relay + presence). */
+  /** Tell the server who we are on the open socket (away relay + presence).
+   *  Protocol v2: an `auth` frame — rejoining the room (as v1 did) made
+   *  every peer see us leave and come back, and tore down their WebRTC
+   *  connections just because we signed in. */
   function announceAccountToServer() {
     const socket = socketRef.current;
     if (socket?.readyState !== WebSocket.OPEN || !roomRef.current) return;
     socket.send(JSON.stringify({
-      type: "join",
-      room: roomRef.current,
-      peerId: myIdRef.current,
-      name: nameRef.current,
-      ...(accountToken() ? { auth: accountToken() } : {}),
+      type: "auth",
+      token: accountToken() ?? null,
       away: retentionRef.current === "server" && Boolean(accountRef.current),
     }));
   }
@@ -893,68 +914,109 @@ function ChatApp() {
   }
 
   /** A status the server reports for a message we sent to an away member. */
-  function applyRelayStatus(frame: { messageId: string; recipient: { accountId: string; name: string }; state: MsgState | "rejected"; at: number; reason?: string }) {
+  function applyRelayStatus(frame: { messageId: string; recipient: { name: string } & AccountRefFields; state: MsgState | "rejected" | "duplicate"; at: number; reason?: string }) {
+    if (frame.state === "duplicate") return; // the server already had it
     if (frame.state === "rejected") {
-      systemMessage(`${frame.recipient.name}: ${frame.reason ?? "relay rejected"}`);
+      systemMessage(`${frame.recipient.name || "?"}: ${frame.reason ?? "relay rejected"}`);
       return;
     }
     const state = frame.state;
     if (state === "stored") systemMessage(t(lang, "away.stored").replace("{name}", frame.recipient.name));
     setMessages((cur) => cur.map((m) => {
-      if (m.id !== frame.messageId) return m;
+      if (m.id !== frame.messageId || !m.mine) return m;
       if (m.audit?.some((a) => a.state === state && a.meta === frame.recipient.name)) return m;
       return { ...m, audit: [...(m.audit ?? []), { state, at: frame.at, meta: frame.recipient.name }] };
     }));
   }
 
+  /** What the sender's signature says, and how it compares with the key we
+   *  pinned for that name in this room (trust on first use). */
+  async function identityFor(signer: Signer | null, senderName: string): Promise<MessageIdentity> {
+    if (!signer) return { state: "unsigned" };
+    const kid = await keyId(signer.publicKey);
+    const fingerprint = await keyFingerprint(signer.publicKey);
+    if (!signer.valid) {
+      warnOnce(`invalid:${kid}`, t(lang, "sec.identity.invalidFlash").replace("{name}", senderName), "error");
+      return { state: "invalid", kid, fingerprint };
+    }
+    const verdict = pinsRef.current.check(roomRef.current, senderName, kid);
+    if (verdict === "changed") {
+      warnOnce(`changed:${kid}`, t(lang, "sec.identity.changedFlash").replace("{name}", senderName), "error");
+      return { state: "changed", kid, fingerprint };
+    }
+    return { state: "verified", kid, fingerprint };
+  }
+
+  /** A security notice, once per subject per session. */
+  function warnOnce(subject: string, text: string, kind: FlashMessage["kind"] = "warning") {
+    if (warnedPeersRef.current.has(subject)) return;
+    warnedPeersRef.current.add(subject);
+    systemMessage(text, { kind });
+  }
+
+  /** A validated chat payload as a conversation entry. */
+  function chatMessageFrom(p: ChatPayload, extra: Partial<ChatMessage>): ChatMessage {
+    return {
+      id: p.id,
+      senderId: p.senderId,
+      senderName: p.senderName,
+      text: p.text,
+      createdAt: p.createdAt,
+      attachment: p.attachment,
+      mine: false,
+      secure: true,
+      expiresAt: computeExpiry(p.ttlMinutes, p.createdAt),
+      flags: p.flags,
+      to: p.to,
+      replyTo: p.replyTo,
+      forwardedFrom: p.forwardedFrom,
+      ...extra,
+    };
+  }
+
   /** The mailbox the server kept while we were away. */
   async function handleRelayDelivery(items: RelayItem[]) {
-    const key = keyRef.current;
-    if (!key || items.length === 0) return;
+    const keys = keyRef.current;
+    if (!keys || items.length === 0) return;
     const handled: string[] = [];
     const incoming: ChatMessage[] = [];
     for (const item of items) {
       if (item.kind === "status" && item.status) {
         applyRelayStatus({
           messageId: item.messageId,
-          recipient: { accountId: item.from.accountId ?? "", name: item.status.recipientName },
+          recipient: { accountId: accountRefOf(item.from), name: item.status.recipientName },
           state: item.status.state,
           at: item.status.at,
         });
         handled.push(item.id);
         continue;
       }
-      if (!item.envelope) continue;
+      if (!item.envelope) { handled.push(item.id); continue; }
+      let opened: Awaited<ReturnType<typeof openMessage<unknown>>>;
       try {
-        const plaintext = await decryptEnvelope<DecryptedPayload>(key, item.envelope);
-        handled.push(item.id);
-        if (plaintext.kind === "audio-status") continue;
-        if (messagesRef.current.some((m) => m.id === plaintext.id)) continue;
-        relaySendersRef.current.set(plaintext.id, { peerId: item.from.peerId, accountId: item.from.accountId });
-        incoming.push({
-          id: plaintext.id,
-          senderId: plaintext.senderId,
-          senderName: plaintext.senderName,
-          text: plaintext.text,
-          createdAt: plaintext.createdAt,
-          attachment: plaintext.attachment,
-          mine: plaintext.senderId === myIdRef.current,
-          secure: true,
-          expiresAt: computeExpiry(plaintext.ttlMinutes, plaintext.createdAt),
-          flags: plaintext.flags,
-          to: plaintext.to,
-          replyTo: plaintext.replyTo,
-          forwardedFrom: plaintext.forwardedFrom,
-          audit: [
-            { state: "created", at: plaintext.createdAt },
-            { state: "stored", at: item.storedAt, meta: "server" },
-            { state: "received", at: Date.now(), meta: "relay" },
-            { state: "decrypted", at: Date.now() },
-          ],
-        });
+        opened = await openMessage<unknown>(keys, item.envelope);
       } catch {
-        // Not our room key (another room, or a stale message) — leave it.
+        // Not our room key (another passphrase) — leave it; it expires on
+        // the server, or opens once we join with the right key.
+        continue;
       }
+      handled.push(item.id);
+      // The payload must name the peer the server says relayed it, and
+      // never us; anything malformed is dropped.
+      const plaintext = validatePayload(opened.payload, { transportSender: item.from.peerId, myId: myIdRef.current });
+      if (!plaintext || plaintext.kind === "audio-status") continue;
+      if (messagesRef.current.some((m) => m.id === plaintext.id) || !replayRef.current.accept(plaintext.id)) continue;
+      relaySendersRef.current.set(plaintext.id, { peerId: item.from.peerId, accountId: accountRefOf(item.from) });
+      incoming.push(chatMessageFrom(plaintext, {
+        cryptoVersion: opened.version,
+        identity: await identityFor(opened.signer, plaintext.senderName),
+        audit: [
+          { state: "created", at: plaintext.createdAt },
+          { state: "stored", at: item.storedAt, meta: "server" },
+          { state: "received", at: Date.now(), meta: "relay" },
+          { state: "decrypted", at: Date.now() },
+        ],
+      }));
     }
     if (incoming.length > 0) {
       setMessages((cur) => mergeMessages(cur, incoming));
@@ -989,7 +1051,9 @@ function ChatApp() {
     if (!sender || socket?.readyState !== WebSocket.OPEN) return;
     const sec = (roomRef.current && prefsRef.current.roomSecurity[roomRef.current]) || DEFAULT_ROOM_SECURITY;
     if (!sec.readReceipts) return;
-    socket.send(JSON.stringify({ type: "receipt", to: sender, messageIds: [messageId], state: "read" }));
+    // Protocol v2: the server routes it by what it relayed to us — no
+    // address from our side (a v1 client could aim receipts anywhere).
+    socket.send(JSON.stringify({ type: "receipt", messageIds: [messageId], state: "read" }));
   }
 
   useEffect(() => {
@@ -1092,11 +1156,32 @@ function ChatApp() {
     ]);
   }
 
+  /**
+   * SDP and ICE go through the server sealed with the room's signal key
+   * (crypto v2): it routes them but can neither read nor alter them — the
+   * DTLS fingerprints inside the SDP are what makes a call end-to-end.
+   * Sealing is async, so signals to one peer go out through a queue to keep
+   * the offer ahead of its candidates.
+   */
   function sendSignal(target: string, payload: RTCSessionDescriptionInit | RTCIceCandidateInit) {
-    const socket = socketRef.current;
-    if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "signal", target, payload }));
-    }
+    const keys = keyRef.current;
+    const from = myIdRef.current;
+    const previous = signalOutRef.current.get(target) ?? Promise.resolve();
+    const next = previous.then(async () => {
+      const socket = socketRef.current;
+      if (!keys || socket?.readyState !== WebSocket.OPEN) return;
+      const sealed = await sealSignal(keys, from, target, payload);
+      socket.send(JSON.stringify({ type: "signal", target, payload: sealed }));
+    }).catch(() => undefined);
+    signalOutRef.current.set(target, next);
+  }
+
+  /** Seals a chat payload for the room, signed by this device. */
+  async function sealForRoom(payload: { id: string }): Promise<DataChannelEnvelope | null> {
+    const keys = keyRef.current;
+    if (!keys) return null;
+    identityRef.current ??= await loadIdentity().catch(() => null);
+    return sealMessage(keys, payload.id, payload, identityRef.current);
   }
 
   /** Send an envelope to every open peer, or only to `targets` (peerIds). */
@@ -1121,21 +1206,15 @@ function ChatApp() {
   }
 
   async function broadcastAudioStatus(next: AudioStatus) {
-    const key = keyRef.current;
-    if (!key) return;
-    const envelope = await encryptEnvelope(key, {
+    const envelope = await sealForRoom({
       kind: "audio-status",
       id: newId("audio"),
       createdAt: Date.now(),
       senderId: myIdRef.current,
       senderName: nameRef.current,
       status: next,
-    });
-    await broadcastEnvelope(envelope);
-  }
-
-  function handleAudioStatusFrame(frame: Extract<DecryptedPayload, { kind: "audio-status" }>) {
-    setPeerView(frame.senderId, { audio: frame.status });
+    } as { id: string });
+    if (envelope) await broadcastEnvelope(envelope);
   }
 
   function attachAudioTrack(handle: PeerHandle, stream: MediaStream) {
@@ -1173,11 +1252,92 @@ function ChatApp() {
     return candidates.length === 0 ? undefined : Math.min(...candidates);
   }
 
+  /**
+   * What happens to a file arriving over either transport. `askAgain` sends
+   * the receiver's request for lost chunks the way that transport needs.
+   */
+  function fileCallbacks(askAgain: (transferId: string, seqs: number[]) => boolean): IncomingCallbacks {
+    return {
+      onMeta: (meta, transport) => {
+        startTransferTracking(meta.transferId, meta.name, meta.size, "in");
+        systemMessage(
+          `Přijímám soubor ${meta.name} (${formatBytes(meta.size)}) od ${meta.senderName} přes ${transport === "p2p" ? "P2P" : "server proxy"}.`,
+        );
+      },
+      onNeed: (transferId, seqs, _transport, round) => {
+        void sendServerLog("warn", "transfer.chunks-missing", { transferId, missing: seqs.length, round });
+        // Do not throw away a file that is all but delivered.
+        if (!askAgain(transferId, seqs)) return;
+        systemMessage(lang === "cs"
+          ? `Chybí ${seqs.length} částí souboru — žádám o jejich zopakování (pokus ${round}).`
+          : `${seqs.length} file chunks missing — asking the sender to repeat them (attempt ${round}).`);
+      },
+      onProgress: (id, recv, total, stats) => {
+        updateTransfer(id, { stats: { ...stats, received: recv, size: total } });
+      },
+      onComplete: (id, blob, meta, transport, proof) => {
+        updateTransfer(id, {
+          status: "completed",
+          stats: {
+            id,
+            name: meta.name,
+            size: meta.size,
+            received: meta.size,
+            direction: "in",
+            transport,
+            encrypted: true,
+            bytesPerSecond: 0,
+            startedAt: meta.createdAt,
+            updatedAt: Date.now(),
+            etaSeconds: 0,
+            progress: 1,
+          },
+        });
+        // Auto-dismiss complete card after 60 s so the chat stream
+        // does not grow unbounded when many files arrive.
+        window.setTimeout(() => dropTransfer(id), 60_000);
+        // meta.mime is already reduced to a type that is safe to open from
+        // a blob: URL of this origin (file-transfer.ts checkMeta).
+        const url = URL.createObjectURL(blob);
+        systemMessage(t(lang, proof.verified ? "file.verified" : "file.unverified").replace("{name}", meta.name), { kind: proof.verified ? "success" : "info" });
+        void identityFor(proof.signer, meta.senderName).then((identity) => {
+          setMessages((current) => current.some((m) => m.id === meta.transferId) ? current : [
+            ...current,
+            {
+              id: meta.transferId,
+              senderId: meta.senderId,
+              senderName: meta.senderName,
+              text: "",
+              createdAt: meta.createdAt,
+              mine: false,
+              secure: true,
+              cryptoVersion: proof.version,
+              identity,
+              attachment: {
+                kind: isInlineImage(meta.mime) ? "image" : "file",
+                name: meta.name,
+                mime: meta.mime,
+                size: meta.size,
+                dataUrl: url,
+              },
+            },
+          ]);
+        });
+      },
+      onCancel: (id) => updateTransfer(id, { status: "cancelled" }),
+      onError: (id, msg) => {
+        updateTransfer(id, { status: "error", errorMessage: msg });
+        systemMessage(`File transfer failed: ${msg}`, { kind: "error" });
+      },
+    };
+  }
+
   function wireDataChannel(peerId: string, channel: RTCDataChannel) {
     const handle = peersRef.current.get(peerId);
     if (handle) {
       handle.channel = channel;
     }
+    const peerName = () => peersRef.current.get(peerId)?.name || `peer-${peerId.slice(-4)}`;
 
     channel.binaryType = "arraybuffer";
     channel.onopen = () => {
@@ -1186,6 +1346,12 @@ function ChatApp() {
       setNotice(lang === "cs"
         ? "P2P data kanál je otevřený."
         : lang === "de" ? "P2P-Datenkanal offen." : "P2P data channel is open.");
+      // Crypto v2: both sides compare key check values first, so a wrong
+      // passphrase shows up as exactly that instead of undecryptable noise.
+      const keys = keyRef.current;
+      if (keys) {
+        try { channel.send(JSON.stringify({ kind: "key-check", v: 2, check: keys.check })); } catch { /* closing */ }
+      }
       void broadcastAudioStatus(audioStatusRef.current);
     };
     channel.onclose = () => setPeerView(peerId, { status: "closed", audio: "off" });
@@ -1193,172 +1359,108 @@ function ChatApp() {
     channel.addEventListener("open", () => { void flushOutboxRef.current("kanál otevřen"); });
     channel.onerror = () => {
       setPeerView(peerId, { status: "closed" });
-      systemMessage(`Connection with ${handle?.name || peerId.slice(-6)} dropped.`);
+      systemMessage(`Connection with ${peerName()} dropped.`);
     };
     channel.onmessage = async (event) => {
-      try {
-        const dataStr = String(event.data);
-        const st = peerStatsRef.current.get(peerId);
-        if (st) st.recv += dataStr.length;
-        const raw = JSON.parse(dataStr) as DataChannelEnvelope | FileTransferEnvelope;
-        const key = keyRef.current;
-        if (!key) throw new Error("Missing room key");
+      const dataStr = String(event.data);
+      const st = peerStatsRef.current.get(peerId);
+      if (st) st.recv += dataStr.length;
+      let raw: Record<string, unknown>;
+      try { raw = JSON.parse(dataStr) as Record<string, unknown>; } catch { return; }
+      if (!raw || typeof raw !== "object") return;
+      const keys = keyRef.current;
+      if (!keys) return;
 
-        // File transfer frames bypass the normal envelope decode.
-        // The receiver lost a few chunks and asks for them again.
-        if (raw && (raw as { kind?: string }).kind === "file-need") {
-          const need = raw as { transferId: string; seqs: number[] };
-          const repeat = resendableRef.current.get(need.transferId);
-          if (repeat) {
-            systemMessage(lang === "cs"
-              ? `Posílám znovu ${need.seqs.length} chybějících částí souboru.`
-              : `Re-sending ${need.seqs.length} missing file chunks.`);
-            void repeat(need.seqs).catch(() => undefined);
-          }
-          return;
+      if (raw.kind === "key-check") {
+        if (raw.check !== keys.check) warnOnce(`mismatch:${peerId}`, t(lang, "sec.keyMismatch").replace("{name}", peerName()), "error");
+        return;
+      }
+
+      // The receiver lost a few chunks and asks for them again.
+      if (raw.kind === "file-need") {
+        const transferId = String(raw.transferId ?? "");
+        const seqs = Array.isArray(raw.seqs) ? raw.seqs.filter((n): n is number => Number.isInteger(n)).slice(0, 5_000) : [];
+        const repeat = resendableRef.current.get(transferId);
+        if (repeat && seqs.length) {
+          systemMessage(lang === "cs"
+            ? `Posílám znovu ${seqs.length} chybějících částí souboru.`
+            : `Re-sending ${seqs.length} missing file chunks.`);
+          void repeat(seqs).catch(() => undefined);
         }
+        return;
+      }
 
-        if (raw && typeof (raw as { kind?: string }).kind === "string" && (
-          (raw as { kind: string }).kind === "file-meta" ||
-          (raw as { kind: string }).kind === "file-chunk" ||
-          (raw as { kind: string }).kind === "file-end" ||
-          (raw as { kind: string }).kind === "file-cancel"
-        )) {
-          await handleIncomingFrame(
-            key,
-            incomingFilesRef.current,
-            raw as FileTransferEnvelope,
-            prefs.maxAttachmentBytes,
-            {
-              onMeta: (meta, transport) => {
-                startTransferTracking(meta.transferId, meta.name, meta.size, "in");
-                systemMessage(
-                  `Přijímám soubor ${meta.name} (${formatBytes(meta.size)}) od ${meta.senderName} přes ${transport === "p2p" ? "P2P" : "server proxy"}.`,
-                );
-              },
-              onNeed: (transferId, seqs, _transport, round) => {
-                void sendServerLog("warn", "transfer.chunks-missing", { transferId, missing: seqs.length, round });
-                // Do not throw away a file that is all but delivered.
-                try {
-                  channel.send(JSON.stringify({ kind: "file-need", transferId, seqs, transport: "p2p" }));
-                  systemMessage(lang === "cs"
-                    ? `Chybí ${seqs.length} částí souboru — žádám o jejich zopakování (pokus ${round}).`
-                    : `${seqs.length} file chunks missing — asking the sender to repeat them (attempt ${round}).`);
-                } catch { /* channel gone: the end-of-transfer error follows */ }
-              },
-              onProgress: (id, recv, total, stats) => {
-                updateTransfer(id, { stats: { ...stats, received: recv, size: total } });
-              },
-              onComplete: (_id, blob, meta, transport) => {
-                updateTransfer(_id, {
-                  status: "completed",
-                  stats: {
-                    id: _id,
-                    name: meta.name,
-                    size: meta.size,
-                    received: meta.size,
-                    direction: "in",
-                    transport,
-                    encrypted: true,
-                    bytesPerSecond: 0,
-                    startedAt: meta.createdAt,
-                    updatedAt: Date.now(),
-                    etaSeconds: 0,
-                    progress: 1,
-                  },
-                });
-                const url = URL.createObjectURL(blob);
-                // Auto-dismiss complete card after 60 s so the chat stream
-                // does not grow unbounded when many files arrive.
-                const tid = _id;
-                window.setTimeout(() => dropTransfer(tid), 60_000);
-                setMessages((current) => [
-                  ...current,
-                  {
-                    id: meta.transferId,
-                    senderId: meta.senderId,
-                    senderName: meta.senderName,
-                    text: "",
-                    createdAt: meta.createdAt,
-                    mine: meta.senderId === myIdRef.current,
-                    secure: true,
-                    attachment: {
-                      kind: meta.mime.startsWith("image/") ? "image" : "file",
-                      name: meta.name,
-                      mime: meta.mime,
-                      size: meta.size,
-                      dataUrl: url,
-                    },
-                  },
-                ]);
-              },
-              onCancel: (id) => updateTransfer(id, { status: "cancelled" }),
-              onError: (id, msg) => {
-                updateTransfer(id, { status: "error", errorMessage: msg });
-                systemMessage(`File transfer failed: ${msg}`);
-              },
-            },
-          );
-          return;
-        }
-
-        const envelope = raw as DataChannelEnvelope;
-        const receivedAt = Date.now();
-        const plaintext = await decryptEnvelope<DecryptedPayload>(key, envelope);
-
-        if (plaintext.kind === "audio-status") {
-          handleAudioStatusFrame(plaintext);
-          return;
-        }
-
-        const expiresAt = computeExpiry(plaintext.ttlMinutes, plaintext.createdAt);
-        setMessages((current) => [
-          ...current,
-          {
-            id: plaintext.id,
-            senderId: plaintext.senderId,
-            senderName: plaintext.senderName,
-            text: plaintext.text,
-            createdAt: plaintext.createdAt,
-            attachment: plaintext.attachment,
-            mine: plaintext.senderId === myIdRef.current,
-            secure: true,
-            expiresAt,
-            flags: plaintext.flags,
-            to: plaintext.to,
-            replyTo: plaintext.replyTo,
-            forwardedFrom: plaintext.forwardedFrom,
-            cipher: envelope.ciphertext,
-            audit: [
-              { state: "created", at: plaintext.createdAt },
-              { state: "received", at: receivedAt, meta: peerId.slice(-6) },
-              { state: "decrypted", at: Date.now() },
-            ],
-          },
-        ]);
-        dispatchInternal("message", { senderId: plaintext.senderId });
-
-        if (
-          notificationsEnabledRef.current &&
-          typeof document !== "undefined" &&
-          document.hidden &&
-          "Notification" in window &&
-          Notification.permission === "granted"
-        ) {
+      // File transfer frames bypass the normal envelope decode.
+      if (typeof raw.kind === "string" && /^file-(meta|chunk|end|cancel)$/.test(raw.kind) && typeof raw.transferId === "string") {
+        await handleIncomingFrame(keys, incomingFilesRef.current, raw as unknown as FileTransferEnvelope, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
           try {
-            new Notification(`M5cet · ${plaintext.senderName}`, {
-              body: plaintext.text || "(attachment)",
-              tag: "m5cet",
-            });
-          } catch {
-            // ignore
-          }
-        }
+            channel.send(JSON.stringify({ kind: "file-need", transferId, seqs, transport: "p2p" }));
+            return true;
+          } catch { return false; } // channel gone: the end-of-transfer error follows
+        }));
+        return;
+      }
+
+      const envelope = raw as unknown as DataChannelEnvelope;
+      const receivedAt = Date.now();
+      let opened: Awaited<ReturnType<typeof openMessage<unknown>>>;
+      try {
+        opened = await openMessage<unknown>(keys, envelope);
       } catch {
         systemMessage(lang === "cs"
           ? "Přišla zpráva, ale nejde dešifrovat. Druhá strana má pravděpodobně jiný klíč."
           : lang === "de" ? "Nachricht konnte nicht entschlüsselt werden — andere Seite hat anderen Schlüssel."
             : "A message arrived but could not be decrypted. The other side likely has a different room key.");
+        return;
+      }
+      if (opened.version === 1) warnOnce(`legacy:${peerId}`, t(lang, "sec.legacyPeer").replace("{name}", peerName()));
+
+      // Checked, bounded, and bound to this channel's peer: a payload
+      // naming another sender (or us) is not shown.
+      const plaintext = validatePayload(opened.payload, { transportSender: peerId, myId: myIdRef.current });
+      if (!plaintext) {
+        warnOnce(`dropped:${peerId}`, t(lang, "proto.dropped").replace("{name}", peerName()));
+        return;
+      }
+      if (!replayRef.current.accept(plaintext.id)) return; // a replay: already shown
+
+      if (plaintext.kind === "audio-status") {
+        setPeerView(peerId, { audio: plaintext.status });
+        return;
+      }
+      if (messagesRef.current.some((m) => m.id === plaintext.id)) return;
+
+      const identity = await identityFor(opened.signer, plaintext.senderName);
+      setMessages((current) => [
+        ...current,
+        chatMessageFrom(plaintext, {
+          cipher: envelope.ciphertext,
+          cryptoVersion: opened.version,
+          identity,
+          audit: [
+            { state: "created", at: plaintext.createdAt },
+            { state: "received", at: receivedAt, meta: peerId.slice(-6) },
+            { state: "decrypted", at: Date.now() },
+          ],
+        }),
+      ]);
+      dispatchInternal("message", { senderId: plaintext.senderId });
+
+      if (
+        notificationsEnabledRef.current &&
+        typeof document !== "undefined" &&
+        document.hidden &&
+        "Notification" in window &&
+        Notification.permission === "granted"
+      ) {
+        try {
+          new Notification(`M5cet · ${plaintext.senderName}`, {
+            body: plaintext.flags?.sealed ? "🔒" : plaintext.text || "(attachment)",
+            tag: "m5cet",
+          });
+        } catch {
+          // ignore
+        }
       }
     };
   }
@@ -1455,7 +1557,35 @@ function ChatApp() {
     }
   }
 
-  async function handleSignal(source: string, payload: RTCSessionDescriptionInit | RTCIceCandidateInit) {
+  /** Signals from one peer are applied in the order they arrived: opening a
+   *  sealed one is async, and a candidate must not overtake its offer. */
+  function handleSignal(source: string, payload: unknown): Promise<void> {
+    const previous = signalInRef.current.get(source) ?? Promise.resolve();
+    const next = previous
+      .then(() => applySignal(source, payload))
+      .catch((err) => console.warn("[m5cet] signal from", source.slice(-6), "failed:", (err as Error)?.message ?? err));
+    signalInRef.current.set(source, next);
+    return next;
+  }
+
+  async function applySignal(source: string, payload: unknown) {
+    const keys = keyRef.current;
+    if (!keys) return;
+    // Only sealed signals are accepted: a plain one could have been written
+    // by the server itself (to sit in the middle of the call). v2 clients
+    // always seal; a pre-3.0 client is told to update.
+    if (!isSealedSignal(payload)) {
+      warnOnce(`unsealed:${source}`, t(lang, "sec.unsealedSignal").replace("{name}", peersRef.current.get(source)?.name || `peer-${source.slice(-4)}`));
+      return;
+    }
+    let desc: RTCSessionDescriptionInit | RTCIceCandidateInit;
+    try {
+      desc = await openSignal<RTCSessionDescriptionInit | RTCIceCandidateInit>(keys, source, myIdRef.current, payload.sealed);
+    } catch {
+      warnOnce(`mismatch:${source}`, t(lang, "sec.keyMismatch").replace("{name}", peersRef.current.get(source)?.name || `peer-${source.slice(-4)}`), "error");
+      return;
+    }
+
     let handle = peersRef.current.get(source);
     if (!handle) {
       await createPeer(source, `peer-${source.slice(-4)}`, false);
@@ -1463,9 +1593,9 @@ function ChatApp() {
     }
     if (!handle) return;
 
-    if ("type" in payload && (payload.type === "offer" || payload.type === "answer")) {
-      await handle.pc.setRemoteDescription(payload);
-      if (payload.type === "offer") {
+    if ("type" in desc && (desc.type === "offer" || desc.type === "answer")) {
+      await handle.pc.setRemoteDescription(desc);
+      if (desc.type === "offer") {
         const answer = await handle.pc.createAnswer();
         await handle.pc.setLocalDescription(answer);
         sendSignal(source, answer);
@@ -1473,8 +1603,8 @@ function ChatApp() {
       return;
     }
 
-    if ("candidate" in payload && payload.candidate) {
-      await handle.pc.addIceCandidate(payload);
+    if ("candidate" in desc && desc.candidate) {
+      await handle.pc.addIceCandidate(desc);
     }
   }
 
@@ -1554,13 +1684,25 @@ function ChatApp() {
     await turnConfigPromise;
 
     const nextRoom = normalizeRoom(roomInputRef.current);
-    const nextPeerId = newId("peer");
+    // A reconnect to the same room keeps our peer id (the server hands it
+    // back against the resume secret): peers, queued messages and the
+    // "mine" mark of our own history keep pointing at us.
+    const resume = resumeRef.current?.room === nextRoom ? resumeRef.current : null;
+    const nextPeerId = resume?.peerId ?? newId("peer");
     setStatus("deriving");
     setRoom(nextRoom);
     setMyId(nextPeerId);
     myIdRef.current = nextPeerId;
     roomRef.current = nextRoom;
-    keyRef.current = await deriveRoomKey(nextRoom, passphraseRef.current);
+    // 600 000 PBKDF2 rounds cost a second on a phone: derive once per room
+    // and passphrase, not on every reconnect.
+    const keyFor = `${nextRoom}\u0000${passphraseRef.current}`;
+    if (!keyRef.current || keyForRef.current !== keyFor) {
+      keyRef.current = await deriveRoomKeys(nextRoom, passphraseRef.current);
+      keyForRef.current = keyFor;
+      replayRef.current.clear();
+    }
+    identityRef.current ??= await loadIdentity().catch(() => null);
     // "A new connection clears the chat" is one of three choices now: the
     // session and server modes keep the conversation (chat-history.ts).
     if (retentionRef.current === "ephemeral") {
@@ -1569,13 +1711,14 @@ function ChatApp() {
     } else if (retentionRef.current === "session") {
       const restored = await historyRef.current.load(nextRoom);
       if (restored.length > 0) {
-        setMessages((cur) => mergeMessages(cur, restored.map((m) => ({ ...m, mine: m.senderId === nextPeerId }))));
+        setMessages((cur) => mergeMessages(cur, restored));
         systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
       }
     } else if (retentionRef.current === "server" && !accountRef.current && storageSessionId()) {
       // The server kept this session's conversation (no passkey yet).
       const rows = await readServerMessages({ room: nextRoom });
-      const restored = sanitizeRestored(rows.map((r) => r.payload), nextPeerId);
+      const opened = await Promise.all(rows.map((r) => serverSealerRef.current.open(r.id, r.payload)));
+      const restored = sanitizeRestored(opened.filter((m) => m !== null), nextPeerId);
       if (restored.length > 0) {
         setMessages((cur) => mergeMessages(cur, restored));
         systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
@@ -1606,8 +1749,10 @@ function ChatApp() {
       // token and asks the server to stay in the room for them (away relay).
       socket.send(JSON.stringify({
         type: "join",
+        protocol: 2,
         room: nextRoom,
         peerId: nextPeerId,
+        ...(resume ? { resume: resume.secret } : {}),
         name: nameRef.current,
         ...(accountToken() ? { auth: accountToken() } : {}),
         away: retentionRef.current === "server" && Boolean(accountRef.current),
@@ -1670,8 +1815,12 @@ function ChatApp() {
           }),
           onDownloadFile: async (cmdInner) => {
             const url = String(cmdInner.payload?.url || "");
-            const name = String(cmdInner.payload?.name || "admin-file");
-            if (!url) return;
+            const name = String(cmdInner.payload?.name || "admin-file").slice(0, 120);
+            // Only this site or an https address — never file:, data:,
+            // javascript: or a plain-http address on the local network.
+            let target: URL;
+            try { target = new URL(url, window.location.href); } catch { return; }
+            if (target.origin !== window.location.origin && target.protocol !== "https:") return;
             const consent = window.confirm(lang === "cs"
               ? `Administrátor chce stáhnout soubor: ${name}\nSouhlasíš?`
               : `Admin wants you to download a file: ${name}\nProceed?`);
@@ -1695,9 +1844,17 @@ function ChatApp() {
       }
 
       if (frame.type === "joined") {
+        // Protocol v2: the server decides our peer id (it keeps the one we
+        // asked for unless someone else holds it) and gives us a secret to
+        // claim it again after a reconnect.
+        if (frame.peerId && frame.peerId !== myIdRef.current) {
+          myIdRef.current = frame.peerId;
+          setMyId(frame.peerId);
+        }
+        resumeRef.current = frame.resume ? { room: frame.room, peerId: frame.peerId, secret: frame.resume } : null;
         setStatus("joined");
         systemMessage(`Joined ${frame.room}. Peers: ${frame.peers.length}.`);
-        setAwayPeers(frame.away ?? []);
+        setAwayPeers((frame.away ?? []).map((a) => ({ accountId: accountRefOf(a), name: a.name, since: a.since })).filter((a) => a.accountId));
         if (frame.account && "invalid" in frame.account) {
           // The token did not outlive the server: sign in again to get the
           // vault and the relay back.
@@ -1719,7 +1876,13 @@ function ChatApp() {
             }),
           }).catch(() => undefined);
         }
-        setActivePanel((current) => (current === "join" ? null : current));
+        // Close the join form only after a join the user asked for: an
+        // automatic reconnect (restore, resume, network blip) must not shut
+        // a panel they have just opened.
+        if (closeJoinPanelRef.current) {
+          closeJoinPanelRef.current = false;
+          setActivePanel((current) => (current === "join" ? null : current));
+        }
       }
 
       if (frame.type === "peer-joined") {
@@ -1728,13 +1891,58 @@ function ChatApp() {
       }
 
       if (frame.type === "peer-away") {
-        setAwayPeers((cur) => [...cur.filter((a) => a.accountId !== frame.accountId), { accountId: frame.accountId, name: frame.name, since: frame.since }]);
+        const ref = accountRefOf(frame);
+        if (!ref) return;
+        setAwayPeers((cur) => [...cur.filter((a) => a.accountId !== ref), { accountId: ref, name: frame.name, since: frame.since }]);
         systemMessage(t(lang, "away.peer").replace("{name}", frame.name));
         return;
       }
 
       if (frame.type === "peer-back" || frame.type === "peer-gone") {
-        setAwayPeers((cur) => cur.filter((a) => a.accountId !== frame.accountId));
+        const ref = accountRefOf(frame);
+        setAwayPeers((cur) => cur.filter((a) => a.accountId !== ref));
+        return;
+      }
+
+      if (frame.type === "peer-updated") {
+        // Someone signed in or out without leaving the room.
+        setPeerView(frame.peerId, { name: frame.name });
+        return;
+      }
+
+      if (frame.type === "auth-result") {
+        if (frame.invalid) {
+          // The token did not outlive the server: sign in again to get the
+          // vault and the relay back.
+          setAccount(null);
+          void restoreSession().then((acc) => { if (acc) { setAccount(acc); announceAccountToServer(); } });
+        }
+        return;
+      }
+
+      if (frame.type === "account-revoked") {
+        // Signed out elsewhere, deleted, or ended by the operator. Our own
+        // sign-out arrives here too — then there is nothing left to do.
+        if (accountRef.current) {
+          systemMessage(t(lang, "proto.revoked").replace("{reason}", frame.reason), { kind: "warning" });
+          void signOutAccount().catch(() => undefined);
+          setAccount(null);
+          setAwayPeers([]);
+        }
+        return;
+      }
+
+      if (frame.type === "rate-limited") {
+        setNotice(t(lang, "proto.rateLimited").replace("{frame}", frame.frame));
+        return;
+      }
+
+      if (frame.type === "closed-by-server") {
+        systemMessage(t(lang, "proto.closedByServer").replace("{reason}", frame.reason), { kind: "warning" });
+        return;
+      }
+
+      if (frame.type === "presence-ack" || frame.type === "signal-undeliverable" || frame.type === "replaced" || frame.type === "hello") {
         return;
       }
 
@@ -1759,7 +1967,8 @@ function ChatApp() {
       }
 
       if (frame.type === "signal") {
-        await handleSignal(frame.source, frame.payload);
+        void handleSignal(frame.source, frame.payload);
+        return;
       }
 
       if (frame.type === "error") {
@@ -1792,85 +2001,27 @@ function ChatApp() {
         frame.type === "proxy-meta" ||
         frame.type === "proxy-chunk" ||
         frame.type === "proxy-end" ||
-        frame.type === "proxy-cancel" ||
-        frame.type === "proxy-progress"
+        frame.type === "proxy-cancel"
       ) {
-        const key = keyRef.current;
-        if (!key) return;
+        const keys = keyRef.current;
+        if (!keys) return;
         // The proxy frames have the same shape as the p2p file-transfer
-        // envelopes; the kind in the frame body mirrors one of those.
-        const ftx: FileTransferEnvelope = {
-          kind:
-            frame.type === "proxy-meta" ? "proxy-meta" :
-            frame.type === "proxy-chunk" ? "proxy-chunk" :
-            frame.type === "proxy-end" ? "proxy-end" :
-            frame.type === "proxy-cancel" ? "proxy-cancel" :
-            "proxy-progress",
+        // envelopes; version, iv and ciphertext pass through unchanged.
+        const ftx = {
+          kind: frame.type,
           transferId: frame.transferId,
           transport: "proxy",
-          ...(frame.type === "proxy-meta" ? { iv: frame.iv, ciphertext: frame.ciphertext } : {}),
-          ...(frame.type === "proxy-chunk" ? { seq: frame.seq, iv: frame.iv, ciphertext: frame.ciphertext } : {}),
-          ...(frame.type === "proxy-progress" ? { received: frame.received } : {}),
+          ...("v" in frame && frame.v ? { v: frame.v } : {}),
+          ...("seq" in frame ? { seq: frame.seq } : {}),
+          ...("iv" in frame && frame.iv ? { iv: frame.iv } : {}),
+          ...("ciphertext" in frame && frame.ciphertext ? { ciphertext: frame.ciphertext } : {}),
         } as FileTransferEnvelope;
-        await handleIncomingFrame(key, incomingFilesRef.current, ftx, prefs.maxAttachmentBytes, {
-          onMeta: (meta, transport) => {
-            startTransferTracking(meta.transferId, meta.name, meta.size, "in");
-            systemMessage(
-              `Přijímám soubor ${meta.name} (${formatBytes(meta.size)}) od ${meta.senderName} přes ${transport === "p2p" ? "P2P" : "server proxy"}.`,
-            );
-          },
-          onNeed: (transferId, seqs, _transport, round) => {
-            const socket = socketRef.current;
-            if (socket?.readyState !== WebSocket.OPEN) return;
-            socket.send(JSON.stringify({ type: "proxy-need", kind: "proxy-need", transferId, seqs }));
-            systemMessage(lang === "cs"
-              ? `Chybí ${seqs.length} částí souboru — žádám o jejich zopakování (pokus ${round}).`
-              : `${seqs.length} file chunks missing — asking the sender to repeat them (attempt ${round}).`);
-          },
-          onProgress: (id, recv, total, stats) => updateTransfer(id, { stats: { ...stats, received: recv, size: total } }),
-          onComplete: (id, blob, meta, transport) => {
-            updateTransfer(id, {
-              status: "completed",
-              stats: {
-                id,
-                name: meta.name,
-                size: meta.size,
-                received: meta.size,
-                direction: "in",
-                transport,
-                encrypted: true,
-                bytesPerSecond: 0,
-                startedAt: meta.createdAt,
-                updatedAt: Date.now(),
-                etaSeconds: 0,
-                progress: 1,
-              },
-            });
-            window.setTimeout(() => dropTransfer(id), 60_000);
-            const url = URL.createObjectURL(blob);
-            setMessages((current) => [
-              ...current,
-              {
-                id: meta.transferId,
-                senderId: meta.senderId,
-                senderName: meta.senderName,
-                text: "",
-                createdAt: meta.createdAt,
-                mine: meta.senderId === myIdRef.current,
-                secure: true,
-                attachment: {
-                  kind: meta.mime.startsWith("image/") ? "image" : "file",
-                  name: meta.name,
-                  mime: meta.mime,
-                  size: meta.size,
-                  dataUrl: url,
-                },
-              },
-            ]);
-          },
-          onCancel: (id) => updateTransfer(id, { status: "cancelled" }),
-          onError: (id, msg) => updateTransfer(id, { status: "error", errorMessage: msg }),
-        });
+        await handleIncomingFrame(keys, incomingFilesRef.current, ftx, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
+          const sock = socketRef.current;
+          if (sock?.readyState !== WebSocket.OPEN) return false;
+          sock.send(JSON.stringify({ type: "proxy-need", transferId, seqs }));
+          return true;
+        }));
         return;
       }
     };
@@ -1914,6 +2065,7 @@ function ChatApp() {
       return;
     }
     disconnect(false);
+    closeJoinPanelRef.current = true;
     // The user explicitly asked to (re)join; re-arm the persistent
     // connection so any later network blip will silently reconnect.
     await startSession(name, roomInput, passphrase);
@@ -1986,6 +2138,9 @@ function ChatApp() {
     });
     peersRef.current.clear();
     keyRef.current = null;
+    keyForRef.current = "";
+    signalOutRef.current.clear();
+    signalInRef.current.clear();
     if (localAudioStreamRef.current) {
       localAudioStreamRef.current.getTracks().forEach((track) => track.stop());
       localAudioStreamRef.current = null;
@@ -2019,8 +2174,7 @@ function ChatApp() {
       away?: AwayPeer[];
     } = {},
   ) {
-    const key = keyRef.current;
-    if (!key) return;
+    if (!keyRef.current) return;
     const { perMessage } = ttlForRoom();
     const ttlMinutes = perMessage > 0 ? perMessage : undefined;
     const createdAt = Date.now();
@@ -2058,7 +2212,8 @@ function ChatApp() {
       replyTo: opts.replyTo,
       forwardedFrom: opts.forwardedFrom,
     };
-    const envelope = await encryptEnvelope(key, payload);
+    const envelope = await sealForRoom(payload);
+    if (!envelope) return;
     audit.push({ state: "encrypted", at: Date.now() });
     const sent = await broadcastEnvelope(envelope, opts.targets);
     // Away members are not on a data channel: the server takes the ciphertext
@@ -2185,8 +2340,18 @@ function ChatApp() {
     const peer = m.mine ? undefined : peersRef.current.get(m.senderId);
     const net = m.mine ? undefined : peerNetRef.current.get(m.senderId);
     const plain = m.flags?.sealed ? (m.mine ? m.sealPlain : undefined) : m.text;
+    const identity = m.mine
+      ? (identityRef.current ? { text: `${t(lang, "sec.myFingerprint")} · ${identityRef.current.fingerprint}`, tone: "ok" as const } : undefined)
+      : m.identity
+        ? {
+            text: t(lang, `sec.identity.${m.identity.state}`).replace("{fp}", m.identity.fingerprint ?? ""),
+            tone: m.identity.state === "verified" ? "ok" as const : m.identity.state === "unsigned" ? "muted" as const : "warn" as const,
+          }
+        : undefined;
     return {
       id: m.id,
+      identity,
+      cryptoVersion: m.mine ? 2 : m.cryptoVersion,
       mine: m.mine,
       sender: m.senderName,
       senderId: m.senderId,
@@ -2600,6 +2765,7 @@ function ChatApp() {
 
   async function sendLargeFileToAll(file: File) {
     const key = keyRef.current;
+    identityRef.current ??= await loadIdentity().catch(() => null);
     if (!key) {
       setNotice(lang === "cs" ? "Není odvozen klíč místnosti." : "Missing room key.");
       return;
@@ -2644,6 +2810,7 @@ function ChatApp() {
 
     const result = await sendFile({
       key,
+      identity: identityRef.current,
       file,
       senderId: myIdRef.current,
       senderName: nameRef.current,
@@ -2675,8 +2842,9 @@ function ChatApp() {
     const currentTransfer = transfersRef.current.find((x) => x.id === placeholderId);
 
     // One row per transfer in the server's table: what went where, how big,
-    // over which transport and how it ended. The room name is hashed, the
-    // file name only reaches the detail column, which is sealed.
+    // over which transport and how it ended. Never the file name — the
+    // server seals the detail column with a key it holds, so it could read
+    // it; the kind of file (image, video…) is all the statistics need.
     void recordServerTransfer({
       id: result.transferId || placeholderId,
       direction: "out",
@@ -2684,7 +2852,7 @@ function ChatApp() {
       status: result.ok ? "completed" : result.reason === "cancelled" ? "cancelled" : "failed",
       bytes: file.size,
       finishedAt: Date.now(),
-      detail: { name: file.name, mime: file.type, ...(result.reason ? { reason: result.reason } : {}) },
+      detail: { kind: (file.type.split("/")[0] || "other").slice(0, 16), ...(result.reason ? { reason: result.reason.slice(0, 80) } : {}) },
     });
 
     if (result.ok && result.resend) {

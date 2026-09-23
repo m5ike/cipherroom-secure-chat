@@ -34,6 +34,20 @@ describe("generateSealCode", () => {
     expect(code).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]+$/);
     expect(code).not.toMatch(/[01OIL]/);
   });
+  it("defaults to 12 characters in groups of four, without modulo bias", () => {
+    const code = generateSealCode();
+    expect(code).toMatch(/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/);
+    // Every letter appears: rejection sampling keeps the tail of the
+    // alphabet as likely as the head.
+    const counts = new Map<string, number>();
+    for (let i = 0; i < 400; i++) for (const ch of generateSealCode(12, false)) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+    expect(counts.size).toBe(31);
+  });
+  it("opens a v2 code however it is typed", async () => {
+    const { meta, ciphertext } = await sealText("hello", "ABCD-EFGH-JKMN", 1000);
+    expect(meta).toMatchObject({ v: 2, it: 1000 });
+    expect(await openSealed(ciphertext, meta, "abcd efgh jkmn")).toBe("hello");
+  });
   it("is non-deterministic across calls", () => {
     const codes = new Set(Array.from({ length: 20 }, () => generateSealCode()));
     expect(codes.size).toBeGreaterThan(1);

@@ -16,6 +16,12 @@
 // Migrations are a plain list: each entry runs once, in order, and the
 // schema version is the number of entries applied. Never edit an entry that
 // has shipped — append a new one.
+//
+// Session ids never reach these tables in the clear: `databases.owner_id`,
+// `logs.session_id` and `transfers.session_id` hold an HMAC of the id
+// (keys.ts sessionRef). Rows written before that are rewritten by the global
+// store when it opens (GlobalStore.rehashLegacySessionIds) — SQL alone
+// cannot compute the HMAC.
 
 export type Migration = { name: string; sql: string };
 
@@ -97,6 +103,70 @@ export const GLOBAL_MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS transfers_by_account ON transfers(account_id, at);
     `,
   },
+  {
+    // Key check values, the indexes the sweeps and quotas need, and transfer
+    // rows that belong to one owner: (owner, id) is the key now, so nobody
+    // can claim — or overwrite — someone else's transfer record.
+    name: "002-hardening",
+    sql: `
+      ALTER TABLE databases ADD COLUMN key_check BLOB;
+      CREATE INDEX IF NOT EXISTS databases_by_kind_expiry ON databases(owner_kind, expires_at);
+      CREATE INDEX IF NOT EXISTS logs_by_session ON logs(session_id, at);
+
+      CREATE TABLE transfers_v2 (
+        id            TEXT NOT NULL,
+        owner         TEXT NOT NULL DEFAULT '',  -- 'a:<account>' | 's:<session ref>' | '' (server)
+        at            INTEGER NOT NULL,
+        finished_at   INTEGER NOT NULL DEFAULT 0,
+        direction     TEXT NOT NULL,
+        transport     TEXT NOT NULL,
+        status        TEXT NOT NULL,
+        account_id    TEXT,
+        session_id    TEXT,
+        room_hash     TEXT NOT NULL DEFAULT '',
+        bytes         INTEGER NOT NULL DEFAULT 0,
+        chunks        INTEGER NOT NULL DEFAULT 0,
+        resent_chunks INTEGER NOT NULL DEFAULT 0,
+        detail        BLOB,
+        PRIMARY KEY (owner, id)
+      );
+      INSERT OR IGNORE INTO transfers_v2 (id, owner, at, finished_at, direction, transport, status, account_id, session_id, room_hash, bytes, chunks, resent_chunks, detail)
+        SELECT id, COALESCE('a:' || account_id, 's:' || session_id, ''), at, finished_at, direction, transport, status, account_id, session_id, room_hash, bytes, chunks, resent_chunks, detail
+        FROM transfers;
+      DROP TABLE transfers;
+      ALTER TABLE transfers_v2 RENAME TO transfers;
+      CREATE INDEX IF NOT EXISTS transfers_by_time ON transfers(at);
+      CREATE INDEX IF NOT EXISTS transfers_by_account ON transfers(account_id, at);
+      CREATE INDEX IF NOT EXISTS transfers_by_session ON transfers(session_id, at);
+    `,
+  },
+  {
+    // The operator's audit journal (server/monitor/audit.ts), persisted.
+    // 'detail' is sealed with AAD bound to category + event + at.
+    name: "003-audit",
+    sql: `
+      CREATE TABLE IF NOT EXISTS audit (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        at          INTEGER NOT NULL,
+        category    TEXT NOT NULL,
+        level       TEXT NOT NULL,             -- debug | info | notice | warn | error
+        event       TEXT NOT NULL,
+        actor       TEXT,
+        target      TEXT,
+        account_id  TEXT,
+        session_ref TEXT,                      -- HMAC of the session id, never the id
+        peer_id     TEXT,
+        room_hash   TEXT,
+        ip          TEXT,
+        bytes       INTEGER,
+        status      TEXT,
+        detail      BLOB
+      );
+      CREATE INDEX IF NOT EXISTS audit_by_time ON audit(at);
+      CREATE INDEX IF NOT EXISTS audit_by_category ON audit(category, at);
+      CREATE INDEX IF NOT EXISTS audit_by_account ON audit(account_id, at);
+    `,
+  },
 ];
 
 export const USER_MIGRATIONS: Migration[] = [
@@ -155,6 +225,71 @@ export const USER_MIGRATIONS: Migration[] = [
         meta  TEXT
       );
       CREATE INDEX IF NOT EXISTS events_by_time ON events(at);
+    `,
+  },
+  {
+    // Message ids are unique per room, not per database (two rooms may use
+    // the same id), and every stored message gets a server-assigned,
+    // monotonic `seq` — the cursor incremental reads use. `seq` comes from
+    // the counters table, never from max(seq), so a deleted newest message
+    // cannot hand its number to the next one.
+    name: "002-messages-per-room",
+    sql: `
+      CREATE TABLE messages_v2 (
+        seq         INTEGER PRIMARY KEY,
+        id          TEXT NOT NULL,
+        room        TEXT NOT NULL,
+        created_at  INTEGER NOT NULL,
+        stored_at   INTEGER NOT NULL,
+        sender_id   TEXT NOT NULL DEFAULT '',
+        sender_name TEXT NOT NULL DEFAULT '',
+        mine        INTEGER NOT NULL DEFAULT 0,
+        expires_at  INTEGER NOT NULL DEFAULT 0,
+        bytes       INTEGER NOT NULL DEFAULT 0,
+        payload     TEXT NOT NULL,
+        UNIQUE (room, id)
+      );
+      INSERT INTO messages_v2 (seq, id, room, created_at, stored_at, sender_id, sender_name, mine, expires_at, bytes, payload)
+        SELECT row_number() OVER (ORDER BY created_at, rowid), id, room, created_at, stored_at, sender_id, sender_name, mine, expires_at, bytes, payload
+        FROM messages;
+      DROP TABLE messages;
+      ALTER TABLE messages_v2 RENAME TO messages;
+      CREATE INDEX IF NOT EXISTS messages_by_room ON messages(room, created_at, seq);
+      CREATE INDEX IF NOT EXISTS messages_by_room_seq ON messages(room, seq);
+      CREATE INDEX IF NOT EXISTS messages_by_created ON messages(created_at, seq);
+      CREATE INDEX IF NOT EXISTS messages_by_expiry ON messages(expires_at);
+
+      CREATE TABLE IF NOT EXISTS counters (
+        name  TEXT PRIMARY KEY,
+        value INTEGER NOT NULL
+      );
+      INSERT INTO counters (name, value) SELECT 'message_seq', COALESCE(max(seq), 0) FROM messages;
+
+      INSERT OR IGNORE INTO rooms (room, first_seen_at, last_seen_at, message_count)
+        SELECT room, min(created_at), max(stored_at), 0 FROM messages GROUP BY room;
+      UPDATE rooms SET message_count = (SELECT count(*) FROM messages WHERE messages.room = rooms.room);
+      DELETE FROM rooms WHERE message_count <= 0;
+    `,
+  },
+  {
+    // The sealed account vault (profile + chat) gets its own table: it is
+    // written by the server only, may be larger than a settings value, and
+    // an ordinary kv write can no longer overwrite it. A vault kept under
+    // the old kv key moves across.
+    name: "003-vault",
+    sql: `
+      CREATE TABLE IF NOT EXISTS vault (
+        part       TEXT PRIMARY KEY,           -- 'profile' | 'chat'
+        ct         TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+      );
+      INSERT OR REPLACE INTO vault (part, ct, updated_at)
+        SELECT 'profile', json_extract(value, '$.profile.ct'), COALESCE(json_extract(value, '$.profile.updatedAt'), updated_at)
+        FROM kv WHERE key = 'vault' AND CASE WHEN json_valid(value) THEN json_type(value, '$.profile.ct') = 'text' ELSE 0 END;
+      INSERT OR REPLACE INTO vault (part, ct, updated_at)
+        SELECT 'chat', json_extract(value, '$.chat.ct'), COALESCE(json_extract(value, '$.chat.updatedAt'), updated_at)
+        FROM kv WHERE key = 'vault' AND CASE WHEN json_valid(value) THEN json_type(value, '$.chat.ct') = 'text' ELSE 0 END;
+      DELETE FROM kv WHERE key = 'vault';
     `,
   },
 ];

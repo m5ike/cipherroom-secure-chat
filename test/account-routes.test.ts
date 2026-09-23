@@ -193,7 +193,7 @@ describe("client events", () => {
 describe("push, sign-out and deletion", () => {
   it("links a push endpoint for the away wake-up", async () => {
     const { token, account } = await registerAccount();
-    expect((await post("/api/account/push", { subscription: { endpoint: "https://push.example/abc", keys: { p256dh: "p", auth: "a" } } }, token)).status).toBe(200);
+    expect((await post("/api/account/push", { subscription: { endpoint: "https://fcm.googleapis.com/fcm/send/abc", keys: { p256dh: "p", auth: "a" } } }, token)).status).toBe(200);
     expect(store.get(account.id)!.push).toHaveLength(1);
     expect((await post("/api/account/push", { subscription: { endpoint: "ftp://nope" } }, token)).status).toBe(400);
   });

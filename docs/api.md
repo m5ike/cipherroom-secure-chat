@@ -1,5 +1,10 @@
 # M5cet — API surface
 
+> **Od 3.0.0:** WebSocket běží na protokolu v2 — rámce, validace, limity a chybové kódy popisuje
+> [dokumentace 3.0 › Protokol](site/index.html#protokol); operátorské API `/api/admin/*`
+> [› API reference](site/index.html#api-admin). `/api/events/recent` a `/api/transfers/stats`
+> vyžadují admin token.
+
 Všechny endpointy běží na stejném portu jako frontend (`PORT`, default 5000).
 Cache-Control je všude `no-store`.
 

@@ -11,7 +11,8 @@ const push = vi.hoisted(() => ({
   ready: true,
   sent: [] as Array<{ endpoint: string; payload: { title?: string; body?: string } }>,
 }));
-vi.mock("../server/push", () => ({
+vi.mock("../server/push", async (importOriginal) => ({
+  isAllowedPushEndpoint: (await importOriginal<typeof import("../server/push")>()).isAllowedPushEndpoint,
   isWebPushReady: () => push.ready,
   sendWebPush: vi.fn(async (sub: { endpoint: string }, payload: { title?: string; body?: string }) => {
     push.sent.push({ endpoint: sub.endpoint, payload });
@@ -33,8 +34,8 @@ beforeEach(async () => {
   push.ready = true;
   push.sent = [];
   pushSubscriptions.clear();
-  pushSubscriptions.set("sub-alice", { endpoint: "https://push.example/alice", keys: { p256dh: "k", auth: "a" }, createdAt: Date.now() });
-  pushSubscriptions.set("sub-bob", { endpoint: "https://push.example/bob", keys: { p256dh: "k", auth: "a" }, createdAt: Date.now() });
+  pushSubscriptions.set("sub-alice", { endpoint: "https://fcm.googleapis.com/fcm/send/alice", keys: { p256dh: "k", auth: "a" }, createdAt: Date.now() });
+  pushSubscriptions.set("sub-bob", { endpoint: "https://fcm.googleapis.com/fcm/send/bob", keys: { p256dh: "k", auth: "a" }, createdAt: Date.now() });
   process.env.ADMIN_API_TOKEN = TOKEN;
   process.env.VAPID_PUBLIC_KEY = "test-public";
   process.env.VAPID_PRIVATE_KEY = "test-private";
@@ -65,18 +66,18 @@ describe("self-test (own subscription id, no token)", () => {
     const res = await test({ id: "sub-alice", title: "You won!", body: "click here" });
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, mode: "self" });
-    expect(push.sent).toEqual([{ endpoint: "https://push.example/alice", payload: { title: "M5cet · test", body: "Push delivery test" } }]);
+    expect(push.sent).toEqual([{ endpoint: "https://fcm.googleapis.com/fcm/send/alice", payload: { title: "M5cet · test", body: "Push delivery test" } }]);
   });
 
   it("works end to end with the id /api/push/subscribe hands out", async () => {
     const sub = await (await fetch(`${base}/api/push/subscribe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ subscription: { endpoint: "https://push.example/carol", keys: { p256dh: "k", auth: "a" } } }),
+      body: JSON.stringify({ subscription: { endpoint: "https://fcm.googleapis.com/fcm/send/carol", keys: { p256dh: "k", auth: "a" } } }),
     })).json() as { id: string };
     expect(sub.id).toMatch(/^[0-9a-f-]{36}$/);
     expect((await test({ id: sub.id })).status).toBe(200);
-    expect(push.sent.map((s) => s.endpoint)).toEqual(["https://push.example/carol"]);
+    expect(push.sent.map((s) => s.endpoint)).toEqual(["https://fcm.googleapis.com/fcm/send/carol"]);
   });
 
   it("404 for an unknown id, 503 when VAPID is missing", async () => {
@@ -111,7 +112,22 @@ describe("broadcast (admin token)", () => {
     const res = await test({ broadcast: true, title: "Maintenance", body: "Back at 10:00" }, `Bearer ${TOKEN}`);
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ ok: true, mode: "broadcast", sent: 2, failed: 0 });
-    expect(push.sent.map((s) => s.endpoint).sort()).toEqual(["https://push.example/alice", "https://push.example/bob"]);
+    expect(push.sent.map((s) => s.endpoint).sort()).toEqual(["https://fcm.googleapis.com/fcm/send/alice", "https://fcm.googleapis.com/fcm/send/bob"]);
     expect(push.sent.every((s) => s.payload.title === "Maintenance" && s.payload.body === "Back at 10:00")).toBe(true);
+  });
+});
+
+describe("push endpoints", () => {
+  it("only reach known push services (no requests into the server's own network)", async () => {
+    const { isAllowedPushEndpoint } = await import("../server/push");
+    expect(isAllowedPushEndpoint("https://fcm.googleapis.com/fcm/send/abc")).toBe(true);
+    expect(isAllowedPushEndpoint("https://updates.push.services.mozilla.com/wpush/v2/x")).toBe(true);
+    expect(isAllowedPushEndpoint("https://web.push.apple.com/Q")).toBe(true);
+    expect(isAllowedPushEndpoint("https://10.0.0.5/admin")).toBe(false);
+    expect(isAllowedPushEndpoint("https://localhost/x")).toBe(false);
+    expect(isAllowedPushEndpoint("http://fcm.googleapis.com/x")).toBe(false);
+    expect(isAllowedPushEndpoint("https://fcm.googleapis.com.evil.example/x")).toBe(false);
+    expect(isAllowedPushEndpoint("https://user:pw@fcm.googleapis.com/x")).toBe(false);
+    expect(isAllowedPushEndpoint("https://fcm.googleapis.com:8443/x")).toBe(false);
   });
 });

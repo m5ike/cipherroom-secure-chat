@@ -32,7 +32,9 @@ export const VANISH_PRESETS: ReadonlyArray<{ labelKey: string; seconds: number }
   { labelKey: "msgkind.vanish.2h", seconds: 7200 },
 ];
 
-export type SealedMeta = { salt: string; iv: string };
+/** v2: 12-character code, normalised, 600 000 PBKDF2 iterations (`it`).
+ *  Without `v` the message is from version 1 (6 characters, 150 000). */
+export type SealedMeta = { salt: string; iv: string; v?: number; it?: number };
 
 /** Flags carried inside the decrypted chat payload. */
 export type MsgFlags = {
@@ -60,19 +62,39 @@ const buf = (s: string): Uint8Array<ArrayBuffer> => new Uint8Array(encoder.encod
 
 // Crockford-ish alphabet without look-alikes (no 0/O, 1/I/L).
 const SEAL_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+export const SEAL_CODE_LENGTH = 12;
+export const SEAL_ITERATIONS = 600_000;
+const LEGACY_SEAL_ITERATIONS = 150_000;
 
-/** A short shared code shown to the sender to pass out of band. */
-export function generateSealCode(len = 6): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(len));
+/**
+ * A shared code shown to the sender to pass out of band: 12 characters
+ * (≈ 59 bits), shown as XXXX-XXXX-XXXX. Version 1 used 6 (≈ 30 bits), which
+ * any room member holding the ciphertext could try exhaustively in hours.
+ * Characters are drawn by rejection sampling — `byte % 31` favoured the
+ * first eight letters.
+ */
+export function generateSealCode(len = SEAL_CODE_LENGTH, grouped = len >= 8): string {
   let out = "";
-  for (let i = 0; i < len; i += 1) out += SEAL_ALPHABET[bytes[i] % SEAL_ALPHABET.length];
-  return out;
+  const limit = 256 - (256 % SEAL_ALPHABET.length);
+  while (out.length < len) {
+    for (const b of crypto.getRandomValues(new Uint8Array(len * 2))) {
+      if (b >= limit) continue;
+      out += SEAL_ALPHABET[b % SEAL_ALPHABET.length];
+      if (out.length === len) break;
+    }
+  }
+  return grouped ? out.match(/.{1,4}/g)!.join("-") : out;
 }
 
-async function deriveSealKey(code: string, salt: Uint8Array<ArrayBuffer>): Promise<CryptoKey> {
+/** How a typed code is compared: case, spaces and dashes do not matter. */
+export function normalizeSealCode(code: string): string {
+  return code.normalize("NFKC").toUpperCase().replace(/[\s-]+/g, "");
+}
+
+async function deriveSealKey(code: string, salt: Uint8Array<ArrayBuffer>, iterations: number): Promise<CryptoKey> {
   const material = await crypto.subtle.importKey("raw", buf(code), "PBKDF2", false, ["deriveKey"]);
   return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: 150_000, hash: "SHA-256" },
+    { name: "PBKDF2", salt, iterations, hash: "SHA-256" },
     material,
     { name: "AES-GCM", length: 256 },
     false,
@@ -81,17 +103,18 @@ async function deriveSealKey(code: string, salt: Uint8Array<ArrayBuffer>): Promi
 }
 
 /** Encrypt `plaintext` under `code`; returns the ciphertext + the meta to ship. */
-export async function sealText(plaintext: string, code: string): Promise<{ meta: SealedMeta; ciphertext: string }> {
+export async function sealText(plaintext: string, code: string, iterations = SEAL_ITERATIONS): Promise<{ meta: SealedMeta; ciphertext: string }> {
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveSealKey(code, salt);
+  const key = await deriveSealKey(normalizeSealCode(code), salt, iterations);
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, buf(plaintext)));
-  return { meta: { salt: toBase64(salt), iv: toBase64(iv) }, ciphertext: toBase64(ct) };
+  return { meta: { salt: toBase64(salt), iv: toBase64(iv), v: 2, it: iterations }, ciphertext: toBase64(ct) };
 }
 
 /** Reverse of sealText. Throws on a wrong code (AES-GCM tag mismatch). */
 export async function openSealed(ciphertext: string, meta: SealedMeta, code: string): Promise<string> {
-  const key = await deriveSealKey(code, fromBase64(meta.salt));
+  const v2 = meta.v === 2;
+  const key = await deriveSealKey(v2 ? normalizeSealCode(code) : code, fromBase64(meta.salt), v2 ? (meta.it ?? SEAL_ITERATIONS) : LEGACY_SEAL_ITERATIONS);
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(meta.iv) }, key, fromBase64(ciphertext));
   return decoder.decode(plain);
 }

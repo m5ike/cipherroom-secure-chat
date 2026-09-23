@@ -29,205 +29,69 @@
 
 import type { Express, Request, Response } from "express";
 import type { Server } from 'node:http';
-import { WebSocketServer, WebSocket } from "ws";
 import { eventStore } from "./events";
 import { buildModuleManifest } from "./modules";
-import {
-  adminCommandAudit,
-  pushSubscriptions,
-  drain as drainQueue,
-  type AdminCommand,
-} from "./routes-admin-shared";
-import { FileProxy, relayProxyFrame } from "./file-proxy";
+import { pushSubscriptions } from "./routes-admin-shared";
 import { registerRetentionRoutes, startRetentionSchedule } from "./retention-routes";
 import { registerPushRoutes } from "./push-routes";
 import { consentLedger, deviceAuditLog, deviceSettings } from "./device-state";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 import { registerPluginRoutes } from "./plugins/routes";
-import { accountStore } from "./accounts/store";
+import { accountStore, accountsDir } from "./accounts/store";
 import { storage } from "./storage/service";
 import { registerStorageRoutes } from "./storage/routes";
 import { connectAccountsToStorage, forgetAccount, recordAccount } from "./storage/bridge";
-import { handleStorageFrame, isStorageFrame, newStorageSocketState, type StorageFrame, type StorageSocketState } from "./storage/ws";
-import { AwayRelay } from "./accounts/relay";
+import { handleStorageFrame, newStorageSocketState } from "./storage/ws";
+import type { OfflineQueue } from "./accounts/mailqueue";
+import { MemoryQueue } from "./accounts/memqueue";
+import { SignalingHub } from "./signaling/hub";
+import { PROTOCOL_VERSION } from "./signaling/frames";
+import { loadRefSecret } from "./signaling/refs";
+import { registerAdminApi } from "./admin-api";
+import { requireAdminToken } from "./admin-auth";
+import { audit } from "./monitor/audit";
+import { system } from "./monitor/system";
+import { resolveTrustProxy } from "./trust-proxy";
 import { registerAccountRoutes } from "./accounts/routes";
 import { sendWebPush } from "./push";
 import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
 import { buildInfo } from "./build-info";
+import { safeDeviceId } from "./util";
 
-const fileProxy = new FileProxy();
-
-type PeerClient = {
-  id: string;
-  room: string | null;
-  name: string;
-  joinedAt: number;
-  socket: WebSocket;
-  /** Signed-in (passkey account) — set by join with a valid token. */
-  accountId?: string;
-  /** Stay in the room as away when the socket goes (chat kept on the server). */
-  awayEnabled?: boolean;
-};
-
-type ClientMessage =
-  | { type: "join"; room: string; peerId: string; name?: string; auth?: string; away?: boolean }
-  | { type: "signal"; target: string; payload: unknown }
-  | { type: "ping"; t: number }
-  | { type: "command-poll"; deviceId?: string }
-  | { type: "command-ack"; commandId: string; result?: string }
-  | { type: "leave"; away?: boolean }
-  // Away relay (signed-in users): see accounts/relay.ts.
-  | { type: "relay"; messageId: string; to: string[]; envelope: { iv: string; ciphertext: string } }
-  | { type: "relay-ack"; ids: string[] }
-  // The page was put aside / handed back by the browser: stay in the room,
-  // but let the server answer meanwhile (see accounts/relay.ts).
-  | { type: "presence"; away: boolean }
-  | { type: "receipt"; to: { peerId?: string; accountId?: string }; messageIds: string[]; state: "delivered" | "read" }
-  // Server-side storage over this socket (see storage/ws.ts).
-  | StorageFrame
-  // Server-side proxy mode for file transfer: clients that cannot
-  // successfully establish a direct P2P connection can fall back to the
-  // signaling WebSocket as a relay. The server never sees the plaintext
-  // payload — only AES-GCM ciphertext produced by the room key.
-  | { type: "proxy-meta"; transferId: string; iv: string; ciphertext: string }
-  | { type: "proxy-chunk"; transferId: string; seq: number; iv: string; ciphertext: string }
-  | { type: "proxy-end"; transferId: string }
-  | { type: "proxy-cancel"; transferId: string }
-  // Receiver → sender: repeat these chunks (see lib/file-transfer.ts).
-  | { type: "proxy-need"; transferId: string; seqs: number[] }
-  | { type: "proxy-progress"; transferId: string; received: number };
-
-const rooms = new Map<string, Map<string, PeerClient>>();
-
-const relay = new AwayRelay(accountStore, rooms, send, (target, payload) => sendWebPush(target, payload));
-
-// pushSubscriptions and admin command queue live in routes-admin-shared.ts
-// so that the standalone admin API service can read and enqueue against
-// the same in-memory state when it is imported into the same process.
-
-// Per-device server-side state (settings sync, audit, consent) lives in
-// device-state.ts, shared with the retention sweep.
-
-function drainAdminCommands(socket: WebSocket, deviceId: string) {
-  const pending = drainQueue(deviceId);
-  if (pending.length === 0) return;
-  pending.forEach((cmd: AdminCommand) => {
-    send(socket, { type: "admin-command", command: cmd });
-    adminCommandAudit.push({ ts: Date.now(), kind: "deliver", commandId: cmd.id, deviceId });
-  });
-  if (adminCommandAudit.length > 1000) adminCommandAudit.splice(0, adminCommandAudit.length - 1000);
+// The offline queue for signed-in members who are away: a table in the
+// server's SQLite database when storage runs, memory otherwise (lost on a
+// restart — /api/account/status says which).
+const memoryQueue = new MemoryQueue();
+export function offlineQueue(): OfflineQueue {
+  return storage.queue() ?? memoryQueue;
 }
 
-import { safeDeviceId, safeString } from "./util";
+let hub: SignalingHub | null = null;
 
-function send(socket: WebSocket, payload: unknown) {
-  if (socket.readyState === WebSocket.OPEN) {
-    socket.send(JSON.stringify(payload));
-  }
+/** The running signaling hub (null before registerRoutes). */
+export function signalingHub(): SignalingHub | null {
+  return hub;
 }
 
-/** `wantsAway`: a signed-in client with away enabled stays in the room as
- *  away (socket lost, or Disconnect) instead of leaving. */
-function leaveRoom(client: PeerClient, wantsAway = false) {
-  if (!client.room) return;
-  const roomId = client.room;
-  const room = rooms.get(roomId);
-  if (!room) {
-    client.room = null;
-    return;
-  }
-
-  room.delete(client.id);
-  Array.from(room.values()).forEach((peer) => {
-    send(peer.socket, { type: "peer-left", peerId: client.id });
-  });
-  if (room.size === 0) {
-    rooms.delete(roomId);
-  }
-  eventStore.record({ kind: "peer-left", room: roomId, peerId: client.id });
-  client.room = null;
-  relay.onLeave(client, roomId, wantsAway);
-}
-
-function joinRoom(client: PeerClient, message: Extract<ClientMessage, { type: "join" }>) {
-  leaveRoom(client);
-
-  const roomId = safeString(message.room, "default", 64);
-  const peerId = safeString(message.peerId, client.id, 64);
-  client.id = peerId;
-  client.name = safeString(message.name, "Anonymous", 48);
-  client.room = roomId;
-  const account = message.auth ? accountStore.resolveToken(message.auth) : null;
-  client.accountId = account?.id;
-  client.awayEnabled = Boolean(account && message.away === true);
-
-  let room = rooms.get(roomId);
-  if (!room) {
-    room = new Map();
-    rooms.set(roomId, room);
-  }
-
-  const existingPeers = [...room.values()].map((peer) => ({
-    peerId: peer.id,
-    name: peer.name,
-    joinedAt: peer.joinedAt,
-    ...(peer.accountId ? { accountId: peer.accountId } : {}),
-  }));
-
-  room.set(client.id, client);
-
-  send(client.socket, {
-    type: "joined",
-    peerId: client.id,
-    room: roomId,
-    peers: existingPeers,
-    // Signed-in members who are away: messages to them go through the relay.
-    away: relay.awayList(roomId).filter((a) => a.accountId !== client.accountId),
-    account: account ? { id: account.id, away: client.awayEnabled } : message.auth ? { invalid: true } : null,
-    policy: {
-      transport: "webrtc-datachannel",
-      persistence: "none",
-      cache: "no-store",
-      signalingOnly: true,
-    },
-  });
-
-  Array.from(room.values()).forEach((peer) => {
-    if (peer.id !== client.id) {
-      send(peer.socket, {
-        type: "peer-joined",
-        peerId: client.id,
-        name: client.name,
-        joinedAt: client.joinedAt,
-        ...(client.accountId ? { accountId: client.accountId } : {}),
+/** Moves mailbox files of the first relay version into the queue, once. */
+function migrateLegacyMailboxes(queue: OfflineQueue): number {
+  let moved = 0;
+  for (const account of accountStore.all()) {
+    const items = accountStore.mailbox(account.id);
+    if (items.length === 0) continue;
+    const done: string[] = [];
+    for (const item of items) {
+      const r = queue.enqueue({
+        accountId: account.id, room: item.room, kind: item.kind, messageId: item.messageId, from: item.from,
+        ...(item.envelope ? { envelope: item.envelope } : {}), ...(item.status ? { status: item.status } : {}),
       });
+      if (r.ok) { done.push(item.id); moved += 1; }
     }
-  });
-
-  // Back from away (peer-back) + everything that waited in the mailbox.
-  relay.onJoin(client);
-
-  eventStore.record({
-    kind: "peer-joined",
-    room: roomId,
-    peerId,
-    meta: { peerCount: room.size },
-  });
-}
-
-function forwardSignal(client: PeerClient, message: Extract<ClientMessage, { type: "signal" }>) {
-  if (!client.room) return;
-  const target = safeString(message.target, "", 64);
-  const room = rooms.get(client.room);
-  const peer = room?.get(target);
-  if (!peer) return;
-  send(peer.socket, {
-    type: "signal",
-    source: client.id,
-    payload: message.payload,
-  });
+    accountStore.takeMail(account.id, done);
+  }
+  return moved;
 }
 
 export async function registerRoutes(
@@ -251,19 +115,83 @@ export async function registerRoutes(
   // learn about the accounts that already exist.
   connectAccountsToStorage(storage, accountStore);
 
+  // Passkeys are bound to a domain. Without WEBAUTHN_RP_ID / PUBLIC_BASE_URL
+  // it is taken from each request's Host header, so the same deployment
+  // reached under two names would create accounts that work on one only.
+  if (process.env.NODE_ENV === "production" && !process.env.WEBAUTHN_RP_ID?.trim() && !process.env.PUBLIC_BASE_URL?.trim()) {
+    console.warn("[accounts] WEBAUTHN_RP_ID and PUBLIC_BASE_URL are unset: passkeys follow the Host header. Set one of them.");
+    audit.add({ category: "system", level: "warn", event: "config.rp-id-unset" });
+  }
+
+  // Room-scoped account references survive restarts (refs.ts).
+  loadRefSecret(accountsDir());
+  // The audit journal keeps its last entries in memory; with storage, every
+  // entry also lands in the global database (never throws).
+  if (storageReady.ok) audit.setSink((entry) => storage.appendAudit(entry));
+  // Signing out on one device locks the user's database for that device
+  // only; the last holder (or "everywhere") locks it for good.
+  accountStore.onRevoke((accountId, hash) => storage.releaseAccount(accountId, hash ?? undefined));
+
+  // The offline queue: hand the first version's mailbox files over to it,
+  // and let /api/account/me read its numbers.
+  const queue = offlineQueue();
+  const migrated = migrateLegacyMailboxes(queue);
+  if (migrated > 0) audit.add({ category: "system", level: "notice", event: "queue.migrated", detail: { items: migrated } });
+  accountStore.setQueueStats((accountId) => {
+    const st = offlineQueue().stats(accountId);
+    return { pending: st.queued + st.delivering, bytes: st.bytes };
+  });
+  const queueSweep = setInterval(() => {
+    const swept = offlineQueue().sweep();
+    if (swept.expired + swept.purged > 0) audit.add({ category: "storage", event: "queue.sweep", detail: swept });
+  }, 10 * 60 * 1000);
+  queueSweep.unref?.();
+
+  // The signaling hub (signaling/hub.ts): /ws, protocol v2, the away relay.
+  hub = new SignalingHub({
+    accounts: accountStore,
+    queue: offlineQueue,
+    push: (target, payload) => sendWebPush(target, payload),
+    storageFrame: (socket, state, frame, reply) => handleStorageFrame(socket, state, frame, reply),
+    newStorageState: (ip) => newStorageSocketState(ip),
+    trustProxy: resolveTrustProxy(process.env.TRUST_PROXY).value,
+    allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean),
+  });
+  const signaling = hub;
+  system.start();
+
   // Passkey accounts: WebAuthn sign-in, zero-knowledge vault, audit log.
   // Signing out / deleting ends the away status in every room, and closes
-  // the user's database so the file is opaque again.
+  // the user's database so the file is opaque again. (Open sockets learn
+  // it from the store's revoke event — see SignalingHub.onRevoke.)
   registerAccountRoutes(app, accountStore, {
     onSignOut: (accountId) => {
-      relay.forget(accountId);
-      storage.releaseAccount(accountId);
+      // (The database lock follows the revoked token — see onRevoke above.)
+      signaling.relay.forget(accountId);
     },
     onAuthenticated: (accountId, event, meta) => {
       const account = accountStore.get(accountId);
       if (account) recordAccount(storage, account, event, meta);
+      audit.add({ category: "account", event: `account.${event}`, accountId });
     },
-    onDeleted: (accountId) => forgetAccount(storage, accountId),
+    onDeleted: (accountId) => {
+      signaling.relay.forget(accountId);
+      offlineQueue().purgeAccount(accountId);
+      forgetAccount(storage, accountId);
+      audit.add({ category: "account", level: "notice", event: "account.deleted", accountId });
+    },
+  });
+
+  // The operator console's API (/api/admin/*, admin token): live traffic,
+  // connections, rooms, users, queue, databases, audit, system.
+  registerAdminApi(app, {
+    rooms: () => signaling.snapshot(),
+    closeConnection: (connId, reason) => signaling.closeConnection(connId, reason),
+    accounts: accountStore,
+    storage,
+    queue: offlineQueue,
+    health: () => ({ signaling: signaling.stats(), queuePersistent: offlineQueue().persistent, protocol: PROTOCOL_VERSION }),
+    deliverCommands: (deviceId) => signaling.deliverCommands(deviceId),
   });
   // Optional telephony (voice + SMS via Twilio/Telnyx/Vonage, SIP trunk config),
   // gated by ENABLE_TELEPHONY.
@@ -278,7 +206,8 @@ export async function registerRoutes(
     const b = buildInfo();
     res.json({
       ok: true,
-      rooms: rooms.size,
+      rooms: signaling.rooms.size,
+      protocol: PROTOCOL_VERSION,
       cache: "no-store",
       persistence: "none",
       role: "webrtc-signaling-only",
@@ -314,7 +243,8 @@ export async function registerRoutes(
     });
   });
 
-  app.get("/api/events/recent", (req: Request, res: Response) => {
+  // Room names and peer ids: operator eyes only.
+  app.get("/api/events/recent", requireAdminToken(), (req: Request, res: Response) => {
     if (!eventStore.isEnabled) {
       return res.status(404).json({ ok: false, message: "Event logging is disabled. Set LOG_EVENTS=1." });
     }
@@ -398,8 +328,9 @@ export async function registerRoutes(
   });
 
   // ---------- File proxy diagnostics (server-enhanced mode) ----------
-  app.get("/api/transfers/stats", (_req, res) => {
-    res.json({ ok: true, ...fileProxy.stats() });
+  app.get("/api/transfers/stats", requireAdminToken(), (_req, res) => {
+    const { totalByPeer: _perConnection, ...stats } = signaling.proxy.stats();
+    res.json({ ok: true, ...stats });
   });
 
   // ---------- GDPR-friendly data retention ----------
@@ -407,150 +338,7 @@ export async function registerRoutes(
   registerRetentionRoutes(app);
   startRetentionSchedule();
 
-  const wss = new WebSocketServer({
-    server: httpServer,
-    path: "/ws",
-    perMessageDeflate: false,
-  });
-
-  wss.on("connection", (socket, request) => {
-    // Per-socket storage identity + rate window (storage/ws.ts).
-    const storageState: StorageSocketState = newStorageSocketState();
-    const client: PeerClient = {
-      id: crypto.randomUUID(),
-      room: null,
-      name: "Anonymous",
-      joinedAt: Date.now(),
-      socket,
-    };
-
-    socket.on("message", (data) => {
-      try {
-        const raw = data.toString("utf8");
-        if (raw.length > 128_000) return;
-        const message = JSON.parse(raw) as ClientMessage;
-
-        if (isStorageFrame(message)) {
-          handleStorageFrame(socket, storageState, message, send);
-          return;
-        }
-
-        if (message.type === "join") {
-          joinRoom(client, message);
-          return;
-        }
-
-        if (message.type === "signal") {
-          forwardSignal(client, message);
-          return;
-        }
-
-        if (message.type === "ping") {
-          const t = typeof message.t === "number" ? message.t : Date.now();
-          send(socket, { type: "pong", t, serverTs: Date.now() });
-          return;
-        }
-
-        if (message.type === "command-poll") {
-          const deviceId = safeDeviceId(message.deviceId);
-          if (deviceId) drainAdminCommands(socket, deviceId);
-          return;
-        }
-
-        if (message.type === "command-ack") {
-          adminCommandAudit.push({
-            ts: Date.now(),
-            kind: "ack",
-            commandId: String(message.commandId).slice(0, 64),
-            peerId: client.id,
-            result: typeof message.result === "string" ? message.result.slice(0, 256) : undefined,
-          });
-          return;
-        }
-
-        if (message.type === "leave") {
-          leaveRoom(client, message.away === true);
-          return;
-        }
-
-        // ---------- Away relay (signed-in users) ----------
-        if (message.type === "relay") {
-          void relay.relay(client, message);
-          return;
-        }
-        if (message.type === "relay-ack") {
-          relay.ack(client, message.ids);
-          return;
-        }
-        if (message.type === "presence") {
-          const away = relay.setPresence(client, message.away === true);
-          send(socket, { type: "presence-ack", away });
-          // Back at the keyboard: hand over whatever arrived meanwhile.
-          if (!away) relay.deliver(client);
-          return;
-        }
-        if (message.type === "receipt") {
-          relay.receipt(client, message);
-          return;
-        }
-
-        // ---------- File transfer proxy mode ----------
-        if (
-          message.type === "proxy-meta" ||
-          message.type === "proxy-chunk" ||
-          message.type === "proxy-end" ||
-          message.type === "proxy-cancel" ||
-          message.type === "proxy-need"
-        ) {
-          if (!client.room) return;
-          const result = relayProxyFrame(
-            fileProxy,
-            client.id,
-            message,
-            (targetPeerId, frame) => {
-              const room = rooms.get(client.room!);
-              if (!room) return;
-              if (targetPeerId === "__broadcast__") {
-                room.forEach((peer) => {
-                  if (peer.id !== client.id) send(peer.socket, { type: frame.kind, ...frame });
-                });
-              } else {
-                const peer = room.get(targetPeerId);
-                if (peer) send(peer.socket, { type: frame.kind, ...frame });
-              }
-            },
-          );
-          if (message.type === "proxy-meta") {
-            send(socket, {
-              type: "proxy-ack",
-              transferId: message.transferId,
-              transport: "proxy",
-              accepted: result.ok,
-              reason: result.reason,
-            });
-          }
-          if (message.type === "proxy-end") {
-            eventStore.record({ kind: "proxy-end", meta: { transferId: message.transferId, room: client.room } });
-          }
-          return;
-        }
-      } catch {
-        send(socket, { type: "error", message: "Malformed signaling frame ignored." });
-      }
-    });
-
-    // Losing the socket (tab closed, network gone) is not a goodbye: a
-    // signed-in user with away enabled stays reachable through the relay.
-    socket.on("close", () => leaveRoom(client, true));
-    socket.on("error", () => leaveRoom(client, true));
-
-    send(socket, {
-      type: "hello",
-      peerId: client.id,
-      cache: "no-store",
-      ip: request.headers["x-forwarded-for"] ? "proxied" : "direct",
-    });
-  });
+  signaling.attach(httpServer);
 
   return httpServer;
 }

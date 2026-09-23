@@ -1,7 +1,7 @@
 // @vitest-environment node
 //
-// The away relay over the real signaling socket (server/routes.ts +
-// server/accounts/relay.ts): a signed-in user who loses their connection
+// The away relay over the real signaling socket (server/signaling/hub.ts +
+// server/signaling/relay.ts): a signed-in user who loses their connection
 // stays in the room as away, the server takes the ciphertext others send
 // them, answers "stored", and hands everything over — with the delivery and
 // read receipts the senders expect — when the user comes back.
@@ -19,7 +19,8 @@ import express from "express";
 import { createServer, type Server } from "node:http";
 import { rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
-import { registerRoutes } from "../server/routes";
+import { offlineQueue, registerRoutes } from "../server/routes";
+import { accountRef } from "../server/signaling/refs";
 import { storage } from "../server/storage/service";
 import { accountStore } from "../server/accounts/store";
 import { FakeAuthenticator } from "./helpers/authenticator";
@@ -63,6 +64,10 @@ async function account(userName: string) {
   return { token: r.token, accountId: r.account.id, userName };
 }
 
+/** How a room sees an account: a room-scoped reference, never the id. */
+const ref = (room: string, accountId: string) => accountRef(room, accountId);
+const waiting = (accountId: string, room: string) => offlineQueue().pending(accountId, room);
+
 async function join(room: string, name: string, opts: { auth?: string; away?: boolean } = {}) {
   const client = await WsClient.connect(base);
   const hello = await client.next("hello");
@@ -78,26 +83,29 @@ describe("away relay", () => {
 
     // Alice is signed in and asks the server to cover for her.
     const a1 = await join(room, "Alice", { auth: alice.token, away: true });
-    expect(a1.joined.account).toMatchObject({ id: alice.accountId, away: true });
+    const aliceRef = ref(room, alice.accountId);
+    expect(a1.joined.account).toMatchObject({ account: aliceRef, away: true });
+    expect(JSON.stringify(a1.joined)).not.toContain(alice.accountId);
 
     const bob = await join(room, "Bob");
-    expect((bob.joined.peers as Array<{ accountId?: string }>)[0]).toMatchObject({ accountId: alice.accountId });
+    expect((bob.joined.peers as Array<{ account?: string }>)[0]).toMatchObject({ account: aliceRef });
+    expect(JSON.stringify(bob.joined)).not.toContain(alice.accountId);
 
     // Her tab closes: the room sees her leave, then go away.
     await a1.client.close();
     await bob.client.next("peer-left");
     const away = await bob.client.next("peer-away");
-    expect(away).toMatchObject({ accountId: alice.accountId, name: "Alice" });
+    expect(away).toMatchObject({ account: aliceRef, name: "Alice" });
 
     // Bob writes anyway; the server answers on her behalf.
-    bob.client.send({ type: "relay", messageId: "msg-1", to: [alice.accountId], envelope: ENVELOPE });
+    bob.client.send({ type: "relay", messageId: "msg-1", to: [aliceRef], envelope: ENVELOPE });
     const stored = await bob.client.next("relay-status");
-    expect(stored).toMatchObject({ messageId: "msg-1", state: "stored", recipient: { accountId: alice.accountId, name: "Alice" } });
-    expect(accountStore.mailbox(alice.accountId, room)).toHaveLength(1);
+    expect(stored).toMatchObject({ messageId: "msg-1", state: "stored", recipient: { account: aliceRef, name: "Alice" } });
+    expect(waiting(alice.accountId, room)).toHaveLength(1);
 
     // She comes back: the room learns it, and her mailbox is handed over.
     const a2 = await join(room, "Alice", { auth: alice.token, away: true });
-    expect(await bob.client.next("peer-back")).toMatchObject({ accountId: alice.accountId });
+    expect(await bob.client.next("peer-back")).toMatchObject({ account: aliceRef });
     const delivery = await a2.client.next("relay-deliver");
     const items = delivery.items as Array<{ id: string; messageId: string; envelope: typeof ENVELOPE; from: { name: string } }>;
     expect(items).toHaveLength(1);
@@ -105,11 +113,11 @@ describe("away relay", () => {
 
     // Her client decrypted them: acknowledge, and Bob's message turns delivered.
     a2.client.send({ type: "relay-ack", ids: items.map((i) => i.id) });
-    expect(await bob.client.next("relay-status")).toMatchObject({ messageId: "msg-1", state: "delivered", recipient: { accountId: alice.accountId } });
-    expect(accountStore.mailbox(alice.accountId, room)).toHaveLength(0);
+    expect(await bob.client.next("relay-status")).toMatchObject({ messageId: "msg-1", state: "delivered", recipient: { account: aliceRef } });
+    expect(waiting(alice.accountId, room)).toHaveLength(0);
 
     // …and when she reads it, so does the read receipt.
-    a2.client.send({ type: "receipt", to: { peerId: bob.peerId }, messageIds: ["msg-1"], state: "read" });
+    a2.client.send({ type: "receipt", messageIds: ["msg-1"], state: "read" });
     expect(await bob.client.next("relay-status")).toMatchObject({ messageId: "msg-1", state: "read" });
 
     const audit = accountStore.get(alice.accountId)!.audit.map((e) => e.kind);
@@ -127,11 +135,11 @@ describe("away relay", () => {
     // The tab went to the background: the socket stays, the room is told.
     her.client.send({ type: "presence", away: true });
     expect(await her.client.next("presence-ack")).toMatchObject({ away: true });
-    expect(await watcher.client.next("peer-away")).toMatchObject({ accountId: mia.accountId, name: "Mia" });
+    expect(await watcher.client.next("peer-away")).toMatchObject({ account: ref(room, mia.accountId), name: "Mia" });
     expect(accountStore.isAway(mia.accountId, room)).toBe(true);
 
     // Someone writes while she is away; the server takes it.
-    watcher.client.send({ type: "relay", messageId: "msg-p", to: [mia.accountId], envelope: ENVELOPE });
+    watcher.client.send({ type: "relay", messageId: "msg-p", to: [ref(room, mia.accountId)], envelope: ENVELOPE });
     expect(await watcher.client.next("relay-status")).toMatchObject({ state: "stored" });
 
     // She comes back to the tab: no rejoin, and the mailbox arrives at once.
@@ -139,7 +147,7 @@ describe("away relay", () => {
     expect(await her.client.next("presence-ack")).toMatchObject({ away: false });
     const items = (await her.client.next("relay-deliver")).items as Array<{ id: string; messageId: string }>;
     expect(items.map((i) => i.messageId)).toEqual(["msg-p"]);
-    expect(await watcher.client.next("peer-back")).toMatchObject({ accountId: mia.accountId });
+    expect(await watcher.client.next("peer-back")).toMatchObject({ account: ref(room, mia.accountId) });
 
     her.client.send({ type: "relay-ack", ids: items.map((i) => i.id) });
     expect(await watcher.client.next("relay-status")).toMatchObject({ messageId: "msg-p", state: "delivered" });
@@ -164,7 +172,8 @@ describe("away relay", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     const dave = await join(room, "Dave");
-    expect(dave.joined.away).toEqual([{ accountId: carol.accountId, name: "Carol", since: expect.any(Number) }]);
+    const carolRef = ref(room, carol.accountId);
+    expect(dave.joined.away).toEqual([{ account: carolRef, accountId: carolRef, name: "Carol", since: expect.any(Number) }]);
     await dave.client.close();
   });
 
@@ -176,11 +185,12 @@ describe("away relay", () => {
     frank.client.send({ type: "relay", messageId: "nope-1", to: ["thisaccountdoesnotexist"], envelope: ENVELOPE });
     expect(await frank.client.next("relay-status")).toMatchObject({ messageId: "nope-1", state: "rejected" });
 
-    // Erin has an account but never joined this room.
-    frank.client.send({ type: "relay", messageId: "nope-2", to: [erin.accountId], envelope: ENVELOPE });
+    // Erin has an account but never joined this room: the same answer as
+    // for an account that does not exist — nothing to learn from it.
+    frank.client.send({ type: "relay", messageId: "nope-2", to: [ref(room, erin.accountId)], envelope: ENVELOPE });
     const r = await frank.client.next("relay-status");
-    expect(r).toMatchObject({ messageId: "nope-2", state: "rejected" });
-    expect(String(r.reason)).toMatch(/not in this room/);
+    expect(r).toMatchObject({ messageId: "nope-2", state: "rejected", reason: "not reachable" });
+    expect(JSON.stringify(r)).not.toContain("Erin");
 
     frank.client.send({ type: "relay", messageId: "", to: [], envelope: null });
     expect((await frank.client.next("error")).message).toMatch(/relay/i);
@@ -222,7 +232,7 @@ describe("away relay", () => {
     expect(accountStore.isAway(hana.accountId, room)).toBe(false);
 
     await tab2.client.close();
-    expect(await watcher.client.next("peer-away")).toMatchObject({ accountId: hana.accountId });
+    expect(await watcher.client.next("peer-away")).toMatchObject({ account: ref(room, hana.accountId) });
     await watcher.client.close();
   });
 
@@ -236,7 +246,7 @@ describe("away relay", () => {
     await j1.client.close();
     await i1.client.next("peer-away");
 
-    i1.client.send({ type: "relay", messageId: "msg-x", to: [jana.accountId], envelope: ENVELOPE });
+    i1.client.send({ type: "relay", messageId: "msg-x", to: [ref(room, jana.accountId)], envelope: ENVELOPE });
     expect(await i1.client.next("relay-status")).toMatchObject({ state: "stored" });
 
     // Ivan leaves too, before Jana ever comes back.
@@ -263,7 +273,7 @@ describe("away relay", () => {
     const kimClient = await join(room, "Kim", { auth: kim.token, away: true });
     const leo = await join(room, "Leo");
 
-    leo.client.send({ type: "relay", messageId: "msg-f", to: [kim.accountId], envelope: ENVELOPE });
+    leo.client.send({ type: "relay", messageId: "msg-f", to: [ref(room, kim.accountId)], envelope: ENVELOPE });
     const delivered = await kimClient.client.next("relay-deliver");
     expect((delivered.items as Array<{ messageId: string }>)[0].messageId).toBe("msg-f");
     expect(await leo.client.next("relay-status")).toMatchObject({ messageId: "msg-f", state: "forwarded" });

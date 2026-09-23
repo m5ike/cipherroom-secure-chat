@@ -143,3 +143,23 @@ describe("session-scoped store", () => {
     await expect(store.load("alpha")).resolves.toEqual([]);
   });
 });
+
+describe("history kept by the server for a browser without a passkey", () => {
+  it("is sealed here, bound to its message, and never carries a sealed message's secrets", async () => {
+    const { createServerSealer } = await import("../client/src/lib/chat-history");
+    const keys = new Map<string, CryptoKey>();
+    const sealer = createServerSealer({ keys });
+    const m = { id: "m-1", senderId: "p", senderName: "Alice", text: "tajné", createdAt: 1, mine: true, secure: true, sealPlain: "plain", sealCode: "CODE", cipher: "x" };
+    const row = await sealer.seal(m);
+    expect(JSON.stringify(row)).not.toContain("tajné");
+    expect(JSON.stringify(row)).not.toContain("Alice");
+    const opened = await sealer.open("m-1", row) as Record<string, unknown>;
+    expect(opened).toMatchObject({ id: "m-1", text: "tajné", mine: true });
+    expect(opened).not.toHaveProperty("sealPlain");
+    expect(opened).not.toHaveProperty("sealCode");
+    // Moved to another row id: it does not open.
+    expect(await sealer.open("m-2", row)).toBeNull();
+    // Another browser (another key) cannot open it either.
+    expect(await createServerSealer({ keys: new Map() }).open("m-1", row)).toBeNull();
+  });
+});

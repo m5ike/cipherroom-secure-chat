@@ -1,5 +1,12 @@
 # Účty s passkey, data chatu a stav „away"
 
+> **Od 3.0.0** (viz [dokumentace 3.0](site/index.html#fronta)): členy s účtem místnost vidí pod
+> pseudonymem `account` platným jen pro ni (ne pod ID účtu); fronta pro nepřítomné je tabulka
+> SQLite s pořadím, deduplikací, lease a potvrzením (`relay-ack`), dead-letter a kvótami;
+> `receipt` už nemá pole `to` — server ho doručí jen odesílateli zprávy, kterou tomuto čtenáři
+> relayoval; přihlášení a odhlášení za běhu jde rámcem `auth` (bez nového `join`). Text níže
+> popisuje principy a platí, kde se s tímto neliší.
+
 Tři věci, které spolu souvisí:
 
 1. **kde zůstává konverzace** (volba v *Spojení*),

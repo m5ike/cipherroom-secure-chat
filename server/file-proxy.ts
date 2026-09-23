@@ -121,6 +121,22 @@ export class FileProxy {
     return { ok: true };
   }
 
+  /** Who started a transfer (the connection key given to begin()). */
+  senderOf(transferId: string): string | null {
+    return this.byTransfer.get(transferId)?.senderPeerId ?? null;
+  }
+
+  /** The sender's connection went: its transfers end. Returns their ids. */
+  dropSender(senderClientId: string): string[] {
+    const ids = [...(this.byPeer.get(senderClientId) ?? [])];
+    for (const id of ids) {
+      const state = this.byTransfer.get(id);
+      if (state) state.cancelled = true;
+      this.finalize(id);
+    }
+    return ids;
+  }
+
   /**
    * Allow an in-progress (or recently ended) transfer to be re-bound to a
    * different recipient. We do not filter by identity here — the room key

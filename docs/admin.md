@@ -1,5 +1,10 @@
 # Admin API + GUI
 
+> **Since 3.0.0** the operator console lives at `/console/` and reads all live state (traffic,
+> connections, users, queue, storage, audit, commands, push) from the main service's
+> `/api/admin/*`; the admin service keeps the layout, telephony and AI tools and forwards
+> `/api/admin/*` to `MAIN_URL`. See [documentation 3.0 › Administrace](site/index.html#administrace).
+
 A second Node service runs alongside the chat server. It provides a
 read/write management surface and ships with a minimal static GUI.
 

@@ -1,0 +1,1119 @@
+<!doctype html>
+<html lang="cs" data-theme="light">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="referrer" content="no-referrer" />
+<title>M5cet 3.0 — dokumentace</title>
+<meta name="description" content="Dokumentace M5cet 3.0: architektura, protokol v2, šifrování v2, fronta zpráv, účty a passkeys, úložiště, administrace, audit, API, nasazení a návrhy." />
+<style>
+:root {
+  --bg: #f6f7fb; --surface: #ffffff; --surface-2: #f0f2f8; --surface-3: #e6e9f2;
+  --border: #dde2ec; --text: #1a2233; --text-2: #3c4760; --muted: #6b7690;
+  --accent: #3d63f5; --accent-soft: rgba(61,99,245,.10); --ok: #16a064; --ok-soft: rgba(22,160,100,.12);
+  --warn: #c7820b; --warn-soft: rgba(199,130,11,.12); --err: #d23c5a; --err-soft: rgba(210,60,90,.10);
+  --violet: #7c5ce6; --violet-soft: rgba(124,92,230,.12); --info: #0e8fc2; --info-soft: rgba(14,143,194,.12);
+  --code-bg: #0f1522; --code-fg: #d8deea;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --radius: 12px; --side: 290px;
+}
+:root[data-theme="dark"] {
+  --bg: #0b0f17; --surface: #111723; --surface-2: #161d2b; --surface-3: #1d2536;
+  --border: #243044; --text: #e6e9f0; --text-2: #b6bfd0; --muted: #8190a8;
+  --accent: #6d8dff; --accent-soft: rgba(109,141,255,.14); --ok: #34c784; --warn: #f0ae3a; --err: #f0607e;
+  --violet: #a48bfb; --info: #45bdf0; --code-bg: #0a0e16;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; scroll-padding-top: 78px; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.65 var(--sans); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, kbd { font-family: var(--mono); font-size: .9em; }
+:not(pre) > code { background: var(--surface-2); border: 1px solid var(--border); border-radius: 5px; padding: .05em .35em; }
+kbd { border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 .35em; background: var(--surface); }
+
+/* ---------- shell ---------- */
+.top { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 14px; padding: 12px 22px; background: color-mix(in srgb, var(--surface) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+.logo { display: flex; align-items: center; gap: 10px; font-weight: 800; letter-spacing: -.01em; color: var(--text); }
+.logo__mark { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: #fff; font-size: 13px; background: linear-gradient(135deg, var(--accent), var(--violet)); }
+.logo small { color: var(--muted); font-weight: 500; }
+.search { position: relative; flex: 1; max-width: 520px; margin-left: auto; }
+.search input { width: 100%; padding: 9px 12px 9px 34px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; }
+.search input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.search svg { position: absolute; left: 11px; top: 11px; width: 15px; height: 15px; color: var(--muted); }
+.search kbd { position: absolute; right: 10px; top: 8px; color: var(--muted); font-size: 12px; }
+.results { position: absolute; top: calc(100% + 6px); left: 0; right: 0; max-height: 70vh; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 18px 40px rgba(0,0,0,.18); display: none; }
+.results.is-open { display: block; }
+.results a { display: block; padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); }
+.results a:hover, .results a.is-active { background: var(--accent-soft); text-decoration: none; }
+.results b { display: block; font-size: 14px; }
+.results span { display: block; font-size: 12.5px; color: var(--muted); }
+.results mark { background: rgba(245,190,40,.35); color: inherit; border-radius: 3px; }
+.results .none { padding: 14px; color: var(--muted); font-size: 13px; }
+.btn { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 9px; padding: 7px 11px; font: inherit; font-size: 13px; cursor: pointer; }
+.btn:hover { background: var(--surface-2); }
+.layout { display: grid; grid-template-columns: var(--side) minmax(0, 1fr); }
+nav.toc { position: sticky; top: 57px; height: calc(100vh - 57px); overflow: auto; padding: 20px 14px 40px 22px; border-right: 1px solid var(--border); font-size: 13.5px; }
+.toc__group { margin: 16px 0 6px; font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); font-weight: 700; }
+.toc a { display: block; padding: 4px 10px; border-radius: 7px; color: var(--text-2); }
+.toc a:hover { background: var(--surface-2); text-decoration: none; }
+.toc a.is-current { background: var(--accent-soft); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.toc a.sub { padding-left: 22px; font-size: 12.5px; color: var(--muted); }
+main { padding: 34px clamp(18px, 4vw, 56px) 80px; max-width: 1080px; }
+
+/* ---------- content ---------- */
+.hero { padding: 28px 30px; border-radius: 18px; background: radial-gradient(1200px 300px at 0% 0%, var(--accent-soft), transparent), var(--surface); border: 1px solid var(--border); margin-bottom: 26px; }
+.hero h1 { margin: 0 0 6px; font-size: 32px; letter-spacing: -.02em; }
+.hero p { margin: 4px 0; color: var(--text-2); max-width: 760px; }
+.pills { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--border); color: var(--text-2); }
+section.doc { margin: 0 0 44px; }
+h2 { font-size: 24px; letter-spacing: -.015em; margin: 0 0 12px; padding-top: 10px; border-top: 1px solid var(--border); }
+section.doc:first-of-type h2 { border-top: 0; }
+h3 { font-size: 18px; margin: 26px 0 8px; }
+h4 { font-size: 15px; margin: 18px 0 6px; color: var(--text-2); }
+h2 .anchor, h3 .anchor { opacity: 0; margin-left: 6px; font-size: .8em; }
+h2:hover .anchor, h3:hover .anchor { opacity: .6; }
+p, li { color: var(--text-2); }
+ul, ol { padding-left: 22px; }
+.lead { font-size: 16.5px; color: var(--text); }
+table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 13.5px; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+th { text-align: left; background: var(--surface-2); color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text-2); }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 14px 0; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px 18px; }
+.card h4 { margin-top: 0; color: var(--text); }
+.card p:last-child { margin-bottom: 0; }
+.note, .warn, .tip { border-radius: 10px; padding: 12px 16px; margin: 14px 0; border: 1px solid; font-size: 14px; }
+.note { background: var(--info-soft); border-color: color-mix(in srgb, var(--info) 35%, transparent); }
+.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 40%, transparent); }
+.tip { background: var(--ok-soft); border-color: color-mix(in srgb, var(--ok) 35%, transparent); }
+.note b, .warn b, .tip b { color: var(--text); }
+pre { position: relative; background: var(--code-bg); color: var(--code-fg); border-radius: 10px; padding: 14px 16px; overflow: auto; font: 12.8px/1.55 var(--mono); margin: 12px 0 18px; }
+pre .copy { position: absolute; top: 8px; right: 8px; font-size: 11px; padding: 3px 8px; border-radius: 6px; border: 1px solid rgba(255,255,255,.15); background: rgba(255,255,255,.06); color: #cfd6e4; cursor: pointer; }
+.k { color: #8fb4ff; } .s { color: #a6e3a1; } .n { color: #f9c97a; } .c { color: #7d879a; font-style: italic; }
+.badge { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); vertical-align: 1px; }
+.b-ok { background: var(--ok-soft); color: var(--ok); } .b-warn { background: var(--warn-soft); color: var(--warn); } .b-err { background: var(--err-soft); color: var(--err); } .b-acc { background: var(--accent-soft); color: var(--accent); } .b-vio { background: var(--violet-soft); color: var(--violet); }
+figure { margin: 18px 0 24px; }
+figure svg { width: 100%; height: auto; display: block; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; }
+figcaption { font-size: 12.5px; color: var(--muted); margin-top: 6px; text-align: center; }
+
+/* ---------- datagrams (frame layouts) ---------- */
+.dgram { margin: 14px 0 6px; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.dgram__title { display: flex; gap: 10px; align-items: center; padding: 8px 12px; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 13px; }
+.dgram__title code { font-weight: 700; color: var(--text); border: 0; background: none; padding: 0; }
+.dgram__title .dir { margin-left: auto; font-size: 11.5px; color: var(--muted); }
+.dgram__row { display: flex; flex-wrap: wrap; gap: 0; }
+.f { flex: var(--w, 1) 1 0; min-width: 96px; padding: 8px 10px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); font-size: 12px; }
+.f:last-child { border-right: 0; }
+.f b { display: block; font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+.f i { display: block; font-style: normal; color: var(--muted); font-size: 11.5px; }
+.f--hdr { background: var(--accent-soft); } .f--sec { background: var(--violet-soft); } .f--ct { background: repeating-linear-gradient(135deg, var(--surface-2), var(--surface-2) 6px, var(--surface-3) 6px, var(--surface-3) 12px); } .f--opt { opacity: .78; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: 6px 0 14px; }
+.legend span::before { content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; border: 1px solid var(--border); }
+.legend .l-hdr::before { background: var(--accent-soft); } .legend .l-sec::before { background: var(--violet-soft); } .legend .l-ct::before { background: var(--surface-3); }
+
+/* ---------- svg diagram tokens ---------- */
+svg .box { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.5; }
+svg .box-acc { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+svg .box-vio { fill: var(--violet-soft); stroke: var(--violet); stroke-width: 1.5; }
+svg .box-ok { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 1.5; }
+svg .box-warn { fill: var(--warn-soft); stroke: var(--warn); stroke-width: 1.5; }
+svg .box-err { fill: var(--err-soft); stroke: var(--err); stroke-width: 1.5; }
+svg .t { fill: var(--text); font: 600 13px var(--sans); }
+svg .t2 { fill: var(--muted); font: 11.5px var(--sans); }
+svg .tm { fill: var(--text-2); font: 11px var(--mono); }
+svg .ln { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+svg .ln-acc { stroke: var(--accent); stroke-width: 2; fill: none; }
+svg .ln-ok { stroke: var(--ok); stroke-width: 2; fill: none; }
+svg .ln-vio { stroke: var(--violet); stroke-width: 2; fill: none; stroke-dasharray: 6 4; }
+svg .ln-warn { stroke: var(--warn); stroke-width: 2; fill: none; stroke-dasharray: 4 4; }
+svg .life { stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 3 5; }
+svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .arrow-ok { fill: var(--ok); } svg .arrow-vio { fill: var(--violet); } svg .arrow-warn { fill: var(--warn); }
+
+.print-only { display: none; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+  nav.toc { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); max-height: 260px; }
+  .search kbd { display: none; }
+}
+@media print {
+  :root { --bg: #fff; --surface: #fff; --surface-2: #f3f5f9; --surface-3: #e8ebf2; --border: #d5dae4; --text: #111827; --text-2: #2f3a4f; --muted: #5d6882; --code-bg: #f3f5f9; --code-fg: #1b2335; }
+  body { font-size: 10.5pt; background: #fff; }
+  .top, nav.toc, pre .copy, .no-print { display: none !important; }
+  .layout { display: block; }
+  main { max-width: none; padding: 0; }
+  .print-only { display: block; }
+  section.doc { break-before: page; }
+  section.doc.cover, section.doc.toc-print { break-before: auto; }
+  h2 { border-top: 0; }
+  h3, h4, .dgram, figure, table, pre, .card { break-inside: avoid; }
+  h2, h3, h4 { break-after: avoid; }
+  #printToc { padding-left: 34px; columns: 2; font-size: 11pt; line-height: 1.9; }
+  .k { color: #1d4ed8; } .s { color: #15803d; } .n { color: #b45309; } .c { color: #6b7280; }
+  a { color: inherit; }
+  .hero { border: 0; padding: 0; background: none; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 3.0.0</small></a>
+  <div class="search" role="search">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Hledat v dokumentaci…" autocomplete="off" aria-label="Hledat v dokumentaci" />
+    <kbd>/</kbd>
+    <div class="results" id="results" role="listbox"></div>
+  </div>
+  <button class="btn" id="theme" type="button" title="Světlý / tmavý motiv">◐</button>
+  <a class="btn" href="m5cet-dokumentace-3.0.0.pdf" download>PDF</a>
+</header>
+<div class="layout">
+<nav class="toc" id="toc" aria-label="Obsah"></nav>
+<main id="content">
+<section class="doc cover" id="uvod" data-group="Začínáme">
+  <div class="hero">
+    <h1>M5cet 3.0</h1>
+    <p class="lead">Šifrovaná komunikace peer-to-peer v prohlížeči: zprávy, soubory, hovory a sdílení polohy mezi lidmi, kteří znají společné heslo místnosti. Server zprostředkuje spojení, podrží zprávy pro nepřítomné a nikdy nevidí obsah.</p>
+    <p>Tato dokumentace popisuje verzi <b>3.0.0</b>: nový signalizační protokol v2, šifrování v2 s identitou zařízení, spolehlivou frontu zpráv, novou administraci s živým sledováním provozu a auditem.</p>
+    <div class="pills"><span class="pill">Node.js 24</span><span class="pill">TypeScript 7</span><span class="pill">React 19</span><span class="pill">WebRTC DataChannel</span><span class="pill">AES-GCM 256</span><span class="pill">ECDSA P-256</span><span class="pill">WebAuthn + PRF</span><span class="pill">SQLite + SQLCipher</span></div>
+  </div>
+  <div class="grid2">
+    <div class="card"><h4>Pro koho je co</h4><p><b>Uživatel</b> — <a href="#rezimy">režimy</a>, <a href="#sifrovani">co šifrování chrání</a>. <b>Vývojář</b> — <a href="#architektura">architektura</a>, <a href="#protokol">protokol v2</a>, <a href="#api">API</a>. <b>Provozovatel</b> — <a href="#nasazeni">nasazení</a>, <a href="#administrace">administrace</a>, <a href="#audit">audit</a>, <a href="#bezpecnost">bezpečnost</a>.</p></div>
+    <div class="card"><h4>Co je nového ve 3.0</h4><p>Validované rámce a limity, pseudonymy účtů, zapečetěná signalizace (ochrana hovorů před serverem), podepsané zprávy a soubory, fronta s lease a dead-letter, konzole s živým provozem a auditem. Plný přehled v <a href="#zmeny">seznamu změn</a>.</p></div>
+  </div>
+  <div class="note"><b>Vyhledávání:</b> stiskněte <kbd>/</kbd> a pište — výsledky se hledají v nadpisech i textu, <kbd>↑</kbd> <kbd>↓</kbd> a <kbd>Enter</kbd> skočí na místo. Tlačítko <b>PDF</b> stáhne tutéž dokumentaci k tisku.</div>
+</section>
+
+<section class="doc toc-print print-only" id="obsah-tisk">
+  <h2>Obsah</h2>
+  <ol id="printToc"></ol>
+</section>
+
+<section class="doc" id="rezimy" data-group="Začínáme">
+  <h2>Režimy a funkce<a class="anchor" href="#rezimy">#</a></h2>
+  <p>Aplikace běží ve dvou režimech. Oba šifrují stejně; liší se tím, co smí dělat server.</p>
+  <table>
+    <thead><tr><th>Režim</th><th>Co dělá server</th><th>Co to přináší</th></tr></thead>
+    <tbody>
+      <tr><td><span class="badge b-ok">light</span></td><td>Jen signalizace (spojení WebRTC). Nic neukládá.</td><td>Nejmenší stopa. Zpráva pro někoho, kdo není online, čeká v <a href="#outbox">lokální frontě</a> prohlížeče.</td></tr>
+      <tr><td><span class="badge b-acc">server-enhanced</span></td><td>Navíc: úložiště, relay pro nepřítomné, Web Push, synchronizace nastavení, proxy souborů, když P2P nejde.</td><td>Zprávy dorazí i nepřítomnému (přihlášenému passkey), historie přežije zavření okna, soubory projdou i přes striktní NAT.</td></tr>
+    </tbody>
+  </table>
+  <h3 id="retence">Uchování chatu</h3>
+  <table>
+    <thead><tr><th>Volba</th><th>Kde je historie</th><th>Kdo ji přečte</th></tr></thead>
+    <tbody>
+      <tr><td><code>ephemeral</code></td><td>Nikde. Nové spojení začíná prázdné.</td><td>—</td></tr>
+      <tr><td><code>session</code></td><td>V <code>sessionStorage</code> prohlížeče, šifrovaná neexportovatelným klíčem z IndexedDB.</td><td>Jen tato záložka prohlížeče.</td></tr>
+      <tr><td><code>server</code> s passkey</td><td>V trezoru účtu a v jeho SQLCipher databázi; zapečetěno v prohlížeči klíčem z PRF passkey.</td><td>Jen držitel passkey (zero-knowledge).</td></tr>
+      <tr><td><code>server</code> bez passkey</td><td>V dočasné databázi relace (TTL 1 den); každý řádek zapečetěný v prohlížeči klíčem, který zařízení neopustí.</td><td>Jen tento prohlížeč. Server drží řádky, které neumí otevřít.</td></tr>
+    </tbody>
+  </table>
+  <h3 id="funkce">Funkce v kostce</h3>
+  <div class="grid2">
+    <div class="card"><h4>Zprávy</h4><p>Místnost i soukromí příjemci, odpovědi, přeposílání, stav (odesláno → uloženo → doručeno → přečteno), zprávy <i>klikací</i>, <i>mizející</i> a <i>zapečetěné</i> vlastním kódem.</p></div>
+    <div class="card"><h4>Soubory</h4><p>Malé přímo ve zprávě, velké po kusech po DataChannelu; když P2P nejde, přes šifrovanou proxy serveru. Opakování ztracených kusů, ověření otisku celého souboru.</p></div>
+    <div class="card"><h4>Hovory a média</h4><p>Audio a video přes WebRTC; DTLS otisky chráněné zapečetěnou signalizací. Sdílení polohy, NFC, přepis řeči, AI asistent a telefonie jako volitelné moduly.</p></div>
+    <div class="card"><h4>Účty</h4><p>Passkey (WebAuthn) s rozšířením PRF: z něj se v prohlížeči odvodí klíč trezoru i klíč vlastní databáze. Server nezná žádný z nich.</p></div>
+  </div>
+</section>
+
+<section class="doc" id="architektura" data-group="Architektura">
+  <h2>Architektura<a class="anchor" href="#architektura">#</a></h2>
+  <p>Tři běžící části: <b>prohlížeče</b> (veškerá kryptografie), <b>hlavní služba</b> (Express + WebSocket, všechen živý stav) a <b>admin služba</b> (konzole a nástroje). Před nimi obvykle nginx.</p>
+  <figure>
+  <svg viewBox="0 0 960 470" role="img" aria-label="Architektura M5cet">
+    <defs>
+      <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker>
+      <marker id="ar-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-acc"/></marker>
+      <marker id="ar-vio" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="arrow-vio"/></marker>
+    </defs>
+    <!-- browsers -->
+    <rect x="24" y="40" width="210" height="150" rx="14" class="box-acc"/>
+    <text x="40" y="66" class="t">Prohlížeč A</text>
+    <text x="40" y="88" class="t2">React 19 · envelope.ts · identity.ts</text>
+    <text x="40" y="106" class="t2">klíče místnosti (PBKDF2 → HKDF)</text>
+    <text x="40" y="124" class="t2">ECDSA identita v IndexedDB</text>
+    <text x="40" y="142" class="t2">WebRTC · DataChannel · média</text>
+    <text x="40" y="168" class="tm">wss://…/ws  ·  https://…/api</text>
+    <rect x="726" y="40" width="210" height="150" rx="14" class="box-acc"/>
+    <text x="742" y="66" class="t">Prohlížeč B</text>
+    <text x="742" y="88" class="t2">stejný kód, jiná identita</text>
+    <text x="742" y="106" class="t2">stejný klíč místnosti</text>
+    <text x="742" y="124" class="t2">(zná heslo)</text>
+    <path d="M234 70 C 420 20, 540 20, 726 70" class="ln-vio" marker-end="url(#ar-vio)" marker-start="url(#ar-vio)"/>
+    <text x="392" y="36" class="t2">P2P DataChannel (DTLS) — zprávy, soubory, média</text>
+    <!-- nginx -->
+    <rect x="300" y="120" width="360" height="44" rx="10" class="box"/>
+    <text x="318" y="147" class="t">nginx</text>
+    <text x="376" y="147" class="tm">/ws  /api  /api/admin  /admin  /console</text>
+    <path d="M234 150 L300 145" class="ln" marker-end="url(#ar)"/>
+    <path d="M726 150 L660 145" class="ln" marker-end="url(#ar)"/>
+    <!-- main service -->
+    <rect x="120" y="210" width="520" height="236" rx="16" class="box"/>
+    <text x="138" y="236" class="t">Hlavní služba · dist/index.cjs</text>
+    <rect x="138" y="250" width="150" height="80" rx="10" class="box-vio"/>
+    <text x="150" y="272" class="t">SignalingHub</text>
+    <text x="150" y="290" class="t2">/ws · protokol v2</text>
+    <text x="150" y="306" class="t2">limity · brána · Origin</text>
+    <text x="150" y="322" class="t2">proxy souborů</text>
+    <rect x="300" y="250" width="150" height="80" rx="10" class="box-vio"/>
+    <text x="312" y="272" class="t">AwayRelay</text>
+    <text x="312" y="290" class="t2">pseudonymy účtů</text>
+    <text x="312" y="306" class="t2">účtenky · Web Push</text>
+    <text x="312" y="322" class="t2">přítomnost po socketech</text>
+    <rect x="462" y="250" width="160" height="80" rx="10" class="box-ok"/>
+    <text x="474" y="272" class="t">Fronta zpráv</text>
+    <text x="474" y="290" class="t2">SQLite · lease · dedupe</text>
+    <text x="474" y="306" class="t2">kvóty · expirace</text>
+    <text x="474" y="322" class="t2">dead-letter</text>
+    <rect x="138" y="344" width="150" height="86" rx="10" class="box"/>
+    <text x="150" y="366" class="t">Účty (passkey)</text>
+    <text x="150" y="384" class="t2">WebAuthn · relace</text>
+    <text x="150" y="400" class="t2">trezor (zapečetěný)</text>
+    <text x="150" y="416" class="t2">odvolání → sockety</text>
+    <rect x="300" y="344" width="150" height="86" rx="10" class="box"/>
+    <text x="312" y="366" class="t">Úložiště</text>
+    <text x="312" y="384" class="t2">m5cet.db (globální)</text>
+    <text x="312" y="400" class="t2">SQLCipher na uživatele</text>
+    <text x="312" y="416" class="t2">a na relaci (TTL 1 den)</text>
+    <rect x="462" y="344" width="160" height="86" rx="10" class="box-warn"/>
+    <text x="474" y="366" class="t">Monitor</text>
+    <text x="474" y="384" class="t2">traffic · audit · system</text>
+    <text x="474" y="400" class="t2">/api/admin/* · SSE</text>
+    <text x="474" y="416" class="t2">metadata, nikdy obsah</text>
+    <path d="M470 164 L420 210" class="ln" marker-end="url(#ar)"/>
+    <!-- admin -->
+    <rect x="690" y="250" width="246" height="180" rx="16" class="box"/>
+    <text x="708" y="276" class="t">Admin služba · dist/admin.cjs</text>
+    <text x="708" y="298" class="t2">konzole /console (CSP self)</text>
+    <text x="708" y="316" class="t2">layout builder · telefonie · AI</text>
+    <text x="708" y="334" class="t2">/admin/* (token)</text>
+    <text x="708" y="352" class="t2">/api/admin/* → MAIN_URL</text>
+    <text x="708" y="378" class="tm">127.0.0.1:5050</text>
+    <path d="M690 380 L640 380" class="ln-acc" marker-end="url(#ar-acc)"/>
+    <text x="646" y="372" class="t2">přeposílá</text>
+    <path d="M620 164 L760 250" class="ln" marker-end="url(#ar)"/>
+  </svg>
+  <figcaption>Obr. 1 — Části systému a kudy tečou data. Fialové: signalizace a relay; zelené: fronta; oranžové: monitoring.</figcaption>
+  </figure>
+  <h3 id="kde-je-co">Kde je co v kódu</h3>
+  <table>
+    <thead><tr><th>Oblast</th><th>Soubory</th></tr></thead>
+    <tbody>
+      <tr><td>Signalizace, protokol v2</td><td><code>server/signaling/hub.ts</code>, <code>frames.ts</code>, <code>limits.ts</code>, <code>refs.ts</code></td></tr>
+      <tr><td>Relay pro nepřítomné</td><td><code>server/signaling/relay.ts</code></td></tr>
+      <tr><td>Fronta zpráv</td><td><code>server/accounts/mailqueue.ts</code> (SQLite), <code>memqueue.ts</code> (paměť)</td></tr>
+      <tr><td>Účty, WebAuthn</td><td><code>server/accounts/store.ts</code>, <code>routes.ts</code>, <code>webauthn.ts</code>, <code>cbor.ts</code></td></tr>
+      <tr><td>Úložiště</td><td><code>server/storage/*</code> — <code>service.ts</code>, <code>global-store.ts</code>, <code>user-store.ts</code>, <code>keys.ts</code></td></tr>
+      <tr><td>Monitoring a audit</td><td><code>server/monitor/traffic.ts</code>, <code>audit.ts</code>, <code>system.ts</code>; API <code>server/admin-api.ts</code></td></tr>
+      <tr><td>Admin služba a konzole</td><td><code>server/admin.ts</code>, <code>admin-ui/public/</code> (<code>console.js</code>, <code>legacy-tools.js</code>)</td></tr>
+      <tr><td>Kryptografie v prohlížeči</td><td><code>client/src/lib/envelope.ts</code>, <code>identity.ts</code>, <code>crypto.ts</code> (v1), <code>file-transfer.ts</code>, <code>message-kinds.ts</code></td></tr>
+      <tr><td>Validace příchozích dat</td><td><code>client/src/lib/validate.ts</code></td></tr>
+      <tr><td>Aplikace</td><td><code>client/src/App.tsx</code> a komponenty v <code>client/src/components/</code></td></tr>
+    </tbody>
+  </table>
+</section>
+<section class="doc" id="protokol" data-group="Protokol v2">
+  <h2>Signalizační protokol v2<a class="anchor" href="#protokol">#</a></h2>
+  <p class="lead">Jeden WebSocket na <code>/ws</code>, rámce jako JSON objekty s polem <code>type</code>. Verze 2 přinesla přesnou validaci, limity, pseudonymy, rámec <code>auth</code> a zapečetěnou signalizaci.</p>
+  <h3 id="zivot-spojeni">Životní cyklus spojení</h3>
+  <figure>
+  <svg viewBox="0 0 960 520" role="img" aria-label="Sekvence připojení">
+    <defs><marker id="sq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker>
+    <marker id="sq-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow-acc"/></marker>
+    <marker id="sq-vio" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow-vio"/></marker></defs>
+    <rect x="40" y="16" width="160" height="36" rx="9" class="box-acc"/><text x="120" y="39" text-anchor="middle" class="t">Klient A</text>
+    <rect x="400" y="16" width="160" height="36" rx="9" class="box-vio"/><text x="480" y="39" text-anchor="middle" class="t">Server (hub)</text>
+    <rect x="760" y="16" width="160" height="36" rx="9" class="box-acc"/><text x="840" y="39" text-anchor="middle" class="t">Klient B (v místnosti)</text>
+    <line x1="120" y1="52" x2="120" y2="505" class="life"/><line x1="480" y1="52" x2="480" y2="505" class="life"/><line x1="840" y1="52" x2="840" y2="505" class="life"/>
+    <path d="M120 80 L478 80" class="ln" marker-end="url(#sq)"/><text x="140" y="72" class="tm">HTTP Upgrade /ws  (Origin, brána spojení)</text>
+    <path d="M480 108 L122 108" class="ln" marker-end="url(#sq)"/><text x="300" y="100" class="tm">hello {protocol:2, peerId, connId}</text>
+    <path d="M120 140 L478 140" class="ln-acc" marker-end="url(#sq-acc)"/><text x="140" y="132" class="tm">join {protocol:2, room, name, peerId, resume?, auth?, away}</text>
+    <path d="M480 172 L122 172" class="ln" marker-end="url(#sq)"/><text x="206" y="164" class="tm">joined {peerId, resume, peers[], away[], account}</text>
+    <path d="M480 172 L838 172" class="ln" marker-end="url(#sq)"/><text x="560" y="164" class="tm">peer-joined {peerId, name, account?}</text>
+    <path d="M840 212 L482 212" class="ln-vio" marker-end="url(#sq-vio)"/><text x="560" y="204" class="tm">signal {target:A, payload:{sealed}}</text>
+    <path d="M480 236 L122 236" class="ln-vio" marker-end="url(#sq-vio)"/><text x="170" y="228" class="tm">signal {source:B, payload:{sealed}} (offer)</text>
+    <path d="M120 266 L478 266" class="ln-vio" marker-end="url(#sq-vio)"/><text x="170" y="258" class="tm">signal answer + ICE (zapečetěné)</text>
+    <path d="M480 290 L838 290" class="ln-vio" marker-end="url(#sq-vio)"/>
+    <rect x="200" y="310" width="560" height="40" rx="10" class="box-ok"/><text x="480" y="335" text-anchor="middle" class="t">DataChannel otevřen: key-check → zprávy a soubory P2P</text>
+    <path d="M120 380 L478 380" class="ln" marker-end="url(#sq)"/><text x="140" y="372" class="tm">ping {t}  ·  presence {away}  ·  auth {token}</text>
+    <path d="M480 404 L122 404" class="ln" marker-end="url(#sq)"/><text x="260" y="396" class="tm">pong · presence-ack · auth-result</text>
+    <path d="M480 430 L122 430" class="ln" marker-end="url(#sq)"/><text x="200" y="424" class="tm">WS ping (30 s) ← pong: jinak spojení končí</text>
+    <path d="M120 466 L478 466" class="ln" marker-end="url(#sq)"/><text x="140" y="458" class="tm">leave {away}  nebo zavření socketu</text>
+    <path d="M480 490 L838 490" class="ln" marker-end="url(#sq)"/><text x="560" y="482" class="tm">peer-left (+ peer-away, pokud away)</text>
+  </svg>
+  <figcaption>Obr. 2 — Připojení, výměna zapečetěné signalizace a udržování spojení.</figcaption>
+  </figure>
+
+  <h3 id="pipeline">Co se stane s každým rámcem</h3>
+  <ol>
+    <li><b>Velikost</b> — nad 256 KB (<code>MAX_FRAME_BYTES</code>) knihovna ws spojení zavře kódem <code>1009</code>.</li>
+    <li><b>Parsování</b> (<code>parseFrame</code>) do přesného tvaru: typy, délky, formát ID (<code>[A-Za-z0-9_:.-]{1,96}</code>), base64, počty. Neznámý typ → <code>error {code:"unknown-type"}</code>, špatný tvar → <code>invalid-frame</code>.</li>
+    <li><b>Limit třídy</b> — token bucket na socket. Při překročení <code>rate-limited {frame, retryAfterMs}</code>; 20 odmítnutí za minutu → zavření <code>1008</code>.</li>
+    <li><b>Akce</b> a <b>záznam</b> do monitoru provozu (typ, bajty, spojení, peer, účet, hash místnosti, stav).</li>
+  </ol>
+
+  <h3 id="ramce-klient">Rámce klient → server</h3>
+  <table>
+    <thead><tr><th>type</th><th>Pole</th><th>Význam</th><th>Třída limitu</th></tr></thead>
+    <tbody>
+      <tr><td><code>join</code></td><td><code>protocol, room, name, peerId?, resume?, auth?, away</code></td><td>Vstup do místnosti; <code>auth</code> = session token účtu</td><td>signaling</td></tr>
+      <tr><td><code>auth</code></td><td><code>token | null, away</code></td><td>Přihlásit / odhlásit účet bez opuštění místnosti</td><td>signaling</td></tr>
+      <tr><td><code>leave</code></td><td><code>away</code></td><td>Odchod; <code>away:true</code> = zůstat jako nepřítomný (relay)</td><td>signaling</td></tr>
+      <tr><td><code>signal</code></td><td><code>target, payload</code></td><td>SDP/ICE pro jednoho peera; ve v2 <code>{sealed:{v,iv,ciphertext}}</code></td><td>signaling</td></tr>
+      <tr><td><code>ping</code></td><td><code>t</code></td><td>Aplikační heartbeat a měření RTT</td><td>heartbeat</td></tr>
+      <tr><td><code>presence</code></td><td><code>away</code></td><td>Stránka odložena / zpět (lifecycle)</td><td>presence</td></tr>
+      <tr><td><code>relay</code></td><td><code>messageId, to[], envelope, expiresAt?</code></td><td>Šifrová obálka pro nepřítomné členy (odkazy z <code>away[]</code>)</td><td>relay</td></tr>
+      <tr><td><code>relay-ack</code></td><td><code>ids[]</code> (≤ 500)</td><td>Potvrzení zpracování doručených položek</td><td>relay</td></tr>
+      <tr><td><code>receipt</code></td><td><code>messageIds[]</code> (≤ 200), <code>state</code></td><td>Přečteno / doručeno — jen pro zprávy, které server tomuto čtenáři doručil</td><td>receipt</td></tr>
+      <tr><td><code>storage</code></td><td><code>id, op, payload, auth?, session?</code></td><td>Operace úložiště po WebSocketu (viz <a href="#uloziste">úložiště</a>)</td><td>storage</td></tr>
+      <tr><td><code>command-poll</code> / <code>command-ack</code></td><td><code>deviceId</code> / <code>commandId, result?</code></td><td>Příkazy operátora pro zařízení</td><td>command</td></tr>
+      <tr><td><code>proxy-meta|chunk|end|cancel|need</code></td><td><code>transferId, …</code></td><td>Proxy souborů přes server (když P2P nejde)</td><td>proxy (+ bajty)</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="ramce-server">Rámce server → klient</h3>
+  <table>
+    <thead><tr><th>type</th><th>Kdy</th></tr></thead>
+    <tbody>
+      <tr><td><code>hello</code></td><td>Hned po otevření: <code>protocol</code>, navržené <code>peerId</code>, <code>connId</code>, <code>limits</code></td></tr>
+      <tr><td><code>joined</code></td><td>Odpověď na <code>join</code>: přidělené <code>peerId</code>, <code>resume</code>, <code>peers[]</code>, <code>away[]</code>, <code>account</code></td></tr>
+      <tr><td><code>peer-joined</code> / <code>peer-left</code> / <code>peer-updated</code></td><td>Změny v místnosti (<code>peer-updated</code> = přihlášení/odhlášení bez odchodu)</td></tr>
+      <tr><td><code>peer-away</code> / <code>peer-back</code> / <code>peer-gone</code></td><td>Člen s účtem je nepřítomen / zpět / odhlášen (relay pro něj končí)</td></tr>
+      <tr><td><code>signal</code>, <code>signal-undeliverable</code></td><td>Signál od peera / cíl v místnosti není</td></tr>
+      <tr><td><code>relay-status</code></td><td><code>stored | forwarded | duplicate | delivered | read | rejected</code> pro odeslanou zprávu</td></tr>
+      <tr><td><code>relay-deliver</code></td><td>Položky z fronty (po 50) — čekají na <code>relay-ack</code></td></tr>
+      <tr><td><code>presence-ack</code>, <code>auth-result</code>, <code>account-revoked</code></td><td>Stav přítomnosti a účtu na tomto socketu</td></tr>
+      <tr><td><code>rate-limited</code>, <code>error</code></td><td>Odmítnutý rámec (<code>code</code>: <code>invalid-frame</code>, <code>unknown-type</code>, <code>not-in-room</code>, <code>proxy-refused</code>, <code>server-error</code>)</td></tr>
+      <tr><td><code>replaced</code>, <code>closed-by-server</code></td><td>Stejný klient se připojil znovu (resume) / operátor spojení ukončil</td></tr>
+      <tr><td><code>proxy-*</code>, <code>proxy-ack</code></td><td>Přeposlané rámce proxy (s <code>from</code>) a přijetí přenosu</td></tr>
+      <tr><td><code>admin-command</code>, <code>storage-result</code>, <code>pong</code></td><td>Příkaz operátora, výsledek operace úložiště, odpověď na ping</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="datagramy">Datagramy — rozložení klíčových rámců</h3>
+  <div class="legend"><span class="l-hdr">hlavička / směrování (vidí server)</span><span class="l-sec">bezpečnostní pole</span><span class="l-ct">šifrový text (server nepřečte)</span></div>
+
+  <div class="dgram"><div class="dgram__title"><code>join</code><span class="dir">klient → server</span></div>
+    <div class="dgram__row"><div class="f f--hdr" style="--w:1"><b>type</b><i>"join"</i></div><div class="f f--hdr"><b>protocol</b><i>2</i></div><div class="f f--hdr" style="--w:2"><b>room</b><i>1–64 znaků</i></div><div class="f f--hdr" style="--w:2"><b>name</b><i>≤ 48, bez řídicích znaků</i></div></div>
+    <div class="dgram__row"><div class="f f--hdr f--opt" style="--w:2"><b>peerId?</b><i>požadované ID</i></div><div class="f f--sec f--opt" style="--w:2"><b>resume?</b><i>tajemství z minulého joined</i></div><div class="f f--sec f--opt" style="--w:2"><b>auth?</b><i>session token (≤ 200)</i></div><div class="f f--hdr"><b>away</b><i>bool</i></div></div></div>
+
+  <div class="dgram"><div class="dgram__title"><code>joined</code><span class="dir">server → klient</span></div>
+    <div class="dgram__row"><div class="f f--hdr"><b>type</b><i>"joined"</i></div><div class="f f--hdr"><b>protocol</b><i>2</i></div><div class="f f--hdr" style="--w:2"><b>peerId</b><i>přidělené — převzít!</i></div><div class="f f--sec" style="--w:2"><b>resume</b><i>32 B base64url, jednorázově</i></div></div>
+    <div class="dgram__row"><div class="f f--hdr" style="--w:3"><b>peers[]</b><i>{peerId, name, joinedAt, account?}</i></div><div class="f f--hdr" style="--w:3"><b>away[]</b><i>{account, name, since}</i></div><div class="f f--sec" style="--w:2"><b>account</b><i>{account, away} | {invalid} | null</i></div></div></div>
+
+  <div class="dgram"><div class="dgram__title"><code>signal</code> (zapečetěný)<span class="dir">klient → server → klient</span></div>
+    <div class="dgram__row"><div class="f f--hdr"><b>type</b><i>"signal"</i></div><div class="f f--hdr" style="--w:2"><b>target / source</b><i>peer ID</i></div><div class="f f--sec"><b>sealed.v</b><i>2</i></div><div class="f f--sec"><b>sealed.iv</b><i>12 B</i></div><div class="f f--ct" style="--w:4"><b>sealed.ciphertext</b><i>AES-GCM(klíč „signal“, SDP|ICE) · AAD „m5cet/2|signal|místnost|od|pro“</i></div></div></div>
+
+  <div class="dgram"><div class="dgram__title"><code>relay</code><span class="dir">klient → server</span></div>
+    <div class="dgram__row"><div class="f f--hdr"><b>type</b><i>"relay"</i></div><div class="f f--hdr" style="--w:2"><b>messageId</b><i>ID zprávy</i></div><div class="f f--hdr" style="--w:2"><b>to[]</b><i>≤ 50 odkazů účtů (pseudonymy)</i></div><div class="f f--hdr f--opt"><b>expiresAt?</b><i>TTL zprávy</i></div></div>
+    <div class="dgram__row"><div class="f f--sec"><b>envelope.v</b><i>2</i></div><div class="f f--hdr"><b>envelope.id</b><i>= messageId</i></div><div class="f f--sec"><b>envelope.iv</b><i>12 B</i></div><div class="f f--ct" style="--w:5"><b>envelope.ciphertext</b><i>AES-GCM(klíč „message“, {b, pk?, s?}) · AAD „m5cet/2|msg|místnost|id“ · ≤ 190 KB</i></div></div></div>
+
+  <div class="dgram"><div class="dgram__title"><code>relay-deliver</code> — položka<span class="dir">server → klient</span></div>
+    <div class="dgram__row"><div class="f f--hdr" style="--w:2"><b>id</b><i>mq-… (pro ack)</i></div><div class="f f--hdr"><b>seq</b><i>pořadí v místnosti</i></div><div class="f f--hdr"><b>kind</b><i>message | status</i></div><div class="f f--hdr" style="--w:2"><b>messageId</b></div><div class="f f--hdr" style="--w:3"><b>from</b><i>{peerId, name, account?}</i></div></div>
+    <div class="dgram__row"><div class="f f--ct" style="--w:4"><b>envelope</b><i>přesně to, co odesílatel poslal</i></div><div class="f f--hdr f--opt" style="--w:2"><b>status?</b><i>{state, at, recipientName}</i></div><div class="f f--hdr"><b>storedAt</b></div><div class="f f--hdr"><b>attempts</b></div></div></div>
+
+  <div class="dgram"><div class="dgram__title"><code>proxy-chunk</code><span class="dir">odesílatel → server → místnost</span></div>
+    <div class="dgram__row"><div class="f f--hdr"><b>type</b><i>"proxy-chunk"</i></div><div class="f f--hdr" style="--w:2"><b>transferId</b></div><div class="f f--hdr"><b>seq</b><i>0 … n−1</i></div><div class="f f--sec"><b>v</b><i>2</i></div><div class="f f--sec"><b>iv</b></div><div class="f f--ct" style="--w:4"><b>ciphertext</b><i>AES-GCM(klíč souboru, kus) · AAD „m5cet/2|chunk|přenos|seq|počet“</i></div><div class="f f--hdr"><b>from</b><i>přidá server</i></div></div></div>
+
+  <h3 id="limity">Limity</h3>
+  <table>
+    <thead><tr><th>Třída</th><th>Kapacita (burst)</th><th>Doplňování / s</th><th>Rámce</th></tr></thead>
+    <tbody>
+      <tr><td>signaling</td><td>120</td><td>10</td><td>join, leave, signal, auth</td></tr>
+      <tr><td>relay</td><td>60</td><td>2</td><td>relay, relay-ack</td></tr>
+      <tr><td>receipt</td><td>30</td><td>1</td><td>receipt</td></tr>
+      <tr><td>presence</td><td>10</td><td>0,2</td><td>presence</td></tr>
+      <tr><td>storage</td><td>120</td><td>10</td><td>storage</td></tr>
+      <tr><td>proxy</td><td>400</td><td>60</td><td>proxy-* + bajty: 8 MB burst, 2 MB/s</td></tr>
+      <tr><td>heartbeat</td><td>6</td><td>0,5</td><td>ping</td></tr>
+      <tr><td>command</td><td>20</td><td>0,5</td><td>command-poll, command-ack</td></tr>
+      <tr><td>other</td><td>30</td><td>1</td><td>neplatné rámce</td></tr>
+    </tbody>
+  </table>
+  <p><b>Brána spojení</b> (při upgradu): 30 nových spojení za minutu a 20 současně na adresu, 5 000 celkem. Adresa se bere z <code>X-Forwarded-For</code> jen od důvěryhodné proxy (<code>TRUST_PROXY</code>). <b>Zpětný tlak</b>: příjemci s více než 8 MB ve frontě socketu server přestane posílat kusy souborů (klient si je vyžádá znovu), nad 32 MB je spojení ukončeno.</p>
+
+  <h3 id="identita-peeru">Peer ID, resume a pseudonymy</h3>
+  <ul>
+    <li>Server v <code>hello</code> navrhne ID; klient smí v <code>join</code> požádat o vlastní. Je-li v místnosti obsazené jiným živým socketem, dostane nové — <b>převzetí cizího ID už není možné</b> (dřív šlo odklonit cizí signalizaci).</li>
+    <li><code>joined.resume</code> je jednorázové tajemství. Při novém připojení do stejné místnosti ho klient pošle spolu se svým ID; server porovná SHA-256 v konstantním čase, starý socket dostane <code>replaced</code> a ID přejde na nové spojení.</li>
+    <li>Členové s účtem se místnosti ukazují jako <code>account</code> = <code>base64url(HMAC-SHA256(tajemství, místnost ‖ 0 ‖ ID účtu))[0..22]</code>. Stejná osoba má v každé místnosti jiný odkaz. Pole <code>accountId</code> nese totéž (alias pro klienty 2.x).</li>
+  </ul>
+
+  <h3 id="priklad-klient">Příklad: minimální klient</h3>
+<pre><code><span class="k">const</span> ws = <span class="k">new</span> WebSocket(<span class="s">"wss://chat.example.com/ws"</span>);
+<span class="k">let</span> me = <span class="k">null</span>;
+ws.onmessage = (e) =&gt; {
+  <span class="k">const</span> f = JSON.parse(e.data);
+  <span class="k">if</span> (f.type === <span class="s">"hello"</span>) ws.send(JSON.stringify({ type: <span class="s">"join"</span>, protocol: <span class="n">2</span>, room: <span class="s">"brno"</span>, name: <span class="s">"Alice"</span>, peerId: f.peerId, away: <span class="k">false</span> }));
+  <span class="k">if</span> (f.type === <span class="s">"joined"</span>) { me = f.peerId; <span class="c">/* uložit f.resume pro reconnect */</span> }
+  <span class="k">if</span> (f.type === <span class="s">"rate-limited"</span>) setTimeout(retry, f.retryAfterMs);
+  <span class="k">if</span> (f.type === <span class="s">"error"</span>) console.warn(f.code, f.message);
+};
+setInterval(() =&gt; ws.send(JSON.stringify({ type: <span class="s">"ping"</span>, t: Date.now() })), <span class="n">25_000</span>);</code></pre>
+  <div class="warn"><b>Kompatibilita:</b> klient 3.0 přijímá jen zapečetěné signály. Klient 2.x se po nasazení sám nabídne k obnovení; dokud se neobnoví, P2P spojení s ním nevznikne a jeho zprávy v1 klient 3.0 sice přečte, ale 2.x nepřečte zprávy v2.</div>
+</section>
+<section class="doc" id="sifrovani" data-group="Bezpečnost">
+  <h2>Šifrování v2<a class="anchor" href="#sifrovani">#</a></h2>
+  <p class="lead">Veškerá kryptografie běží v prohlížeči přes WebCrypto. Server dostává jen šifrové texty a metadata potřebná ke směrování.</p>
+  <h3 id="hierarchie">Hierarchie klíčů místnosti</h3>
+  <figure>
+  <svg viewBox="0 0 960 330" role="img" aria-label="Hierarchie klíčů">
+    <defs><marker id="kh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
+    <rect x="20" y="130" width="150" height="64" rx="12" class="box-warn"/><text x="95" y="158" text-anchor="middle" class="t">heslo místnosti</text><text x="95" y="178" text-anchor="middle" class="t2">normalizace NFC</text>
+    <path d="M170 162 L220 162" class="ln" marker-end="url(#kh)"/>
+    <rect x="220" y="118" width="200" height="88" rx="12" class="box"/><text x="320" y="144" text-anchor="middle" class="t">PBKDF2-SHA256</text><text x="320" y="164" text-anchor="middle" class="t2">600 000 iterací</text><text x="320" y="182" text-anchor="middle" class="tm">salt m5cet:room:v2:&lt;místnost&gt;</text>
+    <path d="M420 162 L470 162" class="ln" marker-end="url(#kh)"/>
+    <rect x="470" y="126" width="160" height="72" rx="12" class="box-vio"/><text x="550" y="154" text-anchor="middle" class="t">tajemství místnosti</text><text x="550" y="174" text-anchor="middle" class="t2">256 b → HKDF-SHA256</text><text x="550" y="190" text-anchor="middle" class="tm">salt „m5cet:v2“</text>
+    <path d="M630 150 L700 50" class="ln" marker-end="url(#kh)"/><path d="M630 158 L700 125" class="ln" marker-end="url(#kh)"/><path d="M630 166 L700 200" class="ln" marker-end="url(#kh)"/><path d="M630 174 L700 280" class="ln" marker-end="url(#kh)"/>
+    <rect x="700" y="22" width="240" height="56" rx="10" class="box-acc"/><text x="716" y="46" class="t">info „message“ → AES-GCM</text><text x="716" y="66" class="t2">chat obálky, relay, audio stav</text>
+    <rect x="700" y="97" width="240" height="56" rx="10" class="box-acc"/><text x="716" y="121" class="t">info „signal“ → AES-GCM</text><text x="716" y="141" class="t2">SDP a ICE přes server</text>
+    <rect x="700" y="172" width="240" height="56" rx="10" class="box-ok"/><text x="716" y="196" class="t">info „files“ → HKDF klíč</text><text x="716" y="216" class="t2">salt = ID přenosu → klíč souboru</text>
+    <rect x="700" y="252" width="240" height="56" rx="10" class="box"/><text x="716" y="276" class="t">info „check“ → 64 b</text><text x="716" y="296" class="t2">kontrolní hodnota (stejné heslo?)</text>
+    <text x="20" y="300" class="t2">Klíč v1 (PBKDF2 250 000, salt CipherRoom:v1:…) se odvodí až při první obálce v1.</text>
+  </svg>
+  <figcaption>Obr. 3 — Z jednoho hesla čtyři nezávislé klíče; žádný z nich neopustí prohlížeč.</figcaption>
+  </figure>
+
+  <h3 id="aad">Svázání s kontextem (AAD)</h3>
+  <p>Každé šifrování AES-GCM nese <i>associated data</i> — řetězec, který se nešifruje, ale je chráněný tagem. Šifrový text proto jde otevřít jen tam, kam patří.</p>
+  <table>
+    <thead><tr><th>Účel</th><th>AAD</th><th>Čemu brání</th></tr></thead>
+    <tbody>
+      <tr><td>zpráva</td><td><code>m5cet/2|msg|&lt;místnost&gt;|&lt;id&gt;</code></td><td>přenesení do jiné místnosti, záměně ID, přehrání pod jiným ID</td></tr>
+      <tr><td>signál</td><td><code>m5cet/2|signal|&lt;místnost&gt;|&lt;od&gt;|&lt;pro&gt;</code></td><td>přesměrování nebo podvržení SDP serverem (MITM hovoru)</td></tr>
+      <tr><td>meta souboru</td><td><code>m5cet/2|file-meta|&lt;přenos&gt;</code></td><td>záměně metadat mezi přenosy</td></tr>
+      <tr><td>kus souboru</td><td><code>m5cet/2|chunk|&lt;přenos&gt;|&lt;seq&gt;|&lt;počet&gt;</code></td><td>přeskládání kusů, vložení kusu z jiného souboru</td></tr>
+      <tr><td>konec souboru</td><td><code>m5cet/2|file-end|&lt;přenos&gt;</code></td><td>podvržení otisku</td></tr>
+      <tr><td>řádek historie na serveru</td><td><code>m5cet:server-row:v1:&lt;id&gt;</code></td><td>záměně řádků v úložišti relace</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="obalka">Obálka zprávy</h3>
+  <div class="dgram"><div class="dgram__title"><code>Envelope v2</code><span class="dir">DataChannel i relay</span></div>
+    <div class="dgram__row"><div class="f f--hdr"><b>v</b><i>2</i></div><div class="f f--hdr" style="--w:2"><b>id</b><i>ID zprávy (v AAD)</i></div><div class="f f--sec"><b>iv</b><i>12 B náhodně</i></div><div class="f f--ct" style="--w:5"><b>ciphertext</b><i>AES-GCM-256(JSON { b: tělo, pk?: veřejný klíč, s?: podpis }) + 16 B tag</i></div></div></div>
+  <div class="dgram"><div class="dgram__title"><code>tělo b</code> (uvnitř šifrování)<span class="dir">jen příjemci</span></div>
+    <div class="dgram__row"><div class="f f--ct" style="--w:2"><b>id</b><i>= envelope.id</i></div><div class="f f--ct" style="--w:3"><b>text / attachment</b><i>obsah, příloha data:</i></div><div class="f f--ct" style="--w:2"><b>senderId, senderName</b></div><div class="f f--ct" style="--w:2"><b>createdAt, ttl, flags</b></div><div class="f f--ct" style="--w:2"><b>to, replyTo, forwardedFrom</b></div></div></div>
+  <p>Podpis <code>s</code> = ECDSA-P256-SHA256 přes <code>AAD ‖ b</code> klíčem identity odesílatele; <code>pk</code> je jeho veřejný klíč (SPKI). Obojí je <b>uvnitř</b> šifrování — server nevidí, kdo co podepsal, a nemůže tak propojit identitu zařízení napříč místnostmi.</p>
+<pre><code><span class="c">// client/src/lib/envelope.ts</span>
+<span class="k">const</span> keys = <span class="k">await</span> deriveRoomKeys(<span class="s">"brno"</span>, <span class="s">"correct horse battery"</span>);
+<span class="k">const</span> me = <span class="k">await</span> loadIdentity();                      <span class="c">// ECDSA P-256, IndexedDB</span>
+<span class="k">const</span> env = <span class="k">await</span> sealMessage(keys, <span class="s">"msg-1"</span>, { id: <span class="s">"msg-1"</span>, text: <span class="s">"ahoj"</span>, <span class="c">/* … */</span> }, me);
+<span class="c">// → { v: 2, id: "msg-1", iv: "…", ciphertext: "…" }</span>
+<span class="k">const</span> { payload, version, signer } = <span class="k">await</span> openMessage(keys, env);
+<span class="c">// signer = { publicKey, valid: true }  ·  version = 2</span></code></pre>
+
+  <h3 id="identita">Identita zařízení, TOFU a bezpečnostní čísla</h3>
+  <ul>
+    <li>Každý profil prohlížeče má pár ECDSA P-256; soukromý klíč je <b>neexportovatelný</b> (umí podepsat, nejde přečíst ani kódem aplikace) a leží v IndexedDB <code>m5cet-identity</code>.</li>
+    <li><b>Trust on first use:</b> první ověřený klíč pro jméno v místnosti se připne (<code>m5cet:pins:v1</code>). Zpráva pod stejným jménem s jiným klíčem se označí <span class="badge b-err">jiný klíč</span> a zobrazí se varování; neplatný podpis <span class="badge b-err">neplatný</span>; starší klient <span class="badge">nepodepsáno</span>.</li>
+    <li><b>Bezpečnostní číslo</b> dvou lidí = 12 skupin po 5 číslicích ze SHA-512 (1 025 kol) seřazených veřejných klíčů — obě strany vidí totéž a mohou ho porovnat mimo aplikaci.</li>
+    <li>Otisk vlastního zařízení i ověření odesílatele ukazuje <i>Informace o zprávě</i>.</li>
+  </ul>
+
+  <h3 id="kontrola-klice">Kontrola klíče a replay</h3>
+  <p>Po otevření DataChannelu si peeři pošlou <code>{kind:"key-check", v:2, check}</code>. Nesouhlasí-li, aplikace řekne „jiné heslo místnosti“ místo nečitelných zpráv. Hodnota je odvozená z tajemství místnosti a k útoku na heslo nedává víc než libovolný šifrový text. ID přijatých zpráv si klient pamatuje (20 000 posledních) a opakované zahodí.</p>
+
+  <h3 id="soubory">Soubory</h3>
+  <ol>
+    <li>Odesílatel vytvoří <code>transferId</code>, odvodí <b>klíč souboru</b> (HKDF, salt = ID přenosu) a pošle zapečetěná, podepsaná metadata.</li>
+    <li>Každý kus (32 KiB) šifruje s AAD <code>chunk|přenos|seq|počet</code> a zároveň počítá jeho SHA-256.</li>
+    <li>Konec přenosu nese zapečetěné a podepsané <code>{ root, totalChunks, size }</code>, kde <code>root</code> = SHA-256 zřetězených otisků kusů.</li>
+    <li>Příjemce ověří: metadata před alokací (velikost, počet kusů ≤ 2 000 000, konzistence), každý kus proti AAD, na konci součet bajtů, <code>root</code> a shodu podpisu s metadaty. Ztracené kusy si vyžádá (<code>file-need</code> / <code>proxy-need</code>, max. 3 kola).</li>
+    <li>Jméno souboru se očistí (bez cest a řídicích znaků, BiDi) a <b>MIME typ se omezí na bezpečné</b> (obrázky, audio, video, PDF, text). HTML nebo SVG přijde jako <code>application/octet-stream</code> — nikdy se nespustí jako stránka v originu aplikace.</li>
+  </ol>
+
+  <h3 id="zapecetene">Zapečetěné zprávy</h3>
+  <p>Text zprávy se navíc šifruje kódem předaným mimo aplikaci. Ve 3.0: kód <b>12 znaků</b> z 31znakové abecedy bez záměnných znaků (≈ 59 bitů, zobrazení <code>XXXX-XXXX-XXXX</code>), losování bez modulo biasu, PBKDF2 <b>600 000</b> iterací, při zadání se ignoruje velikost písmen, mezery a pomlčky. Zprávy z 2.x (6 znaků, 150 000 iterací) jdou dál otevřít. Text ani kód zapečetěné zprávy se nikdy neukládají mimo prohlížeč.</p>
+
+  <h3 id="model-hrozeb">Co kdo vidí</h3>
+  <table>
+    <thead><tr><th>Údaj</th><th>Server</th><th>Člen místnosti</th><th>Pozorovatel sítě</th></tr></thead>
+    <tbody>
+      <tr><td>Obsah zpráv, souborů, hovorů</td><td><span class="badge b-ok">ne</span></td><td><span class="badge b-warn">ano</span> (má klíč)</td><td><span class="badge b-ok">ne</span></td></tr>
+      <tr><td>Kdo zprávu napsal (podpis)</td><td><span class="badge b-ok">ne</span></td><td><span class="badge b-warn">ano</span>, ověřeně</td><td><span class="badge b-ok">ne</span></td></tr>
+      <tr><td>SDP / ICE, DTLS otisky</td><td><span class="badge b-ok">ne</span> (zapečetěno)</td><td><span class="badge b-warn">ano</span></td><td><span class="badge b-ok">ne</span></td></tr>
+      <tr><td>Název místnosti</td><td><span class="badge b-warn">ano</span> (směrování)</td><td><span class="badge b-warn">ano</span></td><td><span class="badge b-ok">ne</span> (TLS)</td></tr>
+      <tr><td>Kdo je v místnosti, kdy, IP</td><td><span class="badge b-warn">ano</span> (monitor ukládá IP zkrácenou)</td><td><span class="badge b-warn">jména</span></td><td><span class="badge b-warn">IP spojení</span></td></tr>
+      <tr><td>Kdo komu píše přes relay</td><td><span class="badge b-warn">ano</span> — do auditu jen se zapnutým auditem komunikace</td><td>—</td><td><span class="badge b-ok">ne</span></td></tr>
+      <tr><td>Heslo místnosti, klíče, passkey</td><td><span class="badge b-ok">nikdy</span></td><td>heslo ano</td><td><span class="badge b-ok">ne</span></td></tr>
+    </tbody>
+  </table>
+  <div class="note"><b>Omezení, které 3.0 neřeší:</b> klíč místnosti je sdílený a statický — kdo heslo zná (nebo ho později získá), přečte i starší zachycený provoz. Forward secrecy a vyloučení člena bez změny hesla řeší až <a href="#navrhy">návrhy</a> (sender keys / MLS).</div>
+</section>
+<section class="doc" id="fronta" data-group="Doručování">
+  <h2>Fronta zpráv pro nepřítomné<a class="anchor" href="#fronta">#</a></h2>
+  <p class="lead">Když člen s účtem (passkey) a zapnutým uchováním na serveru odejde nebo odloží stránku, zůstane v místnosti jako <i>nepřítomný</i>. Ostatní mu dál píší; server šifrovou obálku uloží, odpoví „uloženo“, probudí ho Web Push a po návratu mu vše předá — v pořadí a s potvrzením.</p>
+  <h3 id="relay-tok">Tok relay</h3>
+  <figure>
+  <svg viewBox="0 0 960 470" role="img" aria-label="Tok relay">
+    <defs><marker id="rl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker>
+    <marker id="rl-ok" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow-ok"/></marker>
+    <marker id="rl-warn" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow-warn"/></marker></defs>
+    <rect x="30" y="14" width="150" height="34" rx="9" class="box-acc"/><text x="105" y="36" text-anchor="middle" class="t">Bob (odesílatel)</text>
+    <rect x="300" y="14" width="150" height="34" rx="9" class="box-vio"/><text x="375" y="36" text-anchor="middle" class="t">Relay</text>
+    <rect x="530" y="14" width="150" height="34" rx="9" class="box-ok"/><text x="605" y="36" text-anchor="middle" class="t">Fronta (SQLite)</text>
+    <rect x="780" y="14" width="150" height="34" rx="9" class="box-acc"/><text x="855" y="36" text-anchor="middle" class="t">Alice (nepřítomná)</text>
+    <line x1="105" y1="48" x2="105" y2="460" class="life"/><line x1="375" y1="48" x2="375" y2="460" class="life"/><line x1="605" y1="48" x2="605" y2="460" class="life"/><line x1="855" y1="48" x2="855" y2="460" class="life"/>
+    <path d="M855 76 L377 76" class="ln" marker-end="url(#rl)"/><text x="470" y="68" class="tm">zavření socketu / presence {away:true}</text>
+    <path d="M375 96 L107 96" class="ln" marker-end="url(#rl)"/><text x="150" y="90" class="tm">peer-away {account: odkaz}</text>
+    <path d="M105 128 L373 128" class="ln" marker-end="url(#rl)"/><text x="120" y="120" class="tm">relay {messageId, to:[odkaz], envelope}</text>
+    <path d="M375 150 L603 150" class="ln-ok" marker-end="url(#rl-ok)"/><text x="392" y="144" class="tm">enqueue (dedupe, kvóty)</text>
+    <path d="M375 172 L107 172" class="ln" marker-end="url(#rl)"/><text x="160" y="166" class="tm">relay-status: stored</text>
+    <path d="M375 196 L853 196" class="ln-warn" marker-end="url(#rl-warn)"/><text x="600" y="190" class="tm">Web Push → /signin (max 1× / 30 s)</text>
+    <path d="M855 236 L377 236" class="ln" marker-end="url(#rl)"/><text x="480" y="228" class="tm">join / presence {away:false}</text>
+    <path d="M375 258 L107 258" class="ln" marker-end="url(#rl)"/><text x="170" y="252" class="tm">peer-back</text>
+    <path d="M603 282 L377 282" class="ln-ok" marker-end="url(#rl-ok)"/><text x="410" y="276" class="tm">lease (60 s, attempts+1)</text>
+    <path d="M375 304 L853 304" class="ln" marker-end="url(#rl)"/><text x="560" y="298" class="tm">relay-deliver {items[] podle seq}</text>
+    <path d="M855 340 L377 340" class="ln" marker-end="url(#rl)"/><text x="480" y="334" class="tm">relay-ack {ids}  (po dešifrování)</text>
+    <path d="M375 360 L603 360" class="ln-ok" marker-end="url(#rl-ok)"/><text x="420" y="354" class="tm">ack → smazat</text>
+    <path d="M375 382 L107 382" class="ln" marker-end="url(#rl)"/><text x="160" y="376" class="tm">relay-status: delivered</text>
+    <path d="M855 418 L377 418" class="ln" marker-end="url(#rl)"/><text x="470" y="410" class="tm">receipt {messageIds, state:"read"}</text>
+    <path d="M375 440 L107 440" class="ln" marker-end="url(#rl)"/><text x="160" y="434" class="tm">relay-status: read (jen odesílateli)</text>
+  </svg>
+  <figcaption>Obr. 4 — Od odeslání nepřítomné po „přečteno“. Je-li odesílatel mezitím pryč, stav čeká v jeho vlastní frontě jako položka <code>status</code>.</figcaption>
+  </figure>
+
+  <h3 id="stavy-fronty">Stavy položky</h3>
+  <figure>
+  <svg viewBox="0 0 960 250" role="img" aria-label="Stavový diagram fronty">
+    <defs><marker id="st" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="arrow"/></marker></defs>
+    <rect x="40" y="95" width="150" height="56" rx="28" class="box-acc"/><text x="115" y="128" text-anchor="middle" class="t">queued</text>
+    <rect x="370" y="95" width="170" height="56" rx="28" class="box-vio"/><text x="455" y="128" text-anchor="middle" class="t">delivering</text>
+    <rect x="720" y="30" width="200" height="56" rx="28" class="box-ok"/><text x="820" y="63" text-anchor="middle" class="t">smazáno (ack)</text>
+    <rect x="720" y="160" width="200" height="56" rx="28" class="box-err"/><text x="820" y="193" text-anchor="middle" class="t">dead (+ důvod)</text>
+    <path d="M190 112 L368 112" class="ln" marker-end="url(#st)"/><text x="220" y="104" class="tm">lease()</text>
+    <path d="M370 138 L192 138" class="ln" marker-end="url(#st)"/><text x="200" y="160" class="tm">lease vypršel · socket zavřen (release)</text>
+    <path d="M540 110 L718 62" class="ln" marker-end="url(#st)"/><text x="590" y="76" class="tm">ack()</text>
+    <path d="M540 138 L718 186" class="ln" marker-end="url(#st)"/><text x="560" y="186" class="tm">attempts ≥ 8</text>
+    <path d="M115 151 C 160 236, 600 236, 718 206" class="ln" marker-end="url(#st)"/><text x="236" y="198" class="tm">expiresAt ≤ teď (sweep)</text>
+    <path d="M720 200 C 420 250, 150 230, 110 153" class="ln" marker-end="url(#st)" stroke-dasharray="5 4"/><text x="560" y="244" class="tm">revive (operátor)</text>
+  </svg>
+  <figcaption>Obr. 5 — Doručení položku nemaže; smaže ji až potvrzení příjemce.</figcaption>
+  </figure>
+  <table>
+    <thead><tr><th>Vlastnost</th><th>Hodnota</th><th>Poznámka</th></tr></thead>
+    <tbody>
+      <tr><td>Pořadí</td><td><code>seq</code> na (účet, místnost)</td><td>doručení v pořadí odeslání</td></tr>
+      <tr><td>Deduplikace</td><td>(účet, druh, messageId)</td><td>opakovaný relay = <code>duplicate</code></td></tr>
+      <tr><td>Položek na účet</td><td>1 000</td><td><code>maxItemsPerAccount</code></td></tr>
+      <tr><td>Bajtů na účet</td><td>8 MB</td><td><code>maxBytesPerAccount</code></td></tr>
+      <tr><td>Velikost položky</td><td>130 000 B</td><td><code>maxItemBytes</code></td></tr>
+      <tr><td>Od jednoho odesílatele</td><td>300 položek</td><td>jeden člen nezaplní cizí schránku</td></tr>
+      <tr><td>Lease</td><td>60 s</td><td>po zavření socketu uvolněn hned</td></tr>
+      <tr><td>Pokusů</td><td>8</td><td>pak <code>dead</code></td></tr>
+      <tr><td>Život</td><td>30 dní (<code>RELAY_RETENTION_DAYS</code>) nebo TTL zprávy</td><td>kratší z obou</td></tr>
+      <tr><td>Dead-letter</td><td>7 dní</td><td>pak se maže</td></tr>
+    </tbody>
+  </table>
+  <h3 id="uctenky">Poctivé účtenky</h3>
+  <p>Server si ke každé relayované zprávě pamatuje (v paměti, až 50 000 zpráv / 30 dní) odesílatele a příjemce. <code>receipt</code> přijme jen od účtu, kterému zprávu doručil, a pošle ho jen jejímu odesílateli. Ve 2.x mohl kdokoli v místnosti označit cizí zprávu jako přečtenou a vložit položky do cizí schránky.</p>
+  <h3 id="outbox">Lokální fronta (light režim)</h3>
+  <p>Bez serveru čeká zpráva, pro kterou není otevřený kanál, v paměti prohlížeče — už zašifrovaná. Zkouší se při otevření kanálu, po návratu do okna a jednou za minutu (200 zpráv, 60 pokusů, 24 h, respektuje TTL). Protože peer ID je od 3.0 stabilní i po výpadku (resume), obálky ve frontě zůstávají platné.</p>
+</section>
+
+<section class="doc" id="ucty" data-group="Doručování">
+  <h2>Účty a passkeys<a class="anchor" href="#ucty">#</a></h2>
+  <p>Účet je passkey (WebAuthn) — žádné heslo. Server uloží jen veřejný klíč a počítadlo podpisů; bez rozšíření <b>PRF</b> účet nevznikne, protože z něj prohlížeč odvozuje klíče:</p>
+  <ul>
+    <li><code>HKDF(PRF, "m5cet:profile:v1")</code> → klíč trezoru (profil + historie chatu, zapečetěné před odesláním),</li>
+    <li><code>HKDF(PRF, "m5cet:userdb:v1")</code> → klíč vlastní SQLCipher databáze; server ho drží jen v paměti, dokud je uživatel přihlášený.</li>
+  </ul>
+  <table>
+    <thead><tr><th>Mechanismus</th><th>Chování</th></tr></thead>
+    <tbody>
+      <tr><td>Výzvy</td><td>náhodné, jednorázové, 2 minuty, vázané na obřad (registrace / přihlášení)</td></tr>
+      <tr><td>Relace</td><td>náhodný token (32 B), na serveru jen SHA-256, platnost 12 h, jen v paměti — restart znamená nové přihlášení (klient to udělá sám)</td></tr>
+      <tr><td>Odvolání</td><td>odhlášení (jedno zařízení), „všude“, smazání účtu, zásah operátora → <code>account-revoked</code> na všech dotčených socketech, relay pro účet končí, databáze se pro toto zařízení zamkne (poslední držitel ji zavře úplně)</td></tr>
+      <tr><td>RP ID</td><td><code>WEBAUTHN_RP_ID</code>, jinak host z <code>PUBLIC_BASE_URL</code>, jinak hlavička Host (v produkci server varuje)</td></tr>
+      <tr><td>Push</td><td>jen endpointy známých služeb (FCM, Mozilla, Windows, Apple; rozšíření <code>PUSH_ENDPOINT_HOSTS</code>)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section class="doc" id="uloziste" data-group="Doručování">
+  <h2>Úložiště<a class="anchor" href="#uloziste">#</a></h2>
+  <p>Jedna globální SQLite databáze pro server a jedna SQLCipher databáze pro každého uživatele či anonymní relaci. Podrobně v <code>docs/storage.md</code>.</p>
+<pre><code>$DATA_DIR/storage/
+├── m5cet.db         <span class="c"># globální: uživatelé, passkeys, index DB, logy, přenosy, audit, fronta</span>
+├── storage.key      <span class="c"># master klíč, 0600 (nebo STORAGE_MASTER_KEY / STORAGE_KEY_FILE)</span>
+└── db/
+    ├── db-&lt;id&gt;.db   <span class="c"># účet — klíč z passkey (PRF), jen v paměti</span>
+    └── db-&lt;id&gt;.db   <span class="c"># relace — klíč zabalený master klíčem, TTL 24 h od posledního použití, max. 7 dní</span></code></pre>
+  <div class="grid2">
+    <div class="card"><h4>Limity</h4><p>Kvóta 64 MB na účet, 16 MB na relaci (zápis nad kvótou se vrátí); zpráva ≤ 256 KB; hodnota kv ≤ 4 MB; 30 nových relací za hodinu z jedné adresy, 5 000 živých celkem; nejvýš 200 otevřených databází (LRU).</p></div>
+    <div class="card"><h4>Povýšení relace na účet</h4><p>Po vytvoření passkey se data relace zkopírují do databáze účtu v jedné transakci (ATTACH s klíčem), počty se ověří před commitem; relace se smaže až potom.</p></div>
+    <div class="card"><h4>Klíče</h4><p>Klíč účtu drží server po držitelích (zařízeních); zapomene ho a přepíše nulami, až se odhlásí poslední, nebo po 12 h nečinnosti. ID relací jen jako HMAC.</p></div>
+    <div class="card"><h4>Veřejný status</h4><p><code>/api/storage/status</code> říká jen <code>available</code>, <code>engine</code>, <code>caller</code>, <code>locked</code> — nic o ostatních uživatelích. Úplný stav je v administraci.</p></div>
+  </div>
+</section>
+<section class="doc" id="administrace" data-group="Provoz">
+  <h2>Administrace<a class="anchor" href="#administrace">#</a></h2>
+  <p class="lead">Konzole operátora na <code>https://&lt;doména&gt;/console/</code>. Živá data bere z hlavní služby (<code>/api/admin/*</code>), nástroje layoutu, telefonie a AI z admin služby (<code>/admin/*</code>). Vše chrání <code>ADMIN_API_TOKEN</code>.</p>
+  <figure><img src="img/console-overview.png" alt="Přehled konzole" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 6 — Přehled: KPI, provoz za 2 minuty, paměť za 30 minut, provoz podle tříd, zdraví, poslední varování.</figcaption></figure>
+  <table>
+    <thead><tr><th>Panel</th><th>Co ukazuje a co umí</th></tr></thead>
+    <tbody>
+      <tr><td>Přehled</td><td>spojení, místnosti, nepřítomní, účty a relace, rámce a bajty za minutu, chyby, heap, event loop p99, fronta; grafy; zdravotní kontroly (úložiště, trvalost fronty, event loop, heap, audit komunikace)</td></tr>
+      <tr><td>Živý provoz</td><td>každý WebSocket rámec a HTTP požadavek (čas, kanál, směr, třída, typ, bajty, peer/účet, hash místnosti, spojení, stav, doba); filtry, pauza, detail; graf propustnosti</td></tr>
+      <tr><td>Spojení</td><td>otevřené sockety: jméno, peer, účet, místnost, klient (prohlížeč/OS), adresa /24 (/48), bajty a rámce, doba, protokol; odpojení</td></tr>
+      <tr><td>Místnosti</td><td>členové online i nepřítomní (hash místnosti, nikdy název)</td></tr>
+      <tr><td>Uživatelé a passkeys</td><td>účty, databáze (klíčování, otevřená), trezor, fronta, relace; detail s passkeys, položkami ve frontě, auditem účtu, žurnálem a provozem; odhlásit všude, smazat (s opsáním ID)</td></tr>
+      <tr><td>Fronta zpráv</td><td>stav fronty (uloženo / doručuje se / mrtvé / velikost / trvalost), schránky po účtech, dead-letter s obnovou</td></tr>
+      <tr><td>Úložiště</td><td>globální DB (soubor, WAL, stránky, žurnál, tabulky a řádky), index šifrovaných databází</td></tr>
+      <tr><td>Audit</td><td>žurnál s filtry (kategorie, úroveň, text), zdroj paměť / databáze, export CSV a JSON, přepínač auditu komunikace</td></tr>
+      <tr><td>Systém a paměť</td><td>RSS, heap (a limit), external, event loop p99 / průměr, CPU, zátěž hostitele, otevřené zdroje; grafy 30 minut</td></tr>
+      <tr><td>Retence</td><td>politika uchovávání, další běh, ruční spuštění</td></tr>
+      <tr><td>Příkazy a push</td><td>příkaz pro zařízení (doručí se hned, je-li připojené), čekající příkazy, log doručení, stav VAPID, odběratelé, testovací push</td></tr>
+      <tr><td>Layout, Telefonie, AI</td><td>přenesené nástroje z předchozí administrace</td></tr>
+    </tbody>
+  </table>
+  <div class="grid2">
+    <figure><img src="img/console-traffic.png" alt="Živý provoz" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 7 — Živý provoz.</figcaption></figure>
+    <figure><img src="img/console-audit.png" alt="Audit" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 8 — Auditní žurnál.</figcaption></figure>
+  </div>
+  <h3 id="konzole-bezpecnost">Bezpečnost konzole</h3>
+  <ul>
+    <li>Token je jen v paměti záložky (volitelně v <code>sessionStorage</code>), <b>nikdy v <code>localStorage</code></b> — starý klíč <code>m5cet:admin:cfg</code> konzole při načtení smaže.</li>
+    <li>CSP <code>script-src 'self'</code>, žádné inline skripty ani <code>eval</code>, <code>frame-ancestors 'none'</code>. Vše ze serveru jde do stránky přes <code>textContent</code>.</li>
+    <li>Živý stream je Server-Sent Events čtený přes <code>fetch()</code> — token v hlavičce, ne v URL (nezůstane v logu proxy).</li>
+    <li>Odmítnuté tokeny se počítají: 30 za 15 minut na adresu. Každý zásah operátora se zapíše do auditu (kategorie <code>admin</code>).</li>
+    <li>Doporučeno omezit <code>/console/</code>, <code>/admin/</code> a <code>/api/admin/</code> v nginx na adresy správců (<code>allow … ; deny all;</code>).</li>
+  </ul>
+</section>
+
+<section class="doc" id="audit" data-group="Provoz">
+  <h2>Monitoring a audit<a class="anchor" href="#audit">#</a></h2>
+  <h3 id="provoz-zaznam">Záznam provozu</h3>
+  <p>Monitor drží v paměti posledních 5 000 záznamů, počitadla po třídách, sekundové řady za 10 minut a registr živých spojení. Obsah zpráv nemá — server ho nikdy nevidí.</p>
+  <div class="dgram"><div class="dgram__title"><code>TrafficRecord</code><span class="dir">SSE event „traffic“</span></div>
+    <div class="dgram__row"><div class="f f--hdr"><b>id</b></div><div class="f f--hdr"><b>at</b><i>ms</i></div><div class="f f--hdr"><b>channel</b><i>ws | http</i></div><div class="f f--hdr"><b>direction</b><i>in | out</i></div><div class="f f--hdr"><b>cls</b><i>třída</i></div><div class="f f--hdr" style="--w:2"><b>type</b><i>„join“, „GET /api/…“</i></div><div class="f f--hdr"><b>bytes</b></div></div>
+    <div class="dgram__row"><div class="f f--hdr f--opt"><b>conn</b></div><div class="f f--hdr f--opt"><b>peerId</b></div><div class="f f--hdr f--opt"><b>accountId</b></div><div class="f f--sec f--opt"><b>roomHash</b><i>SHA-256, 16 hex</i></div><div class="f f--sec f--opt"><b>ip</b><i>/24 · /48</i></div><div class="f f--hdr f--opt"><b>status</b><i>ok · error · dropped · HTTP</i></div><div class="f f--hdr f--opt"><b>durationMs</b></div></div></div>
+  <p>Třídy: <code>signaling</code>, <code>presence</code>, <code>relay</code>, <code>storage</code>, <code>file-proxy</code>, <code>heartbeat</code>, <code>account</code>, <code>admin</code>, <code>push</code>, <code>api</code>, <code>static</code>, <code>error</code>, <code>other</code>. Heartbeaty se do živého streamu neposílají (jejich počet je v ticku).</p>
+
+  <h3 id="zurnal">Auditní žurnál</h3>
+  <table>
+    <thead><tr><th>Kategorie</th><th>Příklady událostí</th><th>Zapnuto</th></tr></thead>
+    <tbody>
+      <tr><td><code>security</code></td><td><code>ws.origin-refused</code>, <code>ws.kicked</code>, <code>auth.invalid-token</code>, <code>join.peer-id-taken</code>, <code>relay.refused</code>, <code>http.rate-limited</code></td><td>vždy</td></tr>
+      <tr><td><code>account</code></td><td><code>account.register</code>, <code>account.sign-in</code>, <code>account.deleted</code>, <code>session.revoked</code>, <code>relay.away</code>, <code>relay.back</code>, <code>relay.push</code></td><td>vždy</td></tr>
+      <tr><td><code>communication</code></td><td><code>room.join</code>, <code>room.leave</code>, <code>relay.stored</code>, <code>relay.delivered</code></td><td><b>jen na vyžádání</b> (<code>AUDIT_COMMUNICATION=1</code> nebo přepínač)</td></tr>
+      <tr><td><code>storage</code></td><td><code>queue.sweep</code>, zakládání, povýšení a mazání databází</td><td>vždy</td></tr>
+      <tr><td><code>admin</code></td><td><code>admin.command</code>, <code>admin.user.delete</code>, <code>admin.audit.export</code>, <code>admin.connection.close</code></td><td>vždy</td></tr>
+      <tr><td><code>network</code></td><td><code>ws.refused</code>, <code>ws.closed</code>, <code>ws.heartbeat-timeout</code>, <code>ws.slow-consumer</code></td><td>vždy</td></tr>
+      <tr><td><code>system</code></td><td><code>server.start</code>, <code>server.stop</code>, <code>http.error</code>, <code>config.rp-id-unset</code>, <code>queue.migrated</code></td><td>vždy</td></tr>
+    </tbody>
+  </table>
+  <p>Úrovně <code>debug &lt; info &lt; notice &lt; warn &lt; error</code>. Žurnál drží 3 000 posledních záznamů v paměti; s úložištěm jde každý záznam i do tabulky <code>audit</code> globální databáze, kde je volné pole <code>detail</code> <b>zapečetěné</b> master klíčem a svázané s kategorií, událostí a časem.</p>
+  <div class="warn"><b>Audit komunikace</b> zaznamenává, kdo koho kdy a jak velkou zprávou oslovil — tedy přesně metadata, která by šifrovaný chat neměl sbírat. Proto je vypnutý a jeho zapnutí (i vypnutí) se samo zapíše do auditu. Zapínejte jen s právním důvodem.</div>
+
+  <h3 id="sse">Živý stream</h3>
+<pre><code>GET /api/admin/live?streams=traffic,audit,tick
+Authorization: Bearer &lt;ADMIN_API_TOKEN&gt;
+Accept: text/event-stream
+
+<span class="c">event: traffic</span>
+data: {<span class="s">"id"</span>:<span class="n">812</span>,<span class="s">"at"</span>:<span class="n">1790000000000</span>,<span class="s">"channel"</span>:<span class="s">"ws"</span>,<span class="s">"direction"</span>:<span class="s">"in"</span>,<span class="s">"cls"</span>:<span class="s">"relay"</span>,<span class="s">"type"</span>:<span class="s">"relay"</span>,<span class="s">"bytes"</span>:<span class="n">1843</span>,<span class="s">"conn"</span>:<span class="s">"c-1a82ee…"</span>,<span class="s">"status"</span>:<span class="s">"ok"</span>}
+
+<span class="c">event: audit</span>
+data: {<span class="s">"id"</span>:<span class="n">77</span>,<span class="s">"category"</span>:<span class="s">"security"</span>,<span class="s">"level"</span>:<span class="s">"warn"</span>,<span class="s">"event"</span>:<span class="s">"ws.kicked"</span>,<span class="s">"status"</span>:<span class="s">"rate limits exceeded"</span>}
+
+<span class="c">event: tick</span>   <span class="c">(každé 2 s)</span>
+data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<span class="s">"framesIn"</span>:<span class="n">12</span>,<span class="s">"framesOut"</span>:<span class="n">15</span>,<span class="s">"http"</span>:<span class="n">1</span>,…},<span class="s">"system"</span>:{<span class="s">"rss"</span>:…,<span class="s">"loopP99"</span>:<span class="n">1.4</span>}}</code></pre>
+  <p>Konzoli, která nestíhá (víc než 1 MB ve frontě odpovědi), server záznamy zahazuje — nikdy kvůli ní nehromadí paměť.</p>
+</section>
+<section class="doc" id="api" data-group="Reference">
+  <h2>API reference<a class="anchor" href="#api">#</a></h2>
+  <h3 id="api-verejne">Veřejné REST API hlavní služby</h3>
+  <table>
+    <thead><tr><th>Metoda a cesta</th><th>Popis</th><th>Autorizace</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /api/health</code></td><td>živost, verze, build, <code>protocol</code>, počet místností</td><td>—</td></tr>
+      <tr><td><code>GET /api/modules</code></td><td>manifest volitelných modulů</td><td>—</td></tr>
+      <tr><td><code>GET /api/turn</code></td><td>ICE servery (TURN, je-li nastaven)</td><td>—</td></tr>
+      <tr><td><code>GET /api/layout</code></td><td>vzhled a šablony od operátora</td><td>—</td></tr>
+      <tr><td><code>POST /api/share/create|redeem|revoke</code></td><td>pozvánky (split-key, kód 12 číslic); limit 30 / 40 za 15 min</td><td>—</td></tr>
+      <tr><td><code>GET /api/push/status</code>, <code>POST /api/push/subscribe|test</code></td><td>Web Push pro zařízení bez účtu (jen známé push služby)</td><td>test sobě bez tokenu, všem s admin tokenem</td></tr>
+      <tr><td><code>/api/account/*</code></td><td>registrace a přihlášení passkey, <code>me</code>, trezor, push, odhlášení, smazání</td><td>Bearer token relace</td></tr>
+      <tr><td><code>/api/storage/*</code></td><td>úložiště (i přes WebSocket rámec <code>storage</code>)</td><td>relace účtu nebo <code>X-M5cet-Session</code></td></tr>
+      <tr><td><code>GET|POST /api/settings</code>, <code>POST /api/audit/purge</code>, <code>/api/analytics/consent</code></td><td>nastavení a souhlasy vázané na <code>deviceId</code></td><td>znalost <code>deviceId</code></td></tr>
+      <tr><td><code>/api/ai/*</code>, <code>/api/speech/*</code>, <code>/api/telephony/*</code></td><td>volitelné moduly (<code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>, <code>ENABLE_TELEPHONY</code>)</td><td>limity na IP</td></tr>
+      <tr><td><code>GET /api/events/recent</code>, <code>GET /api/transfers/stats</code></td><td>metadata událostí, statistika proxy</td><td><b>admin token</b> (od 3.0)</td></tr>
+    </tbody>
+  </table>
+  <h3 id="api-admin">Operátorské API (<code>/api/admin/*</code>)</h3>
+  <p>Všechny cesty vyžadují <code>Authorization: Bearer &lt;ADMIN_API_TOKEN&gt;</code>.</p>
+  <table>
+    <thead><tr><th>Metoda a cesta</th><th>Popis</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET overview</code></td><td>verze, proces, počty, provoz, fronta, úložiště, audit, zdraví</td></tr>
+      <tr><td><code>GET live</code></td><td>SSE: <code>traffic</code>, <code>audit</code>, <code>tick</code> (výběr <code>?streams=</code>)</td></tr>
+      <tr><td><code>GET traffic</code></td><td>záznamy provozu; filtry <code>cls, channel, direction, conn, peer, account, room, type, since, before, errors=1, limit</code></td></tr>
+      <tr><td><code>GET traffic/rates?seconds=</code></td><td>sekundové řady (max 600 s)</td></tr>
+      <tr><td><code>GET connections</code>, <code>POST connections/:id/close</code></td><td>živá spojení, odpojení</td></tr>
+      <tr><td><code>GET rooms</code></td><td>místnosti (hash), členové, nepřítomní</td></tr>
+      <tr><td><code>GET users</code>, <code>GET users/:id</code></td><td>účty; detail s passkeys, frontou, auditem, žurnálem, provozem</td></tr>
+      <tr><td><code>POST users/:id/signout</code></td><td>odvolat všechny relace (okamžitě i na socketech)</td></tr>
+      <tr><td><code>DELETE users/:id?confirm=:id</code></td><td>smazat účet se vším (ID se musí zopakovat)</td></tr>
+      <tr><td><code>GET queue</code>, <code>GET queue/dead</code>, <code>POST queue/:id/revive</code></td><td>fronta po účtech, dead-letter, obnova položky</td></tr>
+      <tr><td><code>GET system</code>, <code>GET db</code></td><td>proces a paměť (+ historie 30 min); databáze</td></tr>
+      <tr><td><code>GET audit</code> (<code>?source=db</code>), <code>GET audit/export?format=csv|json</code></td><td>žurnál z paměti nebo databáze; export (CSV s ochranou proti vzorcům)</td></tr>
+      <tr><td><code>PUT audit/settings</code></td><td><code>{ communication: bool }</code></td></tr>
+      <tr><td><code>GET|POST commands</code></td><td>povolené příkazy, čekající, log; zařazení příkazu <code>{kind, deviceId, payload?}</code></td></tr>
+      <tr><td><code>GET push</code>, <code>POST push/test</code></td><td>stav VAPID a odběratelé; testovací push</td></tr>
+      <tr><td><code>GET events</code></td><td>metadata událostí (<code>LOG_EVENTS=1</code>)</td></tr>
+      <tr><td><code>GET retention</code>, <code>POST retention/run</code></td><td>politika uchovávání, ruční běh</td></tr>
+      <tr><td><code>GET storage</code>, <code>GET storage/logs</code></td><td>index a statistika úložiště, tabulka logů</td></tr>
+    </tbody>
+  </table>
+<pre><code><span class="c"># export auditu bezpečnostních událostí od úrovně warn do CSV</span>
+curl -H <span class="s">"Authorization: Bearer $ADMIN_API_TOKEN"</span> \
+  <span class="s">"https://chat.example.com/api/admin/audit/export?format=csv&amp;category=security&amp;minLevel=warn"</span> -o audit.csv
+
+<span class="c"># příkaz pro zařízení (doručí se hned, je-li připojené)</span>
+curl -X POST -H <span class="s">"Authorization: Bearer $ADMIN_API_TOKEN"</span> -H <span class="s">"Content-Type: application/json"</span> \
+  -d <span class="s">'{"kind":"show-notification","deviceId":"dev-3f9c0a","payload":{"title":"Údržba","body":"Ve 22:00 restart"}}'</span> \
+  https://chat.example.com/api/admin/commands</code></pre>
+  <h3 id="api-admin-sluzba">Admin služba (<code>/admin/*</code>)</h3>
+  <p>Layout builder (<code>/admin/layout</code>), telefonie a SIP (<code>/admin/telephony/*</code> včetně <code>sip/trunks</code>), AI a řeč (<code>/admin/plugins*</code>, <code>/admin/logs/stream</code>). Dřívější <code>/admin/commands/*</code>, <code>/admin/clients</code>, <code>/admin/test/push</code>, <code>/admin/metrics</code> a <code>/admin/logs/recent</code> dnes přeposílají na hlavní službu — ve 2.x četly prázdnou kopii stavu v jiném procesu, takže příkazy nikdy nedorazily.</p>
+</section>
+
+<section class="doc" id="nasazeni" data-group="Provoz">
+  <h2>Nasazení<a class="anchor" href="#nasazeni">#</a></h2>
+  <h3 id="promenne">Proměnné prostředí</h3>
+  <table>
+    <thead><tr><th>Proměnná</th><th>Výchozí</th><th>Význam</th></tr></thead>
+    <tbody>
+      <tr><td><code>PORT</code>, <code>HOST</code></td><td>5000, 0.0.0.0</td><td>kde poslouchá hlavní služba</td></tr>
+      <tr><td><code>DATA_DIR</code></td><td><code>./.m5cet</code></td><td>data: účty, úložiště, <code>signaling.secret</code> (systemd: <code>StateDirectory</code>)</td></tr>
+      <tr><td><code>TRUST_PROXY</code></td><td>loopback</td><td>kterým proxy věřit s <code>X-Forwarded-For</code> (limity, brána spojení, audit)</td></tr>
+      <tr><td><code>ALLOWED_ORIGINS</code> <span class="badge b-acc">3.0</span></td><td>—</td><td>další originy smějící otevřít <code>/ws</code> (čárkami); vlastní doména je povolená vždy</td></tr>
+      <tr><td><code>ADMIN_API_TOKEN</code></td><td>—</td><td>token konzole a admin API (bez něj vrací 503)</td></tr>
+      <tr><td><code>ENABLE_ADMIN</code>, <code>ADMIN_PORT</code>, <code>ADMIN_BIND</code></td><td>—, 5050, 127.0.0.1</td><td>admin služba</td></tr>
+      <tr><td><code>MAIN_URL</code> <span class="badge b-acc">3.0</span></td><td><code>http://127.0.0.1:$PORT</code></td><td>kam admin služba přeposílá <code>/api/admin/*</code></td></tr>
+      <tr><td><code>AUDIT_COMMUNICATION</code> <span class="badge b-acc">3.0</span></td><td>vypnuto</td><td><code>1</code> = audit komunikace od startu</td></tr>
+      <tr><td><code>LOG_HTTP</code> <span class="badge b-acc">3.0</span></td><td>ve vývoji ano</td><td><code>1</code> = řádek na každý API požadavek i v produkci (bez těl)</td></tr>
+      <tr><td><code>PUSH_ENDPOINT_HOSTS</code> <span class="badge b-acc">3.0</span></td><td>—</td><td>další povolené push služby (<code>.example.com</code> = i subdomény)</td></tr>
+      <tr><td><code>VAPID_PUBLIC_KEY</code>, <code>VAPID_PRIVATE_KEY</code>, <code>VAPID_SUBJECT</code></td><td>—</td><td>Web Push</td></tr>
+      <tr><td><code>WEBAUTHN_RP_ID</code>, <code>WEBAUTHN_ORIGINS</code>, <code>PUBLIC_BASE_URL</code></td><td>—</td><td>doména passkeys a povolené originy; bez nich produkce varuje</td></tr>
+      <tr><td><code>STORAGE_DIR</code>, <code>STORAGE_MASTER_KEY</code>, <code>STORAGE_KEY_FILE</code></td><td>—</td><td>úložiště a jeho master klíč</td></tr>
+      <tr><td><code>ACCOUNTS_DIR</code>, <code>RELAY_RETENTION_DAYS</code></td><td>—, 30</td><td>účty; jak dlouho čeká položka fronty bez vlastního TTL</td></tr>
+      <tr><td><code>TURN_SERVER_URL</code>, <code>TURN_USERNAME</code>, <code>TURN_CREDENTIAL</code></td><td>—</td><td>TURN pro striktní NAT</td></tr>
+      <tr><td><code>LOG_EVENTS</code></td><td>vypnuto</td><td>metadata událostí (<code>/api/admin/events</code>)</td></tr>
+      <tr><td><code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>, <code>ENABLE_TELEPHONY</code> + klíče poskytovatelů</td><td>vypnuto</td><td>volitelné moduly</td></tr>
+    </tbody>
+  </table>
+  <h3 id="nginx">nginx</h3>
+  <p>Konfigurace je v <code>deploy/nginx/m5cet.conf</code>. Pro 3.0 přibyl blok pro operátorské API (SSE potřebuje vypnutý buffering a dlouhý timeout):</p>
+<pre><code>location /api/admin/ {
+    <span class="c"># allow 203.0.113.10; deny all;   # doporučeno</span>
+    proxy_pass http://m5cet_app;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header Connection        "";
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+}</code></pre>
+  <h3 id="upgrade">Upgrade z 2.x na 3.0</h3>
+  <ol>
+    <li><code>git pull</code>, <code>npm ci</code>, <code>npm run build</code> (nebo <code>./update.sh</code>).</li>
+    <li>Do nginx přidat blok <code>/api/admin/</code>; <code>nginx -t &amp;&amp; systemctl reload nginx</code>.</li>
+    <li>Běží-li hlavní služba jinde než na <code>127.0.0.1:$PORT</code>, nastavit admin službě <code>MAIN_URL</code>.</li>
+    <li>Restart <code>m5cet</code> a <code>m5cet-admin</code>. Při startu se staré schránky převedou do fronty (<code>queue.migrated</code> v auditu) a vznikne <code>signaling.secret</code>.</li>
+    <li>Otevřená okna nabídnou obnovení (nový build). Klient 2.x se s 3.0 nespojí — všichni obnoví.</li>
+    <li>Dřívější admin stránka ukládala token do <code>localStorage</code>; nová konzole ho při prvním otevření smaže. Zvažte výměnu <code>ADMIN_API_TOKEN</code>.</li>
+  </ol>
+  <h3 id="overeni">Ověření</h3>
+<pre><code>npm run check            <span class="c"># TypeScript</span>
+npm test -- --no-file-parallelism   <span class="c"># 700+ unit testů</span>
+npm run build
+npm run test:e2e         <span class="c"># dva prohlížeče, účty a relay, konzole, lifecycle…</span>
+curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"protocol":2,"version":"3.0.0",…}</span></code></pre>
+</section>
+
+<section class="doc" id="bezpecnost" data-group="Bezpečnost">
+  <h2>Bezpečnostní opatření serveru<a class="anchor" href="#bezpecnost">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>HTTP</h4><p>Helmet, CSP v produkci <code>script-src 'self'</code> a <code>object-src 'none'</code>; <code>Cache-Control: no-store</code> všude; limity <b>před</b> parsery těl (veřejné API 100 / 15 min, trezor 300, úložiště 1 200, admin 30 odmítnutí / 15 min); JSON do 256 KB (trezor 8 MB, úložiště 12 MB); chyby 500 bez interních detailů.</p></div>
+    <div class="card"><h4>Logy</h4><p>Řádek požadavku = metoda, cesta, stav, doba, velikost. <b>Nikdy těla</b> — odpovědi nesou session tokeny a šifrové texty (2.x je logovala). Surové tělo se drží jen pro webhooky poskytovatelů kvůli podpisům.</p></div>
+    <div class="card"><h4>WebSocket</h4><p>Origin, brána spojení, maxPayload 256 KB, validace rámců, limity tříd, vyhazování opakovaných narušitelů, heartbeat, zpětný tlak, vlastnictví přenosů, rozesílání jen ověřených polí.</p></div>
+    <div class="card"><h4>Identita a soukromí</h4><p>Pseudonymy účtů v místnosti, obecná odmítnutí relay, IP v monitoru zkrácené na /24 (/48), místnosti jako hash, audit komunikace jen na vyžádání, zapečetěné detaily v databázi.</p></div>
+    <div class="card"><h4>SSRF</h4><p>Server POSTuje jen na push endpointy známých služeb (https, bez portu a přihlašovacích údajů); příkaz ke stažení souboru přijme jen https adresu a klient se uživatele zeptá.</p></div>
+    <div class="card"><h4>Ukončení</h4><p>SIGTERM/SIGINT: sockety se zavřou (klienti se vrátí přes resume), účty se zapíšou, databáze se zavřou a klíče vynulují, pak konec (nejpozději za 8 s).</p></div>
+  </div>
+</section>
+<section class="doc" id="navrhy" data-group="Plán">
+  <h2>Návrhy a roadmapa<a class="anchor" href="#navrhy">#</a></h2>
+  <p class="lead">Co bych v jakém modulu změnil nebo optimalizoval dál. Priorita <span class="badge b-err">P1</span> = nejvyšší přínos pro bezpečnost či spolehlivost, náročnost S / M / L.</p>
+
+  <h3 id="navrhy-krypto">Kryptografie</h3>
+  <table>
+    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
+    <tbody>
+      <tr><td><b>Forward secrecy a odebrání člena</b> — Sender Keys (řetěz klíčů na odesílatele, distribuce párově přes X25519) nebo MLS (RFC 9420) pro skupiny</td><td>Dnes je klíč místnosti statický: kdo heslo zná nebo získá, přečte i zachycený starší provoz, a člena nejde vyloučit bez změny hesla.</td><td><span class="badge b-err">P1</span></td><td>L</td></tr>
+      <tr><td><b>Slepá ID místností</b> — server dostane <code>HMAC(klíč místnosti, název)</code> místo názvu</td><td>Server by přestal znát názvy místností; pozvánky i join fungují stejně, protože heslo znají všichni členové.</td><td><span class="badge b-err">P1</span></td><td>S</td></tr>
+      <tr><td><b>Párové šifrování soukromých zpráv</b> (ECDH X25519 mezi identitami)</td><td>Zpráva pro vybrané příjemce je dnes šifrovaná klíčem místnosti; párový klíč ji omezí jen na ně i kryptograficky.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
+      <tr><td><b>Identita svázaná s účtem</b> — veřejný klíč zařízení podepsaný v rámci účtu (passkey), seznam zařízení</td><td>Ověřený odznak „účet X“ napříč zařízeními místo TOFU podle jména.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
+      <tr><td><b>Argon2id</b> (WASM) místo PBKDF2 pro heslo místnosti</td><td>Paměťově náročná KDF výrazně zdraží útok GPU na slabá hesla; vyžaduje CSP <code>'wasm-unsafe-eval'</code>.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
+      <tr><td><b>Ověření QR kódem</b> bezpečnostního čísla</td><td>Pohodlnější a spolehlivější než diktování 60 číslic.</td><td><span class="badge">P3</span></td><td>S</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="navrhy-protokol">Protokol a signalizace</h3>
+  <table>
+    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
+    <tbody>
+      <tr><td><b>Více instancí</b> — stav místností přes Redis/NATS pub-sub, sticky sessions, fronta v Postgresu</td><td>Hub drží místnosti v paměti jednoho procesu; škálování a zero-downtime deploy potřebují sdílený stav.</td><td><span class="badge b-warn">P2</span></td><td>L</td></tr>
+      <tr><td><b>Binární rámce</b> (CBOR) pro proxy souborů, případně WebTransport</td><td>Base64 v JSON přidává 33 % k datům a zátěž CPU na serveru i klientech.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
+      <tr><td><b>SFU pro skupinové hovory</b> s E2EE (SFrame / insertable streams)</td><td>Mesh WebRTC se nad 4–5 účastníků neškáluje (upload roste s počtem lidí).</td><td><span class="badge">P3</span></td><td>L</td></tr>
+      <tr><td><b>TURN s krátkodobými přístupy</b> (TURN REST API, HMAC)</td><td>Statické přihlašovací údaje k TURN jsou čitelné v klientovi a zneužitelné jako otevřený relay.</td><td><span class="badge b-err">P1</span></td><td>S</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="navrhy-fronta">Fronta a doručování</h3>
+  <table>
+    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
+    <tbody>
+      <tr><td><b>Trvalá evidence účtenek</b> (tabulka v globální DB)</td><td>Po restartu se dnes ztratí možnost poslat „přečteno“ ke zprávám relayovaným před ním (doručení přežije, je ve frontě).</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
+      <tr><td><b>Neutrální text probuzení</b> — jméno a místnost ukázat až po odemčení aplikace</td><td>Obsah push je šifrovaný pro prohlížeč (RFC 8291), push služba ho nepřečte; na zamčené obrazovce je ale dnes vidět jméno odesílatele a název místnosti.</td><td><span class="badge">P3</span></td><td>S</td></tr>
+      <tr><td><b>Metadata fronty do databáze uživatele</b> (jméno odesílatele, místnost) — v globální DB jen směrovací minimum</td><td>Šifrový text je chráněný, ale kdo komu psal leží v globální DB čitelně pro server.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="navrhy-ucty">Účty a úložiště</h3>
+  <table>
+    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
+    <tbody>
+      <tr><td><b>Více passkeys na účet a obnovovací klíč</b></td><td>Ztráta jediného passkey dnes znamená ztrátu trezoru i databáze.</td><td><span class="badge b-err">P1</span></td><td>M</td></tr>
+      <tr><td><b>Relace přežívající restart</b> (hash tokenů v DB, obnovování, seznam zařízení s odhlášením)</td><td>Tokeny jsou jen v paměti: restart serveru odhlásí všechny a každý se musí znovu přihlásit passkey.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
+      <tr><td><b>Zálohy a kontrola integrity</b> (SQLite backup API, <code>PRAGMA integrity_check</code>, plánovaný VACUUM)</td><td>Provozní jistota a obnova po havárii disku.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="navrhy-admin">Administrace a provoz</h3>
+  <table>
+    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
+    <tbody>
+      <tr><td><b>Role a jmenné přístupy</b> (auditor jen pro čtení / operátor), přihlášení do konzole passkey nebo OIDC</td><td>Jeden sdílený token neřekne, kdo co udělal, a nejde ho odebrat jednomu člověku.</td><td><span class="badge b-err">P1</span></td><td>M</td></tr>
+      <tr><td><b>Neměnný audit</b> — hash řetěz přes záznamy a podepsané kontrolní body</td><td>Pozdější úprava nebo smazání záznamu by byla odhalitelná.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
+      <tr><td><b>Prometheus <code>/metrics</code></b>, OpenTelemetry, pravidla alertů (např. víc než N bezpečnostních varování za minutu)</td><td>Napojení na existující monitoring a upozornění mimo otevřenou konzoli.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="navrhy-klient">Klient</h3>
+  <table>
+    <thead><tr><th>Návrh</th><th>Proč</th><th>Priorita</th><th>Náročnost</th></tr></thead>
+    <tbody>
+      <tr><td><b>Rozdělit <code>App.tsx</code></b> (4 000+ řádků) — hook spojení a signalizace, správce WebRTC peerů, úložiště zpráv (reducer), řadič přenosů; stavový automat spojení; error boundary</td><td>Testovatelnost a menší riziko regresí; dnes je většina logiky testovaná jen end-to-end.</td><td><span class="badge b-err">P1</span></td><td>L</td></tr>
+      <tr><td><b>Kryptografie ve Web Workeru</b></td><td>PBKDF2 se 600 000 iteracemi zablokuje hlavní vlákno až na sekundu na slabším telefonu.</td><td><span class="badge b-warn">P2</span></td><td>S</td></tr>
+      <tr><td><b>Rozdělení bundlu</b> (hlavní chunk 635 KB) a virtualizovaný seznam zpráv</td><td>Rychlejší první načtení a plynulost u dlouhých historií.</td><td><span class="badge b-warn">P2</span></td><td>M</td></tr>
+      <tr><td><b>Dokončit i18n</b> — v <code>App.tsx</code> jsou natvrdo české a anglické řetězce</td><td>Konzistentní jazyk podle volby uživatele.</td><td><span class="badge">P3</span></td><td>S</td></tr>
+    </tbody>
+  </table>
+
+  <h3 id="navrhy-testy">Testování</h3>
+  <ul>
+    <li><b>Fuzzing a property-based testy</b> parseru rámců, metadat souborů a validace payloadů (fast-check).</li>
+    <li><b>Zátěžové testy hubu</b> (k6 / artillery): tisíce socketů, bouře relay, velké přenosy přes proxy — ověřit limity a zpětný tlak.</li>
+    <li><b>E2E konzole v CI</b> (test <code>admin-console.test.ts</code> už existuje) a test upgradu 2.x → 3.0 s daty.</li>
+  </ul>
+</section>
+
+<section class="doc" id="zmeny" data-group="Plán">
+  <h2>Změny ve 3.0.0<a class="anchor" href="#zmeny">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>Přidáno</h4><p>Protokol v2 (validace, limity, brána, Origin, resume, pseudonymy, <code>auth</code>, odvolání, heartbeat, zpětný tlak), šifrování v2 (klíče podle účelu, AAD, zapečetěná signalizace, podpisy, TOFU, ověřené soubory), SQLite fronta s lease a dead-letter, nová konzole s živým provozem, auditem, uživateli, frontou, úložištěm a systémem, dokumentace HTML + PDF.</p></div>
+    <div class="card"><h4>Opraveno</h4><p>XSS přes MIME souboru, DoS přes metadata souboru, převzetí peer ID, podvržené účtenky a položky schránky, logování session tokenů, SSRF přes push endpoint, token admina v localStorage, příkazy z admin služby, které nikdy nedorazily, vlastní zprávy po obnovení označené jako cizí, 18 oprav úložiště.</p></div>
+    <div class="card"><h4>Změněno</h4><p>Veřejný status úložiště bez statistik ostatních, metadata endpointy jen s tokenem, kód zapečetěné zprávy 12 znaků, transfer log bez jmen souborů, historie serveru bez passkey šifrovaná v prohlížeči.</p></div>
+    <div class="card"><h4>Nekompatibilní</h4><p>Klienti 2.x se s 3.0 nespojí (nezapečetěná signalizace) a nepřečtou obálky v2. Po nasazení obnovit všechna okna; přidat blok nginx <code>/api/admin/</code>.</p></div>
+  </div>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 3.0.0.</p>
+</section>
+</main>
+</div>
+<script>
+(() => {
+  "use strict";
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+  /* ---------- table of contents (sidebar + printed) ---------- */
+  const toc = $("#toc");
+  const printToc = $("#printToc");
+  let group = "";
+  for (const section of $$("section.doc[id]")) {
+    if (section.classList.contains("print-only")) continue;
+    const h2 = $("h2", section);
+    const title = (h2 ? h2.firstChild.textContent : section.dataset.title || section.id).trim();
+    if (section.dataset.group && section.dataset.group !== group) {
+      group = section.dataset.group;
+      const g = document.createElement("div");
+      g.className = "toc__group";
+      g.textContent = group;
+      toc.append(g);
+    }
+    const link = document.createElement("a");
+    link.href = `#${section.id}`;
+    link.textContent = section.id === "uvod" ? "Úvod" : title;
+    toc.append(link);
+    const li = document.createElement("li");
+    li.textContent = section.id === "uvod" ? "Úvod" : title;
+    printToc.append(li);
+    for (const h3 of $$("h3[id]", section)) {
+      const sub = document.createElement("a");
+      sub.href = `#${h3.id}`;
+      sub.className = "sub";
+      sub.textContent = h3.textContent.replace(/#$/, "");
+      toc.append(sub);
+    }
+  }
+
+  /* ---------- scroll spy ---------- */
+  const links = new Map($$("a", toc).map((a) => [a.getAttribute("href").slice(1), a]));
+  const spy = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      $$("a.is-current", toc).forEach((a) => a.classList.remove("is-current"));
+      const link = links.get(entry.target.id);
+      if (link) { link.classList.add("is-current"); link.scrollIntoView({ block: "nearest" }); }
+    }
+  }, { rootMargin: "-80px 0px -70% 0px" });
+  $$("section.doc[id], h3[id]").forEach((el) => spy.observe(el));
+
+  /* ---------- theme ---------- */
+  const root = document.documentElement;
+  const saved = (() => { try { return localStorage.getItem("m5cet:docs:theme"); } catch { return null; } })();
+  root.dataset.theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  $("#theme").addEventListener("click", () => {
+    root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
+    try { localStorage.setItem("m5cet:docs:theme", root.dataset.theme); } catch { /* ignore */ }
+  });
+
+  /* ---------- copy buttons ---------- */
+  for (const pre of $$("pre")) {
+    const button = document.createElement("button");
+    button.className = "copy";
+    button.type = "button";
+    button.textContent = "Kopírovat";
+    button.addEventListener("click", async () => {
+      const text = pre.querySelector("code") ? pre.querySelector("code").innerText : pre.innerText;
+      try { await navigator.clipboard.writeText(text); button.textContent = "Zkopírováno"; } catch { button.textContent = "Nelze"; }
+      setTimeout(() => { button.textContent = "Kopírovat"; }, 1400);
+    });
+    pre.append(button);
+  }
+
+  /* ---------- search ---------- */
+  // One entry per heading with the text that follows it (until the next
+  // heading), so a hit lands on the nearest section.
+  const index = [];
+  for (const section of $$("section.doc[id]")) {
+    if (section.classList.contains("print-only")) continue;
+    let current = { id: section.id, title: ($("h2", section) || {}).textContent || section.id, text: "" };
+    index.push(current);
+    for (const node of section.children) {
+      if (node.matches("h3[id], h4[id]")) {
+        current = { id: node.id, title: `${current.title.split(" › ")[0]} › ${node.textContent}`, text: "" };
+        index.push(current);
+      } else if (!node.matches("h2")) {
+        current.text += " " + node.textContent.replace(/\s+/g, " ");
+      }
+    }
+  }
+  index.forEach((e) => { e.title = e.title.replace(/#/g, "").trim(); e.hay = (e.title + " " + e.text).toLowerCase(); });
+
+  const q = $("#q");
+  const results = $("#results");
+  let active = -1;
+  const norm = (s) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  index.forEach((e) => { e.plain = norm(e.hay); });
+
+  function highlight(text, words) {
+    const frag = document.createDocumentFragment();
+    const plain = norm(text);
+    let pos = 0;
+    const marks = [];
+    for (const w of words) {
+      let i = plain.indexOf(w);
+      while (i >= 0) { marks.push([i, i + w.length]); i = plain.indexOf(w, i + w.length); }
+    }
+    marks.sort((a, b) => a[0] - b[0]);
+    for (const [start, end] of marks) {
+      if (start < pos) continue;
+      frag.append(text.slice(pos, start));
+      const m = document.createElement("mark");
+      m.textContent = text.slice(start, end);
+      frag.append(m);
+      pos = end;
+    }
+    frag.append(text.slice(pos));
+    return frag;
+  }
+
+  function search() {
+    const words = norm(q.value.trim()).split(/\s+/).filter((w) => w.length > 1);
+    results.textContent = "";
+    active = -1;
+    if (!words.length) { results.classList.remove("is-open"); return; }
+    const scored = index.map((e) => {
+      if (!words.every((w) => e.plain.includes(w))) return null;
+      const t = norm(e.title);
+      const score = words.reduce((n, w) => n + (t.includes(w) ? 10 : 0) + (e.plain.split(w).length - 1), 0);
+      return { e, score };
+    }).filter(Boolean).sort((a, b) => b.score - a.score).slice(0, 12);
+    if (!scored.length) {
+      const none = document.createElement("div");
+      none.className = "none";
+      none.textContent = "Nic nenalezeno.";
+      results.append(none);
+    }
+    for (const { e } of scored) {
+      const a = document.createElement("a");
+      a.href = `#${e.id}`;
+      const b = document.createElement("b");
+      b.append(highlight(e.title, words));
+      const plain = norm(e.text);
+      const at = Math.max(0, plain.indexOf(words[0]) - 60);
+      const span = document.createElement("span");
+      span.append(highlight((at > 0 ? "…" : "") + e.text.slice(at, at + 170).trim() + "…", words));
+      a.append(b, span);
+      a.addEventListener("click", () => { results.classList.remove("is-open"); q.blur(); });
+      results.append(a);
+    }
+    results.classList.add("is-open");
+  }
+  q.addEventListener("input", search);
+  q.addEventListener("focus", () => { if (q.value.trim()) search(); });
+  q.addEventListener("keydown", (e) => {
+    const items = $$("a", results);
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!items.length) return;
+      active = (active + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
+      items.forEach((a, i) => a.classList.toggle("is-active", i === active));
+      items[active].scrollIntoView({ block: "nearest" });
+    } else if (e.key === "Enter" && items.length) {
+      (items[Math.max(0, active)]).click();
+      location.hash = items[Math.max(0, active)].getAttribute("href");
+    } else if (e.key === "Escape") {
+      results.classList.remove("is-open");
+      q.blur();
+    }
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "/" && document.activeElement !== q && !e.metaKey && !e.ctrlKey) { e.preventDefault(); q.focus(); q.select(); }
+  });
+  document.addEventListener("click", (e) => { if (!e.target.closest(".search")) results.classList.remove("is-open"); });
+})();
+</script>
+</body>
+</html>

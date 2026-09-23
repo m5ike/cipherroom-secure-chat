@@ -23,6 +23,7 @@
 // Storage is process memory, like every other store in this server: a restart
 // invalidates all outstanding invites. That is deliberate ("persistence: none").
 
+import { rateLimit } from "express-rate-limit";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 
@@ -151,7 +152,12 @@ export class ShareStore {
 export const shareStore = new ShareStore();
 
 export function registerShareRoutes(app: Express, store: ShareStore = shareStore): void {
-  app.post("/api/share/create", (req: Request, res: Response) => {
+  // Per address, on top of the per-invite attempt counter: creating fills
+  // the store, redeeming is where a code would be guessed.
+  const createLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false, message: { ok: false, reason: "rate-limited" } });
+  const redeemLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 40, standardHeaders: true, legacyHeaders: false, message: { ok: false, reason: "rate-limited" } });
+
+  app.post("/api/share/create", createLimiter, (req: Request, res: Response) => {
     const result = store.create((req.body ?? {}) as CreateInput);
     if (!result.ok) return res.status(result.status).json({ ok: false, reason: result.reason });
     return res.status(201).json({ ok: true, expiresAt: result.expiresAt, maxUses: result.maxUses, maxAttempts: SHARE_LIMITS.maxAttempts });
@@ -159,7 +165,7 @@ export function registerShareRoutes(app: Express, store: ShareStore = shareStore
 
   // POST only: crawlers and link-preview fetchers issue GETs and send no body,
   // so they can neither consume a use nor burn an attempt.
-  app.post("/api/share/redeem", (req: Request, res: Response) => {
+  app.post("/api/share/redeem", redeemLimiter, (req: Request, res: Response) => {
     const body = (req.body ?? {}) as { id?: unknown; proof?: unknown };
     const result = store.redeem(body.id, body.proof);
     if (!result.ok) return res.status(result.status).json({ ok: false, reason: result.reason, attemptsLeft: result.attemptsLeft });

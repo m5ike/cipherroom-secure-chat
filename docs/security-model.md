@@ -1,5 +1,9 @@
 # M5cet — bezpečnostní model
 
+> **Od 3.0.0** platí šifrování v2 (klíče podle účelu z PBKDF2 600 000 + HKDF, associated data,
+> zapečetěná signalizace, podpisy ECDSA uvnitř šifrování, ověřené soubory) — viz
+> [dokumentace 3.0 › Šifrování](site/index.html#sifrovani) a [› Bezpečnost serveru](site/index.html#bezpecnost).
+
 Tento dokument popisuje, **co M5cet chrání, jak to chrání, a co naopak
 chránit nemůže**. Je psán pro ty, kdo M5cet nasazují nebo auditují.
 

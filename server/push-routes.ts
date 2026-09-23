@@ -18,7 +18,7 @@ import type { Express, Request, Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { checkAdminRequest, sendAdminAuthFailure } from "./admin-auth";
 import { eventStore } from "./events";
-import { isWebPushReady, sendWebPush } from "./push";
+import { isAllowedPushEndpoint, isWebPushReady, sendWebPush } from "./push";
 import { pushSubscriptions } from "./routes-admin-shared";
 import { safeDeviceId } from "./util";
 
@@ -52,10 +52,10 @@ export function registerPushRoutes(app: Express): void {
     }
     const body = (req.body || {}) as Record<string, unknown>;
     const subscription = body.subscription as { endpoint?: unknown } | undefined;
-    if (!subscription || typeof subscription.endpoint !== "string" || !subscription.endpoint.startsWith("https://")) {
+    if (!subscription || !isAllowedPushEndpoint(subscription.endpoint)) {
       return res.status(400).json({ ok: false, message: "Invalid subscription." });
     }
-    const endpoint = subscription.endpoint.slice(0, 512);
+    const endpoint = String(subscription.endpoint).slice(0, 512);
     const keys = (subscription as Record<string, unknown>).keys as Record<string, unknown> | undefined;
     const p256dh = typeof keys?.p256dh === "string" ? String(keys.p256dh).slice(0, 256) : undefined;
     const auth = typeof keys?.auth === "string" ? String(keys.auth).slice(0, 128) : undefined;

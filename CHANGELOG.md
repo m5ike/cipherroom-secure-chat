@@ -5,6 +5,122 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [3.0.0] – 2026-09-23
+
+Profesionální komunikační platforma: nový protokol, nové šifrování, nová
+fronta zpráv a úplně nová administrace s živým sledováním provozu a
+auditem. **Nekompatibilní se staršími klienty** — viz „Upgrade“ níže.
+Kompletní dokumentace (HTML + PDF): [`docs/site/`](docs/site/index.html).
+
+### Protokol v2 (signalizace, `server/signaling/*`)
+- **Každý rámec se validuje** do přesného tvaru s limity (`frames.ts`);
+  přeposílané rámce server skládá z ověřených polí, nikdy nerozprostírá, co
+  klient poslal. Chyby mají kódy (`invalid-frame`, `unknown-type`,
+  `too-large`), rámec nad 256 KB zavře spojení (1009).
+- **Rate-limity po třídách** (token bucket na socket: signalizace, relay,
+  účtenky, presence, úložiště, proxy + bajtový limit, heartbeat, příkazy);
+  kdo je opakovaně překračuje, je odpojen (1008). **Brána spojení** při
+  upgradu: počet otevřených za minutu a naráz na adresu i celkem (429/503).
+- **Kontrola Origin** při upgradu (`ALLOWED_ORIGINS` pro výjimky).
+- **Peer ID přiděluje server.** Obsazené ID už nejde převzít (dřív šlo
+  přesměrovat cizí signalizaci); stejný klient se po výpadku vrátí se svým
+  ID díky jednorázovému `resume` tajemství.
+- **Pseudonymy účtů v místnosti** (`refs.ts`): místnost nevidí ID účtu, ale
+  HMAC odkaz platný jen pro ni — nejde spojit osobu napříč místnostmi ani
+  zjistit, zda účet existuje. Tajemství je trvalé (`signaling.secret`).
+- **Rámec `auth`**: přihlášení/odhlášení bez opuštění místnosti (dřív
+  opětovný `join` shodil všem WebRTC spojení). **Odvolání relace** (odhlášení,
+  smazání účtu, zásah admina) platí okamžitě i na otevřených socketech
+  (`account-revoked`).
+- **Heartbeat** (ping/pong) odhalí mrtvá TCP spojení — „přítomný“ uživatel
+  za nimi už nezadržuje doručení přes relay. **Zpětný tlak**: pomalý příjemce
+  nedostane další kusy souborů, zaseknutý je odpojen.
+- **Proxy souborů**: chunky, konec i opakování smí posílat jen odesílatel;
+  `proxy-need` jde jen odesílateli, odmítnutí příjemce ruší přenos jen pro
+  něj; po odpojení odesílatele se jeho přenosy ukončí.
+- Operátorské příkazy se doručí **hned**, je-li zařízení připojené.
+
+### Šifrování v2 (`client/src/lib/envelope.ts`, `identity.ts`)
+- **Klíče podle účelu**: heslo → NFC → PBKDF2-SHA256 **600 000** iterací →
+  HKDF: zprávy, signalizace, soubory (klíč **pro každý soubor**), kontrolní
+  hodnota klíče.
+- **Associated data všude**: místnost + ID zprávy, odesílatel + příjemce
+  signálu, přenos + pořadí + počet chunků. Šifrový text nejde přesunout
+  jinam (jiná místnost, jiná zpráva, jiná pozice v souboru).
+- **Zapečetěná signalizace**: SDP a ICE jdou přes server šifrované a
+  svázané s odesílatelem i příjemcem — server nemůže podvrhnout DTLS
+  otisky a posadit se doprostřed hovoru. Nezapečetěné signály se odmítají.
+- **Identita zařízení** (ECDSA P-256, neexportovatelný klíč v IndexedDB):
+  zprávy a soubory jsou **podepsané uvnitř šifrování**; TOFU pinování
+  jméno → klíč, varování „jiný klíč než dříve“, bezpečnostní čísla (60 číslic).
+- **Soubory**: podepsaný otisk celého souboru (SHA-256 přes otisky chunků)
+  v koncovém rámci, kontrola před předáním; validace metadat před alokací
+  (strop 2 M chunků); **bezpečný MIME** — HTML/SVG z chatu už nepoběží jako
+  stránka v originu aplikace (dřív XSS přes `blob:` URL).
+- **Ochrana proti replay** (ID zpráv), **kontrola klíče** mezi peery (hláška
+  „jiné heslo“ místo nečitelných zpráv).
+- **Zapečetěné zprávy**: kód 12 znaků (≈ 59 bitů, dřív 6 ≈ 30 bitů), bez
+  modulo biasu, 600 000 iterací, normalizace při zadávání.
+- **Historie pro server bez passkey** se šifruje už v prohlížeči klíčem,
+  který nikdy neopustí zařízení; do žádného úložiště mimo prohlížeč nejde
+  text ani kód zapečetěné zprávy.
+- Obálky v1 jdou dál přečíst (zprávy z fronty z doby před upgradem).
+
+### Fronta zpráv pro offline účty (`server/accounts/mailqueue.ts`)
+- Tabulka v SQLite místo JSON souboru přepisovaného celý: **pořadí** (seq
+  na účet a místnost), **deduplikace**, **lease** (doručení nemaže — jen
+  potvrzení; po odpojení se lease hned uvolní), **kvóty** (na účet i na
+  odesílatele), **expirace**, **dead-letter** s důvodem a obnovou z admina.
+  Bez úložiště funguje stejně v paměti (`memqueue.ts`).
+- **Účtenky jen pro skutečně relayované zprávy** a jen jejich odesílateli
+  (dřív šlo podvrhnout „přečteno“ nebo vložit cizí položky do schránky).
+- Odmítnutí je obecné — neprozradí jména ani existenci účtů.
+- Staré schránky se při startu převedou do fronty.
+
+### Administrace (nová konzole `/console/`)
+- **Živý provoz**: každý rámec a požadavek (metadata — nikdy obsah), filtry,
+  pauza, detail, graf propustnosti; **spojení** s adresou (/24), klientem,
+  bajty, odpojením; **místnosti** (jako hash).
+- **Audit**: bezpečnost, účty, komunikace (volitelné, výchozí vypnuto),
+  úložiště, admin, síť, systém — úrovně, filtry, zdroj paměť/databáze,
+  export CSV (s ochranou proti vzorcům) a JSON. Každý zásah operátora se
+  zapisuje.
+- **Uživatelé a passkeys**: databáze, trezor, fronta, relace, detail s
+  passkeys a historií; odhlásit všude, smazat (s potvrzením ID).
+- **Fronta**, **úložiště** (globální DB, tabulky, index šifrovaných DB),
+  **systém** (RSS, heap, event loop p99, CPU, zdroje, grafy 30 min),
+  **retence**, **příkazy a push**; zachovány nástroje layout builderu,
+  telefonie a AI.
+- Token jen v paměti (volitelně session storage), **nikdy v localStorage**
+  (starý klíč se maže); striktní CSP bez inline skriptů.
+
+### Bezpečnost serveru
+- Log požadavků **bez těl odpovědí** (dřív se logovaly i session tokeny).
+- Limity **před** parsery těl; vlastní limity pro trezor, úložiště, admin
+  (počítá se hlavně odmítnutý token), sdílení.
+- **Push endpointy jen známých služeb** (FCM, Mozilla, Windows, Apple;
+  `PUSH_ENDPOINT_HOSTS`) — konec SSRF do interní sítě.
+- Produkční **CSP `script-src 'self'`**, `object-src 'none'`; chyby 500 bez
+  interních detailů; řádné ukončení na SIGTERM.
+- `/api/transfers/stats` a `/api/events/recent` jen s admin tokenem.
+- Varování, když chybí `WEBAUTHN_RP_ID` / `PUBLIC_BASE_URL`.
+
+### Opraveno
+- Admin služba zapisovala příkazy do vlastní (prázdné) fronty — ke klientům
+  se nikdy nedostaly. Stav s živými daty teď spravuje hlavní služba, admin
+  služba přeposílá (`MAIN_URL`).
+- Obnovená historie označovala vlastní starší zprávy jako cizí.
+- Úložiště: 18 oprav (limity, kvóty, povýšení session → účet v transakci,
+  držitelé klíčů po zařízeních, ID relací jen jako HMAC, …) — `docs/storage.md`.
+
+### Upgrade
+- Klienti 2.x se po nasazení sami nabídnou k obnovení (kontrola buildu).
+  Klient 2.x v místnosti s klientem 3.0 zprávy neotevře a spojení odmítne
+  (nezapečetěná signalizace) — obnovte všechna okna.
+- nginx: přidejte blok `location /api/admin/` z `deploy/nginx/m5cet.conf`.
+- Admin služba potřebuje `MAIN_URL`, pokud hlavní služba neběží na
+  `127.0.0.1:$PORT`.
+
 ## [2.11.0] – 2026-09-23
 
 Okno, které se vrátí přesně tam, kde bylo — a chat, ve kterém je jen to, co

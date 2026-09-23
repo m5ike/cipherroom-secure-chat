@@ -17,14 +17,17 @@
 
 import { toBase64, fromBase64 } from "./crypto";
 
+/** What the public /api/storage/status tells a browser. Operator details
+ *  (reason, open databases, totals) are on /api/admin/storage only; the
+ *  optional fields stay for older servers that still sent them. */
 export type StorageStatus = {
   available: boolean;
-  reason: string | null;
   engine: string;
   caller: "account" | "session" | "none";
   locked?: boolean;
-  openDatabases: number;
-  stats: { users: number; databases: number; sessions: number; logs: number; transfers: number; bytes: number } | null;
+  reason?: string | null;
+  openDatabases?: number;
+  stats?: { users: number; databases: number; sessions: number; logs: number; transfers: number; bytes: number } | null;
 };
 
 export type StoredMessage = {

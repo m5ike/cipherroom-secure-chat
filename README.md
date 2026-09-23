@@ -1,7 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **2.7.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **3.0.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
+> **Dokumentace 3.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-3.0.0.pdf`](docs/site/m5cet-dokumentace-3.0.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -594,7 +596,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 2.7.0        | aktuální — šifrovaná relace, pozvánky s kódem, Smazat vše a odejít, nové šablony |
+| 3.0.0        | aktuální — protokol v2, šifrování v2 (podpisy, zapečetěná signalizace, ověřené soubory), fronta s lease, nová administrace s živým provozem a auditem |
+| 2.7.0 – 2.11.0 | šifrovaná relace, pozvánky s kódem, passkey účty, úložiště SQLCipher, lifecycle a flash oznámení |
 | 2.6.0        | instalační sada, oprava odesílání souborů, nové menu a kompozér |
 | 2.5.0        | modernizace toolchainu, úklid závislostí, opravy |
 | 2.4.2        | oprava speed-dial menu na dotykových zařízeních, CI |
