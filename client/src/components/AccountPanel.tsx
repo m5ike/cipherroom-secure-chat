@@ -5,7 +5,9 @@
 //   ChatRetentionSection the "chat data and history" choice in Connection,
 //                        with the passkey sign-in the server option needs
 
-import { KeyRound, LockKeyholeOpen, RefreshCw, Trash2, Save, LogOut, Moon } from "lucide-react";
+import { useEffect, useState } from "react";
+import { KeyRound, LockKeyholeOpen, RefreshCw, Trash2, Save, LogOut, Moon, Plus, LifeBuoy, MonitorSmartphone, Fingerprint } from "lucide-react";
+import { keyFingerprint } from "../lib/identity";
 import { t, type Lang } from "../lib/i18n";
 import type { AccountSummary, AccountStatus } from "../lib/account";
 import type { ChatRetention } from "../lib/chat-history";
@@ -53,8 +55,130 @@ function Row({ label, value, mono }: { label: React.ReactNode; value: React.Reac
   );
 }
 
+/** The account's passkeys, recovery code, devices and identity (3.1). */
+export type AccountActions = {
+  onAddPasskey?: (label: string) => void;
+  onRemovePasskey?: (credentialId: string) => void;
+  /** Resolves to the new code, shown once. */
+  onCreateRecovery?: () => Promise<string | null>;
+  onRemoveRecovery?: () => void;
+  onEndSession?: (id: string) => void;
+};
+
+function PasskeysSection({ account, busy, lang, actions }: { account: AccountSummary; busy: boolean; lang: Lang; actions: AccountActions }) {
+  const [label, setLabel] = useState("");
+  const passkeys = account.passkeys ?? [{ credentialId: account.credentialId, alg: account.alg, createdAt: account.createdAt, lastUsedAt: account.lastLoginAt, label: "", primary: true }];
+  return (
+    <section className="acc-card" data-testid="account-passkeys">
+      <h4 className="acc-card__title"><KeyRound className="h-4 w-4" />{t(lang, "acc.passkeys")}</h4>
+      <p className="text-xs text-muted-foreground">{t(lang, "acc.passkeys.desc")}</p>
+      <ul className="acc-list">
+        {passkeys.map((p) => (
+          <li key={p.credentialId} data-testid="passkey-row">
+            <span>
+              <strong>{p.label || `${ALG_NAMES[p.alg] ?? p.alg} · ${p.credentialId.slice(0, 8)}…`}</strong>
+              {p.primary ? <em className="acc-chip">{t(lang, "acc.passkeys.primary")}</em> : null}
+              <small>{t(lang, "acc.sessions.lastUsed").replace("{date}", when(p.lastUsedAt, lang))}</small>
+            </span>
+            {passkeys.length > 1 && actions.onRemovePasskey ? (
+              <button type="button" className="acc-btn acc-btn--small" disabled={busy} onClick={() => { if (window.confirm(t(lang, "acc.passkeys.removeConfirm"))) actions.onRemovePasskey!(p.credentialId); }}>
+                <Trash2 className="h-3.5 w-3.5" />{t(lang, "acc.passkeys.remove")}
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {actions.onAddPasskey ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <input className="acc-input" value={label} maxLength={40} placeholder={t(lang, "acc.passkeys.label")} onChange={(e) => setLabel(e.target.value)} data-testid="passkey-label" />
+          <button type="button" className="acc-btn" disabled={busy} onClick={() => { actions.onAddPasskey!(label.trim()); setLabel(""); }} data-testid="passkey-add">
+            <Plus className="h-4 w-4" />{t(lang, "acc.passkeys.add")}
+          </button>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function RecoverySection({ account, busy, lang, actions }: { account: AccountSummary; busy: boolean; lang: Lang; actions: AccountActions }) {
+  const [code, setCode] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const set = account.recovery?.set === true;
+  return (
+    <section className="acc-card" data-testid="account-recovery">
+      <h4 className="acc-card__title"><LifeBuoy className="h-4 w-4" />{t(lang, "acc.recovery")}</h4>
+      <p className="text-xs text-muted-foreground">{t(lang, "acc.recovery.desc")}</p>
+      <Row label={t(lang, "acc.recovery")} value={set ? t(lang, "acc.recovery.set").replace("{date}", when(account.recovery?.createdAt ?? 0, lang)) : t(lang, "acc.recovery.none")} />
+      {code ? (
+        <div className="acc-code" data-testid="recovery-code-box">
+          <p className="text-xs">{t(lang, "acc.recovery.show")}</p>
+          <code data-testid="recovery-code">{code}</code>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="acc-btn acc-btn--small" onClick={() => { void navigator.clipboard?.writeText(code).then(() => setCopied(true)); }}>{copied ? t(lang, "acc.recovery.copied") : t(lang, "acc.recovery.copy")}</button>
+            <button type="button" className="acc-btn acc-btn--small" onClick={() => { setCode(null); setCopied(false); }}>{t(lang, "acc.recovery.done")}</button>
+          </div>
+        </div>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {actions.onCreateRecovery ? (
+          <button type="button" className="acc-btn" disabled={busy} data-testid="recovery-create" onClick={() => { void actions.onCreateRecovery!().then((c) => { if (c) setCode(c); }); }}>
+            <LifeBuoy className="h-4 w-4" />{t(lang, set ? "acc.recovery.replace" : "acc.recovery.create")}
+          </button>
+        ) : null}
+        {set && actions.onRemoveRecovery ? (
+          <button type="button" className="acc-btn acc-btn--danger" disabled={busy} onClick={actions.onRemoveRecovery}>{t(lang, "acc.recovery.remove")}</button>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
+function SessionsSection({ account, busy, lang, actions }: { account: AccountSummary; busy: boolean; lang: Lang; actions: AccountActions }) {
+  const sessions = account.sessions ?? [];
+  if (sessions.length === 0) return null;
+  return (
+    <section className="acc-card" data-testid="account-sessions">
+      <h4 className="acc-card__title"><MonitorSmartphone className="h-4 w-4" />{t(lang, "acc.sessions")}</h4>
+      <ul className="acc-list">
+        {sessions.map((s) => (
+          <li key={s.id} data-testid="session-row">
+            <span>
+              <strong>{s.client || "—"}</strong>
+              {s.current ? <em className="acc-chip">{t(lang, "acc.sessions.current")}</em> : null}
+              <small>{[s.ip, t(lang, "acc.sessions.lastUsed").replace("{date}", when(s.lastUsedAt, lang))].filter(Boolean).join(" · ")}</small>
+            </span>
+            {!s.current && actions.onEndSession ? (
+              <button type="button" className="acc-btn acc-btn--small" disabled={busy} onClick={() => actions.onEndSession!(s.id)}>
+                <LogOut className="h-3.5 w-3.5" />{t(lang, "acc.sessions.end")}
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function IdentityRow({ account, lang }: { account: AccountSummary; lang: Lang }) {
+  const [fp, setFp] = useState("");
+  const key = account.identity?.publicKey ?? "";
+  useEffect(() => {
+    let live = true;
+    if (key) void keyFingerprint(key).then((v) => { if (live) setFp(v); }).catch(() => undefined);
+    return () => { live = false; };
+  }, [key]);
+  if (!key) return null;
+  return (
+    <section className="acc-card" data-testid="account-identity">
+      <h4 className="acc-card__title"><Fingerprint className="h-4 w-4" />{t(lang, "acc.identity")}</h4>
+      <p className="text-xs text-muted-foreground">{t(lang, "acc.identity.desc")}</p>
+      <Row label={t(lang, "acc.identity")} value={fp || "…"} mono />
+    </section>
+  );
+}
+
 export function AccountInfoModal({
-  account, status, busy, message, lang, onRefresh, onSaveNow, onSignOut, onDelete,
+  account, status, busy, message, lang, onRefresh, onSaveNow, onSignOut, onDelete, actions = {},
 }: {
   account: AccountSummary;
   status: AccountStatus | null;
@@ -65,6 +189,7 @@ export function AccountInfoModal({
   onSaveNow: () => void;
   onSignOut: () => void;
   onDelete: () => void;
+  actions?: AccountActions;
 }) {
   const v = account.vault;
   return (
@@ -101,6 +226,11 @@ export function AccountInfoModal({
           />
         ) : null}
       </section>
+
+      <PasskeysSection account={account} busy={busy} lang={lang} actions={actions} />
+      <RecoverySection account={account} busy={busy} lang={lang} actions={actions} />
+      <SessionsSection account={account} busy={busy} lang={lang} actions={actions} />
+      <IdentityRow account={account} lang={lang} />
 
       <section className="acc-card">
         <h4 className="acc-card__title">{t(lang, "acc.activity")}</h4>
@@ -139,7 +269,7 @@ export function AccountInfoModal({
 /** "Chat data and history" — the three retention modes and the passkey the
  *  server-side one needs. */
 export function ChatRetentionSection({
-  value, onChange, account, status, supported, busy, message, lang, onSignIn, onRegister, onSignOutAndWipe,
+  value, onChange, account, status, supported, busy, message, lang, onSignIn, onRegister, onSignOutAndWipe, onRecover,
 }: {
   value: ChatRetention;
   onChange: (next: ChatRetention) => void;
@@ -152,7 +282,11 @@ export function ChatRetentionSection({
   onSignIn: () => void;
   onRegister: () => void;
   onSignOutAndWipe: () => void;
+  /** 3.1: every passkey lost — come back with the recovery code. */
+  onRecover?: (code: string) => void;
 }) {
+  const [recovering, setRecovering] = useState(false);
+  const [code, setCode] = useState("");
   const options: Array<{ id: ChatRetention; disabled?: boolean }> = [
     { id: "ephemeral" },
     { id: "session" },
@@ -205,6 +339,17 @@ export function ChatRetentionSection({
           </button>
         ) : null}
       </div>
+
+      {!account && onRecover && supported && status?.available !== false ? (
+        recovering ? (
+          <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); onRecover(code); }} data-testid="recover-form">
+            <input className="acc-input font-mono" value={code} onChange={(e) => setCode(e.target.value)} placeholder={t(lang, "acc.recover.placeholder")} autoComplete="off" spellCheck={false} data-testid="recover-code" />
+            <button type="submit" className="acc-btn" disabled={busy || code.replace(/[\s-]/g, "").length < 26}><LifeBuoy className="h-4 w-4" />{t(lang, "acc.recover.go")}</button>
+          </form>
+        ) : (
+          <button type="button" className="acc-link text-xs" onClick={() => setRecovering(true)} data-testid="recover-open">{t(lang, "acc.recover")}</button>
+        )
+      ) : null}
 
       {!supported ? <p className="text-xs text-amber-600 dark:text-amber-400">{t(lang, "acc.unsupported")}</p> : null}
       {status?.available === false ? <p className="text-xs text-amber-600 dark:text-amber-400">{t(lang, "acc.unavailable")}</p> : null}

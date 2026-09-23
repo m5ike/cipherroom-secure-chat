@@ -128,6 +128,7 @@
     system: [],
     liveAbort: null,
     liveUp: false,
+    admin: null,
     renderQueued: new Set(),
   };
 
@@ -170,13 +171,42 @@
     $("#shell").hidden = false;
     state.overview = overview;
     state.counts = overview.counts;
+    await loadWhoami();
     $("#brandVersion").textContent = `v${overview.version || "?"} · operator console`;
     $("#footBuild").textContent = overview.build ? `build ${overview.build}` : "";
     startLive();
     route(location.hash.replace(/^#\/?/, "") || "overview");
   }
 
+  const RANK = { auditor: 1, operator: 2, owner: 3 };
+  const can = (role) => Boolean(state.admin && RANK[state.admin.role] >= RANK[role]);
+
+  async function loadWhoami() {
+    try { state.admin = (await api("/api/admin/whoami")).admin || null; } catch { state.admin = null; }
+    const who = $("#whoami");
+    clear(who);
+    if (state.admin) append(who, ["signed in as ", h("b", {}, state.admin.name), ` · ${state.admin.role}`, state.admin.via === "passkey" ? " · passkey" : ""]);
+    for (const el of $$("[data-min-role]")) el.hidden = !can(el.dataset.minRole);
+    $("#btnMyPasskey").hidden = !state.admin || state.admin.via === "env-token";
+    applyRoleGates();
+  }
+
+  /** An auditor reads; buttons that act are disabled for them. */
+  function applyRoleGates(root = document) {
+    const readOnly = !can("operator");
+    for (const el of $$("button, input, select, textarea", root)) {
+      if (el.closest(".login, .topbar, .nav, .toolbar, #aSource, [data-panel=admins]") || el.dataset.read === "1") continue;
+      const acting = el.closest("form") || el.classList.contains("btn--danger") || el.classList.contains("btn--primary") || /Disconnect|Revive|Sign out every|Delete|Sweep|Send|Test|Save|Reset|Install|Route|Add|Import/i.test(el.textContent || "");
+      if (!acting) continue;
+      if (readOnly) el.setAttribute("data-disabled-by-role", ""); else el.removeAttribute("data-disabled-by-role");
+    }
+  }
+
   function signOut(message) {
+    if (state.admin && state.admin.via === "passkey") {
+      fetch(`${state.base}/api/admin/auth/signout`, { method: "POST", headers: { Authorization: `Bearer ${state.token}` } }).catch(() => undefined);
+    }
+    state.admin = null;
     state.token = "";
     try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
     stopLive();
@@ -202,6 +232,54 @@
   });
   $("#btnSignOut").addEventListener("click", () => signOut());
 
+  /* ---------------------------------------------------- passkeys (WebAuthn) */
+
+  const b64url = (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  const fromB64url = (s) => Uint8Array.from(atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+
+  $("#loginPasskey").addEventListener("click", async () => {
+    const err = $("#loginError");
+    err.hidden = true;
+    const base = ($("#loginBase").value || location.origin).trim().replace(/\/+$/, "");
+    try {
+      if (!window.PublicKeyCredential) throw new Error("this browser has no passkeys");
+      const opts = await (await fetch(`${base}/api/admin/auth/passkey/options`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" })).json();
+      const credential = await navigator.credentials.get({ publicKey: {
+        challenge: fromB64url(opts.publicKey.challenge), rpId: opts.publicKey.rpId, userVerification: "required", timeout: 60000,
+      } });
+      if (!credential) throw new Error("cancelled");
+      const r = credential.response;
+      const res = await fetch(`${base}/api/admin/auth/passkey/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ credential: {
+        id: credential.id, rawId: b64url(credential.rawId), type: credential.type,
+        response: { clientDataJSON: b64url(r.clientDataJSON), authenticatorData: b64url(r.authenticatorData), signature: b64url(r.signature), userHandle: r.userHandle ? b64url(r.userHandle) : null },
+      } }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || `HTTP ${res.status}`);
+      await signIn(base, data.token, $("#loginRemember").checked);
+    } catch (e) {
+      err.textContent = `Passkey sign-in failed: ${e.message}`;
+      err.hidden = false;
+    }
+  });
+
+  $("#btnMyPasskey").addEventListener("click", async () => {
+    try {
+      const opts = (await api("/api/admin/me/passkeys/options", { method: "POST", body: {} })).publicKey;
+      const credential = await navigator.credentials.create({ publicKey: {
+        challenge: fromB64url(opts.challenge), rp: opts.rp,
+        user: { id: fromB64url(opts.user.id), name: opts.user.name, displayName: opts.user.displayName },
+        pubKeyCredParams: opts.pubKeyCredParams, authenticatorSelection: opts.authenticatorSelection, attestation: "none", timeout: 60000,
+        excludeCredentials: (opts.excludeCredentials || []).map((c) => ({ type: "public-key", id: fromB64url(c.id) })),
+      } });
+      if (!credential) return;
+      await api("/api/admin/me/passkeys/verify", { method: "POST", body: { label: navigator.platform || "passkey", credential: {
+        id: credential.id, rawId: b64url(credential.rawId), type: credential.type,
+        response: { clientDataJSON: b64url(credential.response.clientDataJSON), attestationObject: b64url(credential.response.attestationObject) },
+      } } });
+      toast("Passkey registered — next time, sign in with it.", "ok");
+    } catch (e) { toast(`Passkey: ${e.message}`, "err"); }
+  });
+
   /* ================================================================ theme */
 
   function applyTheme(theme) {
@@ -225,6 +303,8 @@
     system: ["System & memory", "Process health over the last 30 minutes", loadSystem],
     retention: ["Retention", "What is kept, for how long, and the last sweep", loadRetention],
     commands: ["Commands & push", "Operator commands to devices, Web Push", loadCommands],
+    admins: ["Administrators", "Who may use this console, and as what", loadAdmins],
+    alerts: ["Alerts", "What the server watches for when nobody is looking", loadAlerts],
     layout: ["Layout builder", "Styles and text templates for every client", null],
     telephony: ["Telephony & SIP", "Voice and SMS providers, webhooks, trunks", null],
     plugins: ["AI & speech", "Connectors and their live log", null],
@@ -239,7 +319,7 @@
     const [title, crumb, loader] = ROUTES[name];
     $("#pageTitle").textContent = title;
     $("#pageCrumb").textContent = crumb;
-    if (loader && state.token) loader().catch((e) => { if (e.message !== "unauthorized") toast(`${title}: ${e.message}`, "err"); });
+    if (loader && state.token) loader().then(() => applyRoleGates(), (e) => { if (e.message !== "unauthorized") toast(`${title}: ${e.message}`, "err"); });
   }
 
   $("#nav").addEventListener("click", (event) => {
@@ -793,6 +873,7 @@
   /* ============================================================== storage */
 
   async function loadStorage() {
+    loadBackups().catch((e) => toast(`Backups: ${e.message}`, "err"));
     const data = await api("/api/admin/db");
     const container = $("#dbKpis");
     clear(container);
@@ -832,6 +913,38 @@
       d.expiresAt ? ago(d.expiresAt) : "never",
     ]), "No user databases.");
   }
+
+  async function loadBackups() {
+    const b = await api("/api/admin/backups");
+    if (!b.available) {
+      kv($("#dbBackupInfo"), [["Backups", "storage is not running"]]);
+      fillTable($("#dbBackups"), [], "—");
+      return;
+    }
+    const integrity = b.integrity;
+    kv($("#dbBackupInfo"), [
+      ["Directory", h("span", { class: "mono small" }, b.dir)],
+      ["Schedule", b.scheduled ? `every ${b.intervalHours} h, keep ${b.keep}` : "manual only (set BACKUP_DIR to schedule)"],
+      ["Last backup", b.last ? (b.last.ok ? `${b.last.name} · ${bytes(b.last.bytes)} · ${b.last.ms} ms` : h("span", { class: "err" }, b.last.error)) : "—"],
+      ["Integrity", integrity ? h("span", { class: integrity.ok ? "ok" : "err" }, `${integrity.ok ? "ok" : "problems"} · global ${integrity.global} · ${integrity.databases.length} open checked · ${integrity.locked} locked · ${ago(integrity.at)}`) : "not checked yet"],
+    ]);
+    fillTable($("#dbBackups"), (b.backups || []).map((x) => [h("span", { class: "mono small" }, x.name), dateTime(x.at), num(x.files), bytes(x.bytes)]), "No backups yet.");
+  }
+
+  $("#dbBackup").addEventListener("click", async () => {
+    toast("Backing up…");
+    try { const r = await api("/api/admin/backups", { method: "POST", body: {} }); toast(`Backup ${r.name}: ${num(r.files)} files, ${bytes(r.bytes)}.`, "ok"); loadBackups(); } catch (e) { toast(`Backup failed: ${e.message}`, "err"); }
+  });
+  $("#dbIntegrity").addEventListener("click", async () => {
+    try { const r = await api("/api/admin/db/integrity", { method: "POST", body: {} }); toast(r.integrity.ok ? "Integrity check: ok." : "Integrity check found problems.", r.integrity.ok ? "ok" : "err"); loadBackups(); } catch (e) { toast(e.message, "err"); }
+  });
+  $("#dbOptimize").addEventListener("click", async () => {
+    try { const r = await api("/api/admin/db/optimize", { method: "POST", body: {} }); toast(`Optimized (${bytes(r.before)} → ${bytes(r.after)}).`, "ok"); } catch (e) { toast(e.message, "err"); }
+  });
+  $("#dbVacuum").addEventListener("click", async () => {
+    if (!confirm("VACUUM rewrites the whole global database; writes wait until it finishes. Continue?")) return;
+    try { const r = await api("/api/admin/db/optimize", { method: "POST", body: { vacuum: true } }); toast(`VACUUM done (${bytes(r.before)} → ${bytes(r.after)}).`, "ok"); loadStorage(); } catch (e) { toast(e.message, "err"); }
+  });
 
   /* ================================================================ audit */
 
@@ -907,6 +1020,24 @@
       setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
     } catch (e) { toast(`Export failed: ${e.message}`, "err"); }
   }
+  $("#auditVerify").addEventListener("click", async () => {
+    try {
+      const r = await api("/api/admin/audit/verify");
+      if (!r.available) { toast("The journal is kept in memory only (no storage): nothing to verify.", "err"); return; }
+      toast(r.intact ? `Journal intact: ${num(r.checked)} chained rows, ${num(r.signedCheckpoints)} signed checkpoints.` : `Journal NOT intact: ${r.problems.length} problems — see details.`, r.intact ? "ok" : "err");
+      openDrawer("Journal integrity", (body) => {
+        body.append(kv(h("dl", { class: "kv" }), [
+          ["Result", r.intact ? h("span", { class: "ok" }, "intact") : h("span", { class: "err" }, "problems found")],
+          ["Chained rows", num(r.checked)],
+          ["Rows before the chain", num(r.unchained)],
+          ["Checkpoints", `${num(r.signedCheckpoints)} of ${num(r.checkpoints)} signatures valid`],
+          ["Last checkpoint", r.lastCheckpoint ? `row ${r.lastCheckpoint.lastId} · ${dateTime(r.lastCheckpoint.at)}` : "—"],
+          ["Signing key (Ed25519)", h("span", { class: "mono small" }, r.publicKey)],
+        ]));
+        if (r.problems.length) body.append(json(r.problems));
+      });
+    } catch (e) { toast(e.message, "err"); }
+  });
   $("#auditCsv").addEventListener("click", (e) => { e.preventDefault(); const p = auditQuery(); p.set("format", "csv"); download(`/api/admin/audit/export?${p}`, "m5cet-audit.csv"); });
   $("#auditJson").addEventListener("click", (e) => { e.preventDefault(); const p = auditQuery(); p.set("format", "json"); download(`/api/admin/audit/export?${p}`, "m5cet-audit.json"); });
 
@@ -1012,6 +1143,93 @@
       $("#cmdResult").textContent = result.delivered ? "delivered now" : "queued until the device connects";
       toast(result.delivered ? "Delivered to the connected device." : "Queued for the device.", "ok");
       loadCommands();
+    } catch (e) { toast(e.message, "err"); }
+  });
+
+  /* =============================================================== alerts */
+
+  async function loadAlerts() {
+    const r = await api("/api/admin/alerts");
+    $("#navAlerts").textContent = r.active.length ? String(r.active.length) : "";
+    $("#alertWebhook").textContent = r.webhook ? "Webhook: ALERT_WEBHOOK_URL is set." : "No webhook (set ALERT_WEBHOOK_URL to be told elsewhere).";
+    const active = $("#alertActive");
+    clear(active);
+    if (!r.active.length) active.append(h("div", { class: "empty" }, "Nothing is firing."));
+    for (const a of r.active) active.append(h("div", { class: "problem" }, badge("firing", "err"), " ", h("b", {}, a.message), " ", h("span", { class: "muted" }, `since ${ago(a.since)}`)));
+    const states = new Map((r.states || []).map((st) => [st.rule, st]));
+    fillTable($("#alertRules"), r.rules.map((rule) => {
+      const st = states.get(rule.id);
+      const input = h("input", { class: "input", type: "number", min: "0", step: "1", value: String(rule.threshold), style: "width:110px" });
+      input.addEventListener("change", () => saveRule(rule.id, { threshold: Number(input.value) }));
+      const toggle = h("input", { type: "checkbox", checked: rule.enabled || undefined });
+      toggle.addEventListener("change", () => saveRule(rule.id, { enabled: toggle.checked }));
+      return [h("b", {}, rule.label), st ? `${st.value}${rule.unit}` : "—", [input, ` ${rule.unit}`], h("label", { class: "switch" }, toggle)];
+    }), "No rules.");
+    fillTable($("#alertHistory"), (r.history || []).map((x) => [dateTime(x.at), x.rule, x.firing ? badge("fired", "err") : badge("resolved", "ok"), x.message]), "Nothing happened yet.");
+  }
+
+  async function saveRule(id, patch) {
+    try { await api(`/api/admin/alerts/rules/${encodeURIComponent(id)}`, { method: "PUT", body: patch }); toast("Rule saved.", "ok"); } catch (e) { toast(e.message, "err"); }
+  }
+
+  /* ======================================================= administrators */
+
+  async function loadAdmins() {
+    if (!can("owner")) return;
+    renderAdmins((await api("/api/admin/admins")).admins || []);
+  }
+
+  function renderAdmins(admins) {
+    fillTable($("#adminTable"), admins.map((a) => {
+      const role = h("select", { class: "input", "data-read": "1", onchange: (e) => patchAdmin(a.name, { role: e.target.value }) },
+        ["auditor", "operator", "owner"].map((r) => h("option", { value: r, selected: r === a.role || undefined }, r)));
+      const tokens = h("div", { class: "stack small" }, a.tokens.map((t) => h("div", { class: "row" },
+        h("span", { class: "mono" }, t.label), h("span", { class: "muted" }, t.lastUsedAt ? `used ${ago(t.lastUsedAt)}` : "never used"),
+        h("button", { class: "btn btn--sm btn--danger", "data-read": "1", onclick: async () => {
+          if (!confirm(`Revoke the token "${t.label}" of ${a.name}?`)) return;
+          renderAdmins((await api(`/api/admin/admins/${encodeURIComponent(a.name)}/tokens/${encodeURIComponent(t.id)}`, { method: "DELETE" })).admins || []);
+        } }, "Revoke"))));
+      return [
+        h("b", {}, a.name),
+        role,
+        a.disabled ? badge("disabled", "err") : badge("active", "ok"),
+        [tokens, h("button", { class: "btn btn--sm", "data-read": "1", onclick: () => issueToken(a.name) }, "Issue token")],
+        num(a.passkeys.length),
+        dateTime(a.createdAt),
+        h("div", { class: "row" },
+          h("button", { class: "btn btn--sm", "data-read": "1", onclick: () => patchAdmin(a.name, { disabled: !a.disabled }) }, a.disabled ? "Enable" : "Disable"),
+          h("button", { class: "btn btn--sm btn--danger", "data-read": "1", onclick: async () => {
+            if (!confirm(`Remove the administrator ${a.name}? Their tokens and passkeys stop working.`)) return;
+            renderAdmins((await api(`/api/admin/admins/${encodeURIComponent(a.name)}`, { method: "DELETE" })).admins || []);
+          } }, "Remove")),
+      ];
+    }), "No console-made administrators yet (the environment tokens still work).");
+  }
+
+  async function patchAdmin(name, patch) {
+    try { renderAdmins((await api(`/api/admin/admins/${encodeURIComponent(name)}`, { method: "PATCH", body: patch })).admins || []); toast("Saved.", "ok"); } catch (e) { toast(e.message, "err"); }
+  }
+
+  async function issueToken(name) {
+    const label = prompt(`A label for the new token of ${name} (e.g. "laptop"):`, "token");
+    if (label === null) return;
+    try {
+      const r = await api(`/api/admin/admins/${encodeURIComponent(name)}/tokens`, { method: "POST", body: { label } });
+      const box = $("#adminNewToken");
+      clear(box);
+      append(box, [`New token for ${name} — copy it now, it is not shown again:\n`, h("b", {}, r.token)]);
+      box.hidden = false;
+      renderAdmins(r.admins || []);
+    } catch (e) { toast(e.message, "err"); }
+  }
+
+  $("#adminCreate").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const r = await api("/api/admin/admins", { method: "POST", body: { name: $("#adminName").value.trim().toLowerCase(), role: $("#adminRole").value } });
+      $("#adminName").value = "";
+      renderAdmins(r.admins || []);
+      toast("Administrator added. Issue them a token.", "ok");
     } catch (e) { toast(e.message, "err"); }
   });
 

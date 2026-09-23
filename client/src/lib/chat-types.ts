@@ -62,4 +62,4 @@ export type ChatMessage = {
 /** verified: signed, key as pinned (or first seen) · changed: signed, but
  *  another key than before for this name · invalid: signature fails ·
  *  unsigned: an older client, no signature at all. */
-export type MessageIdentity = { state: "verified" | "changed" | "invalid" | "unsigned"; kid?: string; fingerprint?: string };
+export type MessageIdentity = { state: "verified" | "changed" | "invalid" | "unsigned"; kid?: string; fingerprint?: string; account?: boolean };

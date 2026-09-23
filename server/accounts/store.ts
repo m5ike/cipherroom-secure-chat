@@ -12,10 +12,18 @@
 // it does know (and logs): who signed in when, sizes, counts, room names and
 // display names — the same metadata signaling already sees.
 //
-// Session tokens are random, shown to the client once, kept only as SHA-256
-// hashes and only in memory (a restart signs everyone out; sign in again).
+// Session tokens are random, shown to the client once and kept only as
+// SHA-256 hashes — in sessions.json next to the accounts, so a restart does
+// not sign everyone out. A session lives 12 hours from its last use and at
+// most 7 days; the account window lists them and ends any one of them.
+//
+// One account, several passkeys (3.1): the browser derives the account's
+// keys from a root secret. The first passkey's PRF output IS that root; for
+// every further passkey — and for a recovery code — the browser stores the
+// root sealed under a key only that passkey (or code) can produce
+// (`wrapped`). The server keeps blobs it cannot open.
 
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { accessSync, constants as fsConstants, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { StoredCredential } from "./webauthn";
@@ -31,16 +39,36 @@ export const ACCOUNT_LIMITS = {
   maxAudit: 300,
   maxPush: 5,
   maxAwayRooms: 20,
+  /** A session ends this long after its last use… */
   tokenTtlMs: 12 * 60 * 60 * 1000,
+  /** …and this long after it began, used or not. */
+  tokenMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
+  maxSessionsPerAccount: 20,
+  maxPasskeys: 10,
 } as const;
 
 export type AuditEntry = { at: number; kind: string; meta?: Record<string, string | number | boolean> };
 
 export type PushTarget = { endpoint: string; keys: { p256dh: string; auth: string }; createdAt: number };
 
+/** A passkey besides the first one, with what the account window shows. */
+export type AccountCredential = StoredCredential & { createdAt: number; lastUsedAt: number; label: string };
+
+/** The account root sealed for one passkey or for the recovery code. */
+export type WrappedRoot = { iv: string; ct: string; createdAt: number };
+
 export type AccountRecord = {
   id: string;
+  /** The first passkey — its PRF output is the account root. */
   credential: StoredCredential;
+  /** Further passkeys (3.1). */
+  credentials?: AccountCredential[];
+  /** credentialId | "recovery" → the root sealed for it. */
+  wrapped?: Record<string, WrappedRoot>;
+  /** The recovery code, as a lookup id and a verifier of its proof. */
+  recovery?: { id: string; verifier: string; createdAt: number };
+  /** The account's own signing key (Ed25519, public part), for reference. */
+  identity?: { publicKey: string; updatedAt: number };
   userName: string;
   createdAt: number;
   lastLoginAt: number;
@@ -87,7 +115,10 @@ let vaultBackend: VaultBackend | null = null;
 export function setVaultBackend(backend: VaultBackend | null): void {
   vaultBackend = backend;
 }
-type Session = { accountId: string; createdAt: number; expiresAt: number };
+type Session = { accountId: string; createdAt: number; expiresAt: number; lastUsedAt: number; client?: string; ip?: string };
+
+/** What the account window shows about one session. */
+export type SessionView = { id: string; createdAt: number; lastUsedAt: number; expiresAt: number; client: string; ip: string; current: boolean };
 
 const env = (name: string) => process.env[name]?.trim() || "";
 
@@ -110,6 +141,14 @@ function readJson<T>(path: string, fallback: T): T {
 }
 
 const sha256hex = (s: string) => createHash("sha256").update(s).digest("hex");
+
+const B64 = /^[A-Za-z0-9+/=_-]+$/;
+function validWrapped(w: unknown): w is { iv: string; ct: string } {
+  const v = w as { iv?: unknown; ct?: unknown } | null;
+  return Boolean(v) && typeof v!.iv === "string" && typeof v!.ct === "string" && B64.test(v!.iv) && B64.test(v!.ct) && v!.iv.length <= 32 && v!.ct.length <= 256;
+}
+// eslint-disable-next-line no-control-regex
+const cleanLabel = (label: unknown) => (typeof label === "string" ? label.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, 40) : "") || "passkey";
 
 /** How a session token is known inside the server (never the token itself). */
 export function tokenHash(token: string): string {
@@ -166,6 +205,7 @@ export class AccountStore {
   }
 
   private indexPath() { return join(this.dir, "accounts.json"); }
+  private sessionsPath() { return join(this.dir, "sessions.json"); }
   private vaultPath(id: string) { return join(this.dir, "vault", `${id}.json`); }
   private mailboxPath(id: string) { return join(this.dir, "mailbox", `${id}.json`); }
 
@@ -186,7 +226,32 @@ export class AccountStore {
       rec.audit ??= [];
       this.accounts.set(rec.id, rec);
       this.byCredential.set(rec.credential.credentialId, rec.id);
+      for (const extra of rec.credentials ?? []) this.byCredential.set(extra.credentialId, rec.id);
     }
+    // Sessions survive a restart: hashes only, and only live ones.
+    const now = Date.now();
+    const stored = readJson<{ sessions?: Record<string, Session> }>(this.sessionsPath(), {});
+    for (const [hash, sess] of Object.entries(stored.sessions ?? {})) {
+      if (/^[0-9a-f]{64}$/.test(hash) && sess && this.accounts.has(sess.accountId) && sess.expiresAt > now) this.sessions.set(hash, sess);
+    }
+  }
+
+  private sessionsTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** Session writes are frequent (every use moves "last used"): coalesce them. */
+  private persistSessionsSoon(immediately = false): void {
+    const write = () => {
+      this.sessionsTimer = null;
+      this.write(this.sessionsPath(), { v: 1, sessions: Object.fromEntries(this.sessions) });
+    };
+    if (immediately) {
+      if (this.sessionsTimer) clearTimeout(this.sessionsTimer);
+      write();
+      return;
+    }
+    if (this.sessionsTimer) return;
+    this.sessionsTimer = setTimeout(write, 2_000);
+    this.sessionsTimer.unref?.();
   }
 
   private persist() {
@@ -204,6 +269,7 @@ export class AccountStore {
   /** Writes pending changes now (tests, shutdown). */
   flush(): void {
     if (this.persistTimer) this.persist();
+    if (this.sessionsTimer) this.persistSessionsSoon(true);
   }
 
   get size(): number { this.load(); return this.accounts.size; }
@@ -248,10 +314,12 @@ export class AccountStore {
     return { ok: true, account };
   }
 
-  recordSignIn(accountId: string, signCount: number, meta: AuditEntry["meta"], now = Date.now()): void {
+  recordSignIn(accountId: string, signCount: number, meta: AuditEntry["meta"], now = Date.now(), credentialId?: string): void {
     const acc = this.get(accountId);
     if (!acc) return;
-    acc.credential.signCount = signCount;
+    const extra = credentialId ? acc.credentials?.find((c) => c.credentialId === credentialId) : undefined;
+    if (extra) { extra.signCount = signCount; extra.lastUsedAt = now; }
+    else acc.credential.signCount = signCount;
     acc.lastLoginAt = now;
     acc.loginCount += 1;
     this.addAudit(accountId, "sign-in", meta, now);
@@ -268,18 +336,37 @@ export class AccountStore {
 
   /* -------------------------------------------------------------- tokens */
 
-  issueToken(accountId: string, now = Date.now()): string {
+  issueToken(accountId: string, now = Date.now(), meta: { client?: string; ip?: string } = {}): string {
     const token = randomBytes(32).toString("base64url");
-    this.sessions.set(sha256hex(token), { accountId, createdAt: now, expiresAt: now + ACCOUNT_LIMITS.tokenTtlMs });
+    this.sessions.set(sha256hex(token), {
+      accountId, createdAt: now, lastUsedAt: now, expiresAt: now + ACCOUNT_LIMITS.tokenTtlMs,
+      ...(meta.client ? { client: meta.client.slice(0, 40) } : {}), ...(meta.ip ? { ip: meta.ip.slice(0, 48) } : {}),
+    });
+    // Oldest sessions of the account go first when it has too many.
+    const mine = [...this.sessions].filter(([, sess]) => sess.accountId === accountId).sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+    for (const [hash] of mine.slice(0, Math.max(0, mine.length - ACCOUNT_LIMITS.maxSessionsPerAccount))) {
+      this.sessions.delete(hash);
+      this.emitRevoke(accountId, hash, "sign-out");
+    }
+    this.persistSessionsSoon(true);
     return token;
   }
 
   resolveToken(token: unknown, now = Date.now()): AccountRecord | null {
+    this.load();
     if (typeof token !== "string" || token.length < 20 || token.length > 128) return null;
     const key = sha256hex(token);
     const s = this.sessions.get(key);
     if (!s) return null;
-    if (s.expiresAt < now) { this.sessions.delete(key); return null; }
+    if (s.expiresAt < now || now - s.createdAt > ACCOUNT_LIMITS.tokenMaxAgeMs) {
+      this.sessions.delete(key);
+      this.persistSessionsSoon();
+      return null;
+    }
+    // Sliding: every use buys another 12 hours, up to the maximum age.
+    s.lastUsedAt = now;
+    s.expiresAt = Math.min(now + ACCOUNT_LIMITS.tokenTtlMs, s.createdAt + ACCOUNT_LIMITS.tokenMaxAgeMs);
+    this.persistSessionsSoon();
     return this.get(s.accountId);
   }
 
@@ -287,16 +374,155 @@ export class AccountStore {
     const key = sha256hex(token);
     const s = this.sessions.get(key);
     this.sessions.delete(key);
+    this.persistSessionsSoon(true);
     if (s) this.emitRevoke(s.accountId, key, "sign-out");
   }
 
   revokeAll(accountId: string, reason: "sign-out-everywhere" | "deleted" | "admin" = "sign-out-everywhere"): void {
     for (const [k, s] of this.sessions) if (s.accountId === accountId) this.sessions.delete(k);
+    this.persistSessionsSoon(true);
     this.emitRevoke(accountId, null, reason);
+  }
+
+  /** The account's sessions for its window; `currentHash` marks this one. */
+  listSessions(accountId: string, currentHash?: string, now = Date.now()): SessionView[] {
+    this.load();
+    return [...this.sessions]
+      .filter(([, sess]) => sess.accountId === accountId && sess.expiresAt >= now)
+      .sort((a, b) => b[1].lastUsedAt - a[1].lastUsedAt)
+      .map(([hash, sess]) => ({
+        id: hash.slice(0, 16),
+        createdAt: sess.createdAt,
+        lastUsedAt: sess.lastUsedAt,
+        expiresAt: sess.expiresAt,
+        client: sess.client ?? "",
+        ip: sess.ip ?? "",
+        current: hash === currentHash,
+      }));
+  }
+
+  /** Ends one session of the account (another device), by its listed id. */
+  revokeSession(accountId: string, id: string): boolean {
+    this.load();
+    if (!/^[0-9a-f]{16}$/.test(id)) return false;
+    for (const [hash, sess] of this.sessions) {
+      if (sess.accountId !== accountId || !hash.startsWith(id)) continue;
+      this.sessions.delete(hash);
+      this.persistSessionsSoon(true);
+      this.emitRevoke(accountId, hash, "sign-out");
+      this.addAudit(accountId, "session-ended", { client: sess.client ?? "" });
+      return true;
+    }
+    return false;
+  }
+
+  /* ------------------------------------------------------------ passkeys */
+
+  /** The stored public key of any of the account's passkeys. */
+  credentialOf(accountId: string, credentialId: string): StoredCredential | null {
+    const acc = this.get(accountId);
+    if (!acc) return null;
+    if (acc.credential.credentialId === credentialId) return acc.credential;
+    return acc.credentials?.find((c) => c.credentialId === credentialId) ?? null;
+  }
+
+  wrappedFor(accountId: string, slot: string): WrappedRoot | null {
+    return this.get(accountId)?.wrapped?.[slot] ?? null;
+  }
+
+  addCredential(accountId: string, credential: StoredCredential, wrapped: { iv: string; ct: string }, label: string, now = Date.now()): { ok: true } | { ok: false; reason: string } {
+    const acc = this.get(accountId);
+    if (!acc) return { ok: false, reason: "unknown account" };
+    if (this.byCredential.has(credential.credentialId)) return { ok: false, reason: "this passkey is already registered" };
+    if (1 + (acc.credentials?.length ?? 0) >= ACCOUNT_LIMITS.maxPasskeys) return { ok: false, reason: "too many passkeys" };
+    if (!validWrapped(wrapped)) return { ok: false, reason: "sealed account key missing or malformed" };
+    acc.credentials = [...(acc.credentials ?? []), { ...credential, createdAt: now, lastUsedAt: now, label: cleanLabel(label) }];
+    acc.wrapped = { ...(acc.wrapped ?? {}), [credential.credentialId]: { iv: wrapped.iv, ct: wrapped.ct, createdAt: now } };
+    this.byCredential.set(credential.credentialId, accountId);
+    this.addAudit(accountId, "passkey-added", { passkeys: 1 + acc.credentials.length });
+    this.persist();
+    return { ok: true };
+  }
+
+  /** Removes a passkey. The last one cannot go; removing the first one makes
+   *  the next the "first" (its sealed root still opens the account). */
+  removeCredential(accountId: string, credentialId: string, now = Date.now()): { ok: true } | { ok: false; reason: string } {
+    const acc = this.get(accountId);
+    if (!acc) return { ok: false, reason: "unknown account" };
+    const extras = acc.credentials ?? [];
+    if (extras.length === 0) return { ok: false, reason: "the last passkey cannot be removed" };
+    if (acc.credential.credentialId === credentialId) {
+      const [next, ...rest] = extras;
+      const { createdAt: _c, lastUsedAt: _l, label: _n, ...stored } = next;
+      acc.credential = stored;
+      acc.credentials = rest;
+      // The new first passkey keeps its sealed root: its PRF output is not the root.
+    } else if (extras.some((c) => c.credentialId === credentialId)) {
+      acc.credentials = extras.filter((c) => c.credentialId !== credentialId);
+      if (acc.wrapped) delete acc.wrapped[credentialId];
+    } else {
+      return { ok: false, reason: "unknown passkey" };
+    }
+    this.byCredential.delete(credentialId);
+    this.addAudit(accountId, "passkey-removed", {}, now);
+    this.persist();
+    return { ok: true };
+  }
+
+  /* ------------------------------------------------------------ recovery */
+
+  setRecovery(accountId: string, input: { id: string; verifier: string; wrapped: { iv: string; ct: string } }, now = Date.now()): { ok: true } | { ok: false; reason: string } {
+    const acc = this.get(accountId);
+    if (!acc) return { ok: false, reason: "unknown account" };
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(input.id) || !/^[0-9a-f]{64}$/.test(input.verifier) || !validWrapped(input.wrapped)) {
+      return { ok: false, reason: "malformed recovery data" };
+    }
+    for (const other of this.accounts.values()) {
+      if (other.id !== accountId && other.recovery?.id === input.id) return { ok: false, reason: "recovery id collision; generate a new code" };
+    }
+    acc.recovery = { id: input.id, verifier: input.verifier, createdAt: now };
+    acc.wrapped = { ...(acc.wrapped ?? {}), recovery: { iv: input.wrapped.iv, ct: input.wrapped.ct, createdAt: now } };
+    this.addAudit(accountId, "recovery-set", {}, now);
+    this.persist();
+    return { ok: true };
+  }
+
+  clearRecovery(accountId: string): boolean {
+    const acc = this.get(accountId);
+    if (!acc?.recovery) return false;
+    delete acc.recovery;
+    if (acc.wrapped) delete acc.wrapped.recovery;
+    this.addAudit(accountId, "recovery-removed");
+    this.persist();
+    return true;
+  }
+
+  /** The account a recovery proof opens (constant-time check), or null. */
+  checkRecovery(id: string, proof: string): AccountRecord | null {
+    this.load();
+    if (typeof id !== "string" || typeof proof !== "string" || proof.length > 128) return null;
+    for (const acc of this.accounts.values()) {
+      if (acc.recovery?.id !== id) continue;
+      const expected = Buffer.from(acc.recovery.verifier, "hex");
+      const given = createHash("sha256").update(proof).digest();
+      return expected.length === given.length && timingSafeEqual(expected, given) ? acc : null;
+    }
+    return null;
+  }
+
+  setIdentity(accountId: string, publicKey: string, now = Date.now()): boolean {
+    const acc = this.get(accountId);
+    if (!acc || typeof publicKey !== "string" || !/^[A-Za-z0-9+/=_-]{40,64}$/.test(publicKey)) return false;
+    if (acc.identity?.publicKey === publicKey) return true;
+    acc.identity = { publicKey, updatedAt: now };
+    this.addAudit(accountId, "identity-set", {}, now);
+    this.persist();
+    return true;
   }
 
   /** Open sessions (valid tokens), for one account or all of them. */
   sessionCount(accountId?: string, now = Date.now()): number {
+    this.load();
     let n = 0;
     for (const s of this.sessions.values()) if (s.expiresAt >= now && (!accountId || s.accountId === accountId)) n += 1;
     return n;
@@ -304,6 +530,7 @@ export class AccountStore {
 
   /** Whether the session behind `hash` is still valid. */
   sessionAlive(hash: string, now = Date.now()): boolean {
+    this.load();
     const s = this.sessions.get(hash);
     return Boolean(s && s.expiresAt >= now && this.accounts.has(s.accountId));
   }
@@ -505,6 +732,7 @@ export class AccountStore {
     if (!acc) return false;
     this.accounts.delete(accountId);
     this.byCredential.delete(acc.credential.credentialId);
+    for (const extra of acc.credentials ?? []) this.byCredential.delete(extra.credentialId);
     this.revokeAll(accountId, "deleted");
     vaultBackend?.erase(accountId);
     this.remove(this.vaultPath(accountId));
@@ -522,7 +750,8 @@ export class AccountStore {
     let mailboxItems = 0;
     let auditEntries = 0;
     let tokens = 0;
-    for (const [k, s] of this.sessions) if (s.expiresAt < now) { this.sessions.delete(k); tokens++; }
+    for (const [k, s] of this.sessions) if (s.expiresAt < now || now - s.createdAt > ACCOUNT_LIMITS.tokenMaxAgeMs) { this.sessions.delete(k); tokens++; }
+    if (tokens) this.persistSessionsSoon(true);
     let dirty = false;
     for (const acc of this.accounts.values()) {
       const before = acc.audit.length;
@@ -539,11 +768,19 @@ export class AccountStore {
     return { mailboxItems, auditEntries, tokens };
   }
 
-  /** What /api/account/me shows (never the key material or tokens). */
-  summary(accountId: string) {
+  /** What /api/account/me shows (never the key material or tokens).
+   *  `currentHash` marks the caller's own session in the list. */
+  summary(accountId: string, currentHash?: string) {
     const acc = this.get(accountId);
     if (!acc) return null;
     return {
+      passkeys: [
+        { credentialId: acc.credential.credentialId, alg: acc.credential.alg, createdAt: acc.createdAt, lastUsedAt: acc.lastLoginAt, label: "", primary: true },
+        ...(acc.credentials ?? []).map((c) => ({ credentialId: c.credentialId, alg: c.alg, createdAt: c.createdAt, lastUsedAt: c.lastUsedAt, label: c.label, primary: false })),
+      ],
+      recovery: acc.recovery ? { set: true, createdAt: acc.recovery.createdAt } : { set: false },
+      identity: acc.identity ?? null,
+      sessions: this.listSessions(acc.id, currentHash),
       id: acc.id,
       credentialId: acc.credential.credentialId,
       alg: acc.credential.alg,

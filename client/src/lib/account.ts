@@ -9,8 +9,18 @@
 //
 // What the server logs, and what the user sees in the account window: sign
 // in, vault load and save, decryption results, away / relay activity.
+//
+// 3.1: an account can have several passkeys and a recovery code. The keys
+// come from the account root (see passkey.ts); any passkey or the code opens
+// it. At sign-in the account also certifies this device's signing key
+// (identity.ts), so peers recognise the account on every device.
 
-import { assertPasskey, createPasskey, openProfile, passkeySupported, sealProfile, type ServerCreationOptions, type ServerRequestOptions } from "./passkey";
+import {
+  assertPasskey, confirmWithPasskey, createPasskey, deriveAccountKeys, openProfile, openRoot, passkeySupported, sealProfile, sealRoot,
+  WRAP_INFO, type SealedRoot, type ServerCreationOptions, type ServerRequestOptions,
+} from "./passkey";
+import { accountSigningKey, certifyDevice, ed25519Supported, loadIdentity, saveAttestation } from "./identity";
+import { generateRecoveryCode, recoveryMaterial } from "./recovery";
 import {
   forgetDatabaseKey, openUserDatabase, promoteSessionToAccount, recallDatabaseKey,
   rememberDatabaseKey, setStorageToken, storageSessionId,
@@ -31,6 +41,12 @@ export type AccountSummary = {
   away: Array<{ room: string; name: string; since: number }>;
   pushDevices: number;
   audit: AccountAudit[];
+  /** 3.1: every passkey of the account ("primary" = the first one). */
+  passkeys?: Array<{ credentialId: string; alg: number; createdAt: number; lastUsedAt: number; label: string; primary: boolean }>;
+  recovery?: { set: boolean; createdAt?: number };
+  identity?: { publicKey: string; updatedAt: number } | null;
+  /** Signed-in devices; `current` is this one. */
+  sessions?: Array<{ id: string; createdAt: number; lastUsedAt: number; expiresAt: number; client: string; ip: string; current: boolean }>;
 };
 
 export type AccountStatus = {
@@ -158,12 +174,14 @@ export async function registerAccount(userName: string): Promise<AccountSummary>
     method: "POST",
     body: JSON.stringify({ userName }),
   });
-  const { response, key, databaseKey } = await createPasskey(options.publicKey);
+  const { response, key, databaseKey, secret } = await createPasskey(options.publicKey);
   const result = await api<{ token: string; account: AccountSummary }>("/api/account/register/verify", {
     method: "POST",
     body: JSON.stringify({ credential: response }),
   });
   await adopt(result.token, result.account, key);
+  // The first passkey's PRF output is the account root.
+  await attestDevice(secret);
   // Whatever this browser stored as an anonymous session becomes theirs.
   const hadSession = Boolean(storageSessionId());
   await rememberDatabaseKey(databaseKey, key);
@@ -175,17 +193,125 @@ export async function registerAccount(userName: string): Promise<AccountSummary>
 /** Signs in with an existing passkey (the browser picks the credential). */
 export async function signInWithPasskey(): Promise<AccountSummary> {
   const options = await api<{ publicKey: ServerRequestOptions }>("/api/account/signin/options", { method: "POST", body: JSON.stringify({}) });
-  const { response, key, databaseKey } = await assertPasskey(options.publicKey);
-  const result = await api<{ token: string; account: AccountSummary }>("/api/account/signin/verify", {
+  const signed = await assertPasskey(options.publicKey);
+  const result = await api<{ token: string; account: AccountSummary; wrapped?: SealedRoot | null }>("/api/account/signin/verify", {
     method: "POST",
-    body: JSON.stringify({ credential: response }),
+    body: JSON.stringify({ credential: signed.response }),
   });
+  // A passkey added later brings the root sealed for it; the first one IS it.
+  const root = result.wrapped ? await openRoot(result.wrapped, signed.secret, WRAP_INFO.passkey) : signed.secret;
+  const { key, databaseKey } = result.wrapped ? await deriveAccountKeys(root) : { key: signed.key, databaseKey: signed.databaseKey };
   await adopt(result.token, result.account, key);
+  await attestDevice(root);
   await rememberDatabaseKey(databaseKey, key);
   // The key opens the SQLCipher database on the server for this session.
   if (storageSessionId()) await promoteSessionToAccount(databaseKey);
   else await openUserDatabase(databaseKey);
   return result.account;
+}
+
+/** The account certifies this device's signing key (and tells the server
+ *  its public key). Best effort: a browser without Ed25519 simply signs as
+ *  a device, as before. */
+async function attestDevice(root: Uint8Array): Promise<void> {
+  try {
+    if (!(await ed25519Supported())) return;
+    const account = await accountSigningKey(root);
+    const device = await loadIdentity();
+    await saveAttestation(await certifyDevice(account.privateKey, account.publicKey, device.publicKey));
+    if (session) await api("/api/account/identity", { method: "PUT", body: JSON.stringify({ publicKey: account.publicKey }) }, session.token).catch(() => undefined);
+  } catch { /* signing as a device still works */ }
+}
+
+/** The account root, confirmed with one of the account's passkeys: needed to
+ *  seal it for a new passkey or a recovery code. */
+async function confirmRoot(): Promise<Uint8Array> {
+  if (!session) throw new Error("Not signed in.");
+  const ids = (session.account.passkeys ?? []).map((p) => p.credentialId);
+  const confirmed = await confirmWithPasskey(ids.length ? ids : [session.account.credentialId]);
+  const primary = session.account.passkeys?.find((p) => p.primary)?.credentialId ?? session.account.credentialId;
+  if (confirmed.credentialId === primary) return confirmed.secret;
+  const sealed = await api<{ wrapped: SealedRoot | null }>(`/api/account/passkeys/${encodeURIComponent(confirmed.credentialId)}/wrapped`, {}, session.token);
+  if (!sealed.wrapped) throw new Error("This passkey cannot open the account key.");
+  return openRoot(sealed.wrapped, confirmed.secret, WRAP_INFO.passkey);
+}
+
+/** Adds another passkey (another device, a security key) to the account. */
+export async function addPasskey(label: string): Promise<AccountSummary> {
+  if (!session) throw new Error("Not signed in.");
+  const root = await confirmRoot();
+  const options = await api<{ publicKey: ServerCreationOptions }>("/api/account/passkeys/options", { method: "POST", body: "{}" }, session.token);
+  const created = await createPasskey(options.publicKey);
+  const wrapped = await sealRoot(root, created.secret, WRAP_INFO.passkey);
+  root.fill(0);
+  const r = await api<{ account: AccountSummary }>("/api/account/passkeys/verify", {
+    method: "POST",
+    body: JSON.stringify({ credential: created.response, wrapped, label: label.slice(0, 40) }),
+  }, session.token);
+  session.account = r.account;
+  return r.account;
+}
+
+export async function removePasskey(credentialId: string): Promise<AccountSummary> {
+  if (!session) throw new Error("Not signed in.");
+  const r = await api<{ account: AccountSummary }>(`/api/account/passkeys/${encodeURIComponent(credentialId)}`, { method: "DELETE" }, session.token);
+  session.account = r.account;
+  return r.account;
+}
+
+/** Creates (or replaces) the recovery code. Returns the code — the only time it is shown. */
+export async function createRecoveryCode(): Promise<{ code: string; account: AccountSummary }> {
+  if (!session) throw new Error("Not signed in.");
+  const root = await confirmRoot();
+  const code = generateRecoveryCode();
+  const material = await recoveryMaterial(code);
+  const wrapped = await sealRoot(root, material.secret, WRAP_INFO.recovery);
+  root.fill(0);
+  const r = await api<{ account: AccountSummary }>("/api/account/recovery", {
+    method: "PUT",
+    body: JSON.stringify({ id: material.id, verifier: material.verifier, wrapped }),
+  }, session.token);
+  session.account = r.account;
+  return { code, account: r.account };
+}
+
+export async function removeRecoveryCode(): Promise<AccountSummary> {
+  if (!session) throw new Error("Not signed in.");
+  const r = await api<{ account: AccountSummary }>("/api/account/recovery", { method: "DELETE" }, session.token);
+  session.account = r.account;
+  return r.account;
+}
+
+/** Every passkey is gone: the recovery code opens the account root, a new
+ *  passkey is registered for it, and this becomes a normal sign-in. */
+export async function recoverWithCode(code: string, label = "recovered"): Promise<AccountSummary> {
+  const material = await recoveryMaterial(code);
+  const started = await api<{ ticket: string; wrapped: SealedRoot | null; publicKey: ServerCreationOptions }>("/api/account/recovery/start", {
+    method: "POST",
+    body: JSON.stringify({ id: material.id, proof: material.proof }),
+  });
+  if (!started.wrapped) throw new Error("The account has no key sealed for this code.");
+  const root = await openRoot(started.wrapped, material.secret, WRAP_INFO.recovery);
+  const created = await createPasskey(started.publicKey);
+  const wrapped = await sealRoot(root, created.secret, WRAP_INFO.passkey);
+  const result = await api<{ token: string; account: AccountSummary }>("/api/account/recovery/finish", {
+    method: "POST",
+    body: JSON.stringify({ ticket: started.ticket, credential: created.response, wrapped, label }),
+  });
+  const { key, databaseKey } = await deriveAccountKeys(root);
+  await adopt(result.token, result.account, key);
+  await attestDevice(root);
+  root.fill(0);
+  await rememberDatabaseKey(databaseKey, key);
+  await openUserDatabase(databaseKey);
+  return result.account;
+}
+
+/** Ends one of the account's sessions (another device). */
+export async function endSession(id: string): Promise<AccountSummary | null> {
+  if (!session) return null;
+  await api(`/api/account/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }, session.token);
+  return refreshAccount();
 }
 
 async function adopt(token: string, account: AccountSummary, key: CryptoKey): Promise<void> {
@@ -291,6 +417,7 @@ export async function signOutAccount(everywhere = false): Promise<void> {
   dropToken();
   setStorageToken(null);
   forgetDatabaseKey();
+  await saveAttestation(null).catch(() => undefined);
   if (!current) return;
   await forgetKey(current.accountId);
   try { await api("/api/account/signout", { method: "POST", body: JSON.stringify({ everywhere }) }, current.token); } catch { /* already gone */ }
@@ -303,6 +430,7 @@ export async function deleteAccount(): Promise<void> {
   session = null;
   dropToken();
   forgetDatabaseKey();
+  await saveAttestation(null).catch(() => undefined);
   await forgetKey(current.accountId);
   await api("/api/account", { method: "DELETE" }, current.token);
   setStorageToken(null);

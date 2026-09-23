@@ -6,6 +6,7 @@ type Dict = Record<string, string>;
 const cs: Dict = {
   "sec.identity": "Identita odesílatele",
   "sec.identity.verified": "Ověřeno podpisem · {fp}",
+  "sec.identity.account": "Ověřený účet (potvrzuje i toto zařízení) · {fp}",
   "sec.identity.changed": "POZOR: jiný klíč než dříve pro toto jméno · {fp}",
   "sec.identity.unsigned": "Nepodepsáno (starší klient)",
   "sec.identity.invalid": "Podpis nesouhlasí — zpráva mohla být podvržena",
@@ -27,6 +28,7 @@ const cs: Dict = {
 const en: Dict = {
   "sec.identity": "Sender identity",
   "sec.identity.verified": "Verified by signature · {fp}",
+  "sec.identity.account": "Verified account (vouches for this device) · {fp}",
   "sec.identity.changed": "WARNING: a different key than before for this name · {fp}",
   "sec.identity.unsigned": "Unsigned (older client)",
   "sec.identity.invalid": "Signature does not verify — the message may be forged",
@@ -48,6 +50,7 @@ const en: Dict = {
 const de: Dict = {
   "sec.identity": "Identität des Absenders",
   "sec.identity.verified": "Per Signatur bestätigt · {fp}",
+  "sec.identity.account": "Bestätigtes Konto (bürgt für dieses Gerät) · {fp}",
   "sec.identity.changed": "ACHTUNG: anderer Schlüssel als zuvor für diesen Namen · {fp}",
   "sec.identity.unsigned": "Unsigniert (älterer Client)",
   "sec.identity.invalid": "Signatur ungültig — die Nachricht könnte gefälscht sein",

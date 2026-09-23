@@ -37,7 +37,8 @@ import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerAdminLayoutRoutes } from "./layout";
 import { applyTrustProxy } from "./trust-proxy";
 import { buildInfo } from "./build-info";
-import { requireAdminToken } from "./admin-auth";
+import { isAuthorizedHeader } from "./admin-auth";
+import { createHash } from "node:crypto";
 import { ADMIN_COMMAND_ALLOWLIST } from "./routes-admin-shared";
 
 const app = express();
@@ -89,9 +90,43 @@ app.use("/api/admin", (req, res) => { void forward(req, res, req.originalUrl); }
 // ---- Auth middleware ---------------------------------------------------
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN?.trim() || "";
 
-// Constant-time Bearer check shared with the main service (admin-auth.ts).
-// The token is fixed at start-up here, as before.
-const requireAuth = requireAdminToken(() => ADMIN_API_TOKEN);
+// Who is asking: this service's own ADMIN_API_TOKEN (owner), or — for the
+// named administrators and passkey sessions the main service manages
+// (admin-users.ts) — whatever the main service says about the token.
+// Answers are cached for a minute, by token hash.
+const whoamiCache = new Map<string, { principal: { name: string; role: "owner" | "operator" | "auditor" } | null; at: number }>();
+
+async function principalFor(authorization: string | undefined): Promise<{ name: string; role: "owner" | "operator" | "auditor" } | null> {
+  if (ADMIN_API_TOKEN && isAuthorizedHeader(authorization, ADMIN_API_TOKEN)) return { name: "admin", role: "owner" };
+  if (!authorization?.startsWith("Bearer ")) return null;
+  const key = createHash("sha256").update(authorization).digest("hex");
+  const cached = whoamiCache.get(key);
+  if (cached && Date.now() - cached.at < 60_000) return cached.principal;
+  let principal: { name: string; role: "owner" | "operator" | "auditor" } | null = null;
+  try {
+    const r = await fetch(`${MAIN_URL}/api/admin/whoami`, { headers: { authorization } });
+    if (r.ok) principal = ((await r.json()) as { admin?: { name: string; role: "owner" | "operator" | "auditor" } }).admin ?? null;
+  } catch { principal = null; }
+  whoamiCache.set(key, { principal, at: Date.now() });
+  if (whoamiCache.size > 1_000) whoamiCache.delete(whoamiCache.keys().next().value!);
+  return principal;
+}
+
+const RANK = { auditor: 1, operator: 2, owner: 3 } as const;
+
+/** Reading needs an auditor, changing anything an operator. */
+const requireAuth: express.RequestHandler = (req, res, next) => {
+  void principalFor(req.header("authorization")).then((principal) => {
+    if (!principal) {
+      if (!ADMIN_API_TOKEN) return res.status(503).json({ ok: false, message: "ADMIN_API_TOKEN env var is not set." });
+      res.setHeader("WWW-Authenticate", 'Bearer realm="m5cet-admin"');
+      return res.status(401).json({ ok: false, message: "Unauthorized." });
+    }
+    const needed = req.method === "GET" || req.method === "HEAD" ? "auditor" : "operator";
+    if (RANK[principal.role] < RANK[needed]) return res.status(403).json({ ok: false, message: `This needs the ${needed} role; you are ${principal.role}.` });
+    next();
+  });
+};
 
 app.use((_req, res, next) => {
   res.setHeader("Cache-Control", "no-store");

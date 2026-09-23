@@ -125,16 +125,22 @@ export function recordAccount(storage: StorageService, account: AccountRecord, e
   if (!storage.isAvailable) return;
   try {
     storage.global.upsertUser({ id: account.id, userName: account.userName, createdAt: account.createdAt });
-    storage.global.addPasskey({
-      credentialId: account.credential.credentialId,
-      accountId: account.id,
-      publicKey: account.credential.publicKeyJwk,
-      alg: account.credential.alg,
-      signCount: account.credential.signCount,
-    });
+    // Every passkey of the account (3.1: there can be several), and none it
+    // no longer has.
+    const credentials = [
+      { ...account.credential, label: "" },
+      ...(account.credentials ?? []),
+    ];
+    for (const c of credentials) {
+      storage.global.addPasskey({ credentialId: c.credentialId, accountId: account.id, publicKey: c.publicKeyJwk, alg: c.alg, signCount: c.signCount, label: c.label });
+    }
+    const current = new Set(credentials.map((c) => c.credentialId));
+    for (const row of storage.global.listPasskeys(account.id)) {
+      if (!current.has(row.credentialId)) storage.global.removePasskey(row.credentialId);
+    }
     if (event === "sign-in") {
       storage.global.recordLogin(account.id);
-      storage.global.updateSignCount(account.credential.credentialId, account.credential.signCount);
+      for (const c of credentials) storage.global.updateSignCount(c.credentialId, c.signCount);
     }
     storage.log({ level: "info", source: "server", event: `account.${event}`, accountId: account.id, detail: meta });
   } catch (err) {

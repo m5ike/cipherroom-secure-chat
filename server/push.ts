@@ -67,7 +67,7 @@ export function isWebPushReady(): boolean {
 
 export async function sendWebPush(
   sub: StoredSubscription,
-  payload: { title?: string; body?: string; tag?: string; url?: string; requireInteraction?: boolean },
+  payload: { title?: string; body?: string; tag?: string; url?: string; requireInteraction?: boolean; kind?: string },
 ): Promise<{ ok: boolean; error?: string }> {
   if (!isWebPushReady()) return { ok: false, error: "VAPID keys not configured" };
   const wp = await loadWebPush();

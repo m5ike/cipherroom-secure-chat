@@ -38,7 +38,7 @@ import {
   type OpenFailure,
 } from "./db";
 import {
-  checkMasterKey, digestKey, KEY_BYTES, keyCheckValue, newDatabaseKey, parseClientKey, sameDigest, sessionRef, storageDir, wrapKey,
+  checkMasterKey, digestKey, KEY_BYTES, keyCheckValue, newDatabaseKey, openValue, parseClientKey, sameDigest, sealValue, sessionRef, storageDir, wrapKey,
 } from "./keys";
 import { USER_MIGRATIONS } from "./schema";
 
@@ -582,13 +582,37 @@ export class StorageService {
     if (!this.available) return null;
     if (!this.mailQueue) {
       try {
-        this.mailQueue = new MailQueue(this.global.handleForQueue());
+        // Metadata at rest (who sent it, status details) is sealed with the
+        // master key and bound to its row (accounts/mailqueue.ts).
+        this.mailQueue = new MailQueue(this.global.handleForQueue(), Date.now, {
+          seal: (text, aad) => sealValue(text, aad).toString("base64"),
+          open: (sealed, aad) => openValue(Buffer.from(sealed, "base64"), aad),
+        });
       } catch (err) {
         this.log({ level: "error", source: "server", event: "storage.queue.unavailable", detail: { error: (err as Error).message } });
         return null;
       }
     }
     return this.mailQueue;
+  }
+
+  /* ------------------------------------------------- backup & integrity */
+
+  /** Paths of the encrypted user database files, with open ones checkpointed first. */
+  userDatabaseFiles(): string[] {
+    this.require();
+    this.pool.forEachOpen((_id, db) => db.checkpoint());
+    return this.global.listDatabases(1000).map((row) => this.global.databasePath(row));
+  }
+
+  /** quick_check of the global database and of every open user database
+   *  (a locked account database cannot be read without its owner's key). */
+  integrityCheck(): { global: string; databases: Array<{ id: string; result: string }>; locked: number } {
+    this.require();
+    const databases: Array<{ id: string; result: string }> = [];
+    this.pool.forEachOpen((id, db) => databases.push({ id, result: db.quickCheck() }));
+    const locked = Math.max(0, this.global.listDatabases(1000).length - databases.length);
+    return { global: this.global.quickCheck(), databases, locked };
   }
 
   /* ------------------------------------------------------------ retention */

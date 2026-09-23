@@ -5,12 +5,13 @@
 // restart, and the console says so (persistent: false).
 
 import { randomBytes } from "node:crypto";
-import { QUEUE_LIMITS, queueTtlMs, type EnqueueResult, type OfflineQueue, type QueueItem } from "./mailqueue";
+import { LEDGER_LIMITS, QUEUE_LIMITS, queueTtlMs, type EnqueueResult, type LedgerEntry, type OfflineQueue, type QueueItem } from "./mailqueue";
 
 export class MemoryQueue implements OfflineQueue {
   readonly persistent = false;
   private items = new Map<string, QueueItem & { senderKey: string }>();
   private seqs = new Map<string, number>();
+  private ledger = new Map<string, LedgerEntry>();
 
   constructor(private readonly now: () => number = Date.now) {}
 
@@ -94,6 +95,23 @@ export class MemoryQueue implements OfflineQueue {
       taken.push(strip(item));
     }
     return taken;
+  }
+
+  rememberRelay(messageId: string, room: string, sender: LedgerEntry["sender"], recipient: string): void {
+    const existing = this.ledger.get(messageId);
+    if (existing) {
+      if (!existing.recipients.includes(recipient)) existing.recipients.push(recipient);
+      return;
+    }
+    this.ledger.set(messageId, { messageId, room, sender, recipients: [recipient], at: this.now() });
+    if (this.ledger.size > LEDGER_LIMITS.maxEntries) this.ledger.delete(this.ledger.keys().next().value!);
+  }
+
+  relayOf(messageId: string): LedgerEntry | null {
+    const entry = this.ledger.get(messageId);
+    if (!entry) return null;
+    if (this.now() - entry.at > LEDGER_LIMITS.ttlMs) { this.ledger.delete(messageId); return null; }
+    return { ...entry, recipients: [...entry.recipients] };
   }
 
   release(accountId: string, ids: string[]): number {

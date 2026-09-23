@@ -14,6 +14,19 @@
 //   POST   /api/account/signout            revoke this token                      (Bearer)
 //   DELETE /api/account                    delete account, vault and mailbox      (Bearer)
 //
+//   3.1 — several passkeys, a recovery code, sessions, the account key:
+//   POST   /api/account/passkeys/options   creation options for one more passkey (Bearer)
+//   POST   /api/account/passkeys/verify    attestation + the root sealed for it  (Bearer)
+//   DELETE /api/account/passkeys/:id       remove one (never the last)           (Bearer)
+//   GET    /api/account/passkeys/:id/wrapped   the root sealed for that passkey  (Bearer)
+//   PUT    /api/account/recovery           set the recovery code's id/verifier + sealed root (Bearer)
+//   DELETE /api/account/recovery                                                  (Bearer)
+//   POST   /api/account/recovery/start     {id, proof} → sealed root + options for a new passkey
+//   POST   /api/account/recovery/finish    {ticket, credential, wrapped} → session token
+//   GET    /api/account/sessions           this account's sessions (devices)      (Bearer)
+//   DELETE /api/account/sessions/:id       end one of them                        (Bearer)
+//   PUT    /api/account/identity           the account's public signing key      (Bearer)
+//
 // Challenges are random, single-use and expire after 2 minutes; the one a
 // response answers is read from its clientDataJSON and must have been issued
 // for that ceremony. rpId: WEBAUTHN_RP_ID, else the PUBLIC_BASE_URL host,
@@ -21,6 +34,7 @@
 // origin on the rpId (+ http://localhost for development).
 
 import { isAllowedPushEndpoint } from "../push";
+import { tokenHash } from "./store";
 import { randomBytes } from "node:crypto";
 import type { Express, NextFunction, Request, Response } from "express";
 import { rateLimit } from "express-rate-limit";
@@ -34,7 +48,7 @@ import {
 const env = (name: string) => process.env[name]?.trim() || "";
 const CHALLENGE_TTL_MS = 2 * 60 * 1000;
 
-type Purpose = "register" | "signin";
+type Purpose = "register" | "signin" | "add-passkey" | "recover";
 class Challenges {
   private map = new Map<string, { purpose: Purpose; at: number; userName?: string }>();
   issue(purpose: Purpose, userName?: string): string {
@@ -64,7 +78,7 @@ export function rpPolicyFor(req: Request): RpPolicy {
   return { rpId, origins };
 }
 
-function challengeOf(clientDataJSON: unknown): string {
+export function challengeOf(clientDataJSON: unknown): string {
   try {
     const data = JSON.parse(b64urlToBuffer(String(clientDataJSON)).toString("utf8")) as { challenge?: unknown };
     return typeof data.challenge === "string" ? data.challenge.replace(/=+$/, "") : "";
@@ -169,9 +183,9 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     if (!created.ok) return res.status(409).json({ ok: false, message: created.reason });
     store.addAudit(created.account.id, "sign-in", { ...clientInfo(req), via: "register" });
     hooks.onAuthenticated?.(created.account.id, "register", clientInfo(req));
-    const token = store.issueToken(created.account.id);
+    const token = store.issueToken(created.account.id, Date.now(), clientInfo(req));
     eventStore.record({ kind: "account-register", meta: { accountId: created.account.id } });
-    res.json({ ok: true, token, account: store.summary(created.account.id) });
+    res.json({ ok: true, token, account: store.summary(created.account.id, tokenHash(token)) });
   });
 
   /* ------------------------------------------------------------ sign-in */
@@ -194,22 +208,26 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       eventStore.record({ kind: "account-signin-unknown" });
       return res.status(404).json({ ok: false, message: "This passkey has no account on this server." });
     }
-    const r = verifyAssertion({ response: credential, expectedChallenge: challenge, policy: rpPolicyFor(req), stored: account.credential });
+    const stored = store.credentialOf(account.id, credentialId);
+    if (!stored) return res.status(404).json({ ok: false, message: "This passkey has no account on this server." });
+    const r = verifyAssertion({ response: credential, expectedChallenge: challenge, policy: rpPolicyFor(req), stored });
     if (!r.ok) {
       store.addAudit(account.id, "sign-in-failed", { reason: r.error.slice(0, 60), ...clientInfo(req) });
       return res.status(401).json({ ok: false, message: `Passkey verification failed: ${r.error}` });
     }
-    store.recordSignIn(account.id, r.signCount, clientInfo(req));
+    store.recordSignIn(account.id, r.signCount, clientInfo(req), Date.now(), credentialId);
     hooks.onAuthenticated?.(account.id, "sign-in", clientInfo(req));
-    const token = store.issueToken(account.id);
+    const token = store.issueToken(account.id, Date.now(), clientInfo(req));
     eventStore.record({ kind: "account-signin", meta: { accountId: account.id } });
-    res.json({ ok: true, token, account: store.summary(account.id) });
+    // A passkey added later carries the account root sealed for it; the first
+    // one does not need it (its PRF output is the root).
+    res.json({ ok: true, token, account: store.summary(account.id, tokenHash(token)), wrapped: store.wrappedFor(account.id, credentialId) });
   });
 
   /* ------------------------------------------------------- authenticated */
 
   app.get("/api/account/me", requireAccount, (req: AuthedRequest, res: Response) => {
-    res.json({ ok: true, account: store.summary(req.account!.id) });
+    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
   });
 
   app.get("/api/account/vault", requireAccount, (req: AuthedRequest, res: Response) => {
@@ -291,5 +309,132 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     hooks.onDeleted?.(id);
     eventStore.record({ kind: "account-deleted", meta: { accountId: id } });
     res.json({ ok: true });
+  });
+
+  /* ------------------------------------------------------ more passkeys */
+
+  const creationOptions = (req: Request, account: AccountRecord, challenge: string) => {
+    const policy = rpPolicyFor(req);
+    const all = [account.credential.credentialId, ...(account.credentials ?? []).map((c) => c.credentialId)];
+    return {
+      challenge,
+      rp: { id: policy.rpId, name: "M5cet" },
+      user: { id: Buffer.from(account.id).toString("base64url"), name: account.userName, displayName: account.userName },
+      pubKeyCredParams: SUPPORTED_ALGS.map((alg) => ({ type: "public-key", alg })),
+      authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
+      excludeCredentials: all.map((id) => ({ type: "public-key", id })),
+      attestation: "none",
+      timeout: 60_000,
+    };
+  };
+
+  app.post("/api/account/passkeys/options", ceremonyLimiter, requireAccount, (req: AuthedRequest, res: Response) => {
+    const account = req.account!;
+    res.json({ ok: true, publicKey: creationOptions(req, account, challenges.issue("add-passkey", account.id)) });
+  });
+
+  app.post("/api/account/passkeys/verify", ceremonyLimiter, requireAccount, (req: AuthedRequest, res: Response) => {
+    const body = (req.body || {}) as { credential?: RegistrationResponseJSON; wrapped?: { iv: string; ct: string }; label?: string };
+    const challenge = challengeOf(body.credential?.response?.clientDataJSON);
+    const issued = challenge ? challenges.take(challenge, "add-passkey") : null;
+    if (!body.credential || !issued || issued.userName !== req.account!.id) return res.status(400).json({ ok: false, message: "Unknown or expired challenge." });
+    const r = verifyRegistration({ response: body.credential, expectedChallenge: challenge, policy: rpPolicyFor(req) });
+    if (!r.ok) return res.status(400).json({ ok: false, message: `Passkey registration rejected: ${r.error}` });
+    const added = store.addCredential(req.account!.id, r.credential, body.wrapped ?? { iv: "", ct: "" }, String(body.label ?? ""));
+    if (!added.ok) return res.status(409).json({ ok: false, message: added.reason });
+    hooks.onAuthenticated?.(req.account!.id, "register", { ...clientInfo(req), via: "add-passkey" });
+    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
+  });
+
+  // The root sealed for one of the account's own passkeys (to confirm with
+  // it before adding another passkey or a recovery code). Opaque to us.
+  app.get("/api/account/passkeys/:id/wrapped", requireAccount, (req: AuthedRequest, res: Response) => {
+    const id = String(req.params.id);
+    if (!store.credentialOf(req.account!.id, id)) return res.status(404).json({ ok: false, message: "unknown passkey" });
+    res.json({ ok: true, wrapped: store.wrappedFor(req.account!.id, id) });
+  });
+
+  app.delete("/api/account/passkeys/:id", requireAccount, (req: AuthedRequest, res: Response) => {
+    const removed = store.removeCredential(req.account!.id, String(req.params.id));
+    if (!removed.ok) return res.status(400).json({ ok: false, message: removed.reason });
+    hooks.onAuthenticated?.(req.account!.id, "register", { via: "remove-passkey" });
+    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
+  });
+
+  /* ------------------------------------------------------------ recovery */
+
+  // A recovery code is 130 random bits, so guessing is hopeless — this limit
+  // is about noise, and about making a stolen id useless without the code.
+  const recoveryLimiter = rateLimit({ windowMs: 60 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many recovery attempts; try again in an hour." } });
+  const tickets = new Map<string, { accountId: string; at: number }>();
+  const TICKET_TTL_MS = 10 * 60 * 1000;
+
+  app.put("/api/account/recovery", requireAccount, (req: AuthedRequest, res: Response) => {
+    const body = (req.body || {}) as { id?: unknown; verifier?: unknown; wrapped?: { iv: string; ct: string } };
+    const r = store.setRecovery(req.account!.id, { id: String(body.id ?? ""), verifier: String(body.verifier ?? ""), wrapped: body.wrapped ?? { iv: "", ct: "" } });
+    if (!r.ok) return res.status(400).json({ ok: false, message: r.reason });
+    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
+  });
+
+  app.delete("/api/account/recovery", requireAccount, (req: AuthedRequest, res: Response) => {
+    store.clearRecovery(req.account!.id);
+    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
+  });
+
+  app.post("/api/account/recovery/start", recoveryLimiter, (req: Request, res: Response) => {
+    const body = (req.body || {}) as { id?: unknown; proof?: unknown };
+    const account = store.checkRecovery(String(body.id ?? ""), String(body.proof ?? ""));
+    if (!account) {
+      eventStore.record({ kind: "account-recovery-failed" });
+      return res.status(404).json({ ok: false, message: "This recovery code does not match an account on this server." });
+    }
+    const now = Date.now();
+    for (const [k, v] of tickets) if (now - v.at > TICKET_TTL_MS) tickets.delete(k);
+    const ticket = randomBytes(24).toString("base64url");
+    tickets.set(ticket, { accountId: account.id, at: now });
+    store.addAudit(account.id, "recovery-started", clientInfo(req));
+    res.json({
+      ok: true,
+      ticket,
+      wrapped: store.wrappedFor(account.id, "recovery"),
+      userName: account.userName,
+      publicKey: creationOptions(req, account, challenges.issue("recover", account.id)),
+    });
+  });
+
+  app.post("/api/account/recovery/finish", ceremonyLimiter, (req: Request, res: Response) => {
+    const body = (req.body || {}) as { ticket?: unknown; credential?: RegistrationResponseJSON; wrapped?: { iv: string; ct: string }; label?: string };
+    const ticket = tickets.get(String(body.ticket ?? ""));
+    tickets.delete(String(body.ticket ?? ""));
+    if (!ticket || Date.now() - ticket.at > TICKET_TTL_MS) return res.status(400).json({ ok: false, message: "The recovery has expired; start again." });
+    const challenge = challengeOf(body.credential?.response?.clientDataJSON);
+    const issued = challenge ? challenges.take(challenge, "recover") : null;
+    if (!body.credential || !issued || issued.userName !== ticket.accountId) return res.status(400).json({ ok: false, message: "Unknown or expired challenge." });
+    const r = verifyRegistration({ response: body.credential, expectedChallenge: challenge, policy: rpPolicyFor(req) });
+    if (!r.ok) return res.status(400).json({ ok: false, message: `Passkey registration rejected: ${r.error}` });
+    const added = store.addCredential(ticket.accountId, r.credential, body.wrapped ?? { iv: "", ct: "" }, String(body.label ?? "recovered"));
+    if (!added.ok) return res.status(409).json({ ok: false, message: added.reason });
+    store.recordSignIn(ticket.accountId, r.credential.signCount, { ...clientInfo(req), via: "recovery" }, Date.now(), r.credential.credentialId);
+    store.addAudit(ticket.accountId, "recovered", clientInfo(req));
+    hooks.onAuthenticated?.(ticket.accountId, "sign-in", { ...clientInfo(req), via: "recovery" });
+    const token = store.issueToken(ticket.accountId, Date.now(), clientInfo(req));
+    res.json({ ok: true, token, account: store.summary(ticket.accountId, tokenHash(token)) });
+  });
+
+  /* -------------------------------------------------- sessions, identity */
+
+  app.get("/api/account/sessions", requireAccount, (req: AuthedRequest, res: Response) => {
+    res.json({ ok: true, sessions: store.listSessions(req.account!.id, tokenHash(req.token!)) });
+  });
+
+  app.delete("/api/account/sessions/:id", requireAccount, (req: AuthedRequest, res: Response) => {
+    const ended = store.revokeSession(req.account!.id, String(req.params.id));
+    if (!ended) return res.status(404).json({ ok: false, message: "No such session." });
+    res.json({ ok: true, sessions: store.listSessions(req.account!.id, tokenHash(req.token!)) });
+  });
+
+  app.put("/api/account/identity", requireAccount, (req: AuthedRequest, res: Response) => {
+    const ok = store.setIdentity(req.account!.id, String(((req.body || {}) as { publicKey?: unknown }).publicKey ?? ""));
+    res.status(ok ? 200 : 400).json({ ok });
   });
 }

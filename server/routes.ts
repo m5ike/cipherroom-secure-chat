@@ -47,7 +47,12 @@ import { MemoryQueue } from "./accounts/memqueue";
 import { SignalingHub } from "./signaling/hub";
 import { PROTOCOL_VERSION } from "./signaling/frames";
 import { loadRefSecret } from "./signaling/refs";
-import { registerAdminApi } from "./admin-api";
+import { metricsText, registerAdminApi, type AdminProviders } from "./admin-api";
+import { adminDirectory } from "./admin-users";
+import { alerts } from "./monitor/alerts";
+import { traffic } from "./monitor/traffic";
+import { BackupManager } from "./storage/backup";
+import { storageDir } from "./storage/keys";
 import { requireAdminToken } from "./admin-auth";
 import { audit } from "./monitor/audit";
 import { system } from "./monitor/system";
@@ -58,6 +63,8 @@ import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
 import { buildInfo } from "./build-info";
+import { turnAnswer } from "./turn";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { safeDeviceId } from "./util";
 
 // The offline queue for signed-in members who are away: a table in the
@@ -184,7 +191,12 @@ export async function registerRoutes(
 
   // The operator console's API (/api/admin/*, admin token): live traffic,
   // connections, rooms, users, queue, databases, audit, system.
-  registerAdminApi(app, {
+  // Backups and integrity checks (storage/backup.ts): on a schedule when
+  // BACKUP_DIR is set, and whenever the operator asks.
+  const backups = storageReady.ok ? new BackupManager(storage, storageDir()) : null;
+  backups?.start();
+
+  const adminProviders: AdminProviders = {
     rooms: () => signaling.snapshot(),
     closeConnection: (connId, reason) => signaling.closeConnection(connId, reason),
     accounts: accountStore,
@@ -192,6 +204,31 @@ export async function registerRoutes(
     queue: offlineQueue,
     health: () => ({ signaling: signaling.stats(), queuePersistent: offlineQueue().persistent, protocol: PROTOCOL_VERSION }),
     deliverCommands: (deviceId) => signaling.deliverCommands(deviceId),
+    backups,
+  };
+  registerAdminApi(app, adminProviders);
+
+  // Prometheus: /metrics with METRICS_TOKEN (or any administrator's token).
+  app.get("/metrics", (req, res) => {
+    const metricsToken = process.env.METRICS_TOKEN?.trim();
+    const header = req.header("authorization") ?? "";
+    const same = (x: string, y: string) => timingSafeEqual(createHash("sha256").update(x).digest(), createHash("sha256").update(y).digest());
+    const ok = (metricsToken && same(header, `Bearer ${metricsToken}`)) || adminDirectory.authenticate(header) !== null;
+    if (!ok) return res.status(401).set("WWW-Authenticate", 'Bearer realm="m5cet-metrics"').send("unauthorized\n");
+    res.type("text/plain; version=0.0.4").send(metricsText(adminProviders));
+  });
+
+  // Alerts: evaluated every 30 s from the monitors (monitor/alerts.ts).
+  alerts.start(() => {
+    const summary = traffic.summary();
+    const snap = system.snapshot();
+    return {
+      securityWarningsPerMin: 0, // counted from the audit stream by the engine itself
+      errorsPerMin: summary.lastMinute.errors,
+      loopP99: snap.latest?.loopP99 ?? 0,
+      heapRatio: snap.memory.heapLimit ? snap.memory.heapUsed / snap.memory.heapLimit : 0,
+      deadLetters: offlineQueue().stats().dead,
+    };
   });
   // Optional telephony (voice + SMS via Twilio/Telnyx/Vonage, SIP trunk config),
   // gated by ENABLE_TELEPHONY.
@@ -222,28 +259,17 @@ export async function registerRoutes(
     res.json(buildModuleManifest(eventStore.backend));
   });
 
+  // ICE servers (server/turn.ts): short-lived TURN credentials with
+  // TURN_SECRET, the old shared ones otherwise.
   app.get("/api/turn", (_req, res) => {
-    const url = process.env.TURN_SERVER_URL?.trim() || "";
-    if (!url) {
-      // Not an error: most rooms work over STUN. (A 404 here printed a red
-      // "Failed to load resource" line in every visitor's console.)
-      return res.json({ ok: true, configured: false, iceServers: [] });
-    }
-    const username = process.env.TURN_USERNAME?.trim() || "";
-    const credential = process.env.TURN_CREDENTIAL?.trim() || "";
-    if (!username || !credential) {
-      return res.status(503).json({ ok: false, message: "TURN credentials are incomplete." });
-    }
-    res.json({
-      ok: true,
-      iceServers: [
-        { urls: "stun:stun.l.google.com:19302" },
-        { urls: url, username, credential },
-      ],
-    });
+    const answer = turnAnswer();
+    if (!answer.ok) return res.status(answer.status).json({ ok: false, message: answer.message });
+    res.json(answer);
   });
+  if (turnAnswer().ok && (turnAnswer() as { mode?: string }).mode === "static") {
+    audit.add({ category: "security", level: "warn", event: "config.turn-static", detail: { hint: "TURN_USERNAME/TURN_CREDENTIAL are shared with every visitor; set TURN_SECRET (coturn use-auth-secret) for short-lived credentials" } });
+  }
 
-  // Room names and peer ids: operator eyes only.
   app.get("/api/events/recent", requireAdminToken(), (req: Request, res: Response) => {
     if (!eventStore.isEnabled) {
       return res.status(404).json({ ok: false, message: "Event logging is disabled. Set LOG_EVENTS=1." });

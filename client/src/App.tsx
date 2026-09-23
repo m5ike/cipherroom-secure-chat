@@ -109,7 +109,7 @@ import { MainMenu } from "./components/MainMenu";
 import { formatTime, formatFullDate, formatBytes } from "./lib/format";
 import { fetchLayoutConfig, applyLayoutStyles, loadCachedLayout } from "./lib/layout-client";
 import { renderTemplate, type LayoutConfig } from "./lib/layout-config";
-import { RTC_CONFIG, turnConfigPromise } from "./lib/rtc";
+import { freshRtcConfig, turnConfigPromise } from "./lib/rtc";
 import { M5Logo } from "./components/M5Logo";
 import { InvitePrompt, ShareSection } from "./components/SharePanel";
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
@@ -118,9 +118,9 @@ import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgSta
 import { isInlineImage } from "./lib/validate";
 import { AccountInfoModal, ChatRetentionSection, SignedInBadge } from "./components/AccountPanel";
 import {
-  accountStatus, accountSupported, accountToken, currentAccount, deleteAccount as deleteServerAccount,
-  linkPushSubscription, loadVault, logAccountEvent, refreshAccount, registerAccount, restoreSession, saveVault,
-  signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
+  accountStatus, accountSupported, accountToken, addPasskey, createRecoveryCode, currentAccount, deleteAccount as deleteServerAccount,
+  endSession, linkPushSubscription, loadVault, logAccountEvent, recoverWithCode, refreshAccount, registerAccount, removePasskey,
+  removeRecoveryCode, restoreSession, saveVault, signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
 } from "./lib/account";
 import { createHistoryStore, createServerSealer, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
@@ -888,6 +888,37 @@ function ChatApp() {
     });
   }
 
+  /** 3.1: the account window's passkey, recovery and device actions. */
+  const accountActions = {
+    onAddPasskey: (label: string) => void runAccountTask(async () => {
+      setAccount(await addPasskey(label || navigator.platform || "passkey"));
+      setAccMsg(t(lang, "acc.passkeys.added"));
+    }),
+    onRemovePasskey: (credentialId: string) => void runAccountTask(async () => { setAccount(await removePasskey(credentialId)); }),
+    onCreateRecovery: async (): Promise<string | null> => {
+      let code: string | null = null;
+      await runAccountTask(async () => { const r = await createRecoveryCode(); setAccount(r.account); code = r.code; });
+      return code;
+    },
+    onRemoveRecovery: () => void runAccountTask(async () => { setAccount(await removeRecoveryCode()); }),
+    onEndSession: (id: string) => void runAccountTask(async () => { const fresh = await endSession(id); if (fresh) setAccount(fresh); }),
+  };
+
+  /** Every passkey lost: the recovery code, a new passkey, and back in. */
+  function recoverAccount(code: string) {
+    return runAccountTask(async () => {
+      const acc = await recoverWithCode(code, navigator.platform || "recovered");
+      setAccount(acc);
+      setPrefs({ chatRetention: "server" });
+      retentionRef.current = "server";
+      setAccMsg(t(lang, "acc.recover.done"));
+      systemMessage(t(lang, "acc.recover.done"));
+      await applyVault(true);
+      await linkPushForAccount();
+      announceAccountToServer();
+    });
+  }
+
   function saveAccountDataNow() {
     void runAccountTask(async () => {
       await persistChat(true);
@@ -933,18 +964,27 @@ function ChatApp() {
    *  pinned for that name in this room (trust on first use). */
   async function identityFor(signer: Signer | null, senderName: string): Promise<MessageIdentity> {
     if (!signer) return { state: "unsigned" };
-    const kid = await keyId(signer.publicKey);
-    const fingerprint = await keyFingerprint(signer.publicKey);
-    if (!signer.valid) {
+    // Signed in: the ACCOUNT key vouches for the device (3.1), so the pin
+    // follows the person across devices; otherwise it is the device key.
+    const byAccount = Boolean(signer.valid && signer.account?.valid);
+    const pinned = byAccount ? signer.account!.publicKey : signer.publicKey;
+    const kid = await keyId(pinned);
+    const fingerprint = await keyFingerprint(pinned);
+    if (!signer.valid || (signer.account && !signer.account.valid)) {
       warnOnce(`invalid:${kid}`, t(lang, "sec.identity.invalidFlash").replace("{name}", senderName), "error");
       return { state: "invalid", kid, fingerprint };
     }
-    const verdict = pinsRef.current.check(roomRef.current, senderName, kid);
+    let verdict = pinsRef.current.check(roomRef.current, senderName, kid);
+    // The same device signing in to its account is an upgrade, not a stranger.
+    if (verdict === "changed" && byAccount && pinsRef.current.pinned(roomRef.current, senderName) === await keyId(signer.publicKey)) {
+      pinsRef.current.accept(roomRef.current, senderName, kid);
+      verdict = "match";
+    }
     if (verdict === "changed") {
       warnOnce(`changed:${kid}`, t(lang, "sec.identity.changedFlash").replace("{name}", senderName), "error");
-      return { state: "changed", kid, fingerprint };
+      return { state: "changed", kid, fingerprint, account: byAccount };
     }
-    return { state: "verified", kid, fingerprint };
+    return { state: "verified", kid, fingerprint, account: byAccount };
   }
 
   /** A security notice, once per subject per session. */
@@ -1468,7 +1508,9 @@ function ChatApp() {
   async function createPeer(peerId: string, peerName: string, initiator: boolean) {
     if (peersRef.current.has(peerId) || peerId === myIdRef.current) return;
 
-    const pc = new RTCPeerConnection(RTC_CONFIG);
+    // TURN credentials may be short-lived (TURN_SECRET): refreshed here if close to expiry.
+    const pc = new RTCPeerConnection(await freshRtcConfig());
+    if (peersRef.current.has(peerId)) { pc.close(); return; } // raced by another signal meanwhile
     const handle: PeerHandle = {
       id: peerId,
       name: peerName,
@@ -2344,7 +2386,7 @@ function ChatApp() {
       ? (identityRef.current ? { text: `${t(lang, "sec.myFingerprint")} · ${identityRef.current.fingerprint}`, tone: "ok" as const } : undefined)
       : m.identity
         ? {
-            text: t(lang, `sec.identity.${m.identity.state}`).replace("{fp}", m.identity.fingerprint ?? ""),
+            text: t(lang, m.identity.state === "verified" && m.identity.account ? "sec.identity.account" : `sec.identity.${m.identity.state}`).replace("{fp}", m.identity.fingerprint ?? ""),
             tone: m.identity.state === "verified" ? "ok" as const : m.identity.state === "unsigned" ? "muted" as const : "warn" as const,
           }
         : undefined;
@@ -3642,6 +3684,7 @@ function ChatApp() {
               onSignIn={() => void signInToAccount()}
               onRegister={() => void createAccount()}
               onSignOutAndWipe={() => void signOutAndWipe()}
+              onRecover={(code) => void recoverAccount(code)}
             />
             <ConnectionPanel status={connStatus} prefs={prefs} setPrefs={setPrefs} lang={lang} desired={desired} log={connLog} />
           </div>
@@ -3759,6 +3802,7 @@ function ChatApp() {
             onSaveNow={saveAccountDataNow}
             onSignOut={() => void signOutAndWipe()}
             onDelete={deleteAccountForever}
+            actions={accountActions}
           />
         </SimpleModal>
       ) : null}

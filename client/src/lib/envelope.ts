@@ -36,7 +36,7 @@
 
 import { deriveRoomKey as deriveLegacyRoomKey, fromBase64, toBase64, type Bytes } from "./crypto";
 import type { Identity } from "./identity";
-import { verifySignature } from "./identity";
+import { verifyDeviceCert, verifySignature } from "./identity";
 
 export const CRYPTO_VERSION = 2 as const;
 export const ROOM_KDF_ITERATIONS = 600_000;
@@ -104,16 +104,26 @@ export async function deriveRoomKeys(room: string, passphrase: string, opts: { i
 
 /* ------------------------------------------------------------------ bodies */
 
-/** What travels inside the encryption: the body, and who signed it. */
-type SignedBody = { b: string; pk?: string; s?: string };
+/** What travels inside the encryption: the body, who signed it, and (when
+ *  signed in) the account that vouches for the signing device. */
+type SignedBody = { b: string; pk?: string; s?: string; apk?: string; ac?: string };
 
-export type Signer = { publicKey: string; valid: boolean };
+export type Signer = {
+  publicKey: string;
+  valid: boolean;
+  /** The account key that certified this device, and whether the certificate holds. */
+  account?: { publicKey: string; valid: boolean };
+};
 
 async function signBody(body: string, ctx: Bytes, identity?: Identity | null): Promise<string> {
   const inner: SignedBody = { b: body };
   if (identity) {
     inner.pk = identity.publicKey;
     inner.s = await identity.sign(concat(ctx, utf8(body)));
+    if (identity.attestation) {
+      inner.apk = identity.attestation.accountKey;
+      inner.ac = identity.attestation.cert;
+    }
   }
   return JSON.stringify(inner);
 }
@@ -123,7 +133,11 @@ async function readBody(plain: string, ctx: Bytes): Promise<{ body: string; sign
   if (!inner || typeof inner.b !== "string") throw new Error("malformed body");
   if (typeof inner.pk === "string" && typeof inner.s === "string") {
     const valid = await verifySignature(inner.pk, concat(ctx, utf8(inner.b)), inner.s).catch(() => false);
-    return { body: inner.b, signer: { publicKey: inner.pk, valid } };
+    const signer: Signer = { publicKey: inner.pk, valid };
+    if (typeof inner.apk === "string" && typeof inner.ac === "string") {
+      signer.account = { publicKey: inner.apk, valid: valid && await verifyDeviceCert({ accountKey: inner.apk, cert: inner.ac }, inner.pk) };
+    }
+    return { body: inner.b, signer };
   }
   return { body: inner.b, signer: null };
 }

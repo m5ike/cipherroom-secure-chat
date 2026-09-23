@@ -59,7 +59,7 @@ export type HubClient = RelayPeer & {
   deviceId?: string;
 };
 
-type PushFn = (target: PushTarget, payload: { title: string; body: string; url: string; tag: string }) => Promise<{ ok: boolean; error?: string }>;
+type PushFn = (target: PushTarget, payload: { title: string; body: string; url: string; tag: string; kind?: string }) => Promise<{ ok: boolean; error?: string }>;
 
 export type HubOptions = {
   accounts: AccountStore;

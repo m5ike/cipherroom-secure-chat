@@ -138,3 +138,38 @@ describe("expiry and statistics", () => {
     expect(queue.stats("acc-alice").queued).toBe(0);
   });
 });
+
+
+describe("metadata at rest and the relay ledger", () => {
+  const sealer = {
+    // A stand-in for the master-key sealer: reversible, and bound to the aad.
+    seal: (text: string, aad: string) => Buffer.from(`${aad}|${text}`).toString("base64"),
+    open: (sealed: string, aad: string) => {
+      const raw = Buffer.from(sealed, "base64").toString();
+      return raw.startsWith(`${aad}|`) ? raw.slice(aad.length + 1) : null;
+    },
+  };
+
+  it("seals who sent an item and keeps it readable through the queue", () => {
+    const q = new MailQueue(db, () => clock, sealer);
+    const r = q.enqueue({ accountId: "acc-seal", room: "r", kind: "message", messageId: "m-seal", from: { peerId: "p-1", accountId: "acc-sender", name: "Mallory Q." }, envelope: ENVELOPE });
+    expect(r.ok).toBe(true);
+    const raw = db.prepare("SELECT from_json, sender_key FROM mail_queue WHERE message_id = 'm-seal'").get() as { from_json: string; sender_key: string };
+    expect(raw.from_json.startsWith("s1:")).toBe(true);
+    expect(raw.from_json).not.toContain("Mallory");
+    expect(raw.sender_key).not.toContain("acc-sender");
+    expect(q.lease("acc-seal", "r")[0].from).toEqual({ peerId: "p-1", accountId: "acc-sender", name: "Mallory Q." });
+  });
+
+  it("remembers relayed messages across instances (a restart)", () => {
+    const before = new MailQueue(db, () => clock, sealer);
+    before.rememberRelay("m-led", "room-x", { peerId: "p-s", name: "Sender" }, "acc-a");
+    before.rememberRelay("m-led", "room-x", { peerId: "p-s", name: "Sender" }, "acc-b");
+    before.rememberRelay("m-led", "room-x", { peerId: "p-s", name: "Sender" }, "acc-b");
+    const after = new MailQueue(db, () => clock, sealer);
+    expect(after.relayOf("m-led")).toMatchObject({ room: "room-x", sender: { peerId: "p-s", name: "Sender" }, recipients: ["acc-a", "acc-b"] });
+    const stored = db.prepare("SELECT sender FROM relay_ledger WHERE message_id = 'm-led'").get() as { sender: string };
+    expect(stored.sender).not.toContain("Sender");
+    expect(after.relayOf("nope")).toBeNull();
+  });
+});

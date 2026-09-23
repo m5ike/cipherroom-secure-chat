@@ -15,8 +15,8 @@ vi.mock("../client/src/lib/passkey", async (importOriginal) => {
   return {
     ...actual,
     passkeySupported: () => true,
-    createPasskey: vi.fn(async () => ({ response: { id: "cred", rawId: "cred", type: "public-key", response: { clientDataJSON: "c", attestationObject: "a" } }, key: passkeyKey.current!, databaseKey: DB_KEY })),
-    assertPasskey: vi.fn(async () => ({ response: { id: "cred", rawId: "cred", type: "public-key", response: { clientDataJSON: "c", authenticatorData: "a", signature: "s" } }, key: passkeyKey.current!, databaseKey: DB_KEY })),
+    createPasskey: vi.fn(async () => ({ response: { id: "cred", rawId: "cred", type: "public-key", response: { clientDataJSON: "c", attestationObject: "a" } }, key: passkeyKey.current!, databaseKey: DB_KEY, secret: new Uint8Array(32).fill(9) })),
+    assertPasskey: vi.fn(async () => ({ response: { id: "cred", rawId: "cred", type: "public-key", response: { clientDataJSON: "c", authenticatorData: "a", signature: "s" } }, key: passkeyKey.current!, databaseKey: DB_KEY, secret: new Uint8Array(32).fill(9) })),
   };
 });
 
@@ -95,7 +95,10 @@ describe("registration and sign-in", () => {
     expect(currentAccount()?.id).toBe(SUMMARY.id);
     // Registration also opens the user's database on the server, with the
     // key the passkey derived — never with the vault key.
-    expect(urls()).toEqual(["POST /api/account/register/options", "POST /api/account/register/verify", "POST /api/storage/open"]);
+    // …and the account key (derived from the root) vouches for this device;
+    // only its public half goes to the server.
+    expect(urls()).toEqual(["POST /api/account/register/options", "POST /api/account/register/verify", "PUT /api/account/identity", "POST /api/storage/open"]);
+    expect(calls[2].body).toMatchObject({ publicKey: expect.stringMatching(/^[A-Za-z0-9+/]{43}=$/) });
     expect(calls.at(-1)).toMatchObject({ body: { key: DB_KEY }, auth: "Bearer session-token-abcdefghijkl" });
     expect(sessionStorage.getItem("m5cet:account:v1")).toContain("session-token-abcdefghijkl");
     expect(keys.get(SUMMARY.id)).toBeDefined();
@@ -103,7 +106,7 @@ describe("registration and sign-in", () => {
 
   it("signs in with an existing passkey", async () => {
     await signInWithPasskey();
-    expect(urls()).toEqual(["POST /api/account/signin/options", "POST /api/account/signin/verify", "POST /api/storage/open"]);
+    expect(urls()).toEqual(["POST /api/account/signin/options", "POST /api/account/signin/verify", "PUT /api/account/identity", "POST /api/storage/open"]);
     expect(isSignedIn()).toBe(true);
   });
 
@@ -141,7 +144,7 @@ describe("the vault", () => {
     const chat = { messages: [{ id: "m1", text: "a secret sentence" }], rooms: ["alpha"], savedAt: 1 };
     await saveVault({ profile: { name: "Alice", theme: "midnight" }, chat });
 
-    const put = calls.find((c) => c.method === "PUT")!;
+    const put = calls.find((c) => c.method === "PUT" && c.url === "/api/account/vault")!;
     const raw = JSON.stringify(put.body);
     expect(raw).not.toContain("a secret sentence");
     expect(raw).not.toContain("midnight");

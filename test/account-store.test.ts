@@ -84,11 +84,24 @@ describe("session tokens", () => {
     expect(store.resolveToken(b)).toBeNull();
   });
 
-  it("does not persist tokens (a restart signs everyone out)", () => {
+  it("keeps sessions across a restart, as hashes, and ends them after 7 days whatever happens", () => {
     const acc = makeAccount();
-    const token = store.issueToken(acc.id);
+    const t0 = 1_800_000_000_000;
+    const token = store.issueToken(acc.id, t0);
     store.flush();
-    expect(new AccountStore(dir).resolveToken(token)).toBeNull();
+    const restarted = new AccountStore(dir);
+    expect(restarted.resolveToken(token, t0 + 60_000)?.id).toBe(acc.id);
+    // Used every few hours it slides on…
+    let at = t0;
+    for (let i = 0; i < 12; i++) { at += 10 * 60 * 60 * 1000; expect(restarted.resolveToken(token, at)?.id).toBe(acc.id); }
+    // …but not past the maximum age.
+    expect(restarted.resolveToken(token, t0 + 7 * 24 * 60 * 60 * 1000 + 1)).toBeNull();
+  });
+
+  it("ends an idle session after 12 hours", () => {
+    const acc = makeAccount();
+    const token = store.issueToken(acc.id, 1_000);
+    expect(store.resolveToken(token, 1_000 + 12 * 60 * 60 * 1000 + 1)).toBeNull();
   });
 });
 

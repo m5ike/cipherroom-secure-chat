@@ -34,6 +34,8 @@ export type SqliteDatabase = {
   exec(sql: string): unknown;
   pragma(source: string, options?: { simple?: boolean }): unknown;
   transaction<T extends (...args: never[]) => unknown>(fn: T): T;
+  /** better-sqlite3's online backup (pages copied while the database stays in use). */
+  backup?(destination: string): Promise<unknown>;
   close(): void;
   readonly open: boolean;
   readonly name: string;

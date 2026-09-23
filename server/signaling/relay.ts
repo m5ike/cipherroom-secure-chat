@@ -46,22 +46,16 @@ export type RelayPeer = {
 
 type Rooms = Map<string, Map<string, RelayPeer>>;
 type SendFn = (socket: WebSocket, payload: unknown) => boolean;
-type PushFn = (target: PushTarget, payload: { title: string; body: string; url: string; tag: string }) => Promise<{ ok: boolean; error?: string }>;
+type PushFn = (target: PushTarget, payload: { title: string; body: string; url: string; tag: string; kind?: string }) => Promise<{ ok: boolean; error?: string }>;
 
 type AwayEntry = { name: string; since: number };
 
-/** Who relayed which message to whom — so receipts can find their way back. */
-type LedgerEntry = { room: string; senderPeerId: string; senderAccountId?: string; senderName: string; recipients: Set<string>; at: number };
-
 const PUSH_THROTTLE_MS = 30_000;
-const LEDGER_MAX = 50_000;
-const LEDGER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const DELIVER_BATCH = 50;
 
 export class AwayRelay {
   /** room → accountId → away entry. The truth lives here, not on disk. */
   private awayByRoom = new Map<string, Map<string, AwayEntry>>();
-  private ledger = new Map<string, LedgerEntry>();
   private lastPush = new Map<string, number>();
 
   constructor(
@@ -248,7 +242,9 @@ export class AwayRelay {
         audit.add({ category: "security", level: "warn", event: "relay.refused", actor: client.id, accountId, roomHash: hashRoom(room), status: result.reason });
         continue;
       }
-      this.remember(frame.messageId, room, client, accountId);
+      // The ledger (in the queue's database) routes receipts back later,
+      // also after a restart.
+      queue.rememberRelay(frame.messageId, room, { peerId: client.id, name: client.name, ...(client.accountId ? { accountId: client.accountId } : {}) }, accountId);
       if (result.duplicate) { status(ref, "duplicate", name); continue; }
 
       this.accounts.addAudit(accountId, "relay-stored", { bytes: result.item.bytes });
@@ -263,26 +259,6 @@ export class AwayRelay {
       } else {
         status(ref, "stored", name);
         await this.wake(accountId, room, client.name);
-      }
-    }
-  }
-
-  private remember(messageId: string, room: string, sender: RelayPeer, recipient: string): void {
-    const existing = this.ledger.get(messageId);
-    if (existing) { existing.recipients.add(recipient); return; }
-    this.ledger.set(messageId, {
-      room,
-      senderPeerId: sender.id,
-      senderAccountId: sender.accountId,
-      senderName: sender.name,
-      recipients: new Set([recipient]),
-      at: this.now(),
-    });
-    if (this.ledger.size > LEDGER_MAX) {
-      const cutoff = this.now() - LEDGER_TTL_MS;
-      for (const [id, entry] of this.ledger) {
-        if (entry.at < cutoff || this.ledger.size > LEDGER_MAX) this.ledger.delete(id);
-        else break;
       }
     }
   }
@@ -304,12 +280,13 @@ export class AwayRelay {
 
   /** "I have read these": only for messages relayed to this reader. */
   receipt(client: RelayPeer, messageIds: string[], state: "read" | "delivered"): number {
-    if (!client.accountId || !client.room) return 0;
+    const queue = this.queue();
+    if (!queue || !client.accountId || !client.room) return 0;
     let routed = 0;
     for (const messageId of messageIds) {
-      const entry = this.ledger.get(messageId);
-      if (!entry || entry.room !== client.room || !entry.recipients.has(client.accountId)) continue;
-      this.notifySender(entry.room, messageId, { peerId: entry.senderPeerId, accountId: entry.senderAccountId }, client, state);
+      const entry = queue.relayOf(messageId);
+      if (!entry || entry.room !== client.room || !entry.recipients.includes(client.accountId)) continue;
+      this.notifySender(entry.room, messageId, { peerId: entry.sender.peerId, accountId: entry.sender.accountId }, client, state);
       routed += 1;
     }
     return routed;
@@ -377,12 +354,17 @@ export class AwayRelay {
     this.lastPush.set(key, this.now());
     if (this.lastPush.size > 20_000) this.lastPush.clear();
     let sent = 0;
+    // A neutral wake-up: the push payload is encrypted for the browser
+    // (RFC 8291), but the notification shows on a locked screen — no name,
+    // no room. The service worker words it in the device's language.
+    void fromName;
     for (const target of acc.push) {
       const r = await this.push(target, {
         title: "M5cet",
-        body: `${fromName.slice(0, 40)} · ${room.slice(0, 40)}`,
+        body: "",
         url: "/signin",
         tag: `m5cet-away-${hashRoom(room)}`,
+        kind: "relay",
       });
       if (r.ok) sent += 1;
       else if (/\b(404|410)\b/.test(r.error ?? "")) this.accounts.removePushEndpoint(accountId, target.endpoint);
@@ -394,6 +376,6 @@ export class AwayRelay {
   stats() {
     let away = 0;
     for (const map of this.awayByRoom.values()) away += map.size;
-    return { away, rooms: this.awayByRoom.size, ledger: this.ledger.size };
+    return { away, rooms: this.awayByRoom.size };
   }
 }

@@ -26,17 +26,31 @@
 //   GET    /api/admin/audit                   the journal, filtered
 //   GET    /api/admin/audit/export            CSV or JSON download
 //   PUT    /api/admin/audit/settings          communication auditing on/off
+//   GET    /api/admin/audit/verify            check the hash chain and signed checkpoints
+//   POST   /api/admin/audit/checkpoint        sign the head of the chain now
 //   GET    /api/admin/commands                allowlist, pending, delivery audit
 //   POST   /api/admin/commands                queue a command for a device
 //   GET    /api/admin/push                    push readiness + anonymous subscribers
 //   POST   /api/admin/push/test               test push (one id, or everyone)
 //   GET    /api/admin/events                  metadata event feed (LOG_EVENTS=1)
+//   GET    /api/admin/backups                 backups, schedule, last integrity check
+//   POST   /api/admin/backups                 back up now
+//   POST   /api/admin/db/integrity            quick_check now
+//   POST   /api/admin/db/optimize             ANALYZE-style optimize (+ VACUUM, owner)
+//   GET    /api/admin/metrics                 Prometheus text format (also /metrics)
+//   GET    /api/admin/alerts                  rules, firing alerts, history
+//   PUT    /api/admin/alerts/rules/:id        threshold / enabled
 //
 // Everything the operator does here is itself written to the audit
 // journal (category "admin").
 
 import type { Express, Request, Response } from "express";
-import { requireAdminToken } from "./admin-auth";
+import { adminName, requireAdmin, requireAdminToken, type AdminRequest } from "./admin-auth";
+import { adminDirectory, isRole } from "./admin-users";
+import { rateLimit } from "express-rate-limit";
+import { randomBytes } from "node:crypto";
+import { challengeOf, rpPolicyFor } from "./accounts/routes";
+import { b64urlToBuffer, SUPPORTED_ALGS, verifyAssertion, verifyRegistration, type AssertionResponseJSON, type RegistrationResponseJSON } from "./accounts/webauthn";
 import { buildInfo } from "./build-info";
 import { audit, type AuditCategory, type AuditLevel } from "./monitor/audit";
 import { system } from "./monitor/system";
@@ -44,6 +58,9 @@ import { traffic, type TrafficClass } from "./monitor/traffic";
 import type { AccountStore } from "./accounts/store";
 import type { OfflineQueue } from "./accounts/mailqueue";
 import type { StorageService } from "./storage/service";
+import type { BackupManager } from "./storage/backup";
+import { gauge, renderMetrics, type Metric } from "./monitor/metrics";
+import { alerts, type RuleId } from "./monitor/alerts";
 import { ADMIN_COMMAND_ALLOWLIST, adminCommandAudit, buildCommand, enqueue, pendingCommands, pushSubscriptions } from "./routes-admin-shared";
 import { isWebPushReady, sendWebPush } from "./push";
 import { eventStore } from "./events";
@@ -65,6 +82,8 @@ export type AdminProviders = {
   health?: () => Record<string, unknown>;
   /** Hands queued commands to the device now, if it is connected. */
   deliverCommands?: (deviceId: string) => number;
+  /** Backups and integrity checks (storage/backup.ts), when storage runs. */
+  backups?: BackupManager | null;
 };
 
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -73,17 +92,141 @@ const num = (v: unknown) => {
   return Number.isFinite(n) && n > 0 ? n : undefined;
 };
 
-function adminActor(req: Request): string {
-  return `admin@${String(req.ip ?? "").replace(/^::ffff:/, "") || "unknown"}`;
-}
+const adminActor = adminName;
 
 export function registerAdminApi(app: Express, deps: AdminProviders): void {
   const guard = requireAdminToken();
+  const selfGuard = requireAdmin("auditor");
   app.use("/api/admin", (req, res, next) => {
     // Retention and storage have their own guarded routes under the same
     // prefix; everything else in this module goes through the guard here.
-    if (req.path.startsWith("/retention") || req.path.startsWith("/storage")) return next();
+    if (req.path.startsWith("/retention") || req.path.startsWith("/storage") || req.path.startsWith("/auth/")) return next();
+    // Their own passkeys: any administrator, auditors included.
+    if (req.path.startsWith("/me/")) return selfGuard(req, res, next);
     return guard(req, res, next);
+  });
+
+  /* ------------------------------------------------ administrators (3.1) */
+
+  const owner = requireAdmin("owner");
+  const challenges = new Map<string, { purpose: "admin-register" | "admin-signin"; name?: string; at: number }>();
+  const issueChallenge = (purpose: "admin-register" | "admin-signin", name?: string) => {
+    const now = Date.now();
+    for (const [k, v] of challenges) if (now - v.at > 120_000) challenges.delete(k);
+    const c = randomBytes(32).toString("base64url");
+    challenges.set(c, { purpose, name, at: now });
+    return c;
+  };
+  const takeChallenge = (clientDataJSON: unknown, purpose: "admin-register" | "admin-signin") => {
+    const c = challengeOf(clientDataJSON);
+    const v = c ? challenges.get(c) : undefined;
+    if (c) challenges.delete(c);
+    return v && v.purpose === purpose && Date.now() - v.at <= 120_000 ? { challenge: c, name: v.name } : null;
+  };
+
+  app.get("/api/admin/whoami", (req: AdminRequest, res) => res.json({ ok: true, admin: req.admin ?? null }));
+
+  app.get("/api/admin/admins", owner, (_req, res) => res.json({ ok: true, admins: adminDirectory.list() }));
+
+  app.post("/api/admin/admins", owner, (req, res) => {
+    const body = (req.body ?? {}) as { name?: unknown; role?: unknown };
+    const role = isRole(body.role) ? body.role : "auditor";
+    const created = adminDirectory.create(String(body.name ?? "").toLowerCase(), role);
+    audit.add({ category: "admin", level: "notice", event: "admin.admins.create", actor: adminActor(req), target: String(body.name ?? ""), status: created.ok ? role : "refused" });
+    if (!created.ok) return res.status(400).json({ ok: false, message: created.reason });
+    res.json({ ok: true, admins: adminDirectory.list() });
+  });
+
+  app.patch("/api/admin/admins/:name", owner, (req, res) => {
+    const body = (req.body ?? {}) as { role?: unknown; disabled?: unknown };
+    const ok = adminDirectory.update(String(req.params.name), { ...(isRole(body.role) ? { role: body.role } : {}), ...(typeof body.disabled === "boolean" ? { disabled: body.disabled } : {}) });
+    audit.add({ category: "admin", level: "notice", event: "admin.admins.update", actor: adminActor(req), target: String(req.params.name), detail: body });
+    res.status(ok ? 200 : 404).json({ ok, admins: adminDirectory.list() });
+  });
+
+  app.delete("/api/admin/admins/:name", owner, (req, res) => {
+    const ok = adminDirectory.remove(String(req.params.name));
+    audit.add({ category: "admin", level: "warn", event: "admin.admins.delete", actor: adminActor(req), target: String(req.params.name) });
+    res.status(ok ? 200 : 404).json({ ok, admins: adminDirectory.list() });
+  });
+
+  app.post("/api/admin/admins/:name/tokens", owner, (req, res) => {
+    const token = adminDirectory.issueToken(String(req.params.name), String(((req.body ?? {}) as { label?: unknown }).label ?? ""));
+    audit.add({ category: "admin", level: "notice", event: "admin.admins.token", actor: adminActor(req), target: String(req.params.name), status: token ? "issued" : "not-found" });
+    if (!token) return res.status(404).json({ ok: false, message: "unknown administrator" });
+    res.json({ ok: true, token, admins: adminDirectory.list() });
+  });
+
+  app.delete("/api/admin/admins/:name/tokens/:id", owner, (req, res) => {
+    const ok = adminDirectory.revokeToken(String(req.params.name), String(req.params.id));
+    audit.add({ category: "admin", level: "notice", event: "admin.admins.token-revoked", actor: adminActor(req), target: String(req.params.name) });
+    res.status(ok ? 200 : 404).json({ ok, admins: adminDirectory.list() });
+  });
+
+  // An administrator registers a passkey for themself (named administrators
+  // only — the environment tokens have no record to hold one).
+  app.post("/api/admin/me/passkeys/options", (req: AdminRequest, res) => {
+    const me = req.admin && adminDirectory.get(req.admin.name);
+    if (!me) return res.status(400).json({ ok: false, message: "Create a named administrator first (Administrators → Add), then sign in with its token." });
+    const policy = rpPolicyFor(req);
+    res.json({
+      ok: true,
+      publicKey: {
+        challenge: issueChallenge("admin-register", me.name),
+        rp: { id: policy.rpId, name: "M5cet console" },
+        user: { id: Buffer.from(`admin:${me.name}`).toString("base64url"), name: `${me.name} (M5cet admin)`, displayName: me.name },
+        pubKeyCredParams: SUPPORTED_ALGS.map((alg) => ({ type: "public-key", alg })),
+        authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
+        excludeCredentials: me.passkeys.map((p) => ({ type: "public-key", id: p.credentialId })),
+        attestation: "none",
+        timeout: 60_000,
+      },
+    });
+  });
+
+  app.post("/api/admin/me/passkeys/verify", (req: AdminRequest, res) => {
+    const body = (req.body ?? {}) as { credential?: RegistrationResponseJSON; label?: unknown };
+    const taken = takeChallenge(body.credential?.response?.clientDataJSON, "admin-register");
+    if (!body.credential || !taken || taken.name !== req.admin?.name) return res.status(400).json({ ok: false, message: "Unknown or expired challenge." });
+    const r = verifyRegistration({ response: body.credential, expectedChallenge: taken.challenge, policy: rpPolicyFor(req) });
+    if (!r.ok) return res.status(400).json({ ok: false, message: `Passkey registration rejected: ${r.error}` });
+    const ok = adminDirectory.addPasskey(req.admin!.name, r.credential, String(body.label ?? ""));
+    audit.add({ category: "admin", level: "notice", event: "admin.passkey.added", actor: adminActor(req), status: ok ? "ok" : "refused" });
+    res.status(ok ? 200 : 409).json({ ok });
+  });
+
+  // Signing in to the console with a passkey (no token needed).
+  const loginLimiter = rateLimit({ windowMs: 10 * 60 * 1000, limit: 30, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many sign-in attempts." } });
+
+  app.post("/api/admin/auth/passkey/options", loginLimiter, (req, res) => {
+    res.json({ ok: true, publicKey: { challenge: issueChallenge("admin-signin"), rpId: rpPolicyFor(req).rpId, userVerification: "required", timeout: 60_000 } });
+  });
+
+  app.post("/api/admin/auth/passkey/verify", loginLimiter, (req, res) => {
+    const body = (req.body ?? {}) as { credential?: AssertionResponseJSON };
+    const taken = takeChallenge(body.credential?.response?.clientDataJSON, "admin-signin");
+    if (!body.credential || !taken) return res.status(400).json({ ok: false, message: "Unknown or expired challenge." });
+    let credentialId = "";
+    try { credentialId = b64urlToBuffer(body.credential.rawId || body.credential.id).toString("base64url"); } catch { credentialId = ""; }
+    const found = credentialId ? adminDirectory.byCredential(credentialId) : null;
+    if (!found || found.user.disabled) {
+      audit.add({ category: "security", level: "warn", event: "admin.passkey.unknown", ip: String(req.ip ?? "") });
+      return res.status(401).json({ ok: false, message: "This passkey belongs to no administrator." });
+    }
+    const r = verifyAssertion({ response: body.credential, expectedChallenge: taken.challenge, policy: rpPolicyFor(req), stored: found.passkey });
+    if (!r.ok) {
+      audit.add({ category: "security", level: "warn", event: "admin.passkey.failed", actor: found.user.name, status: r.error.slice(0, 60) });
+      return res.status(401).json({ ok: false, message: "Passkey verification failed." });
+    }
+    const session = adminDirectory.passkeySignIn(credentialId, r.signCount);
+    if (!session) return res.status(401).json({ ok: false, message: "Sign-in refused." });
+    audit.add({ category: "admin", level: "notice", event: "admin.signin.passkey", actor: `${session.principal.name}@${String(req.ip ?? "")}` });
+    res.json({ ok: true, token: session.token, admin: session.principal });
+  });
+
+  app.post("/api/admin/auth/signout", (req, res) => {
+    adminDirectory.endSession(req.header("authorization"));
+    res.json({ ok: true });
   });
 
   const accountSummaries = () => {
@@ -357,6 +500,22 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
     res.json({ exportedAt: Date.now(), entries });
   });
 
+  // Tamper evidence (3.1): recompute the hash chain of the persisted
+  // journal and check the signed checkpoints.
+  app.get("/api/admin/audit/verify", (req, res) => {
+    if (!deps.storage.isAvailable) return res.json({ ok: true, available: false });
+    const result = deps.storage.global.verifyAudit();
+    audit.add({ category: "admin", level: result.ok ? "info" : "error", event: "admin.audit.verify", actor: adminActor(req), status: result.ok ? "intact" : `${result.problems.length} problems` });
+    const { ok: intact, ...rest } = result;
+    res.json({ ok: true, available: true, intact, ...rest });
+  });
+
+  app.post("/api/admin/audit/checkpoint", (req, res) => {
+    if (!deps.storage.isAvailable) return res.status(503).json({ ok: false, message: "storage is not running" });
+    const checkpoint = deps.storage.global.auditCheckpoint(`manual:${adminActor(req)}`);
+    res.json({ ok: true, checkpoint });
+  });
+
   app.put("/api/admin/audit/settings", (req, res) => {
     const body = (req.body ?? {}) as { communication?: unknown };
     if (typeof body.communication === "boolean") audit.setCommunication(body.communication, adminActor(req));
@@ -421,4 +580,94 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
     if (!eventStore.isEnabled) return res.json({ ok: true, enabled: false, events: [] });
     res.json({ ok: true, enabled: true, backend: eventStore.backend, events: eventStore.recent(num(req.query.limit) ?? 100) });
   });
+
+  /* ------------------------------------------------ backups & integrity */
+
+  app.get("/api/admin/backups", (_req, res) => {
+    const b = deps.backups;
+    if (!b) return res.json({ ok: true, available: false });
+    res.json({ ok: true, available: true, dir: b.dir, scheduled: b.scheduled, intervalHours: b.intervalHours, keep: b.keep, last: b.last, integrity: b.lastIntegrity, backups: b.list() });
+  });
+
+  app.post("/api/admin/backups", async (req, res) => {
+    if (!deps.backups) return res.status(503).json({ ok: false, message: "storage is not running" });
+    audit.add({ category: "admin", level: "notice", event: "admin.backup", actor: adminActor(req) });
+    const result = await deps.backups.run(`manual:${adminActor(req)}`);
+    res.status(result.ok ? 200 : 500).json(result.ok ? { ...result } : { ok: false, message: result.error });
+  });
+
+  app.post("/api/admin/db/integrity", (req, res) => {
+    if (!deps.backups) return res.status(503).json({ ok: false, message: "storage is not running" });
+    audit.add({ category: "admin", level: "info", event: "admin.integrity", actor: adminActor(req) });
+    res.json({ ok: true, integrity: deps.backups.integrity() });
+  });
+
+  app.post("/api/admin/db/optimize", (req: AdminRequest, res) => {
+    if (!deps.storage.isAvailable) return res.status(503).json({ ok: false, message: "storage is not running" });
+    const vacuum = ((req.body ?? {}) as { vacuum?: unknown }).vacuum === true;
+    if (vacuum && req.admin?.role !== "owner") return res.status(403).json({ ok: false, message: "VACUUM needs the owner role (it rewrites the whole file)." });
+    const result = deps.storage.global.optimize(vacuum);
+    audit.add({ category: "admin", level: "notice", event: "admin.db.optimize", actor: adminActor(req), detail: { vacuum, ...result } });
+    res.json({ ok: true, ...result });
+  });
+
+  /* ------------------------------------------------- metrics & alerts */
+
+  app.get("/api/admin/metrics", (_req, res) => {
+    res.type("text/plain; version=0.0.4").send(metricsText(deps));
+  });
+
+  app.get("/api/admin/alerts", (_req, res) => {
+    res.json({ ok: true, rules: alerts.listRules(), active: alerts.active(), states: alerts.all(), history: alerts.history.slice(0, 100), webhook: Boolean(process.env.ALERT_WEBHOOK_URL?.trim()) });
+  });
+
+  app.put("/api/admin/alerts/rules/:id", (req, res) => {
+    const body = (req.body ?? {}) as { threshold?: unknown; enabled?: unknown };
+    const rule = alerts.setRule(String(req.params.id) as RuleId, {
+      ...(typeof body.threshold === "number" ? { threshold: body.threshold } : {}),
+      ...(typeof body.enabled === "boolean" ? { enabled: body.enabled } : {}),
+    });
+    audit.add({ category: "admin", level: "notice", event: "admin.alerts.rule", actor: adminActor(req), target: String(req.params.id), detail: body });
+    res.status(rule ? 200 : 404).json({ ok: Boolean(rule), rule });
+  });
+}
+
+/** Everything the monitors count, as Prometheus metrics. */
+export function metricsText(deps: AdminProviders): string {
+  const t = traffic.summary();
+  const snap = system.snapshot();
+  const latest = snap.latest;
+  const rooms = deps.rooms();
+  const queue = deps.queue();
+  const q = queue?.stats();
+  const b = buildInfo();
+  const auditStats = audit.stats();
+  const perClass = (field: "frames" | "bytesIn" | "bytesOut" | "errors") => Object.entries(t.classes).map(([cls, c]) => ({ labels: { class: cls }, value: c[field] }));
+  const metrics: Metric[] = [
+    gauge("m5cet_build_info", "Version and build of the running server.", 1, { version: b.version, build: b.build }),
+    gauge("m5cet_uptime_seconds", "Seconds since the process started.", snap.uptimeSec),
+    gauge("m5cet_ws_connections", "Open WebSocket connections.", t.connections),
+    gauge("m5cet_rooms", "Open rooms.", rooms.length),
+    gauge("m5cet_room_members", "Members connected to a room.", rooms.reduce((n, r) => n + r.peers.length, 0)),
+    gauge("m5cet_away_members", "Signed-in members the relay answers for.", rooms.reduce((n, r) => n + r.away.length, 0)),
+    gauge("m5cet_accounts", "Passkey accounts.", deps.accounts.size),
+    gauge("m5cet_account_sessions", "Valid account sessions.", deps.accounts.sessionCount()),
+    { name: "m5cet_frames_total", help: "WebSocket frames and HTTP requests seen, by class.", type: "counter", samples: perClass("frames") },
+    { name: "m5cet_bytes_in_total", help: "Bytes received, by class.", type: "counter", samples: perClass("bytesIn") },
+    { name: "m5cet_bytes_out_total", help: "Bytes sent, by class.", type: "counter", samples: perClass("bytesOut") },
+    { name: "m5cet_errors_total", help: "Failed frames and requests, by class.", type: "counter", samples: perClass("errors") },
+    { name: "m5cet_http_requests_total", help: "HTTP API requests.", type: "counter", samples: [{ value: t.totals.http }] },
+    { name: "m5cet_connections_opened_total", help: "WebSocket connections opened.", type: "counter", samples: [{ value: t.totals.connectionsOpened }] },
+    { name: "m5cet_queue_items", help: "Offline queue items by state.", type: "gauge", samples: q ? [{ labels: { state: "queued" }, value: q.queued }, { labels: { state: "delivering" }, value: q.delivering }, { labels: { state: "dead" }, value: q.dead }] : [] },
+    gauge("m5cet_queue_bytes", "Bytes waiting in the offline queue.", q?.bytes ?? 0),
+    { name: "m5cet_audit_events_total", help: "Audit journal entries, by category.", type: "counter", samples: Object.entries(auditStats.byCategory).filter(([k]) => !k.includes(".")).map(([category, value]) => ({ labels: { category }, value })) },
+    gauge("m5cet_process_resident_memory_bytes", "Resident set size.", snap.memory.rss),
+    gauge("m5cet_heap_used_bytes", "V8 heap in use.", snap.memory.heapUsed),
+    gauge("m5cet_heap_limit_bytes", "V8 heap limit.", snap.memory.heapLimit),
+    gauge("m5cet_event_loop_delay_p99_ms", "Event-loop delay, 99th percentile over the last sample.", latest?.loopP99 ?? 0),
+    gauge("m5cet_cpu_percent", "Process CPU, % of one core, over the last sample.", latest?.cpu ?? 0),
+    gauge("m5cet_storage_available", "1 when server-side storage runs.", deps.storage.isAvailable ? 1 : 0),
+    gauge("m5cet_alerts_firing", "Alert rules currently firing.", alerts.active().length),
+  ];
+  return renderMetrics(metrics);
 }

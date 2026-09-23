@@ -25,6 +25,7 @@
       </div>
       <label class="switch"><input type="checkbox" id="loginRemember" /> Keep the token for this browser tab</label>
       <button class="btn btn--primary" type="submit">Sign in</button>
+      <button class="btn" type="button" id="loginPasskey">Sign in with a passkey</button>
       <p class="login__err err small" id="loginError" hidden></p>
       <p class="login__note">The token stays in this tab's memory (or its session storage, if you tick the box) and is never written to local storage. Every action you take here is recorded in the audit journal.</p>
     </form>
@@ -43,6 +44,7 @@
         <button class="nav__item" data-route="traffic"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Live traffic<span class="nav__badge" id="navRate"></span></button>
         <button class="nav__item" data-route="connections"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14 0M8.5 16.1a6 6 0 0 1 7 0M12 20h.01M2 8.8a15 15 0 0 1 20 0"/></svg>Connections<span class="nav__badge" id="navConn"></span></button>
         <button class="nav__item" data-route="rooms"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Rooms<span class="nav__badge" id="navRooms"></span></button>
+        <button class="nav__item" data-route="alerts"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts<span class="nav__badge" id="navAlerts"></span></button>
         <div class="nav__group">Users &amp; data</div>
         <button class="nav__item" data-route="users"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Users &amp; passkeys<span class="nav__badge" id="navUsers"></span></button>
         <button class="nav__item" data-route="queue"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>Message queue<span class="nav__badge" id="navQueue"></span></button>
@@ -55,6 +57,7 @@
         <button class="nav__item" data-route="layout"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 9h18"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>Layout builder</button>
         <button class="nav__item" data-route="telephony"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Telephony &amp; SIP</button>
         <button class="nav__item" data-route="plugins"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>AI &amp; speech</button>
+        <button class="nav__item" data-route="admins" data-min-role="owner" hidden><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>Administrators</button>
         <button class="nav__item" data-route="commands"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 17 6-6-6-6M12 19h8"/></svg>Commands &amp; push</button>
       </nav>
       <div class="sidebar__foot">
@@ -70,6 +73,8 @@
           <div class="topbar__crumb" id="pageCrumb">Everything at a glance</div>
         </div>
         <div class="topbar__spacer"></div>
+        <span class="whoami" id="whoami"></span>
+        <button class="btn btn--sm" id="btnMyPasskey" title="Register a passkey to sign in to this console without a token" hidden>Add my passkey</button>
         <span class="live" id="liveState"><span class="live__dot"></span><span id="liveText">offline</span></span>
         <button class="btn btn--sm" id="btnTheme" title="Light / dark">◐</button>
         <button class="btn btn--sm" id="btnSignOut">Sign out</button>
@@ -187,6 +192,17 @@
             <div class="card"><div class="card__head"><div class="card__title">Tables</div></div><div class="table-wrap table-wrap--short"><table class="t" id="dbTables"><thead><tr><th>Table</th><th class="num">Rows</th></tr></thead><tbody></tbody></table></div></div>
           </div>
           <div class="card">
+            <div class="card__head"><div class="card__title">Backups &amp; integrity</div><div class="card__hint">The master key is never in a backup — keep it separately.</div>
+              <div class="card__actions">
+                <button class="btn btn--sm btn--primary" id="dbBackup" type="button">Back up now</button>
+                <button class="btn btn--sm" id="dbIntegrity" type="button" data-read="1">Integrity check</button>
+                <button class="btn btn--sm" id="dbOptimize" type="button">Optimize</button>
+                <button class="btn btn--sm btn--danger" id="dbVacuum" type="button" data-min-role="owner" hidden>VACUUM</button>
+              </div></div>
+            <dl class="kv" id="dbBackupInfo"></dl>
+            <div class="table-wrap table-wrap--short"><table class="t" id="dbBackups"><thead><tr><th>Backup</th><th>Made</th><th class="num">Files</th><th class="num">Size</th></tr></thead><tbody></tbody></table></div>
+          </div>
+          <div class="card">
             <div class="card__head"><div class="card__title">Encrypted databases</div><div class="card__hint">One SQLCipher file per account (key from the passkey, held in memory only) or per anonymous session (key wrapped by the master key, one-day TTL).</div></div>
             <div class="table-wrap"><table class="t" id="dbIndex"><thead><tr><th>Database</th><th>Owner</th><th>Kind</th><th>Key</th><th class="num">Size</th><th>Created</th><th>Last opened</th><th>Expires</th></tr></thead><tbody></tbody></table></div>
           </div>
@@ -199,6 +215,7 @@
               <div class="card__title">Audit journal</div>
               <div class="card__actions">
                 <label class="switch small" title="Record who reached whom (metadata only). Off by default."><input type="checkbox" id="auditComm" /> Communication auditing</label>
+                <button class="btn btn--sm" id="auditVerify" data-read="1" type="button" title="Recompute the hash chain of the stored journal and check the signed checkpoints">Verify integrity</button>
                 <a class="btn btn--sm" id="auditCsv">Export CSV</a>
                 <a class="btn btn--sm" id="auditJson">Export JSON</a>
               </div>
@@ -402,6 +419,38 @@
           <div class="card"><div class="card__head"><div class="card__title">Waiting commands</div></div><div class="table-wrap table-wrap--short"><table class="t" id="cmdPending"><thead><tr><th>Device</th><th>Command</th><th>Queued</th><th>Id</th></tr></thead><tbody></tbody></table></div></div>
           <div class="card"><div class="card__head"><div class="card__title">Delivery log</div><div class="card__hint">enqueue → deliver (the socket took it) → ack (the app ran it)</div></div><div class="table-wrap table-wrap--short"><table class="t" id="cmdAudit"><thead><tr><th>Time</th><th>Step</th><th>Command</th><th>Device</th><th>Peer</th><th>Result</th></tr></thead><tbody></tbody></table></div></div>
           <div class="card"><div class="card__head"><div class="card__title">Push subscribers (devices without an account)</div></div><div class="table-wrap table-wrap--short"><table class="t" id="pushSubs"><thead><tr><th>Id</th><th>Push service</th><th>Device</th><th>Since</th><th>Keys</th><th></th></tr></thead><tbody></tbody></table></div></div>
+        </section>
+        <!-- ============================ alerts ============================ -->
+        <section data-panel="alerts" class="stack" hidden>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Firing now</div><div class="card__hint" id="alertWebhook"></div><div class="card__actions"><button class="btn btn--sm" data-refresh="alerts">Refresh</button></div></div>
+            <div id="alertActive" class="stack small"></div>
+          </div>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Rules</div><div class="card__hint">Checked every 30 s. Changes are kept in alert-rules.json; ALERT_&lt;RULE&gt; sets the default.</div></div>
+            <div class="table-wrap table-wrap--short"><table class="t" id="alertRules"><thead><tr><th>Rule</th><th>Now</th><th>Threshold</th><th>On</th></tr></thead><tbody></tbody></table></div>
+          </div>
+          <div class="card">
+            <div class="card__head"><div class="card__title">History</div><div class="card__hint">Prometheus: scrape /metrics with METRICS_TOKEN or an administrator's token.</div></div>
+            <div class="table-wrap table-wrap--short"><table class="t" id="alertHistory"><thead><tr><th>When</th><th>Rule</th><th>State</th><th>Message</th></tr></thead><tbody></tbody></table></div>
+          </div>
+        </section>
+
+        <!-- ============================ administrators ============================ -->
+        <section data-panel="admins" class="stack" hidden>
+          <div class="card">
+            <div class="card__head"><div class="card__title">Administrators</div><div class="card__hint">owner — everything · operator — everything but this page · auditor — read only. Tokens are shown once and stored as hashes.</div><div class="card__actions"><button class="btn btn--sm" data-refresh="admins">Refresh</button></div></div>
+            <form id="adminCreate" class="toolbar">
+              <input class="input mono" id="adminName" placeholder="name (a–z, 0–9, . _ -)" required pattern="[a-zA-Z0-9][a-zA-Z0-9._\-]{1,31}" />
+              <select class="input" id="adminRole"><option value="auditor">auditor</option><option value="operator">operator</option><option value="owner">owner</option></select>
+              <button class="btn btn--primary" type="submit">Add administrator</button>
+            </form>
+            <div class="code" id="adminNewToken" hidden></div>
+          </div>
+          <div class="table-wrap">
+            <table class="t" id="adminTable"><thead><tr><th>Name</th><th>Role</th><th>Status</th><th>Tokens</th><th>Passkeys</th><th>Created</th><th></th></tr></thead><tbody></tbody></table>
+          </div>
+          <div class="card"><div class="card__head"><div class="card__title">From the environment</div></div><p class="small muted">ADMIN_API_TOKEN is the owner "admin". ADMIN_TOKENS="name:role:token,…" adds more. Those cannot be changed here.</p></div>
         </section>
       </main>
     </div>

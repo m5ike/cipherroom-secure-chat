@@ -168,3 +168,16 @@
 /* A message still waiting for its recipient (light mode outbox). */
 .msg-bubble--queued { opacity: 0.72; border-style: dashed; }
 .msg-delivery.is-queued { color: hsl(var(--muted-foreground)); opacity: 0.9; }
+
+/* 3.1 — passkeys, recovery code, devices */
+.acc-list { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 4px; }
+.acc-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid hsl(var(--border)); font-size: 12px; }
+.acc-list li:last-child { border-bottom: 0; }
+.acc-list li > span { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; min-width: 0; }
+.acc-list small { color: hsl(var(--muted-foreground)); width: 100%; }
+.acc-chip { font-style: normal; font-size: 10px; padding: 0 6px; border-radius: 999px; background: hsl(var(--primary) / 0.12); color: hsl(var(--primary)); }
+.acc-btn--small { min-height: 1.6rem; padding: 0 0.5rem; font-size: 0.7rem; }
+.acc-input { flex: 1 1 180px; min-width: 0; padding: 6px 10px; border-radius: 10px; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); color: hsl(var(--foreground)); font-size: 12px; }
+.acc-code { display: grid; gap: 8px; padding: 10px; border-radius: 12px; border: 1px dashed hsl(var(--primary) / 0.6); background: hsl(var(--primary) / 0.06); }
+.acc-code code { font-size: 15px; letter-spacing: 0.06em; word-break: break-all; user-select: all; }
+.acc-link { background: none; border: 0; padding: 0; color: hsl(var(--primary)); cursor: pointer; text-decoration: underline; justify-self: start; }

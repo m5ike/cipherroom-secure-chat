@@ -24,7 +24,7 @@ let store: AccountStore;
 let queue: MemoryQueue;
 let rooms: Map<string, Map<string, RelayPeer>>;
 let sent: Array<{ socket: WebSocket; payload: Record<string, unknown> }>;
-let pushed: Array<{ target: PushTarget; payload: { url: string; body: string } }>;
+let pushed: Array<{ target: PushTarget; payload: { url: string; body: string; kind?: string } }>;
 let pushResult: { ok: boolean; error?: string };
 let now = 1_700_000_000_000;
 
@@ -82,10 +82,12 @@ describe("waking an away user", () => {
 
     expect(statuses()).toEqual(["stored"]);
     expect(pushed).toHaveLength(1);
-    expect(pushed[0].payload.url).toBe("/signin");
-    expect(pushed[0].payload.body).toContain("Bob");
-    // The push says who and where — never what.
-    expect(JSON.stringify(pushed[0].payload)).not.toContain(ENVELOPE.ciphertext);
+    expect(pushed[0].payload).toMatchObject({ url: "/signin", kind: "relay" });
+    // A locked screen shows it: no content, no sender, no room.
+    const text = JSON.stringify(pushed[0].payload);
+    expect(text).not.toContain(ENVELOPE.ciphertext);
+    expect(text).not.toContain("Bob");
+    expect(text).not.toContain("alpha");
     expect(store.get(acc.id)!.audit.map((e) => e.kind)).toContain("push-sent");
   });
 

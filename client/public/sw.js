@@ -11,6 +11,30 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+// A relay wake-up carries no name and no room (it shows on a locked
+// screen); it is worded here, in the device's language.
+const RELAY_TEXT = {
+  cs: "Máte novou zprávu. Otevřete M5cet a přihlaste se.",
+  de: "Sie haben eine neue Nachricht. Öffnen Sie M5cet und melden Sie sich an.",
+  en: "You have a new message. Open M5cet and sign in.",
+};
+
+function relayText() {
+  const lang = String((self.navigator && self.navigator.language) || "en").slice(0, 2).toLowerCase();
+  return RELAY_TEXT[lang] || RELAY_TEXT.en;
+}
+
+/** Same-origin path ("/signin") or an http(s) URL of this site; anything else → "/". */
+function safeUrl(value) {
+  const url = String(value || "/").slice(0, 512);
+  if (url.startsWith("/") && !url.startsWith("//")) return url;
+  try {
+    const parsed = new URL(url);
+    if (parsed.origin === self.location.origin) return parsed.pathname + parsed.search;
+  } catch (_err) { /* not a URL */ }
+  return "/";
+}
+
 self.addEventListener("push", (event) => {
   let data = { title: "M5cet", body: "New activity in your room.", url: "/" };
   try {
@@ -18,15 +42,14 @@ self.addEventListener("push", (event) => {
       const parsed = event.data.json();
       if (parsed && typeof parsed === "object") {
         // Sanitize push payload so a malicious push service cannot inject
-        // arbitrary HTML, excessively long text, or non-http(s) URLs.
+        // arbitrary HTML, excessively long text, or a foreign URL.
         data = {
           title: String(parsed.title || data.title).slice(0, 64),
-          body: String(parsed.body || data.body).slice(0, 200),
-          url: String(parsed.url || data.url).slice(0, 512),
+          body: parsed.kind === "relay" ? relayText() : String(parsed.body || data.body).slice(0, 200),
+          url: safeUrl(parsed.url),
           tag: parsed.tag ? String(parsed.tag).slice(0, 64) : data.tag,
           requireInteraction: parsed.requireInteraction === true,
         };
-        if (!/^https?:\/\//.test(data.url)) data.url = "/";
       }
     }
   } catch (_err) {

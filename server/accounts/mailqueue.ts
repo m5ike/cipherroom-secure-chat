@@ -22,9 +22,17 @@
 //                a reason for the operator instead of vanishing silently
 //
 // What is stored is exactly what the relay received: room-key ciphertext
-// the server cannot open, plus the metadata needed to route it.
+// the server cannot open, plus the metadata needed to route it. With a
+// sealer (the storage master key, see storage/service.ts) the metadata
+// that is not needed for routing — who sent it, the status details — is
+// sealed at rest and bound to its row, and the per-sender quota key is a
+// hash: a copy of the database file does not say who wrote to whom.
+//
+// The relay ledger (relay_ledger) remembers, per relayed message, its room,
+// sender and recipients, so a read receipt can find its way back — also
+// after a restart (it used to live in memory only).
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { migrate, type SqliteDatabase } from "../storage/db";
 import type { Migration } from "../storage/schema";
 
@@ -78,6 +86,23 @@ export function queueTtlMs(): number {
   return Number.isFinite(days) && days > 0 ? days * 24 * 60 * 60 * 1000 : QUEUE_LIMITS.defaultTtlMs;
 }
 
+/** Seals / opens metadata at rest; `aad` names the row and the column. */
+export type QueueSealer = {
+  seal(plaintext: string, aad: string): string;
+  open(sealed: string, aad: string): string | null;
+};
+
+/** Who relayed a message to whom — for routing receipts back. */
+export type LedgerEntry = {
+  messageId: string;
+  room: string;
+  sender: { peerId: string; accountId?: string; name: string };
+  recipients: string[];
+  at: number;
+};
+
+export const LEDGER_LIMITS = { maxEntries: 50_000, ttlMs: 30 * 24 * 60 * 60 * 1000 } as const;
+
 export type EnqueueResult =
   | { ok: true; item: QueueItem; duplicate: boolean }
   | { ok: false; reason: "quota" | "sender-quota" | "too-large" | "invalid"; detail: string };
@@ -118,14 +143,33 @@ export const MAILQUEUE_MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    name: "mq-002-ledger",
+    sql: `
+      CREATE TABLE IF NOT EXISTS relay_ledger (
+        message_id TEXT PRIMARY KEY,
+        room       TEXT NOT NULL,
+        sender     TEXT NOT NULL,
+        recipients TEXT NOT NULL,
+        at         INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS relay_ledger_at ON relay_ledger(at);
+    `,
+  },
 ];
 
 type Row = Record<string, unknown>;
 
-function toItem(row: Row): QueueItem {
-  const parse = <T>(raw: unknown): T | undefined => {
+const SEALED = "s1:";
+
+function toItem(row: Row, sealer?: QueueSealer): QueueItem {
+  const parse = <T>(raw: unknown, column: string): T | undefined => {
     if (typeof raw !== "string" || !raw) return undefined;
-    try { return JSON.parse(raw) as T; } catch { return undefined; }
+    let text: string | null = raw;
+    // A sealed column (s1:…); rows written before sealing are plain JSON.
+    if (raw.startsWith(SEALED)) text = sealer ? sealer.open(raw.slice(SEALED.length), `mq:${String(row.id)}:${column}`) : null;
+    if (text === null) return undefined;
+    try { return JSON.parse(text) as T; } catch { return undefined; }
   };
   return {
     id: String(row.id),
@@ -134,9 +178,9 @@ function toItem(row: Row): QueueItem {
     seq: Number(row.seq),
     kind: String(row.kind) as MailKind,
     messageId: String(row.message_id),
-    from: parse<MailFrom>(row.from_json) ?? { peerId: "", name: "" },
-    envelope: parse(row.envelope),
-    status: parse(row.status_json),
+    from: parse<MailFrom>(row.from_json, "from") ?? { peerId: "", name: "" },
+    envelope: parse(row.envelope, "envelope"),
+    status: parse(row.status_json, "status"),
     state: String(row.state) as MailState,
     attempts: Number(row.attempts),
     storedAt: Number(row.stored_at),
@@ -163,14 +207,27 @@ export interface OfflineQueue {
   purgeAccount(accountId: string): number;
   /** Raise a status item to a higher state ("read" beats "delivered"). */
   upgradeStatus(accountId: string, messageId: string, status: { state: "delivered" | "read"; at: number; recipientName: string }): boolean;
+  /** The relay ledger: this message went from `sender` to `recipient`. */
+  rememberRelay(messageId: string, room: string, sender: LedgerEntry["sender"], recipient: string): void;
+  relayOf(messageId: string): LedgerEntry | null;
   readonly persistent: boolean;
 }
 
 export class MailQueue implements OfflineQueue {
   readonly persistent = true;
 
-  constructor(private readonly db: SqliteDatabase, private readonly now: () => number = Date.now) {
+  constructor(private readonly db: SqliteDatabase, private readonly now: () => number = Date.now, private readonly sealer?: QueueSealer) {
     migrate(db, MAILQUEUE_MIGRATIONS);
+  }
+
+  private row(r: Row): QueueItem {
+    return toItem(r, this.sealer);
+  }
+
+  /** A metadata column as stored: sealed and bound to its row when a sealer is set. */
+  private store(id: string, column: string, json: string | null): string | null {
+    if (json === null) return null;
+    return this.sealer ? SEALED + this.sealer.seal(json, `mq:${id}:${column}`) : json;
   }
 
   /** Adds an item, or returns the one already there for the same message. */
@@ -192,12 +249,14 @@ export class MailQueue implements OfflineQueue {
     const fromJson = JSON.stringify(input.from ?? { peerId: "", name: "" });
     const bytes = (envelope?.length ?? 0) + (status?.length ?? 0) + fromJson.length;
     if (bytes > QUEUE_LIMITS.maxItemBytes) return { ok: false, reason: "too-large", detail: `${bytes} bytes` };
-    const senderKey = input.from?.accountId || input.from?.peerId || "anonymous";
+    const rawSender = input.from?.accountId || input.from?.peerId || "anonymous";
+    // With a sealer the quota key is a hash: the quota works, the file does not name the sender.
+    const senderKey = this.sealer ? createHash("sha256").update(`mq-sender:${rawSender}`).digest("base64url").slice(0, 22) : rawSender;
 
     const run = this.db.transaction((): EnqueueResult => {
       const existing = this.db.prepare("SELECT * FROM mail_queue WHERE account_id = ? AND kind = ? AND message_id = ?")
         .get(input.accountId, input.kind, input.messageId) as Row | undefined;
-      if (existing) return { ok: true, item: toItem(existing), duplicate: true };
+      if (existing) return { ok: true, item: this.row(existing), duplicate: true };
 
       const totals = this.db.prepare("SELECT count(*) AS n, COALESCE(sum(bytes), 0) AS b FROM mail_queue WHERE account_id = ? AND state != 'dead'")
         .get(input.accountId) as { n: number; b: number };
@@ -226,8 +285,8 @@ export class MailQueue implements OfflineQueue {
       this.db.prepare(`
         INSERT INTO mail_queue (id, account_id, room, seq, kind, message_id, from_json, sender_key, envelope, status_json, state, attempts, stored_at, lease_until, expires_at, bytes)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', 0, ?, 0, ?, ?)
-      `).run(id, input.accountId, input.room, seq, input.kind, input.messageId, fromJson, senderKey, envelope, status, at, expiresAt, bytes);
-      return { ok: true, item: toItem(this.db.prepare("SELECT * FROM mail_queue WHERE id = ?").get(id) as Row), duplicate: false };
+      `).run(id, input.accountId, input.room, seq, input.kind, input.messageId, this.store(id, "from", fromJson), senderKey, envelope, this.store(id, "status", status), at, expiresAt, bytes);
+      return { ok: true, item: this.row(this.db.prepare("SELECT * FROM mail_queue WHERE id = ?").get(id) as Row), duplicate: false };
     });
     return run();
   }
@@ -253,7 +312,7 @@ export class MailQueue implements OfflineQueue {
       const deliver = this.db.prepare("UPDATE mail_queue SET state = 'delivering', attempts = attempts + 1, lease_until = ? WHERE id = ?");
       const kill = this.db.prepare("UPDATE mail_queue SET state = 'dead', dead_reason = ?, lease_until = 0 WHERE id = ?");
       for (const row of rows) {
-        const item = toItem(row);
+        const item = this.row(row);
         if (item.attempts >= QUEUE_LIMITS.maxAttempts) {
           kill.run(`delivered ${item.attempts} times without an acknowledgement`, item.id);
           continue;
@@ -277,7 +336,7 @@ export class MailQueue implements OfflineQueue {
         const row = get.get(id, accountId) as Row | undefined;
         if (!row) continue;
         drop.run(id);
-        taken.push(toItem(row));
+        taken.push(this.row(row));
       }
       return taken;
     });
@@ -302,14 +361,14 @@ export class MailQueue implements OfflineQueue {
     const rows = (room === undefined
       ? this.db.prepare("SELECT * FROM mail_queue WHERE account_id = ? AND state != 'dead' ORDER BY room, seq").all(accountId)
       : this.db.prepare("SELECT * FROM mail_queue WHERE account_id = ? AND room = ? AND state != 'dead' ORDER BY seq").all(accountId, room)) as Row[];
-    return rows.map(toItem);
+    return rows.map((r) => this.row(r));
   }
 
   dead(accountId?: string, limit = 200): QueueItem[] {
     const rows = (accountId
       ? this.db.prepare("SELECT * FROM mail_queue WHERE state = 'dead' AND account_id = ? ORDER BY stored_at DESC LIMIT ?").all(accountId, limit)
       : this.db.prepare("SELECT * FROM mail_queue WHERE state = 'dead' ORDER BY stored_at DESC LIMIT ?").all(limit)) as Row[];
-    return rows.map(toItem);
+    return rows.map((r) => this.row(r));
   }
 
   /** Puts a dead item back in the queue (operator action). */
@@ -362,19 +421,61 @@ export class MailQueue implements OfflineQueue {
       .run(at).changes;
     const purged = this.db.prepare("DELETE FROM mail_queue WHERE state = 'dead' AND stored_at < ?")
       .run(at - QUEUE_LIMITS.deadRetentionMs).changes;
+    // The ledger: by age, then by count (oldest first).
+    this.db.prepare("DELETE FROM relay_ledger WHERE at < ?").run(at - LEDGER_LIMITS.ttlMs);
+    const count = Number((this.db.prepare("SELECT count(*) AS n FROM relay_ledger").get() as { n: number }).n);
+    if (count > LEDGER_LIMITS.maxEntries) {
+      this.db.prepare("DELETE FROM relay_ledger WHERE message_id IN (SELECT message_id FROM relay_ledger ORDER BY at ASC LIMIT ?)").run(count - LEDGER_LIMITS.maxEntries);
+    }
     return { expired, purged };
   }
 
   /** A later receipt for the same message raises the stored one. */
   upgradeStatus(accountId: string, messageId: string, status: { state: "delivered" | "read"; at: number; recipientName: string }): boolean {
-    const row = this.db.prepare("SELECT status_json FROM mail_queue WHERE account_id = ? AND kind = 'status' AND message_id = ? AND state != 'dead'")
-      .get(accountId, messageId) as { status_json?: string } | undefined;
-    if (!row?.status_json) return false;
-    let current: { state?: string } = {};
-    try { current = JSON.parse(row.status_json) as { state?: string }; } catch { current = {}; }
-    if (current.state === "read" || current.state === status.state) return false;
-    return this.db.prepare("UPDATE mail_queue SET status_json = ?, state = 'queued', lease_until = 0 WHERE account_id = ? AND kind = 'status' AND message_id = ?")
-      .run(JSON.stringify(status), accountId, messageId).changes > 0;
+    const row = this.db.prepare("SELECT * FROM mail_queue WHERE account_id = ? AND kind = 'status' AND message_id = ? AND state != 'dead'")
+      .get(accountId, messageId) as Row | undefined;
+    if (!row) return false;
+    const current = this.row(row).status;
+    if (!current || current.state === "read" || current.state === status.state) return false;
+    return this.db.prepare("UPDATE mail_queue SET status_json = ?, state = 'queued', lease_until = 0 WHERE id = ?")
+      .run(this.store(String(row.id), "status", JSON.stringify(status)), String(row.id)).changes > 0;
+  }
+
+  /* -------------------------------------------------------------- ledger */
+
+  rememberRelay(messageId: string, room: string, sender: LedgerEntry["sender"], recipient: string): void {
+    const run = this.db.transaction(() => {
+      const existing = this.relayOf(messageId);
+      if (existing) {
+        if (existing.recipients.includes(recipient)) return;
+        const recipients = [...existing.recipients, recipient].slice(-200);
+        this.db.prepare("UPDATE relay_ledger SET recipients = ? WHERE message_id = ?")
+          .run(this.store(`ledger:${messageId}`, "recipients", JSON.stringify(recipients)), messageId);
+        return;
+      }
+      this.db.prepare("INSERT INTO relay_ledger (message_id, room, sender, recipients, at) VALUES (?, ?, ?, ?, ?)").run(
+        messageId, room,
+        this.store(`ledger:${messageId}`, "sender", JSON.stringify(sender)),
+        this.store(`ledger:${messageId}`, "recipients", JSON.stringify([recipient])),
+        this.now(),
+      );
+    });
+    run();
+  }
+
+  relayOf(messageId: string): LedgerEntry | null {
+    const row = this.db.prepare("SELECT * FROM relay_ledger WHERE message_id = ?").get(messageId) as Row | undefined;
+    if (!row) return null;
+    const open = (raw: unknown, column: string): unknown => {
+      if (typeof raw !== "string") return null;
+      const text = raw.startsWith(SEALED) ? (this.sealer ? this.sealer.open(raw.slice(SEALED.length), `mq:ledger:${messageId}:${column}`) : null) : raw;
+      if (text === null) return null;
+      try { return JSON.parse(text); } catch { return null; }
+    };
+    const sender = open(row.sender, "sender") as LedgerEntry["sender"] | null;
+    const recipients = open(row.recipients, "recipients") as string[] | null;
+    if (!sender || !Array.isArray(recipients)) return null;
+    return { messageId, room: String(row.room), sender, recipients, at: Number(row.at) };
   }
 
   /** Everything of one account (it was deleted). */

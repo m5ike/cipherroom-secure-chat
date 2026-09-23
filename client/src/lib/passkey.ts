@@ -14,6 +14,12 @@
 //
 // PRF needs a recent browser and a platform authenticator; when it is absent
 // we say so instead of silently falling back to something weaker.
+//
+// Several passkeys, one account (3.1): the keys come from the account ROOT.
+// The first passkey's PRF output is the root; for every other passkey (and
+// for a recovery code) the root is sealed under a key only that passkey's
+// PRF output (or that code) produces, and the server stores the sealed blob
+// (sealRoot / openRoot). Existing accounts keep working unchanged.
 
 import { toBase64, fromBase64 } from "./crypto";
 
@@ -53,6 +59,37 @@ export function b64url(bytes: Uint8Array): string {
 export function fromB64url(value: string): Uint8Array {
   const pad = value.length % 4 === 0 ? "" : "=".repeat(4 - (value.length % 4));
   return fromBase64(value.replace(/-/g, "+").replace(/_/g, "/") + pad);
+}
+
+const WRAP_AAD = new Uint8Array(enc.encode("m5cet:account-root:v1"));
+
+/** The keys an account works with, from its root. */
+export async function deriveAccountKeys(root: Uint8Array): Promise<{ key: CryptoKey; databaseKey: string }> {
+  return { key: await deriveKey(root), databaseKey: await deriveDatabaseKey(root) };
+}
+
+async function wrappingKey(secret: Uint8Array, info: string): Promise<CryptoKey> {
+  const base = await crypto.subtle.importKey("raw", new Uint8Array(secret), "HKDF", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "HKDF", hash: "SHA-256", salt: PRF_SALT, info: new Uint8Array(enc.encode(info)) },
+    base, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"],
+  );
+}
+
+export type SealedRoot = { iv: string; ct: string };
+export const WRAP_INFO = { passkey: "m5cet:root-wrap:passkey:v1", recovery: "m5cet:root-wrap:recovery:v1" } as const;
+
+/** Seals the account root under a key derived from `secret` (another
+ *  passkey's PRF output, or a recovery code's secret). */
+export async function sealRoot(root: Uint8Array, secret: Uint8Array, info: string): Promise<SealedRoot> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: WRAP_AAD }, await wrappingKey(secret, info), new Uint8Array(root)));
+  return { iv: toBase64(iv), ct: toBase64(ct) };
+}
+
+export async function openRoot(sealed: SealedRoot, secret: Uint8Array, info: string): Promise<Uint8Array> {
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(sealed.iv), additionalData: WRAP_AAD }, await wrappingKey(secret, info), fromBase64(sealed.ct));
+  return new Uint8Array(plain);
 }
 
 async function deriveKey(secret: Uint8Array): Promise<CryptoKey> {
@@ -101,6 +138,8 @@ export type ServerCreationOptions = {
   authenticatorSelection?: AuthenticatorSelectionCriteria;
   attestation?: AttestationConveyancePreference;
   timeout?: number;
+  /** Passkeys the account already has (adding one more). */
+  excludeCredentials?: Array<{ type: "public-key"; id: string }>;
 };
 
 /** What POST /api/account/signin/options answers. */
@@ -136,7 +175,7 @@ function prfSecret(credential: PublicKeyCredential): ArrayBuffer | null {
 /** Creates the passkey the server asked for, and derives the vault key.
  *  Most browsers do not hand out the PRF secret at creation time, so we
  *  immediately assert with the fresh credential to get it. */
-export async function createPasskey(options: ServerCreationOptions): Promise<{ response: RegistrationResponseJSON; key: CryptoKey; databaseKey: string }> {
+export async function createPasskey(options: ServerCreationOptions): Promise<{ response: RegistrationResponseJSON; key: CryptoKey; databaseKey: string; secret: Uint8Array }> {
   if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
   const publicKey: PublicKeyCredentialCreationOptions = {
     challenge: new Uint8Array(fromB64url(options.challenge)),
@@ -150,6 +189,9 @@ export async function createPasskey(options: ServerCreationOptions): Promise<{ r
     authenticatorSelection: options.authenticatorSelection ?? { residentKey: "required", userVerification: "required" },
     attestation: options.attestation ?? "none",
     timeout: options.timeout ?? 60_000,
+    ...(options.excludeCredentials?.length
+      ? { excludeCredentials: options.excludeCredentials.map((c) => ({ id: new Uint8Array(fromB64url(c.id)), type: "public-key" as const })) }
+      : {}),
     extensions: prfInput(),
   };
   const credential = await navigator.credentials.create({ publicKey }) as PublicKeyCredential | null;
@@ -169,11 +211,11 @@ export async function createPasskey(options: ServerCreationOptions): Promise<{ r
   // that created the passkey still counts as the user's gesture.
   const direct = prfSecret(credential);
   const secret = direct ? new Uint8Array(direct) : await prfSecretFor(new Uint8Array(credential.rawId));
-  return { response, key: await deriveKey(secret), databaseKey: await deriveDatabaseKey(secret) };
+  return { response, key: await deriveKey(secret), databaseKey: await deriveDatabaseKey(secret), secret };
 }
 
 /** Signs the server's challenge and derives the same vault key. */
-export async function assertPasskey(options: ServerRequestOptions): Promise<{ response: AssertionResponseJSON; key: CryptoKey; databaseKey: string }> {
+export async function assertPasskey(options: ServerRequestOptions): Promise<{ response: AssertionResponseJSON; key: CryptoKey; databaseKey: string; secret: Uint8Array }> {
   if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
   const publicKey: PublicKeyCredentialRequestOptions = {
     challenge: new Uint8Array(fromB64url(options.challenge)),
@@ -205,7 +247,27 @@ export async function assertPasskey(options: ServerRequestOptions): Promise<{ re
     },
     key: await deriveKey(bytes),
     databaseKey: await deriveDatabaseKey(bytes),
+    secret: bytes,
   };
+}
+
+/** "Confirm with your passkey": a PRF-only assertion with one of the
+ *  account's passkeys, no server round trip — to reach the account root
+ *  before adding a passkey or a recovery code. */
+export async function confirmWithPasskey(credentialIds: string[]): Promise<{ credentialId: string; secret: Uint8Array }> {
+  if (!passkeySupported()) throw new Error("PassKeys are not supported in this browser.");
+  const publicKey: PublicKeyCredentialRequestOptions = {
+    challenge: crypto.getRandomValues(new Uint8Array(32)),
+    userVerification: "required",
+    timeout: 60_000,
+    ...(credentialIds.length ? { allowCredentials: credentialIds.map((id) => ({ id: new Uint8Array(fromB64url(id)), type: "public-key" as const })) } : {}),
+    extensions: prfInput(),
+  };
+  const credential = await navigator.credentials.get({ publicKey }) as PublicKeyCredential | null;
+  if (!credential) throw new Error("Confirmation with the passkey was cancelled.");
+  const secret = prfSecret(credential);
+  if (!secret) throw new PrfUnsupportedError();
+  return { credentialId: b64url(new Uint8Array(credential.rawId)), secret: new Uint8Array(secret) };
 }
 
 /** A PRF-only assertion (no server ceremony) — used right after creating a

@@ -167,6 +167,27 @@ export const GLOBAL_MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS audit_by_account ON audit(account_id, at);
     `,
   },
+  {
+    // 3.1 — tamper evidence: every audit row carries the hash of the row
+    // before it; signed checkpoints pin the head of the chain (Ed25519, key
+    // next to the master key). Rows written before this have no hash and
+    // are reported as "before the chain".
+    name: "004-audit-chain",
+    sql: `
+      ALTER TABLE audit ADD COLUMN prev_hash TEXT;
+      ALTER TABLE audit ADD COLUMN hash TEXT;
+      CREATE TABLE IF NOT EXISTS audit_checkpoints (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        at         INTEGER NOT NULL,
+        last_id    INTEGER NOT NULL,
+        head_hash  TEXT NOT NULL,
+        reason     TEXT NOT NULL,
+        signature  TEXT NOT NULL,
+        public_key TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS audit_checkpoints_by_last ON audit_checkpoints(last_id);
+    `,
+  },
 ];
 
 export const USER_MIGRATIONS: Migration[] = [

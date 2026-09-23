@@ -137,6 +137,16 @@ export class UserDatabase {
 
   /** Bytes the database uses: its pages minus the free ones. Inside a
    *  write transaction this already counts what the transaction added. */
+  /** Writes the WAL back into the file, so a copy of the file is complete. */
+  checkpoint(): void {
+    try { this.db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* a busy database checkpoints later */ }
+  }
+
+  /** SQLite's quick integrity check: "ok", or what is wrong. */
+  quickCheck(): string {
+    try { return String(this.db.pragma("quick_check", { simple: true })); } catch (err) { return (err as Error).message; }
+  }
+
   usedBytes(): number {
     const pages = Number(this.db.pragma("page_count", { simple: true }) ?? 0);
     const free = Number(this.db.pragma("freelist_count", { simple: true }) ?? 0);
@@ -726,6 +736,11 @@ export class UserDatabasePool {
   }
 
   get size(): number { return this.entries.size; }
+
+  /** Every open database (backup, integrity check). */
+  forEachOpen(fn: (id: string, db: UserDatabase) => void): void {
+    for (const [id, entry] of this.entries) if (entry.handle.open) fn(id, entry.handle);
+  }
 }
 
 function toMessage(row: Record<string, unknown>): StoredMessage {

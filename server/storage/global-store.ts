@@ -17,8 +17,8 @@
 // value copied onto another row does not open. Session ids never appear in
 // the clear: they are stored as HMAC references (keys.ts sessionRef).
 
-import { randomBytes } from "node:crypto";
-import { readdirSync, rmSync, statSync } from "node:fs";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign as edSign, verify as edVerify, type KeyObject } from "node:crypto";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { databaseBytes, ensurePrivateDir, openPlainDatabase, StorageUnavailableError, type SqliteDatabase, type SqliteStatement } from "./db";
 import { GLOBAL_MIGRATIONS } from "./schema";
@@ -143,6 +143,36 @@ const auditAad = (category: string, event: string, at: number) => `m5cet:audit:v
 
 const escapeLike = (value: string) => value.replace(/[\\%_]/g, (c) => `\\${c}`);
 const optText = (value: unknown, max: number): string | null => (typeof value === "string" && value ? value.slice(0, max) : null);
+
+/** How often (in rows) the head of the audit chain is signed. */
+const AUDIT_CHECKPOINT_EVERY = 500;
+
+export type AuditVerification = {
+  ok: boolean;
+  checked: number;
+  /** Rows from before the chain existed (3.0 and earlier). */
+  unchained: number;
+  checkpoints: number;
+  signedCheckpoints: number;
+  lastCheckpoint: { at: number; lastId: number } | null;
+  publicKey: string;
+  problems: Array<{ id: number; kind: "row-altered" | "link-broken" | "rows-missing" | "checkpoint-signature" | "checkpoint-mismatch" }>;
+};
+
+type ChainedRow = {
+  at: number; category: string; level: string; event: string; actor: string | null; target: string | null;
+  accountId: string | null; sessionRef: string | null; peerId: string | null; roomHash: string | null;
+  ip: string | null; bytes: number | null; status: string | null; detail: Buffer | Uint8Array | null;
+};
+
+/** SHA-256 over the previous hash and every column, in a fixed order. */
+function auditRowHash(prev: string, row: ChainedRow): string {
+  const detail = row.detail ? Buffer.from(row.detail).toString("base64") : null;
+  const canonical = JSON.stringify([prev, row.at, row.category, row.level, row.event, row.actor, row.target, row.accountId, row.sessionRef, row.peerId, row.roomHash, row.ip, row.bytes, row.status, detail]);
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+const checkpointMessage = (lastId: number, headHash: string, at: number) => `m5cet/audit-checkpoint/1|${lastId}|${headHash}|${at}`;
 
 export class GlobalStore {
   private db: SqliteDatabase | null = null;
@@ -572,16 +602,143 @@ export class GlobalStore {
     const level = (AUDIT_LEVELS as readonly string[]).includes(String(entry.level)) ? String(entry.level) : "info";
     const detail = entry.detail === undefined ? null : sealValue(capJson(entry.detail, DETAIL_MAX), auditAad(category, event, at));
     const bytes = typeof entry.bytes === "number" && Number.isFinite(entry.bytes) ? Math.round(entry.bytes) : null;
-    this.sql(`
-      INSERT INTO audit (at, category, level, event, actor, target, account_id, session_ref, peer_id, room_hash, ip, bytes, status, detail)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
+    const row = {
       at, category, level, event,
-      optText(entry.actor, 120), optText(entry.target, 120), optText(entry.accountId, 64),
-      entry.sessionId ? toSessionRef(String(entry.sessionId)) : null,
-      optText(entry.peerId, 64), optText(entry.roomHash, 64), optText(entry.ip, 64),
-      bytes, optText(entry.status, 40), detail,
-    );
+      actor: optText(entry.actor, 120), target: optText(entry.target, 120), accountId: optText(entry.accountId, 64),
+      sessionRef: entry.sessionId ? toSessionRef(String(entry.sessionId)) : null,
+      peerId: optText(entry.peerId, 64), roomHash: optText(entry.roomHash, 64), ip: optText(entry.ip, 64),
+      bytes, status: optText(entry.status, 40), detail,
+    };
+    const prev = this.chainHead();
+    const hash = auditRowHash(prev, row);
+    const id = Number(this.sql(`
+      INSERT INTO audit (at, category, level, event, actor, target, account_id, session_ref, peer_id, room_hash, ip, bytes, status, detail, prev_hash, hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      row.at, row.category, row.level, row.event, row.actor, row.target, row.accountId, row.sessionRef,
+      row.peerId, row.roomHash, row.ip, row.bytes, row.status, row.detail, prev, hash,
+    ).lastInsertRowid);
+    this.head = { id, hash };
+    this.sinceCheckpoint += 1;
+    if (this.sinceCheckpoint >= AUDIT_CHECKPOINT_EVERY) this.auditCheckpoint("interval");
+  }
+
+  /* --------------------------------------------------- audit hash chain */
+
+  private head: { id: number; hash: string } | null = null;
+  private sinceCheckpoint = 0;
+  private signingKey: { privateKey: KeyObject; publicKey: string } | null = null;
+
+  /** The hash of the newest chained row ("" before the first). */
+  private chainHead(): string {
+    if (!this.head) {
+      const last = this.sql("SELECT id, hash FROM audit WHERE hash IS NOT NULL ORDER BY id DESC LIMIT 1").get() as { id: number; hash: string } | undefined;
+      this.head = last ? { id: Number(last.id), hash: String(last.hash) } : { id: 0, hash: "" };
+    }
+    return this.head.hash;
+  }
+
+  /** The Ed25519 key that signs checkpoints: audit-signing.key next to the
+   *  database (0600), created on first use. */
+  private auditSigner(): { privateKey: KeyObject; publicKey: string } {
+    if (this.signingKey) return this.signingKey;
+    const file = join(this.dir, "audit-signing.key");
+    let privateKey: KeyObject;
+    try {
+      privateKey = createPrivateKey(readFileSync(file, "utf8"));
+    } catch {
+      const pair = generateKeyPairSync("ed25519");
+      privateKey = pair.privateKey;
+      mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      writeFileSync(file, privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600, flag: "wx" });
+    }
+    const publicKey = createPublicKey(privateKey).export({ type: "spki", format: "der" }).toString("base64");
+    this.signingKey = { privateKey, publicKey };
+    return this.signingKey;
+  }
+
+  /** Signs the current head of the chain. Called every N rows, before
+   *  rows are pruned, and on demand. */
+  auditCheckpoint(reason: string, at = Date.now()): { lastId: number; headHash: string } | null {
+    this.chainHead();
+    if (!this.head || this.head.id === 0) return null;
+    const signer = this.auditSigner();
+    const message = checkpointMessage(this.head.id, this.head.hash, at);
+    const signature = edSign(null, Buffer.from(message), signer.privateKey).toString("base64");
+    this.sql("INSERT INTO audit_checkpoints (at, last_id, head_hash, reason, signature, public_key) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(at, this.head.id, this.head.hash, reason.slice(0, 40), signature, signer.publicKey);
+    this.sinceCheckpoint = 0;
+    return { lastId: this.head.id, headHash: this.head.hash };
+  }
+
+  /**
+   * Walks the chain and the checkpoints. A row whose hash does not match
+   * its contents, a broken link to the row before, a missing row inside the
+   * chain or a checkpoint whose signature or head does not hold — each is
+   * reported with the first id where it happens.
+   */
+  verifyAudit(): AuditVerification {
+    const rows = this.sql("SELECT * FROM audit ORDER BY id ASC").iterate() as Iterable<Record<string, unknown>>;
+    const checkpoints = this.sql("SELECT * FROM audit_checkpoints ORDER BY last_id ASC").all() as Array<Record<string, unknown>>;
+    const byLast = new Map(checkpoints.map((c) => [Number(c.last_id), c]));
+    const problems: AuditVerification["problems"] = [];
+    let checked = 0;
+    let unchained = 0;
+    let prevHash: string | null = null;
+    let prevId = 0;
+    let first = true;
+    const hashes = new Map<number, string>();
+    for (const r of rows) {
+      const id = Number(r.id);
+      if (r.hash === null || r.hash === undefined) { unchained += 1; continue; }
+      const row = {
+        at: Number(r.at), category: String(r.category), level: String(r.level), event: String(r.event),
+        actor: r.actor as string | null, target: r.target as string | null, accountId: r.account_id as string | null,
+        sessionRef: r.session_ref as string | null, peerId: r.peer_id as string | null, roomHash: r.room_hash as string | null,
+        ip: r.ip as string | null, bytes: r.bytes === null ? null : Number(r.bytes), status: r.status as string | null,
+        detail: (r.detail ?? null) as Buffer | null,
+      };
+      const expected = auditRowHash(String(r.prev_hash ?? ""), row);
+      if (expected !== r.hash) problems.push({ id, kind: "row-altered" });
+      if (first) {
+        // The oldest kept row: its predecessor was pruned — a checkpoint
+        // signed before pruning must vouch for the link.
+        const anchor = byLast.get(id - 1);
+        if (r.prev_hash && anchor && anchor.head_hash !== r.prev_hash) problems.push({ id, kind: "link-broken" });
+        first = false;
+      } else {
+        if (id !== prevId + 1) problems.push({ id, kind: "rows-missing" });
+        if (r.prev_hash !== prevHash) problems.push({ id, kind: "link-broken" });
+      }
+      hashes.set(id, String(r.hash));
+      prevHash = String(r.hash);
+      prevId = id;
+      checked += 1;
+    }
+    let signed = 0;
+    for (const c of checkpoints) {
+      const ok = (() => {
+        try {
+          const key = createPublicKey({ key: Buffer.from(String(c.public_key), "base64"), format: "der", type: "spki" });
+          return edVerify(null, Buffer.from(checkpointMessage(Number(c.last_id), String(c.head_hash), Number(c.at))), key, Buffer.from(String(c.signature), "base64"));
+        } catch { return false; }
+      })();
+      if (!ok) problems.push({ id: Number(c.last_id), kind: "checkpoint-signature" });
+      const rowHash = hashes.get(Number(c.last_id));
+      if (rowHash !== undefined && rowHash !== c.head_hash) problems.push({ id: Number(c.last_id), kind: "checkpoint-mismatch" });
+      if (ok) signed += 1;
+    }
+    const last = checkpoints.at(-1);
+    return {
+      ok: problems.length === 0,
+      checked,
+      unchained,
+      checkpoints: checkpoints.length,
+      signedCheckpoints: signed,
+      lastCheckpoint: last ? { at: Number(last.at), lastId: Number(last.last_id) } : null,
+      publicKey: this.auditSigner().publicKey,
+      problems: problems.slice(0, 50),
+    };
   }
 
   /** Newest first. `search` matches event, actor, target, status and ip;
@@ -615,6 +772,9 @@ export class GlobalStore {
 
   /** Keeps the audit table bounded by age and by count. */
   pruneAudit(cutoff: number, keep = AUDIT_KEEP): number {
+    // Sign the head first: the link from the pruned rows to the kept ones
+    // stays verifiable.
+    this.auditCheckpoint("prune");
     const byAge = this.sql("DELETE FROM audit WHERE at < ?").run(cutoff).changes;
     const edge = this.sql("SELECT at, id FROM audit ORDER BY at DESC, id DESC LIMIT 1 OFFSET ?").get(Math.max(0, keep)) as { at: number; id: number } | undefined;
     const byCount = edge ? this.sql("DELETE FROM audit WHERE (at, id) <= (?, ?)").run(edge.at, edge.id).changes : 0;
@@ -634,6 +794,28 @@ export class GlobalStore {
       transfers: one("SELECT count(*) AS n FROM transfers"),
       bytes: one("SELECT COALESCE(sum(bytes), 0) AS n FROM databases"),
     };
+  }
+
+  /** A consistent copy of this database while it stays in use. */
+  async backupTo(path: string): Promise<void> {
+    const db = this.handle();
+    if (typeof db.backup === "function") { await db.backup(path); return; }
+    db.prepare("VACUUM INTO ?").run(path);
+  }
+
+  quickCheck(): string {
+    try { return String(this.handle().pragma("quick_check", { simple: true })); } catch (err) { return (err as Error).message; }
+  }
+
+  /** Planner statistics, and space from deleted rows given back (VACUUM). */
+  optimize(vacuum = false): { before: number; after: number } {
+    const size = () => { try { return statSync(join(this.dir, "m5cet.db")).size; } catch { return 0; } };
+    const before = size();
+    const db = this.handle();
+    db.pragma("optimize");
+    if (vacuum) db.exec("VACUUM");
+    try { db.pragma("wal_checkpoint(TRUNCATE)"); } catch { /* busy */ }
+    return { before, after: size() };
   }
 
   /** The file, its pages and every table's row count — for the operator. */

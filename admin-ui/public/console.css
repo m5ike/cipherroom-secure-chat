@@ -323,3 +323,7 @@ pre.code, .code {
 .lb-chip { display: inline-block; background: var(--surface-3); border-radius: 6px; padding: 1px 6px; font-size: 11px; margin-left: 4px; cursor: pointer; }
 .lb-hidden { display: none !important; }
 .brand--login { padding: 0; }
+
+.whoami { font-size: 12px; color: var(--text-2); }
+.whoami b { color: var(--text); }
+[data-disabled-by-role] { opacity: .45; pointer-events: none; }
