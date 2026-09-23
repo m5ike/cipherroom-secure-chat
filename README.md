@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **3.2.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **3.3.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 3.2 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-3.2.0.pdf`](docs/site/m5cet-dokumentace-3.2.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 3.3 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-3.3.0.pdf`](docs/site/m5cet-dokumentace-3.3.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -122,8 +122,14 @@ místnosti.
   klíčem, jménem, serverem, TTL a dalším nastavením; výchozí připojení,
   připojení po přihlášení, automatické znovupřipojení, přepínač v záhlaví,
   jiný obslužný server, statistiky a log. Zapečetěné klíčem účtu v
-  prohlížeči — server má jen šifrovaný blok a počet.
+  prohlížeči — server má jen šifrovaný blok a počet. Každé jde **sdílet
+  pozvánkou** (kód 12 číslic, jméno pro pozvaného, i s jiným serverem).
   Viz [dokumentace › Uložená připojení](docs/site/index.html#pripojeni).
+- **Okno Místnost** (logo vlevo nahoře) — typ připojení jako záložky v
+  záhlaví: *Light · P2P* s ručním zadáním, *Server-enhanced* s výběrem
+  uloženého připojení (ozubené kolo otevře jejich správu); Připojit /
+  Odpojit a Sdílet místnost vždy dole; během spojení nic nepřepnete.
+  Viz [dokumentace › Okno Místnost](docs/site/index.html#okno-mistnost).
 - **Přihlášený uživatel a stav away** — odznak „přihlášen" s oknem účtu
   (velikosti, data, počty, serverový log), adresa `/signin` pro automatické
   přihlášení, a relay: když je přihlášený účastník pryč, server jeho zprávy
@@ -502,7 +508,7 @@ Plný přehled: [`docs/browser-limitations.md`](docs/browser-limitations.md).
 
 ## Známá omezení
 
-Projekt je poctivý v tom, co (zatím) neumí. Stav 3.2.0; co zbývá z plánu,
+Projekt je poctivý v tom, co (zatím) neumí. Stav 3.3.0; co zbývá z plánu,
 je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
 
 - **Skupinové hovory jsou mesh** (každý s každým): nad 4–5 účastníků roste
@@ -621,7 +627,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 3.2.0        | aktuální — uložená připojení (klíč, jméno, server, TTL, statistiky a log, výchozí a automatické připojení), 13 šablon GUI včetně iOS 27 a Windows 11, konzole *Client & addons*, předkomprimované assety |
+| 3.3.0        | aktuální — okno Místnost se záložkami a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, relace si pamatuje server |
+| 3.2.0        | uložená připojení (klíč, jméno, server, TTL, statistiky a log, výchozí a automatické připojení), 13 šablon GUI včetně iOS 27 a Windows 11, konzole *Client & addons*, předkomprimované assety |
 | 3.1.0        | šifrování v3 (Argon2id, slepé ID místností, klíče odesílatele, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role, neměnný audit, zálohy, metriky a alerty |
 | 3.0.0        | protokol v2, šifrování v2 (podpisy, zapečetěná signalizace, ověřené soubory), fronta s lease, nová administrace s živým provozem a auditem |
 | 2.7.0 – 2.11.0 | šifrovaná relace, pozvánky s kódem, passkey účty, úložiště SQLCipher, lifecycle a flash oznámení |

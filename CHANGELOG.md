@@ -5,6 +5,57 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [3.3.0] – 2026-09-24
+
+Nové okno Místnost a sdílení uložených připojení. Protokol, šifrování ani
+data se nemění. Dokumentace (HTML + PDF): [`docs/site/`](docs/site/index.html#okno-mistnost).
+
+### Okno Místnost (`client/src/components/RoomDialog.tsx`, `client/src/room.css`)
+- Typ připojení je **záložka v záhlaví okna** místo názvu *Místnost*:
+  *Light · P2P* a *Server-enhanced* (na úzkém displeji *P2P* / *Server*),
+  šipky přepínají (WAI-ARIA tabs).
+- **Light · P2P**: jméno, room ID a klíč (s okem pro zobrazení).
+- **Server-enhanced**: uložená připojení ve vzhledu *Moje připojení*, ale
+  **bez tlačítek** — vybírají se klepnutím, vybrané je orámované a
+  zaškrtnuté; výchozí první, pak naposledy použitá. *Jiná místnost* ukáže
+  pole pro ruční zadání; nepřihlášený vidí výzvu k přihlášení a pole.
+- **Ozubené kolo** otevře *Moje připojení* nad oknem Místnost; po zavření se
+  seznam obnoví a nově vytvořené připojení je vybrané. Bez připojení nabídne
+  *Vytvořit připojení* rovnou s formulářem.
+- **Vždy viditelné**: Připojit / Reconnect (podle výběru *Připojit · název*),
+  Odpojit, Sdílet místnost.
+- **Během spojení nic nepřepnete** (záložka, ostatní záznamy, pole); po
+  Odpojit jsou znovu k výběru. Reconnect obnoví totéž spojení.
+- Šablony iOS 27 (kapslový segmentový ovladač, vložené řádky, modrá
+  fajfka) a Windows 11 (SelectorBar s akcentovou pilulkou, proužek výběru).
+
+### Sdílet připojení (`SharePanel.tsx › ShareConnection`)
+- Nové tlačítko **Sdílet** u každého připojení v *Moje připojení* (mezi
+  hvězdičkou a košem) otevře okno *Sdílet připojení*: stejná pozvánka jako v
+  okně Místnost (kód 12 číslic, počet použití, platnost), ale bez nutnosti
+  spojení, s kartou připojení, volbami jako řadou tlačítek a **jménem pro
+  pozvaného**.
+- Připojení na **jiném signalizačním serveru** předá server v zapečetěné
+  pozvánce (`SharePayload.server`, jen čisté `wss://`); pozvaný se tam
+  připojí, jen když to správce tohoto serveru povoluje.
+
+### Okna
+- Okna se skládají nad sebe: Escape zavře jen horní, další okno ztmaví
+  obrazovku jen trochu; všechna se vykreslují do `<body>` (sklo iOS 27 pod
+  nimi už neposune pevně umístěný obsah).
+
+### Opraveno
+- Obnovení stránky a Reconnect vracely uložené připojení s jiným serverem na
+  tento server — relace si teď pamatuje server i připojení.
+- Pozvánka přijatá po spojení s jiným serverem zůstala na něm.
+- Uložené připojení s režimem *light* po připojení skrylo *Moje připojení* a
+  přepínač v záhlaví.
+
+### Testy
+- Komponenta okna Místnost a skládání oken (jsdom), pozvánka se serverem a
+  jménem, relace se serverem; E2E: výběr připojení v okně, zámek během spojení,
+  přidání přes ozubené kolo, sdílení připojení až po připojení hosta kódem.
+
 ## [3.2.0] – 2026-09-23
 
 Uložená připojení pro přihlášené uživatele, nové šablony celého GUI (iOS 27,
