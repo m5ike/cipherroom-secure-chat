@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **3.1.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **3.2.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 3.1 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-3.1.0.pdf`](docs/site/m5cet-dokumentace-3.1.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 3.2 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-3.2.0.pdf`](docs/site/m5cet-dokumentace-3.2.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -79,7 +79,9 @@ místnosti.
 - **Operátorská konzole** (`/console/`) — živý provoz, spojení, místnosti,
   uživatelé, fronta, úložiště, audit; **role** vlastník / operátor / auditor,
   přihlášení **passkey**, **neměnný audit** (hash řetěz + podepsané body),
-  **zálohy**, **Prometheus `/metrics`** a **alerty** s webhookem.
+  **zálohy**, **Prometheus `/metrics`** a **alerty** s webhookem; panel
+  **Client & addons** řídí uložená připojení (limity, další signalizační
+  servery) a šablony GUI (povolené, výchozí, zámek).
 - **Více instancí** — místnosti přes Redis pub/sub (`REDIS_URL`), podepsané
   zprávy clusteru.
 - **Mapy / lokace** — Geolocation + OSM deep linky, žádný bundling Leafletu.
@@ -87,8 +89,13 @@ místnosti.
   PIN + PBKDF2/AES-GCM. Plug-in registry pro hardware čtečky.
 - **Privacy panel + TTL** — automatické mazání starších zpráv, audit purge
   endpoint.
-- **6 šablon × 6 barevných variací × 4 rozvržení** — Motorsport, Glass,
-  Terminal, Midnight, Paper, Kontrast.
+- **13 šablon celého GUI × 6 barevných variací × 4 rozvržení** — systémové
+  **iOS 27** (Liquid Glass, bubliny jako iMessage, spodní listy) a **Windows 11**
+  (Mica, akryl, Fluent), klasické Motorsport, Glass, Terminal, Midnight,
+  Paper, Kontrast a studiové Aurora, Nord, Sakura, Ocean, Graphite; tón
+  světlý / tmavý / podle systému a pět stylů ikon. Které šablony smějí
+  uživatelé vybrat, určuje správce.
+  Viz [dokumentace › Šablony vzhledu](docs/site/index.html#vzhled).
 - **Pozastavení a probuzení okna** — přepnutí na jinou záložku či aplikaci,
   zamrznutí i back/forward cache hlásí jeden pár hooků. Při odložení se
   uloží stav a server (u přihlášených) přebírá zprávy; při návratu se
@@ -111,6 +118,12 @@ místnosti.
   zašifrovaný **passkeyem**. Server ověří podpis WebAuthn, ale obsah nepřečte.
 - **Účty s více passkeys a obnovovacím kódem**, relace přežívající restart
   a seznam zařízení.
+- **Uložená připojení** (přihlášení, režim Server-enhanced) — místnost s
+  klíčem, jménem, serverem, TTL a dalším nastavením; výchozí připojení,
+  připojení po přihlášení, automatické znovupřipojení, přepínač v záhlaví,
+  jiný obslužný server, statistiky a log. Zapečetěné klíčem účtu v
+  prohlížeči — server má jen šifrovaný blok a počet.
+  Viz [dokumentace › Uložená připojení](docs/site/index.html#pripojeni).
 - **Přihlášený uživatel a stav away** — odznak „přihlášen" s oknem účtu
   (velikosti, data, počty, serverový log), adresa `/signin` pro automatické
   přihlášení, a relay: když je přihlášený účastník pryč, server jeho zprávy
@@ -464,7 +477,9 @@ serverem — viz [`docs/nfc.md`](docs/nfc.md).
   `deviceId` (settings sync, audit ledger, push subscription).
 - **`X-Robots-Tag: noindex, nofollow`** — pokud používáte bundlované Nginx
   vhost.
-- **`Cache-Control: no-store`** — na všem.
+- **`Cache-Control: no-store`** — na HTML, API, service workeru a
+  `build.json`; jen soubory s hashem v názvu (`/assets/`) mají roční
+  `immutable` cache a jdou předkomprimované (brotli / gzip).
 
 ---
 
@@ -487,7 +502,7 @@ Plný přehled: [`docs/browser-limitations.md`](docs/browser-limitations.md).
 
 ## Známá omezení
 
-Projekt je poctivý v tom, co (zatím) neumí. Stav 3.1.0; co zbývá z plánu,
+Projekt je poctivý v tom, co (zatím) neumí. Stav 3.2.0; co zbývá z plánu,
 je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
 
 - **Skupinové hovory jsou mesh** (každý s každým): nad 4–5 účastníků roste
@@ -606,7 +621,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 3.1.0        | aktuální — šifrování v3 (Argon2id, slepé ID místností, klíče odesílatele, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role, neměnný audit, zálohy, metriky a alerty |
+| 3.2.0        | aktuální — uložená připojení (klíč, jméno, server, TTL, statistiky a log, výchozí a automatické připojení), 13 šablon GUI včetně iOS 27 a Windows 11, konzole *Client & addons*, předkomprimované assety |
+| 3.1.0        | šifrování v3 (Argon2id, slepé ID místností, klíče odesílatele, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role, neměnný audit, zálohy, metriky a alerty |
 | 3.0.0        | protokol v2, šifrování v2 (podpisy, zapečetěná signalizace, ověřené soubory), fronta s lease, nová administrace s živým provozem a auditem |
 | 2.7.0 – 2.11.0 | šifrovaná relace, pozvánky s kódem, passkey účty, úložiště SQLCipher, lifecycle a flash oznámení |
 | 2.6.0        | instalační sada, oprava odesílání souborů, nové menu a kompozér |

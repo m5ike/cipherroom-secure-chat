@@ -5,6 +5,72 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [3.2.0] – 2026-09-23
+
+Uložená připojení pro přihlášené uživatele, nové šablony celého GUI (iOS 27,
+Windows 11 a pět studiových), jejich konfigurace v administraci a rychlejší
+načítání. Protokol ani šifrování se nemění — **klienti 3.1 a 3.2 se v
+místnosti potkají**. Dokumentace (HTML + PDF): [`docs/site/`](docs/site/index.html).
+
+### Uložená připojení (`client/src/lib/connections.ts`, `components/ConnectionsPanel.tsx`)
+- Přihlášený uživatel v režimu Server-enhanced si v menu *Moje připojení*
+  ukládá, upravuje a maže připojení: **místnost, klíč** (zobrazit, vygenerovat
+  ~140 bitů), **jméno**, **obslužný server**, režim, historie chatu, **mizení
+  zpráv (TTL)**, relay pro nepřítomné, upozornění, automatické znovupřipojení
+  a strategie udržování spojení; název a barva.
+- **Výchozí připojení**, **připojení po přihlášení** (nebo k naposledy
+  použitému), znovupřipojení po výpadku, po návratu stránky a sítě, přepínač
+  připojení v záhlaví, dotaz před přepnutím, *Uložit aktuální místnost*.
+- **Statistiky** (připojení, čas online, zprávy, soubory a data, obnovy,
+  selhání, chyby, nejvíc lidí) a **log** s filtry, exportem JSON bez klíče a
+  vymazáním.
+- **Jiný obslužný server**: ze seznamu správce nebo vlastní `wss://`, když to
+  správce dovolí. Cizí server nedostane token účtu, úložiště, relay ani
+  neposílá administrátorské příkazy.
+- Vše zapečetěné **klíčem trezoru účtu** v prohlížeči — nová část trezoru
+  `connections` (`PUT /api/account/vault`, ≤ 1,5 MB); server zná jen šifrovaný
+  blok a počet. Dokud se trezor nenačte, klient ho nepřepíše.
+
+### Šablony vzhledu (`client/src/themes.css`, `lib/theme-catalog.ts`)
+- **iOS 27**: Liquid Glass (průsvitné vrstvy, světelná hrana), bubliny jako
+  iMessage, kompozér jako kapsle, zelené přepínače, ikony menu na barevných
+  čtverečcích, spodní listy na telefonu; světlý i tmavý tón.
+- **Windows 11**: Mica, akrylové nabídky, Fluent ovládací prvky, elevace,
+  akcentová linka fokusu, proužek výběru v menu, Segoe UI Variable, tenké
+  ikony; světlý i tmavý tón.
+- **Studio**: Aurora, Nord, Sakura, Ocean, Graphite. Celkem 13 šablon ve
+  třech rodinách, každá dál s 6 barevnými variacemi a 4 rozvrženími.
+- **Tón** automaticky podle systému (mění se za běhu), světlý nebo tmavý;
+  **styl ikon** outline / thin / bold / duotone / badge nebo podle šablony.
+- Šablona se použije ještě před prvním vykreslením (žádné probliknutí).
+
+### Administrace — Client & addons (`server/client-config.ts`)
+- Nový panel konzole: využití uložených připojení; zapnutí, statistiky a
+  logy, výchozí automatické připojení, vlastní servery, limity (připojení na
+  účet, řádky logu), **seznam dalších signalizačních serverů**; povolené
+  šablony, výchozí šablona, tón a ikony, **zámek šablony**.
+- `GET /api/client-config` (veřejné, nic tajného), `GET|PUT
+  /api/admin/client-config` (čtení auditor, změna operátor, audit
+  `admin.client-config`), soubor `$DATA_DIR/client-config.json` nebo
+  `CLIENT_CONFIG_FILE`. Klienti si změnu vezmou do 5 minut nebo po obnovení.
+
+### Optimalizace
+- Build **předkomprimuje** assety (brotli + gzip): hlavní JS 484 kB → 122 kB
+  po síti. Server je posílá sám, nginx přes `gzip_static on;`. Soubory s
+  hashem v názvu mají roční `immutable` cache, HTML a service worker dál
+  `no-store`.
+- Chat se nepřekresluje každou sekundu: časovač míří jen na nejbližší
+  expiraci zprávy; řádky zpráv jsou memoizované.
+- Odvozené klíče v LRU cache; konfigurace layoutu se čte znovu jen při změně
+  souboru; stejná konfigurace klienta nevyvolá nové vykreslení.
+
+### Testy
+- Unit: model připojení (úpravy, limity, jiné servery, statistiky a
+  ohraničený log, načtení z trezoru, dávkové ukládání), politika správce,
+  úložiště konfigurace a jeho API, část trezoru `connections`. E2E: uložení a připojení,
+  statistiky a log se dvěma účastníky, na serveru jen zapečetěný blok,
+  automatické připojení po načtení; konzole *Client & addons*.
+
 ## [3.1.0] – 2026-09-23
 
 Zapracované návrhy z roadmapy 3.0: forward secrecy a párové klíče, slepá ID

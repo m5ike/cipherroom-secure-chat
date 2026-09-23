@@ -161,7 +161,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
 </head>
 <body>
 <header class="top">
-  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 3.1.0</small></a>
+  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 3.2.0</small></a>
   <div class="search" role="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" placeholder="Hledat v dokumentaci…" autocomplete="off" aria-label="Hledat v dokumentaci" />
@@ -169,20 +169,21 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <div class="results" id="results" role="listbox"></div>
   </div>
   <button class="btn" id="theme" type="button" title="Světlý / tmavý motiv">◐</button>
-  <a class="btn" href="m5cet-dokumentace-3.1.0.pdf" download>PDF</a>
+  <a class="btn" href="m5cet-dokumentace-3.2.0.pdf" download>PDF</a>
 </header>
 <div class="layout">
 <nav class="toc" id="toc" aria-label="Obsah"></nav>
 <main id="content">
 <section class="doc cover" id="uvod" data-group="Začínáme">
   <div class="hero">
-    <h1>M5cet 3.1</h1>
+    <h1>M5cet 3.2</h1>
     <p class="lead">Šifrovaná komunikace peer-to-peer v prohlížeči: zprávy, soubory, hovory a sdílení polohy mezi lidmi, kteří znají společné heslo místnosti. Server zprostředkuje spojení, podrží zprávy pro nepřítomné a nikdy nevidí obsah.</p>
-    <p>Tato dokumentace popisuje verzi <b>3.1.0</b>: signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
+    <p>Tato dokumentace popisuje verzi <b>3.2.0</b>: uložená připojení přihlášených uživatelů (klíč, jméno, server, statistiky a log), šablony vzhledu iOS 27, Windows 11 a pět studiových, jejich konfiguraci v administraci — a pod tím vším signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
     <div class="pills"><span class="pill">Node.js 24</span><span class="pill">TypeScript 7</span><span class="pill">React 19</span><span class="pill">WebRTC DataChannel</span><span class="pill">AES-GCM 256</span><span class="pill">ECDSA / ECDH P-256</span><span class="pill">Argon2id</span><span class="pill">Ed25519</span><span class="pill">WebAuthn + PRF</span><span class="pill">SQLite + SQLCipher</span></div>
   </div>
   <div class="grid2">
     <div class="card"><h4>Pro koho je co</h4><p><b>Uživatel</b> — <a href="#rezimy">režimy</a>, <a href="#sifrovani">co šifrování chrání</a>. <b>Vývojář</b> — <a href="#architektura">architektura</a>, <a href="#protokol">protokol v2</a>, <a href="#api">API</a>. <b>Provozovatel</b> — <a href="#nasazeni">nasazení</a>, <a href="#administrace">administrace</a>, <a href="#audit">audit</a>, <a href="#bezpecnost">bezpečnost</a>.</p></div>
+    <div class="card"><h4>Co je nového ve 3.2</h4><p><a href="#pripojeni">Uložená připojení</a> s výchozím připojením, automatickým připojením po přihlášení, jiným obslužným serverem, statistikami a logem; <a href="#vzhled">13 šablon vzhledu</a> včetně <a href="#vzhled-ios">iOS 27</a> a <a href="#vzhled-windows">Windows 11</a>, světlý / tmavý tón podle systému a pět stylů ikon; vše řízené z konzole (<a href="#klient-addony">Client &amp; addons</a>); rychlejší načítání. Přehled v <a href="#zmeny-32">seznamu změn 3.2</a>.</p></div>
     <div class="card"><h4>Co je nového ve 3.1</h4><p><a href="#sifrovani-v3">Šifrování v3</a> s forward secrecy a slepým ID místnosti, <a href="#prenosy">binární přenos, relay souborů a E2EE hovorů</a>, <a href="#cluster">více instancí</a>, <a href="#ucty">více passkeys a obnovovací kód</a>, <a href="#role">role</a>, <a href="#neměnný-audit">neměnný audit</a>, <a href="#metriky">metriky a alerty</a>. Přehled v <a href="#zmeny-31">seznamu změn 3.1</a>.</p></div>
   </div>
   <div class="note"><b>Vyhledávání:</b> stiskněte <kbd>/</kbd> a pište — výsledky se hledají v nadpisech i textu, <kbd>↑</kbd> <kbd>↓</kbd> a <kbd>Enter</kbd> skočí na místo. Tlačítko <b>PDF</b> stáhne tutéž dokumentaci k tisku.</div>
@@ -760,6 +761,79 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
     <div class="card"><h4>Veřejný status</h4><p><code>/api/storage/status</code> říká jen <code>available</code>, <code>engine</code>, <code>caller</code>, <code>locked</code> — nic o ostatních uživatelích. Úplný stav je v administraci.</p></div>
   </div>
 </section>
+<section class="doc" id="pripojeni" data-group="Klient">
+  <h2>Uložená připojení <span class="badge b-acc">3.2</span><a class="anchor" href="#pripojeni">#</a></h2>
+  <p class="lead">Přihlášený uživatel v režimu <b>Server-enhanced</b> si uloží místnosti i s klíčem, jménem a nastavením, připojí se k nim jedním klepnutím (nebo z přepínače v záhlaví), vybere výchozí a nechá se k němu připojit hned po přihlášení. U každého připojení vidí statistiky a log. Menu › <i>Moje připojení</i>.</p>
+  <table>
+    <thead><tr><th>Položka připojení</th><th>Význam</th></tr></thead>
+    <tbody>
+      <tr><td>Název, barva</td><td>jak se připojení jmenuje v seznamu a v přepínači; barevná tečka</td></tr>
+      <tr><td>Místnost, klíč, jméno</td><td>vše, co chce formulář pro připojení; klíč lze zobrazit a <b>vygenerovat</b> (24 znaků z 57 bez záměn, ~140 bitů, bez modulo zkreslení)</td></tr>
+      <tr><td>Obslužný server</td><td><i>tento server</i>, server ze seznamu správce, nebo vlastní <code>wss://</code> adresa, pokud to správce dovolí (<a href="#jiny-server">níže</a>)</td></tr>
+      <tr><td>Režim, historie chatu</td><td>light / Server-enhanced a <a href="#retence">uchování chatu</a> — nastaví se při připojení</td></tr>
+      <tr><td>Mizení zpráv</td><td>výchozí TTL zpráv odeslaných v této místnosti (nebo „nemizí“)</td></tr>
+      <tr><td>Relay pro nepřítomné</td><td>server drží zprávy, když uživatel není online — jen na tomto serveru</td></tr>
+      <tr><td>Upozornění</td><td>upozornění na nové zprávy v této místnosti</td></tr>
+      <tr><td>Automaticky znovu připojit</td><td>po výpadku se připojení obnoví samo (jde vypnout u jednoho připojení)</td></tr>
+      <tr><td>Udržování spojení</td><td><i>šetrná</i> (ping 45 s, základ zpoždění obnovy 1,5 s), <i>vyvážená</i> (25 s, 1 s), <i>rychlá</i> (12 s, 0,5 s); zpoždění roste exponenciálně s náhodným rozptylem (full jitter), nejvýš 2 minuty</td></tr>
+    </tbody>
+  </table>
+  <h3 id="pripojeni-nastaveni">Nastavení</h3>
+  <ul>
+    <li><b>Výchozí připojení</b> a <b>po přihlášení se připojit</b> k němu (když žádné není, k naposledy použitému) — jednou po každém načtení stránky, a jen když není připojené nic jiného (třeba místnost obnovená z relace).</li>
+    <li><b>Po výpadku se připojit znovu</b> (vypnuté i u jednotlivého připojení = po výpadku zůstane odpojené) a <b>znovu připojit po návratu na stránku a do sítě</b> (návrat skryté nebo zmrazené stránky, událost <code>online</code>).</li>
+    <li><b>Přepínač v záhlaví</b> vedle stavu spojení; volitelně <b>dotaz před přepnutím</b> z jiné místnosti.</li>
+    <li><b>Statistiky a log</b> vypnout (správce je může vypnout všem).</li>
+    <li>Tlačítko <i>Uložit aktuální místnost</i> převezme místnost, klíč, jméno a nastavení, se kterými je uživatel právě připojený.</li>
+  </ul>
+  <h3 id="pripojeni-statistiky">Statistiky a log</h3>
+  <p>Počet připojení, čas online (celkem, nejdelší, průměr), zprávy a soubory odeslané / přijaté, objem souborů, obnovení spojení, neúspěšné pokusy, chyby, nejvíc lidí v místnosti a kdy naposledy. Log zapisuje vytvoření a úpravy, pokusy, připojení a odpojení, obnovy, chyby, příchody a odchody lidí a soubory; zprávy se jen počítají. Filtry <i>Vše / Spojení / Lidé / Soubory / Chyby</i>, <b>export JSON</b> (bez klíče místnosti) a vymazání. Délku logu určuje správce (výchozí 200 řádků na připojení).</p>
+  <h3 id="pripojeni-ulozeni">Kde a jak se ukládají</h3>
+  <p>Seznam, nastavení, statistiky i log tvoří jeden objekt, který prohlížeč <b>zapečetí klíčem trezoru účtu</b> (AES-GCM, klíč z PRF passkey, stejně jako profil) a uloží jako třetí část trezoru: <code>PUT /api/account/vault</code> s <code>{ connections: { ct, count } }</code>. Server drží jen šifrovaný blok (nejvýš 1,5 MB), jeho velikost, čas a počet připojení — nikdy klíč, název místnosti ani to, kdo se kam připojil. Úprava se uloží hned; počítadla (zprávy, obnovy) se sbírají a odejdou nejdéle za 8 s, nebo když se stránka skryje či uživatel odhlásí. Dokud se trezor nenačte, klient nic nezapíše (starší zařízení tak nepřepíše novější data).</p>
+  <h3 id="jiny-server">Jiný obslužný server</h3>
+  <p>Připojení může místo tohoto serveru použít jiný signalizační server M5cet: ze seznamu, který správce vede v konzoli, nebo — když to dovolí — libovolnou adresu <code>wss://</code> (<code>ws://</code> jen pro <code>localhost</code>; bez přihlašovacích údajů, dotazu a fragmentu). Tamní provozovatel musí mít tuto doménu v <code>ALLOWED_ORIGINS</code>. Na cizí server klient <b>neposílá token účtu</b>, neotevírá úložiště přes WebSocket, nevyužívá relay pro nepřítomné a <b>neposlouchá tamní administrátorské příkazy</b>. Šifrování je stejné — klíč místnosti prohlížeč neopustí nikdy.</p>
+  <div class="grid2">
+    <figure><img src="img/connections-list.png" alt="Seznam uložených připojení" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 10 — Moje připojení v šabloně Windows 11 (tmavý tón): výchozí, připojené, akce.</figcaption></figure>
+    <figure><img src="img/connections-edit.png" alt="Úprava připojení" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 11 — Úprava připojení v šabloně iOS 27: klíč, server, režim, historie, TTL, udržování spojení.</figcaption></figure>
+  </div>
+</section>
+
+<section class="doc" id="vzhled" data-group="Klient">
+  <h2>Šablony vzhledu <span class="badge b-acc">3.2</span><a class="anchor" href="#vzhled">#</a></h2>
+  <p class="lead">Šablona mění celé GUI: barvy, písmo, tvary, stíny, průhlednost, ovládací prvky (přepínače, segmenty, záložky, výběry), bubliny zpráv, menu a styl ikon. K šabloně se dál kombinuje barevná variace (6) a rozvržení (4). Vzhled › <i>Šablona</i>.</p>
+  <table>
+    <thead><tr><th>Rodina</th><th>Šablona</th><th>Tóny</th><th>Ikony</th></tr></thead>
+    <tbody>
+      <tr><td rowspan="2">Systémové</td><td><b>iOS 27</b></td><td>světlý + tmavý</td><td>badge</td></tr>
+      <tr><td><b>Windows 11</b></td><td>světlý + tmavý</td><td>thin</td></tr>
+      <tr><td rowspan="6">Klasické</td><td>Motorsport Dark</td><td>tmavý</td><td>outline</td></tr>
+      <tr><td>Glass Light</td><td>světlý</td><td>outline</td></tr>
+      <tr><td>Terminal Secure</td><td>tmavý</td><td>outline</td></tr>
+      <tr><td>Midnight</td><td>tmavý</td><td>outline</td></tr>
+      <tr><td>Paper</td><td>světlý</td><td>outline</td></tr>
+      <tr><td>Vysoký kontrast</td><td>tmavý</td><td>bold</td></tr>
+      <tr><td rowspan="5">Studio</td><td>Aurora — polární záře, skleněné karty</td><td>tmavý</td><td>duotone</td></tr>
+      <tr><td>Nord — arktické pastely</td><td>tmavý + světlý</td><td>thin</td></tr>
+      <tr><td>Sakura — růžová, měkké tvary</td><td>světlý</td><td>duotone</td></tr>
+      <tr><td>Ocean — tyrkys a hlubina</td><td>světlý + tmavý</td><td>outline</td></tr>
+      <tr><td>Graphite — grafit s oranžovou</td><td>tmavý + světlý</td><td>bold</td></tr>
+    </tbody>
+  </table>
+  <h3 id="vzhled-ios">iOS 27</h3>
+  <p>Systémové barvy iOS (modrá <code>#007AFF</code>, skupinové pozadí, oddělovače), písmo SF Pro (na Apple zařízeních systémové), <b>Liquid Glass</b> — průsvitné vrstvy s rozostřením a sytostí, světelný okraj a měkký stín — na záhlaví, menu, oknech a kompozéru. Bubliny jako iMessage (moje modré vpravo, cizí šedé), kompozér jako kapsle, zelené přepínače, segmentové přepínače s vystouplým vybraným segmentem, velké zaoblení, ikony menu na barevných čtverečcích jako v Nastavení; na telefonu okna jako spodní listy s úchytem.</p>
+  <h3 id="vzhled-windows">Windows 11</h3>
+  <p>Fluent: materiál <b>Mica</b> v okně, <b>akrylové</b> nabídky a vyskakovací okna, Segoe UI Variable, zaoblení 4–8 px, jemný rámeček s elevací (spodní hrana tmavší), akcent <code>#005FB8</code> / <code>#60CDFF</code>, pole s akcentovou linkou při fokusu, vybraná položka menu s proužkem vlevo, přepínače, segmenty a záložky (pivot) s akcentovou linkou, tenké ikony 1,5 px.</p>
+  <h3 id="vzhled-ton">Tón a ikony</h3>
+  <ul>
+    <li><b>Tón</b> u šablon se dvěma tóny: <i>automaticky</i> (podle nastavení systému, mění se za běhu), <i>světlý</i>, <i>tmavý</i>.</li>
+    <li><b>Ikony</b>: <i>podle šablony</i>, nebo <code>outline</code> (2 px), <code>thin</code> (1,5 px), <code>bold</code> (2,5 px), <code>duotone</code> (tah a jemná výplň), <code>badge</code> (ikony menu na barevných čtverečcích).</li>
+    <li>Technicky: atributy <code>data-theme</code>, <code>data-tone</code>, <code>data-icons</code> a <code>data-family</code> na <code>&lt;html&gt;</code> a CSS proměnné (<code>client/src/themes.css</code>, katalog <code>client/src/lib/theme-catalog.ts</code>). Šablona se nastaví ještě před prvním vykreslením Reactu — stránka neblikne jinou barvou.</li>
+    <li>Které šablony uživatel smí vybrat, výchozí šablonu, tón a ikony a zámek určuje správce (<a href="#klient-addony">Client &amp; addons</a>). Zařízení, které si šablonu nevybralo, ukazuje výchozí.</li>
+  </ul>
+  <figure><img src="img/template-ios.png" alt="Šablona iOS 27" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 12 — Chat v šabloně iOS 27 (světlý tón).</figcaption></figure>
+  <figure><img src="img/template-windows.png" alt="Šablona Windows 11" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 13 — Chat v šabloně Windows 11 (tmavý tón).</figcaption></figure>
+</section>
+
 <section class="doc" id="administrace" data-group="Provoz">
   <h2>Administrace<a class="anchor" href="#administrace">#</a></h2>
   <p class="lead">Konzole operátora na <code>https://&lt;doména&gt;/console/</code>. Živá data bere z hlavní služby (<code>/api/admin/*</code>), nástroje layoutu, telefonie a AI z admin služby (<code>/admin/*</code>). Přístup mají jmenovití administrátoři s rolí; <code>ADMIN_API_TOKEN</code> zůstává jako vlastník „admin“.</p>
@@ -778,6 +852,7 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
       <tr><td>Systém a paměť</td><td>RSS, heap (a limit), external, event loop p99 / průměr, CPU, zátěž hostitele, otevřené zdroje; grafy 30 minut</td></tr>
       <tr><td>Retence</td><td>politika uchovávání, další běh, ruční spuštění</td></tr>
       <tr><td>Příkazy a push</td><td>příkaz pro zařízení (doručí se hned, je-li připojené), čekající příkazy, log doručení, stav VAPID, odběratelé, testovací push</td></tr>
+      <tr><td>Client &amp; addons <span class="badge b-acc">3.2</span></td><td>využití uložených připojení; jejich politika a další signalizační servery; povolené šablony vzhledu, výchozí šablona, tón a ikony, zámek (<a href="#klient-addony">níže</a>)</td></tr>
       <tr><td>Layout, Telefonie, AI</td><td>přenesené nástroje z předchozí administrace</td></tr>
     </tbody>
   </table>
@@ -799,6 +874,24 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
     <li><b>Přihlášení passkey:</b> administrátor si v konzoli zaregistruje passkey (<i>Můj passkey</i>) a příště se přihlásí bez tokenu; relace konzole platí 8 h.</li>
     <li>Každý zásah se v auditu zapíše <b>jménem</b> administrátora (<code>actor</code>), ne „admin“.</li>
   </ul>
+  <h3 id="klient-addony">Client &amp; addons <span class="badge b-acc">3.2</span></h3>
+  <p>Co správce zapíná pro všechny klienty. Uloží se do <code>$DATA_DIR/client-config.json</code> (nebo <code>CLIENT_CONFIG_FILE</code>; sdílí ho všechny instance), klienti si ho berou z <code>GET /api/client-config</code> při startu a pak každých 5 minut. Číst smí auditor, měnit operátor; každá změna je v auditu jako <code>admin.client-config</code>.</p>
+  <table>
+    <thead><tr><th>Nastavení</th><th>Výchozí</th><th>Význam</th></tr></thead>
+    <tbody>
+      <tr><td>Users may save connections</td><td>ano</td><td><a href="#pripojeni">uložená připojení</a> pro přihlášené v režimu Server-enhanced</td></tr>
+      <tr><td>Statistics and logs</td><td>ano</td><td>klienti vedou statistiky a log připojení</td></tr>
+      <tr><td>New users: connect the default after sign-in</td><td>ano</td><td>výchozí hodnota uživatelského nastavení</td></tr>
+      <tr><td>Users may type other signaling servers</td><td>ne</td><td>jinak jen tento server a servery ze seznamu</td></tr>
+      <tr><td>Connections per account, Log lines per connection</td><td>30, 200</td><td>limity (max. 200 a 2 000)</td></tr>
+      <tr><td>Other signaling servers</td><td>—</td><td>až 20 serverů (název, <code>wss://</code> adresa), které připojení smí použít</td></tr>
+      <tr><td>GUI templates</td><td>všechny</td><td>šablony, které si uživatelé smějí vybrat</td></tr>
+      <tr><td>Default template / tone / icons</td><td>Motorsport, automaticky, podle šablony</td><td>co ukazuje zařízení, které si nevybralo</td></tr>
+      <tr><td>Lock</td><td>ne</td><td>všichni dostanou výchozí šablonu, výběr je zamčený</td></tr>
+    </tbody>
+  </table>
+  <p>Horní karta ukazuje využití: počet účtů, kolik z nich má uložená připojení a kolik připojení celkem — z počtů, které hlásí prohlížeč; obsah trezoru server nepřečte.</p>
+  <figure><img src="img/console-client.png" alt="Client &amp; addons" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 14 — Konzole › Client &amp; addons: politika připojení, další server, povolené šablony (jen iOS 27 a Windows 11), zámek.</figcaption></figure>
   <h3 id="konzole-bezpecnost">Bezpečnost konzole</h3>
   <ul>
     <li>Token je jen v paměti záložky (volitelně v <code>sessionStorage</code>), <b>nikdy v <code>localStorage</code></b> — starý klíč <code>m5cet:admin:cfg</code> konzole při načtení smaže.</li>
@@ -881,9 +974,11 @@ data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<spa
       <tr><td><code>GET /api/turn</code></td><td>ICE servery; s <code>TURN_SECRET</code> krátkodobé přístupy a <code>expiresAt</code></td><td>—</td></tr>
       <tr><td><code>GET /metrics</code> <span class="badge b-acc">3.1</span></td><td>Prometheus metriky</td><td><code>METRICS_TOKEN</code> nebo administrátor</td></tr>
       <tr><td><code>GET /api/layout</code></td><td>vzhled a šablony od operátora</td><td>—</td></tr>
+      <tr><td><code>GET /api/client-config</code> <span class="badge b-acc">3.2</span></td><td>konfigurace klienta od správce: politika uložených připojení a další servery, povolené a výchozí šablony (<a href="#klient-addony">Client &amp; addons</a>); nic tajného</td><td>—</td></tr>
       <tr><td><code>POST /api/share/create|redeem|revoke</code></td><td>pozvánky (split-key, kód 12 číslic); limit 30 / 40 za 15 min</td><td>—</td></tr>
       <tr><td><code>GET /api/push/status</code>, <code>POST /api/push/subscribe|test</code></td><td>Web Push pro zařízení bez účtu (jen známé push služby)</td><td>test sobě bez tokenu, všem s admin tokenem</td></tr>
       <tr><td><code>/api/account/*</code></td><td>registrace a přihlášení passkey, <code>me</code>, trezor, push, odhlášení, smazání</td><td>Bearer token relace</td></tr>
+      <tr><td><code>GET|PUT /api/account/vault</code> — část <code>connections</code> <span class="badge b-acc">3.2</span></td><td>zapečetěná <a href="#pripojeni">uložená připojení</a>: <code>{ connections: { ct, count } }</code>, <code>ct</code> ≤ 1,5 MB</td><td>token relace</td></tr>
       <tr><td><code>POST /api/account/passkeys/options|verify</code>, <code>GET passkeys/:id/wrapped</code>, <code>DELETE passkeys/:id</code> <span class="badge b-acc">3.1</span></td><td>další passkey účtu, jeho zapečetěný kořen, odebrání (poslední nejde)</td><td>token relace</td></tr>
       <tr><td><code>PUT|DELETE /api/account/recovery</code>, <code>POST recovery/start|finish</code> <span class="badge b-acc">3.1</span></td><td>obnovovací kód: nastavit, zrušit, obnovit účet (10 pokusů / h)</td><td>token relace / důkaz z kódu</td></tr>
       <tr><td><code>GET /api/account/sessions</code>, <code>DELETE sessions/:id</code>, <code>PUT identity</code> <span class="badge b-acc">3.1</span></td><td>zařízení účtu a jejich odhlášení; veřejný klíč účtu (Ed25519)</td><td>token relace</td></tr>
@@ -922,6 +1017,7 @@ data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<spa
       <tr><td><code>GET audit/verify</code>, <code>POST audit/checkpoint</code> <span class="badge b-acc">3.1</span></td><td>ověření hash řetězu a podpisů; podepsat hlavu teď</td></tr>
       <tr><td><code>GET|POST backups</code>, <code>POST db/integrity</code>, <code>POST db/optimize</code> <span class="badge b-acc">3.1</span></td><td>zálohy, kontrola integrity, optimalizace (<code>{vacuum:true}</code> jen vlastník)</td></tr>
       <tr><td><code>GET metrics</code>, <code>GET alerts</code>, <code>PUT alerts/rules/:id</code> <span class="badge b-acc">3.1</span></td><td>metriky; pravidla, spuštěné alerty, historie; práh a zapnutí pravidla</td></tr>
+      <tr><td><code>GET|PUT client-config</code> <span class="badge b-acc">3.2</span></td><td>konfigurace klienta (+ výchozí hodnoty, cesta k souboru, využití, katalog šablon); <code>PUT</code> operátor</td></tr>
     </tbody>
   </table>
 <pre><code><span class="c"># export auditu bezpečnostních událostí od úrovně warn do CSV</span>
@@ -1013,6 +1109,7 @@ REDIS_URL=redis://:heslo@127.0.0.1:6379/0  CLUSTER_SECRET=$(openssl rand -base64
       <tr><td><code>BACKUP_DIR</code>, <code>BACKUP_INTERVAL_HOURS</code>, <code>BACKUP_KEEP</code> <span class="badge b-acc">3.1</span></td><td>—, 24, 7</td><td>plánované zálohy a kontroly integrity</td></tr>
       <tr><td><code>REDIS_URL</code>, <code>CLUSTER_SECRET</code>, <code>CLUSTER_CHANNEL</code> <span class="badge b-acc">3.1</span></td><td>—, —, <code>m5cet:cluster</code></td><td>více instancí (<a href="#cluster">cluster</a>); tajemství pro podpis zpráv</td></tr>
       <tr><td><code>WS_CONNECTS_PER_MINUTE</code>, <code>WS_CONNECTIONS_PER_CLIENT</code>, <code>WS_CONNECTIONS_TOTAL</code> <span class="badge b-acc">3.1</span></td><td>30, 20, 5000</td><td>brána WebSocket spojení (na adresu klienta / celkem)</td></tr>
+      <tr><td><code>CLIENT_CONFIG_FILE</code> <span class="badge b-acc">3.2</span></td><td><code>$DATA_DIR/client-config.json</code></td><td>konfigurace klienta z konzole (<a href="#klient-addony">Client &amp; addons</a>)</td></tr>
       <tr><td><code>LOG_EVENTS</code></td><td>vypnuto</td><td>metadata událostí (<code>/api/admin/events</code>)</td></tr>
       <tr><td><code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>, <code>ENABLE_TELEPHONY</code> + klíče poskytovatelů</td><td>vypnuto</td><td>volitelné moduly</td></tr>
     </tbody>
@@ -1032,6 +1129,15 @@ REDIS_URL=redis://:heslo@127.0.0.1:6379/0  CLUSTER_SECRET=$(openssl rand -base64
     proxy_cache off;
     proxy_read_timeout 3600s;
 }</code></pre>
+  <p><b>Od 3.2</b> build ukládá ke každému souboru v <code>/assets/</code> i předkomprimované <code>.br</code> a <code>.gz</code>. nginx je posílá direktivou <code>gzip_static on;</code> (s modulem ngx_brotli i <code>brotli_static on;</code>); bez nginx je posílá sám server. Soubory s hashem v názvu mají <code>Cache-Control: public, max-age=31536000, immutable</code>, HTML, service worker a <code>build.json</code> dál <code>no-store</code>.</p>
+  <h3 id="upgrade-32">Upgrade z 3.1 na 3.2</h3>
+  <ol>
+    <li><code>git pull</code>, <code>npm ci</code>, <code>npm run build</code> (nebo <code>./update.sh</code>) — build nově předkomprimuje assety.</li>
+    <li>nginx (doporučeno): <code>gzip_static on;</code> v bloku <code>/assets/</code> (hotové v <code>deploy/nginx/m5cet.conf</code>); <code>nginx -t &amp;&amp; systemctl reload nginx</code>.</li>
+    <li>Restart <code>m5cet</code> a <code>m5cet-admin</code>. Bez <code>client-config.json</code> platí výchozí hodnoty: uložená připojení zapnutá, všechny šablony povolené, výchozí Motorsport.</li>
+    <li>Protokol ani šifrování se nemění: <b>klienti 3.1 a 3.2 se v místnosti potkají</b>. Otevřená okna nabídnou obnovení (nový build). Kdo si šablonu už vybral, má ji dál.</li>
+    <li>V konzoli › <i>Client &amp; addons</i> nastavit šablony a případné další signalizační servery.</li>
+  </ol>
   <h3 id="upgrade-31">Upgrade z 3.0 na 3.1</h3>
   <ol>
     <li><code>git pull</code>, <code>npm ci</code> (nová závislost <code>hash-wasm</code>), <code>npm run build</code> (nebo <code>./update.sh</code>).</li>
@@ -1051,11 +1157,11 @@ REDIS_URL=redis://:heslo@127.0.0.1:6379/0  CLUSTER_SECRET=$(openssl rand -base64
   </ol>
   <h3 id="overeni">Ověření</h3>
 <pre><code>npm run check            <span class="c"># TypeScript</span>
-npm test -- --no-file-parallelism   <span class="c"># ~800 unit testů (vč. fuzz, upgrade z 3.0, cluster s Redisem)</span>
+npm test -- --no-file-parallelism   <span class="c"># ~810 unit testů (vč. fuzz, upgrade z 3.0, cluster s Redisem, připojení a konfigurace klienta)</span>
 npm run build
-npm run test:e2e         <span class="c"># 48 testů: zprávy, soubory P2P i relay, šifrovaný hovor, účty a obnova, konzole a role…</span>
+npm run test:e2e         <span class="c"># 54 testů: zprávy, soubory P2P i relay, šifrovaný hovor, účty a obnova, uložená připojení, konzole a role…</span>
 npm run load-test -- --url ws://127.0.0.1:5000/ws --clients 500   <span class="c"># zátěž (zvednout WS_* limity na testovacím serveru)</span>
-curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"protocol":2,"version":"3.1.0","cluster":"local",…}</span></code></pre>
+curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"protocol":2,"version":"3.2.0","cluster":"local",…}</span></code></pre>
 </section>
 
 <section class="doc" id="bezpecnost" data-group="Bezpečnost">
@@ -1118,9 +1224,22 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
       <tr><td><b>Seznam zařízení účtu viditelný protistranám</b> (podepsaný účtem, transparentní změny)</td><td>Upozornit, když účet získá nové zařízení, ne až když napíše.</td><td><span class="badge">P3</span></td><td>M</td></tr>
       <tr><td><b>OIDC pro konzoli</b>, <b>OpenTelemetry</b> trasování</td><td>Napojení na firemní identitu a tracing.</td><td><span class="badge">P3</span></td><td>M</td></tr>
       <tr><td><b>Fronta v Postgresu</b>, WebTransport</td><td>Cluster přes více hostitelů bez sdíleného disku; nižší latence relay.</td><td><span class="badge">P3</span></td><td>L</td></tr>
+      <tr><td><b>Sdílení uloženého připojení</b> pozvánkou (split-key) a import / export zapečetěným souborem</td><td>Připojení se dnes zakládá ručně na každém účtu.</td><td><span class="badge">P3</span></td><td>S</td></tr>
+      <tr><td><b>Vlastní šablona od správce</b> (barvy, písmo, zaoblení) v konzoli</td><td>Firemní vzhled bez úprav CSS; dnes jen výběr z 13 šablon.</td><td><span class="badge">P3</span></td><td>M</td></tr>
       <tr><td><b>Post-kvantový hybrid</b> (ML-KEM + ECDH) pro párové klíče</td><td>„Sklidit teď, rozšifrovat později“; až to WebCrypto nabídne nativně.</td><td><span class="badge">P3</span></td><td>M</td></tr>
     </tbody>
   </table>
+</section>
+
+<section class="doc" id="zmeny-32" data-group="Plán">
+  <h2>Změny ve 3.2.0<a class="anchor" href="#zmeny-32">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>Přidáno</h4><p>Uložená připojení přihlášených uživatelů (místnost, klíč, jméno, server, režim, historie, TTL, relay, upozornění, znovupřipojení, udržování spojení) se statistikami, logem a exportem; výchozí připojení, připojení po přihlášení a po návratu, přepínač v záhlaví; jiný obslužný server. Šablony iOS 27 a Windows 11 (světlý i tmavý tón), Aurora, Nord, Sakura, Ocean, Graphite; tón podle systému; pět stylů ikon. Konzole › Client &amp; addons, <code>/api/client-config</code>.</p></div>
+    <div class="card"><h4>Optimalizováno</h4><p>Předkomprimované assety (brotli: hlavní JS 484 → 122 kB) s ročním cache; zprávy chatu se nepřekreslují každou sekundu (časovač jen k nejbližší expiraci) a řádky zpráv jsou memoizované; odvozené klíče v LRU cache; konfigurace layoutu se čte jen při změně souboru.</p></div>
+    <div class="card"><h4>Bezpečnost</h4><p>Na jiný obslužný server nejde token účtu, úložiště, relay ani administrátorské příkazy; adresy serverů jen <code>wss://</code> bez přihlašovacích údajů; trezor s připojeními se nepřepíše, dokud se nenačte; export logu bez klíče.</p></div>
+    <div class="card"><h4>Kompatibilita</h4><p>Protokol a šifrování beze změny — klienti 3.1 a 3.2 se potkají. Trezor účtu má třetí část <code>connections</code>; starší klient ji ignoruje.</p></div>
+  </div>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 3.2.0.</p>
 </section>
 
 <section class="doc" id="zmeny-31" data-group="Plán">
@@ -1131,7 +1250,7 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
     <div class="card"><h4>Změněno</h4><p>Živé zprávy už nešifruje klíč místnosti; server zná jen slepé ID; metadata fronty zapečetěná; push probuzení neutrální; relace 12 h klouzavě (max. 7 dní) místo pevných 12 h v paměti; CSP povoluje WebAssembly.</p></div>
     <div class="card"><h4>Nekompatibilní</h4><p>Klient 3.0 a 3.1 se v místnosti nepotkají (jiné ID i klíče) — po nasazení obnovit všechna okna. nginx potřebuje <code>'wasm-unsafe-eval'</code> v CSP.</p></div>
   </div>
-  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 3.1.0.</p>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>.</p>
 </section>
 
 <section class="doc" id="zmeny" data-group="Plán">
