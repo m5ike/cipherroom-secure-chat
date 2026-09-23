@@ -36,7 +36,10 @@ export type AccountSummary = {
   createdAt: number;
   lastLoginAt: number;
   loginCount: number;
-  vault: { profileBytes: number; profileUpdatedAt: number; chatBytes: number; chatUpdatedAt: number; messages: number; messageBytes: number; rooms: number };
+  vault: {
+    profileBytes: number; profileUpdatedAt: number; chatBytes: number; chatUpdatedAt: number; messages: number; messageBytes: number; rooms: number;
+    connections?: number; connectionsBytes?: number; connectionsUpdatedAt?: number;
+  };
   mailbox: { pending: number; bytes: number };
   away: Array<{ room: string; name: string; since: number }>;
   pushDevices: number;
@@ -358,20 +361,31 @@ export async function refreshAccount(): Promise<AccountSummary | null> {
 
 /** Opens the server-side vault. `profile` and `chat` are null when empty;
  *  a blob that does not decrypt throws (wrong passkey, corrupted upload). */
-export async function loadVault<P>(): Promise<{ profile: P | null; chat: ChatVaultPayload | null }> {
+export async function loadVault<P, C = unknown>(): Promise<{ profile: P | null; chat: ChatVaultPayload | null; connections: C | null }> {
   if (!session) throw new Error("Not signed in.");
-  const raw = await api<{ profile: { ct: string } | null; chat: { ct: string } | null }>("/api/account/vault", {}, session.token);
-  const out: { profile: P | null; chat: ChatVaultPayload | null } = { profile: null, chat: null };
+  const raw = await api<{ profile: { ct: string } | null; chat: { ct: string } | null; connections?: { ct: string } | null }>("/api/account/vault", {}, session.token);
+  const out: { profile: P | null; chat: ChatVaultPayload | null; connections: C | null } = { profile: null, chat: null, connections: null };
   if (raw.profile?.ct) out.profile = await openProfile<P>(raw.profile.ct, session.key);
   if (raw.chat?.ct) out.chat = await openProfile<ChatVaultPayload>(raw.chat.ct, session.key);
+  if (raw.connections?.ct) out.connections = await openProfile<C>(raw.connections.ct, session.key);
   return out;
 }
 
+/** Only the saved connections (connections.ts), opened with the vault key. */
+export async function loadConnectionsVault<C>(): Promise<C | null> {
+  if (!session) return null;
+  const raw = await api<{ connections?: { ct: string } | null }>("/api/account/vault", {}, session.token);
+  return raw.connections?.ct ? await openProfile<C>(raw.connections.ct, session.key) : null;
+}
+
 /** Seals and uploads what changed. Returns the refreshed account summary. */
-export async function saveVault(patch: { profile?: unknown; chat?: ChatVaultPayload }): Promise<AccountSummary | null> {
+export async function saveVault(patch: { profile?: unknown; chat?: ChatVaultPayload; connections?: { value: unknown; count: number } }): Promise<AccountSummary | null> {
   if (!session) return null;
   const body: Record<string, unknown> = {};
   if (patch.profile !== undefined) body.profile = await sealProfile(patch.profile, session.key);
+  // The room keys inside are sealed here: the server stores ciphertext and
+  // a count, nothing it could connect with.
+  if (patch.connections !== undefined) body.connections = { ct: await sealProfile(patch.connections.value, session.key), count: patch.connections.count };
   if (patch.chat !== undefined) {
     const ct = await sealProfile(patch.chat, session.key);
     body.chat = {

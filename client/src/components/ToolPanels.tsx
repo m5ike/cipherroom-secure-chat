@@ -257,16 +257,16 @@ export function ConnectionPanel({
         <span className="font-semibold">{t(lang, "conn.desired")}:</span>{" "}
         {t(lang, desired === "connected" ? "conn.desired.connected" : "conn.desired.disconnected")}
       </div>
-      <p className="text-xs text-muted-foreground">Heartbeat strategy controls how often the client pings signaling and how aggressively it reconnects after a drop. Browsers throttle background timers; mobile may suspend WebSockets entirely when tab is hidden.</p>
-      <label className="grid gap-1 text-sm font-medium">Strategy
+      <p className="text-xs text-muted-foreground">{t(lang, "keepalive.hint")}</p>
+      <label className="grid gap-1 text-sm font-medium">{t(lang, "keepalive.strategy")}
         <select
           value={prefs.keepaliveStrategy}
           onChange={(e) => setPrefs({ keepaliveStrategy: e.target.value as KeepaliveStrategy })}
           className="min-h-10 rounded-xl border border-input bg-background px-2"
         >
-          <option value="conservative">Conservative (45s ping, reconnect from 1.5s)</option>
-          <option value="balanced">Balanced (25s ping, reconnect from 1s)</option>
-          <option value="aggressive">Aggressive (12s ping, reconnect from 0.5s)</option>
+          <option value="conservative">{t(lang, "keepalive.conservative")}</option>
+          <option value="balanced">{t(lang, "keepalive.balanced")}</option>
+          <option value="aggressive">{t(lang, "keepalive.aggressive")}</option>
         </select>
       </label>
       {status ? (

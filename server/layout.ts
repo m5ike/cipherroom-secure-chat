@@ -10,8 +10,7 @@
 // templates — never markup. The app and admin are separate processes: the
 // admin writes, the app re-reads when the file's mtime changes.
 
-import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Express, Request, Response } from "express";
 import { DEFAULT_LAYOUT, sanitizeLayout, type LayoutConfig } from "../client/src/lib/layout-config";
@@ -25,9 +24,11 @@ export function layoutFilePath(): string {
   return dir ? resolve(dir, "layout.json") : resolve(process.cwd(), ".m5cet", "layout.json");
 }
 
-/** Content signature ("" when missing) — mtime alone misses same-tick writes. */
+/** mtime, size and inode ("" when missing). Saves are atomic renames, so a
+ *  write always shows as a new inode — no need to hash the file on every
+ *  GET /api/layout, as this used to. */
 function fileSig(): string {
-  try { return createHash("sha1").update(readFileSync(layoutFilePath())).digest("hex"); } catch { return ""; }
+  try { const st = statSync(layoutFilePath()); return `${st.mtimeMs}:${st.size}:${st.ino}`; } catch { return ""; }
 }
 
 export class LayoutStore {

@@ -75,6 +75,7 @@ import {
   Nfc,
   Palette,
   PencilRuler,
+  Plug,
   Radio,
   Phone,
   Settings as SettingsIcon,
@@ -117,6 +118,7 @@ export const MENU_ENTRIES: MenuEntry[] = [
   { group: "room",  panel: "trust", testId: "btn-trust", labelKey: "menu.trust", Icon: Shield },
   { group: "room",  panel: "peers", testId: "btn-peers", labelKey: "menu.peers", Icon: Users },
   { group: "room",  panel: "connection", testId: "btn-connection", labelKey: "menu.connection", Icon: Radio },
+  { group: "room",  panel: "connections", testId: "btn-connections", labelKey: "menu.connections", Icon: Plug },
   { group: "talk",  panel: "audio", testId: "btn-audio", labelKey: "menu.audio", Icon: Mic },
   { group: "talk",  panel: "video", testId: "btn-video", labelKey: "menu.video", Icon: Video },
   { group: "talk",  panel: "files", testId: "btn-files", labelKey: "menu.files", Icon: FileText },
@@ -685,7 +687,7 @@ function SpeedDialItem(props: {
           (isCurrent ? "bg-primary/15 text-primary" : "")
         }
       >
-        <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className="menu-icon" data-panel={entry.panel} aria-hidden="true"><Icon className="h-4 w-4 shrink-0" /></span>
         <span className="font-medium">{label}</span>
         {isCurrent ? (
           <span className="ms-auto h-2 w-2 rounded-full bg-primary" aria-hidden="true" />

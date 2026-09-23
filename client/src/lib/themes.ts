@@ -1,8 +1,12 @@
-// Visual system: three independent axes, each a data-* attribute on <html>.
+// Visual system: independent axes, each a data-* attribute on <html>.
 //
 //   data-theme   the template — surfaces, typography, radius, mood
+//                (theme-catalog.ts lists them; index.css + themes.css style them)
+//   data-tone    light / dark — fixed for most templates; the system
+//                look-alikes follow the OS when the user picks "automatic"
 //   data-accent  a colour variation of that template (primary / ring / stripe)
 //   data-layout  how the conversation is laid out (width, density)
+//   data-icons   how icons are drawn (outline, thin, bold, duotone, badge)
 //
 // CSS variables in index.css do the work; this file only lists what exists
 // and flips the attributes. User-level overrides from the Appearance screen
@@ -11,22 +15,19 @@
 
 import { FONTS, fontStack } from "./fonts";
 import { hexToHslVar, isHexColor, readableOn, shade } from "./color";
+import {
+  THEME_CATALOG, isThemeId, resolveIconStyle, resolveTone, themeDef,
+  type IconStyle, type ThemeId, type ThemePreview, type ThemeTone, type ToneChoice,
+} from "./theme-catalog";
 
-export type ThemeId = "motorsport" | "glass" | "terminal" | "midnight" | "paper" | "contrast";
+export { isThemeId, type ThemeId };
 export type AccentId = "default" | "red" | "orange" | "green" | "blue" | "violet";
 export type LayoutId = "classic" | "wide" | "compact" | "focus";
 
-type Hsl = [number, number, number];
-/** `preview` mirrors the template's CSS variables (background, card,
- *  foreground, primary) for the picker cards — the real values stay in index.css. */
-export const THEMES: { id: ThemeId; tone: "dark" | "light"; labelKey: string; preview: { bg: Hsl; card: Hsl; fg: Hsl; primary: Hsl } }[] = [
-  { id: "motorsport", tone: "dark", labelKey: "themes.motorsport", preview: { bg: [220, 28, 6], card: [220, 26, 9], fg: [210, 16, 95], primary: [0, 86, 52] } },
-  { id: "glass", tone: "light", labelKey: "themes.glass", preview: { bg: [210, 40, 98], card: [0, 0, 100], fg: [222, 28, 14], primary: [220, 90, 56] } },
-  { id: "terminal", tone: "dark", labelKey: "themes.terminal", preview: { bg: [145, 30, 4], card: [145, 32, 6], fg: [142, 86, 78], primary: [142, 86, 50] } },
-  { id: "midnight", tone: "dark", labelKey: "themes.midnight", preview: { bg: [232, 38, 7], card: [232, 34, 10], fg: [226, 40, 92], primary: [252, 88, 68] } },
-  { id: "paper", tone: "light", labelKey: "themes.paper", preview: { bg: [40, 33, 96], card: [42, 40, 99], fg: [28, 24, 14], primary: [18, 72, 42] } },
-  { id: "contrast", tone: "dark", labelKey: "themes.contrast", preview: { bg: [0, 0, 0], card: [0, 0, 5], fg: [0, 0, 100], primary: [52, 100, 50] } },
-];
+/** Picker data for every template (the catalog in theme-catalog.ts). `tone`
+ *  and `preview` are the template's default tone; `previews` has all. */
+export const THEMES: { id: ThemeId; tone: ThemeTone; tones: readonly ThemeTone[]; family: string; labelKey: string; descKey: string; preview: ThemePreview; previews: Partial<Record<ThemeTone, ThemePreview>> }[] =
+  THEME_CATALOG.map((t) => ({ id: t.id, tone: t.tones[0], tones: t.tones, family: t.family, labelKey: t.labelKey, descKey: t.descKey, preview: t.preview[t.tones[0]]!, previews: t.preview }));
 
 /** `swatch` is only for the picker; the real colours live in index.css. */
 export const ACCENTS: { id: AccentId; swatch: string }[] = [
@@ -45,23 +46,49 @@ export const LAYOUTS: { id: LayoutId; labelKey: string }[] = [
   { id: "focus", labelKey: "layout.focus" },
 ];
 
-export const isThemeId = (v: unknown): v is ThemeId => THEMES.some((t) => t.id === v);
 export const isAccentId = (v: unknown): v is AccentId => ACCENTS.some((a) => a.id === v);
 export const isLayoutId = (v: unknown): v is LayoutId => LAYOUTS.some((l) => l.id === v);
 
-export function applyTheme(id: ThemeId, accent: AccentId = "default", layout: LayoutId = "classic") {
+export type ThemeOptions = { tone?: ToneChoice; icons?: IconStyle | "theme" };
+
+let applied: { id: ThemeId; tone: ToneChoice } | null = null;
+let systemQuery: MediaQueryList | null = null;
+
+function systemDark(): boolean {
+  try { return window.matchMedia("(prefers-color-scheme: dark)").matches; } catch { return false; }
+}
+
+/** "Automatic" follows the operating system while the page is open. */
+function followSystem(): void {
+  if (systemQuery || typeof window === "undefined" || !window.matchMedia) return;
+  systemQuery = window.matchMedia("(prefers-color-scheme: dark)");
+  const onChange = () => { if (applied?.tone === "auto" && themeDef(applied.id).tones.length > 1) setTone(resolveTone(applied.id, "auto", systemDark())); };
+  try { systemQuery.addEventListener("change", onChange); } catch { systemQuery.addListener?.(onChange); }
+}
+
+function setTone(tone: ThemeTone): void {
   const root = document.documentElement;
-  root.setAttribute("data-theme", id);
+  root.setAttribute("data-tone", tone);
+  root.classList.toggle("dark", tone === "dark");
+  // Native controls and scrollbars follow the template; "only" stops
+  // Samsung Internet / Chrome forced dark mode from re-inverting it.
+  root.style.colorScheme = `only ${tone}`;
+  syncThemeColor();
+}
+
+export function applyTheme(id: ThemeId, accent: AccentId = "default", layout: LayoutId = "classic", options: ThemeOptions = {}) {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  const theme = isThemeId(id) ? id : "motorsport";
+  const tone = options.tone ?? "auto";
+  root.setAttribute("data-theme", theme);
   root.setAttribute("data-accent", accent);
   root.setAttribute("data-layout", layout);
-  const theme = THEMES.find((entry) => entry.id === id);
-  if (theme) {
-    root.classList.toggle("dark", theme.tone === "dark");
-    // Native controls and scrollbars follow the template; "only" stops
-    // Samsung Internet / Chrome forced dark mode from re-inverting it.
-    root.style.colorScheme = `only ${theme.tone}`;
-  }
-  syncThemeColor();
+  root.setAttribute("data-icons", resolveIconStyle(theme, options.icons ?? "theme"));
+  root.setAttribute("data-family", themeDef(theme).family);
+  applied = { id: theme, tone };
+  if (tone === "auto") followSystem();
+  setTone(resolveTone(theme, tone, systemDark()));
 }
 
 /** Mobile browser chrome (Android address bar, iOS 15+ tab bar, installed

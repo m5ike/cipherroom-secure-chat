@@ -2,7 +2,8 @@
 // triggers a sync via the consented Server-enhanced mode.
 
 import type { Lang } from "./i18n";
-import { isAccentId, isLayoutId, isThemeId, type AccentId, type LayoutId, type ThemeId } from "./themes";
+import { isAccentId, isLayoutId, type AccentId, type LayoutId } from "./themes";
+import { isIconStyle, isThemeId, isToneChoice, type IconStyle, type ThemeId, type ToneChoice } from "./theme-catalog";
 import { sanitizeStyleMap, type PerUserStyle } from "./message-styles";
 import { isFontId } from "./fonts";
 import { isHexColor } from "./color";
@@ -75,6 +76,12 @@ export type Preferences = {
   lastRoom: string;
   // Theme/visual
   theme: ThemeId;
+  /** Light / dark for templates that have both ("auto" follows the OS). */
+  themeTone: ToneChoice;
+  /** Icon drawing style ("theme" = the template's own). */
+  iconStyle: IconStyle | "theme";
+  /** The user picked a template here; until then the operator's default shows. */
+  themeSet: boolean;
   /** Colour variation of the template and conversation layout. */
   accent: AccentId;
   layout: LayoutId;
@@ -188,6 +195,9 @@ const DEFAULTS: Preferences = {
   avatar: "",
   lastRoom: "brno-secure",
   theme: "motorsport",
+  themeTone: "auto",
+  iconStyle: "theme",
+  themeSet: false,
   accent: "default",
   layout: "classic",
   font: "theme",
@@ -341,6 +351,10 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     avatar: typeof parsed.avatar === "string" ? parsed.avatar.slice(0, 256) : base.avatar,
     lastRoom: typeof parsed.lastRoom === "string" ? parsed.lastRoom.slice(0, 48) : base.lastRoom,
     theme,
+    themeTone: isToneChoice(parsed.themeTone) ? parsed.themeTone : base.themeTone,
+    iconStyle: parsed.iconStyle === "theme" || isIconStyle(parsed.iconStyle) ? parsed.iconStyle : base.iconStyle,
+    // Stored before 3.2 with a non-default template: that was a choice too.
+    themeSet: typeof parsed.themeSet === "boolean" ? parsed.themeSet : (isThemeId(parsed.theme) && parsed.theme !== base.theme),
     accent: isAccentId(parsed.accent) ? parsed.accent : base.accent,
     layout: isLayoutId(parsed.layout) ? parsed.layout : base.layout,
     font: isFontId(parsed.font) ? parsed.font : base.font,
@@ -406,7 +420,7 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
 
 /** The appearance defaults, for "reset appearance". */
 export const APPEARANCE_DEFAULTS: Partial<Preferences> = {
-  theme: DEFAULTS.theme, accent: DEFAULTS.accent, layout: DEFAULTS.layout,
+  theme: DEFAULTS.theme, themeTone: DEFAULTS.themeTone, iconStyle: DEFAULTS.iconStyle, themeSet: false, accent: DEFAULTS.accent, layout: DEFAULTS.layout,
   font: DEFAULTS.font, fontSize: DEFAULTS.fontSize, chatFont: DEFAULTS.chatFont, monoFont: DEFAULTS.monoFont,
   textSize: DEFAULTS.textSize, fontWeight: DEFAULTS.fontWeight, lineHeight: DEFAULTS.lineHeight,
   letterSpacing: DEFAULTS.letterSpacing, chatScale: DEFAULTS.chatScale, accentColor: "", bubbleMine: "",

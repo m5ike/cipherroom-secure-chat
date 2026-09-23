@@ -157,6 +157,35 @@ describe("operator console", () => {
     await expect.poll(() => page.locator("#pluginOut").innerText()).toMatch(/defaults|enabled/);
   });
 
+  it("configures the client addons: saved connections, other servers, GUI templates", async () => {
+    await go("client");
+    await expect.poll(() => page.locator("#clientUsage .kpi").count()).toBe(3);
+    await page.check("#cxCustom");
+    await page.fill("#cxMax", "12");
+    await page.click("#cxAddServer");
+    await page.locator("[data-srv-label]").last().fill("EU");
+    await page.locator("[data-srv-url]").last().fill("chat-eu.example.org");
+    await page.click("#clientConnections button[type=submit]");
+    await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Saved/);
+    // Only iOS and Windows, iOS by default, locked.
+    for (const box of await page.locator("[data-theme-pick]").all()) {
+      const id = await box.getAttribute("value");
+      if ((id === "ios" || id === "windows") !== (await box.isChecked())) await box.click();
+    }
+    await page.selectOption("#cxDefaultTheme", "ios");
+    await page.check("#cxLock");
+    await page.click("#clientAppearance button[type=submit]");
+    await expect.poll(async () => (await (await fetch(`${MAIN}/api/client-config`)).json()).config.appearance.lockTheme).toBe(true);
+
+    const cfg = (await (await fetch(`${MAIN}/api/client-config`)).json()).config;
+    expect(cfg.connections).toMatchObject({ maxProfiles: 12, allowCustomServers: true, servers: [{ label: "EU", url: "wss://chat-eu.example.org" }] });
+    expect(cfg.appearance).toMatchObject({ themes: ["ios", "windows"], defaultTheme: "ios", lockTheme: true });
+    await page.locator("#toasts").evaluate((el) => el.replaceChildren());
+    await shot("client");
+    await go("audit");
+    await expect.poll(() => page.locator("#auditTable tbody").innerText(), { timeout: 10_000 }).toContain("admin.client-config");
+  });
+
   it("gives an auditor the console to read, and nothing to change", async () => {
     // The owner names an auditor and issues them a token of their own.
     const owner = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };

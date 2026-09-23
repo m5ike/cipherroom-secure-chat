@@ -31,6 +31,22 @@ export function formatFullDate(value: number, lang: Lang, timezone: string) {
   }
 }
 
+/** Compact date and time for log rows: "23. 9. 21:35:04". */
+export function formatLogTime(value: number, lang: Lang, timezone: string) {
+  try {
+    return new Intl.DateTimeFormat(lang === "cs" ? "cs-CZ" : lang === "de" ? "de-DE" : "en-GB", {
+      day: "numeric",
+      month: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZone: timezone || undefined,
+    }).format(new Date(value));
+  } catch {
+    return new Date(value).toLocaleString();
+  }
+}
+
 export function formatBytes(value: number) {
   if (value < 1024) return `${value} B`;
   if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} kB`;

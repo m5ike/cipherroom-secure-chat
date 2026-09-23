@@ -1,6 +1,8 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile } from "node:fs/promises";
+import { rm, readFile, readdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { brotliCompressSync, gzipSync, constants as zlib } from "node:zlib";
 
 // Server deps to bundle to reduce openat(2) syscalls, which helps cold start
 // times. Keep this list in sync with package.json dependencies actually used
@@ -51,6 +53,28 @@ async function buildAll() {
   // the two toolchains can run concurrently.
   console.log("building client + server...");
   await Promise.all([viteBuild(), buildServer()]);
+  await precompress("dist/public/assets");
+}
+
+/**
+ * Brotli and gzip next to every text asset (server/static.ts serves them
+ * when the browser accepts them): compressed once at build time, at the
+ * highest level, instead of on every request.
+ */
+async function precompress(dir: string) {
+  let saved = 0;
+  for (const name of await readdir(dir)) {
+    if (!/\.(js|css|svg|json|txt|html|mjs)$/.test(name)) continue;
+    const path = join(dir, name);
+    const raw = await readFile(path);
+    if (raw.length < 1024) continue;
+    const br = brotliCompressSync(raw, { params: { [zlib.BROTLI_PARAM_QUALITY]: 11, [zlib.BROTLI_PARAM_SIZE_HINT]: raw.length } });
+    const gz = gzipSync(raw, { level: 9 });
+    if (br.length < raw.length) await writeFile(`${path}.br`, br);
+    if (gz.length < raw.length) await writeFile(`${path}.gz`, gz);
+    saved += raw.length - br.length;
+  }
+  console.log(`precompressed assets (brotli saves ${(saved / 1024).toFixed(0)} kB per cold load)`);
 }
 
 buildAll().catch((err) => {

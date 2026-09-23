@@ -305,6 +305,7 @@
     commands: ["Commands & push", "Operator commands to devices, Web Push", loadCommands],
     admins: ["Administrators", "Who may use this console, and as what", loadAdmins],
     alerts: ["Alerts", "What the server watches for when nobody is looking", loadAlerts],
+    client: ["Client & addons", "Saved connections and GUI templates for every user", loadClient],
     layout: ["Layout builder", "Styles and text templates for every client", null],
     telephony: ["Telephony & SIP", "Voice and SMS providers, webhooks, trunks", null],
     plugins: ["AI & speech", "Connectors and their live log", null],
@@ -1179,6 +1180,118 @@
   async function saveRule(id, patch) {
     try { await api(`/api/admin/alerts/rules/${encodeURIComponent(id)}`, { method: "PUT", body: patch }); toast("Rule saved.", "ok"); } catch (e) { toast(e.message, "err"); }
   }
+
+  /* ====================================================== client & addons */
+
+  let clientCfg = null;
+  let clientCatalog = { themes: [], icons: [] };
+
+  async function loadClient() {
+    const r = await api("/api/admin/client-config");
+    clientCfg = r.config;
+    clientCatalog = r.catalog || clientCatalog;
+    renderClient(r);
+  }
+
+  function renderClient(r) {
+    const c = r.config;
+    $("#clientFile").textContent = r.file ? `Stored in ${r.file}` : "";
+    const usage = $("#clientUsage");
+    clear(usage);
+    const u = r.usage || { accounts: 0, withConnections: 0, savedConnections: 0 };
+    usage.append(
+      kpi("Accounts", num(u.accounts), "passkey accounts"),
+      kpi("With saved connections", num(u.withConnections), u.accounts ? `${Math.round((u.withConnections / u.accounts) * 100)} % of accounts` : ""),
+      kpi("Saved connections", num(u.savedConnections), "sealed in the users' vaults"),
+    );
+    $("#cxEnabled").checked = c.connections.enabled;
+    $("#cxStats").checked = c.connections.stats;
+    $("#cxAutoConnect").checked = c.connections.autoConnectDefault;
+    $("#cxCustom").checked = c.connections.allowCustomServers;
+    $("#cxMax").value = String(c.connections.maxProfiles);
+    $("#cxLog").value = String(c.connections.logLimit);
+    renderServers(c.connections.servers);
+
+    const picks = $("#cxThemes");
+    clear(picks);
+    const families = [["system", "System look"], ["classic", "Classic"], ["studio", "Studio"]];
+    for (const [family, title] of families) {
+      const list = clientCatalog.themes.filter((t) => t.family === family);
+      if (!list.length) continue;
+      picks.append(h("div", { class: "theme-picks__family" }, h("div", { class: "label" }, title),
+        h("div", { class: "row" }, list.map((t) => h("label", { class: "switch" },
+          h("input", { type: "checkbox", value: t.id, checked: c.appearance.themes.length === 0 || c.appearance.themes.includes(t.id) || undefined, "data-theme-pick": "1" }),
+          `${t.label}${t.tones.length > 1 ? " (light + dark)" : ""}`)))));
+    }
+    const def = $("#cxDefaultTheme");
+    clear(def);
+    for (const t of clientCatalog.themes) def.append(h("option", { value: t.id, selected: t.id === c.appearance.defaultTheme || undefined }, t.label));
+    $("#cxDefaultTone").value = c.appearance.defaultTone;
+    const icons = $("#cxDefaultIcons");
+    clear(icons);
+    for (const v of ["theme", ...(clientCatalog.icons || [])]) icons.append(h("option", { value: v, selected: v === c.appearance.defaultIcons || undefined }, v === "theme" ? "as the template" : v));
+    $("#cxLock").checked = c.appearance.lockTheme;
+  }
+
+  function renderServers(servers) {
+    fillTable($("#cxServers"), servers.map((srv, i) => [
+      h("input", { class: "input", value: srv.label, "data-srv-label": String(i), placeholder: "EU" }),
+      h("input", { class: "input mono", value: srv.url, "data-srv-url": String(i), placeholder: "wss://chat.example.org", style: "min-width:260px" }),
+      h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: () => { const list = collectServers(); list.splice(i, 1); renderServers(list); } }, "Remove"),
+    ]), "Only this server.");
+    applyRoleGates($("#clientConnections"));
+  }
+
+  function collectServers() {
+    return $$("[data-srv-url]").map((input) => ({
+      label: ($(`[data-srv-label="${input.dataset.srvUrl}"]`) || {}).value || "",
+      url: input.value.trim(),
+    })).filter((s) => s.url);
+  }
+
+  async function saveClient(patch) {
+    if (!clientCfg) return;
+    const next = { ...clientCfg, ...patch };
+    try {
+      const r = await api("/api/admin/client-config", { method: "PUT", body: { config: next } });
+      clientCfg = r.config;
+      renderClient({ ...r, file: $("#clientFile").textContent.replace(/^Stored in /, "") });
+      toast("Saved. Clients pick it up within five minutes (or on reload).", "ok");
+    } catch (e) { toast(e.message, "err"); }
+  }
+
+  $("#cxAddServer").addEventListener("click", () => renderServers([...collectServers(), { label: "", url: "" }]));
+  $("#clientConnections").addEventListener("submit", (event) => {
+    event.preventDefault();
+    void saveClient({ connections: {
+      enabled: $("#cxEnabled").checked,
+      stats: $("#cxStats").checked,
+      autoConnectDefault: $("#cxAutoConnect").checked,
+      allowCustomServers: $("#cxCustom").checked,
+      maxProfiles: Number($("#cxMax").value) || 30,
+      logLimit: Number($("#cxLog").value) || 0,
+      servers: collectServers(),
+    } });
+  });
+  $("#clientAppearance").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const picked = $$("[data-theme-pick]").filter((i) => i.checked).map((i) => i.value);
+    const all = picked.length === clientCatalog.themes.length;
+    void saveClient({ appearance: {
+      themes: all ? [] : picked,
+      defaultTheme: $("#cxDefaultTheme").value,
+      defaultTone: $("#cxDefaultTone").value,
+      defaultIcons: $("#cxDefaultIcons").value,
+      lockTheme: $("#cxLock").checked,
+    } });
+  });
+  $("#cxReset").addEventListener("click", async () => {
+    if (!confirm("Reset the client configuration to the defaults?")) return;
+    try {
+      const r = await api("/api/admin/client-config");
+      await saveClient({ connections: r.defaults.connections, appearance: r.defaults.appearance });
+    } catch (e) { toast(e.message, "err"); }
+  });
 
   /* ======================================================= administrators */
 

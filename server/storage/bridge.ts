@@ -23,7 +23,7 @@ import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { accountsDir, setVaultBackend, type AccountRecord, type AccountStore } from "../accounts/store";
 import type { StorageService } from "./service";
-import type { VaultPart, VaultParts } from "./user-store";
+import { VAULT_PARTS, type VaultPart, type VaultParts } from "./user-store";
 
 const ACCOUNT_ID = /^[A-Za-z0-9_-]{10,64}$/;
 
@@ -36,7 +36,7 @@ function isPart(value: unknown): value is VaultPart {
 export function newestVault(a: VaultParts | null, b: VaultParts | null): VaultParts | null {
   if (!a && !b) return null;
   const out: VaultParts = {};
-  for (const part of ["profile", "chat"] as const) {
+  for (const part of VAULT_PARTS) {
     const left = a?.[part];
     const right = b?.[part];
     const pick = isPart(left) && isPart(right) ? (Number(right.updatedAt) > Number(left.updatedAt) ? right : left) : isPart(left) ? left : isPart(right) ? right : undefined;
@@ -62,7 +62,7 @@ function readVaultFile(dir: string, accountId: string): VaultParts | null {
 
 /** Whether `candidate` has a part newer than `current`'s. */
 function hasNewer(candidate: VaultParts, current: VaultParts | null): boolean {
-  return (["profile", "chat"] as const).some((part) => {
+  return VAULT_PARTS.some((part) => {
     const next = candidate[part];
     if (!isPart(next)) return false;
     const now = current?.[part];

@@ -53,7 +53,9 @@ export type MailboxItem = {
 export type UserEvent = { at: number; kind: string; meta?: unknown };
 
 export type VaultPart = { ct: string; updatedAt: number };
-export type VaultParts = { profile?: VaultPart; chat?: VaultPart };
+export type VaultParts = { profile?: VaultPart; chat?: VaultPart; connections?: VaultPart };
+/** The sealed parts of an account vault (3.2 added the saved connections). */
+export const VAULT_PARTS = ["profile", "chat", "connections"] as const;
 
 /** The kv key the account vault used to live under; nobody may write it. */
 export const VAULT_KEY = "vault";
@@ -205,16 +207,16 @@ export class UserDatabase {
     if (rows.length === 0) return null;
     const vault: VaultParts = {};
     for (const row of rows) {
-      if (row.part === "profile" || row.part === "chat") vault[row.part] = { ct: String(row.ct), updatedAt: Number(row.updated_at) };
+      if ((VAULT_PARTS as readonly string[]).includes(row.part)) vault[row.part as (typeof VAULT_PARTS)[number]] = { ct: String(row.ct), updatedAt: Number(row.updated_at) };
     }
-    return vault.profile || vault.chat ? vault : null;
+    return vault.profile || vault.chat || vault.connections ? vault : null;
   }
 
   /** Stores the parts given. With `onlyNewer`, a part only replaces one
    *  with an older timestamp. */
   putVault(vault: VaultParts, options: { onlyNewer?: boolean } = {}): void {
     this.touch();
-    const parts = (["profile", "chat"] as const).filter((p) => vault[p] && typeof vault[p]!.ct === "string");
+    const parts = VAULT_PARTS.filter((p) => vault[p] && typeof vault[p]!.ct === "string");
     for (const part of parts) {
       if (vault[part]!.ct.length > this.limits.maxVaultPartBytes) throw new PayloadTooLargeError(`vault ${part} too large`);
     }

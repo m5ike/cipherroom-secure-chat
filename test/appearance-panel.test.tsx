@@ -52,10 +52,25 @@ describe("AppearancePanel", () => {
     fireEvent.click(screen.getByTestId("layout-compact"));
     fireEvent.click(screen.getByTestId("chatwidth-full"));
     fireEvent.click(screen.getByTestId("menu-display-icons-text"));
-    expect(onChange).toHaveBeenCalledWith({ theme: "paper" });
+    // Picking a template also records that it was a choice (the operator's
+    // default no longer applies to this device).
+    expect(onChange).toHaveBeenCalledWith({ theme: "paper", themeSet: true });
     expect(onChange).toHaveBeenCalledWith({ layout: "compact" });
     expect(onChange).toHaveBeenCalledWith({ chatWidth: "full" });
     expect(onChange).toHaveBeenCalledWith({ menuDisplay: "icons-text" });
+  });
+
+  it("groups the templates, offers light / dark for iOS and Windows, and icon styles", () => {
+    const onChange = vi.fn();
+    render(<Harness onChange={onChange} initial={{ theme: "ios", themeSet: true }} />);
+    fireEvent.click(screen.getByTestId("ap-tab-theme"));
+    expect(screen.getByTestId("theme-family-system")).toBeTruthy();
+    expect(screen.getByTestId("theme-ios")).toBeTruthy();
+    expect(screen.getByTestId("theme-windows")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("tone-dark"));
+    expect(onChange).toHaveBeenCalledWith({ themeTone: "dark", themeSet: true });
+    fireEvent.click(screen.getByTestId("icons-badge"));
+    expect(onChange).toHaveBeenCalledWith({ iconStyle: "badge", themeSet: true });
   });
 
   it("typography: searching fonts, picking a Google font asks for consent, sliders", () => {

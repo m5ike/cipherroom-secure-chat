@@ -17,6 +17,7 @@ import { Modal } from "./Modal";
 import { ColorField } from "./ColorField";
 import { FontPicker } from "./FontPicker";
 import { ACCENTS, LAYOUTS, THEMES, type ThemeId } from "@/lib/themes";
+import { ICON_STYLES, THEME_FAMILIES, TONE_CHOICES, resolveTone } from "@/lib/theme-catalog";
 import { hslToHex } from "@/lib/color";
 import { t, type Lang } from "@/lib/i18n";
 import { APPEARANCE_DEFAULTS, type Preferences } from "@/lib/preferences";
@@ -30,12 +31,17 @@ import { removeGoogleFonts } from "@/lib/fonts";
 import { APP_BUILT_AT, buildLabel } from "@/lib/build-info";
 import "../appearance.css";
 
+/** What the server's operator allows (client-config.ts › appearance), and
+ *  the template actually shown (it can differ from the stored choice). */
+export type AppearancePolicy = { themes: readonly ThemeId[]; lockTheme: boolean; shown: ThemeId };
+
 type Props = {
   open: boolean;
   onClose: () => void;
   prefs: Preferences;
   setPrefs: (next: Partial<Preferences>) => void;
   lang: Lang;
+  policy?: AppearancePolicy;
 };
 
 type TabId = "theme" | "type" | "color" | "display" | "editor";
@@ -49,6 +55,7 @@ const TABS: Array<{ id: TabId; icon: typeof Palette }> = [
 ];
 
 const hex = (c: [number, number, number]) => hslToHex(c[0], c[1], c[2]);
+const systemPrefersDark = () => { try { return window.matchMedia("(prefers-color-scheme: dark)").matches; } catch { return false; } };
 
 /* ------------------------------------------------------------ Edit Mode */
 
@@ -174,7 +181,7 @@ function Preview({ lang }: { lang: Lang }) {
 
 /* ---------------------------------------------------------------- panel */
 
-export function AppearancePanel({ open, onClose, prefs, setPrefs, lang }: Props) {
+export function AppearancePanel({ open, onClose, prefs, setPrefs, lang, policy }: Props) {
   const [tab, setTab] = useState<TabId>(() => {
     try { const v = localStorage.getItem(TAB_KEY); return (TABS.some((x) => x.id === v) ? v : "theme") as TabId; } catch { return "theme"; }
   });
@@ -212,7 +219,7 @@ export function AppearancePanel({ open, onClose, prefs, setPrefs, lang }: Props)
         </nav>
 
         <div className="ap-content" role="tabpanel">
-          {tab === "theme" ? <ThemeTab prefs={prefs} setPrefs={setPrefs} lang={lang} /> : null}
+          {tab === "theme" ? <ThemeTab prefs={prefs} setPrefs={setPrefs} lang={lang} policy={policy} /> : null}
           {tab === "type" ? <TypeTab prefs={prefs} setPrefs={setPrefs} lang={lang} onConsent={consent} /> : null}
           {tab === "color" ? <ColorTab prefs={prefs} setPrefs={setPrefs} lang={lang} /> : null}
           {tab === "display" ? <DisplayTab prefs={prefs} setPrefs={setPrefs} lang={lang} onConsent={consent} /> : null}
@@ -239,7 +246,8 @@ type TabProps = { prefs: Preferences; setPrefs: (next: Partial<Preferences>) => 
 
 /* ---------------------------------------------------------------- theme */
 
-function ThemeTab({ prefs, setPrefs, lang }: TabProps) {
+function ThemeTab({ prefs, setPrefs, lang, policy }: TabProps & { policy?: AppearancePolicy }) {
+  const shownTheme = policy?.shown ?? prefs.theme;
   const menuModes: Array<Preferences["menuDisplay"]> = ["speeddial", "icons", "text", "icons-text", "icons-tooltip"];
   const menuKey: Record<Preferences["menuDisplay"], string> = {
     speeddial: "settings.menu.speeddial", icons: "settings.menu.icons", text: "settings.menu.text",
@@ -248,31 +256,67 @@ function ThemeTab({ prefs, setPrefs, lang }: TabProps) {
   return (
     <>
       <Section title={t(lang, "ap.theme.templates")} icon={<LayoutTemplate className="h-4 w-4" />}>
-        <div className="ap-theme-grid" data-testid="theme-grid">
-          {THEMES.map((theme) => {
-            const p = theme.preview;
-            return (
-              <button
-                key={theme.id}
-                type="button"
-                className="ap-theme"
-                aria-pressed={prefs.theme === theme.id}
-                onClick={() => setPrefs({ theme: theme.id as ThemeId })}
-                data-testid={`theme-${theme.id}`}
-                style={{ background: hex(p.bg), color: hex(p.fg) }}
-              >
-                <span className="ap-theme__mock" aria-hidden="true">
-                  <span className="ap-theme__bar" style={{ background: `hsl(${p.fg[0]} ${p.fg[1]}% ${p.fg[2]}% / 0.12)` }} />
-                  <span className="ap-theme__bubble" style={{ background: `hsl(${p.primary[0]} ${p.primary[1]}% ${p.primary[2]}% / 0.18)`, border: `1px solid hsl(${p.primary[0]} ${p.primary[1]}% ${p.primary[2]}% / 0.35)` }} />
-                  <span className="ap-theme__bubble is-mine" style={{ background: hex(p.primary) }} />
-                </span>
-                <span className="ap-theme__name">{t(lang, theme.labelKey)}</span>
-                <span className="ap-theme__tone">{theme.tone === "dark" ? t(lang, "ap.theme.dark") : t(lang, "ap.theme.light")}</span>
-                {prefs.theme === theme.id ? <span className="ap-theme__check"><Check className="h-3.5 w-3.5" /></span> : null}
-              </button>
-            );
-          })}
-        </div>
+        {policy?.lockTheme ? <p className="ap-note" data-testid="theme-locked">{t(lang, "ap.theme.locked")}</p> : null}
+        {THEME_FAMILIES.map((family) => {
+          const list = THEMES.filter((th) => th.family === family.id && (!policy || policy.themes.length === 0 || policy.themes.includes(th.id)));
+          if (list.length === 0) return null;
+          return (
+            <div key={family.id} className="ap-theme-family" data-testid={`theme-family-${family.id}`}>
+              <h4 className="ap-theme-family__title">{t(lang, family.labelKey)}</h4>
+              <div className="ap-theme-grid" data-testid="theme-grid">
+                {list.map((theme) => {
+                  const tone = theme.tones.length > 1 ? resolveTone(theme.id, prefs.themeTone, systemPrefersDark()) : theme.tone;
+                  const p = theme.previews[tone] ?? theme.preview;
+                  return (
+                    <button
+                      key={theme.id}
+                      type="button"
+                      className="ap-theme"
+                      data-theme-card={theme.id}
+                      aria-pressed={shownTheme === theme.id}
+                      disabled={policy?.lockTheme && shownTheme !== theme.id}
+                      onClick={() => setPrefs({ theme: theme.id as ThemeId, themeSet: true })}
+                      data-testid={`theme-${theme.id}`}
+                      title={t(lang, theme.descKey)}
+                      style={{ background: hex(p.bg), color: hex(p.fg) }}
+                    >
+                      <span className="ap-theme__mock" aria-hidden="true">
+                        <span className="ap-theme__bar" style={{ background: `hsl(${p.fg[0]} ${p.fg[1]}% ${p.fg[2]}% / 0.12)` }} />
+                        <span className="ap-theme__bubble" style={{ background: hex(p.card), border: `1px solid hsl(${p.fg[0]} ${p.fg[1]}% ${p.fg[2]}% / 0.12)` }} />
+                        <span className="ap-theme__bubble is-mine" style={{ background: hex(p.primary) }} />
+                      </span>
+                      <span className="ap-theme__name">{t(lang, theme.labelKey)}</span>
+                      <span className="ap-theme__tone">{theme.tones.length > 1 ? t(lang, "ap.theme.both") : theme.tone === "dark" ? t(lang, "ap.theme.dark") : t(lang, "ap.theme.light")}</span>
+                      {shownTheme === theme.id ? <span className="ap-theme__check"><Check className="h-3.5 w-3.5" /></span> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </Section>
+
+      {THEMES.find((th) => th.id === shownTheme)?.tones.length === 2 && !policy?.lockTheme ? (
+        <Section title={t(lang, "ap.theme.tone")} hint={t(lang, "ap.theme.tone.hint")}>
+          <Segmented
+            label={t(lang, "ap.theme.tone")}
+            value={prefs.themeTone}
+            options={TONE_CHOICES.map((tone) => ({ id: tone, label: t(lang, `ap.theme.tone.${tone}`) }))}
+            onChange={(themeTone) => setPrefs({ themeTone, themeSet: true })}
+            testIdPrefix="tone"
+          />
+        </Section>
+      ) : null}
+
+      <Section title={t(lang, "ap.icons")} hint={t(lang, "ap.icons.hint")}>
+        <Segmented
+          label={t(lang, "ap.icons")}
+          value={prefs.iconStyle}
+          options={(["theme", ...ICON_STYLES] as const).map((style) => ({ id: style, label: t(lang, `ap.icons.${style}`) }))}
+          onChange={(iconStyle) => setPrefs({ iconStyle, themeSet: true })}
+          testIdPrefix="icons"
+        />
       </Section>
 
       <Section title={t(lang, "templates.layout")}>

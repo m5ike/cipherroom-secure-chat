@@ -175,13 +175,13 @@
 :root[data-accent="green"]  { --primary: 146 62% 46%; --ring: 146 62% 46%; }
 :root[data-accent="blue"]   { --primary: 214 88% 60%; --ring: 214 88% 60%; }
 :root[data-accent="violet"] { --primary: 265 84% 68%; --ring: 265 84% 68%; }
-:root:is([data-theme="glass"], [data-theme="paper"])[data-accent="red"]    { --primary: 356 78% 42%; --ring: 356 78% 42%; }
-:root:is([data-theme="glass"], [data-theme="paper"])[data-accent="orange"] { --primary: 24 90% 38%;  --ring: 24 90% 38%; }
-:root:is([data-theme="glass"], [data-theme="paper"])[data-accent="green"]  { --primary: 148 64% 28%; --ring: 148 64% 28%; }
-:root:is([data-theme="glass"], [data-theme="paper"])[data-accent="blue"]   { --primary: 216 84% 42%; --ring: 216 84% 42%; }
-:root:is([data-theme="glass"], [data-theme="paper"])[data-accent="violet"] { --primary: 264 62% 46%; --ring: 264 62% 46%; }
-:root:not([data-theme="glass"]):not([data-theme="paper"]):not([data-accent="default"]) { --primary-foreground: 0 0% 4%; }
-:root:is([data-theme="glass"], [data-theme="paper"]):not([data-accent="default"]) { --primary-foreground: 0 0% 100%; }
+:root[data-tone="light"][data-accent="red"]    { --primary: 356 78% 42%; --ring: 356 78% 42%; }
+:root[data-tone="light"][data-accent="orange"] { --primary: 24 90% 38%;  --ring: 24 90% 38%; }
+:root[data-tone="light"][data-accent="green"]  { --primary: 148 64% 28%; --ring: 148 64% 28%; }
+:root[data-tone="light"][data-accent="blue"]   { --primary: 216 84% 42%; --ring: 216 84% 42%; }
+:root[data-tone="light"][data-accent="violet"] { --primary: 264 62% 46%; --ring: 264 62% 46%; }
+:root:not([data-tone="light"]):not([data-accent="default"]) { --primary-foreground: 0 0% 4%; }
+:root[data-tone="light"]:not([data-accent="default"]) { --primary-foreground: 0 0% 100%; }
 
 .dark {
   /* legacy hook — themes now own dark/light themselves */
@@ -750,12 +750,10 @@
       0 4px 6px -1px hsl(0 0% 0% / 0.12),
       0 12px 24px -8px hsl(0 0% 0% / 0.18);
   }
-  @media (prefers-color-scheme: dark) {
-    .menu-panel {
-      box-shadow:
-        0 4px 6px -1px hsl(0 0% 0% / 0.32),
-        0 12px 24px -8px hsl(0 0% 0% / 0.40);
-    }
+  :root[data-tone="dark"] .menu-panel {
+    box-shadow:
+      0 4px 6px -1px hsl(0 0% 0% / 0.32),
+      0 12px 24px -8px hsl(0 0% 0% / 0.40);
   }
 
   /* Entry row: 44 px touch target, gentle hover, current row gets a
@@ -1252,3 +1250,11 @@
 }
 .error-actions button + button { background: hsl(var(--background)); color: hsl(var(--foreground)); }
 .error-panel { padding: 1rem 0; color: hsl(var(--muted-foreground)); font-size: 0.9rem; }
+
+/* The switcher in the header (App.tsx). */
+.cx-switcher {
+  display: inline-flex; align-items: center; gap: 0.3rem; max-width: 13rem; min-height: 2rem; padding: 0 0.5rem;
+  border: 1px solid hsl(var(--border)); border-radius: 9999px; background: hsl(var(--background) / 0.6); font-size: 0.75rem;
+}
+.cx-switcher select { max-width: 10rem; border: 0; background: transparent; color: inherit; font: inherit; font-weight: 600; outline: none; }
+@media (max-width: 520px) { .cx-switcher { max-width: 8.5rem; } .cx-switcher select { max-width: 6rem; } }

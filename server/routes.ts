@@ -62,6 +62,7 @@ import { sendWebPush } from "./push";
 import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
+import { registerAdminClientConfigRoutes, registerClientConfigRoutes } from "./client-config";
 import { buildInfo } from "./build-info";
 import { turnAnswer } from "./turn";
 import { clusterBus } from "./cluster/bus";
@@ -214,6 +215,12 @@ export async function registerRoutes(
     backups,
   };
   registerAdminApi(app, adminProviders);
+  // The addons the operator switches on (saved connections, GUI templates).
+  registerAdminClientConfigRoutes(app, () => {
+    const all = accountStore.all();
+    const withConnections = all.filter((a) => (a.vault.connections ?? 0) > 0);
+    return { accounts: all.length, withConnections: withConnections.length, savedConnections: withConnections.reduce((n, a) => n + (a.vault.connections ?? 0), 0) };
+  });
 
   // Prometheus: /metrics with METRICS_TOKEN (or any administrator's token).
   app.get("/metrics", (req, res) => {
@@ -245,6 +252,7 @@ export async function registerRoutes(
   registerWebhookRoutes(app);
   // Admin-edited layout / templates for every client (GET /api/layout).
   registerLayoutRoutes(app);
+  registerClientConfigRoutes(app);
 
   app.get("/api/health", (_req, res) => {
     const b = buildInfo();

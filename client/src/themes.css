@@ -1,0 +1,554 @@
+/* ==========================================================================
+   Templates beyond the classic six (theme-catalog.ts):
+     system  ios (iOS 27 look: Liquid Glass materials, grouped lists,
+             iMessage bubbles, sheets) · windows (Windows 11: Mica,
+             Fluent 2 controls, acrylic flyouts, accent selection pill)
+     studio  aurora · nord · sakura · ocean · graphite
+   and the icon styles (data-icons). Everything is keyed on <html>:
+     data-theme · data-tone (light | dark) · data-accent · data-icons
+
+   Colour-variation rule: a template here sets --theme-primary; it becomes
+   --primary only while the accent is "default", so the accent picker
+   (index.css) keeps working on every template and tone.
+   ========================================================================== */
+
+:root[data-accent="default"]:is(
+  [data-theme="ios"], [data-theme="windows"], [data-theme="aurora"],
+  [data-theme="nord"], [data-theme="sakura"], [data-theme="ocean"], [data-theme="graphite"]
+) {
+  --primary: var(--theme-primary);
+  --ring: var(--theme-primary);
+  --primary-foreground: var(--theme-primary-fg, 0 0% 100%);
+}
+
+/* ============================================================== icon styles */
+:root[data-icons="thin"] svg.lucide { stroke-width: 1.5px; }
+:root[data-icons="bold"] svg.lucide { stroke-width: 2.5px; }
+:root[data-icons="duotone"] svg.lucide { stroke-width: 1.75px; }
+:root[data-icons="duotone"] svg.lucide :is(rect, circle, ellipse, polygon) { fill: currentColor; fill-opacity: 0.16; }
+:root[data-icons="badge"] svg.lucide { stroke-width: 1.9px; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Badge style: menu icons sit on coloured rounded squares, like the rows
+   of iOS Settings. The colour follows what the entry opens. */
+.menu-icon { display: inline-flex; flex: none; align-items: center; justify-content: center; }
+:root[data-icons="badge"] .menu-icon {
+  width: 1.75rem; height: 1.75rem; border-radius: 0.5rem;
+  background: var(--badge, #8e8e93); color: #fff;
+  box-shadow: inset 0 0 0 0.5px rgb(0 0 0 / 0.08);
+}
+:root[data-icons="badge"] .menu-icon svg.lucide { width: 1.05rem; height: 1.05rem; stroke-width: 2.1px; }
+.menu-icon[data-panel="roomSecurity"] { --badge: #007aff; }
+.menu-icon[data-panel="encryption"] { --badge: #8e8e93; }
+.menu-icon[data-panel="trust"] { --badge: #34c759; }
+.menu-icon[data-panel="peers"] { --badge: #ff9500; }
+.menu-icon[data-panel="connection"] { --badge: #5856d6; }
+.menu-icon[data-panel="connections"] { --badge: #30b0c7; }
+.menu-icon[data-panel="audio"] { --badge: #ff2d55; }
+.menu-icon[data-panel="video"] { --badge: #34c759; }
+.menu-icon[data-panel="files"] { --badge: #007aff; }
+.menu-icon[data-panel="location"] { --badge: #ff3b30; }
+.menu-icon[data-panel="speech"] { --badge: #af52de; }
+.menu-icon[data-panel="ai"] { --badge: #5e5ce6; }
+.menu-icon[data-panel="phone"] { --badge: #34c759; }
+.menu-icon[data-panel="nfc"] { --badge: #ff9f0a; }
+.menu-icon[data-panel="appearance"] { --badge: #ff2d55; }
+.menu-icon[data-panel="settings"] { --badge: #8e8e93; }
+.menu-icon[data-panel="notifications"] { --badge: #ff3b30; }
+.menu-icon[data-panel="privacy"] { --badge: #007aff; }
+.menu-icon[data-panel="analytics"] { --badge: #5856d6; }
+.menu-icon[data-panel="profile"] { --badge: #8e8e93; }
+
+/* ================================================================ iOS 27 */
+:root[data-theme="ios"] {
+  --background: 240 24% 96%;         /* systemGroupedBackground #F2F2F7 */
+  --foreground: 0 0% 0%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 0%;
+  --card-border: 240 6% 90%;
+  --border: 240 4% 82%;               /* separator */
+  --theme-primary: 211 100% 50%;      /* systemBlue #007AFF */
+  --muted: 240 11% 91%;               /* tertiarySystemFill */
+  --muted-foreground: 240 3% 45%;     /* secondaryLabel */
+  --accent: 240 8% 93%;
+  --accent-foreground: 0 0% 0%;
+  --destructive: 3 100% 59%;          /* systemRed #FF3B30 */
+  --destructive-foreground: 0 0% 100%;
+  --input: 240 6% 86%;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Helvetica Neue", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --radius: 1.375rem;
+  --radius-xl: 0.875rem;
+  --radius-2xl: 1.25rem;
+  --radius-3xl: 1.75rem;
+  --shadow-sm: 0 1px 1px rgb(0 0 0 / 0.03);
+  --shadow: 0 8px 24px rgb(0 0 0 / 0.08);
+  --shadow-md: 0 22px 60px rgb(0 0 0 / 0.14);
+  --tracking-normal: -0.01em;
+  /* Liquid Glass materials */
+  --glass: rgb(255 255 255 / 0.58);
+  --glass-strong: rgb(250 250 252 / 0.8);
+  --glass-hi: rgb(255 255 255 / 0.75);    /* specular top edge */
+  --glass-edge: rgb(0 0 0 / 0.07);
+  --glass-tint: linear-gradient(180deg, rgb(255 255 255 / 0.42), rgb(255 255 255 / 0.08));
+  --ios-bubble-in: #e9e9eb;
+  --ios-bubble-in-fg: #000;
+  --ios-green: #34c759;
+}
+:root[data-theme="ios"][data-tone="dark"] {
+  --background: 0 0% 0%;
+  --foreground: 0 0% 100%;
+  --card: 240 3% 11%;                 /* #1C1C1E */
+  --card-foreground: 0 0% 100%;
+  --card-border: 240 3% 18%;
+  --border: 240 3% 22%;               /* #38383A */
+  --theme-primary: 210 100% 52%;      /* #0A84FF */
+  --muted: 240 3% 17%;                /* #2C2C2E */
+  --muted-foreground: 240 3% 62%;
+  --accent: 240 3% 17%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 3 100% 61%;          /* #FF453A */
+  --input: 240 3% 26%;
+  --shadow: 0 8px 24px rgb(0 0 0 / 0.5);
+  --shadow-md: 0 22px 60px rgb(0 0 0 / 0.6);
+  --glass: rgb(28 28 30 / 0.55);
+  --glass-strong: rgb(30 30 32 / 0.78);
+  --glass-hi: rgb(255 255 255 / 0.16);
+  --glass-edge: rgb(255 255 255 / 0.09);
+  --glass-tint: linear-gradient(180deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.02));
+  --ios-bubble-in: #262628;
+  --ios-bubble-in-fg: #fff;
+  --ios-green: #30d158;
+}
+
+:root[data-theme="ios"] body { -webkit-font-smoothing: antialiased; letter-spacing: var(--letter-spacing-base, -0.01em); }
+:root[data-theme="ios"] .bg-app-shell { background: hsl(var(--background)); }
+:root[data-theme="ios"] .m5-stripe { display: none; }
+
+/* A glass surface: translucent, blurred, a bright top edge. */
+:root[data-theme="ios"] :is(.toolbar, .composer-bar, .menu-panel, .modal-shell, .recip-widget, .recip-fab, .flash, .signed-badge, [data-testid="status-connection"]) {
+  background-color: var(--glass);
+  background-image: var(--glass-tint);
+  -webkit-backdrop-filter: blur(28px) saturate(190%);
+  backdrop-filter: blur(28px) saturate(190%);
+  border: 0.5px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-hi), 0 10px 30px rgb(0 0 0 / 0.08);
+}
+:root[data-theme="ios"] .toolbar { border-width: 0 0 0.5px; box-shadow: none; }
+:root[data-theme="ios"] :is(.menu-panel, .modal-shell) { background-color: var(--glass-strong); }
+:root[data-theme="ios"] [data-testid="status-connection"] { border-radius: 9999px; }
+:root[data-theme="ios"] [data-testid="btn-menu-speeddial"] {
+  border-radius: 9999px; background: var(--glass); border: 0.5px solid var(--glass-edge);
+  box-shadow: inset 0 1px 0 var(--glass-hi);
+  -webkit-backdrop-filter: blur(20px) saturate(180%); backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* Conversation: plain grouped background, iMessage bubbles. */
+:root[data-theme="ios"] .chat-surface::after,
+:root[data-theme="windows"] .chat-surface::after { opacity: calc(var(--chat-pattern-opacity, 1) * 0.22); }
+:root[data-theme="ios"] .msg-bubble { box-shadow: none; }
+:root[data-theme="ios"] .msg-bubble--mine {
+  background: var(--u-out-bg, var(--c-out-bg, hsl(var(--primary))));
+  border-color: transparent;
+  border-radius: var(--u-bubble-radius, var(--c-out-radius, 1.25rem));
+  border-end-end-radius: 0.4rem;
+}
+:root[data-theme="ios"] .msg-bubble--theirs {
+  background: var(--u-in-bg, var(--c-in-bg, var(--ios-bubble-in)));
+  color: var(--u-in-fg, var(--c-in-fg, var(--ios-bubble-in-fg)));
+  border-color: var(--u-in-border, transparent);
+  border-radius: var(--u-bubble-radius, var(--c-in-radius, 1.25rem));
+  border-end-start-radius: 0.4rem;
+}
+:root[data-theme="ios"] .msg-bubble--system { border-style: solid; border-color: transparent; background: hsl(var(--muted) / 0.6); border-radius: 9999px; }
+
+/* Composer: a floating glass capsule over the conversation. */
+:root[data-theme="ios"] .composer { background: transparent !important; border-top: 0 !important; -webkit-backdrop-filter: none; backdrop-filter: none; }
+:root[data-theme="ios"] .composer-bar { border-radius: var(--c-composer-radius, 1.75rem); padding: 0.3rem; }
+:root[data-theme="ios"] .composer-bar:focus-within { box-shadow: inset 0 1px 0 var(--glass-hi), 0 0 0 3px hsl(var(--ring) / 0.25), 0 10px 30px rgb(0 0 0 / 0.08); }
+:root[data-theme="ios"] .composer-send { box-shadow: 0 2px 8px hsl(var(--primary) / 0.35); }
+
+/* Controls: capsule buttons, filled fields, green switches. */
+:root[data-theme="ios"] button[class~="bg-primary"],
+:root[data-theme="ios"] :is(.ap-btn--primary, .cx-btn--primary) { border-radius: 9999px; }
+:root[data-theme="ios"] :is(.acc-btn, .ap-btn, .cx-btn) {
+  border-radius: 9999px; border-color: transparent;
+  background: hsl(var(--primary) / 0.12); color: hsl(var(--primary));
+}
+:root[data-theme="ios"] :is(.acc-btn--danger, .ap-btn--danger, .cx-btn--danger) { background: hsl(var(--destructive) / 0.12); color: hsl(var(--destructive)); }
+:root[data-theme="ios"] .modal-body :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), select, textarea) {
+  background-color: hsl(var(--muted)); border-color: transparent; border-radius: 0.75rem;
+}
+:root[data-theme="ios"] .ap-toggle__track { width: 3.2rem; height: 1.95rem; }
+:root[data-theme="ios"] .ap-toggle__thumb { top: 0.13rem; left: 0.13rem; width: 1.7rem; height: 1.7rem; box-shadow: 0 3px 8px rgb(0 0 0 / 0.15), 0 1px 1px rgb(0 0 0 / 0.16); }
+:root[data-theme="ios"] .ap-toggle input:checked + .ap-toggle__track { background: var(--ios-green); }
+:root[data-theme="ios"] .ap-toggle input:checked + .ap-toggle__track .ap-toggle__thumb { transform: translateX(1.25rem); }
+:root[data-theme="ios"] .ap-seg { border-radius: 0.6rem; padding: 0.15rem; background: hsl(var(--muted)); }
+:root[data-theme="ios"] .ap-seg__btn[aria-checked="true"] { border-radius: 0.45rem; box-shadow: 0 3px 8px rgb(0 0 0 / 0.12), 0 3px 1px rgb(0 0 0 / 0.04); }
+/* Grouped, inset lists. */
+:root[data-theme="ios"] :is(.ap-section, .acc-card, .cx-card) { background: hsl(var(--card)); border: 0; border-radius: 0.875rem; }
+
+/* Menu: a glass popover with iOS row metrics. */
+:root[data-theme="ios"] .menu-panel { border-radius: 1.6rem; }
+:root[data-theme="ios"] .menu-panel [role="menuitem"] { min-height: 2.75rem; border-radius: 0.75rem; font-size: 1rem; }
+:root[data-theme="ios"] .menu-group-label { text-transform: uppercase; letter-spacing: 0.02em; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+
+/* Sheets: on a phone a dialog rises from the bottom edge with a grabber. */
+:root[data-theme="ios"] .modal-root { background: rgb(0 0 0 / 0.25); }
+:root[data-theme="ios"] .modal-shell { border-radius: 1.9rem; }
+:root[data-theme="ios"] .modal-head { border-bottom: 0; }
+:root[data-theme="ios"] .modal-head h2 { font-size: 1.06rem; font-weight: 600; }
+:root[data-theme="ios"] .modal-close { background: hsl(var(--muted)); width: 1.9rem; height: 1.9rem; color: hsl(var(--muted-foreground)); }
+/* Phones already get bottom sheets with a grabber (mobile.css); iOS makes
+   them rounder and lets them rise with the system's spring. */
+:root[data-theme="ios"][data-form="phone"] .modal-shell--center {
+  border-radius: 1.9rem 1.9rem 0 0;
+  animation: ios-sheet-in 320ms cubic-bezier(0.2, 0.9, 0.25, 1);
+}
+:root[data-theme="ios"][data-form="phone"] .modal-shell--center .modal-head::before { background: hsl(var(--muted-foreground) / 0.35); }
+@keyframes ios-sheet-in { from { transform: translateY(40%); opacity: 0.6; } to { transform: none; opacity: 1; } }
+
+:root[data-theme="ios"] .flash { border-radius: 1.3rem; }
+:root[data-theme="ios"] .signed-badge { border-radius: 9999px; }
+:root[data-theme="ios"] :focus-visible { outline-color: hsl(var(--primary) / 0.6); outline-width: 3px; }
+
+/* ============================================================ Windows 11 */
+:root[data-theme="windows"] {
+  --background: 0 0% 95%;              /* Mica base #F3F3F3 */
+  --foreground: 0 0% 10%;
+  --card: 0 0% 99%;                    /* card fill */
+  --card-foreground: 0 0% 10%;
+  --card-border: 0 0% 90%;
+  --border: 0 0% 88%;                  /* stroke #E5E5E5 */
+  --theme-primary: 209 100% 36%;       /* accent #005FB8 */
+  --muted: 0 0% 96%;
+  --muted-foreground: 0 0% 38%;        /* secondary text #616161 */
+  --accent: 0 0% 93%;                  /* subtle fill (hover) */
+  --accent-foreground: 0 0% 10%;
+  --destructive: 5 75% 44%;            /* critical #C42B1C */
+  --destructive-foreground: 0 0% 100%;
+  --input: 0 0% 80%;
+  --font-sans: "Segoe UI Variable Text", "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Cascadia Mono", "Cascadia Code", Consolas, monospace;
+  --radius: 0.5rem;
+  --radius-xl: 0.25rem;                /* controls: 4 px */
+  --radius-2xl: 0.5rem;                /* cards, overlays: 8 px */
+  --radius-3xl: 0.5rem;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.04);
+  --shadow: 0 2px 4px rgb(0 0 0 / 0.14);
+  --shadow-md: 0 8px 16px rgb(0 0 0 / 0.14);
+  --win-acrylic: rgb(249 249 249 / 0.86);
+  --win-layer: rgb(255 255 255 / 0.5);
+  --win-stroke: rgb(0 0 0 / 0.06);
+  --win-stroke-strong: rgb(0 0 0 / 0.16);
+  --win-control: rgb(255 255 255 / 0.7);
+  --win-control-hover: rgb(249 249 249 / 0.5);
+  --win-dialog-shadow: 0 32px 64px rgb(0 0 0 / 0.19), 0 2px 21px rgb(0 0 0 / 0.15);
+}
+:root[data-theme="windows"][data-tone="dark"] {
+  --background: 0 0% 13%;              /* #202020 */
+  --foreground: 0 0% 100%;
+  --card: 0 0% 17%;
+  --card-foreground: 0 0% 100%;
+  --card-border: 0 0% 22%;
+  --border: 0 0% 24%;
+  --theme-primary: 199 100% 69%;       /* #60CDFF */
+  --theme-primary-fg: 0 0% 0%;
+  --muted: 0 0% 18%;
+  --muted-foreground: 0 0% 77%;
+  --accent: 0 0% 21%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 354 100% 80%;         /* #FF99A4 */
+  --destructive-foreground: 0 0% 0%;
+  --input: 0 0% 32%;
+  --shadow: 0 2px 4px rgb(0 0 0 / 0.26);
+  --shadow-md: 0 8px 16px rgb(0 0 0 / 0.26);
+  --win-acrylic: rgb(44 44 44 / 0.9);
+  --win-layer: rgb(58 58 58 / 0.3);
+  --win-stroke: rgb(255 255 255 / 0.07);
+  --win-stroke-strong: rgb(255 255 255 / 0.09);
+  --win-control: rgb(255 255 255 / 0.06);
+  --win-control-hover: rgb(255 255 255 / 0.08);
+  --win-dialog-shadow: 0 32px 64px rgb(0 0 0 / 0.37), 0 2px 21px rgb(0 0 0 / 0.37);
+}
+
+:root[data-theme="windows"] body { font-feature-settings: normal; }
+/* Mica: the window background, faintly tinted by the accent. */
+:root[data-theme="windows"] .bg-app-shell {
+  background: radial-gradient(120% 90% at 10% 0%, hsl(var(--primary) / 0.07), transparent 60%), hsl(var(--background));
+  background-attachment: fixed;
+}
+:root[data-theme="windows"] .m5-stripe { display: none; }
+/* Title bar */
+:root[data-theme="windows"] .toolbar {
+  background: transparent !important; -webkit-backdrop-filter: none; backdrop-filter: none;
+  border-bottom: 1px solid var(--win-stroke); min-height: 3rem;
+}
+/* Content layer: the lighter surface behind the conversation. */
+:root[data-theme="windows"] .chat-surface { background-color: var(--c-chat-bg, var(--win-layer)); }
+:root[data-theme="windows"] [data-testid="status-connection"] { border-radius: 0.25rem; }
+
+/* Messages: rectangular cards, the accent for mine. */
+:root[data-theme="windows"] .msg-bubble { border-radius: var(--u-bubble-radius, 0.5rem); box-shadow: var(--shadow-sm); }
+:root[data-theme="windows"] .msg-bubble--mine { border-radius: var(--u-bubble-radius, var(--c-out-radius, 0.5rem)); }
+:root[data-theme="windows"] .msg-bubble--theirs {
+  background: var(--u-in-bg, var(--c-in-bg, hsl(var(--card))));
+  border-color: var(--u-in-border, var(--c-in-border, var(--win-stroke)));
+  border-radius: var(--u-bubble-radius, var(--c-in-radius, 0.5rem));
+}
+:root[data-theme="windows"] .msg-bubble--system { border-radius: 0.25rem; border-style: solid; }
+
+/* Controls: standard / accent buttons with the elevation edge. */
+:root[data-theme="windows"] :is(.composer-icon-btn, .composer-send) { border-radius: 0.25rem; }
+:root[data-theme="windows"] button[class~="bg-primary"],
+:root[data-theme="windows"] :is(.ap-btn--primary, .cx-btn--primary, .composer-send) {
+  border-radius: 0.25rem; box-shadow: inset 0 -1px 0 rgb(0 0 0 / 0.28);
+}
+:root[data-theme="windows"] :is(.acc-btn, .ap-btn, .cx-btn) {
+  border-radius: 0.25rem; background: var(--win-control); border: 1px solid var(--win-stroke);
+  border-bottom-color: var(--win-stroke-strong); font-weight: 400;
+}
+:root[data-theme="windows"] :is(.acc-btn, .ap-btn, .cx-btn):hover:not(:disabled) { background: var(--win-control-hover); }
+:root[data-theme="windows"] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), select, textarea) {
+  border-radius: 0.25rem; border-bottom-color: var(--win-stroke-strong);
+}
+:root[data-theme="windows"] :is(input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not([type="file"]), select, textarea):focus {
+  outline: none; box-shadow: inset 0 -2px 0 hsl(var(--primary));
+}
+:root[data-theme="windows"] .composer { background: transparent !important; -webkit-backdrop-filter: none; backdrop-filter: none; border-top-color: var(--win-stroke) !important; }
+:root[data-theme="windows"] .composer-bar {
+  border-radius: var(--c-composer-radius, 0.375rem); background: var(--c-composer-bg, var(--win-control));
+  border-color: var(--win-stroke); border-bottom-color: var(--win-stroke-strong);
+}
+:root[data-theme="windows"] .composer-bar:focus-within { border-color: var(--win-stroke); box-shadow: inset 0 -2px 0 hsl(var(--primary)); }
+:root[data-theme="windows"] .ap-toggle__track { width: 2.5rem; height: 1.25rem; background: transparent; box-shadow: inset 0 0 0 1px hsl(var(--muted-foreground)); }
+:root[data-theme="windows"] .ap-toggle__thumb { top: 0.3125rem; left: 0.3125rem; width: 0.625rem; height: 0.625rem; background: hsl(var(--muted-foreground)); box-shadow: none; }
+:root[data-theme="windows"] .ap-toggle input:checked + .ap-toggle__track { background: hsl(var(--primary)); box-shadow: none; }
+:root[data-theme="windows"] .ap-toggle input:checked + .ap-toggle__track .ap-toggle__thumb { transform: translateX(1.25rem); background: hsl(var(--primary-foreground)); }
+:root[data-theme="windows"] .ap-seg { border-radius: 0.25rem; background: transparent; gap: 0.25rem; }
+:root[data-theme="windows"] .ap-seg__btn { padding: 0.3rem 0.65rem; }
+:root[data-theme="windows"] .cx-tabs { background: transparent; border-bottom: 1px solid var(--win-stroke); border-radius: 0; padding: 0; }
+:root[data-theme="windows"] .cx-tab { border-radius: 0.25rem 0.25rem 0 0; }
+:root[data-theme="windows"] .cx-tab[aria-selected="true"] { background: transparent; box-shadow: inset 0 -3px 0 hsl(var(--primary)); }
+:root[data-theme="windows"] .ap-seg__btn[aria-checked="true"] { background: transparent; box-shadow: inset 0 -3px 0 hsl(var(--primary)); border-radius: 0; font-weight: 600; }
+:root[data-theme="windows"] :is(.ap-section, .acc-card, .cx-card) { border-radius: 0.5rem; background: hsl(var(--card)); border-color: var(--win-stroke); }
+
+/* Flyouts and dialogs: acrylic, 8 px, the Fluent depth. */
+:root[data-theme="windows"] :is(.menu-panel, .recip-widget, .flash) {
+  background: var(--win-acrylic); border: 1px solid var(--win-stroke);
+  -webkit-backdrop-filter: blur(30px) saturate(125%); backdrop-filter: blur(30px) saturate(125%);
+  border-radius: 0.5rem; box-shadow: var(--shadow-md);
+}
+:root[data-theme="windows"] .menu-panel [role="menuitem"] { position: relative; min-height: 2.25rem; border-radius: 0.25rem; }
+/* The navigation selection pill. */
+:root[data-theme="windows"] .menu-panel [role="menuitem"][aria-current="page"] { background: hsl(var(--accent)); color: inherit; }
+:root[data-theme="windows"] .menu-panel [role="menuitem"][aria-current="page"]::before {
+  content: ""; position: absolute; inset-inline-start: 0; top: 50%; width: 3px; height: 1rem; margin-top: -0.5rem;
+  border-radius: 9999px; background: hsl(var(--primary));
+}
+:root[data-theme="windows"] .modal-root { background: rgb(0 0 0 / 0.3); }
+:root[data-theme="windows"] .modal-shell { border-radius: 0.5rem; border-color: var(--win-stroke); box-shadow: var(--win-dialog-shadow); }
+:root[data-theme="windows"] .modal-head { border-bottom-color: var(--win-stroke); }
+:root[data-theme="windows"] .modal-head h2 { font-size: 1.25rem; font-weight: 600; }
+:root[data-theme="windows"] .modal-close { border-radius: 0.25rem; }
+:root[data-theme="windows"] :focus-visible { outline: 2px solid hsl(var(--foreground)); outline-offset: 1px; border-radius: 0.25rem; }
+:root[data-theme="windows"] * { scrollbar-color: hsl(var(--muted-foreground) / 0.5) transparent; }
+
+/* ============================================================ studio */
+:root[data-theme="aurora"] {
+  --background: 232 40% 8%;
+  --foreground: 220 40% 95%;
+  --card: 234 34% 12%;
+  --card-foreground: 220 40% 95%;
+  --card-border: 236 30% 20%;
+  --border: 236 28% 20%;
+  --theme-primary: 168 82% 48%;
+  --theme-primary-fg: 232 40% 8%;
+  --muted: 234 30% 15%;
+  --muted-foreground: 226 22% 68%;
+  --accent: 250 34% 20%;
+  --accent-foreground: 220 40% 95%;
+  --destructive: 350 86% 62%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 236 28% 26%;
+  --radius: 1.1rem;
+  --shadow: 0 10px 30px rgb(4 6 22 / 0.55);
+  --shadow-md: 0 18px 50px rgb(4 6 22 / 0.65);
+}
+:root[data-theme="aurora"] .bg-app-shell {
+  background:
+    radial-gradient(60% 45% at 12% 0%, hsl(168 82% 48% / 0.18), transparent 70%),
+    radial-gradient(55% 45% at 90% 10%, hsl(268 80% 62% / 0.2), transparent 70%),
+    radial-gradient(50% 40% at 60% 100%, hsl(320 80% 60% / 0.12), transparent 70%),
+    hsl(var(--background));
+  background-attachment: fixed;
+}
+:root[data-theme="aurora"][data-accent="default"] .msg-bubble--mine,
+:root[data-theme="aurora"][data-accent="default"] .composer-send {
+  background: var(--u-out-bg, var(--c-out-bg, linear-gradient(135deg, hsl(168 82% 46%), hsl(212 86% 58%) 55%, hsl(268 80% 64%))));
+}
+:root[data-theme="aurora"] :is(.toolbar, .composer, .menu-panel, .modal-shell) { -webkit-backdrop-filter: blur(22px) saturate(160%); backdrop-filter: blur(22px) saturate(160%); }
+:root[data-theme="aurora"] .m5-stripe { background: linear-gradient(90deg, hsl(168 82% 48%), hsl(212 86% 58%), hsl(268 80% 64%), hsl(320 80% 62%)); }
+
+:root[data-theme="nord"] {
+  --background: 220 16% 22%;          /* nord0 #2E3440 */
+  --foreground: 218 27% 94%;          /* nord6 */
+  --card: 222 16% 28%;                /* nord1 */
+  --card-foreground: 218 27% 94%;
+  --card-border: 220 17% 32%;
+  --border: 220 16% 36%;              /* nord3 */
+  --theme-primary: 193 43% 67%;       /* nord8 frost */
+  --theme-primary-fg: 220 16% 16%;
+  --muted: 220 17% 32%;
+  --muted-foreground: 219 28% 80%;
+  --accent: 220 17% 32%;
+  --accent-foreground: 218 27% 94%;
+  --destructive: 354 42% 56%;         /* nord11 */
+  --destructive-foreground: 0 0% 100%;
+  --input: 220 16% 40%;
+  --radius: 0.625rem;
+  --radius-xl: 0.5rem;
+  --radius-2xl: 0.75rem;
+}
+:root[data-theme="nord"][data-tone="light"] {
+  --background: 218 27% 94%;          /* nord6 */
+  --foreground: 220 16% 22%;
+  --card: 0 0% 100%;
+  --card-foreground: 220 16% 22%;
+  --card-border: 219 28% 86%;
+  --border: 219 28% 84%;
+  --theme-primary: 213 32% 52%;       /* nord10 */
+  --theme-primary-fg: 0 0% 100%;
+  --muted: 218 27% 90%;
+  --muted-foreground: 220 16% 40%;
+  --accent: 219 28% 88%;
+  --accent-foreground: 220 16% 22%;
+  --input: 219 20% 74%;
+}
+:root[data-theme="nord"] .m5-stripe { background: linear-gradient(90deg, #8fbcbb, #88c0d0, #81a1c1, #5e81ac); }
+
+:root[data-theme="sakura"] {
+  --background: 340 60% 97%;
+  --foreground: 330 22% 18%;
+  --card: 0 0% 100%;
+  --card-foreground: 330 22% 18%;
+  --card-border: 338 40% 90%;
+  --border: 338 36% 88%;
+  --theme-primary: 336 72% 50%;
+  --muted: 340 40% 93%;
+  --muted-foreground: 330 12% 42%;
+  --accent: 338 60% 94%;
+  --accent-foreground: 330 22% 18%;
+  --destructive: 0 72% 46%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 338 30% 80%;
+  --font-sans: "Nunito", ui-rounded, "SF Pro Rounded", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 1.4rem;
+  --radius-xl: 1rem;
+  --radius-2xl: 1.4rem;
+}
+:root[data-theme="sakura"] .bg-app-shell {
+  background:
+    radial-gradient(40% 30% at 0% 0%, hsl(336 90% 88% / 0.7), transparent 70%),
+    radial-gradient(40% 35% at 100% 100%, hsl(350 90% 90% / 0.6), transparent 70%),
+    hsl(var(--background));
+  background-attachment: fixed;
+}
+:root[data-theme="sakura"][data-accent="default"] .msg-bubble--mine { background: var(--u-out-bg, var(--c-out-bg, linear-gradient(135deg, hsl(336 78% 56%), hsl(350 80% 64%)))); }
+:root[data-theme="sakura"] .m5-stripe { background: linear-gradient(90deg, #f9a8d4, #f472b6, #fb7185); }
+
+:root[data-theme="ocean"] {
+  --background: 195 45% 96%;
+  --foreground: 205 42% 15%;
+  --card: 0 0% 100%;
+  --card-foreground: 205 42% 15%;
+  --card-border: 196 36% 88%;
+  --border: 196 32% 86%;
+  --theme-primary: 190 86% 34%;
+  --muted: 195 36% 92%;
+  --muted-foreground: 202 18% 38%;
+  --accent: 192 50% 92%;
+  --accent-foreground: 205 42% 15%;
+  --destructive: 356 72% 44%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 196 26% 76%;
+  --radius: 1rem;
+}
+:root[data-theme="ocean"][data-tone="dark"] {
+  --background: 205 50% 9%;
+  --foreground: 190 30% 92%;
+  --card: 204 44% 13%;
+  --card-foreground: 190 30% 92%;
+  --card-border: 202 36% 20%;
+  --border: 202 34% 22%;
+  --theme-primary: 184 80% 48%;
+  --theme-primary-fg: 205 50% 8%;
+  --muted: 204 40% 16%;
+  --muted-foreground: 196 20% 68%;
+  --accent: 200 40% 19%;
+  --accent-foreground: 190 30% 92%;
+  --destructive: 356 80% 62%;
+  --input: 202 30% 28%;
+}
+:root[data-theme="ocean"] .bg-app-shell {
+  background: linear-gradient(180deg, hsl(var(--primary) / 0.1), transparent 45%), hsl(var(--background));
+  background-attachment: fixed;
+}
+:root[data-theme="ocean"] .m5-stripe { background: linear-gradient(90deg, #0e7490, #06b6d4, #67e8f9); }
+
+:root[data-theme="graphite"] {
+  --background: 0 0% 9%;
+  --foreground: 0 0% 92%;
+  --card: 0 0% 12%;
+  --card-foreground: 0 0% 92%;
+  --card-border: 0 0% 18%;
+  --border: 0 0% 20%;
+  --theme-primary: 24 95% 55%;
+  --theme-primary-fg: 0 0% 6%;
+  --muted: 0 0% 15%;
+  --muted-foreground: 0 0% 64%;
+  --accent: 0 0% 17%;
+  --accent-foreground: 0 0% 92%;
+  --destructive: 0 80% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --input: 0 0% 26%;
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --radius: 0.5rem;
+  --radius-xl: 0.4rem;
+  --radius-2xl: 0.6rem;
+  --radius-3xl: 0.8rem;
+}
+:root[data-theme="graphite"][data-tone="light"] {
+  --background: 0 0% 97%;
+  --foreground: 0 0% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 0 0% 10%;
+  --card-border: 0 0% 88%;
+  --border: 0 0% 86%;
+  --theme-primary: 22 90% 44%;
+  --theme-primary-fg: 0 0% 100%;
+  --muted: 0 0% 93%;
+  --muted-foreground: 0 0% 38%;
+  --accent: 0 0% 92%;
+  --accent-foreground: 0 0% 10%;
+  --input: 0 0% 76%;
+}
+:root[data-theme="graphite"] .bg-app-shell { background: hsl(var(--background)); }
+:root[data-theme="graphite"] .m5-stripe { background: hsl(var(--primary)); }
+
+/* ======================================================= shared refinements */
+/* The admin layout builder's menu radius is !important in index.css; the
+   system templates have their own geometry. */
+:root[data-theme="ios"] .menu-panel { border-radius: var(--c-menu-radius-ios, 1.6rem) !important; }
+:root[data-theme="windows"] .menu-panel { border-radius: var(--c-menu-radius-win, 0.5rem) !important; }
+:root[data-theme="ios"] .menu-footer { background: transparent; border-top-width: 0.5px; }
+:root[data-theme="windows"] .menu-footer { background: transparent; }
+:root[data-theme="ios"] .menu-clear { border-radius: 9999px; }
+:root[data-theme="windows"] .menu-clear { border-radius: 0.25rem; }
+/* The connection state is in the status pill; the stripe goes quiet. */
+:root[data-theme="ios"] [data-testid="stripe-connection"] { display: none; }
+:root[data-theme="windows"] [data-testid="stripe-connection"] { height: 2px; opacity: 0.85; }
+/* Primary buttons stay filled with the accent on the system templates. */
+:root:is([data-theme="ios"], [data-theme="windows"]) :is(.ap-btn--primary, .cx-btn--primary) {
+  background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); border-color: transparent;
+}
+:root:is([data-theme="ios"], [data-theme="windows"]) :is(.ap-btn--primary, .cx-btn--primary):hover:not(:disabled) { background: hsl(var(--primary) / 0.9); }

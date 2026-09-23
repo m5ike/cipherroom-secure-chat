@@ -33,6 +33,8 @@ export const ACCOUNT_LIMITS = {
   maxUserNameChars: 64,
   maxProfileChars: 128_000,
   maxChatChars: 6_000_000,
+  /** Saved connections with their logs and statistics (sealed by the browser). */
+  maxConnectionsChars: 1_500_000,
   maxMailboxItems: 500,
   maxMailboxBytes: 4_000_000,
   maxItemBytes: 130_000,
@@ -73,7 +75,11 @@ export type AccountRecord = {
   createdAt: number;
   lastLoginAt: number;
   loginCount: number;
-  vault: { profileBytes: number; profileUpdatedAt: number; chatBytes: number; chatUpdatedAt: number; messages: number; messageBytes: number; rooms: number };
+  vault: {
+    profileBytes: number; profileUpdatedAt: number; chatBytes: number; chatUpdatedAt: number; messages: number; messageBytes: number; rooms: number;
+    /** 3.2: saved connections — how many (the browser says), how big, when. */
+    connections?: number; connectionsBytes?: number; connectionsUpdatedAt?: number;
+  };
   push: PushTarget[];
   away: Array<{ room: string; name: string; since: number }>;
   audit: AuditEntry[];
@@ -95,7 +101,7 @@ export type MailItem = {
   bytes: number;
 };
 
-type VaultFile = { profile?: { ct: string; updatedAt: number }; chat?: { ct: string; updatedAt: number } };
+type VaultFile = { profile?: { ct: string; updatedAt: number }; chat?: { ct: string; updatedAt: number }; connections?: { ct: string; updatedAt: number } };
 
 /**
  * Where a user's sealed vault lives. By default it is a file next to the
@@ -612,7 +618,7 @@ export class AccountStore {
 
   putVault(
     accountId: string,
-    patch: { profile?: string; chat?: { ct: string; messages: number; messageBytes: number; rooms: number } },
+    patch: { profile?: string; chat?: { ct: string; messages: number; messageBytes: number; rooms: number }; connections?: { ct: string; count: number } },
     now = Date.now(),
   ): { ok: true } | { ok: false; reason: string } {
     const acc = this.get(accountId);
@@ -623,6 +629,9 @@ export class AccountStore {
     }
     if (patch.chat !== undefined && (typeof patch.chat.ct !== "string" || !b64.test(patch.chat.ct) || patch.chat.ct.length > ACCOUNT_LIMITS.maxChatChars)) {
       return { ok: false, reason: "chat ciphertext invalid or too large" };
+    }
+    if (patch.connections !== undefined && (typeof patch.connections.ct !== "string" || !b64.test(patch.connections.ct) || patch.connections.ct.length > ACCOUNT_LIMITS.maxConnectionsChars)) {
+      return { ok: false, reason: "connections ciphertext invalid or too large" };
     }
     const vault = this.getVault(accountId);
     if (patch.profile !== undefined) {
@@ -638,6 +647,12 @@ export class AccountStore {
       acc.vault.messages = n(patch.chat.messages);
       acc.vault.messageBytes = n(patch.chat.messageBytes);
       acc.vault.rooms = n(patch.chat.rooms);
+    }
+    if (patch.connections !== undefined) {
+      vault.connections = { ct: patch.connections.ct, updatedAt: now };
+      acc.vault.connections = Math.min(1000, Math.max(0, Math.floor(Number(patch.connections.count) || 0)));
+      acc.vault.connectionsBytes = patch.connections.ct.length;
+      acc.vault.connectionsUpdatedAt = now;
     }
     // The user's own encrypted database when it is open, the file otherwise.
     if (!vaultBackend?.write(accountId, vault)) this.write(this.vaultPath(accountId), vault);

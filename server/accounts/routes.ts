@@ -236,11 +236,11 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       profileBytes: vault.profile?.ct.length ?? 0,
       chatBytes: vault.chat?.ct.length ?? 0,
     });
-    res.json({ ok: true, profile: vault.profile ?? null, chat: vault.chat ?? null });
+    res.json({ ok: true, profile: vault.profile ?? null, chat: vault.chat ?? null, connections: vault.connections ?? null });
   });
 
   app.put("/api/account/vault", requireAccount, (req: AuthedRequest, res: Response) => {
-    const body = (req.body || {}) as { profile?: unknown; chat?: { ct?: unknown; messages?: unknown; messageBytes?: unknown; rooms?: unknown } };
+    const body = (req.body || {}) as { profile?: unknown; chat?: { ct?: unknown; messages?: unknown; messageBytes?: unknown; rooms?: unknown }; connections?: { ct?: unknown; count?: unknown } };
     const patch: Parameters<AccountStore["putVault"]>[1] = {};
     if (body.profile !== undefined) patch.profile = String(body.profile);
     if (body.chat !== undefined) {
@@ -251,7 +251,10 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
         rooms: Number(body.chat?.rooms) || 0,
       };
     }
-    if (!patch.profile && !patch.chat) return res.status(400).json({ ok: false, message: "Nothing to store." });
+    if (body.connections !== undefined) {
+      patch.connections = { ct: String(body.connections?.ct ?? ""), count: Number(body.connections?.count) || 0 };
+    }
+    if (!patch.profile && !patch.chat && !patch.connections) return res.status(400).json({ ok: false, message: "Nothing to store." });
     const r = store.putVault(req.account!.id, patch);
     if (!r.ok) return res.status(413).json({ ok: false, message: r.reason });
     // One audit line per minute per account, not one per autosave.

@@ -7,10 +7,15 @@ export default {
   content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
+      // The larger radii read a variable a template may set (themes.css:
+      // Windows 11 is square-ish, iOS round); the fallback is Tailwind's own.
       borderRadius: {
         lg: ".5625rem", /* 9px */
         md: ".375rem", /* 6px */
         sm: ".1875rem", /* 3px */
+        xl: "var(--radius-xl, .75rem)",
+        "2xl": "var(--radius-2xl, 1rem)",
+        "3xl": "var(--radius-3xl, 1.5rem)",
       },
       colors: {
         background: "hsl(var(--background) / <alpha-value>)",

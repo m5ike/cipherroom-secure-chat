@@ -18,6 +18,7 @@ import {
   Lock,
   LogOut,
   Paperclip,
+  Plug,
   Radio,
   Smile,
   Wifi,
@@ -25,7 +26,7 @@ import {
   Maximize2,
   Minimize2,
 } from "lucide-react";
-import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { detectCapabilities } from "./lib/capabilities";
 import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURITY, type Preferences, type WidgetState } from "./lib/preferences";
 import { linkify } from "./lib/linkify";
@@ -62,7 +63,8 @@ const ChatRetentionSection = lazy(() => import("./components/AccountPanel").then
 const ShareSection = lazy(() => import("./components/SharePanel").then((m) => ({ default: m.ShareSection })));
 const InvitePrompt = lazy(() => import("./components/SharePanel").then((m) => ({ default: m.InvitePrompt })));
 const AiPanel = lazy(() => import("./components/AiPanel").then((m) => ({ default: m.AiPanel })));
-import { detectLang, t, tf } from "./lib/i18n";
+const ConnectionsPanel = lazy(() => import("./components/ConnectionsPanel").then((m) => ({ default: m.ConnectionsPanel })));
+import { detectLang, t, tf, type Lang } from "./lib/i18n";
 import type { ConnectionStatus } from "./lib/connection-keeper";
 import { dispatchCommand, isAdminCommand } from "./lib/admin-commands";
 import {
@@ -110,13 +112,16 @@ import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgSta
 import { isInlineImage } from "./lib/validate";
 import { DEFAULT_PROXY_LIMITS, extractPeerAddress, normalizeRoom, proxyPacer, type ProxyLimits } from "./lib/app-helpers";
 import { SignedInBadge } from "./components/SignedInBadge";
+import { ConnectionsStore, findProfile, startupProfile, normalizeRoomName, type ConnectionEvent, type ConnectionProfile, type RecordExtra } from "./lib/connections";
+import { effectiveAppearance, serverAllowed, signalingUrl } from "./lib/client-config";
+import { fetchClientConfig, loadCachedClientConfig } from "./lib/client-config-client";
 import { SimpleModal } from "./components/SimpleModal";
 import { AudioControls, PeerList, VideoControls } from "./components/CallPanels";
 import { ConnectionPanel, FilesPanel, LocationPanel, SpeechPanel, type ConnLogEvent } from "./components/ToolPanels";
 import {
   accountStatus, accountSupported, accountToken, addPasskey, createRecoveryCode, currentAccount, deleteAccount as deleteServerAccount,
   endSession, linkPushSubscription, loadVault, logAccountEvent, recoverWithCode, refreshAccount, registerAccount, removePasskey,
-  removeRecoveryCode, restoreSession, saveVault, signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
+  removeRecoveryCode, restoreSession, saveVault, loadConnectionsVault, signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
 } from "./lib/account";
 import { createHistoryStore, createServerSealer, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
@@ -240,7 +245,12 @@ const QUICK_EMOJI = ["😀", "😂", "🥳", "👍", "🙏", "🔥", "❤️", "
 /** Messages rendered at once; "show earlier" adds as many again. */
 const MESSAGE_WINDOW = 200;
 
-function wsUrl() {
+/** The signaling socket: a saved connection's own server, or this one. */
+function wsUrl(server = "") {
+  if (server) {
+    const url = signalingUrl(server);
+    if (url) return url;
+  }
   if (EXTERNAL_SIGNALING_URL?.trim()) {
     return EXTERNAL_SIGNALING_URL.trim();
   }
@@ -314,7 +324,109 @@ export type PanelKey =
   | "ai"
   | "phone"
   | "connection"
+  | "connections"
   | null;
+
+type RowActions = {
+  setMessageStyle: (key: string, patch: PerUserStyle) => void;
+  resetMessageStyle: (key: string) => void;
+  showUser: (id: string) => void;
+  showInfo: (id: string) => void;
+  reply: (m: ChatMessage) => void;
+  forward: (m: ChatMessage) => void;
+  vanished: (id: string) => void;
+  displayed: (id: string) => void;
+  jump: (id: string) => void;
+};
+
+type MessageRowProps = {
+  message: ChatMessage;
+  perStyle: PerUserStyle | undefined;
+  layout: LayoutConfig;
+  lang: Lang;
+  timezone: string;
+  room: string;
+  avatar: string;
+  delivery: MsgState | undefined;
+  act: { current: RowActions };
+};
+
+/** One message in the conversation. Memoized: typing in the composer, a
+ *  peer's status or a new message elsewhere leave it alone. */
+const MessageRow = memo(function MessageRow({ message, perStyle, layout, lang, timezone, room, avatar, delivery, act }: MessageRowProps) {
+  const isSystem = message.senderId === "system";
+  const styleKey = styleKeyFor(message.senderName, message.senderId);
+  const vars = {
+    sender: message.senderName,
+    time: formatTime(message.createdAt, lang, timezone),
+    date: formatFullDate(message.createdAt, lang, timezone),
+    room,
+    appName: "M5cet",
+  };
+  const badge = isSystem ? (
+    <span className="msg-bubble__label">
+      {layout.flags.showSystemLogo ? <M5Logo mono size={16} className="msg-sys-logo" /> : null}
+      {renderTemplate(layout.templates.systemHeader, {
+        ...vars,
+        appName: message.senderName,
+        date: layout.flags.systemFullDate ? vars.date : vars.time,
+      }, layout.partials)}
+    </span>
+  ) : message.mine ? (
+    <span className="msg-bubble__label inline-flex items-center gap-1.5">
+      {layout.flags.showAvatars ? <Avatar name={message.senderName} avatar={avatar} size={20} /> : null}
+      {message.senderName}
+    </span>
+  ) : (
+    <UserBadge
+      name={message.senderName}
+      senderId={message.senderId}
+      mine={false}
+      style={perStyle}
+      onChangeStyle={(patch) => act.current.setMessageStyle(styleKey, patch)}
+      onResetStyle={() => act.current.resetMessageStyle(styleKey)}
+      onInfo={() => act.current.showUser(message.senderId)}
+      lang={lang}
+    />
+  );
+  return (
+    <MessageBubble
+      id={message.id}
+      sealedWith={message.sealedWith}
+      senderId={message.senderId}
+      senderName={message.senderName}
+      mine={message.mine}
+      isSystem={isSystem}
+      secure={message.secure && layout.flags.showLockIcon}
+      createdAt={message.createdAt}
+      timeLabel={isSystem || !layout.flags.showTime ? "" : renderTemplate(message.mine ? layout.templates.outgoingMeta : layout.templates.incomingMeta, vars, layout.partials)}
+      text={message.text}
+      attachment={message.attachment}
+      flags={message.flags}
+      ownPlaintext={message.mine && message.flags?.sealed ? message.sealPlain : undefined}
+      sealCode={message.mine ? message.sealCode : undefined}
+      vanished={message.vanished}
+      vanishedAt={message.vanishedAt}
+      onVanish={(id) => act.current.vanished(id)}
+      to={message.to}
+      replyTo={message.replyTo}
+      forwardedFrom={message.forwardedFrom}
+      bubbleStyle={bubbleStyleFrom(perStyle)}
+      badge={badge}
+      lang={lang}
+      renderText={linkify}
+      formatSize={formatBytes}
+      onInfo={isSystem ? undefined : (mid) => act.current.showInfo(mid)}
+      onReply={isSystem || !layout.flags.showActions ? undefined : () => act.current.reply(message)}
+      onForward={isSystem || !layout.flags.showActions ? undefined : () => act.current.forward(message)}
+      deliveryState={delivery}
+      onDisplayed={(id) => act.current.displayed(id)}
+      onReplyJump={(id) => act.current.jump(id)}
+      systemCollapseAfterSec={layout.flags.systemCollapseAfterSec}
+      systemExpandForSec={layout.flags.systemExpandForSec}
+    />
+  );
+});
 
 function ChatApp() {
   const capabilitiesRef = useRef(detectCapabilities());
@@ -364,6 +476,29 @@ function ChatApp() {
 
   // --- signed-in user (passkey account) + away relay ---
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  // The operator's addon configuration (saved connections, templates).
+  const [clientConfig, setClientConfig] = useState(loadCachedClientConfig);
+  // Saved connections: sealed into the account vault (lib/connections.ts).
+  const connectionsReadyRef = useRef(false);
+  const connectionsRef = useRef<ConnectionsStore | null>(null);
+  if (!connectionsRef.current) {
+    connectionsRef.current = new ConnectionsStore(async (state) => {
+      // Never write before the vault was read: an empty list would replace the real one.
+      if (!connectionsReadyRef.current) return;
+      await saveVault({ connections: { value: state, count: state.profiles.length } });
+    }, loadCachedClientConfig().connections);
+  }
+  const [cxState, setCxState] = useState(() => connectionsRef.current!.get());
+  const [cxReady, setCxReady] = useState(false);
+  /** The saved connection this tab is using; "" server = this one. */
+  const activeProfileRef = useRef<ConnectionProfile | null>(null);
+  const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
+  const activeServerRef = useRef("");
+  /** The last few rooms' derived keys (memory only; Argon2id costs ~1 s on a phone). */
+  const derivedKeysRef = useRef(new Map<string, RoomKeys>());
+  /** Names the room told us, by peer id (a signal can arrive before the name). */
+  const peerNamesRef = useRef(new Map<string, string>());
+  const autoConnectDoneRef = useRef(false);
   const [accStatus, setAccStatus] = useState<AccountStatus | null>(null);
   const [accBusy, setAccBusy] = useState(false);
   const [accMsg, setAccMsg] = useState("");
@@ -406,13 +541,20 @@ function ChatApp() {
     return () => { cancelled = true; window.clearInterval(timer); };
   }, []);
   useEffect(() => { applyLayoutStyles(layout); }, [layout]);
-  const tplVars = (message: { senderName: string; createdAt: number }) => ({
-    sender: message.senderName,
-    time: formatTime(message.createdAt, lang, prefs.timezone),
-    date: formatFullDate(message.createdAt, lang, prefs.timezone),
-    room,
-    appName: "M5cet",
-  });
+  // What a message row may do: read through a ref, so a row that did not
+  // change is not re-rendered for a new function identity (MessageRow).
+  const rowActionsRef = useRef<RowActions>(null as unknown as RowActions);
+  rowActionsRef.current = {
+    setMessageStyle: (key, patch) => setMessageStyle(key, patch),
+    resetMessageStyle: (key) => resetMessageStyle(key),
+    showUser: (id) => setUserInfoFor(id),
+    showInfo: (id) => setMsgInfoFor(id),
+    reply: (m) => startReply(m),
+    forward: (m) => void forwardMessage(m),
+    vanished: (id) => onMessageVanished(id),
+    displayed: (id) => onMessageDisplayed(id),
+    jump: (id) => scrollToMessage(id),
+  };
 
   const socketRef = useRef<WebSocket | null>(null);
   const peersRef = useRef<Map<string, PeerHandle>>(new Map());
@@ -596,9 +738,70 @@ function ChatApp() {
   }
 
   // Apply theme/font/effects whenever they change.
+  // The template shown: the user's, unless the operator locked one, left it
+  // out of the allowed list, or the user never picked any.
+  const appearancePolicy = clientConfig.appearance;
+  const { theme: effectiveTheme, tone: effectiveTone, icons: effectiveIcons } = effectiveAppearance(prefs, appearancePolicy);
   useEffect(() => {
-    applyTheme(prefs.theme, prefs.accent, prefs.layout);
-  }, [prefs.theme, prefs.accent, prefs.layout]);
+    applyTheme(effectiveTheme, prefs.accent, prefs.layout, { tone: effectiveTone, icons: effectiveIcons });
+  }, [effectiveTheme, prefs.accent, prefs.layout, effectiveTone, effectiveIcons]);
+
+  // ---------------------------------------------------- saved connections
+  useEffect(() => {
+    let live = true;
+    // Same config again (the usual case) keeps the old object: no re-render.
+    const load = () => void fetchClientConfig().then((cfg) => {
+      if (live) setClientConfig((prev) => (JSON.stringify(prev) === JSON.stringify(cfg) ? prev : cfg));
+    });
+    load();
+    const id = window.setInterval(load, 5 * 60_000);
+    return () => { live = false; window.clearInterval(id); };
+  }, []);
+  useEffect(() => connectionsRef.current!.subscribe(setCxState), []);
+  useEffect(() => { connectionsRef.current!.setPolicy(clientConfig.connections); }, [clientConfig.connections]);
+  // Signed in: open the saved connections from the vault; signed out: forget them.
+  useEffect(() => {
+    const store = connectionsRef.current!;
+    if (!account) {
+      if (connectionsReadyRef.current) { void store.flush(); store.reset(); }
+      connectionsReadyRef.current = false;
+      setCxReady(false);
+      autoConnectDoneRef.current = false;
+      return;
+    }
+    if (!clientConfig.connections.enabled || connectionsReadyRef.current) return;
+    let live = true;
+    void loadConnectionsVault<unknown>().then((raw) => {
+      if (!live) return;
+      store.load(raw ?? {});
+      connectionsReadyRef.current = true;
+      setCxReady(true);
+    }).catch(() => { /* not readable (wrong key, offline): stay read-only, never overwrite */ });
+    return () => { live = false; };
+  }, [account?.id, clientConfig.connections.enabled]);
+  const cxEligible = Boolean(account) && cxReady && prefs.mode === "server" && clientConfig.connections.enabled;
+  // Signed in: the default connection (or the last one) connects by itself —
+  // once per page, and only when nothing else is connected or on its way.
+  useEffect(() => {
+    if (!cxEligible || autoConnectDoneRef.current) return;
+    autoConnectDoneRef.current = true;
+    const st = connectionsRef.current!.get();
+    if (!st.settings.autoConnect || desired === "connected" || intentRef.current) return;
+    const target = startupProfile(st);
+    if (!target) return;
+    setNotice(tf(lang, "cx.autoConnecting", { name: target.label }));
+    void connectProfile(target.id, { auto: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cxEligible]);
+
+  // Unsaved counters go to the vault when the page is put away.
+  useEffect(() => {
+    const flush = () => { void connectionsRef.current?.flush(); };
+    const onHide = () => { if (document.visibilityState === "hidden") flush(); };
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", flush);
+    return () => { document.removeEventListener("visibilitychange", onHide); window.removeEventListener("pagehide", flush); };
+  }, []);
   useEffect(() => {
     applyTypography({
       font: prefs.font, chatFont: prefs.chatFont, monoFont: prefs.monoFont, sizePx: prefs.textSize,
@@ -802,7 +1005,7 @@ function ChatApp() {
    *  connections just because we signed in. */
   function announceAccountToServer() {
     const socket = socketRef.current;
-    if (socket?.readyState !== WebSocket.OPEN || !roomRef.current) return;
+    if (socket?.readyState !== WebSocket.OPEN || !roomRef.current || !onHomeServer()) return;
     socket.send(JSON.stringify({
       type: "auth",
       token: accountToken() ?? null,
@@ -983,7 +1186,53 @@ function ChatApp() {
   function warnOnce(subject: string, text: string, kind: FlashMessage["kind"] = "warning") {
     if (warnedPeersRef.current.has(subject)) return;
     warnedPeersRef.current.add(subject);
+    if (kind === "error") cx("error", subject.split(":")[0]);
     systemMessage(text, { kind });
+  }
+
+  /** Counts / logs an event for the saved connection in use (connections.ts). */
+  function cx(event: ConnectionEvent, detail?: string, extra?: RecordExtra) {
+    connectionsRef.current?.record(activeProfileRef.current?.id, event, detail, extra);
+  }
+
+  /** True while this tab talks to its own server (not a saved connection's other one). */
+  function onHomeServer(): boolean {
+    return !activeServerRef.current;
+  }
+
+  /** Joins a saved connection: its room, key and name, and how the session behaves. */
+  async function connectProfile(id: string, opts: { auto?: boolean } = {}) {
+    const store = connectionsRef.current!;
+    const profile = findProfile(store.get(), id);
+    if (!profile) return;
+    if (!serverAllowed(clientConfig.connections, profile.server)) { setNotice(t(lang, "cx.err.server")); return; }
+    const current = activeProfileRef.current;
+    const busy = desired === "connected" && roomRef.current;
+    if (!opts.auto && busy && current?.id !== profile.id && store.get().settings.confirmSwitch) {
+      const from = current?.label ?? roomRef.current;
+      if (!window.confirm(tf(lang, "cx.switch.confirm", { from, to: profile.label }))) return;
+    }
+    if (busy) cx("disconnected");
+    const userName = profile.userName || nameRef.current || name;
+    retentionRef.current = profile.retention;
+    setPrefs({
+      mode: profile.mode,
+      chatRetention: profile.retention,
+      keepaliveStrategy: profile.keepalive,
+      roomTtl: { ...prefs.roomTtl, [profile.room]: { defaultMinutes: profile.ttlMinutes, absoluteMinutes: prefs.roomTtl[profile.room]?.absoluteMinutes ?? 0 } },
+      ...(profile.userName ? { name: profile.userName } : {}),
+    });
+    activeProfileRef.current = profile;
+    activeServerRef.current = profile.server;
+    setActiveProfileId(profile.id);
+    setName(userName);
+    setRoomInput(profile.room);
+    setPassphrase(profile.passphrase);
+    store.record(profile.id, "connect", profile.server ? new URL(profile.server).host : undefined);
+    disconnect(false);
+    closeJoinPanelRef.current = true;
+    setActivePanel(null);
+    await startSession(userName, profile.room, profile.passphrase);
   }
 
   /** A validated chat payload as a conversation entry. */
@@ -1135,14 +1384,22 @@ function ChatApp() {
     messageEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [visibleMessages.length]);
 
-  // Tick once a second to evict expired messages.
+  // Expired messages leave at the moment they expire. One timer for the
+  // earliest expiry — not a re-render of the whole screen every second.
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setNow(Date.now());
-      setMessages((current) => current.filter((message) => !message.expiresAt || message.expiresAt > Date.now()));
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, []);
+    let next = Infinity;
+    for (const m of messages) if (m.expiresAt && m.expiresAt < next) next = m.expiresAt;
+    if (next === Infinity) return;
+    const id = window.setTimeout(() => {
+      const t = Date.now();
+      setNow(t);
+      setMessages((current) => {
+        const kept = current.filter((message) => !message.expiresAt || message.expiresAt > t);
+        return kept.length === current.length ? current : kept;
+      });
+    }, Math.max(50, Math.min(next - Date.now() + 20, 2_147_000_000)));
+    return () => window.clearTimeout(id);
+  }, [messages]);
 
   function setPeerView(id: string, update: Partial<PeerView> & { name?: string; initiator?: boolean }) {
     setPeers((current) => {
@@ -1159,8 +1416,18 @@ function ChatApp() {
           },
         ];
       }
-      return current.map((peer) => (peer.id === id ? { ...peer, ...update } : peer));
+      // A placeholder ("peer-1a2b", from a signal that came first) never
+      // replaces the name the room told us.
+      const placeholder = update.name?.startsWith("peer-") && !existing.name.startsWith("peer-");
+      const next = placeholder ? { ...update, name: existing.name } : update;
+      return current.map((peer) => (peer.id === id ? { ...peer, ...next } : peer));
     });
+    // The handle names the peer in notices; give it the real name too.
+    if (update.name && !update.name.startsWith("peer-")) {
+      peerNamesRef.current.set(id, update.name);
+      const handle = peersRef.current.get(id);
+      if (handle) handle.name = update.name;
+    }
   }
 
   /**
@@ -1354,6 +1621,7 @@ function ChatApp() {
         updateTransfer(id, { stats: { ...stats, received: recv, size: total } });
       },
       onComplete: (id, blob, meta, transport, proof) => {
+        cx("file-received", meta.name, { bytes: meta.size });
         updateTransfer(id, {
           status: "completed",
           stats: {
@@ -1567,9 +1835,12 @@ function ChatApp() {
         }),
       ]);
       dispatchInternal("message", { senderId: plaintext.senderId });
+      cx("received");
+      if (plaintext.attachment) cx("file-received", plaintext.attachment.name, { bytes: plaintext.attachment.size });
 
       if (
         notificationsEnabledRef.current &&
+        activeProfileRef.current?.notifications !== false &&
         typeof document !== "undefined" &&
         document.hidden &&
         "Notification" in window &&
@@ -1595,7 +1866,7 @@ function ChatApp() {
     if (peersRef.current.has(peerId)) { pc.close(); return; } // raced by another signal meanwhile
     const handle: PeerHandle = {
       id: peerId,
-      name: peerName,
+      name: peerNamesRef.current.get(peerId) ?? peerName,
       pc,
       initiator,
       audio: "off",
@@ -1788,6 +2059,7 @@ function ChatApp() {
       reconnectTimerRef.current = null;
     }
     const attempt = ++reconnectAttemptsRef.current;
+    cx("reconnect", `#${attempt}`);
     const initial = prefs.keepaliveStrategy === "aggressive" ? 500 : prefs.keepaliveStrategy === "conservative" ? 1500 : 1000;
     const max = 120_000; // hard 2 min cap so we never sleep forever
     const exp = Math.min(max, initial * Math.pow(2, Math.min(attempt, 12)));
@@ -1816,6 +2088,7 @@ function ChatApp() {
       await doConnect();
     } catch (err) {
       logConn("failed");
+      cx("failed", (err as Error)?.message?.slice(0, 120));
       console.warn("[m5cet] connect attempt threw", err);
       if (intentRef.current) { setStatus("offline"); scheduleReconnect(); }
     }
@@ -1842,7 +2115,12 @@ function ChatApp() {
     const keyFor = `${nextRoom}\u0000${passphraseRef.current}`;
     if (!keyRef.current || keyForRef.current !== keyFor) {
       // Argon2id in a worker (kdf.ts): the page stays responsive meanwhile.
-      keyRef.current = await deriveRoomKeys(nextRoom, passphraseRef.current);
+      // Switching back to a recent room (saved connections) reuses its keys.
+      const cached = derivedKeysRef.current.get(keyFor);
+      keyRef.current = cached ?? await deriveRoomKeys(nextRoom, passphraseRef.current);
+      derivedKeysRef.current.delete(keyFor);
+      derivedKeysRef.current.set(keyFor, keyRef.current);
+      while (derivedKeysRef.current.size > 4) derivedKeysRef.current.delete(derivedKeysRef.current.keys().next().value!);
       keyForRef.current = keyFor;
       replayRef.current.clear();
       senderKeysRef.current.clear();
@@ -1885,13 +2163,14 @@ function ChatApp() {
     setStatus("connecting");
     logConn("connecting", reconnectAttemptsRef.current + 1);
 
-    const socket = new WebSocket(wsUrl());
+    const socket = new WebSocket(wsUrl(activeServerRef.current));
     socket.binaryType = "arraybuffer";
     serverBinaryRef.current = false;
     socketRef.current = socket;
     // Storage operations ride on this socket rather than opening their own
     // connection (lib/storage-client.ts).
-    attachStorageSocket(socket);
+    // Only our own server gets storage frames: they carry the account token.
+    attachStorageSocket(onHomeServer() ? socket : null);
 
     socket.onopen = () => {
       logConn("open", reconnectAttemptsRef.current + 1);
@@ -1906,11 +2185,12 @@ function ChatApp() {
         peerId: nextPeerId,
         ...(resume ? { resume: resume.secret } : {}),
         name: nameRef.current,
-        ...(accountToken() ? { auth: accountToken() } : {}),
-        away: retentionRef.current === "server" && Boolean(accountRef.current),
+        // Another server never sees the account: no token, no away relay.
+        ...(onHomeServer() && accountToken() ? { auth: accountToken() } : {}),
+        away: onHomeServer() && retentionRef.current === "server" && Boolean(accountRef.current) && activeProfileRef.current?.away !== false,
         features: ["bin"],
       }));
-      socket.send(JSON.stringify({ type: "command-poll", deviceId: prefs.deviceId }));
+      if (onHomeServer()) socket.send(JSON.stringify({ type: "command-poll", deviceId: prefs.deviceId }));
       startHeartbeat();
       setConnStatus({
         state: "open",
@@ -1952,7 +2232,8 @@ function ChatApp() {
         return;
       }
 
-      if (frame.type === "admin-command") {
+      // Operator commands only from our own server.
+      if (frame.type === "admin-command" && onHomeServer()) {
         const cmd = frame.command;
         if (!isAdminCommand(cmd)) return;
         await dispatchCommand(cmd, {
@@ -2018,6 +2299,7 @@ function ChatApp() {
         resumeRef.current = frame.resume ? { room: roomRef.current, peerId: frame.peerId, secret: frame.resume } : null;
         setStatus("joined");
         systemMessage(tf(lang, "app.joined", { room: roomRef.current, n: frame.peers.length }));
+        cx("connected", tf(lang, "app.joined", { room: roomRef.current, n: frame.peers.length }), { peers: frame.peers.length + 1 });
         setAwayPeers((frame.away ?? []).map((a) => ({ accountId: accountRefOf(a), name: a.name, since: a.since })).filter((a) => a.accountId));
         if (frame.account && "invalid" in frame.account) {
           // The token did not outlive the server: sign in again to get the
@@ -2052,6 +2334,7 @@ function ChatApp() {
       if (frame.type === "peer-joined") {
         setPeerView(frame.peerId, { name: frame.name, status: "connecting", initiator: false });
         systemMessage(tf(lang, "app.peerEntered", { name: frame.name }));
+        cx("peer-joined", frame.name, { peers: peersRef.current.size + 2 });
       }
 
       if (frame.type === "peer-away") {
@@ -2138,6 +2421,7 @@ function ChatApp() {
         peersRef.current.delete(frame.peerId);
         setPeers((current) => current.filter((peer) => peer.id !== frame.peerId));
         systemMessage(tf(lang, "app.peerLeft", { name: handle?.name && !handle.name.startsWith("peer-") ? handle.name : `peer-${frame.peerId.slice(-4)}` }));
+        cx("peer-left", handle?.name);
       }
 
       if (frame.type === "signal") {
@@ -2203,7 +2487,16 @@ function ChatApp() {
       //      suspend) → reconnect until the user explicitly leaves.
       if (!clientStoppedRef.current) {
         logConn("closed");
+        cx("disconnected");
         setStatus("offline");
+        const profile = activeProfileRef.current;
+        if (profile && (!profile.autoReconnect || !connectionsRef.current!.get().settings.autoReconnect)) {
+          // This saved connection asked not to reconnect by itself.
+          intentRef.current = false;
+          setConnStatus(null);
+          setNotice(t(lang, "cx.reconnectOff"));
+          return;
+        }
         setConnStatus((s) => s ? { ...s, state: "reconnecting" } : s);
         scheduleReconnect();
       } else {
@@ -2232,6 +2525,12 @@ function ChatApp() {
     }
     disconnect(false);
     closeJoinPanelRef.current = true;
+    // The same room and key as a saved connection: its statistics count it.
+    const match = cxState.profiles.find((p) => p.room === normalizeRoomName(roomInput) && p.passphrase === passphrase && !p.server) ?? null;
+    activeProfileRef.current = match;
+    activeServerRef.current = "";
+    setActiveProfileId(match?.id ?? null);
+    if (match) connectionsRef.current?.record(match.id, "connect");
     // The user explicitly asked to (re)join; re-arm the persistent
     // connection so any later network blip will silently reconnect.
     await startSession(name, roomInput, passphrase);
@@ -2280,6 +2579,7 @@ function ChatApp() {
   }
 
   function disconnect(showMessage = true) {
+    if (status === "joined") cx("disconnected");
     // Only this path tears down the connection permanently. Server- or
     // browser-initiated close should reach here ONLY if the user clicked
     // the Disconnect button. Everywhere else we keep reconnecting.
@@ -2407,6 +2707,8 @@ function ChatApp() {
     if (queued) setQueuedIds((cur) => new Set(cur).add(payload.id));
 
     if (sent > 0 || relayed > 0 || queued) {
+      cx("sent");
+      if (payload.attachment) cx("file-sent", payload.attachment.name, { bytes: payload.attachment.size });
       const expiresAt = computeExpiry(ttlMinutes, payload.createdAt);
       setMessages((current) => [
         ...current,
@@ -2780,7 +3082,9 @@ function ChatApp() {
   // Browser-level reconnect triggers.
   useEffect(() => {
     function onOnline() {
-      if (intentRef.current && socketRef.current?.readyState !== WebSocket.OPEN) {
+      // A saved connection can opt out of "reconnect when the network returns".
+      const allowed = !activeProfileRef.current || connectionsRef.current!.get().settings.reconnectOnResume;
+      if (allowed && intentRef.current && socketRef.current?.readyState !== WebSocket.OPEN) {
         reconnectAttemptsRef.current = 0;
         void doConnect();
       }
@@ -2867,7 +3171,8 @@ function ChatApp() {
     // session from the cache, so there is nothing to repair here.
     if (event.wasDiscarded) return;
 
-    if (wanted?.desired === "connected" && !clientStoppedRef.current) {
+    const resumeAllowed = !activeProfileRef.current || connectionsRef.current!.get().settings.reconnectOnResume;
+    if (wanted?.desired === "connected" && !clientStoppedRef.current && resumeAllowed) {
       if (!connected) {
         // The socket did not survive: rebuild it and rejoin the same room.
         reconnectAttemptsRef.current = 0;
@@ -3086,6 +3391,7 @@ function ChatApp() {
       });
       // Auto-dismiss complete card after 60 s.
       window.setTimeout(() => dropTransfer(result.transferId), 60_000);
+      cx("file-sent", file.name, { bytes: file.size });
       systemMessage(
         result.transport === "p2p"
           ? tf(lang, "app.file.sentP2p", { name: file.name, size: formatBytes(file.size) })
@@ -3391,6 +3697,21 @@ function ChatApp() {
           {status === "joined" ? <span className="sm:hidden">{openPeerCount}</span> : null}
         </span>
 
+        {cxEligible && cxState.settings.quickSwitch && cxState.profiles.length > 0 ? (
+          <label className="cx-switcher" title={t(lang, "cx.switch.label")} data-testid="cx-switcher">
+            <Plug className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="sr-only">{t(lang, "cx.switch.label")}</span>
+            <select
+              value={activeProfileId ?? ""}
+              onChange={(e) => { if (e.target.value) void connectProfile(e.target.value); }}
+              data-testid="cx-switcher-select"
+            >
+              <option value="">—</option>
+              {cxState.profiles.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+          </label>
+        ) : null}
+
         {account ? (
           <SignedInBadge account={account} onClick={() => { setAccMsg(""); setShowAccount(true); void refreshAccount().then((fresh) => { if (fresh) setAccount(fresh); }); }} lang={lang} />
         ) : null}
@@ -3494,76 +3815,20 @@ function ChatApp() {
                     {t(lang, "chat.showEarlier").replace("{n}", String(hiddenMessages))}
                   </button>
                 ) : null}
-                {renderedMessages.map((message) => {
-                  const isSystem = message.senderId === "system";
-                  const styleKey = styleKeyFor(message.senderName, message.senderId);
-                  const perStyle = isSystem ? undefined : prefs.messageStyles[styleKey];
-                  const vars = tplVars(message);
-                  const badge = isSystem ? (
-                    <span className="msg-bubble__label">
-                      {layout.flags.showSystemLogo ? <M5Logo mono size={16} className="msg-sys-logo" /> : null}
-                      {renderTemplate(layout.templates.systemHeader, {
-                        ...vars,
-                        appName: message.senderName,
-                        date: layout.flags.systemFullDate ? vars.date : vars.time,
-                      }, layout.partials)}
-                    </span>
-                  ) : message.mine ? (
-                    <span className="msg-bubble__label inline-flex items-center gap-1.5">
-                      {layout.flags.showAvatars ? <Avatar name={message.senderName} avatar={prefs.avatar} size={20} /> : null}
-                      {message.senderName}
-                    </span>
-                  ) : (
-                    <UserBadge
-                      name={message.senderName}
-                      senderId={message.senderId}
-                      mine={false}
-                      style={perStyle}
-                      onChangeStyle={(patch) => setMessageStyle(styleKey, patch)}
-                      onResetStyle={() => resetMessageStyle(styleKey)}
-                      onInfo={() => setUserInfoFor(message.senderId)}
-                      lang={lang}
-                    />
-                  );
-                  return (
-                    <MessageBubble
-                      key={message.id}
-                      id={message.id}
-                      sealedWith={message.sealedWith}
-                      senderId={message.senderId}
-                      senderName={message.senderName}
-                      mine={message.mine}
-                      isSystem={isSystem}
-                      secure={message.secure && layout.flags.showLockIcon}
-                      createdAt={message.createdAt}
-                      timeLabel={isSystem || !layout.flags.showTime ? "" : renderTemplate(message.mine ? layout.templates.outgoingMeta : layout.templates.incomingMeta, vars, layout.partials)}
-                      text={message.text}
-                      attachment={message.attachment}
-                      flags={message.flags}
-                      ownPlaintext={message.mine && message.flags?.sealed ? message.sealPlain : undefined}
-                      sealCode={message.mine ? message.sealCode : undefined}
-                      vanished={message.vanished}
-                      vanishedAt={message.vanishedAt}
-                      onVanish={onMessageVanished}
-                      to={message.to}
-                      replyTo={message.replyTo}
-                      forwardedFrom={message.forwardedFrom}
-                      bubbleStyle={bubbleStyleFrom(perStyle)}
-                      badge={badge}
-                      lang={lang}
-                      renderText={linkify}
-                      formatSize={formatBytes}
-                      onInfo={isSystem ? undefined : (mid) => setMsgInfoFor(mid)}
-                      onReply={isSystem || !layout.flags.showActions ? undefined : () => startReply(message)}
-                      onForward={isSystem || !layout.flags.showActions ? undefined : () => void forwardMessage(message)}
-                      deliveryState={deliveryStateOf(message)}
-                      onDisplayed={onMessageDisplayed}
-                      onReplyJump={scrollToMessage}
-                      systemCollapseAfterSec={layout.flags.systemCollapseAfterSec}
-                      systemExpandForSec={layout.flags.systemExpandForSec}
-                    />
-                  );
-                })}
+                {renderedMessages.map((message) => (
+                  <MessageRow
+                    key={message.id}
+                    message={message}
+                    perStyle={message.senderId === "system" ? undefined : prefs.messageStyles[styleKeyFor(message.senderName, message.senderId)]}
+                    layout={layout}
+                    lang={lang}
+                    timezone={prefs.timezone}
+                    room={room}
+                    avatar={prefs.avatar}
+                    delivery={deliveryStateOf(message)}
+                    act={rowActionsRef}
+                  />
+                ))}
                 {hiddenMessages > 0 && newestFirst ? (
                   <button type="button" data-testid="button-show-earlier" className="show-earlier" onClick={() => setMessageWindow((n) => n + MESSAGE_WINDOW)}>
                     {t(lang, "chat.showEarlier").replace("{n}", String(hiddenMessages))}
@@ -3687,7 +3952,8 @@ function ChatApp() {
       <SettingsPanel open={activePanel === "settings"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} onOpenAppearance={() => setActivePanel("appearance")} />
       {activePanel === "appearance" ? (
         <Suspense fallback={null}>
-          <AppearancePanel open onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
+          <AppearancePanel open onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang}
+            policy={{ themes: appearancePolicy.themes.length ? appearancePolicy.themes : [], lockTheme: appearancePolicy.lockTheme, shown: effectiveTheme }} />
         </Suspense>
       ) : null}
       <EncryptionPanel open={activePanel === "encryption"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
@@ -3839,6 +4105,35 @@ function ChatApp() {
       ) : null}
 
       {/* Connection panel */}
+      {activePanel === "connections" ? (
+        <SimpleModal title={t(lang, "cx.title")} onClose={() => setActivePanel(null)}>
+          <ConnectionsPanel
+            lang={lang}
+            timezone={prefs.timezone}
+            state={cxState}
+            policy={clientConfig.connections}
+            eligible={{ enabled: clientConfig.connections.enabled, signedIn: Boolean(account) && cxReady, serverMode: prefs.mode === "server" }}
+            activeId={activeProfileId}
+            connected={status === "joined"}
+            current={status === "joined" && sessionPassphrase ? { room, passphrase: sessionPassphrase, userName: nameRef.current } : null}
+            storedBytes={account?.vault.connectionsBytes ?? 0}
+            onConnect={(id) => void connectProfile(id)}
+            onDisconnect={() => userDisconnect()}
+            onSave={(input) => {
+              const result = connectionsRef.current!.save(input);
+              if (result.ok) setNotice(tf(lang, "cx.saved", { name: result.profile.label }));
+              return result;
+            }}
+            onDelete={(id) => { connectionsRef.current!.remove(id); if (activeProfileRef.current?.id === id) { activeProfileRef.current = null; setActiveProfileId(null); } }}
+            onDefault={(id) => connectionsRef.current!.makeDefault(id)}
+            onSettings={(patch) => connectionsRef.current!.settings(patch)}
+            onClearLog={(id) => connectionsRef.current!.clearLog(id)}
+            onSignIn={() => setActivePanel("connection")}
+            onEnableServerMode={() => setPrefs({ mode: "server" })}
+          />
+        </SimpleModal>
+      ) : null}
+
       {activePanel === "connection" ? (
         <SimpleModal title={t(lang, "app.connection.title")} onClose={() => setActivePanel(null)}>
           <div className="space-y-5">

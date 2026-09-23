@@ -44,6 +44,7 @@
         <button class="nav__item" data-route="traffic"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Live traffic<span class="nav__badge" id="navRate"></span></button>
         <button class="nav__item" data-route="connections"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14 0M8.5 16.1a6 6 0 0 1 7 0M12 20h.01M2 8.8a15 15 0 0 1 20 0"/></svg>Connections<span class="nav__badge" id="navConn"></span></button>
         <button class="nav__item" data-route="rooms"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Rooms<span class="nav__badge" id="navRooms"></span></button>
+        <button class="nav__item" data-route="client"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/><path d="M7 8h4M7 11h7"/></svg>Client &amp; addons</button>
         <button class="nav__item" data-route="alerts"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts<span class="nav__badge" id="navAlerts"></span></button>
         <div class="nav__group">Users &amp; data</div>
         <button class="nav__item" data-route="users"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Users &amp; passkeys<span class="nav__badge" id="navUsers"></span></button>
@@ -434,6 +435,41 @@
             <div class="card__head"><div class="card__title">History</div><div class="card__hint">Prometheus: scrape /metrics with METRICS_TOKEN or an administrator's token.</div></div>
             <div class="table-wrap table-wrap--short"><table class="t" id="alertHistory"><thead><tr><th>When</th><th>Rule</th><th>State</th><th>Message</th></tr></thead><tbody></tbody></table></div>
           </div>
+        </section>
+
+        <!-- ============================ client & addons ============================ -->
+        <section data-panel="client" class="stack" hidden>
+          <div class="card">
+            <div class="card__head"><div class="card__title">How the addons are used</div><div class="card__hint" id="clientFile"></div><div class="card__actions"><button class="btn btn--sm" data-refresh="client">Refresh</button></div></div>
+            <div class="kpis" id="clientUsage"></div>
+            <p class="small muted">Saved connections are sealed in each user's browser with their account key; the server stores ciphertext and a count — never a room key, a room name or who connected where.</p>
+          </div>
+          <form class="card" id="clientConnections">
+            <div class="card__head"><div class="card__title">Saved connections</div><div class="card__hint">For signed-in users in server-enhanced mode: rooms with their key, name and settings, with statistics and a log.</div></div>
+            <div class="form-grid">
+              <label class="switch"><input type="checkbox" id="cxEnabled" /> Users may save connections</label>
+              <label class="switch"><input type="checkbox" id="cxStats" /> Statistics and logs</label>
+              <label class="switch"><input type="checkbox" id="cxAutoConnect" /> New users: connect the default after sign-in</label>
+              <label class="switch"><input type="checkbox" id="cxCustom" /> Users may type other signaling servers</label>
+              <label class="field">Connections per account <input class="input" type="number" min="1" max="200" id="cxMax" /></label>
+              <label class="field">Log lines per connection <input class="input" type="number" min="0" max="2000" id="cxLog" /></label>
+            </div>
+            <div class="card__head" style="margin-top:12px"><div class="card__title">Other signaling servers</div><div class="card__hint">A connection may use these instead of this server (wss://). Their operators must allow this site in ALLOWED_ORIGINS. No account token and no away relay go there.</div></div>
+            <div class="table-wrap table-wrap--short"><table class="t" id="cxServers"><thead><tr><th>Label</th><th>Address</th><th></th></tr></thead><tbody></tbody></table></div>
+            <div class="toolbar"><button class="btn btn--sm" type="button" id="cxAddServer">Add server</button></div>
+            <div class="toolbar"><button class="btn btn--primary" type="submit">Save</button></div>
+          </form>
+          <form class="card" id="clientAppearance">
+            <div class="card__head"><div class="card__title">GUI templates</div><div class="card__hint">Which templates users may pick, and what a device shows before it picks one. iOS 27 and Windows 11 follow the system's light / dark setting on "automatic".</div></div>
+            <div id="cxThemes" class="theme-picks"></div>
+            <div class="form-grid">
+              <label class="field">Default template <select class="input" id="cxDefaultTheme"></select></label>
+              <label class="field">Default tone <select class="input" id="cxDefaultTone"><option value="auto">automatic (system)</option><option value="light">light</option><option value="dark">dark</option></select></label>
+              <label class="field">Default icons <select class="input" id="cxDefaultIcons"></select></label>
+              <label class="switch"><input type="checkbox" id="cxLock" /> Lock: everyone gets the default template</label>
+            </div>
+            <div class="toolbar"><button class="btn btn--primary" type="submit">Save</button><button class="btn" type="button" id="cxReset">Reset to defaults</button></div>
+          </form>
         </section>
 
         <!-- ============================ administrators ============================ -->
