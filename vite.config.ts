@@ -83,6 +83,11 @@ export default defineConfig({
         assetFileNames: "assets/[name].[hash][extname]",
         chunkFileNames: "assets/[name].[hash].js",
         entryFileNames: "assets/[name].[hash].js",
+        // React in a chunk of its own: it changes far less often than the
+        // app, so a deploy leaves it cached in every browser.
+        codeSplitting: {
+          groups: [{ name: "react", test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ }],
+        },
       },
     },
   },

@@ -191,7 +191,7 @@ export function MessageBubble(props: MessageBubbleProps) {
   const isPrivate = Array.isArray(props.to) && props.to.length > 0;
   const bodyText = sealed ? (sealedOpen ? sealText ?? "" : "") : props.text;
 
-  const wrapCls = `flex ${mine ? "justify-end" : "justify-start"}`;
+  const wrapCls = `msg-row flex ${mine ? "justify-end" : "justify-start"}`;
   const bubbleCls = [
     "msg-bubble",
     isSystem ? "msg-bubble--system" : mine ? "msg-bubble--mine" : "msg-bubble--theirs",

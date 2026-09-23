@@ -116,6 +116,22 @@ export class ConnectionGate {
   private open = new Map<string, number>();
   private total = 0;
 
+  /** Limits from the environment: WS_CONNECTS_PER_MINUTE (per client
+   *  address, default 30), WS_CONNECTIONS_PER_CLIENT (open at once, 20),
+   *  WS_CONNECTIONS_TOTAL (5000). A load test from one machine needs them
+   *  raised on the test server (scripts/load-test.mjs). */
+  static fromEnv(env: NodeJS.ProcessEnv = process.env): ConnectionGate {
+    const num = (name: string, fallback: number) => {
+      const n = Number(env[name]);
+      return Number.isInteger(n) && n > 0 ? n : fallback;
+    };
+    return new ConnectionGate({
+      perMinute: num("WS_CONNECTS_PER_MINUTE", 30),
+      concurrentPerClient: num("WS_CONNECTIONS_PER_CLIENT", 20),
+      concurrentTotal: num("WS_CONNECTIONS_TOTAL", 5_000),
+    });
+  }
+
   constructor(
     private readonly limits = { perMinute: 30, concurrentPerClient: 20, concurrentTotal: 5_000 },
     private readonly now: () => number = Date.now,

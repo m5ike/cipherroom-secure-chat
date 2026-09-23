@@ -22,7 +22,7 @@ const utf8 = (s: string) => new Uint8Array(new TextEncoder().encode(s));
 /** The KDF, here and now (inside the worker, or where no worker exists). */
 export async function runKdfInline(request: KdfRequest): Promise<Uint8Array<ArrayBuffer>> {
   if (request.kdf === "argon2id") {
-    const { argon2id } = await import("hash-wasm");
+    const { argon2id } = await import("./argon2");
     const out = await argon2id({
       password: request.password,
       salt: utf8(request.salt),

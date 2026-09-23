@@ -1,6 +1,7 @@
 import { APPEARANCE_I18N } from "./i18n-appearance";
 import { ACCOUNT_I18N } from "./i18n-account";
 import { SECURITY_I18N } from "./i18n-security";
+import { APP_I18N } from "./i18n-app";
 // Simple i18n. Strings live in this file; no extra deps. Add keys as needed.
 
 export type Lang = "cs" | "en" | "de";
@@ -99,6 +100,14 @@ const cs: Dict = {
   "join.passphrase": "Klíč místnosti",
   "join.connect": "Připojit",
   "join.reconnect": "Reconnect",
+  "chat.showEarlier": "Zobrazit starší zprávy ({n})",
+  "error.title": "Něco se pokazilo",
+  "error.body": "Část aplikace spadla. Klíče ani zprávy se neodeslaly nikam jinam; po obnovení stránky se připojíte znovu.",
+  "error.panel": "Tento panel se nepodařilo zobrazit.",
+  "error.newVersion": "Na serveru je nová verze aplikace — obnovte stránku.",
+  "error.reload": "Obnovit stránku",
+  "error.retry": "Zkusit znovu",
+  "error.details": "Podrobnosti",
   "chat.empty.title": "Čistá ephemeral místnost",
   "chat.empty.body": "Žádná historie, žádné ukládání, žádný serverový relay textů. Pošli první zprávu, až bude peer ve stavu open.",
   "chat.placeholder": "Napiš šifrovanou zprávu...",
@@ -430,6 +439,14 @@ const en: Dict = {
   "join.passphrase": "Room key",
   "join.connect": "Connect",
   "join.reconnect": "Reconnect",
+  "chat.showEarlier": "Show earlier messages ({n})",
+  "error.title": "Something went wrong",
+  "error.body": "Part of the app crashed. No keys or messages went anywhere else; reload the page to connect again.",
+  "error.panel": "This panel could not be shown.",
+  "error.newVersion": "A new version of the app is on the server — reload the page.",
+  "error.reload": "Reload",
+  "error.retry": "Try again",
+  "error.details": "Details",
   "chat.empty.title": "Clean ephemeral room",
   "chat.empty.body": "No history, no storage, no server text relay. Send the first message once a peer is open.",
   "chat.placeholder": "Type an encrypted message...",
@@ -761,6 +778,14 @@ const de: Dict = {
   "join.passphrase": "Raum-Schlüssel",
   "join.connect": "Verbinden",
   "join.reconnect": "Reconnect",
+  "chat.showEarlier": "Frühere Nachrichten zeigen ({n})",
+  "error.title": "Etwas ist schiefgegangen",
+  "error.body": "Ein Teil der App ist abgestürzt. Keine Schlüssel oder Nachrichten gingen anderswohin; laden Sie die Seite neu, um sich wieder zu verbinden.",
+  "error.panel": "Dieses Fenster konnte nicht angezeigt werden.",
+  "error.newVersion": "Auf dem Server ist eine neue Version — laden Sie die Seite neu.",
+  "error.reload": "Neu laden",
+  "error.retry": "Erneut versuchen",
+  "error.details": "Details",
   "chat.empty.title": "Sauberer ephemerer Raum",
   "chat.empty.body": "Kein Verlauf, kein Speicher, kein Server-Relay. Sende die erste Nachricht, sobald ein Peer offen ist.",
   "chat.placeholder": "Verschlüsselte Nachricht schreiben...",
@@ -1003,9 +1028,9 @@ const de: Dict = {
 };
 
 const dicts: Record<Lang, Dict> = {
-  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs },
-  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en },
-  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de },
+  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs, ...APP_I18N.cs },
+  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en, ...APP_I18N.en },
+  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de, ...APP_I18N.de },
 };
 
 export function detectLang(stored: string | undefined): Lang {
@@ -1020,6 +1045,16 @@ export function detectLang(stored: string | undefined): Lang {
 
 export function t(lang: Lang, key: string): string {
   return dicts[lang]?.[key] ?? dicts.en[key] ?? key;
+}
+
+/** Every string of one language (tests: all languages have all keys). */
+export function dictionary(lang: Lang): Readonly<Dict> {
+  return dicts[lang];
+}
+
+/** t() with {placeholders} filled in. */
+export function tf(lang: Lang, key: string, vars: Record<string, string | number>): string {
+  return t(lang, key).replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
 }
 
 export function langLabel(lang: Lang): string {

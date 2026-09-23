@@ -1209,3 +1209,46 @@
 .update-banner__btn { min-height: 2rem; padding: 0 0.8rem; border-radius: 9999px; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); font-weight: 700; }
 .update-banner__x { width: 1.8rem; height: 1.8rem; border-radius: 9999px; font-size: 1.1rem; line-height: 1; color: hsl(var(--muted-foreground)); }
 .update-banner__x:hover { background: hsl(var(--accent)); }
+
+/* Long conversations: a bubble off screen skips layout and paint until it
+   scrolls near (the browser keeps its last size as the placeholder). */
+.msg-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
+}
+
+.show-earlier {
+  display: block;
+  margin: 0 auto;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 999px;
+  background: hsl(var(--background));
+  color: hsl(var(--muted-foreground));
+  font-size: 0.8rem;
+}
+.show-earlier:hover { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+
+/* ErrorBoundary.tsx */
+.error-page {
+  max-width: 34rem;
+  margin: 12vh auto;
+  padding: 1.5rem;
+  font-family: inherit;
+  color: hsl(var(--foreground));
+}
+.error-page h1 { font-size: 1.4rem; font-weight: 650; margin-bottom: 0.6rem; }
+.error-page p { color: hsl(var(--muted-foreground)); margin-bottom: 1rem; }
+.error-page pre { white-space: pre-wrap; font-size: 0.75rem; margin-top: 0.5rem; color: hsl(var(--muted-foreground)); }
+.error-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.error-actions button {
+  padding: 0.45rem 0.95rem;
+  border-radius: 0.75rem;
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.error-actions button + button { background: hsl(var(--background)); color: hsl(var(--foreground)); }
+.error-panel { padding: 1rem 0; color: hsl(var(--muted-foreground)); font-size: 0.9rem; }

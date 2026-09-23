@@ -36,7 +36,14 @@ export function encodeCommand(args: Array<string | Buffer | number>): Buffer {
   return Buffer.concat(parts);
 }
 
-/** Parses one value at `offset`; null when the buffer does not hold all of it yet. */
+/** A length or integer header; anything else is a broken stream. */
+function integer(head: string): number {
+  if (!/^-?\d{1,19}$/.test(head)) throw new Error(`RESP protocol error: bad number ${JSON.stringify(head.slice(0, 20))}`);
+  return Number(head);
+}
+
+/** Parses one value at `offset`; null when the buffer does not hold all of
+ *  it yet. Throws on a stream that is not RESP (the caller drops the link). */
 export function parseReply(buf: Buffer, offset = 0): { value: RespValue; next: number } | null {
   if (offset >= buf.length) return null;
   const line = buf.indexOf("\r\n", offset);
@@ -47,15 +54,17 @@ export function parseReply(buf: Buffer, offset = 0): { value: RespValue; next: n
   switch (type) {
     case "+": return { value: head, next: after };
     case "-": return { value: new RespError(head), next: after };
-    case ":": return { value: Number(head), next: after };
+    case ":": return { value: integer(head), next: after };
     case "$": {
-      const len = Number(head);
+      const len = integer(head);
       if (len < 0) return { value: null, next: after };
+      if (len > 512 * 1024 * 1024) throw new Error("RESP protocol error: bulk string too long");
       if (buf.length < after + len + 2) return null;
+      if (buf[after + len] !== 0x0d || buf[after + len + 1] !== 0x0a) throw new Error("RESP protocol error: bulk string not terminated");
       return { value: buf.subarray(after, after + len), next: after + len + 2 };
     }
     case "*": {
-      const count = Number(head);
+      const count = integer(head);
       if (count < 0) return { value: null, next: after };
       const items: RespValue[] = [];
       let at = after;
@@ -68,7 +77,7 @@ export function parseReply(buf: Buffer, offset = 0): { value: RespValue; next: n
       return { value: items, next: at };
     }
     default:
-      throw new Error(`unexpected RESP type ${JSON.stringify(type)}`);
+      throw new Error(`RESP protocol error: unexpected type ${JSON.stringify(type)}`);
   }
 }
 

@@ -18,6 +18,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "load-test": "node scripts/load-test.mjs",
     "check:menu": "bash scripts/pre-commit-check.sh",
     "docs:pdf": "node scripts/docs-pdf.mjs",
     "check:menu:verbose": "bash -x scripts/pre-commit-check.sh"

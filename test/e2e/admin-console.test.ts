@@ -22,8 +22,8 @@ import { join } from "node:path";
 import { WebSocket } from "ws";
 import { chromium, type Browser, type Page } from "playwright";
 
-const MAIN_PORT = 5931;
-const ADMIN_PORT = 5932;
+const MAIN_PORT = 5933;
+const ADMIN_PORT = 5934;
 const MAIN = `http://127.0.0.1:${MAIN_PORT}`;
 const ADMIN = `http://127.0.0.1:${ADMIN_PORT}`;
 // Generated for this run; it only ever unlocks these two throwaway processes.
@@ -155,6 +155,41 @@ describe("operator console", () => {
     await go("plugins");
     await page.click("#btnPlugins");
     await expect.poll(() => page.locator("#pluginOut").innerText()).toMatch(/defaults|enabled/);
+  });
+
+  it("gives an auditor the console to read, and nothing to change", async () => {
+    // The owner names an auditor and issues them a token of their own.
+    const owner = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
+    expect((await fetch(`${MAIN}/api/admin/admins`, { method: "POST", headers: owner, body: JSON.stringify({ name: "eve", role: "auditor" }) })).ok).toBe(true);
+    const issued = await (await fetch(`${MAIN}/api/admin/admins/eve/tokens`, { method: "POST", headers: owner, body: JSON.stringify({ label: "e2e" }) })).json() as { token: string };
+    expect(issued.token.length).toBeGreaterThanOrEqual(32);
+
+    await page.click("#btnSignOut");
+    await page.fill("#loginToken", issued.token);
+    await page.click("#loginForm button[type=submit]");
+    await expect.poll(() => page.locator("#shell").isVisible(), { timeout: 10_000 }).toBe(true);
+    await expect.poll(() => page.locator("#whoami").innerText()).toMatch(/eve.*auditor/);
+
+    // What only an owner may do is not even shown…
+    expect(await page.locator('.nav__item[data-route="admins"]').isHidden()).toBe(true);
+    // …what an operator may do is shown but disabled…
+    await go("commands");
+    expect(await page.locator("#cmdForm button[type=submit]").getAttribute("data-disabled-by-role")).not.toBeNull();
+    // …and the server refuses it anyway.
+    const refused = await fetch(`${MAIN}/api/admin/commands`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${issued.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ deviceId: "device-x", kind: "refresh-settings" }),
+    });
+    expect(refused.status).toBe(403);
+
+    // Reading is theirs: the journal verifies, and records who looked.
+    await go("audit");
+    expect(await page.locator("#auditVerify").getAttribute("data-disabled-by-role")).toBeNull();
+    await page.click("#auditVerify");
+    await expect.poll(() => page.locator("body").innerText(), { timeout: 10_000 }).toMatch(/Journal intact/);
+    // The refused request above is the browser's own log line, not a problem.
+    problems.splice(0, problems.length, ...problems.filter((p) => !/403/.test(p)));
   });
 
   it("ran without a CSP violation or a script error", () => {

@@ -27,24 +27,8 @@ function when(at: number, lang: Lang): string {
 const ALG_NAMES: Record<number, string> = { [-7]: "ES256", [-8]: "Ed25519", [-257]: "RS256" };
 
 /** The badge in the top bar: an unlocked key, the user's name, a live dot. */
-export function SignedInBadge({ account, onClick, lang }: { account: AccountSummary; onClick: () => void; lang: Lang }) {
-  const pending = account.mailbox.pending;
-  return (
-    <button
-      type="button"
-      className="signed-badge"
-      onClick={onClick}
-      data-testid="signed-in-badge"
-      title={t(lang, "acc.signedInAs").replace("{name}", account.userName)}
-      aria-label={t(lang, "acc.signedInAs").replace("{name}", account.userName)}
-    >
-      <LockKeyholeOpen className="h-3.5 w-3.5" aria-hidden="true" />
-      <span className="signed-badge__label">{t(lang, "acc.signedIn")}</span>
-      <span className="signed-badge__name">{account.userName}</span>
-      {pending > 0 ? <span className="signed-badge__count" title={t(lang, "away.pending").replace("{n}", String(pending))}>{pending}</span> : null}
-    </button>
-  );
-}
+// The header badge lives in SignedInBadge.tsx (always loaded); this panel loads on demand.
+export { SignedInBadge } from "./SignedInBadge";
 
 function Row({ label, value, mono }: { label: React.ReactNode; value: React.ReactNode; mono?: boolean }) {
   return (

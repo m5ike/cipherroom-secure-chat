@@ -12,35 +12,16 @@
 //     /api surface in cipherroom-api.ts. The server never sees plaintext.
 
 import {
-  Activity,
-  Bell,
-  BellOff,
   Copy,
   CornerUpLeft,
   Image as ImageIcon,
-  KeyRound,
   Lock,
   LogOut,
-  Mic,
-  MicOff,
-  Menu as MenuIcon,
-  Moon,
   Paperclip,
-  PhoneOff,
   Radio,
-  ShieldCheck,
   Smile,
-  Sun,
-  Trash2,
-  UserCircle2,
-  Settings as SettingsIcon,
-  Eye,
-  Cloud,
-  Languages,
-  Bell as BellIcon,
   Wifi,
   WifiOff,
-  Users,
   Maximize2,
   Minimize2,
 } from "lucide-react";
@@ -63,8 +44,8 @@ import { UserBadge, Avatar } from "./components/UserBadge";
 import { SendOptions, DEFAULT_SEND_STATE, type SendState } from "./components/SendOptions";
 import { RecipientsWidget, type WidgetPeer } from "./components/RecipientsWidget";
 import { AudioRecorder } from "./components/AudioRecorder";
-import { UserInfoView, type UserInfo } from "./components/UserInfoModal";
-import { MessageInfoView, type MessageInfo } from "./components/MessageInfoModal";
+import type { UserInfo } from "./components/UserInfoModal";
+import type { MessageInfo } from "./components/MessageInfoModal";
 // The NFC / smart-card workbench pulls in the transport + card-parsing tree;
 // load it only when the panel opens so the initial bundle stays lean.
 const NfcWorkbench = lazy(() => import("./components/NfcWorkbench").then((m) => ({ default: m.NfcWorkbench })));
@@ -72,15 +53,22 @@ const NfcWorkbench = lazy(() => import("./components/NfcWorkbench").then((m) => 
 const AppearancePanel = lazy(() => import("./components/AppearancePanel").then((m) => ({ default: m.AppearancePanel })));
 const StyleInspector = lazy(() => import("./components/StyleInspector").then((m) => ({ default: m.StyleInspector })));
 const PhonePanel = lazy(() => import("./components/PhonePanel").then((m) => ({ default: m.PhonePanel })));
-import { AiPanel } from "./components/AiPanel";
-import { detectLang, t, type Lang } from "./lib/i18n";
-import type { ConnectionStatus, KeepaliveStrategy } from "./lib/connection-keeper";
+// Dialogs load when first opened (SimpleModal waits for them): the account
+// panel, participant and message details (QR code, scanner), sharing, AI.
+const UserInfoView = lazy(() => import("./components/UserInfoModal").then((m) => ({ default: m.UserInfoView })));
+const MessageInfoView = lazy(() => import("./components/MessageInfoModal").then((m) => ({ default: m.MessageInfoView })));
+const AccountInfoModal = lazy(() => import("./components/AccountPanel").then((m) => ({ default: m.AccountInfoModal })));
+const ChatRetentionSection = lazy(() => import("./components/AccountPanel").then((m) => ({ default: m.ChatRetentionSection })));
+const ShareSection = lazy(() => import("./components/SharePanel").then((m) => ({ default: m.ShareSection })));
+const InvitePrompt = lazy(() => import("./components/SharePanel").then((m) => ({ default: m.InvitePrompt })));
+const AiPanel = lazy(() => import("./components/AiPanel").then((m) => ({ default: m.AiPanel })));
+import { detectLang, t, tf } from "./lib/i18n";
+import type { ConnectionStatus } from "./lib/connection-keeper";
 import { dispatchCommand, isAdminCommand } from "./lib/admin-commands";
 import {
   extractRemoteFingerprint,
   persistFingerprint,
   compareFingerprint,
-  dropFingerprint,
   formatFingerprint,
   sha256Hex,
   type Fingerprint,
@@ -92,19 +80,17 @@ import {
   binaryFrame,
   frameFromBinary,
   wireFrame,
-  Pacer,
   type FileTransferEnvelope,
   type IncomingCallbacks,
 } from "./lib/file-transfer";
-import { detectGeolocation, getCurrentPosition, watchPosition, osmLink, type LatLng, type LocationWatcher } from "./lib/maps";
-import { detectSpeechCaps, listVoices, speak, stopSpeaking, startRecognition, fetchServerSpeechStatus, serverTts, type VoicePreset, type ServerVoiceInfo } from "./lib/speech";
+import { detectGeolocation, getCurrentPosition, watchPosition, osmLink, type LocationWatcher } from "./lib/maps";
 import { toBase64 } from "./lib/crypto";
 // Crypto v2: per-purpose keys, bound contexts, signed bodies (envelope.ts).
 import {
   createReplayGuard, deriveRoomKeys, isSealedSignal, openMessage, openSignal, sealMessage, sealSignal,
   type Envelope as DataChannelEnvelope, type RoomKeys, type Signer,
 } from "./lib/envelope";
-import { createPinStore, keyFingerprint, keyId, loadIdentity, safetyNumber, type Identity } from "./lib/identity";
+import { createPinStore, keyFingerprint, keyId, loadIdentity, type Identity } from "./lib/identity";
 import { envelopeKind, SenderKeyStore, type Hello } from "./lib/sender-keys";
 import { MediaE2ee } from "./lib/media-e2ee";
 import { validatePayload, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
@@ -117,12 +103,16 @@ import { fetchLayoutConfig, applyLayoutStyles, loadCachedLayout } from "./lib/la
 import { renderTemplate, type LayoutConfig } from "./lib/layout-config";
 import { freshRtcConfig, turnConfigPromise } from "./lib/rtc";
 import { M5Logo } from "./components/M5Logo";
-import { InvitePrompt, ShareSection } from "./components/SharePanel";
+
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
 import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
 import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgState } from "./lib/chat-types";
 import { isInlineImage } from "./lib/validate";
-import { AccountInfoModal, ChatRetentionSection, SignedInBadge } from "./components/AccountPanel";
+import { DEFAULT_PROXY_LIMITS, extractPeerAddress, normalizeRoom, proxyPacer, type ProxyLimits } from "./lib/app-helpers";
+import { SignedInBadge } from "./components/SignedInBadge";
+import { SimpleModal } from "./components/SimpleModal";
+import { AudioControls, PeerList, VideoControls } from "./components/CallPanels";
+import { ConnectionPanel, FilesPanel, LocationPanel, SpeechPanel, type ConnLogEvent } from "./components/ToolPanels";
 import {
   accountStatus, accountSupported, accountToken, addPasskey, createRecoveryCode, currentAccount, deleteAccount as deleteServerAccount,
   endSession, linkPushSubscription, loadVault, logAccountEvent, recoverWithCode, refreshAccount, registerAccount, removePasskey,
@@ -131,10 +121,10 @@ import {
 import { createHistoryStore, createServerSealer, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
 import { createFlashQueue, kindForText, type FlashMessage } from "./lib/flash";
-import { createOutbox, type QueuedMessage } from "./lib/outbox";
+import { createOutbox } from "./lib/outbox";
 import { FlashMessages } from "./components/FlashMessages";
 import {
-  addStorageEvent, attachStorageSocket, forgetServerData, putMessages as putServerMessages,
+  attachStorageSocket, forgetServerData, putMessages as putServerMessages,
   readMessages as readServerMessages, recordTransfer as recordServerTransfer, sendLog as sendServerLog,
   startStorageSession, storageSessionId, storageStatus, type StorageStatus,
 } from "./lib/storage-client";
@@ -151,16 +141,7 @@ import {
   profileFromPrefs,
 } from "./components/panels";
 
-type PeerStatus = "connecting" | "open" | "closed";
-type AudioStatus = "off" | "joining" | "live" | "muted";
-
-type PeerView = {
-  id: string;
-  name: string;
-  status: PeerStatus;
-  initiator: boolean;
-  audio: AudioStatus;
-};
+import type { AudioStatus, PeerView } from "./lib/app-types";
 
 // The message shapes live in lib/chat-types.ts so the history store and the
 // account vault can talk about them without importing the whole app.
@@ -256,36 +237,8 @@ const EXTERNAL_SIGNALING_URL = import.meta.env.VITE_SIGNALING_URL as string | un
 const INLINE_ATTACHMENT_LIMIT = 512 * 1024;
 const QUICK_EMOJI = ["😀", "😂", "🥳", "👍", "🙏", "🔥", "❤️", "🎉", "✅", "❓"];
 
-function normalizeRoom(value: string) {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9._-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 48) || "secure-room"
-  );
-}
-
-/** The server's per-socket budget for relayed file chunks (hello.limits.proxy). */
-type ProxyLimits = { bytesPerSec: number; burstBytes: number; framesPerSec: number; burstFrames: number };
-const DEFAULT_PROXY_LIMITS: ProxyLimits = { bytesPerSec: 2 * 1024 * 1024, burstBytes: 8 * 1024 * 1024, framesPerSec: 60, burstFrames: 400 };
-
-/** Paces a relayed transfer at 80 % of the server's budget and keeps the
- *  socket's own send buffer short, so the relay never refuses a chunk. */
-function proxyPacer(limits: ProxyLimits, socket: () => WebSocket | null): (bytes: number) => Promise<void> {
-  const pacer = new Pacer(
-    { bytesPerSec: limits.bytesPerSec * 0.8, burstBytes: limits.burstBytes / 2, framesPerSec: limits.framesPerSec * 0.8, burstFrames: limits.burstFrames / 2 },
-    async () => {
-      for (let i = 0; i < 400; i++) {
-        const sock = socket();
-        if (!sock || sock.readyState !== WebSocket.OPEN || sock.bufferedAmount < 1024 * 1024) return;
-        await new Promise((r) => setTimeout(r, 25));
-      }
-    },
-  );
-  return (bytes) => pacer.take(bytes);
-}
+/** Messages rendered at once; "show earlier" adds as many again. */
+const MESSAGE_WINDOW = 200;
 
 function wsUrl() {
   if (EXTERNAL_SIGNALING_URL?.trim()) {
@@ -316,26 +269,6 @@ async function fileToAttachment(file: File): Promise<AttachmentMeta> {
     size: file.size,
     dataUrl,
   };
-}
-
-/** Read the in-use ICE candidate pair to learn the peer's remote address and
- *  how media is routed (direct host/reflexive vs TURN relay). Best-effort:
- *  returns null when getStats is blocked or the pair is not yet nominated. */
-async function extractPeerAddress(pc: RTCPeerConnection): Promise<{ ip?: string; candidateType?: string } | null> {
-  try {
-    const stats = await pc.getStats();
-    let pairId: string | null = null;
-    const remotes = new Map<string, RTCIceCandidate & { address?: string; ip?: string; candidateType?: string }>();
-    stats.forEach((r: { type?: string; state?: string; selected?: boolean; nominated?: boolean; remoteCandidateId?: string; id?: string; address?: string; ip?: string; candidateType?: string }) => {
-      if (r.type === "candidate-pair" && (r.selected || r.nominated || r.state === "succeeded")) pairId = r.remoteCandidateId ?? null;
-      if (r.type === "remote-candidate" && r.id) remotes.set(r.id, r as never);
-    });
-    const remote = pairId ? remotes.get(pairId) : undefined;
-    if (!remote) return null;
-    return { ip: remote.address || remote.ip, candidateType: remote.candidateType };
-  } catch {
-    return null;
-  }
 }
 
 function UnsupportedBanner({ reasons }: { reasons: string[] }) {
@@ -638,6 +571,18 @@ function ChatApp() {
     if (sec.sort === "desc") return [...filtered].reverse();
     return filtered;
   }, [messages, now, prefs.roomSecurity, room]);
+
+  // A long conversation renders its newest MESSAGE_WINDOW messages; older
+  // ones come in steps on request. (Off-screen bubbles also skip layout and
+  // paint: content-visibility in index.css.)
+  const [messageWindow, setMessageWindow] = useState(MESSAGE_WINDOW);
+  useEffect(() => { setMessageWindow(MESSAGE_WINDOW); }, [room]);
+  const newestFirst = ((room && prefs.roomSecurity[room]) || DEFAULT_ROOM_SECURITY).sort === "desc";
+  const hiddenMessages = Math.max(0, visibleMessages.length - messageWindow);
+  const renderedMessages = useMemo(
+    () => (hiddenMessages === 0 ? visibleMessages : newestFirst ? visibleMessages.slice(0, messageWindow) : visibleMessages.slice(-messageWindow)),
+    [visibleMessages, hiddenMessages, newestFirst, messageWindow],
+  );
 
   // Away members count as reachable: the server takes the message for them.
   const canSend = status === "joined" && (openPeerCount > 0 || awayPeers.length > 0) && messageInput.trim().length > 0;
@@ -995,7 +940,7 @@ function ChatApp() {
   function applyRelayStatus(frame: { messageId: string; recipient: { name: string } & AccountRefFields; state: MsgState | "rejected" | "duplicate"; at: number; reason?: string }) {
     if (frame.state === "duplicate") return; // the server already had it
     if (frame.state === "rejected") {
-      systemMessage(`${frame.recipient.name || "?"}: ${frame.reason ?? "relay rejected"}`);
+      systemMessage(tf(lang, "app.relayRejected", { name: frame.recipient.name || "?", reason: frame.reason ?? t(lang, "app.relayRejected.default") }));
       return;
     }
     const state = frame.state;
@@ -1403,9 +1348,7 @@ function ChatApp() {
         void sendServerLog("warn", "transfer.chunks-missing", { transferId, missing: seqs.length, round });
         // Do not throw away a file that is all but delivered.
         if (!askAgain(transferId, seqs)) return;
-        systemMessage(lang === "cs"
-          ? `Chybí ${seqs.length} částí souboru — žádám o jejich zopakování (pokus ${round}).`
-          : `${seqs.length} file chunks missing — asking the sender to repeat them (attempt ${round}).`);
+        systemMessage(tf(lang, "app.chunksMissing", { n: seqs.length, round }));
       },
       onProgress: (id, recv, total, stats) => {
         updateTransfer(id, { stats: { ...stats, received: recv, size: total } });
@@ -1462,7 +1405,7 @@ function ChatApp() {
       onCancel: (id) => updateTransfer(id, { status: "cancelled" }),
       onError: (id, msg) => {
         updateTransfer(id, { status: "error", errorMessage: msg });
-        systemMessage(`File transfer failed: ${msg}`, { kind: "error" });
+        systemMessage(tf(lang, "app.fileFailed", { msg }), { kind: "error" });
       },
     };
   }
@@ -1478,9 +1421,7 @@ function ChatApp() {
     channel.onopen = () => {
       peerStatsRef.current.set(peerId, { sent: 0, recv: 0, openedAt: Date.now() });
       setPeerView(peerId, { status: "open" });
-      setNotice(lang === "cs"
-        ? "P2P data kanál je otevřený."
-        : lang === "de" ? "P2P-Datenkanal offen." : "P2P data channel is open.");
+      setNotice(t(lang, "app.channelOpen"));
       // Crypto v3: a signed hello — key check value, device key and a DH key
       // for the pair key (sender-keys.ts). A wrong passphrase shows up as
       // exactly that instead of undecryptable noise.
@@ -1500,7 +1441,7 @@ function ChatApp() {
     channel.addEventListener("open", () => { void flushOutboxRef.current("kanál otevřen"); });
     channel.onerror = () => {
       setPeerView(peerId, { status: "closed" });
-      systemMessage(`Connection with ${peerName()} dropped.`);
+      systemMessage(tf(lang, "app.connectionDropped", { name: peerName() }));
     };
     channel.onmessage = async (event) => {
       if (event.data instanceof ArrayBuffer) {
@@ -1561,9 +1502,7 @@ function ChatApp() {
         const seqs = Array.isArray(raw.seqs) ? raw.seqs.filter((n): n is number => Number.isInteger(n)).slice(0, 5_000) : [];
         const repeat = resendableRef.current.get(transferId);
         if (repeat && seqs.length) {
-          systemMessage(lang === "cs"
-            ? `Posílám znovu ${seqs.length} chybějících částí souboru.`
-            : `Re-sending ${seqs.length} missing file chunks.`);
+          systemMessage(tf(lang, "app.resendingChunks", { n: seqs.length }));
           void repeat(seqs).catch(() => undefined);
         }
         return;
@@ -1592,10 +1531,7 @@ function ChatApp() {
             ? { ...(await senderKeysRef.current.openPrivate<unknown>(keys, envelope, peerId, myIdRef.current)), version: 3 }
             : await openMessage<unknown>(keys, envelope);
       } catch {
-        systemMessage(lang === "cs"
-          ? "Přišla zpráva, ale nejde dešifrovat. Druhá strana má pravděpodobně jiný klíč."
-          : lang === "de" ? "Nachricht konnte nicht entschlüsselt werden — andere Seite hat anderen Schlüssel."
-            : "A message arrived but could not be decrypted. The other side likely has a different room key.");
+        systemMessage(t(lang, "app.undecryptable"));
         return;
       }
       if (opened.version === 1) warnOnce(`legacy:${peerId}`, t(lang, "sec.legacyPeer").replace("{name}", peerName()));
@@ -1859,10 +1795,7 @@ function ChatApp() {
     // many clients synchronising after a global outage.
     const delay = Math.random() * exp;
     logConn("retry", attempt, delay);
-    setNotice(lang === "cs"
-      ? `Server odpojen — automatický reconnect za ${(delay / 1000).toFixed(1)}s (pokus #${attempt}).`
-      : lang === "de" ? `Server unterbrochen — automatischer Reconnect in ${(delay / 1000).toFixed(1)}s (Versuch #${attempt}).`
-        : `Server disconnected — auto-reconnect in ${(delay / 1000).toFixed(1)}s (attempt #${attempt}).`);
+    setNotice(tf(lang, "app.reconnectIn", { s: (delay / 1000).toFixed(1), n: attempt }));
     reconnectTimerRef.current = window.setTimeout(() => {
       reconnectTimerRef.current = null;
       if (!intentRef.current) return;
@@ -2026,17 +1959,17 @@ function ChatApp() {
           onRefreshSettings: () => {
             const fresh = loadPreferences();
             setPrefsState(fresh);
-            systemMessage(lang === "cs" ? "Nastavení obnovena administrátorem." : "Settings refreshed by admin.");
+            systemMessage(t(lang, "app.admin.refreshed"));
           },
           onReconnect: () => {
             try { socketRef.current?.close(4001, "admin-reconnect"); } catch { /* ignore */ }
           },
           onPurgeLocal: () => {
             clearPreferences();
-            systemMessage(lang === "cs" ? "Lokální data smazána (admin příkaz)." : "Local data purged (admin).");
+            systemMessage(t(lang, "app.admin.purged"));
           },
           onShowNotification: (title, body) => {
-            systemMessage(`[admin] ${title}: ${body}`);
+            systemMessage(tf(lang, "app.admin.notice", { title, body }));
             try { if ("Notification" in window && Notification.permission === "granted") new Notification(title, { body }); } catch { /* ignore */ }
           },
           onRunDiagnostic: () => ({
@@ -2054,9 +1987,7 @@ function ChatApp() {
             let target: URL;
             try { target = new URL(url, window.location.href); } catch { return; }
             if (target.origin !== window.location.origin && target.protocol !== "https:") return;
-            const consent = window.confirm(lang === "cs"
-              ? `Administrátor chce stáhnout soubor: ${name}\nSouhlasíš?`
-              : `Admin wants you to download a file: ${name}\nProceed?`);
+            const consent = window.confirm(tf(lang, "app.admin.download", { name }));
             if (!consent) return;
             try {
               const res = await fetch(url);
@@ -2066,7 +1997,7 @@ function ChatApp() {
               a.download = name;
               a.click();
             } catch (err) {
-              systemMessage(`download failed: ${(err as Error).message}`);
+              systemMessage(tf(lang, "app.admin.downloadFailed", { msg: (err as Error).message }));
             }
           },
         });
@@ -2086,7 +2017,7 @@ function ChatApp() {
         }
         resumeRef.current = frame.resume ? { room: roomRef.current, peerId: frame.peerId, secret: frame.resume } : null;
         setStatus("joined");
-        systemMessage(`Joined ${roomRef.current}. Peers: ${frame.peers.length}.`);
+        systemMessage(tf(lang, "app.joined", { room: roomRef.current, n: frame.peers.length }));
         setAwayPeers((frame.away ?? []).map((a) => ({ accountId: accountRefOf(a), name: a.name, since: a.since })).filter((a) => a.accountId));
         if (frame.account && "invalid" in frame.account) {
           // The token did not outlive the server: sign in again to get the
@@ -2120,7 +2051,7 @@ function ChatApp() {
 
       if (frame.type === "peer-joined") {
         setPeerView(frame.peerId, { name: frame.name, status: "connecting", initiator: false });
-        systemMessage(`${frame.name} entered the room.`);
+        systemMessage(tf(lang, "app.peerEntered", { name: frame.name }));
       }
 
       if (frame.type === "peer-away") {
@@ -2206,7 +2137,7 @@ function ChatApp() {
         handle?.pc.close();
         peersRef.current.delete(frame.peerId);
         setPeers((current) => current.filter((peer) => peer.id !== frame.peerId));
-        systemMessage(`Peer ${frame.peerId.slice(-6)} left.`);
+        systemMessage(tf(lang, "app.peerLeft", { name: handle?.name && !handle.name.startsWith("peer-") ? handle.name : `peer-${frame.peerId.slice(-4)}` }));
       }
 
       if (frame.type === "signal") {
@@ -2222,9 +2153,7 @@ function ChatApp() {
       if (frame.type === "proxy-need") {
         const repeat = resendableRef.current.get(frame.transferId);
         if (repeat) {
-          systemMessage(lang === "cs"
-            ? `Posílám znovu ${frame.seqs.length} chybějících částí souboru.`
-            : `Re-sending ${frame.seqs.length} missing file chunks.`);
+          systemMessage(tf(lang, "app.resendingChunks", { n: frame.seqs.length }));
           void repeat(frame.seqs).catch(() => undefined);
         }
         return;
@@ -2233,9 +2162,7 @@ function ChatApp() {
       if (frame.type === "proxy-ack") {
         if (!frame.accepted) {
           setNotice(
-            lang === "cs"
-              ? `Server proxy odmítl přenos: ${frame.reason ?? "neznámý důvod"}.`
-              : `Server relay refused transfer: ${frame.reason ?? "unknown"}`,
+            tf(lang, "app.proxyRefused", { reason: frame.reason ?? t(lang, "app.unknownReason") }),
           );
         }
         return;
@@ -2290,11 +2217,7 @@ function ChatApp() {
       // is called from onclose if intentRef is true.
       if (typeof event === "object" && event && "message" in event) {
         const msg = String((event as { message?: string }).message || "");
-        setNotice(lang === "cs"
-          ? `Spojení přerušeno${msg ? ` (${msg})` : ""}. Pokus o obnovení…`
-          : lang === "de"
-            ? `Verbindung unterbrochen${msg ? ` (${msg})` : ""}. Reconnect läuft…`
-            : `Connection interrupted${msg ? ` (${msg})` : ""}. Auto-reconnect is running…`);
+        setNotice(tf(lang, "app.connectionLost", { detail: msg ? ` (${msg})` : "" }));
       } else {
         setStatus("offline");
       }
@@ -2304,7 +2227,7 @@ function ChatApp() {
   async function connect(event?: FormEvent) {
     event?.preventDefault();
     if (!passphrase.trim()) {
-      setNotice(lang === "cs" ? "Zadej klíč místnosti." : lang === "de" ? "Bitte Raum-Schlüssel eingeben." : "Enter the room key.");
+      setNotice(t(lang, "app.enterRoomKey"));
       return;
     }
     disconnect(false);
@@ -2318,13 +2241,13 @@ function ChatApp() {
    *  a full teardown + fresh join rather than an in-place reconnect. */
   async function reconnectViaButtons() {
     if (!passphrase.trim() && !passphraseRef.current) {
-      setNotice(lang === "cs" ? "Zadej klíč místnosti." : lang === "de" ? "Bitte Raum-Schlüssel eingeben." : "Enter the room key.");
+      setNotice(t(lang, "app.enterRoomKey"));
       return;
     }
-    setNotice(lang === "cs" ? "Reconnect: odpojuji…" : lang === "de" ? "Reconnect: trenne…" : "Reconnect: disconnecting…");
+    setNotice(t(lang, "app.reconnect.disconnecting"));
     userDisconnect();
     await new Promise((resolve) => window.setTimeout(resolve, 1500));
-    setNotice(lang === "cs" ? "Reconnect: připojuji…" : lang === "de" ? "Reconnect: verbinde…" : "Reconnect: connecting…");
+    setNotice(t(lang, "app.reconnect.connecting"));
     await connect();
   }
 
@@ -2404,10 +2327,7 @@ function ChatApp() {
     setStatus("idle");
     setConnStatus(null);
     if (showMessage) {
-      systemMessage(lang === "cs"
-        ? "Lokální session ukončena. Klíč i WebRTC spojení jsou zahozena."
-        : lang === "de" ? "Lokale Session beendet. Schlüssel und WebRTC-Verbindungen verworfen."
-          : "Local session ended. Key and WebRTC connections discarded.");
+      systemMessage(t(lang, "app.sessionEnded"));
     }
   }
 
@@ -2483,7 +2403,7 @@ function ChatApp() {
       }) !== null;
     audit.push(queued
       ? { state: "queued", at: Date.now(), meta: opts.toNames?.join(", ") }
-      : { state: "sent", at: Date.now(), meta: `${sent + relayed} ${sent + relayed === 1 ? "příjemce" : "příjemců"}` });
+      : { state: "sent", at: Date.now(), meta: tf(lang, sent + relayed === 1 ? "app.recipients.one" : "app.recipients.many", { n: sent + relayed }) });
     if (queued) setQueuedIds((cur) => new Set(cur).add(payload.id));
 
     if (sent > 0 || relayed > 0 || queued) {
@@ -2514,13 +2434,10 @@ function ChatApp() {
       setMessageInput("");
       setReplyingTo(null);
       if (queued) {
-        systemMessage(lang === "cs"
-          ? "Zpráva čeká na příjemce — odešle se, jakmile bude online."
-          : lang === "de" ? "Nachricht wartet auf den Empfänger — sie geht raus, sobald er online ist."
-            : "The message is waiting for its recipient — it goes out as soon as they are online.");
+        systemMessage(t(lang, "app.waitingForRecipient"));
       }
     } else {
-      setNotice(lang === "cs" ? "Zprávu se nepodařilo zařadit k odeslání." : "The message could not be queued for sending.");
+      setNotice(t(lang, "app.queueFailed"));
     }
   }
 
@@ -2576,13 +2493,19 @@ function ChatApp() {
       away: rec.away,
       forwardedFrom: m.forwardedFrom || m.senderName,
     });
-    setNotice(lang === "cs" ? "Přeposláno." : lang === "de" ? "Weitergeleitet." : "Forwarded.");
+    setNotice(t(lang, "app.forwarded"));
   }
 
   /** Scroll the conversation to a message by id (reply source jump). */
   function scrollToMessage(id: string) {
     const el = document.querySelector(`[data-testid="message-${id}"]`);
-    if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("msg-flash"); window.setTimeout(() => el.classList.remove("msg-flash"), 1200); }
+    if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); el.classList.add("msg-flash"); window.setTimeout(() => el.classList.remove("msg-flash"), 1200); return; }
+    // Older than the rendered window: widen it, then jump once it is drawn.
+    const at = visibleMessages.findIndex((m) => m.id === id);
+    if (at < 0) return;
+    const needed = newestFirst ? at + 1 : visibleMessages.length - at;
+    setMessageWindow((n) => Math.max(n, Math.ceil(needed / MESSAGE_WINDOW) * MESSAGE_WINDOW));
+    window.setTimeout(() => { if (document.querySelector(`[data-testid="message-${id}"]`)) scrollToMessage(id); }, 60);
   }
 
   /** Assemble the info + audit trail shown for a single message. */
@@ -2608,7 +2531,7 @@ function ChatApp() {
       senderId: m.senderId,
       recipients: m.to && m.to.length > 0 ? m.to : [t(lang, "recipients.everyone")],
       ip: net?.ip,
-      route: m.mine ? "P2P (odchozí)" : net?.candidateType === "relay" ? "P2P přes TURN relay" : peer ? "přímé P2P" : "—",
+      route: m.mine ? t(lang, "app.route.outgoing") : net?.candidateType === "relay" ? t(lang, "app.route.turn") : peer ? t(lang, "app.route.direct") : "—",
       createdAt: m.createdAt,
       secure: m.secure,
       cipher: m.cipher,
@@ -2719,7 +2642,7 @@ function ChatApp() {
 
   async function startAudio() {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setNotice("getUserMedia unavailable.");
+      setNotice(t(lang, "app.media.unavailable"));
       return;
     }
     try {
@@ -2737,10 +2660,10 @@ function ChatApp() {
       });
       setAudioStatus("live");
       await broadcastAudioStatus("live");
-      systemMessage("Audio: your microphone is live.");
+      systemMessage(t(lang, "app.audio.live"));
     } catch (err) {
       setAudioStatus("off");
-      setNotice(`Microphone failed: ${(err as Error).message}`);
+      setNotice(tf(lang, "app.audio.failed", { msg: (err as Error).message }));
     }
   }
 
@@ -2761,7 +2684,7 @@ function ChatApp() {
     });
     setAudioStatus("off");
     await broadcastAudioStatus("off");
-    systemMessage("Audio: left the call.");
+    systemMessage(t(lang, "app.audio.left"));
   }
 
   async function toggleMute() {
@@ -2787,37 +2710,37 @@ function ChatApp() {
   async function enableNotifications() {
     if (!pushAvailable || !pushVapidKey) {
       if (!("Notification" in window)) {
-        setNotice("Notifications API unavailable.");
+        setNotice(t(lang, "app.notify.unavailable"));
         return;
       }
       const permission = await Notification.requestPermission();
       if (permission !== "granted") {
-        setNotice("Notification permission not granted.");
+        setNotice(t(lang, "app.notify.denied"));
         return;
       }
       setPrefs({ notificationsEnabled: true });
-      systemMessage("Local notifications enabled.");
+      systemMessage(t(lang, "app.notify.local"));
       return;
     }
 
     const result = await subscribeToPush(pushVapidKey, prefs.deviceId);
     if (result.ok) {
       setPrefs({ notificationsEnabled: true });
-      systemMessage("Push subscribed.");
+      systemMessage(t(lang, "app.notify.push"));
     } else {
-      setNotice(result.reason || "Push subscribe failed.");
+      setNotice(result.reason || t(lang, "app.notify.pushFailed"));
     }
   }
 
   function disableNotifications() {
     setPrefs({ notificationsEnabled: false });
-    systemMessage("Notifications disabled locally.");
+    systemMessage(t(lang, "app.notify.off"));
   }
 
   function clearLocalData() {
     clearPreferences();
     setPrefsState((current) => ({ ...current })); // trigger re-render
-    setNotice(lang === "cs" ? "Lokální preference smazány." : lang === "de" ? "Lokale Einstellungen gelöscht." : "Local preferences purged.");
+    setNotice(t(lang, "app.prefsPurged"));
   }
 
   async function purgeServer() {
@@ -2899,9 +2822,7 @@ function ChatApp() {
         : m)));
     }
     if (result.delivered > 0) {
-      systemMessage(lang === "cs"
-        ? `Odesláno ${result.delivered} čekajících zpráv.`
-        : `Sent ${result.delivered} queued message${result.delivered === 1 ? "" : "s"}.`);
+      systemMessage(tf(lang, "app.outboxSent", { n: result.delivered }));
     }
   }, [lang]);
 
@@ -2965,7 +2886,7 @@ function ChatApp() {
       }
     }
     // Light mode: whatever could not be delivered tries again now.
-    void flushOutbox(lang === "cs" ? "po návratu" : "on resume");
+    void flushOutbox(t(lang, "app.outbox.resume"));
     void sendServerLog("debug", "page.resumed", { reason: event.reason, awayMs: event.awayMs, fromCache: event.fromCache });
   }, [flushOutbox, lang]);
 
@@ -2982,7 +2903,7 @@ function ChatApp() {
         void doConnect();
         return;
       }
-      void flushOutbox(lang === "cs" ? "opakování" : "retry");
+      void flushOutbox(t(lang, "app.outbox.retry"));
     }, 60_000);
     return () => { watcher.stop(); tick.stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2990,7 +2911,7 @@ function ChatApp() {
 
   async function startVideoCall() {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setNotice("getUserMedia unavailable.");
+      setNotice(t(lang, "app.media.unavailable"));
       return;
     }
     try {
@@ -3013,11 +2934,11 @@ function ChatApp() {
       setVideoOn(true);
       setCallMode("video");
       await broadcastAudioStatus("live");
-      systemMessage("Video call started (audio+video, encrypted with DTLS-SRTP).");
+      systemMessage(t(lang, "app.video.started"));
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
     } catch (err) {
       setAudioStatus("off");
-      setNotice(`Video failed: ${(err as Error).message}`);
+      setNotice(tf(lang, "app.video.failed", { msg: (err as Error).message }));
     }
   }
 
@@ -3043,7 +2964,7 @@ function ChatApp() {
     const key = keyRef.current;
     identityRef.current ??= await loadIdentity().catch(() => null);
     if (!key) {
-      setNotice(lang === "cs" ? "Není odvozen klíč místnosti." : "Missing room key.");
+      setNotice(t(lang, "app.noRoomKey"));
       return;
     }
     // File size limit is now per-user (`prefs.maxAttachmentBytes`); there
@@ -3051,7 +2972,7 @@ function ChatApp() {
     // (Number.MAX_SAFE_INTEGER, see preferences.ts); Settings offers lower
     // caps such as 100 MB. Chunks are held in RAM until the transfer ends.
     if (file.size > prefs.maxAttachmentBytes && prefs.maxAttachmentBytes < Number.MAX_SAFE_INTEGER - 1) {
-      setNotice(`Soubor přesahuje limit ${formatBytes(prefs.maxAttachmentBytes)}.`);
+      setNotice(tf(lang, "app.fileTooLarge", { limit: formatBytes(prefs.maxAttachmentBytes) }));
       return;
     }
 
@@ -3101,13 +3022,11 @@ function ChatApp() {
         // sendFile; cheer the user with which transport was picked.
         systemMessage(
           transport === "p2p"
-            ? `Odesílám ${file.name} (${formatBytes(file.size)}) přímým P2P DataChannelem.`
-            : `P2P spojení není dostupné; přepínám ${file.name} (${formatBytes(file.size)}) na server proxy (šifrované).`,
+            ? tf(lang, "app.file.sendingP2p", { name: file.name, size: formatBytes(file.size) })
+            : tf(lang, "app.file.sendingProxy", { name: file.name, size: formatBytes(file.size) }),
         );
         if (transport === "proxy") {
-          setNotice(lang === "cs"
-            ? "P2P spojení se nepodařilo navázat — soubor jde přes šifrovaný server proxy."
-            : "Direct P2P unavailable — transferring via encrypted server relay.");
+          setNotice(t(lang, "app.file.proxyNotice"));
         }
       },
       onProgress: (_sent, _total, stats) => {
@@ -3169,15 +3088,15 @@ function ChatApp() {
       window.setTimeout(() => dropTransfer(result.transferId), 60_000);
       systemMessage(
         result.transport === "p2p"
-          ? `Odesláno: ${file.name} (${formatBytes(file.size)}) přes P2P.`
-          : `Odesláno: ${file.name} (${formatBytes(file.size)}) přes server proxy (end-to-end šifrované).`,
+          ? tf(lang, "app.file.sentP2p", { name: file.name, size: formatBytes(file.size) })
+          : tf(lang, "app.file.sentProxy", { name: file.name, size: formatBytes(file.size) }),
       );
     } else {
       updateTransfer(result.transferId || placeholderId, {
         status: result.reason === "cancelled" ? "cancelled" : "error",
         errorMessage: result.reason,
       });
-      systemMessage(`Send failed: ${result.reason || "unknown"}`);
+      systemMessage(tf(lang, "app.file.sendFailed", { reason: result.reason || t(lang, "app.unknownReason") }));
     }
     void cancelled;
   }
@@ -3197,7 +3116,7 @@ function ChatApp() {
       const link = osmLink(pos);
       await sendChatPayload(`📍 ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} (±${Math.round(pos.accuracy ?? 0)} m) ${link}`);
     } catch (err) {
-      setNotice(`Location failed: ${(err as Error).message}`);
+      setNotice(tf(lang, "app.location.failed", { msg: (err as Error).message }));
     }
   }
 
@@ -3208,15 +3127,15 @@ function ChatApp() {
         const link = osmLink(pos);
         void sendChatPayload(`📍 live ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} ${link}`);
       },
-      (msg) => setNotice(`Location error: ${msg}`),
+      (msg) => setNotice(tf(lang, "app.location.error", { msg })),
     );
-    if (locationWatcherRef.current) systemMessage("Continuous location started.");
+    if (locationWatcherRef.current) systemMessage(t(lang, "app.location.started"));
   }
 
   function stopContinuousLocation() {
     locationWatcherRef.current?.stop();
     locationWatcherRef.current = null;
-    systemMessage("Continuous location stopped.");
+    systemMessage(t(lang, "app.location.stopped"));
   }
 
   useEffect(() => () => disconnect(false), []);
@@ -3570,7 +3489,12 @@ function ChatApp() {
               </div>
             ) : (
               <div className="chat-column mx-auto w-full space-y-3">
-                {visibleMessages.map((message) => {
+                {hiddenMessages > 0 && !newestFirst ? (
+                  <button type="button" data-testid="button-show-earlier" className="show-earlier" onClick={() => setMessageWindow((n) => n + MESSAGE_WINDOW)}>
+                    {t(lang, "chat.showEarlier").replace("{n}", String(hiddenMessages))}
+                  </button>
+                ) : null}
+                {renderedMessages.map((message) => {
                   const isSystem = message.senderId === "system";
                   const styleKey = styleKeyFor(message.senderName, message.senderId);
                   const perStyle = isSystem ? undefined : prefs.messageStyles[styleKey];
@@ -3640,6 +3564,11 @@ function ChatApp() {
                     />
                   );
                 })}
+                {hiddenMessages > 0 && newestFirst ? (
+                  <button type="button" data-testid="button-show-earlier" className="show-earlier" onClick={() => setMessageWindow((n) => n + MESSAGE_WINDOW)}>
+                    {t(lang, "chat.showEarlier").replace("{n}", String(hiddenMessages))}
+                  </button>
+                ) : null}
                 <div ref={messageEndRef} />
               </div>
             )}
@@ -3818,7 +3747,7 @@ function ChatApp() {
 
       {/* Video modal */}
       {activePanel === "video" ? (
-        <SimpleModal title="Video call" onClose={() => setActivePanel(null)}>
+        <SimpleModal title={t(lang, "app.video.title")} onClose={() => setActivePanel(null)}>
           <VideoControls
             connected={status === "joined"}
             mode={callMode}
@@ -3911,7 +3840,7 @@ function ChatApp() {
 
       {/* Connection panel */}
       {activePanel === "connection" ? (
-        <SimpleModal title="Connection" onClose={() => setActivePanel(null)}>
+        <SimpleModal title={t(lang, "app.connection.title")} onClose={() => setActivePanel(null)}>
           <div className="space-y-5">
             <ChatRetentionSection
               value={prefs.chatRetention}
@@ -3951,12 +3880,12 @@ function ChatApp() {
               <label className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-xs ${prefs.mode === "light" ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}>
                 <input type="radio" name="mode" className="sr-only" checked={prefs.mode === "light"} onChange={() => setPrefs({ mode: "light" })} data-testid="radio-mode-light" />
                 <span className="font-semibold">Light · P2P</span>
-                <span className="opacity-80">{lang === "cs" ? "Jen WebRTC, server jenom signalizuje." : lang === "de" ? "Nur WebRTC, Server signalisiert." : "WebRTC only, server only signals."}</span>
+                <span className="opacity-80">{t(lang, "app.mode.p2p.hint")}</span>
               </label>
               <label className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-xs ${prefs.mode === "server" ? "bg-primary text-primary-foreground" : "hover:bg-accent"}`}>
                 <input type="radio" name="mode" className="sr-only" checked={prefs.mode === "server"} onChange={() => setPrefs({ mode: "server" })} data-testid="radio-mode-server" />
                 <span className="font-semibold">Server-enhanced</span>
-                <span className="opacity-80">{lang === "cs" ? "Volitelné push a metadata logy." : lang === "de" ? "Optional Push und Metadaten-Log." : "Optional push and metadata logs."}</span>
+                <span className="opacity-80">{t(lang, "app.mode.server.hint")}</span>
               </label>
             </fieldset>
 
@@ -4082,456 +4011,6 @@ function ChatApp() {
         </Suspense>
       ) : null}
     </div>
-  );
-}
-
-function SimpleModal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  // A modal dialog must be dismissable from the keyboard.
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-  useEffect(() => {
-    const onKey = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") onCloseRef.current(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, []);
-  return (
-    <div role="dialog" aria-modal="true" aria-label={title} className="modal-root fixed inset-0 z-40 flex items-stretch justify-center bg-black/45 p-3 sm:p-6" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-      <div className="modal-shell modal-shell--center my-auto flex max-h-[92dvh] w-full max-w-xl flex-col" onMouseDown={(event) => event.stopPropagation()}>
-        <header className="modal-head flex items-center justify-between border-b border-border px-5 py-3">
-          <h2 className="text-base font-semibold tracking-tight">{title}</h2>
-          <button type="button" onClick={onClose} aria-label="Close" className="modal-close inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-accent">×</button>
-        </header>
-        <div className="modal-body flex-1 overflow-y-auto px-5 py-4">{children}</div>
-      </div>
-    </div>
-  );
-}
-
-function PeerList({ peers, lang }: { peers: PeerView[]; lang: Lang }) {
-  if (peers.length === 0) {
-    return <div className="rounded-2xl border border-dashed border-border p-4 text-sm text-muted-foreground">{lang === "cs" ? "Zatím žádný peer." : lang === "de" ? "Noch keine Peers." : "No peers yet."}</div>;
-  }
-  return (
-    <div className="space-y-2" data-testid="list-peers">
-      {peers.map((peer) => (
-        <div key={peer.id} className="flex items-center justify-between gap-3 rounded-2xl bg-background p-3">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-medium" data-testid={`text-peer-${peer.id}`}>{peer.name}</p>
-            <p className="font-mono text-xs text-muted-foreground">{peer.id.slice(-12)}</p>
-          </div>
-          <div className="flex items-center gap-1">
-            {peer.audio === "live" ? <Mic className="h-4 w-4 text-emerald-500" aria-label="audio live" /> : peer.audio === "muted" ? <MicOff className="h-4 w-4 text-amber-500" aria-label="audio muted" /> : null}
-            <span className={`rounded-full px-2 py-1 text-xs ${peer.status === "open" ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" : peer.status === "connecting" ? "bg-amber-500/15 text-amber-700 dark:text-amber-300" : "bg-muted text-muted-foreground"}`}>{peer.status}</span>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function AudioControls({ audioStatus, audioPeerCount, connected, onJoin, onLeave, onToggleMute, lang, media, mediaDetail }: { audioStatus: AudioStatus; audioPeerCount: number; connected: boolean; onJoin: () => void; onLeave: () => void; onToggleMute: () => void; lang: Lang; media: Record<string, "e2ee" | "partial" | "off"> | null; mediaDetail?: string }) {
-  const states = Object.values(media ?? {});
-  const sealed = states.filter((s) => s === "e2ee").length;
-  const mediaState = media === null ? "unsupported" : states.length > 0 && sealed === states.length ? "e2ee" : states.some((s) => s !== "off") ? "partial" : "off";
-  return (
-    <div className="space-y-3">
-      <div className="text-sm text-muted-foreground">{t(lang, "audio.hint")}</div>
-      <div className="text-xs text-muted-foreground">{t(lang, "audio.onCall").replace("{n}", String(audioPeerCount))}</div>
-      {audioStatus !== "off" ? (
-        <div data-testid="media-e2ee" data-state={mediaState} data-detail={mediaDetail} className={`flex items-start gap-2 rounded-xl border px-3 py-2 text-xs ${mediaState === "e2ee" ? "border-emerald-500/40 text-emerald-700 dark:text-emerald-300" : "border-border text-muted-foreground"}`}>
-          <Lock className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{t(lang, `sec.media.${mediaState}`).replace("{n}", String(sealed)).replace("{total}", String(states.length))}</span>
-        </div>
-      ) : null}
-      <div className="flex flex-wrap gap-2">
-        {audioStatus === "off" || audioStatus === "joining" ? (
-          <button type="button" data-testid="button-audio-join" className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60" onClick={onJoin} disabled={!connected || audioStatus === "joining"}>
-            <Mic className="h-4 w-4" />
-            {audioStatus === "joining" ? "..." : t(lang, "audio.join")}
-          </button>
-        ) : (
-          <>
-            <button type="button" data-testid="button-audio-mute" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent" onClick={onToggleMute}>
-              {audioStatus === "muted" ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
-              {audioStatus === "muted" ? t(lang, "audio.unmute") : t(lang, "audio.mute")}
-            </button>
-            <button type="button" data-testid="button-audio-leave" className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent" onClick={onLeave}>
-              <PhoneOff className="h-4 w-4" />
-              {t(lang, "audio.leave")}
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function VideoIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <rect x="3" y="6" width="13" height="12" rx="2" />
-      <path d="M16 10l5-3v10l-5-3z" />
-    </svg>
-  );
-}
-function MapPinIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <path d="M12 22s7-7.16 7-12a7 7 0 1 0-14 0c0 4.84 7 12 7 12z" />
-      <circle cx="12" cy="10" r="3" />
-    </svg>
-  );
-}
-function NfcIcon(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <path d="M4 8a8 8 0 0 1 16 0v8a8 8 0 0 1-16 0z" />
-      <path d="M8 12a4 4 0 0 1 8 0" />
-      <circle cx="12" cy="12" r="1" />
-    </svg>
-  );
-}
-
-function VideoControls({
-  connected, mode, videoOn, onStart, onLeave, onToggleCamera, localVideoRef, remoteVideosRef, lang,
-}: {
-  connected: boolean;
-  mode: "audio" | "video" | "off";
-  videoOn: boolean;
-  onStart: () => void;
-  onLeave: () => void;
-  onToggleCamera: () => void;
-  localVideoRef: React.MutableRefObject<HTMLVideoElement | null>;
-  remoteVideosRef: React.MutableRefObject<HTMLDivElement | null>;
-  lang: Lang;
-}) {
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">{lang === "cs"
-        ? "Hlas i obraz jdou stejným WebRTC P2P spojením; přenos je šifrovaný DTLS-SRTP."
-        : "Audio + video share the same WebRTC P2P link, encrypted with DTLS-SRTP."}</p>
-      <video ref={localVideoRef} muted autoPlay playsInline className="aspect-video w-full rounded-2xl border border-border bg-black" />
-      <div ref={remoteVideosRef} className="grid grid-cols-2 gap-2" />
-      <div className="flex flex-wrap gap-2">
-        {mode !== "video" ? (
-          <button type="button" onClick={onStart} disabled={!connected} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
-            Start video
-          </button>
-        ) : (
-          <>
-            <button type="button" onClick={onToggleCamera} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">
-              {videoOn ? "Camera off" : "Camera on"}
-            </button>
-            <button type="button" onClick={onLeave} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">
-              Hang up
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-type FilesPanelTransfer = {
-  id: string;
-  name: string;
-  size: number;
-  direction: "in" | "out";
-  status: "active" | "completed" | "cancelled" | "error";
-  stats: import("./lib/file-transfer").TransferStats;
-};
-
-function FilesPanel({
-  connected, enabled, maxBytes, onPickFile, transfers,
-}: {
-  connected: boolean;
-  enabled: boolean;
-  maxBytes: number;
-  onPickFile: () => void;
-  transfers: FilesPanelTransfer[];
-}) {
-  const active = transfers.filter((t) => t.status === "active");
-  const recent = transfers.slice(-3);
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        End-to-end encrypted P2P transfer (AES-GCM 256, 32 KiB chunks) with automatic server-relay fallback.
-        Hard cap: 10 GiB. Configure your own limit in Settings.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onPickFile}
-          disabled={!connected}
-          className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-        >
-          Choose file…
-        </button>
-      </div>
-      {active.length > 0 ? (
-        <div className="rounded-2xl border border-border bg-background p-3 text-xs">
-          <div className="mb-1 font-semibold">Probíhá {active.length} přenos{active.length > 1 ? "y" : ""}:</div>
-          <ul className="space-y-1 font-mono">
-            {active.map((t) => (
-              <li key={t.id}>
-                {t.direction === "out" ? "↑" : "↓"} {t.name} ·
-                {t.stats.transport === "p2p" ? " P2P" : " Proxy"} ·
-                {Math.round((t.stats.progress ?? 0) * 100)} %
-                · {formatBytes(t.stats.size)} ·{" "}
-                {Math.round((t.stats.bytesPerSecond ?? 0) / 1024)} kB/s
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {recent.length > 0 ? (
-        <div className="rounded-2xl border border-dashed border-border/60 p-3 text-[11px] text-muted-foreground">
-          {recent.length} přenosů sledováno — podrobnosti v chatu.
-        </div>
-      ) : null}
-      <p className="text-[11px] text-muted-foreground">
-        Files  10 GiB cannot transfer today. For very large volumes use the
-        storage-provider plugin — see docs/files.md.
-      </p>
-    </div>
-  );
-}
-
-function LocationPanel({
-  connected, onShareOnce, onStartContinuous, onStopContinuous, watching, lang,
-}: {
-  connected: boolean;
-  onShareOnce: () => void;
-  onStartContinuous: () => void;
-  onStopContinuous: () => void;
-  watching: boolean;
-  lang: Lang;
-}) {
-  const caps = detectGeolocation();
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        {lang === "cs" ? "Pošle aktuální polohu jako šifrovanou zprávu s OpenStreetMap odkazem." : "Sends your current position as an encrypted chat message with an OpenStreetMap link."}
-      </p>
-      {!caps.available ? (
-        <p className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{caps.reason}</p>
-      ) : null}
-      <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={onShareOnce} disabled={!connected || !caps.available} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
-          Share once
-        </button>
-        {watching ? (
-          <button type="button" onClick={onStopContinuous} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">Stop sharing</button>
-        ) : (
-          <button type="button" onClick={onStartContinuous} disabled={!connected || !caps.available} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60">Start continuous</button>
-        )}
-      </div>
-      <p className="text-[11px] text-muted-foreground">Your coordinates only travel through the encrypted P2P channel; the OSM link reveals them to whoever clicks it.</p>
-    </div>
-  );
-}
-
-
-function SpeechPanel({
-  recognitionRef, onSendText, onInsertText, serverMode, lang,
-}: {
-  recognitionRef: React.MutableRefObject<{ stop: () => void } | null>;
-  onSendText: (text: string) => void;
-  onInsertText: (text: string) => void;
-  serverMode: boolean;
-  lang: Lang;
-}) {
-  const caps = detectSpeechCaps();
-  const [text, setText] = useState("");
-  const [voiceLang, setVoiceLang] = useState("cs-CZ");
-  const [preset, setPreset] = useState<VoicePreset>("neutral");
-  const [voiceURI, setVoiceURI] = useState<string>("");
-  const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
-  const [partial, setPartial] = useState("");
-  const [revoice, setRevoice] = useState(false);
-  // Server voices (ElevenLabs / OpenAI …), only in Server-enhanced mode.
-  const [serverVoices, setServerVoices] = useState<ServerVoiceInfo[]>([]);
-  const [serverVoice, setServerVoice] = useState<string>("");
-  const [serverBusy, setServerBusy] = useState(false);
-  const serverAudioRef = useRef<HTMLAudioElement | null>(null);
-
-  useEffect(() => {
-    function load() { setVoices(listVoices()); }
-    load();
-    if (typeof window !== "undefined" && "speechSynthesis" in window) {
-      window.speechSynthesis.addEventListener("voiceschanged", load);
-      return () => window.speechSynthesis.removeEventListener("voiceschanged", load);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!serverMode) return;
-    let cancelled = false;
-    void fetchServerSpeechStatus().then((s) => {
-      if (cancelled) return;
-      if (s.tts.enabled) { setServerVoices(s.tts.connectors); if (s.tts.connectors[0]) setServerVoice(s.tts.connectors[0].id); }
-    });
-    return () => { cancelled = true; };
-  }, [serverMode]);
-
-  async function speakServer() {
-    if (!text.trim() || !serverVoice) return;
-    setServerBusy(true);
-    const r = await serverTts(text, { connector: serverVoice });
-    setServerBusy(false);
-    if (r.ok) {
-      if (!serverAudioRef.current) serverAudioRef.current = new Audio();
-      serverAudioRef.current.src = r.url;
-      void serverAudioRef.current.play();
-    }
-  }
-
-  function startStt() {
-    setPartial("");
-    recognitionRef.current = startRecognition(voiceLang, {
-      onPartial: setPartial,
-      onFinal: (txt) => {
-        setText((prev) => `${prev} ${txt}`.trim());
-        if (revoice) speak({ text: txt, lang: voiceLang, preset, voiceURI: voiceURI || null });
-      },
-      onError: (msg) => setPartial(`(error: ${msg})`),
-      onEnd: () => setPartial(""),
-    }, true);
-  }
-  function stopStt() {
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2">
-        <label className="grid gap-1 text-sm">Language
-          <select value={voiceLang} onChange={(e) => setVoiceLang(e.target.value)} className="min-h-10 rounded-xl border border-input bg-background px-2">
-            {["cs-CZ","sk-SK","de-DE","en-GB","en-US","pl-PL","fr-FR","es-ES","it-IT","nl-NL","ru-RU"].map((l) => <option key={l}>{l}</option>)}
-          </select>
-        </label>
-        <label className="grid gap-1 text-sm">Preset
-          <select value={preset} onChange={(e) => setPreset(e.target.value as VoicePreset)} className="min-h-10 rounded-xl border border-input bg-background px-2">
-            {["neutral","male","female","child"].map((p) => <option key={p}>{p}</option>)}
-          </select>
-        </label>
-      </div>
-      <label className="grid gap-1 text-sm">Voice
-        <select value={voiceURI} onChange={(e) => setVoiceURI(e.target.value)} className="min-h-10 rounded-xl border border-input bg-background px-2">
-          <option value="">(auto)</option>
-          {voices.filter((v) => v.lang.toLowerCase().startsWith(voiceLang.toLowerCase().slice(0, 2))).map((v) => (
-            <option key={v.voiceURI} value={v.voiceURI}>{v.name} · {v.lang}</option>
-          ))}
-        </select>
-      </label>
-      <label className="grid gap-1 text-sm">Text
-        <textarea value={text} onChange={(e) => setText(e.target.value)} className="min-h-20 rounded-xl border border-input bg-background px-2 py-1" />
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={!caps.ttsAvailable} onClick={() => speak({ text, lang: voiceLang, preset, voiceURI: voiceURI || null })} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">Speak</button>
-        <button type="button" disabled={!caps.ttsAvailable} onClick={stopSpeaking} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60">Stop</button>
-        {!recognitionRef.current ? (
-          <button type="button" disabled={!caps.sttAvailable} onClick={startStt} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60">Listen</button>
-        ) : (
-          <button type="button" onClick={stopStt} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">Stop listening</button>
-        )}
-        <label className="inline-flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={revoice} onChange={(e) => setRevoice(e.target.checked)} />
-          Revoice (STT → TTS)
-        </label>
-        <button type="button" disabled={!text.trim()} onClick={() => { onInsertText(text); setText(""); }} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60" data-testid="speech-insert">{t(lang, "speech.insert")}</button>
-        <button type="button" onClick={() => { onSendText(text); setText(""); }} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">Send to chat</button>
-      </div>
-      {partial ? <div className="rounded-xl border border-border bg-background p-2 text-xs italic">{partial}</div> : null}
-      {serverMode && serverVoices.length > 0 ? (
-        <div className="rounded-xl border border-border bg-background p-2 text-xs">
-          <div className="mb-1 font-semibold">{t(lang, "speech.server")}</div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={serverVoice} onChange={(e) => setServerVoice(e.target.value)} className="min-h-9 rounded-lg border border-input bg-background px-2">
-              {serverVoices.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-            </select>
-            <button type="button" disabled={serverBusy || !text.trim()} onClick={() => void speakServer()} className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-60">
-              {serverBusy ? "…" : t(lang, "speech.server.speak")}
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {!caps.sttAvailable ? <p className="text-[11px] text-muted-foreground">Speech recognition is Chrome/Edge/Android only. Voice cloning of arbitrary samples is intentionally not implemented — see docs/speech.md.</p> : null}
-    </div>
-  );
-}
-
-type ConnLogEvent = "connecting" | "open" | "closed" | "retry" | "failed" | "stopped";
-
-function ConnectionPanel({
-  status, prefs, setPrefs, lang, desired, log,
-}: {
-  status: ConnectionStatus | null;
-  prefs: Preferences;
-  setPrefs: (p: Partial<Preferences>) => void;
-  lang: Lang;
-  desired: DesiredState;
-  log: Array<{ at: number; attempt: number; event: ConnLogEvent; delayMs?: number }>;
-}) {
-  return (
-    <div className="space-y-3">
-      <div className="rounded-xl border border-border bg-background p-2 text-xs" data-testid="conn-desired" data-desired={desired}>
-        <span className="font-semibold">{t(lang, "conn.desired")}:</span>{" "}
-        {t(lang, desired === "connected" ? "conn.desired.connected" : "conn.desired.disconnected")}
-      </div>
-      <p className="text-xs text-muted-foreground">Heartbeat strategy controls how often the client pings signaling and how aggressively it reconnects after a drop. Browsers throttle background timers; mobile may suspend WebSockets entirely when tab is hidden.</p>
-      <label className="grid gap-1 text-sm font-medium">Strategy
-        <select
-          value={prefs.keepaliveStrategy}
-          onChange={(e) => setPrefs({ keepaliveStrategy: e.target.value as KeepaliveStrategy })}
-          className="min-h-10 rounded-xl border border-input bg-background px-2"
-        >
-          <option value="conservative">Conservative (45s ping, reconnect from 1.5s)</option>
-          <option value="balanced">Balanced (25s ping, reconnect from 1s)</option>
-          <option value="aggressive">Aggressive (12s ping, reconnect from 0.5s)</option>
-        </select>
-      </label>
-      {status ? (
-        <div className="rounded-xl border border-border bg-background p-2 text-xs font-mono">
-          <div>state: {status.state}</div>
-          <div>RTT: {status.rttMs} ms</div>
-          <div>strategy: {status.strategy}</div>
-          <div>last activity: {status.lastActivityAt ? new Date(status.lastActivityAt).toLocaleTimeString() : "—"}</div>
-          <div>last pong: {status.lastPongAt ? new Date(status.lastPongAt).toLocaleTimeString() : "—"}</div>
-        </div>
-      ) : <p className="text-xs text-muted-foreground">Not connected.</p>}
-      <div>
-        <h3 className="mb-1 text-xs font-semibold">{t(lang, "conn.log.title")}</h3>
-        {log.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t(lang, "conn.log.empty")}</p>
-        ) : (
-          <ol className="max-h-40 overflow-y-auto rounded-xl border border-border bg-background p-2 font-mono text-[11px] leading-5" data-testid="conn-log">
-            {log.map((entry, i) => (
-              <li key={`${entry.at}-${i}`}>
-                {new Date(entry.at).toLocaleTimeString()} · #{entry.attempt} ·{" "}
-                {entry.event === "retry"
-                  ? t(lang, "conn.log.retry").replace("{s}", ((entry.delayMs ?? 0) / 1000).toFixed(1))
-                  : t(lang, `conn.log.${entry.event}`)}
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// Local Palette icon shim to avoid extra import noise
-function Palette(props: React.SVGProps<SVGSVGElement>) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <circle cx="13.5" cy="6.5" r="1.5" />
-      <circle cx="17.5" cy="10.5" r="1.5" />
-      <circle cx="6.5" cy="12.5" r="1.5" />
-      <circle cx="8.5" cy="7.5" r="1.5" />
-      <path d="M12 22a10 10 0 1 1 10-10c0 2-1.5 3-3 3h-2c-1.5 0-3 1-3 2.5S15 22 12 22z" />
-    </svg>
   );
 }
 

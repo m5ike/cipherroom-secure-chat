@@ -13,7 +13,9 @@
 #   4. build-smoke — `npm run build` (custom tsx/esbuild) and verify
 #      dist/ artefact tree
 #   5. installer — shellcheck + a real install -> update -> uninstall cycle
-#   6. e2e — Playwright: UI smoke + two peers (message, inline + chunked file)
+#   6. e2e — Playwright: UI smoke, two peers (messages, files P2P and through
+#      the relay), an encrypted call, passkey accounts with away relay and
+#      recovery, the operator console with roles
 #   7. ci-aggregate — gate, exits 1 if any of the above 6 failed
 #
 # Cache: GitHub-managed npm cache keyed on package-lock.json.
@@ -98,6 +100,14 @@ jobs:
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
+
+      # The cluster bus test (test/cluster-redis.test.ts) runs two instances
+      # through a real Redis server it starts on a port of its own; without
+      # the binary it is skipped.
+      - name: redis-server for the cluster test
+        run: |
+          sudo apt-get install -y --no-install-recommends redis-server
+          sudo systemctl stop redis-server || true
 
       # One file at a time: the SQLCipher tests open real databases, and a
       # two-core runner running fifty files at once turned that into a

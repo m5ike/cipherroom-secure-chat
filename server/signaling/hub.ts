@@ -146,7 +146,7 @@ export class SignalingHub {
 
   constructor(private readonly opts: HubOptions) {
     this.path = opts.path ?? "/ws";
-    this.gate = opts.gate ?? new ConnectionGate();
+    this.gate = opts.gate ?? ConnectionGate.fromEnv();
     this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES, perMessageDeflate: false });
     this.relay = new AwayRelay(
       opts.accounts,
