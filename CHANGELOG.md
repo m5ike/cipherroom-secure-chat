@@ -5,6 +5,83 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [4.0.5] – 2026-09-24
+
+Layout builder jako GUI designer. Protokol, šifrování ani data účtů se
+nemění. Dokumentace (HTML + PDF): [`docs/site/`](docs/site/index.html#layout-builder),
+[`docs/layout-builder.md`](docs/layout-builder.md).
+
+### Rozvržení jako data (`client/src/lib/layout-tree.ts`, `client/src/lib/layouts/*`, `client/src/components/LayoutView.tsx`)
+- Lišta nahoře, okno chatu, příchozí / odchozí / systémová zpráva, pole pro
+  psaní a widget příjemců (panel i minimalizované tlačítko) jsou **stromy
+  prvků**, které kreslí `LayoutView`. Výchozí stromy vykreslují **stejný DOM**
+  jako dřívější JSX — ověřeno porovnáním starých a nových komponent ve 248
+  situacích, hlídáno 31 snímky (`test/layout-snapshots.test.tsx`).
+- Prvek má tag, text (šablona), atributy (šablona nebo výraz po `=`), CSS,
+  styl se stavy (hover / click / focus / current), CSS z dat, podmínku,
+  opakování se svým rozsahem (`$p`, `$iterator`), události → akce s
+  argumentem, ref, živou část aplikace (slot) nebo šablonu (block).
+- Každé rozvržení má **kontrakt** (hodnoty, akce, živé části, refy);
+  komponenty si nechávají stav a chování (tažení widgetu, časovače zpráv,
+  zapečetění), rozvržení jen kreslí.
+- Šablonovací jazyk: podmínka `a ? b : c`, filtr `t` (`{$state|t:'msginfo.state.'}`),
+  vykreslení jako prostý text, rychlá cesta pro `{$x}` / `$x` / `!$x`.
+
+### Konzole › Layout builder (`admin-ui/public/layout-builder.js`)
+- Záložky rozvržení (+ šablony, + *Texts & behaviour*), **paleta** 28 prvků
+  (panel, area, row, column, grid, list, group, text, heading, paragraph,
+  label, link, icon, image, audio, logo, avatar, HTML, separator, button,
+  input, text area, select, option, form, živé části, šablony), **strom**
+  s přetahováním (i z palety), nástroji pro vybraný prvek (skrýt, posunout,
+  duplikovat, zabalit, rozbalit, uložit jako šablonu, smazat), zpět / znovu,
+  kopírovat / vložit mezi rozvrženími, export / import.
+- **Vlastnosti s našeptáváním**: tag, třídy, které styly aplikace opravdu
+  mají (čtou se z buildu), atributy podle tagu a jejich hodnoty (typy inputu,
+  role, target, autocomplete…), 114 vlastností CSS s hodnotami, proměnné,
+  akce, živé části, refy. Plovoucí nápověda (hodnoty, akce, filtry, makra,
+  výrazy, prvky).
+- **Náhled je aplikace sama**: `layout-preview.html` (druhý vstup buildu) se
+  skutečnými komponentami, CSS a šablonami vzhledu a ukázkovými daty;
+  varianty, šablona, tón, jazyk, šířka; klepnutí vybere prvek, režim
+  *click tries it* náhled ovládá; chyby výrazů u prvků.
+- **Šablony prvků**: uložit vybraný prvek, vložit propojeně (s `$arg`) nebo
+  jako kopii, upravit ve vlastní záložce.
+- Uloží se jen rozvržení odlišná od výchozích (`layouts.<id> = { tree, rev }`)
+  a šablony (`blocks`); builder upozorní, když aktualizace aplikace změnila
+  výchozí stav, ze kterého návrh vznikl.
+- Dřívější barvy komponent, krátké texty, includes a chování zpráv jsou na
+  záložce *Texts & behaviour*; starý panel z `legacy-tools.js` je pryč.
+
+### Server
+- `GET /admin/layout` vrací i katalog (paleta, atributy, CSS, třídy z
+  `dist/public/assets/*.css`, ikony, rozvržení s výchozími stromy, kontrakty
+  a variantami); `PUT /admin/layout` přijme tělo do 4 MB.
+- Admin služba podává náhled `/layout-preview.html` (`frame-ancestors 'self'`)
+  a `/assets/*` z buildu aplikace.
+- Validace `layout-tree.ts` (server i klient): známé prvky a tagy, žádné
+  `on*`, `style`, `srcdoc`, `formaction`, bezpečné adresy (i při vykreslení),
+  CSS bez `url()` a výrazů, limity (2 500 prvků, hloubka 40, 60 šablon).
+
+### Sdílené (`admin-ui/public/builder-kit.js`)
+- Menu builder a Layout builder sdílejí pole formulářů, výběr barev a ikon,
+  editor stylů se stavy, plovoucí nápovědu a našeptávač.
+- Katalog ikon 207 (+ ikony zpráv, lišty, psaní a widgetu); přejmenované
+  ikony lucide (`smile` → `face-slightly-smiling`) se najdou i pod starým jménem.
+
+### Opraveno
+- Levý sloupec Menu builderu na středně širokých obrazovkách překrýval náhled
+  pod sebou.
+
+### Testy
+- `layout-tree` (validace, adresy, CSS, limity, výchozí stromy projdou
+  validací beze změny a používají jen svůj kontrakt), `layout-view`
+  (šablony jako text, podmínky, opakování, typované atributy, události,
+  refy, sloty, šablony, bezpečné HTML, styly, ikony, režim náhledu),
+  snímky výchozích rozvržení, `layout-config` (rozvržení a šablony). E2E:
+  paleta, výběr v náhledu, našeptávání tříd / CSS / textu / akcí, přetažení,
+  šablona v jiném rozvržení, uložení — a aplikace kreslí uložené rozvržení
+  (nové tlačítko v ní opravdu otevře emoji); auditor jen čte.
+
 ## [4.0.0] – 2026-09-24
 
 Identita a přihlášení, moduly pro skupiny a menu jako data. **Nekompatibilní

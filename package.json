@@ -1,6 +1,6 @@
 {
   "name": "cipherroom-secure-chat",
-  "version": "4.0.0",
+  "version": "4.0.5",
   "description": "M5cet — end-to-end encrypted WebRTC P2P workspace (chat, calls, files, speech, NFC, maps, push) with WebSocket signaling and no message persistence.",
   "license": "MIT",
   "type": "module",

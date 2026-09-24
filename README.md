@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **4.0.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **4.0.5** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 4.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-4.0.0.pdf`](docs/site/m5cet-dokumentace-4.0.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 4.0.5 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-4.0.5.pdf`](docs/site/m5cet-dokumentace-4.0.5.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -84,6 +84,13 @@ místnosti.
   servery) a šablony GUI (povolené, výchozí, zámek); **Modules & groups**
   zapíná moduly pro skupiny uživatelů a **Menu builder** skládá menu
   aplikace (přetahování, HTML s proměnnými, styly a stavy, živý náhled).
+- **Layout builder — GUI designer (4.0.5)** — lišta, okno chatu, zprávy,
+  psaní a widget příjemců jsou stromy prvků z palety (panely, oblasti,
+  texty, tlačítka, pole, ikony, obrázky, HTML, živé části aplikace,
+  šablony); vlastnosti s našeptáváním (třídy z buildu, atributy, CSS,
+  proměnné, akce), podmínky, opakování, události; náhled je aplikace sama.
+  Viz [dokumentace › Layout builder](docs/site/index.html#layout-builder) a
+  [`docs/layout-builder.md`](docs/layout-builder.md).
 - **Identita a přihlášení (4.0)** — Server-enhanced jen s přihlášením
   **passkey**; účet má jedinečné **uživatelské jméno** vygenerované serverem
   a uložené v passkey (primární klíč dat účtu), jméno v místnosti je jen
@@ -652,7 +659,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 4.0.0        | aktuální — Server-enhanced jen s passkey, jedinečné uživatelské jméno, ověřené přihlášení (globální klíč, databáze, trezor) s auditem, `/signin` a `/signup`, ochrana navigace, kontrola verzí s opravou, moduly a skupiny, Menu builder |
+| 4.0.5        | aktuální — Layout builder jako GUI designer: rozvržení lišty, chatu, zpráv, psaní a widgetu jako stromy prvků, paleta, našeptávání, šablony prvků, náhled aplikace |
+| 4.0.0        | Server-enhanced jen s passkey, jedinečné uživatelské jméno, ověřené přihlášení (globální klíč, databáze, trezor) s auditem, `/signin` a `/signup`, ochrana navigace, kontrola verzí s opravou, moduly a skupiny, Menu builder |
 | 3.3.0        | okno Místnost se záložkami a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, relace si pamatuje server |
 | 3.2.0        | uložená připojení (klíč, jméno, server, TTL, statistiky a log, výchozí a automatické připojení), 13 šablon GUI včetně iOS 27 a Windows 11, konzole *Client & addons*, předkomprimované assety |
 | 3.1.0        | šifrování v3 (Argon2id, slepé ID místností, klíče odesílatele, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role, neměnný audit, zálohy, metriky a alerty |
@@ -698,7 +706,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |
 | [`docs/session-and-sharing.md`](docs/session-and-sharing.md) | Session cache, vynucený stav, pozvánky s kódem, Smazat vše a odejít |
 | [`docs/telephony.md`](docs/telephony.md)                | Hovory a SMS (Twilio / Telnyx / Vonage vč. JWT), volba providera, perzistentní SIP trunky + `.env`, webhooky `/wh/*` s ověřením podpisů |
-| [`docs/layout-builder.md`](docs/layout-builder.md)      | Admin Layout / template builder: styly komponent, šablony se zástupnými parametry a includes, živý náhled, sbalování systémových zpráv |
+| [`docs/layout-builder.md`](docs/layout-builder.md)      | Layout builder (GUI designer): rozvržení jako stromy prvků, paleta, našeptávání, šablony, náhled aplikace, texty a chování zpráv |
 | [`docs/appearance.md`](docs/appearance.md)              | Obrazovka Vzhled (71 Google Fonts, paleta, typografie), mobilní layout podle zařízení a prohlížeče, celá obrazovka, Edit Mode s inspektorem CSS |
 | [`docs/knowledge-base.md`](docs/knowledge-base.md)      | Znalostní báze: mapa kódu, co server vidí, známé mezery |
 | [`docs/optimizations.md`](docs/optimizations.md)        | Změřené optimalizace a jak je reprodukovat     |

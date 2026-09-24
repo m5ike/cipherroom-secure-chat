@@ -161,7 +161,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
 </head>
 <body>
 <header class="top">
-  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 4.0.0</small></a>
+  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 4.0.5</small></a>
   <div class="search" role="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" placeholder="Hledat v dokumentaci…" autocomplete="off" aria-label="Hledat v dokumentaci" />
@@ -169,7 +169,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <div class="results" id="results" role="listbox"></div>
   </div>
   <button class="btn" id="theme" type="button" title="Světlý / tmavý motiv">◐</button>
-  <a class="btn" href="m5cet-dokumentace-4.0.0.pdf" download>PDF</a>
+  <a class="btn" href="m5cet-dokumentace-4.0.5.pdf" download>PDF</a>
 </header>
 <div class="layout">
 <nav class="toc" id="toc" aria-label="Obsah"></nav>
@@ -178,11 +178,12 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
   <div class="hero">
     <h1>M5cet 4.0</h1>
     <p class="lead">Šifrovaná komunikace peer-to-peer v prohlížeči: zprávy, soubory, hovory a sdílení polohy mezi lidmi, kteří znají společné heslo místnosti. Server zprostředkuje spojení, podrží zprávy pro nepřítomné a nikdy nevidí obsah.</p>
-    <p>Tato dokumentace popisuje verzi <b>4.0.0</b>: Server-enhanced jen s přihlášením passkey, jedinečné uživatelské jméno účtu jako primární klíč, ověřené přihlášení krok za krokem (passkey, globální klíč, databáze, trezor) a adresy /signin a /signup, ochranu před opuštěním připojené místnosti, kontrolu verzí aplikace a knihoven proti serveru s opravou jedním tlačítkem, moduly zapínané pro skupiny uživatelů a Menu builder v konzoli se šablonovacím jazykem; dále okno Místnost se záložkami Light · P2P / Server-enhanced a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, uložená připojení přihlášených uživatelů (klíč, jméno, server, statistiky a log), šablony vzhledu iOS 27, Windows 11 a pět studiových, jejich konfiguraci v administraci — a pod tím vším signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
+    <p>Tato dokumentace popisuje verzi <b>4.0.5</b>: Layout builder jako GUI designer (lišta, okno chatu, zprávy, psaní a widget příjemců jako stromy prvků s paletou, našeptáváním a náhledem samotné aplikace); Server-enhanced jen s přihlášením passkey, jedinečné uživatelské jméno účtu jako primární klíč, ověřené přihlášení krok za krokem (passkey, globální klíč, databáze, trezor) a adresy /signin a /signup, ochranu před opuštěním připojené místnosti, kontrolu verzí aplikace a knihoven proti serveru s opravou jedním tlačítkem, moduly zapínané pro skupiny uživatelů a Menu builder v konzoli se šablonovacím jazykem; dále okno Místnost se záložkami Light · P2P / Server-enhanced a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, uložená připojení přihlášených uživatelů (klíč, jméno, server, statistiky a log), šablony vzhledu iOS 27, Windows 11 a pět studiových, jejich konfiguraci v administraci — a pod tím vším signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
     <div class="pills"><span class="pill">Node.js 24</span><span class="pill">TypeScript 7</span><span class="pill">React 19</span><span class="pill">WebRTC DataChannel</span><span class="pill">AES-GCM 256</span><span class="pill">ECDSA / ECDH P-256</span><span class="pill">Argon2id</span><span class="pill">Ed25519</span><span class="pill">WebAuthn + PRF</span><span class="pill">SQLite + SQLCipher</span></div>
   </div>
   <div class="grid2">
     <div class="card"><h4>Pro koho je co</h4><p><b>Uživatel</b> — <a href="#rezimy">režimy</a>, <a href="#sifrovani">co šifrování chrání</a>. <b>Vývojář</b> — <a href="#architektura">architektura</a>, <a href="#protokol">protokol v2</a>, <a href="#api">API</a>. <b>Provozovatel</b> — <a href="#nasazeni">nasazení</a>, <a href="#administrace">administrace</a>, <a href="#audit">audit</a>, <a href="#bezpecnost">bezpečnost</a>.</p></div>
+    <div class="card"><h4>Co je nového ve 4.0.5</h4><p><a href="#layout-builder">Layout builder</a> je GUI designer: lišta nahoře, okno chatu, příchozí / odchozí / systémové zprávy, pole pro psaní a widget příjemců jsou stromy prvků z palety (panely, oblasti, texty, tlačítka, pole, ikony, obrázky, HTML, živé části aplikace, šablony). Každé pole našeptává (třídy, atributy, CSS, proměnné, akce), náhled je aplikace sama. Přehled v <a href="#zmeny-405">seznamu změn 4.0.5</a>.</p></div>
     <div class="card"><h4>Co je nového ve 4.0</h4><p><a href="#prihlaseni">Přihlášení a identita</a>: Server-enhanced vyžaduje passkey, účet má jedinečné uživatelské jméno (jméno v místnosti je jen přezdívka), přihlášení ověří passkey, globální klíč i databázi a všechno zapíše do auditu; <a href="#prihlaseni-adresy">/signin a /signup</a>. <a href="#navigace-verze">Ochrana navigace a kontrola verzí</a>. <a href="#moduly">Moduly a skupiny</a> a <a href="#menu-builder">Menu builder</a> v konzoli. Přehled v <a href="#zmeny-40">seznamu změn 4.0</a>.</p></div>
     <div class="card"><h4>Co je nového ve 3.3</h4><p><a href="#okno-mistnost">Okno Místnost</a>: typ připojení jako záložky v záhlaví, na <i>Server-enhanced</i> výběr z uložených připojení a ozubené kolo k jejich správě, tlačítka a sdílení vždy dole, během spojení nic nepřepnete. <a href="#sdilet-pripojeni">Sdílení uloženého připojení</a> pozvánkou. Přehled v <a href="#zmeny-33">seznamu změn 3.3</a>.</p></div>
     <div class="card"><h4>Co je nového ve 3.2</h4><p><a href="#pripojeni">Uložená připojení</a> s výchozím připojením, automatickým připojením po přihlášení, jiným obslužným serverem, statistikami a logem; <a href="#vzhled">13 šablon vzhledu</a> včetně <a href="#vzhled-ios">iOS 27</a> a <a href="#vzhled-windows">Windows 11</a>, světlý / tmavý tón podle systému a pět stylů ikon; vše řízené z konzole (<a href="#klient-addony">Client &amp; addons</a>); rychlejší načítání. Přehled v <a href="#zmeny-32">seznamu změn 3.2</a>.</p></div>
@@ -314,7 +315,8 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
       <tr><td>Účty, WebAuthn</td><td><code>server/accounts/store.ts</code>, <code>routes.ts</code>, <code>webauthn.ts</code>, <code>cbor.ts</code></td></tr>
       <tr><td>Úložiště</td><td><code>server/storage/*</code> — <code>service.ts</code>, <code>global-store.ts</code>, <code>user-store.ts</code>, <code>keys.ts</code></td></tr>
       <tr><td>Monitoring a audit</td><td><code>server/monitor/traffic.ts</code>, <code>audit.ts</code>, <code>system.ts</code>; API <code>server/admin-api.ts</code></td></tr>
-      <tr><td>Admin služba a konzole</td><td><code>server/admin.ts</code>, <code>admin-ui/public/</code> (<code>console.js</code>, <code>legacy-tools.js</code>)</td></tr>
+      <tr><td>Admin služba a konzole</td><td><code>server/admin.ts</code>, <code>admin-ui/public/</code> (<code>console.js</code>, <code>builder-kit.js</code>, <code>menu-builder.js</code>, <code>layout-builder.js</code>, <code>modules.js</code>, <code>legacy-tools.js</code>)</td></tr>
+      <tr><td>Rozvržení (Layout builder)</td><td><code>client/src/lib/layout-tree.ts</code> (model, paleta, validace), <code>client/src/lib/layouts/*</code> (výchozí stromy, kontrakty, ukázky), <code>client/src/components/LayoutView.tsx</code> (vykreslení), <code>client/src/layout-preview.tsx</code> (náhled), <code>server/layout.ts</code>, <code>server/layout-catalog.ts</code></td></tr>
       <tr><td>Kryptografie v prohlížeči</td><td><code>client/src/lib/envelope.ts</code>, <code>identity.ts</code>, <code>crypto.ts</code> (v1), <code>file-transfer.ts</code>, <code>message-kinds.ts</code></td></tr>
       <tr><td>Validace příchozích dat</td><td><code>client/src/lib/validate.ts</code></td></tr>
       <tr><td>Aplikace</td><td><code>client/src/App.tsx</code> a komponenty v <code>client/src/components/</code></td></tr>
@@ -953,7 +955,8 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
       <tr><td>Client &amp; addons <span class="badge b-acc">3.2</span></td><td>využití uložených připojení; jejich politika a další signalizační servery; povolené šablony vzhledu, výchozí šablona, tón a ikony, zámek (<a href="#klient-addony">níže</a>)</td></tr>
       <tr><td>Modules &amp; groups <span class="badge b-acc">4.0</span></td><td>moduly aplikace zapnuté pro všechny, jen pro některé skupiny, nebo vypnuté; vlastní skupiny uživatelů (<a href="#moduly">níže</a>)</td></tr>
       <tr><td>Menu builder <span class="badge b-acc">4.0</span></td><td>menu a navigace aplikace: pořadí přetažením, sekce, položky, HTML s proměnnými, oddělovače, speciální tlačítka, styly a stavy, náhled (<a href="#menu-builder">Menu builder</a>)</td></tr>
-      <tr><td>Layout, Telefonie, AI</td><td>přenesené nástroje z předchozí administrace</td></tr>
+      <tr><td>Layout builder <span class="badge b-acc">4.0.5</span></td><td>GUI designer rozvržení aplikace: paleta prvků, strom s přetahováním, vlastnosti s našeptáváním, šablony, náhled samotné aplikace; texty a chování zpráv (<a href="#layout-builder">Layout builder</a>)</td></tr>
+      <tr><td>Telefonie, AI</td><td>přenesené nástroje z předchozí administrace</td></tr>
     </tbody>
   </table>
   <div class="grid2">
@@ -1069,6 +1072,47 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
   {ifset $session.room} · {$session.room|upper} · {$room.peers} {_'menu.peers'}{/ifset}&lt;/div&gt;
 &lt;button data-action="panel:settings"&gt;{icon settings} {_'menu.settings'}&lt;/button&gt;
 &lt;button data-action="fn:setTheme:ios"&gt;iOS&lt;/button&gt;</code></pre>
+</section>
+
+<section class="doc" id="layout-builder" data-group="Provoz">
+  <h2>Layout builder — GUI designer <span class="badge b-acc">4.0.5</span><a class="anchor" href="#layout-builder">#</a></h2>
+  <p class="lead">Konzole › <i>Layout builder</i>. Části aplikace jsou od 4.0.5 <b>stromy prvků</b> — data, která kreslí <code>LayoutView.tsx</code>. Výchozí stromy vykreslují přesně totéž, co dřív kód komponent: při převodu se porovnal DOM starých a nových komponent v 248 situacích (typy zpráv, přílohy, zapečetění, mizení, stavy doručení, widget se všemi stavy lidí, lišta, okno chatu, psaní) a výsledek hlídají snímky v testech. Správce tak mění design i strukturu bez zásahu do kódu; nezměněná rozvržení dál sledují aktualizace aplikace.</p>
+  <table>
+    <thead><tr><th>Rozvržení</th><th>Co kreslí</th><th>Živé části</th></tr></thead>
+    <tbody>
+      <tr><td>App bar</td><td>logo (otevře okno Místnost), stav spojení, přepínač uložených připojení, celá obrazovka</td><td>odznak účtu, menu (<a href="#menu-builder">Menu builder</a>)</td></tr>
+      <tr><td>Chat window</td><td>informační pruh (oznámení, místnost, Odpojit, Kopírovat), konverzace, prázdný stav, „zobrazit starší“</td><td>karta přenosu souboru, zpráva, pole pro psaní</td></tr>
+      <tr><td>Incoming / Outgoing / System message</td><td>bublina: hlavička, čas a ikony, citace, přeposlání, soukromé, tělo s odkazy, přílohy, zapečetění, podržení, mizení, akce, stav doručení</td><td>odznak odesílatele (příchozí)</td></tr>
+      <tr><td>Composer</td><td>citovaná zpráva, emoji, přílohy, pole, patička s příjemci</td><td>hlasová zpráva, odeslání s volbami</td></tr>
+      <tr><td>Recipients widget / button</td><td>hlavička, nastavení, lidé s latencí a volbou, místnost, vše / nic; minimalizované tlačítko</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <figure><img src="img/lb-chat.png" alt="Layout builder" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 25 — Layout builder: záložky rozvržení, paleta, strom, vlastnosti, náhled (šablona iOS 27) s vybranou zprávou.</figcaption></figure>
+  <h3 id="layout-paleta">Paleta a nastavení prvků</h3>
+  <ul>
+    <li><b>Rozložení:</b> Panel (<code>div</code>, <code>section</code>, <code>header</code>, <code>nav</code>…), Area (<code>span</code>, <code>strong</code>, <code>small</code>…), Row, Column, Grid, List a List item, Group (bez vlastního prvku). <b>Text a média:</b> Text (šablona; formát <i>links</i>), Heading, Paragraph, Label, Link, Icon (207 ikon), Image, Audio, Logo, Avatar, HTML (bezpečné), Separator. <b>Ovládání:</b> Button, Input (text, password, number, email, range, color, file…), Text area, Select + Option, Form. <b>Logika:</b> App part (živá část aplikace), Template (šablona prvků). Kontejnery se libovolně vnořují.</li>
+    <li><b>Každé pole našeptává během psaní</b> (šipky, Enter / Tab): tag, <b>třídy, které styly aplikace opravdu mají</b> (čtou se z buildu), názvy atributů podle tagu a jejich hodnoty (<code>type</code> inputu, <code>role</code>, <code>target</code>, <code>autocomplete</code>…), 114 vlastností CSS s hodnotami (<code>display</code>: block, flex, grid, contents…), proměnné rozvržení (<code>{$room}</code>, <code>$peers</code>), akce a živé části.</li>
+    <li>Hodnota atributu je šablona, nebo výraz po <code>=</code> se zachovaným typem: <code>=$openPeerCount == 0</code>, <code>=$private ? '1' : null</code> (<code>null</code> atribut vynechá). Výrazy umí <code>&amp;&amp; || ! == != &lt; &gt;</code>, podmínku <code>? :</code> a filtry.</li>
+    <li><b>Logika:</b> zobrazit jen když, opakovat pro každou položku seznamu (<code>$peers</code> jako <code>$p</code>, klíč, <code>$iterator</code>), CSS z dat, ref a <b>události → akce</b> s argumentem (<code>click</code> → <code>togglePeer</code>, <code>$p.id</code>).</li>
+    <li><b>Styl a stavy</b> — týž editor jako v Menu builderu, včetně hover, click, focus a current.</li>
+  </ul>
+  <div class="grid2">
+    <figure><img src="img/lb-css.png" alt="Našeptávání CSS" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 26 — Vlastnosti tlačítka: třídy, atributy, CSS s našeptanými hodnotami <code>display</code>, událost → akce.</figcaption></figure>
+    <figure><img src="img/lb-widget.png" alt="Widget příjemců v náhledu" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 27 — Widget příjemců (Windows 11, tmavý tón) se strukturou nastavení a opakováním lidí.</figcaption></figure>
+  </div>
+  <h3 id="layout-prace">Strom, šablony, náhled</h3>
+  <ul>
+    <li>Přetažení z palety do stromu (dovnitř, před, za), přesouvání, <kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd>, duplikace, zabalení do panelu a rozbalení, skrytí, smazání, kopírovat / vložit i mezi rozvrženími, zpět / znovu, export / import.</li>
+    <li><b>Šablony:</b> <i>Save as template</i> uloží vybraný prvek; z palety se vloží propojeně (změna šablony se projeví všude, kde je) nebo jako kopie; šablona dostane argument jako <code>$arg</code> a upravuje se ve vlastní záložce.</li>
+    <li><b>Náhled je aplikace sama</b> (<code>layout-preview.html</code>): skutečné komponenty, CSS a šablony vzhledu s ukázkovými lidmi a zprávami; situace podle rozvržení, šablona, tón, jazyk, šířka (desktop / tablet / telefon). Klepnutí vybere prvek, v režimu <i>click tries it</i> náhled reaguje (emoji, příjemci, psaní). Chyby ve výrazech se ukáží u prvku.</li>
+    <li>Rozvržení, které se od výchozího neliší, se neukládá; u uloženého builder upozorní, když aktualizace aplikace změnila výchozí stav, ze kterého vzniklo.</li>
+    <li>Záložka <i>Texts &amp; behaviour</i>: krátké texty (<code>{{placeholders}}</code>, includes), co zprávy ukazují, sbalování systémových zpráv a rychlé barvy komponent (dřívější nastavení).</li>
+  </ul>
+  <div class="grid2">
+    <figure><img src="img/lb-help.png" alt="Nápověda Layout builderu" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 28 — Plovoucí nápověda: hodnoty, akce, části, filtry, makra, výrazy, prvky.</figcaption></figure>
+    <figure><img src="img/app-layout-built.png" alt="Rozvržení z builderu v aplikaci" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 29 — V aplikaci: nové tlačítko v psaní (otevírá emoji) a šablona emoji tlačítka v liště.</figcaption></figure>
+  </div>
+  <p><b>Bezpečnost:</b> server i aplikace validují strom týmž modulem (<code>layout-tree.ts</code>) — jen známé prvky a tagy, žádné <code>on*</code> atributy, <code>style</code>, <code>srcdoc</code> ani <code>formaction</code>, adresy jen <code>https:</code>, cesty webu, <code>#</code>, <code>mailto:</code>, <code>tel:</code> a <code>data:image</code> (při vykreslení i <code>data:</code>/<code>blob:</code> z dat aplikace, nikdy <code>javascript:</code>), CSS bez <code>url()</code> a výrazů, limity velikosti. Vykreslení nikdy nepoužívá <code>innerHTML</code>; prvek HTML jde přes bezpečný parser. Konzole a náhled si píší jen se stejným původem.</p>
 </section>
 
 <section class="doc" id="audit" data-group="Provoz">
@@ -1204,7 +1248,7 @@ curl -X POST -H <span class="s">"Authorization: Bearer $ADMIN_API_TOKEN"</span> 
   -d <span class="s">'{"kind":"show-notification","deviceId":"dev-3f9c0a","payload":{"title":"Údržba","body":"Ve 22:00 restart"}}'</span> \
   https://chat.example.com/api/admin/commands</code></pre>
   <h3 id="api-admin-sluzba">Admin služba (<code>/admin/*</code>)</h3>
-  <p>Layout builder (<code>/admin/layout</code>), telefonie a SIP (<code>/admin/telephony/*</code> včetně <code>sip/trunks</code>), AI a řeč (<code>/admin/plugins*</code>, <code>/admin/logs/stream</code>). Dřívější <code>/admin/commands/*</code>, <code>/admin/clients</code>, <code>/admin/test/push</code>, <code>/admin/metrics</code> a <code>/admin/logs/recent</code> dnes přeposílají na hlavní službu — ve 2.x četly prázdnou kopii stavu v jiném procesu, takže příkazy nikdy nedorazily.</p>
+  <p>Layout builder: <code>GET /admin/layout</code> (konfigurace, výchozí hodnoty a katalog — paleta, atributy, CSS, třídy aplikace, ikony, rozvržení s výchozími stromy a kontrakty), <code>PUT /admin/layout</code> (operátor, tělo do 4 MB), <code>POST /admin/layout/reset</code>; náhled <code>/layout-preview.html</code> (<code>frame-ancestors 'self'</code>) a <code>/assets/*</code> z <code>dist/public</code>. Telefonie a SIP (<code>/admin/telephony/*</code> včetně <code>sip/trunks</code>), AI a řeč (<code>/admin/plugins*</code>, <code>/admin/logs/stream</code>). Dřívější <code>/admin/commands/*</code>, <code>/admin/clients</code>, <code>/admin/test/push</code>, <code>/admin/metrics</code> a <code>/admin/logs/recent</code> dnes přeposílají na hlavní službu — ve 2.x četly prázdnou kopii stavu v jiném procesu, takže příkazy nikdy nedorazily.</p>
 </section>
 
 <section class="doc" id="cluster" data-group="Provoz">
@@ -1409,6 +1453,17 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
   </table>
 </section>
 
+<section class="doc" id="zmeny-405" data-group="Plán">
+  <h2>Změny ve 4.0.5<a class="anchor" href="#zmeny-405">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>Přidáno</h4><p>Layout builder jako GUI designer: rozvržení lišty, okna chatu, zpráv (3), psaní a widgetu příjemců (2) jako stromy prvků; paleta 28 prvků, strom s přetahováním, vlastnosti s našeptáváním (třídy z buildu, atributy, CSS, proměnné, akce), podmínky, opakování, události, šablony prvků, kopírování mezi rozvrženími, náhled samotné aplikace (<code>layout-preview.html</code>). Šablonovací jazyk: podmínka <code>? :</code>, filtr <code>t</code>.</p></div>
+    <div class="card"><h4>Změněno</h4><p>MessageBubble, RecipientsWidget, lišta, okno chatu a pole pro psaní se kreslí z rozvržení (DOM beze změny, ověřeno). Menu builder a Layout builder sdílejí prvky formulářů, výběr ikon a barev, editor stylů a nápovědu (<code>builder-kit.js</code>). Katalog ikon 207 (přejmenované ikony lucide se hledají i pod starým jménem).</p></div>
+    <div class="card"><h4>Kompatibilita</h4><p><code>layout.json</code> dostal <code>layouts</code> a <code>blocks</code>; dřívější barvy, texty a chování platí dál. Protokol, šifrování ani data účtů se nemění.</p></div>
+    <div class="card"><h4>Bezpečnost</h4><p>Stromy validuje server i klient, vykreslení bez <code>innerHTML</code>, adresy a CSS se kontrolují i při vykreslení. Náhled smí zarámovat jen konzole (stejný původ).</p></div>
+  </div>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 4.0.5.</p>
+</section>
+
 <section class="doc" id="zmeny-40" data-group="Plán">
   <h2>Změny ve 4.0.0<a class="anchor" href="#zmeny-40">#</a></h2>
   <div class="grid2">
@@ -1417,7 +1472,7 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
     <div class="card"><h4>Stávající účty</h4><p>Fungují dál: jejich ID je jejich uživatelské jméno (nepřejmenovávají se), hash důkazu klíče se uloží při prvním přihlášení 4.0. Menu vypadá stejně, dokud ho správce v builderu nezmění.</p></div>
     <div class="card"><h4>Kompatibilita</h4><p>Signalizační protokol a šifrování místností beze změny; hello nově nese uživatelské jméno (starší klienti ho ignorují). Nová data: <code>menu-config.json</code>, <code>modules</code> a <code>groups</code> v konfiguraci klienta, <code>username</code> a <code>keyVerifier</code> u účtu.</p></div>
   </div>
-  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 4.0.0.</p>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>.</p>
 </section>
 
 <section class="doc" id="zmeny-33" data-group="Plán">
