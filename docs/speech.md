@@ -58,3 +58,21 @@ speak({ text: "Ahoj", lang: "cs-CZ", preset: "female", rate: 1.0 });
 const handle = startRecognition("cs-CZ", { onFinal: (t) => console.log(t) });
 handle?.stop();
 ```
+
+## Server voices and transcription (optional, 4.14)
+
+Besides the browser's own speech, the operator can offer server speech:
+synthesis (OpenAI `tts-1`…, ElevenLabs voices, any OpenAI-compatible
+server) and transcription (OpenAI `whisper-1`…, Hugging Face
+`openai/whisper-large-v3`, compatible servers). It is set up in the console
+(AI & speech: a provider with a speech model, the Speech switch, the default
+model and voice) and tried there (Speech tab). **This audio and text leave
+the device**: they go to the server and the operator's provider; the Speech
+panel offers them only when the operator turned them on.
+
+- `GET /api/speech/status` — `{ tts: { enabled, connectors: [{ id, label }] }, stt: … }` for this user (their account's groups)
+- `POST /api/speech/tts` — `{ text, connector?, voice? }` → `{ audioBase64, mime, connector }`
+- `POST /api/speech/stt` — raw audio (or `{ audioBase64, mime, language }`) → `{ text, connector }`
+
+Every call is in the console's journal (who, which model, how long) — never
+the audio, and the text only while the owner has content logging on.

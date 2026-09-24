@@ -1,6 +1,6 @@
 # M5cet Functions — architektura (návrh pro 5.0)
 
-> Stav: **návrh k odsouhlasení** (2026-09-24). Popisuje, jak z modulu
+> Stav: **odsouhlaseno** (2026-09-24, rozhodnutí v [kap. 17](#17-rozhodnutí-2026-09-24)). Popisuje, jak z modulu
 > „AI & speech“ vyrůst v platformu **funkcí, balíčků a modelů**, které se
 > spouštějí z chatu, z webhooků a z konzole — napsané v JavaScriptu nebo
 > Pythonu, spouštěné v sandboxu, asynchronně přes frontu. Nic z toho zatím
@@ -41,9 +41,9 @@
 - Plná kompatibilita s npm / PyPI balíčky s nativním kódem (viz
   [trusted runtime](#43-trusted-runtime-volitelně) — vědomá výjimka jen pro vlastníka).
 - Funkce psané běžnými uživateli (5.0: autoři jsou operátoři a vlastník;
-  otevření uživatelům je samostatné rozhodnutí — [otevřené otázky](#17-otevřená-rozhodnutí)).
+  otevření uživatelům je samostatné rozhodnutí — [rozhodnutí](#17-rozhodnutí-2026-09-24)).
 
-## 2. Výchozí stav (4.13)
+## 2. Výchozí stav (před 4.14)
 
 - `server/plugins/*`: konektory AI (`ai.ts`) a řeči (`speech.ts`) čtou klíče
   **jen z proměnných prostředí**, registry vybírá výchozí podle
@@ -411,8 +411,9 @@ Perplexity, llama.cpp, GPT4All, Hugging Face i Ollama (compat); specifika
   uživatele a model; při překročení odmítnutí s vysvětlením a alert.
 - **Zdraví**: pravidelný `health()`, jistič (po sérii chyb přepne na záložní),
   metriky do existujícího `/metrics`.
-- Aplikace: `AiPanel` nahradí **asistent v chatu** (`/ai …`, `/shrň`,
-  `/přelož …` jako vestavěné modely) nad touto vrstvou.
+- Aplikace (4.14): `AiPanel` je **asistent** se streamem a Markdownem; příkazy
+  v chatu (`/ai …`, `/shrň`, `/přelož …` jako vestavěné modely) nad touto
+  vrstvou přijdou s etapou 3.
 
 ## 11. Konzole: IDE, běhy, tutoriál
 
@@ -489,26 +490,56 @@ sandboxu), dokumentací a nasazením; další staví na předchozí.
 
 | Etapa | Obsah | Hotovo, když |
 |---|---|---|
-| **1 — AI & speech 5.0** | vrstva poskytovatelů (8 AI + řeč), šifrované přístupy, katalog modelů, zkušebna, logy volání, kvóty a náklady, zdraví; nové API aplikace (stream); asistent v chatu místo `AiPanel` | každý poskytovatel projde testem v zkušebně (mock server v testech), stream v chatu, logy a náklady v konzoli |
+| **1 — AI & speech** (4.14, hotovo) | vrstva poskytovatelů (8 AI + řeč), šifrované přístupy, katalog modelů, zkušebna, logy volání, kvóty a náklady, zdraví; nové API aplikace (stream); asistent v chatu místo `AiPanel` | každý poskytovatel projde testem v zkušebně (mock server v testech), stream v chatu, logy a náklady v konzoli |
 | **2 — Runtime** | `m5cet-runner`, fronta, QuickJS + Pyodide sandboxy, SDK jádro (`sys`, `run`, `caller`, `log`, `out`, `session`, `cache`, `codec`, `id`, `crypto` základ), balíčky a verze, modely, IDE v1, zkušební běh, běhy v konzoli | sada útoků na sandbox (únik, paměť, smyčka, SSRF) neprojde; zkušební běh JS i Pythonu z IDE |
 | **3 — Chat** | executor `/klíč`: našeptávání, nápověda parametrů, parsování, validace, karty běhu, výstupy (`message.function`), prompt a formulář, flash, okna; E2EE štítky a souhlas | E2E: dva lidé v místnosti, jeden spustí serverový a prohlížečový model, druhý vidí výstup |
 | **4 — Síť a integrace** | `http` (cookies, form-data, raw), `dns`, `crypto` plné (SSH, PGP, X.509, JWT), `codes`, komprese, webhooky (vstupní, běhu), `on_event`, trvalé pokračování, plány, API tokeny | webhook běhu doručí data do `on_event` po restartu runneru |
 | **5 — AI ve funkcích** | `m5.ai` (chat, stream, reasoning, embed, obrázky, řeč), agenti s nástroji a potvrzováním, rozpočty běhu | agent s dvěma nástroji a potvrzením v chatu |
 | **6 — Autor** | interaktivní tutoriál, galerie šablon, import / export `.m5pkg`, diff verzí, trusted runtime (volitelný) | nový operátor projde tutoriál a publikuje model bez dokumentace |
 
-## 17. Otevřená rozhodnutí
+### Stav etapy 1 (4.14)
 
-1. **Výchozí místo běhu** — server, nebo prohlížeč tam, kde model obojí umí?
-   (Návrh: prohlížeč, pokud model nepotřebuje server; E2EE je hlavní
-   vlastnost M5cet.)
-2. **Python na serveru** — Pyodide (bezpečné, bez instalace, pomalejší start
-   ~1 s, řešeno poolem) vs. systémový Python v nsjail (rychlejší, potřebuje
-   nastavení hostitele). Návrh: Pyodide v základu, nsjail jen v trusted runtime.
-3. **Kdo píše funkce** — jen vlastník a operátoři (návrh pro 5.0), nebo i
-   uživatelé ve skupině „vývojáři“ s tvrdšími limity?
-4. **Redis** — povinný až v clusteru (návrh), nebo vždy?
-5. **Rozpočty AI** — výchozí měsíční limit na instanci (návrh: 0 = vypnuto,
-   dokud ho vlastník nenastaví), a zda smí AI v modelech používat i hosté.
+Hotovo: adaptéry Anthropic (Messages API, adaptivní uvažování s `effort`,
+rozpočet u starších modelů), OpenAI-kompatibilní (OpenAI, Open WebUI,
+Perplexity se zdroji, llama.cpp, GPT4All, Hugging Face, jiné; řeč a přepis),
+Ollama (NDJSON, `think`), ElevenLabs; klíče zašifrované master klíčem
+úložiště a svázané s poskytovatelem; modely od poskytovatele i jménem, ceny;
+skupiny; limity instance (tokeny, USD za měsíc) a uživatele (volání a tokeny
+za den), velikosti; žurnál v SQLite s obsahem jen při dočasném ladění;
+konzole (poskytovatelé, modely, zkušebna se streamem a požadavkem, řeč,
+volání živě / CSV / souhrny, nastavení); asistent v aplikaci (rozvržení
+`panel.ai`, stream, Markdown, uvažování, zdroje, zastavení).
+
+Oproti plánu v kap. 10 zatím chybí (přijde s etapou 5 — AI ve funkcích — nebo
+podle potřeby dřív): pravidelný `health()` s jističem a záložním řetězcem
+modelů, rozpočty po poskytovatelích, skupinách a modelech, embeddings a
+obrázky, metriky AI v `/metrics`, OpenAI Responses API (používá se Chat
+Completions, které OpenAI dál podporuje) a příkazy `/ai` v chatu (etapa 3).
+
+## 17. Rozhodnutí (2026-09-24)
+
+1. **Místo běhu** — model deklaruje `runtime: "browser" | "server" | "auto"`
+   (výchozí `auto`). `auto` poběží **v prohlížeči volajícího**, pokud model
+   nepotřebuje nic serverového (HTTP mimo CORS, DNS, AI, tajemství, webhooky,
+   plány, globální cache); jinak na serveru a uživatel to vidí předem (štítek
+   „server“, souhlas při prvním spuštění v místnosti). Konzole u modelu
+   ukáže, proč dopadl tam, kam dopadl. Důvod: E2EE je hlavní vlastnost M5cet
+   a výpočet, který server nepotřebuje, ho nemá vidět.
+2. **Python = Pyodide.** Balíček `pyodide` je závislost projektu; instalační
+   i aktualizační skript ho nainstalují (s předem schválenými čistými Python
+   balíčky pro offline běh) a ověří, že se interpret spustí. Systémový Python
+   v nsjail jen v trusted runtime (etapa 6).
+3. **Autoři funkcí** v 5.0: vlastník a operátoři.
+4. **Redis** je v pořádku: instalační skript ho nabídne (a nastaví
+   `REDIS_URL`) pro frontu, cache a zámky; bez něj běží fronta a cache nad
+   SQLite (jeden server, vývoj, testy).
+5. **Rozpočty AI**: měsíční limit instance je ve výchozím stavu **0 = AI
+   vypnutá**, dokud ho vlastník nenastaví (tokeny a volitelně USD, když jsou
+   zadané ceny modelů); limity na uživatele a den; zkušebna a testy v konzoli
+   se počítají, ale limit je neblokuje. Hosté AI používají, jen když je
+   skupina „Hosté“ u poskytovatele povolená.
+
+Verze: etapa 1 = **4.14**, další etapy 4.15–4.19, celek **5.0**.
 
 ## 18. Příklad: `/spustmodel1`
 

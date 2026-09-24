@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **4.13.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **4.14.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 4.13.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-4.13.0.pdf`](docs/site/m5cet-dokumentace-4.13.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 4.14.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-4.14.0.pdf`](docs/site/m5cet-dokumentace-4.14.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -84,6 +84,16 @@ místnosti.
   servery) a šablony GUI (povolené, výchozí, zámek); **Modules & groups**
   zapíná moduly pro skupiny uživatelů a **Menu builder** skládá menu
   aplikace (přetahování, HTML s proměnnými, styly a stavy, živý náhled).
+- **AI a řeč (4.14)** — poskytovatelé Claude, OpenAI, Open WebUI,
+  Perplexity, Ollama, llama.cpp, GPT4All, Hugging Face a ElevenLabs s klíči
+  zašifrovanými na serveru, modely načtené od poskytovatele (uvažování,
+  ceny), skupiny, které je smí používat, **limity** (měsíc, uživatel a den;
+  výchozí 0 = AI vypnutá, dokud je vlastník nenastaví), **zkušebna** se
+  streamem a požadavkem, test řeči, **žurnál všech volání** (tokeny, cena,
+  doba; obsah jen při dočasném ladění), a v aplikaci **asistent** s
+  odpověďmi psanými průběžně (Markdown, uvažování, zdroje). První etapa
+  frameworku funkcí ([`docs/functions-architecture.md`](docs/functions-architecture.md)).
+  Viz [dokumentace › AI a řeč](docs/site/index.html#ai).
 - **Layout builder — GUI designer (4.0.5, 4.13)** — lišta, okno chatu,
   zprávy, psaní a widget příjemců, od 4.13 i okno Místnost, okna, dialogy
   a panely (44 rozvržení v sekcích) jsou stromy prvků z palety (panely,
@@ -665,7 +675,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 4.13.0       | aktuální — Layout builder pro celou aplikaci: okno Místnost, okna, dialogy a panely jako rozvržení (44 v sekcích), varianty pro skupiny a šablony vzhledu, historie s rozdíly a návratem, sloučení s novým výchozím po aktualizaci, vložení HTML, kontrola přístupnosti, kompilované šablony a rozvržení |
+| 4.14.0       | aktuální — AI a řeč od základu: 9 druhů poskytovatelů se zašifrovanými klíči, modely, skupiny, limity (výchozí 0 = vypnuto), zkušebna, test řeči, žurnál volání; asistent v aplikaci se streamem a Markdownem |
+| 4.13.0       | Layout builder pro celou aplikaci: okno Místnost, okna, dialogy a panely jako rozvržení (44 v sekcích), varianty pro skupiny a šablony vzhledu, historie s rozdíly a návratem, sloučení s novým výchozím po aktualizaci, vložení HTML, kontrola přístupnosti, kompilované šablony a rozvržení |
 | 4.0.6        | oprava konektorů AI a řeči (Claude 5 bez `temperature`, HuggingFace Inference Providers), zapínání modulů AI a Speech v konzoli |
 | 4.0.5        | Layout builder jako GUI designer: rozvržení lišty, chatu, zpráv, psaní a widgetu jako stromy prvků, paleta, našeptávání, šablony prvků, náhled aplikace |
 | 4.0.0        | Server-enhanced jen s passkey, jedinečné uživatelské jméno, ověřené přihlášení (globální klíč, databáze, trezor) s auditem, `/signin` a `/signup`, ochrana navigace, kontrola verzí s opravou, moduly a skupiny, Menu builder |
@@ -706,7 +717,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/accounts-away.md`](docs/accounts-away.md)        | Passkey účty, data chatu, stav away + relay    |
 | [`docs/storage.md`](docs/storage.md)                    | Serverové úložiště: SQLite + SQLCipher, API    |
 | [`docs/lifecycle-and-notices.md`](docs/lifecycle-and-notices.md) | Pozastavení okna, flash oznámení, fronta zpráv |
-| [`docs/speech.md`](docs/speech.md)                      | Web Speech API                                 |
+| [`docs/speech.md`](docs/speech.md)                      | Web Speech API; serverové hlasy a přepis (4.14) |
+| [`docs/functions-architecture.md`](docs/functions-architecture.md) | Architektura frameworku funkcí (JS / Python ve WASM, balíčky, modely, `/příkazy` v chatu, webhooky, IDE) a rozhodnutí; etapa 1 = AI a řeč 4.14 |
 | [`docs/browser-limitations.md`](docs/browser-limitations.md) | Co prohlížeč (ne)umí                       |
 | [`docs/build-and-deploy.md`](docs/build-and-deploy.md)  | npm workflow, PWA, sanity checky               |
 | [`INSTALL.md`](INSTALL.md)                              | `install.sh` / `update.sh` / `uninstall.sh`: režimy, parametry, zálohy, rollback |

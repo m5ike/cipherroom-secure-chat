@@ -9,7 +9,7 @@ vykresloval kód (ověřeno porovnáním DOM starých a nových komponent ve
 svůj vlastní [Menu builder](site/index.html#menu-builder).
 
 **4.13:** rozvržením je celá aplikace — i okno Místnost, okna, dialogy a
-panely (44 rozvržení v pěti sekcích); k tomu varianty pro skupiny uživatelů a
+panely (44 rozvržení v pěti sekcích, od 4.14 i asistent AI — 45); k tomu varianty pro skupiny uživatelů a
 šablony vzhledu, historie verzí s rozdíly a návratem, třícestné sloučení
 vlastního rozvržení s novým výchozím po aktualizaci aplikace, vložení HTML
 jako prvků a kontrola přístupnosti.
@@ -35,7 +35,7 @@ v builderu v sekcích (`LAYOUT_GROUP`):
 | Room window | `room.tabs` (záložky v záhlaví), `room` (obsah okna Místnost; slot `share`, `needSignIn`) |
 | Windows | `window` (okno panelu, `SimpleModal`), `window.large` (velké okno / šuplík, `Modal`) |
 | Dialogs & parts | `part.needSignIn`, `part.signedIn`, `dialog.userInfo`, `dialog.messageInfo`, `dialog.integrity`, `part.shareResult`, `panel.share`, `panel.shareConnection`, `part.invite` |
-| Panels | `dialog.account`, `panel.access`, `panel.retention`, `panel.profile`, `panel.settings`, `panel.privacy`, `panel.encryption`, `panel.notifications`, `panel.analytics`, `panel.roomSecurity`, `panel.trust`, `part.peers`, `part.audio`, `part.video`, `panel.files`, `panel.location`, `panel.speech`, `panel.connection`, `panel.phone`, `panel.connections`, `part.connectionEdit`, `part.connectionDetail`, `part.connectionSettings` |
+| Panels | `panel.ai` (asistent AI, 4.14), `dialog.account`, `panel.access`, `panel.retention`, `panel.profile`, `panel.settings`, `panel.privacy`, `panel.encryption`, `panel.notifications`, `panel.analytics`, `panel.roomSecurity`, `panel.trust`, `part.peers`, `part.audio`, `part.video`, `panel.files`, `panel.location`, `panel.speech`, `panel.connection`, `panel.phone`, `panel.connections`, `part.connectionEdit`, `part.connectionDetail`, `part.connectionSettings` |
 
 Komponenty si strom berou z `LayoutProvider` (`useLayout(id)` /
 `useLayoutBase(id, lang)`): varianta pro skupiny a šablonu diváka, jinak

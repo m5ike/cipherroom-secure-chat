@@ -5,6 +5,58 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [4.14.0] – 2026-09-24
+
+AI a řeč od základu — první etapa frameworku funkcí
+(`docs/functions-architecture.md`). Protokol, šifrování ani data účtů se
+nemění.
+
+### Přidáno
+- **Vrstva AI a řeči** (`server/ai/`): adaptéry **Anthropic** (Messages API,
+  stream, adaptivní uvažování s `effort` u Claude 5, rozpočet uvažování u
+  starších modelů, seznam modelů s jejich schopnostmi), **OpenAI-kompatibilní**
+  (OpenAI, Open WebUI, Perplexity se zdroji, llama.cpp, GPT4All, Hugging Face,
+  jiné servery; syntéza a přepis řeči), **Ollama** (NDJSON, `think`),
+  **ElevenLabs** (hlasy účtu). Odmítnutý parametr se vynechá a zkusí znovu;
+  časový limit do první odpovědi a na ticho během streamu; zrušení s klientem.
+- **Poskytovatelé** v konzoli: klíče zašifrované master klíčem úložiště a
+  svázané s poskytovatelem (`$DATA_DIR/ai/config.json`), nikdy zpět do
+  konzole; adresa; **skupiny**, které je smí používat; test; **modely** od
+  poskytovatele nebo jménem (zapnutí, jméno, uvažování, obrázky, ceny).
+  Klíče z proměnných prostředí (jako dřív) se ukážou jako poskytovatelé
+  „z prostředí“.
+- **Limity**: tokeny a USD za měsíc pro server (výchozí **0 tokenů = asistent
+  vypnutý**, dokud je vlastník nenastaví), volání a tokeny na uživatele a den,
+  nejdelší odpověď a konverzace; konzole se počítá, ale neblokuje.
+- **Žurnál volání** (`$DATA_DIR/ai/journal.db`, SQLite; bez ovladače v
+  paměti): odkud, kdo, model, výsledek, doba, doba do prvního kousku, tokeny,
+  cena; obsah jen při dočasném *content logging* vlastníka (pak se smaže);
+  retence 30 dní; filtry, živý proud, detail, CSV, souhrny.
+- **Konzole › AI & speech** (`admin-ui/public/ai-console.js`): přepínače a
+  souhrn měsíce, poskytovatelé a modely, **zkušebna** (stream, uvažování,
+  zdroje, tokeny, cena, požadavek jak odešel), test řeči (syntéza, přepis
+  nahrávky nebo souboru), volání, výchozí modely a pokyny asistenta, limity,
+  žurnál. API `/admin/ai*` (klíče, adresy, ceny, limity a obsah: vlastník).
+- **Asistent v aplikaci** (`AiPanel`, rozvržení `panel.ai`): modely podle
+  skupin účtu, úroveň uvažování, odpověď psaná průběžně jako **Markdown**
+  (`lib/markdown.ts`, `components/Markdown.tsx` — bez HTML, odkazy jen
+  https / mailto), uvažování, zdroje, zastavení, vložení do zprávy, kopírování;
+  stav, když použít nejde (vypnuto, žádný model, jen pro přihlášené, bez
+  limitu); odmítnutí v jazyce uživatele. API `POST /api/ai/chat` (SSE).
+
+### Změněno
+- `/api/ai/status` a `/api/speech/status` podle přihlášeného účtu a skupin;
+  `/api/ai/complete` a `/admin/plugins`, `/admin/plugins/switches` zůstávají.
+- Manifest `/api/modules` hlásí AI a řeč podle přepínače z konzole a
+  nastavených modelů (dřív jen podle `ENABLE_AI=1` v prostředí).
+- Admin služba předává roli administrátora (`res.locals.adminRole`).
+- Konektory `server/plugins/{registry,routes,connectors}` nahradily adaptéry
+  v `server/ai/`.
+
+### Kompatibilita
+- Po aktualizaci je asistent vypnutý, dokud vlastník nenastaví měsíční limit.
+- Hosté asistenta používají jen se skupinou *Guests* u poskytovatele.
+
 ## [4.13.0] – 2026-09-24
 
 Layout builder pro celou aplikaci. Protokol, šifrování ani data účtů se
