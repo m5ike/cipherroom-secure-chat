@@ -1,6 +1,6 @@
-// Tools ported from the previous admin page: AI & speech connectors and
-// their live log, and the telephony / SIP console (the layout builder is
-// layout-builder.js since 4.0.5). They
+// Tools ported from the previous admin page: the telephony / SIP console
+// (the layout builder is layout-builder.js since 4.0.5, AI & speech
+// ai-console.js since 4.14). They
 // talk to the admin service (/admin/*) with the token the console signed in
 // with (#base / #token, kept in memory — the old page stored it in local
 // storage). Everything a server returns is escaped before it becomes
@@ -29,104 +29,6 @@
     function show(el, data) {
       $(el).textContent = typeof data === "string" ? data : JSON.stringify(data, null, 2);
     }
-
-    function connectorRow(c) {
-      const badge = c.configured ? '<span class="ok">configured</span>' : '<span class="err">' + esc(c.reason || 'not configured') + '</span>';
-      const model = c.model ? ' · <code>' + esc(c.model) + '</code>' : '';
-      return '<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--border);padding:6px 0;">'
-        + '<span><b>' + esc(String(c.kind || '').toUpperCase()) + '</b> ' + esc(c.label) + model + ' — ' + badge + '</span>'
-        + '<button data-kind="' + esc(c.kind) + '" data-id="' + esc(c.id) + '" class="secondary btnTestConn"' + (c.configured ? '' : ' disabled') + '>Test</button>'
-        + '</div>';
-    }
-    // 4.0.6: the AI and speech modules are switched here (unless the environment fixes them).
-    function renderSwitches(s) {
-      const box = $("pluginSwitches");
-      box.textContent = "";
-      const sw = s.switches || { ai: { enabled: s.enabled.ai, source: "env", env: "ENABLE_AI" }, speech: { enabled: s.enabled.speech, source: "env", env: "ENABLE_SPEECH" } };
-      for (const [key, label] of [["ai", "AI module"], ["speech", "Speech module (TTS / STT)"]]) {
-        const st = sw[key];
-        const lab = document.createElement("label");
-        lab.className = "row";
-        lab.style.gap = "6px";
-        lab.style.alignItems = "center";
-        const cb = document.createElement("input");
-        cb.type = "checkbox";
-        cb.id = "switch-" + key;
-        cb.checked = Boolean(st.enabled);
-        cb.disabled = st.source === "env";
-        cb.onchange = async () => {
-          cb.disabled = true;
-          const r = await api("/admin/plugins/switches", { method: "PUT", body: JSON.stringify({ [key]: cb.checked }) });
-          if (!r.ok) { cb.checked = !cb.checked; show("pluginOut", r.json); cb.disabled = false; return; }
-          renderPlugins(r.json);
-          show("pluginOut", { [key]: cb.checked ? "on" : "off" });
-        };
-        const text = document.createElement("span");
-        text.textContent = label + ": " + (st.enabled ? "ON" : "off") + (st.source === "env" ? " (fixed by " + st.env + " in the environment)" : st.source === "default" ? " (never switched on)" : "");
-        lab.append(cb, text);
-        box.append(lab);
-      }
-    }
-    function renderPlugins(s) {
-      const all = [].concat(s.ai || [], s.tts || [], s.stt || []);
-      renderSwitches(s);
-      $("connectorList").innerHTML = all.map(connectorRow).join("");
-      document.querySelectorAll(".btnTestConn").forEach((b) => b.onclick = () => testConnector(b.dataset.kind, b.dataset.id));
-    }
-    async function loadPlugins() {
-      const r = await api("/admin/plugins");
-      if (!r.ok) return show("pluginOut", r.json);
-      renderPlugins(r.json);
-      show("pluginOut", { defaults: r.json.defaults, enabled: r.json.enabled });
-    }
-    $("btnPlugins").onclick = () => void loadPlugins();
-    // Opening the panel shows the switches and connectors at once.
-    if (window.M5Console) window.M5Console.addRoute("plugins", ["AI & speech", "Switches, connectors and their live log", loadPlugins]);
-    async function testConnector(kind, id) {
-      show("pluginOut", "Testing " + kind + "/" + id + "…");
-      const r = await api("/admin/plugins/test", { method: "POST", body: JSON.stringify({ kind, id, text: $("pluginTestText").value.trim() || undefined }) });
-      if (r.ok && kind === "tts" && r.json.result && r.json.result.audioBase64) {
-        const p = $("ttsPlayer");
-        p.src = "data:" + (r.json.result.mime || "audio/mpeg") + ";base64," + r.json.result.audioBase64;
-        p.style.display = "block";
-        const clone = Object.assign({}, r.json.result); delete clone.audioBase64; r.json.result = Object.assign(clone, { audioBase64: "[" + r.json.result.audioBase64.length + " b64 chars]" });
-      }
-      show("pluginOut", r.json);
-    }
-
-    let liveCtrl = null;
-    $("btnLiveLog").onclick = async () => {
-      if (liveCtrl) liveCtrl.abort();
-      liveCtrl = new AbortController();
-      const base = $("base").value.trim().replace(/\/$/, "");
-      const token = $("token").value.trim();
-      try {
-        const res = await fetch(base + "/admin/logs/stream", { headers: token ? { Authorization: "Bearer " + token } : {}, signal: liveCtrl.signal });
-        if (!res.ok || !res.body) { $("liveLog").textContent = "stream failed (" + res.status + ")"; return; }
-        $("liveLog").textContent = "";
-        const reader = res.body.getReader();
-        const dec = new TextDecoder();
-        let buf = "";
-        while (true) {
-          const { value, done } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const parts = buf.split("\n\n"); buf = parts.pop() || "";
-          for (const part of parts) {
-            const line = part.split("\n").find((l) => l.startsWith("data:"));
-            if (!line) continue;
-            try {
-              const e = JSON.parse(line.slice(5).trim());
-              const t = new Date(e.ts).toLocaleTimeString();
-              $("liveLog").textContent += t + "  [" + e.level + "] " + e.kind + (e.connector ? "/" + e.connector : "") + "  " + e.message + (e.ms != null ? " (" + e.ms + "ms)" : "") + "\n";
-              $("liveLog").scrollTop = $("liveLog").scrollHeight;
-            } catch {}
-          }
-        }
-      } catch (e) { if (e.name !== "AbortError") $("liveLog").textContent += "\n[stream error] " + e.message; }
-    };
-    $("btnLiveStop").onclick = () => { if (liveCtrl) { liveCtrl.abort(); liveCtrl = null; } };
-    $("btnLiveClear").onclick = () => { $("liveLog").textContent = ""; };
 
     // ---- Telephony & SIP console ----
     $("btnTel").onclick = async () => {

@@ -1,6 +1,6 @@
 // Registry of the optional telephony connectors. Reads which providers are
 // present from the environment, exposes their status (without secrets), and
-// resolves the DEFAULT connector for each kind. Mirrors server/plugins/registry.ts.
+// resolves the DEFAULT connector for each kind.
 //
 // One operator gate, OFF by default, keeps these endpoints from becoming an
 // open proxy to paid, billable telephony APIs:

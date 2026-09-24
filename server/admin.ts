@@ -30,10 +30,8 @@ import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { eventStore } from "./events";
 import { isWebPushReady } from "./push";
-import { registrySnapshot, getAi, getTts, getStt } from "./plugins/registry";
 import { pluginLog } from "./plugins/log";
-import { base64ToBytes } from "./plugins/types";
-import { setPluginSwitches } from "./plugins/settings";
+import { registerAiAdminRoutes } from "./ai/admin-routes";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerAdminLayoutRoutes } from "./layout";
 import { distPublicDir } from "./layout-catalog";
@@ -130,6 +128,8 @@ const requireAuth: express.RequestHandler = (req, res, next) => {
     const needed = req.method === "GET" || req.method === "HEAD" ? "auditor" : "operator";
     if (RANK[principal.role] < RANK[needed]) return res.status(403).json({ ok: false, message: `This needs the ${needed} role; you are ${principal.role}.` });
     res.locals.adminName = principal.name;
+    // 4.14: the owner-only AI settings (keys, limits, content logging) read it.
+    res.locals.adminRole = principal.role;
     next();
   });
 };
@@ -182,61 +182,8 @@ app.get("/admin/modules", (_req, res) => {
   res.json({ ok: true, moduleAllowlist: ADMIN_COMMAND_ALLOWLIST, pushReady: isWebPushReady(), eventsBackend: eventStore.backend, mainUrl: MAIN_URL });
 });
 
-// ---- AI / speech plugin console -----------------------------------------
-// Snapshot of every connector and its config state (never secrets).
-app.get("/admin/plugins", (_req, res) => {
-  res.json({ ok: true, ...registrySnapshot() });
-});
-
-// 4.0.6: switch the AI / speech modules on or off (operator). The environment
-// (ENABLE_AI / ENABLE_SPEECH) wins when it is set.
-app.put("/admin/plugins/switches", (req, res) => {
-  const body = (req.body || {}) as Record<string, unknown>;
-  const change: { ai?: boolean; speech?: boolean } = {};
-  if (typeof body.ai === "boolean") change.ai = body.ai;
-  if (typeof body.speech === "boolean") change.speech = body.speech;
-  if (!Object.keys(change).length) return res.status(400).json({ ok: false, message: "Send { ai: true|false } and/or { speech: true|false }." });
-  const actor = String(res.locals.adminName ?? "admin");
-  const r = setPluginSwitches(change, actor);
-  if (!r.ok) return res.status(409).json({ ok: false, message: r.message });
-  pluginLog.record({ level: "info", kind: "admin", message: `${Object.entries(change).map(([k, v]) => `${k} ${v ? "on" : "off"}`).join(", ")} (${actor})` });
-  res.json({ ok: true, ...registrySnapshot() });
-});
-
-// Real-time test of one connector. Logs to the plugin log (visible on the
-// live stream). TTS returns the audio so the admin can play it back.
-app.post("/admin/plugins/test", async (req, res) => {
-  const body = (req.body || {}) as Record<string, unknown>;
-  const kind = String(body.kind || "");
-  const id = typeof body.id === "string" ? body.id : undefined;
-  const text = typeof body.text === "string" ? body.text : "";
-  const started = Date.now();
-  try {
-    if (kind === "ai") {
-      const c = getAi(id);
-      if (!c) return res.status(404).json({ ok: false, message: "Unknown AI connector." });
-      // Room for a reasoning model's thinking before the answer.
-      const result = await pluginLog.time("ai", c.id, "admin-test", () => c.complete({ messages: [{ role: "user", content: text || "Reply with a short friendly greeting." }], maxTokens: 400 }));
-      return res.json({ ok: true, kind, ms: Date.now() - started, result });
-    }
-    if (kind === "tts") {
-      const c = getTts(id);
-      if (!c) return res.status(404).json({ ok: false, message: "Unknown TTS connector." });
-      const result = await pluginLog.time("tts", c.id, "admin-test", () => c.synthesize({ text: text || "This is a M5cet server speech test." }));
-      return res.json({ ok: true, kind, result });
-    }
-    if (kind === "stt") {
-      const c = getStt(id);
-      if (!c) return res.status(404).json({ ok: false, message: "Unknown STT connector." });
-      if (typeof body.audioBase64 !== "string") return res.status(400).json({ ok: false, message: "audioBase64 required for an STT test." });
-      const result = await pluginLog.time("stt", c.id, "admin-test", () => c.transcribe({ audio: base64ToBytes(body.audioBase64 as string), mime: typeof body.mime === "string" ? body.mime : "audio/webm" }));
-      return res.json({ ok: true, kind, result });
-    }
-    return res.status(400).json({ ok: false, message: "kind must be ai | tts | stt." });
-  } catch (err) {
-    res.status(502).json({ ok: false, kind, connector: id, ms: Date.now() - started, message: (err as Error).message });
-  }
-});
+// ---- AI & speech (4.14: providers, keys, models, limits, playground, journal) ----
+registerAiAdminRoutes(app);
 
 // Recent plugin log entries (metadata only).
 app.get("/admin/plugins/logs", (req, res) => {
@@ -257,10 +204,6 @@ app.get("/admin/logs/stream", (req, res) => {
   req.on("close", () => { clearInterval(ping); pluginLog.emitter.off("entry", onEntry); });
 });
 
-// Legacy stub kept for compatibility.
-app.get("/admin/plugins/debug", (_req, res) => {
-  res.json({ ok: true, plugins: [], notes: "See GET /admin/plugins for the live connector snapshot." });
-});
 
 // Static admin GUI: when admin-ui/dist exists, serve it.
 function adminUiDir(): string | null {
@@ -320,7 +263,7 @@ if (uiDir) {
       "  POST /admin/commands/enqueue { kind, deviceId, payload? }",
       "  GET  /admin/commands/audit",
       "  POST /admin/test/push { id?, title?, body? }",
-      "  GET  /admin/plugins/debug",
+      "  GET  /admin/ai (AI & speech: providers, models, limits, journal)",
     ].join("\n"));
   });
 }

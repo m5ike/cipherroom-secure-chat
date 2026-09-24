@@ -4300,7 +4300,7 @@ function ChatApp() {
       {/* AI assistant modal (server-enhanced) */}
       {activePanel === "ai" ? (
         <SimpleModal title={t(lang, "menu.ai")} onClose={() => setActivePanel(null)}>
-          <AiPanel lang={lang} onInsert={(text) => { setMessageInput((cur) => (cur ? `${cur} ${text}` : text)); setActivePanel(null); }} />
+          <AiPanel lang={lang} onInsert={(text) => { setMessageInput((cur) => (cur ? `${cur} ${text}` : text)); setActivePanel(null); }} onSignIn={() => setActivePanel("connection")} />
         </SimpleModal>
       ) : null}
 

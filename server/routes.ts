@@ -36,7 +36,7 @@ import { registerRetentionRoutes, startRetentionSchedule } from "./retention-rou
 import { registerPushRoutes } from "./push-routes";
 import { consentLedger, deviceAuditLog, deviceSettings } from "./device-state";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
-import { registerPluginRoutes } from "./plugins/routes";
+import { registerAiRoutes } from "./ai/routes";
 import { accountStore, accountsDir } from "./accounts/store";
 import { storage } from "./storage/service";
 import { registerStorageRoutes } from "./storage/routes";
@@ -111,7 +111,7 @@ export async function registerRoutes(
   // 4.0: modules the operator switched off (or keeps from a user's groups)
   // are refused here too — before the routes that serve them.
   const gated: Array<[string, string]> = [
-    ["/api/ai/complete", "ai"], ["/api/speech/tts", "speech"], ["/api/speech/stt", "speech"],
+    ["/api/ai/complete", "ai"], ["/api/ai/chat", "ai"], ["/api/speech/tts", "speech"], ["/api/speech/stt", "speech"],
     ["/api/telephony/sms", "telephony"], ["/api/telephony/call", "telephony"],
     ["/api/share/create", "invites"], ["/api/push/subscribe", "notifications"], ["/api/push/test", "notifications"],
     ["/api/account/push", "notifications"],
@@ -121,8 +121,8 @@ export async function registerRoutes(
   // Invite links (split-key, code-gated) and the Clear & Quit landing page.
   registerShareRoutes(app);
   registerGoodbyeRoute(app);
-  // Optional AI + speech modules (gated by ENABLE_AI / ENABLE_SPEECH).
-  registerPluginRoutes(app);
+  // Optional AI + speech modules (4.14: providers, limits and the journal in server/ai).
+  registerAiRoutes(app);
   // Server-side storage: one SQLite database for the server, one encrypted
   // SQLCipher database per user or session (storage/*). Boots before the
   // routes so /api/storage/status can answer honestly either way.

@@ -14,6 +14,7 @@ import { TOOL_CONTRACTS } from "./tools";
 import { SHARE_CONTRACTS } from "./share";
 import { PHONE_CONTRACTS } from "./phone";
 import { CONNECTION_CONTRACTS } from "./connections";
+import { AI_CONTRACTS } from "./ai";
 
 export type ContractVar = { path: string; type: "text" | "number" | "yes/no" | "list" | "object"; description: string };
 export type ContractAction = { name: string; description: string; arg?: string; event?: string };
@@ -232,4 +233,5 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
   ...SHARE_CONTRACTS,
   ...PHONE_CONTRACTS,
   ...CONNECTION_CONTRACTS,
+  ...AI_CONTRACTS,
 };

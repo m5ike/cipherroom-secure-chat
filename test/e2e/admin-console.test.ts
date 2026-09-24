@@ -21,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
 import { chromium, type Browser, type Page } from "playwright";
+import { json, mockProvider, openAiStream, sse } from "../helpers/mock-ai";
 
 const MAIN_PORT = 5933;
 const ADMIN_PORT = 5934;
@@ -151,18 +152,100 @@ describe("operator console", () => {
     await shot("audit");
   });
 
-  it("keeps the ported tools working through the admin service", async () => {
-    await go("plugins");
-    await page.click("#btnPlugins");
-    await expect.poll(() => page.locator("#pluginOut").innerText()).toMatch(/defaults|enabled/);
-    // 4.0.6: the modules are switched here, and the app service sees it (a shared file).
-    await expect.poll(() => page.locator("#switch-ai").isChecked()).toBe(false);
-    await page.check("#switch-ai");
-    await expect.poll(() => page.locator("#pluginSwitches").innerText()).toMatch(/AI module: ON/);
-    await expect.poll(async () => (await (await fetch(`${MAIN}/api/ai/status`)).json()).enabled).toBe(true);
-    await page.uncheck("#switch-ai");
-    await expect.poll(() => page.locator("#pluginSwitches").innerText()).toMatch(/AI module: off/);
-    await expect.poll(async () => (await (await fetch(`${MAIN}/api/ai/status`)).json()).enabled).toBe(false);
+  it("4.14: AI & speech — a provider and its models, the limit, the playground, the journal; a guest's assistant in the app", async () => {
+    // A pretend provider (OpenAI-compatible) in this process; the services call it.
+    const mock = await mockProvider();
+    mock.on("GET /v1/models", (_q, res) => json(res, 200, { data: [{ id: "m1" }, { id: "m2" }] }));
+    mock.on("POST /v1/chat/completions", (q, res) => ((q.body as { stream?: boolean }).stream
+      ? sse(res, openAiStream("Dobrý den! **Jak** mohu pomoci?", { model: "m1" }), 15)
+      : json(res, 200, { model: "m1", choices: [{ message: { content: "OK" } }], usage: { prompt_tokens: 3, completion_tokens: 1 } })));
+    const status = async () => (await (await fetch(`${MAIN}/api/ai/status`)).json()) as { state: string; enabled: boolean };
+    try {
+      await go("plugins");
+      // The default: no monthly limit = the app's AI is off.
+      await expect.poll(() => page.locator('[data-testid="ai-no-limit"]').count()).toBe(1);
+      expect((await status()).state).toBe("off");
+      // The switch (4.0.6) is here, and the app service sees it (a shared file).
+      await page.check('[data-testid="ai-switch-ai"]');
+      await expect.poll(async () => (await status()).state).toBe("no-model");
+
+      // A provider through the dialog; its key never comes back.
+      await page.click('[data-testid="ai-add-provider"]');
+      await page.selectOption('[data-testid="ai-f-type"]', "openai-compatible");
+      await page.fill('[data-testid="ai-f-label"]', "Mock AI");
+      await page.fill('[data-testid="ai-f-base"]', `${mock.url}/v1`);
+      await page.fill('[data-testid="ai-f-key"]', "sk-e2e-secret-4321");
+      await page.fill('[data-testid="ai-f-model"]', "m1");
+      await page.locator(".mb-dialog .chip-check", { hasText: "Guests" }).locator("input").check();
+      await page.click('[data-testid="ai-f-save"]');
+      await expect.poll(() => page.locator('[data-provider="mock-ai"]').count()).toBe(1);
+      expect(await page.content()).not.toContain("sk-e2e-secret-4321");
+      expect(readFileSync(join(dataDir, "ai", "config.json"), "utf8")).not.toContain("sk-e2e-secret-4321");
+      await expect.poll(async () => (await status()).state).toBe("no-limit");
+
+      // Test it (its models list, with the key), fetch the models, switch the new one on.
+      await page.click('[data-testid="ai-test-mock-ai"]');
+      await expect.poll(() => page.locator('[data-provider="mock-ai"]').innerText()).toMatch(/answers/);
+      expect(mock.seen.find((x) => x.path === "/v1/models")!.headers.authorization).toBe("Bearer sk-e2e-secret-4321");
+      await page.click('[data-testid="ai-discover-mock-ai"]');
+      await expect.poll(() => page.locator('[data-provider="mock-ai"] [data-model]').count()).toBe(2);
+      await page.locator('[data-provider="mock-ai"] [data-model="m2"] input[type=checkbox]').first().check();
+      await page.click('[data-testid="ai-save-models-mock-ai"]');
+      await expect.poll(() => page.locator('[data-provider="mock-ai"]').innerText()).toMatch(/2 of 2 models on/);
+      await shot("ai-providers");
+
+      // The owner sets a monthly limit: the app's AI is ready.
+      await page.click('[data-ai-tab="settings"]');
+      await page.fill('[data-testid="ai-limit-monthly"]', "100000");
+      await page.click('[data-testid="ai-save-limits"]');
+      await expect.poll(async () => (await status()).state).toBe("ready");
+      await expect.poll(async () => (await (await fetch(`${MAIN}/api/modules`)).json()).features.ai.enabled).toBe(true);
+
+      // The playground: streamed, with tokens and the request as it went out.
+      await page.click('[data-ai-tab="playground"]');
+      await page.fill('[data-testid="ai-play-input"]', "Ahoj");
+      await page.click('[data-testid="ai-play-send"]');
+      await expect.poll(() => page.locator('[data-testid="ai-play-stats"]').innerText(), { timeout: 10_000 }).toMatch(/20 in \+ 5 out tokens/);
+      expect(await page.locator('[data-testid="ai-play-thread"]').innerText()).toContain("Jak** mohu pomoci?");
+      await shot("ai-playground");
+
+      // The app: a guest asks the assistant; the answer is drawn as Markdown and goes into the message.
+      const appCtx = await browser!.newContext({ viewport: { width: 1280, height: 900 } });
+      const app = await appCtx.newPage();
+      const appErrors: string[] = [];
+      app.on("pageerror", (err) => appErrors.push(err.message));
+      await app.goto(MAIN);
+      await app.getByTestId("input-message").waitFor({ timeout: 15_000 });
+      const dial = app.getByTestId("btn-menu-speeddial");
+      const inDial = await dial.isVisible().catch(() => false);
+      if (inDial) await dial.click();
+      await app.getByTestId(inDial ? "speeddial-btn-ai" : "btn-ai").click();
+      await app.getByTestId("ai-input").waitFor({ timeout: 10_000 });
+      await app.getByTestId("ai-input").fill("Ahoj");
+      await app.getByTestId("ai-input").press("Enter");
+      await expect.poll(() => app.getByTestId("ai-answer").innerText(), { timeout: 10_000 }).toBe("Dobrý den! Jak mohu pomoci?");
+      expect(await app.locator('[data-testid="ai-answer"] strong').innerText()).toBe("Jak");
+      if (SHOTS) await app.screenshot({ path: join(SHOTS, "app-ai-assistant.png") });
+      await app.getByTestId("ai-insert").click();
+      await expect.poll(() => app.getByTestId("input-message").inputValue()).toBe("Dobrý den! **Jak** mohu pomoci?");
+      expect(appErrors).toEqual([]);
+      await appCtx.close();
+
+      // The journal: both calls, from where and who.
+      await page.click('[data-ai-tab="calls"]');
+      await expect.poll(() => page.locator('[data-testid="ai-calls"] tbody tr').count()).toBeGreaterThanOrEqual(2);
+      const calls = await page.locator('[data-testid="ai-calls"] tbody').innerText();
+      expect(calls).toMatch(/app\s+guest\s+mock-ai\/m1/);
+      expect(calls).toMatch(/playground\s+admin\s+mock-ai\/m1/);
+      await shot("ai-calls");
+
+      // Back to off for the other tests.
+      await page.click('[data-ai-tab="providers"]');
+      await page.uncheck('[data-testid="ai-switch-ai"]');
+      await expect.poll(async () => (await status()).state).toBe("off");
+    } finally {
+      await mock.close();
+    }
   });
 
   it("configures the client addons: saved connections, other servers, GUI templates", async () => {
@@ -549,7 +632,7 @@ describe("operator console", () => {
     await page.locator("#toasts").evaluate((el) => el.replaceChildren());
     const frame = page.frameLocator("#lbFrame");
     // The sections: the app's main screen first.
-    await expect.poll(async () => (await page.locator("#lbSections .lb-section").allInnerTexts()).map((x) => x.replace(/\s+/g, ""))).toEqual(["App8", "Roomwindow2", "Windows2", "Dialogs&parts9", "Panels23"]);
+    await expect.poll(async () => (await page.locator("#lbSections .lb-section").allInnerTexts()).map((x) => x.replace(/\s+/g, ""))).toEqual(["App8", "Roomwindow2", "Windows2", "Dialogs&parts9", "Panels24"]);
     expect(await page.locator('#lbTabs [data-layout="panel.connections"]').count()).toBe(0);
 
     // The Room window: drawn by RoomDialog in the preview, in its situations.

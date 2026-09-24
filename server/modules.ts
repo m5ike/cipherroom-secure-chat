@@ -2,6 +2,8 @@
 // Lets the frontend (window.CipherRoomAPI) discover which optional features
 // the operator has enabled without exposing secrets.
 
+import { aiReady } from "./ai/service";
+
 export type ModuleManifest = {
   modes: { id: string; label: string; description: string }[];
   features: Record<string, { enabled: boolean; reason?: string }>;
@@ -52,12 +54,13 @@ export function buildModuleManifest(eventsBackend: "disabled" | "memory" | "data
       maps: { enabled: true, reason: "OpenStreetMap link sharing and continuous geolocation; no Leaflet bundle." },
       nfc: { enabled: true, reason: "Web NFC read/write encrypted with PBKDF2/AES-GCM. Android Chrome only." },
       speech: { enabled: true, reason: "Browser Web Speech API for TTS/STT and pitch-based revoice." },
-      serverSpeech: hasServerSpeech()
-        ? { enabled: true, reason: "Server TTS/STT connectors are configured (ENABLE_SPEECH=1)." }
-        : { enabled: false, reason: "Set ENABLE_SPEECH=1 and configure a provider (e.g. OPENAI_API_KEY, ELEVENLABS_API_KEY)." },
-      ai: hasAi()
-        ? { enabled: true, reason: "Server AI connector is configured (ENABLE_AI=1)." }
-        : { enabled: false, reason: "Set ENABLE_AI=1 and configure a provider (e.g. OPENAI_API_KEY, ANTHROPIC_API_KEY, OLLAMA_URL)." },
+      // 4.14: switched in the console (or ENABLE_SPEECH / ENABLE_AI), with a model from a provider set up there.
+      serverSpeech: aiReady("tts") || aiReady("stt")
+        ? { enabled: true, reason: "Server speech synthesis / transcription is on and has a model." }
+        : { enabled: false, reason: "Turn Speech on and add a provider with a speech model in the console (AI & speech)." },
+      ai: aiReady("chat")
+        ? { enabled: true, reason: "The server's AI is on and has a model (limits: console › AI & speech)." }
+        : { enabled: false, reason: "Turn AI on and add a provider with a model in the console (AI & speech)." },
       telephony: hasTelephony()
         ? { enabled: true, reason: "Telephony is configured (ENABLE_TELEPHONY=1). Voice + SMS via the operator's provider." }
         : { enabled: false, reason: "Set ENABLE_TELEPHONY=1 and configure a provider (Twilio/Telnyx/Vonage). Voice media path needs an external SIP↔WebRTC gateway." },
@@ -95,16 +98,6 @@ export function buildModuleManifest(eventsBackend: "disabled" | "memory" | "data
 function hasTurn() {
   const url = process.env.TURN_SERVER_URL?.trim() || "";
   return url.length > 0;
-}
-
-function hasAi() {
-  if (process.env.ENABLE_AI?.trim() !== "1") return false;
-  return ["OPENAI_API_KEY", "ANTHROPIC_API_KEY", "HF_API_KEY", "OLLAMA_URL"].some((k) => (process.env[k]?.trim() || "").length > 0);
-}
-
-function hasServerSpeech() {
-  if (process.env.ENABLE_SPEECH?.trim() !== "1") return false;
-  return ["OPENAI_API_KEY", "ELEVENLABS_API_KEY", "HF_API_KEY"].some((k) => (process.env[k]?.trim() || "").length > 0);
 }
 
 function hasTelephony() {

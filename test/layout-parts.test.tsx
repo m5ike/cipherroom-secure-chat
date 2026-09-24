@@ -33,20 +33,26 @@ const REACHED: Record<string, (body: HTMLElement) => boolean> = {
   "part.connectionEdit:edit": (b) => (b.querySelector("[data-testid=cx-f-label]") as HTMLInputElement | null)?.value === "Rodina",
   "part.connectionDetail:log": (b) => Boolean(b.querySelector("[data-testid=cx-log]")),
   "part.connectionSettings:plain": (b) => Boolean(b.querySelector("[data-testid=cx-settings]")),
+  "panel.ai:ready": (b) => b.querySelectorAll("[data-testid=ai-msg]").length === 2 && Boolean(b.querySelector("[data-testid=ai-answer] ol li")),
+  "panel.ai:writing": (b) => Boolean(b.querySelector("[data-testid=ai-stop]")) && (b.querySelector("[data-testid=ai-answer]")?.textContent ?? "").includes("Hledám"),
+  "panel.ai:no-limit": (b) => b.querySelector("[data-testid=ai-state]")?.getAttribute("data-state") === "no-limit",
 };
 
 async function draw(layout: LayoutId, variant: string, lang: "cs" | "en" | "de") {
   const errors: string[] = [];
   setLayoutPreviewMode({ onError: (id, message) => errors.push(`${id}: ${message}`) });
   render(<AppPart layout={layout} variant={variant} lang={lang} />);
-  // The situation's clicks (60 ms apart) and whatever the component loads by itself (made up, at once).
-  await act(async () => { await new Promise((ok) => setTimeout(ok, 60 * (STEP_COUNT[`${layout}:${variant}`] ?? 0) + 40)); });
+  // The situation's clicks (60 ms apart) and whatever the component loads by itself (made up, at once) —
+  // in short pieces, so that React draws in between (the clicks look for what was drawn).
+  const total = 60 * (STEP_COUNT[`${layout}:${variant}`] ?? 0) + 40;
+  for (let waited = 0; waited < total; waited += 20) await act(async () => { await new Promise((ok) => setTimeout(ok, 20)); });
   return errors;
 }
 
 describe("windows, the Room window, dialogs and panels", () => {
   it("are all here (and nothing of the app's main screen), each situation with a way to reach it", () => {
     expect(PARTS.length).toBe(LAYOUT_IDS.length - 8);
+    expect(PARTS).toContain("panel.ai");
     for (const key of [...Object.keys(PREVIEW_STEPS), ...Object.keys(REACHED)]) {
       const [id, variant] = key.split(":");
       expect(PREVIEW_VARIANTS[id as LayoutId]?.map((v) => v.id), key).toContain(variant);
@@ -64,7 +70,11 @@ describe("windows, the Room window, dialogs and panels", () => {
           const errors = await draw(id, variant, lang);
           expect(errors, `${id} ${variant} ${lang}`).toEqual([]);
           const reached = REACHED[`${id}:${variant}`];
-          if (reached) expect(reached(document.body), `${id} ${variant} ${lang}: reached`).toBe(true);
+          if (reached) {
+            // Some situations are reached by a stream: wait (in act, so React draws it) up to 3 s.
+            for (let waited = 0; !reached(document.body) && waited < 3000; waited += 40) await act(async () => { await new Promise((ok) => setTimeout(ok, 40)); });
+            expect(reached(document.body), `${id} ${variant} ${lang}: reached`).toBe(true);
+          }
           // Something of this very layout is on the page.
           expect(document.body.querySelector("[data-lb-id]"), `${id} ${variant} ${lang}: drawn`).not.toBeNull();
           const drawn = checkDom(document.body).filter((i) => own.has(i.id) && !parts.has(i.id) && i.rule !== "contrast");

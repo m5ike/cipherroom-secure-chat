@@ -1377,6 +1377,8 @@
   // same DOM helpers, the API with the token, role gates and routes of their own.
   window.M5Console = {
     api: (path, opts) => api(path, opts),
+    /** A request with the signed-in token, answered as a Response (streams, audio, downloads). */
+    raw: (path, init = {}) => fetch(state.base + path, { ...init, cache: "no-store", headers: { ...(init.headers || {}), Authorization: `Bearer ${state.token}` } }),
     toast, h, clear, $, $$, can, applyRoleGates,
     base: () => state.base,
     addRoute(name, entry) {

@@ -25,6 +25,8 @@ import { ConnectionPanel, FilesPanel, LocationPanel, SpeechPanel } from "./compo
 import { InvitePrompt, ShareConnection, ShareResult, ShareSection } from "./components/SharePanel";
 import { PhonePanel } from "./components/PhonePanel";
 import { ConnectionsPanel } from "./components/ConnectionsPanel";
+import { AiPanel, type AiTurnView } from "./components/AiPanel";
+import type { AiState, AiStatus, aiChat } from "./lib/ai";
 import { connectionsProps, noop, roomProps, sampleAccount, SAMPLE_STATUS } from "./layout-samples";
 
 const NOW = Date.UTC(2026, 8, 24, 10, 0);
@@ -107,6 +109,38 @@ const SPEECH_STATUS = async () => ({
   tts: { enabled: true, connectors: [{ id: "elevenlabs", label: "ElevenLabs · Rachel" }, { id: "openai", label: "OpenAI · alloy" }] },
   stt: { enabled: false, connectors: [] },
 });
+
+/** The assistant (4.14): the models a user sees, a conversation, an answer being written. */
+function aiStatus(state: AiState): AiStatus {
+  return {
+    enabled: state === "ready", state, default: "claude/claude-sonnet-5", limits: { maxOutputTokens: 2048, maxInputChars: 24000 },
+    models: state === "ready" ? [
+      { ref: "claude/claude-sonnet-5", label: "Claude Sonnet 5", provider: "Anthropic", reasoning: true, vision: true },
+      { ref: "local/llama3.1:8b", label: "llama3.1:8b", provider: "Ollama", reasoning: false, vision: false },
+    ] : [],
+  };
+}
+const AI_TURNS: AiTurnView[] = [
+  { key: "q1", role: "user", text: "Jak M5cet chrání zprávy?", model: "", reasoning: "", citations: [], error: "", stats: "", pending: false },
+  {
+    key: "a1", role: "assistant", model: "Claude Sonnet 5", pending: false, error: "", stats: "3.4 s · 182 tokens",
+    reasoning: "The user asks about message protection; summarize the E2EE layers briefly.",
+    citations: [{ url: "https://chat.fir.ma/docs/#sifrovani", title: "Šifrování v3" }],
+    text: "Zprávy jsou **šifrované mezi klienty** (E2EE):\n\n1. klíč místnosti se odvodí z hesla (*Argon2id*),\n2. každý odesílatel má vlastní klíč s `forward secrecy`,\n3. server vidí jen šifrovaný text.\n\n> Heslo místnosti nikdy neopustí zařízení.",
+  },
+];
+/** An answer that is written slowly and never finishes (the preview's "writing"). */
+const writingChat: typeof aiChat = async (_input, h, signal) => {
+  for (const piece of ["Hledám ", "odpověď ", "na ", "vaši ", "otázku", "…"]) {
+    await new Promise((ok) => setTimeout(ok, 120));
+    if (signal?.aborted) return { ok: false, code: "cancelled", message: "" };
+    h.onText?.(piece);
+  }
+  await new Promise<void>((ok) => signal?.addEventListener("abort", () => ok(), { once: true }));
+  return { ok: false, code: "cancelled", message: "" };
+};
+
+const AI_STATUS: Record<string, () => Promise<AiStatus>> = Object.fromEntries((["ready", "off", "no-model", "sign-in", "no-limit"] as const).map((st) => [st, async () => aiStatus(st)]));
 
 const ACCOUNT_ACTIONS = { onAddPasskey: noop, onRemovePasskey: noop, onCreateRecovery: async () => "K7QM-2XPA-9RTD-VB4H-EW8N-3JCZ-LF6U", onRemoveRecovery: noop };
 
@@ -231,6 +265,11 @@ export function AppPart({ layout, variant: v, lang }: { layout: LayoutId; varian
         ? { enabled: false, sms: [], voice: [] }
         : { enabled: true, sms: [{ id: "twilio", label: "Twilio" }], voice: [{ id: "telnyx", label: "Telnyx" }, { id: "vonage", label: "Vonage" }] })} />);
       break;
+    case "panel.ai": {
+      const state: AiState = v === "writing" ? "ready" : (v as AiState);
+      node = win(t(lang, "menu.ai"), <AiPanel lang={lang} onInsert={noop} onSignIn={noop} loadStatus={AI_STATUS[state] ?? AI_STATUS.ready} chat={writingChat} initialTurns={v === "ready" ? AI_TURNS : undefined} />);
+      break;
+    }
     case "panel.connections":
       node = win(t(lang, "cx.title"), <ConnectionsPanel {...connectionsProps(v, lang)} />);
       break;
@@ -256,4 +295,5 @@ export const PREVIEW_STEPS: Readonly<Record<string, Step[]>> = {
   "part.connectionEdit:edit": [{ click: "[data-testid=cx-edit]", nth: 1 }],
   "part.connectionDetail:log": [{ click: "[data-testid=cx-details]" }],
   "part.connectionSettings:plain": [{ click: "[data-testid=cx-tab-settings]" }],
+  "panel.ai:writing": [{ change: "[data-testid=ai-input]", value: "Co umí M5cet?" }, { click: "[data-testid=ai-send]" }],
 };

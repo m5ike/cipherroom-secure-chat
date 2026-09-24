@@ -16,6 +16,7 @@ import { audioTree, connectionTree, filesTree, locationTree, peersTree, speechTr
 import { inviteTree, shareConnectionTree, shareResultTree, shareTree } from "./share";
 import { phoneTree } from "./phone";
 import { connectionDetailTree, connectionEditTree, connectionSettingsTree, connectionsTree } from "./connections";
+import { aiTree } from "./ai";
 export const LAYOUT_IDS = [
   "header", "chat", "message.in", "message.out", "message.sys", "composer", "widget", "widget.fab",
   // 4.13: the windows, the Room window, dialogs and panels
@@ -27,6 +28,7 @@ export const LAYOUT_IDS = [
   "part.shareResult", "panel.share", "panel.shareConnection", "part.invite",
   "panel.phone",
   "panel.connections", "part.connectionEdit", "part.connectionDetail", "part.connectionSettings",
+  "panel.ai",
 ] as const;
 export type LayoutId = (typeof LAYOUT_IDS)[number];
 
@@ -75,6 +77,7 @@ export const LAYOUT_LABELS: Readonly<Record<LayoutId, string>> = {
   "part.connectionEdit": "My connections \u2014 the editor",
   "part.connectionDetail": "My connections \u2014 statistics and log",
   "part.connectionSettings": "My connections \u2014 settings",
+  "panel.ai": "AI assistant",
 };
 
 /** 4.13: how the builder groups the layouts. */
@@ -92,6 +95,7 @@ export const LAYOUT_GROUP: Readonly<Record<LayoutId, LayoutGroup>> = {
   "part.shareResult": "dialogs", "panel.share": "dialogs", "panel.shareConnection": "dialogs", "part.invite": "dialogs",
   "panel.phone": "panels",
   "panel.connections": "panels", "part.connectionEdit": "panels", "part.connectionDetail": "panels", "part.connectionSettings": "panels",
+  "panel.ai": "panels",
 };
 
 /** The old Layout builder's component styles each layout carries on (CSS variables --c-<id>-…). */
@@ -140,6 +144,7 @@ export const LAYOUT_STYLE_COMPONENT: Readonly<Record<LayoutId, string>> = {
   "part.connectionEdit": "",
   "part.connectionDetail": "",
   "part.connectionSettings": "",
+  "panel.ai": "",
 };
 
 /** How each of the app's own layouts is built. */
@@ -188,6 +193,7 @@ const BUILDERS: Record<LayoutId, () => LNode> = {
   "part.connectionEdit": connectionEditTree,
   "part.connectionDetail": connectionDetailTree,
   "part.connectionSettings": connectionSettingsTree,
+  "panel.ai": aiTree,
 };
 
 /**

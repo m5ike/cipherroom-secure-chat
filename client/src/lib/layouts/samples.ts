@@ -11,6 +11,7 @@ import { TOOL_VARIANTS } from "./tools";
 import { SHARE_VARIANTS } from "./share";
 import { PHONE_VARIANTS } from "./phone";
 import { CONNECTION_VARIANTS } from "./connections";
+import { AI_VARIANTS } from "./ai";
 
 export const PREVIEW_VARIANTS: Readonly<Record<LayoutId, ReadonlyArray<{ id: string; label: string }>>> = {
   header: [
@@ -52,6 +53,7 @@ export const PREVIEW_VARIANTS: Readonly<Record<LayoutId, ReadonlyArray<{ id: str
   ...SHARE_VARIANTS,
   ...PHONE_VARIANTS,
   ...CONNECTION_VARIANTS,
+  ...AI_VARIANTS,
 };
 
 /** A 48 × 32 image for attachment previews (a small gradient PNG). */
