@@ -6,15 +6,21 @@
 // never depends on lib/i18n.ts (mirrors NfcWorkbench). When the module is off
 // or unconfigured, it explains what the operator must enable — it never
 // pretends to work.
+//
+// 4.13: the panel is a layout ("panel.phone", lib/layouts/phone.ts); its
+// texts and the calls stay here.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { Phone, PhoneOutgoing, MessageSquare, Send, Delete, AlertTriangle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent } from "react";
 import "./phone-panel.css";
+import { renderLayout } from "./LayoutView";
+import { useLayoutBase } from "./LayoutProvider";
 import { fetchTelephonyStatus, sendSms, placeCall, type TelephonyConnectorInfo } from "../lib/telephony";
 
 export type PhonePanelProps = {
   lang: "cs" | "en" | "de";
   onSystem?: (message: string) => void;
+  /** Where the providers come from (the Layout builder's preview gives its own). */
+  loadStatus?: () => Promise<{ enabled: boolean; sms: TelephonyConnectorInfo[]; voice: TelephonyConnectorInfo[] }>;
 };
 
 /* ---------- i18n (local, per task) ---------- */
@@ -60,7 +66,7 @@ const PAD_KEYS = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "*", "0", "#"];
 
 type HistItem = { id: number; kind: "call" | "sms"; to: string; at: number; ok: boolean; detail: string };
 
-export function PhonePanel(props: PhonePanelProps): React.JSX.Element {
+export function PhonePanel(props: PhonePanelProps): React.ReactNode {
   const { lang, onSystem } = props;
   const t = useCallback((k: keyof typeof DICT["en"]) => DICT[lang][k] ?? DICT.en[k] ?? k, [lang]);
 
@@ -76,7 +82,7 @@ export function PhonePanel(props: PhonePanelProps): React.JSX.Element {
 
   useEffect(() => {
     let cancelled = false;
-    void fetchTelephonyStatus().then((s) => {
+    void (props.loadStatus ?? fetchTelephonyStatus)().then((s) => {
       if (cancelled) return;
       setStatus(s);
       if (s.sms[0]) setSmsConnector(s.sms[0].id);
@@ -132,114 +138,29 @@ export function PhonePanel(props: PhonePanelProps): React.JSX.Element {
     }
   }, [valid, busy, number, text, smsConnector, pushHist, onSystem, t]);
 
-  if (status && !status.enabled) {
-    return (
-      <div className="phone">
-        <div className="phone__banner phone__banner--warn">
-          <div className="phone__banner-head"><AlertTriangle width={16} height={16} /> <strong>{t("disabledTitle")}</strong></div>
-          <p>{t("disabledBody")}</p>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="phone">
-      {/* number display */}
-      <div className="phone__display">
-        <input
-          className="phone__number"
-          value={number}
-          inputMode="tel"
-          onChange={(e) => setNumber(e.target.value.replace(/[^\d+*#]/g, "").slice(0, 20))}
-          placeholder={t("placeholderNumber")}
-          aria-label={t("number")}
-        />
-        <button type="button" className="phone__bs" onClick={backspace} aria-label={t("backspace")}>
-          <Delete width={18} height={18} />
-        </button>
-      </div>
-      {number.trim().length > 1 && !valid ? <p className="phone__hint phone__hint--err">{t("invalidNumber")}</p> : null}
-
-      {/* dial pad */}
-      <div className="phone__pad">
-        {PAD_KEYS.map((k) => (
-          <button key={k} type="button" className="phone__key" onClick={() => tap(k)}>{k}</button>
-        ))}
-        <button type="button" className="phone__key phone__key--plus" onClick={() => tap("+")}>+</button>
-      </div>
-
-      {/* mode toggle */}
-      <div className="phone__tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={mode === "call"} className="phone__tab" onClick={() => setMode("call")}>
-          <Phone width={14} height={14} /> {t("call")}
-        </button>
-        <button type="button" role="tab" aria-selected={mode === "sms"} className="phone__tab" onClick={() => setMode("sms")}>
-          <MessageSquare width={14} height={14} /> {t("sms")}
-        </button>
-      </div>
-
-      {mode === "call" ? (
-        <div className="phone__section">
-          {status?.voice.length ? (
-            <label className="phone__label">{t("callProvider")}
-              <select className="phone__select" value={voiceConnector} onChange={(e) => setVoiceConnector(e.target.value)} data-testid="phone-voice-connector">
-                {status.voice.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-              </select>
-            </label>
-          ) : <p className="phone__hint">{t("noProvider")}</p>}
-          <button type="button" className="phone__btn phone__btn--call" disabled={!valid || busy || !status?.voice.length} onClick={() => void doCall()}>
-            <PhoneOutgoing width={16} height={16} /> {busy ? t("calling") : t("call")}
-          </button>
-          <p className="phone__note">{t("mediaNote")}</p>
-        </div>
-      ) : (
-        <div className="phone__section">
-          {status?.sms.length ? (
-            <label className="phone__label">{t("smsProvider")}
-              <select className="phone__select" value={smsConnector} onChange={(e) => setSmsConnector(e.target.value)} data-testid="phone-sms-connector">
-                {status.sms.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-              </select>
-            </label>
-          ) : <p className="phone__hint">{t("noProvider")}</p>}
-          <textarea
-            className="phone__textarea"
-            rows={3}
-            value={text}
-            maxLength={1600}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={t("placeholderText")}
-            data-testid="phone-sms-text"
-          />
-          <div className="phone__row">
-            <span className="phone__count">{text.length}/1600</span>
-            <button type="button" className="phone__btn phone__btn--send" disabled={!valid || busy || !text.trim() || !status?.sms.length} onClick={() => void doSms()}>
-              <Send width={16} height={16} /> {busy ? t("sending") : t("send")}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* history */}
-      <div className="phone__section">
-        <div className="phone__section-title">
-          <span>{t("history")}</span>
-          {history.length ? <button type="button" className="phone__link" onClick={() => setHistory([])}>{t("clear")}</button> : null}
-        </div>
-        {history.length === 0 ? <p className="phone__hint">{t("noHistory")}</p> : (
-          <ul className="phone__hist">
-            {history.map((h) => (
-              <li key={h.id} className={`phone__hist-item ${h.ok ? "" : "phone__hist-item--err"}`}>
-                {h.kind === "call" ? <Phone width={13} height={13} /> : <MessageSquare width={13} height={13} />}
-                <span className="phone__hist-to">{h.to}</span>
-                <span className="phone__hist-detail">{h.detail}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </div>
-  );
+  const { tree, base } = useLayoutBase("panel.phone", lang);
+  const value = (e: unknown) => (e as ChangeEvent<HTMLInputElement>).target.value;
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      txt: { ...DICT.en, ...DICT[lang] },
+      disabled: Boolean(status && !status.enabled),
+      number, valid, showInvalid: number.trim().length > 1 && !valid, keys: PAD_KEYS, mode,
+      voice: status?.voice ?? [], sms: status?.sms ?? [], voiceConnector, smsConnector, text, hasText: Boolean(text.trim()), busy, history,
+    },
+    actions: {
+      number: (e) => setNumber(value(e).replace(/[^\d+*#]/g, "").slice(0, 20)),
+      backspace: () => backspace(),
+      tap: (_e, k) => tap(String(k)),
+      mode: (_e, m) => setMode(m as "call" | "sms"),
+      voiceConnector: (e) => setVoiceConnector(value(e)),
+      smsConnector: (e) => setSmsConnector(value(e)),
+      text: (e) => setText(value(e)),
+      call: () => void doCall(),
+      send: () => void doSms(),
+      clear: () => setHistory([]),
+    },
+  });
 }
 
 export default PhonePanel;

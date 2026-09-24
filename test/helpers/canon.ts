@@ -5,11 +5,24 @@ export function canon(n: Node): string {
   if (n.nodeType !== 1) return "";
   const el = n as Element;
   const attrs = Array.from(el.attributes).map((a) => `${a.name}=${JSON.stringify(a.value)}`).sort().join(" ");
-  return `<${el.tagName.toLowerCase()}${attrs ? " " + attrs : ""}>${Array.from(el.childNodes).map(canon).join("")}</${el.tagName.toLowerCase()}>`;
+  return `<${el.tagName.toLowerCase()}${attrs ? " " + attrs : ""}>${children(el)}</${el.tagName.toLowerCase()}>`;
+}
+/** Child nodes, adjacent (and empty) texts merged as normalize() would — without changing the DOM React still writes to. */
+function children(parent: Node): string {
+  let out = "";
+  let text: string | null = null;
+  for (const c of Array.from(parent.childNodes)) {
+    if (c.nodeType === 3) { text = (text ?? "") + (c.textContent ?? ""); continue; }
+    if (c.nodeType !== 1) continue;
+    if (text) out += JSON.stringify(text);
+    text = null;
+    out += canon(c);
+  }
+  if (text) out += JSON.stringify(text);
+  return out;
 }
 export function canonOf(container: Element): string {
-  container.normalize();
-  return Array.from(container.childNodes).map(canon).join("");
+  return children(container);
 }
 /** First difference, with context. */
 export function diff(a: string, b: string): string {

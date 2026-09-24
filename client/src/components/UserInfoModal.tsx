@@ -3,13 +3,16 @@
 // locally from the WebRTC connection and our own counters — we never ask the
 // server, and we label honestly what the browser cannot know (a peer's real IP
 // is only visible when ICE exposes the selected candidate pair).
+//
+// 4.13: the view is a layout ("dialog.userInfo", lib/layouts/dialogs.ts);
+// the safety number, the scanner and what they do stay here.
 
 import { useEffect, useRef, useState } from "react";
-import { ShieldCheck, ScanLine, UserX } from "lucide-react";
-import { Avatar } from "./UserBadge";
 import { QrCodeView } from "./SharePanel";
 import { safetyNumber } from "../lib/identity";
 import { t, type Lang } from "../lib/i18n";
+import { renderLayout } from "./LayoutView";
+import { useLayoutBase } from "./LayoutProvider";
 
 export type UserInfo = {
   /** The nickname shown in the room. */
@@ -71,45 +74,6 @@ function QrScanner({ onResult, onClose }: { onResult: (text: string) => void; on
   return <video ref={video} className="userinfo-scan" muted playsInline />;
 }
 
-function SafetySection({ safety, lang }: { safety: NonNullable<UserInfo["safety"]>; lang: Lang }) {
-  const [number, setNumber] = useState("");
-  const [scanning, setScanning] = useState(false);
-  const [result, setResult] = useState<"match" | "mismatch" | "">("");
-  useEffect(() => {
-    let live = true;
-    void safetyNumber(safety.mine, safety.theirs).then((n) => { if (live) setNumber(n); });
-    return () => { live = false; };
-  }, [safety.mine, safety.theirs]);
-  const canScan = typeof window !== "undefined" && "BarcodeDetector" in window && Boolean(navigator.mediaDevices?.getUserMedia);
-  const digits = number.replace(/\s/g, "");
-  return (
-    <div className="userinfo-safety" data-testid="safety-number">
-      <div className="userinfo-row__k mb-1">{t(lang, "sec.safety")}</div>
-      <p className="text-[11px] text-muted-foreground">{t(lang, "sec.safety.desc")}</p>
-      <code className="userinfo-sn">{number || "…"}</code>
-      {digits ? <QrCodeView value={`${QR_PREFIX}${digits}`} size={160} /> : null}
-      {scanning ? (
-        <QrScanner
-          onClose={() => setScanning(false)}
-          onResult={(text) => {
-            setScanning(false);
-            const ok = text === `${QR_PREFIX}${digits}`;
-            setResult(ok ? "match" : "mismatch");
-            if (ok) safety.onVerified();
-          }}
-        />
-      ) : null}
-      {safety.verified || result === "match" ? <p className="text-xs text-emerald-600 dark:text-emerald-400"><ShieldCheck className="mr-1 inline h-3.5 w-3.5" />{t(lang, "sec.safety.verified")}</p> : null}
-      {result === "mismatch" ? <p className="text-xs font-semibold text-destructive">{t(lang, "sec.safety.mismatch")}</p> : null}
-      <div className="flex flex-wrap gap-2">
-        {canScan && !safety.verified ? <button type="button" className="acc-btn acc-btn--small" onClick={() => setScanning(true)}><ScanLine className="h-3.5 w-3.5" />{t(lang, "sec.safety.scan")}</button> : null}
-        {!safety.verified && result !== "match" ? <button type="button" className="acc-btn acc-btn--small" onClick={() => { safety.onVerified(); setResult("match"); }} data-testid="safety-confirm">{t(lang, "sec.safety.confirm")}</button> : null}
-        <button type="button" className="acc-btn acc-btn--small acc-btn--danger" onClick={() => { if (window.confirm(t(lang, "sec.exclude.confirm"))) safety.onExclude(); }} data-testid="peer-exclude"><UserX className="h-3.5 w-3.5" />{t(lang, "sec.exclude")}</button>
-      </div>
-    </div>
-  );
-}
-
 function dur(ms: number | null, lang: Lang): string {
   if (ms === null) return "—";
   const s = Math.floor(ms / 1000);
@@ -125,46 +89,46 @@ function bytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return (
-    <div className="userinfo-row">
-      <span className="userinfo-row__k">{label}</span>
-      <span className="userinfo-row__v">{value}</span>
-    </div>
-  );
-}
-
 export function UserInfoView({ info, lang }: { info: UserInfo; lang: Lang }) {
-  const transportLabel = t(lang, `userinfo.transport.${info.transport}`);
-  return (
-    <div className="space-y-3">
-      <div className="userinfo-head">
-        <Avatar name={info.name} avatar={info.avatar} size={44} />
-        <div>
-          <div className="text-base font-semibold">{info.name || "—"}</div>
-          <div className="font-mono text-xs text-muted-foreground">{info.peerId.slice(-16)}</div>
-        </div>
-      </div>
-      <div className="userinfo-grid">
-        {info.username ? <Row label={t(lang, "id.username")} value={<span className="font-mono" data-testid="userinfo-username">{info.username}</span>} /> : null}
-        <Row label={t(lang, "userinfo.duration")} value={dur(info.connectedForMs, lang)} />
-        <Row label={t(lang, "userinfo.ip")} value={info.ip || t(lang, "userinfo.ip.unknown")} />
-        <Row label={t(lang, "userinfo.candidate")} value={info.candidateType || "—"} />
-        <Row label={t(lang, "userinfo.transport")} value={transportLabel} />
-        <Row label={t(lang, "userinfo.app")} value={info.appType} />
-        <Row label={t(lang, "userinfo.server")} value={info.usesServer ? t(lang, "userinfo.server.on") : t(lang, "userinfo.server.off")} />
-        <Row label={t(lang, "userinfo.sent")} value={bytes(info.sentBytes)} />
-        <Row label={t(lang, "userinfo.recv")} value={bytes(info.recvBytes)} />
-        <Row label={t(lang, "userinfo.security")} value={info.security} />
-      </div>
-      {info.fingerprint ? (
-        <div>
-          <div className="userinfo-row__k mb-1">{t(lang, "userinfo.fingerprint")}</div>
-          <code className="userinfo-fp">{info.fingerprint}</code>
-        </div>
-      ) : null}
-      {info.safety ? <SafetySection safety={info.safety} lang={lang} /> : null}
-      <p className="text-[11px] text-muted-foreground">{t(lang, "userinfo.note")}</p>
-    </div>
-  );
+  const { tree, base } = useLayoutBase("dialog.userInfo", lang);
+  const safety = info.safety;
+  const [number, setNumber] = useState("");
+  const [scanning, setScanning] = useState(false);
+  const [result, setResult] = useState<"match" | "mismatch" | "">("");
+  useEffect(() => {
+    if (!safety) return;
+    let live = true;
+    void safetyNumber(safety.mine, safety.theirs).then((n) => { if (live) setNumber(n); });
+    return () => { live = false; };
+  }, [safety?.mine, safety?.theirs]); // eslint-disable-line react-hooks/exhaustive-deps
+  const canScan = typeof window !== "undefined" && "BarcodeDetector" in window && Boolean(navigator.mediaDevices?.getUserMedia);
+  const digits = number.replace(/\s/g, "");
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      name: info.name, avatar: info.avatar, peerShort: info.peerId.slice(-16), username: info.username, duration: dur(info.connectedForMs, lang),
+      ip: info.ip, candidateType: info.candidateType, transport: info.transport, appType: info.appType, usesServer: info.usesServer,
+      sent: bytes(info.sentBytes), recv: bytes(info.recvBytes), security: info.security, fingerprint: info.fingerprint,
+      hasSafety: Boolean(safety), number, digits, verified: Boolean(safety?.verified), result, scanning, canScan,
+    },
+    actions: {
+      scan: () => setScanning(true),
+      confirm: () => { safety?.onVerified(); setResult("match"); },
+      exclude: () => { if (window.confirm(t(lang, "sec.exclude.confirm"))) safety?.onExclude(); },
+    },
+    slots: {
+      qr: () => <QrCodeView value={`${QR_PREFIX}${digits}`} size={160} />,
+      scanner: () => (
+        <QrScanner
+          onClose={() => setScanning(false)}
+          onResult={(text) => {
+            setScanning(false);
+            const ok = text === `${QR_PREFIX}${digits}`;
+            setResult(ok ? "match" : "mismatch");
+            if (ok) safety?.onVerified();
+          }}
+        />
+      ),
+    },
+  });
 }

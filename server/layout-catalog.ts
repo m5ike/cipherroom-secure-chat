@@ -8,7 +8,7 @@ import path from "node:path";
 import {
   ARIA_ATTRS, ATTR_VALUES, BOOLEAN_ATTRS, CSS_PROPERTIES, ELEMENTS, GLOBAL_ATTRS, LAYOUT_EVENTS, LAYOUT_LIMITS, TAG_ATTRS,
 } from "../client/src/lib/layout-tree";
-import { DEFAULT_LAYOUT_REVS, DEFAULT_LAYOUTS, LAYOUT_IDS, LAYOUT_LABELS, LAYOUT_STYLE_COMPONENT } from "../client/src/lib/layouts";
+import { DEFAULT_LAYOUT_REVS, DEFAULT_LAYOUTS, LAYOUT_GROUP, LAYOUT_GROUP_LABELS, LAYOUT_IDS, LAYOUT_LABELS, LAYOUT_STYLE_COMPONENT, type LayoutGroup } from "../client/src/lib/layouts";
 import { LAYOUT_CONTRACTS } from "../client/src/lib/layouts/contracts";
 import { PREVIEW_VARIANTS } from "../client/src/lib/layouts/samples";
 import { THEME_IDS } from "../client/src/lib/theme-catalog";
@@ -17,6 +17,23 @@ import {
   ALIGNS, BORDER_STYLES, COLOR_TOKENS, FONT_STACKS, FONT_WEIGHTS, ICON_POSITIONS, SHADOWS, STATE_KEYS, WRAPS,
 } from "../client/src/lib/menu-config";
 import { TEMPLATE_FILTERS, TEMPLATE_MACROS } from "../client/src/lib/menu-template";
+import { sanitizeClientConfig } from "../client/src/lib/client-config";
+import { BUILTIN_GROUPS } from "../client/src/lib/modules";
+
+/**
+ * 4.13: the groups a layout variant may be for — guest, user and the
+ * operator's own (from the client configuration; ids and labels, never the
+ * members). Read from the file the main service keeps (the same path rules
+ * as server/client-config.ts, which this process does not load).
+ */
+export function layoutGroups(): Array<{ id: string; label: string }> {
+  const explicit = process.env.CLIENT_CONFIG_FILE?.trim();
+  const dir = process.env.DATA_DIR?.trim();
+  const file = explicit ? path.resolve(explicit) : dir ? path.resolve(dir, "client-config.json") : path.resolve(process.cwd(), ".m5cet", "client-config.json");
+  let own: Array<{ id: string; label: string }> = [];
+  try { own = sanitizeClientConfig(JSON.parse(fs.readFileSync(file, "utf8"))).groups.map((g) => ({ id: g.id, label: g.label })); } catch { /* none yet */ }
+  return [...BUILTIN_GROUPS.map((g) => ({ id: g.id, label: g.label })), ...own];
+}
 
 /** dist/public of this install (the app's build), when there is one. */
 export function distPublicDir(): string | null {
@@ -70,13 +87,17 @@ export function layoutCatalog() {
     layouts: LAYOUT_IDS.map((id) => ({
       id,
       label: LAYOUT_LABELS[id],
+      section: LAYOUT_GROUP[id],
       styleComponent: LAYOUT_STYLE_COMPONENT[id],
       contract: LAYOUT_CONTRACTS[id],
       tree: DEFAULT_LAYOUTS[id],
       rev: DEFAULT_LAYOUT_REVS[id],
     })),
+    // 4.13: the layouts in sections (the app, the Room window, windows, dialogs, panels)
+    sections: (Object.keys(LAYOUT_GROUP_LABELS) as LayoutGroup[]).map((id) => ({ id, label: LAYOUT_GROUP_LABELS[id] })),
     variants: PREVIEW_VARIANTS,
     themes: THEME_IDS,
+    groups: layoutGroups(),
     template: { filters: TEMPLATE_FILTERS, macros: TEMPLATE_MACROS },
     style: {
       states: STATE_KEYS, fonts: Object.keys(FONT_STACKS), fontStacks: FONT_STACKS, fontWeights: FONT_WEIGHTS, colors: Object.keys(COLOR_TOKENS),

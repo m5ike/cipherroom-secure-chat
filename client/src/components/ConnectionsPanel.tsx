@@ -3,22 +3,24 @@
 // settings (default connection, connect after sign-in, reconnecting, the
 // header switcher). State and persistence live in lib/connections.ts; this
 // file only shows it and hands edits back.
+//
+// 4.13: drawn by layouts ("panel.connections", "part.connectionEdit",
+// "part.connectionDetail", "part.connectionSettings" — lib/layouts/connections.ts).
 
-import { useMemo, useState } from "react";
-import {
-  BarChart3, Check, Eye, EyeOff, Pencil, Plug, PlugZap, Plus, RefreshCw, Save, Server, Settings2, Share2, Star, Trash2, Undo2,
-} from "lucide-react";
+import { useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 import { t, tf, type Lang } from "../lib/i18n";
 import { formatBytes, formatFullDate, formatLogTime } from "../lib/format";
 import { normalizeServerUrl, type ConnectionsPolicy } from "../lib/client-config";
 import {
-  EMPTY_STATS, formatDuration, type ConnectionEvent, type ConnectionProfile, type ConnectionSettings, type ConnectionsState,
-  type EditResult, type Keepalive, type LogEntry, type ProfileInput,
+  EMPTY_STATS, formatDuration, type ConnectionEvent, type ConnectionSettings, type ConnectionsState,
+  type EditResult, type Keepalive, type ProfileInput,
 } from "../lib/connections";
 import type { ChatRetention } from "../lib/chat-history";
 import { SimpleModal } from "./SimpleModal";
 import { NeedSignIn } from "./NeedSignIn";
 import { ShareConnection } from "./SharePanel";
+import { renderLayout } from "./LayoutView";
+import { useLayoutBase } from "./LayoutProvider";
 // The switches, segmented controls and hints share the Appearance screen's styles.
 import "../appearance.css";
 import "../connections.css";
@@ -69,140 +71,68 @@ function randomKey(): string {
   return out.replace(/(.{6})(?=.)/g, "$1-");
 }
 
-function Switch({ label, checked, onChange, hint, disabled, testId }: { label: string; checked: boolean; onChange: (v: boolean) => void; hint?: string; disabled?: boolean; testId?: string }) {
-  return (
-    <label className={`ap-toggle cx-switch${disabled ? " is-disabled" : ""}`}>
-      <span>
-        <span className="ap-toggle__label">{label}</span>
-        {hint ? <span className="ap-hint">{hint}</span> : null}
-      </span>
-      <input type="checkbox" role="switch" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} data-testid={testId} />
-      <span className="ap-toggle__track" aria-hidden="true"><span className="ap-toggle__thumb" /></span>
-    </label>
-  );
-}
+const value = (e: unknown) => (e as ChangeEvent<HTMLInputElement | HTMLSelectElement>).target.value;
+const checked = (e: unknown) => (e as ChangeEvent<HTMLInputElement>).target.checked;
 
 export function ConnectionsPanel(props: ConnectionsPanelProps) {
-  const { lang, state, policy, eligible } = props;
+  const { lang, state, policy, eligible, activeId, connected, current } = props;
   const [view, setView] = useState<View>(props.startWith === "new" ? { kind: "edit" } : { kind: "list" });
   // Share a connection: a window of its own, above this one.
   const [sharing, setSharing] = useState<string | null>(null);
   const shared = sharing ? state.profiles.find((p) => p.id === sharing) ?? null : null;
+  const { tree, base } = useLayoutBase("panel.connections", lang);
 
   // 4.0: saved connections belong to a passkey account; signing in happens
   // in the Connection window only.
-  if (eligible.enabled && !eligible.signedIn) {
-    return (
-      <div className="cx" data-testid="connections-panel">
-        <div data-testid="connections-need">
-          <NeedSignIn lang={lang} onOpen={props.onSignIn} text={t(lang, "cx.need.account")} testId="cx-need" />
-        </div>
-      </div>
-    );
-  }
-  if (!eligible.enabled || !eligible.serverMode) {
-    return (
-      <div className="cx" data-testid="connections-panel">
-        <div className="cx-card cx-need" data-testid="connections-need">
-          <h3 className="cx-need__title">{t(lang, eligible.enabled ? "cx.need.title" : "cx.need.disabled")}</h3>
-          {eligible.enabled ? (
-            <>
-              <p>{t(lang, "cx.need.server")}</p>
-              <div className="cx-actions">
-                <button type="button" className="cx-btn cx-btn--primary" onClick={props.onEnableServerMode} data-testid="cx-enable-server"><Server className="h-4 w-4" />{t(lang, "cx.enableServer")}</button>
-              </div>
-            </>
-          ) : null}
-        </div>
-      </div>
-    );
-  }
+  const gate = eligible.enabled && !eligible.signedIn ? "account" : !eligible.enabled ? "disabled" : !eligible.serverMode ? "server" : "";
+  const list = !gate && view.kind === "list";
+  const full = state.profiles.length >= policy.maxProfiles;
+  const alreadySaved = current ? state.profiles.some((p) => p.room === current.room && p.passphrase === current.passphrase) : true;
+  const items = list ? state.profiles.map((p) => {
+    const s = state.stats[p.id] ?? EMPTY_STATS;
+    return {
+      id: p.id, label: p.label, room: p.room, user: p.userName || "—", color: p.color ?? "",
+      host: p.server ? new URL(p.server).host : t(lang, "cx.thisServer"),
+      isActive: activeId === p.id && connected, isDefault: state.settings.defaultId === p.id,
+      meta: `${tf(lang, "cx.usage", { n: s.connects, time: formatDuration(s.totalMs) })} · ${p.lastUsedAt ? tf(lang, "cx.lastUsed", { when: formatFullDate(p.lastUsedAt, lang, props.timezone) }) : t(lang, "cx.never")}`,
+    };
+  }) : [];
+  const toList = () => setView({ kind: "list" });
 
-  return (
-    <div className="cx" data-testid="connections-panel">
-      <nav className="cx-tabs" role="tablist">
-        <button type="button" role="tab" aria-selected={view.kind !== "settings"} className="cx-tab" onClick={() => setView({ kind: "list" })} data-testid="cx-tab-list">
-          <Plug className="h-4 w-4" />{t(lang, "cx.tab.list")}
-          <span className="cx-count">{tf(lang, "cx.limit", { n: state.profiles.length, max: policy.maxProfiles })}</span>
-        </button>
-        <button type="button" role="tab" aria-selected={view.kind === "settings"} className="cx-tab" onClick={() => setView({ kind: "settings" })} data-testid="cx-tab-settings">
-          <Settings2 className="h-4 w-4" />{t(lang, "cx.tab.settings")}
-        </button>
-      </nav>
-      {view.kind === "list" ? <ListView {...props} onEdit={(id, draft) => setView({ kind: "edit", id, draft })} onDetail={(id) => setView({ kind: "detail", id })} onShare={setSharing} /> : null}
-      {view.kind === "edit" ? <EditView {...props} id={view.id} draft={view.draft} onDone={() => setView({ kind: "list" })} /> : null}
-      {view.kind === "detail" ? <DetailView {...props} id={view.id} onBack={() => setView({ kind: "list" })} onEdit={() => setView({ kind: "edit", id: view.id })} /> : null}
-      {view.kind === "settings" ? <SettingsView {...props} /> : null}
-      {shared ? (
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      gate, view: view.kind, countText: tf(lang, "cx.limit", { n: state.profiles.length, max: policy.maxProfiles }),
+      full, canSaveCurrent: Boolean(current) && !alreadySaved, items, canShare: props.canShare !== false, sharing: Boolean(shared),
+    },
+    actions: {
+      tab: (_e, tab) => setView({ kind: tab === "settings" ? "settings" : "list" }),
+      add: () => setView({ kind: "edit" }),
+      saveCurrent: () => { if (current) setView({ kind: "edit", draft: { label: current.room, room: current.room, passphrase: current.passphrase, userName: current.userName } }); },
+      connect: (_e, id) => props.onConnect(String(id)),
+      disconnect: () => props.onDisconnect(),
+      edit: (_e, id) => setView({ kind: "edit", id: String(id) }),
+      details: (_e, id) => setView({ kind: "detail", id: String(id) }),
+      makeDefault: (_e, id) => props.onDefault(state.settings.defaultId === id ? null : String(id)),
+      share: (_e, id) => setSharing(String(id)),
+      delete: (_e, id) => {
+        const p = state.profiles.find((x) => x.id === id);
+        if (p && window.confirm(tf(lang, "cx.delete.confirm", { name: p.label }))) props.onDelete(p.id);
+      },
+      enableServerMode: () => props.onEnableServerMode(),
+    },
+    slots: {
+      needSignIn: () => <NeedSignIn lang={lang} onOpen={props.onSignIn} text={t(lang, "cx.need.account")} testId="cx-need" />,
+      edit: () => (view.kind === "edit" ? <EditView {...props} id={view.id} draft={view.draft} onDone={toList} /> : null),
+      detail: () => (view.kind === "detail" ? <DetailView {...props} id={view.id} onBack={toList} onEdit={() => setView({ kind: "edit", id: view.id })} /> : null),
+      settings: () => <SettingsView {...props} />,
+      share: () => (shared ? (
         <SimpleModal title={t(lang, "sc.title")} onClose={() => setSharing(null)} testId="share-connection-dialog">
           <ShareConnection lang={lang} connection={shared} onDone={() => setSharing(null)} />
         </SimpleModal>
-      ) : null}
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------- list */
-
-function ListView(props: ConnectionsPanelProps & { onEdit: (id?: string, draft?: ProfileInput) => void; onDetail: (id: string) => void; onShare: (id: string) => void }) {
-  const { lang, state, activeId, connected, current, policy } = props;
-  const full = state.profiles.length >= policy.maxProfiles;
-  const alreadySaved = current ? state.profiles.some((p) => p.room === current.room && p.passphrase === current.passphrase) : true;
-  return (
-    <>
-      <p className="cx-intro">{t(lang, "cx.intro")}</p>
-      <div className="cx-actions">
-        <button type="button" className="cx-btn cx-btn--primary" disabled={full} onClick={() => props.onEdit()} data-testid="cx-add"><Plus className="h-4 w-4" />{t(lang, "cx.add")}</button>
-        {current && !alreadySaved ? (
-          <button type="button" className="cx-btn" disabled={full} data-testid="cx-save-current"
-            onClick={() => props.onEdit(undefined, { label: current.room, room: current.room, passphrase: current.passphrase, userName: current.userName })}>
-            <Save className="h-4 w-4" />{t(lang, "cx.saveCurrent")}
-          </button>
-        ) : null}
-      </div>
-      {state.profiles.length === 0 ? <p className="cx-empty" data-testid="cx-empty">{t(lang, "cx.empty")}</p> : null}
-      <ul className="cx-list" data-testid="cx-list">
-        {state.profiles.map((p) => {
-          const s = state.stats[p.id] ?? EMPTY_STATS;
-          const isActive = activeId === p.id && connected;
-          const isDefault = state.settings.defaultId === p.id;
-          return (
-            <li key={p.id} className={`cx-card cx-item${isActive ? " is-active" : ""}`} data-testid="cx-item" data-id={p.id} style={p.color ? { ["--cx-color" as string]: p.color } : undefined}>
-              <div className="cx-item__head">
-                <span className="cx-dot" aria-hidden="true" />
-                <div className="cx-item__title">
-                  <span className="cx-item__label" data-testid="cx-item-label">{p.label}</span>
-                  <span className="cx-item__sub">{p.room} · {p.userName || "—"} · {p.server ? new URL(p.server).host : t(lang, "cx.thisServer")}</span>
-                </div>
-                {isDefault ? <span className="cx-badge" data-testid="cx-default-badge"><Star className="h-3 w-3" />{t(lang, "cx.default")}</span> : null}
-                {isActive ? <span className="cx-badge cx-badge--ok"><Check className="h-3 w-3" />{t(lang, "cx.active")}</span> : null}
-              </div>
-              <div className="cx-item__meta">
-                {tf(lang, "cx.usage", { n: s.connects, time: formatDuration(s.totalMs) })}
-                {" · "}
-                {p.lastUsedAt ? tf(lang, "cx.lastUsed", { when: formatFullDate(p.lastUsedAt, lang, props.timezone) }) : t(lang, "cx.never")}
-              </div>
-              <div className="cx-item__actions">
-                {isActive ? (
-                  <button type="button" className="cx-btn" onClick={props.onDisconnect} data-testid="cx-disconnect"><PlugZap className="h-4 w-4" />{t(lang, "cx.disconnect")}</button>
-                ) : (
-                  <button type="button" className="cx-btn cx-btn--primary" onClick={() => props.onConnect(p.id)} data-testid="cx-connect"><Plug className="h-4 w-4" />{t(lang, "cx.connect")}</button>
-                )}
-                <button type="button" className="cx-icon" title={t(lang, "cx.edit")} aria-label={t(lang, "cx.edit")} onClick={() => props.onEdit(p.id)} data-testid="cx-edit"><Pencil className="h-4 w-4" /></button>
-                <button type="button" className="cx-icon" title={t(lang, "cx.details")} aria-label={t(lang, "cx.details")} onClick={() => props.onDetail(p.id)} data-testid="cx-details"><BarChart3 className="h-4 w-4" /></button>
-                <button type="button" className="cx-icon" title={t(lang, "cx.makeDefault")} aria-label={t(lang, "cx.makeDefault")} aria-pressed={isDefault} onClick={() => props.onDefault(isDefault ? null : p.id)} data-testid="cx-make-default"><Star className="h-4 w-4" /></button>
-                {props.canShare !== false ? <button type="button" className="cx-icon" title={t(lang, "cx.share")} aria-label={t(lang, "cx.share")} onClick={() => props.onShare(p.id)} data-testid="cx-share"><Share2 className="h-4 w-4" /></button> : null}
-                <button type="button" className="cx-icon cx-icon--danger" title={t(lang, "cx.delete")} aria-label={t(lang, "cx.delete")} data-testid="cx-delete"
-                  onClick={() => { if (window.confirm(tf(lang, "cx.delete.confirm", { name: p.label }))) props.onDelete(p.id); }}>
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-    </>
-  );
+      ) : null),
+    },
+  });
 }
 
 /* ---------------------------------------------------------------- edit */
@@ -221,6 +151,7 @@ function EditView(props: ConnectionsPanelProps & { id?: string; draft?: ProfileI
   const [custom, setCustom] = useState(Boolean(form.server) && !listed);
   const set = (patch: Partial<ProfileInput>) => { setForm((f) => ({ ...f, ...patch })); setError(""); };
   const foreign = Boolean(form.server);
+  const { tree, base } = useLayoutBase("part.connectionEdit", lang);
 
   const submit = (connect: boolean) => {
     const result = props.onSave({ ...form, ...(props.id ? { id: props.id } : {}), away: foreign ? false : form.away });
@@ -229,99 +160,48 @@ function EditView(props: ConnectionsPanelProps & { id?: string; draft?: ProfileI
     props.onDone();
   };
 
-  return (
-    <form className="cx-form" onSubmit={(e) => { e.preventDefault(); submit(false); }} data-testid="cx-form">
-      <h3 className="cx-form__title">{t(lang, props.id ? "cx.form.edit" : "cx.form.new")}</h3>
-      <div className="cx-grid">
-        <label className="cx-field">
-          <span>{t(lang, "cx.form.label")}</span>
-          <input value={form.label ?? ""} maxLength={60} onChange={(e) => set({ label: e.target.value })} data-testid="cx-f-label" />
-        </label>
-        <div className="cx-field">
-          <span>{t(lang, "cx.form.color")}</span>
-          <div className="cx-colors" role="radiogroup" aria-label={t(lang, "cx.form.color")}>
-            {COLORS.map((c) => (
-              <button key={c || "none"} type="button" role="radio" aria-checked={(form.color ?? "") === c} className="cx-color" style={{ background: c || "transparent" }} onClick={() => set({ color: c })} aria-label={c || "—"} />
-            ))}
-          </div>
-        </div>
-        <label className="cx-field">
-          <span>{t(lang, "cx.form.room")}</span>
-          <input value={form.room ?? ""} required maxLength={64} onChange={(e) => set({ room: e.target.value })} data-testid="cx-f-room" autoComplete="off" />
-        </label>
-        <label className="cx-field">
-          <span>{t(lang, "cx.form.userName")}</span>
-          <input value={form.userName ?? ""} maxLength={42} onChange={(e) => set({ userName: e.target.value })} data-testid="cx-f-name" />
-        </label>
-        <div className="cx-field cx-field--wide">
-          <span>{t(lang, "cx.form.passphrase")}</span>
-          <div className="cx-key">
-            <input type={showKey ? "text" : "password"} value={form.passphrase ?? ""} required onChange={(e) => set({ passphrase: e.target.value })} data-testid="cx-f-key" autoComplete="new-password" spellCheck={false} />
-            <button type="button" className="cx-icon" onClick={() => setShowKey((v) => !v)} aria-label={t(lang, showKey ? "cx.form.hide" : "cx.form.show")}>{showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}</button>
-            <button type="button" className="cx-btn" onClick={() => { set({ passphrase: randomKey() }); setShowKey(true); }} data-testid="cx-f-generate"><RefreshCw className="h-4 w-4" />{t(lang, "cx.form.generate")}</button>
-          </div>
-        </div>
-        <label className="cx-field cx-field--wide">
-          <span>{t(lang, "cx.form.server")}</span>
-          <select
-            value={custom ? "__custom" : form.server ?? ""}
-            onChange={(e) => { if (e.target.value === "__custom") { setCustom(true); } else { setCustom(false); set({ server: e.target.value }); } }}
-            data-testid="cx-f-server"
-          >
-            <option value="">{t(lang, "cx.thisServer")}</option>
-            {policy.servers.map((s) => <option key={s.id} value={s.url}>{s.label} — {new URL(s.url).host}</option>)}
-            {policy.allowCustomServers ? <option value="__custom">{t(lang, "cx.form.server.custom")}</option> : null}
-          </select>
-          {custom ? (
-            <input placeholder={t(lang, "cx.form.server.url")} value={form.server ?? ""} onChange={(e) => set({ server: e.target.value })}
-              onBlur={() => { const n = normalizeServerUrl(form.server ?? ""); if (n) set({ server: n }); }} data-testid="cx-f-server-url" />
-          ) : null}
-          {foreign ? <span className="ap-hint">{t(lang, "cx.form.server.hint")}</span> : null}
-        </label>
-        <label className="cx-field">
-          <span>{t(lang, "cx.form.mode")}</span>
-          <select value={form.mode} onChange={(e) => set({ mode: e.target.value as "light" | "server" })} data-testid="cx-f-mode">
-            <option value="server">Server-enhanced</option>
-            <option value="light">Light · P2P</option>
-          </select>
-        </label>
-        <label className="cx-field">
-          <span>{t(lang, "cx.form.retention")}</span>
-          <select value={form.retention} onChange={(e) => set({ retention: e.target.value as ChatRetention })} data-testid="cx-f-retention">
-            {RETENTIONS.map((r) => <option key={r} value={r}>{t(lang, `data.${r}`)}</option>)}
-          </select>
-        </label>
-        <label className="cx-field">
-          <span>{t(lang, "cx.form.ttl")}</span>
-          <select value={String(form.ttlMinutes ?? 0)} onChange={(e) => set({ ttlMinutes: Number(e.target.value) })} data-testid="cx-f-ttl">
-            {TTL_OPTIONS.map((m) => <option key={m} value={m}>{m === 0 ? t(lang, "cx.form.ttl.off") : formatDuration(m * 60_000)}</option>)}
-          </select>
-        </label>
-        <label className="cx-field">
-          <span>{t(lang, "cx.form.keepalive")}</span>
-          <select value={form.keepalive} onChange={(e) => set({ keepalive: e.target.value as Keepalive })} data-testid="cx-f-keepalive">
-            {KEEPALIVES.map((k) => <option key={k} value={k}>{t(lang, `keepalive.${k}`)}</option>)}
-          </select>
-        </label>
-      </div>
-      <div className="cx-switches">
-        <Switch label={t(lang, "cx.form.away")} hint={t(lang, "cx.form.away.hint")} checked={!foreign && Boolean(form.away)} disabled={foreign || form.retention !== "server"} onChange={(away) => set({ away })} testId="cx-f-away" />
-        <Switch label={t(lang, "cx.form.notifications")} checked={Boolean(form.notifications)} onChange={(notifications) => set({ notifications })} testId="cx-f-notify" />
-        <Switch label={t(lang, "cx.form.autoReconnect")} checked={Boolean(form.autoReconnect)} onChange={(autoReconnect) => set({ autoReconnect })} testId="cx-f-reconnect" />
-      </div>
-      {error ? <p className="cx-error" role="alert" data-testid="cx-error">{error}</p> : null}
-      <div className="cx-actions">
-        <button type="submit" className="cx-btn cx-btn--primary" data-testid="cx-f-save"><Save className="h-4 w-4" />{t(lang, "cx.form.save")}</button>
-        <button type="button" className="cx-btn" onClick={() => submit(true)} data-testid="cx-f-save-connect"><Plug className="h-4 w-4" />{t(lang, "cx.form.saveConnect")}</button>
-        <button type="button" className="cx-btn cx-btn--ghost" onClick={props.onDone}><Undo2 className="h-4 w-4" />{t(lang, "cx.form.cancel")}</button>
-      </div>
-    </form>
-  );
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      editing: Boolean(props.id),
+      form: {
+        label: form.label ?? "", room: form.room ?? "", userName: form.userName ?? "", passphrase: form.passphrase ?? "", server: form.server ?? "",
+        mode: form.mode, retention: form.retention, keepalive: form.keepalive,
+        away: Boolean(form.away), notifications: Boolean(form.notifications), autoReconnect: Boolean(form.autoReconnect),
+      },
+      colors: COLORS.map((c) => ({ key: c || "none", value: c, bg: c || "transparent", label: c || "—", checked: (form.color ?? "") === c })),
+      showKey,
+      servers: policy.servers.map((s) => ({ id: s.id, url: s.url, label: s.label, host: new URL(s.url).host })),
+      allowCustom: policy.allowCustomServers, custom, serverValue: custom ? "__custom" : form.server ?? "", foreign,
+      retentions: RETENTIONS,
+      ttls: TTL_OPTIONS.map((m) => ({ value: String(m), label: m === 0 ? t(lang, "cx.form.ttl.off") : formatDuration(m * 60_000) })),
+      ttlValue: String(form.ttlMinutes ?? 0),
+      keepalives: KEEPALIVES,
+      error,
+    },
+    actions: {
+      field: (e, name) => set({ [String(name)]: value(e) }),
+      color: (_e, c) => set({ color: String(c ?? "") }),
+      toggleKey: () => setShowKey((v) => !v),
+      generate: () => { set({ passphrase: randomKey() }); setShowKey(true); },
+      server: (e) => { const v = value(e); if (v === "__custom") { setCustom(true); } else { setCustom(false); set({ server: v }); } },
+      serverBlur: () => { const n = normalizeServerUrl(form.server ?? ""); if (n) set({ server: n }); },
+      mode: (e) => set({ mode: value(e) as "light" | "server" }),
+      retention: (e) => set({ retention: value(e) as ChatRetention }),
+      ttl: (e) => set({ ttlMinutes: Number(value(e)) }),
+      keepalive: (e) => set({ keepalive: value(e) as Keepalive }),
+      check: (e, name) => set({ [String(name)]: checked(e) }),
+      save: (e) => { (e as FormEvent).preventDefault(); submit(false); },
+      saveConnect: () => submit(true),
+      cancel: () => props.onDone(),
+    },
+  });
 }
 
 /* -------------------------------------------------------------- detail */
 
 type LogFilter = "all" | "session" | "people" | "files" | "errors";
+const LOG_FILTERS: LogFilter[] = ["all", "session", "people", "files", "errors"];
 const FILTER_EVENTS: Record<Exclude<LogFilter, "all">, ReadonlySet<ConnectionEvent>> = {
   session: new Set(["connect", "connected", "disconnected", "reconnect", "created", "edited"]),
   people: new Set(["peer-joined", "peer-left"]),
@@ -335,6 +215,7 @@ function DetailView(props: ConnectionsPanelProps & { id: string; onBack: () => v
   const [filter, setFilter] = useState<LogFilter>("all");
   const log = state.logs[id] ?? [];
   const shown = useMemo(() => (filter === "all" ? log : log.filter((e) => FILTER_EVENTS[filter].has(e.event))).slice().reverse(), [log, filter]);
+  const { tree, base } = useLayoutBase("part.connectionDetail", lang);
   if (!profile) return null;
   const s = state.stats[id] ?? EMPTY_STATS;
   const sessions = Math.max(1, s.connects);
@@ -363,43 +244,25 @@ function DetailView(props: ConnectionsPanelProps & { id: string; onBack: () => v
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5_000);
   };
-  return (
-    <div className="cx-detail" data-testid="cx-detail">
-      <div className="cx-detail__head">
-        <button type="button" className="cx-btn cx-btn--ghost" onClick={props.onBack}><Undo2 className="h-4 w-4" />{t(lang, "cx.log.back")}</button>
-        <h3 className="cx-form__title">{profile.label}</h3>
-        <button type="button" className="cx-icon" onClick={props.onEdit} aria-label={t(lang, "cx.edit")}><Pencil className="h-4 w-4" /></button>
-      </div>
-      <div className="cx-stats" data-testid="cx-stats">
-        {tiles.map(([label, value]) => (
-          <div key={label} className="cx-stat"><span className="cx-stat__value">{value}</span><span className="cx-stat__label">{label}</span></div>
-        ))}
-      </div>
-      <div className="cx-log-head">
-        <h4>{t(lang, "cx.log")}</h4>
-        <div className="ap-seg" role="radiogroup" aria-label={t(lang, "cx.log")}>
-          {(["all", "session", "people", "files", "errors"] as LogFilter[]).map((f) => (
-            <button key={f} type="button" role="radio" aria-checked={filter === f} className="ap-seg__btn" onClick={() => setFilter(f)} data-testid={`cx-log-${f}`}>{t(lang, `cx.log.filter.${f}`)}</button>
-          ))}
-        </div>
-      </div>
-      {shown.length === 0 ? <p className="cx-empty">{t(lang, "cx.log.empty")}</p> : (
-        <ol className="cx-log" data-testid="cx-log">
-          {shown.slice(0, 300).map((e: LogEntry, i) => (
-            <li key={`${e.at}-${i}`} className={`cx-log__row is-${e.event}`}>
-              <time dateTime={new Date(e.at).toISOString()} title={formatFullDate(e.at, lang, props.timezone)}>{formatLogTime(e.at, lang, props.timezone)}</time>
-              <span className="cx-log__event">{t(lang, `cx.ev.${e.event}`)}</span>
-              {e.detail ? <span className="cx-log__detail">{e.detail}</span> : null}
-            </li>
-          ))}
-        </ol>
-      )}
-      <div className="cx-actions">
-        <button type="button" className="cx-btn" onClick={exportJson} data-testid="cx-export">{t(lang, "cx.log.export")}</button>
-        <button type="button" className="cx-btn cx-btn--danger" onClick={() => { if (window.confirm(t(lang, "cx.log.clear.confirm"))) props.onClearLog(id); }} data-testid="cx-clear-log">{t(lang, "cx.log.clear")}</button>
-      </div>
-    </div>
-  );
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      label: profile.label,
+      tiles: tiles.map(([label, v]) => ({ label, value: v })),
+      filters: LOG_FILTERS, filter,
+      shown: shown.slice(0, 300).map((e, i) => ({
+        key: `${e.at}-${i}`, iso: new Date(e.at).toISOString(), full: formatFullDate(e.at, lang, props.timezone), time: formatLogTime(e.at, lang, props.timezone),
+        event: e.event, detail: e.detail ?? "",
+      })),
+    },
+    actions: {
+      back: () => props.onBack(),
+      edit: () => props.onEdit(),
+      filter: (_e, f) => setFilter(f as LogFilter),
+      export: () => exportJson(),
+      clearLog: () => { if (window.confirm(t(lang, "cx.log.clear.confirm"))) props.onClearLog(id); },
+    },
+  });
 }
 
 /* ------------------------------------------------------------ settings */
@@ -407,24 +270,16 @@ function DetailView(props: ConnectionsPanelProps & { id: string; onBack: () => v
 function SettingsView(props: ConnectionsPanelProps) {
   const { lang, state, policy } = props;
   const st = state.settings;
-  return (
-    <div className="cx-settings" data-testid="cx-settings">
-      <label className="cx-field">
-        <span>{t(lang, "cx.set.default")}</span>
-        <select value={st.defaultId ?? ""} onChange={(e) => props.onDefault(e.target.value || null)} data-testid="cx-s-default">
-          <option value="">{t(lang, "cx.set.default.none")}</option>
-          {state.profiles.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-        </select>
-      </label>
-      <div className="cx-switches">
-        <Switch label={t(lang, "cx.set.autoConnect")} hint={t(lang, "cx.set.autoConnect.hint")} checked={st.autoConnect} onChange={(autoConnect) => props.onSettings({ autoConnect })} testId="cx-s-autoconnect" />
-        <Switch label={t(lang, "cx.set.autoReconnect")} checked={st.autoReconnect} onChange={(autoReconnect) => props.onSettings({ autoReconnect })} testId="cx-s-autoreconnect" />
-        <Switch label={t(lang, "cx.set.reconnectOnResume")} checked={st.reconnectOnResume} onChange={(reconnectOnResume) => props.onSettings({ reconnectOnResume })} testId="cx-s-resume" />
-        <Switch label={t(lang, "cx.set.collectStats")} hint={policy.stats ? undefined : t(lang, "cx.set.collectStats.off")} checked={st.collectStats} disabled={!policy.stats} onChange={(collectStats) => props.onSettings({ collectStats })} testId="cx-s-stats" />
-        <Switch label={t(lang, "cx.set.quickSwitch")} checked={st.quickSwitch} onChange={(quickSwitch) => props.onSettings({ quickSwitch })} testId="cx-s-quickswitch" />
-        <Switch label={t(lang, "cx.set.confirmSwitch")} checked={st.confirmSwitch} onChange={(confirmSwitch) => props.onSettings({ confirmSwitch })} testId="cx-s-confirm" />
-      </div>
-      <p className="cx-intro">{tf(lang, "cx.set.storage", { n: state.profiles.length, size: formatBytes(props.storedBytes) })}</p>
-    </div>
-  );
+  const { tree, base } = useLayoutBase("part.connectionSettings", lang);
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      defaultId: st.defaultId ?? "", profiles: state.profiles.map((p) => ({ id: p.id, label: p.label })), settings: st,
+      statsAllowed: policy.stats, storageText: tf(lang, "cx.set.storage", { n: state.profiles.length, size: formatBytes(props.storedBytes) }),
+    },
+    actions: {
+      default: (e) => props.onDefault(value(e) || null),
+      setting: (e, key) => props.onSettings({ [String(key)]: checked(e) } as Partial<ConnectionSettings>),
+    },
+  });
 }

@@ -4,11 +4,15 @@
 // lists what differs and offers "Fix" — wipe this app's cache and data here
 // and load everything fresh.
 
-import { useCallback, useEffect, useImperativeHandle, useRef, useState, type Ref } from "react";
-import { AlertTriangle, RefreshCw, Wrench } from "lucide-react";
+//
+// 4.13: the window's content is a layout ("dialog.integrity", lib/layouts/dialogs.ts).
+
+import { useCallback, useEffect, useImperativeHandle, useRef, useState, type ChangeEvent, type Ref } from "react";
 import { t, type Lang } from "../lib/i18n";
 import { checkIntegrity, repairAndReload, type Mismatch } from "../lib/integrity";
 import { SimpleModal } from "./SimpleModal";
+import { renderLayout } from "./LayoutView";
+import { useLayoutBase } from "./LayoutProvider";
 
 export type IntegrityHandle = { check: (now?: boolean) => Promise<void> };
 
@@ -50,6 +54,7 @@ export function IntegrityCheck({ lang, onMismatch, handle }: {
   }, []);
 
   useImperativeHandle(handle, () => ({ check }), [check]);
+  const { tree, base } = useLayoutBase("dialog.integrity", lang);
 
   useEffect(() => {
     const first = window.setTimeout(() => { void check(true); }, 2500);
@@ -74,39 +79,15 @@ export function IntegrityCheck({ lang, onMismatch, handle }: {
 
   return (
     <SimpleModal title={t(lang, "ver.title")} onClose={later} testId="integrity-modal">
-      <div className="ic">
-        <p className="ic-lead"><AlertTriangle className="h-5 w-5 flex-none" aria-hidden="true" /><span>{t(lang, "ver.desc")}</span></p>
-        <h3 className="ic-title">{t(lang, "ver.found")} <span className="ic-count">{found.length}</span></h3>
-        <div className="ic-table-wrap">
-          <table className="ic-table" data-testid="integrity-list">
-            <thead>
-              <tr><th>{t(lang, "ver.col.item")}</th><th>{t(lang, "ver.col.local")}</th><th>{t(lang, "ver.col.server")}</th></tr>
-            </thead>
-            <tbody>
-              {found.map((m, i) => (
-                <tr key={`${m.kind}-${m.item}-${i}`} data-kind={m.kind}>
-                  <td><span className="ic-kind">{t(lang, `ver.kind.${m.kind}`)}</span> <code>{m.item}</code></td>
-                  <td><code>{m.local}</code></td>
-                  <td><code>{m.server || t(lang, "ver.missing")}</code></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <p className="ic-fix-desc">{t(lang, "ver.fix.desc")}</p>
-        <label className="ic-keep">
-          <input type="checkbox" checked={keepPrefs} onChange={(e) => setKeepPrefs(e.target.checked)} data-testid="integrity-keep" />
-          {t(lang, "ver.keepPrefs")}
-        </label>
-        <div className="ic-actions">
-          <button type="button" className="acc-btn acc-btn--primary" disabled={fixing} data-testid="integrity-fix"
-            onClick={() => { setFixing(true); void repairAndReload({ keepPrefs }); }}>
-            {fixing ? <RefreshCw className="h-4 w-4 animate-spin" aria-hidden="true" /> : <Wrench className="h-4 w-4" aria-hidden="true" />}
-            {fixing ? t(lang, "ver.fixing") : t(lang, "ver.fix")}
-          </button>
-          <button type="button" className="acc-btn" onClick={later} disabled={fixing} data-testid="integrity-later">{t(lang, "ver.later")}</button>
-        </div>
-      </div>
+      {renderLayout(tree, {
+        ...base,
+        data: { found: found.map((m, i) => ({ ...m, key: `${m.kind}-${m.item}-${i}` })), keepPrefs, fixing },
+        actions: {
+          keepPrefs: (e) => setKeepPrefs((e as ChangeEvent<HTMLInputElement>).target.checked),
+          fix: () => { setFixing(true); void repairAndReload({ keepPrefs }); },
+          later: () => later(),
+        },
+      })}
     </SimpleModal>
   );
 }

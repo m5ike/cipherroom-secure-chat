@@ -145,6 +145,24 @@
     search.focus();
   }
 
+  /**
+   * 4.13: a modal dialog (Esc or a click outside closes it). `body` is a node
+   * or a list of nodes; returns { close, dialog, body }.
+   */
+  function openDialog({ title, subtitle = "", body, wide = false, label, onClose }) {
+    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
+    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); if (onClose) onClose(); };
+    const content = h("div", { class: "mb-dialog__body" }, body || null);
+    const dialog = h("div", { class: `mb-dialog${wide ? " mb-dialog--wide" : ""}`, role: "dialog", "aria-modal": "true", "aria-label": label || title },
+      h("div", { class: "mb-dialog__head" }, h("strong", {}, title), subtitle ? h("span", { class: "muted small" }, subtitle) : null,
+        h("button", { type: "button", class: "btn btn--sm", "data-read": "1", onclick: () => close() }, "Close")),
+      content);
+    const overlay = h("div", { class: "mb-overlay", onclick: (e) => { if (e.target === overlay) close(); } }, dialog);
+    document.body.append(overlay);
+    document.addEventListener("keydown", onKey, true);
+    return { close, dialog, body: content };
+  }
+
   /* --------------------------------------------------------- help window */
 
   const helpWindows = new Map();
@@ -505,5 +523,5 @@
     return { field, textField, suggestField, selectField, checkField, triField, numberField, colorField, iconField, grid, group, styleEditor };
   }
 
-  window.M5Kit = { create, iconSvg, insertAt, openIconPicker, openHelp, suggestInput, styleProps, mergeStyles, cssColor, STATE_LABELS, SHADOW_CSS };
+  window.M5Kit = { create, iconSvg, insertAt, openIconPicker, openHelp, openDialog, suggestInput, styleProps, mergeStyles, cssColor, STATE_LABELS, SHADOW_CSS };
 })();

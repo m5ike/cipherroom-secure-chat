@@ -6,7 +6,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
-  formatDate, parseSafeHtml, renderMenuHtml, renderTemplate, renderText, sampleTemplateVars, TemplateError,
+  compileExpression, compileTemplate, evalExpression, formatDate, parseSafeHtml, renderMenuHtml, renderTemplate, renderText, sampleTemplateVars, TemplateError,
   TEMPLATE_FILTERS, FILTERS,
 } from "../client/src/lib/menu-template";
 
@@ -130,5 +130,36 @@ describe("safe HTML", () => {
     expect(bad.error).toMatch(/missing/);
     // A variable that holds markup stays text.
     expect(renderMenuHtml("<p>{$x}</p>", { x: "<b>no</b>" }, allow).nodes).toEqual([{ t: "p", a: {}, c: ["<b>no</b>"] }]);
+  });
+});
+
+describe("compiled templates (4.13)", () => {
+  it("compiles a template and an expression once, and runs them over a chain of scopes", () => {
+    const t = compileTemplate("{$who} in {$room}{foreach $list as $i}, {$i}{/foreach}");
+    expect(compileTemplate("{$who} in {$room}{foreach $list as $i}, {$i}{/foreach}")).toBe(t);
+    // The innermost scope wins; the outer ones stay visible.
+    expect(t.run([{ who: "Ann", room: "brno", list: [1] }, { who: "Bob" }], {})).toBe("Bob in brno, 1");
+    const e = compileExpression("$n > 1 && $who|upper");
+    expect(compileExpression("$n > 1 && $who|upper")).toBe(e);
+    expect(e([{ n: 2 }, { who: "ann" }], {})).toBe("ANN");
+    expect(() => compileTemplate("{if $a}")).toThrow(TemplateError);
+  });
+
+  it("{var} never changes the caller's values", () => {
+    const outer = { a: 1 };
+    const scopes = [outer, { b: 2 }];
+    expect(compileTemplate("{var $a = 5}{var $b = 6}{$a}{$b}").run(scopes, {})).toBe("56");
+    expect(outer).toEqual({ a: 1 });
+    expect(scopes).toEqual([{ a: 1 }, { b: 2 }]);
+    expect(renderTemplate("{var $a = 5}{$a}", outer)).toBe("5");
+    expect(outer).toEqual({ a: 1 });
+  });
+
+  it("reads digits after a dot as steps of the path, not as a number", () => {
+    const v = { x: [["a", "b"], ["c"]], m: { "1a": "one-a", "b-c": "dash" } };
+    expect(evalExpression("$x.0.1", v)).toBe("b");
+    expect(renderTemplate("{$x.1.0}{$m.1a}{$m.b-c}", v)).toBe("cone-adash");
+    expect(evalExpression("$x.0.length + 0.5", v)).toBe(2.5);
+    expect(renderTemplate("{$n|number:1}", { n: 2.25 })).toMatch(/^2[.,]3$/);
   });
 });

@@ -267,7 +267,9 @@
               <div class="card__title">Layout builder</div>
               <div class="card__hint">A GUI designer for the app: pick a layout, drag elements from the palette into the tree, pick one (in the tree or in the preview) to edit its tag, text, classes, attributes, CSS, conditions, repeats and events — every field suggests while typing. The preview is the app itself.</div>
             </div>
+            <div class="lb-sections" id="lbSections" role="group" aria-label="Layout sections"></div>
             <div class="lb-tabs" id="lbTabs" role="tablist" aria-label="Layouts"></div>
+            <div class="lb-variants" id="lbVariants" aria-label="Variants of the layout"></div>
             <div class="mb-bar">
               <div class="mb-actions">
                 <span class="badge badge--warn" id="lbDirty" hidden>Unsaved changes</span>
@@ -275,6 +277,8 @@
                 <button class="btn btn--sm" type="button" id="lbRedo" data-read="1" title="Redo (Ctrl+Shift+Z)">Redo</button>
                 <button class="btn btn--sm" type="button" id="lbCopy" data-read="1" title="Copy the selected element">Copy</button>
                 <button class="btn btn--sm" type="button" id="lbPaste" data-read="1" title="Paste into the selection (any layout)">Paste</button>
+                <button class="btn btn--sm" type="button" id="lbPasteHtml" title="Paste HTML: it becomes elements of the palette">Paste HTML</button>
+                <button class="btn btn--sm" type="button" id="lbHistoryBtn" data-read="1" title="Every saved version: who, what changed, restore">History</button>
                 <button class="btn btn--sm" type="button" id="lbHelpBtn" data-read="1" title="Values, actions, filters and macros" aria-label="Layout builder help">? Help</button>
                 <button class="btn btn--sm" type="button" id="lbExport" data-read="1">Export</button>
                 <label class="btn btn--sm mb-import">Import<input type="file" id="lbImport" accept="application/json,.json" hidden /></label>
@@ -299,9 +303,11 @@
                   <select class="input" id="lbLang" data-read="1" aria-label="Language"><option value="cs">cs</option><option value="en">en</option><option value="de">de</option></select>
                   <select class="input" id="lbDevice" data-read="1" aria-label="Width"><option value="desktop">desktop</option><option value="tablet">tablet</option><option value="phone">phone</option></select>
                   <select class="input" id="lbMode" data-read="1" aria-label="Clicks"><option value="select">click selects</option><option value="interact">click tries it</option></select>
+                  <select class="input" id="lbGroups" data-read="1" aria-label="Preview as (group)" title="Whose app the preview shows (variants for groups)"></select>
                 </div>
                 <div class="lb-frame" id="lbFrameBox" data-device="desktop"><iframe id="lbFrame" title="Preview" src="layout-preview.html"></iframe></div>
                 <ul class="lb-errors" id="lbErrors" hidden></ul>
+                <div class="lb-a11y" id="lbA11y"></div>
                 <p class="small muted" id="lbFile"></p>
               </div>
             </div>

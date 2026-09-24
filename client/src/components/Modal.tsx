@@ -7,8 +7,9 @@
 // on-screen keyboard never hides a field and the sheet clears the notch and
 // the home indicator.
 
-import { ReactNode, useEffect } from "react";
-import { X } from "lucide-react";
+import { ReactNode, useEffect, type MouseEvent } from "react";
+import { renderLayout } from "./LayoutView";
+import { useLayout } from "./LayoutProvider";
 
 type ModalProps = {
   open: boolean;
@@ -39,43 +40,18 @@ export function Modal({ open, onClose, title, children, side = "center", size = 
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
+  const { tree, blocks } = useLayout("window.large");
   if (!open) return null;
 
-  return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      data-testid={testId}
-      className="modal-root fixed inset-0 z-40 flex items-stretch justify-center bg-black/45 p-3 sm:p-6"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onClose();
-      }}
-    >
-      <div
-        className={
-          side === "right"
-            ? "modal-shell modal-shell--drawer ml-auto flex h-full w-full max-w-xl flex-col"
-            : `modal-shell modal-shell--center my-auto flex max-h-[92dvh] w-full ${WIDTH[size]} flex-col`
-        }
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <header className="modal-head flex items-center justify-between gap-2 border-b border-border px-5 py-3">
-          <h2 className="min-w-0 truncate text-base font-semibold tracking-tight">{title}</h2>
-          <div className="flex flex-none items-center gap-2">
-            {headerExtra}
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label={closeLabel}
-              className="modal-close inline-flex h-9 w-9 items-center justify-center rounded-full hover:bg-accent"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </header>
-        <div className="modal-body flex-1 overflow-y-auto px-5 py-4">{children}</div>
-      </div>
-    </div>
-  );
+  // 4.13: the window is a layout ("window.large", lib/layouts/windows.ts).
+  return renderLayout(tree, {
+    blocks,
+    data: { title, testId, side, width: WIDTH[size], closeLabel },
+    actions: {
+      backdrop: (event) => { const e = event as MouseEvent; if (e.target === e.currentTarget) onClose(); },
+      stop: (event) => (event as MouseEvent).stopPropagation(),
+      close: () => onClose(),
+    },
+    slots: { headerExtra: () => headerExtra, content: () => children },
+  });
 }

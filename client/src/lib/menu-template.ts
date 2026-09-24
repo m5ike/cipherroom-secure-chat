@@ -31,7 +31,9 @@ type Expr =
   | { e: "not"; x: Expr }
   | { e: "neg"; x: Expr }
   | { e: "bin"; op: string; a: Expr; b: Expr }
-  | { e: "cond"; c: Expr; a: Expr; b: Expr };
+  | { e: "cond"; c: Expr; a: Expr; b: Expr }
+  /** 4.13: filters inside parentheses — ('room.locked'|t), ($name|upper). */
+  | { e: "filter"; x: Expr; filters: Filter[] };
 type Filter = { name: string; args: Expr[] };
 type TNode =
   | { t: "text"; v: string }
@@ -108,6 +110,14 @@ function lex(src: string, at: number): Tok[] {
       if (j >= src.length) throw new TemplateError("unclosed string", at);
       toks.push({ k: "str", v: s });
       i = j + 1;
+      continue;
+    }
+    // After a "." a property name, digits too: $list.0.name, $x.0.1 (not the number 0.1).
+    const prev = toks[toks.length - 1];
+    if (prev && prev.k === "op" && prev.v === "." && /[A-Za-z0-9_]/.test(c)) {
+      const m = src.slice(i).match(/^[A-Za-z0-9_][A-Za-z0-9_-]*/)!;
+      toks.push({ k: "id", v: m[0] });
+      i += m[0].length;
       continue;
     }
     if (/[0-9]/.test(c)) {
@@ -214,7 +224,20 @@ class ExprParser {
       }
       return { e: "var", name: t.v, path };
     }
-    if (t.v === "(") { const x = this.expr(); this.expect(")"); return x; }
+    if (t.v === "(") {
+      const x = this.expr();
+      const filters: Filter[] = [];
+      while (this.peek("|")) {
+        this.i++;
+        const name = this.take();
+        if (!name || name.k !== "id") throw new TemplateError("a filter name is missing after '|'", this.at);
+        const args: Expr[] = [];
+        while (this.take(":")) args.push(this.primary());
+        filters.push({ name: name.v, args });
+      }
+      this.expect(")");
+      return filters.length ? { e: "filter", x, filters } : x;
+    }
     throw new TemplateError(`unexpected "${t.v}"`, this.at);
   }
 }
@@ -222,10 +245,13 @@ class ExprParser {
 /** "expr|filter:arg:arg|filter" */
 function parsePrint(src: string, at: number): { expr: Expr; filters: Filter[] } {
   const toks = lex(src, at);
-  // Split on a single "|" (not "||").
+  // Split on a single "|" (not "||") outside parentheses (inside them it filters a part: ('k'|t)).
   const parts: Tok[][] = [[]];
+  let depth = 0;
   for (const t of toks) {
-    if (t.k === "op" && t.v === "|") parts.push([]);
+    if (t.k === "op" && (t.v === "(" || t.v === "[")) depth++;
+    else if (t.k === "op" && (t.v === ")" || t.v === "]")) depth = Math.max(0, depth - 1);
+    if (t.k === "op" && t.v === "|" && depth === 0) parts.push([]);
     else parts[parts.length - 1].push(t);
   }
   const p = new ExprParser(parts[0], at);
@@ -453,122 +479,197 @@ export const FILTERS: Record<string, FilterFn> = {
 
 export const MAX_TEMPLATE_OUTPUT = MAX_OUTPUT;
 
-/** An evaluator over a chain of scopes (the innermost last). */
-function evaluator(scopes: Array<Record<string, unknown>>): (e: Expr) => unknown {
-  const get = (name: string): unknown => {
-    for (let i = scopes.length - 1; i >= 0; i--) if (Object.prototype.hasOwnProperty.call(scopes[i], name)) return scopes[i][name];
-    return undefined;
-  };
-  const evaluate = (e: Expr): unknown => {
-    switch (e.e) {
-      case "lit": return e.v;
-      case "not": return !truthy(evaluate(e.x));
-      case "neg": return -Number(evaluate(e.x));
-      case "cond": return truthy(evaluate(e.c)) ? evaluate(e.a) : evaluate(e.b);
-      case "var": {
-        if (FORBIDDEN.has(e.name)) return undefined;
-        let v = get(e.name);
-        for (const p of e.path) v = lookup(v, typeof p === "string" ? p : evaluate(p));
-        return v;
-      }
-      case "bin": {
-        if (e.op === "&&") return truthy(evaluate(e.a)) ? evaluate(e.b) : false;
-        if (e.op === "||") { const a = evaluate(e.a); return truthy(a) ? a : evaluate(e.b); }
-        const a = evaluate(e.a);
-        const b = evaluate(e.b);
-        switch (e.op) {
-          // eslint-disable-next-line eqeqeq
-          case "==": return a == b;
-          // eslint-disable-next-line eqeqeq
-          case "!=": return a != b;
-          case "===": return a === b;
-          case "!==": return a !== b;
-          case "<": return Number(a) < Number(b);
-          case ">": return Number(a) > Number(b);
-          case "<=": return Number(a) <= Number(b);
-          case ">=": return Number(a) >= Number(b);
-          case "+": return typeof a === "number" && typeof b === "number" ? a + b : toText(a) + toText(b);
-          case "~": return toText(a) + toText(b);
-          case "-": return Number(a) - Number(b);
-          case "*": return Number(a) * Number(b);
-          case "/": return Number(b) === 0 ? 0 : Number(a) / Number(b);
-          case "%": return Number(b) === 0 ? 0 : Number(a) % Number(b);
-        }
-        return undefined;
-      }
-    }
-  };
-  return evaluate;
+/* ----------------------------------------------------------- compiling */
+//
+// A parsed template or expression becomes a tree of closures once (cached by
+// its source), so drawing it again — a message bubble, a layout, a label —
+// only runs those closures. The semantics are exactly the interpreter's
+// that preceded it (4.0.5 and earlier): own properties only, forbidden names,
+// truthiness, loose ==, the output and loop limits.
+
+/** Scopes from the outermost (the caller's values) to the innermost. */
+export type Scopes = Array<Record<string, unknown>>;
+type CExpr = (s: Scopes, o: RenderOptions) => unknown;
+type Out = { s: string; loops: number };
+type CNode = (s: Scopes, o: RenderOptions, out: Out) => void;
+
+function getVar(s: Scopes, name: string): unknown {
+  for (let i = s.length - 1; i >= 0; i--) if (Object.prototype.hasOwnProperty.call(s[i], name)) return s[i][name];
+  return undefined;
 }
 
-function applyFilters(value: unknown, filters: Filter[], evaluate: (e: Expr) => unknown, opts: RenderOptions): unknown {
-  let v = value;
+function compileExprNode(e: Expr): CExpr {
+  switch (e.e) {
+    case "lit": { const v = e.v; return () => v; }
+    case "not": { const x = compileExprNode(e.x); return (s, o) => !truthy(x(s, o)); }
+    case "neg": { const x = compileExprNode(e.x); return (s, o) => -Number(x(s, o)); }
+    case "cond": {
+      const c = compileExprNode(e.c); const a = compileExprNode(e.a); const b = compileExprNode(e.b);
+      return (s, o) => (truthy(c(s, o)) ? a(s, o) : b(s, o));
+    }
+    case "filter": return compilePrint(e.x, e.filters);
+    case "var": {
+      const name = e.name;
+      if (FORBIDDEN.has(name)) return () => undefined;
+      const path = e.path.map((p) => (typeof p === "string" ? p : compileExprNode(p)));
+      if (!path.length) return (s) => getVar(s, name);
+      return (s, o) => {
+        let v = getVar(s, name);
+        for (const p of path) v = lookup(v, typeof p === "string" ? p : p(s, o));
+        return v;
+      };
+    }
+    case "bin": {
+      const a = compileExprNode(e.a);
+      const b = compileExprNode(e.b);
+      switch (e.op) {
+        case "&&": return (s, o) => (truthy(a(s, o)) ? b(s, o) : false);
+        case "||": return (s, o) => { const x = a(s, o); return truthy(x) ? x : b(s, o); };
+        // eslint-disable-next-line eqeqeq
+        case "==": return (s, o) => a(s, o) == b(s, o);
+        // eslint-disable-next-line eqeqeq
+        case "!=": return (s, o) => a(s, o) != b(s, o);
+        case "===": return (s, o) => a(s, o) === b(s, o);
+        case "!==": return (s, o) => a(s, o) !== b(s, o);
+        case "<": return (s, o) => Number(a(s, o)) < Number(b(s, o));
+        case ">": return (s, o) => Number(a(s, o)) > Number(b(s, o));
+        case "<=": return (s, o) => Number(a(s, o)) <= Number(b(s, o));
+        case ">=": return (s, o) => Number(a(s, o)) >= Number(b(s, o));
+        case "+": return (s, o) => { const x = a(s, o); const y = b(s, o); return typeof x === "number" && typeof y === "number" ? x + y : toText(x) + toText(y); };
+        case "~": return (s, o) => toText(a(s, o)) + toText(b(s, o));
+        case "-": return (s, o) => Number(a(s, o)) - Number(b(s, o));
+        case "*": return (s, o) => Number(a(s, o)) * Number(b(s, o));
+        case "/": return (s, o) => { const y = Number(b(s, o)); return y === 0 ? 0 : Number(a(s, o)) / y; };
+        case "%": return (s, o) => { const y = Number(b(s, o)); return y === 0 ? 0 : Number(a(s, o)) % y; };
+      }
+      return () => undefined;
+    }
+  }
+}
+
+function compilePrint(expr: Expr, filters: Filter[]): CExpr {
+  let x = compileExprNode(expr);
   for (const f of filters) {
     const fn = FILTERS[f.name];
-    if (!fn) throw new TemplateError(`unknown filter |${f.name}`, 0);
-    v = fn(v, f.args.map(evaluate), opts);
+    const inner = x;
+    if (!fn) { const name = f.name; x = () => { throw new TemplateError(`unknown filter |${name}`, 0); }; continue; }
+    const args = f.args.map(compileExprNode);
+    x = (s, o) => fn(inner(s, o), args.map((arg) => arg(s, o)), o);
   }
-  return v;
+  return x;
+}
+
+const emitTo = (out: Out, str: string) => {
+  if (out.s.length < MAX_OUTPUT) out.s += str.length + out.s.length > MAX_OUTPUT ? str.slice(0, MAX_OUTPUT - out.s.length) : str;
+};
+
+function compileList(list: TNode[]): CNode {
+  const parts = list.map(compileNode);
+  if (parts.length === 1) return parts[0];
+  return (s, o, out) => {
+    for (const p of parts) {
+      if (out.s.length >= MAX_OUTPUT) return;
+      p(s, o, out);
+    }
+  };
+}
+
+function compileNode(n: TNode): CNode {
+  switch (n.t) {
+    case "text": { const v = n.v; return (_s, _o, out) => emitTo(out, v); }
+    case "print": {
+      const x = compilePrint(n.expr, n.filters);
+      return (s, o, out) => { const t = toText(x(s, o)); emitTo(out, o.raw ? t : escapeHtml(t)); };
+    }
+    case "tr": { const key = n.key; return (_s, o, out) => { const t = o.translate ? o.translate(key) : key; emitTo(out, o.raw ? t : escapeHtml(t)); }; }
+    case "icon": { const tag = `<i data-icon="${escapeHtml(n.name)}"></i>`; return (_s, o, out) => { if (!o.raw) emitTo(out, tag); }; }
+    case "var": { const name = n.name; const x = compileExprNode(n.expr); return (s, o) => { s[s.length - 1][name] = x(s, o); }; }
+    case "if": {
+      const branches = n.branches.map((b) => ({ cond: b.cond ? compileExprNode(b.cond) : null, body: compileList(b.body) }));
+      return (s, o, out) => {
+        for (const b of branches) if (b.cond === null || truthy(b.cond(s, o))) { b.body(s, o, out); return; }
+      };
+    }
+    case "ifset": {
+      const x = compileExprNode(n.expr); const body = compileList(n.body); const otherwise = compileList(n.otherwise);
+      return (s, o, out) => { const v = x(s, o); (v !== undefined && v !== null ? body : otherwise)(s, o, out); };
+    }
+    case "foreach": {
+      const list = compileExprNode(n.list); const body = compileList(n.body); const otherwise = compileList(n.otherwise);
+      const item = n.item; const key = n.key;
+      return (s, o, out) => {
+        const v = list(s, o);
+        const entries: Array<[unknown, unknown]> = Array.isArray(v)
+          ? v.map((x, i) => [i, x])
+          : v && typeof v === "object" ? Object.entries(v as Record<string, unknown>).filter(([k]) => !FORBIDDEN.has(k)) : [];
+        if (!entries.length) { otherwise(s, o, out); return; }
+        for (let i = 0; i < entries.length; i++) {
+          if (++out.loops > MAX_LOOPS) return;
+          const [k, x] = entries[i];
+          const scope: Record<string, unknown> = {
+            [item]: x,
+            iterator: { counter: i + 1, counter0: i, first: i === 0, last: i === entries.length - 1, odd: i % 2 === 0, even: i % 2 === 1, length: entries.length },
+          };
+          if (key) scope[key] = k;
+          s.push(scope);
+          try { body(s, o, out); } finally { s.pop(); }
+        }
+      };
+    }
+  }
+}
+
+/** A compiled template: its output for a chain of scopes, and whether it defines variables. */
+export type CompiledTemplate = { run: (scopes: Scopes, opts: RenderOptions) => string; hasVar: boolean };
+const compiledTemplates = new Map<string, CompiledTemplate>();
+
+/** Parses and compiles a template once (cached). Throws TemplateError. */
+export function compileTemplate(src: string): CompiledTemplate {
+  const hit = compiledTemplates.get(src);
+  if (hit) return hit;
+  const nodes = parseTemplate(src);
+  const body = compileList(nodes);
+  let hasVar = false;
+  const walk = (list: TNode[]) => {
+    for (const n of list) {
+      if (n.t === "var") hasVar = true;
+      else if (n.t === "if") n.branches.forEach((b) => walk(b.body));
+      else if (n.t === "ifset" || n.t === "foreach") { walk(n.body); walk(n.otherwise); }
+    }
+  };
+  walk(nodes);
+  const compiled: CompiledTemplate = {
+    hasVar,
+    run: (scopes, opts) => {
+      const out: Out = { s: "", loops: 0 };
+      // {var} must not change the caller's values: it writes to a scope of its own.
+      body(hasVar ? [...scopes, {}] : scopes, opts, out);
+      return out.s;
+    },
+  };
+  if (compiledTemplates.size > 4000) compiledTemplates.clear();
+  compiledTemplates.set(src, compiled);
+  return compiled;
 }
 
 /** Renders a template to HTML text (variables escaped) — or, with `raw`, to plain text. */
 export function renderTemplate(src: string, vars: TemplateVars, opts: RenderOptions = {}): string {
-  const nodes = parseTemplate(src);
-  const scopes: Array<Record<string, unknown>> = [vars];
-  let loops = 0;
-  let out = "";
-  const evaluate = evaluator(scopes);
-  const esc = opts.raw ? (x: string) => x : escapeHtml;
-  const emit = (s: string) => {
-    if (out.length < MAX_OUTPUT) out += s.slice(0, MAX_OUTPUT - out.length);
-  };
-  const run = (list: TNode[]) => {
-    for (const n of list) {
-      if (out.length >= MAX_OUTPUT) return;
-      switch (n.t) {
-        case "text": emit(n.v); break;
-        case "print": emit(esc(toText(applyFilters(evaluate(n.expr), n.filters, evaluate, opts)))); break;
-        case "tr": emit(esc(opts.translate ? opts.translate(n.key) : n.key)); break;
-        case "icon": if (!opts.raw) emit(`<i data-icon="${escapeHtml(n.name)}"></i>`); break;
-        case "var": scopes[scopes.length - 1][n.name] = evaluate(n.expr); break;
-        case "if": {
-          for (const b of n.branches) if (b.cond === null || truthy(evaluate(b.cond))) { run(b.body); break; }
-          break;
-        }
-        case "ifset": {
-          const v = evaluate(n.expr);
-          run(v !== undefined && v !== null ? n.body : n.otherwise);
-          break;
-        }
-        case "foreach": {
-          const list = evaluate(n.list);
-          const entries: Array<[unknown, unknown]> = Array.isArray(list)
-            ? list.map((v, i) => [i, v])
-            : list && typeof list === "object" ? Object.entries(list as Record<string, unknown>).filter(([k]) => !FORBIDDEN.has(k)) : [];
-          if (!entries.length) { run(n.otherwise); break; }
-          entries.forEach(([k, v], i) => {
-            if (++loops > MAX_LOOPS) return;
-            const scope: Record<string, unknown> = {
-              [n.item]: v,
-              iterator: { counter: i + 1, counter0: i, first: i === 0, last: i === entries.length - 1, odd: i % 2 === 0, even: i % 2 === 1, length: entries.length },
-            };
-            if (n.key) scope[n.key] = k;
-            scopes.push(scope);
-            run(n.body);
-            scopes.pop();
-          });
-          break;
-        }
-      }
-    }
-  };
-  // {var} in the top block must not change the caller's object.
-  scopes.push({});
-  run(nodes);
-  return out;
+  return compileTemplate(src).run([vars, {}], opts);
 }
 
-const exprCache = new Map<string, { expr: Expr; filters: Filter[] }>();
+const compiledExprs = new Map<string, CExpr>();
+
+/** Parses and compiles an expression (with filters) once (cached). Throws TemplateError. */
+export function compileExpression(src: string): (scopes: Scopes, opts: RenderOptions) => unknown {
+  let hit = compiledExprs.get(src);
+  if (!hit) {
+    const parsed = parsePrint(src, 0);
+    hit = compilePrint(parsed.expr, parsed.filters);
+    if (compiledExprs.size > 4000) compiledExprs.clear();
+    compiledExprs.set(src, hit);
+  }
+  return hit;
+}
 
 /**
  * The value of one expression — `$message.mine && !$sealed`, `$peers|length`
@@ -576,18 +677,8 @@ const exprCache = new Map<string, { expr: Expr; filters: Filter[] }>();
  * for conditions, lists and bound attributes. Throws TemplateError.
  */
 export function evalExpression(src: string, vars: TemplateVars, opts: RenderOptions = {}): unknown {
-  let parsed = exprCache.get(src);
-  if (!parsed) {
-    parsed = parsePrint(src, 0);
-    if (exprCache.size > 2000) exprCache.clear();
-    exprCache.set(src, parsed);
-  }
-  let evaluate = evaluators.get(vars);
-  if (!evaluate) { evaluate = evaluator([vars]); evaluators.set(vars, evaluate); }
-  return applyFilters(evaluate(parsed.expr), parsed.filters, evaluate, opts);
+  return compileExpression(src)([vars], opts);
 }
-/** One evaluator per variables object (a layout evaluates many expressions over the same data). */
-const evaluators = new WeakMap<TemplateVars, (e: Expr) => unknown>();
 
 /** Whether a value counts as true in a template ({if}): "0", "", [] and null do not. */
 export function isTruthy(v: unknown): boolean {

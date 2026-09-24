@@ -1,21 +1,22 @@
 // Invite links UI: the "Share" section of the Room window, the "Share a
 // connection" window of My connections, and the prompt an invitee sees. All
 // cryptography lives in lib/share-link.ts.
+//
+// 4.13: each view is a layout ("part.shareResult", "panel.share",
+// "panel.shareConnection", "part.invite" — lib/layouts/share.ts).
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
-import {
-  Check, Clock3, Copy, KeyRound, Link2, Mail, MessageCircle, MessageSquare, MessagesSquare, Phone,
-  QrCode, Send, Server, Share2, ShieldCheck, Smartphone, Trash2, UserRound, Users, type LucideIcon,
-} from "lucide-react";
-import { t, tf, type Lang } from "../lib/i18n";
+import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
+import { t, type Lang } from "../lib/i18n";
+import { renderLayout } from "./LayoutView";
+import { useLayoutBase } from "./LayoutProvider";
 import {
   createShare, formatCode, normalizeCode, redeemShare, revokeShare, shareTargets,
   type CreatedShare, type ShareLinkParts, type SharePayload, type ShareTarget,
 } from "../lib/share-link";
 
-const TARGET_ICONS: Record<ShareTarget["id"], LucideIcon> = {
-  whatsapp: MessageCircle, telegram: Send, viber: Phone, signal: ShieldCheck, messenger: MessageSquare,
-  imessage: MessagesSquare, sms: Smartphone, email: Mail, qr: QrCode, copy: Copy, native: Share2,
+const TARGET_ICONS: Record<ShareTarget["id"], string> = {
+  whatsapp: "message-circle", telegram: "send", viber: "phone", signal: "shield-check", messenger: "message-square",
+  imessage: "messages-square", sms: "smartphone", email: "mail", qr: "qr-code", copy: "copy", native: "share-2",
 };
 
 async function copyText(text: string): Promise<boolean> {
@@ -73,7 +74,7 @@ function useShare(lang: Lang, input: () => { room: string; passphrase: string; n
 }
 
 /** A created invite: link, code, where to send it, QR, limits, new / revoke. */
-function ShareResult({ lang, share, busy, onAnother, onRevoke }: {
+export function ShareResult({ lang, share, busy, onAnother, onRevoke }: {
   lang: Lang; share: CreatedShare; busy: boolean; onAnother: () => void; onRevoke: () => void;
 }) {
   const [copied, setCopied] = useState<"" | "link" | "code">("");
@@ -91,64 +92,29 @@ function ShareResult({ lang, share, busy, onAnother, onRevoke }: {
     } else if (await copyText(share.url)) { flash("link"); }
   }
 
-  return (
-    <div className="mt-3 space-y-3" data-testid="share-result">
-      <div>
-        <div className="text-xs font-medium">{t(lang, "share.link")}</div>
-        <div className="mt-1 flex items-center gap-2">
-          <input readOnly value={share.url} data-testid="share-url" onFocus={(e) => e.currentTarget.select()}
-            className="min-h-10 min-w-0 flex-1 rounded-xl border border-input bg-background px-3 font-mono text-xs outline-none focus:ring-2 focus:ring-ring" />
-          <button type="button" className="share-copy" data-testid="share-copy-link" aria-label={t(lang, "share.copyLink")} title={t(lang, "share.copyLink")}
-            onClick={() => void copyText(share.url).then((ok) => ok && flash("link"))}>
-            {copied === "link" ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
-          </button>
-        </div>
-      </div>
-
-      <div>
-        <div className="flex items-center gap-1 text-xs font-medium"><KeyRound className="h-3.5 w-3.5" aria-hidden="true" />{t(lang, "share.code")}</div>
-        <div className="mt-1 flex items-center gap-2">
-          <output className="share-code" data-testid="share-code">{formatCode(share.code)}</output>
-          <button type="button" className="share-copy" data-testid="share-copy-code" aria-label={t(lang, "share.copyCode")} title={t(lang, "share.copyCode")}
-            onClick={() => void copyText(formatCode(share.code)).then((ok) => ok && flash("code"))}>
-            {copied === "code" ? <Check className="h-4 w-4" aria-hidden="true" /> : <Copy className="h-4 w-4" aria-hidden="true" />}
-          </button>
-        </div>
-        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">{t(lang, "share.codeHint")}</p>
-      </div>
-
-      <div role="group" aria-label={t(lang, "share.via")} className="share-targets">
-        {shareTargets(share.url, t(lang, "share.message")).map((target) => {
-          const Icon = TARGET_ICONS[target.id];
-          const label = target.id === "copy" ? t(lang, "share.copyLink") : target.id === "native" ? t(lang, "share.more") : target.label;
-          return (
-            <button key={target.id} type="button" className="share-target" data-testid={`share-via-${target.id}`} title={label}
-              aria-pressed={target.id === "qr" ? showQr : undefined} onClick={() => void onTarget(target)}>
-              <Icon className="h-5 w-5" aria-hidden="true" />
-              <span>{label}</span>
-            </button>
-          );
-        })}
-      </div>
-
-      {showQr ? <div className="flex justify-center"><QrCodeView value={share.url} /></div> : null}
-
-      <p className="text-xs text-muted-foreground">
-        {t(lang, "share.limits").replace("{uses}", String(share.maxUses)).replace("{attempts}", String(share.maxAttempts))
-          .replace("{expires}", new Date(share.expiresAt).toLocaleString(lang))}
-      </p>
-      <div className="flex gap-2">
-        <button type="button" data-testid="share-new" onClick={onAnother} disabled={busy}
-          className="inline-flex min-h-10 flex-1 items-center justify-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">
-          <Share2 className="h-4 w-4" aria-hidden="true" />{t(lang, "share.another")}
-        </button>
-        <button type="button" data-testid="share-revoke" onClick={onRevoke}
-          className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-destructive/40 px-3 text-sm text-destructive hover:bg-destructive/10">
-          <Trash2 className="h-4 w-4" aria-hidden="true" />{t(lang, "share.revoke")}
-        </button>
-      </div>
-    </div>
-  );
+  const { tree, base } = useLayoutBase("part.shareResult", lang);
+  const targets = shareTargets(share.url, t(lang, "share.message"));
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      url: share.url,
+      code: formatCode(share.code),
+      copied,
+      showQr,
+      targets: targets.map((target) => ({ id: target.id, icon: TARGET_ICONS[target.id], label: target.id === "copy" ? t(lang, "share.copyLink") : target.id === "native" ? t(lang, "share.more") : target.label })),
+      limits: t(lang, "share.limits").replace("{uses}", String(share.maxUses)).replace("{attempts}", String(share.maxAttempts)).replace("{expires}", new Date(share.expiresAt).toLocaleString(lang)),
+      busy,
+    },
+    actions: {
+      selectAll: (e) => (e as { currentTarget: HTMLInputElement }).currentTarget.select(),
+      copyLink: () => void copyText(share.url).then((ok) => ok && flash("link")),
+      copyCode: () => void copyText(formatCode(share.code)).then((ok) => ok && flash("code")),
+      target: (_e, id) => { const target = targets.find((x) => x.id === id); if (target) void onTarget(target); },
+      another: () => onAnother(),
+      revoke: () => onRevoke(),
+    },
+    slots: { qr: () => <QrCodeView value={share.url} /> },
+  });
 }
 
 export function ShareSection(props: {
@@ -166,58 +132,17 @@ export function ShareSection(props: {
   const { busy, error, share, create, revoke } = useShare(lang, () => ({ room, passphrase, server }));
   const options = { maxUses, ttlSec };
 
-  return (
-    <section className="share-section" data-testid="share-section" aria-label={t(lang, "share.title")}>
-      <h3 className="flex items-center gap-2 text-sm font-semibold"><Link2 className="h-4 w-4" aria-hidden="true" />{t(lang, "share.title")}</h3>
-      <p className="mt-1 text-xs text-muted-foreground">{t(lang, "share.intro")}</p>
-
-      {!share ? (
-        <>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            <label className="grid gap-1 text-xs font-medium">
-              {t(lang, "share.maxUses")}
-              <select data-testid="share-max-uses" className="share-select" value={maxUses} onChange={(e) => setMaxUses(Number(e.target.value))}>
-                {USES.map((n) => <option key={n} value={n}>{n}×</option>)}
-              </select>
-            </label>
-            <label className="grid gap-1 text-xs font-medium">
-              {t(lang, "share.ttl")}
-              <select data-testid="share-ttl" className="share-select" value={ttlSec} onChange={(e) => setTtlSec(Number(e.target.value))}>
-                {TTLS.map((sec) => <option key={sec} value={sec}>{ttlLabel(sec)}</option>)}
-              </select>
-            </label>
-          </div>
-          <button type="button" data-testid="button-share" disabled={!ready || busy} onClick={() => void create(options)}
-            className="mt-3 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-2xl border border-primary/50 bg-primary/10 px-4 text-sm font-semibold text-primary hover:bg-primary/20 disabled:cursor-not-allowed disabled:opacity-50">
-            <Share2 className="h-4 w-4" aria-hidden="true" />
-            {busy ? t(lang, "share.creating") : t(lang, "share.create")}
-          </button>
-          {!ready ? <p className="mt-2 text-xs text-muted-foreground">{t(lang, "share.needSession")}</p> : null}
-        </>
-      ) : (
-        <ShareResult lang={lang} share={share} busy={busy} onAnother={() => void create(options)} onRevoke={() => void revoke()} />
-      )}
-      {error ? <p role="alert" className="mt-2 text-xs text-destructive">{error}</p> : null}
-    </section>
-  );
-}
-
-/** Choices as a row of pills: one tap instead of opening a list. */
-function Pills<T extends number>({ label, icon: Icon, value, options, format, onChange, testId }: {
-  label: string; icon: LucideIcon; value: T; options: readonly T[]; format: (v: T) => string; onChange: (v: T) => void; testId: string;
-}) {
-  return (
-    <div className="sc-field">
-      <span className="sc-field__label"><Icon className="h-3.5 w-3.5" aria-hidden="true" />{label}</span>
-      <div className="sc-pills" role="radiogroup" aria-label={label} data-testid={testId}>
-        {options.map((o) => (
-          <button key={o} type="button" role="radio" aria-checked={value === o} className="sc-pill" onClick={() => onChange(o)} data-testid={`${testId}-${o}`}>
-            {format(o)}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
+  const { tree, base } = useLayoutBase("panel.share", lang);
+  return renderLayout(tree, {
+    ...base,
+    data: { created: Boolean(share), ready, busy, error, uses: USES, maxUses, ttls: TTLS.map((sec) => ({ sec, label: ttlLabel(sec) })), ttlSec },
+    actions: {
+      maxUses: (e) => setMaxUses(Number((e as ChangeEvent<HTMLSelectElement>).target.value)),
+      ttl: (e) => setTtlSec(Number((e as ChangeEvent<HTMLSelectElement>).target.value)),
+      create: () => void create(options),
+    },
+    slots: { result: () => (share ? <ShareResult lang={lang} share={share} busy={busy} onAnother={() => void create(options)} onRevoke={() => void revoke()} /> : null) },
+  });
 }
 
 /**
@@ -242,42 +167,22 @@ export function ShareConnection(props: {
   const options = { maxUses, ttlSec };
   const host = connection.server ? new URL(connection.server).host : "";
 
-  return (
-    <div className="sc" data-testid="share-connection">
-      <div className="sc-card" style={connection.color ? { ["--cx-color" as string]: connection.color } : undefined}>
-        <span className="sc-card__dot" aria-hidden="true" />
-        <div className="sc-card__text">
-          <span className="sc-card__label">{connection.label}</span>
-          <span className="sc-card__sub">{connection.room} · {host || t(lang, "cx.thisServer")}</span>
-        </div>
-        <span className="sc-card__lock" title={t(lang, "sc.sealed")}><ShieldCheck className="h-4 w-4" aria-hidden="true" /></span>
-      </div>
-
-      {!share ? (
-        <>
-          <p className="sc-intro">{t(lang, "sc.intro")}</p>
-          <Pills label={t(lang, "share.maxUses")} icon={Users} value={maxUses} options={USES} format={(n) => `${n}×`} onChange={setMaxUses} testId="sc-uses" />
-          <Pills label={t(lang, "share.ttl")} icon={Clock3} value={ttlSec} options={TTLS} format={ttlLabel} onChange={setTtlSec} testId="sc-ttl" />
-          <label className="sc-field">
-            <span className="sc-field__label"><UserRound className="h-3.5 w-3.5" aria-hidden="true" />{t(lang, "sc.guest")}</span>
-            <input className="sc-input" value={guest} maxLength={42} placeholder={t(lang, "sc.guest.placeholder")}
-              onChange={(e) => setGuest(e.target.value.replace(/[^\p{L}\p{N} ._-]/gu, ""))} data-testid="sc-guest" />
-          </label>
-          {host ? <p className="sc-note"><Server className="h-3.5 w-3.5" aria-hidden="true" />{tf(lang, "sc.server", { host })}</p> : null}
-          <button type="button" className="sc-create" disabled={busy} onClick={() => void create(options)} data-testid="sc-create">
-            <Share2 className="h-4 w-4" aria-hidden="true" />
-            {busy ? t(lang, "share.creating") : t(lang, "sc.create")}
-          </button>
-        </>
-      ) : (
-        <>
-          <ShareResult lang={lang} share={share} busy={busy} onAnother={() => void create(options)} onRevoke={() => void revoke()} />
-          <button type="button" className="sc-done" onClick={props.onDone} data-testid="sc-done">{t(lang, "sc.done")}</button>
-        </>
-      )}
-      {error ? <p role="alert" className="sc-error">{error}</p> : null}
-    </div>
-  );
+  const { tree, base } = useLayoutBase("panel.shareConnection", lang);
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      label: connection.label, color: connection.color, room: connection.room, host, created: Boolean(share), busy, error,
+      uses: USES.map((v) => ({ value: v, label: `${v}×` })), maxUses, ttls: TTLS.map((v) => ({ value: v, label: ttlLabel(v) })), ttlSec, guest,
+    },
+    actions: {
+      maxUses: (_e, v) => setMaxUses(Number(v)),
+      ttl: (_e, v) => setTtlSec(Number(v)),
+      guest: (e) => setGuest((e as ChangeEvent<HTMLInputElement>).target.value.replace(/[^\p{L}\p{N} ._-]/gu, "")),
+      create: () => void create(options),
+      done: () => props.onDone(),
+    },
+    slots: { result: () => (share ? <ShareResult lang={lang} share={share} busy={busy} onAnother={() => void create(options)} onRevoke={() => void revoke()} /> : null) },
+  });
 }
 
 /** Shown when the app was opened from an invite link. */
@@ -306,25 +211,14 @@ export function InvitePrompt(props: {
     else { setDead(true); setMessage(t(lang, outcome.reason === "burned" ? "invite.burned" : "invite.gone")); }
   }
 
-  return (
-    <form onSubmit={(e) => void submit(e)} className="space-y-3" data-testid="form-invite" autoComplete="off">
-      <p className="text-sm text-muted-foreground">{t(lang, "invite.intro")}</p>
-      <label className="grid gap-1 text-sm font-medium">
-        {t(lang, "invite.code")}
-        <input data-testid="input-invite-code" autoFocus inputMode="numeric" autoComplete="one-time-code" placeholder="0000-0000-0000"
-          disabled={dead} value={value} onChange={(e) => setValue(formatCode(e.target.value))}
-          className="min-h-12 rounded-xl border border-input bg-background px-3 text-center font-mono text-xl tracking-widest outline-none focus:ring-2 focus:ring-ring" />
-      </label>
-      {message ? <p role="alert" className="text-sm text-destructive" data-testid="invite-message">{message}</p> : null}
-      <div className="flex gap-2">
-        <button type="submit" data-testid="button-invite-join" disabled={!code || busy || dead}
-          className="inline-flex min-h-11 flex-1 items-center justify-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
-          {busy ? t(lang, "invite.checking") : t(lang, "invite.join")}
-        </button>
-        <button type="button" onClick={onDismiss} className="inline-flex min-h-11 items-center rounded-2xl border border-border bg-background px-3 text-sm hover:bg-accent">
-          {t(lang, "common.cancel")}
-        </button>
-      </div>
-    </form>
-  );
+  const { tree, base } = useLayoutBase("part.invite", lang);
+  return renderLayout(tree, {
+    ...base,
+    data: { value, code, busy, dead, message },
+    actions: {
+      code: (e) => setValue(formatCode((e as ChangeEvent<HTMLInputElement>).target.value)),
+      submit: (e) => void submit(e as FormEvent),
+      dismiss: () => onDismiss(),
+    },
+  });
 }

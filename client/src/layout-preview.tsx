@@ -3,8 +3,10 @@
 // console is editing. The console (same origin) frames this page and talks
 // to it with postMessage:
 //
-//   console → preview   { type: "m5-lb:hello" } · { type: "m5-lb:render", config, layout, variant, theme, tone, lang, selected, mode }
+//   console → preview   { type: "m5-lb:hello" } · { type: "m5-lb:render", config, layout, variant, theme, tone, lang, selected, mode,
+//                         groups (4.13: who is looking, for variants), pin ({ layout, variant }: the variant being edited) }
 //   preview → console   { type: "m5-lb:ready" } · { type: "m5-lb:select", id } · { type: "m5-lb:errors", errors }
+//                       · { type: "m5-lb:a11y", issues } (4.13: accessibility of what was drawn)
 //
 // Nothing here talks to a server: no account, no room, no network.
 
@@ -23,9 +25,13 @@ import { SignedInBadge } from "./components/SignedInBadge";
 import { TransferCard } from "./components/TransferCard";
 import { AudioRecorder } from "./components/AudioRecorder";
 import { SendOptions, DEFAULT_SEND_STATE } from "./components/SendOptions";
-import { DEFAULT_LAYOUT, layoutBlocks, layoutTree, renderTemplate, sanitizeLayout, type LayoutConfig } from "./lib/layout-config";
+import { DEFAULT_LAYOUT, layoutBlocks, layoutTree, renderTemplate, sanitizeLayout, type LayoutConfig, type LayoutContext } from "./lib/layout-config";
 import { applyLayoutStyles } from "./lib/layout-client";
-import { isLayoutId, type LayoutId } from "./lib/layouts";
+import { isLayoutId, LAYOUT_GROUP, LAYOUT_IDS, type LayoutId } from "./lib/layouts";
+import { LayoutProvider } from "./components/LayoutProvider";
+import { AppPart, isDriving } from "./layout-preview-parts";
+import { checkDom, checkTree, type A11yIssue } from "./lib/layout-a11y";
+import { walkTree } from "./lib/layout-tree";
 import { SAMPLE_MESSAGES, type SampleMessage } from "./lib/layouts/samples";
 import { applyTheme } from "./lib/themes";
 import { isThemeId, type ThemeId } from "./lib/theme-catalog";
@@ -45,7 +51,22 @@ type Request = {
   lang: Lang;
   selected: string;
   mode: "select" | "interact";
+  groups: string[];
+  pin: { layout: LayoutId; variant: string } | null;
 };
+
+/**
+ * The configuration as this viewer gets it: every layout resolved for the
+ * groups and template of the preview (variants), the one being edited pinned.
+ */
+function resolveFor(cfg: LayoutConfig, ctx: LayoutContext, pin: Request["pin"]): LayoutConfig {
+  const layouts: LayoutConfig["layouts"] = {};
+  for (const id of LAYOUT_IDS) {
+    const pinned = pin && pin.layout === id && pin.variant ? cfg.variants[id]?.find((v) => v.id === pin.variant) : undefined;
+    layouts[id] = { tree: pinned?.tree ?? layoutTree(cfg, id, ctx), rev: "" };
+  }
+  return { ...cfg, layouts, variants: {} };
+}
 
 const noop = () => undefined;
 const QUICK_EMOJI = ["😀", "😂", "🥳", "👍", "🙏", "🔥", "❤️", "🎉", "✅", "❓"];
@@ -179,8 +200,10 @@ function PreviewWidget({ cfg, variant, lang, fab }: { cfg: LayoutConfig; variant
   );
 }
 
+const NO_CTX: LayoutContext = {};
+
 function View({ req }: { req: Request }) {
-  const cfg = useMemo(() => sanitizeLayout(req.config ?? DEFAULT_LAYOUT), [req.config]);
+  const cfg = useMemo(() => resolveFor(sanitizeLayout(req.config ?? DEFAULT_LAYOUT), { groups: req.groups, theme: req.theme }, req.pin), [req.config, req.groups, req.theme, req.pin]);
   const lang = req.lang;
   const env = useMemo(() => ({
     lang,
@@ -257,6 +280,14 @@ function View({ req }: { req: Request }) {
     content = <div className="flex min-h-[100dvh] flex-col justify-end"><PreviewComposer key={v} cfg={cfg} env={env} variant={v} lang={lang} /></div>;
   } else if (req.layout === "widget" || req.layout === "widget.fab") {
     content = <div className="min-h-[100dvh]"><PreviewWidget key={`${req.layout}:${v}`} cfg={cfg} variant={v} lang={lang} fab={req.layout === "widget.fab"} /></div>;
+  } else if (LAYOUT_GROUP[req.layout] !== "app") {
+    // 4.13: windows, the Room window, dialogs and panels — drawn by their components.
+    // The configuration is already resolved for this viewer (and the variant being edited).
+    content = (
+      <LayoutProvider config={cfg} ctx={NO_CTX}>
+        <div className="chat-surface min-h-[100dvh]"><AppPart key={`${req.layout}:${v}:${lang}`} layout={req.layout} variant={v} lang={lang} /></div>
+      </LayoutProvider>
+    );
   } else {
     content = (
       <div className="chat-surface min-h-[100dvh] p-3 sm:p-5">
@@ -291,6 +322,8 @@ function Preview() {
         lang: d.lang === "en" || d.lang === "de" ? d.lang : "cs",
         selected: String(d.selected ?? ""),
         mode: d.mode === "interact" ? "interact" : "select",
+        groups: Array.isArray(d.groups) ? d.groups.filter((g): g is string => typeof g === "string").slice(0, 20) : ["user"],
+        pin: d.pin && isLayoutId(d.pin.layout) && typeof d.pin.variant === "string" ? { layout: d.pin.layout, variant: d.pin.variant } : null,
       });
     };
     window.addEventListener("message", onMessage);
@@ -316,6 +349,7 @@ function Preview() {
     sel.textContent = req.selected ? `[data-lb-id="${CSS.escape(req.selected)}"]{outline:2px solid #f5a524 !important;outline-offset:2px}` : "";
     if (req.mode !== "select") { hov.textContent = ""; return; }
     const pick = (event: Event) => {
+      if (isDriving()) return;
       const hit = (event.target as Element | null)?.closest?.("[data-lb-id]");
       if (!hit) return;
       event.preventDefault();
@@ -340,6 +374,31 @@ function Preview() {
     if (!req) return;
     post({ type: "m5-lb:errors", errors: [...errors.entries()].map(([message, id]) => ({ id, message })) });
     errors.clear();
+  });
+
+  // 4.13 — accessibility of the layout being edited: its design, and what was drawn
+  // (names, labels, contrast of the real colours), once the page has settled.
+  const lastA11y = useRef("");
+  useEffect(() => {
+    if (!req) return;
+    const timer = window.setTimeout(() => {
+      const cfg = resolveFor(sanitizeLayout(req.config ?? DEFAULT_LAYOUT), { groups: req.groups, theme: req.theme }, req.pin);
+      const tree = cfg.layouts[req.layout]!.tree;
+      const blocks = layoutBlocks(cfg);
+      const own = new Set<string>();
+      const parts = new Set<string>();
+      walkTree(tree, (n) => { own.add(n.id); if (n.el === "slot") parts.add(n.id); });
+      // What the app draws inside a live part is not the operator's to fix.
+      const issues: A11yIssue[] = [
+        ...checkTree(tree, blocks),
+        ...checkDom(document.getElementById("root")!).filter((i) => own.has(i.id) && !parts.has(i.id)),
+      ];
+      const json = JSON.stringify(issues);
+      if (json === lastA11y.current) return;
+      lastA11y.current = json;
+      post({ type: "m5-lb:a11y", issues: issues.slice(0, 100) });
+    }, 300);
+    return () => window.clearTimeout(timer);
   });
 
   if (!req) return null;

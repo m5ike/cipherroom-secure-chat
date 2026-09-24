@@ -5,6 +5,15 @@
 // simply gets nothing for it.
 
 import type { LayoutId } from "./index";
+import { WINDOW_CONTRACTS } from "./windows";
+import { ROOM_CONTRACTS } from "./room";
+import { DIALOG_CONTRACTS } from "./dialogs";
+import { ACCOUNT_CONTRACTS } from "./account";
+import { SETTINGS_CONTRACTS } from "./settings";
+import { TOOL_CONTRACTS } from "./tools";
+import { SHARE_CONTRACTS } from "./share";
+import { PHONE_CONTRACTS } from "./phone";
+import { CONNECTION_CONTRACTS } from "./connections";
 
 export type ContractVar = { path: string; type: "text" | "number" | "yes/no" | "list" | "object"; description: string };
 export type ContractAction = { name: string; description: string; arg?: string; event?: string };
@@ -213,4 +222,14 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
     slots: [],
     refs: [],
   },
+  // 4.13
+  ...WINDOW_CONTRACTS,
+  ...ROOM_CONTRACTS,
+  ...DIALOG_CONTRACTS,
+  ...ACCOUNT_CONTRACTS,
+  ...SETTINGS_CONTRACTS,
+  ...TOOL_CONTRACTS,
+  ...SHARE_CONTRACTS,
+  ...PHONE_CONTRACTS,
+  ...CONNECTION_CONTRACTS,
 };

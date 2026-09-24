@@ -29,7 +29,8 @@ import { sanitizeStyle, type ElementStyle } from "./menu-config";
 
 export type ElementKind =
   | "panel" | "area" | "row" | "column" | "grid" | "list" | "item" | "group"
-  | "text" | "heading" | "paragraph" | "label" | "link" | "icon" | "image" | "audio" | "logo" | "avatar" | "html" | "separator"
+  | "table" | "tableSection" | "tableRow" | "tableCell"
+  | "text" | "heading" | "paragraph" | "label" | "link" | "icon" | "image" | "audio" | "video" | "logo" | "avatar" | "html" | "separator"
   | "button" | "input" | "textarea" | "select" | "option" | "form"
   | "slot" | "block";
 
@@ -62,7 +63,7 @@ export type ElementDef = {
 };
 
 const BLOCK_TAGS = ["div", "section", "article", "header", "footer", "main", "nav", "aside", "figure", "figcaption", "details", "summary", "fieldset", "legend", "blockquote", "address"] as const;
-const INLINE_TAGS = ["span", "strong", "em", "b", "i", "u", "s", "small", "code", "kbd", "mark", "abbr", "time", "sup", "sub", "q", "cite", "bdi"] as const;
+const INLINE_TAGS = ["span", "strong", "em", "b", "i", "u", "s", "small", "code", "kbd", "mark", "abbr", "time", "sup", "sub", "q", "cite", "bdi", "output", "data", "var", "samp", "del", "ins"] as const;
 
 export const ELEMENTS: readonly ElementDef[] = [
   { el: "panel", label: "Panel", group: "layout", icon: "square", hint: "A block (<div>) holding other elements", tag: "div", tags: BLOCK_TAGS, container: true },
@@ -73,6 +74,11 @@ export const ELEMENTS: readonly ElementDef[] = [
   { el: "list", label: "List", group: "layout", icon: "list", hint: "A list (<ul> or <ol>) of items", tag: "ul", tags: ["ul", "ol", "menu"], container: true },
   { el: "item", label: "List item", group: "layout", icon: "circle-dot", hint: "One <li> of a list", tag: "li", tags: ["li"], container: true },
   { el: "group", label: "Group", group: "layout", icon: "layers", hint: "Groups elements without an element of its own (for a condition or a repeat)", container: true },
+  // 4.13: tables (the version check's list, and whatever an operator lays out in rows and columns)
+  { el: "table", label: "Table", group: "layout", icon: "layout-grid", hint: "A table (<table>): head, body and foot sections of rows", tag: "table", tags: ["table"], container: true },
+  { el: "tableSection", label: "Table section", group: "layout", icon: "rows-2", hint: "The head, body or foot of a table (<thead>, <tbody>, <tfoot>)", tag: "tbody", tags: ["thead", "tbody", "tfoot"], container: true },
+  { el: "tableRow", label: "Table row", group: "layout", icon: "minus", hint: "A row of a table (<tr>) — repeat it for a list", tag: "tr", tags: ["tr"], container: true },
+  { el: "tableCell", label: "Table cell", group: "layout", icon: "square", hint: "A cell (<td>, or <th> for a heading)", tag: "td", tags: ["td", "th"], container: true, text: "template" },
   {
     el: "text", label: "Text", group: "content", icon: "file-text", hint: "Text with {$variables} — no element of its own", container: false, text: "template",
     props: [{ key: "format", label: "Format", kind: "select", options: ["", "links"], hint: "links: web addresses become links" }],
@@ -84,11 +90,12 @@ export const ELEMENTS: readonly ElementDef[] = [
   { el: "link", label: "Link", group: "content", icon: "link", hint: "A link — https:// or a path of this site", tag: "a", tags: ["a"], container: true, text: "template", preset: { text: "Link", attrs: { href: "https://" } } },
   {
     el: "icon", label: "Icon", group: "content", icon: "star", hint: "An icon of the catalog (lucide)", container: false,
-    props: [{ key: "icon", label: "Icon", kind: "icon", hint: "A name, or a template: {if $on}moon{else}sun{/if}" }, { key: "strokeWidth", label: "Stroke width", kind: "number" }],
+    props: [{ key: "icon", label: "Icon", kind: "icon", hint: "A name, or a template: {if $on}moon{else}sun{/if}" }, { key: "strokeWidth", label: "Stroke width", kind: "number" }, { key: "size", label: "Size (px)", kind: "number", hint: "Its width and height (else a class sets them)" }],
     preset: { props: { icon: "star" }, attrs: { class: "h-4 w-4" } },
   },
   { el: "image", label: "Image", group: "content", icon: "image", hint: "An image — https://, a path, or data:image", tag: "img", tags: ["img"], container: false, preset: { attrs: { src: "", alt: "" } } },
   { el: "audio", label: "Audio", group: "content", icon: "volume-2", hint: "An audio player", tag: "audio", tags: ["audio"], container: false, preset: { attrs: { controls: "=true" } } },
+  { el: "video", label: "Video", group: "content", icon: "video", hint: "A video (a camera of a call is given by a ref)", tag: "video", tags: ["video"], container: false, preset: { attrs: { controls: "=true" } } },
   {
     el: "logo", label: "Logo", group: "content", icon: "shield-check", hint: "The M5cet logo", container: false,
     props: [{ key: "size", label: "Size (px)", kind: "number" }, { key: "mono", label: "One colour", kind: "bool" }],
@@ -118,6 +125,8 @@ export const ELEMENT_BY_KIND: Readonly<Record<string, ElementDef>> = Object.from
 export const LAYOUT_EVENTS = [
   "click", "dblclick", "contextmenu", "change", "input", "keydown", "keyup", "submit", "focus", "blur",
   "mouseenter", "mouseleave", "pointerdown", "pointerup", "pointerleave", "pointercancel", "dragover", "drop", "paste",
+  // 4.13 (the windows, panels and dialogs use them)
+  "mousedown", "mouseup", "dragstart", "dragend", "dragenter", "dragleave", "wheel", "scroll", "touchstart", "touchend", "load", "error",
 ] as const;
 export type LayoutEvent = (typeof LAYOUT_EVENTS)[number];
 
@@ -170,7 +179,8 @@ export const GLOBAL_ATTRS = ["class", "id", "title", "role", "lang", "dir", "tab
 export const TAG_ATTRS: Readonly<Record<string, readonly string[]>> = {
   a: ["href", "target", "rel", "download", "hreflang"],
   img: ["src", "alt", "width", "height", "loading", "decoding"],
-  audio: ["src", "controls", "preload", "loop", "muted"],
+  audio: ["src", "controls", "preload", "loop", "muted", "autoplay"],
+  video: ["src", "poster", "controls", "preload", "loop", "muted", "autoplay", "playsinline", "width", "height"],
   input: ["type", "name", "value", "checked", "placeholder", "min", "max", "step", "minlength", "maxlength", "size", "pattern", "autocomplete", "readonly", "disabled", "required", "multiple", "accept", "autofocus", "list"],
   textarea: ["name", "value", "placeholder", "rows", "cols", "minlength", "maxlength", "wrap", "autocomplete", "readonly", "disabled", "required", "autofocus"],
   select: ["name", "value", "multiple", "size", "disabled", "required", "autocomplete"],
@@ -186,12 +196,14 @@ export const TAG_ATTRS: Readonly<Record<string, readonly string[]>> = {
   q: ["cite"],
   blockquote: ["cite"],
   fieldset: ["disabled", "name"],
+  td: ["colspan", "rowspan", "headers"],
+  th: ["colspan", "rowspan", "headers", "scope", "abbr"],
 };
 
 /** Attributes that are true or false (an expression, or "", "true", "false"). */
-export const BOOLEAN_ATTRS = new Set(["hidden", "checked", "readonly", "disabled", "required", "multiple", "autofocus", "controls", "loop", "muted", "selected", "open", "novalidate", "reversed"]);
+export const BOOLEAN_ATTRS = new Set(["hidden", "checked", "readonly", "disabled", "required", "multiple", "autofocus", "controls", "loop", "muted", "selected", "open", "novalidate", "reversed", "autoplay", "playsinline"]);
 
-const URL_ATTRS = new Set(["href", "src", "cite"]);
+const URL_ATTRS = new Set(["href", "src", "cite", "poster"]);
 const NEVER_ATTRS = /^(on|formaction$|action$|srcdoc$|style$|xmlns|xlink)/i;
 
 /** Suggested values for enumerated attributes (the builder offers them while typing). */

@@ -91,8 +91,9 @@ import { TransferCard } from "./components/TransferCard";
 import { MainMenu } from "./components/MainMenu";
 import { formatTime, formatFullDate, formatBytes } from "./lib/format";
 import { fetchLayoutConfig, applyLayoutStyles, loadCachedLayout } from "./lib/layout-client";
-import { layoutBlocks, layoutTree, renderTemplate, type LayoutConfig } from "./lib/layout-config";
+import { layoutBlocks, layoutTree, renderTemplate, type LayoutConfig, type LayoutContext } from "./lib/layout-config";
 import { renderLayout } from "./components/LayoutView";
+import { LayoutProvider } from "./components/LayoutProvider";
 import type { LNode } from "./lib/layout-tree";
 import { freshRtcConfig, turnConfigPromise } from "./lib/rtc";
 import { M5Logo } from "./components/M5Logo";
@@ -343,6 +344,8 @@ type MessageRowProps = {
   message: ChatMessage;
   perStyle: PerUserStyle | undefined;
   layout: LayoutConfig;
+  /** 4.13: who is looking (groups, GUI template) — picks a layout's variant. */
+  layoutCtx: LayoutContext;
   lang: Lang;
   timezone: string;
   room: string;
@@ -362,7 +365,7 @@ function layoutBlocksOf(cfg: LayoutConfig): Record<string, LNode> {
 
 /** One message in the conversation. Memoized: typing in the composer, a
  *  peer's status or a new message elsewhere leave it alone. */
-const MessageRow = memo(function MessageRow({ message, perStyle, layout, lang, timezone, room, avatar, delivery, act }: MessageRowProps) {
+const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutCtx, lang, timezone, room, avatar, delivery, act }: MessageRowProps) {
   const isSystem = message.senderId === "system";
   const styleKey = styleKeyFor(message.senderName, message.senderId);
   const vars = {
@@ -417,7 +420,7 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, lang, t
       bubbleStyle={bubbleStyleFrom(perStyle)}
       badge={badge}
       head={head}
-      tree={layoutTree(layout, isSystem ? "message.sys" : message.mine ? "message.out" : "message.in")}
+      tree={layoutTree(layout, isSystem ? "message.sys" : message.mine ? "message.out" : "message.in", layoutCtx)}
       blocks={layoutBlocksOf(layout)}
       lang={lang}
       renderText={linkify}
@@ -818,6 +821,8 @@ function ChatApp() {
   }, [account?.id, clientConfig.connections.enabled]);
   // 4.0: modules the operator switched off, or keeps from this user's groups.
   const myGroups = useMemo(() => (account ? account.groups ?? ["user"] : ["guest"]), [account]);
+  // 4.13: the operator may design a layout of its own for some groups or GUI templates.
+  const layoutCtx = useMemo<LayoutContext>(() => ({ groups: myGroups, theme: effectiveTheme }), [myGroups, effectiveTheme]);
   const moduleOn = useCallback((id: string) => moduleAllowed(clientConfig.modules, id, myGroups), [clientConfig.modules, myGroups]);
   const panelVisible = useCallback((panel: PanelKey) => { const m = moduleOfPanel(String(panel)); return !m || moduleOn(m); }, [moduleOn]);
   const connectionsOn = clientConfig.connections.enabled && moduleOn("connections");
@@ -3944,6 +3949,8 @@ function ChatApp() {
   }
 
   return (
+    // 4.13: the windows, the Room window, dialogs and panels draw the operator's layouts for this viewer.
+    <LayoutProvider config={layout} ctx={layoutCtx}>
     <div className="app-shell flex h-dvh flex-col overflow-hidden bg-app-shell text-foreground safe-pt safe-pb safe-px transition-colors">
       {/* Connection status stripe — color reflects the WS state */}
       <div
@@ -3984,7 +3991,7 @@ function ChatApp() {
       {/* Top app bar, the chat window and the composer: layouts of the
           console's Layout builder (lib/layouts/app.ts), drawn with the app's
           data, actions and live parts. */}
-      {renderLayout(layoutTree(layout, "header"), {
+      {renderLayout(layoutTree(layout, "header", layoutCtx), {
         ...layoutEnvBase,
         data: {
           status,
@@ -4037,7 +4044,7 @@ function ChatApp() {
         },
       })}
 
-      {renderLayout(layoutTree(layout, "chat"), {
+      {renderLayout(layoutTree(layout, "chat", layoutCtx), {
         ...layoutEnvBase,
         data: {
           notice,
@@ -4084,6 +4091,7 @@ function ChatApp() {
                 message={message}
                 perStyle={message.senderId === "system" ? undefined : prefs.messageStyles[styleKeyFor(message.senderName, message.senderId)]}
                 layout={layout}
+                layoutCtx={layoutCtx}
                 lang={lang}
                 timezone={prefs.timezone}
                 room={room}
@@ -4093,7 +4101,7 @@ function ChatApp() {
               />
             );
           },
-          composer: () => renderLayout(layoutTree(layout, "composer"), {
+          composer: () => renderLayout(layoutTree(layout, "composer", layoutCtx), {
             ...layoutEnvBase,
             data: {
               replyTo: replyingTo ? { id: replyingTo.id, senderName: replyingTo.senderName, text: replyingTo.text } : null,
@@ -4447,8 +4455,8 @@ function ChatApp() {
           onUpdate={(patch) => updateWidget(patch)}
           title={renderTemplate(layout.templates.widgetTitle, { title: t(lang, "recipients.title"), peerCount: String(openPeerCount), room }, layout.partials)}
           lang={lang}
-          tree={layoutTree(layout, "widget")}
-          fabTree={layoutTree(layout, "widget.fab")}
+          tree={layoutTree(layout, "widget", layoutCtx)}
+          fabTree={layoutTree(layout, "widget.fab", layoutCtx)}
           blocks={layoutEnvBase.blocks}
         />
       ) : null}
@@ -4506,6 +4514,7 @@ function ChatApp() {
         </Suspense>
       ) : null}
     </div>
+    </LayoutProvider>
   );
 }
 

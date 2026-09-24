@@ -16,7 +16,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket } from "ws";
@@ -68,7 +68,10 @@ afterAll(async () => {
 });
 
 async function shot(name: string) {
-  if (SHOTS) await page.screenshot({ path: join(SHOTS, `console-${name}.png`), fullPage: false });
+  if (!SHOTS) return;
+  // The notices of earlier steps would cover what the picture is of.
+  await page.locator("#toasts").evaluate((el) => el.replaceChildren());
+  await page.screenshot({ path: join(SHOTS, `console-${name}.png`), fullPage: false });
 }
 
 async function go(route: string) {
@@ -429,6 +432,166 @@ describe("operator console", () => {
       page.once("dialog", (d) => void d.accept());
       await page.click("#lbReset");
     }
+    await page.click("#lbSave");
+    await expect.poll(async () => Object.keys((await (await fetch(`${MAIN}/api/layout`)).json()).layout.layouts)).toEqual([]);
+    await page.locator("#toasts").evaluate((el) => el.replaceChildren());
+  });
+
+  it("4.13: variants for groups, the history, merging an app update, pasted HTML, accessibility", async () => {
+    const api = async (path: string, init?: { method?: string; body?: unknown }) => {
+      const r = await fetch(`${ADMIN}${path}`, { method: init?.method ?? "GET", headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" }, body: init?.body === undefined ? undefined : JSON.stringify(init.body) });
+      return { status: r.status, json: await r.json() as Record<string, unknown> };
+    };
+    const reopen = async () => { await go("overview"); await go("layout"); };
+    await go("layout");
+    const frame = page.frameLocator("#lbFrame");
+
+    // A variant of the composer for guests, without the emoji button.
+    await page.click('#lbTabs [data-layout="composer"]');
+    await page.click(".lb-variant-add");
+    await expect.poll(() => page.locator('.lb-variant.is-on').getAttribute("data-variant")).toBe("variant-1");
+    await expect.poll(() => page.locator("#lbProps").innerText()).toMatch(/No condition yet/);
+    await page.check('[data-prop="variant-groups-guest"]');
+    await expect.poll(() => page.locator(".lb-variant.is-on .lb-variant__when").innerText()).toMatch(/Guests/);
+    await page.click('#lbTree .mbt-row[data-id="btn-emoji"] .mbt-title');
+    await page.click('#lbTree .lb-tool[data-tool="hide"]');
+    // The preview shows the variant being edited; "everyone else" still has the button.
+    await expect.poll(() => frame.locator('[data-lb-id="btn-emoji"]').count(), { timeout: 10_000 }).toBe(0);
+    await page.click('#lbTree .mbt-row[data-id="composer"] .mbt-title');
+    await page.click('#lbTree .mbt-row[data-id="composer"] .mbt-title');
+    await shot("layout-variant");
+    await page.click('.lb-variant[data-variant="main"]');
+    await expect.poll(() => frame.locator('[data-lb-id="btn-emoji"]').count(), { timeout: 10_000 }).toBe(1);
+    await page.click("#lbSave");
+    await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Layouts saved/);
+    const saved = (await (await fetch(`${MAIN}/api/layout`)).json()).layout;
+    expect(saved.variants.composer.map((v: { id: string; groups: string[] }) => [v.id, v.groups])).toEqual([["variant-1", ["guest"]]]);
+    // A guest's app draws the variant.
+    const appCtx = await browser!.newContext({ viewport: { width: 1280, height: 900 } });
+    const guest = await appCtx.newPage();
+    await guest.goto(MAIN);
+    await guest.locator('[data-testid="input-message"]').waitFor({ timeout: 15_000 });
+    expect(await guest.locator('[data-testid="button-emoji"]').count()).toBe(0);
+    await appCtx.close();
+
+    // The history: who saved what; restoring the version before brings everything back.
+    await page.click("#lbHistoryBtn");
+    await expect.poll(() => page.locator(".lb-history__item").count()).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => page.locator(".lb-history__detail").innerText()).toMatch(/variant:composer\/variant-1/);
+    expect(await page.locator(".lb-history__item").first().innerText()).toMatch(/admin · saved/);
+    await shot("layout-history");
+    await page.locator(".lb-history__item").last().click();
+    await expect.poll(() => page.locator(".lb-history__detail").innerText()).toMatch(/before the first saved change/);
+    page.once("dialog", (d) => void d.accept());
+    await page.click("[data-history-restore]");
+    await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Restored/);
+    await expect.poll(async () => (await (await fetch(`${MAIN}/api/layout`)).json()).layout.variants).toEqual({});
+    expect(((await api("/admin/layout/history")).json.entries as Array<{ action: string }>)[0].action).toBe("restore");
+
+    // Pasted HTML becomes elements; the accessibility check notices an image without alt text.
+    await page.click('#lbTabs [data-layout="composer"]');
+    await page.click('#lbTree .mbt-row[data-id="actions"] .mbt-title');
+    await page.click("#lbPasteHtml");
+    await page.fill('[data-prop="paste-html"]', '<span class="pasted-x">Pasted <b>bold</b></span><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><script>alert(1)</script>');
+    await page.click('.mb-dialog button:has-text("Convert and insert")');
+    await expect.poll(() => page.locator(".lb-paste__out").innerText()).toMatch(/<script> removed/);
+    await page.click('.mb-dialog button:has-text("Close")');
+    await expect.poll(() => frame.locator(".pasted-x").count(), { timeout: 10_000 }).toBe(1);
+    await expect.poll(() => page.locator('#lbA11y [data-rule="img-alt"]').count(), { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
+    await expect.poll(() => page.locator("#lbA11y summary").innerText()).toMatch(/Accessibility:\s*[1-9]\d* errors? ·/);
+    await expect.poll(() => page.locator("#lbTree .lb-chip--a11y.is-error").count()).toBeGreaterThanOrEqual(1);
+    await page.locator("#lbA11y").scrollIntoViewIfNeeded();
+    await shot("layout-a11y");
+    page.once("dialog", (d) => void d.accept());
+    await page.click("#lbRevert");
+    await expect.poll(() => frame.locator(".pasted-x").count(), { timeout: 10_000 }).toBe(0);
+
+    // An app update: a message layout designed from 4.0.5 is merged into today's default.
+    const archive = JSON.parse(readFileSync("server/layout-archive.json", "utf8")) as Record<string, { layout: string; version: string; tree: Record<string, unknown> }>;
+    const [oldRev, old] = Object.entries(archive).find(([, e]) => e.layout === "message.in" && e.version === "4.0.5")!;
+    const mine = structuredClone(old.tree) as { attrs?: Record<string, string> };
+    mine.attrs = { ...(mine.attrs ?? {}), "data-mine": "1" };
+    expect((await api("/admin/layout", { method: "PUT", body: { layout: { layouts: { "message.in": { tree: mine, rev: oldRev } } } } })).status).toBe(200);
+    const served = (await (await fetch(`${MAIN}/api/layout`)).json()).layout.layouts["message.in"];
+    expect(served.rev).not.toBe(oldRev);
+    expect(served.tree.attrs["data-mine"]).toBe("1");
+    expect(JSON.stringify(served.tree)).toContain("aria-label");
+    await reopen();
+    await page.click('#lbTabs [data-layout="message.in"]');
+    await expect.poll(() => page.locator("#lbProps").innerText()).toMatch(/merged into the new one automatically/);
+    // Both changed the same thing: the operator's stays, the builder offers the merge and lists it.
+    const clash = structuredClone(old.tree) as { children?: unknown[] };
+    const seal = JSON.stringify(clash).replace('"id":"seal-input","el":"input","name":"Code","tag":"input","attrs":{', '"id":"seal-input","el":"input","name":"Code","tag":"input","attrs":{"aria-label":"Heslo",');
+    expect(seal).toContain("Heslo");
+    expect((await api("/admin/layout", { method: "PUT", body: { layout: { layouts: { "message.in": { tree: JSON.parse(seal), rev: oldRev } } } } })).status).toBe(200);
+    await reopen();
+    await page.click('#lbTabs [data-layout="message.in"]');
+    await expect.poll(() => page.locator("#lbProps").innerText()).toMatch(/same things were changed by you too/);
+    await page.click('#lbProps button:has-text("Merge with the new default")');
+    await expect.poll(() => page.locator(".lb-conflict").count()).toBe(1);
+    await shot("layout-merge");
+    expect(await page.locator(".lb-conflict").innerText()).toMatch(/seal-input attrs\.aria-label/);
+    await page.click('.lb-conflict button:has-text("Use the app\'s")');
+    await expect.poll(() => page.locator(".lb-conflict").count()).toBe(0);
+    await page.click("#lbSave");
+    // Merged, with the one conflict resolved the app's way: exactly today's default — nothing of the operator's left to keep.
+    await expect.poll(async () => Object.keys((await (await fetch(`${MAIN}/api/layout`)).json()).layout.layouts)).toEqual([]);
+    // Back to the app's own.
+    page.once("dialog", (d) => void d.accept());
+    await page.click("#lbReset");
+    await page.click("#lbSave");
+    await expect.poll(async () => Object.keys((await (await fetch(`${MAIN}/api/layout`)).json()).layout.layouts)).toEqual([]);
+    await page.locator("#toasts").evaluate((el) => el.replaceChildren());
+  });
+
+  it("4.13: the Room window, windows, dialogs and panels are layouts too — in sections, previewed by their components", async () => {
+    await go("layout");
+    await page.locator("#toasts").evaluate((el) => el.replaceChildren());
+    const frame = page.frameLocator("#lbFrame");
+    // The sections: the app's main screen first.
+    await expect.poll(async () => (await page.locator("#lbSections .lb-section").allInnerTexts()).map((x) => x.replace(/\s+/g, ""))).toEqual(["App8", "Roomwindow2", "Windows2", "Dialogs&parts9", "Panels23"]);
+    expect(await page.locator('#lbTabs [data-layout="panel.connections"]').count()).toBe(0);
+
+    // The Room window: drawn by RoomDialog in the preview, in its situations.
+    await page.click('#lbSections [data-section="room"]');
+    expect(await page.locator("#lbTabs .lb-tab:not(.lb-tab--settings):not(.lb-tab--block)").evaluateAll((els) => els.map((e) => e.getAttribute("data-layout")))).toEqual(["room.tabs", "room"]);
+    await page.click('#lbTabs [data-layout="room"]');
+    await expect.poll(() => frame.locator('[data-testid="room-dialog"]').count(), { timeout: 10_000 }).toBe(1);
+    expect(await page.locator("#lbVariant option").count()).toBe(5);
+    await expect.poll(() => frame.locator('[data-lb-id="rd-hint"]').count()).toBe(1);
+    await page.click('#lbTree .mbt-row[data-id="rd-hint"] .mbt-title');
+    await page.click('#lbTree .lb-tool[data-tool="hide"]');
+    await expect.poll(() => frame.locator('[data-lb-id="rd-hint"]').count(), { timeout: 10_000 }).toBe(0);
+    await shot("layout-room");
+    await page.click("#lbSave");
+    await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Layouts saved/);
+    expect(Object.keys((await (await fetch(`${MAIN}/api/layout`)).json()).layout.layouts)).toEqual(["room"]);
+    // The app's Room window follows the operator's layout.
+    const appCtx = await browser!.newContext({ viewport: { width: 1280, height: 900 } });
+    const app = await appCtx.newPage();
+    await app.goto(MAIN);
+    await app.getByTestId("button-brand").click();
+    await app.getByTestId("room-dialog").waitFor();
+    await expect.poll(() => app.locator('[data-testid="room-tab-light"]').count()).toBe(1);
+    expect(await app.locator(".rd-hint").count()).toBe(0);
+    await appCtx.close();
+
+    // A panel: My connections, its list and (after a click the preview makes itself) its log.
+    await page.click('#lbSections [data-section="panels"]');
+    await page.click('#lbTabs [data-layout="panel.connections"]');
+    await expect.poll(() => frame.locator('[data-testid="cx-item"]').count(), { timeout: 10_000 }).toBe(3);
+    await shot("layout-panel");
+    await page.click('#lbTabs [data-layout="part.connectionDetail"]');
+    await expect.poll(() => frame.locator('[data-testid="cx-log"]').count(), { timeout: 10_000 }).toBe(1);
+    // Picking in the preview picks the element of the layout being edited (the clicks of the preview itself did not).
+    await frame.locator('[data-lb-id="cx-detail-title"]').click();
+    await expect.poll(() => page.locator("#lbTree .mbt-row.is-selected").getAttribute("data-id")).toBe("cx-detail-title");
+
+    // Back to the app's own.
+    await page.click('#lbSections [data-section="room"]');
+    await page.click('#lbTabs [data-layout="room"]');
+    page.once("dialog", (d) => void d.accept());
+    await page.click("#lbReset");
     await page.click("#lbSave");
     await expect.poll(async () => Object.keys((await (await fetch(`${MAIN}/api/layout`)).json()).layout.layouts)).toEqual([]);
     await page.locator("#toasts").evaluate((el) => el.replaceChildren());

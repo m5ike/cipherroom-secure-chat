@@ -7,8 +7,9 @@
 //
 // Icons: lucide (https://lucide.dev), ISC license.
 
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { execFileSync } from "node:child_process";
 
 const ICONS = [
   // what the default menu uses
@@ -41,7 +42,48 @@ const ICONS = [
   "ellipsis-vertical", "circle-plus", "circle-minus",
 ];
 
+// 4.13: every icon the app's components draw — the Layout builder's layouts
+// of the Room window, panels and dialogs use them (read from their imports,
+// by lucide's own name: Loader2 → loader-circle, Trash2 → trash).
+const lucide = await import("lucide-react");
+const toKebab = (pascal) => pascal.replace(/([a-z0-9])([A-Z])/g, "$1-$2").replace(/([a-zA-Z])([0-9])/g, "$1-$2").toLowerCase();
+const componentsDir = join(import.meta.dirname, "..", "client", "src", "components");
+const sources = [...readdirSync(componentsDir).filter((f) => f.endsWith(".tsx")).map((f) => join(componentsDir, f)), join(import.meta.dirname, "..", "client", "src", "App.tsx")];
+for (const file of sources) {
+  for (const m of readFileSync(file, "utf8").matchAll(/import\s*\{([^}]*)\}\s*from\s*"lucide-react"/g)) {
+    for (const spec of m[1].split(",")) {
+      const name = spec.trim().split(/\s+as\s+/)[0].replace(/^type\s+/, "");
+      const display = lucide[name]?.displayName;
+      if (display) ICONS.push(toKebab(display));
+    }
+  }
+}
+
 const dir = join(import.meta.dirname, "..", "node_modules", "lucide-react", "dist", "esm", "icons");
+
+// …and every icon the app's own layouts draw (4.13: the components that became
+// layouts no longer import them): read from the default trees themselves (an
+// icon's name, or the names between the tags of a template like "{if $on}moon{else}sun{/if}"),
+// and the icons components hand their layouts as data (a const …ICON(S) map,
+// or a quoted name on a line that sets an `icon:`).
+const isIcon = (name) => existsSync(join(dir, `${name}.mjs`));
+const treeIcons = JSON.parse(execFileSync(join(import.meta.dirname, "..", "node_modules", ".bin", "tsx"), ["-e", `
+  import { DEFAULT_LAYOUTS } from "./client/src/lib/layouts";
+  const names = new Set();
+  const walk = (n) => { if (n.el === "icon" && typeof n.props?.icon === "string") names.add(n.props.icon); (n.children ?? []).forEach(walk); };
+  Object.values(DEFAULT_LAYOUTS).forEach(walk);
+  console.log(JSON.stringify([...names]));
+`], { cwd: join(import.meta.dirname, ".."), encoding: "utf8" }));
+for (const raw of treeIcons) {
+  for (const name of raw.replace(/\{[^}]*\}/g, " ").trim().split(/\s+/).filter(Boolean)) if (isIcon(name)) ICONS.push(name);
+}
+for (const file of sources) {
+  const src = readFileSync(file, "utf8");
+  const maps = [...src.matchAll(/const\s+\w*ICONS?\b[^=]*=\s*\{([\s\S]*?)\};/g)].map((m) => m[1]);
+  const lines = src.split("\n").filter((l) => /\bicon:/.test(l));
+  for (const text of [...maps, ...lines]) for (const m of text.matchAll(/"([a-z][a-z0-9]*(?:-[a-z0-9]+)*)"/g)) if (isIcon(m[1])) ICONS.push(m[1]);
+}
+
 const out = {};
 const seen = new Set();
 const aliases = {};

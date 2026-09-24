@@ -1,11 +1,16 @@
 // The tool dialogs of the chat screen: files, location, speech and the
 // connection details.
+//
+// 4.13: each is a layout ("panel.files", "panel.location", "panel.speech",
+// "panel.connection" — lib/layouts/tools.ts); what they do stays here.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { renderLayout } from "./LayoutView";
+import { useLayoutBase } from "./LayoutProvider";
 import { t, type Lang } from "../lib/i18n";
 import { formatBytes } from "../lib/format";
 import { detectGeolocation } from "../lib/maps";
-import { detectSpeechCaps, fetchServerSpeechStatus, listVoices, serverTts, speak, startRecognition, stopSpeaking, type ServerVoiceInfo, type VoicePreset } from "../lib/speech";
+import { detectSpeechCaps, fetchServerSpeechStatus, listVoices, serverTts, speak, startRecognition, stopSpeaking, type ServerSpeechStatus, type ServerVoiceInfo, type VoicePreset } from "../lib/speech";
 import type { ConnectionStatus, KeepaliveStrategy } from "../lib/connection-keeper";
 import type { Preferences } from "../lib/preferences";
 import type { DesiredState } from "../lib/session-cache";
@@ -28,51 +33,21 @@ export function FilesPanel({
   onPickFile: () => void;
   transfers: FilesPanelTransfer[];
 }) {
+  const { tree, base } = useLayoutBase("panel.files", "en");
   const active = transfers.filter((t) => t.status === "active");
   const recent = transfers.slice(-3);
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        End-to-end encrypted P2P transfer (AES-GCM 256, 32 KiB chunks) with automatic server-relay fallback.
-        Hard cap: 10 GiB. Configure your own limit in Settings.
-      </p>
-      <div className="flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onPickFile}
-          disabled={!connected}
-          className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
-        >
-          Choose file…
-        </button>
-      </div>
-      {active.length > 0 ? (
-        <div className="rounded-2xl border border-border bg-background p-3 text-xs">
-          <div className="mb-1 font-semibold">Probíhá {active.length} přenos{active.length > 1 ? "y" : ""}:</div>
-          <ul className="space-y-1 font-mono">
-            {active.map((t) => (
-              <li key={t.id}>
-                {t.direction === "out" ? "↑" : "↓"} {t.name} ·
-                {t.stats.transport === "p2p" ? " P2P" : " Proxy"} ·
-                {Math.round((t.stats.progress ?? 0) * 100)} %
-                · {formatBytes(t.stats.size)} ·{" "}
-                {Math.round((t.stats.bytesPerSecond ?? 0) / 1024)} kB/s
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {recent.length > 0 ? (
-        <div className="rounded-2xl border border-dashed border-border/60 p-3 text-[11px] text-muted-foreground">
-          {recent.length} přenosů sledováno — podrobnosti v chatu.
-        </div>
-      ) : null}
-      <p className="text-[11px] text-muted-foreground">
-        Files  10 GiB cannot transfer today. For very large volumes use the
-        storage-provider plugin — see docs/files.md.
-      </p>
-    </div>
-  );
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      connected,
+      active: active.map((t) => ({
+        id: t.id,
+        line: `${t.direction === "out" ? "↑" : "↓"} ${t.name} ·${t.stats.transport === "p2p" ? " P2P" : " Proxy"} ·${Math.round((t.stats.progress ?? 0) * 100)} % · ${formatBytes(t.stats.size)} · ${Math.round((t.stats.bytesPerSecond ?? 0) / 1024)} kB/s`,
+      })),
+      recent,
+    },
+    actions: { pickFile: () => onPickFile() },
+  });
 }
 
 export function LocationPanel({
@@ -86,37 +61,24 @@ export function LocationPanel({
   lang: Lang;
 }) {
   const caps = detectGeolocation();
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">
-        {t(lang, "app.location.hint")}
-      </p>
-      {!caps.available ? (
-        <p className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{caps.reason}</p>
-      ) : null}
-      <div className="flex flex-wrap gap-2">
-        <button type="button" onClick={onShareOnce} disabled={!connected || !caps.available} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">
-          {t(lang, "app.location.once")}
-        </button>
-        {watching ? (
-          <button type="button" onClick={onStopContinuous} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">{t(lang, "app.location.stop")}</button>
-        ) : (
-          <button type="button" onClick={onStartContinuous} disabled={!connected || !caps.available} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60">{t(lang, "app.location.continuous")}</button>
-        )}
-      </div>
-      <p className="text-[11px] text-muted-foreground">{t(lang, "app.location.privacy")}</p>
-    </div>
-  );
+  const { tree, base } = useLayoutBase("panel.location", lang);
+  return renderLayout(tree, {
+    ...base,
+    data: { connected, available: caps.available, reason: caps.reason, watching },
+    actions: { shareOnce: () => onShareOnce(), startContinuous: () => onStartContinuous(), stop: () => onStopContinuous() },
+  });
 }
 
 export function SpeechPanel({
-  recognitionRef, onSendText, onInsertText, serverMode, lang,
+  recognitionRef, onSendText, onInsertText, serverMode, lang, loadServerStatus = fetchServerSpeechStatus,
 }: {
   recognitionRef: React.MutableRefObject<{ stop: () => void } | null>;
   onSendText: (text: string) => void;
   onInsertText: (text: string) => void;
   serverMode: boolean;
   lang: Lang;
+  /** Where the server voices come from (the Layout builder's preview gives its own). */
+  loadServerStatus?: () => Promise<ServerSpeechStatus>;
 }) {
   const caps = detectSpeechCaps();
   const [text, setText] = useState("");
@@ -144,11 +106,12 @@ export function SpeechPanel({
   useEffect(() => {
     if (!serverMode) return;
     let cancelled = false;
-    void fetchServerSpeechStatus().then((s) => {
+    void loadServerStatus().then((s) => {
       if (cancelled) return;
       if (s.tts.enabled) { setServerVoices(s.tts.connectors); if (s.tts.connectors[0]) setServerVoice(s.tts.connectors[0].id); }
     });
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- where they come from is fixed for a panel
   }, [serverMode]);
 
   async function speakServer() {
@@ -180,63 +143,34 @@ export function SpeechPanel({
     recognitionRef.current = null;
   }
 
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2">
-        <label className="grid gap-1 text-sm">{t(lang, "app.speech.language")}
-          <select value={voiceLang} onChange={(e) => setVoiceLang(e.target.value)} className="min-h-10 rounded-xl border border-input bg-background px-2">
-            {["cs-CZ","sk-SK","de-DE","en-GB","en-US","pl-PL","fr-FR","es-ES","it-IT","nl-NL","ru-RU"].map((l) => <option key={l}>{l}</option>)}
-          </select>
-        </label>
-        <label className="grid gap-1 text-sm">{t(lang, "app.speech.preset")}
-          <select value={preset} onChange={(e) => setPreset(e.target.value as VoicePreset)} className="min-h-10 rounded-xl border border-input bg-background px-2">
-            {["neutral","male","female","child"].map((p) => <option key={p}>{p}</option>)}
-          </select>
-        </label>
-      </div>
-      <label className="grid gap-1 text-sm">{t(lang, "app.speech.voice")}
-        <select value={voiceURI} onChange={(e) => setVoiceURI(e.target.value)} className="min-h-10 rounded-xl border border-input bg-background px-2">
-          <option value="">{t(lang, "app.speech.auto")}</option>
-          {voices.filter((v) => v.lang.toLowerCase().startsWith(voiceLang.toLowerCase().slice(0, 2))).map((v) => (
-            <option key={v.voiceURI} value={v.voiceURI}>{v.name} · {v.lang}</option>
-          ))}
-        </select>
-      </label>
-      <label className="grid gap-1 text-sm">{t(lang, "app.speech.text")}
-        <textarea value={text} onChange={(e) => setText(e.target.value)} className="min-h-20 rounded-xl border border-input bg-background px-2 py-1" />
-      </label>
-      <div className="flex flex-wrap gap-2">
-        <button type="button" disabled={!caps.ttsAvailable} onClick={() => speak({ text, lang: voiceLang, preset, voiceURI: voiceURI || null })} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60">{t(lang, "app.speech.speak")}</button>
-        <button type="button" disabled={!caps.ttsAvailable} onClick={stopSpeaking} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60">{t(lang, "app.speech.stop")}</button>
-        {!recognitionRef.current ? (
-          <button type="button" disabled={!caps.sttAvailable} onClick={startStt} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60">{t(lang, "app.speech.listen")}</button>
-        ) : (
-          <button type="button" onClick={stopStt} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">{t(lang, "app.speech.stopListening")}</button>
-        )}
-        <label className="inline-flex items-center gap-2 text-xs">
-          <input type="checkbox" checked={revoice} onChange={(e) => setRevoice(e.target.checked)} />
-          {t(lang, "app.speech.revoice")}
-        </label>
-        <button type="button" disabled={!text.trim()} onClick={() => { onInsertText(text); setText(""); }} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60" data-testid="speech-insert">{t(lang, "speech.insert")}</button>
-        <button type="button" onClick={() => { onSendText(text); setText(""); }} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">{t(lang, "app.speech.send")}</button>
-      </div>
-      {partial ? <div className="rounded-xl border border-border bg-background p-2 text-xs italic">{partial}</div> : null}
-      {serverMode && serverVoices.length > 0 ? (
-        <div className="rounded-xl border border-border bg-background p-2 text-xs">
-          <div className="mb-1 font-semibold">{t(lang, "speech.server")}</div>
-          <div className="flex flex-wrap items-center gap-2">
-            <select value={serverVoice} onChange={(e) => setServerVoice(e.target.value)} className="min-h-9 rounded-lg border border-input bg-background px-2">
-              {serverVoices.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}
-            </select>
-            <button type="button" disabled={serverBusy || !text.trim()} onClick={() => void speakServer()} className="inline-flex min-h-9 items-center gap-2 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-60">
-              {serverBusy ? "…" : t(lang, "speech.server.speak")}
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {!caps.sttAvailable ? <p className="text-[11px] text-muted-foreground">Speech recognition is Chrome/Edge/Android only. Voice cloning of arbitrary samples is intentionally not implemented — see docs/speech.md.</p> : null}
-    </div>
-  );
+  const { tree, base } = useLayoutBase("panel.speech", lang);
+  const value = (e: unknown) => (e as ChangeEvent<HTMLInputElement>).target.value;
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      langs: ["cs-CZ", "sk-SK", "de-DE", "en-GB", "en-US", "pl-PL", "fr-FR", "es-ES", "it-IT", "nl-NL", "ru-RU"],
+      presets: ["neutral", "male", "female", "child"],
+      voices: voices.filter((v) => v.lang.toLowerCase().startsWith(voiceLang.toLowerCase().slice(0, 2))).map((v) => ({ uri: v.voiceURI, name: v.name, lang: v.lang })),
+      voiceLang, preset, voiceURI, text, hasText: Boolean(text.trim()),
+      ttsAvailable: caps.ttsAvailable, sttAvailable: caps.sttAvailable, listening: Boolean(recognitionRef.current), revoice, partial,
+      serverMode, serverVoices: serverVoices.map((v) => ({ id: v.id, label: v.label })), serverVoice, serverBusy,
+    },
+    actions: {
+      voiceLang: (e) => setVoiceLang(value(e)),
+      preset: (e) => setPreset(value(e) as VoicePreset),
+      voice: (e) => setVoiceURI(value(e)),
+      text: (e) => setText(value(e)),
+      speak: () => speak({ text, lang: voiceLang, preset, voiceURI: voiceURI || null }),
+      stopSpeaking: () => stopSpeaking(),
+      listen: () => startStt(),
+      stopListening: () => stopStt(),
+      revoice: (e) => setRevoice((e as ChangeEvent<HTMLInputElement>).target.checked),
+      insert: () => { onInsertText(text); setText(""); },
+      send: () => { onSendText(text); setText(""); },
+      serverVoice: (e) => setServerVoice(value(e)),
+      speakServer: () => void speakServer(),
+    },
+  });
 }
 
 export type ConnLogEvent = "connecting" | "open" | "closed" | "retry" | "failed" | "stopped";
@@ -251,50 +185,24 @@ export function ConnectionPanel({
   desired: DesiredState;
   log: Array<{ at: number; attempt: number; event: ConnLogEvent; delayMs?: number }>;
 }) {
-  return (
-    <div className="space-y-3">
-      <div className="rounded-xl border border-border bg-background p-2 text-xs" data-testid="conn-desired" data-desired={desired}>
-        <span className="font-semibold">{t(lang, "conn.desired")}:</span>{" "}
-        {t(lang, desired === "connected" ? "conn.desired.connected" : "conn.desired.disconnected")}
-      </div>
-      <p className="text-xs text-muted-foreground">{t(lang, "keepalive.hint")}</p>
-      <label className="grid gap-1 text-sm font-medium">{t(lang, "keepalive.strategy")}
-        <select
-          value={prefs.keepaliveStrategy}
-          onChange={(e) => setPrefs({ keepaliveStrategy: e.target.value as KeepaliveStrategy })}
-          className="min-h-10 rounded-xl border border-input bg-background px-2"
-        >
-          <option value="conservative">{t(lang, "keepalive.conservative")}</option>
-          <option value="balanced">{t(lang, "keepalive.balanced")}</option>
-          <option value="aggressive">{t(lang, "keepalive.aggressive")}</option>
-        </select>
-      </label>
-      {status ? (
-        <div className="rounded-xl border border-border bg-background p-2 text-xs font-mono">
-          <div>state: {status.state}</div>
-          <div>RTT: {status.rttMs} ms</div>
-          <div>strategy: {status.strategy}</div>
-          <div>last activity: {status.lastActivityAt ? new Date(status.lastActivityAt).toLocaleTimeString() : "—"}</div>
-          <div>last pong: {status.lastPongAt ? new Date(status.lastPongAt).toLocaleTimeString() : "—"}</div>
-        </div>
-      ) : <p className="text-xs text-muted-foreground">Not connected.</p>}
-      <div>
-        <h3 className="mb-1 text-xs font-semibold">{t(lang, "conn.log.title")}</h3>
-        {log.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t(lang, "conn.log.empty")}</p>
-        ) : (
-          <ol className="max-h-40 overflow-y-auto rounded-xl border border-border bg-background p-2 font-mono text-[11px] leading-5" data-testid="conn-log">
-            {log.map((entry, i) => (
-              <li key={`${entry.at}-${i}`}>
-                {new Date(entry.at).toLocaleTimeString()} · #{entry.attempt} ·{" "}
-                {entry.event === "retry"
-                  ? t(lang, "conn.log.retry").replace("{s}", ((entry.delayMs ?? 0) / 1000).toFixed(1))
-                  : t(lang, `conn.log.${entry.event}`)}
-              </li>
-            ))}
-          </ol>
-        )}
-      </div>
-    </div>
-  );
+  const { tree, base } = useLayoutBase("panel.connection", lang);
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      desired,
+      strategy: prefs.keepaliveStrategy,
+      status: status ? {
+        state: status.state, rttMs: status.rttMs, strategy: status.strategy,
+        lastActivity: status.lastActivityAt ? new Date(status.lastActivityAt).toLocaleTimeString() : "—",
+        lastPong: status.lastPongAt ? new Date(status.lastPongAt).toLocaleTimeString() : "—",
+      } : null,
+      log: log.map((entry, i) => ({
+        key: `${entry.at}-${i}`,
+        time: new Date(entry.at).toLocaleTimeString(),
+        attempt: entry.attempt,
+        text: entry.event === "retry" ? t(lang, "conn.log.retry").replace("{s}", ((entry.delayMs ?? 0) / 1000).toFixed(1)) : t(lang, `conn.log.${entry.event}`),
+      })),
+    },
+    actions: { strategy: (e) => setPrefs({ keepaliveStrategy: (e as ChangeEvent<HTMLSelectElement>).target.value as KeepaliveStrategy }) },
+  });
 }

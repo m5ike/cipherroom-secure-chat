@@ -9,7 +9,9 @@ import { describe, it, expect } from "vitest";
 import {
   ELEMENTS, LAYOUT_LIMITS, attrNames, attrValues, countNodes, isSafeCssValue, isSafeUrl, sanitizeTree, treeRev, walkTree, type LNode,
 } from "../client/src/lib/layout-tree";
-import { DEFAULT_LAYOUT_REVS, DEFAULT_LAYOUTS, LAYOUT_IDS } from "../client/src/lib/layouts";
+import { DEFAULT_LAYOUT_REVS, DEFAULT_LAYOUTS, LAYOUT_GROUP, LAYOUT_GROUP_LABELS, LAYOUT_IDS, LAYOUT_LABELS } from "../client/src/lib/layouts";
+import { PREVIEW_VARIANTS } from "../client/src/lib/layouts/samples";
+import { MENU_ICONS } from "../client/src/lib/menu-icons-data";
 import { LAYOUT_CONTRACTS } from "../client/src/lib/layouts/contracts";
 import { DEFAULT_LAYOUT, layoutBlocks, layoutTree, sanitizeLayout } from "../client/src/lib/layout-config";
 
@@ -132,6 +134,26 @@ describe("the app's own layouts", () => {
       for (const a of u.actions) expect(c.actions.map((x) => x.name), `${id}: action ${a}`).toContain(a);
       for (const s of u.slots) expect(c.slots.map((x) => x.name), `${id}: slot ${s}`).toContain(s);
       for (const r of u.refs) expect(c.refs.map((x) => x.name), `${id}: ref ${r}`).toContain(r);
+    }
+  });
+
+  it("draw only icons of the catalog (script/gen-menu-icons.mjs reads them from the trees)", () => {
+    for (const id of LAYOUT_IDS) {
+      walkTree(DEFAULT_LAYOUTS[id], (n) => {
+        const name = n.el === "icon" ? n.props?.icon : undefined;
+        if (typeof name !== "string") return;
+        const names = name.replace(/\{[^}]*\}/g, " ").trim().split(/\s+/).filter(Boolean);
+        for (const x of names) expect(MENU_ICONS[x], `${id}: ${n.id} draws "${x}"`).toBeDefined();
+      });
+    }
+  });
+
+  it("each have a name, a section of the builder and situations to preview", () => {
+    for (const id of LAYOUT_IDS) {
+      expect(LAYOUT_LABELS[id], id).toBeTruthy();
+      expect(Object.keys(LAYOUT_GROUP_LABELS), id).toContain(LAYOUT_GROUP[id]);
+      expect(PREVIEW_VARIANTS[id]?.length, id).toBeGreaterThan(0);
+      expect(new Set(PREVIEW_VARIANTS[id].map((v) => v.id)).size, id).toBe(PREVIEW_VARIANTS[id].length);
     }
   });
 

@@ -12,65 +12,47 @@
 // While a connection is up, nothing can be switched: the tabs and the other
 // connections are disabled until Disconnect. The connecting itself stays in
 // App.tsx; this file shows the choice and reports it.
+//
+// 4.13: both are layouts ("room.tabs", "room" — lib/layouts/room.ts) the
+// operator can redesign; the choosing, the keyboard and the state stay here.
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
-import {
-  Check, Eye, EyeOff, KeyRound, Lock, LogOut, PencilLine, Plug, Plus, Radio, RefreshCw, Server, Settings, Star, Zap,
-} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { t, tf, type Lang } from "../lib/i18n";
-import type { ConnectionProfile, ConnectionsState } from "../lib/connections";
+import type { ConnectionsState } from "../lib/connections";
 import { NeedSignIn } from "./NeedSignIn";
+import { renderLayout } from "./LayoutView";
+import { useLayoutBase } from "./LayoutProvider";
 import "../room.css";
 
 export type RoomTab = "light" | "server";
 /** What Connect joins: a saved connection, or the room typed in. */
 export type RoomTarget = { kind: "manual" } | { kind: "profile"; id: string };
 
-const TABS: ReadonlyArray<{ id: RoomTab; icon: typeof Zap; long: string; short: string }> = [
-  { id: "light", icon: Zap, long: "room.tab.light", short: "room.tab.light.short" },
-  { id: "server", icon: Server, long: "room.tab.server", short: "room.tab.server.short" },
+const TABS: ReadonlyArray<{ id: RoomTab; icon: string; long: string; short: string }> = [
+  { id: "light", icon: "zap", long: "room.tab.light", short: "room.tab.light.short" },
+  { id: "server", icon: "server", long: "room.tab.server", short: "room.tab.server.short" },
 ];
 
 /** The tabs, rendered in the window's header in place of its title. */
 export function RoomTabs({ lang, tab, locked, onTab }: { lang: Lang; tab: RoomTab; locked: boolean; onTab: (tab: RoomTab) => void }) {
-  const refs = useRef<Array<HTMLButtonElement | null>>([]);
-  // Arrow keys move between tabs (WAI-ARIA tabs pattern).
-  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (locked || (event.key !== "ArrowLeft" && event.key !== "ArrowRight")) return;
-    event.preventDefault();
-    const next = TABS[(TABS.findIndex((x) => x.id === tab) + 1) % TABS.length];
-    onTab(next.id);
-    refs.current[TABS.indexOf(next)]?.focus();
-  };
-  return (
-    <div className="rd-tabs" role="tablist" aria-label={t(lang, "room.tabs")} onKeyDown={onKeyDown} data-testid="room-tabs">
-      {TABS.map((x, i) => {
-        const Icon = x.icon;
-        const selected = tab === x.id;
-        return (
-          <button
-            key={x.id}
-            ref={(el) => { refs.current[i] = el; }}
-            type="button"
-            role="tab"
-            id={`rd-tab-${x.id}`}
-            aria-selected={selected}
-            aria-controls="rd-panel"
-            tabIndex={selected ? 0 : -1}
-            disabled={locked && !selected}
-            title={locked && !selected ? t(lang, "room.locked") : undefined}
-            className="rd-tab"
-            onClick={() => onTab(x.id)}
-            data-testid={`room-tab-${x.id}`}
-          >
-            <Icon className="rd-tab__icon" aria-hidden="true" />
-            <span className="rd-tab__long">{t(lang, x.long)}</span>
-            <span className="rd-tab__short" aria-hidden="true">{t(lang, x.short)}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
+  const { tree, base } = useLayoutBase("room.tabs", lang);
+  const tabs = TABS.map((x) => ({ ...x, selected: tab === x.id, disabled: locked && tab !== x.id }));
+  return renderLayout(tree, {
+    ...base,
+    data: { tabs, locked },
+    actions: {
+      tab: (_e, id) => onTab(id as RoomTab),
+      // Arrow keys move between tabs (WAI-ARIA tabs pattern).
+      tabKey: (event) => {
+        const e = event as KeyboardEvent<HTMLDivElement>;
+        if (locked || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+        e.preventDefault();
+        const next = TABS[(TABS.findIndex((x) => x.id === tab) + 1) % TABS.length];
+        onTab(next.id);
+        document.getElementById(`rd-tab-${next.id}`)?.focus();
+      },
+    },
+  });
 }
 
 export type RoomDialogProps = {
@@ -115,6 +97,7 @@ function initialPick(state: ConnectionsState, activeId: string | null): string {
 
 export function RoomDialog(props: RoomDialogProps) {
   const { lang, tab, locked, joined, busy, saved } = props;
+  const { tree, base } = useLayoutBase("room", lang);
   const listed = saved.enabled && saved.signedIn && saved.ready;
   const profiles = saved.state.profiles;
   const [pick, setPick] = useState<string>(() => initialPick(saved.state, saved.activeId));
@@ -153,179 +136,41 @@ export function RoomDialog(props: RoomDialogProps) {
     ? t(lang, "join.reconnect")
     : selectedProfile ? tf(lang, "room.connectTo", { name: selectedProfile.label }) : t(lang, "join.connect");
 
-  return (
-    <div className="rd" data-tab={tab}>
-      <form data-testid="form-join" onSubmit={submit} autoComplete="off" className="rd-form">
-        <div role="tabpanel" id="rd-panel" aria-labelledby={`rd-tab-${tab}`} className="rd-panel" data-testid={`room-panel-${tab}`}>
-          <p className="rd-hint">{t(lang, tab === "light" ? "room.hint.light" : "room.hint.server")}</p>
-
-          {tab === "server" ? (
-            <SavedList
-              {...props}
-              listed={listed}
-              selected={selected}
-              onPick={(id) => { if (!locked) setPick(id); }}
-            />
-          ) : null}
-
-          {manual ? <ManualFields {...props} disabled={locked} /> : null}
-
-          {locked ? (
-            <p className="rd-locked" data-testid="room-locked"><Lock className="h-3.5 w-3.5 flex-none" aria-hidden="true" />{t(lang, "room.locked")}</p>
-          ) : null}
-        </div>
-
-        <div className="rd-actions">
-          <button data-testid="button-connect" type="submit" className="rd-btn rd-btn--primary" disabled={busy || (needsSignIn && !joined)}>
-            {joined ? <RefreshCw className="h-4 w-4 flex-none" aria-hidden="true" /> : <Radio className="h-4 w-4 flex-none" aria-hidden="true" />}
-            <span className="truncate">{connectLabel}</span>
-          </button>
-          {locked ? (
-            <button type="button" data-testid="button-disconnect" onClick={props.onDisconnect} className="rd-btn">
-              <LogOut className="h-4 w-4 flex-none" aria-hidden="true" />
-              {t(lang, "common.disconnect")}
-            </button>
-          ) : null}
-        </div>
-      </form>
-      <div className="rd-share">{props.share}</div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------ typed in by hand */
-
-function ManualFields({ lang, fields, onField, disabled }: RoomDialogProps & { disabled: boolean }) {
+  // The saved connections: the default first, then the most recently used.
+  const defaultId = saved.state.settings.defaultId;
+  const ordered = useMemo(() => [...profiles].sort((a, b) => Number(b.id === defaultId) - Number(a.id === defaultId) || b.lastUsedAt - a.lastUsedAt), [profiles, defaultId]);
+  const items = ordered.map((p) => {
+    const checked = selected === p.id;
+    return {
+      id: p.id, label: p.label, room: p.room, user: p.userName || "—", host: p.server ? new URL(p.server).host : t(lang, "cx.thisServer"),
+      mode: p.mode, color: p.color ?? "", isDefault: defaultId === p.id, checked, disabled: locked && !checked, live: locked && checked && saved.activeId === p.id,
+    };
+  });
+  // The key shown or not: back to hidden whenever the fields go away.
   const [showKey, setShowKey] = useState(false);
-  return (
-    <div className="rd-fields" data-testid="room-manual-fields">
-      <label className="rd-field">
-        <span>{t(lang, "join.name")}</span>
-        <input data-testid="input-name" className="rd-input" value={fields.name} disabled={disabled}
-          onChange={(event) => onField({ name: event.target.value })} maxLength={42} />
-      </label>
-      <label className="rd-field">
-        <span>{t(lang, "join.room")}</span>
-        <input data-testid="input-room" className="rd-input rd-input--mono" value={fields.room} disabled={disabled}
-          onChange={(event) => onField({ room: event.target.value })} maxLength={48} />
-      </label>
-      <label className="rd-field rd-field--wide">
-        <span>{t(lang, "join.passphrase")}</span>
-        <span className="rd-key">
-          <input data-testid="input-passphrase" className="rd-input" value={fields.passphrase} disabled={disabled}
-            onChange={(event) => onField({ passphrase: event.target.value })}
-            type={showKey ? "text" : "password"} autoComplete="new-password" spellCheck={false} />
-          <button type="button" className="rd-eye" onClick={() => setShowKey((v) => !v)}
-            aria-label={t(lang, showKey ? "cx.form.hide" : "cx.form.show")} title={t(lang, showKey ? "cx.form.hide" : "cx.form.show")}
-            aria-pressed={showKey} data-testid="room-key-toggle">
-            {showKey ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
-          </button>
-        </span>
-      </label>
-    </div>
-  );
-}
+  useEffect(() => { if (!manual) setShowKey(false); }, [manual]);
+  const field = (key: "name" | "room" | "passphrase") => (event: unknown) => props.onField({ [key]: (event as ChangeEvent<HTMLInputElement>).target.value });
 
-/* ------------------------------------------------ the saved connections */
-
-function SavedList(props: RoomDialogProps & { listed: boolean; selected: string; onPick: (id: string) => void }) {
-  const { lang, saved, listed, selected, locked } = props;
-  const profiles = saved.state.profiles;
-  // The default first, then the most recently used.
-  const ordered = useMemo(() => [...profiles].sort((a, b) =>
-    Number(b.id === saved.state.settings.defaultId) - Number(a.id === saved.state.settings.defaultId) || b.lastUsedAt - a.lastUsedAt,
-  ), [profiles, saved.state.settings.defaultId]);
-
-  if (!saved.signedIn) {
-    return <NeedSignIn lang={lang} onOpen={locked ? undefined : props.onSignIn} text={t(lang, "room.signin.text")} testId="room-need" />;
-  }
-  if (!saved.enabled) {
-    return (
-      <div className="rd-need" data-testid="room-disabled">
-        <span className="rd-need__icon" aria-hidden="true"><Lock className="h-5 w-5" /></span>
-        <span className="rd-need__text"><span>{t(lang, "room.disabled")}</span></span>
-      </div>
-    );
-  }
-  if (!listed) return <p className="rd-loading" aria-busy="true" data-testid="room-loading">{t(lang, "room.saved.loading")}</p>;
-
-  return (
-    <div className="rd-saved">
-      <div className="rd-saved__head">
-        <span className="rd-saved__title">
-          {t(lang, "room.saved.title")}
-          <span className="rd-count">{profiles.length}</span>
-        </span>
-        <button type="button" className="rd-gear" onClick={props.onManage} title={t(lang, "room.saved.manage")} aria-label={t(lang, "room.saved.manage")} data-testid="room-manage">
-          <Settings className="h-[1.1rem] w-[1.1rem]" aria-hidden="true" />
-        </button>
-      </div>
-
-      {profiles.length === 0 ? (
-        <div className="rd-empty" data-testid="room-empty">
-          <span className="rd-empty__icon" aria-hidden="true"><Plug className="h-5 w-5" /></span>
-          <span>{t(lang, "room.saved.empty")}</span>
-          <button type="button" className="rd-btn rd-btn--soft" onClick={props.onCreate} disabled={locked} data-testid="room-create">
-            <Plus className="h-4 w-4" aria-hidden="true" />{t(lang, "room.saved.create")}
-          </button>
-        </div>
-      ) : null}
-
-      <div className="rd-list" role="radiogroup" aria-label={t(lang, "room.saved.list")} data-testid="room-list">
-        {ordered.map((p) => (
-          <SavedItem key={p.id} {...props} profile={p} checked={selected === p.id} disabled={locked && selected !== p.id} />
-        ))}
-        <button
-          type="button"
-          role="radio"
-          aria-checked={selected === "manual"}
-          disabled={locked && selected !== "manual"}
-          className="rd-item rd-item--manual"
-          onClick={() => props.onPick("manual")}
-          data-testid="room-item-manual"
-        >
-          <span className="rd-item__glyph" aria-hidden="true"><PencilLine className="h-4 w-4" /></span>
-          <span className="rd-item__text">
-            <span className="rd-item__label">{t(lang, "room.manual")}</span>
-            <span className="rd-item__sub rd-item__sub--plain">{t(lang, "room.manual.hint")}</span>
-          </span>
-          <span className="rd-item__check" aria-hidden="true"><Check className="h-3.5 w-3.5" /></span>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function SavedItem(props: RoomDialogProps & { profile: ConnectionProfile; checked: boolean; disabled: boolean; onPick: (id: string) => void }) {
-  const { lang, profile: p, checked, disabled, saved, locked } = props;
-  const isDefault = saved.state.settings.defaultId === p.id;
-  const live = locked && checked && saved.activeId === p.id;
-  const host = p.server ? new URL(p.server).host : t(lang, "cx.thisServer");
-  return (
-    <button
-      type="button"
-      role="radio"
-      aria-checked={checked}
-      disabled={disabled}
-      className={`rd-item${live ? " is-live" : ""}`}
-      style={p.color ? { ["--cx-color" as string]: p.color } : undefined}
-      onClick={() => props.onPick(p.id)}
-      data-testid="room-item"
-      data-id={p.id}
-    >
-      <span className="rd-item__dot" aria-hidden="true" />
-      <span className="rd-item__text">
-        <span className="rd-item__label">
-          <span className="truncate">{p.label}</span>
-          {isDefault ? <Star className="rd-item__star" aria-label={t(lang, "cx.default")} /> : null}
-        </span>
-        <span className="rd-item__sub">{p.room} · {p.userName || "—"} · {host}</span>
-      </span>
-      <span className="rd-item__meta">
-        {live ? <span className="rd-live" data-testid="room-item-live"><span className="rd-live__pulse" aria-hidden="true" />{t(lang, "cx.active")}</span>
-          : <span className="rd-chip">{t(lang, p.mode === "server" ? "room.mode.server" : "room.mode.light")}</span>}
-      </span>
-      <span className="rd-item__check" aria-hidden="true"><Check className="h-3.5 w-3.5" /></span>
-    </button>
-  );
+  return renderLayout(tree, {
+    ...base,
+    data: {
+      tab, locked, joined, busy, signedIn: saved.signedIn, savedEnabled: saved.enabled, listed, needsSignIn, manual,
+      items, selected, fields: props.fields, showKey, connectLabel,
+    },
+    actions: {
+      submit: (event) => submit(event as FormEvent),
+      disconnect: () => props.onDisconnect(),
+      pick: (_e, id) => { if (!locked) setPick(String(id)); },
+      manage: () => props.onManage(),
+      create: () => props.onCreate(),
+      fieldName: field("name"),
+      fieldRoom: field("room"),
+      fieldKey: field("passphrase"),
+      toggleKey: () => setShowKey((v) => !v),
+    },
+    slots: {
+      needSignIn: () => <NeedSignIn lang={lang} onOpen={locked ? undefined : props.onSignIn} text={t(lang, "room.signin.text")} testId="room-need" />,
+      share: () => props.share,
+    },
+  });
 }

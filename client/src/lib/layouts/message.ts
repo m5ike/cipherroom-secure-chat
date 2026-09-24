@@ -79,7 +79,7 @@ export function messageTree(kind: MessageKind): LNode {
     n("panel", { id: "seal-row", attrs: { class: "msg-seal__row" } }, [
       n("input", {
         id: "seal-input", name: "Code",
-        attrs: { class: "msg-seal__input", value: "=$codeInput", placeholder: "{_'msgkind.sealed.code'}", "data-testid": "seal-code-{$id}", autocomplete: "off" },
+        attrs: { class: "msg-seal__input", value: "=$codeInput", placeholder: "{_'msgkind.sealed.code'}", "aria-label": "{_'msgkind.sealed.code'}", "data-testid": "seal-code-{$id}", autocomplete: "off" },
         on: { change: { action: "codeChange" }, keydown: { action: "codeKey" } },
       }),
       n("button", { id: "seal-unlock", attrs: { type: "button", class: "msg-seal__btn" }, text: "{_'msgkind.sealed.unlock'}", on: { click: { action: "codeSubmit" } } }),

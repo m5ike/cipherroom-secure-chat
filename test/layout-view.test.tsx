@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, cleanup, fireEvent } from "@testing-library/react";
-import { createRef } from "react";
+import { createRef, isValidElement, type ReactElement } from "react";
 import { renderLayout, setLayoutPreviewMode, type LayoutEnv } from "../client/src/components/LayoutView";
 import type { LNode } from "../client/src/lib/layout-tree";
 
@@ -157,4 +157,35 @@ describe("LayoutView", () => {
     expect(container.querySelector('[data-lb-id="b"]')!.tagName).toBe("BUTTON");
     expect(container.querySelector('[data-lb-id="s"] em')).not.toBeNull();
   });
+
+  it("compiles a tree once: what never changes is created once and handed to React again", () => {
+    const tree: LNode = {
+      id: "r", el: "panel", tag: "div", children: [
+        { id: "fixed", el: "panel", tag: "div", attrs: { class: "a" }, children: [{ id: "i", el: "icon", props: { icon: "star" } }, { id: "t", el: "text", text: "x" }] },
+        { id: "live", el: "panel", tag: "div", text: "{$n}" },
+        { id: "rep", el: "area", tag: "span", each: "$ids", as: "i", text: "y" },
+      ],
+    };
+    const kids = (n: unknown) => (n as ReactElement<{ children: unknown[] }>).props.children;
+    const a = kids(renderLayout(tree, { data: { n: 1, ids: [1] } }));
+    const b = kids(renderLayout(tree, { data: { n: 2, ids: [1] } }));
+    expect(isValidElement(a[0]) && a[0] === b[0]).toBe(true);
+    expect(a[1]).not.toBe(b[1]);
+    expect((a[2] as unknown[])[0]).not.toBe((b[2] as unknown[])[0]);
+    // In the builder's preview every element is marked: nothing is reused there.
+    setLayoutPreviewMode({});
+    const c = kids(renderLayout(tree, { data: { n: 2, ids: [1] } }));
+    expect(c[0]).not.toBe(a[0]);
+    expect((c[0] as ReactElement<Record<string, unknown>>).props["data-lb-id"]).toBe("fixed");
+  });
+
+  it("gives a live part the values in scope when it asks for them", () => {
+    const seen: unknown[] = [];
+    draw({ id: "r", el: "panel", tag: "div", children: [{ id: "s", el: "slot", slot: "row", each: "$people", as: "p", arg: "$p.id" }] }, {
+      data: { people: [{ id: "a" }, { id: "b" }], room: "brno" },
+      slots: { row: (arg, scope) => { seen.push([arg, scope.room, (scope.p as { id: string }).id, (scope.iterator as { counter: number }).counter]); return null; } },
+    });
+    expect(seen).toEqual([["a", "brno", "a", 1], ["b", "brno", "b", 2]]);
+  });
 });
+

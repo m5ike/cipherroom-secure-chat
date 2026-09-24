@@ -3,8 +3,9 @@
 // server's chat history, web push. Signing in happens in one place only, the
 // Connection window; this card links there.
 
-import { KeyRound } from "lucide-react";
-import { t, type Lang } from "../lib/i18n";
+import { type Lang } from "../lib/i18n";
+import { renderLayout } from "./LayoutView";
+import { useLayoutBase } from "./LayoutProvider";
 
 export function NeedSignIn({ lang, onOpen, text, testId = "need-signin", compact }: {
   lang: Lang;
@@ -15,18 +16,11 @@ export function NeedSignIn({ lang, onOpen, text, testId = "need-signin", compact
   testId?: string;
   compact?: boolean;
 }) {
-  return (
-    <div className={`id-need${compact ? " is-compact" : ""}`} data-testid={testId}>
-      <span className="id-need__icon" aria-hidden="true"><KeyRound className="h-4 w-4" /></span>
-      <div className="min-w-0">
-        <strong>{t(lang, "id.need.title")}</strong>
-        <p>{text ?? t(lang, "id.need.text")}</p>
-        {onOpen ? (
-          <button type="button" className="acc-btn" onClick={onOpen} data-testid={`${testId}-open`}>
-            {t(lang, "id.need.open")}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
+  // 4.13: a layout ("part.needSignIn", lib/layouts/dialogs.ts).
+  const { tree, base } = useLayoutBase("part.needSignIn", lang);
+  return renderLayout(tree, {
+    ...base,
+    data: { text, testId, compact: Boolean(compact), canOpen: Boolean(onOpen) },
+    actions: { open: () => onOpen?.() },
+  });
 }

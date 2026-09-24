@@ -11,13 +11,16 @@
 import { createElement, Fragment, type CSSProperties, type ReactNode, type Ref } from "react";
 import { Icon } from "lucide-react";
 import { BOOLEAN_ATTRS, ELEMENT_BY_KIND, isSafeCssValue, isSafeUrl, type LNode, type LayoutEvent } from "../lib/layout-tree";
-import { evalExpression, isTruthy, lookupValue, parseSafeHtml, renderTemplate, valueText, type SafeNode, type TemplateVars } from "../lib/menu-template";
+import {
+  compileExpression, compileTemplate, isTruthy, lookupValue, parseSafeHtml, valueText, type CompiledTemplate, type RenderOptions, type SafeNode, type TemplateVars,
+} from "../lib/menu-template";
 import { styleProps } from "../lib/menu-style";
 import { MENU_ICON_ALIASES, MENU_ICONS } from "../lib/menu-icons-data";
 import { M5Logo } from "./M5Logo";
 import { Avatar } from "./UserBadge";
 
 export type LayoutActions = Record<string, (event: unknown, arg?: unknown) => void>;
+/** A live part: its argument, and (to a function that declares a second parameter) the values in scope where it is drawn. */
 export type LayoutSlots = Record<string, (arg: unknown, scope: TemplateVars) => ReactNode>;
 
 export type LayoutEnv = {
@@ -37,8 +40,6 @@ export type LayoutEnv = {
   onError?: (nodeId: string, message: string) => void;
 };
 
-type Scope = TemplateVars;
-
 /** The builder's preview: every layout drawn on the page marks its elements and reports its errors. */
 let previewMode: { onError?: (nodeId: string, message: string) => void } | null = null;
 export function setLayoutPreviewMode(mode: { onError?: (nodeId: string, message: string) => void } | null): void {
@@ -50,6 +51,8 @@ const EVENT_PROPS: Record<LayoutEvent, string> = {
   keydown: "onKeyDown", keyup: "onKeyUp", submit: "onSubmit", focus: "onFocus", blur: "onBlur",
   mouseenter: "onMouseEnter", mouseleave: "onMouseLeave", pointerdown: "onPointerDown", pointerup: "onPointerUp",
   pointerleave: "onPointerLeave", pointercancel: "onPointerCancel", dragover: "onDragOver", drop: "onDrop", paste: "onPaste",
+  mousedown: "onMouseDown", mouseup: "onMouseUp", dragstart: "onDragStart", dragend: "onDragEnd", dragenter: "onDragEnter", dragleave: "onDragLeave",
+  wheel: "onWheel", scroll: "onScroll", touchstart: "onTouchStart", touchend: "onTouchEnd", load: "onLoad", error: "onError",
 };
 
 /** HTML attribute → React prop. */
@@ -57,9 +60,10 @@ const PROP_NAMES: Record<string, string> = {
   class: "className", for: "htmlFor", tabindex: "tabIndex", readonly: "readOnly", maxlength: "maxLength", minlength: "minLength",
   autocomplete: "autoComplete", autofocus: "autoFocus", spellcheck: "spellCheck", inputmode: "inputMode", enterkeyhint: "enterKeyHint",
   accesskey: "accessKey", novalidate: "noValidate", datetime: "dateTime", hreflang: "hrefLang",
+  autoplay: "autoPlay", playsinline: "playsInline",
 };
 
-const URL_ATTRS = new Set(["href", "src", "cite"]);
+const URL_ATTRS = new Set(["href", "src", "cite", "poster"]);
 
 /** An icon of the catalog by name or by one of its old names. */
 const ICON_BY_ALIAS: Record<string, string> = (() => {
@@ -71,289 +75,454 @@ export function iconName(name: string): string {
   return MENU_ICONS[name] ? name : ICON_BY_ALIAS[name] ?? "circle-alert";
 }
 
-/**
- * The common cases, compiled once: "$a.b", "!$a.b" (conditions) and "{$a.b}"
- * (texts) look the value up directly instead of running the template engine.
- * Same semantics as the engine (own properties, forbidden names, printing).
- */
-type Fast = (scope: Scope) => unknown;
-const fastExpr = new Map<string, Fast | null>();
-const fastText = new Map<string, Fast | null>();
-const FORBIDDEN = new Set(["__proto__", "prototype", "constructor"]);
-function accessor(path: string): Fast | null {
-  const parts = path.split(".");
-  if (parts.some((p) => FORBIDDEN.has(p))) return null;
-  const [head, ...rest] = parts;
-  return (scope) => {
-    let v: unknown = Object.prototype.hasOwnProperty.call(scope, head) ? scope[head] : undefined;
-    for (const p of rest) v = lookupValue(v, p);
-    return v;
-  };
-}
-function compiledExpr(src: string): Fast | null {
-  let f = fastExpr.get(src);
-  if (f !== undefined) return f;
-  const m = /^\s*(!?)\$([A-Za-z_]\w*(?:\.[A-Za-z0-9_]+)*)\s*$/.exec(src);
-  const get = m ? accessor(m[2]) : null;
-  f = get ? (m![1] ? (scope) => !isTruthy(get(scope)) : get) : null;
-  if (fastExpr.size > 4000) fastExpr.clear();
-  fastExpr.set(src, f);
-  return f;
-}
-function compiledText(src: string): Fast | null {
-  let f = fastText.get(src);
-  if (f !== undefined) return f;
-  const m = /^\{\$([A-Za-z_]\w*(?:\.[A-Za-z0-9_]+)*)\}$/.exec(src);
-  const get = m ? accessor(m[1]) : null;
-  f = get ? (scope) => valueText(get(scope)) : null;
-  if (fastText.size > 4000) fastText.clear();
-  fastText.set(src, f);
-  return f;
-}
-
 const camel = (prop: string) => (prop.startsWith("--") ? prop : prop.replace(/-([a-z])/g, (_m, c: string) => c.toUpperCase()));
 
-class Renderer {
-  private errors = new Set<string>();
-  private blockDepth = 0;
-  constructor(private readonly env: LayoutEnv) {}
+/* ------------------------------------------------------------- compiling */
+//
+// Every node of a tree is compiled once into a function (cached per node
+// object — trees are data that is replaced, never changed in place): its
+// templates and expressions are compiled closures, whatever does not depend
+// on the data (static attributes, CSS, the designer's style) is computed
+// ahead, and repeats extend a chain of scopes instead of copying the data.
+// Drawing a layout then only runs those functions.
 
-  private fail(node: LNode, message: string) {
-    const key = `${node.id}:${message}`;
-    if (this.errors.has(key)) return;
-    this.errors.add(key);
-    (this.env.onError ?? previewMode?.onError)?.(node.id, message);
+/** Scopes from the component's data (outermost) to the innermost repeat or template. */
+type Chain = TemplateVars[];
+
+/** One drawing of a layout: its environment, and errors reported once. */
+type Run = {
+  env: LayoutEnv;
+  debug: boolean;
+  opts: RenderOptions;
+  rawOpts: RenderOptions;
+  errors: Set<string> | null;
+  blockDepth: number;
+};
+
+/** Draws a node; `key` is its React key — its id, or its id and item key in a repeat. */
+type Draw = (run: Run, chain: Chain, key: string) => ReactNode;
+type Get = (run: Run, chain: Chain) => unknown;
+
+function fail(run: Run, nodeId: string, message: string): void {
+  const key = `${nodeId}:${message}`;
+  if (!run.errors) run.errors = new Set();
+  else if (run.errors.has(key)) return;
+  run.errors.add(key);
+  (run.env.onError ?? previewMode?.onError)?.(nodeId, message);
+}
+
+function chainGet(chain: Chain, name: string): unknown {
+  for (let i = chain.length - 1; i >= 0; i--) if (Object.prototype.hasOwnProperty.call(chain[i], name)) return chain[i][name];
+  return undefined;
+}
+
+/** A merged copy of the scopes — what a slot sees as its scope. */
+function flatten(chain: Chain): TemplateVars {
+  return chain.length === 1 ? chain[0] : Object.assign({}, ...chain) as TemplateVars;
+}
+
+/** An expression's value (undefined when it fails). */
+function exprGetter(node: LNode, src: string): Get {
+  let fn: ReturnType<typeof compileExpression>;
+  try {
+    fn = compileExpression(src);
+  } catch (err) {
+    const message = `${src}: ${(err as Error).message}`;
+    return (run) => { fail(run, node.id, message); return undefined; };
   }
-
-  /** An expression's value (undefined when it fails). */
-  expr(node: LNode, src: string, scope: Scope): unknown {
-    const fast = compiledExpr(src);
-    if (fast) return fast(scope);
+  return (run, chain) => {
     try {
-      return evalExpression(src, scope, { translate: this.env.translate, lang: this.env.lang });
+      return fn(chain, run.opts);
     } catch (err) {
-      this.fail(node, `${src}: ${(err as Error).message}`);
+      fail(run, node.id, `${src}: ${(err as Error).message}`);
       return undefined;
     }
-  }
+  };
+}
 
-  /** A template as plain text. */
-  text(node: LNode, src: string, scope: Scope): string {
-    if (!src.includes("{")) return src;
-    const fast = compiledText(src);
-    if (fast) return fast(scope) as string;
+const FORBIDDEN = new Set(["__proto__", "prototype", "constructor"]);
+
+/** A template as plain text. */
+function textGetter(node: LNode, src: string): Get {
+  if (!src.includes("{")) return () => src;
+  // "{$a.b}" alone: the value itself, as text — never cut to the template's output limit (a long message).
+  const m = /^\{\$([A-Za-z_]\w*(?:\.[A-Za-z0-9_]+)*)\}$/.exec(src);
+  if (m && !m[1].split(".").some((p) => FORBIDDEN.has(p))) {
+    const [head, ...rest] = m[1].split(".");
+    return (_run, chain) => {
+      let v = chainGet(chain, head);
+      for (const p of rest) v = lookupValue(v, p);
+      return valueText(v);
+    };
+  }
+  let t: CompiledTemplate;
+  try {
+    t = compileTemplate(src);
+  } catch (err) {
+    const message = `${src.slice(0, 60)}: ${(err as Error).message}`;
+    return (run) => { fail(run, node.id, message); return ""; };
+  }
+  return (run, chain) => {
     try {
-      return renderTemplate(src, scope, { translate: this.env.translate, lang: this.env.lang, raw: true });
+      return t.run(chain, run.rawOpts);
     } catch (err) {
-      this.fail(node, `${src.slice(0, 60)}: ${(err as Error).message}`);
+      fail(run, node.id, `${src.slice(0, 60)}: ${(err as Error).message}`);
       return "";
     }
-  }
+  };
+}
 
-  /** An attribute or parameter value: "=expression" keeps its type, anything else is template text. */
-  value(node: LNode, src: string, scope: Scope): unknown {
-    if (src.startsWith("=")) {
-      const v = this.expr(node, src.slice(1), scope);
-      return v === null ? undefined : v;
-    }
-    return this.text(node, src, scope);
-  }
+/** An attribute or parameter value: "=expression" keeps its type (null → left out), anything else is template text. */
+function valueGetter(node: LNode, src: string): Get {
+  if (!src.startsWith("=")) return textGetter(node, src);
+  const get = exprGetter(node, src.slice(1));
+  return (run, chain) => { const v = get(run, chain); return v === null ? undefined : v; };
+}
 
-  render(node: LNode, scope: Scope, key?: string): ReactNode {
-    if (node.hidden) return null;
-    if (node.each) {
-      const list = this.expr(node, node.each, scope);
-      const items = Array.isArray(list) ? list : list && typeof list === "object" ? Object.values(list as Record<string, unknown>) : [];
-      const as = node.as || "item";
-      const one: LNode = { ...node, each: undefined };
-      return items.slice(0, 2000).map((item, i) => {
-        const inner: Scope = {
-          ...scope,
-          [as]: item,
-          iterator: { counter: i + 1, counter0: i, first: i === 0, last: i === items.length - 1, odd: i % 2 === 0, even: i % 2 === 1, length: items.length },
-        };
-        const k = node.key ? this.value(node, node.key.startsWith("=") ? node.key : `=${node.key}`, inner) : i;
-        return this.render(one, inner, `${node.id}:${String(k)}`);
-      });
+/** An argument (of a repeat's key, a slot, a template, an event): always an expression. */
+const argGetter = (node: LNode, src: string): Get => valueGetter(node, src.startsWith("=") ? src : `=${src}`);
+
+const compiled = new WeakMap<LNode, Draw>();
+
+function compileNode(node: LNode): Draw {
+  let draw = compiled.get(node);
+  if (!draw) {
+    draw = buildNode(node);
+    compiled.set(node, draw);
+  }
+  return draw;
+}
+
+function buildNode(node: LNode): Draw {
+  if (node.hidden) return () => null;
+  const body = buildBody(node);
+  if (!node.each) return body;
+  const list = exprGetter(node, node.each);
+  const as = node.as || "item";
+  const keyOf = node.key ? argGetter(node, node.key) : null;
+  return (run, chain) => {
+    const v = list(run, chain);
+    const items = Array.isArray(v) ? v : v && typeof v === "object" ? Object.values(v as Record<string, unknown>) : [];
+    const n = Math.min(items.length, 2000);
+    const out: ReactNode[] = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const inner: Chain = [...chain, {
+        [as]: items[i],
+        iterator: { counter: i + 1, counter0: i, first: i === 0, last: i === items.length - 1, odd: i % 2 === 0, even: i % 2 === 1, length: items.length },
+      }];
+      const k = keyOf ? keyOf(run, inner) : i;
+      out[i] = body(run, inner, `${node.id}:${String(k)}`);
     }
-    if (node.if && !isTruthy(this.expr(node, node.if, scope))) return null;
-    const k = key ?? node.id;
-    switch (node.el) {
-      case "text": {
-        const t = this.text(node, node.text ?? "", scope);
-        const format = node.props?.format;
-        if (format && this.env.formats?.[format]) return <Fragment key={k}>{this.env.formats[format](t)}</Fragment>;
-        return t === "" ? null : <Fragment key={k}>{t}</Fragment>;
-      }
-      case "group":
-        return <Fragment key={k}>{this.children(node, scope)}</Fragment>;
-      case "slot": {
-        const fn = node.slot ? this.env.slots?.[node.slot] : undefined;
+    return out;
+  };
+}
+
+/** Whether a value is the same whatever the data: no template, no expression. */
+const fixedValue = (v: string | undefined) => v === undefined || (!v.startsWith("=") && !v.includes("{"));
+
+/**
+ * Whether what a node draws (its "show only when" and repeat aside) never
+ * changes: fixed attributes, CSS and texts, no events, refs, live parts,
+ * templates or data — and so do its children. Such an element is created
+ * once and handed to React again and again, which then skips it on a redraw.
+ */
+function fixedElement(node: LNode): boolean {
+  if (["slot", "block", "html", "logo", "avatar", "text"].includes(node.el)) return false;
+  if (node.styleBind || node.ref || (node.on && Object.keys(node.on).length) || !fixedValue(node.text)) return false;
+  if (node.el === "icon" && !(fixedValue(node.props?.icon) && fixedValue(node.props?.strokeWidth) && fixedValue(node.props?.size))) return false;
+  for (const [name, raw] of Object.entries(node.attrs ?? {})) {
+    if (!fixedValue(raw) || (URL_ATTRS.has(name) && !isSafeUrl(raw, { data: false }))) return false;
+  }
+  if (Object.values(node.css ?? {}).some((v) => !fixedValue(v))) return false;
+  return (node.children ?? []).every((c) => c.hidden || (!c.if && !c.each && (c.el === "text" ? fixedValue(c.text) && !c.props?.format : fixedElement(c))));
+}
+
+/** The node itself: "show only when", then what it draws. */
+function buildBody(node: LNode): Draw {
+  let draw = buildElement(node);
+  if (fixedElement(node)) {
+    const make = draw;
+    const id = node.id;
+    let made: ReactNode | undefined;
+    // Not in the builder's preview (marks) nor in a repeat (a key of its own each time).
+    draw = (run, chain, key) => (run.debug || key !== id ? make(run, chain, key) : (made ??= make(run, chain, key)));
+  }
+  if (!node.if) return draw;
+  const cond = exprGetter(node, node.if);
+  return (run, chain, key) => (isTruthy(cond(run, chain)) ? draw(run, chain, key) : null);
+}
+
+/** Something drawn without an element of this tree (a live part, a template, the logo, an avatar):
+ *  in the builder's preview it gets a box of its own (display: contents) to be picked by a click. */
+function mark(run: Run, node: LNode, key: string, content: ReactNode): ReactNode {
+  if (!run.debug) return <Fragment key={key}>{content}</Fragment>;
+  return <span key={key} data-lb-id={node.id} style={{ display: "contents" }}>{content}</span>;
+}
+
+function buildElement(node: LNode): (run: Run, chain: Chain, key: string) => ReactNode {
+  switch (node.el) {
+    case "text": {
+      const text = textGetter(node, node.text ?? "");
+      const format = node.props?.format;
+      return (run, chain, k) => {
+        const t = text(run, chain) as string;
+        const f = format ? run.env.formats?.[format] : undefined;
+        if (f) return <Fragment key={k}>{f(t)}</Fragment>;
+        // A text is a text node of its parent (a string needs no key, nor a fragment around it).
+        return t === "" ? null : t;
+      };
+    }
+    case "group": {
+      const kids = buildChildren(node);
+      return (run, chain, k) => <Fragment key={k}>{kids(run, chain)}</Fragment>;
+    }
+    case "slot": {
+      const arg = node.arg ? argGetter(node, node.arg) : null;
+      return (run, chain, k) => {
+        const fn = node.slot ? run.env.slots?.[node.slot] : undefined;
         if (!fn) return null;
-        const arg = node.arg ? this.value(node, node.arg.startsWith("=") ? node.arg : `=${node.arg}`, scope) : undefined;
-        return this.mark(node, k, fn(arg, scope));
+        const a = arg ? arg(run, chain) : undefined;
+        return mark(run, node, k, fn(a, fn.length >= 2 ? flatten(chain) : chain[0]));
+      };
+    }
+    case "block": {
+      const arg = node.arg ? argGetter(node, node.arg) : null;
+      return (run, chain, k) => {
+        const tree = node.block ? run.env.blocks?.[node.block] : undefined;
+        if (!tree || run.blockDepth >= 6) return null;
+        const inner = arg ? [...chain, { arg: arg(run, chain) }] : chain;
+        run.blockDepth++;
+        try { return mark(run, node, k, compileNode(tree)(run, inner, tree.id)); } finally { run.blockDepth--; }
+      };
+    }
+    case "icon": {
+      const name = valueGetter(node, node.props?.icon ?? "circle-alert");
+      const props = buildAttrs(node);
+      const stroke = node.props?.strokeWidth ? valueGetter(node, node.props.strokeWidth) : null;
+      const sizeOf = node.props?.size ? valueGetter(node, node.props.size) : null;
+      return (run, chain, key) => {
+        const icon = iconData(iconName(String(name(run, chain) ?? "").trim()));
+        const p = props(run, chain);
+        const sw = stroke ? Number(stroke(run, chain)) : undefined;
+        const size = sizeOf ? Number(sizeOf(run, chain)) : undefined;
+        return createElement(Icon, { key, icon: icon as never, ...(sw ? { strokeWidth: sw } : {}), ...(size ? { size } : {}), ...p });
+      };
+    }
+    case "logo": {
+      const props = buildAttrs(node);
+      const size = valueGetter(node, node.props?.size ?? "36");
+      const mono = valueGetter(node, node.props?.mono ?? "=false");
+      return (run, chain, k) => {
+        const p = props(run, chain);
+        const s = Number(size(run, chain)) || 36;
+        const m = isTruthy(mono(run, chain));
+        return mark(run, node, k, <M5Logo size={s} mono={m} className={p.className as string | undefined} />);
+      };
+    }
+    case "avatar": {
+      const props = buildAttrs(node);
+      const size = valueGetter(node, node.props?.size ?? "32");
+      const name = valueGetter(node, node.props?.name ?? "");
+      const avatar = valueGetter(node, node.props?.avatar ?? "");
+      return (run, chain, k) => {
+        const p = props(run, chain);
+        const s = Number(size(run, chain)) || 32;
+        return mark(run, node, k, <Avatar name={String(name(run, chain) ?? "")} avatar={String(avatar(run, chain) ?? "") || undefined} size={s} className={(p.className as string | undefined) ?? ""} />);
+      };
+    }
+    case "html": return buildHtml(node);
+    default: {
+      const def = ELEMENT_BY_KIND[node.el];
+      const tag = node.tag ?? def?.tag;
+      const kids = buildChildren(node);
+      if (!tag) return (run, chain, k) => <Fragment key={k}>{kids(run, chain)}</Fragment>;
+      const props = buildAttrs(node);
+      if (def && !def.container && !def.text) {
+        return (run, chain, key) => { const p = props(run, chain); p.key = key; return createElement(tag, p); };
       }
-      case "block": {
-        const tree = node.block ? this.env.blocks?.[node.block] : undefined;
-        if (!tree || this.blockDepth >= 6) return null;
-        const inner = node.arg ? { ...scope, arg: this.value(node, node.arg.startsWith("=") ? node.arg : `=${node.arg}`, scope) } : scope;
-        this.blockDepth++;
-        try { return this.mark(node, k, this.render(tree, inner)); } finally { this.blockDepth--; }
-      }
-      case "icon": return this.icon(node, scope, k);
-      case "logo": {
-        const p = this.attrs(node, "svg", scope);
-        const size = Number(this.value(node, node.props?.size ?? "36", scope)) || 36;
-        const mono = isTruthy(this.value(node, node.props?.mono ?? "=false", scope));
-        return this.mark(node, k, <M5Logo size={size} mono={mono} className={p.className as string | undefined} />);
-      }
-      case "avatar": {
-        const p = this.attrs(node, "span", scope);
-        const size = Number(this.value(node, node.props?.size ?? "32", scope)) || 32;
-        return this.mark(node, k, <Avatar name={String(this.value(node, node.props?.name ?? "", scope) ?? "")} avatar={String(this.value(node, node.props?.avatar ?? "", scope) ?? "") || undefined} size={size} className={(p.className as string | undefined) ?? ""} />);
-      }
-      case "html": return this.html(node, scope, k);
-      default: return this.element(node, scope, k);
+      return (run, chain, key) => {
+        const p = props(run, chain);
+        p.key = key;
+        const children = kids(run, chain);
+        // <textarea> takes its text as the value.
+        if (tag === "textarea") return createElement(tag, p);
+        return createElement(tag, p, ...children);
+      };
     }
   }
+}
 
-  /** Something drawn without an element of this tree (a live part, a template, the logo, an avatar):
-   *  in the builder's preview it gets a box of its own (display: contents) to be picked by a click. */
-  mark(node: LNode, key: string, content: ReactNode): ReactNode {
-    if (!(this.env.debug ?? previewMode)) return <Fragment key={key}>{content}</Fragment>;
-    return <span key={key} data-lb-id={node.id} style={{ display: "contents" }}>{content}</span>;
-  }
-
-  children(node: LNode, scope: Scope): ReactNode[] {
+function buildChildren(node: LNode): (run: Run, chain: Chain) => ReactNode[] {
+  const text = node.text !== undefined && node.el !== "html" ? textGetter(node, node.text) : null;
+  const kids = (node.children ?? []).map((c) => ({ draw: compileNode(c), key: c.id }));
+  return (run, chain) => {
     const out: ReactNode[] = [];
-    if (node.text !== undefined && node.el !== "html") {
-      const t = this.text(node, node.text, scope);
+    if (text) {
+      const t = text(run, chain) as string;
       if (t !== "") out.push(t);
     }
-    for (const c of node.children ?? []) {
-      const r = this.render(c, scope);
+    for (const c of kids) {
+      const r = c.draw(run, chain, c.key);
       if (r !== null && r !== undefined) out.push(r);
     }
     return out;
-  }
+  };
+}
 
-  /** Attributes, CSS, the designer's style, events and a ref → React props. */
-  attrs(node: LNode, tag: string, scope: Scope): Record<string, unknown> {
+type AttrPlan = {
+  name: string;
+  prop: string;
+  get: Get;
+  /** A value that does not depend on the data, worked out ahead (not for an unsafe address: that is reported when drawn). */
+  fixed?: { v: unknown };
+  boolean: boolean;
+  /** Checked as an address when drawn; from data (an expression or a template) data: and blob: may pass. */
+  url: boolean;
+  fromData: boolean;
+};
+
+/** Attributes, CSS, the designer's style, events and a ref → React props. */
+function buildAttrs(node: LNode): (run: Run, chain: Chain) => Record<string, unknown> {
+  const attrs: AttrPlan[] = Object.entries(node.attrs ?? {}).map(([name, raw]) => {
+    const plan: AttrPlan = {
+      name,
+      prop: PROP_NAMES[name] ?? name,
+      get: valueGetter(node, raw),
+      boolean: BOOLEAN_ATTRS.has(name),
+      url: URL_ATTRS.has(name),
+      fromData: raw.startsWith("=") || raw.includes("{"),
+    };
+    if (!plan.fromData && !(plan.url && !isSafeUrl(raw, { data: false }))) {
+      plan.fixed = { v: plan.boolean ? raw === "" || raw === "true" || raw === name : raw };
+    }
+    return plan;
+  });
+  const designer = node.style ? styleProps(node.style) : null;
+  const designerClass = designer?.className || "";
+  const designerStyle = designer && Object.keys(designer.style).length ? (designer.style as Record<string, unknown>) : null;
+  const bind = node.styleBind ? exprGetter(node, node.styleBind) : null;
+  const css = Object.entries(node.css ?? {}).map(([prop, raw]) => ({ prop: camel(prop), get: textGetter(node, raw) }));
+  const hasCss = Boolean(node.css);
+  const events = (Object.entries(node.on ?? {}) as Array<[LayoutEvent, { action: string; arg?: string }]>).map(([ev, binding]) => ({
+    prop: EVENT_PROPS[ev],
+    action: binding.action,
+    arg: binding.arg ? argGetter(node, binding.arg) : null,
+  }));
+  const ref = node.ref;
+  const id = node.id;
+  return (run, chain) => {
     const props: Record<string, unknown> = {};
-    for (const [name, raw] of Object.entries(node.attrs ?? {})) {
-      let v = this.value(node, raw, scope);
+    for (const a of attrs) {
+      if (a.fixed) { props[a.prop] = a.fixed.v; continue; }
+      let v = a.get(run, chain);
       if (v === undefined) continue;
-      if (BOOLEAN_ATTRS.has(name)) {
-        if (typeof v === "string") v = v === "" || v === "true" || v === name;
+      if (a.boolean) {
+        if (typeof v === "string") v = v === "" || v === "true" || v === a.name;
         else v = isTruthy(v);
       }
-      if (URL_ATTRS.has(name) && typeof v === "string" && !isSafeUrl(v, { data: raw.startsWith("=") || raw.includes("{") })) {
-        this.fail(node, `${name}: not a safe address`);
+      if (a.url && typeof v === "string" && !isSafeUrl(v, { data: a.fromData })) {
+        fail(run, id, `${a.name}: not a safe address`);
         continue;
       }
-      props[PROP_NAMES[name] ?? name] = v;
+      props[a.prop] = v;
     }
-    const designer = node.style ? styleProps(node.style) : null;
-    if (designer?.className) props.className = props.className ? `${props.className as string} ${designer.className}` : designer.className;
+    if (designerClass) props.className = props.className ? `${props.className as string} ${designerClass}` : designerClass;
     let style: Record<string, unknown> | null = null;
-    if (node.styleBind) {
-      const bound = this.expr(node, node.styleBind, scope);
+    if (bind) {
+      const bound = bind(run, chain);
       if (bound && typeof bound === "object") style = { ...(bound as Record<string, unknown>) };
     }
-    if (node.css) {
+    if (hasCss) {
       style = style ?? {};
-      for (const [prop, raw] of Object.entries(node.css)) {
-        const v = this.text(node, raw, scope);
-        if (v !== "" && isSafeCssValue(v)) style[camel(prop)] = v;
+      for (const c of css) {
+        const v = c.get(run, chain) as string;
+        if (v !== "" && isSafeCssValue(v)) style[c.prop] = v;
       }
     }
-    if (designer && Object.keys(designer.style).length) style = { ...(style ?? {}), ...(designer.style as Record<string, unknown>) };
+    if (designerStyle) style = { ...(style ?? {}), ...designerStyle };
     if (style) props.style = style as CSSProperties;
-    for (const [ev, binding] of Object.entries(node.on ?? {}) as Array<[LayoutEvent, { action: string; arg?: string }]>) {
-      const fn = this.env.actions?.[binding.action];
+    for (const e of events) {
+      const fn = run.env.actions?.[e.action];
       if (!fn) continue;
-      const arg = binding.arg ? this.value(node, binding.arg.startsWith("=") ? binding.arg : `=${binding.arg}`, scope) : undefined;
-      props[EVENT_PROPS[ev]] = (event: unknown) => fn(event, arg);
+      const arg = e.arg ? e.arg(run, chain) : undefined;
+      props[e.prop] = (event: unknown) => fn(event, arg);
     }
-    if (node.ref && this.env.refs?.[node.ref]) props.ref = this.env.refs[node.ref];
-    if (this.env.debug ?? previewMode) props["data-lb-id"] = node.id;
-    void tag;
+    if (ref && run.env.refs?.[ref]) props.ref = run.env.refs[ref];
+    if (run.debug) props["data-lb-id"] = id;
     return props;
-  }
+  };
+}
 
-  element(node: LNode, scope: Scope, key: string): ReactNode {
-    const def = ELEMENT_BY_KIND[node.el];
-    const tag = node.tag ?? def?.tag;
-    if (!tag) return <Fragment key={key}>{this.children(node, scope)}</Fragment>;
-    const props = this.attrs(node, tag, scope);
-    props.key = key;
-    if (def && !def.container && !def.text) return createElement(tag, props);
-    const kids = this.children(node, scope);
-    // <textarea> and <option> take their text as the value / label.
-    if (tag === "textarea") return createElement(tag, props);
-    return createElement(tag, props, ...kids);
-  }
-
-  icon(node: LNode, scope: Scope, key: string): ReactNode {
-    const name = iconName(String(this.value(node, node.props?.icon ?? "circle-alert", scope) ?? "").trim());
-    const props = this.attrs(node, "svg", scope);
-    const stroke = node.props?.strokeWidth ? Number(this.value(node, node.props.strokeWidth, scope)) : undefined;
-    const data = { name, node: MENU_ICONS[name], size: 24, aliases: MENU_ICON_ALIASES[name] ?? [] };
-    return createElement(Icon, { key, icon: data as never, ...(stroke ? { strokeWidth: stroke } : {}), ...props });
-  }
-
-  html(node: LNode, scope: Scope, key: string): ReactNode {
+function buildHtml(node: LNode): (run: Run, chain: Chain, key: string) => ReactNode {
+  const src = node.text ?? "";
+  const props = buildAttrs(node);
+  return (run, chain, key) => {
     let nodes: SafeNode[] = [];
     try {
-      const actions = Object.keys(this.env.actions ?? {});
-      nodes = parseSafeHtml(renderTemplate(node.text ?? "", scope, { translate: this.env.translate, lang: this.env.lang }), { panels: [], fns: actions });
+      const actions = Object.keys(run.env.actions ?? {});
+      nodes = parseSafeHtml(compileTemplate(src).run(chain, run.opts), { panels: [], fns: actions });
     } catch (err) {
-      this.fail(node, (err as Error).message);
+      fail(run, node.id, (err as Error).message);
     }
-    const props = this.attrs(node, "div", scope);
-    props.key = key;
+    const p = props(run, chain);
+    p.key = key;
     const onClick = (event: { target: EventTarget | null; currentTarget: EventTarget; preventDefault: () => void }) => {
       const target = (event.target as HTMLElement | null)?.closest?.("[data-action]");
       if (!target || !(event.currentTarget as HTMLElement).contains(target)) return;
       const action = (target.getAttribute("data-action") ?? "").replace(/^fn:/, "").split(":");
-      const fn = this.env.actions?.[action[0]];
+      const fn = run.env.actions?.[action[0]];
       if (fn) { event.preventDefault(); fn(event, action.slice(1).join(":") || undefined); }
     };
-    if (!props.onClick) props.onClick = onClick;
-    return createElement("div", props, ...this.safe(nodes, `${key}.`));
-  }
+    if (!p.onClick) p.onClick = onClick;
+    return createElement("div", p, ...safe(nodes, `${key}.`));
+  };
+}
 
-  private safe(nodes: SafeNode[], prefix: string): ReactNode[] {
-    return nodes.map((n, i) => {
-      const k = `${prefix}${i}`;
-      if (typeof n === "string") return <Fragment key={k}>{n}</Fragment>;
-      if (n.t === "i" && n.a["data-icon"]) {
-        const name = iconName(n.a["data-icon"]);
-        return createElement(Icon, { key: k, icon: { name, node: MENU_ICONS[name], size: 24, aliases: MENU_ICON_ALIASES[name] ?? [] } as never, className: "mb-inline-icon" });
-      }
-      const props: Record<string, unknown> = { key: k };
-      for (const [name, value] of Object.entries(n.a)) {
-        if (name === "class") props.className = value;
-        else if (name === "style") {
-          const st: Record<string, string> = {};
-          for (const decl of value.split(";")) {
-            const at = decl.indexOf(":");
-            if (at > 0) st[camel(decl.slice(0, at).trim())] = decl.slice(at + 1).trim();
-          }
-          props.style = st;
-        } else props[name] = value;
-      }
-      return createElement(n.t, props, ...(n.c.length ? this.safe(n.c, `${k}.`) : []));
-    });
+const iconCache = new Map<string, unknown>();
+function iconData(name: string): unknown {
+  let data = iconCache.get(name);
+  if (!data) {
+    data = { name, node: MENU_ICONS[name], size: 24, aliases: MENU_ICON_ALIASES[name] ?? [] };
+    iconCache.set(name, data);
   }
+  return data;
+}
+
+function safe(nodes: SafeNode[], prefix: string): ReactNode[] {
+  return nodes.map((n, i) => {
+    const k = `${prefix}${i}`;
+    if (typeof n === "string") return <Fragment key={k}>{n}</Fragment>;
+    if (n.t === "i" && n.a["data-icon"]) {
+      return createElement(Icon, { key: k, icon: iconData(iconName(n.a["data-icon"])) as never, className: "mb-inline-icon" });
+    }
+    const props: Record<string, unknown> = { key: k };
+    for (const [name, value] of Object.entries(n.a)) {
+      if (name === "class") props.className = value;
+      else if (name === "style") {
+        const st: Record<string, string> = {};
+        for (const decl of value.split(";")) {
+          const at = decl.indexOf(":");
+          if (at > 0) st[camel(decl.slice(0, at).trim())] = decl.slice(at + 1).trim();
+        }
+        props.style = st;
+      } else props[name] = value;
+    }
+    return createElement(n.t, props, ...(n.c.length ? safe(n.c, `${k}.`) : []));
+  });
+}
+
+function draw(tree: LNode, env: LayoutEnv): ReactNode {
+  const base = { translate: env.translate, lang: env.lang };
+  const run: Run = { env, debug: Boolean(env.debug ?? previewMode), opts: base, rawOpts: { ...base, raw: true }, errors: null, blockDepth: 0 };
+  return compileNode(tree)(run, [env.data], tree.id);
 }
 
 /** Draws a layout tree with the component's data, actions, slots and refs. */
 export function LayoutView({ tree, env }: { tree: LNode; env: LayoutEnv }): ReactNode {
-  return new Renderer(env).render(tree, env.data);
+  return draw(tree, env);
 }
 
 /** The same as a function (for components that build their tree inline). */
 export function renderLayout(tree: LNode, env: LayoutEnv): ReactNode {
-  return new Renderer(env).render(tree, env.data);
+  return draw(tree, env);
 }

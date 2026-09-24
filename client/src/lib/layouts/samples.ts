@@ -1,7 +1,16 @@
 // The Layout builder's preview shows each layout in a few situations
 // ("variants") with made-up people and messages. PURE data.
 
+import { WINDOW_VARIANTS } from "./windows";
+import { ROOM_VARIANTS } from "./room";
+import { DIALOG_VARIANTS } from "./dialogs";
 import type { LayoutId } from "./index";
+import { ACCOUNT_VARIANTS } from "./account";
+import { SETTINGS_VARIANTS } from "./settings";
+import { TOOL_VARIANTS } from "./tools";
+import { SHARE_VARIANTS } from "./share";
+import { PHONE_VARIANTS } from "./phone";
+import { CONNECTION_VARIANTS } from "./connections";
 
 export const PREVIEW_VARIANTS: Readonly<Record<LayoutId, ReadonlyArray<{ id: string; label: string }>>> = {
   header: [
@@ -33,6 +42,16 @@ export const PREVIEW_VARIANTS: Readonly<Record<LayoutId, ReadonlyArray<{ id: str
     { id: "empty", label: "Nobody here" },
   ],
   "widget.fab": [{ id: "floating", label: "Floating" }, { id: "docked", label: "Docked" }],
+  // 4.13
+  ...WINDOW_VARIANTS,
+  ...ROOM_VARIANTS,
+  ...DIALOG_VARIANTS,
+  ...ACCOUNT_VARIANTS,
+  ...SETTINGS_VARIANTS,
+  ...TOOL_VARIANTS,
+  ...SHARE_VARIANTS,
+  ...PHONE_VARIANTS,
+  ...CONNECTION_VARIANTS,
 };
 
 /** A 48 × 32 image for attachment previews (a small gradient PNG). */
