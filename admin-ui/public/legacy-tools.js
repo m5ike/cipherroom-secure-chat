@@ -38,17 +38,50 @@
         + '<button data-kind="' + esc(c.kind) + '" data-id="' + esc(c.id) + '" class="secondary btnTestConn"' + (c.configured ? '' : ' disabled') + '>Test</button>'
         + '</div>';
     }
-    $("btnPlugins").onclick = async () => {
+    // 4.0.6: the AI and speech modules are switched here (unless the environment fixes them).
+    function renderSwitches(s) {
+      const box = $("pluginSwitches");
+      box.textContent = "";
+      const sw = s.switches || { ai: { enabled: s.enabled.ai, source: "env", env: "ENABLE_AI" }, speech: { enabled: s.enabled.speech, source: "env", env: "ENABLE_SPEECH" } };
+      for (const [key, label] of [["ai", "AI module"], ["speech", "Speech module (TTS / STT)"]]) {
+        const st = sw[key];
+        const lab = document.createElement("label");
+        lab.className = "row";
+        lab.style.gap = "6px";
+        lab.style.alignItems = "center";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.id = "switch-" + key;
+        cb.checked = Boolean(st.enabled);
+        cb.disabled = st.source === "env";
+        cb.onchange = async () => {
+          cb.disabled = true;
+          const r = await api("/admin/plugins/switches", { method: "PUT", body: JSON.stringify({ [key]: cb.checked }) });
+          if (!r.ok) { cb.checked = !cb.checked; show("pluginOut", r.json); cb.disabled = false; return; }
+          renderPlugins(r.json);
+          show("pluginOut", { [key]: cb.checked ? "on" : "off" });
+        };
+        const text = document.createElement("span");
+        text.textContent = label + ": " + (st.enabled ? "ON" : "off") + (st.source === "env" ? " (fixed by " + st.env + " in the environment)" : st.source === "default" ? " (never switched on)" : "");
+        lab.append(cb, text);
+        box.append(lab);
+      }
+    }
+    function renderPlugins(s) {
+      const all = [].concat(s.ai || [], s.tts || [], s.stt || []);
+      renderSwitches(s);
+      $("connectorList").innerHTML = all.map(connectorRow).join("");
+      document.querySelectorAll(".btnTestConn").forEach((b) => b.onclick = () => testConnector(b.dataset.kind, b.dataset.id));
+    }
+    async function loadPlugins() {
       const r = await api("/admin/plugins");
       if (!r.ok) return show("pluginOut", r.json);
-      const s = r.json;
-      const all = [].concat(s.ai || [], s.tts || [], s.stt || []);
-      $("connectorList").innerHTML =
-        '<p class="muted small">AI: ' + (s.enabled.ai ? 'ENABLED' : 'disabled') + ' · Speech: ' + (s.enabled.speech ? 'ENABLED' : 'disabled') + '</p>'
-        + all.map(connectorRow).join("");
-      document.querySelectorAll(".btnTestConn").forEach((b) => b.onclick = () => testConnector(b.dataset.kind, b.dataset.id));
-      show("pluginOut", { defaults: s.defaults, enabled: s.enabled });
-    };
+      renderPlugins(r.json);
+      show("pluginOut", { defaults: r.json.defaults, enabled: r.json.enabled });
+    }
+    $("btnPlugins").onclick = () => void loadPlugins();
+    // Opening the panel shows the switches and connectors at once.
+    if (window.M5Console) window.M5Console.addRoute("plugins", ["AI & speech", "Switches, connectors and their live log", loadPlugins]);
     async function testConnector(kind, id) {
       show("pluginOut", "Testing " + kind + "/" + id + "…");
       const r = await api("/admin/plugins/test", { method: "POST", body: JSON.stringify({ kind, id, text: $("pluginTestText").value.trim() || undefined }) });

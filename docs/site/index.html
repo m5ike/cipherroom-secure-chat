@@ -161,7 +161,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
 </head>
 <body>
 <header class="top">
-  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 4.0.5</small></a>
+  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 4.0.6</small></a>
   <div class="search" role="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" placeholder="Hledat v dokumentaci…" autocomplete="off" aria-label="Hledat v dokumentaci" />
@@ -169,7 +169,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <div class="results" id="results" role="listbox"></div>
   </div>
   <button class="btn" id="theme" type="button" title="Světlý / tmavý motiv">◐</button>
-  <a class="btn" href="m5cet-dokumentace-4.0.5.pdf" download>PDF</a>
+  <a class="btn" href="m5cet-dokumentace-4.0.6.pdf" download>PDF</a>
 </header>
 <div class="layout">
 <nav class="toc" id="toc" aria-label="Obsah"></nav>
@@ -178,11 +178,12 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
   <div class="hero">
     <h1>M5cet 4.0</h1>
     <p class="lead">Šifrovaná komunikace peer-to-peer v prohlížeči: zprávy, soubory, hovory a sdílení polohy mezi lidmi, kteří znají společné heslo místnosti. Server zprostředkuje spojení, podrží zprávy pro nepřítomné a nikdy nevidí obsah.</p>
-    <p>Tato dokumentace popisuje verzi <b>4.0.5</b>: Layout builder jako GUI designer (lišta, okno chatu, zprávy, psaní a widget příjemců jako stromy prvků s paletou, našeptáváním a náhledem samotné aplikace); Server-enhanced jen s přihlášením passkey, jedinečné uživatelské jméno účtu jako primární klíč, ověřené přihlášení krok za krokem (passkey, globální klíč, databáze, trezor) a adresy /signin a /signup, ochranu před opuštěním připojené místnosti, kontrolu verzí aplikace a knihoven proti serveru s opravou jedním tlačítkem, moduly zapínané pro skupiny uživatelů a Menu builder v konzoli se šablonovacím jazykem; dále okno Místnost se záložkami Light · P2P / Server-enhanced a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, uložená připojení přihlášených uživatelů (klíč, jméno, server, statistiky a log), šablony vzhledu iOS 27, Windows 11 a pět studiových, jejich konfiguraci v administraci — a pod tím vším signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
+    <p>Tato dokumentace popisuje verzi <b>4.0.6</b>: opravené konektory AI a řeči (Claude 5, HuggingFace Inference Providers) a jejich zapínání v konzoli; Layout builder jako GUI designer (lišta, okno chatu, zprávy, psaní a widget příjemců jako stromy prvků s paletou, našeptáváním a náhledem samotné aplikace); Server-enhanced jen s přihlášením passkey, jedinečné uživatelské jméno účtu jako primární klíč, ověřené přihlášení krok za krokem (passkey, globální klíč, databáze, trezor) a adresy /signin a /signup, ochranu před opuštěním připojené místnosti, kontrolu verzí aplikace a knihoven proti serveru s opravou jedním tlačítkem, moduly zapínané pro skupiny uživatelů a Menu builder v konzoli se šablonovacím jazykem; dále okno Místnost se záložkami Light · P2P / Server-enhanced a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, uložená připojení přihlášených uživatelů (klíč, jméno, server, statistiky a log), šablony vzhledu iOS 27, Windows 11 a pět studiových, jejich konfiguraci v administraci — a pod tím vším signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
     <div class="pills"><span class="pill">Node.js 24</span><span class="pill">TypeScript 7</span><span class="pill">React 19</span><span class="pill">WebRTC DataChannel</span><span class="pill">AES-GCM 256</span><span class="pill">ECDSA / ECDH P-256</span><span class="pill">Argon2id</span><span class="pill">Ed25519</span><span class="pill">WebAuthn + PRF</span><span class="pill">SQLite + SQLCipher</span></div>
   </div>
   <div class="grid2">
     <div class="card"><h4>Pro koho je co</h4><p><b>Uživatel</b> — <a href="#rezimy">režimy</a>, <a href="#sifrovani">co šifrování chrání</a>. <b>Vývojář</b> — <a href="#architektura">architektura</a>, <a href="#protokol">protokol v2</a>, <a href="#api">API</a>. <b>Provozovatel</b> — <a href="#nasazeni">nasazení</a>, <a href="#administrace">administrace</a>, <a href="#audit">audit</a>, <a href="#bezpecnost">bezpečnost</a>.</p></div>
+    <div class="card"><h4>Oprava 4.0.6</h4><p>AI a řeč: Anthropic bez parametru <code>temperature</code>, který modely Claude 5 odmítají; HuggingFace přes <code>router.huggingface.co</code> (dřívější <code>api-inference.huggingface.co</code> zanikl); srozumitelné chyby spojení; moduly AI a Speech se zapínají v konzoli (<a href="#zmeny-406">změny 4.0.6</a>).</p></div>
     <div class="card"><h4>Co je nového ve 4.0.5</h4><p><a href="#layout-builder">Layout builder</a> je GUI designer: lišta nahoře, okno chatu, příchozí / odchozí / systémové zprávy, pole pro psaní a widget příjemců jsou stromy prvků z palety (panely, oblasti, texty, tlačítka, pole, ikony, obrázky, HTML, živé části aplikace, šablony). Každé pole našeptává (třídy, atributy, CSS, proměnné, akce), náhled je aplikace sama. Přehled v <a href="#zmeny-405">seznamu změn 4.0.5</a>.</p></div>
     <div class="card"><h4>Co je nového ve 4.0</h4><p><a href="#prihlaseni">Přihlášení a identita</a>: Server-enhanced vyžaduje passkey, účet má jedinečné uživatelské jméno (jméno v místnosti je jen přezdívka), přihlášení ověří passkey, globální klíč i databázi a všechno zapíše do auditu; <a href="#prihlaseni-adresy">/signin a /signup</a>. <a href="#navigace-verze">Ochrana navigace a kontrola verzí</a>. <a href="#moduly">Moduly a skupiny</a> a <a href="#menu-builder">Menu builder</a> v konzoli. Přehled v <a href="#zmeny-40">seznamu změn 4.0</a>.</p></div>
     <div class="card"><h4>Co je nového ve 3.3</h4><p><a href="#okno-mistnost">Okno Místnost</a>: typ připojení jako záložky v záhlaví, na <i>Server-enhanced</i> výběr z uložených připojení a ozubené kolo k jejich správě, tlačítka a sdílení vždy dole, během spojení nic nepřepnete. <a href="#sdilet-pripojeni">Sdílení uloženého připojení</a> pozvánkou. Přehled v <a href="#zmeny-33">seznamu změn 3.3</a>.</p></div>
@@ -1201,7 +1202,7 @@ data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<spa
       <tr><td><code>GET /api/account/sessions</code>, <code>DELETE sessions/:id</code>, <code>PUT identity</code> <span class="badge b-acc">3.1</span></td><td>zařízení účtu a jejich odhlášení; veřejný klíč účtu (Ed25519)</td><td>token relace</td></tr>
       <tr><td><code>/api/storage/*</code></td><td>úložiště (i přes WebSocket rámec <code>storage</code>)</td><td>relace účtu nebo <code>X-M5cet-Session</code></td></tr>
       <tr><td><code>GET|POST /api/settings</code>, <code>POST /api/audit/purge</code>, <code>/api/analytics/consent</code></td><td>nastavení a souhlasy vázané na <code>deviceId</code></td><td>znalost <code>deviceId</code></td></tr>
-      <tr><td><code>/api/ai/*</code>, <code>/api/speech/*</code>, <code>/api/telephony/*</code></td><td>volitelné moduly (<code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>, <code>ENABLE_TELEPHONY</code>)</td><td>limity na IP</td></tr>
+      <tr><td><code>/api/ai/*</code>, <code>/api/speech/*</code>, <code>/api/telephony/*</code></td><td>volitelné moduly (AI a Speech zapíná konzole nebo <code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>; <code>ENABLE_TELEPHONY</code>)</td><td>limity na IP</td></tr>
       <tr><td><code>GET /api/events/recent</code>, <code>GET /api/transfers/stats</code></td><td>metadata událostí, statistika proxy</td><td><b>admin token</b> (od 3.0)</td></tr>
     </tbody>
   </table>
@@ -1248,7 +1249,7 @@ curl -X POST -H <span class="s">"Authorization: Bearer $ADMIN_API_TOKEN"</span> 
   -d <span class="s">'{"kind":"show-notification","deviceId":"dev-3f9c0a","payload":{"title":"Údržba","body":"Ve 22:00 restart"}}'</span> \
   https://chat.example.com/api/admin/commands</code></pre>
   <h3 id="api-admin-sluzba">Admin služba (<code>/admin/*</code>)</h3>
-  <p>Layout builder: <code>GET /admin/layout</code> (konfigurace, výchozí hodnoty a katalog — paleta, atributy, CSS, třídy aplikace, ikony, rozvržení s výchozími stromy a kontrakty), <code>PUT /admin/layout</code> (operátor, tělo do 4 MB), <code>POST /admin/layout/reset</code>; náhled <code>/layout-preview.html</code> (<code>frame-ancestors 'self'</code>) a <code>/assets/*</code> z <code>dist/public</code>. Telefonie a SIP (<code>/admin/telephony/*</code> včetně <code>sip/trunks</code>), AI a řeč (<code>/admin/plugins*</code>, <code>/admin/logs/stream</code>). Dřívější <code>/admin/commands/*</code>, <code>/admin/clients</code>, <code>/admin/test/push</code>, <code>/admin/metrics</code> a <code>/admin/logs/recent</code> dnes přeposílají na hlavní službu — ve 2.x četly prázdnou kopii stavu v jiném procesu, takže příkazy nikdy nedorazily.</p>
+  <p>Layout builder: <code>GET /admin/layout</code> (konfigurace, výchozí hodnoty a katalog — paleta, atributy, CSS, třídy aplikace, ikony, rozvržení s výchozími stromy a kontrakty), <code>PUT /admin/layout</code> (operátor, tělo do 4 MB), <code>POST /admin/layout/reset</code>; náhled <code>/layout-preview.html</code> (<code>frame-ancestors 'self'</code>) a <code>/assets/*</code> z <code>dist/public</code>. Telefonie a SIP (<code>/admin/telephony/*</code> včetně <code>sip/trunks</code>), AI a řeč (<code>/admin/plugins*</code>, zapnutí modulů <code>PUT /admin/plugins/switches</code>, <code>/admin/logs/stream</code>). Dřívější <code>/admin/commands/*</code>, <code>/admin/clients</code>, <code>/admin/test/push</code>, <code>/admin/metrics</code> a <code>/admin/logs/recent</code> dnes přeposílají na hlavní službu — ve 2.x četly prázdnou kopii stavu v jiném procesu, takže příkazy nikdy nedorazily.</p>
 </section>
 
 <section class="doc" id="cluster" data-group="Provoz">
@@ -1331,7 +1332,7 @@ REDIS_URL=redis://:heslo@127.0.0.1:6379/0  CLUSTER_SECRET=$(openssl rand -base64
       <tr><td><code>CLIENT_CONFIG_FILE</code> <span class="badge b-acc">3.2</span></td><td><code>$DATA_DIR/client-config.json</code></td><td>konfigurace klienta z konzole (<a href="#klient-addony">Client &amp; addons</a>, <a href="#moduly">moduly a skupiny</a>)</td></tr>
       <tr><td><code>MENU_CONFIG_FILE</code> <span class="badge b-acc">4.0</span></td><td><code>$DATA_DIR/menu-config.json</code></td><td>menu aplikace z <a href="#menu-builder">Menu builderu</a></td></tr>
       <tr><td><code>LOG_EVENTS</code></td><td>vypnuto</td><td>metadata událostí (<code>/api/admin/events</code>)</td></tr>
-      <tr><td><code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>, <code>ENABLE_TELEPHONY</code> + klíče poskytovatelů</td><td>vypnuto</td><td>volitelné moduly</td></tr>
+      <tr><td><code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>, <code>ENABLE_TELEPHONY</code> + klíče poskytovatelů</td><td>vypnuto</td><td>volitelné moduly; AI a Speech lze zapnout i v konzoli (<code>$DATA_DIR/plugins.json</code>, <code>PLUGINS_SETTINGS_FILE</code>) — nastavená proměnná má přednost. HuggingFace: <code>HF_API_KEY</code>, <code>HF_TEXT_MODEL</code> (i s poskytovatelem, např. <code>…:novita</code>, <code>…:cheapest</code>), <code>HF_ASR_MODEL</code>, <code>HF_BASE_URL</code> (výchozí <code>https://router.huggingface.co</code>)</td></tr>
     </tbody>
   </table>
   <h3 id="nginx">nginx</h3>
@@ -1453,6 +1454,15 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
   </table>
 </section>
 
+<section class="doc" id="zmeny-406" data-group="Plán">
+  <h2>Změny ve 4.0.6<a class="anchor" href="#zmeny-406">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>Opraveno</h4><p>Anthropic: konektor posílal vždy <code>temperature: 0.7</code>, což modely vydané po Claude Opus 4.6 (např. <code>claude-sonnet-5</code>) odmítají (chyba 400). Parametry vzorkování se posílají jen na vyžádání a odmítnutý parametr se zkusí znovu bez něj; z odpovědi se berou jen textové bloky. HuggingFace: text i přepis řeči volaly zaniklý <code>api-inference.huggingface.co</code> („fetch failed“) — dnes <code>router.huggingface.co/v1/chat/completions</code> (OpenAI kompatibilní) a <code>router.huggingface.co/hf-inference/models/&lt;model&gt;</code>. OpenAI: <code>max_completion_tokens</code> u api.openai.com.</p></div>
+    <div class="card"><h4>Přidáno</h4><p>Konzole › AI &amp; speech: přepínače modulů AI a Speech (uloženo v <code>plugins.json</code>, sdíleno aplikací i admin službou; proměnné prostředí mají přednost), panel se načte hned po otevření, test ukazuje dobu odezvy. Chyby spojení říkají proč (DNS, odmítnuté spojení, časový limit, certifikát) a u poskytovatele jeho vlastní zprávu.</p></div>
+  </div>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 4.0.6.</p>
+</section>
+
 <section class="doc" id="zmeny-405" data-group="Plán">
   <h2>Změny ve 4.0.5<a class="anchor" href="#zmeny-405">#</a></h2>
   <div class="grid2">
@@ -1461,7 +1471,7 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
     <div class="card"><h4>Kompatibilita</h4><p><code>layout.json</code> dostal <code>layouts</code> a <code>blocks</code>; dřívější barvy, texty a chování platí dál. Protokol, šifrování ani data účtů se nemění.</p></div>
     <div class="card"><h4>Bezpečnost</h4><p>Stromy validuje server i klient, vykreslení bez <code>innerHTML</code>, adresy a CSS se kontrolují i při vykreslení. Náhled smí zarámovat jen konzole (stejný původ).</p></div>
   </div>
-  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 4.0.5.</p>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>.</p>
 </section>
 
 <section class="doc" id="zmeny-40" data-group="Plán">

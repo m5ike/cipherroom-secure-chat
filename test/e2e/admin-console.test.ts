@@ -48,7 +48,7 @@ async function waitFor(url: string, timeoutMs: number): Promise<void> {
 
 beforeAll(async () => {
   if (!existsSync("dist/index.cjs") || !existsSync("dist/admin.cjs")) throw new Error("run `npm run build` first");
-  const env = { ...process.env, NODE_ENV: "production", ADMIN_API_TOKEN: TOKEN, DATA_DIR: dataDir, HOST: "127.0.0.1" };
+  const env = { ...process.env, NODE_ENV: "production", ADMIN_API_TOKEN: TOKEN, DATA_DIR: dataDir, HOST: "127.0.0.1", ENABLE_AI: "", ENABLE_SPEECH: "" };
   main = spawn(process.execPath, ["dist/index.cjs"], { env: { ...env, PORT: String(MAIN_PORT) }, stdio: "ignore" });
   admin = spawn(process.execPath, ["dist/admin.cjs"], { env: { ...env, ENABLE_ADMIN: "1", ADMIN_PORT: String(ADMIN_PORT), MAIN_URL: MAIN }, stdio: "ignore" });
   await waitFor(`${MAIN}/api/health`, 20_000);
@@ -152,6 +152,14 @@ describe("operator console", () => {
     await go("plugins");
     await page.click("#btnPlugins");
     await expect.poll(() => page.locator("#pluginOut").innerText()).toMatch(/defaults|enabled/);
+    // 4.0.6: the modules are switched here, and the app service sees it (a shared file).
+    await expect.poll(() => page.locator("#switch-ai").isChecked()).toBe(false);
+    await page.check("#switch-ai");
+    await expect.poll(() => page.locator("#pluginSwitches").innerText()).toMatch(/AI module: ON/);
+    await expect.poll(async () => (await (await fetch(`${MAIN}/api/ai/status`)).json()).enabled).toBe(true);
+    await page.uncheck("#switch-ai");
+    await expect.poll(() => page.locator("#pluginSwitches").innerText()).toMatch(/AI module: off/);
+    await expect.poll(async () => (await (await fetch(`${MAIN}/api/ai/status`)).json()).enabled).toBe(false);
   });
 
   it("configures the client addons: saved connections, other servers, GUI templates", async () => {

@@ -6,12 +6,16 @@ import {
   ConnectorNotConfiguredError,
   type AiConnector, type AiInput, type AiResult, type ConnectorStatus,
 } from "../types";
+import { postJson, withoutRefusedParam } from "../http";
 
 const env = (name: string): string => (process.env[name]?.trim() || "");
 
-function joinPrompt(input: AiInput): string {
-  return input.messages.map((m) => `${m.role}: ${m.content}`).join("\n");
-}
+// 4.0.6: sampling parameters are sent only when the caller sets them — newer
+// models refuse `temperature` (Claude after Opus 4.6, OpenAI's reasoning
+// models); a refusal is retried once without it.
+const DEFAULT_MAX_TOKENS = 1024;
+
+type ChatCompletion = { choices?: { message?: { content?: string | null; reasoning_content?: string } }[]; model?: string };
 
 /** OpenAI (and any OpenAI-compatible endpoint via OPENAI_BASE_URL). */
 export class OpenAiConnector implements AiConnector {
@@ -29,14 +33,13 @@ export class OpenAiConnector implements AiConnector {
   async complete(input: AiInput): Promise<AiResult> {
     if (!this.key()) throw new ConnectorNotConfiguredError(this.id, "Set OPENAI_API_KEY.");
     const model = input.model || this.model();
-    const res = await fetch(`${this.base()}/chat/completions`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.key()}` },
-      body: JSON.stringify({ model, messages: input.messages, temperature: input.temperature ?? 0.7, max_tokens: input.maxTokens ?? 512 }),
-    });
-    if (!res.ok) throw new Error(`OpenAI ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const json = await res.json() as { choices?: { message?: { content?: string } }[] };
-    return { text: json.choices?.[0]?.message?.content?.trim() || "", model, connector: this.id };
+    // api.openai.com takes max_completion_tokens (max_tokens is refused by its newer models);
+    // OpenAI-compatible servers (llama.cpp, vLLM, LM Studio…) know max_tokens.
+    const official = /(^|\.)openai\.com$/.test(hostOf(this.base()));
+    const body: Record<string, unknown> = { model, messages: input.messages, [official ? "max_completion_tokens" : "max_tokens"]: input.maxTokens ?? DEFAULT_MAX_TOKENS };
+    if (input.temperature !== undefined) body.temperature = input.temperature;
+    const json = await postJson<ChatCompletion>("OpenAI", `${this.base().replace(/\/$/, "")}/chat/completions`, { Authorization: `Bearer ${this.key()}` }, body, withoutRefusedParam);
+    return { text: json.choices?.[0]?.message?.content?.trim() || "", model: json.model || model, connector: this.id };
   }
 }
 
@@ -57,14 +60,16 @@ export class AnthropicConnector implements AiConnector {
     const model = input.model || this.model();
     const system = input.messages.filter((m) => m.role === "system").map((m) => m.content).join("\n") || undefined;
     const messages = input.messages.filter((m) => m.role !== "system").map((m) => ({ role: m.role, content: m.content }));
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": this.key(), "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model, max_tokens: input.maxTokens ?? 512, temperature: input.temperature ?? 0.7, system, messages }),
-    });
-    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const json = await res.json() as { content?: { text?: string }[] };
-    return { text: json.content?.map((c) => c.text || "").join("").trim() || "", model, connector: this.id };
+    const body: Record<string, unknown> = { model, max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS, messages };
+    if (system) body.system = system;
+    if (input.temperature !== undefined) body.temperature = input.temperature;
+    const json = await postJson<{ content?: { type?: string; text?: string }[]; model?: string }>(
+      "Anthropic", `${(env("ANTHROPIC_BASE_URL") || "https://api.anthropic.com").replace(/\/$/, "")}/v1/messages`,
+      { "x-api-key": this.key(), "anthropic-version": "2023-06-01" }, body, withoutRefusedParam,
+    );
+    // Only the answer: thinking blocks and tool calls are not text.
+    const text = (json.content ?? []).filter((c) => (c.type ?? "text") === "text").map((c) => c.text || "").join("").trim();
+    return { text, model: json.model || model, connector: this.id };
   }
 }
 
@@ -83,23 +88,25 @@ export class OllamaConnector implements AiConnector {
   async complete(input: AiInput): Promise<AiResult> {
     if (!this.base()) throw new ConnectorNotConfiguredError(this.id, "Set OLLAMA_URL.");
     const model = input.model || this.model();
-    const res = await fetch(`${this.base().replace(/\/$/, "")}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages: input.messages, stream: false }),
-    });
-    if (!res.ok) throw new Error(`Ollama ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const json = await res.json() as { message?: { content?: string } };
+    const options: Record<string, unknown> = { num_predict: input.maxTokens ?? DEFAULT_MAX_TOKENS };
+    if (input.temperature !== undefined) options.temperature = input.temperature;
+    const json = await postJson<{ message?: { content?: string } }>("Ollama", `${this.base().replace(/\/$/, "")}/api/chat`, {}, { model, messages: input.messages, stream: false, options });
     return { text: json.message?.content?.trim() || "", model, connector: this.id };
   }
 }
 
-/** HuggingFace Inference API (text-generation models). */
+/**
+ * HuggingFace Inference Providers — the OpenAI-compatible router
+ * (https://router.huggingface.co/v1). The old serverless host
+ * api-inference.huggingface.co is retired (it no longer resolves). A model id
+ * may carry a provider or a policy: "meta-llama/Llama-3.1-8B-Instruct:novita",
+ * "…:cheapest", "…:fastest" (the default).
+ */
 export class HuggingFaceAiConnector implements AiConnector {
   readonly id = "huggingface";
   readonly kind = "ai" as const;
   readonly label = "HuggingFace";
-  readonly needs = ["HF_API_KEY", "HF_TEXT_MODEL"];
+  readonly needs = ["HF_API_KEY", "HF_TEXT_MODEL", "HF_BASE_URL"];
   private key() { return env("HF_API_KEY"); }
   private model() { return env("HF_TEXT_MODEL") || "meta-llama/Llama-3.1-8B-Instruct"; }
   status(): ConnectorStatus {
@@ -109,16 +116,20 @@ export class HuggingFaceAiConnector implements AiConnector {
   async complete(input: AiInput): Promise<AiResult> {
     if (!this.key()) throw new ConnectorNotConfiguredError(this.id, "Set HF_API_KEY.");
     const model = input.model || this.model();
-    const res = await fetch(`https://api-inference.huggingface.co/models/${model}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.key()}` },
-      body: JSON.stringify({ inputs: joinPrompt(input), parameters: { max_new_tokens: input.maxTokens ?? 512, temperature: input.temperature ?? 0.7, return_full_text: false } }),
-    });
-    if (!res.ok) throw new Error(`HuggingFace ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    const json = await res.json() as { generated_text?: string }[] | { generated_text?: string };
-    const text = Array.isArray(json) ? json[0]?.generated_text : json.generated_text;
-    return { text: (text || "").trim(), model, connector: this.id };
+    const body: Record<string, unknown> = { model, messages: input.messages, max_tokens: input.maxTokens ?? DEFAULT_MAX_TOKENS };
+    if (input.temperature !== undefined) body.temperature = input.temperature;
+    const json = await postJson<ChatCompletion>("HuggingFace", `${hfBase()}/v1/chat/completions`, { Authorization: `Bearer ${this.key()}` }, body, withoutRefusedParam);
+    return { text: json.choices?.[0]?.message?.content?.trim() || "", model: json.model || model, connector: this.id };
   }
+}
+
+/** The HuggingFace router (HF_BASE_URL overrides it, e.g. for a proxy). */
+export function hfBase(): string {
+  return (env("HF_BASE_URL") || "https://router.huggingface.co").replace(/\/$/, "");
+}
+
+function hostOf(url: string): string {
+  try { return new URL(url).hostname; } catch { return ""; }
 }
 
 export function buildAiConnectors(): AiConnector[] {

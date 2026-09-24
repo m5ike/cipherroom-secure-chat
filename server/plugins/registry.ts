@@ -3,18 +3,20 @@
 // resolves the default connector for each kind.
 //
 // Two operator gates, both OFF by default, keep these endpoints from becoming
-// an open proxy to paid APIs:
-//   ENABLE_AI=1      turns on /api/ai/*
-//   ENABLE_SPEECH=1  turns on /api/speech/*
+// an open proxy to paid APIs (4.0.6: switched in the console, or fixed by the
+// environment — settings.ts):
+//   AI      /api/ai/*       (ENABLE_AI=1 / 0)
+//   Speech  /api/speech/*   (ENABLE_SPEECH=1 / 0)
 
 import { buildAiConnectors } from "./connectors/ai";
 import { buildTtsConnectors, buildSttConnectors } from "./connectors/speech";
 import type { AiConnector, TtsConnector, SttConnector, ConnectorStatus } from "./types";
+import { switchState, type SwitchSource } from "./settings";
 
 const env = (name: string): string => (process.env[name]?.trim() || "");
 
-export const aiEnabled = (): boolean => env("ENABLE_AI") === "1";
-export const speechEnabled = (): boolean => env("ENABLE_SPEECH") === "1";
+export const aiEnabled = (): boolean => switchState("ai").enabled;
+export const speechEnabled = (): boolean => switchState("speech").enabled;
 
 const aiConnectors = buildAiConnectors();
 const ttsConnectors = buildTtsConnectors();
@@ -37,6 +39,8 @@ export function defaultIds(): { ai: string; tts: string; stt: string } {
 
 export type RegistrySnapshot = {
   enabled: { ai: boolean; speech: boolean };
+  /** Who decided: the environment (fixed), the console, or nobody yet (off). */
+  switches: { ai: { enabled: boolean; source: SwitchSource; env: string }; speech: { enabled: boolean; source: SwitchSource; env: string } };
   defaults: { ai: string; tts: string; stt: string };
   ai: ConnectorStatus[];
   tts: ConnectorStatus[];
@@ -46,6 +50,7 @@ export type RegistrySnapshot = {
 export function registrySnapshot(): RegistrySnapshot {
   return {
     enabled: { ai: aiEnabled(), speech: speechEnabled() },
+    switches: { ai: switchState("ai"), speech: switchState("speech") },
     defaults: defaultIds(),
     ai: aiConnectors.map((c) => c.status()),
     tts: ttsConnectors.map((c) => c.status()),

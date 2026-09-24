@@ -33,6 +33,7 @@ import { isWebPushReady } from "./push";
 import { registrySnapshot, getAi, getTts, getStt } from "./plugins/registry";
 import { pluginLog } from "./plugins/log";
 import { base64ToBytes } from "./plugins/types";
+import { setPluginSwitches } from "./plugins/settings";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerAdminLayoutRoutes } from "./layout";
 import { distPublicDir } from "./layout-catalog";
@@ -128,6 +129,7 @@ const requireAuth: express.RequestHandler = (req, res, next) => {
     }
     const needed = req.method === "GET" || req.method === "HEAD" ? "auditor" : "operator";
     if (RANK[principal.role] < RANK[needed]) return res.status(403).json({ ok: false, message: `This needs the ${needed} role; you are ${principal.role}.` });
+    res.locals.adminName = principal.name;
     next();
   });
 };
@@ -186,6 +188,21 @@ app.get("/admin/plugins", (_req, res) => {
   res.json({ ok: true, ...registrySnapshot() });
 });
 
+// 4.0.6: switch the AI / speech modules on or off (operator). The environment
+// (ENABLE_AI / ENABLE_SPEECH) wins when it is set.
+app.put("/admin/plugins/switches", (req, res) => {
+  const body = (req.body || {}) as Record<string, unknown>;
+  const change: { ai?: boolean; speech?: boolean } = {};
+  if (typeof body.ai === "boolean") change.ai = body.ai;
+  if (typeof body.speech === "boolean") change.speech = body.speech;
+  if (!Object.keys(change).length) return res.status(400).json({ ok: false, message: "Send { ai: true|false } and/or { speech: true|false }." });
+  const actor = String(res.locals.adminName ?? "admin");
+  const r = setPluginSwitches(change, actor);
+  if (!r.ok) return res.status(409).json({ ok: false, message: r.message });
+  pluginLog.record({ level: "info", kind: "admin", message: `${Object.entries(change).map(([k, v]) => `${k} ${v ? "on" : "off"}`).join(", ")} (${actor})` });
+  res.json({ ok: true, ...registrySnapshot() });
+});
+
 // Real-time test of one connector. Logs to the plugin log (visible on the
 // live stream). TTS returns the audio so the admin can play it back.
 app.post("/admin/plugins/test", async (req, res) => {
@@ -193,12 +210,14 @@ app.post("/admin/plugins/test", async (req, res) => {
   const kind = String(body.kind || "");
   const id = typeof body.id === "string" ? body.id : undefined;
   const text = typeof body.text === "string" ? body.text : "";
+  const started = Date.now();
   try {
     if (kind === "ai") {
       const c = getAi(id);
       if (!c) return res.status(404).json({ ok: false, message: "Unknown AI connector." });
-      const result = await pluginLog.time("ai", c.id, "admin-test", () => c.complete({ messages: [{ role: "user", content: text || "Reply with a short friendly greeting." }], maxTokens: 96 }));
-      return res.json({ ok: true, kind, result });
+      // Room for a reasoning model's thinking before the answer.
+      const result = await pluginLog.time("ai", c.id, "admin-test", () => c.complete({ messages: [{ role: "user", content: text || "Reply with a short friendly greeting." }], maxTokens: 400 }));
+      return res.json({ ok: true, kind, ms: Date.now() - started, result });
     }
     if (kind === "tts") {
       const c = getTts(id);
@@ -215,7 +234,7 @@ app.post("/admin/plugins/test", async (req, res) => {
     }
     return res.status(400).json({ ok: false, message: "kind must be ai | tts | stt." });
   } catch (err) {
-    res.status(502).json({ ok: false, message: (err as Error).message });
+    res.status(502).json({ ok: false, kind, connector: id, ms: Date.now() - started, message: (err as Error).message });
   }
 });
 

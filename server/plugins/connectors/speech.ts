@@ -2,6 +2,8 @@
 // keys live in the environment, are never returned, and a connector without
 // its key reports not-configured and refuses to run.
 
+import { hfBase } from "./ai";
+import { postRaw } from "../http";
 import {
   ConnectorNotConfiguredError, bytesToBase64,
   type TtsConnector, type TtsInput, type TtsResult,
@@ -26,12 +28,8 @@ export class OpenAiTtsConnector implements TtsConnector {
   }
   async synthesize(input: TtsInput): Promise<TtsResult> {
     if (!this.key()) throw new ConnectorNotConfiguredError(this.id, "Set OPENAI_API_KEY.");
-    const res = await fetch(`${this.base()}/audio/speech`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${this.key()}` },
-      body: JSON.stringify({ model: this.model(), voice: input.voice || this.voice(), input: input.text, response_format: input.format || "mp3" }),
-    });
-    if (!res.ok) throw new Error(`OpenAI TTS ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const res = await postRaw("OpenAI TTS", `${this.base().replace(/\/$/, "")}/audio/speech`, { "Content-Type": "application/json", Authorization: `Bearer ${this.key()}` },
+      JSON.stringify({ model: this.model(), voice: input.voice || this.voice(), input: input.text, response_format: input.format || "mp3" }));
     const bytes = new Uint8Array(await res.arrayBuffer());
     return { audioBase64: bytesToBase64(bytes), mime: input.format === "wav" ? "audio/wav" : input.format === "ogg" ? "audio/ogg" : "audio/mpeg", connector: this.id };
   }
@@ -53,12 +51,8 @@ export class ElevenLabsTtsConnector implements TtsConnector {
   async synthesize(input: TtsInput): Promise<TtsResult> {
     if (!this.key()) throw new ConnectorNotConfiguredError(this.id, "Set ELEVENLABS_API_KEY.");
     const voice = input.voice || this.voice();
-    const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voice}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "xi-api-key": this.key(), Accept: "audio/mpeg" },
-      body: JSON.stringify({ text: input.text, model_id: this.model() }),
-    });
-    if (!res.ok) throw new Error(`ElevenLabs ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const res = await postRaw("ElevenLabs", `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voice)}`, { "Content-Type": "application/json", "xi-api-key": this.key(), Accept: "audio/mpeg" },
+      JSON.stringify({ text: input.text, model_id: this.model() }));
     const bytes = new Uint8Array(await res.arrayBuffer());
     return { audioBase64: bytesToBase64(bytes), mime: "audio/mpeg", connector: this.id };
   }
@@ -85,23 +79,22 @@ export class OpenAiSttConnector implements SttConnector {
     form.append("file", new Blob([new Uint8Array(input.audio)], { type: input.mime || "audio/webm" }), `audio.${ext}`);
     form.append("model", this.model());
     if (input.language) form.append("language", input.language);
-    const res = await fetch(`${this.base()}/audio/transcriptions`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.key()}` },
-      body: form,
-    });
-    if (!res.ok) throw new Error(`OpenAI STT ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const res = await postRaw("OpenAI STT", `${this.base().replace(/\/$/, "")}/audio/transcriptions`, { Authorization: `Bearer ${this.key()}` }, form);
     const json = await res.json() as { text?: string };
     return { text: (json.text || "").trim(), connector: this.id };
   }
 }
 
-/** HuggingFace ASR (e.g. openai/whisper-large-v3). */
+/**
+ * HuggingFace ASR (e.g. openai/whisper-large-v3) through the router's
+ * hf-inference provider: https://router.huggingface.co/hf-inference/models/<model>
+ * with the audio as the body (the old api-inference.huggingface.co is retired).
+ */
 export class HuggingFaceSttConnector implements SttConnector {
   readonly id = "huggingface";
   readonly kind = "stt" as const;
   readonly label = "HuggingFace ASR";
-  readonly needs = ["HF_API_KEY", "HF_ASR_MODEL"];
+  readonly needs = ["HF_API_KEY", "HF_ASR_MODEL", "HF_BASE_URL"];
   private key() { return env("HF_API_KEY"); }
   private model() { return env("HF_ASR_MODEL") || "openai/whisper-large-v3"; }
   status(): ConnectorStatus {
@@ -110,12 +103,8 @@ export class HuggingFaceSttConnector implements SttConnector {
   }
   async transcribe(input: SttInput): Promise<SttResult> {
     if (!this.key()) throw new ConnectorNotConfiguredError(this.id, "Set HF_API_KEY.");
-    const res = await fetch(`https://api-inference.huggingface.co/models/${this.model()}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${this.key()}`, "Content-Type": input.mime || "audio/webm" },
-      body: new Uint8Array(input.audio),
-    });
-    if (!res.ok) throw new Error(`HuggingFace ASR ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    const model = this.model().split("/").map(encodeURIComponent).join("/");
+    const res = await postRaw("HuggingFace ASR", `${hfBase()}/hf-inference/models/${model}`, { Authorization: `Bearer ${this.key()}`, "Content-Type": input.mime || "audio/webm" }, new Uint8Array(input.audio));
     const json = await res.json() as { text?: string };
     return { text: (json.text || "").trim(), connector: this.id };
   }

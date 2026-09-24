@@ -1,5 +1,5 @@
 // Client-facing endpoints for the optional AI + speech modules. These are OFF
-// unless the operator sets ENABLE_AI / ENABLE_SPEECH, are size-capped, and are
+// unless the operator turns them on (console, or ENABLE_AI / ENABLE_SPEECH), are size-capped, and are
 // throttled harder than the general API since each call can hit a paid
 // provider. They never expose keys and log only metadata.
 
@@ -45,7 +45,7 @@ export function registerPluginRoutes(app: Express): void {
   });
 
   app.post("/api/ai/complete", heavyLimiter, async (req: Request, res: Response) => {
-    if (!aiEnabled()) return res.status(404).json({ ok: false, message: "AI module disabled. Operator sets ENABLE_AI=1." });
+    if (!aiEnabled()) return res.status(404).json({ ok: false, message: "AI module disabled. The operator turns it on in the console (AI & speech) or sets ENABLE_AI=1." });
     const body = (req.body || {}) as Record<string, unknown>;
     const messages = sanitizeMessages(body.messages);
     if (!messages) return res.status(400).json({ ok: false, message: `messages[] required, <= ${MAX_AI_CHARS} chars total.` });
@@ -72,7 +72,7 @@ export function registerPluginRoutes(app: Express): void {
   });
 
   app.post("/api/speech/tts", heavyLimiter, async (req: Request, res: Response) => {
-    if (!speechEnabled()) return res.status(404).json({ ok: false, message: "Speech module disabled. Operator sets ENABLE_SPEECH=1." });
+    if (!speechEnabled()) return res.status(404).json({ ok: false, message: "Speech module disabled. The operator turns it on in the console (AI & speech) or sets ENABLE_SPEECH=1." });
     const body = (req.body || {}) as Record<string, unknown>;
     const text = typeof body.text === "string" ? body.text.slice(0, MAX_TTS_CHARS) : "";
     if (!text.trim()) return res.status(400).json({ ok: false, message: "text required." });
@@ -95,7 +95,7 @@ export function registerPluginRoutes(app: Express): void {
   // body { audioBase64, mime, language }. Raw keeps large uploads off the JSON
   // parser's small default limit.
   app.post("/api/speech/stt", heavyLimiter, express.raw({ type: (req) => !String(req.headers["content-type"] || "").includes("application/json"), limit: MAX_AUDIO_BYTES }), async (req: Request, res: Response) => {
-    if (!speechEnabled()) return res.status(404).json({ ok: false, message: "Speech module disabled. Operator sets ENABLE_SPEECH=1." });
+    if (!speechEnabled()) return res.status(404).json({ ok: false, message: "Speech module disabled. The operator turns it on in the console (AI & speech) or sets ENABLE_SPEECH=1." });
     let audio: Uint8Array | null = null;
     let mime = String(req.headers["content-type"] || "audio/webm");
     let language: string | undefined;

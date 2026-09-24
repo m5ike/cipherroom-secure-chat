@@ -5,6 +5,40 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [4.0.6] – 2026-09-24
+
+Oprava modulů AI a řeči. Protokol, šifrování ani data účtů se nemění.
+
+### Opraveno (`server/plugins/*`)
+- **Anthropic** vracel `400: temperature is deprecated for this model` —
+  konektor posílal vždy `temperature: 0.7`, což modely vydané po Claude
+  Opus 4.6 (např. `claude-sonnet-5`) odmítají. Parametry vzorkování
+  (`temperature`) se posílají jen na vyžádání; parametr, který model
+  odmítne, se zkusí jednou znovu bez něj. Z odpovědi se berou jen textové
+  bloky (ne thinking), výchozí `max_tokens` 1024. `ANTHROPIC_BASE_URL`
+  volitelně.
+- **HuggingFace** (text i přepis řeči) hlásil `fetch failed`: volal
+  `api-inference.huggingface.co`, který zanikl (doména se už nepřekládá).
+  Text jde přes Inference Providers — OpenAI kompatibilní
+  `https://router.huggingface.co/v1/chat/completions` (model může nést
+  poskytovatele nebo politiku: `…:novita`, `…:cheapest`, `…:fastest`),
+  přepis přes `https://router.huggingface.co/hf-inference/models/<model>`.
+  `HF_BASE_URL` volitelně.
+- **OpenAI**: u api.openai.com `max_completion_tokens` (novější modely
+  `max_tokens` odmítají), u kompatibilních serverů dál `max_tokens`;
+  `temperature` jen na vyžádání. Ollama: `options.temperature` a
+  `num_predict`.
+- Chyby: místo holého `fetch failed` důvod (DNS, odmítnuté spojení, časový
+  limit, TLS certifikát) a hostitel; u poskytovatele jeho vlastní zpráva.
+  Každé volání má limit 60 s.
+
+### Přidáno
+- Konzole › AI & speech: **přepínače modulů AI a Speech**
+  (`PUT /admin/plugins/switches`, operátor). Uloženo v
+  `$DATA_DIR/plugins.json` (`PLUGINS_SETTINGS_FILE`), čte ho aplikace i
+  admin služba; `ENABLE_AI` / `ENABLE_SPEECH` (1/0) mají přednost a konzole
+  to ukáže. Panel se načte po otevření; test konektoru vrací dobu odezvy.
+
 ## [4.0.5] – 2026-09-24
 
 Layout builder jako GUI designer. Protokol, šifrování ani data účtů se
