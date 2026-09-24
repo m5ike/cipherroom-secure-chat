@@ -192,8 +192,18 @@ describe("Clear & Quit", () => {
       workers: (await navigator.serviceWorker.getRegistrations()).length,
     }));
     expect(left).toEqual({ local: 0, session: 0, cookies: "", dbs: [], caches: 0, workers: 0 });
-    // location.replace(): there is no history entry of the chat to return to
-    expect(await page.goBack().catch(() => null)).toBeNull();
-    expect(page.url()).toMatch(/\/goodbye$|about:blank/);
+    // location.replace() took the chat's entry. Only a reload while connected
+    // (earlier in this file) leaves an entry below it (4.0: the navigation
+    // lock's; history outlives the document) — and going there loads a
+    // fresh, empty app: no session, no messages, not connected.
+    const back = await page.goBack().catch(() => null);
+    if (back) {
+      await page.getByTestId("status-connection").waitFor({ timeout: 15_000 });
+      expect(await page.evaluate(() => sessionStorage.length)).toBe(0);
+      expect(await page.locator('[data-testid^="message-"]').count()).toBe(0);
+      expect(await page.getByTestId("status-connection").innerText()).not.toContain(ROOM);
+    } else {
+      expect(page.url()).toMatch(/\/goodbye$|about:blank/);
+    }
   }, 120_000);
 });

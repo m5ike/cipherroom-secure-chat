@@ -21,7 +21,7 @@
 
 import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { accountsDir, setVaultBackend, type AccountRecord, type AccountStore } from "../accounts/store";
+import { accountsDir, setVaultBackend, usernameOf, type AccountRecord, type AccountStore } from "../accounts/store";
 import type { StorageService } from "./service";
 import { VAULT_PARTS, type VaultPart, type VaultParts } from "./user-store";
 
@@ -124,7 +124,7 @@ export function installVaultBackend(storage: StorageService, accounts?: AccountS
 export function recordAccount(storage: StorageService, account: AccountRecord, event: "register" | "sign-in", meta: Record<string, string | number | boolean> = {}): void {
   if (!storage.isAvailable) return;
   try {
-    storage.global.upsertUser({ id: account.id, userName: account.userName, createdAt: account.createdAt });
+    storage.global.upsertUser({ id: account.id, userName: usernameOf(account), createdAt: account.createdAt });
     // Every passkey of the account (3.1: there can be several), and none it
     // no longer has.
     const credentials = [

@@ -2,14 +2,19 @@
 //   SignedInBadge        the unlocked-key badge next to the logo
 //   AccountInfoModal     what the server holds: credentials, sizes, dates,
 //                        counts, away state and the server-side activity log
-//   ChatRetentionSection the "chat data and history" choice in Connection,
-//                        with the passkey sign-in the server option needs
+//   AccountAccess        (Connection window) the ONLY place to sign in with a
+//                        passkey, register one, add passkeys and set the
+//                        recovery code (4.0) — with the checked sign-in steps
+//   ChatRetentionSection the "chat data and history" choice in Connection
 
 import { useEffect, useState } from "react";
-import { KeyRound, LockKeyholeOpen, RefreshCw, Trash2, Save, LogOut, Moon, Plus, LifeBuoy, MonitorSmartphone, Fingerprint } from "lucide-react";
+import {
+  AlertTriangle, BadgeCheck, CheckCircle2, CircleDashed, ExternalLink, Fingerprint, KeyRound, LifeBuoy, Loader2, LockKeyholeOpen, LogOut,
+  MonitorSmartphone, Moon, Plus, RefreshCw, Save, Trash2, UserRound, UserPlus, XCircle,
+} from "lucide-react";
 import { keyFingerprint } from "../lib/identity";
 import { t, type Lang } from "../lib/i18n";
-import type { AccountSummary, AccountStatus } from "../lib/account";
+import type { AccountSummary, AccountStatus, StepState } from "../lib/account";
 import type { ChatRetention } from "../lib/chat-history";
 
 function bytes(n: number): string {
@@ -162,7 +167,7 @@ function IdentityRow({ account, lang }: { account: AccountSummary; lang: Lang })
 }
 
 export function AccountInfoModal({
-  account, status, busy, message, lang, onRefresh, onSaveNow, onSignOut, onDelete, actions = {},
+  account, status, busy, message, lang, onRefresh, onSaveNow, onSignOut, onDelete, actions = {}, onOpenConnection,
 }: {
   account: AccountSummary;
   status: AccountStatus | null;
@@ -174,8 +179,11 @@ export function AccountInfoModal({
   onSignOut: () => void;
   onDelete: () => void;
   actions?: AccountActions;
+  /** Passkeys and the recovery code are managed in the Connection window (4.0). */
+  onOpenConnection?: () => void;
 }) {
   const v = account.vault;
+  const passkeyCount = account.passkeys?.length ?? 1;
   return (
     <div className="space-y-4" data-testid="account-info">
       <p className="text-xs text-muted-foreground">{t(lang, "acc.desc")}</p>
@@ -185,7 +193,7 @@ export function AccountInfoModal({
 
       <section className="acc-card">
         <h4 className="acc-card__title"><KeyRound className="h-4 w-4" />{t(lang, "acc.credentials")}</h4>
-        <Row label={t(lang, "acc.id")} value={account.id} mono />
+        <Row label={t(lang, "id.username")} value={<span data-testid="account-info-username">{account.username ?? account.id}</span>} mono />
         <Row label={t(lang, "acc.credential")} value={`${account.credentialId.slice(0, 16)}…`} mono />
         <Row label={t(lang, "acc.alg")} value={ALG_NAMES[account.alg] ?? String(account.alg)} />
         <Row label={t(lang, "acc.created")} value={when(account.createdAt, lang)} />
@@ -211,8 +219,16 @@ export function AccountInfoModal({
         ) : null}
       </section>
 
-      <PasskeysSection account={account} busy={busy} lang={lang} actions={actions} />
-      <RecoverySection account={account} busy={busy} lang={lang} actions={actions} />
+      <section className="acc-card" data-testid="account-passkeys-summary">
+        <h4 className="acc-card__title"><KeyRound className="h-4 w-4" />{t(lang, "id.passkeys")}</h4>
+        <Row label={t(lang, "acc.passkeys")} value={passkeyCount} />
+        <Row label={t(lang, "acc.recovery")} value={account.recovery?.set ? t(lang, "acc.recovery.set").replace("{date}", when(account.recovery.createdAt ?? 0, lang)) : t(lang, "acc.recovery.none")} />
+        {onOpenConnection ? (
+          <button type="button" className="acc-btn acc-btn--small" onClick={onOpenConnection} data-testid="account-open-connection">
+            <ExternalLink className="h-3.5 w-3.5" />{t(lang, "id.need.open")}
+          </button>
+        ) : null}
+      </section>
       <SessionsSection account={account} busy={busy} lang={lang} actions={actions} />
       <IdentityRow account={account} lang={lang} />
 
@@ -250,27 +266,152 @@ export function AccountInfoModal({
   );
 }
 
-/** "Chat data and history" — the three retention modes and the passkey the
- *  server-side one needs. */
-export function ChatRetentionSection({
-  value, onChange, account, status, supported, busy, message, lang, onSignIn, onRegister, onSignOutAndWipe, onRecover,
+/** A sign-in or registration in progress (or just finished): its steps and,
+ *  when it stopped, why. */
+export type SignInProgress = {
+  kind: "signin" | "register";
+  steps: Array<{ id: string; state: StepState; detail?: string }>;
+  error?: { code: string; message: string } | null;
+  /** Shown when it finished well. */
+  done?: string;
+};
+
+const STEP_ICON: Record<StepState, typeof CheckCircle2> = { run: Loader2, ok: CheckCircle2, warn: AlertTriangle, fail: XCircle };
+
+function Steps({ progress, lang }: { progress: SignInProgress; lang: Lang }) {
+  return (
+    <ol className="id-steps" data-testid="signin-steps" aria-label={t(lang, "id.steps")}>
+      {progress.steps.map((step) => {
+        const Icon = STEP_ICON[step.state] ?? CircleDashed;
+        return (
+          <li key={step.id} className={`id-step is-${step.state}`} data-step={step.id} data-state={step.state}>
+            <Icon className={`id-step__icon${step.state === "run" ? " animate-spin" : ""}`} aria-hidden="true" />
+            <span className="id-step__label">{t(lang, `id.step.${step.id}`)}</span>
+            <span className="sr-only">{t(lang, `id.state.${step.state}`)}</span>
+            {step.detail ? <span className="id-step__detail">{step.detail}</span> : null}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+/**
+ * The account part of the Connection window — the one place where a passkey
+ * signs in, registers, is added, and where the recovery code is set (4.0).
+ */
+export function AccountAccess({
+  account, status, supported, busy, message, lang, nickname, progress, onSignIn, onRegister, onSignOutAndWipe, onRecover, actions = {},
 }: {
-  value: ChatRetention;
-  onChange: (next: ChatRetention) => void;
   account: AccountSummary | null;
   status: AccountStatus | null;
   supported: boolean;
   busy: boolean;
   message: string;
   lang: Lang;
+  /** The name used in rooms: only an alias of the username. */
+  nickname: string;
+  progress: SignInProgress | null;
   onSignIn: () => void;
   onRegister: () => void;
   onSignOutAndWipe: () => void;
-  /** 3.1: every passkey lost — come back with the recovery code. */
+  /** Every passkey lost — come back with the recovery code. */
   onRecover?: (code: string) => void;
+  actions?: AccountActions;
 }) {
   const [recovering, setRecovering] = useState(false);
   const [code, setCode] = useState("");
+  const blocked = busy || !supported || status?.available === false;
+  const err = progress?.error ?? null;
+  return (
+    <section className="id-access space-y-3" data-testid="account-access">
+      <div>
+        <h3 className="flex items-center gap-2 text-sm font-semibold"><KeyRound className="h-4 w-4" aria-hidden="true" />{t(lang, "id.title")}</h3>
+        <p className="text-xs text-muted-foreground">{t(lang, "id.desc")}</p>
+      </div>
+
+      {account ? (
+        <div className="id-card" data-testid="account-identity-card">
+          <span className="id-card__avatar" aria-hidden="true"><UserRound className="h-5 w-5" /></span>
+          <div className="id-card__text">
+            <span className="id-card__caption">{t(lang, "id.signedInAs")}</span>
+            <strong className="id-card__username" data-testid="account-username" title={t(lang, "id.username.hint")}>{account.username ?? account.id}</strong>
+            <span className="id-card__nick">{t(lang, "id.nickname")}: <b>{nickname.trim() || "—"}</b> <em>· {t(lang, "id.nickname.hint")}</em></span>
+          </div>
+          {account.keyVerified !== false ? <span className="id-chip" title={t(lang, "id.keyVerified")}><BadgeCheck className="h-3.5 w-3.5" aria-hidden="true" />{t(lang, "id.keyVerified")}</span> : null}
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        {!account ? (
+          <>
+            <button type="button" className="acc-btn acc-btn--primary" disabled={blocked} onClick={onSignIn} data-testid="account-signin">
+              <LockKeyholeOpen className="h-4 w-4" />{t(lang, "id.signIn")}
+            </button>
+            <button type="button" className="acc-btn" disabled={blocked} onClick={onRegister} data-testid="account-register">
+              <UserPlus className="h-4 w-4" />{t(lang, "id.register")}
+            </button>
+          </>
+        ) : (
+          <button type="button" className="acc-btn" disabled={busy} onClick={onSignOutAndWipe} data-testid="account-signout-wipe">
+            <LogOut className="h-4 w-4" />{t(lang, "id.signOut")}
+          </button>
+        )}
+      </div>
+
+      {progress && progress.steps.length > 0 ? <Steps progress={progress} lang={lang} /> : null}
+
+      {err ? (
+        <div className="id-error" role="alert" data-testid="signin-error" data-code={err.code}>
+          <XCircle className="h-5 w-5 flex-none" aria-hidden="true" />
+          <div className="min-w-0">
+            <strong>{t(lang, `id.err.${err.code}`) === `id.err.${err.code}` ? t(lang, "id.err.server") : t(lang, `id.err.${err.code}`)}</strong>
+            {t(lang, `id.err.${err.code}.hint`) !== `id.err.${err.code}.hint` ? <p>{t(lang, `id.err.${err.code}.hint`)}</p> : null}
+            {err.message && err.code !== "cancelled" ? <p className="id-error__detail">{err.message}</p> : null}
+            {err.code !== "cancelled" ? <p className="id-error__logged">{t(lang, "id.err.logged")}</p> : null}
+            {err.code === "unknown-passkey" ? (
+              <button type="button" className="acc-btn acc-btn--primary mt-2" disabled={blocked} onClick={onRegister} data-testid="signin-error-register">
+                <UserPlus className="h-4 w-4" />{t(lang, "id.register")}
+              </button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+      {progress?.done && !err ? <p className="id-done" data-testid="signin-done">{progress.done}</p> : null}
+
+      {!account && onRecover && supported && status?.available !== false ? (
+        recovering ? (
+          <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); onRecover(code); }} data-testid="recover-form">
+            <input className="acc-input font-mono" value={code} onChange={(e) => setCode(e.target.value)} placeholder={t(lang, "acc.recover.placeholder")} autoComplete="off" spellCheck={false} data-testid="recover-code" />
+            <button type="submit" className="acc-btn" disabled={busy || code.replace(/[\s-]/g, "").length < 26}><LifeBuoy className="h-4 w-4" />{t(lang, "acc.recover.go")}</button>
+          </form>
+        ) : (
+          <button type="button" className="acc-link text-xs" onClick={() => setRecovering(true)} data-testid="recover-open">{t(lang, "acc.recover")}</button>
+        )
+      ) : null}
+
+      {account ? (
+        <>
+          <PasskeysSection account={account} busy={busy} lang={lang} actions={actions} />
+          <RecoverySection account={account} busy={busy} lang={lang} actions={actions} />
+        </>
+      ) : null}
+
+      {!supported ? <p className="text-xs text-amber-600 dark:text-amber-400">{t(lang, "acc.unsupported")}</p> : null}
+      {status?.available === false ? <p className="text-xs text-amber-600 dark:text-amber-400">{t(lang, "acc.unavailable")}</p> : null}
+      {message ? <p className="text-xs" data-testid="retention-msg">{message}</p> : null}
+    </section>
+  );
+}
+
+/** "Chat data and history" — the three retention modes; the server one needs
+ *  a signed-in account (AccountAccess above it). */
+export function ChatRetentionSection({ value, onChange, account, lang }: {
+  value: ChatRetention;
+  onChange: (next: ChatRetention) => void;
+  account: AccountSummary | null;
+  lang: Lang;
+}) {
   const options: Array<{ id: ChatRetention; disabled?: boolean }> = [
     { id: "ephemeral" },
     { id: "session" },
@@ -296,48 +437,11 @@ export function ChatRetentionSection({
             <span>
               <strong>{t(lang, `data.${opt.id}`)}</strong>
               <em>{t(lang, `data.${opt.id}.desc`)}</em>
-              {opt.disabled ? <em className="text-amber-600 dark:text-amber-400">{t(lang, "data.server.needsKey")}</em> : null}
+              {opt.disabled ? <em className="text-amber-600 dark:text-amber-400">{t(lang, "id.need.title")}</em> : null}
             </span>
           </label>
         ))}
       </div>
-
-      <div className="flex flex-wrap items-center gap-2">
-        {!account ? (
-          <>
-            <button type="button" className="acc-btn" disabled={busy || !supported || status?.available === false} onClick={onSignIn} data-testid="account-signin">
-              <LockKeyholeOpen className="h-4 w-4" />{t(lang, "acc.signIn")}
-            </button>
-            <button type="button" className="acc-btn" disabled={busy || !supported || status?.available === false} onClick={onRegister} data-testid="account-register">
-              <KeyRound className="h-4 w-4" />{t(lang, "acc.register")}
-            </button>
-          </>
-        ) : (
-          <button type="button" className="acc-btn" disabled={busy} onClick={onSignOutAndWipe} data-testid="account-signout-wipe">
-            <LogOut className="h-4 w-4" />{t(lang, "data.signout")}
-          </button>
-        )}
-        {value === "session" && !account ? (
-          <button type="button" className="acc-btn" disabled={busy} onClick={onSignOutAndWipe} data-testid="session-wipe">
-            <LogOut className="h-4 w-4" />{t(lang, "data.signout")}
-          </button>
-        ) : null}
-      </div>
-
-      {!account && onRecover && supported && status?.available !== false ? (
-        recovering ? (
-          <form className="flex flex-wrap items-center gap-2" onSubmit={(e) => { e.preventDefault(); onRecover(code); }} data-testid="recover-form">
-            <input className="acc-input font-mono" value={code} onChange={(e) => setCode(e.target.value)} placeholder={t(lang, "acc.recover.placeholder")} autoComplete="off" spellCheck={false} data-testid="recover-code" />
-            <button type="submit" className="acc-btn" disabled={busy || code.replace(/[\s-]/g, "").length < 26}><LifeBuoy className="h-4 w-4" />{t(lang, "acc.recover.go")}</button>
-          </form>
-        ) : (
-          <button type="button" className="acc-link text-xs" onClick={() => setRecovering(true)} data-testid="recover-open">{t(lang, "acc.recover")}</button>
-        )
-      ) : null}
-
-      {!supported ? <p className="text-xs text-amber-600 dark:text-amber-400">{t(lang, "acc.unsupported")}</p> : null}
-      {status?.available === false ? <p className="text-xs text-amber-600 dark:text-amber-400">{t(lang, "acc.unavailable")}</p> : null}
-      {message ? <p className="text-xs" data-testid="retention-msg">{message}</p> : null}
     </section>
   );
 }

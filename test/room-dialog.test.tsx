@@ -127,7 +127,7 @@ describe("Room window", () => {
     expect(itemFor("Gamma").getAttribute("aria-checked")).toBe("true");
   });
 
-  it("no saved connection yet: an invitation to create one; signed out: to sign in", () => {
+  it("no saved connection yet: an invitation to create one; signed out: only the way to sign in", () => {
     const p = props({ saved: { enabled: true, signedIn: true, ready: true, state: emptyState(), activeId: null } });
     const { rerender } = render(<RoomDialog {...p} />);
     fireEvent.click(screen.getByTestId("room-create"));
@@ -135,10 +135,13 @@ describe("Room window", () => {
     // Nothing saved: "another room" is the pick, so the fields are there.
     expect(screen.getByTestId("room-manual-fields")).toBeTruthy();
 
+    // Signed out, Server-enhanced needs a passkey sign-in: no fields, no
+    // Connect — only the way to the Connection window (4.0).
     rerender(<RoomDialog {...p} saved={{ ...p.saved, signedIn: false }} />);
-    fireEvent.click(screen.getByTestId("room-sign-in"));
+    fireEvent.click(screen.getByTestId("room-need-open"));
     expect(p.onSignIn).toHaveBeenCalled();
-    expect(screen.getByTestId("room-manual-fields")).toBeTruthy();
+    expect(screen.queryByTestId("room-manual-fields")).toBeNull();
+    expect((screen.getByTestId("button-connect") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("the tabs: arrow keys switch, and the other tab is disabled while connected", () => {

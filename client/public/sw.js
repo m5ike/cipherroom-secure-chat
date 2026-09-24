@@ -3,6 +3,9 @@
 // configured server-side. Message contents never reach the worker;
 // payloads are opaque metadata only (room id, sender id, timestamp).
 
+// The build this worker came with (the build writes it in; 4.0 version check).
+const SW_BUILD = "m5cet-sw:dev";
+
 self.addEventListener("install", (event) => {
   self.skipWaiting();
 });
@@ -91,6 +94,12 @@ self.addEventListener("notificationclick", (event) => {
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || typeof data !== "object") return;
+  if (data.type === "version") {
+    // Answer on the port the page handed over (IntegrityCheck).
+    const port = event.ports && event.ports[0];
+    if (port) port.postMessage({ build: SW_BUILD.replace(/^m5cet-sw:/, "") });
+    return;
+  }
   if (data.type === "show-test-notification") {
     self.registration.showNotification(String(data.title || "M5cet test").slice(0, 64), {
       body: String(data.body || "Local test notification").slice(0, 200),

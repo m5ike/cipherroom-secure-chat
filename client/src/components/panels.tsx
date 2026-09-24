@@ -1,6 +1,7 @@
 // Modal-window panels exposed from the top menu. Each panel reads/writes the
 // shared Preferences object via the props passed in from App.tsx.
 
+import { NeedSignIn } from "./NeedSignIn";
 import { useState } from "react";
 import {
   AlertTriangle,
@@ -20,8 +21,7 @@ import { Modal } from "./Modal";
 import { langLabel, SUPPORTED_LANGS, t, type Lang } from "@/lib/i18n";
 import { DEFAULT_ROOM_SECURITY, type Preferences, type RoomSecurity } from "@/lib/preferences";
 import { Fingerprint, formatFingerprint, loadFingerprints } from "@/lib/fingerprint";
-import { passkeySupported } from "@/lib/passkey";
-import { currentAccount, loadVault, registerAccount, saveVault, signInWithPasskey, signOutAccount, type AccountSummary } from "@/lib/account";
+import { currentAccount, saveVault } from "@/lib/account";
 
 type PanelBaseProps = {
   open: boolean;
@@ -61,7 +61,7 @@ const inputClass =
   "min-h-10 rounded-xl border border-input bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring";
 const selectClass = inputClass;
 
-export function ProfilePanel({ open, onClose, prefs, setPrefs, lang }: PanelBaseProps) {
+export function ProfilePanel({ open, onClose, prefs, setPrefs, lang, onOpenConnection }: PanelBaseProps & { onOpenConnection?: () => void }) {
   return (
     <Modal open={open} onClose={onClose} title={t(lang, "profile.title")}>
       <Section title={t(lang, "profile.title")} icon={<UserCircle2 className="h-4 w-4" />}>
@@ -93,7 +93,7 @@ export function ProfilePanel({ open, onClose, prefs, setPrefs, lang }: PanelBase
           />
         </Row>
       </Section>
-      <PasskeyProfileSection prefs={prefs} setPrefs={setPrefs} lang={lang} />
+      <PasskeyProfileSection prefs={prefs} lang={lang} onOpenConnection={onOpenConnection} />
     </Modal>
   );
 }
@@ -116,69 +116,38 @@ export function profileFromPrefs(prefs: Preferences): Partial<Preferences> {
   return out as Partial<Preferences>;
 }
 
-function PasskeyProfileSection({ prefs, setPrefs, lang }: { prefs: Preferences; setPrefs: (p: Partial<Preferences>) => void; lang: Lang }) {
+/** 4.0: no passkey buttons here — sign-in and passkeys live in the
+ *  Connection window. Signed in, the profile is saved with the account. */
+function PasskeyProfileSection({ prefs, lang, onOpenConnection }: { prefs: Preferences; lang: Lang; onOpenConnection?: () => void }) {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState("");
-  const [account, setAccount] = useState<AccountSummary | null>(() => currentAccount());
-  const supported = passkeySupported();
-  const serverMode = prefs.mode === "server";
+  const account = currentAccount();
 
-  async function run(work: () => Promise<string>) {
+  const onSave = async () => {
     setBusy(true); setMsg("");
-    try { setMsg(await work()); } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
-  }
-
-  const onRegister = () => run(async () => {
-    const acc = await registerAccount(prefs.name || "M5cet");
-    setAccount(acc);
-    await saveVault({ profile: profileFromPrefs(prefs) });
-    return t(lang, "passkey.saved");
-  });
-
-  const onUnlock = () => run(async () => {
-    const acc = await signInWithPasskey();
-    setAccount(acc);
-    const { profile } = await loadVault<Partial<Preferences>>();
-    if (profile) setPrefs(profile);
-    return profile ? t(lang, "passkey.loaded") : t(lang, "acc.signedInAs").replace("{name}", acc.userName);
-  });
-
-  const onSave = () => run(async () => {
-    await saveVault({ profile: profileFromPrefs(prefs) });
-    setAccount(currentAccount());
-    return t(lang, "passkey.saved");
-  });
-
-  const onLock = () => run(async () => {
-    await signOutAccount();
-    setAccount(null);
-    return t(lang, "passkey.locked");
-  });
-
-  const cred = account?.credentialId ?? "";
+    try { await saveVault({ profile: profileFromPrefs(prefs) }); setMsg(t(lang, "passkey.saved")); } catch (e) { setMsg((e as Error).message); } finally { setBusy(false); }
+  };
 
   return (
     <Section title={t(lang, "passkey.title")} icon={<KeyRound className="h-4 w-4" />}>
-      <p className="text-xs text-muted-foreground">{t(lang, "passkey.desc")}</p>
-      {!serverMode ? (
-        <p className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{t(lang, "passkey.needServer")}</p>
-      ) : !supported ? (
-        <p className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">{t(lang, "passkey.unsupported")}</p>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          {!cred ? (
-            <button type="button" disabled={busy} onClick={() => void onRegister()} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-60" data-testid="passkey-register">{t(lang, "passkey.create")}</button>
-          ) : (
+      {account ? (
+        <>
+          <p className="text-xs text-muted-foreground">{t(lang, "id.signedInAs")} <code data-testid="profile-username">{account.username ?? account.id}</code> · {t(lang, "id.nickname")}: <b>{prefs.name || "—"}</b></p>
+          <div className="flex flex-wrap gap-2">
             <button type="button" disabled={busy} onClick={() => void onSave()} className="inline-flex min-h-10 items-center gap-2 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground disabled:opacity-60" data-testid="passkey-save">{t(lang, "passkey.save")}</button>
-          )}
-          <button type="button" disabled={busy} onClick={() => void onUnlock()} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60" data-testid="passkey-unlock">{t(lang, "passkey.unlock")}</button>
-          {cred ? (
-            <button type="button" onClick={() => void onLock()} className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent">{t(lang, "passkey.lock")}</button>
-          ) : null}
+          </div>
+        </>
+      ) : (
+        <div className="id-need" data-testid="profile-need-signin">
+          <span className="id-need__icon" aria-hidden="true"><KeyRound className="h-4 w-4" /></span>
+          <div>
+            <strong>{t(lang, "id.need.title")}</strong>
+            <p>{t(lang, "id.profile.note")}</p>
+            {onOpenConnection ? <button type="button" className="acc-btn" onClick={onOpenConnection} data-testid="profile-open-connection">{t(lang, "id.need.open")}</button> : null}
+          </div>
         </div>
       )}
       {msg ? <p className="text-xs" data-testid="passkey-msg">{msg}</p> : null}
-      {cred ? <p className="text-[11px] text-muted-foreground">{t(lang, "passkey.active")}: <code>{cred.slice(0, 12)}…</code></p> : null}
     </Section>
   );
 }
@@ -359,10 +328,15 @@ export function NotificationsPanel({
   pushAvailable,
   onTestPush,
   onTestLocal,
+  signedIn = true,
+  onOpenConnection,
 }: PanelBaseProps & {
   onEnable: () => Promise<void>;
   onDisable: () => void;
   pushAvailable: boolean;
+  /** 4.0: web push through the server belongs to a signed-in account. */
+  signedIn?: boolean;
+  onOpenConnection?: () => void;
   onTestPush?: () => Promise<{ ok: boolean; reason?: string }>;
   onTestLocal?: () => Promise<{ ok: boolean; reason?: string }>;
 }) {
@@ -416,11 +390,12 @@ export function NotificationsPanel({
                 const r = await onTestPush();
                 setTestResult(r.ok ? "Push test sent." : `Push test failed: ${r.reason}`);
               }}
-              disabled={!pushAvailable}
+              disabled={!pushAvailable || !signedIn}
               className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-border bg-background px-3 text-sm hover:bg-accent disabled:opacity-60"
             >Test web push</button>
           ) : null}
         </div>
+        {!signedIn ? <NeedSignIn lang={lang} onOpen={onOpenConnection} testId="notif-need-signin" /> : null}
         {testResult ? <p className="text-xs text-muted-foreground" data-testid="text-notif-test-result">{testResult}</p> : null}
       </Section>
     </Modal>

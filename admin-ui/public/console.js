@@ -1373,5 +1373,15 @@
     }
   } catch { /* nothing saved */ }
 
-  window.M5Console = { api: (path, opts) => api(path, opts), toast };
+  // What the console's other scripts (modules.js, menu-builder.js) use: the
+  // same DOM helpers, the API with the token, role gates and routes of their own.
+  window.M5Console = {
+    api: (path, opts) => api(path, opts),
+    toast, h, clear, $, $$, can, applyRoleGates,
+    base: () => state.base,
+    addRoute(name, entry) {
+      ROUTES[name] = entry;
+      if (location.hash === `#/${name}` && state.token) route(name);
+    },
+  };
 })();

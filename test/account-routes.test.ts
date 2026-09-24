@@ -65,6 +65,9 @@ const putVault = (body: unknown, token: string) =>
  *  http://localhost would have signed. */
 const authenticator = () => new FakeAuthenticator("localhost", "http://localhost");
 
+/** What a browser derives from the passkey's PRF output (passkey.ts › deriveKeyProof). */
+const KEY_PROOF = "k".repeat(43);
+
 async function challengeFor(kind: "register" | "signin"): Promise<string> {
   const r = await post(`/api/account/${kind}/options`, { userName: "Alice" });
   const j = await r.json() as { publicKey: { challenge: string } };
@@ -73,15 +76,21 @@ async function challengeFor(kind: "register" | "signin"): Promise<string> {
 
 async function registerAccount(auth = authenticator()) {
   const challenge = await challengeFor("register");
-  const r = await post("/api/account/register/verify", { credential: auth.register(challenge) });
+  const r = await post("/api/account/register/verify", { credential: auth.register(challenge), keyProof: KEY_PROOF });
   const j = await r.json() as { ok: boolean; token: string; account: { id: string } };
   return { status: r.status, auth, ...j };
 }
 
-async function signIn(auth: FakeAuthenticator) {
+/** Signs in and, like the browser, proves the global key (unless told not to). */
+async function signIn(auth: FakeAuthenticator, opts: { keyProof?: string | null } = {}) {
   const challenge = await challengeFor("signin");
   const r = await post("/api/account/signin/verify", { credential: auth.assert(challenge) });
-  return { status: r.status, body: await r.json() as { ok: boolean; token?: string; account?: { loginCount: number } } };
+  const body = await r.json() as { ok: boolean; token?: string; locked?: boolean; account?: { loginCount: number } };
+  if (r.ok && body.token && opts.keyProof !== null) {
+    const u = await post("/api/account/unlock", { keyProof: opts.keyProof ?? KEY_PROOF }, body.token);
+    return { status: u.ok ? r.status : u.status, body, unlock: await u.json() as { ok: boolean; code?: string } };
+  }
+  return { status: r.status, body, unlock: null };
 }
 
 describe("status", () => {
@@ -104,12 +113,12 @@ describe("registration", () => {
   it("uses each challenge once and refuses a foreign origin", async () => {
     const auth = authenticator();
     const challenge = await challengeFor("register");
-    expect((await post("/api/account/register/verify", { credential: auth.register(challenge) })).status).toBe(200);
+    expect((await post("/api/account/register/verify", { credential: auth.register(challenge), keyProof: KEY_PROOF })).status).toBe(200);
     // Replaying the same ceremony is rejected (the challenge is gone).
-    expect((await post("/api/account/register/verify", { credential: auth.register(challenge) })).status).toBe(400);
+    expect((await post("/api/account/register/verify", { credential: auth.register(challenge), keyProof: KEY_PROOF })).status).toBe(400);
 
     const c2 = await challengeFor("register");
-    const evil = await post("/api/account/register/verify", { credential: authenticator().register(c2, { origin: "https://evil.example" }) });
+    const evil = await post("/api/account/register/verify", { credential: authenticator().register(c2, { origin: "https://evil.example" }), keyProof: KEY_PROOF });
     expect(evil.status).toBe(400);
     expect(store.size).toBe(1);
   });
@@ -208,5 +217,58 @@ describe("push, sign-out and deletion", () => {
     // The same passkey can start over, as a new account.
     expect((await signIn(auth)).status).toBe(404);
     expect((await registerAccount(auth)).status).toBe(200);
+  });
+});
+
+describe("usernames and the global key (4.0)", () => {
+  it("names a new account itself: a unique username that is its id and goes into the passkey", async () => {
+    const opts = await (await post("/api/account/register/options", { userName: "ignored" })).json() as { username: string; publicKey: { user: { name: string; id: string } } };
+    expect(opts.username).toMatch(/^[a-z]+-[a-z]+-[a-z0-9]{4,6}$/);
+    expect(opts.publicKey.user.name).toBe(opts.username);
+    expect(Buffer.from(opts.publicKey.user.id, "base64url").toString("utf8")).toBe(opts.username);
+    const r = await post("/api/account/register/verify", { credential: authenticator().register((opts.publicKey as unknown as { challenge: string }).challenge), keyProof: KEY_PROOF });
+    const j = await r.json() as { account: { id: string; username: string } };
+    expect(j.account.id).toBe(opts.username);
+    expect(j.account.username).toBe(opts.username);
+    // The typed name counts for nothing: a second account gets another username.
+    const second = await registerAccount();
+    expect(second.account.id).not.toBe(opts.username);
+  });
+
+  it("refuses a registration without the key proof", async () => {
+    const challenge = await challengeFor("register");
+    const r = await post("/api/account/register/verify", { credential: authenticator().register(challenge) });
+    expect(r.status).toBe(400);
+    expect(((await r.json()) as { code: string }).code).toBe("no-key");
+    expect(store.size).toBe(0);
+  });
+
+  it("keeps a sign-in locked until the global key is proven, and ends it on a wrong key", async () => {
+    const reg = await registerAccount();
+    const challenge = await challengeFor("signin");
+    const r = await post("/api/account/signin/verify", { credential: reg.auth.assert(challenge) });
+    const body = await r.json() as { token: string; locked: boolean };
+    expect(body.locked).toBe(true);
+    // Locked: no vault, no account routes — only /me says so.
+    expect((await get("/api/account/vault", body.token)).status).toBe(401);
+    expect(((await (await get("/api/account/me", body.token)).json()) as { locked: boolean }).locked).toBe(true);
+    // A wrong key ends the session and says why.
+    const wrong = await post("/api/account/unlock", { keyProof: "w".repeat(43) }, body.token);
+    expect(wrong.status).toBe(403);
+    expect(((await wrong.json()) as { code: string }).code).toBe("wrong-key");
+    expect((await get("/api/account/me", body.token)).status).toBe(401);
+    expect(store.get(reg.account.id)!.audit.map((e) => e.kind)).toContain("unlock-failed");
+
+    // The right key unlocks a fresh sign-in.
+    const good = await signIn(reg.auth);
+    expect(good.unlock?.ok).toBe(true);
+    expect((await get("/api/account/vault", good.body.token)).status).toBe(200);
+  });
+
+  it("an unknown passkey gets 404 with a code the client turns into 'register'", async () => {
+    const challenge = await challengeFor("signin");
+    const r = await post("/api/account/signin/verify", { credential: authenticator().assert(challenge) });
+    expect(r.status).toBe(404);
+    expect(((await r.json()) as { code: string }).code).toBe("unknown-passkey");
   });
 });

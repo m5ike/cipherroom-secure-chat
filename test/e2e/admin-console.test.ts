@@ -186,6 +186,136 @@ describe("operator console", () => {
     await expect.poll(() => page.locator("#auditTable tbody").innerText(), { timeout: 10_000 }).toContain("admin.client-config");
   });
 
+  it("switches modules off, or gives them to groups — members never reach the clients", async () => {
+    await go("modules");
+    await expect.poll(() => page.locator("[data-module-on]").count()).toBeGreaterThan(8);
+    await page.click("#groupAdd");
+    await page.fill('[data-group-id="0"]', "staff");
+    await page.fill('[data-group-label="0"]', "Staff");
+    await page.fill('[data-group-members="0"]', "bystry-sokol-7k3q");
+    await page.click("#groupsForm button[type=submit]");
+    await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Groups saved/);
+    await page.uncheck('[data-module-on="ai"]');
+    await page.check('[data-module-group="telephony"][value="staff"]');
+    await page.click("#modulesForm button[type=submit]");
+    await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Modules saved/);
+    const cfg = (await (await fetch(`${MAIN}/api/client-config`)).json()).config;
+    expect(cfg.modules.ai).toMatchObject({ enabled: false });
+    expect(cfg.modules.telephony).toMatchObject({ enabled: true, groups: ["staff"] });
+    expect(cfg.groups).toEqual([{ id: "staff", label: "Staff", members: [] }]);
+    // The server refuses what a module switched off serves.
+    const ai = await fetch(`${MAIN}/api/ai/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    expect(ai.status).toBe(403);
+    expect((await ai.json()).code).toBe("module-disabled");
+    await page.locator("#toasts").evaluate((el) => el.replaceChildren());
+    await shot("modules");
+  });
+
+  it("builds the menu: drag and drop, styles and states, HTML with variables, help — and the app draws it", async () => {
+    await go("menu");
+    await expect.poll(() => page.locator("#mbTree .mbt-row[data-id]").count()).toBeGreaterThan(25);
+    const topIds = () => page.locator("#mbTree .mbt-area").first().evaluate((area) =>
+      Array.from(area.querySelector(".mbt-list")!.children).map((li) => (li as HTMLElement).dataset.id).filter(Boolean));
+    // The default is the classic menu.
+    expect(await topIds()).toEqual(["user", "quick", "room", "talk", "tools", "app"]);
+    expect(await page.locator("#mbPreview .menu-group-label").count()).toBe(4);
+
+    // Drag "Tools" above "Room".
+    await page.dragAndDrop('#mbTree .mbt-row[data-id="tools"]', '#mbTree .mbt-row[data-id="room"]', { targetPosition: { x: 60, y: 3 } });
+    await expect.poll(topIds).toEqual(["user", "quick", "tools", "room", "talk", "app"]);
+    // …and an item into another section, by keyboard: Alt+↑ at the top of "Talk" moves it out, above the section.
+    await page.click('#mbTree .mbt-row[data-id="btn-audio"]');
+    await page.focus('#mbTree .mbt-row[data-id="btn-audio"]');
+    await page.keyboard.press("Alt+ArrowUp");
+    await expect.poll(topIds).toEqual(["user", "quick", "tools", "room", "btn-audio", "talk", "app"]);
+    await page.click("#mbUndo");
+    await expect.poll(topIds).toEqual(["user", "quick", "tools", "room", "talk", "app"]);
+
+    // An HTML block with live variables in "Room", written with the help window.
+    await page.click('#mbTree .mbt-row[data-id="room"]');
+    await page.click('[data-mb-add="html"]');
+    const html = page.locator('[data-prop="html"]');
+    await html.fill("<b>{$user.nickname}</b> · {$session.room|upper} ");
+    await page.click(".mb-htmltools .btn");
+    await expect.poll(() => page.locator("#mbHelp").isVisible()).toBe(true);
+    await page.click('#mbHelp [data-help-tab="filters"]');
+    await page.fill("#mbHelp input[type=search]", "peers");
+    await page.locator("#mbHelp .mb-help__row").first().click();
+    await expect.poll(() => html.inputValue()).toMatch(/\{\$session\.peers\|padLeft:2\}|\{\$room\.people\|length\}/);
+    await page.click('#mbHelp button[aria-label="Close the help"]');
+    await expect.poll(() => page.locator("#mbPreview .menu-html").first().innerText(), { timeout: 5000 }).toMatch(/Alice · TYM-BRNO/);
+
+    // Style and a hover state for "Settings"; a separator in "Talk".
+    await page.click('#mbTree .mbt-row[data-id="btn-settings"]');
+    await page.click(".mb-style > summary");
+    await page.selectOption('[data-prop="style-fontWeight"]', "800");
+    await page.fill('[data-prop="style-fontSize"]', "17");
+    await page.selectOption('[data-prop="state-hover-background"]', "destructive");
+    await page.selectOption('[data-prop="state-hover-color"]', "#");
+    const settings = page.locator('#mbPreview [data-mb-id="btn-settings"]');
+    await expect.poll(() => settings.evaluate((el) => (el as HTMLElement).style.fontWeight)).toBe("800");
+    expect(await settings.getAttribute("class")).toContain("mb-hover-bg");
+    await page.selectOption("#mbState", "hover");
+    await expect.poll(() => settings.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
+    await page.selectOption("#mbState", "");
+    await page.click('#mbTree .mbt-row[data-id="talk"]');
+    await page.click('[data-mb-add="separator"]');
+    await page.selectOption('[data-prop="variant"]', "dashed");
+
+    // The ☰ button: an icon from the picker, and a text.
+    await page.click('#mbTree .mbt-row[data-root="trigger"]');
+    await page.click('[data-prop="trigger-icon"]');
+    await page.fill(".mb-dialog input[type=search]", "rocket");
+    await page.click('.mb-dialog [data-icon="rocket"]');
+    await page.fill('[data-prop="trigger-text"]', "Menu");
+    await page.check('[data-prop="trigger-showtext"]');
+    await expect.poll(() => page.locator('#mbPreview [data-mb-id="trigger"]').innerText()).toBe("Menu");
+    await expect.poll(() => page.locator("#mbDirty").isVisible()).toBe(true);
+    await page.waitForTimeout(300); // the switch's transition
+    await shot("menu-builder");
+
+    await page.click("#mbSave");
+    await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Menu saved/);
+    const menu = (await (await fetch(`${MAIN}/api/menu-config`)).json()).config;
+    expect(menu.items.map((n: { id: string }) => n.id)).toEqual(["user", "quick", "tools", "room", "talk", "app"]);
+    expect(menu.trigger).toMatchObject({ icon: "rocket", text: "Menu", showText: true });
+    const room = menu.items.find((n: { id: string }) => n.id === "room");
+    expect(room.children.at(-1)).toMatchObject({ kind: "html" });
+    const app = menu.items.find((n: { id: string }) => n.id === "app");
+    const btn = app.children.find((n: { id: string }) => n.id === "btn-settings");
+    expect(btn.style).toMatchObject({ fontWeight: "800", fontSize: 17, states: { hover: { background: "destructive" } } });
+    expect(btn.style.states.hover.color).toMatch(/^#[0-9a-f]{6}$/i);
+
+    // The app draws the saved menu (a phone: the ☰ panel).
+    const appCtx = await browser!.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const app2 = await appCtx.newPage();
+    await app2.goto(MAIN);
+    await app2.locator('[data-testid="btn-menu-speeddial"]').waitFor();
+    await expect.poll(() => app2.locator('[data-testid="btn-menu-speeddial"]').innerText(), { timeout: 10_000 }).toBe("Menu");
+    await app2.click('[data-testid="btn-menu-speeddial"]');
+    const panel = app2.locator('[data-testid="speeddial-menu"]');
+    await panel.waitFor();
+    const order = await panel.locator('[data-testid^="speeddial-btn-"]').evaluateAll((els) => els.map((e) => e.getAttribute("data-testid")));
+    expect(order.indexOf("speeddial-btn-speech")).toBeLessThan(order.indexOf("speeddial-btn-room-security"));
+    // The modules switched off above: AI for everyone, telephony for all but "staff".
+    expect(order).not.toContain("speeddial-btn-ai");
+    expect(order).not.toContain("speeddial-btn-phone");
+    expect(await panel.locator(".menu-html").count()).toBe(1);
+    expect(await panel.locator(".menu-sep--dashed").count()).toBe(1);
+    expect(await app2.locator('[data-testid="speeddial-btn-settings"]').evaluate((el) => (el as HTMLElement).style.fontWeight)).toBe("800");
+    if (SHOTS) await app2.screenshot({ path: join(SHOTS, "app-menu-built.png") });
+    await appCtx.close();
+
+    // Back to the classic menu.
+    page.once("dialog", (d) => void d.accept());
+    await page.click("#mbReset");
+    await page.click("#mbSave");
+    await expect.poll(async () => (await (await fetch(`${MAIN}/api/menu-config`)).json()).config.items.map((n: { id: string }) => n.id)).toEqual(["user", "quick", "room", "talk", "tools", "app"]);
+    await page.locator("#toasts").evaluate((el) => el.replaceChildren());
+    await go("audit");
+    await expect.poll(() => page.locator("#auditTable tbody").innerText(), { timeout: 10_000 }).toContain("admin.menu-config");
+  });
+
   it("gives an auditor the console to read, and nothing to change", async () => {
     // The owner names an auditor and issues them a token of their own.
     const owner = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
@@ -212,6 +342,12 @@ describe("operator console", () => {
     });
     expect(refused.status).toBe(403);
 
+    // The menu builder shows the menu, and changes nothing.
+    await go("menu");
+    await expect.poll(() => page.locator("#mbTree .mbt-row[data-id]").count()).toBeGreaterThan(25);
+    await expect.poll(() => page.locator("#mbSave").isHidden()).toBe(true);
+    await expect.poll(() => page.locator("#mbAdd").isHidden()).toBe(true);
+    await expect.poll(() => page.locator('#mbTree .mbt-row[data-id="room"]').getAttribute("draggable")).toBeNull();
     // Reading is theirs: the journal verifies, and records who looked.
     await go("audit");
     expect(await page.locator("#auditVerify").getAttribute("data-disabled-by-role")).toBeNull();

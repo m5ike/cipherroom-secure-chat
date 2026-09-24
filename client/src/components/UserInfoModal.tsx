@@ -12,7 +12,10 @@ import { safetyNumber } from "../lib/identity";
 import { t, type Lang } from "../lib/i18n";
 
 export type UserInfo = {
+  /** The nickname shown in the room. */
   name: string;
+  /** 4.0: the username behind it (account, or this P2P session's). */
+  username?: string;
   avatar?: string;
   peerId: string;
   self: boolean;
@@ -143,6 +146,7 @@ export function UserInfoView({ info, lang }: { info: UserInfo; lang: Lang }) {
         </div>
       </div>
       <div className="userinfo-grid">
+        {info.username ? <Row label={t(lang, "id.username")} value={<span className="font-mono" data-testid="userinfo-username">{info.username}</span>} /> : null}
         <Row label={t(lang, "userinfo.duration")} value={dur(info.connectedForMs, lang)} />
         <Row label={t(lang, "userinfo.ip")} value={info.ip || t(lang, "userinfo.ip.unknown")} />
         <Row label={t(lang, "userinfo.candidate")} value={info.candidateType || "—"} />

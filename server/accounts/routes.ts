@@ -1,10 +1,15 @@
 // Passkey accounts — REST API of the main service.
 //
 //   GET    /api/account/status             is this server offering accounts?
-//   POST   /api/account/register/options   challenge + creation options
-//   POST   /api/account/register/verify    attestation → account + session token
+//   POST   /api/account/register/options   challenge + creation options, with the
+//                                          username the server picked (4.0)
+//   POST   /api/account/register/verify    attestation + key verifier → account +
+//                                          session token (unlocked)
 //   POST   /api/account/signin/options     challenge (discoverable credentials)
-//   POST   /api/account/signin/verify      signed assertion → session token
+//   POST   /api/account/signin/verify      signed assertion → LOCKED session token
+//   POST   /api/account/unlock             {keyProof} → the global key checked
+//                                          against the account's verifier;
+//                                          unlocks the session (4.0)       (Bearer, locked ok)
 //   GET    /api/account/me                 summary: sizes, dates, counts, audit   (Bearer)
 //   GET    /api/account/vault              encrypted profile + chat blobs         (Bearer)
 //   PUT    /api/account/vault              store encrypted blobs                  (Bearer)
@@ -39,7 +44,9 @@ import { randomBytes } from "node:crypto";
 import type { Express, NextFunction, Request, Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { eventStore } from "../events";
-import { ACCOUNT_LIMITS, accountStore as defaultStore, type AccountRecord, type AccountStore } from "./store";
+import { audit } from "../monitor/audit";
+import { ACCOUNT_LIMITS, accountStore as defaultStore, usernameOf, type AccountRecord, type AccountStore } from "./store";
+import { userHandleFor, usernameFromHandle } from "./username";
 import {
   SUPPORTED_ALGS, b64urlToBuffer, verifyAssertion, verifyRegistration,
   type AssertionResponseJSON, type RegistrationResponseJSON, type RpPolicy,
@@ -99,9 +106,29 @@ export function clientInfo(req: Request): Record<string, string> {
 
 type AuthedRequest = Request & { account?: AccountRecord; token?: string };
 
-const CLIENT_EVENTS = new Set(["decrypt-ok", "decrypt-failed", "data-loaded", "data-cleared", "chat-restored"]);
+const CLIENT_EVENTS = new Set([
+  "decrypt-ok", "decrypt-failed", "data-loaded", "data-cleared", "chat-restored",
+  // 4.0: the steps of a sign-in the browser checks after the server's part
+  "signin-check", "signin-complete", "signin-failed", "database-locked", "version-mismatch",
+]);
+/** Client events that are problems: they also go to the operator's audit as warnings. */
+const PROBLEM_EVENTS = new Set(["decrypt-failed", "signin-failed", "database-locked", "version-mismatch"]);
+
+/** Account and sign-in events for the operator's audit journal. */
+function adminLog(event: string, level: "info" | "notice" | "warn", req: Request, fields: { accountId?: string; status?: string; detail?: Record<string, unknown> } = {}): void {
+  const info = clientInfo(req);
+  audit.add({
+    category: "account", level, event,
+    ...(fields.accountId ? { accountId: fields.accountId, actor: fields.accountId } : {}),
+    ...(fields.status ? { status: fields.status } : {}),
+    ip: info.ip,
+    detail: { client: info.client, ...(fields.detail ?? {}) },
+  });
+}
 
 export type AccountHooks = {
+  /** 4.0: the groups an account is in (client-config.ts › accountGroups). */
+  groupsFor?: (username: string) => string[];
   /** Signed out or deleted: stop answering for the account (away relay). */
   onSignOut?: (accountId: string) => void;
   /** A ceremony succeeded — the storage mirrors it into its tables. */
@@ -112,6 +139,11 @@ export type AccountHooks = {
 
 export function registerAccountRoutes(app: Express, store: AccountStore = defaultStore, hooks: AccountHooks = {}): void {
   const challenges = new Challenges();
+  /** The account summary with the groups it is in. */
+  const summaryOf = (accountId: string, currentHash?: string) => {
+    const summary = store.summary(accountId, currentHash);
+    return summary ? { ...summary, groups: hooks.groupsFor?.(summary.username) ?? ["user"] } : null;
+  };
   const lastSaveAudit = new Map<string, number>();
   const ceremonyLimiter = rateLimit({
     windowMs: 10 * 60 * 1000,
@@ -121,18 +153,22 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     message: { ok: false, message: "Too many sign-in attempts; wait a few minutes." },
   });
 
-  const requireAccount = (req: AuthedRequest, res: Response, next: NextFunction) => {
+  const authenticate = (allowLocked: boolean) => (req: AuthedRequest, res: Response, next: NextFunction) => {
     const header = req.header("authorization") || "";
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-    const account = store.resolveToken(token);
+    const account = store.resolveToken(token, Date.now(), { allowLocked });
     if (!account) {
       res.setHeader("WWW-Authenticate", 'Bearer realm="m5cet-account"');
-      return res.status(401).json({ ok: false, message: "Sign in with your passkey first." });
+      const locked = token && store.isLocked(token);
+      return res.status(401).json({ ok: false, code: locked ? "locked" : "signed-out", message: locked ? "The account key has not been verified yet." : "Sign in with your passkey first." });
     }
     req.account = account;
     req.token = token;
     next();
   };
+  const requireAccount = authenticate(false);
+  /** Also a session that has not finished its sign-in (key not verified yet). */
+  const requireSession = authenticate(true);
 
   app.get("/api/account/status", (req: Request, res: Response) => {
     const s = store.status();
@@ -149,17 +185,23 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
 
   /* ----------------------------------------------------------- register */
 
+  // 4.0: the server picks the username (unique, the account's primary key)
+  // and puts it into the passkey — name, display name and user handle.
   app.post("/api/account/register/options", ceremonyLimiter, (req: Request, res: Response) => {
-    const body = (req.body || {}) as Record<string, unknown>;
-    const userName = typeof body.userName === "string" && body.userName.trim() ? body.userName.trim().slice(0, 64) : "M5cet";
     const policy = rpPolicyFor(req);
-    const challenge = challenges.issue("register", userName);
+    let username: string;
+    try { username = store.newUsername(); } catch {
+      adminLog("account.register.failed", "warn", req, { status: "no-username" });
+      return res.status(503).json({ ok: false, message: "No free username; try again." });
+    }
+    const challenge = challenges.issue("register", username);
     res.json({
       ok: true,
+      username,
       publicKey: {
         challenge,
         rp: { id: policy.rpId, name: "M5cet" },
-        user: { id: randomBytes(16).toString("base64url"), name: userName, displayName: userName },
+        user: { id: userHandleFor(username), name: username, displayName: `M5cet · ${username}` },
         pubKeyCredParams: SUPPORTED_ALGS.map((alg) => ({ type: "public-key", alg })),
         authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
         attestation: "none",
@@ -169,23 +211,39 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
   });
 
   app.post("/api/account/register/verify", ceremonyLimiter, (req: Request, res: Response) => {
-    const body = (req.body || {}) as { credential?: RegistrationResponseJSON };
+    const body = (req.body || {}) as { credential?: RegistrationResponseJSON; keyProof?: unknown };
     const credential = body.credential;
     const challenge = challengeOf(credential?.response?.clientDataJSON);
     const issued = challenge ? challenges.take(challenge, "register") : null;
-    if (!credential || !issued) return res.status(400).json({ ok: false, message: "Unknown or expired challenge." });
+    if (!credential || !issued?.userName) {
+      adminLog("account.register.failed", "warn", req, { status: "challenge" });
+      return res.status(400).json({ ok: false, message: "Unknown or expired challenge." });
+    }
+    // The global key's proof (derived from the passkey's PRF output in the
+    // browser): without it the account could never be unlocked.
+    const keyProof = typeof body.keyProof === "string" && /^[A-Za-z0-9_-]{43}$/.test(body.keyProof) ? body.keyProof : "";
+    if (!keyProof) {
+      adminLog("account.register.failed", "warn", req, { status: "no-key-proof" });
+      return res.status(400).json({ ok: false, code: "no-key", message: "The passkey did not produce an encryption key (PRF)." });
+    }
     const r = verifyRegistration({ response: credential, expectedChallenge: challenge, policy: rpPolicyFor(req) });
     if (!r.ok) {
       eventStore.record({ kind: "account-register-failed", meta: { error: r.error.slice(0, 80) } });
+      adminLog("account.register.failed", "warn", req, { status: "attestation", detail: { error: r.error.slice(0, 80) } });
       return res.status(400).json({ ok: false, message: `Passkey registration rejected: ${r.error}` });
     }
-    const created = store.create(r.credential, issued.userName ?? "M5cet");
-    if (!created.ok) return res.status(409).json({ ok: false, message: created.reason });
+    const created = store.create(r.credential, { username: issued.userName });
+    if (!created.ok) {
+      adminLog("account.register.failed", "warn", req, { status: "store", detail: { reason: created.reason } });
+      return res.status(409).json({ ok: false, message: created.reason });
+    }
+    store.setKeyVerifier(created.account.id, keyProof);
     store.addAudit(created.account.id, "sign-in", { ...clientInfo(req), via: "register" });
     hooks.onAuthenticated?.(created.account.id, "register", clientInfo(req));
     const token = store.issueToken(created.account.id, Date.now(), clientInfo(req));
     eventStore.record({ kind: "account-register", meta: { accountId: created.account.id } });
-    res.json({ ok: true, token, account: store.summary(created.account.id, tokenHash(token)) });
+    adminLog("account.register", "notice", req, { accountId: created.account.id, status: "ok", detail: { username: created.account.id, alg: r.credential.alg } });
+    res.json({ ok: true, token, account: summaryOf(created.account.id, tokenHash(token)) });
   });
 
   /* ------------------------------------------------------------ sign-in */
@@ -206,28 +264,66 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     const account = credentialId ? store.findByCredential(credentialId) : null;
     if (!account) {
       eventStore.record({ kind: "account-signin-unknown" });
-      return res.status(404).json({ ok: false, message: "This passkey has no account on this server." });
+      adminLog("account.signin.unknown-passkey", "warn", req, { status: "404", detail: { credential: credentialId.slice(0, 12), handle: usernameFromHandle(credential.response?.userHandle).slice(0, 40) } });
+      return res.status(404).json({ ok: false, code: "unknown-passkey", message: "This passkey is not registered on this server." });
     }
     const stored = store.credentialOf(account.id, credentialId);
-    if (!stored) return res.status(404).json({ ok: false, message: "This passkey has no account on this server." });
+    if (!stored) {
+      adminLog("account.signin.unknown-passkey", "warn", req, { accountId: account.id, status: "404" });
+      return res.status(404).json({ ok: false, code: "unknown-passkey", message: "This passkey is not registered on this server." });
+    }
     const r = verifyAssertion({ response: credential, expectedChallenge: challenge, policy: rpPolicyFor(req), stored });
     if (!r.ok) {
       store.addAudit(account.id, "sign-in-failed", { reason: r.error.slice(0, 60), ...clientInfo(req) });
-      return res.status(401).json({ ok: false, message: `Passkey verification failed: ${r.error}` });
+      adminLog("account.signin.rejected", "warn", req, { accountId: account.id, status: "401", detail: { reason: r.error.slice(0, 80) } });
+      return res.status(401).json({ ok: false, code: "rejected", message: `Passkey verification failed: ${r.error}` });
+    }
+    // Since 4.0 the passkey's user handle is the username: it must name the
+    // account its credential belongs to (older accounts: any handle).
+    const handle = usernameFromHandle(credential.response?.userHandle);
+    if (account.username && handle && handle !== account.id) {
+      store.addAudit(account.id, "sign-in-failed", { reason: "user handle", ...clientInfo(req) });
+      adminLog("account.signin.rejected", "warn", req, { accountId: account.id, status: "401", detail: { reason: "user handle does not match" } });
+      return res.status(401).json({ ok: false, code: "rejected", message: "This passkey does not belong to that account." });
     }
     store.recordSignIn(account.id, r.signCount, clientInfo(req), Date.now(), credentialId);
-    hooks.onAuthenticated?.(account.id, "sign-in", clientInfo(req));
-    const token = store.issueToken(account.id, Date.now(), clientInfo(req));
+    // The session stays locked until the browser proved the global key.
+    const token = store.issueToken(account.id, Date.now(), { ...clientInfo(req), locked: true });
     eventStore.record({ kind: "account-signin", meta: { accountId: account.id } });
+    adminLog("account.signin.passkey-ok", "info", req, { accountId: account.id, status: "locked" });
     // A passkey added later carries the account root sealed for it; the first
     // one does not need it (its PRF output is the root).
-    res.json({ ok: true, token, account: store.summary(account.id, tokenHash(token)), wrapped: store.wrappedFor(account.id, credentialId) });
+    res.json({ ok: true, token, locked: true, account: summaryOf(account.id, tokenHash(token)), wrapped: store.wrappedFor(account.id, credentialId) });
+  });
+
+  // Step two of a sign-in: the global key. The browser derived it from the
+  // passkey's PRF output and sends only the proof derived next to it; a
+  // mismatch means this passkey cannot open this account's data — the
+  // session ends there and the operator sees why.
+  app.post("/api/account/unlock", ceremonyLimiter, requireSession, (req: AuthedRequest, res: Response) => {
+    const account = req.account!;
+    const proof = (req.body as { keyProof?: unknown } | undefined)?.keyProof;
+    if (typeof proof !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(proof)) return res.status(400).json({ ok: false, code: "bad-proof", message: "A key proof is required." });
+    const verdict = store.checkKeyProof(account.id, proof);
+    if (verdict === "mismatch") {
+      store.revokeToken(req.token!);
+      store.addAudit(account.id, "unlock-failed", { reason: "wrong key", ...clientInfo(req) });
+      adminLog("account.signin.wrong-key", "warn", req, { accountId: account.id, status: "403" });
+      return res.status(403).json({ ok: false, code: "wrong-key", message: "This passkey's key does not open the account's data." });
+    }
+    // An account from before 4.0 has no verifier yet: its first unlock sets it.
+    if (verdict === "unset") store.setKeyVerifier(account.id, proof);
+    store.unlockToken(req.token!);
+    hooks.onAuthenticated?.(account.id, "sign-in", clientInfo(req));
+    store.addAudit(account.id, "unlocked", { ...clientInfo(req), first: verdict === "unset" });
+    adminLog("account.signin.unlocked", "notice", req, { accountId: account.id, status: "ok", detail: { firstVerifier: verdict === "unset" } });
+    res.json({ ok: true, account: summaryOf(account.id, tokenHash(req.token!)) });
   });
 
   /* ------------------------------------------------------- authenticated */
 
-  app.get("/api/account/me", requireAccount, (req: AuthedRequest, res: Response) => {
-    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
+  app.get("/api/account/me", requireSession, (req: AuthedRequest, res: Response) => {
+    res.json({ ok: true, locked: store.isLocked(req.token!), account: summaryOf(req.account!.id, tokenHash(req.token!)) });
   });
 
   app.get("/api/account/vault", requireAccount, (req: AuthedRequest, res: Response) => {
@@ -264,10 +360,10 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       const a = store.get(req.account!.id)!;
       store.addAudit(a.id, "vault-save", { profileBytes: a.vault.profileBytes, chatBytes: a.vault.chatBytes, messages: a.vault.messages });
     }
-    res.json({ ok: true, account: store.summary(req.account!.id) });
+    res.json({ ok: true, account: summaryOf(req.account!.id) });
   });
 
-  app.post("/api/account/event", requireAccount, (req: AuthedRequest, res: Response) => {
+  app.post("/api/account/event", requireSession, (req: AuthedRequest, res: Response) => {
     const body = (req.body || {}) as { kind?: unknown; meta?: unknown };
     const kind = typeof body.kind === "string" ? body.kind : "";
     if (!CLIENT_EVENTS.has(kind)) return res.status(400).json({ ok: false, message: "Unknown event kind." });
@@ -281,6 +377,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       }
     }
     store.addAudit(req.account!.id, kind, meta);
+    adminLog(`account.client.${kind}`, PROBLEM_EVENTS.has(kind) ? "warn" : "info", req, { accountId: req.account!.id, detail: meta });
     res.json({ ok: true });
   });
 
@@ -296,7 +393,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     res.json({ ok: true });
   });
 
-  app.post("/api/account/signout", requireAccount, (req: AuthedRequest, res: Response) => {
+  app.post("/api/account/signout", requireSession, (req: AuthedRequest, res: Response) => {
     const everywhere = ((req.body || {}) as { everywhere?: unknown }).everywhere === true;
     if (everywhere) store.revokeAll(req.account!.id);
     else store.revokeToken(req.token!);
@@ -322,7 +419,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     return {
       challenge,
       rp: { id: policy.rpId, name: "M5cet" },
-      user: { id: Buffer.from(account.id).toString("base64url"), name: account.userName, displayName: account.userName },
+      user: { id: userHandleFor(account.id), name: usernameOf(account), displayName: `M5cet · ${usernameOf(account)}` },
       pubKeyCredParams: SUPPORTED_ALGS.map((alg) => ({ type: "public-key", alg })),
       authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
       excludeCredentials: all.map((id) => ({ type: "public-key", id })),
@@ -346,7 +443,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     const added = store.addCredential(req.account!.id, r.credential, body.wrapped ?? { iv: "", ct: "" }, String(body.label ?? ""));
     if (!added.ok) return res.status(409).json({ ok: false, message: added.reason });
     hooks.onAuthenticated?.(req.account!.id, "register", { ...clientInfo(req), via: "add-passkey" });
-    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
+    res.json({ ok: true, account: summaryOf(req.account!.id, tokenHash(req.token!)) });
   });
 
   // The root sealed for one of the account's own passkeys (to confirm with
@@ -361,7 +458,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     const removed = store.removeCredential(req.account!.id, String(req.params.id));
     if (!removed.ok) return res.status(400).json({ ok: false, message: removed.reason });
     hooks.onAuthenticated?.(req.account!.id, "register", { via: "remove-passkey" });
-    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
+    res.json({ ok: true, account: summaryOf(req.account!.id, tokenHash(req.token!)) });
   });
 
   /* ------------------------------------------------------------ recovery */
@@ -376,12 +473,12 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     const body = (req.body || {}) as { id?: unknown; verifier?: unknown; wrapped?: { iv: string; ct: string } };
     const r = store.setRecovery(req.account!.id, { id: String(body.id ?? ""), verifier: String(body.verifier ?? ""), wrapped: body.wrapped ?? { iv: "", ct: "" } });
     if (!r.ok) return res.status(400).json({ ok: false, message: r.reason });
-    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
+    res.json({ ok: true, account: summaryOf(req.account!.id, tokenHash(req.token!)) });
   });
 
   app.delete("/api/account/recovery", requireAccount, (req: AuthedRequest, res: Response) => {
     store.clearRecovery(req.account!.id);
-    res.json({ ok: true, account: store.summary(req.account!.id, tokenHash(req.token!)) });
+    res.json({ ok: true, account: summaryOf(req.account!.id, tokenHash(req.token!)) });
   });
 
   app.post("/api/account/recovery/start", recoveryLimiter, (req: Request, res: Response) => {
@@ -400,7 +497,8 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       ok: true,
       ticket,
       wrapped: store.wrappedFor(account.id, "recovery"),
-      userName: account.userName,
+      userName: usernameOf(account),
+      username: usernameOf(account),
       publicKey: creationOptions(req, account, challenges.issue("recover", account.id)),
     });
   });
@@ -419,9 +517,10 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     if (!added.ok) return res.status(409).json({ ok: false, message: added.reason });
     store.recordSignIn(ticket.accountId, r.credential.signCount, { ...clientInfo(req), via: "recovery" }, Date.now(), r.credential.credentialId);
     store.addAudit(ticket.accountId, "recovered", clientInfo(req));
-    hooks.onAuthenticated?.(ticket.accountId, "sign-in", { ...clientInfo(req), via: "recovery" });
-    const token = store.issueToken(ticket.accountId, Date.now(), clientInfo(req));
-    res.json({ ok: true, token, account: store.summary(ticket.accountId, tokenHash(token)) });
+    // The browser opened the root with the code; it proves the key next.
+    const token = store.issueToken(ticket.accountId, Date.now(), { ...clientInfo(req), locked: true });
+    adminLog("account.recovered", "notice", req, { accountId: ticket.accountId, status: "locked" });
+    res.json({ ok: true, token, locked: true, account: summaryOf(ticket.accountId, tokenHash(token)) });
   });
 
   /* -------------------------------------------------- sessions, identity */

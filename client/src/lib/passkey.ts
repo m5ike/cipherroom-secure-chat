@@ -20,6 +20,14 @@
 // for a recovery code) the root is sealed under a key only that passkey's
 // PRF output (or that code) produces, and the server stores the sealed blob
 // (sealRoot / openRoot). Existing accounts keep working unchanged.
+//
+// The global key (4.0): everything above is derived from the root with HKDF,
+// so the same passkey always yields the same keys — nothing has to be stored
+// to get them back. A third derivation, the KEY PROOF, is what the server
+// checks at every sign-in: it keeps SHA-256(proof) from the registration and
+// compares. The proof tells nothing about the vault or database key
+// (different HKDF info), but a wrong one says "this passkey cannot open this
+// account's data" before anything is decrypted.
 
 import { toBase64, fromBase64 } from "./crypto";
 
@@ -32,6 +40,7 @@ const HKDF_INFO = new Uint8Array(enc.encode("m5cet:profile:v1"));
 // user's SQLCipher database on the server, so unlike the vault key it does
 // leave the browser. Separate info string = neither key tells you the other.
 const DB_INFO = new Uint8Array(enc.encode("m5cet:userdb:v1"));
+const PROOF_INFO = new Uint8Array(enc.encode("m5cet:key-proof:v1"));
 
 type PrfExtension = { prf?: { eval?: { first: BufferSource } } };
 type PrfResults = { prf?: { enabled?: boolean; results?: { first?: ArrayBuffer } } };
@@ -108,6 +117,13 @@ async function deriveDatabaseKey(secret: Uint8Array): Promise<string> {
   const base = await crypto.subtle.importKey("raw", new Uint8Array(secret), "HKDF", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: PRF_SALT, info: DB_INFO }, base, 256);
   return Array.from(new Uint8Array(bits), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** The key proof (base64url, 43 characters) the server checks at sign-in. */
+export async function deriveKeyProof(root: Uint8Array): Promise<string> {
+  const base = await crypto.subtle.importKey("raw", new Uint8Array(root), "HKDF", false, ["deriveBits"]);
+  const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: PRF_SALT, info: PROOF_INFO }, base, 256));
+  return toBase64(bits).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 export async function sealProfile<T>(profile: T, key: CryptoKey): Promise<string> {

@@ -16,6 +16,14 @@ import { loadCachedClientConfig } from "./lib/client-config-client";
 // OS, browser) so the very first paint already uses the optimised layout,
 // track the visual viewport (on-screen keyboard), and mount the user's
 // saved Edit Mode styles.
+// The version check's fix reloads with ?refresh=…: it has done its job.
+{
+  const url = new URL(window.location.href);
+  if (url.searchParams.has("refresh")) {
+    url.searchParams.delete("refresh");
+    window.history.replaceState(null, "", url.pathname + url.search + url.hash);
+  }
+}
 const startPrefs = loadPreferences();
 applyDeviceAttributes(deviceInfo(), startPrefs.deviceLayout);
 // The template before the first paint: no flash of the default one.

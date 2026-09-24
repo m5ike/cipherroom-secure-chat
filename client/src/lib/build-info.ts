@@ -8,10 +8,16 @@
 declare const __APP_VERSION__: string;
 declare const __APP_BUILD__: string;
 declare const __APP_BUILT_AT__: string;
+declare const __APP_LIBS__: Record<string, string>;
+declare const __APP_PROTOCOL__: number;
 
 export const APP_VERSION: string = typeof __APP_VERSION__ !== "undefined" ? __APP_VERSION__ : "dev";
 export const APP_BUILD: string = typeof __APP_BUILD__ !== "undefined" ? __APP_BUILD__ : "dev";
 export const APP_BUILT_AT: string = typeof __APP_BUILT_AT__ !== "undefined" ? __APP_BUILT_AT__ : "";
+/** The libraries bundled into this build, with their versions (4.0). */
+export const APP_LIBS: Record<string, string> = typeof __APP_LIBS__ !== "undefined" ? __APP_LIBS__ : {};
+/** The signaling protocol this build speaks. */
+export const APP_PROTOCOL: number = typeof __APP_PROTOCOL__ !== "undefined" ? __APP_PROTOCOL__ : 2;
 
 export function buildLabel(): string {
   return `M5cet ${APP_VERSION} · ${APP_BUILD === "dev" ? "dev" : `build ${APP_BUILD}`}`;

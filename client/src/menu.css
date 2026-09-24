@@ -1,0 +1,97 @@
+/* 4.0 — the menu built in the console's Menu builder (lib/menu-config.ts).
+   An unstyled node gets none of these classes, so the default menu looks
+   exactly like it always did. A node's resting style is inline CSS
+   (lib/menu-style.ts); each state (hover, click, keyboard focus, current)
+   is a class plus a custom property read here. */
+
+/* ---------- Icons ---------- */
+.mb-ic svg { color: var(--mb-icon); }
+.mb-is svg { width: var(--mb-icon-size) !important; height: var(--mb-icon-size) !important; }
+.mb-icon-top { flex-direction: column; }
+.mb-icon-end { flex-direction: row-reverse; justify-content: flex-end; }
+.mb-icon-none svg, .mb-icon-none .menu-icon { display: none !important; }
+.mb-ellipsis, .mb-ellipsis > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mb-inline-icon { display: inline-block; width: 1em; height: 1em; vertical-align: -0.125em; }
+
+/* ---------- The trigger (☰) with a text ---------- */
+.menu-trigger--text { width: auto !important; padding-inline: 0.75rem; gap: 0.5rem; }
+.menu-trigger__text { font-size: 0.875rem; font-weight: 600; white-space: nowrap; }
+
+/* ---------- Panel nodes ---------- */
+.menu-group-label__icon { display: inline-block; width: 0.875rem; height: 0.875rem; margin-inline-end: 0.375rem; vertical-align: -0.125rem; }
+.menu-badge {
+  margin-inline-start: auto; padding: 0.05rem 0.45rem; border-radius: 9999px; font-size: 0.68rem; font-weight: 700;
+  background: hsl(var(--primary) / 0.14); color: hsl(var(--primary));
+}
+.menu-badge + span { margin-inline-start: 0.5rem !important; }
+.menu-sep { list-style: none; height: 0; margin: 0.25rem 0.5rem; border: 0; border-top: 1px solid hsl(var(--border)); }
+.menu-sep--space { border-top: 0; height: 0.5rem; }
+.menu-sep--double { border-top-width: 3px; }
+footer > .menu-sep { margin-inline: 0; }
+.menu-html-row { padding: 0.25rem 0.75rem; }
+.menu-special { padding: 0.25rem; }
+.menu-special > .menu-quick__btn, .menu-special > .menu-edit { width: 100%; }
+.menu-build-row { list-style: none; }
+.menu-user--inline { border-bottom: 0; margin: 0; padding: 0 0.25rem; }
+.menu-account.is-on { border-color: hsl(var(--primary) / 0.5); }
+.menu-footer > * + * { margin-top: 0.375rem; }
+.menu-footer > .menu-build { margin-top: 0.4rem; }
+
+/* ---------- HTML blocks ---------- */
+.menu-html { font-size: 0.8125rem; line-height: 1.4; color: hsl(var(--foreground)); overflow-wrap: anywhere; }
+.menu-html a { color: hsl(var(--primary)); text-decoration: underline; }
+.menu-html button, .menu-html [data-action] { cursor: pointer; }
+.menu-html button {
+  display: inline-flex; align-items: center; gap: 0.35rem; min-height: 2rem; padding: 0 0.6rem; border-radius: 0.5rem;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--background)); font: inherit; color: inherit;
+}
+.menu-html button:hover { background: hsl(var(--accent)); }
+.menu-html button:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.menu-html img { max-width: 100%; height: auto; }
+.menu-html small { color: hsl(var(--muted-foreground)); }
+.menu-html--inline { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.75rem; max-width: 16rem; }
+.menu-html.is-error { color: hsl(var(--destructive)); font: 0.72rem var(--font-mono); }
+
+/* hover */
+.mb-hover-color:hover { color: var(--mb-hover-color) !important; }
+.mb-hover-bg:hover { background: var(--mb-hover-bg) !important; }
+.mb-hover-icon:hover svg { color: var(--mb-hover-icon) !important; }
+.mb-hover-border:hover { border-color: var(--mb-hover-border) !important; }
+.mb-hover-weight:hover { font-weight: var(--mb-hover-weight) !important; }
+.mb-hover-underline:hover { text-decoration: var(--mb-hover-underline) !important; }
+.mb-hover-opacity:hover { opacity: var(--mb-hover-opacity) !important; }
+.mb-hover-scale:hover { transform: scale(var(--mb-hover-scale)) !important; }
+.mb-hover-shadow:hover { box-shadow: var(--mb-hover-shadow) !important; }
+
+/* active */
+.mb-active-color:active { color: var(--mb-active-color) !important; }
+.mb-active-bg:active { background: var(--mb-active-bg) !important; }
+.mb-active-icon:active svg { color: var(--mb-active-icon) !important; }
+.mb-active-border:active { border-color: var(--mb-active-border) !important; }
+.mb-active-weight:active { font-weight: var(--mb-active-weight) !important; }
+.mb-active-underline:active { text-decoration: var(--mb-active-underline) !important; }
+.mb-active-opacity:active { opacity: var(--mb-active-opacity) !important; }
+.mb-active-scale:active { transform: scale(var(--mb-active-scale)) !important; }
+.mb-active-shadow:active { box-shadow: var(--mb-active-shadow) !important; }
+
+/* focus */
+.mb-focus-color:focus-visible { color: var(--mb-focus-color) !important; }
+.mb-focus-bg:focus-visible { background: var(--mb-focus-bg) !important; }
+.mb-focus-icon:focus-visible svg { color: var(--mb-focus-icon) !important; }
+.mb-focus-border:focus-visible { border-color: var(--mb-focus-border) !important; }
+.mb-focus-weight:focus-visible { font-weight: var(--mb-focus-weight) !important; }
+.mb-focus-underline:focus-visible { text-decoration: var(--mb-focus-underline) !important; }
+.mb-focus-opacity:focus-visible { opacity: var(--mb-focus-opacity) !important; }
+.mb-focus-scale:focus-visible { transform: scale(var(--mb-focus-scale)) !important; }
+.mb-focus-shadow:focus-visible { box-shadow: var(--mb-focus-shadow) !important; }
+
+/* current */
+.mb-current-color[aria-current="page"], .mb-current-color.is-on, .mb-current-color[aria-checked="true"] { color: var(--mb-current-color) !important; }
+.mb-current-bg[aria-current="page"], .mb-current-bg.is-on, .mb-current-bg[aria-checked="true"] { background: var(--mb-current-bg) !important; }
+.mb-current-icon[aria-current="page"] svg, .mb-current-icon.is-on svg, .mb-current-icon[aria-checked="true"] svg { color: var(--mb-current-icon) !important; }
+.mb-current-border[aria-current="page"], .mb-current-border.is-on, .mb-current-border[aria-checked="true"] { border-color: var(--mb-current-border) !important; }
+.mb-current-weight[aria-current="page"], .mb-current-weight.is-on, .mb-current-weight[aria-checked="true"] { font-weight: var(--mb-current-weight) !important; }
+.mb-current-underline[aria-current="page"], .mb-current-underline.is-on, .mb-current-underline[aria-checked="true"] { text-decoration: var(--mb-current-underline) !important; }
+.mb-current-opacity[aria-current="page"], .mb-current-opacity.is-on, .mb-current-opacity[aria-checked="true"] { opacity: var(--mb-current-opacity) !important; }
+.mb-current-scale[aria-current="page"], .mb-current-scale.is-on, .mb-current-scale[aria-checked="true"] { transform: scale(var(--mb-current-scale)) !important; }
+.mb-current-shadow[aria-current="page"], .mb-current-shadow.is-on, .mb-current-shadow[aria-checked="true"] { box-shadow: var(--mb-current-shadow) !important; }

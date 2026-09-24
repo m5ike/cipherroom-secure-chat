@@ -5,6 +5,7 @@
 // from GET /api/client-config.
 
 import { isIconStyle, isThemeId, isToneChoice, THEME_IDS, type IconStyle, type ThemeId, type ToneChoice } from "./theme-catalog";
+import { sanitizeGroups, sanitizeModules, type GroupDef, type ModulesPolicy } from "./modules";
 
 export type ServerEntry = { id: string; label: string; url: string };
 
@@ -41,6 +42,10 @@ export type ClientConfig = {
   updatedAt: number;
   connections: ConnectionsPolicy;
   appearance: AppearancePolicy;
+  /** 4.0: which modules are on, and for which groups (modules.ts). */
+  modules: ModulesPolicy;
+  /** 4.0: the operator's own groups. Members only on the server and the console. */
+  groups: GroupDef[];
 };
 
 export const CLIENT_CONFIG_LIMITS = { maxProfiles: 200, logLimit: 2000, servers: 20 } as const;
@@ -64,6 +69,8 @@ export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
     defaultIcons: "theme",
     lockTheme: false,
   },
+  modules: {},
+  groups: [],
 };
 
 /**
@@ -116,6 +123,7 @@ export function sanitizeClientConfig(raw: unknown): ClientConfig {
     servers.push({ id, label: label(e.label) || new URL(url).host, url });
   }
 
+  const groups = sanitizeGroups(r.groups);
   const themes = Array.isArray(a.themes) ? [...new Set(a.themes.filter(isThemeId))] : [];
   let defaultTheme: ThemeId = isThemeId(a.defaultTheme) ? a.defaultTheme : d.appearance.defaultTheme;
   if (themes.length > 0 && !themes.includes(defaultTheme)) defaultTheme = themes[0];
@@ -139,7 +147,14 @@ export function sanitizeClientConfig(raw: unknown): ClientConfig {
       defaultIcons: a.defaultIcons === "theme" || isIconStyle(a.defaultIcons) ? a.defaultIcons : d.appearance.defaultIcons,
       lockTheme: bool(a.lockTheme, d.appearance.lockTheme),
     },
+    modules: sanitizeModules(r.modules, groups),
+    groups,
   };
+}
+
+/** What every client may read: the groups without their members. */
+export function publicClientConfig(config: ClientConfig): ClientConfig {
+  return { ...config, groups: config.groups.map((g) => ({ id: g.id, label: g.label, members: [] })) };
 }
 
 /** Whether a connection may use `server` ("" = this server) under the policy. */

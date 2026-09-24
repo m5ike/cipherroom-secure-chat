@@ -53,14 +53,20 @@ const WRAPPED = { iv: "aXZpdml2aXZpdml2", ct: "c2VhbGVkLXJvb3Qtc2VhbGVkLXJvb3Q="
 
 async function register(a = auth()) {
   const opts = await call("POST", "/api/account/register/options", { userName: "Alice" });
-  const r = await call("POST", "/api/account/register/verify", { credential: a.register(opts.json.publicKey.challenge) });
+  const r = await call("POST", "/api/account/register/verify", { credential: a.register(opts.json.publicKey.challenge), keyProof: KEY_PROOF });
   expect(r.status).toBe(200);
   return { a, token: r.json.token as string, id: r.json.account.id as string };
 }
 
+/** The global key's proof the browser derives from the account root (4.0). */
+const KEY_PROOF = "k".repeat(43);
+
+/** Signs in and proves the global key, as the browser does. */
 async function signIn(a: FakeAuthenticator) {
   const opts = await call("POST", "/api/account/signin/options");
-  return call("POST", "/api/account/signin/verify", { credential: a.assert(opts.json.publicKey.challenge) });
+  const r = await call("POST", "/api/account/signin/verify", { credential: a.assert(opts.json.publicKey.challenge) });
+  if (r.status === 200 && r.json.token) await call("POST", "/api/account/unlock", { keyProof: KEY_PROOF }, r.json.token);
+  return r;
 }
 
 describe("several passkeys", () => {

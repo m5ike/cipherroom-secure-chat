@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from "react";
 import {
-  BarChart3, Check, Eye, EyeOff, KeyRound, Pencil, Plug, PlugZap, Plus, RefreshCw, Save, Server, Settings2, Share2, Star, Trash2, Undo2,
+  BarChart3, Check, Eye, EyeOff, Pencil, Plug, PlugZap, Plus, RefreshCw, Save, Server, Settings2, Share2, Star, Trash2, Undo2,
 } from "lucide-react";
 import { t, tf, type Lang } from "../lib/i18n";
 import { formatBytes, formatFullDate, formatLogTime } from "../lib/format";
@@ -17,6 +17,7 @@ import {
 } from "../lib/connections";
 import type { ChatRetention } from "../lib/chat-history";
 import { SimpleModal } from "./SimpleModal";
+import { NeedSignIn } from "./NeedSignIn";
 import { ShareConnection } from "./SharePanel";
 // The switches, segmented controls and hints share the Appearance screen's styles.
 import "../appearance.css";
@@ -44,6 +45,8 @@ export type ConnectionsPanelProps = {
   onEnableServerMode: () => void;
   /** Open straight on a new connection (the Room window's "Create a connection"). */
   startWith?: "new";
+  /** 4.0: the Invitations module is on for this user (else no Share button). */
+  canShare?: boolean;
 };
 
 type View = { kind: "list" } | { kind: "edit"; id?: string; draft?: ProfileInput } | { kind: "detail"; id: string } | { kind: "settings" };
@@ -86,18 +89,27 @@ export function ConnectionsPanel(props: ConnectionsPanelProps) {
   const [sharing, setSharing] = useState<string | null>(null);
   const shared = sharing ? state.profiles.find((p) => p.id === sharing) ?? null : null;
 
-  if (!eligible.enabled || !eligible.signedIn || !eligible.serverMode) {
+  // 4.0: saved connections belong to a passkey account; signing in happens
+  // in the Connection window only.
+  if (eligible.enabled && !eligible.signedIn) {
+    return (
+      <div className="cx" data-testid="connections-panel">
+        <div data-testid="connections-need">
+          <NeedSignIn lang={lang} onOpen={props.onSignIn} text={t(lang, "cx.need.account")} testId="cx-need" />
+        </div>
+      </div>
+    );
+  }
+  if (!eligible.enabled || !eligible.serverMode) {
     return (
       <div className="cx" data-testid="connections-panel">
         <div className="cx-card cx-need" data-testid="connections-need">
           <h3 className="cx-need__title">{t(lang, eligible.enabled ? "cx.need.title" : "cx.need.disabled")}</h3>
           {eligible.enabled ? (
             <>
-              {!eligible.signedIn ? <p>{t(lang, "cx.need.account")}</p> : null}
-              {!eligible.serverMode ? <p>{t(lang, "cx.need.server")}</p> : null}
+              <p>{t(lang, "cx.need.server")}</p>
               <div className="cx-actions">
-                {!eligible.serverMode ? <button type="button" className="cx-btn" onClick={props.onEnableServerMode} data-testid="cx-enable-server"><Server className="h-4 w-4" />{t(lang, "cx.enableServer")}</button> : null}
-                {!eligible.signedIn ? <button type="button" className="cx-btn cx-btn--primary" onClick={props.onSignIn} data-testid="cx-sign-in"><KeyRound className="h-4 w-4" />{t(lang, "cx.signIn")}</button> : null}
+                <button type="button" className="cx-btn cx-btn--primary" onClick={props.onEnableServerMode} data-testid="cx-enable-server"><Server className="h-4 w-4" />{t(lang, "cx.enableServer")}</button>
               </div>
             </>
           ) : null}
@@ -179,7 +191,7 @@ function ListView(props: ConnectionsPanelProps & { onEdit: (id?: string, draft?:
                 <button type="button" className="cx-icon" title={t(lang, "cx.edit")} aria-label={t(lang, "cx.edit")} onClick={() => props.onEdit(p.id)} data-testid="cx-edit"><Pencil className="h-4 w-4" /></button>
                 <button type="button" className="cx-icon" title={t(lang, "cx.details")} aria-label={t(lang, "cx.details")} onClick={() => props.onDetail(p.id)} data-testid="cx-details"><BarChart3 className="h-4 w-4" /></button>
                 <button type="button" className="cx-icon" title={t(lang, "cx.makeDefault")} aria-label={t(lang, "cx.makeDefault")} aria-pressed={isDefault} onClick={() => props.onDefault(isDefault ? null : p.id)} data-testid="cx-make-default"><Star className="h-4 w-4" /></button>
-                <button type="button" className="cx-icon" title={t(lang, "cx.share")} aria-label={t(lang, "cx.share")} onClick={() => props.onShare(p.id)} data-testid="cx-share"><Share2 className="h-4 w-4" /></button>
+                {props.canShare !== false ? <button type="button" className="cx-icon" title={t(lang, "cx.share")} aria-label={t(lang, "cx.share")} onClick={() => props.onShare(p.id)} data-testid="cx-share"><Share2 className="h-4 w-4" /></button> : null}
                 <button type="button" className="cx-icon cx-icon--danger" title={t(lang, "cx.delete")} aria-label={t(lang, "cx.delete")} data-testid="cx-delete"
                   onClick={() => { if (window.confirm(tf(lang, "cx.delete.confirm", { name: p.label }))) props.onDelete(p.id); }}>
                   <Trash2 className="h-4 w-4" />

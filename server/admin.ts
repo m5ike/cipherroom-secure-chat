@@ -83,6 +83,7 @@ async function forward(req: express.Request, res: express.Response, path: string
   }
 }
 
+app.use("/api/admin/menu-config", express.json({ limit: "1mb" }));
 app.use(express.json({ limit: "256kb" }));
 // The console's API: live state is in the main service.
 app.use("/api/admin", (req, res) => { void forward(req, res, req.originalUrl); });

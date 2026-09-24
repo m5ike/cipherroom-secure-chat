@@ -142,7 +142,8 @@ describe("passkey account and the away relay", () => {
 
     await alice.page.getByTestId("account-register").click();
     await alice.page.getByTestId("signed-in-badge").waitFor({ state: "visible", timeout: 20_000 });
-    expect(await alice.page.getByTestId("signed-in-badge").innerText()).toMatch(/alice/i);
+    // 4.0: the badge shows the username the server gave the account.
+    expect(await alice.page.getByTestId("signed-in-badge").innerText()).toMatch(/[a-z]+-[a-z]+-[a-z0-9]{4,6}/);
 
     // The server-side option is now selectable, and it is the one in use.
     const serverChecked = await alice.page.locator('[data-testid="retention-server"] input').isChecked();

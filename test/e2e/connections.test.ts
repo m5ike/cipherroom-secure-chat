@@ -80,10 +80,13 @@ describe("saved connections", () => {
     alice = await tab(true);
     await openMenuEntry(alice.page, "btn-connections");
     await alice.page.getByTestId("connections-need").waitFor({ timeout: 10_000 });
-    // Server-enhanced first, then an account (from the Connection panel).
-    await alice.page.getByTestId("cx-enable-server").click();
-    await alice.page.getByTestId("cx-sign-in").click();
+    // 4.0: signed out there is only the way to the Connection window — the
+    // one place to sign in; an account switches Server-enhanced on.
+    expect(await alice.page.getByTestId("cx-enable-server").count()).toBe(0);
+    await alice.page.getByTestId("cx-need-open").click();
     await alice.page.getByTestId("account-register").click();
+    await alice.page.getByTestId("signin-done").waitFor({ timeout: 20_000 });
+    expect(await alice.page.locator('[data-testid="signin-steps"] [data-state="fail"]').count()).toBe(0);
     await alice.page.getByTestId("signed-in-badge").waitFor({ state: "visible", timeout: 20_000 });
     await alice.page.keyboard.press("Escape");
     await openMenuEntry(alice.page, "btn-connections");

@@ -14,9 +14,16 @@
 // come from the account root (see passkey.ts); any passkey or the code opens
 // it. At sign-in the account also certifies this device's signing key
 // (identity.ts), so peers recognise the account on every device.
+//
+// 4.0: the server names the account (a unique username, its primary key)
+// and a sign-in is a checked sequence — each step reported to the caller
+// (the Connection window shows them) and, when one fails, to the server's
+// log: the passkey is known → the global key matches (key proof) → the
+// user's database opens with it → the vault decrypts. Only then is the user
+// signed in; a failure signs the half-open session out again.
 
 import {
-  assertPasskey, confirmWithPasskey, createPasskey, deriveAccountKeys, openProfile, openRoot, passkeySupported, sealProfile, sealRoot,
+  assertPasskey, confirmWithPasskey, createPasskey, deriveAccountKeys, deriveKeyProof, openProfile, openRoot, passkeySupported, sealProfile, sealRoot,
   WRAP_INFO, type SealedRoot, type ServerCreationOptions, type ServerRequestOptions,
 } from "./passkey";
 import { accountSigningKey, certifyDevice, ed25519Supported, loadIdentity, saveAttestation } from "./identity";
@@ -29,7 +36,13 @@ import {
 export type AccountAudit = { at: number; kind: string; meta?: Record<string, string | number | boolean> };
 
 export type AccountSummary = {
+  /** The account's primary key: its username (4.0), or an older account's id. */
   id: string;
+  /** 4.0: the unique username the server gave the account (= id). */
+  username?: string;
+  /** Groups the account belongs to ("user" and the operator's own ones). */
+  groups?: string[];
+  keyVerified?: boolean;
   credentialId: string;
   alg: number;
   userName: string;
@@ -139,9 +152,52 @@ async function api<T>(path: string, init: RequestInit = {}, token?: string): Pro
     },
   });
   const text = await res.text();
-  const json = text ? JSON.parse(text) as Record<string, unknown> : {};
-  if (!res.ok) throw new Error(typeof json.message === "string" ? json.message : `Server error ${res.status}.`);
+  let json: Record<string, unknown> = {};
+  try { json = text ? JSON.parse(text) as Record<string, unknown> : {}; } catch { /* not JSON: an HTML error page */ }
+  if (!res.ok) {
+    throw Object.assign(new Error(typeof json.message === "string" ? json.message : `Server error ${res.status}.`), {
+      status: res.status, code: typeof json.code === "string" ? json.code : "",
+    });
+  }
   return json as T;
+}
+
+/* ------------------------------------------------------------- sign-in steps */
+
+/** Why a sign-in or registration stopped. */
+export type AccountErrorCode =
+  | "unknown-passkey"   // the server has no account for this passkey → register
+  | "rejected"          // the signature (or user handle) did not verify
+  | "wrong-key"         // registered, but its key does not open the account's data
+  | "database"          // the user's encrypted database will not open with the key
+  | "vault"             // the stored vault does not decrypt with the key
+  | "no-prf"            // the authenticator cannot produce a key
+  | "cancelled"         // the user closed the passkey prompt
+  | "unavailable"       // accounts are not offered / network
+  | "server";
+
+export class AccountError extends Error {
+  constructor(readonly code: AccountErrorCode, message: string) {
+    super(message);
+    this.name = "AccountError";
+  }
+}
+
+export type SignInStep = "passkey" | "key" | "database" | "vault";
+export type StepState = "run" | "ok" | "warn" | "fail";
+/** Told as each step starts and ends (the Connection window lists them). */
+export type StepReporter = (step: SignInStep, state: StepState, detail?: string) => void;
+
+function asAccountError(err: unknown, fallback: AccountErrorCode = "server"): AccountError {
+  if (err instanceof AccountError) return err;
+  const e = err as { name?: string; code?: string; status?: number; message?: string };
+  if (e?.name === "NotAllowedError" || e?.name === "AbortError") return new AccountError("cancelled", e.message || "cancelled");
+  if (e?.name === "PasskeyNoPrfError" || /PRF/i.test(e?.message ?? "")) return new AccountError("no-prf", e.message ?? "no PRF");
+  const known: AccountErrorCode[] = ["unknown-passkey", "rejected", "wrong-key"];
+  if (e?.code && (known as string[]).includes(e.code)) return new AccountError(e.code as AccountErrorCode, e.message ?? e.code);
+  if (e?.status === 404) return new AccountError("unknown-passkey", e.message ?? "unknown passkey");
+  if (e?.status === undefined && e?.name === "TypeError") return new AccountError("unavailable", e.message ?? "network");
+  return new AccountError(fallback, e?.message ?? String(err));
 }
 
 /* -------------------------------------------------------------- lifecycle */
@@ -172,44 +228,133 @@ export function isSignedIn(): boolean {
  *  account is created: an account whose data nobody could ever decrypt is
  *  worse than none, and this way a device without PRF leaves nothing
  *  behind on the server. */
-export async function registerAccount(userName: string): Promise<AccountSummary> {
-  const options = await api<{ publicKey: ServerCreationOptions }>("/api/account/register/options", {
-    method: "POST",
-    body: JSON.stringify({ userName }),
-  });
-  const { response, key, databaseKey, secret } = await createPasskey(options.publicKey);
-  const result = await api<{ token: string; account: AccountSummary }>("/api/account/register/verify", {
-    method: "POST",
-    body: JSON.stringify({ credential: response }),
-  });
+export async function registerAccount(report: StepReporter = () => undefined): Promise<AccountSummary> {
+  let created: Awaited<ReturnType<typeof createPasskey>>;
+  let result: { token: string; account: AccountSummary };
+  report("passkey", "run");
+  try {
+    // 4.0: the server picks the username and puts it into the passkey.
+    const options = await api<{ publicKey: ServerCreationOptions; username: string }>("/api/account/register/options", { method: "POST", body: "{}" });
+    created = await createPasskey(options.publicKey);
+    // The first passkey's PRF output is the account root; the server keeps
+    // only the hash of the proof derived from it.
+    const keyProof = await deriveKeyProof(created.secret);
+    result = await api<{ token: string; account: AccountSummary }>("/api/account/register/verify", {
+      method: "POST",
+      body: JSON.stringify({ credential: created.response, keyProof }),
+    });
+  } catch (err) {
+    const e = asAccountError(err);
+    report("passkey", "fail", e.message);
+    throw e;
+  }
+  report("passkey", "ok", result.account.username ?? result.account.id);
+  report("key", "ok");
+  const { key, databaseKey, secret } = created;
   await adopt(result.token, result.account, key);
-  // The first passkey's PRF output is the account root.
   await attestDevice(secret);
   // Whatever this browser stored as an anonymous session becomes theirs.
-  const hadSession = Boolean(storageSessionId());
+  report("database", "run");
   await rememberDatabaseKey(databaseKey, key);
-  if (hadSession) await promoteSessionToAccount(databaseKey);
-  else await openUserDatabase(databaseKey);
+  if (storageSessionId()) {
+    const moved = await promoteSessionToAccount(databaseKey);
+    report("database", moved ? "ok" : "warn");
+  } else {
+    const opened = await openUserDatabase(databaseKey);
+    report("database", opened.ok ? "ok" : "warn", opened.ok ? undefined : opened.message);
+  }
+  report("vault", "ok");
   return result.account;
 }
 
-/** Signs in with an existing passkey (the browser picks the credential). */
-export async function signInWithPasskey(): Promise<AccountSummary> {
-  const options = await api<{ publicKey: ServerRequestOptions }>("/api/account/signin/options", { method: "POST", body: JSON.stringify({}) });
-  const signed = await assertPasskey(options.publicKey);
-  const result = await api<{ token: string; account: AccountSummary; wrapped?: SealedRoot | null }>("/api/account/signin/verify", {
-    method: "POST",
-    body: JSON.stringify({ credential: signed.response }),
-  });
-  // A passkey added later brings the root sealed for it; the first one IS it.
-  const root = result.wrapped ? await openRoot(result.wrapped, signed.secret, WRAP_INFO.passkey) : signed.secret;
-  const { key, databaseKey } = result.wrapped ? await deriveAccountKeys(root) : { key: signed.key, databaseKey: signed.databaseKey };
-  await adopt(result.token, result.account, key);
+/**
+ * Signs in with an existing passkey (the browser picks the credential), in
+ * checked steps:
+ *
+ *   passkey   the server knows the passkey and its signature verifies
+ *             (else: "unknown-passkey" → register, or "rejected")
+ *   key       the global key derived from it matches the account (key
+ *             proof against the server's verifier) — the session unlocks
+ *   database  the user's encrypted database opens with the database key
+ *   vault     what the vault holds decrypts with the vault key
+ *
+ * A failed step after the passkey signs the session out again and tells the
+ * server's log why; the caller gets an AccountError.
+ */
+export async function signInWithPasskey(report: StepReporter = () => undefined): Promise<AccountSummary> {
+  report("passkey", "run");
+  let signed: Awaited<ReturnType<typeof assertPasskey>>;
+  let result: { token: string; account: AccountSummary; wrapped?: SealedRoot | null };
+  try {
+    const options = await api<{ publicKey: ServerRequestOptions }>("/api/account/signin/options", { method: "POST", body: JSON.stringify({}) });
+    signed = await assertPasskey(options.publicKey);
+    result = await api<{ token: string; account: AccountSummary; wrapped?: SealedRoot | null }>("/api/account/signin/verify", {
+      method: "POST",
+      body: JSON.stringify({ credential: signed.response }),
+    });
+  } catch (err) {
+    const e = asAccountError(err);
+    report("passkey", "fail", e.message);
+    throw e;
+  }
+  report("passkey", "ok", result.account.username ?? result.account.id);
+
+  // The global key: a passkey added later brings the root sealed for it;
+  // the first one IS it. The server compares the proof derived from it.
+  report("key", "run");
+  let root: Uint8Array;
+  let keys: { key: CryptoKey; databaseKey: string };
+  try {
+    root = result.wrapped ? await openRoot(result.wrapped, signed.secret, WRAP_INFO.passkey) : signed.secret;
+    keys = result.wrapped ? await deriveAccountKeys(root) : { key: signed.key, databaseKey: signed.databaseKey };
+    const unlocked = await api<{ account: AccountSummary }>("/api/account/unlock", {
+      method: "POST",
+      body: JSON.stringify({ keyProof: await deriveKeyProof(root) }),
+    }, result.token);
+    result.account = unlocked.account;
+  } catch (err) {
+    // The server already ended the session on a wrong key; anything else ends it here.
+    const e = asAccountError(err, "wrong-key");
+    report("key", "fail", e.message);
+    await api("/api/account/event", { method: "POST", body: JSON.stringify({ kind: "signin-failed", meta: { step: "key", code: e.code } }) }, result.token).catch(() => undefined);
+    await api("/api/account/signout", { method: "POST", body: "{}" }, result.token).catch(() => undefined);
+    throw e;
+  }
+  report("key", "ok");
+  await adopt(result.token, result.account, keys.key);
   await attestDevice(root);
-  await rememberDatabaseKey(databaseKey, key);
+
   // The key opens the SQLCipher database on the server for this session.
-  if (storageSessionId()) await promoteSessionToAccount(databaseKey);
-  else await openUserDatabase(databaseKey);
+  report("database", "run");
+  await rememberDatabaseKey(keys.databaseKey, keys.key);
+  if (storageSessionId()) {
+    const moved = await promoteSessionToAccount(keys.databaseKey);
+    report("database", moved ? "ok" : "warn");
+  } else {
+    const opened = await openUserDatabase(keys.databaseKey);
+    if (!opened.ok && opened.fatal) {
+      report("database", "fail", opened.message);
+      await logAccountEvent("database-locked", { code: opened.code });
+      await signOutAccount();
+      throw new AccountError("database", opened.message);
+    }
+    report("database", opened.ok ? "ok" : "warn", opened.ok ? undefined : opened.message);
+  }
+
+  // The vault: whatever is stored must decrypt with this key.
+  report("vault", "run");
+  try {
+    const raw = await api<{ profile: { ct: string } | null; connections?: { ct: string } | null }>("/api/account/vault", {}, result.token);
+    if (raw.profile?.ct) await openProfile(raw.profile.ct, keys.key);
+    if (raw.connections?.ct) await openProfile(raw.connections.ct, keys.key);
+  } catch (err) {
+    const e = new AccountError("vault", (err as Error).message);
+    report("vault", "fail", e.message);
+    await logAccountEvent("decrypt-failed", { step: "signin" });
+    await signOutAccount();
+    throw e;
+  }
+  report("vault", "ok");
   return result.account;
 }
 
@@ -301,6 +446,11 @@ export async function recoverWithCode(code: string, label = "recovered"): Promis
     method: "POST",
     body: JSON.stringify({ ticket: started.ticket, credential: created.response, wrapped, label }),
   });
+  // The recovered root must still be the account's global key.
+  const unlocked = await api<{ account: AccountSummary }>("/api/account/unlock", {
+    method: "POST", body: JSON.stringify({ keyProof: await deriveKeyProof(root) }),
+  }, result.token).catch((err) => { throw asAccountError(err, "wrong-key"); });
+  result.account = unlocked.account;
   const { key, databaseKey } = await deriveAccountKeys(root);
   await adopt(result.token, result.account, key);
   await attestDevice(root);
@@ -333,7 +483,13 @@ export async function restoreSession(): Promise<AccountSummary | null> {
   const key = await recallKey(stored.accountId);
   if (!key) { dropToken(); return null; }
   try {
-    const me = await api<{ account: AccountSummary }>("/api/account/me", {}, stored.token);
+    const me = await api<{ account: AccountSummary; locked?: boolean }>("/api/account/me", {}, stored.token);
+    // A sign-in that never got past the key check is not a session to keep.
+    if (me.locked) {
+      await api("/api/account/signout", { method: "POST", body: "{}" }, stored.token).catch(() => undefined);
+      dropToken();
+      return null;
+    }
     session = { token: stored.token, accountId: stored.accountId, key, account: me.account };
     setStorageToken(stored.token);
     // The server keeps database keys in memory only, so after a restart it
@@ -402,7 +558,11 @@ export async function saveVault(patch: { profile?: unknown; chat?: ChatVaultPayl
 }
 
 /** Records what happened with the data on the server's audit trail. */
-export async function logAccountEvent(kind: "decrypt-ok" | "decrypt-failed" | "data-loaded" | "data-cleared" | "chat-restored", meta?: Record<string, string | number | boolean>): Promise<void> {
+export type AccountEventKind =
+  | "decrypt-ok" | "decrypt-failed" | "data-loaded" | "data-cleared" | "chat-restored"
+  | "signin-check" | "signin-complete" | "signin-failed" | "database-locked" | "version-mismatch";
+
+export async function logAccountEvent(kind: AccountEventKind, meta?: Record<string, string | number | boolean>): Promise<void> {
   if (!session) return;
   try { await api("/api/account/event", { method: "POST", body: JSON.stringify({ kind, meta }) }, session.token); } catch { /* best effort */ }
 }

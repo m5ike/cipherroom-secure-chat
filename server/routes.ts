@@ -62,7 +62,8 @@ import { sendWebPush } from "./push";
 import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
-import { registerAdminClientConfigRoutes, registerClientConfigRoutes } from "./client-config";
+import { accountGroups, registerAdminClientConfigRoutes, registerClientConfigRoutes, requireModule } from "./client-config";
+import { registerAdminMenuConfigRoutes, registerMenuConfigRoutes } from "./menu-config";
 import { buildInfo } from "./build-info";
 import { turnAnswer } from "./turn";
 import { clusterBus } from "./cluster/bus";
@@ -107,6 +108,16 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // 4.0: modules the operator switched off (or keeps from a user's groups)
+  // are refused here too — before the routes that serve them.
+  const gated: Array<[string, string]> = [
+    ["/api/ai/complete", "ai"], ["/api/speech/tts", "speech"], ["/api/speech/stt", "speech"],
+    ["/api/telephony/sms", "telephony"], ["/api/telephony/call", "telephony"],
+    ["/api/share/create", "invites"], ["/api/push/subscribe", "notifications"], ["/api/push/test", "notifications"],
+    ["/api/account/push", "notifications"],
+  ];
+  for (const [path, module] of gated) app.use(path, requireModule(module));
+
   // Invite links (split-key, code-gated) and the Clear & Quit landing page.
   registerShareRoutes(app);
   registerGoodbyeRoute(app);
@@ -179,6 +190,7 @@ export async function registerRoutes(
   // the user's database so the file is opaque again. (Open sockets learn
   // it from the store's revoke event — see SignalingHub.onRevoke.)
   registerAccountRoutes(app, accountStore, {
+    groupsFor: accountGroups,
     onSignOut: (accountId) => {
       // (The database lock follows the revoked token — see onRevoke above.)
       signaling.relay.forget(accountId);
@@ -216,11 +228,12 @@ export async function registerRoutes(
   };
   registerAdminApi(app, adminProviders);
   // The addons the operator switches on (saved connections, GUI templates).
+  registerAdminMenuConfigRoutes(app);
   registerAdminClientConfigRoutes(app, () => {
     const all = accountStore.all();
     const withConnections = all.filter((a) => (a.vault.connections ?? 0) > 0);
     return { accounts: all.length, withConnections: withConnections.length, savedConnections: withConnections.reduce((n, a) => n + (a.vault.connections ?? 0), 0) };
-  });
+  }, () => buildModuleManifest(eventStore.backend).features);
 
   // Prometheus: /metrics with METRICS_TOKEN (or any administrator's token).
   app.get("/metrics", (req, res) => {
@@ -253,6 +266,7 @@ export async function registerRoutes(
   // Admin-edited layout / templates for every client (GET /api/layout).
   registerLayoutRoutes(app);
   registerClientConfigRoutes(app);
+  registerMenuConfigRoutes(app);
 
   app.get("/api/health", (_req, res) => {
     const b = buildInfo();
@@ -269,6 +283,16 @@ export async function registerRoutes(
       build: b.build,
       builtAt: b.builtAt,
     });
+  });
+
+  // The version check's "Fix" (client/src/lib/integrity.ts): the browser
+  // drops its HTTP cache for this site, cross-origin fonts included, so the
+  // reload that follows fetches every file fresh. Storage the app clears
+  // itself (it keeps the device identity).
+  app.post("/api/clear-site-data", (_req, res) => {
+    res.setHeader("Clear-Site-Data", '"cache"');
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true });
   });
 
   app.get("/api/modules", (_req, res) => {

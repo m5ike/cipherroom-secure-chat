@@ -4,7 +4,7 @@
 
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, within, cleanup } from "@testing-library/react";
-import { AccountInfoModal, ChatRetentionSection, SignedInBadge } from "../client/src/components/AccountPanel";
+import { AccountAccess, AccountInfoModal, ChatRetentionSection, SignedInBadge } from "../client/src/components/AccountPanel";
 import type { AccountSummary } from "../client/src/lib/account";
 
 afterEach(() => cleanup());
@@ -107,18 +107,7 @@ describe("account window", () => {
 
 describe("chat retention choice", () => {
   function render_(over: Record<string, unknown> = {}) {
-    const props = {
-      value: "ephemeral" as const,
-      onChange: vi.fn(),
-      account: null as AccountSummary | null,
-      status: null,
-      supported: true,
-      busy: false,
-      message: "",
-      lang: "cs" as const,
-      onSignIn: vi.fn(), onRegister: vi.fn(), onSignOutAndWipe: vi.fn(),
-      ...over,
-    };
+    const props = { value: "ephemeral" as const, onChange: vi.fn(), account: null as AccountSummary | null, lang: "cs" as const, ...over };
     render(<ChatRetentionSection {...props} />);
     return props;
   }
@@ -130,22 +119,38 @@ describe("chat retention choice", () => {
     expect(screen.getByTestId("retention-server").textContent).toContain("zůstávají na serveru");
   });
 
-  it("keeps the server option locked until a passkey is registered", () => {
+  it("keeps the server option locked until signed in with a passkey", () => {
     const props = render_();
     const server = screen.getByTestId("retention-server");
-    expect(server.textContent).toContain("Pro tuto volbu se přihlas passkeyem");
+    expect(server.textContent).toContain("Vyžaduje přihlášení passkey");
     expect((within(server).getByRole("radio") as HTMLInputElement).disabled).toBe(true);
     fireEvent.click(within(screen.getByTestId("retention-session")).getByRole("radio"));
     expect(props.onChange).toHaveBeenCalledWith("session");
   });
 
-  it("unlocks the server option once signed in, and offers to wipe", () => {
-    const props = render_({ account: ACCOUNT, value: "server" });
+  it("unlocks the server option once signed in", () => {
+    render_({ account: ACCOUNT, value: "server" });
     expect((within(screen.getByTestId("retention-server")).getByRole("radio") as HTMLInputElement).disabled).toBe(false);
-    expect(screen.queryByTestId("account-signin")).toBeNull();
-    fireEvent.click(screen.getByTestId("account-signout-wipe"));
-    expect(props.onSignOutAndWipe).toHaveBeenCalled();
   });
+});
+
+describe("account access (the Connection window, 4.0)", () => {
+  function render_(over: Record<string, unknown> = {}) {
+    const props = {
+      account: null as AccountSummary | null,
+      status: null,
+      supported: true,
+      busy: false,
+      message: "",
+      lang: "cs" as const,
+      nickname: "Alice",
+      progress: null,
+      onSignIn: vi.fn(), onRegister: vi.fn(), onSignOutAndWipe: vi.fn(),
+      ...over,
+    };
+    render(<AccountAccess {...props} />);
+    return props;
+  }
 
   it("offers sign-in and registration, and says when the browser cannot", () => {
     const props = render_();
@@ -157,5 +162,40 @@ describe("chat retention choice", () => {
     render_({ supported: false });
     expect((screen.getAllByTestId("account-signin").at(-1) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/nepodporuje passkey/i)).toBeTruthy();
+  });
+
+  it("signed in: the username, the nickname as only an alias, and the wipe", () => {
+    const props = render_({ account: { ...ACCOUNT, id: "bystry-sokol-7k3q", username: "bystry-sokol-7k3q", keyVerified: true } });
+    expect(screen.getByTestId("account-username").textContent).toBe("bystry-sokol-7k3q");
+    expect(screen.getByTestId("account-identity-card").textContent).toContain("Alice");
+    expect(screen.queryByTestId("account-signin")).toBeNull();
+    fireEvent.click(screen.getByTestId("account-signout-wipe"));
+    expect(props.onSignOutAndWipe).toHaveBeenCalled();
+    // Passkeys are added here, not in the account window.
+    expect(screen.getByTestId("account-passkeys")).toBeTruthy();
+  });
+
+  it("lists the checked steps and, for an unknown passkey, recommends registering", () => {
+    const props = render_({
+      progress: {
+        kind: "signin",
+        steps: [{ id: "passkey", state: "fail", detail: "not registered" }],
+        error: { code: "unknown-passkey", message: "This passkey is not registered on this server." },
+      },
+    });
+    const steps = screen.getByTestId("signin-steps");
+    expect(steps.querySelector('[data-step="passkey"]')?.getAttribute("data-state")).toBe("fail");
+    const err = screen.getByTestId("signin-error");
+    expect(err.getAttribute("data-code")).toBe("unknown-passkey");
+    expect(err.textContent).toContain("registrovaný není");
+    expect(err.textContent).toContain("Zapsáno do logu serveru");
+    fireEvent.click(screen.getByTestId("signin-error-register"));
+    expect(props.onRegister).toHaveBeenCalled();
+  });
+
+  it("says plainly when the key does not open the account's data", () => {
+    render_({ progress: { kind: "signin", steps: [{ id: "passkey", state: "ok" }, { id: "key", state: "fail" }], error: { code: "wrong-key", message: "wrong key" } } });
+    expect(screen.getByTestId("signin-error").textContent).toContain("neodemyká data účtu");
+    expect(screen.queryByTestId("signin-error-register")).toBeNull();
   });
 });

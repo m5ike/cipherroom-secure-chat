@@ -45,6 +45,7 @@
         <button class="nav__item" data-route="connections"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.55a11 11 0 0 1 14 0M8.5 16.1a6 6 0 0 1 7 0M12 20h.01M2 8.8a15 15 0 0 1 20 0"/></svg>Connections<span class="nav__badge" id="navConn"></span></button>
         <button class="nav__item" data-route="rooms"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>Rooms<span class="nav__badge" id="navRooms"></span></button>
         <button class="nav__item" data-route="client"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/><path d="M7 8h4M7 11h7"/></svg>Client &amp; addons</button>
+        <button class="nav__item" data-route="modules"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M17.5 14v7M14 17.5h7"/></svg>Modules &amp; groups</button>
         <button class="nav__item" data-route="alerts"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/></svg>Alerts<span class="nav__badge" id="navAlerts"></span></button>
         <div class="nav__group">Users &amp; data</div>
         <button class="nav__item" data-route="users"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>Users &amp; passkeys<span class="nav__badge" id="navUsers"></span></button>
@@ -56,6 +57,7 @@
         <button class="nav__item" data-route="retention"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>Retention</button>
         <div class="nav__group">Tools</div>
         <button class="nav__item" data-route="layout"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M3 9h18"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg>Layout builder</button>
+        <button class="nav__item" data-route="menu"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h10M4 18h7"/><circle cx="18" cy="16" r="3"/><path d="M18 11v2M18 19v2M22.3 13.5l-1.7 1M15.4 17.5l-1.7 1M22.3 18.5l-1.7-1M15.4 14.5l-1.7-1"/></svg>Menu builder</button>
         <button class="nav__item" data-route="telephony"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Telephony &amp; SIP</button>
         <button class="nav__item" data-route="plugins"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>AI &amp; speech</button>
         <button class="nav__item" data-route="admins" data-min-role="owner" hidden><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>Administrators</button>
@@ -438,6 +440,71 @@
         </section>
 
         <!-- ============================ client & addons ============================ -->
+        <!-- ============================ modules & groups ============================ -->
+        <section data-panel="modules" class="stack" hidden>
+          <form class="card" id="modulesForm">
+            <div class="card__head"><div class="card__title">Modules &amp; plugins</div><div class="card__hint">Switch parts of the app off, or give them to some groups only. What a user may not use disappears from their menu and screens — and the server refuses it too.</div><div class="card__actions"><button class="btn btn--sm" type="button" data-refresh="modules">Refresh</button></div></div>
+            <div class="table-wrap"><table class="t" id="modulesTable"><thead><tr><th>Module</th><th>On the server</th><th>On</th><th>For</th></tr></thead><tbody></tbody></table></div>
+            <div class="toolbar"><button class="btn btn--primary" type="submit">Save modules</button></div>
+          </form>
+          <form class="card" id="groupsForm">
+            <div class="card__head"><div class="card__title">User groups</div><div class="card__hint">"guest" is everyone who is not signed in, "user" everyone signed in with a passkey. Groups of your own list their members by username (one per line). Members are never sent to the clients.</div></div>
+            <div id="groupsList" class="groups"></div>
+            <div class="toolbar"><button class="btn btn--sm" type="button" id="groupAdd">Add group</button></div>
+            <div class="toolbar"><button class="btn btn--primary" type="submit">Save groups</button></div>
+          </form>
+        </section>
+
+        <!-- ============================ menu builder ============================ -->
+        <section data-panel="menu" class="stack" hidden>
+          <div class="card mb-card">
+            <div class="card__head">
+              <div class="card__title">Menu builder</div>
+              <div class="card__hint">The app's ☰ menu and desktop toolbar. Drag elements to reorder them (or Alt+↑/↓), pick one to edit its content, action, visibility and style — with hover, click, focus and current states. The classic menu is the default; Reset brings it back.</div>
+            </div>
+            <div class="mb-bar">
+              <div class="mb-addbar" id="mbAdd" role="group" aria-label="Add an element">
+                <button class="btn btn--sm" type="button" data-mb-add="section" title="A heading and its items">Add section</button>
+                <button class="btn btn--sm" type="button" data-mb-add="item" title="Icon, text and an action">Add item</button>
+                <button class="btn btn--sm" type="button" data-mb-add="html" title="HTML with live {$variables}">Add HTML</button>
+                <button class="btn btn--sm" type="button" data-mb-add="separator" title="A line or a space">Add separator</button>
+                <button class="btn btn--sm" type="button" data-mb-add="row" title="Buttons side by side">Add row</button>
+                <button class="btn btn--sm" type="button" data-mb-add="special" title="Appearance, Edit Mode, light / dark, account…">Add special button</button>
+              </div>
+              <div class="mb-actions">
+                <span class="badge badge--warn" id="mbDirty" hidden>Unsaved changes</span>
+                <button class="btn btn--sm" type="button" id="mbUndo" data-read="1" title="Undo (Ctrl+Z)">Undo</button>
+                <button class="btn btn--sm" type="button" id="mbRedo" data-read="1" title="Redo (Ctrl+Shift+Z)">Redo</button>
+                <button class="btn btn--sm" type="button" id="mbHelpBtn" data-read="1" title="Variables, filters and macros of the HTML blocks" aria-label="Template language help">? Help</button>
+                <button class="btn btn--sm" type="button" id="mbExport" data-read="1">Export</button>
+                <label class="btn btn--sm mb-import">Import<input type="file" id="mbImport" accept="application/json,.json" hidden /></label>
+                <button class="btn btn--sm" type="button" id="mbRevert" data-read="1">Discard changes</button>
+                <button class="btn btn--sm btn--danger" type="button" id="mbReset">Reset to default</button>
+                <button class="btn btn--sm btn--primary" type="button" id="mbSave">Save menu</button>
+              </div>
+            </div>
+            <p class="small muted mb-bar__hint">New elements go into the selected section or row, or after the selected element.</p>
+            <div class="mb-layout">
+              <div class="mb-col mb-col--tree"><div id="mbTree" class="mbt" role="tree" aria-label="Menu structure"></div></div>
+              <div class="mb-col mb-col--props"><div id="mbProps" class="mb-props"></div></div>
+              <div class="mb-col mb-col--preview">
+                <div class="mb-previewbar">
+                  <select class="input" id="mbMode" data-read="1" aria-label="Preview"><option value="panel">☰ panel</option><option value="toolbar">Desktop toolbar</option></select>
+                  <select class="input" id="mbLang" data-read="1" aria-label="Language"><option value="cs">cs</option><option value="en">en</option><option value="de">de</option></select>
+                  <select class="input" id="mbTone" data-read="1" aria-label="Tone"><option value="light">light</option><option value="dark">dark</option></select>
+                  <select class="input" id="mbState" data-read="1" aria-label="Show state of the selected element"><option value="">Show state: —</option><option value="hover">hover</option><option value="active">click</option><option value="focus">focus</option><option value="current">current</option></select>
+                  <label class="mb-flag"><input type="checkbox" id="mbSignedIn" data-read="1" checked /> signed in</label>
+                  <label class="mb-flag"><input type="checkbox" id="mbConnected" data-read="1" checked /> connected</label>
+                  <label class="mb-flag"><input type="checkbox" id="mbPhone" data-read="1" /> phone</label>
+                </div>
+                <div id="mbPreview" class="mbp" aria-label="Preview"></div>
+                <p class="small muted">Sample values (Alice, room tym-brno, 2 people). Click an element to edit it.</p>
+                <p class="small muted" id="mbFile"></p>
+              </div>
+            </div>
+          </div>
+        </section>
+
         <section data-panel="client" class="stack" hidden>
           <div class="card">
             <div class="card__head"><div class="card__title">How the addons are used</div><div class="card__hint" id="clientFile"></div><div class="card__actions"><button class="btn btn--sm" data-refresh="client">Refresh</button></div></div>
@@ -497,5 +564,7 @@
   <div class="toasts" id="toasts"></div>
   <script src="console.js"></script>
   <script src="legacy-tools.js"></script>
+  <script src="modules.js"></script>
+  <script src="menu-builder.js"></script>
 </body>
 </html>

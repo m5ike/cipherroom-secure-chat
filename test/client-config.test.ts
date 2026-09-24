@@ -87,3 +87,58 @@ describe("the vault part for saved connections", () => {
     expect(store.summary(id)).toMatchObject({ vault: { connections: 7, connectionsBytes: 8 } });
   });
 });
+
+describe("modules and groups (4.0)", () => {
+  it("keeps only real groups and members, and only known groups on a module", async () => {
+    const { sanitizeClientConfig, publicClientConfig } = await import("../client/src/lib/client-config");
+    const c = sanitizeClientConfig({
+      groups: [
+        { id: "support", label: "Support", members: ["bystry-sokol-7k3q", "bystry-sokol-7k3q", "<script>"] },
+        { id: "user", label: "clash with a built-in" },
+        { id: "Bad Id!", label: "x" },
+      ],
+      modules: { ai: { enabled: true, groups: ["support", "ghost"] }, video: { enabled: false }, nope: { enabled: false } },
+    });
+    expect(c.groups).toEqual([{ id: "support", label: "Support", members: ["bystry-sokol-7k3q"] }]);
+    expect(c.modules).toEqual({ ai: { enabled: true, groups: ["support"] }, video: { enabled: false, groups: [] } });
+    // The public copy never names members.
+    expect(publicClientConfig(c).groups).toEqual([{ id: "support", label: "Support", members: [] }]);
+  });
+
+  it("decides per group: guests, signed-in users, members of the operator's groups", async () => {
+    const { groupsFor, moduleAllowed, moduleOfPanel } = await import("../client/src/lib/modules");
+    const groups = [{ id: "support", label: "Support", members: ["alice-7k3q"] }];
+    const policy = { ai: { enabled: true, groups: ["support"] }, video: { enabled: false, groups: [] }, files: { enabled: true, groups: ["user"] } };
+    expect(groupsFor(groups, null)).toEqual(["guest"]);
+    expect(groupsFor(groups, "alice-7k3q")).toEqual(["user", "support"]);
+    expect(moduleAllowed(policy, "ai", ["user", "support"])).toBe(true);
+    expect(moduleAllowed(policy, "ai", ["user"])).toBe(false);
+    expect(moduleAllowed(policy, "video", ["user", "support"])).toBe(false);
+    expect(moduleAllowed(policy, "files", ["guest"])).toBe(false);
+    expect(moduleAllowed(policy, "audio", ["guest"])).toBe(true); // not listed: on for everyone
+    expect(moduleOfPanel("phone")).toBe("telephony");
+    expect(moduleOfPanel("trust")).toBe("");
+  });
+
+  it("the server refuses a switched-off module, not just the app", async () => {
+    const { ClientConfigStore, requireModule, clientConfigStore } = await import("../server/client-config");
+    new ClientConfigStore().set({ modules: { ai: { enabled: false } } });
+    expect(clientConfigStore.get().modules.ai).toEqual({ enabled: false, groups: [] });
+    const app = express();
+    app.use("/api/ai/complete", requireModule("ai"));
+    app.use("/api/speech/tts", requireModule("speech"));
+    app.post("/api/ai/complete", (_req, res) => res.json({ ok: true }));
+    app.post("/api/speech/tts", (_req, res) => res.json({ ok: true }));
+    const http = app.listen(0, "127.0.0.1");
+    await new Promise((r) => http.once("listening", r));
+    const base = `http://127.0.0.1:${(http.address() as AddressInfo).port}`;
+    try {
+      const ai = await fetch(`${base}/api/ai/complete`, { method: "POST" });
+      expect(ai.status).toBe(403);
+      expect(await ai.json()).toMatchObject({ code: "module-disabled", module: "ai" });
+      expect((await fetch(`${base}/api/speech/tts`, { method: "POST" })).status).toBe(200);
+    } finally {
+      await new Promise((r) => http.close(r));
+    }
+  });
+});

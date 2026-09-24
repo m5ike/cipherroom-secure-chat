@@ -58,7 +58,7 @@ async function account(userName: string) {
   })).json() as { publicKey: { challenge: string } };
   const r = await (await fetch(`${base}/api/account/register/verify`, {
     method: "POST", headers: { "content-type": "application/json" },
-    body: JSON.stringify({ credential: auth.register(options.publicKey.challenge) }),
+    body: JSON.stringify({ credential: auth.register(options.publicKey.challenge), keyProof: "k".repeat(43) }),
   })).json() as { ok: boolean; token: string; account: { id: string } };
   expect(r.ok).toBe(true);
   return { token: r.token, accountId: r.account.id, userName };

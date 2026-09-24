@@ -103,6 +103,8 @@ app.use("/api/account/vault", express.json({ limit: "8mb" }));
 // Conversations arrive in batches; this parser has to come before the
 // global one to win.
 app.use("/api/storage", express.json({ limit: "12mb" }));
+// The menu builder saves a whole menu, HTML blocks included.
+app.use("/api/admin/menu-config", express.json({ limit: "1mb" }));
 // The operator console: a busy operator is not a flood, a wrong token is.
 // Refused requests count against a small budget (token guessing), all
 // requests against a generous one.

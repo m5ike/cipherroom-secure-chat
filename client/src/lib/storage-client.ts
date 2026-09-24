@@ -199,13 +199,23 @@ export async function startStorageSession(): Promise<{ sessionId: string; expire
 }
 
 /** Opens the signed-in user's database with the passkey-derived key. */
-export async function openUserDatabase(key: string): Promise<{ databaseId: string } | null> {
+export type OpenOutcome =
+  | { ok: true; databaseId: string }
+  /** `fatal`: the key does not open the stored database (wrong key, damaged
+   *  or missing file) — the sign-in must not go on. Otherwise the storage is
+   *  just not reachable now (not configured, busy, offline). */
+  | { ok: false; code: string; message: string; fatal: boolean };
+
+const FATAL_OPEN = new Set(["wrong-key", "corrupt", "missing"]);
+
+export async function openUserDatabase(key: string): Promise<OpenOutcome> {
   try {
     const data = await call("open", { key }, { method: "POST", path: "/open", body: { key } }) as { databaseId?: string } | null;
     databaseKey = key;
-    return data?.databaseId ? { databaseId: data.databaseId } : { databaseId: "" };
-  } catch {
-    return null;
+    return { ok: true, databaseId: data?.databaseId ?? "" };
+  } catch (err) {
+    const code = String((err as { code?: unknown }).code ?? "unavailable");
+    return { ok: false, code, message: (err as Error).message, fatal: FATAL_OPEN.has(code) };
   }
 }
 

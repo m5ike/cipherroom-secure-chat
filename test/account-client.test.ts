@@ -21,10 +21,13 @@ vi.mock("../client/src/lib/passkey", async (importOriginal) => {
 });
 
 import {
-  _resetAccountForTests, accountStatus, currentAccount, deleteAccount, isSignedIn, linkPushSubscription,
+  _resetAccountForTests, accountStatus, AccountError, currentAccount, deleteAccount, isSignedIn, linkPushSubscription,
   loadVault, logAccountEvent, registerAccount, restoreSession, saveVault, signInWithPasskey, signOutAccount,
   type AccountSummary,
 } from "../client/src/lib/account";
+
+/** Per-test overrides of what the fake server answers (url → reply). */
+let overrides: Record<string, () => Response> = {};
 
 const SUMMARY: AccountSummary = {
   id: "acc-0000000000000000001",
@@ -55,6 +58,7 @@ beforeEach(async () => {
   keys = new Map();
   calls = [];
   vault = { profile: null, chat: null };
+  overrides = {};
   _resetAccountForTests(keys);
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit = {}) => {
     const headers = (init.headers ?? {}) as Record<string, string>;
@@ -64,6 +68,8 @@ beforeEach(async () => {
       body: init.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null,
       auth: headers.Authorization ?? null,
     });
+    if (overrides[url]) return overrides[url]();
+    if (url === "/api/account/unlock") return reply({ ok: true, account: SUMMARY });
     if (url === "/api/account/status") return reply({ ok: true, available: true, persistent: true, rpId: "chat.example", accounts: 2, limits: {} });
     if (url.endsWith("/options")) return reply({ ok: true, publicKey: { challenge: "chal", rp: { id: "chat.example", name: "M5cet" }, user: { id: "dXNlcg", name: "Alice", displayName: "Alice" }, pubKeyCredParams: [], rpId: "chat.example" } });
     if (url.endsWith("/verify")) return reply({ ok: true, token: "session-token-abcdefghijkl", account: SUMMARY });
@@ -89,7 +95,8 @@ const urls = () => calls.map((c) => `${c.method} ${c.url}`);
 
 describe("registration and sign-in", () => {
   it("registers, keeps the session for this tab and reports the account", async () => {
-    const account = await registerAccount("Alice");
+    const steps: string[] = [];
+    const account = await registerAccount((step, state) => steps.push(`${step}:${state}`));
     expect(account.userName).toBe("Alice");
     expect(isSignedIn()).toBe(true);
     expect(currentAccount()?.id).toBe(SUMMARY.id);
@@ -98,15 +105,68 @@ describe("registration and sign-in", () => {
     // …and the account key (derived from the root) vouches for this device;
     // only its public half goes to the server.
     expect(urls()).toEqual(["POST /api/account/register/options", "POST /api/account/register/verify", "PUT /api/account/identity", "POST /api/storage/open"]);
+    // 4.0: the server gets the key proof (to keep its hash), never a key.
+    expect(calls[1].body).toMatchObject({ keyProof: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/) });
+    expect(JSON.stringify(calls[1].body)).not.toContain(DB_KEY);
+    expect(steps).toEqual(["passkey:run", "passkey:ok", "key:ok", "database:run", "database:ok", "vault:ok"]);
     expect(calls[2].body).toMatchObject({ publicKey: expect.stringMatching(/^[A-Za-z0-9+/]{43}=$/) });
     expect(calls.at(-1)).toMatchObject({ body: { key: DB_KEY }, auth: "Bearer session-token-abcdefghijkl" });
     expect(sessionStorage.getItem("m5cet:account:v1")).toContain("session-token-abcdefghijkl");
     expect(keys.get(SUMMARY.id)).toBeDefined();
   });
 
-  it("signs in with an existing passkey", async () => {
+  it("signs in with an existing passkey, in checked steps", async () => {
+    const steps: string[] = [];
+    await signInWithPasskey((step, state) => steps.push(`${step}:${state}`));
+    expect(urls()).toEqual([
+      "POST /api/account/signin/options", "POST /api/account/signin/verify", "POST /api/account/unlock",
+      "PUT /api/account/identity", "POST /api/storage/open", "GET /api/account/vault",
+    ]);
+    // The same passkey always yields the same proof.
+    const proof = calls[2].body!.keyProof;
+    expect(proof).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(isSignedIn()).toBe(true);
+    expect(steps).toEqual(["passkey:run", "passkey:ok", "key:run", "key:ok", "database:run", "database:ok", "vault:run", "vault:ok"]);
+    _resetAccountForTests(keys);
+    calls = [];
     await signInWithPasskey();
-    expect(urls()).toEqual(["POST /api/account/signin/options", "POST /api/account/signin/verify", "PUT /api/account/identity", "POST /api/storage/open"]);
+    expect(calls[2].body!.keyProof).toBe(proof);
+  });
+
+  it("an unknown passkey stops at the first step with 'unknown-passkey'", async () => {
+    overrides["/api/account/signin/verify"] = () => reply({ ok: false, code: "unknown-passkey", message: "not registered" }, 404);
+    const steps: string[] = [];
+    const err = await signInWithPasskey((step, state) => steps.push(`${step}:${state}`)).catch((e) => e);
+    expect(err).toBeInstanceOf(AccountError);
+    expect((err as AccountError).code).toBe("unknown-passkey");
+    expect(steps).toEqual(["passkey:run", "passkey:fail"]);
+    expect(isSignedIn()).toBe(false);
+  });
+
+  it("a wrong global key ends the half-open session and is reported", async () => {
+    overrides["/api/account/unlock"] = () => reply({ ok: false, code: "wrong-key", message: "wrong key" }, 403);
+    const err = await signInWithPasskey().catch((e) => e);
+    expect((err as AccountError).code).toBe("wrong-key");
+    expect(isSignedIn()).toBe(false);
+    expect(urls()).toContain("POST /api/account/event");
+    expect(calls.find((c) => c.url === "/api/account/event")?.body).toMatchObject({ kind: "signin-failed", meta: { step: "key" } });
+    expect(urls().at(-1)).toBe("POST /api/account/signout");
+    expect(sessionStorage.getItem("m5cet:account:v1")).toBeNull();
+  });
+
+  it("a database the key does not open stops the sign-in", async () => {
+    overrides["/api/storage/open"] = () => reply({ ok: false, code: "wrong-key", message: "this key does not open the stored database" }, 409);
+    const err = await signInWithPasskey().catch((e) => e);
+    expect((err as AccountError).code).toBe("database");
+    expect(isSignedIn()).toBe(false);
+    expect(calls.find((c) => c.url === "/api/account/event")?.body).toMatchObject({ kind: "database-locked" });
+  });
+
+  it("a storage that is just not there is only a warning", async () => {
+    overrides["/api/storage/open"] = () => reply({ ok: false, message: "storage unavailable" }, 503);
+    const steps: string[] = [];
+    await signInWithPasskey((step, state) => steps.push(`${step}:${state}`));
+    expect(steps).toContain("database:warn");
     expect(isSignedIn()).toBe(true);
   });
 
@@ -117,7 +177,7 @@ describe("registration and sign-in", () => {
 
 describe("restoring a session", () => {
   it("comes back after a reload without another passkey prompt", async () => {
-    await registerAccount("Alice");
+    await registerAccount();
     _resetAccountForTests(keys); // a reload: module state gone, storage kept
     sessionStorage.setItem("m5cet:account:v1", JSON.stringify({ token: "session-token-abcdefghijkl", accountId: SUMMARY.id }));
 
@@ -140,7 +200,7 @@ describe("restoring a session", () => {
 
 describe("the vault", () => {
   it("uploads sealed blobs only, and reads them back", async () => {
-    await registerAccount("Alice");
+    await registerAccount();
     const chat = { messages: [{ id: "m1", text: "a secret sentence" }], rooms: ["alpha"], savedAt: 1 };
     await saveVault({ profile: { name: "Alice", theme: "midnight" }, chat });
 
@@ -166,7 +226,7 @@ describe("the vault", () => {
   it("logs only the allowlisted events, and never without a session", async () => {
     await logAccountEvent("decrypt-ok");
     expect(urls()).toEqual([]);
-    await registerAccount("Alice");
+    await registerAccount();
     await logAccountEvent("decrypt-ok", { messages: 3 });
     expect(calls.at(-1)).toMatchObject({ url: "/api/account/event", body: { kind: "decrypt-ok", meta: { messages: 3 } } });
   });
@@ -174,14 +234,14 @@ describe("the vault", () => {
 
 describe("push and ending the session", () => {
   it("links this device for the away wake-up", async () => {
-    await registerAccount("Alice");
+    await registerAccount();
     const ok = await linkPushSubscription({ endpoint: "https://push.example/x", keys: { p256dh: "p", auth: "a" } } as PushSubscriptionJSON);
     expect(ok).toBe(true);
     expect(calls.at(-1)).toMatchObject({ url: "/api/account/push", body: { subscription: { endpoint: "https://push.example/x" } } });
   });
 
   it("signing out drops the token and the local key", async () => {
-    await registerAccount("Alice");
+    await registerAccount();
     await signOutAccount();
     expect(isSignedIn()).toBe(false);
     expect(sessionStorage.getItem("m5cet:account:v1")).toBeNull();
@@ -190,7 +250,7 @@ describe("push and ending the session", () => {
   });
 
   it("deleting the account asks the server and forgets everything here", async () => {
-    await registerAccount("Alice");
+    await registerAccount();
     await deleteAccount();
     expect(calls.at(-1)).toMatchObject({ url: "/api/account", method: "DELETE" });
     expect(isSignedIn()).toBe(false);

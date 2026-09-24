@@ -14,7 +14,10 @@
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Express, Request, Response } from "express";
-import { DEFAULT_CLIENT_CONFIG, sanitizeClientConfig, type ClientConfig } from "../client/src/lib/client-config";
+import { DEFAULT_CLIENT_CONFIG, publicClientConfig, sanitizeClientConfig, type ClientConfig } from "../client/src/lib/client-config";
+import { BUILTIN_GROUPS, groupsFor, MODULE_CATALOG, moduleAllowed } from "../client/src/lib/modules";
+import type { NextFunction } from "express";
+import { accountStore, usernameOf } from "./accounts/store";
 import { ICON_STYLES, THEME_CATALOG } from "../client/src/lib/theme-catalog";
 import { audit } from "./monitor/audit";
 import { adminName } from "./admin-auth";
@@ -28,6 +31,8 @@ const THEME_LABELS: Record<string, string> = {
 const catalog = () => ({
   themes: THEME_CATALOG.map((t) => ({ id: t.id, family: t.family, tones: t.tones, icons: t.icons, label: THEME_LABELS[t.id] ?? t.id })),
   icons: ICON_STYLES,
+  modules: MODULE_CATALOG,
+  builtinGroups: BUILTIN_GROUPS,
 });
 const env = (name: string): string => (process.env[name]?.trim() || "");
 
@@ -80,14 +85,40 @@ export type AddonUsage = { accounts: number; withConnections: number; savedConne
 export function registerClientConfigRoutes(app: Express): void {
   app.get("/api/client-config", (_req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    res.json({ ok: true, config: clientConfigStore.get() });
+    res.json({ ok: true, config: publicClientConfig(clientConfigStore.get()) });
   });
 }
 
+/** The groups of whoever sends this request: "guest", or the account's. */
+export function requestGroups(req: Request): string[] {
+  const header = req.header("authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  const account = token ? accountStore.resolveToken(token) : null;
+  return groupsFor(clientConfigStore.get().groups, account ? usernameOf(account) : null);
+}
+
+/** The groups of an account (for /api/account/me). */
+export function accountGroups(username: string): string[] {
+  return groupsFor(clientConfigStore.get().groups, username);
+}
+
+/**
+ * 4.0: a module the operator switched off (or kept from this user's groups)
+ * is refused on the server too, not only hidden in the app.
+ */
+export function requireModule(id: string) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (moduleAllowed(clientConfigStore.get().modules, id, requestGroups(req))) return next();
+    res.status(403).json({ ok: false, code: "module-disabled", module: id, message: `The ${id} module is not available to you on this server.` });
+  };
+}
+
 /** Mounted behind the admin guard (GET auditor, PUT operator). */
-export function registerAdminClientConfigRoutes(app: Express, usage: () => AddonUsage): void {
+export function registerAdminClientConfigRoutes(app: Express, usage: () => AddonUsage, features: () => unknown = () => ({})): void {
   app.get("/api/admin/client-config", (_req, res) => {
-    res.json({ ok: true, config: clientConfigStore.get(), defaults: DEFAULT_CLIENT_CONFIG, file: clientConfigPath(), usage: usage(), catalog: catalog() });
+    // features: which server connectors are configured (the /api/modules
+    // manifest) — the console's Modules page shows it next to each module.
+    res.json({ ok: true, config: clientConfigStore.get(), defaults: DEFAULT_CLIENT_CONFIG, file: clientConfigPath(), usage: usage(), catalog: catalog(), features: features() });
   });
   app.put("/api/admin/client-config", (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -99,6 +130,8 @@ export function registerAdminClientConfigRoutes(app: Express, usage: () => Addon
       detail: {
         connections: c.connections.enabled, servers: c.connections.servers.length, customServers: c.connections.allowCustomServers,
         themes: c.appearance.themes.length || "all", defaultTheme: c.appearance.defaultTheme, lockTheme: c.appearance.lockTheme,
+        modulesOff: Object.entries(c.modules).filter(([, r]) => !r.enabled).map(([id]) => id).join(",") || "none",
+        groups: c.groups.length,
       },
     });
     res.json({ ok: true, config: c, usage: usage() });

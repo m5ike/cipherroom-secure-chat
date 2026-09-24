@@ -37,7 +37,8 @@ import { ensureFonts, GOOGLE_FONTS } from "./lib/fonts";
 import { applyDeviceAttributes, deviceInfo, fullscreenSupported, toggleFullscreen, watchFullscreen } from "./lib/device";
 import { buildStylesheet } from "./lib/style-overrides";
 import { useStyleOverrides } from "./lib/style-editor";
-import { buildLabel, watchForNewVersion, type DeployedBuild } from "./lib/build-info";
+import { buildLabel, watchForNewVersion } from "./lib/build-info";
+import { IntegrityCheck, type IntegrityHandle } from "./components/IntegrityCheck";
 import { styleKeyFor, bubbleStyleFrom, sanitizePerUserStyle, isEmptyStyle, type PerUserStyle } from "./lib/message-styles";
 import { sealText, generateSealCode, type MsgFlags } from "./lib/message-kinds";
 import { MessageBubble, RecipientHint } from "./components/MessageBubble";
@@ -60,6 +61,7 @@ const UserInfoView = lazy(() => import("./components/UserInfoModal").then((m) =>
 const MessageInfoView = lazy(() => import("./components/MessageInfoModal").then((m) => ({ default: m.MessageInfoView })));
 const AccountInfoModal = lazy(() => import("./components/AccountPanel").then((m) => ({ default: m.AccountInfoModal })));
 const ChatRetentionSection = lazy(() => import("./components/AccountPanel").then((m) => ({ default: m.ChatRetentionSection })));
+const AccountAccess = lazy(() => import("./components/AccountPanel").then((m) => ({ default: m.AccountAccess })));
 const ShareSection = lazy(() => import("./components/SharePanel").then((m) => ({ default: m.ShareSection })));
 const InvitePrompt = lazy(() => import("./components/SharePanel").then((m) => ({ default: m.InvitePrompt })));
 const AiPanel = lazy(() => import("./components/AiPanel").then((m) => ({ default: m.AiPanel })));
@@ -97,7 +99,8 @@ import { envelopeKind, SenderKeyStore, type Hello } from "./lib/sender-keys";
 import { MediaE2ee } from "./lib/media-e2ee";
 import { validatePayload, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
 import { newId } from "./lib/id";
-import { APP_VERSION } from "./lib/build-info";
+import { APP_BUILD, APP_VERSION } from "./lib/build-info";
+import type { SignInProgress } from "./components/AccountPanel";
 import { TransferCard } from "./components/TransferCard";
 import { MainMenu } from "./components/MainMenu";
 import { formatTime, formatFullDate, formatBytes } from "./lib/format";
@@ -117,12 +120,20 @@ import { effectiveAppearance, serverAllowed, signalingUrl } from "./lib/client-c
 import { fetchClientConfig, loadCachedClientConfig } from "./lib/client-config-client";
 import { SimpleModal } from "./components/SimpleModal";
 import { RoomDialog, RoomTabs, type RoomTab, type RoomTarget } from "./components/RoomDialog";
+import { cleanUsername, sessionUsername } from "./lib/username";
+import { installNavigationGuard, releaseNavigationGuard, type BlockedBy } from "./lib/nav-guard";
+import { moduleAllowed, moduleOfPanel } from "./lib/modules";
+import { fetchMenuConfig, loadCachedMenuConfig } from "./lib/menu-config-client";
+import { nodeModule, type MenuAction, type MenuNode } from "./lib/menu-config";
+import type { TemplateVars } from "./lib/menu-template";
+import { isThemeId } from "./lib/theme-catalog";
 import { AudioControls, PeerList, VideoControls } from "./components/CallPanels";
 import { ConnectionPanel, FilesPanel, LocationPanel, SpeechPanel, type ConnLogEvent } from "./components/ToolPanels";
 import {
   accountStatus, accountSupported, accountToken, addPasskey, createRecoveryCode, currentAccount, deleteAccount as deleteServerAccount,
   endSession, linkPushSubscription, loadVault, logAccountEvent, recoverWithCode, refreshAccount, registerAccount, removePasskey,
   removeRecoveryCode, restoreSession, saveVault, loadConnectionsVault, signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
+  AccountError, type StepState,
 } from "./lib/account";
 import { createHistoryStore, createServerSealer, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
@@ -132,7 +143,7 @@ import { FlashMessages } from "./components/FlashMessages";
 import {
   attachStorageSocket, forgetServerData, putMessages as putServerMessages,
   readMessages as readServerMessages, recordTransfer as recordServerTransfer, sendLog as sendServerLog,
-  startStorageSession, storageSessionId, storageStatus, type StorageStatus,
+  storageSessionId, storageStatus, type StorageStatus,
 } from "./lib/storage-client";
 import { leaveToGoodbye, wipeEverything } from "./lib/wipe";
 import {
@@ -458,6 +469,10 @@ function ChatApp() {
   // retrying until it holds; only the Disconnect button (or the idle limit,
   // or Clear & Quit) sets it back. Mirrors intentRef for rendering.
   const [desired, setDesired] = useState<DesiredState>("disconnected");
+  const desiredRef = useRef<DesiredState>("disconnected");
+  desiredRef.current = desired;
+  /** The version check (IntegrityCheck): `check(true)` runs it now. */
+  const integrityRef = useRef<IntegrityHandle | null>(null);
   const [connLog, setConnLog] = useState<Array<{ at: number; attempt: number; event: ConnLogEvent; delayMs?: number }>>([]);
   const [inviteParts, setInviteParts] = useState<ShareLinkParts | null>(null);
   const [sessionPassphrase, setSessionPassphrase] = useState("");
@@ -477,8 +492,12 @@ function ChatApp() {
 
   // --- signed-in user (passkey account) + away relay ---
   const [account, setAccount] = useState<AccountSummary | null>(null);
+  /** The startup check for this tab's account session has finished. */
+  const [accountResolved, setAccountResolved] = useState(false);
   // The operator's addon configuration (saved connections, templates).
   const [clientConfig, setClientConfig] = useState(loadCachedClientConfig);
+  // 4.0: the menu as the operator built it (console › Menu builder).
+  const [menuConfig, setMenuConfig] = useState(loadCachedMenuConfig);
   // Saved connections: sealed into the account vault (lib/connections.ts).
   const connectionsReadyRef = useRef(false);
   const connectionsRef = useRef<ConnectionsStore | null>(null);
@@ -495,6 +514,11 @@ function ChatApp() {
   const activeProfileRef = useRef<ConnectionProfile | null>(null);
   const [activeProfileId, setActiveProfileId] = useState<string | null>(null);
   const activeServerRef = useRef("");
+  /** 4.0: who this session is — the account's username, or (P2P) one made from the nickname. */
+  const sessionUserRef = useRef("");
+  const [sessionUser, setSessionUser] = useState("");
+  /** The usernames peers told us in their hello. */
+  const peerUsersRef = useRef(new Map<string, string>());
   /** A restored session's saved connection, bound once the vault opens. */
   const pendingProfileIdRef = useRef<string | null>(null);
   /** The Room window's tab when the user picked one; otherwise it follows the session. */
@@ -509,6 +533,8 @@ function ChatApp() {
   const [accStatus, setAccStatus] = useState<AccountStatus | null>(null);
   const [accBusy, setAccBusy] = useState(false);
   const [accMsg, setAccMsg] = useState("");
+  /** 4.0: the sign-in / registration in progress (or just finished) — its checked steps. */
+  const [signin, setSignin] = useState<SignInProgress | null>(null);
   const [showAccount, setShowAccount] = useState(false);
   /** Signed-in members of the room the server is currently answering for. */
   const [awayPeers, setAwayPeers] = useState<AwayPeer[]>([]);
@@ -757,9 +783,14 @@ function ChatApp() {
   useEffect(() => {
     let live = true;
     // Same config again (the usual case) keeps the old object: no re-render.
-    const load = () => void fetchClientConfig().then((cfg) => {
-      if (live) setClientConfig((prev) => (JSON.stringify(prev) === JSON.stringify(cfg) ? prev : cfg));
-    });
+    const load = () => {
+      void fetchClientConfig().then((cfg) => {
+        if (live) setClientConfig((prev) => (JSON.stringify(prev) === JSON.stringify(cfg) ? prev : cfg));
+      });
+      void fetchMenuConfig().then((cfg) => {
+        if (live) setMenuConfig((prev) => (JSON.stringify(prev) === JSON.stringify(cfg) ? prev : cfg));
+      });
+    };
     load();
     const id = window.setInterval(load, 5 * 60_000);
     return () => { live = false; window.clearInterval(id); };
@@ -791,13 +822,120 @@ function ChatApp() {
     }).catch(() => { /* not readable (wrong key, offline): stay read-only, never overwrite */ });
     return () => { live = false; };
   }, [account?.id, clientConfig.connections.enabled]);
+  // 4.0: modules the operator switched off, or keeps from this user's groups.
+  const myGroups = useMemo(() => (account ? account.groups ?? ["user"] : ["guest"]), [account]);
+  const moduleOn = useCallback((id: string) => moduleAllowed(clientConfig.modules, id, myGroups), [clientConfig.modules, myGroups]);
+  const panelVisible = useCallback((panel: PanelKey) => { const m = moduleOfPanel(String(panel)); return !m || moduleOn(m); }, [moduleOn]);
+  const connectionsOn = clientConfig.connections.enabled && moduleOn("connections");
+  // A panel of a module that is not (or no longer) available closes; Edit Mode switches off.
+  useEffect(() => { if (activePanel && !panelVisible(activePanel)) setActivePanel(null); }, [activePanel, panelVisible]);
+  useEffect(() => { if (prefs.editMode && !moduleOn("editMode")) setPrefs({ editMode: false }); }, [prefs.editMode, moduleOn]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 4.0: the menu's live values ({$session.username}, {$room.peers}… in its
+  // labels and HTML blocks), its rules (module, when) and its functions.
+  const menuLive = useMemo(() => JSON.stringify(menuConfig).includes("{"), [menuConfig]);
+  const [menuClock, setMenuClock] = useState(() => Date.now());
+  useEffect(() => {
+    if (!menuLive) return;
+    const id = window.setInterval(() => setMenuClock(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, [menuLive]);
+  /** When this room session began ($session.since); a reconnect keeps it. */
+  const [joinedSince, setJoinedSince] = useState<number | null>(null);
+  useEffect(() => {
+    if (status === "joined") setJoinedSince((prev) => prev ?? Date.now());
+    else if (desired !== "connected") setJoinedSince(null);
+  }, [status, desired]);
+  const menuVars = useMemo<TemplateVars>(() => {
+    const time = Math.max(menuClock, now);
+    const host = (url: string) => { try { return url ? new URL(url).host : location.host; } catch { return location.host; } };
+    const active = activeProfileId ? cxState.profiles.find((p) => p.id === activeProfileId) : undefined;
+    const fallback = cxState.settings.defaultId ? cxState.profiles.find((p) => p.id === cxState.settings.defaultId) : undefined;
+    const username = account ? account.username ?? account.userName ?? "" : "";
+    return {
+      app: { name: "M5cet", version: APP_VERSION, build: APP_BUILD, lang, online: typeof navigator === "undefined" || navigator.onLine },
+      global: { server: location.host, time },
+      now: time,
+      user: { signedIn: Boolean(account), username, nickname: name, avatar: prefs.avatar || (Array.from(name.trim())[0] ?? "").toUpperCase(), groups: myGroups, keyVerified: Boolean(account?.keyVerified) },
+      session: {
+        username: sessionUser, current_username: sessionUser, nickname: name, connected: desired === "connected", status, room,
+        mode: prefs.mode, server: host(activeServerRef.current), peers: peers.length, rtt: connStatus?.rttMs ?? null, since: joinedSince,
+      },
+      room: { name: room, peers: peers.length, people: peers.map((p) => p.name) },
+      connection: { active: active?.label ?? "", default: fallback?.label ?? "", saved: cxState.profiles.length },
+      settings: {
+        theme: effectiveTheme, tone: effectiveTone, accent: prefs.accent, lang,
+        notifications: prefs.notificationsEnabled, editMode: prefs.editMode, retention: prefs.chatRetention,
+      },
+    };
+  }, [menuClock, now, activeProfileId, cxState, account, lang, name, prefs.avatar, prefs.mode, prefs.accent, prefs.notificationsEnabled, prefs.editMode, prefs.chatRetention, myGroups, sessionUser, desired, status, room, peers, connStatus, joinedSince, effectiveTheme, effectiveTone]);
+  const menuNodeVisible = useCallback((node: MenuNode) => {
+    const module = nodeModule(node, moduleOfPanel);
+    if (module && !moduleOn(module)) return false;
+    switch (node.when) {
+      case "signedIn": return Boolean(account);
+      case "signedOut": return !account;
+      case "connected": return desired === "connected";
+      case "disconnected": return desired !== "connected";
+      case "phone": return typeof window !== "undefined" && window.matchMedia?.("(max-width: 640px)").matches === true;
+      case "desktop": return !(typeof window !== "undefined" && window.matchMedia?.("(max-width: 640px)").matches === true);
+      default: return true;
+    }
+  }, [moduleOn, account, desired]);
+  const shownTone = (): "light" | "dark" => (document.documentElement.getAttribute("data-tone") === "dark" ? "dark" : "light");
+  function runMenuAction(action: MenuAction) {
+    if (action.type === "url") {
+      // sanitizeMenuConfig keeps only https:// and this site's paths.
+      if (!/^https:\/\/\S+$/i.test(action.href) && !/^\/(?!\/)\S*$/.test(action.href)) return;
+      if (action.newTab) window.open(action.href, "_blank", "noopener,noreferrer");
+      else window.location.assign(action.href);
+      return;
+    }
+    if (action.type !== "fn") return;
+    switch (action.fn) {
+      case "openRoom": setActivePanel("join"); break;
+      case "signIn": setActivePanel("connection"); break;
+      case "connectDefault": {
+        const target = startupProfile(cxState);
+        if (target && account) void connectProfile(target.id);
+        else setActivePanel(account ? "join" : "connection");
+        break;
+      }
+      case "disconnect": if (desired === "connected") userDisconnect(); break;
+      case "toggleEditMode": if (moduleOn("editMode")) setPrefs({ editMode: !prefs.editMode }); break;
+      case "toggleTone": if (moduleOn("appearance")) setPrefs({ theme: effectiveTheme, themeSet: true, themeTone: shownTone() === "dark" ? "light" : "dark" }); break;
+      case "setTheme": if (moduleOn("appearance") && action.param && isThemeId(action.param)) setPrefs({ theme: action.param, themeSet: true }); break;
+      case "setLang": if (action.param === "cs" || action.param === "en" || action.param === "de") setPrefs({ lang: action.param }); break;
+      case "toggleNotifications":
+        if (!moduleOn("notifications")) break;
+        if (prefs.notificationsEnabled) disableNotifications(); else void enableNotifications();
+        break;
+      case "clearQuit": void clearAndQuit(); break;
+      default: break;
+    }
+  }
   // Server-enhanced picked — or a saved connection in use (its own mode may be light).
   const cxServerSide = prefs.mode === "server" || activeProfileId !== null;
-  const cxEligible = Boolean(account) && cxReady && cxServerSide && clientConfig.connections.enabled;
+  const cxEligible = Boolean(account) && cxReady && cxServerSide && connectionsOn;
   // The Room window: its tab follows the session — a saved connection lives on
   // Server-enhanced, whatever its own mode — until the user picks one. While a
   // connection is up (or on its way) nothing in it can be switched.
   const roomLocked = desired === "connected";
+  // 4.0: while connected, leaving the page (back, reload, another address)
+  // asks to disconnect from the room first.
+  const [navBlocked, setNavBlocked] = useState<BlockedBy | null>(null);
+  useEffect(() => {
+    if (desired !== "connected") { setNavBlocked(null); return; }
+    return installNavigationGuard((by) => setNavBlocked(by));
+  }, [desired]);
+  // 4.0: Server-enhanced needs a passkey sign-in. Signed out (once the
+  // startup check is done), the mode falls back to Light · P2P; the retention
+  // that keeps chat on the server goes with it.
+  useEffect(() => {
+    if (!accountResolved || account || desired === "connected") return;
+    if (prefs.mode === "server") setPrefs({ mode: "light" });
+    if (prefs.chatRetention === "server") { setPrefs({ chatRetention: "session" }); retentionRef.current = "session"; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [accountResolved, account, desired, prefs.mode, prefs.chatRetention]);
   const roomTab: RoomTab = roomTabPick ?? (activeProfileId ? "server" : prefs.mode);
   useEffect(() => { if (activePanel !== "join") setRoomTabPick(null); }, [activePanel]);
   // Signed in: the default connection (or the last one) connects by itself —
@@ -848,8 +986,9 @@ function ChatApp() {
   const [fullscreen, setFullscreen] = useState(false);
   useEffect(() => watchFullscreen(setFullscreen), []);
   // A tab opened before a deploy keeps the old bundle: offer a reload.
-  const [newBuild, setNewBuild] = useState<DeployedBuild | null>(null);
-  useEffect(() => watchForNewVersion(setNewBuild), []);
+  // A new deploy on the server: the version check (IntegrityCheck) looks at
+  // everything this browser runs and offers the fix.
+  useEffect(() => watchForNewVersion(() => { void integrityRef.current?.check(true); }), []);
   useEffect(() => {
     applyEffects(prefs.effects);
   }, [prefs.effects]);
@@ -1039,31 +1178,118 @@ function ChatApp() {
     try { await work(); } catch (err) { setAccMsg((err as Error).message); } finally { setAccBusy(false); }
   }
 
+  /** Collects the steps of one sign-in or registration for the Connection window. */
+  function startSignInProgress(kind: SignInProgress["kind"]) {
+    let steps: SignInProgress["steps"] = [];
+    setSignin({ kind, steps, error: null });
+    const report = (id: string, state: StepState, detail?: string) => {
+      const next = { id, state, ...(detail ? { detail } : {}) };
+      steps = steps.some((x) => x.id === id) ? steps.map((x) => (x.id === id ? next : x)) : [...steps, next];
+      setSignin((cur) => ({ kind, steps, error: cur?.error ?? null, done: cur?.done }));
+    };
+    const fail = (err: unknown) => {
+      const e = err instanceof AccountError ? err : new AccountError("server", (err as Error)?.message ?? String(err));
+      setSignin((cur) => ({ kind, steps: cur?.steps ?? steps, error: { code: e.code, message: e.message } }));
+      setAccMsg("");
+    };
+    const done = (text: string) => setSignin((cur) => ({ kind, steps: cur?.steps ?? steps, error: null, done: text }));
+    return { report, fail, done };
+  }
+
+  /**
+   * After the passkey, key, database and vault checks (account.ts): is the
+   * server there and quick, does this app match what it deploys, load the
+   * user's settings and data, link notifications, and say what connects by
+   * itself. Every result is reported to the Connection window and the whole
+   * run goes to the server's log.
+   */
+  async function afterSignIn(acc: AccountSummary, report: (id: string, state: StepState, detail?: string) => void, kind: SignInProgress["kind"], started: number) {
+    setAccount(acc);
+    // Server-enhanced is now available; a live P2P session keeps its mode.
+    setPrefs(desiredRef.current === "connected" ? { chatRetention: "server" } : { chatRetention: "server", mode: "server" });
+    retentionRef.current = "server";
+
+    report("server", "run");
+    let rtt = -1;
+    let versionOk = true;
+    try {
+      const t0 = performance.now();
+      const res = await fetch("/api/health", { cache: "no-store" });
+      const health = await res.json() as { ok?: boolean; version?: string; build?: string };
+      rtt = Math.round(performance.now() - t0);
+      report("server", res.ok && health.ok !== false ? (rtt < 800 ? "ok" : "warn") : "fail", `${rtt} ms`);
+      versionOk = APP_BUILD === "dev" || !health.build || health.build === APP_BUILD;
+      report("version", versionOk ? "ok" : "warn", `${APP_VERSION} · ${APP_BUILD}${versionOk ? "" : ` ≠ ${health.version ?? "?"} · ${health.build}`}`);
+      if (!versionOk) {
+        void logAccountEvent("version-mismatch", { local: APP_BUILD, server: String(health.build) });
+        void integrityRef.current?.check(true);
+      }
+    } catch (err) {
+      report("server", "fail", (err as Error).message);
+    }
+
+    report("settings", "run");
+    let messages = 0;
+    try {
+      if (kind === "register") {
+        await saveVault({ profile: profileFromPrefs(prefsRef.current), chat: chatVaultPayload() });
+        setAccount(currentAccount());
+      } else {
+        messages = await applyVault(true);
+      }
+      report("settings", "ok", kind === "register" ? undefined : tf(lang, "acc.loaded", { n: messages }));
+    } catch (err) {
+      report("settings", "fail", (err as Error).message);
+    }
+
+    report("push", "run");
+    await linkPushForAccount();
+    report("push", "ok");
+    announceAccountToServer();
+
+    // What connects by itself: the saved connections open once the vault is read.
+    report("connect", "run");
+    for (let i = 0; i < 50 && clientConfig.connections.enabled && !connectionsReadyRef.current; i++) await new Promise((r) => setTimeout(r, 100));
+    const st = connectionsRef.current!.get();
+    const target = st.settings.autoConnect && desiredRef.current !== "connected" ? startupProfile(st) : null;
+    report("connect", "ok", target ? target.label : t(lang, "id.step.connect.none"));
+
+    void logAccountEvent("signin-complete", { kind, ms: Math.round(performance.now() - started), rtt, versionOk, messages });
+  }
+
   function signInToAccount() {
     return runAccountTask(async () => {
-      const acc = await signInWithPasskey();
-      setAccount(acc);
-      setPrefs({ chatRetention: "server" });
-      retentionRef.current = "server";
-      setAccMsg(t(lang, "acc.signedInAs").replace("{name}", acc.userName));
-      systemMessage(t(lang, "acc.signedInAs").replace("{name}", acc.userName));
-      await applyVault(true);
-      await linkPushForAccount();
-      announceAccountToServer();
+      const started = performance.now();
+      const progress = startSignInProgress("signin");
+      let acc: AccountSummary;
+      try {
+        acc = await signInWithPasskey(progress.report);
+      } catch (err) {
+        progress.fail(err);
+        return;
+      }
+      const name = acc.username ?? acc.id;
+      systemMessage(tf(lang, "acc.signedInAs", { name }));
+      await afterSignIn(acc, progress.report, "signin", started);
+      progress.done(t(lang, "id.done.signin"));
     });
   }
 
   function createAccount() {
     return runAccountTask(async () => {
-      const acc = await registerAccount(prefs.name || "M5cet");
-      setAccount(acc);
-      setPrefs({ chatRetention: "server" });
-      retentionRef.current = "server";
-      await saveVault({ profile: profileFromPrefs(prefsRef.current), chat: chatVaultPayload() });
-      setAccount(currentAccount());
-      setAccMsg(t(lang, "acc.signedInAs").replace("{name}", acc.userName));
-      await linkPushForAccount();
-      announceAccountToServer();
+      const started = performance.now();
+      const progress = startSignInProgress("register");
+      let acc: AccountSummary;
+      try {
+        acc = await registerAccount(progress.report);
+      } catch (err) {
+        progress.fail(err);
+        return;
+      }
+      const username = acc.username ?? acc.id;
+      systemMessage(tf(lang, "id.done.register", { username }));
+      await afterSignIn(acc, progress.report, "register", started);
+      progress.done(tf(lang, "id.done.register", { username }));
     });
   }
 
@@ -1122,15 +1348,22 @@ function ChatApp() {
   /** Every passkey lost: the recovery code, a new passkey, and back in. */
   function recoverAccount(code: string) {
     return runAccountTask(async () => {
-      const acc = await recoverWithCode(code, navigator.platform || "recovered");
-      setAccount(acc);
-      setPrefs({ chatRetention: "server" });
-      retentionRef.current = "server";
-      setAccMsg(t(lang, "acc.recover.done"));
+      const started = performance.now();
+      const progress = startSignInProgress("signin");
+      let acc: AccountSummary;
+      try {
+        progress.report("passkey", "run");
+        acc = await recoverWithCode(code, navigator.platform || "recovered");
+        progress.report("passkey", "ok", acc.username ?? acc.id);
+        progress.report("key", "ok");
+      } catch (err) {
+        progress.report("passkey", "fail", (err as Error).message);
+        progress.fail(err);
+        return;
+      }
       systemMessage(t(lang, "acc.recover.done"));
-      await applyVault(true);
-      await linkPushForAccount();
-      announceAccountToServer();
+      await afterSignIn(acc, progress.report, "signin", started);
+      progress.done(t(lang, "acc.recover.done"));
     });
   }
 
@@ -1224,13 +1457,15 @@ function ChatApp() {
   function pickRoomTab(tab: RoomTab) {
     if (roomLocked) return;
     setRoomTabPick(tab);
-    if (prefs.mode !== tab) setPrefs({ mode: tab });
+    // Signed out, the Server-enhanced tab only shows where to sign in.
+    if (prefs.mode !== tab && (tab === "light" || account)) setPrefs({ mode: tab });
   }
 
   /** Connect in the Room window: the saved connection picked, or the room typed in. */
   async function connectRoomTarget(target: RoomTarget) {
     if (target.kind === "profile") { await connectProfile(target.id); return; }
     // Typed in: the tab says which mode (a saved connection may have left another).
+    if (roomTab === "server" && !account) { setActivePanel("connection"); return; }
     if (prefs.mode !== roomTab) {
       setPrefs({ mode: roomTab });
       prefsRef.current = { ...prefsRef.current, mode: roomTab };
@@ -1738,7 +1973,8 @@ function ChatApp() {
           const identity = identityRef.current ?? (identityRef.current = await loadIdentity());
           const hello = await senderKeysRef.current.hello(keys, identity, myIdRef.current, peerId);
           const caps = mediaE2eeRef.current.supported ? ["bin", "media"] : ["bin"];
-          try { channel.send(JSON.stringify({ ...hello, caps })); } catch { /* closing */ }
+          // `user`: this session's username (the peer's claim, like its nickname).
+          try { channel.send(JSON.stringify({ ...hello, caps, ...(sessionUserRef.current ? { user: sessionUserRef.current } : {}) })); } catch { /* closing */ }
         })();
       }
       void broadcastAudioStatus(audioStatusRef.current);
@@ -1783,6 +2019,8 @@ function ChatApp() {
 
       if (raw.kind === "hello") {
         const hello = raw as unknown as Hello;
+        const user = cleanUsername(raw.user);
+        if (user) peerUsersRef.current.set(peerId, user);
         if (excludedRef.current.has(String(hello.pk))) { try { channel.close(); } catch { /* ignore */ } return; }
         if (Array.isArray(raw.caps) && raw.caps.includes("bin")) binaryChannelsRef.current.add(channel);
         const identity = identityRef.current ?? (identityRef.current = await loadIdentity());
@@ -2594,6 +2832,12 @@ function ChatApp() {
 
   /** Desired state := connected. Used by the form, a restored session and invites. */
   async function startSession(nextName: string, nextRoom: string, nextPassphrase: string) {
+    // Signed in: the account's username. P2P: a username from the nickname,
+    // for this session only (the nickname stays just the name shown).
+    const acc = accountRef.current;
+    const user = acc ? (acc.username ?? acc.id) : sessionUsername(nextName);
+    sessionUserRef.current = user;
+    setSessionUser(user);
     intentRef.current = true;
     clientStoppedRef.current = false;
     reconnectAttemptsRef.current = 0;
@@ -2900,6 +3144,7 @@ function ChatApp() {
     if (self) {
       return {
         name: nameRef.current || prefs.name, peerId: myIdRef.current, self: true,
+        username: sessionUserRef.current || (account ? account.username ?? account.id : undefined),
         connectedForMs: null, transport: "self", appType: "M5cet Web",
         usesServer: prefs.mode === "server", sentBytes: 0, recvBytes: 0,
         security: "AES-GCM 256 (E2EE)",
@@ -2914,6 +3159,7 @@ function ChatApp() {
     const transport: UserInfo["transport"] = !open ? "connecting" : net?.candidateType === "relay" ? "p2p-relay" : "p2p-direct";
     return {
       name: handle?.name || target.slice(-6), peerId: target, self: false,
+      username: peerUsersRef.current.get(target),
       connectedForMs: st ? Date.now() - st.openedAt : null,
       ip: net?.ip, candidateType: net?.candidateType, transport,
       appType: "M5cet Web", usesServer: prefs.mode === "server",
@@ -3535,12 +3781,8 @@ function ChatApp() {
       if (cancelled || !status) return;
       setServerStorage(status);
       serverStorageRef.current = status;
-      // Server-enhanced without a passkey: the server keeps a database for
-      // this session, encrypted with a key it generates, for one day.
-      if (status.available && status.caller !== "account" && prefsRef.current.mode === "server") {
-        const session = await startStorageSession();
-        if (session) void sendServerLog("info", "session.started", { mode: "server-enhanced" });
-      }
+      // 4.0: Server-enhanced needs a passkey sign-in, so a browser without
+      // one no longer gets a day-long anonymous database on the server.
     });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3550,6 +3792,7 @@ function ChatApp() {
   useEffect(() => {
     void accountStatus().then((st) => setAccStatus(st));
     void restoreSession().then((acc) => {
+      setAccountResolved(true);
       if (!acc) return;
       setAccount(acc);
       if (retentionRef.current === "server") announceAccountToServer();
@@ -3557,34 +3800,38 @@ function ChatApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- /signin: arrive from a push notification straight into the session ---
+  // --- /signin and /signup ---
+  //   /signin  (also where a push notification points) back into the account:
+  //            this tab's session if it has one, else the passkey ceremony
+  //   /signup  a new account: the server names it, the passkey stores it, and
+  //            it is signed in and active straight away
+  // Both open the Connection window, where the checked steps show.
   useEffect(() => {
-    if (!window.location.pathname.startsWith("/signin")) return;
+    const path = window.location.pathname;
+    const route = path.startsWith("/signin") ? "signin" : path.startsWith("/signup") ? "signup" : null;
+    if (!route) return;
     // Scrub the path at once so a reload does not repeat the ceremony.
     window.history.replaceState(null, "", "/");
+    setActivePanel("connection");
     let cancelled = false;
     void (async () => {
       const restored = await restoreSession();
       if (cancelled) return;
       if (restored) {
         setAccount(restored);
-        setPrefs({ chatRetention: "server" });
+        setPrefs({ chatRetention: "server", mode: "server" });
         retentionRef.current = "server";
-        systemMessage(t(lang, "acc.signedInAs").replace("{name}", restored.userName));
+        systemMessage(tf(lang, "acc.signedInAs", { name: restored.username ?? restored.id }));
         await applyVault(true);
         await linkPushForAccount();
         announceAccountToServer();
         return;
       }
-      // No live session in this tab. The passkey ceremony usually needs a
-      // gesture, so when the browser refuses we ask for one click instead.
-      setAccMsg(t(lang, "acc.signinRunning"));
-      await signInToAccount();
-      if (cancelled) return;
-      if (!currentAccount()) {
-        setActivePanel("connection");
-        setAccMsg((cur) => cur || t(lang, "acc.signinPrompt"));
-      }
+      // The passkey ceremony may need a gesture: when the browser refuses,
+      // the Connection window shows the buttons (and why) instead.
+      setAccMsg(t(lang, route === "signin" ? "acc.signinRunning" : "id.register"));
+      if (route === "signin") await signInToAccount();
+      else await createAccount();
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -3684,6 +3931,9 @@ function ChatApp() {
     // signed-in user's own — goes with it.
     await forgetServerData().catch(() => undefined);
     await wipeEverything({ deviceId: prefs.deviceId });
+    // Leaving on purpose: the lock's history entry goes first, so nothing of
+    // the chat is left to go back to.
+    await releaseNavigationGuard();
     leaveToGoodbye();
   }
 
@@ -3706,15 +3956,28 @@ function ChatApp() {
       {/* Motorsport stripe */}
       <div className="m5-stripe h-1 w-full" aria-hidden="true" />
 
-      {newBuild ? (
-        <div className="update-banner" role="status" data-testid="update-banner">
-          <span>{t(lang, "app.update.available").replace("{v}", `${newBuild.version} · ${newBuild.build}`)}</span>
-          <button type="button" className="update-banner__btn" onClick={() => window.location.reload()} data-testid="update-reload">
-            {t(lang, "app.update.reload")}
-          </button>
-          <button type="button" className="update-banner__x" onClick={() => setNewBuild(null)} aria-label={t(lang, "common.close")}>×</button>
-        </div>
+      {navBlocked ? (
+        <SimpleModal title={t(lang, "nav.leave.title")} onClose={() => setNavBlocked(null)} testId="nav-guard">
+          <div className="space-y-4" data-blocked={navBlocked}>
+            <p className="text-sm font-semibold" data-testid="nav-guard-text">{t(lang, "nav.leave")}</p>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" className="acc-btn acc-btn--primary" data-testid="nav-guard-disconnect" onClick={() => { setNavBlocked(null); userDisconnect(); }}>
+                <LogOut className="h-4 w-4" />{t(lang, "nav.leave.disconnect")}
+              </button>
+              <button type="button" className="acc-btn" data-testid="nav-guard-stay" onClick={() => setNavBlocked(null)}>{t(lang, "nav.leave.stay")}</button>
+            </div>
+          </div>
+        </SimpleModal>
       ) : null}
+
+      <IntegrityCheck
+        lang={lang}
+        handle={integrityRef}
+        onMismatch={(found) => {
+          console.warn("[m5cet] version check:", found);
+          if (accountRef.current) void logAccountEvent("version-mismatch", { items: found.length, first: `${found[0].kind}:${found[0].item}`.slice(0, 60) });
+        }}
+      />
 
       {/* Top app bar */}
       <header className="toolbar relative flex min-h-[3rem] flex-wrap items-center gap-2 border-b border-border bg-card/85 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/70 sm:px-4">
@@ -3789,8 +4052,14 @@ function ChatApp() {
           user={{ name: prefs.name, avatar: prefs.avatar }}
           onClearQuit={() => void clearAndQuit()}
           editMode={prefs.editMode}
-          onToggleEditMode={() => setPrefs({ editMode: !prefs.editMode })}
+          onToggleEditMode={moduleOn("editMode") ? () => setPrefs({ editMode: !prefs.editMode }) : undefined}
           buildLabel={buildLabel()}
+          visible={panelVisible}
+          config={menuConfig}
+          vars={menuVars}
+          nodeVisible={menuNodeVisible}
+          onAction={runMenuAction}
+          states={{ tone: shownTone(), notifications: prefs.notificationsEnabled, signedIn: Boolean(account), username: account ? account.username ?? account.userName ?? "" : "" }}
         />
         {/* Fullscreen through the browser viewport (Android, iPad, desktop
             touch screens). iPhone has no element fullscreen: there it is
@@ -3946,6 +4215,7 @@ function ChatApp() {
                   >
                     <Smile className="h-5 w-5" aria-hidden="true" />
                   </button>
+                  {moduleOn("files") ? <>
                   <button
                     type="button"
                     data-testid="button-attach-file"
@@ -3974,6 +4244,7 @@ function ChatApp() {
                     onRecorded={(file) => void sendPickedFile(file)}
                     onError={(msg) => setNotice(msg)}
                   />
+                  </> : null}
                 </div>
                 <label className="sr-only" htmlFor="message">{t(lang, "chat.placeholder")}</label>
                 <textarea
@@ -4013,7 +4284,7 @@ function ChatApp() {
       </main>
 
       {/* Modal panels */}
-      <ProfilePanel open={activePanel === "profile"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
+      <ProfilePanel open={activePanel === "profile"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} onOpenConnection={() => setActivePanel("connection")} />
       <SettingsPanel open={activePanel === "settings"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} onOpenAppearance={() => setActivePanel("appearance")} />
       {activePanel === "appearance" ? (
         <Suspense fallback={null}>
@@ -4049,6 +4320,8 @@ function ChatApp() {
           return r;
         }}
         onTestLocal={async () => showLocalTestNotification()}
+        signedIn={Boolean(account)}
+        onOpenConnection={() => setActivePanel("connection")}
       />
       <AnalyticsPanel open={activePanel === "analytics"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
 
@@ -4178,7 +4451,8 @@ function ChatApp() {
             timezone={prefs.timezone}
             state={cxState}
             policy={clientConfig.connections}
-            eligible={{ enabled: clientConfig.connections.enabled, signedIn: Boolean(account) && cxReady, serverMode: cxServerSide || manageFromRoom !== null }}
+            eligible={{ enabled: connectionsOn, signedIn: Boolean(account) && cxReady, serverMode: cxServerSide || manageFromRoom !== null }}
+            canShare={moduleOn("invites")}
             activeId={activeProfileId}
             connected={status === "joined"}
             current={status === "joined" && sessionPassphrase ? { room, passphrase: sessionPassphrase, userName: nameRef.current } : null}
@@ -4203,19 +4477,26 @@ function ChatApp() {
       {activePanel === "connection" ? (
         <SimpleModal title={t(lang, "app.connection.title")} onClose={() => setActivePanel(null)}>
           <div className="space-y-5">
-            <ChatRetentionSection
-              value={prefs.chatRetention}
-              onChange={(next) => { setPrefs({ chatRetention: next }); retentionRef.current = next; if (next !== "server") void historyRef.current.clear(); announceAccountToServer(); }}
+            <AccountAccess
               account={account}
               status={accStatus}
               supported={accountSupported()}
               busy={accBusy}
               message={accMsg}
               lang={lang}
+              nickname={name}
+              progress={signin}
               onSignIn={() => void signInToAccount()}
               onRegister={() => void createAccount()}
               onSignOutAndWipe={() => void signOutAndWipe()}
               onRecover={(code) => void recoverAccount(code)}
+              actions={accountActions}
+            />
+            <ChatRetentionSection
+              value={prefs.chatRetention}
+              onChange={(next) => { setPrefs({ chatRetention: next }); retentionRef.current = next; if (next !== "server") void historyRef.current.clear(); announceAccountToServer(); }}
+              account={account}
+              lang={lang}
             />
             <ConnectionPanel status={connStatus} prefs={prefs} setPrefs={setPrefs} lang={lang} desired={desired} log={connLog} />
           </div>
@@ -4245,7 +4526,7 @@ function ChatApp() {
               if (patch.passphrase !== undefined) setPassphrase(patch.passphrase);
             }}
             saved={{
-              enabled: clientConfig.connections.enabled,
+              enabled: connectionsOn,
               signedIn: Boolean(account),
               ready: cxReady,
               state: cxState,
@@ -4257,7 +4538,7 @@ function ChatApp() {
             onManage={() => setManageFromRoom("list")}
             onCreate={() => setManageFromRoom("new")}
             onSignIn={() => setActivePanel("connection")}
-            share={(
+            share={moduleOn("invites") ? (
               <ShareSection
                 lang={lang}
                 room={normalizeRoom(roomInputRef.current || roomInput)}
@@ -4265,7 +4546,7 @@ function ChatApp() {
                 ready={desired === "connected" && sessionPassphrase.length > 0}
                 server={activeServerRef.current || undefined}
               />
-            )}
+            ) : null}
           />
         </SimpleModal>
       ) : null}
@@ -4320,6 +4601,7 @@ function ChatApp() {
             onSignOut={() => void signOutAndWipe()}
             onDelete={deleteAccountForever}
             actions={accountActions}
+            onOpenConnection={() => { setShowAccount(false); setActivePanel("connection"); }}
           />
         </SimpleModal>
       ) : null}

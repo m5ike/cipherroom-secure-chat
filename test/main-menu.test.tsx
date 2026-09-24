@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, cleanup, screen, act } from "@testing-library/react";
 import { MainMenu, MENU_ENTRIES, MENU_GROUPS, avatarGlyph } from "../client/src/components/MainMenu";
 import type { Lang } from "../client/src/lib/i18n";
+import { DEFAULT_MENU_CONFIG, sanitizeMenuConfig, type MenuConfig } from "../client/src/lib/menu-config";
 
 const LANG: Lang = "en";
 
@@ -289,5 +290,101 @@ describe("MainMenu — quick access (Appearance + Edit Mode) and build label", (
     render(<MainMenu mode="icons-text" lang={LANG} onOpen={vi.fn()} editMode={false} onToggleEditMode={onToggle} />);
     fireEvent.click(screen.getByTestId("btn-edit-mode"));
     expect(onToggle).toHaveBeenCalled();
+  });
+});
+
+describe("MainMenu — 4.0 menu built in the console (MenuConfig)", () => {
+  beforeEach(() => { cleanup(); });
+
+  const custom = (): MenuConfig => sanitizeMenuConfig({
+    ...DEFAULT_MENU_CONFIG,
+    trigger: { icon: "rocket", text: "Menu {$user.nickname}", showText: true, title: "Open", style: { color: "#ff0000", states: { hover: { background: "primary" } } } },
+    panel: { ...DEFAULT_MENU_CONFIG.panel, width: 400, title: "Hi {$user.nickname|upper}", showClose: false },
+    items: [
+      { kind: "html", id: "hello", html: "<p class=\"x\">Room {$session.room} · {$room.peers} <button data-action=\"panel:settings\">go</button><button data-action=\"fn:setLang:de\">de</button></p>" },
+      { kind: "separator", id: "sep1", variant: "dashed", color: "#00ff00", thickness: 2, spacing: 6 },
+      { kind: "section", id: "main", label: "Main", icon: "star", children: [
+        { kind: "item", id: "btn-a", icon: "globe", label: "Web", action: { type: "url", href: "https://example.org", newTab: true }, badge: "{$room.peers}" },
+        { kind: "item", id: "btn-b", icon: "settings", label: "@menu.settings", action: { type: "panel", panel: "settings" }, style: { fontWeight: "700", states: { hover: { color: "#123456" } } } },
+        { kind: "item", id: "btn-hidden", icon: "x", label: "Hidden", action: { type: "none" }, hidden: true },
+        { kind: "item", id: "btn-rule", icon: "x", label: "Rule", action: { type: "none" }, module: "ai" },
+      ] },
+      { kind: "section", id: "empty", label: "Nothing shown", children: [{ kind: "item", id: "btn-gone", icon: "x", label: "Gone", action: { type: "none" }, hidden: true }] },
+      { kind: "row", id: "switches", children: [
+        { kind: "special", id: "tone", special: "toneToggle", showState: true },
+        { kind: "special", id: "acc", special: "account" },
+      ] },
+    ],
+    footer: [{ kind: "special", id: "build", special: "build" }],
+  });
+  const vars = { user: { nickname: "Alice" }, session: { room: "brno" }, room: { peers: 3 } };
+
+  it("draws the trigger, the panel, HTML with live values, separators, sections and rows", () => {
+    const onOpen = vi.fn();
+    const onAction = vi.fn();
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={onOpen} onAction={onAction} config={custom()} vars={vars} buildLabel="b1"
+      nodeVisible={(node) => node.module !== "ai"} states={{ tone: "dark", signedIn: true, username: "quick-fox-ab12" }} />);
+    const trigger = screen.getByTestId("btn-menu-speeddial");
+    expect(trigger.textContent).toBe("Menu Alice");
+    expect(["#ff0000", "rgb(255, 0, 0)"]).toContain(trigger.style.color);
+    expect(trigger.className).toContain("mb-hover-bg");
+    expect(trigger.querySelector("svg")!.getAttribute("class")).toContain("lucide-rocket");
+    fireEvent.click(trigger);
+    const menu = screen.getByTestId("speeddial-menu");
+    expect(menu.style.width).toBe(`${Math.min(400, window.innerWidth - 32)}px`);
+    expect(menu.querySelector("header")!.textContent).toBe("Hi ALICE");
+    expect(screen.queryByTestId("speeddial-close")).toBeNull();
+    // HTML block: values filled in, markup kept, no raw template left.
+    const html = menu.querySelector(".menu-html")!;
+    expect(html.querySelector("p.x")!.textContent).toContain("Room brno · 3");
+    // Separator with its own look.
+    const sep = menu.querySelector(".menu-sep--dashed") as HTMLElement;
+    expect(sep.style.borderTopStyle).toBe("dashed");
+    expect(sep.style.borderTopWidth).toBe("2px");
+    // Hidden nodes, rules and sections left empty are not drawn.
+    expect(screen.queryByTestId("speeddial-btn-hidden")).toBeNull();
+    expect(screen.queryByTestId("speeddial-btn-rule")).toBeNull();
+    expect(menu.textContent).not.toContain("Nothing shown");
+    expect(menu.textContent).toContain("Main");
+    expect(screen.getByTestId("speeddial-btn-a").textContent).toContain("3"); // badge
+    const b = screen.getByTestId("speeddial-btn-b");
+    expect(b.style.fontWeight).toBe("700");
+    expect(b.className).toContain("mb-hover-color");
+    // Specials in a row: the tone switch shows its state, the account its username.
+    expect(screen.getByTestId("speeddial-tone").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByTestId("speeddial-acc").textContent).toContain("quick-fox-ab12");
+    expect(screen.getByTestId("menu-build").textContent).toBe("b1");
+    // Actions: a URL goes to onAction, a panel to onOpen, HTML data-action too.
+    fireEvent.click(screen.getByTestId("speeddial-btn-a"));
+    expect(onAction).toHaveBeenCalledWith({ type: "url", href: "https://example.org", newTab: true });
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    fireEvent.click(screen.getByText("go"));
+    expect(onOpen).toHaveBeenCalledWith("settings");
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    fireEvent.click(screen.getByText("de"));
+    expect(onAction).toHaveBeenCalledWith({ type: "fn", fn: "setLang", param: "de" });
+  });
+
+  it("the toolbar draws the same items, the HTML inline, a divider for a separator", () => {
+    const onAction = vi.fn();
+    render(<MainMenu mode="icons-text" lang={LANG} onOpen={vi.fn()} onAction={onAction} config={custom()} vars={vars} nodeVisible={(node) => node.module !== "ai"} />);
+    const nav = screen.getByTestId("main-nav");
+    expect(screen.getByTestId("btn-b").getAttribute("aria-label")).toBe("Settings");
+    expect(screen.queryByTestId("btn-hidden")).toBeNull();
+    expect(screen.queryByTestId("btn-rule")).toBeNull();
+    expect(nav.querySelector(".menu-html--inline")!.textContent).toContain("Room brno");
+    fireEvent.click(screen.getByTestId("btn-a"));
+    expect(onAction).toHaveBeenCalledWith(expect.objectContaining({ type: "url" }));
+  });
+
+  it("never lets an HTML block run script or reach javascript: URLs", () => {
+    const config = sanitizeMenuConfig({ ...DEFAULT_MENU_CONFIG, items: [
+      { kind: "html", id: "evil", html: "<img src=x onerror=\"alert(1)\"><a href=\"javascript:alert(1)\">x</a><script>alert(1)</script><b onclick=\"alert(1)\">b</b>" },
+    ] });
+    render(<MainMenu mode="speeddial" lang={LANG} onOpen={vi.fn()} config={config} />);
+    fireEvent.click(screen.getByTestId("btn-menu-speeddial"));
+    const html = screen.getByTestId("speeddial-menu").querySelector(".menu-html")!;
+    expect(html.querySelector("script")).toBeNull();
+    expect(html.innerHTML).not.toMatch(/onerror|onclick|javascript:/i);
   });
 });

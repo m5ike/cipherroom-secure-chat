@@ -81,15 +81,17 @@ async function openConnection(page: Page): Promise<void> {
 
 describe("account recovery", () => {
   let code = "";
+  let username = "";
 
   it("makes a recovery code on the first device", async () => {
     const first = await device();
     await openConnection(first.page);
     await first.page.getByTestId("account-register").click();
     await first.page.getByTestId("signed-in-badge").waitFor({ state: "visible", timeout: 20_000 });
-    await first.page.keyboard.press("Escape");
-
-    await first.page.getByTestId("signed-in-badge").click();
+    // 4.0: the server named the account; the recovery code is made here, in
+    // the Connection window (the only place for passkeys).
+    username = (await first.page.getByTestId("account-username").innerText()).trim();
+    expect(username).toMatch(/^[a-z]+-[a-z]+-[a-z0-9]{4,6}$/);
     await first.page.getByTestId("recovery-create").click();
     code = (await first.page.getByTestId("recovery-code").innerText({ timeout: 20_000 })).trim();
     // 26 Crockford base32 characters (130 bits), shown in groups.
@@ -104,12 +106,13 @@ describe("account recovery", () => {
     await second.page.getByTestId("recover-code").fill(code.toLowerCase()); // typed any which way
     await second.page.locator('[data-testid="recover-form"] button[type=submit]').click();
     await second.page.getByTestId("signed-in-badge").waitFor({ state: "visible", timeout: 20_000 });
-    expect(await second.page.getByTestId("signed-in-badge").innerText()).toMatch(/alice/i);
+    // The same account — the same username — on the new device.
+    expect(await second.page.getByTestId("signed-in-badge").innerText()).toContain(username);
+    // Both passkeys now open the account; the account key is the same one.
+    await expect.poll(() => second.page.getByTestId("passkey-row").count(), { timeout: 10_000 }).toBe(2);
     await second.page.keyboard.press("Escape");
 
-    // Both passkeys now open the account; the account key is the same one.
     await second.page.getByTestId("signed-in-badge").click();
-    await expect.poll(() => second.page.getByTestId("passkey-row").count(), { timeout: 10_000 }).toBe(2);
     await expect.poll(() => second.page.getByTestId("session-row").count(), { timeout: 10_000 }).toBeGreaterThanOrEqual(2);
     expect(second.errors).toEqual([]);
   }, 120_000);
@@ -120,7 +123,7 @@ describe("account recovery", () => {
     await third.page.getByTestId("recover-open").click();
     await third.page.getByTestId("recover-code").fill("0".repeat(26));
     await third.page.locator('[data-testid="recover-form"] button[type=submit]').click();
-    await expect.poll(() => third.page.getByTestId("retention-msg").innerText(), { timeout: 15_000 }).toBeTruthy();
+    await third.page.getByTestId("signin-error").waitFor({ state: "visible", timeout: 15_000 });
     expect(await third.page.getByTestId("signed-in-badge").count()).toBe(0);
   }, 120_000);
 });

@@ -55,7 +55,7 @@ import { buildInfo } from "./build-info";
 import { audit, type AuditCategory, type AuditLevel } from "./monitor/audit";
 import { system } from "./monitor/system";
 import { traffic, type TrafficClass } from "./monitor/traffic";
-import type { AccountStore } from "./accounts/store";
+import { usernameOf, type AccountStore } from "./accounts/store";
 import type { OfflineQueue } from "./accounts/mailqueue";
 import type { StorageService } from "./storage/service";
 import type { BackupManager } from "./storage/backup";
@@ -238,7 +238,9 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
       const q = queue?.stats(a.id);
       return {
         id: a.id,
-        userName: a.userName,
+        username: usernameOf(a),
+        userName: usernameOf(a),
+        keyVerified: Boolean(a.keyVerifier),
         createdAt: a.createdAt,
         lastLoginAt: a.lastLoginAt,
         loginCount: a.loginCount,
@@ -420,7 +422,7 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
   app.get("/api/admin/queue", (_req, res) => {
     const queue = deps.queue();
     if (!queue) return res.json({ ok: true, available: false, accounts: [], stats: null });
-    const names = new Map(deps.accounts.all().map((a) => [a.id, a.userName]));
+    const names = new Map(deps.accounts.all().map((a) => [a.id, usernameOf(a)]));
     res.json({
       ok: true,
       available: true,

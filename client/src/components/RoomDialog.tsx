@@ -5,7 +5,9 @@
 //   Light · P2P       name, room ID and key, typed in
 //   Server-enhanced   the account's saved connections to pick from (no
 //                     buttons on them — those live in My connections), or
-//                     "another room" typed in; a gear opens My connections
+//                     "another room" typed in; a gear opens My connections.
+//                     4.0: only for a passkey sign-in — signed out, the tab
+//                     says so and links to the Connection window
 //
 // While a connection is up, nothing can be switched: the tabs and the other
 // connections are disabled until Disconnect. The connecting itself stays in
@@ -17,6 +19,7 @@ import {
 } from "lucide-react";
 import { t, tf, type Lang } from "../lib/i18n";
 import type { ConnectionProfile, ConnectionsState } from "../lib/connections";
+import { NeedSignIn } from "./NeedSignIn";
 import "../room.css";
 
 export type RoomTab = "light" | "server";
@@ -136,7 +139,9 @@ export function RoomDialog(props: RoomDialogProps) {
   // While connected the choice is the connection in use.
   const selected = locked ? (saved.activeId && profiles.some((p) => p.id === saved.activeId) ? saved.activeId : "manual") : pick;
   const selectedProfile = tab === "server" && listed ? profiles.find((p) => p.id === selected) ?? null : null;
-  const manual = tab === "light" || !listed || selected === "manual";
+  // Signed out, Server-enhanced has nothing to connect: no fields, no button.
+  const needsSignIn = tab === "server" && !saved.signedIn;
+  const manual = tab === "light" || (!needsSignIn && (!listed || selected === "manual"));
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
@@ -171,7 +176,7 @@ export function RoomDialog(props: RoomDialogProps) {
         </div>
 
         <div className="rd-actions">
-          <button data-testid="button-connect" type="submit" className="rd-btn rd-btn--primary" disabled={busy}>
+          <button data-testid="button-connect" type="submit" className="rd-btn rd-btn--primary" disabled={busy || (needsSignIn && !joined)}>
             {joined ? <RefreshCw className="h-4 w-4 flex-none" aria-hidden="true" /> : <Radio className="h-4 w-4 flex-none" aria-hidden="true" />}
             <span className="truncate">{connectLabel}</span>
           </button>
@@ -231,30 +236,15 @@ function SavedList(props: RoomDialogProps & { listed: boolean; selected: string;
     Number(b.id === saved.state.settings.defaultId) - Number(a.id === saved.state.settings.defaultId) || b.lastUsedAt - a.lastUsedAt,
   ), [profiles, saved.state.settings.defaultId]);
 
-  if (!saved.enabled || !saved.signedIn) {
+  if (!saved.signedIn) {
+    return <NeedSignIn lang={lang} onOpen={locked ? undefined : props.onSignIn} text={t(lang, "room.signin.text")} testId="room-need" />;
+  }
+  if (!saved.enabled) {
     return (
-      <>
-      <div className="rd-need" data-testid="room-need">
-        {saved.enabled ? (
-          <>
-            <span className="rd-need__icon" aria-hidden="true"><KeyRound className="h-5 w-5" /></span>
-            <div className="rd-need__text">
-              <strong>{t(lang, "room.signin.title")}</strong>
-              <span>{t(lang, "room.signin.text")}</span>
-            </div>
-            <button type="button" className="rd-btn rd-btn--primary rd-need__btn" onClick={props.onSignIn} disabled={locked} data-testid="room-sign-in">
-              {t(lang, "cx.signIn")}
-            </button>
-          </>
-        ) : (
-          <>
-            <span className="rd-need__icon" aria-hidden="true"><Lock className="h-5 w-5" /></span>
-            <span className="rd-need__text"><span>{t(lang, "room.disabled")}</span></span>
-          </>
-        )}
+      <div className="rd-need" data-testid="room-disabled">
+        <span className="rd-need__icon" aria-hidden="true"><Lock className="h-5 w-5" /></span>
+        <span className="rd-need__text"><span>{t(lang, "room.disabled")}</span></span>
       </div>
-      {saved.enabled ? <p className="rd-or">{t(lang, "room.orManual")}</p> : null}
-      </>
     );
   }
   if (!listed) return <p className="rd-loading" aria-busy="true" data-testid="room-loading">{t(lang, "room.saved.loading")}</p>;
