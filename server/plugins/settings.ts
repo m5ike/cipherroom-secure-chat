@@ -14,11 +14,11 @@
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-export type PluginSwitch = "ai" | "speech";
+export type PluginSwitch = "ai" | "speech" | "functions";
 export type SwitchSource = "env" | "console" | "default";
-export type PluginSettings = { ai?: boolean; speech?: boolean; updatedAt?: number; updatedBy?: string };
+export type PluginSettings = { ai?: boolean; speech?: boolean; functions?: boolean; updatedAt?: number; updatedBy?: string };
 
-const ENV_NAME: Record<PluginSwitch, string> = { ai: "ENABLE_AI", speech: "ENABLE_SPEECH" };
+const ENV_NAME: Record<PluginSwitch, string> = { ai: "ENABLE_AI", speech: "ENABLE_SPEECH", functions: "ENABLE_FUNCTIONS" };
 
 export function pluginSettingsPath(): string {
   const explicit = process.env.PLUGINS_SETTINGS_FILE?.trim();
@@ -40,6 +40,7 @@ function read(): PluginSettings {
     settings = {
       ai: typeof raw.ai === "boolean" ? raw.ai : undefined,
       speech: typeof raw.speech === "boolean" ? raw.speech : undefined,
+      functions: typeof raw.functions === "boolean" ? raw.functions : undefined,
       updatedAt: typeof raw.updatedAt === "number" ? raw.updatedAt : undefined,
       updatedBy: typeof raw.updatedBy === "string" ? raw.updatedBy.slice(0, 120) : undefined,
     };

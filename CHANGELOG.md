@@ -5,6 +5,55 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [4.15.0] – 2026-09-24
+
+Programovatelné moduly — druhá etapa frameworku funkcí
+(`docs/functions-architecture.md`, kap. 16, etapa 2). Operátor napíše model
+v JavaScriptu nebo Pythonu, publikuje ho a v chatu ho kdokoli spustí přes
+`/klíčové-slovo` (jako roboti v messengerech). Protokol, šifrování ani data
+účtů se nemění; server nikdy nečte místnost — dostane jen to, co klient
+u příkazu pošle, a výstup do místnosti šifruje klient.
+
+### Přidáno
+- **Sandbox a runner** (`server/functions/`): každý běh dostane vlastní
+  **oddělený proces** (`dist/sandbox.cjs`) s interpretem ve WebAssembly —
+  **QuickJS** pro JavaScript (ES2023, moduly, `async/await`, přerušení podle
+  času, limit paměti), **Pyodide** pro Python (CPython 3.14, standardní
+  knihovna). Smyčka, přetečení paměti ani pád tak neohrozí hlavní službu:
+  runner hlídá čas i paměť a proces v případě potřeby ukončí. Interpret ve
+  WASM nevidí hostitele; skripty píše důvěryhodný operátor, takže hranicí je
+  proces a interpret, ne obrana proti autorovi.
+- **SDK `m5`** stejné v obou jazycích (v Pythonu `snake_case`): `sys`, `run`,
+  `caller` (`send`, `flash`), `log` (živě v konzoli), `out`
+  (text, markdown, code, table, json, image, file, flash), `session` a
+  `cache` s TTL, a čisté pomocníky `codec` (base64/32/58, hex, url, html,
+  csv, komprese), `id` (uuid, uuid7, ulid, nanoid, slug) a `crypto` (hash,
+  hmac, hkdf, pbkdf2, scrypt, AES-GCM, náhoda) — počítané uvnitř procesu,
+  jednou pro oba jazyky.
+- **Balíčky, verze a modely** (SQLite `$DATA_DIR/functions/functions.db`):
+  koncept (upravitelný) → publikovaná verze (neměnná, otisk obsahu),
+  importy mezi soubory i balíčky s pevnou verzí; model = vstupní bod +
+  schéma vstupů (typy, validace, koerce) + limity + executory + skupiny +
+  klíčové slovo; revize modelu jako historie.
+- **Konzole — IDE** (`admin-ui`, sekce *Functions*): editor souborů balíčku
+  s panelem SDK, uložení konceptu, publikace verze, zkušební běh s výstupy
+  a živými logy; správa modelů (klíčové slovo, vstupní bod přes výběr
+  balíček\@verze:soubor, schéma vstupů, viditelnost v místnosti / jen
+  volajícímu, skupiny, zapnutí) se zkušebním během; seznam běhů.
+- **Chat**: klient rozpozná `/klíč args`, přeloží argumenty na vstupy
+  (`klíč=hodnota` i poziční), spustí model na serveru a výstup buď pošle do
+  místnosti jako běžnou šifrovanou zprávu (podepsanou modelem), nebo ukáže
+  jen volajícímu. Nové API `GET /api/functions/commands` a
+  `POST /api/functions/run`; přepínač modulu `functions` (`ENABLE_FUNCTIONS`).
+- **Sestavení**: `npm run build` staví i `dist/sandbox.cjs` a kopíruje běhové
+  balíčky do `dist/node_modules` (ovladač SQLCipher, Pyodide, QuickJS WASM),
+  takže je má i instalace bez `node_modules` a obraz Dockeru s jen `dist`.
+
+### Opraveno
+- Ovladač SQLCipher se teď dostane do `dist/node_modules`, takže úložiště
+  a žurnál AI přežijí i výchozí instalaci a obraz Dockeru (dřív běžely jen
+  v paměti, když se `node_modules` po sestavení mazal).
+
 ## [4.14.0] – 2026-09-24
 
 AI a řeč od základu — první etapa frameworku funkcí

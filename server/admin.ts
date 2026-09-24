@@ -32,6 +32,7 @@ import { eventStore } from "./events";
 import { isWebPushReady } from "./push";
 import { pluginLog } from "./plugins/log";
 import { registerAiAdminRoutes } from "./ai/admin-routes";
+import { registerFunctionsAdminRoutes } from "./functions/admin-routes";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerAdminLayoutRoutes } from "./layout";
 import { distPublicDir } from "./layout-catalog";
@@ -184,6 +185,9 @@ app.get("/admin/modules", (_req, res) => {
 
 // ---- AI & speech (4.14: providers, keys, models, limits, playground, journal) ----
 registerAiAdminRoutes(app);
+
+// ---- Functions (4.15: packages, models, IDE, test runs) ----
+registerFunctionsAdminRoutes(app);
 
 // Recent plugin log entries (metadata only).
 app.get("/admin/plugins/logs", (req, res) => {

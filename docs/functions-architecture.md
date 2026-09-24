@@ -491,7 +491,7 @@ sandboxu), dokumentací a nasazením; další staví na předchozí.
 | Etapa | Obsah | Hotovo, když |
 |---|---|---|
 | **1 — AI & speech** (4.14, hotovo) | vrstva poskytovatelů (8 AI + řeč), šifrované přístupy, katalog modelů, zkušebna, logy volání, kvóty a náklady, zdraví; nové API aplikace (stream); asistent v chatu místo `AiPanel` | každý poskytovatel projde testem v zkušebně (mock server v testech), stream v chatu, logy a náklady v konzoli |
-| **2 — Runtime** | `m5cet-runner`, fronta, QuickJS + Pyodide sandboxy, SDK jádro (`sys`, `run`, `caller`, `log`, `out`, `session`, `cache`, `codec`, `id`, `crypto` základ), balíčky a verze, modely, IDE v1, zkušební běh, běhy v konzoli | sada útoků na sandbox (únik, paměť, smyčka, SSRF) neprojde; zkušební běh JS i Pythonu z IDE |
+| **2 — Runtime** (4.15, hotovo) | `m5cet-runner`, fronta, QuickJS + Pyodide sandboxy, SDK jádro (`sys`, `run`, `caller`, `log`, `out`, `session`, `cache`, `codec`, `id`, `crypto` základ), balíčky a verze, modely, IDE v1, zkušební běh, běhy v konzoli | sada útoků na sandbox (únik, paměť, smyčka, SSRF) neprojde; zkušební běh JS i Pythonu z IDE |
 | **3 — Chat** | executor `/klíč`: našeptávání, nápověda parametrů, parsování, validace, karty běhu, výstupy (`message.function`), prompt a formulář, flash, okna; E2EE štítky a souhlas | E2E: dva lidé v místnosti, jeden spustí serverový a prohlížečový model, druhý vidí výstup |
 | **4 — Síť a integrace** | `http` (cookies, form-data, raw), `dns`, `crypto` plné (SSH, PGP, X.509, JWT), `codes`, komprese, webhooky (vstupní, běhu), `on_event`, trvalé pokračování, plány, API tokeny | webhook běhu doručí data do `on_event` po restartu runneru |
 | **5 — AI ve funkcích** | `m5.ai` (chat, stream, reasoning, embed, obrázky, řeč), agenti s nástroji a potvrzováním, rozpočty běhu | agent s dvěma nástroji a potvrzením v chatu |
@@ -516,6 +516,33 @@ modelů, rozpočty po poskytovatelích, skupinách a modelech, embeddings a
 obrázky, metriky AI v `/metrics`, OpenAI Responses API (používá se Chat
 Completions, které OpenAI dál podporuje) a příkazy `/ai` v chatu (etapa 3).
 
+### Stav etapy 2 (4.15)
+
+Hotovo: oddělený **sandbox proces** (`dist/sandbox.cjs`) s **QuickJS** (JS) a
+**Pyodide** (Python 3.14) ve WASM; **runner** hlídá čas a paměť a proces při
+překročení ukončí (smyčka, paměť i pád jsou izolované od hlavní služby); jádro
+**SDK `m5`** (`sys`, `run`, `caller`, `log`, `out`, `session`, `cache`,
+`codec`, `id`, `crypto` základ) stejné v obou jazycích; **úložiště** (SQLite:
+balíčky, verze, modely, běhy, logy, session, cache) s koncepty a neměnnými
+publikovanými verzemi; **modely** se schématem vstupů (koerce, validace),
+limity, skupinami a klíčovým slovem; **konzole** s editorem, publikací,
+zkušebním během a živými logy, správou modelů a seznamem běhů; **chat
+executor** (`/klíč`, poziční i `klíč=hodnota` argumenty, výstup do místnosti
+nebo jen volajícímu); přepínač modulu `functions`; sestavení kopíruje běhové
+balíčky do `dist/node_modules`.
+
+Zjednodušeno oproti kap. 4.2: protože skripty píše **důvěryhodný operátor**
+(rozhodnutí 6 níže), hranicí je oddělený proces a interpret ve WASM, ne obrana
+proti autorovi. Sandbox proces si při startu ještě jako lehkou hygienu zaslepí
+síťové a procesní moduly Node a odstraní nepotřebné globály
+(`server/functions/sandbox/harden.ts`), ale agresivní vrstva z prvního
+návrhu — sondy útoků, uzamčení přes `node --permission` a bubblewrap — se
+nepoužívá. Nespuštěné části: samostatný démon `m5cet-runner` s frontou
+(běhy zatím běží v procesu služby, těžká práce je v sandbox procesu; fronta
+nad SQLite/Redis přijde se škálováním), `trace`/přehrání běhu, tutoriál,
+`m5.http`/`dns`/`codes` a plné `crypto` (etapa 4), běh v prohlížeči
+(`runtime: browser` je zatím vždy server) a `on_event`/webhooky (etapa 4).
+
 ## 17. Rozhodnutí (2026-09-24)
 
 1. **Místo běhu** — model deklaruje `runtime: "browser" | "server" | "auto"`
@@ -538,6 +565,15 @@ Completions, které OpenAI dál podporuje) a příkazy `/ai` v chatu (etapa 3).
    zadané ceny modelů); limity na uživatele a den; zkušebna a testy v konzoli
    se počítají, ale limit je neblokuje. Hosté AI používají, jen když je
    skupina „Hosté“ u poskytovatele povolená.
+
+6. **Model hrozby**: skripty modelů píše jedna **důvěryhodná osoba**
+   (vlastník / operátor), ne koncoví uživatelé. Proto se modely spouští
+   v **odděleném procesu** (aby chyba, smyčka nebo přetečení paměti
+   neohrozily hlavní službu) s interpretem ve **WASM** (oddělený od
+   hostitele a dat místnosti), ale **bez** vrstvy obrany proti úniku autora
+   (enumerace nebezpečných API, uzamčení oprávnění, bwrap) z kap. 4.2 —
+   ta je zbytečná a v etapě 2 se vypustila. Systémový Python v nsjail a plné
+   uzamčení zůstávají pro budoucí spouštění cizího kódu (nad rámec 5.0).
 
 Verze: etapa 1 = **4.14**, další etapy 4.15–4.19, celek **5.0**.
 

@@ -1,8 +1,11 @@
 import { build as esbuild } from "esbuild";
 import { build as viteBuild } from "vite";
-import { rm, readFile, readdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { rm, readFile, readdir, writeFile, cp, mkdir } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { createRequire } from "node:module";
+import { dirname, join } from "node:path";
 import { brotliCompressSync, gzipSync, constants as zlib } from "node:zlib";
+import { sandboxBuildOptions } from "../server/functions/sandbox/bundle";
 
 // Server deps to bundle to reduce openat(2) syscalls, which helps cold start
 // times. Keep this list in sync with package.json dependencies actually used
@@ -46,13 +49,54 @@ async function buildServer() {
   });
 }
 
+/** The Functions sandbox process (4.15): its own bundle, run per function. */
+async function buildSandbox() {
+  await esbuild(sandboxBuildOptions("dist/sandbox.cjs", true));
+}
+
+/**
+ * Copies the packages the runtime loads from disk into dist/node_modules
+ * (4.15). The installer removes node_modules after the build (dist is meant
+ * to be self-contained), and the Docker image copies only dist — so the
+ * SQLite driver (storage and the AI journal), Pyodide (Python functions) and
+ * the QuickJS WebAssembly (JavaScript functions) must travel inside dist.
+ */
+async function copyRuntimeDeps() {
+  const req = createRequire(join(process.cwd(), "package.json"));
+  const out = "dist/node_modules";
+  await mkdir(out, { recursive: true });
+
+  const copyPackage = async (name: string, subpaths: string[]) => {
+    let base: string;
+    try { base = dirname(req.resolve(`${name}/package.json`)); }
+    catch { console.warn(`[build] ${name} not installed; skipping (its feature is off at runtime).`); return; }
+    const dest = join(out, name);
+    await mkdir(dirname(dest), { recursive: true });
+    if (subpaths.length === 0) { await cp(base, dest, { recursive: true }); }
+    else {
+      await mkdir(dest, { recursive: true });
+      await cp(join(base, "package.json"), join(dest, "package.json"));
+      for (const sub of subpaths) { const from = join(base, sub); if (existsSync(from)) await cp(from, join(dest, sub), { recursive: true }); }
+    }
+    console.log(`[build] bundled runtime package ${name}`);
+  };
+
+  // Pyodide loads its own files (asm, stdlib) relative to the folder.
+  await copyPackage("pyodide", []);
+  // QuickJS: the glue is bundled into sandbox.cjs; only the .wasm is loaded from disk.
+  await copyPackage("@jitl/quickjs-ng-wasmfile-release-sync", ["dist/emscripten-module.wasm"]);
+  // The SQLCipher driver: the loader (lib) picks the prebuilt binary for the platform.
+  await copyPackage("better-sqlite3-multiple-ciphers", ["lib", "prebuilds", "build"]);
+}
+
 async function buildAll() {
   await rm("dist", { recursive: true, force: true });
 
   // Client (dist/public) and server (dist/*.cjs) outputs do not overlap, so
   // the two toolchains can run concurrently.
   console.log("building client + server...");
-  await Promise.all([viteBuild(), buildServer()]);
+  await Promise.all([viteBuild(), buildServer(), buildSandbox()]);
+  await copyRuntimeDeps();
   await precompress("dist/public/assets");
 }
 

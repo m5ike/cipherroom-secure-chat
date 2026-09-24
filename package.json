@@ -1,6 +1,6 @@
 {
   "name": "cipherroom-secure-chat",
-  "version": "4.14.0",
+  "version": "4.15.0",
   "description": "M5cet — end-to-end encrypted WebRTC P2P workspace (chat, calls, files, speech, NFC, maps, push) with WebSocket signaling and no message persistence.",
   "license": "MIT",
   "type": "module",
@@ -24,11 +24,14 @@
     "check:menu:verbose": "bash -x scripts/pre-commit-check.sh"
   },
   "dependencies": {
+    "@jitl/quickjs-ng-wasmfile-release-sync": "^0.32.0",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
     "hash-wasm": "^4.12.0",
     "helmet": "^8.3.0",
     "lucide-react": "^1.47.0",
+    "pyodide": "^314.0.7",
+    "quickjs-emscripten-core": "^0.32.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "uqr": "^0.1.3",

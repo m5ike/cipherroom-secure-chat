@@ -37,6 +37,7 @@ import { registerPushRoutes } from "./push-routes";
 import { consentLedger, deviceAuditLog, deviceSettings } from "./device-state";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 import { registerAiRoutes } from "./ai/routes";
+import { registerFunctionsRoutes } from "./functions/routes";
 import { accountStore, accountsDir } from "./accounts/store";
 import { storage } from "./storage/service";
 import { registerStorageRoutes } from "./storage/routes";
@@ -123,6 +124,8 @@ export async function registerRoutes(
   registerGoodbyeRoute(app);
   // Optional AI + speech modules (4.14: providers, limits and the journal in server/ai).
   registerAiRoutes(app);
+  // Functions (4.15: chat commands "/keyword" run a model in a sandbox process).
+  registerFunctionsRoutes(app);
   // Server-side storage: one SQLite database for the server, one encrypted
   // SQLCipher database per user or session (storage/*). Boots before the
   // routes so /api/storage/status can answer honestly either way.

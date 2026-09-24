@@ -129,6 +129,13 @@ native_build() {
   run_sh "cd '${INSTALL_DIR}' && env -u NODE_ENV npm run build"
   if [ "${DRY_RUN}" != "1" ]; then
     [ -f "${INSTALL_DIR}/dist/index.cjs" ] || die "$(L 'Build did not produce dist/index.cjs.' 'Build nevytvořil dist/index.cjs.')"
+    # 4.15: the Functions sandbox and its runtime packages must be in dist,
+    # because node_modules is removed below (dist is self-contained).
+    [ -f "${INSTALL_DIR}/dist/sandbox.cjs" ] || die "$(L 'Build did not produce dist/sandbox.cjs (Functions).' 'Build nevytvořil dist/sandbox.cjs (funkce).')"
+    if [ ! -d "${INSTALL_DIR}/dist/node_modules/pyodide" ]; then
+      warn "$(L 'dist/node_modules/pyodide is missing — Python functions will not run (JavaScript still works).' \
+               'dist/node_modules/pyodide chybí — funkce v Pythonu nepoběží (JavaScript funguje).')"
+    fi
   fi
   if [ "${KEEP_NODE_MODULES}" != "1" ]; then
     # dist/*.cjs bundle every server dependency, so nothing at runtime needs it.

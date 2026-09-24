@@ -101,6 +101,7 @@ import { M5Logo } from "./components/M5Logo";
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
 import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
 import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgState } from "./lib/chat-types";
+import { fetchCommands, parseCommandLine, buildInputs, runCommand, outputsToMarkdown, type Command } from "./lib/functions";
 import { isInlineImage } from "./lib/validate";
 import { DEFAULT_PROXY_LIMITS, extractPeerAddress, normalizeRoom, proxyPacer, type ProxyLimits } from "./lib/app-helpers";
 import { SignedInBadge } from "./components/SignedInBadge";
@@ -458,6 +459,8 @@ function ChatApp() {
   const [room, setRoom] = useState("");
   const [myId, setMyId] = useState(() => newId("peer"));
   const [messageInput, setMessageInput] = useState("");
+  // Chat commands (4.15): the "/keyword" functions this user may run.
+  const [commands, setCommands] = useState<Command[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [peers, setPeers] = useState<PeerView[]>([]);
   const [copied, setCopied] = useState(false);
@@ -3059,9 +3062,33 @@ function ChatApp() {
     event?.preventDefault();
     const text = messageInput.trim();
     if (!text) return;
+    // A "/keyword" that matches a known command runs a function instead of
+    // sending text; an unknown slash word is sent as an ordinary message.
+    const parsed = parseCommandLine(text);
+    const command = parsed ? commands.find((c) => c.keyword === parsed.keyword) : undefined;
+    if (parsed && command) { await runChatCommand(command, parsed.argText); return; }
     const rec = resolveRecipients();
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
     await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: replyingTo ?? undefined });
+  }
+
+  /** Runs a chat command and shows the result: a model posting to the room
+   *  sends its output as an ordinary end-to-end-encrypted message; a
+   *  caller-only model shows it just to the person who ran it. */
+  async function runChatCommand(command: Command, argText: string) {
+    const inputs = buildInputs(command, argText);
+    setMessageInput("");
+    setReplyingTo(null);
+    const rec = command.visibility === "room" ? resolveRecipients() : { away: [] as AwayPeer[] };
+    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+    const outcome = await runCommand({ keyword: command.keyword, inputs, room: room || null, client: prefs.deviceId || null, lang, token: accountToken() ?? null });
+    if (!outcome.ok) { systemMessage(tf(lang, "functions.failed", { name: command.name, message: outcome.message }), { kind: "error", chatOnly: true }); return; }
+    const body = outputsToMarkdown(outcome.outputs) || tf(lang, "functions.empty", { name: command.name });
+    if (command.visibility === "room") {
+      await sendChatPayload(body, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, forwardedFrom: `/${command.keyword}` });
+    } else {
+      systemMessage(body, { chatOnly: true });
+    }
   }
 
   function onMessageVanished(id: string) {
@@ -3371,6 +3398,15 @@ function ChatApp() {
       void sendMessage();
     }
   }
+
+  // The chat commands this user may run ("/keyword"): fetched when signed in
+  // or connected changes, refreshed as the operator adds models.
+  useEffect(() => {
+    let alive = true;
+    void fetchCommands(accountToken() ?? null).then((list) => { if (alive) setCommands(list); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account, status]);
 
   // When the user changes keepalive strategy, restart the heartbeat at the
   // new cadence. We don't drop the socket — only the timer changes.
