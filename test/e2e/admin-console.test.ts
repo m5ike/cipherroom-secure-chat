@@ -149,9 +149,6 @@ describe("operator console", () => {
   });
 
   it("keeps the ported tools working through the admin service", async () => {
-    await go("layout");
-    await page.click("#lbLoad");
-    await expect.poll(() => page.locator("#lbOut").innerText()).toMatch(/updatedAt|defaults/);
     await go("plugins");
     await page.click("#btnPlugins");
     await expect.poll(() => page.locator("#pluginOut").innerText()).toMatch(/defaults|enabled/);
@@ -316,6 +313,119 @@ describe("operator console", () => {
     await expect.poll(() => page.locator("#auditTable tbody").innerText(), { timeout: 10_000 }).toContain("admin.menu-config");
   });
 
+  it("designs layouts: the palette, suggestions, the app's own preview, templates — and the app draws them", async () => {
+    await go("layout");
+    await expect.poll(() => page.locator("#lbTabs .lb-tab").count()).toBeGreaterThanOrEqual(9);
+    await page.click('#lbTabs [data-layout="composer"]');
+    await expect.poll(() => page.locator("#lbTree .mbt-row").count()).toBeGreaterThan(20);
+    const frame = page.frameLocator("#lbFrame");
+    // The preview is the app itself: its composer, drawn from the layout.
+    await expect.poll(() => frame.locator('[data-lb-id="btn-emoji"]').count(), { timeout: 15_000 }).toBe(1);
+    expect(await frame.locator('[data-testid="input-message"]').count()).toBe(1);
+
+    // Pick an element in the preview.
+    await frame.locator('[data-lb-id="btn-file"]').click({ position: { x: 20, y: 4 } });
+    await expect.poll(() => page.locator("#lbTree .mbt-row.is-selected").getAttribute("data-id")).toBe("btn-file");
+    const sugg = () => page.locator(".sg-list:not([hidden]) .sg-item .sg-value").allInnerTexts();
+    // A class, completed from the classes the app really has.
+    const cls = page.locator('[data-prop="attr-class"]');
+    await cls.click();
+    await cls.press("End");
+    await cls.type(" rounded-f");
+    await expect.poll(sugg).toContain("rounded-full");
+    await page.locator('.sg-list:not([hidden]) .sg-item[data-value="rounded-full"]').click();
+    await expect.poll(() => frame.locator('[data-lb-id="btn-file"]').getAttribute("class")).toContain("rounded-full");
+    // CSS: property and value suggested.
+    await page.click('#lbProps details summary:has-text("CSS")');
+    const cssNew = page.locator('[data-prop="css-new"]');
+    await cssNew.click();
+    await cssNew.type("border-st");
+    await expect.poll(sugg).toContain("border-style");
+    await page.locator('.sg-list:not([hidden]) .sg-item[data-value="border-style"]').click();
+    const cssVal = page.locator('#lbProps [data-prop="css-border-style"]');
+    await cssVal.fill("");
+    await cssVal.type("dash");
+    await expect.poll(sugg).toEqual(["dashed"]);
+    await cssVal.press("ArrowDown");
+    await cssVal.press("Enter");
+    await expect.poll(() => frame.locator('[data-lb-id="btn-file"]').getAttribute("style")).toContain("border-style: dashed");
+
+    // A new button from the palette, with a text and an action.
+    await page.dragAndDrop('#lbPalette [data-make="button"]', '#lbTree .mbt-row[data-id="actions"]', { targetPosition: { x: 90, y: 12 } });
+    await expect.poll(() => page.locator("#lbTree .mbt-row.is-selected").getAttribute("data-id")).toBe("button");
+    const text = page.locator('#lbProps [data-prop="text"]');
+    await text.fill("Hi {$ro");
+    await expect.poll(sugg).toContain("{$room}");
+    await text.press("ArrowDown");
+    await text.press("Enter");
+    await expect.poll(() => text.inputValue()).toBe("Hi {$room}");
+    await page.click('#lbProps details summary:has-text("Logic")');
+    const ev = page.locator('[data-prop="on-new"]');
+    await ev.click();
+    await ev.type("clic");
+    await page.locator('.sg-list:not([hidden]) .sg-item[data-value="click"]').click();
+    const action = page.locator('[data-prop="on-click"]');
+    await action.fill("");
+    await action.type("toggleEm");
+    await expect.poll(sugg).toEqual(["toggleEmoji"]);
+    await action.press("ArrowDown");
+    await action.press("Enter");
+    const attr = page.locator('[data-prop="attr-new"]');
+    await attr.click();
+    await attr.type("data-test");
+    await page.locator('.sg-list:not([hidden]) .sg-item[data-value="data-testid"]').click();
+    await page.locator('#lbProps [data-prop="attr-data-testid"]').fill("lb-hello");
+    await expect.poll(() => frame.locator('[data-lb-id="button"]').innerText()).toBe("Hi tym-brno");
+    // Try it in the preview: the action runs there too.
+    await page.selectOption("#lbMode", "interact");
+    await page.waitForTimeout(300);
+    await frame.locator('[data-lb-id="button"]').click();
+    await expect.poll(() => frame.locator('[data-testid="picker-emoji"]').count()).toBe(1);
+    await page.selectOption("#lbMode", "select");
+
+    // A template: the emoji button, reused in the app bar.
+    page.once("dialog", (d) => void d.accept("smile-btn"));
+    await page.click('#lbTree .mbt-row[data-id="btn-emoji"] .mbt-title');
+    await page.click('#lbTree .lb-tool[data-tool="save"]');
+    await expect.poll(() => page.locator('#lbPalette [data-make="block:smile-btn"]').count()).toBe(1);
+    await page.click('#lbTabs [data-layout="header"]');
+    await expect.poll(() => page.locator("#lbTree .mbt-row").count()).toBeGreaterThan(8);
+    await page.click('#lbTree .mbt-row[data-id="header"] .mbt-title');
+    await page.click('#lbPalette [data-make="block:smile-btn"]');
+    await expect.poll(() => frame.locator('header [data-testid="button-emoji"]').count(), { timeout: 10_000 }).toBe(1);
+    expect(await page.locator("#lbErrors").isHidden()).toBe(true);
+    await shot("layout-builder");
+
+    await page.click("#lbSave");
+    await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Layouts saved/);
+    const saved = (await (await fetch(`${MAIN}/api/layout`)).json()).layout;
+    expect(Object.keys(saved.layouts).sort()).toEqual(["composer", "header"]);
+    expect(Object.keys(saved.blocks)).toEqual(["smile-btn"]);
+
+    // The app draws the saved layouts — and the new button works there.
+    const appCtx = await browser!.newContext({ viewport: { width: 1280, height: 900 } });
+    const app2 = await appCtx.newPage();
+    await app2.goto(MAIN);
+    await app2.locator('[data-testid="lb-hello"]').waitFor({ timeout: 15_000 });
+    expect((await app2.locator('[data-testid="lb-hello"]').innerText()).trim()).toBe("Hi");
+    expect(await app2.locator('[data-testid="button-attach-file"]').getAttribute("class")).toContain("rounded-full");
+    expect(await app2.locator('header [data-testid="button-emoji"]').count()).toBe(1);
+    await app2.click('[data-testid="lb-hello"]');
+    await expect.poll(() => app2.locator('[data-testid="picker-emoji"]').count()).toBe(1);
+    if (SHOTS) await app2.screenshot({ path: join(SHOTS, "app-layout-built.png") });
+    await appCtx.close();
+
+    // Back to the app's own layouts.
+    for (const id of ["composer", "header"]) {
+      await page.click(`#lbTabs [data-layout="${id}"]`);
+      page.once("dialog", (d) => void d.accept());
+      await page.click("#lbReset");
+    }
+    await page.click("#lbSave");
+    await expect.poll(async () => Object.keys((await (await fetch(`${MAIN}/api/layout`)).json()).layout.layouts)).toEqual([]);
+    await page.locator("#toasts").evaluate((el) => el.replaceChildren());
+  });
+
   it("gives an auditor the console to read, and nothing to change", async () => {
     // The owner names an auditor and issues them a token of their own.
     const owner = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };
@@ -348,6 +458,12 @@ describe("operator console", () => {
     await expect.poll(() => page.locator("#mbSave").isHidden()).toBe(true);
     await expect.poll(() => page.locator("#mbAdd").isHidden()).toBe(true);
     await expect.poll(() => page.locator('#mbTree .mbt-row[data-id="room"]').getAttribute("draggable")).toBeNull();
+    // …the Layout builder too.
+    await go("layout");
+    await expect.poll(() => page.locator("#lbTree .mbt-row").count()).toBeGreaterThan(8);
+    await expect.poll(() => page.locator("#lbSave").isHidden()).toBe(true);
+    expect(await page.locator("#lbTree .mbt-row[draggable]").count()).toBe(0);
+    expect(await page.locator("#lbPalette .lb-pal[draggable]").count()).toBe(0);
     // Reading is theirs: the journal verifies, and records who looked.
     await go("audit");
     expect(await page.locator("#auditVerify").getAttribute("data-disabled-by-role")).toBeNull();

@@ -30,7 +30,8 @@ type Expr =
   | { e: "var"; name: string; path: Array<string | Expr> }
   | { e: "not"; x: Expr }
   | { e: "neg"; x: Expr }
-  | { e: "bin"; op: string; a: Expr; b: Expr };
+  | { e: "bin"; op: string; a: Expr; b: Expr }
+  | { e: "cond"; c: Expr; a: Expr; b: Expr };
 type Filter = { name: string; args: Expr[] };
 type TNode =
   | { t: "text"; v: string }
@@ -145,7 +146,18 @@ class ExprParser {
   take(v?: string) { const t = this.peek(v); if (t) this.i++; return t; }
   expect(v: string) { if (!this.take(v)) throw new TemplateError(`"${v}" expected`, this.at); }
 
-  expr(): Expr { return this.or(); }
+  expr(): Expr {
+    const c = this.or();
+    // cond ? a : b
+    if (this.peek("?")) {
+      this.i++;
+      const a = this.expr();
+      this.expect(":");
+      const b = this.expr();
+      return { e: "cond", c, a, b };
+    }
+    return c;
+  }
   private or(): Expr { let a = this.and(); while (this.peek("||")) { this.i++; a = { e: "bin", op: "||", a, b: this.and() }; } return a; }
   private and(): Expr { let a = this.cmp(); while (this.peek("&&")) { this.i++; a = { e: "bin", op: "&&", a, b: this.cmp() }; } return a; }
   private cmp(): Expr {
@@ -312,7 +324,7 @@ export function parseTemplate(src: string): TNode[] {
     return { nodes, end: "" };
   };
   const { nodes } = block([]);
-  if (templateCache.size > 300) templateCache.clear();
+  if (templateCache.size > 2000) templateCache.clear();
   templateCache.set(src, nodes);
   return nodes;
 }
@@ -327,6 +339,9 @@ export type RenderOptions = {
   translate?: (key: string) => string;
   /** "cs" | "en" | "de" for dates and durations. */
   lang?: string;
+  /** Plain text, not HTML: nothing escaped, {icon} left out (the layout
+   *  engine puts the result into a text node or an attribute itself). */
+  raw?: boolean;
 };
 
 const FORBIDDEN = new Set(["__proto__", "prototype", "constructor"]);
@@ -348,6 +363,11 @@ function lookup(obj: unknown, key: unknown): unknown {
 }
 
 const truthy = (v: unknown) => (Array.isArray(v) ? v.length > 0 : Boolean(v) && v !== "0");
+
+/** A value's property as templates see it (own properties only; lists have .length). */
+export const lookupValue = (obj: unknown, key: unknown): unknown => lookup(obj, key);
+/** A value as templates print it: "" for nothing, "1" for true, lists joined. */
+export const valueText = (v: unknown): string => toText(v);
 
 function toText(v: unknown): string {
   if (v === null || v === undefined || v === false) return "";
@@ -422,6 +442,8 @@ export const FILTERS: Record<string, FilterFn> = {
   join: (v, [sep = ", "]) => (Array.isArray(v) ? v.map(toText).join(String(sep)) : toText(v)),
   bytes: (v) => bytes(Number(v)),
   duration: (v, _a, o) => duration(Number(v), o.lang),
+  /** A translated text whose key is built from a value: {$state|t:'msginfo.state.'}. */
+  t: (v, [prefix = ""], o) => { const key = String(prefix) + toText(v); return o.translate ? o.translate(key) : key; },
   ago: (v, _a, o) => { const t = Number(v); return Number.isFinite(t) && t > 0 ? duration(Date.now() - t, o.lang) : ""; },
   yesno: (v, [yes = "✓", no = "✗"]) => (truthy(v) ? yes : no),
   padLeft: (v, [n = 2, ch = "0"]) => toText(v).padStart(Number(n) || 0, String(ch).charAt(0) || " "),
@@ -431,13 +453,8 @@ export const FILTERS: Record<string, FilterFn> = {
 
 export const MAX_TEMPLATE_OUTPUT = MAX_OUTPUT;
 
-/** Renders a template to HTML text (variables escaped). */
-export function renderTemplate(src: string, vars: TemplateVars, opts: RenderOptions = {}): string {
-  const nodes = parseTemplate(src);
-  const scopes: Array<Record<string, unknown>> = [vars];
-  let loops = 0;
-  let out = "";
-
+/** An evaluator over a chain of scopes (the innermost last). */
+function evaluator(scopes: Array<Record<string, unknown>>): (e: Expr) => unknown {
   const get = (name: string): unknown => {
     for (let i = scopes.length - 1; i >= 0; i--) if (Object.prototype.hasOwnProperty.call(scopes[i], name)) return scopes[i][name];
     return undefined;
@@ -447,6 +464,7 @@ export function renderTemplate(src: string, vars: TemplateVars, opts: RenderOpti
       case "lit": return e.v;
       case "not": return !truthy(evaluate(e.x));
       case "neg": return -Number(evaluate(e.x));
+      case "cond": return truthy(evaluate(e.c)) ? evaluate(e.a) : evaluate(e.b);
       case "var": {
         if (FORBIDDEN.has(e.name)) return undefined;
         let v = get(e.name);
@@ -480,6 +498,27 @@ export function renderTemplate(src: string, vars: TemplateVars, opts: RenderOpti
       }
     }
   };
+  return evaluate;
+}
+
+function applyFilters(value: unknown, filters: Filter[], evaluate: (e: Expr) => unknown, opts: RenderOptions): unknown {
+  let v = value;
+  for (const f of filters) {
+    const fn = FILTERS[f.name];
+    if (!fn) throw new TemplateError(`unknown filter |${f.name}`, 0);
+    v = fn(v, f.args.map(evaluate), opts);
+  }
+  return v;
+}
+
+/** Renders a template to HTML text (variables escaped) — or, with `raw`, to plain text. */
+export function renderTemplate(src: string, vars: TemplateVars, opts: RenderOptions = {}): string {
+  const nodes = parseTemplate(src);
+  const scopes: Array<Record<string, unknown>> = [vars];
+  let loops = 0;
+  let out = "";
+  const evaluate = evaluator(scopes);
+  const esc = opts.raw ? (x: string) => x : escapeHtml;
   const emit = (s: string) => {
     if (out.length < MAX_OUTPUT) out += s.slice(0, MAX_OUTPUT - out.length);
   };
@@ -488,18 +527,9 @@ export function renderTemplate(src: string, vars: TemplateVars, opts: RenderOpti
       if (out.length >= MAX_OUTPUT) return;
       switch (n.t) {
         case "text": emit(n.v); break;
-        case "print": {
-          let v = evaluate(n.expr);
-          for (const f of n.filters) {
-            const fn = FILTERS[f.name];
-            if (!fn) throw new TemplateError(`unknown filter |${f.name}`, 0);
-            v = fn(v, f.args.map(evaluate), opts);
-          }
-          emit(escapeHtml(toText(v)));
-          break;
-        }
-        case "tr": emit(escapeHtml(opts.translate ? opts.translate(n.key) : n.key)); break;
-        case "icon": emit(`<i data-icon="${escapeHtml(n.name)}"></i>`); break;
+        case "print": emit(esc(toText(applyFilters(evaluate(n.expr), n.filters, evaluate, opts)))); break;
+        case "tr": emit(esc(opts.translate ? opts.translate(n.key) : n.key)); break;
+        case "icon": if (!opts.raw) emit(`<i data-icon="${escapeHtml(n.name)}"></i>`); break;
         case "var": scopes[scopes.length - 1][n.name] = evaluate(n.expr); break;
         case "if": {
           for (const b of n.branches) if (b.cond === null || truthy(evaluate(b.cond))) { run(b.body); break; }
@@ -536,6 +566,32 @@ export function renderTemplate(src: string, vars: TemplateVars, opts: RenderOpti
   scopes.push({});
   run(nodes);
   return out;
+}
+
+const exprCache = new Map<string, { expr: Expr; filters: Filter[] }>();
+
+/**
+ * The value of one expression — `$message.mine && !$sealed`, `$peers|length`
+ * — typed (a boolean, a number, a list…), not text. Used by the layout engine
+ * for conditions, lists and bound attributes. Throws TemplateError.
+ */
+export function evalExpression(src: string, vars: TemplateVars, opts: RenderOptions = {}): unknown {
+  let parsed = exprCache.get(src);
+  if (!parsed) {
+    parsed = parsePrint(src, 0);
+    if (exprCache.size > 2000) exprCache.clear();
+    exprCache.set(src, parsed);
+  }
+  let evaluate = evaluators.get(vars);
+  if (!evaluate) { evaluate = evaluator([vars]); evaluators.set(vars, evaluate); }
+  return applyFilters(evaluate(parsed.expr), parsed.filters, evaluate, opts);
+}
+/** One evaluator per variables object (a layout evaluates many expressions over the same data). */
+const evaluators = new WeakMap<TemplateVars, (e: Expr) => unknown>();
+
+/** Whether a value counts as true in a template ({if}): "0", "", [] and null do not. */
+export function isTruthy(v: unknown): boolean {
+  return truthy(v);
 }
 
 /** A plain-text label with {$variables} (no HTML), "" on an error. */
@@ -762,6 +818,7 @@ export const TEMPLATE_FILTERS: ReadonlyArray<{ name: string; args: string; descr
   { name: "ago", args: "", description: "How long ago a time was", example: "{$session.since|ago}" },
   { name: "yesno", args: "yes, no", description: "A text for yes / no", example: "{$session.connected|yesno:'online':'offline'}" },
   { name: "padLeft", args: "length, char", description: "Pads from the left", example: "{$session.peers|padLeft:2}" },
+  { name: "t", args: "prefix", description: "A translated text, the key built from the value", example: "{$state|t:'msginfo.state.'}" },
   { name: "trim", args: "", description: "Without spaces around", example: "{$user.nickname|trim}" },
 ];
 

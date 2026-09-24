@@ -11,21 +11,7 @@
 //   - Anything that touches the network goes through deriveRoomKey or the
 //     /api surface in cipherroom-api.ts. The server never sees plaintext.
 
-import {
-  Copy,
-  CornerUpLeft,
-  Image as ImageIcon,
-  Lock,
-  LogOut,
-  Paperclip,
-  Plug,
-  Radio,
-  Smile,
-  Wifi,
-  WifiOff,
-  Maximize2,
-  Minimize2,
-} from "lucide-react";
+import { LogOut } from "lucide-react";
 import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { detectCapabilities } from "./lib/capabilities";
 import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURITY, type Preferences, type WidgetState } from "./lib/preferences";
@@ -41,8 +27,8 @@ import { buildLabel, watchForNewVersion } from "./lib/build-info";
 import { IntegrityCheck, type IntegrityHandle } from "./components/IntegrityCheck";
 import { styleKeyFor, bubbleStyleFrom, sanitizePerUserStyle, isEmptyStyle, type PerUserStyle } from "./lib/message-styles";
 import { sealText, generateSealCode, type MsgFlags } from "./lib/message-kinds";
-import { MessageBubble, RecipientHint } from "./components/MessageBubble";
-import { UserBadge, Avatar } from "./components/UserBadge";
+import { MessageBubble } from "./components/MessageBubble";
+import { UserBadge } from "./components/UserBadge";
 import { SendOptions, DEFAULT_SEND_STATE, type SendState } from "./components/SendOptions";
 import { RecipientsWidget, type WidgetPeer } from "./components/RecipientsWidget";
 import { AudioRecorder } from "./components/AudioRecorder";
@@ -105,7 +91,9 @@ import { TransferCard } from "./components/TransferCard";
 import { MainMenu } from "./components/MainMenu";
 import { formatTime, formatFullDate, formatBytes } from "./lib/format";
 import { fetchLayoutConfig, applyLayoutStyles, loadCachedLayout } from "./lib/layout-client";
-import { renderTemplate, type LayoutConfig } from "./lib/layout-config";
+import { layoutBlocks, layoutTree, renderTemplate, type LayoutConfig } from "./lib/layout-config";
+import { renderLayout } from "./components/LayoutView";
+import type { LNode } from "./lib/layout-tree";
 import { freshRtcConfig, turnConfigPromise } from "./lib/rtc";
 import { M5Logo } from "./components/M5Logo";
 
@@ -363,6 +351,15 @@ type MessageRowProps = {
   act: { current: RowActions };
 };
 
+/** The layout config's reusable templates, one object per config (so the
+ *  memoized rows below do not see a new object on every render). */
+const blocksCache = new WeakMap<LayoutConfig, Record<string, LNode>>();
+function layoutBlocksOf(cfg: LayoutConfig): Record<string, LNode> {
+  let b = blocksCache.get(cfg);
+  if (!b) { b = layoutBlocks(cfg); blocksCache.set(cfg, b); }
+  return b;
+}
+
 /** One message in the conversation. Memoized: typing in the composer, a
  *  peer's status or a new message elsewhere leave it alone. */
 const MessageRow = memo(function MessageRow({ message, perStyle, layout, lang, timezone, room, avatar, delivery, act }: MessageRowProps) {
@@ -375,21 +372,9 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, lang, t
     room,
     appName: "M5cet",
   };
-  const badge = isSystem ? (
-    <span className="msg-bubble__label">
-      {layout.flags.showSystemLogo ? <M5Logo mono size={16} className="msg-sys-logo" /> : null}
-      {renderTemplate(layout.templates.systemHeader, {
-        ...vars,
-        appName: message.senderName,
-        date: layout.flags.systemFullDate ? vars.date : vars.time,
-      }, layout.partials)}
-    </span>
-  ) : message.mine ? (
-    <span className="msg-bubble__label inline-flex items-center gap-1.5">
-      {layout.flags.showAvatars ? <Avatar name={message.senderName} avatar={avatar} size={20} /> : null}
-      {message.senderName}
-    </span>
-  ) : (
+  // Others get the user badge (a live part of the layout); my own and system
+  // messages draw their head from the layout with these values.
+  const badge = isSystem || message.mine ? null : (
     <UserBadge
       name={message.senderName}
       senderId={message.senderId}
@@ -401,6 +386,12 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, lang, t
       lang={lang}
     />
   );
+  const head = isSystem
+    ? {
+        showLogo: layout.flags.showSystemLogo,
+        headerText: renderTemplate(layout.templates.systemHeader, { ...vars, appName: message.senderName, date: layout.flags.systemFullDate ? vars.date : vars.time }, layout.partials),
+      }
+    : message.mine ? { showAvatar: layout.flags.showAvatars, avatar } : undefined;
   return (
     <MessageBubble
       id={message.id}
@@ -425,6 +416,9 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, lang, t
       forwardedFrom={message.forwardedFrom}
       bubbleStyle={bubbleStyleFrom(perStyle)}
       badge={badge}
+      head={head}
+      tree={layoutTree(layout, isSystem ? "message.sys" : message.mine ? "message.out" : "message.in")}
+      blocks={layoutBlocksOf(layout)}
       lang={lang}
       renderText={linkify}
       formatSize={formatBytes}
@@ -830,6 +824,14 @@ function ChatApp() {
   // A panel of a module that is not (or no longer) available closes; Edit Mode switches off.
   useEffect(() => { if (activePanel && !panelVisible(activePanel)) setActivePanel(null); }, [activePanel, panelVisible]);
   useEffect(() => { if (prefs.editMode && !moduleOn("editMode")) setPrefs({ editMode: false }); }, [prefs.editMode, moduleOn]); // eslint-disable-line react-hooks/exhaustive-deps
+  // 4.0.5: what every layout of the Layout builder is drawn with.
+  const layoutEnvBase = useMemo(() => ({
+    lang,
+    translate: (key: string) => t(lang, key),
+    blocks: layoutBlocksOf(layout),
+    formats: { links: (text: string) => linkify(text) },
+  }), [lang, layout]);
+
   // 4.0: the menu's live values ({$session.username}, {$room.peers}… in its
   // labels and HTML blocks), its rules (module, when) and its functions.
   const menuLive = useMemo(() => JSON.stringify(menuConfig).includes("{"), [menuConfig]);
@@ -3979,287 +3981,158 @@ function ChatApp() {
         }}
       />
 
-      {/* Top app bar */}
-      <header className="toolbar relative flex min-h-[3rem] flex-wrap items-center gap-2 border-b border-border bg-card/85 px-3 py-2 backdrop-blur supports-[backdrop-filter]:bg-card/70 sm:px-4">
-        <button
-          type="button"
-          onClick={() => setActivePanel("join")}
-          aria-label={t(lang, "menu.room")}
-          className="inline-flex items-center gap-2 rounded-2xl px-2 py-1 hover:bg-accent"
-          data-testid="button-brand"
-        >
-          <M5Logo size={32} className="text-primary" />
-          <div className="hidden text-left sm:block">
-            <div className="text-sm font-bold leading-tight">{t(lang, "app.name")}</div>
-            <div className="text-[11px] leading-tight text-muted-foreground">{t(lang, "app.tagline")}</div>
-          </div>
-        </button>
-
-        <span
-          data-testid="status-connection"
-          title={connStatus
+      {/* Top app bar, the chat window and the composer: layouts of the
+          console's Layout builder (lib/layouts/app.ts), drawn with the app's
+          data, actions and live parts. */}
+      {renderLayout(layoutTree(layout, "header"), {
+        ...layoutEnvBase,
+        data: {
+          status,
+          room,
+          openPeerCount,
+          reconnectPending: Boolean(connStatus?.disconnectReason && connStatus.disconnectReason !== "idle"),
+          statusTitle: connStatus
             ? `state: ${connStatus.state}\n` +
               `attempts: ${connStatus.attempts}\n` +
               `last reconnects: ${connStatus.totalReconnects}\n` +
               `next reconnect in: ${connStatus.nextReconnectAtMs ? Math.max(0, Math.round((connStatus.nextReconnectAtMs - Date.now()) / 1000)) + "s" : "—"}\n` +
               `RTT: ${connStatus.rttMs}ms`
-            : "—"}
-          className={`ml-2 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition-colors ${
-            status === "joined"
-              ? "border-emerald-500/40 bg-emerald-500/10"
-              : status === "offline"
-                ? "border-amber-500/40 bg-amber-500/10"
-                : "border-border bg-background"
-          }`}
-        >
-          {status === "joined" ? <Wifi className="h-3.5 w-3.5 text-emerald-500" /> : <WifiOff className="h-3.5 w-3.5 text-muted-foreground" />}
-          <span className="hidden sm:inline">
-            {status === "joined"
-              ? connStatus?.disconnectReason && connStatus.disconnectReason !== "idle"
-                ? `${openPeerCount} P2P · reconnect-pending`
-                : `${openPeerCount} P2P · ${room}`
-              : status === "offline"
-                ? `${t(lang, "status.offline")} · auto-reconnect`
-                : t(lang, `status.${status}`)}
-          </span>
-          {status === "joined" ? <span className="sm:hidden">{openPeerCount}</span> : null}
-        </span>
+            : "—",
+          showSwitcher: cxEligible && cxState.settings.quickSwitch && cxState.profiles.length > 0,
+          profiles: cxState.profiles.map((p) => ({ id: p.id, label: p.label })),
+          activeProfileId: activeProfileId ?? "",
+          showFullscreen: fullscreenSupported() && deviceInfo().touch && !deviceInfo().standalone,
+          fullscreen,
+          signedIn: Boolean(account),
+          username: account ? account.username ?? account.userName ?? "" : "",
+        },
+        actions: {
+          openRoom: () => setActivePanel("join"),
+          switchProfile: (e) => { const v = (e as ChangeEvent<HTMLSelectElement>).target.value; if (v) void connectProfile(v); },
+          toggleFullscreen: () => void toggleFullscreen(),
+        },
+        slots: {
+          signedIn: () => (account ? (
+            <SignedInBadge account={account} onClick={() => { setAccMsg(""); setShowAccount(true); void refreshAccount().then((fresh) => { if (fresh) setAccount(fresh); }); }} lang={lang} />
+          ) : null),
+          menu: () => (
+            <MainMenu
+              mode={prefs.menuDisplay}
+              lang={lang}
+              currentPanel={activePanel}
+              onOpen={(panel) => setActivePanel(panel)}
+              user={{ name: prefs.name, avatar: prefs.avatar }}
+              onClearQuit={() => void clearAndQuit()}
+              editMode={prefs.editMode}
+              onToggleEditMode={moduleOn("editMode") ? () => setPrefs({ editMode: !prefs.editMode }) : undefined}
+              buildLabel={buildLabel()}
+              visible={panelVisible}
+              config={menuConfig}
+              vars={menuVars}
+              nodeVisible={menuNodeVisible}
+              onAction={runMenuAction}
+              states={{ tone: shownTone(), notifications: prefs.notificationsEnabled, signedIn: Boolean(account), username: account ? account.username ?? account.userName ?? "" : "" }}
+            />
+          ),
+        },
+      })}
 
-        {cxEligible && cxState.settings.quickSwitch && cxState.profiles.length > 0 ? (
-          <label className="cx-switcher" title={t(lang, "cx.switch.label")} data-testid="cx-switcher">
-            <Plug className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-            <span className="sr-only">{t(lang, "cx.switch.label")}</span>
-            <select
-              value={activeProfileId ?? ""}
-              onChange={(e) => { if (e.target.value) void connectProfile(e.target.value); }}
-              data-testid="cx-switcher-select"
-            >
-              <option value="">—</option>
-              {cxState.profiles.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
-          </label>
-        ) : null}
-
-        {account ? (
-          <SignedInBadge account={account} onClick={() => { setAccMsg(""); setShowAccount(true); void refreshAccount().then((fresh) => { if (fresh) setAccount(fresh); }); }} lang={lang} />
-        ) : null}
-
-        <MainMenu
-          mode={prefs.menuDisplay}
-          lang={lang}
-          currentPanel={activePanel}
-          onOpen={(panel) => setActivePanel(panel)}
-          user={{ name: prefs.name, avatar: prefs.avatar }}
-          onClearQuit={() => void clearAndQuit()}
-          editMode={prefs.editMode}
-          onToggleEditMode={moduleOn("editMode") ? () => setPrefs({ editMode: !prefs.editMode }) : undefined}
-          buildLabel={buildLabel()}
-          visible={panelVisible}
-          config={menuConfig}
-          vars={menuVars}
-          nodeVisible={menuNodeVisible}
-          onAction={runMenuAction}
-          states={{ tone: shownTone(), notifications: prefs.notificationsEnabled, signedIn: Boolean(account), username: account ? account.username ?? account.userName ?? "" : "" }}
-        />
-        {/* Fullscreen through the browser viewport (Android, iPad, desktop
-            touch screens). iPhone has no element fullscreen: there it is
-            Add to Home Screen — see Appearance → Display. */}
-        {fullscreenSupported() && deviceInfo().touch && !deviceInfo().standalone ? (
-          <button
-            type="button"
-            onClick={() => void toggleFullscreen()}
-            aria-label={fullscreen ? t(lang, "ap.device.exitFullscreen") : t(lang, "ap.device.enterFullscreen")}
-            title={fullscreen ? t(lang, "ap.device.exitFullscreen") : t(lang, "ap.device.enterFullscreen")}
-            className="inline-flex items-center justify-center rounded-2xl hover:bg-accent"
-            data-testid="btn-toolbar-fullscreen"
-          >
-            {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-          </button>
-        ) : null}
-      </header>
-
-      {/* Full-screen chat area */}
-      <main className="relative flex flex-1 min-h-0 flex-col chat-canvas">
-        <div className="flex flex-1 min-h-0 flex-col">
-          <div ref={dockAnchorRef} data-layout-hide="focus" className="flex-shrink-0 border-b border-border bg-card/60 px-3 py-2 sm:px-4">
-            <div className="flex items-center justify-between gap-3 text-xs">
-              <p data-testid="text-notice" className="truncate text-muted-foreground">
-                {notice}
-              </p>
-              <div className="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
-                <span>{room ? `room:${room}` : t(lang, "status.idle")}</span>
-                <span className="hidden sm:inline">·</span>
-                <span className="hidden sm:inline">{myId.slice(-10)}</span>
-                {desired === "connected" ? (
-                  <button type="button" data-testid="button-disconnect-bar" onClick={() => userDisconnect()} className="ml-1 inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 hover:bg-accent">
-                    <LogOut className="h-3 w-3" />
-                    {t(lang, "common.disconnect")}
-                  </button>
-                ) : null}
-                <button type="button" onClick={copyRoom} className="ml-1 inline-flex items-center gap-1 rounded-full border border-border bg-background px-2 py-0.5 hover:bg-accent">
-                  <Copy className="h-3 w-3" />
-                  {copied ? t(lang, "common.copied") : t(lang, "common.copy")}
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div data-testid="list-messages" className="flex-1 overflow-y-auto chat-surface p-3 sm:p-5">
-            {/* Live file-transfer cards — show progress, transport, encryption, ETA */}
-            {transfers.length > 0 ? (
-              <div className="mx-auto mb-4 grid w-full max-w-4xl grid-cols-1 gap-2 md:grid-cols-2">
-                {transfers.map((t) => (
-                  <TransferCard
-                    key={t.id}
-                    id={t.id}
-                    name={t.name}
-                    size={t.size}
-                    direction={t.direction}
-                    initialStats={t.stats}
-                    finalStatus={t.status}
-                    errorMessage={t.errorMessage}
-                    onRemove={dropTransfer}
-                  />
-                ))}
-              </div>
-            ) : null}
-            {visibleMessages.length === 0 ? (
-              <div className="flex h-full min-h-[60dvh] items-center justify-center">
-                <div className="max-w-md rounded-3xl border border-border bg-card/90 p-6 text-center shadow-sm">
-                  <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                    <Lock className="h-6 w-6" />
-                  </div>
-                  <h3 className="text-lg font-semibold">{renderTemplate(layout.templates.chatEmptyTitle, { title: t(lang, "chat.empty.title"), appName: "M5cet" }, layout.partials)}</h3>
-                  <p className="mt-2 text-sm text-muted-foreground">{renderTemplate(layout.templates.chatEmptyBody, { body: t(lang, "chat.empty.body"), appName: "M5cet" }, layout.partials)}</p>
-                  <button
-                    type="button"
-                    onClick={() => setActivePanel("join")}
-                    className="mt-4 inline-flex min-h-10 items-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-primary-foreground"
-                    data-testid="button-open-join"
-                  >
-                    <Radio className="h-4 w-4" />
-                    {t(lang, "join.connect")}
-                  </button>
-                </div>
-              </div>
-            ) : (
-              <div className="chat-column mx-auto w-full space-y-3">
-                {hiddenMessages > 0 && !newestFirst ? (
-                  <button type="button" data-testid="button-show-earlier" className="show-earlier" onClick={() => setMessageWindow((n) => n + MESSAGE_WINDOW)}>
-                    {t(lang, "chat.showEarlier").replace("{n}", String(hiddenMessages))}
-                  </button>
-                ) : null}
-                {renderedMessages.map((message) => (
-                  <MessageRow
-                    key={message.id}
-                    message={message}
-                    perStyle={message.senderId === "system" ? undefined : prefs.messageStyles[styleKeyFor(message.senderName, message.senderId)]}
-                    layout={layout}
-                    lang={lang}
-                    timezone={prefs.timezone}
-                    room={room}
-                    avatar={prefs.avatar}
-                    delivery={deliveryStateOf(message)}
-                    act={rowActionsRef}
-                  />
-                ))}
-                {hiddenMessages > 0 && newestFirst ? (
-                  <button type="button" data-testid="button-show-earlier" className="show-earlier" onClick={() => setMessageWindow((n) => n + MESSAGE_WINDOW)}>
-                    {t(lang, "chat.showEarlier").replace("{n}", String(hiddenMessages))}
-                  </button>
-                ) : null}
-                <div ref={messageEndRef} />
-              </div>
-            )}
-          </div>
-
-          <form onSubmit={sendMessage} className="composer border-t border-border bg-card/80 backdrop-blur">
-            <div className="chat-column mx-auto w-full">
-              {replyingTo ? (
-                <div className="composer-reply" data-testid="composer-reply">
-                  <button type="button" className="composer-reply__jump" onClick={() => scrollToMessage(replyingTo.id)}>
-                    <CornerUpLeft className="h-3.5 w-3.5" />
-                    <span className="composer-reply__inner">
-                      <span className="composer-reply__name">{t(lang, "msginfo.replyingTo")} {replyingTo.senderName}</span>
-                      <span className="composer-reply__text">{replyingTo.text}</span>
-                    </span>
-                  </button>
-                  <button type="button" className="composer-reply__x" onClick={() => setReplyingTo(null)} aria-label={t(lang, "common.close")}>×</button>
-                </div>
-              ) : null}
-              {emojiOpen ? (
-                <div className="mb-2 flex flex-wrap gap-1 rounded-2xl border border-border bg-background p-2" data-testid="picker-emoji">
-                  {QUICK_EMOJI.map((emoji) => (
-                    <button
-                      key={emoji}
-                      type="button"
-                      className="rounded-xl px-2 py-1 text-lg hover:bg-accent"
-                      onClick={() => insertEmoji(emoji)}
-                    >
-                      {emoji}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-
-              <div className="composer-bar">
-                <div className="composer-actions">
-                  <button
-                    type="button"
-                    data-testid="button-emoji"
-                    className="composer-icon-btn"
-                    onClick={() => setEmojiOpen((current) => !current)}
-                    aria-expanded={emojiOpen}
-                    aria-label={t(lang, "chat.emoji")}
-                    title={t(lang, "chat.emoji")}
-                  >
-                    <Smile className="h-5 w-5" aria-hidden="true" />
-                  </button>
-                  {moduleOn("files") ? <>
-                  <button
-                    type="button"
-                    data-testid="button-attach-file"
-                    className="composer-icon-btn"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={openPeerCount === 0}
-                    aria-label={t(lang, "chat.attach.file")}
-                    title={t(lang, "chat.attach.file")}
-                  >
-                    <Paperclip className="h-5 w-5" aria-hidden="true" />
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="button-attach-image"
-                    className="composer-icon-btn"
-                    onClick={() => imageInputRef.current?.click()}
-                    disabled={openPeerCount === 0}
-                    aria-label={t(lang, "chat.attach.image")}
-                    title={t(lang, "chat.attach.image")}
-                  >
-                    <ImageIcon className="h-5 w-5" aria-hidden="true" />
-                  </button>
-                  <AudioRecorder
-                    lang={lang}
-                    disabled={openPeerCount === 0}
-                    onRecorded={(file) => void sendPickedFile(file)}
-                    onError={(msg) => setNotice(msg)}
-                  />
-                  </> : null}
-                </div>
-                <label className="sr-only" htmlFor="message">{t(lang, "chat.placeholder")}</label>
-                <textarea
-                  data-testid="input-message"
-                  id="message"
-                  rows={1}
-                  className="composer-input"
-                  placeholder={renderTemplate(layout.templates.composerPlaceholder, {
-                    placeholder: openPeerCount > 0 ? t(lang, "chat.placeholder") : t(lang, "chat.placeholder.waiting"),
-                    room, peerCount: String(openPeerCount),
-                  }, layout.partials)}
-                  value={messageInput}
-                  onChange={(event) => setMessageInput(event.target.value)}
-                  onKeyDown={handleMessageKeyDown}
+      {renderLayout(layoutTree(layout, "chat"), {
+        ...layoutEnvBase,
+        data: {
+          notice,
+          room,
+          myIdShort: myId.slice(-10),
+          connected: desired === "connected",
+          copied,
+          transfers,
+          empty: visibleMessages.length === 0,
+          emptyTitle: renderTemplate(layout.templates.chatEmptyTitle, { title: t(lang, "chat.empty.title"), appName: "M5cet" }, layout.partials),
+          emptyBody: renderTemplate(layout.templates.chatEmptyBody, { body: t(lang, "chat.empty.body"), appName: "M5cet" }, layout.partials),
+          hiddenMessages,
+          newestFirst,
+          showEarlierText: t(lang, "chat.showEarlier").replace("{n}", String(hiddenMessages)),
+          messages: renderedMessages,
+        },
+        actions: {
+          disconnect: () => userDisconnect(),
+          copyRoom: () => void copyRoom(),
+          openRoom: () => setActivePanel("join"),
+          showEarlier: () => setMessageWindow((n) => n + MESSAGE_WINDOW),
+        },
+        refs: { dock: dockAnchorRef as never, end: messageEndRef as never },
+        slots: {
+          transfer: (tr) => {
+            const x = tr as (typeof transfers)[number];
+            return (
+              <TransferCard
+                id={x.id}
+                name={x.name}
+                size={x.size}
+                direction={x.direction}
+                initialStats={x.stats}
+                finalStatus={x.status}
+                errorMessage={x.errorMessage}
+                onRemove={dropTransfer}
+              />
+            );
+          },
+          message: (m) => {
+            const message = m as ChatMessage;
+            return (
+              <MessageRow
+                message={message}
+                perStyle={message.senderId === "system" ? undefined : prefs.messageStyles[styleKeyFor(message.senderName, message.senderId)]}
+                layout={layout}
+                lang={lang}
+                timezone={prefs.timezone}
+                room={room}
+                avatar={prefs.avatar}
+                delivery={deliveryStateOf(message)}
+                act={rowActionsRef}
+              />
+            );
+          },
+          composer: () => renderLayout(layoutTree(layout, "composer"), {
+            ...layoutEnvBase,
+            data: {
+              replyTo: replyingTo ? { id: replyingTo.id, senderName: replyingTo.senderName, text: replyingTo.text } : null,
+              emojiOpen,
+              emojis: QUICK_EMOJI,
+              filesOn: moduleOn("files"),
+              openPeerCount,
+              room,
+              placeholder: renderTemplate(layout.templates.composerPlaceholder, {
+                placeholder: openPeerCount > 0 ? t(lang, "chat.placeholder") : t(lang, "chat.placeholder.waiting"),
+                room, peerCount: String(openPeerCount),
+              }, layout.partials),
+              messageInput,
+              everyone: widget.autoRoom,
+              recipientNames: Array.from(recipients, (id) => peersRef.current.get(id)?.name || id.slice(-4)).join(", "),
+            },
+            actions: {
+              submit: (e) => void sendMessage(e as FormEvent),
+              replyJump: () => { if (replyingTo) scrollToMessage(replyingTo.id); },
+              cancelReply: () => setReplyingTo(null),
+              insertEmoji: (_e, emoji) => insertEmoji(String(emoji)),
+              toggleEmoji: () => setEmojiOpen((current) => !current),
+              pickFile: () => fileInputRef.current?.click(),
+              pickImage: () => imageInputRef.current?.click(),
+              input: (e) => setMessageInput((e as ChangeEvent<HTMLTextAreaElement>).target.value),
+              keydown: (e) => handleMessageKeyDown(e as KeyboardEvent<HTMLTextAreaElement>),
+              attachment: (e) => void handleAttachmentChange(e as ChangeEvent<HTMLInputElement>),
+            },
+            refs: { fileInput: fileInputRef as never, imageInput: imageInputRef as never },
+            slots: {
+              recorder: () => (
+                <AudioRecorder
+                  lang={lang}
+                  disabled={openPeerCount === 0}
+                  onRecorded={(file) => void sendPickedFile(file)}
+                  onError={(msg) => setNotice(msg)}
                 />
+              ),
+              sendOptions: () => (
                 <SendOptions
                   value={sendOpts}
                   onChange={setSendOpts}
@@ -4267,21 +4140,11 @@ function ChatApp() {
                   canSend={canSend}
                   lang={lang}
                 />
-              </div>
-              <div className="composer-foot">
-                <RecipientHint
-                  everyone={widget.autoRoom}
-                  names={Array.from(recipients, (id) => peersRef.current.get(id)?.name || id.slice(-4))}
-                  lang={lang}
-                />
-                <p className="composer-hint">{t(lang, "composer.attachHint")}</p>
-              </div>
-              <input ref={fileInputRef} type="file" className="hidden" onChange={handleAttachmentChange} data-testid="input-file" />
-              <input ref={imageInputRef} type="file" accept="image/*" className="hidden" onChange={handleAttachmentChange} data-testid="input-image" />
-            </div>
-          </form>
-        </div>
-      </main>
+              ),
+            },
+          }),
+        },
+      })}
 
       {/* Modal panels */}
       <ProfilePanel open={activePanel === "profile"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} onOpenConnection={() => setActivePanel("connection")} />
@@ -4584,6 +4447,9 @@ function ChatApp() {
           onUpdate={(patch) => updateWidget(patch)}
           title={renderTemplate(layout.templates.widgetTitle, { title: t(lang, "recipients.title"), peerCount: String(openPeerCount), room }, layout.partials)}
           lang={lang}
+          tree={layoutTree(layout, "widget")}
+          fabTree={layoutTree(layout, "widget.fab")}
+          blocks={layoutEnvBase.blocks}
         />
       ) : null}
 

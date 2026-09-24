@@ -35,6 +35,7 @@ import { pluginLog } from "./plugins/log";
 import { base64ToBytes } from "./plugins/types";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerAdminLayoutRoutes } from "./layout";
+import { distPublicDir } from "./layout-catalog";
 import { applyTrustProxy } from "./trust-proxy";
 import { buildInfo } from "./build-info";
 import { isAuthorizedHeader } from "./admin-auth";
@@ -84,6 +85,8 @@ async function forward(req: express.Request, res: express.Response, path: string
 }
 
 app.use("/api/admin/menu-config", express.json({ limit: "1mb" }));
+// 4.0.5: the Layout builder saves whole element trees.
+app.use("/admin/layout", express.json({ limit: "4mb" }));
 app.use(express.json({ limit: "256kb" }));
 // The console's API: live state is in the main service.
 app.use("/api/admin", (req, res) => { void forward(req, res, req.originalUrl); });
@@ -264,6 +267,19 @@ function adminUiDir(): string | null {
     if (fs.existsSync(path.join(c, "index.html"))) return c;
   }
   return null;
+}
+
+// 4.0.5: the Layout builder's preview — the app's own components and CSS
+// (dist/public), framed by the console (same origin, so frame-ancestors
+// 'self' for this page only). The app's /assets are public files anyway.
+const appDist = distPublicDir();
+if (appDist) {
+  app.get("/layout-preview.html", (_req, res) => {
+    res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+    res.sendFile(path.join(appDist, "layout-preview.html"));
+  });
+  app.use("/assets", express.static(path.join(appDist, "assets"), { maxAge: 0, etag: true, fallthrough: false }));
 }
 
 const uiDir = adminUiDir();

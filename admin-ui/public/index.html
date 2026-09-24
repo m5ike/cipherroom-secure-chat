@@ -260,64 +260,53 @@
         </section>
 
         <!-- ============================ tools (ported) ============================ -->
-        <section data-panel="layout" class="stack legacy" hidden><div class="card"><div class="card__head"><div class="card__title">Layout / template builder</div></div>
-
-      <p style="font-size:12px;margin:6px 0;">Shape every client's chat: per-component colours/borders/fonts and short text templates with <code>{{placeholders}}</code> and <code>{{> includes}}</code> (named partials). Templates render as TEXT only — no markup can reach other users. Saved server-side; clients pick it up on load (and every 5 min).</p>
-      <div class="row"><button id="lbLoad">Load</button><button id="lbSave">Save</button><button class="secondary" id="lbReset">Reset to defaults</button><button class="secondary" id="lbExport">Export JSON</button><label class="secondary" style="display:inline-block;background:#2a3242;padding:8px 12px;border-radius:8px;cursor:pointer;margin:0;color:#fff;font-size:inherit;">Import JSON <input id="lbImport" type="file" accept="application/json" style="display:none;" /></label></div>
-
-      <h2 style="margin-top:14px;">Component style</h2>
-      <div class="row">
-        <select id="lbComp">
-          <option value="chat">Main chat window</option><option value="in">Incoming message</option><option value="sys">Incoming system message</option>
-          <option value="out">Outgoing message</option><option value="widget">Recipients widget</option><option value="menu">Menu</option><option value="composer">Send panel (composer)</option>
-        </select>
-        <button class="secondary" id="lbClearComp">Clear this component</button>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <label style="margin:0;">Background <input id="lbBg" type="color" style="width:48px;padding:2px;" /> <input id="lbBgOn" type="checkbox" /></label>
-        <label style="margin:0;">Text <input id="lbFg" type="color" style="width:48px;padding:2px;" /> <input id="lbFgOn" type="checkbox" /></label>
-        <label style="margin:0;">Border <input id="lbBorder" type="color" style="width:48px;padding:2px;" /> <input id="lbBorderOn" type="checkbox" /></label>
-        <label style="margin:0;">Border style <select id="lbBstyle"><option value="">(default)</option><option>solid</option><option>dashed</option><option>dotted</option><option>double</option><option>none</option></select></label>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <label style="margin:0;">Border px <input id="lbBwidth" type="number" min="0" max="8" step="1" style="width:70px;" /></label>
-        <label style="margin:0;">Radius px <input id="lbRadius" type="number" min="0" max="48" step="1" style="width:70px;" /></label>
-        <label style="margin:0;">Font px <input id="lbFs" type="number" min="10" max="28" step="1" style="width:70px;" /></label>
-        <label style="margin:0;">Opacity <input id="lbOpacity" type="number" min="0.2" max="1" step="0.05" style="width:80px;" /></label>
-        <label style="margin:0;">Padding px <input id="lbPad" type="number" min="0" max="40" step="1" style="width:70px;" /></label>
-        <label style="margin:0;">Shadow <select id="lbShadow"><option value="">(default)</option><option value="true">on</option><option value="false">off</option></select></label>
-      </div>
-
-      <h2 style="margin-top:14px;">Templates</h2>
-      <div id="lbTemplates"></div>
-
-      <h2 style="margin-top:14px;">Includes (partials) — use as <code>{{> name}}</code></h2>
-      <div class="row"><input id="lbPartName" placeholder="name (a-z0-9_-)" style="max-width:180px;" /><input id="lbPartBody" placeholder="text with {{placeholders}}" style="flex:1;" /><button class="secondary" id="lbPartAdd">Add / update</button></div>
-      <div id="lbPartials" style="font-size:12px;margin-top:6px;"></div>
-
-      <h2 style="margin-top:14px;">Behaviour flags</h2>
-      <div class="row">
-        <label style="margin:0;"><input id="lfAvatars" type="checkbox" /> avatars</label>
-        <label style="margin:0;"><input id="lfTime" type="checkbox" /> time</label>
-        <label style="margin:0;"><input id="lfLock" type="checkbox" /> lock icon</label>
-        <label style="margin:0;"><input id="lfActions" type="checkbox" /> reply/forward</label>
-        <label style="margin:0;"><input id="lfSysLogo" type="checkbox" /> logo in system msgs</label>
-        <label style="margin:0;"><input id="lfSysDate" type="checkbox" /> full date in system msgs</label>
-        <label style="margin:0;">fold system after s <input id="lfCollapse" type="number" min="0" max="3600" style="width:80px;" /></label>
-        <label style="margin:0;">stay open s <input id="lfExpand" type="number" min="3" max="600" style="width:80px;" /></label>
-      </div>
-
-      <h2 style="margin-top:14px;">Live preview (test)</h2>
-      <div id="lbPreview" class="lb-preview">
-        <div class="lb-sys"><span class="lb-logo">⬢</span><b id="pvSysHead"></b><div id="pvSysBody">Joined room. Peers: 2. Second line of a longer system notice that folds after a while…</div></div>
-        <div class="lb-in"><div class="lb-meta"><span class="lb-av">A</span> Alice · <span id="pvInMeta"></span></div>Hi! Incoming message preview.</div>
-        <div class="lb-out"><div class="lb-meta">You · <span id="pvOutMeta"></span></div>Outgoing message preview.</div>
-        <div class="lb-widget"><b id="pvWidget"></b><div style="font-size:11px;opacity:.7;">Alice ✓ · Bob ✓ · Room ✓</div></div>
-        <div class="lb-menu"><b>Navigace</b><div style="font-size:11px;opacity:.7;">Místnost · Šifrování · Nástroje…</div></div>
-        <div class="lb-composer"><span id="pvComposer" style="opacity:.6;"></span></div>
-      </div>
-      <pre id="lbOut"></pre>
-    </div></section>
+        <!-- ============================ layout builder ============================ -->
+        <section data-panel="layout" class="stack" hidden>
+          <div class="card lb-card">
+            <div class="card__head">
+              <div class="card__title">Layout builder</div>
+              <div class="card__hint">A GUI designer for the app: pick a layout, drag elements from the palette into the tree, pick one (in the tree or in the preview) to edit its tag, text, classes, attributes, CSS, conditions, repeats and events — every field suggests while typing. The preview is the app itself.</div>
+            </div>
+            <div class="lb-tabs" id="lbTabs" role="tablist" aria-label="Layouts"></div>
+            <div class="mb-bar">
+              <div class="mb-actions">
+                <span class="badge badge--warn" id="lbDirty" hidden>Unsaved changes</span>
+                <button class="btn btn--sm" type="button" id="lbUndo" data-read="1" title="Undo (Ctrl+Z)">Undo</button>
+                <button class="btn btn--sm" type="button" id="lbRedo" data-read="1" title="Redo (Ctrl+Shift+Z)">Redo</button>
+                <button class="btn btn--sm" type="button" id="lbCopy" data-read="1" title="Copy the selected element">Copy</button>
+                <button class="btn btn--sm" type="button" id="lbPaste" data-read="1" title="Paste into the selection (any layout)">Paste</button>
+                <button class="btn btn--sm" type="button" id="lbHelpBtn" data-read="1" title="Values, actions, filters and macros" aria-label="Layout builder help">? Help</button>
+                <button class="btn btn--sm" type="button" id="lbExport" data-read="1">Export</button>
+                <label class="btn btn--sm mb-import">Import<input type="file" id="lbImport" accept="application/json,.json" hidden /></label>
+              </div>
+              <div class="mb-actions">
+                <button class="btn btn--sm" type="button" id="lbRevert" data-read="1">Discard changes</button>
+                <button class="btn btn--sm btn--danger" type="button" id="lbReset">Reset this layout</button>
+                <button class="btn btn--sm btn--primary" type="button" id="lbSave">Save layouts</button>
+              </div>
+            </div>
+            <div class="lb-layout">
+              <div class="lb-col lb-col--left">
+                <div class="lb-palette" id="lbPalette" aria-label="Palette"></div>
+                <div class="mbt lb-tree" id="lbTree" role="tree" aria-label="Layout structure"></div>
+              </div>
+              <div class="lb-col lb-col--props"><div id="lbProps" class="mb-props"></div></div>
+              <div class="lb-col lb-col--preview">
+                <div class="mb-previewbar">
+                  <select class="input" id="lbVariant" data-read="1" aria-label="Situation"></select>
+                  <select class="input" id="lbTheme" data-read="1" aria-label="Template"></select>
+                  <select class="input" id="lbTone" data-read="1" aria-label="Tone"><option value="light">light</option><option value="dark">dark</option></select>
+                  <select class="input" id="lbLang" data-read="1" aria-label="Language"><option value="cs">cs</option><option value="en">en</option><option value="de">de</option></select>
+                  <select class="input" id="lbDevice" data-read="1" aria-label="Width"><option value="desktop">desktop</option><option value="tablet">tablet</option><option value="phone">phone</option></select>
+                  <select class="input" id="lbMode" data-read="1" aria-label="Clicks"><option value="select">click selects</option><option value="interact">click tries it</option></select>
+                </div>
+                <div class="lb-frame" id="lbFrameBox" data-device="desktop"><iframe id="lbFrame" title="Preview" src="layout-preview.html"></iframe></div>
+                <ul class="lb-errors" id="lbErrors" hidden></ul>
+                <p class="small muted" id="lbFile"></p>
+              </div>
+            </div>
+          </div>
+        </section>
         <section data-panel="telephony" class="stack legacy" hidden><div class="card"><div class="card__head"><div class="card__title">Telephony &amp; SIP console</div></div>
 
       <div class="row"><button id="btnTel">Refresh telephony</button></div>
@@ -565,6 +554,8 @@
   <script src="console.js"></script>
   <script src="legacy-tools.js"></script>
   <script src="modules.js"></script>
+  <script src="builder-kit.js"></script>
   <script src="menu-builder.js"></script>
+  <script src="layout-builder.js"></script>
 </body>
 </html>

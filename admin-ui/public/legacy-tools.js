@@ -1,5 +1,6 @@
 // Tools ported from the previous admin page: AI & speech connectors and
-// their live log, the telephony / SIP console and the layout builder. They
+// their live log, and the telephony / SIP console (the layout builder is
+// layout-builder.js since 4.0.5). They
 // talk to the admin service (/admin/*) with the token the console signed in
 // with (#base / #token, kept in memory — the old page stored it in local
 // storage). Everything a server returns is escaped before it becomes
@@ -189,90 +190,4 @@
       show("sipOut", r.json);
     };
 
-    // ---- Layout / template builder ----
-    // Mirrors client/src/lib/layout-config.ts (renderTemplate + css var mapping);
-    // the server re-validates everything on save.
-    const LB_COMPS = ["chat", "in", "sys", "out", "widget", "menu", "composer"];
-    const LB_TPL = {
-      systemHeader: ["appName", "date", "time", "room"], incomingMeta: ["sender", "time", "date", "room"], outgoingMeta: ["sender", "time", "date", "room"],
-      composerPlaceholder: ["placeholder", "room", "peerCount"], widgetTitle: ["title", "peerCount", "room"], chatEmptyTitle: ["title", "appName"], chatEmptyBody: ["body", "appName"],
-    };
-    const LB_DEFAULT_TPL = { systemHeader: "{{appName}} · {{date}}", incomingMeta: "{{time}}", outgoingMeta: "{{time}}", composerPlaceholder: "{{placeholder}}", widgetTitle: "{{title}}", chatEmptyTitle: "{{title}}", chatEmptyBody: "{{body}}" };
-    let lb = { version: 1, styles: {}, templates: { ...LB_DEFAULT_TPL }, partials: {}, flags: { showAvatars: true, showTime: true, showLockIcon: true, showActions: true, showSystemLogo: true, systemFullDate: true, systemCollapseAfterSec: 60, systemExpandForSec: 20 } };
-    function lbRender(tpl, vars, partials, depth) {
-      depth = depth || 0;
-      let out = String(tpl || "").replace(/\{\{>\s*([a-zA-Z0-9_-]+)\s*\}\}/g, (_m, n) => (depth >= 3 || !partials[n]) ? "" : lbRender(partials[n], vars, partials, depth + 1));
-      return out.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_m, n) => (n in vars ? String(vars[n]) : ""));
-    }
-    function lbPreview() {
-      const pv = $("lbPreview");
-      LB_COMPS.forEach((c) => ["bg", "fg", "border", "bstyle", "bwidth", "radius", "fs", "opacity", "pad", "shadow"].forEach((p) => pv.style.removeProperty("--c-" + c + "-" + p)));
-      for (const c of LB_COMPS) {
-        const s = lb.styles[c] || {};
-        for (const p of Object.keys(s)) {
-          const v = s[p]; let css = String(v);
-          if (["bwidth", "radius", "fs", "pad"].includes(p)) css = v + "px";
-          if (p === "shadow") css = v ? "0 1px 2px rgba(0,0,0,.3)" : "none";
-          pv.style.setProperty("--c-" + c + "-" + p, css);
-        }
-      }
-      const now = new Date();
-      const vars = { appName: "M5cet", sender: "Alice", time: now.toLocaleTimeString(), date: now.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" }) + ", " + now.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }), room: "brno-secure", peerCount: "2", placeholder: "Napiš šifrovanou zprávu…", title: "Příjemci", body: "Žádná historie, žádné ukládání." };
-      const t = lb.templates, p = lb.partials;
-      $("pvSysHead").textContent = lbRender(t.systemHeader, { ...vars, date: lb.flags.systemFullDate ? vars.date : vars.time }, p);
-      document.querySelector("#lbPreview .lb-logo").style.display = lb.flags.showSystemLogo ? "inline-block" : "none";
-      $("pvInMeta").textContent = lb.flags.showTime ? lbRender(t.incomingMeta, vars, p) : "";
-      $("pvOutMeta").textContent = lb.flags.showTime ? lbRender(t.outgoingMeta, vars, p) : "";
-      $("pvWidget").textContent = lbRender(t.widgetTitle, vars, p);
-      $("pvComposer").textContent = lbRender(t.composerPlaceholder, vars, p);
-      document.querySelector("#lbPreview .lb-av").style.display = lb.flags.showAvatars ? "inline-flex" : "none";
-    }
-    function lbFillStyleForm() {
-      const s = lb.styles[$("lbComp").value] || {};
-      const col = (id, key) => { $(id + "On").checked = !!s[key]; $(id).value = s[key] || "#3358d4"; };
-      col("lbBg", "bg"); col("lbFg", "fg"); col("lbBorder", "border");
-      $("lbBstyle").value = s.bstyle || ""; $("lbBwidth").value = s.bwidth ?? ""; $("lbRadius").value = s.radius ?? ""; $("lbFs").value = s.fs ?? "";
-      $("lbOpacity").value = s.opacity ?? ""; $("lbPad").value = s.pad ?? ""; $("lbShadow").value = s.shadow === undefined ? "" : String(s.shadow);
-    }
-    function lbReadStyleForm() {
-      const c = $("lbComp").value; const s = {};
-      if ($("lbBgOn").checked) s.bg = $("lbBg").value; if ($("lbFgOn").checked) s.fg = $("lbFg").value; if ($("lbBorderOn").checked) s.border = $("lbBorder").value;
-      if ($("lbBstyle").value) s.bstyle = $("lbBstyle").value;
-      const n = (id) => ($(id).value === "" ? undefined : Number($(id).value));
-      if (n("lbBwidth") !== undefined) s.bwidth = n("lbBwidth"); if (n("lbRadius") !== undefined) s.radius = n("lbRadius"); if (n("lbFs") !== undefined) s.fs = n("lbFs");
-      if (n("lbOpacity") !== undefined) s.opacity = n("lbOpacity"); if (n("lbPad") !== undefined) s.pad = n("lbPad");
-      if ($("lbShadow").value) s.shadow = $("lbShadow").value === "true";
-      if (Object.keys(s).length) lb.styles[c] = s; else delete lb.styles[c];
-      lbPreview();
-    }
-    function lbFillTemplates() {
-      $("lbTemplates").innerHTML = Object.keys(LB_TPL).map((k) => '<div class="lb-tpl"><span>' + k + '<br>' + LB_TPL[k].map((v) => '<span class="lb-chip" data-ins="{{' + v + '}}" data-for="' + k + '">{{' + v + '}}</span>').join("") + '</span><input data-tpl="' + k + '" value="' + esc(lb.templates[k] || "") + '" /></div>').join("");
-      document.querySelectorAll("[data-tpl]").forEach((i) => i.oninput = () => { lb.templates[i.dataset.tpl] = i.value; lbPreview(); });
-      document.querySelectorAll(".lb-chip").forEach((ch) => ch.onclick = () => { const i = document.querySelector('[data-tpl="' + ch.dataset.for + '"]'); i.value += ch.dataset.ins; lb.templates[ch.dataset.for] = i.value; lbPreview(); });
-    }
-    function lbFillPartials() {
-      const names = Object.keys(lb.partials);
-      $("lbPartials").innerHTML = names.length ? names.map((n) => '<div class="row" style="justify-content:space-between;border-bottom:1px solid var(--border);padding:3px 0;"><span><code>{{&gt; ' + esc(n) + '}}</code> = ' + esc(lb.partials[n]) + '</span><button class="secondary" data-del="' + esc(n) + '">remove</button></div>').join("") : '<span style="">no partials</span>';
-      document.querySelectorAll("[data-del]").forEach((b) => b.onclick = () => { delete lb.partials[b.dataset.del]; lbFillPartials(); lbPreview(); });
-    }
-    function lbFillFlags() {
-      const f = lb.flags; $("lfAvatars").checked = f.showAvatars; $("lfTime").checked = f.showTime; $("lfLock").checked = f.showLockIcon; $("lfActions").checked = f.showActions;
-      $("lfSysLogo").checked = f.showSystemLogo; $("lfSysDate").checked = f.systemFullDate; $("lfCollapse").value = f.systemCollapseAfterSec; $("lfExpand").value = f.systemExpandForSec;
-    }
-    function lbReadFlags() {
-      lb.flags = { showAvatars: $("lfAvatars").checked, showTime: $("lfTime").checked, showLockIcon: $("lfLock").checked, showActions: $("lfActions").checked, showSystemLogo: $("lfSysLogo").checked, systemFullDate: $("lfSysDate").checked, systemCollapseAfterSec: Number($("lfCollapse").value) || 0, systemExpandForSec: Number($("lfExpand").value) || 20 };
-      lbPreview();
-    }
-    function lbFillAll() { lbFillStyleForm(); lbFillTemplates(); lbFillPartials(); lbFillFlags(); lbPreview(); }
-    $("lbLoad").onclick = async () => { const r = await api("/admin/layout"); if (r.status === 404) return show("lbOut", "The running admin backend has no /admin/layout — it predates the layout builder. Rebuild (npm run build) and restart the admin service, or `docker compose --profile admin up -d --build`."); if (!r.ok) return show("lbOut", r.json); lb = r.json.layout; lbFillAll(); show("lbOut", { file: r.json.file, updatedAt: lb.updatedAt ? new Date(lb.updatedAt).toLocaleString() : "(defaults)", lastSaveError: r.json.lastSaveError || null }); };
-    $("lbSave").onclick = async () => { const r = await api("/admin/layout", { method: "PUT", body: JSON.stringify({ layout: lb }) }); show("lbOut", r.ok ? { saved: true, updatedAt: new Date(r.json.layout.updatedAt).toLocaleString() } : r.json); if (r.ok) { lb = r.json.layout; lbFillAll(); } };
-    $("lbReset").onclick = async () => { if (!confirm("Reset layout to defaults for all clients?")) return; const r = await api("/admin/layout/reset", { method: "POST" }); if (r.ok) { lb = r.json.layout; lbFillAll(); } show("lbOut", r.json); };
-    $("lbExport").onclick = () => { const a = document.createElement("a"); a.href = "data:application/json," + encodeURIComponent(JSON.stringify(lb, null, 2)); a.download = "m5cet-layout.json"; a.click(); };
-    $("lbImport").onchange = async (e) => { const f = e.target.files[0]; if (!f) return; try { const j = JSON.parse(await f.text()); lb = j.layout || j; lbFillAll(); show("lbOut", "Imported — press Save to apply."); } catch (err) { show("lbOut", "Invalid JSON: " + err.message); } e.target.value = ""; };
-    $("lbComp").onchange = lbFillStyleForm;
-    $("lbClearComp").onclick = () => { delete lb.styles[$("lbComp").value]; lbFillStyleForm(); lbPreview(); };
-    ["lbBg", "lbBgOn", "lbFg", "lbFgOn", "lbBorder", "lbBorderOn", "lbBstyle", "lbBwidth", "lbRadius", "lbFs", "lbOpacity", "lbPad", "lbShadow"].forEach((id) => { $(id).oninput = lbReadStyleForm; $(id).onchange = lbReadStyleForm; });
-    ["lfAvatars", "lfTime", "lfLock", "lfActions", "lfSysLogo", "lfSysDate", "lfCollapse", "lfExpand"].forEach((id) => { $(id).onchange = lbReadFlags; });
-    $("lbPartAdd").onclick = () => { const n = $("lbPartName").value.trim(); if (!/^[a-zA-Z0-9_-]{1,32}$/.test(n)) return show("lbOut", "partial name: a-z, 0-9, _ or -"); lb.partials[n] = $("lbPartBody").value; $("lbPartName").value = ""; $("lbPartBody").value = ""; lbFillPartials(); lbPreview(); };
-    lbFillAll();
 })();

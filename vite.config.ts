@@ -116,6 +116,11 @@ export default defineConfig({
     // Vite 8 default (oxc): measurably smaller output than esbuild here.
     minify: true,
     rollupOptions: {
+      // The app, and (4.0.5) the console Layout builder's preview page.
+      input: {
+        index: path.resolve(import.meta.dirname, "client", "index.html"),
+        "layout-preview": path.resolve(import.meta.dirname, "client", "layout-preview.html"),
+      },
       output: {
         // cache-friendly filenames; subasset names hashed via content.
         assetFileNames: "assets/[name].[hash][extname]",

@@ -22,7 +22,6 @@
   const C = window.M5Console;
   if (!C) return;
   const { h, clear, $, $$, api, toast } = C;
-  const SVG_NS = "http://www.w3.org/2000/svg";
 
   const KINDS = {
     section: { label: "Section", hint: "a heading and its items", icon: "layers" },
@@ -39,25 +38,6 @@
     section: ["item", "html", "separator", "row", "special"],
     row: ["item", "special", "html", "separator"],
   };
-  const STATE_LABELS = { hover: "Hover", active: "Click", focus: "Keyboard focus", current: "Current / on" };
-  const SHADOW_CSS = {
-    none: "none",
-    sm: "0 1px 2px rgb(0 0 0 / 0.12)",
-    md: "0 4px 12px rgb(0 0 0 / 0.16)",
-    lg: "0 12px 32px rgb(0 0 0 / 0.22)",
-    glow: "0 0 0 3px hsl(var(--primary) / 0.28)",
-  };
-  const STATE_PROPS = [
-    ["color", "color", (v) => cssColor(v)],
-    ["background", "bg", (v) => cssColor(v)],
-    ["iconColor", "icon", (v) => cssColor(v)],
-    ["borderColor", "border", (v) => cssColor(v)],
-    ["fontWeight", "weight", (v) => v],
-    ["underline", "underline", (v) => (v ? "underline" : "none")],
-    ["opacity", "opacity", (v) => String(v)],
-    ["scale", "scale", (v) => String(v)],
-    ["shadow", "shadow", (v) => SHADOW_CSS[v] || "none"],
-  ];
   const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
   const SAFE_TAGS = new Set([
     "div", "span", "p", "b", "strong", "i", "em", "u", "s", "small", "br", "hr", "code", "kbd", "mark", "sup", "sub",
@@ -79,7 +59,6 @@
   let lastSnap = 0;
   let wired = false;
   let dragId = null;
-  let helpTarget = null;
 
   const clone = (v) => JSON.parse(JSON.stringify(v));
   const comparable = (config) => JSON.stringify({ ...config, updatedAt: 0 });
@@ -284,18 +263,7 @@
 
   /* ============================================================== icons */
 
-  function iconSvg(name, cls = "mb-ico") {
-    const node = (catalog && (catalog.icons[name] || catalog.icons["circle-alert"])) || [];
-    const svg = document.createElementNS(SVG_NS, "svg");
-    const attrs = { width: 24, height: 24, viewBox: "0 0 24 24", fill: "none", stroke: "currentColor", "stroke-width": 2, "stroke-linecap": "round", "stroke-linejoin": "round", class: `lucide lucide-${name} ${cls}`, "aria-hidden": "true" };
-    for (const [k, v] of Object.entries(attrs)) svg.setAttribute(k, String(v));
-    for (const [tag, a] of node) {
-      const el = document.createElementNS(SVG_NS, tag);
-      for (const [k, v] of Object.entries(a)) if (k !== "key") el.setAttribute(k, String(v));
-      svg.append(el);
-    }
-    return svg;
-  }
+  const iconSvg = (name, cls = "mb-ico") => M5Kit.iconSvg(catalog && catalog.icons, name, cls);
   const SPECIAL_ICONS = { user: "user", appearance: "palette", editMode: "pencil-ruler", toneToggle: "moon", notifications: "bell", account: "key-round", clearQuit: "log-out", build: "info" };
   function nodeIcon(n) {
     if (n.kind === "item") return n.icon;
@@ -412,178 +380,20 @@
 
   /* ========================================================== properties */
 
-  function field(label, control, hint, wide) {
-    return h("label", { class: `field mb-field${wide ? " mb-field--wide" : ""}` }, h("span", { class: "label" }, label), control, hint ? h("span", { class: "muted small" }, hint) : null);
-  }
-  function textField(label, value, onChange, opts = {}) {
-    const input = h(opts.area ? "textarea" : "input", {
-      class: `input${opts.mono ? " mono" : ""}`, type: opts.area ? undefined : "text", maxlength: String(opts.max || 80),
-      placeholder: opts.placeholder || "", rows: opts.area ? String(opts.rows || 8) : undefined, spellcheck: opts.mono ? "false" : undefined,
-      "data-prop": opts.prop || undefined,
-    });
-    input.value = value || "";
-    input.addEventListener("input", () => {
-      const ok = opts.valid ? opts.valid(input.value) : true;
-      input.classList.toggle("is-invalid", !ok);
-      if (ok) edit(() => onChange(input.value));
-    });
-    return field(label, input, opts.hint, opts.wide);
-  }
-  function selectField(label, value, options, onChange, opts = {}) {
-    const sel = h("select", { class: "input", "data-prop": opts.prop || undefined },
-      opts.empty !== false ? h("option", { value: "" }, opts.empty || "—") : null,
-      options.map(([v, text]) => h("option", { value: v, selected: String(value ?? "") === v || undefined }, text)));
-    sel.addEventListener("change", () => edit(() => onChange(sel.value === "" ? undefined : sel.value), { props: Boolean(opts.rerender) }));
-    return field(label, sel, opts.hint, opts.wide);
-  }
-  function checkField(label, value, onChange, opts = {}) {
-    const box = h("input", { type: "checkbox", checked: value || undefined, "data-prop": opts.prop || undefined });
-    box.addEventListener("change", () => edit(() => onChange(box.checked), { props: Boolean(opts.rerender) }));
-    return h("label", { class: "switch mb-switch" }, box, label);
-  }
-  /** yes / no / unset (unset keeps the template's own look). */
-  function triField(label, value, onChange, opts = {}) {
-    return selectField(label, value === undefined ? "" : value ? "yes" : "no", [["yes", "yes"], ["no", "no"]], (v) => onChange(v === undefined ? undefined : v === "yes"), opts);
-  }
-  function numberField(label, value, min, max, stepBy, onChange, opts = {}) {
-    const input = h("input", { class: "input", type: "number", min: String(min), max: String(max), step: String(stepBy), placeholder: opts.placeholder || "—", "data-prop": opts.prop || undefined });
-    if (value !== undefined && value !== null) input.value = String(value);
-    input.addEventListener("input", () => {
-      if (input.value === "") { edit(() => onChange(undefined)); return; }
-      const n = Number(input.value);
-      if (!Number.isFinite(n)) return;
-      edit(() => onChange(Math.max(min, Math.min(max, n))));
-    });
-    return field(label, input, opts.hint);
-  }
-  function colorField(label, value, onChange, opts = {}) {
-    const tokens = catalog.colors || [];
-    const hex = typeof value === "string" && value.startsWith("#");
-    const sel = h("select", { class: "input", "data-prop": opts.prop || undefined },
-      h("option", { value: "" }, "—"),
-      h("optgroup", { label: "The template's colours" }, tokens.map((t) => h("option", { value: t, selected: value === t || undefined }, t))),
-      h("option", { value: "#", selected: hex || undefined }, "Custom colour…"));
-    const pick = h("input", { type: "color", class: "mb-color", title: "Pick a colour", "data-prop": opts.prop ? `${opts.prop}-pick` : undefined });
-    pick.value = hex && /^#[0-9a-f]{6}$/i.test(value) ? value : "#3366ff";
-    pick.hidden = !hex;
-    const swatch = h("span", { class: "mb-swatch", "aria-hidden": "true" });
-    const paint = (v) => { swatch.style.background = v ? previewColor(v) : "transparent"; swatch.classList.toggle("is-empty", !v); };
-    paint(value);
-    sel.addEventListener("change", () => {
-      if (sel.value === "#") { pick.hidden = false; paint(pick.value); edit(() => onChange(pick.value)); }
-      else { pick.hidden = true; paint(sel.value); edit(() => onChange(sel.value || undefined)); }
-    });
-    pick.addEventListener("input", () => { paint(pick.value); edit(() => onChange(pick.value)); });
-    return field(label, h("span", { class: "mb-colorctl" }, swatch, sel, pick));
-  }
-  function iconField(label, value, onChange, opts = {}) {
-    const btn = h("button", { type: "button", class: "btn btn--sm mb-iconbtn", "data-prop": opts.prop || undefined, "data-read": "1" },
-      value ? iconSvg(value) : null, h("span", {}, value || opts.none || "— none —"));
-    btn.addEventListener("click", () => openIconPicker(value, opts.optional, (name) => edit(() => onChange(name), { props: true })));
-    if (readOnly) btn.disabled = true;
-    return field(label, btn, opts.hint);
-  }
-  const grid = (...children) => h("div", { class: "mb-grid" }, children);
-  function group(title, ...children) {
-    return h("fieldset", { class: "mb-fs" }, h("legend", {}, title), grid(...children));
-  }
-
-  /** A style and its states. get() → the style (or undefined), set(style or undefined). */
-  function styleEditor(title, get, set, opts = {}) {
-    const st = () => get() || {};
-    const put = (key, value) => {
-      const s = { ...st() };
-      if (value === undefined || value === "") delete s[key]; else s[key] = value;
-      set(Object.keys(s).length ? s : undefined);
-    };
-    const putState = (state, key, value) => {
-      const s = { ...st() };
-      const states = { ...(s.states || {}) };
-      const one = { ...(states[state] || {}) };
-      if (value === undefined || value === "") delete one[key]; else one[key] = value;
-      if (Object.keys(one).length) states[state] = one; else delete states[state];
-      if (Object.keys(states).length) s.states = states; else delete s.states;
-      set(Object.keys(s).length ? s : undefined);
-    };
-    const s = st();
-    const set_ = Object.keys(s).filter((k) => k !== "states").length + Object.keys(s.states || {}).length;
-    const opts2 = (list) => (list || []).map((v) => [v, v]);
-    const details = h("details", { class: "mb-style", open: opts.open || undefined },
-      h("summary", {}, title, set_ ? h("span", { class: "badge badge--accent" }, `${set_} set`) : h("span", { class: "muted small" }, "the template's own look")));
-    details.append(
-      group("Text",
-        selectField("Font", s.fontFamily, opts2(catalog.fonts), (v) => put("fontFamily", v), { prop: "style-fontFamily" }),
-        numberField("Size (px)", s.fontSize, 8, 40, 1, (v) => put("fontSize", v), { prop: "style-fontSize" }),
-        selectField("Weight", s.fontWeight, opts2(catalog.fontWeights), (v) => put("fontWeight", v), { prop: "style-fontWeight" }),
-        triField("Italic", s.italic, (v) => put("italic", v), { prop: "style-italic" }),
-        triField("Underline", s.underline, (v) => put("underline", v), { prop: "style-underline" }),
-        triField("UPPER CASE", s.uppercase, (v) => put("uppercase", v), { prop: "style-uppercase" }),
-        numberField("Letter spacing (px)", s.letterSpacing, -2, 10, 0.1, (v) => put("letterSpacing", v), { prop: "style-letterSpacing" })),
-      group("Colours",
-        colorField("Text", s.color, (v) => put("color", v), { prop: "style-color" }),
-        colorField("Background", s.background, (v) => put("background", v), { prop: "style-background" }),
-        colorField("Icon", s.iconColor, (v) => put("iconColor", v), { prop: "style-iconColor" }),
-        colorField("Border", s.borderColor, (v) => put("borderColor", v), { prop: "style-borderColor" })),
-      group("Layout",
-        selectField("Alignment", s.align, opts2(catalog.aligns), (v) => put("align", v), { prop: "style-align" }),
-        selectField("Wrapping", s.wrap, [["wrap", "wrap"], ["nowrap", "one line"], ["ellipsis", "one line with …"]], (v) => put("wrap", v), { prop: "style-wrap" }),
-        numberField("Padding ↔ (px)", s.paddingX, 0, 48, 1, (v) => put("paddingX", v), { prop: "style-paddingX" }),
-        numberField("Padding ↕ (px)", s.paddingY, 0, 48, 1, (v) => put("paddingY", v), { prop: "style-paddingY" }),
-        numberField("Gap (px)", s.gap, 0, 32, 1, (v) => put("gap", v), { prop: "style-gap" }),
-        numberField("Min. height (px)", s.minHeight, 0, 120, 1, (v) => put("minHeight", v), { prop: "style-minHeight" }),
-        numberField("Corner radius (px)", s.radius, 0, 64, 1, (v) => put("radius", v), { prop: "style-radius" })),
-      group("Icon",
-        numberField("Icon size (px)", s.iconSize, 8, 48, 1, (v) => put("iconSize", v), { prop: "style-iconSize" }),
-        selectField("Icon position", s.iconPosition, opts2(catalog.iconPositions), (v) => put("iconPosition", v), { prop: "style-iconPosition" })),
-      group("Border & effects",
-        numberField("Border width (px)", s.borderWidth, 0, 8, 1, (v) => put("borderWidth", v), { prop: "style-borderWidth" }),
-        selectField("Border style", s.borderStyle, opts2(catalog.borders), (v) => put("borderStyle", v), { prop: "style-borderStyle" }),
-        numberField("Opacity (0–1)", s.opacity, 0, 1, 0.05, (v) => put("opacity", v), { prop: "style-opacity" }),
-        numberField("Scale (0.8–1.2)", s.scale, 0.8, 1.2, 0.01, (v) => put("scale", v), { prop: "style-scale" }),
-        selectField("Shadow", s.shadow, opts2(catalog.shadows), (v) => put("shadow", v), { prop: "style-shadow" })),
-    );
-    if (opts.states !== false) details.append(stateTabs(s, putState));
-    if (!readOnly) {
-      details.append(h("div", { class: "mb-style__foot" },
-        h("button", { type: "button", class: "btn btn--sm", "data-read": "1", onclick: () => edit(() => set(undefined), { props: true }) }, "Clear this style")));
-    }
-    return details;
-  }
-  function stateTabs(s, putState) {
-    const box = h("fieldset", { class: "mb-fs mb-states" }, h("legend", {}, "States"));
-    const tabs = h("div", { class: "mb-tabs", role: "tablist" });
-    const panes = h("div", {});
-    const keys = catalog.states || Object.keys(STATE_LABELS);
-    keys.forEach((state, i) => {
-      const one = (s.states && s.states[state]) || {};
-      const count = Object.keys(one).length;
-      const tab = h("button", { type: "button", role: "tab", class: `mb-tab${i === 0 ? " is-on" : ""}`, "aria-selected": i === 0 ? "true" : "false", "data-read": "1", "data-state-tab": state },
-        STATE_LABELS[state] || state, count ? h("span", { class: "mb-tab__n" }, String(count)) : null);
-      const pane = h("div", { role: "tabpanel", hidden: i === 0 ? undefined : true, "data-state-pane": state },
-        grid(
-          colorField("Text", one.color, (v) => putState(state, "color", v), { prop: `state-${state}-color` }),
-          colorField("Background", one.background, (v) => putState(state, "background", v), { prop: `state-${state}-background` }),
-          colorField("Icon", one.iconColor, (v) => putState(state, "iconColor", v), { prop: `state-${state}-iconColor` }),
-          colorField("Border", one.borderColor, (v) => putState(state, "borderColor", v), { prop: `state-${state}-borderColor` }),
-          selectField("Weight", one.fontWeight, (catalog.fontWeights || []).map((v) => [v, v]), (v) => putState(state, "fontWeight", v), { prop: `state-${state}-fontWeight` }),
-          triField("Underline", one.underline, (v) => putState(state, "underline", v), { prop: `state-${state}-underline` }),
-          numberField("Opacity", one.opacity, 0, 1, 0.05, (v) => putState(state, "opacity", v), { prop: `state-${state}-opacity` }),
-          numberField("Scale", one.scale, 0.8, 1.2, 0.01, (v) => putState(state, "scale", v), { prop: `state-${state}-scale` }),
-          selectField("Shadow", one.shadow, (catalog.shadows || []).map((v) => [v, v]), (v) => putState(state, "shadow", v), { prop: `state-${state}-shadow` })));
-      tab.addEventListener("click", () => {
-        for (const t of $$(".mb-tab", tabs)) { t.classList.toggle("is-on", t === tab); t.setAttribute("aria-selected", t === tab ? "true" : "false"); }
-        for (const p of $$("[data-state-pane]", panes)) p.hidden = p !== pane;
-        view.state = state;
-        const pick = $("#mbState");
-        if (pick) pick.value = state;
-        renderPreview();
-      });
-      tabs.append(tab);
-      panes.append(pane);
-    });
-    box.append(h("p", { class: "muted small" }, "Hover and click apply as the pointer does it, keyboard focus when tabbing, current for the open panel or a switch that is on. The preview shows a state for the selected element with “Show state”."), tabs, panes);
-    return box;
-  }
+  const kit = M5Kit.create({
+    edit: (change, opts) => edit(change, opts),
+    readOnly: () => readOnly,
+    catalog: () => catalog,
+    icons: () => catalog && catalog.icons,
+    previewColor: (v) => previewColor(v),
+    onStateTab: (state) => {
+      view.state = state;
+      const pick = $("#mbState");
+      if (pick) pick.value = state;
+      renderPreview();
+    },
+  });
+  const { textField, selectField, checkField, triField, numberField, colorField, iconField, group, styleEditor } = kit;
 
   function actionEditor(n) {
     const a = n.action || { type: "none" };
@@ -732,127 +542,26 @@
     }
     return out;
   }
-  function insertAt(textarea, text) {
-    if (!textarea || textarea.disabled) return;
-    const start = textarea.selectionStart ?? textarea.value.length;
-    const end = textarea.selectionEnd ?? start;
-    textarea.value = textarea.value.slice(0, start) + text + textarea.value.slice(end);
-    textarea.selectionStart = textarea.selectionEnd = start + text.length;
-    textarea.focus();
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-
-  /* ========================================================= icon picker */
-
-  function openIconPicker(current, optional, onPick) {
-    const names = Object.keys(catalog.icons || {});
-    const search = h("input", { class: "input", type: "search", placeholder: `Search ${names.length} icons…`, "aria-label": "Search icons", "data-read": "1" });
-    const gridBox = h("div", { class: "mb-icongrid", role: "listbox", "aria-label": "Icons" });
-    const close = () => { overlay.remove(); document.removeEventListener("keydown", onKey, true); };
-    const pick = (name) => { close(); onPick(name); };
-    const draw = () => {
-      clear(gridBox);
-      const q = search.value.trim().toLowerCase();
-      if (optional) gridBox.append(h("button", { type: "button", class: `mb-iconpick${!current ? " is-on" : ""}`, "data-read": "1", onclick: () => pick(undefined) }, h("span", { class: "mb-iconpick__none" }, "∅"), h("span", {}, "none")));
-      for (const name of names) {
-        if (q && !name.includes(q)) continue;
-        gridBox.append(h("button", { type: "button", role: "option", "aria-selected": name === current ? "true" : "false", class: `mb-iconpick${name === current ? " is-on" : ""}`, title: name, "data-icon": name, "data-read": "1", onclick: () => pick(name) }, iconSvg(name), h("span", {}, name)));
-      }
-    };
-    const onKey = (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } };
-    const dialog = h("div", { class: "mb-dialog", role: "dialog", "aria-modal": "true", "aria-label": "Pick an icon" },
-      h("div", { class: "mb-dialog__head" }, h("strong", {}, "Pick an icon"), h("span", { class: "muted small" }, "lucide · the same icons the app draws"),
-        h("button", { type: "button", class: "btn btn--sm", "data-read": "1", onclick: () => close() }, "Close")),
-      search, gridBox);
-    const overlay = h("div", { class: "mb-overlay", onclick: (e) => { if (e.target === overlay) close(); } }, dialog);
-    search.addEventListener("input", draw);
-    draw();
-    document.body.append(overlay);
-    document.addEventListener("keydown", onKey, true);
-    search.focus();
-  }
+  const insertAt = (field, text) => M5Kit.insertAt(field, text);
 
   /* ========================================================== help window */
 
   function openHelp(target) {
-    helpTarget = target || null;
-    let win = $("#mbHelp");
-    if (win) { win.hidden = false; updateHelpTarget(); $("input", win).focus(); return; }
     const tpl = (catalog && catalog.template) || { variables: [], filters: [], macros: [], examples: [] };
-    const body = h("div", { class: "mb-help__body" });
-    const filter = h("input", { class: "input", type: "search", placeholder: "Filter…", "aria-label": "Filter the help", "data-read": "1" });
-    const tabs = [
-      ["variables", "Variables", () => tpl.variables.map((v) => entry(v.path.startsWith("$") ? `{${v.path}}` : v.path, v.description, v.type))],
-      ["filters", "Filters", () => tpl.filters.map((f) => entry(f.example, `${f.name}${f.args ? `:${f.args}` : ""} — ${f.description}`))],
-      ["macros", "Macros", () => tpl.macros.map((m) => entry(m.syntax, m.description))],
-      ["examples", "Examples", () => tpl.examples.map((e) => entry(e.html, e.title, "", true))],
-    ];
-    const tabBar = h("div", { class: "mb-tabs", role: "tablist" });
-    let current = "variables";
-    const draw = () => {
-      clear(body);
-      const q = filter.value.trim().toLowerCase();
-      const [, , make] = tabs.find(([id]) => id === current);
-      const rows = make().filter((row) => !q || row.dataset.search.includes(q));
-      body.append(...(rows.length ? rows : [h("p", { class: "muted small" }, "Nothing matches.")]));
-    };
-    for (const [id, label] of tabs) {
-      const tab = h("button", { type: "button", role: "tab", class: `mb-tab${id === current ? " is-on" : ""}`, "data-read": "1", "data-help-tab": id }, label);
-      tab.addEventListener("click", () => {
-        current = id;
-        for (const t of $$(".mb-tab", tabBar)) t.classList.toggle("is-on", t === tab);
-        draw();
-      });
-      tabBar.append(tab);
-    }
-    filter.addEventListener("input", draw);
-    const target_ = h("div", { class: "mb-help__target muted small", id: "mbHelpTarget" });
-    const header = h("div", { class: "mb-help__head" },
-      iconSvg("circle-question-mark"), h("strong", {}, "Template language"),
-      h("span", { class: "muted small" }, "Latte-like · click to insert"),
-      h("button", { type: "button", class: "btn btn--sm", "data-read": "1", "aria-label": "Close the help", onclick: () => { win.hidden = true; } }, "×"));
-    win = h("div", { id: "mbHelp", class: "mb-help", role: "dialog", "aria-label": "Template language help" }, header, h("div", { class: "mb-help__tools" }, tabBar, filter), target_, body);
-    document.body.append(win);
-    // Move it by its header.
-    header.addEventListener("pointerdown", (e) => {
-      if (e.target.closest("button")) return;
-      const rect = win.getBoundingClientRect();
-      const dx = e.clientX - rect.left;
-      const dy = e.clientY - rect.top;
-      header.setPointerCapture(e.pointerId);
-      const move = (ev) => {
-        win.style.left = `${Math.max(0, Math.min(window.innerWidth - 120, ev.clientX - dx))}px`;
-        win.style.top = `${Math.max(0, Math.min(window.innerHeight - 60, ev.clientY - dy))}px`;
-        win.style.right = "auto";
-      };
-      const up = () => { header.removeEventListener("pointermove", move); header.removeEventListener("pointerup", up); };
-      header.addEventListener("pointermove", move);
-      header.addEventListener("pointerup", up);
+    M5Kit.openHelp({
+      id: "menu", domId: "mbHelp", title: "Template language", subtitle: "Latte-like · click to insert", target, icons: catalog && catalog.icons,
+      tabs: [
+        { id: "variables", label: "Variables", rows: () => tpl.variables.map((v) => ({ code: v.path.startsWith("$") ? `{${v.path}}` : v.path, text: v.description, type: v.type })) },
+        { id: "filters", label: "Filters", rows: () => tpl.filters.map((f) => ({ code: f.example, text: `${f.name}${f.args ? `:${f.args}` : ""} — ${f.description}` })) },
+        { id: "macros", label: "Macros", rows: () => tpl.macros.map((m) => ({ code: m.syntax, text: m.description })) },
+        { id: "examples", label: "Examples", rows: () => tpl.examples.map((e) => ({ code: e.html, text: e.title, block: true })) },
+      ],
     });
-    updateHelpTarget();
-    draw();
-    filter.focus();
-  }
-  function updateHelpTarget() {
-    const el = $("#mbHelpTarget");
-    if (el) el.textContent = helpTarget && document.body.contains(helpTarget) ? "Inserts into the HTML block you are editing." : "Copies to the clipboard (open the help from an HTML block to insert).";
-  }
-  function entry(code, text, type, block) {
-    const row = h("button", { type: "button", class: `mb-help__row${block ? " is-block" : ""}`, "data-read": "1", "data-search": `${code} ${text} ${type || ""}`.toLowerCase(), title: "Insert" },
-      h("code", {}, code), h("span", { class: "mb-help__desc" }, text, type ? h("span", { class: "badge" }, type) : null));
-    row.addEventListener("click", () => {
-      if (helpTarget && document.body.contains(helpTarget) && !helpTarget.disabled) insertAt(helpTarget, code);
-      else if (navigator.clipboard) navigator.clipboard.writeText(code).then(() => toast("Copied.", "ok"), () => toast(code));
-      else toast(code);
-    });
-    return row;
   }
 
   /* ============================================================= styles */
 
-  function cssColor(v) {
-    return (catalog && catalog.colorTokens && catalog.colorTokens[v]) || v;
-  }
+  const cssColor = (v) => M5Kit.cssColor(v, catalog && catalog.colorTokens);
   /** A colour for a swatch: tokens resolve against the preview's palette. */
   function previewColor(v) {
     const host = $("#mbPreview");
@@ -864,65 +573,8 @@
     }
     return css;
   }
-  function mergeStyles(...styles) {
-    const out = {};
-    for (const s of styles) {
-      if (!s) continue;
-      const { states, ...rest } = s;
-      Object.assign(out, rest);
-      if (states) {
-        out.states = { ...(out.states || {}) };
-        for (const k of Object.keys(states)) out.states[k] = { ...(out.states[k] || {}), ...states[k] };
-      }
-    }
-    return out;
-  }
-  /** The same CSS the app puts on an element (client/src/lib/menu-style.ts). */
-  function styleProps(style) {
-    const css = {};
-    const classes = [];
-    if (!style) return { css, classes };
-    if (style.color) css.color = cssColor(style.color);
-    if (style.background) css.background = cssColor(style.background);
-    if (style.iconColor) { css["--mb-icon"] = cssColor(style.iconColor); classes.push("mb-ic"); }
-    if (style.borderColor) css["border-color"] = cssColor(style.borderColor);
-    if (style.borderWidth !== undefined) { css["border-width"] = `${style.borderWidth}px`; css["border-style"] = style.borderStyle || "solid"; }
-    else if (style.borderStyle) css["border-style"] = style.borderStyle;
-    if (style.fontWeight) css["font-weight"] = style.fontWeight;
-    if (style.underline !== undefined) css["text-decoration"] = style.underline ? "underline" : "none";
-    if (style.opacity !== undefined) css.opacity = String(style.opacity);
-    if (style.scale !== undefined) css.transform = `scale(${style.scale})`;
-    if (style.shadow) css["box-shadow"] = SHADOW_CSS[style.shadow];
-    if (style.align) {
-      css["justify-content"] = style.align === "start" ? "flex-start" : style.align === "end" ? "flex-end" : style.align === "between" ? "space-between" : "center";
-      css["text-align"] = style.align === "between" ? "start" : style.align;
-    }
-    if (style.wrap === "nowrap") css["white-space"] = "nowrap";
-    if (style.wrap === "wrap") css["white-space"] = "normal";
-    if (style.wrap === "ellipsis") classes.push("mb-ellipsis");
-    if (style.fontSize) css["font-size"] = `${style.fontSize}px`;
-    if (style.fontFamily && style.fontFamily !== "inherit") css["font-family"] = (catalog.fontStacks || {})[style.fontFamily] || "inherit";
-    if (style.italic !== undefined) css["font-style"] = style.italic ? "italic" : "normal";
-    if (style.uppercase !== undefined) css["text-transform"] = style.uppercase ? "uppercase" : "none";
-    if (style.letterSpacing !== undefined) css["letter-spacing"] = `${style.letterSpacing}px`;
-    if (style.iconSize) { css["--mb-icon-size"] = `${style.iconSize}px`; classes.push("mb-is"); }
-    if (style.iconPosition && style.iconPosition !== "start") classes.push(`mb-icon-${style.iconPosition}`);
-    if (style.paddingX !== undefined) css["padding-inline"] = `${style.paddingX}px`;
-    if (style.paddingY !== undefined) css["padding-block"] = `${style.paddingY}px`;
-    if (style.gap !== undefined) css.gap = `${style.gap}px`;
-    if (style.minHeight !== undefined) css["min-height"] = `${style.minHeight}px`;
-    if (style.radius !== undefined) css["border-radius"] = `${style.radius}px`;
-    for (const state of Object.keys(STATE_LABELS)) {
-      const st = style.states && style.states[state];
-      if (!st) continue;
-      for (const [key, slug, toCss] of STATE_PROPS) {
-        if (st[key] === undefined) continue;
-        css[`--mb-${state}-${slug}`] = toCss(st[key]);
-        classes.push(`mb-${state}-${slug}`);
-      }
-    }
-    return { css, classes };
-  }
+  const mergeStyles = (...styles) => M5Kit.mergeStyles(...styles);
+  const styleProps = (style) => M5Kit.styleProps(style, catalog);
   function styled(el, ...styles) {
     const { css, classes } = styleProps(mergeStyles(...styles));
     for (const [k, v] of Object.entries(css)) el.style.setProperty(k, v);

@@ -26,24 +26,49 @@ const ICONS = [
   "lightbulb", "map", "megaphone", "newspaper", "package", "paperclip", "pen-line", "printer", "puzzle", "scale",
   "shopping-cart", "square-terminal", "store", "thumbs-up", "ticket", "trophy", "truck", "umbrella", "wallet", "webhook",
   "circle-alert", "triangle-alert", "circle-check", "circle-x", "user-plus", "user-cog", "users-round", "graduation-cap",
+  // 4.0.5: what the Layout builder's layouts use (messages, app bar, chat, composer, recipients)
+  "lock", "timer", "scroll-text", "eye-off", "users", "paperclip", "info", "reply", "forward", "corner-up-left", "check",
+  "check-check", "clock", "send-horizontal", "wifi", "wifi-off", "plug", "maximize-2", "minimize-2", "log-out", "copy",
+  "radio", "smile", "image", "minus", "grip-horizontal", "lock-open", "settings-2", "moon", "x",
+  // …and more to design with
+  "arrow-left", "arrow-up", "arrow-down", "chevron-left", "chevron-up", "chevron-down", "circle", "square", "circle-dot",
+  "bell-off", "calendar-days", "file", "file-image", "file-audio", "file-video", "folder-open", "mail-open",
+  "message-circle-more", "mic-off", "video-off", "volume-x", "phone-off", "share", "pencil", "save", "eye", "send",
+  "reply-all", "sparkle", "hand", "smile-plus", "sticker", "quote", "pin", "pin-off", "map-pinned", "timer-reset",
+  "hourglass", "shield-alert", "shield-off", "key", "user-round", "user-check", "user-x", "signal", "signal-high",
+  "signal-low", "signal-zero", "battery", "zap-off", "loader", "loader-circle", "refresh-ccw", "rotate-ccw", "undo-2",
+  "redo-2", "panel-left", "panel-right", "layout-dashboard", "columns-2", "rows-2", "grip-vertical", "move", "ellipsis",
+  "ellipsis-vertical", "circle-plus", "circle-minus",
 ];
 
 const dir = join(import.meta.dirname, "..", "node_modules", "lucide-react", "dist", "esm", "icons");
 const out = {};
+const seen = new Set();
 const aliases = {};
 const missing = [];
 for (const name of ICONS) {
-  const file = join(dir, `${name}.mjs`);
+  if (seen.has(name)) continue;
+  seen.add(name);
+  let file = join(dir, `${name}.mjs`);
   if (!existsSync(file)) { missing.push(name); continue; }
-  const src = readFileSync(file, "utf8");
+  let src = readFileSync(file, "utf8");
+  // An old name re-exports the icon it was renamed to (smile → face-slightly-smiling):
+  // take that one, under its own name (what the named component draws).
+  const reexport = src.match(/export \{ default \} from '\.\/([a-z0-9-]+)\.mjs'/);
+  if (reexport) {
+    if (seen.has(reexport[1])) continue;
+    seen.add(reexport[1]);
+    file = join(dir, `${reexport[1]}.mjs`);
+    src = readFileSync(file, "utf8");
+  }
   const match = src.match(/const __iconData = (\{[\s\S]*?\n\});/);
   if (!match) { missing.push(name); continue; }
   // The module's literal is plain JSON-like data (strings, numbers, arrays).
   const data = Function(`"use strict"; return (${match[1]});`)();
-  out[name] = data.node;
+  out[data.name ?? name] = data.node;
   // lucide adds a class per alias (lucide-sparkles lucide-stars): the same here.
   const names = (data.aliases ?? []).map((a) => (typeof a === "string" ? a : a?.name)).filter(Boolean);
-  if (names.length) aliases[name] = names;
+  if (names.length) aliases[data.name ?? name] = names;
 }
 if (missing.length) console.warn(`not in this lucide-react: ${missing.join(", ")}`);
 

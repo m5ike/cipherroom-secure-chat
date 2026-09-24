@@ -6,14 +6,16 @@
 //   ./.m5cet/layout.json
 //
 // Validation is the SAME pure module the client uses (sanitizeLayout), so an
-// operator can only store hex colours, bounded numbers and short text
-// templates — never markup. The app and admin are separate processes: the
-// admin writes, the app re-reads when the file's mtime changes.
+// operator can only store hex colours, bounded numbers, short text templates
+// and (4.0.5) element trees of the known palette — never markup or script.
+// The app and admin are separate processes: the admin writes, the app
+// re-reads when the file's mtime changes.
 
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import type { Express, Request, Response } from "express";
 import { DEFAULT_LAYOUT, sanitizeLayout, type LayoutConfig } from "../client/src/lib/layout-config";
+import { layoutCatalog } from "./layout-catalog";
 
 const env = (name: string): string => (process.env[name]?.trim() || "");
 
@@ -85,7 +87,7 @@ export function registerLayoutRoutes(app: Express): void {
 /** Admin (mount AFTER auth): read / save / reset the layout. */
 export function registerAdminLayoutRoutes(app: Express): void {
   app.get("/admin/layout", (_req, res) => {
-    res.json({ ok: true, layout: layoutStore.get(), defaults: DEFAULT_LAYOUT, file: layoutStore.file, lastSaveError: layoutStore.saveError });
+    res.json({ ok: true, layout: layoutStore.get(), defaults: DEFAULT_LAYOUT, file: layoutStore.file, lastSaveError: layoutStore.saveError, catalog: layoutCatalog() });
   });
   app.put("/admin/layout", (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
