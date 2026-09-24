@@ -5,6 +5,70 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [4.13.0] – 2026-09-24
+
+Layout builder pro celou aplikaci. Protokol, šifrování ani data účtů se
+nemění; klienti 4.0 a 4.13 se v místnosti potkají.
+
+### Přidáno
+- **Okno Místnost, okna, dialogy a panely jako rozvržení** (36 nových,
+  celkem 44; `client/src/lib/layouts/{windows,room,dialogs,account,settings,tools,share,phone,connections}.ts`):
+  okno panelu a velké okno nastavení, záložky a obsah okna Místnost,
+  „nejdřív se přihlaste“, odznak přihlášeného, informace o účastníkovi,
+  o zprávě, kontrola verzí, účet, passkey, historie chatu, profil,
+  nastavení, soukromí, šifrování, oznámení, analytika, zabezpečení
+  místnosti, důvěra, lidé, hlasový a video hovor, soubory, poloha, řeč,
+  podrobnosti spojení, telefonie, sdílení a pozvánky, Moje připojení
+  (seznam, úprava, statistiky a log, nastavení). Komponenty drží stav a
+  logiku, rozvržení dostane data a akce (kontrakty). Aplikace kreslí
+  rozvržení operátora pro přihlášeného diváka (`LayoutProvider`).
+- Builder: **sekce** záložek (App, Room window, Windows, Dialogs & parts,
+  Panels); **náhled** oken a panelů jejich skutečnými komponentami s
+  ukázkovými daty (`layout-preview-parts.tsx`, `layout-samples.tsx`), stavy
+  po klepnutí si náhled „doklikne“ sám; bez volání serveru.
+- **Varianty** rozvržení pro skupiny uživatelů a šablony vzhledu (první
+  vyhovující; nejvýš 8 na rozvržení, 40 celkem); v náhledu „jako kdo“.
+- **Historie** uložených verzí (`layout-history.json`, posledních 50,
+  ~12 MB) s rozdíly (proti předchozí nebo dnešní) a **návratem**;
+  `GET /admin/layout/history[/:id[/diff]]`, `POST …/:id/restore`.
+- **Archiv vydaných výchozích stromů** (`server/layout-archive.json`,
+  `script/archive-layouts.ts`) a **třícestné sloučení** vlastního rozvržení
+  s novým výchozím po aktualizaci (`layout-merge.ts`): bez konfliktu samo
+  při načtení, jinak nabídka v builderu se seznamem konfliktů;
+  `POST /admin/layout/merge`.
+- **Vložení HTML** jako prvků palety (`html-to-tree.ts`,
+  `POST /admin/layout/from-html`): nebezpečné a neznámé se vynechá a vypíše.
+- **Kontrola přístupnosti** (`layout-a11y.ts`): návrh (alt, názvy
+  ovládacích prvků, popisky polí, klávesnice, tabindex, nadpisy, duplicitní
+  id, odkazy) i vykreslený náhled (přístupný název, kontrast WCAG proti
+  skutečnému pozadí); souhrn pod náhledem a čipy ve stromu.
+- Prvky **tabulka** (sekce, řádek, buňka) a **video**; ikona s velikostí;
+  další události (mousedown/up, drag…, wheel, scroll, touch, load, error).
+- Šablonovací jazyk: **filtry nad výrazem v závorce**
+  (`{=('acc.signedInAs'|t|replace:'{name}':$userName)}`); číslice za tečkou
+  jsou krok cesty (`$x.0.1`).
+
+### Změněno
+- Šablony a výrazy se **překládají na funkce** a strom rozvržení také
+  (`LayoutView`): rychlejší vykreslení, neměnné části se nevytvářejí znovu.
+- Výchozí stromy se staví až při prvním použití (úvodní obrazovka 8 ze 44).
+- Katalog ikon 239; `script/gen-menu-icons.mjs` čte ikony ze stromů
+  rozvržení a z map ikon komponent.
+- Kontrola `target="_blank"` bere `rel="noreferrer"` jako `noopener`
+  (podle HTML).
+
+### Přístupnost
+- Přístupný název dostalo šest polí: klíč místnosti v úpravě připojení,
+  text SMS, odkaz pozvánky, výběr serverového hlasu, název passkey a
+  obnovovací kód; ve zprávách pole kódu zapečetěné zprávy.
+
+### Ověření
+- DOM i volané akce starých a nových komponent porovnány krok za krokem
+  (všechny převedené komponenty, cs / en, část de; jediný rozdíl jsou nové
+  přístupné názvy). `test/layout-parts.test.tsx` kreslí každé rozvržení
+  oken, dialogů a panelů v každé situaci náhledu a jazyce: bez chyby
+  rozvržení, bez sítě, s přístupnými názvy.
+
 ## [4.0.6] – 2026-09-24
 
 Oprava modulů AI a řeči. Protokol, šifrování ani data účtů se nemění.
