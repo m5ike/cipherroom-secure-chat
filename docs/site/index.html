@@ -161,7 +161,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
 </head>
 <body>
 <header class="top">
-  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 3.3.0</small></a>
+  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 4.0.0</small></a>
   <div class="search" role="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" placeholder="Hledat v dokumentaci…" autocomplete="off" aria-label="Hledat v dokumentaci" />
@@ -169,20 +169,21 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <div class="results" id="results" role="listbox"></div>
   </div>
   <button class="btn" id="theme" type="button" title="Světlý / tmavý motiv">◐</button>
-  <a class="btn" href="m5cet-dokumentace-3.3.0.pdf" download>PDF</a>
+  <a class="btn" href="m5cet-dokumentace-4.0.0.pdf" download>PDF</a>
 </header>
 <div class="layout">
 <nav class="toc" id="toc" aria-label="Obsah"></nav>
 <main id="content">
 <section class="doc cover" id="uvod" data-group="Začínáme">
   <div class="hero">
-    <h1>M5cet 3.3</h1>
+    <h1>M5cet 4.0</h1>
     <p class="lead">Šifrovaná komunikace peer-to-peer v prohlížeči: zprávy, soubory, hovory a sdílení polohy mezi lidmi, kteří znají společné heslo místnosti. Server zprostředkuje spojení, podrží zprávy pro nepřítomné a nikdy nevidí obsah.</p>
-    <p>Tato dokumentace popisuje verzi <b>3.3.0</b>: okno Místnost se záložkami Light · P2P / Server-enhanced a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, uložená připojení přihlášených uživatelů (klíč, jméno, server, statistiky a log), šablony vzhledu iOS 27, Windows 11 a pět studiových, jejich konfiguraci v administraci — a pod tím vším signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
+    <p>Tato dokumentace popisuje verzi <b>4.0.0</b>: Server-enhanced jen s přihlášením passkey, jedinečné uživatelské jméno účtu jako primární klíč, ověřené přihlášení krok za krokem (passkey, globální klíč, databáze, trezor) a adresy /signin a /signup, ochranu před opuštěním připojené místnosti, kontrolu verzí aplikace a knihoven proti serveru s opravou jedním tlačítkem, moduly zapínané pro skupiny uživatelů a Menu builder v konzoli se šablonovacím jazykem; dále okno Místnost se záložkami Light · P2P / Server-enhanced a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, uložená připojení přihlášených uživatelů (klíč, jméno, server, statistiky a log), šablony vzhledu iOS 27, Windows 11 a pět studiových, jejich konfiguraci v administraci — a pod tím vším signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
     <div class="pills"><span class="pill">Node.js 24</span><span class="pill">TypeScript 7</span><span class="pill">React 19</span><span class="pill">WebRTC DataChannel</span><span class="pill">AES-GCM 256</span><span class="pill">ECDSA / ECDH P-256</span><span class="pill">Argon2id</span><span class="pill">Ed25519</span><span class="pill">WebAuthn + PRF</span><span class="pill">SQLite + SQLCipher</span></div>
   </div>
   <div class="grid2">
     <div class="card"><h4>Pro koho je co</h4><p><b>Uživatel</b> — <a href="#rezimy">režimy</a>, <a href="#sifrovani">co šifrování chrání</a>. <b>Vývojář</b> — <a href="#architektura">architektura</a>, <a href="#protokol">protokol v2</a>, <a href="#api">API</a>. <b>Provozovatel</b> — <a href="#nasazeni">nasazení</a>, <a href="#administrace">administrace</a>, <a href="#audit">audit</a>, <a href="#bezpecnost">bezpečnost</a>.</p></div>
+    <div class="card"><h4>Co je nového ve 4.0</h4><p><a href="#prihlaseni">Přihlášení a identita</a>: Server-enhanced vyžaduje passkey, účet má jedinečné uživatelské jméno (jméno v místnosti je jen přezdívka), přihlášení ověří passkey, globální klíč i databázi a všechno zapíše do auditu; <a href="#prihlaseni-adresy">/signin a /signup</a>. <a href="#navigace-verze">Ochrana navigace a kontrola verzí</a>. <a href="#moduly">Moduly a skupiny</a> a <a href="#menu-builder">Menu builder</a> v konzoli. Přehled v <a href="#zmeny-40">seznamu změn 4.0</a>.</p></div>
     <div class="card"><h4>Co je nového ve 3.3</h4><p><a href="#okno-mistnost">Okno Místnost</a>: typ připojení jako záložky v záhlaví, na <i>Server-enhanced</i> výběr z uložených připojení a ozubené kolo k jejich správě, tlačítka a sdílení vždy dole, během spojení nic nepřepnete. <a href="#sdilet-pripojeni">Sdílení uloženého připojení</a> pozvánkou. Přehled v <a href="#zmeny-33">seznamu změn 3.3</a>.</p></div>
     <div class="card"><h4>Co je nového ve 3.2</h4><p><a href="#pripojeni">Uložená připojení</a> s výchozím připojením, automatickým připojením po přihlášení, jiným obslužným serverem, statistikami a logem; <a href="#vzhled">13 šablon vzhledu</a> včetně <a href="#vzhled-ios">iOS 27</a> a <a href="#vzhled-windows">Windows 11</a>, světlý / tmavý tón podle systému a pět stylů ikon; vše řízené z konzole (<a href="#klient-addony">Client &amp; addons</a>); rychlejší načítání. Přehled v <a href="#zmeny-32">seznamu změn 3.2</a>.</p></div>
     <div class="card"><h4>Co je nového ve 3.1</h4><p><a href="#sifrovani-v3">Šifrování v3</a> s forward secrecy a slepým ID místnosti, <a href="#prenosy">binární přenos, relay souborů a E2EE hovorů</a>, <a href="#cluster">více instancí</a>, <a href="#ucty">více passkeys a obnovovací kód</a>, <a href="#role">role</a>, <a href="#neměnný-audit">neměnný audit</a>, <a href="#metriky">metriky a alerty</a>. Přehled v <a href="#zmeny-31">seznamu změn 3.1</a>.</p></div>
@@ -202,7 +203,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <thead><tr><th>Režim</th><th>Co dělá server</th><th>Co to přináší</th></tr></thead>
     <tbody>
       <tr><td><span class="badge b-ok">light</span></td><td>Jen signalizace (spojení WebRTC). Nic neukládá.</td><td>Nejmenší stopa. Zpráva pro někoho, kdo není online, čeká v <a href="#outbox">lokální frontě</a> prohlížeče.</td></tr>
-      <tr><td><span class="badge b-acc">server-enhanced</span></td><td>Navíc: úložiště, relay pro nepřítomné, Web Push, synchronizace nastavení, proxy souborů, když P2P nejde.</td><td>Zprávy dorazí i nepřítomnému (přihlášenému passkey), historie přežije zavření okna, soubory projdou i přes striktní NAT.</td></tr>
+      <tr><td><span class="badge b-acc">server-enhanced</span></td><td>Navíc: úložiště, relay pro nepřítomné, Web Push, synchronizace nastavení, proxy souborů, když P2P nejde. Od 4.0 <b>jen s přihlášením passkey</b> (<a href="#prihlaseni">Přihlášení a identita</a>).</td><td>Zprávy dorazí i nepřítomnému (přihlášenému passkey), historie přežije zavření okna, soubory projdou i přes striktní NAT.</td></tr>
     </tbody>
   </table>
   <h3 id="retence">Uchování chatu</h3>
@@ -212,7 +213,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
       <tr><td><code>ephemeral</code></td><td>Nikde. Nové spojení začíná prázdné.</td><td>—</td></tr>
       <tr><td><code>session</code></td><td>V <code>sessionStorage</code> prohlížeče, šifrovaná neexportovatelným klíčem z IndexedDB.</td><td>Jen tato záložka prohlížeče.</td></tr>
       <tr><td><code>server</code> s passkey</td><td>V trezoru účtu a v jeho SQLCipher databázi; zapečetěno v prohlížeči klíčem z PRF passkey.</td><td>Jen držitel passkey (zero-knowledge).</td></tr>
-      <tr><td><code>server</code> bez passkey</td><td>V dočasné databázi relace (TTL 1 den); každý řádek zapečetěný v prohlížeči klíčem, který zařízení neopustí.</td><td>Jen tento prohlížeč. Server drží řádky, které neumí otevřít.</td></tr>
+      <tr><td><code>server</code> bez passkey</td><td>Do 3.3 v dočasné databázi relace (TTL 1 den). Od 4.0 ho aplikace bez přihlášení nenabízí a uchování přepne na <code>session</code>.</td><td>—</td></tr>
     </tbody>
   </table>
   <h3 id="funkce">Funkce v kostce</h3>
@@ -746,9 +747,52 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
   </table>
 </section>
 
+<section class="doc" id="prihlaseni" data-group="Doručování">
+  <h2>Přihlášení a identita <span class="badge b-acc">4.0</span><a class="anchor" href="#prihlaseni">#</a></h2>
+  <p class="lead">Vše, co drží server — uložená připojení, historie chatu na serveru, zprávy pro nepřítomné, push — patří k <b>účtu s passkey</b>. Bez přihlášení je aplikace plně použitelná v režimu <i>Light · P2P</i>; volby režimu Server-enhanced jsou neaktivní a odkazují do okna <b>Spojení</b>, jediného místa, kde se passkey vytváří a kde se přihlašuje.</p>
+  <h3 id="uzivatelske-jmeno">Uživatelské jméno a přezdívka</h3>
+  <table>
+    <thead><tr><th></th><th>Uživatelské jméno</th><th>Přezdívka</th></tr></thead>
+    <tbody>
+      <tr><td>Co to je</td><td>jedinečné jméno účtu, např. <code>bystry-sokol-7k3q</code> (dvě slova a 4–6 znaků z abecedy bez záměn <code>i l o 0 1</code>); vygeneruje ho server při registraci a nemění se</td><td>jméno zadané pro místnost — jen alias uživatelského jména, co uvidí ostatní</td></tr>
+      <tr><td>Kde je uložené</td><td>v passkey: <code>user.name</code> i <code>displayName</code> a jako <code>user.id</code> (user handle = UTF-8 jméno), takže ho ukáže správce hesel; na serveru je to <b>ID účtu</b> — primární klíč relací, trezoru, databáze uživatele (<code>db-&lt;id&gt;</code>), fronty zpráv i auditu</td><td>v nastavení zařízení a zašifrovaně v trezoru účtu</td></tr>
+      <tr><td>Co peer vidí</td><td>v detailu uživatele (poslané v hello vedle podepsaných klíčů)</td><td>u zpráv a v seznamu lidí</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><b>Light · P2P bez účtu:</b> relace dostane uživatelské jméno z přezdívky — přezdívka jako slug a 4 náhodné znaky (<i>Tomáš K.</i> → <code>tomas-k-7k3q</code>), platí jen pro tuto relaci.</li>
+    <li><b>Účty z doby před 4.0</b> si ponechávají své dosavadní ID a to je zároveň jejich uživatelské jméno. Nepřejmenovávají se: ID je zapsané v jejich passkeys (user handle), v neměnném auditu, ve frontě i v indexu databází, a přejmenování by tyto vazby rozbilo.</li>
+  </ul>
+  <h3 id="globalni-klic">Globální šifrovací klíč účtu</h3>
+  <p>Klíč, kterým se šifrují data a databáze uživatele, je <b>kořen účtu</b> z rozšíření WebAuthn PRF: tentýž passkey s touž solí vrátí vždy tentýž výstup, takže klíč je pokaždé stejný a nikdy se neukládá ani neposílá. Z něj se odvozuje (HKDF) klíč trezoru, klíč databáze, podpisový klíč účtu a nově <b>důkaz klíče</b> <code>HKDF(kořen, "m5cet:key-proof:v1")</code>. Server si při registraci uloží jen <code>SHA-256(důkaz)</code>; z něj klíč nezjistí.</p>
+  <h3 id="prihlaseni-kroky">Přihlášení krok za krokem</h3>
+  <table>
+    <thead><tr><th>Krok</th><th>Co se ověří</th><th>Když selže</th></tr></thead>
+    <tbody>
+      <tr><td>1. Passkey</td><td>server passkey zná (je registrovaný), podpis a počítadlo sedí, user handle odpovídá účtu</td><td>neznámý passkey → chyba s doporučením registrace (<code>404 unknown-passkey</code>); audit <code>account.signin.unknown-passkey</code></td></tr>
+      <tr><td>2. Globální klíč</td><td>relace je zatím <b>zamčená</b>; <code>POST /api/account/unlock</code> pošle důkaz klíče, server porovná hash (v konstantním čase)</td><td>jiný klíč → relace se zruší, <code>403 wrong-key</code>, audit <code>account.signin.wrong-key</code></td></tr>
+      <tr><td>3. Databáze</td><td>šifrovaná databáze uživatele se klíčem otevře</td><td>odhlášení, audit <code>account.client.database-locked</code></td></tr>
+      <tr><td>4. Trezor</td><td>uložená data (profil, nastavení, připojení) se dešifrují</td><td>chyba se zapíše; data se nepřepíšou</td></tr>
+      <tr><td>5. Server a verze</td><td>odezva serveru a shoda verze aplikace se serverem</td><td>jiná verze spustí <a href="#kontrola-verzi">kontrolu verzí</a>, audit <code>account.client.version-mismatch</code></td></tr>
+      <tr><td>6. Nastavení</td><td>načtení uživatelských nastavení do aplikace</td><td>—</td></tr>
+      <tr><td>7. Upozornění, připojení</td><td>propojení push, automatické připojení výchozího uloženého připojení</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p>Okno Spojení ukazuje průběh (probíhá / hotovo / s výhradou / selhalo) a výsledek. Každý krok i každé selhání se zapíše do auditu v kategorii <code>account</code> (<code>account.signin.passkey-ok</code>, <code>account.signin.unlocked</code>, <code>account.client.signin-complete</code>, <code>account.client.signin-failed</code>, <code>account.register</code>, <code>account.register.failed</code> …) s klientem a adresou — správce v konzoli vidí, proč se kdo nepřihlásil. Zamčená relace (před krokem 2) neotevře nic kromě <code>unlock</code>, <code>me</code>, odhlášení a hlášení událostí.</p>
+  <h3 id="prihlaseni-adresy">Adresy /signin a /signup</h3>
+  <ul>
+    <li><code>/signin</code> otevře okno Spojení a rovnou spustí přihlášení passkey.</li>
+    <li><code>/signup</code> otevře okno Spojení a spustí <b>registraci</b>: server vygeneruje uživatelské jméno, prohlížeč vytvoří passkey s PRF, pošle důkaz klíče a uživatel je hned <b>přihlášený a aktivovaný</b> (projde stejnými kroky jako přihlášení; nastavení zařízení se uloží do nového trezoru).</li>
+  </ul>
+  <div class="grid2">
+    <figure><img src="img/signup-steps.png" alt="Registrace přes /signup" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 18 — /signup: účet s vygenerovaným uživatelským jménem, ověřený globální klíč a průběh všech kroků.</figcaption></figure>
+    <figure><img src="img/room-need-signin.png" alt="Server-enhanced vyžaduje přihlášení" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 19 — Nepřihlášený uživatel: Server-enhanced odkazuje do okna Spojení, Připojit je neaktivní.</figcaption></figure>
+  </div>
+</section>
+
 <section class="doc" id="uloziste" data-group="Doručování">
   <h2>Úložiště<a class="anchor" href="#uloziste">#</a></h2>
-  <p>Jedna globální SQLite databáze pro server a jedna SQLCipher databáze pro každého uživatele či anonymní relaci. Podrobně v <code>docs/storage.md</code>.</p>
+  <p>Jedna globální SQLite databáze pro server a jedna SQLCipher databáze pro každého uživatele či anonymní relaci (aplikace od 4.0 anonymní relaci nezakládá — Server-enhanced je jen pro přihlášené). Podrobně v <code>docs/storage.md</code>.</p>
 <pre><code>$DATA_DIR/storage/
 ├── m5cet.db         <span class="c"># globální: uživatelé, passkeys, index DB, logy, přenosy, audit, fronta</span>
 ├── storage.key      <span class="c"># master klíč, 0600 (nebo STORAGE_MASTER_KEY / STORAGE_KEY_FILE)</span>
@@ -762,6 +806,24 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
     <div class="card"><h4>Veřejný status</h4><p><code>/api/storage/status</code> říká jen <code>available</code>, <code>engine</code>, <code>caller</code>, <code>locked</code> — nic o ostatních uživatelích. Úplný stav je v administraci.</p></div>
   </div>
 </section>
+<section class="doc" id="navigace-verze" data-group="Klient">
+  <h2>Ochrana navigace a kontrola verzí <span class="badge b-acc">4.0</span><a class="anchor" href="#navigace-verze">#</a></h2>
+  <h3 id="ochrana-navigace">Nejdřív se odpojte</h3>
+  <p>Dokud je uživatel připojený k místnosti (nebo se připojuje), aplikace brání tomu, aby stránku omylem opustil:</p>
+  <ul>
+    <li><b>Zpět</b> (tlačítko prohlížeče, gesto, <kbd>Alt</kbd>+<kbd>←</kbd>, <kbd>Cmd</kbd>+<kbd>[</kbd>) a <b>obnovení</b> (<kbd>F5</kbd>, <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>R</kbd>) otevřou okno <i>„Prosím nejprve se odpojte z místnosti.“</i> s tlačítky <b>Odpojit</b> a <b>Zůstat</b>. Zpět zachytí strážný záznam v historii.</li>
+    <li><b>Zavření karty, nová adresa, obnovení z menu</b>: prohlížeč se zeptá vlastním dialogem (<code>beforeunload</code>; žádná stránka mu nesmí vnutit vlastní text).</li>
+    <li>Po odpojení ochrana zmizí; <i>Smazat vše a odejít</i> ji uvolní sám.</li>
+  </ul>
+  <h3 id="kontrola-verzi">Kontrola verzí</h3>
+  <p>Sestavení zapíše <code>/version-manifest.json</code>: verzi, build, verzi protokolu, build service workeru, verze knihoven klienta a seznam souborů s SHA-256. Aplikace porovná s ním, co opravdu běží v prohlížeči — svou verzi a build, protokol, knihovny, načtené soubory a service worker — 2,5 s po startu, při návratu do okna, každých 10 minut, když server oznámí novou verzi, a při přihlášení, pokud server hlásí jiný build.</p>
+  <p>Při nesouladu otevře okno se seznamem rozdílů (aplikace, sestavení, protokol, knihovna, soubor, service worker — v prohlížeči / na serveru) a tlačítkem <b>Opravit</b>: smaže Cache Storage, odregistruje service worker, vymaže uložené konfigurace, relace a IndexedDB (kromě identity zařízení; volitelně ponechá vzhled a jazyk), požádá server o <code>Clear-Site-Data: "cache"</code> (<code>POST /api/clear-site-data</code>) a načte stránku znovu s parametrem, který obejde mezipaměti — vše včetně knihoven se stáhne čerstvé ze serveru.</p>
+  <div class="grid2">
+    <figure><img src="img/nav-guard.png" alt="Ochrana navigace" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 20 — F5 během spojení: nejdřív se odpojte.</figcaption></figure>
+    <figure><img src="img/version-check.png" alt="Kontrola verzí" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 21 — Server nasazuje jiné sestavení: seznam rozdílů a Opravit.</figcaption></figure>
+  </div>
+</section>
+
 <section class="doc" id="okno-mistnost" data-group="Klient">
   <h2>Okno Místnost <span class="badge b-acc">3.3</span><a class="anchor" href="#okno-mistnost">#</a></h2>
   <p class="lead">Otevře se klepnutím na logo vlevo nahoře. V záhlaví okna jsou místo názvu <b>záložky typu připojení</b> — <i>Light · P2P</i> a <i>Server-enhanced</i> (na úzkém displeji <i>P2P</i> / <i>Server</i>); vybraná záložka určuje režim. Pod obsahem záložky je část, která je vidět vždy: <b>Připojit / Reconnect</b>, <b>Odpojit</b> a <b>Sdílet místnost</b>.</p>
@@ -769,7 +831,7 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
     <thead><tr><th>Záložka</th><th>Obsah</th></tr></thead>
     <tbody>
       <tr><td>Light · P2P</td><td>jméno, room ID a klíč místnosti (klíč lze zobrazit okem)</td></tr>
-      <tr><td>Server-enhanced</td><td><b>uložená připojení</b> ve stejném vzhledu jako v <i>Moje připojení</i> (barva, název, místnost · jméno · server, výchozí ★, režim) — bez tlačítek; připojení se <b>vybere klepnutím</b> a vybrané je orámované a zaškrtnuté. Poslední položka <i>Jiná místnost</i> ukáže pole pro ruční zadání. Nepřihlášený uživatel vidí výzvu k přihlášení a pole pro ruční zadání.</td></tr>
+      <tr><td>Server-enhanced</td><td><b>uložená připojení</b> ve stejném vzhledu jako v <i>Moje připojení</i> (barva, název, místnost · jméno · server, výchozí ★, režim) — bez tlačítek; připojení se <b>vybere klepnutím</b> a vybrané je orámované a zaškrtnuté. Poslední položka <i>Jiná místnost</i> ukáže pole pro ruční zadání. Nepřihlášený uživatel vidí od 4.0 jen výzvu k přihlášení s odkazem do okna Spojení a Připojit je neaktivní (<a href="#prihlaseni">Přihlášení a identita</a>).</td></tr>
     </tbody>
   </table>
   <ul>
@@ -889,6 +951,8 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
       <tr><td>Retence</td><td>politika uchovávání, další běh, ruční spuštění</td></tr>
       <tr><td>Příkazy a push</td><td>příkaz pro zařízení (doručí se hned, je-li připojené), čekající příkazy, log doručení, stav VAPID, odběratelé, testovací push</td></tr>
       <tr><td>Client &amp; addons <span class="badge b-acc">3.2</span></td><td>využití uložených připojení; jejich politika a další signalizační servery; povolené šablony vzhledu, výchozí šablona, tón a ikony, zámek (<a href="#klient-addony">níže</a>)</td></tr>
+      <tr><td>Modules &amp; groups <span class="badge b-acc">4.0</span></td><td>moduly aplikace zapnuté pro všechny, jen pro některé skupiny, nebo vypnuté; vlastní skupiny uživatelů (<a href="#moduly">níže</a>)</td></tr>
+      <tr><td>Menu builder <span class="badge b-acc">4.0</span></td><td>menu a navigace aplikace: pořadí přetažením, sekce, položky, HTML s proměnnými, oddělovače, speciální tlačítka, styly a stavy, náhled (<a href="#menu-builder">Menu builder</a>)</td></tr>
       <tr><td>Layout, Telefonie, AI</td><td>přenesené nástroje z předchozí administrace</td></tr>
     </tbody>
   </table>
@@ -928,6 +992,14 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
   </table>
   <p>Horní karta ukazuje využití: počet účtů, kolik z nich má uložená připojení a kolik připojení celkem — z počtů, které hlásí prohlížeč; obsah trezoru server nepřečte.</p>
   <figure><img src="img/console-client.png" alt="Client &amp; addons" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 14 — Konzole › Client &amp; addons: politika připojení, další server, povolené šablony (jen iOS 27 a Windows 11), zámek.</figcaption></figure>
+  <h3 id="moduly">Moduly a skupiny <span class="badge b-acc">4.0</span></h3>
+  <p>Konzole › <i>Modules &amp; groups</i>. Každý modul aplikace — <code>audio</code>, <code>video</code>, <code>files</code>, <code>location</code>, <code>speech</code>, <code>ai</code>, <code>telephony</code>, <code>nfc</code>, <code>invites</code>, <code>connections</code>, <code>notifications</code>, <code>analytics</code>, <code>appearance</code>, <code>editMode</code> — je buď zapnutý pro všechny, zapnutý jen pro vybrané skupiny, nebo vypnutý. Skupiny: <code>guest</code> (nepřihlášení), <code>user</code> (přihlášení passkey) a vlastní skupiny správce, jejichž členy jsou <b>uživatelská jména</b>.</p>
+  <ul>
+    <li><b>Aplikace</b> modul, který uživatel nesmí, schová: položky menu (i v <a href="#menu-builder">Menu builderu</a>), panely, tlačítka ve psaní zprávy (soubory, obrázky, hlasové zprávy), sdílení, Edit Mode. Otevřený panel vypnutého modulu se zavře.</li>
+    <li><b>Server</b> to, co modul obsluhuje, odmítne (<code>403 module-disabled</code>): <code>/api/ai/complete</code>, <code>/api/speech/tts|stt</code>, <code>/api/telephony/sms|call</code>, <code>/api/share/create</code>, <code>/api/push/subscribe|test</code>, <code>/api/account/push</code>. Skupiny volajícího určí z jeho relace.</li>
+    <li>Ukládá se do konfigurace klienta (<code>modules</code>, <code>groups</code>); <b>členové skupin se klientům nikdy neposílají</b> — účet se dozví jen své skupiny (<code>/api/account/me</code> › <code>groups</code>). Sloupec <i>On the server</i> ukazuje, zda je serverová část modulu nakonfigurovaná.</li>
+  </ul>
+  <figure><img src="img/console-modules.png" alt="Modules &amp; groups" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 22 — Konzole › Modules &amp; groups: AI vypnuté, telefonie jen pro skupinu „staff“.</figcaption></figure>
   <h3 id="konzole-bezpecnost">Bezpečnost konzole</h3>
   <ul>
     <li>Token je jen v paměti záložky (volitelně v <code>sessionStorage</code>), <b>nikdy v <code>localStorage</code></b> — starý klíč <code>m5cet:admin:cfg</code> konzole při načtení smaže.</li>
@@ -936,6 +1008,67 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
     <li>Odmítnuté tokeny se počítají: 30 za 15 minut na adresu. Každý zásah operátora se zapíše do auditu (kategorie <code>admin</code>).</li>
     <li>Doporučeno omezit <code>/console/</code>, <code>/admin/</code> a <code>/api/admin/</code> v nginx na adresy správců (<code>allow … ; deny all;</code>).</li>
   </ul>
+</section>
+
+<section class="doc" id="menu-builder" data-group="Provoz">
+  <h2>Menu builder <span class="badge b-acc">4.0</span><a class="anchor" href="#menu-builder">#</a></h2>
+  <p class="lead">Konzole › <i>Menu builder</i>. Menu aplikace (panel za tlačítkem ☰ a nástrojová lišta na desktopu) je od 4.0 <b>data</b>: <code>client/src/lib/menu-config.ts</code> je popisuje, <code>MainMenu.tsx</code> vykresluje. Výchozí konfigurace je přesně dosavadní menu — stejné položky, skupiny, třídy i test ID (ověřeno testem, který porovná DOM starého a nového menu ve všech režimech zobrazení). <i>Reset to default</i> ho kdykoli vrátí.</p>
+  <table>
+    <thead><tr><th>Prvek</th><th>Co nastavíte</th></tr></thead>
+    <tbody>
+      <tr><td>☰ tlačítko</td><td>ikona ze seznamu, text (i s proměnnými), zobrazit text, tooltip, styl a stavy</td></tr>
+      <tr><td>Panel</td><td>šířka (220–560 px), titulek, záhlaví a zavírací tlačítko; styl okna, záhlaví, nadpisů sekcí a výchozí styl všech položek</td></tr>
+      <tr><td>Sekce</td><td>nadpis (např. <i>Místnost a zabezpečení</i>), ikona, položky; prázdná sekce se nezobrazí</td></tr>
+      <tr><td>Položka</td><td>ikona, text, odznak, akce: <b>panel</b> (21 panelů), <b>funkce</b> (<code>openRoom</code>, <code>signIn</code>, <code>connectDefault</code>, <code>disconnect</code>, <code>toggleEditMode</code>, <code>toggleTone</code>, <code>setTheme:ios</code>, <code>setLang:en</code>, <code>toggleNotifications</code>, <code>clearQuit</code>), <b>odkaz</b> (<code>https://</code> nebo cesta tohoto webu, volitelně nová karta)</td></tr>
+      <tr><td>HTML</td><td>blok HTML s proměnnými, podmínkami a cykly (<a href="#sablony">šablonovací jazyk</a>); <code>data-action="panel:…"</code> nebo <code>"fn:…"</code> udělá z čehokoli tlačítko</td></tr>
+      <tr><td>Oddělovač</td><td>čára, čárkovaná, tečkovaná, dvojitá nebo jen mezera; barva, tloušťka, odsazení</td></tr>
+      <tr><td>Řada</td><td>tlačítka vedle sebe (jako Vzhled a Edit Mode nahoře)</td></tr>
+      <tr><td>Speciální tlačítko</td><td>uživatel, Vzhled, Edit Mode, světlý / tmavý, oznámení, účet (uživatelské jméno nebo přihlášení), Smazat vše a odejít, verze; u přepínačů volba <i>zobrazit stav</i> (ON / OFF)</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><b>Viditelnost</b> každého prvku: modul (skryje se, když modul uživatel nemá; položka s panelem se řídí modulem panelu sama), situace (<code>signedIn</code>, <code>signedOut</code>, <code>connected</code>, <code>disconnected</code>, <code>phone</code>, <code>desktop</code>), nebo skrytý (zůstane v builderu).</li>
+    <li><b>Styl</b> každého prvku: zarovnání, obtékání (zalomit, jeden řádek, se třemi tečkami), barva textu, pozadí, ikony a rámečku (barvy šablony nebo vlastní), velikost a typ písma, tloušťka, kurzíva, podtržení, verzálky, prostrkání, velikost a pozice ikony, odsazení, mezera, výška, zaoblení, rámeček, průhlednost, zvětšení, stín. Totéž (barvy, tloušťka, podtržení, průhlednost, zvětšení, stín) pro stavy <b>hover</b>, <b>click</b>, <b>focus</b> (klávesnice) a <b>current</b> (otevřený panel nebo zapnutý přepínač).</li>
+    <li><b>Ovládání:</b> přetažení myší (do sekce či řady, před či za prvek), <kbd>Alt</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> z klávesnice (na kraji seznamu přesune prvek ven ze sekce), duplikace, skrytí, smazání, zpět / znovu (<kbd>Ctrl</kbd>+<kbd>Z</kbd>), export a import JSON. Nápověda (<i>? Help</i>) je plovoucí okno s proměnnými, filtry, makry a příklady; klepnutí vloží ukázku do právě upravovaného HTML.</li>
+    <li><b>Náhled</b> vpravo kreslí menu stejnými třídami a styly jako aplikace, s ukázkovými hodnotami (Alice, místnost <i>tym-brno</i>): panel nebo nástrojová lišta, jazyk, tón, přihlášení / připojení / telefon a vynucený stav vybraného prvku. Klepnutí v náhledu vybere prvek.</li>
+    <li><b>Uložení:</b> <code>PUT /api/admin/menu-config</code> (operátor; auditor builder jen čte) → server vše znovu ověří (neznámé panely, funkce, ikony, odkazy mimo https a tento web, velikosti) a uloží do <code>$DATA_DIR/menu-config.json</code> (nebo <code>MENU_CONFIG_FILE</code>); audit <code>admin.menu-config</code>. Aplikace si menu bere z <code>GET /api/menu-config</code> při startu a každých 5 minut a pamatuje si ho pro příští start.</li>
+  </ul>
+  <figure><img src="img/console-menu-builder.png" alt="Menu builder" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 23 — Menu builder: struktura s přetahováním, vlastnosti ☰ tlačítka, živý náhled.</figcaption></figure>
+  <figure><img src="img/app-menu-built.png" alt="Menu z builderu v aplikaci" style="width:40%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 24 — Totéž menu v aplikaci (telefon): nástroje nahoře, oddělovač, HTML blok, vypnuté moduly chybí.</figcaption></figure>
+  <h3 id="sablony">Šablonovací jazyk</h3>
+  <p>Texty položek a bloky HTML jsou šablony podobné Latte (<code>client/src/lib/menu-template.ts</code>). Text začínající <code>@</code> (např. <code>@menu.settings</code>) je překlad aplikace. Výsledek HTML se nikdy nevloží jako <code>innerHTML</code>: rozloží se na bezpečný strom (povolené značky, atributy a styly bez <code>url()</code>, odkazy jen <code>https:</code> a cesty webu, žádné <code>on…</code>, <code>script</code>, <code>style</code>, <code>iframe</code>, formuláře) a vykreslí jako prvky Reactu. Vše vypsané se escapuje.</p>
+  <table>
+    <thead><tr><th>Makro</th><th>Význam</th></tr></thead>
+    <tbody>
+      <tr><td><code>{$proměnná}</code>, <code>{$a.b[0]}</code></td><td>hodnota (escapovaná)</td></tr>
+      <tr><td><code>{=výraz}</code></td><td>výraz: <code>{=$room.peers + 1}</code>, <code>{='Místnost ' ~ $session.room}</code></td></tr>
+      <tr><td><code>{if}…{elseif}…{else}…{/if}</code></td><td>podmínky s <code>== != === &lt; &gt; &lt;= &gt;= &amp;&amp; || !</code> a závorkami</td></tr>
+      <tr><td><code>{ifset $x}…{/ifset}</code></td><td>když hodnota existuje</td></tr>
+      <tr><td><code>{foreach $list as $item}…{else}…{/foreach}</code></td><td>cyklus (i <code>$key =&gt; $value</code>), <code>$iterator.counter</code>, <code>.first</code>, <code>.last</code>, <code>.odd</code>, <code>.even</code></td></tr>
+      <tr><td><code>{var $x = …}</code></td><td>vlastní proměnná</td></tr>
+      <tr><td><code>{icon shield-check}</code></td><td>ikona z katalogu (128 ikon lucide)</td></tr>
+      <tr><td><code>{_'menu.room'}</code></td><td>přeložený text aplikace</td></tr>
+      <tr><td><code>{* … *}</code>, <code>{l}</code> <code>{r}</code></td><td>komentář, literální složené závorky</td></tr>
+    </tbody>
+  </table>
+  <table>
+    <thead><tr><th>Proměnné</th><th>Obsah</th></tr></thead>
+    <tbody>
+      <tr><td><code>$app</code></td><td><code>name</code>, <code>version</code>, <code>build</code>, <code>lang</code>, <code>online</code></td></tr>
+      <tr><td><code>$global</code>, <code>$now</code></td><td><code>server</code> (host), <code>time</code>; <code>$now</code> = čas v ms</td></tr>
+      <tr><td><code>$user</code></td><td><code>signedIn</code>, <code>username</code>, <code>nickname</code>, <code>avatar</code>, <code>groups</code>, <code>keyVerified</code></td></tr>
+      <tr><td><code>$session</code></td><td><code>username</code> = <code>current_username</code> (účet, nebo P2P jméno relace), <code>nickname</code>, <code>connected</code>, <code>status</code>, <code>room</code>, <code>mode</code>, <code>server</code>, <code>peers</code>, <code>rtt</code>, <code>since</code></td></tr>
+      <tr><td><code>$room</code></td><td><code>name</code>, <code>peers</code>, <code>people</code> (přezdívky)</td></tr>
+      <tr><td><code>$connection</code></td><td><code>active</code>, <code>default</code>, <code>saved</code></td></tr>
+      <tr><td><code>$settings</code></td><td><code>theme</code>, <code>tone</code>, <code>accent</code>, <code>lang</code>, <code>notifications</code>, <code>editMode</code>, <code>retention</code></td></tr>
+    </tbody>
+  </table>
+  <p><b>Filtry</b> (<code>{$x|filtr:arg}</code>, řetězí se): <code>upper</code>, <code>lower</code>, <code>capitalize</code>, <code>firstUpper</code>, <code>truncate</code>, <code>replace</code>, <code>default</code>, <code>date</code> (písmena jako v PHP, <code>{$now|date:'H:i'}</code>), <code>number</code>, <code>round</code>, <code>length</code>, <code>join</code>, <code>first</code>, <code>last</code>, <code>bytes</code>, <code>duration</code>, <code>ago</code>, <code>yesno</code>, <code>padLeft</code> a další — úplný seznam s příklady je v nápovědě builderu. Hodnoty se v aplikaci obnovují živě (změna místnosti, lidí, připojení; čas každých 30 s).</p>
+<pre><code><span class="c">&lt;!-- kdo a kde, tlačítko do nastavení --&gt;</span>
+&lt;div style="padding:6px 12px"&gt;{if $user.signedIn}&lt;b&gt;{$user.username}&lt;/b&gt;{else}{$session.username|default:'host'}{/if}
+  {ifset $session.room} · {$session.room|upper} · {$room.peers} {_'menu.peers'}{/ifset}&lt;/div&gt;
+&lt;button data-action="panel:settings"&gt;{icon settings} {_'menu.settings'}&lt;/button&gt;
+&lt;button data-action="fn:setTheme:ios"&gt;iOS&lt;/button&gt;</code></pre>
 </section>
 
 <section class="doc" id="audit" data-group="Provoz">
@@ -1010,10 +1143,14 @@ data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<spa
       <tr><td><code>GET /api/turn</code></td><td>ICE servery; s <code>TURN_SECRET</code> krátkodobé přístupy a <code>expiresAt</code></td><td>—</td></tr>
       <tr><td><code>GET /metrics</code> <span class="badge b-acc">3.1</span></td><td>Prometheus metriky</td><td><code>METRICS_TOKEN</code> nebo administrátor</td></tr>
       <tr><td><code>GET /api/layout</code></td><td>vzhled a šablony od operátora</td><td>—</td></tr>
-      <tr><td><code>GET /api/client-config</code> <span class="badge b-acc">3.2</span></td><td>konfigurace klienta od správce: politika uložených připojení a další servery, povolené a výchozí šablony (<a href="#klient-addony">Client &amp; addons</a>); nic tajného</td><td>—</td></tr>
+      <tr><td><code>GET /api/client-config</code> <span class="badge b-acc">3.2</span></td><td>konfigurace klienta od správce: politika uložených připojení a další servery, povolené a výchozí šablony (<a href="#klient-addony">Client &amp; addons</a>), od 4.0 <a href="#moduly">moduly a skupiny</a> (bez členů); nic tajného</td><td>—</td></tr>
       <tr><td><code>POST /api/share/create|redeem|revoke</code></td><td>pozvánky (split-key, kód 12 číslic); limit 30 / 40 za 15 min. Zapečetěný obsah: místnost, klíč, jméno a od 3.3 volitelně <code>server</code> (<code>wss://</code>)</td><td>—</td></tr>
       <tr><td><code>GET /api/push/status</code>, <code>POST /api/push/subscribe|test</code></td><td>Web Push pro zařízení bez účtu (jen známé push služby)</td><td>test sobě bez tokenu, všem s admin tokenem</td></tr>
-      <tr><td><code>/api/account/*</code></td><td>registrace a přihlášení passkey, <code>me</code>, trezor, push, odhlášení, smazání</td><td>Bearer token relace</td></tr>
+      <tr><td><code>/api/account/*</code></td><td>registrace a přihlášení passkey, <code>me</code>, trezor, push, odhlášení, smazání. Od 4.0 vrací <code>register/options</code> vygenerované <code>username</code>, <code>register/verify</code> chce <code>keyProof</code> a <code>signin/verify</code> vydá <b>zamčený</b> token (<code>locked:true</code>); neznámý passkey → <code>404 unknown-passkey</code></td><td>Bearer token relace</td></tr>
+      <tr><td><code>POST /api/account/unlock</code> <span class="badge b-acc">4.0</span></td><td><code>{ keyProof }</code> — odemkne relaci, když důkaz globálního klíče sedí; jinak zruší token a vrátí <code>403 wrong-key</code></td><td>zamčený token relace</td></tr>
+      <tr><td><code>GET /api/menu-config</code> <span class="badge b-acc">4.0</span></td><td>menu aplikace z <a href="#menu-builder">Menu builderu</a></td><td>—</td></tr>
+      <tr><td><code>POST /api/clear-site-data</code> <span class="badge b-acc">4.0</span></td><td>odpoví <code>Clear-Site-Data: "cache"</code> — krok opravy v <a href="#kontrola-verzi">kontrole verzí</a></td><td>—</td></tr>
+      <tr><td><code>GET /version-manifest.json</code> <span class="badge b-acc">4.0</span></td><td>verze, build, protokol, service worker, knihovny a soubory sestavení (SHA-256)</td><td>—</td></tr>
       <tr><td><code>GET|PUT /api/account/vault</code> — část <code>connections</code> <span class="badge b-acc">3.2</span></td><td>zapečetěná <a href="#pripojeni">uložená připojení</a>: <code>{ connections: { ct, count } }</code>, <code>ct</code> ≤ 1,5 MB</td><td>token relace</td></tr>
       <tr><td><code>POST /api/account/passkeys/options|verify</code>, <code>GET passkeys/:id/wrapped</code>, <code>DELETE passkeys/:id</code> <span class="badge b-acc">3.1</span></td><td>další passkey účtu, jeho zapečetěný kořen, odebrání (poslední nejde)</td><td>token relace</td></tr>
       <tr><td><code>PUT|DELETE /api/account/recovery</code>, <code>POST recovery/start|finish</code> <span class="badge b-acc">3.1</span></td><td>obnovovací kód: nastavit, zrušit, obnovit účet (10 pokusů / h)</td><td>token relace / důkaz z kódu</td></tr>
@@ -1053,7 +1190,9 @@ data: {<span class="s">"counts"</span>:{…},<span class="s">"rate"</span>:{<spa
       <tr><td><code>GET audit/verify</code>, <code>POST audit/checkpoint</code> <span class="badge b-acc">3.1</span></td><td>ověření hash řetězu a podpisů; podepsat hlavu teď</td></tr>
       <tr><td><code>GET|POST backups</code>, <code>POST db/integrity</code>, <code>POST db/optimize</code> <span class="badge b-acc">3.1</span></td><td>zálohy, kontrola integrity, optimalizace (<code>{vacuum:true}</code> jen vlastník)</td></tr>
       <tr><td><code>GET metrics</code>, <code>GET alerts</code>, <code>PUT alerts/rules/:id</code> <span class="badge b-acc">3.1</span></td><td>metriky; pravidla, spuštěné alerty, historie; práh a zapnutí pravidla</td></tr>
-      <tr><td><code>GET|PUT client-config</code> <span class="badge b-acc">3.2</span></td><td>konfigurace klienta (+ výchozí hodnoty, cesta k souboru, využití, katalog šablon); <code>PUT</code> operátor</td></tr>
+      <tr><td><code>GET|PUT client-config</code> <span class="badge b-acc">3.2</span></td><td>konfigurace klienta (+ výchozí hodnoty, cesta k souboru, využití, katalog šablon a od 4.0 modulů, stav serverových modulů <code>features</code>); <code>PUT</code> operátor</td></tr>
+      <tr><td><code>GET|PUT menu-config</code> <span class="badge b-acc">4.0</span></td><td>menu aplikace (+ výchozí, cesta k souboru, katalog: ikony, panely, funkce, speciální tlačítka, písma, barvy, moduly, nápověda šablon); <code>PUT</code> operátor, tělo do 1 MB</td></tr>
+      <tr><td><code>POST menu-config/render</code> <span class="badge b-acc">4.0</span></td><td>náhled builderu: <code>{ config, lang }</code> → přeložené texty a HTML bloky jako bezpečné stromy (ukázkové hodnoty); nic nemění</td></tr>
     </tbody>
   </table>
 <pre><code><span class="c"># export auditu bezpečnostních událostí od úrovně warn do CSV</span>
@@ -1145,7 +1284,8 @@ REDIS_URL=redis://:heslo@127.0.0.1:6379/0  CLUSTER_SECRET=$(openssl rand -base64
       <tr><td><code>BACKUP_DIR</code>, <code>BACKUP_INTERVAL_HOURS</code>, <code>BACKUP_KEEP</code> <span class="badge b-acc">3.1</span></td><td>—, 24, 7</td><td>plánované zálohy a kontroly integrity</td></tr>
       <tr><td><code>REDIS_URL</code>, <code>CLUSTER_SECRET</code>, <code>CLUSTER_CHANNEL</code> <span class="badge b-acc">3.1</span></td><td>—, —, <code>m5cet:cluster</code></td><td>více instancí (<a href="#cluster">cluster</a>); tajemství pro podpis zpráv</td></tr>
       <tr><td><code>WS_CONNECTS_PER_MINUTE</code>, <code>WS_CONNECTIONS_PER_CLIENT</code>, <code>WS_CONNECTIONS_TOTAL</code> <span class="badge b-acc">3.1</span></td><td>30, 20, 5000</td><td>brána WebSocket spojení (na adresu klienta / celkem)</td></tr>
-      <tr><td><code>CLIENT_CONFIG_FILE</code> <span class="badge b-acc">3.2</span></td><td><code>$DATA_DIR/client-config.json</code></td><td>konfigurace klienta z konzole (<a href="#klient-addony">Client &amp; addons</a>)</td></tr>
+      <tr><td><code>CLIENT_CONFIG_FILE</code> <span class="badge b-acc">3.2</span></td><td><code>$DATA_DIR/client-config.json</code></td><td>konfigurace klienta z konzole (<a href="#klient-addony">Client &amp; addons</a>, <a href="#moduly">moduly a skupiny</a>)</td></tr>
+      <tr><td><code>MENU_CONFIG_FILE</code> <span class="badge b-acc">4.0</span></td><td><code>$DATA_DIR/menu-config.json</code></td><td>menu aplikace z <a href="#menu-builder">Menu builderu</a></td></tr>
       <tr><td><code>LOG_EVENTS</code></td><td>vypnuto</td><td>metadata událostí (<code>/api/admin/events</code>)</td></tr>
       <tr><td><code>ENABLE_AI</code>, <code>ENABLE_SPEECH</code>, <code>ENABLE_TELEPHONY</code> + klíče poskytovatelů</td><td>vypnuto</td><td>volitelné moduly</td></tr>
     </tbody>
@@ -1199,7 +1339,7 @@ npm test -- --no-file-parallelism   <span class="c"># ~820 unit testů (vč. fuz
 npm run build
 npm run test:e2e         <span class="c"># 56 testů: zprávy, soubory P2P i relay, šifrovaný hovor, účty a obnova, uložená připojení, okno Místnost, sdílení připojení, konzole a role…</span>
 npm run load-test -- --url ws://127.0.0.1:5000/ws --clients 500   <span class="c"># zátěž (zvednout WS_* limity na testovacím serveru)</span>
-curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"protocol":2,"version":"3.3.0","cluster":"local",…}</span></code></pre>
+curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"protocol":2,"version":"4.0.0","cluster":"local",…}</span></code></pre>
 </section>
 
 <section class="doc" id="bezpecnost" data-group="Bezpečnost">
@@ -1269,6 +1409,17 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
   </table>
 </section>
 
+<section class="doc" id="zmeny-40" data-group="Plán">
+  <h2>Změny ve 4.0.0<a class="anchor" href="#zmeny-40">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>Přidáno</h4><p>Jedinečné uživatelské jméno účtu (primární klíč, uložené v passkey), přezdívka jako alias, P2P jméno relace z přezdívky. Důkaz globálního klíče a zamčená relace do jeho ověření; přihlášení krok za krokem s logem v auditu; <code>/signin</code> a <code>/signup</code>. Ochrana navigace během spojení. Kontrola verzí aplikace, knihoven, souborů a service workeru proti serveru s opravou. Moduly a skupiny v konzoli, vynucené i serverem. Menu builder se šablonovacím jazykem, styly a stavy.</p></div>
+    <div class="card"><h4>Změněno (nekompatibilně)</h4><p><b>Server-enhanced vyžaduje přihlášení passkey</b> — nepřihlášený uživatel už nedostane anonymní relaci úložiště ani ruční připojení na server; volby jsou neaktivní a vedou do okna Spojení. Vytvoření passkey a přihlášení jsou jen v okně Spojení. Registrace chce důkaz klíče (starší klient se nezaregistruje) a přihlášení vydá zamčený token, který odemkne až <code>/api/account/unlock</code>.</p></div>
+    <div class="card"><h4>Stávající účty</h4><p>Fungují dál: jejich ID je jejich uživatelské jméno (nepřejmenovávají se), hash důkazu klíče se uloží při prvním přihlášení 4.0. Menu vypadá stejně, dokud ho správce v builderu nezmění.</p></div>
+    <div class="card"><h4>Kompatibilita</h4><p>Signalizační protokol a šifrování místností beze změny; hello nově nese uživatelské jméno (starší klienti ho ignorují). Nová data: <code>menu-config.json</code>, <code>modules</code> a <code>groups</code> v konfiguraci klienta, <code>username</code> a <code>keyVerifier</code> u účtu.</p></div>
+  </div>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 4.0.0.</p>
+</section>
+
 <section class="doc" id="zmeny-33" data-group="Plán">
   <h2>Změny ve 3.3.0<a class="anchor" href="#zmeny-33">#</a></h2>
   <div class="grid2">
@@ -1277,7 +1428,7 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
     <div class="card"><h4>Opraveno</h4><p>Obnovení stránky vracelo spojení uloženého připojení s jiným serverem na tento server; Reconnect takového připojení také. Pozvánka přijatá po připojení k jinému serveru zůstala na něm. Uložené připojení s režimem light po připojení skrylo seznam připojení.</p></div>
     <div class="card"><h4>Kompatibilita</h4><p>Protokol, šifrování i data beze změny. Relace si navíc pamatuje server a uložené připojení; pozvánka může nést <code>server</code>.</p></div>
   </div>
-  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 3.3.0.</p>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>.</p>
 </section>
 
 <section class="doc" id="zmeny-32" data-group="Plán">

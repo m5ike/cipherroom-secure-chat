@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **3.3.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **4.0.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 3.3 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-3.3.0.pdf`](docs/site/m5cet-dokumentace-3.3.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 4.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-4.0.0.pdf`](docs/site/m5cet-dokumentace-4.0.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -81,7 +81,19 @@ místnosti.
   přihlášení **passkey**, **neměnný audit** (hash řetěz + podepsané body),
   **zálohy**, **Prometheus `/metrics`** a **alerty** s webhookem; panel
   **Client & addons** řídí uložená připojení (limity, další signalizační
-  servery) a šablony GUI (povolené, výchozí, zámek).
+  servery) a šablony GUI (povolené, výchozí, zámek); **Modules & groups**
+  zapíná moduly pro skupiny uživatelů a **Menu builder** skládá menu
+  aplikace (přetahování, HTML s proměnnými, styly a stavy, živý náhled).
+- **Identita a přihlášení (4.0)** — Server-enhanced jen s přihlášením
+  **passkey**; účet má jedinečné **uživatelské jméno** vygenerované serverem
+  a uložené v passkey (primární klíč dat účtu), jméno v místnosti je jen
+  přezdívka. Přihlášení ověří passkey, **globální šifrovací klíč** (důkaz z
+  PRF), databázi i trezor a vše zapíše do auditu; adresy `/signin` a
+  `/signup`. Viz [dokumentace › Přihlášení a identita](docs/site/index.html#prihlaseni).
+- **Ochrana navigace a kontrola verzí (4.0)** — během spojení zpět / obnovení
+  / jiná adresa nejdřív vyzve k odpojení; aplikace porovná své soubory,
+  knihovny a service worker s `version-manifest.json` serveru a nesoulad
+  opraví vymazáním mezipaměti a čistým stažením.
 - **Více instancí** — místnosti přes Redis pub/sub (`REDIS_URL`), podepsané
   zprávy clusteru.
 - **Mapy / lokace** — Geolocation + OSM deep linky, žádný bundling Leafletu.
@@ -213,8 +225,12 @@ Operátor zapne kombinaci:
 | Web Push          | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY`      | endpoint URL, p256dh/auth keys   |
 | Admin API         | `ADMIN_API_TOKEN`, `ENABLE_ADMIN=1`           | jen co je vyjmenované v `/admin` |
 | Settings sync     | `POST /api/settings/sync` (opt-in v UI)        | per-device JSON preferences      |
-| Passkey účty      | `WEBAUTHN_RP_ID`, zapisovatelný `DATA_DIR`     | veřejný klíč, velikosti, časy, ciphertext trezoru a schránky |
+| Passkey účty      | `WEBAUTHN_RP_ID`, zapisovatelný `DATA_DIR`     | uživatelské jméno, veřejný klíč, hash důkazu klíče, velikosti, časy, ciphertext trezoru a schránky |
 | Úložiště          | `STORAGE_MASTER_KEY` (volitelně), `DATA_DIR`   | šifrované databáze, index, logy, přenosy (detaily zapečetěné) |
+
+Od 4.0 je Server-enhanced **jen pro přihlášené passkey** — nepřihlášený
+uživatel má volby neaktivní s odkazem do okna *Spojení* (tam jediném se
+passkey vytváří a přihlašuje).
 
 **Žádný režim** nikdy neumožní serveru číst obsah zpráv — to je nemožné z
 podstaty (klíč je odvozen v prohlížeči).
@@ -359,6 +375,12 @@ Detaily v [`docs/admin.md`](docs/admin.md).
 Frontend (`client/src/lib/`) i backend (`server/modules.ts`) drží registr modulů.
 `/api/modules` vrací manifest, který si frontend přečte, aby zjistil, co je
 zapnuté. Detaily v [`docs/modules.md`](docs/modules.md).
+
+Od 4.0 správce v konzoli (*Modules & groups*) zapíná každý modul aplikace
+pro všechny, jen pro některé skupiny (`guest`, `user` a vlastní skupiny
+uživatelských jmen), nebo ho vypne: aplikace jeho ovládání schová a server
+jeho endpointy odmítne (`403 module-disabled`). Viz
+[dokumentace › Moduly a skupiny](docs/site/index.html#moduly).
 
 ---
 
@@ -508,9 +530,12 @@ Plný přehled: [`docs/browser-limitations.md`](docs/browser-limitations.md).
 
 ## Známá omezení
 
-Projekt je poctivý v tom, co (zatím) neumí. Stav 3.3.0; co zbývá z plánu,
+Projekt je poctivý v tom, co (zatím) neumí. Stav 4.0.0; co zbývá z plánu,
 je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
 
+- **Účty z doby před 4.0** mají jako uživatelské jméno své dosavadní ID (ne
+  tvar `slovo-slovo-xxxx`) — nepřejmenovávají se, protože ID je v jejich
+  passkeys, neměnném auditu, frontě i indexu databází.
 - **Skupinové hovory jsou mesh** (každý s každým): nad 4–5 účastníků roste
   upload. Rámce hovoru jsou šifrované end-to-end tak, aby prošly SFU, ale SFU
   součástí není.
@@ -627,7 +652,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 3.3.0        | aktuální — okno Místnost se záložkami a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, relace si pamatuje server |
+| 4.0.0        | aktuální — Server-enhanced jen s passkey, jedinečné uživatelské jméno, ověřené přihlášení (globální klíč, databáze, trezor) s auditem, `/signin` a `/signup`, ochrana navigace, kontrola verzí s opravou, moduly a skupiny, Menu builder |
+| 3.3.0        | okno Místnost se záložkami a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, relace si pamatuje server |
 | 3.2.0        | uložená připojení (klíč, jméno, server, TTL, statistiky a log, výchozí a automatické připojení), 13 šablon GUI včetně iOS 27 a Windows 11, konzole *Client & addons*, předkomprimované assety |
 | 3.1.0        | šifrování v3 (Argon2id, slepé ID místností, klíče odesílatele, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role, neměnný audit, zálohy, metriky a alerty |
 | 3.0.0        | protokol v2, šifrování v2 (podpisy, zapečetěná signalizace, ověřené soubory), fronta s lease, nová administrace s živým provozem a auditem |

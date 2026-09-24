@@ -5,6 +5,108 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [4.0.0] – 2026-09-24
+
+Identita a přihlášení, moduly pro skupiny a menu jako data. **Nekompatibilní
+změna:** Server-enhanced vyžaduje přihlášení passkey a registrace/přihlášení
+mají nový krok (důkaz globálního klíče). Signalizační protokol a šifrování
+místností se nemění. Dokumentace (HTML + PDF):
+[`docs/site/`](docs/site/index.html#prihlaseni).
+
+### Identita (`server/accounts/username.ts`, `store.ts`, `routes.ts`, `client/src/lib/account.ts`)
+- **Uživatelské jméno** účtu: jedinečné, vygenerované serverem při registraci
+  (`slovo-slovo-xxxx`, konec z abecedy bez záměn), uložené v passkey
+  (`user.name`, `displayName`, `user.id` = UTF-8 jméno). U nových účtů je to
+  **ID účtu** — primární klíč relací, trezoru, databáze, fronty i auditu.
+  Jméno v místnosti je jen přezdívka; hello nese i uživatelské jméno a detail
+  uživatele ho ukazuje.
+- **Light · P2P** bez účtu: jméno relace z přezdívky (`tomas-k-7k3q`).
+- **Globální klíč**: kořen z PRF (pro tentýž passkey vždy stejný) → nový
+  **důkaz klíče** `HKDF(kořen, "m5cet:key-proof:v1")`; server drží jen
+  `SHA-256` (`keyVerifier`). `register/verify` bez důkazu → `400 no-key`.
+- **Přihlášení krok za krokem**: passkey (neznámý → `404 unknown-passkey` s
+  doporučením registrace), globální klíč (`signin/verify` vydá **zamčený**
+  token, `POST /api/account/unlock` ho odemkne; jiný klíč → token zrušen,
+  `403 wrong-key`), databáze, trezor, server a verze, nastavení, push,
+  automatické připojení. Okno Spojení ukazuje průběh; selhání databáze nebo
+  klíče uživatele odhlásí.
+- **Audit** všeho v kategorii `account`: `register`, `register.failed`,
+  `signin.unknown-passkey`, `signin.rejected`, `signin.passkey-ok`,
+  `signin.wrong-key`, `signin.unlocked`, `recovered` a hlášení klienta
+  `client.signin-complete|signin-failed|database-locked|version-mismatch…`.
+- **`/signin` a `/signup`**: otevřou okno Spojení a spustí přihlášení, resp.
+  registraci — po registraci je uživatel rovnou přihlášený a aktivovaný.
+- Účty z doby před 4.0 si ponechávají své ID jako uživatelské jméno (bez
+  přejmenování); hash důkazu klíče se uloží při jejich prvním přihlášení.
+
+### Server-enhanced jen s passkey
+- Vytvořit passkey a přihlásit se jde **jen v okně Spojení**. Jinde (okno
+  Místnost › Server-enhanced, Moje připojení, profil, test upozornění, …) jsou
+  volby neaktivní a karta *Vyžaduje přihlášení passkey* vede do okna Spojení.
+- Nepřihlášená aplikace nezakládá anonymní relaci úložiště ani se nepřipojí
+  na server ručně; uchování chatu `server` se přepne na `session`.
+
+### Ochrana navigace (`client/src/lib/nav-guard.ts`)
+- Během spojení: zpět, obnovení (F5, Ctrl/Cmd+R) a klávesové zkratky historie
+  otevřou okno *„Prosím nejprve se odpojte z místnosti.“* (Odpojit / Zůstat);
+  zavření karty a nová adresa → dialog prohlížeče (`beforeunload`).
+
+### Kontrola verzí (`client/src/lib/integrity.ts`, `IntegrityCheck.tsx`, `vite.config.ts`)
+- Sestavení zapíše `/version-manifest.json` (verze, build, protokol, build
+  service workeru, knihovny, soubory se SHA-256); `sw.js` zná svůj build.
+- Aplikace porovná, co opravdu běží (verze, build, protokol, knihovny,
+  načtené soubory, service worker): po startu, při návratu do okna, každých
+  10 minut, při oznámení nové verze a při přihlášení. Nesoulad → okno se
+  seznamem a **Opravit**: smaže Cache Storage, service worker, uložené
+  konfigurace, relace a IndexedDB (identita zařízení zůstane; volitelně i
+  vzhled a jazyk), `POST /api/clear-site-data` (`Clear-Site-Data: "cache"`) a
+  načte vše znovu ze serveru. Nahrazuje dosavadní pruh „nová verze“.
+
+### Moduly a skupiny (`client/src/lib/modules.ts`, `server/client-config.ts`, konzole *Modules & groups*)
+- 14 modulů (hovory, video, soubory, poloha, řeč, AI, telefonie, NFC,
+  pozvánky, uložená připojení, upozornění, analytika, vzhled, Edit Mode):
+  zapnuto pro všechny, jen pro skupiny, nebo vypnuto. Skupiny `guest`,
+  `user` a vlastní skupiny správce s uživatelskými jmény jako členy (klientům
+  se členové neposílají; účet zná své skupiny z `/api/account/me`).
+- Aplikace schová menu, panely a ovládání modulu, který uživatel nemá;
+  server odmítne jeho endpointy (`403 module-disabled`).
+
+### Menu builder (`client/src/lib/menu-config.ts`, `menu-template.ts`, `menu-style.ts`, `MainMenu.tsx`, `server/menu-config.ts`, konzole `menu-builder.js`)
+- Menu je data: ☰ tlačítko, panel, **sekce, položky** (panel, funkce, odkaz),
+  **HTML** s proměnnými, **oddělovače**, **řady** a **speciální tlačítka**
+  (uživatel, Vzhled, Edit Mode, světlý / tmavý, oznámení, účet, Smazat vše a
+  odejít, verze). Výchozí konfigurace vykreslí **stejné DOM** jako menu 3.3
+  (ověřeno ve všech pěti režimech zobrazení).
+- Každý prvek: modul, situace (přihlášen, připojen, telefon…), skrytí;
+  styl (zarovnání, obtékání, barvy textu / pozadí / ikony / rámečku, písmo,
+  velikost, dekorace, odsazení, zaoblení, stín…) a totéž pro stavy hover,
+  click, focus a current.
+- **Šablonovací jazyk** podobný Latte: `{$session.current_username}`,
+  `{=výraz}`, `{if}`, `{ifset}`, `{foreach}`, `{var}`, `{icon …}`, `{_'klíč'}`,
+  22 filtrů; výstup je bezpečný strom prvků (nikdy `innerHTML`), odkazy jen
+  `https:` a cesty webu, `data-action="panel:…|fn:…"`.
+- Konzole: strom s **přetahováním** (i Alt+↑/↓), přidávání, duplikace,
+  skrytí, mazání, zpět / znovu, export / import JSON, výběr ikon (128 ikon
+  lucide), editor stylů se stavy, plovoucí **nápověda** (proměnné, filtry,
+  makra, příklady — klepnutím vloží), **živý náhled** panelu i lišty.
+- `GET /api/menu-config`, `GET|PUT /api/admin/menu-config`,
+  `POST /api/admin/menu-config/render`; `$DATA_DIR/menu-config.json`
+  (`MENU_CONFIG_FILE`); audit `admin.menu-config`.
+
+### Opraveno
+- Konzole *Modules & groups* se ptala admin služby na `/api/modules`
+  (404); stav serverových modulů teď přichází s `/api/admin/client-config`.
+
+### Testy
+- Jednotkové: uživatelská jména, důkaz klíče a zamčené relace, kroky
+  přihlášení a chyby (neznámý passkey, špatný klíč, databáze), moduly a
+  skupiny, šablonovací jazyk, konfigurace menu (validace, úložiště, routy,
+  náhled), menu z konfigurace (styly, HTML, oddělovače, speciální tlačítka,
+  bezpečnost HTML). E2E: `/signup`, `/signin`, neznámý passkey na jiném
+  serveru, zamčení Server-enhanced, ochrana navigace, kontrola verzí,
+  moduly a skupiny v konzoli, Menu builder (přetažení, klávesnice, styly a
+  stavy, HTML s nápovědou, uložení) a totéž menu v aplikaci.
+
 ## [3.3.0] – 2026-09-24
 
 Nové okno Místnost a sdílení uložených připojení. Protokol, šifrování ani
