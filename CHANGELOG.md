@@ -5,14 +5,16 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
-## [4.15.0] – 2026-09-24
+## [5.0.0] – 2026-09-28
 
-Programovatelné moduly — druhá etapa frameworku funkcí
-(`docs/functions-architecture.md`, kap. 16, etapa 2). Operátor napíše model
+**M5cet Functions** — programovatelné moduly (celý framework funkcí,
+`docs/functions-architecture.md`, etapy 2–6). Operátor napíše model
 v JavaScriptu nebo Pythonu, publikuje ho a v chatu ho kdokoli spustí přes
-`/klíčové-slovo` (jako roboti v messengerech). Protokol, šifrování ani data
-účtů se nemění; server nikdy nečte místnost — dostane jen to, co klient
-u příkazu pošle, a výstup do místnosti šifruje klient.
+`/klíčové-slovo` (jako roboti v messengerech), případně přes webhook, plán
+nebo API. Protokol, šifrování ani data účtů se nemění; server nikdy nečte
+místnost — dostane jen to, co klient u příkazu pošle, a výstup do místnosti
+šifruje klient. Model hrozby: skripty píše důvěryhodný operátor, hranicí je
+oddělený proces a interpret ve WASM (ne obrana proti autorovi).
 
 ### Přidáno
 - **Sandbox a runner** (`server/functions/`): každý běh dostane vlastní
@@ -105,8 +107,10 @@ u příkazu pošle, a výstup do místnosti šifruje klient.
 - **Pro autora** (etapa 6): **šablony** balíčků (Hello JS/PY, HTTP fetch, QR,
   AI asistent) — nový balíček lze založit z šablony; **export a import**
   balíčku jako přenosný bundle `.m5pkg` (všechny publikované verze + soubory),
-  v konzoli tlačítka Import/Export. (Interaktivní tutoriál a volitelný trusted
-  runtime zbývají.)
+  v konzoli tlačítka Import/Export; **interaktivní tutoriál** v konzoli (lekce
+  v Markdownu vedle editoru: „vlož ukázku → spusť → kontrola“, od `m5.out`
+  přes vstupy, session/cache, HTTP, kódy a prompt až po AI a Python). Volitelný
+  trusted runtime (npm/PyPI v nsjail) se po zvoleném modelu hrozby nepoužívá.
 
 ### Opraveno
 - Ovladač SQLCipher se teď dostane do `dist/node_modules`, takže úložiště

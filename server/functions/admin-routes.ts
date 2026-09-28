@@ -23,6 +23,7 @@ import { execute, functionsPublicUrl, runAdhoc, runEvents, RunRefused } from "./
 import { parseEntry, type Caller, type Model } from "./types";
 import { SDK_SPEC, sdkCompletions, sdkDts } from "./sdk-spec";
 import { cronError } from "./cron";
+import { tutorialLessons } from "./tutorial";
 import { newId } from "./store";
 import { layoutGroups } from "../layout-catalog";
 
@@ -77,6 +78,7 @@ export function registerFunctionsAdminRoutes(app: Express): void {
 
   r.get("/", (_req, res) => { void functionsStore.ready().then(() => res.json(overview())); });
   r.get("/sdk", (_req, res) => res.json({ ok: true, spec: SDK_SPEC, completions: sdkCompletions(), dts: sdkDts() }));
+  r.get("/tutorial", (_req, res) => res.json({ ok: true, lessons: tutorialLessons() }));
 
   /* -------- packages -------- */
   r.get("/packages/:id", (req, res) => {
@@ -132,8 +134,15 @@ export function registerFunctionsAdminRoutes(app: Express): void {
   r.post("/run", operator, (req, res) => {
     const inputs = (req.body.inputs ?? {}) as Record<string, unknown>;
     const caller = consoleCaller(res);
-    const draft = req.body.draft as { packageId: string; file: string; fn: string } | undefined;
     const done = (p: Promise<{ run: unknown; outputs: unknown; value: unknown }>) => p.then((out) => res.json({ ok: true, ...out })).catch((err) => send(res, err));
+    // Inline code (the tutorial): run files directly, no package needed.
+    const adhoc = req.body.adhoc as { lang?: string; files?: Record<string, string>; file?: string; fn?: string } | undefined;
+    if (adhoc && adhoc.files) {
+      const lang = adhoc.lang === "py" ? "py" : "js";
+      const file = String(adhoc.file || (lang === "py" ? "index.py" : "index.js"));
+      return void done(runAdhoc({ lang, files: adhoc.files, deps: {}, entry: { file, fn: String(adhoc.fn || "execute") }, inputs }, caller));
+    }
+    const draft = req.body.draft as { packageId: string; file: string; fn: string } | undefined;
     if (draft) {
       const pkg = functionsStore.package(draft.packageId);
       const version = pkg ? functionsStore.version(pkg.id, DRAFT) : null;

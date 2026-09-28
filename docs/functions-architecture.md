@@ -485,6 +485,8 @@ publikace, změny oprávnění a tajemství, ruční zrušení, trusted runtime.
 
 ## 16. Etapy
 
+> **Stav k 5.0:** etapy 2–5 hotové; z etapy 6 hotové šablony, export/import `.m5pkg` a interaktivní tutoriál — zbývá jen volitelný trusted runtime (po zvoleném modelu hrozby se nepoužívá) a diff verzí. Podrobnosti výše u jednotlivých „Stav etapy“.
+
 Každá etapa je samostatná verze s testy (unit, E2E, bezpečnostní testy
 sandboxu), dokumentací a nasazením; další staví na předchozí.
 
@@ -492,10 +494,10 @@ sandboxu), dokumentací a nasazením; další staví na předchozí.
 |---|---|---|
 | **1 — AI & speech** (4.14, hotovo) | vrstva poskytovatelů (8 AI + řeč), šifrované přístupy, katalog modelů, zkušebna, logy volání, kvóty a náklady, zdraví; nové API aplikace (stream); asistent v chatu místo `AiPanel` | každý poskytovatel projde testem v zkušebně (mock server v testech), stream v chatu, logy a náklady v konzoli |
 | **2 — Runtime** (4.15, hotovo) | `m5cet-runner`, fronta, QuickJS + Pyodide sandboxy, SDK jádro (`sys`, `run`, `caller`, `log`, `out`, `session`, `cache`, `codec`, `id`, `crypto` základ), balíčky a verze, modely, IDE v1, zkušební běh, běhy v konzoli | sada útoků na sandbox (únik, paměť, smyčka, SSRF) neprojde; zkušební běh JS i Pythonu z IDE |
-| **3 — Chat** | executor `/klíč`: našeptávání, nápověda parametrů, parsování, validace, karty běhu, výstupy (`message.function`), prompt a formulář, flash, okna; E2EE štítky a souhlas | E2E: dva lidé v místnosti, jeden spustí serverový a prohlížečový model, druhý vidí výstup |
-| **4 — Síť a integrace** | `http` (cookies, form-data, raw), `dns`, `crypto` plné (SSH, PGP, X.509, JWT), `codes`, komprese, webhooky (vstupní, běhu), `on_event`, trvalé pokračování, plány, API tokeny | webhook běhu doručí data do `on_event` po restartu runneru |
-| **5 — AI ve funkcích** | `m5.ai` (chat, stream, reasoning, embed, obrázky, řeč), agenti s nástroji a potvrzováním, rozpočty běhu | agent s dvěma nástroji a potvrzením v chatu |
-| **6 — Autor** | interaktivní tutoriál, galerie šablon, import / export `.m5pkg`, diff verzí, trusted runtime (volitelný) | nový operátor projde tutoriál a publikuje model bez dokumentace |
+| **3 — Chat** (5.0, hotovo) | executor `/klíč`: našeptávání, nápověda parametrů, parsování, validace, karty běhu, výstupy (`message.function`), prompt a formulář, flash, okna; E2EE štítky a souhlas | E2E: dva lidé v místnosti, jeden spustí serverový a prohlížečový model, druhý vidí výstup |
+| **4 — Síť a integrace** (5.0, hotovo) | `http` (cookies, form-data, raw), `dns`, `crypto` plné (SSH, PGP, X.509, JWT), `codes`, komprese, webhooky (vstupní, běhu), `on_event`, trvalé pokračování, plány, API tokeny | webhook běhu doručí data do `on_event` po restartu runneru |
+| **5 — AI ve funkcích** (5.0, hotovo) | `m5.ai` (chat, stream, reasoning, embed, obrázky, řeč), agenti s nástroji a potvrzováním, rozpočty běhu | agent s dvěma nástroji a potvrzením v chatu |
+| **6 — Autor** (5.0, z větší části hotovo) | interaktivní tutoriál, galerie šablon, import / export `.m5pkg`, diff verzí, trusted runtime (volitelný) | nový operátor projde tutoriál a publikuje model bez dokumentace |
 
 ### Stav etapy 1 (4.14)
 

@@ -94,7 +94,7 @@ místnosti.
   odpověďmi psanými průběžně (Markdown, uvažování, zdroje). První etapa
   frameworku funkcí ([`docs/functions-architecture.md`](docs/functions-architecture.md)).
   Viz [dokumentace › AI a řeč](docs/site/index.html#ai).
-- **Funkce — programovatelné moduly (4.15)** — operátor napíše model
+- **Funkce — programovatelné moduly (5.0)** — operátor napíše model
   v **JavaScriptu** (QuickJS) nebo **Pythonu** (Pyodide), publikuje ho v
   konzoli (editor, verze, zkušební běh, živé logy) a v chatu ho kdokoli
   spustí přes **`/klíčové-slovo`** (jako roboti v messengerech). Každý běh
@@ -684,7 +684,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 4.15.0       | aktuální — programovatelné moduly (funkce): modely v JS (QuickJS) i Pythonu (Pyodide) v odděleném procesu s limity, SDK `m5`, balíčky a verze, IDE v konzoli se zkušebním během, `/klíčové-slovo` v chatu; `ENABLE_FUNCTIONS` |
+| 5.0.0        | aktuální — **M5cet Functions**: modely v JS (QuickJS) i Pythonu (Pyodide) v odděleném procesu s limity, SDK `m5` (out/log/session/cache/codec/id/crypto+JWT/PGP/SSH/X.509, http+SSRF, dns, kódy, ai+agenti), balíčky/verze, IDE + tutoriál v konzoli, `/příkaz` v chatu s `prompt`/`form`, webhooky, plány (cron), API tokeny, `.m5pkg` export/import; `ENABLE_FUNCTIONS` |
 | 4.14.0       | AI a řeč od základu: 9 druhů poskytovatelů se zašifrovanými klíči, modely, skupiny, limity (výchozí 0 = vypnuto), zkušebna, test řeči, žurnál volání; asistent v aplikaci se streamem a Markdownem |
 | 4.13.0       | Layout builder pro celou aplikaci: okno Místnost, okna, dialogy a panely jako rozvržení (44 v sekcích), varianty pro skupiny a šablony vzhledu, historie s rozdíly a návratem, sloučení s novým výchozím po aktualizaci, vložení HTML, kontrola přístupnosti, kompilované šablony a rozvržení |
 | 4.0.6        | oprava konektorů AI a řeči (Claude 5 bez `temperature`, HuggingFace Inference Providers), zapínání modulů AI a Speech v konzoli |

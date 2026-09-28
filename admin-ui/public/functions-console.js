@@ -23,7 +23,12 @@
   let current = "";        // the open file
   let dirty = false;
   let modelDraft = null;   // the model being edited
+  let lessons = null;      // tutorial lessons (fetched once)
+  let lessonId = null;     // the open lesson
   const OUT = outputRenderer();
+
+  const tutDone = () => { try { return new Set(JSON.parse(localStorage.getItem("m5cet:fn-tut") || "[]")); } catch { return new Set(); } };
+  const markLesson = (id) => { try { const s = tutDone(); s.add(id); localStorage.setItem("m5cet:fn-tut", JSON.stringify([...s])); } catch { /* none */ } };
 
   /* ============================================================== loading */
 
@@ -47,12 +52,13 @@
     if (tab === "packages") el.append(packagesView());
     else if (tab === "models") el.append(modelsView());
     else if (tab === "schedules") el.append(schedulesView());
+    else if (tab === "tutorial") el.append(tutorialView());
     else el.append(runsView());
   }
 
   function tabs() {
     const bar = h("div", { class: "fn-tabs" });
-    for (const [id, label] of [["packages", "Packages"], ["models", "Models"], ["schedules", "Schedules"], ["runs", "Runs"]]) {
+    for (const [id, label] of [["packages", "Packages"], ["models", "Models"], ["schedules", "Schedules"], ["runs", "Runs"], ["tutorial", "Tutorial"]]) {
       bar.append(h("button", { class: `fn-tab${tab === id ? " fn-tab--on" : ""}`, onclick: () => { tab = id; render(); } }, label));
     }
     return bar;
@@ -473,6 +479,55 @@
     if (!confirm("Delete this schedule?")) return;
     try { await api(`/admin/functions/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }); toast("Deleted.", "ok"); await load(); }
     catch (e) { toast(e.message, "err"); }
+  }
+
+  /* ============================================================= tutorial */
+
+  function tutorialView() {
+    if (!lessons) {
+      api("/admin/functions/tutorial").then((d) => { lessons = d.lessons || []; lessonId = lessonId || (lessons[0] && lessons[0].id); render(); }).catch((e) => toast(e.message, "err"));
+      return h("div", { class: "card empty" }, "Loading…");
+    }
+    const wrap = h("div", { class: "fn-cols" });
+    const side = h("div", { class: "fn-side card" });
+    side.append(h("div", { class: "fn-side__head" }, h("span", {}, "Tutorial")));
+    const done = tutDone();
+    for (const l of lessons) {
+      side.append(h("button", { class: `fn-pkg${l.id === lessonId ? " fn-pkg--on" : ""}`, onclick: () => { lessonId = l.id; render(); } },
+        h("span", { class: "fn-pkg__name" }, l.title),
+        done.has(l.id) ? h("span", { class: "badge badge--ok" }, "✓") : null));
+    }
+    wrap.append(side);
+    const lesson = lessons.find((l) => l.id === lessonId) || lessons[0];
+    wrap.append(lesson ? lessonPane(lesson) : h("div", { class: "card empty" }, "Pick a lesson."));
+    return wrap;
+  }
+
+  function lessonPane(lesson) {
+    const pane = h("div", { class: "fn-editor-pane card" });
+    pane.append(h("div", { class: "fn-editor__head" }, h("strong", {}, lesson.title), h("span", { class: "badge" }, lesson.lang.toUpperCase())));
+    pane.append(h("div", { class: "fn-md" }, mdBlock(lesson.body)));
+    const ta = h("textarea", { class: "fn-editor", spellcheck: "false", wrap: "off", style: "min-height:180px" }, lesson.sample);
+    ta.value = lesson.sample;
+    pane.append(ta);
+    const result = h("div", { class: "fn-run__result" });
+    const runBtn = h("button", { class: "btn btn--primary btn--sm", onclick: run }, "Run");
+    pane.append(h("div", { class: "fn-run__row mt8" }, runBtn, lesson.inputs ? h("span", { class: "muted small" }, "inputs: " + JSON.stringify(lesson.inputs)) : null));
+    pane.append(result);
+    return pane;
+
+    async function run() {
+      clear(result); result.append(h("div", { class: "muted small" }, "Running…"));
+      const file = lesson.lang === "py" ? "main.py" : "index.js";
+      try {
+        const r = await api("/admin/functions/run", { method: "POST", body: { adhoc: { lang: lesson.lang, files: { [file]: ta.value }, file, fn: "execute" }, inputs: lesson.inputs || {} } });
+        renderRunResult(result, r.run, r.outputs);
+        const text = (r.outputs || []).map((o) => o.text || (o.value !== undefined ? JSON.stringify(o.value) : "")).join(" ");
+        const ok = r.run.status === "done" && (!lesson.expect || text.includes(lesson.expect));
+        if (ok) { markLesson(lesson.id); result.prepend(h("div", { class: "fn-flash fn-flash--success" }, "✓ Lesson complete")); }
+        else if (r.run.status === "done" && lesson.expect) result.prepend(h("div", { class: "fn-flash fn-flash--warning" }, `Ran, but the output did not contain “${lesson.expect}”.`));
+      } catch (e) { clear(result); result.append(h("div", { class: "fn-err" }, e.message)); }
+    }
   }
 
   /* ================================================================ runs */
