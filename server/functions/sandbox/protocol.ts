@@ -87,6 +87,7 @@ export type FromSandbox =
 export const HOST_CALLS = [
   "session.get", "session.set", "session.delete", "session.keys",
   "cache.get", "cache.set", "cache.incr", "cache.delete", "cache.lock", "cache.unlock",
+  "prompt", "form",
 ] as const;
 export type HostCall = (typeof HOST_CALLS)[number];
 

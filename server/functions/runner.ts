@@ -92,11 +92,64 @@ export function buildSpec(model: Model, inputs: Record<string, unknown>, caller:
   };
 }
 
+/* ---------------------------------------------------- live interactions */
+
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> };
+const interactions = new Map<string, Map<string, Pending>>();
+const PROMPT_TTL_MS = 5 * 60 * 1000;
+
+class InteractionError extends Error {
+  constructor(readonly code: string, message: string) { super(message); this.name = "InteractionError"; }
+}
+
+/** Delivers the caller's answer to a waiting m5.prompt / m5.form. Returns
+ *  false when there is no such open question (already answered, or timed out). */
+export function answerRun(runId: string, interactionId: string, value: unknown): boolean {
+  const forRun = interactions.get(runId);
+  const pending = forRun?.get(interactionId);
+  if (!pending || !forRun) return false;
+  clearTimeout(pending.timer);
+  forRun.delete(interactionId);
+  if (!forRun.size) interactions.delete(runId);
+  pending.resolve(value);
+  return true;
+}
+
+/** Public: cancel a run's open questions because the caller went away. */
+export function endInteractionsFor(runId: string): void { endInteractions(runId, "the caller left"); }
+
+/** Cancels every open question of a run (it finished, failed or was cancelled). */
+function endInteractions(runId: string, why: string): void {
+  const forRun = interactions.get(runId);
+  if (!forRun) return;
+  interactions.delete(runId);
+  for (const p of forRun.values()) { clearTimeout(p.timer); p.reject(new InteractionError("cancelled", why)); }
+}
+
+/** Registers a question and waits for its answer (or a timeout). */
+function ask(runId: string, kind: "prompt" | "form", spec: unknown, control: Parameters<RunHandlers["host"]>[2]): Promise<unknown> {
+  const id = newId("int");
+  return control.wait(new Promise<unknown>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const forRun = interactions.get(runId);
+      forRun?.delete(id);
+      if (forRun && !forRun.size) interactions.delete(runId);
+      reject(new InteractionError("timeout", "the question was not answered in time"));
+    }, PROMPT_TTL_MS);
+    timer.unref?.();
+    let forRun = interactions.get(runId);
+    if (!forRun) { forRun = new Map(); interactions.set(runId, forRun); }
+    forRun.set(id, { resolve, reject, timer });
+    runEvents.emit("run", { runId, type: "interaction", interaction: { id, kind, spec } });
+  }));
+}
+
 /* ------------------------------------------------------------ host calls */
 
-/** The session and cache calls a run may make, scoped to it. */
-function hostHandler(model: Model, sessionId: string): RunHandlers["host"] {
-  return async (fn, args) => {
+/** The session, cache and interaction calls a run may make, scoped to it. */
+function hostHandler(model: Model, sessionId: string, runId: string): RunHandlers["host"] {
+  return async (fn, args, control) => {
+    if (fn === "prompt" || fn === "form") return ask(runId, fn, args[0] ?? {}, control);
     const scopeName = (raw: unknown): string => {
       const s = String(raw ?? "model");
       const scope = s === "run" || s === "session" || s === "model" || s === "global" ? s : "model";
@@ -133,6 +186,8 @@ export type ExecuteOptions = {
   parent?: string | null;
   /** Reuse a session (repeat runs of the same model, caller and room share one). */
   sessionScope?: string;
+  /** A caller-chosen id (a streaming caller subscribes to it before starting). */
+  runId?: string;
 };
 
 /** The result the caller (chat, console) sees. */
@@ -154,7 +209,7 @@ const scopeKey = (model: Model, caller: Caller): string => `${model.id}\0${calle
 export async function execute(model: Model, rawInputs: Record<string, unknown>, caller: Caller, opts: ExecuteOptions): Promise<ExecuteResult> {
   await functionsStore.ready();
   const inputs = validateInputs(model.inputs, rawInputs); // throws RunRefused on a bad input
-  const runId = newId("run");
+  const runId = opts.runId ?? newId("run");
   const sessionId = functionsStore.session(model.id, opts.sessionScope ?? scopeKey(model, caller));
   const spec = buildSpec(model, inputs, caller, opts.executor, { test: Boolean(opts.test), runId, sessionId, parent: opts.parent ?? null });
 
@@ -178,13 +233,14 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
   const flushTimer = setInterval(flush, 500);
 
   const handlers: RunHandlers = {
-    host: hostHandler(model, sessionId),
+    host: hostHandler(model, sessionId, runId),
     onLog: (level, msg, fields) => log(level as RunLog["level"], msg, fields),
     onOutput: (out) => { outputs.push(out); runEvents.emit("run", { runId, type: "output", output: out }); },
     onProgress: (p, text) => runEvents.emit("run", { runId, type: "progress", p, text }),
   };
 
   const result = await thePool().run(spec, handlers);
+  endInteractions(runId, "the run ended");
   clearInterval(flushTimer);
   flush();
 
@@ -242,12 +298,13 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
   const outputs: Output[] = [];
   let seq = 0;
   const runHandlers: RunHandlers = {
-    host: hostHandler({ id: "__adhoc__" } as Model, sessionId),
+    host: hostHandler({ id: "__adhoc__" } as Model, sessionId, runId),
     onLog: (level, msg, fields) => { const e = { runId, seq: seq++, ts: Date.now(), level: level as RunLog["level"], msg, fields: fields ?? null }; functionsStore.addLogs([e]); runEvents.emit("run", { type: "log", ...e }); handlers?.onLog?.(level, msg, fields); },
     onOutput: (out) => { outputs.push(out); runEvents.emit("run", { runId, type: "output", output: out }); handlers?.onOutput?.(out); },
     onProgress: (p, text) => { runEvents.emit("run", { runId, type: "progress", p, text }); handlers?.onProgress?.(p, text); },
   };
   const result = await thePool().run(full, runHandlers);
+  endInteractions(runId, "the run ended");
   const value = result.ok ? result.value : null;
   const finalOutputs = value && !outputs.includes(value) ? [...outputs, value] : outputs;
   run.status = result.ok ? "done" : result.error.type === "TimeLimit" ? "timed-out" : "failed";

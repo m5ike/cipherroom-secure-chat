@@ -735,6 +735,19 @@
   .cmd-item__kw { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: hsl(var(--primary)); white-space: nowrap; }
   .cmd-item__sum { flex: 1 1 auto; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
   .cmd-item__args { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; opacity: 0.7; white-space: nowrap; }
+  /* A running command's live question (m5.prompt / m5.form). */
+  .fn-ask { gap: 0.5rem; padding: 0.75rem; }
+  .fn-ask__title { font-weight: 600; }
+  .fn-ask__text { color: hsl(var(--foreground)); }
+  .fn-ask__choices { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .fn-ask__row { display: flex; gap: 0.4rem; }
+  .fn-ask__form { display: flex; flex-direction: column; gap: 0.5rem; }
+  .fn-ask__field { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.8rem; color: hsl(var(--muted-foreground)); }
+  .fn-ask__input { flex: 1 1 auto; padding: 0.45rem 0.6rem; border-radius: 0.6rem; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); color: hsl(var(--foreground)); font-size: 0.95rem; }
+  .fn-ask__choice { padding: 0.45rem 0.9rem; border-radius: 0.6rem; border: 1px solid hsl(var(--primary)); background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); cursor: pointer; font-weight: 600; }
+  .fn-ask__choice:hover { filter: brightness(1.08); }
+  .fn-ask__cancel { align-self: flex-start; padding: 0.2rem 0.2rem; border: 0; background: transparent; color: hsl(var(--muted-foreground)); cursor: pointer; font-size: 0.8rem; }
+  .fn-ask__cancel:hover { color: hsl(var(--foreground)); }
   /* A command's Markdown output inside a message bubble. */
   .md-fn { display: block; }
   .md-fn > :first-child { margin-top: 0; }

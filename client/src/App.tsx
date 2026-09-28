@@ -101,7 +101,7 @@ import { M5Logo } from "./components/M5Logo";
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
 import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
 import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgState } from "./lib/chat-types";
-import { fetchCommands, parseCommandLine, buildInputs, runCommand, outputsToMarkdown, type Command } from "./lib/functions";
+import { fetchCommands, parseCommandLine, buildInputs, runCommandStream, answerInteraction, outputsToMarkdown, type Command, type Interaction } from "./lib/functions";
 import { isInlineImage } from "./lib/validate";
 import { DEFAULT_PROXY_LIMITS, extractPeerAddress, normalizeRoom, proxyPacer, type ProxyLimits } from "./lib/app-helpers";
 import { SignedInBadge } from "./components/SignedInBadge";
@@ -463,6 +463,11 @@ function ChatApp() {
   const [commands, setCommands] = useState<Command[]>([]);
   const [cmdIndex, setCmdIndex] = useState(0);
   const [cmdOpen, setCmdOpen] = useState(true);
+  // A running command's live question (m5.prompt / m5.form) and its run token.
+  const [interaction, setInteraction] = useState<Interaction | null>(null);
+  const runCmdAbortRef = useRef<AbortController | null>(null);
+  const runCmdTokenRef = useRef<string | null>(null);
+  const runCmdRunIdRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [peers, setPeers] = useState<PeerView[]>([]);
   const [copied, setCopied] = useState(false);
@@ -3102,23 +3107,48 @@ function ChatApp() {
     const inputs = buildInputs(command, argText);
     setMessageInput("");
     setReplyingTo(null);
+    setCmdOpen(false);
     const rec = command.visibility === "room" ? resolveRecipients() : { away: [] as AwayPeer[] };
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
-    const outcome = await runCommand({ keyword: command.keyword, inputs, room: room || null, client: prefs.deviceId || null, lang, token: accountToken() ?? null });
-    if (!outcome.ok) { systemMessage(tf(lang, "functions.failed", { name: command.name, message: outcome.message }), { kind: "error", chatOnly: true }); return; }
-    const body = outputsToMarkdown(outcome.outputs) || tf(lang, "functions.empty", { name: command.name });
     const fn = { keyword: command.keyword, name: command.name };
-    if (command.visibility === "room") {
-      await sendChatPayload(body, { targets: rec.targets, toNames: rec.toNames, away: rec.away, forwardedFrom: `/${command.keyword}`, fn });
-    } else {
-      // Only the caller sees it: a local bubble from the model (not sent to peers).
-      setMessages((cur) => [...cur, {
-        id: `fn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-        senderId: `function:${command.keyword}`, senderName: command.name,
-        text: body, createdAt: Date.now(), mine: false, secure: true,
-        flags: { fn }, audit: [{ state: "displayed", at: Date.now() }],
-      }]);
-    }
+    const token = accountToken() ?? null;
+    runCmdAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    runCmdAbortRef.current = ctrl;
+    runCmdTokenRef.current = token;
+    const showResult = (body: string) => {
+      if (command.visibility === "room") {
+        void sendChatPayload(body, { targets: rec.targets, toNames: rec.toNames, away: rec.away, forwardedFrom: `/${command.keyword}`, fn });
+      } else {
+        setMessages((cur) => [...cur, {
+          id: `fn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+          senderId: `function:${command.keyword}`, senderName: command.name,
+          text: body, createdAt: Date.now(), mine: false, secure: true,
+          flags: { fn }, audit: [{ state: "displayed", at: Date.now() }],
+        }]);
+      }
+    };
+    await runCommandStream(
+      { keyword: command.keyword, inputs, room: room || null, client: prefs.deviceId || null, lang, token, signal: ctrl.signal },
+      {
+        onStart: (id) => { runCmdRunIdRef.current = id; },
+        onInteraction: (i) => setInteraction(i),
+        onError: (e) => { setInteraction(null); systemMessage(tf(lang, "functions.failed", { name: command.name, message: e.message }), { kind: "error", chatOnly: true }); },
+        onDone: (r) => {
+          setInteraction(null);
+          if (r.error) { systemMessage(tf(lang, "functions.failed", { name: command.name, message: r.error.message }), { kind: "error", chatOnly: true }); return; }
+          showResult(outputsToMarkdown(r.outputs) || tf(lang, "functions.empty", { name: command.name }));
+        },
+      },
+    );
+  }
+
+  /** Sends the caller's answer to a running command's question. */
+  async function answerCurrentInteraction(value: unknown) {
+    const i = interaction;
+    if (!i) return;
+    setInteraction(null);
+    await answerInteraction(i.runId || runCmdRunIdRef.current || "", i.id, value, runCmdTokenRef.current);
   }
 
   function onMessageVanished(id: string) {
@@ -4252,6 +4282,37 @@ function ChatApp() {
           </div>
         );
       })()}
+
+      {/* 4.15: a running command's live question (m5.prompt / m5.form). */}
+      {interaction ? (
+        <div className="cmd-menu fn-ask" role="dialog" aria-label={interaction.spec.text || interaction.kind} data-testid="fn-interaction">
+          {interaction.spec.title ? <div className="fn-ask__title">{interaction.spec.title}</div> : null}
+          {interaction.spec.text ? <div className="fn-ask__text">{interaction.spec.text}</div> : null}
+          {interaction.kind === "prompt" && interaction.spec.choices?.length ? (
+            <div className="fn-ask__choices">
+              {interaction.spec.choices.map((c) => (
+                <button key={c} type="button" className="fn-ask__choice" onClick={() => void answerCurrentInteraction(c)}>{c}</button>
+              ))}
+            </div>
+          ) : interaction.kind === "prompt" ? (
+            <form className="fn-ask__row" onSubmit={(e) => { e.preventDefault(); const el = document.getElementById("fnprompt") as HTMLInputElement | null; void answerCurrentInteraction(el?.value ?? ""); }}>
+              <input id="fnprompt" className="fn-ask__input" autoFocus placeholder={interaction.spec.placeholder || ""} />
+              <button type="submit" className="fn-ask__choice">{t(lang, "functions.send")}</button>
+            </form>
+          ) : (
+            <form className="fn-ask__form" onSubmit={(e) => { e.preventDefault(); const v: Record<string, unknown> = {}; for (const f of interaction.spec.fields || []) { const el = document.getElementById(`fnfield_${f.name}`) as HTMLInputElement | null; if (el) v[f.name] = el.value; } void answerCurrentInteraction(v); }}>
+              {(interaction.spec.fields || []).map((f) => (
+                <label key={f.name} className="fn-ask__field">
+                  <span>{f.label || f.name}{f.required ? " *" : ""}</span>
+                  <input id={`fnfield_${f.name}`} className="fn-ask__input" placeholder={f.placeholder || ""} />
+                </label>
+              ))}
+              <button type="submit" className="fn-ask__choice">{interaction.spec.submit || t(lang, "functions.send")}</button>
+            </form>
+          )}
+          <button type="button" className="fn-ask__cancel" onClick={() => void answerCurrentInteraction(null)}>{t(lang, "functions.cancel")}</button>
+        </div>
+      ) : null}
 
       {/* Modal panels */}
       <ProfilePanel open={activePanel === "profile"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} onOpenConnection={() => setActivePanel("connection")} />

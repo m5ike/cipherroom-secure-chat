@@ -23,7 +23,56 @@ export type RunOutcome =
   | { ok: true; outputs: FnOutput[]; visibility: "room" | "caller"; status: string; ms: number }
   | { ok: false; code: string; message: string };
 
+import { readEvents } from "./ai";
+
 const authHeaders = (token: string | null): Record<string, string> => (token ? { Authorization: `Bearer ${token}` } : {});
+
+/** A live question a running command asks the caller (m5.prompt / m5.form). */
+export type PromptSpec = { text?: string; choices?: string[]; placeholder?: string };
+export type FormField = { name: string; label?: string; type?: string; required?: boolean; placeholder?: string; values?: string[] };
+export type FormSpec = { title?: string; text?: string; fields: FormField[]; submit?: string };
+export type Interaction = { runId: string; id: string; kind: "prompt" | "form"; spec: PromptSpec & FormSpec };
+
+export type StreamHandlers = {
+  onStart?: (runId: string) => void;
+  onInteraction?: (i: { runId: string; id: string; kind: "prompt" | "form"; spec: PromptSpec & FormSpec }) => void;
+  onProgress?: (p: number, text: string) => void;
+  onDone?: (r: { runId: string; status: string; outputs: FnOutput[]; error: { type: string; message: string } | null; visibility: "room" | "caller" }) => void;
+  onError?: (e: { code: string; message: string }) => void;
+};
+
+/** Runs a command with a live stream: progress, questions, then the outputs. */
+export async function runCommandStream(opts: { keyword: string; inputs: Record<string, unknown>; room: string | null; client: string | null; lang: string; tz?: string; token: string | null; signal?: AbortSignal }, h: StreamHandlers): Promise<void> {
+  let res: Response;
+  try {
+    res = await fetch("/api/functions/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders(opts.token) },
+      body: JSON.stringify({ keyword: opts.keyword, inputs: opts.inputs, room: opts.room, client: opts.client, lang: opts.lang, tz: opts.tz, stream: true }),
+      signal: opts.signal,
+    });
+  } catch (err) { h.onError?.({ code: "network", message: (err as Error).message }); return; }
+  if (!res.ok || !res.body) { const d = await res.json().catch(() => ({})); h.onError?.({ code: (d as { code?: string }).code || "error", message: (d as { message?: string }).message || `HTTP ${res.status}` }); return; }
+  for await (const { event, data } of readEvents(res.body)) {
+    const d = data as Record<string, unknown>;
+    if (event === "start") h.onStart?.(String(d.runId));
+    else if (event === "interaction") h.onInteraction?.(d as never);
+    else if (event === "progress") h.onProgress?.(Number(d.p), String(d.text ?? ""));
+    else if (event === "done") h.onDone?.(d as never);
+    else if (event === "error") h.onError?.(d as never);
+  }
+}
+
+/** Sends the caller's answer to a running command's question. */
+export async function answerInteraction(runId: string, interactionId: string, value: unknown, token: string | null): Promise<void> {
+  try {
+    await fetch(`/api/functions/runs/${encodeURIComponent(runId)}/events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(token) },
+      body: JSON.stringify({ interactionId, value }),
+    });
+  } catch { /* the run will time out on its own */ }
+}
 
 /** The commands this user may run ("/keyword"); empty when the module is off. */
 export async function fetchCommands(token: string | null): Promise<Command[]> {

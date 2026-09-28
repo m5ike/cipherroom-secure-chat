@@ -45,9 +45,14 @@ u příkazu pošle, a výstup do místnosti šifruje klient.
   vstupy (`klíč=hodnota` i poziční), spustí model na serveru a výstup buď
   pošle do místnosti jako běžnou šifrovanou zprávu (příznak `fn`), nebo ukáže
   jen volajícímu; v obou případech se vykreslí jako **Markdown** přímo
-  v bublině (nadpisy, tučné, **tabulky**, kód). Nové API
-  `GET /api/functions/commands` a `POST /api/functions/run`; přepínač modulu
-  `functions` (`ENABLE_FUNCTIONS`).
+  v bublině (nadpisy, tučné, **tabulky**, kód).
+- **Živá interakce**: funkce se za běhu zeptá volajícího — `m5.prompt`
+  (tlačítka volby nebo text) a `m5.form` (formulář) — a **čeká** na odpověď
+  (čekání se nepočítá do výpočetního limitu; hlídač se pauzuje). Klient ukáže
+  otázku v plovoucí kartě, odpověď pošle přes `POST /api/functions/runs/:id/events`
+  a běh pokračuje; když volající odejde, otázky se zruší. Streamovaný běh
+  (`POST /api/functions/run` se `stream:true`, SSE) doručuje průběh, otázky a
+  výstupy živě. Přepínač modulu `functions` (`ENABLE_FUNCTIONS`).
 - **Sestavení**: `npm run build` staví i `dist/sandbox.cjs` a kopíruje běhové
   balíčky do `dist/node_modules` (ovladač SQLCipher, Pyodide, QuickJS WASM),
   takže je má i instalace bez `node_modules` a obraz Dockeru s jen `dist`.

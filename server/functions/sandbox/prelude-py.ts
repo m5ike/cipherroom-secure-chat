@@ -225,6 +225,8 @@ def _setup(ctx):
             equal=lambda a, b: _call("crypto.equal", a, b),
         ),
         sleep=lambda ms: _acall("sleep", ms),
+        prompt=lambda spec=None, **kw: _acall("prompt", {"text": spec} if isinstance(spec, str) else (spec or kw)),
+        form=lambda spec=None, **kw: _acall("form", spec or kw),
         Error=M5Error,
         Output=Output,
     )

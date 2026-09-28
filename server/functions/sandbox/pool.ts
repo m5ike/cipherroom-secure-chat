@@ -59,8 +59,13 @@ export function sandboxPaths(): Promise<SandboxPaths> {
 
 /* --------------------------------------------------------------- a child */
 
-/** The host answers a sandbox's m5.* call (session, cache); returns the value. */
-export type HostCallHandler = (fn: string, args: unknown[]) => Promise<unknown>;
+/** While a run waits for the caller (m5.prompt / m5.form), the wall-time
+ *  watchdog is paused: the wait counts against a separate, larger budget, not
+ *  the compute limit. A host call wraps the waiting promise in `wait`. */
+export type RunControl = { wait<T>(p: Promise<T>): Promise<T> };
+
+/** The host answers a sandbox's m5.* call (session, cache, prompt); returns the value. */
+export type HostCallHandler = (fn: string, args: unknown[], control: RunControl) => Promise<unknown>;
 
 export type RunHandlers = {
   onLog?: (level: string, msg: string, fields?: Record<string, unknown>) => void;
@@ -68,6 +73,9 @@ export type RunHandlers = {
   onProgress?: (p: number, text: string) => void;
   host: HostCallHandler;
 };
+
+/** How long, in total, a run may sit waiting for the caller across all prompts. */
+const MAX_WAIT_MS = 10 * 60 * 1000;
 
 export type RunResult =
   | { ok: true; value: Output | null; ms: number; memMb: number; engine: string }
@@ -166,19 +174,37 @@ export class SandboxPool {
     return await new Promise<RunResult>((resolve) => {
       let settled = false;
       let rss = 0;
+      // Time spent waiting for the caller (paused watchdog), so a slow answer
+      // is not counted as compute.
+      let pausedTotal = 0;
+      let pausedSince = 0;
+      let pauseDepth = 0;
+      const pausedNow = () => (pauseDepth > 0 ? Date.now() - pausedSince : 0);
+      const control: RunControl = {
+        wait: async <T,>(p: Promise<T>): Promise<T> => {
+          if (pauseDepth++ === 0) pausedSince = Date.now();
+          try { return await p; }
+          finally { if (--pauseDepth === 0) pausedTotal += Date.now() - pausedSince; }
+        },
+      };
       const finish = (r: RunResult) => { if (settled) return; settled = true; clearInterval(watch); clearTimeout(hardStop); child.onMessage = null; this.retire(child); resolve(r); };
 
       const watch = setInterval(() => {
         rss = readRss(child.proc.pid);
-        if (Date.now() - started > spec.limits.wallMs + grace) {
+        const compute = Date.now() - started - pausedTotal - pausedNow();
+        const waited = pausedTotal + pausedNow();
+        if (compute > spec.limits.wallMs + grace) {
           kill(child);
           finish({ ok: false, error: { type: "TimeLimit", message: "the run took longer than its time limit" }, ms: Date.now() - started, memMb: Math.round(rss / 1048576), engine });
+        } else if (waited > MAX_WAIT_MS) {
+          kill(child);
+          finish({ ok: false, error: { type: "TimeLimit", message: "the run waited too long for an answer" }, ms: Date.now() - started, memMb: Math.round(rss / 1048576), engine });
         } else if (rss > (spec.limits.memoryMb + 192) * 1048576) {
           kill(child);
           finish({ ok: false, error: { type: "MemoryLimit", message: "the run used more memory than its limit" }, ms: Date.now() - started, memMb: Math.round(rss / 1048576), engine });
         }
       }, 250);
-      const hardStop = setTimeout(() => { kill(child); finish({ ok: false, error: { type: "TimeLimit", message: "the run did not stop" }, ms: Date.now() - started, memMb: Math.round(rss / 1048576), engine }); }, spec.limits.wallMs + grace * 3);
+      const hardStop = setTimeout(() => { if (!settled && pauseDepth === 0) { kill(child); finish({ ok: false, error: { type: "TimeLimit", message: "the run did not stop" }, ms: Date.now() - started, memMb: Math.round(rss / 1048576), engine }); } }, MAX_WAIT_MS + grace * 3);
       hardStop.unref?.();
 
       child.proc.once("exit", () => finish({ ok: false, error: { type: "Crashed", message: "the sandbox process stopped unexpectedly" }, ms: Date.now() - started, memMb: Math.round(rss / 1048576), engine }));
@@ -189,7 +215,7 @@ export class SandboxPool {
           case "out": handlers.onOutput?.(m.out); break;
           case "progress": handlers.onProgress?.(m.p, m.text); break;
           case "call":
-            handlers.host(m.fn, m.args).then(
+            handlers.host(m.fn, m.args, control).then(
               (v) => send(child, { t: "ret", id: m.id, ok: true, v }),
               (err) => send(child, { t: "ret", id: m.id, ok: false, e: { code: (err as { code?: string })?.code ?? "error", message: (err as Error)?.message ?? "host call failed" } }),
             );

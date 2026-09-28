@@ -11,7 +11,7 @@ import { join } from "node:path";
 process.env.FUNCTIONS_DB_FILE = join(mkdtempSync(join(tmpdir(), "m5run-")), "functions.db");
 process.env.FUNCTIONS_WARM = "0";
 
-const { runAdhoc, closeRunner } = await import("../server/functions/runner");
+const { runAdhoc, closeRunner, runEvents, answerRun } = await import("../server/functions/runner");
 const { functionsStore } = await import("../server/functions/store");
 
 const caller = { kind: "console" as const, account: "", name: "tester", groups: [], room: "r", client: "c", lang: "cs", tz: "UTC" };
@@ -38,6 +38,29 @@ describe("running JavaScript", () => {
     const r = await runAdhoc({ lang: "js", files: { "index.js": "export async function execute(){ while(true){} }" }, entry: { file: "index.js", fn: "execute" }, inputs: {}, limits: { wallMs: 1000, stepMs: 500 } }, caller);
     expect(["timed-out", "failed"]).toContain(r.run.status);
     expect(r.run.error?.type).toMatch(/Time|Cancel/);
+  }, 30_000);
+});
+
+describe("live interaction", () => {
+  it("asks with m5.prompt / m5.form, waits, and continues with the answer", async () => {
+    const seen: Array<{ kind: string }> = [];
+    const onRun = (ev: { type?: string; runId?: string; interaction?: { id: string; kind: string } }) => {
+      if (ev.type === "interaction" && ev.interaction && ev.runId) {
+        seen.push({ kind: ev.interaction.kind });
+        const value = ev.interaction.kind === "form" ? { name: "Mike" } : "go";
+        setTimeout(() => answerRun(ev.runId!, ev.interaction!.id, value), 20);
+      }
+    };
+    runEvents.on("run", onRun);
+    try {
+      const files = { "index.js": "export async function execute(){ const a = await m5.prompt({ text: 'x', choices: ['go','no'] }); const f = await m5.form({ fields: [{ name: 'name' }] }); return m5.out.json({ a, name: f.name }); }" };
+      const r = await runAdhoc({ lang: "js", files, entry: { file: "index.js", fn: "execute" }, inputs: {}, limits: { wallMs: 3000 } }, caller);
+      expect(r.run.status).toBe("done");
+      expect((r.value as { value: { a: string; name: string } }).value).toEqual({ a: "go", name: "Mike" });
+      expect(seen.map((s) => s.kind)).toEqual(["prompt", "form"]);
+    } finally {
+      runEvents.off("run", onRun);
+    }
   }, 30_000);
 });
 

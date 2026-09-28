@@ -239,6 +239,10 @@ return function setup(host, ctxJson) {
       equal: (a, b) => call("crypto.equal", a, b),
     },
     sleep: (ms) => acall("sleep", Number(ms)),
+    // Ask the caller and wait for the answer (live). prompt → a choice or text;
+    // form → an object of the field values.
+    prompt: (spec) => acall("prompt", typeof spec === "string" ? { text: spec } : plain(spec)),
+    form: (spec) => acall("form", plain(spec)),
     Error: M5Error,
   };
   freeze(m5);

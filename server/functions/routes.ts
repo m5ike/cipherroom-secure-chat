@@ -13,8 +13,8 @@
 
 import express, { type Express, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
-import { execute, RunRefused } from "./runner";
-import { functionsStore } from "./store";
+import { answerRun, endInteractionsFor, execute, runEvents, RunRefused } from "./runner";
+import { functionsStore, newId } from "./store";
 import { validateInputs } from "./inputs";
 import { type Caller, type Model } from "./types";
 import { switchState } from "../plugins/settings";
@@ -106,6 +106,11 @@ export function registerFunctionsRoutes(app: Express): void {
       }
     }
 
+    // Streaming: the run's progress, outputs and — the point of it — its live
+    // questions (m5.prompt / m5.form) arrive as they happen, and the caller
+    // answers them via POST /runs/:id/events. The runId is known up front so
+    // the caller can subscribe and answer before the run finishes.
+    const runId = newId("run");
     res.status(200);
     res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
@@ -113,23 +118,39 @@ export function registerFunctionsRoutes(app: Express): void {
     res.flushHeaders?.();
     const sse = (event: string, data: unknown) => { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
     const keepAlive = setInterval(() => { if (!res.writableEnded) res.write(": ping\n\n"); }, 15_000);
+    const onRun = (ev: Record<string, unknown>) => {
+      if (ev.runId !== runId) return;
+      if (ev.type === "output") sse("output", ev.output);
+      else if (ev.type === "progress") sse("progress", ev);
+      else if (ev.type === "interaction") sse("interaction", { runId, ...(ev.interaction as object) });
+      else if (ev.type === "log") sse("log", ev);
+    };
+    runEvents.on("run", onRun);
+    // If the caller goes away, cancel the questions so the function stops waiting.
+    req.on("close", () => { runEvents.off("run", onRun); clearInterval(keepAlive); endInteractionsFor(runId); });
     try {
-      // validateInputs early so a bad argument is a clean error, not a stream.
-      validateInputs(model.inputs, inputs);
-      sse("start", { keyword: model.keyword, name: model.name, visibility: model.executors.chat.visibility });
-      const out = await execute(model, inputs, caller, {
-        executor: "chat",
-      });
-      // Stream the outputs and progress via runEvents would need per-run wiring;
-      // for chat the final outputs are enough and arrive here in order.
-      for (const o of out.outputs) sse("output", o);
-      sse("done", { runId: out.run.id, status: out.run.status, error: out.run.error, ms: out.run.ms, visibility: model.executors.chat.visibility });
+      validateInputs(model.inputs, inputs); // a bad argument is a clean error, not a stream
+      sse("start", { runId, keyword: model.keyword, name: model.name, visibility: model.executors.chat.visibility });
+      const out = await execute(model, inputs, caller, { executor: "chat", runId });
+      sse("done", { runId: out.run.id, status: out.run.status, outputs: out.outputs, error: out.run.error, ms: out.run.ms, visibility: model.executors.chat.visibility });
     } catch (err) {
       const e = errorOf(err);
       sse("error", { code: e.code, message: e.message });
     } finally {
+      runEvents.off("run", onRun);
       clearInterval(keepAlive);
       res.end();
     }
+  });
+
+  // Answer a live question (m5.prompt / m5.form) of a running command.
+  app.post("/api/functions/runs/:id/events", limiter, express.json({ limit: "256kb" }), (req: Request, res: Response) => {
+    if (!switchState("functions").enabled) return res.status(404).json({ ok: false, code: "off", message: "The functions module is off." });
+    const body = (req.body || {}) as Record<string, unknown>;
+    const interactionId = typeof body.interactionId === "string" ? body.interactionId : "";
+    if (!interactionId) return res.status(400).json({ ok: false, message: "interactionId required." });
+    const ok = answerRun(String(req.params.id), interactionId, body.value ?? null);
+    if (!ok) return res.status(409).json({ ok: false, code: "no-question", message: "That question is not open (already answered, or timed out)." });
+    res.json({ ok: true });
   });
 }
