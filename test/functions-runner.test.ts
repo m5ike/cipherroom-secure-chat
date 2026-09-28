@@ -1,3 +1,4 @@
+// @vitest-environment node
 // The runner and the sandbox, end to end (server/functions/runner.ts + the
 // sandbox process, 4.15): a JS and a Python function actually run in a child
 // process, the m5 SDK works, host calls (cache) reach the store, and the
@@ -60,6 +61,25 @@ describe("live interaction", () => {
       expect(seen.map((s) => s.kind)).toEqual(["prompt", "form"]);
     } finally {
       runEvents.off("run", onRun);
+    }
+  }, 30_000);
+});
+
+describe("m5.http", () => {
+  it("blocks a private address by default, and fetches when allowed", async () => {
+    const http = await import("node:http");
+    const srv = http.createServer((_req, res) => { res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ hi: 1 })); });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", () => r()));
+    const port = (srv.address() as { port: number }).port;
+    try {
+      const blocked = await runAdhoc({ lang: "js", files: { "index.js": `export async function execute(){ try { await m5.http.get('http://127.0.0.1:${port}/'); return m5.out.text('open'); } catch(e){ return m5.out.text(e.code); } }` }, entry: { file: "index.js", fn: "execute" }, inputs: {} }, caller);
+      expect((blocked.value as { text: string }).text).toBe("ssrf");
+      process.env.FUNCTIONS_HTTP_ALLOW_LOCAL = "1";
+      const ok = await runAdhoc({ lang: "js", files: { "index.js": `export async function execute(){ const r = await m5.http.get('http://127.0.0.1:${port}/'); return m5.out.json({ status: r.status, hi: r.json.hi }); }` }, entry: { file: "index.js", fn: "execute" }, inputs: {} }, caller);
+      expect((ok.value as { value: { status: number; hi: number } }).value).toEqual({ status: 200, hi: 1 });
+    } finally {
+      delete process.env.FUNCTIONS_HTTP_ALLOW_LOCAL;
+      srv.close();
     }
   }, 30_000);
 });

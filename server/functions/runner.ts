@@ -17,7 +17,14 @@ import { DEFAULT_LIMITS, MAX_LIMITS, type Output, type RunLimits, type RunSpec }
 import { buildInfo } from "../build-info";
 import { functionsStore, newId } from "./store";
 import { validateInputs } from "./inputs";
+import { httpRequest, dnsResolve } from "./host-net";
+import { Buffer } from "node:buffer";
 import { formatEntry, parseEntry, type Caller, type Lang, type Model, type Run, type RunLog } from "./types";
+
+/** Bytes a sandbox sent as {"$b": base64}; null for anything else. */
+function taggedBytes(v: unknown): Buffer | null {
+  return v && typeof v === "object" && typeof (v as { $b?: unknown }).$b === "string" ? Buffer.from((v as { $b: string }).$b, "base64") : null;
+}
 
 export class RunRefused extends Error {
   constructor(readonly code: string, message: string) {
@@ -150,6 +157,8 @@ function ask(runId: string, kind: "prompt" | "form", spec: unknown, control: Par
 function hostHandler(model: Model, sessionId: string, runId: string): RunHandlers["host"] {
   return async (fn, args, control) => {
     if (fn === "prompt" || fn === "form") return ask(runId, fn, args[0] ?? {}, control);
+    if (fn === "http.request") return control.wait(httpRequest(args[0] as never, taggedBytes));
+    if (fn === "dns.resolve") return control.wait(dnsResolve(args[0], args[1]));
     const scopeName = (raw: unknown): string => {
       const s = String(raw ?? "model");
       const scope = s === "run" || s === "session" || s === "model" || s === "global" ? s : "model";

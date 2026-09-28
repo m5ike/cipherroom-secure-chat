@@ -71,6 +71,14 @@ export const SDK_SPEC: SdkObject[] = [
     m("nanoid", "m5.id.nanoid(size?)", "m5.id.nanoid(size=21)", "A short random id."),
     m("slug", "m5.id.slug(text)", "m5.id.slug(text)", "A URL-safe slug."),
   ] },
+  { name: "http", doc: "HTTP from the server (no CORS), with an SSRF guard (no private addresses).", methods: [
+    m("get", "await m5.http.get(url, { headers })", "await m5.http.get(url, headers=...)", "A GET request.", true),
+    m("post", "await m5.http.post(url, { json })", "await m5.http.post(url, json=...)", "A POST (json / body / headers).", true),
+    m("request", "await m5.http.request({ method, url, ... })", "await m5.http.request({...})", "Any method; returns { status, headers, text, json, body }.", true),
+  ] },
+  { name: "dns", doc: "DNS lookups.", methods: [
+    m("resolve", "await m5.dns.resolve(name, type)", "await m5.dns.resolve(name, type='A')", "A/AAAA/CNAME/MX/TXT/NS/SRV/CAA/PTR/SOA.", true),
+  ] },
   { name: "crypto", doc: "Hashes, HMAC, key derivation, AES-GCM, random.", methods: [
     m("random", "m5.crypto.random(n)", "m5.crypto.random(n)", "n random bytes."),
     m("hash", "m5.crypto.hash(alg, data, enc?)", "m5.crypto.hash(alg, data, encoding=None)", "sha256, sha512, blake2b, …"),

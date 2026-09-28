@@ -53,6 +53,13 @@ u příkazu pošle, a výstup do místnosti šifruje klient.
   a běh pokračuje; když volající odejde, otázky se zruší. Streamovaný běh
   (`POST /api/functions/run` se `stream:true`, SSE) doručuje průběh, otázky a
   výstupy živě. Přepínač modulu `functions` (`ENABLE_FUNCTIONS`).
+- **Síť** (`m5.http`, `m5.dns`): funkce může volat HTTP zvenčí (bez CORS,
+  hlavičky, JSON, `body`, časový limit, limit velikosti, přesměrování) a
+  překládat DNS — vše přes hostitele s **ochranou proti SSRF**: jen `http(s)`
+  a nikdy na privátní, loopback, link-local ani metadatovou adresu (kontrola
+  na první i každé přesměrované adrese, spojení připnuté na ověřenou IP proti
+  DNS rebindingu). Vývojový přepínač `FUNCTIONS_HTTP_ALLOW_LOCAL=1` guard
+  vypne (jen pro místní testy). První kus etapy 4.
 - **Sestavení**: `npm run build` staví i `dist/sandbox.cjs` a kopíruje běhové
   balíčky do `dist/node_modules` (ovladač SQLCipher, Pyodide, QuickJS WASM),
   takže je má i instalace bez `node_modules` a obraz Dockeru s jen `dist`.

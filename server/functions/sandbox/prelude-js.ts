@@ -238,6 +238,21 @@ return function setup(host, ctxJson) {
       },
       equal: (a, b) => call("crypto.equal", a, b),
     },
+    http: (() => {
+      const req = (method, url, opts) => acall("http.request", { ...(opts && typeof opts === "object" ? plain(opts) : {}), method, url: String(url) });
+      return {
+        request: (spec) => acall("http.request", plain(spec)),
+        get: (url, opts) => req("GET", url, opts),
+        post: (url, opts) => req("POST", url, opts),
+        put: (url, opts) => req("PUT", url, opts),
+        patch: (url, opts) => req("PATCH", url, opts),
+        delete: (url, opts) => req("DELETE", url, opts),
+        head: (url, opts) => req("HEAD", url, opts),
+      };
+    })(),
+    dns: {
+      resolve: (name, type) => acall("dns.resolve", String(name), type === undefined ? "A" : String(type)),
+    },
     sleep: (ms) => acall("sleep", Number(ms)),
     // Ask the caller and wait for the answer (live). prompt → a choice or text;
     // form → an object of the field values.
