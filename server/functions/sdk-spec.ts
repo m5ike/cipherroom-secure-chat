@@ -85,6 +85,14 @@ export const SDK_SPEC: SdkObject[] = [
     m("hmac", "m5.crypto.hmac(alg, key, data, enc?)", "m5.crypto.hmac(alg, key, data, encoding=None)", "An HMAC."),
     m("hkdf", "m5.crypto.hkdf(alg, key, salt, info, length)", "m5.crypto.hkdf(alg, key, salt, info, length)", "HKDF key derivation."),
     m("aesGcm", "m5.crypto.aesGcm.encrypt(key, data, aad?)", "m5.crypto.aes_gcm.encrypt(key, data, aad=None)", "AES-GCM encrypt/decrypt."),
+    m("jwt", "await m5.crypto.jwt.sign({ payload, secret })", "await m5.crypto.jwt.sign({...})", "JWT/JWS sign, verify, decode (HS/RS/ES/PS).", true),
+    m("pgp", "await m5.crypto.pgp.encrypt({ text, publicKey })", "await m5.crypto.pgp.encrypt({...})", "OpenPGP encrypt, decrypt, sign, verify, generateKey.", true),
+    m("ssh", "await m5.crypto.ssh.fingerprint({ key })", "await m5.crypto.ssh.fingerprint({...})", "OpenSSH keys: parse, fingerprint.", true),
+    m("x509", "await m5.crypto.x509.parse(pem)", "await m5.crypto.x509.parse(pem)", "Parse and verify an X.509 certificate.", true),
+  ] },
+  { name: "codes", doc: "2D and bar codes: QR, Data Matrix, PDF417, Aztec, Code128, EAN/UPC…", methods: [
+    m("qr", "await m5.codes.qr(text, { scale })", "await m5.codes.qr(text, scale=...)", "A QR code as SVG (or PNG).", true),
+    m("barcode", "await m5.codes.barcode(type, text)", "await m5.codes.barcode(type, text)", "Any symbology by name → SVG/PNG.", true),
   ] },
 ];
 

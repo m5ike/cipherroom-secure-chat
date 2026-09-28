@@ -53,6 +53,15 @@ u příkazu pošle, a výstup do místnosti šifruje klient.
   a běh pokračuje; když volající odejde, otázky se zruší. Streamovaný běh
   (`POST /api/functions/run` se `stream:true`, SSE) doručuje průběh, otázky a
   výstupy živě. Přepínač modulu `functions` (`ENABLE_FUNCTIONS`).
+- **Plné crypto** (`m5.crypto`): vedle rychlých primitiv (hash, HMAC, AES-GCM,
+  odvození klíčů) i **JWT/JWS** (podpis, ověření, dekódování; HS/RS/ES/PS),
+  **X.509** (parsování a ověření certifikátu), **OpenPGP** (šifrování,
+  dešifrování, podpis, ověření, generování klíčů – OpenPGP.js) a **OpenSSH**
+  klíče (parsování, otisky – sshpk). Tyto větší operace běží u hostitele
+  (`await`).
+- **Kódy** (`m5.codes`): QR, Micro QR, rMQR, Aztec, Data Matrix, PDF417,
+  MaxiCode, Han Xin, DotCode, Code 128/39/93, EAN/UPC, ITF… do SVG nebo PNG
+  (bwip-js) — `m5.codes.qr(text)`, `m5.codes.barcode(typ, text)`.
 - **Webhooky**: model může být dosažitelný **příchozím webhookem** —
   `POST /hooks/m/:model/:token` spustí model s tělem jako vstupy a vrátí jeho
   výstupy jako JSON (mimo E2EE, pro integrace); v konzoli se zapne přepínačem

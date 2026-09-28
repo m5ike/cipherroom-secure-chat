@@ -18,6 +18,8 @@ import { buildInfo } from "../build-info";
 import { functionsStore, newId } from "./store";
 import { validateInputs } from "./inputs";
 import { httpRequest, dnsResolve } from "./host-net";
+import { hostCrypto } from "./host-crypto";
+import { hostCode } from "./host-codes";
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import { formatEntry, parseEntry, type Caller, type Lang, type Model, type Run, type RunLog } from "./types";
@@ -211,6 +213,8 @@ function hostHandler(model: Model, sessionId: string, runId: string): RunHandler
     if (fn === "prompt" || fn === "form") return ask(runId, fn, args[0] ?? {}, control);
     if (fn === "http.request") return control.wait(httpRequest(args[0] as never, taggedBytes));
     if (fn === "dns.resolve") return control.wait(dnsResolve(args[0], args[1]));
+    if (fn === "crypto") return control.wait(hostCrypto(String(args[0]), args.slice(1)));
+    if (fn === "codes") return control.wait(hostCode((args[0] ?? {}) as never));
     if (fn === "webhook.create") { const spec = (args[0] ?? {}) as { once?: boolean }; return makeWebhook(runId, Boolean(spec.once)); }
     if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
     const scopeName = (raw: unknown): string => {

@@ -237,6 +237,32 @@ return function setup(host, ctxJson) {
         decrypt: (key, sealed, aad) => call("crypto.aesGcm.decrypt", key, sealed, aad === undefined ? null : aad),
       },
       equal: (a, b) => call("crypto.equal", a, b),
+      // Bigger, host-side crypto (async): JWT/JWS, X.509, OpenPGP, OpenSSH keys.
+      jwt: {
+        sign: (spec) => acall("crypto", "jwt.sign", plain(spec)),
+        verify: (token, key, opts) => acall("crypto", "jwt.verify", String(token), key, opts ? plain(opts) : {}),
+        decode: (token) => acall("crypto", "jwt.decode", String(token)),
+      },
+      x509: {
+        parse: (pem) => acall("crypto", "x509.parse", pem),
+        verify: (pem, issuer) => acall("crypto", "x509.verify", pem, issuer),
+      },
+      pgp: {
+        encrypt: (spec) => acall("crypto", "pgp.encrypt", plain(spec)),
+        decrypt: (spec) => acall("crypto", "pgp.decrypt", plain(spec)),
+        sign: (spec) => acall("crypto", "pgp.sign", plain(spec)),
+        verify: (spec) => acall("crypto", "pgp.verify", plain(spec)),
+        generateKey: (spec) => acall("crypto", "pgp.generateKey", plain(spec || {})),
+      },
+      ssh: {
+        parse: (spec) => acall("crypto", "ssh.parse", plain(spec)),
+        fingerprint: (spec) => acall("crypto", "ssh.fingerprint", plain(spec)),
+      },
+    },
+    codes: {
+      render: (spec) => acall("codes", plain(spec)),
+      qr: (text, opts) => acall("codes", { ...(opts ? plain(opts) : {}), type: "qr", text: String(text) }),
+      barcode: (type, text, opts) => acall("codes", { ...(opts ? plain(opts) : {}), type: String(type), text: String(text) }),
     },
     http: (() => {
       const req = (method, url, opts) => acall("http.request", { ...(opts && typeof opts === "object" ? plain(opts) : {}), method, url: String(url) });

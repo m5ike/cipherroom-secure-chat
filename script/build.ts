@@ -16,6 +16,11 @@ const allowlist = [
   "helmet",
   "web-push",
   "ws",
+  // 4.15: functions host-side crypto and codes — pure JS, bundled so they
+  // travel in dist (the installer removes node_modules after the build).
+  "openpgp",
+  "sshpk",
+  "bwip-js",
 ];
 
 async function buildServer() {
