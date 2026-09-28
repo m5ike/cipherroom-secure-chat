@@ -53,6 +53,18 @@ u příkazu pošle, a výstup do místnosti šifruje klient.
   a běh pokračuje; když volající odejde, otázky se zruší. Streamovaný běh
   (`POST /api/functions/run` se `stream:true`, SSE) doručuje průběh, otázky a
   výstupy živě. Přepínač modulu `functions` (`ENABLE_FUNCTIONS`).
+- **Plány (cron)**: model může běžet podle **cronu** (`*/15 * * * *`,
+  `@daily`, názvy měsíců/dnů, časové pásmo). Scheduler v hlavní službě spouští
+  splatné plány jednou za minutu; v konzoli je záložka *Plány* (přidat, zapnout,
+  spustit teď, smazat). Naplánovaný běh nemá interaktivního volajícího, výstup
+  jde do záznamu běhu (pro periodickou práci).
+- **Trvalé `on_event`**: `m5.webhook.create({ durable: true })` uloží webhook
+  do úložiště; příchozí `POST /hooks/r/:token` po skončení běhu (i po restartu)
+  spustí **`on_event`** modelu v uloženém sessionu se stavem, který funkce
+  odložila do `m5.session`.
+- **API tokeny**: model lze zpřístupnit jako `POST /api/functions/call/:id`
+  s `Authorization: Bearer <token>` (executor „api“); vrací výstupy jako JSON,
+  token se ukáže v konzoli.
 - **Plné crypto** (`m5.crypto`): vedle rychlých primitiv (hash, HMAC, AES-GCM,
   odvození klíčů) i **JWT/JWS** (podpis, ověření, dekódování; HS/RS/ES/PS),
   **X.509** (parsování a ověření certifikátu), **OpenPGP** (šifrování,

@@ -14,7 +14,8 @@
 import express, { type Express, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { answerRun, deliverWebhook, endInteractionsFor, execute, runEvents, RunRefused } from "./runner";
+import { answerRun, deliverWebhook, endInteractionsFor, execute, runEvents, triggerDurableWebhook, RunRefused } from "./runner";
+import { startScheduler } from "./scheduler";
 import { functionsStore, newId } from "./store";
 import { validateInputs } from "./inputs";
 import { type Caller, type Model } from "./types";
@@ -74,6 +75,8 @@ export function registerFunctionsRoutes(app: Express): void {
   // Open the store at boot so the first request does not race it (an unopened
   // store answers from its empty in-memory fallback).
   void functionsStore.ready();
+  // The cron scheduler runs only here (the main service), so a schedule fires once.
+  startScheduler();
 
   app.get("/api/functions/commands", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -144,6 +147,24 @@ export function registerFunctionsRoutes(app: Express): void {
     }
   });
 
+  // Programmatic API: run a model with its API bearer token, get outputs as JSON.
+  app.post("/api/functions/call/:id", limiter, express.json({ limit: "1mb" }), async (req: Request, res: Response) => {
+    if (!switchState("functions").enabled) return res.status(404).json({ ok: false, code: "off", message: "The functions module is off." });
+    await functionsStore.ready();
+    const model = functionsStore.model(String(req.params.id));
+    const api = model?.executors.api;
+    if (!model || !model.enabled || !api?.enabled || !api.token) return res.status(404).json({ ok: false, message: "No such API function." });
+    const header = req.header("authorization") || "";
+    const given = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    if (given.length !== api.token.length || !timingSafeEqual(Buffer.from(given), Buffer.from(api.token))) return res.status(401).json({ ok: false, message: "Wrong or missing API token." });
+    const inputs = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
+    const caller: Caller = { kind: "api", account: "", name: "api", groups: [], room: null, client: "api", lang: "en", tz: "UTC" };
+    try {
+      const out = await execute(model, inputs, caller, { executor: "api", skipValidation: true });
+      res.status(out.run.status === "done" ? 200 : 500).json({ ok: out.run.status === "done", runId: out.run.id, status: out.run.status, outputs: out.outputs, error: out.run.error });
+    } catch (err) { const e = errorOf(err); res.status(e.status).json({ ok: false, code: e.code, message: e.message }); }
+  });
+
   // Answer a live question (m5.prompt / m5.form) of a running command.
   app.post("/api/functions/runs/:id/events", limiter, express.json({ limit: "256kb" }), (req: Request, res: Response) => {
     if (!switchState("functions").enabled) return res.status(404).json({ ok: false, code: "off", message: "The functions module is off." });
@@ -169,12 +190,15 @@ export function registerFunctionsRoutes(app: Express): void {
   const hookMeta = (req: Request) => ({ method: req.method, headers: req.headers as Record<string, unknown>, query: req.query as Record<string, unknown> });
 
   // A run waiting on m5.webhook.wait(): deliver the body to it.
-  app.post("/hooks/r/:token", hookLimiter, hookBody, (req: Request, res: Response) => {
+  app.post("/hooks/r/:token", hookLimiter, hookBody, async (req: Request, res: Response) => {
     if (!switchState("functions").enabled) return res.status(404).json({ ok: false });
     const { body, text } = parseHook(req);
-    const ok = deliverWebhook(String(req.params.token), { body, text, ...hookMeta(req) });
-    if (!ok) return res.status(404).json({ ok: false, message: "No run is waiting on that webhook." });
-    res.json({ ok: true });
+    const payload = { body, text, ...hookMeta(req) };
+    if (deliverWebhook(String(req.params.token), payload)) return res.json({ ok: true, delivered: "live" });
+    // Not a live wait: a durable webhook runs the model's on_event in its session.
+    const fired = await triggerDurableWebhook(String(req.params.token), payload);
+    if (!fired) return res.status(404).json({ ok: false, message: "No run is waiting on that webhook, and it is not a durable one." });
+    res.json({ ok: true, delivered: "on_event" });
   });
 
   // A model reachable as a webhook: run it with the payload, answer with its outputs.

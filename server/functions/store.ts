@@ -12,7 +12,7 @@ import { dirname, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { loadSqliteDriver, type SqliteDatabase } from "../storage/db";
 import type {
-  Caller, FileMap, Model, Package, PackageVersion, Run, RunLog, RunStatus,
+  Caller, DurableWebhook, FileMap, Model, Package, PackageVersion, Run, RunLog, RunStatus, Schedule,
 } from "./types";
 
 export function functionsDir(): string {
@@ -94,6 +94,12 @@ CREATE TABLE IF NOT EXISTS session_kv (
   session_id TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, expires_at INTEGER, PRIMARY KEY (session_id, key));
 CREATE TABLE IF NOT EXISTS cache_kv (
   scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, expires_at INTEGER, lock_token TEXT, PRIMARY KEY (scope, key));
+CREATE TABLE IF NOT EXISTS schedules (
+  id TEXT PRIMARY KEY, model_id TEXT NOT NULL, cron TEXT NOT NULL, tz TEXT NOT NULL DEFAULT 'UTC', inputs TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER, created_at INTEGER NOT NULL, created_by TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS webhooks (
+  token TEXT PRIMARY KEY, model_id TEXT NOT NULL, session_id TEXT NOT NULL, caller TEXT NOT NULL DEFAULT '{}', entry TEXT NOT NULL,
+  once INTEGER NOT NULL DEFAULT 0, expires_at INTEGER, created_at INTEGER NOT NULL);
 `;
 
 /* ---------------------------------------------------------- the store */
@@ -313,14 +319,65 @@ class FunctionsStore {
     this.d.prepare("DELETE FROM cache_kv WHERE scope = ?  AND key = ?").run(scope, key);
   }
 
+  /* -------- schedules -------- */
+
+  schedules(): Schedule[] {
+    if (!this.d) return this.mem.schedules();
+    return (this.d.prepare("SELECT * FROM schedules ORDER BY created_at").all() as Array<Record<string, unknown>>).map(toSchedule);
+  }
+  schedule(id: string): Schedule | null {
+    if (!this.d) return this.mem.schedule(id);
+    const r = this.d.prepare("SELECT * FROM schedules WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return r ? toSchedule(r) : null;
+  }
+  saveSchedule(s: Schedule): void {
+    if (!this.d) return this.mem.saveSchedule(s);
+    this.d.prepare(`INSERT INTO schedules (id, model_id, cron, tz, inputs, enabled, last_run, created_at, created_by)
+      VALUES (@id, @model_id, @cron, @tz, @inputs, @enabled, @last_run, @created_at, @created_by)
+      ON CONFLICT(id) DO UPDATE SET model_id=@model_id, cron=@cron, tz=@tz, inputs=@inputs, enabled=@enabled, last_run=@last_run`)
+      .run({ id: s.id, model_id: s.modelId, cron: s.cron, tz: s.tz, inputs: JSON.stringify(s.inputs), enabled: s.enabled ? 1 : 0, last_run: s.lastRun, created_at: s.createdAt, created_by: s.createdBy });
+  }
+  deleteSchedule(id: string): void {
+    if (!this.d) return this.mem.deleteSchedule(id);
+    this.d.prepare("DELETE FROM schedules WHERE id = ?").run(id);
+  }
+
+  /* -------- durable webhooks -------- */
+
+  saveWebhook(w: DurableWebhook): void {
+    if (!this.d) return this.mem.saveWebhook(w);
+    this.d.prepare(`INSERT OR REPLACE INTO webhooks (token, model_id, session_id, caller, entry, once, expires_at, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`).run(w.token, w.modelId, w.sessionId, JSON.stringify(w.caller), w.entry, w.once ? 1 : 0, w.expiresAt, w.createdAt);
+  }
+  webhook(token: string): DurableWebhook | null {
+    const now = Date.now();
+    if (!this.d) return this.mem.webhook(token, now);
+    const r = this.d.prepare("SELECT * FROM webhooks WHERE token = ?").get(token) as Record<string, unknown> | undefined;
+    if (!r) return null;
+    if (r.expires_at !== null && (r.expires_at as number) <= now) { this.deleteWebhook(token); return null; }
+    return toWebhook(r);
+  }
+  deleteWebhook(token: string): void {
+    if (!this.d) return this.mem.deleteWebhook(token);
+    this.d.prepare("DELETE FROM webhooks WHERE token = ?").run(token);
+  }
+
   /** Removes expired session and cache values, and runs older than the cutoff. */
   prune(runCutoff: number, now = Date.now()): void {
     if (!this.d) return this.mem.prune(runCutoff, now);
     this.d.prepare("DELETE FROM session_kv WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
     this.d.prepare("DELETE FROM cache_kv WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
+    this.d.prepare("DELETE FROM webhooks WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
     this.d.prepare("DELETE FROM run_logs WHERE run_id IN (SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?)").run(runCutoff);
     this.d.prepare("DELETE FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?").run(runCutoff);
   }
+}
+
+function toSchedule(r: Record<string, unknown>): Schedule {
+  return { id: String(r.id), modelId: String(r.model_id), cron: String(r.cron), tz: String(r.tz || "UTC"), inputs: jsonParse(r.inputs, {}), enabled: Boolean(r.enabled), lastRun: (r.last_run as number) ?? null, createdAt: Number(r.created_at), createdBy: String(r.created_by || "") };
+}
+function toWebhook(r: Record<string, unknown>): DurableWebhook {
+  return { token: String(r.token), modelId: String(r.model_id), sessionId: String(r.session_id), caller: jsonParse(r.caller, {} as Caller), entry: String(r.entry), once: Boolean(r.once), expiresAt: (r.expires_at as number) ?? null, createdAt: Number(r.created_at) };
 }
 
 /* --------------------------------------------------- memory fallback */
@@ -378,9 +435,20 @@ class MemoryStore {
   cacheSet(scope: string, key: string, value: unknown, ttlMs: number | null): void { this.ckv.set(`${scope}\0${key}`, { value: value ?? null, expires: ttlMs ? Date.now() + ttlMs : null }); }
   cacheDelete(scope: string, key: string): void { this.ckv.delete(`${scope}\0${key}`); }
 
+  private sch = new Map<string, Schedule>();
+  private hooks = new Map<string, DurableWebhook>();
+  schedules(): Schedule[] { return [...this.sch.values()].sort((a, b) => a.createdAt - b.createdAt); }
+  schedule(id: string): Schedule | null { return this.sch.get(id) ?? null; }
+  saveSchedule(s: Schedule): void { this.sch.set(s.id, structuredClone(s)); }
+  deleteSchedule(id: string): void { this.sch.delete(id); }
+  saveWebhook(w: DurableWebhook): void { this.hooks.set(w.token, structuredClone(w)); }
+  webhook(token: string, now: number): DurableWebhook | null { const w = this.hooks.get(token); if (!w) return null; if (w.expiresAt !== null && w.expiresAt <= now) { this.hooks.delete(token); return null; } return w; }
+  deleteWebhook(token: string): void { this.hooks.delete(token); }
+
   prune(runCutoff: number, now: number): void {
     for (const [k, v] of this.skv) if (v.expires !== null && v.expires <= now) this.skv.delete(k);
     for (const [k, v] of this.ckv) if (v.expires !== null && v.expires <= now) this.ckv.delete(k);
+    for (const [t, w] of this.hooks) if (w.expiresAt !== null && w.expiresAt <= now) this.hooks.delete(t);
     for (const [id, r] of this.rns) if (r.finishedAt !== null && r.finishedAt < runCutoff) { this.rns.delete(id); this.lgs.delete(id); }
   }
 }

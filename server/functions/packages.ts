@@ -165,6 +165,7 @@ function normalizeExecutors(next: Model["executors"], prev: Model["executors"] |
     const token = out.webhook.token || prev?.webhook?.token || randToken();
     out.webhook = { enabled: true, token, auth: out.webhook.auth === "hmac" ? "hmac" : "none", ...(out.webhook.secret ? { secret: out.webhook.secret } : prev?.webhook?.secret ? { secret: prev.webhook.secret } : {}) };
   }
+  if (out.api?.enabled) out.api = { enabled: true, token: out.api.token || prev?.api?.token || randToken() };
   return out;
 }
 function randToken(): string { return randomBytes(18).toString("base64url"); }

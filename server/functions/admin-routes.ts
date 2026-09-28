@@ -22,6 +22,8 @@ import { createPackage, deleteModel, deletePackage, publishDraft, saveDraft, sav
 import { execute, functionsPublicUrl, runAdhoc, runEvents, RunRefused } from "./runner";
 import { parseEntry, type Caller, type Model } from "./types";
 import { SDK_SPEC, sdkCompletions, sdkDts } from "./sdk-spec";
+import { cronError } from "./cron";
+import { newId } from "./store";
 import { layoutGroups } from "../layout-catalog";
 
 const actorOf = (res: Response): string => String(res.locals.adminName ?? "admin");
@@ -40,6 +42,7 @@ function overview() {
     ok: true as const,
     packages: functionsStore.packages().map((p) => ({ ...p, versions: functionsStore.versions(p.id).filter((v) => v.status === "published").map((v) => v.version) })),
     models: functionsStore.models().map(modelView),
+    schedules: functionsStore.schedules(),
     groups: layoutGroups(),
     runtime: { persistent: store.persistent, reason: store.reason },
     sdk: SDK_SPEC.map((o) => o.name),
@@ -130,6 +133,28 @@ export function registerFunctionsAdminRoutes(app: Express): void {
     const model = functionsStore.model(String(req.body.modelId ?? ""));
     if (!model) return res.status(404).json({ ok: false, message: "No such model." });
     void done(execute(model, inputs, caller, { executor: "console", test: true }));
+  });
+
+  /* -------- schedules (cron) -------- */
+  r.post("/schedules", operator, (req, res) => {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const model = functionsStore.model(String(b.modelId ?? ""));
+    if (!model) return res.status(404).json({ ok: false, message: "No such model." });
+    const err = cronError(String(b.cron ?? ""));
+    if (err) return res.status(400).json({ ok: false, code: "bad-cron", message: err });
+    const id = b.id && functionsStore.schedule(String(b.id)) ? String(b.id) : newId("sch");
+    const prev = functionsStore.schedule(id);
+    const schedule = { id, modelId: model.id, cron: String(b.cron), tz: typeof b.tz === "string" ? b.tz : "UTC", inputs: (b.inputs && typeof b.inputs === "object" ? b.inputs : {}) as Record<string, unknown>, enabled: b.enabled !== false, lastRun: prev?.lastRun ?? null, createdAt: prev?.createdAt ?? Date.now(), createdBy: actorOf(res) };
+    functionsStore.saveSchedule(schedule);
+    res.json({ ok: true, schedule });
+  });
+  r.delete("/schedules/:id", operator, (req, res) => { functionsStore.deleteSchedule(String(req.params.id)); res.json({ ok: true }); });
+  r.post("/schedules/:id/run", operator, (req, res) => {
+    const s = functionsStore.schedule(String(req.params.id));
+    const model = s && functionsStore.model(s.modelId);
+    if (!s || !model) return res.status(404).json({ ok: false, message: "No such schedule." });
+    execute(model, s.inputs, consoleCaller(res), { executor: "schedule", test: true, skipValidation: true })
+      .then((out) => res.json({ ok: true, run: out.run, outputs: out.outputs })).catch((err) => send(res, err));
   });
 
   r.get("/runs", (req, res) => {

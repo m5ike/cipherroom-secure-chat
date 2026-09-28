@@ -62,9 +62,10 @@ function limitsFor(model: Model): RunLimits {
 /* -------------------------------------------------------- build a spec */
 
 /** Resolves a model's entry and its package dependencies into a run spec. */
-export function buildSpec(model: Model, inputs: Record<string, unknown>, caller: Caller, executor: string, opts: { test: boolean; runId: string; sessionId: string; parent: string | null }): RunSpec {
-  const entry = parseEntry(model.entry);
-  if (!entry) throw new RunRefused("bad-entry", `The model's entry point "${model.entry}" is malformed.`);
+export function buildSpec(model: Model, inputs: Record<string, unknown>, caller: Caller, executor: string, opts: { test: boolean; runId: string; sessionId: string; parent: string | null; entry?: string }): RunSpec {
+  const entrySpec = opts.entry || model.entry;
+  const entry = parseEntry(entrySpec);
+  if (!entry) throw new RunRefused("bad-entry", `The entry point "${entrySpec}" is malformed.`);
   const version = functionsStore.versionByName(entry.pkg, entry.version);
   if (!version) throw new RunRefused("no-package", `The package ${entry.pkg}@${entry.version} is not published.`);
   if (!Object.prototype.hasOwnProperty.call(version.files, entry.file)) throw new RunRefused("no-file", `${entry.pkg}@${entry.version} has no file ${entry.file}.`);
@@ -93,7 +94,7 @@ export function buildSpec(model: Model, inputs: Record<string, unknown>, caller:
     entry: { file: entry.file, fn: entry.fn },
     inputs,
     context: {
-      run: { id: opts.runId, model: model.id, executor, parent: opts.parent, startedAt: now, deadline: now + limits.wallMs, test: opts.test, entry: model.entry },
+      run: { id: opts.runId, model: model.id, executor, parent: opts.parent, startedAt: now, deadline: now + limits.wallMs, test: opts.test, entry: entrySpec },
       caller: { kind: caller.kind, name: caller.name, groups: caller.groups, room: caller.room, client: caller.client, lang: caller.lang, tz: caller.tz },
       sys: { version: buildInfo().version, instance: process.env.INSTANCE_ID?.trim() || "m5cet" },
       session: { id: opts.sessionId },
@@ -166,15 +167,43 @@ export function functionsPublicUrl(): string {
   return (process.env.PUBLIC_URL || process.env.M5CET_PUBLIC_URL || "").trim().replace(/\/+$/, "");
 }
 
-function makeWebhook(runId: string, once: boolean): { token: string; url: string; path: string } {
+function makeWebhook(runId: string, spec: { once?: boolean; durable?: boolean; ttl?: unknown }, model: Model, sessionId: string, caller: Caller): { token: string; url: string; path: string; durable: boolean } {
   const token = randomBytes(24).toString("base64url");
   mailboxes.set(token, { runId, delivered: [], waiter: null, timer: null });
   let set = runTokens.get(runId);
   if (!set) { set = new Set(); runTokens.set(runId, set); }
   set.add(token);
-  void once; // "once" is enforced by the run ending; each wait consumes one delivery
+  // Durable: persist so an inbound POST after the run ends (even after a
+  // restart) runs the model's on_event in a new run of this session.
+  const durable = Boolean(spec.durable) && Boolean(model.onEvent);
+  if (durable) {
+    const ttlMs = ttlToMs(spec.ttl);
+    functionsStore.saveWebhook({ token, modelId: model.id, sessionId, caller, entry: model.onEvent, once: Boolean(spec.once), expiresAt: ttlMs ? Date.now() + ttlMs : null, createdAt: Date.now() });
+  }
   const path = `/hooks/r/${token}`;
-  return { token, url: `${functionsPublicUrl()}${path}`, path };
+  return { token, url: `${functionsPublicUrl()}${path}`, path, durable };
+}
+
+function ttlToMs(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return v > 0 ? v : null;
+  const m = /^(\d+)\s*(ms|s|m|h|d)?$/.exec(String(v).trim());
+  if (!m) return null;
+  return Number(m[1]) * ({ ms: 1, s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] || "ms"] ?? 1);
+}
+
+/** An inbound POST to a durable webhook: run the model's on_event in a new run
+ *  of the saved session. Returns false when the token is not a durable webhook. */
+export async function triggerDurableWebhook(token: string, payload: unknown): Promise<boolean> {
+  await functionsStore.ready();
+  const hook = functionsStore.webhook(token);
+  if (!hook) return false;
+  const model = functionsStore.model(hook.modelId);
+  if (!model || !model.onEvent) { functionsStore.deleteWebhook(token); return false; }
+  if (hook.once) functionsStore.deleteWebhook(token);
+  const event = { type: "webhook", ...(payload && typeof payload === "object" ? payload as object : { body: payload }) };
+  await execute(model, event as Record<string, unknown>, hook.caller, { executor: "webhook", entry: hook.entry, sessionId: hook.sessionId, skipValidation: true, parent: null }).catch((err) => { console.warn(`[functions] on_event ${token}: ${(err as Error).message}`); });
+  return true;
 }
 
 /** Delivers an inbound webhook body to a run waiting on it (m5.webhook.wait),
@@ -208,14 +237,14 @@ function endWebhooks(runId: string): void {
 /* ------------------------------------------------------------ host calls */
 
 /** The session, cache, interaction and webhook calls a run may make, scoped to it. */
-function hostHandler(model: Model, sessionId: string, runId: string): RunHandlers["host"] {
+function hostHandler(model: Model, sessionId: string, runId: string, caller: Caller): RunHandlers["host"] {
   return async (fn, args, control) => {
     if (fn === "prompt" || fn === "form") return ask(runId, fn, args[0] ?? {}, control);
     if (fn === "http.request") return control.wait(httpRequest(args[0] as never, taggedBytes));
     if (fn === "dns.resolve") return control.wait(dnsResolve(args[0], args[1]));
     if (fn === "crypto") return control.wait(hostCrypto(String(args[0]), args.slice(1)));
     if (fn === "codes") return control.wait(hostCode((args[0] ?? {}) as never));
-    if (fn === "webhook.create") { const spec = (args[0] ?? {}) as { once?: boolean }; return makeWebhook(runId, Boolean(spec.once)); }
+    if (fn === "webhook.create") return makeWebhook(runId, (args[0] ?? {}) as { once?: boolean; durable?: boolean; ttl?: unknown }, model, sessionId, caller);
     if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
     const scopeName = (raw: unknown): string => {
       const s = String(raw ?? "model");
@@ -257,6 +286,10 @@ export type ExecuteOptions = {
   runId?: string;
   /** Pass the inputs through unchecked (a webhook sends arbitrary JSON). */
   skipValidation?: boolean;
+  /** Run a different entry than the model's (e.g. its on_event). */
+  entry?: string;
+  /** Use this exact session (durable continuation) instead of deriving one. */
+  sessionId?: string;
 };
 
 /** The result the caller (chat, console) sees. */
@@ -279,11 +312,11 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
   await functionsStore.ready();
   const inputs = opts.skipValidation ? rawInputs : validateInputs(model.inputs, rawInputs); // throws RunRefused on a bad input
   const runId = opts.runId ?? newId("run");
-  const sessionId = functionsStore.session(model.id, opts.sessionScope ?? scopeKey(model, caller));
-  const spec = buildSpec(model, inputs, caller, opts.executor, { test: Boolean(opts.test), runId, sessionId, parent: opts.parent ?? null });
+  const sessionId = opts.sessionId ?? functionsStore.session(model.id, opts.sessionScope ?? scopeKey(model, caller));
+  const spec = buildSpec(model, inputs, caller, opts.executor, { test: Boolean(opts.test), runId, sessionId, parent: opts.parent ?? null, entry: opts.entry });
 
   const run: Run = {
-    id: runId, modelId: model.id, entry: model.entry, lang: spec.lang as Lang, executor: opts.executor, caller, sessionId, parent: opts.parent ?? null,
+    id: runId, modelId: model.id, entry: opts.entry || model.entry, lang: spec.lang as Lang, executor: opts.executor, caller, sessionId, parent: opts.parent ?? null,
     status: "running", inputs, outputs: [], error: null, test: Boolean(opts.test), queuedAt: Date.now(), startedAt: Date.now(), finishedAt: null, ms: 0, memMb: 0,
   };
   functionsStore.saveRun(run);
@@ -302,7 +335,7 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
   const flushTimer = setInterval(flush, 500);
 
   const handlers: RunHandlers = {
-    host: hostHandler(model, sessionId, runId),
+    host: hostHandler(model, sessionId, runId, caller),
     onLog: (level, msg, fields) => log(level as RunLog["level"], msg, fields),
     onOutput: (out) => { outputs.push(out); runEvents.emit("run", { runId, type: "output", output: out }); },
     onProgress: (p, text) => runEvents.emit("run", { runId, type: "progress", p, text }),
@@ -368,7 +401,7 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
   const outputs: Output[] = [];
   let seq = 0;
   const runHandlers: RunHandlers = {
-    host: hostHandler({ id: "__adhoc__" } as Model, sessionId, runId),
+    host: hostHandler({ id: "__adhoc__", onEvent: "" } as Model, sessionId, runId, caller),
     onLog: (level, msg, fields) => { const e = { runId, seq: seq++, ts: Date.now(), level: level as RunLog["level"], msg, fields: fields ?? null }; functionsStore.addLogs([e]); runEvents.emit("run", { type: "log", ...e }); handlers?.onLog?.(level, msg, fields); },
     onOutput: (out) => { outputs.push(out); runEvents.emit("run", { runId, type: "output", output: out }); handlers?.onOutput?.(out); },
     onProgress: (p, text) => { runEvents.emit("run", { runId, type: "progress", p, text }); handlers?.onProgress?.(p, text); },

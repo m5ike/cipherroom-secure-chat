@@ -79,6 +79,10 @@ export const SDK_SPEC: SdkObject[] = [
   { name: "dns", doc: "DNS lookups.", methods: [
     m("resolve", "await m5.dns.resolve(name, type)", "await m5.dns.resolve(name, type='A')", "A/AAAA/CNAME/MX/TXT/NS/SRV/CAA/PTR/SOA.", true),
   ] },
+  { name: "webhook", doc: "A URL that resumes this run (or runs on_event later).", methods: [
+    m("create", "await m5.webhook.create({ durable, ttl })", "await m5.webhook.create(durable=True)", "A URL bound to the run; durable → runs on_event later.", true),
+    m("wait", "await m5.webhook.wait(hook, { timeoutMs })", "await m5.webhook.wait(hook, timeout_ms=...)", "Wait for a POST to the webhook (live).", true),
+  ] },
   { name: "crypto", doc: "Hashes, HMAC, key derivation, AES-GCM, random.", methods: [
     m("random", "m5.crypto.random(n)", "m5.crypto.random(n)", "n random bytes."),
     m("hash", "m5.crypto.hash(alg, data, enc?)", "m5.crypto.hash(alg, data, encoding=None)", "sha256, sha512, blake2b, …"),

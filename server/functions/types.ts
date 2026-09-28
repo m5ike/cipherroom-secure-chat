@@ -90,7 +90,10 @@ export type ConsoleExecutor = { enabled: boolean };
 /** A model reachable by an inbound HTTP webhook. `token` is the capability in
  *  the URL (POST /hooks/m/:model/:token); `auth` adds an HMAC check on top. */
 export type WebhookExecutor = { enabled: boolean; token?: string; auth?: "none" | "hmac"; secret?: string };
-export type Executors = { chat: ChatExecutor; console: ConsoleExecutor; webhook?: WebhookExecutor };
+/** A model callable programmatically at POST /api/functions/call/:id with a
+ *  bearer token (distinct from a webhook's capability URL). */
+export type ApiExecutor = { enabled: boolean; token?: string };
+export type Executors = { chat: ChatExecutor; console: ConsoleExecutor; webhook?: WebhookExecutor; api?: ApiExecutor };
 
 export type Model = {
   id: string;
@@ -154,6 +157,37 @@ export type Run = {
   finishedAt: number | null;
   ms: number;
   memMb: number;
+};
+
+/* ------------------------------------------------------------ schedules */
+
+export type Schedule = {
+  id: string;
+  modelId: string;
+  /** A five-field cron expression (or an @shortcut). */
+  cron: string;
+  tz: string;
+  inputs: Record<string, unknown>;
+  enabled: boolean;
+  lastRun: number | null;
+  createdAt: number;
+  createdBy: string;
+};
+
+/* ------------------------------------------------- durable webhooks */
+
+/** A webhook that survives a restart: an inbound POST runs the model's
+ *  on_event in a new run of the saved session (persistent continuation). */
+export type DurableWebhook = {
+  token: string;
+  modelId: string;
+  sessionId: string;
+  caller: Caller;
+  /** "package@version:file#fn" — usually the model's on_event. */
+  entry: string;
+  once: boolean;
+  expiresAt: number | null;
+  createdAt: number;
 };
 
 export type RunLogLevel = "debug" | "info" | "warn" | "error" | "stdout" | "stderr";

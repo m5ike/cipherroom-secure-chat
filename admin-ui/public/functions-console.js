@@ -46,12 +46,13 @@
     el.append(tabs());
     if (tab === "packages") el.append(packagesView());
     else if (tab === "models") el.append(modelsView());
+    else if (tab === "schedules") el.append(schedulesView());
     else el.append(runsView());
   }
 
   function tabs() {
     const bar = h("div", { class: "fn-tabs" });
-    for (const [id, label] of [["packages", "Packages"], ["models", "Models"], ["runs", "Runs"]]) {
+    for (const [id, label] of [["packages", "Packages"], ["models", "Models"], ["schedules", "Schedules"], ["runs", "Runs"]]) {
       bar.append(h("button", { class: `fn-tab${tab === id ? " fn-tab--on" : ""}`, onclick: () => { tab = id; render(); } }, label));
     }
     return bar;
@@ -291,14 +292,18 @@
     form.append(h("div", { class: "fn-grid3" }, h("label", { class: "field" }, h("span", { class: "label" }, "Runs"), rtSel), h("label", { class: "field" }, h("span", { class: "label" }, "Output goes"), visSel), h("label", { class: "field" }, h("span", { class: "label" }, "Executor"), chatOn)));
     form.append(groupsField(m, ro));
 
-    // webhook executor (reachable by an inbound HTTP POST)
+    // webhook + API executors (reachable by an inbound HTTP POST)
     if (!m.executors.webhook) m.executors.webhook = { enabled: false, auth: "none" };
+    if (!m.executors.api) m.executors.api = { enabled: false };
     const hookOn = h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: m.executors.webhook.enabled, disabled: ro, onchange: (e) => { m.executors.webhook.enabled = e.target.checked; } }), " reachable as a webhook (POST)");
-    const hookBox = h("div", { class: "fn-fs" }, h("legend", {}, "Webhook"), hookOn);
+    const apiOn = h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: m.executors.api.enabled, disabled: ro, onchange: (e) => { m.executors.api.enabled = e.target.checked; } }), " API (bearer token)");
+    const hookBox = h("div", { class: "fn-fs" }, h("legend", {}, "Webhook & API"), h("div", { class: "fn-grid2" }, hookOn, apiOn));
     if (m.webhookUrl) {
-      const url = h("input", { class: "input", readonly: "readonly", value: m.webhookUrl });
-      hookBox.append(h("label", { class: "field mt8" }, h("span", { class: "label" }, "URL (save first; keep it secret)"), url,
-        h("span", { class: "muted small" }, m.webhookUrl.startsWith("http") ? "POST JSON here to run the model." : "Set PUBLIC_URL on the server for an absolute URL. POST JSON to this path.")));
+      hookBox.append(h("label", { class: "field mt8" }, h("span", { class: "label" }, "Webhook URL (keep it secret)"), h("input", { class: "input", readonly: "readonly", value: m.webhookUrl }),
+        h("span", { class: "muted small" }, m.webhookUrl.startsWith("http") ? "POST JSON here to run the model." : "Set PUBLIC_URL on the server for an absolute URL.")));
+    }
+    if (m.executors.api.enabled && m.executors.api.token) {
+      hookBox.append(h("label", { class: "field mt8" }, h("span", { class: "label" }, "API — POST /api/functions/call/" + m.id), h("input", { class: "input", readonly: "readonly", value: "Authorization: Bearer " + m.executors.api.token })));
     }
     form.append(hookBox);
 
@@ -375,6 +380,72 @@
       fs.append(tf);
     }
     return fs;
+  }
+
+  /* ============================================================ schedules */
+
+  function schedulesView() {
+    const wrap = h("div", { class: "stack" });
+    const card = h("div", { class: "card" });
+    card.append(h("div", { class: "fn-side__head" }, h("span", {}, "Schedules (cron)")));
+    const list = h("div", {});
+    if (!data.schedules || !data.schedules.length) list.append(h("div", { class: "muted small p8" }, "No schedules yet."));
+    else {
+      const table = h("table", { class: "tbl" });
+      table.append(h("thead", {}, h("tr", {}, ...["Model", "Cron", "TZ", "State", "Last run", ""].map((t) => h("th", {}, t)))));
+      const tb = h("tbody", {});
+      for (const s of data.schedules) {
+        const model = data.models.find((m) => m.id === s.modelId);
+        tb.append(h("tr", {},
+          h("td", {}, model ? model.name : s.modelId),
+          h("td", {}, h("code", {}, s.cron)),
+          h("td", {}, s.tz),
+          h("td", {}, h("span", { class: `badge badge--${s.enabled ? "ok" : ""}` }, s.enabled ? "on" : "off")),
+          h("td", {}, s.lastRun ? new Date(s.lastRun).toLocaleString() : "—"),
+          h("td", {}, writable() ? h("span", {},
+            h("button", { class: "btn btn--sm", onclick: () => runSchedule(s.id) }, "Run now"),
+            h("button", { class: "btn btn--sm btn--danger", onclick: () => delSchedule(s.id) }, "×")) : null)));
+      }
+      table.append(tb); list.append(table);
+    }
+    card.append(list);
+    if (writable()) card.append(scheduleForm());
+    wrap.append(card);
+    return wrap;
+  }
+
+  function scheduleForm() {
+    const box = h("div", { class: "fn-fs mt8" }, h("legend", {}, "New schedule"));
+    const modelSel = h("select", { class: "input" });
+    modelSel.append(h("option", { value: "" }, "— model —"));
+    for (const m of data.models) if (m.entryOk) modelSel.append(h("option", { value: m.id }, m.name));
+    const cron = h("input", { class: "input", placeholder: "*/15 * * * *  (or @daily)" });
+    const tz = h("input", { class: "input", value: "UTC", placeholder: "UTC / Europe/Prague" });
+    const inputs = h("textarea", { class: "fn-run__inputs", placeholder: '{ } inputs' }, "{}");
+    const msg = h("span", { class: "muted small" });
+    box.append(h("div", { class: "fn-grid3" },
+      h("label", { class: "field" }, h("span", { class: "label" }, "Model"), modelSel),
+      h("label", { class: "field" }, h("span", { class: "label" }, "Cron (min hour dom mon dow)"), cron),
+      h("label", { class: "field" }, h("span", { class: "label" }, "Time zone"), tz)));
+    box.append(h("label", { class: "field" }, h("span", { class: "label" }, "Inputs (JSON)"), inputs));
+    box.append(h("div", {}, h("button", { class: "btn btn--primary btn--sm", onclick: add }, "Add schedule"), " ", msg));
+    return box;
+
+    async function add() {
+      let parsed; try { parsed = JSON.parse(inputs.value || "{}"); } catch (e) { msg.textContent = "Inputs are not JSON."; return; }
+      try { await api("/admin/functions/schedules", { method: "POST", body: { modelId: modelSel.value, cron: cron.value.trim(), tz: tz.value.trim() || "UTC", inputs: parsed, enabled: true } }); toast("Schedule added.", "ok"); await load(); }
+      catch (e) { msg.textContent = e.message; }
+    }
+  }
+
+  async function runSchedule(id) {
+    try { const r = await api(`/admin/functions/schedules/${encodeURIComponent(id)}/run`, { method: "POST", body: {} }); toast(`Ran: ${r.run.status}.`, r.run.status === "done" ? "ok" : "err"); }
+    catch (e) { toast(e.message, "err"); }
+  }
+  async function delSchedule(id) {
+    if (!confirm("Delete this schedule?")) return;
+    try { await api(`/admin/functions/schedules/${encodeURIComponent(id)}`, { method: "DELETE" }); toast("Deleted.", "ok"); await load(); }
+    catch (e) { toast(e.message, "err"); }
   }
 
   /* ================================================================ runs */
