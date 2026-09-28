@@ -99,6 +99,7 @@ export const SDK_SPEC: SdkObject[] = [
     m("models", "await m5.ai.models()", "await m5.ai.models()", "The chat models this caller may use.", true),
     m("tts", "await m5.ai.tts({ text, voice? })", "await m5.ai.tts(text=...)", "Speech synthesis → audio bytes.", true),
     m("stt", "await m5.ai.stt({ audio, mime })", "await m5.ai.stt(audio=...)", "Transcribe audio → text.", true),
+    m("agent", "await m5.ai.agent(goal, { tools, maxSteps, approve })", "await m5.ai.agent(goal, tools=[...])", "An agent loop: the model uses your tools (a tool may need approval).", true),
   ] },
   { name: "codes", doc: "2D and bar codes: QR, Data Matrix, PDF417, Aztec, Code128, EAN/UPC…", methods: [
     m("qr", "await m5.codes.qr(text, { scale })", "await m5.codes.qr(text, scale=...)", "A QR code as SVG (or PNG).", true),

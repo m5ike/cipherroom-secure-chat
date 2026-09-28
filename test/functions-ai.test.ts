@@ -14,7 +14,7 @@ process.env.FUNCTIONS_WARM = "0";
 
 const { defaultAiConfig, saveAiConfig, sealKey } = await import("../server/ai/config");
 const { setPluginSwitches } = await import("../server/plugins/settings");
-const { runAdhoc, closeRunner } = await import("../server/functions/runner");
+const { runAdhoc, runEvents, answerRun, closeRunner } = await import("../server/functions/runner");
 const { functionsStore } = await import("../server/functions/store");
 const { mockProvider, json } = await import("./helpers/mock-ai");
 type MockProvider = Awaited<ReturnType<typeof mockProvider>>;
@@ -63,6 +63,59 @@ describe("m5.ai.chat", () => {
     const r = await runAdhoc({ lang: "js", files: { "index.js": code }, entry: { file: "index.js", fn: "execute" }, inputs: {} }, caller);
     expect((r.value as { value: { n: number; first: string } }).value).toEqual({ n: 1, first: "local/m1" });
   }, 30_000);
+
+  it("runs an agent with two tools and an approval", async () => {
+    // The model asks for one tool, then a second (which needs approval), then finishes.
+    const script = [
+      JSON.stringify({ tool: "add", args: { a: 2, b: 3 } }),
+      JSON.stringify({ tool: "mul", args: { a: 5, b: 10 } }),
+      JSON.stringify({ final: "the answer is 50" }),
+    ];
+    let call = 0;
+    mock.on("POST /v1/chat/completions", (_q, res) => json(res, 200, { model: "m1", choices: [{ message: { content: script[Math.min(call++, script.length - 1)] }, finish_reason: "stop" }], usage: { prompt_tokens: 5, completion_tokens: 5 } }));
+    // Auto-approve the one tool that asks.
+    const onRun = (ev: { type?: string; runId?: string; interaction?: { id: string } }) => { if (ev.type === "interaction" && ev.runId && ev.interaction) answerRun(ev.runId, ev.interaction.id, "yes"); };
+    runEvents.on("run", onRun);
+    try {
+      const code = `
+export async function execute() {
+  const steps = [];
+  const tools = [
+    { name: 'add', description: 'a+b', run: ({a,b}) => a + b },
+    { name: 'mul', description: 'a*b', approve: true, run: ({a,b}) => a * b },
+  ];
+  const r = await m5.ai.agent('compute please', { tools });
+  return m5.out.json({ answer: r.answer, tools: r.steps.map(s => s.tool), results: r.steps.map(s => s.result) });
+}`;
+      const r = await runAdhoc({ lang: "js", files: { "index.js": code }, entry: { file: "index.js", fn: "execute" }, inputs: {}, limits: { wallMs: 15000 } }, caller);
+      expect(r.run.status).toBe("done");
+      const v = (r.value as { value: { answer: string; tools: string[]; results: number[] } }).value;
+      expect(v.answer).toBe("the answer is 50");
+      expect(v.tools).toEqual(["add", "mul"]);
+      expect(v.results).toEqual([5, 50]);
+    } finally {
+      runEvents.off("run", onRun);
+    }
+  }, 30_000);
+
+  it("runs a Python agent with a tool", async () => {
+    const script = [JSON.stringify({ tool: "double", args: { n: 21 } }), JSON.stringify({ final: "done: 42" })];
+    let call = 0;
+    mock.on("POST /v1/chat/completions", (_q, res) => json(res, 200, { model: "m1", choices: [{ message: { content: script[Math.min(call++, script.length - 1)] }, finish_reason: "stop" }], usage: { prompt_tokens: 5, completion_tokens: 5 } }));
+    const code = [
+      "async def execute():",
+      "    def double(args): return args['n'] * 2",
+      "    tools = [{'name': 'double', 'description': 'n*2', 'run': double}]",
+      "    r = await m5.ai.agent('go', tools=tools)",
+      "    return m5.out.json({'answer': r['answer'], 'tools': [s['tool'] for s in r['steps']], 'results': [s['result'] for s in r['steps']]})",
+    ].join("\n");
+    const r = await runAdhoc({ lang: "py", files: { "main.py": code }, entry: { file: "main.py", fn: "execute" }, inputs: {}, limits: { wallMs: 20000 } }, caller);
+    expect(r.run.status).toBe("done");
+    const v = (r.value as { value: { answer: string; tools: string[]; results: number[] } }).value;
+    expect(v.answer).toBe("done: 42");
+    expect(v.tools).toEqual(["double"]);
+    expect(v.results).toEqual([42]);
+  }, 60_000);
 
   it("surfaces a refusal (AI off) to the function", async () => {
     setPluginSwitches({ ai: false }, "test");

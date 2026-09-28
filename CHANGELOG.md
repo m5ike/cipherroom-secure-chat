@@ -91,13 +91,16 @@ u příkazu pošle, a výstup do místnosti šifruje klient.
   balíčky do `dist/node_modules` (ovladač SQLCipher, Pyodide, QuickJS WASM),
   takže je má i instalace bez `node_modules` a obraz Dockeru s jen `dist`.
 
-- **AI ve funkcích** (`m5.ai`, začátek etapy 5): funkce zavolá model instance —
+- **AI ve funkcích** (`m5.ai`, etapa 5): funkce zavolá model instance —
   `m5.ai.chat({ messages, model?, system?, reasoning?, json? })` (vrátí text,
   tokeny, cenu), `m5.ai.models()`, `m5.ai.tts` a `m5.ai.stt`. Volání jde přes
   vrstvu AI z 4.14 jako volající „function“, takže se řídí přepínačem, skupinami
   a rozpočty a zapíše se do žurnálu; navíc má **rozpočet na běh** (strop tokenů).
-  Agenti s nástroji a potvrzováním přijdou, až adaptéry AI budou umět volání
-  nástrojů.
+- **Agenti** (`m5.ai.agent(cíl, { tools, maxSteps, approve })`): smyčka, v níž
+  model volí nástroje (funkce v sandboxu), sandbox je spustí a výsledky vrací
+  modelu, dokud nedá odpověď nebo nedojdou kroky. Nástroj označený `approve`
+  se před spuštěním zeptá volajícího (`m5.prompt`). V JS i Pythonu, bez nutnosti
+  nativního volání nástrojů u poskytovatele.
 
 ### Opraveno
 - Ovladač SQLCipher se teď dostane do `dist/node_modules`, takže úložiště

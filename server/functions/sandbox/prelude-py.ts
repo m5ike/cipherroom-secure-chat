@@ -170,6 +170,48 @@ class _Stream:
         if self.buf: _write(self.level, self.buf, None); self.buf = ""
     def isatty(self): return False
 
+async def _ai_agent(goal, tools=None, max_steps=6, system=None, model=None, reasoning=None, approve=False):
+    tools = tools or []
+    max_steps = max(1, min(int(max_steps), 20))
+    desc = "\n".join("- " + t["name"] + ((": " + t["description"]) if t.get("description") else "") for t in tools)
+    sysmsg = (system or "You are a helpful agent. Think step by step.") \
+        + "\nWhen you need a tool, reply with ONLY this JSON: {\"tool\":\"<name>\",\"args\":{...}}." \
+        + "\nWhen you are done, reply with ONLY this JSON: {\"final\":<answer>}." \
+        + (("\nTools you may use:\n" + desc) if desc else "\nYou have no tools; answer with {\"final\":...}.")
+    messages = [{"role": "user", "content": goal if isinstance(goal, str) else _json.dumps(goal)}]
+    steps = []
+    for _ in range(max_steps):
+        r = await m5.ai.chat({"messages": messages, "system": sysmsg, "model": model, "reasoning": reasoning, "json": True})
+        try:
+            parsed = _json.loads(r["text"])
+        except Exception:
+            return {"answer": r["text"], "steps": steps, "stopped": "not-json"}
+        if isinstance(parsed, dict) and "final" in parsed:
+            return {"answer": parsed["final"], "steps": steps}
+        if isinstance(parsed, dict) and parsed.get("tool"):
+            tool = next((t for t in tools if t["name"] == parsed["tool"]), None)
+            messages.append({"role": "assistant", "content": r["text"]})
+            if tool is None:
+                messages.append({"role": "user", "content": "No such tool " + repr(parsed["tool"]) + ". Use a listed tool, or finish."})
+                continue
+            if approve or tool.get("approve"):
+                ok = await m5.prompt({"text": "Run " + tool["name"] + "(" + _json.dumps(parsed.get("args") or {}) + ")?", "choices": ["yes", "no"]})
+                if ok != "yes":
+                    steps.append({"tool": tool["name"], "args": parsed.get("args"), "declined": True})
+                    messages.append({"role": "user", "content": "The caller declined that tool. Continue or finish."})
+                    continue
+            try:
+                res = tool["run"](parsed.get("args") or {})
+                if _inspect.isawaitable(res):
+                    res = await res
+            except Exception as e:
+                res = {"error": str(e)}
+            steps.append({"tool": tool["name"], "args": parsed.get("args"), "result": res})
+            messages.append({"role": "user", "content": "Tool " + tool["name"] + " returned: " + _json.dumps(res)})
+            continue
+        return {"answer": r["text"], "steps": steps, "stopped": "no-action"}
+    return {"answer": None, "steps": steps, "stopped": "max-steps"}
+
 _ctx = {}
 m5 = None
 
@@ -260,6 +302,7 @@ def _setup(ctx):
             models=lambda: _acall("ai", "models"),
             tts=lambda **spec: _acall("ai", "tts", spec),
             stt=lambda **spec: _acall("ai", "stt", spec),
+            agent=_ai_agent,
         ),
         sleep=lambda ms: _acall("sleep", ms),
         prompt=lambda spec=None, **kw: _acall("prompt", {"text": spec} if isinstance(spec, str) else (spec or kw)),

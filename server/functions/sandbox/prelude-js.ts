@@ -290,6 +290,43 @@ return function setup(host, ctxJson) {
       models: () => acall("ai", "models"),
       tts: (spec) => acall("ai", "tts", plain(spec)),
       stt: (spec) => acall("ai", "stt", plain(spec)),
+      // A small agent loop: the model chooses tools (JSON), the sandbox runs
+      // them and feeds results back, until a final answer or maxSteps. A tool
+      // marked { approve: true } (or opts.approve) asks the caller first.
+      agent: async (goal, opts) => {
+        opts = opts || {};
+        const tools = Array.isArray(opts.tools) ? opts.tools : [];
+        const maxSteps = Math.max(1, Math.min(Number(opts.maxSteps) || 6, 20));
+        const desc = tools.map((t) => "- " + t.name + (t.description ? ": " + t.description : "") + (t.parameters ? " · args " + JSON.stringify(t.parameters) : "")).join("\n");
+        const system = (opts.system || "You are a helpful agent. Think step by step.")
+          + "\nWhen you need a tool, reply with ONLY this JSON: {\"tool\":\"<name>\",\"args\":{...}}."
+          + "\nWhen you are done, reply with ONLY this JSON: {\"final\":<answer>}."
+          + (desc ? "\nTools you may use:\n" + desc : "\nYou have no tools; answer directly with {\"final\":...}.");
+        const messages = [{ role: "user", content: typeof goal === "string" ? goal : JSON.stringify(goal) }];
+        const steps = [];
+        for (let i = 0; i < maxSteps; i++) {
+          const r = await m5.ai.chat({ messages, system, model: opts.model, reasoning: opts.reasoning, json: true });
+          let parsed;
+          try { parsed = JSON.parse(r.text); } catch (e) { return { answer: r.text, steps, stopped: "not-json" }; }
+          if (parsed && parsed.final !== undefined) return { answer: parsed.final, steps };
+          if (parsed && parsed.tool) {
+            const tool = tools.find((t) => t.name === parsed.tool);
+            messages.push({ role: "assistant", content: r.text });
+            if (!tool) { messages.push({ role: "user", content: "No such tool \"" + parsed.tool + "\". Use one of the listed tools, or finish." }); continue; }
+            if ((opts.approve || tool.approve)) {
+              const ok = await m5.prompt({ text: "Run " + tool.name + "(" + JSON.stringify(parsed.args || {}) + ")?", choices: ["yes", "no"] });
+              if (ok !== "yes") { messages.push({ role: "user", content: "The caller declined to run that tool. Continue without it, or finish." }); steps.push({ tool: tool.name, args: parsed.args, declined: true }); continue; }
+            }
+            let result;
+            try { result = await tool.run(parsed.args || {}); } catch (e) { result = { error: String((e && e.message) || e) }; }
+            steps.push({ tool: tool.name, args: parsed.args, result });
+            messages.push({ role: "user", content: "Tool " + tool.name + " returned: " + JSON.stringify(result === undefined ? null : result) });
+            continue;
+          }
+          return { answer: r.text, steps, stopped: "no-action" };
+        }
+        return { answer: null, steps, stopped: "max-steps" };
+      },
     },
     sleep: (ms) => acall("sleep", Number(ms)),
     // Ask the caller and wait for the answer (live). prompt → a choice or text;
