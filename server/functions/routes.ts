@@ -13,7 +13,8 @@
 
 import express, { type Express, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
-import { answerRun, endInteractionsFor, execute, runEvents, RunRefused } from "./runner";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { answerRun, deliverWebhook, endInteractionsFor, execute, runEvents, RunRefused } from "./runner";
 import { functionsStore, newId } from "./store";
 import { validateInputs } from "./inputs";
 import { type Caller, type Model } from "./types";
@@ -152,5 +153,54 @@ export function registerFunctionsRoutes(app: Express): void {
     const ok = answerRun(String(req.params.id), interactionId, body.value ?? null);
     if (!ok) return res.status(409).json({ ok: false, code: "no-question", message: "That question is not open (already answered, or timed out)." });
     res.json({ ok: true });
+  });
+
+  /* ---------------------------------------------------------- webhooks */
+
+  const hookLimiter = rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many webhook calls." } });
+  // Body as JSON when it is JSON, otherwise the raw text (both reach the function).
+  const hookBody = express.raw({ type: () => true, limit: "1mb" });
+  const parseHook = (req: Request): { body: unknown; text: string } => {
+    const raw = Buffer.isBuffer(req.body) ? req.body.toString("utf8") : "";
+    const ctype = String(req.headers["content-type"] || "");
+    if (/json/.test(ctype)) { try { return { body: JSON.parse(raw || "null"), text: raw }; } catch { /* fall through */ } }
+    return { body: raw, text: raw };
+  };
+  const hookMeta = (req: Request) => ({ method: req.method, headers: req.headers as Record<string, unknown>, query: req.query as Record<string, unknown> });
+
+  // A run waiting on m5.webhook.wait(): deliver the body to it.
+  app.post("/hooks/r/:token", hookLimiter, hookBody, (req: Request, res: Response) => {
+    if (!switchState("functions").enabled) return res.status(404).json({ ok: false });
+    const { body, text } = parseHook(req);
+    const ok = deliverWebhook(String(req.params.token), { body, text, ...hookMeta(req) });
+    if (!ok) return res.status(404).json({ ok: false, message: "No run is waiting on that webhook." });
+    res.json({ ok: true });
+  });
+
+  // A model reachable as a webhook: run it with the payload, answer with its outputs.
+  app.post("/hooks/m/:modelId/:token", hookLimiter, hookBody, async (req: Request, res: Response) => {
+    if (!switchState("functions").enabled) return res.status(404).json({ ok: false });
+    await functionsStore.ready();
+    const model = functionsStore.model(String(req.params.modelId));
+    const hook = model?.executors.webhook;
+    if (!model || !model.enabled || !hook?.enabled || !hook.token) return res.status(404).json({ ok: false, message: "No such webhook." });
+    const given = String(req.params.token);
+    const want = hook.token;
+    if (given.length !== want.length || !timingSafeEqual(Buffer.from(given), Buffer.from(want))) return res.status(403).json({ ok: false, message: "Wrong webhook token." });
+    const { body, text } = parseHook(req);
+    if (hook.auth === "hmac" && hook.secret) {
+      const sig = String(req.headers["x-signature"] || req.headers["x-hub-signature-256"] || "").replace(/^sha256=/, "");
+      const mac = createHmac("sha256", hook.secret).update(text).digest("hex");
+      if (sig.length !== mac.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(mac))) return res.status(403).json({ ok: false, message: "Bad signature." });
+    }
+    const inputs = (body && typeof body === "object" && !Array.isArray(body) ? body : { body }) as Record<string, unknown>;
+    const caller: Caller = { kind: "webhook", account: "", name: "webhook", groups: [], room: null, client: "webhook", lang: "en", tz: "UTC" };
+    try {
+      const out = await execute(model, { ...inputs, _webhook: hookMeta(req) }, caller, { executor: "webhook", skipValidation: true });
+      res.status(out.run.status === "done" ? 200 : 500).json({ ok: out.run.status === "done", runId: out.run.id, status: out.run.status, outputs: out.outputs, error: out.run.error });
+    } catch (err) {
+      const e = errorOf(err);
+      res.status(e.status).json({ ok: false, code: e.code, message: e.message });
+    }
   });
 }

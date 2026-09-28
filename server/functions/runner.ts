@@ -19,6 +19,7 @@ import { functionsStore, newId } from "./store";
 import { validateInputs } from "./inputs";
 import { httpRequest, dnsResolve } from "./host-net";
 import { Buffer } from "node:buffer";
+import { randomBytes } from "node:crypto";
 import { formatEntry, parseEntry, type Caller, type Lang, type Model, type Run, type RunLog } from "./types";
 
 /** Bytes a sandbox sent as {"$b": base64}; null for anything else. */
@@ -151,14 +152,67 @@ function ask(runId: string, kind: "prompt" | "form", spec: unknown, control: Par
   }));
 }
 
+/* ------------------------------------------------------- run webhooks */
+
+type Mailbox = { runId: string; delivered: unknown[]; waiter: ((v: unknown) => void) | null; timer: ReturnType<typeof setTimeout> | null };
+const mailboxes = new Map<string, Mailbox>();
+const runTokens = new Map<string, Set<string>>();
+
+/** The public base URL for webhook URLs; empty when not configured (the path
+ *  is still returned so a reverse proxy or the caller can prefix it). */
+export function functionsPublicUrl(): string {
+  return (process.env.PUBLIC_URL || process.env.M5CET_PUBLIC_URL || "").trim().replace(/\/+$/, "");
+}
+
+function makeWebhook(runId: string, once: boolean): { token: string; url: string; path: string } {
+  const token = randomBytes(24).toString("base64url");
+  mailboxes.set(token, { runId, delivered: [], waiter: null, timer: null });
+  let set = runTokens.get(runId);
+  if (!set) { set = new Set(); runTokens.set(runId, set); }
+  set.add(token);
+  void once; // "once" is enforced by the run ending; each wait consumes one delivery
+  const path = `/hooks/r/${token}`;
+  return { token, url: `${functionsPublicUrl()}${path}`, path };
+}
+
+/** Delivers an inbound webhook body to a run waiting on it (m5.webhook.wait),
+ *  or holds it until the run waits. Returns false for an unknown token. */
+export function deliverWebhook(token: string, payload: unknown): boolean {
+  const box = mailboxes.get(token);
+  if (!box) return false;
+  if (box.waiter) { const w = box.waiter; box.waiter = null; if (box.timer) { clearTimeout(box.timer); box.timer = null; } w(payload); }
+  else box.delivered.push(payload);
+  return true;
+}
+
+function waitWebhook(token: string, timeoutMs: number, control: Parameters<RunHandlers["host"]>[2]): Promise<unknown> {
+  const box = mailboxes.get(token);
+  if (!box) return Promise.reject(new InteractionError("no-webhook", "that webhook does not exist (create it first)"));
+  if (box.delivered.length) return Promise.resolve(box.delivered.shift());
+  return control.wait(new Promise((resolve, reject) => {
+    box.waiter = resolve;
+    box.timer = setTimeout(() => { if (box.waiter) { box.waiter = null; reject(new InteractionError("timeout", "no webhook arrived in time")); } }, Math.max(1000, Math.min(timeoutMs || 10 * 60_000, 24 * 3600_000)));
+    box.timer.unref?.();
+  }));
+}
+
+function endWebhooks(runId: string): void {
+  const set = runTokens.get(runId);
+  if (!set) return;
+  runTokens.delete(runId);
+  for (const token of set) { const box = mailboxes.get(token); if (box?.timer) clearTimeout(box.timer); if (box?.waiter) box.waiter(null); mailboxes.delete(token); }
+}
+
 /* ------------------------------------------------------------ host calls */
 
-/** The session, cache and interaction calls a run may make, scoped to it. */
+/** The session, cache, interaction and webhook calls a run may make, scoped to it. */
 function hostHandler(model: Model, sessionId: string, runId: string): RunHandlers["host"] {
   return async (fn, args, control) => {
     if (fn === "prompt" || fn === "form") return ask(runId, fn, args[0] ?? {}, control);
     if (fn === "http.request") return control.wait(httpRequest(args[0] as never, taggedBytes));
     if (fn === "dns.resolve") return control.wait(dnsResolve(args[0], args[1]));
+    if (fn === "webhook.create") { const spec = (args[0] ?? {}) as { once?: boolean }; return makeWebhook(runId, Boolean(spec.once)); }
+    if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
     const scopeName = (raw: unknown): string => {
       const s = String(raw ?? "model");
       const scope = s === "run" || s === "session" || s === "model" || s === "global" ? s : "model";
@@ -197,6 +251,8 @@ export type ExecuteOptions = {
   sessionScope?: string;
   /** A caller-chosen id (a streaming caller subscribes to it before starting). */
   runId?: string;
+  /** Pass the inputs through unchecked (a webhook sends arbitrary JSON). */
+  skipValidation?: boolean;
 };
 
 /** The result the caller (chat, console) sees. */
@@ -217,7 +273,7 @@ const scopeKey = (model: Model, caller: Caller): string => `${model.id}\0${calle
  */
 export async function execute(model: Model, rawInputs: Record<string, unknown>, caller: Caller, opts: ExecuteOptions): Promise<ExecuteResult> {
   await functionsStore.ready();
-  const inputs = validateInputs(model.inputs, rawInputs); // throws RunRefused on a bad input
+  const inputs = opts.skipValidation ? rawInputs : validateInputs(model.inputs, rawInputs); // throws RunRefused on a bad input
   const runId = opts.runId ?? newId("run");
   const sessionId = functionsStore.session(model.id, opts.sessionScope ?? scopeKey(model, caller));
   const spec = buildSpec(model, inputs, caller, opts.executor, { test: Boolean(opts.test), runId, sessionId, parent: opts.parent ?? null });
@@ -250,6 +306,7 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
 
   const result = await thePool().run(spec, handlers);
   endInteractions(runId, "the run ended");
+  endWebhooks(runId);
   clearInterval(flushTimer);
   flush();
 
@@ -314,6 +371,7 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
   };
   const result = await thePool().run(full, runHandlers);
   endInteractions(runId, "the run ended");
+  endWebhooks(runId);
   const value = result.ok ? result.value : null;
   const finalOutputs = value && !outputs.includes(value) ? [...outputs, value] : outputs;
   run.status = result.ok ? "done" : result.error.type === "TimeLimit" ? "timed-out" : "failed";

@@ -234,6 +234,10 @@ def _setup(ctx):
             head=lambda url, **o: _acall("http.request", {**o, "method": "HEAD", "url": url}),
         ),
         dns=_NS(resolve=lambda name, type="A": _acall("dns.resolve", name, type)),
+        webhook=_NS(
+            create=lambda **spec: _acall("webhook.create", spec),
+            wait=lambda hook, timeout_ms=0: _acall("webhook.wait", hook["token"] if isinstance(hook, dict) else hook, timeout_ms),
+        ),
         sleep=lambda ms: _acall("sleep", ms),
         prompt=lambda spec=None, **kw: _acall("prompt", {"text": spec} if isinstance(spec, str) else (spec or kw)),
         form=lambda spec=None, **kw: _acall("form", spec or kw),

@@ -19,7 +19,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { functionsStore } from "./store";
 import { createPackage, deleteModel, deletePackage, publishDraft, saveDraft, saveModel, PackageError, DRAFT } from "./packages";
-import { execute, runAdhoc, runEvents, RunRefused } from "./runner";
+import { execute, functionsPublicUrl, runAdhoc, runEvents, RunRefused } from "./runner";
 import { parseEntry, type Caller, type Model } from "./types";
 import { SDK_SPEC, sdkCompletions, sdkDts } from "./sdk-spec";
 import { layoutGroups } from "../layout-catalog";
@@ -39,7 +39,7 @@ function overview() {
   return {
     ok: true as const,
     packages: functionsStore.packages().map((p) => ({ ...p, versions: functionsStore.versions(p.id).filter((v) => v.status === "published").map((v) => v.version) })),
-    models: functionsStore.models().map((m) => ({ ...m, entryOk: entryOk(m) })),
+    models: functionsStore.models().map(modelView),
     groups: layoutGroups(),
     runtime: { persistent: store.persistent, reason: store.reason },
     sdk: SDK_SPEC.map((o) => o.name),
@@ -51,6 +51,14 @@ function entryOk(m: Model): boolean {
   if (!p) return false;
   const v = functionsStore.versionByName(p.pkg, p.version);
   return Boolean(v && v.status === "published" && Object.prototype.hasOwnProperty.call(v.files, p.file));
+}
+
+/** The model as the console sees it: whether its entry resolves, and — when the
+ *  webhook executor is on — the URL to call it (a path when no public URL is set). */
+function modelView(m: Model): Model & { entryOk: boolean; webhookUrl: string | null } {
+  const hook = m.executors.webhook;
+  const webhookUrl = hook?.enabled && hook.token ? `${functionsPublicUrl()}/hooks/m/${m.id}/${hook.token}` : null;
+  return { ...m, entryOk: entryOk(m), webhookUrl };
 }
 
 export function registerFunctionsAdminRoutes(app: Express): void {
@@ -94,10 +102,10 @@ export function registerFunctionsAdminRoutes(app: Express): void {
   r.get("/models/:id", (req, res) => {
     const model = functionsStore.model(req.params.id);
     if (!model) return res.status(404).json({ ok: false, message: "No such model." });
-    res.json({ ok: true, model: { ...model, entryOk: entryOk(model) } });
+    res.json({ ok: true, model: modelView(model) });
   });
   r.post("/models", operator, (req, res) => {
-    try { res.json({ ok: true, model: saveModel(req.body ?? {}, actorOf(res)) }); }
+    try { res.json({ ok: true, model: modelView(saveModel(req.body ?? {}, actorOf(res))) }); }
     catch (err) { send(res, err); }
   });
   r.delete("/models/:id", operator, (req, res) => {

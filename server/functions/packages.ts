@@ -6,6 +6,7 @@
 // semver that models can point at. A model points at one published entry and
 // carries its input schema, limits, executors and chat keyword.
 
+import { randomBytes } from "node:crypto";
 import { fingerprint, functionsStore, newId } from "./store";
 import { parseEntry, ID_RE, KEYWORD_RE, NAME_RE, SEMVER_RE, type FileMap, type Lang, type Model, type Package, type PackageManifest, type PackageVersion } from "./types";
 
@@ -144,7 +145,7 @@ export function saveModel(input: Partial<Model> & { id?: string }, actor: string
     inputs: Array.isArray(input.inputs) ? input.inputs : existing?.inputs ?? [],
     outputs: Array.isArray(input.outputs) ? input.outputs : existing?.outputs ?? ["markdown"],
     limits: input.limits ?? existing?.limits ?? {},
-    executors: input.executors ?? existing?.executors ?? DEFAULT_EXECUTORS,
+    executors: normalizeExecutors(input.executors ?? existing?.executors ?? DEFAULT_EXECUTORS, existing?.executors),
     groups: Array.isArray(input.groups) ? input.groups.filter((g) => typeof g === "string") : existing?.groups ?? [],
     enabled: input.enabled ?? existing?.enabled ?? false,
     revision: (existing?.revision ?? 0) + 1,
@@ -155,6 +156,18 @@ export function saveModel(input: Partial<Model> & { id?: string }, actor: string
   functionsStore.saveModel(model);
   return model;
 }
+
+/** Keeps a stable webhook token (capability in the URL) once the webhook is on,
+ *  and mints one when it is first enabled. */
+function normalizeExecutors(next: Model["executors"], prev: Model["executors"] | undefined): Model["executors"] {
+  const out = { ...next };
+  if (out.webhook?.enabled) {
+    const token = out.webhook.token || prev?.webhook?.token || randToken();
+    out.webhook = { enabled: true, token, auth: out.webhook.auth === "hmac" ? "hmac" : "none", ...(out.webhook.secret ? { secret: out.webhook.secret } : prev?.webhook?.secret ? { secret: prev.webhook.secret } : {}) };
+  }
+  return out;
+}
+function randToken(): string { return randomBytes(18).toString("base64url"); }
 
 export function deleteModel(id: string): void {
   functionsStore.model(id) ?? bad("no-model", "No such model.");

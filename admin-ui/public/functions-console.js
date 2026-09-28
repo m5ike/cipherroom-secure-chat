@@ -291,6 +291,17 @@
     form.append(h("div", { class: "fn-grid3" }, h("label", { class: "field" }, h("span", { class: "label" }, "Runs"), rtSel), h("label", { class: "field" }, h("span", { class: "label" }, "Output goes"), visSel), h("label", { class: "field" }, h("span", { class: "label" }, "Executor"), chatOn)));
     form.append(groupsField(m, ro));
 
+    // webhook executor (reachable by an inbound HTTP POST)
+    if (!m.executors.webhook) m.executors.webhook = { enabled: false, auth: "none" };
+    const hookOn = h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: m.executors.webhook.enabled, disabled: ro, onchange: (e) => { m.executors.webhook.enabled = e.target.checked; } }), " reachable as a webhook (POST)");
+    const hookBox = h("div", { class: "fn-fs" }, h("legend", {}, "Webhook"), hookOn);
+    if (m.webhookUrl) {
+      const url = h("input", { class: "input", readonly: "readonly", value: m.webhookUrl });
+      hookBox.append(h("label", { class: "field mt8" }, h("span", { class: "label" }, "URL (save first; keep it secret)"), url,
+        h("span", { class: "muted small" }, m.webhookUrl.startsWith("http") ? "POST JSON here to run the model." : "Set PUBLIC_URL on the server for an absolute URL. POST JSON to this path.")));
+    }
+    form.append(hookBox);
+
     // inputs schema
     form.append(inputsEditor(m, ro));
 

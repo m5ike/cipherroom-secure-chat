@@ -253,6 +253,11 @@ return function setup(host, ctxJson) {
     dns: {
       resolve: (name, type) => acall("dns.resolve", String(name), type === undefined ? "A" : String(type)),
     },
+    webhook: {
+      // Create a URL bound to this run; wait for a POST to it (live continuation).
+      create: (spec) => acall("webhook.create", spec ? plain(spec) : {}),
+      wait: (hook, opts) => acall("webhook.wait", hook && hook.token ? hook.token : String(hook), opts && opts.timeoutMs ? Number(opts.timeoutMs) : 0),
+    },
     sleep: (ms) => acall("sleep", Number(ms)),
     // Ask the caller and wait for the answer (live). prompt → a choice or text;
     // form → an object of the field values.

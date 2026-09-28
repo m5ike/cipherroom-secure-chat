@@ -87,7 +87,10 @@ export type Runtime = "browser" | "server" | "auto";
 
 export type ChatExecutor = { enabled: boolean; visibility: "room" | "caller" };
 export type ConsoleExecutor = { enabled: boolean };
-export type Executors = { chat: ChatExecutor; console: ConsoleExecutor };
+/** A model reachable by an inbound HTTP webhook. `token` is the capability in
+ *  the URL (POST /hooks/m/:model/:token); `auth` adds an HMAC check on top. */
+export type WebhookExecutor = { enabled: boolean; token?: string; auth?: "none" | "hmac"; secret?: string };
+export type Executors = { chat: ChatExecutor; console: ConsoleExecutor; webhook?: WebhookExecutor };
 
 export type Model = {
   id: string;

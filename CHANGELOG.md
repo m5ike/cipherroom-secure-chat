@@ -53,6 +53,12 @@ u příkazu pošle, a výstup do místnosti šifruje klient.
   a běh pokračuje; když volající odejde, otázky se zruší. Streamovaný běh
   (`POST /api/functions/run` se `stream:true`, SSE) doručuje průběh, otázky a
   výstupy živě. Přepínač modulu `functions` (`ENABLE_FUNCTIONS`).
+- **Webhooky**: model může být dosažitelný **příchozím webhookem** —
+  `POST /hooks/m/:model/:token` spustí model s tělem jako vstupy a vrátí jeho
+  výstupy jako JSON (mimo E2EE, pro integrace); v konzoli se zapne přepínačem
+  a ukáže se URL (token jako schopnost v URL, volitelně HMAC podpis). Uvnitř
+  běhu `m5.webhook.create()` vytvoří URL vázanou na běh a `m5.webhook.wait()`
+  na ni **počká** (živé pokračování; `POST /hooks/r/:token` ji doručí).
 - **Síť** (`m5.http`, `m5.dns`): funkce může volat HTTP zvenčí (bez CORS,
   hlavičky, JSON, `body`, časový limit, limit velikosti, přesměrování) a
   překládat DNS — vše přes hostitele s **ochranou proti SSRF**: jen `http(s)`
