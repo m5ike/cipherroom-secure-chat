@@ -94,6 +94,12 @@ export const SDK_SPEC: SdkObject[] = [
     m("ssh", "await m5.crypto.ssh.fingerprint({ key })", "await m5.crypto.ssh.fingerprint({...})", "OpenSSH keys: parse, fingerprint.", true),
     m("x509", "await m5.crypto.x509.parse(pem)", "await m5.crypto.x509.parse(pem)", "Parse and verify an X.509 certificate.", true),
   ] },
+  { name: "ai", doc: "The instance's AI & speech (counted against its budget).", methods: [
+    m("chat", "await m5.ai.chat({ messages, model?, system? })", "await m5.ai.chat({...})", "Ask a model; returns { text, usage, cost, model }.", true),
+    m("models", "await m5.ai.models()", "await m5.ai.models()", "The chat models this caller may use.", true),
+    m("tts", "await m5.ai.tts({ text, voice? })", "await m5.ai.tts(text=...)", "Speech synthesis → audio bytes.", true),
+    m("stt", "await m5.ai.stt({ audio, mime })", "await m5.ai.stt(audio=...)", "Transcribe audio → text.", true),
+  ] },
   { name: "codes", doc: "2D and bar codes: QR, Data Matrix, PDF417, Aztec, Code128, EAN/UPC…", methods: [
     m("qr", "await m5.codes.qr(text, { scale })", "await m5.codes.qr(text, scale=...)", "A QR code as SVG (or PNG).", true),
     m("barcode", "await m5.codes.barcode(type, text)", "await m5.codes.barcode(type, text)", "Any symbology by name → SVG/PNG.", true),

@@ -255,6 +255,12 @@ def _setup(ctx):
             create=lambda **spec: _acall("webhook.create", spec),
             wait=lambda hook, timeout_ms=0: _acall("webhook.wait", hook["token"] if isinstance(hook, dict) else hook, timeout_ms),
         ),
+        ai=_NS(
+            chat=lambda spec=None, **kw: _acall("ai", "chat", {"prompt": spec} if isinstance(spec, str) else (spec or kw)),
+            models=lambda: _acall("ai", "models"),
+            tts=lambda **spec: _acall("ai", "tts", spec),
+            stt=lambda **spec: _acall("ai", "stt", spec),
+        ),
         sleep=lambda ms: _acall("sleep", ms),
         prompt=lambda spec=None, **kw: _acall("prompt", {"text": spec} if isinstance(spec, str) else (spec or kw)),
         form=lambda spec=None, **kw: _acall("form", spec or kw),

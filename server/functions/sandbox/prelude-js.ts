@@ -284,6 +284,13 @@ return function setup(host, ctxJson) {
       create: (spec) => acall("webhook.create", spec ? plain(spec) : {}),
       wait: (hook, opts) => acall("webhook.wait", hook && hook.token ? hook.token : String(hook), opts && opts.timeoutMs ? Number(opts.timeoutMs) : 0),
     },
+    ai: {
+      // The instance's AI & speech layer, as this run's caller (counted, limited).
+      chat: (spec) => acall("ai", "chat", typeof spec === "string" ? { prompt: spec } : plain(spec)),
+      models: () => acall("ai", "models"),
+      tts: (spec) => acall("ai", "tts", plain(spec)),
+      stt: (spec) => acall("ai", "stt", plain(spec)),
+    },
     sleep: (ms) => acall("sleep", Number(ms)),
     // Ask the caller and wait for the answer (live). prompt → a choice or text;
     // form → an object of the field values.

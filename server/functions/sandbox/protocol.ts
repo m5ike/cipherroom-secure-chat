@@ -90,7 +90,7 @@ export const HOST_CALLS = [
   "prompt", "form",
   "http.request", "dns.resolve",
   "webhook.create", "webhook.wait",
-  "crypto", "codes",
+  "crypto", "codes", "ai",
 ] as const;
 export type HostCall = (typeof HOST_CALLS)[number];
 

@@ -20,6 +20,7 @@ import { validateInputs } from "./inputs";
 import { httpRequest, dnsResolve } from "./host-net";
 import { hostCrypto } from "./host-crypto";
 import { hostCode } from "./host-codes";
+import { hostAi, AI_RUN_TOKEN_CAP } from "./host-ai";
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import { formatEntry, parseEntry, type Caller, type Lang, type Model, type Run, type RunLog } from "./types";
@@ -160,6 +161,8 @@ function ask(runId: string, kind: "prompt" | "form", spec: unknown, control: Par
 type Mailbox = { runId: string; delivered: unknown[]; waiter: ((v: unknown) => void) | null; timer: ReturnType<typeof setTimeout> | null };
 const mailboxes = new Map<string, Mailbox>();
 const runTokens = new Map<string, Set<string>>();
+/** AI tokens spent per run, for the per-run budget (AI_RUN_TOKEN_CAP). */
+const aiTokens = new Map<string, number>();
 
 /** The public base URL for webhook URLs; empty when not configured (the path
  *  is still returned so a reverse proxy or the caller can prefix it). */
@@ -228,6 +231,7 @@ function waitWebhook(token: string, timeoutMs: number, control: Parameters<RunHa
 }
 
 function endWebhooks(runId: string): void {
+  aiTokens.delete(runId);
   const set = runTokens.get(runId);
   if (!set) return;
   runTokens.delete(runId);
@@ -244,6 +248,10 @@ function hostHandler(model: Model, sessionId: string, runId: string, caller: Cal
     if (fn === "dns.resolve") return control.wait(dnsResolve(args[0], args[1]));
     if (fn === "crypto") return control.wait(hostCrypto(String(args[0]), args.slice(1)));
     if (fn === "codes") return control.wait(hostCode((args[0] ?? {}) as never));
+    if (fn === "ai") {
+      if ((aiTokens.get(runId) ?? 0) >= AI_RUN_TOKEN_CAP) throw new RunRefused("ai-budget", "this run has reached its AI token budget");
+      return control.wait(hostAi(String(args[0]), args.slice(1), caller, (t) => aiTokens.set(runId, (aiTokens.get(runId) ?? 0) + t)));
+    }
     if (fn === "webhook.create") return makeWebhook(runId, (args[0] ?? {}) as { once?: boolean; durable?: boolean; ttl?: unknown }, model, sessionId, caller);
     if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
     const scopeName = (raw: unknown): string => {
