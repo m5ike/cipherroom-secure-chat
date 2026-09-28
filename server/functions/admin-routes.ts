@@ -12,15 +12,23 @@
 //   POST   /admin/functions/models               save (create or update)
 //   DELETE /admin/functions/models/:id
 //   POST   /admin/functions/run                  a test run: { modelId, inputs } or { draft: {packageId,file,fn}, inputs }
+//                                                 or { adhoc: {lang,files,file,fn} }; live: true answers { runId } at once
 //   GET    /admin/functions/runs · /runs/:id
 //   GET    /admin/functions/runs/:id/stream      live logs & outputs (SSE)
+//   GET    /admin/functions/runs/:id/live        a live run's events from the start, then as they come (SSE)
+//   POST   /admin/functions/runs/:id/answer      { interaction, value } — answer m5.prompt / m5.form
+//   POST   /admin/functions/flow/compile         { flow, trace? } → the code a visual flow compiles to
+//   PUT    /admin/functions/packages/:id/flow    { flow } → the draft gets flow.m5flow.json + the code
 //   GET    /admin/functions/sdk                  the SDK spec for the editor
 
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { functionsStore } from "./store";
 import { createPackage, deleteModel, deletePackage, exportPackage, importPackage, publishDraft, saveDraft, saveModel, PackageError, TEMPLATES, DRAFT } from "./packages";
-import { execute, functionsPublicUrl, runAdhoc, runEvents, RunRefused } from "./runner";
-import { parseEntry, type Caller, type Model } from "./types";
+import { answerRun, execute, functionsPublicUrl, runAdhoc, runEvents, RunRefused } from "./runner";
+import { checkFlow, compileFlow, parseFlow, FLOW_FILE, type Flow, type FlowError } from "./flow";
+import { parseEntry, type Caller, type Model, type RunStatus } from "./types";
+
+const RUN_STATUSES = ["queued", "running", "waiting", "done", "failed", "timed-out", "cancelled"];
 import { SDK_SPEC, sdkCompletions, sdkDts } from "./sdk-spec";
 import { cronError } from "./cron";
 import { tutorialLessons } from "./tutorial";
@@ -37,18 +45,54 @@ function errorOf(err: unknown): { status: number; code: string; message: string 
 }
 const send = (res: Response, err: unknown) => { const e = errorOf(err); res.status(e.status).json({ ok: false, code: e.code, message: e.message }); };
 
+/* ------------------------------------------------------- live console runs (5.1) */
+
+type LiveEvent = { runId?: string; type: string; [k: string]: unknown };
+const liveRuns = new Map<string, { events: LiveEvent[]; done: boolean; subs: Set<(ev: LiveEvent) => void> }>();
+const LIVE_KEEP_MS = 2 * 60 * 1000;
+const LIVE_MAX_EVENTS = 5000;
+
+/** Buffers a run's events from its first one, so the console can subscribe after it started. */
+function followLive(runId: string, work: Promise<{ run: unknown; outputs: unknown }>): void {
+  const entry = { events: [] as LiveEvent[], done: false, subs: new Set<(ev: LiveEvent) => void>() };
+  liveRuns.set(runId, entry);
+  const push = (ev: LiveEvent) => { if (entry.events.length < LIVE_MAX_EVENTS) entry.events.push(ev); for (const s of entry.subs) s(ev); };
+  const onRun = (ev: LiveEvent) => { if (ev.runId === runId) push(ev); };
+  runEvents.on("run", onRun);
+  const finish = (ev: LiveEvent) => {
+    runEvents.off("run", onRun);
+    push(ev);
+    entry.done = true;
+    setTimeout(() => liveRuns.delete(runId), LIVE_KEEP_MS).unref?.();
+  };
+  work.then((out) => finish({ runId, type: "result", ok: true, run: out.run, outputs: out.outputs }))
+    .catch((err) => { const e = errorOf(err); finish({ runId, type: "result", ok: false, code: e.code, message: e.message }); });
+}
+
+function safeIssues(raw: unknown) { try { return checkFlow(parseFlow(raw)); } catch { return []; } }
+
 function overview() {
   const store = functionsStore.status();
   return {
     ok: true as const,
-    packages: functionsStore.packages().map((p) => ({ ...p, versions: functionsStore.versions(p.id).filter((v) => v.status === "published").map((v) => v.version) })),
+    packages: functionsStore.packages().map((p) => ({ ...p, versions: functionsStore.versions(p.id).filter((v) => v.status === "published").map((v) => v.version), flow: Boolean(functionsStore.version(p.id, DRAFT)?.files[FLOW_FILE]) })),
     models: functionsStore.models().map(modelView),
     schedules: functionsStore.schedules(),
     templates: TEMPLATES.map((t) => ({ id: t.id, name: t.name, language: t.language, description: t.description })),
     groups: layoutGroups(),
     runtime: { persistent: store.persistent, reason: store.reason },
     sdk: SDK_SPEC.map((o) => o.name),
+    stats: runStats(),
   };
+}
+
+/** Runs in the last 24 hours, by outcome (the console's header). */
+function runStats() {
+  const since = Date.now() - 24 * 3600 * 1000;
+  const runs = functionsStore.runs({ limit: 1000 }).filter((r) => r.queuedAt >= since);
+  const failed = runs.filter((r) => r.status === "failed" || r.status === "timed-out").length;
+  const ms = runs.filter((r) => r.status === "done").map((r) => r.ms);
+  return { runs24h: runs.length, failed24h: failed, avgMs: ms.length ? Math.round(ms.reduce((a, b) => a + b, 0) / ms.length) : 0 };
 }
 
 function entryOk(m: Model): boolean {
@@ -134,13 +178,21 @@ export function registerFunctionsAdminRoutes(app: Express): void {
   r.post("/run", operator, (req, res) => {
     const inputs = (req.body.inputs ?? {}) as Record<string, unknown>;
     const caller = consoleCaller(res);
-    const done = (p: Promise<{ run: unknown; outputs: unknown; value: unknown }>) => p.then((out) => res.json({ ok: true, ...out })).catch((err) => send(res, err));
-    // Inline code (the tutorial): run files directly, no package needed.
+    // live: answer at once with the run id; the console follows /runs/:id/live
+    // (logs, outputs, questions to answer, the result) instead of waiting.
+    const live = req.body.live === true;
+    const runId = live ? newId("run") : undefined;
+    const done = (p: Promise<{ run: unknown; outputs: unknown; value: unknown }>) => {
+      if (!live) return void p.then((out) => res.json({ ok: true, ...out })).catch((err) => send(res, err));
+      followLive(runId!, p);
+      res.json({ ok: true, runId });
+    };
+    // Inline code (the tutorial, the builder): run files directly, no package needed.
     const adhoc = req.body.adhoc as { lang?: string; files?: Record<string, string>; file?: string; fn?: string } | undefined;
     if (adhoc && adhoc.files) {
       const lang = adhoc.lang === "py" ? "py" : "js";
       const file = String(adhoc.file || (lang === "py" ? "index.py" : "index.js"));
-      return void done(runAdhoc({ lang, files: adhoc.files, deps: {}, entry: { file, fn: String(adhoc.fn || "execute") }, inputs }, caller));
+      return void done(runAdhoc({ lang, files: adhoc.files, deps: {}, entry: { file, fn: String(adhoc.fn || "execute") }, inputs, limits: req.body.limits, runId }, caller));
     }
     const draft = req.body.draft as { packageId: string; file: string; fn: string } | undefined;
     if (draft) {
@@ -149,11 +201,60 @@ export function registerFunctionsAdminRoutes(app: Express): void {
       if (!pkg || !version) return res.status(404).json({ ok: false, message: "No draft to run." });
       const deps: Record<string, { version: string; main: string; files: Record<string, string> }> = {};
       for (const [name, ver] of Object.entries(version.manifest.dependencies ?? {})) { const dv = functionsStore.versionByName(name, ver); if (dv) deps[name] = { version: ver, main: dv.manifest.main, files: dv.files }; }
-      return void done(runAdhoc({ lang: pkg.language, files: version.files, deps, entry: { file: String(draft.file || version.manifest.main), fn: String(draft.fn || "execute") }, inputs, limits: req.body.limits }, caller));
+      return void done(runAdhoc({ lang: pkg.language, files: version.files, deps, entry: { file: String(draft.file || version.manifest.main), fn: String(draft.fn || "execute") }, inputs, limits: req.body.limits, runId }, caller));
     }
     const model = functionsStore.model(String(req.body.modelId ?? ""));
     if (!model) return res.status(404).json({ ok: false, message: "No such model." });
-    void done(execute(model, inputs, caller, { executor: "console", test: true }));
+    done(execute(model, inputs, caller, { executor: "console", test: true, runId }));
+  });
+
+  // A live run's events, replayed from the start, then as they come (SSE).
+  r.get("/runs/:id/live", (req, res) => {
+    const entry = liveRuns.get(String(req.params.id));
+    if (!entry) return res.status(404).json({ ok: false, message: "No live run with that id (it ended a while ago?)." });
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-store");
+    res.setHeader("X-Accel-Buffering", "no");
+    (res as unknown as { flushHeaders?: () => void }).flushHeaders?.();
+    const write = (ev: unknown) => { try { res.write(`data: ${JSON.stringify(ev)}\n\n`); } catch { /* gone */ } };
+    for (const ev of entry.events) write(ev);
+    if (entry.done) return void res.end();
+    const sub = (ev: LiveEvent) => { write(ev); if (ev.type === "result") { cleanup(); res.end(); } };
+    entry.subs.add(sub);
+    const ping = setInterval(() => { try { res.write(": ping\n\n"); } catch { /* gone */ } }, 15_000);
+    const cleanup = () => { clearInterval(ping); entry.subs.delete(sub); };
+    req.on("close", cleanup);
+  });
+
+  // The console answers a question (m5.prompt / m5.form) of its own run.
+  r.post("/runs/:id/answer", operator, (req, res) => {
+    const body = (req.body ?? {}) as { interaction?: string; value?: unknown };
+    const ok = answerRun(String(req.params.id), String(body.interaction ?? ""), body.value ?? null);
+    if (!ok) return res.status(404).json({ ok: false, message: "That question is no longer open." });
+    res.json({ ok: true });
+  });
+
+  /* -------- the visual builder (5.1) -------- */
+  r.post("/flow/compile", (req, res) => {
+    try {
+      const flow = parseFlow(req.body?.flow);
+      const c = compileFlow(flow, { trace: req.body?.trace === true });
+      res.json({ ok: true, code: c.code, file: c.file, issues: c.issues, inputs: c.inputs });
+    } catch (err) { res.status(400).json({ ok: false, code: "bad-flow", message: (err as Error).message, node: (err as FlowError).node ?? null, issues: safeIssues(req.body?.flow) }); }
+  });
+  // Saves a flow into a package's draft: the flow file plus the code it compiles to.
+  r.put("/packages/:id/flow", operator, (req, res) => {
+    const pkg = functionsStore.package(String(req.params.id));
+    if (!pkg) return res.status(404).json({ ok: false, message: "No such package." });
+    let flow: Flow;
+    let code: ReturnType<typeof compileFlow>;
+    try { flow = parseFlow(req.body?.flow); code = compileFlow(flow); }
+    catch (err) { return res.status(400).json({ ok: false, code: "bad-flow", message: (err as Error).message, node: (err as FlowError).node ?? null }); }
+    if (flow.lang !== pkg.language) return res.status(400).json({ ok: false, code: "bad-language", message: `The package is ${pkg.language === "py" ? "Python" : "JavaScript"}; switch the flow's language or save it to another package.` });
+    const current = functionsStore.version(pkg.id, DRAFT);
+    const files = { ...(current?.files ?? {}), [FLOW_FILE]: JSON.stringify(flow, null, 2) + "\n", [code.file]: code.code };
+    try { res.json({ ok: true, draft: saveDraft(pkg.id, files, current?.manifest.dependencies, actorOf(res)), inputs: code.inputs }); }
+    catch (err) { send(res, err); }
   });
 
   /* -------- schedules (cron) -------- */
@@ -179,7 +280,7 @@ export function registerFunctionsAdminRoutes(app: Express): void {
   });
 
   r.get("/runs", (req, res) => {
-    void functionsStore.ready().then(() => res.json({ ok: true, runs: functionsStore.runs({ modelId: req.query.model ? String(req.query.model) : undefined, limit: Number(req.query.limit) || 100 }) }));
+    void functionsStore.ready().then(() => res.json({ ok: true, runs: functionsStore.runs({ modelId: req.query.model ? String(req.query.model) : undefined, status: RUN_STATUSES.includes(String(req.query.status)) ? (String(req.query.status) as RunStatus) : undefined, limit: Math.min(Number(req.query.limit) || 100, 500) }) }));
   });
   r.get("/runs/:id", (req, res) => {
     const run = functionsStore.run(req.params.id);

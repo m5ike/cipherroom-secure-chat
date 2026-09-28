@@ -415,6 +415,24 @@ Perplexity, llama.cpp, GPT4All, Hugging Face i Ollama (compat); specifika
   v chatu (`/ai …`, `/shrň`, `/přelož …` jako vestavěné modely) nad touto
   vrstvou přijdou s etapou 3.
 
+### 10.4 Vestavěná offline řeč (5.1, hotovo)
+
+`server/ai/local-speech.ts` + adaptér `providers/local.ts` (typ poskytovatele
+`local`, bez adresy a klíče): **sherpa-onnx** (`sherpa-onnx-node`, volitelná
+nativní závislost; `npm run build` ji s balíčkem pro platformu zkopíruje do
+`dist/node_modules`) spouští **Whisper** (tiny, base, small, large-v3 turbo)
+a hlasy **Piper** (cs, sk, en, de, pl, fr, es, it, uk). Katalog modelů je
+pevný; archivy `.tar.bz2` z vydání sherpa-onnx na GitHubu se stahují na
+pokyn vlastníka (`POST /admin/ai/local/:id/install`, průběh v
+`GET /admin/ai/local`) do `$DATA_DIR/ai/speech-models/<id>` (rozbalí `tar` s
+`bzip2`, zbytečné float váhy Whisperu a testovací nahrávky se smažou) a
+přidají se k poskytovateli „Built-in speech“ (výchozí TTS/STT, když žádný
+není). Vstup WAV (16/24/32bit, float, libovolná frekvence → mono), jiné
+formáty přes `ffmpeg`, je-li; delší nahrávky po 28 s oknech; výstup WAV
+PCM16. Enginy zůstávají načtené (nejvýš 3 od druhu), volání jednoho modelu
+jdou za sebou, `SPEECH_THREADS` vláken. Bezplatné alternativy jako typy
+poskytovatelů: `groq`, `speaches`, `kokoro`, `whispercpp` (OpenAI protokol).
+
 ## 11. Konzole: IDE, běhy, tutoriál
 
 - **Editor**: CodeMirror 6 přibalený do konzole (CSP `script-src 'self'`
@@ -436,6 +454,61 @@ Perplexity, llama.cpp, GPT4All, Hugging Face i Ollama (compat); specifika
   **kontroly** (lekce ověří výstup běhu), postup uložený u operátora; od
   „Hello, `m5.out.text`“ přes vstupy, HTTP, cache, prompt a webhook až po
   agenta s nástroji. Každá lekce je zároveň testem SDK.
+
+### 11.1 Editor (5.1, hotovo)
+
+`admin-ui/src/m5-editor.ts` — CodeMirror 6 přibalený esbuildem do
+`admin-ui/public/vendor/m5-editor.js` (`server/admin-vendor.ts`: `npm run
+build` ho zapíše, ve vývoji ho admin služba přestaví, když je zdroj novější;
+CSP konzole zůstává `script-src 'self'`). Globálně `window.M5Editor`
+(`create`, `show`, `langOf`, `toSnippet`, `SNIPPETS`). Hotovo: zvýraznění JS,
+Pythonu a JSON s barvami z proměnných konzole (světlý i tmavý vzhled),
+zvýraznění volání `m5.*`; našeptávač SDK ze `SDK_SPEC` (objekty → metody,
+podpis a nápověda, vloží šablonu s poli pro povinné argumenty a doplní
+`await`), jména vstupů po `inputs.`, šablony pro oba jazyky; nápověda při
+najetí a podpis volání při psaní; kontrola syntaxe z parseru (lezer) a
+varování u asynchronního volání bez `await` s opravou; hledání, skládání,
+více kurzorů, formátování (odsazení), klávesy Ctrl+S / Ctrl+Enter. Kontrola
+Pythonu přes Pyodide `ast` a diff verzí zatím ne.
+
+### 11.2 Vizuální tvůrce (5.1, hotovo)
+
+Tok (`flow.m5flow.json`, formát `m5flow` verze 1) = uzly `{ id, type, x, y,
+params, values, label? }` a dráty `{ from: { node, port }, to: { node, port } }`
+s jazykem `js` nebo `py`. Katalog uzlů a překladač jsou v
+`server/functions/flow.ts` — čisté (bez Node API), takže ho konzole přibalí
+do stejného balíku jako editor (`window.M5Flow`) a náhled kódu je přesně to,
+co uloží server (`PUT /admin/functions/packages/:id/flow`, `POST
+/admin/functions/flow/compile`).
+
+- **Uzel** má vstupní porty (některé podle parametrů — zástupci šablony,
+  klíče objektu, argumenty výrazu), výstupní porty (s přístupem k poli
+  výsledku, např. `json`/`text`/`status` u HTTP) a parametry; šablonu kódu
+  pro JS i Python. Vstup bez drátu dostane literál z inspektoru.
+- **Pořadí**: topologické; nezávislé uzly zleva doprava, shora dolů. Kruh je
+  chyba.
+- **Větve**: výstupy `then`/`else` uzlu If nesou podmínku; uzel získá
+  sjednocení podmínek svých vstupů a přeloží se do `if (…) { … }`. Co na
+  větvi nevisí, běží vždy.
+- **Výstupy** jdou volajícímu hned (`m5.caller.send`) v pořadí toku; uzel
+  Result určí návratovou hodnotu (pro API a webhook).
+- **Trasování**: běh z tvůrce se přeloží s `trace` — po každém uzlu
+  `m5.log.debug("flow:node", { node, value })` (zkrácený náhled), chyba
+  `flow:fail` s id uzlu; konzole z toho kreslí hodnoty na plátně
+  (`traceResults`).
+- **Kontrola**: neznámý uzel, chybějící povinný vstup, dva dráty do jednoho
+  vstupu, drát do zaniklého portu, kruh, dvě stejná jména vstupů; uzly Input
+  dají schéma vstupů modelu (`flowInputs`).
+
+### 11.3 Živé běhy konzole (5.1, hotovo)
+
+`POST /admin/functions/run` s `live: true` přidělí `runId` předem (runner
+bere `runId` i u běhů z editoru) a hned odpoví; události běhu se od první
+ukládají do vyrovnávací paměti (2 minuty po konci), takže
+`GET /admin/functions/runs/:id/live` (SSE) je přehraje i pozdnímu odběrateli
+a skončí událostí `result`. Otázky `m5.prompt`/`m5.form` konzole zodpoví přes
+`POST /admin/functions/runs/:id/answer` (`answerRun`). Konzole to používá
+všude — balíček, model, lekce, tok.
 
 ## 12. Bezpečnost
 
@@ -485,7 +558,7 @@ publikace, změny oprávnění a tajemství, ruční zrušení, trusted runtime.
 
 ## 16. Etapy
 
-> **Stav k 5.0:** etapy 2–5 hotové; z etapy 6 hotové šablony, export/import `.m5pkg` a interaktivní tutoriál — zbývá jen volitelný trusted runtime (po zvoleném modelu hrozby se nepoužívá) a diff verzí. Podrobnosti výše u jednotlivých „Stav etapy“.
+> **Stav k 5.1:** etapy 2–5 hotové; z etapy 6 hotové šablony, export/import `.m5pkg`, interaktivní tutoriál a (5.1) editor CodeMirror, **vizuální tvůrce** a živé běhy konzole (kap. 11.1–11.3) — zbývá jen volitelný trusted runtime (po zvoleném modelu hrozby se nepoužívá) a diff verzí. Řeč dostala **vestavěný offline engine** (kap. 10.4). Podrobnosti výše u jednotlivých „Stav etapy“.
 
 Každá etapa je samostatná verze s testy (unit, E2E, bezpečnostní testy
 sandboxu), dokumentací a nasazením; další staví na předchozí.

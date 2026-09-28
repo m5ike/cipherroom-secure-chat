@@ -250,6 +250,16 @@ if (appDist) {
 
 const uiDir = adminUiDir();
 if (uiDir) {
+  // 5.1: the editor bundle (admin-vendor.ts) — `npm run build` writes it; in
+  // development it is rebuilt here whenever its sources are newer.
+  if (process.env.NODE_ENV !== "production" && path.basename(uiDir) === "public") {
+    const repo = path.resolve(uiDir, "..", "..");
+    app.get("/vendor/m5-editor.js", async (_req, _res, next) => {
+      try { const { ensureAdminVendor } = await import("./admin-vendor"); await ensureAdminVendor(repo); }
+      catch (err) { console.warn(`[admin] could not build the editor bundle: ${(err as Error).message}`); }
+      next();
+    });
+  }
   app.use("/", express.static(uiDir, { maxAge: 0, etag: false }));
   app.get("/", (_req, res) => res.sendFile(path.join(uiDir, "index.html")));
 } else {

@@ -76,3 +76,32 @@ panel offers them only when the operator turned them on.
 
 Every call is in the console's journal (who, which model, how long) — never
 the audio, and the text only while the owner has content logging on.
+
+## Free, offline server speech (5.1)
+
+The server can also speak and transcribe **without any provider**: a
+built-in engine (sherpa-onnx, native, Apache-2.0) runs **Whisper** (speech →
+text, 99 languages including Czech) and **Piper** voices (text → speech:
+Czech, Slovak, English US/UK, German, Polish, French, Spanish, Italian,
+Ukrainian) on the server itself. No account, no key, nothing leaves the
+server.
+
+- Console › AI & speech › Speech › *Offline speech*: download a model (one
+  click, with progress), try it (▶), remove it. A downloaded model joins the
+  “Built-in speech” provider and becomes the default when none is set;
+  switch **Speech** on for the app.
+- Sizes: Whisper tiny 116 MB, base 208 MB, small 640 MB (good Czech), large-v3
+  turbo 564 MB (best, wants a strong CPU); a Piper voice ~21 MB (≈ 60 MB RAM).
+- Files: `$DATA_DIR/ai/speech-models/<id>`; unpacking needs `bzip2` (the
+  installer and the Docker image add it). Threads: `SPEECH_THREADS` (default 2).
+- Audio in: WAV — the app (and the console) convert a recording to 16 kHz mono
+  WAV in the browser before uploading; other formats need `ffmpeg` on the
+  server. Audio out: WAV.
+- Functions use it like any speech model: `m5.ai.tts({ text })`,
+  `m5.ai.stt({ audio, mime })`; in the visual builder the *Text → speech* and
+  *Speech → text* nodes.
+
+Other free options (console › *More free speech*): **Groq** (free tier,
+Whisper large-v3 turbo in the cloud — audio leaves the server), self-hosted
+**Speaches** (faster-whisper + Piper/Kokoro), **Kokoro-FastAPI** (natural
+voices, no Czech) and a **whisper.cpp** server.

@@ -1,6 +1,6 @@
 {
   "name": "cipherroom-secure-chat",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "description": "M5cet — end-to-end encrypted WebRTC P2P workspace (chat, calls, files, speech, NFC, maps, push) with WebSocket signaling and no message persistence.",
   "license": "MIT",
   "type": "module",
@@ -42,6 +42,17 @@
     "ws": "^8.21.3"
   },
   "devDependencies": {
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/commands": "^6.11.1",
+    "@codemirror/lang-javascript": "^6.2.5",
+    "@codemirror/lang-json": "^6.0.2",
+    "@codemirror/lang-python": "^6.2.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/lint": "^6.9.7",
+    "@codemirror/search": "^6.7.2",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.13",
+    "@lezer/highlight": "^1.2.5",
     "@testing-library/react": "^16.3.3",
     "@types/express": "^5.0.6",
     "@types/node": "^24.13.6",
@@ -64,7 +75,8 @@
   },
   "optionalDependencies": {
     "better-sqlite3-multiple-ciphers": "^13.0.3",
-    "bufferutil": "^4.0.8"
+    "bufferutil": "^4.0.8",
+    "sherpa-onnx-node": "^1.13.8"
   },
   "overrides": {
     "esbuild": "$esbuild"

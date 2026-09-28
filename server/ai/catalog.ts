@@ -5,7 +5,7 @@
 
 import type { ModelKind, ProviderType } from "./types";
 
-export type Protocol = "anthropic" | "openai" | "ollama" | "elevenlabs";
+export type Protocol = "anthropic" | "openai" | "ollama" | "elevenlabs" | "local";
 
 export type ProviderTypeDef = {
   type: ProviderType;
@@ -66,6 +66,32 @@ export const PROVIDER_TYPES: readonly ProviderTypeDef[] = [
   {
     type: "openai-compatible", label: "Other OpenAI-compatible (vLLM, LM Studio, LocalAI…)", protocol: "openai", baseUrl: "", key: "optional", kinds: ["chat", "tts", "stt", "embed"], discovery: true,
     hint: "The address up to /v1 of any server with the OpenAI API.",
+  },
+  // 5.1: free speech. The built-in engine needs nothing; the others are free
+  // tiers or free servers with the OpenAI speech API.
+  {
+    type: "local", label: "Built-in speech (offline, free)", protocol: "local", baseUrl: "", key: "none", kinds: ["tts", "stt"], discovery: true,
+    hint: "Whisper and Piper voices on this server — no account, nothing leaves it. Download models in AI & speech → Offline speech; they appear here.",
+  },
+  {
+    type: "groq", label: "Groq (free tier)", protocol: "openai", baseUrl: "https://api.groq.com/openai/v1", key: "required", kinds: ["chat", "stt"], discovery: true,
+    hint: "A free key (no card) from console.groq.com → API Keys. whisper-large-v3-turbo transcribes hours of audio a day on the free tier; Czech works well.",
+    suggested: ["whisper-large-v3-turbo", "whisper-large-v3"],
+  },
+  {
+    type: "speaches", label: "Speaches (self-hosted Whisper + Piper/Kokoro)", protocol: "openai", baseUrl: "http://127.0.0.1:8000/v1", key: "optional", kinds: ["tts", "stt"], discovery: true,
+    hint: "Free, on your own machine: docker run -p 8000:8000 ghcr.io/speaches-ai/speaches:latest-cpu — faster-whisper, Piper and Kokoro voices behind the OpenAI speech API.",
+    suggested: ["Systran/faster-whisper-small", "speaches-ai/piper-cs_CZ-jirka-medium"],
+  },
+  {
+    type: "kokoro", label: "Kokoro-FastAPI (self-hosted voices)", protocol: "openai", baseUrl: "http://127.0.0.1:8880/v1", key: "none", kinds: ["tts"], discovery: true,
+    hint: "Free natural voices (English, Spanish, French, Italian, Portuguese, Hindi, Japanese, Chinese): docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu. Voices: af_heart, af_bella, am_adam, bf_emma…",
+    suggested: ["kokoro"],
+  },
+  {
+    type: "whispercpp", label: "whisper.cpp server (self-hosted)", protocol: "openai", baseUrl: "http://127.0.0.1:8081/v1", key: "none", kinds: ["stt"], discovery: false,
+    hint: "Free and light: whisper-server -m ggml-small.bin --port 8081 --inference-path /v1/audio/transcriptions",
+    suggested: ["whisper"],
   },
   {
     type: "elevenlabs", label: "ElevenLabs", protocol: "elevenlabs", baseUrl: "https://api.elevenlabs.io", key: "required", kinds: ["tts"], discovery: true,

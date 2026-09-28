@@ -22,9 +22,12 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { PROVIDER_TYPE, PROVIDER_TYPES, isProviderType } from "./catalog";
 import {
-  aiConfig, aiConfigPath, keyState, newProviderId, providerBaseUrl, saveAiConfig, sanitizeBaseUrl, sanitizeGroups, sanitizeLimits, sanitizeModel, sealKey,
+  aiConfig, aiConfigPath, keyState, newProviderId, providerBaseUrl, refOf, saveAiConfig, sanitizeBaseUrl, sanitizeGroups, sanitizeLimits, sanitizeModel, sealKey,
   type AiConfig, type ModelConfig, type ProviderConfig,
 } from "./config";
+import { install as installLocal, LOCAL_MODEL, status as localStatus, uninstall as uninstallLocal, voicesOf, type LocalModelDef } from "./local-speech";
+import { kindOf } from "./providers/openai";
+import type { ProviderType } from "./types";
 import { journal, type CallRecord } from "./journal";
 import { AiRefused, chat, dayStart, discover, monthStart, stt, testProvider, tts, type Caller } from "./service";
 import { REASONING_LEVELS, DEFAULT_CAPS, type ChatEvent, type Reasoning, type CallTrace } from "./types";
@@ -96,6 +99,36 @@ const csvCell = (v: unknown) => {
   return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 };
 
+/** A downloaded built-in model becomes a model of the "local" provider (made on first use), and the default when none is set. */
+function registerLocal(def: LocalModelDef, actor: string): void {
+  const config = aiConfig();
+  const now = Date.now();
+  let p = config.providers.find((x) => x.type === "local");
+  const providers = [...config.providers];
+  if (!p) {
+    p = { id: newProviderId(config, "local"), type: "local", label: "Built-in speech (offline)", baseUrl: "", key: null, keyHint: "", enabled: true, groups: ["user"], models: [], source: "console", createdAt: now, updatedAt: now, updatedBy: actor };
+    providers.push(p);
+  }
+  const model: ModelConfig = { id: def.id, label: def.label, kind: def.kind, enabled: true, caps: { ...DEFAULT_CAPS }, price: null, source: "discovered", ...(def.kind === "tts" ? { voices: voicesOf(def.id) } : {}) };
+  const next: ProviderConfig = { ...p, models: [...p.models.filter((m) => !(m.id === def.id && m.kind === def.kind)), model], updatedAt: now, updatedBy: actor };
+  const ref = refOf(next.id, def.id);
+  const defaults = { ...config.defaults };
+  if (def.kind === "tts" && !defaults.tts) defaults.tts = ref;
+  if (def.kind === "stt" && !defaults.stt) defaults.stt = ref;
+  const r = saveAiConfig({ ...config, providers: providers.map((x) => (x.id === next.id ? next : x)), defaults }, actor);
+  pluginLog.record({ level: r.ok ? "info" : "warn", kind: "admin", message: r.ok ? `speech model ${def.id} installed (${actor})` : `speech model ${def.id} installed, but the AI config could not be saved: ${r.message}` });
+}
+
+function unregisterLocal(id: string, actor: string): void {
+  const config = aiConfig();
+  const p = config.providers.find((x) => x.type === "local");
+  if (!p) return;
+  const ref = refOf(p.id, id);
+  const defaults = { ...config.defaults, tts: config.defaults.tts === ref ? "" : config.defaults.tts, stt: config.defaults.stt === ref ? "" : config.defaults.stt };
+  saveAiConfig({ ...config, providers: config.providers.map((x) => (x.id === p.id ? { ...x, models: x.models.filter((m) => m.id !== id), updatedAt: Date.now(), updatedBy: actor } : x)), defaults }, actor);
+  pluginLog.record({ level: "info", kind: "admin", message: `speech model ${id} removed (${actor})` });
+}
+
 export function registerAiAdminRoutes(app: Express): void {
   app.get("/admin/ai", async (_req, res) => {
     await journal.ready();
@@ -135,15 +168,16 @@ export function registerAiAdminRoutes(app: Express): void {
     const id = newProviderId(config, typeof body.label === "string" && body.label.trim() ? body.label : body.type);
     const baseUrl = typeof body.baseUrl === "string" ? sanitizeBaseUrl(body.baseUrl) : "";
     if (typeof body.baseUrl === "string" && body.baseUrl.trim() && !baseUrl) return res.status(400).json({ ok: false, message: "The address must be an http(s) URL without a user name or password." });
-    if (!def.baseUrl && !baseUrl) return res.status(400).json({ ok: false, message: "This kind of provider needs its address." });
+    if (!def.baseUrl && !baseUrl && def.protocol !== "local") return res.status(400).json({ ok: false, message: "This kind of provider needs its address." });
     let sealed: { key: string; keyHint: string } | null = null;
     if (typeof body.key === "string" && body.key.trim()) {
       try { sealed = sealKey(id, body.key); } catch (err) { return res.status(500).json({ ok: false, message: `The key cannot be stored: ${(err as Error).message}` }); }
     }
     const now = Date.now();
     const actor = actorOf(res);
-    const models: ModelConfig[] = (def.suggested ?? []).map((m) => ({ id: m, label: "", kind: "chat", enabled: false, caps: { ...DEFAULT_CAPS }, price: null, source: "manual" }));
-    const first = typeof body.model === "string" ? sanitizeModel({ id: body.model, kind: def.kinds[0], enabled: true }) : null;
+    const models: ModelConfig[] = (def.suggested ?? []).map((m) => ({ id: m, label: "", kind: kindOf(body.type as ProviderType, m), enabled: false, caps: { ...DEFAULT_CAPS }, price: null, source: "manual" }));
+    const guessed = typeof body.model === "string" ? kindOf(body.type as ProviderType, body.model) : def.kinds[0];
+    const first = typeof body.model === "string" ? sanitizeModel({ id: body.model, kind: def.kinds.includes(guessed) ? guessed : def.kinds[0], enabled: true }) : null;
     if (first) {
       const at = models.findIndex((m) => m.id === first.id);
       if (at >= 0) models[at] = { ...models[at], enabled: true }; else models.unshift({ ...first, caps: { ...first.caps, reasoning: body.type === "anthropic" ? "adaptive" : "none" } });
@@ -339,6 +373,28 @@ export function registerAiAdminRoutes(app: Express): void {
       const e = errorOf(err);
       res.status(e.status).json({ ok: false, code: e.code, message: e.message });
     }
+  });
+
+  /* ------------------------------------------------------------- the built-in speech engine (5.1) */
+
+  // Offline Whisper models and Piper voices: download, remove, and what is there.
+  app.get("/admin/ai/local", (_req, res) => { void localStatus().then((st) => res.json({ ok: true, ...st })); });
+  app.post("/admin/ai/local/:id/install", owner, (req, res) => {
+    const id = String(req.params.id);
+    if (!LOCAL_MODEL.has(id)) return res.status(404).json({ ok: false, message: "No such model." });
+    const actor = actorOf(res);
+    try {
+      const job = installLocal(id, (def) => registerLocal(def, actor));
+      pluginLog.record({ level: "info", kind: "admin", message: `speech model ${id} downloading (${actor})` });
+      res.json({ ok: true, job });
+    } catch (err) { res.status(400).json({ ok: false, message: (err as Error).message }); }
+  });
+  app.delete("/admin/ai/local/:id", owner, (req, res) => {
+    const id = String(req.params.id);
+    if (!LOCAL_MODEL.has(id)) return res.status(404).json({ ok: false, message: "No such model." });
+    try { uninstallLocal(id); } catch (err) { return res.status(400).json({ ok: false, message: (err as Error).message }); }
+    unregisterLocal(id, actorOf(res));
+    res.json({ ok: true });
   });
 
   /* ------------------------------------------------------------- journal */

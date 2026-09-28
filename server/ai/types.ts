@@ -5,7 +5,9 @@
 // every call in the journal.
 
 export type ProviderType =
-  | "anthropic" | "openai" | "openwebui" | "perplexity" | "ollama" | "llamacpp" | "gpt4all" | "huggingface" | "openai-compatible" | "elevenlabs";
+  | "anthropic" | "openai" | "openwebui" | "perplexity" | "ollama" | "llamacpp" | "gpt4all" | "huggingface" | "openai-compatible" | "elevenlabs"
+  // 5.1: free speech — the built-in offline engine, Groq's free tier, self-hosted servers
+  | "local" | "groq" | "speaches" | "kokoro" | "whispercpp";
 
 export type ModelKind = "chat" | "tts" | "stt" | "embed";
 

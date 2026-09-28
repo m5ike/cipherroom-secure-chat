@@ -378,6 +378,8 @@ export type AdhocSpec = {
   entry: { file: string; fn: string };
   inputs: Record<string, unknown>;
   limits?: Partial<RunLimits>;
+  /** A run id chosen up front (the console's live runs subscribe before it starts). */
+  runId?: string;
 };
 
 /**
@@ -387,7 +389,7 @@ export type AdhocSpec = {
  */
 export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Partial<RunHandlers>): Promise<ExecuteResult> {
   await functionsStore.ready();
-  const runId = newId("run");
+  const runId = spec.runId ?? newId("run");
   const sessionId = functionsStore.session("__adhoc__", `adhoc\0${runId}`);
   const limits = { ...DEFAULT_LIMITS };
   for (const k of Object.keys(limits) as (keyof RunLimits)[]) { const v = spec.limits?.[k]; if (typeof v === "number" && v > 0) limits[k] = Math.min(v, MAX_LIMITS[k]); }

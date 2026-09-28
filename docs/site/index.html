@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <meta name="referrer" content="no-referrer" />
-<title>M5cet 5.0 — dokumentace</title>
+<title>M5cet 5.1 — dokumentace</title>
 <meta name="description" content="Dokumentace M5cet 3.0: architektura, protokol v2, šifrování v2, fronta zpráv, účty a passkeys, úložiště, administrace, audit, API, nasazení a návrhy." />
 <style>
 :root {
@@ -161,7 +161,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
 </head>
 <body>
 <header class="top">
-  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 5.0.0</small></a>
+  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 5.1.0</small></a>
   <div class="search" role="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" placeholder="Hledat v dokumentaci…" autocomplete="off" aria-label="Hledat v dokumentaci" />
@@ -169,20 +169,21 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <div class="results" id="results" role="listbox"></div>
   </div>
   <button class="btn" id="theme" type="button" title="Světlý / tmavý motiv">◐</button>
-  <a class="btn" href="m5cet-dokumentace-5.0.0.pdf" download>PDF</a>
+  <a class="btn" href="m5cet-dokumentace-5.1.0.pdf" download>PDF</a>
 </header>
 <div class="layout">
 <nav class="toc" id="toc" aria-label="Obsah"></nav>
 <main id="content">
 <section class="doc cover" id="uvod" data-group="Začínáme">
   <div class="hero">
-    <h1>M5cet 5.0</h1>
+    <h1>M5cet 5.1</h1>
     <p class="lead">Šifrovaná komunikace peer-to-peer v prohlížeči: zprávy, soubory, hovory a sdílení polohy mezi lidmi, kteří znají společné heslo místnosti. Server zprostředkuje spojení, podrží zprávy pro nepřítomné a nikdy nevidí obsah.</p>
-    <p>Tato dokumentace popisuje verzi <b>4.14.0</b>: nové AI a řeč — poskytovatelé Claude, OpenAI, Open WebUI, Perplexity, Ollama, llama.cpp, GPT4All, Hugging Face a ElevenLabs se zašifrovanými klíči, modely, limity, zkušebnou a žurnálem všech volání, asistent v aplikaci s odpověďmi psanými průběžně; Layout builder pro celou aplikaci — okno Místnost, okna, dialogy a panely jako rozvržení, varianty pro skupiny uživatelů a šablony vzhledu, historie uložených verzí s rozdíly a návratem, sloučení vlastního rozvržení s novým výchozím po aktualizaci aplikace, vložení HTML jako prvků a kontrola přístupnosti; opravené konektory AI a řeči (Claude 5, HuggingFace Inference Providers) a jejich zapínání v konzoli; Layout builder jako GUI designer (lišta, okno chatu, zprávy, psaní a widget příjemců jako stromy prvků s paletou, našeptáváním a náhledem samotné aplikace); Server-enhanced jen s přihlášením passkey, jedinečné uživatelské jméno účtu jako primární klíč, ověřené přihlášení krok za krokem (passkey, globální klíč, databáze, trezor) a adresy /signin a /signup, ochranu před opuštěním připojené místnosti, kontrolu verzí aplikace a knihoven proti serveru s opravou jedním tlačítkem, moduly zapínané pro skupiny uživatelů a Menu builder v konzoli se šablonovacím jazykem; dále okno Místnost se záložkami Light · P2P / Server-enhanced a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, uložená připojení přihlášených uživatelů (klíč, jméno, server, statistiky a log), šablony vzhledu iOS 27, Windows 11 a pět studiových, jejich konfiguraci v administraci — a pod tím vším signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
+    <p>Tato dokumentace popisuje verzi <b>5.1.0</b>: konzole Functions s profesionálním editorem kódu (CodeMirror, našeptávač SDK, šablony, nápověda) a vizuálním tvůrcem funkcí z uzlů a drátů, živé běhy s odpovídáním na otázky funkce, řeč zdarma a offline přímo na serveru (Whisper a hlasy Piper); M5cet Functions (5.0) — programovatelné moduly v JavaScriptu a Pythonu spouštěné z chatu přes /klíčové-slovo, webhookem, plánem nebo API; AI a řeč (4.14) — poskytovatelé Claude, OpenAI, Open WebUI, Perplexity, Ollama, llama.cpp, GPT4All, Hugging Face a ElevenLabs se zašifrovanými klíči, modely, limity, zkušebnou a žurnálem všech volání, asistent v aplikaci s odpověďmi psanými průběžně; Layout builder pro celou aplikaci — okno Místnost, okna, dialogy a panely jako rozvržení, varianty pro skupiny uživatelů a šablony vzhledu, historie uložených verzí s rozdíly a návratem, sloučení vlastního rozvržení s novým výchozím po aktualizaci aplikace, vložení HTML jako prvků a kontrola přístupnosti; opravené konektory AI a řeči (Claude 5, HuggingFace Inference Providers) a jejich zapínání v konzoli; Layout builder jako GUI designer (lišta, okno chatu, zprávy, psaní a widget příjemců jako stromy prvků s paletou, našeptáváním a náhledem samotné aplikace); Server-enhanced jen s přihlášením passkey, jedinečné uživatelské jméno účtu jako primární klíč, ověřené přihlášení krok za krokem (passkey, globální klíč, databáze, trezor) a adresy /signin a /signup, ochranu před opuštěním připojené místnosti, kontrolu verzí aplikace a knihoven proti serveru s opravou jedním tlačítkem, moduly zapínané pro skupiny uživatelů a Menu builder v konzoli se šablonovacím jazykem; dále okno Místnost se záložkami Light · P2P / Server-enhanced a výběrem uložených připojení, sdílení uloženého připojení pozvánkou, uložená připojení přihlášených uživatelů (klíč, jméno, server, statistiky a log), šablony vzhledu iOS 27, Windows 11 a pět studiových, jejich konfiguraci v administraci — a pod tím vším signalizační protokol v2, šifrování v3 (Argon2id, slepá ID místností, klíče odesílatelů s forward secrecy, párové klíče, E2EE hovorů), binární přenos a relay souborů, cluster přes Redis, účty s více passkeys a obnovou, role v administraci, neměnný audit, zálohy, metriky a alerty.</p>
     <div class="pills"><span class="pill">Node.js 24</span><span class="pill">TypeScript 7</span><span class="pill">React 19</span><span class="pill">WebRTC DataChannel</span><span class="pill">AES-GCM 256</span><span class="pill">ECDSA / ECDH P-256</span><span class="pill">Argon2id</span><span class="pill">Ed25519</span><span class="pill">WebAuthn + PRF</span><span class="pill">SQLite + SQLCipher</span></div>
   </div>
   <div class="grid2">
     <div class="card"><h4>Pro koho je co</h4><p><b>Uživatel</b> — <a href="#rezimy">režimy</a>, <a href="#sifrovani">co šifrování chrání</a>. <b>Vývojář</b> — <a href="#architektura">architektura</a>, <a href="#protokol">protokol v2</a>, <a href="#api">API</a>. <b>Provozovatel</b> — <a href="#nasazeni">nasazení</a>, <a href="#administrace">administrace</a>, <a href="#audit">audit</a>, <a href="#bezpecnost">bezpečnost</a>.</p></div>
+    <div class="card"><h4>Co je nového v 5.1</h4><p>Konzole <a href="#functions-editor">Functions</a> přepracovaná: <b>editor kódu</b> s barevným zvýrazněním, našeptávačem SDK <code>m5</code> se signaturami a poli k vyplnění, šablonami, nápovědou a kontrolou; <a href="#functions-builder"><b>vizuální tvůrce</b></a> — funkce z uzlů a drátů bez psaní kódu, hodnoty uzlů přímo na plátně, balíček i model jedním klikem; <a href="#functions-live">živé běhy</a> s odpovídáním na <code>prompt</code>/<code>form</code>. <a href="#ai-offline"><b>Řeč zdarma a offline</b></a>: Whisper a hlasy Piper (i česky) přímo na serveru, plus předvolby Groq, Speaches, Kokoro a whisper.cpp. Přehled v <a href="#zmeny-510">seznamu změn 5.1</a>.</p></div>
     <div class="card"><h4>Co je nového v 5.0</h4><p><a href="#functions">M5cet Functions</a> — programovatelné moduly: operátor napíše model v <b>JavaScriptu</b> (QuickJS) nebo <b>Pythonu</b> (Pyodide) v odděleném procesu s limity, publikuje ho a v chatu ho kdokoli spustí přes <code>/klíčové-slovo</code> (jako roboti v messengerech), případně přes <a href="#functions-webhook">webhook</a>, <a href="#functions-plany">plán</a> nebo API. SDK <code>m5</code> (výstupy, session, cache, <a href="#functions-sit">HTTP se SSRF ochranou</a>, DNS, <a href="#functions-crypto">crypto vč. JWT/PGP/SSH/X.509</a>, kódy, <a href="#functions-ai">AI a agenti</a>), <a href="#functions-ide">IDE a tutoriál</a> v konzoli, živé <code>prompt</code>/<code>form</code> v chatu. Přehled v <a href="#zmeny-500">seznamu změn 5.0</a>.</p></div>
     <div class="card"><h4>Co je nového ve 4.14</h4><p><a href="#ai">AI a řeč</a> od základu: poskytovatelé (Claude, OpenAI, Open WebUI, Perplexity, Ollama, llama.cpp, GPT4All, Hugging Face, ElevenLabs) s klíči zašifrovanými na serveru, modely načtené od poskytovatele, <a href="#ai-limity">limity</a> (výchozí 0 = AI vypnutá), <a href="#ai-zkusebna">zkušebna</a>, <a href="#ai-zurnal">žurnál všech volání</a> a <a href="#ai-asistent">asistent v aplikaci</a> se streamovanými odpověďmi. První etapa <a href="#ai-funkce">frameworku funkcí</a>. Přehled v <a href="#zmeny-414">seznamu změn 4.14</a>.</p></div>
     <div class="card"><h4>Co je nového ve 4.13</h4><p><a href="#layout-builder">Layout builder</a> navrhuje celou aplikaci: vedle hlavní obrazovky i <a href="#layout-sekce">okno Místnost, okna, dialogy a panely</a> (44 rozvržení v sekcích). <a href="#layout-varianty">Varianty</a> pro skupiny a šablony vzhledu, <a href="#layout-historie">historie s rozdíly a návratem</a>, <a href="#layout-aktualizace">sloučení s novým výchozím rozvržením</a> po aktualizaci, <a href="#layout-html">vložení HTML</a> a <a href="#layout-pristupnost">kontrola přístupnosti</a>. Přehled v <a href="#zmeny-413">seznamu změn 4.13</a>.</p></div>
@@ -962,7 +963,7 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
       <tr><td>Menu builder <span class="badge b-acc">4.0</span></td><td>menu a navigace aplikace: pořadí přetažením, sekce, položky, HTML s proměnnými, oddělovače, speciální tlačítka, styly a stavy, náhled (<a href="#menu-builder">Menu builder</a>)</td></tr>
       <tr><td>Layout builder <span class="badge b-acc">4.0.5 · 4.13</span></td><td>GUI designer rozvržení celé aplikace (hlavní obrazovka, okno Místnost, okna, dialogy, panely): paleta prvků, strom s přetahováním, vlastnosti s našeptáváním, šablony, varianty pro skupiny a šablony vzhledu, historie s návratem, sloučení po aktualizaci, vložení HTML, kontrola přístupnosti, náhled samotné aplikace; texty a chování zpráv (<a href="#layout-builder">Layout builder</a>)</td></tr>
       <tr><td>AI &amp; speech <span class="badge b-acc">4.14</span></td><td>poskytovatelé a klíče, modely a ceny, výchozí modely a pokyny asistenta, limity, zkušebna, test řeči, žurnál volání s živým proudem a CSV (<a href="#ai">AI a řeč</a>)</td></tr>
-      <tr><td>Functions <span class="badge b-acc">5.0</span></td><td>balíčky a verze, editor s panelem SDK a zkušebním během, modely (klíčové slovo, vstupy, webhook, API), plány (cron), běhy s logy, tutoriál, import/export <code>.m5pkg</code> (<a href="#functions">Funkce</a>)</td></tr>
+      <tr><td>Functions <span class="badge b-acc">5.1</span></td><td>balíčky a verze, editor CodeMirror (zvýraznění, našeptávač, šablony, nápověda, kontrola) a <a href="#functions-builder">vizuální tvůrce</a>, živé zkušební běhy s odpovídáním na otázky, modely (klíčové slovo, vstupy, webhook, API), plány (cron), běhy s logy, tutoriál, import/export <code>.m5pkg</code> (<a href="#functions">Funkce</a>)</td></tr>
       <tr><td>Telefonie</td><td>přenesené nástroje z předchozí administrace</td></tr>
     </tbody>
   </table>
@@ -1223,6 +1224,19 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
   <figure><img src="img/ai-calls.png" alt="Žurnál volání" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 38 — Žurnál: volání hosta z aplikace a administrátora ze zkušebny, souhrny po dnech, modelech a uživatelích.</figcaption></figure>
   <h3 id="ai-zkusebna">Zkušebna a řeč</h3>
   <p>Zkušebna je konverzace s jakýmkoli modelem (i vypnutým pro aplikaci): systémový pokyn, úroveň uvažování, nejdelší odpověď, teplota, JSON, průběžné psaní; u odpovědi uvažování, zdroje, tokeny, cena, čas a <i>požadavek</i> — adresa, tělo (bez klíče), stav a počet pokusů. Karta <i>Speech</i> vyzkouší syntézu (model, hlas, text → přehrávač) a přepis (nahrávka z mikrofonu nebo soubor).</p>
+  <h3 id="ai-offline">Řeč zdarma a offline <span class="badge b-acc">5.1</span></h3>
+  <p>Vestavěný engine <b>sherpa-onnx</b> (nativní, Apache-2.0) spouští přímo na serveru <b>Whisper</b> (řeč → text, 99 jazyků vč. češtiny) a hlasy <b>Piper</b> (text → řeč). Bez účtu a klíče, nic neodchází ven. V konzoli <i>AI &amp; speech → Speech</i> je karta <i>Offline speech</i>: model se stáhne jedním klikem (průběh, velikost na disku), přidá se k poskytovateli <i>Built-in speech</i> a stane se výchozím, pokud žádný není; <i>▶ Try</i> ho hned přehraje.</p>
+  <table>
+    <thead><tr><th>Model</th><th>Stažení</th><th>Poznámka</th></tr></thead>
+    <tbody>
+      <tr><td>Whisper tiny / base</td><td>116 / 208 MB</td><td>rychlé; tiny jen pro krátké povely</td></tr>
+      <tr><td>Whisper small</td><td>640 MB</td><td>dobrá čeština, pár sekund na větu na malém CPU</td></tr>
+      <tr><td>Whisper large-v3 turbo</td><td>564 MB</td><td>nejlepší kvalita, chce silnější CPU a ~2 GB RAM</td></tr>
+      <tr><td>Piper — čeština (Jirka), slovenština, angličtina US/UK, němčina, polština, francouzština, španělština, italština, ukrajinština</td><td>21–23 MB</td><td>jeden hlas ≈ 60 MB paměti</td></tr>
+    </tbody>
+  </table>
+  <p>Modely leží v <code>$DATA_DIR/ai/speech-models</code>; k rozbalení je potřeba <code>bzip2</code> (instalátor i obraz Dockeru ho přidají). Vstup je WAV — aplikace i konzole nahrávku převedou v prohlížeči na 16kHz mono WAV; jiné formáty engine převede přes <code>ffmpeg</code>, pokud je na serveru. Výstup je WAV. Volání jednoho modelu jdou za sebou; počet vláken nastaví <code>SPEECH_THREADS</code> (výchozí 2). Karta <i>More free speech</i> přidá bezplatné alternativy: <b>Groq</b> (free tier, Whisper large-v3 turbo v cloudu), self-hosted <b>Speaches</b> (faster-whisper + Piper/Kokoro), <b>Kokoro-FastAPI</b> (přirozené hlasy, bez češtiny) a <b>whisper.cpp</b>. Funkce řeč používají přes <code>m5.ai.tts</code> / <code>m5.ai.stt</code> (v tvůrci uzly <i>Text → speech</i> a <i>Speech → text</i>).</p>
+  <figure><img src="img/ai-offline.png" alt="Offline řeč v konzoli" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 42 — AI &amp; speech › Speech: offline modely — Whisper tiny a český hlas Jirka stažené, ostatní jedním klikem.</figcaption></figure>
   <h3 id="ai-asistent">Asistent v aplikaci</h3>
   <ul>
     <li>Menu › <i>AI asistent</i>: výběr modelu (ty, které uživatel smí), úroveň uvažování (u modelů, které uvažují), konverzace. Odpověď se píše průběžně, jako <b>Markdown</b> (nadpisy, seznamy, kód, tabulky, odkazy jen https / mailto — nic z odpovědi se nestane HTML), s uvažováním a zdroji; <i>Zastavit</i> ponechá, co přišlo; poslední odpověď jde <i>vložit do zprávy</i> nebo zkopírovat. Enter odesílá, Shift+Enter dělá nový řádek.</li>
@@ -1281,6 +1295,37 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
 
   <h3 id="functions-ide">IDE, tutoriál a přenos</h3>
   <p>Konzole má <b>editor</b> souborů balíčku s panelem SDK, uložení konceptu, publikaci, <b>zkušební běh</b> s výstupy a živými logy; správu modelů (klíčové slovo, vstupní bod, schéma vstupů, viditelnost, skupiny, webhook a API), <b>plány</b>, <b>běhy</b>, <b>interaktivní tutoriál</b> (lekce „vlož ukázku → spusť → kontrola“) a <b>šablony</b> i <b>export/import</b> balíčku jako přenosný bundle <code>.m5pkg</code>.</p>
+
+  <h3 id="functions-editor">Editor kódu <span class="badge b-acc">5.1</span></h3>
+  <p>Soubory balíčku se píší v editoru <b>CodeMirror 6</b>, který je přibalený do konzole (její CSP povoluje skripty jen z vlastní adresy; <code>npm run build</code> ho sestaví do <code>admin-ui/public/vendor/m5-editor.js</code>).</p>
+  <ul>
+    <li><b>Barvy</b>: klíčová slova, definice a volání funkcí, proměnné, vlastnosti, řetězce, čísla, komentáře; volání SDK <code>m5.*</code> zvlášť — ve světlém i tmavém vzhledu konzole.</li>
+    <li><b>Našeptávač</b> (píše se sám, nebo Ctrl+Mezerník): <code>m5.</code> nabídne objekty SDK, <code>m5.ai.</code> jejich metody s podpisem a nápovědou. Vybraná metoda se vloží jako šablona s poli pro povinné argumenty (Tab mezi nimi) a u asynchronních volání se doplní <code>await</code>. Po <code>inputs.</code> nabídne vstupy modelů, které balíček spouštějí.</li>
+    <li><b>Šablony</b>: napište <code>execute</code>, <code>httpjson</code>, <code>table</code>, <code>ask</code>, <code>aichat</code>, <code>speak</code>, <code>counter</code>… (JS i Python) a vyberte je ze seznamu.</li>
+    <li><b>Nápověda</b>: najetím myší na <code>m5.…</code> se ukáže podpis a popis, při psaní volání podpis nad řádkem. Panel vpravo má záložky <i>SDK</i>, <i>Templates</i> a <i>Examples</i> (lekce tutoriálu) s hledáním; kliknutí vloží.</li>
+    <li><b>Kontrola</b>: syntaktické chyby podtržené a v okraji; asynchronní volání SDK bez <code>await</code> dostane varování s opravou jedním klikem.</li>
+    <li>Hledání a nahrazení (Ctrl+F), skládání bloků, více kurzorů, formátování (Shift+Alt+F), Ctrl+S uloží koncept, Ctrl+Enter ho spustí; stavový řádek s pozicí a stavem uložení.</li>
+  </ul>
+  <figure><img src="img/fn-editor.png" alt="Editor kódu s našeptávačem" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 40 — Editor: po <code>m5.ai.</code> našeptávač nabídne metody s podpisem a nápovědou; vpravo panel SDK · Templates · Examples.</figcaption></figure>
+
+  <h3 id="functions-builder">Vizuální tvůrce <span class="badge b-acc">5.1</span></h3>
+  <p>Záložka <i>Builder</i> skládá funkci <b>bez psaní kódu</b>: uzly z palety (přetažením nebo kliknutím, dvojklikem na plátno, puštěním drátu do prázdna — uzel se rovnou zapojí) se propojí dráty z výstupů do vstupů. Vstup bez drátu vezme hodnotu napsanou v inspektoru.</p>
+  <table>
+    <thead><tr><th>Skupina</th><th>Uzly</th></tr></thead>
+    <tbody>
+      <tr><td>Flow</td><td>Input (vstup modelu: jméno, typ, výchozí, povinný), Value, Result (návratová hodnota pro API a webhook)</td></tr>
+      <tr><td>Logic</td><td>If (větve <i>then</i>/<i>else</i> — co na nich visí, běží jen v té větvi), Compare, And/Or/Not, Fallback</td></tr>
+      <tr><td>Text · Data · Code</td><td>Template s <code>{zástupci}</code>, změna textu, nahrazení, rozdělení a spojení; pole podle cesty, objekt, seznam, JSON, mapování, filtr, řazení, počet; výpočty, výraz a blok kódu v jazyce toku</td></tr>
+      <tr><td>Output · Ask</td><td>poslat text, Markdown, kód, JSON, tabulku (sloupce z dat), obrázek, soubor, flash; zeptat se volajícího (volby nebo text)</td></tr>
+      <tr><td>Store · Web</td><td>session a cache (čtení, zápis s TTL, počítadlo); HTTP (JSON se rozparsuje), DNS</td></tr>
+      <tr><td>AI &amp; speech · Crypto &amp; codes · Utility</td><td>AI chat, text → řeč, řeč → text; hash, HMAC, kódování, nové id, QR a čárové kódy; log, čas, volající, čekání</td></tr>
+    </tbody>
+  </table>
+  <p>Tok se přeloží (<code>server/functions/flow.ts</code>, stejný kód na serveru i v prohlížeči) do čitelného <b>JavaScriptu nebo Pythonu</b> — záložka <i>Code</i> ho ukazuje živě. <b>Run</b> spustí tok s formulářem podle uzlů Input a každý uzel na plátně ukáže svou <b>hodnotu</b> nebo chybu (dráty z hotových uzlů „tečou“). Kontrola hlídá chybějící vstupy, dva dráty do jednoho vstupu i kruhy a vede k uzlu. <b>Save</b> uloží tok do konceptu balíčku (<code>flow.m5flow.json</code> + vygenerovaný <code>index.js</code>/<code>index.py</code>), <b>Create model…</b> balíček publikuje a vytvoří nebo aktualizuje model se vstupy podle uzlů Input (klíčové slovo pro chat, viditelnost). <i>Eject to code</i> převede tok na obyčejný balíček. Zpět/znovu, duplikace, <i>Tidy</i> (srovnání), přiblížení (Ctrl + kolečko), <i>Fit</i>, celá obrazovka (⤢, Esc).</p>
+  <figure><img src="img/fn-builder.png" alt="Vizuální tvůrce" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 41 — Vizuální tvůrce na celé obrazovce: příklad <i>Branch</i> po běhu s hodnotou 7 — každý uzel ukazuje svou hodnotu, větev „big“ neběžela.</figcaption></figure>
+
+  <h3 id="functions-live">Živé běhy z konzole <span class="badge b-acc">5.1</span></h3>
+  <p>Zkušební běhy (balíček, model, lekce, tok) jsou živé: <code>POST /admin/functions/run</code> s <code>live: true</code> vrátí hned <code>runId</code>, <code>GET /admin/functions/runs/:id/live</code> (SSE) přehraje události od začátku — logy, výstupy, průběh, otázky, výsledek. Když se funkce zeptá (<code>m5.prompt</code>, <code>m5.form</code>), konzole ukáže kartu s volbami nebo formulářem a odpověď pošle přes <code>POST /admin/functions/runs/:id/answer</code>. Záložka <i>Runs</i> filtruje podle stavu a modelu, umí se obnovovat sama a detail běhu ukáže vstupy, výstupy, logy i hodnoty uzlů toku.</p>
 
   <p class="muted">Zapíná se přepínačem modulu <i>Functions</i> v konzoli nebo proměnnou <code>ENABLE_FUNCTIONS=1</code>. Volitelný trusted runtime (npm/PyPI v nsjail) se po zvoleném modelu hrozby nepoužívá.</p>
 </section>
@@ -1553,7 +1598,7 @@ npm test -- --no-file-parallelism   <span class="c"># 1107 unit testů (vč. fuz
 npm run build
 npm run test:e2e         <span class="c"># 67 testů: zprávy, soubory P2P i relay, šifrovaný hovor, účty a obnova, uložená připojení, okno Místnost, sdílení připojení, konzole, Layout builder, AI a role…</span>
 npm run load-test -- --url ws://127.0.0.1:5000/ws --clients 500   <span class="c"># zátěž (zvednout WS_* limity na testovacím serveru)</span>
-curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"protocol":2,"version":"5.0.0","cluster":"local",…}</span></code></pre>
+curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"protocol":2,"version":"5.1.0","cluster":"local",…}</span></code></pre>
 </section>
 
 <section class="doc" id="bezpecnost" data-group="Bezpečnost">
@@ -1621,6 +1666,17 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
       <tr><td><b>Post-kvantový hybrid</b> (ML-KEM + ECDH) pro párové klíče</td><td>„Sklidit teď, rozšifrovat později“; až to WebCrypto nabídne nativně.</td><td><span class="badge">P3</span></td><td>M</td></tr>
     </tbody>
   </table>
+</section>
+
+<section class="doc" id="zmeny-510" data-group="Plán">
+  <h2>Změny v 5.1<a class="anchor" href="#zmeny-510">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>Přidáno</h4><p><b>Editor CodeMirror 6</b> v konzoli Functions (zvýraznění, našeptávač SDK s šablonami a <code>await</code>, šablony, nápověda při najetí i psaní, kontrola syntaxe a chybějícího <code>await</code>, hledání, formátování). <b>Vizuální tvůrce</b> (uzly a dráty → JS/Python, hodnoty na plátně, uložení do balíčku, model jedním klikem, příklady). <b>Živé běhy</b> s odpovídáním na <code>prompt</code>/<code>form</code>. <b>Řeč zdarma a offline</b> (Whisper + Piper přes sherpa-onnx) a předvolby Groq, Speaches, Kokoro, whisper.cpp.</p></div>
+    <div class="card"><h4>Změněno</h4><p>Přehled konzole Functions (statistiky za 24 h), dialogy místo <code>prompt()</code>, typovaný testovací formulář modelu, filtr a automatické obnovování běhů. Nahrávky k přepisu jdou jako 16kHz WAV. Funkce spuštěná z konzole je pro AI i přihlášený uživatel. Instalátor a obraz Dockeru mají <code>bzip2</code>. Nové endpointy konzole: <code>/admin/functions/runs/:id/live</code>, <code>/runs/:id/answer</code>, <code>/flow/compile</code>, <code>/packages/:id/flow</code>, <code>/admin/ai/local</code>.</p></div>
+    <div class="card"><h4>Opraveno</h4><p>Záložka <i>Runs</i> ukazovala „[object Promise]“. Markdown výstupů: nadpis či seznam na prvním řádku bloku.</p></div>
+    <div class="card"><h4>Bezpečnost</h4><p>Editor se nenačítá z CDN (CSP konzole zůstává <code>script-src 'self'</code>). Offline řeč běží na serveru a nic neposílá ven; modely se stahují jen na pokyn vlastníka z vydání sherpa-onnx na GitHubu. Protokol, šifrování ani data účtů se nemění.</p></div>
+  </div>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Tato dokumentace odpovídá kódu verze 5.1.0.</p>
 </section>
 
 <section class="doc" id="zmeny-500" data-group="Plán">

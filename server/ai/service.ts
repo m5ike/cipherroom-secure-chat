@@ -12,6 +12,7 @@ import {
 import { journal, newCallId, type CallRecord, type CallSource, type CallStatus } from "./journal";
 import { AnthropicAdapter } from "./providers/anthropic";
 import { ElevenLabsAdapter } from "./providers/elevenlabs";
+import { LocalSpeechAdapter } from "./providers/local";
 import { OllamaAdapter } from "./providers/ollama";
 import { OpenAiAdapter } from "./providers/openai";
 import { ProviderError } from "./net";
@@ -63,6 +64,7 @@ export function adapterFor(p: ProviderConfig): ProviderAdapter {
     case "anthropic": return new AnthropicAdapter(base, key, p.label);
     case "ollama": return new OllamaAdapter(base, p.label);
     case "elevenlabs": return new ElevenLabsAdapter(base, key, p.label);
+    case "local": return new LocalSpeechAdapter(p.label);
     default: return new OpenAiAdapter(p.type, base, key, p.label);
   }
 }

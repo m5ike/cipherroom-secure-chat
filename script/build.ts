@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { brotliCompressSync, gzipSync, constants as zlib } from "node:zlib";
 import { sandboxBuildOptions } from "../server/functions/sandbox/bundle";
+import { buildAdminVendor } from "../server/admin-vendor";
 
 // Server deps to bundle to reduce openat(2) syscalls, which helps cold start
 // times. Keep this list in sync with package.json dependencies actually used
@@ -92,6 +93,9 @@ async function copyRuntimeDeps() {
   await copyPackage("@jitl/quickjs-ng-wasmfile-release-sync", ["dist/emscripten-module.wasm"]);
   // The SQLCipher driver: the loader (lib) picks the prebuilt binary for the platform.
   await copyPackage("better-sqlite3-multiple-ciphers", ["lib", "prebuilds", "build"]);
+  // 5.1: the built-in speech engine (optional): the loader and this platform's native build.
+  await copyPackage("sherpa-onnx-node", []);
+  await copyPackage(`sherpa-onnx-${process.platform === "win32" ? "win" : process.platform}-${process.arch}`, []);
 }
 
 async function buildAll() {
@@ -100,7 +104,8 @@ async function buildAll() {
   // Client (dist/public) and server (dist/*.cjs) outputs do not overlap, so
   // the two toolchains can run concurrently.
   console.log("building client + server...");
-  await Promise.all([viteBuild(), buildServer(), buildSandbox()]);
+  // 5.1: the console's code editor + visual builder (admin-ui/public/vendor).
+  await Promise.all([viteBuild(), buildServer(), buildSandbox(), buildAdminVendor()]);
   await copyRuntimeDeps();
   await precompress("dist/public/assets");
 }

@@ -155,7 +155,8 @@ pkg_install() {
 ensure_base_packages() {
   local -a missing
   local n=0 bin
-  for bin in git curl tar; do
+  # bzip2: the built-in speech engine (5.1) unpacks its downloaded models with it.
+  for bin in git curl tar bzip2; do
     have "${bin}" || { missing[n]="${bin}"; n=$((n+1)); }
   done
   if [ "${SYS_KERNEL}" = "Linux" ] && [ ! -d /etc/ssl/certs ] ; then

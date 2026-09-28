@@ -1,5 +1,7 @@
 node_modules/
 dist/
+# Built by `npm run build` (server/admin-vendor.ts): the console editor bundle
+admin-ui/public/vendor/
 .vite/
 
 # SQLite database files — never commit; exposes demo data at rest

@@ -7,7 +7,9 @@
 //               provider or added by name) with what they can do and prices
 //   Playground  a conversation with any model, streamed: reasoning, sources,
 //               tokens, cost, time and the request as it went out
-//   Speech      synthesis with a voice, transcription of a recording or file
+//   Speech      synthesis with a voice, transcription of a recording or file;
+//               5.1: free offline speech on this server (Whisper + Piper
+//               voices: download, remove, try) and the free alternatives
 //   Calls       every call (app, playground, tests) — live, filtered, CSV,
 //               sums per model, day and user
 //   Settings    default models, the assistant's guidance, limits (the owner:
@@ -207,10 +209,10 @@
     } catch (err) { toast(err.message, "err"); btn.disabled = false; btn.textContent = "Fetch models"; }
   }
 
-  function providerDialog(p) {
+  function providerDialog(p, presetType) {
     const owner = can("owner");
     const types = data.types;
-    const type = select(types.map((t) => ({ value: t.type, label: t.label })), p ? p.type : "anthropic", { disabled: p ? true : undefined, "data-testid": "ai-f-type" });
+    const type = select(types.map((t) => ({ value: t.type, label: t.label })), p ? p.type : presetType || "anthropic", { disabled: p ? true : undefined, "data-testid": "ai-f-type" });
     const hint = h("p", { class: "muted small" });
     const label = h("input", { class: "input", value: p ? p.label : "", placeholder: "e.g. Claude (company key)", maxlength: "80", "data-testid": "ai-f-label" });
     const base = h("input", { class: "input mono", value: p ? p.baseUrl : "", disabled: (p && p.source === "env") || !owner || undefined, "data-testid": "ai-f-base" });
@@ -502,11 +504,14 @@
   function speechTab() {
     const tts = modelChoices("tts", false);
     const sttModels = modelChoices("stt", false);
+    const page = h("div", { class: "stack" });
+    page.append(localSpeechCard());
     const box = h("div", { class: "grid grid--2" });
+    page.append(box, freeSpeechCard());
 
     // Synthesis
     const tModel = select(tts.map((c) => ({ value: c.ref, label: c.label })), data.defaults.tts || tts[0]?.ref || "", { "data-read": "1", "data-testid": "ai-tts-model" });
-    const voice = h("input", { class: "input", list: "aiVoices", placeholder: "voice (e.g. alloy, nova — or an ElevenLabs voice)", value: data.defaults.voice || "", "data-read": "1" });
+    const voice = h("input", { class: "input", list: "aiVoices", placeholder: "voice (alloy, nova, an ElevenLabs voice, a Piper speaker…)", value: data.defaults.voice || "", "data-read": "1" });
     const voices = h("datalist", { id: "aiVoices" });
     const syncVoices = () => { clear(voices); for (const v of tts.find((c) => c.ref === tModel.value)?.model.voices || []) voices.append(h("option", { value: v })); };
     tModel.addEventListener("change", syncVoices);
@@ -528,7 +533,7 @@
       speak.disabled = false;
     });
     box.append(h("div", { class: "card stack" }, h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Speech synthesis")),
-      tts.length ? tModel : h("p", { class: "muted" }, "No speech model yet (OpenAI tts-1, an ElevenLabs model…)."), voice, voices, text, h("div", { class: "row" }, speak, tInfo), player));
+      tts.length ? tModel : h("p", { class: "muted" }, "No speech model yet — download a free offline voice above, or add a provider (OpenAI tts-1, ElevenLabs, Kokoro…)."), voice, voices, text, h("div", { class: "row" }, speak, tInfo), player));
 
     // Transcription
     const sModel = select(sttModels.map((c) => ({ value: c.ref, label: c.label })), data.defaults.stt || sttModels[0]?.ref || "", { "data-read": "1" });
@@ -541,7 +546,9 @@
       out.textContent = "";
       try {
         const q = `?model=${encodeURIComponent(sModel.value)}${lang.value.trim() ? `&language=${encodeURIComponent(lang.value.trim())}` : ""}`;
-        const res = await C.raw(`/admin/ai/speech/stt${q}`, { method: "POST", headers: { "Content-Type": blob.type || "audio/webm" }, body: blob });
+        // WAV (16 kHz mono) reads everywhere — the offline engine without ffmpeg too.
+        const wav = await toWav16k(blob);
+        const res = await C.raw(`/admin/ai/speech/stt${q}`, { method: "POST", headers: { "Content-Type": wav.type || "audio/webm" }, body: wav });
         const j = await res.json();
         if (!res.ok || !j.ok) throw new Error(j.message || `HTTP ${res.status}`);
         out.textContent = j.text || "(nothing heard)";
@@ -570,9 +577,117 @@
       } catch (err) { sInfo.textContent = `microphone: ${err.message}`; }
     });
     box.append(h("div", { class: "card stack" }, h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Transcription")),
-      sttModels.length ? sModel : h("p", { class: "muted" }, "No transcription model yet (whisper-1, openai/whisper-large-v3…)."), lang,
+      sttModels.length ? sModel : h("p", { class: "muted" }, "No transcription model yet — download Whisper above (offline, free), or add Groq's free tier, OpenAI whisper-1…"), lang,
       h("div", { class: "row" }, rec, file), sInfo, out));
-    return box;
+    return page;
+  }
+
+  /* ------------------------------------------------------------ offline speech (5.1) */
+
+  const SAMPLE = { cs: "Dobrý den, tento hlas běží přímo na serveru, zdarma a bez internetu.", sk: "Dobrý deň, tento hlas beží priamo na serveri.", en: "Hello! This voice runs right on the server, free and offline.", de: "Hallo! Diese Stimme läuft direkt auf dem Server.", pl: "Dzień dobry, ten głos działa bezpośrednio na serwerze.", fr: "Bonjour, cette voix fonctionne directement sur le serveur.", es: "Hola, esta voz funciona directamente en el servidor.", it: "Ciao, questa voce funziona direttamente sul server.", uk: "Добрий день, цей голос працює прямо на сервері." };
+  const mb = (bytes) => `${(bytes / 1e6).toFixed(0)} MB`;
+  let localTimer = null;
+
+  function localSpeechCard() {
+    const card = h("div", { class: "card stack", "data-testid": "ai-local" });
+    card.append(h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Offline speech — free, on this server"),
+      h("span", { class: "muted small" }, "Whisper (speech → text, 99 languages) and Piper voices (text → speech) run here: no account, no key, nothing leaves the server.")));
+    const body = h("div", { class: "stack" }, h("div", { class: "muted small" }, "Loading…"));
+    const player = h("audio", { controls: true, hidden: true, class: "ai-audio" });
+    card.append(body, player);
+    const draw = async () => {
+      let st;
+      try { st = await api("/admin/ai/local"); } catch (err) { clear(body); body.append(h("p", { class: "ai-err" }, err.message)); return; }
+      if (!card.isConnected && localTimer) { clearInterval(localTimer); localTimer = null; return; }
+      clear(body);
+      if (!st.engine) body.append(h("div", { class: "ai-note ai-note--warn" }, st.engineError || "The speech engine is not installed on this server."));
+      const local = (data.providers || []).find((p) => p.type === "local");
+      const table = h("table", { class: "t ai-local" }, h("thead", {}, h("tr", {}, ["Model", "Does", "Languages", "Size", "State", ""].map((c) => h("th", {}, c)))));
+      const tb = h("tbody");
+      for (const m of st.models) {
+        const j = m.job;
+        const busy = j && (j.state === "downloading" || j.state === "extracting");
+        let state;
+        if (busy) {
+          const pct = j.total ? Math.min(100, (j.received / j.total) * 100) : 0;
+          state = h("div", { class: "ai-dl" }, h("div", { class: "bar__track" }, h("div", { class: "bar__fill", style: `width:${pct.toFixed(1)}%` })), h("span", { class: "muted small" }, j.state === "extracting" ? "unpacking…" : `${pct.toFixed(0)} % of ${mb(j.total)}`));
+        } else if (j && j.state === "failed") state = h("span", { title: j.error || "" }, badge("failed", "err"), h("span", { class: "muted small" }, ` ${j.error || ""}`));
+        else if (m.installed) state = h("span", {}, badge("installed", "ok"), h("span", { class: "muted small" }, ` ${mb(m.bytes)}`));
+        else state = h("span", { class: "muted small" }, "—");
+        const actions = h("div", { class: "row" });
+        if (m.installed && m.kind === "tts" && local) actions.append(h("button", { type: "button", class: "btn btn--sm", "data-read": "1", onclick: async (e) => {
+          const btn = e.currentTarget; btn.disabled = true;
+          try { const r = await api("/admin/ai/speech/tts", { method: "POST", body: { model: `${local.id}/${m.id}`, text: SAMPLE[m.langs[0]] || SAMPLE.en } }); player.src = `data:${r.mime};base64,${r.audioBase64}`; player.hidden = false; void player.play().catch(() => undefined); toast(`${m.label} · ${ms(r.ms)}`, "ok"); }
+          catch (err) { toast(err.message, "err"); }
+          btn.disabled = false;
+        } }, "▶ Try"));
+        if (can("owner")) {
+          if (m.installed) actions.append(h("button", { type: "button", class: "btn btn--sm btn--danger", onclick: async () => {
+            if (!confirm(`Remove ${m.label} (${mb(m.bytes)})?`)) return;
+            try { await api(`/admin/ai/local/${encodeURIComponent(m.id)}`, { method: "DELETE" }); toast("Removed", "ok"); await load(); } catch (err) { toast(err.message, "err"); }
+          } }, "Remove"));
+          else if (!busy && st.engine) actions.append(h("button", { type: "button", class: "btn btn--sm btn--primary", "data-testid": `ai-local-get-${m.id}`, onclick: async () => {
+            if (m.mb > 300 && !confirm(`${m.label} is a ${m.mb} MB download. Go ahead?`)) return;
+            try { await api(`/admin/ai/local/${encodeURIComponent(m.id)}/install`, { method: "POST", body: {} }); void draw(); } catch (err) { toast(err.message, "err"); }
+          } }, `Download · ${m.mb} MB`));
+        }
+        tb.append(h("tr", {},
+          h("td", {}, h("strong", {}, m.label), m.note ? h("div", { class: "muted small" }, m.note) : null),
+          h("td", {}, m.kind === "tts" ? "text → speech" : "speech → text"),
+          h("td", {}, m.langs[0] === "*" ? "99 (cs, sk, en, de…)" : m.langs.join(", "), m.voices && m.voices.length > 1 ? h("div", { class: "muted small" }, `${m.voices.length} voices`) : null),
+          h("td", {}, `${m.mb} MB`),
+          h("td", {}, state),
+          h("td", {}, actions)));
+      }
+      table.append(tb);
+      body.append(table, h("p", { class: "muted small" }, `Models live in ${st.dir}. A downloaded model is added to the “Built-in speech” provider and becomes the default when none is set; switch Speech on (top) for the app. Audio in: WAV (the app and this page convert), other formats need ffmpeg${st.ffmpeg ? " — found" : " — not installed"}.`));
+      const running = st.models.some((m) => m.job && (m.job.state === "downloading" || m.job.state === "extracting"));
+      if (running && !localTimer) localTimer = setInterval(() => void draw(), 1000);
+      if (!running && localTimer) { clearInterval(localTimer); localTimer = null; void load(); }
+    };
+    void draw();
+    return card;
+  }
+
+  function freeSpeechCard() {
+    const rows = [
+      ["groq", "Groq — free tier (cloud)", "Whisper large-v3 turbo: fast, very good Czech, hours of audio a day free. A free key, no card."],
+      ["speaches", "Speaches — self-hosted", "One Docker container with faster-whisper, Piper and Kokoro behind the OpenAI speech API."],
+      ["kokoro", "Kokoro-FastAPI — self-hosted voices", "Natural voices in English and 7 more languages (no Czech)."],
+      ["whispercpp", "whisper.cpp server — self-hosted", "A light Whisper for small machines."],
+    ];
+    const card = h("div", { class: "card stack" }, h("div", { class: "card__head" }, h("div", { class: "card__title" }, "More free speech"), h("span", { class: "muted small" }, "Free tiers and free servers you run yourself; they speak the OpenAI speech API.")));
+    const list = h("div", { class: "ai-free" });
+    for (const [type, title, text] of rows) {
+      const t = (data.types || []).find((x) => x.type === type);
+      if (!t) continue;
+      const have = (data.providers || []).some((p) => p.type === type);
+      list.append(h("div", { class: "ai-free__row" }, h("div", {}, h("strong", {}, title), h("div", { class: "muted small" }, text), h("div", { class: "muted small mono" }, t.hint)),
+        can("owner") ? h("button", { type: "button", class: "btn btn--sm", onclick: () => providerDialog(null, type) }, have ? "Add another" : "Add") : null));
+    }
+    card.append(list);
+    return card;
+  }
+
+  /** A recording or file as 16 kHz mono WAV (decoded by the browser); the original when it cannot. */
+  async function toWav16k(blob) {
+    if (/wav/.test(blob.type || "")) return blob;
+    try {
+      const Ctx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new Ctx();
+      const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+      void ctx.close();
+      const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * 16000)), 16000);
+      const src = off.createBufferSource();
+      src.buffer = decoded; src.connect(off.destination); src.start();
+      const pcm = (await off.startRendering()).getChannelData(0);
+      const buf = new DataView(new ArrayBuffer(44 + pcm.length * 2));
+      const w = (o, s) => { for (let i = 0; i < s.length; i++) buf.setUint8(o + i, s.charCodeAt(i)); };
+      w(0, "RIFF"); buf.setUint32(4, 36 + pcm.length * 2, true); w(8, "WAVE"); w(12, "fmt "); buf.setUint32(16, 16, true); buf.setUint16(20, 1, true); buf.setUint16(22, 1, true);
+      buf.setUint32(24, 16000, true); buf.setUint32(28, 32000, true); buf.setUint16(32, 2, true); buf.setUint16(34, 16, true); w(36, "data"); buf.setUint32(40, pcm.length * 2, true);
+      for (let i = 0; i < pcm.length; i++) buf.setInt16(44 + i * 2, Math.max(-1, Math.min(1, pcm[i])) * 32767, true);
+      return new Blob([buf.buffer], { type: "audio/wav" });
+    } catch { return blob; }
   }
 
   /* ============================================================== calls */

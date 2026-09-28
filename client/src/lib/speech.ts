@@ -11,6 +11,8 @@
 //     voice cloning requires a server-side model and explicit consent and
 //     is intentionally NOT implemented here. See docs/speech.md.
 
+import { toWav16k } from "./wav";
+
 export type SpeechCaps = {
   ttsAvailable: boolean;
   sttAvailable: boolean;
@@ -167,10 +169,12 @@ export async function serverTts(text: string, opts: { connector?: string; voice?
 export async function serverStt(blob: Blob, opts: { connector?: string } = {}): Promise<{ ok: true; text: string } | { ok: false; message: string }> {
   try {
     const qs = opts.connector ? `?connector=${encodeURIComponent(opts.connector)}` : "";
+    // 5.1: sent as 16 kHz mono WAV — every model reads it (the offline engine too).
+    const audio = await toWav16k(blob);
     const res = await fetch(`/api/speech/stt${qs}`, {
       method: "POST",
-      headers: { "Content-Type": blob.type || "audio/webm" },
-      body: blob,
+      headers: { "Content-Type": audio.type || "audio/webm" },
+      body: audio,
     });
     const json = await res.json().catch(() => ({})) as { ok?: boolean; text?: string; message?: string };
     if (!res.ok || !json.ok) return { ok: false, message: json.message || `HTTP ${res.status}` };

@@ -143,8 +143,8 @@ export class OpenAiAdapter implements ProviderAdapter {
 /** What kind of model a name is (OpenAI's list mixes them). */
 export function kindOf(type: ProviderType, id: string): ModelKind {
   const s = id.toLowerCase();
-  if (/whisper|transcribe|asr/.test(s)) return "stt";
-  if (/(^|[-/])tts|speech/.test(s) && type !== "huggingface") return "tts";
+  if (/whisper|transcribe|asr|parakeet|canary/.test(s)) return "stt";
+  if (/(^|[-/])tts|speech|piper|kokoro|orpheus|melo|xtts|playai/.test(s) && type !== "huggingface") return "tts";
   if (/embed/.test(s)) return "embed";
   return "chat";
 }

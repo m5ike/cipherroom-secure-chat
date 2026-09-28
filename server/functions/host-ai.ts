@@ -15,7 +15,10 @@ export class AiCallError extends Error {
 
 /** The function's caller, as the AI layer sees it (counted, limited, logged). */
 export function aiCallerOf(caller: Caller): AiCaller {
-  return { source: "function", actor: caller.name || "function", account: caller.account || "", groups: caller.groups ?? [], console: false };
+  // An operator testing in the console is a signed-in user too: providers
+  // open to "user" serve its runs (switches and limits still apply).
+  const groups = caller.kind === "console" ? [...new Set([...(caller.groups ?? []), "user"])] : caller.groups ?? [];
+  return { source: "function", actor: caller.name || "function", account: caller.account || "", groups, console: false };
 }
 
 const bytesOf = (v: unknown): Buffer | null => (v && typeof v === "object" && typeof (v as { $b?: unknown }).$b === "string" ? Buffer.from((v as { $b: string }).$b, "base64") : null);

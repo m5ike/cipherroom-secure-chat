@@ -5,6 +5,86 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [5.1.0] – 2026-09-28
+
+Konzole *Functions* přepracovaná pro pohodlné psaní i **skládání** funkcí,
+a **řeč zdarma a offline** přímo na serveru.
+
+### Přidáno
+- **Profesionální editor kódu** (CodeMirror 6, `admin-ui/src/m5-editor.ts`,
+  přibalený do `admin-ui/public/vendor/m5-editor.js` — konzole smí skripty jen
+  ze své adresy): barevné zvýraznění JavaScriptu a Pythonu (klíčová slova,
+  definice a volání funkcí, proměnné, vlastnosti, řetězce, čísla, komentáře;
+  volání `m5.*` zvlášť), **našeptávač** SDK (`m5.` → objekty, `m5.ai.` →
+  metody se signaturou a nápovědou; vloží šablonu s poli k vyplnění, Tab mezi
+  nimi, a doplní `await`, když chybí), jména vstupů modelu po `inputs.`,
+  **šablony** (execute, if, for, try, HTTP JSON, tabulka, prompt, AI, řeč,
+  počítadlo…), nápověda při najetí myší a podpis volání při psaní, kontrola
+  syntaxe a varování u asynchronního volání bez `await` (s opravou jedním
+  klikem), hledání a nahrazení, skládání bloků, více kurzorů, formátování
+  (Shift+Alt+F), Ctrl+S uloží, Ctrl+Enter spustí. Panel nápovědy
+  (SDK · Šablony · Příklady) s hledáním; stavový řádek.
+- **Vizuální tvůrce** (záložka *Builder*, `admin-ui/public/functions-builder.js`,
+  kompilátor `server/functions/flow.ts` sdílený serverem i prohlížečem):
+  plátno s **uzly** (vstupy, hodnoty, výsledek, if/porovnání/logika, šablona
+  textu, text, data — pole, objekty, seznamy, mapování, filtr, řazení —,
+  výpočty, výraz a blok kódu, výstupy text/Markdown/kód/JSON/tabulka/obrázek/
+  soubor/flash, dotaz na volajícího, session a cache, HTTP, DNS, AI chat,
+  řeč → text a text → řeč, hash, HMAC, kódování, id, QR a čárové kódy, log,
+  čas, volající, čekání) a **dráty** mezi porty. Tok se přeloží do čitelného
+  JavaScriptu nebo Pythonu (větve If obalí jen to, co na nich visí); náhled
+  kódu živě. Běh z tvůrce **trasuje** každý uzel, takže hodnota nebo chyba
+  se ukáže přímo na plátně a dráty „tečou“. Paleta s hledáním a tažením,
+  rychlé přidání uzlu dvojklikem nebo puštěním drátu do prázdna (rovnou se
+  zapojí), inspektor nastavení a hodnot vstupů, zpět/znovu, duplikace,
+  srovnání rozložení, přiblížení, kontrola chyb s odkazem na uzel. Tok se
+  uloží do balíčku (`flow.m5flow.json` + vygenerovaný kód) a **„Create
+  model…“** balíček publikuje a vytvoří/aktualizuje model se vstupy podle
+  uzlů Input. Příklady: Hello, QR, větvení, Fetch JSON, Speak, AI, počítadlo.
+  „Eject to code“ převede tok na běžný balíček.
+- **Živé běhy z konzole**: `POST /admin/functions/run` s `live: true` vrátí
+  hned `runId`; `GET /admin/functions/runs/:id/live` (SSE) přehraje události
+  od začátku (logy, výstupy, průběh, otázky, výsledek) a `POST
+  /admin/functions/runs/:id/answer` odpoví na `m5.prompt` / `m5.form` —
+  konzole ukáže otázku jako kartu s volbami nebo formulářem.
+- **Konzole Functions**: přehled nahoře (balíčky, modely, plány, běhy a chyby
+  za 24 h, průměrná doba), dialogy místo `prompt()` (nový balíček s volbou
+  šablony nebo toku, publikace s náhledem verze, nový soubor, mazání),
+  filtr balíčků, domovská stránka, odkazy balíček ↔ tok ↔ model, typovaný
+  testovací formulář modelu, kopírování URL webhooku a ukázky `curl`,
+  řazení vstupů, předvolby cronu, filtr běhů podle stavu a modelu
+  s automatickým obnovováním, detail běhu se vstupy a hodnotami uzlů,
+  přehrávač u zvukových výstupů, zvýrazněný kód ve výstupech a lekcích.
+- **Řeč zdarma a offline** (`server/ai/local-speech.ts`, poskytovatel
+  „Built-in speech“): **sherpa-onnx** (nativní, Apache-2.0, volitelná
+  závislost `sherpa-onnx-node`) spouští **Whisper** (tiny, base, small,
+  large-v3 turbo; 99 jazyků vč. češtiny) a hlasy **Piper** (čeština — Jirka,
+  slovenština, angličtina US/UK, němčina, polština, francouzština,
+  španělština, italština, ukrajinština). Modely se stahují jedním klikem
+  v *AI & speech → Speech* (průběh, velikost, odebrání, „▶ Try“) do
+  `$DATA_DIR/ai/speech-models`, samy se přidají k poskytovateli a stanou se
+  výchozími, když žádný není. Vstup WAV (jiné formáty přes `ffmpeg`), výstup
+  WAV; volání jednoho modelu jdou za sebou, `SPEECH_THREADS` (výchozí 2).
+- **Bezplatné předvolby řeči**: **Groq** (free tier, Whisper large-v3 turbo),
+  **Speaches** (self-hosted faster-whisper + Piper/Kokoro), **Kokoro-FastAPI**
+  (self-hosted hlasy) a **whisper.cpp server**; karta „More free speech“.
+- Aplikace i konzole posílají nahrávku k přepisu jako **16kHz mono WAV**
+  (převod v prohlížeči), takže ji přečte každý model.
+
+### Změněno
+- Funkce spuštěná z konzole se pro vrstvu AI počítá i jako přihlášený
+  uživatel (skupina „user“), takže může použít poskytovatele otevřené
+  přihlášeným; přepínače a limity platí dál.
+- Druh modelu se u přidávaných poskytovatelů odhaduje i pro řeč (whisper,
+  piper, kokoro… → přepis / syntéza).
+- Instalátor doinstaluje `bzip2`, obraz Dockeru ho má také (rozbalení modelů).
+
+### Opraveno
+- Záložka **Runs** ukazovala „[object Promise]“ (asynchronní vykreslení);
+  seznam se teď načítá do hotového rámu.
+- Markdown ve výstupech: nadpis nebo seznam na prvním řádku bloku se
+  vykreslí správně.
+
 ## [5.0.0] – 2026-09-28
 
 **M5cet Functions** — programovatelné moduly (celý framework funkcí,

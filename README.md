@@ -103,6 +103,24 @@ místnosti.
   crypto) je stejné v obou jazycích. Server nečte místnost — výstup do ní
   šifruje klient. Zapíná `ENABLE_FUNCTIONS` nebo přepínač v konzoli. Druhá
   etapa frameworku funkcí.
+- **Vizuální tvůrce a profesionální editor (5.1)** — v konzoli *Functions*
+  se kód píše v **CodeMirror 6**: barevné zvýraznění (funkce, proměnné,
+  vlastnosti, volání `m5.*`), **našeptávač** SDK se signaturami a poli
+  k vyplnění (Tab), automatické `await`, šablony, nápověda při najetí myší
+  i během psaní volání, kontrola syntaxe, hledání, formátování. **Builder**
+  skládá funkci **bez kódu**: uzly (vstupy, logika, text, data, výstupy,
+  HTTP, AI a řeč, kódy, úložiště…) a dráty mezi porty se přeloží do
+  JavaScriptu nebo Pythonu; běh ukáže hodnotu každého uzlu přímo na plátně
+  a z toku jedním klikem vznikne balíček i model (`/příkaz`). Běhy
+  z konzole jsou **živé** — logy a výstupy průběžně, na `m5.prompt` /
+  `m5.form` se odpovídá přímo v konzoli.
+- **Řeč zdarma a offline (5.1)** — vestavěný engine (**sherpa-onnx**):
+  **Whisper** (řeč → text, 99 jazyků vč. češtiny) a hlasy **Piper**
+  (text → řeč: čeština, slovenština, angličtina, němčina, polština, …)
+  běží přímo na serveru — bez účtu, bez klíče, nic neodchází ven. Modely se
+  stahují jedním klikem v *AI & speech → Speech*; navíc předvolby pro
+  bezplatné **Groq** (Whisper v cloudu) a self-hosted **Speaches**,
+  **Kokoro** a **whisper.cpp**.
 - **Layout builder — GUI designer (4.0.5, 4.13)** — lišta, okno chatu,
   zprávy, psaní a widget příjemců, od 4.13 i okno Místnost, okna, dialogy
   a panely (44 rozvržení v sekcích) jsou stromy prvků z palety (panely,
@@ -476,6 +494,14 @@ Web Speech API obal v `lib/speech.ts`:
 Firefox a desktopové Safari nemají `SpeechRecognition`. UI proto schovává
 ovládací prvky na základě `capabilities.ts`.
 
+**Řeč na serveru** (4.14, 5.1): kromě placených poskytovatelů (OpenAI,
+ElevenLabs…) má server **vestavěný offline engine** — Whisper a hlasy Piper
+přes sherpa-onnx, zdarma a bez internetu (modely se stahují v konzoli
+*AI & speech → Speech*). Aplikace posílá nahrávku jako 16kHz WAV, takže ji
+přečte každý model; ostatní formáty engine převede přes `ffmpeg`, pokud je
+na serveru. K rozbalení modelů je potřeba `bzip2` (instalátor i obraz
+Dockeru ho přidají).
+
 Viz [`docs/speech.md`](docs/speech.md).
 
 ---
@@ -684,7 +710,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 5.0.0        | aktuální — **M5cet Functions**: modely v JS (QuickJS) i Pythonu (Pyodide) v odděleném procesu s limity, SDK `m5` (out/log/session/cache/codec/id/crypto+JWT/PGP/SSH/X.509, http+SSRF, dns, kódy, ai+agenti), balíčky/verze, IDE + tutoriál v konzoli, `/příkaz` v chatu s `prompt`/`form`, webhooky, plány (cron), API tokeny, `.m5pkg` export/import; `ENABLE_FUNCTIONS` |
+| 5.1.0        | aktuální — konzole *Functions* s editorem **CodeMirror** (zvýraznění, našeptávač SDK, šablony, nápověda, kontrola), **vizuální tvůrce** (uzly a dráty → JS/Python, hodnoty na plátně, balíček i model jedním klikem), **živé běhy** s odpovídáním na `prompt`/`form`; **řeč zdarma a offline** (Whisper + Piper přes sherpa-onnx) a předvolby Groq, Speaches, Kokoro, whisper.cpp; oprava záložky *Runs* („[object Promise]“) |
+| 5.0.0        | **M5cet Functions**: modely v JS (QuickJS) i Pythonu (Pyodide) v odděleném procesu s limity, SDK `m5` (out/log/session/cache/codec/id/crypto+JWT/PGP/SSH/X.509, http+SSRF, dns, kódy, ai+agenti), balíčky/verze, IDE + tutoriál v konzoli, `/příkaz` v chatu s `prompt`/`form`, webhooky, plány (cron), API tokeny, `.m5pkg` export/import; `ENABLE_FUNCTIONS` |
 | 4.14.0       | AI a řeč od základu: 9 druhů poskytovatelů se zašifrovanými klíči, modely, skupiny, limity (výchozí 0 = vypnuto), zkušebna, test řeči, žurnál volání; asistent v aplikaci se streamem a Markdownem |
 | 4.13.0       | Layout builder pro celou aplikaci: okno Místnost, okna, dialogy a panely jako rozvržení (44 v sekcích), varianty pro skupiny a šablony vzhledu, historie s rozdíly a návratem, sloučení s novým výchozím po aktualizaci, vložení HTML, kontrola přístupnosti, kompilované šablony a rozvržení |
 | 4.0.6        | oprava konektorů AI a řeči (Claude 5 bez `temperature`, HuggingFace Inference Providers), zapínání modulů AI a Speech v konzoli |
