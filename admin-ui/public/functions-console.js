@@ -63,7 +63,7 @@
   function packagesView() {
     const wrap = h("div", { class: "fn-cols" });
     const list = h("div", { class: "fn-side card" });
-    list.append(h("div", { class: "fn-side__head" }, h("span", {}, "Packages"), writable() ? h("button", { class: "btn btn--sm", onclick: newPackage }, "+ New") : null));
+    list.append(h("div", { class: "fn-side__head" }, h("span", {}, "Packages"), writable() ? h("span", {}, h("button", { class: "btn btn--sm", onclick: importPackage }, "Import"), " ", h("button", { class: "btn btn--sm", onclick: newPackage }, "+ New")) : null));
     if (!data.packages.length) list.append(h("div", { class: "muted small p8" }, "No packages yet."));
     for (const p of data.packages) {
       const on = sel && sel.package.id === p.id;
@@ -80,9 +80,35 @@
   async function newPackage() {
     const name = prompt("New package name (lower-case letters, digits, hyphens):", "");
     if (!name) return;
-    const language = confirm("OK = JavaScript, Cancel = Python") ? "js" : "py";
-    try { const r = await api("/admin/functions/packages", { method: "POST", body: { name, language } }); toast(`Package ${r.package.name} created.`, "ok"); await load(); await openPackage(r.package.id); }
+    const tpls = data.templates || [];
+    const choice = prompt("Template? Type an id, or leave blank for an empty package.\n\n" + tpls.map((t) => `${t.id} — ${t.name} (${t.language})`).join("\n"), "");
+    const template = choice && tpls.some((t) => t.id === choice.trim()) ? choice.trim() : undefined;
+    const language = template ? undefined : (confirm("OK = JavaScript, Cancel = Python") ? "js" : "py");
+    try { const r = await api("/admin/functions/packages", { method: "POST", body: { name, language, template } }); toast(`Package ${r.package.name} created.`, "ok"); await load(); await openPackage(r.package.id); }
     catch (e) { toast(e.message, "err"); }
+  }
+
+  function importPackage() {
+    const input = h("input", { type: "file", accept: ".json,.m5pkg,application/json", style: "display:none" });
+    input.addEventListener("change", async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      let bundle; try { bundle = JSON.parse(await file.text()); } catch (e) { toast("That file is not JSON.", "err"); return; }
+      try { const r = await api("/admin/functions/packages/import", { method: "POST", body: { bundle } }); toast(`Imported ${r.package.name}.`, "ok"); await load(); await openPackage(r.package.id); }
+      catch (e) { toast(e.message, "err"); }
+    });
+    document.body.append(input); input.click(); setTimeout(() => input.remove(), 1000);
+  }
+
+  async function exportPackage(id, name) {
+    try {
+      const res = await C.raw(`/admin/functions/packages/${encodeURIComponent(id)}/export`);
+      if (!res.ok) { toast("Export failed (publish a version first).", "err"); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = h("a", { href: url, download: `${name}.m5pkg.json` });
+      document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (e) { toast(e.message, "err"); }
   }
 
   async function openPackage(id) {
@@ -109,6 +135,7 @@
         h("button", { class: "btn btn--sm btn--primary", onclick: publish }, "Publish…"),
       );
     }
+    if (sel.versions.some((v) => v.status === "published")) actions.append(h("button", { class: "btn btn--sm", onclick: () => exportPackage(sel.package.id, sel.package.name) }, "Export"));
     head.append(actions);
     pane.append(head);
 

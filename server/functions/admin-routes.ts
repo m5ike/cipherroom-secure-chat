@@ -18,7 +18,7 @@
 
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { functionsStore } from "./store";
-import { createPackage, deleteModel, deletePackage, publishDraft, saveDraft, saveModel, PackageError, DRAFT } from "./packages";
+import { createPackage, deleteModel, deletePackage, exportPackage, importPackage, publishDraft, saveDraft, saveModel, PackageError, TEMPLATES, DRAFT } from "./packages";
 import { execute, functionsPublicUrl, runAdhoc, runEvents, RunRefused } from "./runner";
 import { parseEntry, type Caller, type Model } from "./types";
 import { SDK_SPEC, sdkCompletions, sdkDts } from "./sdk-spec";
@@ -43,6 +43,7 @@ function overview() {
     packages: functionsStore.packages().map((p) => ({ ...p, versions: functionsStore.versions(p.id).filter((v) => v.status === "published").map((v) => v.version) })),
     models: functionsStore.models().map(modelView),
     schedules: functionsStore.schedules(),
+    templates: TEMPLATES.map((t) => ({ id: t.id, name: t.name, language: t.language, description: t.description })),
     groups: layoutGroups(),
     runtime: { persistent: store.persistent, reason: store.reason },
     sdk: SDK_SPEC.map((o) => o.name),
@@ -85,7 +86,18 @@ export function registerFunctionsAdminRoutes(app: Express): void {
     res.json({ ok: true, package: pkg, draft, versions: functionsStore.versions(pkg.id) });
   });
   r.post("/packages", operator, (req, res) => {
-    try { res.json({ ok: true, package: createPackage(String(req.body.name ?? ""), req.body.language === "py" ? "py" : "js", String(req.body.description ?? ""), actorOf(res)) }); }
+    try { res.json({ ok: true, package: createPackage(String(req.body.name ?? ""), req.body.language === "py" ? "py" : "js", String(req.body.description ?? ""), actorOf(res), req.body.template ? String(req.body.template) : undefined) }); }
+    catch (err) { send(res, err); }
+  });
+  r.get("/packages/:id/export", (req, res) => {
+    try {
+      const bundle = exportPackage(String(req.params.id));
+      res.setHeader("Content-Disposition", `attachment; filename="${bundle.name}.m5pkg.json"`);
+      res.json(bundle);
+    } catch (err) { send(res, err); }
+  });
+  r.post("/packages/import", operator, (req, res) => {
+    try { res.json({ ok: true, package: importPackage(req.body?.bundle ?? req.body, actorOf(res), req.body?.name ? String(req.body.name) : undefined) }); }
     catch (err) { send(res, err); }
   });
   r.put("/packages/:id/draft", operator, (req, res) => {

@@ -102,6 +102,12 @@ u příkazu pošle, a výstup do místnosti šifruje klient.
   se před spuštěním zeptá volajícího (`m5.prompt`). V JS i Pythonu, bez nutnosti
   nativního volání nástrojů u poskytovatele.
 
+- **Pro autora** (etapa 6): **šablony** balíčků (Hello JS/PY, HTTP fetch, QR,
+  AI asistent) — nový balíček lze založit z šablony; **export a import**
+  balíčku jako přenosný bundle `.m5pkg` (všechny publikované verze + soubory),
+  v konzoli tlačítka Import/Export. (Interaktivní tutoriál a volitelný trusted
+  runtime zbývají.)
+
 ### Opraveno
 - Ovladač SQLCipher se teď dostane do `dist/node_modules`, takže úložiště
   a žurnál AI přežijí i výchozí instalaci a obraz Dockeru (dřív běžely jen

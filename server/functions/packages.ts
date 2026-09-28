@@ -24,17 +24,37 @@ const starterFiles = (lang: Lang): FileMap => lang === "py"
   ? { "index.py": "# The entry function receives the model's inputs as keyword arguments.\nasync def execute(name: str = \"world\"):\n    m5.log.info(\"hello\", name=name)\n    return m5.out.markdown(f\"# Hello, {name}!\")\n", "README.md": "# New package\n" }
   : { "index.js": "// The entry function receives the model's inputs as one object.\nexport async function execute({ name = \"world\" }) {\n  m5.log.info(\"hello\", { name });\n  return m5.out.markdown(`# Hello, ${name}!`);\n}\n", "README.md": "# New package\n" };
 
+/* -------------------------------------------------------------- templates */
+
+export type Template = { id: string; name: string; language: Lang; description: string; files: FileMap };
+
+/** Starter packages the console offers under "New from template". */
+export const TEMPLATES: Template[] = [
+  { id: "hello-js", name: "Hello (JavaScript)", language: "js", description: "A minimal command that greets.",
+    files: { "index.js": "export async function execute({ name = \"world\" }) {\n  m5.log.info(\"hello\", { name });\n  return m5.out.markdown(`# Hello, ${name}!`);\n}\n", "README.md": "# Hello\n" } },
+  { id: "hello-py", name: "Hello (Python)", language: "py", description: "A minimal command that greets.",
+    files: { "index.py": "async def execute(name: str = \"world\"):\n    m5.log.info(\"hello\", name=name)\n    return m5.out.markdown(f\"# Hello, {name}!\")\n", "README.md": "# Hello\n" } },
+  { id: "http-fetch", name: "Fetch JSON (HTTP)", language: "js", description: "Calls an HTTP API and shows a field.",
+    files: { "index.js": "export async function execute({ url }) {\n  const r = await m5.http.get(url);\n  if (!r.ok) return m5.out.text(`HTTP ${r.status}`);\n  return m5.out.json(r.json ?? r.text, { title: `${r.status} ${url}` });\n}\n" } },
+  { id: "qr", name: "QR code", language: "js", description: "Turns text into a QR code.",
+    files: { "index.js": "export async function execute({ text }) {\n  const qr = await m5.codes.qr(text || \"https://chat.fir.ma\", { scale: 5 });\n  return m5.out.image(m5.codec.base64.decode(qr.image.$b ?? qr.image), \"image/svg+xml\", { alt: \"QR\" });\n}\n" } },
+  { id: "assistant", name: "AI assistant", language: "js", description: "Answers with the instance's model.",
+    files: { "index.js": "export async function execute({ question }) {\n  const r = await m5.ai.chat({ messages: [{ role: \"user\", content: question }] });\n  return m5.out.markdown(r.text);\n}\n" } },
+];
+
 /* --------------------------------------------------------------- packages */
 
-export function createPackage(name: string, language: Lang, description: string, actor: string): Package {
+export function createPackage(name: string, language: Lang, description: string, actor: string, templateId?: string): Package {
   const clean = name.trim().toLowerCase();
   if (!NAME_RE.test(clean)) bad("bad-name", "A package name is lower-case letters, digits and hyphens (e.g. tools-net).");
-  if (language !== "js" && language !== "py") bad("bad-language", "The language is js or py.");
+  const template = templateId ? TEMPLATES.find((t) => t.id === templateId) ?? bad("no-template", "No such template.") : null;
+  const lang = template ? template.language : language;
+  if (lang !== "js" && lang !== "py") bad("bad-language", "The language is js or py.");
   if (functionsStore.packageByName(clean)) bad("exists", `A package named "${clean}" already exists.`);
   const now = Date.now();
-  const pkg: Package = { id: newId("pkg"), name: clean, language, description: description.slice(0, 500), draft: DRAFT, createdAt: now, updatedAt: now, updatedBy: actor };
+  const pkg: Package = { id: newId("pkg"), name: clean, language: lang, description: (description || template?.description || "").slice(0, 500), draft: DRAFT, createdAt: now, updatedAt: now, updatedBy: actor };
   functionsStore.savePackage(pkg);
-  const files = starterFiles(language);
+  const files = template ? { ...template.files } : starterFiles(lang);
   functionsStore.saveVersion({ packageId: pkg.id, version: DRAFT, manifest: draftManifest(pkg, files, {}), files, fingerprint: fingerprint(files), status: "draft", test: null, createdAt: now, createdBy: actor, publishedAt: null });
   return pkg;
 }
@@ -173,6 +193,57 @@ function randToken(): string { return randomBytes(18).toString("base64url"); }
 export function deleteModel(id: string): void {
   functionsStore.model(id) ?? bad("no-model", "No such model.");
   functionsStore.deleteModel(id);
+}
+
+/* -------------------------------------------------------- export / import */
+
+export type PackageBundle = {
+  format: "m5pkg";
+  bundleVersion: 1;
+  name: string;
+  language: Lang;
+  description: string;
+  exportedAt: number;
+  versions: Array<{ version: string; manifest: PackageManifest; files: FileMap; fingerprint: string }>;
+};
+
+/** A package with its published versions as a portable bundle (.m5pkg). */
+export function exportPackage(packageId: string): PackageBundle {
+  const pkg = functionsStore.package(packageId) ?? bad("no-package", "No such package.");
+  const versions = functionsStore.versions(pkg.id).filter((v) => v.status === "published").sort((a, b) => (a.publishedAt ?? 0) - (b.publishedAt ?? 0));
+  if (!versions.length) bad("empty", "Publish a version before exporting.");
+  return {
+    format: "m5pkg", bundleVersion: 1, name: pkg.name, language: pkg.language, description: pkg.description, exportedAt: Date.now(),
+    versions: versions.map((v) => ({ version: v.version, manifest: v.manifest, files: v.files, fingerprint: v.fingerprint })),
+  };
+}
+
+/** Creates a package from a bundle. A clashing name gets a suffix unless `name`
+ *  is given; every published version comes in, and the latest becomes the draft. */
+export function importPackage(bundle: unknown, actor: string, nameOverride?: string): Package {
+  const b = bundle as Partial<PackageBundle>;
+  if (!b || b.format !== "m5pkg" || !Array.isArray(b.versions) || !b.versions.length) bad("bad-bundle", "That is not an .m5pkg bundle.");
+  const language = b.language === "py" ? "py" : "js";
+  let name = (nameOverride || b.name || "imported").trim().toLowerCase();
+  if (!NAME_RE.test(name)) bad("bad-name", "The package name in the bundle is not valid.");
+  if (functionsStore.packageByName(name)) {
+    let n = 2;
+    while (functionsStore.packageByName(`${name}-${n}`)) n++;
+    name = `${name}-${n}`;
+  }
+  const now = Date.now();
+  const pkg: Package = { id: newId("pkg"), name, language, description: String(b.description ?? "").slice(0, 500), draft: DRAFT, createdAt: now, updatedAt: now, updatedBy: actor };
+  functionsStore.savePackage(pkg);
+  const sorted = [...b.versions!].filter((v) => v && SEMVER_RE.test(String(v.version)) && v.files && typeof v.files === "object");
+  for (const v of sorted) {
+    checkFiles(v.files as FileMap, language);
+    const files = v.files as FileMap;
+    const manifest: PackageManifest = { name, version: v.version, language, main: v.manifest?.main || (language === "py" ? "index.py" : "index.js"), dependencies: v.manifest?.dependencies ?? {}, description: pkg.description };
+    functionsStore.saveVersion({ packageId: pkg.id, version: v.version, manifest, files, fingerprint: fingerprint(files), status: "published", test: null, createdAt: now, createdBy: actor, publishedAt: now });
+  }
+  const latest = sorted[sorted.length - 1];
+  if (latest) functionsStore.saveVersion({ packageId: pkg.id, version: DRAFT, manifest: draftManifest(pkg, latest.files as FileMap, latest.manifest?.dependencies ?? {}), files: latest.files as FileMap, fingerprint: fingerprint(latest.files as FileMap), status: "draft", test: null, createdAt: now, createdBy: actor, publishedAt: null });
+  return pkg;
 }
 
 export { DRAFT };
