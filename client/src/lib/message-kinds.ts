@@ -42,6 +42,8 @@ export type MsgFlags = {
   vanishSeconds?: number;
   /** Present when the `text` field is itself ciphertext (base64). */
   sealed?: SealedMeta;
+  /** 4.15: the body is the Markdown output of a chat command ("/keyword"). */
+  fn?: { keyword: string; name: string };
 };
 
 export function hasAnyFlag(flags: MsgFlags | undefined): boolean {

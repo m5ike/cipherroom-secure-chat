@@ -91,7 +91,13 @@ function validateFlags(value: unknown): MsgFlags | undefined {
     if (typeof sealed.v === "number") out.sealed.v = sealed.v;
     if (typeof sealed.it === "number" && sealed.it >= 100_000 && sealed.it <= 5_000_000) out.sealed.it = sealed.it;
   }
-  return out.tap || out.vanishSeconds || out.sealed ? out : undefined;
+  const fn = f.fn as Record<string, unknown> | undefined;
+  if (fn && typeof fn === "object") {
+    const keyword = str(fn.keyword, 40);
+    const name = str(fn.name, 120);
+    if (keyword) out.fn = { keyword, name: name || keyword };
+  }
+  return out.tap || out.vanishSeconds || out.sealed || out.fn ? out : undefined;
 }
 
 export type ChatPayload = {

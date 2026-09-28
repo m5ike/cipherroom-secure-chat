@@ -18,6 +18,7 @@ import type { LNode } from "../lib/layout-tree";
 import type { MessageKind } from "../lib/layouts/message";
 import { DEFAULT_LAYOUTS } from "../lib/layouts";
 import { renderLayout, type LayoutEnv } from "./LayoutView";
+import { Markdown } from "./Markdown";
 
 export type BubbleAttachment = { kind: "file" | "image"; name: string; mime: string; size: number; dataUrl: string };
 
@@ -236,7 +237,9 @@ export function MessageBubble(props: MessageBubbleProps) {
     data,
     lang,
     translate: (key) => t(lang, key),
-    formats: { links: (s) => props.renderText(s) },
+    // A command's output ("/keyword") is rendered as Markdown; ordinary text
+    // is linkified. Sealed bodies stay linkified until they are opened.
+    formats: { links: (s) => (flags?.fn && !sealed ? <Markdown text={s} className="md-fn" /> : props.renderText(s)) },
     refs: { root: rootRef as never },
     blocks: props.blocks,
     slots: { badge: () => props.badge },

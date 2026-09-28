@@ -40,11 +40,14 @@ u příkazu pošle, a výstup do místnosti šifruje klient.
   a živými logy; správa modelů (klíčové slovo, vstupní bod přes výběr
   balíček\@verze:soubor, schéma vstupů, viditelnost v místnosti / jen
   volajícímu, skupiny, zapnutí) se zkušebním během; seznam běhů.
-- **Chat**: klient rozpozná `/klíč args`, přeloží argumenty na vstupy
-  (`klíč=hodnota` i poziční), spustí model na serveru a výstup buď pošle do
-  místnosti jako běžnou šifrovanou zprávu (podepsanou modelem), nebo ukáže
-  jen volajícímu. Nové API `GET /api/functions/commands` a
-  `POST /api/functions/run`; přepínač modulu `functions` (`ENABLE_FUNCTIONS`).
+- **Chat**: napsání `/` ukáže **našeptávač** dostupných příkazů s popisem a
+  nápovědou argumentů (šipky, Enter/Tab, Escape). Klient přeloží argumenty na
+  vstupy (`klíč=hodnota` i poziční), spustí model na serveru a výstup buď
+  pošle do místnosti jako běžnou šifrovanou zprávu (příznak `fn`), nebo ukáže
+  jen volajícímu; v obou případech se vykreslí jako **Markdown** přímo
+  v bublině (nadpisy, tučné, **tabulky**, kód). Nové API
+  `GET /api/functions/commands` a `POST /api/functions/run`; přepínač modulu
+  `functions` (`ENABLE_FUNCTIONS`).
 - **Sestavení**: `npm run build` staví i `dist/sandbox.cjs` a kopíruje běhové
   balíčky do `dist/node_modules` (ovladač SQLCipher, Pyodide, QuickJS WASM),
   takže je má i instalace bez `node_modules` a obraz Dockeru s jen `dist`.

@@ -461,6 +461,8 @@ function ChatApp() {
   const [messageInput, setMessageInput] = useState("");
   // Chat commands (4.15): the "/keyword" functions this user may run.
   const [commands, setCommands] = useState<Command[]>([]);
+  const [cmdIndex, setCmdIndex] = useState(0);
+  const [cmdOpen, setCmdOpen] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [peers, setPeers] = useState<PeerView[]>([]);
   const [copied, setCopied] = useState(false);
@@ -2942,6 +2944,8 @@ function ChatApp() {
       replyTo?: { id: string; senderName: string; text: string }; forwardedFrom?: string;
       /** Signed-in members the server holds this message for. */
       away?: AwayPeer[];
+      /** 4.15: this message carries the Markdown output of a chat command. */
+      fn?: { keyword: string; name: string };
     } = {},
   ) {
     if (!keyRef.current) return;
@@ -2955,6 +2959,7 @@ function ChatApp() {
     const flags: MsgFlags = {};
     if (send?.tap) flags.tap = true;
     if (send?.vanishSeconds && send.vanishSeconds > 0) flags.vanishSeconds = send.vanishSeconds;
+    if (opts.fn) flags.fn = opts.fn;
 
     let wireText = text;
     let sealPlain: string | undefined;
@@ -2967,7 +2972,7 @@ function ChatApp() {
       wireText = ciphertext;
       sealPlain = text;
     }
-    const flagsOut = flags.tap || flags.vanishSeconds || flags.sealed ? flags : undefined;
+    const flagsOut = flags.tap || flags.vanishSeconds || flags.sealed || flags.fn ? flags : undefined;
 
     const payload = {
       id: newId("msg"),
@@ -3072,6 +3077,24 @@ function ChatApp() {
     await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: replyingTo ?? undefined });
   }
 
+  /** The commands whose keyword matches what is being typed ("/pa" → "pauza"),
+   *  while the user is still on the keyword (before any argument). */
+  function commandMatches(input: string): Command[] {
+    if (!cmdOpen || !commands.length) return [];
+    const m = /^\/([a-z0-9_-]*)$/i.exec(input);
+    if (!m) return [];
+    const q = m[1].toLowerCase();
+    return commands.filter((c) => c.keyword.startsWith(q)).slice(0, 6);
+  }
+
+  /** Picks a suggested command: fills the composer with "/keyword " ready for arguments. */
+  function selectCommand(command: Command) {
+    setMessageInput(`/${command.keyword} `);
+    setCmdOpen(false);
+    setCmdIndex(0);
+    setTimeout(() => document.getElementById("message")?.focus(), 0);
+  }
+
   /** Runs a chat command and shows the result: a model posting to the room
    *  sends its output as an ordinary end-to-end-encrypted message; a
    *  caller-only model shows it just to the person who ran it. */
@@ -3084,10 +3107,17 @@ function ChatApp() {
     const outcome = await runCommand({ keyword: command.keyword, inputs, room: room || null, client: prefs.deviceId || null, lang, token: accountToken() ?? null });
     if (!outcome.ok) { systemMessage(tf(lang, "functions.failed", { name: command.name, message: outcome.message }), { kind: "error", chatOnly: true }); return; }
     const body = outputsToMarkdown(outcome.outputs) || tf(lang, "functions.empty", { name: command.name });
+    const fn = { keyword: command.keyword, name: command.name };
     if (command.visibility === "room") {
-      await sendChatPayload(body, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, forwardedFrom: `/${command.keyword}` });
+      await sendChatPayload(body, { targets: rec.targets, toNames: rec.toNames, away: rec.away, forwardedFrom: `/${command.keyword}`, fn });
     } else {
-      systemMessage(body, { chatOnly: true });
+      // Only the caller sees it: a local bubble from the model (not sent to peers).
+      setMessages((cur) => [...cur, {
+        id: `fn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        senderId: `function:${command.keyword}`, senderName: command.name,
+        text: body, createdAt: Date.now(), mine: false, secure: true,
+        flags: { fn }, audit: [{ state: "displayed", at: Date.now() }],
+      }]);
     }
   }
 
@@ -3393,6 +3423,14 @@ function ChatApp() {
   }
 
   function handleMessageKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    // While the command suggester is open, the arrows and Enter/Tab drive it.
+    const menu = commandMatches(messageInput);
+    if (menu.length) {
+      if (event.key === "ArrowDown") { event.preventDefault(); setCmdIndex((i) => (i + 1) % menu.length); return; }
+      if (event.key === "ArrowUp") { event.preventDefault(); setCmdIndex((i) => (i - 1 + menu.length) % menu.length); return; }
+      if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); selectCommand(menu[Math.min(cmdIndex, menu.length - 1)]); return; }
+      if (event.key === "Escape") { event.preventDefault(); setCmdOpen(false); return; }
+    }
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       void sendMessage();
@@ -4162,7 +4200,7 @@ function ChatApp() {
               toggleEmoji: () => setEmojiOpen((current) => !current),
               pickFile: () => fileInputRef.current?.click(),
               pickImage: () => imageInputRef.current?.click(),
-              input: (e) => setMessageInput((e as ChangeEvent<HTMLTextAreaElement>).target.value),
+              input: (e) => { setMessageInput((e as ChangeEvent<HTMLTextAreaElement>).target.value); setCmdOpen(true); setCmdIndex(0); },
               keydown: (e) => handleMessageKeyDown(e as KeyboardEvent<HTMLTextAreaElement>),
               attachment: (e) => void handleAttachmentChange(e as ChangeEvent<HTMLInputElement>),
             },
@@ -4189,6 +4227,31 @@ function ChatApp() {
           }),
         },
       })}
+
+      {/* 4.15: the "/keyword" command suggester, floating above the composer. */}
+      {(() => {
+        const menu = commandMatches(messageInput);
+        if (!menu.length) return null;
+        const active = Math.min(cmdIndex, menu.length - 1);
+        return (
+          <div className="cmd-menu" role="listbox" aria-label={t(lang, "functions.commands")} data-testid="cmd-menu">
+            {menu.map((c, i) => (
+              <button
+                key={c.keyword}
+                type="button"
+                role="option"
+                aria-selected={i === active}
+                className={`cmd-item${i === active ? " cmd-item--on" : ""}`}
+                onMouseDown={(e) => { e.preventDefault(); selectCommand(c); }}
+              >
+                <span className="cmd-item__kw">/{c.keyword}</span>
+                <span className="cmd-item__sum">{c.summary || c.name}</span>
+                {c.inputs.length ? <span className="cmd-item__args">{c.inputs.map((a) => (a.required ? a.name : `[${a.name}]`)).join(" ")}</span> : null}
+              </button>
+            ))}
+          </div>
+        );
+      })()}
 
       {/* Modal panels */}
       <ProfilePanel open={activePanel === "profile"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} onOpenConnection={() => setActivePanel("connection")} />
