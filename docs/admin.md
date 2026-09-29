@@ -86,6 +86,31 @@ URL. The client polls for commands once per socket open (`command-poll`),
 not periodically, and acknowledges with `command-ack` regardless of the
 handler's result.
 
+## Android (6.0)
+
+Console › **Android** (`admin-ui/public/android-console.js`) talks to the main
+service under `/api/admin/android/*` (module `android` in Modules & groups;
+rights `devices`, `push`, `wipe`, `builds`, `releases`, `publish`,
+`settings`). Every change is audited as `admin.android.*`.
+
+| Method + path | What |
+|---|---|
+| `GET /api/admin/android` | store, config (service account only as its e-mail), FCM readiness, the server's Android key, counts, app version, design revision |
+| `PUT /api/admin/android/config` | enrolment (`open`/`code`/`closed`), `policy` (lock, poll, update, rooms, logs), `packageName`, `certSha256`, `fcm` (`enabled`, `client` from google-services.json, `serviceAccount` JSON — sealed with the storage master key) |
+| `GET /api/admin/android/devices[?q=&status=]`, `GET\|PATCH\|DELETE …/devices/:id` | enrolled devices; name, notes, status `active`/`blocked`/`retired` |
+| `POST …/devices/:id/commands` `{kind, payload}` | control message: `ping`, `status` (`{logs}`), `flash` (`{text, level, title}`), `push` (`{title, body, room, url}`), `update`, `lock`, `wipe` (right `wipe`), `config` |
+| `POST …/commands` `{kind, payload, devices?}` | the same to several / all active devices (not `wipe`) |
+| `GET …/commands`, `GET …/events[?device=&type=&level=]` | what was sent and how it ended; what devices reported |
+| `GET\|POST\|DELETE …/codes`, `GET …/codes/qr?server=&code=` | enrolment codes (shown once, stored hashed); QR SVG of `m5cet://enroll?…` (header `X-M5-Link`) |
+| `GET\|PUT …/design`, `POST …/design/reset`, `GET …/catalog` | the app's design (validated), the builder's catalogue |
+| `GET\|POST …/builds`, `GET …/builds/:id`, `…/content`, `…/deploy?devices=all\|id,…`, `POST …/publish\|withdraw\|restore`, `DELETE` | builds (`.m5ab`) |
+| `GET …/releases`, `POST …/releases/upload?channel=&notes=&mandatory=` (body: the APK, ≤ 300 MB), `PATCH\|DELETE …/releases/:id`, `POST …/publish\|withdraw`, `GET …/apk` | APK releases |
+
+The devices' own API is `/api/android/*` (signed requests, see
+[`android-architecture.md`](android-architecture.md)). Behind nginx the APK
+upload needs its own body limit — `deploy/nginx/m5cet.conf` and the
+installer's template have it (300 MB).
+
 ## GUI
 
 `admin-ui/public/index.html` is a single-page static GUI. It reads the

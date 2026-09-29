@@ -5,6 +5,112 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.0.0] – 2026-09-29
+
+**M5cet pro Android** — nativní aplikace v Javě, která je zároveň
+**frameworkem** řízeným z konzole: vzhled, obrazovky, animace, texty a
+knihovny akcí se sestaví do zašifrovaného a podepsaného balíčku, zařízení
+ho ověří, nainstaluje a při chybě se vrátí k poslední funkční verzi. Otevření
+chrání biometrie nebo PIN s wipe po opakovaných chybách, všechna data v
+telefonu jsou šifrovaná klíči z Android Keystore, server řídí zařízení
+zprávami přes Firebase Cloud Messaging. Na webu i v telefonu jde být ve
+**víc místnostech naráz** a seznam lidí jde přilepit k okraji a schovat.
+
+### Přidáno
+- **Aplikace pro Android** (`android/`, Java 17, Android 10+, `npm run android:build`):
+  - chat protokolem v2 / šifrováním v3 nad WebRTC (DataChannel `m5cet`):
+    Argon2id (vlastní implementace, vektor RFC 9106), HKDF, AES-256-GCM,
+    ECDSA/ECDH P-256 (P1363), zapečetěné signály, perfect negotiation,
+    podepsaný hello, párové klíče, klíče odesílatelů s forward secrecy,
+    soukromé zprávy, kontrola identit (TOFU), obrázky do 512 KiB;
+  - **víc místností naráz** — každá se svým spojením, výběr zaškrtnutím,
+    odznaky počtu lidí a nepřečtených zpráv, lišta místností, přejetí mezi
+    nimi, otevření místnosti z notifikace, po odchodu přechod na nejaktivnější;
+  - **panel lidí** volně nebo přilepený vlevo, vpravo, dole; připnout nebo
+    automaticky schovat za úchyt (`users.handle`), přetažením k okraji přilepit;
+  - **zámek**: biometrie (`BiometricPrompt` s `CryptoObject`) nebo PIN;
+    počítadlo chyb (PIN i odmítnutý prst), rostoucí čekání, po posledním
+    pokusu **wipe** všech dat a klíčů s podepsanou událostí na server,
+    automatické zamčení, zákaz snímků obrazovky;
+  - **šifrovaná data**: systémová vrstva (Keystore `m5.sys`) a uživatelská
+    (biometrický klíč a PIN s pepřem v Keystore), AES-256-GCM vázané na
+    záznam, šifrovaný log, historie zpráv, vypnuté zálohy;
+  - **řídicí zprávy** ping, status, flash, push, update, lock, wipe, config —
+    přes FCM (Firebase se inicializuje nastavením ze serveru, APK nemá
+    `google-services.json`) nebo check-inem přes `JobScheduler`;
+  - **framework**: nativní renderer stromů obrazovek (sestaví se jednou,
+    pak se jen napojují data), jazyk výrazů a šablon, 30+ akcí v Javě,
+    knihovny akcí, téma, animace, texty cs/en/de, menu, ikony lucide
+    kreslené nativně, obrázky a písma z balíčku;
+  - **aktualizace**: balíčky `.m5ab` (ověření podpisu, rozbalení klíče,
+    dešifrování, kontrola hashů a manifestu, zkušební běh, návrat na
+    poslední funkční), vydání APK (podpis serveru, hash, stejný certifikát,
+    `PackageInstaller`);
+  - **systém**: hovory ve službě na popředí a v systémovém záznamu hovorů,
+    notifikace zpráv s přímou odpovědí a zkratkou konverzace, sdílení textu
+    do místnosti, animovaný splash (systémový i designový), odkaz
+    `m5cet://enroll` z QR kódu.
+- **Server** (`server/android/`): registrace zařízení (open, kódy, closed)
+  s důkazem držení klíče, **podepsané požadavky** (čas, nonce), check-in,
+  potvrzení příkazů, události (i podepsané před wipe); **buildy** (design →
+  kontejner M5PK → gzip → AES-256-GCM po segmentech → podpis ECDSA, klíč
+  obsahu zapečetěný a zabalený pro každé zařízení, soubor k nasazení pro
+  vybraná zařízení); **vydání APK** (balíček, verze a certifikát přečtené z
+  APK, připnutý certifikát, podepsaný manifest); **řídicí zprávy** šifrované
+  (ECIES P-256) a podepsané, FCM HTTP v1 bez SDK (servisní účet zapečetěný),
+  priority a slučování pro baterii; audit a alerty bezpečnostních událostí.
+- **Konzole › Android**: přehled, zařízení (stav, řídicí zprávy, příkazy,
+  události, blokace), push (hromadně, nastavení FCM, test), **Design** —
+  builder obrazovek se stromem, inspektorem a **živým náhledem telefonu**
+  (světlý/tmavý, cs/en/de), téma, animace, texty, menu, knihovny, assety —,
+  buildy, vydání, zabezpečení (policy zámku, check-in, aktualizace,
+  registrace, kódy s QR), události. Modul `android` v Modules & groups s
+  právy `devices`, `push`, `wipe`, `builds`, `releases`, `publish`, `settings`.
+- **Web**: seznam lidí (widget příjemců) přilepený k okraji — vlevo, vpravo,
+  dole — nebo plovoucí; připnout nebo automaticky schovat za úchyt s
+  animací; přetažením k okraji přilepit; rozvržení `widget.handle` v
+  Layout builderu, nastavení operátora `widgetSlideMs` a `widgetSlideEasing`.
+- **Web**: víc místností naráz — výběr zaškrtnutím, odznaky počtu lidí a
+  nepřečtených zpráv, lišta místností a chytré přepínání.
+- `npm run android:build` (debug/release, testy Javy, SHA-256 a certifikát,
+  `--install`, `--upload`), `npm run android:assets`; testovací vektory z
+  kódu webu a serveru (`script/android-vectors.ts`) a testy Javy, které je
+  ověřují bajt po bajtu.
+
+### Změněno
+- Verze 6.0.0 (versionCode aplikace 60000).
+- Widget příjemců: `locked` se převádí na `dock` (okraj) a `autoHide`;
+  tlačítko zámku v hlavičce je volba okraje; `$locked` a `toggleLock`
+  v rozvrženích z doby před 6.0 fungují dál.
+- Nginx (`deploy/nginx/m5cet.conf` i šablona instalátoru): location pro
+  `/api/admin/android/releases/upload` s tělem do 300 MB.
+- Katalog ikon: `panel-bottom`.
+
+### Opraveno
+- Konzole vypisovala text „null“ (form builder, nový model, lišta tvůrce,
+  chyba kompilace bez uzlu).
+- Archiv layoutů značil nové stromy starší verzí.
+- Test výstupů funkcí hlásil chybu načítání rámu sandboxu.
+
+### Bezpečnost
+- Zařízení podepisuje každý požadavek klíčem, který neopustí Keystore;
+  server hlídá čas a jednorázový nonce; zablokované, vyřazené a vymazané
+  zařízení nic nedostane.
+- Balíčky jsou podepsané serverem a šifrované zvlášť pro každé zařízení;
+  aplikace je nepřijme bez platného podpisu připnutého klíče ani s
+  nesouhlasným hashem; APK jen se stejným certifikátem, jaký má aplikace.
+- Řídicí zprávy jsou šifrované pro jedno zařízení a podepsané (FCM ani
+  nikdo po cestě nevidí obsah); opakování a prošlé zprávy se zahazují.
+- Servisní účet FCM a klíče buildů jsou zapečetěné hlavním klíčem úložiště;
+  nahrání APK čte tělo až po ověření tokenu operátora.
+- Wipe po vyčerpání pokusů smaže data i klíče a nahlásí se serveru
+  (audit `security`, alert) i když zařízení bylo mezitím offline.
+
+### Kompatibilita
+- Protokol a šifrování chatu se nemění: web (4.x–6.0) a aplikace jsou v
+  místnosti rovnocenní. Účty s passkey a přenos velkých souborů po kouscích
+  jsou v aplikaci 6.0 zatím jen na webu.
+
 ## [5.3.0] – 2026-09-29
 
 Příkazy jako **rozhovor**: model má **vstupní body** pro start, odpověď na

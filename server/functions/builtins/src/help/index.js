@@ -5,6 +5,7 @@
 //   /help <command>       one command in detail (parameters, examples)
 //   /help syntax | webhooks | api | tags | all
 //   /help endpoints | results | buttons | forms | browser | model   (5.3)
+//   /help android | rooms                                            (6.0)
 //   /help ?               pick a command from a list
 //
 // Entry points (1.1): execute; button — the topic buttons under an answer;
@@ -116,8 +117,26 @@ const BROWSER = [
   "`hidden: true` makes it an effect (runs once, when the message is new); otherwise it is a small widget in the message.",
 ].join("\n");
 
-const TOPICS = { syntax: SYNTAX, endpoints: ENDPOINTS, entry: ENDPOINTS, model: MODEL, session: MODEL, results: RESULTS, result: RESULTS, buttons: BUTTONS, button: BUTTONS, forms: FORMS, form: FORMS, browser: BROWSER, js: BROWSER };
-const TOPIC_BUTTONS = [["syntax", "How to call"], ["results", "Results"], ["endpoints", "Entry points"], ["buttons", "Buttons"], ["forms", "Forms"], ["browser", "Browser code"], ["model", "m5.model"], ["webhooks", "Webhooks"]];
+const ANDROID = [
+  "## 📱 The Android app (6.0)",
+  "The same rooms, the same end-to-end encryption as here — a native app. Ask the operator for the server's address or its **QR code** (the camera opens the app directly).",
+  "- **Opening it**: a PIN, and your fingerprint or face if the phone has them. Every wrong PIN or rejected finger counts; after the last attempt the operator allows, the app **erases all its data**.",
+  "- **Several rooms at once**: tick them in the room list and *Connect selected*; each shows its people and unread messages. Swipe left/right above the chat to move between them.",
+  "- **People panel**: floating, or docked left, right or at the bottom; docked, pin it or let it hide behind a small tab.",
+  "- Replies straight from notifications, pictures, calls (optionally in the phone's call log), updates of its look without a new install.",
+  "Everything it keeps is encrypted with keys in the phone's secure hardware.",
+].join("\n");
+
+const ROOMS = [
+  "## 🗂️ Several rooms at once (6.0)",
+  "- In the **Room** window tick the saved connections you want and choose **Connect selected** — the first comes on screen, the others stay connected in the background.",
+  "- The **room bar** shows every connected room with its number of people and **unread** messages; a click brings that room on screen (its messages come with it).",
+  "- Messages in a room you are not looking at raise its badge (and notify you when the page is hidden); leaving the room on screen moves you to the most recently active one.",
+  "- The **people list** can stick to the left, right or bottom edge, and hide behind a small tab (the pin icon in its header).",
+].join("\n");
+
+const TOPICS = { android: ANDROID, phone: ANDROID, app: ANDROID, rooms: ROOMS, multi: ROOMS, syntax: SYNTAX, endpoints: ENDPOINTS, entry: ENDPOINTS, model: MODEL, session: MODEL, results: RESULTS, result: RESULTS, buttons: BUTTONS, button: BUTTONS, forms: FORMS, form: FORMS, browser: BROWSER, js: BROWSER };
+const TOPIC_BUTTONS = [["syntax", "How to call"], ["results", "Results"], ["endpoints", "Entry points"], ["buttons", "Buttons"], ["forms", "Forms"], ["browser", "Browser code"], ["model", "m5.model"], ["webhooks", "Webhooks"], ["rooms", "Several rooms"], ["android", "Android app"]];
 const topicButtons = (skip) => m5.out.buttons(TOPIC_BUTTONS.filter(([t]) => t !== skip).map(([t, title]) => ({ name: "topic", title, data: { topic: t }, css: "small ghost" })));
 
 const WEBHOOKS = [
@@ -156,7 +175,7 @@ export async function execute({ topic } = {}) {
 
   const md = [`# 🆘 Help — ${commands.length} command${commands.length === 1 ? "" : "s"} for ${m5.caller.name || "you"}`];
   md.push(commands.length ? table(["Command", "What it does", "Parameters"], commands.map((c) => [`\`/${c.keyword}\``, c.summary || c.name, c.inputs.map((i) => (i.required ? `<${i.name}>` : `[${i.name}]`)).join(" ")])) : "_No command is available to you on this server._");
-  md.push("**More:** `/help <command>` for one command · `/help syntax` · `/help results` · `/help endpoints` · `/help buttons` · `/help forms` · `/help browser` · `/help model` · `/help webhooks` · `/help tags` · `/help ?` — or reply to this message with a command's name.");
+  md.push("**More:** `/help <command>` for one command · `/help syntax` · `/help results` · `/help endpoints` · `/help buttons` · `/help forms` · `/help browser` · `/help model` · `/help webhooks` · `/help tags` · `/help rooms` · `/help android` · `/help ?` — or reply to this message with a command's name.");
   if (t === "all") {
     md.push(SYNTAX, RESULTS, ENDPOINTS, BUTTONS, FORMS, BROWSER, MODEL, WEBHOOKS);
     for (const c of commands) md.push(`### /${c.keyword} — ${c.name}\n${c.summary || ""}\n\n\`${sig(c)}\` — e.g. \`${example(c)[0]}\``);

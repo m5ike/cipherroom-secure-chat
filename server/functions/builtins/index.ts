@@ -18,7 +18,7 @@ export type BuiltinEndpoint = { type: Exclude<EndpointType, "execute" | "webhook
 export type BuiltinModel = { keyword: string; name: string; summary: string; inputs: InputSpec[]; visibility: "room" | "caller"; limits?: Partial<Model["limits"]>; endpoints?: BuiltinEndpoint[] };
 export type BuiltinDef = { name: string; kind: "system" | "demo" | "library"; version: string; description: string; dependencies?: Record<string, string>; model?: BuiltinModel };
 
-const V = "1.1.0";
+const V = "1.2.0";
 const NET = { netkit: V };
 const SLOW = { wallMs: 120_000, stepMs: 10_000, memoryMb: 256 };
 // 1.1 (5.3): a reply, a click, a form and an error reach every command.
@@ -28,7 +28,7 @@ export const BUILTINS: readonly BuiltinDef[] = [
   { name: "netkit", kind: "library", version: V, description: "Network helpers for the demo commands: DNS, RDAP (whois), HTML, technologies, security headers, e-mail checks." },
   { name: "help", kind: "system", version: V, description: "The guide to the chat's commands: syntax, every command with its parameters and examples, webhooks, the API.",
     model: { keyword: "help", name: "Help", summary: "How to use commands, and every command you may run with its parameters", visibility: "caller",
-      inputs: [{ name: "topic", type: "string", label: "Command or topic", help: "a command (e.g. dns), or: syntax, results, endpoints, buttons, forms, browser, model, webhooks, tags, all, ?" }],
+      inputs: [{ name: "topic", type: "string", label: "Command or topic", help: "a command (e.g. dns), or: syntax, results, endpoints, buttons, forms, browser, model, webhooks, tags, rooms, android, all, ?" }],
       endpoints: [{ type: "response" }, { type: "button" }, { type: "error" }] } },
   { name: "whois", kind: "demo", version: V, description: "Who holds a domain or an IP address: registrar, dates, status, name servers, DNSSEC, abuse contact (RDAP).", dependencies: NET,
     model: { keyword: "whois", name: "Whois", summary: "Who holds a domain or IP address (registrar, expiry, DNSSEC, abuse)", visibility: "caller", limits: SLOW,

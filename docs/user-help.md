@@ -102,6 +102,39 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
 
 ---
 
+### Aplikace pro Android (6.0)
+
+- **Instalace a připojení k serveru** — při prvním spuštění zadejte adresu
+  serveru (a registrační kód, pokud ho správce vyžaduje), nebo naskenujte
+  QR kód od správce fotoaparátem. Aplikace si ověří klíč serveru a zapamatuje
+  si ho.
+- **PIN a biometrie** — nastavte PIN; když to telefon umí, nabídne se otisk
+  prstu nebo obličej. Aplikace se zamkne sama po chvíli na pozadí.
+  **Pozor:** každý špatný PIN i odmítnutý prst se počítá. Od třetí chyby se
+  čeká (30 s, pak déle) a po posledním povoleném pokusu (nastavuje správce)
+  aplikace **smaže všechna svá data** — místnosti, zprávy i klíče. Počet
+  zbývajících pokusů je vidět na obrazovce zámku.
+- **Víc místností naráz** — v seznamu místností zaškrtněte ty, které chcete
+  mít připojené, a klepněte na *Připojit vybrané*. U každé je počet lidí a
+  nepřečtených zpráv. Nad chatem je lišta připojených místností; přejetím
+  prstem doleva nebo doprava přepnete na další. Dlouhý stisk na kartě
+  místnost odpojí.
+- **Panel lidí** — ikona lidí v horní liště ho ukáže. Může plout (táhněte za
+  hlavičku), nebo se přilepit vlevo, vpravo či dole (ikona umístění nebo
+  přetažení k okraji). Přilepený jde připnout, nebo nechat schovat: zajede do
+  okraje a zůstane malý úchyt s počtem lidí — klepnutím ho vysunete.
+- **Zprávy a hovory** — zprávy jsou šifrované stejně jako na webu; dlouhým
+  stiskem zprávy na ni odpovíte nebo ji zkopírujete. Obrázek pošlete ikonou
+  vlevo od pole. Hovor ikonou telefonu; když ho v nastavení povolíte, objeví
+  se hovory i v systémovém záznamu hovorů.
+- **Notifikace** — na zprávu jde odpovědět přímo z notifikace; když je
+  aplikace zamčená, notifikace ukáže jen „Nová zpráva“.
+- **Aktualizace** — nový vzhled nebo novou verzi aplikace nabídne karta
+  aktualizace. Když se nový vzhled nepovede, aplikace se sama vrátí
+  k předchozímu.
+- **Nastavení** — biometrie, změna PINu, notifikace, tmavý vzhled, jazyk,
+  záznam hovorů, kontrola aktualizací, o aplikaci a *Smazat všechna data*.
+
 ### Příkazy (/)
 Napiš **/** na začátek zprávy — ukáže se seznam příkazů, které smíš použít
 (`/help` vysvětlí všechny). Výsledek příkazu může mít **tlačítka** a
@@ -154,6 +187,35 @@ Same as the Czech section above.
 
 ---
 
+### Android app (6.0)
+
+- **Install and connect** — on the first start enter the server's address (and
+  the enrolment code if your administrator requires one), or scan the
+  administrator's QR code with the camera. The app checks the server's key and
+  remembers it.
+- **PIN and biometrics** — choose a PIN; where the phone can, fingerprint or
+  face unlock is offered. The app locks itself after a while in the background.
+  **Careful:** every wrong PIN and every rejected finger counts. From the third
+  failure you wait (30 s, then longer), and after the last allowed attempt
+  (set by the administrator) the app **erases all its data** — rooms, messages
+  and keys. The lock screen shows the attempts left.
+- **Several rooms at once** — tick the rooms you want connected and tap
+  *Connect selected*. Each shows its number of people and unread messages. A
+  bar of connected rooms sits above the chat; swipe left or right to move to
+  the next one. A long press on a tab disconnects it.
+- **People panel** — the people icon in the top bar shows it. It floats (drag
+  its header) or docks left, right or at the bottom (the position button, or
+  drop it near an edge). Docked, pin it or let it hide: it slides into its edge
+  and leaves a small tab with the number of people — tap it to slide it out.
+- **Messages and calls** — end-to-end encrypted exactly as on the web; a long
+  press on a message replies to it or copies it. Send a picture with the icon
+  left of the field. Call with the phone icon; if you allow it in the settings,
+  calls also appear in the phone's call log.
+- **Notifications** — reply straight from a notification; while the app is
+  locked a notification only says "New message".
+- **Updates** — a new look or a new version of the app is offered on an update
+  card. If a new look fails, the app goes back to the previous one by itself.
+
 ### Commands (/)
 Type **/** at the start of a message to see the commands you may use (`/help`
 explains them all). A command's answer may have **buttons** and **forms** —
@@ -205,6 +267,31 @@ Standard-TTL je Nachricht, Raum-Override, absolute Raum-Obergrenze. Vom Client e
 
 ### Einschränkungen
 Siehe Czech-Abschnitt oben.
+
+### Android-App (6.0)
+
+- **Installieren und verbinden** — beim ersten Start die Adresse des Servers
+  (und ggf. den Registrierungscode) eingeben oder den QR-Code des
+  Administrators mit der Kamera scannen. Die App prüft den Schlüssel des
+  Servers und merkt ihn sich.
+- **PIN und Biometrie** — eine PIN festlegen; wo das Telefon es kann, wird
+  Fingerabdruck oder Gesicht angeboten. Die App sperrt sich nach einer Weile im
+  Hintergrund. **Achtung:** jede falsche PIN und jeder abgelehnte Finger zählt.
+  Ab dem dritten Fehler wird gewartet (30 s, dann länger), nach dem letzten
+  erlaubten Versuch (vom Administrator festgelegt) **löscht die App alle ihre
+  Daten** — Räume, Nachrichten und Schlüssel.
+- **Mehrere Räume gleichzeitig** — die gewünschten Räume ankreuzen und
+  *Ausgewählte verbinden* tippen. Jeder zeigt die Zahl der Personen und
+  ungelesenen Nachrichten; über dem Chat eine Leiste der verbundenen Räume,
+  Wischen wechselt zum nächsten.
+- **Personen-Panel** — frei schwebend oder links, rechts, unten angedockt;
+  angedockt anheften oder automatisch ausblenden (ein kleiner Griff bleibt am
+  Rand, Tippen fährt es heraus).
+- **Nachrichten, Anrufe, Benachrichtigungen** — Ende-zu-Ende-verschlüsselt wie
+  im Web; Antworten direkt aus der Benachrichtigung; Anrufe auf Wunsch im
+  Anrufprotokoll des Telefons.
+- **Updates** — ein neues Aussehen oder eine neue Version wird auf einer Karte
+  angeboten; misslingt ein neues Aussehen, kehrt die App selbst zum vorigen zurück.
 
 ### Befehle (/)
 Tippe **/** am Anfang einer Nachricht — die Befehle, die du nutzen darfst,

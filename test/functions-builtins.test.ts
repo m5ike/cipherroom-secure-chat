@@ -68,8 +68,8 @@ describe("built-in packages", () => {
       expect(c.current, def.name).toBe(true);
       if (def.model) expect(c.model?.enabled, def.name).toBe(true);
     }
-    const dns = functionsStore.versionByName("dns", "1.1.0")!;
-    expect(dns.manifest.dependencies).toEqual({ netkit: "1.1.0" });
+    const dns = functionsStore.versionByName("dns", "1.2.0")!;
+    expect(dns.manifest.dependencies).toEqual({ netkit: "1.2.0" });
     // A second seed does nothing; installing again changes nothing.
     expect(await seedBuiltins("test")).toEqual([]);
     expect(installBuiltin("whois", "test").every((r) => r.package === "unchanged")).toBe(true);
@@ -84,6 +84,9 @@ describe("built-in packages", () => {
     expect(text(one.outputs)).toMatch(/\/dns — DNS lookup[\s\S]*`type`[\s\S]*full, A, AAAA/);
     const hooks = await run("help", { topic: "webhooks" });
     expect(text(hooks.outputs)).toContain("Webhook");
+    // 6.0: the Android app and several rooms at once.
+    expect(text((await run("help", { topic: "android" })).outputs)).toMatch(/Android app[\s\S]*erases all its data/);
+    expect(text((await run("help", { topic: "rooms" })).outputs)).toMatch(/Several rooms at once[\s\S]*unread/);
   }, 60_000);
 
   it("/web reads a page: technologies, security headers, meta, links, social networks", async () => {
@@ -129,8 +132,8 @@ describe("built-in packages", () => {
     const marker = join(DATA, "functions", "builtins.json");
     writeFileSync(marker, JSON.stringify({ netkit: "1.0.0", help: "1.0.0", whois: "1.0.0", dns: "1.0.0", web: "1.0.0", mail: "1.0.0", domain: "1.0.0" }));
     const results = await seedBuiltins("test");
-    expect(results!.every((x) => x.package === "unchanged")).toBe(true); // 1.1.0 is there already
-    expect(JSON.parse(readFileSync(marker, "utf8")).dns).toBe("1.1.0");
+    expect(results!.every((x) => x.package === "unchanged")).toBe(true); // 1.2.0 is there already
+    expect(JSON.parse(readFileSync(marker, "utf8")).dns).toBe("1.2.0");
   }, 60_000);
 
   it("a missing input without anyone to ask is a clear error", async () => {

@@ -114,6 +114,24 @@ místnosti.
   a z toku jedním klikem vznikne balíček i model (`/příkaz`). Běhy
   z konzole jsou **živé** — logy a výstupy průběžně, na `m5.prompt` /
   `m5.form` se odpovídá přímo v konzoli.
+- **Aplikace pro Android (6.0)** — nativní aplikace v Javě (Android 10+),
+  která je zároveň **frameworkem** řízeným z konzole: obrazovky, téma,
+  animace, texty, menu a knihovny akcí se v *Android › Design* navrhují
+  s živým náhledem telefonu, build je **zašifrovaný a podepsaný** balíček
+  a telefon se při chybě vrátí k poslední funkční verzi. Chat stejným
+  protokolem a šifrováním jako web, **víc místností naráz** (zaškrtnutí,
+  odznaky lidí a nepřečtených, přepínání gestem), panel lidí u okraje
+  s automatickým schováním, hovory v systémovém záznamu hovorů,
+  notifikace s odpovědí. Otevření chrání **biometrie nebo PIN** s wipe po
+  opakovaných chybách, všechna data v telefonu jsou šifrovaná klíči z
+  Android Keystore, server řídí zařízení **řídicími zprávami přes FCM**
+  (šifrované pro zařízení, podepsané) a nabízí **vydání APK** se stejným
+  certifikátem. `npm run android:build`; podrobnosti v
+  [`docs/android-architecture.md`](docs/android-architecture.md).
+- **Víc místností a seznam lidí u okraje (6.0)** — na webu jde být ve víc
+  místnostech naráz (výběr zaškrtnutím, odznaky, chytré přepínání); seznam
+  lidí se přilepí vlevo, vpravo nebo dole a umí se schovat za úchyt
+  (rozvržení `widget.handle` v Layout builderu).
 - **Příkazy jako rozhovor (5.3)** — model má **vstupní body**: execute
   (start), **response** (odpověď na jeho zprávu), **button**, **form**,
   **error** a libovolný počet **webhooků** s vlastními URL, každý se svými
@@ -453,7 +471,7 @@ pro všechny, jen pro některé skupiny (`guest`, `user` a vlastní skupiny
 uživatelských jmen), nebo ho vypne: aplikace jeho ovládání schová a server
 jeho endpointy odmítne (`403 module-disabled`). Od 5.2 jsou moduly i
 nástroje konzole (Functions, AI & speech, Telephony & SIP, Layout a Menu
-builder) s výchozím přístupem, přístupovými skupinami, hlavní skupinou
+builder, od 6.0 i Android) s výchozím přístupem, přístupovými skupinami, hlavní skupinou
 `mod-<modul>`, granty na části modulu a logem přístupů. Viz
 [dokumentace › Moduly a skupiny](docs/site/index.html#moduly).
 
@@ -696,6 +714,8 @@ npm run dev          # tsx server/index.ts + Vite middleware
 npm run build        # client (Vite/oxc) + oba server bundly (esbuild), souběžně
 PORT=5000 npm start
 npm run test:e2e     # Playwright smoke; jednorázově: npx playwright install chromium
+npm run android:build            # aplikace pro Android: debug APK + testy Javy (JDK 17+, Android SDK)
+npm run android:build -- --release --install   # release (R8; podpis z M5_KEYSTORE…) rovnou do telefonu
 ```
 
 > **macOS:** port `5000` obvykle drží *AirPlay Receiver* (proces ControlCenter).
@@ -735,7 +755,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 5.3.0        | aktuální — **vstupní body** modelu (execute, response, button, form, error, víc webhooků s vlastními URL) se vstupy u každého; `m5.model` (sezení: calls, current, last, session, cache); **výsledek jako seznam** výstupů, každý vykreslený samostatně; nové výstupy zvuk, video, **tlačítka**, **formuláře** (form builder), **kód v prohlížeči** v izolovaném rámu; odpověď na zprávu modelu; `/help` a ukázky 1.1.0 s tlačítky a formuláři; tutoriál 10–16 |
+| 6.0.0        | aktuální — **aplikace pro Android** jako framework (obrazovky, téma, animace, texty a knihovny z konzole; zašifrované a podepsané balíčky s návratem; biometrie a PIN s wipe; šifrovaná data v Keystore; řídicí zprávy přes FCM; vydání APK; záznam hovorů); sekce *Android* v konzoli s builderem a živým náhledem; **víc místností naráz** na webu i v telefonu; seznam lidí u okraje s automatickým schováním; `npm run android:build` |
+| 5.3.0        | **vstupní body** modelu (execute, response, button, form, error, víc webhooků s vlastními URL) se vstupy u každého; `m5.model` (sezení: calls, current, last, session, cache); **výsledek jako seznam** výstupů, každý vykreslený samostatně; nové výstupy zvuk, video, **tlačítka**, **formuláře** (form builder), **kód v prohlížeči** v izolovaném rámu; odpověď na zprávu modelu; `/help` a ukázky 1.1.0 s tlačítky a formuláři; tutoriál 10–16 |
 | 5.2.0        | nástroje konzole jako **moduly** s výchozím přístupem, přístupovými skupinami, hlavní skupinou a **granty** se zástupnými znaky (funkce, balíčky, poskytovatelé a modely AI, čísla); **log přístupů**; **webhooky** s plným logem, parsováním těl, replayem (i na konceptu) a režimy sync/async/auto; opravené `/` v chatu, aktivační znaky `@` a `#`; vestavěné `/help`, `/whois`, `/dns`, `/web`, `/mail`, `/domain` |
 | 5.1.0        | konzole *Functions* s editorem **CodeMirror** (zvýraznění, našeptávač SDK, šablony, nápověda, kontrola), **vizuální tvůrce** (uzly a dráty → JS/Python, hodnoty na plátně, balíček i model jedním klikem), **živé běhy** s odpovídáním na `prompt`/`form`; **řeč zdarma a offline** (Whisper + Piper přes sherpa-onnx) a předvolby Groq, Speaches, Kokoro, whisper.cpp; oprava záložky *Runs* („[object Promise]“) |
 | 5.0.0        | **M5cet Functions**: modely v JS (QuickJS) i Pythonu (Pyodide) v odděleném procesu s limity, SDK `m5` (out/log/session/cache/codec/id/crypto+JWT/PGP/SSH/X.509, http+SSRF, dns, kódy, ai+agenti), balíčky/verze, IDE + tutoriál v konzoli, `/příkaz` v chatu s `prompt`/`form`, webhooky, plány (cron), API tokeny, `.m5pkg` export/import; `ENABLE_FUNCTIONS` |
@@ -767,7 +788,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/api.md`](docs/api.md)                            | `WSS /ws` rámce + všechny `/api/*` endpointy   |
 | [`docs/admin.md`](docs/admin.md)                        | Admin API + GUI                                |
 | [`docs/modules.md`](docs/modules.md)                    | Modulový registr, frontend i server            |
-| [`docs/user-help.md`](docs/user-help.md)                | Uživatelská nápověda (CZ + EN)                 |
+| [`docs/user-help.md`](docs/user-help.md)                | Uživatelská nápověda (CZ + EN + DE), aplikace pro Android |
 | [`docs/developer-guide.md`](docs/developer-guide.md)    | Vývojářský průvodce, build, struktura          |
 | [`docs/security-model.md`](docs/security-model.md)      | Bezpečnostní model, threat model               |
 | [`docs/deployment.md`](docs/deployment.md)              | Ruční nasazení, PaaS (DO / Railway / Render / Fly.io), TLS, reverse proxy |
@@ -782,6 +803,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/storage.md`](docs/storage.md)                    | Serverové úložiště: SQLite + SQLCipher, API    |
 | [`docs/lifecycle-and-notices.md`](docs/lifecycle-and-notices.md) | Pozastavení okna, flash oznámení, fronta zpráv |
 | [`docs/speech.md`](docs/speech.md)                      | Web Speech API; serverové hlasy a přepis (4.14) |
+| [`docs/android-architecture.md`](docs/android-architecture.md) | Aplikace pro Android (6.0): klíče a formáty (podpisy, ECIES, balíček `.m5ab`, push), úložiště a zámek, framework obrazovek, aktualizace a návrat, víc místností, server, sestavení |
 | [`docs/functions-architecture.md`](docs/functions-architecture.md) | Architektura frameworku funkcí (JS / Python ve WASM, balíčky, modely, `/příkazy` v chatu, webhooky, IDE) a rozhodnutí; etapa 1 = AI a řeč 4.14 |
 | [`docs/browser-limitations.md`](docs/browser-limitations.md) | Co prohlížeč (ne)umí                       |
 | [`docs/build-and-deploy.md`](docs/build-and-deploy.md)  | npm workflow, PWA, sanity checky               |

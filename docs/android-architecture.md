@@ -180,3 +180,46 @@ balíčky), `bundle.ts` (kompilace + `.m5ab`), `design.ts` (výchozí obrazovky,
 katalog), `fcm.ts` (HTTP v1, JWT RS256), `apk.ts` (verze a certifikát z APK),
 `routes.ts` (`/api/android/*`), `admin-routes.ts` (`/api/admin/android/*`, modul
 `android` v Modules & groups).
+
+## 8. Sestavení, podpis, nasazení
+
+```bash
+npm run android:build                         # debug APK + testy Javy
+npm run android:build -- --install            # … rovnou do telefonu (adb)
+M5_KEYSTORE=m5cet.jks M5_KEYSTORE_PASSWORD=… M5_KEY_ALIAS=m5cet \
+npm run android:build -- --release --server https://chat.example.com --server-key <kid>
+npm run android:build -- --release --upload https://chat.example.com --token <token operátora>
+```
+
+* **JDK 17–25** a **Android SDK** (platforma 37, build-tools) — skript je najde
+  sám (`JAVA_HOME`, `ANDROID_HOME`, obvyklé složky), Gradle 9.8 přijde s wrapperem.
+* **Podpisový klíč vydání** vytvořte jednou a uschovejte (bez něj už nejde vydat
+  aktualizaci, kterou zařízení přijmou):
+  `keytool -genkeypair -v -keystore m5cet.jks -alias m5cet -keyalg EC -groupname secp256r1 -validity 10000`.
+  První nahrané vydání připne jeho certifikát na serveru (Android › Security,
+  `certSha256`); jiný certifikát server i zařízení odmítnou.
+* `--server` vloží výchozí adresu serveru, `--server-key` připne **id Android
+  klíče serveru** (Android › Overview) — aplikace pak jiný klíč při registraci
+  odmítne i bez QR kódu.
+* Výstup: `dist/android/m5cet-<verze>-<typ>.apk`, vypíše SHA-256 a otisk certifikátu.
+* **Nginx**: nahrání APK je jediný velký požadavek — location
+  `/api/admin/android/releases/upload` s `client_max_body_size 300m` je v
+  `deploy/nginx/m5cet.conf` i v šabloně instalátoru.
+* **FCM** (volitelné, jinak polling): projekt Firebase → přidat aplikaci Android
+  s balíčkem `cz.m5cet.app` → stáhnout `google-services.json` a vložit ho v
+  Android › Push; Project settings › Service accounts → Generate new private
+  key → vložit JSON tamtéž. APK nic z toho neobsahuje.
+* **Registrace**: Android › Overview → QR kód (volitelně s kódem z Android ›
+  Security), nebo ruční zadání adresy v aplikaci.
+
+## 9. Stav 6.0 a omezení
+
+* Hotové: vše z kapitol 1–8; testy — `test/android-server.test.ts` (server),
+  `test/android-console.test.ts` (jazyk náhledu), `test/android-assets.test.ts`
+  (vestavěný design), `android/app/src/test` (Java: interop s webem a serverem,
+  jazyk výrazů).
+* Účty s passkey (Server-enhanced, relay zpráv pro nepřítomné) a přenos velkých
+  souborů po kouscích jsou zatím jen ve webovém klientovi; aplikace se připojuje
+  do místností Light · P2P a zprávy přijímá, když je připojená.
+* Šifrování snímků hovorů (vložené proudy prohlížeče) aplikace neoznamuje:
+  hovor s prohlížečem jde přes DTLS-SRTP bez této vrstvy navíc.
