@@ -70,8 +70,17 @@ zprávami přes Firebase Cloud Messaging. Na webu i v telefonu jde být ve
   dole — nebo plovoucí; připnout nebo automaticky schovat za úchyt s
   animací; přetažením k okraji přilepit; rozvržení `widget.handle` v
   Layout builderu, nastavení operátora `widgetSlideMs` a `widgetSlideEasing`.
-- **Web**: víc místností naráz — výběr zaškrtnutím, odznaky počtu lidí a
-  nepřečtených zpráv, lišta místností a chytré přepínání.
+- **Web: víc místností naráz** (`client/src/lib/room-hub.ts`) — místnosti na
+  pozadí běží bez vykreslování se stejným protokolem jako ta na obrazovce
+  (podepsané hello, párové klíče a klíče odesílatelů, kontrola zpráv),
+  počítají lidi a nepřečtené a po přepnutí předají zprávy; výchozí limit 8.
+  **Lišta místností** nad chatem (rozvržení `room.bar`): stav, odznak lidí a
+  nepřečtených, přepnutí klepnutím nebo `Alt`+←/→, × odpojí (na obrazovku
+  přijde nejaktivnější místnost), + připojí další na pozadí. Zpráva na
+  pozadí ukáže upozornění (klepnutí přepne) a „(n)“ v titulku. Okno
+  Místnost: zaškrtávátka u uložených připojení a *Připojit vybrané (n)*,
+  odznaky lidí a nepřečtených. Modul `rooms` (*Several rooms*) v Modules &
+  groups; Layout builder má v sekci App 10 rozvržení.
 - `npm run android:build` (debug/release, testy Javy, SHA-256 a certifikát,
   `--install`, `--upload`), `npm run android:assets`; testovací vektory z
   kódu webu a serveru (`script/android-vectors.ts`) a testy Javy, které je
@@ -87,6 +96,16 @@ zprávami přes Firebase Cloud Messaging. Na webu i v telefonu jde být ve
 - Katalog ikon: `panel-bottom`.
 
 ### Opraveno
+- Po přepnutí místnosti nebo uloženého připojení se pozdní zavření starého
+  WebSocketu počítalo jako výpadek: obnova nahradila nový socket (4001) a
+  jeho zavření spustilo další — smyčka skončila na limitu `/ws` (429).
+  Události socketu, který už neplatí, se teď ignorují.
+- Seznam příkazů (`/api/functions/commands`) se načítal znovu při každé
+  změně stavu spojení a mohl vyčerpat limit API; teď jen při změně účtu.
+- Při přepínání se místnost odcházející z obrazovky mohla v liště ukázat
+  dvakrát.
+- E2E test konzole odpovídá dialogu přístupu k modulům z 5.2 a čeká na
+  ukončení serverů (na masteru od 5.2 selhával).
 - Konzole vypisovala text „null“ (form builder, nový model, lišta tvůrce,
   chyba kompilace bez uzlu).
 - Archiv layoutů značil nové stromy starší verzí.

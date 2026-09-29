@@ -67,6 +67,21 @@ přilepit k okraji chatu:
   Když má systém zapnuté *omezení pohybu*, okno se jen ukáže a skryje, bez
   posunu.
 
+### Víc místností naráz
+Připojených může být víc místností najednou (nejvýš 8): jedna je na
+obrazovce, ostatní zůstávají připojené na pozadí a hlídají zprávy.
+- **Lišta místností** nad chatem ukazuje každou připojenou místnost: tečku
+  stavu, počet lidí a u místností na pozadí počet **nepřečtených** zpráv.
+  Klepnutím na místnost na ni přepnete i se zprávami, které mezitím přišly;
+  **×** ji odpojí, **+** připojí další (zadáte místnost a klíč).
+- **Klávesnice** — `Alt`+`←`/`→` přepíná mezi místnostmi.
+- Zpráva v místnosti na pozadí ukáže upozornění (klepnutím se na místnost
+  přepnete) a počet nepřečtených v titulku karty, např. „(2)“.
+- **Okno Místnost** (záložka *Server-enhanced*) — zaškrtněte několik
+  uložených připojení a stiskněte *Připojit vybrané*: první bude na
+  obrazovce, ostatní na pozadí.
+- Soubory se v místnosti na pozadí jen ohlásí; přijmou se, až na ni přepnete.
+
 ### Režim Light / Server-enhanced
 Volí se v dialogu *Připojit*. **Light** (výchozí) = jen přímé spojení mezi
 prohlížeči. **Server-enhanced** navíc umí Web Push upozornění, když je karta
@@ -175,6 +190,22 @@ stick to an edge of the chat:
 - Saved with your other appearance settings (and with your account). With the
   system's *reduce motion* on, it just shows and hides.
 
+### Several rooms at once
+You can stay connected to several rooms (up to 8): one is on screen, the
+others stay connected in the background and keep collecting messages.
+- **The room bar** above the chat shows each connected room: a status dot,
+  the number of people and, for background rooms, the **unread** count. Tap a
+  room to switch to it, with the messages that came meanwhile; **×**
+  disconnects it, **+** connects one more (room and key).
+- **Keyboard** — `Alt`+`←`/`→` switches between rooms.
+- A message in a background room shows a notification (tap it to switch)
+  and the unread count in the tab title, e.g. "(2)".
+- **The Room window** (*Server-enhanced* tab) — tick several saved
+  connections and press *Connect selected*: the first goes on screen, the
+  others to the background.
+- Files in a background room are only announced; they arrive once you switch
+  to it.
+
 ### Privacy & audit
 Local purge clears `localStorage`. Server purge sends `POST /api/audit/purge` with
 your device id and removes settings sync, audit log, push subs.
@@ -257,6 +288,25 @@ schweben oder an einem Rand des Chats haften:
   Reiter ist eine normale Schaltfläche (Tab, Enter).
 - Gespeichert wie die übrigen Darstellungs-Einstellungen (auch im Konto). Mit
   *Bewegung reduzieren* im System wird es nur ein- und ausgeblendet.
+
+### Mehrere Räume gleichzeitig
+Du kannst mit mehreren Räumen verbunden bleiben (bis zu 8): einer ist im
+Vordergrund, die anderen bleiben im Hintergrund verbunden und sammeln
+Nachrichten.
+- **Die Raumleiste** über dem Chat zeigt jeden verbundenen Raum: einen
+  Statuspunkt, die Personenzahl und bei Hintergrundräumen die Zahl der
+  **ungelesenen** Nachrichten. Tippe auf einen Raum, um mit den inzwischen
+  gekommenen Nachrichten zu ihm zu wechseln; **×** trennt ihn, **+** verbindet
+  einen weiteren (Raum und Schlüssel).
+- **Tastatur** — `Alt`+`←`/`→` wechselt zwischen den Räumen.
+- Eine Nachricht in einem Hintergrundraum zeigt eine Benachrichtigung
+  (antippen wechselt dorthin) und die Zahl der ungelesenen im Tab-Titel,
+  z. B. „(2)“.
+- **Das Raum-Fenster** (Reiter *Server-enhanced*) — mehrere gespeicherte
+  Verbindungen ankreuzen und *Ausgewählte verbinden* drücken: die erste kommt
+  in den Vordergrund, die anderen in den Hintergrund.
+- Dateien in einem Hintergrundraum werden nur angekündigt; sie kommen an,
+  sobald du zu ihm wechselst.
 
 ### Datenschutz
 Lokale Reinigung löscht `localStorage`. Server-Purge sendet

@@ -129,9 +129,12 @@ místnosti.
   certifikátem. `npm run android:build`; podrobnosti v
   [`docs/android-architecture.md`](docs/android-architecture.md).
 - **Víc místností a seznam lidí u okraje (6.0)** — na webu jde být ve víc
-  místnostech naráz (výběr zaškrtnutím, odznaky, chytré přepínání); seznam
-  lidí se přilepí vlevo, vpravo nebo dole a umí se schovat za úchyt
-  (rozvržení `widget.handle` v Layout builderu).
+  místnostech naráz: lišta místností nad chatem s odznaky lidí a
+  nepřečtených, přepnutí klepnutím nebo `Alt`+šipkou, místnosti na pozadí
+  se stejným protokolem a upozorněním, výběr zaškrtnutím v okně Místnost
+  (modul `rooms`, rozvržení `room.bar`). Seznam lidí se přilepí vlevo,
+  vpravo nebo dole a umí se schovat za úchyt (rozvržení `widget.handle`).
+  Viz [dokumentace › Víc místností naráz](docs/site/index.html#vic-mistnosti).
 - **Příkazy jako rozhovor (5.3)** — model má **vstupní body**: execute
   (start), **response** (odpověď na jeho zprávu), **button**, **form**,
   **error** a libovolný počet **webhooků** s vlastními URL, každý se svými
