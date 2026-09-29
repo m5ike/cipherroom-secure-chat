@@ -9,7 +9,7 @@ vykresloval kód (ověřeno porovnáním DOM starých a nových komponent ve
 svůj vlastní [Menu builder](site/index.html#menu-builder).
 
 **4.13:** rozvržením je celá aplikace — i okno Místnost, okna, dialogy a
-panely (44 rozvržení v pěti sekcích, od 4.14 i asistent AI — 45); k tomu varianty pro skupiny uživatelů a
+panely (44 rozvržení v pěti sekcích, od 4.14 i asistent AI — 45, od 6.0 i úchyt widgetu příjemců — 46); k tomu varianty pro skupiny uživatelů a
 šablony vzhledu, historie verzí s rozdíly a návratem, třícestné sloučení
 vlastního rozvržení s novým výchozím po aktualizaci aplikace, vložení HTML
 jako prvků a kontrola přístupnosti.
@@ -24,8 +24,9 @@ jako prvků a kontrola přístupnosti.
 | `message.out` | moje zpráva | — |
 | `message.sys` | systémové oznámení | — |
 | `composer` | psaní a odeslání | `recorder`, `sendOptions` |
-| `widget` | plovoucí panel příjemců | — |
+| `widget` | panel příjemců — plovoucí, nebo (6.0) ukotvený vlevo, vpravo či dole | — |
 | `widget.fab` | minimalizovaný widget (tlačítko) | — |
+| `widget.handle` | 6.0: úchyt ukotveného, automaticky skrývaného widgetu (záložka na okraji) | — |
 
 Od 4.13 dalších 36 rozvržení (`client/src/lib/layouts/{windows,room,dialogs,account,settings,tools,share,phone,connections}.ts`),
 v builderu v sekcích (`LAYOUT_GROUP`):
@@ -188,6 +189,40 @@ odpovědět / přeposlat, logo, datum, sbalování systémových zpráv) a rychl
 barvy komponent (CSS proměnné `--c-<komponenta>-…`). Rozvržení tyto texty
 používají jako hodnoty (`$headerText`, `$timeLabel`, `$placeholder`,
 `$title`, `$emptyTitle`, `$emptyBody`).
+
+## Ukotvený widget příjemců a jeho úchyt (6.0)
+
+Uživatel může widget příjemců přilepit k **levému**, **pravému** nebo
+**dolnímu** okraji chatu, nebo ho nechat volně (`Preferences.widget.dock`:
+`none | left | right | bottom`; starší `locked: true` se čte jako `right`).
+Ukotvený je buď **připnutý** (vždy vidět), nebo **automaticky skrývaný**
+(`autoHide`): panel se zasune do svého okraje a zůstane z něj jen úchyt.
+Umístění, posouvání (`transform`) a načasování drží komponenta
+`RecipientsWidget.tsx` v obalu `.recip-dock` — rozvržení kreslí jen obsah.
+
+- **`widget`** dostal hodnoty `$docked`, `$dock`, `$dockLabel`, `$dockIcon`,
+  `$dockOptions` (`.id`, `.label`, `.icon`, `.current`), `$showDockMenu`,
+  `$autoHide`, `$hidden` a akce `toggleDockMenu`, `setDock` (argument `none`,
+  `left`, `right`, `bottom`), `dockChange` (select), `togglePin`,
+  `autoHideChange` (checkbox). `$locked` a `toggleLock` zůstávají pro
+  rozvržení z doby před 6.0 (ukotví vpravo, na telefonu dole).
+- **`widget.handle`** (sekce *App*) je záložka na okraji: výchozí strom je
+  tlačítko s ikonou `users` a počtem lidí (`{$count}`). Ikonu i vzhled lze v
+  builderu změnit (vlastnost `icon` prvku Icon). Kontrakt: `$edge` (`left`,
+  `right`, `bottom`), `$count`, `$open` (použij jako `aria-expanded`),
+  `$label` (přístupný název: titulek a počet), `$panelId` (pro
+  `aria-controls`), `$title`, `$room`, `$autoRoom`; akce **`reveal`** (vysunout /
+  zasunout; klávesnicí se fokus přesune do panelu). Najetí myší, 800 ms po
+  odjetí, Escape a klik mimo řeší aplikace sama. Náhled má situace *Right
+  edge*, *Left edge*, *Bottom edge* a *Slid out*; `widget` navíc *Docked
+  right / left / at the bottom* a *Choosing the edge*.
+- **Rychlost vysouvání** nastavuje správce v záložce *Texts & behaviour* →
+  *Recipients widget — docked, auto-hide*: příznaky `widgetSlideMs` (0–1000 ms,
+  výchozí 220; 0 = bez animace) a `widgetSlideEasing` (`ease-out` výchozí,
+  `ease`, `ease-in-out`, `ease-in`, `linear` — nic jiného sanitizér
+  nepustí). Klient z nich dělá CSS proměnné `--c-widget-slide-dur` a
+  `--c-widget-slide-ease` (jen když se liší od výchozích). Při
+  `prefers-reduced-motion: reduce` se panel jen ukáže / skryje, bez posunu.
 
 ## Uložení a API
 

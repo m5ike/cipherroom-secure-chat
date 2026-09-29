@@ -15,15 +15,27 @@ export type FontSize = "sm" | "md" | "lg";
 export type ChatPattern = "grid" | "dots" | "diagonal" | "plain";
 export type ChatWidth = "sm" | "md" | "lg" | "full";
 
-/** Floating recipients widget: position, collapsed/locked state, room-broadcast
+/** 6.0: the edge of the chat area the recipients widget sticks to ("none": floating). */
+export type WidgetDock = "none" | "left" | "right" | "bottom";
+export const WIDGET_DOCKS: readonly WidgetDock[] = ["none", "left", "right", "bottom"];
+export function isWidgetDock(v: unknown): v is WidgetDock {
+  return typeof v === "string" && (WIDGET_DOCKS as readonly string[]).includes(v);
+}
+
+/** Floating recipients widget: position, collapsed/docked state, room-broadcast
  *  toggle, and its user-tunable appearance (size, opacity, colour, zoom). */
 export type WidgetState = {
   x: number;
   y: number;
   minimized: boolean;
   autoRoom: boolean;
-  /** Docked (fixed top-left) when true; floating + draggable when false. */
+  /** Docked to an edge (any) — kept in step with `dock` for older clients
+   *  that read the synced preferences; `dock` is what counts. */
   locked: boolean;
+  /** 6.0: the edge it sticks to, or "none" (floating, draggable). */
+  dock: WidgetDock;
+  /** 6.0: docked and slid into its edge behind a handle (false: pinned, always shown). */
+  autoHide: boolean;
   width: number; // px
   opacity: number; // 0.3–1
   fontScale: number; // 0.8–1.4
@@ -225,7 +237,7 @@ const DEFAULTS: Preferences = {
   chatPattern: "grid",
   chatWidth: "md",
   messageStyles: {},
-  widget: { x: 0, y: 0, minimized: false, autoRoom: true, locked: true, width: 240, opacity: 1, fontScale: 1, zoom: 1, accent: "" },
+  widget: { x: 0, y: 0, minimized: false, autoRoom: true, locked: true, dock: "right", autoHide: false, width: 240, opacity: 1, fontScale: 1, zoom: 1, accent: "" },
   showSystemInChat: false,
   flash: { enabled: true, seconds: 10, position: "top", background: "", color: "", font: "", size: 14, radius: 14, icon: true, animation: "fade" },
   chatRetention: "ephemeral",
@@ -244,17 +256,35 @@ const DEFAULTS: Preferences = {
   menuRev: 2,
 };
 
-function sanitizeWidget(raw: unknown, base: WidgetState): WidgetState {
+/**
+ * The edge a widget state is docked to. Preferences stored before 6.0 only
+ * know `locked` (docked at the top right): that is the right edge, and an
+ * unlocked widget floats.
+ */
+export function widgetDock(w: { dock?: unknown; locked?: unknown }): WidgetDock {
+  if (isWidgetDock(w.dock)) return w.dock;
+  return w.locked === false ? "none" : "right";
+}
+
+/** A change of the edge, with `locked` kept in step (older clients read it). */
+export function dockPatch(dock: WidgetDock): Pick<WidgetState, "dock" | "locked"> {
+  return { dock, locked: dock !== "none" };
+}
+
+export function sanitizeWidget(raw: unknown, base: WidgetState): WidgetState {
   const w = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const num = (v: unknown, dflt: number) => (typeof v === "number" && Number.isFinite(v) ? v : dflt);
   const clamp = (v: unknown, lo: number, hi: number, dflt: number) => Math.max(lo, Math.min(hi, num(v, dflt)));
+  // Docked (next to the menu button — 6.0: the right edge) unless the user
+  // moved it away; an edge that is not one of ours falls back the same way.
+  const dock = widgetDock(w);
   return {
     x: Math.max(-4000, Math.min(4000, num(w.x, base.x))),
     y: Math.max(-4000, Math.min(4000, num(w.y, base.y))),
     minimized: w.minimized === true,
     autoRoom: w.autoRoom === false ? false : true,
-    // Docked (next to the menu button) unless the user moved it away.
-    locked: w.locked === false ? false : true,
+    ...dockPatch(dock),
+    autoHide: w.autoHide === true,
     width: clamp(w.width, 180, 420, base.width),
     opacity: clamp(w.opacity, 0.3, 1, base.opacity),
     fontScale: clamp(w.fontScale, 0.8, 1.4, base.fontScale),

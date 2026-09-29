@@ -41,8 +41,20 @@ export const PREVIEW_VARIANTS: Readonly<Record<LayoutId, ReadonlyArray<{ id: str
     { id: "config", label: "Settings open" },
     { id: "manual", label: "Chosen recipients" },
     { id: "empty", label: "Nobody here" },
+    // 6.0
+    { id: "right", label: "Docked right" },
+    { id: "left", label: "Docked left" },
+    { id: "bottom", label: "Docked at the bottom" },
+    { id: "dockmenu", label: "Choosing the edge" },
   ],
   "widget.fab": [{ id: "floating", label: "Floating" }, { id: "docked", label: "Docked" }],
+  // 6.0: the handle of an auto-hidden docked widget
+  "widget.handle": [
+    { id: "right", label: "Right edge" },
+    { id: "left", label: "Left edge" },
+    { id: "bottom", label: "Bottom edge" },
+    { id: "open", label: "Slid out" },
+  ],
   // 4.13
   ...WINDOW_VARIANTS,
   ...ROOM_VARIANTS,

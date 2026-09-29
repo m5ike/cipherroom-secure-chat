@@ -46,6 +46,27 @@ jako součást zprávy, větší se samy pošlou po šifrovaných částech — 
 nic přepínat. Druhá strana musí být připojená (štítek nahoře ukazuje `1 P2P`).
 Velikostní strop si nastavíte v *Nastavení*.
 
+### Seznam příjemců — ukotvení a automatické skrývání
+Okno *Příjemci* (kdo dostane další zprávu) může plavat kdekoli, nebo se
+přilepit k okraji chatu:
+- **Ukotvení** — tlačítko s ikonou okraje v záhlaví okna (nebo ozubené kolo →
+  *Ukotvení*) nabídne **Volně / Vlevo / Vpravo / Dole**. Vlevo a vpravo je
+  svislý panel pod lištou, dole vodorovný pruh nad polem pro psaní (pole
+  nikdy nezakryje; dlouhý seznam se posouvá). Na telefonu je přirozenou volbou
+  **Dole**.
+- **Přetažení** — chyť záhlaví a táhni: ukotvené okno se uvolní; když ho
+  pustíš u okraje (asi 5 mm), zobrazí se přerušovaný rámeček a okno se k tomu
+  okraji přilepí.
+- **Připnout / skrývat** (ikona špendlíku, jen u ukotveného okna, nebo
+  ozubené kolo → *Automaticky skrývat*) — připnuté je vidět pořád; skrývané se
+  zasune do okraje a zůstane z něj malá záložka s počtem lidí. Najetím myší
+  nebo klepnutím se vysune, po odjetí myší (asi po vteřině), klávesou Escape
+  nebo klepnutím mimo se zase zasune — ne ale, dokud máš otevřené jeho
+  nastavení. Záložka je obyčejné tlačítko, jde i Tabulátorem a Enterem.
+- Nastavení se uloží jako ostatní vzhled (s účtem i na další zařízení).
+  Když má systém zapnuté *omezení pohybu*, okno se jen ukáže a skryje, bez
+  posunu.
+
 ### Režim Light / Server-enhanced
 Volí se v dialogu *Připojit*. **Light** (výchozí) = jen přímé spojení mezi
 prohlížeči. **Server-enhanced** navíc umí Web Push upozornění, když je karta
@@ -103,6 +124,24 @@ Top bar → palette icon → pick Motorsport Dark, Glass Light, or Terminal Secu
 ### Settings
 Language (cs/en/de), timezone, font family/size, visual effects toggle.
 
+### Recipients list — docking and auto-hide
+The *Recipients* window (who gets your next message) can float anywhere or
+stick to an edge of the chat:
+- **Dock** — the edge button in its header (or the gear → *Dock*) offers
+  **Free / Left / Right / Bottom**. Left and right are a vertical panel below
+  the top bar, bottom is a strip above the composer (it never covers it; a
+  long list scrolls). On a phone, **Bottom** is the natural choice.
+- **Drag** — grab the header: a docked window comes loose; drop it near an edge
+  and a dashed outline shows where it will dock.
+- **Pin / auto-hide** (the pin icon, docked only; or the gear → *Auto-hide*) —
+  pinned stays visible; auto-hide slides it into its edge, leaving a small tab
+  with the number of people. Hover or tap the tab to slide it out; it slides
+  back after the pointer leaves (about a second), on Escape or a click
+  outside — but not while its settings are open. The tab is a normal button
+  (Tab, Enter).
+- Saved with your other appearance settings (and with your account). With the
+  system's *reduce motion* on, it just shows and hides.
+
 ### Privacy & audit
 Local purge clears `localStorage`. Server purge sends `POST /api/audit/purge` with
 your device id and removes settings sync, audit log, push subs.
@@ -136,6 +175,26 @@ Top-Leiste → Paletten-Icon → Motorsport Dark / Glass Light / Terminal Secure
 
 ### Einstellungen
 Sprache (cs/en/de), Zeitzone, Schrift, Größe, visuelle Effekte.
+
+### Empfängerliste — andocken und automatisch ausblenden
+Das Fenster *Empfänger* (wer deine nächste Nachricht bekommt) kann frei
+schweben oder an einem Rand des Chats haften:
+- **Andocken** — die Rand-Schaltfläche in seiner Kopfzeile (oder Zahnrad →
+  *Andocken*) bietet **Frei / Links / Rechts / Unten**. Links und rechts ist es
+  eine senkrechte Leiste unter der oberen Leiste, unten ein Streifen über dem
+  Eingabefeld (das es nie verdeckt; eine lange Liste scrollt). Auf dem Handy
+  ist **Unten** die natürliche Wahl.
+- **Ziehen** — an der Kopfzeile greifen: ein angedocktes Fenster löst sich;
+  nahe einem Rand loslassen, ein gestrichelter Rahmen zeigt, wo es andockt.
+- **Anheften / ausblenden** (Stecknadel-Symbol, nur angedockt; oder Zahnrad →
+  *Automatisch ausblenden*) — angeheftet bleibt es sichtbar; sonst gleitet es
+  in seinen Rand, nur ein kleiner Reiter mit der Personenzahl bleibt. Mit der
+  Maus darüberfahren oder tippen schiebt es heraus; es gleitet zurück, wenn
+  der Zeiger es verlässt (nach etwa einer Sekunde), mit Escape oder einem
+  Klick daneben — aber nicht, solange seine Einstellungen offen sind. Der
+  Reiter ist eine normale Schaltfläche (Tab, Enter).
+- Gespeichert wie die übrigen Darstellungs-Einstellungen (auch im Konto). Mit
+  *Bewegung reduzieren* im System wird es nur ein- und ausgeblendet.
 
 ### Datenschutz
 Lokale Reinigung löscht `localStorage`. Server-Purge sendet

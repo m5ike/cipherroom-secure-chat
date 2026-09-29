@@ -1,6 +1,7 @@
-// The recipients widget as layout trees — the floating panel and its
-// minimised button — drawn by RecipientsWidget.tsx (which keeps dragging,
-// docking and the settings to itself).
+// The recipients widget as layout trees — the floating panel, its
+// minimised button and (6.0) the handle an auto-hidden docked panel leaves
+// on its edge — drawn by RecipientsWidget.tsx (which keeps dragging,
+// docking, sliding and the settings to itself).
 
 import { treeBuilder, type LNode } from "../layout-tree";
 
@@ -48,13 +49,25 @@ export function widgetTree(): LNode {
     ]),
   ]);
 
+  // 6.0: where it sits, and whether it slides into that edge.
+  const dockRow = n("label", { id: "cfg-dock", name: "Dock", attrs: { class: "recip-cfg-row" } }, [
+    n("area", { id: "cfg-dock-label", text: "{_'recipients.dock'}" }),
+    n("select", { id: "cfg-dock-select", attrs: { class: "recip-cfg-select", value: "=$dock", "data-testid": "recip-cfg-dock" }, on: { change: { action: "dockChange" } } }, [
+      n("option", { id: "cfg-dock-option", each: "$dockOptions", as: "o", key: "$o.id", attrs: { value: "{$o.id}" }, text: "{$o.label}" }),
+    ]),
+  ]);
+  const autoHideRow = n("label", { id: "cfg-autohide", name: "Auto-hide", if: "$docked", attrs: { class: "recip-cfg-row" } }, [
+    n("area", { id: "cfg-autohide-label", text: "{_'recipients.autohide'}" }),
+    n("input", { id: "cfg-autohide-input", attrs: { type: "checkbox", checked: "=$autoHide", "data-testid": "recip-cfg-autohide" }, on: { change: { action: "autoHideChange" } } }),
+  ]);
+
   return n("panel", {
     id: "widget", name: "Recipients widget", styleBind: "$appearance",
-    attrs: { class: "recip-widget{if $locked} is-locked{/if}", "data-testid": "recip-widget", role: "group", "aria-label": "{$title}" },
+    attrs: { class: "recip-widget{if $docked} is-docked is-dock-{$dock}{/if}", "data-testid": "recip-widget", role: "group", "aria-label": "{$title}" },
   }, [
+    // Dragging the head moves a floating panel, undocks a docked one, and docks it again near an edge.
     n("panel", { id: "head", name: "Head (drag)", attrs: { class: "recip-widget__head", "data-testid": "recip-drag" }, on: { pointerdown: { action: "startDrag" } } }, [
-      icon("lock", "h-4 w-4 opacity-70", {}, { id: "head-lock", if: "$locked" }),
-      icon("grip-horizontal", "h-4 w-4 opacity-60", {}, { id: "head-grip", if: "!$locked" }),
+      icon("grip-horizontal", "h-4 w-4 opacity-60", {}, { id: "head-grip" }),
       n("area", { id: "title", name: "Title", attrs: { class: "recip-widget__title" }, text: "{$title}" }),
       n("button", {
         id: "btn-config", name: "Settings",
@@ -62,17 +75,32 @@ export function widgetTree(): LNode {
         on: { click: { action: "toggleConfig" } },
       }, [icon("settings-2", "h-4 w-4", {}, { id: "btn-config-icon" })]),
       n("button", {
-        id: "btn-lock", name: "Dock",
+        id: "btn-dock", name: "Dock",
         attrs: {
-          type: "button", class: "recip-widget__min",
-          "aria-label": "{if $locked}{_'recipients.unlock'}{else}{_'recipients.lock'}{/if}", title: "{if $locked}{_'recipients.unlock'}{else}{_'recipients.lock'}{/if}",
-          "data-testid": "recip-lock",
+          type: "button", class: "recip-widget__min{if $showDockMenu} is-active{/if}",
+          "aria-label": "{_'recipients.dock'}: {$dockLabel}", title: "{_'recipients.dock'}: {$dockLabel}", "aria-expanded": "=$showDockMenu",
+          "data-testid": "recip-dock-toggle",
         },
-        on: { click: { action: "toggleLock" } },
-      }, [icon("{if $locked}lock-open{else}lock{/if}", "h-4 w-4", {}, { id: "btn-lock-icon" })]),
+        on: { click: { action: "toggleDockMenu" } },
+      }, [icon("{$dockIcon}", "h-4 w-4", {}, { id: "btn-dock-icon" })]),
+      n("button", {
+        id: "btn-pin", name: "Pin / auto-hide", if: "$docked",
+        attrs: { type: "button", class: "recip-widget__min", "aria-label": "{_'recipients.pin'}", title: "{_'recipients.pin'}", "aria-pressed": "=!$autoHide", "data-testid": "recip-pin" },
+        on: { click: { action: "togglePin" } },
+      }, [icon("{if $autoHide}pin-off{else}pin{/if}", "h-4 w-4", {}, { id: "btn-pin-icon" })]),
       n("button", { id: "btn-min", name: "Minimise", attrs: { type: "button", class: "recip-widget__min", "aria-label": "{_'recipients.minimize'}" }, on: { click: { action: "minimize" } } }, [icon("minus", "h-4 w-4", {}, { id: "btn-min-icon" })]),
     ]),
-    n("panel", { id: "config", name: "Settings", if: "$showConfig", attrs: { class: "recip-config", "data-testid": "recip-config" } }, [configRow, colorRow]),
+    n("panel", { id: "dock-menu", name: "Dock menu", if: "$showDockMenu", attrs: { class: "recip-dockmenu", role: "group", "aria-label": "{_'recipients.dock'}", "data-testid": "recip-dock-menu" } }, [
+      n("button", {
+        id: "dock-option", name: "Edge", each: "$dockOptions", as: "o", key: "$o.id",
+        attrs: { type: "button", class: "recip-dockmenu__opt{if $o.current} is-current{/if}", "aria-pressed": "=$o.current", "data-testid": "recip-dock-{$o.id}" },
+        on: { click: { action: "setDock", arg: "$o.id" } },
+      }, [
+        icon("{$o.icon}", "h-4 w-4", {}, { id: "dock-option-icon" }),
+        n("area", { id: "dock-option-label", text: "{$o.label}" }),
+      ]),
+    ]),
+    n("panel", { id: "config", name: "Settings", if: "$showConfig", attrs: { class: "recip-config", "data-testid": "recip-config" } }, [configRow, colorRow, dockRow, autoHideRow]),
     n("panel", { id: "body", name: "Body", attrs: { class: "recip-widget__body" } }, [
       n("paragraph", { id: "empty", name: "Nobody here", if: "!$hasPeers", attrs: { class: "recip-empty" }, text: "{_'recipients.nopeers'}" }),
       n("list", { id: "list", name: "People", if: "$hasPeers", attrs: { class: "recip-list" } }, [peerRow]),
@@ -103,5 +131,25 @@ export function widgetFabTree(): LNode {
   }, [
     icon("users", "h-5 w-5", {}, { id: "fab-icon" }),
     n("area", { id: "fab-count", name: "Count", attrs: { class: "recip-fab__count" }, text: "{$count}" }),
+  ]);
+}
+
+/**
+ * 6.0: the tab a docked, auto-hidden widget leaves on its edge. Hovering it
+ * (a mouse) or a tap / click / Enter slides the panel out; the component
+ * keeps the timing, Escape and the click outside to itself.
+ */
+export function widgetHandleTree(): LNode {
+  const { n, icon } = treeBuilder("h");
+  return n("button", {
+    id: "handle", name: "Handle",
+    attrs: {
+      type: "button", class: "recip-handle recip-handle--{$edge}{if $open} is-open{/if}", "data-testid": "recip-handle",
+      "aria-expanded": "=$open", "aria-controls": "{$panelId}", "aria-label": "{$label}", title: "{$label}",
+    },
+    on: { click: { action: "reveal" } },
+  }, [
+    icon("users", "h-4 w-4", {}, { id: "handle-icon" }),
+    n("area", { id: "handle-count", name: "Count", attrs: { class: "recip-handle__count" }, text: "{$count}" }),
   ]);
 }

@@ -1207,6 +1207,71 @@ ol.md-list { list-style: decimal; }
 .recip-cfg-val { min-width: 2.4rem; text-align: right; font-variant-numeric: tabular-nums; opacity: 0.75; }
 .recip-row.is-offline { opacity: 0.5; }
 .recip-row.is-offline .recip-name { font-style: italic; }
+.recip-widget__min.is-active { background: hsl(var(--accent)); }
+.recip-cfg-select { font-size: 0.72rem; padding: 0.1rem 0.35rem; border-radius: 0.4rem; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); color: inherit; }
+
+/* The edge chooser (6.0): Free / Left / Right / Bottom under the head. */
+.recip-dockmenu { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0.25rem; padding: 0.45rem 0.5rem; border-bottom: 1px solid hsl(var(--border)); background: hsl(var(--muted) / 0.5); }
+.recip-dockmenu__opt { display: flex; flex-direction: column; align-items: center; gap: 0.2rem; padding: 0.35rem 0.15rem; border-radius: 0.5rem; border: 1px solid hsl(var(--border)); font-size: 0.66rem; line-height: 1.1; }
+.recip-dockmenu__opt:hover { background: hsl(var(--accent)); }
+.recip-dockmenu__opt.is-current { border-color: hsl(var(--primary) / 0.6); background: hsl(var(--primary) / 0.12); color: hsl(var(--primary)); font-weight: 700; }
+
+/* ---------- 6.0: docked to an edge of the chat area — pinned, or slid into it behind a handle ----------
+   RecipientsWidget places the holder (below the header: --m5-dock-top, measured by App; above the
+   composer: --m5-dock-bottom, measured by the widget), scales and slides it (transform); the
+   operator's Layout builder flags set the slide (--c-widget-slide-dur / --c-widget-slide-ease). */
+.recip-dock {
+  position: fixed; z-index: 9990; display: flex; flex-direction: column; pointer-events: none;
+  max-height: calc(100vh - var(--m5-dock-top, 96px) - var(--m5-dock-bottom, 88px));
+  max-height: calc(100dvh - var(--m5-dock-top, 96px) - var(--m5-dock-bottom, 88px));
+  transition: transform var(--c-widget-slide-dur, 220ms) var(--c-widget-slide-ease, ease-out);
+}
+.recip-dock--bottom { width: min(100vw, 48rem); margin-inline: auto; max-height: min(40vh, 18rem); max-height: min(40dvh, 18rem); }
+.recip-dock__panel {
+  pointer-events: auto; display: flex; flex-direction: column; min-height: 0;
+  transition: opacity var(--c-widget-slide-dur, 220ms) var(--c-widget-slide-ease, ease-out), visibility 0s;
+}
+/* Slid in: hidden once the slide is over (the handle stays). */
+.recip-dock.is-autohide:not(.is-open) .recip-dock__panel {
+  visibility: hidden; pointer-events: none;
+  transition: opacity var(--c-widget-slide-dur, 220ms) var(--c-widget-slide-ease, ease-out), visibility 0s linear var(--c-widget-slide-dur, 220ms);
+}
+/* Into the composer it fades on the way (a side slides off the screen). */
+.recip-dock--bottom.is-autohide:not(.is-open) .recip-dock__panel { opacity: 0; }
+.recip-dock .recip-widget { position: relative; z-index: auto; max-width: none; min-height: 0; display: flex; flex-direction: column; }
+.recip-dock .recip-widget > * { flex: none; }
+.recip-dock .recip-widget__body { flex: 1 1 auto; min-height: 0; max-height: none; }
+.recip-dock--left .recip-widget { border-top-left-radius: 0; border-bottom-left-radius: 0; border-left-width: 0; }
+.recip-dock--right .recip-widget { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right-width: 0; }
+.recip-dock--bottom .recip-widget { width: 100%; }
+.recip-dock--bottom .recip-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); column-gap: 0.5rem; }
+
+/* The handle (the widget.handle layout): a tab on the outer side of the panel — on the edge while slid in. */
+.recip-dock__tab { position: absolute; pointer-events: auto; }
+.recip-dock--left .recip-dock__tab { left: 100%; top: 0.75rem; }
+.recip-dock--right .recip-dock__tab { right: 100%; top: 0.75rem; }
+.recip-dock--bottom .recip-dock__tab { bottom: 100%; left: 50%; transform: translateX(-50%); }
+.recip-handle { display: inline-flex; flex-direction: column; align-items: center; gap: 0.25rem; min-width: 1.9rem; padding: 0.55rem 0.3rem; background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); box-shadow: var(--shadow-md); font-size: 0.7rem; font-weight: 700; line-height: 1; cursor: pointer; }
+.recip-handle--left { border-radius: 0 0.65rem 0.65rem 0; }
+.recip-handle--right { border-radius: 0.65rem 0 0 0.65rem; }
+.recip-handle--bottom { flex-direction: row; padding: 0.35rem 0.8rem; border-radius: 0.65rem 0.65rem 0 0; }
+.recip-handle.is-open { opacity: 0.85; }
+.recip-handle:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 2px; }
+.recip-handle__count { font-variant-numeric: tabular-nums; }
+
+/* Dragged near an edge: where it docks when dropped. */
+.recip-drop-hint { position: fixed; z-index: 9989; pointer-events: none; display: flex; align-items: center; justify-content: center; border: 2px dashed hsl(var(--primary) / 0.75); border-radius: 0.8rem; background: hsl(var(--primary) / 0.12); color: hsl(var(--primary)); font-size: 0.72rem; font-weight: 700; text-align: center; animation: recip-hint-in 140ms ease-out; }
+.recip-drop-hint--left, .recip-drop-hint--right { top: var(--m5-dock-top, 96px); bottom: var(--m5-dock-bottom, 88px); width: 3.25rem; writing-mode: vertical-rl; }
+.recip-drop-hint--left { left: 4px; }
+.recip-drop-hint--right { right: 4px; }
+.recip-drop-hint--bottom { left: 0; right: 0; margin-inline: auto; width: min(calc(100vw - 8px), 48rem); bottom: var(--m5-dock-bottom, 88px); height: 3.25rem; }
+@keyframes recip-hint-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* Reduced motion: no slide — shown or hidden at once. */
+@media (prefers-reduced-motion: reduce) {
+  .recip-dock, .recip-dock__panel, .recip-dock.is-autohide:not(.is-open) .recip-dock__panel { transition: none; }
+  .recip-drop-hint { animation: none; }
+}
 
 /* ---------- Message info button / actions / reply / forward ---------- */
 .msg-bubble { position: relative; }

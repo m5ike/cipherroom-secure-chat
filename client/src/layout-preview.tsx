@@ -39,7 +39,7 @@ import { t, type Lang } from "./lib/i18n";
 import { linkify } from "./lib/linkify";
 import { formatBytes } from "./lib/format";
 import type { AccountSummary } from "./lib/account";
-import type { WidgetState } from "./lib/preferences";
+import { dockPatch, isWidgetDock, type WidgetDock, type WidgetState } from "./lib/preferences";
 
 type Request = {
   type: "m5-lb:render";
@@ -164,10 +164,20 @@ function PreviewComposer({ cfg, env, variant, lang }: { cfg: LayoutConfig; env: 
   });
 }
 
-function PreviewWidget({ cfg, variant, lang, fab }: { cfg: LayoutConfig; variant: string; lang: Lang; fab: boolean }) {
-  const [state, setState] = useState<WidgetState>({
-    x: 0, y: 0, minimized: fab, locked: fab ? variant === "docked" : false, autoRoom: variant !== "manual", width: 260, opacity: 1, fontScale: 1, zoom: 1, accent: "",
-  });
+/** The widget in a situation of the preview: floating, docked (6.0), minimised, or auto-hidden behind its handle. */
+function previewWidgetState(kind: "widget" | "fab" | "handle", variant: string): WidgetState {
+  const edge: WidgetDock = kind === "handle"
+    ? (isWidgetDock(variant) && variant !== "none" ? variant : "right")
+    : kind === "fab"
+      ? (variant === "docked" ? "right" : "none")
+      : variant === "dockmenu" ? "right" : isWidgetDock(variant) ? variant : "none";
+  return {
+    x: 0, y: 0, minimized: kind === "fab", ...dockPatch(edge), autoHide: kind === "handle", autoRoom: variant !== "manual", width: 260, opacity: 1, fontScale: 1, zoom: 1, accent: "",
+  };
+}
+
+function PreviewWidget({ cfg, variant, lang, kind }: { cfg: LayoutConfig; variant: string; lang: Lang; kind: "widget" | "fab" | "handle" }) {
+  const [state, setState] = useState<WidgetState>(() => previewWidgetState(kind, variant));
   const [selected, setSelected] = useState(new Set(["p1"]));
   const peers: WidgetPeer[] = variant === "empty" ? [] : [
     { id: "p1", name: "Bob", status: "open", rttMs: 38 },
@@ -194,8 +204,11 @@ function PreviewWidget({ cfg, variant, lang, fab }: { cfg: LayoutConfig; variant
       lang={lang}
       tree={layoutTree(cfg, "widget")}
       fabTree={layoutTree(cfg, "widget.fab")}
+      handleTree={layoutTree(cfg, "widget.handle")}
       blocks={layoutBlocks(cfg)}
       configOpen={variant === "config"}
+      dockMenuOpen={variant === "dockmenu"}
+      revealed={kind === "handle" && variant === "open"}
     />
   );
 }
@@ -278,8 +291,9 @@ function View({ req }: { req: Request }) {
     );
   } else if (req.layout === "composer") {
     content = <div className="flex min-h-[100dvh] flex-col justify-end"><PreviewComposer key={v} cfg={cfg} env={env} variant={v} lang={lang} /></div>;
-  } else if (req.layout === "widget" || req.layout === "widget.fab") {
-    content = <div className="min-h-[100dvh]"><PreviewWidget key={`${req.layout}:${v}`} cfg={cfg} variant={v} lang={lang} fab={req.layout === "widget.fab"} /></div>;
+  } else if (req.layout === "widget" || req.layout === "widget.fab" || req.layout === "widget.handle") {
+    const kind = req.layout === "widget.fab" ? "fab" : req.layout === "widget.handle" ? "handle" : "widget";
+    content = <div className="min-h-[100dvh]"><PreviewWidget key={`${req.layout}:${v}`} cfg={cfg} variant={v} lang={lang} kind={kind} /></div>;
   } else if (LAYOUT_GROUP[req.layout] !== "app") {
     // 4.13: windows, the Room window, dialogs and panels — drawn by their components.
     // The configuration is already resolved for this viewer (and the variant being edited).

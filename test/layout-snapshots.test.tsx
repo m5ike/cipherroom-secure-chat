@@ -48,7 +48,13 @@ describe("recipients widget layouts", () => {
     { id: "p3", name: "Cyd", status: "closed" as const },
   ];
   const props = { peers, room: "brno", selected: new Set(["p1"]), onTogglePeer: noop, onToggleAuto: noop, onSelectAll: noop, onSelectNone: noop, onPeerInfo: noop, onRoomInfo: noop, onMove: noop, onMinimize: noop, onUpdate: noop, lang: "en" as const };
-  for (const [name, st, cfg] of [["floating, manual, settings", {}, true], ["docked, everyone", { locked: true, autoRoom: true }, false], ["minimised", { minimized: true, x: 10, y: 20 }, false]] as const) {
+  // "docked, everyone" is a state stored before 6.0 (locked, no edge): the right edge.
+  for (const [name, st, cfg] of [
+    ["floating, manual, settings", {}, true],
+    ["docked, everyone", { locked: true, autoRoom: true }, false],
+    ["minimised", { minimized: true, x: 10, y: 20 }, false],
+    ["docked left, auto-hidden behind its handle", { dock: "left", locked: true, autoHide: true, autoRoom: true }, false],
+  ] as const) {
     it(name, () => {
       const r = render(<RecipientsWidget {...props} state={{ ...state, ...st }} />);
       if (cfg) fireEvent.click(r.getByTestId("recip-config-toggle"));

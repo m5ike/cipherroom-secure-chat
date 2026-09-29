@@ -248,6 +248,7 @@ export const MENU_ICONS: Record<string, IconChild[]> = {
   "corner-down-left":[["path",{"d":"M20 4v7a4 4 0 0 1-4 4H4","key":"6o5b7l"}],["path",{"d":"m9 10-5 5 5 5","key":"1kshq7"}]],
   "clipboard-copy":[["rect",{"width":"8","height":"4","x":"8","y":"2","rx":"1","ry":"1","key":"tgr4d6"}],["path",{"d":"M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2","key":"4jdomd"}],["path",{"d":"M16 4h2a2 2 0 0 1 2 2v4","key":"3hqy98"}],["path",{"d":"M21 14H11","key":"1bme5i"}],["path",{"d":"m15 10-4 4 4 4","key":"5dvupr"}]],
   "circle-dashed":[["path",{"d":"M10.1 2.182a10 10 0 0 1 3.8 0","key":"5ilxe3"}],["path",{"d":"M13.9 21.818a10 10 0 0 1-3.8 0","key":"11zvb9"}],["path",{"d":"M17.609 3.721a10 10 0 0 1 2.69 2.7","key":"1iw5b2"}],["path",{"d":"M2.182 13.9a10 10 0 0 1 0-3.8","key":"c0bmvh"}],["path",{"d":"M20.279 17.609a10 10 0 0 1-2.7 2.69","key":"1ruxm7"}],["path",{"d":"M21.818 10.1a10 10 0 0 1 0 3.8","key":"qkgqxc"}],["path",{"d":"M3.721 6.391a10 10 0 0 1 2.7-2.69","key":"1mcia2"}],["path",{"d":"M6.391 20.279a10 10 0 0 1-2.69-2.7","key":"1fvljs"}]],
+  "panel-bottom":[["rect",{"width":"18","height":"18","x":"3","y":"3","rx":"2","key":"afitv7"}],["path",{"d":"M3 15h18","key":"5xshup"}]],
 };
 
 export const MENU_ICON_NAMES: readonly string[] = Object.keys(MENU_ICONS);

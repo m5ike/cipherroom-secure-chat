@@ -1114,6 +1114,10 @@
       checkField("Full date in system messages", fl.systemFullDate, (v) => { fl.systemFullDate = v; }, { prop: "flag-sysdate" }),
       numberField("Fold system messages after (s, 0 = never)", fl.systemCollapseAfterSec, 0, 3600, 5, (v) => { fl.systemCollapseAfterSec = v ?? 0; }, { prop: "flag-collapse" }),
       numberField("…unfolded for (s)", fl.systemExpandForSec, 3, 600, 1, (v) => { fl.systemExpandForSec = v ?? 20; }, { prop: "flag-expand" })));
+    // 6.0: the docked recipients widget sliding out of / into its edge (WIDGET_SLIDE_EASINGS in layout-config.ts).
+    out.push(group("Recipients widget — docked, auto-hide",
+      numberField("Slide (ms, 0 = at once)", fl.widgetSlideMs ?? 220, 0, 1000, 10, (v) => { fl.widgetSlideMs = v ?? 220; }, { prop: "flag-slide-ms", hint: "How long the panel takes to slide out of its edge and back. Reduced motion always shows and hides it at once." }),
+      selectField("Slide easing", fl.widgetSlideEasing || "ease-out", ["ease-out", "ease", "ease-in-out", "ease-in", "linear"].map((v) => [v, v]), (v) => { fl.widgetSlideEasing = v || "ease-out"; }, { prop: "flag-slide-easing", empty: false })));
     const comp = h("div", {});
     for (const [cid, label] of COMPONENTS) {
       const st = config.styles[cid] || {};

@@ -1,7 +1,38 @@
 import { describe, it, expect } from "vitest";
 import {
-  DEFAULT_LAYOUT, LAYOUT_LIMITS, layoutCssVars, renderTemplate, sanitizeLayout, sanitizeStyle, allLayoutVarNames,
+  DEFAULT_LAYOUT, LAYOUT_LIMITS, layoutCssVars, renderTemplate, sanitizeLayout, sanitizeStyle, allLayoutVarNames, WIDGET_SLIDE_EASINGS,
 } from "../client/src/lib/layout-config";
+
+describe("the docked widget's slide (6.0 operator flags)", () => {
+  it("defaults to 220 ms, ease-out — and sets no CSS variable for the defaults", () => {
+    const l = sanitizeLayout({});
+    expect(l.flags.widgetSlideMs).toBe(220);
+    expect(l.flags.widgetSlideEasing).toBe("ease-out");
+    const vars = layoutCssVars(l);
+    expect(vars["--c-widget-slide-dur"]).toBeUndefined();
+    expect(vars["--c-widget-slide-ease"]).toBeUndefined();
+  });
+  it("clamps the duration to 0–1000 ms (whole ms) and keeps the easing to its list", () => {
+    expect(sanitizeLayout({ flags: { widgetSlideMs: 5000 } }).flags.widgetSlideMs).toBe(1000);
+    expect(sanitizeLayout({ flags: { widgetSlideMs: -20 } }).flags.widgetSlideMs).toBe(0);
+    expect(sanitizeLayout({ flags: { widgetSlideMs: 333.6 } }).flags.widgetSlideMs).toBe(334);
+    expect(sanitizeLayout({ flags: { widgetSlideMs: "300" } }).flags.widgetSlideMs).toBe(220);
+    expect(sanitizeLayout({ flags: { widgetSlideMs: Number.NaN } }).flags.widgetSlideMs).toBe(220);
+    for (const e of WIDGET_SLIDE_EASINGS) expect(sanitizeLayout({ flags: { widgetSlideEasing: e } }).flags.widgetSlideEasing).toBe(e);
+    // Anything else — a cubic-bezier, CSS that escapes, a number — falls back.
+    for (const bad of ["cubic-bezier(0,0,1,1)", "ease; background:url(x)", "steps(2)", 3, null]) {
+      expect(sanitizeLayout({ flags: { widgetSlideEasing: bad } }).flags.widgetSlideEasing).toBe("ease-out");
+    }
+  });
+  it("becomes CSS variables the widget's stylesheet reads", () => {
+    const vars = layoutCssVars(sanitizeLayout({ flags: { widgetSlideMs: 0, widgetSlideEasing: "linear" } }));
+    expect(vars["--c-widget-slide-dur"]).toBe("0ms");
+    expect(vars["--c-widget-slide-ease"]).toBe("linear");
+    expect(layoutCssVars(sanitizeLayout({ flags: { widgetSlideMs: 450 } }))["--c-widget-slide-dur"]).toBe("450ms");
+    // Cleared again when the operator goes back to the defaults.
+    expect(allLayoutVarNames()).toEqual(expect.arrayContaining(["--c-widget-slide-dur", "--c-widget-slide-ease"]));
+  });
+});
 
 describe("sanitizeStyle", () => {
   it("keeps hex colours, enum border styles and clamps numbers", () => {

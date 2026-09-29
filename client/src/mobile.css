@@ -64,6 +64,10 @@
 :root[data-input="touch"] .recip-info,
 :root[data-input="touch"] .recip-widget__min { width: 2.25rem; height: 2.25rem; }
 :root[data-input="touch"] .recip-row { min-height: 2.5rem; }
+/* 6.0: the docked widget's handle and edge chooser — big enough for a thumb. */
+:root[data-input="touch"] .recip-handle { min-width: 2.5rem; min-height: 2.75rem; justify-content: center; }
+:root[data-input="touch"] .recip-handle--bottom { min-width: 3.5rem; min-height: 2.25rem; }
+:root[data-input="touch"] .recip-dockmenu__opt { min-height: 2.75rem; justify-content: center; }
 :root[data-input="touch"] .modal-close { width: 2.75rem; height: 2.75rem; }
 
 /* ------------------------------------------------ phones */
@@ -78,6 +82,12 @@
 }
 :root[data-form="phone"] .composer-foot { margin-inline: 0.5rem; }
 :root[data-form="phone"] .recip-widget { max-width: calc(100vw - 1rem); }
+/* Docked on a phone: the bottom strip spans the width just above the composer (the widget keeps
+   --m5-dock-bottom measured, the keyboard too); a side panel leaves room for its handle. */
+:root[data-form="phone"] .recip-dock--bottom { width: 100vw; max-height: min(35vh, 15rem); max-height: min(35dvh, 15rem); }
+:root[data-form="phone"] .recip-dock--bottom .recip-widget { max-width: none; border-radius: var(--c-widget-radius, 1rem) var(--c-widget-radius, 1rem) 0 0; border-left-width: 0; border-right-width: 0; }
+:root[data-form="phone"] .recip-dock--bottom .recip-list { grid-template-columns: 1fr; }
+:root[data-form="phone"] .recip-dock:is(.recip-dock--left, .recip-dock--right) .recip-widget { max-width: calc(100vw - 3rem); }
 
 /* Typing on a phone: every pixel goes to the conversation. */
 :root[data-form="phone"][data-keyboard="open"] [data-layout-hide="focus"],

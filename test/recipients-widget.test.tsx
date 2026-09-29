@@ -42,13 +42,16 @@ function show(over: Partial<Parameters<typeof RecipientsWidget>[0]> = {}) {
 
 describe("where the widget sits", () => {
   it("docks on the right, not under the logo", () => {
+    // A state stored before 6.0 ("locked", no edge) is docked to the right edge.
     show();
-    const widget = screen.getByTestId("recip-widget") as HTMLElement;
-    expect(widget.style.right).toBe("8px");
-    expect(widget.style.left).toBe("");
-    expect(widget.style.transformOrigin).toBe("top right");
+    const dock = screen.getByTestId("recip-dock") as HTMLElement;
+    expect(dock.getAttribute("data-edge")).toBe("right");
+    expect(dock.style.right).toBe("0px");
+    expect(dock.style.left).toBe("");
+    expect(dock.style.transformOrigin).toBe("top right");
     // Below the header + status bar, so it cannot cover Disconnect.
-    expect(widget.style.top).toContain("--m5-dock-top");
+    expect(dock.style.top).toContain("--m5-dock-top");
+    expect(within(dock).getByTestId("recip-widget").className).toContain("is-dock-right");
   });
 
   it("floats at its remembered position once unlocked", () => {

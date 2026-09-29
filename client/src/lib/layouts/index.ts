@@ -4,7 +4,7 @@
 
 import { sanitizeTree, treeRev, type LNode } from "../layout-tree";
 import { messageTree } from "./message";
-import { widgetFabTree, widgetTree } from "./widget";
+import { widgetFabTree, widgetHandleTree, widgetTree } from "./widget";
 import { chatTree, composerTree, headerTree } from "./app";
 import { largeWindowTree, windowTree } from "./windows";
 import { roomTabsTree, roomTree } from "./room";
@@ -19,6 +19,8 @@ import { connectionDetailTree, connectionEditTree, connectionSettingsTree, conne
 import { aiTree } from "./ai";
 export const LAYOUT_IDS = [
   "header", "chat", "message.in", "message.out", "message.sys", "composer", "widget", "widget.fab",
+  // 6.0: the handle of the docked, auto-hidden widget
+  "widget.handle",
   // 4.13: the windows, the Room window, dialogs and panels
   "window", "window.large", "room.tabs", "room",
   "part.needSignIn", "part.signedIn", "dialog.userInfo", "dialog.messageInfo", "dialog.integrity",
@@ -41,6 +43,7 @@ export const LAYOUT_LABELS: Readonly<Record<LayoutId, string>> = {
   composer: "Composer (send panel)",
   widget: "Recipients widget",
   "widget.fab": "Recipients button (minimised)",
+  "widget.handle": "Recipients handle (docked, auto-hide)",
   window: "Window (panels, dialogs)",
   "window.large": "Large window (settings)",
   "room.tabs": "Room window — tabs",
@@ -86,7 +89,7 @@ export const LAYOUT_GROUP_LABELS: Readonly<Record<LayoutGroup, string>> = {
   app: "App", room: "Room window", windows: "Windows", dialogs: "Dialogs & parts", panels: "Panels",
 };
 export const LAYOUT_GROUP: Readonly<Record<LayoutId, LayoutGroup>> = {
-  header: "app", chat: "app", "message.in": "app", "message.out": "app", "message.sys": "app", composer: "app", widget: "app", "widget.fab": "app",
+  header: "app", chat: "app", "message.in": "app", "message.out": "app", "message.sys": "app", composer: "app", widget: "app", "widget.fab": "app", "widget.handle": "app",
   window: "windows", "window.large": "windows", "room.tabs": "room", room: "room",
   "part.needSignIn": "dialogs", "part.signedIn": "dialogs", "dialog.userInfo": "dialogs", "dialog.messageInfo": "dialogs", "dialog.integrity": "dialogs",
   "dialog.account": "panels", "panel.access": "panels", "panel.retention": "panels",
@@ -108,6 +111,7 @@ export const LAYOUT_STYLE_COMPONENT: Readonly<Record<LayoutId, string>> = {
   composer: "composer",
   widget: "widget",
   "widget.fab": "widget",
+  "widget.handle": "widget",
   window: "",
   "window.large": "",
   "room.tabs": "",
@@ -157,6 +161,7 @@ const BUILDERS: Record<LayoutId, () => LNode> = {
   composer: composerTree,
   widget: widgetTree,
   "widget.fab": widgetFabTree,
+  "widget.handle": widgetHandleTree,
   window: windowTree,
   "window.large": largeWindowTree,
   "room.tabs": roomTabsTree,

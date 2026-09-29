@@ -51,8 +51,11 @@ async function draw(layout: LayoutId, variant: string, lang: "cs" | "en" | "de")
 
 describe("windows, the Room window, dialogs and panels", () => {
   it("are all here (and nothing of the app's main screen), each situation with a way to reach it", () => {
-    expect(PARTS.length).toBe(LAYOUT_IDS.length - 8);
+    // The main screen's nine: app bar, chat, three messages, composer and the recipients widget's
+    // panel, button and (6.0) handle.
+    expect(PARTS.length).toBe(LAYOUT_IDS.length - 9);
     expect(PARTS).toContain("panel.ai");
+    expect(PARTS).not.toContain("widget.handle");
     for (const key of [...Object.keys(PREVIEW_STEPS), ...Object.keys(REACHED)]) {
       const [id, variant] = key.split(":");
       expect(PREVIEW_VARIANTS[id as LayoutId]?.map((v) => v.id), key).toContain(variant);
