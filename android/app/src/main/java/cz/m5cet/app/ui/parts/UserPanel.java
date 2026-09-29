@@ -17,6 +17,7 @@ import org.json.JSONObject;
 import java.util.HashMap;
 import java.util.Map;
 
+import cz.m5cet.app.R;
 import cz.m5cet.app.chat.RoomSession;
 import cz.m5cet.app.ui.Expr;
 import cz.m5cet.app.ui.MainActivity;
@@ -268,10 +269,10 @@ final class UserPanel extends FrameLayout implements Renderer.Slot {
             while (box.getChildCount() > list.length()) box.removeViewAt(box.getChildCount() - 1);
             for (int i = 0; i < list.length(); i++) {
                 Renderer.Bound b;
-                if (i < box.getChildCount()) b = (Renderer.Bound) box.getChildAt(i).getTag(android.R.id.content);
+                if (i < box.getChildCount()) b = (Renderer.Bound) box.getChildAt(i).getTag(R.id.m5_bound);
                 else {
                     b = a.renderer().build(tree);
-                    b.root().setTag(android.R.id.content, b);
+                    b.root().setTag(R.id.m5_bound, b);
                     box.addView(b.root(), new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
                 }
                 Map<String, Object> s = new HashMap<>();

@@ -42,6 +42,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
+import cz.m5cet.app.R;
 import cz.m5cet.app.design.Design;
 
 /**
@@ -590,8 +591,8 @@ public final class Renderer {
                         default: it = InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES;
                     }
                     if (e.getInputType() != it) e.setInputType(it);
-                    if (bind != null && e.getTag(e.getId()) == null) {
-                        e.setTag(e.getId(), bind);
+                    if (bind != null && e.getTag(R.id.m5_input_bind) == null) {
+                        e.setTag(R.id.m5_input_bind, bind);
                         Object v = r.host.form().get(bind);
                         if (v != null) e.setText(String.valueOf(v));
                         e.addTextChangedListener(new TextWatcher() {

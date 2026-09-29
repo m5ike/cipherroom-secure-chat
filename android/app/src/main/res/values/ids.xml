@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Keys for View.setTag(int, Object): only the app's own ids are allowed there. -->
+<resources>
+    <!-- A row's Renderer.Bound, kept on its root view for rebinding. -->
+    <item name="m5_bound" type="id" />
+    <!-- An input's form binding, set once when its watcher is attached. -->
+    <item name="m5_input_bind" type="id" />
+</resources>
