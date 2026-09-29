@@ -34,7 +34,7 @@ export function roomTree(): LNode {
   const { n, text, icon } = treeBuilder("rm");
 
   const savedItem = n("button", {
-    id: "room-item", name: "A saved connection", each: "$items", as: "p", key: "$p.id",
+    id: "room-item", name: "A saved connection",
     css: { "--cx-color": "{$p.color}" },
     attrs: {
       type: "button", role: "radio", "aria-checked": "=$p.checked", disabled: "=$p.disabled", class: "rd-item{if $p.live} is-live{/if}",
@@ -51,6 +51,11 @@ export function roomTree(): LNode {
       n("area", { id: "item-sub", name: "Room · name · server", attrs: { class: "rd-item__sub" }, text: "{$p.room} · {$p.user} · {$p.host}" }),
     ]),
     n("area", { id: "item-meta", attrs: { class: "rd-item__meta" } }, [
+      // 6.0: people and unread messages of a room kept connected (on screen or in the background)
+      n("area", { id: "item-badges", name: "Counts", if: "$p.users > 0 || $p.unread > 0", attrs: { class: "rd-badges" } }, [
+        n("area", { id: "item-users", name: "People", if: "$p.users > 0", attrs: { class: "rb-badge", title: "{_'rooms.bar.users'}", "data-testid": "room-item-users" } }, [icon("users", "rb-badge__icon", { "aria-hidden": "true" }, { id: "item-users-icon" }), text("{$p.users}", { id: "item-users-n" })]),
+        n("area", { id: "item-unread", name: "Unread", if: "$p.unread > 0", attrs: { class: "rb-badge rb-badge--unread", title: "{_'rooms.bar.unread'}", "data-testid": "room-item-unread" } }, [icon("message-circle", "rb-badge__icon", { "aria-hidden": "true" }, { id: "item-unread-icon" }), text("{$p.unread}", { id: "item-unread-n" })]),
+      ]),
       n("area", { id: "room-item-live", name: "Live", if: "$p.live", attrs: { class: "rd-live", "data-testid": "room-item-live" } }, [
         n("area", { id: "live-pulse", attrs: { class: "rd-live__pulse", "aria-hidden": "true" } }, []),
         text("{_'cx.active'}", { id: "live-text" }),
@@ -89,7 +94,15 @@ export function roomTree(): LNode {
         }, [icon("plus", "h-4 w-4", { "aria-hidden": "true" }, { id: "create-icon" }), text("{_'room.saved.create'}", { id: "create-text" })]),
       ]),
       n("panel", { id: "room-list", name: "Choices", attrs: { class: "rd-list", role: "radiogroup", "aria-label": "{_'room.saved.list'}", "data-testid": "room-list" } }, [
-        savedItem,
+        // 6.0: a checkbox per connection — several rooms connected at once
+        n("panel", { id: "room-row", name: "A row", each: "$items", as: "p", key: "$p.id", attrs: { class: "rd-row" } }, [
+          n("input", {
+            id: "room-multi", name: "Select for several rooms", if: "$multiOn",
+            attrs: { type: "checkbox", class: "rd-multi", checked: "=$p.multi", disabled: "=$p.live || $p.background", title: "{_'room.multi.select'}", "aria-label": "{_'room.multi.select'}: {$p.label}", "data-testid": "room-multi" },
+            on: { change: { action: "toggleMulti", arg: "$p.id" } },
+          }),
+          savedItem,
+        ]),
         n("button", {
           id: "room-item-manual", name: "Another room",
           attrs: { type: "button", role: "radio", "aria-checked": "=$selected === 'manual'", disabled: "=$locked && $selected !== 'manual'", class: "rd-item rd-item--manual", "data-testid": "room-item-manual" },
@@ -102,6 +115,15 @@ export function roomTree(): LNode {
           ]),
           n("area", { id: "manual-check", attrs: { class: "rd-item__check", "aria-hidden": "true" } }, [icon("check", "h-3.5 w-3.5", {}, { id: "manual-check-icon" })]),
         ]),
+      ]),
+      // 6.0: the checked connections at once — the first on screen, the rest in the background
+      n("panel", { id: "room-multi-bar", name: "Connect several", if: "$multiOn && $multiCount > 0", attrs: { class: "rd-actions" } }, [
+        n("button", {
+          id: "room-connect-multi", name: "Connect selected",
+          attrs: { type: "button", class: "rd-btn rd-btn--soft", "data-testid": "room-connect-multi" },
+          on: { click: { action: "connectMulti" } },
+        }, [icon("plug", "h-4 w-4", { "aria-hidden": "true" }, { id: "multi-icon" }), text("{_'room.multi.connect'} ({$multiCount})", { id: "multi-text" })]),
+        n("area", { id: "room-multi-hint", name: "Hint", attrs: { class: "rd-hint" }, text: "{_'room.multi.hint'}" }),
       ]),
     ]),
   ]);
@@ -199,7 +221,9 @@ export const ROOM_CONTRACTS: Record<"room.tabs" | "room", LayoutContract> = {
       { path: "$listed", type: "yes/no", description: "The saved connections are loaded (the vault is open)." },
       { path: "$needsSignIn", type: "yes/no", description: "Server-enhanced while signed out: nothing to connect." },
       { path: "$manual", type: "yes/no", description: "The room is typed in (Light, or “another room”)." },
-      { path: "$items", type: "list", description: "The saved connections: .id, .label, .room, .user, .host, .mode, .color, .isDefault, .checked, .disabled, .live." },
+      { path: "$items", type: "list", description: "The saved connections: .id, .label, .room, .user, .host, .mode, .color, .isDefault, .checked, .disabled, .live; 6.0: .multi (checked to connect together), .background (connected in the background), .users, .unread." },
+      { path: "$multiOn", type: "yes/no", description: "6.0: several rooms at once is available (module)." },
+      { path: "$multiCount", type: "number", description: "6.0: connections checked to connect together." },
       { path: "$selected", type: "text", description: "The chosen connection's id, or manual." },
       { path: "$fields", type: "object", description: "What is typed in: .name, .room, .passphrase." },
       { path: "$showKey", type: "yes/no", description: "The key is shown." },
@@ -209,6 +233,8 @@ export const ROOM_CONTRACTS: Record<"room.tabs" | "room", LayoutContract> = {
       { name: "submit", description: "Connect (or reconnect).", event: "submit" },
       { name: "disconnect", description: "Disconnect." },
       { name: "pick", description: "Choose a saved connection (or manual).", arg: "its id" },
+      { name: "toggleMulti", description: "6.0: check / uncheck a connection to connect together.", arg: "its id", event: "change" },
+      { name: "connectMulti", description: "6.0: connect the checked ones — the first on screen, the others in the background." },
       { name: "manage", description: "Open My connections." },
       { name: "create", description: "Create a saved connection." },
       { name: "fieldName", description: "The name typed.", event: "change" },

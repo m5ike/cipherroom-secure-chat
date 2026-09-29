@@ -105,6 +105,7 @@ export const MODULE_CATALOG: readonly ModuleDef[] = [
   { id: "android", label: "Android", description: "The Android app: enrolled devices, control messages, the design, builds, APK releases, the lock policy (console: Android).", panels: [], console: "android", rights: ANDROID_RIGHTS },
   { id: "menu", label: "Menu builder", description: "The console's menu designer (the app keeps what is published).", panels: [], console: "menu", rights: BUILDER_RIGHTS },
   { id: "nfc", label: "NFC", description: "Encrypted configurations on NFC tags (Android Chrome).", panels: ["nfc"] },
+  { id: "rooms", label: "Several rooms", description: "Keep several rooms connected at once: the room bar (unread and people counts, switching) and the Room window's checkboxes.", panels: [] },
   { id: "invites", label: "Invitations", description: "Share a room or a saved connection with a link and a code.", panels: [] },
   { id: "connections", label: "Saved connections", description: "Rooms saved in the account (Server-enhanced).", panels: ["connections"] },
   { id: "notifications", label: "Notifications", description: "Local notifications and web push.", panels: ["notifications"] },

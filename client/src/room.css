@@ -220,3 +220,37 @@
 .sc-create { width: 100%; min-height: 2.9rem; }
 .sc-done { width: 100%; }
 .sc-error { font-size: 0.78rem; color: hsl(var(--destructive)); }
+
+/* ===================================================== 6.0: the room bar */
+.rb-bar { display: flex; align-items: center; gap: 6px; padding: 6px 10px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid hsl(var(--border)); background: hsl(var(--card) / 0.7); backdrop-filter: blur(8px); }
+.rb-bar::-webkit-scrollbar { display: none; }
+.rb-chip { display: inline-flex; align-items: stretch; flex: none; max-width: 240px; border: 1px solid hsl(var(--border)); border-radius: 999px; background: hsl(var(--background)); transition: border-color .15s, background-color .15s; }
+.rb-chip.is-active { border-color: hsl(var(--primary)); background: hsl(var(--primary) / 0.1); }
+.rb-chip.has-unread { border-color: hsl(var(--primary) / 0.6); }
+.rb-chip__main { display: inline-flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 4px 4px 10px; font-size: 13px; font-weight: 600; color: hsl(var(--foreground)); background: none; border: 0; cursor: pointer; border-radius: 999px 0 0 999px; }
+.rb-chip.is-active .rb-chip__main { color: hsl(var(--primary)); }
+.rb-chip__main:focus-visible, .rb-chip__close:focus-visible, .rb-add:focus-visible { outline: 2px solid hsl(var(--ring)); outline-offset: 1px; }
+.rb-chip__close { display: inline-grid; place-items: center; width: 26px; color: hsl(var(--muted-foreground)); background: none; border: 0; cursor: pointer; border-radius: 0 999px 999px 0; }
+.rb-chip__close:hover { color: hsl(var(--destructive)); }
+.rb-label { min-width: 0; }
+.rb-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: hsl(var(--muted-foreground)); }
+.rb-dot--joined { background: #16a34a; }
+.rb-dot--connecting, .rb-dot--deriving { background: #d97706; animation: rb-pulse 1.2s ease-in-out infinite; }
+.rb-dot--mismatch { background: hsl(var(--destructive)); }
+@keyframes rb-pulse { 50% { opacity: .35; } }
+.rb-badge { display: inline-flex; align-items: center; gap: 3px; padding: 1px 6px; border-radius: 999px; font-size: 11px; font-weight: 700; background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); flex: none; }
+.rb-badge--unread { background: hsl(var(--primary)); color: hsl(var(--primary-foreground)); animation: rb-pop .24s ease-out; }
+@keyframes rb-pop { from { transform: scale(.6); } to { transform: scale(1); } }
+.rb-badge__icon { width: 11px; height: 11px; }
+.rb-add { display: inline-grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; border: 1px dashed hsl(var(--border)); background: none; color: hsl(var(--muted-foreground)); cursor: pointer; }
+.rb-add:hover { color: hsl(var(--primary)); border-color: hsl(var(--primary)); }
+.rb-form { display: inline-flex; gap: 6px; align-items: center; flex: none; }
+.rb-input { width: 130px; padding: 5px 10px; border-radius: 999px; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); color: hsl(var(--foreground)); font-size: 13px; }
+.rb-btn { padding: 5px 12px; border-radius: 999px; border: 1px solid hsl(var(--border)); background: none; color: hsl(var(--foreground)); font-size: 13px; cursor: pointer; }
+.rb-btn--primary { background: hsl(var(--primary)); border-color: hsl(var(--primary)); color: hsl(var(--primary-foreground)); }
+.rb-note { font-size: 12px; color: hsl(var(--muted-foreground)); flex: none; }
+.rd-row { display: flex; align-items: stretch; gap: 6px; }
+.rd-row > .rd-item { flex: 1 1 auto; min-width: 0; }
+.rd-multi { flex: none; width: 18px; height: 18px; margin: auto 2px; accent-color: hsl(var(--primary)); cursor: pointer; }
+.rd-badges { display: inline-flex; gap: 4px; }
+@media (prefers-reduced-motion: reduce) { .rb-dot--connecting, .rb-dot--deriving, .rb-badge--unread { animation: none; } }

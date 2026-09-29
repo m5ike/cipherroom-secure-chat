@@ -12,7 +12,7 @@
 //     /api surface in cipherroom-api.ts. The server never sees plaintext.
 
 import { LogOut } from "lucide-react";
-import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { detectCapabilities } from "./lib/capabilities";
 import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURITY, type Preferences, type WidgetState } from "./lib/preferences";
 import { linkify, tagsIn } from "./lib/linkify";
@@ -112,6 +112,8 @@ import { DEFAULT_COMPOSER, effectiveAppearance, serverAllowed, signalingUrl } fr
 import { fetchClientConfig, loadCachedClientConfig } from "./lib/client-config-client";
 import { SimpleModal } from "./components/SimpleModal";
 import { RoomDialog, RoomTabs, type RoomTab, type RoomTarget } from "./components/RoomDialog";
+import { RoomBar, type RoomBarItem } from "./components/RoomBar";
+import { createRoomHub, roomKeyOf, type HubTarget, type RoomHub } from "./lib/room-hub";
 import { cleanUsername, sessionUsername } from "./lib/username";
 import { installNavigationGuard, releaseNavigationGuard, type BlockedBy } from "./lib/nav-guard";
 import { moduleAllowed, moduleOfPanel } from "./lib/modules";
@@ -755,6 +757,15 @@ function ChatApp() {
   }
 
   const openPeerCount = useMemo(() => peers.filter((peer) => peer.status === "open").length, [peers]);
+  // 6.0: several rooms at once — the others run headless in the hub
+  // (lib/room-hub.ts); messages a room collected there come with it when it
+  // is put on screen (carryRef, merged in doConnect).
+  const hubRef = useRef<RoomHub | null>(null);
+  if (!hubRef.current) hubRef.current = createRoomHub(wsUrl, () => freshRtcConfig());
+  const hub = hubRef.current;
+  const hubRooms = useSyncExternalStore(hub.subscribe, hub.list, hub.list);
+  const carryRef = useRef(new Map<string, ChatMessage[]>());
+  const [multiSel, setMultiSel] = useState<Set<string>>(() => new Set());
   const audioPeerCount = useMemo(
     () => peers.filter((peer) => peer.audio === "live" || peer.audio === "muted").length,
     [peers],
@@ -1498,6 +1509,139 @@ function ChatApp() {
     setRoomTabPick(tab);
     // Signed out, the Server-enhanced tab only shows where to sign in.
     if (prefs.mode !== tab && (tab === "light" || account)) setPrefs({ mode: tab });
+  }
+
+  /* ------------------------------------------ 6.0: several rooms at once */
+
+  /** The room on screen as the hub would keep it (null when there is none). */
+  function currentHubTarget(): HubTarget | null {
+    const room = roomRef.current;
+    const pass = passphraseRef.current;
+    if (!room || !pass || !intentRef.current) return null;
+    const server = activeServerRef.current || "";
+    const profile = activeProfileRef.current;
+    return { key: roomKeyOf(room, server), room, label: profile?.label ?? room, name: nameRef.current || name, passphrase: pass, server, profileId: profile?.id };
+  }
+
+  /** The hub's key of a saved connection that runs in the background. */
+  function hubKeyOfProfile(id: string): string | null {
+    return hubRooms.find((r) => r.profileId === id)?.key ?? null;
+  }
+
+  /** Smart switching: the room chosen comes on screen with what it collected; the one there goes to the background. */
+  async function switchRoom(key: string) {
+    const current = currentHubTarget();
+    if (current?.key === key) return;
+    const taken = hub.take(key);
+    if (!taken) return;
+    const { target, messages: collected } = taken;
+    if (collected.length) carryRef.current.set(target.room, collected);
+    disconnect(false);
+    if (current) hub.add(current);
+    setNotice(tf(lang, "rooms.switched", { room: target.label }));
+    const store = connectionsRef.current;
+    if (target.profileId && store && findProfile(store.get(), target.profileId)) {
+      await connectProfile(target.profileId, { auto: true });
+      return;
+    }
+    activeProfileRef.current = null;
+    setActiveProfileId(null);
+    activeServerRef.current = target.server ?? "";
+    setName(target.name);
+    setRoomInput(target.room);
+    setPassphrase(target.passphrase);
+    await startSession(target.name, target.room, target.passphrase);
+  }
+  const switchRoomRef = useRef(switchRoom);
+  switchRoomRef.current = switchRoom;
+
+  // A message in a background room: a notification that brings the room on screen.
+  useEffect(() => hub.onMessage((e) => {
+    if (!notificationsEnabledRef.current || typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    try {
+      const note = new Notification(tf(lang, "rooms.notify.title", { room: e.label, name: e.message.senderName }), { body: e.message.flags?.sealed ? "🔒" : e.message.text || "📎", tag: `m5cet-room-${e.key}` });
+      note.onclick = () => { window.focus(); note.close(); void switchRoomRef.current(e.key); };
+    } catch { /* not allowed here */ }
+  }), [hub, lang]);
+  // Unread elsewhere in the tab's title: "(3) M5cet".
+  const unreadElsewhere = hubRooms.reduce((n, r) => n + r.unread, 0);
+  useEffect(() => {
+    const base = document.title.replace(/^\(\d+\) /, "");
+    document.title = unreadElsewhere > 0 ? `(${unreadElsewhere}) ${base}` : base;
+  }, [unreadElsewhere]);
+  // Alt+← / Alt+→ move between the connected rooms.
+  useEffect(() => {
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+      const keys = [currentHubTarget()?.key, ...hub.list().map((r) => r.key)].filter((k): k is string => Boolean(k));
+      if (keys.length < 2) return;
+      e.preventDefault();
+      void switchRoomRef.current(e.key === "ArrowRight" ? keys[1] : keys[keys.length - 1]);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hub]);
+  useEffect(() => () => hub.clear(), [hub]);
+
+  /** The room bar's chips: the room on screen first, then the background ones. Mid-switch the
+   *  room leaving the screen is briefly in both places: it shows once (React needs unique keys). */
+  function roomBarItems(): RoomBarItem[] {
+    const onScreen: RoomBarItem[] = desired === "connected" && room
+      ? [{ key: roomKeyOf(room, activeServerRef.current || ""), label: activeProfileRef.current?.label ?? room, users: status === "joined" ? openPeerCount + 1 : 0, unread: 0, active: true, status }]
+      : [];
+    const seen = new Set(onScreen.map((r) => r.key));
+    return [
+      ...onScreen,
+      ...hubRooms.filter((r) => !seen.has(r.key)).map((r): RoomBarItem => ({ key: r.key, label: r.label, users: r.users, unread: r.unread, active: false, status: r.status })),
+    ];
+  }
+
+  /** × on a room: a background room just goes; the room on screen gives its place to the most recently active one. */
+  async function closeRoom(key: string) {
+    if (currentHubTarget()?.key !== key) { hub.remove(key); return; }
+    userDisconnect();
+    const next = hub.list()[0];
+    if (next) {
+      setNotice(tf(lang, "rooms.promoted", { room: next.label }));
+      await switchRoom(next.key);
+    }
+  }
+
+  /** + in the room bar: one more room, in the background (or on screen when none is). */
+  async function addRoom(roomName: string, pass: string) {
+    const room = normalizeRoom(roomName);
+    const server = activeServerRef.current || "";
+    const who = nameRef.current || name || prefs.name;
+    if (!currentHubTarget()) {
+      setName(who);
+      setRoomInput(room);
+      setPassphrase(pass);
+      await startSession(who, room, pass);
+      return;
+    }
+    const target: HubTarget = { key: roomKeyOf(room, server), room, label: roomName.trim() || room, name: who, passphrase: pass, server };
+    if (target.key === currentHubTarget()?.key) return;
+    if (!hub.add(target)) { setNotice(t(lang, "rooms.bar.full")); return; }
+    setNotice(tf(lang, "rooms.background", { room: target.label }));
+  }
+
+  /** The Room window's checked connections: the first on screen (unless one is), the others in the background. */
+  async function connectSelected() {
+    const store = connectionsRef.current;
+    if (!store) return;
+    const profiles = [...multiSel].map((id) => findProfile(store.get(), id)).filter((p): p is ConnectionProfile => Boolean(p));
+    setMultiSel(new Set());
+    if (!profiles.length) return;
+    const onScreen = currentHubTarget();
+    const [first, ...rest] = onScreen ? [null, ...profiles] : profiles;
+    for (const p of rest) {
+      if (!p || p.id === activeProfileRef.current?.id) continue;
+      if (!serverAllowed(clientConfig.connections, p.server)) continue;
+      hub.add({ key: roomKeyOf(p.room, p.server ?? ""), room: p.room, label: p.label, name: p.userName || nameRef.current || name, passphrase: p.passphrase, server: p.server ?? "", profileId: p.id });
+    }
+    if (first) await connectProfile(first.id);
+    else setActivePanel(null);
   }
 
   /** Connect in the Room window: the saved connection picked, or the room typed in. */
@@ -2467,6 +2611,12 @@ function ChatApp() {
         systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
       }
     }
+    // 6.0: what this room collected while it ran in the background.
+    const carried = carryRef.current.get(nextRoom);
+    if (carried?.length) {
+      carryRef.current.delete(nextRoom);
+      setMessages((cur) => mergeMessages(cur, carried));
+    }
     setPeers([]);
     setAwayPeers([]);
     // Compute the deterministic room-key fingerprint (DPA anchor). We
@@ -2489,6 +2639,8 @@ function ChatApp() {
     attachStorageSocket(onHomeServer() ? socket : null);
 
     socket.onopen = () => {
+      // Replaced before it opened (a quick switch): not ours any more.
+      if (socketRef.current !== socket) { try { socket.close(); } catch { /* closing */ } return; }
       logConn("open", reconnectAttemptsRef.current + 1);
       reconnectAttemptsRef.current = 0;
       // A signed-in user with server-side history joins with their account
@@ -2525,7 +2677,13 @@ function ChatApp() {
   }
 
   function wireSocketHandlers(socket: WebSocket) {
+    // 6.0: a socket that is no longer the current one (a switch of rooms or
+    // saved connections closes it while the next one opens) is ignored: its
+    // late close used to count as a drop and start a reconnect that replaced
+    // the new connection (4001), whose close started the next one — a loop.
+    const stale = () => socketRef.current !== socket;
     socket.onmessage = async (event) => {
+      if (stale()) return;
       if (event.data instanceof ArrayBuffer) {
         // A relayed file chunk in binary form (the only binary frame).
         const chunk = frameFromBinary(event.data);
@@ -2796,6 +2954,7 @@ function ChatApp() {
       }
     };
     socket.onclose = () => {
+      if (stale()) return;
       stopHeartbeat();
       // Two reasons the socket closes today:
       //   1. The user explicitly disconnected → clientStoppedRef.current is true.
@@ -2821,6 +2980,7 @@ function ChatApp() {
       }
     };
     socket.onerror = (event) => {
+      if (stale()) return;
       // Browsers fire onerror immediately before onclose. Keep the user
       // informed without triggering a manual disconnect — scheduleReconnect
       // is called from onclose if intentRef is true.
@@ -3610,9 +3770,14 @@ function ChatApp() {
   }
 
   // The chat commands this user may run ("/keyword"): fetched when signed in
-  // or connected changes, refreshed as the operator adds models.
+  // or connected changes, refreshed as the operator adds models. 6.0: only a
+  // new account forces it — a connection that flaps (connecting, offline,
+  // joined…) no longer asks the server on every step (at most every 10 s).
+  const commandsAccountRef = useRef<unknown>(undefined);
   useEffect(() => {
-    void refreshCommands(true);
+    const accountChanged = commandsAccountRef.current !== account;
+    commandsAccountRef.current = account;
+    void refreshCommands(accountChanged);
     // 5.2: refreshed every minute and when the tab comes back, so new models show up.
     const timer = window.setInterval(() => void refreshCommands(false), 60_000);
     const onVisible = () => { if (document.visibilityState === "visible") void refreshCommands(false); };
@@ -4188,6 +4353,7 @@ function ChatApp() {
   async function clearAndQuit() {
     if (!window.confirm(t(lang, "clear.confirm"))) return;
     setNotice(t(lang, "clear.working"));
+    hub.clear();
     disconnect(false);
     await sessionCacheRef.current.clear().catch(() => undefined);
     await historyRef.current.clear().catch(() => undefined);
@@ -4301,6 +4467,18 @@ function ChatApp() {
           ),
         },
       })}
+
+      {/* 6.0: the rooms kept connected at once (layout "room.bar") */}
+      {moduleOn("rooms") && (hubRooms.length > 0 || (desired === "connected" && room)) ? (
+        <RoomBar
+          lang={lang}
+          rooms={roomBarItems()}
+          canAdd={hubRooms.length < hub.limit}
+          onSwitch={(key) => void switchRoom(key)}
+          onClose={(key) => void closeRoom(key)}
+          onAdd={(r, p) => void addRoom(r, p)}
+        />
+      ) : null}
 
       {renderLayout(layoutTree(layout, "chat", layoutCtx), {
         ...layoutEnvBase,
@@ -4728,12 +4906,27 @@ function ChatApp() {
               state: cxState,
               activeId: activeProfileId,
             }}
-            onConnect={(target) => void connectRoomTarget(target)}
+            onConnect={(target) => {
+              // A connection running in the background comes on screen (smart switching).
+              const bg = target.kind === "profile" ? hubKeyOfProfile(target.id) : null;
+              void (bg ? switchRoom(bg) : connectRoomTarget(target));
+            }}
             onReconnect={() => void reconnectViaButtons()}
             onDisconnect={() => userDisconnect()}
             onManage={() => setManageFromRoom("list")}
             onCreate={() => setManageFromRoom("new")}
             onSignIn={() => setActivePanel("connection")}
+            multi={moduleOn("rooms") ? {
+              on: true,
+              selected: multiSel,
+              background: new Set(hubRooms.map((r) => r.profileId).filter((x): x is string => Boolean(x))),
+              counts: Object.fromEntries([
+                ...hubRooms.filter((r) => r.profileId).map((r) => [r.profileId as string, { users: r.users, unread: r.unread }] as const),
+                ...(activeProfileId && status === "joined" ? [[activeProfileId, { users: openPeerCount + 1, unread: 0 }] as const] : []),
+              ]),
+              onToggle: (id) => setMultiSel((cur) => { const next = new Set(cur); if (next.has(id)) next.delete(id); else next.add(id); return next; }),
+              onConnect: () => void connectSelected(),
+            } : undefined}
             share={moduleOn("invites") ? (
               <ShareSection
                 lang={lang}

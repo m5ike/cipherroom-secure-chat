@@ -29,6 +29,7 @@ import { DEFAULT_LAYOUT, layoutBlocks, layoutTree, renderTemplate, sanitizeLayou
 import { applyLayoutStyles } from "./lib/layout-client";
 import { isLayoutId, LAYOUT_GROUP, LAYOUT_IDS, type LayoutId } from "./lib/layouts";
 import { LayoutProvider } from "./components/LayoutProvider";
+import { RoomBar, type RoomBarItem } from "./components/RoomBar";
 import { AppPart, isDriving } from "./layout-preview-parts";
 import { checkDom, checkTree, type A11yIssue } from "./lib/layout-a11y";
 import { walkTree } from "./lib/layout-tree";
@@ -291,6 +292,27 @@ function View({ req }: { req: Request }) {
     );
   } else if (req.layout === "composer") {
     content = <div className="flex min-h-[100dvh] flex-col justify-end"><PreviewComposer key={v} cfg={cfg} env={env} variant={v} lang={lang} /></div>;
+  } else if (req.layout === "room.bar") {
+    // 6.0: the rooms kept connected at once.
+    const rooms: RoomBarItem[] = v === "one"
+      ? [{ key: "local|tym-brno", label: "Tým Brno", users: 3, unread: 0, active: true, status: "joined" }]
+      : v === "states"
+        ? [
+          { key: "local|tym-brno", label: "Tým Brno", users: 3, unread: 0, active: true, status: "joined" },
+          { key: "local|rodina", label: "Rodina", users: 0, unread: 0, active: false, status: "connecting" },
+          { key: "local|projekt-x", label: "Projekt X", users: 0, unread: 2, active: false, status: "offline" },
+          { key: "local|jiny-klic", label: "Jiný klíč", users: 1, unread: 0, active: false, status: "mismatch" },
+        ]
+        : [
+          { key: "local|tym-brno", label: "Tým Brno", users: 3, unread: 0, active: true, status: "joined" },
+          { key: "local|rodina", label: "Rodina", users: 4, unread: 7, active: false, status: "joined" },
+          { key: "local|projekt-x", label: "Projekt X", users: 2, unread: 0, active: false, status: "joined" },
+        ];
+    content = (
+      <LayoutProvider config={cfg} ctx={NO_CTX}>
+        <div className="chat-surface min-h-[100dvh]"><RoomBar key={v} lang={lang} rooms={rooms} canAdd adding={v === "adding"} onSwitch={() => undefined} onClose={() => undefined} onAdd={() => undefined} /></div>
+      </LayoutProvider>
+    );
   } else if (req.layout === "widget" || req.layout === "widget.fab" || req.layout === "widget.handle") {
     const kind = req.layout === "widget.fab" ? "fab" : req.layout === "widget.handle" ? "handle" : "widget";
     content = <div className="min-h-[100dvh]"><PreviewWidget key={`${req.layout}:${v}`} cfg={cfg} variant={v} lang={lang} kind={kind} /></div>;

@@ -63,9 +63,15 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await browser?.close().catch(() => undefined);
-  main?.kill("SIGTERM");
-  admin?.kill("SIGTERM");
-  rmSync(dataDir, { recursive: true, force: true });
+  // The servers still write their data while they stop: remove it once they are gone.
+  const gone = (p: ChildProcess | null) => new Promise<void>((resolve) => {
+    if (!p || p.exitCode !== null || p.signalCode !== null) { resolve(); return; }
+    p.once("exit", () => resolve());
+    p.kill("SIGTERM");
+    setTimeout(resolve, 5_000);
+  });
+  await Promise.all([gone(main), gone(admin)]);
+  rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 });
 
 async function shot(name: string) {
@@ -281,19 +287,27 @@ describe("operator console", () => {
     await go("modules");
     await expect.poll(() => page.locator("[data-module-on]").count()).toBeGreaterThan(8);
     await page.click("#groupAdd");
-    await page.fill('[data-group-id="0"]', "staff");
-    await page.fill('[data-group-label="0"]', "Staff");
-    await page.fill('[data-group-members="0"]', "bystry-sokol-7k3q");
+    // The tool modules' main groups (mod-<id>, 5.2) come first: the new row is the last one.
+    await page.locator("[data-group-id]").last().fill("staff");
+    await page.locator("[data-group-label]").last().fill("Staff");
+    await page.locator("[data-group-members]").last().fill("bystry-sokol-7k3q");
     await page.click("#groupsForm button[type=submit]");
     await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Groups saved/);
     await page.uncheck('[data-module-on="ai"]');
-    await page.check('[data-module-group="telephony"][value="staff"]');
     await page.click("#modulesForm button[type=submit]");
     await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/Modules saved/);
+    // Telephony for the staff group: its access dialog (5.2).
+    await page.click('tr[data-module="telephony"] button[data-read]');
+    await page.locator('input[name="da-telephony"][value="deny"]').check();
+    await page.locator('.chip-check input[value="staff"]').check();
+    await page.locator(".md-actions .btn--primary").click();
+    await expect.poll(() => page.locator("#toasts").innerText()).toMatch(/access saved/);
     const cfg = (await (await fetch(`${MAIN}/api/client-config`)).json()).config;
     expect(cfg.modules.ai).toMatchObject({ enabled: false });
-    expect(cfg.modules.telephony).toMatchObject({ enabled: true, groups: ["staff"] });
-    expect(cfg.groups).toEqual([{ id: "staff", label: "Staff", members: [] }]);
+    expect(cfg.modules.telephony).toMatchObject({ enabled: true, defaultAccess: "deny", groups: ["staff"] });
+    expect(cfg.groups).toContainEqual({ id: "staff", label: "Staff", members: [] });
+    // Members stay on the server, whichever group.
+    for (const g of cfg.groups) expect(g.members).toEqual([]);
     // The server refuses what a module switched off serves.
     const ai = await fetch(`${MAIN}/api/ai/complete`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     expect(ai.status).toBe(403);
@@ -632,7 +646,7 @@ describe("operator console", () => {
     await page.locator("#toasts").evaluate((el) => el.replaceChildren());
     const frame = page.frameLocator("#lbFrame");
     // The sections: the app's main screen first.
-    await expect.poll(async () => (await page.locator("#lbSections .lb-section").allInnerTexts()).map((x) => x.replace(/\s+/g, ""))).toEqual(["App8", "Roomwindow2", "Windows2", "Dialogs&parts9", "Panels24"]);
+    await expect.poll(async () => (await page.locator("#lbSections .lb-section").allInnerTexts()).map((x) => x.replace(/\s+/g, ""))).toEqual(["App10", "Roomwindow2", "Windows2", "Dialogs&parts9", "Panels24"]);
     expect(await page.locator('#lbTabs [data-layout="panel.connections"]').count()).toBe(0);
 
     // The Room window: drawn by RoomDialog in the preview, in its situations.

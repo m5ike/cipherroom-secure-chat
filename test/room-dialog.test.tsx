@@ -181,3 +181,52 @@ describe("stacked dialogs", () => {
     expect(screen.queryByRole("heading", { name: "Room" })).toBeNull();
   });
 });
+
+// 6.0: several rooms at once — the saved connections get checkboxes, the
+// checked ones connect together, a room in the background shows its counts
+// and picking it brings it on screen.
+describe("Room window: several rooms at once", () => {
+  const ids = () => {
+    const state = stateWith("alpha", "beta", "gamma");
+    const of = (room: string) => state.profiles.find((x) => x.room === room)!.id;
+    return { state, alpha: of("alpha"), beta: of("beta"), gamma: of("gamma") };
+  };
+  const multi = (over: Partial<NonNullable<RoomDialogProps["multi"]>> = {}): NonNullable<RoomDialogProps["multi"]> => ({
+    on: true, selected: new Set(), background: new Set(), counts: {}, onToggle: vi.fn(), onConnect: vi.fn(), ...over,
+  });
+
+  it("no checkboxes unless the module is on", () => {
+    const { state } = ids();
+    render(<RoomDialog {...props({ saved: { enabled: true, signedIn: true, ready: true, state, activeId: null }, multi: multi({ on: false }) })} />);
+    expect(screen.queryAllByTestId("room-multi")).toHaveLength(0);
+    expect(screen.queryByTestId("room-connect-multi")).toBeNull();
+  });
+
+  it("checking connections offers to connect them together", () => {
+    const { state, alpha, gamma } = ids();
+    const m = multi({ selected: new Set([alpha, gamma]) });
+    render(<RoomDialog {...props({ saved: { enabled: true, signedIn: true, ready: true, state, activeId: null }, multi: m })} />);
+    const boxes = screen.getAllByTestId("room-multi") as HTMLInputElement[];
+    expect(boxes).toHaveLength(3);
+    expect(boxes.filter((b) => b.checked)).toHaveLength(2);
+    fireEvent.click(boxes.find((b) => !b.checked)!);
+    expect(m.onToggle).toHaveBeenCalledTimes(1);
+    const connect = screen.getByTestId("room-connect-multi");
+    expect(connect.textContent).toContain("(2)");
+    fireEvent.click(connect);
+    expect(m.onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("a room in the background: its counts, no checkbox, and picking it switches to it", () => {
+    const { state, beta } = ids();
+    const p = props({ saved: { enabled: true, signedIn: true, ready: true, state, activeId: null }, multi: multi({ background: new Set([beta]), counts: { [beta]: { users: 3, unread: 5 } } }) });
+    render(<RoomDialog {...p} />);
+    const row = itemFor("BETA");
+    expect(within(row).getByTestId("room-item-users").textContent).toContain("3");
+    expect(within(row).getByTestId("room-item-unread").textContent).toContain("5");
+    const boxes = screen.getAllByTestId("room-multi") as HTMLInputElement[];
+    expect(boxes.filter((b) => b.disabled)).toHaveLength(1);
+    fireEvent.click(row);
+    expect(p.onConnect).toHaveBeenCalledWith({ kind: "profile", id: beta });
+  });
+});

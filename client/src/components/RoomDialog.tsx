@@ -84,6 +84,16 @@ export type RoomDialogProps = {
   onSignIn: () => void;
   /** Share this room — the always-visible part below the buttons. */
   share: ReactNode;
+  /** 6.0: several rooms at once — which connections are checked, which run
+   *  in the background, their people and unread counts. */
+  multi?: {
+    on: boolean;
+    selected: ReadonlySet<string>;
+    background: ReadonlySet<string>;
+    counts: Readonly<Record<string, { users: number; unread: number }>>;
+    onToggle: (id: string) => void;
+    onConnect: () => void;
+  };
 };
 
 /** The connection a fresh dialog points at: in use, default, last used, first. */
@@ -139,13 +149,20 @@ export function RoomDialog(props: RoomDialogProps) {
   // The saved connections: the default first, then the most recently used.
   const defaultId = saved.state.settings.defaultId;
   const ordered = useMemo(() => [...profiles].sort((a, b) => Number(b.id === defaultId) - Number(a.id === defaultId) || b.lastUsedAt - a.lastUsedAt), [profiles, defaultId]);
+  const multi = props.multi;
   const items = ordered.map((p) => {
     const checked = selected === p.id;
+    const background = Boolean(multi?.background.has(p.id));
+    const counts = multi?.counts[p.id];
     return {
       id: p.id, label: p.label, room: p.room, user: p.userName || "—", host: p.server ? new URL(p.server).host : t(lang, "cx.thisServer"),
-      mode: p.mode, color: p.color ?? "", isDefault: defaultId === p.id, checked, disabled: locked && !checked, live: locked && checked && saved.activeId === p.id,
+      mode: p.mode, color: p.color ?? "", isDefault: defaultId === p.id, checked,
+      // A room kept in the background can still be picked: connecting brings it on screen.
+      disabled: locked && !checked && !background, live: locked && checked && saved.activeId === p.id,
+      multi: Boolean(multi?.selected.has(p.id)), background, users: counts?.users ?? 0, unread: counts?.unread ?? 0,
     };
   });
+  const multiCount = multi ? items.filter((i) => i.multi && !i.live && !i.background).length : 0;
   // The key shown or not: back to hidden whenever the fields go away.
   const [showKey, setShowKey] = useState(false);
   useEffect(() => { if (!manual) setShowKey(false); }, [manual]);
@@ -156,11 +173,18 @@ export function RoomDialog(props: RoomDialogProps) {
     data: {
       tab, locked, joined, busy, signedIn: saved.signedIn, savedEnabled: saved.enabled, listed, needsSignIn, manual,
       items, selected, fields: props.fields, showKey, connectLabel,
+      multiOn: Boolean(multi?.on) && listed && tab === "server", multiCount,
     },
     actions: {
       submit: (event) => submit(event as FormEvent),
       disconnect: () => props.onDisconnect(),
-      pick: (_e, id) => { if (!locked) setPick(String(id)); },
+      pick: (_e, id) => {
+        // 6.0: a room running in the background comes on screen at once.
+        if (multi?.background.has(String(id))) { props.onConnect({ kind: "profile", id: String(id) }); return; }
+        if (!locked) setPick(String(id));
+      },
+      toggleMulti: (_e, id) => multi?.onToggle(String(id)),
+      connectMulti: () => multi?.onConnect(),
       manage: () => props.onManage(),
       create: () => props.onCreate(),
       fieldName: field("name"),

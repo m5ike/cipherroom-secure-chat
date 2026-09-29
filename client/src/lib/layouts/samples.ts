@@ -3,6 +3,7 @@
 
 import { WINDOW_VARIANTS } from "./windows";
 import { ROOM_VARIANTS } from "./room";
+import { ROOM_BAR_VARIANTS } from "./roombar";
 import { DIALOG_VARIANTS } from "./dialogs";
 import type { LayoutId } from "./index";
 import { ACCOUNT_VARIANTS } from "./account";
@@ -48,6 +49,7 @@ export const PREVIEW_VARIANTS: Readonly<Record<LayoutId, ReadonlyArray<{ id: str
     { id: "dockmenu", label: "Choosing the edge" },
   ],
   "widget.fab": [{ id: "floating", label: "Floating" }, { id: "docked", label: "Docked" }],
+  "room.bar": ROOM_BAR_VARIANTS,
   // 6.0: the handle of an auto-hidden docked widget
   "widget.handle": [
     { id: "right", label: "Right edge" },
