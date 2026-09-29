@@ -62,10 +62,16 @@ async function forward(req: express.Request, res: express.Response, path: string
   res.on("close", () => { if (!res.writableFinished) controller.abort(); });
   const headers: Record<string, string> = { accept: String(req.headers.accept ?? "application/json") };
   if (req.headers.authorization) headers.authorization = String(req.headers.authorization);
-  let body: string | undefined;
+  let body: string | Uint8Array<ArrayBuffer> | undefined;
   if (req.method !== "GET" && req.method !== "HEAD") {
-    headers["content-type"] = "application/json";
-    body = JSON.stringify(req.body ?? {});
+    // 6.0: a raw upload (an APK release) passes as it came.
+    if (Buffer.isBuffer(req.body)) {
+      headers["content-type"] = String(req.headers["content-type"] ?? "application/octet-stream");
+      body = new Uint8Array(req.body);
+    } else {
+      headers["content-type"] = "application/json";
+      body = JSON.stringify(req.body ?? {});
+    }
   }
   try {
     const upstream = await fetch(`${MAIN_URL}${path}`, { method: req.method, headers, body, signal: controller.signal });
@@ -88,6 +94,14 @@ async function forward(req: express.Request, res: express.Response, path: string
 }
 
 app.use("/api/admin/menu-config", express.json({ limit: "1mb" }));
+// 6.0: an APK release goes to the main service as the raw file; the Android
+// design (screens, strings, small assets) is bigger than the default.
+app.use("/api/admin/android/releases/upload", (req, res, next) => {
+  // Read the body only for someone with a token (the main service checks it for real).
+  if (!/^Bearer \S{16,}/.test(String(req.headers.authorization ?? ""))) return res.status(401).json({ ok: false, message: "Unauthorized." });
+  next();
+}, express.raw({ type: () => true, limit: "300mb" }));
+app.use("/api/admin/android/design", express.json({ limit: "8mb" }));
 // 4.0.5: the Layout builder saves whole element trees.
 app.use("/admin/layout", express.json({ limit: "4mb" }));
 // Package drafts and imports are bigger than the default 256 kB.

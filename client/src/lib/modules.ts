@@ -74,6 +74,15 @@ const TEL_RIGHTS: RightDef[] = [
   { right: "settings", label: "Console: providers, SIP trunks, webhooks" },
   { right: "test", label: "Console: test calls and SMS" },
 ];
+const ANDROID_RIGHTS: RightDef[] = [
+  { right: "devices", label: "Devices", help: "Rename, block, retire, delete enrolled devices" },
+  { right: "push", label: "Control messages", help: "Ping, status, flash, push, update, lock" },
+  { right: "wipe", label: "Remote wipe", help: "Erase a device's data" },
+  { right: "builds", label: "Design and builds", help: "Edit the Android design, create builds" },
+  { right: "releases", label: "APK releases", help: "Upload and edit releases" },
+  { right: "publish", label: "Publish", help: "Publish builds and releases to devices" },
+  { right: "settings", label: "Settings", help: "Enrolment, codes, lock policy, FCM" },
+];
 const BUILDER_RIGHTS: RightDef[] = [
   { right: "edit", label: "Edit" },
   { right: "publish", label: "Publish / save for everyone" },
@@ -81,7 +90,7 @@ const BUILDER_RIGHTS: RightDef[] = [
 ];
 
 /** The rights that name an action (no "kind:"): run, edit, chat, sms… — the rest name items. */
-export const ACTION_RIGHTS: ReadonlySet<string> = new Set([...FN_RIGHTS, ...AI_RIGHTS, ...SPEECH_RIGHTS, ...TEL_RIGHTS, ...BUILDER_RIGHTS].map((r) => r.right).filter((r) => !r.includes(":")));
+export const ACTION_RIGHTS: ReadonlySet<string> = new Set([...FN_RIGHTS, ...AI_RIGHTS, ...SPEECH_RIGHTS, ...TEL_RIGHTS, ...BUILDER_RIGHTS, ...ANDROID_RIGHTS].map((r) => r.right).filter((r) => !r.includes(":")));
 
 export const MODULE_CATALOG: readonly ModuleDef[] = [
   { id: "audio", label: "Audio calls", description: "Voice over WebRTC between the people in a room.", panels: ["audio"] },
@@ -93,6 +102,7 @@ export const MODULE_CATALOG: readonly ModuleDef[] = [
   { id: "functions", label: "Functions", description: "“/keyword” commands, webhooks, the API; the console's packages, models, builder.", panels: [], switch: "functions", console: "functions", rights: FN_RIGHTS },
   { id: "telephony", label: "Telephony & SIP", description: "Calls and SMS through the operator's provider; SIP trunks (console).", panels: ["phone"], feature: "telephony", console: "telephony", rights: TEL_RIGHTS },
   { id: "layout", label: "Layout builder", description: "The console's GUI designer (the app keeps what is published).", panels: [], console: "layout", rights: BUILDER_RIGHTS },
+  { id: "android", label: "Android", description: "The Android app: enrolled devices, control messages, the design, builds, APK releases, the lock policy (console: Android).", panels: [], console: "android", rights: ANDROID_RIGHTS },
   { id: "menu", label: "Menu builder", description: "The console's menu designer (the app keeps what is published).", panels: [], console: "menu", rights: BUILDER_RIGHTS },
   { id: "nfc", label: "NFC", description: "Encrypted configurations on NFC tags (Android Chrome).", panels: ["nfc"] },
   { id: "invites", label: "Invitations", description: "Share a room or a saved connection with a link and a code.", panels: [] },

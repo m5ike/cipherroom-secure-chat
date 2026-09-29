@@ -67,6 +67,8 @@ import { accountGroups, registerAdminClientConfigRoutes, registerClientConfigRou
 import { requireModule } from "./access";
 import { registerAdminMenuConfigRoutes, registerMenuConfigRoutes } from "./menu-config";
 import { registerModulesAdminRoutes } from "./modules-routes";
+import { registerAndroidAdminRoutes } from "./android/admin-routes";
+import { registerAndroidRoutes } from "./android/routes";
 import { buildInfo } from "./build-info";
 import { turnAnswer } from "./turn";
 import { clusterBus } from "./cluster/bus";
@@ -235,6 +237,10 @@ export async function registerRoutes(
   // The addons the operator switches on (saved connections, GUI templates).
   registerAdminMenuConfigRoutes(app);
   registerModulesAdminRoutes(app);
+  // 6.0: the Android app — the console's side (devices, builds, releases, push)
+  // and the devices' own API (/api/android/*).
+  registerAndroidAdminRoutes(app);
+  registerAndroidRoutes(app);
   registerAdminClientConfigRoutes(app, () => {
     const all = accountStore.all();
     const withConnections = all.filter((a) => (a.vault.connections ?? 0) > 0);

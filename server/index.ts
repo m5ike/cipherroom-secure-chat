@@ -24,6 +24,7 @@ import express, { Response, NextFunction } from 'express';
 import type { Request } from 'express';
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
+import { requireAdminToken } from "./admin-auth";
 import { registerRoutes, signalingHub } from "./routes";
 import { clusterBus } from "./cluster/bus";
 import { accountStore } from "./accounts/store";
@@ -52,7 +53,7 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   // The vault and the storage API have their own, larger buckets (below).
-  skip: (req) => req.originalUrl.startsWith("/api/account/vault") || req.originalUrl.startsWith("/api/storage") || req.originalUrl.startsWith("/api/admin"),
+  skip: (req) => req.originalUrl.startsWith("/api/account/vault") || req.originalUrl.startsWith("/api/storage") || req.originalUrl.startsWith("/api/admin") || req.originalUrl.startsWith("/api/android"),
   message: { ok: false, message: "Too many requests, please try again later." },
 });
 
@@ -101,6 +102,17 @@ app.use(
   "/api/storage",
   rateLimit({ windowMs: 15 * 60 * 1000, limit: 1_200, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many storage requests." } }),
 );
+// 6.0: the Android devices check in, fetch bundles and APKs; many phones can
+// share one address (a carrier's NAT), so their bucket is larger. Their
+// requests are signed over the exact bytes: the body is read raw here,
+// before the global JSON parser, and the routes parse it themselves.
+app.use(
+  "/api/android",
+  rateLimit({ windowMs: 15 * 60 * 1000, limit: 1_500, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many requests from this network." } }),
+  express.raw({ type: () => true, limit: "1mb" }),
+);
+// The Android design carries screens, strings and small assets.
+app.use("/api/admin/android/design", express.json({ limit: "8mb" }));
 app.use("/api/account/vault", express.json({ limit: "8mb" }));
 // Conversations arrive in batches; this parser has to come before the
 // global one to win.
@@ -115,6 +127,9 @@ app.use(
   rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many refused admin requests." } }),
   rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many admin requests." } }),
 );
+// 6.0: an APK release is uploaded as the raw file — only an operator's
+// request is read at all (up to 300 MB), and only after the limits above.
+app.use("/api/admin/android/releases/upload", requireAdminToken(undefined, "operator"), express.raw({ type: () => true, limit: "300mb" }));
 
 const jsonBody = express.json({
   limit: "256kb",
