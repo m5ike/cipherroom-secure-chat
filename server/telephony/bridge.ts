@@ -34,6 +34,7 @@ import { FINAL_CALL_STATUSES, type CallAction, type NormalizedCallEvent, type Pr
 import { hookUrl, mediaUrl, note, rendered, save, setBridgeHooks, TelError, telBase, type WebhookReply } from "./engine";
 import { telId, telStore, telToken, type BridgeSession, type TelCall, type TelOwner } from "./tel-store";
 import { isE164 } from "./types";
+import { numberInfo } from "./numbers";
 import { publicBaseUrl } from "./connectors";
 import { stt, tts, type Caller as AiCaller } from "../ai/service";
 import { Framer, Segmenter, StreamResampler, mulawDecode, mulawEncode, pcm16FromLE, pcm16ToLE, resample, wavDecode, wavEncode } from "./audio";
@@ -159,7 +160,8 @@ export async function allocateBridge(spec: AllocateSpec, who: { owner: TelOwner 
   telStore.bridges.put(b);
   // Point the number's calls here (Twilio per number; Vonage and Telnyx per application / connection).
   if (!bought && env("TELEPHONY_DID_ASSIGN") !== "0" && a.assignNumber) {
-    await a.assignNumber(number, { voiceUrl: inboundUrl(a.id) }).catch((err) => log(b, `could not point ${number} here: ${(err as Error).message.slice(0, 160)} (set its voice webhook in the provider's console)`, "warn"));
+    const country = numberInfo(number)?.iso2 ?? "";
+    await a.assignNumber(number, { voiceUrl: inboundUrl(a.id), ...(/^[A-Z]{2}$/.test(country) ? { country } : {}) }).catch((err) => log(b, `could not point ${number} here: ${(err as Error).message.slice(0, 160)} (set its voice webhook in the provider's console)`, "warn"));
   }
   log(b, `number ${number} lent for ${minutes} min to a member of room ${b.roomHash}`, "notice", { minutes, mode: b.mode, bought });
   return b;
