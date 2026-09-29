@@ -383,7 +383,7 @@ describe("a device's life through the API", () => {
     expect(res.json.problems.join()).toMatch(/unknown icon/);
     const cat = (await admin("GET", "/catalog")).json.catalog;
     expect(cat.screens.map((s: { id: string }) => s.id)).toContain("rooms.item");
-    expect(cat.icons.length).toBeGreaterThan(100);
+    expect(Object.keys(cat.icons).length).toBeGreaterThan(100);
   });
 });
 

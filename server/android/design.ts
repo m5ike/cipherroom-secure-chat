@@ -796,7 +796,7 @@ export function forgetAndroidDesign(): void { cachedDesign = null; }
 export function androidCatalog() {
   return {
     elements: ELEMENTS, style: STYLE_PROPS, colors: COLOR_TOKENS, anims: ANIM_TYPES, easings: EASINGS, events: EVENTS,
-    actions: ACTIONS, slots: SLOTS, screens: SCREENS, langs: LANGS, icons: Object.keys(MENU_ICONS), limits: LIMITS,
+    actions: ACTIONS, slots: SLOTS, screens: SCREENS, langs: LANGS, icons: MENU_ICONS, limits: LIMITS,
     defaults: DEFAULT_DESIGN,
   };
 }

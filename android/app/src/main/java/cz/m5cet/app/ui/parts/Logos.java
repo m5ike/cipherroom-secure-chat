@@ -49,7 +49,7 @@ final class Logos {
     static final class Mark extends View {
         private final int sizeDp;
         Mark(Context c, int sizeDp) { super(c); this.sizeDp = sizeDp; }
-        @Override protected void onMeasure(int w, int h) { int s = Ui.dp(getContext(), sizeDp); setMeasuredDimension(s, s); }
+        @Override protected void onMeasure(int w, int h) { int s = Ui.dp(getContext(), sizeDp); setMeasuredDimension(resolveSize(s, w), resolveSize(s, h)); }
         @Override protected void onDraw(Canvas c) {
             float s = Math.min(getWidth(), getHeight());
             drawMark(c, getWidth() / 2f, getHeight() / 2f, s, Ui.color(getContext(), "@primary", Color.RED), Ui.color(getContext(), "@onPrimary", Color.WHITE));
@@ -77,7 +77,7 @@ final class Logos {
 
         @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); if (!style.equals("none") && !Ui.reducedMotion(getContext())) anim.start(); }
         @Override protected void onDetachedFromWindow() { anim.cancel(); super.onDetachedFromWindow(); }
-        @Override protected void onMeasure(int w, int h) { int s = Ui.dp(getContext(), 168); setMeasuredDimension(s, s); }
+        @Override protected void onMeasure(int w, int h) { int s = Ui.dp(getContext(), 168); setMeasuredDimension(resolveSize(s, w), resolveSize(s, h)); }
 
         @Override protected void onDraw(Canvas c) {
             int primary = Ui.color(getContext(), "@primary", Color.RED);

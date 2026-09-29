@@ -61,6 +61,7 @@
         <button class="nav__item" data-route="telephony"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.8 19.8 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.1 9.9a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>Telephony &amp; SIP</button>
         <button class="nav__item" data-route="plugins"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>AI &amp; speech</button>
         <button class="nav__item" data-route="functions"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m8 3-6 9 6 9M16 3l6 9-6 9M13 3l-2 18"/></svg>Functions</button>
+        <button class="nav__item" data-route="android"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M12 18h.01"/></svg>Android</button>
         <button class="nav__item" data-route="admins" data-min-role="owner" hidden><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/><path d="M9 12l2 2 4-4"/></svg>Administrators</button>
         <button class="nav__item" data-route="commands"><svg class="nav__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m4 17 6-6-6-6M12 19h8"/></svg>Commands &amp; push</button>
       </nav>
@@ -383,6 +384,8 @@
         <!-- 4.14: AI & speech — providers, models, playground, speech, calls, limits (ai-console.js) -->
         <section data-panel="plugins" class="stack" hidden><div id="aiRoot" class="stack"><div class="card empty">Loading…</div></div></section>
         <section data-panel="functions" class="stack" hidden><div id="fnRoot" class="stack"><div class="card empty">Loading…</div></div></section>
+        <!-- 6.0: the Android app — devices, push, design, builds, releases, security (android-console.js) -->
+        <section data-panel="android" class="stack" hidden><div id="androidRoot" class="stack"><div class="card empty">Loading…</div></div></section>
         <section data-panel="commands" class="stack" hidden>
           <div class="grid grid--2">
             <div class="card">
@@ -560,5 +563,7 @@
   <script src="functions-outputs.js"></script>
   <script src="functions-console.js"></script>
   <script src="functions-builder.js"></script>
+  <script src="android-expr.js"></script>
+  <script src="android-console.js"></script>
 </body>
 </html>
