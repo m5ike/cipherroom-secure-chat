@@ -261,9 +261,9 @@ instalují vypnuté. Konzole: karta *m5.telephony* na stránce Telephony
 `POST …/sdk/bridges/:id/release`).
 
 Omezení: ověřeno proti napodobeným API poskytovatelů (vymyšlená čísla),
-skutečný hovor ne; Android zvuk mostu nepřevezme; Vonage potřebuje k
-přesměrování čísla zemi (webhook čísla nastavit ve Vonage aplikaci);
-vyzvánění Twilio může být asi o 5 s delší než `timeout`.
+skutečný hovor ne; Android zvuk mostu nepřevezme; když se přesměrování
+čísla nepovede (Vonage zemi čísla bere z číslovacího plánu), most zapíše
+varování a webhook čísla je třeba nastavit u poskytovatele; vyzvánění Twilio může být asi o 5 s delší než `timeout`.
 
 ## 6. Co je ověřené testy
 

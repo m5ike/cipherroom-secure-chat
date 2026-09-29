@@ -201,8 +201,9 @@ Funkce dostaly **administraci jako SDK** (`m5adm`) s řízením místností a
 - m5.telephony je ověřené proti napodobeným API poskytovatelů (čísla v
   testech jsou vymyšlená) — skutečný hovor zatím testovaný nebyl.
 - Zvuk telefonního mostu převezme jen web; Android ukáže hovor a přepis.
-- Vonage potřebuje k přesměrování čísla zemi — most zapíše varování a
-  webhook čísla je třeba nastavit ve Vonage aplikaci.
+- Když se přesměrování půjčeného čísla u poskytovatele nepovede (Vonage bez
+  rozpoznané země čísla, chybějící oprávnění), most zapíše varování a
+  webhook čísla je třeba nastavit v konzoli poskytovatele.
 - Vyzvánění u Twilio může být asi o 5 s delší než `timeout`.
 
 ## [5.3.0] – 2026-09-29

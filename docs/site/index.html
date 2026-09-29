@@ -1632,7 +1632,7 @@ msg = <span class="k">await</span> m5.telephony.sms(to=<span class="s">"+4206012
   <ul>
     <li>Skutečný hovor zatím testovaný nebyl — testy běží proti napodobeným API poskytovatelů a s vymyšlenými čísly.</li>
     <li>Aplikace pro Android zvuk mostu nepřevezme (jen text).</li>
-    <li>Vonage potřebuje k přesměrování čísla zemi: most zapíše varování a webhook čísla je třeba nastavit ve Vonage aplikaci.</li>
+    <li>Když se přesměrování půjčeného čísla nepovede (Vonage zemi čísla bere z číslovacího plánu), most zapíše varování a webhook čísla je třeba nastavit v konzoli poskytovatele.</li>
     <li>Vyzvánění u Twilio může trvat asi o 5 s déle, než je <code>timeout</code>.</li>
   </ul>
 </section>
