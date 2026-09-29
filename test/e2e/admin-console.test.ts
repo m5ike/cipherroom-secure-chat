@@ -646,7 +646,7 @@ describe("operator console", () => {
     await page.locator("#toasts").evaluate((el) => el.replaceChildren());
     const frame = page.frameLocator("#lbFrame");
     // The sections: the app's main screen first.
-    await expect.poll(async () => (await page.locator("#lbSections .lb-section").allInnerTexts()).map((x) => x.replace(/\s+/g, ""))).toEqual(["App10", "Roomwindow2", "Windows2", "Dialogs&parts9", "Panels24"]);
+    await expect.poll(async () => (await page.locator("#lbSections .lb-section").allInnerTexts()).map((x) => x.replace(/\s+/g, ""))).toEqual(["App11", "Roomwindow2", "Windows2", "Dialogs&parts9", "Panels24"]);
     expect(await page.locator('#lbTabs [data-layout="panel.connections"]').count()).toBe(0);
 
     // The Room window: drawn by RoomDialog in the preview, in its situations.

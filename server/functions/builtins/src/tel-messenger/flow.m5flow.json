@@ -1,0 +1,308 @@
+{
+  "format": "m5flow",
+  "version": 1,
+  "lang": "js",
+  "name": "Messenger",
+  "summary": "Send a Facebook Messenger message",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "out.form",
+      "x": 80,
+      "y": 120,
+      "params": {
+        "form": {
+          "name": "tel-messenger",
+          "title": "Messenger",
+          "text": "Send a Facebook Messenger message",
+          "submit": "Send",
+          "labels": "top",
+          "fields": [
+            {
+              "name": "to",
+              "type": "text",
+              "label": "Recipient (page-scoped id)",
+              "required": true,
+              "pattern": "^[0-9]{5,32}$"
+            },
+            {
+              "name": "text",
+              "type": "textarea",
+              "label": "Text",
+              "required": true,
+              "rows": 3
+            },
+            {
+              "name": "tag",
+              "type": "select",
+              "label": "Outside 24 hours",
+              "default": "",
+              "options": [
+                {
+                  "value": "",
+                  "label": "—"
+                },
+                {
+                  "value": "HUMAN_AGENT",
+                  "label": "HUMAN_AGENT"
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "values": {}
+    }
+  ],
+  "edges": [],
+  "functions": {
+    "form": {
+      "nodes": [
+        {
+          "id": "n2",
+          "type": "flow.event",
+          "x": 40,
+          "y": 80,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n3",
+          "type": "tel.message",
+          "x": 380,
+          "y": 80,
+          "params": {
+            "channel": "messenger"
+          },
+          "values": {}
+        },
+        {
+          "id": "n5",
+          "type": "data.get",
+          "x": 200,
+          "y": 130,
+          "params": {
+            "path": "to"
+          },
+          "values": {}
+        },
+        {
+          "id": "n8",
+          "type": "data.get",
+          "x": 200,
+          "y": 220,
+          "params": {
+            "path": "text"
+          },
+          "values": {}
+        },
+        {
+          "id": "n11",
+          "type": "text.template",
+          "x": 640,
+          "y": 60,
+          "params": {
+            "template": "**Messenger to {to}** — {status}"
+          },
+          "values": {}
+        },
+        {
+          "id": "n12",
+          "type": "out.markdown",
+          "x": 880,
+          "y": 60,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n13",
+          "type": "data.get",
+          "x": 520,
+          "y": 220,
+          "params": {
+            "path": "to"
+          },
+          "values": {}
+        },
+        {
+          "id": "n15",
+          "type": "data.get",
+          "x": 520,
+          "y": 360,
+          "params": {
+            "path": "status"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e4",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n3",
+            "port": "options"
+          }
+        },
+        {
+          "id": "e6",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n5",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e7",
+          "from": {
+            "node": "n5",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "to"
+          }
+        },
+        {
+          "id": "e9",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n8",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e10",
+          "from": {
+            "node": "n8",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "text"
+          }
+        },
+        {
+          "id": "e14",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n13",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e16",
+          "from": {
+            "node": "n3",
+            "port": "message"
+          },
+          "to": {
+            "node": "n15",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e17",
+          "from": {
+            "node": "n13",
+            "port": "value"
+          },
+          "to": {
+            "node": "n11",
+            "port": "to"
+          }
+        },
+        {
+          "id": "e18",
+          "from": {
+            "node": "n15",
+            "port": "value"
+          },
+          "to": {
+            "node": "n11",
+            "port": "status"
+          }
+        },
+        {
+          "id": "e19",
+          "from": {
+            "node": "n11",
+            "port": "text"
+          },
+          "to": {
+            "node": "n12",
+            "port": "text"
+          }
+        }
+      ]
+    },
+    "error": {
+      "nodes": [
+        {
+          "id": "n20",
+          "type": "flow.event",
+          "x": 40,
+          "y": 60,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n21",
+          "type": "data.get",
+          "x": 240,
+          "y": 60,
+          "params": {
+            "path": "message"
+          },
+          "values": {}
+        },
+        {
+          "id": "n22",
+          "type": "out.flash",
+          "x": 460,
+          "y": 60,
+          "params": {
+            "level": "error"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e23",
+          "from": {
+            "node": "n20",
+            "port": "error"
+          },
+          "to": {
+            "node": "n21",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e24",
+          "from": {
+            "node": "n21",
+            "port": "value"
+          },
+          "to": {
+            "node": "n22",
+            "port": "text"
+          }
+        }
+      ]
+    }
+  }
+}

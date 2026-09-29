@@ -1,0 +1,306 @@
+{
+  "format": "m5flow",
+  "version": 1,
+  "lang": "js",
+  "name": "WhatsApp",
+  "summary": "Send a WhatsApp message (text, or a template)",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "out.form",
+      "x": 80,
+      "y": 120,
+      "params": {
+        "form": {
+          "name": "tel-whatsapp",
+          "title": "WhatsApp",
+          "text": "Send a WhatsApp message (text, or a template)",
+          "submit": "Send",
+          "labels": "top",
+          "fields": [
+            {
+              "name": "to",
+              "type": "tel",
+              "label": "Recipient",
+              "required": true,
+              "pattern": "^\\+[1-9][0-9]{6,14}$",
+              "placeholder": "+420603123456",
+              "help": "In the international form: +420603123456"
+            },
+            {
+              "name": "text",
+              "type": "textarea",
+              "label": "Text",
+              "rows": 3
+            },
+            {
+              "name": "template",
+              "type": "text",
+              "label": "Template (outside the 24-hour window)",
+              "pattern": "^[a-z0-9_]{0,512}$|^HX[0-9a-f]{32}$"
+            },
+            {
+              "name": "language",
+              "type": "text",
+              "label": "Template language",
+              "default": "cs",
+              "pattern": "^[a-z]{2}(_[A-Z]{2})?$"
+            }
+          ]
+        }
+      },
+      "values": {}
+    }
+  ],
+  "edges": [],
+  "functions": {
+    "form": {
+      "nodes": [
+        {
+          "id": "n2",
+          "type": "flow.event",
+          "x": 40,
+          "y": 80,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n3",
+          "type": "tel.message",
+          "x": 380,
+          "y": 80,
+          "params": {
+            "channel": "whatsapp"
+          },
+          "values": {}
+        },
+        {
+          "id": "n5",
+          "type": "data.get",
+          "x": 200,
+          "y": 130,
+          "params": {
+            "path": "to"
+          },
+          "values": {}
+        },
+        {
+          "id": "n8",
+          "type": "data.get",
+          "x": 200,
+          "y": 220,
+          "params": {
+            "path": "text"
+          },
+          "values": {}
+        },
+        {
+          "id": "n11",
+          "type": "text.template",
+          "x": 640,
+          "y": 60,
+          "params": {
+            "template": "**WhatsApp to {to}** — {status}"
+          },
+          "values": {}
+        },
+        {
+          "id": "n12",
+          "type": "out.markdown",
+          "x": 880,
+          "y": 60,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n13",
+          "type": "data.get",
+          "x": 520,
+          "y": 220,
+          "params": {
+            "path": "to"
+          },
+          "values": {}
+        },
+        {
+          "id": "n15",
+          "type": "data.get",
+          "x": 520,
+          "y": 360,
+          "params": {
+            "path": "status"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e4",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n3",
+            "port": "options"
+          }
+        },
+        {
+          "id": "e6",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n5",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e7",
+          "from": {
+            "node": "n5",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "to"
+          }
+        },
+        {
+          "id": "e9",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n8",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e10",
+          "from": {
+            "node": "n8",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "text"
+          }
+        },
+        {
+          "id": "e14",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n13",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e16",
+          "from": {
+            "node": "n3",
+            "port": "message"
+          },
+          "to": {
+            "node": "n15",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e17",
+          "from": {
+            "node": "n13",
+            "port": "value"
+          },
+          "to": {
+            "node": "n11",
+            "port": "to"
+          }
+        },
+        {
+          "id": "e18",
+          "from": {
+            "node": "n15",
+            "port": "value"
+          },
+          "to": {
+            "node": "n11",
+            "port": "status"
+          }
+        },
+        {
+          "id": "e19",
+          "from": {
+            "node": "n11",
+            "port": "text"
+          },
+          "to": {
+            "node": "n12",
+            "port": "text"
+          }
+        }
+      ]
+    },
+    "error": {
+      "nodes": [
+        {
+          "id": "n20",
+          "type": "flow.event",
+          "x": 40,
+          "y": 60,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n21",
+          "type": "data.get",
+          "x": 240,
+          "y": 60,
+          "params": {
+            "path": "message"
+          },
+          "values": {}
+        },
+        {
+          "id": "n22",
+          "type": "out.flash",
+          "x": 460,
+          "y": 60,
+          "params": {
+            "level": "error"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e23",
+          "from": {
+            "node": "n20",
+            "port": "error"
+          },
+          "to": {
+            "node": "n21",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e24",
+          "from": {
+            "node": "n21",
+            "port": "value"
+          },
+          "to": {
+            "node": "n22",
+            "port": "text"
+          }
+        }
+      ]
+    }
+  }
+}

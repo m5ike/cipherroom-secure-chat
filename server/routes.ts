@@ -38,6 +38,8 @@ import { consentLedger, deviceAuditLog, deviceSettings } from "./device-state";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 import { registerAiRoutes } from "./ai/routes";
 import { registerFunctionsRoutes } from "./functions/routes";
+import { registerTelEngineRoutes } from "./telephony/tel-routes";
+import { attachBridgeMedia, setBridgeNotifier } from "./telephony/bridge";
 import { accountStore, accountsDir } from "./accounts/store";
 import { storage } from "./storage/service";
 import { registerStorageRoutes } from "./storage/routes";
@@ -278,6 +280,10 @@ export async function registerRoutes(
   // Provider webhooks (/wh/{provider}/{type}): signature-verified, always
   // mounted so delivery receipts / inbound SMS / call events can reach us.
   registerWebhookRoutes(app);
+  // 6.0: m5.telephony — every call's and message's own webhooks, inbound calls to lent
+  // numbers (the audio bridge), and the console's view of them.
+  registerTelEngineRoutes(app);
+  setBridgeNotifier((hash, member, payload) => signaling.sendToMembers(hash, payload, member));
   // Admin-edited layout / templates for every client (GET /api/layout).
   registerLayoutRoutes(app);
   registerClientConfigRoutes(app);
@@ -420,6 +426,8 @@ export async function registerRoutes(
   startRetentionSchedule();
 
   signaling.attach(httpServer);
+  // 6.0: the audio bridge's media streams (/media/tel/…).
+  attachBridgeMedia(httpServer);
 
   return httpServer;
 }

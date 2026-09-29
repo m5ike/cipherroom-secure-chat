@@ -399,6 +399,100 @@ def _adm_ns():
         Room=M5Room,
     )
 
+# ---- m5.telephony (6.0): calls, SMS, chat messages, lookups, the audio bridge ----
+
+def _tel(op, *args):
+    return _acall("telephony", op, [_plain(a) for a in args])
+
+def _say(text, **o): return {"say": {**o, "text": str(text)}}
+def _play(url, **o): return {"play": {**o, "url": str(url)}}
+def _pause(seconds=1): return {"pause": {"seconds": float(seconds)}}
+def _gather(**o): return {"gather": {"digits": 5, "finishOnKey": "#", "timeout": 10, **o}}
+def _record(**o): return {"record": {"maxSeconds": 60, "beep": True, **o}}
+def _redirect(url): return {"redirect": {"url": str(url)}}
+def _hangup_action(): return {"hangup": {}}
+
+_HANDLER_OF = {"answered": "answer", "completed": "hangup", "busy": "busy", "no-answer": "noanswer", "failed": "failed", "canceled": "failed", "machine": "machine"}
+
+def _call_spec(spec):
+    fns, names, rest = {}, {}, {}
+    def put(k, v):
+        ev = str(k)
+        if ev.lower().startswith("on"):
+            ev = ev[2:]
+        ev = ev.lstrip("_").replace("_", "").replace("-", "").lower()
+        if callable(v):
+            fns[ev] = v
+        elif isinstance(v, str) and v:
+            names[ev] = v
+    for k, v in (spec or {}).items():
+        if k == "on" and isinstance(v, dict):
+            for kk, vv in v.items():
+                put(kk, vv)
+        elif str(k).startswith("on_") or callable(v):
+            put(k, v)
+        else:
+            rest[k] = v
+    return fns, names, rest
+
+async def _wait_for(call_id, fns, opts):
+    cursor, last, events = 0, None, []
+    budget = min(float((opts or {}).get("timeoutMs") or 600000), max(0, m5.sys.remaining() - 1500))
+    until = m5.sys.now() + budget
+    while m5.sys.now() < until:
+        r = await _tel("wait", call_id, cursor, min(20000, max(0, until - m5.sys.now())))
+        if not r:
+            return None
+        last = r["call"]
+        for ev in r["events"]:
+            cursor = max(cursor, ev["seq"])
+            events.append(ev)
+            name = "digits" if ev.get("kind") == "gather" else _HANDLER_OF.get(ev.get("status") or "")
+            f = fns.get(name) if name else None
+            if not f:
+                continue
+            out = f({**ev, "call": r["call"]})
+            if _inspect.isawaitable(out):
+                out = await out
+            if out and not r["call"]["final"]:
+                await _tel("calls.steer", call_id, out)
+        if last["final"]:
+            break
+    return {**(last or {"id": call_id}), "events": events}
+
+async def _tel_call(spec=None, **kw):
+    fns, names, rest = _call_spec({**(spec or {}), **kw})
+    wait = rest.get("wait") is True or rest.get("mode") == "sync" or bool(fns)
+    native = bool(rest.get("twiml") or rest.get("ncco") or rest.get("texml"))
+    c = await _tel("call", {**rest, "handlers": names, "mode": "native" if native else ("sync" if wait else "async")})
+    return (await _wait_for(c["id"], fns, rest)) if wait else c
+
+def _id_of(x):
+    return x.get("id") if isinstance(x, dict) else x
+
+def _telephony_ns():
+    return _NS(
+        providers=lambda: _tel("providers"),
+        call=_tel_call,
+        wait=lambda call, **o: _wait_for(_id_of(call), _call_spec(o)[0], o),
+        say=lambda call, text, **o: _tel("calls.steer", _id_of(call), [_say(text, **o)]),
+        hangup=lambda call: _tel("calls.hangup", _id_of(call)),
+        steer=lambda call, logic: _tel("calls.steer", _id_of(call), logic),
+        calls=_NS(get=lambda call_id: _tel("calls.get", call_id), list=lambda **f: _tel("calls.list", f),
+                  hangup=lambda call_id: _tel("calls.hangup", call_id), steer=lambda call_id, logic: _tel("calls.steer", call_id, logic)),
+        sms=lambda spec=None, text=None, **kw: _tel("sms", {"to": spec, "text": text, **kw} if isinstance(spec, str) else {**(spec or {}), **kw}),
+        whatsapp=lambda spec=None, **kw: _tel("message", "whatsapp", {**(spec or {}), **kw}),
+        viber=lambda spec=None, **kw: _tel("message", "viber", {**(spec or {}), **kw}),
+        messenger=lambda spec=None, **kw: _tel("message", "messenger", {**(spec or {}), **kw}),
+        messages=_NS(get=lambda message_id: _tel("messages.get", message_id)),
+        lookup=lambda number, **o: _tel("lookup", str(number), o),
+        hlr=lambda number, **o: _tel("hlr", str(number), o),
+        did=_NS(allocate=lambda spec=None, **kw: _tel("did.allocate", {**(spec or {}), **kw}), get=lambda session_id: _tel("did.get", session_id),
+                list=lambda **f: _tel("did.list", f), release=lambda session: _tel("did.release", _id_of(session))),
+        log=lambda **f: _tel("log", f),
+        actions=_NS(say=_say, play=_play, pause=_pause, gather=_gather, record=_record, redirect=_redirect, hangup=_hangup_action),
+    )
+
 _ctx = {}
 m5 = None
 m5adm = None
@@ -497,6 +591,7 @@ def _setup(ctx):
             agent=_ai_agent,
         ),
         functions=_NS(list=lambda: _acall("functions.list"), get=_functions_get),
+        telephony=_telephony_ns(),
         sleep=lambda ms: _acall("sleep", ms),
         prompt=lambda spec=None, **kw: _acall("prompt", {"text": spec} if isinstance(spec, str) else (spec or kw)),
         form=lambda spec=None, **kw: _acall("form", spec or kw),

@@ -113,6 +113,8 @@ export const HOST_CALLS = [
   "functions.list",
   // 6.0: m5adm — the administration, as the owner granted the model.
   "adm", "adm.info",
+  // 6.0: m5.telephony.
+  "telephony",
   // 5.3: m5.model.session — the processing session's own key–value store.
   "model.session.get", "model.session.set", "model.session.delete", "model.session.keys",
 ] as const;

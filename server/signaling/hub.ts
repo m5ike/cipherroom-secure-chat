@@ -838,6 +838,16 @@ export class SignalingHub {
     return sent;
   }
 
+  /** A frame of the server's own for the members that match (6.0: the phone bridge's call for one member). */
+  sendToMembers(hash: string, payload: Record<string, unknown>, target: MemberTarget): number {
+    const room = this.roomOfHash(hash);
+    if (!room) return 0;
+    let sent = 0;
+    for (const peer of this.matching(room, target)) if (this.send(peer.socket, payload, peer)) sent += 1;
+    if (sent === 0 && target.peerId && this.cluster?.signal(room, target.peerId, payload)) sent += 1;
+    return sent;
+  }
+
   /** Disconnects everyone in a room (or the members that match). Returns how many. */
   disconnectRoom(hash: string, reason: string, target?: MemberTarget): number {
     const room = this.roomOfHash(hash);

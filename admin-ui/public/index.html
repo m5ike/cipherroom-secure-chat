@@ -315,7 +315,9 @@
             </div>
           </div>
         </section>
-        <section data-panel="telephony" class="stack legacy" hidden><div class="card"><div class="card__head"><div class="card__title">Telephony &amp; SIP console</div></div>
+        <section data-panel="telephony" class="stack legacy" hidden>
+      <div class="card" id="telSdkRoot"></div>
+      <div class="card"><div class="card__head"><div class="card__title">Telephony &amp; SIP console</div></div>
 
       <div class="row"><button id="btnTel">Refresh telephony</button></div>
       <p style="font-size:12px;margin:6px 0;">Voice + SMS via Twilio / Telnyx / Vonage. Keys come from server env (ENABLE_TELEPHONY=1). The audio/media path needs an external SIP↔WebRTC gateway — this console manages providers, webhooks, trunk config + DID routing.</p>
@@ -553,6 +555,7 @@
   <div class="toasts" id="toasts"></div>
   <script src="console.js"></script>
   <script src="legacy-tools.js"></script>
+  <script src="telephony-sdk.js"></script>
   <script src="modules.js"></script>
   <script src="builder-kit.js"></script>
   <script src="menu-builder.js"></script>

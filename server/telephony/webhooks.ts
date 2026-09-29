@@ -184,7 +184,7 @@ export function webhookVerificationStatus(provider: TelephonyProvider): { verify
 
 type Params = Record<string, string>;
 
-function stringParams(src: unknown): Params {
+export function stringParams(src: unknown): Params {
   const out: Params = {};
   if (src && typeof src === "object") {
     for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
@@ -217,9 +217,10 @@ function escapeXml(s: string): string {
 
 const cap = (v: unknown, n = 200) => (typeof v === "string" ? v.slice(0, n) : undefined);
 
-type Verification = { verified: boolean; enforced: boolean };
+export type Verification = { verified: boolean; enforced: boolean };
 
-function verifyRequest(provider: TelephonyProvider, type: string, req: Request): Verification {
+/** 6.0: also the m5.telephony webhooks (engine.ts) — the same signatures per provider. */
+export function verifyRequest(provider: TelephonyProvider, type: string, req: Request): Verification {
   if (provider === "twilio") {
     const token = env("TWILIO_AUTH_TOKEN");
     if (!token) return { verified: false, enforced: false };
@@ -283,6 +284,15 @@ function normalize(provider: TelephonyProvider, type: string, req: Request, v: V
 
 /* ----------------------------------------------------------------- routes */
 
+/**
+ * 6.0: m5.telephony takes over some of these requests — an inbound call to a
+ * number lent by the audio bridge, and the Telnyx events of its calls. It
+ * registers here (tel-routes.ts) rather than being imported: it imports this.
+ */
+export type InboundHook = (provider: TelephonyProvider, type: string, req: Request) => Promise<{ status: number; type: string; body: string } | null>;
+let inboundHook: InboundHook | null = null;
+export function setInboundHook(fn: InboundHook | null): void { inboundHook = fn; }
+
 const whLimiter = rateLimit({
   windowMs: 60 * 1000,
   limit: 300,
@@ -293,7 +303,7 @@ const whLimiter = rateLimit({
 
 /** Mount on the MAIN app. Providers must be able to reach it (nginx: proxy /wh/ to the app). */
 export function registerWebhookRoutes(app: Express): void {
-  app.all("/wh/:provider/:type", whLimiter, (req: Request, res: Response) => {
+  app.all("/wh/:provider/:type", whLimiter, async (req: Request, res: Response) => {
     const provider = String(req.params.provider);
     const type = String(req.params.type);
     if (!isProvider(provider)) return res.status(404).json({ ok: false, message: "unknown provider" });
@@ -310,6 +320,12 @@ export function registerWebhookRoutes(app: Express): void {
       level: v.verified ? "info" : "warn", kind: "admin", connector: provider,
       message: `webhook ${type}: ${ev.summary}${v.verified ? "" : " (unverified — set " + webhookVerificationStatus(provider).needs + ")"}${ev.route ? ` → trunk ${ev.route.trunkId}` : ""}`,
     });
+
+    // 6.0: a call of the audio bridge (or a Telnyx event of an m5.telephony call).
+    if (inboundHook) {
+      const taken = await inboundHook(provider, type, req).catch((err) => { pluginLog.record({ level: "warn", kind: "admin", connector: provider, message: `webhook ${type}: m5.telephony failed: ${(err as Error).message}` }); return null; });
+      if (taken) return res.status(taken.status).type(taken.type).send(taken.body);
+    }
 
     // Provider-specific answer bodies; everything else is a plain 200.
     if (provider === "twilio") {

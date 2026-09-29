@@ -254,3 +254,33 @@
 .rd-multi { flex: none; width: 18px; height: 18px; margin: auto 2px; accent-color: hsl(var(--primary)); cursor: pointer; }
 .rd-badges { display: inline-flex; gap: 4px; }
 @media (prefers-reduced-motion: reduce) { .rb-dot--connecting, .rb-dot--deriving, .rb-badge--unread { animation: none; } }
+
+/* 6.0: the phone bridge — a call offered to this member (layout "phone.bridge") */
+.pb-stack { position: fixed; right: 16px; bottom: 96px; z-index: 60; display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100vw - 32px)); }
+.pb-card { border: 1px solid hsl(var(--border)); border-radius: 16px; background: hsl(var(--card)); color: hsl(var(--card-foreground)); box-shadow: 0 18px 48px rgb(0 0 0 / .35); padding: 12px; display: flex; flex-direction: column; gap: 8px; animation: pb-in .22s ease-out; }
+.pb-card--ringing { border-color: hsl(var(--primary) / .6); }
+.pb-card--ended { opacity: .8; }
+@keyframes pb-in { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+.pb-head { display: flex; align-items: center; gap: 10px; }
+.pb-head__icon { width: 20px; height: 20px; color: hsl(var(--primary)); flex: none; }
+.pb-card--ringing .pb-head__icon { animation: pb-ring 1.2s ease-in-out infinite; }
+@keyframes pb-ring { 0%, 100% { transform: rotate(0); } 20% { transform: rotate(-14deg); } 40% { transform: rotate(12deg); } 60% { transform: rotate(-8deg); } }
+.pb-who { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.pb-from { font-weight: 700; font-size: 15px; }
+.pb-to { font-size: 12px; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pb-state { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: hsl(var(--muted)); color: hsl(var(--muted-foreground)); }
+.pb-state--audio, .pb-state--text { background: hsl(142 70% 40% / .18); color: hsl(142 70% 45%); }
+.pb-note { font-size: 11px; color: hsl(var(--muted-foreground)); }
+.pb-lines { display: flex; flex-direction: column; gap: 4px; max-height: 180px; overflow-y: auto; font-size: 13px; }
+.pb-line { align-self: flex-start; background: hsl(var(--muted)); border-radius: 10px; padding: 4px 8px; max-width: 90%; }
+.pb-line--mine { align-self: flex-end; background: hsl(var(--primary) / .18); }
+.pb-actions, .pb-foot { display: flex; gap: 8px; flex-wrap: wrap; }
+.pb-reply { display: flex; gap: 6px; }
+.pb-input { flex: 1; min-width: 0; border: 1px solid hsl(var(--border)); border-radius: 10px; background: hsl(var(--background)); padding: 6px 10px; font-size: 13px; }
+.pb-btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid hsl(var(--border)); border-radius: 10px; padding: 6px 10px; font-size: 13px; background: hsl(var(--background)); cursor: pointer; }
+.pb-btn:hover { background: hsl(var(--accent)); }
+.pb-btn.is-on { background: hsl(var(--accent)); }
+.pb-btn--go { background: hsl(142 70% 38%); border-color: transparent; color: white; }
+.pb-btn--go:hover { background: hsl(142 70% 33%); }
+.pb-btn--stop { color: hsl(0 80% 60%); border-color: hsl(0 80% 60% / .5); }
+@media (prefers-reduced-motion: reduce) { .pb-card, .pb-card--ringing .pb-head__icon { animation: none; } }

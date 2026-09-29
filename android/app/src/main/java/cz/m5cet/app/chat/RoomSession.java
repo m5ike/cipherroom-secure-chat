@@ -240,6 +240,16 @@ public final class RoomSession {
             case "rate-limited": notice = "rate limited: " + f.optString("frame"); changed(); break;
             case "closed-by-server": notice = f.optString("reason"); changed(); break;
             case "server-notice": onServerNotice(f); break;
+            case "phone-bridge": {
+                // 6.0: a call for this member (m5.telephony's phone bridge). The app shows it;
+                // what the caller says arrives as private notices, taking the audio is the web app's.
+                String ev = f.optString("event");
+                if ("incoming".equals(ev)) system("☎ " + f.optString("from", "?") + " → " + f.optString("number") + (f.optString("label").isEmpty() ? "" : " · " + f.optString("label")));
+                else if ("ended".equals(ev)) system("☎ " + f.optString("reason", "ended"));
+                notice = "☎ " + f.optString("from", f.optString("number"));
+                changed();
+                break;
+            }
             case "error": {
                 notice = f.optString("message");
                 Log.w("room", label + ": " + notice);

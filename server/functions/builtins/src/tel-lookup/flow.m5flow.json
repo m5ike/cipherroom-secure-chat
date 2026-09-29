@@ -1,0 +1,192 @@
+{
+  "format": "m5flow",
+  "version": 1,
+  "lang": "js",
+  "name": "Number lookup",
+  "summary": "Everything about a phone number: country, type, carrier, name, porting, roaming",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "out.form",
+      "x": 80,
+      "y": 120,
+      "params": {
+        "form": {
+          "name": "tel-lookup",
+          "title": "Number lookup",
+          "text": "Everything about a phone number: country, type, carrier, name, porting, roaming",
+          "submit": "Send",
+          "labels": "top",
+          "fields": [
+            {
+              "name": "number",
+              "type": "tel",
+              "label": "Number",
+              "required": true,
+              "pattern": "^[+0-9 ()./-]{3,24}$",
+              "placeholder": "+420603123456"
+            },
+            {
+              "name": "country",
+              "type": "text",
+              "label": "Country for a national number (ISO)",
+              "pattern": "^([A-Za-z]{2})?$",
+              "placeholder": "CZ"
+            },
+            {
+              "name": "offline",
+              "type": "switch",
+              "label": "Only what is free (no providers)"
+            }
+          ]
+        }
+      },
+      "values": {}
+    }
+  ],
+  "edges": [],
+  "functions": {
+    "form": {
+      "nodes": [
+        {
+          "id": "n2",
+          "type": "flow.event",
+          "x": 40,
+          "y": 80,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n3",
+          "type": "tel.lookup",
+          "x": 380,
+          "y": 80,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n5",
+          "type": "data.get",
+          "x": 200,
+          "y": 130,
+          "params": {
+            "path": "number"
+          },
+          "values": {}
+        },
+        {
+          "id": "n8",
+          "type": "out.json",
+          "x": 640,
+          "y": 80,
+          "params": {
+            "title": "Number"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e4",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n3",
+            "port": "options"
+          }
+        },
+        {
+          "id": "e6",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n5",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e7",
+          "from": {
+            "node": "n5",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "number"
+          }
+        },
+        {
+          "id": "e9",
+          "from": {
+            "node": "n3",
+            "port": "result"
+          },
+          "to": {
+            "node": "n8",
+            "port": "value"
+          }
+        }
+      ]
+    },
+    "error": {
+      "nodes": [
+        {
+          "id": "n10",
+          "type": "flow.event",
+          "x": 40,
+          "y": 60,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n11",
+          "type": "data.get",
+          "x": 240,
+          "y": 60,
+          "params": {
+            "path": "message"
+          },
+          "values": {}
+        },
+        {
+          "id": "n12",
+          "type": "out.flash",
+          "x": 460,
+          "y": 60,
+          "params": {
+            "level": "error"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e13",
+          "from": {
+            "node": "n10",
+            "port": "error"
+          },
+          "to": {
+            "node": "n11",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e14",
+          "from": {
+            "node": "n11",
+            "port": "value"
+          },
+          "to": {
+            "node": "n12",
+            "port": "text"
+          }
+        }
+      ]
+    }
+  }
+}

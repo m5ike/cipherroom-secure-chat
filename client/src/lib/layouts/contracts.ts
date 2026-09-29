@@ -8,6 +8,7 @@ import type { LayoutId } from "./index";
 import { WINDOW_CONTRACTS } from "./windows";
 import { ROOM_CONTRACTS } from "./room";
 import { ROOM_BAR_CONTRACT } from "./roombar";
+import { PHONE_BRIDGE_CONTRACT } from "./phonebridge";
 import { DIALOG_CONTRACTS } from "./dialogs";
 import { ACCOUNT_CONTRACTS } from "./account";
 import { SETTINGS_CONTRACTS } from "./settings";
@@ -259,6 +260,7 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
   ...WINDOW_CONTRACTS,
   ...ROOM_CONTRACTS,
   "room.bar": ROOM_BAR_CONTRACT,
+  "phone.bridge": PHONE_BRIDGE_CONTRACT,
   ...DIALOG_CONTRACTS,
   ...ACCOUNT_CONTRACTS,
   ...SETTINGS_CONTRACTS,

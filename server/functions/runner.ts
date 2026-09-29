@@ -29,6 +29,9 @@ import { storedInputs } from "./webhook-log";
 import { endpointOf, endpointTypes, endpointsOf, entryOf, eventInputs } from "./endpoints";
 import { admInfo, endAdmRun, hostAdm, type AdmContext } from "./host-adm";
 import { consoleGrant, isAdmArea } from "./adm-token";
+import { hostTelephony } from "./host-telephony";
+import { setHandlerRunner } from "../telephony/engine";
+import type { TelOwner } from "../telephony/tel-store";
 
 /** Bytes a sandbox sent as {"$b": base64}; null for anything else. */
 function taggedBytes(v: unknown): Buffer | null {
@@ -341,6 +344,8 @@ function hostHandler(model: Model, sessionId: string, runId: string, caller: Cal
     // 6.0: the administration, as the owner granted it (host-adm.ts → /api/admin/*).
     if (fn === "adm") return control.wait(hostAdm(String(args[0] ?? ""), String(args[1] ?? ""), Array.isArray(args[2]) ? args[2] : [], admContext(model, caller, runId)));
     if (fn === "adm.info") return admInfo(admContext(model, caller, runId));
+    // 6.0: m5.telephony — calls, SMS, chat messages, lookups, the audio bridge.
+    if (fn === "telephony") return control.wait(hostTelephony(String(args[0] ?? ""), Array.isArray(args[1]) ? args[1] : [], { model, caller, runId, chainId: chain?.id ?? "" }));
     if (fn === "webhook.create") return makeWebhook(runId, (args[0] ?? {}) as { once?: boolean; durable?: boolean; ttl?: unknown }, model, sessionId, caller);
     if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
     const scopeName = (raw: unknown): string => {
@@ -655,3 +660,21 @@ export function exportedFunctions(lang: Lang, source: string): string[] {
 }
 
 export { formatEntry };
+
+/* ------------------------------------------ telephony handlers (6.0) */
+
+/**
+ * A call or a message placed by a model reports back (telephony/engine.ts):
+ * its handler — a function in the model's file ("on_hangup"), or "file#fn" —
+ * runs in the model's processing session, as the run that placed it.
+ */
+setHandlerRunner(async (owner: TelOwner, fn: string, inputs: Record<string, unknown>) => {
+  await functionsStore.ready();
+  const model = functionsStore.model(owner.modelId);
+  if (!model || !model.enabled) return null;
+  const base = owner.entry; // package@version:file
+  const entry = fn.includes("#") ? `${base.slice(0, base.indexOf(":") + 1)}${fn}` : `${base}#${fn}`;
+  const chainId = owner.chainId && functionsStore.chain(owner.chainId) ? owner.chainId : undefined;
+  const r = await execute(model, inputs, owner.caller, { executor: "telephony", entry, skipValidation: true, callType: "webhook", ...(chainId ? { chainId } : {}) });
+  return r.result ?? null;
+});

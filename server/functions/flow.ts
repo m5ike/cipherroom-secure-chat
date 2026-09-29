@@ -544,6 +544,76 @@ export const NODES: NodeDef[] = [
     js: (g) => `(await m5.sleep(${Math.max(0, Number(g.p.ms) || 0)}), ${g.in.value})`, py: (g) => `(await m5.sleep(${Math.max(0, Number(g.p.ms) || 0)}), ${g.in.value})[1]`,
   },
 
+  /* ------------------------------------------------------------ telephony (6.0, m5.telephony) */
+  { type: "tel.call", group: "Telephony", title: "Phone call", doc: "Calls a number (ring timeout in seconds, default 10). Says the text when answered. Handlers name functions of this flow (on_answer, on_hangup, on_busy…) — they run when the provider reports; with “wait” the run waits for the end of the call.",
+    inputs: [P("to", "text", { required: true, placeholder: "+420603123456" }), P("text", "text"), P("options", "object")],
+    outputs: [OUT("call", "object"), FIELD("id", ...prop("id"), "text"), FIELD("status", ...prop("status"), "text"), FIELD("duration", ...prop("durationSec"), "number")], effect: true,
+    params: [
+      { name: "from", label: "From (empty: the provider's number)", type: "string", default: "" },
+      { name: "timeout", label: "Ring timeout (s)", type: "number", default: 10 },
+      { name: "provider", label: "Provider (empty: the default)", type: "enum", values: ["", "twilio", "telnyx", "vonage"], default: "" },
+      { name: "wait", label: "Wait for the end of the call", type: "boolean", default: false },
+      { name: "on_answer", label: "On answer (function; returns call logic)", type: "string", default: "" },
+      { name: "on_hangup", label: "On hang-up (function)", type: "string", default: "" },
+      { name: "on_busy", label: "On busy / no answer / failed (function)", type: "string", default: "" },
+    ],
+    js: (g) => { g.use("clean"); g.use("str"); const busy = String(g.p.on_busy ?? ""); return `await m5.telephony.call({ ...__clean(${g.in.options} || {}), ...__clean({ to: __str(${g.in.to}), say: __str(${g.in.text}), from: ${g.lit(String(g.p.from ?? ""))}, timeout: ${Number(g.p.timeout) || 10}, provider: ${g.lit(String(g.p.provider ?? ""))}, wait: ${g.p.wait ? "true" : "undefined"}, on: __clean({ answer: ${g.lit(String(g.p.on_answer ?? ""))}, hangup: ${g.lit(String(g.p.on_hangup ?? ""))}, busy: ${g.lit(busy)}, noanswer: ${g.lit(busy)}, failed: ${g.lit(busy)} }) }) })`; },
+    py: (g) => { g.use("clean"); g.use("str"); const busy = String(g.p.on_busy ?? ""); return `await m5.telephony.call({**_clean(${g.in.options} or {}), **_clean({"to": _str(${g.in.to}), "say": _str(${g.in.text}), "from": ${g.lit(String(g.p.from ?? ""))}, "timeout": ${Number(g.p.timeout) || 10}, "provider": ${g.lit(String(g.p.provider ?? ""))}, "wait": ${g.p.wait ? "True" : "None"}, "on": _clean({"answer": ${g.lit(String(g.p.on_answer ?? ""))}, "hangup": ${g.lit(String(g.p.on_hangup ?? ""))}, "busy": ${g.lit(busy)}, "noanswer": ${g.lit(busy)}, "failed": ${g.lit(busy)}})})})`; },
+  },
+  { type: "tel.sms", group: "Telephony", title: "SMS", doc: "Sends an SMS; its delivery report updates it (and runs the on-status function).",
+    inputs: [P("to", "text", { required: true, placeholder: "+420603123456" }), P("text", "text", { required: true }), P("options", "object")],
+    outputs: [OUT("message", "object"), FIELD("id", ...prop("id"), "text"), FIELD("status", ...prop("status"), "text")], effect: true,
+    params: [{ name: "from", label: "From (empty: default)", type: "string", default: "" }, { name: "provider", label: "Provider", type: "enum", values: ["", "twilio", "telnyx", "vonage"], default: "" }, { name: "unicode", label: "Unicode (diacritics)", type: "boolean", default: true }, { name: "on_status", label: "On delivery (function)", type: "string", default: "" }],
+    js: (g) => { g.use("clean"); g.use("str"); return `await m5.telephony.sms({ ...__clean(${g.in.options} || {}), ...__clean({ to: __str(${g.in.to}), text: __str(${g.in.text}), from: ${g.lit(String(g.p.from ?? ""))}, provider: ${g.lit(String(g.p.provider ?? ""))}, options: { unicode: ${g.p.unicode === false ? "false" : "true"} }, on_status: ${g.lit(String(g.p.on_status ?? ""))} }) })`; },
+    py: (g) => { g.use("clean"); g.use("str"); return `await m5.telephony.sms({**_clean(${g.in.options} or {}), **_clean({"to": _str(${g.in.to}), "text": _str(${g.in.text}), "from": ${g.lit(String(g.p.from ?? ""))}, "provider": ${g.lit(String(g.p.provider ?? ""))}, "options": {"unicode": ${g.p.unicode === false ? "False" : "True"}}, "on_status": ${g.lit(String(g.p.on_status ?? ""))}})})`; },
+  },
+  { type: "tel.message", group: "Telephony", title: "WhatsApp / Viber / Messenger", doc: "A message on a chat channel. WhatsApp outside the 24-hour window needs a template (its name and parameters).",
+    inputs: [P("to", "text", { required: true }), P("text", "text"), P("params", "list"), P("options", "object")],
+    outputs: [OUT("message", "object"), FIELD("status", ...prop("status"), "text")], effect: true,
+    params: [{ name: "channel", label: "Channel", type: "enum", values: ["whatsapp", "viber", "messenger"], default: "whatsapp" }, { name: "template", label: "Template (WhatsApp; empty: text)", type: "string", default: "" }, { name: "language", label: "Template language", type: "string", default: "cs" }, { name: "from", label: "From (empty: default)", type: "string", default: "" }, { name: "provider", label: "Provider", type: "enum", values: ["", "twilio", "telnyx", "vonage", "meta"], default: "" }],
+    js: (g) => { g.use("clean"); g.use("str"); const tpl = String(g.p.template ?? ""); return `await m5.telephony.${telChannel(g.p.channel)}({ ...__clean(${g.in.options} || {}), ...__clean({ to: __str(${g.in.to}), text: __str(${g.in.text}), from: ${g.lit(String(g.p.from ?? ""))}, provider: ${g.lit(String(g.p.provider ?? ""))}${tpl ? `, template: { name: ${g.lit(tpl)}, language: ${g.lit(String(g.p.language || "cs"))}, params: Array.isArray(${g.in.params}) ? ${g.in.params}.map(String) : [] }` : ""} }) })`; },
+    py: (g) => { g.use("clean"); g.use("str"); const tpl = String(g.p.template ?? ""); return `await m5.telephony.${telChannel(g.p.channel)}({**_clean(${g.in.options} or {}), **_clean({"to": _str(${g.in.to}), "text": _str(${g.in.text}), "from": ${g.lit(String(g.p.from ?? ""))}, "provider": ${g.lit(String(g.p.provider ?? ""))}${tpl ? `, "template": {"name": ${g.lit(tpl)}, "language": ${g.lit(String(g.p.language || "cs"))}, "params": [str(x) for x in (${g.in.params} or [])]}` : ""}})})`; },
+  },
+  { type: "tel.lookup", group: "Telephony", title: "Number lookup", doc: "Everything about a phone number: country, type, formats, time zones (offline, free) — and carrier, name, porting, roaming, reachability from the configured providers (paid; off: offline only).",
+    inputs: [P("number", "text", { required: true, placeholder: "+420603123456" }), P("options", "object")],
+    outputs: [OUT("result", "object"), FIELD("summary", ...prop("summary"), "object"), FIELD("country", (v) => `${v}?.summary?.country`, (v) => `((${v} or {}).get("summary") or {}).get("country")`, "any"), FIELD("type", (v) => `${v}?.summary?.type`, (v) => `((${v} or {}).get("summary") or {}).get("type")`, "text"), FIELD("valid", (v) => `${v}?.summary?.valid`, (v) => `((${v} or {}).get("summary") or {}).get("valid")`, "boolean")],
+    params: [{ name: "providers", label: "Ask the providers (paid)", type: "boolean", default: true }, { name: "fields", label: "Fields (comma-separated; empty: the usual)", type: "string", default: "" }, { name: "country", label: "Country for national numbers (ISO, e.g. CZ)", type: "string", default: "" }],
+    js: (g) => { g.use("clean"); g.use("str"); return `await m5.telephony.lookup(__str(${g.in.number}), { ...__clean(${g.in.options} || {}), ...__clean({ offline: ${g.p.providers === false ? "true" : "undefined"}, fields: ${list(g.p.fields).length ? g.lit(list(g.p.fields)) : "undefined"}, country: ${g.lit(String(g.p.country ?? ""))} }) })`; },
+    py: (g) => { g.use("clean"); g.use("str"); return `await m5.telephony.lookup(_str(${g.in.number}), **{**_clean(${g.in.options} or {}), **_clean({"offline": ${g.p.providers === false ? "True" : "None"}, "fields": ${list(g.p.fields).length ? g.lit(list(g.p.fields)) : "None"}, "country": ${g.lit(String(g.p.country ?? ""))}})})`; },
+  },
+  { type: "tel.hlr", group: "Telephony", title: "HLR", doc: "Asks the number's home network: connected or absent, roaming (country, network), ported, the network.",
+    inputs: [P("number", "text", { required: true })],
+    outputs: [OUT("result", "object"), FIELD("status", ...prop("status"), "text"), FIELD("roaming", ...prop("roaming"), "any"), FIELD("network", ...prop("network"), "any")],
+    params: [{ name: "provider", label: "Provider (empty: the first that can)", type: "enum", values: ["", "hlrlookups", "vonage"], default: "" }],
+    js: (g) => { g.use("clean"); g.use("str"); return `await m5.telephony.hlr(__str(${g.in.number}), __clean({ provider: ${g.lit(String(g.p.provider ?? ""))} }))`; },
+    py: (g) => { g.use("clean"); g.use("str"); return `await m5.telephony.hlr(_str(${g.in.number}), **_clean({"provider": ${g.lit(String(g.p.provider ?? ""))}}))`; },
+  },
+  { type: "tel.did", group: "Telephony", title: "Temporary number", doc: "Lends a phone number and a 5-digit code for a member of a room: whoever calls the number and types the code and # is connected with them — audio, or (when they do not take it) speech to text and their written replies to speech.",
+    inputs: [P("room", "any", { required: true, field: "string" }), P("member", "text", { required: true }), P("options", "object")],
+    outputs: [OUT("session", "object"), FIELD("number", ...prop("number"), "text"), FIELD("code", ...prop("code"), "text"), FIELD("expires", ...prop("expiresAt"), "number")], effect: true,
+    params: [{ name: "minutes", label: "Valid for (minutes)", type: "number", default: 10 }, { name: "mode", label: "Mode", type: "enum", values: ["auto", "audio", "text"], default: "auto" }, { name: "language", label: "Language of the prompts", type: "enum", values: ["cs", "en", "de"], default: "cs" }, { name: "number", label: "Number (empty: from the pool)", type: "string", default: "" }],
+    js: (g) => { g.use("clean"); g.use("str"); return `await m5.telephony.did.allocate({ ...__clean(${g.in.options} || {}), ...__clean({ room: ${roomIdJs(g.in.room)}, member: __str(${g.in.member}), minutes: ${Math.max(1, Number(g.p.minutes) || 10)}, mode: ${g.lit(String(g.p.mode || "auto"))}, language: ${g.lit(String(g.p.language || "cs"))}, number: ${g.lit(String(g.p.number ?? ""))} }) })`; },
+    py: (g) => { g.use("clean"); g.use("str"); return `await m5.telephony.did.allocate({**_clean(${g.in.options} or {}), **_clean({"room": ${roomIdPy(g.in.room)}, "member": _str(${g.in.member}), "minutes": ${Math.max(1, Number(g.p.minutes) || 10)}, "mode": ${g.lit(String(g.p.mode || "auto"))}, "language": ${g.lit(String(g.p.language || "cs"))}, "number": ${g.lit(String(g.p.number ?? ""))}})})`; },
+  },
+  { type: "tel.action", group: "Telephony", title: "Call logic", doc: "What a call does next — return it from an on_answer / on_digits function: say, play, pause, gather digits (their function), hang up. Chain several with Make list.",
+    inputs: [P("text", "text")], outputs: [OUT("action", "object")],
+    params: [{ name: "action", label: "Action", type: "enum", values: ["say", "play", "pause", "gather", "hangup"], default: "say" }, { name: "language", label: "Language (say)", type: "string", default: "cs-CZ" }, { name: "digits", label: "Digits (gather)", type: "number", default: 5 }, { name: "fn", label: "Digits go to function (gather)", type: "string", default: "on_digits" }, { name: "seconds", label: "Seconds (pause)", type: "number", default: 1 }],
+    js: (g) => { g.use("str"); switch (String(g.p.action || "say")) {
+      case "play": return `m5.telephony.actions.play(__str(${g.in.text}))`;
+      case "pause": return `m5.telephony.actions.pause(${Number(g.p.seconds) || 1})`;
+      case "gather": return `m5.telephony.actions.gather({ digits: ${Number(g.p.digits) || 5}, fn: ${g.lit(String(g.p.fn || "on_digits"))}, prompt: __str(${g.in.text}) || undefined, language: ${g.lit(String(g.p.language || "cs-CZ"))} })`;
+      case "hangup": return "m5.telephony.actions.hangup()";
+      default: return `m5.telephony.actions.say(__str(${g.in.text}), { language: ${g.lit(String(g.p.language || "cs-CZ"))} })`;
+    } },
+    py: (g) => { g.use("str"); switch (String(g.p.action || "say")) {
+      case "play": return `m5.telephony.actions.play(_str(${g.in.text}))`;
+      case "pause": return `m5.telephony.actions.pause(${Number(g.p.seconds) || 1})`;
+      case "gather": return `m5.telephony.actions.gather(digits=${Number(g.p.digits) || 5}, fn=${g.lit(String(g.p.fn || "on_digits"))}, prompt=_str(${g.in.text}) or None, language=${g.lit(String(g.p.language || "cs-CZ"))})`;
+      case "hangup": return "m5.telephony.actions.hangup()";
+      default: return `m5.telephony.actions.say(_str(${g.in.text}), language=${g.lit(String(g.p.language || "cs-CZ"))})`;
+    } },
+  },
+
   /* ------------------------------------------------------------ administration (6.0, m5adm) */
   { type: "adm.rooms.list", group: "Administration", title: "Find rooms", doc: "Rooms whose members match a pattern (preg_match: /^eva/i) — by name in the room, username, passkey id or group; or by the room's id, label or tag. Needs the model's access to the administration (rooms).",
     inputs: [P("value", "text", { default: "/./" }), P("filters", "json")],
@@ -609,6 +679,7 @@ export const NODES: NodeDef[] = [
   },
 ];
 
+const telChannel = (v: unknown) => (v === "viber" || v === "messenger" ? v : "whatsapp");
 function admCall(v: unknown): [string, string] {
   const s = String(v ?? "");
   if (!ADM_CALLS.includes(s)) throw new FlowError(`Not an administration call: ${s.slice(0, 40)}`);

@@ -16,6 +16,9 @@ export default defineConfig({
     environment: "node",
     include: ["test/e2e/**/*.test.ts"],
     globals: false,
+    // The servers the tests start ignore a developer's .env (provider keys,
+    // ports…): the tests say what they need (server/env.ts).
+    env: { M5CET_ENV_FILE: "none" },
     testTimeout: 60_000,
     hookTimeout: 60_000,
     // Playwright spawns its own browser binaries; we do not want the

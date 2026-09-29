@@ -15,7 +15,8 @@ import { endpointsOf } from "../endpoints";
 
 /** 5.3: the other entry points a built-in answers (its package exports a function of each name). */
 export type BuiltinEndpoint = { type: Exclude<EndpointType, "execute" | "webhook">; inputs?: InputSpec[] };
-export type BuiltinModel = { keyword: string; name: string; summary: string; inputs: InputSpec[]; visibility: "room" | "caller"; limits?: Partial<Model["limits"]>; endpoints?: BuiltinEndpoint[] };
+/** off (6.0): installed switched off — the operator turns it on (telephony costs money). */
+export type BuiltinModel = { keyword: string; name: string; summary: string; inputs: InputSpec[]; visibility: "room" | "caller"; limits?: Partial<Model["limits"]>; endpoints?: BuiltinEndpoint[]; off?: boolean };
 export type BuiltinDef = { name: string; kind: "system" | "demo" | "library"; version: string; description: string; dependencies?: Record<string, string>; model?: BuiltinModel };
 
 const V = "1.2.0";
@@ -56,7 +57,35 @@ export const BUILTINS: readonly BuiltinDef[] = [
       endpoints: EVENTS([], [{ name: "domain", type: "string", required: true }]) } },
 ];
 
-export const BUILTIN_BY_NAME: Readonly<Record<string, BuiltinDef>> = Object.fromEntries(BUILTINS.map((b) => [b.name, b]));
+/* 6.0: m5.telephony — one package per function, built as a flow (script/gen-telephony-flows.ts):
+   execute shows a form (checked in the browser), form calls the function, error says what went wrong. */
+const TEL_V = "1.0.0";
+const E164: InputSpec = { name: "to", type: "string", required: true, pattern: "^\\+[1-9][0-9]{6,14}$" };
+const TEL_FORM = (inputs: InputSpec[]): BuiltinEndpoint[] => [{ type: "form", inputs }, { type: "error" }];
+const TEL_LIMITS = { wallMs: 180_000, stepMs: 60_000 };
+const telModel = (keyword: string, name: string, summary: string, form: InputSpec[]): BuiltinModel => ({ keyword, name, summary, inputs: [], visibility: "caller", limits: TEL_LIMITS, endpoints: TEL_FORM(form), off: true });
+const TELEPHONY: BuiltinDef[] = [
+  { name: "tel-call", kind: "demo", version: TEL_V, description: "A phone call: says your text when answered, waits for the end, reports how it went (ring timeout 10 s).",
+    model: telModel("call", "Phone call", "Call a phone number and say something", [E164, { name: "text", type: "text", required: true }, { name: "timeout", type: "integer", min: 5, max: 60 }, { name: "from", type: "string" }]) },
+  { name: "tel-sms", kind: "demo", version: TEL_V, description: "An SMS through the operator's provider; its delivery report comes back.",
+    model: telModel("sms", "SMS", "Send an SMS", [E164, { name: "text", type: "text", required: true, max: 1600 }, { name: "from", type: "string" }]) },
+  { name: "tel-whatsapp", kind: "demo", version: TEL_V, description: "A WhatsApp message: text within 24 hours, else an approved template.",
+    model: telModel("whatsapp", "WhatsApp", "Send a WhatsApp message", [E164, { name: "text", type: "text" }, { name: "template", type: "string" }, { name: "language", type: "string" }]) },
+  { name: "tel-viber", kind: "demo", version: TEL_V, description: "A Viber service message (Vonage).",
+    model: telModel("viber", "Viber", "Send a Viber service message", [E164, { name: "text", type: "text", required: true }, { name: "category", type: "enum", values: ["transaction", "promotion"] }]) },
+  { name: "tel-messenger", kind: "demo", version: TEL_V, description: "A Facebook Messenger message (Vonage or Meta).",
+    model: telModel("messenger", "Messenger", "Send a Facebook Messenger message", [{ name: "to", type: "string", required: true, pattern: "^[0-9]{5,32}$" }, { name: "text", type: "text", required: true }, { name: "tag", type: "string" }]) },
+  { name: "tel-lookup", kind: "demo", version: TEL_V, description: "Everything about a phone number: numbering plan (free) and the providers' data, merged.",
+    model: telModel("lookup", "Number lookup", "Everything about a phone number", [{ name: "number", type: "string", required: true }, { name: "country", type: "string" }, { name: "offline", type: "boolean" }]) },
+  { name: "tel-hlr", kind: "demo", version: TEL_V, description: "An HLR query: connected, roaming, ported, network.",
+    model: telModel("hlr", "HLR", "Ask a number's home network", [{ name: "number", type: "string", required: true, pattern: "^\\+[1-9][0-9]{6,14}$" }]) },
+  { name: "tel-did", kind: "demo", version: TEL_V, description: "Lends a phone number and a 5-digit code that connect a caller to a room member (audio, or speech ↔ text).",
+    model: telModel("phone-bridge", "Phone bridge", "Lend a phone number that connects a caller to a room member", [{ name: "room", type: "string", required: true }, { name: "member", type: "string", required: true }, { name: "minutes", type: "integer", min: 1, max: 120 }, { name: "mode", type: "enum", values: ["auto", "audio", "text"] }]) },
+];
+
+export const BUILTINS_ALL: readonly BuiltinDef[] = [...BUILTINS, ...TELEPHONY];
+
+export const BUILTIN_BY_NAME: Readonly<Record<string, BuiltinDef>> = Object.fromEntries(BUILTINS_ALL.map((b) => [b.name, b]));
 
 function filesOf(def: BuiltinDef): Record<string, string> {
   const files = { ...(SOURCES[def.name] ?? {}) };
@@ -93,7 +122,7 @@ export function installBuiltin(name: string, actor: string, opts: { enableModel?
       saveModel({
         name: def.model.name, keyword: def.model.keyword, summary: def.model.summary, entry, runtime: "server", inputs: def.model.inputs, outputs: ["markdown"],
         limits: def.model.limits ?? {}, executors: { chat: { enabled: true, visibility: def.model.visibility }, console: { enabled: true } } as Model["executors"],
-        groups: [], enabled: opts.enableModel !== false, endpoints: builtinEndpoints(def.model, []),
+        groups: [], enabled: opts.enableModel !== false && !def.model.off, endpoints: builtinEndpoints(def.model, []),
       }, actor);
       modelState = "created";
     } else if (existing.entry.startsWith(`${def.name}@`) && (existing.entry !== entry || !sameEndpoints(existing, def.model))) {
@@ -119,7 +148,7 @@ function sameEndpoints(existing: Model, m: BuiltinModel): boolean {
 
 /** What the gallery shows: each built-in, whether it is installed, and at which version. */
 export function builtinCatalog() {
-  return BUILTINS.map((def) => {
+  return BUILTINS_ALL.map((def) => {
     const pkg = functionsStore.packageByName(def.name);
     const published = pkg ? functionsStore.versions(pkg.id).filter((v) => v.status === "published").map((v) => v.version) : [];
     const model = def.model ? functionsStore.modelByKeyword(def.model.keyword) : null;
@@ -144,7 +173,7 @@ export async function seedBuiltins(actor = "system"): Promise<InstallResult[] | 
   try { done = JSON.parse(readFileSync(file, "utf8")) as Record<string, string>; } catch { /* first time */ }
   await functionsStore.ready();
   const results: InstallResult[] = [];
-  for (const def of BUILTINS) {
+  for (const def of BUILTINS_ALL) {
     if (done[def.name] === def.version) continue;
     // Installed before at an older version: update it — unless the operator deleted it since.
     if (done[def.name] && !functionsStore.packageByName(def.name)) { done[def.name] = def.version; continue; }

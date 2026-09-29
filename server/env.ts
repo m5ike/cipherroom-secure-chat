@@ -10,8 +10,14 @@
 // (unreadable file, parse error) is surfaced rather than silently booting
 // with half a configuration.
 
-try {
-  process.loadEnvFile();
-} catch (err) {
-  if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+// M5CET_ENV_FILE=none (6.0): no file at all — the end-to-end tests start the
+// built server from the checkout, where a developer's .env (provider keys…)
+// would change what they test.
+const file = process.env.M5CET_ENV_FILE?.trim();
+if (file !== "none") {
+  try {
+    process.loadEnvFile(file || undefined);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
 }

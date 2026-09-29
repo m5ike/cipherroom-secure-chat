@@ -47,11 +47,11 @@ function twilioSid() { return env("TWILIO_ACCOUNT_SID"); }
 function twilioToken() { return env("TWILIO_AUTH_TOKEN"); }
 function twilioFrom() { return env("TWILIO_FROM"); }
 function twilioAuthHeader() { return `Basic ${Buffer.from(`${twilioSid()}:${twilioToken()}`).toString("base64")}`; }
-async function twilioForm(path: string, params: Record<string, string>): Promise<Record<string, unknown>> {
+async function twilioForm(path: string, params: Record<string, string> | URLSearchParams): Promise<Record<string, unknown>> {
   const res = await fetch(`${TWILIO_API}/Accounts/${encodeURIComponent(twilioSid())}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: twilioAuthHeader() },
-    body: new URLSearchParams(params),
+    body: params instanceof URLSearchParams ? params : new URLSearchParams(params),
   });
   if (!res.ok) throw new Error(`Twilio ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return await res.json() as Record<string, unknown>;
@@ -93,11 +93,15 @@ export class TwilioVoiceConnector implements VoiceConnector {
     if (!twilioSid() || !twilioToken()) throw new TelephonyNotConfiguredError(this.id, "Set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN.");
     const from = input.from || twilioFrom();
     if (!from) throw new TelephonyNotConfiguredError(this.id, "Set TWILIO_FROM or pass from.");
-    const params: Record<string, string> = { To: input.to, From: from };
-    if (input.twiml) params.Twiml = input.twiml;
-    else params.Url = input.url || this.voiceUrl();
+    const params = new URLSearchParams({ To: input.to, From: from });
+    if (input.twiml) params.append("Twiml", input.twiml);
+    else params.append("Url", input.url || this.voiceUrl());
     const cb = webhookUrl("/wh/twilio/voice_status");
-    if (cb) { params.StatusCallback = cb; params.StatusCallbackEvent = "initiated ringing answered completed"; }
+    if (cb) {
+      params.append("StatusCallback", cb);
+      // A repeated form field, one per event (space-separated works only in TwiML attributes).
+      for (const ev of ["initiated", "ringing", "answered", "completed"]) params.append("StatusCallbackEvent", ev);
+    }
     const json = await twilioForm("/Calls.json", params);
     return { id: String(json.sid || ""), provider: this.id };
   }
@@ -352,7 +356,9 @@ export async function installProviderWebhooks(provider: TelephonyProvider): Prom
     if (!cur.ok) throw new Error(`Vonage ${cur.status}: ${(await cur.text()).slice(0, 200)}`);
     const app = await cur.json() as { name?: string; capabilities?: Record<string, unknown> };
     const capabilities = { ...(app.capabilities ?? {}) } as Record<string, unknown>;
-    capabilities.voice = { ...((capabilities.voice as Record<string, unknown>) ?? {}), webhooks: {
+    // signed_callbacks: signed webhooks are off by default on older Voice applications,
+    // and /wh/vonage/* verifies the JWT Vonage then sends.
+    capabilities.voice = { ...((capabilities.voice as Record<string, unknown>) ?? {}), signed_callbacks: true, webhooks: {
       answer_url: { address: `${base}/wh/vonage/answer`, http_method: "POST" },
       event_url: { address: `${base}/wh/vonage/events`, http_method: "POST" },
     } };

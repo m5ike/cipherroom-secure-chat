@@ -70,6 +70,11 @@ const SPEECH_RIGHTS: RightDef[] = [
 const TEL_RIGHTS: RightDef[] = [
   { right: "call", label: "Place calls" },
   { right: "sms", label: "Send SMS" },
+  // 6.0: m5.telephony in functions.
+  { right: "message", label: "WhatsApp · Viber · Messenger", help: "Functions: m5.telephony.whatsapp / viber / messenger" },
+  { right: "lookup", label: "Number lookup", help: "Functions: m5.telephony.lookup (the providers' paid data)" },
+  { right: "hlr", label: "HLR", help: "Functions: m5.telephony.hlr — reachability, roaming" },
+  { right: "did", label: "Temporary numbers", help: "Functions: m5.telephony.did — a phone number and code that connect a caller to a room member" },
   { right: "number:*", label: "Numbers", help: "Where to: number:+420*, -number:+1900*" },
   { right: "settings", label: "Console: providers, SIP trunks, webhooks" },
   { right: "test", label: "Console: test calls and SMS" },

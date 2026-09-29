@@ -30,6 +30,8 @@ import { applyLayoutStyles } from "./lib/layout-client";
 import { isLayoutId, LAYOUT_GROUP, LAYOUT_IDS, type LayoutId } from "./lib/layouts";
 import { LayoutProvider } from "./components/LayoutProvider";
 import { RoomBar, type RoomBarItem } from "./components/RoomBar";
+import { PhoneBridgePanel } from "./components/PhoneBridgePanel";
+import type { PhoneCall } from "./lib/phone-bridge";
 import { AppPart, isDriving } from "./layout-preview-parts";
 import { checkDom, checkTree, type A11yIssue } from "./lib/layout-a11y";
 import { walkTree } from "./lib/layout-tree";
@@ -311,6 +313,18 @@ function View({ req }: { req: Request }) {
     content = (
       <LayoutProvider config={cfg} ctx={NO_CTX}>
         <div className="chat-surface min-h-[100dvh]"><RoomBar key={v} lang={lang} rooms={rooms} canAdd adding={v === "adding"} onSwitch={() => undefined} onClose={() => undefined} onAdd={() => undefined} /></div>
+      </LayoutProvider>
+    );
+  } else if (req.layout === "phone.bridge") {
+    // 6.0: a call from a lent number.
+    const state = (["ringing", "text", "audio", "ended"].includes(v) ? v : "ringing") as PhoneCall["state"];
+    const call: PhoneCall = {
+      session: "tb_sample", token: "", number: "+420 222 111 000", from: "+420 603 123 456", label: "Podpora", mode: "auto", state, muted: false, startedAt: Date.now(), reason: state === "ended" ? "the caller hung up" : "",
+      transcripts: state === "text" || state === "ended" ? [{ text: "Dobrý den, volám kvůli objednávce 1234.", at: 1, mine: false }, { text: "Hned se na to podívám.", at: 2, mine: true }] : [],
+    };
+    content = (
+      <LayoutProvider config={cfg} ctx={NO_CTX}>
+        <div className="chat-surface min-h-[100dvh] p-4"><PhoneBridgePanel key={v} lang={lang} calls={[call]} onTakeAudio={() => undefined} onTakeText={() => undefined} onReply={() => undefined} onMute={() => undefined} onHangup={() => undefined} onDismiss={() => undefined} /></div>
       </LayoutProvider>
     );
   } else if (req.layout === "widget" || req.layout === "widget.fab" || req.layout === "widget.handle") {

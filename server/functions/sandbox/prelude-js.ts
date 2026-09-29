@@ -224,6 +224,87 @@ return function setup(host, ctxJson) {
   }
   for (const k of ["wall_msg", "user_msg", "user_flash"]) M5Room.prototype[camel(k)] = M5Room.prototype[k];
   const asRoom = (d) => (d ? new M5Room(d) : null);
+
+  /* ---- m5.telephony (6.0): calls, SMS, chat messages, lookups, the audio bridge ---- */
+  const tel = (op, ...args) => acall("telephony", op, args.map(arg));
+  // Call logic, provider-neutral: say, play, pause, gather (digits → a handler), stream, record, redirect, hangup.
+  const actions = {
+    say: (text, opts) => ({ say: { ...(opts ? plain(opts) : {}), text: String(text) } }),
+    play: (url, opts) => ({ play: { ...(opts ? plain(opts) : {}), url: String(url) } }),
+    pause: (seconds) => ({ pause: { seconds: Number(seconds) || 1 } }),
+    gather: (opts) => ({ gather: { digits: 5, finishOnKey: "#", timeout: 10, ...(opts ? plain(opts) : {}) } }),
+    record: (opts) => ({ record: { maxSeconds: 60, beep: true, ...(opts ? plain(opts) : {}) } }),
+    redirect: (url) => ({ redirect: { url: String(url) } }),
+    hangup: () => ({ hangup: {} }),
+  };
+  const HANDLER_OF = { answered: "answer", completed: "hangup", busy: "busy", "no-answer": "noanswer", failed: "failed", canceled: "failed", machine: "machine" };
+  // on_answer / onAnswer / on: { answer } — a function runs here (the run waits), a name runs later in the model.
+  function callSpec(spec) {
+    const s = spec || {};
+    const fns = {}, names = {};
+    const put = (k, v) => { const ev = String(k).replace(/^on_?/i, "").replace(/[-_]/g, "").toLowerCase(); if (typeof v === "function") fns[ev] = v; else if (typeof v === "string" && v) names[ev] = v; };
+    for (const [k, v] of Object.entries(s)) if (/^on[_A-Z]/.test(k) && k !== "on") put(k, v);
+    if (s.on && typeof s.on === "object") for (const [k, v] of Object.entries(s.on)) put(k, v);
+    const rest = {};
+    for (const [k, v] of Object.entries(s)) if (typeof v !== "function" && k !== "on" && !/^on[_A-Z]/.test(k)) rest[k] = v;
+    return { fns, names, rest };
+  }
+  async function waitFor(id, fns, opts) {
+    let cursor = 0, last = null;
+    const all = [];
+    const until = Date.now() + Math.min(Number(opts && opts.timeoutMs) || 10 * 60_000, Math.max(0, m5.sys.remaining() - 1500));
+    while (Date.now() < until) {
+      const r = await tel("wait", id, cursor, Math.min(20_000, Math.max(0, until - Date.now())));
+      if (!r) return null;
+      last = r.call;
+      for (const ev of r.events) {
+        cursor = Math.max(cursor, ev.seq);
+        all.push(ev);
+        const name = ev.kind === "gather" ? "digits" : ev.status ? HANDLER_OF[ev.status] : null;
+        const f = name && fns[name];
+        if (!f) continue;
+        const out = await f({ ...ev, call: r.call });
+        if (out && !r.call.final) await tel("calls.steer", id, out);
+      }
+      if (r.call.final) break;
+    }
+    return { ...(last || { id }), events: all };
+  }
+  const telephony = {
+    providers: () => tel("providers"),
+    call: async (spec) => {
+      const { fns, names, rest } = callSpec(spec);
+      const wait = rest.wait === true || rest.mode === "sync" || Object.keys(fns).length > 0;
+      const native = Boolean(rest.twiml || rest.ncco || rest.texml);
+      const c = await tel("call", { ...rest, handlers: names, mode: native ? "native" : wait ? "sync" : "async" });
+      return wait ? waitFor(c.id, fns, rest) : c;
+    },
+    wait: (id, opts) => waitFor(typeof id === "object" && id ? id.id : id, callSpec(opts || {}).fns, opts || {}),
+    say: (id, text, opts) => tel("calls.steer", typeof id === "object" && id ? id.id : id, [actions.say(text, opts)]),
+    hangup: (id) => tel("calls.hangup", typeof id === "object" && id ? id.id : id),
+    steer: (id, logic) => tel("calls.steer", typeof id === "object" && id ? id.id : id, logic),
+    calls: {
+      get: (id) => tel("calls.get", id),
+      list: (filter) => tel("calls.list", filter || {}),
+      hangup: (id) => tel("calls.hangup", id),
+      steer: (id, logic) => tel("calls.steer", id, logic),
+    },
+    sms: (spec, text) => tel("sms", typeof spec === "string" ? { to: spec, text } : spec),
+    whatsapp: (spec) => tel("message", "whatsapp", spec),
+    viber: (spec) => tel("message", "viber", spec),
+    messenger: (spec) => tel("message", "messenger", spec),
+    messages: { get: (id) => tel("messages.get", id) },
+    lookup: (number, opts) => tel("lookup", String(number), opts || {}),
+    hlr: (number, opts) => tel("hlr", String(number), opts || {}),
+    did: {
+      allocate: (spec) => tel("did.allocate", spec || {}),
+      get: (id) => tel("did.get", id),
+      list: (filter) => tel("did.list", filter || {}),
+      release: (id) => tel("did.release", typeof id === "object" && id ? id.id : id),
+    },
+    log: (filter) => tel("log", filter || {}),
+    actions,
+  };
   const m5adm = {
     info: () => acall("adm.info"),
     overview: ops("overview", ["get", "system", "alerts", "db", "backups", "metrics", "whoami"]),
@@ -470,6 +551,7 @@ return function setup(host, ctxJson) {
         return { answer: null, steps, stopped: "max-steps" };
       },
     },
+    telephony,
     sleep: (ms) => acall("sleep", Number(ms)),
     // Ask the caller and wait for the answer (live). prompt → a choice or text;
     // form → an object of the field values.
