@@ -68,8 +68,8 @@ describe("built-in packages", () => {
       expect(c.current, def.name).toBe(true);
       if (def.model) expect(c.model?.enabled, def.name).toBe(true);
     }
-    const dns = functionsStore.versionByName("dns", "1.0.0")!;
-    expect(dns.manifest.dependencies).toEqual({ netkit: "1.0.0" });
+    const dns = functionsStore.versionByName("dns", "1.1.0")!;
+    expect(dns.manifest.dependencies).toEqual({ netkit: "1.1.0" });
     // A second seed does nothing; installing again changes nothing.
     expect(await seedBuiltins("test")).toEqual([]);
     expect(installBuiltin("whois", "test").every((r) => r.package === "unchanged")).toBe(true);
@@ -101,6 +101,36 @@ describe("built-in packages", () => {
     expect(t).not.toContain("sharer");
     expect(t).toContain("info@kavarna.example");
     expect(t).toMatch(/robots\.txt \| ✅/);
+  }, 60_000);
+
+  it("1.1: /help answers with topic buttons; a click and a reply reach its entry points", async () => {
+    const m = functionsStore.modelByKeyword("help")!;
+    const { endpointsOf } = await import("../server/functions/endpoints");
+    expect(endpointsOf(m).map((e) => e.type)).toEqual(expect.arrayContaining(["execute", "response", "button", "error"]));
+    const r = await run("help", {});
+    expect(r.values.map((o) => o.type)).toEqual(["markdown", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button"].slice(0, r.values.length));
+    const topic = r.values.find((o) => o.type === "button" && (o as { data?: { topic?: string } }).data?.topic === "forms") as { name: string; data: unknown };
+    expect(topic).toBeTruthy();
+    const ep = (type: string) => endpointsOf(m).find((e) => e.type === type)!;
+    const clicked = await execute(m, { name: topic.name, data: topic.data, event: { type: "click" } }, console_, { executor: "console", endpoint: ep("button"), chainId: r.chain, skipValidation: true });
+    expect(text(clicked.outputs)).toMatch(/## 📝 Forms/);
+    expect(functionsStore.chain(r.chain)!.calls.map((c) => c.type)).toEqual(["execute", "button"]);
+    const replied = await execute(m, { text: "dns", message: { text: "", call: 0 } }, console_, { executor: "console", endpoint: ep("response"), chainId: r.chain, skipValidation: true });
+    expect(text(replied.outputs)).toMatch(/\/dns — DNS lookup/);
+  }, 60_000);
+
+  it("1.1: a missing input is asked for with a form (a form entry point answers it)", async () => {
+    const r = await run("mail", {});
+    expect(r.values[0]).toMatchObject({ type: "form", name: "ask", fields: [{ name: "domain", required: true }] });
+  }, 30_000);
+
+  it("1.1: an older install is updated on the next start (unless it was deleted)", async () => {
+    const { writeFileSync } = await import("node:fs");
+    const marker = join(DATA, "functions", "builtins.json");
+    writeFileSync(marker, JSON.stringify({ netkit: "1.0.0", help: "1.0.0", whois: "1.0.0", dns: "1.0.0", web: "1.0.0", mail: "1.0.0", domain: "1.0.0" }));
+    const results = await seedBuiltins("test");
+    expect(results!.every((x) => x.package === "unchanged")).toBe(true); // 1.1.0 is there already
+    expect(JSON.parse(readFileSync(marker, "utf8")).dns).toBe("1.1.0");
   }, 60_000);
 
   it("a missing input without anyone to ask is a clear error", async () => {

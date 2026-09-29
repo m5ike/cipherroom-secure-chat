@@ -26,7 +26,7 @@ import { useStyleOverrides } from "./lib/style-editor";
 import { buildLabel, watchForNewVersion } from "./lib/build-info";
 import { IntegrityCheck, type IntegrityHandle } from "./components/IntegrityCheck";
 import { styleKeyFor, bubbleStyleFrom, sanitizePerUserStyle, isEmptyStyle, type PerUserStyle } from "./lib/message-styles";
-import { sealText, generateSealCode, type MsgFlags } from "./lib/message-kinds";
+import { sealText, generateSealCode, type FnMeta, type MsgFlags } from "./lib/message-kinds";
 import { MessageBubble } from "./components/MessageBubble";
 import { UserBadge } from "./components/UserBadge";
 import { SendOptions, DEFAULT_SEND_STATE, type SendState } from "./components/SendOptions";
@@ -101,7 +101,9 @@ import { M5Logo } from "./components/M5Logo";
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
 import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
 import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgState } from "./lib/chat-types";
-import { fetchCommandState, parseCommandLine, buildInputs, runCommandStream, answerInteraction, outputsToMarkdown, type Command, type Interaction } from "./lib/functions";
+import { fetchCommandState, parseCommandLine, buildInputs, runCommandStream, answerInteraction, outputsToMarkdown, sendFnEventStream, sendFnReport, type Command, type FnEventBody, type Interaction, type RunDone } from "./lib/functions";
+import { shareableOutputs } from "./lib/fn-outputs";
+import { FnHostContext, type FnHost } from "./components/fn/FnOutputs";
 import { isInlineImage } from "./lib/validate";
 import { DEFAULT_PROXY_LIMITS, extractPeerAddress, normalizeRoom, proxyPacer, type ProxyLimits } from "./lib/app-helpers";
 import { SignedInBadge } from "./components/SignedInBadge";
@@ -304,6 +306,9 @@ function UnsupportedBanner({ reasons }: { reasons: string[] }) {
   );
 }
 
+/** The panels a function may open (m5.out.window). */
+const FN_PANELS = ["profile", "settings", "appearance", "privacy", "encryption", "notifications", "roomSecurity", "trust", "invite", "join", "peers", "audio", "video", "files", "location", "nfc", "speech", "ai", "phone", "connections"] as const;
+
 export type PanelKey =
   | "profile"
   | "settings"
@@ -471,6 +476,9 @@ function ChatApp() {
   // A running command's live question (m5.prompt / m5.form) and its run token.
   const [interaction, setInteraction] = useState<Interaction | null>(null);
   const runCmdAbortRef = useRef<AbortController | null>(null);
+  // 5.3: what a function's outputs (buttons, forms, browser code) reach — the latest handlers, through refs.
+  const fnEventRef = useRef<(meta: FnMeta, ev: Exclude<FnEventBody, { type: "error" | "log" }>) => Promise<boolean>>(async () => false);
+  const fnReportRef = useRef<(meta: FnMeta, ev: Extract<FnEventBody, { type: "error" | "log" }>) => Promise<void>>(async () => undefined);
   const runCmdTokenRef = useRef<string | null>(null);
   const runCmdRunIdRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -840,6 +848,15 @@ function ChatApp() {
   const layoutCtx = useMemo<LayoutContext>(() => ({ groups: myGroups, theme: effectiveTheme }), [myGroups, effectiveTheme]);
   const moduleOn = useCallback((id: string) => moduleAllowed(clientConfig.modules, id, myGroups), [clientConfig.modules, myGroups]);
   const panelVisible = useCallback((panel: PanelKey) => { const m = moduleOfPanel(String(panel)); return !m || moduleOn(m); }, [moduleOn]);
+  const fnHost = useMemo<FnHost>(() => ({
+    lang,
+    event: (meta, ev) => fnEventRef.current(meta, ev),
+    report: (meta, ev) => { void fnReportRef.current(meta, ev); },
+    flash: (text, level) => { if (prefsRef.current.flash.enabled) flashRef.current.push({ text, kind: level }); },
+    // m5.out.window / m5.browser.open: a panel of the app, when this viewer has it.
+    openWindow: (id) => { if (!(FN_PANELS as readonly string[]).includes(id) || !panelVisible(id as PanelKey)) return false; setActivePanel(id as PanelKey); return true; },
+    tone: () => (document.documentElement.getAttribute("data-tone") === "dark" ? "dark" : "light"),
+  }), [lang, panelVisible]);
   const connectionsOn = clientConfig.connections.enabled && moduleOn("connections");
   // A panel of a module that is not (or no longer) available closes; Edit Mode switches off.
   useEffect(() => { if (activePanel && !panelVisible(activePanel)) setActivePanel(null); }, [activePanel, panelVisible]);
@@ -2954,8 +2971,10 @@ function ChatApp() {
       replyTo?: { id: string; senderName: string; text: string }; forwardedFrom?: string;
       /** Signed-in members the server holds this message for. */
       away?: AwayPeer[];
-      /** 4.15: this message carries the Markdown output of a chat command. */
-      fn?: { keyword: string; name: string };
+      /** 4.15: this message carries the Markdown output of a chat command (5.3: and its outputs, session…). */
+      fn?: FnMeta;
+      /** 5.3: the sender's own copy keeps the full outputs (the room's may leave large media out). */
+      fnLocal?: FnMeta;
     } = {},
   ) {
     if (!keyRef.current) return;
@@ -3041,7 +3060,7 @@ function ChatApp() {
           mine: true,
           secure: true,
           expiresAt,
-          flags: flagsOut,
+          flags: flagsOut && opts.fnLocal ? { ...flagsOut, fn: opts.fnLocal } : flagsOut,
           to: opts.toNames,
           sealPlain,
           sealCode,
@@ -3102,6 +3121,24 @@ function ChatApp() {
       const late = fresh.find((c) => c.keyword === parsed.keyword);
       if (late) { await runChatCommand(late, parsed.argText); return; }
     }
+    // 5.3: a reply to a model's message goes to its response entry point (in that message's processing session).
+    const replied = replyingTo ? messages.find((m) => m.id === replyingTo.id) : undefined;
+    const target = replied?.flags?.fn;
+    if (replyingTo && replied && target?.chain && (target.events ? target.events.includes("response") : commands.find((c) => c.keyword === target.keyword)?.events?.includes("response"))) {
+      const quote = { id: replyingTo.id, senderName: replyingTo.senderName, text: replyingTo.text };
+      if (replied.senderId.startsWith("function:")) {
+        // The model's message was only here (caller-only): so is the reply.
+        setMessages((cur) => [...cur, { id: newId("fnreply"), senderId: myIdRef.current || "me", senderName: nameRef.current || "me", text, createdAt: Date.now(), mine: true, secure: true, replyTo: quote, audit: [{ state: "displayed" as const, at: Date.now() }] }]);
+        setMessageInput("");
+        setReplyingTo(null);
+      } else {
+        const rec = resolveRecipients();
+        if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+        await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: quote });
+      }
+      await fnEvent(target, { type: "response", text, message: { text: replyingTo.text } });
+      return;
+    }
     const rec = resolveRecipients();
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
     await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: replyingTo ?? undefined });
@@ -3160,29 +3197,12 @@ function ChatApp() {
     setMessageInput("");
     setReplyingTo(null);
     setCmdOpen(false);
-    // 5.2: a room command with nobody to send to still runs — its output stays with the caller.
-    const roomRec = command.visibility === "room" ? resolveRecipients() : null;
-    const toRoom = command.visibility === "room" && roomRec !== null;
-    const rec = roomRec ?? { away: [] as AwayPeer[] };
-    if (command.visibility === "room" && !roomRec) setNotice(tf(lang, "functions.localOnly", { name: command.name }));
     const fn = { keyword: command.keyword, name: command.name };
     const token = accountToken() ?? null;
     runCmdAbortRef.current?.abort();
     const ctrl = new AbortController();
     runCmdAbortRef.current = ctrl;
     runCmdTokenRef.current = token;
-    const showResult = (body: string) => {
-      if (toRoom) {
-        void sendChatPayload(body, { targets: rec.targets, toNames: rec.toNames, away: rec.away, forwardedFrom: `/${command.keyword}`, fn });
-      } else {
-        setMessages((cur) => [...cur, {
-          id: `fn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-          senderId: `function:${command.keyword}`, senderName: command.name,
-          text: body, createdAt: Date.now(), mine: false, secure: true,
-          flags: { fn }, audit: [{ state: "displayed", at: Date.now() }],
-        }]);
-      }
-    };
     await runCommandStream(
       { keyword: command.keyword, inputs, room: room || null, client: prefs.deviceId || null, lang, token, signal: ctrl.signal },
       {
@@ -3191,11 +3211,78 @@ function ChatApp() {
         onError: (e) => { setInteraction(null); systemMessage(tf(lang, "functions.failed", { name: command.name, message: e.message }), { kind: "error", chatOnly: true }); },
         onDone: (r) => {
           setInteraction(null);
-          if (r.error) { systemMessage(tf(lang, "functions.failed", { name: command.name, message: r.error.message }), { kind: "error", chatOnly: true }); return; }
-          showResult(outputsToMarkdown(r.outputs) || tf(lang, "functions.empty", { name: command.name }));
+          if (r.error && !r.handled) { systemMessage(tf(lang, "functions.failed", { name: command.name, message: r.error.message }), { kind: "error", chatOnly: true }); return; }
+          showFnResult({ ...r, visibility: r.visibility ?? command.visibility }, fn, r.handled ? { origin: "error" } : {});
         },
       },
     );
+  }
+
+  /**
+   * 5.3: a model's answer as a message — its outputs rendered (buttons, forms,
+   * sound, browser code…), their Markdown as the text. A model posting to the
+   * room sends it end-to-end encrypted (large media stay with the caller); a
+   * caller-only model shows it just here — as does a room model with nobody to send to.
+   */
+  function showFnResult(r: RunDone, fallback: { keyword: string; name: string }, opts: { origin?: "error" } = {}) {
+    const outputs = r.outputs ?? [];
+    const keyword = r.keyword || fallback.keyword;
+    const meta: FnMeta = {
+      keyword, name: r.name || fallback.name,
+      ...(r.model ? { model: r.model } : {}), ...(r.chain ? { chain: r.chain } : {}), ...(typeof r.call === "number" ? { call: r.call } : {}),
+      ...(r.events?.length ? { events: r.events } : {}), ...(opts.origin ? { origin: opts.origin } : {}),
+    };
+    // The Markdown is the message's text (older apps, search, forwarding); only browser code or a panel has none — then the command's name.
+    const text = outputsToMarkdown(outputs) || (outputs.length ? `/${keyword}` : tf(lang, "functions.empty", { name: meta.name }));
+    const roomRec = r.visibility === "room" ? resolveRecipients() : null;
+    if (roomRec) {
+      void sendChatPayload(text, { targets: roomRec.targets, toNames: roomRec.toNames, away: roomRec.away, forwardedFrom: `/${keyword}`, fn: { ...meta, outputs: shareableOutputs(outputs) }, fnLocal: { ...meta, outputs } });
+      return;
+    }
+    if (r.visibility === "room") setNotice(tf(lang, "functions.localOnly", { name: meta.name }));
+    setMessages((cur) => [...cur, {
+      id: `fn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+      senderId: `function:${keyword}`, senderName: meta.name,
+      text, createdAt: Date.now(), mine: false, secure: true,
+      flags: { fn: { ...meta, outputs } }, audit: [{ state: "displayed", at: Date.now() }],
+    }]);
+  }
+
+  /** 5.3: a click, a form or a reply for a model's message — its entry point answers in that message's processing session. */
+  async function fnEvent(meta: FnMeta, ev: Exclude<FnEventBody, { type: "error" | "log" }>): Promise<boolean> {
+    if (!meta.chain) return false;
+    const token = accountToken() ?? null;
+    let ok = false;
+    await sendFnEventStream(
+      { model: meta.model, keyword: meta.keyword, chain: meta.chain, call: meta.call, room: room || null, client: prefs.deviceId || null, lang, token },
+      ev,
+      {
+        onStart: (id) => { runCmdRunIdRef.current = id; runCmdTokenRef.current = token; },
+        onInteraction: (i) => setInteraction(i),
+        onError: (e) => {
+          setInteraction(null);
+          if (e.code === "expired") systemMessage(tf(lang, "fnui.expired", { keyword: meta.keyword }), { kind: "warning" });
+          else systemMessage(tf(lang, "fnui.eventFailed", { keyword: meta.keyword, message: e.message }), { kind: "error", chatOnly: true });
+        },
+        onDone: (r) => {
+          setInteraction(null);
+          if (r.error && !r.handled) { systemMessage(tf(lang, "fnui.eventFailed", { keyword: meta.keyword, message: r.error.message }), { kind: "error", chatOnly: true }); return; }
+          ok = true;
+          showFnResult({ ...r, visibility: r.visibility ?? "caller" }, meta, r.handled ? { origin: "error" } : {});
+        },
+      },
+    );
+    return ok;
+  }
+
+  fnEventRef.current = fnEvent;
+  fnReportRef.current = fnReport;
+
+  /** 5.3: an output the browser could not show, or a line from browser code — logged with the run; the error entry point may answer. */
+  async function fnReport(meta: FnMeta, ev: Extract<FnEventBody, { type: "error" | "log" }>): Promise<void> {
+    if (!meta.chain) return;
+    const r = await sendFnReport({ model: meta.model, keyword: meta.keyword, chain: meta.chain, call: meta.call, room: room || null, client: prefs.deviceId || null, lang, token: accountToken() ?? null }, ev);
+    if (r && ev.type === "error" && !ev.fromError) showFnResult({ ...r, visibility: r.visibility ?? "caller" }, meta, { origin: "error" });
   }
 
   /** Sends the caller's answer to a running command's question. */
@@ -4121,6 +4208,7 @@ function ChatApp() {
   return (
     // 4.13: the windows, the Room window, dialogs and panels draw the operator's layouts for this viewer.
     <LayoutProvider config={layout} ctx={layoutCtx}>
+    <FnHostContext.Provider value={fnHost}>
     <div className="app-shell flex h-dvh flex-col overflow-hidden bg-app-shell text-foreground safe-pt safe-pb safe-px transition-colors">
       {/* Connection status stripe — color reflects the WS state */}
       <div
@@ -4751,6 +4839,7 @@ function ChatApp() {
         </Suspense>
       ) : null}
     </div>
+    </FnHostContext.Provider>
     </LayoutProvider>
   );
 }

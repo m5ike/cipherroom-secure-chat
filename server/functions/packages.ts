@@ -8,7 +8,8 @@
 
 import { randomBytes } from "node:crypto";
 import { fingerprint, functionsStore, newId } from "./store";
-import { parseEntry, ID_RE, KEYWORD_RE, NAME_RE, SEMVER_RE, type FileMap, type Lang, type Model, type Package, type PackageManifest, type PackageVersion } from "./types";
+import { parseEntry, ID_RE, KEYWORD_RE, NAME_RE, SEMVER_RE, type Endpoint, type FileMap, type Lang, type Model, type Package, type PackageManifest, type PackageVersion } from "./types";
+import { endpointsOf, legacyWebhookOf, normalizeEndpoints, type EndpointError } from "./endpoints";
 
 export class PackageError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "PackageError"; }
@@ -146,13 +147,40 @@ export function saveModel(input: Partial<Model> & { id?: string }, actor: string
   const keyword = (input.keyword ?? existing?.keyword ?? "").trim().toLowerCase();
   if (keyword && !KEYWORD_RE.test(keyword)) bad("bad-keyword", "A keyword is lower-case letters, digits, - and _ (no slash).");
   if (keyword) { const clash = functionsStore.modelByKeyword(keyword); if (clash && clash.id !== id) bad("keyword-clash", `The keyword /${keyword} is already used by "${clash.name}".`); }
-  const entry = (input.entry ?? existing?.entry ?? "").trim();
+  let entry = (input.entry ?? existing?.entry ?? "").trim();
   const parsed = entry ? parseEntry(entry) : null;
   if (entry && !parsed) bad("bad-entry", 'The entry is "package@version:file#function".');
+  // 5.3: the entry points. A save sends the list, or (older callers) entry + inputs
+  // and executors.webhook, which update the execute entry point and the first webhook.
+  const prevEps = existing ? endpointsOf(existing) : [];
+  let rawEps: unknown[];
+  if (Array.isArray(input.endpoints)) rawEps = input.endpoints;
+  else {
+    rawEps = (existing ? prevEps : endpointsOf({ entry, inputs: Array.isArray(input.inputs) ? input.inputs : [], executors: input.executors ?? DEFAULT_EXECUTORS })).map((e) => ({ ...e }));
+    const exec = rawEps.find((e) => (e as Endpoint).type === "execute") as Endpoint | undefined;
+    if (exec) {
+      if (input.entry !== undefined && parsed) exec.fn = `${parsed.file}#${parsed.fn}`;
+      if (Array.isArray(input.inputs)) exec.inputs = input.inputs;
+    } else if (parsed) rawEps.unshift({ id: "execute", type: "execute", fn: `${parsed.file}#${parsed.fn}`, inputs: Array.isArray(input.inputs) ? input.inputs : [], enabled: true });
+    const w = input.executors?.webhook;
+    if (w && existing) {
+      const hook = rawEps.find((e) => (e as Endpoint).type === "webhook") as Endpoint | undefined;
+      if (hook) Object.assign(hook, w);
+      else if (w.enabled || w.token) rawEps.push({ id: "wh-default", type: "webhook", name: "Webhook", fn: exec?.fn ?? (parsed ? `${parsed.file}#${parsed.fn}` : "index.js#execute"), inputs: [], ...w });
+    }
+  }
+  let endpoints: Endpoint[];
+  try { endpoints = normalizeEndpoints(rawEps, prevEps); } catch (err) { bad((err as EndpointError).code ?? "bad-endpoint", (err as Error).message); }
+  const execEp = endpoints!.find((e) => e.type === "execute");
   if (parsed) {
     const v = functionsStore.versionByName(parsed.pkg, parsed.version);
     if (!v || v.status !== "published") bad("no-entry", `${parsed.pkg}@${parsed.version} is not published.`);
-    if (!Object.prototype.hasOwnProperty.call(v!.files, parsed.file)) bad("no-entry", `${parsed.pkg}@${parsed.version} has no file ${parsed.file}.`);
+    // The execute entry point is the model's entry; every entry point's file must be in that version.
+    if (execEp) entry = `${parsed.pkg}@${parsed.version}:${execEp.fn}`;
+    for (const ep of endpoints!) {
+      const file = ep.fn.split("#")[0];
+      if (!Object.prototype.hasOwnProperty.call(v!.files, file)) bad("no-entry", `${parsed.pkg}@${parsed.version} has no file ${file} (the ${ep.type} entry point).`);
+    }
   }
   const model: Model = {
     id,
@@ -162,37 +190,36 @@ export function saveModel(input: Partial<Model> & { id?: string }, actor: string
     entry,
     onEvent: (input.onEvent ?? existing?.onEvent ?? "").trim(),
     runtime: input.runtime ?? existing?.runtime ?? "auto",
-    inputs: Array.isArray(input.inputs) ? input.inputs : existing?.inputs ?? [],
+    inputs: execEp ? execEp.inputs : Array.isArray(input.inputs) ? input.inputs : existing?.inputs ?? [],
     outputs: Array.isArray(input.outputs) ? input.outputs : existing?.outputs ?? ["markdown"],
     limits: input.limits ?? existing?.limits ?? {},
-    executors: normalizeExecutors(input.executors ?? existing?.executors ?? DEFAULT_EXECUTORS, existing?.executors),
+    executors: withWebhook(normalizeExecutors(input.executors ?? existing?.executors ?? DEFAULT_EXECUTORS, existing?.executors), endpoints!),
     groups: Array.isArray(input.groups) ? input.groups.filter((g) => typeof g === "string") : existing?.groups ?? [],
     enabled: input.enabled ?? existing?.enabled ?? false,
     revision: (existing?.revision ?? 0) + 1,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
     updatedBy: actor,
+    endpoints: endpoints!,
   };
   functionsStore.saveModel(model);
   return model;
+}
+
+/** executors.webhook mirrors the first webhook entry point (5.3). */
+function withWebhook(ex: Model["executors"], endpoints: Endpoint[]): Model["executors"] {
+  const out = { ...ex };
+  const w = legacyWebhookOf(endpoints);
+  if (w) out.webhook = w; else delete out.webhook;
+  return out;
 }
 
 /** Keeps a stable webhook token (capability in the URL) once the webhook is on,
  *  and mints one when it is first enabled. */
 function normalizeExecutors(next: Model["executors"], prev: Model["executors"] | undefined): Model["executors"] {
   const out = { ...next };
-  if (out.webhook) {
-    // 5.2: the mode, the callback and the log survive; token "rotate" issues a new one.
-    const w = out.webhook;
-    const token = w.token === "rotate" ? randToken() : w.token || prev?.webhook?.token || (w.enabled ? randToken() : undefined);
-    const secret = w.secret ?? prev?.webhook?.secret;
-    out.webhook = {
-      enabled: Boolean(w.enabled), ...(token ? { token } : {}), auth: w.auth === "hmac" ? "hmac" : "none", ...(secret ? { secret } : {}),
-      mode: w.mode === "async" || w.mode === "auto" ? w.mode : w.mode === "sync" ? "sync" : prev?.webhook?.mode ?? "sync",
-      callback: typeof w.callback === "boolean" ? w.callback : prev?.webhook?.callback ?? false,
-      log: w.log === "meta" || w.log === "off" ? w.log : w.log === "full" ? "full" : prev?.webhook?.log ?? "full",
-    };
-  }
+  // The webhooks are entry points now (5.3); withWebhook() mirrors the first one here.
+  delete out.webhook;
   if (out.api?.enabled) out.api = { enabled: true, token: out.api.token || prev?.api?.token || randToken() };
   return out;
 }

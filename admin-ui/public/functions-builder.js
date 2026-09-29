@@ -43,8 +43,15 @@
   let runBox = null;        // the last run's result (kept across renders)
   let compileError = null;  // { message, node }
   let full = false;         // full-screen canvas
+  let fnName = "execute";   // 5.3: the function on the canvas (execute, or another entry point of the flow)
 
-  const byId = (id) => flow.nodes.find((n) => n.id === id);
+  /** The graph on the canvas: the flow's own (execute) or one of its other functions. */
+  const G = () => {
+    if (fnName === "execute" || !flow.functions || !flow.functions[fnName]) { if (fnName !== "execute" && (!flow.functions || !flow.functions[fnName])) fnName = "execute"; return flow; }
+    return flow.functions[fnName];
+  };
+
+  const byId = (id) => G().nodes.find((n) => n.id === id);
   const defOf = (n) => F().NODE_BY_TYPE[n.type];
   const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "-");
   const isTyping = (t) => t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable);
@@ -65,6 +72,7 @@
   }
 
   function setFlow(next, tgt, saved) {
+    fnName = "execute";
     flow = next; target = tgt || null; selected = null; results = {}; runBox = null; undoStack = []; redoStack = []; compileError = null;
     savedJson = saved ? JSON.stringify(flow) : "";
     cam = { x: 60, y: 40, z: 1 };
@@ -90,7 +98,7 @@
   function snapshot() { undoStack.push(JSON.stringify(flow)); if (undoStack.length > 150) undoStack.shift(); redoStack = []; }
   function undo() { if (!undoStack.length) return; redoStack.push(JSON.stringify(flow)); flow = JSON.parse(undoStack.pop()); afterStructure(); }
   function redo() { if (!redoStack.length) return; undoStack.push(JSON.stringify(flow)); flow = JSON.parse(redoStack.pop()); afterStructure(); }
-  function afterStructure() { if (selected && selected.kind === "node" && !byId(selected.id)) selected = null; drawNodes(); drawWires(); changed(); drawSide(); }
+  function afterStructure() { if (selected && selected.kind === "node" && !byId(selected.id)) selected = null; G(); drawFns(); drawNodes(); drawWires(); changed(); drawSide(); }
 
   /* ============================================================ build */
 
@@ -117,17 +125,20 @@
     const issues = h("div", { class: "fb-issues" });
     stage.append(zoomBox, empty, issues);
     const side = h("div", { class: "fb-side" });
+    const fns = h("div", { class: "fb-fns", role: "tablist", "aria-label": "Functions of the flow" });
+    stage.append(fns);
     wrap.append(bar, palette, stage, side);
-    els = { wrap, bar, palette, stage, world, svg, g, side, issues, empty, nodes: new Map(), zoomPct: zoomBox.querySelector(".fb-zoom__pct") };
+    els = { wrap, bar, palette, stage, world, svg, g, side, issues, empty, fns, nodes: new Map(), zoomPct: zoomBox.querySelector(".fb-zoom__pct") };
 
     drawBar();
+    drawFns();
     drawPalette();
     drawNodes();
     applyCam();
     wireStage();
     drawSide();
     changed(true);
-    requestAnimationFrame(() => { drawWires(); if (!flow.nodes.length) return; if (cam.x === 60 && cam.y === 40 && cam.z === 1) fit(); });
+    requestAnimationFrame(() => { drawWires(); if (!G().nodes.length) return; if (cam.x === 60 && cam.y === 40 && cam.z === 1) fit(); });
     return wrap;
   }
 
@@ -140,7 +151,7 @@
     name.addEventListener("change", () => { snapshot(); flow.name = name.value.trim(); changed(); });
     const lang = h("select", { class: "input input--sm", "aria-label": "Language", title: "The language the flow compiles to" }, h("option", { value: "js", selected: flow.lang === "js" }, "JavaScript"), h("option", { value: "py", selected: flow.lang === "py" }, "Python"));
     lang.addEventListener("change", () => {
-      const hasCode = flow.nodes.some((n) => ["data.map", "data.filter", "code.expr", "code.block"].includes(n.type));
+      const hasCode = G().nodes.some((n) => ["data.map", "data.filter", "code.expr", "code.block"].includes(n.type));
       if (hasCode && !confirm("Expression and Code nodes are written in the flow's language — check them after switching. Switch?")) { lang.value = flow.lang; return; }
       snapshot(); flow.lang = lang.value; changed(); drawSide();
     });
@@ -157,8 +168,8 @@
       h("span", { class: "fb-status", id: "fbStatus" }),
       h("button", { class: "btn btn--sm", title: "Full screen (Esc to leave)", "aria-pressed": full ? "true" : "false", onclick: () => toggleFull() }, full ? "⤡" : "⤢"),
       h("button", { class: "btn btn--sm btn--primary", title: "Run the flow (Ctrl/⌘+Enter)", onclick: () => { sideTab = "run"; drawSide(); startRun(); } }, "▶ Run"),
-      C.can("operator") ? saveBtn : null,
-      C.can("operator") ? h("button", { class: "btn btn--sm", onclick: makeModel, title: "Publish the package and make a model: a chat command, webhook or API" }, "Create model…") : null,
+      C.can("operator") ? saveBtn : "",
+      C.can("operator") ? h("button", { class: "btn btn--sm", onclick: makeModel, title: "Publish the package and make a model: a chat command, webhook or API" }, "Create model…") : "",
     );
   }
 
@@ -170,6 +181,39 @@
     requestAnimationFrame(() => { drawWires(); fit(); });
   }
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && full && els && els.wrap.isConnected && !document.querySelector(".mb-overlay, .fb-quick")) toggleFull(false); });
+
+  /** 5.3: the flow's functions — execute and the model's other entry points — as tabs over the canvas. */
+  const FN_HELP = { execute: "the start (chat, console, API)", response: "a reply to the model's message", button: "a click on its button", form: "a sent form", error: "another entry point failed", webhook: "an inbound HTTP call" };
+  function drawFns() {
+    const box = els.fns;
+    clear(box);
+    for (const name of F().flowFunctions(flow)) {
+      const on = name === fnName;
+      box.append(h("button", { class: `fb-fn${on ? " is-on" : ""}`, role: "tab", "aria-selected": on ? "true" : "false", title: FN_HELP[name] || "a function of the flow", onclick: () => switchFn(name) }, name,
+        name !== "execute" && C.can("operator") ? h("span", { class: "fb-fn__x", title: `Remove the ${name} function`, onclick: async (e) => { e.stopPropagation(); if (!(await ctx.confirmDialog(`Remove the ${name} function (and its nodes)?`, true))) return; snapshot(); delete flow.functions[name]; if (!Object.keys(flow.functions).length) delete flow.functions; switchFn("execute"); } }, "×") : null));
+    }
+    if (C.can("operator")) {
+      const free = F().FLOW_FUNCTIONS.filter((f) => !(flow.functions && flow.functions[f]));
+      const sel = h("select", { class: "input input--sm fb-fn__add", title: "Add a function: another entry point of the model" }, h("option", { value: "" }, "+ function…"), ...free.map((f) => h("option", { value: f }, `${f} — ${FN_HELP[f]}`)), h("option", { value: "__custom" }, "another name…"));
+      sel.addEventListener("change", () => {
+        let name = sel.value;
+        sel.value = "";
+        if (!name) return;
+        if (name === "__custom") { name = (window.prompt("Function name (letters, digits, _)", "helper") || "").trim(); if (!/^[A-Za-z_][A-Za-z0-9_]{0,40}$/.test(name) || name === "execute") { if (name) toast("Not a function name.", "err"); return; } }
+        snapshot();
+        flow.functions = flow.functions || {};
+        if (!flow.functions[name]) flow.functions[name] = { nodes: [], edges: [] };
+        switchFn(name);
+      });
+      box.append(sel);
+    }
+  }
+  function switchFn(name) {
+    fnName = name;
+    selected = null; results = {};
+    drawFns(); drawNodes(); drawWires(); changed(); drawSide();
+    requestAnimationFrame(() => { if (G().nodes.length) fit(); });
+  }
 
   function markSaved() { const s = els && els.bar.querySelector("#fbSave"); if (s) s.textContent = dirty() ? "Save •" : "Save"; }
 
@@ -227,14 +271,14 @@
     const w = toWorld(r.left + r.width / 2, r.top + r.height / 2);
     // Do not stack new nodes exactly on top of each other.
     let x = w.x - 100, y = w.y - 40;
-    while (flow.nodes.some((n) => Math.abs(n.x - x) < 12 && Math.abs(n.y - y) < 12)) { x += 24; y += 24; }
+    while (G().nodes.some((n) => Math.abs(n.x - x) < 12 && Math.abs(n.y - y) < 12)) { x += 24; y += 24; }
     addNode(type, x, y);
   }
 
   function addNode(type, x, y, connectFrom) {
     snapshot();
-    const n = F().newNode(flow, type, snap(x), snap(y));
-    flow.nodes.push(n);
+    const n = F().newNode(G(), type, snap(x), snap(y));
+    G().nodes.push(n);
     if (connectFrom) {
       const ports = F().inputsOf(n);
       const port = ports.find((p) => p.required) || ports[0];
@@ -269,10 +313,10 @@
     applyCam(); remember();
   }
   function fit() {
-    if (!els || !flow.nodes.length) return;
+    if (!els || !G().nodes.length) return;
     const r = els.stage.getBoundingClientRect();
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const n of flow.nodes) {
+    for (const n of G().nodes) {
       const el = els.nodes.get(n.id);
       const w = el ? el.offsetWidth : 200, hh = el ? el.offsetHeight : 80;
       minX = Math.min(minX, n.x); minY = Math.min(minY, n.y); maxX = Math.max(maxX, n.x + w); maxY = Math.max(maxY, n.y + hh);
@@ -285,16 +329,16 @@
   }
 
   function autoLayout() {
-    if (!flow.nodes.length) return;
+    if (!G().nodes.length) return;
     snapshot();
-    const depth = new Map(flow.nodes.map((n) => [n.id, 0]));
-    for (let i = 0; i < flow.nodes.length; i++) {
+    const depth = new Map(G().nodes.map((n) => [n.id, 0]));
+    for (let i = 0; i < G().nodes.length; i++) {
       let moved = false;
-      for (const e of flow.edges) { const d = (depth.get(e.from.node) ?? 0) + 1; if (d > (depth.get(e.to.node) ?? 0)) { depth.set(e.to.node, d); moved = true; } }
+      for (const e of G().edges) { const d = (depth.get(e.from.node) ?? 0) + 1; if (d > (depth.get(e.to.node) ?? 0)) { depth.set(e.to.node, d); moved = true; } }
       if (!moved) break;
     }
     const cols = new Map();
-    for (const n of flow.nodes) { const d = depth.get(n.id); if (!cols.has(d)) cols.set(d, []); cols.get(d).push(n); }
+    for (const n of G().nodes) { const d = depth.get(n.id); if (!cols.has(d)) cols.set(d, []); cols.get(d).push(n); }
     for (const [d, list] of cols) {
       list.sort((a, b) => a.y - b.y);
       let y = 40;
@@ -308,8 +352,8 @@
   function drawNodes() {
     for (const el of els.nodes.values()) el.remove();
     els.nodes.clear();
-    for (const n of flow.nodes) { const el = nodeEl(n); els.nodes.set(n.id, el); els.world.append(el); }
-    els.empty.hidden = flow.nodes.length > 0;
+    for (const n of G().nodes) { const el = nodeEl(n); els.nodes.set(n.id, el); els.world.append(el); }
+    els.empty.hidden = G().nodes.length > 0;
   }
 
   function redrawNode(n) {
@@ -329,6 +373,9 @@
       case "data.get": return p.path ? `.${p.path}` : "";
       case "data.map": case "data.filter": case "code.expr": return String(p.expr ?? "").slice(0, 40);
       case "code.block": return `(${p.args}) ⇒ …`;
+      case "out.button": { const b = p.button && typeof p.button === "object" ? p.button : {}; return `${b.icon ? b.icon + " " : ""}${b.title || "button"} → ${b.name || ""}`; }
+      case "out.form": { const f = p.form && typeof p.form === "object" ? p.form : {}; return `${f.title || f.name || "form"}`; }
+      case "out.js": return String(p.code ?? "").replace(/\n/g, " ").slice(0, 40);
       default: {
         const def = defOf(n);
         const first = (def.params || []).find((x) => x.type === "enum");
@@ -347,7 +394,7 @@
   function nodeEl(n) {
     const def = defOf(n);
     if (!def) return h("div", { class: "fb-node fb-node--err", "data-id": n.id, style: `left:${n.x}px;top:${n.y}px` }, h("div", { class: "fb-node__head" }, `Unknown: ${n.type}`));
-    const wired = new Set(flow.edges.filter((e) => e.to.node === n.id).map((e) => e.to.port));
+    const wired = new Set(G().edges.filter((e) => e.to.node === n.id).map((e) => e.to.port));
     const on = selected && selected.kind === "node" && selected.id === n.id;
     const res = results[n.id];
     const el = h("div", { class: `fb-node fb-g--${slug(def.group)}${on ? " fb-node--on" : ""}${res && res.error ? " fb-node--fail" : ""}${compileError && compileError.node === n.id ? " fb-node--err" : ""}`, "data-id": n.id, style: `left:${n.x}px;top:${n.y}px` });
@@ -392,7 +439,7 @@
     if (!els) return;
     const g = els.g;
     while (g.firstChild) g.firstChild.remove();
-    for (const e of flow.edges) {
+    for (const e of G().edges) {
       const a = dotPos(e.from.node, "out", e.from.port), b = dotPos(e.to.node, "in", e.to.port);
       if (!a || !b) continue;
       const src = byId(e.from.node);
@@ -411,8 +458,8 @@
   function connect(fromNode, fromPort, toNode, toPort, withHistory = true) {
     if (fromNode === toNode) return false;
     if (withHistory) snapshot();
-    flow.edges = flow.edges.filter((e) => !(e.to.node === toNode && e.to.port === toPort));
-    flow.edges.push({ id: `e${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, from: { node: fromNode, port: fromPort }, to: { node: toNode, port: toPort } });
+    G().edges = G().edges.filter((e) => !(e.to.node === toNode && e.to.port === toPort));
+    G().edges.push({ id: `e${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, from: { node: fromNode, port: fromPort }, to: { node: toNode, port: toPort } });
     return true;
   }
 
@@ -505,8 +552,8 @@
     let node = nodeEl.dataset.id, port = portEl.dataset.port;
     // Grabbing a wired input picks the wire up from its source.
     if (side === "in") {
-      const existing = flow.edges.find((x) => x.to.node === node && x.to.port === port);
-      if (existing) { snapshot(); flow.edges = flow.edges.filter((x) => x !== existing); side = "out"; node = existing.from.node; port = existing.from.port; redrawNode(byId(existing.to.node)); drawWires(); changed(); }
+      const existing = G().edges.find((x) => x.to.node === node && x.to.port === port);
+      if (existing) { snapshot(); G().edges = G().edges.filter((x) => x !== existing); side = "out"; node = existing.from.node; port = existing.from.port; redrawNode(byId(existing.to.node)); drawWires(); changed(); }
     }
     const anchor = dotPos(node, side, port);
     if (!anchor) return;
@@ -584,10 +631,10 @@
     snapshot();
     if (selected.kind === "node") {
       const id = selected.id;
-      flow.nodes = flow.nodes.filter((n) => n.id !== id);
-      flow.edges = flow.edges.filter((e) => e.from.node !== id && e.to.node !== id);
+      G().nodes = G().nodes.filter((n) => n.id !== id);
+      G().edges = G().edges.filter((e) => e.from.node !== id && e.to.node !== id);
       delete results[id];
-    } else flow.edges = flow.edges.filter((e) => e.id !== selected.id);
+    } else G().edges = G().edges.filter((e) => e.id !== selected.id);
     selected = null;
     drawNodes(); drawWires(); changed(); drawSide();
   }
@@ -596,10 +643,10 @@
     const n = byId(id);
     if (!n) return;
     snapshot();
-    const copy = F().newNode(flow, n.type, n.x + 30, n.y + 30);
+    const copy = F().newNode(G(), n.type, n.x + 30, n.y + 30);
     copy.params = clone(n.params || {}); copy.values = clone(n.values || {}); if (n.label) copy.label = n.label;
     if (copy.type === "flow.input") copy.params.name = `${n.params.name || "value"}_2`;
-    flow.nodes.push(copy);
+    G().nodes.push(copy);
     selected = { kind: "node", id: copy.id };
     drawNodes(); drawWires(); changed(); drawSide();
   }
@@ -612,11 +659,12 @@
     try { issues = F().checkFlow(flow); } catch (e) { issues = [{ level: "error", message: e.message }]; }
     compileError = null;
     const errs = issues.filter((i) => i.level === "error");
-    if (!errs.length) { try { F().compileFlow(flow); } catch (e) { compileError = { message: e.message, node: e.node }; } }
+    if (!errs.length) { try { F().compileFlow(flow); } catch (e) { compileError = { message: e.message, node: e.node, fn: e.fn }; } }
     drawIssues(issues);
     const st = els.bar.querySelector("#fbStatus");
-    if (st) { clear(st); st.append(errs.length || compileError ? h("span", { class: "badge badge--err" }, `${errs.length || 1} error${errs.length > 1 ? "s" : ""}`) : h("span", { class: "badge badge--ok" }, "ready"), h("span", { class: "muted small" }, ` ${flow.nodes.length} nodes · ${flow.edges.length} wires`)); }
-    for (const [id, el] of els.nodes) el.classList.toggle("fb-node--err", Boolean(errs.find((i) => i.node === id)) || Boolean(compileError && compileError.node === id));
+    if (st) { clear(st); st.append(errs.length || compileError ? h("span", { class: "badge badge--err" }, `${errs.length || 1} error${errs.length > 1 ? "s" : ""}`) : h("span", { class: "badge badge--ok" }, "ready"), h("span", { class: "muted small" }, ` ${G().nodes.length} nodes · ${G().edges.length} wires`)); }
+    const here = (i) => (i.fn || "execute") === fnName;
+    for (const [id, el] of els.nodes) el.classList.toggle("fb-node--err", Boolean(errs.find((i) => i.node === id && here(i))) || Boolean(compileError && compileError.node === id && here(compileError)));
     markSaved();
     if (!initial) remember();
     if (sideTab === "code") { clearTimeout(codeTimer); codeTimer = setTimeout(drawSide, 250); }
@@ -629,7 +677,7 @@
     if (compileError && !issues.some((i) => i.level === "error")) list.unshift({ level: "error", node: compileError.node, message: compileError.message });
     box.hidden = !list.length;
     for (const i of list.slice(0, 6)) {
-      box.append(h("button", { class: `fb-issue fb-issue--${i.level}`, onclick: () => { if (i.node && byId(i.node)) { selected = { kind: "node", id: i.node }; centerOn(i.node); drawNodes(); drawWires(); drawSide(); } } }, i.level === "error" ? "✗ " : "! ", i.node ? h("strong", {}, `${i.node} `) : null, i.message));
+      box.append(h("button", { class: `fb-issue fb-issue--${i.level}`, onclick: () => { if (i.fn && i.fn !== fnName) switchFn(i.fn); if (i.node && byId(i.node)) { selected = { kind: "node", id: i.node }; centerOn(i.node); drawNodes(); drawWires(); drawSide(); } } }, i.level === "error" ? "✗ " : "! ", i.node ? h("strong", {}, `${i.fn && i.fn !== "execute" ? `${i.fn}/` : ""}${i.node} `) : null, i.message));
     }
     if (list.length > 6) box.append(h("span", { class: "muted small" }, `…and ${list.length - 6} more`));
   }
@@ -674,9 +722,10 @@
     body.append(section("Flow",
       h("label", { class: "field" }, h("span", { class: "label" }, "Name"), nm),
       h("label", { class: "field" }, h("span", { class: "label" }, "Summary"), sm),
-      h("div", { class: "muted small" }, `${flow.lang === "py" ? "Python" : "JavaScript"} · ${flow.nodes.length} nodes · ${flow.edges.length} wires`, target ? ` · saves to ${target.name}` : " · not saved to a package yet")));
-    const inputs = F().flowInputs(flow);
-    body.append(section("Inputs (the model's form)", inputs.length ? h("ul", { class: "fb-list" }, ...inputs.map((i) => h("li", {}, h("code", {}, i.name), ` ${i.type}${i.required ? " *" : ""}${i.default !== undefined ? ` = ${JSON.stringify(i.default)}` : ""}`))) : h("div", { class: "muted small" }, "No Input nodes — the flow takes no inputs.")));
+      h("div", { class: "muted small" }, `${flow.lang === "py" ? "Python" : "JavaScript"} · ${G().nodes.length} nodes · ${G().edges.length} wires`, target ? ` · saves to ${target.name}` : " · not saved to a package yet")));
+    const inputs = F().flowInputs(G());
+    if (fnName !== "execute") body.append(section(`The ${fnName} function`, h("div", { class: "muted small" }, `${FN_HELP[fnName] ? `Runs on ${FN_HELP[fnName]}` : "Another function in the same file"}. “Entry point data” gives what it got (a reply's text, a button's name and data, a form's values, an error); “Model session” the calls so far. Create model… makes it the model's ${fnName} entry point.`)));
+    body.append(section(fnName === "execute" ? "Inputs (the model's form)" : `Inputs of ${fnName}`, inputs.length ? h("ul", { class: "fb-list" }, ...inputs.map((i) => h("li", {}, h("code", {}, i.name), ` ${i.type}${i.required ? " *" : ""}${i.default !== undefined ? ` = ${JSON.stringify(i.default)}` : ""}`))) : h("div", { class: "muted small" }, "No Input nodes — the flow takes no inputs.")));
     body.append(section("How to",
       h("ul", { class: "fb-list fb-list--help" },
         h("li", {}, "Drag a node from the left, or double-click the canvas."),
@@ -688,7 +737,7 @@
   }
 
   function edgeInspector(body) {
-    const e = flow.edges.find((x) => x.id === selected.id);
+    const e = G().edges.find((x) => x.id === selected.id);
     if (!e) { flowInspector(body); return; }
     const a = byId(e.from.node), b = byId(e.to.node);
     body.append(section("Wire",
@@ -720,7 +769,7 @@
       body.append(box);
     }
     const outs = F().outputsOf(n);
-    if (outs.length) body.append(section("Outputs", h("ul", { class: "fb-list" }, ...outs.map((o) => h("li", {}, h("span", { class: `fb-dot fb-t--${o.type}` }), " ", h("code", {}, o.name), h("span", { class: "muted small" }, ` ${o.type}${o.branch ? ` — only when the condition is ${o.branch === "then" ? "true" : "false"}` : ""}`), " · ", h("span", { class: "muted small" }, `${flow.edges.filter((e) => e.from.node === n.id && e.from.port === o.name).length} wire(s)`))))));
+    if (outs.length) body.append(section("Outputs", h("ul", { class: "fb-list" }, ...outs.map((o) => h("li", {}, h("span", { class: `fb-dot fb-t--${o.type}` }), " ", h("code", {}, o.name), h("span", { class: "muted small" }, ` ${o.type}${o.branch ? ` — only when the condition is ${o.branch === "then" ? "true" : "false"}` : ""}`), " · ", h("span", { class: "muted small" }, `${G().edges.filter((e) => e.from.node === n.id && e.from.port === o.name).length} wire(s)`))))));
     if (C.can("operator")) body.append(h("div", { class: "fn-row mt8" }, h("button", { class: "btn btn--sm", onclick: () => duplicate(n.id) }, "Duplicate"), h("button", { class: "btn btn--sm btn--danger", onclick: removeSelected }, "Delete node")));
   }
 
@@ -732,7 +781,7 @@
     // Ports may follow the params (template placeholders, keys, args…): drop wires to ports that went away.
     const ports = F().inputsOf(n).map((p) => p.name);
     const names = new Set(ports);
-    flow.edges = flow.edges.filter((e) => e.to.node !== n.id || names.has(e.to.port));
+    G().edges = G().edges.filter((e) => e.to.node !== n.id || names.has(e.to.port));
     redrawNode(n); drawWiresSoon(); changed();
     if (ports.join(",") !== before) drawSideKeepingFocus();
   }
@@ -763,15 +812,27 @@
     } else if (p.type === "number") {
       input = h("input", { class: "input input--sm", type: "number", value: value ?? "" });
       input.addEventListener("change", () => setParam(n, p.name, input.value === "" ? p.default : Number(input.value)));
-    } else if (p.type === "code") {
+    } else if (p.type === "code" || p.type === "jscode") {
+      // jscode (5.3): browser JavaScript — always JavaScript, whatever the flow's language.
       const host = h("div", { class: "fb-code" });
       const E = window.M5Editor;
       if (E) {
         let t = null;
-        const ed = E.create(host, { doc: String(value ?? ""), lang: flow.lang, sdk: (ctx && ctx.sdk && ctx.sdk.spec) || [], minHeight: "60px", maxHeight: "260px", lineNumbers: p.name === "code", onChange: (text) => { clearTimeout(t); t = setTimeout(() => setParam(n, p.name, text), 400); } });
+        const ed = E.create(host, { doc: String(value ?? ""), lang: p.type === "jscode" ? "js" : flow.lang, sdk: p.type === "jscode" ? [] : (ctx && ctx.sdk && ctx.sdk.spec) || [], minHeight: "60px", maxHeight: "260px", lineNumbers: p.name === "code", onChange: (text) => { clearTimeout(t); t = setTimeout(() => setParam(n, p.name, text), 400); } });
         sideEditors.push(ed);
       }
-      return h("div", { class: "field" }, lbl, host, help);
+      const tool = p.type === "jscode" && window.M5FnOut ? h("button", { class: "btn btn--xs mt8", type: "button", onclick: () => window.M5FnOut.browserJsTool({ lang: flow.lang, spec: { code: String(value ?? "") }, onApply: (spec) => { setParam(n, p.name, spec.code); drawSide(); } }) }, "Templates and a try-out…") : null;
+      return h("div", { class: "field" }, lbl, host, tool, help);
+    } else if (p.type === "form" || p.type === "button") {
+      // 5.3: edited in the console's form / button builder; stored as an object.
+      const X = window.M5FnOut;
+      let v = value;
+      if (typeof v === "string") { try { v = JSON.parse(v); } catch { v = {}; } }
+      v = v && typeof v === "object" ? v : {};
+      const count = (v.fields || []).length + (v.panels || []).reduce((a, x) => a + ((x && x.fields) || []).length, 0);
+      const summary = p.type === "form" ? `${v.title || v.name || "form"} · ${count} field${count === 1 ? "" : "s"}${(v.panels || []).length ? ` in ${v.panels.length} panel${v.panels.length === 1 ? "" : "s"}` : ""}` : `${v.icon ? v.icon + " " : ""}${v.title || "button"} · name “${v.name || ""}”`;
+      const btn = h("button", { class: "btn btn--sm", type: "button", onclick: () => { if (!X) { toast("functions-outputs.js is missing.", "err"); return; } (p.type === "form" ? X.formBuilder : X.buttonBuilder)({ spec: v, lang: flow.lang, onApply: (spec) => { setParam(n, p.name, spec); drawSide(); } }); } }, p.type === "form" ? "▦ Edit the form…" : "▭ Edit the button…");
+      return h("div", { class: "field" }, lbl, h("div", { class: "fn-row" }, btn, h("span", { class: "muted small" }, summary)), help);
     } else if (p.type === "text" || p.type === "json") {
       input = h("textarea", { class: `input input--sm${p.type === "json" ? " fn-mono" : ""}`, rows: p.type === "json" ? 3 : 3, placeholder: p.placeholder || "" });
       input.value = value === undefined || value === null ? "" : typeof value === "object" ? JSON.stringify(value, null, 2) : String(value);
@@ -787,11 +848,11 @@
   }
 
   function inputField(n, p) {
-    const e = flow.edges.find((x) => x.to.node === n.id && x.to.port === p.name);
+    const e = G().edges.find((x) => x.to.node === n.id && x.to.port === p.name);
     const lbl = h("span", { class: "label" }, h("span", { class: `fb-dot fb-t--${p.type}` }), ` ${p.label || p.name}`, p.required ? " *" : "", h("span", { class: "muted small" }, ` · ${p.type}`));
     if (e) {
       const src = byId(e.from.node);
-      return h("div", { class: "field" }, lbl, h("div", { class: "fn-row" }, h("span", { class: "fb-wired" }, `← ${e.from.node} · ${src ? (src.label || defOf(src).title) : "?"} → ${e.from.port}`), C.can("operator") ? h("button", { class: "btn btn--xs", title: "Remove the wire", onclick: () => { snapshot(); flow.edges = flow.edges.filter((x) => x !== e); drawNodes(); drawWires(); changed(); drawSide(); } }, "×") : null));
+      return h("div", { class: "field" }, lbl, h("div", { class: "fn-row" }, h("span", { class: "fb-wired" }, `← ${e.from.node} · ${src ? (src.label || defOf(src).title) : "?"} → ${e.from.port}`), C.can("operator") ? h("button", { class: "btn btn--xs", title: "Remove the wire", onclick: () => { snapshot(); G().edges = G().edges.filter((x) => x !== e); drawNodes(); drawWires(); changed(); drawSide(); } }, "×") : null));
     }
     if (!p.field) return h("div", { class: "field" }, lbl, h("span", { class: "muted small" }, "Connect a wire (bytes come from another node)."));
     const v = n.values ? n.values[p.name] : undefined;
@@ -810,7 +871,7 @@
     let compiled = null, err = null;
     try { compiled = F().compileFlow(flow); } catch (e) { err = e; }
     if (err) {
-      body.append(h("div", { class: "fn-err" }, err.message), err.node ? h("button", { class: "btn btn--sm mt8", onclick: () => { selected = { kind: "node", id: err.node }; sideTab = "inspect"; centerOn(err.node); drawNodes(); drawWires(); drawSide(); } }, `Show ${err.node}`) : null);
+      body.append(h("div", { class: "fn-err" }, err.message), err.node ? h("button", { class: "btn btn--sm mt8", onclick: () => { selected = { kind: "node", id: err.node }; sideTab = "inspect"; centerOn(err.node); drawNodes(); drawWires(); drawSide(); } }, `Show ${err.node}`) : "");
       return;
     }
     body.append(h("div", { class: "fn-row" }, h("strong", { class: "small" }, compiled.file), h("span", { class: "fb-grow" }),
@@ -838,7 +899,8 @@
   /* ------------------------------------------------------------ run */
 
   function runPane(body) {
-    const inputs = F().flowInputs(flow);
+    const inputs = F().flowInputs(G());
+    if (fnName !== "execute") body.append(h("div", { class: "muted small" }, `Runs the ${fnName} function (give it what it would get — e.g. Input nodes named name and data for a button). A button or a form in a result of execute runs these functions too.`));
     const form = h("form", { class: "fb-runform" });
     for (const i of inputs) {
       if (runValues[i.name] === undefined && i.default !== undefined) runValues[i.name] = i.default;
@@ -864,10 +926,10 @@
     catch (e) { toast(e.message, "err"); if (e.node) { selected = { kind: "node", id: e.node }; centerOn(e.node); drawNodes(); drawWires(); } drawSide(); return; }
     if (!runBox) { sideTab = "run"; drawSide(); }
     const inputs = {};
-    for (const i of F().flowInputs(flow)) if (runValues[i.name] !== undefined && runValues[i.name] !== "") inputs[i.name] = runValues[i.name];
+    for (const i of F().flowInputs(G())) if (runValues[i.name] !== undefined && runValues[i.name] !== "") inputs[i.name] = runValues[i.name];
     results = {};
     drawNodes(); drawWires();
-    ctx.liveRunInto(runBox, { adhoc: { lang: flow.lang, files: { [compiled.file]: compiled.code }, file: compiled.file, fn: "execute" }, inputs, limits: { wallMs: 60000 } }, {
+    ctx.liveRunInto(runBox, { adhoc: { lang: flow.lang, files: { [compiled.file]: compiled.code }, file: compiled.file, fn: fnName }, inputs, limits: { wallMs: 60000 } }, {
       onTrace: (l) => {
         const f = l.fields || {};
         if (!f.node) return;
@@ -924,6 +986,7 @@
   async function makeModel() {
     if (!(await save())) return;
     const inputs = F().flowInputs(flow);
+    const fnsIn = F().compileFlow(flow).functions;
     const existing = (ctx.data.models || []).find((m) => (m.entry || "").startsWith(`${target.name}@`));
     const v = await ctx.formDialog({
       title: existing ? `Update the model “${existing.name}”` : "Create a model", subtitle: `publishes ${target.name} and points the model at it`, submit: existing ? "Publish & update" : "Publish & create",
@@ -943,6 +1006,16 @@
       const base = existing ? clone(existing) : { id: "", onEvent: "", runtime: "server", outputs: ["markdown"], limits: {}, groups: [], executors: { chat: { enabled: true, visibility: "room" }, console: { enabled: true } } };
       delete base.entryOk; delete base.webhookUrl;
       const model = { ...base, name: v.name.trim(), keyword: v.keyword.trim(), summary: v.summary.trim(), entry: `${target.name}@${pub.version.version}:${file}#execute`, inputs, enabled: Boolean(v.enabled) };
+      // 5.3: the flow's functions become the model's entry points (a webhook is added switched off — turn it on in Models).
+      const eps = (base.endpoints || []).map((e) => { const { url: _u, hidden: _h, hasSecret: _s, ...rest } = e; return rest; });
+      const upsert = (type, fn, ins) => {
+        const same = eps.find((e) => e.type === type && (type !== "webhook" || e.fn === fn));
+        if (same) { same.fn = fn; same.inputs = ins; }
+        else eps.push({ id: type === "webhook" ? "" : type, type, fn, inputs: ins, enabled: type !== "webhook", ...(type === "webhook" ? { name: "Webhook", mode: "sync", auth: "none", log: "full" } : {}) });
+      };
+      upsert("execute", `${file}#execute`, inputs);
+      for (const f of fnsIn) if (f.name !== "execute" && F().FLOW_FUNCTIONS.includes(f.name)) upsert(f.name, `${file}#${f.name}`, f.inputs);
+      model.endpoints = eps;
       model.executors = { ...model.executors, chat: { ...(model.executors.chat || {}), enabled: Boolean(v.keyword.trim()) || Boolean(model.executors.chat && model.executors.chat.enabled), visibility: v.visibility } };
       const r = await api("/admin/functions/models", { method: "POST", body: model });
       toast(`${existing ? "Updated" : "Created"} the model ${r.model.name} (${target.name}@${pub.version.version}).`, "ok");
@@ -953,7 +1026,7 @@
   /* ============================================================ new / open */
 
   async function newDialog() {
-    if (dirty() && flow.nodes.length && !(await ctx.confirmDialog("The flow has unsaved changes. Start another one anyway? (Undo will not bring it back.)"))) return;
+    if (dirty() && G().nodes.length && !(await ctx.confirmDialog("The flow has unsaved changes. Start another one anyway? (Undo will not bring it back.)"))) return;
     const Kit = window.M5Kit;
     const grid = h("div", { class: "fb-gallery" });
     let dlg = null;

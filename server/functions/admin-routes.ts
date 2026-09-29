@@ -24,14 +24,15 @@
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
 import { functionsStore } from "./store";
 import { createPackage, deleteModel, deletePackage, exportPackage, importPackage, publishDraft, saveDraft, saveModel, PackageError, TEMPLATES, DRAFT } from "./packages";
-import { answerRun, execute, functionsPublicUrl, runAdhoc, runEvents, RunRefused } from "./runner";
+import { answerRun, execute, exportedFunctions, functionsPublicUrl, runAdhoc, runErrorEndpoint, runEvents, RunRefused, type ExecuteResult } from "./runner";
+import { argsToInputs, endpointOf, endpointsOf, entryOf, EVENT_FIELDS, eventInputs, fnOfEntry, newWebhookId } from "./endpoints";
 import { checkFlow, compileFlow, parseFlow, FLOW_FILE, type Flow, type FlowError } from "./flow";
 import { builtinCatalog, installBuiltin } from "./builtins";
 import { modelRightNames } from "./visibility";
 import type { Check, Needs } from "../access";
 import { permits } from "../../client/src/lib/modules";
 import { inputsOf, maskToken, newCallId, type ParsedBody } from "./webhook-log";
-import { parseEntry, type Caller, type Model, type Run, type RunStatus, type WebhookCall } from "./types";
+import { parseEntry, type Caller, type Endpoint, type EndpointType, type Model, type Run, type RunStatus, type WebhookCall } from "./types";
 
 const RUN_STATUSES = ["queued", "running", "waiting", "done", "failed", "timed-out", "cancelled"];
 import { SDK_SPEC, sdkCompletions, sdkDts } from "./sdk-spec";
@@ -59,7 +60,7 @@ const LIVE_KEEP_MS = 2 * 60 * 1000;
 const LIVE_MAX_EVENTS = 5000;
 
 /** Buffers a run's events from its first one, so the console can subscribe after it started. */
-function followLive(runId: string, work: Promise<{ run: unknown; outputs: unknown }>): void {
+function followLive(runId: string, work: Promise<{ run: unknown; outputs: unknown; handled?: { outputs: unknown[] } }>): void {
   const entry = { events: [] as LiveEvent[], done: false, subs: new Set<(ev: LiveEvent) => void>() };
   liveRuns.set(runId, entry);
   const push = (ev: LiveEvent) => { if (entry.events.length < LIVE_MAX_EVENTS) entry.events.push(ev); for (const s of entry.subs) s(ev); };
@@ -71,7 +72,8 @@ function followLive(runId: string, work: Promise<{ run: unknown; outputs: unknow
     entry.done = true;
     setTimeout(() => liveRuns.delete(runId), LIVE_KEEP_MS).unref?.();
   };
-  work.then((out) => finish({ runId, type: "result", ok: true, run: out.run, outputs: out.outputs }))
+  // 5.3: a failure the error entry point answered shows its answer too.
+  work.then((out) => finish({ runId, type: "result", ok: true, run: out.run, outputs: out.handled ? [...(out.outputs as unknown[]), ...out.handled.outputs] : out.outputs, handled: Boolean(out.handled) }))
     .catch((err) => { const e = errorOf(err); finish({ runId, type: "result", ok: false, code: e.code, message: e.message }); });
 }
 
@@ -129,17 +131,20 @@ function entryOk(m: Model): boolean {
 
 /** The model as the console sees it: whether its entry resolves, and — when the
  *  webhook executor is on — the URL to call it (a path when no public URL is set). */
-function modelView(m: Model, reveal: Reveal = () => true): Model & { entryOk: boolean; webhookUrl: string | null; secretsHidden?: boolean } {
+type EndpointView = Endpoint & { url?: string | null; hidden?: boolean; hasSecret?: boolean };
+function modelView(m: Model, reveal: Reveal = () => true): Model & { entryOk: boolean; webhookUrl: string | null; secretsHidden?: boolean; endpoints: EndpointView[] } {
+  const hookUrl = (ep: Endpoint) => (ep.enabled !== false && ep.token ? `${functionsPublicUrl()}/hooks/m/${m.id}/${ep.token}` : null);
   if (!reveal(m)) {
     // Without the right to change the model's webhooks: no token, secret or API token (a save keeps them).
     const ex = { ...m.executors };
     if (ex.webhook) { const { token: _t, secret: _s, ...w } = ex.webhook; ex.webhook = w; }
     if (ex.api) { const { token: _t, ...a } = ex.api; ex.api = a; }
-    return { ...m, executors: ex, entryOk: entryOk(m), webhookUrl: null, secretsHidden: true };
+    const endpoints = endpointsOf(m).map((ep) => { const { token: _t, secret: _s, ...rest } = ep; return { ...rest, ...(ep.type === "webhook" ? { url: null, hidden: Boolean(ep.token), hasSecret: Boolean(ep.secret) } : {}) }; });
+    return { ...m, executors: ex, endpoints, entryOk: entryOk(m), webhookUrl: null, secretsHidden: true };
   }
-  const hook = m.executors.webhook;
-  const webhookUrl = hook?.enabled && hook.token ? `${functionsPublicUrl()}/hooks/m/${m.id}/${hook.token}` : null;
-  return { ...m, entryOk: entryOk(m), webhookUrl };
+  const endpoints = endpointsOf(m).map((ep) => (ep.type === "webhook" ? { ...ep, url: hookUrl(ep), hasSecret: Boolean(ep.secret) } : ep));
+  const first = endpoints.find((e) => e.type === "webhook");
+  return { ...m, endpoints, entryOk: entryOk(m), webhookUrl: first ? hookUrl(first) : null };
 }
 
 /** Whose eyes a model's webhook token, HMAC secret and API token are for: who may change its webhooks. */
@@ -175,10 +180,16 @@ export function functionsConsoleRight(req: Request): Needs | null {
     if (call) return needs(["webhooks", "edit"], modelNames(functionsStore.webhookCall(call)?.modelId ?? ""));
     if (path === "/webhooks/calls") return needs(["webhooks", "edit"], modelNames(String(req.query.model ?? "")));
     // Switching a model's public URL on, its mode, auth or token: a change to the model.
-    return needs(["edit"], modelNames(id(/^\/webhooks\/([^/]+)$/)));
+    return needs(["edit"], modelNames(id(/^\/webhooks\/([^/]+)(?:\/[^/]+)?$/)));
   }
   if (read) return null;
   if (path === "/flow/compile") return null; // pure: turns a flow into code, runs nothing
+  // 5.3: a click / form / reply in a console run's result — a run of that model (or draft).
+  if (path === "/event") {
+    const chain = functionsStore.chain(String(body.chain ?? ""));
+    if (chain && chain.source.kind === "draft") return needs(["run", "edit"], pkgNames(chain.source.packageId));
+    return needs(["run", "edit"], modelNames(chain?.modelId ?? ""));
+  }
   if (path === "/run") {
     if (body.adhoc) return [["edit"]];
     const draft = body.draft as { packageId?: string } | undefined;
@@ -298,7 +309,9 @@ export function registerFunctionsAdminRoutes(app: Express): void {
       if (!pkg || !version) return res.status(404).json({ ok: false, message: "No draft to run." });
       const deps: Record<string, { version: string; main: string; files: Record<string, string> }> = {};
       for (const [name, ver] of Object.entries(version.manifest.dependencies ?? {})) { const dv = functionsStore.versionByName(name, ver); if (dv) deps[name] = { version: ver, main: dv.manifest.main, files: dv.files }; }
-      return void done(runAdhoc({ lang: pkg.language, files: version.files, deps, entry: { file: String(draft.file || version.manifest.main), fn: String(draft.fn || "execute") }, inputs, limits: req.body.limits, runId }, caller));
+      const file = String(draft.file || version.manifest.main);
+      // 5.3: a click or a form in the result runs the draft's function of that name.
+      return void done(runAdhoc({ lang: pkg.language, files: version.files, deps, entry: { file, fn: String(draft.fn || "execute") }, inputs, limits: req.body.limits, runId, source: { packageId: pkg.id, file } }, caller));
     }
     const model = functionsStore.model(String(req.body.modelId ?? ""));
     if (!model) return res.status(404).json({ ok: false, message: "No such model." });
@@ -331,6 +344,86 @@ export function registerFunctionsAdminRoutes(app: Express): void {
     res.json({ ok: true });
   });
 
+  /* -------- entry points (5.3) -------- */
+
+  // The functions a package version exports, per file (the entry point pickers).
+  r.get("/exports", (req, res) => {
+    const name = String(req.query.package ?? ""), version = String(req.query.version ?? "");
+    const pkg = functionsStore.packageByName(name);
+    const v = pkg ? functionsStore.version(pkg.id, version || DRAFT) : null;
+    if (!pkg || !v) return res.status(404).json({ ok: false, message: "No such package version." });
+    const files: Record<string, string[]> = {};
+    for (const [file, text] of Object.entries(v.files)) if (/\.(m?js|py)$/.test(file) && !file.startsWith("tests/")) files[file] = exportedFunctions(pkg.language, text);
+    res.json({ ok: true, package: name, version: v.version, language: pkg.language, main: v.manifest.main, files, fields: EVENT_FIELDS });
+  });
+
+  // A model's processing sessions (m5.model): the recent ones, or one with its calls.
+  r.get("/chains", (req, res) => {
+    const id = String(req.query.id ?? "");
+    if (id) { const c = functionsStore.chain(id); return c ? res.json({ ok: true, chain: c }) : res.status(404).json({ ok: false, message: "No such processing session." }); }
+    res.json({ ok: true, chains: functionsStore.chains(String(req.query.model ?? ""), Number(req.query.limit) || 30).map((c) => ({ id: c.id, modelId: c.modelId, calls: c.calls.length, types: c.calls.map((x) => x.type), last: c.calls.at(-1)?.status ?? "", createdAt: c.createdAt, updatedAt: c.updatedAt })) });
+  });
+
+  // 5.3: a click, a submitted form or a reply in a console run's result (a model's, or a draft's), or a
+  // browser error — the entry point of that type runs in the same processing session; { live } streams it.
+  r.post("/event", operator, (req, res) => {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const chain = functionsStore.chain(String(b.chain ?? ""));
+    if (!chain) return res.status(410).json({ ok: false, code: "expired", message: "That processing session is over — run it again." });
+    const type = String(b.type ?? "") as EndpointType;
+    if (!["response", "button", "form", "error"].includes(type)) return res.status(400).json({ ok: false, message: "type: response, button, form or error." });
+    const caller = consoleCaller(res);
+    const origin = chain.calls[Number.isInteger(b.call) ? Number(b.call) : chain.calls.length - 1] ?? chain.calls.at(-1);
+    const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+    const event = { type: type === "response" ? "reply" : b.source === "js" ? "js" : type === "button" ? "click" : type === "form" ? "submit" : "error", at: Date.now(), by: caller.name, console: true };
+    const e = (b.error && typeof b.error === "object" ? b.error : {}) as Record<string, unknown>;
+    const system = (ep: Endpoint | null): { source: Record<string, unknown>; sys: Record<string, unknown> } => {
+      if (type === "response") { const text = str(b.text, 16_000); return { source: ep ? argsToInputs(ep.inputs, text) : {}, sys: { text, message: { text: str((b.message as { text?: unknown } | undefined)?.text, 2000), call: origin?.id ?? 0 }, event } }; }
+      if (type === "button") { const data = b.data === undefined ? null : b.data; return { source: data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {}, sys: { name: str(b.name, 64), data, event } }; }
+      if (type === "form") { const values = b.values && typeof b.values === "object" && !Array.isArray(b.values) ? b.values as Record<string, unknown> : {}; return { source: values, sys: { name: str(b.name, 64), values, event } }; }
+      return { source: {}, sys: { error: { type: str(e.type, 60) || "RenderError", message: str(e.message, 2000) }, failed: { call: origin?.id ?? 0, type: origin?.type ?? "execute", parms: origin?.parms ?? {}, ...(typeof b.output === "number" ? { output: b.output } : {}) }, source: "client" } };
+    };
+    const live = b.live === true && type !== "error";
+    const runId = newId("run");
+    let work: Promise<ExecuteResult>;
+    try {
+      if (chain.source.kind === "draft") {
+        // A draft: its function of that name (button, form, response, error).
+        const src = chain.source;
+        const { sys } = system(null);
+        if (!src.packageId && src.inline) {
+          // Inline code (the tutorial, the builder): its function of that name.
+          work = runAdhoc({ lang: src.inline.lang, files: src.inline.files, entry: { file: src.file, fn: type }, inputs: sys, runId, chainId: chain.id, type }, caller);
+          if (!live) return void work.then((out) => res.json({ ok: true, run: out.run, outputs: out.handled ? [...out.outputs, ...out.handled.outputs] : out.outputs, chain: out.chain, call: out.call })).catch((err) => send(res, err));
+          followLive(runId, work as never);
+          return res.json({ ok: true, runId });
+        }
+        const pkg = functionsStore.package(src.packageId);
+        const draft = pkg ? functionsStore.version(pkg.id, DRAFT) : null;
+        if (!pkg || !draft) return res.status(409).json({ ok: false, message: "This code is not in a package any more — run it again." });
+        const file = src.file || draft.manifest.main;
+        const deps: Record<string, { version: string; main: string; files: Record<string, string> }> = {};
+        for (const [name, ver] of Object.entries(draft.manifest.dependencies ?? {})) { const dv = functionsStore.versionByName(name, ver); if (dv) deps[name] = { version: ver, main: dv.manifest.main, files: dv.files }; }
+        work = runAdhoc({ lang: pkg.language, files: draft.files, deps, entry: { file, fn: type }, inputs: sys, runId, source: { packageId: pkg.id, file }, chainId: chain.id, type }, caller);
+      } else {
+        const model = functionsStore.model(chain.modelId);
+        if (!model) return res.status(404).json({ ok: false, message: "The model is gone." });
+        const ep = endpointOf(model, type);
+        if (type === "error") {
+          if (!ep) return res.json({ ok: true, outputs: [], message: "The model has no error entry point." });
+          work = runErrorEndpoint(model, ep, chain.id, system(ep).sys as never, caller, { executor: "console", test: true }).then((h) => { if (!h) throw new RunRefused("error-endpoint", "The error entry point could not run."); return { run: h.run, outputs: h.outputs, value: null, values: [], result: null, chain: chain.id, call: h.run.callId ?? 0 }; });
+        } else {
+          if (!ep) return res.status(404).json({ ok: false, code: "no-endpoint", message: `The model has no ${type} entry point.` });
+          const { source, sys } = system(ep);
+          work = execute(model, eventInputs(ep, source, sys), caller, { executor: "console", test: true, endpoint: ep, chainId: chain.id, skipValidation: true, runId });
+        }
+      }
+    } catch (err) { return send(res, err); }
+    if (!live) return void work.then((out) => res.json({ ok: true, run: out.run, outputs: out.handled ? [...out.outputs, ...out.handled.outputs] : out.outputs, chain: out.chain, call: out.call })).catch((err) => send(res, err));
+    followLive(runId, work as never);
+    res.json({ ok: true, runId });
+  });
+
   /* -------- built-in packages (5.2): /help and the demos -------- */
   r.get("/builtins", (_req, res) => { void functionsStore.ready().then(() => res.json({ ok: true, builtins: builtinCatalog() })); });
   r.post("/builtins/:name/install", operator, (req, res) => {
@@ -343,9 +436,17 @@ export function registerFunctionsAdminRoutes(app: Express): void {
     const reveal = revealFor(res);
     void functionsStore.ready().then(() => {
       const stats = new Map(functionsStore.webhookStats().map((x) => [x.modelId, x]));
-      const endpoints = functionsStore.models().map((m) => {
-        const h = m.executors.webhook;
-        return { modelId: m.id, name: m.name, keyword: m.keyword, modelEnabled: m.enabled, enabled: Boolean(h?.enabled), url: h?.enabled && h.token && reveal(m) ? `${functionsPublicUrl()}/hooks/m/${m.id}/${h.token}` : null, hidden: Boolean(h?.enabled && h.token && !reveal(m)), mode: h?.mode ?? "sync", auth: h?.auth ?? "none", callback: Boolean(h?.callback), log: h?.log ?? "full", entry: m.entry, inputs: m.inputs, stats: stats.get(m.id) ?? null };
+      const byHook = new Map(functionsStore.webhookHookStats().map((x) => [`${x.modelId}\0${x.hook}`, x]));
+      // 5.3: one row per webhook entry point; a model without one gets a row to create it.
+      const endpoints = functionsStore.models().flatMap((m) => {
+        const hooks = endpointsOf(m).filter((e) => e.type === "webhook");
+        const row = (h: Endpoint | null) => ({
+          modelId: m.id, endpoint: h?.id ?? null, hookName: h?.name ?? "", name: m.name, keyword: m.keyword, modelEnabled: m.enabled, enabled: Boolean(h && h.enabled !== false && h.token),
+          url: h && h.enabled !== false && h.token && reveal(m) ? `${functionsPublicUrl()}/hooks/m/${m.id}/${h.token}` : null, hidden: Boolean(h && h.enabled !== false && h.token && !reveal(m)),
+          mode: h?.mode ?? "sync", auth: h?.auth ?? "none", callback: Boolean(h?.callback), log: h?.log ?? "full", entry: h ? entryOf(m, h) : m.entry, fn: h?.fn ?? "", inputs: h ? h.inputs : m.inputs,
+          stats: h?.token ? byHook.get(`${m.id}\0${maskToken(h.token)}`) ?? null : hooks.length ? null : stats.get(m.id) ?? null,
+        });
+        return hooks.length ? hooks.map(row) : [row(null)];
       });
       const durable = functionsStore.durableWebhooks().map((w) => ({ hook: maskToken(w.token), modelId: w.modelId, entry: w.entry, once: w.once, expiresAt: w.expiresAt, createdAt: w.createdAt, caller: w.caller?.name ?? "" }));
       res.json({ ok: true, publicUrl: functionsPublicUrl(), autoWaitMs: Number(process.env.WEBHOOK_AUTO_WAIT_MS) || 25_000, endpoints, durable, other: stats.get("") ?? null });
@@ -365,15 +466,35 @@ export function registerFunctionsAdminRoutes(app: Express): void {
   r.delete("/webhooks/calls", operator, (req, res) => {
     res.json({ ok: true, deleted: functionsStore.deleteWebhookCalls(req.query.model ? String(req.query.model) : undefined) });
   });
+  // A webhook entry point's settings — `endpoint` names it (default: the first; `create: true` adds one,
+  // running `fn` or the execute function).
   r.put("/webhooks/:modelId", operator, (req, res) => {
     const m = functionsStore.model(String(req.params.modelId));
     if (!m) return res.status(404).json({ ok: false, message: "No such model." });
     const b = (req.body ?? {}) as Record<string, unknown>;
-    const cur = m.executors.webhook ?? { enabled: false, auth: "none" as const };
-    const next: NonNullable<Model["executors"]["webhook"]> = { ...cur, ...(typeof b.enabled === "boolean" ? { enabled: b.enabled } : {}), ...(b.mode === "sync" || b.mode === "async" || b.mode === "auto" ? { mode: b.mode as "sync" | "async" | "auto" } : {}),
-      ...(typeof b.callback === "boolean" ? { callback: b.callback } : {}), ...(b.log === "full" || b.log === "meta" || b.log === "off" ? { log: b.log as "full" | "meta" | "off" } : {}),
-      ...(b.auth === "none" || b.auth === "hmac" ? { auth: b.auth as "none" | "hmac" } : {}), ...(typeof b.secret === "string" && b.secret ? { secret: b.secret.slice(0, 200) } : {}), ...(b.rotate === true ? { token: "rotate" } : {}) };
-    try { res.json({ ok: true, model: modelView(saveModel({ id: m.id, executors: { ...m.executors, webhook: next } }, actorOf(res)), revealFor(res)) }); }
+    const eps = endpointsOf(m).map((e) => ({ ...e }));
+    let hook = b.create === true ? null : eps.find((e) => e.type === "webhook" && (typeof b.endpoint !== "string" || e.id === b.endpoint)) ?? null;
+    if (!hook) {
+      if (typeof b.endpoint === "string" && b.create !== true) return res.status(404).json({ ok: false, message: "No such webhook entry point." });
+      const exec = eps.find((e) => e.type === "execute");
+      hook = { id: newWebhookId(), type: "webhook", name: typeof b.name === "string" && b.name ? b.name : `Webhook ${eps.filter((e) => e.type === "webhook").length + 1}`, fn: typeof b.fn === "string" && b.fn ? b.fn : exec?.fn ?? fnOfEntry(m.entry), inputs: [], enabled: false };
+      eps.push(hook);
+    }
+    Object.assign(hook, {
+      ...(typeof b.enabled === "boolean" ? { enabled: b.enabled } : {}), ...(b.mode === "sync" || b.mode === "async" || b.mode === "auto" ? { mode: b.mode } : {}),
+      ...(typeof b.callback === "boolean" ? { callback: b.callback } : {}), ...(b.log === "full" || b.log === "meta" || b.log === "off" ? { log: b.log } : {}),
+      ...(b.auth === "none" || b.auth === "hmac" ? { auth: b.auth } : {}), ...(typeof b.secret === "string" && b.secret ? { secret: b.secret.slice(0, 200) } : {}),
+      ...(typeof b.name === "string" && b.name.trim() ? { name: b.name.trim() } : {}), ...(typeof b.fn === "string" && b.fn ? { fn: b.fn } : {}),
+      ...(b.rotate === true ? { token: "rotate" } : {}),
+    });
+    try { res.json({ ok: true, endpoint: hook.id, model: modelView(saveModel({ id: m.id, endpoints: eps }, actorOf(res)), revealFor(res)) }); }
+    catch (err) { send(res, err); }
+  });
+  r.delete("/webhooks/:modelId/:endpoint", operator, (req, res) => {
+    const m = functionsStore.model(String(req.params.modelId));
+    if (!m) return res.status(404).json({ ok: false, message: "No such model." });
+    const eps = endpointsOf(m).filter((e) => !(e.type === "webhook" && e.id === req.params.endpoint));
+    try { res.json({ ok: true, model: modelView(saveModel({ id: m.id, endpoints: eps }, actorOf(res)), revealFor(res)) }); }
     catch (err) { send(res, err); }
   });
   // Replays a logged call — on the published version, or on the package's draft (to debug the script) — as a live run.
@@ -387,7 +508,10 @@ export function registerFunctionsAdminRoutes(app: Express): void {
     if (call.parsed?.kind === "binary") return res.status(409).json({ ok: false, message: "The log keeps only the size of a binary body — nothing to replay." });
     if (!call.parsed || (call.parsed.value === null && call.parsed.kind !== "empty")) return res.status(409).json({ ok: false, message: "The log kept no body for this call (log: meta) — nothing to replay." });
     const target = (req.body ?? {}).target === "draft" ? "draft" : "published";
-    const inputs = { ...inputsOf({ kind: call.parsed.kind as ParsedBody["kind"], value: call.parsed.value }, call.query), _webhook: { method: call.method, headers: call.headers, query: call.query, replayOf: call.id } };
+    // 5.3: the webhook entry point the call came through (its masked token), else the first.
+    const hooks = endpointsOf(model).filter((e) => e.type === "webhook");
+    const hookEp = hooks.find((e) => e.token && maskToken(e.token) === call.hook) ?? hooks[0] ?? null;
+    const inputs = { ...inputsOf({ kind: call.parsed.kind as ParsedBody["kind"], value: call.parsed.value }, call.query), _webhook: { method: call.method, headers: call.headers, query: call.query, replayOf: call.id, ...(hookEp ? { endpoint: hookEp.id, name: hookEp.name ?? "" } : {}) } };
     const caller: Caller = { kind: "webhook", account: "", name: `replay by ${actorOf(res)}`, groups: [], room: null, client: "console", lang: "en", tz: "UTC" };
     const runId = newId("run");
     let work: Promise<{ run: Run; outputs: unknown; value: unknown }>;
@@ -398,9 +522,10 @@ export function registerFunctionsAdminRoutes(app: Express): void {
       if (!entry || !pkg || !draft) return res.status(404).json({ ok: false, message: "The model's package has no draft." });
       const deps: Record<string, { version: string; main: string; files: Record<string, string> }> = {};
       for (const [name, ver] of Object.entries(draft.manifest.dependencies ?? {})) { const dv = functionsStore.versionByName(name, ver); if (dv) deps[name] = { version: ver, main: dv.manifest.main, files: dv.files }; }
-      work = runAdhoc({ lang: pkg.language, files: draft.files, deps, entry: { file: entry.file, fn: entry.fn }, inputs, runId, limits: model.limits }, caller) as never;
+      const [file, fn] = (hookEp?.fn ?? `${entry.file}#${entry.fn}`).split("#");
+      work = runAdhoc({ lang: pkg.language, files: draft.files, deps, entry: { file, fn }, inputs, runId, limits: model.limits, source: { packageId: pkg.id, file }, type: "webhook" }, caller) as never;
     } else {
-      work = execute(model, inputs, caller, { executor: "webhook", test: true, skipValidation: true, runId }) as never;
+      work = execute(model, inputs, caller, { executor: "webhook", test: true, skipValidation: true, runId, ...(hookEp ? { endpoint: hookEp } : {}) }) as never;
     }
     const rec: WebhookCall = { ...call, id: newCallId(), at: Date.now(), kind: "replay", replayOf: call.id, runId, status: 0, responseBody: "", responseHeaders: {}, result: null, ms: 0, error: "", path: `${call.path} (replay: ${target})` };
     functionsStore.addWebhookCall(rec);

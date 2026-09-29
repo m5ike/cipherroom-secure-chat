@@ -151,3 +151,57 @@ describe("flows run in the sandbox", () => {
     }
   }, 90_000);
 });
+
+describe("5.3: several functions in a flow, and the new nodes", () => {
+  const N = (id: string, type: string, x: number, params: Record<string, unknown> = {}, values: Record<string, unknown> = {}) => ({ id, type, x, y: 0, params: { ...F.paramsOf({ id, type, x, y: 0 }), ...params }, values });
+  const E = (from: string, fp: string, to: string, tp: string) => ({ id: `${from}-${to}`, from: { node: from, port: fp }, to: { node: to, port: tp } });
+
+  it("compiles execute and the entry point functions into one file, with their inputs", () => {
+    for (const lang of ["js", "py"] as const) {
+      const flow = {
+        ...F.emptyFlow(lang, "demo"),
+        nodes: [N("n1", "text.template", 0, { template: "Hi" }), N("n2", "out.markdown", 200), N("n3", "out.button", 400, { button: { name: "more", title: "More", css: "primary" } }, { data: "{\"page\":2}" }), N("n4", "out.form", 600), N("n5", "out.js", 800, { code: "m5.flash('x')", hidden: true })],
+        edges: [E("n1", "text", "n2", "text")],
+        functions: {
+          button: { nodes: [N("b1", "flow.event", 0), N("b2", "model.history", 0), N("b3", "text.template", 200, { template: "clicked {name}, call {call}" }), N("b4", "out.text", 400)], edges: [E("b1", "name", "b3", "name"), E("b2", "call", "b3", "call"), E("b3", "text", "b4", "text")] },
+          form: { nodes: [N("f0", "flow.input", 0, { name: "email", type: "email", required: true }), N("f1", "flow.event", 0), N("f2", "out.json", 200)], edges: [E("f1", "values", "f2", "value")] },
+        },
+      };
+      const parsed = F.parseFlow(JSON.parse(JSON.stringify(flow)));
+      expect(F.flowFunctions(parsed)).toEqual(["execute", "button", "form"]);
+      const c = F.compileFlow(parsed);
+      expect(c.functions.map((f) => f.name)).toEqual(["execute", "button", "form"]);
+      expect(c.functions[2].inputs).toEqual([{ name: "email", type: "email", required: true }]);
+      if (lang === "js") {
+        expect(c.code).toMatch(/export async function execute\(inputs = \{\}\)/);
+        expect(c.code).toMatch(/export async function button\(inputs = \{\}\)/);
+        expect(c.code).toMatch(/m5\.out\.button\(\{ \.\.\.\{"name":"more","title":"More","css":"primary"\}, data: \{"page":2\} \}\)/);
+        expect(() => new AsyncFunction(c.code.replace(/export /g, ""))).not.toThrow();
+      } else {
+        expect(c.code).toMatch(/async def button\(\*\*inputs\):/);
+        expect(c.code).toMatch(/m5\.out\.js\("m5\.flash\('x'\)", None, hidden=True\)/);
+      }
+    }
+  });
+
+  it("a problem in another function is reported with its name", () => {
+    const flow = { ...F.emptyFlow("js"), nodes: [N("n1", "out.text", 0, {}, { text: "hi" })], edges: [], functions: { error: { nodes: [N("e1", "out.text", 0)], edges: [] } } };
+    const issues = F.checkFlow(F.parseFlow(flow));
+    expect(issues.find((i) => i.fn === "error")).toMatchObject({ level: "error", node: "e1", message: expect.stringMatching(/^error: /) });
+    expect(() => F.compileFlow(F.parseFlow(flow))).toThrow(/needs a wire or a value/);
+  });
+
+  it("the functions run: a click on the flow's button runs its button function in the same session", async () => {
+    const flow = F.parseFlow({
+      ...F.emptyFlow("js"), nodes: [N("n1", "out.button", 0, { button: { name: "go", title: "Go" } }, { data: "{\"x\":7}" })], edges: [],
+      functions: { button: { nodes: [N("b1", "flow.event", 0), N("b2", "model.history", 0), N("b3", "data.object", 200, { keys: "data, type, first" }), N("b4", "flow.return", 400)], edges: [E("b1", "data", "b3", "data"), E("b2", "type", "b3", "type"), E("b2", "first", "b3", "first"), E("b3", "object", "b4", "value")] } },
+    });
+    const c = F.compileFlow(flow);
+    const files = { [c.file]: c.code };
+    const r = await runAdhoc({ lang: "js", files, entry: { file: c.file, fn: "execute" }, inputs: {} }, caller);
+    expect(r.outputs[0]).toMatchObject({ type: "button", name: "go", data: { x: 7 } });
+    const b = await runAdhoc({ lang: "js", files, entry: { file: c.file, fn: "button" }, inputs: { name: "go", data: { x: 7 }, event: { type: "click" } }, chainId: r.chain }, caller);
+    expect(b.run.error).toBeNull();
+    expect((b.values[0] as { value: { data: unknown; type: string; first: { type: string } } }).value).toMatchObject({ data: { x: 7 }, type: "button", first: { type: "execute" } });
+  }, 60_000);
+});

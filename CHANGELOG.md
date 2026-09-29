@@ -5,6 +5,126 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [5.3.0] – 2026-09-29
+
+Příkazy jako **rozhovor**: model má **vstupní body** pro start, odpověď na
+svou zprávu, tlačítka, formuláře, chyby a libovolný počet webhooků, zná
+celou **historii volání** (`m5.model`) a jeho výsledek může být **seznam
+výstupů** — text, zvuk, tlačítka, formuláře i kód pro prohlížeč.
+
+### Přidáno
+- **Vstupní body modelu** (*Functions › Models › Entry points*): každý typ
+  volání má svou funkci v balíčku modelu (`soubor#funkce`, výběr ze
+  skutečně exportovaných funkcí):
+  - **execute** — start: `/příkaz` v chatu, konzole, API, plán;
+  - **response** — někdo **odpověděl** na zprávu modelu (dostane `text`,
+    `message` a vstupy přečtené z odpovědi jako argumenty příkazu);
+  - **button** — kliknutí na tlačítko modelu (`name`, `data`, `event`);
+  - **form** — odeslaný formulář modelu (`name`, `values`, `event`);
+  - **error** — jiný vstupní bod selhal (výjimka, časový limit, neplatný
+    výsledek) nebo prohlížeč nedokázal výsledek zobrazit (`error`,
+    `failed`, `source`); jeho odpověď se ukáže místo holé chyby, jeho
+    vlastní chyby se jen logují (nic se necyklí);
+  - **webhook** — příchozí HTTP volání; **webhooků může být víc**, každý
+    s vlastní automaticky vytvořenou URL (kopírovat v seznamu), funkcí,
+    režimem, kontrolou HMAC a logem.
+
+  execute, response, button, form a error jsou jedinečné. Ke každému řádku
+  patří jeho **Inputs** (kontrolované a typované; u webhooku pole JSON těla —
+  `application/json`, nové typy `object` a `array`).
+- **`m5.model`** — „sezení zpracování“ modelu: `calls` (každé volání
+  `{ type, parms, result, status, err_msg, http }`, `calls[0]` je vždy
+  první — execute nebo webhook), `current`, `last`, `first`, `call`,
+  `chain`, `endpoints`, `type` a vlastní **`m5.model.session`** a
+  **`m5.model.cache`** jen pro toto sezení. `http` u webhooku nese URL
+  (token maskovaný), metodu, GET a POST.
+- **Výsledek jako seznam**: vstupní funkce vrací jeden výstup nebo **pole
+  výstupů** — každá položka se zobrazí, přehraje nebo spustí samostatně;
+  vadná položka neshodí ostatní, zaloguje se a předá se vstupnímu bodu
+  **error**. Stejné pravidlo kontroluje server i prohlížeč
+  (`client/src/lib/fn-outputs.ts`).
+- **Nové výstupy**: `m5.out.audio`, `m5.out.video`, `m5.out.flash`,
+  `m5.out.window`, **`m5.out.button`** / `buttons` (titulek, name, data,
+  třídy, barvy, ikona, potvrzení, jednou), **`m5.out.form`** (panely
+  v řádcích nebo sloupcích, popisky nad nebo vedle, text, textarea,
+  číslo, posuvník, telefon, e-mail, URL, heslo, datum, čas, datum a čas,
+  měsíc, barva, **maska**, **select a multiselect s ikonami**, radio,
+  checkbox, přepínač, skryté, statický text, oddělovač) a **`m5.out.js`**.
+- **Kód v prohlížeči** (`m5.out.js`, `m5.browser.run`): běží v izolovaném
+  rámu `/fn-sandbox.html` (neprůhledný origin — žádný přístup k aplikaci,
+  úložišti ani klíčům) s API `m5.args`, `m5.root`, `m5.flash`,
+  `m5.send` (→ button), `m5.submit` (→ form), `m5.log`, `m5.play`;
+  `hidden: true` = efekt, který proběhne jednou. **`m5.browser`**: `run`,
+  `play`, `flash`, `open` (odeslané hned během běhu).
+- **Knihovna výstupů v aplikaci** (`client/src/components/fn/`): každá
+  položka má vlastní ochranu (error boundary a try/catch), zvuk a video
+  přes blob, notifikace (flash) jednou u nové zprávy, soubory jako stažení,
+  tlačítka v řadě, formulář s kontrolou (povinné, e-mail, čísla, maska,
+  vzor), vlastní výběr s ikonami a klávesnicí. Zprávy příkazů do
+  místnosti nesou výstupy šifrovaně (velká média zůstanou volajícímu).
+- **Odpověď na zprávu modelu** v chatu spustí jeho vstupní bod response
+  (v místnosti odejde i jako běžná zpráva, u výsledku jen pro volajícího
+  zůstane u něj).
+- `POST /api/functions/event` — response, button, form, error a log
+  z aplikace (stream jako `/run`); konzole: `/admin/functions/event`,
+  `/admin/functions/exports`, `/admin/functions/chains`,
+  `DELETE /admin/functions/webhooks/:model/:endpoint`.
+- **Konzole**: editor vstupních bodů s výběrem funkcí a vstupy u každého
+  řádku; interaktivní tlačítka, formuláře a „Reply“ ve zkušebních bězích
+  (i u konceptů, tutoriálu a vizuálního tvůrce); dialog se sezením
+  (`m5.model.calls`); záložka **Tools** v editoru — **Form builder**
+  (GUI s náhledem a kódem v JS i Pythonu), **Button**, **Browser
+  JavaScript** a kostry vstupních funkcí; nové šablony v našeptávači.
+- **Vizuální tvůrce**: tok může mít **víc funkcí** (záložky execute,
+  response, button, form, error, webhook…) v jednom souboru; nové uzly
+  *Play sound*, *Button*, *Form* (form builder v inspektoru), *Browser
+  code*, *Entry point data*, *Model session*; *Remember* umí
+  „conversation“ (`m5.model.session`/`cache`); *Create model…* z funkcí
+  udělá vstupní body.
+- **Vestavěné příkazy 1.1.0**: `/help` s tlačítky témat a novými tématy
+  (`endpoints`, `results`, `buttons`, `forms`, `browser`, `model`),
+  odpověď na zprávu vybere téma; `/dns`, `/whois`, `/web`, `/mail` a
+  `/domain` se ptají formulářem, mají tlačítka (jiný typ záznamu, záznamy,
+  bezpečnost, znovu), odpověď s jinou doménou a přátelský vstupní bod
+  error. Starší instalace se při startu aktualizují.
+- **Tutoriál**: lekce 10–16 — seznam výsledků, tlačítka, formuláře,
+  `m5.model` a odpovědi, kód v prohlížeči, vstupní bod error, Python.
+
+### Změněno
+- Model ukládá vstupní body (`endpoints`); `entry` a `inputs` jsou
+  vstupní bod execute a `executors.webhook` první webhook — starší modely
+  se načtou beze změny chování, webhooky si ponechají URL.
+- Text zprávy v rozvržení je `<div>` (výstupy mají nadpisy a tabulky);
+  výchozí rozvržení je archivované pro slučování.
+- Běh ukládá své sezení a volání (`chainId`, `callId`, `endpoint`); sezení
+  se uklízejí s běhy (`FUNCTIONS_RUNS_DAYS`).
+- CSP aplikace povoluje rámy jen z vlastního originu (`frame-src 'self'`,
+  kvůli `/fn-sandbox.html`).
+
+### Opraveno
+- Výstupy příkazů se v chatu zobrazovaly jen jako Markdown — obrázky,
+  soubory, notifikace a okna se ztrácely; teď se vykreslí všechny typy.
+- `m5.caller.send` s neplatným výstupem ho tiše zahodil; teď se zaloguje a
+  dostane ho vstupní bod error.
+- Plain objekt se známým `type` se omylem bral jako výstup i u dat — teď
+  jen s klíčem svého typu (`{ type: "flash", text }`).
+- Konzole ve výsledku zkušebního běhu neukázala odpověď vstupního bodu
+  error.
+- Konzole vypisovala text „null“ — ve form builderu u vybraného pole, pod
+  editorem nového modelu (bez tlačítka Delete), v liště vizuálního tvůrce u
+  role viewer a u chyby kompilace bez uzlu.
+- Archiv layoutů označil nové stromy zpráv verzí 5.2.0 místo 5.3.0.
+
+### Bezpečnost
+- Kód z funkcí běží v prohlížeči jen v izolovaném rámu s vlastní CSP
+  (`sandbox allow-scripts`, bez `allow-same-origin`); s aplikací mluví
+  jen omezenou sadou zpráv s limitem počtu.
+- Tlačítka, formuláře i odpovědi prochází stejnou kontrolou přístupu
+  k modulu a modelu jako příkaz; ID sezení má 96 náhodných bitů; výstupy
+  od ostatních v místnosti se znovu kontrolují (typy, velikosti, třídy
+  a barvy tlačítek, pole formulářů).
+- Hlášení z prohlížeče (chyby, logy) mají limit na sezení a minutu.
+
 ## [5.2.0] – 2026-09-29
 
 Nástroje konzole jako **moduly s řízeným přístupem**, **webhooky s plným

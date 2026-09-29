@@ -76,6 +76,48 @@ export const LESSONS: Lesson[] = [
     inputs: { name: "Mike" },
     expect: "greeting",
   },
+  // 5.3: results as lists, entry points, m5.model, browser code.
+  {
+    id: "results", title: "10 · Several results at once", lang: "js",
+    body: "An entry function may return **one output or a list of them**. Every item of the list is shown, played or run — each on its own: text, a table, a notice, a sound, a button… If one item is broken, the others still show; the broken one is logged and handed to the model's **error** entry point.\n\nA plain object with a known `type` and its key is an output too (`{ type: \"flash\", text: \"…\" }`); a list of plain data is one JSON value.",
+    sample: "export async function execute() {\n  return [\n    m5.out.markdown(\"# Three things\"),\n    m5.out.table([\"n\", \"square\"], [1, 2, 3].map((n) => [n, n * n])),\n    { type: \"flash\", text: \"All done\", level: \"success\" },\n  ];\n}\n",
+    expect: "Three things",
+  },
+  {
+    id: "buttons", title: "11 · Buttons and the button entry point", lang: "js",
+    body: "`m5.out.button({ name, title, data })` draws a button. A click runs the model's **button** entry point — here the `button` function of the same file — with `{ name, data, event }`, in the same **processing session** (`m5.model`).\n\nRun it, then click **Count** in the result: each click adds to a value kept in `m5.model.session`, which lives as long as this conversation with the model.",
+    sample: "export async function execute() {\n  return [m5.out.markdown(\"Click to count\"), m5.out.button({ name: \"count\", title: \"Count\", data: { by: 1 }, css: \"primary\", icon: \"➕\" })];\n}\n\nexport async function button({ name, data }) {\n  const n = ((await m5.model.session.get(\"n\")) || 0) + data.by;\n  await m5.model.session.set(\"n\", n);\n  return [m5.out.markdown(`Clicked **${n}×** — this is call ${m5.model.call} (the first was ${m5.model.first.type})`), m5.out.button({ name, title: \"Again\", data })];\n}\n",
+    expect: "Click to count",
+  },
+  {
+    id: "forms", title: "12 · Forms", lang: "js",
+    body: "`m5.out.form({ name, title, fields | panels })` draws a form — text, numbers, dates, e-mail, masked values, selects with icons, switches…, grouped in **panels** laid out in rows or columns. Sending it runs the **form** entry point with `{ name, values }`.\n\n**Tools › Form builder** in the editor draws a form with the mouse and writes the code.",
+    sample: "export async function execute() {\n  return m5.out.form({\n    name: \"order\", title: \"Order\", submit: \"Send\",\n    panels: [{ title: \"You\", layout: \"columns\", columns: 2, fields: [\n      { name: \"email\", type: \"email\", label: \"E-mail\", required: true },\n      { name: \"size\", type: \"select\", label: \"Size\", default: \"m\", options: [{ value: \"s\", label: \"Small\", icon: \"🥤\" }, { value: \"m\", label: \"Medium\", icon: \"🧋\" }] },\n    ] }],\n  });\n}\n\nexport async function form({ name, values }) {\n  return m5.out.table([\"field\", \"value\"], Object.entries(values), { title: `Form ${name}` });\n}\n",
+  },
+  {
+    id: "model", title: "13 · m5.model — the conversation", lang: "js",
+    body: "Every call that follows from one start is one **processing session**: `m5.model.calls` lists them — `{ type, parms, result, status, err_msg, http }` — with `calls[0]` always the first (**execute** or a **webhook**). `m5.model.current` is this call, `m5.model.last` the one before.\n\nIn the chat, a **reply** to the model's message runs its **response** entry point (the reply's text is `text`).",
+    sample: "export async function execute({ topic = \"DNS\" }) {\n  return m5.out.markdown(`Tell me more about **${topic}** — reply to this message.`);\n}\n\nexport async function response({ text }) {\n  const first = m5.model.first;\n  return m5.out.json({ youSaid: text, firstTopic: first.parms.topic, calls: m5.model.calls.map((c) => c.type) });\n}\n",
+    inputs: { topic: "DNS" },
+    expect: "DNS",
+  },
+  {
+    id: "browser", title: "14 · Code in the browser", lang: "js",
+    body: "`m5.out.js(code, args)` runs JavaScript in the **viewer's browser**, in a sandbox that cannot reach the app. Inside: `m5.args`, `m5.root`, `m5.flash()`, `m5.send(name, data)` (→ the button entry point), `m5.submit(name, values)` (→ the form one), `m5.play()`. `hidden: true` makes it an effect that runs once.\n\nIn the console the result shows the code with **Run in a sandbox**.",
+    sample: "export async function execute() {\n  const code = `\n    const b = document.createElement(\"button\");\n    b.textContent = \"Pick \" + m5.args.item;\n    b.onclick = () => m5.send(\"pick\", { item: m5.args.item });\n    m5.root.append(b);\n  `;\n  return [m5.out.markdown(\"A widget:\"), m5.out.js(code, { item: \"🍎\" })];\n}\n\nexport async function button({ name, data }) {\n  return m5.out.flash(`You picked ${data.item}`, \"success\");\n}\n",
+    expect: "A widget",
+  },
+  {
+    id: "errors", title: "15 · The error entry point", lang: "js",
+    body: "When an entry point fails — it throws, runs out of time, returns something that is not an output — or the browser cannot show a result, the model's **error** entry point runs with `{ error, failed, source }` and its answer is shown instead of a bare failure. Its own failures are only logged (nothing loops).",
+    sample: "export async function execute() {\n  throw new Error(\"the database is asleep\");\n}\n\nexport async function error({ error, failed, source }) {\n  m5.log.warn(\"handled\", { failed: failed.type, source });\n  return m5.out.flash(`Sorry — ${error.message}. Try again later.`, \"warning\");\n}\n",
+  },
+  {
+    id: "results-py", title: "16 · Several results in Python", lang: "py",
+    body: "The same in **Python**: return a list; every entry point is a function of its type (`button`, `form`, `response`, `error`) taking keyword arguments — add `**inputs` to accept the rest.",
+    sample: "async def execute(**inputs):\n    return [\n        m5.out.markdown(\"# From Python\"),\n        m5.out.button({\"name\": \"hi\", \"title\": \"Say hi\"}),\n    ]\n\nasync def button(name, data=None, event=None, **inputs):\n    return m5.out.flash(\"Hi from \" + m5.model.type, \"success\")\n",
+    expect: "From Python",
+  },
 ];
 
 /** The lessons as the console needs them (the sample entry is always `execute`). */

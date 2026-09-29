@@ -81,6 +81,14 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
 
 ---
 
+### Příkazy (/)
+Napiš **/** na začátek zprávy — ukáže se seznam příkazů, které smíš použít
+(`/help` vysvětlí všechny). Výsledek příkazu může mít **tlačítka** a
+**formuláře** — kliknutím nebo odesláním pokračuješ v rozhovoru s příkazem;
+**odpovědí** na jeho zprávu mu napíšeš (např. jinou doménu). Někdy přehraje
+zvuk, ukáže notifikaci nebo malý widget — ten běží v izolovaném rámu a
+k aplikaci ani k tvým klíčům nemá přístup.
+
 ## English
 
 ### First run
@@ -107,6 +115,14 @@ Same as the Czech section above.
 
 ---
 
+### Commands (/)
+Type **/** at the start of a message to see the commands you may use (`/help`
+explains them all). A command's answer may have **buttons** and **forms** —
+clicking or sending them continues the conversation with it; **reply** to its
+message to write to it (e.g. another domain). It may also play a sound, show a
+notice or a small widget — that runs in an isolated frame with no access to
+the app or your keys.
+
 ## Deutsch
 
 ### Erste Schritte
@@ -130,3 +146,10 @@ Standard-TTL je Nachricht, Raum-Override, absolute Raum-Obergrenze. Vom Client e
 
 ### Einschränkungen
 Siehe Czech-Abschnitt oben.
+
+### Befehle (/)
+Tippe **/** am Anfang einer Nachricht — die Befehle, die du nutzen darfst,
+erscheinen (`/help` erklärt sie). Die Antwort eines Befehls kann **Schaltflächen**
+und **Formulare** haben — damit setzt du das Gespräch fort; **antworte** auf
+seine Nachricht, um ihm zu schreiben. Ein kleines Widget läuft in einem
+isolierten Rahmen ohne Zugriff auf die App oder deine Schlüssel.

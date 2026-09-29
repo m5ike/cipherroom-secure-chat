@@ -432,7 +432,7 @@
   function helpPanel() {
     const box = h("div", { class: "fn-help" });
     const bar = h("div", { class: "fn-help__tabs" });
-    for (const [id, label] of [["sdk", "SDK"], ["snippets", "Templates"], ["examples", "Examples"]]) bar.append(h("button", { class: `fn-help__tab${helpTab === id ? " is-on" : ""}`, onclick: () => { helpTab = id; const n = helpPanel(); box.replaceWith(n); } }, label));
+    for (const [id, label] of [["sdk", "SDK"], ["snippets", "Templates"], ["tools", "Tools"], ["examples", "Examples"]]) bar.append(h("button", { class: `fn-help__tab${helpTab === id ? " is-on" : ""}`, onclick: () => { helpTab = id; const n = helpPanel(); box.replaceWith(n); } }, label));
     const search = h("input", { class: "input input--sm", type: "search", placeholder: "Search…", "aria-label": "Search the help" });
     const body = h("div", { class: "fn-help__body" });
     box.append(bar, search, body);
@@ -460,6 +460,20 @@
           body.append(h("button", { class: "fn-snip", onclick: () => insert(s.template), title: "Click to insert — Tab moves between the fields" }, h("strong", {}, s.label), h("span", { class: "muted small" }, s.detail), h("pre", {}, s.template.replace(/\$\{([^}]*)\}/g, "$1"))));
         }
         body.append(h("p", { class: "muted small p8" }, "Tip: type a template's name in the editor (e.g. ", h("code", {}, "httpjson"), ") and pick it from the completion list."));
+      } else if (helpTab === "tools") {
+        // 5.3: builders that write the code — a form, a button, browser JavaScript — and the entry point functions.
+        const X = window.M5FnOut;
+        if (!X) { body.append(h("div", { class: "muted small p8" }, "functions-outputs.js is missing.")); return; }
+        const plain = (code) => insert(code.replace(/\$/g, "\\$"));
+        body.append(
+          h("button", { class: "fn-snip", onclick: () => X.formBuilder({ lang, onInsert: plain }) }, h("strong", {}, "▦ Form builder…"), h("span", { class: "muted small" }, "m5.out.form — panels, rows or columns, labels above or beside, text, numbers, dates, masks, selects with icons, switches; the form entry point")),
+          h("button", { class: "fn-snip", onclick: () => X.buttonBuilder({ lang, onInsert: plain }) }, h("strong", {}, "▭ Button…"), h("span", { class: "muted small" }, "m5.out.button — title, name, data, classes, colours, icon, confirm; the button entry point")),
+          h("button", { class: "fn-snip", onclick: () => X.browserJsTool({ lang, onInsert: plain }) }, h("strong", {}, "⟨/⟩ Browser JavaScript…"), h("span", { class: "muted small" }, "m5.out.js — code for the viewer's browser in a sandbox: a notice, a sound, a widget that calls the model")),
+          h("div", { class: "muted small p8" }, "Entry point functions (Models › Entry points — one function each):"));
+        for (const sk of X.entrySkeletons(lang)) body.append(h("button", { class: "fn-snip", onclick: () => plain(sk.code) }, h("strong", {}, sk.type), h("pre", {}, sk.code.split("\n").slice(0, 4).join("\n") + "\n…")));
+        body.append(h("button", { class: "fn-snip", onclick: () => plain(lang === "py"
+          ? "async def execute(**inputs):\n    # A list: every item is shown, played or run — each on its own.\n    return [\n        m5.out.markdown(\"# Result\"),\n        m5.out.flash(\"Done\", \"success\"),\n        m5.out.button({\"name\": \"again\", \"title\": \"Again\", \"css\": \"primary\"}),\n    ]\n"
+          : "export async function execute(inputs) {\n  // A list: every item is shown, played or run — each on its own.\n  return [\n    m5.out.markdown(\"# Result\"),\n    m5.out.flash(\"Done\", \"success\"),\n    m5.out.button({ name: \"again\", title: \"Again\", css: \"primary\" }),\n  ];\n}\n") }, h("strong", {}, "A result list"), h("span", { class: "muted small" }, "several outputs at once: text, a notice, a button…")));
       } else {
         if (!lessons) { api("/admin/functions/tutorial").then((d) => { lessons = d.lessons || []; draw(); }).catch(() => undefined); body.append(h("div", { class: "muted small p8" }, "Loading…")); return; }
         for (const l of lessons.filter((x) => x.lang === lang && (!q || `${x.title} ${x.body}`.toLowerCase().includes(q)))) {
@@ -555,7 +569,10 @@
     const logsBox = h("details", { class: "fn-logbox", open: true }, h("summary", { class: "muted small" }, "Logs"));
     const logs = h("pre", { class: "fn-logs" });
     logsBox.append(logs);
-    el.append(statusRow, bar, asks, outs, logsBox);
+    const after = h("div", { class: "fn-after" });
+    el.append(statusRow, bar, asks, outs, logsBox, after);
+    // 5.3: the run's processing session — a click or a form in its outputs runs the entry point in it.
+    const ctx = { chain: null, call: null, follow: (id) => followRunInto(after, id) };
     const t0 = Date.now();
     const timer = setInterval(() => { info.textContent = `${((Date.now() - t0) / 1000).toFixed(1)} s`; }, 200);
     let runId = null;
@@ -568,7 +585,7 @@
     liveRun(body, (ev) => {
       if (ev.type === "started") { runId = ev.runId; setBadge("running"); if (hooks.onStart) hooks.onStart(runId); }
       else if (ev.type === "log") logLine(ev);
-      else if (ev.type === "output") outs.append(OUT(ev.output));
+      else if (ev.type === "output") outs.append(OUT(ev.output, ctx));
       else if (ev.type === "progress") { bar.hidden = false; bar.firstChild.style.width = `${Math.max(0, Math.min(1, ev.p)) * 100}%`; bar.title = ev.text || ""; }
       else if (ev.type === "status" && ev.status === "waiting") setBadge("waiting for you", "warn");
       else if (ev.type === "interaction") asks.append(interactionCard(runId, ev.interaction, () => setBadge("running")));
@@ -578,12 +595,14 @@
         clear(asks);
         if (!ev.ok) { setBadge("refused", "err"); el.insertBefore(h("div", { class: "fn-err" }, ev.message || "The run was refused."), outs); if (hooks.onDone) hooks.onDone(ev); return; }
         const run = ev.run;
+        ctx.chain = run.chainId || null; ctx.call = typeof run.callId === "number" ? run.callId : null;
         setBadge(run.status, run.status === "done" ? "ok" : "err");
         info.textContent = `${run.ms} ms · ${run.memMb} MB · ${run.lang || ""} · ${run.id}`;
         if (run.error) el.insertBefore(h("pre", { class: "fn-err" }, `${run.error.type}: ${run.error.message}${run.error.stack ? "\n" + run.error.stack : ""}`), outs);
         // The returned value (last output) — the ones sent during the run are shown already.
         const shown = outs.childElementCount;
-        for (const o of (ev.outputs || []).slice(shown)) outs.append(OUT(o));
+        for (const o of (ev.outputs || []).slice(shown)) outs.append(OUT(o, ctx));
+        if (run.chainId) { info.append(` · session ${run.chainId}, call ${run.callId}${run.endpoint && run.endpoint !== "execute" ? ` (${run.endpoint})` : ""}`); el.insertBefore(replyForm(ctx), after); }
         if (!logs.childElementCount) logsBox.hidden = true;
         if (hooks.onDone) hooks.onDone(ev);
       }
@@ -685,33 +704,126 @@
     form.append(h("div", { class: "fn-grid2" }, text("Name", "name", "Weather"), h("div", {}, text("Keyword (chat: /keyword)", "keyword", "pocasi"), hintEl)));
     form.append(text("Summary", "summary", "What it does, shown in the /command hint"));
 
-    // entry picker
+    // 5.3: the package version the model runs, and its entry points in it.
     const pkgs = data.packages.filter((p) => p.versions.length);
-    const entryRow = h("div", { class: "fn-grid3" });
+    const anchorRow = h("div", { class: "fn-grid3" });
     const pkgSel = h("select", { class: "input", disabled: ro });
     pkgSel.append(h("option", { value: "" }, pkgs.length ? "— package —" : "— publish a package first —"));
     for (const p of pkgs) pkgSel.append(h("option", { value: p.name }, `${p.name} (${p.language})`));
     const verSel = h("select", { class: "input", disabled: ro });
-    const fileIn = h("input", { class: "input", placeholder: "index.js#execute", disabled: ro });
     const parsed = /^([^@]+)@([^:]+):(.+)#(.+)$/.exec(m.entry || "");
-    if (parsed) { pkgSel.value = parsed[1]; fileIn.value = `${parsed[3]}#${parsed[4]}`; }
+    if (parsed) pkgSel.value = parsed[1];
+    if (!Array.isArray(m.endpoints) || !m.endpoints.length) m.endpoints = [{ id: "execute", type: "execute", fn: parsed ? `${parsed[3]}#${parsed[4]}` : "", inputs: m.inputs || [], enabled: true }];
+    const execEp = () => m.endpoints.find((e) => e.type === "execute");
+    // The test form and the chat hint read the execute entry point's inputs.
+    if (execEp()) { execEp().inputs = execEp().inputs || []; m.inputs = execEp().inputs; }
+    let exportsInfo = null;
+    const epBox = h("div", { class: "fn-eps" });
+    const syncEntry = () => {
+      const ex = execEp();
+      m.entry = pkgSel.value && verSel.value && ex && ex.fn && ex.fn.includes("#") ? `${pkgSel.value}@${verSel.value}:${ex.fn}` : "";
+    };
+    const loadExports = async () => {
+      exportsInfo = null;
+      if (pkgSel.value && verSel.value) { try { exportsInfo = await api(`/admin/functions/exports?package=${encodeURIComponent(pkgSel.value)}&version=${encodeURIComponent(verSel.value)}`); } catch { exportsInfo = null; } }
+      drawEndpoints();
+    };
     const fillVers = () => {
       clear(verSel);
       const p = pkgs.find((x) => x.name === pkgSel.value);
       for (const v of (p ? [...p.versions].reverse() : [])) verSel.append(h("option", { value: v }, v));
       if (parsed && pkgSel.value === parsed[1]) verSel.value = parsed[2];
-      if (p && !fileIn.value) fileIn.value = `${p.language === "py" ? "index.py" : "index.js"}#execute`;
+      const ex = execEp();
+      if (p && ex && !ex.fn) ex.fn = `${p.language === "py" ? "index.py" : "index.js"}#execute`;
       syncEntry();
+      void loadExports();
     };
-    const syncEntry = () => { m.entry = pkgSel.value && verSel.value && fileIn.value.includes("#") ? `${pkgSel.value}@${verSel.value}:${fileIn.value}` : ""; };
-    pkgSel.onchange = () => { fileIn.value = ""; fillVers(); }; verSel.onchange = syncEntry; fileIn.oninput = syncEntry; fillVers();
-    entryRow.append(h("label", { class: "field" }, h("span", { class: "label" }, "Package"), pkgSel), h("label", { class: "field" }, h("span", { class: "label" }, "Version"), verSel), h("label", { class: "field" }, h("span", { class: "label" }, "File # function"), fileIn));
-    const entryFs = h("fieldset", { class: "fn-fs" }, h("legend", {}, "Entry point"), entryRow);
+    pkgSel.onchange = fillVers; verSel.onchange = () => { syncEntry(); void loadExports(); };
+    anchorRow.append(h("label", { class: "field" }, h("span", { class: "label" }, "Package"), pkgSel), h("label", { class: "field" }, h("span", { class: "label" }, "Version"), verSel),
+      h("div", { class: "field" }, h("span", { class: "label" }, " "), h("div", { class: "fn-row" },
+        h("button", { class: "btn btn--xs", onclick: () => { const p = pkgOf(); if (p) openPackage(p.id); } }, "Open the package"),
+        h("button", { class: "btn btn--xs", onclick: () => { const p = pkgOf(); if (p && p.flow && window.M5FnBuilder) api(`/admin/functions/packages/${encodeURIComponent(p.id)}`).then((d) => { window.M5FnBuilder.openFromPackage(d.package, JSON.parse(d.draft.files["flow.m5flow.json"])); go("builder"); }).catch((e) => toast(e.message, "err")); else toast("That package was not made in the builder.", "err"); } }, "◇ Open its flow"))));
     const pkgOf = () => data.packages.find((p) => p.name === pkgSel.value);
-    entryFs.append(h("div", { class: "fn-row mt8" },
-      h("button", { class: "btn btn--xs", onclick: () => { const p = pkgOf(); if (p) openPackage(p.id); } }, "Open the package"),
-      h("button", { class: "btn btn--xs", onclick: () => { const p = pkgOf(); if (p && p.flow && window.M5FnBuilder) api(`/admin/functions/packages/${encodeURIComponent(p.id)}`).then((d) => { window.M5FnBuilder.openFromPackage(d.package, JSON.parse(d.draft.files["flow.m5flow.json"])); go("builder"); }).catch((e) => toast(e.message, "err")); else toast("That package was not made in the builder.", "err"); } }, "◇ Open its flow")));
+    const entryFs = h("fieldset", { class: "fn-fs" }, h("legend", {}, "Entry points"),
+      h("p", { class: "muted small" }, "Which function answers which call: ", h("b", {}, "execute"), " (the chat command, the console, the API, a schedule), ", h("b", {}, "response"), " (a reply to the model's message), ", h("b", {}, "button"), " and ", h("b", {}, "form"), " (a click, a sent form), ", h("b", {}, "error"), " (another entry point failed, or the browser could not show a result) — one of each; ", h("b", {}, "webhook"), " — as many as you need, each with its own URL. Each has its inputs; the function also gets m5.model (the processing session: calls, current, last)."),
+      anchorRow, epBox);
     form.append(entryFs);
+    fillVers();
+
+    const TYPE_HELP = { execute: "the start", response: "a reply to its message", button: "a click on its button", form: "a sent form", error: "another entry point failed", webhook: "an inbound HTTP call" };
+    function fnOptions(ep) {
+      const out = [];
+      if (exportsInfo && exportsInfo.files) for (const [file, fns] of Object.entries(exportsInfo.files)) for (const fn of fns) out.push(`${file}#${fn}`);
+      if (ep.fn && !out.includes(ep.fn)) out.unshift(ep.fn);
+      return out;
+    }
+    function suggestFn(type) {
+      const all = fnOptions({ fn: "" });
+      const main = (exportsInfo && exportsInfo.main) || (pkgOf() && pkgOf().language === "py" ? "index.py" : "index.js");
+      return all.find((x) => x.endsWith(`#${type}`)) || (all.length ? (type === "webhook" ? (execEp() ? execEp().fn : all[0]) : `${main}#${type}`) : `${main}#${type}`);
+    }
+    function drawEndpoints() {
+      clear(epBox);
+      for (const ep of m.endpoints) epBox.append(endpointRow(ep));
+      if (ro) return;
+      const present = new Set(m.endpoints.map((e) => e.type));
+      const addSel = h("select", { class: "input input--sm" });
+      for (const t of ["response", "button", "form", "error", "webhook"]) if (t === "webhook" || !present.has(t)) addSel.append(h("option", { value: t }, `${t} — ${TYPE_HELP[t]}`));
+      epBox.append(h("div", { class: "fn-row mt8" }, addSel, h("button", { class: "btn btn--sm", onclick: () => {
+        const t = addSel.value;
+        if (!t) return;
+        const ep = { id: t === "webhook" ? "" : t, type: t, fn: suggestFn(t), inputs: [], enabled: true };
+        if (t === "webhook") Object.assign(ep, { name: `Webhook ${m.endpoints.filter((e) => e.type === "webhook").length + 1}`, mode: "sync", auth: "none", log: "full", callback: false });
+        m.endpoints.push(ep);
+        drawEndpoints();
+      } }, "+ Entry point"), exportsInfo ? h("span", { class: "muted small" }, `functions in ${pkgSel.value}@${verSel.value}: ${Object.values(exportsInfo.files || {}).flat().join(", ") || "none found"}`) : null));
+    }
+    function endpointRow(ep) {
+      const card = h("div", { class: `fn-ep fn-ep--${ep.type}${ep.enabled === false ? " fn-ep--off" : ""}` });
+      const fnSel = h("select", { class: "input input--sm fn-mono", disabled: ro });
+      for (const f of fnOptions(ep)) fnSel.append(h("option", { value: f, selected: f === ep.fn || null }, f));
+      fnSel.append(h("option", { value: "__other" }, "other… (type file#function)"));
+      fnSel.onchange = () => { if (fnSel.value === "__other") { const v = window.prompt("file#function", ep.fn || "index.js#execute"); if (v && /^[^#\s]+#[A-Za-z_$][\w$]*$/.test(v)) ep.fn = v; drawEndpoints(); return; } ep.fn = fnSel.value; if (ep.type === "execute") syncEntry(); };
+      const missing = exportsInfo && ep.fn && !fnOptions({ fn: "" }).includes(ep.fn);
+      const head = h("div", { class: "fn-ep__head" },
+        h("span", { class: `badge fn-ep__type fn-ep__type--${ep.type}` }, ep.type),
+        ep.type === "webhook" ? h("input", { class: "input input--sm fn-ep__name", value: ep.name || "", placeholder: "name", disabled: ro, oninput: (e) => { ep.name = e.target.value; } }) : h("span", { class: "muted small fn-ep__what" }, TYPE_HELP[ep.type]),
+        fnSel,
+        missing ? h("span", { class: "badge badge--err", title: "The version does not export this function." }, "not found") : null,
+        h("span", { class: "fn-grow" }),
+        ep.type === "execute" ? null : h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: ep.enabled !== false, disabled: ro, onchange: (e) => { ep.enabled = e.target.checked; card.classList.toggle("fn-ep--off", !e.target.checked); } }), " on"),
+        ro || ep.type === "execute" ? null : h("button", { class: "fn-file__x", title: "Remove the entry point", onclick: () => { m.endpoints = m.endpoints.filter((x) => x !== ep); drawEndpoints(); } }, "×"));
+      card.append(head);
+      if (ep.type === "webhook") card.append(webhookSettings(ep));
+      // Its inputs: what the type always brings, and what it declares.
+      const fields = (exportsInfo && exportsInfo.fields && exportsInfo.fields[ep.type]) || [];
+      const det = h("details", { class: "fn-ep__inputs", open: ep.type === "execute" || (ep.inputs || []).length ? true : null });
+      det.append(h("summary", { class: "small" }, `Inputs${(ep.inputs || []).length ? ` (${ep.inputs.length})` : ""}`, ep.type === "webhook" ? h("span", { class: "muted" }, " — the JSON body (application/json), checked and typed; other fields pass as they are") : ep.type === "execute" ? h("span", { class: "muted" }, " — the command's arguments") : h("span", { class: "muted" }, ep.type === "response" ? " — read from the reply like a command's arguments" : ep.type === "button" ? " — read from the button's data" : ep.type === "form" ? " — read from the form's values" : "")));
+      if (fields.length) det.append(h("div", { class: "fn-ep__sys" }, h("span", { class: "muted small" }, "Always: "), ...fields.map((f) => h("code", { class: "fn-ep__field", title: f.help }, `${f.name}: ${f.type}`))));
+      ep.inputs = ep.inputs || [];
+      det.append(inputsList(ep, ro, ep.type === "webhook" ? JSON_INPUT_TYPES : INPUT_TYPES, () => { if (ep.type === "execute") { m.inputs = ep.inputs; hintEl.textContent = chatHint(); } }));
+      card.append(det);
+      return card;
+    }
+    function webhookSettings(ep) {
+      const box = h("div", { class: "fn-ep__hook" });
+      if (ep.url) box.append(h("div", { class: "fn-row" }, h("input", { class: "input input--sm fn-mono fn-grow", readonly: "readonly", value: ep.url }), h("button", { class: "btn btn--xs", onclick: () => { navigator.clipboard && navigator.clipboard.writeText(ep.url); toast("URL copied.", "ok"); } }, "Copy URL"),
+        h("button", { class: "btn btn--xs", onclick: () => { navigator.clipboard && navigator.clipboard.writeText(`curl -X POST -H 'Content-Type: application/json' -d '{}' ${shq(ep.url)}`); toast("curl copied.", "ok"); } }, "curl")));
+      else if (ep.hidden) box.append(h("div", { class: "muted small" }, "The URL is hidden — only who may change this model's webhooks sees it."));
+      else box.append(h("div", { class: "muted small" }, ep.enabled === false ? "Switched off — no URL." : "Save the model: the URL is made then."));
+      const sel = (key, values, label) => { const s = h("select", { class: "input input--sm", disabled: ro }); for (const [v, l] of values) s.append(h("option", { value: v, selected: (ep[key] || values[0][0]) === v || null }, l)); s.onchange = () => { ep[key] = s.value; if (key === "auth") redrawSecret(); }; return h("label", { class: "field" }, h("span", { class: "label" }, label), s); };
+      const secretBox = h("div", {});
+      const redrawSecret = () => { clear(secretBox); if (ep.auth === "hmac") secretBox.append(h("label", { class: "field" }, h("span", { class: "label" }, "HMAC secret (X-Signature: sha256 of the body)"), h("input", { class: "input input--sm fn-mono", type: "password", placeholder: ep.hasSecret ? "(kept — type to change)" : "a shared secret", disabled: ro, oninput: (e) => { ep.secret = e.target.value; } }))); };
+      box.append(h("div", { class: "fn-grid3" },
+        sel("mode", [["sync", "sync — answers with the outputs"], ["async", "async — 202 and a status URL"], ["auto", "auto — sync if quick, else async"]], "Mode"),
+        sel("auth", [["none", "the secret URL"], ["hmac", "the URL + an HMAC signature"]], "Checks"),
+        sel("log", [["full", "full (headers, bodies)"], ["meta", "no bodies"], ["off", "off"]], "Log")));
+      box.append(secretBox, h("div", { class: "fn-row" },
+        h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: ep.callback || null, disabled: ro, onchange: (e) => { ep.callback = e.target.checked; } }), " callback (?callback= / X-Callback-URL)"),
+        ro || !ep.url ? null : h("button", { class: "btn btn--xs btn--danger", onclick: () => { ep.token = "rotate"; toast("A new URL is made when you save; the old one stops working.", "ok"); } }, "New URL on save")));
+      redrawSecret();
+      return box;
+    }
 
     // runtime + visibility + groups
     const rtSel = h("select", { class: "input", disabled: ro });
@@ -724,31 +836,29 @@
     form.append(h("div", { class: "fn-grid3" }, h("label", { class: "field" }, h("span", { class: "label" }, "Runs"), rtSel), h("label", { class: "field" }, h("span", { class: "label" }, "Output goes"), visSel), h("label", { class: "field" }, h("span", { class: "label" }, "Executor"), chatOn)));
     form.append(groupsField(m, ro));
 
-    // webhook + API executors (reachable by an inbound HTTP POST)
-    if (!m.executors.webhook) m.executors.webhook = { enabled: false, auth: "none" };
+    // the API (webhooks are entry points above)
     if (!m.executors.api) m.executors.api = { enabled: false };
-    const hookOn = h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: m.executors.webhook.enabled, disabled: ro, onchange: (e) => { m.executors.webhook.enabled = e.target.checked; } }), " reachable as a webhook (POST)");
-    const apiOn = h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: m.executors.api.enabled, disabled: ro, onchange: (e) => { m.executors.api.enabled = e.target.checked; } }), " API (bearer token)");
-    const hookBox = h("fieldset", { class: "fn-fs" }, h("legend", {}, "Webhook & API"), h("div", { class: "fn-grid2" }, hookOn, apiOn));
+    const apiOn = h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: m.executors.api.enabled, disabled: ro, onchange: (e) => { m.executors.api.enabled = e.target.checked; } }), " API (bearer token) — runs the execute entry point");
+    const hookBox = h("fieldset", { class: "fn-fs" }, h("legend", {}, "API"), apiOn);
     const copyField = (label, value, note) => h("label", { class: "field mt8" }, h("span", { class: "label" }, label), h("div", { class: "fn-row" }, h("input", { class: "input fn-mono", readonly: "readonly", value }), h("button", { class: "btn btn--sm", onclick: () => { navigator.clipboard && navigator.clipboard.writeText(value); toast("Copied.", "ok"); } }, "Copy")), note ? h("span", { class: "muted small" }, note) : null);
-    if (m.secretsHidden) hookBox.append(h("p", { class: "muted small" }, "The webhook URL, its HMAC secret and the API token are hidden: only who may change this model's webhooks sees them (Modules & groups › Functions)."));
-    if (m.webhookUrl) hookBox.append(copyField("Webhook URL (keep it secret)", m.webhookUrl, m.webhookUrl.startsWith("http") ? "POST JSON here to run the model." : "Set PUBLIC_URL on the server for an absolute URL."));
+    if (m.secretsHidden) hookBox.append(h("p", { class: "muted small" }, "The webhook URLs, their HMAC secrets and the API token are hidden: only who may change this model's webhooks sees them (Modules & groups › Functions)."));
     if (m.executors.api.enabled && m.executors.api.token) hookBox.append(copyField(`API — POST /api/functions/call/${m.id}`, `curl -X POST -H "Authorization: Bearer ${m.executors.api.token}" -H "Content-Type: application/json" -d '{}' ${location.origin.replace(/\/$/, "")}/api/functions/call/${m.id}`, "Replace the host with the chat's address if the console runs elsewhere."));
     form.append(hookBox);
 
-    // inputs schema
-    form.append(inputsEditor(m, ro));
-
     // actions + test
     const actions = h("div", { class: "fn-editor__actions mt8" });
-    if (writable()) actions.append(h("button", { class: "btn btn--primary", onclick: saveModel }, "Save model"), m.id ? h("button", { class: "btn btn--danger", onclick: deleteModel }, "Delete") : null);
+    if (writable()) actions.append(h("button", { class: "btn btn--primary", onclick: saveModel }, "Save model"), m.id ? h("button", { class: "btn btn--danger", onclick: deleteModel }, "Delete") : "");
     form.append(actions);
     if (m.id) form.append(testForm(m));
     return form;
 
     async function saveModel() {
       syncEntry();
-      try { const r = await api("/admin/functions/models", { method: "POST", body: m }); toast(`Model ${r.model.name} saved.`, "ok"); modelDraft = r.model; await load(); }
+      const ex = execEp();
+      if (ex) m.inputs = ex.inputs;
+      // Tokens and secrets the console was not shown are kept by the server; "rotate" makes a new URL.
+      const body = { ...m, endpoints: m.endpoints.map((e) => { const { url: _u, hidden: _h, hasSecret: _s, ...rest } = e; return rest; }) };
+      try { const r = await api("/admin/functions/models", { method: "POST", body }); toast(`Model ${r.model.name} saved.`, "ok"); modelDraft = r.model; await load(); }
       catch (e) { toast(e.message, "err"); }
     }
     async function deleteModel() {
@@ -795,35 +905,39 @@
     return box;
   }
 
-  const INPUT_TYPES = ["string", "text", "integer", "number", "boolean", "enum", "date", "time", "duration", "url", "hostname", "email", "ip", "json", "user", "file"];
+  const INPUT_TYPES = ["string", "text", "integer", "number", "boolean", "enum", "date", "time", "duration", "url", "hostname", "email", "ip", "json", "object", "array", "user", "file"];
+  // 5.3: a webhook's inputs are the fields of a JSON body.
+  const JSON_INPUT_TYPES = ["string", "number", "integer", "boolean", "object", "array", "json", "enum", "email", "url", "date", "time"];
 
-  function inputsEditor(m, ro) {
-    const fs = h("fieldset", { class: "fn-fs" }, h("legend", {}, "Inputs"));
+  /** An editable list of input specs (target.inputs). */
+  function inputsList(target, ro, types = INPUT_TYPES, onChange = () => undefined) {
     const list = h("div", { class: "fn-inputs" });
+    const box = h("div", {}, list);
     const redraw = () => {
       clear(list);
-      if (m.inputs.length) list.append(h("div", { class: "fn-input-row fn-input-row--head muted small" }, h("span", {}, "name"), h("span", {}, "type"), h("span", {}, "label"), h("span", {}, "default"), h("span", {}, "required"), h("span", {}, "")));
-      m.inputs.forEach((inp, i) => {
+      onChange();
+      if (target.inputs.length) list.append(h("div", { class: "fn-input-row fn-input-row--head muted small" }, h("span", {}, "name"), h("span", {}, "type"), h("span", {}, "label"), h("span", {}, "default"), h("span", {}, "required"), h("span", {}, "")));
+      target.inputs.forEach((inp, i) => {
         const typeSel = h("select", { class: "input input--sm", disabled: ro });
-        for (const t of INPUT_TYPES) typeSel.append(h("option", { value: t, selected: inp.type === t }, t));
+        for (const t of types) typeSel.append(h("option", { value: t, selected: inp.type === t }, t));
+        if (!types.includes(inp.type)) typeSel.append(h("option", { value: inp.type, selected: true }, inp.type));
         typeSel.onchange = (e) => { inp.type = e.target.value; redraw(); };
         const row = h("div", { class: "fn-input-row" },
-          h("input", { class: "input input--sm fn-mono", value: inp.name || "", placeholder: "name", disabled: ro, oninput: (e) => { inp.name = e.target.value; } }),
+          h("input", { class: "input input--sm fn-mono", value: inp.name || "", placeholder: "name", disabled: ro, oninput: (e) => { inp.name = e.target.value; onChange(); } }),
           typeSel,
           h("input", { class: "input input--sm", value: inp.label || "", placeholder: "label", disabled: ro, oninput: (e) => { inp.label = e.target.value; } }),
-          h("input", { class: "input input--sm", value: inp.default === undefined ? "" : inp.default, placeholder: "default", disabled: ro, oninput: (e) => { inp.default = e.target.value || undefined; } }),
-          h("label", { class: "fn-req" }, h("input", { type: "checkbox", checked: inp.required, disabled: ro, onchange: (e) => { inp.required = e.target.checked; } }), "req"),
+          h("input", { class: "input input--sm", value: inp.default === undefined ? "" : typeof inp.default === "object" ? JSON.stringify(inp.default) : inp.default, placeholder: "default", disabled: ro, oninput: (e) => { inp.default = e.target.value || undefined; } }),
+          h("label", { class: "fn-req" }, h("input", { type: "checkbox", checked: inp.required, disabled: ro, onchange: (e) => { inp.required = e.target.checked; onChange(); } }), "req"),
           writable() ? h("span", { class: "fn-row" },
-            h("button", { class: "btn btn--xs", title: "Move up", disabled: i === 0 ? true : null, onclick: () => { m.inputs.splice(i - 1, 0, m.inputs.splice(i, 1)[0]); redraw(); } }, "↑"),
-            h("button", { class: "fn-file__x", title: "Remove", onclick: () => { m.inputs.splice(i, 1); redraw(); } }, "×")) : null);
+            h("button", { class: "btn btn--xs", title: "Move up", disabled: i === 0 ? true : null, onclick: () => { target.inputs.splice(i - 1, 0, target.inputs.splice(i, 1)[0]); redraw(); } }, "↑"),
+            h("button", { class: "fn-file__x", title: "Remove", onclick: () => { target.inputs.splice(i, 1); redraw(); } }, "×")) : null);
         list.append(row);
         if (inp.type === "enum") list.append(h("input", { class: "input input--sm fn-enum", value: (inp.values || []).join(", "), placeholder: "enum values, comma-separated", disabled: ro, oninput: (e) => { inp.values = e.target.value.split(",").map((s) => s.trim()).filter(Boolean); } }));
       });
     };
     redraw();
-    fs.append(list);
-    if (writable()) fs.append(h("button", { class: "btn btn--sm", onclick: () => { m.inputs.push({ name: "", type: "string" }); redraw(); } }, "+ Input"));
-    return fs;
+    if (writable() && !ro) box.append(h("button", { class: "btn btn--xs", onclick: () => { target.inputs.push({ name: "", type: "string" }); redraw(); } }, "+ Input"));
+    return box;
   }
 
   /* ============================================================ schedules */
@@ -978,13 +1092,14 @@
     try { d = await api("/admin/functions/webhooks"); } catch (e) { clear(card); card.append(h("div", { class: "fn-err" }, e.message)); return; }
     clear(card);
     card.append(h("div", { class: "fn-side__head" }, h("span", {}, "Webhook endpoints"), h("span", { class: "muted small" }, `public address: ${d.publicUrl || "(PUBLIC_URL not set — relative)"} · auto waits ${Math.round(d.autoWaitMs / 1000)} s`)));
-    card.append(h("p", { class: "muted small" }, "Every model can be reached by an HTTP POST to its secret URL — JSON, a form or multipart become its inputs. sync answers with the outputs; async answers at once (202) with a status URL; auto answers with the outputs when the run ends in time, else like async. A caller may name ?callback= (or X-Callback-URL) to get the result POSTed; a run that asks (m5.prompt / m5.form) is answered at …/runs/<id>/answer. Every call is logged (headers, bodies, answer) and can be replayed."));
+    card.append(h("p", { class: "muted small" }, "A model's webhooks are entry points (Models › Entry points): a model may have several, each with its own secret URL and function. JSON, a form or multipart become its inputs (the declared ones checked). sync answers with the outputs; async answers at once (202) with a status URL; auto answers with the outputs when the run ends in time, else like async. A caller may name ?callback= (or X-Callback-URL) to get the result POSTed; a run that asks (m5.prompt / m5.form) is answered at …/runs/<id>/answer. Every call is logged (headers, bodies, answer) and can be replayed."));
     const table = h("table", { class: "tbl fn-hooks" });
-    table.append(h("thead", {}, h("tr", {}, ...["Model", "Webhook", "Mode", "Log", "Callback", "Calls", "URL", ""].map((t) => h("th", {}, t)))));
+    table.append(h("thead", {}, h("tr", {}, ...["Model", "Webhook", "Function", "Mode", "Log", "Callback", "Calls", "URL", ""].map((t) => h("th", {}, t)))));
     const tb = h("tbody");
     for (const e of d.endpoints) {
+      // A row is one webhook entry point (e.endpoint); a model without one gets a row that creates it.
       const put = async (body, note) => {
-        try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}`, { method: "PUT", body }); toast(note || "Saved.", "ok"); void drawEndpoints(card); await loadQuiet(); }
+        try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}`, { method: "PUT", body: e.endpoint ? { endpoint: e.endpoint, ...body } : { create: true, ...body } }); toast(note || "Saved.", "ok"); void drawEndpoints(card); await loadQuiet(); }
         catch (err) { toast(err.message, "err"); }
       };
       const mode = h("select", { class: "input input--sm", disabled: !writable() || !e.enabled || undefined }, ...[["sync", "sync"], ["async", "async (202)"], ["auto", "auto"]].map(([v, l]) => h("option", { value: v, selected: e.mode === v || undefined }, l)));
@@ -995,12 +1110,16 @@
       cb.addEventListener("change", () => put({ callback: cb.checked }, cb.checked ? "Callbacks allowed." : "Callbacks off."));
       const curl = e.url ? `curl -X POST -H 'Content-Type: application/json' -d ${shq(JSON.stringify(Object.fromEntries((e.inputs || []).slice(0, 3).map((i) => [i.name, i.default ?? (i.type === "number" || i.type === "integer" ? 1 : "value")]))))} ${shq(e.url)}` : "";
       tb.append(h("tr", { class: e.enabled ? "" : "fn-hooks__off" },
-        h("td", {}, h("strong", {}, e.name), e.keyword ? h("span", { class: "muted small" }, ` /${e.keyword}`) : null, e.modelEnabled ? null : h("span", { class: "badge", title: "The model is switched off" }, "model off")),
+        h("td", {}, h("strong", {}, e.name), e.keyword ? h("span", { class: "muted small" }, ` /${e.keyword}`) : null, e.hookName ? h("div", { class: "muted small" }, `▸ ${e.hookName}`) : null, e.modelEnabled ? null : h("span", { class: "badge", title: "The model is switched off" }, "model off")),
         h("td", {}, writable() ? h("button", { class: `btn btn--xs${e.enabled ? "" : " btn--primary"}`, onclick: () => put(e.enabled ? { enabled: false } : { enabled: true, mode: e.mode === "sync" && !e.url ? "auto" : e.mode }, e.enabled ? "Webhook off." : "Webhook on — copy its URL.") }, e.enabled ? "on — turn off" : "Create / turn on") : h("span", { class: `badge badge--${e.enabled ? "ok" : ""}` }, e.enabled ? "on" : "off")),
+        h("td", { class: "fn-mono small" }, e.fn || "—"),
         h("td", {}, mode), h("td", {}, logSel), h("td", {}, cb),
         h("td", { class: "fn-num" }, e.stats ? h("button", { class: "btn btn--xs", "data-read": "1", title: "Show its calls", onclick: () => { hookFilter.model = e.modelId; drawLog(card.nextElementSibling); } }, `${e.stats.calls}${e.stats.errors ? ` · ${e.stats.errors} ✗` : ""}`) : "—"),
         h("td", {}, e.url ? h("div", { class: "fn-row" }, h("button", { class: "btn btn--xs", "data-read": "1", onclick: () => copy(e.url, "URL copied.") }, "Copy URL"), h("button", { class: "btn btn--xs", "data-read": "1", onclick: () => copy(curl, "curl copied.") }, "curl")) : h("span", { class: "muted small", title: e.hidden ? "Only who may change this model's webhooks sees its URL (Modules & groups › Functions: webhooks or edit)." : "" }, e.hidden ? "hidden" : "—")),
-        h("td", {}, writable() && e.enabled ? h("button", { class: "btn btn--xs btn--danger", title: "A new secret URL; the old one stops working", onclick: async () => { if (await confirmDialog(`Issue a new URL for “${e.name}”? The current one stops working at once.`, true)) void put({ rotate: true }, "New URL issued."); } }, "New URL") : null)));
+        h("td", {}, h("div", { class: "fn-row" },
+          writable() && e.enabled ? h("button", { class: "btn btn--xs btn--danger", title: "A new secret URL; the old one stops working", onclick: async () => { if (await confirmDialog(`Issue a new URL for “${e.name}”? The current one stops working at once.`, true)) void put({ rotate: true }, "New URL issued."); } }, "New URL") : null,
+          writable() && e.endpoint ? h("button", { class: "btn btn--xs", title: "Another webhook for this model — its own URL (set its function in Models › Entry points)", onclick: async () => { try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}`, { method: "PUT", body: { create: true, enabled: true } }); toast("Webhook added.", "ok"); void drawEndpoints(card); await loadQuiet(); } catch (err) { toast(err.message, "err"); } } }, "+ Webhook") : null,
+          writable() && e.endpoint ? h("button", { class: "fn-file__x", title: "Remove this webhook", onclick: async () => { if (!(await confirmDialog(`Remove the webhook “${e.hookName || e.endpoint}” of ${e.name}? Its URL stops working.`, true))) return; try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}/${encodeURIComponent(e.endpoint)}`, { method: "DELETE" }); toast("Webhook removed.", "ok"); void drawEndpoints(card); await loadQuiet(); } catch (err) { toast(err.message, "err"); } } }, "×") : null))));
     }
     table.append(tb);
     card.append(h("div", { class: "fn-tablewrap" }, table));
@@ -1128,8 +1247,10 @@
 
   /** Follows a live run started elsewhere (a replay) into an element. */
   async function followRunInto(el, runId) {
-    const out = h("div", {});
+    const out = h("div", { class: "fn-follow" });
     el.append(out);
+    const after = h("div", { class: "fn-after" });
+    const ctx = { chain: null, call: null, follow: (id) => followRunInto(after, id) };
     const logs = h("pre", { class: "fn-logs" });
     const status = h("div", { class: "fn-run__status" }, h("span", { class: "fn-spin" }), h("span", { class: "badge" }, "running"));
     out.append(status, logs);
@@ -1146,8 +1267,20 @@
           if (!line) continue;
           const ev = JSON.parse(line.slice(6));
           if (ev.type === "log") logs.append(h("div", { class: `fn-log fn-log--${ev.level}` }, h("span", { class: "fn-log__lvl" }, ev.level), ` ${ev.msg}${ev.fields ? "  " + JSON.stringify(ev.fields) : ""}`));
-          else if (ev.type === "output") out.append(OUT(ev.output));
-          else if (ev.type === "result") { clear(status); if (ev.ok) { status.append(h("span", { class: `badge badge--${ev.run.status === "done" ? "ok" : "err"}` }, ev.run.status), h("span", { class: "muted small" }, ` ${ev.run.ms} ms`)); if (ev.run.error) out.append(h("pre", { class: "fn-err" }, `${ev.run.error.type}: ${ev.run.error.message}${ev.run.error.stack ? "\n" + ev.run.error.stack : ""}`)); } else status.append(h("span", { class: "fn-err" }, ev.message)); }
+          else if (ev.type === "output") out.append(OUT(ev.output, ctx));
+          else if (ev.type === "result") {
+            clear(status);
+            if (ev.ok) {
+              ctx.chain = ev.run.chainId || null; ctx.call = typeof ev.run.callId === "number" ? ev.run.callId : null;
+              status.append(h("span", { class: `badge badge--${ev.run.status === "done" ? "ok" : "err"}` }, ev.run.status), h("span", { class: "muted small" }, ` ${ev.run.ms} ms${ev.run.endpoint ? ` · ${ev.run.endpoint}` : ""}${typeof ev.run.callId === "number" ? ` · call ${ev.run.callId}` : ""}`));
+              if (ev.run.error) out.append(h("pre", { class: "fn-err" }, `${ev.run.error.type}: ${ev.run.error.message}${ev.run.error.stack ? "\n" + ev.run.error.stack : ""}`));
+              // Outputs not streamed while it ran (the returned ones), and an error entry point's answer.
+              const shown = out.querySelectorAll(":scope > .fn-out").length;
+              for (const o of (ev.outputs || []).slice(shown)) out.append(OUT(o, ctx));
+              if (ctx.chain) out.append(replyForm(ctx));
+            } else status.append(h("span", { class: "fn-err" }, ev.message));
+            out.append(after);
+          }
         }
       }
     } catch (e) { out.append(h("div", { class: "fn-err" }, e.message)); }
@@ -1242,7 +1375,11 @@
       box.append(h("div", { class: "fn-run__status" }, h("span", { class: `badge badge--${ok ? "ok" : "err"}` }, run.status), h("span", { class: "muted small" }, `${run.ms} ms · ${run.memMb} MB · ${run.lang || ""} · ${run.executor}${run.test ? " (test)" : ""} · ${new Date(run.queuedAt).toLocaleString()}`)));
       if (run.inputs && Object.keys(run.inputs).length) box.append(h("details", {}, h("summary", { class: "muted small" }, "Inputs"), h("pre", { class: "fn-code" }, JSON.stringify(run.inputs, null, 2))));
       if (run.error) box.append(h("pre", { class: "fn-err" }, `${run.error.type}: ${run.error.message}${run.error.stack ? "\n" + run.error.stack : ""}`));
-      for (const o of run.outputs || []) box.append(OUT(o));
+      const after = h("div", { class: "fn-after" });
+      const ctx = { chain: run.chainId || null, call: typeof run.callId === "number" ? run.callId : null, follow: (rid) => followRunInto(after, rid) };
+      if (run.chainId) box.append(h("div", { class: "muted small" }, `Processing session ${run.chainId} · call ${run.callId}${run.endpoint ? ` · ${run.endpoint}` : ""} `, h("button", { class: "btn btn--xs", onclick: () => showChain(run.chainId) }, "m5.model.calls")));
+      for (const o of run.outputs || []) box.append(OUT(o, ctx));
+      box.append(after);
       const trace = (d.logs || []).filter((l) => l.msg === "flow:node" || l.msg === "flow:fail");
       if (trace.length) {
         const t = h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, h("th", {}, "node"), h("th", {}, "value"))));
@@ -1263,11 +1400,50 @@
     } catch (e) { toast(e.message, "err"); }
   }
 
+  /** 5.3: "reply to this result" — the response entry point, as a reply in the chat would run it. */
+  function replyForm(ctx) {
+    const inp = h("input", { class: "input input--sm fn-grow", placeholder: "Reply to this result… (the response entry point)" });
+    const f = h("form", { class: "fn-row fn-reply" }, h("span", { class: "muted small" }, "↩"), inp, h("button", { class: "btn btn--xs", type: "submit" }, "Reply"));
+    f.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const text = inp.value.trim();
+      if (!text || !ctx.chain) return;
+      try {
+        const r = await api("/admin/functions/event", { method: "POST", body: { chain: ctx.chain, call: ctx.call, type: "response", text, live: true } });
+        inp.value = "";
+        if (r.runId && ctx.follow) ctx.follow(r.runId);
+      } catch (err) { toast(err.message, "err"); }
+    });
+    return f;
+  }
+
+  /** 5.3: a processing session — every call with its parms, result, status and error (what m5.model.calls holds). */
+  async function showChain(id) {
+    try {
+      const d = await api(`/admin/functions/chains?id=${encodeURIComponent(id)}`);
+      const c = d.chain;
+      const box = h("div", { class: "stack" });
+      box.append(h("div", { class: "muted small" }, `${c.calls.length} calls · ${new Date(c.createdAt).toLocaleString()} → ${new Date(c.updatedAt).toLocaleString()}${c.source && c.source.kind === "draft" ? " · a package draft" : ""}`));
+      const t = h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, h("th", {}, "#"), h("th", {}, "type"), h("th", {}, "status"), h("th", {}, "parms"), h("th", {}, "result"), h("th", {}, "err_msg"), h("th", {}, "http"), h("th", {}, "run"))));
+      const tb = h("tbody", {});
+      const cut = (v) => { const s = JSON.stringify(v); return s && s.length > 160 ? s.slice(0, 160) + "…" : s; };
+      for (const x of c.calls) tb.append(h("tr", {}, h("td", {}, String(x.id)), h("td", {}, h("span", { class: "badge" }, x.type)), h("td", {}, h("span", { class: `badge badge--${x.status === "done" ? "ok" : x.status === "running" ? "" : "err"}` }, x.status)), h("td", { class: "fn-mono small" }, cut(x.parms)), h("td", { class: "fn-mono small" }, cut(x.result)), h("td", { class: "fn-err small" }, x.err_msg || ""), h("td", { class: "fn-mono small" }, x.http ? `${x.http.method} ${x.http.url}` : ""), h("td", {}, x.run ? h("button", { class: "btn btn--xs", onclick: () => showRun(x.run) }, x.run.slice(-8)) : "")));
+      t.append(tb);
+      box.append(h("div", { class: "fn-tablewrap" }, t), h("details", {}, h("summary", { class: "muted small" }, "JSON (m5.model.calls)"), h("pre", { class: "fn-code" }, JSON.stringify(c.calls, null, 2))));
+      const Kit = window.M5Kit;
+      if (Kit && Kit.openDialog) Kit.openDialog({ title: `Processing session ${id}`, subtitle: "m5.model.calls — calls[0] is the first call (execute or a webhook)", body: box, wide: true });
+    } catch (e) { toast(e.message, "err"); }
+  }
+
   /* ============================================================= outputs */
 
   function outputRenderer() {
-    return function renderOutput(o) {
+    return function renderOutput(o, ctx) {
       const box = h("div", { class: "fn-out" });
+      // 5.3: sound, video, buttons, forms, browser code (functions-outputs.js); clicks and forms run the entry points.
+      const X = window.M5FnOut;
+      const special = X && ["audio", "video", "button", "form", "js"].includes(o.type) ? X.render(o, ctx || null) : null;
+      if (special) { box.append(special); return box; }
       if (o.title) box.append(h("div", { class: "muted small" }, o.title));
       switch (o.type) {
         case "text": box.append(h("div", { class: "fn-out__text" }, o.text)); break;
@@ -1284,7 +1460,7 @@
           break;
         }
         case "flash": box.append(h("div", { class: `fn-flash fn-flash--${o.level}` }, o.text)); break;
-        case "window": box.append(h("div", { class: "muted small" }, `opens window: ${o.id}`)); break;
+        case "window": box.append(h("div", { class: "muted small" }, `opens the app's panel: ${o.id}`)); break;
         default: box.append(h("pre", { class: "fn-code" }, JSON.stringify(o)));
       }
       return box;

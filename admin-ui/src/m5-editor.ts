@@ -243,6 +243,16 @@ export const SNIPPETS: Record<"js" | "py", Snip[]> = {
     { label: "log", detail: "log a value", template: "m5.log.info(\"${message}\", { ${value} });", info: "A structured log line." },
     { label: "qr", detail: "QR code image", template: "const qr = await m5.codes.qr(${text}, { scale: 5 });\nreturn m5.out.image(qr.image, qr.mime, { alt: \"QR\" });", info: "Text → QR code." },
     { label: "arrow", detail: "async arrow", template: "const ${name} = async (${args}) => {\n  ${}\n};", info: "A small helper function." },
+    // 5.3: several outputs, buttons, forms, browser code, the other entry points, m5.model.
+    { label: "results", detail: "a list of outputs", template: "return [\n  m5.out.markdown(\"# ${Title}\"),\n  m5.out.flash(\"${Done}\", \"success\"),\n  m5.out.button({ name: \"${again}\", title: \"${Again}\", css: \"primary\" }),\n];", info: "A list: every item is shown, played or run — each on its own." },
+    { label: "button", detail: "a button", template: "m5.out.button({ name: \"${name}\", title: \"${Title}\", data: { ${} }, css: \"primary\", icon: \"${👉}\" })", info: "A click calls the button entry point with { name, data, event }." },
+    { label: "form", detail: "a form", template: "m5.out.form({\n  name: \"${contact}\", title: \"${Contact}\",\n  fields: [\n    { name: \"email\", type: \"email\", label: \"E-mail\", required: true },\n    { name: \"text\", type: \"textarea\", label: \"Message\" },\n  ],\n})", info: "Sending it calls the form entry point with { name, values }. Tools › Form builder makes bigger ones." },
+    { label: "browserjs", detail: "code for the browser", template: "m5.out.js(\"m5.flash('${Hello from the browser}', 'success')\", ${null}, { hidden: true })", info: "Runs in the viewer's browser, in a sandbox." },
+    { label: "onbutton", detail: "button entry point", template: "export async function button({ name, data, event }) {\n  if (name === \"${more}\") {\n    ${}\n    return m5.out.json(data);\n  }\n}", info: "Answers a click on the model's button (Models › Entry points: button)." },
+    { label: "onform", detail: "form entry point", template: "export async function form({ name, values, event }) {\n  ${}\n  return m5.out.table([\"field\", \"value\"], Object.entries(values), { title: name });\n}", info: "Answers a sent form." },
+    { label: "onresponse", detail: "response entry point", template: "export async function response({ text, message }) {\n  const first = m5.model.first;\n  ${}\n  return m5.out.markdown(\"You wrote **\" + text + \"**\");\n}", info: "Answers a reply to the model's message." },
+    { label: "onerror", detail: "error entry point", template: "export async function error({ error, failed, source }) {\n  m5.log.error(\"handled\", { error, failed, source });\n  return m5.out.flash(\"Sorry — \" + error.message, \"error\");\n}", info: "Answers when another entry point failed (or the browser could not show a result)." },
+    { label: "history", detail: "m5.model calls", template: "const { calls, current, last, first } = m5.model;\n${}", info: "The processing session: every call so far (calls[0] — execute or a webhook)." },
   ],
   py: [
     { label: "execute", detail: "entry function", template: "async def execute(${name}: str = \"${world}\"):\n    ${}\n    return m5.out.markdown(f\"# Hello, {${name}}!\")", info: "The function a model runs: inputs arrive as keyword arguments." },
@@ -258,6 +268,13 @@ export const SNIPPETS: Record<"js" | "py", Snip[]> = {
     { label: "log", detail: "log a value", template: "m5.log.info(\"${message}\", ${value}=${value})", info: "A structured log line." },
     { label: "listcomp", detail: "list comprehension", template: "[${x} for ${x} in ${items} if ${condition}]", info: "Build a list." },
     { label: "fstring", detail: "f-string", template: "f\"${text} {${value}}\"", info: "Text with values." },
+    { label: "results", detail: "a list of outputs", template: "return [\n    m5.out.markdown(\"# ${Title}\"),\n    m5.out.flash(\"${Done}\", \"success\"),\n    m5.out.button({\"name\": \"${again}\", \"title\": \"${Again}\", \"css\": \"primary\"}),\n]", info: "A list: every item is shown, played or run — each on its own." },
+    { label: "button", detail: "a button", template: "m5.out.button({\"name\": \"${name}\", \"title\": \"${Title}\", \"data\": {${}}, \"css\": \"primary\"})", info: "A click calls the button entry point." },
+    { label: "form", detail: "a form", template: "m5.out.form({\n    \"name\": \"${contact}\", \"title\": \"${Contact}\",\n    \"fields\": [\n        {\"name\": \"email\", \"type\": \"email\", \"label\": \"E-mail\", \"required\": True},\n        {\"name\": \"text\", \"type\": \"textarea\", \"label\": \"Message\"},\n    ],\n})", info: "Sending it calls the form entry point." },
+    { label: "onbutton", detail: "button entry point", template: "async def button(name, data=None, event=None, **inputs):\n    ${}\n    return m5.out.json(data)", info: "Answers a click on the model's button." },
+    { label: "onform", detail: "form entry point", template: "async def form(name, values, event=None, **inputs):\n    ${}\n    return m5.out.table([\"field\", \"value\"], [[k, v] for k, v in values.items()], title=name)", info: "Answers a sent form." },
+    { label: "onresponse", detail: "response entry point", template: "async def response(text, message=None, event=None, **inputs):\n    ${}\n    return m5.out.markdown(f\"You wrote **{text}**\")", info: "Answers a reply to the model's message." },
+    { label: "onerror", detail: "error entry point", template: "async def error(error, failed=None, source=\"server\", **inputs):\n    return m5.out.flash(\"Sorry — \" + error.get(\"message\", \"\"), \"error\")", info: "Answers when another entry point failed." },
   ],
 };
 
@@ -472,7 +489,7 @@ export function langOf(file: string): Lang {
   return /\.py$/.test(file) ? "py" : /\.(m?js|cjs|ts)$/.test(file) ? "js" : /\.json$/.test(file) ? "json" : "text";
 }
 
-const api = { create, show, langOf, toSnippet, SNIPPETS, version: "5.1" };
+const api = { create, show, langOf, toSnippet, SNIPPETS, version: "5.3" };
 const flowApi = { ...Flow };
 declare global { interface Window { M5Editor?: typeof api; M5Flow?: typeof flowApi } }
 window.M5Editor = api;

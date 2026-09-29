@@ -1,9 +1,16 @@
 // /whois — who holds a domain or an IP address: registrar, dates, status,
 // name servers, DNSSEC, abuse contact (RDAP, the JSON successor of whois).
-import { cleanHost, isIp, isDomain, rdap, registrable, day, daysUntil, mdTable, need } from "pkg:netkit";
+//
+// Entry points (1.1): execute; form — the query asked for when it is
+// missing (and by "Another…"); button — "Refresh" and "Another…"; response —
+// a reply with another domain or address; error.
+import { cleanHost, isIp, isDomain, rdap, registrable, day, daysUntil, mdTable, ask, buttons, sorry } from "pkg:netkit";
+
+const askQuery = () => ask("Whois", [{ name: "query", label: "Domain or IP address", placeholder: "example.com · 1.1.1.1" }], "Look up");
 
 export async function execute({ query } = {}) {
-  const q = cleanHost(await need(query, "query", "Domain or IP address", "example.com · 1.1.1.1", "Whois"));
+  const q = cleanHost(query || "");
+  if (!q) return askQuery();
   if (!isIp(q) && !isDomain(q)) throw new m5.Error("bad-input", `“${q}” is neither a domain nor an IP address`);
   m5.run.progress(0.2, "asking the registry (RDAP)…");
   const r = await rdap(q);
@@ -29,5 +36,23 @@ export async function execute({ query } = {}) {
   }
   md.push(`\n_Source: ${r.source || "rdap.org"}_`);
   m5.run.progress(1, "done");
-  return m5.out.markdown(md.join("\n\n"));
+  const out = [m5.out.markdown(md.join("\n\n")), buttons([{ name: "refresh", title: "Refresh", icon: "↻", data: { query: q } }, { name: "another", title: "Another…", icon: "🔎" }])];
+  if (!isIp(q)) {
+    const left = daysUntil(r.expires);
+    if (left !== null && left >= 0 && left < 30) out.splice(1, 0, m5.out.flash(`${q} expires in ${left} days`, "warning"));
+  }
+  return out;
+}
+
+export async function button({ name, data } = {}) {
+  if (name === "another") return askQuery();
+  return execute({ query: data && data.query });
+}
+
+export async function form({ values } = {}) { return execute(values || {}); }
+
+export async function response({ text } = {}) { return execute({ query: String(text || "").trim().split(/\s+/)[0] }); }
+
+export async function error({ error } = {}) {
+  return sorry(error, "Give a domain (**example.com**) or an IP address (**1.1.1.1**); some registries answer slowly — try again in a moment.");
 }

@@ -94,11 +94,84 @@ def _out_image(data, mime="image/png", alt=None):
 def _out_file(name, data, mime="application/octet-stream"):
     return Output(type="file", name=str(name), mime=str(mime), data=_b64.b64encode(_bytes_or_text(data, "file data")).decode("ascii"))
 
+# 5.3: media, a notice, an app window, buttons, forms and browser JavaScript.
+def _media_bytes(v, what):
+    if isinstance(v, dict) and ("audio" in v or "data" in v):
+        return _bytes_or_text(v.get("audio") or v.get("data"), what + " data")
+    return _bytes_or_text(v, what + " data")
+def _media(o, kind, data, mime, title=None, autoplay=False, loop=False):
+    o = Output(type=kind, mime=str(mime), data=_b64.b64encode(_media_bytes(data, kind)).decode("ascii"))
+    if title is not None: o["title"] = str(title)
+    if autoplay: o["autoplay"] = True
+    if loop: o["loop"] = True
+    return o
+def _out_audio(data, mime="audio/wav", title=None, autoplay=False, loop=False): return _media(None, "audio", data, mime, title, autoplay, loop)
+def _out_video(data, mime="video/mp4", title=None, autoplay=False, loop=False): return _media(None, "video", data, mime, title, autoplay, loop)
+def _out_flash(text, level="info"): return Output(type="flash", text=str(text), level=str(level))
+def _out_window(id, args=None): return Output(type="window", id=str(id), args=_plain(args))
+def _out_button(spec=None, title=None, **opts):
+    if isinstance(spec, str):
+        return Output(type="button", **{**_plain(opts), "name": spec, "title": str(title) if title is not None else spec})
+    return Output(type="button", **_plain(spec or opts))
+def _out_buttons(items): return [_out_button(b) for b in (items or [])]
+def _out_form(spec=None, **kw): return Output(type="form", **_plain(spec or kw))
+def _out_js(code, args=None, **opts):
+    o = Output(type="js", code=str(code), **_plain(opts))
+    if args is not None: o["args"] = _plain(args)
+    return o
+
+# A plain dict is an output when its type is one and it has a key of that type
+# ({"type": "flash", "text": …}); {"type": "button", "data": …} is data.
+_OUT_KEYS = {"text": ("text",), "markdown": ("text",), "code": ("text",), "table": ("columns", "rows"), "json": ("value",), "image": ("data", "mime"),
+             "file": ("name", "data"), "flash": ("text",), "window": ("id",), "audio": ("data", "mime"), "video": ("data", "mime"),
+             "button": ("name", "title"), "form": ("fields", "panels"), "js": ("code",)}
+
+def _is_out(v):
+    if isinstance(v, Output): return True
+    if not isinstance(v, dict): return False
+    keys = _OUT_KEYS.get(v.get("type")) if isinstance(v.get("type"), str) else None
+    return bool(keys) and any(k in v for k in keys)
+
 def _as_output(v):
     if v is None: return None
     if isinstance(v, Output): return dict(v)
     if isinstance(v, str): return dict(_out_text(v))
+    if _is_out(v): return _plain(v)
     return dict(_out_json(v))
+
+def _has_out(v):
+    return isinstance(v, (list, tuple)) and any(_is_out(x) or _has_out(x) for x in v)
+
+def _flat_outs(v):
+    out = []
+    for x in v:
+        if _has_out(x): out.extend(_flat_outs(x))
+        else: out.append(x)
+    return out
+
+def _as_outputs(v):
+    """A list whose items are outputs is several outputs (lists of outputs inside it — m5.out.buttons — join it);
+    any other list is one JSON value."""
+    if v is None: return []
+    if _has_out(v):
+        return [_as_output(x) for x in _flat_outs(v) if x is not None]
+    return [_as_output(v)]
+
+def _result_of(v):
+    def cut(x, depth):
+        if x is None: return None
+        if isinstance(x, str): return x if len(x) <= 4000 else x[:4000] + "… (" + str(len(x)) + " characters)"
+        if isinstance(x, (int, float, bool)): return x
+        if depth > 12: return "…"
+        if isinstance(x, list): return [cut(y, depth + 1) for y in x[:500]]
+        if isinstance(x, dict):
+            if len(x) == 1 and isinstance(x.get("$b"), str): return "(" + str(len(x["$b"]) * 3 // 4) + " bytes)"
+            return {k: cut(x[k], depth + 1) for k in list(x)[:500]}
+        return str(x)
+    try:
+        return cut(_json.loads(_enc(v)), 0)
+    except Exception:
+        return repr(v)
 
 def _show(v):
     if isinstance(v, str): return v
@@ -149,8 +222,8 @@ def _bin(name, url=None):
     return _NS(encode=lambda v: _call(name + ".enc", v, url), decode=lambda s: _call(name + ".dec", str(s)))
 
 async def _send(output):
-    o = _as_output(output)
-    if o is not None: _emit("out", o)
+    for o in _as_outputs(output):
+        if o is not None: _emit("out", o)
 
 async def _flash(text, level="info"):
     _emit("out", {"type": "flash", "text": str(text), "level": str(level)})
@@ -212,6 +285,24 @@ async def _ai_agent(goal, tools=None, max_steps=6, system=None, model=None, reas
         return {"answer": r["text"], "steps": steps, "stopped": "no-action"}
     return {"answer": None, "steps": steps, "stopped": "max-steps"}
 
+async def _browser_run(code, args=None, **opts): _emit("out", dict(_out_js(code, args, **opts)))
+async def _browser_play(data, mime="audio/wav", title=None, loop=False): _emit("out", dict(_out_audio(data, mime, title, True, loop)))
+async def _browser_flash(text, level="info"): _emit("out", dict(_out_flash(text, level)))
+async def _browser_open(id, args=None): _emit("out", dict(_out_window(id, args)))
+
+def _model_ns(ctx):
+    mc = ctx.get("model") or {"id": ctx["run"]["model"], "name": "", "keyword": "", "type": "execute", "endpoint": "execute", "chain": "", "call": 0, "calls": [], "endpoints": ["execute"]}
+    calls = list(mc.get("calls") or [])
+    i = int(mc.get("call") or 0)
+    return _NS(id=mc.get("id"), name=mc.get("name", ""), keyword=mc.get("keyword", ""), type=mc.get("type", "execute"), endpoint=mc.get("endpoint", "execute"),
+               endpoints=list(mc.get("endpoints") or []), chain=mc.get("chain", ""), call=i, calls=calls,
+               current=calls[i] if i < len(calls) else None, last=calls[i - 1] if 0 < i <= len(calls) else None, first=calls[0] if calls else None,
+               session=_NS(get=lambda key: _acall("model.session.get", str(key)),
+                           set=lambda key, value, ttl=None: _acall("model.session.set", str(key), value, ttl),
+                           delete=lambda key: _acall("model.session.delete", str(key)),
+                           keys=lambda: _acall("model.session.keys")),
+               cache=_cache_in("chain"))
+
 _ctx = {}
 m5 = None
 
@@ -229,7 +320,10 @@ def _setup(ctx):
                    send=_send, flash=_flash, open_window=_open_window),
         log=_NS(debug=lambda msg, **f: _write("debug", msg, f), info=lambda msg, **f: _write("info", msg, f),
                 warn=lambda msg, **f: _write("warn", msg, f), error=lambda msg, **f: _write("error", msg, f), trace=_trace),
-        out=_NS(text=_out_text, markdown=_out_markdown, code=_out_code, table=_out_table, json=_out_json, image=_out_image, file=_out_file),
+        out=_NS(text=_out_text, markdown=_out_markdown, code=_out_code, table=_out_table, json=_out_json, image=_out_image, file=_out_file,
+                audio=_out_audio, video=_out_video, flash=_out_flash, window=_out_window, button=_out_button, buttons=_out_buttons, form=_out_form, js=_out_js),
+        model=_model_ns(ctx),
+        browser=_NS(run=_browser_run, play=_browser_play, flash=_browser_flash, open=_browser_open),
         session=_NS(id=ctx["session"]["id"],
                     get=lambda key: _acall("session.get", str(key)),
                     set=lambda key, value, ttl=None: _acall("session.set", str(key), value, ttl),
@@ -351,7 +445,7 @@ async def _m5_execute(spec_json):
     if _inspect.isawaitable(result):
         result = await result
     _sys.stdout.flush(); _sys.stderr.flush()
-    return _enc(_as_output(result))
+    return _enc({"values": _as_outputs(result), "result": _result_of(result)})
 
 _BLOCKED = ("js", "pyodide_js", "pyodide", "_pyodide", "_pyodide_core", "micropip", "_m5host", "pyodide_http")
 

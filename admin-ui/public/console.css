@@ -1130,3 +1130,62 @@ textarea.input--sm { min-height: 0; }
 .fn-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
 .fn-gallery__card { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .fn-builtins { border-top: 1px solid var(--border); padding-top: 10px; }
+
+/* 5.3: entry points, the outputs of a run (buttons, forms, sound, browser code) and their builders */
+.fn-eps { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.fn-ep { border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-sm); padding: 8px 10px; background: var(--surface-2); display: flex; flex-direction: column; gap: 6px; }
+.fn-ep--off { opacity: .6; }
+.fn-ep--response { border-left-color: #2fbf71; } .fn-ep--button { border-left-color: #c77dff; } .fn-ep--form { border-left-color: #ff9f43; } .fn-ep--error { border-left-color: var(--err); } .fn-ep--webhook { border-left-color: #22b8cf; }
+.fn-ep__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.fn-ep__head select { min-width: 200px; }
+.fn-ep__type { text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
+.fn-ep__name { max-width: 160px; }
+.fn-ep__what { min-width: 140px; }
+.fn-ep__hook { display: flex; flex-direction: column; gap: 6px; padding: 6px 0 0; border-top: 1px dashed var(--border); }
+.fn-ep__inputs > summary { cursor: pointer; }
+.fn-ep__sys { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 4px 0; }
+.fn-ep__field { font-size: 11px; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); }
+.fn-after:empty { display: none; }
+.fn-after { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--accent-soft); }
+.fn-follow { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.fn-brow { flex-wrap: wrap; gap: 6px; }
+.fn-bcls-success { background: var(--ok-soft); color: var(--ok); } .fn-bcls-warning { background: var(--warn-soft); color: var(--warn); } .fn-bcls-info { background: var(--accent-soft); }
+.fn-bcls-ghost, .fn-bcls-link { background: transparent; border-color: transparent; } .fn-bcls-link { text-decoration: underline; }
+.fn-bcls-outline { background: transparent; } .fn-bcls-round { border-radius: 999px; } .fn-bcls-block { width: 100%; } .fn-bcls-large { padding: 8px 16px; font-size: 15px; } .fn-bcls-small { padding: 2px 8px; font-size: 12px; }
+.fn-media { display: flex; flex-direction: column; gap: 4px; }
+.fn-media audio { width: min(100%, 360px); } .fn-media video { max-width: min(100%, 520px); border-radius: var(--radius-sm); background: #000; }
+.fn-cform { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); max-width: 640px; }
+.fn-cform__panel { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px 10px 10px; margin: 0; }
+.fn-cform__grid { display: grid; gap: 8px 10px; }
+.fn-cform__field { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.fn-cform__field--left { display: grid; grid-template-columns: minmax(90px, 34%) 1fr; align-items: center; }
+.fn-cform__opts { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.fn-cform__opt { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; }
+.fn-cform__sep { grid-column: 1 / -1; border: 0; border-top: 1px solid var(--border); width: 100%; }
+.fn-jsbox { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px dashed var(--border); border-radius: var(--radius-sm); }
+.fn-jsframe { width: 100%; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
+.fb-form { display: grid; grid-template-columns: minmax(230px, 1fr) minmax(230px, 1fr) minmax(300px, 1.4fr); gap: 12px; align-items: start; }
+.fb-form__col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.fb-form__formprops { display: flex; flex-direction: column; gap: 4px; }
+.fb-form__tree { display: flex; flex-direction: column; gap: 8px; }
+.fb-form__panel { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 6px; display: flex; flex-direction: column; gap: 3px; }
+.fb-form__panel.is-on { border-color: var(--accent); }
+.fb-form__field { display: flex; align-items: center; gap: 4px; border-radius: 6px; padding: 1px 2px; }
+.fb-form__field.is-on { background: var(--accent-soft); }
+.fb-form__req { color: var(--err); font-weight: 600; }
+.fb-form__fieldbtn { flex: 1; text-align: left; background: none; border: 0; color: inherit; font: inherit; font-size: 13px; cursor: pointer; padding: 3px 4px; }
+.fb-form__props { display: flex; flex-direction: column; gap: 4px; }
+.fb-form__options { display: flex; flex-direction: column; gap: 4px; }
+.fb-form__optrow { display: grid; grid-template-columns: 1fr 1.2fr 64px 24px; gap: 4px; align-items: center; }
+.fb-form__code { max-height: 260px; overflow: auto; font-size: 12px; }
+.fb-form__preview { max-height: 420px; overflow: auto; }
+@media (max-width: 1100px) { .fb-form { grid-template-columns: 1fr; } }
+/* 5.3: the builder's functions (execute and the other entry points) as tabs over the canvas */
+.fb-fns { position: absolute; left: 8px; top: 8px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; z-index: 6; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 3px; max-width: calc(100% - 16px); }
+.fb-fn { display: inline-flex; align-items: center; gap: 4px; border: 1px solid transparent; background: transparent; color: var(--text-2); border-radius: 6px; padding: 2px 8px; font: inherit; font-size: 12px; cursor: pointer; }
+.fb-fn.is-on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); font-weight: 600; }
+.fb-fn__x { opacity: .6; padding: 0 2px; } .fb-fn__x:hover { opacity: 1; color: var(--err); }
+.fb-fn__add { width: auto; font-size: 12px; padding: 2px 4px; }
+.fn-ep__head select { width: auto; flex: 0 1 340px; min-width: 180px; }
+.fn-follow .fn-logs:empty, .fn-after .fn-logs:empty { display: none; }
+.fn-reply { margin-top: 6px; max-width: 640px; }

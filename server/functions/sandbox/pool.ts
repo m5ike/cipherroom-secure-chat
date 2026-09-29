@@ -18,7 +18,7 @@ import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkFromSandbox, MAX_FRAME, type FromSandbox, type Lang, type Output, type RunError, type RunSpec, type ToSandbox } from "./protocol";
+import { checkFromSandbox, MAX_FRAME, type FromSandbox, type Lang, type Output, type Rejected, type RunError, type RunSpec, type ToSandbox } from "./protocol";
 
 const here = typeof __filename === "string" ? __filename : fileURLToPath(import.meta.url);
 const req = createRequire(here);
@@ -70,6 +70,8 @@ export type HostCallHandler = (fn: string, args: unknown[], control: RunControl)
 export type RunHandlers = {
   onLog?: (level: string, msg: string, fields?: Record<string, unknown>) => void;
   onOutput?: (out: Output) => void;
+  /** 5.3: an output sent during the run was not a valid one. */
+  onRejected?: (reason: string) => void;
   onProgress?: (p: number, text: string) => void;
   host: HostCallHandler;
 };
@@ -78,7 +80,7 @@ export type RunHandlers = {
 const MAX_WAIT_MS = 10 * 60 * 1000;
 
 export type RunResult =
-  | { ok: true; value: Output | null; ms: number; memMb: number; engine: string }
+  | { ok: true; values: Output[]; result: unknown; rejected: Rejected[]; ms: number; memMb: number; engine: string }
   | { ok: false; error: RunError; ms: number; memMb: number; engine: string };
 
 type Child = {
@@ -213,6 +215,7 @@ export class SandboxPool {
         switch (m.t) {
           case "log": handlers.onLog?.(m.level, m.msg, m.fields); break;
           case "out": handlers.onOutput?.(m.out); break;
+          case "bad-out": handlers.onRejected?.(m.reason); break;
           case "progress": handlers.onProgress?.(m.p, m.text); break;
           case "call":
             handlers.host(m.fn, m.args, control).then(
@@ -222,7 +225,7 @@ export class SandboxPool {
             break;
           case "done":
             finish(m.ok
-              ? { ok: true, value: m.value, ms: m.ms, memMb: Math.max(m.mem, Math.round(rss / 1048576)), engine }
+              ? { ok: true, values: m.values, result: m.result, rejected: m.rejected, ms: m.ms, memMb: Math.max(m.mem, Math.round(rss / 1048576)), engine }
               : { ok: false, error: m.error, ms: m.ms, memMb: Math.max(m.mem, Math.round(rss / 1048576)), engine });
             break;
           case "fatal":

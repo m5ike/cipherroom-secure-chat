@@ -90,7 +90,7 @@ export function resolveModule(spec: Pick<RunSpec, "files" | "deps">, base: strin
 
 export function moduleSource(spec: Pick<RunSpec, "files" | "deps">, name: string): string {
   if (name === "m5") {
-    return "const m = globalThis.m5; export default m; export const { sys, run, caller, log, out, session, cache, codec, id, crypto, sleep } = m;";
+    return "const m = globalThis.m5; export default m; export const { sys, run, caller, log, out, session, cache, codec, id, crypto, sleep, codes, http, dns, functions, webhook, ai, prompt, form, model, browser } = m;";
   }
   if (name.startsWith("pkg:")) {
     const dep = name.slice(4).split("/")[0];

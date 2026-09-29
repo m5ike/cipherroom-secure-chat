@@ -64,6 +64,8 @@ export type PackageVersion = {
 export type InputType =
   | "string" | "text" | "integer" | "number" | "boolean" | "enum"
   | "date" | "time" | "duration" | "url" | "hostname" | "email" | "ip" | "json"
+  /** 5.3: JSON bodies (webhooks) — a plain object, a list. */
+  | "object" | "array"
   | "user" | "file" | "secret";
 
 export type InputSpec = {
@@ -101,6 +103,68 @@ export type WebhookExecutor = { enabled: boolean; token?: string; auth?: "none" 
 export type ApiExecutor = { enabled: boolean; token?: string };
 export type Executors = { chat: ChatExecutor; console: ConsoleExecutor; webhook?: WebhookExecutor; api?: ApiExecutor };
 
+/**
+ * 5.3: a model's entry points, by what calls them. The function is "file#fn"
+ * in the model's package version (the one `entry` names).
+ *   execute  — the start: "/keyword" in the chat, the console, the API, a schedule
+ *   response — someone replied to a message the model sent
+ *   button   — someone clicked a button the model rendered (m5.out.button)
+ *   form     — someone submitted a form the model rendered (m5.out.form)
+ *   error    — another entry point failed (a JavaScript / Python error, a time
+ *              limit, a bad result) or a result could not be shown in the browser
+ *   webhook  — an inbound HTTP call; a model may have several, each with its own URL
+ * execute, response, button, form and error are unique; webhooks are not.
+ */
+export type EndpointType = "execute" | "response" | "webhook" | "error" | "button" | "form";
+export const ENDPOINT_TYPES: readonly EndpointType[] = ["execute", "response", "button", "form", "error", "webhook"];
+export const UNIQUE_ENDPOINTS: readonly EndpointType[] = ["execute", "response", "button", "form", "error"];
+
+export type Endpoint = {
+  /** "execute", "response"… for the unique ones; "wh-…" for a webhook (stable across saves). */
+  id: string;
+  type: EndpointType;
+  /** "file#function" in the model's package version. */
+  fn: string;
+  /** A webhook's label (several webhooks: "GitHub", "Stripe"…). */
+  name?: string;
+  /** What the entry point reads from its payload (the reply, the button's data, the form's
+   *  values, the JSON body) — checked and typed like a command's inputs. */
+  inputs: InputSpec[];
+  enabled: boolean;
+} & Partial<Omit<WebhookExecutor, "enabled">>;
+
+/** One call in a model's processing session (m5.model.calls[i]). */
+export type ChainCall = {
+  id: number;
+  type: EndpointType;
+  /** The parameters the entry function got. */
+  parms: Record<string, unknown>;
+  /** What the entry function returned (plain data; large values are cut). */
+  result: unknown;
+  /** running · done · failed · timed-out · cancelled */
+  status: string;
+  err_msg: string;
+  /** A webhook call: the URL (token masked), the method, GET (query) and POST (body). */
+  http: { url: string; method: string; get: Record<string, unknown>; post: unknown } | null;
+  run: string;
+  at: number;
+  by: string;
+};
+
+/** A model's processing session: the first call (execute or a webhook) and
+ *  everything that follows from it — replies, clicks, forms, errors. */
+export type Chain = {
+  id: string;
+  modelId: string;
+  /** The session m5.model.session keeps its values in. */
+  sessionId: string;
+  /** Where its calls run: the model, or (console) a package draft. */
+  source: { kind: "model" } | { kind: "draft"; packageId: string; file: string; inline?: { lang: Lang; files: FileMap } };
+  calls: ChainCall[];
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type Model = {
   id: string;
   name: string;
@@ -111,6 +175,8 @@ export type Model = {
   entry: string;
   /** Called when an awaited event arrives; "" = none. */
   onEvent: string;
+  /** 5.3: the entry points (execute mirrors `entry` and `inputs`). */
+  endpoints: Endpoint[];
   runtime: Runtime;
   inputs: InputSpec[];
   outputs: OutputKind[];
@@ -163,6 +229,10 @@ export type Run = {
   finishedAt: number | null;
   ms: number;
   memMb: number;
+  /** 5.3: the processing session and the call in it; the entry point type. */
+  chainId?: string;
+  callId?: number;
+  endpoint?: EndpointType;
 };
 
 /* ------------------------------------------------------------ schedules */

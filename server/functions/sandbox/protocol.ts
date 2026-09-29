@@ -6,6 +6,8 @@
 // have reached the process's own JavaScript — so the runner checks every
 // message (shape, size, limits) and only ever affects the run it belongs to.
 
+import { checkFnOutput, type FnOutput } from "../../../client/src/lib/fn-outputs";
+
 export type Lang = "js" | "py";
 
 /** The limits of one run. The runner enforces them; the sandbox also
@@ -29,11 +31,29 @@ export const MAX_LIMITS: RunLimits = { wallMs: 300_000, stepMs: 30_000, memoryMb
 /** Files of one package: path inside the package → text. */
 export type FileMap = Record<string, string>;
 
+/** 5.3: m5.model — the model, the entry point and its processing session. */
+export type ModelContext = {
+  id: string | null;
+  name: string;
+  keyword: string;
+  /** The entry point type of this call, and its id ("execute", "wh-…"). */
+  type: string;
+  endpoint: string;
+  /** The processing session (chain) and this call's index in it. */
+  chain: string;
+  call: number;
+  /** Every call so far (this one last: result null, status "running"). */
+  calls: Array<{ id: number; type: string; parms: unknown; result: unknown; status: string; err_msg: string; http: unknown; run: string; at: number; by: string }>;
+  /** The entry point types the model has (a function can tell whether a button will reach it). */
+  endpoints: string[];
+};
+
 export type RunContext = {
   run: { id: string; model: string | null; executor: string; parent: string | null; startedAt: number; deadline: number; test: boolean; entry: string };
   caller: { kind: "console" | "user" | "guest" | "webhook" | "schedule" | "api"; name: string; groups: string[]; room: string | null; client: string | null; lang: string; tz: string };
   sys: { version: string; instance: string };
   session: { id: string };
+  model?: ModelContext;
 };
 
 export type RunSpec = {
@@ -49,17 +69,12 @@ export type RunSpec = {
   limits: RunLimits;
 };
 
-/** One output of a run (m5.out.*). Bytes travel as base64 in `data`. */
-export type Output =
-  | { type: "text"; text: string }
-  | { type: "markdown"; text: string }
-  | { type: "code"; text: string; lang: string }
-  | { type: "table"; columns: string[]; rows: unknown[][]; title?: string }
-  | { type: "json"; value: unknown; title?: string }
-  | { type: "image"; mime: string; data: string; alt?: string }
-  | { type: "file"; name: string; mime: string; data: string }
-  | { type: "flash"; text: string; level: "info" | "success" | "warning" | "error" }
-  | { type: "window"; id: string; args: unknown };
+/** One output of a run (m5.out.*) — the shared description in client/src/lib/fn-outputs.ts.
+ *  Bytes travel as base64 in `data`. */
+export type Output = FnOutput;
+
+/** 5.3: a result item that was not a valid output (its index in the returned list, and why). */
+export type Rejected = { index: number; reason: string };
 
 export type LogLevel = "debug" | "info" | "warn" | "error" | "stdout" | "stderr";
 
@@ -77,9 +92,13 @@ export type FromSandbox =
   | { t: "ready"; engine: string; version: string; ms: number }
   | { t: "log"; level: LogLevel; msg: string; fields?: Record<string, unknown> }
   | { t: "out"; out: Output }
+  /** 5.3: an output sent during the run (m5.caller.send, m5.browser.*) that is not a valid one. */
+  | { t: "bad-out"; reason: string }
   | { t: "progress"; p: number; text: string }
   | { t: "call"; id: number; fn: string; args: unknown[] }
-  | { t: "done"; ok: true; value: Output | null; ms: number; mem: number }
+  /** values: what the entry function returned, as outputs (a list returns several);
+   *  result: the returned value as plain data (m5.model.calls[i].result); rejected: items that were not outputs. */
+  | { t: "done"; ok: true; values: Output[]; result: unknown; rejected: Rejected[]; ms: number; mem: number }
   | { t: "done"; ok: false; error: RunError; ms: number; mem: number }
   | { t: "fatal"; message: string };
 
@@ -92,6 +111,8 @@ export const HOST_CALLS = [
   "webhook.create", "webhook.wait",
   "crypto", "codes", "ai",
   "functions.list",
+  // 5.3: m5.model.session — the processing session's own key–value store.
+  "model.session.get", "model.session.set", "model.session.delete", "model.session.keys",
 ] as const;
 export type HostCall = (typeof HOST_CALLS)[number];
 
@@ -99,44 +120,17 @@ export type HostCall = (typeof HOST_CALLS)[number];
 export const MAX_FRAME = 12 * 1024 * 1024;
 
 const LEVELS = new Set<LogLevel>(["debug", "info", "warn", "error", "stdout", "stderr"]);
-const OUT_TYPES = new Set(["text", "markdown", "code", "table", "json", "image", "file", "flash", "window"]);
-const FLASH_LEVELS = new Set(["info", "success", "warning", "error"]);
-
-const str = (v: unknown, max: number): string | null => (typeof v === "string" && v.length <= max ? v : null);
 const isObj = (v: unknown): v is Record<string, unknown> => Boolean(v) && typeof v === "object" && !Array.isArray(v);
 
 /** An output as the sandbox claimed it, or null when it is not one. */
 export function checkOutput(v: unknown): Output | null {
-  if (!isObj(v) || typeof v.type !== "string" || !OUT_TYPES.has(v.type)) return null;
-  const MAX = MAX_LIMITS.outputBytes * 2;
-  switch (v.type) {
-    case "text": case "markdown": { const text = str(v.text, MAX); return text === null ? null : { type: v.type, text }; }
-    case "code": { const text = str(v.text, MAX); const lang = str(v.lang ?? "", 40); return text === null || lang === null ? null : { type: "code", text, lang }; }
-    case "table": {
-      if (!Array.isArray(v.columns) || !Array.isArray(v.rows) || !v.rows.every(Array.isArray)) return null;
-      const columns = v.columns.map((c) => String(c).slice(0, 200));
-      const title = v.title === undefined ? undefined : str(v.title, 500);
-      return { type: "table", columns, rows: v.rows as unknown[][], ...(title ? { title } : {}) };
-    }
-    case "json": { const title = v.title === undefined ? undefined : str(v.title, 500); return { type: "json", value: v.value ?? null, ...(title ? { title } : {}) }; }
-    case "image": {
-      const mime = str(v.mime, 100); const data = str(v.data, MAX);
-      if (!mime || !/^image\/(png|jpeg|gif|webp|svg\+xml)$/.test(mime) || data === null || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) return null;
-      const alt = v.alt === undefined ? undefined : str(v.alt, 500);
-      return { type: "image", mime, data, ...(alt ? { alt } : {}) };
-    }
-    case "file": {
-      const name = str(v.name, 200); const mime = str(v.mime, 100); const data = str(v.data, MAX);
-      if (!name || !mime || !/^[\w.+-]+\/[\w.+-]+$/.test(mime) || data === null || !/^[A-Za-z0-9+/]*={0,2}$/.test(data)) return null;
-      return { type: "file", name: name.replace(/[\\/\0]/g, "_"), mime, data };
-    }
-    case "flash": {
-      const text = str(v.text, 2000); const level = typeof v.level === "string" && FLASH_LEVELS.has(v.level) ? v.level as "info" : "info";
-      return text === null ? null : { type: "flash", text, level };
-    }
-    case "window": { const id = str(v.id, 100); return id ? { type: "window", id, args: v.args ?? null } : null; }
-  }
-  return null;
+  const r = checkFnOutput(v, MAX_LIMITS.outputBytes * 2);
+  return r.ok ? r.output : null;
+}
+
+/** An output, or why it is not one (for the run's log and its error entry point). */
+export function explainOutput(v: unknown): { ok: true; output: Output } | { ok: false; reason: string } {
+  return checkFnOutput(v, MAX_LIMITS.outputBytes * 2);
 }
 
 /** A message from a sandbox, checked; null for anything malformed. */
@@ -150,7 +144,7 @@ export function checkFromSandbox(v: unknown): FromSandbox | null {
       if (!level || msg === null) return null;
       return { t: "log", level, msg, ...(isObj(v.fields) ? { fields: v.fields } : {}) };
     }
-    case "out": { const out = checkOutput(v.out); return out ? { t: "out", out } : null; }
+    case "out": { const r = explainOutput(v.out); return r.ok ? { t: "out", out: r.output } : { t: "bad-out", reason: r.reason }; }
     case "progress": {
       const p = Number(v.p);
       return { t: "progress", p: Number.isFinite(p) ? Math.max(0, Math.min(1, p)) : 0, text: String(v.text ?? "").slice(0, 300) };
@@ -162,9 +156,14 @@ export function checkFromSandbox(v: unknown): FromSandbox | null {
     case "done": {
       const ms = Number(v.ms) || 0; const mem = Number(v.mem) || 0;
       if (v.ok === true) {
-        const value = v.value === null || v.value === undefined ? null : checkOutput(v.value);
-        if (v.value !== null && v.value !== undefined && !value) return null;
-        return { t: "done", ok: true, value, ms, mem };
+        // Each returned item on its own: a bad one is reported (and the error
+        // entry point runs), the good ones are still shown.
+        const raw = Array.isArray(v.values) ? v.values.slice(0, 200) : [];
+        const values: Output[] = [];
+        const rejected: Rejected[] = [];
+        raw.forEach((item, index) => { const r = explainOutput(item); if (r.ok) values.push(r.output); else rejected.push({ index, reason: r.reason }); });
+        if (Array.isArray(v.values) && v.values.length > 200) rejected.push({ index: 200, reason: `${v.values.length - 200} more items were left out (200 at most)` });
+        return { t: "done", ok: true, values, result: v.result ?? null, rejected, ms, mem };
       }
       const e = isObj(v.error) ? v.error : {};
       return { t: "done", ok: false, error: { type: String(e.type ?? "Error").slice(0, 100), message: String(e.message ?? "").slice(0, 4000), ...(typeof e.stack === "string" ? { stack: e.stack.slice(0, 8000) } : {}) }, ms, mem };

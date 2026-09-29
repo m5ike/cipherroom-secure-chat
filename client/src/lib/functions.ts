@@ -6,18 +6,12 @@
 // to send as an ordinary end-to-end-encrypted message.
 
 export type CommandInput = { name: string; type: string; label?: string; help?: string; required: boolean; default?: unknown; values?: string[] };
-export type Command = { keyword: string; name: string; summary: string; runtime: string; visibility: "room" | "caller"; mine: boolean; inputs: CommandInput[] };
+/** events (5.3): what a reply, a click or a form of the command's messages reaches (response, button, form, error). */
+export type Command = { keyword: string; name: string; summary: string; runtime: string; visibility: "room" | "caller"; mine: boolean; inputs: CommandInput[]; events?: string[]; model?: string };
 
-export type FnOutput =
-  | { type: "text"; text: string }
-  | { type: "markdown"; text: string }
-  | { type: "code"; text: string; lang?: string }
-  | { type: "table"; columns: string[]; rows: unknown[][]; title?: string }
-  | { type: "json"; value: unknown; title?: string }
-  | { type: "image"; mime: string; data: string; alt?: string }
-  | { type: "file"; name: string; mime: string; data: string }
-  | { type: "flash"; text: string; level: string }
-  | { type: "window"; id: string; args: unknown };
+import type { FnOutput } from "./fn-outputs";
+export type { FnOutput } from "./fn-outputs";
+export { outputsToMarkdown } from "./fn-outputs";
 
 export type RunOutcome =
   | { ok: true; outputs: FnOutput[]; visibility: "room" | "caller"; status: string; ms: number }
@@ -33,23 +27,61 @@ export type FormField = { name: string; label?: string; type?: string; required?
 export type FormSpec = { title?: string; text?: string; fields: FormField[]; submit?: string };
 export type Interaction = { runId: string; id: string; kind: "prompt" | "form"; spec: PromptSpec & FormSpec };
 
+/** A finished run as the chat gets it (5.3: the processing session, the call, what the model answers). */
+export type RunDone = {
+  runId: string; status: string; outputs: FnOutput[]; error: { type: string; message: string } | null; visibility: "room" | "caller";
+  chain?: string; call?: number; model?: string; keyword?: string; name?: string; events?: string[];
+  /** The function failed and its error entry point answered (outputs are that answer). */
+  handled?: boolean; failed?: { type: string; message: string } | null;
+};
+
 export type StreamHandlers = {
   onStart?: (runId: string) => void;
   onInteraction?: (i: { runId: string; id: string; kind: "prompt" | "form"; spec: PromptSpec & FormSpec }) => void;
   onProgress?: (p: number, text: string) => void;
-  onDone?: (r: { runId: string; status: string; outputs: FnOutput[]; error: { type: string; message: string } | null; visibility: "room" | "caller" }) => void;
+  onDone?: (r: RunDone) => void;
   onError?: (e: { code: string; message: string }) => void;
 };
 
 /** Runs a command with a live stream: progress, questions, then the outputs. */
 export async function runCommandStream(opts: { keyword: string; inputs: Record<string, unknown>; room: string | null; client: string | null; lang: string; tz?: string; token: string | null; signal?: AbortSignal }, h: StreamHandlers): Promise<void> {
+  return streamFunction("/api/functions/run", { keyword: opts.keyword, inputs: opts.inputs, room: opts.room, client: opts.client, lang: opts.lang, tz: opts.tz }, opts.token, opts.signal, h);
+}
+
+/** 5.3: what the app sends to a model's other entry points. */
+export type FnEventBody =
+  | { type: "response"; text: string; message?: { text: string } }
+  | { type: "button"; name: string; data?: unknown; source?: "js" }
+  | { type: "form"; name: string; values: Record<string, unknown>; source?: "js" }
+  | { type: "error"; error: { type: string; message: string; stack?: string }; output?: number; fromError?: boolean }
+  | { type: "log"; level: "debug" | "info" | "warn" | "error"; message: string };
+
+/** 5.3: a reply to the model's message, a click, a form — the entry point runs in the message's processing session (streamed like a command). */
+export async function sendFnEventStream(opts: { model?: string; keyword: string; chain: string; call?: number; room: string | null; client: string | null; lang: string; tz?: string; token: string | null; signal?: AbortSignal }, ev: FnEventBody, h: StreamHandlers): Promise<void> {
+  return streamFunction("/api/functions/event", { model: opts.model, keyword: opts.keyword, chain: opts.chain, call: opts.call, room: opts.room, client: opts.client, lang: opts.lang, tz: opts.tz, ...ev }, opts.token, opts.signal, h);
+}
+
+/** 5.3: a report from the browser (an output it could not show, a log line); the error entry point may answer. */
+export async function sendFnReport(opts: { model?: string; keyword: string; chain: string; call?: number; room: string | null; client: string | null; lang: string; token: string | null }, ev: Extract<FnEventBody, { type: "error" | "log" }>): Promise<RunDone | null> {
+  try {
+    const res = await fetch("/api/functions/event", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders(opts.token) },
+      body: JSON.stringify({ model: opts.model, keyword: opts.keyword, chain: opts.chain, call: opts.call, room: opts.room, client: opts.client, lang: opts.lang, ...ev }),
+    });
+    const d = await res.json().catch(() => null);
+    return res.ok && d && Array.isArray(d.outputs) && d.outputs.length ? d as RunDone : null;
+  } catch { return null; }
+}
+
+async function streamFunction(path: string, body: Record<string, unknown>, token: string | null, signal: AbortSignal | undefined, h: StreamHandlers): Promise<void> {
   let res: Response;
   try {
-    res = await fetch("/api/functions/run", {
+    res = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders(opts.token) },
-      body: JSON.stringify({ keyword: opts.keyword, inputs: opts.inputs, room: opts.room, client: opts.client, lang: opts.lang, tz: opts.tz, stream: true }),
-      signal: opts.signal,
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream", ...authHeaders(token) },
+      body: JSON.stringify({ ...body, stream: true }),
+      signal,
     });
   } catch (err) { h.onError?.({ code: "network", message: (err as Error).message }); return; }
   if (!res.ok || !res.body) { const d = await res.json().catch(() => ({})); h.onError?.({ code: (d as { code?: string }).code || "error", message: (d as { message?: string }).message || `HTTP ${res.status}` }); return; }
@@ -159,29 +191,4 @@ export async function runCommand(opts: { keyword: string; inputs: Record<string,
   return { ok: true, outputs: (data.outputs ?? []) as FnOutput[], visibility: data.visibility === "caller" ? "caller" : "room", status: data.status, ms: data.ms };
 }
 
-/** Renders outputs to Markdown for an ordinary chat message (what peers see). */
-export function outputsToMarkdown(outputs: FnOutput[]): string {
-  const parts: string[] = [];
-  for (const o of outputs) {
-    switch (o.type) {
-      case "text": parts.push(o.text); break;
-      case "markdown": parts.push(o.text); break;
-      case "code": parts.push("```" + (o.lang || "") + "\n" + o.text + "\n```"); break;
-      case "json": parts.push((o.title ? `**${o.title}**\n` : "") + "```json\n" + JSON.stringify(o.value, null, 2) + "\n```"); break;
-      case "table": parts.push(tableToMarkdown(o)); break;
-      case "flash": parts.push(`> ${o.text}`); break;
-      case "image": parts.push(`_(image: ${o.alt || o.mime})_`); break;
-      case "file": parts.push(`_(file: ${o.name})_`); break;
-      case "window": break;
-    }
-  }
-  return parts.join("\n\n").trim();
-}
 
-function tableToMarkdown(o: { columns: string[]; rows: unknown[][]; title?: string }): string {
-  const cell = (v: unknown) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v)).replace(/\|/g, "\\|").replace(/\n/g, " ");
-  const head = `| ${o.columns.map(cell).join(" | ")} |`;
-  const sep = `| ${o.columns.map(() => "---").join(" | ")} |`;
-  const body = o.rows.map((r) => `| ${r.map(cell).join(" | ")} |`).join("\n");
-  return (o.title ? `**${o.title}**\n\n` : "") + [head, sep, body].join("\n");
-}

@@ -512,3 +512,28 @@ export async function need(value, field, label, placeholder, title) {
   }
   throw new m5.Error("bad-input", `${label} is required`);
 }
+
+/* ---------------------------------------------------------------- 1.1 (5.3) */
+
+/** The caller can answer a form in the message (the chat, the console); a webhook or the API cannot. */
+export const canAsk = () => ["user", "guest", "console"].includes(m5.caller.kind);
+
+/**
+ * What is missing, asked for with a form in the message (sent, it runs the
+ * package's `form` entry point) — or, for a webhook or the API, a clear error.
+ */
+export function ask(title, fields, submit = "Go") {
+  if (!canAsk()) throw new m5.Error("bad-input", `${fields[0].label || fields[0].name} is required`);
+  return [m5.out.form({ name: "ask", title, submit, fields: fields.map((f) => ({ type: "text", required: f.type !== "select", ...f })) })];
+}
+
+/** Buttons under a result: the same command with other parameters (they run the `button` entry point). */
+export const buttons = (list) => m5.out.buttons(list.map((b) => ({ css: "small", ...b })));
+
+/** What the `error` entry point answers: what went wrong, and what to try. */
+export function sorry(error, hint) {
+  const msg = String((error && error.message) || error || "something went wrong");
+  const again = m5.model.first ? m5.model.first.parms : null;
+  m5.log.warn("answered an error", { error, again });
+  return [m5.out.flash(`${m5.model.name || "The command"}: ${msg}`, "error"), m5.out.markdown(`**That did not work** — ${msg}.${hint ? `\n\n${hint}` : ""}`)];
+}

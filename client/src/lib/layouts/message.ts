@@ -106,7 +106,8 @@ export function messageTree(kind: MessageKind): LNode {
       on: holdEvents,
     }, [icon("timer", "h-4 w-4", {}, { id: "tap-icon" }), text(" {_'msgkind.tap.hold'}", { id: "tap-text" })]),
     n("panel", { id: "body", name: "Body", if: "!($tap && !$revealed)", attrs: sys ? { class: "msg-sys__body" } : {}, on: holdEvents }, [
-      n("paragraph", { id: "text", name: "Text", if: "$bodyText", attrs: { class: "msg-bubble__text" } }, [
+      // A <div>, not a <p>: a command's output (5.3) holds headings, tables, forms and buttons.
+      n("paragraph", { id: "text", name: "Text", if: "$bodyText", tag: "div", attrs: { class: "msg-bubble__text" } }, [
         text("{$bodyText}", { id: "text-body", props: { format: "links" } }),
         sys ? n("area", { id: "sys-more", attrs: { class: "msg-sys__more", "aria-hidden": "true" }, text: "…" }) : null,
       ]),

@@ -17,6 +17,7 @@
 // INSIDE the already-decrypted payload, so the signalling server never sees
 // them and a passive room member cannot read a sealed body.
 
+import type { FnOutput } from "./fn-outputs";
 import { toBase64, fromBase64 } from "./crypto";
 
 export const VANISH_MIN_SECONDS = 4;
@@ -43,7 +44,26 @@ export type MsgFlags = {
   /** Present when the `text` field is itself ciphertext (base64). */
   sealed?: SealedMeta;
   /** 4.15: the body is the Markdown output of a chat command ("/keyword"). */
-  fn?: { keyword: string; name: string };
+  fn?: FnMeta;
+};
+
+/**
+ * A chat command's message (4.15; 5.3 adds the rest): which model, its
+ * processing session and the call that made it (a reply, a click or a form
+ * continues it), the entry points it answers, and the outputs themselves (the
+ * text stays Markdown for older apps and for search).
+ */
+export type FnMeta = {
+  keyword: string;
+  name: string;
+  model?: string;
+  chain?: string;
+  call?: number;
+  /** response · button · form · error — what reaches the model from this message. */
+  events?: string[];
+  outputs?: FnOutput[];
+  /** The model's error entry point wrote it (its own render errors are not reported again). */
+  origin?: "error";
 };
 
 export function hasAnyFlag(flags: MsgFlags | undefined): boolean {

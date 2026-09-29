@@ -88,6 +88,13 @@ function coerce(spec: InputSpec, value: unknown): unknown {
       try { return JSON.parse(value); } catch { fail(field, "must be valid JSON"); }
       return value;
     }
+    // 5.3: a JSON body's object or list (text is parsed).
+    case "object": case "array": {
+      let v = value;
+      if (typeof v === "string") { try { v = JSON.parse(v); } catch { fail(field, `must be a JSON ${spec.type === "array" ? "list" : "object"}`); } }
+      if (spec.type === "array" ? !Array.isArray(v) : !(v && typeof v === "object" && !Array.isArray(v))) fail(field, `must be ${spec.type === "array" ? "a list" : "an object"}`);
+      return v;
+    }
     case "user": case "file": case "secret": return value; // resolved by the executor (chat, webhook); passed through here
     default: return value;
   }

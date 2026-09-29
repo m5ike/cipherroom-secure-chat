@@ -7,20 +7,25 @@
 // sends (the command and its arguments), never the conversation.
 //
 //   GET  /api/functions/commands   the "/keyword" commands this caller may use
-//                                  (name, summary, input schema, where it runs)
+//                                  (name, summary, input schema, where it runs,
+//                                  the entry points a reply / click / form reaches)
 //   POST /api/functions/run        { keyword|model, inputs, room?, client?, stream? }
 //                                  stream: SSE progress / log / output / done / error
+//   POST /api/functions/event      (5.3) { keyword|model, chain, type: response |
+//                                  button | form | error | log, … } — a reply to the
+//                                  model's message, a click, a form, a browser error
 
 import express, { type Express, type Request, type Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { answerRun, deliverWebhook, endInteractionsFor, execute, functionsPublicUrl, openInteractions, runEvents, triggerDurableWebhook, RunRefused } from "./runner";
+import { answerRun, deliverWebhook, endInteractionsFor, execute, functionsPublicUrl, openInteractions, runErrorEndpoint, runEvents, triggerDurableWebhook, RunRefused, type ExecuteResult } from "./runner";
+import { argsToInputs, endpointOf, endpointTypes, endpointsOf, eventInputs, webhookByToken } from "./endpoints";
 import { callRecord, callbackOf, clientIp, inputsOf, LOG_BODY_MAX, maskPath, maskToken, postCallback } from "./webhook-log";
 import { accessLog } from "../access-log";
 import { startScheduler } from "./scheduler";
 import { functionsStore, newId } from "./store";
 import { validateInputs } from "./inputs";
-import { type Caller, type Model } from "./types";
+import { type Caller, type Endpoint, type Model, type RunLog } from "./types";
 import { switchState } from "../plugins/settings";
 import { accountStore, usernameOf } from "../accounts/store";
 import { clientConfigStore } from "../client-config";
@@ -28,6 +33,7 @@ import { groupsFor } from "../../client/src/lib/modules";
 import { checkAccess, userSubject, type Check, type Needs } from "../access";
 import { modelVisible, runNeeds } from "./visibility";
 import { seedBuiltins } from "./builtins";
+import { registerSandboxPage } from "./sandbox-page";
 
 /** Auto mode: how long a webhook waits for the run before answering 202. */
 const AUTO_WAIT_MS = Math.max(1000, Number(process.env.WEBHOOK_AUTO_WAIT_MS) || 25_000);
@@ -75,12 +81,78 @@ function commandView(model: Model, caller: Caller) {
     visibility: model.executors.chat.visibility,
     mine: model.groups.length === 0 || model.groups.some((g) => caller.groups.includes(g)),
     inputs: model.inputs.map((i) => ({ name: i.name, type: i.type, label: i.label, help: i.help, required: Boolean(i.required), default: i.default, values: i.values })),
+    // 5.3: the entry points a reply, a click or a form of this model's messages reach.
+    events: endpointTypes(model).filter((t) => t !== "execute" && t !== "webhook"),
+    model: model.id,
   };
 }
 
 function errorOf(err: unknown): { status: number; code: string; message: string } {
-  if (err instanceof RunRefused) return { status: err.code === "bad-input" ? 400 : 422, code: err.code, message: err.message };
+  if (err instanceof RunRefused) return { status: err.code === "bad-input" ? 400 : err.code === "no-chain" ? 410 : 422, code: err.code, message: err.message };
   return { status: 500, code: "error", message: "The function could not run." };
+}
+
+/** What a chat caller gets back from a run (or its error entry point's answer). */
+function doneBody(model: Model, out: ExecuteResult) {
+  return {
+    ok: true, runId: out.run.id, status: out.run.status,
+    // The error entry point answered a failure: its outputs, and the failure as `failed`.
+    outputs: out.handled ? [...out.outputs, ...out.handled.outputs] : out.outputs,
+    error: out.handled ? null : out.run.error,
+    ...(out.handled ? { failed: out.run.error ?? { type: "BadResult", message: "a result item was left out" }, handled: true } : {}),
+    ms: out.run.ms, visibility: model.executors.chat.visibility,
+    chain: out.chain, call: out.handled?.run.callId ?? out.call,
+    model: model.id, keyword: model.keyword, name: model.name, events: endpointTypes(model).filter((t) => t !== "execute" && t !== "webhook"),
+  };
+}
+
+/** Streams a run to a chat caller (SSE): start, progress, questions, outputs, then done or error. */
+async function streamRun(req: Request, res: Response, model: Model, start: (runId: string) => Promise<ExecuteResult>, precheck?: () => void): Promise<void> {
+  const runId = newId("run");
+  res.status(200);
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+  const sse = (event: string, data: unknown) => { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+  const keepAlive = setInterval(() => { if (!res.writableEnded) res.write(": ping\n\n"); }, 15_000);
+  const onRun = (ev: Record<string, unknown>) => {
+    if (ev.runId !== runId) return;
+    if (ev.type === "output") sse("output", ev.output);
+    else if (ev.type === "progress") sse("progress", ev);
+    else if (ev.type === "interaction") sse("interaction", { runId, ...(ev.interaction as object) });
+    else if (ev.type === "log") sse("log", ev);
+  };
+  runEvents.on("run", onRun);
+  // If the caller goes away, cancel the questions so the function stops waiting.
+  req.on("close", () => { runEvents.off("run", onRun); clearInterval(keepAlive); endInteractionsFor(runId); });
+  try {
+    precheck?.(); // a bad argument is a clean error, not a stream
+    sse("start", { runId, keyword: model.keyword, name: model.name, visibility: model.executors.chat.visibility });
+    const out = await start(runId);
+    sse("done", doneBody(model, out));
+  } catch (err) {
+    const e = errorOf(err);
+    sse("error", { code: e.code, message: e.message });
+  } finally {
+    runEvents.off("run", onRun);
+    clearInterval(keepAlive);
+    res.end();
+  }
+}
+
+/** Client log lines a processing session may add to its runs (per chain, per minute). */
+const clientLogBudget = new Map<string, { at: number; n: number }>();
+function clientLogAllowed(chain: string): boolean {
+  const now = Date.now();
+  const b = clientLogBudget.get(chain);
+  if (!b || now - b.at > 60_000) { clientLogBudget.set(chain, { at: now, n: 1 }); if (clientLogBudget.size > 5000) clientLogBudget.clear(); return true; }
+  return ++b.n <= 30;
+}
+/** A line from the browser in the run that produced the output (the console shows it with the run). */
+function clientLog(runId: string, level: RunLog["level"], msg: string, fields: Record<string, unknown> | null): void {
+  const last = functionsStore.logs(runId).at(-1);
+  functionsStore.addLogs([{ runId, seq: (last?.seq ?? -1) + 1, ts: Date.now(), level, msg: `browser: ${msg}`.slice(0, 2000), fields }]);
 }
 
 export function registerFunctionsRoutes(app: Express): void {
@@ -91,6 +163,8 @@ export function registerFunctionsRoutes(app: Express): void {
   if (!process.env.VITEST || process.env.FUNCTIONS_BUILTINS === "1") void seedBuiltins("system").catch((err) => console.warn(`[functions] built-in packages: ${(err as Error).message}`));
   // The cron scheduler runs only here (the main service), so a schedule fires once.
   startScheduler();
+  // 5.3: where a function's browser JavaScript runs (an opaque-origin sandbox).
+  registerSandboxPage(app);
 
   app.get("/api/functions/commands", async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
@@ -121,7 +195,7 @@ export function registerFunctionsRoutes(app: Express): void {
     if (body.stream !== true) {
       try {
         const out = await execute(model, inputs, caller, { executor: "chat" });
-        return res.json({ ok: true, runId: out.run.id, status: out.run.status, outputs: out.outputs, error: out.run.error, ms: out.run.ms, visibility: model.executors.chat.visibility });
+        return res.json(doneBody(model, out));
       } catch (err) {
         const e = errorOf(err);
         return res.status(e.status).json({ ok: false, code: e.code, message: e.message });
@@ -132,37 +206,66 @@ export function registerFunctionsRoutes(app: Express): void {
     // questions (m5.prompt / m5.form) arrive as they happen, and the caller
     // answers them via POST /runs/:id/events. The runId is known up front so
     // the caller can subscribe and answer before the run finishes.
-    const runId = newId("run");
-    res.status(200);
-    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
-    res.setHeader("Cache-Control", "no-store");
-    res.setHeader("X-Accel-Buffering", "no");
-    res.flushHeaders?.();
-    const sse = (event: string, data: unknown) => { if (!res.writableEnded) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
-    const keepAlive = setInterval(() => { if (!res.writableEnded) res.write(": ping\n\n"); }, 15_000);
-    const onRun = (ev: Record<string, unknown>) => {
-      if (ev.runId !== runId) return;
-      if (ev.type === "output") sse("output", ev.output);
-      else if (ev.type === "progress") sse("progress", ev);
-      else if (ev.type === "interaction") sse("interaction", { runId, ...(ev.interaction as object) });
-      else if (ev.type === "log") sse("log", ev);
-    };
-    runEvents.on("run", onRun);
-    // If the caller goes away, cancel the questions so the function stops waiting.
-    req.on("close", () => { runEvents.off("run", onRun); clearInterval(keepAlive); endInteractionsFor(runId); });
-    try {
-      validateInputs(model.inputs, inputs); // a bad argument is a clean error, not a stream
-      sse("start", { runId, keyword: model.keyword, name: model.name, visibility: model.executors.chat.visibility });
-      const out = await execute(model, inputs, caller, { executor: "chat", runId });
-      sse("done", { runId: out.run.id, status: out.run.status, outputs: out.outputs, error: out.run.error, ms: out.run.ms, visibility: model.executors.chat.visibility });
-    } catch (err) {
-      const e = errorOf(err);
-      sse("error", { code: e.code, message: e.message });
-    } finally {
-      runEvents.off("run", onRun);
-      clearInterval(keepAlive);
-      res.end();
+    await streamRun(req, res, model, (runId) => execute(model, inputs, caller, { executor: "chat", runId }), () => { validateInputs(model.inputs, inputs); });
+  });
+
+  // 5.3: the model's other entry points, from the app — a reply to its message,
+  // a click on its button, a submitted form (as a new call in the processing
+  // session the message came from), an error or a log line from the browser.
+  app.post("/api/functions/event", limiter, express.json({ limit: "1mb" }), async (req: Request, res: Response) => {
+    if (!switchState("functions").enabled) return res.status(404).json({ ok: false, code: "off", message: "The functions module is off." });
+    await functionsStore.ready();
+    const body = (req.body || {}) as Record<string, unknown>;
+    const caller = callerOf(req);
+    const model = typeof body.model === "string" ? functionsStore.model(body.model)
+      : typeof body.keyword === "string" ? functionsStore.modelByKeyword(body.keyword.replace(/^\//, "")) : null;
+    const type = String(body.type ?? "");
+    if (!["response", "button", "form", "error", "log"].includes(type)) return res.status(400).json({ ok: false, code: "bad-event", message: "type: response, button, form, error or log." });
+    const access = model ? moduleAccess(req, caller, runNeeds(model), type !== "log") : null;
+    if (!model || !model.enabled || !access?.allowed || !allowed(model, caller, access)) return res.status(404).json({ ok: false, code: "no-command", message: "No such command, or it is not available to you." });
+    const chainId = typeof body.chain === "string" ? body.chain : "";
+    const chain = chainId ? functionsStore.chain(chainId) : null;
+    if (!chain || chain.modelId !== model.id) return res.status(410).json({ ok: false, code: "expired", message: `This conversation with /${model.keyword || model.name} is over — run the command again.` });
+    const callIdx = Number.isInteger(body.call) ? Number(body.call) : chain.calls.length - 1;
+    const origin = chain.calls[callIdx] ?? chain.calls.at(-1);
+    const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
+
+    // The browser: a log line, or an output it could not show (logged; the error entry point answers).
+    if (type === "log" || type === "error") {
+      if (!clientLogAllowed(chain.id)) return res.status(429).json({ ok: false, code: "rate", message: "Too many browser reports for this conversation." });
+      const e = (body.error && typeof body.error === "object" ? body.error : {}) as Record<string, unknown>;
+      const level = type === "log" ? (["debug", "info", "warn", "error"].includes(String(body.level)) ? String(body.level) as RunLog["level"] : "info") : "error";
+      const msg = type === "log" ? str(body.message, 2000) : `${str(e.type, 60) || "Error"}: ${str(e.message, 1500)}`;
+      if (origin?.run) clientLog(origin.run, level, msg, { ...(typeof body.output === "number" ? { output: body.output } : {}), ...(type === "error" && e.stack ? { stack: str(e.stack, 4000) } : {}), by: caller.name });
+      const errEp = type === "error" && body.fromError !== true && origin?.type !== "error" ? endpointOf(model, "error") : null;
+      if (!errEp) return res.json({ ok: true, outputs: [] });
+      const handled = await runErrorEndpoint(model, errEp, chain.id, { error: { type: str(e.type, 60) || "RenderError", message: str(e.message, 2000), ...(e.stack ? { stack: str(e.stack, 4000) } : {}) }, failed: { call: origin?.id ?? 0, type: origin?.type ?? "execute", parms: origin?.parms ?? {}, ...(typeof body.output === "number" ? { output: body.output } : {}) }, source: "client" }, caller, { executor: "chat", parent: origin?.run ?? null });
+      if (!handled) return res.json({ ok: true, outputs: [] });
+      return res.json({ ok: true, runId: handled.run.id, status: handled.run.status, outputs: handled.outputs, error: handled.run.error, ms: handled.run.ms, visibility: model.executors.chat.visibility, chain: chain.id, call: handled.run.callId, model: model.id, keyword: model.keyword, name: model.name, events: endpointTypes(model).filter((t) => t !== "execute" && t !== "webhook"), fromError: true });
     }
+
+    const ep = endpointOf(model, type as "response" | "button" | "form");
+    if (!ep) return res.status(404).json({ ok: false, code: "no-endpoint", message: `/${model.keyword || model.name} does not answer ${type === "response" ? "replies" : type === "button" ? "buttons" : "forms"}.` });
+    const event = { type: type === "response" ? "reply" : body.source === "js" ? "js" : type === "button" ? "click" : "submit", at: Date.now(), by: caller.name };
+    let inputs: Record<string, unknown>;
+    try {
+      if (type === "response") {
+        const text = str(body.text, 16_000);
+        inputs = eventInputs(ep, argsToInputs(ep.inputs, text), { text, message: { text: str((body.message as { text?: unknown } | undefined)?.text, 2000), call: origin?.id ?? 0 }, event });
+      } else if (type === "button") {
+        const data = body.data === undefined ? null : body.data;
+        inputs = eventInputs(ep, data && typeof data === "object" && !Array.isArray(data) ? data as Record<string, unknown> : {}, { name: str(body.name, 64), data, event });
+      } else {
+        const values = body.values && typeof body.values === "object" && !Array.isArray(body.values) ? body.values as Record<string, unknown> : {};
+        inputs = eventInputs(ep, values, { name: str(body.name, 64), values, event });
+      }
+    } catch (err) { const e = errorOf(err); return res.status(e.status).json({ ok: false, code: e.code, message: e.message }); }
+    const run = (runId?: string) => execute(model, inputs, caller, { executor: "chat", endpoint: ep, chainId: chain.id, skipValidation: true, runId });
+    if (body.stream !== true) {
+      try { return res.json(doneBody(model, await run())); }
+      catch (err) { const e = errorOf(err); return res.status(e.status).json({ ok: false, code: e.code, message: e.message }); }
+    }
+    await streamRun(req, res, model, (runId) => run(runId));
   });
 
   // Programmatic API: run a model with its API bearer token, get outputs as JSON.
@@ -245,13 +348,13 @@ export function registerFunctionsRoutes(app: Express): void {
     answer(call, res, 200, { ok: true, delivered: "on_event" }, log);
   });
 
-  /** The model and its webhook, when the token matches. */
-  const hookModel = (req: Request): { model: Model; hook: NonNullable<Model["executors"]["webhook"]> } | { status: number; message: string } => {
+  /** The model and the webhook entry point whose URL this is (5.3: a model may have several). */
+  const hookModel = (req: Request): { model: Model; hook: Endpoint } | { status: number; message: string } => {
     const model = functionsStore.model(String(req.params.modelId));
-    const hook = model?.executors.webhook;
-    if (!model || !model.enabled || !hook?.enabled || !hook.token) return { status: 404, message: "No such webhook." };
-    const given = String(req.params.token);
-    if (given.length !== hook.token.length || !timingSafeEqual(Buffer.from(given), Buffer.from(hook.token))) return { status: 403, message: "Wrong webhook token." };
+    if (!model || !model.enabled) return { status: 404, message: "No such webhook." };
+    const hook = webhookByToken(model, String(req.params.token));
+    if (!hook) return endpointsOf(model).some((e) => e.type === "webhook" && e.enabled !== false && e.token) ? { status: 403, message: "Wrong webhook token." } : { status: 404, message: "No such webhook." };
+    if (hook.enabled === false) return { status: 404, message: "No such webhook." };
     return { model, hook };
   };
 
@@ -261,7 +364,8 @@ export function registerFunctionsRoutes(app: Express): void {
     await functionsStore.ready();
     const found = hookModel(req);
     const known = functionsStore.model(String(req.params.modelId));
-    const logMode = known?.executors.webhook?.log ?? "full";
+    // The log setting of the webhook this URL opens (a wrong token: the model's first webhook's).
+    const logMode = ("hook" in found ? found.hook.log : known?.executors.webhook?.log) ?? "full";
     const call = callRecord(req, "model", known?.id ?? "", String(req.params.token), rawOf(req), logMode);
     const log = Boolean(known) && logMode !== "off";
     if (!["POST", "PUT", "PATCH", "GET"].includes(req.method)) return answer(call, res, 405, { ok: false, message: "Use POST (or PUT, PATCH, GET)." }, log);
@@ -274,15 +378,21 @@ export function registerFunctionsRoutes(app: Express): void {
       if (sig.length !== mac.length || !timingSafeEqual(Buffer.from(sig), Buffer.from(mac))) { logAccess(model.keyword || model.id, "deny", "bad signature", req); return answer(call, res, 403, { ok: false, message: "Bad signature." }, log); }
     }
     logAccess(model.keyword || model.id, "allow", "token", req);
-    const inputs = { ...inputsOf(call.parsedBody, req.query as Record<string, unknown>), _webhook: hookMeta(req) };
+    // The body's fields (JSON, a form, multipart; the query under them): the declared inputs are
+    // checked and typed (application/json), the rest passes as it came.
+    let inputs: Record<string, unknown>;
+    try { inputs = eventInputs(hook, inputsOf(call.parsedBody, req.query as Record<string, unknown>), { _webhook: { ...hookMeta(req), endpoint: hook.id, name: hook.name ?? "" } }, { keepExtra: true }); }
+    catch (err) { const e = errorOf(err); return answer(call, res, e.status, { ok: false, code: e.code, message: e.message }, log); }
     const caller: Caller = { kind: "webhook", account: "", name: "webhook", groups: [], room: null, client: "webhook", lang: "en", tz: "UTC" };
     const runId = newId("run");
     call.runId = runId;
+    const http = { url: `${functionsPublicUrl()}${maskPath(req.originalUrl.split("?")[0], String(req.params.token))}`, method: req.method, get: call.query, post: call.logMode === "full" ? call.parsedBody.value : null };
     const mode = req.query.wait === "1" ? "sync" : req.query.wait === "0" ? "async" : hook.mode ?? "sync";
     const callback = hook.callback ? callbackOf(req) : "";
     const statusUrl = `${functionsPublicUrl()}/hooks/m/${model.id}/${hook.token}/runs/${runId}`;
-    const resultOf = (out: { run: { status: string; error: unknown; ms: number }; outputs: unknown }) => ({ ok: out.run.status === "done", runId, status: out.run.status, outputs: out.outputs, error: out.run.error });
-    const work = execute(model, inputs, caller, { executor: "webhook", skipValidation: true, runId });
+    // A failure the error entry point answered is still a failure to the caller (500), with its outputs.
+    const resultOf = (out: ExecuteResult) => ({ ok: out.run.status === "done", runId, status: out.run.status, outputs: out.handled ? [...out.outputs, ...out.handled.outputs] : out.outputs, error: out.run.error, ...(out.handled ? { handled: true } : {}), chain: out.chain, call: out.call });
+    const work = execute(model, inputs, caller, { executor: "webhook", skipValidation: true, runId, endpoint: hook, http });
 
     if (mode === "sync") {
       try { const out = await work; answer(call, res, out.run.status === "done" ? 200 : 500, resultOf(out), log); }

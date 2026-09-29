@@ -157,6 +157,9 @@ app.use(
         mediaSrc: ["'self'", "blob:"],
         workerSrc: ["'self'"],
         childSrc: ["'none'"],
+        // 5.3: only this site's own pages may be framed — /fn-sandbox.html, where a
+        // function's browser code runs (sandboxed, opaque origin).
+        frameSrc: ["'self'"],
         frameAncestors: ["'none'"],
         baseUri: ["'self'"],
         formAction: ["'self'"],

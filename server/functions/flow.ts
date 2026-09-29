@@ -13,10 +13,14 @@
 //              compiler wraps those nodes in `if (…)`
 //   trace      a traced build logs each node's value (and which node failed)
 //              so the builder can show results on the canvas
+//   functions  (5.3) a flow may hold several functions — execute and the
+//              model's other entry points (response, button, form, error,
+//              webhook…), each its own graph, all in one generated file
 
 export type FlowLang = "js" | "py";
 export type PortType = "any" | "text" | "number" | "boolean" | "json" | "list" | "object" | "bytes" | "output";
-export type FieldType = "string" | "text" | "number" | "boolean" | "enum" | "json" | "code";
+/** 5.3: form / button — edited in the console's form and button builders; jscode — browser JavaScript. */
+export type FieldType = "string" | "text" | "number" | "boolean" | "enum" | "json" | "code" | "form" | "button" | "jscode";
 
 export type FlowPort = { name: string; label?: string; type: PortType; field?: FieldType; values?: string[]; default?: unknown; required?: boolean; placeholder?: string };
 export type FlowOutPort = { name: string; label?: string; type: PortType; branch?: "then" | "else"; js?: (v: string) => string; py?: (v: string) => string };
@@ -24,7 +28,12 @@ export type FlowParam = { name: string; label: string; type: FieldType; values?:
 
 export type FlowNode = { id: string; type: string; x: number; y: number; params?: Record<string, unknown>; values?: Record<string, unknown>; label?: string };
 export type FlowEdge = { id: string; from: { node: string; port: string }; to: { node: string; port: string } };
-export type Flow = { format: "m5flow"; version: 1; lang: FlowLang; name?: string; summary?: string; nodes: FlowNode[]; edges: FlowEdge[] };
+export type FlowGraph = { nodes: FlowNode[]; edges: FlowEdge[] };
+/** nodes/edges: the execute function; functions (5.3): the other entry points (name → its graph). */
+export type Flow = { format: "m5flow"; version: 1; lang: FlowLang; name?: string; summary?: string; nodes: FlowNode[]; edges: FlowEdge[]; functions?: Record<string, FlowGraph> };
+/** The function names a flow may hold besides execute (the model's entry points, or any identifier). */
+export const FLOW_FUNCTIONS = ["response", "button", "form", "error", "webhook"] as const;
+const FN_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]{0,40}$/;
 
 /** What a node's code template gets: its inputs as expressions, its params as values. */
 export type Gen = {
@@ -128,6 +137,16 @@ function templateExpr(g: Gen, tpl: string): string {
   }
   if (last < tpl.length) parts.push(g.lit(tpl.slice(last)));
   return parts.length ? parts.join(" + ") : g.lit("");
+}
+
+/** Where the Remember nodes keep a value (5.3: the processing session's own store and cache). */
+const STORE_WHERE = ["session", "cache", "conversation", "conversation cache"];
+const storeNs = (w: unknown) => (w === "cache" ? "cache" : w === "conversation" ? "model.session" : w === "conversation cache" ? "model.cache" : "session");
+/** A form / button param: an object (the builder stores it as one), or JSON text. */
+function objParam(v: unknown): Record<string, unknown> {
+  if (v && typeof v === "object" && !Array.isArray(v)) return v as Record<string, unknown>;
+  if (typeof v === "string" && v.trim()) { try { const o = JSON.parse(v); if (o && typeof o === "object" && !Array.isArray(o)) return o as Record<string, unknown>; } catch { /* below */ } throw new FlowError("Not valid JSON for a form or a button."); }
+  return {};
 }
 
 const COMPARE_OPS = ["==", "!=", "<", "<=", ">", ">=", "contains", "starts with", "ends with", "matches", "is empty", "is not empty"];
@@ -333,6 +352,58 @@ export const NODES: NodeDef[] = [
     params: [{ name: "level", label: "Level", type: "enum", values: ["info", "success", "warning", "error"], default: "info" }],
     js: (g) => { g.use("str"); return `await m5.caller.flash(__str(${g.in.text}), ${g.lit(String(g.p.level || "info"))})`; }, py: (g) => { g.use("str"); return `await m5.caller.flash(_str(${g.in.text}), ${g.lit(String(g.p.level || "info"))})`; },
   },
+  // 5.3: sound, buttons, forms and browser code in the message.
+  { type: "out.audio", group: "Output", title: "Play sound", doc: "Sound to play in the chat (e.g. from “Text → speech”).",
+    inputs: [P("audio", "bytes", { required: true })], outputs: [], effect: true,
+    params: [{ name: "mime", label: "Type (auto: from the data)", type: "string", default: "auto" }, { name: "title", label: "Title", type: "string", default: "" }, { name: "autoplay", label: "Play at once", type: "boolean", default: true }],
+    js: (g) => { g.use("bytes"); const mime = g.p.mime && g.p.mime !== "auto" ? g.lit(String(g.p.mime)) : `(${g.in.audio}?.mime || "audio/wav")`; return `await m5.caller.send(m5.out.audio(__bytes(${g.in.audio}), ${mime}, ${g.lit({ ...(g.p.title ? { title: String(g.p.title) } : {}), autoplay: g.p.autoplay !== false })}))`; },
+    py: (g) => { g.use("bytes"); const mime = g.p.mime && g.p.mime !== "auto" ? g.lit(String(g.p.mime)) : `((${g.in.audio} or {}).get("mime") if isinstance(${g.in.audio}, dict) else None) or "audio/wav"`; return `await m5.caller.send(m5.out.audio(_bytes(${g.in.audio}), ${mime}${g.p.title ? `, title=${g.lit(String(g.p.title))}` : ""}, autoplay=${g.p.autoplay !== false ? "True" : "False"}))`; },
+  },
+  { type: "out.button", group: "Output", title: "Button", doc: "A button in the message: a click runs the model's button entry point (the flow's “button” function) with its name and data.",
+    // data: typed in as JSON ({"page": 2}), or wired from any node.
+    inputs: [P("data", "json", { placeholder: "{\"page\": 2}" })], outputs: [], effect: true,
+    params: [{ name: "button", label: "Button", type: "button", default: { name: "more", title: "More", css: "primary" } }],
+    js: (g) => `await m5.caller.send(m5.out.button({ ...${g.lit(objParam(g.p.button))}, data: ${g.in.data} }))`,
+    py: (g) => `await m5.caller.send(m5.out.button({**${g.lit(objParam(g.p.button))}, "data": ${g.in.data}}))`,
+  },
+  { type: "out.form", group: "Output", title: "Form", doc: "A form in the message (panels, rows or columns, every field type): sending it runs the model's form entry point (the flow's “form” function) with { name, values }.",
+    inputs: [], outputs: [], effect: true,
+    params: [{ name: "form", label: "Form", type: "form", default: { name: "contact", title: "Contact", fields: [{ name: "email", type: "email", label: "E-mail", required: true }, { name: "text", type: "textarea", label: "Message" }] } }],
+    js: (g) => `await m5.caller.send(m5.out.form(${g.lit(objParam(g.p.form))}))`,
+    py: (g) => `await m5.caller.send(m5.out.form(${g.lit(objParam(g.p.form))}))`,
+  },
+  { type: "out.js", group: "Output", title: "Browser code", doc: "JavaScript for the viewer's browser, in a sandbox (no access to the app): m5.args, m5.root, m5.flash, m5.send → the button function, m5.submit → the form function.",
+    inputs: [P("args", "json", { placeholder: "{\"n\": 5}" })], outputs: [], effect: true,
+    params: [{ name: "code", label: "Code (JavaScript, in the browser)", type: "jscode", default: "m5.flash(\"Hello from the browser!\", \"success\");" }, { name: "title", label: "Title", type: "string", default: "" }, { name: "height", label: "Height px (0: fits)", type: "number", default: 0 }, { name: "hidden", label: "Hidden (an effect)", type: "boolean", default: false }],
+    js: (g) => { const o = { ...(g.p.title ? { title: String(g.p.title) } : {}), ...(Number(g.p.height) > 0 ? { height: Number(g.p.height) } : {}), ...(g.p.hidden ? { hidden: true } : {}) }; return `await m5.caller.send(m5.out.js(${g.lit(String(g.p.code ?? ""))}, ${g.in.args}${Object.keys(o).length ? `, ${g.lit(o)}` : ""}))`; },
+    py: (g) => `await m5.caller.send(m5.out.js(${g.lit(String(g.p.code ?? ""))}, ${g.in.args}${g.p.title ? `, title=${g.lit(String(g.p.title))}` : ""}${Number(g.p.height) > 0 ? `, height=${Number(g.p.height)}` : ""}${g.p.hidden ? ", hidden=True" : ""}))`,
+  },
+
+  /* ------------------------------------------------------------ entry points (5.3) */
+  { type: "flow.event", group: "Flow", title: "Entry point data", doc: "What this function got as an entry point: a reply's text, a button's name and data, a form's values, an error.",
+    inputs: [], outputs: [
+      FIELD("text", (v) => `${v}.text`, (v) => `${v}.get("text")`, "text", "reply text"),
+      FIELD("name", (v) => `${v}.name`, (v) => `${v}.get("name")`, "text", "button / form name"),
+      FIELD("data", (v) => `${v}.data`, (v) => `${v}.get("data")`, "any", "button data"),
+      FIELD("values", (v) => `${v}.values`, (v) => `${v}.get("values")`, "object", "form values"),
+      FIELD("error", (v) => `${v}.error`, (v) => `${v}.get("error")`, "object", "error"),
+      FIELD("event", (v) => `${v}.event`, (v) => `${v}.get("event")`, "object"),
+      OUT("all", "object", "all inputs"),
+    ],
+    js: () => "inputs", py: () => "inputs",
+  },
+  { type: "model.history", group: "Flow", title: "Model session", doc: "m5.model: this call's type, the calls of the processing session (calls[0] is the first — execute or a webhook), the current and the last one.",
+    inputs: [], outputs: [
+      FIELD("type", (v) => `${v}.type`, (v) => `${v}.type`, "text"),
+      FIELD("call", (v) => `${v}.call`, (v) => `${v}.call`, "number"),
+      FIELD("first", (v) => `${v}.first`, (v) => `${v}.first`, "object"),
+      FIELD("last", (v) => `${v}.last`, (v) => `${v}.last`, "object"),
+      FIELD("current", (v) => `${v}.current`, (v) => `${v}.current`, "object"),
+      FIELD("calls", (v) => `${v}.calls`, (v) => `${v}.calls`, "list"),
+      FIELD("chain", (v) => `${v}.chain`, (v) => `${v}.chain`, "text"),
+    ],
+    js: () => "m5.model", py: () => "m5.model",
+  },
 
   /* ------------------------------------------------------------ ask */
   { type: "ask.prompt", group: "Ask", title: "Ask the caller", doc: "Asks a question and waits for the answer (choices become buttons).",
@@ -343,16 +414,16 @@ export const NODES: NodeDef[] = [
   },
 
   /* ------------------------------------------------------------ store */
-  { type: "store.get", group: "Store", title: "Remember: read", doc: "Reads a value kept by an earlier run (session: this caller in this room; cache: shared, with TTL).",
+  { type: "store.get", group: "Store", title: "Remember: read", doc: "Reads a value kept by an earlier run (session: this caller in this room; cache: shared, with TTL; conversation: this model's processing session only — m5.model.session / cache).",
     inputs: [P("key", "text", { required: true, default: "count" })], outputs: [OUT("value", "any")],
-    params: [{ name: "where", label: "Where", type: "enum", values: ["session", "cache"], default: "session" }],
-    js: (g) => `await m5.${g.p.where === "cache" ? "cache" : "session"}.get(${g.in.key})`, py: (g) => `await m5.${g.p.where === "cache" ? "cache" : "session"}.get(${g.in.key})`,
+    params: [{ name: "where", label: "Where", type: "enum", values: STORE_WHERE, default: "session" }],
+    js: (g) => `await m5.${storeNs(g.p.where)}.get(${g.in.key})`, py: (g) => `await m5.${storeNs(g.p.where)}.get(${g.in.key})`,
   },
   { type: "store.set", group: "Store", title: "Remember: write", doc: "Keeps a value for later runs (optionally for a while: TTL in seconds).",
     inputs: [P("key", "text", { required: true, default: "count" }), P("value", "any")], outputs: [OUT("value", "any")], effect: true,
-    params: [{ name: "where", label: "Where", type: "enum", values: ["session", "cache"], default: "session" }, { name: "ttl", label: "TTL seconds (0: keep)", type: "number", default: 0 }],
-    js: (g) => { const ns = g.p.where === "cache" ? "cache" : "session"; const ttl = Number(g.p.ttl) || 0; return `(await m5.${ns}.set(${g.in.key}, ${g.in.value}${ttl ? `, { ttl: ${ttl} }` : ""}), ${g.in.value})`; },
-    py: (g) => { const ns = g.p.where === "cache" ? "cache" : "session"; const ttl = Number(g.p.ttl) || 0; return `(await m5.${ns}.set(${g.in.key}, ${g.in.value}${ttl ? `, ttl=${ttl}` : ""}), ${g.in.value})[1]`; },
+    params: [{ name: "where", label: "Where", type: "enum", values: STORE_WHERE, default: "session" }, { name: "ttl", label: "TTL seconds (0: keep)", type: "number", default: 0 }],
+    js: (g) => { const ns = storeNs(g.p.where); const ttl = Number(g.p.ttl) || 0; return `(await m5.${ns}.set(${g.in.key}, ${g.in.value}${ttl ? `, { ttl: ${ttl} }` : ""}), ${g.in.value})`; },
+    py: (g) => { const ns = storeNs(g.p.where); const ttl = Number(g.p.ttl) || 0; return `(await m5.${ns}.set(${g.in.key}, ${g.in.value}${ttl ? `, ttl=${ttl}` : ""}), ${g.in.value})[1]`; },
   },
   { type: "store.incr", group: "Store", title: "Counter", doc: "Adds to a shared counter and gives the new value.",
     inputs: [P("key", "text", { required: true, default: "visits" }), P("by", "number", { default: 1 })], outputs: [OUT("value", "number")], effect: true,
@@ -497,7 +568,7 @@ export class FlowError extends Error {
   constructor(message: string, readonly node?: string) { super(message); this.name = "FlowError"; }
 }
 
-export type FlowIssue = { node?: string; level: "error" | "warning"; message: string };
+export type FlowIssue = { node?: string; level: "error" | "warning"; message: string; fn?: string };
 
 /** The input ports of a node (some depend on its params). */
 export function inputsOf(n: FlowNode): FlowPort[] {
@@ -555,11 +626,28 @@ export function parseFlow(raw: unknown): Flow {
     if (!e || !e.from || !e.to || !ids.has(e.from.node) || !ids.has(e.to.node)) continue;
     edges.push({ id: String(e.id || `e${edges.length + 1}`), from: { node: e.from.node, port: String(e.from.port) }, to: { node: e.to.node, port: String(e.to.port) } });
   }
-  return { format: "m5flow", version: 1, lang, name: typeof o.name === "string" ? o.name.slice(0, 80) : "", summary: typeof o.summary === "string" ? o.summary.slice(0, 300) : "", nodes, edges };
+  const functions: Record<string, FlowGraph> = {};
+  if (o.functions && typeof o.functions === "object") {
+    for (const [fn, g] of Object.entries(o.functions).slice(0, 12)) {
+      if (!FN_NAME_RE.test(fn) || fn === "execute" || !g || typeof g !== "object") continue;
+      const sub = parseFlow({ lang, nodes: Array.isArray((g as FlowGraph).nodes) ? (g as FlowGraph).nodes : [], edges: Array.isArray((g as FlowGraph).edges) ? (g as FlowGraph).edges : [] });
+      functions[fn] = { nodes: sub.nodes, edges: sub.edges };
+    }
+  }
+  return { format: "m5flow", version: 1, lang, name: typeof o.name === "string" ? o.name.slice(0, 80) : "", summary: typeof o.summary === "string" ? o.summary.slice(0, 300) : "", nodes, edges, ...(Object.keys(functions).length ? { functions } : {}) };
 }
 
-/** Problems a flow has: unknown nodes, dangling wires, missing required inputs, cycles, clashing input names. */
+/** Problems a flow has: unknown nodes, dangling wires, missing required inputs, cycles, clashing input names — in each of its functions. */
 export function checkFlow(flow: Flow): FlowIssue[] {
+  const issues = checkGraph(flow, "execute");
+  for (const [fn, graph] of Object.entries(flow.functions ?? {})) {
+    if (!FN_NAME_RE.test(fn) || fn === "execute") { issues.push({ fn, level: "error", message: `“${fn}” is not a function name.` }); continue; }
+    issues.push(...checkGraph(graph, fn).map((i) => ({ ...i, fn, message: `${fn}: ${i.message}` })));
+  }
+  return issues;
+}
+
+function checkGraph(flow: FlowGraph, fn: string): FlowIssue[] {
   const issues: FlowIssue[] = [];
   const byId = new Map(flow.nodes.map((n) => [n.id, n]));
   const wiredIn = new Set(flow.edges.map((e) => `${e.to.node}:${e.to.port}`));
@@ -590,12 +678,21 @@ export function checkFlow(flow: Flow): FlowIssue[] {
     seen.add(k);
   }
   try { order(flow); } catch (err) { issues.push({ node: (err as FlowError).node, level: "error", message: (err as Error).message }); }
-  if (!flow.nodes.some((n) => NODE_BY_TYPE[n.type]?.effect)) issues.push({ level: "warning", message: "Nothing sends or returns a result yet — add an Output node (e.g. Send text) or Result." });
+  if (!flow.nodes.some((n) => NODE_BY_TYPE[n.type]?.effect) && (fn === "execute" || flow.nodes.length)) issues.push({ level: "warning", message: "Nothing sends or returns a result yet — add an Output node (e.g. Send text) or Result." });
   return issues;
 }
 
+/** The functions a flow holds: execute, then the others (5.3). */
+export function flowFunctions(flow: Flow): string[] {
+  return ["execute", ...Object.keys(flow.functions ?? {}).filter((f) => FN_NAME_RE.test(f) && f !== "execute")];
+}
+/** One function's graph (execute: the flow's own nodes and edges). */
+export function graphOf(flow: Flow, fn: string): FlowGraph {
+  return fn === "execute" ? { nodes: flow.nodes, edges: flow.edges } : flow.functions?.[fn] ?? { nodes: [], edges: [] };
+}
+
 /** The model input schema the flow's Input nodes describe. */
-export function flowInputs(flow: Flow): Array<{ name: string; type: string; label?: string; required?: boolean; default?: unknown; values?: string[] }> {
+export function flowInputs(flow: FlowGraph): Array<{ name: string; type: string; label?: string; required?: boolean; default?: unknown; values?: string[] }> {
   return flow.nodes.filter((n) => n.type === "flow.input").sort((a, b) => a.y - b.y || a.x - b.x).map((n) => {
     const p = paramsOf(n);
     const type = (INPUT_TYPES as readonly string[]).includes(String(p.type)) ? String(p.type) : "string";
@@ -607,7 +704,7 @@ export function flowInputs(flow: Flow): Array<{ name: string; type: string; labe
 /* ============================================================ compiling */
 
 /** Dependency order; nodes that could run in any order go left to right, then top to bottom. */
-function order(flow: Flow): FlowNode[] {
+function order(flow: FlowGraph): FlowNode[] {
   const byId = new Map(flow.nodes.map((n) => [n.id, n]));
   const indeg = new Map(flow.nodes.map((n) => [n.id, 0]));
   const next = new Map<string, string[]>();
@@ -638,19 +735,60 @@ function order(flow: Flow): FlowNode[] {
 const varOf = (id: string) => `n_${id.replace(/[^A-Za-z0-9_]/g, "_")}`;
 
 export type CompileOptions = { trace?: boolean; fn?: string };
-export type Compiled = { code: string; file: string; issues: FlowIssue[]; inputs: ReturnType<typeof flowInputs>; order: string[] };
+/** functions (5.3): each function in the file with the inputs its Input nodes describe. */
+export type Compiled = { code: string; file: string; issues: FlowIssue[]; inputs: ReturnType<typeof flowInputs>; order: string[]; functions: Array<{ name: string; inputs: ReturnType<typeof flowInputs> }> };
 
-/** Compiles a flow to the source of one module whose `execute` runs it. Throws FlowError on errors. */
+/** Compiles a flow to the source of one module: `execute` runs its main graph, and each of its
+ *  other functions (5.3: response, button, form, error, webhook…) runs its own. Throws FlowError on errors. */
 export function compileFlow(flow: Flow, opts: CompileOptions = {}): Compiled {
   const issues = checkFlow(flow);
   const errors = issues.filter((i) => i.level === "error");
-  if (errors.length) throw new FlowError(errors[0].message, errors[0].node);
+  if (errors.length) throw Object.assign(new FlowError(errors[0].message, errors[0].node), { fn: errors[0].fn });
   const lang = flow.lang;
-  const fn = opts.fn && /^[A-Za-z_][A-Za-z0-9_]*$/.test(opts.fn) ? opts.fn : "execute";
-  const nodes = order(flow);
-  const byId = new Map(flow.nodes.map((n) => [n.id, n]));
+  const main = opts.fn && /^[A-Za-z_][A-Za-z0-9_]*$/.test(opts.fn) ? opts.fn : "execute";
   const helpers = new Set<HelperName>();
   if (opts.trace) helpers.add("peek");
+  const graphs: Array<[string, FlowGraph]> = [[main, flow], ...Object.entries(flow.functions ?? {}).filter(([fn, g]) => FN_NAME_RE.test(fn) && fn !== main && fn !== "execute" && g.nodes.length)];
+  const fns: string[][] = [];
+  let mainOrder: string[] = [];
+  for (const [fn, graph] of graphs) {
+    try {
+      const r = compileGraph(graph, fn, lang, opts, helpers);
+      fns.push(r.lines);
+      if (fn === main) mainOrder = r.order;
+    } catch (err) { throw Object.assign(err as Error, { fn }); }
+  }
+
+  const head = lang === "js"
+    ? ["// Generated by the M5cet visual builder from flow.m5flow.json.", "// Edit the flow in Functions → Builder (changes here are replaced on the next save),", "// or use “Eject to code” there to keep working on this file by hand.", ""]
+    : ["# Generated by the M5cet visual builder from flow.m5flow.json.", "# Edit the flow in Functions → Builder (changes here are replaced on the next save),", "# or use “Eject to code” there to keep working on this file by hand.", ""];
+  const out: string[] = [...head];
+  if (lang === "js") {
+    for (const h of ["str", "num", "get", "table", "bytes", "clean", "peek"] as HelperName[]) if (helpers.has(h)) out.push(HELPERS_JS[h]);
+    if (opts.trace) {
+      out.push("const __trace = (id, v) => m5.log.debug(\"flow:node\", { node: id, value: __peek(v) });");
+      out.push("const __fail = (id, e) => { m5.log.error(\"flow:fail\", { node: id, error: String((e && e.message) || e) }); throw e; };");
+    }
+    if (helpers.size || opts.trace) out.push("");
+  } else {
+    out.push("import json as _json, re as _re, random as _random, datetime as _dt", "");
+    for (const h of ["str", "num", "get", "table", "bytes", "clean", "peek"] as HelperName[]) if (helpers.has(h)) out.push(...HELPERS_PY[h], "");
+    if (opts.trace) {
+      out.push("def _trace(id, v):", "    m5.log.debug(\"flow:node\", node=id, value=_peek(v))", "");
+      out.push("def _fail(id, e):", "    m5.log.error(\"flow:fail\", node=id, error=str(e))", "    raise e", "");
+    }
+  }
+  for (const f of fns) out.push(...f);
+  return {
+    code: out.join("\n"), file: lang === "py" ? "index.py" : "index.js", issues, inputs: flowInputs(flow), order: mainOrder,
+    functions: graphs.map(([name, g]) => ({ name, inputs: flowInputs(g) })),
+  };
+}
+
+/** One function of the module: its nodes in order, gated by If branches, traced when asked. */
+function compileGraph(flow: FlowGraph, fn: string, lang: FlowLang, opts: CompileOptions, helpers: Set<HelperName>): { lines: string[]; order: string[] } {
+  const nodes = order(flow);
+  const byId = new Map(flow.nodes.map((n) => [n.id, n]));
   const incoming = new Map<string, FlowEdge>();
   for (const e of flow.edges) incoming.set(`${e.to.node}:${e.to.port}`, e);
 
@@ -659,7 +797,6 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): Compiled {
   const lines: string[] = [];
   const pad = lang === "js" ? "  " : "    ";
   let usesResult = false;
-
   for (const n of nodes) {
     const def = NODE_BY_TYPE[n.type];
     const v = varOf(n.id);
@@ -720,36 +857,19 @@ export function compileFlow(flow: Flow, opts: CompileOptions = {}): Compiled {
     }
   }
 
-  const head = lang === "js"
-    ? ["// Generated by the M5cet visual builder from flow.m5flow.json.", "// Edit the flow in Functions → Builder (changes here are replaced on the next save),", "// or use “Eject to code” there to keep working on this file by hand.", ""]
-    : ["# Generated by the M5cet visual builder from flow.m5flow.json.", "# Edit the flow in Functions → Builder (changes here are replaced on the next save),", "# or use “Eject to code” there to keep working on this file by hand.", ""];
-  const out: string[] = [...head];
+  const out: string[] = [];
   if (lang === "js") {
-    for (const h of ["str", "num", "get", "table", "bytes", "clean", "peek"] as HelperName[]) if (helpers.has(h)) out.push(HELPERS_JS[h]);
-    if (opts.trace) {
-      out.push("const __trace = (id, v) => m5.log.debug(\"flow:node\", { node: id, value: __peek(v) });");
-      out.push("const __fail = (id, e) => { m5.log.error(\"flow:fail\", { node: id, error: String((e && e.message) || e) }); throw e; };");
-    }
-    if (helpers.size || opts.trace) out.push("");
     out.push(`export async function ${fn}(inputs = {}) {`);
     if (usesResult) out.push("  let __result = null;");
     out.push(...lines);
     out.push(usesResult ? "  return __result;" : "  return null;", "}", "");
   } else {
-    out.push("import json as _json, re as _re, random as _random, datetime as _dt", "");
-    for (const h of ["str", "num", "get", "table", "bytes", "clean", "peek"] as HelperName[]) if (helpers.has(h)) out.push(...HELPERS_PY[h], "");
-    if (opts.trace) {
-      out.push("def _trace(id, v):", "    m5.log.debug(\"flow:node\", node=id, value=_peek(v))", "");
-      out.push("def _fail(id, e):", "    m5.log.error(\"flow:fail\", node=id, error=str(e))", "    raise e", "");
-    }
     out.push(`async def ${fn}(**inputs):`);
-    if (usesResult) {
-      out.push("    _result = [None]", "    def _set_result(v):", "        _result[0] = v", "        return v");
-    }
+    if (usesResult) out.push("    _result = [None]", "    def _set_result(v):", "        _result[0] = v", "        return v");
     out.push(...lines);
     out.push(usesResult ? "    return _result[0]" : "    return None", "");
   }
-  return { code: out.join("\n"), file: lang === "py" ? "index.py" : "index.js", issues, inputs: flowInputs(flow), order: nodes.map((n) => n.id) };
+  return { lines: out, order: nodes.map((n) => n.id) };
 }
 
 /** A port's typed-in value as a literal (or the language's "nothing"). */

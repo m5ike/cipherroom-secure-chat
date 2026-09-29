@@ -13,7 +13,7 @@
 
 import { EventEmitter } from "node:events";
 import { SandboxPool, type RunHandlers } from "./sandbox/pool";
-import { DEFAULT_LIMITS, MAX_LIMITS, type Output, type RunLimits, type RunSpec } from "./sandbox/protocol";
+import { DEFAULT_LIMITS, MAX_LIMITS, type ModelContext, type Output, type Rejected, type RunLimits, type RunSpec } from "./sandbox/protocol";
 import { buildInfo } from "../build-info";
 import { functionsStore, newId } from "./store";
 import { validateInputs } from "./inputs";
@@ -23,9 +23,10 @@ import { hostCode } from "./host-codes";
 import { hostAi, AI_RUN_TOKEN_CAP } from "./host-ai";
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
-import { formatEntry, parseEntry, type Caller, type Lang, type Model, type Run, type RunLog } from "./types";
+import { ENDPOINT_TYPES, formatEntry, parseEntry, type Caller, type Chain, type ChainCall, type Endpoint, type EndpointType, type Lang, type Model, type Run, type RunLog } from "./types";
 import { commandsFor } from "./visibility";
 import { storedInputs } from "./webhook-log";
+import { endpointOf, endpointTypes, endpointsOf, entryOf, eventInputs } from "./endpoints";
 
 /** Bytes a sandbox sent as {"$b": base64}; null for anything else. */
 function taggedBytes(v: unknown): Buffer | null {
@@ -65,7 +66,7 @@ function limitsFor(model: Model): RunLimits {
 /* -------------------------------------------------------- build a spec */
 
 /** Resolves a model's entry and its package dependencies into a run spec. */
-export function buildSpec(model: Model, inputs: Record<string, unknown>, caller: Caller, executor: string, opts: { test: boolean; runId: string; sessionId: string; parent: string | null; entry?: string }): RunSpec {
+export function buildSpec(model: Model, inputs: Record<string, unknown>, caller: Caller, executor: string, opts: { test: boolean; runId: string; sessionId: string; parent: string | null; entry?: string; model?: ModelContext }): RunSpec {
   const entrySpec = opts.entry || model.entry;
   const entry = parseEntry(entrySpec);
   if (!entry) throw new RunRefused("bad-entry", `The entry point "${entrySpec}" is malformed.`);
@@ -101,9 +102,68 @@ export function buildSpec(model: Model, inputs: Record<string, unknown>, caller:
       caller: { kind: caller.kind, name: caller.name, groups: caller.groups, room: caller.room, client: caller.client, lang: caller.lang, tz: caller.tz },
       sys: { version: buildInfo().version, instance: process.env.INSTANCE_ID?.trim() || "m5cet" },
       session: { id: opts.sessionId },
+      ...(opts.model ? { model: opts.model } : {}),
     },
     limits,
   };
+}
+
+/* ------------------------------------------------ processing sessions (5.3) */
+
+/** Calls a processing session may have (m5.model.calls); a longer conversation starts a new one. */
+export const CHAIN_MAX_CALLS = 500;
+/** Bytes of one call's parms / result kept in the session (the rest is cut, with a preview). */
+const CHAIN_VALUE_MAX = 64_000;
+/** Bytes of m5.model.calls a run gets: the oldest results make way first. */
+const CHAIN_CONTEXT_MAX = 512_000;
+
+function capValue(v: unknown, max = CHAIN_VALUE_MAX): unknown {
+  let s: string;
+  try { s = JSON.stringify(v ?? null) ?? "null"; } catch { return String(v); }
+  return s.length <= max ? JSON.parse(s) : { truncated: true, bytes: s.length, preview: s.slice(0, 2000) };
+}
+
+/** A new processing session — the first call (execute, a webhook) opens one. */
+export function newChain(modelId: string, source: Chain["source"] = { kind: "model" }): Chain {
+  // 96 random bits: a message carries it, and a click or a reply needs it (with the model's own access check).
+  const id = `chn_${Date.now().toString(36)}${randomBytes(12).toString("hex")}`;
+  const now = Date.now();
+  return { id, modelId, sessionId: functionsStore.session(modelId, `chain\0${id}`), source, calls: [], createdAt: now, updatedAt: now };
+}
+
+/** m5.model.calls as a run gets it: everything, unless it is too big — then the oldest results are left out. */
+function callsForContext(calls: ChainCall[]): ModelContext["calls"] {
+  const list = calls.map((c) => ({ ...c }));
+  let size = JSON.stringify(list).length;
+  for (let i = 0; size > CHAIN_CONTEXT_MAX && i < list.length - 1; i++) {
+    const before = JSON.stringify(list[i]).length;
+    list[i] = { ...list[i], result: { truncated: true }, parms: { truncated: true } };
+    size -= before - JSON.stringify(list[i]).length;
+  }
+  return list;
+}
+
+function modelContext(model: Pick<Model, "id" | "name" | "keyword"> & Partial<Model>, chain: Chain, callId: number, type: EndpointType, endpointId: string, types: EndpointType[]): ModelContext {
+  return { id: model.id || null, name: model.name ?? "", keyword: model.keyword ?? "", type, endpoint: endpointId, chain: chain.id, call: callId, calls: callsForContext(chain.calls), endpoints: types };
+}
+
+/** Records the start of a call in its processing session (and returns its index). */
+function openCall(chain: Chain, call: Omit<ChainCall, "id" | "result" | "status" | "err_msg">): number {
+  if (chain.calls.length >= CHAIN_MAX_CALLS) throw new RunRefused("chain-full", `This conversation with the model has ${CHAIN_MAX_CALLS} calls; start it again.`);
+  const id = chain.calls.length;
+  chain.calls.push({ id, ...call, parms: capValue(call.parms) as Record<string, unknown>, result: null, status: "running", err_msg: "" });
+  chain.updatedAt = Date.now();
+  functionsStore.saveChain(chain);
+  return id;
+}
+
+/** Records how a call ended (re-read first: another call may have joined meanwhile). */
+function closeCall(chainId: string, callId: number, patch: Pick<ChainCall, "status" | "err_msg" | "result">): void {
+  const chain = functionsStore.chain(chainId);
+  if (!chain || !chain.calls[callId]) return;
+  chain.calls[callId] = { ...chain.calls[callId], status: patch.status, err_msg: patch.err_msg, result: capValue(patch.result) };
+  chain.updatedAt = Date.now();
+  functionsStore.saveChain(chain);
 }
 
 /* ---------------------------------------------------- live interactions */
@@ -213,7 +273,7 @@ export async function triggerDurableWebhook(token: string, payload: unknown): Pr
   if (!model || !model.onEvent) { functionsStore.deleteWebhook(token); return false; }
   if (hook.once) functionsStore.deleteWebhook(token);
   const event = { type: "webhook", ...(payload && typeof payload === "object" ? payload as object : { body: payload }) };
-  await execute(model, event as Record<string, unknown>, hook.caller, { executor: "webhook", entry: hook.entry, sessionId: hook.sessionId, skipValidation: true, parent: null }).catch((err) => { console.warn(`[functions] on_event ${token}: ${(err as Error).message}`); });
+  await execute(model, event as Record<string, unknown>, hook.caller, { executor: "webhook", entry: hook.entry, sessionId: hook.sessionId, skipValidation: true, parent: null, callType: "webhook" }).catch((err) => { console.warn(`[functions] on_event ${token}: ${(err as Error).message}`); });
   return true;
 }
 
@@ -249,7 +309,7 @@ function endWebhooks(runId: string): void {
 /* ------------------------------------------------------------ host calls */
 
 /** The session, cache, interaction and webhook calls a run may make, scoped to it. */
-function hostHandler(model: Model, sessionId: string, runId: string, caller: Caller): RunHandlers["host"] {
+function hostHandler(model: Model, sessionId: string, runId: string, caller: Caller, chain?: { id: string; sessionId: string }): RunHandlers["host"] {
   return async (fn, args, control) => {
     if (fn === "prompt" || fn === "form") return ask(runId, fn, args[0] ?? {}, control);
     if (fn === "http.request") return control.wait(httpRequest(args[0] as never, taggedBytes));
@@ -266,9 +326,21 @@ function hostHandler(model: Model, sessionId: string, runId: string, caller: Cal
     if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
     const scopeName = (raw: unknown): string => {
       const s = String(raw ?? "model");
+      // 5.3: "chain" — m5.model.cache, the processing session's own cache.
+      if (s === "chain") { if (!chain) throw new RunRefused("no-chain", "m5.model.cache needs a processing session"); return `chain:${chain.id}`; }
       const scope = s === "run" || s === "session" || s === "model" || s === "global" ? s : "model";
       return scope === "global" ? "global" : scope === "model" ? `model:${model.id}` : scope === "session" ? `session:${sessionId}` : `session:${sessionId}`;
     };
+    if (fn.startsWith("model.session.")) {
+      if (!chain) throw new RunRefused("no-chain", "m5.model.session needs a processing session");
+      const sid = chain.sessionId;
+      switch (fn) {
+        case "model.session.get": return functionsStore.sessionGet(sid, String(args[0]));
+        case "model.session.set": functionsStore.sessionSet(sid, String(args[0]), args[1], ttlToMs(args[2])); return true;
+        case "model.session.delete": functionsStore.sessionDelete(sid, String(args[0])); return true;
+        case "model.session.keys": return functionsStore.sessionKeys(sid);
+      }
+    }
     const ttl = (v: unknown): number | null => {
       if (v === null || v === undefined) return null;
       if (typeof v === "number") return v > 0 ? v : null;
@@ -308,13 +380,32 @@ export type ExecuteOptions = {
   entry?: string;
   /** Use this exact session (durable continuation) instead of deriving one. */
   sessionId?: string;
+  /** 5.3: the entry point to run (default: the model's execute). */
+  endpoint?: Endpoint;
+  /** 5.3: continue this processing session (a reply, a click, a form, an error); else a new one opens. */
+  chainId?: string;
+  /** 5.3: the call's type in m5.model.calls when it is not the entry point's own (a durable webhook). */
+  callType?: EndpointType;
+  /** 5.3: a webhook call's URL (token masked), method, query and body — m5.model.calls[i].http. */
+  http?: ChainCall["http"];
+  /** 5.3: do not run the error entry point on failure (the error entry point itself). */
+  noErrorEndpoint?: boolean;
 };
 
 /** The result the caller (chat, console) sees. */
 export type ExecuteResult = {
   run: Run;
   outputs: Output[];
+  /** The first returned output (older callers). */
   value: Output | null;
+  /** 5.3: what the entry function returned, as outputs; and as plain data. */
+  values: Output[];
+  result: unknown;
+  /** 5.3: the processing session and the call's index in it. */
+  chain: string;
+  call: number;
+  /** 5.3: the call failed (or returned a bad item) and the error entry point answered: its run and outputs. */
+  handled?: { run: Run; outputs: Output[] };
 };
 
 const scopeKey = (model: Model, caller: Caller): string => `${model.id}\0${caller.account || caller.client || "anon"}\0${caller.room ?? ""}`;
@@ -328,14 +419,30 @@ const scopeKey = (model: Model, caller: Caller): string => `${model.id}\0${calle
  */
 export async function execute(model: Model, rawInputs: Record<string, unknown>, caller: Caller, opts: ExecuteOptions): Promise<ExecuteResult> {
   await functionsStore.ready();
-  const inputs = opts.skipValidation ? rawInputs : validateInputs(model.inputs, rawInputs); // throws RunRefused on a bad input
+  const ep = opts.endpoint ?? endpointOf(model, "execute") ?? { id: "execute", type: "execute" as const, fn: "", inputs: model.inputs, enabled: true };
+  const inputs = opts.skipValidation ? rawInputs : validateInputs(ep.type === "execute" ? model.inputs : ep.inputs, rawInputs); // throws RunRefused on a bad input
   const runId = opts.runId ?? newId("run");
   const sessionId = opts.sessionId ?? functionsStore.session(model.id, opts.sessionScope ?? scopeKey(model, caller));
-  const spec = buildSpec(model, inputs, caller, opts.executor, { test: Boolean(opts.test), runId, sessionId, parent: opts.parent ?? null, entry: opts.entry });
+  const entry = opts.entry || (ep.fn ? entryOf(model, ep) : model.entry);
+
+  // The processing session: the one this call continues, or a new one.
+  let chain: Chain;
+  if (opts.chainId) {
+    const found = functionsStore.chain(opts.chainId);
+    if (!found || found.modelId !== model.id) throw new RunRefused("no-chain", "That conversation with the model is over (or belongs to another model).");
+    chain = found;
+  } else chain = newChain(model.id);
+  const callType = opts.callType ?? ep.type;
+  const callId = openCall(chain, { type: callType, parms: storedInputs(inputs), http: opts.http ?? null, run: runId, at: Date.now(), by: caller.name });
+  const context = modelContext(model, chain, callId, callType, ep.id, endpointTypes(model));
+  let spec: RunSpec;
+  try { spec = buildSpec(model, inputs, caller, opts.executor, { test: Boolean(opts.test), runId, sessionId, parent: opts.parent ?? null, entry, model: context }); }
+  catch (err) { closeCall(chain.id, callId, { status: "failed", err_msg: (err as Error).message, result: null }); throw err; }
 
   const run: Run = {
-    id: runId, modelId: model.id, entry: opts.entry || model.entry, lang: spec.lang as Lang, executor: opts.executor, caller, sessionId, parent: opts.parent ?? null,
+    id: runId, modelId: model.id, entry, lang: spec.lang as Lang, executor: opts.executor, caller, sessionId, parent: opts.parent ?? null,
     status: "running", inputs: storedInputs(inputs), outputs: [], error: null, test: Boolean(opts.test), queuedAt: Date.now(), startedAt: Date.now(), finishedAt: null, ms: 0, memMb: 0,
+    chainId: chain.id, callId, endpoint: callType,
   };
   functionsStore.saveRun(run);
   runEvents.emit("run", { runId, type: "status", status: "running", modelId: model.id });
@@ -352,21 +459,25 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
   };
   const flushTimer = setInterval(flush, 500);
 
+  const rejectedLive: string[] = [];
   const handlers: RunHandlers = {
-    host: hostHandler(model, sessionId, runId, caller),
+    host: hostHandler(model, sessionId, runId, caller, { id: chain.id, sessionId: chain.sessionId }),
     onLog: (level, msg, fields) => log(level as RunLog["level"], msg, fields),
     onOutput: (out) => { outputs.push(out); runEvents.emit("run", { runId, type: "output", output: out }); },
     onProgress: (p, text) => runEvents.emit("run", { runId, type: "progress", p, text }),
+    onRejected: (reason) => { rejectedLive.push(reason); log("error", `a sent output was left out: ${reason}`); },
   };
 
   const result = await thePool().run(spec, handlers);
   endInteractions(runId, "the run ended");
   endWebhooks(runId);
   clearInterval(flushTimer);
-  flush();
 
-  const value = result.ok ? result.value : null;
-  const finalOutputs = value && !outputs.includes(value) ? [...outputs, value] : outputs;
+  const values = result.ok ? result.values : [];
+  const rejected: Rejected[] = result.ok ? result.rejected : [];
+  for (const r of rejected) log("error", `result[${r.index}] was left out: ${r.reason}`, { index: r.index });
+  flush();
+  const finalOutputs = [...outputs, ...values];
   run.status = result.ok ? "done" : result.error.type === "TimeLimit" ? "timed-out" : "failed";
   run.outputs = finalOutputs;
   run.error = result.ok ? null : result.error;
@@ -375,9 +486,36 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
   run.memMb = result.memMb;
   functionsStore.saveRun(run);
   runEvents.emit("run", { runId, type: "status", status: run.status, error: run.error, ms: run.ms, memMb: run.memMb });
+  const problems = [...rejectedLive, ...rejected.map((r) => `result[${r.index}]: ${r.reason}`)];
+  closeCall(chain.id, callId, { status: run.status, err_msg: run.error ? run.error.message : problems.join("; "), result: result.ok ? result.result : null });
 
-  return { run, outputs: finalOutputs, value };
+  const out: ExecuteResult = { run, outputs: finalOutputs, value: values[0] ?? null, values, result: result.ok ? result.result : null, chain: chain.id, call: callId };
+  // The error entry point: the function failed, or returned something that is not an output.
+  if (!opts.noErrorEndpoint && callType !== "error" && (run.error || problems.length)) {
+    const errEp = endpointOf(model, "error");
+    if (errEp) {
+      const error = run.error ?? { type: "BadResult", message: problems.join("; ").slice(0, 2000) };
+      const handled = await runErrorEndpoint(model, errEp, chain.id, { error, failed: { call: callId, type: callType, parms: run.inputs }, source: "server" }, caller, { executor: opts.executor, test: Boolean(opts.test), parent: runId });
+      if (handled) out.handled = handled;
+    }
+  }
+  return out;
 }
+
+/** Runs the model's error entry point in a processing session; null when it could not start. */
+export async function runErrorEndpoint(model: Model, errEp: Endpoint, chainId: string, payload: { error: unknown; failed: unknown; source: "server" | "client" }, caller: Caller, opts: { executor: string; test?: boolean; parent?: string | null }): Promise<{ run: Run; outputs: Output[] } | null> {
+  try {
+    const inputs = eventInputs(errEp, {}, payload);
+    const r = await execute(model, inputs, caller, { executor: opts.executor, test: opts.test, parent: opts.parent ?? null, endpoint: errEp, chainId, skipValidation: true, noErrorEndpoint: true });
+    return { run: r.run, outputs: r.outputs };
+  } catch (err) {
+    console.warn(`[functions] error entry point of ${model.id}: ${(err as Error).message}`);
+    return null;
+  }
+}
+
+/** The entry point of a type, when a model has it switched on. */
+export { endpointOf, endpointsOf, ENDPOINT_TYPES };
 
 /* ------------------------------------------------------- ad-hoc test run */
 
@@ -390,12 +528,22 @@ export type AdhocSpec = {
   limits?: Partial<RunLimits>;
   /** A run id chosen up front (the console's live runs subscribe before it starts). */
   runId?: string;
+  /** 5.3: the package draft the code is from — a button or a form in the result then runs its function of that name. */
+  source?: { packageId: string; file: string };
+  /** 5.3: continue a processing session (a click on a draft run's button). */
+  chainId?: string;
+  /** 5.3: the entry point type this call is (default: the function's name when it is one, else execute). */
+  type?: EndpointType;
 };
+
+const DRAFT_MODEL = "__draft__";
 
 /**
  * Runs code straight from the editor (the current draft), before it is a
  * published model — the console's "Run" button. It is always a test run,
  * scoped to its own throwaway session, and streams to runEvents like any run.
+ * (5.3) It has a processing session too, so a draft's buttons and forms call
+ * its `button` / `form` functions, and a failure its `error` function.
  */
 export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Partial<RunHandlers>): Promise<ExecuteResult> {
   await functionsStore.ready();
@@ -404,6 +552,17 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
   const limits = { ...DEFAULT_LIMITS };
   for (const k of Object.keys(limits) as (keyof RunLimits)[]) { const v = spec.limits?.[k]; if (typeof v === "number" && v > 0) limits[k] = Math.min(v, MAX_LIMITS[k]); }
   const now = Date.now();
+  const type: EndpointType = spec.type ?? ((ENDPOINT_TYPES as readonly string[]).includes(spec.entry.fn) ? spec.entry.fn as EndpointType : "execute");
+  let chain: Chain;
+  const found = spec.chainId ? functionsStore.chain(spec.chainId) : null;
+  if (found && found.modelId === DRAFT_MODEL) chain = found;
+  else {
+    // Inline code (the tutorial, the builder) keeps its files with the session (up to 256 kB), so its buttons and forms work too.
+    const inline = !spec.source && JSON.stringify(spec.files).length <= 256_000 ? { lang: spec.lang, files: spec.files } : undefined;
+    chain = newChain(DRAFT_MODEL, spec.source ? { kind: "draft", packageId: spec.source.packageId, file: spec.source.file } : { kind: "draft", packageId: "", file: spec.entry.file, ...(inline ? { inline } : {}) });
+  }
+  const callId = openCall(chain, { type, parms: spec.inputs, http: null, run: runId, at: now, by: caller.name });
+  const draftTypes = (ENDPOINT_TYPES as readonly EndpointType[]).filter((t) => exportsFunction(spec.lang, spec.files[chain.source.kind === "draft" && chain.source.file ? chain.source.file : spec.entry.file] ?? "", t));
   const full: RunSpec = {
     id: runId, lang: spec.lang, files: spec.files, deps: spec.deps ?? {}, entry: spec.entry, inputs: spec.inputs,
     context: {
@@ -411,31 +570,67 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
       caller: { kind: caller.kind, name: caller.name, groups: caller.groups, room: caller.room, client: caller.client, lang: caller.lang, tz: caller.tz },
       sys: { version: buildInfo().version, instance: process.env.INSTANCE_ID?.trim() || "m5cet" },
       session: { id: sessionId },
+      model: modelContext({ id: "", name: "draft", keyword: "" }, chain, callId, type, type, draftTypes.length ? draftTypes : ["execute"]),
     },
     limits,
   };
-  const run: Run = { id: runId, modelId: "", entry: full.context.run.entry, lang: spec.lang, executor: "console", caller, sessionId, parent: null, status: "running", inputs: spec.inputs, outputs: [], error: null, test: true, queuedAt: now, startedAt: now, finishedAt: null, ms: 0, memMb: 0 };
+  const run: Run = { id: runId, modelId: "", entry: full.context.run.entry, lang: spec.lang, executor: "console", caller, sessionId, parent: null, status: "running", inputs: spec.inputs, outputs: [], error: null, test: true, queuedAt: now, startedAt: now, finishedAt: null, ms: 0, memMb: 0, chainId: chain.id, callId, endpoint: type };
   functionsStore.saveRun(run);
   runEvents.emit("run", { runId, type: "status", status: "running", modelId: "" });
 
   const outputs: Output[] = [];
   let seq = 0;
+  const logLine = (level: string, msg: string, fields?: Record<string, unknown>) => { const e = { runId, seq: seq++, ts: Date.now(), level: level as RunLog["level"], msg, fields: fields ?? null }; functionsStore.addLogs([e]); runEvents.emit("run", { type: "log", ...e }); handlers?.onLog?.(level, msg, fields); };
+  const rejectedLive: string[] = [];
   const runHandlers: RunHandlers = {
-    host: hostHandler({ id: "__adhoc__", onEvent: "" } as Model, sessionId, runId, caller),
-    onLog: (level, msg, fields) => { const e = { runId, seq: seq++, ts: Date.now(), level: level as RunLog["level"], msg, fields: fields ?? null }; functionsStore.addLogs([e]); runEvents.emit("run", { type: "log", ...e }); handlers?.onLog?.(level, msg, fields); },
+    host: hostHandler({ id: "__adhoc__", onEvent: "" } as Model, sessionId, runId, caller, { id: chain.id, sessionId: chain.sessionId }),
+    onLog: logLine,
     onOutput: (out) => { outputs.push(out); runEvents.emit("run", { runId, type: "output", output: out }); handlers?.onOutput?.(out); },
     onProgress: (p, text) => { runEvents.emit("run", { runId, type: "progress", p, text }); handlers?.onProgress?.(p, text); },
+    onRejected: (reason) => { rejectedLive.push(reason); logLine("error", `a sent output was left out: ${reason}`); },
   };
   const result = await thePool().run(full, runHandlers);
   endInteractions(runId, "the run ended");
   endWebhooks(runId);
-  const value = result.ok ? result.value : null;
-  const finalOutputs = value && !outputs.includes(value) ? [...outputs, value] : outputs;
+  const values = result.ok ? result.values : [];
+  const rejected = result.ok ? result.rejected : [];
+  for (const r of rejected) logLine("error", `result[${r.index}] was left out: ${r.reason}`, { index: r.index });
+  const finalOutputs = [...outputs, ...values];
   run.status = result.ok ? "done" : result.error.type === "TimeLimit" ? "timed-out" : "failed";
   run.outputs = finalOutputs; run.error = result.ok ? null : result.error; run.finishedAt = Date.now(); run.ms = result.ms; run.memMb = result.memMb;
   functionsStore.saveRun(run);
   runEvents.emit("run", { runId, type: "status", status: run.status, error: run.error, ms: run.ms, memMb: run.memMb });
-  return { run, outputs: finalOutputs, value };
+  const problems = [...rejectedLive, ...rejected.map((r) => `result[${r.index}]: ${r.reason}`)];
+  closeCall(chain.id, callId, { status: run.status, err_msg: run.error ? run.error.message : problems.join("; "), result: result.ok ? result.result : null });
+  const out: ExecuteResult = { run, outputs: finalOutputs, value: values[0] ?? null, values, result: result.ok ? result.result : null, chain: chain.id, call: callId };
+  // The draft's own error function, when it has one.
+  if (type !== "error" && (run.error || problems.length) && draftTypes.includes("error")) {
+    const error = run.error ?? { type: "BadResult", message: problems.join("; ").slice(0, 2000) };
+    const handled = await runAdhoc({ ...spec, runId: undefined, entry: { file: spec.entry.file, fn: "error" }, inputs: { error, failed: { call: callId, type, parms: spec.inputs }, source: "server" }, chainId: chain.id, type: "error" }, caller).catch(() => null);
+    if (handled) out.handled = { run: handled.run, outputs: handled.outputs };
+  }
+  return out;
+}
+
+/** Whether a module's source exports a function of that name (a quick look, not a parse). */
+export function exportsFunction(lang: Lang, source: string, name: string): boolean {
+  if (!source || !/^[A-Za-z_$][\w$]*$/.test(name)) return false;
+  return lang === "py"
+    ? new RegExp(`^(async\\s+)?def\\s+${name}\\s*\\(`, "m").test(source)
+    : new RegExp(`export\\s+(async\\s+)?function\\s*\\*?\\s*${name}\\s*\\(|export\\s+(const|let|var)\\s+${name}\\s*=|export\\s*\\{[^}]*\\b${name}\\b[^}]*\\}`).test(source);
+}
+
+/** The functions a module's source exports (the console's entry point picker). */
+export function exportedFunctions(lang: Lang, source: string): string[] {
+  const out = new Set<string>();
+  if (!source) return [];
+  if (lang === "py") { for (const m of source.matchAll(/^(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/gm)) if (!m[1].startsWith("_")) out.add(m[1]); }
+  else {
+    for (const m of source.matchAll(/export\s+(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)/g)) out.add(m[1]);
+    for (const m of source.matchAll(/export\s+(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g)) out.add(m[1]);
+    for (const m of source.matchAll(/export\s*\{([^}]*)\}/g)) for (const part of m[1].split(",")) { const name = part.trim().split(/\s+as\s+/).pop()?.trim(); if (name && /^[A-Za-z_$][\w$]*$/.test(name) && name !== "default") out.add(name); }
+  }
+  return [...out];
 }
 
 export { formatEntry };

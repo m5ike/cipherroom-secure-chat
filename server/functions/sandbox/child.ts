@@ -139,12 +139,14 @@ async function execute(run: RunSpec): Promise<void> {
       json = await enginePy!.execute(JSON.stringify(run));
     }
     stopped = true;
-    const value = json === "null" || !json ? null : JSON.parse(json);
-    if (value) {
+    // { values: [outputs…], result: the returned value as plain data } (5.3).
+    const back = json === "null" || !json ? null : JSON.parse(json) as { values?: unknown[]; result?: unknown } | null;
+    const values = Array.isArray(back?.values) ? back!.values.filter((v) => v !== null && v !== undefined) : [];
+    if (values.length) {
       outBytes += json.length;
       if (outBytes > run.limits.outputBytes) throw new RunFailure("OutputLimit", "the outputs are larger than the limit");
     }
-    finish({ t: "done", ok: true, value, ms: Date.now() - t0, mem: mem() });
+    finish({ t: "done", ok: true, values: values as never, result: back?.result ?? null, rejected: [], ms: Date.now() - t0, mem: mem() });
   } catch (err) {
     stopped = true;
     const e = err instanceof RunFailure ? err : new RunFailure((err as Error)?.name || "Error", String((err as Error)?.message ?? err));

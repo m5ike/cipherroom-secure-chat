@@ -12,7 +12,7 @@ import { dirname, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { loadSqliteDriver, type SqliteDatabase } from "../storage/db";
 import type {
-  Caller, DurableWebhook, FileMap, Model, Package, PackageVersion, Run, RunLog, RunStatus, Schedule, WebhookCall,
+  Caller, Chain, DurableWebhook, FileMap, Model, Package, PackageVersion, Run, RunLog, RunStatus, Schedule, WebhookCall,
 } from "./types";
 
 export function functionsDir(): string {
@@ -42,8 +42,8 @@ const jsonParse = <T>(v: unknown, fallback: T): T => {
 
 type PackageRow = { id: string; name: string; language: string; description: string; draft: string | null; created_at: number; updated_at: number; updated_by: string };
 type VersionRow = { package_id: string; version: string; manifest: string; files: string; fingerprint: string; status: string; test: string | null; created_at: number; created_by: string; published_at: number | null };
-type ModelRow = { id: string; name: string; keyword: string; summary: string; entry: string; on_event: string; runtime: string; inputs: string; outputs: string; limits: string; executors: string; groups: string; enabled: number; revision: number; created_at: number; updated_at: number; updated_by: string };
-type RunRow = { id: string; model_id: string; entry: string; lang: string; executor: string; caller: string; session_id: string; parent: string | null; status: string; inputs: string; outputs: string; error: string | null; test: number; queued_at: number; started_at: number | null; finished_at: number | null; ms: number; mem_mb: number };
+type ModelRow = { id: string; name: string; keyword: string; summary: string; entry: string; on_event: string; runtime: string; inputs: string; outputs: string; limits: string; executors: string; groups: string; enabled: number; revision: number; created_at: number; updated_at: number; updated_by: string; endpoints?: string };
+type RunRow = { id: string; model_id: string; entry: string; lang: string; executor: string; caller: string; session_id: string; parent: string | null; status: string; inputs: string; outputs: string; error: string | null; test: number; queued_at: number; started_at: number | null; finished_at: number | null; ms: number; mem_mb: number; chain_id?: string; call_id?: number | null; endpoint?: string };
 
 function toPackage(r: PackageRow): Package {
   return { id: r.id, name: r.name, language: r.language as Package["language"], description: r.description, draft: r.draft, createdAt: r.created_at, updatedAt: r.updated_at, updatedBy: r.updated_by };
@@ -52,10 +52,14 @@ function toVersion(r: VersionRow): PackageVersion {
   return { packageId: r.package_id, version: r.version, manifest: jsonParse(r.manifest, {} as PackageVersion["manifest"]), files: jsonParse(r.files, {}), fingerprint: r.fingerprint, status: r.status as PackageVersion["status"], test: jsonParse(r.test, null), createdAt: r.created_at, createdBy: r.created_by, publishedAt: r.published_at };
 }
 function toModel(r: ModelRow): Model {
-  return { id: r.id, name: r.name, keyword: r.keyword, summary: r.summary, entry: r.entry, onEvent: r.on_event, runtime: r.runtime as Model["runtime"], inputs: jsonParse(r.inputs, []), outputs: jsonParse(r.outputs, []), limits: jsonParse(r.limits, {}), executors: jsonParse(r.executors, { chat: { enabled: false, visibility: "room" }, console: { enabled: true } }), groups: jsonParse(r.groups, []), enabled: Boolean(r.enabled), revision: r.revision, createdAt: r.created_at, updatedAt: r.updated_at, updatedBy: r.updated_by };
+  return { id: r.id, name: r.name, keyword: r.keyword, summary: r.summary, entry: r.entry, onEvent: r.on_event, runtime: r.runtime as Model["runtime"], inputs: jsonParse(r.inputs, []), outputs: jsonParse(r.outputs, []), limits: jsonParse(r.limits, {}), executors: jsonParse(r.executors, { chat: { enabled: false, visibility: "room" }, console: { enabled: true } }), groups: jsonParse(r.groups, []), enabled: Boolean(r.enabled), revision: r.revision, createdAt: r.created_at, updatedAt: r.updated_at, updatedBy: r.updated_by, endpoints: jsonParse(r.endpoints, []) };
 }
 function toRun(r: RunRow): Run {
-  return { id: r.id, modelId: r.model_id, entry: r.entry, lang: r.lang as Run["lang"], executor: r.executor, caller: jsonParse(r.caller, {} as Caller), sessionId: r.session_id, parent: r.parent, status: r.status as RunStatus, inputs: jsonParse(r.inputs, {}), outputs: jsonParse(r.outputs, []), error: jsonParse(r.error, null), test: Boolean(r.test), queuedAt: r.queued_at, startedAt: r.started_at, finishedAt: r.finished_at, ms: r.ms, memMb: r.mem_mb };
+  return { id: r.id, modelId: r.model_id, entry: r.entry, lang: r.lang as Run["lang"], executor: r.executor, caller: jsonParse(r.caller, {} as Caller), sessionId: r.session_id, parent: r.parent, status: r.status as RunStatus, inputs: jsonParse(r.inputs, {}), outputs: jsonParse(r.outputs, []), error: jsonParse(r.error, null), test: Boolean(r.test), queuedAt: r.queued_at, startedAt: r.started_at, finishedAt: r.finished_at, ms: r.ms, memMb: r.mem_mb,
+    ...(r.chain_id ? { chainId: r.chain_id } : {}), ...(typeof r.call_id === "number" ? { callId: r.call_id } : {}), ...(r.endpoint ? { endpoint: r.endpoint as Run["endpoint"] } : {}) };
+}
+function toChain(r: Record<string, unknown>): Chain {
+  return { id: String(r.id), modelId: String(r.model_id), sessionId: String(r.session_id), source: jsonParse(r.source, { kind: "model" } as Chain["source"]), calls: jsonParse(r.calls, []), createdAt: Number(r.created_at), updatedAt: Number(r.updated_at) };
 }
 
 const SCHEMA = `
@@ -71,7 +75,8 @@ CREATE TABLE IF NOT EXISTS models (
   entry TEXT NOT NULL, on_event TEXT NOT NULL DEFAULT '', runtime TEXT NOT NULL DEFAULT 'auto',
   inputs TEXT NOT NULL DEFAULT '[]', outputs TEXT NOT NULL DEFAULT '[]', limits TEXT NOT NULL DEFAULT '{}',
   executors TEXT NOT NULL DEFAULT '{}', groups TEXT NOT NULL DEFAULT '[]', enabled INTEGER NOT NULL DEFAULT 0,
-  revision INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL DEFAULT '');
+  revision INTEGER NOT NULL DEFAULT 1, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, updated_by TEXT NOT NULL DEFAULT '',
+  endpoints TEXT NOT NULL DEFAULT '[]');
 CREATE INDEX IF NOT EXISTS models_keyword ON models(keyword);
 CREATE TABLE IF NOT EXISTS model_revisions (
   model_id TEXT NOT NULL, revision INTEGER NOT NULL, snapshot TEXT NOT NULL, created_at INTEGER NOT NULL, created_by TEXT NOT NULL DEFAULT '',
@@ -81,7 +86,8 @@ CREATE TABLE IF NOT EXISTS runs (
   executor TEXT NOT NULL, caller TEXT NOT NULL DEFAULT '{}', session_id TEXT NOT NULL DEFAULT '', parent TEXT,
   status TEXT NOT NULL, inputs TEXT NOT NULL DEFAULT '{}', outputs TEXT NOT NULL DEFAULT '[]', error TEXT,
   test INTEGER NOT NULL DEFAULT 0, queued_at INTEGER NOT NULL, started_at INTEGER, finished_at INTEGER,
-  ms INTEGER NOT NULL DEFAULT 0, mem_mb INTEGER NOT NULL DEFAULT 0);
+  ms INTEGER NOT NULL DEFAULT 0, mem_mb INTEGER NOT NULL DEFAULT 0,
+  chain_id TEXT NOT NULL DEFAULT '', call_id INTEGER, endpoint TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS runs_model_ts ON runs(model_id, queued_at);
 CREATE INDEX IF NOT EXISTS runs_status ON runs(status, queued_at);
 CREATE TABLE IF NOT EXISTS run_logs (
@@ -108,7 +114,19 @@ CREATE INDEX IF NOT EXISTS webhook_calls_at ON webhook_calls(at);
 CREATE TABLE IF NOT EXISTS webhooks (
   token TEXT PRIMARY KEY, model_id TEXT NOT NULL, session_id TEXT NOT NULL, caller TEXT NOT NULL DEFAULT '{}', entry TEXT NOT NULL,
   once INTEGER NOT NULL DEFAULT 0, expires_at INTEGER, created_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS model_chains (
+  id TEXT PRIMARY KEY, model_id TEXT NOT NULL, session_id TEXT NOT NULL, source TEXT NOT NULL DEFAULT '{"kind":"model"}',
+  calls TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS model_chains_updated ON model_chains(updated_at);
 `;
+
+/** Columns later versions added to tables an older database already has. */
+const MIGRATIONS: Array<[table: string, column: string, definition: string]> = [
+  ["models", "endpoints", "TEXT NOT NULL DEFAULT '[]'"],
+  ["runs", "chain_id", "TEXT NOT NULL DEFAULT ''"],
+  ["runs", "call_id", "INTEGER"],
+  ["runs", "endpoint", "TEXT NOT NULL DEFAULT ''"],
+];
 
 /* ---------------------------------------------------------- the store */
 
@@ -133,6 +151,10 @@ class FunctionsStore {
         db.pragma("busy_timeout = 5000");
         db.pragma("foreign_keys = ON");
         db.exec(SCHEMA);
+        for (const [table, column, definition] of MIGRATIONS) {
+          const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name);
+          if (!cols.includes(column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+        }
         this.db = db;
         this.reason = "";
       } catch (err) {
@@ -223,10 +245,10 @@ class FunctionsStore {
   }
   saveModel(m: Model): void {
     if (!this.d) return this.mem.saveModel(m);
-    this.d.prepare(`INSERT INTO models (id, name, keyword, summary, entry, on_event, runtime, inputs, outputs, limits, executors, groups, enabled, revision, created_at, updated_at, updated_by)
-      VALUES (@id, @name, @keyword, @summary, @entry, @on_event, @runtime, @inputs, @outputs, @limits, @executors, @groups, @enabled, @revision, @created_at, @updated_at, @updated_by)
-      ON CONFLICT(id) DO UPDATE SET name=@name, keyword=@keyword, summary=@summary, entry=@entry, on_event=@on_event, runtime=@runtime, inputs=@inputs, outputs=@outputs, limits=@limits, executors=@executors, groups=@groups, enabled=@enabled, revision=@revision, updated_at=@updated_at, updated_by=@updated_by`)
-      .run({ id: m.id, name: m.name, keyword: m.keyword, summary: m.summary, entry: m.entry, on_event: m.onEvent, runtime: m.runtime, inputs: JSON.stringify(m.inputs), outputs: JSON.stringify(m.outputs), limits: JSON.stringify(m.limits), executors: JSON.stringify(m.executors), groups: JSON.stringify(m.groups), enabled: m.enabled ? 1 : 0, revision: m.revision, created_at: m.createdAt, updated_at: m.updatedAt, updated_by: m.updatedBy });
+    this.d.prepare(`INSERT INTO models (id, name, keyword, summary, entry, on_event, runtime, inputs, outputs, limits, executors, groups, enabled, revision, created_at, updated_at, updated_by, endpoints)
+      VALUES (@id, @name, @keyword, @summary, @entry, @on_event, @runtime, @inputs, @outputs, @limits, @executors, @groups, @enabled, @revision, @created_at, @updated_at, @updated_by, @endpoints)
+      ON CONFLICT(id) DO UPDATE SET name=@name, keyword=@keyword, summary=@summary, entry=@entry, on_event=@on_event, runtime=@runtime, inputs=@inputs, outputs=@outputs, limits=@limits, executors=@executors, groups=@groups, enabled=@enabled, revision=@revision, updated_at=@updated_at, updated_by=@updated_by, endpoints=@endpoints`)
+      .run({ id: m.id, name: m.name, keyword: m.keyword, summary: m.summary, entry: m.entry, on_event: m.onEvent, runtime: m.runtime, inputs: JSON.stringify(m.inputs), outputs: JSON.stringify(m.outputs), limits: JSON.stringify(m.limits), executors: JSON.stringify(m.executors), groups: JSON.stringify(m.groups), enabled: m.enabled ? 1 : 0, revision: m.revision, created_at: m.createdAt, updated_at: m.updatedAt, updated_by: m.updatedBy, endpoints: JSON.stringify(m.endpoints ?? []) });
     this.d.prepare("INSERT OR REPLACE INTO model_revisions (model_id, revision, snapshot, created_at, created_by) VALUES (?, ?, ?, ?, ?)").run(m.id, m.revision, JSON.stringify(m), m.updatedAt, m.updatedBy);
   }
   deleteModel(id: string): void {
@@ -238,10 +260,10 @@ class FunctionsStore {
 
   saveRun(r: Run): void {
     if (!this.d) return this.mem.saveRun(r);
-    this.d.prepare(`INSERT INTO runs (id, model_id, entry, lang, executor, caller, session_id, parent, status, inputs, outputs, error, test, queued_at, started_at, finished_at, ms, mem_mb)
-      VALUES (@id, @model_id, @entry, @lang, @executor, @caller, @session_id, @parent, @status, @inputs, @outputs, @error, @test, @queued_at, @started_at, @finished_at, @ms, @mem_mb)
+    this.d.prepare(`INSERT INTO runs (id, model_id, entry, lang, executor, caller, session_id, parent, status, inputs, outputs, error, test, queued_at, started_at, finished_at, ms, mem_mb, chain_id, call_id, endpoint)
+      VALUES (@id, @model_id, @entry, @lang, @executor, @caller, @session_id, @parent, @status, @inputs, @outputs, @error, @test, @queued_at, @started_at, @finished_at, @ms, @mem_mb, @chain_id, @call_id, @endpoint)
       ON CONFLICT(id) DO UPDATE SET status=@status, outputs=@outputs, error=@error, started_at=@started_at, finished_at=@finished_at, ms=@ms, mem_mb=@mem_mb`)
-      .run({ id: r.id, model_id: r.modelId, entry: r.entry, lang: r.lang, executor: r.executor, caller: JSON.stringify(r.caller), session_id: r.sessionId, parent: r.parent, status: r.status, inputs: JSON.stringify(r.inputs), outputs: JSON.stringify(r.outputs), error: r.error ? JSON.stringify(r.error) : null, test: r.test ? 1 : 0, queued_at: r.queuedAt, started_at: r.startedAt, finished_at: r.finishedAt, ms: r.ms, mem_mb: r.memMb });
+      .run({ id: r.id, model_id: r.modelId, entry: r.entry, lang: r.lang, executor: r.executor, caller: JSON.stringify(r.caller), session_id: r.sessionId, parent: r.parent, status: r.status, inputs: JSON.stringify(r.inputs), outputs: JSON.stringify(r.outputs), error: r.error ? JSON.stringify(r.error) : null, test: r.test ? 1 : 0, queued_at: r.queuedAt, started_at: r.startedAt, finished_at: r.finishedAt, ms: r.ms, mem_mb: r.memMb, chain_id: r.chainId ?? "", call_id: r.callId ?? null, endpoint: r.endpoint ?? "" });
   }
   run(id: string): Run | null {
     if (!this.d) return this.mem.run(id);
@@ -406,15 +428,47 @@ class FunctionsStore {
     return (this.d.prepare("SELECT model_id, COUNT(*) AS calls, SUM(CASE WHEN status < 200 OR status >= 300 THEN 1 ELSE 0 END) AS errors, MAX(at) AS last FROM webhook_calls GROUP BY model_id").all() as Array<Record<string, unknown>>)
       .map((r) => ({ modelId: String(r.model_id), calls: Number(r.calls), errors: Number(r.errors ?? 0), last: Number(r.last) }));
   }
+  /** 5.3: calls per webhook (model × masked token) — a model may have several. */
+  webhookHookStats(): Array<{ modelId: string; hook: string; calls: number; errors: number; last: number }> {
+    if (!this.d) return this.mem.webhookHookStats();
+    return (this.d.prepare("SELECT model_id, hook, COUNT(*) AS calls, SUM(CASE WHEN status < 200 OR status >= 300 THEN 1 ELSE 0 END) AS errors, MAX(at) AS last FROM webhook_calls GROUP BY model_id, hook").all() as Array<Record<string, unknown>>)
+      .map((r) => ({ modelId: String(r.model_id), hook: String(r.hook), calls: Number(r.calls), errors: Number(r.errors ?? 0), last: Number(r.last) }));
+  }
   deleteWebhookCalls(modelId?: string): number {
     if (!this.d) return this.mem.deleteWebhookCalls(modelId);
     const r = modelId ? this.d.prepare("DELETE FROM webhook_calls WHERE model_id = ?").run(modelId) : this.d.prepare("DELETE FROM webhook_calls").run();
     return Number((r as { changes?: number }).changes ?? 0);
   }
 
+  /* -------- processing sessions (5.3: m5.model) -------- */
+
+  chain(id: string): Chain | null {
+    if (!this.d) return this.mem.chain(id);
+    const r = this.d.prepare("SELECT * FROM model_chains WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return r ? toChain(r) : null;
+  }
+  saveChain(c: Chain): void {
+    if (!this.d) return this.mem.saveChain(c);
+    this.d.prepare(`INSERT INTO model_chains (id, model_id, session_id, source, calls, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET calls=excluded.calls, updated_at=excluded.updated_at`).run(c.id, c.modelId, c.sessionId, JSON.stringify(c.source), JSON.stringify(c.calls), c.createdAt, c.updatedAt);
+  }
+  /** A model's recent processing sessions (the console). */
+  chains(modelId: string, limit = 50): Chain[] {
+    if (!this.d) return this.mem.chains(modelId, limit);
+    return (this.d.prepare("SELECT * FROM model_chains WHERE model_id = ? ORDER BY updated_at DESC LIMIT ?").all(modelId, Math.max(1, Math.min(500, limit))) as Array<Record<string, unknown>>).map(toChain);
+  }
+
   /** Removes expired session and cache values, and runs older than the cutoff. */
   prune(runCutoff: number, now = Date.now()): void {
     if (!this.d) return this.mem.prune(runCutoff, now);
+    // Processing sessions idle since the cutoff go with their key–value store and cache.
+    const old = this.d.prepare("SELECT id, session_id FROM model_chains WHERE updated_at < ?").all(runCutoff) as Array<{ id: string; session_id: string }>;
+    for (const c of old) {
+      this.d.prepare("DELETE FROM session_kv WHERE session_id = ?").run(c.session_id);
+      this.d.prepare("DELETE FROM sessions WHERE id = ?").run(c.session_id);
+      this.d.prepare("DELETE FROM cache_kv WHERE scope = ?").run(`chain:${c.id}`);
+    }
+    this.d.prepare("DELETE FROM model_chains WHERE updated_at < ?").run(runCutoff);
     this.d.prepare("DELETE FROM webhook_calls WHERE at < ?").run(runCutoff);
     this.d.prepare("DELETE FROM session_kv WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
     this.d.prepare("DELETE FROM cache_kv WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
@@ -515,11 +569,22 @@ class MemoryStore {
     for (const c of this.calls.values()) { const s = by.get(c.modelId) ?? { modelId: c.modelId, calls: 0, errors: 0, last: 0 }; s.calls++; if (c.status < 200 || c.status >= 300) s.errors++; s.last = Math.max(s.last, c.at); by.set(c.modelId, s); }
     return [...by.values()];
   }
+  webhookHookStats(): Array<{ modelId: string; hook: string; calls: number; errors: number; last: number }> {
+    const by = new Map<string, { modelId: string; hook: string; calls: number; errors: number; last: number }>();
+    for (const c of this.calls.values()) { const k = `${c.modelId}\0${c.hook}`; const s = by.get(k) ?? { modelId: c.modelId, hook: c.hook, calls: 0, errors: 0, last: 0 }; s.calls++; if (c.status < 200 || c.status >= 300) s.errors++; s.last = Math.max(s.last, c.at); by.set(k, s); }
+    return [...by.values()];
+  }
   deleteWebhookCalls(modelId?: string): number { let n = 0; for (const [id, c] of this.calls) if (!modelId || c.modelId === modelId) { this.calls.delete(id); n++; } return n; }
   webhook(token: string, now: number): DurableWebhook | null { const w = this.hooks.get(token); if (!w) return null; if (w.expiresAt !== null && w.expiresAt <= now) { this.hooks.delete(token); return null; } return w; }
   deleteWebhook(token: string): void { this.hooks.delete(token); }
 
+  private chs = new Map<string, Chain>();
+  chain(id: string): Chain | null { const c = this.chs.get(id); return c ? structuredClone(c) : null; }
+  saveChain(c: Chain): void { this.chs.set(c.id, structuredClone(c)); }
+  chains(modelId: string, limit: number): Chain[] { return [...this.chs.values()].filter((c) => c.modelId === modelId).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit).map((c) => structuredClone(c)); }
+
   prune(runCutoff: number, now: number): void {
+    for (const [id, c] of this.chs) if (c.updatedAt < runCutoff) { this.chs.delete(id); for (const k of [...this.skv.keys()]) if (k.startsWith(`${c.sessionId}\0`)) this.skv.delete(k); for (const k of [...this.ckv.keys()]) if (k.startsWith(`chain:${id}\0`)) this.ckv.delete(k); }
     for (const [k, v] of this.skv) if (v.expires !== null && v.expires <= now) this.skv.delete(k);
     for (const [k, v] of this.ckv) if (v.expires !== null && v.expires <= now) this.ckv.delete(k);
     for (const [t, w] of this.hooks) if (w.expiresAt !== null && w.expiresAt <= now) this.hooks.delete(t);

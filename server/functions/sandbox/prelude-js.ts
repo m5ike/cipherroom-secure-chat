@@ -104,12 +104,60 @@ return function setup(host, ctxJson) {
     json: (value, opts) => mark({ type: "json", value: plain(value), ...(opts && opts.title ? { title: String(opts.title) } : {}) }),
     image: (data, mime, opts) => mark({ type: "image", mime: mime === undefined ? "image/png" : String(mime), data: toB64(bytesOrText(data, "image data")), ...(opts && opts.alt ? { alt: String(opts.alt) } : {}) }),
     file: (name, data, mime) => mark({ type: "file", name: String(name), mime: mime === undefined ? "application/octet-stream" : String(mime), data: toB64(bytesOrText(data, "file data")) }),
+    // 5.3: media, a notice, an app window, buttons, forms and browser JavaScript.
+    audio: (data, mime, opts) => mark({ type: "audio", mime: mime === undefined ? "audio/wav" : String(mime), data: toB64(mediaBytes(data, "audio")), ...media(opts) }),
+    video: (data, mime, opts) => mark({ type: "video", mime: mime === undefined ? "video/mp4" : String(mime), data: toB64(mediaBytes(data, "video")), ...media(opts) }),
+    flash: (text, level) => mark({ type: "flash", text: String(text), level: level === undefined ? "info" : String(level) }),
+    window: (id, args) => mark({ type: "window", id: String(id), args: args === undefined ? null : plain(args) }),
+    button: (spec, title, opts) => mark({ type: "button", ...(typeof spec === "string" ? { ...(opts ? plain(opts) : {}), name: spec, title: title === undefined ? spec : String(title) } : plain(spec || {})) }),
+    buttons: (list) => (Array.isArray(list) ? list : []).map((b) => out.button(b)),
+    form: (spec) => mark({ type: "form", ...plain(spec || {}) }),
+    js: (code, args, opts) => mark({ type: "js", code: typeof code === "function" ? "(" + String(code) + ")(m5.args)" : String(code), ...(args === undefined ? {} : { args: plain(args) }), ...(opts ? plain(opts) : {}) }),
   };
+  function media(opts) {
+    const o = opts ? plain(opts) : {};
+    return { ...(o.title ? { title: String(o.title) } : {}), ...(o.autoplay ? { autoplay: true } : {}), ...(o.loop ? { loop: true } : {}) };
+  }
+  // m5.ai.tts gives { audio, mime }; a plain byte array works too.
+  function mediaBytes(v, what) {
+    if (v && typeof v === "object" && !asBytes(v) && (v.audio || v.data)) return bytesOrText(v.audio || v.data, what + " data");
+    return bytesOrText(v, what + " data");
+  }
+  // A plain object is an output when its type is one and it has a key of that type
+  // ({ type: "flash", text }); { type: "button", data } is data. m5.out.* objects always are.
+  const OUT_KEYS = { text: ["text"], markdown: ["text"], code: ["text"], table: ["columns", "rows"], json: ["value"], image: ["data", "mime"], file: ["name", "data"], flash: ["text"], window: ["id"], audio: ["data", "mime"], video: ["data", "mime"], button: ["name", "title"], form: ["fields", "panels"], js: ["code"] };
+  const isOut = (v) => v !== null && typeof v === "object" && (OUTPUTS.has(v) || (!Array.isArray(v) && !asBytes(v) && typeof v.type === "string" && Object.prototype.hasOwnProperty.call(OUT_KEYS, v.type) && OUT_KEYS[v.type].some((k) => k in v)));
   function asOutput(v) {
     if (v === undefined || v === null) return null;
     if (typeof v === "object" && OUTPUTS.has(v)) return v;
     if (typeof v === "string") return out.text(v);
+    // A plain { type: "flash", text } is an output too; the host checks it.
+    if (isOut(v)) return plain(v);
     return out.json(v);
+  }
+  // 5.3: a list whose items are outputs is several outputs (lists of outputs inside it — m5.out.buttons —
+  // join it); any other list is one JSON value.
+  const hasOut = (v) => Array.isArray(v) && v.some((x) => isOut(x) || hasOut(x));
+  const flatOuts = (v) => v.flatMap((x) => (hasOut(x) ? flatOuts(x) : [x]));
+  function asOutputs(v) {
+    if (v === undefined || v === null) return [];
+    if (hasOut(v)) return flatOuts(v).filter((x) => x !== undefined && x !== null).map(asOutput);
+    return [asOutput(v)];
+  }
+  // The returned value as plain data for m5.model.calls[i].result: long text and bytes cut.
+  function resultOf(v) {
+    const cut = (x, depth) => {
+      if (x === null || x === undefined) return null;
+      if (typeof x === "string") return x.length > 4000 ? x.slice(0, 4000) + "… (" + x.length + " characters)" : x;
+      if (typeof x !== "object") return x;
+      if (depth > 12) return "…";
+      if (Array.isArray(x)) return x.slice(0, 500).map((y) => cut(y, depth + 1));
+      if (typeof x.$b === "string" && Object.keys(x).length === 1) return "(" + Math.floor(x.$b.length * 3 / 4) + " bytes)";
+      const o = {};
+      for (const k of Object.keys(x).slice(0, 500)) o[k] = cut(x[k], depth + 1);
+      return o;
+    };
+    try { return cut(JSON.parse(enc(v === undefined ? null : v)), 0); } catch (e) { return String(v); }
   }
 
   /* ---- log ---- */
@@ -180,9 +228,39 @@ return function setup(host, ctxJson) {
       client: ctx.caller.client,
       lang: ctx.caller.lang,
       tz: ctx.caller.tz,
-      send: async (output) => { const o = asOutput(output); if (o) emit("out", o); },
+      send: async (output) => { for (const o of asOutputs(output)) if (o) emit("out", o); },
       flash: async (text, level) => { emit("out", { type: "flash", text: String(text), level: level === undefined ? "info" : String(level) }); },
       openWindow: async (id, args) => { emit("out", { type: "window", id: String(id), args: args === undefined ? null : plain(args) }); },
+    },
+    // 5.3: the model, this entry point, and its processing session: every call
+    // so far (calls[0] is the first — execute or a webhook), the current one
+    // and the one before it; a key–value store and a cache of its own.
+    model: (() => {
+      const mc = ctx.model || { id: ctx.run.model, name: "", keyword: "", type: "execute", endpoint: "execute", chain: "", call: 0, calls: [], endpoints: ["execute"] };
+      const calls = mc.calls || [];
+      return {
+        id: mc.id, name: mc.name, keyword: mc.keyword,
+        type: mc.type, endpoint: mc.endpoint, endpoints: mc.endpoints || [],
+        chain: mc.chain, call: mc.call,
+        calls,
+        current: calls[mc.call] || null,
+        last: mc.call > 0 ? calls[mc.call - 1] || null : null,
+        first: calls[0] || null,
+        session: {
+          get: (key) => acall("model.session.get", String(key)),
+          set: (key, value, opts) => acall("model.session.set", String(key), value === undefined ? null : value, opts && opts.ttl !== undefined ? opts.ttl : null),
+          delete: (key) => acall("model.session.delete", String(key)),
+          keys: () => acall("model.session.keys"),
+        },
+        cache: cacheIn("chain"),
+      };
+    })(),
+    // 5.3: the caller's browser — sandboxed JavaScript, sound, a notice, an app window (sent at once).
+    browser: {
+      run: async (code, args, opts) => { emit("out", out.js(code, args, opts)); },
+      play: async (data, mime, opts) => { emit("out", out.audio(data, mime, { ...(opts || {}), autoplay: true })); },
+      flash: async (text, level) => { emit("out", out.flash(text, level)); },
+      open: async (id, args) => { emit("out", out.window(id, args)); },
     },
     log,
     out,
@@ -349,7 +427,7 @@ return function setup(host, ctxJson) {
     const fn = mod[name];
     if (typeof fn !== "function") throw new M5Error("no-entry", "the module has no exported function \"" + name + "\"");
     const result = await fn(plain(ctx.inputs));
-    return enc(asOutput(result));
+    return enc({ values: asOutputs(result), result: resultOf(result) });
   };
 };
 })()`;

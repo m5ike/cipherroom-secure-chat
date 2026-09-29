@@ -369,7 +369,52 @@ dostane surové bajty.
 - **Konzole**: zkušební běh ve IDE (viz kap. 11) — vstupy formulářem,
   výstup a logy vedle, stejný sandbox jako produkce.
 
+### 8.4 Vstupní body a sezení zpracování (5.3, hotovo)
+
+Model má seznam **vstupních bodů** (`Model.endpoints`, `server/functions/endpoints.ts`):
+`{ id, type, fn: "soubor#funkce", inputs, enabled }` v balíčku a verzi, kterou
+jmenuje `entry`. Typy: `execute` (start), `response` (odpověď na zprávu
+modelu), `button`, `form`, `error` — každý nejvýš jednou — a `webhook`
+(libovolně mnoho; každý má `token`, `mode`, `auth`, `secret`, `callback`,
+`log`, `name` a tedy vlastní URL `/hooks/m/:model/:token`). `entry` a `inputs`
+zrcadlí execute, `executors.webhook` první webhook (starší čtenáři); model
+z doby před 5.3 se čte jako execute + jeho webhook.
+
+- **Vstupy** každého bodu se čtou z jeho payloadu a kontrolují jako argumenty
+  příkazu (`eventInputs`): odpověď jako řádek argumentů (`argsToInputs`),
+  tlačítko z `data`, formulář z `values`, webhook z JSON těla (ostatní pole
+  projdou). K tomu pole typu (`EVENT_FIELDS`): `text`/`message`,
+  `name`/`data`/`event`, `name`/`values`/`event`, `error`/`failed`/`source`,
+  `_webhook`.
+- **Sezení zpracování** (`model_chains`): první volání (execute, webhook)
+  otevře `chain` (`chn_` + 96 bitů); každé další (odpověď, klik, formulář,
+  chyba) se připojí. Volání `{ id, type, parms, result, status, err_msg,
+  http, run, at, by }` jde do kontextu běhu jako `m5.model.calls`
+  (`current`, `last`, `first`); `m5.model.session` je session s klíčem
+  `chain\0<id>`, `m5.model.cache` scope `chain:<id>`. Nejvýš 500 volání;
+  úklid s běhy (`FUNCTIONS_RUNS_DAYS`).
+- **Error**: selže-li běh (výjimka, limit) nebo vrátí neplatnou položku, runner
+  spustí vstupní bod error ve stejném sezení (`runErrorEndpoint`) a jeho
+  výstupy vrátí jako `handled`; chyby samotného error bodu se jen logují.
+- **Z aplikace**: `POST /api/functions/event` (response, button, form, error,
+  log) — kontrola přístupu jako u příkazu, sezení musí patřit modelu (jinak
+  `410`), hlášení z prohlížeče s limitem 30/min na sezení. Konzole: `POST
+  /admin/functions/event` (i pro koncepty — funkce stejného jména — a inline
+  kód tutoriálu a tvůrce, jehož soubory sezení drží do 256 kB).
+
 ## 9. Výstupy a interakce v aplikaci
+
+> 5.3 (hotovo): funkce vrací **výstup nebo pole výstupů**; sandbox pošle
+> `{ values, result }` (`values` — výstupy, `result` — vrácená data pro
+> `m5.model.calls[i].result`), host každou položku zkontroluje zvlášť
+> (`checkFnOutput` v `client/src/lib/fn-outputs.ts`, stejné pravidlo v
+> prohlížeči); vadné (`rejected`) se zalogují a jdou vstupnímu bodu error.
+> Aplikace (`client/src/components/fn/`) vykreslí každou položku s vlastní
+> ochranou; `button` a `form` volají vstupní body, `js` běží v
+> `/fn-sandbox.html` (iframe `sandbox="allow-scripts"`, CSP `sandbox
+> allow-scripts`, neprůhledný origin, zprávy resize/flash/send/submit/log/error
+> s limitem). Tabulka níže je původní návrh; skutečné typy: text, markdown,
+> code, table, json, image, file, flash, window, audio, video, button, form, js.
 
 | Výstup | Jak se ukáže |
 |---|---|
@@ -611,7 +656,7 @@ publikace, změny oprávnění a tajemství, ruční zrušení, trusted runtime.
 
 | Kde | Endpoint |
 |---|---|
-| Aplikace | `GET /api/models` (co smím, s nápovědou) · `POST /api/runs` · `GET /api/runs/:id` · `POST /api/runs/:id/events` (odpověď na prompt, formulář) · `POST /api/runs/:id/cancel` · WS rámce `run.*` (stav, výstupy, stream) |
+| Aplikace | `GET /api/models` (co smím, s nápovědou) · `POST /api/runs` · `GET /api/runs/:id` · `POST /api/runs/:id/events` (odpověď na prompt, formulář) · `POST /api/runs/:id/cancel` · WS rámce `run.*` (stav, výstupy, stream) — skutečně: `GET /api/functions/commands`, `POST /api/functions/run`, `POST /api/functions/event` (5.3), `POST /api/functions/runs/:id/events`, `GET /fn-sandbox.html` (5.3) |
 | Webhooky | `ALL /hooks/m/:modelId/:token` · `GET /hooks/m/:modelId/:token/runs/:runId` · `POST …/runs/:runId/answer` · `POST /hooks/r/:token` |
 | Konzole | `/admin/providers*` · `/admin/credentials*` · `/admin/ai/playground` · `/admin/ai/calls` · `/admin/packages*` · `/admin/models*` · `/admin/runs*` · `/admin/webhooks*` · `/admin/schedules*` · `/admin/functions/tutorial` |
 | Interní | runner ↔ hlavní služba: `/internal/runs`, `/internal/deliver`, `/internal/host/*` (volání `m5.*` s I/O) |

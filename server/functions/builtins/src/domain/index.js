@@ -1,10 +1,14 @@
 // /domain — the whole picture of a domain: registration (RDAP), DNS, the
 // web site (status, technologies, security), hosting (who owns the
 // addresses), e-mail (provider, SPF/DKIM/DMARC), social networks and links.
-import { cleanHost, isDomain, registrable, rdap, dnsAll, lines, webInfo, mailInfo, hostingOf, day, daysUntil, mdTable, yes, bar, need } from "pkg:netkit";
+//
+// Entry points (1.1): execute; form — the domain asked for when it is
+// missing; button — "again"; response — a reply with another domain; error.
+import { cleanHost, isDomain, registrable, rdap, dnsAll, lines, webInfo, mailInfo, hostingOf, day, daysUntil, mdTable, yes, bar, ask, buttons, sorry } from "pkg:netkit";
 
 export async function execute({ domain } = {}) {
-  const input = cleanHost(await need(domain, "domain", "Domain", "example.com", "Domain analysis"));
+  const input = cleanHost(domain || "");
+  if (!input) return ask("Domain analysis", [{ name: "domain", label: "Domain", placeholder: "example.com" }], "Analyse");
   if (!isDomain(input)) throw new m5.Error("bad-input", `“${input}” is not a domain name`);
   const d = registrable(input);
   const step = (p, t) => m5.run.progress(p, t);
@@ -73,6 +77,17 @@ export async function execute({ domain } = {}) {
   notes.push(...mail.advice.slice(0, 3));
   md.push("## Summary");
   md.push(notes.map((n) => `- ${n}`).join("\n") || "- nothing stands out");
+  md.push("_Reply with another domain to analyse it._");
   step(1, "done");
-  return m5.out.markdown(md.join("\n\n"));
+  return [m5.out.markdown(md.join("\n\n")), buttons([{ name: "again", title: "Again", icon: "↻", data: { domain: d } }])];
+}
+
+export async function button({ data } = {}) { return execute({ domain: data && data.domain }); }
+
+export async function form({ values } = {}) { return execute(values || {}); }
+
+export async function response({ text } = {}) { return execute({ domain: String(text || "").trim().split(/\s+/)[0] }); }
+
+export async function error({ error } = {}) {
+  return sorry(error, "Give a domain name — e.g. **example.com**. The analysis asks several services; one of them may be slow — try again.");
 }

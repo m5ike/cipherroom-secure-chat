@@ -114,6 +114,16 @@ místnosti.
   a z toku jedním klikem vznikne balíček i model (`/příkaz`). Běhy
   z konzole jsou **živé** — logy a výstupy průběžně, na `m5.prompt` /
   `m5.form` se odpovídá přímo v konzoli.
+- **Příkazy jako rozhovor (5.3)** — model má **vstupní body**: execute
+  (start), **response** (odpověď na jeho zprávu), **button**, **form**,
+  **error** a libovolný počet **webhooků** s vlastními URL, každý se svými
+  vstupy. `m5.model` zná celé sezení (`calls`, `current`, `last`, vlastní
+  session a cache). Funkce vrací **seznam výstupů** — text, tabulky, zvuk,
+  video, notifikace, **tlačítka**, **formuláře** (panely, masky, výběry
+  s ikonami) a **kód pro prohlížeč** v izolovaném rámu; každá položka se
+  vykreslí samostatně a chyby jdou do vstupního bodu error. V konzoli
+  editor vstupních bodů, **Form builder**, tlačítka a „Reply“ ve
+  zkušebních bězích; vizuální tvůrce má víc funkcí v jednom toku.
 - **Nástroje jako moduly, webhooky a vestavěné příkazy (5.2)** —
   *Functions*, *AI & speech*, *Telephony & SIP*, *Layout builder* a *Menu
   builder* jsou moduly v *Modules & groups*: výchozí přístup allow/deny,
@@ -725,7 +735,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 5.2.0        | aktuální — nástroje konzole jako **moduly** s výchozím přístupem, přístupovými skupinami, hlavní skupinou a **granty** se zástupnými znaky (funkce, balíčky, poskytovatelé a modely AI, čísla); **log přístupů**; **webhooky** s plným logem, parsováním těl, replayem (i na konceptu) a režimy sync/async/auto; opravené `/` v chatu, aktivační znaky `@` a `#`; vestavěné `/help`, `/whois`, `/dns`, `/web`, `/mail`, `/domain` |
+| 5.3.0        | aktuální — **vstupní body** modelu (execute, response, button, form, error, víc webhooků s vlastními URL) se vstupy u každého; `m5.model` (sezení: calls, current, last, session, cache); **výsledek jako seznam** výstupů, každý vykreslený samostatně; nové výstupy zvuk, video, **tlačítka**, **formuláře** (form builder), **kód v prohlížeči** v izolovaném rámu; odpověď na zprávu modelu; `/help` a ukázky 1.1.0 s tlačítky a formuláři; tutoriál 10–16 |
+| 5.2.0        | nástroje konzole jako **moduly** s výchozím přístupem, přístupovými skupinami, hlavní skupinou a **granty** se zástupnými znaky (funkce, balíčky, poskytovatelé a modely AI, čísla); **log přístupů**; **webhooky** s plným logem, parsováním těl, replayem (i na konceptu) a režimy sync/async/auto; opravené `/` v chatu, aktivační znaky `@` a `#`; vestavěné `/help`, `/whois`, `/dns`, `/web`, `/mail`, `/domain` |
 | 5.1.0        | konzole *Functions* s editorem **CodeMirror** (zvýraznění, našeptávač SDK, šablony, nápověda, kontrola), **vizuální tvůrce** (uzly a dráty → JS/Python, hodnoty na plátně, balíček i model jedním klikem), **živé běhy** s odpovídáním na `prompt`/`form`; **řeč zdarma a offline** (Whisper + Piper přes sherpa-onnx) a předvolby Groq, Speaches, Kokoro, whisper.cpp; oprava záložky *Runs* („[object Promise]“) |
 | 5.0.0        | **M5cet Functions**: modely v JS (QuickJS) i Pythonu (Pyodide) v odděleném procesu s limity, SDK `m5` (out/log/session/cache/codec/id/crypto+JWT/PGP/SSH/X.509, http+SSRF, dns, kódy, ai+agenti), balíčky/verze, IDE + tutoriál v konzoli, `/příkaz` v chatu s `prompt`/`form`, webhooky, plány (cron), API tokeny, `.m5pkg` export/import; `ENABLE_FUNCTIONS` |
 | 4.14.0       | AI a řeč od základu: 9 druhů poskytovatelů se zašifrovanými klíči, modely, skupiny, limity (výchozí 0 = vypnuto), zkušebna, test řeči, žurnál volání; asistent v aplikaci se streamem a Markdownem |

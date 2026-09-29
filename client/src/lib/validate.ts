@@ -8,6 +8,7 @@
 // running in this origin. Now each field is checked, bounded and coerced,
 // and anything that does not fit is dropped.
 
+import { sanitizeFnOutputs } from "./fn-outputs";
 import { clampVanishSeconds, type MsgFlags } from "./message-kinds";
 import type { AttachmentMeta } from "./chat-types";
 
@@ -79,6 +80,8 @@ export function validateAttachment(value: unknown): AttachmentMeta | undefined {
   };
 }
 
+const FN_EVENTS = new Set(["response", "button", "form", "error"]);
+
 function validateFlags(value: unknown): MsgFlags | undefined {
   if (!value || typeof value !== "object") return undefined;
   const f = value as Record<string, unknown>;
@@ -95,7 +98,16 @@ function validateFlags(value: unknown): MsgFlags | undefined {
   if (fn && typeof fn === "object") {
     const keyword = str(fn.keyword, 40);
     const name = str(fn.name, 120);
-    if (keyword) out.fn = { keyword, name: name || keyword };
+    if (keyword) {
+      out.fn = { keyword, name: name || keyword };
+      // 5.3: the processing session a reply / click continues, and the outputs to render.
+      if (typeof fn.model === "string" && /^[a-z0-9][a-z0-9_-]{0,63}$/.test(fn.model)) out.fn.model = fn.model;
+      if (typeof fn.chain === "string" && /^chn_[a-z0-9]{6,40}$/.test(fn.chain)) out.fn.chain = fn.chain;
+      if (typeof fn.call === "number" && Number.isInteger(fn.call) && fn.call >= 0 && fn.call < 10_000) out.fn.call = fn.call;
+      if (Array.isArray(fn.events)) { const ev = fn.events.filter((e): e is string => typeof e === "string" && FN_EVENTS.has(e)); if (ev.length) out.fn.events = [...new Set(ev)]; }
+      if (Array.isArray(fn.outputs)) { const outputs = sanitizeFnOutputs(fn.outputs); if (outputs.length) out.fn.outputs = outputs; }
+      if (fn.origin === "error") out.fn.origin = "error";
+    }
   }
   return out.tap || out.vanishSeconds || out.sealed || out.fn ? out : undefined;
 }
