@@ -78,6 +78,7 @@ const SETTINGS_SAMPLE = {
   "calls": { audioText: false, speaker: true }, callLog: false,
   "appearance": { tone: "system", preset: "design", accent: "", fontScale: 1, density: "normal", bubbles: "rounded" },
   "nfc": { emulate: false },
+  "security": { shufflePin: false },
 };
 const VOICES = [{ value: "", label: "Default" }, { value: "cs-cz-x-jfs-local", label: "cs-CZ · jfs ★" }];
 
@@ -93,7 +94,7 @@ export const SCREENS_61 = [
   { id: "settings.location", label: "Settings › Location", group: "app" as const, vars: ["$settings", "$location"], sample: { settings: SETTINGS_SAMPLE, location: { permitted: true, tracking: false, allowed: true } }, help: "The position in messages, tracking." },
   { id: "settings.calls", label: "Settings › Calls", group: "app" as const, vars: ["$settings"], sample: { settings: SETTINGS_SAMPLE }, help: "Audio ↔ text calls, speaker, the call log." },
   { id: "settings.appearance", label: "Settings › Appearance", group: "app" as const, vars: ["$settings", "$presets"], sample: { settings: SETTINGS_SAMPLE, presets: [{ value: "design", label: "Design" }, { value: "midnight", label: "Midnight" }] }, help: "Tone, template, accent, size, density, bubbles." },
-  { id: "settings.security", label: "Settings › Security", group: "app" as const, vars: ["$security"], sample: { security: { biometricAvailable: true, biometric: true, pinLength: 6, maxAttempts: 8, wipe: true, screenshots: false } }, help: "Lock, biometrics, PIN, erase." },
+  { id: "settings.security", label: "Settings › Security", group: "app" as const, vars: ["$security", "$settings"], sample: { security: { biometricAvailable: true, biometric: true, pinLength: 6, maxAttempts: 8, wipe: true, screenshots: false }, settings: SETTINGS_SAMPLE }, help: "Lock, biometrics, PIN, the PIN pad's shuffle, erase." },
   { id: "ai", label: "AI assistant", group: "app" as const, vars: ["$ai"], sample: { ai: { state: "ready", model: "anthropic/claude-sonnet-5-5", busy: false } }, help: "A conversation with the operator's AI (not end-to-end encrypted)." },
   { id: "voice", label: "Voice", group: "app" as const, vars: ["$voice", "$settings", "$voices"], sample: { voice: { dictating: false, listening: false, speaking: false, available: true }, settings: SETTINGS_SAMPLE, voices: VOICES }, help: "Dictation to text, reading aloud, the voice settings at hand." },
   { id: "nfc", label: "NFC", group: "app" as const, vars: ["$nfc", "$room"], sample: { nfc: { available: true, enabled: true, state: "idle", last: null, emulating: false }, room: { name: "team" } }, help: "Read and write a room's connection card, answer as a tag." },
@@ -347,6 +348,7 @@ export const SCREENS_TREES_61: Record<string, ANode> = {
       n("bio-switch", "switch", { props: { checked: "$security.biometric" }, on: click("biometric.toggle") }),
     ]),
     actRow("pin", "key-round", "{_'settings.changePin'}", "pin.change"),
+    toggleRow("shuffle", "shuffle", "{_'set.security.shuffle'}", "security.shufflePin", "{_'set.security.shuffleHint'}"),
     actRow("lock", "lock", "{_'menu.lock'}", "lock.now"),
     infoRow("policy", "{_'set.security.policy'}", "PIN {$security.pinLength} · {$security.maxAttempts}× → {=$security.wipe ? _('set.security.wipe') : _('set.security.lockout')}"),
     infoRow("shots", "{_'set.security.screenshots'}", "{=$security.screenshots ? _('set.security.allowed') : _('set.security.blocked')}"),
@@ -481,6 +483,7 @@ export const STRINGS_61: Record<"cs" | "en" | "de", Record<string, string>> = {
     "ai.new": "Nová konverzace", "ai.placeholder": "Zeptejte se…", "ai.off": "AI není na tomto serveru zapnutá.", "ai.signIn": "AI je jen pro přihlášené — Nastavení › Uživatel.", "ai.notE2ee": "AI běží na serveru — co napíšete, není šifrované end-to-end.",
     "ai.send": "Odeslat", "ai.stop": "Zastavit", "ai.stopped": "Zastaveno", "ai.thinking": "Přemýšlím…", "ai.you": "Vy", "ai.error": "Chyba", "ai.noModel": "Vyberte model.", "ai.model": "Model", "ai.reasoning": "Uvažování",
     "functions.failed": "Příkaz selhal", "functions.empty": "Model nevrátil nic.", "functions.localOnly": "Nikdo tu není — výsledek vidíte jen vy.", "functions.off": "Příkazy nejsou zapnuté.", "fnui.expired": "Sezení příkazu skončilo.", "fnui.eventFailed": "Nepodařilo se odpovědět.",
+    "set.security.shuffle": "Míchat klávesy PIN", "set.security.shuffleHint": "Čísla nejsou v pořadí a po každém ťuknutí se přemíchají.",
     "nfc.pin": "PIN karty (4–16 číslic)", "nfc.read": "Číst", "nfc.write": "Zapsat místnost", "nfc.emulate": "Být kartou", "nfc.stop": "Zastavit", "nfc.hold": "Přiložte kartu nebo telefon…", "nfc.unavailable": "Telefon nemá NFC.", "nfc.disabled": "NFC je vypnuté.", "nfc.written": "Karta zapsána", "nfc.card": "Připojka do místnosti", "nfc.join": "Připojit", "nfc.wrongPin": "Nesprávný PIN", "nfc.tooSmall": "Karta je na připojku malá (použijte NTAG215/216).", "nfc.emulating": "Odpovídám jako karta — přiložte druhý telefon.",
   },
   en: {
@@ -513,6 +516,7 @@ export const STRINGS_61: Record<"cs" | "en" | "de", Record<string, string>> = {
     "ai.new": "New conversation", "ai.placeholder": "Ask…", "ai.off": "AI is not switched on on this server.", "ai.signIn": "AI is for signed-in people — Settings › User.", "ai.notE2ee": "AI runs on the server — what you write is not end-to-end encrypted.",
     "ai.send": "Send", "ai.stop": "Stop", "ai.stopped": "Stopped", "ai.thinking": "Thinking…", "ai.you": "You", "ai.error": "Error", "ai.noModel": "Choose a model.", "ai.model": "Model", "ai.reasoning": "Reasoning",
     "functions.failed": "The command failed", "functions.empty": "The model returned nothing.", "functions.localOnly": "Nobody is here — only you see the result.", "functions.off": "Commands are off.", "fnui.expired": "The command's session is over.", "fnui.eventFailed": "The answer did not go through.",
+    "set.security.shuffle": "Shuffle the PIN keys", "set.security.shuffleHint": "The digits are out of order and reshuffle after every tap.",
     "nfc.pin": "Card PIN (4–16 digits)", "nfc.read": "Read", "nfc.write": "Write the room", "nfc.emulate": "Be a card", "nfc.stop": "Stop", "nfc.hold": "Hold a card or a phone to the back…", "nfc.unavailable": "This phone has no NFC.", "nfc.disabled": "NFC is switched off.", "nfc.written": "Card written", "nfc.card": "A room's connection card", "nfc.join": "Join", "nfc.wrongPin": "Wrong PIN", "nfc.tooSmall": "The card is too small for a connection card (use NTAG215/216).", "nfc.emulating": "Answering as a card — hold the other phone to this one.",
   },
   de: {
@@ -545,6 +549,7 @@ export const STRINGS_61: Record<"cs" | "en" | "de", Record<string, string>> = {
     "ai.new": "Neues Gespräch", "ai.placeholder": "Fragen…", "ai.off": "KI ist auf diesem Server nicht eingeschaltet.", "ai.signIn": "KI ist für angemeldete Personen — Einstellungen › Benutzer.", "ai.notE2ee": "Die KI läuft auf dem Server — was Sie schreiben, ist nicht Ende-zu-Ende verschlüsselt.",
     "ai.send": "Senden", "ai.stop": "Stopp", "ai.stopped": "Gestoppt", "ai.thinking": "Ich denke nach…", "ai.you": "Sie", "ai.error": "Fehler", "ai.noModel": "Wählen Sie ein Modell.", "ai.model": "Modell", "ai.reasoning": "Denken",
     "functions.failed": "Der Befehl ist fehlgeschlagen", "functions.empty": "Das Modell hat nichts zurückgegeben.", "functions.localOnly": "Niemand ist hier — nur Sie sehen das Ergebnis.", "functions.off": "Befehle sind aus.", "fnui.expired": "Die Sitzung des Befehls ist vorbei.", "fnui.eventFailed": "Die Antwort ist fehlgeschlagen.",
+    "set.security.shuffle": "PIN-Tasten mischen", "set.security.shuffleHint": "Die Ziffern sind nicht der Reihe nach und mischen sich nach jedem Tippen neu.",
     "nfc.pin": "Karten-PIN (4–16 Ziffern)", "nfc.read": "Lesen", "nfc.write": "Raum schreiben", "nfc.emulate": "Als Karte antworten", "nfc.stop": "Stopp", "nfc.hold": "Karte oder Telefon an die Rückseite halten…", "nfc.unavailable": "Dieses Telefon hat kein NFC.", "nfc.disabled": "NFC ist ausgeschaltet.", "nfc.written": "Karte geschrieben", "nfc.card": "Verbindungskarte eines Raums", "nfc.join": "Beitreten", "nfc.wrongPin": "Falsche PIN", "nfc.tooSmall": "Die Karte ist zu klein für eine Verbindungskarte (NTAG215/216 verwenden).", "nfc.emulating": "Antworte als Karte — das andere Telefon daranhalten.",
   },
 };

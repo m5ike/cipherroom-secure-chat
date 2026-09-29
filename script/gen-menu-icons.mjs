@@ -43,7 +43,7 @@ const ICONS = [
   // 6.1: the Android app's tools, voice, calls, location and account
   "hammer", "audio-lines", "switch-camera", "log-in", "speaker", "pause", "navigation", "sun-moon", "volume-1",
   "wand-sparkles", "scan-line", "text-cursor-input", "route", "locate-fixed", "file-up", "camera-off", "ear", "speech",
-  "type", "contrast", "shield-user",
+  "type", "contrast", "shield-user", "shuffle",
 ];
 
 // 4.13: every icon the app's components draw — the Layout builder's layouts

@@ -55,6 +55,8 @@ public final class Settings {
         DEFAULTS.put("appearance.bubbles", "rounded");   // rounded | square | minimal
         // NFC
         DEFAULTS.put("nfc.emulate", false);              // answer as a tag with the room invite
+        // Security (the SYS tier is readable while the app is locked, so the PIN pad can read these)
+        DEFAULTS.put("security.shufflePin", false);      // the PIN keys are not in order and reshuffle after every tap
     }
 
     private final Vault vault;
