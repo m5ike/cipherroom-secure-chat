@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The system splash icon: the mark grows in and its "M" draws itself. -->
+<animated-vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt">
+    <aapt:attr name="android:drawable">
+        <vector android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+            <group android:name="mark" android:pivotX="54" android:pivotY="54" android:scaleX="0.6" android:scaleY="0.6">
+                <path android:fillColor="#E11D48" android:pathData="M34,26h40a8,8 0,0 1,8 8v40a8,8 0,0 1,-8 8h-40a8,8 0,0 1,-8 -8v-40a8,8 0,0 1,8 -8z" />
+                <path android:name="m" android:strokeColor="#FFFFFF" android:strokeWidth="6" android:strokeLineCap="round" android:strokeLineJoin="round"
+                    android:trimPathEnd="0" android:pathData="M42,68L42,44L54,57L66,44L66,68" />
+            </group>
+        </vector>
+    </aapt:attr>
+    <target android:name="mark">
+        <aapt:attr name="android:animation">
+            <set>
+                <objectAnimator android:propertyName="scaleX" android:duration="450" android:valueFrom="0.6" android:valueTo="1" android:interpolator="@android:interpolator/overshoot" />
+                <objectAnimator android:propertyName="scaleY" android:duration="450" android:valueFrom="0.6" android:valueTo="1" android:interpolator="@android:interpolator/overshoot" />
+            </set>
+        </aapt:attr>
+    </target>
+    <target android:name="m">
+        <aapt:attr name="android:animation">
+            <objectAnimator android:propertyName="trimPathEnd" android:startOffset="250" android:duration="550" android:valueFrom="0" android:valueTo="1" android:interpolator="@android:interpolator/fast_out_slow_in" />
+        </aapt:attr>
+    </target>
+</animated-vector>

@@ -1,0 +1,314 @@
+package cz.m5cet.app.chat;
+
+import org.json.JSONArray;
+import org.json.JSONException;
+import org.json.JSONObject;
+
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
+
+import cz.m5cet.app.M5;
+import cz.m5cet.app.core.Io;
+import cz.m5cet.app.core.Log;
+import cz.m5cet.app.security.Crypto;
+import cz.m5cet.app.security.Vault;
+
+/**
+ * Every room of the app, several connected at once (6.0): the saved rooms
+ * (user tier — name, passphrase, nickname), which are selected, which are
+ * connected, which one is on screen, unread counts, history.
+ *
+ * Smart switching: a notification or a shortcut opens its room; when the
+ * room on screen is left, the one with the latest activity takes its
+ * place; messages elsewhere only raise that room's badge; the room bar is
+ * ordered by activity and swiped through.
+ */
+public final class Rooms {
+    public interface Listener {
+        void onRoomsChanged();
+        void onRoomMessage(String roomKey, ChatMessage message);
+    }
+
+    public static final class Saved {
+        public String key, room, label, passphrase, userName;
+        public boolean selected;
+        public long lastActive;
+
+        JSONObject json() throws JSONException {
+            return new JSONObject().put("key", key).put("room", room).put("label", label).put("passphrase", passphrase).put("userName", userName)
+                .put("selected", selected).put("lastActive", lastActive);
+        }
+
+        static Saved of(JSONObject o) {
+            Saved s = new Saved();
+            s.key = o.optString("key"); s.room = o.optString("room"); s.label = o.optString("label", s.room);
+            s.passphrase = o.optString("passphrase"); s.userName = o.optString("userName");
+            s.selected = o.optBoolean("selected"); s.lastActive = o.optLong("lastActive");
+            return s;
+        }
+    }
+
+    private final M5 app;
+    private final Map<String, Saved> saved = new LinkedHashMap<>();
+    private final Map<String, RoomSession> sessions = new ConcurrentHashMap<>();
+    final Map<String, String> pendingNames = new ConcurrentHashMap<>();
+    private final CopyOnWriteArrayList<Listener> listeners = new CopyOnWriteArrayList<>();
+    private volatile String active = "";
+    private volatile boolean visible = false;
+    private ChatIdentity identity;
+    private boolean loaded = false;
+
+    public Rooms(M5 app) { this.app = app; }
+
+    public void addListener(Listener l) { listeners.add(l); }
+    public void removeListener(Listener l) { listeners.remove(l); }
+
+    /* ------------------------------------------------------------ storage */
+
+    public synchronized void load() {
+        if (loaded) return;
+        JSONArray list = app.vault.json(Vault.Tier.USER, "rooms").optJSONArray("list");
+        saved.clear();
+        if (list != null) for (int i = 0; i < list.length(); i++) { Saved s = Saved.of(list.optJSONObject(i)); if (!s.key.isEmpty()) saved.put(s.key, s); }
+        active = app.vault.json(Vault.Tier.USER, "rooms").optString("active", "");
+        loaded = true;
+        Log.i("rooms", saved.size() + " saved rooms");
+        // What was connected before stays connected.
+        for (Saved s : saved.values()) if (s.selected) connect(s.key);
+        emit();
+    }
+
+    private synchronized void persist() {
+        try {
+            JSONArray list = new JSONArray();
+            for (Saved s : saved.values()) list.put(s.json());
+            app.vault.putJson(Vault.Tier.USER, "rooms", new JSONObject().put("list", list).put("active", active));
+        } catch (JSONException ignored) { }
+    }
+
+    synchronized ChatIdentity identity() {
+        if (identity != null) return identity;
+        JSONObject o = app.vault.json(Vault.Tier.USER, "identity");
+        try {
+            if (o.has("signPkcs8")) identity = ChatIdentity.fromPkcs8(o.getString("signPkcs8"), o.getString("publicKey"), o.getString("dhPkcs8"), o.getString("dhPublicKey"));
+        } catch (Exception e) {
+            Log.e("rooms", "the chat identity is unreadable — a new one", e);
+        }
+        if (identity == null) {
+            identity = ChatIdentity.generate();
+            try {
+                app.vault.putJson(Vault.Tier.USER, "identity", new JSONObject().put("signPkcs8", identity.signPkcs8()).put("publicKey", identity.publicKey)
+                    .put("dhPkcs8", identity.dhPkcs8()).put("dhPublicKey", identity.dhPublicKey));
+            } catch (JSONException ignored) { }
+        }
+        return identity;
+    }
+
+    /** Trust on first use: room + name → key id. "new", "match" or "changed". */
+    synchronized String pin(String room, String name, String kid) {
+        JSONObject pins = app.vault.json(Vault.Tier.USER, "pins");
+        String slot = room + "\u0000" + name.trim().toLowerCase(java.util.Locale.ROOT);
+        String old = pins.optString(slot, "");
+        if (old.isEmpty()) {
+            try { pins.put(slot, kid); } catch (JSONException ignored) { }
+            app.vault.putJson(Vault.Tier.USER, "pins", pins);
+            return "new";
+        }
+        return old.equals(kid) ? "match" : "changed";
+    }
+
+    /* ------------------------------------------------------------- rooms */
+
+    public synchronized List<Saved> saved() {
+        List<Saved> out = new ArrayList<>(saved.values());
+        out.sort(Comparator.comparingLong((Saved s) -> -Math.max(s.lastActive, sessions.containsKey(s.key) ? sessions.get(s.key).lastActivity() : 0)));
+        return out;
+    }
+
+    public RoomSession session(String key) { return sessions.get(key); }
+    public String active() { return active; }
+    public RoomSession activeSession() { return active.isEmpty() ? null : sessions.get(active); }
+
+    /** The connected rooms for the room bar, most recently active first. */
+    public List<RoomSession> connectedSessions() {
+        List<RoomSession> out = new ArrayList<>(sessions.values());
+        out.sort(Comparator.comparingLong((RoomSession r) -> -r.lastActivity()));
+        return out;
+    }
+
+    public int connectedCount() {
+        int n = 0;
+        for (RoomSession r : sessions.values()) if (r.connected()) n++;
+        return n;
+    }
+
+    public int unreadTotal() {
+        int n = 0;
+        for (RoomSession r : sessions.values()) n += r.unread();
+        return n;
+    }
+
+    public int selectedCount() {
+        int n = 0;
+        synchronized (this) { for (Saved s : saved.values()) if (s.selected && !sessions.containsKey(s.key)) n++; }
+        return n;
+    }
+
+    public int maxRooms() {
+        JSONObject r = app.config.policy().optJSONObject("rooms");
+        return r == null ? 8 : Math.max(1, Math.min(16, r.optInt("max", 8)));
+    }
+
+    /** Adds (or updates) a saved room and connects it. Returns its key. */
+    public String add(String roomName, String passphrase, String userName, boolean connectNow) {
+        String room = RoomKeys.normalizeRoom(roomName);
+        Saved s;
+        synchronized (this) {
+            s = saved.get(room);
+            if (s == null) { s = new Saved(); s.key = room; saved.put(room, s); }
+            s.room = room;
+            s.label = roomName.trim().isEmpty() ? room : roomName.trim();
+            s.passphrase = passphrase;
+            s.userName = userName;
+            s.selected = true;
+            s.lastActive = System.currentTimeMillis();
+            persist();
+        }
+        app.config.setUserName(userName);
+        if (connectNow) { connect(room); switchTo(room); }
+        emit();
+        return room;
+    }
+
+    public synchronized void toggleSelected(String key) {
+        Saved s = saved.get(key);
+        if (s == null) return;
+        s.selected = !s.selected;
+        persist();
+        emit();
+    }
+
+    /** Connects every selected room (up to the policy's maximum). */
+    public void connectSelected() {
+        List<String> keys = new ArrayList<>();
+        synchronized (this) { for (Saved s : saved.values()) if (s.selected) keys.add(s.key); }
+        for (String k : keys) connect(k);
+        if (active.isEmpty() && !keys.isEmpty()) switchTo(keys.get(0));
+    }
+
+    public void connect(String key) {
+        Saved s;
+        synchronized (this) { s = saved.get(key); }
+        if (s == null) return;
+        RoomSession r = sessions.get(key);
+        if (r == null) {
+            if (sessions.size() >= maxRooms()) { Log.w("rooms", "at most " + maxRooms() + " rooms at once"); return; }
+            r = new RoomSession(app, this, key, s.room, s.label, s.passphrase, s.userName.isEmpty() ? app.config.userName() : s.userName);
+            sessions.put(key, r);
+            RoomSession session = r;
+            Io.bg(() -> session.restore(History.load(app, key)));
+        }
+        synchronized (this) { s.selected = true; persist(); }
+        r.connect();
+        emit();
+    }
+
+    /** Makes a room the one on screen (connecting it if needed); its badge clears. */
+    public void switchTo(String key) {
+        if (!sessions.containsKey(key)) connect(key);
+        active = key;
+        RoomSession r = sessions.get(key);
+        if (r != null) r.unread = 0;
+        synchronized (this) { Saved s = saved.get(key); if (s != null) s.lastActive = System.currentTimeMillis(); persist(); }
+        app.notify.clearRoom(key);
+        emit();
+    }
+
+    public void leave(String key) {
+        String k = key == null || key.isEmpty() ? active : key;
+        RoomSession r = sessions.remove(k);
+        if (r != null) { History.save(app, k, r.messagesCopy()); r.destroy(); }
+        synchronized (this) { Saved s = saved.get(k); if (s != null) s.selected = false; persist(); }
+        if (k.equals(active)) {
+            // Smart switching: the most recently active of the others.
+            List<RoomSession> left = connectedSessions();
+            active = left.isEmpty() ? "" : left.get(0).key;
+        }
+        emit();
+    }
+
+    public void forget(String key) {
+        leave(key);
+        synchronized (this) { saved.remove(key); persist(); }
+        History.delete(app, key);
+        emit();
+    }
+
+    public void disconnectAll() {
+        for (String k : new ArrayList<>(sessions.keySet())) {
+            RoomSession r = sessions.remove(k);
+            if (r != null) { History.save(app, k, r.messagesCopy()); r.destroy(); }
+        }
+        synchronized (this) { loaded = false; saved.clear(); identity = null; }
+        active = "";
+        emit();
+    }
+
+    public void send(String key, String text, ChatMessage replyTo) {
+        RoomSession r = sessions.get(key);
+        if (r != null) r.send(text, replyTo, null, null, null, 0);
+    }
+
+    /* ------------------------------------------------------------ events */
+
+    public void setVisible(boolean v) {
+        visible = v;
+        RoomSession r = activeSession();
+        if (v && r != null) { r.unread = 0; app.notify.clearRoom(r.key); emit(); }
+    }
+
+    public void onForeground() { }
+
+    public void onBackground() {
+        visible = false;
+        for (RoomSession r : sessions.values()) History.save(app, r.key, r.messagesCopy());
+    }
+
+    void roomChanged(RoomSession r) { emit(); }
+
+    void onMessage(RoomSession r, ChatMessage m, boolean fresh) {
+        boolean onScreen = visible && r.key.equals(active) && app.inForeground() && !app.lock.isLocked();
+        if (fresh && !onScreen) {
+            r.unread++;
+            app.notify.message(r.key, r.label, m.senderName, m.text.isEmpty() ? "📎 " + m.fileName : m.text, app.lock.isLocked());
+        }
+        if (fresh || m.mine) History.saveSoon(app, r.key, r);
+        for (Listener l : listeners) Io.main(() -> l.onRoomMessage(r.key, m));
+        if (!onScreen) emit();
+    }
+
+    private void emit() { Io.main(() -> { for (Listener l : listeners) l.onRoomsChanged(); }); }
+
+    /** The rooms as the rooms screen sees them ($rooms). */
+    public JSONArray scope() {
+        JSONArray out = new JSONArray();
+        for (Saved s : saved()) {
+            RoomSession r = sessions.get(s.key);
+            try {
+                out.put(new JSONObject().put("key", s.key).put("name", s.label).put("room", s.room)
+                    .put("users", r == null ? 0 : r.userCount()).put("unread", r == null ? 0 : r.unread())
+                    .put("active", s.key.equals(active)).put("connected", r != null && r.connected())
+                    .put("status", r == null ? "saved" : r.status()).put("selected", s.selected));
+            } catch (JSONException ignored) { }
+        }
+        return out;
+    }
+
+    public static String hashKey(String key) { return Crypto.hex(Crypto.sha256(Crypto.utf8(key))).substring(0, 16); }
+
+}
