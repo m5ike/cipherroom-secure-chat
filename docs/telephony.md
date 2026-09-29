@@ -203,6 +203,68 @@ defaulty + jejich zdroj, perzistence, trunky, webhooky), `PUT /admin/telephony/s
 `GET|DELETE /admin/telephony/events`, `GET|PUT|DELETE /admin/telephony/sip/trunks`,
 `POST /admin/telephony/sip/route {did}`.
 
+## 5a. m5.telephony z funkcí a telefonní most (6.0)
+
+Funkce (JavaScript i Python) mají `m5.telephony`: `call` (obsluha jménem =
+později v modelu, funkcí = běh čeká a `on_answer` vrací logiku živého
+hovoru), `wait`, `say`, `hangup`, `steer`, `calls.*`, `actions.*` (say, play,
+pause, gather, record, redirect, hangup), `sms`, `whatsapp`, `viber`,
+`messenger`, `messages.get`, `lookup` (offline číslovací plán + data
+poskytovatelů), `hlr`, `did.*`, `log`, `providers()`. Podrobně v dokumentaci
+(`docs/site/index.html#m5-telephony`).
+
+| Poskytovatel | Umí |
+|---|---|
+| Twilio | hovory, SMS, lookup, WhatsApp, Messenger (beta), čísla |
+| Telnyx | hovory, SMS, lookup, WhatsApp, čísla |
+| Vonage | hovory, SMS, lookup + HLR (Number Insight), WhatsApp, Viber, Messenger, čísla |
+| HLR-Lookups.com | HLR |
+| Meta | Messenger |
+
+```bash
+# .env — navíc k SMS/voice klíčům výše
+PUBLIC_BASE_URL=https://chat.example.com     # povinné: webhooky každého hovoru a zprávy
+TWILIO_MESSAGING_SERVICE_SID=MG…             # nebo TWILIO_FROM
+TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+TWILIO_MESSENGER_PAGE_ID=…
+TELNYX_WHATSAPP_FROM=+…
+VONAGE_WHATSAPP_FROM=…   VONAGE_VIBER_FROM=…   VONAGE_MESSENGER_PAGE_ID=…
+VONAGE_MESSAGES_SANDBOX=1                    # sandbox Vonage Messages
+HLRLOOKUPS_API_KEY=…     HLRLOOKUPS_API_SECRET=…
+META_PAGE_ID=…           META_PAGE_TOKEN=…     META_GRAPH_VERSION=v21.0
+TELEPHONY_DID_POOL="+420222111000, vonage:+442079460000"   # čísla k půjčení
+TELEPHONY_DID_ASSIGN=0                       # neměnit webhook čísla u poskytovatele
+TELEPHONY_FN_RATE=30                         # placené operace jednoho modelu za minutu
+```
+
+Webhooky: `/wh/tel/<token>/answer|event|gather|record|status` (každý hovor a
+zpráva má svůj token, podpis poskytovatele se kontroluje), příchozí hovory na
+půjčená čísla `/wh/tel/in/<provider>` (Twilio VoiceUrl se nastaví při
+půjčení), u Vonage a Telnyx přes `/wh/vonage/answer` a `/wh/telnyx/events`.
+
+**Telefonní most**: `did.allocate({ room, member, minutes: 10, mode:
+auto|audio|text, language, number?, buy? })` → `{ number, code, expiresAt }`.
+Volající zadá 5místný kód a `#` (3 pokusy), poskytovatel streamuje zvuk na
+`wss://…/media/tel/<token>` (Twilio/Telnyx µ-law 8 kHz, Vonage L16 16 kHz),
+člen ho převezme v prohlížeči (`/media/tel/client/<token>`, PCM 16 kHz), nebo
+jako přepis (VAD → STT → soukromá oznámení; odpovědi TTS). `auto` přejde na
+text po 8 s. **Není koncově šifrovaný.** Za nginx musí `/media/tel/` projít
+jako WebSocket — `deploy/nginx/m5cet.conf` i instalátor to od 6.0 mají.
+
+Práva: běh člověka potřebuje jeho Telephony & SIP práva (`call`, `sms`,
+`message`, `lookup`, `hlr`, `did`, `number:+420*`); běh, který nikdo
+nespustil (webhook, plán, API), grant modelu (Functions › model › *Beyond
+the caller* › m5.telephony). Vestavěné balíčky `tel-*` (`/call`, `/sms`,
+`/whatsapp`, `/viber`, `/messenger`, `/lookup`, `/hlr`, `/phone-bridge`) se
+instalují vypnuté. Konzole: karta *m5.telephony* na stránce Telephony
+(`GET /api/admin/telephony/sdk`, `GET …/sdk/calls/:id`,
+`POST …/sdk/bridges/:id/release`).
+
+Omezení: ověřeno proti napodobeným API poskytovatelů (vymyšlená čísla),
+skutečný hovor ne; Android zvuk mostu nepřevezme; Vonage potřebuje k
+přesměrování čísla zemi (webhook čísla nastavit ve Vonage aplikaci);
+vyzvánění Twilio může být asi o 5 s delší než `timeout`.
+
 ## 6. Co je ověřené testy
 
 `test/telephony.test.ts` + `test/telephony-webhooks.test.ts`: referenční vektor

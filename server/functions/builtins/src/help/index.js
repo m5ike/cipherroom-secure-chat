@@ -5,7 +5,7 @@
 //   /help <command>       one command in detail (parameters, examples)
 //   /help syntax | webhooks | api | tags | all
 //   /help endpoints | results | buttons | forms | browser | model   (5.3)
-//   /help android | rooms                                            (6.0)
+//   /help android | rooms | telephony | adm                           (6.0)
 //   /help ?               pick a command from a list
 //
 // Entry points (1.1): execute; button — the topic buttons under an answer;
@@ -135,8 +135,28 @@ const ROOMS = [
   "- The **people list** can stick to the left, right or bottom edge, and hide behind a small tab (the pin icon in its header).",
 ].join("\n");
 
-const TOPICS = { android: ANDROID, phone: ANDROID, app: ANDROID, rooms: ROOMS, multi: ROOMS, syntax: SYNTAX, endpoints: ENDPOINTS, entry: ENDPOINTS, model: MODEL, session: MODEL, results: RESULTS, result: RESULTS, buttons: BUTTONS, button: BUTTONS, forms: FORMS, form: FORMS, browser: BROWSER, js: BROWSER };
-const TOPIC_BUTTONS = [["syntax", "How to call"], ["results", "Results"], ["endpoints", "Entry points"], ["buttons", "Buttons"], ["forms", "Forms"], ["browser", "Browser code"], ["model", "m5.model"], ["webhooks", "Webhooks"], ["rooms", "Several rooms"], ["android", "Android app"]];
+const ADM = [
+  "## 🛠️ m5adm — the administration from a function (6.0)",
+  "A model can use the operator console from its code — `m5adm` (also `m5.adm`), in JavaScript and Python — **only if an owner granted it** (Functions › the model › *Beyond the caller*: a role — auditor, operator or owner — and areas).",
+  "- **Objects**: `overview`, `rooms`, `connections`, `traffic`, `modules`, `groups`, `users`, `passkeys`, `queue`, `audit`, `commands`, `push`, `admins`; `m5adm.info()` tells what the grant allows.",
+  "- **Conventions**: `list` → a list, `get` → the object or `null`, `set(id | null, obj)` → the id or `-1` (the reason is in the run's log), `delete` → `true`/`false`.",
+  "- **Rooms** come as objects with controls: `room.wall_msg(text, { pin })`, `user_msg`, `user_flash`, `disconnect`, `block({ reason, minutes })`, `unblock`, `connect`, `log`. `m5adm.rooms.list([{ key: \"room_username\", value: \"/^eva/i\" }])` finds rooms by who is in them.",
+  "- Every call goes through the console's own checks and lands in the **audit log** as `fn:<model>/<caller>`.",
+  "- In the room, an operator's message shows as **Announcement · operator** (a pinned one also greets everyone who joins later); a closed or full room tells you why.",
+].join("\n");
+
+const TELEPHONY = [
+  "## ☎️ Phones — m5.telephony (6.0)",
+  "Commands and functions can reach real phones through the operator's provider (Twilio, Telnyx, Vonage; HLR-Lookups.com, Meta):",
+  "- **Commands** (the operator switches them on — they cost money): `/call`, `/sms`, `/whatsapp`, `/viber`, `/messenger`, `/lookup`, `/hlr`, `/phone-bridge` — each asks with a form.",
+  "- **In a function**: `m5.telephony.call({ to, say, on_answer, on_hangup })` (ring timeout 10 s), `sms`, `whatsapp`, `viber`, `messenger`, `lookup(number)`, `hlr(number)`, `did.allocate(...)`, and call logic with `m5.telephony.actions` (say, play, gather digits, record, hang up).",
+  "- **Phone bridge**: `/phone-bridge` lends a phone number and a 5-digit code for a room member. The caller dials it, types the code and `#` (3 tries), and the member gets a **call card**: *Take as audio* in the browser, or *As text* — the caller's speech is written into the chat and your replies are read to them.",
+  "- ⚠️ A phone call is **not end-to-end encrypted** — it goes over the phone network and the server bridges it.",
+  "- Who may: your **Telephony & SIP** rights (calls, SMS, messages, lookup, HLR, temporary numbers, which numbers); a webhook's or a schedule's run needs the model's own grant.",
+].join("\n");
+
+const TOPICS = { adm: ADM, m5adm: ADM, admin: ADM, telephony: TELEPHONY, tel: TELEPHONY, calls: TELEPHONY, android: ANDROID, phone: ANDROID, app: ANDROID, rooms: ROOMS, multi: ROOMS, syntax: SYNTAX, endpoints: ENDPOINTS, entry: ENDPOINTS, model: MODEL, session: MODEL, results: RESULTS, result: RESULTS, buttons: BUTTONS, button: BUTTONS, forms: FORMS, form: FORMS, browser: BROWSER, js: BROWSER };
+const TOPIC_BUTTONS = [["syntax", "How to call"], ["results", "Results"], ["endpoints", "Entry points"], ["buttons", "Buttons"], ["forms", "Forms"], ["browser", "Browser code"], ["model", "m5.model"], ["webhooks", "Webhooks"], ["rooms", "Several rooms"], ["android", "Android app"], ["telephony", "Phones"], ["adm", "m5adm"]];
 const topicButtons = (skip) => m5.out.buttons(TOPIC_BUTTONS.filter(([t]) => t !== skip).map(([t, title]) => ({ name: "topic", title, data: { topic: t }, css: "small ghost" })));
 
 const WEBHOOKS = [
@@ -175,7 +195,7 @@ export async function execute({ topic } = {}) {
 
   const md = [`# 🆘 Help — ${commands.length} command${commands.length === 1 ? "" : "s"} for ${m5.caller.name || "you"}`];
   md.push(commands.length ? table(["Command", "What it does", "Parameters"], commands.map((c) => [`\`/${c.keyword}\``, c.summary || c.name, c.inputs.map((i) => (i.required ? `<${i.name}>` : `[${i.name}]`)).join(" ")])) : "_No command is available to you on this server._");
-  md.push("**More:** `/help <command>` for one command · `/help syntax` · `/help results` · `/help endpoints` · `/help buttons` · `/help forms` · `/help browser` · `/help model` · `/help webhooks` · `/help tags` · `/help rooms` · `/help android` · `/help ?` — or reply to this message with a command's name.");
+  md.push("**More:** `/help <command>` for one command · `/help syntax` · `/help results` · `/help endpoints` · `/help buttons` · `/help forms` · `/help browser` · `/help model` · `/help webhooks` · `/help tags` · `/help rooms` · `/help android` · `/help telephony` · `/help adm` · `/help ?` — or reply to this message with a command's name.");
   if (t === "all") {
     md.push(SYNTAX, RESULTS, ENDPOINTS, BUTTONS, FORMS, BROWSER, MODEL, WEBHOOKS);
     for (const c of commands) md.push(`### /${c.keyword} — ${c.name}\n${c.summary || ""}\n\n\`${sig(c)}\` — e.g. \`${example(c)[0]}\``);

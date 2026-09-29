@@ -86,6 +86,24 @@ URL. The client polls for commands once per socket open (`command-poll`),
 not periodically, and acknowledges with `command-ack` regardless of the
 handler's result.
 
+## Místnosti, m5adm a m5.telephony (6.0)
+
+| Metoda a cesta | Popis |
+|---|---|
+| `GET /api/admin/rooms?members=full` | místnosti s uživatelskými jmény, skupinami a passkeys členů |
+| `GET /api/admin/rooms/registry`, `GET\|PUT\|DELETE /api/admin/rooms/registry/:id` | záznam místnosti: popisek, poznámka, štítky, `maxMembers`, blokace (důvod, do kdy), připnuté oznámení (`$DATA_DIR/room-registry.json`) |
+| `GET /api/admin/rooms/:id` | detail: členové, záznam, provoz, žurnál |
+| `POST /api/admin/rooms/:id/notice` | oznámení operátora (`wall` / `message` / `flash`, volitelně připnuté) — rámec `server-notice` |
+| `POST /api/admin/rooms/:id/disconnect`, `POST …/block`, `DELETE …/block`, `POST …/wake` | odpojit (všechny / člena), uzavřít a otevřít, zavolat nepřítomné |
+| `DELETE /api/admin/users/:id/passkeys/:credentialId` | odebrat jednu passkey (nikdy poslední) |
+| `POST /api/admin/audit/entries` | vlastní řádek auditu (`m5adm.audit.add`) |
+| `GET /api/admin/telephony/sdk`, `GET …/sdk/calls/:id`, `POST …/sdk/bridges/:id/release` | m5.telephony: poskytovatelé, půjčená čísla, hovory, zprávy, log; uvolnění čísla |
+
+**m5adm** (funkce): každé volání jde sem s podepsaným krátkodobým tokenem
+funkce (role a oblasti z grantu vlastníka, klíč `$DATA_DIR/functions-adm.key`
+nebo `FUNCTIONS_ADM_KEY_FILE`); strážce kontroluje oblast cestu po cestě,
+audit zapisuje `fn:<model>/<volající>`, tokeny funkcí mají vlastní limit.
+
 ## Android (6.0)
 
 Console › **Android** (`admin-ui/public/android-console.js`) talks to the main

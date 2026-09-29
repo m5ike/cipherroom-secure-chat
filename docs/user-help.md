@@ -150,6 +150,18 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
 - **Nastavení** — biometrie, změna PINu, notifikace, tmavý vzhled, jazyk,
   záznam hovorů, kontrola aktualizací, o aplikaci a *Smazat všechna data*.
 
+### Oznámení operátora a telefonní hovory (6.0)
+- **Oznámení · operátor** — správce serveru může poslat oznámení celé
+  místnosti, zprávu jen vám nebo krátké upozornění. Připnuté oznámení uvidíte
+  i po vstupu do místnosti. Tyto zprávy posílá server, nejsou šifrované
+  koncově jako chat. Když je místnost uzavřená nebo plná, aplikace řekne proč.
+- **Telefonní hovor** — někdo vám může zavolat z běžného telefonu přes
+  dočasné číslo s kódem (příkaz `/phone-bridge`, když ho správce zapne).
+  Objeví se karta hovoru: *Přijmout zvukem* (mluvíte v prohlížeči), nebo
+  *Textem* — řeč volajícího přijde jako zprávy „☎ …“ a co napíšete, se mu
+  přečte. **Hovor jde telefonní sítí a není šifrovaný koncově.** V aplikaci
+  pro Android zatím jen textem.
+
 ### Příkazy (/)
 Napiš **/** na začátek zprávy — ukáže se seznam příkazů, které smíš použít
 (`/help` vysvětlí všechny). Výsledek příkazu může mít **tlačítka** a
@@ -247,6 +259,18 @@ Same as the Czech section above.
 - **Updates** — a new look or a new version of the app is offered on an update
   card. If a new look fails, the app goes back to the previous one by itself.
 
+### Operator notices and phone calls (6.0)
+- **Announcement · operator** — the server's operator can send a notice to
+  the whole room, a message just to you or a short alert. A pinned one is
+  shown when you join. The server sends these, so they are not end-to-end
+  encrypted like the chat. A closed or full room tells you why.
+- **Phone call** — someone can call you from an ordinary phone through a
+  temporary number and code (`/phone-bridge`, if the operator switched it
+  on). A call card appears: *Take as audio* (you talk in the browser), or
+  *As text* — the caller's speech arrives as "☎ …" messages and what you
+  write is read to them. **The call goes over the phone network and is not
+  end-to-end encrypted.** In the Android app, text only for now.
+
 ### Commands (/)
 Type **/** at the start of a message to see the commands you may use (`/help`
 explains them all). A command's answer may have **buttons** and **forms** —
@@ -342,6 +366,20 @@ Siehe Czech-Abschnitt oben.
   Anrufprotokoll des Telefons.
 - **Updates** — ein neues Aussehen oder eine neue Version wird auf einer Karte
   angeboten; misslingt ein neues Aussehen, kehrt die App selbst zum vorigen zurück.
+
+### Hinweise des Betreibers und Telefonanrufe (6.0)
+- **Ankündigung · Betreiber** — der Betreiber des Servers kann dem ganzen Raum
+  eine Ankündigung schicken, dir allein eine Nachricht oder eine kurze Meldung.
+  Eine angeheftete Ankündigung erscheint auch beim Betreten. Diese Nachrichten
+  schickt der Server — sie sind nicht Ende-zu-Ende verschlüsselt wie der
+  Chat. Ein geschlossener oder voller Raum sagt dir, warum.
+- **Telefonanruf** — jemand kann dich von einem normalen Telefon über eine
+  vorübergehende Nummer mit Code anrufen (`/phone-bridge`, wenn der Betreiber
+  es eingeschaltet hat). Eine Anrufkarte erscheint: *Mit Ton annehmen* (du
+  sprichst im Browser) oder *Als Text* — die Sprache des Anrufers kommt als
+  „☎ …“-Nachrichten, und was du schreibst, wird ihm vorgelesen. **Der Anruf
+  läuft über das Telefonnetz und ist nicht Ende-zu-Ende verschlüsselt.** In
+  der Android-App vorerst nur als Text.
 
 ### Befehle (/)
 Tippe **/** am Anfang einer Nachricht — die Befehle, die du nutzen darfst,

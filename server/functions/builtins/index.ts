@@ -29,7 +29,7 @@ export const BUILTINS: readonly BuiltinDef[] = [
   { name: "netkit", kind: "library", version: V, description: "Network helpers for the demo commands: DNS, RDAP (whois), HTML, technologies, security headers, e-mail checks." },
   { name: "help", kind: "system", version: V, description: "The guide to the chat's commands: syntax, every command with its parameters and examples, webhooks, the API.",
     model: { keyword: "help", name: "Help", summary: "How to use commands, and every command you may run with its parameters", visibility: "caller",
-      inputs: [{ name: "topic", type: "string", label: "Command or topic", help: "a command (e.g. dns), or: syntax, results, endpoints, buttons, forms, browser, model, webhooks, tags, rooms, android, all, ?" }],
+      inputs: [{ name: "topic", type: "string", label: "Command or topic", help: "a command (e.g. dns), or: syntax, results, endpoints, buttons, forms, browser, model, webhooks, tags, rooms, android, telephony, adm, all, ?" }],
       endpoints: [{ type: "response" }, { type: "button" }, { type: "error" }] } },
   { name: "whois", kind: "demo", version: V, description: "Who holds a domain or an IP address: registrar, dates, status, name servers, DNSSEC, abuse contact (RDAP).", dependencies: NET,
     model: { keyword: "whois", name: "Whois", summary: "Who holds a domain or IP address (registrar, expiry, DNSSEC, abuse)", visibility: "caller", limits: SLOW,

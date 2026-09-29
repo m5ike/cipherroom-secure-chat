@@ -87,6 +87,8 @@ describe("built-in packages", () => {
     // 6.0: the Android app and several rooms at once.
     expect(text((await run("help", { topic: "android" })).outputs)).toMatch(/Android app[\s\S]*erases all its data/);
     expect(text((await run("help", { topic: "rooms" })).outputs)).toMatch(/Several rooms at once[\s\S]*unread/);
+    expect(text((await run("help", { topic: "telephony" })).outputs)).toMatch(/m5\.telephony[\s\S]*5-digit code[\s\S]*not end-to-end encrypted/);
+    expect(text((await run("help", { topic: "adm" })).outputs)).toMatch(/only if an owner granted it[\s\S]*fn:<model>\/<caller>/);
   }, 60_000);
 
   it("/web reads a page: technologies, security headers, meta, links, social networks", async () => {

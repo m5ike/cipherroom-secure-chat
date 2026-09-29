@@ -15,6 +15,8 @@ chrání biometrie nebo PIN s wipe po opakovaných chybách, všechna data v
 telefonu jsou šifrovaná klíči z Android Keystore, server řídí zařízení
 zprávami přes Firebase Cloud Messaging. Na webu i v telefonu jde být ve
 **víc místnostech naráz** a seznam lidí jde přilepit k okraji a schovat.
+Funkce dostaly **administraci jako SDK** (`m5adm`) s řízením místností a
+**telefonii** (`m5.telephony`) včetně telefonního mostu do místnosti.
 
 ### Přidáno
 - **Aplikace pro Android** (`android/`, Java 17, Android 10+, `npm run android:build`):
@@ -81,6 +83,51 @@ zprávami přes Firebase Cloud Messaging. Na webu i v telefonu jde být ve
   Místnost: zaškrtávátka u uložených připojení a *Připojit vybrané (n)*,
   odznaky lidí a nepřečtených. Modul `rooms` (*Several rooms*) v Modules &
   groups; Layout builder má v sekci App 10 rozvržení.
+- **m5adm — administrace jako SDK** (také `m5.adm`, JavaScript i Python):
+  `overview`, `rooms`, `connections`, `traffic` (i `watch`), `modules`,
+  `groups`, `users`, `passkeys`, `queue`, `audit`, `commands`, `push`,
+  `admins`, `info()`. Konvence: `list` → seznam, `get` → objekt nebo `null`,
+  `set(id | null, obj)` → id nebo `-1` (důvod v logu běhu), `delete` → bool.
+  Místnosti jako objekty `m5room` s `wall_msg`, `user_msg`, `user_flash`,
+  `disconnect`, `block`, `unblock`, `connect`, `log`, `refresh`, `save`,
+  `forget`; `rooms.list` filtruje podle členů (`room_username`,
+  `system_username`, `system_passkey_id`, `system_group`, `room_id`,
+  `room_label`, `room_tag`; vzory `preg_match`, `{ match: "any" }`).
+  Grant dává jen vlastník (Functions › model › *Beyond the caller*: role a
+  oblasti). Tvůrce: skupina *Administration* (Find rooms, Room, Room action,
+  Save room record, Room statistics, Administration call, Audit line).
+- **Řízení místností**: záznam místnosti (`$DATA_DIR/room-registry.json`:
+  popisek, poznámka, štítky, limit členů, blokace s důvodem a časem,
+  připnuté oznámení), který hub vynucuje při vstupu (`room-blocked`,
+  `room-full`); **oznámení operátora** — rámec `server-notice` (`wall`,
+  `message`, `flash`, `wake`), web i Android je ukážou jako *Oznámení ·
+  operátor*, připnuté i každému, kdo přijde. Konzole › Místnosti: Flash a
+  Odpojit u člena, oznámení, zavřít / otevřít, popisek a limit, odpojit
+  všechny, zapomenout. API `/api/admin/rooms/registry[/:id]`,
+  `/api/admin/rooms/:id` (+ `notice|disconnect|block|wake`),
+  `?members=full`, `DELETE /api/admin/users/:id/passkeys/:cid`,
+  `POST /api/admin/audit/entries`.
+- **m5.telephony** (JavaScript i Python): `call` s obsluhou jménem
+  (asynchronně) nebo funkcí (běh čeká, `on_answer` vrací logiku živého
+  hovoru), `wait`, `say`, `hangup`, `steer`, `calls.*`, `actions.*` (say,
+  play, pause, gather, record, redirect, hangup), `sms`, `whatsapp`,
+  `viber`, `messenger`, `messages.get`, `lookup` (offline číslovací plán
+  všech zemí + data poskytovatelů), `hlr`, `did.*`, `log`, `providers()`.
+  Poskytovatelé Twilio, Telnyx, Vonage, HLR-Lookups.com a Meta. Každý hovor
+  a zpráva má vlastní webhooky `/wh/tel/<token>/…` s kontrolou podpisu;
+  příchozí na půjčená čísla `/wh/tel/in/<poskytovatel>`.
+- **Telefonní most**: `did.allocate({ room, member, minutes, mode, language })`
+  půjčí číslo s 5místným kódem; volající zadá kód a `#` (3 pokusy), zvuk
+  přijde přes `/media/tel/<token>` a člen dostane kartu hovoru (rozvržení
+  `phone.bridge`): *Přijmout zvukem* v prohlížeči, nebo *Textem* — přepis
+  řeči přes AI a řeč a odpovědi čtené hlasem; `auto` přejde na text po 8 s.
+  Není koncově šifrovaný (karta to říká). Android ukazuje hovory a přepisy.
+- Vestavěné balíčky `tel-call` (`/call`), `tel-sms` (`/sms`),
+  `tel-whatsapp`, `tel-viber`, `tel-messenger`, `tel-lookup` (`/lookup`),
+  `tel-hlr` (`/hlr`), `tel-did` (`/phone-bridge`) — toky s formulářem,
+  instalované **vypnuté** (stojí peníze). Tvůrce: skupina *Telephony*.
+  Konzole › Telephony & SIP: karta *m5.telephony* (`GET /api/admin/telephony/sdk`).
+- `/help adm` a `/help telephony`.
 - `npm run android:build` (debug/release, testy Javy, SHA-256 a certifikát,
   `--install`, `--upload`), `npm run android:assets`; testovací vektory z
   kódu webu a serveru (`script/android-vectors.ts`) a testy Javy, které je
@@ -88,6 +135,19 @@ zprávami přes Firebase Cloud Messaging. Na webu i v telefonu jde být ve
 
 ### Změněno
 - Verze 6.0.0 (versionCode aplikace 60000).
+- Telephony & SIP: nová práva `message`, `lookup`, `hlr`, `did`; běh, který
+  nikdo nespustil (webhook, plán, API), potřebuje grant modelu. Placené
+  operace jednoho modelu omezuje `TELEPHONY_FN_RATE` (30 za minutu).
+- Nové proměnné: `TELEPHONY_DID_POOL`, `TELEPHONY_DID_ASSIGN`,
+  `TELEPHONY_DB_FILE`, `TWILIO_MESSAGING_SERVICE_SID`, `TWILIO_WHATSAPP_FROM`,
+  `TWILIO_MESSENGER_PAGE_ID`, `TELNYX_WHATSAPP_FROM`, `VONAGE_WHATSAPP_FROM`,
+  `VONAGE_VIBER_FROM`, `VONAGE_MESSENGER_PAGE_ID`, `VONAGE_MESSAGES_SANDBOX`,
+  `HLRLOOKUPS_API_KEY/SECRET`, `META_PAGE_ID/TOKEN/GRAPH_VERSION`,
+  `ROOM_REGISTRY_FILE`, `FUNCTIONS_ADM_KEY_FILE`; `M5CET_ENV_FILE`
+  (`none` = žádný `.env`, tak startují E2E testy). `PUBLIC_BASE_URL` je pro
+  m5.telephony povinná.
+- Layout builder: sekce App má 11 rozvržení (`phone.bridge`), celkem 48.
+- Nginx (repo i instalátor): WebSocket `/media/tel/` pro zvuk telefonního mostu.
 - Widget příjemců: `locked` se převádí na `dock` (okraj) a `autoHide`;
   tlačítko zámku v hlavičce je volba okraje; `$locked` a `toggleLock`
   v rozvrženích z doby před 6.0 fungují dál.
@@ -124,11 +184,26 @@ zprávami přes Firebase Cloud Messaging. Na webu i v telefonu jde být ve
   nahrání APK čte tělo až po ověření tokenu operátora.
 - Wipe po vyčerpání pokusů smaže data i klíče a nahlásí se serveru
   (audit `security`, alert) i když zařízení bylo mezitím offline.
+- m5adm: grant jen od vlastníka; podepsaný krátkodobý token funkce s rolí a
+  oblastmi, vynucený v operátorském API cestu po cestě, vlastní limit
+  požadavků, audit `fn:<model>/<volající>`; povolený model smí měnit jen
+  vlastník.
+- m5.telephony: webhooky s tokenem pro každý hovor a zprávu a kontrolou
+  podpisu poskytovatele; kód mostu jen 3 pokusy, zadané číslice se do logu
+  zapisují maskované; most není koncově šifrovaný a klient to říká.
 
 ### Kompatibilita
 - Protokol a šifrování chatu se nemění: web (4.x–6.0) a aplikace jsou v
   místnosti rovnocenní. Účty s passkey a přenos velkých souborů po kouscích
   jsou v aplikaci 6.0 zatím jen na webu.
+
+### Známá omezení
+- m5.telephony je ověřené proti napodobeným API poskytovatelů (čísla v
+  testech jsou vymyšlená) — skutečný hovor zatím testovaný nebyl.
+- Zvuk telefonního mostu převezme jen web; Android ukáže hovor a přepis.
+- Vonage potřebuje k přesměrování čísla zemi — most zapíše varování a
+  webhook čísla je třeba nastavit ve Vonage aplikaci.
+- Vyzvánění u Twilio může být asi o 5 s delší než `timeout`.
 
 ## [5.3.0] – 2026-09-29
 

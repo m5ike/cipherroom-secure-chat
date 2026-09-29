@@ -135,6 +135,20 @@ místnosti.
   (modul `rooms`, rozvržení `room.bar`). Seznam lidí se přilepí vlevo,
   vpravo nebo dole a umí se schovat za úchyt (rozvržení `widget.handle`).
   Viz [dokumentace › Víc místností naráz](docs/site/index.html#vic-mistnosti).
+- **Administrace a telefonie z funkcí (6.0)** — `m5adm` (také `m5.adm`)
+  zpřístupní kódu modelu konzoli operátora jako SDK: místnosti jako objekty s
+  ovládáním (oznámení všem nebo jednomu, připnuté oznámení, odpojení,
+  uzavření s důvodem a časem, limit členů), spojení, provoz, moduly, skupiny,
+  účty, frontu, audit, příkazy, push a administrátory — jen s grantem
+  vlastníka, přes kontroly operátorského API a s auditem
+  `fn:<model>/<volající>`. `m5.telephony` volá, píše SMS a zprávy do
+  WhatsAppu, Viberu a Messengeru, zjišťuje informace o číslech (lookup, HLR)
+  a půjčuje čísla pro **telefonní most**: volající zadá kód a mluví s
+  členem místnosti zvukem, nebo přes přepis (není koncově šifrovaný).
+  Twilio, Telnyx, Vonage, HLR-Lookups.com, Meta; balíčky `/call`, `/sms`,
+  `/lookup`, `/hlr`, `/phone-bridge` … se instalují vypnuté. Viz
+  [dokumentace › m5adm](docs/site/index.html#m5adm) a
+  [› m5.telephony](docs/site/index.html#m5-telephony).
 - **Příkazy jako rozhovor (5.3)** — model má **vstupní body**: execute
   (start), **response** (odpověď na jeho zprávu), **button**, **form**,
   **error** a libovolný počet **webhooků** s vlastními URL, každý se svými
@@ -758,7 +772,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.0.0        | aktuální — **aplikace pro Android** jako framework (obrazovky, téma, animace, texty a knihovny z konzole; zašifrované a podepsané balíčky s návratem; biometrie a PIN s wipe; šifrovaná data v Keystore; řídicí zprávy přes FCM; vydání APK; záznam hovorů); sekce *Android* v konzoli s builderem a živým náhledem; **víc místností naráz** na webu i v telefonu; seznam lidí u okraje s automatickým schováním; `npm run android:build` |
+| 6.0.0        | aktuální — **aplikace pro Android** jako framework (obrazovky, téma, animace, texty a knihovny z konzole; zašifrované a podepsané balíčky s návratem; biometrie a PIN s wipe; šifrovaná data v Keystore; řídicí zprávy přes FCM; vydání APK; záznam hovorů); sekce *Android* v konzoli s builderem a živým náhledem; **víc místností naráz** na webu i v telefonu; seznam lidí u okraje s automatickým schováním; **m5adm** (administrace jako SDK, řízení místností, oznámení operátora) a **m5.telephony** (hovory, SMS, chatovací sítě, lookup, HLR, telefonní most); `npm run android:build` |
 | 5.3.0        | **vstupní body** modelu (execute, response, button, form, error, víc webhooků s vlastními URL) se vstupy u každého; `m5.model` (sezení: calls, current, last, session, cache); **výsledek jako seznam** výstupů, každý vykreslený samostatně; nové výstupy zvuk, video, **tlačítka**, **formuláře** (form builder), **kód v prohlížeči** v izolovaném rámu; odpověď na zprávu modelu; `/help` a ukázky 1.1.0 s tlačítky a formuláři; tutoriál 10–16 |
 | 5.2.0        | nástroje konzole jako **moduly** s výchozím přístupem, přístupovými skupinami, hlavní skupinou a **granty** se zástupnými znaky (funkce, balíčky, poskytovatelé a modely AI, čísla); **log přístupů**; **webhooky** s plným logem, parsováním těl, replayem (i na konceptu) a režimy sync/async/auto; opravené `/` v chatu, aktivační znaky `@` a `#`; vestavěné `/help`, `/whois`, `/dns`, `/web`, `/mail`, `/domain` |
 | 5.1.0        | konzole *Functions* s editorem **CodeMirror** (zvýraznění, našeptávač SDK, šablony, nápověda, kontrola), **vizuální tvůrce** (uzly a dráty → JS/Python, hodnoty na plátně, balíček i model jedním klikem), **živé běhy** s odpovídáním na `prompt`/`form`; **řeč zdarma a offline** (Whisper + Piper přes sherpa-onnx) a předvolby Groq, Speaches, Kokoro, whisper.cpp; oprava záložky *Runs* („[object Promise]“) |
@@ -814,7 +828,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`CHANGELOG.md`](CHANGELOG.md)                          | Historie verzí                                 |
 | [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |
 | [`docs/session-and-sharing.md`](docs/session-and-sharing.md) | Session cache, vynucený stav, pozvánky s kódem, Smazat vše a odejít |
-| [`docs/telephony.md`](docs/telephony.md)                | Hovory a SMS (Twilio / Telnyx / Vonage vč. JWT), volba providera, perzistentní SIP trunky + `.env`, webhooky `/wh/*` s ověřením podpisů |
+| [`docs/telephony.md`](docs/telephony.md)                | Hovory a SMS (Twilio / Telnyx / Vonage vč. JWT), volba providera, perzistentní SIP trunky + `.env`, webhooky `/wh/*` s ověřením podpisů; m5.telephony z funkcí a telefonní most (6.0) |
 | [`docs/layout-builder.md`](docs/layout-builder.md)      | Layout builder (GUI designer): rozvržení jako stromy prvků, paleta, našeptávání, šablony, náhled aplikace, texty a chování zpráv; varianty, historie, sloučení po aktualizaci, vložení HTML, přístupnost (4.13) |
 | [`docs/appearance.md`](docs/appearance.md)              | Obrazovka Vzhled (71 Google Fonts, paleta, typografie), mobilní layout podle zařízení a prohlížeče, celá obrazovka, Edit Mode s inspektorem CSS |
 | [`docs/knowledge-base.md`](docs/knowledge-base.md)      | Znalostní báze: mapa kódu, co server vidí, známé mezery |

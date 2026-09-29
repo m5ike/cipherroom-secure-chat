@@ -566,6 +566,21 @@ server {
         proxy_buffering off;
     }
 
+    # 6.0: the phone bridge's audio — WebSockets from the provider and the browser.
+    location /media/tel/ {
+        proxy_pass http://${upstream}:${APP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
     # 6.0: an APK release uploaded from the console (Android › Releases).
     location = /api/admin/android/releases/upload {
         client_max_body_size 300m;
