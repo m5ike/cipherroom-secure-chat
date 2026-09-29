@@ -1100,3 +1100,33 @@ textarea.input--sm { min-height: 0; }
 .ai-free { display: flex; flex-direction: column; gap: 8px; }
 .ai-free__row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .ai-free__row .mono { font-family: var(--mono); margin-top: 3px; word-break: break-word; }
+
+/* Modules & groups (5.2) */
+.md-dlg { gap: 12px; }
+.md-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 720px) { .md-grid { grid-template-columns: 1fr; } }
+.md-fs { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.md-fs legend { padding: 0 6px; color: var(--muted); font-weight: 600; font-size: 12px; }
+.md-fs p { margin: 0; }
+.md-radio { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; }
+.md-grant { display: grid; grid-template-columns: 200px 1fr auto; gap: 6px; align-items: center; }
+.md-rights { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
+.md-rights code { font-size: 11px; }
+.md-test { display: flex; flex-direction: column; gap: 3px; }
+.md-actions { justify-content: flex-end; }
+.md-filters { flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.md-filters .input { width: auto; }
+.md-stats { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+.md-stat { font-size: 12px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2); }
+.md-deny { color: var(--err); font-weight: 600; }
+
+/* Functions 5.2 — webhooks, the built-in gallery */
+.fn-hooks td { vertical-align: middle; }
+.fn-hooks .input { width: auto; }
+.fn-hooks__off td { opacity: .65; }
+.fn-kv td:first-child { width: 32%; color: var(--text-2); }
+.fn-kv td { word-break: break-all; }
+.fn-call .fn-help__tabs { max-width: 520px; }
+.fn-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.fn-gallery__card { display: flex; flex-direction: column; gap: 6px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.fn-builtins { border-top: 1px solid var(--border); padding-top: 10px; }

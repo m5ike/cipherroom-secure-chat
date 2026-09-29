@@ -735,6 +735,16 @@
   .cmd-item__kw { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: hsl(var(--primary)); white-space: nowrap; }
   .cmd-item__sum { flex: 1 1 auto; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
   .cmd-item__args { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; opacity: 0.7; white-space: nowrap; }
+  /* 5.2: a hint instead of suggestions (the module is off, nothing matches). */
+  .cmd-item--off { cursor: default; opacity: 0.75; }
+  .cmd-item--off .cmd-item__kw { color: hsl(var(--muted-foreground)); font-family: inherit; font-weight: 500; white-space: normal; }
+  .cmd-item--off:hover { background: transparent; }
+  /* 5.2: @mentions and #tags in messages; a tag filters the conversation. */
+  .mention { font-weight: 600; color: hsl(var(--primary)); }
+  .hashtag { display: inline; padding: 0 0.1em; border: 0; background: none; font: inherit; font-weight: 600; color: hsl(var(--primary)); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
+  .hashtag:hover { opacity: 0.8; }
+  .tag-filter { position: fixed; left: 50%; top: 4.5rem; transform: translateX(-50%); z-index: 40; display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.3rem 0.4rem 0.3rem 0.8rem; border-radius: 999px; border: 1px solid hsl(var(--border)); background: hsl(var(--card)); box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.5); font-size: 0.85rem; }
+  .tag-filter button { border: 0; border-radius: 999px; width: 1.6rem; height: 1.6rem; background: hsl(var(--accent)); color: hsl(var(--foreground)); cursor: pointer; }
   /* A running command's live question (m5.prompt / m5.form). */
   .fn-ask { gap: 0.5rem; padding: 0.75rem; }
   .fn-ask__title { font-weight: 600; }

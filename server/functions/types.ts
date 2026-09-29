@@ -89,7 +89,13 @@ export type ChatExecutor = { enabled: boolean; visibility: "room" | "caller" };
 export type ConsoleExecutor = { enabled: boolean };
 /** A model reachable by an inbound HTTP webhook. `token` is the capability in
  *  the URL (POST /hooks/m/:model/:token); `auth` adds an HMAC check on top. */
-export type WebhookExecutor = { enabled: boolean; token?: string; auth?: "none" | "hmac"; secret?: string };
+/**
+ * mode (5.2): sync — answer with the outputs; async — answer at once (202) with the run id and
+ * a status URL; auto — answer with the outputs when the run ends within 25 s, else as async.
+ * callback: POST the result to ?callback= / X-Callback-URL when the run ends. log: what the
+ * webhook log keeps (full: headers + bodies; meta: without the bodies; off).
+ */
+export type WebhookExecutor = { enabled: boolean; token?: string; auth?: "none" | "hmac"; secret?: string; mode?: "sync" | "async" | "auto"; callback?: boolean; log?: "full" | "meta" | "off" };
 /** A model callable programmatically at POST /api/functions/call/:id with a
  *  bearer token (distinct from a webhook's capability URL). */
 export type ApiExecutor = { enabled: boolean; token?: string };
@@ -188,6 +194,36 @@ export type DurableWebhook = {
   once: boolean;
   expiresAt: number | null;
   createdAt: number;
+};
+
+/** 5.2: one call to a webhook, as the log keeps it (secrets masked). */
+export type WebhookCall = {
+  id: string;
+  at: number;
+  /** model: /hooks/m/…; run: a live m5.webhook.wait; durable: an on_event webhook; replay: from the console. */
+  kind: "model" | "run" | "durable" | "replay";
+  modelId: string;
+  /** The token, masked (first 6 characters). */
+  hook: string;
+  method: string;
+  path: string;
+  query: Record<string, unknown>;
+  headers: Record<string, string>;
+  contentType: string;
+  body: string;
+  bodySize: number;
+  /** The body as variables: { kind: json | form | multipart | text | xml | binary | empty, value }. */
+  parsed: { kind: string; value: unknown } | null;
+  ip: string;
+  status: number;
+  responseHeaders: Record<string, string>;
+  responseBody: string;
+  runId: string;
+  ms: number;
+  error: string;
+  replayOf: string;
+  /** Async / auto: how the run ended, and the callback. */
+  result: { status: string; ms: number; outputs?: unknown; error?: unknown; callback?: { url: string; status: number; error?: string } } | null;
 };
 
 export type RunLogLevel = "debug" | "info" | "warn" | "error" | "stdout" | "stderr";

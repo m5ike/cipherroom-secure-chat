@@ -3,6 +3,7 @@
 // the operator has enabled without exposing secrets.
 
 import { aiReady } from "./ai/service";
+import { switchState } from "./plugins/settings";
 
 export type ModuleManifest = {
   modes: { id: string; label: string; description: string }[];
@@ -61,6 +62,10 @@ export function buildModuleManifest(eventsBackend: "disabled" | "memory" | "data
       ai: aiReady("chat")
         ? { enabled: true, reason: "The server's AI is on and has a model (limits: console › AI & speech)." }
         : { enabled: false, reason: "Turn AI on and add a provider with a model in the console (AI & speech)." },
+      // 5.2: the Functions service (console › Modules & groups, or ENABLE_FUNCTIONS).
+      functions: switchState("functions").enabled
+        ? { enabled: true, reason: "Functions are on: “/keyword” commands, webhooks and the API." }
+        : { enabled: false, reason: "Switch Functions on in the console (Modules & groups) or set ENABLE_FUNCTIONS=1." },
       telephony: hasTelephony()
         ? { enabled: true, reason: "Telephony is configured (ENABLE_TELEPHONY=1). Voice + SMS via the operator's provider." }
         : { enabled: false, reason: "Set ENABLE_TELEPHONY=1 and configure a provider (Twilio/Telnyx/Vonage). Voice media path needs an external SIP↔WebRTC gateway." },

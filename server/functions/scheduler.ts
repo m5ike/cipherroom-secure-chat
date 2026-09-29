@@ -3,7 +3,9 @@
 // from registerFunctionsRoutes), never in the admin service, so a schedule
 // fires once. A scheduled run has no interactive caller and its output goes to
 // the run record (console); it is for periodic work (fetching, caching, later
-// sending via m5.ai), not for posting into an E2EE room.
+// sending via m5.ai), not for posting into an E2EE room. Once an hour it also
+// prunes: finished runs with their logs and the webhook call log older than
+// FUNCTIONS_RUNS_DAYS (default 30), and expired session, cache and webhooks.
 
 import { cronMatches, parseCron, type Cron } from "./cron";
 import { functionsStore } from "./store";
@@ -11,6 +13,9 @@ import { execute } from "./runner";
 import type { Caller } from "./types";
 
 let timer: ReturnType<typeof setInterval> | null = null;
+let lastPrune = 0;
+const PRUNE_EVERY_MS = 60 * 60_000;
+export const runsKeepDays = () => Math.max(1, Number(process.env.FUNCTIONS_RUNS_DAYS) || 30);
 const compiled = new Map<string, { src: string; cron: Cron }>();
 
 function cronFor(expr: string): Cron | null {
@@ -23,6 +28,11 @@ function cronFor(expr: string): Cron | null {
 async function tick(now = new Date()): Promise<void> {
   await functionsStore.ready();
   const minute = Math.floor(now.getTime() / 60_000);
+  if (now.getTime() - lastPrune >= PRUNE_EVERY_MS) {
+    lastPrune = now.getTime();
+    try { functionsStore.prune(now.getTime() - runsKeepDays() * 86_400_000, now.getTime()); }
+    catch (err) { console.warn(`[functions] prune: ${(err as Error).message}`); }
+  }
   for (const s of functionsStore.schedules()) {
     if (!s.enabled) continue;
     const cron = cronFor(s.cron);

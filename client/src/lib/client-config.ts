@@ -46,7 +46,30 @@ export type ClientConfig = {
   modules: ModulesPolicy;
   /** 4.0: the operator's own groups. Members only on the server and the console. */
   groups: GroupDef[];
+  /** 5.2: the message box — which characters open which suggestions, and tags to offer. */
+  composer: ComposerPolicy;
 };
+
+export type ComposerAction = "functions" | "mentions" | "tags";
+export type ComposerPolicy = { triggers: Array<{ char: string; action: ComposerAction }>; tags: string[] };
+export const DEFAULT_COMPOSER: ComposerPolicy = { triggers: [{ char: "/", action: "functions" }, { char: "@", action: "mentions" }, { char: "#", action: "tags" }], tags: [] };
+
+export function sanitizeComposer(raw: unknown): ComposerPolicy {
+  if (!raw || typeof raw !== "object") return { triggers: DEFAULT_COMPOSER.triggers.map((t) => ({ ...t })), tags: [] };
+  const r = raw as Record<string, unknown>;
+  const triggers: ComposerPolicy["triggers"] = [];
+  const seen = new Set<string>();
+  for (const t of Array.isArray(r.triggers) ? r.triggers : []) {
+    const e = (t && typeof t === "object" ? t : {}) as Record<string, unknown>;
+    const char = typeof e.char === "string" ? [...e.char.trim()][0] ?? "" : "";
+    const action = e.action === "functions" || e.action === "mentions" || e.action === "tags" ? e.action : null;
+    if (!char || !action || /[\sA-Za-z0-9]/.test(char) || seen.has(char) || triggers.length >= 10) continue;
+    seen.add(char);
+    triggers.push({ char, action });
+  }
+  const tags = Array.isArray(r.tags) ? [...new Set(r.tags.filter((x): x is string => typeof x === "string").map((x) => x.replace(/^#/, "").trim().toLowerCase()).filter((x) => /^[\p{L}\p{N}_-]{1,40}$/u.test(x)))].slice(0, 200) : [];
+  return { triggers, tags };
+}
 
 export const CLIENT_CONFIG_LIMITS = { maxProfiles: 200, logLimit: 2000, servers: 20 } as const;
 
@@ -71,6 +94,7 @@ export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   },
   modules: {},
   groups: [],
+  composer: DEFAULT_COMPOSER,
 };
 
 /**
@@ -149,6 +173,7 @@ export function sanitizeClientConfig(raw: unknown): ClientConfig {
     },
     modules: sanitizeModules(r.modules, groups),
     groups,
+    composer: sanitizeComposer(r.composer),
   };
 }
 

@@ -331,6 +331,37 @@ files:    index.js · dns.js · http.js · README.md · tests/*.js
   URL svázaná s během a session: `POST /hooks/r/{token}` → událost →
   čekající `await`, nebo `on_event(event, session, caller)`.
 
+### 8.2.1 Webhooky modelů v 5.2 (hotovo)
+
+Skutečná adresa je `/hooks/m/:modelId/:token` (metody POST, PUT, PATCH,
+GET); token se porovnává v konstantním čase, volitelně HMAC-SHA256 nad
+surovými bajty těla (`X-Signature` nebo `X-Hub-Signature-256`). Globální
+parsery těla hlavní služby cestu `/hooks/*` přeskakují, takže webhook
+dostane surové bajty.
+
+- **Tělo → vstupy** (`server/functions/webhook-log.ts`, `inputsOf`): JSON
+  objekt (plochý, nebo `{"inputs": {…}}`), formulář, multipart (soubory jako
+  `{filename, mime, size, data}`, data do 1 MB), jinak `{ body }`; parametry dotazu
+  doplní, co tělo nemá (kromě `callback` a `wait`). Funkce dostane navíc
+  `_webhook` (metoda, hlavičky bez `Authorization`/`Cookie`, dotaz).
+- **Režim** (`executors.webhook.mode`): `sync` (čeká, 200/500 s výstupy),
+  `async` (hned `202 { runId, statusUrl }`), `auto` (čeká nejdéle
+  `WEBHOOK_AUTO_WAIT_MS`, výchozí 25 s, pak 202); `?wait=1` / `?wait=0`
+  režim přebije. `GET …/runs/:runId` vrátí stav, výstupy a otevřené otázky
+  (`m5.prompt`/`m5.form`), `POST …/runs/:runId/answer` na ně odpoví.
+- **Zpětné volání** (`executors.webhook.callback`): `?callback=` nebo
+  `X-Callback-URL`, jen http(s) a přes stejnou ochranu SSRF jako `m5.http`.
+- **Log volání** (tabulka `webhook_calls`, `log: full | meta | off`):
+  metoda, cesta a hook s maskovaným tokenem, dotaz, hlavičky (maskované
+  `authorization`, `cookie`, podpisy, tokeny), tělo do 256 kB, rozparsované
+  proměnné, odpověď, běh, doba, chyba; u async/auto i výsledek a stav
+  zpětného volání. Uklízí se s běhy po `FUNCTIONS_RUNS_DAYS` (30).
+- **Konzole** (`/admin/functions/webhooks*`): seznam endpointů se
+  statistikami, nastavení (`PUT /webhooks/:modelId` — zapnutí, režim, log,
+  HMAC, zpětné volání, nová URL), log s filtry, detail volání s proměnnými
+  a logy běhu, **replay** (`POST /webhooks/calls/:id/replay`,
+  `target: published | draft`) a „Debug in the editor“.
+
 ### 8.3 API, plán, konzole
 
 - **API**: tokeny s rozsahem (modely, limity) pro jiné systémy.
@@ -510,6 +541,35 @@ a skončí událostí `result`. Otázky `m5.prompt`/`m5.form` konzole zodpoví p
 `POST /admin/functions/runs/:id/answer` (`answerRun`). Konzole to používá
 všude — balíček, model, lekce, tok.
 
+### 11.4 Přístup k modulu Functions (5.2, hotovo)
+
+Functions je modul v *Modules & groups* (`client/src/lib/modules.ts`,
+`server/access.ts`): výchozí přístup, přístupové skupiny, hlavní skupina
+`mod-functions` a granty. Pro chat a API se model posuzuje podle kandidátů
+`model:<klíčové slovo>`, `model:<id>`, `model:<název>`,
+`package:<balíček>` (položka) a akce `run` (`server/functions/visibility.ts`,
+`permits` v `client/src/lib/modules.ts`: akce i položka musí sedět, pokud
+je grant jmenuje), takže `model:dns*`, `run package:net*` nebo
+`-model:whois` platí pro seznam příkazů (`/api/functions/commands`,
+`m5.functions.list()`) i pro běh. V konzoli chrání `/admin/functions/*`
+akce `edit`, `publish`, `run`, `webhooks` spolu s balíčkem či modelem, kterého
+se požadavek týká (`functionsConsoleRight` ho dohledá i u běhů, plánů,
+webhooků a replayů; inline kód tutoriálu a tvůrce potřebuje jmenované
+`edit`). Každé rozhodnutí může
+jít do logu přístupů (`$DATA_DIR/access/`).
+
+### 11.5 Vestavěné balíčky (5.2, hotovo)
+
+`server/functions/builtins/src/*/index.js` (skutečný JavaScript pro
+sandbox; `npm run gen:builtins` z nich vygeneruje `sources.ts`): knihovna
+`netkit` a modely `/help`, `/whois` (RDAP přes bootstrap IANA), `/dns`,
+`/web`, `/mail`, `/domain`. Hlavní služba je nainstaluje jednou při prvním
+startu (značka `$DATA_DIR/functions/builtins.json`,
+`FUNCTIONS_BUILTINS=0` vypne) — balíček, publikovaná verze 1.0.0 a
+zapnutý model; galerie v *Functions › Packages* je doinstaluje znovu
+(`GET /admin/functions/builtins`, `POST /admin/functions/builtins/:name/install`).
+`/help` čte `m5.functions.list()` — ukáže jen to, co smí volající spustit.
+
 ## 12. Bezpečnost
 
 | Hrozba | Opatření |
@@ -552,7 +612,7 @@ publikace, změny oprávnění a tajemství, ruční zrušení, trusted runtime.
 | Kde | Endpoint |
 |---|---|
 | Aplikace | `GET /api/models` (co smím, s nápovědou) · `POST /api/runs` · `GET /api/runs/:id` · `POST /api/runs/:id/events` (odpověď na prompt, formulář) · `POST /api/runs/:id/cancel` · WS rámce `run.*` (stav, výstupy, stream) |
-| Webhooky | `POST /hooks/:model/:hookId` · `POST /hooks/r/:token` · `GET /hooks/runs/:id` |
+| Webhooky | `ALL /hooks/m/:modelId/:token` · `GET /hooks/m/:modelId/:token/runs/:runId` · `POST …/runs/:runId/answer` · `POST /hooks/r/:token` |
 | Konzole | `/admin/providers*` · `/admin/credentials*` · `/admin/ai/playground` · `/admin/ai/calls` · `/admin/packages*` · `/admin/models*` · `/admin/runs*` · `/admin/webhooks*` · `/admin/schedules*` · `/admin/functions/tutorial` |
 | Interní | runner ↔ hlavní služba: `/internal/runs`, `/internal/deliver`, `/internal/host/*` (volání `m5.*` s I/O) |
 

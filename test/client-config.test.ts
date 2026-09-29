@@ -100,7 +100,11 @@ describe("modules and groups (4.0)", () => {
       modules: { ai: { enabled: true, groups: ["support", "ghost"] }, video: { enabled: false }, nope: { enabled: false } },
     });
     expect(c.groups).toEqual([{ id: "support", label: "Support", members: ["bystry-sokol-7k3q"] }]);
-    expect(c.modules).toEqual({ ai: { enabled: true, groups: ["support"] }, video: { enabled: false, groups: [] } });
+    // 5.2: a 4.0 rule reads as default deny + the listed groups allowed; unset parts get their defaults.
+    expect(c.modules).toEqual({
+      ai: { enabled: true, groups: ["support"], defaultAccess: "deny", groupAccess: "allow", grants: [], log: "all" },
+      video: { enabled: false, groups: [], defaultAccess: "allow", groupAccess: "allow", grants: [], log: "all" },
+    });
     // The public copy never names members.
     expect(publicClientConfig(c).groups).toEqual([{ id: "support", label: "Support", members: [] }]);
   });
@@ -121,9 +125,10 @@ describe("modules and groups (4.0)", () => {
   });
 
   it("the server refuses a switched-off module, not just the app", async () => {
-    const { ClientConfigStore, requireModule, clientConfigStore } = await import("../server/client-config");
+    const { ClientConfigStore, clientConfigStore } = await import("../server/client-config");
+    const { requireModule } = await import("../server/access");
     new ClientConfigStore().set({ modules: { ai: { enabled: false } } });
-    expect(clientConfigStore.get().modules.ai).toEqual({ enabled: false, groups: [] });
+    expect(clientConfigStore.get().modules.ai).toMatchObject({ enabled: false, groups: [] });
     const app = express();
     app.use("/api/ai/complete", requireModule("ai"));
     app.use("/api/speech/tts", requireModule("speech"));

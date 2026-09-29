@@ -38,6 +38,7 @@ import { pluginLog } from "../plugins/log";
 import { base64ToBytes, bytesToBase64 } from "../plugins/types";
 import { checkMasterKey } from "../storage/keys";
 import { layoutGroups } from "../layout-catalog";
+import { switchRefused } from "../access";
 
 const actorOf = (res: Response): string => String(res.locals.adminName ?? "admin");
 const isOwner = (res: Response): boolean => res.locals.adminRole === "owner";
@@ -143,10 +144,13 @@ export function registerAiAdminRoutes(app: Express): void {
 
   const switches = (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
-    const change: { ai?: boolean; speech?: boolean } = {};
+    const change: { ai?: boolean; speech?: boolean; functions?: boolean } = {};
     if (typeof body.ai === "boolean") change.ai = body.ai;
     if (typeof body.speech === "boolean") change.speech = body.speech;
+    if (typeof body.functions === "boolean") change.functions = body.functions;
     if (!Object.keys(change).length) return res.status(400).json({ ok: false, message: "Send { ai: true|false } and/or { speech: true|false }." });
+    const refused = switchRefused(req, res, Object.keys(change));
+    if (refused) return res.status(403).json({ ok: false, code: "module-denied", message: refused });
     const actor = actorOf(res);
     const r = setPluginSwitches(change, actor);
     if (!r.ok) return res.status(409).json({ ok: false, message: r.message });

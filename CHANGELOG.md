@@ -5,6 +5,134 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [5.2.0] – 2026-09-29
+
+Nástroje konzole jako **moduly s řízeným přístupem**, **webhooky s plným
+logem a replayem**, opravené spouštění příkazů `/` v chatu a vestavěné
+příkazy **`/help`**, **`/whois`**, **`/dns`**, **`/web`**, **`/mail`**
+a **`/domain`**.
+
+### Přidáno
+- **Nástroje jako moduly** (*Modules & groups*): *Functions*, *AI & speech*
+  (`ai` a `speech`), *Telephony & SIP*, *Layout builder* a *Menu builder*
+  mají každý svůj řádek s nastavením:
+  - **výchozí přístup** `allow` / `deny` — pro ty, kdo nejsou v žádné
+    skupině modulu;
+  - **přístup skupin** `allow` / `deny` a **přístupové skupiny** — jejich
+    členové mají přístup povolený, nebo naopak zakázaný;
+  - **hlavní skupina** `mod-<modul>` se všemi právy — vznikne sama, když
+    chybí (při startu služeb i při otevření stránky);
+  - **granty** skupin: jen části modulu, se zástupnými znaky a odebráním
+    přes `-`. *Functions*: `model:dns*`, `package:net*`, `*check`,
+    `-model:whois`, `run`, `edit`, `publish`, `webhooks`. *AI*:
+    `provider:openai`, `model:anthropic/claude*`, `-provider:elevenlabs`,
+    `chat`, `settings`, `playground`. *Speech*: `provider:local`,
+    `model:local/piper-cs*`, `tts`, `stt`. *Telephony & SIP*:
+    `sms`, `call`, `number:+420*`, `settings`, `test`. *Layout / Menu
+    builder*: `edit`, `publish`, `history`;
+  - **log** přístupů: vše / jen odmítnutí / vypnuto;
+  - **„Test access“** vysvětlí rozhodnutí pro uživatele, správce konzole
+    (`admin:jméno@role`) nebo hosta.
+
+  Členy skupin mohou být uživatelé aplikace i správci konzole
+  (`admin:jméno`); skupiny `admin`, `admin-owner`, `admin-operator`
+  a `admin-auditor` jsou vestavěné. Konzole schová nástroje, ke kterým
+  správce přístup nemá; **vlastník konzole se nikdy nezamkne**.
+- **Rychlé a logované kontroly** (`server/access.ts`): rozhodnutí se
+  kešuje podle konfigurace a skupin, práva jsou předkompilované vzory.
+  Kontrolují se API aplikace i konzole: běh a seznam příkazů Functions
+  (i webhooky), modely a poskytovatelé AI a řeči (seznam i volání), SMS
+  a hovory telefonie podle čísla, zápisy v Layout a Menu builderu.
+- **Log přístupů** (`server/access-log.ts`): povolení i odmítnutí
+  s modulem, subjektem, důvodem, právem, cestou a IP; denní soubory
+  `$DATA_DIR/access/access-RRRR-MM-DD.jsonl` (zápis po dávkách,
+  `ACCESS_LOG_DAYS`, výchozí 30; `ACCESS_LOG=0` vypne). V konzoli karta
+  s filtry, statistikou a živým obnovováním; `GET /admin/access/log`,
+  `GET /admin/access/me`, `POST /admin/access/explain`.
+- **Přepínače služeb** *AI*, *Speech* a nově **Functions** přímo
+  v *Modules & groups* (a v hlavičce konzole *Functions*):
+  `GET /api/admin/modules/state`, `PUT /api/admin/modules/switches`.
+- **Webhooky** (konzole *Functions › Webhooks*):
+  - seznam endpointů všech modelů — zapnutí, URL, nová URL (rotace
+    tokenu), **režim** `sync` / `async` (202 s adresou stavu) / `auto`
+    (odpoví do `WEBHOOK_AUTO_WAIT_MS`, výchozí 25 s, jinak 202), zpětné
+    volání (`?callback=` nebo `X-Callback-URL`, přes ochranu SSRF),
+    HMAC podpis a úroveň logu (`full` / bez těl / `off`);
+  - **plný log** každého volání: metoda, cesta, dotaz, hlavičky (tajné
+    maskované), tělo do 256 kB, **rozparsované proměnné** (JSON, formulář,
+    multipart se soubory, XML, text, binární data), odpověď s hlavičkami
+    a tělem, běh, doba a chyba; filtry a statistiky;
+  - **replay** na publikované verzi i na **konceptu** a „Debug in the
+    editor“ — vstupy volání se otevřou v testovacím formuláři balíčku;
+    „Copy as curl“;
+  - **asynchronní volání**: `GET …/runs/:runId` vrátí stav, výstupy
+    a otázky, na které běh čeká, a `POST …/runs/:runId/answer` na ně
+    odpoví; tělo může být i `{"inputs": {…}}` jako u API.
+- **Aktivační znaky psaní zprávy** (*Modules & groups › Message input*):
+  `/` příkazy, `@` zmínky (lidé v místnosti), `#` štítky — lze přidat
+  další znaky (např. `!` pro příkazy) a předvolené štítky. `@jméno` a `#štítek`
+  se ve zprávách zvýrazní; klik na štítek filtruje konverzaci.
+- **Vestavěné balíčky** (`server/functions/builtins`), nainstalované při
+  prvním startu (`FUNCTIONS_BUILTINS=0` vypne) a v galerii *Functions ›
+  Packages*:
+  - **`/help`** — návod: syntaxe, všechny příkazy, které smí volající
+    spustit, s parametry, výchozími hodnotami a příklady, webhooky a API,
+    štítky; `/help dns` vysvětlí jeden příkaz, `/help ?` nabídne výběr;
+  - **`/whois`** — držitel domény nebo IP přes RDAP (registrátor, data,
+    stav, name servery, DNSSEC, abuse);
+  - **`/dns`** — záznamy `full`, A, AAAA, CNAME, MX, NS, TXT, SOA, CAA,
+    SRV, PTR;
+  - **`/web`** — analýza stránky: stav, rychlost, server a technologie,
+    bezpečnostní hlavičky, meta a SEO, robots.txt, sitemap, odkazy,
+    sociální sítě;
+  - **`/mail`** — MX a poskytovatel, SPF, DKIM, DMARC, MTA-STS, TLS-RPT,
+    BIMI, skóre a doporučení;
+  - **`/domain`** — celkový obraz domény: registrace, DNS, web, hosting,
+    e-mail, sociální sítě a odkazy;
+  - sdílená knihovna **`netkit`** (`pkg:netkit`). Bez zadaného vstupu
+    ukáže příkaz formulář.
+- SDK: **`m5.functions.list()`** a **`m5.functions.get()`** — příkazy,
+  které smí volající spustit (JS i Python).
+
+### Změněno
+- Seznam příkazů v chatu se obnovuje (každou minutu, po návratu na
+  záložku a před odesláním neznámého příkazu); našeptávač řekne, když je
+  služba Functions vypnutá nebo žádný příkaz není k dispozici.
+- Příkaz s viditelností „místnost“ se bez příjemců spustí aspoň lokálně.
+- Pravidla modulů mají nový tvar (`defaultAccess`, `groupAccess`,
+  `grants`, `log`); stará pravidla se načtou beze změny chování.
+- Běhy funkcí a log webhooků se uklízejí po `FUNCTIONS_RUNS_DAYS`
+  (výchozí 30 dní).
+
+### Opraveno
+- **`/` v chatu nespouštěl příkazy**: služba Functions byla ve výchozím
+  stavu vypnutá a konzole neměla přepínač; seznam příkazů se nikdy
+  neobnovil.
+- Webhooky dostávaly **prázdné tělo** — globální parsery JSON a formulářů
+  ho spotřebovaly dřív (HMAC podpis tak nešlo ověřit).
+- Úklid starých běhů funkcí se nikdy nespouštěl.
+
+### Bezpečnost
+- Webhooky: token se porovnává v konstantním čase, v logu je maskovaný
+  (i v cestě); `Authorization`, `Cookie` a podpisy se v logu maskují
+  a funkci se `Authorization` a `Cookie` nepředávají. Zpětné volání prochází
+  stejnou ochranou SSRF jako `m5.http`. Seznam příkazů pro klienty
+  neobsahuje tajné údaje.
+- Odmítnutí přístupu jsou vždy v logu (pokud ho modul nevypne).
+- Práva kombinují akci a položku (`chat provider:local` neotevře ostatní
+  poskytovatele, `run model:dns*` ostatní příkazy); konzole Functions
+  kontroluje balíček či model u každé změny, běhu, plánu i replaye.
+- Pravidla nástrojových modulů, skupiny se správci konzole a přepínače
+  služeb smí měnit jen vlastník, resp. správce s právem `settings`/`edit`
+  daného nástroje; `/admin/plugins` hlídá modul AI.
+- Token webhooku, tajemství HMAC a API token vidí jen ten, kdo smí webhooky
+  modelu měnit; tajné hlavičky (i `X-Gitlab-Token`, `Stripe-Signature`…)
+  se maskují v logu i v uložených vstupech běhu, token ve `statusUrl`
+  odpovědi 202 také. Úroveň logu `meta` neukládá výstupy.
+- „Copy as curl“ uvozuje všechny hodnoty pro shell (tělo volání mohl
+  poslat kdokoli, kdo zná URL). Webhook odpovídá jen na otázky vlastních
+  běhů. Vypnutý modul Functions zastaví i API `/api/functions/call`.
+
 ## [5.1.0] – 2026-09-28
 
 Konzole *Functions* přepracovaná pro pohodlné psaní i **skládání** funkcí,

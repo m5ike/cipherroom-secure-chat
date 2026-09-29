@@ -66,6 +66,7 @@
     const el = root();
     if (!el || !data) return;
     if (runsTimer) { clearInterval(runsTimer); runsTimer = null; }
+    if (hookTimer) { clearInterval(hookTimer); hookTimer = null; }
     stashEditor();
     for (const v of mounted.splice(0)) { try { v.destroy(); } catch { /* gone */ } }
     clear(el);
@@ -77,6 +78,7 @@
     else if (tab === "models") el.append(modelsView());
     else if (tab === "schedules") el.append(schedulesView());
     else if (tab === "tutorial") el.append(tutorialView());
+    else if (tab === "webhooks") el.append(webhooksView());
     else el.append(runsView());
   }
 
@@ -84,7 +86,15 @@
     const s = data.stats || { runs24h: 0, failed24h: 0, avgMs: 0 };
     const on = data.models.filter((m) => m.enabled).length;
     const stat = (label, value, hint, cls) => h("div", { class: `fn-stat${cls ? " " + cls : ""}`, title: hint || "" }, h("div", { class: "fn-stat__v" }, String(value)), h("div", { class: "fn-stat__l" }, label));
+    const svc = data.service || { enabled: true, source: "default" };
+    const svcToggle = h("input", { type: "checkbox", checked: svc.enabled || undefined, disabled: svc.source === "env" || !writable() || undefined, title: svc.source === "env" ? `Fixed by ${svc.env}` : "The Functions service: chat commands, webhooks, the API, schedules" });
+    svcToggle.addEventListener("change", async () => {
+      try { await api("/api/admin/modules/switches", { method: "PUT", body: { functions: svcToggle.checked } }); toast(svcToggle.checked ? "Functions are running: /commands, webhooks and the API work." : "Functions stopped.", "ok"); await load(); }
+      catch (e) { toast(e.message, "err"); svcToggle.checked = !svcToggle.checked; }
+    });
     return h("div", { class: "fn-stats" },
+      h("div", { class: `fn-stat${svc.enabled ? "" : " fn-stat--warn"}`, title: "Off: nothing runs from the chat, webhooks or the API (the console's tests still do)" },
+        h("label", { class: "fn-switch" }, svcToggle, h("span", { class: "fn-stat__v" }, svc.enabled ? "on" : "off")), h("div", { class: "fn-stat__l" }, svc.source === "env" ? `service · ${svc.env}` : "service")),
       stat("packages", data.packages.length, "Code packages (JavaScript or Python)"),
       stat("models", `${on}/${data.models.length}`, "Models switched on / all"),
       stat("schedules", (data.schedules || []).length, "Cron schedules"),
@@ -96,7 +106,7 @@
 
   function tabs() {
     const bar = h("div", { class: "fn-tabs", role: "tablist" });
-    const items = [["packages", "Packages", data.packages.length], ["builder", "Builder", null], ["models", "Models", data.models.length], ["schedules", "Schedules", (data.schedules || []).length], ["runs", "Runs", null], ["tutorial", "Tutorial", null]];
+    const items = [["packages", "Packages", data.packages.length], ["builder", "Builder", null], ["models", "Models", data.models.length], ["schedules", "Schedules", (data.schedules || []).length], ["webhooks", "Webhooks", data.models.filter((m) => m.executors && m.executors.webhook && m.executors.webhook.enabled).length], ["runs", "Runs", null], ["tutorial", "Tutorial", null]];
     for (const [id, label, n] of items) {
       bar.append(h("button", { class: `fn-tab${tab === id ? " fn-tab--on" : ""}`, role: "tab", "aria-selected": tab === id ? "true" : "false", onclick: () => go(id) }, label, n !== null ? h("span", { class: "fn-tab__n" }, String(n)) : null));
     }
@@ -206,6 +216,9 @@
         homeCard("▶", "Tutorial", "Short lessons that run right here.", () => go("tutorial")));
     }
     box.append(cards);
+    const gallery = h("div", { class: "fn-builtins mt8" });
+    box.append(gallery);
+    void builtinGallery(gallery);
     return box;
   }
   const homeCard = (icon, title, text, onclick) => h("button", { class: "fn-home__card", onclick }, h("span", { class: "fn-home__icon" }, icon), h("strong", {}, title), h("span", { class: "muted small" }, text));
@@ -718,6 +731,7 @@
     const apiOn = h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: m.executors.api.enabled, disabled: ro, onchange: (e) => { m.executors.api.enabled = e.target.checked; } }), " API (bearer token)");
     const hookBox = h("fieldset", { class: "fn-fs" }, h("legend", {}, "Webhook & API"), h("div", { class: "fn-grid2" }, hookOn, apiOn));
     const copyField = (label, value, note) => h("label", { class: "field mt8" }, h("span", { class: "label" }, label), h("div", { class: "fn-row" }, h("input", { class: "input fn-mono", readonly: "readonly", value }), h("button", { class: "btn btn--sm", onclick: () => { navigator.clipboard && navigator.clipboard.writeText(value); toast("Copied.", "ok"); } }, "Copy")), note ? h("span", { class: "muted small" }, note) : null);
+    if (m.secretsHidden) hookBox.append(h("p", { class: "muted small" }, "The webhook URL, its HMAC secret and the API token are hidden: only who may change this model's webhooks sees them (Modules & groups › Functions)."));
     if (m.webhookUrl) hookBox.append(copyField("Webhook URL (keep it secret)", m.webhookUrl, m.webhookUrl.startsWith("http") ? "POST JSON here to run the model." : "Set PUBLIC_URL on the server for an absolute URL."));
     if (m.executors.api.enabled && m.executors.api.token) hookBox.append(copyField(`API — POST /api/functions/call/${m.id}`, `curl -X POST -H "Authorization: Bearer ${m.executors.api.token}" -H "Content-Type: application/json" -d '{}' ${location.origin.replace(/\/$/, "")}/api/functions/call/${m.id}`, "Replace the host with the chat's address if the console runs elsewhere."));
     form.append(hookBox);
@@ -937,6 +951,227 @@
         },
       });
     }
+  }
+
+  /* ============================================================ webhooks (5.2) */
+
+  let hookFilter = { model: "", kind: "", status: "" };
+  let hookTimer = null;
+
+  function webhooksView() {
+    const wrap = h("div", { class: "stack" });
+    const endpoints = h("div", { class: "card" }, h("div", { class: "muted small p8" }, "Loading…"));
+    const log = h("div", { class: "card" });
+    wrap.append(endpoints, log);
+    const acc = C.moduleAccess ? C.moduleAccess("functions") : null;
+    if (acc && acc.allowed && acc.rights && !acc.rights.some((r) => r === "*" || /^(webhooks|edit)$/.test(r))) {
+      clear(endpoints); endpoints.append(h("div", { class: "empty" }, "Your access to Functions does not include webhooks (Modules & groups)."));
+      return wrap;
+    }
+    void drawEndpoints(endpoints);
+    drawLog(log);
+    return wrap;
+  }
+
+  async function drawEndpoints(card) {
+    let d;
+    try { d = await api("/admin/functions/webhooks"); } catch (e) { clear(card); card.append(h("div", { class: "fn-err" }, e.message)); return; }
+    clear(card);
+    card.append(h("div", { class: "fn-side__head" }, h("span", {}, "Webhook endpoints"), h("span", { class: "muted small" }, `public address: ${d.publicUrl || "(PUBLIC_URL not set — relative)"} · auto waits ${Math.round(d.autoWaitMs / 1000)} s`)));
+    card.append(h("p", { class: "muted small" }, "Every model can be reached by an HTTP POST to its secret URL — JSON, a form or multipart become its inputs. sync answers with the outputs; async answers at once (202) with a status URL; auto answers with the outputs when the run ends in time, else like async. A caller may name ?callback= (or X-Callback-URL) to get the result POSTed; a run that asks (m5.prompt / m5.form) is answered at …/runs/<id>/answer. Every call is logged (headers, bodies, answer) and can be replayed."));
+    const table = h("table", { class: "tbl fn-hooks" });
+    table.append(h("thead", {}, h("tr", {}, ...["Model", "Webhook", "Mode", "Log", "Callback", "Calls", "URL", ""].map((t) => h("th", {}, t)))));
+    const tb = h("tbody");
+    for (const e of d.endpoints) {
+      const put = async (body, note) => {
+        try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}`, { method: "PUT", body }); toast(note || "Saved.", "ok"); void drawEndpoints(card); await loadQuiet(); }
+        catch (err) { toast(err.message, "err"); }
+      };
+      const mode = h("select", { class: "input input--sm", disabled: !writable() || !e.enabled || undefined }, ...[["sync", "sync"], ["async", "async (202)"], ["auto", "auto"]].map(([v, l]) => h("option", { value: v, selected: e.mode === v || undefined }, l)));
+      mode.addEventListener("change", () => put({ mode: mode.value }, `Mode: ${mode.value}.`));
+      const logSel = h("select", { class: "input input--sm", disabled: !writable() || !e.enabled || undefined }, ...[["full", "full"], ["meta", "no bodies"], ["off", "off"]].map(([v, l]) => h("option", { value: v, selected: e.log === v || undefined }, l)));
+      logSel.addEventListener("change", () => put({ log: logSel.value }, `Log: ${logSel.value}.`));
+      const cb = h("input", { type: "checkbox", checked: e.callback || undefined, disabled: !writable() || !e.enabled || undefined });
+      cb.addEventListener("change", () => put({ callback: cb.checked }, cb.checked ? "Callbacks allowed." : "Callbacks off."));
+      const curl = e.url ? `curl -X POST -H 'Content-Type: application/json' -d ${shq(JSON.stringify(Object.fromEntries((e.inputs || []).slice(0, 3).map((i) => [i.name, i.default ?? (i.type === "number" || i.type === "integer" ? 1 : "value")]))))} ${shq(e.url)}` : "";
+      tb.append(h("tr", { class: e.enabled ? "" : "fn-hooks__off" },
+        h("td", {}, h("strong", {}, e.name), e.keyword ? h("span", { class: "muted small" }, ` /${e.keyword}`) : null, e.modelEnabled ? null : h("span", { class: "badge", title: "The model is switched off" }, "model off")),
+        h("td", {}, writable() ? h("button", { class: `btn btn--xs${e.enabled ? "" : " btn--primary"}`, onclick: () => put(e.enabled ? { enabled: false } : { enabled: true, mode: e.mode === "sync" && !e.url ? "auto" : e.mode }, e.enabled ? "Webhook off." : "Webhook on — copy its URL.") }, e.enabled ? "on — turn off" : "Create / turn on") : h("span", { class: `badge badge--${e.enabled ? "ok" : ""}` }, e.enabled ? "on" : "off")),
+        h("td", {}, mode), h("td", {}, logSel), h("td", {}, cb),
+        h("td", { class: "fn-num" }, e.stats ? h("button", { class: "btn btn--xs", "data-read": "1", title: "Show its calls", onclick: () => { hookFilter.model = e.modelId; drawLog(card.nextElementSibling); } }, `${e.stats.calls}${e.stats.errors ? ` · ${e.stats.errors} ✗` : ""}`) : "—"),
+        h("td", {}, e.url ? h("div", { class: "fn-row" }, h("button", { class: "btn btn--xs", "data-read": "1", onclick: () => copy(e.url, "URL copied.") }, "Copy URL"), h("button", { class: "btn btn--xs", "data-read": "1", onclick: () => copy(curl, "curl copied.") }, "curl")) : h("span", { class: "muted small", title: e.hidden ? "Only who may change this model's webhooks sees its URL (Modules & groups › Functions: webhooks or edit)." : "" }, e.hidden ? "hidden" : "—")),
+        h("td", {}, writable() && e.enabled ? h("button", { class: "btn btn--xs btn--danger", title: "A new secret URL; the old one stops working", onclick: async () => { if (await confirmDialog(`Issue a new URL for “${e.name}”? The current one stops working at once.`, true)) void put({ rotate: true }, "New URL issued."); } }, "New URL") : null)));
+    }
+    table.append(tb);
+    card.append(h("div", { class: "fn-tablewrap" }, table));
+    if (d.durable.length) {
+      card.append(h("div", { class: "fn-side__head mt8" }, h("span", {}, "Durable webhooks (m5.webhook.create — they run on_event later)")));
+      const t2 = h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, ...["Token", "Model", "Runs", "Once", "Expires", "Made for"].map((x) => h("th", {}, x)))));
+      const b2 = h("tbody");
+      for (const w of d.durable) {
+        const m = data.models.find((x) => x.id === w.modelId);
+        b2.append(h("tr", {}, h("td", { class: "fn-mono" }, w.hook), h("td", {}, m ? m.name : w.modelId), h("td", { class: "fn-mono small" }, w.entry), h("td", {}, w.once ? "yes" : "no"), h("td", {}, w.expiresAt ? new Date(w.expiresAt).toLocaleString() : "never"), h("td", {}, w.caller)));
+      }
+      t2.append(b2); card.append(t2);
+    }
+  }
+
+  function copy(text, note) { try { navigator.clipboard.writeText(text); toast(note, "ok"); } catch { toast("Copy failed.", "err"); } }
+  /** A value for a POSIX shell, single-quoted: nothing inside is interpreted. */
+  function shq(v) { return `'${String(v ?? "").replace(/'/g, "'\\''")}'`; }
+  async function loadQuiet() { try { data = await api("/admin/functions"); } catch { /* keep */ } }
+
+  function drawLog(card) {
+    if (!card) return;
+    if (hookTimer) { clearInterval(hookTimer); hookTimer = null; }
+    clear(card);
+    const modelSel = h("select", { class: "input input--sm" }, h("option", { value: "" }, "all models"), ...data.models.map((m) => h("option", { value: m.id, selected: hookFilter.model === m.id || undefined }, m.name)));
+    const kindSel = h("select", { class: "input input--sm" }, ...[["", "all kinds"], ["model", "model webhooks"], ["run", "run (live wait)"], ["durable", "durable (on_event)"], ["replay", "replays"]].map(([v, l]) => h("option", { value: v, selected: hookFilter.kind === v || undefined }, l)));
+    const statusSel = h("select", { class: "input input--sm" }, ...[["", "all answers"], ["ok", "2xx"], ["error", "errors"]].map(([v, l]) => h("option", { value: v, selected: hookFilter.status === v || undefined }, l)));
+    const auto = h("input", { type: "checkbox" });
+    const body = h("div", {}, h("div", { class: "muted small p8" }, "Loading…"));
+    const fill = async () => {
+      hookFilter = { model: modelSel.value, kind: kindSel.value, status: statusSel.value };
+      const q = new URLSearchParams({ limit: "150" });
+      if (hookFilter.model) q.set("model", hookFilter.model);
+      if (hookFilter.kind) q.set("kind", hookFilter.kind);
+      if (hookFilter.status) q.set("status", hookFilter.status);
+      try {
+        const r = await api(`/admin/functions/webhooks/calls?${q}`);
+        clear(body);
+        if (!r.calls.length) { body.append(h("div", { class: "muted small p8" }, "No calls yet.")); return; }
+        const table = h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, ...["When", "Model", "Kind", "Request", "Body", "Answer", "ms", "Run"].map((t) => h("th", {}, t)))));
+        const tb = h("tbody");
+        for (const c of r.calls) {
+          const m = data.models.find((x) => x.id === c.modelId);
+          const st = c.status >= 200 && c.status < 300 ? "ok" : c.status === 0 ? "" : "err";
+          tb.append(h("tr", { class: "fn-run-row", onclick: () => showCall(c.id) },
+            h("td", { title: new Date(c.at).toLocaleString() }, when(c.at)),
+            h("td", {}, m ? m.name : c.modelId || "—"),
+            h("td", {}, c.kind, c.replayOf ? h("span", { class: "muted small" }, " ↻") : null),
+            h("td", { class: "fn-mono small" }, `${c.method} ${c.path}`),
+            h("td", { class: "small" }, c.parsed ? c.parsed.kind : "—", h("span", { class: "muted" }, ` ${c.bodySize} B`)),
+            h("td", {}, h("span", { class: `badge badge--${st}` }, String(c.status || "…")), c.result ? h("span", { class: "muted small" }, ` → ${c.result.status}${c.result.callback ? ` · cb ${c.result.callback.status || "✗"}` : ""}`) : null),
+            h("td", { class: "fn-num" }, String(c.ms)),
+            h("td", { class: "fn-mono small" }, c.runId ? c.runId.slice(-8) : "")));
+        }
+        table.append(tb);
+        body.append(h("div", { class: "fn-tablewrap" }, table));
+      } catch (e) { clear(body); body.append(h("div", { class: "fn-err" }, e.message)); }
+    };
+    for (const el of [modelSel, kindSel, statusSel]) el.addEventListener("change", fill);
+    auto.addEventListener("change", () => { if (hookTimer) { clearInterval(hookTimer); hookTimer = null; } if (auto.checked) hookTimer = setInterval(() => { if (!card.isConnected) { clearInterval(hookTimer); hookTimer = null; return; } void fill(); }, 5000); });
+    card.append(h("div", { class: "fn-side__head" }, h("span", {}, "Webhook calls"), h("span", { class: "fn-row" }, modelSel, kindSel, statusSel, h("label", { class: "fn-switch small" }, auto, " live"), h("button", { class: "btn btn--sm", onclick: fill }, "Refresh"),
+      writable() ? h("button", { class: "btn btn--sm btn--danger", onclick: async () => { if (!(await confirmDialog(hookFilter.model ? "Clear this model's webhook log?" : "Clear the whole webhook log?", true))) return; try { const r = await api(`/admin/functions/webhooks/calls${hookFilter.model ? `?model=${encodeURIComponent(hookFilter.model)}` : ""}`, { method: "DELETE" }); toast(`${r.deleted} calls removed.`, "ok"); void fill(); } catch (e) { toast(e.message, "err"); } } }, "Clear") : null)), body);
+    void fill();
+  }
+
+  async function showCall(id) {
+    let d;
+    try { d = await api(`/admin/functions/webhooks/calls/${encodeURIComponent(id)}`); } catch (e) { toast(e.message, "err"); return; }
+    const c = d.call;
+    const Kit = window.M5Kit;
+    const box = h("div", { class: "stack fn-call" });
+    const kv = (obj) => { const t = h("table", { class: "tbl fn-kv" }); const tb = h("tbody"); for (const [k, v] of Object.entries(obj || {})) tb.append(h("tr", {}, h("td", { class: "fn-mono small" }, k), h("td", { class: "fn-mono small" }, typeof v === "string" ? v : JSON.stringify(v)))); t.append(tb); return Object.keys(obj || {}).length ? t : h("span", { class: "muted small" }, "—"); };
+    const pretty = (text, ct) => { if (!text) return h("span", { class: "muted small" }, "(empty)"); let t = text; let lang = "text"; if (/json/.test(ct || "") || /^\s*[[{]/.test(text)) { try { t = JSON.stringify(JSON.parse(text), null, 2); lang = "json"; } catch { /* as is */ } } return codeBlock(t, lang); };
+    const st = c.status >= 200 && c.status < 300 ? "ok" : "err";
+    box.append(h("div", { class: "fn-run__status" }, h("span", { class: `badge badge--${st}` }, String(c.status)), h("span", { class: "muted small" }, `${new Date(c.at).toLocaleString()} · ${c.kind} · ${c.ms} ms · ${c.ip}${c.replayOf ? ` · replay of ${c.replayOf}` : ""}`)));
+    const tabs = h("div", { class: "fn-help__tabs" });
+    const pane = h("div", { class: "stack" });
+    const panes = {
+      request: () => [h("div", { class: "fn-mono" }, `${c.method} ${c.path}`), h("div", { class: "muted small" }, "Query"), kv(c.query), h("div", { class: "muted small" }, `Headers (secrets masked)`), kv(c.headers), h("div", { class: "muted small" }, `Body — ${c.contentType || "no content type"} · ${c.bodySize} B · ${c.parsed ? c.parsed.kind : "—"}`), pretty(c.body, c.contentType)],
+      variables: () => { const t = h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, h("th", {}, "Variable"), h("th", {}, "Type"), h("th", {}, "Value")))); const tb = h("tbody"); for (const v of d.variables) tb.append(h("tr", {}, h("td", { class: "fn-mono small" }, v.path), h("td", { class: "muted small" }, v.type), h("td", { class: "fn-mono small" }, v.value))); t.append(tb); return [h("p", { class: "muted small" }, "What the model gets: the body's fields (and the query's) are its inputs; the whole request is in inputs._webhook."), t]; },
+      response: () => [h("div", {}, h("span", { class: `badge badge--${st}` }, String(c.status))), kv(c.responseHeaders), pretty(c.responseBody, "application/json"), c.result ? h("div", { class: "stack" }, h("div", { class: "muted small" }, "The run's result (async / auto)"), pretty(JSON.stringify(c.result), "application/json")) : null],
+      run: () => {
+        if (!d.run) return [h("span", { class: "muted small" }, "No run.")];
+        const out = h("div", {});
+        renderRunDetail(out, d.run, d.logs);
+        return [out];
+      },
+    };
+    let current = "request";
+    const draw = () => { clear(tabs); for (const [k, l] of [["request", "Request"], ["variables", "Variables"], ["response", "Response"], ["run", "Run & logs"]]) tabs.append(h("button", { class: `fn-help__tab${k === current ? " is-on" : ""}`, onclick: () => { current = k; draw(); } }, l)); clear(pane); pane.append(...panes[current]().filter(Boolean)); };
+    draw();
+    box.append(tabs, pane);
+    const replayBox = h("div", { class: "fn-run__result" });
+    const actions = h("div", { class: "fn-row mt8" });
+    if (writable() && d.model) {
+      const replay = (target) => async () => {
+        try {
+          clear(replayBox);
+          const r = await api(`/admin/functions/webhooks/calls/${encodeURIComponent(c.id)}/replay`, { method: "POST", body: { target } });
+          replayBox.append(h("div", { class: "muted small" }, `Replay on the ${target === "draft" ? "draft (debugging)" : "published version"} — run ${r.runId}`));
+          followRunInto(replayBox, r.runId);
+        } catch (e) { toast(e.message, "err"); }
+      };
+      actions.append(h("button", { class: "btn btn--sm btn--primary", onclick: replay("published") }, "↻ Replay"),
+        h("button", { class: "btn btn--sm", title: "Run the same request on the package's draft — to debug the script", onclick: replay("draft") }, "↻ Replay on draft"));
+    }
+    if (d.model && d.model.packageId) {
+      const inputs = c.parsed && c.parsed.value && typeof c.parsed.value === "object" && !Array.isArray(c.parsed.value) ? c.parsed.value : { body: c.parsed ? c.parsed.value : null };
+      actions.append(h("button", { class: "btn btn--sm", title: "Open the package with this request as its test inputs", onclick: () => { try { localStorage.setItem(`m5cet:fn-inputs:${d.model.packageId}`, JSON.stringify({ ...inputs, _webhook: { method: c.method, headers: c.headers, query: c.query } })); } catch { /* none */ } if (dlg) dlg.close(); void openPackage(d.model.packageId); } }, "Debug in the editor"));
+    }
+    // Every value single-quoted for the shell — the logged request came from anyone who knew the URL.
+    actions.append(h("button", { class: "btn btn--sm", "data-read": "1", onclick: () => copy(`curl -X ${/^[A-Z]{3,7}$/.test(c.method) ? c.method : "POST"} -H ${shq(`Content-Type: ${c.contentType || "application/json"}`)} --data-binary ${shq(c.body)} '<webhook URL>'`, "curl copied (put the URL in).") }, "Copy as curl"));
+    box.append(actions, replayBox);
+    const dlg = Kit && Kit.openDialog ? Kit.openDialog({ title: `Webhook call ${c.id}`, subtitle: d.model ? `${d.model.name} · ${d.model.entry}` : "", body: box, wide: true }) : null;
+  }
+
+  /** A finished run with its logs (for the call detail). */
+  function renderRunDetail(el, run, logs) {
+    clear(el);
+    el.append(h("div", { class: "fn-run__status" }, h("span", { class: `badge badge--${run.status === "done" ? "ok" : "err"}` }, run.status), h("span", { class: "muted small" }, `${run.ms} ms · ${run.memMb} MB · ${run.id}`)));
+    if (run.error) el.append(h("pre", { class: "fn-err" }, `${run.error.type}: ${run.error.message}${run.error.stack ? "\n" + run.error.stack : ""}`));
+    for (const o of run.outputs || []) el.append(OUT(o));
+    if (logs && logs.length) { const pre = h("pre", { class: "fn-logs" }); for (const l of logs) pre.append(h("div", { class: `fn-log fn-log--${l.level}` }, h("span", { class: "fn-log__lvl" }, l.level), ` ${l.msg}${l.fields ? "  " + JSON.stringify(l.fields) : ""}`)); el.append(pre); }
+  }
+
+  /** Follows a live run started elsewhere (a replay) into an element. */
+  async function followRunInto(el, runId) {
+    const out = h("div", {});
+    el.append(out);
+    const logs = h("pre", { class: "fn-logs" });
+    const status = h("div", { class: "fn-run__status" }, h("span", { class: "fn-spin" }), h("span", { class: "badge" }, "running"));
+    out.append(status, logs);
+    try {
+      const res = await C.raw(`/admin/functions/runs/${encodeURIComponent(runId)}/live`);
+      const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf("\n\n")) >= 0) {
+          const line = buf.slice(0, i).split("\n").find((l) => l.startsWith("data: ")); buf = buf.slice(i + 2);
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(6));
+          if (ev.type === "log") logs.append(h("div", { class: `fn-log fn-log--${ev.level}` }, h("span", { class: "fn-log__lvl" }, ev.level), ` ${ev.msg}${ev.fields ? "  " + JSON.stringify(ev.fields) : ""}`));
+          else if (ev.type === "output") out.append(OUT(ev.output));
+          else if (ev.type === "result") { clear(status); if (ev.ok) { status.append(h("span", { class: `badge badge--${ev.run.status === "done" ? "ok" : "err"}` }, ev.run.status), h("span", { class: "muted small" }, ` ${ev.run.ms} ms`)); if (ev.run.error) out.append(h("pre", { class: "fn-err" }, `${ev.run.error.type}: ${ev.run.error.message}${ev.run.error.stack ? "\n" + ev.run.error.stack : ""}`)); } else status.append(h("span", { class: "fn-err" }, ev.message)); }
+        }
+      }
+    } catch (e) { out.append(h("div", { class: "fn-err" }, e.message)); }
+  }
+
+  /* ============================================================ built-in gallery (5.2) */
+
+  async function builtinGallery(box) {
+    let d;
+    try { d = await api("/admin/functions/builtins"); } catch { return; }
+    clear(box);
+    box.append(h("div", { class: "fn-side__head" }, h("span", {}, "Built-in commands and demos"), h("span", { class: "muted small" }, "/help and ready-made network tools — installed once on the first start; install again, or update, here.")));
+    const grid = h("div", { class: "fn-gallery" });
+    for (const b of d.builtins) {
+      const state = !b.installed ? "not installed" : b.current ? `v${b.version}` : `update to v${b.version}`;
+      grid.append(h("div", { class: "fn-gallery__card" },
+        h("div", { class: "fn-row" }, h("strong", {}, b.keyword ? `/${b.keyword}` : b.name), h("span", { class: `badge${b.kind === "system" ? " badge--accent" : ""}` }, b.kind), h("span", { class: "fn-grow" }), h("span", { class: `badge badge--${b.installed && b.current ? "ok" : "warn"}` }, state)),
+        h("div", { class: "muted small" }, b.summary || b.description),
+        h("div", { class: "fn-row" },
+          writable() && (!b.installed || !b.current || (b.keyword && !b.model)) ? h("button", { class: "btn btn--xs btn--primary", onclick: async () => { try { const r = await api(`/admin/functions/builtins/${encodeURIComponent(b.name)}/install`, { method: "POST", body: {} }); const notes = r.results.filter((x) => x.message).map((x) => x.message); toast(notes.length ? notes.join(" ") : `${b.name} installed.`, notes.length ? "err" : "ok"); await load(); } catch (e) { toast(e.message, "err"); } } }, b.installed ? "Update / repair" : "Install") : null,
+          b.installed ? h("button", { class: "btn btn--xs", onclick: () => { const p = data.packages.find((x) => x.name === b.name); if (p) void openPackage(p.id); } }, "Open") : null,
+          b.model ? h("button", { class: "btn btn--xs", onclick: () => { const m = data.models.find((x) => x.id === b.model.id); if (m) editModel(m); } }, "Model") : null)));
+    }
+    box.append(grid);
   }
 
   /* ================================================================ runs */

@@ -28,6 +28,7 @@ import {
 } from "../client/src/lib/menu-template";
 import { MENU_ICONS } from "../client/src/lib/menu-icons-data";
 import { MODULE_CATALOG } from "../client/src/lib/modules";
+import { consoleGuard } from "./access";
 import { t, type Lang } from "../client/src/lib/i18n";
 import { audit } from "./monitor/audit";
 import { adminName } from "./admin-auth";
@@ -142,6 +143,8 @@ export function registerMenuConfigRoutes(app: Express): void {
 
 /** Mounted behind the admin guard (GET auditor; PUT and the preview's POST operator). */
 export function registerAdminMenuConfigRoutes(app: Express): void {
+  // 5.2: the Menu builder is a module — the administrator's access (and "edit" to save).
+  app.use("/api/admin/menu-config", consoleGuard("menu", (req) => (req.method === "PUT" ? [["edit", "publish"]] : null)));
   app.get("/api/admin/menu-config", (_req, res) => {
     res.json({ ok: true, config: menuConfigStore.get(), defaults: DEFAULT_MENU_CONFIG, file: menuConfigPath(), catalog: menuCatalog() });
   });

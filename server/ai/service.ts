@@ -20,6 +20,8 @@ import {
   estimateTokens, type CallTrace, type ChatEvent, type ChatMessage, type ChatResult, type DiscoveredModel, type ModelKind, type ProviderAdapter, type Reasoning,
 } from "./types";
 import { switchState } from "../plugins/settings";
+import { decision as moduleDecision } from "../access";
+import { permits } from "../../client/src/lib/modules";
 import { pluginLog } from "../plugins/log";
 
 /** Who calls. The console (playground, tests) is not held to the switches, groups or limits — but is counted. */
@@ -73,6 +75,17 @@ export function adapterFor(p: ProviderConfig): ProviderAdapter {
 
 const allowed = (p: ProviderConfig, caller: Caller) => caller.console || p.groups.some((g) => caller.groups.includes(g));
 
+/**
+ * 5.2: the module's rights — chat models belong to "AI & speech", voices and
+ * transcription to "Speech": a grant may give or take away a provider
+ * (provider:openai), a model (model:local/piper-cs*) or a kind (chat, tts, stt).
+ */
+export function moduleAllows(caller: Caller, kind: ModelKind, providerId: string, modelId: string): boolean {
+  if (caller.console) return true;
+  const d = moduleDecision(kind === "tts" || kind === "stt" ? "speech" : "ai", caller.groups);
+  return d.allowed && permits(d.rights, [kind], [`provider:${providerId}`, `model:${refOf(providerId, modelId)}`]);
+}
+
 /** The models of a kind this caller may use (enabled, on enabled providers with a key). */
 export function modelsFor(caller: Caller, kind: ModelKind, config: AiConfig = aiConfig()): Array<{ ref: string; provider: ProviderConfig; model: ModelConfig }> {
   const out: Array<{ ref: string; provider: ProviderConfig; model: ModelConfig }> = [];
@@ -80,7 +93,7 @@ export function modelsFor(caller: Caller, kind: ModelKind, config: AiConfig = ai
     if (!p.enabled || !allowed(p, caller)) continue;
     const ks = keyState(p);
     if (ks === "missing" || ks === "unreadable") continue;
-    for (const m of p.models) if (m.enabled && m.kind === kind) out.push({ ref: refOf(p.id, m.id), provider: p, model: m });
+    for (const m of p.models) if (m.enabled && m.kind === kind && moduleAllows(caller, kind, p.id, m.id)) out.push({ ref: refOf(p.id, m.id), provider: p, model: m });
   }
   return out;
 }
@@ -101,7 +114,7 @@ export function resolve(config: AiConfig, ref: string | undefined, kind: ModelKi
     const model = provider?.models.find((m) => m.id === parsed.model && m.kind === kind);
     if (provider && model) {
       if (!caller.console && (!provider.enabled || !model.enabled)) throw new AiRefused("no-model", `The model ${asked} is switched off.`);
-      if (!allowed(provider, caller)) throw new AiRefused("not-allowed", `The model ${asked} is not available to you.`);
+      if (!allowed(provider, caller) || !moduleAllows(caller, kind, provider.id, model.id)) throw new AiRefused("not-allowed", `The model ${asked} is not available to you.`);
       const ks = keyState(provider);
       if (ks === "missing") throw new AiRefused("no-key", `${provider.label} has no key yet.`);
       if (ks === "unreadable") throw new AiRefused("no-key", `${provider.label}'s key cannot be opened (was the server's storage key replaced?). Enter it again in the console.`);

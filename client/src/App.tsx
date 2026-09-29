@@ -15,7 +15,7 @@ import { LogOut } from "lucide-react";
 import { ChangeEvent, FormEvent, KeyboardEvent, Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { detectCapabilities } from "./lib/capabilities";
 import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURITY, type Preferences, type WidgetState } from "./lib/preferences";
-import { linkify } from "./lib/linkify";
+import { linkify, tagsIn } from "./lib/linkify";
 import { fetchPushStatus, subscribeToPush, ensureServiceWorker, sendTestPush, showLocalTestNotification } from "./lib/push";
 import { dispatchInternal, installPublicAPI } from "./lib/cipherroom-api";
 import { applyTheme, applyTypography, applyColorOverrides, applyEffects, applyChatSurface } from "./lib/themes";
@@ -101,12 +101,12 @@ import { M5Logo } from "./components/M5Logo";
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
 import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
 import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgState } from "./lib/chat-types";
-import { fetchCommands, parseCommandLine, buildInputs, runCommandStream, answerInteraction, outputsToMarkdown, type Command, type Interaction } from "./lib/functions";
+import { fetchCommandState, parseCommandLine, buildInputs, runCommandStream, answerInteraction, outputsToMarkdown, type Command, type Interaction } from "./lib/functions";
 import { isInlineImage } from "./lib/validate";
 import { DEFAULT_PROXY_LIMITS, extractPeerAddress, normalizeRoom, proxyPacer, type ProxyLimits } from "./lib/app-helpers";
 import { SignedInBadge } from "./components/SignedInBadge";
 import { ConnectionsStore, findProfile, startupProfile, normalizeRoomName, type ConnectionEvent, type ConnectionProfile, type RecordExtra } from "./lib/connections";
-import { effectiveAppearance, serverAllowed, signalingUrl } from "./lib/client-config";
+import { DEFAULT_COMPOSER, effectiveAppearance, serverAllowed, signalingUrl } from "./lib/client-config";
 import { fetchClientConfig, loadCachedClientConfig } from "./lib/client-config-client";
 import { SimpleModal } from "./components/SimpleModal";
 import { RoomDialog, RoomTabs, type RoomTab, type RoomTarget } from "./components/RoomDialog";
@@ -461,8 +461,13 @@ function ChatApp() {
   const [messageInput, setMessageInput] = useState("");
   // Chat commands (4.15): the "/keyword" functions this user may run.
   const [commands, setCommands] = useState<Command[]>([]);
+  // 5.2: whether the Functions module is on for this user (null: not asked yet).
+  const [commandsEnabled, setCommandsEnabled] = useState<boolean | null>(null);
+  const commandsAtRef = useRef(0);
   const [cmdIndex, setCmdIndex] = useState(0);
   const [cmdOpen, setCmdOpen] = useState(true);
+  // 5.2: a "#tag" the conversation is filtered by (clicked in a message).
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
   // A running command's live question (m5.prompt / m5.form) and its run token.
   const [interaction, setInteraction] = useState<Interaction | null>(null);
   const runCmdAbortRef = useRef<AbortController | null>(null);
@@ -748,11 +753,11 @@ function ChatApp() {
   );
 
   const visibleMessages = useMemo(() => {
-    const filtered = messages.filter((message) => !message.expiresAt || message.expiresAt > now);
+    const filtered = messages.filter((message) => (!message.expiresAt || message.expiresAt > now) && (!tagFilter || tagsIn(message.text || "").includes(tagFilter)));
     const sec = (room && prefs.roomSecurity[room]) || DEFAULT_ROOM_SECURITY;
     if (sec.sort === "desc") return [...filtered].reverse();
     return filtered;
-  }, [messages, now, prefs.roomSecurity, room]);
+  }, [messages, now, prefs.roomSecurity, room, tagFilter]);
 
   // A long conversation renders its newest MESSAGE_WINDOW messages; older
   // ones come in steps on request. (Off-screen bubbles also skip layout and
@@ -3068,33 +3073,80 @@ function ChatApp() {
     return { targets: ids, toNames, away };
   }
 
+  /** 5.2: the characters that start a command, from the console (Modules & groups › Message input). */
+  const composerTriggers = clientConfig.composer?.triggers ?? DEFAULT_COMPOSER.triggers;
+  const commandChars = composerTriggers.filter((x) => x.action === "functions").map((x) => x.char);
+
+  /** Asks the server for the commands (at most every 10 s unless forced). */
+  async function refreshCommands(force: boolean): Promise<Command[]> {
+    if (!force && Date.now() - commandsAtRef.current < 10_000) return commands;
+    commandsAtRef.current = Date.now();
+    const st = await fetchCommandState(accountToken() ?? null);
+    setCommandsEnabled(st.enabled);
+    setCommands(st.commands);
+    return st.commands;
+  }
+
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
     const text = messageInput.trim();
     if (!text) return;
     // A "/keyword" that matches a known command runs a function instead of
     // sending text; an unknown slash word is sent as an ordinary message.
-    const parsed = parseCommandLine(text);
+    const parsed = parseCommandLine(text, commandChars);
     const command = parsed ? commands.find((c) => c.keyword === parsed.keyword) : undefined;
     if (parsed && command) { await runChatCommand(command, parsed.argText); return; }
+    // A command we do not know yet (the list is a minute old): ask the server again, then run it.
+    if (parsed && commandsEnabled !== false) {
+      const fresh = await refreshCommands(true);
+      const late = fresh.find((c) => c.keyword === parsed.keyword);
+      if (late) { await runChatCommand(late, parsed.argText); return; }
+    }
     const rec = resolveRecipients();
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
     await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: replyingTo ?? undefined });
   }
 
-  /** The commands whose keyword matches what is being typed ("/pa" → "pauza"),
-   *  while the user is still on the keyword (before any argument). */
-  function commandMatches(input: string): Command[] {
-    if (!cmdOpen || !commands.length) return [];
-    const m = /^\/([a-z0-9_-]*)$/i.exec(input);
-    if (!m) return [];
-    const q = m[1].toLowerCase();
-    return commands.filter((c) => c.keyword.startsWith(q)).slice(0, 6);
+  /** 5.2: what typing a trigger character offers — "/" commands (at the start),
+   *  "@" the people in the room, "#" tags (at the start of a word). */
+  type Suggestion = { key: string; label: string; detail?: string; extra?: string; disabled?: boolean; pick: () => void };
+  function composerSuggestions(input: string): { title: string; items: Suggestion[] } | null {
+    if (!cmdOpen || !input) return null;
+    const first = [...input][0] ?? "";
+    if (commandChars.includes(first)) {
+      const m = /^([a-z0-9_-]*)$/i.exec(input.slice(first.length));
+      if (m) {
+        if (commandsEnabled === false) return { title: t(lang, "functions.commands"), items: [{ key: "off", label: t(lang, "functions.off"), disabled: true, pick: () => undefined }] };
+        const q = m[1].toLowerCase();
+        const list = commands.filter((c) => c.keyword.startsWith(q)).slice(0, 8);
+        if (!list.length) return q || commandsEnabled === null ? null : { title: t(lang, "functions.commands"), items: [{ key: "none", label: t(lang, "functions.none"), disabled: true, pick: () => undefined }] };
+        return { title: t(lang, "functions.commands"), items: list.map((c) => ({ key: c.keyword, label: `${first}${c.keyword}`, detail: c.summary || c.name, extra: c.inputs.map((a) => (a.required ? a.name : `[${a.name}]`)).join(" "), pick: () => selectCommand(c, first) })) };
+      }
+    }
+    const w = /(^|\s)(\S)([\p{L}\p{N}_.-]*)$/u.exec(input);
+    if (!w) return null;
+    const trig = composerTriggers.find((x) => x.char === w[2] && x.action !== "functions");
+    if (!trig) return null;
+    const q = w[3].toLowerCase();
+    const replaceWith = (token: string) => () => {
+      setMessageInput(`${input.slice(0, input.length - w[2].length - w[3].length)}${w[2]}${token} `);
+      setCmdIndex(0);
+      setTimeout(() => document.getElementById("message")?.focus(), 0);
+    };
+    if (trig.action === "mentions") {
+      const names = [...new Set([...peers.map((p) => p.name), ...awayPeers.map((a) => a.name)].filter(Boolean).map((n) => n.replace(/\s+/g, "_")))];
+      const items = names.filter((n) => n.toLowerCase().startsWith(q)).slice(0, 8).map((n) => ({ key: n, label: `${trig.char}${n}`, pick: replaceWith(n) }));
+      return items.length ? { title: t(lang, "composer.mentions"), items } : null;
+    }
+    const seen = new Set<string>(clientConfig.composer?.tags ?? []);
+    for (const msg of messages.slice(-300)) for (const tag of tagsIn(msg.text || "")) seen.add(tag);
+    const items = [...seen].filter((tag) => tag.startsWith(q) && tag !== q).slice(0, 8).map((tag) => ({ key: tag, label: `${trig.char}${tag}`, pick: replaceWith(tag) }));
+    return items.length ? { title: t(lang, "composer.tags"), items } : null;
   }
 
   /** Picks a suggested command: fills the composer with "/keyword " ready for arguments. */
-  function selectCommand(command: Command) {
-    setMessageInput(`/${command.keyword} `);
+  function selectCommand(command: Command, char = "/") {
+    setMessageInput(`${char}${command.keyword} `);
     setCmdOpen(false);
     setCmdIndex(0);
     setTimeout(() => document.getElementById("message")?.focus(), 0);
@@ -3108,8 +3160,11 @@ function ChatApp() {
     setMessageInput("");
     setReplyingTo(null);
     setCmdOpen(false);
-    const rec = command.visibility === "room" ? resolveRecipients() : { away: [] as AwayPeer[] };
-    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+    // 5.2: a room command with nobody to send to still runs — its output stays with the caller.
+    const roomRec = command.visibility === "room" ? resolveRecipients() : null;
+    const toRoom = command.visibility === "room" && roomRec !== null;
+    const rec = roomRec ?? { away: [] as AwayPeer[] };
+    if (command.visibility === "room" && !roomRec) setNotice(tf(lang, "functions.localOnly", { name: command.name }));
     const fn = { keyword: command.keyword, name: command.name };
     const token = accountToken() ?? null;
     runCmdAbortRef.current?.abort();
@@ -3117,7 +3172,7 @@ function ChatApp() {
     runCmdAbortRef.current = ctrl;
     runCmdTokenRef.current = token;
     const showResult = (body: string) => {
-      if (command.visibility === "room") {
+      if (toRoom) {
         void sendChatPayload(body, { targets: rec.targets, toNames: rec.toNames, away: rec.away, forwardedFrom: `/${command.keyword}`, fn });
       } else {
         setMessages((cur) => [...cur, {
@@ -3454,11 +3509,11 @@ function ChatApp() {
 
   function handleMessageKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     // While the command suggester is open, the arrows and Enter/Tab drive it.
-    const menu = commandMatches(messageInput);
+    const menu = composerSuggestions(messageInput)?.items.filter((i) => !i.disabled) ?? [];
     if (menu.length) {
       if (event.key === "ArrowDown") { event.preventDefault(); setCmdIndex((i) => (i + 1) % menu.length); return; }
       if (event.key === "ArrowUp") { event.preventDefault(); setCmdIndex((i) => (i - 1 + menu.length) % menu.length); return; }
-      if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); selectCommand(menu[Math.min(cmdIndex, menu.length - 1)]); return; }
+      if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); menu[Math.min(cmdIndex, menu.length - 1)].pick(); return; }
       if (event.key === "Escape") { event.preventDefault(); setCmdOpen(false); return; }
     }
     if (event.key === "Enter" && !event.shiftKey) {
@@ -3470,11 +3525,22 @@ function ChatApp() {
   // The chat commands this user may run ("/keyword"): fetched when signed in
   // or connected changes, refreshed as the operator adds models.
   useEffect(() => {
-    let alive = true;
-    void fetchCommands(accountToken() ?? null).then((list) => { if (alive) setCommands(list); });
-    return () => { alive = false; };
+    void refreshCommands(true);
+    // 5.2: refreshed every minute and when the tab comes back, so new models show up.
+    const timer = window.setInterval(() => void refreshCommands(false), 60_000);
+    const onVisible = () => { if (document.visibilityState === "visible") void refreshCommands(false); };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => { window.clearInterval(timer); document.removeEventListener("visibilitychange", onVisible); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [account, status]);
+
+  // 5.2: a "#tag" clicked in a message filters the conversation (again: clears it).
+  useEffect(() => {
+    const onTag = (e: Event) => { const tag = String((e as CustomEvent).detail || ""); setTagFilter((cur) => (cur === tag ? null : tag || null)); };
+    window.addEventListener("m5:tag", onTag);
+    return () => window.removeEventListener("m5:tag", onTag);
+  }, []);
+  useEffect(() => { setTagFilter(null); }, [room]);
 
   // When the user changes keepalive strategy, restart the heartbeat at the
   // new cadence. We don't drop the socket — only the timer changes.
@@ -4258,30 +4324,41 @@ function ChatApp() {
         },
       })}
 
-      {/* 4.15: the "/keyword" command suggester, floating above the composer. */}
+      {/* 4.15 / 5.2: what the trigger characters offer ("/" commands, "@" people, "#" tags), floating above the composer. */}
       {(() => {
-        const menu = commandMatches(messageInput);
-        if (!menu.length) return null;
-        const active = Math.min(cmdIndex, menu.length - 1);
+        const sug = composerSuggestions(messageInput);
+        if (!sug || !sug.items.length) return null;
+        const live = sug.items.filter((i) => !i.disabled);
+        const active = live.length ? live[Math.min(cmdIndex, live.length - 1)] : null;
         return (
-          <div className="cmd-menu" role="listbox" aria-label={t(lang, "functions.commands")} data-testid="cmd-menu">
-            {menu.map((c, i) => (
+          <div className="cmd-menu" role="listbox" aria-label={sug.title} data-testid="cmd-menu">
+            {sug.items.map((c) => (
               <button
-                key={c.keyword}
+                key={c.key}
                 type="button"
                 role="option"
-                aria-selected={i === active}
-                className={`cmd-item${i === active ? " cmd-item--on" : ""}`}
-                onMouseDown={(e) => { e.preventDefault(); selectCommand(c); }}
+                aria-selected={c === active}
+                aria-disabled={c.disabled || undefined}
+                disabled={c.disabled}
+                className={`cmd-item${c === active ? " cmd-item--on" : ""}${c.disabled ? " cmd-item--off" : ""}`}
+                onMouseDown={(e) => { e.preventDefault(); if (!c.disabled) c.pick(); }}
               >
-                <span className="cmd-item__kw">/{c.keyword}</span>
-                <span className="cmd-item__sum">{c.summary || c.name}</span>
-                {c.inputs.length ? <span className="cmd-item__args">{c.inputs.map((a) => (a.required ? a.name : `[${a.name}]`)).join(" ")}</span> : null}
+                <span className="cmd-item__kw">{c.label}</span>
+                {c.detail ? <span className="cmd-item__sum">{c.detail}</span> : null}
+                {c.extra ? <span className="cmd-item__args">{c.extra}</span> : null}
               </button>
             ))}
           </div>
         );
       })()}
+
+      {/* 5.2: the conversation filtered by a #tag. */}
+      {tagFilter ? (
+        <div className="tag-filter" role="status" data-testid="tag-filter">
+          <span>{tf(lang, "composer.tagFilter", { tag: tagFilter })}</span>
+          <button type="button" onClick={() => setTagFilter(null)} aria-label={t(lang, "composer.tagClear")}>×</button>
+        </div>
+      ) : null}
 
       {/* 4.15: a running command's live question (m5.prompt / m5.form). */}
       {interaction ? (

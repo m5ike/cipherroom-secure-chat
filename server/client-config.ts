@@ -15,12 +15,11 @@ import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "no
 import { dirname, resolve } from "node:path";
 import type { Express, Request, Response } from "express";
 import { DEFAULT_CLIENT_CONFIG, publicClientConfig, sanitizeClientConfig, type ClientConfig } from "../client/src/lib/client-config";
-import { BUILTIN_GROUPS, groupsFor, MODULE_CATALOG, moduleAllowed } from "../client/src/lib/modules";
-import type { NextFunction } from "express";
+import { BUILTIN_GROUPS, CONSOLE_GROUPS, groupsFor, MODULE_CATALOG, ruleChangeNeedsOwner } from "../client/src/lib/modules";
 import { accountStore, usernameOf } from "./accounts/store";
 import { ICON_STYLES, THEME_CATALOG } from "../client/src/lib/theme-catalog";
 import { audit } from "./monitor/audit";
-import { adminName } from "./admin-auth";
+import { adminName, type AdminRequest } from "./admin-auth";
 
 /** The console lists the templates with these names. */
 const THEME_LABELS: Record<string, string> = {
@@ -33,6 +32,7 @@ const catalog = () => ({
   icons: ICON_STYLES,
   modules: MODULE_CATALOG,
   builtinGroups: BUILTIN_GROUPS,
+  consoleGroups: CONSOLE_GROUPS,
 });
 const env = (name: string): string => (process.env[name]?.trim() || "");
 
@@ -102,17 +102,6 @@ export function accountGroups(username: string): string[] {
   return groupsFor(clientConfigStore.get().groups, username);
 }
 
-/**
- * 4.0: a module the operator switched off (or kept from this user's groups)
- * is refused on the server too, not only hidden in the app.
- */
-export function requireModule(id: string) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (moduleAllowed(clientConfigStore.get().modules, id, requestGroups(req))) return next();
-    res.status(403).json({ ok: false, code: "module-disabled", module: id, message: `The ${id} module is not available to you on this server.` });
-  };
-}
-
 /** Mounted behind the admin guard (GET auditor, PUT operator). */
 export function registerAdminClientConfigRoutes(app: Express, usage: () => AddonUsage, features: () => unknown = () => ({})): void {
   app.get("/api/admin/client-config", (_req, res) => {
@@ -122,6 +111,14 @@ export function registerAdminClientConfigRoutes(app: Express, usage: () => Addon
   });
   app.put("/api/admin/client-config", (req: Request, res: Response) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
+    // 5.2: the tool modules' rules and the groups with console members decide
+    // the console itself — only an owner changes them (an operator could
+    // otherwise give themselves any tool).
+    const role = (req as AdminRequest).admin?.role ?? "operator";
+    if (role !== "owner") {
+      const what = ruleChangeNeedsOwner(clientConfigStore.get(), sanitizeClientConfig(body.config ?? body));
+      if (what) return res.status(403).json({ ok: false, code: "owner-only", message: `Only an owner may change ${what}.` });
+    }
     const saved = clientConfigStore.set(body.config ?? body);
     if (!saved.ok) return res.status(500).json({ ok: false, message: saved.message });
     const c = saved.config;

@@ -74,19 +74,27 @@ export async function answerInteraction(runId: string, interactionId: string, va
   } catch { /* the run will time out on its own */ }
 }
 
-/** The commands this user may run ("/keyword"); empty when the module is off. */
-export async function fetchCommands(token: string | null): Promise<Command[]> {
+/** The commands this user may run, and whether the Functions module is on for them (5.2). */
+export async function fetchCommandState(token: string | null): Promise<{ enabled: boolean; commands: Command[] }> {
   try {
     const res = await fetch("/api/functions/commands", { headers: authHeaders(token), cache: "no-store" });
-    if (!res.ok) return [];
+    if (!res.ok) return { enabled: false, commands: [] };
     const data = await res.json();
-    return data.enabled && Array.isArray(data.commands) ? data.commands as Command[] : [];
-  } catch { return []; }
+    return { enabled: Boolean(data.enabled), commands: data.enabled && Array.isArray(data.commands) ? data.commands as Command[] : [] };
+  } catch { return { enabled: false, commands: [] }; }
 }
 
-/** "/word rest" → { keyword, argText }; null when the text is not a command. */
-export function parseCommandLine(text: string): { keyword: string; argText: string } | null {
-  const m = /^\/([a-z0-9_-]{1,40})(?:\s+([\s\S]*))?$/i.exec(text.trim());
+/** The commands this user may run ("/keyword"); empty when the module is off. */
+export async function fetchCommands(token: string | null): Promise<Command[]> {
+  return (await fetchCommandState(token)).commands;
+}
+
+/** "/word rest" → { keyword, argText }; null when the text is not a command. `chars`: the
+ *  characters that start a command (5.2: the console may add "!" and others). */
+export function parseCommandLine(text: string, chars: readonly string[] = ["/"]): { keyword: string; argText: string } | null {
+  const t = text.trim();
+  if (!t || !chars.includes([...t][0] ?? "")) return null;
+  const m = /^([a-z0-9_-]{1,40})(?:\s+([\s\S]*))?$/i.exec(t.slice(([...t][0] ?? "").length));
   return m ? { keyword: m[1].toLowerCase(), argText: (m[2] ?? "").trim() } : null;
 }
 

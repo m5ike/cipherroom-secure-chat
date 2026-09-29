@@ -188,6 +188,16 @@
     if (state.admin) append(who, ["signed in as ", h("b", {}, state.admin.name), ` · ${state.admin.role}`, state.admin.via === "passkey" ? " · passkey" : ""]);
     for (const el of $$("[data-min-role]")) el.hidden = !can(el.dataset.minRole);
     $("#btnMyPasskey").hidden = !state.admin || state.admin.via === "env-token";
+    // 5.2: the tools are modules — hide the ones this administrator may not use.
+    state.modules = {};
+    try {
+      const acc = await api("/admin/access/me");
+      for (const m of acc.modules || []) {
+        state.modules[m.id] = m;
+        const item = $(`.nav__item[data-route="${m.console}"]`);
+        if (item) { item.hidden = !m.allowed; item.title = m.allowed ? "" : "No access (Modules & groups)"; }
+      }
+    } catch { /* an older admin service: show everything */ }
     applyRoleGates();
   }
 
@@ -1380,6 +1390,8 @@
     /** A request with the signed-in token, answered as a Response (streams, audio, downloads). */
     raw: (path, init = {}) => fetch(state.base + path, { ...init, cache: "no-store", headers: { ...(init.headers || {}), Authorization: `Bearer ${state.token}` } }),
     toast, h, clear, $, $$, can, applyRoleGates,
+    /** 5.2: this administrator's access to a tool module: { allowed, rights } (null: unknown). */
+    moduleAccess: (id) => (state.modules && state.modules[id]) || null,
     base: () => state.base,
     addRoute(name, entry) {
       ROUTES[name] = entry;

@@ -24,6 +24,8 @@ import { hostAi, AI_RUN_TOKEN_CAP } from "./host-ai";
 import { Buffer } from "node:buffer";
 import { randomBytes } from "node:crypto";
 import { formatEntry, parseEntry, type Caller, type Lang, type Model, type Run, type RunLog } from "./types";
+import { commandsFor } from "./visibility";
+import { storedInputs } from "./webhook-log";
 
 /** Bytes a sandbox sent as {"$b": base64}; null for anything else. */
 function taggedBytes(v: unknown): Buffer | null {
@@ -106,7 +108,7 @@ export function buildSpec(model: Model, inputs: Record<string, unknown>, caller:
 
 /* ---------------------------------------------------- live interactions */
 
-type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; kind?: "prompt" | "form"; spec?: unknown; at?: number };
 const interactions = new Map<string, Map<string, Pending>>();
 const PROMPT_TTL_MS = 5 * 60 * 1000;
 
@@ -125,6 +127,12 @@ export function answerRun(runId: string, interactionId: string, value: unknown):
   if (!forRun.size) interactions.delete(runId);
   pending.resolve(value);
   return true;
+}
+
+/** 5.2: a run's open questions (m5.prompt / m5.form) — for webhook callers that poll and answer. */
+export function openInteractions(runId: string): Array<{ id: string; kind: string; spec: unknown; at: number }> {
+  const forRun = interactions.get(runId);
+  return forRun ? [...forRun.entries()].map(([id, p]) => ({ id, kind: p.kind ?? "prompt", spec: p.spec ?? {}, at: p.at ?? 0 })) : [];
 }
 
 /** Public: cancel a run's open questions because the caller went away. */
@@ -151,7 +159,7 @@ function ask(runId: string, kind: "prompt" | "form", spec: unknown, control: Par
     timer.unref?.();
     let forRun = interactions.get(runId);
     if (!forRun) { forRun = new Map(); interactions.set(runId, forRun); }
-    forRun.set(id, { resolve, reject, timer });
+    forRun.set(id, { resolve, reject, timer, kind, spec, at: Date.now() });
     runEvents.emit("run", { runId, type: "interaction", interaction: { id, kind, spec } });
   }));
 }
@@ -252,6 +260,8 @@ function hostHandler(model: Model, sessionId: string, runId: string, caller: Cal
       if ((aiTokens.get(runId) ?? 0) >= AI_RUN_TOKEN_CAP) throw new RunRefused("ai-budget", "this run has reached its AI token budget");
       return control.wait(hostAi(String(args[0]), args.slice(1), caller, (t) => aiTokens.set(runId, (aiTokens.get(runId) ?? 0) + t)));
     }
+    // 5.2: the commands the caller may run (for /help and menus).
+    if (fn === "functions.list") return commandsFor(caller);
     if (fn === "webhook.create") return makeWebhook(runId, (args[0] ?? {}) as { once?: boolean; durable?: boolean; ttl?: unknown }, model, sessionId, caller);
     if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
     const scopeName = (raw: unknown): string => {
@@ -325,7 +335,7 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
 
   const run: Run = {
     id: runId, modelId: model.id, entry: opts.entry || model.entry, lang: spec.lang as Lang, executor: opts.executor, caller, sessionId, parent: opts.parent ?? null,
-    status: "running", inputs, outputs: [], error: null, test: Boolean(opts.test), queuedAt: Date.now(), startedAt: Date.now(), finishedAt: null, ms: 0, memMb: 0,
+    status: "running", inputs: storedInputs(inputs), outputs: [], error: null, test: Boolean(opts.test), queuedAt: Date.now(), startedAt: Date.now(), finishedAt: null, ms: 0, memMb: 0,
   };
   functionsStore.saveRun(run);
   runEvents.emit("run", { runId, type: "status", status: "running", modelId: model.id });

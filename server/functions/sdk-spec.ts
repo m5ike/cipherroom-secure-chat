@@ -101,6 +101,10 @@ export const SDK_SPEC: SdkObject[] = [
     m("stt", "await m5.ai.stt({ audio, mime })", "await m5.ai.stt(audio=...)", "Transcribe audio → text.", true),
     m("agent", "await m5.ai.agent(goal, { tools, maxSteps, approve })", "await m5.ai.agent(goal, tools=[...])", "An agent loop: the model uses your tools (a tool may need approval).", true),
   ] },
+  { name: "functions", doc: "The “/keyword” commands this run's caller may use (no secrets).", methods: [
+    m("list", "await m5.functions.list()", "await m5.functions.list()", "Every command: keyword, name, summary, inputs, webhook/API availability.", true),
+    m("get", "await m5.functions.get(keyword)", "await m5.functions.get(keyword)", "One command by keyword, or null.", true),
+  ] },
   { name: "codes", doc: "2D and bar codes: QR, Data Matrix, PDF417, Aztec, Code128, EAN/UPC…", methods: [
     m("qr", "await m5.codes.qr(text, { scale })", "await m5.codes.qr(text, scale=...)", "A QR code as SVG (or PNG).", true),
     m("barcode", "await m5.codes.barcode(type, text)", "await m5.codes.barcode(type, text)", "Any symbology by name → SVG/PNG.", true),

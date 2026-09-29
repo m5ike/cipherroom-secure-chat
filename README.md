@@ -114,6 +114,18 @@ místnosti.
   a z toku jedním klikem vznikne balíček i model (`/příkaz`). Běhy
   z konzole jsou **živé** — logy a výstupy průběžně, na `m5.prompt` /
   `m5.form` se odpovídá přímo v konzoli.
+- **Nástroje jako moduly, webhooky a vestavěné příkazy (5.2)** —
+  *Functions*, *AI & speech*, *Telephony & SIP*, *Layout builder* a *Menu
+  builder* jsou moduly v *Modules & groups*: výchozí přístup allow/deny,
+  přístupové skupiny (allow/deny), hlavní skupina `mod-<modul>` se všemi
+  právy a **granty** jen na části modulu se zástupnými znaky (`model:dns*`,
+  `-provider:openai`, `number:+420*`). Kontroly jsou kešované a každé
+  povolení i odmítnutí jde do **logu přístupů**. Webhooky mají **plný log**
+  (hlavičky, tělo, rozparsované proměnné, odpověď), **replay** i na
+  konceptu, režimy sync/async/auto se stavem a zpětným voláním. V chatu
+  opět funguje **`/`** (přepínač služby Functions je v konzoli), přibyly
+  aktivační znaky `@` a `#` a vestavěné příkazy **`/help`**, **`/whois`**,
+  **`/dns`**, **`/web`**, **`/mail`** a **`/domain`** s formulářem.
 - **Řeč zdarma a offline (5.1)** — vestavěný engine (**sherpa-onnx**):
   **Whisper** (řeč → text, 99 jazyků vč. češtiny) a hlasy **Piper**
   (text → řeč: čeština, slovenština, angličtina, němčina, polština, …)
@@ -429,7 +441,10 @@ zapnuté. Detaily v [`docs/modules.md`](docs/modules.md).
 Od 4.0 správce v konzoli (*Modules & groups*) zapíná každý modul aplikace
 pro všechny, jen pro některé skupiny (`guest`, `user` a vlastní skupiny
 uživatelských jmen), nebo ho vypne: aplikace jeho ovládání schová a server
-jeho endpointy odmítne (`403 module-disabled`). Viz
+jeho endpointy odmítne (`403 module-disabled`). Od 5.2 jsou moduly i
+nástroje konzole (Functions, AI & speech, Telephony & SIP, Layout a Menu
+builder) s výchozím přístupem, přístupovými skupinami, hlavní skupinou
+`mod-<modul>`, granty na části modulu a logem přístupů. Viz
 [dokumentace › Moduly a skupiny](docs/site/index.html#moduly).
 
 ---
@@ -710,7 +725,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 5.1.0        | aktuální — konzole *Functions* s editorem **CodeMirror** (zvýraznění, našeptávač SDK, šablony, nápověda, kontrola), **vizuální tvůrce** (uzly a dráty → JS/Python, hodnoty na plátně, balíček i model jedním klikem), **živé běhy** s odpovídáním na `prompt`/`form`; **řeč zdarma a offline** (Whisper + Piper přes sherpa-onnx) a předvolby Groq, Speaches, Kokoro, whisper.cpp; oprava záložky *Runs* („[object Promise]“) |
+| 5.2.0        | aktuální — nástroje konzole jako **moduly** s výchozím přístupem, přístupovými skupinami, hlavní skupinou a **granty** se zástupnými znaky (funkce, balíčky, poskytovatelé a modely AI, čísla); **log přístupů**; **webhooky** s plným logem, parsováním těl, replayem (i na konceptu) a režimy sync/async/auto; opravené `/` v chatu, aktivační znaky `@` a `#`; vestavěné `/help`, `/whois`, `/dns`, `/web`, `/mail`, `/domain` |
+| 5.1.0        | konzole *Functions* s editorem **CodeMirror** (zvýraznění, našeptávač SDK, šablony, nápověda, kontrola), **vizuální tvůrce** (uzly a dráty → JS/Python, hodnoty na plátně, balíček i model jedním klikem), **živé běhy** s odpovídáním na `prompt`/`form`; **řeč zdarma a offline** (Whisper + Piper přes sherpa-onnx) a předvolby Groq, Speaches, Kokoro, whisper.cpp; oprava záložky *Runs* („[object Promise]“) |
 | 5.0.0        | **M5cet Functions**: modely v JS (QuickJS) i Pythonu (Pyodide) v odděleném procesu s limity, SDK `m5` (out/log/session/cache/codec/id/crypto+JWT/PGP/SSH/X.509, http+SSRF, dns, kódy, ai+agenti), balíčky/verze, IDE + tutoriál v konzoli, `/příkaz` v chatu s `prompt`/`form`, webhooky, plány (cron), API tokeny, `.m5pkg` export/import; `ENABLE_FUNCTIONS` |
 | 4.14.0       | AI a řeč od základu: 9 druhů poskytovatelů se zašifrovanými klíči, modely, skupiny, limity (výchozí 0 = vypnuto), zkušebna, test řeči, žurnál volání; asistent v aplikaci se streamem a Markdownem |
 | 4.13.0       | Layout builder pro celou aplikaci: okno Místnost, okna, dialogy a panely jako rozvržení (44 v sekcích), varianty pro skupiny a šablony vzhledu, historie s rozdíly a návratem, sloučení s novým výchozím po aktualizaci, vložení HTML, kontrola přístupnosti, kompilované šablony a rozvržení |

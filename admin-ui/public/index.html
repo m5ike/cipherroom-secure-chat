@@ -429,15 +429,16 @@
         <section data-panel="modules" class="stack" hidden>
           <form class="card" id="modulesForm">
             <div class="card__head"><div class="card__title">Modules &amp; plugins</div><div class="card__hint">Switch parts of the app off, or give them to some groups only. What a user may not use disappears from their menu and screens — and the server refuses it too.</div><div class="card__actions"><button class="btn btn--sm" type="button" data-refresh="modules">Refresh</button></div></div>
-            <div class="table-wrap"><table class="t" id="modulesTable"><thead><tr><th>Module</th><th>On the server</th><th>On</th><th>For</th></tr></thead><tbody></tbody></table></div>
-            <div class="toolbar"><button class="btn btn--primary" type="submit">Save modules</button></div>
+            <div class="table-wrap"><table class="t" id="modulesTable"><thead><tr><th>Module</th><th>Service</th><th>On</th><th>Who may use it</th><th>Log</th><th></th></tr></thead><tbody></tbody></table></div>
+            <div class="toolbar"><button class="btn btn--primary" type="submit">Save modules</button><span class="muted small">Settings… opens a module's access: default and group access, its groups, the main group with all rights, the parts (grants) and the log.</span></div>
           </form>
           <form class="card" id="groupsForm">
-            <div class="card__head"><div class="card__title">User groups</div><div class="card__hint">"guest" is everyone who is not signed in, "user" everyone signed in with a passkey. Groups of your own list their members by username (one per line). Members are never sent to the clients.</div></div>
+            <div class="card__head"><div class="card__title">User groups</div><div class="card__hint">"guest" is everyone who is not signed in, "user" everyone signed in with a passkey, "admin" (and admin-owner, admin-operator, admin-auditor) the console's administrators. Groups of your own list their members — a username, or admin:&lt;name&gt; for an administrator — one per line. Members are never sent to the clients. mod-… groups are the modules' main groups: their members get the whole module.</div></div>
             <div id="groupsList" class="groups"></div>
             <div class="toolbar"><button class="btn btn--sm" type="button" id="groupAdd">Add group</button></div>
             <div class="toolbar"><button class="btn btn--primary" type="submit">Save groups</button></div>
           </form>
+          <div id="modulesExtra" class="stack"></div>
         </section>
 
         <!-- ============================ menu builder ============================ -->

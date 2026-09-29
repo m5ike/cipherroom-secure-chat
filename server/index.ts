@@ -34,6 +34,8 @@ import { classifyRoute, traffic, truncateIp } from "./monitor/traffic";
 import { serveStatic } from "./static";
 import { createServer } from "node:http";
 import { applyTrustProxy } from "./trust-proxy";
+import { ensureMainGroups } from "./access";
+import { accessLog } from "./access-log";
 
 const app = express();
 const httpServer = createServer(app);
@@ -114,18 +116,21 @@ app.use(
   rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many admin requests." } }),
 );
 
-app.use(
-  express.json({
-    limit: "256kb",
-    // Provider webhooks verify signatures over the exact bytes; nothing
-    // else needs a second copy of every body.
-    verify: (req, _res, buf) => {
-      if (req.url?.startsWith("/wh/")) req.rawBody = buf;
-    },
-  }),
-);
-
-app.use(express.urlencoded({ extended: false }));
+const jsonBody = express.json({
+  limit: "256kb",
+  // Provider webhooks verify signatures over the exact bytes; nothing
+  // else needs a second copy of every body.
+  verify: (req, _res, buf) => {
+    if (req.url?.startsWith("/wh/")) req.rawBody = buf;
+  },
+});
+const formBody = express.urlencoded({ extended: false });
+// 5.2: the Functions webhooks (/hooks/…) read their own raw body — JSON, a
+// form, multipart, anything — to log it, parse it and check a signature over
+// it; the global parsers must leave it alone (they used to empty it).
+const notHooks = (mw: express.RequestHandler): express.RequestHandler => (req, res, next) => (req.path.startsWith("/hooks/") ? next() : mw(req, res, next));
+app.use(notHooks(jsonBody));
+app.use(notHooks(formBody));
 
 app.disable("etag");
 
@@ -237,6 +242,8 @@ export function log(message: string, source = "express") {
     () => {
       log(`serving on ${host}:${port} (trust proxy: ${JSON.stringify(trustProxy)})`);
       audit.add({ category: "system", level: "notice", event: "server.start", detail: { port, host, node: process.version } });
+      // 5.2: the tool modules' main groups (mod-functions, mod-ai, …) exist from the start.
+      try { ensureMainGroups("server"); } catch { /* the console creates them on first use */ }
     },
   );
 })();
@@ -256,6 +263,7 @@ async function shutdown(signal: string): Promise<void> {
     await clusterBus().close();
     system.stop();
     accountStore.flush();
+    await accessLog.flush();
     storage.close();
   } catch (err) {
     console.error("shutdown:", err);

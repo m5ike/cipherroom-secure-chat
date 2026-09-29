@@ -32,7 +32,10 @@ import { eventStore } from "./events";
 import { isWebPushReady } from "./push";
 import { pluginLog } from "./plugins/log";
 import { registerAiAdminRoutes } from "./ai/admin-routes";
-import { registerFunctionsAdminRoutes } from "./functions/admin-routes";
+import { registerFunctionsAdminRoutes, functionsConsoleRight } from "./functions/admin-routes";
+import { consoleGuard, ensureMainGroups } from "./access";
+import { accessLog } from "./access-log";
+import { registerAccessRoutes, aiConsoleRight } from "./access-routes";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerAdminLayoutRoutes } from "./layout";
 import { distPublicDir } from "./layout-catalog";
@@ -87,6 +90,8 @@ async function forward(req: express.Request, res: express.Response, path: string
 app.use("/api/admin/menu-config", express.json({ limit: "1mb" }));
 // 4.0.5: the Layout builder saves whole element trees.
 app.use("/admin/layout", express.json({ limit: "4mb" }));
+// Package drafts and imports are bigger than the default 256 kB.
+app.use("/admin/functions", express.json({ limit: "8mb" }));
 app.use(express.json({ limit: "256kb" }));
 // The console's API: live state is in the main service.
 app.use("/api/admin", (req, res) => { void forward(req, res, req.originalUrl); });
@@ -165,6 +170,15 @@ app.get("/admin/health", (_req, res) => {
 // A wrong token is what gets counted: 30 refusals per 15 minutes per address.
 app.use("/admin", rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many refused admin requests." } }));
 app.use("/admin", requireAuth);
+
+// 5.2: the console's tools are modules — the administrator's access to each
+// (Modules & groups), and the part a change needs; every decision is logged.
+app.use("/admin/functions", consoleGuard("functions", functionsConsoleRight));
+app.use("/admin/ai", consoleGuard("ai", aiConsoleRight));
+app.use("/admin/plugins", consoleGuard("ai", aiConsoleRight)); // the AI & speech console's earlier addresses
+app.use("/admin/telephony", consoleGuard("telephony", (req) => (req.method === "GET" ? null : req.path.startsWith("/test") ? [["test", "settings"]] : [["settings"]])));
+app.use("/admin/layout", consoleGuard("layout", (req) => (req.method === "GET" ? null : req.path.includes("/restore") ? [["history", "edit"]] : req.path.startsWith("/reset") ? [["publish"]] : [["edit", "publish"]])));
+registerAccessRoutes(app);
 
 // Telephony + SIP console (all under /admin, so behind the auth middleware).
 registerAdminTelephonyRoutes(app);
@@ -292,6 +306,8 @@ const enabled = process.env.ENABLE_ADMIN === "1";
 if (enabled) {
   app.listen(port, host, () => {
     console.log(`[admin] listening on http://${host}:${port}`);
+    // 5.2: the tool modules' main groups (mod-functions, mod-ai, …) exist from the start.
+    try { ensureMainGroups("admin-service"); } catch { /* the console creates them on first use */ }
     if (!ADMIN_API_TOKEN) {
       console.warn("[admin] ADMIN_API_TOKEN is not set — endpoints will return 503 until you set it.");
     }
@@ -299,5 +315,8 @@ if (enabled) {
 } else {
   console.log("[admin] disabled (set ENABLE_ADMIN=1 to enable)");
 }
+
+// Write what the access log holds before a restart.
+for (const sig of ["SIGTERM", "SIGINT"] as const) process.once(sig, () => { void accessLog.flush().finally(() => process.exit(0)); });
 
 export { app as adminApp };

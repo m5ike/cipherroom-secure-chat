@@ -24,6 +24,7 @@ import {
 import { sipStore, type SipTrunkInput } from "./sip";
 import { TelephonyNotConfiguredError, isE164, isProvider } from "./types";
 import { telephonyEvents } from "./webhooks";
+import { checkAccess, requestSubject } from "../access";
 
 const MAX_SMS_CHARS = 1600;   // ~10 GSM segments; a hard body cap
 const MAX_NUMBER_CHARS = 20;
@@ -45,6 +46,15 @@ function readNumber(raw: unknown): string {
   return typeof raw === "string" ? raw.trim().slice(0, MAX_NUMBER_CHARS) : "";
 }
 
+/**
+ * 5.2: the Telephony & SIP module's rights — "call" / "sms", and where to:
+ * "number:+420*" lets only those numbers through, "-number:+1900*" keeps
+ * some out. Logged, allowed or refused.
+ */
+function telephonyRight(req: Request, action: "call" | "sms", to: string): boolean {
+  return checkAccess("telephony", requestSubject(req), { right: [[action], [`number:${to}`]], path: `${req.method} ${req.path} → ${to}`, ip: (req.ip || "").replace(/^::ffff:/, ""), via: "app" }).allowed;
+}
+
 /* -------------------------------------------------- client-facing routes */
 
 export function registerTelephonyRoutes(app: Express): void {
@@ -57,6 +67,7 @@ export function registerTelephonyRoutes(app: Express): void {
     const body = (req.body || {}) as Record<string, unknown>;
     const to = readNumber(body.to);
     if (!isE164(to)) return res.status(400).json({ ok: false, message: "to must be an E.164 number, e.g. +14155550123." });
+    if (!telephonyRight(req, "sms", to)) return res.status(403).json({ ok: false, code: "module-denied", message: `Sending SMS to ${to} is not among your rights (Modules & groups › Telephony & SIP).` });
     const text = typeof body.text === "string" ? body.text.slice(0, MAX_SMS_CHARS) : "";
     if (!text.trim()) return res.status(400).json({ ok: false, message: "text required." });
     const connector = getSms(typeof body.connector === "string" ? body.connector : undefined);
@@ -77,6 +88,7 @@ export function registerTelephonyRoutes(app: Express): void {
     const body = (req.body || {}) as Record<string, unknown>;
     const to = readNumber(body.to);
     if (!isE164(to)) return res.status(400).json({ ok: false, message: "to must be an E.164 number, e.g. +14155550123." });
+    if (!telephonyRight(req, "call", to)) return res.status(403).json({ ok: false, code: "module-denied", message: `Calling ${to} is not among your rights (Modules & groups › Telephony & SIP).` });
     const connector = getVoice(typeof body.connector === "string" ? body.connector : undefined);
     if (!connector || !connector.status().configured) {
       return res.status(503).json({ ok: false, message: connector?.status().reason || "No voice connector configured." });

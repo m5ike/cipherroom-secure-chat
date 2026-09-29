@@ -304,6 +304,7 @@ def _setup(ctx):
             stt=lambda **spec: _acall("ai", "stt", spec),
             agent=_ai_agent,
         ),
+        functions=_NS(list=lambda: _acall("functions.list"), get=_functions_get),
         sleep=lambda ms: _acall("sleep", ms),
         prompt=lambda spec=None, **kw: _acall("prompt", {"text": spec} if isinstance(spec, str) else (spec or kw)),
         form=lambda spec=None, **kw: _acall("form", spec or kw),
@@ -323,6 +324,13 @@ def _write_tree(root, files):
         _os.makedirs(_os.path.dirname(full), exist_ok=True)
         with open(full, "w", encoding="utf-8") as f:
             f.write(text)
+
+async def _functions_get(keyword):
+    k = str(keyword or "").lstrip("/!").lower()
+    for f in await _acall("functions.list"):
+        if f["keyword"] == k:
+            return f
+    return None
 
 async def _m5_execute(spec_json):
     spec = _json.loads(spec_json)

@@ -279,6 +279,11 @@ return function setup(host, ctxJson) {
     dns: {
       resolve: (name, type) => acall("dns.resolve", String(name), type === undefined ? "A" : String(type)),
     },
+    // 5.2: the "/keyword" commands this run's caller may use (for /help, menus).
+    functions: {
+      list: () => acall("functions.list"),
+      get: async (keyword) => { const k = String(keyword || "").replace(/^[/!]/, "").toLowerCase(); return (await acall("functions.list")).find((f) => f.keyword === k) || null; },
+    },
     webhook: {
       // Create a URL bound to this run; wait for a POST to it (live continuation).
       create: (spec) => acall("webhook.create", spec ? plain(spec) : {}),

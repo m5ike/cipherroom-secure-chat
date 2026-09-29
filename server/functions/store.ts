@@ -12,7 +12,7 @@ import { dirname, resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { loadSqliteDriver, type SqliteDatabase } from "../storage/db";
 import type {
-  Caller, DurableWebhook, FileMap, Model, Package, PackageVersion, Run, RunLog, RunStatus, Schedule,
+  Caller, DurableWebhook, FileMap, Model, Package, PackageVersion, Run, RunLog, RunStatus, Schedule, WebhookCall,
 } from "./types";
 
 export function functionsDir(): string {
@@ -97,6 +97,14 @@ CREATE TABLE IF NOT EXISTS cache_kv (
 CREATE TABLE IF NOT EXISTS schedules (
   id TEXT PRIMARY KEY, model_id TEXT NOT NULL, cron TEXT NOT NULL, tz TEXT NOT NULL DEFAULT 'UTC', inputs TEXT NOT NULL DEFAULT '{}',
   enabled INTEGER NOT NULL DEFAULT 1, last_run INTEGER, created_at INTEGER NOT NULL, created_by TEXT NOT NULL DEFAULT '');
+CREATE TABLE IF NOT EXISTS webhook_calls (
+  id TEXT PRIMARY KEY, at INTEGER NOT NULL, kind TEXT NOT NULL, model_id TEXT NOT NULL DEFAULT '', hook TEXT NOT NULL DEFAULT '',
+  method TEXT NOT NULL DEFAULT 'POST', path TEXT NOT NULL DEFAULT '', query TEXT NOT NULL DEFAULT '{}', headers TEXT NOT NULL DEFAULT '{}',
+  content_type TEXT NOT NULL DEFAULT '', body TEXT NOT NULL DEFAULT '', body_size INTEGER NOT NULL DEFAULT 0, parsed TEXT,
+  ip TEXT NOT NULL DEFAULT '', status INTEGER NOT NULL DEFAULT 0, response_headers TEXT NOT NULL DEFAULT '{}', response_body TEXT NOT NULL DEFAULT '',
+  run_id TEXT NOT NULL DEFAULT '', ms INTEGER NOT NULL DEFAULT 0, error TEXT NOT NULL DEFAULT '', replay_of TEXT NOT NULL DEFAULT '', result TEXT);
+CREATE INDEX IF NOT EXISTS webhook_calls_model ON webhook_calls(model_id, at);
+CREATE INDEX IF NOT EXISTS webhook_calls_at ON webhook_calls(at);
 CREATE TABLE IF NOT EXISTS webhooks (
   token TEXT PRIMARY KEY, model_id TEXT NOT NULL, session_id TEXT NOT NULL, caller TEXT NOT NULL DEFAULT '{}', entry TEXT NOT NULL,
   once INTEGER NOT NULL DEFAULT 0, expires_at INTEGER, created_at INTEGER NOT NULL);
@@ -362,9 +370,52 @@ class FunctionsStore {
     this.d.prepare("DELETE FROM webhooks WHERE token = ?").run(token);
   }
 
+  /** Durable webhooks (for the console's list; tokens masked there). */
+  durableWebhooks(): DurableWebhook[] {
+    const now = Date.now();
+    if (!this.d) return this.mem.durableWebhooks(now);
+    return (this.d.prepare("SELECT * FROM webhooks WHERE expires_at IS NULL OR expires_at > ? ORDER BY created_at DESC LIMIT 500").all(now) as Array<Record<string, unknown>>).map(toWebhook);
+  }
+
+  /* -------- the webhook log (5.2) -------- */
+
+  addWebhookCall(c: WebhookCall): void {
+    if (!this.d) return this.mem.addWebhookCall(c);
+    this.d.prepare(`INSERT OR REPLACE INTO webhook_calls (id, at, kind, model_id, hook, method, path, query, headers, content_type, body, body_size, parsed, ip, status, response_headers, response_body, run_id, ms, error, replay_of, result)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(c.id, c.at, c.kind, c.modelId, c.hook, c.method, c.path, JSON.stringify(c.query), JSON.stringify(c.headers), c.contentType, c.body, c.bodySize, c.parsed ? JSON.stringify(c.parsed) : null, c.ip, c.status, JSON.stringify(c.responseHeaders), c.responseBody, c.runId, c.ms, c.error, c.replayOf, c.result ? JSON.stringify(c.result) : null);
+  }
+  webhookCall(id: string): WebhookCall | null {
+    if (!this.d) return this.mem.webhookCall(id);
+    const r = this.d.prepare("SELECT * FROM webhook_calls WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return r ? toWebhookCall(r) : null;
+  }
+  webhookCalls(q: { modelId?: string; kind?: string; status?: "ok" | "error"; limit?: number; before?: number } = {}): WebhookCall[] {
+    const limit = Math.max(1, Math.min(500, q.limit ?? 100));
+    if (!this.d) return this.mem.webhookCalls(q, limit);
+    const where: string[] = []; const args: unknown[] = [];
+    if (q.modelId) { where.push("model_id = ?"); args.push(q.modelId); }
+    if (q.kind) { where.push("kind = ?"); args.push(q.kind); }
+    if (q.status === "ok") where.push("status BETWEEN 200 AND 299");
+    if (q.status === "error") where.push("(status < 200 OR status >= 300)");
+    if (q.before) { where.push("at < ?"); args.push(q.before); }
+    const sql = `SELECT * FROM webhook_calls ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY at DESC LIMIT ${limit}`;
+    return (this.d.prepare(sql).all(...args) as Array<Record<string, unknown>>).map(toWebhookCall);
+  }
+  webhookStats(): Array<{ modelId: string; calls: number; errors: number; last: number }> {
+    if (!this.d) return this.mem.webhookStats();
+    return (this.d.prepare("SELECT model_id, COUNT(*) AS calls, SUM(CASE WHEN status < 200 OR status >= 300 THEN 1 ELSE 0 END) AS errors, MAX(at) AS last FROM webhook_calls GROUP BY model_id").all() as Array<Record<string, unknown>>)
+      .map((r) => ({ modelId: String(r.model_id), calls: Number(r.calls), errors: Number(r.errors ?? 0), last: Number(r.last) }));
+  }
+  deleteWebhookCalls(modelId?: string): number {
+    if (!this.d) return this.mem.deleteWebhookCalls(modelId);
+    const r = modelId ? this.d.prepare("DELETE FROM webhook_calls WHERE model_id = ?").run(modelId) : this.d.prepare("DELETE FROM webhook_calls").run();
+    return Number((r as { changes?: number }).changes ?? 0);
+  }
+
   /** Removes expired session and cache values, and runs older than the cutoff. */
   prune(runCutoff: number, now = Date.now()): void {
     if (!this.d) return this.mem.prune(runCutoff, now);
+    this.d.prepare("DELETE FROM webhook_calls WHERE at < ?").run(runCutoff);
     this.d.prepare("DELETE FROM session_kv WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
     this.d.prepare("DELETE FROM cache_kv WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
     this.d.prepare("DELETE FROM webhooks WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
@@ -375,6 +426,15 @@ class FunctionsStore {
 
 function toSchedule(r: Record<string, unknown>): Schedule {
   return { id: String(r.id), modelId: String(r.model_id), cron: String(r.cron), tz: String(r.tz || "UTC"), inputs: jsonParse(r.inputs, {}), enabled: Boolean(r.enabled), lastRun: (r.last_run as number) ?? null, createdAt: Number(r.created_at), createdBy: String(r.created_by || "") };
+}
+function toWebhookCall(r: Record<string, unknown>): WebhookCall {
+  return {
+    id: String(r.id), at: Number(r.at), kind: String(r.kind) as WebhookCall["kind"], modelId: String(r.model_id || ""), hook: String(r.hook || ""),
+    method: String(r.method || "POST"), path: String(r.path || ""), query: jsonParse(r.query, {}), headers: jsonParse(r.headers, {}),
+    contentType: String(r.content_type || ""), body: String(r.body || ""), bodySize: Number(r.body_size || 0), parsed: jsonParse(r.parsed, null),
+    ip: String(r.ip || ""), status: Number(r.status || 0), responseHeaders: jsonParse(r.response_headers, {}), responseBody: String(r.response_body || ""),
+    runId: String(r.run_id || ""), ms: Number(r.ms || 0), error: String(r.error || ""), replayOf: String(r.replay_of || ""), result: jsonParse(r.result, null),
+  };
 }
 function toWebhook(r: Record<string, unknown>): DurableWebhook {
   return { token: String(r.token), modelId: String(r.model_id), sessionId: String(r.session_id), caller: jsonParse(r.caller, {} as Caller), entry: String(r.entry), once: Boolean(r.once), expiresAt: (r.expires_at as number) ?? null, createdAt: Number(r.created_at) };
@@ -442,6 +502,20 @@ class MemoryStore {
   saveSchedule(s: Schedule): void { this.sch.set(s.id, structuredClone(s)); }
   deleteSchedule(id: string): void { this.sch.delete(id); }
   saveWebhook(w: DurableWebhook): void { this.hooks.set(w.token, structuredClone(w)); }
+  private calls = new Map<string, WebhookCall>();
+  durableWebhooks(now: number): DurableWebhook[] { return [...this.hooks.values()].filter((w) => w.expiresAt === null || w.expiresAt > now); }
+  addWebhookCall(c: WebhookCall): void { this.calls.set(c.id, c); if (this.calls.size > 2000) this.calls.delete(this.calls.keys().next().value as string); }
+  webhookCall(id: string): WebhookCall | null { return this.calls.get(id) ?? null; }
+  webhookCalls(q: { modelId?: string; kind?: string; status?: "ok" | "error"; before?: number }, limit: number): WebhookCall[] {
+    return [...this.calls.values()].filter((c) => (!q.modelId || c.modelId === q.modelId) && (!q.kind || c.kind === q.kind) && (!q.before || c.at < q.before)
+      && (!q.status || (q.status === "ok" ? c.status >= 200 && c.status < 300 : c.status < 200 || c.status >= 300))).sort((a, b) => b.at - a.at).slice(0, limit);
+  }
+  webhookStats(): Array<{ modelId: string; calls: number; errors: number; last: number }> {
+    const by = new Map<string, { modelId: string; calls: number; errors: number; last: number }>();
+    for (const c of this.calls.values()) { const s = by.get(c.modelId) ?? { modelId: c.modelId, calls: 0, errors: 0, last: 0 }; s.calls++; if (c.status < 200 || c.status >= 300) s.errors++; s.last = Math.max(s.last, c.at); by.set(c.modelId, s); }
+    return [...by.values()];
+  }
+  deleteWebhookCalls(modelId?: string): number { let n = 0; for (const [id, c] of this.calls) if (!modelId || c.modelId === modelId) { this.calls.delete(id); n++; } return n; }
   webhook(token: string, now: number): DurableWebhook | null { const w = this.hooks.get(token); if (!w) return null; if (w.expiresAt !== null && w.expiresAt <= now) { this.hooks.delete(token); return null; } return w; }
   deleteWebhook(token: string): void { this.hooks.delete(token); }
 

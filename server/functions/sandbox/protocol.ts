@@ -91,6 +91,7 @@ export const HOST_CALLS = [
   "http.request", "dns.resolve",
   "webhook.create", "webhook.wait",
   "crypto", "codes", "ai",
+  "functions.list",
 ] as const;
 export type HostCall = (typeof HOST_CALLS)[number];
 

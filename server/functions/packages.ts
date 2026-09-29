@@ -181,9 +181,17 @@ export function saveModel(input: Partial<Model> & { id?: string }, actor: string
  *  and mints one when it is first enabled. */
 function normalizeExecutors(next: Model["executors"], prev: Model["executors"] | undefined): Model["executors"] {
   const out = { ...next };
-  if (out.webhook?.enabled) {
-    const token = out.webhook.token || prev?.webhook?.token || randToken();
-    out.webhook = { enabled: true, token, auth: out.webhook.auth === "hmac" ? "hmac" : "none", ...(out.webhook.secret ? { secret: out.webhook.secret } : prev?.webhook?.secret ? { secret: prev.webhook.secret } : {}) };
+  if (out.webhook) {
+    // 5.2: the mode, the callback and the log survive; token "rotate" issues a new one.
+    const w = out.webhook;
+    const token = w.token === "rotate" ? randToken() : w.token || prev?.webhook?.token || (w.enabled ? randToken() : undefined);
+    const secret = w.secret ?? prev?.webhook?.secret;
+    out.webhook = {
+      enabled: Boolean(w.enabled), ...(token ? { token } : {}), auth: w.auth === "hmac" ? "hmac" : "none", ...(secret ? { secret } : {}),
+      mode: w.mode === "async" || w.mode === "auto" ? w.mode : w.mode === "sync" ? "sync" : prev?.webhook?.mode ?? "sync",
+      callback: typeof w.callback === "boolean" ? w.callback : prev?.webhook?.callback ?? false,
+      log: w.log === "meta" || w.log === "off" ? w.log : w.log === "full" ? "full" : prev?.webhook?.log ?? "full",
+    };
   }
   if (out.api?.enabled) out.api = { enabled: true, token: out.api.token || prev?.api?.token || randToken() };
   return out;

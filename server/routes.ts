@@ -63,8 +63,10 @@ import { sendWebPush } from "./push";
 import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
-import { accountGroups, registerAdminClientConfigRoutes, registerClientConfigRoutes, requireModule } from "./client-config";
+import { accountGroups, registerAdminClientConfigRoutes, registerClientConfigRoutes } from "./client-config";
+import { requireModule } from "./access";
 import { registerAdminMenuConfigRoutes, registerMenuConfigRoutes } from "./menu-config";
+import { registerModulesAdminRoutes } from "./modules-routes";
 import { buildInfo } from "./build-info";
 import { turnAnswer } from "./turn";
 import { clusterBus } from "./cluster/bus";
@@ -232,6 +234,7 @@ export async function registerRoutes(
   registerAdminApi(app, adminProviders);
   // The addons the operator switches on (saved connections, GUI templates).
   registerAdminMenuConfigRoutes(app);
+  registerModulesAdminRoutes(app);
   registerAdminClientConfigRoutes(app, () => {
     const all = accountStore.all();
     const withConnections = all.filter((a) => (a.vault.connections ?? 0) > 0);
