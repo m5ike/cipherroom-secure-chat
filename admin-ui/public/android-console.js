@@ -4,8 +4,10 @@
 //   Devices    enrolled phones: state, commands (ping, status, flash, push,
 //              update, lock, wipe), history, events; block, retire, delete
 //   Push       one control message to several devices; FCM settings and a test
-//   Design     the app's look: screens (element trees) with a live phone
-//              preview, theme, animations, texts, menus, action libraries, assets
+//   Design     the app's look: a visual builder for the screens (element
+//              trees: palette, layers, drag & drop, the phone preview with
+//              direct editing, inspector, undo), theme, animations, texts,
+//              menus, action libraries, assets
 //   Builds     the design frozen, encrypted and signed; publish, withdraw,
 //              restore, inspect, deploy files for chosen devices
 //   Releases   APK versions: upload (package and certificate checked), publish
@@ -28,7 +30,7 @@
   let overview = null;
   let catalog = null;
   let design = null;
-  let designSaved = "";
+  let designSaved = null; // the design as last saved, a snapshot (snap())
   let screenId = "room";
   let selected = "";
   let designTab = "screens";
@@ -62,6 +64,7 @@
   async function load() {
     const el = root();
     if (!el) return;
+    ensureStyles();
     try {
       overview = await api("/api/admin/android");
       if (!catalog) catalog = (await api("/api/admin/android/catalog")).catalog;
@@ -519,33 +522,121 @@
 
   /* ============================================================= design */
 
+  // 6.1: the Design tab is a visual builder. Every change of the design goes
+  // through changed(): one undo step per edit, typing into one field is one
+  // step. Snapshots leave the assets out of the JSON (they are only ever
+  // added or removed whole), so a long session stays small.
+  const hist = { undo: [], redo: [], last: null, key: null };
+  let designStatus = () => {};
+  let builder = null; // the mounted screens editor: { alive, refresh, place, key }
+
+  const snap = () => { const { assets, ...rest } = design; return { s: JSON.stringify(rest), a: { ...(assets || {}) } }; };
+  const sameSnap = (a, b) => { if (a.s !== b.s) return false; const ka = Object.keys(a.a); return ka.length === Object.keys(b.a).length && ka.every((k) => a.a[k] === b.a[k]); };
+  function resetHistory() { hist.undo = []; hist.redo = []; hist.last = snap(); hist.key = null; }
+
+  /** Call after changing the design: an undo step, unless it goes on with the same key (typing into one field). */
+  function changed(key = null) {
+    const now = snap();
+    now.scr = screenId; // where it happened, and what was selected: undo and redo go back there
+    now.sel = selected;
+    if (!hist.last) hist.last = now;
+    else if (!sameSnap(now, hist.last)) {
+      if (key === null || key !== hist.key) { hist.undo.push(hist.last); if (hist.undo.length > 200) hist.undo.shift(); }
+      hist.redo = [];
+      hist.last = now;
+      hist.key = key;
+    }
+    designStatus();
+  }
+  /** Back to a snapshot; `via` is the step undone or redone (its screen is shown). */
+  function restore(s, via) {
+    design = JSON.parse(s.s);
+    design.assets = { ...s.a };
+    hist.last = s;
+    hist.key = null;
+    if (designTab === "screens" && builder && builder.alive()) builder.refresh(via.scr, via.sel); else render();
+    designStatus();
+  }
+  function undo() { if (!hist.undo.length) return; const cur = hist.last; hist.redo.push(cur); restore(hist.undo.pop(), cur); }
+  function redo() { if (!hist.redo.length) return; hist.undo.push(hist.last); const next = hist.redo.pop(); restore(next, next); }
+  /** The field being typed into: the other editors' keystrokes in one field make one undo step. */
+  const typing = () => { const a = document.activeElement; return a && (a.tagName === "INPUT" || a.tagName === "TEXTAREA") ? a : null; };
+  const editable = (el) => Boolean(el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName)));
+
+  // Keys work while the Design tab is shown and no field or dialog has them.
+  document.addEventListener("keydown", (e) => {
+    const el = root();
+    const panel = el && el.closest("[data-panel]");
+    if (!el || tab !== "design" || (panel && panel.hidden) || document.querySelector(".mb-overlay") || editable(e.target)) return;
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (k === "z" || k === "y")) {
+      if (!may("builds")) return;
+      e.preventDefault();
+      if (k === "y" || e.shiftKey) redo(); else undo();
+      return;
+    }
+    if (designTab === "screens" && builder && builder.alive()) builder.key(e);
+  });
+  window.addEventListener("resize", () => { if (builder && builder.alive()) builder.place(); });
+
+  /** The console's stylesheet for this page (android-console.css), added once. */
+  function ensureStyles() {
+    if (document.getElementById("androidConsoleCss")) return;
+    document.head.append(h("link", { id: "androidConsoleCss", rel: "stylesheet", href: "android-console.css" }));
+  }
+
+  function iconBtn(icon, label, onclick, extra = {}) {
+    const { text, ...attrs } = extra;
+    return h("button", { class: "btn btn--sm and-ibtn", type: "button", title: label, "aria-label": label, onclick, ...attrs }, iconEl(icon, 15, "currentColor"), text ? h("span", {}, text) : null);
+  }
+
   async function designView(body) {
     if (!design) {
       const r = await guarded(() => api("/api/admin/android/design"));
       if (!r) return;
       design = r.design;
-      designSaved = JSON.stringify(design);
+      designSaved = snap();
+      resetHistory();
     }
-    const dirty = () => JSON.stringify(design) !== designSaved;
-    const status = h("span", { class: "muted small" }, dirty() ? "unsaved changes" : `saved · ${design.rev}`);
-    const markDirty = () => { status.textContent = dirty() ? "unsaved changes" : `saved · ${design.rev}`; };
+    if (!hist.last) resetHistory();
+    if (!designSaved) designSaved = snap();
+    const edit = may("builds");
+    const dirty = () => !sameSnap(snap(), designSaved);
+    const status = h("span", { class: "muted small", role: "status" });
+    const undoBtn = edit ? iconBtn("undo-2", "Undo (Ctrl+Z)", undo) : null;
+    const redoBtn = edit ? iconBtn("redo-2", "Redo (Ctrl+Shift+Z)", redo) : null;
+    let queued = false;
+    // Once a frame at most: comparing with the saved design costs a JSON of it.
+    designStatus = () => {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        status.textContent = dirty() ? "unsaved changes" : `saved · ${design.rev}`;
+        if (undoBtn) undoBtn.disabled = !hist.undo.length;
+        if (redoBtn) redoBtn.disabled = !hist.redo.length;
+      });
+    };
     const top = h("div", { class: "row" },
-      ...["screens", "theme", "animations", "texts", "menus", "libraries", "assets"].map((id) => h("button", { class: `btn btn--sm${designTab === id ? " btn--primary" : ""}`, type: "button", "data-read": "1", onclick: () => { designTab = id; render(); } }, id[0].toUpperCase() + id.slice(1))),
-      h("span", { class: "spacer" }), status,
-      may("builds") ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: async () => {
+      ...["screens", "theme", "animations", "texts", "menus", "libraries", "assets"].map((id) => h("button", { class: `btn btn--sm${designTab === id ? " btn--primary" : ""}`, type: "button", "data-read": "1", "aria-pressed": designTab === id ? "true" : "false", onclick: () => { designTab = id; render(); } }, id[0].toUpperCase() + id.slice(1))),
+      h("span", { class: "spacer" }), status, undoBtn, redoBtn,
+      edit ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: async () => {
         try {
           const r = await api("/api/admin/android/design", { method: "PUT", body: { design } });
           design = r.design;
-          designSaved = JSON.stringify(design);
+          designSaved = snap();
+          hist.last = designSaved;
+          hist.key = null;
           toast("Design saved. Build it (Builds) to send it to the devices.", "ok");
           render();
         } catch (err) { toast(err.message, "err"); }
       } }, "Save") : null,
-      may("builds") ? h("button", { class: "btn btn--sm", type: "button", onclick: () => { design = JSON.parse(designSaved); render(); } }, "Revert") : null,
-      may("builds") ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm("Replace the design with the built-in default?")) return; const r = await guarded(() => api("/api/admin/android/design/reset", { method: "POST", body: {} }), "Reset to the default."); if (r) { design = r.design; designSaved = JSON.stringify(design); render(); } } }, "Reset") : null);
+      edit ? h("button", { class: "btn btn--sm", type: "button", onclick: () => { design = JSON.parse(designSaved.s); design.assets = { ...designSaved.a }; changed(null); render(); } }, "Revert") : null,
+      edit ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm("Replace the design with the built-in default?")) return; const r = await guarded(() => api("/api/admin/android/design/reset", { method: "POST", body: {} }), "Reset to the default."); if (r) { design = r.design; designSaved = snap(); changed(null); render(); } } }, "Reset") : null);
     body.append(top);
+    designStatus();
     const views = { screens: screensEditor, theme: themeEditor, animations: animationsEditor, texts: textsEditor, menus: menusEditor, libraries: librariesEditor, assets: assetsEditor };
-    (views[designTab] || screensEditor)(body, markDirty);
+    (views[designTab] || screensEditor)(body, () => changed(typing()));
   }
 
   /* ------------------------------------------------------- the preview */
@@ -554,9 +645,9 @@
 
   function colorOf(value, fallback) {
     if (value === undefined || value === null || value === "") return fallback;
-    const v = String(value);
-    if (v.startsWith("@")) return (design.theme[previewDark ? "dark" : "light"] || {})[v.slice(1)] || fallback;
-    // #aarrggbb (Android) → rgba
+    let v = String(value);
+    if (v.startsWith("@")) { v = (design.theme[previewDark ? "dark" : "light"] || {})[v.slice(1)]; if (!v) return fallback; }
+    // #aarrggbb (Android) → rgba (CSS reads eight digits as #rrggbbaa)
     if (/^#[0-9a-fA-F]{8}$/.test(v)) { const a = parseInt(v.slice(1, 3), 16) / 255; return `rgba(${parseInt(v.slice(3, 5), 16)},${parseInt(v.slice(5, 7), 16)},${parseInt(v.slice(7, 9), 16)},${a.toFixed(2)})`; }
     return v;
   }
@@ -568,42 +659,87 @@
     return `${a}px ${b}px ${c}px ${d}px`;
   };
 
+  const iconCache = new Map();
   function iconEl(name, px, color) {
-    const svg = Kit.iconSvg(catalog.icons, name || "circle", "and-ico");
-    svg.setAttribute("width", String(px));
-    svg.setAttribute("height", String(px));
+    const key = `${name || "circle"}/${px}`;
+    let proto = iconCache.get(key);
+    if (!proto) {
+      proto = Kit.iconSvg(catalog.icons, name || "circle", "and-ico");
+      proto.setAttribute("width", String(px));
+      proto.setAttribute("height", String(px));
+      if (iconCache.size < 600) iconCache.set(key, proto);
+    }
+    const svg = proto.cloneNode(true);
     svg.style.color = color;
     svg.style.flex = "none";
     return svg;
   }
 
-  function sampleFor(id) {
-    const s = catalog.screens.find((x) => x.id === id);
-    return s ? structuredClone(s.sample) : {};
+  // The designer's own sample data per screen (preview only, never saved).
+  const samples = {};
+  const catalogSample = (id) => { const s = catalog.screens.find((x) => x.id === id); return s ? structuredClone(s.sample) : {}; };
+  const sampleFor = (id) => (samples[id] !== undefined ? structuredClone(samples[id]) : catalogSample(id));
+  const phoneScope = (id) => ({ ...sampleFor(id), app: { name: design.app.name, version: overview.app.version, code: overview.app.versionCode, bundle: "preview" } });
+  const isPart = (id) => id.includes(".") || id === "users" || id === "flash" || id === "update";
+
+  const elDef = (el) => catalog.elements.find((e) => e.el === el);
+  const isContainer = (n) => Boolean(n && elDef(n.el)?.container);
+  const FLEX = ["column", "row", "card", "scroll"];
+  const DRAWN = new Set(["column", "row", "stack", "scroll", "card", "text", "badge", "chip", "button", "iconButton", "icon", "avatar", "image", "divider", "spacer", "progress", "input", "switch", "checkbox", "slot", "select", "slider", "segmented"]);
+
+  /** "a|b|c", a list, or "=expression" giving either → the option labels. */
+  function optionList(src, val) {
+    if (src === undefined || src === null || src === "") return [];
+    const v = typeof src === "string" ? val(src) : src;
+    if (Array.isArray(v)) return v.map((o) => X.toText(o && typeof o === "object" ? (o.label ?? o.value) : o));
+    return X.toText(v).split("|").map((s) => s.trim()).filter(Boolean);
+  }
+  /** The value a control shows: bind names a value of $form (or $settings, or a dotted path). */
+  function bound(bind, scope) {
+    const path = X.toText(bind).replace(/^\$/, "").split(".").filter(Boolean);
+    if (!path.length) return null;
+    for (const base of [scope.form, scope.settings, scope]) {
+      const v = path.reduce((o, k) => (o && typeof o === "object" ? o[k] : undefined), base);
+      if (v !== undefined && v !== null && v !== "") return v;
+    }
+    return null;
   }
 
-  /** Renders a tree as HTML, as close to the app's native renderer as CSS allows. */
-  function preview(node, scope, parent, fgIn, onPick) {
+  /**
+   * Renders a tree as HTML, as close to the app's native renderer as CSS allows.
+   * `live` marks the edited screen's elements (data-nid) for picking and dropping;
+   * a node that cannot be drawn becomes a marked box instead of breaking the rest.
+   */
+  function preview(node, scope, parent, fgIn, live) {
+    try { return drawNode(node, scope, parent, fgIn, live); }
+    catch (err) { const bad = h("div", { class: "and-n and-bad", title: err.message }, `${node && node.el}: ${err.message}`); if (live && node) bad.dataset.nid = node.id; return bad; }
+  }
+
+  function drawNode(node, scope, parent, fgIn, live) {
     const val = (v) => X.value(v, scope, t);
     if (node.each) {
       const list = X.eval(node.each, scope, t);
       const frag = document.createDocumentFragment();
       const { each, ...rest } = node;
-      (Array.isArray(list) ? list.slice(0, 50) : []).forEach((item, i, arr) => frag.append(preview(rest, { ...scope, [node.as || "item"]: item, index: i, first: i === 0, last: i === arr.length - 1 }, parent, fgIn, onPick)));
+      (Array.isArray(list) ? list.slice(0, 50) : []).forEach((item, i, arr) => frag.append(preview(rest, { ...scope, [node.as || "item"]: item, index: i, first: i === 0, last: i === arr.length - 1 }, parent, fgIn, live)));
       return frag;
     }
     if (node.if) { try { if (!X.truthy(X.eval(node.if, scope, t))) return document.createComment(node.id); } catch { /* shown */ } }
+    const def = elDef(node.el);
     const st = node.style || {};
     const pr = node.props || {};
     const sv = (k) => { const v = st[k]; return typeof v === "string" && v.startsWith("=") ? X.toText(X.eval(v.slice(1), scope, t)) : v; };
     let fg = sv("fg") !== undefined ? colorOf(sv("fg"), fgIn) : fgIn;
-    const el = h("div", { class: `and-n and-${node.el}`, "data-id": node.id });
+    // and-e-<el>: the element's own class, apart from the console's and-* ones (.and-row is a layer row)
+    const el = h("div", { class: `and-n and-e-${node.el}` });
+    if (live) el.dataset.nid = node.id;
     const css = el.style;
     const inRow = parent === "row";
-    // layout
-    if (["column", "row", "card", "scroll"].includes(node.el)) {
+    const primary = colorOf("@primary", "#e11d48");
+    // layout (an element this console does not know yet but that holds children lays them out as a column)
+    if (FLEX.includes(node.el) || (!DRAWN.has(node.el) && def?.container)) {
       css.display = "flex";
-      css.flexDirection = node.el === "row" ? "row" : "column";
+      css.flexDirection = node.el === "row" || (node.el === "scroll" && X.truthy(pr.horizontal)) ? "row" : "column";
       if (node.el === "row" && pr.wrap) css.flexWrap = "wrap";
       const align = st.align || (node.el === "row" ? "center" : "stretch");
       css.alignItems = { start: "flex-start", end: "flex-end", center: "center", stretch: "stretch" }[align] || "stretch";
@@ -636,8 +772,8 @@
       css.fontSize = `${st.size || fs}px`;
       css.fontWeight = st.bold === true ? "700" : st.bold === false ? "400" : String(fw);
       if (st.italic) css.fontStyle = "italic";
-      if (variant === "mono" || design.theme.font === "mono") css.fontFamily = "ui-monospace, monospace";
-      else if (design.theme.font === "serif") css.fontFamily = "Georgia, serif";
+      if (variant === "mono" || design.theme.font === "mono" || st.font === "mono") css.fontFamily = "ui-monospace, monospace";
+      else if (design.theme.font === "serif" || st.font === "serif") css.fontFamily = "Georgia, serif";
       if (st.lines) { css.display = "-webkit-box"; css.webkitLineClamp = String(st.lines); css.webkitBoxOrient = "vertical"; css.overflow = "hidden"; }
       if (pr.align) css.textAlign = pr.align === "end" ? "right" : pr.align;
     };
@@ -648,7 +784,7 @@
         const c = val(pr.color);
         const sel = node.el === "chip" && X.truthy(val(pr.selected));
         if (node.el === "badge") { bg = bg || colorOf(c || "@primary", "#e11d48"); fg = sv("fg") !== undefined ? fg : "#fff"; }
-        else { css.border = `1px solid ${colorOf(sel ? "@primary" : "@border", "#ccc")}`; if (sel) { bg = bg || "color-mix(in srgb, " + colorOf("@primary", "#e11d48") + " 16%, transparent)"; fg = colorOf("@primary", fg); } }
+        else { css.border = `1px solid ${colorOf(sel ? "@primary" : "@border", "#ccc")}`; if (sel) { bg = bg || "color-mix(in srgb, " + primary + " 16%, transparent)"; fg = colorOf("@primary", fg); } }
         radius = radius ?? 999;
         css.display = "inline-flex"; css.alignItems = "center"; css.gap = "3px";
         if (!st.padding) css.padding = node.el === "chip" ? "6px 12px" : "2px 7px";
@@ -659,7 +795,7 @@
       case "button": {
         typo("label");
         const variant = X.toText(val(pr.variant)) || "primary";
-        const colors = { primary: [colorOf("@primary", "#e11d48"), colorOf("@onPrimary", "#fff")], danger: [colorOf("@danger", "#dc2626"), "#fff"], tonal: ["color-mix(in srgb, " + colorOf("@primary", "#e11d48") + " 14%, transparent)", colorOf("@primary", "#e11d48")], secondary: ["transparent", fg], text: ["transparent", colorOf("@primary", "#e11d48")] }[variant] || ["transparent", fg];
+        const colors = { primary: [primary, colorOf("@onPrimary", "#fff")], danger: [colorOf("@danger", "#dc2626"), "#fff"], tonal: ["color-mix(in srgb, " + primary + " 14%, transparent)", primary], secondary: ["transparent", fg], text: ["transparent", primary] }[variant] || ["transparent", fg];
         bg = bg || colors[0];
         if (sv("fg") === undefined) fg = colors[1];
         if (variant === "secondary") css.border = `1px solid ${colorOf("@border", "#ccc")}`;
@@ -674,10 +810,10 @@
       case "iconButton": {
         const variant = X.toText(val(pr.variant));
         css.width = "44px"; css.height = "44px"; css.display = "grid"; css.placeItems = "center"; css.position = "relative"; css.flex = "none";
-        if (variant === "primary") { bg = colorOf("@primary", "#e11d48"); radius = 22; }
+        if (variant === "primary") { bg = primary; radius = 22; }
         el.append(iconEl(X.toText(val(pr.icon)) || "circle", 22, variant === "primary" ? colorOf("@onPrimary", "#fff") : fg));
         const n = Number(val(pr.badge) || 0);
-        if (n > 0) el.append(h("span", { class: "and-dot", style: `background:${colorOf("@primary", "#e11d48")}` }, n > 99 ? "99+" : String(n)));
+        if (n > 0) el.append(h("span", { class: "and-dot", style: `background:${primary}` }, n > 99 ? "99+" : String(n)));
         el.title = text(pr.label || "");
         break;
       }
@@ -692,7 +828,7 @@
       }
       case "image": {
         const src = X.toText(val(pr.src));
-        const img = h("img", { alt: "", style: "width:100%;display:block;object-fit:" + ({ contain: "contain", center: "none" }[pr.fit] || "cover") });
+        const img = h("img", { alt: "", draggable: "false", style: "width:100%;display:block;object-fit:" + ({ contain: "contain", center: "none" }[pr.fit] || "cover") });
         if (src.startsWith("asset:") && design.assets[src.slice(6)]) img.src = `data:${design.assets[src.slice(6)].mime};base64,${design.assets[src.slice(6)].data}`;
         else if (src.startsWith("https://")) img.src = src;
         if (pr.ratio) img.style.aspectRatio = String(pr.ratio);
@@ -703,36 +839,66 @@
       case "spacer": if (pr.size) { css.width = inRow ? `${pr.size}px` : "auto"; css.height = inRow ? "auto" : `${pr.size}px`; } else css.flex = "1 1 0"; break;
       case "progress": {
         const v = pr.value !== undefined ? Number(val(pr.value)) : null;
-        el.append(v === null ? h("div", { class: "and-spin", style: `border-color:${colorOf("@primary", "#e11d48")} transparent transparent transparent` }) : h("div", { class: "and-bar" }, h("div", { style: `width:${Math.round(v * 100)}%;background:${colorOf("@primary", "#e11d48")}` })));
+        el.append(v === null ? h("div", { class: "and-spin", style: `border-color:${primary} transparent transparent transparent` }) : h("div", { class: "and-bar" }, h("div", { style: `width:${Math.round(v * 100)}%;background:${primary}` })));
         break;
       }
       case "input": {
-        const inp = h("div", { class: "and-input" }, text(pr.hint || ""));
+        const v = X.toText(bound(pr.bind, scope));
+        const inp = h("div", { class: "and-input" }, v || text(pr.hint || ""));
         inp.style.background = colorOf("@surfaceVariant", "#eee");
-        inp.style.color = colorOf("@muted", "#888");
+        inp.style.color = v ? fg : colorOf("@muted", "#888");
         el.append(inp);
         break;
       }
       case "switch": case "checkbox": {
         const on = X.truthy(val(pr.checked));
-        const mark = node.el === "switch" ? h("span", { class: `and-switch${on ? " on" : ""}`, style: on ? `background:${colorOf("@primary", "#e11d48")}` : "" }) : h("span", { class: "and-check", style: `border-color:${colorOf("@primary", "#e11d48")};background:${on ? colorOf("@primary", "#e11d48") : "transparent"}` }, on ? "✓" : "");
+        const mark = node.el === "switch" ? h("span", { class: `and-switch${on ? " on" : ""}`, style: on ? `background:${primary}` : "" }) : h("span", { class: "and-check", style: `border-color:${primary};background:${on ? primary : "transparent"}` }, on ? "✓" : "");
         css.display = "flex"; css.alignItems = "center"; css.gap = "8px";
         el.append(mark);
         if (node.text) el.append(document.createTextNode(text(node.text)));
         break;
       }
+      case "select": {
+        const opts = optionList(pr.options, val);
+        const cur = X.toText(bound(pr.bind, scope));
+        const shown = cur || opts[0] || text(pr.hint || "");
+        el.append(h("div", { class: "and-select", style: `background:${colorOf("@surfaceVariant", "#eee")};color:${cur || opts.length ? fg : colorOf("@muted", "#888")}` }, h("span", {}, shown || "—"), iconEl("chevron-down", 18, colorOf("@muted", "#888"))));
+        break;
+      }
+      case "slider": {
+        const num = (v, d) => { const x = Number(v === undefined || v === "" ? NaN : val(v)); return Number.isFinite(x) ? x : d; };
+        const min = num(pr.min, 0);
+        const max = Math.max(num(pr.max, 100), min + 1e-9);
+        const b = Number(bound(pr.bind, scope));
+        const cur = Math.min(max, Math.max(min, Number.isFinite(b) && bound(pr.bind, scope) !== null ? b : min));
+        const pct = ((cur - min) / (max - min)) * 100;
+        el.append(h("div", { class: "and-slider", title: String(cur) },
+          h("div", { class: "and-slider__track", style: `background:${colorOf("@border", "#ccc")}` }, h("div", { class: "and-slider__fill", style: `width:${pct}%;background:${primary}` })),
+          h("div", { class: "and-slider__thumb", style: `left:${pct}%;background:${primary}` })));
+        break;
+      }
+      case "segmented": {
+        const opts = optionList(pr.options, val);
+        const cur = X.toText(bound(pr.bind, scope)) || opts[0];
+        const seg = h("div", { class: "and-seg", style: `border-color:${colorOf("@border", "#ccc")}` });
+        for (const o of opts.length ? opts : ["—"]) seg.append(h("span", { style: o === cur ? `background:${primary};color:${colorOf("@onPrimary", "#fff")}` : "" }, o));
+        el.append(seg);
+        break;
+      }
       case "slot": el.append(slotPreview(pr.name, scope, fg, st)); break;
-      default: break;
+      default:
+        // An element the app knows but this console does not (yet): a labelled box.
+        if (!DRAWN.has(node.el) && !def?.container) el.append(h("div", { class: "and-unknown" }, iconEl(elIcon(node.el), 14, "currentColor"), def ? def.label : node.el));
+        break;
     }
     if (bg) css.background = bg;
     if (radius !== null && radius !== undefined) { css.borderRadius = `${radius}px`; css.overflow = css.overflow || "hidden"; }
     css.color = fg;
     if (node.on && node.on.click) css.cursor = "pointer";
-    for (const k of node.children || []) el.append(preview(k, scope, node.el, fg, onPick));
-    if (onPick) {
-      el.addEventListener("click", (e) => { e.stopPropagation(); onPick(node.id); });
-      if (node.id === selected) el.classList.add("and-sel");
-    }
+    const kids = node.children || [];
+    for (const k of kids) el.append(preview(k, scope, node.el, fg, live));
+    // An empty container stays big enough to drop into while designing.
+    if (live && !kids.length && (def?.container)) { el.classList.add("and-empty"); el.append(h("span", { class: "and-empty__hint" }, "Drop elements here")); }
     return el;
   }
 
@@ -747,7 +913,7 @@
   /** What a native part looks like in the preview (a sketch from the design's own trees where it uses them). */
   function slotPreview(name, scope, fg, st = {}) {
     const wrap = h("div", { class: "and-slot" });
-    const sub = (id, s) => preview(design.screens[id], s, "column", fg, null);
+    const sub = (id, s) => (design.screens[id] ? preview(design.screens[id], s, "column", fg, false) : h("div", { class: "and-ph" }, id));
     switch (name) {
       case "splashLogo": case "logo": {
         const px = Number(st.width) || Number(st.height) || (name === "logo" ? 56 : 120);
@@ -761,7 +927,7 @@
         wrap.append(h("div", { class: "and-dots" }, ...Array.from({ length: overview.config.policy.lock.pinLength }, (_, i) => h("i", { style: `background:${colorOf(i < 2 ? "@primary" : "@border", "#ccc")}` }))), grid);
         break;
       }
-      case "roomList": for (const room of (scope.rooms || sampleFor("rooms").rooms)) wrap.append(sub("rooms.item", { room })); break;
+      case "roomList": for (const room of (scope.rooms || sampleFor("rooms").rooms || [])) wrap.append(sub("rooms.item", { room })); break;
       case "roomTabs": wrap.append(h("div", { class: "and-tabs" }, ...(scope.rooms || []).map((r) => h("span", { style: `border-color:${colorOf(r.active ? "@primary" : "@border", "#ccc")};color:${r.active ? colorOf("@primary", "#e11d48") : fg}` }, r.name + (r.unread ? `  ${r.unread}` : ""))))); break;
       case "messages": {
         wrap.classList.add("and-fill");
@@ -775,6 +941,7 @@
           h("span", { style: `background:${colorOf("@primary", "#e11d48")}` }, iconEl("send-horizontal", 20, colorOf("@onPrimary", "#fff")))));
         break;
       case "userPanel": {
+        if (scope.users && scope.users.open === false) break;
         const u = sampleFor("users");
         const panel = sub("users", u);
         panel.style.width = "264px"; // UserPanel: 264 dp
@@ -782,14 +949,20 @@
         wrap.classList.add("and-overlay");
         break;
       }
-      case "userList": for (const user of (scope.users || sampleFor("users").users)) wrap.append(sub("users.item", { user })); break;
+      case "userList": for (const user of (scope.users || sampleFor("users").users || [])) wrap.append(sub("users.item", { user })); break;
       case "callControls": wrap.append(h("div", { class: "and-call" }, ...[["mic", "#ffffff33"], ["video", "#ffffff33"], ["phone-off", colorOf("@danger", "#dc2626")]].map(([i, c]) => h("span", { style: `background:${c}` }, iconEl(i, 24, "#fff"))))); break;
-      default: wrap.append(h("div", { class: "and-ph" }, (catalog.slots.find((s) => s.name === name) || { label: name }).label));
+      default: wrap.append(h("div", { class: "and-ph" }, (catalog.slots.find((s) => s.name === name) || { label: name || "?" }).label));
     }
     return wrap;
   }
 
-  /* ----------------------------------------------------- screen editor */
+  /* ------------------------------------------------------- tree helpers */
+
+  const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/i;
+  const COLOR_RE = /^(@[A-Za-z]+|#[0-9a-fA-F]{6}|#[0-9a-fA-F]{8})$/;
+  // JSON with sorted keys: a saved screen equals the default whatever order its keys come in.
+  const canon = (v) => JSON.stringify(v, (_k, x) => (x && typeof x === "object" && !Array.isArray(x) ? Object.fromEntries(Object.keys(x).sort().map((key) => [key, x[key]])) : x));
+  const isModified = (id) => { const d = catalog.defaults && catalog.defaults.screens && catalog.defaults.screens[id]; return Boolean(d) && canon(design.screens[id]) !== canon(d); };
 
   function findNode(node, id, parent = null) {
     if (!node) return null;
@@ -797,178 +970,1254 @@
     for (const k of node.children || []) { const f = findNode(k, id, node); if (f) return f; }
     return null;
   }
-
+  function pathTo(node, id) {
+    if (!node) return null;
+    if (node.id === id) return [node];
+    for (const k of node.children || []) { const p = pathTo(k, id); if (p) return [node, ...p]; }
+    return null;
+  }
   function allIds(node, out = new Set()) { if (!node) return out; out.add(node.id); for (const k of node.children || []) allIds(k, out); return out; }
+  const countNodes = (node) => (node ? 1 + (node.children || []).reduce((s, k) => s + countNodes(k), 0) : 0);
+  const nextId = (f) => { const kids = f.parent ? f.parent.children : []; const i = kids.indexOf(f.node); return kids[i + 1] ? kids[i + 1].id : null; };
 
-  function screensEditor(body, markDirty) {
-    const grid = h("div", { class: "and-ed" });
-    const left = h("div", { class: "card and-ed__tree" });
-    const mid = h("div", { class: "and-ed__phone" });
-    const right = h("div", { class: "card and-ed__insp" });
-    grid.append(left, mid, right);
-    body.append(grid);
-    const pick = h("select", { class: "input input--sm", "data-read": "1" });
-    for (const g of ["system", "app", "room", "parts"]) {
-      const og = h("optgroup", { label: g });
-      for (const s of catalog.screens.filter((x) => x.group === g)) og.append(h("option", { value: s.id }, `${s.label} (${s.id})`));
-      pick.append(og);
+  /** An id the screen does not use yet, from a base (an element or an older id). */
+  function freshId(base, ids) {
+    const stem = String(base || "el").toLowerCase().replace(/[^a-z0-9-]/g, "").replace(/^-+/, "").replace(/-\d+$/, "").slice(0, 34) || "el";
+    let i = 1;
+    let id;
+    do { id = `${stem}-${i++}`; } while (ids.has(id));
+    ids.add(id);
+    return id;
+  }
+  /** Gives a copied subtree ids the screen does not use (keeping those it can). */
+  function renumber(node, ids) {
+    node.id = typeof node.id === "string" && ID_RE.test(node.id) && !ids.has(node.id) ? node.id : freshId(typeof node.id === "string" && ID_RE.test(node.id) ? node.id : node.el, ids);
+    ids.add(node.id);
+    if (Array.isArray(node.children)) { node.children = node.children.filter((k) => k && typeof k === "object" && typeof k.el === "string"); node.children.forEach((k) => renumber(k, ids)); if (!node.children.length) delete node.children; }
+    else delete node.children;
+    return node;
+  }
+  /** Puts `node` into `parent` before the child `before` (null: at the end). */
+  function insertInto(parent, node, before) {
+    const kids = parent.children || (parent.children = []);
+    const i = before ? kids.findIndex((k) => k.id === before) : -1;
+    kids.splice(i < 0 ? kids.length : i, 0, node);
+  }
+  function detach(rootNode, id) {
+    const f = findNode(rootNode, id);
+    if (!f || !f.parent) return null;
+    f.parent.children = f.parent.children.filter((k) => k !== f.node);
+    if (!f.parent.children.length) delete f.parent.children;
+    return f.node;
+  }
+
+  const EL_ICONS = { column: "rows-2", row: "columns-2", stack: "layers", scroll: "scroll-text", card: "square", text: "type", icon: "star", image: "image", avatar: "circle-user-round", badge: "tag", chip: "circle-dot", divider: "minus", spacer: "move", progress: "loader", button: "hand", iconButton: "circle-plus", input: "pencil-line", switch: "power", checkbox: "check", slot: "puzzle", select: "chevron-down", slider: "sliders-horizontal", segmented: "layout-template" };
+  const elIcon = (el) => EL_ICONS[el] || "circle-dashed";
+
+  /** A new element as the palette makes it: a fresh id and just enough to be seen. */
+  function freshNode(el, ids, slot) {
+    const def = elDef(el) || { props: [], text: false, container: false };
+    const node = { id: freshId(el === "slot" && slot ? slot : el, ids), el };
+    const has = (p) => def.props.some((x) => x.name === p);
+    if (def.text) node.text = { button: "Button", chip: "Chip", badge: "1", switch: "Switch", checkbox: "Checkbox" }[el] || "Text";
+    const props = {};
+    if ((el === "icon" || el === "iconButton") && has("icon")) props.icon = "circle";
+    if (el === "slot") props.name = slot || (catalog.slots.find((s) => (s.screens || []).includes(screenId)) || catalog.slots[0]).name;
+    if (has("bind") && ["select", "slider", "segmented"].includes(el)) props.bind = el === "slider" ? "level" : "choice";
+    if (has("options")) props.options = "One|Two|Three";
+    if (el === "slider") { if (has("min")) props.min = 0; if (has("max")) props.max = 100; }
+    if (Object.keys(props).length) node.props = props;
+    const style = { row: { gap: 8, align: "center" }, column: { gap: 8 }, card: { padding: 16, gap: 8 } }[el];
+    if (style) node.style = { ...style };
+    return node;
+  }
+
+  /* ------------------------------------------------- inspector widgets */
+
+  let uidSeq = 0;
+  const uid = (p) => `and-${p}-${++uidSeq}`;
+  const trunc = (s, n = 70) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+  const checkTpl = (v) => (v.startsWith("=") ? X.check(v.slice(1)) : X.checkTemplate(v));
+  const checkCond = (v) => (v.trim() ? X.check(v) : null);
+  const checkExprProp = (v) => (v.trim() ? X.check(v.trim().replace(/^=/, "")) : null);
+  function peek(v) {
+    if (v === null || v === undefined) return "null";
+    if (Array.isArray(v)) return `a list of ${v.length}`;
+    if (typeof v === "object") return "an object";
+    return trunc(typeof v === "string" ? JSON.stringify(v) : String(v));
+  }
+  const previewExpr = (scope) => (v) => { try { return `= ${peek(X.eval(v.trim().replace(/^=/, ""), scope, t))}`; } catch { return ""; } };
+  const previewTpl = (scope) => (v) => {
+    if (!v.includes("{") && !v.startsWith("=")) return "";
+    try { return `→ ${v.startsWith("=") ? peek(X.eval(v.slice(1), scope, t)) : trunc(X.render(v, scope, t))}`; } catch { return ""; }
+  };
+
+  const fld = (label, control, hint, extra) => h("div", { class: "and-f" }, h("div", { class: "and-f__head" }, h("span", { class: "label" }, label), extra || null), control, hint ? h("div", { class: "muted small" }, hint) : null);
+
+  /** A text field that checks what is typed (the error inline) and shows what it gives with the sample data. */
+  function textField(o) {
+    const i = h(o.area ? "textarea" : "input", { class: `input input--sm${o.mono ? " mono" : ""}`, rows: o.area ? "2" : undefined, placeholder: o.placeholder || "", "aria-label": o.label, disabled: o.ro || undefined, spellcheck: "false", autocomplete: "off" });
+    i.value = o.value === undefined || o.value === null ? "" : String(o.value);
+    const msg = h("div", { class: "and-msg", id: uid("msg"), "aria-live": "polite" });
+    i.setAttribute("aria-describedby", msg.id);
+    const show = () => {
+      const err = o.check ? o.check(i.value) : null;
+      i.classList.toggle("is-bad", Boolean(err));
+      i.setAttribute("aria-invalid", err ? "true" : "false");
+      msg.className = `and-msg${err ? " is-bad" : ""}`;
+      msg.textContent = err || (o.preview && i.value ? o.preview(i.value) : "");
+      return err;
+    };
+    i.addEventListener("input", () => { if (!show()) o.onValue(o.parse ? o.parse(i.value) : i.value); });
+    show();
+    return h("div", { class: "and-fx" }, i, msg);
+  }
+
+  /** A number with − / + (and ↑ ↓ in the field, Shift for 10 steps). */
+  function numW(o) {
+    const step = o.step || 1;
+    const i = h("input", { class: "input input--sm", inputmode: "decimal", "aria-label": o.label, placeholder: o.placeholder || "—", disabled: o.ro || undefined, autocomplete: "off" });
+    i.value = o.value === undefined || o.value === null ? "" : String(o.value);
+    const msg = h("div", { class: "and-msg", id: uid("msg") });
+    i.setAttribute("aria-describedby", msg.id);
+    const apply = () => {
+      const s = i.value.trim();
+      const err = s === "" || /^-?\d+(\.\d+)?$/.test(s) ? null : "a number";
+      i.classList.toggle("is-bad", Boolean(err));
+      i.setAttribute("aria-invalid", err ? "true" : "false");
+      msg.className = `and-msg${err ? " is-bad" : ""}`;
+      msg.textContent = err || "";
+      if (!err) o.onValue(s === "" ? undefined : Number(s));
+    };
+    const bump = (d) => {
+      let v = Math.round(((Number(i.value) || 0) + d * step) * 1000) / 1000;
+      if (o.min !== undefined) v = Math.max(o.min, v);
+      if (o.max !== undefined) v = Math.min(o.max, v);
+      i.value = String(v);
+      apply();
+    };
+    i.addEventListener("input", apply);
+    i.addEventListener("keydown", (e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); bump((e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1)); } });
+    const btn = (d, sign) => h("button", { type: "button", class: "btn btn--xs", tabindex: "-1", "aria-label": `${o.label} ${d > 0 ? "more" : "less"}`, disabled: o.ro || undefined, onclick: () => bump(d) }, sign);
+    return h("div", { class: "and-fx" }, h("div", { class: "and-num" }, btn(-1, "−"), i, btn(1, "+")), msg);
+  }
+
+  function selectW(o) {
+    const opts = (o.options || []).map((x) => (Array.isArray(x) ? x : [x, x]));
+    const cur = o.value === undefined || o.value === null ? "" : String(o.value);
+    const s = h("select", { class: "input input--sm", "aria-label": o.label, disabled: o.ro || undefined },
+      h("option", { value: "" }, o.empty || "—"), ...opts.map(([v, l]) => h("option", { value: v }, l)));
+    if (cur && !opts.some(([v]) => v === cur)) s.append(h("option", { value: cur }, `${cur} (other)`));
+    s.value = cur;
+    s.addEventListener("change", () => o.onValue(s.value === "" ? undefined : o.parse ? o.parse(s.value) : s.value));
+    return s;
+  }
+
+  function boolW(o) {
+    const cb = h("input", { type: "checkbox", "aria-label": o.label, disabled: o.ro || undefined });
+    cb.checked = o.value === true || o.value === "true";
+    cb.addEventListener("change", () => o.onValue(cb.checked ? true : undefined));
+    return h("label", { class: "and-checkrow" }, cb, h("span", {}, o.text || "yes"));
+  }
+
+  /** match / wrap / a fixed size in dp. */
+  function sizeW(o) {
+    const mode = o.value === "match" || o.value === "wrap" ? o.value : o.value === undefined || o.value === "" ? "" : "dp";
+    const num = numW({ ...o, label: `${o.label} in dp`, value: mode === "dp" ? o.value : "", min: 0, onValue: (v) => o.onValue(v) });
+    num.hidden = mode !== "dp";
+    const sel = selectW({ ...o, value: mode, options: [["match", "fill (match)"], ["wrap", "content (wrap)"], ["dp", "fixed (dp)"]], onValue: (v) => {
+      num.hidden = v !== "dp";
+      if (v !== "dp") { o.onValue(v); return; }
+      const i = num.querySelector("input");
+      if (!i.value) i.value = "100";
+      o.onValue(Number(i.value) || 100);
+      i.focus();
+    } });
+    return h("div", { class: "and-pair" }, sel, num);
+  }
+
+  /** Padding / margin: 12, "8 16" or "8 16 8 16" (dp). */
+  const boxW = (o) => textField({ ...o, mono: true, placeholder: "8 · 8 16 · 8 16 8 16", check: (v) => (!v.trim() || /^-?\d+(\.\d+)?(\s+-?\d+(\.\d+)?){0,3}$/.test(v.trim()) ? null : "one to four numbers (dp)"), parse: (v) => (v.trim() === "" ? undefined : /^-?\d+(\.\d+)?$/.test(v.trim()) ? Number(v) : v.trim().replace(/\s+/g, " ")) });
+
+  /** The hex colour a value shows as (for the colour picker). */
+  function hex6(v) {
+    let s = String(v || "");
+    if (s.startsWith("@")) s = (design.theme[previewDark ? "dark" : "light"] || {})[s.slice(1)] || "";
+    if (/^#[0-9a-f]{8}$/i.test(s)) return `#${s.slice(3)}`.toLowerCase();
+    return /^#[0-9a-f]{6}$/i.test(s) ? s.toLowerCase() : "#000000";
+  }
+
+  /** A colour: a theme token, a custom colour (keeping the alpha of #aarrggbb), or an expression. */
+  function colorW(o) {
+    const v0 = o.value === undefined || o.value === null ? "" : String(o.value);
+    const tok = h("select", { class: "input input--sm", "aria-label": `${o.label}: theme colour`, disabled: o.ro || undefined },
+      h("option", { value: "" }, "—"), ...catalog.colors.map((c) => h("option", { value: `@${c}` }, `@${c}`)), h("option", { value: "#" }, "custom colour"), o.noExpr ? null : h("option", { value: "=" }, "expression"));
+    const pick = h("input", { type: "color", class: "and-swatch", "aria-label": `${o.label}: custom colour`, disabled: o.ro || undefined });
+    let input = null;
+    const sync = (v, toText) => {
+      tok.value = !v ? "" : v.startsWith("=") ? "=" : v.startsWith("@") && catalog.colors.includes(v.slice(1)) ? v : "#";
+      pick.value = hex6(v);
+      if (toText && input) { input.value = v; input.dispatchEvent(new Event("input")); }
+    };
+    const txt = textField({ ...o, value: v0, mono: true, placeholder: o.noExpr ? "@token · #rrggbb" : "@token · #rrggbb · =expression",
+      check: (v) => (!v ? null : v.startsWith("=") && !o.noExpr ? X.check(v.slice(1)) : COLOR_RE.test(v) ? null : "@token, #rrggbb or #aarrggbb" + (o.noExpr ? "" : " or =expression")),
+      onValue: (v) => { sync(v, false); o.onValue(v || undefined); } });
+    input = txt.querySelector("input");
+    tok.addEventListener("change", () => {
+      if (tok.value === "=") { input.value = "="; input.focus(); return; }
+      sync(tok.value === "#" ? pick.value : tok.value, true);
+    });
+    pick.addEventListener("input", () => { const cur = input.value; sync(/^#[0-9a-f]{8}$/i.test(cur) ? `#${cur.slice(1, 3)}${pick.value.slice(1)}` : pick.value, true); });
+    sync(v0, false);
+    return h("div", { class: "and-colorw" }, h("div", { class: "and-colorw__row" }, pick, tok), txt);
+  }
+
+  /** "1 @border": a width and a colour. */
+  function borderW(o) {
+    const parts = o.value === undefined || o.value === null ? [] : String(o.value).split(/\s+/);
+    let w = parts[0] || "";
+    let c = parts[1] || "";
+    const emit = () => o.onValue(w === "" && !c ? undefined : `${w || 1} ${c || "@border"}`);
+    return h("div", { class: "and-fx" },
+      numW({ ...o, label: `${o.label} width`, value: w, min: 0, onValue: (v) => { w = v === undefined ? "" : String(v); emit(); } }),
+      colorW({ ...o, label: `${o.label} colour`, value: c, noExpr: true, onValue: (v) => { c = v || ""; emit(); } }));
+  }
+
+  /** An icon from the catalog, chosen in the picker (with search). */
+  function iconW(o) {
+    const cur = typeof o.value === "string" ? o.value : "";
+    const b = h("button", { type: "button", class: "btn btn--sm and-iconw", "aria-label": `${o.label}: ${cur || "none"}, choose an icon`, disabled: o.ro || undefined },
+      cur ? iconEl(cur, 16, "currentColor") : null, h("span", {}, cur || "choose…"));
+    b.addEventListener("click", () => Kit.openIconPicker({ icons: catalog.icons, current: cur, optional: true, noneLabel: "none", onPick: (name) => {
+      o.onValue(name || undefined);
+      const nb = iconW({ ...o, value: name });
+      b.replaceWith(nb);
+      nb.focus();
+    } }));
+    return b;
+  }
+
+  function imageW(o) {
+    const list = h("datalist", { id: uid("assets") }, ...Object.keys(design.assets).map((a) => h("option", { value: `asset:${a}` })));
+    const f = textField({ ...o, mono: true, placeholder: "asset:<name> or https://…", check: (v) => (!v ? null : v.startsWith("=") ? X.check(v.slice(1)) : /^(asset:[A-Za-z0-9._-]{1,60}|https:\/\/[^\s"'<>]{4,500})$/.test(v) ? null : "asset:<name> or an https URL") });
+    f.querySelector("input").setAttribute("list", list.id);
+    f.append(list);
+    return f;
+  }
+
+  /** A widget — or, with ƒx, an expression "=…" in its place. Returns { box, btn }. */
+  function exprable(o, widget) {
+    const box = h("div", { class: "and-xw" });
+    let on = typeof o.value === "string" && o.value.startsWith("=");
+    const set = (v) => { o.value = v; o.onValue(v); };
+    const btn = h("button", { type: "button", class: "and-xbtn", title: "Compute it with an expression (=…)", "aria-label": `${o.label}: use an expression`, "aria-pressed": "false", disabled: o.ro || undefined }, "ƒx");
+    const draw = () => {
+      btn.setAttribute("aria-pressed", String(on));
+      clear(box).append(on
+        ? textField({ ...o, value: typeof o.value === "string" && o.value.startsWith("=") ? o.value : "=", mono: true, placeholder: "=expression", check: (v) => (v.startsWith("=") ? X.check(v.slice(1)) : "start with ="), preview: previewExpr(o.scope), onValue: set })
+        : widget({ ...o, onValue: set }));
+    };
+    btn.addEventListener("click", () => { on = !on; draw(); const f = box.querySelector("input, select, button"); if (f) f.focus(); });
+    draw();
+    return { box, btn };
+  }
+
+  // How each style property is edited (anything else: a checked text field).
+  const STYLE_UI = {
+    padding: { kind: "box" }, margin: { kind: "box" }, gap: { kind: "num", min: 0 }, width: { kind: "size" }, height: { kind: "size" },
+    maxWidth: { kind: "num", min: 0 }, weight: { kind: "num", min: 0 },
+    align: { kind: "sel", options: ["start", "center", "end", "stretch"] }, justify: { kind: "sel", options: ["start", "center", "end", "between", "around"] }, self: { kind: "sel", options: ["start", "center", "end", "stretch"] },
+    bg: { kind: "color" }, fg: { kind: "color" }, radius: { kind: "num", min: 0 }, border: { kind: "border" }, elevation: { kind: "num", min: 0 },
+    size: { kind: "num", min: 1 }, bold: { kind: "bool3" }, italic: { kind: "bool3" }, font: { kind: "sel", options: ["sans", "serif", "mono"] },
+    lines: { kind: "num", min: 1 }, opacity: { kind: "num", min: 0, max: 1, step: 0.05 },
+  };
+  const LAYOUT_STYLE = new Set(["padding", "margin", "gap", "width", "height", "maxWidth", "weight", "align", "justify", "self"]);
+
+  function styleField(s, n, ctx) {
+    const ui = STYLE_UI[s.name] || { kind: "text" };
+    const o = { label: s.label, value: n.style ? n.style[s.name] : undefined, ro: ctx.ro, scope: ctx.scope, onValue: (v) => ctx.edit(`style.${s.name}`, () => {
+      n.style = n.style || {};
+      if (v === undefined || v === "") delete n.style[s.name]; else n.style[s.name] = v;
+      if (!Object.keys(n.style).length) delete n.style;
+    }) };
+    if (ui.kind === "color") return fld(s.label, colorW(o), s.help);
+    const widget = {
+      num: (x) => numW({ ...x, min: ui.min, max: ui.max, step: ui.step }),
+      sel: (x) => selectW({ ...x, options: ui.options }),
+      bool3: (x) => selectW({ ...x, value: x.value === undefined ? "" : String(x.value), options: [["true", "yes"], ["false", "no"]], parse: (v) => v === "true" }),
+      size: sizeW, box: boxW, border: borderW,
+      text: (x) => textField({ ...x, mono: true, placeholder: s.help, parse: (v) => (v === "" ? undefined : /^-?\d+(\.\d+)?$/.test(v) ? Number(v) : v === "true" || v === "false" ? v === "true" : v) }),
+    }[ui.kind];
+    const x = exprable(o, widget);
+    return fld(s.label, x.box, s.help, x.btn);
+  }
+
+  function slotW(o, here) {
+    const cur = o.value === undefined ? "" : String(o.value);
+    const mine = catalog.slots.filter((s) => (s.screens || []).includes(here));
+    const other = catalog.slots.filter((s) => !(s.screens || []).includes(here));
+    const opt = (s) => h("option", { value: s.name }, `${s.label} (${s.name})`);
+    const sel = h("select", { class: "input input--sm", "aria-label": o.label, disabled: o.ro || undefined },
+      mine.length ? h("optgroup", { label: "On this screen" }, ...mine.map(opt)) : null, other.length ? h("optgroup", { label: "Other screens" }, ...other.map(opt)) : null);
+    if (cur && !catalog.slots.some((s) => s.name === cur)) sel.append(h("option", { value: cur }, `${cur} (unknown)`));
+    sel.value = cur;
+    sel.addEventListener("change", () => o.onValue(sel.value));
+    return sel;
+  }
+
+  function propField(p, n, ctx) {
+    const o = { label: p.label, value: n.props ? n.props[p.name] : undefined, ro: ctx.ro, scope: ctx.scope, onValue: (v) => ctx.edit(`props.${p.name}`, () => {
+      n.props = n.props || {};
+      if (v === undefined || v === "") delete n.props[p.name]; else n.props[p.name] = v;
+      if (!Object.keys(n.props).length) delete n.props;
+    }, p.kind === "slot") };
+    const str = o.value === undefined || o.value === null ? "" : String(o.value);
+    const ex = (widget) => { const x = exprable(o, widget); return fld(p.label, x.box, p.help, x.btn); };
+    switch (p.kind) {
+      case "bool": return fld(p.label, boolW(o), p.help);
+      case "select": return ex((x) => selectW({ ...x, options: p.options || [] }));
+      case "slot": return fld(p.label, slotW(o, screenId), p.help);
+      case "icon": return ex(iconW);
+      case "color": return fld(p.label, colorW(o), p.help);
+      case "number": return ex(numW);
+      case "image": return fld(p.label, imageW(o), p.help);
+      case "expr": return fld(p.label, textField({ ...o, value: str, mono: true, placeholder: "an expression, e.g. $room.selected", check: checkExprProp, preview: previewExpr(ctx.scope) }), p.help);
+      default: return fld(p.label, textField({ ...o, value: str, check: checkTpl, preview: previewTpl(ctx.scope), placeholder: "text, {$var}, {_'key'} or =expression" }), p.help);
     }
-    pick.value = screenId;
-    pick.addEventListener("change", () => { screenId = pick.value; selected = ""; render(); });
+  }
+
+  // Suggestions for an action's argument (typed freely all the same).
+  const ARG_HINTS = {
+    "screen.open": () => catalog.screens.filter((s) => s.group !== "parts").map((s) => s.id),
+    "menu.open": () => Object.keys(design.menus), "lib.run": () => Object.keys(design.libraries), "lang.set": () => catalog.langs,
+    "users.dock": () => ["none", "left", "right", "bottom"], "users.autoHide": () => ["true", "false"],
+  };
+
+  function eventField(ev, n, ctx) {
+    const cur = n.on ? n.on[ev] : undefined;
+    const groups = new Map();
+    for (const a of catalog.actions) { const g = a.action.includes(".") ? a.action.split(".")[0] : "general"; if (!groups.has(g)) groups.set(g, []); groups.get(g).push(a); }
+    const sel = h("select", { class: "input input--sm", "aria-label": `On ${ev}: action`, disabled: ctx.ro || undefined }, h("option", { value: "" }, "— nothing —"),
+      ...[...groups].map(([g, list]) => h("optgroup", { label: g }, ...list.map((a) => h("option", { value: a.action, title: a.help }, a.action)))));
+    sel.value = cur ? cur.action : "";
+    if (cur && !sel.value) { sel.append(h("option", { value: cur.action }, `${cur.action} (unknown)`)); sel.value = cur.action; }
+    const def = catalog.actions.find((a) => a.action === sel.value);
+    sel.addEventListener("change", () => {
+      ctx.edit(`on.${ev}`, () => {
+        n.on = n.on || {};
+        if (!sel.value) delete n.on[ev]; else n.on[ev] = { action: sel.value, ...(cur && cur.arg ? { arg: cur.arg } : {}) };
+        if (!Object.keys(n.on).length) delete n.on;
+      }, true);
+      ctx.redraw();
+    });
+    let arg = null;
+    if (cur && ((def && def.arg) || cur.arg)) {
+      const hints = (ARG_HINTS[cur.action] || (() => (def && /room key/.test(def.arg) ? ["=$room.key"] : def && /message id/.test(def.arg) ? ["=$msg.id"] : [])))();
+      arg = textField({ label: `On ${ev}: argument`, value: cur.arg || "", ro: ctx.ro, mono: true, placeholder: (def && def.arg) || "argument", check: checkTpl, preview: previewTpl(ctx.scope),
+        onValue: (v) => ctx.edit(`on.${ev}.arg`, () => { if (v) cur.arg = v; else delete cur.arg; }) });
+      if (hints.length) { const list = h("datalist", { id: uid("args") }, ...hints.map((x) => h("option", { value: x }))); arg.querySelector("input").setAttribute("list", list.id); arg.append(list); }
+    }
+    return fld(ev, h("div", { class: "and-fx" }, sel, arg), def ? `${def.help}${def.arg ? ` · argument: ${def.arg}` : ""}` : null);
+  }
+
+  // The enter animation, played in the preview on request (Web Animations, no CSS injected).
+  const ANIM_FRAMES = {
+    fade: [{ opacity: 0 }, { opacity: 1 }],
+    "slide-up": [{ opacity: 0, transform: "translateY(24px)" }, { opacity: 1, transform: "none" }],
+    "slide-down": [{ opacity: 0, transform: "translateY(-24px)" }, { opacity: 1, transform: "none" }],
+    "slide-left": [{ opacity: 0, transform: "translateX(24px)" }, { opacity: 1, transform: "none" }],
+    "slide-right": [{ opacity: 0, transform: "translateX(-24px)" }, { opacity: 1, transform: "none" }],
+    scale: [{ opacity: 0, transform: "scale(.85)" }, { opacity: 1, transform: "none" }],
+    pop: [{ opacity: 0, transform: "scale(.6)" }, { opacity: 1, transform: "scale(1.08)", offset: 0.7 }, { opacity: 1, transform: "none" }],
+  };
+  const EASE = { standard: "cubic-bezier(.2,0,0,1)", decelerate: "cubic-bezier(0,0,.2,1)", accelerate: "cubic-bezier(.3,0,1,1)", linear: "linear", overshoot: "cubic-bezier(.34,1.56,.64,1)", bounce: "cubic-bezier(.68,-.55,.27,1.55)" };
+
+  /** Quick sample states: flip a flag, empty a list, show an error. */
+  function quickStates(base) {
+    const out = [];
+    const walk = (obj, path, depth) => {
+      for (const [k, v] of Object.entries(obj || {})) {
+        if (!path.length && k === "app") continue;
+        const p = [...path, k];
+        const name = p.join(".");
+        if (typeof v === "boolean") out.push({ path: p, base: v, alt: !v, label: `${name}: ${!v}` });
+        else if (Array.isArray(v) && v.length) out.push({ path: p, base: v, alt: [], label: `${name}: empty` });
+        else if (/error/i.test(k) && typeof v === "string") out.push({ path: p, base: v, alt: v ? "" : "Something went wrong.", label: v ? `${name}: none` : `${name}: shown` });
+        else if (v && typeof v === "object" && !Array.isArray(v) && depth < 2) walk(v, p, depth + 1);
+      }
+    };
+    walk(base, [], 0);
+    return out.slice(0, 14);
+  }
+  const getPath = (o, p) => p.reduce((x, k) => (x && typeof x === "object" ? x[k] : undefined), o);
+  function setPath(o, p, v) { let x = o; for (const k of p.slice(0, -1)) { if (!x[k] || typeof x[k] !== "object") x[k] = {}; x = x[k]; } x[p[p.length - 1]] = structuredClone(v); }
+
+  /* ----------------------------------------------------- screen editor */
+
+  const DEVICES = [
+    { id: "compact", label: "Compact 360 × 740", w: 360, h: 740 },
+    { id: "tall", label: "Tall 412 × 915", w: 412, h: 915 },
+    { id: "fold", label: "Foldable open 673 × 841", w: 673, h: 841 },
+    { id: "tablet", label: "Tablet 800 × 1280", w: 800, h: 1280 },
+  ];
+  const view = { device: "compact", landscape: false, zoom: 0, overview: false };
+  const collapsed = new Set(); // "screen/node" folded in the layers
+  const inspOpen = { element: true, params: true, layout: true, style: false, anim: false, logic: false, events: true };
+  let clip = null; // the copied element (JSON)
+  let drag = null; // what is dragged: { add: el, slot? } from the palette or { move: id }
+
+  function screensEditor(body) {
+    const ro = !may("builds");
+    if (!design.screens[screenId]) screenId = Object.keys(design.screens)[0];
     const tree = () => design.screens[screenId];
-    const redraw = () => { drawTree(); drawPhone(); drawInspector(); markDirty(); };
-    const outline = h("div", { class: "and-outline" });
-    const info = catalog.screens.find((s) => s.id === screenId);
-    left.append(h("div", { class: "stack" }, pick, h("div", { class: "muted small" }, info?.help || ""), h("div", { class: "muted small" }, "Variables: ", h("span", { class: "mono" }, (info?.vars || []).join(" "))), outline));
+    const fkey = (id) => `${screenId}/${id}`;
+
+    /* layout */
+    const pick = h("select", { class: "input input--sm", "aria-label": "Screen", "data-read": "1" });
+    const overBtn = iconBtn("layout-grid", "All screens", () => { view.overview = !view.overview; showMode(); }, { "data-read": "1", "aria-pressed": "false", text: "All screens" });
+    const dfltBtn = ro ? null : iconBtn("rotate-ccw", "Put this screen back to the built-in one", () => resetScreen(), { text: "Default" });
+    const info = h("div", { class: "and-scrbar__info muted small" });
+    const grid = h("div", { class: "and-ed" });
+    const over = h("div", { class: "and-over", hidden: true });
+    body.append(h("div", { class: "and-scrbar" }, pick, overBtn, dfltBtn, info), grid, over);
+
+    const palSearch = h("input", { class: "input input--sm", type: "search", placeholder: "Search elements…", "aria-label": "Search elements", "data-read": "1" });
+    const palList = h("div", { class: "and-pal" });
+    const outline = h("div", { class: "and-outline", role: "tree", "aria-label": "Layers of the screen" });
+    const treeBox = h("div", { class: "and-layers__box" }, outline);
+    const left = h("div", { class: "and-ed__left" },
+      h("div", { class: "card stack" }, h("div", { class: "and-pal__head" }, "Elements"), ro ? h("div", { class: "muted small" }, "Your access does not include design changes.") : palSearch, ro ? null : palList),
+      h("div", { class: "card and-layers" }, h("div", { class: "and-layers__head" }, "Layers"), treeBox));
+    const mid = h("div", { class: "and-ed__phone" });
+    const right = h("div", { class: "card and-ed__insp", role: "region", "aria-label": "Inspector" });
+    grid.append(left, mid, right);
+
+    // the phone: device bar, stage (phone + overlays + toolbar), note, sample data
+    const devSel = h("select", { class: "input input--sm", "aria-label": "Device", "data-read": "1" }, ...DEVICES.map((d) => h("option", { value: d.id }, d.label)));
+    const rotBtn = iconBtn("rotate-ccw", "Portrait / landscape", () => { view.landscape = !view.landscape; applyDevice(); }, { "data-read": "1", "aria-pressed": "false" });
+    const zoomIn = h("input", { type: "range", min: "50", max: "150", step: "5", "aria-label": "Zoom", "data-read": "1" });
+    const zoomOut = h("output", {});
+    const fitBtn = iconBtn("maximize-2", "Fit the phone to the space", () => { view.zoom = fitZoom(); applyDevice(); }, { "data-read": "1" });
+    const tone = h("select", { class: "input input--sm", "aria-label": "Light or dark", "data-read": "1" }, h("option", { value: "light" }, "light"), h("option", { value: "dark" }, "dark"));
+    const lang = h("select", { class: "input input--sm", "aria-label": "Language", "data-read": "1" }, ...catalog.langs.map((l) => h("option", { value: l }, l)));
+    const playBtn = iconBtn("play", "Play the enter animations", () => play(null), { "data-read": "1" });
+    const note = h("div", { class: "and-note", role: "status" });
+    const screenEl = h("div", { class: "and-screen" });
+    const phone = h("div", { class: "and-phone" }, screenEl);
+    const ov = h("div", { class: "and-ov" });
+    const ovSel = h("div");
+    const ovHov = h("div");
+    const ovDrop = h("div");
+    ov.append(ovSel, ovHov, ovDrop);
+    const tb = h("div", { class: "and-tb", role: "toolbar", "aria-label": "Selected element", hidden: true });
+    const stage = h("div", { class: "and-stage", role: "region", "aria-label": "Phone preview: click to select, double-click a text to edit it, drag to move" }, phone, ov, tb);
+    const sampleTag = badge("edited", "info");
+    const sampleBody = h("div", { class: "and-sample__body" });
+    const sample = h("details", { class: "and-sample" }, h("summary", {}, "Sample data (preview states)", sampleTag), sampleBody);
+    mid.append(h("div", { class: "and-devbar" }, devSel, rotBtn, h("label", { class: "and-zoom" }, zoomIn, zoomOut), fitBtn, tone, lang, playBtn), note, stage, sample);
+
+    const alive = () => grid.isConnected;
+    let hovEl = null;
+    let tbFor = null;
+    let inline = null;
+    let soonTimer = 0;
+    let soonTree = false;
+
+    /* ------------------------------------------------ screens and modes */
+
+    function drawPick() {
+      clear(pick);
+      for (const g of [...new Set(["system", "app", "room", "parts", ...catalog.screens.map((s) => s.group)])]) {
+        const list = catalog.screens.filter((x) => x.group === g);
+        if (list.length) pick.append(h("optgroup", { label: g }, ...list.map((s) => h("option", { value: s.id }, `${isModified(s.id) ? "● " : ""}${s.label} (${s.id})`))));
+      }
+      pick.value = screenId;
+    }
+    function drawInfo() {
+      const s = catalog.screens.find((x) => x.id === screenId);
+      clear(info).append(h("span", {}, s ? s.help : "", " · ", h("span", { class: "mono" }, (s ? s.vars : []).join(" ")), isModified(screenId) ? [" · ", badge("changed", "warn")] : null));
+      if (dfltBtn) dfltBtn.disabled = !isModified(screenId);
+      const opt = [...pick.options].find((x) => x.value === screenId);
+      if (opt && s) opt.textContent = `${isModified(screenId) ? "● " : ""}${s.label} (${s.id})`;
+    }
+    pick.addEventListener("change", () => switchScreen(pick.value));
+    function switchScreen(id) {
+      closeInline();
+      screenId = id;
+      selected = "";
+      hist.key = null;
+      pick.value = id;
+      if (view.overview) { view.overview = false; showMode(); }
+      drawInfo(); drawPalette(); drawTree(); drawScreen(); drawInspector(); drawSample();
+    }
+    function resetScreen() {
+      const d = catalog.defaults && catalog.defaults.screens && catalog.defaults.screens[screenId];
+      if (!d || !confirm(`Put “${screenId}” back to the built-in screen? (Undo brings your version back.)`)) return;
+      design.screens[screenId] = structuredClone(d);
+      commit("");
+    }
+    function showMode() {
+      grid.hidden = view.overview;
+      over.hidden = !view.overview;
+      overBtn.setAttribute("aria-pressed", String(view.overview));
+      if (view.overview) drawOverview(); else { clear(over); place(); }
+    }
+
+    /** Every screen small, drawn a few at a time so the page stays responsive. */
+    function drawOverview() {
+      clear(over);
+      const fg = colorOf("@onSurface", "#1c2330");
+      const s = 0.3;
+      const todo = [];
+      for (const sc of catalog.screens) {
+        const frame = h("div", { class: "and-thumb__frame", style: `width:${380 * s}px;height:${760 * s}px` });
+        const card = h("div", { class: `and-thumb${sc.id === screenId ? " is-on" : ""}`, role: "button", tabindex: "0", "aria-label": `Open ${sc.label}${isModified(sc.id) ? " (changed)" : ""}`, "data-read": "1" },
+          frame, h("span", { class: "and-thumb__name" }, sc.label), h("span", { class: "mono small muted" }, sc.id), isModified(sc.id) ? badge("changed", "warn") : badge("default", ""));
+        card.addEventListener("click", () => { if (design.screens[sc.id]) switchScreen(sc.id); });
+        card.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); switchScreen(sc.id); } });
+        over.append(card);
+        todo.push(() => {
+          const scr = h("div", { class: `and-screen${isPart(sc.id) ? " and-screen--part" : ""}` }, design.screens[sc.id] ? preview(design.screens[sc.id], phoneScope(sc.id), "column", fg, false) : h("div", { class: "and-ph" }, "not in this design"));
+          frame.append(h("div", { class: "and-phone", style: `transform:scale(${s});background:${colorOf("@background", "#f5f6f8")}` }, scr));
+        });
+      }
+      const next = () => { if (!view.overview || !over.isConnected) return; todo.splice(0, 3).forEach((f) => f()); if (todo.length) requestAnimationFrame(next); };
+      requestAnimationFrame(next);
+    }
+
+    /* --------------------------------------------------------- palette */
+
+    function drawPalette() {
+      if (ro) return;
+      clear(palList);
+      const q = palSearch.value.trim().toLowerCase();
+      const hit = (...s) => !q || s.some((x) => String(x || "").toLowerCase().includes(q));
+      const group = (name, tiles, empty) => (tiles.length || (empty && !q) ? h("div", { class: "and-pal__grp", role: "group", "aria-label": name }, h("span", {}, name), tiles.length ? h("div", { class: "and-pal__grid" }, ...tiles) : h("div", { class: "muted small" }, empty)) : null);
+      const tile = (what, label, icon, help) => {
+        const b = h("button", { type: "button", class: "and-tile", draggable: "true", title: `${help || label} — drag it onto the phone or the layers, or click to add it`, "aria-label": `Add ${label}` }, iconEl(icon, 18, "currentColor"), h("span", {}, label));
+        b.addEventListener("dragstart", (e) => startDrag(e, what));
+        b.addEventListener("dragend", endDrag);
+        b.addEventListener("click", () => addAt(what, spotNearSelection()));
+        return b;
+      };
+      const groups = [];
+      for (const g of [...new Set(["layout", "content", "controls", "logic", ...catalog.elements.map((e) => e.group)])]) {
+        const items = catalog.elements.filter((e) => e.group === g && e.el !== "slot" && hit(e.el, e.label, e.help));
+        groups.push(group(g, items.map((e) => tile({ add: e.el }, e.label, elIcon(e.el), e.help))));
+      }
+      if (elDef("slot")) {
+        const parts = catalog.slots.filter((s) => (s.screens || []).includes(screenId) && hit(s.name, s.label, "part"));
+        groups.push(group("App parts", parts.map((s) => tile({ add: "slot", slot: s.name }, s.label.replace(/\s*\(.*\)$/, ""), "puzzle", `App part “${s.name}”: ${s.label}`)), "No app part belongs to this screen."));
+      }
+      palList.append(...groups.filter(Boolean));
+      if (!palList.childNodes.length) palList.append(h("div", { class: "muted small" }, "Nothing matches."));
+    }
+    let palTimer = 0;
+    palSearch.addEventListener("input", () => { clearTimeout(palTimer); palTimer = setTimeout(drawPalette, 120); });
+
+    /* ---------------------------------------------------------- layers */
+
+    const nodeLabel = (n) => n.name || (n.el === "slot" ? `part: ${(n.props && n.props.name) || "?"}` : n.text ? String(n.text).slice(0, 40) : `#${n.id}`);
 
     function drawTree() {
+      const keep = treeBox.scrollTop;
       clear(outline);
-      const walk = (n, depth, parent) => {
-        const def = catalog.elements.find((e) => e.el === n.el);
-        const label = n.name || (n.el === "slot" ? `part: ${n.props?.name}` : n.text ? `${n.el}: ${String(n.text).slice(0, 24)}` : n.el);
-        const row = h("div", { class: `and-row${n.id === selected ? " on" : ""}`, style: `padding-left:${6 + depth * 14}px`, onclick: () => { selected = n.id; redraw(); } },
-          h("span", { class: "mono small muted" }, def ? def.label : n.el), h("span", {}, ` ${label}`), n.if ? h("span", { class: "badge" }, "if") : null, n.each ? h("span", { class: "badge" }, "each") : null);
-        outline.append(row);
-        for (const k of n.children || []) walk(k, depth + 1, n);
+      const frag = document.createDocumentFragment();
+      const walk = (n, depth, isRoot) => {
+        const def = elDef(n.el);
+        const kids = n.children || [];
+        const fold = collapsed.has(fkey(n.id));
+        frag.append(h("div", { class: `and-row${n.id === selected ? " on" : ""}`, role: "treeitem", "aria-level": String(depth + 1), "aria-selected": n.id === selected ? "true" : "false", "aria-expanded": kids.length ? String(!fold) : undefined, tabindex: n.id === selected || (!selected && isRoot) ? "0" : "-1", draggable: ro || isRoot ? undefined : "true", "data-nid": n.id, style: `--depth:${depth}` },
+          kids.length ? h("button", { type: "button", class: "and-caret", tabindex: "-1", "aria-label": fold ? "Expand" : "Collapse", "data-read": "1", "data-fold": n.id }, iconEl(fold ? "chevron-right" : "chevron-down", 12, "currentColor")) : h("span", { class: "and-caret" }),
+          iconEl(elIcon(n.el), 14, "currentColor"),
+          h("span", { class: "and-row__type" }, def ? def.label : n.el),
+          h("span", { class: "and-row__label" }, nodeLabel(n)),
+          n.if ? badge("if", "") : null, n.each ? badge("each", "") : null, n.on ? badge("on", "info") : null));
+        if (!fold) for (const k of kids) walk(k, depth + 1, false);
       };
-      walk(tree(), 0, null);
-      if (!may("builds")) return;
-      const add = h("select", { class: "input input--sm" }, h("option", { value: "" }, "+ Add an element…"), ...catalog.elements.map((e) => h("option", { value: e.el }, `${e.label} (${e.group})`)));
-      add.addEventListener("change", () => {
-        if (!add.value) return;
-        const found = findNode(tree(), selected || tree().id);
-        const def = catalog.elements.find((e) => e.el === add.value);
-        const ids = allIds(tree());
-        let i = 1; let id;
-        do { id = `${add.value.toLowerCase()}-${i++}`; } while (ids.has(id));
-        const fresh = { id, el: add.value, ...(def.text ? { text: def.el === "button" ? "Button" : "Text" } : {}), ...(add.value === "icon" || add.value === "iconButton" ? { props: { icon: "circle" } } : {}), ...(add.value === "slot" ? { props: { name: catalog.slots[0].name } } : {}) };
-        const target = found && catalog.elements.find((e) => e.el === found.node.el)?.container ? found.node : found?.parent || tree();
-        target.children = [...(target.children || []), fresh];
-        selected = id;
-        redraw();
-      });
-      outline.append(h("div", { class: "row mt8" }, add));
+      walk(tree(), 0, true);
+      outline.append(frag);
+      treeBox.scrollTop = keep;
+    }
+    const rowOf = (id) => outline.querySelector(`.and-row[data-nid="${CSS.escape(id)}"]`);
+    function markRows() {
+      for (const r of outline.querySelectorAll(".and-row.on")) { r.classList.remove("on"); r.setAttribute("aria-selected", "false"); r.tabIndex = -1; }
+      const r = selected && rowOf(selected);
+      if (r) { r.classList.add("on"); r.setAttribute("aria-selected", "true"); r.tabIndex = 0; }
+    }
+    /** Unfolds the layers down to an element; true when that changed the tree. */
+    function expandTo(id) {
+      let changedFold = false;
+      for (const n of (pathTo(tree(), id) || []).slice(0, -1)) if (collapsed.delete(fkey(n.id))) changedFold = true;
+      return changedFold;
+    }
+    outline.addEventListener("click", (e) => {
+      const fold = e.target.closest("[data-fold]");
+      if (fold) { const k = fkey(fold.dataset.fold); if (collapsed.has(k)) collapsed.delete(k); else collapsed.add(k); drawTree(); return; }
+      const row = e.target.closest(".and-row");
+      if (row) select(row.dataset.nid, { phone: true });
+    });
+    outline.addEventListener("dblclick", (e) => { const row = e.target.closest(".and-row"); if (row) { select(row.dataset.nid); editInline(); } });
+    outline.addEventListener("mouseover", (e) => { const row = e.target.closest(".and-row"); if (row && !drag) hoverOn(firstEl(row.dataset.nid)); });
+    outline.addEventListener("mouseleave", () => hoverOn(null));
+
+    /* ----------------------------------------------------------- phone */
+
+    function applyDevice() {
+      const d = DEVICES.find((x) => x.id === view.device) || DEVICES[0];
+      const [w, ht] = view.landscape ? [d.h, d.w] : [d.w, d.h];
+      if (!view.zoom) view.zoom = fitZoom();
+      const z = view.zoom / 100;
+      devSel.value = d.id;
+      rotBtn.setAttribute("aria-pressed", String(view.landscape));
+      zoomIn.value = String(view.zoom);
+      zoomOut.textContent = `${view.zoom} %`;
+      phone.style.width = `${w}px`;
+      phone.style.height = `${ht}px`;
+      phone.style.transform = `scale(${z})`;
+      stage.style.width = `${(w + 20) * z}px`;
+      stage.style.height = `${(ht + 20) * z}px`;
+      Object.assign(ov.style, { left: `${10 * z}px`, top: `${10 * z}px`, width: `${w * z}px`, height: `${ht * z}px`, borderRadius: `${24 * z}px` });
+      place();
+    }
+    /** The zoom (50–150 %, in 5 % steps) at which the phone fits the column and the window. */
+    function fitZoom() {
+      const d = DEVICES.find((x) => x.id === view.device) || DEVICES[0];
+      const [w, ht] = view.landscape ? [d.h, d.w] : [d.w, d.h];
+      const aw = Math.max(200, (mid.clientWidth || 400) - 16);
+      const ah = Math.max(300, window.innerHeight - Math.max(0, mid.getBoundingClientRect().top) - 120);
+      return Math.max(50, Math.min(150, Math.floor((Math.min(aw / (w + 20), ah / (ht + 20)) * 100) / 5) * 5));
+    }
+    devSel.addEventListener("change", () => { view.device = devSel.value; applyDevice(); });
+    zoomIn.addEventListener("input", () => { view.zoom = Number(zoomIn.value); applyDevice(); });
+    tone.addEventListener("change", () => { previewDark = tone.value === "dark"; drawScreen(); });
+    lang.addEventListener("change", () => { previewLang = lang.value; drawScreen(); });
+
+    function drawScreen() {
+      if (!alive()) return;
+      closeInline();
+      const keep = screenEl.scrollTop;
+      tone.value = previewDark ? "dark" : "light";
+      lang.value = previewLang;
+      let node;
+      try { node = preview(tree(), phoneScope(screenId), "column", colorOf("@onSurface", "#1c2330"), true); }
+      catch (err) { node = h("div", { class: "err p8" }, `Cannot draw: ${err.message}`); }
+      phone.style.background = colorOf("@background", "#f5f6f8");
+      screenEl.className = `and-screen${isPart(screenId) ? " and-screen--part" : ""}`;
+      clear(screenEl).append(node);
+      screenEl.scrollTop = keep;
+      hovEl = null;
+      clear(ovHov);
+      tbFor = null;
+      place();
+    }
+    const firstEl = (id) => (id ? screenEl.querySelector(`[data-nid="${CSS.escape(id)}"]`) : null);
+    const lastEl = (id) => { const all = screenEl.querySelectorAll(`[data-nid="${CSS.escape(id)}"]`); return all[all.length - 1] || null; };
+    const boxAt = (r, base, cls) => h("div", { class: cls, style: `left:${r.left - base.left}px;top:${r.top - base.top}px;width:${r.width}px;height:${r.height}px` });
+
+    /** The selection boxes and the toolbar, where the selected element is drawn now. */
+    function place() {
+      if (!alive() || view.overview) return;
+      clear(ovSel);
+      for (const el of screenEl.querySelectorAll(".and-n[draggable]")) el.removeAttribute("draggable");
+      const f = selected ? findNode(tree(), selected) : null;
+      const els = f ? [...screenEl.querySelectorAll(`[data-nid="${CSS.escape(selected)}"]`)] : [];
+      if (f && !els.length) setNote(`#${selected} is not drawn with this sample data${f.node.if ? ` (if: ${f.node.if})` : ""}.`, true);
+      else setNote(ro ? "" : "Drag elements from the palette · double-click a text to edit it");
+      if (!els.length) { tb.hidden = true; return; }
+      const base = ov.getBoundingClientRect();
+      els.slice(0, 40).forEach((el, i) => ovSel.append(boxAt(el.getBoundingClientRect(), base, i ? "and-box and-box--sel2" : "and-box and-box--sel")));
+      if (ro) return;
+      if (f.parent) for (const el of els) el.setAttribute("draggable", "true");
+      if (tbFor !== selected) drawToolbar(f);
+      placeToolbar(els[0]);
+    }
+    screenEl.addEventListener("scroll", () => { hoverOn(null); place(); }, { passive: true });
+    /** The line over the phone (a live region: only real changes are announced). */
+    function setNote(text, warn) {
+      if (note.textContent !== text) note.textContent = text;
+      note.classList.toggle("is-warn", Boolean(warn));
     }
 
-    function drawPhone() {
-      clear(mid);
-      const scope = { ...sampleFor(screenId), app: { name: design.app.name, version: overview.app.version, code: overview.app.versionCode, bundle: "preview" } };
-      const bgc = colorOf("@background", "#f5f6f8");
-      const phone = h("div", { class: "and-phone", style: `background:${bgc}` });
+    function placeToolbar(el) {
+      tb.hidden = false;
+      const sr = stage.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const tw = tb.offsetWidth;
+      const th = tb.offsetHeight;
+      // it may rise over the hint line above the phone rather than cover the top of the screen
+      const fits = (y) => y >= -28 && y + th <= sr.height;
+      const above = r.top - sr.top - th - 6;
+      const below = r.bottom - sr.top + 6;
+      const top = fits(above) ? above : fits(below) ? below : Math.max(0, Math.min(sr.height - th, r.top - sr.top + 6));
+      const leftPx = Math.max(0, Math.min(r.left - sr.left, sr.width - tw));
+      tb.style.top = `${top}px`;
+      tb.style.left = `${leftPx}px`;
+    }
+
+    function drawToolbar(f) {
+      tbFor = selected;
+      clear(tb);
+      const def = elDef(f.node.el) || {};
+      const b = (icon, label, fn, cls) => h("button", { type: "button", class: cls || "", title: label, "aria-label": label, onclick: (e) => { e.stopPropagation(); fn(e); } }, iconEl(icon, 15, "currentColor"));
+      tb.append(h("span", { class: "and-tb__name" }, `${def.label || f.node.el}`));
+      if (f.parent) {
+        const grip = h("span", { class: "and-tb__grip", draggable: "true", title: "Drag to move", "aria-hidden": "true" }, iconEl("grip-vertical", 15, "currentColor"));
+        grip.addEventListener("dragstart", (e) => startDrag(e, { move: selected }));
+        grip.addEventListener("dragend", endDrag);
+        tb.append(grip, b("corner-up-left", "Select the parent (Esc)", () => select(f.parent.id, { reveal: true })), b("arrow-up", "Move up (Alt+↑)", () => step(-1)), b("arrow-down", "Move down (Alt+↓)", () => step(1)));
+      }
+      if (def.text) tb.append(b("pencil", "Edit the text (Enter)", () => editInline()));
+      const wrapBtn = b("layers", "Wrap in a row, column or card", (e) => wrapMenu(e.currentTarget));
+      wrapBtn.setAttribute("aria-haspopup", "menu");
+      wrapBtn.setAttribute("aria-expanded", "false");
+      tb.append(wrapBtn);
+      if (f.parent) tb.append(h("span", { class: "and-tb__sep" }), b("copy", "Duplicate (Ctrl+D)", duplicate), b("trash", "Delete (Del)", remove, "is-danger"));
+    }
+
+    function wrapMenu(btn) {
+      const open = tb.querySelector(".and-tb__menu");
+      if (open) { open.remove(); btn.setAttribute("aria-expanded", "false"); return; }
+      const menu = h("div", { class: "and-tb__menu", role: "menu" }, ...["row", "column", "card"].filter((x) => elDef(x)).map((x) => h("button", { type: "button", role: "menuitem", onclick: (e) => { e.stopPropagation(); wrap(x); } }, iconEl(elIcon(x), 15, "currentColor"), `Wrap in a ${elDef(x).label.toLowerCase()}`)));
+      menu.addEventListener("keydown", (e) => {
+        const items = [...menu.querySelectorAll("button")];
+        const i = items.indexOf(document.activeElement);
+        if (e.key === "Escape") { e.stopPropagation(); menu.remove(); btn.setAttribute("aria-expanded", "false"); btn.focus(); }
+        else if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); e.stopPropagation(); items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus(); }
+      });
+      tb.append(menu);
+      btn.setAttribute("aria-expanded", "true");
+      menu.querySelector("button").focus();
+    }
+
+    function hoverOn(el) {
+      if (hovEl === el) return;
+      hovEl = el;
+      clear(ovHov);
+      if (!el || drag || !alive()) return;
+      const n = findNode(tree(), el.dataset.nid);
+      const box = boxAt(el.getBoundingClientRect(), ov.getBoundingClientRect(), "and-box and-box--hov");
+      box.append(h("span", {}, `${n ? (elDef(n.node.el) || { label: n.node.el }).label : "?"} #${el.dataset.nid}`));
+      if (parseFloat(box.style.top) < 16) box.classList.add("is-in");
+      ovHov.append(box);
+    }
+    screenEl.addEventListener("mouseover", (e) => { if (!drag) hoverOn(e.target.closest ? e.target.closest("[data-nid]") : null); });
+    screenEl.addEventListener("mouseleave", () => hoverOn(null));
+    screenEl.addEventListener("click", (e) => { const el = e.target.closest("[data-nid]"); select(el ? el.dataset.nid : tree().id, { tree: true }); });
+    screenEl.addEventListener("dblclick", (e) => { const el = e.target.closest("[data-nid]"); if (!el) return; select(el.dataset.nid, { tree: true }); editInline(el); });
+    screenEl.addEventListener("dragstart", (e) => {
+      const el = e.target.closest ? e.target.closest("[data-nid]") : null;
+      if (!el || ro || el.dataset.nid !== selected || el.dataset.nid === tree().id) { e.preventDefault(); return; }
+      startDrag(e, { move: selected });
+    });
+    screenEl.addEventListener("dragend", endDrag);
+
+    /** Scrolls a container just enough to show an element (the phone's scale taken into account). */
+    function nearest(container, el, scale = 1) {
+      if (!el) return;
+      const c = container.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      if (r.top < c.top) container.scrollTop -= (c.top - r.top) / scale + 8;
+      else if (r.bottom > c.bottom) container.scrollTop += (Math.min(r.bottom - c.bottom, r.top - c.top)) / scale + 8;
+    }
+
+    /** Plays enter animations: of the given elements, or of all that have one. */
+    function play(ids) {
+      const list = ids || [...allIds(tree())];
+      for (const id of list) {
+        const f = findNode(tree(), id);
+        const a = f && f.node.anim && f.node.anim.enter;
+        if (!a) continue;
+        for (const el of screenEl.querySelectorAll(`[data-nid="${CSS.escape(id)}"]`)) {
+          el.animate(ANIM_FRAMES[a.type] || ANIM_FRAMES.fade, { duration: a.ms ?? 300, delay: a.delay ?? 0, easing: EASE[a.easing] || EASE.standard, fill: "backwards" });
+        }
+      }
+    }
+
+    /* ------------------------------------------------ inline text edit */
+
+    function closeInline() { if (inline) inline(false); }
+    /** Edits a text element's template right over it in the phone: Enter keeps it, Esc drops it. */
+    function editInline(target) {
+      if (ro) return;
+      const f = selected ? findNode(tree(), selected) : null;
+      if (!f || !(elDef(f.node.el) || {}).text) return;
+      // A redraw still due from the inspector would close the editor at once: draw now.
+      if (soonTimer) { clearTimeout(soonTimer); flushSoon(); target = null; }
+      const el = target || firstEl(selected);
+      if (!el) return;
+      closeInline();
+      const sr = stage.getBoundingClientRect();
+      const r = el.getBoundingClientRect();
+      const z = view.zoom / 100;
+      const ta = h("textarea", { class: "and-inline", "aria-label": `Text of #${selected}: {$var}, {_'key'}, {=expression}`, spellcheck: "false" });
+      ta.value = f.node.text || "";
+      Object.assign(ta.style, { left: `${Math.max(0, r.left - sr.left - 4)}px`, top: `${Math.max(0, r.top - sr.top - 4)}px`, width: `${Math.max(r.width + 8, 160)}px`, height: `${Math.max(r.height + 8, 34)}px`, fontSize: `${Math.max(11, Math.min(18, parseFloat(getComputedStyle(el).fontSize) * z))}px` });
+      const err = h("div", { class: "and-inline__err", hidden: true, style: `left:${ta.style.left};top:${Math.max(0, r.bottom - sr.top + 6)}px` });
+      const check = () => { const m = checkTpl(ta.value); err.hidden = !m; err.textContent = m || ""; ta.classList.toggle("is-bad", Boolean(m)); return m; };
+      const node = f.node;
+      inline = (save) => {
+        inline = null;
+        ta.remove();
+        err.remove();
+        if (save && !checkTpl(ta.value) && ta.value !== (node.text || "")) { node.text = ta.value; changed(null); drawTree(); drawScreen(); drawInspector(); }
+      };
+      ta.addEventListener("input", check);
+      ta.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); inline(false); rowFocus(); }
+        else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); if (!check()) { inline(true); rowFocus(); } }
+      });
+      ta.addEventListener("blur", () => { if (inline) inline(true); });
+      stage.append(ta, err);
+      ta.focus();
+      ta.select();
+    }
+    const rowFocus = () => { const r = selected && rowOf(selected); if (r) r.focus({ preventScroll: true }); };
+
+    /* -------------------------------------------------------- selecting */
+
+    function select(id, opts = {}) {
+      if (!id) return;
+      if (id !== selected) {
+        closeInline();
+        selected = id;
+        hist.key = null; // another element: another undo step
+        if (expandTo(id)) drawTree(); else markRows();
+        drawInspector();
+        place();
+      }
+      if (opts.reveal || opts.tree) nearest(treeBox, rowOf(id));
+      if (opts.reveal || opts.phone) { nearest(screenEl, firstEl(id), view.zoom / 100); place(); }
+    }
+
+    /* ------------------------------------------------------------ edits */
+
+    /** After a structural edit: one undo step, everything drawn again. */
+    function commit(sel) {
+      closeInline();
+      clearTimeout(soonTimer);
+      soonTimer = 0;
+      soonTree = false;
+      changed(null); // before the new selection: undoing this step selects what was selected
+      if (sel !== undefined) selected = sel;
+      expandTo(selected);
+      drawInfo(); drawTree(); drawScreen(); drawInspector();
+      if (selected) { nearest(treeBox, rowOf(selected)); nearest(screenEl, firstEl(selected), view.zoom / 100); place(); }
+    }
+    /** Typing in the inspector: the phone (and the layers when their labels change) follow a moment later. */
+    function soon(treeToo) {
+      soonTree = soonTree || treeToo;
+      clearTimeout(soonTimer);
+      soonTimer = setTimeout(flushSoon, 140);
+    }
+    function flushSoon() {
+      soonTimer = 0;
+      if (!alive()) return;
+      if (soonTree) drawTree();
+      soonTree = false;
+      drawScreen();
+      drawInfo();
+    }
+
+    function spotNearSelection() {
+      const rootNode = tree();
+      const f = selected ? findNode(rootNode, selected) : null;
+      if (!f) return { parent: rootNode.id, before: null };
+      if (isContainer(f.node)) return { parent: f.node.id, before: null };
+      return f.parent ? { parent: f.parent.id, before: nextId(f) } : { parent: rootNode.id, before: null };
+    }
+    function roomFor(n) {
+      if (countNodes(tree()) + countNodes(n) <= catalog.limits.nodes) return true;
+      toast(`A screen holds at most ${catalog.limits.nodes} elements.`, "err");
+      return false;
+    }
+    function addAt(what, spot) {
+      if (ro) return;
+      const parent = findNode(tree(), spot.parent);
+      if (!parent || !isContainer(parent.node)) { toast("That element cannot hold others.", "err"); return; }
+      const node = freshNode(what.add, allIds(tree()), what.slot);
+      if (!roomFor(node)) return;
+      insertInto(parent.node, node, spot.before);
+      collapsed.delete(fkey(parent.node.id));
+      commit(node.id);
+    }
+    function moveTo(id, spot) {
+      const rootNode = tree();
+      const m = findNode(rootNode, id);
+      const target = findNode(rootNode, spot.parent);
+      if (!m || !m.parent || !target || m.node === target.node || findNode(m.node, spot.parent)) return;
+      detach(rootNode, id);
+      insertInto(target.node, m.node, spot.before === id ? null : spot.before);
+      collapsed.delete(fkey(target.node.id));
+      commit(id);
+    }
+    function step(d) {
+      const f = findNode(tree(), selected);
+      if (!f || !f.parent) return;
+      const kids = f.parent.children;
+      const i = kids.indexOf(f.node);
+      if (i + d < 0 || i + d >= kids.length) return;
+      kids.splice(i + d, 0, kids.splice(i, 1)[0]);
+      commit(selected);
+    }
+    function duplicate() {
+      const f = selected ? findNode(tree(), selected) : null;
+      if (!f || !f.parent) return;
+      const copy = renumber(structuredClone(f.node), allIds(tree()));
+      if (!roomFor(copy)) return;
+      insertInto(f.parent, copy, nextId(f));
+      commit(copy.id);
+    }
+    function remove() {
+      const f = selected ? findNode(tree(), selected) : null;
+      if (!f || !f.parent) return;
+      const kids = f.parent.children;
+      const i = kids.indexOf(f.node);
+      const next = kids[i + 1] || kids[i - 1] || f.parent;
+      detach(tree(), selected);
+      commit(next.id);
+    }
+    function wrap(el) {
+      const rootNode = tree();
+      const f = selected ? findNode(rootNode, selected) : null;
+      if (!f) return;
+      const box = freshNode(el, allIds(rootNode));
+      box.children = [f.node];
+      if (f.parent) f.parent.children[f.parent.children.indexOf(f.node)] = box;
+      else design.screens[screenId] = box;
+      commit(box.id);
+    }
+    function copy(cut) {
+      const f = selected ? findNode(tree(), selected) : null;
+      if (!f) return;
+      clip = JSON.stringify(f.node);
+      try { if (navigator.clipboard) navigator.clipboard.writeText(clip).catch(() => undefined); } catch { /* the console's own clipboard is enough */ }
+      toast(`${cut ? "Cut" : "Copied"} #${f.node.id} — Ctrl+V pastes it into the selected container.`, "ok");
+      if (cut && f.parent) remove();
+    }
+    async function paste() {
+      let text = clip;
+      if (!text && navigator.clipboard && navigator.clipboard.readText) { try { text = await navigator.clipboard.readText(); } catch { return; } }
       let node;
-      try { node = preview(tree(), scope, "column", colorOf("@onSurface", "#1c2330"), (id) => { selected = id; drawTree(); drawInspector(); drawPhone(); }); }
-      catch (err) { node = h("div", { class: "err p8" }, `Cannot draw: ${err.message}`); }
-      const partScreen = screenId.includes(".") || screenId === "users" || screenId === "flash" || screenId === "update";
-      phone.append(h("div", { class: `and-screen${partScreen ? " and-screen--part" : ""}` }, node));
-      const tone = h("select", { class: "input input--sm", "data-read": "1" }, h("option", { value: "light" }, "light"), h("option", { value: "dark" }, "dark"));
-      tone.value = previewDark ? "dark" : "light";
-      tone.addEventListener("change", () => { previewDark = tone.value === "dark"; drawPhone(); });
-      const lang = h("select", { class: "input input--sm", "data-read": "1" }, ...catalog.langs.map((l) => h("option", { value: l }, l)));
-      lang.value = previewLang;
-      lang.addEventListener("change", () => { previewLang = lang.value; drawPhone(); });
-      mid.append(h("div", { class: "row" }, tone, lang, h("span", { class: "muted small" }, "click an element to select it")), phone);
+      try { node = JSON.parse(text || ""); } catch { return; }
+      if (!node || typeof node !== "object" || typeof node.el !== "string") return;
+      renumber(node, allIds(tree()));
+      if (!roomFor(node)) return;
+      const spot = spotNearSelection();
+      insertInto(findNode(tree(), spot.parent).node, node, spot.before);
+      commit(node.id);
+    }
+
+    /* ------------------------------------------------------ drag & drop */
+
+    function startDrag(e, what) {
+      if (ro) { e.preventDefault(); return; }
+      closeInline();
+      drag = what;
+      e.dataTransfer.effectAllowed = what.add ? "copy" : "move";
+      e.dataTransfer.setData("text/plain", what.add ? `${what.add}${what.slot ? `:${what.slot}` : ""}` : what.move);
+      hoverOn(null);
+      // Not now: Chrome cancels a drag whose source changes during dragstart.
+      setTimeout(() => { if (drag) grid.classList.add("is-dragging"); }, 0);
+    }
+    function endDrag() { drag = null; grid.classList.remove("is-dragging"); showDrop(null); }
+
+    const axisOf = (n) => (n.el === "row" || (n.el === "scroll" && X.truthy(n.props && n.props.horizontal)) ? "x" : "y");
+    /** Where a drop over the phone lands: next to the element under the pointer, or inside a container. */
+    function phoneSpot(e) {
+      const rootNode = tree();
+      const el = e.target.closest ? e.target.closest("[data-nid]") : null;
+      if (!el || !screenEl.contains(el)) return inside(rootNode, firstEl(rootNode.id), e);
+      const f = findNode(rootNode, el.dataset.nid);
+      if (!f) return null;
+      const r = el.getBoundingClientRect();
+      const ax = f.parent ? axisOf(f.parent) : "y";
+      const pos = ax === "x" ? e.clientX - r.left : e.clientY - r.top;
+      const len = ax === "x" ? r.width : r.height;
+      const beside = (before) => ({ parent: f.parent.id, before: before ? f.node.id : nextId(f), ref: f.node.id, side: before ? "before" : "after", axis: ax });
+      if (isContainer(f.node)) {
+        const edge = Math.min(10, len / 4);
+        if (f.parent && pos < edge) return beside(true);
+        if (f.parent && pos > len - edge) return beside(false);
+        return inside(f.node, el, e);
+      }
+      return f.parent ? beside(pos < len / 2) : null;
+    }
+    function inside(node, el, e) {
+      if (!el) return { parent: node.id, before: null, side: "inside" };
+      const ax = axisOf(node);
+      const kids = [...el.children].filter((c) => c.dataset && c.dataset.nid);
+      for (const c of kids) {
+        const r = c.getBoundingClientRect();
+        if ((ax === "x" ? e.clientX : e.clientY) < (ax === "x" ? r.left + r.width / 2 : r.top + r.height / 2)) return { parent: node.id, before: c.dataset.nid, ref: c.dataset.nid, side: "before", axis: ax };
+      }
+      const last = kids[kids.length - 1];
+      return last ? { parent: node.id, before: null, ref: last.dataset.nid, side: "after", axis: ax } : { parent: node.id, before: null, side: "inside" };
+    }
+    /** Where a drop over the layers lands: above, below or into the row. */
+    function treeSpot(e) {
+      const row = e.target.closest ? e.target.closest(".and-row") : null;
+      const rootNode = tree();
+      if (!row) return { parent: rootNode.id, before: null, row: rowOf(rootNode.id), side: "inside" };
+      const f = findNode(rootNode, row.dataset.nid);
+      if (!f) return null;
+      if (!f.parent) return { parent: f.node.id, before: null, row, side: "inside" };
+      const r = row.getBoundingClientRect();
+      const rel = (e.clientY - r.top) / r.height;
+      const open = f.node.children && f.node.children.length && !collapsed.has(fkey(f.node.id));
+      if (isContainer(f.node)) {
+        if (rel < 0.25) return { parent: f.parent.id, before: f.node.id, row, side: "before" };
+        if (rel > 0.75) return open ? { parent: f.node.id, before: f.node.children[0].id, row, side: "first" } : { parent: f.parent.id, before: nextId(f), row, side: "after" };
+        return { parent: f.node.id, before: null, row, side: "inside" };
+      }
+      return rel < 0.5 ? { parent: f.parent.id, before: f.node.id, row, side: "before" } : { parent: f.parent.id, before: nextId(f), row, side: "after" };
+    }
+    /** A spot the dragged thing may go to (not into itself, not where it already is). */
+    function allowed(spot) {
+      if (!spot || !drag) return null;
+      const rootNode = tree();
+      const parent = findNode(rootNode, spot.parent);
+      if (!parent || !isContainer(parent.node)) return null;
+      if (drag.move) {
+        const m = findNode(rootNode, drag.move);
+        if (!m || !m.parent || m.node === parent.node || findNode(m.node, spot.parent)) return null;
+        if (spot.before === m.node.id || (m.parent === parent.node && nextId(m) === spot.before)) return null;
+      }
+      return spot;
+    }
+    function showDrop(spot) {
+      for (const r of outline.querySelectorAll(".drop-before, .drop-after, .drop-inside, .drop-first")) r.classList.remove("drop-before", "drop-after", "drop-inside", "drop-first");
+      clear(ovDrop);
+      if (!spot) return;
+      if (spot.row) { spot.row.classList.add(`drop-${spot.side}`); return; }
+      const base = ov.getBoundingClientRect();
+      const pEl = firstEl(spot.parent);
+      if (pEl) ovDrop.append(boxAt(pEl.getBoundingClientRect(), base, "and-box and-box--drop"));
+      if (spot.side === "inside") return;
+      const ref = spot.side === "before" ? firstEl(spot.ref) : lastEl(spot.ref);
+      if (!ref) return;
+      const r = ref.getBoundingClientRect();
+      const line = h("div", { class: "and-dropline" });
+      if (spot.axis === "x") Object.assign(line.style, { left: `${(spot.side === "before" ? r.left : r.right) - base.left - 1.5}px`, top: `${r.top - base.top}px`, width: "3px", height: `${r.height}px` });
+      else Object.assign(line.style, { left: `${r.left - base.left}px`, top: `${(spot.side === "before" ? r.top : r.bottom) - base.top - 1.5}px`, width: `${r.width}px`, height: "3px" });
+      ovDrop.append(line);
+    }
+    const dropZone = (el, where) => {
+      el.addEventListener("dragover", (e) => {
+        if (!drag) return;
+        const spot = allowed(where(e));
+        showDrop(spot);
+        if (!spot) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = drag.add ? "copy" : "move";
+      });
+      el.addEventListener("dragleave", (e) => { if (!el.contains(e.relatedTarget)) showDrop(null); });
+      el.addEventListener("drop", (e) => {
+        if (!drag) return;
+        e.preventDefault();
+        const spot = allowed(where(e));
+        const what = drag;
+        // The drop redraws the source: its dragend would fire on a detached node, so end here.
+        endDrag();
+        if (!spot) return;
+        if (what.add) addAt(what, spot); else moveTo(what.move, spot);
+      });
+    };
+    dropZone(screenEl, phoneSpot);
+    dropZone(treeBox, treeSpot);
+    outline.addEventListener("dragstart", (e) => {
+      const row = e.target.closest ? e.target.closest(".and-row") : null;
+      if (!row || ro || row.dataset.nid === tree().id) { e.preventDefault(); return; }
+      startDrag(e, { move: row.dataset.nid });
+    });
+    outline.addEventListener("dragend", endDrag);
+
+    /* --------------------------------------------------------- keyboard */
+
+    function onKey(e) {
+      if (view.overview) return;
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key;
+      const f = selected ? findNode(tree(), selected) : null;
+      if (mod && !e.altKey) {
+        const l = k.toLowerCase();
+        if (ro || !["c", "x", "v", "d"].includes(l)) return;
+        if (l === "c" && String(window.getSelection() || "")) return; // copying text of the page
+        e.preventDefault();
+        if (l === "c") copy(false); else if (l === "x") copy(true); else if (l === "v") void paste(); else duplicate();
+        return;
+      }
+      if (e.target.closest && e.target.closest("button, summary, a, [role=button], [role=menuitem]") && (k === "Enter" || k === " ")) return;
+      const rows = [...outline.querySelectorAll(".and-row")];
+      const inTree = outline.contains(document.activeElement);
+      const go = (id) => { if (!id) return; select(id, { reveal: true }); if (inTree) rowFocus(); };
+      if (k === "Delete" || k === "Backspace") { if (!ro && f) { e.preventDefault(); remove(); if (inTree) rowFocus(); } }
+      else if (k === "ArrowUp" || k === "ArrowDown") {
+        e.preventDefault();
+        if (e.altKey) { if (!ro) { step(k === "ArrowUp" ? -1 : 1); if (inTree) rowFocus(); } return; }
+        const i = rows.findIndex((r) => r.dataset.nid === selected);
+        const nextRow = rows[i < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, i + (k === "ArrowUp" ? -1 : 1)))];
+        go(nextRow && nextRow.dataset.nid);
+      } else if (k === "ArrowLeft" && f) {
+        e.preventDefault();
+        if (f.node.children && f.node.children.length && !collapsed.has(fkey(f.node.id))) { collapsed.add(fkey(f.node.id)); drawTree(); if (inTree) rowFocus(); }
+        else if (f.parent) go(f.parent.id);
+      } else if (k === "ArrowRight" && f) {
+        e.preventDefault();
+        if (collapsed.delete(fkey(f.node.id))) { drawTree(); if (inTree) rowFocus(); }
+        else if (f.node.children && f.node.children.length) go(f.node.children[0].id);
+      } else if (k === "Home" || k === "End") { e.preventDefault(); const r = k === "Home" ? rows[0] : rows[rows.length - 1]; go(r && r.dataset.nid); }
+      else if (k === "Escape" && f && f.parent) { e.preventDefault(); go(f.parent.id); }
+      else if ((k === "Enter" || k === "F2") && f && (elDef(f.node.el) || {}).text) { e.preventDefault(); editInline(); }
+    }
+
+    /* -------------------------------------------------------- inspector */
+
+    /** The sample scope an element sees: each list above it gives its first item. */
+    function scopeFor(id) {
+      let scope = phoneScope(screenId);
+      for (const n of pathTo(tree(), id) || []) {
+        if (!n.each) continue;
+        try { const list = X.eval(n.each, scope, t); if (Array.isArray(list) && list.length) scope = { ...scope, [n.as || "item"]: list[0], index: 0, first: true, last: list.length === 1 }; } catch { /* the field shows it */ }
+      }
+      return scope;
+    }
+
+    function group(id, title, count, ...content) {
+      const d = h("details", { class: "and-grp", open: inspOpen[id] ? true : undefined },
+        h("summary", {}, title, count ? h("span", { class: "and-grp__count" }, String(count)) : null), h("div", { class: "and-grp__body" }, ...content));
+      d.addEventListener("toggle", () => { inspOpen[id] = d.open; });
+      return d;
     }
 
     function drawInspector() {
+      if (!alive()) return;
+      const keep = right.scrollTop;
       clear(right);
-      const found = selected ? findNode(tree(), selected) : null;
-      if (!found) { right.append(h("div", { class: "muted small" }, "Select an element in the tree or the phone.")); return; }
-      const n = found.node;
-      const def = catalog.elements.find((e) => e.el === n.el) || { props: [], text: false, container: false };
-      const ro = !may("builds");
-      const change = () => { drawTree(); drawPhone(); markDirty(); };
-      const input = (value, onInput, opts = {}) => {
-        const i = h(opts.area ? "textarea" : "input", { class: `input input--sm${opts.mono ? " mono" : ""}`, rows: opts.area ? "2" : undefined, placeholder: opts.placeholder || "", disabled: ro || undefined });
-        i.value = value ?? "";
-        const problem = h("div", { class: "err small", hidden: true });
-        i.addEventListener("input", () => {
-          const msg = opts.check ? opts.check(i.value) : null;
-          problem.hidden = !msg;
-          problem.textContent = msg || "";
-          if (!msg) { onInput(i.value); change(); }
-        });
-        return h("div", { class: "stack" }, i, problem);
+      const f = selected ? findNode(tree(), selected) : null;
+      if (!f) { right.append(emptyInspector()); return; }
+      const n = f.node;
+      const def = elDef(n.el) || { el: n.el, label: n.el, props: [], text: false, container: false, help: "An element this console does not know (yet): its values stay as they are." };
+      const base = fkey(n.id);
+      const ctx = {
+        ro, scope: scopeFor(n.id),
+        edit: (field, fn, treeToo) => { fn(); changed(`${base}/${field}`); soon(treeToo); },
+        redraw: () => drawInspector(),
       };
-      const checkTpl = (v) => (v.startsWith("=") ? X.check(v.slice(1)) : X.checkTemplate(v));
-      const checkExpr = (v) => (v.trim() ? X.check(v) : null);
       const set = (obj, key, v) => { if (v === "" || v === undefined || v === null) delete obj[key]; else obj[key] = v; };
-      const f = (label, control, hint) => h("label", { class: "field" }, h("span", { class: "label" }, label), control, hint ? h("span", { class: "muted small" }, hint) : null);
-      right.append(h("div", { class: "row" }, h("strong", {}, def.label || n.el), h("span", { class: "mono small muted" }, `#${n.id}`), h("span", { class: "spacer" }),
-        found.parent && !ro ? h("button", { class: "btn btn--xs", type: "button", title: "Up", onclick: () => { const kids = found.parent.children; const i = kids.indexOf(n); if (i > 0) { kids.splice(i - 1, 0, kids.splice(i, 1)[0]); change(); } } }, "↑") : null,
-        found.parent && !ro ? h("button", { class: "btn btn--xs", type: "button", title: "Down", onclick: () => { const kids = found.parent.children; const i = kids.indexOf(n); if (i < kids.length - 1) { kids.splice(i + 1, 0, kids.splice(i, 1)[0]); change(); } } }, "↓") : null,
-        found.parent && !ro ? h("button", { class: "btn btn--xs", type: "button", title: "Duplicate", onclick: () => { const ids = allIds(tree()); const copy = structuredClone(n); const rename = (x) => { let i = 2; let id = x.id; while (ids.has(id)) id = `${x.id}-${i++}`; ids.add(id); x.id = id; for (const k of x.children || []) rename(k); }; rename(copy); found.parent.children.splice(found.parent.children.indexOf(n) + 1, 0, copy); selected = copy.id; redraw(); } }, "⧉") : null,
-        found.parent && !ro ? h("button", { class: "btn btn--xs btn--danger", type: "button", title: "Remove", onclick: () => { found.parent.children = found.parent.children.filter((k) => k !== n); if (!found.parent.children.length) delete found.parent.children; selected = found.parent.id; redraw(); } }, "×") : null));
-      right.append(h("div", { class: "muted small" }, def.help || ""));
-      right.append(f("Name (for you)", input(n.name, (v) => set(n, "name", v))));
-      if (def.text) right.append(f("Text", input(n.text, (v) => set(n, "text", v), { area: true, check: checkTpl }), "{$var} {_'key'} {=expression} · filters: |upper |truncate:40 |time |size…"));
-      if (def.props.length) right.append(h("h4", {}, "Parameters"));
-      n.props = n.props || {};
-      for (const p of def.props) {
-        let control;
-        if (p.kind === "bool") {
-          control = h("input", { type: "checkbox", disabled: ro || undefined });
-          control.checked = n.props[p.name] === true || n.props[p.name] === "true";
-          control.addEventListener("change", () => { set(n.props, p.name, control.checked ? true : undefined); change(); });
-        } else if (p.kind === "select" || p.kind === "slot") {
-          const opts = p.kind === "slot" ? catalog.slots.map((s) => s.name) : p.options;
-          control = h("select", { class: "input input--sm", disabled: ro || undefined }, h("option", { value: "" }, "—"), ...opts.map((o) => h("option", { value: o }, o)));
-          control.value = n.props[p.name] ?? "";
-          control.addEventListener("change", () => { set(n.props, p.name, control.value); change(); });
-        } else if (p.kind === "icon") {
-          const cur = String(n.props[p.name] || "");
-          const btn = h("button", { class: "btn btn--sm", type: "button", disabled: ro || undefined, onclick: () => Kit.openIconPicker({ icons: catalog.icons, current: cur, onPick: (name) => { set(n.props, p.name, name); change(); drawInspector(); } }) }, cur && !cur.startsWith("=") ? iconEl(cur, 18, "currentColor") : null, cur || "choose…");
-          control = h("div", { class: "row" }, btn, input(cur.startsWith("=") ? cur : "", (v) => set(n.props, p.name, v || undefined), { placeholder: "or =expression", check: (v) => (v && !v.startsWith("=") ? "start with =" : v ? X.check(v.slice(1)) : null) }));
-        } else if (p.kind === "color") {
-          control = input(n.props[p.name], (v) => set(n.props, p.name, v), { placeholder: "@primary or #rrggbb", mono: true });
-        } else if (p.kind === "number") {
-          control = input(n.props[p.name], (v) => set(n.props, p.name, v === "" ? undefined : Number(v)), { placeholder: "number" });
-        } else {
-          control = input(n.props[p.name] === undefined ? "" : String(n.props[p.name]), (v) => set(n.props, p.name, v), { mono: p.kind === "expr", check: p.kind === "expr" ? (v) => (v ? X.check(v.replace(/^=/, "")) : null) : checkTpl });
-        }
-        right.append(f(p.label, control, p.help));
-      }
-      if (!Object.keys(n.props).length) delete n.props;
-      right.append(h("h4", {}, "Style"));
-      n.style = n.style || {};
-      for (const s of catalog.style) {
-        const v = n.style[s.name];
-        right.append(f(s.label, input(v === undefined ? "" : String(v), (x) => {
-          if (x === "") delete n.style[s.name];
-          else if (/^-?\d+(\.\d+)?$/.test(x)) n.style[s.name] = Number(x);
-          else if (x === "true" || x === "false") n.style[s.name] = x === "true";
-          else n.style[s.name] = x;
-        }, { placeholder: s.help, mono: true, check: (x) => (x.startsWith("=") ? X.check(x.slice(1)) : null) })));
-      }
-      if (!Object.keys(n.style).length) delete n.style;
-      right.append(h("h4", {}, "Animation (enter)"));
-      const enter = (n.anim && n.anim.enter) || {};
-      const type = h("select", { class: "input input--sm", disabled: ro || undefined }, h("option", { value: "" }, "none"), ...catalog.anims.filter((a) => a !== "none").map((a) => h("option", { value: a }, a)));
-      type.value = enter.type || "";
-      const ms = h("input", { class: "input input--sm", type: "number", value: enter.ms ?? "", placeholder: "ms", disabled: ro || undefined });
-      const delay = h("input", { class: "input input--sm", type: "number", value: enter.delay ?? "", placeholder: "delay", disabled: ro || undefined });
-      const easing = h("select", { class: "input input--sm", disabled: ro || undefined }, ...catalog.easings.map((a) => h("option", { value: a }, a)));
-      easing.value = enter.easing || "standard";
-      const setAnim = () => { if (!type.value) delete n.anim; else n.anim = { enter: { type: type.value, ...(ms.value ? { ms: Number(ms.value) } : {}), ...(delay.value ? { delay: Number(delay.value) } : {}), easing: easing.value } }; change(); };
-      for (const c of [type, ms, delay, easing]) c.addEventListener("change", setAnim);
-      right.append(h("div", { class: "row" }, type, ms, delay, easing));
-      right.append(h("h4", {}, "Logic"));
-      right.append(f("Show when (if)", input(n.if, (v) => set(n, "if", v), { mono: true, check: checkExpr, placeholder: "$room.unread > 0" })));
-      right.append(f("Repeat for (each)", input(n.each, (v) => { set(n, "each", v); if (v && !n.as) n.as = "item"; if (!v) delete n.as; }, { mono: true, check: checkExpr, placeholder: "$rooms" })));
-      if (n.each) right.append(f("Each item as", input(n.as, (v) => set(n, "as", v || "item"), { mono: true })));
-      right.append(h("h4", {}, "Events"));
-      n.on = n.on || {};
-      for (const ev of catalog.events) {
-        const a = h("select", { class: "input input--sm", disabled: ro || undefined }, h("option", { value: "" }, "—"), ...catalog.actions.map((x) => h("option", { value: x.action, title: x.help }, x.action)));
-        a.value = n.on[ev]?.action || "";
-        const arg = input(n.on[ev]?.arg || "", (v) => { if (n.on[ev]) set(n.on[ev], "arg", v); }, { placeholder: "argument ({$var} or =expression)", mono: true, check: checkTpl });
-        a.addEventListener("change", () => { if (!a.value) delete n.on[ev]; else n.on[ev] = { action: a.value, ...(n.on[ev]?.arg ? { arg: n.on[ev].arg } : {}) }; change(); });
-        right.append(f(ev, h("div", { class: "stack" }, a, arg), catalog.actions.find((x) => x.action === a.value)?.help));
-      }
-      if (!Object.keys(n.on).length) delete n.on;
-      C.applyRoleGates();
+      right.append(h("div", { class: "and-insp__head" }, iconEl(elIcon(n.el), 18, "currentColor"), h("strong", {}, def.label || n.el), h("span", { class: "mono small muted" }, `#${n.id}`), h("span", { class: "spacer" }),
+        ro || !f.parent ? null : iconBtn("copy", "Duplicate (Ctrl+D)", duplicate),
+        ro || !f.parent ? null : h("button", { class: "btn btn--sm btn--danger and-ibtn", type: "button", title: "Delete (Del)", "aria-label": "Delete the element", onclick: remove }, iconEl("trash", 15, "currentColor"))));
+      right.append(h("div", { class: "muted small and-insp__help" }, def.help || ""));
+
+      const ids = allIds(tree());
+      right.append(group("element", "Element & text", 0,
+        fld("Id", textField({ label: "Id", value: n.id, ro, mono: true, check: (v) => (!ID_RE.test(v) ? "letters, digits and dashes (up to 40)" : v !== n.id && ids.has(v) ? "another element has this id" : null),
+          onValue: (v) => { if (v === n.id) return; ctx.edit("id", () => { ids.delete(n.id); ids.add(v); n.id = v; selected = v; tbFor = null; }, true); } })),
+        fld("Name (for you)", textField({ label: "Name", value: n.name, ro, placeholder: "shown in the layers", onValue: (v) => ctx.edit("name", () => set(n, "name", v.trim()), true) })),
+        def.text ? fld("Text", textField({ label: "Text", value: n.text, ro, area: true, check: checkTpl, preview: previewTpl(ctx.scope), onValue: (v) => ctx.edit("text", () => set(n, "text", v), true) }), "{$var} {_'key'} {=expression} · filters: |upper |truncate:40 |time |size…") : null));
+
+      if (def.props.length) right.append(group("params", "Parameters", def.props.filter((p) => n.props && n.props[p.name] !== undefined).length, ...def.props.map((p) => propField(p, n, ctx))));
+      const known = new Set(catalog.style.map((s) => s.name));
+      const count = (list) => list.filter((s) => n.style && n.style[s.name] !== undefined).length;
+      const layout = catalog.style.filter((s) => LAYOUT_STYLE.has(s.name));
+      const look = catalog.style.filter((s) => !LAYOUT_STYLE.has(s.name));
+      right.append(group("layout", "Layout", count(layout), ...layout.map((s) => styleField(s, n, ctx))));
+      right.append(group("style", "Style", count(look), ...look.map((s) => styleField(s, n, ctx)),
+        ...Object.keys(n.style || {}).filter((k) => !known.has(k)).map((k) => fld(k, h("span", { class: "mono small" }, JSON.stringify(n.style[k])), "not in the catalog; kept as it is"))));
+      right.append(group("anim", "Animation", n.anim ? 1 : 0, animEditor(n, ctx)));
+      right.append(group("logic", "Logic", ["if", "each"].filter((x) => n[x]).length,
+        fld("Show when (if)", textField({ label: "Show when", value: n.if, ro, mono: true, check: checkCond, preview: previewExpr(ctx.scope), placeholder: "$room.unread > 0", onValue: (v) => ctx.edit("if", () => set(n, "if", v.trim()), true) }), "empty: always"),
+        fld("Repeat for each (each)", textField({ label: "Repeat for each", value: n.each, ro, mono: true, check: checkCond, preview: previewExpr(ctx.scope), placeholder: "$rooms", onValue: (v) => ctx.edit("each", () => { set(n, "each", v.trim()); if (n.each && !n.as) n.as = "item"; if (!n.each) delete n.as; }, true) }), "a list: the element is drawn once per item"),
+        fld("Each item as", textField({ label: "Each item as", value: n.as, ro, mono: true, placeholder: "item", check: (v) => (!v || /^[A-Za-z_][A-Za-z0-9_]{0,30}$/.test(v) ? null : "a name: letters, digits, _"), onValue: (v) => ctx.edit("as", () => { if (n.each) n.as = v || "item"; }) }), "then $item (or your name), $index, $first, $last")));
+      right.append(group("events", "Events", n.on ? Object.keys(n.on).length : 0, ...catalog.events.map((ev) => eventField(ev, n, ctx))));
+      right.scrollTop = keep;
+      C.applyRoleGates(right);
     }
 
-    redraw();
+    function animEditor(n, ctx) {
+      const enter = (n.anim && n.anim.enter) || {};
+      const upd = (patch) => ctx.edit("anim", () => {
+        const cur = { ...((n.anim && n.anim.enter) || {}), ...patch };
+        for (const k of Object.keys(cur)) if (cur[k] === undefined || cur[k] === "") delete cur[k];
+        if (!cur.type) delete n.anim; else n.anim = { enter: cur };
+      });
+      const type = selectW({ label: "Enter animation", value: enter.type, ro: ctx.ro, empty: "none", options: catalog.anims.filter((a) => a !== "none"), onValue: (v) => upd({ type: v }) });
+      return h("div", { class: "and-fx" },
+        fld("Enter", type),
+        h("div", { class: "and-anim" },
+          fld("Duration (ms)", numW({ label: "Duration in ms", value: enter.ms, ro: ctx.ro, min: 0, max: 5000, step: 20, onValue: (v) => upd({ ms: v }) })),
+          fld("Delay (ms)", numW({ label: "Delay in ms", value: enter.delay, ro: ctx.ro, min: 0, max: 5000, step: 20, onValue: (v) => upd({ delay: v }) }))),
+        fld("Easing", selectW({ label: "Easing", value: enter.easing, ro: ctx.ro, options: catalog.easings, onValue: (v) => upd({ easing: v }) })),
+        h("div", { class: "row" }, iconBtn("play", "Play it in the phone", () => { if (n.anim) play([n.id]); }, { "data-read": "1", text: "Play" })));
+    }
+
+    function emptyInspector() {
+      const keys = [["Ctrl+Z · Ctrl+Shift+Z", "undo · redo"], ["Ctrl+C · X · V · D", "copy · cut · paste · duplicate"], ["Del", "delete"], ["↑ ↓ · ← →", "previous / next · parent / child"], ["Alt+↑ ↓", "move among siblings"], ["Enter · dbl-click", "edit a text in place"], ["Esc", "select the parent"]];
+      return h("div", { class: "stack" },
+        h("div", { class: "muted small" }, ro ? "Select an element in the layers or the phone to see its settings." : "Select an element in the layers or the phone. Drag elements from the palette onto the phone or into the layers — or click one to add it to the selected container."),
+        h("dl", { class: "and-keys" }, ...keys.flatMap(([a, b]) => [h("dt", {}, a), h("dd", {}, b)])));
+    }
+
+    /* ------------------------------------------------------ sample data */
+
+    function drawSample() {
+      clear(sampleBody);
+      const baseSample = catalogSample(screenId);
+      sampleTag.hidden = samples[screenId] === undefined;
+      const ta = h("textarea", { class: "input mono", rows: "10", spellcheck: "false", "aria-label": "Sample data of the screen (JSON)", "data-read": "1" });
+      ta.value = JSON.stringify(sampleFor(screenId), null, 2);
+      const msg = h("div", { class: "and-msg", "aria-live": "polite" });
+      const chips = h("div", { class: "and-chips", role: "group", "aria-label": "Quick states" });
+      const use = (v) => { samples[screenId] = v; sampleTag.hidden = false; drawChips(); drawScreen(); };
+      const drawChips = () => {
+        clear(chips);
+        const cur = sampleFor(screenId);
+        for (const q of quickStates(baseSample)) {
+          const on = canon(getPath(cur, q.path)) === canon(q.alt);
+          chips.append(h("button", { type: "button", class: "and-chip", "aria-pressed": String(on), "data-read": "1", onclick: () => { const s = sampleFor(screenId); setPath(s, q.path, on ? q.base : q.alt); ta.value = JSON.stringify(s, null, 2); msg.textContent = ""; use(s); } }, q.label));
+        }
+      };
+      let timer = 0;
+      ta.addEventListener("input", () => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          try {
+            const v = JSON.parse(ta.value);
+            if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("The sample is an object: { … }.");
+            msg.className = "and-msg"; msg.textContent = "";
+            use(v);
+          } catch (err) { msg.className = "and-msg is-bad"; msg.textContent = err.message; }
+        }, 250);
+      });
+      drawChips();
+      sampleBody.append(chips, ta, msg, h("div", { class: "row" },
+        h("button", { type: "button", class: "btn btn--sm", "data-read": "1", onclick: () => { delete samples[screenId]; drawSample(); drawScreen(); } }, "Back to the catalog's sample"),
+        h("span", { class: "muted small" }, "Preview only — not part of the design.")));
+    }
+
+    /* ------------------------------------------------------------ start */
+
+    /** After undo / redo: the screen of that step, the selection kept when it still exists. */
+    function refresh(scr, sel) {
+      closeInline();
+      if (scr && scr !== screenId && design.screens[scr]) { screenId = scr; selected = ""; drawPalette(); drawSample(); }
+      if (!selected || !findNode(tree(), selected)) selected = sel && findNode(tree(), sel) ? sel : "";
+      tbFor = null;
+      drawPick(); drawInfo(); drawTree(); drawScreen(); drawInspector();
+      if (view.overview) drawOverview();
+    }
+    builder = { alive, refresh, place, key: onKey };
+    drawPick();
+    drawInfo();
+    drawPalette();
+    drawTree();
+    applyDevice();
+    drawScreen();
+    drawInspector();
+    drawSample();
+    showMode();
+    C.applyRoleGates(body);
   }
 
   /* ---------------------------------------------------- other editors */
