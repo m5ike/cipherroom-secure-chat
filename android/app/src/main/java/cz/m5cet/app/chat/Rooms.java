@@ -32,6 +32,8 @@ public final class Rooms {
     public interface Listener {
         void onRoomsChanged();
         void onRoomMessage(String roomKey, ChatMessage message);
+        /** 6.1: a message already shown changed (delivery state, file progress, receipts, expiry). */
+        default void onRoomMessageChanged(String roomKey, ChatMessage message) { }
     }
 
     public static final class Saved {
@@ -65,6 +67,14 @@ public final class Rooms {
 
     public Rooms(M5 app) { this.app = app; }
 
+    /** A saved room as a connection card ({v:1, room, passphrase, name}) for NFC; null when unknown. */
+    public synchronized JSONObject cardOf(String key) {
+        Saved s = saved.get(key);
+        if (s == null) return null;
+        try { return new JSONObject().put("v", 1).put("room", s.room).put("passphrase", s.passphrase).put("name", s.userName == null ? "" : s.userName); }
+        catch (JSONException e) { return null; }
+    }
+
     public void addListener(Listener l) { listeners.add(l); }
     public void removeListener(Listener l) { listeners.remove(l); }
 
@@ -89,6 +99,12 @@ public final class Rooms {
             for (Saved s : saved.values()) list.put(s.json());
             app.vault.putJson(Vault.Tier.USER, "rooms", new JSONObject().put("list", list).put("active", active));
         } catch (JSONException ignored) { }
+    }
+
+    /** The chat identity if it exists (the settings show its fingerprint), without making one. */
+    public synchronized ChatIdentity identityOrNull() {
+        if (identity != null) return identity;
+        return app.vault.unlocked() && app.vault.json(Vault.Tier.USER, "identity").has("signPkcs8") ? identity() : null;
     }
 
     synchronized ChatIdentity identity() {
@@ -261,7 +277,7 @@ public final class Rooms {
 
     public void send(String key, String text, ChatMessage replyTo) {
         RoomSession r = sessions.get(key);
-        if (r != null) r.send(text, replyTo, null, null, null, 0);
+        if (r != null) { Outgoing o = new Outgoing(); o.text = text; o.replyTo = replyTo; r.send(o); }
     }
 
     /* ------------------------------------------------------------ events */
@@ -281,15 +297,36 @@ public final class Rooms {
 
     void roomChanged(RoomSession r) { emit(); }
 
+    /** 6.1: signed in or out — every room tells its signaling socket (relay for away members). */
+    public void onAccountChanged() {
+        for (RoomSession r : sessions.values()) r.sendAuth();
+        emit();
+    }
+
     void onMessage(RoomSession r, ChatMessage m, boolean fresh) {
         boolean onScreen = visible && r.key.equals(active) && app.inForeground() && !app.lock.isLocked();
         if (fresh && !onScreen) {
             r.unread++;
-            app.notify.message(r.key, r.label, m.senderName, m.text.isEmpty() ? "📎 " + m.fileName : m.text, app.lock.isLocked());
+            app.notify.message(r.key, r.label, m.senderName, notifyText(m), app.lock.isLocked());
         }
+        // Read aloud (voice.autoplay) — only what is shown openly.
+        if (fresh && onScreen && m.sealed == null && !m.tap && m.fileName == null) app.voice.speakIncoming(m.senderName, m.text);
         if (fresh || m.mine) History.saveSoon(app, r.key, r);
         for (Listener l : listeners) Io.main(() -> l.onRoomMessage(r.key, m));
         if (!onScreen) emit();
+    }
+
+    /** What a notification may say: nothing of a sealed or held message (web: 🔒). */
+    static String notifyText(ChatMessage m) {
+        if (m.sealed != null) return "🔒";
+        if (m.tap) return "👁";
+        if (m.fn != null) return "/" + m.fn.optString("keyword") + (m.text.isEmpty() ? "" : " · " + m.text);
+        return m.text.isEmpty() ? "📎 " + m.fileName : m.text;
+    }
+
+    void messageChanged(RoomSession r, ChatMessage m) {
+        if (m.mine || m.filePath != null) History.saveSoon(app, r.key, r);
+        for (Listener l : listeners) Io.main(() -> l.onRoomMessageChanged(r.key, m));
     }
 
     private void emit() { Io.main(() -> { for (Listener l : listeners) l.onRoomsChanged(); }); }

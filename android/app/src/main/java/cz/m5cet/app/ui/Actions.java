@@ -67,7 +67,7 @@ public final class Actions {
                 case "call.mute": { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().mute(!"muted".equals(r.calls().state())); break; }
                 case "lock.now": app.lock.lockNow(false); break;
                 case "lock.biometric": a.parts.retryBiometric(); break;
-                case "theme.toggle": app.config.setTone(Ui.dark(a) ? "light" : "dark"); a.recreate(); break;
+                case "theme.toggle": app.settings.set("appearance.tone", Ui.dark(a) ? "light" : "dark"); a.recreate(); break;
                 case "lang.set": if (s.equals("cs") || s.equals("en") || s.equals("de")) { app.config.setLang(s); a.recreate(); } break;
                 case "update.check": Io.bg(() -> { boolean ok = app.checkin.run("manual"); Io.main(() -> a.flash("", ok ? app.t("update.none") : app.t("room.offline"), ok ? "info" : "warn")); }); break;
                 case "update.install": a.parts.installUpdate(); break;
@@ -83,6 +83,51 @@ public final class Actions {
                     break;
                 }
                 case "lib.run": runLibrary(a, s, scope, source, depth); break;
+                case "setting.set": {
+                    int eq = s.indexOf('=');
+                    if (eq > 0 && app.settings.set(s.substring(0, eq).trim(), s.substring(eq + 1).trim())) { a.settingChanged(s.substring(0, eq).trim()); a.refresh(); }
+                    break;
+                }
+                case "setting.toggle": if (app.settings.toggle(s.trim())) { a.settingChanged(s.trim()); a.refresh(); } break;
+                // 6.1: sheets, the composer, message kinds and actions on a message
+                case "sheet.open": a.parts.showSheet(s); break;
+                case "sheet.close": a.parts.closeOverlay(); break;
+                case "compose": a.parts.composerAction(s, null); break;
+                case "message.kind": a.parts.messageKind(s); break;
+                case "message.recipients": a.parts.closeOverlay(); a.parts.pickRecipients(); break;
+                case "msg.map": case "msg.source": case "msg.open": a.parts.onMessageAction(action, s); break;
+                // voice
+                case "voice.speak": if (!s.isEmpty()) app.voice.say(s); break;
+                case "voice.stop": app.voice.stopSpeaking(); break;
+                case "voice.dictate": a.parts.voicePadDictate(); break;
+                // tools
+                case "ai.send": a.parts.aiSend(); break;
+                case "ai.stop": a.parts.aiStop(); break;
+                case "ai.clear": a.parts.aiClear(); break;
+                case "nfc.read": case "nfc.write": case "nfc.emulate": case "nfc.stop": a.parts.nfc(action.substring(4)); break;
+                // account, security
+                case "account.signin": a.accountSignIn(false); break;
+                case "account.signup": a.accountSignIn(true); break;
+                case "account.signout": a.accountSignOut("everywhere".equals(s)); break;
+                case "pin.change": a.parts.changePin(); break;
+                case "biometric.toggle": a.toggleBiometric(); break;
+                case "wipe.ask": a.parts.askWipe(); break;
+                case "system.settings": a.systemSettings(s); break;
+                // calls
+                case "call.audioText": {
+                    RoomSession r = app.rooms.activeSession();
+                    if (r == null) break;
+                    if (!a.has(Manifest.permission.RECORD_AUDIO)) { a.askPermissions(Manifest.permission.RECORD_AUDIO); break; }
+                    a.parts.closeOverlay();
+                    r.calls().startAudioText();
+                    CallService.start(a, r.label, false);
+                    a.showScreen("call", true);
+                    break;
+                }
+                case "call.camera": { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().toggleCamera(); break; }
+                case "call.switchCamera": { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().switchCamera(); break; }
+                case "call.speaker": app.settings.toggle("calls.speaker"); { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().route(); } a.refresh(); break;
+                case "appearance.reset": for (String k : new String[]{"appearance.tone", "appearance.preset", "appearance.accent", "appearance.fontScale", "appearance.density", "appearance.bubbles"}) app.settings.set(k, cz.m5cet.app.core.Settings.DEFAULTS.get(k)); a.recreate(); break;
                 default: Log.w("action", "unknown action " + action);
             }
         } catch (RuntimeException e) {

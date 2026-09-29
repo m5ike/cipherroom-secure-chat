@@ -40,6 +40,8 @@ public final class Rtc {
         JavaAudioDeviceModule adm = JavaAudioDeviceModule.builder(app)
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
+            // 6.1: audio ↔ text calls replace the microphone with speech (CallAudio).
+            .setAudioBufferCallback((buffer, format, channels, rate, bytes, ts) -> cz.m5cet.app.voice.CallAudio.get().onCapture(buffer, format, channels, rate, bytes, ts))
             .createAudioDeviceModule();
         factory = PeerConnectionFactory.builder()
             .setAudioDeviceModule(adm)
@@ -81,12 +83,17 @@ public final class Rtc {
         return out;
     }
 
+    /** How many ICE servers the server gave (the settings' connection info). */
+    public static synchronized int iceCount() { return ice == null ? 0 : ice.size(); }
+
     public static PeerConnection.RTCConfiguration config() {
         PeerConnection.RTCConfiguration c = new PeerConnection.RTCConfiguration(iceServers());
         c.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN;
         c.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY;
         c.bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE;
         c.rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE;
+        // Perfect negotiation: the polite side rolls back its own offer when both offer at once (the web relies on it).
+        c.enableImplicitRollback = true;
         return c;
     }
 }

@@ -140,7 +140,7 @@ public final class Envelopes {
         throw new GeneralSecurityException("version 1 envelopes are not supported on Android");
     }
 
-    static JSONObject parse(String json) throws GeneralSecurityException {
+    public static JSONObject parse(String json) throws GeneralSecurityException {
         try { return new JSONObject(json); } catch (JSONException e) { throw new GeneralSecurityException("not a JSON payload", e); }
     }
 
@@ -170,6 +170,11 @@ public final class Envelopes {
 
     public static JSONObject openFileBody(byte[] fileKey, byte[] ctx, String iv, String ciphertext) throws GeneralSecurityException {
         return parse(readBody(open(fileKey, iv, ciphertext, ctx), ctx).body);
+    }
+
+    /** A file frame's body with its signer (the end must be signed by the meta's signer). */
+    public static Body openFileBodyFull(byte[] fileKey, byte[] ctx, String iv, String ciphertext) throws GeneralSecurityException {
+        return readBody(open(fileKey, iv, ciphertext, ctx), ctx);
     }
 
     public static JSONObject sealChunk(byte[] fileKey, byte[] ctx, byte[] data) {

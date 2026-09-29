@@ -30,29 +30,50 @@ import cz.m5cet.app.ui.Ui;
 final class CallParts {
     private CallParts() {}
 
+    /**
+     * Mute, speaker, video (camera on / off once it runs, a long press
+     * switches front / back), hang up; an audio ↔ text call says so.
+     */
     static final class Controls extends LinearLayout implements Renderer.Slot {
         private final MainActivity a;
-        private final ImageView mute, video, end;
+        private final ImageView mute, speaker, video, end;
+        private final android.widget.TextView mode;
+        private final LinearLayout row;
 
         Controls(MainActivity a, Parts parts) {
             super(a);
             this.a = a;
+            setOrientation(VERTICAL);
             setGravity(Gravity.CENTER);
+            mode = new android.widget.TextView(a);
+            mode.setTextColor(0xCCFFFFFF);
+            mode.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
+            mode.setGravity(Gravity.CENTER);
+            mode.setPadding(0, 0, 0, Ui.dp(a, 12));
+            addView(mode);
+            row = new LinearLayout(a);
+            row.setGravity(Gravity.CENTER);
+            addView(row);
             mute = button("mic", 0x33FFFFFF, () -> a.action("call.mute", null, n -> null, this));
-            video = button("video", 0x33FFFFFF, () -> a.action("call.video", null, n -> null, this));
+            speaker = button("speaker", 0x33FFFFFF, () -> a.action("call.speaker", null, n -> null, this));
+            video = button("video", 0x33FFFFFF, () -> {
+                RoomSession r = a.app().rooms.activeSession();
+                a.action(r != null && r.calls().video() ? "call.camera" : "call.video", null, n -> null, this);
+            });
+            video.setOnLongClickListener(v -> { a.action("call.switchCamera", null, n -> null, this); return true; });
             end = button("phone-off", Ui.color(a, "@danger", Color.RED), () -> a.action("call.end", null, n -> null, this));
         }
 
         private ImageView button(String icon, int bg, Runnable r) {
             ImageView b = new ImageView(getContext());
-            int s = Ui.dp(getContext(), 64);
+            int s = Ui.dp(getContext(), 60);
             LayoutParams lp = new LayoutParams(s, s);
-            lp.setMargins(Ui.dp(getContext(), 12), 0, Ui.dp(getContext(), 12), 0);
+            lp.setMargins(Ui.dp(getContext(), 8), 0, Ui.dp(getContext(), 8), 0);
             b.setScaleType(ImageView.ScaleType.CENTER);
             b.setImageDrawable(Icons.drawable(getContext(), icon, Ui.dp(getContext(), 26), Color.WHITE));
             b.setBackground(Ui.ripple(Ui.shape(bg, s / 2f, 0, 0), 0x44FFFFFF));
             b.setOnClickListener(v -> r.run());
-            addView(b, lp);
+            row.addView(b, lp);
             return b;
         }
 
@@ -60,7 +81,14 @@ final class CallParts {
             RoomSession r = a.app().rooms.activeSession();
             boolean muted = r != null && "muted".equals(r.calls().state());
             mute.setImageDrawable(Icons.drawable(getContext(), muted ? "mic-off" : "mic", Ui.dp(getContext(), 26), Color.WHITE));
-            video.setAlpha(r != null && r.calls().video() ? 1f : 0.6f);
+            boolean vid = r != null && r.calls().video();
+            video.setImageDrawable(Icons.drawable(getContext(), vid && !r.calls().cameraOn() ? "video-off" : "video", Ui.dp(getContext(), 26), Color.WHITE));
+            video.setAlpha(vid ? 1f : 0.7f);
+            boolean spk = a.app().settings.bool("calls.speaker") || vid;
+            speaker.setImageDrawable(Icons.drawable(getContext(), spk ? "volume-2" : "ear", Ui.dp(getContext(), 26), Color.WHITE));
+            boolean text = r != null && r.calls().audioText();
+            mode.setText(text ? "🎙 ↔ ✍  " + a.app().t("call.audioText") : "");
+            mode.setVisibility(text ? VISIBLE : GONE);
         }
     }
 

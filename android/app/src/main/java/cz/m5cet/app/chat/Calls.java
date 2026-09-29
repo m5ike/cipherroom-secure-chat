@@ -75,6 +75,7 @@ public final class Calls {
             state = "live";
             startedAt = System.currentTimeMillis();
             room.broadcastAudio("live");
+            route();
             room.changed();
             Log.i("call", "audio on in " + room.label);
         });
@@ -135,13 +136,99 @@ public final class Calls {
                 Log.i("call", "call ended in " + room.label + " after " + seconds + " s");
             }
             videoOn = false;
+            cameraOn = true;
+            if (audioText) { audioText = false; cz.m5cet.app.voice.CallAudio.get().stop(); }
             state = "off";
+            unroute();
             room.changed();
         });
     }
 
-    /** Tells a peer whose channel just opened how we are in the call. */
+    /* ------------------------------------------------------- 6.1 */
+
+    private boolean audioText = false;
+    private boolean cameraOn = true;
+    private boolean front = true;
+
+    public boolean audioText() { return audioText; }
+    public boolean cameraOn() { return video != null && cameraOn; }
+
+    /**
+     * An audio ↔ text call: the call's audio as usual for the others, but my
+     * messages are spoken into it and what the others say comes as text.
+     */
+    public void startAudioText() {
+        startAudio();
+        room.post(() -> {
+            audioText = true;
+            cz.m5cet.app.voice.CallAudio.get().start((peerId, text, source) -> room.addTranscript(peerId, text, source));
+            for (Peer p : new java.util.ArrayList<>(room.peers.values())) if (p.remoteAudio != null) cz.m5cet.app.voice.CallAudio.get().listen(room.app, p.id, p.remoteAudio);
+            room.changed();
+        });
+        route();
+    }
+
+    void onRemoteAudio(Peer p) {
+        if (audioText) cz.m5cet.app.voice.CallAudio.get().listen(room.app, p.id, p.remoteAudio);
+    }
+
+    /** Camera on / off in a video call (the track is disabled: black frames, no renegotiation — like the web). */
+    public void toggleCamera() {
+        room.post(() -> {
+            if (video == null) return;
+            cameraOn = !cameraOn;
+            video.setEnabled(cameraOn);
+            room.changed();
+        });
+    }
+
+    /** Front / back camera. */
+    public void switchCamera() {
+        room.post(() -> {
+            if (camera == null) return;
+            camera.switchCamera(new CameraVideoCapturer.CameraSwitchHandler() {
+                @Override public void onCameraSwitchDone(boolean isFront) { front = isFront; }
+                @Override public void onCameraSwitchError(String e) { Log.w("call", "camera switch: " + e); }
+            });
+        });
+    }
+
+    /** Speaker or earpiece (Settings › Calls › Speaker; video calls always use the speaker). */
+    public void route() {
+        android.media.AudioManager am = room.app.getSystemService(android.media.AudioManager.class);
+        if (am == null) return;
+        boolean speaker = videoOn || room.app.settings.bool("calls.speaker");
+        try {
+            am.setMode(android.media.AudioManager.MODE_IN_COMMUNICATION);
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                int want = speaker ? android.media.AudioDeviceInfo.TYPE_BUILTIN_SPEAKER : android.media.AudioDeviceInfo.TYPE_BUILTIN_EARPIECE;
+                for (android.media.AudioDeviceInfo d : am.getAvailableCommunicationDevices()) if (d.getType() == want) { am.setCommunicationDevice(d); return; }
+            } else {
+                am.setSpeakerphoneOn(speaker);
+            }
+        } catch (RuntimeException e) { Log.w("call", "audio route: " + e.getMessage()); }
+    }
+
+    private void unroute() {
+        android.media.AudioManager am = room.app.getSystemService(android.media.AudioManager.class);
+        if (am == null) return;
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 31) am.clearCommunicationDevice();
+            am.setMode(android.media.AudioManager.MODE_NORMAL);
+        } catch (RuntimeException ignored) { }
+    }
+
+    /** Tells a peer whose channel just opened how we are in the call ("off" too, like the web). */
     void announce() {
-        if (!"off".equals(state)) room.broadcastAudio(state);
+        room.broadcastAudio(state);
+    }
+
+    /** A peer's audio-status: "off" ends its video tile. */
+    void onPeerAudio(Peer p, String status) {
+        if ("off".equals(status) && p.remoteVideo != null) {
+            p.remoteVideo = null;
+            VideoListener l = videoListener;
+            if (l != null) l.onVideo(room);
+        }
     }
 }

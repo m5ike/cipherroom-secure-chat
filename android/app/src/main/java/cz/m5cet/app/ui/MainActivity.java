@@ -352,6 +352,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         if (current == null) return;
         try { current.bind(scopeFor(screen)); }
         catch (RuntimeException e) { Log.e("ui", "refresh of " + screen + " failed", e); }
+        parts.refreshSheet();
     }
 
     public String screen() { return screen; }
@@ -383,6 +384,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         Map<String, Object> s = new HashMap<>();
         s.put("app", appScope());
         s.put("form", new JSONObject(form));
+        s.put("settings", app.settings.scope());
+        s.put("account", app.account.scope());
         switch (id) {
             case "splash": s.put("status", splashStatus); s.put("busy", true); break;
             case "lock": s.put("lock", lockState); break;
@@ -408,7 +411,32 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
                 s.put("call", jo("active", r != null && !"off".equals(r.calls().state()), "mode", r != null && r.calls().video() ? "video" : "audio", "muted", r != null && "muted".equals(r.calls().state()), "peers", (double) (r == null ? 0 : Math.max(0, r.userCount() - 1))));
                 break;
             }
-            case "settings": s.put("settings", new JSONObject()); break;
+            case "settings.user": s.put("keys", keysScope()); s.put("connection", connectionScope()); break;
+            case "settings.voice": case "voice": case "dictate.options":
+                loadVoices();
+                s.put("voices", voices);
+                s.put("voice", jo("dictating", app.voice.dictating(), "listening", app.voice.listening(), "speaking", app.voice.speaking(), "available", cz.m5cet.app.voice.Dictation.available(app)));
+                break;
+            case "settings.location": {
+                JSONObject pol = app.config.policy().optJSONObject("location");
+                s.put("location", jo("permitted", app.where.permitted(), "tracking", app.where.tracking(), "allowed", pol == null || pol.optBoolean("track", true)));
+                break;
+            }
+            case "settings.appearance": s.put("presets", cz.m5cet.app.design.Appearance.presets(app.lang(), app.design().appName())); break;
+            case "settings.security":
+                s.put("security", jo("biometricAvailable", !"off".equals(app.lock.biometricMode()) && Biometric.available(this), "biometric", app.vault.bioEnrolled(),
+                    "pinLength", (double) app.lock.pinLength(), "maxAttempts", (double) app.lock.maxAttempts(), "wipe", app.config.lockPolicy().optBoolean("wipe", true), "screenshots", app.lock.screenshots()));
+                break;
+            case "attach": case "send.options": {
+                String text = parts.composerText();
+                s.put("composer", jo("hasText", !text.trim().isEmpty(), "tap", Boolean.TRUE.equals(form.get("msgTap")), "vanish", form.get("msgVanish") == null ? 0.0 : Expr.num(form.get("msgVanish")),
+                    "sealed", form.get("msgSeal") != null, "private", form.get("msgTo") != null));
+                break;
+            }
+            case "tools": s.put("tools", jo("ai", true, "voice", true, "nfc", cz.m5cet.app.nfc.Nfc.available(this))); break;
+            case "call.options": { cz.m5cet.app.chat.RoomSession r = app.rooms.activeSession(); s.put("call", jo("active", r != null && !"off".equals(r.calls().state()))); break; }
+            case "ai": s.put("ai", parts.aiScope()); break;
+            case "nfc": s.put("nfc", parts.nfcScope()); s.put("room", roomScope(app.rooms.activeSession())); break;
             case "update": s.put("update", parts.updateScope()); break;
             case "about": {
                 s.put("device", jo("id", app.config.deviceId(), "model", Build.MANUFACTURER + " " + Build.MODEL));
@@ -437,6 +465,87 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     @Override public boolean dark() { return Ui.dark(this); }
     @Override public Expr.Translate tr() { return app::t; }
     @Override public Map<String, Object> form() { return form; }
+    @Override public Object setting(String key) { return app.settings.get(key); }
+    @Override public void setSetting(String key, Object value) { if (app.settings.set(key, value)) { settingChanged(key); refresh(); } }
+
+    /** 6.1: what a changed setting sets off — permissions, the tracking service, the look. */
+    public void settingChanged(String key) {
+        switch (key) {
+            case "location.inHeader":
+                if (app.settings.bool(key) && !app.where.permitted()) askPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION);
+                else if (app.settings.bool(key)) app.where.current(l -> { });
+                parts.refreshComposer();
+                break;
+            case "location.track": case "location.interval": case "location.precise":
+                if (app.settings.bool("location.track") && !app.where.permitted()) { askPermissions(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION); break; }
+                app.where.stopTracking();
+                cz.m5cet.app.location.LocationService.sync(this);
+                break;
+            case "voice.lang": voices = null; loadVoices(); break;
+            case "calls.speaker": { cz.m5cet.app.chat.RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().route(); break; }
+            default:
+                if (key.startsWith("appearance.")) Io.mainLater(this::recreate, 150);
+        }
+    }
+
+    /* ------------------------------------------------------- account (6.1) */
+
+    public void accountSignIn(boolean signUp) {
+        cz.m5cet.app.account.Account.Done done = (ok, err) -> {
+            flash("", ok ? app.t("set.user.viaPasskey") + " · " + app.account.username() : (err == null ? app.t("voice.failed") : err), ok ? "success" : "error");
+            refresh();
+        };
+        if (signUp) app.account.signUp(this, done); else app.account.signIn(this, done);
+    }
+
+    public void accountSignOut(boolean everywhere) {
+        app.account.signOut(everywhere, (ok, err) -> { flash("", app.t("set.user.signout") + " ✓", "success"); refresh(); });
+    }
+
+    /** The phone's settings pages for the app. */
+    public void systemSettings(String what) {
+        try {
+            Intent i;
+            if ("notifications".equals(what)) i = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
+            else if ("location".equals(what)) i = new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+            else i = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
+            startActivity(i);
+        } catch (RuntimeException e) { Log.w("ui", "settings: " + e.getMessage()); }
+    }
+
+    /* ------------------------------------------------- scopes of 6.1 */
+
+    private JSONArray voices;
+
+    /** The engine's voices for the chosen language ($voices), loaded once and then kept. */
+    private void loadVoices() {
+        if (voices != null) return;
+        voices = new JSONArray();
+        app.voice.speech.voices(list -> { voices = list; refresh(); });
+    }
+
+    /** The id of the device's signing key (what the server calls its kid). */
+    private String deviceKid() {
+        try { return cz.m5cet.app.security.Crypto.b64url(cz.m5cet.app.security.Crypto.sha256(cz.m5cet.app.security.Crypto.unb64(cz.m5cet.app.core.Config.signPublicKey()))).substring(0, 16); }
+        catch (Exception e) { return "—"; }
+    }
+
+    private JSONObject keysScope() {
+        String id = "—";
+        try {
+            cz.m5cet.app.chat.ChatIdentity ci = app.rooms.identityOrNull();
+            if (ci != null) { String h = cz.m5cet.app.security.Crypto.hex(cz.m5cet.app.security.Crypto.sha256(cz.m5cet.app.security.Crypto.unb64(ci.publicKey))).toUpperCase(java.util.Locale.ROOT); id = h.substring(0, 4) + " " + h.substring(4, 8) + " " + h.substring(8, 12) + " " + h.substring(12, 16); }
+        } catch (RuntimeException ignored) { }
+        return jo("device", app.config.deviceId(), "deviceKey", deviceKid(), "identity", id, "server", app.config.serverFingerprint());
+    }
+
+    private JSONObject connectionScope() {
+        java.util.List<cz.m5cet.app.chat.RoomSession> rooms = app.rooms.connectedSessions();
+        int joined = 0;
+        for (cz.m5cet.app.chat.RoomSession r : rooms) if (r.connected()) joined++;
+        return jo("server", app.config.server(), "rooms", (double) joined, "status", joined > 0 ? "joined" : "offline", "push", app.push.enabled() ? "fcm" : "poll",
+            "checkin", (double) app.checkin.lastAt(), "protocol", 2.0, "crypto", "v3", "turn", (double) cz.m5cet.app.rtc.Rtc.iceCount());
+    }
     @Override public boolean animateEnter() { return animate; }
     @Override public View slot(String name, Renderer.Bound bound) { return parts.create(name, bound); }
 
@@ -471,6 +580,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     @Override public void onRoomsChanged() { if (screen.equals("rooms") || screen.equals("room") || screen.equals("call")) refresh(); parts.onRoomsChanged(); }
 
     @Override public void onRoomMessage(String roomKey, ChatMessage m) { parts.onRoomMessage(roomKey, m); }
+
+    @Override public void onRoomMessageChanged(String roomKey, ChatMessage m) { parts.onRoomMessageChanged(roomKey, m); }
 
     /* -------------------------------------------------------------- flash */
 
@@ -529,6 +640,9 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         if (request == 7301 && result == RESULT_OK && data != null && data.getData() != null) parts.pickedImage(data.getData());
+        if (request == 7302 && result == RESULT_OK && data != null) parts.savedTo(data.getData());
+        if (request == 7303 && result == RESULT_OK && data != null && data.getData() != null) parts.pickedFile(data.getData());
+        if (request == 7304 && result == RESULT_OK) parts.captured();
     }
 
     public boolean has(String perm) { return checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED; }

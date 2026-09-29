@@ -99,6 +99,9 @@ public final class Checkin {
     }
 
     /** One check-in; safe to call from any thread (not the main one). */
+    /** When the last check-in succeeded (0 = not in this run of the app). */
+    public long lastAt() { return last; }
+
     public synchronized boolean run(String why) {
         if (!app.config.enrolled()) return false;
         try {

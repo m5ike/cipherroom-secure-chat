@@ -7,12 +7,15 @@ import android.os.Bundle;
 
 import java.util.concurrent.CopyOnWriteArrayList;
 
+import cz.m5cet.app.account.Account;
 import cz.m5cet.app.chat.Rooms;
 import cz.m5cet.app.core.Config;
 import cz.m5cet.app.core.Events;
 import cz.m5cet.app.core.Io;
 import cz.m5cet.app.core.Log;
+import cz.m5cet.app.core.Settings;
 import cz.m5cet.app.design.Design;
+import cz.m5cet.app.location.Where;
 import cz.m5cet.app.net.Server;
 import cz.m5cet.app.push.Checkin;
 import cz.m5cet.app.push.Push;
@@ -22,6 +25,7 @@ import cz.m5cet.app.security.Wiper;
 import cz.m5cet.app.telecom.Notify;
 import cz.m5cet.app.update.Bundles;
 import cz.m5cet.app.update.Releases;
+import cz.m5cet.app.voice.Voice;
 
 /**
  * The application: one instance of every part of the framework. It also
@@ -35,6 +39,7 @@ public final class M5 extends Application {
 
     public Vault vault;
     public Config config;
+    public Settings settings;
     public Server server;
     public Events events;
     public AppLock lock;
@@ -44,6 +49,9 @@ public final class M5 extends Application {
     public Rooms rooms;
     public Notify notify;
     public Checkin checkin;
+    public Voice voice;
+    public Where where;
+    public Account account;
     private volatile Design design;
     private int started = 0;
 
@@ -57,6 +65,7 @@ public final class M5 extends Application {
         instance = this;
         vault = new Vault(this);
         config = new Config(vault);
+        settings = new Settings(vault);
         server = new Server(config);
         events = new Events(this);
         lock = new AppLock(this);
@@ -66,6 +75,9 @@ public final class M5 extends Application {
         rooms = new Rooms(this);
         push = new Push(this);
         checkin = new Checkin(this);
+        voice = new Voice(this);
+        where = new Where(this);
+        account = new Account(this);
         try {
             vault.sysKey();
             Log.attach(vault, line -> { /* problems reach the server as events only on request (status) */ });
@@ -123,6 +135,9 @@ public final class M5 extends Application {
         String sys = java.util.Locale.getDefault().getLanguage();
         return sys.equals("cs") || sys.equals("sk") ? "cs" : sys.equals("de") ? "de" : "en";
     }
+
+    /** The signed-in account's username ("" without an account). */
+    public String accountName() { return account == null ? "" : account.username(); }
 
     public void addListener(Listener l) { listeners.add(l); }
     public void removeListener(Listener l) { listeners.remove(l); }

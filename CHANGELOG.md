@@ -50,10 +50,42 @@ passkeys.
   po novém načtení, reset, statistiky, celá obrazovka).
 
 ### Android a klient (6.1)
-- Potvrzení doručení a přečtení mezi připojenými (zapečetěný `receipt`
-  párovým klíčem), poloha ve zprávě (`loc`), passkeys pro aplikaci Android
-  (`android:apk-key-hash`, `/.well-known/assetlinks.json`), stopy zařízení
-  (`POST /api/android/location`, politika `location`) — viz commit 87808188.
+Aplikace pro Android dostala všechny funkce webu z chatu.
+- **Uživatel a passkey** — Nastavení › Uživatel: přihlášení a odhlášení
+  účtu passkeyem (Credential Manager, `android:apk-key-hash`,
+  `/.well-known/assetlinks.json`), odhlášení všude, informace o klíči
+  (otisk, identita) a o spojení (protokol, místnosti).
+- **Stavové ikony zpráv** — odesílá, odesláno, uloženo, přeposláno,
+  doručeno, přečteno; potvrzení doručení a přečtení mezi připojenými
+  (zapečetěný `receipt` párovým klíčem) a přes relay pro nepřítomné.
+- **Přílohy** — obrázek, fotoaparát, soubor, hlasová zpráva; velké soubory
+  po kouscích (šifrovaný přenos, `FileVault` — segmenty AES-GCM), obrázky
+  v bublině, ostatní jako karta s uložením.
+- **Poloha** — sdílení polohy jako příloha i v hlavičce zprávy (`loc`);
+  bublina má vpravo dole pin, klepnutí otevře mapu (geo:, jinak
+  OpenStreetMap); průběžné trasování na server (politika `location`).
+- **Druhy zpráv** — klikací (`tap`, podržením se odkryje), mizející
+  (`vanishSeconds`, odpočet na každém zařízení), zapečetěná (`sealed`,
+  kód `XXXX-XXXX-XXXX`), individuální (výběr příjemců, soukromá zpráva).
+- **Příkazy a modely** — `/` příkazy, `@` lidé, `#` tagy (znaky určuje
+  operátor); příkaz běží na serveru, výstupy (text, tlačítka, formuláře,
+  zvuk, obrázky, soubor) se vykreslí v bublině, živé otázky modelu; balík
+  `cz.m5cet.app.fn` (shoda s webem ověřená vektory).
+- **Hovory** — audio i video (přepnutí kamery, reproduktor), na podržení
+  tlačítka hovoru volba **audio ↔ text**: odeslané zprávy se převedou na
+  řeč do streamu, přijatý zvuk se přepíše na text; u bubliny ikona zdroje
+  přehraje původní zvuk.
+- **Rychlé nástroje (kladívko)** — AI asistent (server, streamovaná
+  odpověď, výběr modelu; není end-to-end šifrovaný a říká to), Hlas
+  (TTS/STT, jazyky, hlasy, pitch a rychlost, diktování s autoplay, převod
+  diktátu zpět na řeč), NFC (čtení a psaní karet, emulace jako Type 4 tag),
+  Vzhled (šablony a akcenty z webu, světlý/tmavý, hustota, velikost písma,
+  tvar bublin).
+- **Diktování a hlasové odesílání** — mikrofon na řádku zprávy (podržení
+  otevře nastavení diktování), volba u tlačítka Odeslat: text jako hlasová
+  zpráva, nebo řeč přepsaná na text.
+- Vše přidáno do **Android › Design** (nové obrazovky, listy nástrojů,
+  prvky select/slider/segmented, akce a texty ve třech jazycích).
 
 ### Změněno
 - Verze 6.1.0 (versionCode aplikace 60100).

@@ -14,6 +14,7 @@ import { dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { MENU_ICONS } from "../../client/src/lib/menu-icons-data";
 import { checkExpr, checkTemplate } from "./expr";
+import { ACTIONS_61, ELEMENTS_61, MENUS_61, SCREENS_61, SCREENS_TREES_61, SLOTS_61, STRINGS_61, TOGGLE_PROPS_61, messageIn61, messageOut61, roomBar61 } from "./design-61";
 import { androidDir } from "./store";
 
 /* ================================================================ catalog */
@@ -43,8 +44,9 @@ export const ELEMENTS: ElementDef[] = [
   { el: "button", label: "Button", group: "controls", container: false, text: true, props: [P("icon", "icon", "Icon"), P("variant", "select", "Variant", { options: VARIANTS }), P("disabled", "expr", "Disabled when")], help: "A button; its action is in Events." },
   { el: "iconButton", label: "Icon button", group: "controls", container: false, text: false, props: [P("icon", "icon", "Icon"), P("label", "text", "Accessible label"), P("variant", "select", "Variant", { options: VARIANTS }), P("badge", "expr", "Badge number")], help: "A round button with an icon." },
   { el: "input", label: "Input", group: "controls", container: false, text: false, props: [P("bind", "text", "Value name", { help: "Stored under $form.<name>" }), P("hint", "text", "Hint"), P("type", "select", "Type", { options: ["text", "password", "number", "email", "phone", "multiline", "url"] })], help: "A text field; Enter runs its submit action." },
-  { el: "switch", label: "Switch", group: "controls", container: false, text: true, props: [P("checked", "expr", "On when")], help: "An on/off switch; its click action changes the setting." },
-  { el: "checkbox", label: "Checkbox", group: "controls", container: false, text: true, props: [P("checked", "expr", "Checked when")], help: "A checkbox (e.g. selecting rooms)." },
+  { el: "switch", label: "Switch", group: "controls", container: false, text: true, props: [P("checked", "expr", "On when"), ...TOGGLE_PROPS_61], help: "An on/off switch: bound to a setting it changes it itself, else its click action does." },
+  { el: "checkbox", label: "Checkbox", group: "controls", container: false, text: true, props: [P("checked", "expr", "Checked when"), ...TOGGLE_PROPS_61], help: "A checkbox (e.g. selecting rooms)." },
+  ...ELEMENTS_61,
   { el: "slot", label: "App part", group: "logic", container: false, text: false, props: [P("name", "slot", "Part")], help: "A native component of the app (message list, composer…)." },
 ];
 
@@ -75,7 +77,7 @@ export const STYLE_PROPS: Array<{ name: string; label: string; help: string }> =
 export const COLOR_TOKENS = ["primary", "onPrimary", "background", "surface", "surfaceVariant", "onSurface", "muted", "accent", "border", "danger", "success", "warning", "bubbleIn", "onBubbleIn", "bubbleOut", "onBubbleOut", "scrim"] as const;
 export const ANIM_TYPES = ["none", "fade", "slide-up", "slide-down", "slide-left", "slide-right", "scale", "pop"] as const;
 export const EASINGS = ["standard", "decelerate", "accelerate", "linear", "overshoot", "bounce"] as const;
-export const EVENTS = ["click", "longClick", "submit"] as const;
+export const EVENTS = ["click", "longClick", "submit", "change"] as const;
 
 /** The actions the app implements in Java (docs/android-architecture.md §4). */
 export const ACTIONS: Array<{ action: string; arg: string; help: string }> = [
@@ -112,6 +114,7 @@ export const ACTIONS: Array<{ action: string; arg: string; help: string }> = [
   { action: "fn.run", arg: "/command args", help: "Run a Functions command in the active room" },
   { action: "lib.run", arg: "library name", help: "Run an action library of the design" },
   { action: "set", arg: "name=value", help: "Set a value in $form" },
+  ...ACTIONS_61,
 ];
 
 export const SLOTS: Array<{ name: string; label: string; screens: string[] }> = [
@@ -130,6 +133,7 @@ export const SLOTS: Array<{ name: string; label: string; screens: string[] }> = 
   { name: "settingsList", label: "Settings", screens: ["settings"] },
   { name: "joinForm", label: "Join a room form", screens: ["join"] },
   { name: "updateProgress", label: "Download progress", screens: ["update"] },
+  ...SLOTS_61,
 ];
 
 export type ScreenDef = { id: string; label: string; group: "app" | "room" | "parts" | "system"; vars: string[]; sample: Record<string, unknown>; help: string };
@@ -160,6 +164,7 @@ export const SCREENS: ScreenDef[] = [
   { id: "update", label: "Update", group: "system", vars: ["$update"], sample: { update: { kind: "bundle", version: "6.0.0-b2", size: 182000, notes: "New look of the rooms.", progress: 0.4, state: "downloading" } }, help: "A new bundle or release." },
   { id: "about", label: "About", group: "app", vars: ["$app", "$device", "$server"], sample: { app: APP, device: { id: "and_…", model: "Pixel 9" }, server: { url: "https://chat.example.com", kid: "AbCdEf0123456789", fingerprint: "1A2B 3C4D …" } }, help: "Versions, the device, the server's key." },
   { id: "flash", label: "Flash message", group: "parts", vars: ["$flash"], sample: { flash: { text: "Saved.", level: "success", title: "" } }, help: "A short notice at the top." },
+  ...SCREENS_61,
 ];
 export const SCREEN_IDS = SCREENS.map((s) => s.id);
 
@@ -347,6 +352,14 @@ export const DEFAULT_SCREENS: Record<string, ANode> = {
   ]),
 };
 
+// 6.1 (design-61.ts): the new screens; the room bar gets video, the tools and
+// the call's options; the bubbles get the body slot, the kinds, the position
+// pin, the recording's icon and the delivery states; settings become screens.
+Object.assign(DEFAULT_SCREENS, SCREENS_TREES_61);
+DEFAULT_SCREENS.room.children = (DEFAULT_SCREENS.room.children ?? []).map((c) => (c.id === "bar" ? roomBar61() : c));
+DEFAULT_SCREENS["message.in"] = messageIn61();
+DEFAULT_SCREENS["message.out"] = messageOut61();
+
 /* ================================================================== theme */
 
 export type Theme = { light: Record<string, string>; dark: Record<string, string>; radius: number; font: "sans" | "serif" | "mono"; density: "compact" | "normal" | "comfortable" };
@@ -444,6 +457,7 @@ export const DEFAULT_STRINGS: Record<Lang, Record<string, string>> = {
     "push.channel": "Nachrichten und Hinweise", "push.flash": "Hinweise",
   },
 };
+for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_61[lang]);
 
 /* ================================================================== menus */
 
@@ -470,6 +484,7 @@ export const DEFAULT_MENUS: Record<string, MenuItem[]> = {
     { id: "bottom", icon: "rows-2", label: "{_'users.dockBottom'}", action: "users.dock", arg: "bottom" },
   ],
 };
+Object.assign(DEFAULT_MENUS, MENUS_61);
 
 /* ============================================================== libraries */
 

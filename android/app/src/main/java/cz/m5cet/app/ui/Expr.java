@@ -243,7 +243,7 @@ public final class Expr {
         return true;
     }
 
-    static double num(Object v) {
+    public static double num(Object v) {
         v = norm(v);
         if (v == null) return 0;
         if (v instanceof Number) return ((Number) v).doubleValue();

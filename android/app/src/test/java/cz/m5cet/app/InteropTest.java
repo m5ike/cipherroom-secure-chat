@@ -39,7 +39,7 @@ public class InteropTest {
     static JSONObject v;
     static RoomKeys keys;
 
-    static Path fixtures() {
+    public static Path fixtures() {
         Path p = Paths.get("").toAbsolutePath();
         for (int i = 0; i < 5 && p != null; i++, p = p.getParent()) {
             Path f = p.resolve("test").resolve("fixtures");

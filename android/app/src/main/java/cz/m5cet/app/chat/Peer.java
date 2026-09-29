@@ -45,6 +45,8 @@ final class Peer {
     boolean changed;
     final List<RtpSender> senders = new ArrayList<>();
     VideoTrack remoteVideo;
+    /** 6.1: the peer's audio (audio ↔ text calls transcribe it). */
+    org.webrtc.AudioTrack remoteAudio;
 
     Peer(RoomSession room, String id, String name, boolean initiator) {
         this.room = room;
@@ -79,6 +81,7 @@ final class Peer {
             @Override public void onTrack(RtpTransceiver t) {
                 MediaStreamTrack track = t.getReceiver().track();
                 if (track instanceof VideoTrack) room.post(() -> { remoteVideo = (VideoTrack) track; room.calls.onRemoteVideo(Peer.this); });
+                if (track instanceof org.webrtc.AudioTrack) room.post(() -> { remoteAudio = (org.webrtc.AudioTrack) track; room.calls.onRemoteAudio(Peer.this); });
             }
             @Override public void onAddTrack(RtpReceiver r, MediaStream[] streams) { }
         });
@@ -170,6 +173,7 @@ final class Peer {
                 boolean binary = buffer.binary;
                 room.post(() -> {
                     if (!binary) room.onPeerText(Peer.this, new String(bytes, StandardCharsets.UTF_8));
+                    else room.files.onBinary(Peer.this, bytes);
                 });
             }
         });
@@ -177,6 +181,17 @@ final class Peer {
     }
 
     boolean open() { return channel != null && channel.state() == DataChannel.State.OPEN; }
+
+    /** 6.1: the peer reads binary file chunks ("bin" in its hello caps). */
+    boolean bin = false;
+
+    long buffered() { DataChannel dc = channel; return dc == null ? 0 : dc.bufferedAmount(); }
+
+    boolean sendBinary(byte[] data) {
+        DataChannel dc = channel;
+        if (dc == null || dc.state() != DataChannel.State.OPEN) return false;
+        return dc.send(new DataChannel.Buffer(ByteBuffer.wrap(data), true));
+    }
 
     boolean send(String text) {
         DataChannel dc = channel;

@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">M5cet</string>
+    <string name="nfc_card_service">M5cet — a room\'s connection card</string>
 </resources>

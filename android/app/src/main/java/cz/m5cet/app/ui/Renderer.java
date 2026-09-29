@@ -61,6 +61,9 @@ public final class Renderer {
         /** A native part; bind is called with the part's scope on every bind of its tree. */
         View slot(String name, Bound bound);
         Map<String, Object> form();
+        /** 6.1: the user's settings ($settings) — read by elements with a "setting" prop, changed by them. */
+        default Object setting(String key) { return null; }
+        default void setSetting(String key, Object value) { }
     }
 
     final Context ctx;
@@ -184,6 +187,32 @@ public final class Renderer {
                 case "input": view = new EditText(c); break;
                 case "switch": view = new Switch(c); break;
                 case "checkbox": view = new CheckBox(c); break;
+                case "select": {
+                    TextView t = new TextView(c);
+                    t.setGravity(Gravity.CENTER_VERTICAL);
+                    t.setClickable(true);
+                    t.setFocusable(true);
+                    t.setMinHeight(r.dp(44));
+                    t.setOnClickListener(this::openSelect);
+                    view = t;
+                    break;
+                }
+                case "slider": {
+                    android.widget.SeekBar sb = new android.widget.SeekBar(c);
+                    sb.setOnSeekBarChangeListener(new android.widget.SeekBar.OnSeekBarChangeListener() {
+                        @Override public void onProgressChanged(android.widget.SeekBar b, int p, boolean user) { }
+                        @Override public void onStartTrackingTouch(android.widget.SeekBar b) { }
+                        @Override public void onStopTrackingTouch(android.widget.SeekBar b) { commit(sliderValue(b.getProgress()), b); }
+                    });
+                    view = sb;
+                    break;
+                }
+                case "segmented": {
+                    LinearLayout l = new LinearLayout(c);
+                    l.setOrientation(LinearLayout.HORIZONTAL);
+                    view = l;
+                    break;
+                }
                 case "slot": view = r.host.slot(s("name"), this); break;
                 default: view = new View(c);
             }
@@ -262,19 +291,20 @@ public final class Renderer {
                 lp = f;
             }
             int[] m = box4(style.opt("margin"));
-            int gap = index > 0 && parent.box instanceof LinearLayout ? r.dp((float) parent.style.optDouble("gap", 0)) : 0;
+            int gap = index > 0 && parent.box instanceof LinearLayout ? r.dp((float) parent.style.optDouble("gap", 0) * cz.m5cet.app.design.Appearance.density()) : 0;
             lp.setMargins(m[3] + (inRow ? gap : 0), m[0] + (inRow ? 0 : gap), m[1], m[2]);
             return lp;
         }
 
         int[] box4(Object v) {
             if (v == null) return new int[4];
-            if (v instanceof Number) { int d = r.dp(((Number) v).floatValue()); return new int[]{d, d, d, d}; }
+            float k = cz.m5cet.app.design.Appearance.density();
+            if (v instanceof Number) { int d = r.dp(((Number) v).floatValue() * k); return new int[]{d, d, d, d}; }
             String[] p = String.valueOf(v).trim().split("\\s+");
             int[] o = new int[4];
             try {
                 float[] f = new float[p.length];
-                for (int i = 0; i < p.length; i++) f[i] = Float.parseFloat(p[i]);
+                for (int i = 0; i < p.length; i++) f[i] = Float.parseFloat(p[i]) * k;
                 if (f.length == 1) o = new int[]{r.dp(f[0]), r.dp(f[0]), r.dp(f[0]), r.dp(f[0])};
                 else if (f.length == 2) o = new int[]{r.dp(f[0]), r.dp(f[1]), r.dp(f[0]), r.dp(f[1])};
                 else if (f.length == 3) o = new int[]{r.dp(f[0]), r.dp(f[1]), r.dp(f[2]), r.dp(f[1])};
@@ -322,7 +352,7 @@ public final class Renderer {
                 default: size = 15.5f;
             }
             if (style.has("size")) size = (float) style.optDouble("size", size);
-            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, size);
+            t.setTextSize(TypedValue.COMPLEX_UNIT_SP, size * cz.m5cet.app.design.Appearance.fontScale());
             if (style.has("bold")) bold = style.optBoolean("bold");
             Design d = r.host.design();
             t.setTypeface("mono".equals(variant) ? android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, bold ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL) : Ui.typeface(d, bold, style.optBoolean("italic")));
@@ -332,6 +362,10 @@ public final class Renderer {
 
         private void wireEvents() {
             JSONObject on = node.optJSONObject("on");
+            if ((el.equals("switch") || el.equals("checkbox")) && (s("setting") != null || s("bind") != null) && (on == null || !on.has("click"))) {
+                // A switch bound to a setting (or a form value) changes it itself; "change" follows.
+                ((CompoundButton) view).setOnClickListener(v -> commit(((CompoundButton) v).isChecked(), v));
+            }
             if (on == null) return;
             JSONObject click = on.optJSONObject("click");
             if (click != null) {
@@ -353,6 +387,78 @@ public final class Renderer {
                 ((EditText) view).setImeOptions(EditorInfo.IME_ACTION_DONE);
                 ((EditText) view).setOnEditorActionListener((v, id, ev) -> { fire(submit, v); return true; });
             }
+        }
+
+        /* ------------------------------------------------ values (6.1) */
+
+        /** The value an input-like element shows: its setting, else its form value. */
+        Object boundValue() {
+            String key = s("setting");
+            if (key != null) return r.host.setting(key);
+            String bind = s("bind");
+            return bind == null ? null : r.host.form().get(bind);
+        }
+
+        /** A new value from the user: into the setting / form, then the "change" event with $value. */
+        void commit(Object value, View source) {
+            String key = s("setting");
+            if (key != null) r.host.setSetting(key, value);
+            String bind = s("bind");
+            if (bind != null) r.host.form().put(bind, value);
+            JSONObject on = node.optJSONObject("on");
+            JSONObject change = on == null ? null : on.optJSONObject("change");
+            Expr.Scope base = scope == null ? n -> null : scope;
+            if (change != null) {
+                Expr.Scope sc = n -> n.equals("value") ? value : base.get(n);
+                String arg = change.optString("arg", null);
+                r.host.action(change.optString("action"), arg == null ? null : Expr.value(arg, sc, r.host.tr()), sc, source);
+            }
+        }
+
+        /** "a:Label|b:{_'key'}" or "=expr" (a list of values or of {value, label}). */
+        List<String[]> options(Expr.Scope sc) {
+            List<String[]> out = new ArrayList<>();
+            String raw = s("options");
+            if (raw == null || raw.isEmpty()) return out;
+            if (raw.startsWith("=")) {
+                Object v = Expr.eval(raw.substring(1), sc, r.host.tr());
+                if (v instanceof JSONArray) for (int i = 0; i < ((JSONArray) v).length() && i < 100; i++) {
+                    Object o = ((JSONArray) v).opt(i);
+                    if (o instanceof JSONObject) out.add(new String[]{((JSONObject) o).optString("value"), ((JSONObject) o).optString("label", ((JSONObject) o).optString("value"))});
+                    else out.add(new String[]{Expr.toText(o), Expr.toText(o)});
+                }
+                return out;
+            }
+            for (String part : raw.split("\\|")) {
+                int colon = part.indexOf(':');
+                String value = colon < 0 ? part.trim() : part.substring(0, colon).trim();
+                String label = colon < 0 ? value : Expr.render(part.substring(colon + 1).trim(), sc, r.host.tr());
+                out.add(new String[]{value, label});
+            }
+            return out;
+        }
+
+        private void openSelect(View anchor) {
+            Expr.Scope sc = scope == null ? n -> null : scope;
+            List<String[]> opts = options(sc);
+            if (opts.isEmpty()) return;
+            android.widget.PopupMenu pm = new android.widget.PopupMenu(r.ctx, anchor);
+            for (int i = 0; i < opts.size(); i++) pm.getMenu().add(0, i, i, opts.get(i)[1]);
+            pm.setOnMenuItemClickListener(mi -> { commit(opts.get(mi.getItemId())[0], anchor); return true; });
+            pm.show();
+        }
+
+        private double num(String key, double d) {
+            Object v = node.optJSONObject("props") == null ? null : node.optJSONObject("props").opt(key);
+            if (v instanceof Number) return ((Number) v).doubleValue();
+            try { return v == null ? d : Double.parseDouble(String.valueOf(v)); } catch (NumberFormatException e) { return d; }
+        }
+
+        private double sliderValue(int progress) {
+            double min = num("min", 0), step = num("step", 0);
+            double v = min + (num("max", 1) - min) * progress / 1000.0;
+            if (step > 0) v = min + Math.round((v - min) / step) * step;
+            return Math.round(v * 1000) / 1000.0;
         }
 
         private void fire(JSONObject handler, View source) {
@@ -457,6 +563,12 @@ public final class Renderer {
                 if (fgv == null && sel) fg = r.color("@primary", Color.BLUE);
             }
             if (el.equals("divider")) { fill = r.color(bg == null ? "@border" : bg, Color.LTGRAY); paint = true; }
+            // 6.1: the bubbles' shape (Settings › Appearance › Bubbles) for the design's "bubble" elements.
+            if ("bubble".equals(node.optString("id"))) {
+                String shape = cz.m5cet.app.design.Appearance.bubbles();
+                if (shape.equals("square")) radius = r.dp(4);
+                else if (shape.equals("minimal")) { fill = Color.TRANSPARENT; fg = r.color("@onSurface", fg); view.setElevation(0); if (borderW == 0) { borderW = r.dp(1); borderC = r.color("@border", Color.GRAY); } }
+            }
             if (paint || borderW > 0 || radius > 0 && bg != null) {
                 GradientDrawable g = Ui.shape(fill, radius, borderW, borderC);
                 boolean clickable = node.optJSONObject("on") != null && node.optJSONObject("on").has("click");
@@ -608,8 +720,65 @@ public final class Renderer {
                 case "switch": case "checkbox": {
                     CompoundButton cb = (CompoundButton) view;
                     cb.setText(Expr.render(node.optString("text", ""), sc, tr));
-                    boolean checked = Expr.truthy(propValue("checked", sc));
+                    boolean checked = s("checked") != null ? Expr.truthy(propValue("checked", sc)) : Expr.truthy(boundValue());
                     if (cb.isChecked() != checked) cb.setChecked(checked);
+                    break;
+                }
+                case "select": {
+                    TextView t = (TextView) view;
+                    String current = Expr.toText(boundValue());
+                    String label = current;
+                    for (String[] o : options(sc)) if (o[0].equals(current)) { label = o[1]; break; }
+                    if (label.isEmpty()) label = Expr.render(s("hint") == null ? "" : s("hint"), sc, tr);
+                    t.setText(label);
+                    Drawable chevron = Icons.drawable(r.ctx, "chevron-down", r.dp(18), fg);
+                    chevron.setBounds(0, 0, r.dp(18), r.dp(18));
+                    t.setCompoundDrawablesRelative(null, null, chevron, null);
+                    t.setCompoundDrawablePadding(r.dp(8));
+                    if (!style.has("bg")) t.setBackground(Ui.ripple(Ui.shape(r.color("@surfaceVariant", Color.LTGRAY), r.dp(12), 0, 0), Ui.alpha(fg, 0.12f)));
+                    if (!style.has("padding")) t.setPadding(r.dp(14), r.dp(8), r.dp(12), r.dp(8));
+                    break;
+                }
+                case "slider": {
+                    android.widget.SeekBar sb = (android.widget.SeekBar) view;
+                    sb.setMax(1000);
+                    double min = num("min", 0), max = num("max", 1);
+                    double v = Expr.num(boundValue());
+                    if (!sb.isPressed()) sb.setProgress(max > min ? (int) Math.round((Math.max(min, Math.min(max, v)) - min) / (max - min) * 1000) : 0);
+                    int accent = r.color("@primary", Color.BLUE);
+                    sb.setProgressTintList(ColorStateList.valueOf(accent));
+                    sb.setThumbTintList(ColorStateList.valueOf(accent));
+                    break;
+                }
+                case "segmented": {
+                    LinearLayout l = (LinearLayout) view;
+                    List<String[]> opts = options(sc);
+                    String current = Expr.toText(boundValue());
+                    if (l.getChildCount() != opts.size()) {
+                        l.removeAllViews();
+                        for (int i = 0; i < opts.size(); i++) {
+                            TextView seg = new TextView(r.ctx);
+                            seg.setGravity(Gravity.CENTER);
+                            seg.setMinHeight(r.dp(38));
+                            seg.setPadding(r.dp(12), r.dp(6), r.dp(12), r.dp(6));
+                            seg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f);
+                            final int at = i;
+                            seg.setOnClickListener(v -> { List<String[]> now = options(scope == null ? n -> null : scope); if (at < now.size()) commit(now.get(at)[0], v); });
+                            l.addView(seg, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                        }
+                    }
+                    int accent = r.color("@primary", Color.BLUE);
+                    for (int i = 0; i < opts.size(); i++) {
+                        TextView seg = (TextView) l.getChildAt(i);
+                        boolean sel = opts.get(i)[0].equals(current);
+                        seg.setText(opts.get(i)[1]);
+                        seg.setTextColor(sel ? r.color("@onPrimary", Color.WHITE) : fg);
+                        seg.setTypeface(Ui.typeface(r.host.design(), sel, false));
+                        seg.setBackground(Ui.ripple(Ui.shape(sel ? accent : Color.TRANSPARENT, r.dp(10), 0, 0), Ui.alpha(fg, 0.12f)));
+                        seg.setSelected(sel);
+                    }
+                    if (!style.has("bg")) l.setBackground(Ui.shape(r.color("@surfaceVariant", Color.LTGRAY), r.dp(12), 0, 0));
+                    if (!style.has("padding")) l.setPadding(r.dp(3), r.dp(3), r.dp(3), r.dp(3));
                     break;
                 }
                 case "slot": {

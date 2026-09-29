@@ -26,6 +26,12 @@ public final class Ui {
     public static int dp(Context c, float v) { return Math.round(TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, v, c.getResources().getDisplayMetrics())); }
 
     public static boolean dark(Context c) {
+        // 6.1: a one-tone template decides; else Settings › Appearance › Tone; else the 5.x choice.
+        Boolean forced = cz.m5cet.app.design.Appearance.forcedDark();
+        if (forced != null) return forced;
+        String t61 = M5.get().settings.str("appearance.tone");
+        if (t61.equals("dark")) return true;
+        if (t61.equals("light")) return false;
         String tone = M5.get().config.tone();
         if (tone.equals("dark")) return true;
         if (tone.equals("light")) return false;
@@ -50,6 +56,9 @@ public final class Ui {
     public static Drawable ripple(Drawable content, int rippleColor) {
         return new RippleDrawable(ColorStateList.valueOf(rippleColor), content, content == null ? new GradientDrawable() : null);
     }
+
+    /** A byte count for people ("12.3 kB"), like the templates' |size filter. */
+    public static String size(long bytes) { return String.valueOf(Expr.filter((double) bytes, "size", null)); }
 
     public static int alpha(int color, float a) { return Color.argb(Math.round(Color.alpha(color) * a), Color.red(color), Color.green(color), Color.blue(color)); }
 

@@ -84,6 +84,9 @@ dependencies {
     // WebRTC: peer connections and the "m5cet" data channel, calls.
     implementation("io.github.webrtc-sdk:android:150.7871.01")
     implementation("androidx.recyclerview:recyclerview:1.4.0")
+    // 6.1: passkeys (the user's account) through the platform's Credential Manager.
+    implementation("androidx.credentials:credentials:1.6.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
 
     testImplementation("junit:junit:4.13.2")
     // The real org.json on the JVM (android.jar only has stubs).

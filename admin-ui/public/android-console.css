@@ -200,3 +200,7 @@
 .and-thumb__frame { position: relative; overflow: hidden; border-radius: 12px; }
 .and-thumb__frame > .and-phone { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; box-shadow: none; }
 .and-thumb__name { font-size: 12.5px; font-weight: 600; }
+
+/* 6.1: a device's location track */
+.and-track { width: 100%; max-width: 420px; height: auto; color: var(--accent, #6aa0ff); background: var(--surface-2, rgba(127,127,127,.08)); border-radius: 10px; }
+.and-track__last { fill: var(--danger, #e5484d); }

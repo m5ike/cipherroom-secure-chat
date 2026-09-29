@@ -248,6 +248,7 @@
         if (res) toast(`${kind}: ${res.via === "fcm" ? "sent over FCM" : "waits for the next check-in"}${res.error ? ` (${res.error})` : ""}`, res.error ? "err" : "ok");
         setTimeout(() => { close(); openDevice(id); }, 1200);
       }, may("wipe")) : h("div", { class: "muted small" }, d.status === "active" ? "Your access does not include control messages." : `The device is ${d.status}.`),
+      may("devices") ? trackCard(d) : null,
       h("h3", {}, "Commands"),
       commandsTable(r.commands),
       h("h3", {}, "Events"),
@@ -266,6 +267,60 @@
       h("div", { class: "drawer__head" }, h("div", { class: "drawer__title" }, d.name), h("span", { class: "spacer" }), h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: () => close() }, "Close")), bodyEl);
     document.body.append(backdrop, drawer);
     C.applyRoleGates();
+  }
+
+  /**
+   * 6.1: the device's track (Settings › Location › tracking on the phone and
+   * policy.location.track here): the last position, the path drawn to scale,
+   * the points. Reading it needs the devices right and is audited.
+   */
+  function trackCard(d) {
+    const box = h("div", { class: "stack" }, h("h3", {}, "Location track"), h("div", { class: "muted small" }, "Not loaded — reading a track is audited."));
+    const show = async () => {
+      const r = await guarded(() => api(`/api/admin/android/devices/${d.id}/locations?limit=1000`));
+      if (!r) return;
+      const pts = r.points || [];
+      clear(box).append(h("h3", {}, "Location track"));
+      if (!r.policy?.track) box.append(h("div", { class: "muted small" }, "Tracking is off in the policy (Security › Location)."));
+      if (!pts.length) { box.append(h("div", { class: "muted small" }, "No positions — the phone sends them only when its user switched tracking on.")); return; }
+      const osm = (p) => `https://www.openstreetmap.org/?mlat=${p.lat.toFixed(6)}&mlon=${p.lon.toFixed(6)}#map=16/${p.lat.toFixed(6)}/${p.lon.toFixed(6)}`;
+      const last = pts[0];
+      box.append(h("div", { class: "row" },
+        h("span", {}, `Last: ${when(last.at)} · ${last.lat.toFixed(5)}, ${last.lon.toFixed(5)} (±${Math.round(last.acc)} m)`),
+        h("a", { href: osm(last), target: "_blank", rel: "noopener noreferrer", class: "btn btn--sm" }, "Open map")));
+      // The path to scale (equirectangular — fine for a city-sized track), newest point marked.
+      const W = 320, H = 180, lats = pts.map((p) => p.lat), lons = pts.map((p) => p.lon);
+      const minLat = Math.min(...lats), maxLat = Math.max(...lats), minLon = Math.min(...lons), maxLon = Math.max(...lons);
+      const k = Math.cos(((minLat + maxLat) / 2) * Math.PI / 180);
+      const spanX = Math.max((maxLon - minLon) * k, 1e-6), spanY = Math.max(maxLat - minLat, 1e-6), scale = Math.min((W - 20) / spanX, (H - 20) / spanY);
+      const xy = (p) => [10 + (p.lon - minLon) * k * scale, H - 10 - (p.lat - minLat) * scale];
+      const NS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+      svg.setAttribute("class", "and-track");
+      const line = document.createElementNS(NS, "polyline");
+      line.setAttribute("points", pts.slice().reverse().map((p) => xy(p).join(",")).join(" "));
+      line.setAttribute("fill", "none");
+      line.setAttribute("stroke", "currentColor");
+      line.setAttribute("stroke-width", "2");
+      svg.append(line);
+      const dot = document.createElementNS(NS, "circle");
+      const [cx, cy] = xy(last);
+      dot.setAttribute("cx", String(cx)); dot.setAttribute("cy", String(cy)); dot.setAttribute("r", "5"); dot.setAttribute("class", "and-track__last");
+      svg.append(dot);
+      box.append(svg);
+      box.append(h("div", { class: "table-wrap table-wrap--short" }, h("table", { class: "tbl" },
+        h("thead", {}, h("tr", {}, h("th", {}, "When"), h("th", {}, "Position"), h("th", {}, "±"), h("th", {}, "Speed"), h("th", {}))),
+        h("tbody", {}, ...pts.slice(0, 200).map((p) => h("tr", {},
+          h("td", {}, when(p.at)), h("td", { class: "mono" }, `${p.lat.toFixed(5)}, ${p.lon.toFixed(5)}`), h("td", {}, `${Math.round(p.acc)} m`),
+          h("td", {}, p.speed == null ? "—" : `${(p.speed * 3.6).toFixed(1)} km/h`), h("td", {}, h("a", { href: osm(p), target: "_blank", rel: "noopener noreferrer" }, "map"))))))));
+      box.append(h("div", { class: "row" }, h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => {
+        if (!confirm(`Delete the whole track of ${d.name}?`)) return;
+        if (await guarded(() => api(`/api/admin/android/devices/${d.id}/locations`, { method: "DELETE" }), "Deleted.")) show();
+      } }, "Delete the track")));
+    };
+    box.append(h("button", { class: "btn btn--sm", type: "button", onclick: show }, "Show the track"));
+    return box;
   }
 
   function commandsTable(list) {
@@ -447,6 +502,7 @@
 
   async function securityView(body) {
     const p = structuredClone(overview.config.policy);
+    p.location ??= { track: true, days: 30, minSeconds: 15 };
     const cfg = overview.config;
     const num = (obj, key, min, max) => { const i = h("input", { class: "input input--sm", type: "number", min: String(min), max: String(max), value: String(obj[key]) }); i.addEventListener("input", () => { obj[key] = Number(i.value); }); return i; };
     const chk = (obj, key) => { const i = h("input", { type: "checkbox" }); i.checked = Boolean(obj[key]); i.addEventListener("change", () => { obj[key] = i.checked; }); return i; };
@@ -475,7 +531,13 @@
         f("Rooms connected at once", num(p.rooms, "max", 1, 16)),
         f("Logs to the server", sel(p, "logs", ["errors", "all", "off"]), "only when a status request asks for them"),
         f("Enrolment", enrollment, "open: anyone with the address · code: an enrolment code · closed: nobody new"),
-        f("Package name", pkg, "every release must be this application id"))));
+        f("Package name", pkg, "every release must be this application id")),
+      // 6.1: position tracking — the phone's user switches it on, this allows it.
+      h("div", { class: "card stack" },
+        h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Location"), h("div", { class: "card__hint" }, "A phone sends its position only when its user switched tracking on (Settings › Location) and this allows it. Positions are personal data: reading a track needs the devices right and is audited.")),
+        h("label", { class: "row" }, chk(p.location, "track"), "Allow tracking (devices send positions)"),
+        f("Keep positions (days)", num(p.location, "days", 1, 3650)),
+        f("At most one position every (s)", num(p.location, "minSeconds", 5, 3600)))));
     if (may("settings")) body.append(h("div", { class: "row" }, h("button", { class: "btn btn--primary", type: "button", onclick: async () => {
       const r = await guarded(() => api("/api/admin/android/config", { method: "PUT", body: { policy: p, enrollment: enrollment.value, packageName: pkg.value.trim() } }), "Policy saved — devices get it at their next check-in.");
       if (r) overview = await api("/api/admin/android");

@@ -17,6 +17,10 @@ import { fromBase64, toBase64 } from "../client/src/lib/crypto";
 import * as acrypto from "../server/android/crypto";
 import { compileDesign } from "../server/android/bundle";
 import { DEFAULT_DESIGN } from "../server/android/design";
+import { sealText, openSealed } from "../client/src/lib/message-kinds";
+import { encryptForTag } from "../client/src/lib/nfc";
+import { encodeChunk } from "../client/src/lib/binary-frames";
+import { validatePayload } from "../client/src/lib/validate";
 
 const subtle = globalThis.crypto.subtle;
 const b64 = (b: ArrayBuffer | Uint8Array) => toBase64(new Uint8Array(b instanceof Uint8Array ? b : new Uint8Array(b)));
@@ -124,6 +128,24 @@ async function main() {
     push: { i: "cmd_1", ...push, s: pushSig },
     requestSigned: acrypto.requestSignedString("POST", "/api/android/checkin", "1760000000000", "abcdefghijklmnop", Buffer.from('{"state":{}}')),
   };
+
+  // 6.1: a sealed message (the code typed differently — normalisation), a
+  // connection card of the NFC tools, a binary chunk frame, what the web
+  // makes of a payload with every 6.1 field.
+  const sealedMsg = await sealText("Tajná zpráva ✓ 🔒", "ABCD-EFGH-JKMN", 100_000);
+  if ((await openSealed(sealedMsg.ciphertext, sealedMsg.meta, "abcd efgh jkmn")) !== "Tajná zpráva ✓ 🔒") throw new Error("sealed vector");
+  out.sealed = { plain: "Tajná zpráva ✓ 🔒", code: "abcd efgh-jkmn", wrong: "ABCD-EFGH-JKMP", ...sealedMsg };
+  out.nfc = { pin: "482915", card: { v: 1, room: "team", passphrase: "dlouhé heslo místnosti", name: "Alice", app: "6.1.0" } as Record<string, unknown>, blob: "" };
+  out.nfc = { ...(out.nfc as object), blob: await encryptForTag("482915", (out.nfc as { card: Record<string, unknown> }).card) };
+  const civ = new Uint8Array(12).fill(7), cct = new Uint8Array(40).fill(9);
+  out.binaryChunk = { transferId, seq: 5, iv: b64(civ), ct: b64(cct), frame: b64(new Uint8Array(encodeChunk({ transferId, seq: 5, iv: civ, data: cct, version: 2, type: 1 }))) };
+  const full = {
+    id: "msg-0123456789abcdef01234567", text: "ahoj #tag @Bob", createdAt: 1760000000000, senderId: "p-alice", senderName: "Alice",
+    ttlMinutes: 99999, flags: { tap: true, vanishSeconds: 2, sealed: { salt: "c2FsdA==", iv: "aXY=", v: 2, it: 600000 } },
+    to: ["Bob", "Cyd"], replyTo: { id: "msg-x", senderName: "Bob", text: "?" }, forwardedFrom: "/dns", loc: { lat: 50.0874654, lon: 14.4212349, acc: 12.4, at: 1760000000000 },
+    attachment: { kind: "image", name: "../a.png", mime: "image/png; charset=x", size: 3, dataUrl: "data:image/svg+xml;base64,AAAA" },
+  };
+  out.payload = { input: full, web: validatePayload(full, { transportSender: "p-alice", now: 1760000000000 }) };
 
   const file = resolve(import.meta.dirname, "..", "test", "fixtures", "android-interop.json");
   writeFileSync(file, `${JSON.stringify(out, null, 1)}\n`);

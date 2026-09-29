@@ -112,6 +112,9 @@ public final class Design {
         if (value == null || value.isEmpty()) return fallback;
         try {
             if (value.startsWith("@")) {
+                // 6.1: the user's template / accent first (Settings › Appearance).
+                Integer own = Appearance.override(value.substring(1), dark);
+                if (own != null) return own;
                 JSONObject tone = theme == null ? null : theme.optJSONObject(dark ? "dark" : "light");
                 String hex = tone == null ? null : tone.optString(value.substring(1), null);
                 return hex == null ? fallback : parse(hex);

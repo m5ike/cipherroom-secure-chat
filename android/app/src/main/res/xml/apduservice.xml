@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 6.1: the phone as a Type 4 tag with the app's connection card (only while the user has it on). -->
+<host-apdu-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/nfc_card_service"
+    android:requireDeviceUnlock="true">
+    <aid-group android:description="@string/nfc_card_service" android:category="other">
+        <aid-filter android:name="D2760000850101" />
+    </aid-group>
+</host-apdu-service>

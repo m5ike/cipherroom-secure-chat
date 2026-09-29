@@ -40,6 +40,10 @@ const ICONS = [
   "signal-low", "signal-zero", "battery", "zap-off", "loader", "loader-circle", "refresh-ccw", "rotate-ccw", "undo-2",
   "redo-2", "panel-left", "panel-right", "layout-dashboard", "columns-2", "rows-2", "grip-vertical", "move", "ellipsis",
   "ellipsis-vertical", "circle-plus", "circle-minus",
+  // 6.1: the Android app's tools, voice, calls, location and account
+  "hammer", "audio-lines", "switch-camera", "log-in", "speaker", "pause", "navigation", "sun-moon", "volume-1",
+  "wand-sparkles", "scan-line", "text-cursor-input", "route", "locate-fixed", "file-up", "camera-off", "ear", "speech",
+  "type", "contrast", "shield-user",
 ];
 
 // 4.13: every icon the app's components draw — the Layout builder's layouts
