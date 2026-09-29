@@ -43,7 +43,6 @@ import cz.m5cet.app.ui.Ui;
  */
 final class Fn {
     private final MainActivity a;
-    private final M5 app;
     final Theme theme;
     private final Executor exec = Io.POOL;
 
@@ -57,18 +56,23 @@ final class Fn {
 
     Fn(MainActivity a) {
         this.a = a;
-        this.app = a.app();
+        // The app is resolved lazily: Parts (and this) are built as a field of the
+        // activity, before its onCreate sets the app, so a.app() is null here.
         this.theme = new Theme() {
             @Override public int color(String token) { return Ui.color(a, token); }
             @Override public int dp(float value) { return Ui.dp(a, value); }
-            @Override public Typeface typeface(boolean bold) { return Ui.typeface(app.design(), bold, false); }
-            @Override public String text(String key) { return app.t(key); }
+            @Override public Typeface typeface(boolean bold) { return Ui.typeface(app().design(), bold, false); }
+            @Override public String text(String key) { return app().t(key); }
         };
     }
 
-    private String bearer() { return app.account == null ? "" : app.account.bearer(); }
+    private M5 app() { return a.app(); }
+
+    private String bearer() { M5 app = app(); return app == null || app.account == null ? "" : app.account.bearer(); }
 
     private Commands commands() {
+        M5 app = app();
+        if (app == null) return commands != null ? commands : (commands = new Commands(""));
         String b = app.config.server();
         if (commands == null || !b.equals(base)) {
             base = b;
@@ -86,6 +90,7 @@ final class Fn {
     Executor exec() { return exec; }
 
     private Run.Origin origin() {
+        M5 app = app();
         RoomSession r = app.rooms.activeSession();
         return new Run.Origin(r == null ? null : r.label, app.config.deviceId(), app.lang(), TimeZone.getDefault().getID());
     }
@@ -111,6 +116,7 @@ final class Fn {
      * command, send it as text (App.tsx: only a known command is intercepted).
      */
     boolean run(RoomSession r, String text) {
+        final M5 app = app();
         Commands c = commands();
         Commands.Parsed p = Commands.parseCommandLine(text, commandChars());
         if (p == null) return false;
@@ -135,6 +141,7 @@ final class Fn {
 
     /** showFnResult(): a room model sends its output end-to-end; a caller-only one shows it here. */
     private void deliver(RoomSession r, Run.Done d, String keyword, String name, String visibility) {
+        M5 app = app();
         if (d.failedUnanswered()) {
             String msg = d.error == null ? "" : d.error.optString("message");
             a.flash("", app.t("functions.failed") + (msg.isEmpty() ? "" : ": " + msg), "error");
@@ -180,7 +187,7 @@ final class Fn {
         };
         cz.m5cet.app.fn.FnAsk view = new cz.m5cet.app.fn.FnAsk(a, theme, i, answer);
         holder[0] = new android.app.AlertDialog.Builder(a)
-            .setTitle(i.title().isEmpty() ? app.t("tools.ai") : i.title())
+            .setTitle(i.title().isEmpty() ? app().t("tools.ai") : i.title())
             .setView(view)
             .setOnCancelListener(x -> commands().answer(bearer(), i.runId, i.id, null))
             .create();
@@ -193,13 +200,13 @@ final class Fn {
 
     private final FnView.Host host = new FnView.Host() {
         @Override public void event(JSONObject meta, JSONObject ev, Consumer<Boolean> done) {
-            RoomSession r = app.rooms.activeSession();
+            RoomSession r = app().rooms.activeSession();
             running = commands().event(bearer(), meta, ev, origin(), new Run.Listener() {
                 @Override public void interaction(Run.Interaction i) { Io.main(() -> ask(i)); }
                 @Override public void error(String code, String message) {
                     Io.main(() -> {
-                        if ("expired".equals(code)) a.flash("", app.t("fnui.expired"), "warn");
-                        else a.flash("", app.t("fnui.eventFailed") + (message == null || message.isEmpty() ? "" : ": " + message), "error");
+                        if ("expired".equals(code)) a.flash("", app().t("fnui.expired"), "warn");
+                        else a.flash("", app().t("fnui.eventFailed") + (message == null || message.isEmpty() ? "" : ": " + message), "error");
                         done.accept(false);
                     });
                 }
@@ -217,7 +224,7 @@ final class Fn {
         @Override public void openLink(String url) { a.openUrl(url); }
 
         @Override public void report(JSONObject meta, JSONObject ev) {
-            RoomSession r = app.rooms.activeSession();
+            RoomSession r = app().rooms.activeSession();
             commands().report(bearer(), meta, ev, origin(), exec, d -> {
                 if (d != null) Io.main(() -> deliver(r, d, meta.optString("keyword"), meta.optString("name"), d.visibility == null ? "caller" : d.visibility));
             });
@@ -228,7 +235,7 @@ final class Fn {
                 try {
                     Uri uri = saveToDownloads(name, mime, data);
                     Io.main(() -> {
-                        if (uri == null) { a.flash("", app.t("file.failed"), "error"); return; }
+                        if (uri == null) { a.flash("", app().t("file.failed"), "error"); return; }
                         if (open) {
                             try {
                                 a.startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW)
@@ -237,11 +244,11 @@ final class Fn {
                                 return;
                             } catch (RuntimeException ignored) { }
                         }
-                        a.flash("", app.t("file.saved"), "success");
+                        a.flash("", app().t("file.saved"), "success");
                     });
                 } catch (Exception e) {
                     Log.w("fn", "file not saved: " + e.getMessage());
-                    Io.main(() -> a.flash("", app.t("file.failed"), "error"));
+                    Io.main(() -> a.flash("", app().t("file.failed"), "error"));
                 }
             });
         }
