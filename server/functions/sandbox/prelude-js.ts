@@ -198,6 +198,65 @@ return function setup(host, ctxJson) {
 
   const bin = (name, url) => ({ encode: (v) => call(name + ".enc", v, url), decode: (s) => call(name + ".dec", String(s)) });
 
+  /* ---- m5adm (6.0): the administration, as the owner granted the model ---- */
+  const arg = (x) => (x === undefined ? null : plain(x));
+  const adm = (object, op, ...args) => acall("adm", object, op, args.map(arg));
+  const camel = (s) => s.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+  const withCamel = (o) => { for (const k of Object.keys(o)) if (k.includes("_")) o[camel(k)] = o[k]; return o; };
+  const ops = (object, names) => withCamel(Object.fromEntries(names.map((n) => [n, (...a) => adm(object, n, ...a)])));
+  // set(id | null, object) → the id, or -1 (the reason goes to the run's log).
+  const savedId = (r) => { if (r && r.saved) return r.id; write("warn", "m5adm: not saved — " + (r && r.error ? r.error : "unknown")); return -1; };
+  const member = (u) => (u && typeof u === "object" ? { peerId: u.peerId, accountId: u.accountId, name: u.name } : u === undefined || u === null ? null : String(u));
+  // A room with its controls: the data of rooms.get / rooms.list, and methods that act on it.
+  class M5Room {
+    constructor(data) { Object.assign(this, data); }
+    wall_msg(text, opts) { return adm("rooms", "wall_msg", this.id, String(text), opts || {}); }
+    user_msg(user, text, opts) { return adm("rooms", "user_msg", this.id, member(user), String(text), opts || {}); }
+    user_flash(user, text, level) { return adm("rooms", "user_flash", this.id, member(user), String(text), level === undefined ? "info" : String(level)); }
+    disconnect(user, reason) { return adm("rooms", "disconnect", this.id, member(user), reason === undefined ? "" : String(reason)); }
+    block(opts) { return adm("rooms", "block", this.id, typeof opts === "string" ? { reason: opts } : opts || {}); }
+    unblock() { return adm("rooms", "unblock", this.id); }
+    connect(user, opts) { return adm("rooms", "connect", this.id, member(user), opts || {}); }
+    log(opts) { return adm("rooms", "log", this.id, opts || {}); }
+    async refresh() { const d = await adm("rooms", "get", this.id); if (d) Object.assign(this, d); return d ? this : null; }
+    save() { return m5adm.rooms.set(this.id, this); }
+    forget() { return adm("rooms", "delete", this.id); }
+  }
+  for (const k of ["wall_msg", "user_msg", "user_flash"]) M5Room.prototype[camel(k)] = M5Room.prototype[k];
+  const asRoom = (d) => (d ? new M5Room(d) : null);
+  const m5adm = {
+    info: () => acall("adm.info"),
+    overview: ops("overview", ["get", "system", "alerts", "db", "backups", "metrics", "whoami"]),
+    rooms: withCamel({
+      list: async (filters, opts) => (await adm("rooms", "list", filters, opts || {})).map(asRoom),
+      get: async (id) => asRoom(await adm("rooms", "get", id)),
+      set: async (id, room) => savedId(await adm("rooms", "set", id, room || {})),
+      delete: (id) => adm("rooms", "delete", id),
+      stats: () => adm("rooms", "stats"),
+      // The m5room methods by id, too.
+      wall_msg: (id, text, opts) => adm("rooms", "wall_msg", id, String(text), opts || {}),
+      user_msg: (id, user, text, opts) => adm("rooms", "user_msg", id, member(user), String(text), opts || {}),
+      user_flash: (id, user, text, level) => adm("rooms", "user_flash", id, member(user), String(text), level === undefined ? "info" : String(level)),
+      disconnect: (id, user, reason) => adm("rooms", "disconnect", id, member(user), reason === undefined ? "" : String(reason)),
+      block: (id, opts) => adm("rooms", "block", id, typeof opts === "string" ? { reason: opts } : opts || {}),
+      unblock: (id) => adm("rooms", "unblock", id),
+      connect: (id, user, opts) => adm("rooms", "connect", id, member(user), opts || {}),
+      log: (id, opts) => adm("rooms", "log", id, opts || {}),
+    }),
+    connections: ops("connections", ["list", "get", "close", "stats"]),
+    traffic: ops("traffic", ["list", "summary", "rates", "events", "watch"]),
+    modules: { ...ops("modules", ["list", "get", "enable", "state", "switch"]), set: async (id, rule) => savedId(await adm("modules", "set", id, rule || {})) },
+    groups: { ...ops("groups", ["list", "get", "delete", "add_member", "remove_member"]), set: async (id, group) => savedId(await adm("groups", "set", id, group || {})) },
+    users: ops("users", ["list", "get", "signout", "delete", "passkeys", "remove_passkey"]),
+    passkeys: ops("passkeys", ["list", "get", "delete"]),
+    queue: ops("queue", ["list", "stats", "get", "dead", "revive"]),
+    audit: ops("audit", ["list", "stats", "verify", "checkpoint", "communication", "add"]),
+    commands: ops("commands", ["list", "allowlist", "send"]),
+    push: ops("push", ["status", "send"]),
+    admins: { ...ops("admins", ["list", "get", "delete"]), set: async (name, admin) => savedId(await adm("admins", "set", name, admin || {})) },
+    Room: M5Room,
+  };
+
   const m5 = {
     sys: {
       version: ctx.sys.version,
@@ -418,8 +477,12 @@ return function setup(host, ctxJson) {
     form: (spec) => acall("form", plain(spec)),
     Error: M5Error,
   };
+  // m5adm is m5.adm too (one object).
+  Object.defineProperty(m5, "adm", { value: m5adm, enumerable: false });
   freeze(m5);
+  freeze(m5adm);
   Object.defineProperty(globalThis, "m5", { value: m5, enumerable: false, writable: false, configurable: false });
+  Object.defineProperty(globalThis, "m5adm", { value: m5adm, enumerable: false, writable: false, configurable: false });
   Object.defineProperty(globalThis, "console", { value: console, enumerable: false, writable: true, configurable: true });
 
   // The driver module calls this once with the entry module.

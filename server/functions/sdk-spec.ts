@@ -137,6 +137,114 @@ export const SDK_SPEC: SdkObject[] = [
   ] },
 ];
 
+/**
+ * 6.0: m5adm — the administration, as the owner granted the model (Functions ›
+ * model › Administration: a role and areas). Also reachable as m5.adm. Lists
+ * return lists, get → the object or null, set(id | null, object) → the id or
+ * -1, delete → true/false. Rooms come as m5room objects with their controls.
+ */
+export const ADM_SPEC: SdkObject[] = [
+  { name: "info", doc: "What this run may do: { granted, role, areas }.", methods: [
+    m("info", "await m5adm.info()", "await m5adm.info()", "The grant: role (auditor, operator, owner) and areas.", true),
+  ] },
+  { name: "overview", doc: "Everything at a glance: counts, health, system, alerts, databases, backups.", methods: [
+    m("get", "await m5adm.overview.get()", "await m5adm.overview.get()", "The console's overview: counts, health, storage, audit.", true),
+    m("system", "await m5adm.overview.system()", "await m5adm.overview.system()", "Memory, heap, event loop, host — now and the history.", true),
+    m("alerts", "await m5adm.overview.alerts()", "await m5adm.overview.alerts()", "Alert rules, firing alerts, history.", true),
+    m("db", "await m5adm.overview.db()", "await m5adm.overview.db()", "Databases: sizes, tables.", true),
+    m("backups", "await m5adm.overview.backups()", "await m5adm.overview.backups()", "Backups, schedule, last integrity check.", true),
+    m("metrics", "await m5adm.overview.metrics()", "await m5adm.overview.metrics()", "Prometheus text.", true),
+    m("whoami", "await m5adm.overview.whoami()", "await m5adm.overview.whoami()", "How the service sees this run (fn:<model>/<caller>, role).", true),
+  ] },
+  { name: "rooms", doc: "Rooms: who is in them, the operator's records (label, limit, block, pinned message) and control. A room is an m5room: data + wall_msg, user_msg, user_flash, disconnect, block, unblock, connect, log, refresh, save, forget.", methods: [
+    m("list", "await m5adm.rooms.list([{ key: \"room_username\", value: \"/^eva/i\" }])", "await m5adm.rooms.list([{\"key\": \"system_group\", \"value\": \"staff\"}])", "Rooms whose members match every filter (keys: room_username, system_username, system_passkey_id, system_group, room_id, room_label, room_tag; values: preg_match patterns). { match: \"any\" } for any filter.", true),
+    m("get", "await m5adm.rooms.get(id)", "await m5adm.rooms.get(room_id)", "One room (its hash, or the room id itself) as m5room, or null.", true),
+    m("set", "await m5adm.rooms.set(id | null, { label, note, tags, maxMembers, blocked, wall })", "await m5adm.rooms.set(room_id, {...})", "Saves the room's record; null with { room } creates one. The id, or -1.", true),
+    m("delete", "await m5adm.rooms.delete(id)", "await m5adm.rooms.delete(room_id)", "Forgets the room's record.", true),
+    m("stats", "await m5adm.rooms.stats()", "await m5adm.rooms.stats()", "Rooms, members, guests, away, protocols, the busiest, the registry.", true),
+    m("wall_msg", "await room.wall_msg(text, { level, pin })", "await room.wall_msg(text, level=\"info\", pin=None)", "A message from the operator to everyone in the room (pin: also to everyone who joins later). How many got it.", true),
+    m("user_msg", "await room.user_msg(member, text)", "await room.user_msg(member, text)", "A private message from the operator to one member (peer id, account id or name).", true),
+    m("user_flash", "await room.user_flash(member, text, level)", "await room.user_flash(member, text, level=\"info\")", "A short notice to one member.", true),
+    m("disconnect", "await room.disconnect(member?, reason?)", "await room.disconnect(member=None, reason=\"\")", "Disconnects everyone, or one member. How many.", true),
+    m("block", "await room.block({ reason, minutes, kick })", "await room.block(reason=\"\", minutes=None, kick=True)", "Closes the room (and empties it unless kick: false); for a while, or until unblock.", true),
+    m("unblock", "await room.unblock()", "await room.unblock()", "Opens a closed room.", true),
+    m("connect", "await room.connect(accountId?)", "await room.connect(account_id=None)", "Opens the room and calls members who are away back (a push to their devices). How many.", true),
+    m("log", "await room.log({ limit, since })", "await room.log(limit=200)", "The room's recent traffic and journal.", true),
+  ] },
+  { name: "connections", doc: "Live connections (sockets).", methods: [
+    m("list", "await m5adm.connections.list({ ip, name, peer, account, room })", "await m5adm.connections.list({...})", "Connections, filtered (patterns; room: a room id).", true),
+    m("get", "await m5adm.connections.get(id)", "await m5adm.connections.get(conn_id)", "One connection, or null.", true),
+    m("close", "await m5adm.connections.close(id)", "await m5adm.connections.close(conn_id)", "Disconnects it.", true),
+    m("stats", "await m5adm.connections.stats()", "await m5adm.connections.stats()", "Counts, round trip, bytes.", true),
+  ] },
+  { name: "traffic", doc: "Live traffic: records, rates, events, and a few seconds of what arrives.", methods: [
+    m("list", "await m5adm.traffic.list({ cls, direction, room, account, errors, limit })", "await m5adm.traffic.list({...})", "Traffic records, newest first.", true),
+    m("summary", "await m5adm.traffic.summary()", "await m5adm.traffic.summary()", "Totals by class, the last minute.", true),
+    m("rates", "await m5adm.traffic.rates(seconds)", "await m5adm.traffic.rates(120)", "Per-second series.", true),
+    m("events", "await m5adm.traffic.events(limit)", "await m5adm.traffic.events(100)", "The metadata event feed.", true),
+    m("watch", "await m5adm.traffic.watch(ms, filter)", "await m5adm.traffic.watch(5000, {...})", "What arrives in the next ms (at most 60 s).", true),
+  ] },
+  { name: "modules", doc: "Modules & groups: every part of the portal, who may use it.", methods: [
+    m("list", "await m5adm.modules.list()", "await m5adm.modules.list()", "Every module with its rule.", true),
+    m("get", "await m5adm.modules.get(id)", "await m5adm.modules.get(module_id)", "One module, or null.", true),
+    m("set", "await m5adm.modules.set(id, rule)", "await m5adm.modules.set(module_id, {...})", "Changes its rule (enabled, defaultAccess, groups, grants, log). The id, or -1.", true),
+    m("enable", "await m5adm.modules.enable(id, on)", "await m5adm.modules.enable(module_id, True)", "Switches a module on or off.", true),
+    m("state", "await m5adm.modules.state()", "await m5adm.modules.state()", "The service switches.", true),
+    m("switch", "await m5adm.modules.switch(name, on)", "await m5adm.modules.switch(name, True)", "Starts or stops a service (ai, speech, functions…).", true),
+  ] },
+  { name: "groups", doc: "Access groups and their members.", methods: [
+    m("list", "await m5adm.groups.list()", "await m5adm.groups.list()", "Built-in and own groups.", true),
+    m("get", "await m5adm.groups.get(id)", "await m5adm.groups.get(group_id)", "One group, or null.", true),
+    m("set", "await m5adm.groups.set(id, { label, members })", "await m5adm.groups.set(group_id, {...})", "Creates or changes a group. The id, or -1.", true),
+    m("delete", "await m5adm.groups.delete(id)", "await m5adm.groups.delete(group_id)", "Removes a group.", true),
+    m("add_member", "await m5adm.groups.add_member(id, member)", "await m5adm.groups.add_member(group_id, member)", "Adds a username (or admin:<name>).", true),
+    m("remove_member", "await m5adm.groups.remove_member(id, member)", "await m5adm.groups.remove_member(group_id, member)", "Removes one.", true),
+  ] },
+  { name: "users", doc: "Users & passkeys.", methods: [
+    m("list", "await m5adm.users.list({ username, group, passkey })", "await m5adm.users.list({...})", "Accounts, filtered (patterns).", true),
+    m("get", "await m5adm.users.get(id)", "await m5adm.users.get(account_id)", "One account in detail: passkeys, queue, journal, traffic.", true),
+    m("signout", "await m5adm.users.signout(id)", "await m5adm.users.signout(account_id)", "Ends every session of the account.", true),
+    m("delete", "await m5adm.users.delete(id, id)", "await m5adm.users.delete(account_id, account_id)", "Deletes the account and its data (the id repeated).", true),
+    m("passkeys", "await m5adm.users.passkeys(id)", "await m5adm.users.passkeys(account_id)", "The account's passkeys.", true),
+    m("remove_passkey", "await m5adm.users.remove_passkey(id, credentialId)", "await m5adm.users.remove_passkey(account_id, credential_id)", "Removes one passkey (never the last).", true),
+  ] },
+  { name: "passkeys", doc: "Passkeys across the accounts.", methods: [
+    m("list", "await m5adm.passkeys.list({ id, username })", "await m5adm.passkeys.list({...})", "Every passkey with its account.", true),
+    m("get", "await m5adm.passkeys.get(credentialId)", "await m5adm.passkeys.get(credential_id)", "One passkey, or null.", true),
+    m("delete", "await m5adm.passkeys.delete(credentialId)", "await m5adm.passkeys.delete(credential_id)", "Removes it from its account.", true),
+  ] },
+  { name: "queue", doc: "The message queue (offline delivery).", methods: [
+    m("list", "await m5adm.queue.list()", "await m5adm.queue.list()", "Per account: queued, delivering, dead.", true),
+    m("stats", "await m5adm.queue.stats()", "await m5adm.queue.stats()", "Totals.", true),
+    m("get", "await m5adm.queue.get(accountId)", "await m5adm.queue.get(account_id)", "One account's pending items.", true),
+    m("dead", "await m5adm.queue.dead({ account, limit })", "await m5adm.queue.dead({...})", "The dead letters.", true),
+    m("revive", "await m5adm.queue.revive(id)", "await m5adm.queue.revive(item_id)", "Puts a dead item back.", true),
+  ] },
+  { name: "audit", doc: "The audit journal.", methods: [
+    m("list", "await m5adm.audit.list({ category, minLevel, actor, event, q, since, limit })", "await m5adm.audit.list({...})", "Entries, newest first.", true),
+    m("stats", "await m5adm.audit.stats()", "await m5adm.audit.stats()", "Counts by category and level.", true),
+    m("verify", "await m5adm.audit.verify()", "await m5adm.audit.verify()", "Checks the hash chain and the signed checkpoints.", true),
+    m("checkpoint", "await m5adm.audit.checkpoint()", "await m5adm.audit.checkpoint()", "Signs the head of the chain now.", true),
+    m("communication", "await m5adm.audit.communication(on)", "await m5adm.audit.communication(True)", "Communication auditing on or off.", true),
+    m("add", "await m5adm.audit.add(event, detail, { level, target })", "await m5adm.audit.add(event, detail, {...})", "A line of your own (fn.<event>).", true),
+  ] },
+  { name: "commands", doc: "Commands to devices.", methods: [
+    m("list", "await m5adm.commands.list()", "await m5adm.commands.list()", "Allowlist, pending, delivery audit.", true),
+    m("allowlist", "await m5adm.commands.allowlist()", "await m5adm.commands.allowlist()", "The commands a device accepts.", true),
+    m("send", "await m5adm.commands.send(deviceId, kind, payload)", "await m5adm.commands.send(device_id, kind, payload)", "Queues a command (delivered at once when the device is connected).", true),
+  ] },
+  { name: "push", doc: "Web push.", methods: [
+    m("status", "await m5adm.push.status()", "await m5adm.push.status()", "Readiness and subscribers.", true),
+    m("send", "await m5adm.push.send(id | null, title, body)", "await m5adm.push.send(None, title, body)", "A push to one subscriber, or everyone.", true),
+  ] },
+  { name: "admins", doc: "Administrators (owner).", methods: [
+    m("list", "await m5adm.admins.list()", "await m5adm.admins.list()", "Administrators, their roles, tokens and passkeys (no secrets).", true),
+    m("get", "await m5adm.admins.get(name)", "await m5adm.admins.get(name)", "One, or null.", true),
+    m("set", "await m5adm.admins.set(name | null, { name, role, disabled })", "await m5adm.admins.set(name, {...})", "Creates or changes one (role, disabled). The name, or -1.", true),
+    m("delete", "await m5adm.admins.delete(name)", "await m5adm.admins.delete(name)", "Removes one.", true),
+  ] },
+];
+
 export function sdkDts(): string {
   const lines = ["// The m5 SDK available to a function (JavaScript).", "declare global {", "  const m5: {"];
   for (const obj of SDK_SPEC) {
@@ -146,6 +254,17 @@ export function sdkDts(): string {
     lines.push("    };");
   }
   lines.push("    sleep(ms: number): Promise<void>;");
+  lines.push("    /** 6.0: the administration (the same object as m5adm). */ adm: typeof m5adm;");
+  lines.push("  };");
+  lines.push("  /** 6.0: the administration, as the owner granted the model (a role and areas). */");
+  lines.push("  const m5adm: {");
+  for (const obj of ADM_SPEC) {
+    if (obj.name === "info") { lines.push(`    /** ${obj.doc} */ info(): Promise<{ granted: boolean; role: string | null; areas: string[] }>;`); continue; }
+    lines.push(`    /** ${obj.doc} */`);
+    lines.push(`    ${obj.name}: {`);
+    for (const meth of obj.methods) if (!meth.js.startsWith("await room.")) lines.push(`      /** ${meth.doc} */ ${meth.name}: any;`);
+    lines.push("    };");
+  }
   lines.push("  };", "}", "export {};");
   return lines.join("\n");
 }
@@ -156,6 +275,11 @@ export function sdkCompletions(): Array<{ path: string; label: string; detail: s
   for (const obj of SDK_SPEC) {
     out.push({ path: "m5", label: obj.name, detail: `m5.${obj.name}`, doc: obj.doc, async: false });
     for (const meth of obj.methods) out.push({ path: `m5.${obj.name}`, label: meth.name, detail: meth.js, doc: meth.doc, async: Boolean(meth.async) });
+  }
+  for (const obj of ADM_SPEC) {
+    if (obj.name === "info") { out.push({ path: "m5adm", label: "info", detail: obj.methods[0].js, doc: obj.doc, async: true }); continue; }
+    out.push({ path: "m5adm", label: obj.name, detail: `m5adm.${obj.name}`, doc: obj.doc, async: false });
+    for (const meth of obj.methods) out.push({ path: meth.js.startsWith("await room.") ? "room" : `m5adm.${obj.name}`, label: meth.name, detail: meth.js, doc: meth.doc, async: Boolean(meth.async) });
   }
   return out;
 }

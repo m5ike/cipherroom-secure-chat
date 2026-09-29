@@ -303,11 +303,109 @@ def _model_ns(ctx):
                            keys=lambda: _acall("model.session.keys")),
                cache=_cache_in("chain"))
 
+# ---- m5adm (6.0): the administration, as the owner granted the model ----
+
+def _adm(obj, op, *args):
+    return _acall("adm", obj, op, [_plain(a) for a in args])
+
+def _adm_ops(obj, names):
+    return {n: (lambda n: (lambda *a: _adm(obj, n, *a)))(n) for n in names}
+
+async def _saved_id(coro):
+    r = await coro
+    if r and r.get("saved"):
+        return r["id"]
+    _write("warn", "m5adm: not saved — " + str((r or {}).get("error", "unknown")), {})
+    return -1
+
+def _member(u):
+    if u is None:
+        return None
+    if isinstance(u, dict):
+        return {k: u.get(k) for k in ("peerId", "accountId", "name") if u.get(k)}
+    return str(u)
+
+class M5Room(dict):
+    """A room with its controls: the data of rooms.get / rooms.list, and methods that act on it."""
+    def __getattr__(self, k):
+        try:
+            return self[k]
+        except KeyError:
+            raise AttributeError(k)
+    def wall_msg(self, text, level="info", pin=None, **opts):
+        return _adm("rooms", "wall_msg", self["id"], str(text), {"level": level, **({"pin": pin} if pin is not None else {}), **opts})
+    def user_msg(self, user, text, **opts):
+        return _adm("rooms", "user_msg", self["id"], _member(user), str(text), opts)
+    def user_flash(self, user, text, level="info"):
+        return _adm("rooms", "user_flash", self["id"], _member(user), str(text), str(level))
+    def disconnect(self, user=None, reason=""):
+        return _adm("rooms", "disconnect", self["id"], _member(user), str(reason))
+    def block(self, reason="", minutes=None, kick=True, **opts):
+        return _adm("rooms", "block", self["id"], {"reason": reason, "kick": kick, **({"minutes": minutes} if minutes else {}), **opts})
+    def unblock(self):
+        return _adm("rooms", "unblock", self["id"])
+    def connect(self, user=None, **opts):
+        return _adm("rooms", "connect", self["id"], _member(user), opts)
+    def log(self, **opts):
+        return _adm("rooms", "log", self["id"], opts)
+    async def refresh(self):
+        d = await _adm("rooms", "get", self["id"])
+        if d:
+            self.update(d)
+        return self if d else None
+    def save(self):
+        return _saved_id(_adm("rooms", "set", self["id"], dict(self)))
+    def forget(self):
+        return _adm("rooms", "delete", self["id"])
+
+async def _rooms_list(filters=None, match="all"):
+    return [M5Room(d) for d in await _adm("rooms", "list", filters, {"match": match})]
+
+async def _rooms_get(room_id):
+    d = await _adm("rooms", "get", room_id)
+    return M5Room(d) if d else None
+
+def _adm_ns():
+    rooms = dict(
+        list=_rooms_list, get=_rooms_get,
+        set=lambda room_id, room=None: _saved_id(_adm("rooms", "set", room_id, dict(room or {}))),
+        delete=lambda room_id: _adm("rooms", "delete", room_id),
+        stats=lambda: _adm("rooms", "stats"),
+        wall_msg=lambda room_id, text, level="info", pin=None: _adm("rooms", "wall_msg", room_id, str(text), {"level": level, **({"pin": pin} if pin is not None else {})}),
+        user_msg=lambda room_id, user, text: _adm("rooms", "user_msg", room_id, _member(user), str(text), {}),
+        user_flash=lambda room_id, user, text, level="info": _adm("rooms", "user_flash", room_id, _member(user), str(text), str(level)),
+        disconnect=lambda room_id, user=None, reason="": _adm("rooms", "disconnect", room_id, _member(user), str(reason)),
+        block=lambda room_id, reason="", minutes=None, kick=True: _adm("rooms", "block", room_id, {"reason": reason, "kick": kick, **({"minutes": minutes} if minutes else {})}),
+        unblock=lambda room_id: _adm("rooms", "unblock", room_id),
+        connect=lambda room_id, user=None, **o: _adm("rooms", "connect", room_id, _member(user), o),
+        log=lambda room_id, **o: _adm("rooms", "log", room_id, o),
+    )
+    setter = lambda obj: (lambda key, value=None: _saved_id(_adm(obj, "set", key, value or {})))
+    return _NS(
+        info=lambda: _acall("adm.info"),
+        overview=_NS(**_adm_ops("overview", ["get", "system", "alerts", "db", "backups", "metrics", "whoami"])),
+        rooms=_NS(**rooms),
+        connections=_NS(**_adm_ops("connections", ["list", "get", "close", "stats"])),
+        traffic=_NS(**_adm_ops("traffic", ["list", "summary", "rates", "events", "watch"])),
+        modules=_NS(**_adm_ops("modules", ["list", "get", "enable", "state", "switch"]), set=setter("modules")),
+        groups=_NS(**_adm_ops("groups", ["list", "get", "delete", "add_member", "remove_member"]), set=setter("groups")),
+        users=_NS(**_adm_ops("users", ["list", "get", "signout", "delete", "passkeys", "remove_passkey"])),
+        passkeys=_NS(**_adm_ops("passkeys", ["list", "get", "delete"])),
+        queue=_NS(**_adm_ops("queue", ["list", "stats", "get", "dead", "revive"])),
+        audit=_NS(**_adm_ops("audit", ["list", "stats", "verify", "checkpoint", "communication", "add"])),
+        commands=_NS(**_adm_ops("commands", ["list", "allowlist", "send"])),
+        push=_NS(**_adm_ops("push", ["status", "send"])),
+        admins=_NS(**_adm_ops("admins", ["list", "get", "delete"]), set=setter("admins")),
+        Room=M5Room,
+    )
+
 _ctx = {}
 m5 = None
+m5adm = None
 
 def _setup(ctx):
-    global m5
+    global m5, m5adm
+    m5adm = _adm_ns()
     _ctx.update(ctx)
     c = ctx["caller"]; r = ctx["run"]
     m5 = _NS(
@@ -404,11 +502,16 @@ def _setup(ctx):
         form=lambda spec=None, **kw: _acall("form", spec or kw),
         Error=M5Error,
         Output=Output,
+        adm=m5adm,
     )
     mod = _types.ModuleType("m5", "The M5cet function SDK.")
     mod.__dict__.update({k: v for k, v in m5.__dict__.items()})
     _sys.modules["m5"] = mod
     _builtins.m5 = m5
+    adm_mod = _types.ModuleType("m5adm", "The M5cet administration SDK (6.0).")
+    adm_mod.__dict__.update({k: v for k, v in m5adm.__dict__.items()})
+    _sys.modules["m5adm"] = adm_mod
+    _builtins.m5adm = m5adm
     _sys.stdout = _Stream("stdout")
     _sys.stderr = _Stream("stderr")
 

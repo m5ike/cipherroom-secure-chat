@@ -835,6 +835,7 @@
     const chatOn = h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: m.executors.chat.enabled, disabled: ro, onchange: (e) => { m.executors.chat.enabled = e.target.checked; } }), " chat command");
     form.append(h("div", { class: "fn-grid3" }, h("label", { class: "field" }, h("span", { class: "label" }, "Runs"), rtSel), h("label", { class: "field" }, h("span", { class: "label" }, "Output goes"), visSel), h("label", { class: "field" }, h("span", { class: "label" }, "Executor"), chatOn)));
     form.append(groupsField(m, ro));
+    form.append(grantsField(m, ro));
 
     // the API (webhooks are entry points above)
     if (!m.executors.api) m.executors.api = { enabled: false };
@@ -902,6 +903,49 @@
       row.append(h("label", { class: `fn-chip${on ? " fn-chip--on" : ""}` }, h("input", { type: "checkbox", checked: on, disabled: ro, onchange: (e) => { if (e.target.checked) m.groups.push(g.id); else m.groups = m.groups.filter((x) => x !== g.id); e.target.parentElement.classList.toggle("fn-chip--on", e.target.checked); } }), g.label || g.id));
     }
     box.append(row);
+    return box;
+  }
+
+  // 6.0: what the model's code may do beyond its caller — m5adm (only an owner grants it, and a
+  // model that has it is the owner's to change) and m5.telephony for runs nobody started.
+  const ADM_AREAS = [["overview", "Overview"], ["rooms", "Rooms"], ["connections", "Connections"], ["traffic", "Live traffic"], ["modules", "Modules & groups"], ["users", "Users & passkeys"], ["queue", "Message queue"], ["audit", "Audit log"], ["commands", "Commands & push"], ["admins", "Administrators"]];
+  const TEL_RIGHTS = [["call", "calls"], ["sms", "SMS"], ["lookup", "number lookup"], ["hlr", "HLR"], ["message", "WhatsApp · Viber · Messenger"], ["did", "temporary numbers (audio bridge)"]];
+  function grantsField(m, ro) {
+    m.grants = m.grants || {};
+    const owner = C.can("owner");
+    const adm = m.grants.admin || { enabled: false, role: "auditor", areas: [] };
+    const tel = m.grants.telephony || { enabled: false, rights: [] };
+    const box = h("fieldset", { class: "fn-fs" }, h("legend", {}, "Beyond the caller"));
+    const admRo = ro || !owner;
+    const setAdm = () => { m.grants.admin = { ...adm }; };
+    const areaRow = h("div", { class: "fn-groups" });
+    for (const [id, label] of ADM_AREAS) {
+      const on = adm.areas.includes(id);
+      areaRow.append(h("label", { class: `fn-chip${on ? " fn-chip--on" : ""}` }, h("input", { type: "checkbox", checked: on, disabled: admRo, "data-adm-area": id, onchange: (e) => { adm.areas = e.target.checked ? [...adm.areas, id] : adm.areas.filter((x) => x !== id); e.target.parentElement.classList.toggle("fn-chip--on", e.target.checked); setAdm(); } }), label));
+    }
+    const roleSel = h("select", { class: "input input--sm", disabled: admRo, "data-adm-role": "1", onchange: (e) => { adm.role = e.target.value; setAdm(); } });
+    for (const [v, l] of [["auditor", "auditor — read"], ["operator", "operator — act"], ["owner", "owner — also administrators"]]) roleSel.append(h("option", { value: v, selected: adm.role === v }, l));
+    box.append(
+      h("label", { class: "fn-switch" }, h("input", { type: "checkbox", checked: adm.enabled, disabled: admRo, "data-adm-on": "1", onchange: (e) => { adm.enabled = e.target.checked; setAdm(); } }), " m5adm — the administration (every call goes through the console's own routes and the audit journal, as fn:<model>)"),
+      h("div", { class: "fn-row mt8" }, h("span", { class: "small" }, "Role"), roleSel),
+      h("span", { class: "label mt8" }, "Areas"), areaRow,
+      h("p", { class: "muted small" }, owner
+        ? "Whoever runs this model acts with this role in these areas. Once given, only an owner may change the model (anyone may switch it off)."
+        : "Only an owner gives a model access to the administration or changes a model that has it."),
+    );
+    const telRow = h("div", { class: "fn-groups" });
+    const setTel = () => { m.grants.telephony = { enabled: tel.enabled, rights: [...tel.rights] }; };
+    for (const [id, label] of TEL_RIGHTS) {
+      const on = tel.rights.includes(id);
+      telRow.append(h("label", { class: `fn-chip${on ? " fn-chip--on" : ""}` }, h("input", { type: "checkbox", checked: on, disabled: ro, onchange: (e) => { tel.rights = e.target.checked ? [...tel.rights, id] : tel.rights.filter((x) => x !== id); e.target.parentElement.classList.toggle("fn-chip--on", e.target.checked); setTel(); } }), label));
+    }
+    const numbers = h("input", { class: "input input--sm fn-mono", disabled: ro, placeholder: "number:+420* -number:+4209*", value: tel.rights.filter((r) => r.includes(":")).join(" "), onchange: (e) => { tel.rights = [...tel.rights.filter((r) => !r.includes(":")), ...e.target.value.split(/\s+/).filter(Boolean)]; setTel(); } });
+    box.append(
+      h("label", { class: "fn-switch mt8" }, h("input", { type: "checkbox", checked: tel.enabled, disabled: ro, onchange: (e) => { tel.enabled = e.target.checked; setTel(); } }), " m5.telephony when nobody started the run (a webhook, a schedule, the API, a provider's call event)"),
+      telRow,
+      h("label", { class: "field mt8" }, h("span", { class: "label" }, "Which numbers (patterns; empty = any)"), numbers),
+      h("p", { class: "muted small" }, "A person's run also needs their own Telephony & SIP rights (Modules & groups)."),
+    );
     return box;
   }
 

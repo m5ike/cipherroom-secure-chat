@@ -22,7 +22,8 @@ import { dirname, join, resolve } from "node:path";
 import type { StoredCredential } from "./accounts/webauthn";
 
 export type AdminRole = "owner" | "operator" | "auditor";
-export type AdminPrincipal = { name: string; role: AdminRole; via: "env-token" | "token" | "passkey" };
+/** via "function" (6.0): a Functions run with an owner's grant (functions/adm-token.ts) — only its areas. */
+export type AdminPrincipal = { name: string; role: AdminRole; via: "env-token" | "token" | "passkey" | "function"; areas?: readonly string[] };
 
 export const ROLE_RANK: Record<AdminRole, number> = { auditor: 1, operator: 2, owner: 3 };
 export const ADMIN_SESSION_TTL_MS = 8 * 60 * 60 * 1000;

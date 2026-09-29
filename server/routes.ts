@@ -231,6 +231,9 @@ export async function registerRoutes(
     health: () => ({ signaling: signaling.stats(), queuePersistent: offlineQueue().persistent, protocol: PROTOCOL_VERSION }),
     cluster: () => signaling.stats().cluster,
     deliverCommands: (deviceId) => signaling.deliverCommands(deviceId),
+    roomNotice: (hash, notice, target) => signaling.notice(hash, notice, target),
+    roomDisconnect: (hash, reason, target) => signaling.disconnectRoom(hash, reason, target),
+    roomWake: (hash, accountId) => signaling.wakeRoom(hash, accountId),
     backups,
   };
   registerAdminApi(app, adminProviders);

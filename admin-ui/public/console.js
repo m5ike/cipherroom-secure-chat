@@ -775,18 +775,43 @@
       kpi("Largest room", num(Math.max(0, ...rooms.map((r) => r.peers.length + r.away.length)))));
     const cards = $("#roomCards");
     clear(cards);
-    if (!rooms.length) cards.append(h("div", { class: "card empty" }, "No rooms are open."));
-    for (const r of rooms.sort((a, b) => b.peers.length - a.peers.length)) {
+    // 6.0: rooms nobody is in, but that have the operator's record (closed, limited, pinned).
+    const recordsOnly = (data.registry || []).filter((rec) => !rooms.some((r) => r.roomHash === rec.id)).map((rec) => ({ roomHash: rec.id, peers: [], away: [], record: rec }));
+    if (!rooms.length && !recordsOnly.length) cards.append(h("div", { class: "card empty" }, "No rooms are open."));
+    for (const r of [...rooms.sort((a, b) => b.peers.length - a.peers.length), ...recordsOnly]) {
+      const rec = r.record || null;
       const list = h("div", { class: "stack small" });
+      const act = (path, body, done) => async () => {
+        try { const res = await api(`/api/admin/rooms/${r.roomHash}${path}`, { method: body === null ? "DELETE" : "POST", body: body === null ? undefined : body }); toast(done(res), "ok"); await loadRooms(); } catch (e) { toast(e.message, "err"); }
+      };
       for (const p of r.peers) {
         list.append(h("div", { class: "row" }, h("b", {}, p.name), h("span", { class: "mono muted" }, short(p.peerId, 14)),
           p.accountId ? badge("account", "ok") : badge("guest"), p.away ? badge("page hidden", "warn") : null,
-          p.protocol ? h("span", { class: "muted" }, `v${p.protocol}`) : null, h("span", { class: "spacer" }), h("span", { class: "muted" }, ago(p.joinedAt))));
+          p.protocol ? h("span", { class: "muted" }, `v${p.protocol}`) : null, h("span", { class: "spacer" }), h("span", { class: "muted" }, ago(p.joinedAt)),
+          can("operator") ? h("button", { class: "btn btn--xs", title: "A short notice for this member", onclick: async () => { const text = prompt(`Flash for ${p.name}:`); if (text) await act("/notice", { kind: "flash", text, peerId: p.peerId }, (x) => `Sent (${x.delivered}).`)(); } }, "Flash") : null,
+          can("operator") ? h("button", { class: "btn btn--xs btn--danger", onclick: act("/disconnect", { peerId: p.peerId }, () => `${p.name} disconnected.`) }, "Disconnect") : null));
       }
       for (const a of r.away) list.append(h("div", { class: "row" }, h("b", {}, a.name), badge("away · relayed", "warn"), h("span", { class: "spacer" }), h("span", { class: "muted" }, `since ${ago(a.since)}`)));
+      if (rec && (rec.note || rec.wall)) list.append(h("div", { class: "muted small" }, rec.note || "", rec.wall ? h("div", {}, "📌 ", rec.wall.text) : null));
+      const tools = can("operator") ? h("div", { class: "row mt8" },
+        h("button", { class: "btn btn--xs", onclick: async () => { const text = prompt("A message from the operator to everyone in this room:"); if (text) await act("/notice", { kind: "wall", text, pin: confirm("Pin it (also for those who join later)?") }, (x) => `Delivered to ${x.delivered}.`)(); } }, "Wall message"),
+        rec && rec.blocked
+          ? h("button", { class: "btn btn--xs", onclick: act("/block", null, () => "The room is open again.") }, "Open")
+          : h("button", { class: "btn btn--xs btn--danger", onclick: async () => { const reason = prompt("Close this room — the reason members see:", "maintenance"); if (reason !== null) await act("/block", { reason }, (x) => `Closed; ${x.disconnected} disconnected.`)(); } }, "Close room"),
+        h("button", { class: "btn btn--xs", onclick: async () => {
+          const label = prompt("Label (only the console shows it):", rec ? rec.label : "");
+          if (label === null) return;
+          const max = prompt("Most members at once (0 = no limit):", String(rec ? rec.maxMembers : 0));
+          if (max === null) return;
+          try { await api(`/api/admin/rooms/registry/${r.roomHash}`, { method: "PUT", body: { label, maxMembers: Number(max) || 0 } }); toast("Saved.", "ok"); await loadRooms(); } catch (e) { toast(e.message, "err"); }
+        } }, "Label & limit…"),
+        r.peers.length ? h("button", { class: "btn btn--xs btn--danger", onclick: act("/disconnect", {}, (x) => `${x.disconnected} disconnected.`) }, "Disconnect all") : null,
+        rec ? h("button", { class: "btn btn--xs", title: "Forget the operator's record of this room", onclick: async () => { try { await api(`/api/admin/rooms/registry/${r.roomHash}`, { method: "DELETE" }); toast("Forgotten.", "ok"); await loadRooms(); } catch (e) { toast(e.message, "err"); } } }, "Forget") : null) : null;
       cards.append(h("div", { class: "card" },
-        h("div", { class: "card__head" }, h("div", { class: "card__title mono" }, `room ${r.roomHash}`), h("div", { class: "card__actions" }, badge(`${r.peers.length} online`, "accent"), r.away.length ? badge(`${r.away.length} away`, "warn") : null)),
-        list));
+        h("div", { class: "card__head" }, h("div", { class: "card__title" }, rec && rec.label ? h("span", {}, rec.label, " ") : null, h("span", { class: "mono" }, `room ${r.roomHash}`)), h("div", { class: "card__actions" },
+          rec && rec.blocked ? badge("closed", "err") : null, rec && rec.maxMembers ? badge(`max ${rec.maxMembers}`) : null,
+          badge(`${r.peers.length} online`, "accent"), r.away.length ? badge(`${r.away.length} away`, "warn") : null)),
+        list, tools));
     }
   }
 

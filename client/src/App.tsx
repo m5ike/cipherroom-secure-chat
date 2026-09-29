@@ -195,6 +195,8 @@ type SignalFrame =
   | { type: "rate-limited"; frame: string; retryAfterMs: number }
   | { type: "replaced"; reason: string }
   | { type: "closed-by-server"; reason: string }
+  // 6.0: the operator speaks (the console, a function's m5room.wall_msg / user_msg / user_flash).
+  | { type: "server-notice"; id: string; kind: "wall" | "message" | "flash" | "wake"; text: string; level: string; from: string; at: number; pinned?: boolean }
   | { type: "admin-command"; command: { id: string; kind: string; createdAt: number; payload?: Record<string, unknown> } }
   | { type: "error"; message: string; code?: string }
   // Server-relayed file transfer (only when direct P2P cannot be established)
@@ -2863,6 +2865,26 @@ function ChatApp() {
         return;
       }
 
+      // 6.0: a notice from the operator — plain text from the server, not in the room's
+      // encryption, and said so. A wall or a private message stays in the conversation.
+      if (frame.type === "server-notice") {
+        const from = frame.from && frame.from !== "operator" ? frame.from : t(lang, "notice.operator");
+        const kind: FlashMessage["kind"] = frame.level === "error" || frame.level === "warning" || frame.level === "success" ? frame.level : "info";
+        const text = String(frame.text ?? "").slice(0, 2000);
+        if (!text) return;
+        if (frame.kind === "flash" || frame.kind === "wake") {
+          flashRef.current.push({ text, detail: from, kind });
+          return;
+        }
+        const label = tf(lang, frame.kind === "wall" ? (frame.pinned ? "notice.pinned" : "notice.wall") : "notice.private", { from });
+        setMessages((current) => current.some((m) => m.id === `notice-${frame.id}`) ? current : [
+          ...current,
+          { id: `notice-${frame.id}`, senderId: "system", senderName: label, text, createdAt: Number(frame.at) || Date.now(), mine: false, secure: false },
+        ]);
+        if (prefsRef.current.flash.enabled) flashRef.current.push({ text, detail: label, kind });
+        return;
+      }
+
       if (frame.type === "hello") {
         serverBinaryRef.current = Array.isArray(frame.features) && frame.features.includes("bin");
         const pl = frame.limits?.proxy;
@@ -2904,6 +2926,12 @@ function ChatApp() {
       }
 
       if (frame.type === "error") {
+        // 6.0: the operator closed the room, or it is full — not a network problem to retry.
+        if (frame.code === "room-blocked" || frame.code === "room-full") {
+          systemMessage(tf(lang, frame.code === "room-blocked" ? "notice.roomBlocked" : "notice.roomFull", { reason: frame.message }), { kind: "warning" });
+          userDisconnect();
+          return;
+        }
         setNotice(frame.message);
       }
 

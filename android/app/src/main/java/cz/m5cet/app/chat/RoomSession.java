@@ -239,7 +239,19 @@ public final class RoomSession {
             case "signal": onSignal(f.optString("source"), f.optJSONObject("payload")); break;
             case "rate-limited": notice = "rate limited: " + f.optString("frame"); changed(); break;
             case "closed-by-server": notice = f.optString("reason"); changed(); break;
-            case "error": notice = f.optString("message"); Log.w("room", label + ": " + notice); changed(); break;
+            case "server-notice": onServerNotice(f); break;
+            case "error": {
+                notice = f.optString("message");
+                Log.w("room", label + ": " + notice);
+                // 6.0: the operator closed the room, or it is full — not a network problem to retry.
+                String code = f.optString("code");
+                if ("room-blocked".equals(code) || "room-full".equals(code)) {
+                    system(("room-blocked".equals(code) ? "⛔ " : "👥 ") + notice);
+                    disconnect();
+                }
+                changed();
+                break;
+            }
             default: break; // hello, pong, presence-ack, relay frames (accounts only)
         }
     }
@@ -371,6 +383,28 @@ public final class RoomSession {
     }
 
     private void system(String text) { add(ChatMessage.system(key, text), false); }
+
+    /**
+     * 6.0: the operator speaks (the console, a function's m5room.wall_msg / user_msg /
+     * user_flash) — plain text from the server, not in the room's encryption, and said
+     * so. A wall or a private message stays in the conversation; a flash is a notice.
+     */
+    private void onServerNotice(JSONObject f) {
+        String text = f.optString("text");
+        if (text.isEmpty()) return;
+        if (text.length() > 2000) text = text.substring(0, 2000);
+        String kind = f.optString("kind", "wall");
+        String from = f.optString("from", "operator");
+        if ("flash".equals(kind) || "wake".equals(kind)) { notice = text; changed(); return; }
+        ChatMessage m = ChatMessage.system(key, text);
+        m.id = "notice-" + f.optString("id", Long.toString(System.nanoTime(), 36));
+        m.senderName = ("message".equals(kind) ? "✉ " : f.optBoolean("pinned") ? "📌 " : "📣 ") + from;
+        m.createdAt = f.optLong("at", System.currentTimeMillis());
+        synchronized (messages) { for (ChatMessage x : messages) if (m.id.equals(x.id)) return; }
+        add(m, false);
+        notice = text;
+        changed();
+    }
 
     private void add(ChatMessage m, boolean fresh) {
         synchronized (messages) {

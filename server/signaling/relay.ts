@@ -153,6 +153,9 @@ export class AwayRelay {
   }
 
   /** Away members with their real account ids — for the operator only. */
+  /** Rooms where someone is away (a room can be empty on the hub and still have them). */
+  awayRooms(): string[] { return [...this.awayByRoom.keys()]; }
+
   awayAccounts(room: string): Array<{ accountId: string; name: string; since: number }> {
     return [...(this.awayByRoom.get(room) ?? [])].map(([accountId, e]) => ({ accountId, name: e.name, since: e.since }));
   }
@@ -369,6 +372,15 @@ export class AwayRelay {
   }
 
   /* ---------------------------------------------------------------- wake */
+
+  /** 6.0: the operator calls a signed-in member back to a room (m5room.connect):
+   *  the same neutral wake-up push a relayed message sends (throttled alike). */
+  async summon(accountId: string, room: string): Promise<boolean> {
+    const acc = this.accounts.get(accountId);
+    if (!this.push || !acc || acc.push.length === 0) return false;
+    await this.wake(accountId, room, "operator");
+    return true;
+  }
 
   private async wake(accountId: string, room: string, fromName: string): Promise<void> {
     if (!this.push) return;

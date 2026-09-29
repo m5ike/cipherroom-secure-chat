@@ -111,6 +111,8 @@ export const HOST_CALLS = [
   "webhook.create", "webhook.wait",
   "crypto", "codes", "ai",
   "functions.list",
+  // 6.0: m5adm — the administration, as the owner granted the model.
+  "adm", "adm.info",
   // 5.3: m5.model.session — the processing session's own key–value store.
   "model.session.get", "model.session.set", "model.session.delete", "model.session.keys",
 ] as const;

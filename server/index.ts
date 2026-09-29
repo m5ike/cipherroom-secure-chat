@@ -25,6 +25,7 @@ import type { Request } from 'express';
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { requireAdminToken } from "./admin-auth";
+import { isAdmToken } from "./functions/adm-token";
 import { registerRoutes, signalingHub } from "./routes";
 import { clusterBus } from "./cluster/bus";
 import { accountStore } from "./accounts/store";
@@ -122,10 +123,16 @@ app.use("/api/admin/menu-config", express.json({ limit: "1mb" }));
 // The operator console: a busy operator is not a flood, a wrong token is.
 // Refused requests count against a small budget (token guessing), all
 // requests against a generous one.
+// 6.0: a function's calls (m5adm, a signed m5f1 token) come from this host
+// too — they get a bucket per model instead, so a busy script cannot use
+// up the console's.
+const bearerOf = (req: express.Request) => (req.header("authorization") ?? "").replace(/^Bearer\s+/, "");
+const fnModelOf = (req: express.Request) => { try { return String(JSON.parse(Buffer.from(bearerOf(req).slice(5).split(".")[0] ?? "", "base64url").toString("utf8")).m ?? "?"); } catch { return "?"; } };
 app.use(
   "/api/admin",
-  rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many refused admin requests." } }),
-  rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many admin requests." } }),
+  rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, skip: (req) => isAdmToken(bearerOf(req)), message: { ok: false, message: "Too many refused admin requests." } }),
+  rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false, skip: (req) => isAdmToken(bearerOf(req)), message: { ok: false, message: "Too many admin requests." } }),
+  rateLimit({ windowMs: 60 * 1000, limit: 1_200, standardHeaders: true, legacyHeaders: false, skip: (req) => !isAdmToken(bearerOf(req)), keyGenerator: (req) => `fn:${fnModelOf(req)}`, message: { ok: false, message: "Too many administration calls from this function." } }),
 );
 // 6.0: an APK release is uploaded as the raw file — only an operator's
 // request is read at all (up to 300 MB), and only after the limits above.

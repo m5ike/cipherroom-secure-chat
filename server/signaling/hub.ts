@@ -37,6 +37,7 @@ import { FileProxy } from "../file-proxy";
 import { adminCommandAudit, drain as drainCommands, type AdminCommand } from "../routes-admin-shared";
 import { eventStore } from "../events";
 import { audit } from "../monitor/audit";
+import { roomRegistry } from "../room-registry";
 import { classifyFrame, hashRoom, traffic, truncateIp } from "../monitor/traffic";
 import type { StorageFrame, StorageSocketState } from "../storage/ws";
 import type { TrustProxyValue } from "../trust-proxy";
@@ -90,6 +91,23 @@ const HARD_BACKPRESSURE_BYTES = 32 * 1024 * 1024;
 const HEARTBEAT_MS = 30_000;
 
 const sha = (s: string) => createHash("sha256").update(s).digest();
+
+/** 6.0: what the operator can send into a room (server-notice frames). */
+export type NoticeKind = "wall" | "message" | "flash" | "wake";
+/** Members an operator action is for: by peer id, account id, or name (exact, case-insensitive). */
+export type MemberTarget = { peerId?: string; accountId?: string; name?: string };
+const NOTICE_LEVELS = new Set(["info", "success", "warning", "error"]);
+
+export function noticeFrame(kind: NoticeKind, text: string, level = "info", from = "operator", pinned = false) {
+  return { type: "server-notice", id: randomBytes(9).toString("base64url"), kind, text: text.slice(0, 2000), level: NOTICE_LEVELS.has(level) ? level : "info", from: from.slice(0, 60), at: Date.now(), ...(pinned ? { pinned: true } : {}) };
+}
+
+function memberMatches(p: { id: string; accountId?: string; name: string }, t: MemberTarget): boolean {
+  if (t.peerId && p.id !== t.peerId) return false;
+  if (t.accountId && p.accountId !== t.accountId) return false;
+  if (t.name && p.name.toLowerCase() !== t.name.toLowerCase()) return false;
+  return Boolean(t.peerId || t.accountId || t.name);
+}
 const newId = (bytes: number) => randomBytes(bytes).toString("base64url");
 
 /** The client's address as the trusted proxies report it. */
@@ -517,6 +535,23 @@ export class SignalingHub {
     client.name = frame.name;
 
     const room = frame.room;
+    // 6.0: the operator's registry — a blocked room refuses everyone, a full one newcomers.
+    const hash = hashRoom(room) ?? "";
+    const block = roomRegistry.blockOf(hash);
+    if (block) {
+      audit.add({ category: "security", level: "notice", event: "join.room-blocked", peerId: client.id, roomHash: hash, ip: truncateIp(client.ip) });
+      return this.error(client, "room-blocked", block.reason || "The operator has closed this room.", { until: block.until });
+    }
+    const record = roomRegistry.get(hash);
+    if (record?.maxMembers) {
+      const here = this.rooms.get(room);
+      const count = (here?.size ?? 0) + (this.cluster?.members(room).length ?? 0);
+      const returning = Boolean(frame.peerId && here?.has(frame.peerId));
+      if (count >= record.maxMembers && !returning) {
+        audit.add({ category: "communication", level: "notice", event: "join.room-full", peerId: client.id, roomHash: hash, detail: { max: record.maxMembers } });
+        return this.error(client, "room-full", `This room takes at most ${record.maxMembers} people.`, { max: record.maxMembers });
+      }
+    }
     let members = this.rooms.get(room);
     if (!members) { members = new Map(); this.rooms.set(room, members); }
 
@@ -583,6 +618,8 @@ export class SignalingHub {
     this.broadcast(room, { type: "peer-joined", ...view(client) }, client);
     this.cluster?.join(room, this.memberView(client));
     this.relay.onJoin(client);
+    // The operator's pinned message for this room.
+    if (record?.wall) this.send(client.socket, noticeFrame("wall", record.wall.text, record.wall.level, "operator", true), client);
 
     eventStore.record({ kind: "peer-joined", room, peerId: client.id, meta: { peerCount: members.size } });
     audit.add({ category: "communication", event: "room.join", peerId: client.id, accountId: client.accountId, roomHash: hashRoom(room), ip: truncateIp(client.ip), detail: { members: members.size, protocol: client.protocol } });
@@ -768,6 +805,75 @@ export class SignalingHub {
     this.send(client.socket, { type: "closed-by-server", reason: reason.slice(0, 120) }, client);
     try { client.socket.close(4003, reason.slice(0, 100)); } catch { /* ignore */ }
     return true;
+  }
+
+  /* ------------------------------------------ operator room control (6.0) */
+
+  /** The room whose hash this is, among the rooms open on this instance. */
+  private roomOfHash(hash: string): string | null {
+    for (const room of this.rooms.keys()) if (hashRoom(room) === hash) return room;
+    return null;
+  }
+
+  private matching(room: string, target?: MemberTarget): HubClient[] {
+    return this.members(room).filter((p) => !target || memberMatches(p, target));
+  }
+
+  /**
+   * A notice from the operator (the console, a function's m5room.wall_msg /
+   * user_msg / user_flash): to everyone in the room, or to the members that
+   * match. It is the server speaking — plain, marked as the operator's, never
+   * in the room's end-to-end encryption. Returns how many sockets got it.
+   */
+  notice(hash: string, n: { kind: NoticeKind; text: string; level?: string; from?: string }, target?: MemberTarget): number {
+    const room = this.roomOfHash(hash);
+    if (!room) return 0;
+    const payload = noticeFrame(n.kind, n.text, n.level, n.from);
+    let sent = 0;
+    for (const peer of this.matching(room, target)) if (this.send(peer.socket, payload, peer)) sent += 1;
+    // Members on other instances: everyone, or one by peer id.
+    if (!target) this.cluster?.broadcast(room, payload);
+    else if (target.peerId && sent === 0 && this.cluster?.signal(room, target.peerId, payload)) sent += 1;
+    audit.add({ category: "admin", level: "notice", event: `room.notice.${n.kind}`, roomHash: hash, status: `${sent}`, detail: { from: (n.from ?? "operator").slice(0, 60), chars: n.text.length, ...(target ? { target: target.peerId ?? target.accountId ?? target.name ?? "" } : {}) } });
+    return sent;
+  }
+
+  /** Disconnects everyone in a room (or the members that match). Returns how many. */
+  disconnectRoom(hash: string, reason: string, target?: MemberTarget): number {
+    const room = this.roomOfHash(hash);
+    if (!room) return 0;
+    let n = 0;
+    for (const peer of this.matching(room, target)) {
+      this.send(peer.socket, { type: "closed-by-server", reason: reason.slice(0, 120) }, peer);
+      this.leaveRoom(peer, false);
+      try { peer.socket.close(4003, reason.slice(0, 100)); } catch { /* ignore */ }
+      n += 1;
+    }
+    audit.add({ category: "admin", level: "notice", event: "room.disconnect", roomHash: hash, status: `${n}`, detail: { reason: reason.slice(0, 80) } });
+    return n;
+  }
+
+  /**
+   * Calls members back (m5room.connect): signed-in members who are away get
+   * the neutral wake-up push, suspended pages a "wake" notice. Returns how
+   * many were called.
+   */
+  async wakeRoom(hash: string, accountId?: string): Promise<number> {
+    let n = 0;
+    for (const [room] of [...this.rooms.entries(), ...this.relay.awayRooms().map((r) => [r, null] as const)]) {
+      if (hashRoom(room) !== hash) continue;
+      for (const a of this.relay.awayAccounts(room)) {
+        if (accountId && a.accountId !== accountId) continue;
+        if (await this.relay.summon(a.accountId, room)) n += 1;
+      }
+      for (const peer of this.members(room)) {
+        if (!peer.suspended || (accountId && peer.accountId !== accountId)) continue;
+        if (this.send(peer.socket, noticeFrame("wake", "The operator asks you back to this room.", "info", "operator"), peer)) n += 1;
+      }
+      break;
+    }
+    audit.add({ category: "admin", level: "notice", event: "room.wake", roomHash: hash, accountId, status: `${n}` });
+    return n;
   }
 
   /** What the operator console shows for rooms. Room names are not shown. */

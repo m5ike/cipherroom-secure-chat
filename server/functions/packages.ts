@@ -10,6 +10,9 @@ import { randomBytes } from "node:crypto";
 import { fingerprint, functionsStore, newId } from "./store";
 import { parseEntry, ID_RE, KEYWORD_RE, NAME_RE, SEMVER_RE, type Endpoint, type FileMap, type Lang, type Model, type Package, type PackageManifest, type PackageVersion } from "./types";
 import { endpointsOf, legacyWebhookOf, normalizeEndpoints, type EndpointError } from "./endpoints";
+import { sanitizeGrant } from "./adm-token";
+import type { AdminRole } from "../admin-users";
+import type { ModelGrants } from "./types";
 
 export class PackageError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "PackageError"; }
@@ -139,9 +142,40 @@ export function deletePackage(packageId: string, actor: string): void {
 
 const DEFAULT_EXECUTORS: Model["executors"] = { chat: { enabled: false, visibility: "room" }, console: { enabled: true } };
 
-export function saveModel(input: Partial<Model> & { id?: string }, actor: string): Model {
+/** 6.0: a model's grants as stored — m5adm (role, areas) and telephony (rights). */
+export function sanitizeGrants(raw: unknown): ModelGrants {
+  const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const out: ModelGrants = {};
+  if (o.admin !== undefined) out.admin = sanitizeGrant(o.admin);
+  if (o.telephony !== undefined) {
+    const tel = (o.telephony && typeof o.telephony === "object" ? o.telephony : {}) as Record<string, unknown>;
+    const rights = Array.isArray(tel.rights) ? [...new Set(tel.rights.filter((r): r is string => typeof r === "string").map((r) => r.trim()).filter((r) => /^-?[a-z]+(:[\w+*?.:-]{1,40})?$/.test(r)))].slice(0, 30) : [];
+    out.telephony = { enabled: tel.enabled === true, rights };
+  }
+  return out;
+}
+
+const sameAdmin = (a?: ModelGrants["admin"], b?: ModelGrants["admin"]) =>
+  Boolean(a?.enabled) === Boolean(b?.enabled) && (!a?.enabled || (a.role === b?.role && [...a.areas].sort().join() === [...(b?.areas ?? [])].sort().join()));
+
+export function saveModel(input: Partial<Model> & { id?: string }, actor: string, actorRole: AdminRole = "operator"): Model {
   const now = Date.now();
   const existing = input.id ? functionsStore.model(input.id) : null;
+  // 6.0: the administration (m5adm) is the owner's to give — and a model that has it is the owner's to change
+  // (its code acts with that role for whoever runs it). Anyone may still switch it off.
+  const grants = input.grants !== undefined ? { ...(existing?.grants ?? {}), ...sanitizeGrants(input.grants) } : existing?.grants;
+  if (actorRole !== "owner") {
+    if (!sameAdmin(grants?.admin, existing?.grants?.admin)) bad("owner-only", "Only an owner may give a model access to the administration (m5adm), or change it.");
+    if (existing?.grants?.admin?.enabled) {
+      // The console sends the whole model: switching it off is allowed when nothing that says what it runs changed.
+      const same = (["name", "keyword", "summary", "entry", "onEvent", "runtime"] as const).every((k) => input[k] === undefined || input[k] === existing[k])
+        && (input.endpoints === undefined || JSON.stringify(input.endpoints.map((e) => [e.id, e.type, e.fn])) === JSON.stringify(existing.endpoints.map((e) => [e.id, e.type, e.fn])));
+      if (input.enabled !== false || !same) bad("owner-only", "This model has access to the administration (m5adm): only an owner may change it (anyone may switch it off).");
+      const off: Model = { ...existing, enabled: false, revision: existing.revision + 1, updatedAt: now, updatedBy: actor };
+      functionsStore.saveModel(off);
+      return off;
+    }
+  }
   const id = existing?.id ?? (input.id?.trim() || newId("mdl"));
   if (!existing && input.id && !ID_RE.test(input.id)) bad("bad-id", "A model id is lower-case letters, digits and hyphens.");
   const keyword = (input.keyword ?? existing?.keyword ?? "").trim().toLowerCase();
@@ -195,6 +229,7 @@ export function saveModel(input: Partial<Model> & { id?: string }, actor: string
     limits: input.limits ?? existing?.limits ?? {},
     executors: withWebhook(normalizeExecutors(input.executors ?? existing?.executors ?? DEFAULT_EXECUTORS, existing?.executors), endpoints!),
     groups: Array.isArray(input.groups) ? input.groups.filter((g) => typeof g === "string") : existing?.groups ?? [],
+    ...(grants && (grants.admin || grants.telephony) ? { grants } : {}),
     enabled: input.enabled ?? existing?.enabled ?? false,
     revision: (existing?.revision ?? 0) + 1,
     createdAt: existing?.createdAt ?? now,

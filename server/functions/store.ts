@@ -42,7 +42,7 @@ const jsonParse = <T>(v: unknown, fallback: T): T => {
 
 type PackageRow = { id: string; name: string; language: string; description: string; draft: string | null; created_at: number; updated_at: number; updated_by: string };
 type VersionRow = { package_id: string; version: string; manifest: string; files: string; fingerprint: string; status: string; test: string | null; created_at: number; created_by: string; published_at: number | null };
-type ModelRow = { id: string; name: string; keyword: string; summary: string; entry: string; on_event: string; runtime: string; inputs: string; outputs: string; limits: string; executors: string; groups: string; enabled: number; revision: number; created_at: number; updated_at: number; updated_by: string; endpoints?: string };
+type ModelRow = { id: string; name: string; keyword: string; summary: string; entry: string; on_event: string; runtime: string; inputs: string; outputs: string; limits: string; executors: string; groups: string; enabled: number; revision: number; created_at: number; updated_at: number; updated_by: string; endpoints?: string; grants?: string };
 type RunRow = { id: string; model_id: string; entry: string; lang: string; executor: string; caller: string; session_id: string; parent: string | null; status: string; inputs: string; outputs: string; error: string | null; test: number; queued_at: number; started_at: number | null; finished_at: number | null; ms: number; mem_mb: number; chain_id?: string; call_id?: number | null; endpoint?: string };
 
 function toPackage(r: PackageRow): Package {
@@ -52,7 +52,7 @@ function toVersion(r: VersionRow): PackageVersion {
   return { packageId: r.package_id, version: r.version, manifest: jsonParse(r.manifest, {} as PackageVersion["manifest"]), files: jsonParse(r.files, {}), fingerprint: r.fingerprint, status: r.status as PackageVersion["status"], test: jsonParse(r.test, null), createdAt: r.created_at, createdBy: r.created_by, publishedAt: r.published_at };
 }
 function toModel(r: ModelRow): Model {
-  return { id: r.id, name: r.name, keyword: r.keyword, summary: r.summary, entry: r.entry, onEvent: r.on_event, runtime: r.runtime as Model["runtime"], inputs: jsonParse(r.inputs, []), outputs: jsonParse(r.outputs, []), limits: jsonParse(r.limits, {}), executors: jsonParse(r.executors, { chat: { enabled: false, visibility: "room" }, console: { enabled: true } }), groups: jsonParse(r.groups, []), enabled: Boolean(r.enabled), revision: r.revision, createdAt: r.created_at, updatedAt: r.updated_at, updatedBy: r.updated_by, endpoints: jsonParse(r.endpoints, []) };
+  return { id: r.id, name: r.name, keyword: r.keyword, summary: r.summary, entry: r.entry, onEvent: r.on_event, runtime: r.runtime as Model["runtime"], inputs: jsonParse(r.inputs, []), outputs: jsonParse(r.outputs, []), limits: jsonParse(r.limits, {}), executors: jsonParse(r.executors, { chat: { enabled: false, visibility: "room" }, console: { enabled: true } }), groups: jsonParse(r.groups, []), enabled: Boolean(r.enabled), revision: r.revision, createdAt: r.created_at, updatedAt: r.updated_at, updatedBy: r.updated_by, endpoints: jsonParse(r.endpoints, []), ...(r.grants && r.grants !== "{}" ? { grants: jsonParse(r.grants, {}) } : {}) };
 }
 function toRun(r: RunRow): Run {
   return { id: r.id, modelId: r.model_id, entry: r.entry, lang: r.lang as Run["lang"], executor: r.executor, caller: jsonParse(r.caller, {} as Caller), sessionId: r.session_id, parent: r.parent, status: r.status as RunStatus, inputs: jsonParse(r.inputs, {}), outputs: jsonParse(r.outputs, []), error: jsonParse(r.error, null), test: Boolean(r.test), queuedAt: r.queued_at, startedAt: r.started_at, finishedAt: r.finished_at, ms: r.ms, memMb: r.mem_mb,
@@ -123,6 +123,8 @@ CREATE INDEX IF NOT EXISTS model_chains_updated ON model_chains(updated_at);
 /** Columns later versions added to tables an older database already has. */
 const MIGRATIONS: Array<[table: string, column: string, definition: string]> = [
   ["models", "endpoints", "TEXT NOT NULL DEFAULT '[]'"],
+  // 6.0: m5adm and m5.telephony beyond the caller (ModelGrants).
+  ["models", "grants", "TEXT NOT NULL DEFAULT '{}'"],
   ["runs", "chain_id", "TEXT NOT NULL DEFAULT ''"],
   ["runs", "call_id", "INTEGER"],
   ["runs", "endpoint", "TEXT NOT NULL DEFAULT ''"],
@@ -245,10 +247,10 @@ class FunctionsStore {
   }
   saveModel(m: Model): void {
     if (!this.d) return this.mem.saveModel(m);
-    this.d.prepare(`INSERT INTO models (id, name, keyword, summary, entry, on_event, runtime, inputs, outputs, limits, executors, groups, enabled, revision, created_at, updated_at, updated_by, endpoints)
-      VALUES (@id, @name, @keyword, @summary, @entry, @on_event, @runtime, @inputs, @outputs, @limits, @executors, @groups, @enabled, @revision, @created_at, @updated_at, @updated_by, @endpoints)
-      ON CONFLICT(id) DO UPDATE SET name=@name, keyword=@keyword, summary=@summary, entry=@entry, on_event=@on_event, runtime=@runtime, inputs=@inputs, outputs=@outputs, limits=@limits, executors=@executors, groups=@groups, enabled=@enabled, revision=@revision, updated_at=@updated_at, updated_by=@updated_by, endpoints=@endpoints`)
-      .run({ id: m.id, name: m.name, keyword: m.keyword, summary: m.summary, entry: m.entry, on_event: m.onEvent, runtime: m.runtime, inputs: JSON.stringify(m.inputs), outputs: JSON.stringify(m.outputs), limits: JSON.stringify(m.limits), executors: JSON.stringify(m.executors), groups: JSON.stringify(m.groups), enabled: m.enabled ? 1 : 0, revision: m.revision, created_at: m.createdAt, updated_at: m.updatedAt, updated_by: m.updatedBy, endpoints: JSON.stringify(m.endpoints ?? []) });
+    this.d.prepare(`INSERT INTO models (id, name, keyword, summary, entry, on_event, runtime, inputs, outputs, limits, executors, groups, enabled, revision, created_at, updated_at, updated_by, endpoints, grants)
+      VALUES (@id, @name, @keyword, @summary, @entry, @on_event, @runtime, @inputs, @outputs, @limits, @executors, @groups, @enabled, @revision, @created_at, @updated_at, @updated_by, @endpoints, @grants)
+      ON CONFLICT(id) DO UPDATE SET name=@name, keyword=@keyword, summary=@summary, entry=@entry, on_event=@on_event, runtime=@runtime, inputs=@inputs, outputs=@outputs, limits=@limits, executors=@executors, groups=@groups, enabled=@enabled, revision=@revision, updated_at=@updated_at, updated_by=@updated_by, endpoints=@endpoints, grants=@grants`)
+      .run({ id: m.id, name: m.name, keyword: m.keyword, summary: m.summary, entry: m.entry, on_event: m.onEvent, runtime: m.runtime, inputs: JSON.stringify(m.inputs), outputs: JSON.stringify(m.outputs), limits: JSON.stringify(m.limits), executors: JSON.stringify(m.executors), groups: JSON.stringify(m.groups), enabled: m.enabled ? 1 : 0, revision: m.revision, created_at: m.createdAt, updated_at: m.updatedAt, updated_by: m.updatedBy, endpoints: JSON.stringify(m.endpoints ?? []), grants: JSON.stringify(m.grants ?? {}) });
     this.d.prepare("INSERT OR REPLACE INTO model_revisions (model_id, revision, snapshot, created_at, created_by) VALUES (?, ?, ?, ?, ?)").run(m.id, m.revision, JSON.stringify(m), m.updatedAt, m.updatedBy);
   }
   deleteModel(id: string): void {

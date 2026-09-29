@@ -27,6 +27,8 @@ import { ENDPOINT_TYPES, formatEntry, parseEntry, type Caller, type Chain, type 
 import { commandsFor } from "./visibility";
 import { storedInputs } from "./webhook-log";
 import { endpointOf, endpointTypes, endpointsOf, entryOf, eventInputs } from "./endpoints";
+import { admInfo, endAdmRun, hostAdm, type AdmContext } from "./host-adm";
+import { consoleGrant, isAdmArea } from "./adm-token";
 
 /** Bytes a sandbox sent as {"$b": base64}; null for anything else. */
 function taggedBytes(v: unknown): Buffer | null {
@@ -308,6 +310,20 @@ function endWebhooks(runId: string): void {
 
 /* ------------------------------------------------------------ host calls */
 
+/** 6.0: what a run may do in the administration (m5adm): the model's grant, or — a draft in the
+ *  console — what its administrator could do there. */
+function admContext(model: Model, caller: Caller, runId: string): AdmContext {
+  const who = (caller.name || caller.kind).slice(0, 40);
+  if (model.id === "__adhoc__") {
+    return caller.kind === "console" && caller.adminRole
+      ? { grant: consoleGrant(caller.adminRole), model: "console", caller: who, runId }
+      : { grant: null, why: "code outside a model reaches the administration only in the console", model: "adhoc", caller: who, runId };
+  }
+  const g = model.grants?.admin;
+  if (!g?.enabled) return { grant: null, why: "this model has no access to the administration (Functions › model › Administration — an owner grants it)", model: model.keyword || model.id, caller: who, runId };
+  return { grant: { role: g.role, areas: g.areas.filter(isAdmArea) }, model: model.keyword || model.id, caller: who, runId };
+}
+
 /** The session, cache, interaction and webhook calls a run may make, scoped to it. */
 function hostHandler(model: Model, sessionId: string, runId: string, caller: Caller, chain?: { id: string; sessionId: string }): RunHandlers["host"] {
   return async (fn, args, control) => {
@@ -322,6 +338,9 @@ function hostHandler(model: Model, sessionId: string, runId: string, caller: Cal
     }
     // 5.2: the commands the caller may run (for /help and menus).
     if (fn === "functions.list") return commandsFor(caller);
+    // 6.0: the administration, as the owner granted it (host-adm.ts → /api/admin/*).
+    if (fn === "adm") return control.wait(hostAdm(String(args[0] ?? ""), String(args[1] ?? ""), Array.isArray(args[2]) ? args[2] : [], admContext(model, caller, runId)));
+    if (fn === "adm.info") return admInfo(admContext(model, caller, runId));
     if (fn === "webhook.create") return makeWebhook(runId, (args[0] ?? {}) as { once?: boolean; durable?: boolean; ttl?: unknown }, model, sessionId, caller);
     if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
     const scopeName = (raw: unknown): string => {
@@ -471,6 +490,7 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
   const result = await thePool().run(spec, handlers);
   endInteractions(runId, "the run ended");
   endWebhooks(runId);
+  endAdmRun(runId);
   clearInterval(flushTimer);
 
   const values = result.ok ? result.values : [];
@@ -592,6 +612,7 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
   const result = await thePool().run(full, runHandlers);
   endInteractions(runId, "the run ended");
   endWebhooks(runId);
+  endAdmRun(runId);
   const values = result.ok ? result.values : [];
   const rejected = result.ok ? result.rejected : [];
   for (const r of rejected) logLine("error", `result[${r.index}] was left out: ${r.reason}`, { index: r.index });

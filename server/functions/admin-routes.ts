@@ -35,18 +35,20 @@ import { inputsOf, maskToken, newCallId, type ParsedBody } from "./webhook-log";
 import { parseEntry, type Caller, type Endpoint, type EndpointType, type Model, type Run, type RunStatus, type WebhookCall } from "./types";
 
 const RUN_STATUSES = ["queued", "running", "waiting", "done", "failed", "timed-out", "cancelled"];
-import { SDK_SPEC, sdkCompletions, sdkDts } from "./sdk-spec";
+import { ADM_SPEC, SDK_SPEC, sdkCompletions, sdkDts } from "./sdk-spec";
 import { cronError } from "./cron";
 import { tutorialLessons } from "./tutorial";
 import { newId } from "./store";
 import { layoutGroups } from "../layout-catalog";
 import { switchState } from "../plugins/settings";
+import { isRole, type AdminRole } from "../admin-users";
 
 const actorOf = (res: Response): string => String(res.locals.adminName ?? "admin");
-const consoleCaller = (res: Response): Caller => ({ kind: "console", account: "", name: actorOf(res), groups: ["owner", "operator"], room: null, client: "console", lang: "cs", tz: "UTC" });
+const roleOf = (res: Response): AdminRole => (isRole(res.locals.adminRole) ? res.locals.adminRole : "operator");
+const consoleCaller = (res: Response): Caller => ({ kind: "console", account: "", name: actorOf(res), groups: ["owner", "operator"], room: null, client: "console", lang: "cs", tz: "UTC", adminRole: roleOf(res) });
 
 function errorOf(err: unknown): { status: number; code: string; message: string } {
-  if (err instanceof PackageError) return { status: err.code === "no-package" || err.code === "no-draft" || err.code === "no-model" ? 404 : err.code === "exists" || err.code === "in-use" ? 409 : 400, code: err.code, message: err.message };
+  if (err instanceof PackageError) return { status: err.code === "no-package" || err.code === "no-draft" || err.code === "no-model" ? 404 : err.code === "exists" || err.code === "in-use" ? 409 : err.code === "owner-only" ? 403 : 400, code: err.code, message: err.message };
   if (err instanceof RunRefused) return { status: 400, code: err.code, message: err.message };
   return { status: 500, code: "error", message: (err as Error).message };
 }
@@ -229,7 +231,7 @@ export function registerFunctionsAdminRoutes(app: Express): void {
   };
 
   r.get("/", (_req, res) => { void functionsStore.ready().then(() => res.json(overview(revealFor(res)))); });
-  r.get("/sdk", (_req, res) => res.json({ ok: true, spec: SDK_SPEC, completions: sdkCompletions(), dts: sdkDts() }));
+  r.get("/sdk", (_req, res) => res.json({ ok: true, spec: SDK_SPEC, adm: ADM_SPEC, completions: sdkCompletions(), dts: sdkDts() }));
   r.get("/tutorial", (_req, res) => res.json({ ok: true, lessons: tutorialLessons() }));
 
   /* -------- packages -------- */
@@ -274,7 +276,7 @@ export function registerFunctionsAdminRoutes(app: Express): void {
     res.json({ ok: true, model: modelView(model, revealFor(res)) });
   });
   r.post("/models", operator, (req, res) => {
-    try { res.json({ ok: true, model: modelView(saveModel(req.body ?? {}, actorOf(res)), revealFor(res)) }); }
+    try { res.json({ ok: true, model: modelView(saveModel(req.body ?? {}, actorOf(res), roleOf(res)), revealFor(res)) }); }
     catch (err) { send(res, err); }
   });
   r.delete("/models/:id", operator, (req, res) => {
@@ -487,14 +489,14 @@ export function registerFunctionsAdminRoutes(app: Express): void {
       ...(typeof b.name === "string" && b.name.trim() ? { name: b.name.trim() } : {}), ...(typeof b.fn === "string" && b.fn ? { fn: b.fn } : {}),
       ...(b.rotate === true ? { token: "rotate" } : {}),
     });
-    try { res.json({ ok: true, endpoint: hook.id, model: modelView(saveModel({ id: m.id, endpoints: eps }, actorOf(res)), revealFor(res)) }); }
+    try { res.json({ ok: true, endpoint: hook.id, model: modelView(saveModel({ id: m.id, endpoints: eps }, actorOf(res), roleOf(res)), revealFor(res)) }); }
     catch (err) { send(res, err); }
   });
   r.delete("/webhooks/:modelId/:endpoint", operator, (req, res) => {
     const m = functionsStore.model(String(req.params.modelId));
     if (!m) return res.status(404).json({ ok: false, message: "No such model." });
     const eps = endpointsOf(m).filter((e) => !(e.type === "webhook" && e.id === req.params.endpoint));
-    try { res.json({ ok: true, model: modelView(saveModel({ id: m.id, endpoints: eps }, actorOf(res)), revealFor(res)) }); }
+    try { res.json({ ok: true, model: modelView(saveModel({ id: m.id, endpoints: eps }, actorOf(res), roleOf(res)), revealFor(res)) }); }
     catch (err) { send(res, err); }
   });
   // Replays a logged call — on the published version, or on the package's draft (to debug the script) — as a live run.

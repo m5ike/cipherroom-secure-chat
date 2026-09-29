@@ -13,11 +13,20 @@
 //   GET    /api/admin/traffic/rates           per-second series
 //   GET    /api/admin/connections             live sockets
 //   POST   /api/admin/connections/:id/close   disconnect one
-//   GET    /api/admin/rooms                   rooms, peers, away members
+//   GET    /api/admin/rooms                   rooms, peers, away members (+ the registry, 6.0)
+//   GET    /api/admin/rooms/registry[/:id]    6.0: the operator's room records
+//   PUT    /api/admin/rooms/registry/:id      label, note, tags, limit, block, pinned message
+//   DELETE /api/admin/rooms/registry/:id
+//   GET    /api/admin/rooms/:id               one room: members, record, traffic, journal
+//   POST   /api/admin/rooms/:id/notice        wall message (everyone) / message / flash (one)
+//   POST   /api/admin/rooms/:id/disconnect    everyone, or one member
+//   POST   /api/admin/rooms/:id/block         close the room (and empty it); DELETE opens it
+//   POST   /api/admin/rooms/:id/wake          call away members back (push)
 //   GET    /api/admin/users                   accounts with their state
 //   GET    /api/admin/users/:id               one account in detail
 //   POST   /api/admin/users/:id/signout       revoke every session
 //   DELETE /api/admin/users/:id?confirm=ID    delete account and data
+//   DELETE /api/admin/users/:id/passkeys/:cid 6.0: remove one passkey (never the last)
 //   GET    /api/admin/queue                   offline queue per account
 //   GET    /api/admin/queue/dead              dead-letter list
 //   POST   /api/admin/queue/:id/revive        put a dead item back
@@ -26,6 +35,7 @@
 //   GET    /api/admin/audit                   the journal, filtered
 //   GET    /api/admin/audit/export            CSV or JSON download
 //   PUT    /api/admin/audit/settings          communication auditing on/off
+//   POST   /api/admin/audit/entries           6.0: a line of the operator's own (fn.* from functions)
 //   GET    /api/admin/audit/verify            check the hash chain and signed checkpoints
 //   POST   /api/admin/audit/checkpoint        sign the head of the chain now
 //   GET    /api/admin/commands                allowlist, pending, delivery audit
@@ -64,6 +74,9 @@ import { alerts, type RuleId } from "./monitor/alerts";
 import { ADMIN_COMMAND_ALLOWLIST, adminCommandAudit, buildCommand, enqueue, pendingCommands, pushSubscriptions } from "./routes-admin-shared";
 import { isWebPushReady, sendWebPush } from "./push";
 import { eventStore } from "./events";
+import { roomRegistry, ROOM_HASH_RE, type RoomPatch } from "./room-registry";
+import { accountGroups } from "./client-config";
+import type { MemberTarget, NoticeKind } from "./signaling/hub";
 
 export type RoomSnapshot = {
   room: string;
@@ -84,6 +97,10 @@ export type AdminProviders = {
   deliverCommands?: (deviceId: string) => number;
   /** Backups and integrity checks (storage/backup.ts), when storage runs. */
   backups?: BackupManager | null;
+  /** 6.0: the operator's hand in a room (signaling/hub.ts): a notice, a disconnect, a call back. */
+  roomNotice?: (hash: string, notice: { kind: NoticeKind; text: string; level?: string; from?: string }, target?: MemberTarget) => number;
+  roomDisconnect?: (hash: string, reason: string, target?: MemberTarget) => number;
+  roomWake?: (hash: string, accountId?: string) => Promise<number>;
   /** The cluster bus and the other instances (signaling/cluster.ts). */
   cluster?: () => { kind: string; connected?: boolean; published?: number; received?: number; dropped?: number; instances: Array<{ id: string; lastSeen: number; members: number }> };
 };
@@ -95,6 +112,14 @@ const num = (v: unknown) => {
 };
 
 const adminActor = adminName;
+
+/** A detail of the operator's own: an object as it is (up to 4 kB), anything else wrapped. */
+function detailOf(v: unknown): Record<string, unknown> {
+  let s: string;
+  try { s = JSON.stringify(v) ?? "null"; } catch { return { text: String(v).slice(0, 2_000) }; }
+  if (s.length > 4_000) return { truncated: true, preview: s.slice(0, 2_000) };
+  return v && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : { value: v };
+}
 
 export function registerAdminApi(app: Express, deps: AdminProviders): void {
   const guard = requireAdminToken();
@@ -250,6 +275,9 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
         vault: a.vault,
         away: a.away,
         pushDevices: a.push.length,
+        groups: accountGroups(usernameOf(a)),
+        // 6.0: every passkey of the account (the first one's PRF output is its root).
+        passkeys: [{ credentialId: a.credential.credentialId, label: "first", createdAt: a.createdAt, lastUsedAt: a.lastLoginAt }, ...(a.credentials ?? []).map((c) => ({ credentialId: c.credentialId, label: c.label, createdAt: c.createdAt, lastUsedAt: c.lastUsedAt }))],
         database: db ? { id: db.id, keyMode: db.keyMode, bytes: db.bytes, lastOpenedAt: db.lastOpenedAt, open: deps.storage.account(a.id) !== null } : null,
         queue: q ?? deps.accounts.mailboxStats(a.id),
         sessions: deps.accounts.sessionCount(a.id),
@@ -372,7 +400,140 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
 
   /* --------------------------------------------------------------- rooms */
 
-  app.get("/api/admin/rooms", (_req, res) => res.json({ ok: true, rooms: deps.rooms() }));
+  app.get("/api/admin/rooms", (req, res) => {
+    // 6.0: with the operator's records (label, block, limit…); records of rooms nobody is in come as `registry`.
+    // ?members=full: each signed-in member's username, groups and passkey ids too (m5adm's room filters).
+    const records = new Map(roomRegistry.list().map((r) => [r.id, r]));
+    const full = req.query.members === "full";
+    const who = new Map<string, { username: string; groups: string[]; passkeys: string[] }>();
+    const about = (accountId?: string) => {
+      if (!full || !accountId) return {};
+      let w = who.get(accountId);
+      if (!w) {
+        const a = deps.accounts.get(accountId);
+        if (!a) return {};
+        const username = usernameOf(a);
+        const stored = deps.storage.isAvailable ? deps.storage.global.listPasskeys(a.id).map((p) => p.credentialId) : [];
+        w = { username, groups: accountGroups(username), passkeys: [...new Set([a.credential.credentialId, ...(a.credentials ?? []).map((c) => c.credentialId), ...stored])] };
+        who.set(accountId, w);
+      }
+      return w;
+    };
+    const rooms = deps.rooms().map((r) => ({
+      ...r,
+      peers: r.peers.map((p) => ({ ...p, ...about(p.accountId) })),
+      away: r.away.map((a) => ({ ...a, ...about(a.accountId) })),
+      record: records.get(r.roomHash) ?? null,
+    }));
+    res.json({ ok: true, rooms, registry: [...records.values()] });
+  });
+
+  /* ------------------------------------------------ room registry & control (6.0) */
+
+  const roomId = (req: Request) => String(req.params.id ?? "").toLowerCase();
+  const targetOf = (b: Record<string, unknown>): MemberTarget | undefined => {
+    const t: MemberTarget = {};
+    if (typeof b.peerId === "string" && b.peerId) t.peerId = b.peerId.slice(0, 80);
+    if (typeof b.accountId === "string" && b.accountId) t.accountId = b.accountId.slice(0, 80);
+    if (typeof b.name === "string" && b.name) t.name = b.name.slice(0, 80);
+    return t.peerId || t.accountId || t.name ? t : undefined;
+  };
+  const badRoom = (res: Response) => res.status(400).json({ ok: false, message: "a room is its 16-character hash" });
+
+  app.get("/api/admin/rooms/registry", (_req, res) => res.json({ ok: true, rooms: roomRegistry.list() }));
+  app.get("/api/admin/rooms/registry/:id", (req, res) => {
+    const record = roomRegistry.get(roomId(req));
+    res.status(record ? 200 : 404).json({ ok: Boolean(record), record });
+  });
+  app.put("/api/admin/rooms/registry/:id", (req, res) => {
+    const id = roomId(req);
+    if (!ROOM_HASH_RE.test(id)) return badRoom(res);
+    try {
+      const record = roomRegistry.set(id, (req.body ?? {}) as RoomPatch, adminActor(req));
+      audit.add({ category: "admin", level: "notice", event: "admin.room.record", actor: adminActor(req), target: id, detail: { label: record.label, blocked: Boolean(record.blocked), maxMembers: record.maxMembers, wall: Boolean(record.wall) } });
+      res.json({ ok: true, record });
+    } catch (err) { res.status(400).json({ ok: false, message: (err as Error).message }); }
+  });
+  app.delete("/api/admin/rooms/registry/:id", (req, res) => {
+    const removed = roomRegistry.delete(roomId(req));
+    audit.add({ category: "admin", level: "notice", event: "admin.room.forget", actor: adminActor(req), target: roomId(req), status: removed ? "ok" : "not-found" });
+    res.status(removed ? 200 : 404).json({ ok: removed });
+  });
+
+  // One room: who is in it, its record, and its recent traffic and journal (the "log").
+  app.get("/api/admin/rooms/:id", (req, res) => {
+    const id = roomId(req);
+    if (!ROOM_HASH_RE.test(id)) return badRoom(res);
+    const snap = deps.rooms().find((r) => r.roomHash === id) ?? null;
+    const record = roomRegistry.get(id);
+    if (!snap && !record) return res.status(404).json({ ok: false, message: "nobody is in that room and it has no record" });
+    const limit = Math.min(num(req.query.limit) ?? 200, 2_000);
+    const since = num(req.query.since);
+    res.json({
+      ok: true, room: snap, record,
+      traffic: traffic.query({ roomHash: id, since, limit }),
+      journal: audit.recent({ roomHash: id, since, limit }),
+    });
+  });
+
+  app.post("/api/admin/rooms/:id/notice", (req, res) => {
+    const id = roomId(req);
+    if (!ROOM_HASH_RE.test(id)) return badRoom(res);
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const kind = ["wall", "message", "flash"].includes(String(b.kind)) ? String(b.kind) as NoticeKind : "wall";
+    const text = typeof b.text === "string" ? b.text.trim().slice(0, 2000) : "";
+    if (!text) return res.status(400).json({ ok: false, message: "text is required" });
+    const target = targetOf(b);
+    if (kind !== "wall" && !target) return res.status(400).json({ ok: false, message: "a message or a flash is for one member: peerId, accountId or name" });
+    const level = typeof b.level === "string" ? b.level : "info";
+    // A pinned wall message stays: everyone who joins later sees it too.
+    if (kind === "wall" && b.pin === true) roomRegistry.set(id, { wall: { text, level } }, adminActor(req));
+    if (kind === "wall" && b.pin === false && roomRegistry.get(id)?.wall) roomRegistry.set(id, { wall: null }, adminActor(req));
+    const delivered = deps.roomNotice?.(id, { kind, text, level, from: typeof b.from === "string" && b.from ? b.from : "operator" }, target) ?? 0;
+    audit.add({ category: "admin", level: "notice", event: `admin.room.${kind}`, actor: adminActor(req), target: id, status: `${delivered}`, detail: { chars: text.length, pinned: b.pin === true } });
+    res.json({ ok: true, delivered });
+  });
+
+  app.post("/api/admin/rooms/:id/disconnect", (req, res) => {
+    const id = roomId(req);
+    if (!ROOM_HASH_RE.test(id)) return badRoom(res);
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const reason = typeof b.reason === "string" && b.reason.trim() ? b.reason.trim().slice(0, 120) : "disconnected by the operator";
+    const n = deps.roomDisconnect?.(id, reason, targetOf(b)) ?? 0;
+    audit.add({ category: "admin", level: "notice", event: "admin.room.disconnect", actor: adminActor(req), target: id, status: `${n}` });
+    res.json({ ok: true, disconnected: n });
+  });
+
+  app.post("/api/admin/rooms/:id/block", (req, res) => {
+    const id = roomId(req);
+    if (!ROOM_HASH_RE.test(id)) return badRoom(res);
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const reason = typeof b.reason === "string" ? b.reason.slice(0, 200) : "";
+    const until = typeof b.until === "number" ? b.until : null;
+    const record = roomRegistry.set(id, { blocked: { reason, until } }, adminActor(req));
+    // Blocking empties the room unless asked not to (kick: false).
+    const kicked = b.kick === false ? 0 : deps.roomDisconnect?.(id, reason || "the operator has closed this room") ?? 0;
+    audit.add({ category: "admin", level: "warn", event: "admin.room.block", actor: adminActor(req), target: id, status: `${kicked}`, detail: { reason, until } });
+    res.json({ ok: true, record, disconnected: kicked });
+  });
+
+  app.delete("/api/admin/rooms/:id/block", (req, res) => {
+    const id = roomId(req);
+    if (!ROOM_HASH_RE.test(id)) return badRoom(res);
+    const had = Boolean(roomRegistry.get(id)?.blocked);
+    const record = had ? roomRegistry.set(id, { blocked: null }, adminActor(req)) : roomRegistry.get(id);
+    audit.add({ category: "admin", level: "notice", event: "admin.room.unblock", actor: adminActor(req), target: id, status: had ? "ok" : "not-blocked" });
+    res.json({ ok: true, record, unblocked: had });
+  });
+
+  app.post("/api/admin/rooms/:id/wake", async (req, res) => {
+    const id = roomId(req);
+    if (!ROOM_HASH_RE.test(id)) return badRoom(res);
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const n = await (deps.roomWake?.(id, typeof b.accountId === "string" && b.accountId ? b.accountId : undefined) ?? Promise.resolve(0));
+    audit.add({ category: "admin", level: "notice", event: "admin.room.wake", actor: adminActor(req), target: id, status: `${n}` });
+    res.json({ ok: true, called: n });
+  });
 
   /* --------------------------------------------------------------- users */
 
@@ -402,6 +563,16 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
     deps.storage.releaseAccount(id);
     audit.add({ category: "admin", level: "notice", event: "admin.user.signout", actor: adminActor(req), target: id, accountId: id });
     res.json({ ok: true });
+  });
+
+  // 6.0: remove one passkey of an account (never its last one).
+  app.delete("/api/admin/users/:id/passkeys/:credentialId", (req, res) => {
+    const id = String(req.params.id);
+    const credentialId = String(req.params.credentialId);
+    const r = deps.accounts.removeCredential(id, credentialId);
+    if (r.ok && deps.storage.isAvailable) deps.storage.global.removePasskey(credentialId);
+    audit.add({ category: "admin", level: "warn", event: "admin.user.passkey.remove", actor: adminActor(req), target: id, accountId: id, status: r.ok ? "ok" : r.reason });
+    res.status(r.ok ? 200 : 400).json(r.ok ? { ok: true } : { ok: false, message: r.reason });
   });
 
   app.delete("/api/admin/users/:id", (req, res) => {
@@ -518,6 +689,20 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
     if (!deps.storage.isAvailable) return res.status(503).json({ ok: false, message: "storage is not running" });
     const checkpoint = deps.storage.global.auditCheckpoint(`manual:${adminActor(req)}`);
     res.json({ ok: true, checkpoint });
+  });
+
+  // 6.0: a line of the operator's own (a function's m5adm.audit.add, a note from the console).
+  app.post("/api/admin/audit/entries", (req: AdminRequest, res) => {
+    const b = (req.body ?? {}) as Record<string, unknown>;
+    const name = typeof b.event === "string" ? b.event.trim().replace(/[^a-z0-9._-]/gi, "").slice(0, 60) : "";
+    if (!name) return res.status(400).json({ ok: false, message: "event: a–z, 0–9, . _ - (up to 60)" });
+    const level = (["debug", "info", "notice", "warn", "error"] as const).find((l) => l === b.level) ?? "info";
+    const entry = audit.add({
+      category: "admin", level, event: `${req.admin?.via === "function" ? "fn" : "note"}.${name}`, actor: adminActor(req),
+      ...(typeof b.target === "string" && b.target ? { target: b.target.slice(0, 120) } : {}),
+      ...(b.detail !== undefined && b.detail !== null ? { detail: detailOf(b.detail) } : {}),
+    });
+    res.json({ ok: true, entry });
   });
 
   app.put("/api/admin/audit/settings", (req, res) => {

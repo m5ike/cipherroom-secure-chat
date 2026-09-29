@@ -19,6 +19,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { adminDirectory, ROLE_RANK, type AdminPrincipal, type AdminRole } from "./admin-users";
+import { admPathAllowed, isAdmToken, verifyAdmToken, type AdmArea } from "./functions/adm-token";
 
 /** The administrator a request was authenticated as (set by the guards). */
 export type AdminRequest = Request & { admin?: AdminPrincipal };
@@ -54,12 +55,31 @@ export function checkAdminRequest(req: Request, getToken?: () => string, role: A
     (req as AdminRequest).admin = { name: "admin", role: "owner", via: "env-token" };
     return null;
   }
+  // 6.0: a Functions run with an owner's grant (m5adm) — its role, and only its areas.
+  const fn = functionPrincipal(req.header("authorization"));
+  if (fn) {
+    (req as AdminRequest).admin = fn;
+    if (!admPathAllowed(fn.areas as AdmArea[], req.originalUrl || req.path, req.method)) return { status: 403, body: { ok: false, message: "This function's access to the administration does not include this part (Functions › model › Administration)." } };
+    if (ROLE_RANK[fn.role] < ROLE_RANK[role]) return { status: 403, body: { ok: false, message: `This needs the ${role} role; the function has ${fn.role}.` } };
+    return null;
+  }
   if (!adminDirectory.configured()) return { status: 503, body: { ok: false, message: "No administrator is configured (ADMIN_API_TOKEN or ADMIN_TOKENS)." } };
   const principal = adminDirectory.authenticate(req.header("authorization"));
   if (!principal) return { status: 401, body: { ok: false, message: "Unauthorized." } };
   (req as AdminRequest).admin = principal;
   if (ROLE_RANK[principal.role] < ROLE_RANK[role]) return { status: 403, body: { ok: false, message: `This needs the ${role} role; you are ${principal.role}.` } };
   return null;
+}
+
+/** "Bearer m5f1.…": a valid function token → its principal ("fn:<model>/<caller>"). */
+export function functionPrincipal(authorization: string | undefined): AdminPrincipal | null {
+  const header = authorization ?? "";
+  if (!header.startsWith("Bearer ")) return null;
+  const token = header.slice(7).trim();
+  if (!isAdmToken(token) || token.length > 300) return null;
+  const claims = verifyAdmToken(token);
+  if (!claims) return null;
+  return { name: `fn:${claims.model}${claims.caller ? `/${claims.caller}` : ""}`, role: claims.role, via: "function", areas: claims.areas };
 }
 
 export function sendAdminAuthFailure(res: Response, failure: AdminAuthFailure): void {

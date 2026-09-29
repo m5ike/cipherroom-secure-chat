@@ -13,6 +13,7 @@
 // service), not a defence against a hostile author.
 
 import type { Lang, Output, RunLimits } from "./sandbox/protocol";
+import type { AdminRole } from "../admin-users";
 
 export type { Lang, Output, RunLimits };
 
@@ -165,6 +166,21 @@ export type Chain = {
   updatedAt: number;
 };
 
+/**
+ * 6.0: what a model's code may do beyond its caller's rights.
+ *   admin      m5adm — the administration, with a role and areas (adm-token.ts).
+ *              Only an owner grants or changes it; a model that has it can be
+ *              changed only by an owner.
+ *   telephony  m5.telephony for runs nobody started (a webhook, a schedule, the
+ *              API): which parts — call, sms, lookup, hlr, message, did — and
+ *              which numbers ("number:+420*"). A person's run also needs their own
+ *              Telephony & SIP rights.
+ */
+export type ModelGrants = {
+  admin?: { enabled: boolean; role: AdminRole; areas: string[] };
+  telephony?: { enabled: boolean; rights: string[] };
+};
+
 export type Model = {
   id: string;
   name: string;
@@ -184,6 +200,8 @@ export type Model = {
   executors: Executors;
   /** Groups (from 4.0) that may use the model; empty = everyone allowed by the module switch. */
   groups: string[];
+  /** 6.0: m5adm and m5.telephony beyond the caller (see ModelGrants). */
+  grants?: ModelGrants;
   enabled: boolean;
   revision: number;
   createdAt: number;
@@ -205,6 +223,8 @@ export type Caller = {
   client: string | null;
   lang: string;
   tz: string;
+  /** 6.0: a console administrator's role (their test runs of drafts reach m5adm as that role). */
+  adminRole?: AdminRole;
 };
 
 export type RunError = { type: string; message: string; stack?: string };

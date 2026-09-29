@@ -153,6 +153,22 @@ const COMPARE_OPS = ["==", "!=", "<", "<=", ">", ">=", "contains", "starts with"
 const HASH_ALGS = ["sha256", "sha512", "sha1", "md5", "sha3-256", "blake2b512"];
 const CODECS = ["base64", "base64url", "base32", "base58", "hex"];
 
+/** 6.0: the room filter keys and every m5adm call a flow may make (host-adm.ts; a test keeps them equal). */
+export const ROOM_FILTER_KEYS = ["room_username", "system_username", "system_passkey_id", "system_group", "room_id", "room_label", "room_tag"] as const;
+export const ADM_CALLS: string[] = [
+  "overview.get", "overview.system", "overview.alerts", "overview.db", "overview.backups", "overview.metrics", "overview.whoami",
+  "connections.list", "connections.get", "connections.close", "connections.stats",
+  "traffic.list", "traffic.summary", "traffic.rates", "traffic.events", "traffic.watch",
+  "modules.list", "modules.get", "modules.set", "modules.enable", "modules.state", "modules.switch",
+  "groups.list", "groups.get", "groups.set", "groups.delete", "groups.add_member", "groups.remove_member",
+  "users.list", "users.get", "users.signout", "users.delete", "users.passkeys", "users.remove_passkey",
+  "passkeys.list", "passkeys.get", "passkeys.delete",
+  "queue.list", "queue.stats", "queue.get", "queue.dead", "queue.revive",
+  "audit.list", "audit.stats", "audit.verify", "audit.checkpoint", "audit.communication", "audit.add",
+  "commands.list", "commands.allowlist", "commands.send",
+  "push.status", "push.send",
+  "admins.list", "admins.get", "admins.set", "admins.delete",
+];
 export const NODES: NodeDef[] = [
   /* ------------------------------------------------------------ flow */
   { type: "flow.input", group: "Flow", title: "Input", doc: "A value the caller gives (a model input): its name, type and default.",
@@ -527,7 +543,81 @@ export const NODES: NodeDef[] = [
     params: [{ name: "ms", label: "Milliseconds", type: "number", default: 500 }],
     js: (g) => `(await m5.sleep(${Math.max(0, Number(g.p.ms) || 0)}), ${g.in.value})`, py: (g) => `(await m5.sleep(${Math.max(0, Number(g.p.ms) || 0)}), ${g.in.value})[1]`,
   },
+
+  /* ------------------------------------------------------------ administration (6.0, m5adm) */
+  { type: "adm.rooms.list", group: "Administration", title: "Find rooms", doc: "Rooms whose members match a pattern (preg_match: /^eva/i) — by name in the room, username, passkey id or group; or by the room's id, label or tag. Needs the model's access to the administration (rooms).",
+    inputs: [P("value", "text", { default: "/./" }), P("filters", "json")],
+    outputs: [OUT("rooms", "list"), FIELD("count", (v) => `${v}.length`, (v) => `len(${v})`, "number"), FIELD("first", (v) => `(${v}[0] ?? null)`, (v) => `(${v}[0] if ${v} else None)`, "object")],
+    params: [{ name: "key", label: "Match", type: "enum", values: [...ROOM_FILTER_KEYS], default: "room_username" }, { name: "match", label: "More filters (the filters input)", type: "enum", values: ["all", "any"], default: "all" }],
+    js: (g) => `await m5adm.rooms.list([...(Array.isArray(${g.in.filters}) ? ${g.in.filters} : []), ...(${g.in.value} === undefined || ${g.in.value} === null || ${g.in.value} === "" ? [] : [{ key: ${g.lit(String(g.p.key || "room_username"))}, value: String(${g.in.value}) }])], { match: ${g.lit(g.p.match === "any" ? "any" : "all")} })`,
+    py: (g) => `await m5adm.rooms.list([*(${g.in.filters} if isinstance(${g.in.filters}, list) else []), *([] if ${g.in.value} in (None, "") else [{"key": ${g.lit(String(g.p.key || "room_username"))}, "value": str(${g.in.value})}])], ${g.lit(g.p.match === "any" ? "any" : "all")})`,
+  },
+  { type: "adm.rooms.get", group: "Administration", title: "Room", doc: "One room by its id (the 16-character hash the console shows, or the room id itself): who is in it, its record, block, limit, pinned message.",
+    inputs: [P("room", "any", { required: true, field: "string" })],
+    outputs: [OUT("room", "object"), FIELD("members", (v) => `(${v}?.members ?? [])`, (v) => `((${v} or {}).get("members") or [])`, "list"), FIELD("online", (v) => `Boolean(${v}?.online)`, (v) => `bool((${v} or {}).get("online"))`, "boolean"), FIELD("blocked", (v) => `Boolean(${v}?.blocked)`, (v) => `bool((${v} or {}).get("blocked"))`, "boolean")],
+    js: (g) => `await m5adm.rooms.get(${roomIdJs(g.in.room)})`, py: (g) => `await m5adm.rooms.get(${roomIdPy(g.in.room)})`,
+  },
+  { type: "adm.room.action", group: "Administration", title: "Room action", doc: "Acts on a room (a room from “Find rooms” / “Room”, or its id): a wall message to everyone, a private message or a flash to one member, disconnect, block (for N minutes), unblock, call members back (connect).",
+    inputs: [P("room", "any", { required: true, field: "string" }), P("text", "text"), P("member", "text")],
+    outputs: [OUT("result", "any")], effect: true,
+    params: [
+      { name: "action", label: "Action", type: "enum", values: ["wall_msg", "user_msg", "user_flash", "disconnect", "block", "unblock", "connect"], default: "wall_msg" },
+      { name: "level", label: "Level (wall, flash)", type: "enum", values: ["info", "success", "warning", "error"], default: "info" },
+      { name: "pin", label: "Pin the wall message (also for those who join later)", type: "boolean", default: false },
+      { name: "minutes", label: "Block for minutes (0: until unblocked)", type: "number", default: 0 },
+    ],
+    js: (g) => { g.use("str"); const id = roomIdJs(g.in.room); const lvl = g.lit(String(g.p.level || "info")); switch (String(g.p.action || "wall_msg")) {
+      case "user_msg": return `await m5adm.rooms.user_msg(${id}, ${g.in.member}, __str(${g.in.text}))`;
+      case "user_flash": return `await m5adm.rooms.user_flash(${id}, ${g.in.member}, __str(${g.in.text}), ${lvl})`;
+      case "disconnect": return `await m5adm.rooms.disconnect(${id}, ${g.in.member} || null, __str(${g.in.text}))`;
+      case "block": return `await m5adm.rooms.block(${id}, { reason: __str(${g.in.text}), minutes: ${Math.max(0, Number(g.p.minutes) || 0)} })`;
+      case "unblock": return `await m5adm.rooms.unblock(${id})`;
+      case "connect": return `await m5adm.rooms.connect(${id}, ${g.in.member} || null)`;
+      default: return `await m5adm.rooms.wall_msg(${id}, __str(${g.in.text}), { level: ${lvl}${g.p.pin ? ", pin: true" : ""} })`;
+    } },
+    py: (g) => { g.use("str"); const id = roomIdPy(g.in.room); const lvl = g.lit(String(g.p.level || "info")); switch (String(g.p.action || "wall_msg")) {
+      case "user_msg": return `await m5adm.rooms.user_msg(${id}, ${g.in.member}, _str(${g.in.text}))`;
+      case "user_flash": return `await m5adm.rooms.user_flash(${id}, ${g.in.member}, _str(${g.in.text}), ${lvl})`;
+      case "disconnect": return `await m5adm.rooms.disconnect(${id}, ${g.in.member} or None, _str(${g.in.text}))`;
+      case "block": return `await m5adm.rooms.block(${id}, _str(${g.in.text}), ${Math.max(0, Number(g.p.minutes) || 0) || "None"})`;
+      case "unblock": return `await m5adm.rooms.unblock(${id})`;
+      case "connect": return `await m5adm.rooms.connect(${id}, ${g.in.member} or None)`;
+      default: return `await m5adm.rooms.wall_msg(${id}, _str(${g.in.text}), ${lvl}${g.p.pin ? ", True" : ""})`;
+    } },
+  },
+  { type: "adm.rooms.set", group: "Administration", title: "Save room record", doc: "Saves what the operator keeps about a room — label, note, tags, maxMembers, blocked, wall. The room's id when saved, -1 when not (the reason is in the run's log). An empty id with { room } in the record creates one.",
+    inputs: [P("room", "any", { field: "string" }), P("record", "object", { required: true, default: { label: "" } })],
+    outputs: [OUT("id", "any")], effect: true,
+    js: (g) => `await m5adm.rooms.set(${g.in.room} === undefined || ${g.in.room} === null || ${g.in.room} === "" ? null : ${roomIdJs(g.in.room)}, ${g.in.record})`,
+    py: (g) => `await m5adm.rooms.set(None if ${g.in.room} in (None, "") else ${roomIdPy(g.in.room)}, ${g.in.record})`,
+  },
+  { type: "adm.rooms.stats", group: "Administration", title: "Room statistics", doc: "Rooms, members, guests, away, protocols, the busiest rooms, the registry.",
+    inputs: [], outputs: [OUT("stats", "object"), FIELD("rooms", ...prop("rooms"), "number"), FIELD("members", ...prop("members"), "number"), FIELD("busiest", ...prop("busiest"), "list")],
+    js: () => "await m5adm.rooms.stats()", py: () => "await m5adm.rooms.stats()",
+  },
+  { type: "adm.call", group: "Administration", title: "Administration call", doc: "Any other part of the administration: overview, connections, live traffic, modules & groups, users & passkeys, the message queue, the audit journal, commands & push, administrators. The arguments are a list (e.g. [\"acc-123\"]). Needs the model's access to that area.",
+    inputs: [P("args", "list", { default: [] })], outputs: [OUT("result", "any")], effect: true,
+    params: [{ name: "call", label: "Call", type: "enum", values: ADM_CALLS, default: "overview.get" }],
+    js: (g) => { const [o, op] = admCall(g.p.call); return `await m5adm.${o}.${op}(...(Array.isArray(${g.in.args}) ? ${g.in.args} : ${g.in.args} === undefined || ${g.in.args} === null ? [] : [${g.in.args}]))`; },
+    py: (g) => { const [o, op] = admCall(g.p.call); return `await m5adm.${o}.${op}(*(${g.in.args} if isinstance(${g.in.args}, list) else ([] if ${g.in.args} is None else [${g.in.args}])))`; },
+  },
+  { type: "adm.audit.add", group: "Administration", title: "Audit line", doc: "Writes a line of your own to the audit journal (fn.<event>, with the model and its caller as the actor).",
+    inputs: [P("detail", "any")], outputs: [OUT("entry", "object")], effect: true,
+    params: [{ name: "event", label: "Event (a–z, 0–9, . _ -)", type: "string", default: "done" }, { name: "level", label: "Level", type: "enum", values: ["info", "notice", "warn", "error"], default: "info" }],
+    js: (g) => `await m5adm.audit.add(${g.lit(String(g.p.event || "done"))}, ${g.in.detail} ?? null, { level: ${g.lit(String(g.p.level || "info"))} })`,
+    py: (g) => `await m5adm.audit.add(${g.lit(String(g.p.event || "done"))}, ${g.in.detail}, {"level": ${g.lit(String(g.p.level || "info"))}})`,
+  },
 ];
+
+function admCall(v: unknown): [string, string] {
+  const s = String(v ?? "");
+  if (!ADM_CALLS.includes(s)) throw new FlowError(`Not an administration call: ${s.slice(0, 40)}`);
+  const [o, op] = s.split(".");
+  return [o, op];
+}
+/** A room from Find rooms / Room (an object with id), or an id. */
+const roomIdJs = (v: string) => `((r) => (r && typeof r === "object" ? r.id : r))(${v})`;
+const roomIdPy = (v: string) => `(${v}["id"] if isinstance(${v}, dict) else ${v})`;
 
 export const NODE_BY_TYPE: Record<string, NodeDef> = Object.fromEntries(NODES.map((d) => [d.type, d]));
 export const GROUPS = [...new Set(NODES.map((n) => n.group))];
