@@ -36,7 +36,8 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="brand__mark">M5</div>
-        <div><div class="brand__name">M5cet</div><div class="brand__sub" id="brandVersion">operator console</div></div>
+        <div class="brand__text"><div class="brand__name">M5cet</div><div class="brand__sub" id="brandVersion">operator console</div></div>
+        <button class="sidebar__toggle" id="btnSidebar" type="button" data-tip-pos="right" aria-label="Collapse the menu to icons"></button>
       </div>
       <nav class="nav" id="nav">
         <div class="nav__group">Monitor</div>
@@ -78,10 +79,12 @@
           <div class="topbar__crumb" id="pageCrumb">Everything at a glance</div>
         </div>
         <div class="topbar__spacer"></div>
+        <div class="topbar__tools" id="pageTools"></div>
         <span class="whoami" id="whoami"></span>
         <button class="btn btn--sm" id="btnMyPasskey" title="Register a passkey to sign in to this console without a token" hidden>Add my passkey</button>
         <span class="live" id="liveState"><span class="live__dot"></span><span id="liveText">offline</span></span>
-        <button class="btn btn--sm" id="btnTheme" title="Light / dark">◐</button>
+        <button class="btn btn--sm btn--icon" id="btnTheme" type="button" aria-label="Light / dark">◐</button>
+        <button class="btn btn--sm btn--icon" id="btnSettings" type="button" data-tip="Console settings" aria-label="Console settings">⚙</button>
         <button class="btn btn--sm" id="btnSignOut">Sign out</button>
       </header>
 
@@ -553,7 +556,9 @@
   <!-- shared by the ported tools -->
   <input type="hidden" id="base" /><input type="hidden" id="token" />
   <div class="toasts" id="toasts"></div>
+  <script src="console-icons.js"></script>
   <script src="console.js"></script>
+  <script src="panel-layout.js"></script>
   <script src="legacy-tools.js"></script>
   <script src="telephony-sdk.js"></script>
   <script src="modules.js"></script>

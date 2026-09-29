@@ -130,6 +130,8 @@
     liveUp: false,
     admin: null,
     renderQueued: new Set(),
+    /** 6.1: this administrator's console settings (sidebar, page layouts, pins). */
+    prefs: {},
   };
 
   async function api(path, opts = {}) {
@@ -172,6 +174,7 @@
     state.overview = overview;
     state.counts = overview.counts;
     await loadWhoami();
+    await loadPrefs();
     $("#brandVersion").textContent = `v${overview.version || "?"} · operator console`;
     $("#footBuild").textContent = overview.build ? `build ${overview.build}` : "";
     startLive();
@@ -205,7 +208,8 @@
   function applyRoleGates(root = document) {
     const readOnly = !can("operator");
     for (const el of $$("button, input, select, textarea", root)) {
-      if (el.closest(".login, .topbar, .nav, .toolbar, #aSource, [data-panel=admins]") || el.dataset.read === "1") continue;
+      // Page layouts and console settings are the administrator's own (an auditor arranges theirs too).
+      if (el.closest(".login, .topbar, .nav, .toolbar, #aSource, [data-panel=admins], .pl-bar, .pl-head, .cset") || el.dataset.read === "1") continue;
       const acting = el.closest("form") || el.classList.contains("btn--danger") || el.classList.contains("btn--primary") || /Disconnect|Revive|Sign out every|Delete|Sweep|Send|Test|Save|Reset|Install|Route|Add|Import/i.test(el.textContent || "");
       if (!acting) continue;
       if (readOnly) el.setAttribute("data-disabled-by-role", ""); else el.removeAttribute("data-disabled-by-role");
@@ -299,6 +303,166 @@
   try { applyTheme(localStorage.getItem("m5cet:console:theme") || (matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark")); } catch { applyTheme("dark"); }
   $("#btnTheme").addEventListener("click", () => applyTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light"));
 
+  /* ============================================================ prefs (6.1) */
+
+  // The console's settings of whoever is signed in: kept on the server
+  // (/api/admin/me/prefs, per administrator) and mirrored in this browser, so
+  // the page draws as arranged before the server answers.
+  const prefsKey = () => `m5cet:console:prefs:${state.admin ? state.admin.name : "admin"}`;
+  let prefTimer = null;
+
+  async function loadPrefs() {
+    try { state.prefs = JSON.parse(localStorage.getItem(prefsKey()) || "{}") || {}; } catch { state.prefs = {}; }
+    try {
+      const r = await api("/api/admin/me/prefs");
+      if (r && r.prefs && (r.updatedAt || 0) >= (state.prefs.__at || 0)) state.prefs = { ...r.prefs };
+    } catch { /* an older service: this browser only */ }
+    applyPrefs();
+  }
+
+  function pref(key, fallback) { return Object.prototype.hasOwnProperty.call(state.prefs, key) ? state.prefs[key] : fallback; }
+
+  function setPref(key, value) {
+    state.prefs = { ...state.prefs, [key]: value, __at: Date.now() };
+    try { localStorage.setItem(prefsKey(), JSON.stringify(state.prefs)); } catch { /* private mode */ }
+    if (prefTimer) clearTimeout(prefTimer);
+    prefTimer = setTimeout(() => {
+      api("/api/admin/me/prefs", { method: "PUT", body: { prefs: state.prefs } }).catch((e) => toast(`Settings kept in this browser only: ${e.message}`, "err"));
+    }, 400);
+  }
+
+  function applyPrefs() {
+    setSidebar(pref("sidebar", "open") === "collapsed", false);
+  }
+
+  /* ======================================================== sidebar (6.1) */
+
+  // Collapsed, the menu is a column of icons; each says what it is in a tooltip.
+  for (const item of $$(".nav__item")) {
+    for (const node of [...item.childNodes]) {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent.trim()) {
+        const label = h("span", { class: "nav__label" }, node.textContent.trim());
+        node.replaceWith(label);
+        item.dataset.tip = label.textContent;
+        item.dataset.tipWhen = "collapsed";
+        item.dataset.tipPos = "right";
+      }
+    }
+  }
+
+  function setSidebar(collapsed, save = true) {
+    $("#shell").classList.toggle("shell--collapsed", collapsed);
+    const btn = $("#btnSidebar");
+    if (btn) {
+      clear(btn);
+      btn.append(icon(collapsed ? "panel-left-open" : "panel-left-close"));
+      btn.dataset.tip = collapsed ? "Expand the menu" : "Collapse the menu to icons";
+      btn.setAttribute("aria-label", btn.dataset.tip);
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    }
+    if (save) setPref("sidebar", collapsed ? "collapsed" : "open");
+  }
+  $("#btnSidebar").addEventListener("click", () => setSidebar(!$("#shell").classList.contains("shell--collapsed")));
+
+  /** An icon of the console's own set (console-icons.js). */
+  function icon(name, cls = "ico") { return window.M5Icons ? window.M5Icons.svg(name, cls) : h("span", { class: cls }, ""); }
+
+  /* ======================================================== tooltips (6.1) */
+
+  // One tooltip for the whole console: any element with data-tip (data-tip-pos
+  // right / bottom / top; data-tip-when="collapsed": only with the menu collapsed).
+  const tip = h("div", { class: "tip", role: "tooltip", hidden: true });
+  document.body.append(tip);
+  let tipFor = null;
+  function showTip(el) {
+    const text = el.dataset.tip;
+    if (!text || (el.dataset.tipWhen === "collapsed" && !$("#shell").classList.contains("shell--collapsed"))) return hideTip();
+    tipFor = el;
+    tip.textContent = text;
+    tip.hidden = false;
+    const r = el.getBoundingClientRect();
+    const t = tip.getBoundingClientRect();
+    const pos = el.dataset.tipPos || "bottom";
+    let x, y;
+    if (pos === "right") { x = r.right + 8; y = r.top + r.height / 2 - t.height / 2; }
+    else if (pos === "top") { x = r.left + r.width / 2 - t.width / 2; y = r.top - t.height - 6; }
+    else { x = r.left + r.width / 2 - t.width / 2; y = r.bottom + 6; }
+    x = Math.max(6, Math.min(window.innerWidth - t.width - 6, x));
+    y = Math.max(6, Math.min(window.innerHeight - t.height - 6, y));
+    tip.style.left = `${Math.round(x)}px`;
+    tip.style.top = `${Math.round(y)}px`;
+    tip.dataset.pos = pos;
+  }
+  function hideTip() { tipFor = null; tip.hidden = true; }
+  document.addEventListener("pointerover", (e) => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el && el !== tipFor) showTip(el); else if (!el && tipFor) hideTip(); });
+  document.addEventListener("focusin", (e) => { const el = e.target.closest && e.target.closest("[data-tip]"); if (el) showTip(el); });
+  document.addEventListener("focusout", hideTip);
+  document.addEventListener("pointerdown", hideTip, true);
+  window.addEventListener("scroll", hideTip, true);
+
+  /* ================================================== console settings (6.1) */
+
+  function settingsMenu(anchor) {
+    const old = $(".cset");
+    if (old) { old.remove(); return; }
+    const collapsed = $("#shell").classList.contains("shell--collapsed");
+    const sw = (label, on, fn) => { const input = h("input", { type: "checkbox", checked: on || undefined }); input.addEventListener("change", () => fn(input.checked)); return h("label", { class: "switch cset__row" }, input, label); };
+    const box = h("div", { class: "cset", role: "dialog", "aria-label": "Console settings" },
+      h("div", { class: "cset__title" }, icon("settings-2"), "Console settings"),
+      sw("Menu collapsed to icons", collapsed, (v) => setSidebar(v)),
+      sw("Functions: keep the statistics open", pref("fnStatsPinned", false), (v) => { setPref("fnStatsPinned", v); if (state.route === "functions" && ROUTES.functions && ROUTES.functions[2]) void ROUTES.functions[2](); }),
+      h("p", { class: "muted small" }, "Page layouts: press the lock on a page (Overview, the pages of Functions) to arrange its panels; locking saves them."),
+      h("button", { type: "button", class: "btn btn--sm", "data-read": "1", onclick: () => { if (!confirm("Reset the layout of every page to how it comes?")) return; if (window.M5Layout) window.M5Layout.resetAll(); box.remove(); toast("Every page is back to its default layout.", "ok"); route(state.route); } }, icon("rotate-ccw"), "Reset all page layouts"),
+      h("p", { class: "muted small" }, "Saved for you (", h("b", {}, state.admin ? state.admin.name : "admin"), ") on the server, and in this browser."));
+    document.body.append(box);
+    const r = anchor.getBoundingClientRect();
+    box.style.top = `${Math.round(r.bottom + 6)}px`;
+    box.style.right = `${Math.round(window.innerWidth - r.right)}px`;
+    // Closes on a click elsewhere, on Esc, and when the page changes.
+    const done = () => { box.remove(); document.removeEventListener("pointerdown", away, true); document.removeEventListener("keydown", esc, true); window.removeEventListener("hashchange", done); };
+    const away = (e) => { if (!box.isConnected) return done(); if (!box.contains(e.target) && !anchor.contains(e.target)) done(); };
+    const esc = (e) => { if (e.key === "Escape") { e.stopPropagation(); done(); anchor.focus(); } };
+    setTimeout(() => document.addEventListener("pointerdown", away, true), 0);
+    document.addEventListener("keydown", esc, true);
+    window.addEventListener("hashchange", done);
+  }
+  $("#btnSettings").addEventListener("click", (e) => settingsMenu(e.currentTarget));
+  // The theme and settings buttons: icons instead of glyphs.
+  clear($("#btnTheme")).append(icon("sun-moon"));
+  $("#btnTheme").dataset.tip = "Light / dark";
+  $("#btnTheme").removeAttribute("title");
+  clear($("#btnSettings")).append(icon("settings-2"));
+
+  /** The page's own tools in the top bar (a page puts its lock here). */
+  function pageTools(...nodes) { const box = $("#pageTools"); clear(box); append(box, nodes); }
+
+  /* ================================================ overview layout (6.1) */
+
+  let overviewLayout = null;
+  function arrangeOverview() {
+    if (!window.M5Layout) return;
+    if (!overviewLayout) {
+      const sec = $('[data-panel="overview"]');
+      const kpis = $("#kpis");
+      const [row2, row3] = $$(":scope > .grid", sec).filter((g) => g !== kpis);
+      const cards2 = row2 ? $$(":scope > .card", row2) : [];
+      const cards3 = row3 ? $$(":scope > .card", row3) : [];
+      const root = h("div", { class: "ov-layout" });
+      sec.append(root);
+      const panels = [
+        { id: "kpis", title: "Key numbers", el: kpis, basis: "fill", fixed: true },
+        { id: "traffic", title: "Traffic", el: cards2[0], basis: "fill", breakBefore: true, min: 280 },
+        { id: "memory", title: "Memory", el: cards2[1], basis: "fill", min: 280 },
+        { id: "classes", title: "Traffic by class", el: cards3[0], basis: "fill", breakBefore: true },
+        { id: "health", title: "Health", el: cards3[1], basis: "fill" },
+        { id: "problems", title: "Warnings & errors", el: cards3[2], basis: "fill" },
+      ].filter((p) => p.el);
+      overviewLayout = window.M5Layout.mount(root, panels, { page: "overview", title: "Overview", align: "stretch" });
+      row2?.remove(); row3?.remove();
+    } else overviewLayout.reload();
+    pageTools(overviewLayout.lockButton());
+  }
+
   /* =============================================================== router */
 
   const ROUTES = {
@@ -330,6 +494,9 @@
     const [title, crumb, loader] = ROUTES[name];
     $("#pageTitle").textContent = title;
     $("#pageCrumb").textContent = crumb;
+    pageTools();
+    hideTip();
+    if (name === "overview") arrangeOverview();
     if (loader && state.token) loader().then(() => applyRoleGates(), (e) => { if (e.message !== "unauthorized") toast(`${title}: ${e.message}`, "err"); });
   }
 
@@ -1415,6 +1582,8 @@
     /** A request with the signed-in token, answered as a Response (streams, audio, downloads). */
     raw: (path, init = {}) => fetch(state.base + path, { ...init, cache: "no-store", headers: { ...(init.headers || {}), Authorization: `Bearer ${state.token}` } }),
     toast, h, clear, $, $$, can, applyRoleGates,
+    /** 6.1: the signed-in administrator's console settings; an icon of the console's set; the top bar's page tools. */
+    pref, setPref, icon, pageTools,
     /** 5.2: this administrator's access to a tool module: { allowed, rights } (null: unknown). */
     moduleAccess: (id) => (state.modules && state.modules[id]) || null,
     base: () => state.base,

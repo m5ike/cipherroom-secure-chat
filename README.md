@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **4.14.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **6.1.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 6.0.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-6.0.0.pdf`](docs/site/m5cet-dokumentace-6.0.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 6.1.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-6.1.0.pdf`](docs/site/m5cet-dokumentace-6.1.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -84,6 +84,9 @@ místnosti.
   servery) a šablony GUI (povolené, výchozí, zámek); **Modules & groups**
   zapíná moduly pro skupiny uživatelů a **Menu builder** skládá menu
   aplikace (přetahování, HTML s proměnnými, styly a stavy, živý náhled).
+  Od 6.1 se menu sbalí na ikony (s tooltipy) a stránky jdou po odemčení
+  zámku uspořádat — přesunout a zvětšit panely, zalomit, skrýt, zarovnat;
+  zamčení je uloží do nastavení administrátora.
 - **AI a řeč (4.14)** — poskytovatelé Claude, OpenAI, Open WebUI,
   Perplexity, Ollama, llama.cpp, GPT4All, Hugging Face a ElevenLabs s klíči
   zašifrovanými na serveru, modely načtené od poskytovatele (uvažování,
@@ -772,7 +775,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.0.0        | aktuální — **aplikace pro Android** jako framework (obrazovky, téma, animace, texty a knihovny z konzole; zašifrované a podepsané balíčky s návratem; biometrie a PIN s wipe; šifrovaná data v Keystore; řídicí zprávy přes FCM; vydání APK; záznam hovorů); sekce *Android* v konzoli s builderem a živým náhledem; **víc místností naráz** na webu i v telefonu; seznam lidí u okraje s automatickým schováním; **m5adm** (administrace jako SDK, řízení místností, oznámení operátora) a **m5.telephony** (hovory, SMS, chatovací sítě, lookup, HLR, telefonní most); `npm run android:build` |
+| 6.1.0        | aktuální — konzole: **menu sbalitelné na ikony** s tooltipy, **rozvržení stránek** (Přehled a záložky Functions) odemykané zámkem — přesun, velikost, řádky, skrytí, zarovnání; uloží se zamčením do nastavení administrátora (`/api/admin/me/prefs`), jde vrátit; Functions: **IDE na celou obrazovku**, statistiky schované do řádku, ikony na záložkách a tlačítkách, nové webhooky, plány, běhy a tutoriál; potvrzení doručení a přečtení mezi připojenými, poloha ve zprávě, passkeys pro aplikaci Android |
+| 6.0.0        | **aplikace pro Android** jako framework (obrazovky, téma, animace, texty a knihovny z konzole; zašifrované a podepsané balíčky s návratem; biometrie a PIN s wipe; šifrovaná data v Keystore; řídicí zprávy přes FCM; vydání APK; záznam hovorů); sekce *Android* v konzoli s builderem a živým náhledem; **víc místností naráz** na webu i v telefonu; seznam lidí u okraje s automatickým schováním; **m5adm** (administrace jako SDK, řízení místností, oznámení operátora) a **m5.telephony** (hovory, SMS, chatovací sítě, lookup, HLR, telefonní most); `npm run android:build` |
 | 5.3.0        | **vstupní body** modelu (execute, response, button, form, error, víc webhooků s vlastními URL) se vstupy u každého; `m5.model` (sezení: calls, current, last, session, cache); **výsledek jako seznam** výstupů, každý vykreslený samostatně; nové výstupy zvuk, video, **tlačítka**, **formuláře** (form builder), **kód v prohlížeči** v izolovaném rámu; odpověď na zprávu modelu; `/help` a ukázky 1.1.0 s tlačítky a formuláři; tutoriál 10–16 |
 | 5.2.0        | nástroje konzole jako **moduly** s výchozím přístupem, přístupovými skupinami, hlavní skupinou a **granty** se zástupnými znaky (funkce, balíčky, poskytovatelé a modely AI, čísla); **log přístupů**; **webhooky** s plným logem, parsováním těl, replayem (i na konceptu) a režimy sync/async/auto; opravené `/` v chatu, aktivační znaky `@` a `#`; vestavěné `/help`, `/whois`, `/dns`, `/web`, `/mail`, `/domain` |
 | 5.1.0        | konzole *Functions* s editorem **CodeMirror** (zvýraznění, našeptávač SDK, šablony, nápověda, kontrola), **vizuální tvůrce** (uzly a dráty → JS/Python, hodnoty na plátně, balíček i model jedním klikem), **živé běhy** s odpovídáním na `prompt`/`form`; **řeč zdarma a offline** (Whisper + Piper přes sherpa-onnx) a předvolby Groq, Speaches, Kokoro, whisper.cpp; oprava záložky *Runs* („[object Promise]“) |

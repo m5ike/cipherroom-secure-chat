@@ -531,6 +531,21 @@ poskytovatelů: `groq`, `speaches`, `kokoro`, `whispercpp` (OpenAI protokol).
   „Hello, `m5.out.text`“ přes vstupy, HTTP, cache, prompt a webhook až po
   agenta s nástroji. Každá lekce je zároveň testem SDK.
 
+### 11.0 Rozvržení konzole Functions (6.1, hotovo)
+
+Každá záložka (Packages, Builder, Models, Schedules, Webhooks, Runs,
+Tutorial) skládá své karty přes `M5Layout.mount` (viz
+[admin.md › Konzole 6.1](admin.md)) pod klíčem `fn:<záložka>`; zámek je v
+`.fn-tabs__tools` vedle tlačítka celé obrazovky. Packages: `list` (250 px),
+`editor` (vyplnit, nejde skrýt), `help` (310 px), `run` (nový řádek);
+Builder: `palette` (210 px), `canvas` (vyplnit), `inspector` (340 px) s pevnou
+výškou (`calc(100vh - 270px)`; dlouhý panel se posouvá uvnitř sebe). Výšku
+editoru CodeMirror řídí proměnné `--fn-cm-min` / `--fn-cm-max`, které režim
+celé obrazovky (`.fn-root--full`) zvětší. Statistiky jsou `.fn-statbar`:
+řádek čísel (`.fn-peek`) a celý přehled jako vrstva přes obsah (najetí,
+kliknutí, `Enter`), připnutí v nastavení `fnStatsPinned`. Runs zobrazují
+detail vybraného běhu v panelu `detail`; okno s detailem zůstává tlačítkem.
+
 ### 11.1 Editor (5.1, hotovo)
 
 `admin-ui/src/m5-editor.ts` — CodeMirror 6 přibalený esbuildem do

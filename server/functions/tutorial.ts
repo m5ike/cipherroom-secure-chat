@@ -21,7 +21,7 @@ export type Lesson = {
 export const LESSONS: Lesson[] = [
   {
     id: "hello", title: "1 · Hello, output", lang: "js",
-    body: "Every model exports an `async` function — usually `execute` — that returns an **output**. `m5.out` builds them: `text`, `markdown`, `code`, `table`, `json`, `image`, `file`.\n\nRun the sample; you should see rendered Markdown.",
+    body: "Every model exports an `async` function — usually `execute` — that returns an **output**. `m5.out` builds them: `text`, `markdown`, `code`, `table`, `json`, `image`, `file`.\n\nRun the sample; you should see rendered Markdown.\n\n*The console:* the lock beside the tabs arranges this page (move and resize the panels, lock to keep it); the full-screen button beside it gives the editor the whole screen.",
     sample: "export async function execute() {\n  return m5.out.markdown(\"# Hello!\\nThis is **Markdown** from a function.\");\n}\n",
     expect: "Hello!",
   },

@@ -39,6 +39,10 @@
   let runsTimer = null;
   let runsAuto = false;
   let helpTab = "sdk";
+  let layout = null;       // 6.1: the page's arrangeable panels (panel-layout.js)
+  let statOpen = false;    // 6.1: the statistics shown over the page (they hide themselves)
+  let ideMax = false;      // 6.1: Functions on the whole screen (the IDE)
+  let runSel = null;       // 6.1: the run in the Runs page's detail panel
   const mounted = [];      // editors made for the current view (destroyed on re-render)
   const mount = (handle) => { mounted.push(handle); return handle; };
   const OUT = outputRenderer();
@@ -46,6 +50,29 @@
   const tutDone = () => { try { return new Set(JSON.parse(localStorage.getItem("m5cet:fn-tut") || "[]")); } catch { return new Set(); } };
   const markLesson = (id) => { try { const s = tutDone(); s.add(id); localStorage.setItem("m5cet:fn-tut", JSON.stringify([...s])); } catch { /* none */ } };
   const writable = () => can("operator");
+  /** 6.1: an icon of the console's set, and a button with one. */
+  const I = (name, cls) => (C.icon ? C.icon(name, cls || "ico") : h("span", {}));
+  const btnI = (icon, label, attrs = {}) => h("button", { class: "btn btn--sm", ...attrs }, I(icon), label ? h("span", {}, label) : null);
+  const TAB_ICONS = { packages: "package", builder: "workflow", models: "boxes", schedules: "calendar-clock", webhooks: "webhook", runs: "activity", tutorial: "graduation-cap" };
+  const TAB_TIPS = {
+    packages: "Code packages — the IDE: files, completion, help, test runs",
+    builder: "The visual builder — nodes and wires that become a package",
+    models: "Models — what runs: /keyword, entry points, inputs, who may",
+    schedules: "Schedules — models on a cron",
+    webhooks: "Webhooks — endpoints, their calls, replay",
+    runs: "Runs — every run with its outputs and logs",
+    tutorial: "Tutorial — lessons that run in place",
+  };
+
+  /** 6.1: a page of panels the administrator arranges (the lock in the tab bar). */
+  function arranged(page, title, panels, opts = {}) {
+    const view = h("div", { class: "fn-view" });
+    const body = h("div", { class: "fn-view__body" });
+    view.append(body);
+    if (!window.M5Layout) { body.classList.add("fn-plain"); for (const p of panels) body.append(p.el); return view; }
+    layout = window.M5Layout.mount(body, panels, { page: `fn:${page}`, title, ...opts });
+    return view;
+  }
   const langName = (l) => (l === "py" ? "Python" : "JavaScript");
 
   /* ============================================================== loading */
@@ -69,10 +96,15 @@
     if (hookTimer) { clearInterval(hookTimer); hookTimer = null; }
     stashEditor();
     for (const v of mounted.splice(0)) { try { v.destroy(); } catch { /* gone */ } }
+    if (layout) { layout.destroy(); layout = null; }
     clear(el);
+    // 6.1: the whole screen — the Fullscreen API on this element (it survives re-drawing), else a fixed overlay.
+    el.classList.toggle("fn-root--max", ideMax && document.fullscreenElement !== el);
+    el.classList.toggle("fn-root--full", ideMax);
     if (!data.runtime.persistent) el.append(h("div", { class: "card warn" }, h("strong", {}, "In-memory only. "), data.runtime.reason || "The SQLite driver is missing; packages and models will not survive a restart."));
-    el.append(header());
-    el.append(tabs());
+    el.append(statbar());
+    const bar = tabs();
+    el.append(bar);
     if (tab === "packages") el.append(packagesView());
     else if (tab === "builder") el.append(builderView());
     else if (tab === "models") el.append(modelsView());
@@ -80,6 +112,53 @@
     else if (tab === "tutorial") el.append(tutorialView());
     else if (tab === "webhooks") el.append(webhooksView());
     else el.append(runsView());
+    const tools = bar.querySelector(".fn-tabs__tools");
+    tools.append(ideButton());
+    if (layout) tools.append(layout.lockButton());
+  }
+
+  /* ------------------------------------------------ 6.1: the whole screen */
+
+  function ideButton() {
+    return h("button", { type: "button", class: `btn btn--sm btn--icon${ideMax ? " is-on" : ""}`, "data-tip": ideMax ? "Leave the full screen (Esc)" : "Full screen: the IDE (and every Functions page) on the whole screen", "aria-pressed": ideMax ? "true" : "false", "aria-label": "Full screen", onclick: () => setIde(!ideMax) }, I(ideMax ? "minimize-2" : "maximize-2"));
+  }
+  async function setIde(on) {
+    const el = root();
+    ideMax = on;
+    if (on && el && el.requestFullscreen && document.fullscreenElement !== el) { try { await el.requestFullscreen({ navigationUI: "hide" }); } catch { /* the overlay instead */ } }
+    if (!on && document.fullscreenElement) { try { await document.exitFullscreen(); } catch { /* already out */ } }
+    render();
+  }
+  document.addEventListener("fullscreenchange", () => { const el = root(); if (el && ideMax && document.fullscreenElement !== el) { ideMax = false; render(); } });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && ideMax && !document.fullscreenElement && root() && !document.querySelector(".mb-overlay, .fb--full")) setIde(false); });
+  // A click outside the statistics folds them away.
+  document.addEventListener("pointerdown", (e) => { if (statOpen && !(e.target.closest && e.target.closest(".fn-statbar"))) { statOpen = false; const b = document.querySelector(".fn-statbar"); if (b) b.classList.remove("is-open"); } });
+
+  /* ------------------------------------------------ 6.1: the statistics */
+
+  /** The statistics fold into one line at the top; hovering or clicking it shows them all, over the page. */
+  function statbar() {
+    const pinned = Boolean(C.pref && C.pref("fnStatsPinned", false));
+    const s = data.stats || { runs24h: 0, failed24h: 0, avgMs: 0 };
+    const svc = data.service || { enabled: true };
+    const on = data.models.filter((m) => m.enabled).length;
+    const chip = (icon, value, label, cls) => h("span", { class: `fn-peek__chip${cls ? " " + cls : ""}` }, I(icon), h("b", {}, String(value)), h("span", { class: "fn-peek__l" }, label));
+    const peek = h("div", { class: "fn-peek", role: "button", tabindex: "0", "aria-expanded": statOpen ? "true" : "false", "aria-controls": "fnStatsPanel", "aria-label": "Statistics — show them all" },
+      h("span", { class: `fn-peek__svc ${svc.enabled ? "is-on" : "is-off"}` }, I("power"), svc.enabled ? "running" : "stopped"),
+      chip("package", data.packages.length, "packages"),
+      chip("boxes", `${on}/${data.models.length}`, "models"),
+      chip("calendar-clock", (data.schedules || []).length, "schedules"),
+      chip("activity", s.runs24h, "runs · 24 h"),
+      chip("circle-x", s.failed24h, "failed", s.failed24h ? "is-err" : ""),
+      chip("timer", s.avgMs || "—", "avg ms"),
+      h("span", { class: "fn-peek__more" }, I("chevron-down")));
+    const pin = h("button", { type: "button", class: `btn btn--sm btn--icon fn-statbar__pin${pinned ? " is-on" : ""}`, "data-tip": pinned ? "Let the statistics hide again" : "Keep the statistics open", "aria-pressed": pinned ? "true" : "false", "aria-label": "Keep open", "data-read": "1", onclick: () => { if (C.setPref) C.setPref("fnStatsPinned", !pinned); statOpen = false; render(); } }, I(pinned ? "pin-off" : "pin"));
+    const panel = h("div", { class: "fn-statbar__panel", id: "fnStatsPanel" }, header(), pin);
+    const bar = h("div", { class: `fn-statbar${pinned ? " is-pinned" : ""}${statOpen ? " is-open" : ""}` }, peek, panel);
+    const toggle = (v = !statOpen) => { statOpen = v; bar.classList.toggle("is-open", statOpen); peek.setAttribute("aria-expanded", statOpen ? "true" : "false"); };
+    peek.addEventListener("click", () => toggle());
+    peek.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } else if (e.key === "Escape") toggle(false); });
+    return bar;
   }
 
   function header() {
@@ -108,8 +187,9 @@
     const bar = h("div", { class: "fn-tabs", role: "tablist" });
     const items = [["packages", "Packages", data.packages.length], ["builder", "Builder", null], ["models", "Models", data.models.length], ["schedules", "Schedules", (data.schedules || []).length], ["webhooks", "Webhooks", data.models.filter((m) => m.executors && m.executors.webhook && m.executors.webhook.enabled).length], ["runs", "Runs", null], ["tutorial", "Tutorial", null]];
     for (const [id, label, n] of items) {
-      bar.append(h("button", { class: `fn-tab${tab === id ? " fn-tab--on" : ""}`, role: "tab", "aria-selected": tab === id ? "true" : "false", onclick: () => go(id) }, label, n !== null ? h("span", { class: "fn-tab__n" }, String(n)) : null));
+      bar.append(h("button", { class: `fn-tab${tab === id ? " fn-tab--on" : ""}`, role: "tab", "aria-selected": tab === id ? "true" : "false", "data-tip": TAB_TIPS[id], onclick: () => go(id) }, I(TAB_ICONS[id], "ico fn-tab__ico"), h("span", { class: "fn-tab__label" }, label), n !== null ? h("span", { class: "fn-tab__n" }, String(n)) : null));
     }
+    bar.append(h("span", { class: "fn-tabs__grow" }), h("div", { class: "fn-tabs__tools" }));
     return bar;
   }
 
@@ -177,9 +257,8 @@
   /* ============================================================ packages */
 
   function packagesView() {
-    const wrap = h("div", { class: "fn-cols" });
     const list = h("div", { class: "fn-side card" });
-    list.append(h("div", { class: "fn-side__head" }, h("span", {}, "Packages"), writable() ? h("span", { class: "fn-row" }, h("button", { class: "btn btn--sm", onclick: importPackage, title: "Import a .m5pkg.json" }, "Import"), h("button", { class: "btn btn--sm btn--primary", onclick: newPackage }, "+ New")) : null));
+    list.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("package"), "Packages"), writable() ? h("span", { class: "fn-row" }, btnI("upload", "", { onclick: importPackage, "data-tip": "Import a .m5pkg.json", "aria-label": "Import" }), btnI("plus", "New", { class: "btn btn--sm btn--primary", onclick: newPackage, "data-tip": "A new package: empty, a template, or a visual flow" })) : null));
     const search = h("input", { class: "input input--sm fn-search", type: "search", placeholder: "Filter…", value: pkgFilter, "aria-label": "Filter packages" });
     const items = h("div", { class: "fn-list" });
     const draw = () => {
@@ -199,9 +278,16 @@
     search.addEventListener("input", () => { pkgFilter = search.value; draw(); });
     draw();
     list.append(search, items);
-    wrap.append(list);
-    wrap.append(sel ? editorPane() : packagesHome());
-    return wrap;
+    const panels = [{ id: "list", title: "Packages", el: list, basis: 250, min: 190 }];
+    if (sel) {
+      const ed = editorPane();
+      panels.push(
+        { id: "editor", title: "Editor", el: ed.pane, basis: "fill", min: 380, fixed: true },
+        { id: "help", title: "Help", el: ed.help, basis: 310, min: 220 },
+        { id: "run", title: "Test run", el: ed.run, basis: "fill", breakBefore: true, min: 320 },
+      );
+    } else panels.push({ id: "home", title: "Start", el: packagesHome(), basis: "fill", fixed: true });
+    return arranged("packages", "Packages", panels);
   }
 
   function packagesHome() {
@@ -211,9 +297,9 @@
     const cards = h("div", { class: "fn-home__cards" });
     if (writable()) {
       cards.append(
-        homeCard("✎", "New package", "Start empty or from a template, then write code with completion and help.", newPackage),
-        homeCard("◇", "Visual builder", "Connect inputs, SDK calls, logic and outputs — the code is written for you.", () => go("builder")),
-        homeCard("▶", "Tutorial", "Short lessons that run right here.", () => go("tutorial")));
+        homeCard("file-code", "New package", "Start empty or from a template, then write code with completion and help.", newPackage),
+        homeCard("workflow", "Visual builder", "Connect inputs, SDK calls, logic and outputs — the code is written for you.", () => go("builder")),
+        homeCard("graduation-cap", "Tutorial", "Short lessons that run right here.", () => go("tutorial")));
     }
     box.append(cards);
     const gallery = h("div", { class: "fn-builtins mt8" });
@@ -221,7 +307,7 @@
     void builtinGallery(gallery);
     return box;
   }
-  const homeCard = (icon, title, text, onclick) => h("button", { class: "fn-home__card", onclick }, h("span", { class: "fn-home__icon" }, icon), h("strong", {}, title), h("span", { class: "muted small" }, text));
+  const homeCard = (icon, title, text, onclick) => h("button", { class: "fn-home__card", onclick }, h("span", { class: "fn-home__icon" }, I(icon, "ico ico--lg")), h("strong", {}, title), h("span", { class: "muted small" }, text));
 
   async function newPackage() {
     const tpls = data.templates || [];
@@ -296,14 +382,15 @@
     if (sel.package.description) head.append(h("span", { class: "muted small" }, sel.package.description));
     if (published.length) head.append(h("span", { class: "badge", title: published.map((v) => v.version).join(", ") }, `v${published[published.length - 1].version}`));
     const actions = h("div", { class: "fn-editor__actions" });
-    if (hasFlow && window.M5FnBuilder) actions.append(h("button", { class: "btn btn--sm", title: "Edit the flow this code was generated from", onclick: () => openFlowOf(sel) }, "◇ Open in builder"));
+    if (hasFlow && window.M5FnBuilder) actions.append(btnI("workflow", "Open in builder", { "data-tip": "Edit the flow this code was generated from", onclick: () => openFlowOf(sel) }));
     if (writable()) {
       actions.append(
-        h("button", { class: "btn btn--sm", id: "fnSave", title: "Save the draft (Ctrl/⌘+S)", onclick: saveDraft }, dirty ? "Save draft •" : "Save draft"),
-        h("button", { class: "btn btn--sm btn--primary", onclick: publish, title: "Freeze the draft as a version models can use" }, "Publish…"),
+        h("button", { class: "btn btn--sm", id: "fnSave", "data-tip": "Save the draft (Ctrl/⌘+S)", onclick: saveDraft }, I("save"), h("span", { class: "fn-save__label" }, dirty ? "Save draft •" : "Save draft")),
+        btnI("upload", "Publish…", { class: "btn btn--sm btn--primary", onclick: publish, "data-tip": "Freeze the draft as a version models can use" }),
       );
     }
-    const more = h("details", { class: "fn-more" }, h("summary", { class: "btn btn--sm" }, "⋯"));
+    actions.append(h("button", { type: "button", class: `btn btn--sm btn--icon${ideMax ? " is-on" : ""}`, "data-tip": ideMax ? "Leave the full screen (Esc)" : "The IDE on the whole screen", "aria-label": "Full screen", onclick: () => setIde(!ideMax) }, I(ideMax ? "minimize-2" : "maximize-2")));
+    const more = h("details", { class: "fn-more" }, h("summary", { class: "btn btn--sm btn--icon", "aria-label": "More" }, I("ellipsis")));
     const menu = h("div", { class: "fn-more__menu" });
     if (published.length) menu.append(h("button", { class: "fn-more__item", onclick: () => exportPackage(sel.package.id, sel.package.name) }, "Export .m5pkg.json"));
     if (writable()) menu.append(h("button", { class: "fn-more__item", onclick: () => newModelFor(sel) }, "New model from this package…"));
@@ -319,11 +406,10 @@
       ftabs.append(h("button", { class: `fn-file${name === current ? " fn-file--on" : ""}`, title: name, onclick: () => { if (name === current) return; stashEditor(); current = name; render(); } }, name,
         writable() && Object.keys(files).length > 1 ? h("span", { class: "fn-file__x", title: "Delete file", onclick: async (ev) => { ev.stopPropagation(); if (!(await confirmDialog(`Delete ${name}?`, true))) return; stashEditor(); delete files[name]; if (current === name) current = Object.keys(files).sort()[0] || ""; dirty = true; render(); } }, "×") : null));
     }
-    if (writable()) ftabs.append(h("button", { class: "fn-file fn-file--add", title: "New file", onclick: newFile }, "+"));
+    if (writable()) ftabs.append(h("button", { class: "fn-file fn-file--add", "data-tip": "New file", "aria-label": "New file", onclick: newFile }, I("plus")));
     pane.append(ftabs);
 
-    // the editor + help
-    const grid = h("div", { class: "fn-edit-grid" });
+    // the editor (6.1: the help and the test run are panels of their own)
     const host = h("div", { class: "fn-cm" });
     const status = h("div", { class: "fn-statusbar" });
     const E = ED();
@@ -335,7 +421,7 @@
         inputs: () => inputNamesFor(sel.package.name),
         onChange: (text) => { files[current] = text; if (!dirty) { dirty = true; markDirty(); } },
         onSave: saveDraft, onRun: () => { const b = document.getElementById("fnRunBtn"); if (b) b.click(); },
-        onCursor: setStatus, minHeight: "380px", maxHeight: "70vh",
+        onCursor: setStatus, minHeight: "var(--fn-cm-min, 380px)", maxHeight: "var(--fn-cm-max, 70vh)",
         placeholder: sel.package.language === "py" ? "async def execute(**inputs): …" : "export async function execute(inputs) { … }",
       });
       setStatus({ line: 1, col: 1, selected: 0 });
@@ -348,16 +434,14 @@
       host.append(ta);
     }
     const toolbar = h("div", { class: "fn-edtools" },
-      E ? h("button", { class: "btn btn--xs", title: "Find & replace (Ctrl+F)", onclick: () => editor.search() }, "Find") : null,
-      E ? h("button", { class: "btn btn--xs", title: "Re-indent (Shift+Alt+F)", onclick: () => editor.format() }, "Format") : null,
-      E ? h("button", { class: "btn btn--xs", title: "Undo", onclick: () => editor.undo() }, "↶") : null,
-      E ? h("button", { class: "btn btn--xs", title: "Redo", onclick: () => editor.redo() }, "↷") : null);
-    const left = h("div", { class: "fn-edit-main" }, toolbar, host, status);
-    grid.append(left, helpPanel());
-    pane.append(grid);
-
-    pane.append(runPanel());
-    return pane;
+      E ? h("button", { class: "btn btn--xs", "data-tip": "Find & replace (Ctrl+F)", onclick: () => editor.search() }, I("search"), "Find") : null,
+      E ? h("button", { class: "btn btn--xs", "data-tip": "Re-indent (Shift+Alt+F)", onclick: () => editor.format() }, I("code-xml"), "Format") : null,
+      E ? h("button", { class: "btn btn--xs btn--icon", "data-tip": "Undo", "aria-label": "Undo", onclick: () => editor.undo() }, I("undo-2")) : null,
+      E ? h("button", { class: "btn btn--xs btn--icon", "data-tip": "Redo", "aria-label": "Redo", onclick: () => editor.redo() }, I("redo-2")) : null);
+    pane.append(h("div", { class: "fn-edit-main" }, toolbar, host, status));
+    const help = h("div", { class: "card fn-help-card" }, helpPanel());
+    const run = h("div", { class: "card fn-run-card" }, h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("play"), "Test run")), runPanel());
+    return { pane, help, run };
   }
 
   function insertPlain(ta, text) {
@@ -374,7 +458,7 @@
     return [...names];
   }
 
-  function markDirty() { const b = document.getElementById("fnSave"); if (b) b.textContent = dirty ? "Save draft •" : "Save draft"; }
+  function markDirty() { const b = document.querySelector("#fnSave .fn-save__label"); if (b) b.textContent = dirty ? "Save draft •" : "Save draft"; }
 
   async function newFile() {
     const ext = sel.package.language === "py" ? ".py" : ".js";
@@ -507,8 +591,8 @@
     const E = ED();
     if (E) inputsEd = mount(E.create(inputsHost, { doc: saved, lang: "json", minHeight: "44px", maxHeight: "160px", lineNumbers: false, onRun: () => doRun() }));
     else { const ta = h("textarea", { class: "input fn-mono", rows: 2 }, saved); ta.value = saved; inputsHost.append(ta); inputsEd = { getValue: () => ta.value }; }
-    const runBtn = h("button", { class: "btn btn--primary btn--sm", id: "fnRunBtn", title: "Save and run the draft (Ctrl/⌘+Enter)", onclick: () => doRun() }, "▶ Run draft");
-    box.append(h("div", { class: "fn-run__row" }, h("strong", { class: "small" }, "Run"), entryFile, h("span", { class: "muted" }, "#"), entryFn, runBtn));
+    const runBtn = h("button", { class: "btn btn--primary btn--sm", id: "fnRunBtn", "data-tip": "Save and run the draft (Ctrl/⌘+Enter)", onclick: () => doRun() }, I("play"), "Run draft");
+    box.append(h("div", { class: "fn-run__row" }, h("span", { class: "muted small" }, "Entry"), entryFile, h("span", { class: "muted" }, "#"), entryFn, runBtn));
     box.append(h("div", { class: "fn-run__row fn-run__row--top" }, h("span", { class: "muted small" }, "Inputs (JSON)"), inputsHost));
     const result = h("div", { class: "fn-run__result" });
     box.append(result);
@@ -652,15 +736,14 @@
   function builderView() {
     const B = window.M5FnBuilder;
     if (!B || !ED()) return h("div", { class: "card warn" }, "The visual builder needs vendor/m5-editor.js — run ", h("code", {}, "npm run build"), " on the server.");
-    return B.view({ C, data, sdk, reload: load, openPackage: async (id) => { await load(); await openPackage(id); }, editModel: async (id) => { await load(); const m = data.models.find((x) => x.id === id); if (m) editModel(m); }, liveRunInto, renderOutput: OUT, formDialog, confirmDialog });
+    return B.view({ C, data, sdk, reload: load, onLayout: (handle) => { layout = handle; }, openPackage: async (id) => { await load(); await openPackage(id); }, editModel: async (id) => { await load(); const m = data.models.find((x) => x.id === id); if (m) editModel(m); }, liveRunInto, renderOutput: OUT, formDialog, confirmDialog });
   }
 
   /* ============================================================== models */
 
   function modelsView() {
-    const wrap = h("div", { class: "fn-cols" });
     const list = h("div", { class: "fn-side card" });
-    list.append(h("div", { class: "fn-side__head" }, h("span", {}, "Models"), writable() ? h("button", { class: "btn btn--sm btn--primary", onclick: () => editModel(null) }, "+ New") : null));
+    list.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("boxes"), "Models"), writable() ? btnI("plus", "New", { class: "btn btn--sm btn--primary", onclick: () => editModel(null), "data-tip": "A new model: what runs, how it is called, who may" }) : null));
     if (!data.models.length) list.append(h("div", { class: "muted small p8" }, "No models yet. A model makes a published package runnable — from the chat (/keyword), a webhook, the API or a schedule."));
     for (const m of data.models) {
       const on = modelDraft && modelDraft.id === m.id;
@@ -670,9 +753,10 @@
         m.keyword ? h("span", { class: "badge badge--accent" }, "/" + m.keyword) : null,
         m.entryOk ? null : h("span", { class: "badge badge--err", title: "The entry package/version is not published." }, "entry?")));
     }
-    wrap.append(list);
-    wrap.append(modelDraft ? modelForm() : h("div", { class: "card empty" }, "Pick a model, or create one."));
-    return wrap;
+    return arranged("models", "Models", [
+      { id: "list", title: "Models", el: list, basis: 260, min: 200 },
+      { id: "model", title: "Model", el: modelDraft ? modelForm() : h("div", { class: "card empty fn-empty" }, I("boxes", "ico ico--xl"), h("span", {}, "Pick a model, or create one.")), basis: "fill", min: 420, fixed: true },
+    ]);
   }
 
   function editModel(m) {
@@ -989,9 +1073,8 @@
   const CRON_PRESETS = [["*/5 * * * *", "every 5 minutes"], ["*/15 * * * *", "every 15 minutes"], ["0 * * * *", "every hour"], ["0 8 * * *", "daily at 8:00"], ["0 8 * * 1-5", "weekdays at 8:00"], ["0 0 * * 0", "Sundays at midnight"], ["@daily", "@daily"]];
 
   function schedulesView() {
-    const wrap = h("div", { class: "stack" });
     const card = h("div", { class: "card" });
-    card.append(h("div", { class: "fn-side__head" }, h("span", {}, "Schedules (cron)")));
+    card.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("calendar-clock"), "Schedules (cron)")));
     const list = h("div", {});
     if (!data.schedules || !data.schedules.length) list.append(h("div", { class: "muted small p8" }, "No schedules yet."));
     else {
@@ -1008,19 +1091,19 @@
           h("td", {}, h("span", { class: `badge badge--${s.enabled ? "ok" : ""}` }, s.enabled ? "on" : "off")),
           h("td", {}, s.lastRun ? new Date(s.lastRun).toLocaleString() : "—"),
           h("td", {}, writable() ? h("span", { class: "fn-row" },
-            h("button", { class: "btn btn--sm", onclick: () => runSchedule(s.id) }, "Run now"),
-            h("button", { class: "btn btn--sm btn--danger", onclick: () => delSchedule(s.id) }, "×")) : null)));
+            btnI("play", "Run now", { onclick: () => runSchedule(s.id) }),
+            h("button", { class: "btn btn--sm btn--danger btn--icon", "data-tip": "Delete the schedule", "aria-label": "Delete", onclick: () => delSchedule(s.id) }, I("trash-2"))) : null)));
       }
       table.append(tb); list.append(table);
     }
     card.append(list);
-    if (writable()) card.append(scheduleForm());
-    wrap.append(card);
-    return wrap;
+    const panels = [{ id: "list", title: "Schedules", el: card, basis: "fill", min: 420, fixed: true }];
+    if (writable()) panels.push({ id: "new", title: "New schedule", el: h("div", { class: "card" }, h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("plus"), "New schedule")), scheduleForm()), basis: 420, min: 300 });
+    return arranged("schedules", "Schedules", panels);
   }
 
   function scheduleForm() {
-    const box = h("fieldset", { class: "fn-fs mt8" }, h("legend", {}, "New schedule"));
+    const box = h("div", { class: "fn-schedform" });
     const modelSel = h("select", { class: "input" });
     modelSel.append(h("option", { value: "" }, "— model —"));
     for (const m of data.models) if (m.entryOk) modelSel.append(h("option", { value: m.id }, m.name));
@@ -1031,12 +1114,12 @@
     const tz = h("input", { class: "input", value: Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", placeholder: "UTC / Europe/Prague" });
     const inputs = h("textarea", { class: "input fn-mono", rows: 2, placeholder: "{ } inputs" }, "{}");
     const msg = h("span", { class: "muted small" });
-    box.append(h("div", { class: "fn-grid3" },
+    box.append(
       h("label", { class: "field" }, h("span", { class: "label" }, "Model"), modelSel),
-      h("label", { class: "field" }, h("span", { class: "label" }, "Cron (min hour dom mon dow)"), cron, presets),
-      h("label", { class: "field" }, h("span", { class: "label" }, "Time zone"), tz)));
-    box.append(h("label", { class: "field" }, h("span", { class: "label" }, "Inputs (JSON)"), inputs));
-    box.append(h("div", { class: "fn-row" }, h("button", { class: "btn btn--primary btn--sm", onclick: add }, "Add schedule"), msg));
+      h("div", { class: "field" }, h("span", { class: "label" }, "When — cron (min hour day month weekday)"), h("div", { class: "fn-schedform__cron" }, cron, presets)),
+      h("label", { class: "field" }, h("span", { class: "label" }, "Time zone"), tz),
+      h("label", { class: "field" }, h("span", { class: "label" }, "Inputs (JSON)"), inputs),
+      h("div", { class: "fn-row" }, h("button", { class: "btn btn--primary btn--sm", onclick: add }, I("plus"), "Add schedule"), msg));
     return box;
 
     async function add() {
@@ -1063,20 +1146,21 @@
       api("/admin/functions/tutorial").then((d) => { lessons = d.lessons || []; lessonId = lessonId || (lessons[0] && lessons[0].id); render(); }).catch((e) => toast(e.message, "err"));
       return h("div", { class: "card empty" }, "Loading…");
     }
-    const wrap = h("div", { class: "fn-cols" });
     const side = h("div", { class: "fn-side card" });
     const done = tutDone();
-    side.append(h("div", { class: "fn-side__head" }, h("span", {}, "Tutorial"), h("span", { class: "muted small" }, `${lessons.filter((l) => done.has(l.id)).length}/${lessons.length}`)));
+    side.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("graduation-cap"), "Tutorial"), h("span", { class: "muted small" }, `${lessons.filter((l) => done.has(l.id)).length}/${lessons.length}`)));
     lessons.forEach((l, i) => {
-      side.append(h("button", { class: `fn-pkg${l.id === lessonId ? " fn-pkg--on" : ""}`, onclick: () => { lessonId = l.id; render(); } },
-        h("span", { class: "muted small" }, `${i + 1}.`),
-        h("span", { class: "fn-pkg__name" }, l.title),
-        done.has(l.id) ? h("span", { class: "badge badge--ok" }, "✓") : h("span", { class: "badge" }, l.lang.toUpperCase())));
+      // The number is drawn once, as a step (the titles carry it: "3 · Logs and progress").
+      side.append(h("button", { class: `fn-pkg fn-tut${l.id === lessonId ? " fn-pkg--on" : ""}${done.has(l.id) ? " is-done" : ""}`, "data-tip": l.title, onclick: () => { lessonId = l.id; render(); } },
+        h("span", { class: "fn-tut__n" }, done.has(l.id) ? I("circle-check", "ico ico--xs") : String(i + 1)),
+        h("span", { class: "fn-pkg__name" }, l.title.replace(/^\d+\s*·\s*/, "")),
+        h("span", { class: "badge" }, l.lang.toUpperCase())));
     });
-    wrap.append(side);
     const lesson = lessons.find((l) => l.id === lessonId) || lessons[0];
-    wrap.append(lesson ? lessonPane(lesson) : h("div", { class: "card empty" }, "Pick a lesson."));
-    return wrap;
+    return arranged("tutorial", "Tutorial", [
+      { id: "lessons", title: "Lessons", el: side, basis: 260, min: 200 },
+      { id: "lesson", title: "Lesson", el: lesson ? lessonPane(lesson) : h("div", { class: "card empty" }, "Pick a lesson."), basis: "fill", min: 420, fixed: true },
+    ]);
   }
 
   function lessonPane(lesson) {
@@ -1090,9 +1174,9 @@
     if (E) { const ed = mount(E.create(host, { doc: lesson.sample, lang: lesson.lang, sdk: sdk.spec || [], minHeight: "160px", maxHeight: "50vh", onRun: () => run() })); getCode = () => ed.getValue(); }
     else { const ta = h("textarea", { class: "fn-editor", spellcheck: "false", wrap: "off", style: "min-height:180px" }); ta.value = lesson.sample; host.append(ta); getCode = () => ta.value; }
     pane.append(host);
-    const runBtn = h("button", { class: "btn btn--primary btn--sm", onclick: () => run(), title: "Ctrl/⌘+Enter" }, "▶ Run");
+    const runBtn = h("button", { class: "btn btn--primary btn--sm", onclick: () => run(), "data-tip": "Run the sample (Ctrl/⌘+Enter)" }, I("play"), "Run");
     const idx = lessons.indexOf(lesson);
-    const nextBtn = idx < lessons.length - 1 ? h("button", { class: "btn btn--sm", onclick: () => { lessonId = lessons[idx + 1].id; render(); } }, "Next lesson →") : null;
+    const nextBtn = idx < lessons.length - 1 ? h("button", { class: "btn btn--sm", onclick: () => { lessonId = lessons[idx + 1].id; render(); } }, "Next lesson", I("arrow-right")) : null;
     pane.append(h("div", { class: "fn-run__row mt8" }, runBtn, lesson.inputs ? h("span", { class: "muted small" }, "inputs: " + JSON.stringify(lesson.inputs)) : null, h("span", { class: "fn-grow" }), nextBtn));
     pane.append(result);
     return pane;
@@ -1117,66 +1201,123 @@
   let hookTimer = null;
 
   function webhooksView() {
-    const wrap = h("div", { class: "stack" });
-    const endpoints = h("div", { class: "card" }, h("div", { class: "muted small p8" }, "Loading…"));
-    const log = h("div", { class: "card" });
-    wrap.append(endpoints, log);
+    const loading = () => h("div", { class: "muted small p8" }, "Loading…");
+    const cards = {
+      summary: h("div", { class: "card fn-hk-sum" }, loading()),
+      endpoints: h("div", { class: "card" }, loading()),
+      idle: h("div", { class: "card" }, loading()),
+      log: h("div", { class: "card" }),
+    };
     const acc = C.moduleAccess ? C.moduleAccess("functions") : null;
     if (acc && acc.allowed && acc.rights && !acc.rights.some((r) => r === "*" || /^(webhooks|edit)$/.test(r))) {
-      clear(endpoints); endpoints.append(h("div", { class: "empty" }, "Your access to Functions does not include webhooks (Modules & groups)."));
-      return wrap;
+      return arranged("webhooks", "Webhooks", [{ id: "denied", title: "Webhooks", el: h("div", { class: "card empty" }, "Your access to Functions does not include webhooks (Modules & groups)."), basis: "fill", fixed: true }]);
     }
-    void drawEndpoints(endpoints);
-    drawLog(log);
-    return wrap;
+    void drawEndpoints(cards);
+    drawLog(cards.log);
+    return arranged("webhooks", "Webhooks", [
+      { id: "summary", title: "At a glance", el: cards.summary, basis: "fill" },
+      { id: "endpoints", title: "Endpoints", el: cards.endpoints, basis: "fill", breakBefore: true, min: 440, fixed: true },
+      { id: "idle", title: "Models without a webhook", el: cards.idle, basis: 320, min: 240 },
+      { id: "calls", title: "Calls", el: cards.log, basis: "fill", breakBefore: true, min: 440 },
+    ]);
   }
 
-  async function drawEndpoints(card) {
+  /** The webhooks of every model: the summary, the endpoints as cards, the models without one. */
+  async function drawEndpoints(cards) {
     let d;
-    try { d = await api("/admin/functions/webhooks"); } catch (e) { clear(card); card.append(h("div", { class: "fn-err" }, e.message)); return; }
-    clear(card);
-    card.append(h("div", { class: "fn-side__head" }, h("span", {}, "Webhook endpoints"), h("span", { class: "muted small" }, `public address: ${d.publicUrl || "(PUBLIC_URL not set — relative)"} · auto waits ${Math.round(d.autoWaitMs / 1000)} s`)));
-    card.append(h("p", { class: "muted small" }, "A model's webhooks are entry points (Models › Entry points): a model may have several, each with its own secret URL and function. JSON, a form or multipart become its inputs (the declared ones checked). sync answers with the outputs; async answers at once (202) with a status URL; auto answers with the outputs when the run ends in time, else like async. A caller may name ?callback= (or X-Callback-URL) to get the result POSTed; a run that asks (m5.prompt / m5.form) is answered at …/runs/<id>/answer. Every call is logged (headers, bodies, answer) and can be replayed."));
-    const table = h("table", { class: "tbl fn-hooks" });
-    table.append(h("thead", {}, h("tr", {}, ...["Model", "Webhook", "Function", "Mode", "Log", "Callback", "Calls", "URL", ""].map((t) => h("th", {}, t)))));
-    const tb = h("tbody");
-    for (const e of d.endpoints) {
-      // A row is one webhook entry point (e.endpoint); a model without one gets a row that creates it.
+    try { d = await api("/admin/functions/webhooks"); } catch (e) { for (const c of Object.values(cards)) { if (c === cards.log) continue; clear(c); c.append(h("div", { class: "fn-err" }, e.message)); } return; }
+    const redraw = () => drawEndpoints(cards);
+    const live = d.endpoints.filter((e) => e.endpoint);
+    const idle = d.endpoints.filter((e) => !e.endpoint);
+    const on = live.filter((e) => e.enabled);
+    const calls = live.reduce((n, e) => n + (e.stats ? e.stats.calls : 0), 0);
+    const errors = live.reduce((n, e) => n + (e.stats ? e.stats.errors : 0), 0);
+
+    // --- the summary
+    const s = cards.summary;
+    clear(s);
+    const tile = (icon, value, label, cls, tipText) => h("div", { class: `fn-hk-tile${cls ? " " + cls : ""}`, "data-tip": tipText || undefined }, I(icon, "ico ico--lg"), h("div", {}, h("div", { class: "fn-hk-tile__v" }, String(value)), h("div", { class: "fn-hk-tile__l" }, label)));
+    s.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("webhook"), "Webhooks"), h("span", { class: "fn-row" }, btnI("refresh-cw", "", { onclick: redraw, "data-tip": "Refresh", "aria-label": "Refresh", "data-read": "1" }))),
+      h("div", { class: "fn-hk-tiles" },
+        tile("radio", on.length, "endpoints on", on.length ? "is-ok" : "", "Webhook entry points switched on"),
+        tile("boxes", new Set(live.map((e) => e.modelId)).size, "models with webhooks"),
+        tile("send", calls, "calls logged", "", "Calls in the webhook log"),
+        tile("circle-x", errors, "answered with an error", errors ? "is-err" : ""),
+        tile("timer", `${Math.round(d.autoWaitMs / 1000)} s`, "“auto” waits", "", "How long an auto-mode webhook waits for the run before answering 202"),
+        h("div", { class: `fn-hk-addr${d.publicUrl ? "" : " is-warn"}` }, I(d.publicUrl ? "link-2" : "circle-alert"),
+          h("div", {}, h("div", { class: "fn-hk-tile__l" }, "Public address"), h("div", { class: "fn-mono" }, d.publicUrl || "PUBLIC_URL is not set — the URLs below are relative")))),
+      h("details", { class: "fn-hk-how" }, h("summary", {}, I("book-open"), "How webhooks work"),
+        h("p", { class: "muted small" }, "A model's webhooks are entry points (Models › Entry points): a model may have several, each with its own secret URL and function. JSON, a form or multipart become its inputs (the declared ones checked). ", h("b", {}, "sync"), " answers with the outputs; ", h("b", {}, "async"), " answers at once (202) with a status URL; ", h("b", {}, "auto"), " answers with the outputs when the run ends in time, else like async. A caller may name ?callback= (or X-Callback-URL) to get the result POSTed; a run that asks (m5.prompt / m5.form) is answered at …/runs/<id>/answer. Every call is logged (headers, bodies, answer) and can be replayed.")));
+
+    // --- the endpoints
+    const box = cards.endpoints;
+    clear(box);
+    box.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("radio"), "Endpoints"), h("span", { class: "muted small" }, `${on.length} on · ${live.length - on.length} off`)));
+    if (!live.length) box.append(h("div", { class: "fn-empty" }, I("webhook", "ico ico--xl"), h("span", {}, "No webhook yet — create one for a model on the right.")));
+    const list = h("div", { class: "fn-hooks" });
+    for (const e of live) {
       const put = async (body, note) => {
-        try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}`, { method: "PUT", body: e.endpoint ? { endpoint: e.endpoint, ...body } : { create: true, ...body } }); toast(note || "Saved.", "ok"); void drawEndpoints(card); await loadQuiet(); }
+        try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}`, { method: "PUT", body: { endpoint: e.endpoint, ...body } }); toast(note || "Saved.", "ok"); void redraw(); await loadQuiet(); }
         catch (err) { toast(err.message, "err"); }
       };
-      const mode = h("select", { class: "input input--sm", disabled: !writable() || !e.enabled || undefined }, ...[["sync", "sync"], ["async", "async (202)"], ["auto", "auto"]].map(([v, l]) => h("option", { value: v, selected: e.mode === v || undefined }, l)));
+      const ro = !writable() || !e.enabled || undefined;
+      const mode = h("select", { class: "input input--sm", disabled: ro, "aria-label": "Mode" }, ...[["sync", "sync — the outputs"], ["async", "async — 202 at once"], ["auto", "auto — outputs or 202"]].map(([v, l]) => h("option", { value: v, selected: e.mode === v || undefined }, l)));
       mode.addEventListener("change", () => put({ mode: mode.value }, `Mode: ${mode.value}.`));
-      const logSel = h("select", { class: "input input--sm", disabled: !writable() || !e.enabled || undefined }, ...[["full", "full"], ["meta", "no bodies"], ["off", "off"]].map(([v, l]) => h("option", { value: v, selected: e.log === v || undefined }, l)));
+      const logSel = h("select", { class: "input input--sm", disabled: ro, "aria-label": "Log" }, ...[["full", "log everything"], ["meta", "log without bodies"], ["off", "no log"]].map(([v, l]) => h("option", { value: v, selected: e.log === v || undefined }, l)));
       logSel.addEventListener("change", () => put({ log: logSel.value }, `Log: ${logSel.value}.`));
-      const cb = h("input", { type: "checkbox", checked: e.callback || undefined, disabled: !writable() || !e.enabled || undefined });
+      const cb = h("input", { type: "checkbox", checked: e.callback || undefined, disabled: ro });
       cb.addEventListener("change", () => put({ callback: cb.checked }, cb.checked ? "Callbacks allowed." : "Callbacks off."));
       const curl = e.url ? `curl -X POST -H 'Content-Type: application/json' -d ${shq(JSON.stringify(Object.fromEntries((e.inputs || []).slice(0, 3).map((i) => [i.name, i.default ?? (i.type === "number" || i.type === "integer" ? 1 : "value")]))))} ${shq(e.url)}` : "";
-      tb.append(h("tr", { class: e.enabled ? "" : "fn-hooks__off" },
-        h("td", {}, h("strong", {}, e.name), e.keyword ? h("span", { class: "muted small" }, ` /${e.keyword}`) : null, e.hookName ? h("div", { class: "muted small" }, `▸ ${e.hookName}`) : null, e.modelEnabled ? null : h("span", { class: "badge", title: "The model is switched off" }, "model off")),
-        h("td", {}, writable() ? h("button", { class: `btn btn--xs${e.enabled ? "" : " btn--primary"}`, onclick: () => put(e.enabled ? { enabled: false } : { enabled: true, mode: e.mode === "sync" && !e.url ? "auto" : e.mode }, e.enabled ? "Webhook off." : "Webhook on — copy its URL.") }, e.enabled ? "on — turn off" : "Create / turn on") : h("span", { class: `badge badge--${e.enabled ? "ok" : ""}` }, e.enabled ? "on" : "off")),
-        h("td", { class: "fn-mono small" }, e.fn || "—"),
-        h("td", {}, mode), h("td", {}, logSel), h("td", {}, cb),
-        h("td", { class: "fn-num" }, e.stats ? h("button", { class: "btn btn--xs", "data-read": "1", title: "Show its calls", onclick: () => { hookFilter.model = e.modelId; drawLog(card.nextElementSibling); } }, `${e.stats.calls}${e.stats.errors ? ` · ${e.stats.errors} ✗` : ""}`) : "—"),
-        h("td", {}, e.url ? h("div", { class: "fn-row" }, h("button", { class: "btn btn--xs", "data-read": "1", onclick: () => copy(e.url, "URL copied.") }, "Copy URL"), h("button", { class: "btn btn--xs", "data-read": "1", onclick: () => copy(curl, "curl copied.") }, "curl")) : h("span", { class: "muted small", title: e.hidden ? "Only who may change this model's webhooks sees its URL (Modules & groups › Functions: webhooks or edit)." : "" }, e.hidden ? "hidden" : "—")),
-        h("td", {}, h("div", { class: "fn-row" },
-          writable() && e.enabled ? h("button", { class: "btn btn--xs btn--danger", title: "A new secret URL; the old one stops working", onclick: async () => { if (await confirmDialog(`Issue a new URL for “${e.name}”? The current one stops working at once.`, true)) void put({ rotate: true }, "New URL issued."); } }, "New URL") : null,
-          writable() && e.endpoint ? h("button", { class: "btn btn--xs", title: "Another webhook for this model — its own URL (set its function in Models › Entry points)", onclick: async () => { try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}`, { method: "PUT", body: { create: true, enabled: true } }); toast("Webhook added.", "ok"); void drawEndpoints(card); await loadQuiet(); } catch (err) { toast(err.message, "err"); } } }, "+ Webhook") : null,
-          writable() && e.endpoint ? h("button", { class: "fn-file__x", title: "Remove this webhook", onclick: async () => { if (!(await confirmDialog(`Remove the webhook “${e.hookName || e.endpoint}” of ${e.name}? Its URL stops working.`, true))) return; try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}/${encodeURIComponent(e.endpoint)}`, { method: "DELETE" }); toast("Webhook removed.", "ok"); void drawEndpoints(card); await loadQuiet(); } catch (err) { toast(err.message, "err"); } } }, "×") : null))));
+      const st = e.stats || { calls: 0, errors: 0 };
+      list.append(h("article", { class: `fn-hook${e.enabled ? "" : " is-off"}` },
+        h("header", { class: "fn-hook__head" },
+          h("span", { class: `fn-dot fn-dot--${e.enabled ? "on" : "off"}`, "data-tip": e.enabled ? "On" : "Off" }),
+          h("strong", {}, e.name), e.keyword ? h("span", { class: "badge badge--accent" }, `/${e.keyword}`) : null,
+          e.hookName ? h("span", { class: "badge" }, e.hookName) : null,
+          e.modelEnabled ? null : h("span", { class: "badge badge--warn", "data-tip": "The model is switched off: its webhooks answer 404" }, "model off"),
+          h("span", { class: "fn-grow" }),
+          h("button", { class: "btn btn--xs", "data-read": "1", "data-tip": "Show its calls", onclick: () => { hookFilter.model = e.modelId; drawLog(cards.log); } }, I("send"), `${st.calls}`, st.errors ? h("span", { class: "fn-hook__err" }, ` · ${st.errors} ✗`) : null),
+          writable() ? h("button", { class: `btn btn--xs${e.enabled ? "" : " btn--primary"}`, onclick: () => put(e.enabled ? { enabled: false } : { enabled: true }, e.enabled ? "Webhook off." : "Webhook on.") }, I("power"), e.enabled ? "Turn off" : "Turn on") : null),
+        h("div", { class: "fn-hook__url" },
+          e.url ? h("code", { class: "fn-mono", title: e.url }, e.url) : h("span", { class: "muted small", title: e.hidden ? "Only who may change this model's webhooks sees its URL (Modules & groups › Functions: webhooks or edit)." : "" }, e.hidden ? "The URL is hidden from you" : "No URL while it is off"),
+          e.url ? h("button", { class: "btn btn--xs", "data-read": "1", onclick: () => copy(e.url, "URL copied.") }, I("copy"), "URL") : null,
+          e.url ? h("button", { class: "btn btn--xs", "data-read": "1", onclick: () => copy(curl, "curl copied.") }, I("square-terminal"), "curl") : null),
+        h("div", { class: "fn-hook__cfg" },
+          h("span", { class: "fn-hook__fn fn-mono small", "data-tip": "The function this webhook runs" }, I("code-xml"), e.fn || "—"),
+          mode, logSel, h("label", { class: "fn-switch small", "data-tip": "A caller may ask for the result by callback (?callback= / X-Callback-URL)" }, cb, " callback"),
+          h("span", { class: "fn-grow" }),
+          writable() && e.enabled ? h("button", { class: "btn btn--xs btn--danger", "data-tip": "A new secret URL; the old one stops working", onclick: async () => { if (await confirmDialog(`Issue a new URL for “${e.name}”? The current one stops working at once.`, true)) void put({ rotate: true }, "New URL issued."); } }, I("refresh-cw"), "New URL") : null,
+          writable() ? h("button", { class: "btn btn--xs", "data-tip": "Another webhook for this model — its own URL (set its function in Models › Entry points)", onclick: async () => { try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}`, { method: "PUT", body: { create: true, enabled: true } }); toast("Webhook added.", "ok"); void redraw(); await loadQuiet(); } catch (err) { toast(err.message, "err"); } } }, I("plus"), "Another") : null,
+          writable() ? h("button", { class: "btn btn--xs btn--icon", "data-tip": "Remove this webhook", "aria-label": "Remove", onclick: async () => { if (!(await confirmDialog(`Remove the webhook “${e.hookName || e.endpoint}” of ${e.name}? Its URL stops working.`, true))) return; try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}/${encodeURIComponent(e.endpoint)}`, { method: "DELETE" }); toast("Webhook removed.", "ok"); void redraw(); await loadQuiet(); } catch (err) { toast(err.message, "err"); } } }, I("trash-2")) : null)));
     }
-    table.append(tb);
-    card.append(h("div", { class: "fn-tablewrap" }, table));
+    box.append(list);
     if (d.durable.length) {
-      card.append(h("div", { class: "fn-side__head mt8" }, h("span", {}, "Durable webhooks (m5.webhook.create — they run on_event later)")));
+      box.append(h("div", { class: "fn-side__head mt8" }, h("span", { class: "fn-side__title" }, I("clock"), "Durable webhooks"), h("span", { class: "muted small" }, "m5.webhook.create — they run on_event later")));
       const t2 = h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, ...["Token", "Model", "Runs", "Once", "Expires", "Made for"].map((x) => h("th", {}, x)))));
       const b2 = h("tbody");
       for (const w of d.durable) {
         const m = data.models.find((x) => x.id === w.modelId);
         b2.append(h("tr", {}, h("td", { class: "fn-mono" }, w.hook), h("td", {}, m ? m.name : w.modelId), h("td", { class: "fn-mono small" }, w.entry), h("td", {}, w.once ? "yes" : "no"), h("td", {}, w.expiresAt ? new Date(w.expiresAt).toLocaleString() : "never"), h("td", {}, w.caller)));
       }
-      t2.append(b2); card.append(t2);
+      t2.append(b2); box.append(h("div", { class: "fn-tablewrap" }, t2));
     }
+
+    // --- the models without one
+    const ib = cards.idle;
+    clear(ib);
+    ib.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("boxes"), "Models without a webhook"), h("span", { class: "muted small" }, String(idle.length))));
+    if (!idle.length) ib.append(h("div", { class: "muted small p8" }, "Every model has one."));
+    const il = h("div", { class: "fn-list" });
+    for (const e of idle) {
+      il.append(h("div", { class: "fn-pkg fn-hk-idle" },
+        h("span", { class: `fn-dot fn-dot--${e.modelEnabled ? "on" : "off"}`, "data-tip": e.modelEnabled ? "Model on" : "Model off" }),
+        h("span", { class: "fn-pkg__name" }, e.name), e.keyword ? h("span", { class: "muted small" }, `/${e.keyword}`) : null,
+        writable() ? h("button", { class: "btn btn--xs btn--primary", "data-tip": "Create a webhook for this model and switch it on", onclick: async () => {
+          try { await api(`/admin/functions/webhooks/${encodeURIComponent(e.modelId)}`, { method: "PUT", body: { create: true, enabled: true, mode: "auto" } }); toast("Webhook on — copy its URL.", "ok"); void redraw(); await loadQuiet(); }
+          catch (err) { toast(err.message, "err"); }
+        } }, I("plus"), "Create") : null));
+    }
+    ib.append(il);
   }
 
   function copy(text, note) { try { navigator.clipboard.writeText(text); toast(note, "ok"); } catch { toast("Copy failed.", "err"); } }
@@ -1211,10 +1352,10 @@
           tb.append(h("tr", { class: "fn-run-row", onclick: () => showCall(c.id) },
             h("td", { title: new Date(c.at).toLocaleString() }, when(c.at)),
             h("td", {}, m ? m.name : c.modelId || "—"),
-            h("td", {}, c.kind, c.replayOf ? h("span", { class: "muted small" }, " ↻") : null),
-            h("td", { class: "fn-mono small" }, `${c.method} ${c.path}`),
+            h("td", {}, h("span", { class: "badge" }, c.kind), c.replayOf ? h("span", { class: "muted small", "data-tip": `Replay of ${c.replayOf}` }, " ↻") : null),
+            h("td", { class: "fn-mono small" }, h("span", { class: `fn-method fn-method--${String(c.method).toLowerCase()}` }, c.method), ` ${c.path}`),
             h("td", { class: "small" }, c.parsed ? c.parsed.kind : "—", h("span", { class: "muted" }, ` ${c.bodySize} B`)),
-            h("td", {}, h("span", { class: `badge badge--${st}` }, String(c.status || "…")), c.result ? h("span", { class: "muted small" }, ` → ${c.result.status}${c.result.callback ? ` · cb ${c.result.callback.status || "✗"}` : ""}`) : null),
+            h("td", {}, h("span", { class: `badge badge--${st}` }, I(st === "ok" ? "circle-check" : st === "err" ? "circle-x" : "hourglass", "ico ico--xs"), String(c.status || "…")), c.result ? h("span", { class: "muted small" }, ` → ${c.result.status}${c.result.callback ? ` · cb ${c.result.callback.status || "✗"}` : ""}`) : null),
             h("td", { class: "fn-num" }, String(c.ms)),
             h("td", { class: "fn-mono small" }, c.runId ? c.runId.slice(-8) : "")));
         }
@@ -1224,8 +1365,8 @@
     };
     for (const el of [modelSel, kindSel, statusSel]) el.addEventListener("change", fill);
     auto.addEventListener("change", () => { if (hookTimer) { clearInterval(hookTimer); hookTimer = null; } if (auto.checked) hookTimer = setInterval(() => { if (!card.isConnected) { clearInterval(hookTimer); hookTimer = null; return; } void fill(); }, 5000); });
-    card.append(h("div", { class: "fn-side__head" }, h("span", {}, "Webhook calls"), h("span", { class: "fn-row" }, modelSel, kindSel, statusSel, h("label", { class: "fn-switch small" }, auto, " live"), h("button", { class: "btn btn--sm", onclick: fill }, "Refresh"),
-      writable() ? h("button", { class: "btn btn--sm btn--danger", onclick: async () => { if (!(await confirmDialog(hookFilter.model ? "Clear this model's webhook log?" : "Clear the whole webhook log?", true))) return; try { const r = await api(`/admin/functions/webhooks/calls${hookFilter.model ? `?model=${encodeURIComponent(hookFilter.model)}` : ""}`, { method: "DELETE" }); toast(`${r.deleted} calls removed.`, "ok"); void fill(); } catch (e) { toast(e.message, "err"); } } }, "Clear") : null)), body);
+    card.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("send"), "Calls"), h("span", { class: "fn-row" }, modelSel, kindSel, statusSel, h("label", { class: "fn-switch small", "data-tip": "Refresh every 5 seconds" }, auto, " live"), btnI("refresh-cw", "", { onclick: fill, "data-tip": "Refresh", "aria-label": "Refresh", "data-read": "1" }),
+      writable() ? h("button", { class: "btn btn--sm btn--danger", "data-tip": "Clear the log (of the model chosen, or all)", onclick: async () => { if (!(await confirmDialog(hookFilter.model ? "Clear this model's webhook log?" : "Clear the whole webhook log?", true))) return; try { const r = await api(`/admin/functions/webhooks/calls${hookFilter.model ? `?model=${encodeURIComponent(hookFilter.model)}` : ""}`, { method: "DELETE" }); toast(`${r.deleted} calls removed.`, "ok"); void fill(); } catch (e) { toast(e.message, "err"); } } }, "Clear") : null)), body);
     void fill();
   }
 
@@ -1357,8 +1498,8 @@
   // fills in when the request answers (an async function returned a Promise,
   // which the page showed as "[object Promise]").
   function runsView() {
-    const wrap = h("div", { class: "stack" });
     const card = h("div", { class: "card" });
+    const detail = h("div", { class: "card fn-rundetail" }, h("div", { class: "fn-empty" }, I("activity", "ico ico--xl"), h("span", {}, "Pick a run to see its outputs, logs and session.")));
     const statusSel = h("select", { class: "input input--sm", "aria-label": "Status" });
     for (const [v, l] of [["", "all statuses"], ["done", "done"], ["failed", "failed"], ["timed-out", "timed out"], ["running", "running"], ["waiting", "waiting"], ["cancelled", "cancelled"]]) statusSel.append(h("option", { value: v, selected: runsFilter.status === v }, l));
     const modelSel = h("select", { class: "input input--sm", "aria-label": "Model" });
@@ -1369,11 +1510,15 @@
     statusSel.onchange = () => { runsFilter.status = statusSel.value; fill(); };
     modelSel.onchange = () => { runsFilter.model = modelSel.value; fill(); };
     auto.onchange = () => { runsAuto = auto.checked; if (runsTimer) { clearInterval(runsTimer); runsTimer = null; } if (runsAuto) runsTimer = setInterval(fill, 5000); };
-    card.append(h("div", { class: "fn-side__head" }, h("span", {}, "Recent runs"), h("span", { class: "fn-row" }, statusSel, modelSel, h("label", { class: "fn-switch small" }, auto, " auto-refresh"), h("button", { class: "btn btn--sm", onclick: () => fill() }, "Refresh"))));
-    card.append(body); wrap.append(card);
+    card.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("activity"), "Recent runs"), h("span", { class: "fn-row" }, statusSel, modelSel, h("label", { class: "fn-switch small", "data-tip": "Refresh every 5 seconds" }, auto, " live"), btnI("refresh-cw", "", { onclick: () => fill(), "data-tip": "Refresh", "aria-label": "Refresh", "data-read": "1" }))));
+    card.append(body);
     fill();
     if (runsAuto) runsTimer = setInterval(fill, 5000);
-    return wrap;
+    if (runSel) void showRun(runSel, detail);
+    return arranged("runs", "Runs", [
+      { id: "list", title: "Runs", el: card, basis: "fill", min: 420, fixed: true },
+      { id: "detail", title: "Run", el: detail, basis: 520, min: 320 },
+    ], { align: "start" });
 
     async function fill() {
       const q = new URLSearchParams({ limit: "150" });
@@ -1388,11 +1533,11 @@
         const tb = h("tbody", {});
         for (const run of r.runs) {
           const model = data.models.find((m) => m.id === run.modelId);
-          tb.append(h("tr", { class: "fn-run-row", onclick: () => showRun(run.id), title: run.entry },
+          tb.append(h("tr", { class: `fn-run-row${run.id === runSel ? " is-on" : ""}`, onclick: (e) => { runSel = run.id; for (const r of tb.children) r.classList.toggle("is-on", r === e.currentTarget); void showRun(run.id, detail); }, title: run.entry },
             h("td", { title: new Date(run.queuedAt).toLocaleString() }, when(run.queuedAt)),
             h("td", {}, model ? model.name : run.modelId || h("span", { class: "muted" }, "(draft)")),
             h("td", {}, run.executor, run.test ? h("span", { class: "muted small" }, " · test") : null),
-            h("td", {}, h("span", { class: `badge badge--${run.status === "done" ? "ok" : run.status === "failed" || run.status === "timed-out" ? "err" : run.status === "running" || run.status === "waiting" ? "warn" : ""}` }, run.status)),
+            h("td", {}, h("span", { class: `badge badge--${run.status === "done" ? "ok" : run.status === "failed" || run.status === "timed-out" ? "err" : run.status === "running" || run.status === "waiting" ? "warn" : ""}` }, I(run.status === "done" ? "circle-check" : run.status === "failed" || run.status === "timed-out" ? "circle-x" : run.status === "running" || run.status === "waiting" ? "hourglass" : "circle-alert", "ico ico--xs"), run.status)),
             h("td", { class: "fn-num" }, String(run.ms)),
             h("td", { class: "fn-num" }, String(run.memMb || "")),
             h("td", {}, run.caller ? run.caller.name : "")));
@@ -1410,7 +1555,8 @@
     return new Date(ts).toLocaleString();
   }
 
-  async function showRun(id) {
+  /** A run with its outputs and logs: in `into` (the Runs page's detail panel), else in a window. */
+  async function showRun(id, into) {
     try {
       const d = await api(`/admin/functions/runs/${encodeURIComponent(id)}`);
       const run = d.run;
@@ -1439,6 +1585,13 @@
         box.append(h("div", { class: "muted small" }, "Logs"), pre);
       }
       const Kit = window.M5Kit;
+      if (into && into.isConnected) {
+        clear(into);
+        into.append(h("div", { class: "fn-side__head" }, h("span", { class: "fn-side__title" }, I("activity"), `Run ${id.slice(-10)}`),
+          h("span", { class: "fn-row" }, h("span", { class: "muted small fn-mono", title: run.entry }, run.entry.length > 48 ? `…${run.entry.slice(-46)}` : run.entry),
+            Kit && Kit.openDialog ? h("button", { class: "btn btn--sm btn--icon", "data-read": "1", "data-tip": "Open in a window", "aria-label": "Open in a window", onclick: () => showRun(id) }, I("external-link")) : null)), box);
+        return;
+      }
       if (Kit && Kit.openDialog) Kit.openDialog({ title: `Run ${id}`, subtitle: run.entry, body: box, wide: true });
       else { const el = root(); clear(el); el.append(h("button", { class: "btn btn--sm", onclick: render }, "← Back"), box); }
     } catch (e) { toast(e.message, "err"); }

@@ -127,7 +127,17 @@
     const side = h("div", { class: "fb-side" });
     const fns = h("div", { class: "fb-fns", role: "tablist", "aria-label": "Functions of the flow" });
     stage.append(fns);
-    wrap.append(bar, palette, stage, side);
+    // 6.1: the palette, the canvas and the inspector are panels the administrator arranges (the lock).
+    const body = h("div", { class: "fb-body" });
+    wrap.append(bar, body);
+    if (window.M5Layout) {
+      const handle = window.M5Layout.mount(body, [
+        { id: "palette", title: "Nodes", el: palette, basis: 210, min: 160 },
+        { id: "canvas", title: "Canvas", el: stage, basis: "fill", min: 360, fixed: true },
+        { id: "inspector", title: "Inspector", el: side, basis: 340, min: 260 },
+      ], { page: "fn:builder", title: "Builder", align: "stretch", height: "calc(100vh - 270px)", onChange: () => requestAnimationFrame(() => { if (els && els.stage && els.stage.isConnected) drawWires(); }) });
+      if (ctx && ctx.onLayout) ctx.onLayout(handle);
+    } else body.append(palette, stage, side);
     els = { wrap, bar, palette, stage, world, svg, g, side, issues, empty, fns, nodes: new Map(), zoomPct: zoomBox.querySelector(".fb-zoom__pct") };
 
     drawBar();
@@ -156,20 +166,21 @@
       snapshot(); flow.lang = lang.value; changed(); drawSide();
     });
     const tgt = h("span", { class: "muted small fb-target", title: target ? `Saves to the package ${target.name}` : "Not saved to a package yet" }, target ? `→ ${target.name}` : "not saved");
-    const saveBtn = h("button", { class: "btn btn--sm", id: "fbSave", title: "Save the flow and its code to a package (Ctrl/⌘+S)", onclick: save }, dirty() ? "Save •" : "Save");
+    const saveBtn = h("button", { class: "btn btn--sm", id: "fbSave", "data-tip": "Save the flow and its code to a package (Ctrl/⌘+S)", onclick: save }, C.icon ? C.icon("save") : "", h("span", { class: "fb-save__label" }, dirty() ? "Save •" : "Save"));
+    const I = (n) => (C.icon ? C.icon(n) : "");
     b.append(
-      h("span", { class: "fb-logo", "aria-hidden": "true" }, "◇"), name, lang, tgt,
+      h("span", { class: "fb-logo", "aria-hidden": "true" }, I("workflow")), name, lang, tgt,
       h("span", { class: "fb-sep" }),
-      h("button", { class: "btn btn--sm", onclick: newDialog, title: "New flow or an example" }, "New"),
-      h("button", { class: "btn btn--sm", onclick: openDialog, title: "Open a flow saved in a package" }, "Open"),
-      h("button", { class: "btn btn--sm", title: "Undo (Ctrl/⌘+Z)", onclick: undo }, "↶"),
-      h("button", { class: "btn btn--sm", title: "Redo (Ctrl/⌘+Shift+Z)", onclick: redo }, "↷"),
+      h("button", { class: "btn btn--sm", onclick: newDialog, "data-tip": "New flow or an example" }, I("plus"), "New"),
+      h("button", { class: "btn btn--sm", onclick: openDialog, "data-tip": "Open a flow saved in a package" }, I("file-code"), "Open"),
+      h("button", { class: "btn btn--sm btn--icon", "data-tip": "Undo (Ctrl/⌘+Z)", "aria-label": "Undo", onclick: undo }, I("undo-2")),
+      h("button", { class: "btn btn--sm btn--icon", "data-tip": "Redo (Ctrl/⌘+Shift+Z)", "aria-label": "Redo", onclick: redo }, I("redo-2")),
       h("span", { class: "fb-grow" }),
       h("span", { class: "fb-status", id: "fbStatus" }),
-      h("button", { class: "btn btn--sm", title: "Full screen (Esc to leave)", "aria-pressed": full ? "true" : "false", onclick: () => toggleFull() }, full ? "⤡" : "⤢"),
-      h("button", { class: "btn btn--sm btn--primary", title: "Run the flow (Ctrl/⌘+Enter)", onclick: () => { sideTab = "run"; drawSide(); startRun(); } }, "▶ Run"),
+      h("button", { class: "btn btn--sm btn--icon", "data-tip": full ? "Leave the full screen (Esc)" : "The builder on the whole window (Esc to leave)", "aria-label": "Full screen", "aria-pressed": full ? "true" : "false", onclick: () => toggleFull() }, I(full ? "minimize-2" : "maximize-2")),
+      h("button", { class: "btn btn--sm btn--primary", "data-tip": "Run the flow (Ctrl/⌘+Enter)", onclick: () => { sideTab = "run"; drawSide(); startRun(); } }, I("play"), "Run"),
       C.can("operator") ? saveBtn : "",
-      C.can("operator") ? h("button", { class: "btn btn--sm", onclick: makeModel, title: "Publish the package and make a model: a chat command, webhook or API" }, "Create model…") : "",
+      C.can("operator") ? h("button", { class: "btn btn--sm", onclick: makeModel, "data-tip": "Publish the package and make a model: a chat command, webhook or API" }, I("boxes"), "Create model…") : "",
     );
   }
 
@@ -215,7 +226,7 @@
     requestAnimationFrame(() => { if (G().nodes.length) fit(); });
   }
 
-  function markSaved() { const s = els && els.bar.querySelector("#fbSave"); if (s) s.textContent = dirty() ? "Save •" : "Save"; }
+  function markSaved() { const s = els && els.bar.querySelector("#fbSave .fb-save__label"); if (s) s.textContent = dirty() ? "Save •" : "Save"; }
 
   /* ------------------------------------------------------------ palette */
 

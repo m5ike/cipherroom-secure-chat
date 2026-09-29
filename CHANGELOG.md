@@ -5,6 +5,69 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.1.0] – 2026-09-30
+
+**Konzole po svém.** Boční menu se sbalí na šířku ikon, stránky konzole
+(Přehled a všechny záložky Functions) si každý administrátor uspořádá —
+po odemčení zámku přesouvá panely, mění jim velikost, zalamuje je do řádků,
+skrývá a zarovnává; zamčením se rozvržení uloží do jeho nastavení na
+serveru a jde kdykoli vrátit. Functions dostaly IDE na celou obrazovku,
+statistiky schované do jednoho řádku a ikony. Chat umí potvrzení doručení
+a přečtení mezi připojenými a polohu ve zprávě, aplikace pro Android
+passkeys.
+
+### Přidáno
+- **Menu sbalitelné na ikony** (tlačítko vedle loga, `.shell--collapsed`,
+  64 px): názvy položek v tooltipu, odznaky jako malá čísla v rohu ikony, na
+  úzké obrazovce řádek ikon. Tooltipy konzole (`data-tip`) místo `title`.
+- **Rozvržení stránek** (`admin-ui/public/panel-layout.js`,
+  `window.M5Layout`): Přehled a záložky Functions (Packages, Builder,
+  Models, Schedules, Webhooks, Runs, Tutorial) skládají karty do panelů.
+  Zámek (horní lišta, u Functions vedle záložek) je odemkne: přesun tažením
+  za lištu panelu nebo šipkami, šířka a výška za kraje a roh (dvojklik
+  vrátí výchozí), nový řádek, vyplnit / pevná šířka, skrýt a vrátit,
+  zarovnání (nahoru, na střed, dolů, stejná výška), rozestupy; klávesnice
+  (←/→, Shift+←/→, Alt+↑/↓). *Lock & save* uloží, *Cancel* / Esc zahodí,
+  *Reset* vrátí výchozí. Pod 820 px jsou panely pod sebou.
+- **Nastavení administrátora**: `GET` / `PUT /api/admin/me/prefs`
+  (`{ prefs }`, objekt do 64 kB, `admin-prefs.json` v adresáři administrace,
+  `0600`); v konzoli `M5Console.pref` / `setPref` se zrcadlem v
+  `localStorage`. *Console settings* (ikona v horní liště): menu na ikony,
+  trvale otevřené statistiky Functions, *Reset all page layouts*.
+- **Ikony konzole** (lucide, ISC): `admin-ui/public/console-icons.js`
+  (`window.M5Icons`, `M5Console.icon`) generuje
+  `node script/gen-console-icons.mjs`.
+- **Functions**: IDE na celou obrazovku (Fullscreen API, jinak přes okno;
+  Esc), editor na celou výšku; statistiky schované do horního řádku —
+  najetím, kliknutím nebo Enterem se otevřou přes obsah, připínáček je
+  nechá otevřené; ikony na záložkách a tlačítkách (editor, tvůrce, modely,
+  plány, běhy, tutoriál); detail běhu v panelu vedle seznamu; webhooky se
+  souhrnem v dlaždicích, endpointy jako karty (adresa, režim, log, zpětné
+  volání), modely bez webhooku s *Create*, log volání s metodou a stavem;
+  formulář nového plánu v panelu; lekce tutoriálu jako kroky.
+- Testy: `/api/admin/me/prefs` (`test/admin-roles.test.ts`), E2E konzole
+  6.1 (menu, tooltip, odemčení, přesun, skrytí, zarovnání, uložení, obnova
+  po novém načtení, reset, statistiky, celá obrazovka).
+
+### Android a klient (6.1)
+- Potvrzení doručení a přečtení mezi připojenými (zapečetěný `receipt`
+  párovým klíčem), poloha ve zprávě (`loc`), passkeys pro aplikaci Android
+  (`android:apk-key-hash`, `/.well-known/assetlinks.json`), stopy zařízení
+  (`POST /api/android/location`, politika `location`) — viz commit 87808188.
+
+### Změněno
+- Verze 6.1.0 (versionCode aplikace 60100).
+- Vizuální tvůrce je rozvržení (paleta · plátno · inspektor) místo pevné
+  mřížky; dlouhý panel se posouvá uvnitř sebe a nenatahuje plátno.
+- Ovládání rozvržení a nastavení konzole není „akce“ — auditor si svou
+  konzoli uspořádá také.
+
+### Opraveno
+- Lišta rozvržení nevypisuje „null“; popover nastavení se zavře Esc i při
+  změně stránky; dlaždice veřejné adresy webhooků nepřetéká; vyhledávání v
+  nápovědě editoru se nezmenšuje; celá obrazovka Functions nenatahuje řádky.
+- README uvádělo verzi 4.14.0.
+
 ## [6.0.0] – 2026-09-29
 
 **M5cet pro Android** — nativní aplikace v Javě, která je zároveň

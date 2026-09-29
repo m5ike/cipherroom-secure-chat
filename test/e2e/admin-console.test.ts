@@ -694,6 +694,75 @@ describe("operator console", () => {
     await page.locator("#toasts").evaluate((el) => el.replaceChildren());
   });
 
+  it("6.1: the menu folds to icons, pages are arranged and locked, Functions goes full screen — saved per administrator", async () => {
+    const prefs = () => page.evaluate(() => (window as unknown as { M5Console: { api: (p: string) => Promise<{ prefs: Record<string, any> }> } }).M5Console.api("/api/admin/me/prefs").then((r) => r.prefs));
+    await go("overview");
+    // The menu folds to its icons; an icon names itself in a tooltip.
+    await page.click("#btnSidebar");
+    await expect.poll(() => page.locator("#shell").getAttribute("class")).toMatch(/shell--collapsed/);
+    await expect.poll(async () => Math.round((await page.locator(".sidebar").boundingBox())!.width)).toBeLessThanOrEqual(72);
+    expect(await page.locator('.nav__item[data-route="connections"] .nav__label').isHidden()).toBe(true);
+    await page.hover('.nav__item[data-route="connections"]');
+    await expect.poll(() => page.locator(".tip").innerText()).toBe("Connections");
+    await shot("collapsed");
+
+    // Unlocked, the overview's panels move; locked, the arrangement is saved.
+    await page.click("#pageTools .pl-lock");
+    await expect.poll(() => page.locator(".ov-layout").getAttribute("class")).toMatch(/pl--edit/);
+    expect(await page.locator(".pl-bar").isVisible()).toBe(true);
+    await page.locator('.pl-panel[data-pl="traffic"] .pl-tool[aria-label="Move right"]').click();
+    await page.locator('.pl-panel[data-pl="health"] .pl-tool[aria-label="Hide this panel"]').click();
+    await expect.poll(() => page.locator('.pl-panel[data-pl="health"]').isHidden()).toBe(true);
+    await page.locator(".pl-bar .pl-segbtn[aria-label='Centre']").click();
+    await shot("layout-unlocked");
+    await page.locator(".pl-bar button", { hasText: "Lock & save" }).click();
+    await expect.poll(() => page.locator(".ov-layout").getAttribute("class")).not.toMatch(/pl--edit/);
+    await expect.poll(async () => (await prefs()).layouts?.overview?.hidden, { timeout: 5_000 }).toEqual(["health"]);
+    const saved = (await prefs()).layouts.overview;
+    expect(saved.order.indexOf("memory")).toBeLessThan(saved.order.indexOf("traffic"));
+    expect(saved.align).toBe("center");
+    expect((await prefs()).sidebar).toBe("collapsed");
+
+    // A new page load (sign in again: the token lives in memory only) finds it all as it was left.
+    await page.reload();
+    await page.fill("#loginToken", TOKEN);
+    await page.click("#loginForm button[type=submit]");
+    await expect.poll(() => page.locator("#shell").isVisible(), { timeout: 10_000 }).toBe(true);
+    await expect.poll(() => page.locator("#shell").getAttribute("class")).toMatch(/shell--collapsed/);
+    await expect.poll(() => page.locator('.pl-panel[data-pl="health"]').isHidden()).toBe(true);
+    expect(await page.locator(".ov-layout").getAttribute("data-align")).toBe("center");
+
+    // Console settings: everything back to how it comes.
+    await page.click("#btnSettings");
+    page.once("dialog", (d) => void d.accept());
+    await page.locator(".cset button", { hasText: "Reset all page layouts" }).click();
+    await expect.poll(() => page.locator('.pl-panel[data-pl="health"]').isVisible()).toBe(true);
+    await expect.poll(async () => JSON.stringify((await prefs()).layouts), { timeout: 5_000 }).toBe("{}");
+
+    // Functions: the statistics fold into one line and open over the page on hover.
+    await go("functions");
+    await expect.poll(() => page.locator(".fn-peek").isVisible(), { timeout: 10_000 }).toBe(true);
+    const panel = page.locator(".fn-statbar__panel");
+    expect(await panel.evaluate((el) => getComputedStyle(el).visibility)).toBe("hidden");
+    await page.hover(".fn-peek");
+    await expect.poll(() => panel.evaluate((el) => getComputedStyle(el).visibility)).toBe("visible");
+    expect(await panel.evaluate((el) => getComputedStyle(el).position)).toBe("absolute");
+    await page.mouse.move(700, 880);
+    // Every tab has its icon; the IDE goes to the whole screen and back.
+    expect(await page.locator(".fn-tab svg").count()).toBeGreaterThanOrEqual(7);
+    await page.locator(".fn-tabs__tools button[aria-label='Full screen']").click();
+    await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement?.id === "fnRoot" || document.querySelector("#fnRoot.fn-root--max")))).toBe(true);
+    await shot("functions-full");
+    await page.locator(".fn-tabs__tools button[aria-label='Full screen']").click();
+    await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement || document.querySelector("#fnRoot.fn-root--full")))).toBe(false);
+    // The pages of Functions are layouts too.
+    await page.locator(".fn-tab", { hasText: "Webhooks" }).click();
+    await expect.poll(() => page.locator(".fn-hk-tiles").isVisible(), { timeout: 10_000 }).toBe(true);
+    expect(await page.locator('.pl-panel[data-pl="endpoints"]').count()).toBe(1);
+    await page.click("#btnSidebar");
+    await expect.poll(() => page.locator("#shell").getAttribute("class")).not.toMatch(/shell--collapsed/);
+  });
+
   it("gives an auditor the console to read, and nothing to change", async () => {
     // The owner names an auditor and issues them a token of their own.
     const owner = { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" };

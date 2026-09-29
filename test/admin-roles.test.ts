@@ -15,7 +15,7 @@ import type { AddressInfo } from "node:net";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AdminDirectory, adminDirectory } from "../server/admin-users";
+import { AdminDirectory, adminDirectory, adminPrefs } from "../server/admin-users";
 import { registerAdminApi, type AdminProviders } from "../server/admin-api";
 import { FakeAuthenticator } from "./helpers/authenticator";
 
@@ -33,6 +33,7 @@ beforeEach(async () => {
   (adminDirectory as unknown as { file: string; loaded: boolean; users: Map<string, unknown> }).file = join(dir, "admin-users.json");
   (adminDirectory as unknown as { loaded: boolean }).loaded = false;
   (adminDirectory as unknown as { users: Map<string, unknown> }).users.clear();
+  Object.assign(adminPrefs as unknown as { file: string; data: unknown }, { file: join(dir, "admin-prefs.json"), data: null });
   const app = express();
   app.use(express.json());
   const deps = {
@@ -121,5 +122,31 @@ describe("directory", () => {
     delete process.env.ADMIN_API_TOKEN;
     delete process.env.ADMIN_TOKENS;
     expect(new AdminDirectory(join(dir, "none.json")).configured()).toBe(false);
+  });
+});
+
+describe("console settings (6.1)", () => {
+  it("keeps each administrator's own settings, even an auditor's", async () => {
+    expect((await call("GET", "/api/admin/me/prefs", OWNER)).json).toMatchObject({ ok: true, prefs: {}, updatedAt: 0 });
+    const layout = { "fn:packages": { order: ["editor", "list"], w: { list: 300, editor: "fill" }, h: {}, breaks: [], hidden: [], align: "stretch", gap: 8 } };
+    const put = await call("PUT", "/api/admin/me/prefs", OWNER, { prefs: { sidebar: "collapsed", layouts: layout } });
+    expect(put.status).toBe(200);
+    expect(put.json.prefs).toEqual({ sidebar: "collapsed", layouts: layout });
+    expect(put.json.updatedAt).toBeGreaterThan(0);
+    // An auditor reads everything and changes nothing — except their own console.
+    expect((await call("PUT", "/api/admin/me/prefs", "auditor-token-0123456789", { prefs: { sidebar: "open" } })).status).toBe(200);
+    expect((await call("GET", "/api/admin/me/prefs", "auditor-token-0123456789")).json.prefs).toEqual({ sidebar: "open" });
+    expect((await call("GET", "/api/admin/me/prefs", OWNER)).json.prefs.sidebar).toBe("collapsed");
+    // On disk, readable by the server alone.
+    const file = JSON.parse(readFileSync(join(dir, "admin-prefs.json"), "utf8"));
+    expect(Object.keys(file).sort()).toEqual(["admin", "aud"]);
+  });
+
+  it("refuses what is not an object, or too big, and anyone not signed in", async () => {
+    expect((await call("PUT", "/api/admin/me/prefs", OWNER, { prefs: [1, 2] })).status).toBe(400);
+    expect((await call("PUT", "/api/admin/me/prefs", OWNER, { prefs: "collapsed" })).status).toBe(400);
+    expect((await call("PUT", "/api/admin/me/prefs", OWNER, { prefs: { big: "x".repeat(70 * 1024) } })).status).toBe(400);
+    expect((await call("GET", "/api/admin/me/prefs")).status).toBe(401);
+    expect((await call("PUT", "/api/admin/me/prefs", undefined, { prefs: {} })).status).toBe(401);
   });
 });

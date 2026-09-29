@@ -8,6 +8,7 @@
 // header and never in a URL.
 //
 //   GET    /api/admin/overview                everything at a glance
+//   GET    /api/admin/me/prefs                6.1: my console settings (PUT replaces them)
 //   GET    /api/admin/live                    SSE: traffic, audit, ticks
 //   GET    /api/admin/traffic                 filtered traffic records
 //   GET    /api/admin/traffic/rates           per-second series
@@ -56,7 +57,7 @@
 
 import type { Express, Request, Response } from "express";
 import { adminName, requireAdmin, requireAdminToken, type AdminRequest } from "./admin-auth";
-import { adminDirectory, isRole } from "./admin-users";
+import { adminDirectory, adminPrefs, isRole } from "./admin-users";
 import { rateLimit } from "express-rate-limit";
 import { randomBytes } from "node:crypto";
 import { challengeOf, rpPolicyFor } from "./accounts/routes";
@@ -188,6 +189,18 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
     const ok = adminDirectory.revokeToken(String(req.params.name), String(req.params.id));
     audit.add({ category: "admin", level: "notice", event: "admin.admins.token-revoked", actor: adminActor(req), target: String(req.params.name) });
     res.status(ok ? 200 : 404).json({ ok, admins: adminDirectory.list() });
+  });
+
+  // 6.1: the console's settings of whoever is signed in (sidebar, page layouts, pins).
+  app.get("/api/admin/me/prefs", (req: AdminRequest, res) => {
+    const name = req.admin?.name ?? "admin";
+    res.json({ ok: true, ...adminPrefs.get(name) });
+  });
+  app.put("/api/admin/me/prefs", (req: AdminRequest, res) => {
+    const name = req.admin?.name ?? "admin";
+    const body = (req.body ?? {}) as { prefs?: unknown };
+    if (!adminPrefs.set(name, body.prefs)) return res.status(400).json({ ok: false, message: "prefs: an object of at most 64 kB" });
+    res.json({ ok: true, ...adminPrefs.get(name) });
   });
 
   // An administrator registers a passkey for themself (named administrators

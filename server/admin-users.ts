@@ -242,3 +242,49 @@ export class AdminDirectory {
 }
 
 export const adminDirectory = new AdminDirectory();
+
+/* ------------------------------------------------------------ console prefs */
+
+/**
+ * 6.1: each administrator's console settings — the sidebar collapsed or not,
+ * the page layouts they arranged (panel sizes, order, alignment), pinned
+ * panels. Plain UI state, kept per name (the env-token "admin" too) in
+ * admin-prefs.json next to the administrators, at most 64 kB each.
+ */
+export const ADMIN_PREFS_MAX_BYTES = 64 * 1024;
+
+export class AdminPrefs {
+  private data: Record<string, { prefs: Record<string, unknown>; updatedAt: number }> | null = null;
+  constructor(private readonly file: string = join(adminDir(), "admin-prefs.json")) {}
+
+  private load() {
+    if (this.data) return this.data;
+    try { this.data = JSON.parse(readFileSync(this.file, "utf8")) as NonNullable<AdminPrefs["data"]>; }
+    catch { this.data = {}; }
+    return this.data!;
+  }
+
+  get(name: string): { prefs: Record<string, unknown>; updatedAt: number } {
+    return this.load()[name] ?? { prefs: {}, updatedAt: 0 };
+  }
+
+  /** Replaces a name's prefs; false when they are too big or not an object. */
+  set(name: string, prefs: unknown, now = Date.now()): boolean {
+    if (!prefs || typeof prefs !== "object" || Array.isArray(prefs)) return false;
+    const text = JSON.stringify(prefs);
+    if (text.length > ADMIN_PREFS_MAX_BYTES) return false;
+    const data = this.load();
+    data[name] = { prefs: JSON.parse(text) as Record<string, unknown>, updatedAt: now };
+    try {
+      mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+      const tmp = `${this.file}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
+      renameSync(tmp, this.file);
+    } catch (err) {
+      console.warn(`[admin] cannot write ${this.file}: ${(err as Error).message}`);
+    }
+    return true;
+  }
+}
+
+export const adminPrefs = new AdminPrefs();

@@ -131,9 +131,10 @@ installer's template have it (300 MB).
 
 ## GUI
 
-`admin-ui/public/index.html` is a single-page static GUI. It reads the
-admin API base URL and bearer token from `localStorage`. Serve it
-either:
+`admin-ui/public/index.html` is a single-page static GUI (plain JS, DOM
+nodes only, CSP `script-src 'self'`). The bearer token lives in memory —
+in `sessionStorage` only when "remember" is ticked, never in
+`localStorage`. Serve it either:
 
 - via the admin Node service itself (auto-detected at boot), or
 - via a separate nginx container (`docker-compose up admin-ui`), or
@@ -142,6 +143,47 @@ either:
 To ship a richer GUI, replace the contents of `admin-ui/public/` (the
 service also looks in `admin-ui/dist/` as a fallback). The Node service
 serves whatever lives there.
+
+## Konzole: menu, rozvržení stránek, nastavení (6.1)
+
+- **Menu na ikony** — `#btnSidebar` přepne `.shell--collapsed` (šířka
+  `--sidebar-mini`, 64 px); texty položek jsou v `.nav__label`, jejich název
+  ukáže tooltip (`data-tip`, `data-tip-when="collapsed"`).
+- **Rozvržení stránek** — `admin-ui/public/panel-layout.js`
+  (`window.M5Layout`). Stránka předá své karty jako panely:
+  `M5Layout.mount(root, [{ id, title, el, basis: "fill" | px, min?, height?,
+  breakBefore?, fixed? }], { page, title, align?, gap?, height?, onChange? })`
+  a dostane `{ lockButton(), editing, state(), relayout(), reload(),
+  destroy() }`. Zámek odemkne úpravy (přesun tažením nebo šipkami, šířka a
+  výška za kraje, nový řádek, vyplnit, skrýt, zarovnání, rozestupy);
+  zamčení uloží `{ order, w, h, breaks, hidden, align, gap }` pod klíčem
+  stránky (`overview`, `fn:packages`, `fn:builder`, `fn:models`,
+  `fn:schedules`, `fn:webhooks`, `fn:runs`, `fn:tutorial`) do nastavení
+  `layouts`; `Esc` / *Cancel* změny zahodí, *Reset* vrátí výchozí. Pod
+  820 px šířky (container query) jsou panely pod sebou.
+- **Nastavení** — `M5Console.pref(key, fallback)` / `M5Console.setPref(key,
+  value)`: `sidebar` (`open` | `collapsed`), `fnStatsPinned`, `layouts`.
+  Ukládá se se zpožděním 400 ms na server a zrcadlí do
+  `localStorage["m5cet:console:prefs:<jméno>"]`, aby se stránka vykreslila
+  hned. *Console settings* (ikona v horní liště) má přepínače a *Reset all
+  page layouts*.
+
+  | Metoda | Cesta | Co |
+  | ------ | ----- | -- |
+  | GET    | `/api/admin/me/prefs` | `{ ok, prefs, updatedAt }` přihlášeného administrátora |
+  | PUT    | `/api/admin/me/prefs` | `{ prefs }` — objekt do 64 kB, nahradí uložené; jinak `400` |
+
+  Uloženo v `admin-prefs.json` v adresáři administrace (`0600`, atomický
+  zápis). Cesty `/me/` smí každý přihlášený administrátor (i auditor, jde o
+  jeho konzoli); token funkce (`m5adm`) je odmítnut.
+- **Ikony** — `admin-ui/public/console-icons.js` (`window.M5Icons.svg(name,
+  cls)`, lucide, ISC) generuje `node script/gen-console-icons.mjs` ze
+  seznamu v tom skriptu; `M5Console.icon(name)` je zkratka.
+- **Functions** — statistiky v řádku `.fn-statbar` (panel přes obsah při
+  najetí / kliknutí, připínáček), IDE na celou obrazovku (Fullscreen API na
+  `#fnRoot`, jinak `.fn-root--max`), záložky s ikonami, tlačítka stránky v
+  `.fn-tabs__tools`, `M5Console.pageTools(...nodes)` pro horní lištu
+  ostatních stránek.
 
 ## Security model
 
