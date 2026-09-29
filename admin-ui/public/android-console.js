@@ -119,8 +119,11 @@
       getAppCard()));
   }
 
+  /** Where the phones enrol: PUBLIC_BASE_URL when the server has one, else this console's origin. */
+  const chatUrl = () => (overview && overview.publicUrl) || location.origin;
+
   function getAppCard() {
-    const server = h("input", { class: "input", value: location.origin, placeholder: "https://chat.example.com", "data-read": "1" });
+    const server = h("input", { class: "input", value: chatUrl(), placeholder: "https://chat.example.com", "data-read": "1" });
     const qr = h("div", { class: "and-qr" });
     const link = h("div", { class: "mono small muted" });
     const show = async () => {
@@ -494,7 +497,7 @@
       may("settings") ? h("div", { class: "row" }, label, h("span", { class: "muted small" }, "uses"), uses, h("span", { class: "muted small" }, "days"), days, h("button", { class: "btn btn--primary btn--sm", type: "button", onclick: async () => {
         const res = await guarded(() => api("/api/admin/android/codes", { method: "POST", body: { label: label.value, uses: Number(uses.value), days: Number(days.value) } }));
         if (!res) return;
-        const q = await C.raw(`/api/admin/android/codes/qr?server=${encodeURIComponent(location.origin)}&code=${encodeURIComponent(res.code)}`);
+        const q = await C.raw(`/api/admin/android/codes/qr?server=${encodeURIComponent(chatUrl())}&code=${encodeURIComponent(res.code)}`);
         clear(shown).append(h("div", { class: "card" }, h("div", { class: "row" }, h("strong", { class: "mono", style: "font-size:20px" }, res.code), h("span", { class: "muted small" }, "shown only now")), q.ok ? svgNode(await q.text()) : null, h("div", { class: "mono small muted" }, q.headers.get("X-M5-Link") || "")));
       } }, "New code")) : null,
       shown,
@@ -615,7 +618,9 @@
     const dim = (v) => (v === "match" ? "100%" : v === "wrap" ? "auto" : typeof v === "number" || /^\d+(\.\d+)?$/.test(String(v)) ? `${v}px` : null);
     if (st.width !== undefined && dim(st.width)) css.width = dim(st.width);
     if (st.height !== undefined && dim(st.height)) css.height = st.height === "match" ? "100%" : dim(st.height);
-    if (st.weight) { css.flex = `${st.weight} 1 0`; if (inRow) css.minWidth = "0"; else css.minHeight = "0"; }
+    // Like LinearLayout: a row shares its width by weight; a column whose own
+    // height comes from its content (a panel) gives a weighted child its content.
+    if (st.weight) { css.flex = inRow ? `${st.weight} 1 0` : `${st.weight} 1 auto`; if (inRow) css.minWidth = "0"; else css.minHeight = "0"; }
     if (st.self) css.alignSelf = { start: "flex-start", end: "flex-end", center: "center", stretch: "stretch" }[st.self];
     if (st.maxWidth) css.maxWidth = `${st.maxWidth}px`;
     if (sv("opacity") !== undefined) css.opacity = String(sv("opacity"));
@@ -772,7 +777,7 @@
       case "userPanel": {
         const u = sampleFor("users");
         const panel = sub("users", u);
-        panel.style.width = "220px";
+        panel.style.width = "264px"; // UserPanel: 264 dp
         wrap.append(h("div", { class: "and-panel" }, panel), h("div", { class: "and-handle" }, sub("users.handle", sampleFor("users.handle"))));
         wrap.classList.add("and-overlay");
         break;

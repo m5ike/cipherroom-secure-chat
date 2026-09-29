@@ -67,6 +67,9 @@ export function registerAndroidAdminRoutes(app: Express): void {
     const design = androidDesign();
     res.json({
       ok: true, store: androidStore.status(), config: publicConfig(c), fcm: fcmReady(),
+      // The chat's public address for enrolment links and QR codes; the console
+      // falls back to its own origin (right when it is served from the same domain).
+      publicUrl: (process.env.PUBLIC_BASE_URL?.trim() || "").replace(/\/+$/, ""),
       signing: { kid: key.kid, publicKey: key.publicKey, fingerprint: key.fingerprint },
       counts: {
         devices: devices.length, active: devices.filter((d) => d.status === "active").length, wiped: devices.filter((d) => d.status === "wiped").length,

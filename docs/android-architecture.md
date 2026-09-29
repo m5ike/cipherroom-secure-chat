@@ -210,7 +210,9 @@ npm run android:build -- --release --upload https://chat.example.com --token <to
   Android › Push; Project settings › Service accounts → Generate new private
   key → vložit JSON tamtéž. APK nic z toho neobsahuje.
 * **Registrace**: Android › Overview → QR kód (volitelně s kódem z Android ›
-  Security), nebo ruční zadání adresy v aplikaci.
+  Security), nebo ruční zadání adresy v aplikaci. Adresa v QR je
+  `PUBLIC_BASE_URL`, bez ní adresa, na které běží konzole — u konzole na
+  vlastním portu (vývoj, SSH tunel) ji tedy nastavte nebo přepište v poli.
 
 ## 9. Stav 6.0 a omezení
 
