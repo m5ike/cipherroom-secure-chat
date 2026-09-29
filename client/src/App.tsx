@@ -431,6 +431,7 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutC
       to={message.to}
       replyTo={message.replyTo}
       forwardedFrom={message.forwardedFrom}
+      loc={message.loc}
       bubbleStyle={bubbleStyleFrom(perStyle)}
       badge={badge}
       head={head}
@@ -1752,6 +1753,7 @@ function ChatApp() {
       to: p.to,
       replyTo: p.replyTo,
       forwardedFrom: p.forwardedFrom,
+      loc: p.loc,
       ...extra,
     };
   }
@@ -1786,7 +1788,7 @@ function ChatApp() {
       // The payload must name the peer the server says relayed it, and
       // never us; anything malformed is dropped.
       const plaintext = validatePayload(opened.payload, { transportSender: item.from.peerId, myId: myIdRef.current });
-      if (!plaintext || plaintext.kind === "audio-status") continue;
+      if (!plaintext || plaintext.kind === "audio-status" || plaintext.kind === "receipt") continue;
       if (messagesRef.current.some((m) => m.id === plaintext.id) || !replayRef.current.accept(plaintext.id)) continue;
       relaySendersRef.current.set(plaintext.id, { peerId: item.from.peerId, accountId: accountRefOf(item.from) });
       incoming.push(chatMessageFrom(plaintext, {
@@ -1836,6 +1838,51 @@ function ChatApp() {
     // Protocol v2: the server routes it by what it relayed to us — no
     // address from our side (a v1 client could aim receipts anywhere).
     socket.send(JSON.stringify({ type: "receipt", messageIds: [messageId], state: "read" }));
+  }
+
+  /*
+   * 6.1: receipts between online peers (the Android app sends and shows
+   * them too). A sealed payload {kind: "receipt", state, ids} to that one
+   * peer with the pair key — never the room key — batched for 400 ms.
+   */
+  const receiptQueueRef = useRef(new Map<string, { delivered: string[]; read: string[] }>());
+  const receiptTimerRef = useRef<number | null>(null);
+
+  function queueReceipt(peerId: string, state: "delivered" | "read", messageId: string) {
+    const q = receiptQueueRef.current.get(peerId) ?? { delivered: [], read: [] };
+    q[state].push(messageId);
+    receiptQueueRef.current.set(peerId, q);
+    if (receiptTimerRef.current === null) receiptTimerRef.current = window.setTimeout(() => { receiptTimerRef.current = null; void flushReceipts(); }, 400);
+  }
+
+  async function flushReceipts() {
+    const keys = keyRef.current;
+    const store = senderKeysRef.current;
+    const queued = [...receiptQueueRef.current.entries()];
+    receiptQueueRef.current.clear();
+    if (!keys) return;
+    for (const [peerId, q] of queued) {
+      const channel = peersRef.current.get(peerId)?.channel;
+      if (channel?.readyState !== "open" || !store.hasPair(peerId)) continue;
+      for (const state of ["delivered", "read"] as const) {
+        for (let at = 0; at < q[state].length; at += 50) {
+          const payload = { kind: "receipt", id: newId("rcpt"), createdAt: Date.now(), senderId: myIdRef.current, senderName: nameRef.current, state, ids: q[state].slice(at, at + 50) };
+          const envelope = await store.sealPrivate(keys, payload.id, payload, myIdRef.current, peerId, identityRef.current);
+          if (!envelope) continue;
+          try { channel.send(JSON.stringify(envelope)); } catch { /* closing */ }
+        }
+      }
+    }
+  }
+
+  /** A peer's receipt for messages of mine: a delivered / read audit entry per peer (the bubble shows the highest). */
+  function applyReceipt(who: string, state: "delivered" | "read", ids: string[]) {
+    const wanted = new Set(ids);
+    setMessages((cur) => cur.map((m) => {
+      if (!m.mine || !wanted.has(m.id)) return m;
+      if (m.audit?.some((a) => a.state === state && a.meta === who)) return m;
+      return { ...m, audit: [...(m.audit ?? []), { state, at: Date.now(), meta: who }] };
+    }));
   }
 
   useEffect(() => {
@@ -2310,7 +2357,7 @@ function ChatApp() {
 
       // Checked, bounded, and bound to this channel's peer: a payload
       // naming another sender (or us) is not shown.
-      const plaintext = validatePayload(opened.payload, { transportSender: peerId, myId: myIdRef.current });
+      const plaintext = validatePayload(opened.payload, { transportSender: peerId, myId: myIdRef.current, receipts: true });
       if (!plaintext) {
         warnOnce(`dropped:${peerId}`, t(lang, "proto.dropped").replace("{name}", peerName()));
         return;
@@ -2319,6 +2366,11 @@ function ChatApp() {
 
       if (plaintext.kind === "audio-status") {
         setPeerView(peerId, { audio: plaintext.status });
+        return;
+      }
+      if (plaintext.kind === "receipt") {
+        // Only sealed for us alone (a pair envelope) counts: a receipt is not a room-wide claim.
+        if (sealedWith === "pair") applyReceipt(peerName(), plaintext.state, plaintext.ids);
         return;
       }
       if (messagesRef.current.some((m) => m.id === plaintext.id)) return;
@@ -2339,6 +2391,8 @@ function ChatApp() {
         }),
       ]);
       dispatchInternal("message", { senderId: plaintext.senderId });
+      const roomSec = (roomRef.current && prefsRef.current.roomSecurity[roomRef.current]) || DEFAULT_ROOM_SECURITY;
+      if (roomSec.deliveryReceipts) queueReceipt(peerId, "delivered", plaintext.id);
       cx("received");
       if (plaintext.attachment) cx("file-received", plaintext.attachment.name, { bytes: plaintext.attachment.size });
 
@@ -3552,6 +3606,10 @@ function ChatApp() {
       if (m.id !== id || m.audit?.some((a) => a.state === "displayed")) return m;
       // A message the server relayed to us: tell the sender it was read.
       sendReadReceipt(id);
+      // 6.1: one that came over a channel: a read receipt to its sender (room setting readReceipts).
+      const cameDirect = m.audit?.some((a) => a.state === "received" && a.meta !== "relay");
+      const sec = (roomRef.current && prefsRef.current.roomSecurity[roomRef.current]) || DEFAULT_ROOM_SECURITY;
+      if (!m.mine && cameDirect && sec.readReceipts) queueReceipt(m.senderId, "read", m.id);
       return { ...m, audit: [...(m.audit ?? []), { state: "displayed" as const, at: Date.now() }] };
     }));
   }

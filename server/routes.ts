@@ -61,6 +61,7 @@ import { audit } from "./monitor/audit";
 import { system } from "./monitor/system";
 import { resolveTrustProxy } from "./trust-proxy";
 import { registerAccountRoutes } from "./accounts/routes";
+import { registerAppLinks } from "./android/app-links";
 import { sendWebPush } from "./push";
 import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
@@ -198,6 +199,8 @@ export async function registerRoutes(
   // Signing out / deleting ends the away status in every room, and closes
   // the user's database so the file is opaque again. (Open sockets learn
   // it from the store's revoke event — see SignalingHub.onRevoke.)
+  // 6.1: the Android app may use this domain's passkeys (Digital Asset Links).
+  registerAppLinks(app);
   registerAccountRoutes(app, accountStore, {
     groupsFor: accountGroups,
     onSignOut: (accountId) => {

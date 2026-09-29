@@ -80,6 +80,12 @@ export type AndroidEvent = {
   detail: Record<string, unknown>; ip: string;
 };
 
+/** 6.1: a position a device reported (Settings › Location › tracking, allowed by the policy). */
+export type LocationPoint = {
+  id: string; deviceId: string; at: number; receivedAt: number;
+  lat: number; lon: number; acc: number; alt: number | null; speed: number | null; heading: number | null;
+};
+
 export type EnrollCode = {
   id: string; hash: string; label: string; usesLeft: number; used: number; expiresAt: number;
   createdAt: number; createdBy: string;
@@ -99,6 +105,7 @@ class AndroidStore {
   readonly commands = new Table<Command>("commands", () => this.db, (v) => v.createdAt, (v) => v.deviceId);
   readonly events = new Table<AndroidEvent>("events", () => this.db, (v) => v.receivedAt, (v) => v.deviceId);
   readonly codes = new Table<EnrollCode>("enroll_codes", () => this.db, (v) => v.createdAt);
+  readonly locations = new Table<LocationPoint>("locations", () => this.db, (v) => v.at, (v) => v.deviceId);
 
   ready(): Promise<void> {
     if (this.db) return Promise.resolve();
@@ -114,7 +121,7 @@ class AndroidStore {
         db.pragma("journal_mode = WAL");
         db.pragma("busy_timeout = 5000");
         db.pragma("secure_delete = ON");
-        for (const t of [this.devices, this.builds, this.releases, this.commands, this.events, this.codes]) db.exec(t.schema());
+        for (const t of [this.devices, this.builds, this.releases, this.commands, this.events, this.codes, this.locations]) db.exec(t.schema());
         this.db = db;
         this.reason = "";
       } catch (err) {

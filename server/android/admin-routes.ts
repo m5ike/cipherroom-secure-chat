@@ -33,6 +33,8 @@ import { androidStore, newId, type CommandKind, type Device, type Release } from
 
 /** What a console request needs of the Android module (Modules & groups). */
 export function androidConsoleRight(req: Request): Needs | null {
+  // 6.1: positions are personal data — reading them needs the devices right too.
+  if (/^\/devices\/[^/]+\/locations$/.test(req.path)) return ["devices"];
   if (req.method === "GET" || req.method === "HEAD") return null;
   const p = req.path;
   if (p === "/config" || p.startsWith("/codes")) return ["settings"];
@@ -154,8 +156,30 @@ export function registerAndroidAdminRoutes(app: Express): void {
     if (!androidStore.devices.get(id)) return res.status(404).json({ ok: false, message: "No such device." });
     androidStore.devices.delete(id);
     for (const c of androidStore.commands.list({ device: id, limit: 5000 })) androidStore.commands.delete(c.id);
+    for (const p of androidStore.locations.list({ device: id, limit: 100_000 })) androidStore.locations.delete(p.id);
     log(req, "device.delete", {}, "warn", id);
     res.json({ ok: true });
+  });
+
+  // 6.1: the device's track (newest first) — each read is audited.
+  r.get("/devices/:id/locations", (req, res) => {
+    const d = androidStore.devices.get(String(req.params.id));
+    if (!d) return res.status(404).json({ ok: false, message: "No such device." });
+    const limit = Math.max(1, Math.min(5000, Number(req.query.limit) || 500));
+    const since = Number(req.query.since) || 0;
+    const before = Number(req.query.before) || undefined;
+    const points = androidStore.locations.list({ device: d.id, limit, before, filter: (p) => p.at >= since });
+    log(req, "device.locations.read", { points: points.length }, "notice", d.id);
+    res.json({ ok: true, points, policy: androidConfig().policy.location });
+  });
+
+  r.delete("/devices/:id/locations", (req, res) => {
+    const d = androidStore.devices.get(String(req.params.id));
+    if (!d) return res.status(404).json({ ok: false, message: "No such device." });
+    let n = 0;
+    for (const p of androidStore.locations.list({ device: d.id, limit: 100_000 })) { androidStore.locations.delete(p.id); n++; }
+    log(req, "device.locations.delete", { points: n }, "warn", d.id);
+    res.json({ ok: true, deleted: n });
   });
 
   const kindOf = (v: unknown): CommandKind | null => (typeof v === "string" && (COMMAND_KINDS as readonly string[]).includes(v) ? v as CommandKind : null);

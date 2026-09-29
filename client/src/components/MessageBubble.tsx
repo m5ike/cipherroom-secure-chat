@@ -20,6 +20,7 @@ import { DEFAULT_LAYOUTS } from "../lib/layouts";
 import { renderLayout, type LayoutEnv } from "./LayoutView";
 import { Markdown } from "./Markdown";
 import { FnOutputs } from "./fn/FnOutputs";
+import { osmLink } from "../lib/maps";
 
 export type BubbleAttachment = { kind: "file" | "image"; name: string; mime: string; size: number; dataUrl: string };
 
@@ -45,6 +46,8 @@ export type MessageBubbleProps = {
   to?: string[]; // present → private message, only to these names
   replyTo?: { id: string; senderName: string; text: string };
   forwardedFrom?: string;
+  /** 6.1: the sender's position when writing (a map pin). */
+  loc?: { lat: number; lon: number; acc?: number };
   bubbleStyle?: CSSProperties;
   badge: ReactNode; // <UserBadge/> (others) or plain name label (self/system)
   lang: Lang;
@@ -219,6 +222,7 @@ export function MessageBubble(props: MessageBubbleProps) {
     revealed,
     delivery: mine ? props.deliveryState : undefined,
     forwardedFrom: props.forwardedFrom ?? "",
+    loc: props.loc ? { lat: props.loc.lat, lon: props.loc.lon, acc: props.loc.acc ?? null, url: osmLink({ lat: props.loc.lat, lng: props.loc.lon, ts: 0 }, 17) } : null,
     replyTo: props.replyTo ?? null,
     bodyText,
     attachment: att ? { ...att, isImage: att.kind === "image", isAudio: att.kind !== "image" && att.mime.startsWith("audio/"), sizeText: props.formatSize(att.size) } : null,

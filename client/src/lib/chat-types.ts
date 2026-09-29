@@ -39,6 +39,8 @@ export type ChatMessage = {
   flags?: MsgFlags;
   /** Recipient names when the message was sent privately (not to everyone). */
   to?: string[];
+  /** 6.1: the sender's position when writing it (a pin in the bubble). */
+  loc?: { lat: number; lon: number; acc?: number; at?: number };
   /** Sender-only: original text + code for a sealed message, kept locally. */
   sealPlain?: string;
   sealCode?: string;

@@ -302,7 +302,7 @@ export class BackgroundRoom {
     if (!p || this.seen.has(p.id)) return;
     this.seen.add(p.id);
     if (this.seen.size > 20_000) this.seen.delete(this.seen.values().next().value!);
-    if (p.kind === "audio-status") return;
+    if (p.kind === "audio-status" || p.kind === "receipt") return;
     if (p.senderName) link.name = p.senderName;
     const message: ChatMessage = {
       id: p.id, senderId: p.senderId, senderName: p.senderName, text: p.text, createdAt: p.createdAt, mine: false, secure: true,

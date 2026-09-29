@@ -36,6 +36,7 @@ const MESSAGE_VARS: ContractVar[] = [
   { path: "$private", type: "yes/no", description: "Only to some people." },
   { path: "$to", type: "text", description: "Their names (private)." },
   { path: "$forwardedFrom", type: "text", description: "Forwarded from whom." },
+  { path: "$loc", type: "object", description: "6.1: the sender's position (.lat, .lon, .acc, .url — an OpenStreetMap link), or nothing." },
   { path: "$replyTo", type: "object", description: "The quoted message: .id, .senderName, .text." },
   { path: "$attachment", type: "object", description: "A file: .name, .mime, .size, .sizeText, .dataUrl, .isImage, .isAudio." },
   { path: "$tap", type: "yes/no", description: "Hold-to-read." },

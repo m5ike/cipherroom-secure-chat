@@ -125,7 +125,31 @@ export type ChatPayload = {
   to?: string[];
   replyTo?: { id: string; senderName: string; text: string };
   forwardedFrom?: string;
+  /** 6.1: where the sender was when writing it (Android: Settings › Location › in the header). */
+  loc?: MessageLoc;
 };
+
+export type MessageLoc = { lat: number; lon: number; acc?: number; at?: number };
+
+/**
+ * 6.1: a delivery / read receipt between online peers — sealed with the pair
+ * key to that one peer. Only callers that pass { receipts: true } get it;
+ * everyone else drops it like any unknown kind (older clients do the same).
+ */
+export type ReceiptPayload = { kind: "receipt"; id: string; createdAt: number; senderId: string; senderName: string; state: "delivered" | "read"; ids: string[] };
+
+/** loc: lat −90..90, lon −180..180, acc ≥ 0; rounded to 5 decimals (~1 m). */
+export function validateLoc(v: unknown): MessageLoc | undefined {
+  if (!v || typeof v !== "object") return undefined;
+  const l = v as Record<string, unknown>;
+  const lat = l.lat, lon = l.lon;
+  if (typeof lat !== "number" || typeof lon !== "number" || !Number.isFinite(lat) || !Number.isFinite(lon)) return undefined;
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return undefined;
+  const out: MessageLoc = { lat: Math.round(lat * 1e5) / 1e5, lon: Math.round(lon * 1e5) / 1e5 };
+  if (typeof l.acc === "number" && Number.isFinite(l.acc) && l.acc >= 0 && l.acc < 1e6) out.acc = Math.round(l.acc);
+  if (typeof l.at === "number" && Number.isFinite(l.at) && l.at > 0) out.at = Math.floor(l.at);
+  return out;
+}
 
 export type AudioStatusPayload = { kind: "audio-status"; id: string; createdAt: number; senderId: string; senderName: string; status: "off" | "joining" | "live" | "muted" };
 
@@ -139,8 +163,8 @@ const RESERVED_SENDERS = new Set(["system", "self", "server", "admin"]);
  */
 export function validatePayload(
   value: unknown,
-  opts: { transportSender?: string; myId?: string; now?: number } = {},
-): ChatPayload | AudioStatusPayload | null {
+  opts: { transportSender?: string; myId?: string; now?: number; receipts?: boolean } = {},
+): ChatPayload | AudioStatusPayload | ReceiptPayload | null {
   if (!value || typeof value !== "object") return null;
   const p = value as Record<string, unknown>;
   const now = opts.now ?? Date.now();
@@ -156,6 +180,11 @@ export function validatePayload(
     const status = p.status;
     if (status !== "off" && status !== "joining" && status !== "live" && status !== "muted") return null;
     return { kind: "audio-status", id, createdAt, senderId, senderName, status };
+  }
+  if (p.kind === "receipt") {
+    if (!opts.receipts || (p.state !== "delivered" && p.state !== "read") || !Array.isArray(p.ids)) return null;
+    const ids = p.ids.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 80).slice(0, 50);
+    return ids.length ? { kind: "receipt", id, createdAt, senderId, senderName, state: p.state, ids } : null;
   }
   if (p.kind !== undefined && p.kind !== "text") return null;
   const text = p.text === undefined ? "" : str(p.text, PAYLOAD_LIMITS.textChars);
@@ -174,5 +203,7 @@ export function validatePayload(
     out.replyTo = { id: reply.id as string, senderName: clean(reply.senderName, PAYLOAD_LIMITS.nameChars), text: clean(reply.text, PAYLOAD_LIMITS.replyChars) };
   }
   if (typeof p.forwardedFrom === "string") out.forwardedFrom = clean(p.forwardedFrom, PAYLOAD_LIMITS.nameChars);
+  const loc = validateLoc(p.loc);
+  if (loc) out.loc = loc;
   return out;
 }

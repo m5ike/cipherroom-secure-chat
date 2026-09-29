@@ -47,6 +47,7 @@ import { eventStore } from "../events";
 import { audit } from "../monitor/audit";
 import { ACCOUNT_LIMITS, accountStore as defaultStore, usernameOf, type AccountRecord, type AccountStore } from "./store";
 import { userHandleFor, usernameFromHandle } from "./username";
+import { androidAppOrigins } from "../android/app-links";
 import {
   SUPPORTED_ALGS, b64urlToBuffer, verifyAssertion, verifyRegistration,
   type AssertionResponseJSON, type RegistrationResponseJSON, type RpPolicy,
@@ -82,7 +83,7 @@ export function rpPolicyFor(req: Request): RpPolicy {
     try { rpId = new URL(env("PUBLIC_BASE_URL")).hostname; } catch { rpId = ""; }
   }
   if (!rpId) rpId = req.hostname;
-  return { rpId, origins };
+  return { rpId, origins, appOrigins: androidAppOrigins() };
 }
 
 export function challengeOf(clientDataJSON: unknown): string {

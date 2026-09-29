@@ -32,6 +32,12 @@ export type RpPolicy = {
   /** Exact allowed origins; when empty, any https origin on rpId (or a
    *  subdomain) is accepted, plus http://localhost for development. */
   origins?: string[];
+  /**
+   * 6.1: native apps that may use the passkeys of rpId — exact
+   * "android:apk-key-hash:<base64url SHA-256 of the signing certificate>"
+   * origins (Credential Manager). Never a pattern.
+   */
+  appOrigins?: string[];
 };
 
 export type RegistrationResponseJSON = {
@@ -66,6 +72,7 @@ function isLocalhost(hostname: string): boolean {
 }
 
 export function isAllowedOrigin(origin: string, policy: RpPolicy): boolean {
+  if (origin.startsWith("android:apk-key-hash:")) return (policy.appOrigins ?? []).includes(origin) || (policy.origins ?? []).includes(origin);
   if (policy.origins && policy.origins.length > 0) return policy.origins.includes(origin);
   let url: URL;
   try { url = new URL(origin); } catch { return false; }

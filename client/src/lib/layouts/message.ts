@@ -31,6 +31,11 @@ export function messageTree(kind: MessageKind): LNode {
     icon("timer", "h-3 w-3 opacity-70", { "aria-label": "{_'msgkind.tap'}" }, { id: "icon-tap", if: "$tap" }),
     icon("eye-off", "h-3 w-3 opacity-70", { "aria-label": "{_'msgkind.vanish'}" }, { id: "icon-vanish", if: "$vanishing" }),
     icon("scroll-text", "h-3 w-3 opacity-70", { "aria-label": "{_'msgkind.sealed'}" }, { id: "icon-sealed", if: "$sealed" }),
+    // 6.1: where the sender was (a pin; the Android app puts it into the header on request).
+    n("link", {
+      id: "loc", name: "Position", if: "$loc",
+      attrs: { class: "msg-loc", href: "{$loc.url}", target: "_blank", rel: "noopener noreferrer", title: "{_'msg.loc'}", "aria-label": "{_'msg.loc'}", "data-testid": "msg-loc" },
+    }, [icon("map-pin", "h-3 w-3", {}, { id: "loc-icon" })]),
     kind === "out"
       ? n("area", {
           id: "delivery", name: "Delivery mark", if: "$delivery",

@@ -35,6 +35,12 @@ export type AndroidPolicy = {
   rooms: { max: number };
   /** What devices send besides their events: nothing, errors, or everything (on request). */
   logs: "off" | "errors" | "all";
+  /**
+   * 6.1: position tracking. A device sends its position only when the user
+   * switched it on in the app (Settings › Location) AND the operator allows it
+   * here; points are kept for `days`.
+   */
+  location: { track: boolean; days: number; minSeconds: number };
 };
 
 export type FcmClient = { apiKey: string; appId: string; senderId: string; projectId: string; storageBucket?: string };
@@ -58,6 +64,7 @@ export const DEFAULT_POLICY: AndroidPolicy = {
   update: { channel: "stable", checkHours: 12, wifiOnly: false, autoDownload: true },
   rooms: { max: 8 },
   logs: "errors",
+  location: { track: true, days: 30, minSeconds: 15 },
 };
 
 export const DEFAULT_CONFIG: AndroidConfig = {
@@ -83,7 +90,7 @@ const bool = (v: unknown, dflt: boolean) => (typeof v === "boolean" ? v : dflt);
 const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
 export function sanitizePolicy(raw: unknown): AndroidPolicy {
-  const p = (raw && typeof raw === "object" ? raw : {}) as Partial<AndroidPolicy> & { lock?: Partial<LockPolicy>; update?: Partial<AndroidPolicy["update"]>; rooms?: Partial<AndroidPolicy["rooms"]> };
+  const p = (raw && typeof raw === "object" ? raw : {}) as Partial<AndroidPolicy> & { lock?: Partial<LockPolicy>; update?: Partial<AndroidPolicy["update"]>; rooms?: Partial<AndroidPolicy["rooms"]>; location?: Partial<AndroidPolicy["location"]> };
   const l: Partial<LockPolicy> = p.lock ?? {};
   const d = DEFAULT_POLICY;
   return {
@@ -105,6 +112,11 @@ export function sanitizePolicy(raw: unknown): AndroidPolicy {
     },
     rooms: { max: clampInt(p.rooms?.max, 1, 16, d.rooms.max) },
     logs: oneOf(p.logs, ["off", "errors", "all"] as const, d.logs),
+    location: {
+      track: bool(p.location?.track, d.location.track),
+      days: clampInt(p.location?.days, 1, 3650, d.location.days),
+      minSeconds: clampInt(p.location?.minSeconds, 5, 3600, d.location.minSeconds),
+    },
   };
 }
 

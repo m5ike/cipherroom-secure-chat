@@ -363,6 +363,26 @@ describe("a device's life through the API", () => {
     expect(createHash("sha256").update(got).digest("hex")).toBe(rel.apkSha256);
   });
 
+  it("6.1: keeps positions for tracking (policy, spacing, ranges) and shows them to the console", async () => {
+    const now = Date.now();
+    const res = await signed("POST", "/api/android/location", { points: [
+      { lat: 50.08, lon: 14.42, acc: 12, at: now - 60_000 },
+      { lat: 50.081, lon: 14.421, acc: 10, at: now - 55_000 }, // closer than minSeconds (15 s) to the first
+      { lat: 50.09, lon: 14.43, acc: 8, at: now - 30_000, speed: 1.4, heading: 90 },
+      { lat: 95, lon: 14, at: now }, // out of range
+    ] });
+    expect((await res.json() as Record<string, any>).stored).toBe(2);
+    const track = (await admin("GET", `/devices/${dev.id}/locations`)).json;
+    expect(track.points.map((p: { lat: number }) => p.lat)).toEqual([50.09, 50.08]);
+    expect(track.points[0]).toMatchObject({ speed: 1.4, heading: 90 });
+    // The operator can switch it off: then nothing is kept.
+    const cfg = (await admin("GET", "")).json.config;
+    await admin("PUT", "/config", { policy: { ...cfg.policy, location: { track: false, days: 30, minSeconds: 15 } } });
+    expect((await signed("POST", "/api/android/location", { points: [{ lat: 1, lon: 1, at: Date.now() }] })).status).toBe(403);
+    await admin("PUT", "/config", { policy: { ...cfg.policy, location: { track: true, days: 30, minSeconds: 15 } } });
+    expect((await admin("DELETE", `/devices/${dev.id}/locations`)).json.deleted).toBe(2);
+  });
+
   it("records events; a wipe (even signed long ago) retires the device", async () => {
     const res = await signed("POST", "/api/android/events", { events: [{ id: "evt-00000001", type: "unlock-failed", at: Date.now(), detail: { attempts: 3 } }, { id: "evt-00000001", type: "unlock-failed" }] });
     expect((await res.json() as Record<string, any>).stored).toBe(1);

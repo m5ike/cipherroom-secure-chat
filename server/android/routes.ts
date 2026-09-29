@@ -25,7 +25,7 @@ import { enrollSignedString, publicKeyOf, releaseSignedString, requestSignedStri
 import { acknowledge, pendingFor } from "./commands";
 import { deployFile, latestBuildFor, MIN_APP_CODE } from "./bundle";
 import { fcmReady } from "./fcm";
-import { androidStore, newId, type AndroidEvent, type Device, type DeviceState, type EventLevel, type Release } from "./store";
+import { androidStore, newId, type AndroidEvent, type Device, type DeviceState, type EventLevel, type LocationPoint, type Release } from "./store";
 
 const MAX_SKEW = 5 * 60 * 1000;
 /** Events signed before a wipe may arrive much later (the device was offline). */
@@ -273,6 +273,38 @@ export function registerAndroidRoutes(app: Express): void {
     res.json({ ok: true, stored });
   });
 
+  // 6.1: positions for tracking — only when the user switched it on in the app and
+  // the policy allows it. At most 100 points a request; a point closer in time to
+  // the device's last one than policy.location.minSeconds is dropped.
+  const num = (v: unknown, min: number, max: number): number | null => (typeof v === "number" && Number.isFinite(v) && v >= min && v <= max ? v : null);
+  r.post("/location", signedBy(), (req: Signed, res) => {
+    const policy = androidConfig().policy.location;
+    if (!policy.track) return res.status(403).json({ ok: false, code: "location-off", message: "The server does not keep device positions." });
+    const device = req.device!;
+    const b = bodyJson(req);
+    const list = Array.isArray(b.points) ? b.points.slice(0, 100) : [];
+    const last = androidStore.locations.list({ device: device.id, limit: 1 })[0];
+    let lastAt = last?.at ?? 0;
+    let stored = 0;
+    const now = Date.now();
+    for (const raw of list) {
+      const p = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+      const lat = num(p.lat, -90, 90), lon = num(p.lon, -180, 180);
+      const at = int(p.at, 0, now + 5 * 60_000, 0);
+      if (lat === null || lon === null || !at || at < now - 7 * 86_400_000) continue;
+      if (at - lastAt < policy.minSeconds * 1000 && at >= lastAt) continue;
+      const point: LocationPoint = {
+        id: `loc_${device.id}_${at}`, deviceId: device.id, at, receivedAt: now, lat, lon,
+        acc: num(p.acc, 0, 100_000) ?? 0, alt: num(p.alt, -1000, 20_000), speed: num(p.speed, 0, 400), heading: num(p.heading, 0, 360),
+      };
+      if (androidStore.locations.get(point.id)) continue;
+      androidStore.locations.put(point);
+      lastAt = Math.max(lastAt, at);
+      stored++;
+    }
+    res.json({ ok: true, stored, minSeconds: policy.minSeconds });
+  });
+
   r.get("/bundles/:id", signedBy(), (req: Signed, res) => {
     const build = androidStore.builds.get(String(req.params.id));
     if (!build || build.status !== "published") return res.status(404).json({ ok: false, message: "No such published build." });
@@ -312,6 +344,7 @@ export function registerAndroidRoutes(app: Express): void {
       const now = Date.now();
       androidStore.events.pruneBefore(now - days * 86_400_000);
       androidStore.commands.pruneBefore(now - 60 * 86_400_000, (c) => c.status === "queued" && c.expiresAt > now);
+      androidStore.locations.pruneBefore(now - androidConfig().policy.location.days * 86_400_000);
     }).catch(() => undefined);
   };
   setTimeout(prune, 60_000).unref?.();
