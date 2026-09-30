@@ -11,7 +11,32 @@ import { THEME_CATALOG } from "../../client/src/lib/theme-catalog";
 import { t } from "../../client/src/lib/i18n";
 
 type Tokens = Record<string, string>;
-export type AndroidTheme = { id: string; label: Record<"cs" | "en" | "de", string>; tones: string[]; light?: Tokens; dark?: Tokens };
+/**
+ * 6.2: besides the colours a template carries its family (the picker's
+ * groups), its corner radius (--radius, dp) and its font (--font-sans →
+ * sans / serif / mono), so a template changes the shapes and the type too.
+ */
+export type AndroidTheme = {
+  id: string; label: Record<"cs" | "en" | "de", string>; tones: string[]; light?: Tokens; dark?: Tokens;
+  family: string; radius?: number; font?: "sans" | "serif" | "mono";
+};
+
+/** "1.125rem" / "18px" → dp (a rem is 16 px), within what a phone's cards take. */
+export function radiusDp(v: string | undefined): number | undefined {
+  const m = v?.trim().match(/^([\d.]+)(rem|px)$/);
+  if (!m) return undefined;
+  const px = Number(m[1]) * (m[2] === "rem" ? 16 : 1);
+  return Number.isFinite(px) ? Math.max(0, Math.min(28, Math.round(px))) : undefined;
+}
+
+/** The first family of a CSS font stack that says what it is. */
+export function fontKind(stack: string | undefined): "sans" | "serif" | "mono" | undefined {
+  if (!stack) return undefined;
+  const s = stack.toLowerCase();
+  if (/mono|consolas|menlo|courier/.test(s.split(",")[0]) || /^\s*monospace\s*$/.test(s)) return "mono";
+  if (/(^|,)\s*(ui-)?serif\s*(,|$)/.test(s) && !/sans-serif/.test(s.split(",")[0])) return "serif";
+  return "sans";
+}
 
 /** The design token ← the web's custom property. */
 const MAP: Array<[string, string]> = [
@@ -58,7 +83,10 @@ export function androidThemes(): AndroidTheme[] {
   const themes: AndroidTheme[] = [];
   for (const def of THEME_CATALOG) {
     const base = blocks.get(`${def.id}|`) ?? {};
-    const theme: AndroidTheme = { id: def.id, label: { cs: t("cs", def.labelKey), en: t("en", def.labelKey), de: t("de", def.labelKey) }, tones: [...def.tones] };
+    const theme: AndroidTheme = { id: def.id, label: { cs: t("cs", def.labelKey), en: t("en", def.labelKey), de: t("de", def.labelKey) }, tones: [...def.tones], family: def.family };
+    const radius = radiusDp(base.radius), font = fontKind(base["font-sans"]);
+    if (radius !== undefined) theme.radius = radius;
+    if (font) theme.font = font;
     def.tones.forEach((tone, i) => {
       // The first tone is the template's own block; the other has a [data-tone] block on top of it.
       const vars: Record<string, string> = { ...base, ...(i === 0 ? {} : blocks.get(`${def.id}|${tone}`) ?? {}) };

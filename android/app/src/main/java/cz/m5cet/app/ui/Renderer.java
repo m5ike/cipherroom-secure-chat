@@ -43,7 +43,10 @@ import java.util.List;
 import java.util.Map;
 
 import cz.m5cet.app.R;
+import cz.m5cet.app.design.Appearance;
 import cz.m5cet.app.design.Design;
+import cz.m5cet.app.ui.look.FlowLayout;
+import cz.m5cet.app.ui.look.Look;
 
 /**
  * Draws a screen's element tree (docs/android-architecture.md §4) as native
@@ -69,9 +72,15 @@ public final class Renderer {
     final Context ctx;
     final Host host;
 
+    private boolean attached;
+
     public Renderer(Context ctx, Host host) { this.ctx = ctx; this.host = host; }
 
-    public Bound build(JSONObject node) { return new Bound(this, node, null); }
+    public Bound build(JSONObject node) {
+        // 6.2: the look's font and its watch, once the design is there (the first screen).
+        if (!attached) { attached = true; Look.attach(ctx, host.design()); }
+        return new Bound(this, node, null);
+    }
 
     int dp(float v) { return Ui.dp(ctx, v); }
 
@@ -116,8 +125,15 @@ public final class Renderer {
             create();
             if (node.has("each")) {
                 // The repeated node lives in a box of its own; its copies are made on bind.
-                repeatBox = new LinearLayout(r.ctx);
-                ((LinearLayout) repeatBox).setOrientation(parent != null && "row".equals(parent.el) ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+                if (parent != null && parent.box instanceof FlowLayout) {
+                    // 6.2: in a row that wraps, the copies wrap too.
+                    FlowLayout f = new FlowLayout(r.ctx);
+                    f.setGap(r.dp((float) parent.style.optDouble("gap", 0) * Appearance.density()));
+                    repeatBox = f;
+                } else {
+                    repeatBox = new LinearLayout(r.ctx);
+                    ((LinearLayout) repeatBox).setOrientation(parent != null && "row".equals(parent.el) ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
+                }
                 repeated = new ArrayList<>();
             }
         }
@@ -129,7 +145,12 @@ public final class Renderer {
         private void create() {
             Context c = r.ctx;
             switch (el) {
-                case "column": case "row": {
+                case "row":
+                    // 6.2: a row that wraps (chips of a choice, colour swatches).
+                    if ("true".equals(s("wrap"))) { FlowLayout f = new FlowLayout(c); view = f; box = f; break; }
+                    // fall through
+                case "column": case "sheet": {
+                    // 6.2: "sheet" is the root of a sheet or the Tools dock — a column; Parts.showSheet reads its props.
                     LinearLayout l = new LinearLayout(c);
                     l.setOrientation(el.equals("row") ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
                     view = l; box = l;
@@ -182,7 +203,8 @@ public final class Renderer {
                 case "image": view = new RatioImageView(c); break;
                 case "avatar": view = new AvatarView(c); break;
                 case "divider": view = new View(c); break;
-                case "spacer": view = new Space(c); break;
+                // 6.2: a plain view, so a spacer with a background shows it (a Space draws nothing — the sheets' handle was invisible).
+                case "spacer": view = new View(c); break;
                 case "progress": view = new ProgressBar(c, null, s("value") == null ? android.R.attr.progressBarStyle : android.R.attr.progressBarStyleHorizontal); break;
                 case "input": view = new EditText(c); break;
                 case "switch": view = new Switch(c); break;
@@ -324,6 +346,11 @@ public final class Renderer {
                 int g = j.equals("center") ? (row ? Gravity.CENTER_HORIZONTAL : Gravity.CENTER_VERTICAL) : j.equals("end") ? (row ? Gravity.END : Gravity.BOTTOM) : (row ? Gravity.START : Gravity.TOP);
                 ((LinearLayout) box).setGravity(g);
             }
+            if (box instanceof FlowLayout) {
+                String j = style.optString("justify", "start");
+                ((FlowLayout) box).setGap(r.dp((float) style.optDouble("gap", 0) * Appearance.density()));
+                ((FlowLayout) box).setJustify(j.equals("center") ? Gravity.CENTER_HORIZONTAL : j.equals("end") ? Gravity.END : Gravity.START);
+            }
             if (style.has("elevation")) view.setElevation(r.dp((float) style.optDouble("elevation", 0)));
             if (style.has("maxWidth") && view instanceof TextView) ((TextView) view).setMaxWidth(r.dp((float) style.optDouble("maxWidth")));
             if (view instanceof TextView) {
@@ -355,7 +382,13 @@ public final class Renderer {
             t.setTextSize(TypedValue.COMPLEX_UNIT_SP, size * cz.m5cet.app.design.Appearance.fontScale());
             if (style.has("bold")) bold = style.optBoolean("bold");
             Design d = r.host.design();
-            t.setTypeface("mono".equals(variant) ? android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, bold ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL) : Ui.typeface(d, bold, style.optBoolean("italic")));
+            String font = style.optString("font", "");
+            if ("mono".equals(variant)) t.setTypeface(android.graphics.Typeface.create(android.graphics.Typeface.MONOSPACE, bold ? android.graphics.Typeface.BOLD : android.graphics.Typeface.NORMAL));
+            // 6.2: an element's own font (the font chips of Settings › Appearance show themselves).
+            else if (!font.isEmpty()) t.setTypeface(Ui.typeface(Look.familyName(font), bold, style.optBoolean("italic")));
+            // 6.2: labels of buttons and chips in the medium weight.
+            else if (bold && !style.has("bold") && "label".equals(variant) && (el.equals("button") || el.equals("chip"))) t.setTypeface(Ui.labelFace(d));
+            else t.setTypeface(Ui.typeface(d, bold, style.optBoolean("italic")));
             t.setLineSpacing(0, 1.1f);
             t.setIncludeFontPadding(false);
         }
@@ -370,7 +403,9 @@ public final class Renderer {
             JSONObject click = on.optJSONObject("click");
             if (click != null) {
                 View target = view;
-                target.setOnClickListener(v -> fire(click, v));
+                // 6.2: buttons tick under the finger (Settings › Appearance › Haptics).
+                boolean tick = el.equals("button") || el.equals("iconButton") || el.equals("chip");
+                target.setOnClickListener(v -> { if (tick) Look.haptic(v, false); fire(click, v); });
                 if (!(target instanceof CompoundButton)) {
                     target.setClickable(true);
                     if (target.getBackground() == null && !el.equals("button") && !el.equals("iconButton") && !el.equals("chip")) {
@@ -381,7 +416,7 @@ public final class Renderer {
                 }
             }
             JSONObject longClick = on.optJSONObject("longClick");
-            if (longClick != null) view.setOnLongClickListener(v -> { fire(longClick, v); return true; });
+            if (longClick != null) view.setOnLongClickListener(v -> { Look.haptic(v, true); fire(longClick, v); return true; });
             JSONObject submit = on.optJSONObject("submit");
             if (submit != null && view instanceof EditText) {
                 ((EditText) view).setImeOptions(EditorInfo.IME_ACTION_DONE);
@@ -402,7 +437,9 @@ public final class Renderer {
         /** A new value from the user: into the setting / form, then the "change" event with $value. */
         void commit(Object value, View source) {
             String key = s("setting");
-            if (key != null) r.host.setSetting(key, value);
+            // 6.2: the look (appearance.*) changes in place (Look draws the screen again) — the host would restart the activity.
+            if (key != null && key.startsWith("appearance.")) Look.set(key, Expr.toText(value));
+            else if (key != null) r.host.setSetting(key, value);
             String bind = s("bind");
             if (bind != null) r.host.form().put(bind, value);
             JSONObject on = node.optJSONObject("on");
@@ -525,7 +562,9 @@ public final class Renderer {
             String fgv = styleValue("fg", sc);
             if (fgv != null) fg = r.color(fgv, fg);
             String bg = styleValue("bg", sc);
-            float radius = style.has("radius") ? r.dp((float) style.optDouble("radius")) : el.equals("card") ? r.dp(d.radius() + 4) : el.equals("button") || el.equals("chip") || el.equals("badge") ? r.dp(999) : 0;
+            // 6.2: a card follows the template's radius; buttons and chips the user's shape (Settings › Appearance › Buttons).
+            float radius = style.has("radius") ? r.dp((float) style.optDouble("radius")) : el.equals("card") ? r.dp(Appearance.radius(d) + 4)
+                : el.equals("button") ? Look.radius(r.ctx, "button") : el.equals("chip") ? Look.radius(r.ctx, "chip") : el.equals("badge") ? r.dp(999) : 0;
             int borderW = 0, borderC = 0;
             String border = styleValue("border", sc);
             if (border != null) {
@@ -536,17 +575,22 @@ public final class Renderer {
             int fill = Color.TRANSPARENT;
             boolean paint = false;
             if (bg != null) { fill = r.color(bg, Color.TRANSPARENT); paint = true; }
-            if (el.equals("card") && bg == null) { fill = r.color("@surface", Color.WHITE); paint = true; if (!style.has("elevation")) view.setElevation(r.dp(2)); }
+            // 6.2: a card rests lower (a calmer surface); the design can still raise it.
+            if (el.equals("card") && bg == null) { fill = r.color("@surface", Color.WHITE); paint = true; if (!style.has("elevation")) view.setElevation(r.dp(1)); }
             if (el.equals("button")) {
                 String variant = Expr.toText(propValue("variant", sc));
                 if (variant.isEmpty()) variant = "primary";
+                // 6.2: the main buttons in the user's style: filled, tonal, outlined or text.
+                if (variant.equals("primary")) variant = "look:" + Look.buttons();
                 if (bg == null) {
+                    int primary = r.color("@primary", Color.BLUE);
                     switch (variant) {
-                        case "primary": fill = r.color("@primary", Color.BLUE); fg = fgv == null ? r.color("@onPrimary", Color.WHITE) : fg; break;
+                        case "primary": case "look:filled": fill = primary; fg = fgv == null ? r.color("@onPrimary", Color.WHITE) : fg; break;
+                        case "look:outlined": fill = Color.TRANSPARENT; fg = fgv == null ? primary : fg; if (borderW == 0) { borderW = r.dp(1.5f); borderC = Ui.alpha(primary, 0.7f); } break;
                         case "danger": fill = r.color("@danger", Color.RED); fg = fgv == null ? Color.WHITE : fg; break;
-                        case "tonal": fill = Ui.alpha(r.color("@primary", Color.BLUE), 0.14f); fg = fgv == null ? r.color("@primary", Color.BLUE) : fg; break;
+                        case "tonal": case "look:tonal": fill = Ui.alpha(primary, 0.14f); fg = fgv == null ? primary : fg; break;
                         case "secondary": fill = Color.TRANSPARENT; if (borderW == 0) { borderW = r.dp(1); borderC = r.color("@border", Color.GRAY); } break;
-                        default: fill = Color.TRANSPARENT; fg = fgv == null ? r.color("@primary", Color.BLUE) : fg;
+                        default: fill = Color.TRANSPARENT; fg = fgv == null ? primary : fg;
                     }
                 }
                 paint = true;
@@ -563,8 +607,9 @@ public final class Renderer {
                 if (fgv == null && sel) fg = r.color("@primary", Color.BLUE);
             }
             if (el.equals("divider")) { fill = r.color(bg == null ? "@border" : bg, Color.LTGRAY); paint = true; }
-            // 6.1: the bubbles' shape (Settings › Appearance › Bubbles) for the design's "bubble" elements.
-            if ("bubble".equals(node.optString("id"))) {
+            // 6.1: the bubbles' shape (Settings › Appearance › Bubbles) for the design's "bubble" elements
+            // (6.2: and anything painted as a bubble — the preview's mini chat).
+            if ("bubble".equals(node.optString("id")) || "@bubbleIn".equals(style.optString("bg")) || "@bubbleOut".equals(style.optString("bg"))) {
                 String shape = cz.m5cet.app.design.Appearance.bubbles();
                 if (shape.equals("square")) radius = r.dp(4);
                 else if (shape.equals("minimal")) { fill = Color.TRANSPARENT; fg = r.color("@onSurface", fg); view.setElevation(0); if (borderW == 0) { borderW = r.dp(1); borderC = r.color("@border", Color.GRAY); } }
@@ -572,7 +617,9 @@ public final class Renderer {
             if (paint || borderW > 0 || radius > 0 && bg != null) {
                 GradientDrawable g = Ui.shape(fill, radius, borderW, borderC);
                 boolean clickable = node.optJSONObject("on") != null && node.optJSONObject("on").has("click");
-                view.setBackground(clickable || el.equals("button") ? Ui.ripple(g, Ui.alpha(fg, 0.18f)) : g);
+                // 6.2: buttons and chips answer a press the user's way (ripple, scale, nothing).
+                if (el.equals("button") || el.equals("chip") && clickable) view.setBackground(Look.pressable(view, g, Ui.alpha(fg, 0.18f)));
+                else view.setBackground(clickable ? Ui.ripple(g, Ui.alpha(fg, 0.18f)) : g);
                 if (radius > 0) { view.setClipToOutline(true); }
             }
             String op = styleValue("opacity", sc);
@@ -643,10 +690,15 @@ public final class Renderer {
                 case "iconButton": {
                     String icon = Expr.toText(propValue("icon", sc));
                     String variant = Expr.toText(propValue("variant", sc));
-                    int color = variant.equals("primary") ? r.color("@onPrimary", Color.WHITE) : fg;
+                    // 6.2: a primary icon button in the user's button style and shape.
+                    String look = variant.equals("primary") ? Look.buttons() : "";
+                    int primary = r.color("@primary", Color.BLUE);
+                    int color = look.equals("filled") ? r.color("@onPrimary", Color.WHITE) : look.isEmpty() ? fg : primary;
                     iconView.setImageDrawable(Icons.drawable(r.ctx, icon.isEmpty() ? "circle" : icon, r.dp(22), color));
-                    if (variant.equals("primary")) view.setBackground(Ui.ripple(Ui.shape(r.color("@primary", Color.BLUE), r.dp(22), 0, 0), Ui.alpha(color, 0.2f)));
-                    else view.setBackground(Ui.ripple(null, Ui.alpha(fg, 0.16f)));
+                    float rad = Look.radius(r.ctx, "icon");
+                    Drawable shape = look.equals("filled") ? Ui.shape(primary, rad, 0, 0) : look.equals("tonal") ? Ui.shape(Ui.alpha(primary, 0.14f), rad, 0, 0)
+                        : look.equals("outlined") ? Ui.shape(Color.TRANSPARENT, rad, r.dp(1.5f), Ui.alpha(primary, 0.7f)) : null;
+                    view.setBackground(Look.pressable(view, shape, Ui.alpha(shape == null ? fg : color, shape == null ? 0.16f : 0.2f)));
                     String label = Expr.render(s("label") == null ? "" : s("label"), sc, tr);
                     view.setContentDescription(label);
                     if (!label.isEmpty()) view.setTooltipText(label);
@@ -713,7 +765,7 @@ public final class Renderer {
                             @Override public void afterTextChanged(Editable s) { r.host.form().put(bind, s.toString()); }
                         });
                     }
-                    e.setBackground(Ui.shape(r.color("@surfaceVariant", Color.LTGRAY), r.dp(12), 0, 0));
+                    e.setBackground(Ui.shape(r.color("@surfaceVariant", Color.LTGRAY), Math.min(Look.radius(r.ctx, "field"), r.dp(22)), 0, 0));
                     if (!style.has("padding")) e.setPadding(r.dp(14), r.dp(10), r.dp(14), r.dp(10));
                     break;
                 }
@@ -761,23 +813,28 @@ public final class Renderer {
                             seg.setGravity(Gravity.CENTER);
                             seg.setMinHeight(r.dp(38));
                             seg.setPadding(r.dp(12), r.dp(6), r.dp(12), r.dp(6));
-                            seg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f);
+                            seg.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f * Appearance.fontScale());
                             final int at = i;
-                            seg.setOnClickListener(v -> { List<String[]> now = options(scope == null ? n -> null : scope); if (at < now.size()) commit(now.get(at)[0], v); });
+                            seg.setOnClickListener(v -> { Look.haptic(v, false); List<String[]> now = options(scope == null ? n -> null : scope); if (at < now.size()) commit(now.get(at)[0], v); });
                             l.addView(seg, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
                         }
                     }
                     int accent = r.color("@primary", Color.BLUE);
+                    // 6.2: the segments take the buttons' shape; the chosen one is a calm raised pill of the surface.
+                    float outer = Math.min(Look.radius(r.ctx, "button"), r.dp(22)), inner = Math.max(0, outer - r.dp(3));
+                    boolean tonal = !Look.buttons().equals("filled");
                     for (int i = 0; i < opts.size(); i++) {
                         TextView seg = (TextView) l.getChildAt(i);
                         boolean sel = opts.get(i)[0].equals(current);
                         seg.setText(opts.get(i)[1]);
-                        seg.setTextColor(sel ? r.color("@onPrimary", Color.WHITE) : fg);
-                        seg.setTypeface(Ui.typeface(r.host.design(), sel, false));
-                        seg.setBackground(Ui.ripple(Ui.shape(sel ? accent : Color.TRANSPARENT, r.dp(10), 0, 0), Ui.alpha(fg, 0.12f)));
+                        seg.setTextColor(sel ? (tonal ? accent : r.color("@onPrimary", Color.WHITE)) : fg);
+                        seg.setTypeface(sel ? Ui.labelFace(r.host.design()) : Ui.typeface(r.host.design(), false, false));
+                        int selFill = tonal ? r.color("@surface", Color.WHITE) : accent;
+                        seg.setBackground(Look.pressable(seg, Ui.shape(sel ? selFill : Color.TRANSPARENT, inner, 0, 0), Ui.alpha(fg, 0.12f)));
+                        seg.setElevation(sel && tonal ? r.dp(1) : 0);
                         seg.setSelected(sel);
                     }
-                    if (!style.has("bg")) l.setBackground(Ui.shape(r.color("@surfaceVariant", Color.LTGRAY), r.dp(12), 0, 0));
+                    if (!style.has("bg")) l.setBackground(Ui.shape(r.color("@surfaceVariant", Color.LTGRAY), outer, 0, 0));
                     if (!style.has("padding")) l.setPadding(r.dp(3), r.dp(3), r.dp(3), r.dp(3));
                     break;
                 }
@@ -812,12 +869,19 @@ public final class Renderer {
     /** A native part that wants the scope of its tree. */
     public interface Slot { void bindSlot(Expr.Scope scope); }
 
+    /**
+     * An enter animation of the design, as the user wants motion (6.2,
+     * Settings › Appearance › Animations): off, subtle (shorter and nearer),
+     * normal, lively (further, springy), and at their speed.
+     */
     public static void animate(View v, JSONObject spec, Context ctx) {
-        if (Ui.reducedMotion(ctx)) return;
+        if (Look.still(ctx)) return;
         String type = spec.optString("type", "fade");
-        long ms = spec.optLong("ms", 220);
-        long delay = spec.optLong("delay", 0);
-        float d = Ui.dp(ctx, 24);
+        long ms = Look.ms(spec.optLong("ms", 220));
+        long delay = Look.ms(spec.optLong("delay", 0));
+        float k = Look.travel();
+        float d = Ui.dp(ctx, 24) * k;
+        float scale = 1 - 0.1f * k, pop = Math.max(0.2f, 1 - 0.5f * k);
         AnimatorSet set = new AnimatorSet();
         switch (type) {
             case "none": return;
@@ -825,13 +889,13 @@ public final class Renderer {
             case "slide-down": set.playTogether(ObjectAnimator.ofFloat(v, View.TRANSLATION_Y, -d, 0), ObjectAnimator.ofFloat(v, View.ALPHA, 0, 1)); break;
             case "slide-left": set.playTogether(ObjectAnimator.ofFloat(v, View.TRANSLATION_X, d, 0), ObjectAnimator.ofFloat(v, View.ALPHA, 0, 1)); break;
             case "slide-right": set.playTogether(ObjectAnimator.ofFloat(v, View.TRANSLATION_X, -d, 0), ObjectAnimator.ofFloat(v, View.ALPHA, 0, 1)); break;
-            case "scale": set.playTogether(ObjectAnimator.ofFloat(v, View.SCALE_X, 0.9f, 1), ObjectAnimator.ofFloat(v, View.SCALE_Y, 0.9f, 1), ObjectAnimator.ofFloat(v, View.ALPHA, 0, 1)); break;
-            case "pop": set.playTogether(ObjectAnimator.ofFloat(v, View.SCALE_X, 0.5f, 1), ObjectAnimator.ofFloat(v, View.SCALE_Y, 0.5f, 1), ObjectAnimator.ofFloat(v, View.ALPHA, 0, 1)); break;
+            case "scale": set.playTogether(ObjectAnimator.ofFloat(v, View.SCALE_X, scale, 1), ObjectAnimator.ofFloat(v, View.SCALE_Y, scale, 1), ObjectAnimator.ofFloat(v, View.ALPHA, 0, 1)); break;
+            case "pop": set.playTogether(ObjectAnimator.ofFloat(v, View.SCALE_X, pop, 1), ObjectAnimator.ofFloat(v, View.SCALE_Y, pop, 1), ObjectAnimator.ofFloat(v, View.ALPHA, 0, 1)); break;
             default: set.playTogether(ObjectAnimator.ofFloat(v, View.ALPHA, 0, 1));
         }
         set.setDuration(ms);
         set.setStartDelay(delay);
-        set.setInterpolator(Ui.easing(spec.optString("easing", type.equals("pop") ? "overshoot" : "decelerate")));
+        set.setInterpolator(Look.easing(spec.optString("easing", type.equals("pop") ? "overshoot" : "decelerate")));
         set.start();
     }
 

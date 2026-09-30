@@ -1,7 +1,9 @@
 package cz.m5cet.app.ui.parts;
 
 import android.Manifest;
+import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -12,6 +14,7 @@ import android.text.TextWatcher;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewTreeObserver;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
 import android.widget.HorizontalScrollView;
@@ -33,6 +36,7 @@ import cz.m5cet.app.chat.Payloads;
 import cz.m5cet.app.chat.RoomSession;
 import cz.m5cet.app.core.Io;
 import cz.m5cet.app.core.Log;
+import cz.m5cet.app.design.Appearance;
 import cz.m5cet.app.location.Where;
 import cz.m5cet.app.security.FileVault;
 import cz.m5cet.app.ui.Expr;
@@ -40,21 +44,27 @@ import cz.m5cet.app.ui.Icons;
 import cz.m5cet.app.ui.MainActivity;
 import cz.m5cet.app.ui.Renderer;
 import cz.m5cet.app.ui.Ui;
+import cz.m5cet.app.ui.look.Look;
+import cz.m5cet.app.ui.look.SendButton;
 import cz.m5cet.app.voice.Audio;
+import cz.m5cet.app.voice.Dictation;
 import cz.m5cet.app.voice.Voice;
 
 /**
  * Writing (6.1): the text field with suggestions (/ commands, @ people,
  * # tags), a reply preview, the kinds of the next message (hold to reveal,
- * vanishing, sealed with a code, private to some people) as chips, and four
- * buttons —
+ * vanishing, sealed with a code, private to some people) as chips, and —
  *  - attach (+): the "attach" sheet of the design (picture, camera, file,
  *    position, voice message, kinds, recipients);
- *  - dictate (mic): speech into the field; a long press opens the dictation
- *    options ("dictate.options": read back, send at once, language);
- *  - send: a long press opens "send.options" — the text as a voice message
- *    (speech synthesis), or record and send it as text (recognition);
- *  - while recording, a bar with the level, the time, cancel and done.
+ *  - 6.2 dictate (in the field): speech into the field; a long press opens
+ *    the dictation options ("dictate.options": read back, send at once,
+ *    language);
+ *  - 6.2 mic: records a voice message like the web's (tap, then send or
+ *    cancel on the recording bar: level, time);
+ *  - send (ui/look/SendButton): a badge says who gets it (everyone / only
+ *    the chosen, in another colour), dots and a one-time hint that a long
+ *    press opens "send.options" — the text as a voice message (speech
+ *    synthesis), or record and send it as text (recognition).
  * Small files (and pictures) go inline in the message like the web's; larger
  * ones by file transfer from the vault.
  */
@@ -70,22 +80,31 @@ final class Composer extends LinearLayout implements Renderer.Slot {
     private final LinearLayout kinds, row, recBar;
     private final HorizontalScrollView kindsScroll;
     private final LinearLayout suggestions;
-    private final ImageView dictate, send;
+    private final ImageView dictate, mic;
+    private final SendButton send;
     private final TextView recTime;
     private final ProgressBar recLevel;
     private ChatMessage replyTo;
     private Audio.Recorder recorder;
     private String recMode = "";
     private String dictatedBase = "";
+    /** The one-time "hold for more" bubble over Send, while it is shown. */
+    private View hint;
+    /** The microphone was asked for and the answer is not in yet (a refusal is said when the dialog is gone). */
+    private boolean pendingMic;
+    private static boolean micAsked, hinted;
 
     Composer(MainActivity a, Parts parts) {
         super(a);
         this.a = a;
         this.parts = parts;
         setOrientation(VERTICAL);
-        int fg = Ui.color(a, "@onSurface", Color.BLACK);
+        int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
+        // 6.2: a calm surface with a hairline above it instead of a shadow.
         setBackgroundColor(Ui.color(a, "@surface", Color.WHITE));
-        setElevation(Ui.dp(a, 6));
+        View line = new View(a);
+        line.setBackgroundColor(Ui.alpha(Ui.color(a, "@border", Color.LTGRAY), 0.8f));
+        addView(line, new LayoutParams(LayoutParams.MATCH_PARENT, Math.max(1, Ui.dp(a, 0.7f))));
 
         suggestions = new LinearLayout(a);
         suggestions.setOrientation(VERTICAL);
@@ -109,68 +128,95 @@ final class Composer extends LinearLayout implements Renderer.Slot {
 
         row = new LinearLayout(a);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(Ui.dp(a, 6), Ui.dp(a, 6), Ui.dp(a, 6), Ui.dp(a, 6));
-        ImageView attach = iconButton("plus", fg);
+        row.setPadding(Ui.dp(a, 4), Ui.dp(a, 6), Ui.dp(a, 6), Ui.dp(a, 6));
+        ImageView attach = iconButton("plus", fg, 44);
         attach.setContentDescription(a.app().t("composer.attach"));
-        attach.setOnClickListener(v -> parts.showSheet("attach"));
+        attach.setOnClickListener(v -> { Look.haptic(v, false); parts.showSheet("attach"); });
         row.addView(attach);
+        // 6.2: the field and the dictation quick icon share one pill.
+        LinearLayout pill = new LinearLayout(a);
+        pill.setGravity(Gravity.CENTER_VERTICAL);
+        pill.setMinimumHeight(Ui.dp(a, 44));
+        pill.setBackground(Ui.shape(Ui.color(a, "@surfaceVariant", Color.LTGRAY), Math.min(Look.radius(a, "field"), Ui.dp(a, 22)), 0, 0));
         input = new EditText(a);
         input.setHint(a.app().t("room.typeMessage"));
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         input.setMaxLines(6);
-        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, (float) (16 * a.app().settings.num("appearance.fontScale")));
+        input.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16 * Appearance.fontScale());
         input.setTextColor(fg);
-        input.setHintTextColor(Ui.color(a, "@muted", Color.GRAY));
-        input.setBackground(Ui.shape(Ui.color(a, "@surfaceVariant", Color.LTGRAY), Ui.dp(a, 22), 0, 0));
-        input.setPadding(Ui.dp(a, 16), Ui.dp(a, 10), Ui.dp(a, 16), Ui.dp(a, 10));
+        input.setHintTextColor(muted);
+        input.setBackground(null);
+        input.setPadding(Ui.dp(a, 16), Ui.dp(a, 10), Ui.dp(a, 4), Ui.dp(a, 10));
         input.setImeOptions(a.app().settings.bool("messages.enterSends") ? EditorInfo.IME_ACTION_SEND : EditorInfo.IME_ACTION_NONE);
         input.setOnEditorActionListener((v, id, e) -> { if (id == EditorInfo.IME_ACTION_SEND) { send(); return true; } return false; });
         input.addTextChangedListener(new TextWatcher() {
             @Override public void beforeTextChanged(CharSequence s, int st, int c, int af) { }
             @Override public void onTextChanged(CharSequence s, int st, int b, int c) { }
-            @Override public void afterTextChanged(Editable s) { suggest(); }
+            @Override public void afterTextChanged(Editable s) { suggest(); if (s.length() > 0) maybeHint(); }
         });
         Object pending = a.form().remove("composer");
         if (pending != null) input.setText(String.valueOf(pending));
-        LayoutParams il = new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f);
-        il.setMargins(Ui.dp(a, 4), 0, Ui.dp(a, 4), 0);
-        row.addView(input, il);
-        dictate = iconButton("mic", fg);
+        pill.addView(input, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
+        dictate = iconButton("speech", muted, 40);
         dictate.setContentDescription(a.app().t("voice.dictate"));
-        dictate.setOnClickListener(v -> toggleDictation());
-        dictate.setOnLongClickListener(v -> { parts.showSheet("dictate.options"); return true; });
-        row.addView(dictate);
-        send = iconButton("send-horizontal", Ui.color(a, "@onPrimary", Color.WHITE));
-        send.setBackground(Ui.ripple(Ui.shape(Ui.color(a, "@primary", Color.RED), Ui.dp(a, 22), 0, 0), 0x33FFFFFF));
-        send.setContentDescription(a.app().t("room.send"));
-        send.setOnClickListener(v -> send());
-        send.setOnLongClickListener(v -> { parts.showSheet("send.options"); return true; });
-        row.addView(send);
+        dictate.setTooltipText(a.app().t("voice.dictate"));
+        dictate.setOnClickListener(v -> { Look.haptic(v, false); toggleDictation(); });
+        dictate.setOnLongClickListener(v -> { Look.haptic(v, true); parts.showSheet("dictate.options"); return true; });
+        LayoutParams dl0 = new LayoutParams(Ui.dp(a, 40), Ui.dp(a, 40));
+        dl0.setMarginEnd(Ui.dp(a, 2));
+        pill.addView(dictate, dl0);
+        LayoutParams pl = new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f);
+        pl.setMargins(Ui.dp(a, 2), 0, Ui.dp(a, 4), 0);
+        row.addView(pill, pl);
+        // 6.2: the microphone records a voice message (the web's AudioRecorder).
+        mic = iconButton("mic", fg, 44);
+        mic.setContentDescription(a.app().t("look.mic.record"));
+        mic.setTooltipText(a.app().t("look.mic.record"));
+        mic.setOnClickListener(v -> { Look.haptic(v, false); record("voice"); });
+        mic.setOnLongClickListener(v -> { Look.haptic(v, true); parts.showSheet("send.options"); return true; });
+        row.addView(mic);
+        send = new SendButton(a);
+        send.setOnClickListener(v -> { Look.haptic(v, false); send(); });
+        send.setOnLongClickListener(v -> {
+            Look.haptic(v, true);
+            hideHint(true);
+            // Found it without the hint: no need to show it any more.
+            if (!hinted) { hinted = true; app().settings.set(Look.HINT_SEND, true); }
+            parts.showSheet("send.options");
+            return true;
+        });
+        LayoutParams sl = new LayoutParams(Ui.dp(a, 48), Ui.dp(a, 48));
+        sl.setMarginStart(Ui.dp(a, 2));
+        row.addView(send, sl);
         addView(row);
 
         recBar = new LinearLayout(a);
         recBar.setGravity(Gravity.CENTER_VERTICAL);
-        recBar.setPadding(Ui.dp(a, 10), Ui.dp(a, 8), Ui.dp(a, 10), Ui.dp(a, 8));
+        recBar.setPadding(Ui.dp(a, 6), Ui.dp(a, 6), Ui.dp(a, 6), Ui.dp(a, 6));
         recBar.setVisibility(GONE);
-        ImageView cancel = iconButton("x", fg);
-        cancel.setContentDescription(a.app().t("nav.close"));
-        cancel.setOnClickListener(v -> stopRecording(false));
+        ImageView cancel = iconButton("trash", fg, 44);
+        cancel.setContentDescription(a.app().t("look.mic.cancel"));
+        cancel.setTooltipText(a.app().t("look.mic.cancel"));
+        cancel.setOnClickListener(v -> { Look.haptic(v, false); stopRecording(false); });
         recBar.addView(cancel);
         recTime = new TextView(a);
         recTime.setTextColor(Ui.color(a, "@danger", Color.RED));
         recTime.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        recTime.setPadding(Ui.dp(a, 8), 0, Ui.dp(a, 8), 0);
+        recTime.setTypeface(android.graphics.Typeface.MONOSPACE);
+        recTime.setPadding(Ui.dp(a, 8), 0, Ui.dp(a, 10), 0);
         recBar.addView(recTime);
         recLevel = new ProgressBar(a, null, android.R.attr.progressBarStyleHorizontal);
         recLevel.setMax(100);
         recLevel.setProgressTintList(android.content.res.ColorStateList.valueOf(Ui.color(a, "@primary", Color.BLUE)));
-        recBar.addView(recLevel, new LayoutParams(0, Ui.dp(a, 8), 1f));
-        ImageView done = iconButton("check", Ui.color(a, "@onPrimary", Color.WHITE));
-        done.setBackground(Ui.ripple(Ui.shape(Ui.color(a, "@primary", Color.RED), Ui.dp(a, 22), 0, 0), 0x33FFFFFF));
-        done.setContentDescription(a.app().t("room.send"));
-        done.setOnClickListener(v -> stopRecording(true));
-        LayoutParams dl = new LayoutParams(Ui.dp(a, 44), Ui.dp(a, 44));
-        dl.setMarginStart(Ui.dp(a, 8));
+        recLevel.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(Ui.color(a, "@surfaceVariant", Color.LTGRAY)));
+        recBar.addView(recLevel, new LayoutParams(0, Ui.dp(a, 6), 1f));
+        SendButton done = new SendButton(a);
+        done.set("send-horizontal", Ui.color(a, "@primary", Color.RED), Ui.color(a, "@onPrimary", Color.WHITE), null, 0, 0, 0, false);
+        done.setContentDescription(a.app().t("look.mic.stop"));
+        done.setTooltipText(a.app().t("look.mic.stop"));
+        done.setOnClickListener(v -> { Look.haptic(v, false); stopRecording(true); });
+        LayoutParams dl = new LayoutParams(Ui.dp(a, 48), Ui.dp(a, 48));
+        dl.setMarginStart(Ui.dp(a, 10));
         recBar.addView(done, dl);
         addView(recBar);
 
@@ -181,14 +227,113 @@ final class Composer extends LinearLayout implements Renderer.Slot {
 
     private M5 app() { return a.app(); }
 
-    private ImageView iconButton(String icon, int color) {
+    private ImageView iconButton(String icon, int color, int sizeDp) {
         ImageView b = new ImageView(getContext());
-        int s = Ui.dp(getContext(), 44);
+        int s = Ui.dp(getContext(), sizeDp);
         b.setLayoutParams(new LayoutParams(s, s));
         b.setScaleType(ImageView.ScaleType.CENTER);
         b.setImageDrawable(Icons.drawable(getContext(), icon, Ui.dp(getContext(), 22), color));
-        b.setBackground(Ui.ripple(null, Ui.alpha(color, 0.18f)));
+        b.setBackground(Look.pressable(b, null, Ui.alpha(color, 0.18f)));
         return b;
+    }
+
+    /* ------------------------------------------------ Send (6.2) */
+
+    /**
+     * Send's colour and badge: to the whole room the design's primary with a
+     * group; only to the chosen people the inverse (the text colour) with one
+     * person in the primary colour — so a private message is never sent by
+     * mistake to everyone, or the other way round.
+     */
+    private void updateSend() {
+        Context c = getContext();
+        List<String> to = recipientNames();
+        boolean only = !to.isEmpty();
+        int surface = Ui.color(c, "@surface", Color.WHITE);
+        if (only) send.set("send-horizontal", Ui.color(c, "@onSurface", Color.BLACK), surface, "user", Ui.color(c, "@primary", Color.BLUE), Ui.color(c, "@onPrimary", Color.WHITE), surface, true);
+        else send.set("send-horizontal", Ui.color(c, "@primary", Color.BLUE), Ui.color(c, "@onPrimary", Color.WHITE), "users", Ui.color(c, "@onPrimary", Color.WHITE), Ui.color(c, "@primary", Color.BLUE), surface, true);
+        String label = only ? app().t("look.send.only") + " " + String.join(", ", to) : app().t("look.send.everyone");
+        send.setContentDescription(label + " · " + app().t("look.send.hold"));
+        send.setTooltipText(label);
+    }
+
+    /** Once ever: a bubble over Send, "hold for more options" — when the user first has something to send. */
+    private void maybeHint() {
+        if (hinted || app().settings.bool(Look.HINT_SEND) || !isAttachedToWindow() || send.getWidth() == 0) return;
+        hinted = true;
+        app().settings.set(Look.HINT_SEND, true);
+        Context c = getContext();
+        TextView t = new TextView(c);
+        t.setText(app().t("look.send.hint"));
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f * Appearance.fontScale());
+        t.setTextColor(Ui.color(c, "@surface", Color.WHITE));
+        t.setPadding(Ui.dp(c, 12), Ui.dp(c, 8), Ui.dp(c, 12), Ui.dp(c, 8));
+        t.setMaxWidth(Ui.dp(c, 240));
+        t.setBackground(Ui.shape(Ui.alpha(Ui.color(c, "@onSurface", Color.BLACK), 0.92f), Ui.dp(c, 12), 0, 0));
+        t.setElevation(Ui.dp(c, 6));
+        t.setOnClickListener(v -> hideHint(false));
+        t.measure(MeasureSpec.makeMeasureSpec(Ui.dp(c, 260), MeasureSpec.AT_MOST), MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED));
+        android.widget.FrameLayout over = a.overlay();
+        int[] o = new int[2], s = new int[2];
+        over.getLocationInWindow(o);
+        send.getLocationInWindow(s);
+        android.widget.FrameLayout.LayoutParams lp = new android.widget.FrameLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.START);
+        lp.leftMargin = Math.max(Ui.dp(c, 8), s[0] - o[0] - over.getPaddingLeft() + send.getWidth() - t.getMeasuredWidth());
+        lp.topMargin = Math.max(0, s[1] - o[1] - over.getPaddingTop() - t.getMeasuredHeight() - Ui.dp(c, 6));
+        over.addView(t, lp);
+        hint = t;
+        t.setAlpha(0f);
+        t.setTranslationY(Ui.dp(c, 6));
+        t.animate().alpha(1f).translationY(0).setDuration(Look.ms(220)).setInterpolator(Look.easing("decelerate")).start();
+        Io.mainLater(() -> hideHint(false), 6000);
+    }
+
+    private void hideHint(boolean now) {
+        View h = hint;
+        if (h == null) return;
+        hint = null;
+        if (now) { a.overlay().removeView(h); return; }
+        h.animate().alpha(0f).setDuration(Look.ms(180)).withEndAction(() -> a.overlay().removeView(h)).start();
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        hideHint(true);
+        getViewTreeObserver().removeOnWindowFocusChangeListener(focusBack);
+    }
+
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        getViewTreeObserver().addOnWindowFocusChangeListener(focusBack);
+    }
+
+    /* ------------------------------------------- the microphone (6.2) */
+
+    /** The permission dialog closed: a refusal is said (a grant runs the action through withPermission). */
+    private final ViewTreeObserver.OnWindowFocusChangeListener focusBack = focus -> { if (focus && pendingMic) Io.mainLater(this::micAnswered, 250); };
+
+    private void micAnswered() {
+        if (!pendingMic) return;
+        if (a.has(Manifest.permission.RECORD_AUDIO)) { pendingMic = false; return; }
+        if (!a.hasWindowFocus()) return; // the dialog is still up
+        pendingMic = false;
+        a.flash("", app().t("look.mic.denied"), "warn");
+    }
+
+    /**
+     * Runs then with the microphone: at once when allowed; else after the
+     * user allows it; a phone without one, a refusal and a "never ask again"
+     * are said on screen instead of nothing happening.
+     */
+    private void withMic(Runnable then) {
+        if (!a.getPackageManager().hasSystemFeature(PackageManager.FEATURE_MICROPHONE)) { a.flash("", app().t("look.mic.none"), "error"); return; }
+        if (a.has(Manifest.permission.RECORD_AUDIO)) { then.run(); return; }
+        if (micAsked && !a.shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) { a.flash("", app().t("look.mic.blocked"), "warn"); return; }
+        micAsked = true;
+        pendingMic = true;
+        a.askPermissions(Manifest.permission.RECORD_AUDIO);
+        // No dialog at all (refused for good before): the answer is already a no.
+        Io.mainLater(this::micAnswered, 1200);
     }
 
     void setReply(ChatMessage m) {
@@ -217,6 +362,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         if (!to.isEmpty()) kinds.addView(kindChip("✉ " + String.join(", ", to), () -> f.remove("msgTo")));
         if (app().settings.bool("location.inHeader")) kinds.addView(kindChip("📍 " + app().t("location.inHeader"), () -> { app().settings.set("location.inHeader", false); }));
         kindsScroll.setVisibility(kinds.getChildCount() == 0 ? GONE : VISIBLE);
+        updateSend();
     }
 
     private TextView kindChip(String label, Runnable clear) {
@@ -226,8 +372,8 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f);
         t.setTextColor(accent);
         t.setPadding(Ui.dp(getContext(), 10), Ui.dp(getContext(), 4), Ui.dp(getContext(), 10), Ui.dp(getContext(), 4));
-        t.setBackground(Ui.ripple(Ui.shape(Ui.alpha(accent, 0.12f), Ui.dp(getContext(), 999), Ui.dp(getContext(), 1), Ui.alpha(accent, 0.4f)), Ui.alpha(accent, 0.2f)));
-        t.setOnClickListener(v -> { clear.run(); refreshKinds(); a.refresh(); });
+        t.setBackground(Look.pressable(t, Ui.shape(Ui.alpha(accent, 0.12f), Look.radius(getContext(), "chip"), Ui.dp(getContext(), 1), Ui.alpha(accent, 0.4f)), Ui.alpha(accent, 0.2f)));
+        t.setOnClickListener(v -> { Look.haptic(v, false); clear.run(); refreshKinds(); a.refresh(); });
         LayoutParams lp = new LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT);
         lp.setMarginEnd(Ui.dp(getContext(), 6));
         t.setLayoutParams(lp);
@@ -280,6 +426,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         String text = input.getText().toString().trim();
         RoomSession r = app().rooms.activeSession();
         if (text.isEmpty() || r == null) return;
+        hideHint(false);
         if (parts.runCommand(r, text)) { clearAfterSend(); return; }
         r.send(outgoing(text));
         clearAfterSend();
@@ -311,16 +458,24 @@ final class Composer extends LinearLayout implements Renderer.Slot {
 
     /* ---------------------------------------------------- recording */
 
-    /** Records a voice message ("voice") or speech to send as text ("text"). */
+    /** Records a voice message ("voice") or speech to send as text ("text") — asking for the microphone first. */
     void record(String mode) {
-        if (!a.has(Manifest.permission.RECORD_AUDIO)) { a.askPermissions(Manifest.permission.RECORD_AUDIO); return; }
         if (recorder != null) return;
+        withMic(() -> startRecording(mode));
+    }
+
+    private void startRecording(String mode) {
+        if (recorder != null || !isAttachedToWindow()) return;
         if (app().voice.dictating()) toggleDictation();
+        hideHint(true);
         recorder = new Audio.Recorder();
-        if (!recorder.start()) { recorder = null; a.flash("", app().t("voice.failed"), "error"); return; }
+        // Another app (a call, a recorder) may hold the microphone.
+        if (!recorder.start()) { recorder = null; a.flash("", app().t("look.mic.busy"), "error"); return; }
         recMode = mode;
         row.setVisibility(GONE);
         recBar.setVisibility(VISIBLE);
+        recBar.setAlpha(0f);
+        recBar.animate().alpha(1f).setDuration(Look.ms(160)).start();
         recTick();
     }
 
@@ -340,7 +495,9 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         recBar.setVisibility(GONE);
         row.setVisibility(VISIBLE);
         RoomSession r = app().rooms.activeSession();
-        if (!keep || r == null || pcm.length < Audio.RATE / 5) return;
+        if (!keep || r == null) return;
+        // Under half a second is a slip of the finger, not a message.
+        if (pcm.length < Audio.RATE) { a.flash("", app().t("look.mic.short"), "info"); return; }
         if (recMode.equals("text")) {
             a.flash("", app().t("voice.recognizing"), "info");
             app().voice.voiceToText(pcm, Audio.RATE, (text, err) -> {
@@ -505,7 +662,13 @@ final class Composer extends LinearLayout implements Renderer.Slot {
     void toggleDictation() {
         Voice v = app().voice;
         if (v.dictating()) { v.stopDictation(); dictateIcon(false); return; }
-        if (!a.has(Manifest.permission.RECORD_AUDIO)) { a.askPermissions(Manifest.permission.RECORD_AUDIO); return; }
+        if (!Dictation.available(app())) { a.flash("", app().t("look.dictate.none"), "warn"); return; }
+        withMic(this::startDictation);
+    }
+
+    private void startDictation() {
+        Voice v = app().voice;
+        if (v.dictating() || recorder != null || !isAttachedToWindow()) return;
         dictatedBase = input.getText().toString();
         if (!dictatedBase.isEmpty() && !dictatedBase.endsWith(" ")) dictatedBase += " ";
         v.dictate((text, done) -> {
@@ -519,9 +682,11 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         dictateIcon(true);
     }
 
+    /** While dictating: a stop square in the danger colour, and the field says it listens. */
     private void dictateIcon(boolean on) {
-        int c = on ? Ui.color(getContext(), "@danger", Color.RED) : Ui.color(getContext(), "@onSurface", Color.BLACK);
-        dictate.setImageDrawable(Icons.drawable(getContext(), on ? "mic-off" : "mic", Ui.dp(getContext(), 22), c));
+        int c = on ? Ui.color(getContext(), "@danger", Color.RED) : Ui.color(getContext(), "@muted", Color.GRAY);
+        dictate.setImageDrawable(Icons.drawable(getContext(), on ? "square" : "speech", Ui.dp(getContext(), on ? 18 : 22), c));
+        input.setHint(app().t(on ? "voice.listening" : "room.typeMessage"));
     }
 
     /* ----------------------------------------------------- suggestions */
