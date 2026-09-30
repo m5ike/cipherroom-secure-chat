@@ -102,6 +102,10 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         handleIntent(intent);
+        // 6.2 fixes: an enrolment link while the app is already open
+
+        // 6.2 people: "message / call via M5cet" from the phone's contacts
+
         if (!app.lock.isLocked()) openPendingRoom();
     }
 
@@ -116,6 +120,31 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             form.put("kid", data.getQueryParameter("kid") == null ? "" : data.getQueryParameter("kid"));
         }
         if (Intent.ACTION_SEND.equals(i.getAction()) && "text/plain".equals(i.getType())) pendingShare = i.getStringExtra(Intent.EXTRA_TEXT);
+        // 6.2 fixes (enrolment link)
+
+        // 6.2 people (a contact's M5cet row: message / call)
+
+    }
+
+    /* ------------------------------------------------ permissions (6.2) */
+
+    /** What waits for a permission the user is being asked for (the microphone, the contacts…). */
+    private final java.util.Map<String, Runnable> afterPermission = new java.util.HashMap<>();
+
+    /** Runs then with the permission: at once when it is granted, else after the user allows it (not at all when refused). */
+    public void withPermission(String perm, Runnable then) {
+        if (has(perm)) { then.run(); return; }
+        afterPermission.put(perm, then);
+        askPermissions(perm);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int code, String[] perms, int[] results) {
+        super.onRequestPermissionsResult(code, perms, results);
+        for (int i = 0; i < perms.length && i < results.length; i++) {
+            Runnable then = afterPermission.remove(perms[i]);
+            if (then != null && results[i] == PackageManager.PERMISSION_GRANTED) then.run();
+        }
     }
 
     private void applySecureFlag() {

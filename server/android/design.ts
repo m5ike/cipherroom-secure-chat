@@ -15,6 +15,7 @@ import { randomBytes } from "node:crypto";
 import { MENU_ICONS } from "../../client/src/lib/menu-icons-data";
 import { checkExpr, checkTemplate } from "./expr";
 import { ACTIONS_61, ELEMENTS_61, MENUS_61, SCREENS_61, SCREENS_TREES_61, SLOTS_61, STRINGS_61, TOGGLE_PROPS_61, messageIn61, messageOut61, roomBar61 } from "./design-61";
+import { ACTIONS_62, ELEMENTS_62, MENUS_62, SCREENS_62, SCREENS_TREES_62, SLOTS_62, STRINGS_62, patch62 } from "./design-62";
 import { androidDir } from "./store";
 
 /* ================================================================ catalog */
@@ -47,6 +48,7 @@ export const ELEMENTS: ElementDef[] = [
   { el: "switch", label: "Switch", group: "controls", container: false, text: true, props: [P("checked", "expr", "On when"), ...TOGGLE_PROPS_61], help: "An on/off switch: bound to a setting it changes it itself, else its click action does." },
   { el: "checkbox", label: "Checkbox", group: "controls", container: false, text: true, props: [P("checked", "expr", "Checked when"), ...TOGGLE_PROPS_61], help: "A checkbox (e.g. selecting rooms)." },
   ...ELEMENTS_61,
+  ...ELEMENTS_62,
   { el: "slot", label: "App part", group: "logic", container: false, text: false, props: [P("name", "slot", "Part")], help: "A native component of the app (message list, composer…)." },
 ];
 
@@ -115,6 +117,7 @@ export const ACTIONS: Array<{ action: string; arg: string; help: string }> = [
   { action: "lib.run", arg: "library name", help: "Run an action library of the design" },
   { action: "set", arg: "name=value", help: "Set a value in $form" },
   ...ACTIONS_61,
+  ...ACTIONS_62,
 ];
 
 export const SLOTS: Array<{ name: string; label: string; screens: string[] }> = [
@@ -134,6 +137,7 @@ export const SLOTS: Array<{ name: string; label: string; screens: string[] }> = 
   { name: "joinForm", label: "Join a room form", screens: ["join"] },
   { name: "updateProgress", label: "Download progress", screens: ["update"] },
   ...SLOTS_61,
+  ...SLOTS_62,
 ];
 
 export type ScreenDef = { id: string; label: string; group: "app" | "room" | "parts" | "system"; vars: string[]; sample: Record<string, unknown>; help: string };
@@ -165,6 +169,7 @@ export const SCREENS: ScreenDef[] = [
   { id: "about", label: "About", group: "app", vars: ["$app", "$device", "$server"], sample: { app: APP, device: { id: "and_…", model: "Pixel 9" }, server: { url: "https://chat.example.com", kid: "AbCdEf0123456789", fingerprint: "1A2B 3C4D …" } }, help: "Versions, the device, the server's key." },
   { id: "flash", label: "Flash message", group: "parts", vars: ["$flash"], sample: { flash: { text: "Saved.", level: "success", title: "" } }, help: "A short notice at the top." },
   ...SCREENS_61,
+  ...SCREENS_62,
 ];
 export const SCREEN_IDS = SCREENS.map((s) => s.id);
 
@@ -359,6 +364,9 @@ Object.assign(DEFAULT_SCREENS, SCREENS_TREES_61);
 DEFAULT_SCREENS.room.children = (DEFAULT_SCREENS.room.children ?? []).map((c) => (c.id === "bar" ? roomBar61() : c));
 DEFAULT_SCREENS["message.in"] = messageIn61();
 DEFAULT_SCREENS["message.out"] = messageOut61();
+// 6.2 (design-62*.ts): new and replaced trees, then each area's changes to existing ones.
+Object.assign(DEFAULT_SCREENS, SCREENS_TREES_62);
+patch62(DEFAULT_SCREENS);
 
 /* ================================================================== theme */
 
@@ -458,6 +466,7 @@ export const DEFAULT_STRINGS: Record<Lang, Record<string, string>> = {
   },
 };
 for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_61[lang]);
+for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_62[lang]);
 
 /* ================================================================== menus */
 
@@ -485,6 +494,7 @@ export const DEFAULT_MENUS: Record<string, MenuItem[]> = {
   ],
 };
 Object.assign(DEFAULT_MENUS, MENUS_61);
+Object.assign(DEFAULT_MENUS, MENUS_62);
 
 /* ============================================================== libraries */
 

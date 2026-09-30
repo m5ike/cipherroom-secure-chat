@@ -509,4 +509,10 @@ public final class Parts {
         Io.mainLater(() -> v.animate().alpha(0f).translationY(-Ui.dp(a, 16)).setDuration(200).withEndAction(() -> a.overlay().removeView(v)).start(), stay);
         return true;
     }
+
+    /* ---------------------------------------------------- 6.2 people */
+
+    /* --------------------------------------------------- 6.2 bubbles */
+
+    /* ------------------------------------------------------ 6.2 look */
 }

@@ -57,6 +57,14 @@ public final class Settings {
         DEFAULTS.put("nfc.emulate", false);              // answer as a tag with the room invite
         // Security (the SYS tier is readable while the app is locked, so the PIN pad can read these)
         DEFAULTS.put("security.shufflePin", false);      // the PIN keys are not in order and reshuffle after every tap
+        // 6.2 fixes (lock, enrolment, passkeys)
+
+        // 6.2 people (People widget, contacts)
+
+        // 6.2 bubbles (map preview, message details, hide/delete)
+
+        // 6.2 look (templates, colour variants, fonts, buttons, Tools dock)
+
     }
 
     private final Vault vault;

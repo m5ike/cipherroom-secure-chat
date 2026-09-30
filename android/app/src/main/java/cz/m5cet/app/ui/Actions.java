@@ -128,6 +128,14 @@ public final class Actions {
                 case "call.switchCamera": { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().switchCamera(); break; }
                 case "call.speaker": app.settings.toggle("calls.speaker"); { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().route(); } a.refresh(); break;
                 case "appearance.reset": for (String k : new String[]{"appearance.tone", "appearance.preset", "appearance.accent", "appearance.fontScale", "appearance.density", "appearance.bubbles"}) app.settings.set(k, cz.m5cet.app.core.Settings.DEFAULTS.get(k)); a.recreate(); break;
+                // ---- 6.2 fixes (lock, enrolment, passkeys) ----
+
+                // ---- 6.2 people (People widget, contacts) ----
+
+                // ---- 6.2 bubbles (message details, attachments, hide/delete) ----
+
+                // ---- 6.2 look (templates, Tools dock, send button, microphone) ----
+
                 default: Log.w("action", "unknown action " + action);
             }
         } catch (RuntimeException e) {
