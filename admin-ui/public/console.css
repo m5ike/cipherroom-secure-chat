@@ -1380,3 +1380,21 @@ textarea.input--sm { min-height: 0; }
 .fn-method--put, .fn-method--patch { background: var(--warn-soft); color: var(--warn); }
 .fn-method--delete { background: var(--err-soft); color: var(--err); }
 .badge .ico { margin-right: 1px; }
+
+/* 6.2: Client & addons › Map preview — the form beside a live preview drawn as a message draws it. */
+.mp-layout { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: start; }
+@media (max-width: 1100px) { .mp-layout { grid-template-columns: minmax(0, 1fr); } }
+.mp-side { display: grid; gap: 8px; min-width: 0; }
+.mp-preview { display: flex; align-items: flex-start; justify-content: center; min-height: 120px; padding: 12px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); overflow: auto; }
+.mp-card { max-width: 100%; border-radius: 14px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
+.mp-box { position: relative; overflow: hidden; background: var(--surface-3); }
+.mp-tile { position: absolute; width: 256px; height: 256px; max-width: none; user-select: none; }
+.mp-tile.is-missing { visibility: hidden; }
+.mp-box.is-gray .mp-tile { filter: grayscale(1) contrast(1.05); }
+.mp-pin { position: absolute; width: 30px; height: 30px; transform: translate(-50%, -100%); filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.35)); }
+.mp-attr { position: absolute; right: 0; bottom: 0; padding: 1px 5px; border-top-left-radius: 5px; font-size: 9px; color: #333; background: rgba(255, 255, 255, 0.78); }
+.mp-caption { padding: 5px 9px; font-size: 12px; font-weight: 600; background: var(--accent); color: #fff; }
+.mp-coords { padding: 3px 9px 5px; font-size: 11px; font-family: var(--mono); color: var(--text-2); }
+.mp-off { padding: 18px; font-size: 12.5px; color: var(--muted); }
+.input--color { width: 56px; height: 34px; padding: 2px 4px; }
+.input--bad { border-color: var(--err) !important; }

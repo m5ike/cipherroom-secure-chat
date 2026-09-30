@@ -1,0 +1,107 @@
+/* 6.2 — message bubbles: files shown in the bubble, the files footer, the map
+   preview, hidden messages; the detail window's receipts and hide / delete.
+   Everything is a layout node (lib/layouts/message.ts, dialogs.ts): these
+   are the default looks an operator can restyle. */
+
+/* ---------- The (i) button ----------
+   The head's opacity makes it a layer of its own, painted after the button
+   (it took the clicks): the button goes above it, and the head leaves room. */
+.msg-info-btn { z-index: 2; }
+.msg-bubble:not(.msg-bubble--system) > .msg-bubble__head { padding-inline-end: 1.5rem; }
+
+/* ---------- Files in the bubble ---------- */
+.msg-media.is-video, .msg-media.is-audio, .msg-media.is-pdf, .msg-media.is-text { padding: 0.3rem; }
+.msg-bubble__video { display: block; width: 100%; max-height: 20rem; border-radius: 0.75rem; background: #000; }
+
+.msg-pdf {
+  display: flex; align-items: center; gap: 0.6rem; width: 100%; text-align: start;
+  padding: 0.5rem 0.6rem; border-radius: 0.75rem; color: inherit;
+  background: hsl(var(--background) / 0.55);
+}
+.msg-pdf:hover { background: hsl(var(--background) / 0.8); }
+.msg-bubble--mine .msg-pdf { background: hsl(0 0% 100% / 0.14); }
+.msg-bubble--mine .msg-pdf:hover { background: hsl(0 0% 100% / 0.24); }
+.msg-pdf__icon { width: 2rem; height: 2rem; flex: none; opacity: 0.85; }
+.msg-pdf__text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.msg-pdf__name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-pdf__kind { font-size: 0.68rem; opacity: 0.75; }
+
+.msg-textprev {
+  margin: 0; padding: 0.45rem 0.55rem; border-radius: 0.6rem; max-height: 9.5rem; overflow: hidden;
+  font: 0.72rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap; overflow-wrap: anywhere; background: hsl(var(--background) / 0.55);
+}
+.msg-bubble--mine .msg-textprev { background: hsl(0 0% 100% / 0.12); }
+.msg-textprev.is-more { -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+
+/* ---------- The files footer ---------- */
+.msg-files { display: flex; flex-direction: column; gap: 0.25rem; margin-top: 0.45rem; padding-top: 0.4rem; border-top: 1px solid hsl(var(--border) / 0.55); }
+.msg-bubble--mine .msg-files { border-top-color: hsl(0 0% 100% / 0.25); }
+.msg-file { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; min-width: 0; font-size: 0.74rem; }
+.msg-file__icon { width: 1rem; height: 1rem; flex: none; opacity: 0.8; }
+.msg-file__name { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.msg-file__size { flex: none; font-size: 0.68rem; opacity: 0.7; font-variant-numeric: tabular-nums; }
+.msg-file.is-dropped .msg-file__name { font-weight: 400; opacity: 0.65; text-decoration: line-through dotted; }
+.msg-file__btn {
+  display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 1.7rem; height: 1.7rem; border-radius: 9999px; color: inherit; opacity: 0.75;
+}
+.msg-file__btn:hover, .msg-file__btn:focus-visible { opacity: 1; background: hsl(var(--background) / 0.5); }
+.msg-bubble--mine .msg-file__btn:hover, .msg-bubble--mine .msg-file__btn:focus-visible { background: hsl(0 0% 100% / 0.2); }
+:root[data-input="touch"] .msg-file__btn { width: 2.1rem; height: 2.1rem; }
+
+/* In the flow under its row (a bubble clips what sticks out of it). */
+.msg-file__menu {
+  flex-basis: 100%; display: flex; flex-direction: column; gap: 0.15rem; padding: 0.35rem; border-radius: 0.75rem;
+  border: 1px solid hsl(var(--border)); background: hsl(var(--popover, var(--card))); color: hsl(var(--popover-foreground, var(--foreground)));
+}
+.msg-file .msg-file__menu-note { max-width: 15rem; }
+.msg-file__menu-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.35rem 0.5rem; border-radius: 0.5rem; text-align: start; font-size: 0.76rem; color: inherit; }
+.msg-file__menu-item:hover, .msg-file__menu-item:focus-visible { background: hsl(var(--accent)); }
+.msg-file__menu-note { margin: 0.15rem 0.4rem 0.1rem; font-size: 0.66rem; opacity: 0.7; }
+
+/* ---------- The map preview ---------- */
+.msg-map { display: block; width: max-content; max-width: 100%; margin-top: 0.45rem; color: inherit; text-decoration: none; border-radius: 0.85rem; overflow: hidden; }
+.msg-map:focus-visible { outline: 2px solid hsl(var(--ring, var(--primary))); outline-offset: 2px; }
+.msg-map__box { position: relative; overflow: hidden; max-width: 100%; background: hsl(var(--muted)); }
+.msg-map__tile { position: absolute; max-width: none; user-select: none; pointer-events: none; }
+.msg-map.is-gray .msg-map__tile { filter: grayscale(1) contrast(1.05); }
+.msg-map__pin {
+  position: absolute; width: 1.9rem; height: 1.9rem; transform: translate(-50%, -100%);
+  fill: currentColor; stroke: #fff; stroke-width: 1.4; filter: drop-shadow(0 2px 2px hsl(0 0% 0% / 0.35));
+}
+.msg-map__pin circle { fill: #fff; stroke: none; }
+.msg-map__attr {
+  position: absolute; right: 0; bottom: 0; padding: 0.05rem 0.3rem; border-top-left-radius: 0.35rem;
+  font-size: 0.56rem; line-height: 1.3; color: #333; background: hsl(0 0% 100% / 0.78);
+}
+.msg-map__caption {
+  padding: 0.3rem 0.55rem; font-size: 0.72rem; font-weight: 600;
+  background: hsl(var(--primary)); color: hsl(var(--primary-foreground));
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.msg-map__coords { padding: 0.2rem 0.55rem 0.3rem; font-size: 0.66rem; font-variant-numeric: tabular-nums; background: hsl(var(--background) / 0.55); }
+.msg-bubble--mine .msg-map__coords { background: hsl(0 0% 100% / 0.14); }
+
+/* ---------- Hidden messages (while the conversation shows them) ---------- */
+.chat-hidden-toggle { white-space: nowrap; flex: none; }
+.chat-hidden-toggle[aria-pressed="true"] { border-color: hsl(var(--primary) / 0.6); }
+.msg-bubble--hidden { opacity: 0.55; outline: 1px dashed hsl(var(--border)); outline-offset: 2px; }
+.msg-bubble--hidden:hover, .msg-bubble--hidden:focus-within { opacity: 0.9; }
+.msg-hidden-tag { display: inline-flex; align-items: center; gap: 0.2rem; font-size: 0.64rem; font-weight: 600; opacity: 0.8; }
+
+/* ---------- The detail window: receipts, hide and delete ---------- */
+.msg-receipts { display: flex; flex-direction: column; gap: 0.3rem; }
+.msg-receipts li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.6rem; font-size: 0.78rem; }
+.msg-receipts__name { font-weight: 600; }
+.msg-receipts__steps { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
+.msg-receipts__step { padding: 0.05rem 0.4rem; border-radius: 9999px; font-size: 0.7rem; background: hsl(var(--muted)); font-variant-numeric: tabular-nums; }
+.msg-receipts__step.is-stored { color: hsl(38 92% 40%); }
+.msg-receipts__step.is-read { color: hsl(221 83% 50%); }
+
+.msg-manage { border-top: 1px solid hsl(var(--border)); padding-top: 0.6rem; display: flex; flex-direction: column; align-items: flex-start; gap: 0.45rem; }
+.msg-manage__row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem; }
+.msg-manage__label { display: inline-flex; align-items: center; gap: 0.25rem; font-size: 0.76rem; font-weight: 600; margin-inline-end: 0.2rem; }
+.msg-manage__help { font-size: 0.7rem; opacity: 0.7; }
+.msg-manage__delete { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / 0.4); }
+.msg-manage__confirm { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.6rem; border-radius: 0.6rem; font-size: 0.78rem; border: 1px solid hsl(var(--destructive) / 0.45); background: hsl(var(--destructive) / 0.07); }

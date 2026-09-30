@@ -531,6 +531,38 @@
             </div>
             <div class="toolbar"><button class="btn btn--primary" type="submit">Save</button><button class="btn" type="button" id="cxReset">Reset to defaults</button></div>
           </form>
+          <!-- 6.2: the map drawn in a message with a position (web and Android alike) -->
+          <form class="card" id="clientMap">
+            <div class="card__head"><div class="card__title">Map preview</div><div class="card__hint">A message with a position shows a small map, centred on it, with a pin. The tiles come through this server (GET /api/map/tile/…, cached), so a device never tells the provider where it is looking. Off: only the pin link, as before.</div><div class="card__actions"><span class="badge badge--warn" id="mpDirty" hidden>Unsaved changes</span></div></div>
+            <div class="mp-layout">
+              <div class="stack">
+                <div class="form-grid">
+                  <label class="switch"><input type="checkbox" id="mpEnabled" /> Draw a map in the message</label>
+                  <label class="switch"><input type="checkbox" id="mpGray" /> Tiles in grey</label>
+                </div>
+                <label class="field">Tile provider <input class="input mono" id="mpTiles" placeholder="https://tile.openstreetmap.org/{z}/{x}/{y}.png" spellcheck="false" autocomplete="off" />
+                  <span class="small muted">A raster template: https (http only for this machine), with {z} {x} {y}, and {s} for a subdomain. The server fetches the tiles — keep to the provider's usage policy (OpenStreetMap's tile servers are for light use; name your own or a commercial one for more).</span></label>
+                <div class="form-grid">
+                  <label class="field">Subdomains for {s} <input class="input mono" id="mpSubdomains" maxlength="8" placeholder="abc" /></label>
+                  <label class="field">Attribution (in the map's corner) <input class="input" id="mpAttribution" maxlength="120" placeholder="© OpenStreetMap" /></label>
+                  <label class="field">Zoom (3–19) <input class="input" type="number" min="3" max="19" step="1" id="mpZoom" /></label>
+                  <label class="field">Width, px (160–640) <input class="input" type="number" min="160" max="640" step="1" id="mpWidth" /></label>
+                  <label class="field">Height, px (100–480) <input class="input" type="number" min="100" max="480" step="1" id="mpHeight" /></label>
+                  <label class="field">Keep tiles on the server, hours (1–720) <input class="input" type="number" min="1" max="720" step="1" id="mpCache" /></label>
+                  <label class="field">Pin colour <input class="input input--color" type="color" id="mpPin" /></label>
+                  <div class="field"><span class="label">Caption colour</span><div class="row"><input class="input input--color" type="color" id="mpAccent" aria-label="Caption colour" /><label class="switch small"><input type="checkbox" id="mpAccentTheme" /> the template's primary colour</label></div></div>
+                  <label class="switch"><input type="checkbox" id="mpLabel" /> Caption: “Jana's current position”</label>
+                  <label class="switch"><input type="checkbox" id="mpCoords" /> Coordinates and accuracy under the map</label>
+                </div>
+              </div>
+              <div class="mp-side">
+                <div class="label">Preview — Prague, Old Town Square (50.0875, 14.4213 ± 12 m)</div>
+                <div id="mpPreview" class="mp-preview"></div>
+                <p class="small muted" id="mpPreviewNote"></p>
+              </div>
+            </div>
+            <div class="toolbar"><button class="btn btn--primary" type="submit">Save map preview</button><button class="btn" type="button" id="mpRevert">Undo changes</button><button class="btn" type="button" id="mpDefaults">Defaults</button></div>
+          </form>
         </section>
 
         <!-- ============================ administrators ============================ -->

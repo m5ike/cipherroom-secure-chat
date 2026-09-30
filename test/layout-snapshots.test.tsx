@@ -4,7 +4,7 @@
 // element for element — so a change here is a change of what users see:
 // update the snapshot (vitest -u) only on purpose.
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, beforeAll, afterAll, vi } from "vitest";
 import { render, cleanup, fireEvent } from "@testing-library/react";
 import { createRef } from "react";
 import { MessageBubble } from "../client/src/components/MessageBubble";
@@ -19,6 +19,14 @@ beforeEach(() => cleanup());
 const noop = () => undefined;
 
 describe("message layouts", () => {
+  // 6.2: an inline sound or video plays from a blob: URL of its own (the CSP's
+  // media-src has no data:) — a fixed one here, so the snapshot is stable.
+  beforeAll(() => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:m5cet/test");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+  });
+  afterAll(() => { vi.restoreAllMocks(); });
+
   const base = { id: "m1", senderId: "p-a", senderName: "Alice", createdAt: 0, timeLabel: "10:42", text: "hi https://example.org", lang: "en" as const, renderText: linkify, formatSize: (n: number) => `${n} B`, onVanish: noop };
   const variants: Array<[string, Record<string, unknown>]> = [
     ["plain", {}],

@@ -100,5 +100,8 @@ export const SAMPLE_MESSAGES: readonly SampleMessage[] = [
   { id: "i6", kind: "in", senderId: "p-bob", senderName: "Bob", text: "SEALED", minutesAgo: 3, extra: { flags: { sealed: { iv: "x", salt: "y" } } } },
   { id: "o5", kind: "out", senderId: "me", senderName: "Alice", text: "SEALED", minutesAgo: 2, extra: { flags: { sealed: { iv: "x", salt: "y" } }, ownPlaintext: "The door code is 4711.", sealCode: "714-203" } },
   { id: "i7", kind: "in", senderId: "p-dan", senderName: "Dan", text: "", minutesAgo: 1, extra: { vanished: true, vanishedAt: Date.UTC(2026, 8, 24, 9, 30) } },
+  // 6.2: a position (the map preview) and a text file (its first lines).
+  { id: "i8", kind: "in", senderId: "p-carol", senderName: "Carol", text: "I'm at the entrance.", minutesAgo: 1, extra: { loc: { lat: 50.0875, lon: 14.4213, acc: 12 } } },
+  { id: "o6", kind: "out", senderId: "me", senderName: "Alice", text: "", minutesAgo: 1, extra: { attachment: { kind: "file", name: "plan.md", mime: "text/markdown", size: 49, dataUrl: "data:text/markdown;base64,IyBQbGFuCi0gOTowMCBraWNrb2ZmCi0gMTA6MzAgZGVtbwotIDEyOjAwIGx1bmNoCg==" }, deliveryState: "read" } },
   { id: "s2", kind: "sys", senderId: "system", senderName: "M5cet", text: "Keys renewed — Carol left the room.", minutesAgo: 0 },
 ];

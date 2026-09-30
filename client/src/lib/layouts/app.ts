@@ -78,6 +78,12 @@ export function chatTree(): LNode {
             n("area", { id: "dock-room", text: "{if $room}room:{$room}{else}{_'status.idle'}{/if}" }),
             n("area", { id: "dock-dot", attrs: { class: "hidden sm:inline" }, text: "·" }),
             n("area", { id: "dock-id", attrs: { class: "hidden sm:inline" }, text: "{$myIdShort}" }),
+            // 6.2: the messages I hid, shown again for a while (or hidden again).
+            n("button", {
+              id: "show-hidden", name: "Show hidden", if: "$hiddenCount > 0",
+              attrs: { type: "button", "data-testid": "button-show-hidden", class: `${pill} chat-hidden-toggle`, "aria-pressed": "=$showHidden ? 'true' : 'false'" },
+              on: { click: { action: "toggleHidden" } },
+            }, [icon("{if $showHidden}eye-off{else}eye{/if}", "h-3 w-3", {}, { id: "show-hidden-icon" }), text("{$showHiddenText}", { id: "show-hidden-text" })]),
             n("button", {
               id: "disconnect", name: "Disconnect", if: "$connected",
               attrs: { type: "button", "data-testid": "button-disconnect-bar", class: pill }, on: { click: { action: "disconnect" } },

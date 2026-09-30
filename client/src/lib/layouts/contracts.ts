@@ -38,7 +38,11 @@ const MESSAGE_VARS: ContractVar[] = [
   { path: "$forwardedFrom", type: "text", description: "Forwarded from whom." },
   { path: "$loc", type: "object", description: "6.1: the sender's position (.lat, .lon, .acc, .url — an OpenStreetMap link), or nothing." },
   { path: "$replyTo", type: "object", description: "The quoted message: .id, .senderName, .text." },
-  { path: "$attachment", type: "object", description: "A file: .name, .mime, .size, .sizeText, .dataUrl, .isImage, .isAudio." },
+  { path: "$attachment", type: "object", description: "A file: .name, .mime, .size, .sizeText, .dataUrl, .isImage, .isAudio; 6.2: .kind (image, video, audio, pdf, text, file), .isVideo, .isPdf, .isText, .mediaUrl (a blob: URL to play), .preview and .previewMore (a text's first lines), .hasPreview." },
+  { path: "$attachments", type: "list", description: "6.2: the files of the message for the footer: .index, .name, .mime, .kind, .icon, .sizeText, .available (its bytes are here), .dropped (left out of the history)." },
+  { path: "$shareMenu", type: "number", description: "6.2: the file whose share menu is open (its .index), or nothing." },
+  { path: "$map", type: "object", description: "6.2: the map preview of $loc (client config › map), or nothing: .style, .tiles (.src, .style, .key), .pinStyle, .caption, .captionStyle, .coords, .attribution, .gray, .url, .width, .height." },
+  { path: "$hidden", type: "yes/no", description: "6.2: hidden in this view (drawn only while hidden messages are shown)." },
   { path: "$tap", type: "yes/no", description: "Hold-to-read." },
   { path: "$revealed", type: "yes/no", description: "Open (held, unsealed)." },
   { path: "$vanishing", type: "yes/no", description: "Disappears after it was read." },
@@ -75,6 +79,11 @@ const MESSAGE_ACTIONS: ContractAction[] = [
   { name: "codeChange", description: "The code field changed.", event: "change" },
   { name: "codeKey", description: "A key in the code field (Enter opens).", event: "keydown" },
   { name: "codeSubmit", description: "Try the code." },
+  { name: "save", description: "6.2: save a file (the argument: its $f.index).", arg: "$f.index" },
+  { name: "share", description: "6.2: share a file — the system's share sheet, else the share menu.", arg: "$f.index" },
+  { name: "open", description: "6.2: open a file (a PDF) in a new tab.", arg: "$f.index" },
+  { name: "copyName", description: "6.2: copy a file's name (the share menu).", arg: "$f.index" },
+  { name: "closeShare", description: "6.2: close the share menu." },
 ];
 
 export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
@@ -121,12 +130,16 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
       { path: "$hiddenMessages", type: "number", description: "Earlier messages not shown." },
       { path: "$newestFirst", type: "yes/no", description: "Newest at the top." },
       { path: "$showEarlierText", type: "text", description: "“Show N earlier”." },
+      { path: "$hiddenCount", type: "number", description: "6.2: messages I hid (for now)." },
+      { path: "$showHidden", type: "yes/no", description: "6.2: hidden messages are shown too." },
+      { path: "$showHiddenText", type: "text", description: "6.2: “Show hidden (N)” / “Hide them again (N)”." },
     ],
     actions: [
       { name: "disconnect", description: "Disconnect from the room." },
       { name: "copyRoom", description: "Copy the room's name." },
       { name: "openRoom", description: "Open the Room window." },
       { name: "showEarlier", description: "Show earlier messages." },
+      { name: "toggleHidden", description: "6.2: show / hide again the messages I hid." },
     ],
     slots: [
       { name: "transfer", description: "A file transfer card.", arg: "a transfer ($tr)" },
