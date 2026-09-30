@@ -120,6 +120,7 @@ public final class Checkin {
             if (commands != null) for (int i = 0; i < commands.length(); i++) control.handle(commands.getJSONObject(i), "checkin");
             if (!answer.isNull("bundle")) app.bundles.available(answer.optJSONObject("bundle"));
             app.releases.onCheckin(answer.isNull("release") ? null : answer.optJSONObject("release"));
+            app.define.refresh(); // 6.3 define: pull the operator's typed values (own endpoint), keep the cache on failure
             app.events.flush();
             schedule(app);
             Log.d("checkin", "done (" + why + ")");
