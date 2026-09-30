@@ -19,6 +19,7 @@ import { compileDesign } from "../server/android/bundle";
 import { DEFAULT_DESIGN } from "../server/android/design";
 import { sealText, openSealed } from "../client/src/lib/message-kinds";
 import { encryptForTag } from "../client/src/lib/nfc";
+import { buildCard, cardKeys, type M5Record } from "../client/src/lib/nfc/m5card";
 import { encodeChunk } from "../client/src/lib/binary-frames";
 import { validatePayload } from "../client/src/lib/validate";
 
@@ -137,6 +138,25 @@ async function main() {
   out.sealed = { plain: "Tajná zpráva ✓ 🔒", code: "abcd efgh-jkmn", wrong: "ABCD-EFGH-JKMP", ...sealedMsg };
   out.nfc = { pin: "482915", card: { v: 1, room: "team", passphrase: "dlouhé heslo místnosti", name: "Alice", app: "6.1.0" } as Record<string, unknown>, blob: "" };
   out.nfc = { ...(out.nfc as object), blob: await encryptForTag("482915", (out.nfc as { card: Record<string, unknown> }).card) };
+
+  // 6.3: an M5Cet card (client/src/lib/nfc/m5card.ts) — a container the web
+  // sealed, for the Java port (android nfc/M5Card.java) to open byte for byte.
+  // Records: wifi (external, PIN), message (internal, account root), one-time
+  // (external). The Java M5CardTest opens each with its key and checks the
+  // fields; removing the one-time record must reproduce these exact bytes.
+  const m5pin = "482915";
+  const m5root = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) m5root[i] = i;
+  const m5records: M5Record[] = [
+    { id: 0, type: "wifi", mode: "external", data: { ssid: "M5cet", password: "tajné heslo", auth: "WPA" } },
+    { id: 0, type: "message", mode: "internal", data: { text: "Ahoj z webu ✓ 🔒" } },
+    { id: 0, type: "one-time-message", mode: "external", oneTime: true, data: { text: "zmizím" } },
+  ];
+  const m5container = await buildCard(m5records, cardKeys(m5pin, m5root));
+  out.m5card = {
+    pin: m5pin, rootHex: hex(m5root), container: b64(m5container),
+    records: m5records.map((r) => ({ type: r.type, mode: r.mode, oneTime: !!r.oneTime, data: r.data })),
+  };
   const civ = new Uint8Array(12).fill(7), cct = new Uint8Array(40).fill(9);
   out.binaryChunk = { transferId, seq: 5, iv: b64(civ), ct: b64(cct), frame: b64(new Uint8Array(encodeChunk({ transferId, seq: 5, iv: civ, data: cct, version: 2, type: 1 }))) };
   const full = {

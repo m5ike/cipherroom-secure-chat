@@ -43,6 +43,7 @@ public final class Parts {
     final java.util.Set<String> holding = new java.util.HashSet<>();
     ToolPanels.VoicePad voicePad;
     ToolPanels.NfcPanel nfcPanel;
+    NfcWorkbench nfcWork; // 6.3 nfc
     AiChat aiChat;
     final Fn fn;
 
@@ -69,6 +70,9 @@ public final class Parts {
             case "msgBody": return new MsgBody(a, this);
             case "voicePad": return voicePad = new ToolPanels.VoicePad(a);
             case "nfcPanel": return nfcPanel = new ToolPanels.NfcPanel(a);
+            // 6.3 nfc: the NFC workbench and the M5Cet card builder (parity with the web).
+            case "nfcWork": return nfcWork = new NfcWorkbench(a);
+            case "nfcBuilder": return new NfcCardBuilder(a);
             case "aiChat": return aiChat = new AiChat(a, this);
             case "updateProgress": return new CallParts.Progress(a, this);
             default: {

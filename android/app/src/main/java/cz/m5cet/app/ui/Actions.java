@@ -110,6 +110,12 @@ public final class Actions {
                 case "ai.stop": a.parts.aiStop(); break;
                 case "ai.clear": a.parts.aiClear(); break;
                 case "nfc.read": case "nfc.write": case "nfc.emulate": case "nfc.stop": a.parts.nfc(action.substring(4)); break;
+                // ---- 6.3 nfc (the workbench, the M5Cet card builder, the reader choice) ----
+                case "nfc.workbench": a.showScreen("nfc", true); break;
+                case "nfc.builder": a.showScreen("nfc.builder", true); break;
+                case "nfc.reader":
+                    if (s.equals("internal") || s.equals("usb") || s.equals("bluetooth")) { app.settings.set("nfc.reader", s); a.refresh(); }
+                    break;
                 // account, security
                 case "account.signin": a.accountSignIn(false); break;
                 case "account.signup": a.accountSignIn(true); break;
