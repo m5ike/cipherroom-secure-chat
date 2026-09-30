@@ -39,7 +39,13 @@
 //   POST   /api/account/register/start     the same, checked again → a new username
 //                                          (REGISTERED_USERNAME_RE) + creation options;
 //                                          the challenge carries the contact hashes and
-//                                          /register/verify stores them on the account
+//                                          /register/verify stores them on the account;
+//                                          6.4.1: the passkey is named passkeyName()
+//
+//   6.4.1 — the Android app sends X-M5-App-Cert (SHA-256 of its signing
+//   certificate). Every endpoint that starts a passkey ceremony answers
+//   403 {code: "app-not-trusted"} when this server would refuse that app's
+//   origin, BEFORE a passkey exists — no orphan in the password manager.
 //
 // Challenges are random, single-use and expire after 2 minutes; the one a
 // response answers is read from its clientDataJSON and must have been issued
@@ -56,11 +62,11 @@ import { eventStore } from "../events";
 import { audit } from "../monitor/audit";
 import { ACCOUNT_LIMITS, accountStore as defaultStore, usernameOf, type AccountRecord, type AccountStore } from "./store";
 import { userHandleFor, usernameFromHandle } from "./username";
-import { androidAppOrigins } from "../android/app-links";
-import { checkRegistrationOnServer, errorSummary } from "./registration";
+import { androidAppOrigins, androidCertFingerprints } from "../android/app-links";
+import { checkRegistrationOnServer, errorSummary, passkeyName } from "./registration";
 import { countryList } from "../../client/src/lib/registration/form";
 import {
-  SUPPORTED_ALGS, b64urlToBuffer, verifyAssertion, verifyRegistration,
+  SUPPORTED_ALGS, b64urlToBuffer, isAllowedOrigin, verifyAssertion, verifyRegistration,
   type AssertionResponseJSON, type RegistrationResponseJSON, type RpPolicy,
 } from "./webauthn";
 
@@ -202,12 +208,15 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
 
   // 4.0: the server picks the username (unique, the account's primary key)
   // and puts it into the passkey — name, display name and user handle.
-  const registrationOptions = (req: Request, challenge: string, username: string) => {
+  // The user handle is always the username (a sign-in names its account by
+  // it); the name the password manager shows is the username, or — for the
+  // registration form (6.4.1) — passkeyName().
+  const registrationOptions = (req: Request, challenge: string, username: string, keyName?: string) => {
     const policy = rpPolicyFor(req);
     return {
       challenge,
       rp: { id: policy.rpId, name: "M5cet" },
-      user: { id: userHandleFor(username), name: username, displayName: `M5cet · ${username}` },
+      user: { id: userHandleFor(username), name: keyName ?? username, displayName: keyName ?? `M5cet · ${username}` },
       pubKeyCredParams: SUPPORTED_ALGS.map((alg) => ({ type: "public-key", alg })),
       authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
       attestation: "none",
@@ -215,7 +224,30 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     };
   };
 
+  /**
+   * 6.4.1: the Android app names its signing certificate (X-M5-App-Cert). A
+   * passkey made for an origin this server would refuse ends up an orphan in
+   * the person's password manager — so refuse before the ceremony starts,
+   * and tell the app which certificate the operator has to trust.
+   */
+  const appNotTrusted = (req: Request, res: Response): boolean => {
+    const cert = String(req.header("x-m5-app-cert") ?? "").trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(cert)) return false;
+    const policy = rpPolicyFor(req);
+    if (isAllowedOrigin(`android:apk-key-hash:${Buffer.from(cert, "hex").toString("base64url")}`, policy)) return false;
+    const known = androidCertFingerprints().length;
+    adminLog("account.app-not-trusted", "warn", req, { status: "403", detail: { cert: cert.slice(0, 16), known } });
+    res.status(403).json({
+      ok: false, code: "app-not-trusted", certSha256: cert, rpId: policy.rpId, known,
+      message: known
+        ? `This server does not trust this app's signing certificate (SHA-256 ${cert.slice(0, 16)}…) for passkeys. The operator can trust it in Console › Android › Security › Passkeys on Android.`
+        : "This server knows no Android app certificate yet. The operator can trust this app's certificate in Console › Android › Security › Passkeys on Android, or upload a release.",
+    });
+    return true;
+  };
+
   app.post("/api/account/register/options", ceremonyLimiter, (req: Request, res: Response) => {
+    if (appNotTrusted(req, res)) return;
     let username: string;
     try { username = store.newUsername(); } catch {
       adminLog("account.register.failed", "warn", req, { status: "no-username" });
@@ -243,6 +275,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
   });
 
   app.post("/api/account/register/check", registrationLimiter, async (req: Request, res: Response) => {
+    if (appNotTrusted(req, res)) return;
     const r = await checkRegistrationOnServer(req.body, store);
     if (!r.ok) {
       adminLog("account.register.check", r.status === 409 ? "notice" : "info", req, { status: String(r.status), detail: { fields: errorSummary(r.errors) } });
@@ -254,6 +287,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
   // Checked again, never trusting an earlier /check: the challenge issued
   // here carries the contact hashes, so the client cannot swap them.
   app.post("/api/account/register/start", registrationLimiter, async (req: Request, res: Response) => {
+    if (appNotTrusted(req, res)) return;
     const r = await checkRegistrationOnServer(req.body, store);
     if (!r.ok) {
       adminLog("account.register.check", r.status === 409 ? "notice" : "info", req, { status: String(r.status), detail: { fields: errorSummary(r.errors), step: "start" } });
@@ -265,7 +299,8 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       return res.status(503).json({ ok: false, message: "No free username; try again." });
     }
     const challenge = challenges.issue("register", username, r.hashes);
-    res.json({ ok: true, username, normalized: r.normalized, publicKey: registrationOptions(req, challenge, username) });
+    const keyName = passkeyName(r.normalized);
+    res.json({ ok: true, username, keyName, normalized: r.normalized, publicKey: registrationOptions(req, challenge, username, keyName) });
   });
 
   app.post("/api/account/register/verify", ceremonyLimiter, (req: Request, res: Response) => {
@@ -288,7 +323,8 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     if (!r.ok) {
       eventStore.record({ kind: "account-register-failed", meta: { error: r.error.slice(0, 80) } });
       adminLog("account.register.failed", "warn", req, { status: "attestation", detail: { error: r.error.slice(0, 80) } });
-      return res.status(400).json({ ok: false, message: `Passkey registration rejected: ${r.error}` });
+      const origin = /^origin .* not allowed for /.test(r.error);
+      return res.status(400).json({ ok: false, ...(origin ? { code: "origin-not-allowed" } : {}), message: `Passkey registration rejected: ${r.error}` });
     }
     const created = store.create(r.credential, { username: issued.userName, ...(issued.contact ? { contact: issued.contact } : {}) });
     if (!created.ok) {
@@ -311,6 +347,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
   /* ------------------------------------------------------------ sign-in */
 
   app.post("/api/account/signin/options", ceremonyLimiter, (req: Request, res: Response) => {
+    if (appNotTrusted(req, res)) return;
     const policy = rpPolicyFor(req);
     res.json({ ok: true, publicKey: { challenge: challenges.issue("signin"), rpId: policy.rpId, userVerification: "required", timeout: 60_000 } });
   });
@@ -492,6 +529,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
   };
 
   app.post("/api/account/passkeys/options", ceremonyLimiter, requireAccount, (req: AuthedRequest, res: Response) => {
+    if (appNotTrusted(req, res)) return;
     const account = req.account!;
     res.json({ ok: true, publicKey: creationOptions(req, account, challenges.issue("add-passkey", account.id)) });
   });
@@ -545,6 +583,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
   });
 
   app.post("/api/account/recovery/start", recoveryLimiter, (req: Request, res: Response) => {
+    if (appNotTrusted(req, res)) return;
     const body = (req.body || {}) as { id?: unknown; proof?: unknown };
     const account = store.checkRecovery(String(body.id ?? ""), String(body.proof ?? ""));
     if (!account) {

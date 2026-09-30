@@ -45,15 +45,17 @@ function pick<T>(list: readonly T[], byte: number): T {
   return list[byte % list.length];
 }
 
-/** Unbiased characters from TAIL (rejection sampling). */
-function tail(length: number, random: (n: number) => Uint8Array): string {
-  const limit = 256 - (256 % TAIL.length);
+/** Unbiased characters from an alphabet (rejection sampling). */
+function chars(alphabet: string, length: number, random: (n: number) => Uint8Array): string {
+  const limit = 256 - (256 % alphabet.length);
   let out = "";
   while (out.length < length) {
-    for (const b of random(16)) if (b < limit && out.length < length) out += TAIL[b % TAIL.length];
+    for (const b of random(16)) if (b < limit && out.length < length) out += alphabet[b % alphabet.length];
   }
   return out;
 }
+
+const tail = (length: number, random: (n: number) => Uint8Array) => chars(TAIL, length, random);
 
 /**
  * A username nobody has: `taken` answers for the store (case-insensitively).
@@ -71,15 +73,18 @@ export function generateUsername(taken: (name: string) => boolean, random: (n: n
 }
 
 /**
- * 6.4: the username of an account registered with the form — ten characters
- * from TAIL (31 symbols, no look-alikes): 31^10 ≈ 8.2·10^14, about 49.5 bits,
- * letters and digits only. It is not derived from anything the person typed.
+ * 6.4.1: the username of an account registered with the form —
+ * XXXX-XXXX-XXXX-XXXX, each X one of 0-9 a-z A-Z (62 symbols): 62^16 ≈
+ * 4.8·10^28 names, about 95 bits. Nothing in it comes from what the person
+ * typed. Taken is checked case-insensitively (like every username), so two
+ * accounts never differ by case alone.
  */
-export const REGISTERED_USERNAME_RE = /^[a-hjkmnp-z2-9]{10}$/;
+const ALNUM = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+export const REGISTERED_USERNAME_RE = /^[0-9A-Za-z]{4}(?:-[0-9A-Za-z]{4}){3}$/;
 
 export function generateRegisteredUsername(taken: (name: string) => boolean, random: (n: number) => Uint8Array = (n) => randomBytes(n)): string {
   for (let attempt = 0; attempt < 20; attempt++) {
-    const name = tail(10, random);
+    const name = chars(ALNUM, 16, random).match(/.{4}/g)!.join("-");
     if (!taken(name)) return name;
   }
   throw new Error("no free username");

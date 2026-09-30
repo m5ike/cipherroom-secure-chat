@@ -44,6 +44,11 @@ Android app mirrors the light checks and relies on the server's answer.
    `POST /api/account/register/verify`, which creates the account, stores the
    contact hashes and re-checks uniqueness (a registration in between → 409
    `taken`).
+
+   Before any of this, an Android build that the server would refuse (its
+   signing certificate is not listed — see below) gets `403 app-not-trusted`
+   from `/register/check` and `/register/start`: no passkey is created that
+   the server would then reject.
 4. The profile `{ firstName, lastName, country, phone, email, registeredAt }`
    is sealed with the vault key and stored in the vault's own
    **`registration`** slot (`PUT /api/account/vault`).
@@ -51,10 +56,23 @@ Android app mirrors the light checks and relies on the server's answer.
    anonymous session's database is promoted and the vault is synced, as after
    any sign-in.
 
-**The username** of a registered account is ten characters from
-`abcdefghjkmnpqrstuvwxyz23456789` (no look-alikes): 31¹⁰ ≈ 8.2·10¹⁴ names,
-about 49.5 bits. It is not derived from anything typed. The anonymous
-*Create an account* keeps its two-word usernames.
+**The username** of a registered account (6.4.1) is `XXXX-XXXX-XXXX-XXXX`,
+each `X` one of `0-9 a-z A-Z` (62 symbols): 62¹⁶ ≈ 4.8·10²⁸ names, about
+95 bits — e.g. `aZ3k-9QpL-x7Rt-M2nB`. It is not derived from anything typed.
+Usernames are unique case-insensitively, so two accounts never differ by case
+alone. The anonymous *Create an account* keeps its two-word usernames.
+
+**The passkey's name** — what the password manager lists (WebAuthn
+`user.name` / `displayName`) — is the country and a scrambled
+`First-Last-Mobile`: `CZ-Mi3ale-Ko38a-7a73kassa`. The mobile is its national
+number; Latin letters are folded to ASCII (Ł → L, á → a), spaces and
+punctuation dropped, another script kept as it is; each part is capped (16 /
+16 / 15). *Scramble* picks about 20 % of the characters (never the hyphens,
+at least two) and moves each to the next picked place in a random cycle — the
+same characters, not in their places. The user handle (`user.id`) stays the
+username, which is how a sign-in names its account. The name lives only in
+the password manager; the server makes it for `/register/start` and keeps
+nothing of it.
 
 ### Privacy
 
@@ -80,8 +98,8 @@ about 49.5 bits. It is not derived from anything typed. The anonymous
 |---|---|
 | `GET /api/account/countries` | `{ countries: [{ code: "CZ", dial: "420" }, …] }` |
 | `POST /api/account/register/check` | `{ firstName, lastName, country, phone, email }` → `200 { normalized }` · `400/409/503 { errors: { field: code }, message }` · `429` |
-| `POST /api/account/register/start` | same body → `200 { username, normalized, publicKey }` |
-| `POST /api/account/register/verify` | unchanged; new `409 { code: "taken", errors }` |
+| `POST /api/account/register/start` | same body → `200 { username, keyName, normalized, publicKey }` |
+| `POST /api/account/register/verify` | unchanged; new `409 { code: "taken", errors }`, `400 { code: "origin-not-allowed" }` |
 | `GET/PUT /api/account/vault` | new slot `registration` (sealed like `profile`) |
 
 Field codes: `required`, `too-long`, `invalid`, `not-mobile`, `no-domain`,
@@ -134,6 +152,20 @@ adding a passkey.
    key; trust its certificate, or install a release build.
 
 Google caches the file for a few minutes: after a fix, check again shortly.
+
+### No orphan passkeys (6.4.1)
+
+A password manager that does not check `assetlinks.json` itself (some do
+not) creates the passkey anyway, and the server then refuses its origin —
+leaving a passkey the person has to delete by hand. So the Android app sends
+its certificate's SHA-256 with every account request (`X-M5-App-Cert`), and
+every endpoint that starts a passkey ceremony — `/register/check`,
+`/register/start`, `/register/options`, `/signin/options`,
+`/passkeys/options`, `/recovery/start` — answers `403 { code:
+"app-not-trusted", certSha256, known }` when this server would refuse that
+app's origin. The app shows the certificate dialog instead; nothing is
+created. The web sends no such header and is not affected. The operator's
+audit logs `account.app-not-trusted` with the fingerprint's start.
 
 ### What shows it
 

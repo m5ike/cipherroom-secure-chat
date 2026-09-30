@@ -127,7 +127,13 @@ public final class Account {
 
     JSONObject call(String method, String path, JSONObject body, boolean auth) throws IOException {
         JSONObject headers = new JSONObject();
-        try { if (auth && signedIn()) headers.put("Authorization", bearer()); } catch (JSONException ignored) { }
+        try {
+            if (auth && signedIn()) headers.put("Authorization", bearer());
+            // 6.4.1: which certificate signed this build — the server refuses a passkey ceremony it
+            // would not accept before the passkey exists (403 app-not-trusted), instead of after.
+            String cert = AppCert.sha256(app);
+            if (!cert.isEmpty()) headers.put("X-M5-App-Cert", cert);
+        } catch (JSONException ignored) { }
         byte[] b = Server.send(app.config.server() + path, method, body == null ? null : Crypto.utf8(body.toString()), headers, null, 4 * 1024 * 1024);
         try { return new JSONObject(new String(b, java.nio.charset.StandardCharsets.UTF_8)); }
         catch (JSONException e) { throw new IOException("not a JSON answer"); }
@@ -162,6 +168,11 @@ public final class Account {
 
     private static void report(Outcome done, Result r) { Io.main(() -> done.done(r)); }
 
+    /** 6.4.1: "app-not-trusted" — refused before any passkey existed, this build's certificate unknown to the server — reads as rp-unverified. */
+    static String refusalCode(String serverCode) { return "app-not-trusted".equals(serverCode) ? "rp-unverified" : ""; }
+
+    static String codeOf(Exception e) { return e instanceof Server.HttpError ? refusalCode(((Server.HttpError) e).code) : ""; }
+
     private static String accountId(JSONObject account, String fallback) {
         if (account == null) return fallback;
         String id = account.optString("id", account.optString("username", ""));
@@ -184,7 +195,7 @@ public final class Account {
                 }));
             } catch (Exception e) {
                 Log.w("account", "sign-in failed: " + e.getMessage());
-                report(done, Result.failure("", e.getMessage(), ""));
+                report(done, Result.failure(codeOf(e), e.getMessage(), ""));
             }
         });
     }
@@ -267,7 +278,7 @@ public final class Account {
                 create(activity, answer.getJSONObject("publicKey"), answer.optString("username", ""), null, done);
             } catch (Exception e) {
                 Log.w("account", "sign-up failed: " + e.getMessage());
-                report(done, Result.failure("", e.getMessage(), ""));
+                report(done, Result.failure(codeOf(e), e.getMessage(), ""));
             }
         });
     }
@@ -282,7 +293,7 @@ public final class Account {
             create(activity, publicKey, username, steps, done);
         } catch (Exception e) {
             Log.w("account", "registration failed: " + e.getMessage());
-            report(done, Result.failure("", e.getMessage(), username));
+            report(done, Result.failure(codeOf(e), e.getMessage(), username));
         }
     }
 
@@ -297,13 +308,15 @@ public final class Account {
         String rpId = options.getJSONObject("rp").getString("id");
         JSONObject user = options.optJSONObject("user");
         String name = username == null || username.isEmpty() ? (user == null ? "" : user.optString("name")) : username;
+        // What the password manager lists the passkey as (6.4.1: a registration's passkey name) — to find it there.
+        String label = user == null ? name : user.optString("name", name);
         step(steps, "passkey", "run");
         Io.main(() -> Passkeys.create(activity, options, new Passkeys.Result() {
             @Override public void ok(JSONObject registration) {
                 // From here on a passkey exists on the phone: the server must hear of it.
                 step(steps, "passkey", "ok");
                 step(steps, "keys", "run");
-                rootFor(activity, rpId, registration, prf -> Io.bg(() -> finishSignUp(registration, name, rpId, prf, steps, done)));
+                rootFor(activity, rpId, registration, prf -> Io.bg(() -> finishSignUp(registration, name, label, rpId, prf, steps, done)));
             }
             @Override public void failed(String code, String message) { step(steps, "passkey", "fail"); done.done(Result.failure(code, message, "")); }
         }));
@@ -334,7 +347,7 @@ public final class Account {
         }), 400);
     }
 
-    private void finishSignUp(JSONObject registration, String username, String rpId, byte[] prf, Steps steps, Outcome done) {
+    private void finishSignUp(JSONObject registration, String username, String label, String rpId, byte[] prf, Steps steps, Outcome done) {
         String server = app.config.server();
         boolean bound = prf == null;
         // No PRF at all: a root made here, kept before the server hears of it.
@@ -361,13 +374,13 @@ public final class Account {
                     report(done, new Result(false, "taken", refusal.getMessage(), false, username, refusal.body.optJSONObject("errors")));
                     return;
                 }
-                report(done, Result.failure("orphan", t("passkey.orphan").replace("{user}", username).replace("{reason}", String.valueOf(sent.error.getMessage())), username));
+                report(done, Result.failure("orphan", t("passkey.orphan").replace("{user}", label).replace("{reason}", String.valueOf(sent.error.getMessage())), username));
                 return;
             }
             if (sent.answer == null) {
                 // Maybe registered, maybe not: a device root stays (a later sign-in with the passkey finds it).
                 step(steps, "register", "fail");
-                report(done, Result.failure("orphan", t("passkey.orphanOffline").replace("{user}", username), username));
+                report(done, Result.failure("orphan", t("passkey.orphanOffline").replace("{user}", label), username));
                 return;
             }
             step(steps, "register", "ok");
@@ -385,7 +398,7 @@ public final class Account {
         } catch (Exception e) {
             Log.w("account", "sign-up failed: " + e.getMessage());
             step(steps, asked ? "register" : "keys", "fail");
-            report(done, Result.failure("orphan", t("passkey.orphan").replace("{user}", username).replace("{reason}", String.valueOf(e.getMessage())), username));
+            report(done, Result.failure("orphan", t("passkey.orphan").replace("{user}", label).replace("{reason}", String.valueOf(e.getMessage())), username));
         } finally {
             Crypto.wipe(root);
         }
@@ -468,7 +481,7 @@ public final class Account {
                     @Override public void failed(String code, String message) { failed.done(Result.failure(code, message, username())); }
                 }));
             } catch (Exception e) {
-                report(failed, Result.failure("", e.getMessage(), username()));
+                report(failed, Result.failure(codeOf(e), e.getMessage(), username()));
             }
         });
     }
@@ -516,7 +529,7 @@ public final class Account {
                 }));
             } catch (Exception e) {
                 Log.w("account", "add passkey: " + e.getMessage());
-                report(done, Result.failure("", e.getMessage(), username()));
+                report(done, Result.failure(codeOf(e), e.getMessage(), username()));
             }
         }), done);
     }

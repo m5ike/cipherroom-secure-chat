@@ -8,8 +8,14 @@
 
 import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 
-vi.hoisted(() => {
+vi.hoisted(async () => {
   process.env.WEBAUTHN_RP_ID = "localhost";
+  // A config dir of its own: which Android certificates the server knows must not come from the machine.
+  const { mkdtempSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  process.env.DATA_DIR = mkdtempSync(join(tmpdir(), "m5cet-registration-data-"));
+  delete process.env.ANDROID_DEBUG_CERT_SHA256;
 });
 
 import express from "express";
@@ -19,10 +25,10 @@ import type { Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { checkEmail, checkName, checkPhone, checkRegistration, countryList, flagEmoji } from "../client/src/lib/registration/form";
-import { checkRegistrationOnServer, mailDomain, setMxLookupForTests, type MailDomain } from "../server/accounts/registration";
+import { checkRegistrationOnServer, mailDomain, passkeyName, scramble, setMxLookupForTests, type MailDomain } from "../server/accounts/registration";
 import { AccountStore } from "../server/accounts/store";
 import { registerAccountRoutes } from "../server/accounts/routes";
-import { REGISTERED_USERNAME_RE, generateRegisteredUsername, isUsername } from "../server/accounts/username";
+import { REGISTERED_USERNAME_RE, generateRegisteredUsername, isUsername, usernameFromHandle } from "../server/accounts/username";
 import { FakeAuthenticator } from "./helpers/authenticator";
 
 const FORM = { firstName: " Jan  ", lastName: "Novák", country: "CZ", phone: "777 123 456", email: " Jan.Novak@Example.CZ " };
@@ -153,22 +159,63 @@ describe("contact hashes on the account", () => {
 });
 
 describe("registered usernames", () => {
-  it("are ten characters without look-alikes (~49.5 bits)", () => {
+  it("are XXXX-XXXX-XXXX-XXXX from 0-9 a-z A-Z (~95 bits)", () => {
     const seen = new Set<string>();
-    for (let i = 0; i < 200; i++) {
+    const used = new Set<string>();
+    for (let i = 0; i < 500; i++) {
       const name = generateRegisteredUsername(() => false);
       expect(name).toMatch(REGISTERED_USERNAME_RE);
+      expect(name).toMatch(/^[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}-[0-9A-Za-z]{4}$/);
       expect(isUsername(name)).toBe(true);
       seen.add(name);
+      for (const c of name.replace(/-/g, "")) used.add(/[0-9]/.test(c) ? "digit" : /[a-z]/.test(c) ? "lower" : "upper");
     }
-    expect(seen.size).toBe(200);
-    expect(Math.log2(31 ** 10)).toBeGreaterThan(32);
+    expect(seen.size).toBe(500);
+    expect(used).toEqual(new Set(["digit", "lower", "upper"]));
+    expect(Math.log2(62 ** 16)).toBeGreaterThan(95);
   });
 
   it("skip a taken one", () => {
     let first = "";
     const name = generateRegisteredUsername((n) => { if (!first) { first = n; return true; } return false; });
     expect(name).not.toBe(first);
+  });
+});
+
+describe("the passkey's name", () => {
+  it("scrambles about a fifth of the characters, never the hyphens", () => {
+    const text = "Michal-Kojdl-773123456"; // 20 characters besides the hyphens → 4 move
+    for (let i = 0; i < 200; i++) {
+      const out = scramble(text);
+      expect(out).toHaveLength(text.length);
+      expect([...out].filter((c, j) => c === "-").length).toBe(2);
+      expect(out.indexOf("-")).toBe(6);
+      expect(out.lastIndexOf("-")).toBe(12);
+      expect([...out].sort().join("")).toBe([...text].sort().join("")); // the same characters, moved
+      const moved = [...out].filter((c, j) => c !== text[j]).length;
+      expect(moved).toBeLessThanOrEqual(4);
+    }
+    expect(scramble("a")).toBe("a");
+    expect(scramble("ab")).toBe("ba");
+    // Every picked position changes hands (a cycle): with distinct letters, exactly k move.
+    for (let i = 0; i < 50; i++) {
+      const once = scramble("abcdefghijklmnopqrst");
+      expect([..."abcdefghijklmnopqrst"].filter((c, j) => c !== once[j]).length).toBe(4);
+    }
+  });
+
+  it("is the country and a scrambled First-Last-Mobile (national number)", () => {
+    const n = { firstName: "Michal", lastName: "Kojdl", country: "CZ", phone: "+420773123456", email: "m@example.cz" };
+    const name = passkeyName(n);
+    expect(name).toMatch(/^CZ-[A-Za-z0-9]{6}-[A-Za-z0-9]{5}-[A-Za-z0-9]{9}$/);
+    expect([...name.slice(3)].sort().join("")).toBe([..."Michal-Kojdl-773123456"].sort().join(""));
+    // The parts before scrambling: Latin folded to ASCII, spaces and punctuation dropped, another script kept.
+    const chars = (x: string) => [...x].sort().join("");
+    const pl = passkeyName({ ...n, firstName: "Łukasz", lastName: "Nowák", country: "PL", phone: "+48512345678" });
+    expect(pl.slice(0, 3)).toBe("PL-");
+    expect(chars(pl.slice(3))).toBe(chars("Lukasz-Nowak-512345678"));
+    expect(chars(passkeyName({ ...n, firstName: "Jan Maria", lastName: "O'Brien" }).slice(3))).toBe(chars("JanMaria-OBrien-773123456"));
+    expect(chars(passkeyName({ ...n, firstName: "Иван", lastName: "Петров", country: "RU", phone: "+79161234567" }).slice(3))).toBe(chars("Иван-Петров-9161234567"));
   });
 });
 
@@ -195,7 +242,7 @@ describe("registration over HTTP", () => {
 
   async function register(form: Record<string, string>, auth = new FakeAuthenticator("localhost", "http://localhost")) {
     const start = await post("/api/account/register/start", form);
-    const s = await start.json() as { ok: boolean; username: string; publicKey: { challenge: string; user: { name: string } } };
+    const s = await start.json() as { ok: boolean; username: string; keyName: string; publicKey: { challenge: string; user: { id: string; name: string; displayName: string } } };
     expect(start.status).toBe(200);
     const verify = await post("/api/account/register/verify", { credential: auth.register(s.publicKey.challenge), keyProof: KEY_PROOF });
     return { start: s, verify, body: await verify.json() as { ok: boolean; token?: string; code?: string; errors?: Record<string, string>; account?: { username: string; registered: boolean } } };
@@ -212,7 +259,11 @@ describe("registration over HTTP", () => {
     expect(await check.json()).toEqual({ ok: true, normalized: { firstName: "Jan", lastName: "Novák", country: "CZ", phone: "+420777123456", email: "jan.novak@example.cz" } });
     const { start, body } = await register(FORM);
     expect(start.username).toMatch(REGISTERED_USERNAME_RE);
-    expect(start.publicKey.user.name).toBe(start.username);
+    // The password manager shows the passkey's name; the user handle stays the username.
+    expect(start.keyName).toMatch(/^CZ-[A-Za-z0-9]{3}-[A-Za-z0-9]{5}-[A-Za-z0-9]{9}$/);
+    expect(start.publicKey.user.name).toBe(start.keyName);
+    expect(start.publicKey.user.displayName).toBe(start.keyName);
+    expect(usernameFromHandle(start.publicKey.user.id)).toBe(start.username);
     expect(body.ok).toBe(true);
     expect(body.account).toMatchObject({ username: start.username, registered: true });
     // The account keeps hashes only — the typed values are nowhere in its record.
@@ -256,6 +307,37 @@ describe("registration over HTTP", () => {
     const vault = await (await fetch(`${base}/api/account/vault`, { headers: { authorization: `Bearer ${token}` } })).json() as { registration: { ct: string }; profile: { ct: string } };
     expect(vault.registration.ct).toBe("c2VhbGVkLXJlZw==");
     expect(vault.profile.ct).toBe("cHJvZmlsZQ==");
+  });
+
+  it("refuses an Android build this server would not accept — before any passkey exists", async () => {
+    const cert = "3cf2e0f82f32da5651a0ff17a3d50899fb517d1f30b1bb03ed4e3b5096e61ba1";
+    const postAs = (path: string, body: unknown, appCert?: string) =>
+      fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json", ...(appCert ? { "x-m5-app-cert": appCert } : {}) }, body: JSON.stringify(body) });
+    for (const path of ["/api/account/register/check", "/api/account/register/start", "/api/account/register/options", "/api/account/signin/options", "/api/account/recovery/start"]) {
+      const r = await postAs(path, FORM, cert);
+      expect(r.status, path).toBe(403);
+      expect(await r.json(), path).toMatchObject({ ok: false, code: "app-not-trusted", certSha256: cert, known: 0 });
+    }
+    // Without the header (the web), or with a malformed one, nothing changes.
+    expect((await postAs("/api/account/register/check", FORM)).status).toBe(200);
+    expect((await postAs("/api/account/register/check", FORM, "not-a-cert")).status).toBe(200);
+    // Once the server knows the certificate, the same build goes through.
+    process.env.ANDROID_DEBUG_CERT_SHA256 = cert;
+    try {
+      expect((await postAs("/api/account/register/start", FORM, cert)).status).toBe(200);
+      expect((await postAs("/api/account/signin/options", {}, cert)).status).toBe(200);
+    } finally {
+      delete process.env.ANDROID_DEBUG_CERT_SHA256;
+    }
+  });
+
+  it("names an origin refusal at verify (an older app that sent no certificate)", async () => {
+    const cert = "ab".repeat(32);
+    const android = new FakeAuthenticator("localhost", `android:apk-key-hash:${Buffer.from(cert, "hex").toString("base64url")}`);
+    const start = await (await post("/api/account/register/start", FORM)).json() as { publicKey: { challenge: string } };
+    const verify = await post("/api/account/register/verify", { credential: android.register(start.publicKey.challenge), keyProof: KEY_PROOF });
+    expect(verify.status).toBe(400);
+    expect(await verify.json()).toMatchObject({ ok: false, code: "origin-not-allowed" });
   });
 
   it("keeps the anonymous 'create an account' path unchanged", async () => {

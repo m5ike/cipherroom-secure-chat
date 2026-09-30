@@ -493,6 +493,8 @@ public final class RegisterDialog {
             showErrors(codes);   // once the fields take input again (the first one gets the focus)
             return;
         }
+        // 6.4.1: this build's certificate is unknown to the server — said before any passkey was made.
+        if ("app-not-trusted".equals(e.code)) { stopped("check", null); AccountDialogs.rpUnverified(a); return; }
         if (e.status == 429) { stopped("check", t("reg.err.tooMany")); return; }
         if (e.status == 503 && "dns-unavailable".equals(e.code)) { stopped("check", t("reg.err.dns")); return; }
         stopped("check", t("reg.failed").replace("{reason}", String.valueOf(e.getMessage())));

@@ -5,6 +5,38 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.4.1] – 2026-09-30
+
+**Žádné osiřelé passkeye, nové uživatelské jméno a název klíče.** Registrace
+v aplikaci pro Android končila chybou „origin android:apk-key-hash:… not
+allowed“: správce hesel passkey vytvořil, ale server certifikát ladicího
+buildu nezná (neznal žádný — `assetlinks.json` vracel 404 „No Android app
+is known“), takže ho odmítl a passkey zůstal ve správci hesel k ničemu.
+
+### Opraveno
+- Aplikace pro Android posílá s každým požadavkem účtu SHA-256 svého
+  podpisového certifikátu (`X-M5-App-Cert`). Každý endpoint, který začíná
+  obřad passkeye (`register/check`, `register/start`, `register/options`,
+  `signin/options`, `passkeys/options`, `recovery/start`), odpoví
+  `403 app-not-trusted`, když by server původ té aplikace odmítl — **dřív,
+  než passkey vznikne**. Aplikace místo toho ukáže dialog s certifikátem
+  a návodem (Konzole › Android › Security › Passkeys on Android › Trust).
+  Audit zapíše `account.app-not-trusted`.
+- `register/verify` označí odmítnutý původ kódem `origin-not-allowed`
+  a hláška o osiřelém passkeyi jmenuje passkey tak, jak ho ukazuje správce
+  hesel (aby šel najít a smazat).
+
+### Změněno
+- **Uživatelské jméno** účtu z registrace: `XXXX-XXXX-XXXX-XXXX`, X náhodně
+  z `0-9 a-z A-Z` (62¹⁶, ≈ 95 bitů), jedinečné bez ohledu na velikost
+  písmen. Anonymní „Vytvořit účet“ beze změny.
+- **Název passkeye** (co ukazuje správce hesel): `ISO2-scramble(Jméno-Příjmení-Mobil)`,
+  např. `CZ-Mi3ale-Ko38a-7a73kassa` — mobil jako národní číslo, latinka
+  převedená na ASCII, scramble náhodně přesune asi 20 % znaků (pomlčky
+  zůstávají). Handle uživatele zůstává uživatelské jméno; název žije jen ve
+  správci hesel, server z něj nic neukládá.
+- Verze 6.4.1 (versionCode 60401).
+
 ## [6.4.0] – 2026-09-30
 
 **Registrace a passkeys na Androidu.** Nový registrační formulář (web
@@ -26,8 +58,8 @@ nezná — aplikace i konzole to teď přesně řeknou a konzole nabídne opravu
   a to mobil (ne pevná linka, VoIP ani placená linka — plná metadata
   libphonenumber), e-mail syntakticky i přes DNS (doména existuje, má MX
   a nejde o null MX), jedinečnost e-mailu i mobilu.
-- Server vygeneruje **uživatelské jméno** o 10 znacích (bez zaměnitelných
-  znaků, ≈ 49,5 bitu), vyžádá **passkey** (PRF → kořen účtu → klíče, stejně
+- Server vygeneruje **uživatelské jméno** (od 6.4.1 `XXXX-XXXX-XXXX-XXXX`,
+  ≈ 95 bitů), vyžádá **passkey** (PRF → kořen účtu → klíče, stejně
   jako „Vytvořit účet“), zaregistruje účet, uloží profil šifrovaně do
   **trezoru** a srovná a synchronizuje data zařízení s novým účtem.
 - API: `GET /api/account/countries`, `POST /api/account/register/check`,

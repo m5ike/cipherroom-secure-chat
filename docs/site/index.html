@@ -161,7 +161,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
 </head>
 <body>
 <header class="top">
-  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 6.4.0</small></a>
+  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 6.4.1</small></a>
   <div class="search" role="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" placeholder="Hledat v dokumentaci…" autocomplete="off" aria-label="Hledat v dokumentaci" />
@@ -169,7 +169,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <div class="results" id="results" role="listbox"></div>
   </div>
   <button class="btn" id="theme" type="button" title="Světlý / tmavý motiv">◐</button>
-  <a class="btn" href="m5cet-dokumentace-6.4.0.pdf" download>PDF</a>
+  <a class="btn" href="m5cet-dokumentace-6.4.1.pdf" download>PDF</a>
 </header>
 <div class="layout">
 <nav class="toc" id="toc" aria-label="Obsah"></nav>
@@ -810,7 +810,7 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
   <ul>
     <li><b>Země</b> je vyhledávací výběr (název, kód i předvolba, bez ohledu na diakritiku), <b>mobil</b> má předvolbu země. Obě aplikace i server kontrolují stejným modulem (<code>client/src/lib/registration/form.ts</code>).</li>
     <li>Server navíc ověří, že číslo může být <b>mobil</b> (ne pevná linka, VoIP ani placená linka), že <b>doména e-mailu</b> existuje a přijímá poštu (<b>MX</b>, ne null MX) a že e-mail ani mobil ještě <b>nejsou registrované</b>.</li>
-    <li>Pak vygeneruje <b>uživatelské jméno</b> o 10 znacích (≈ 49,5 bitu), vyžádá <b>passkey</b> (PRF → kořen účtu → klíče, stejně jako „Vytvořit účet“), zaregistruje účet, uloží profil šifrovaně do trezoru a <b>srovná a synchronizuje</b> data zařízení s novým účtem.</li>
+    <li>Pak vygeneruje <b>uživatelské jméno</b> <code>XXXX-XXXX-XXXX-XXXX</code> (0-9 a-z A-Z, ≈ 95 bitů), passkey pojmenuje <code>ISO2-scramble(Jméno-Příjmení-Mobil)</code> (např. <code>CZ-Mi3ale-Ko38a-7a73kassa</code> — asi 20 % znaků náhodně přesunutých), vyžádá <b>passkey</b> (PRF → kořen účtu → klíče, stejně jako „Vytvořit účet“), zaregistruje účet, uloží profil šifrovaně do trezoru a <b>srovná a synchronizuje</b> data zařízení s novým účtem.</li>
   </ul>
   <div class="warn"><b>Osobní údaje zůstávají uživateli.</b> Server nemá jméno, zemi, telefon ani e-mail v čitelné podobě: účet nese jen HMAC-SHA256 normalizovaného e-mailu a mobilu (náhodný pepř v <code>registration.json</code>), profil je zašifrovaný klientem ve slotu trezoru <code>registration</code>. Audit zapisuje jen názvy polí a kódy chyb; kontrola jedinečnosti má vlastní limit (20 dotazů / 10 min / adresa).</div>
   <table>
@@ -829,6 +829,7 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
     <li><b>Proxy blokuje <code>/.well-known/</code></b> — hostingové panely často zakazují cesty s tečkou; soubor pak vrací 403 nebo HTML. Oprava: přesná <code>location = /.well-known/assetlinks.json { proxy_pass … }</code> v bloku <code>server</code> (má přednost před <code>location ~ /\.</code>), <code>nginx -t</code> a reload — viz <a href="#nasazeni">nasazení</a>.</li>
     <li><b>Certifikát buildu není uvedený</b> — server uvádí certifikáty vydání (Android › Releases), <code>ANDROID_DEBUG_CERT_SHA256</code> a nově ty, které operátor v konzoli označí jako <b>důvěryhodné pro passkeys</b> (jen <code>assetlinks.json</code> a WebAuthn origin — nikdy kontrola vydání APK).</li>
   </ul>
+  <p><b>Bez osiřelých passkeyů (6.4.1).</b> Aplikace posílá s každým požadavkem účtu SHA-256 svého certifikátu (<code>X-M5-App-Cert</code>); endpointy, které začínají obřad passkeye, odpoví <code>403 app-not-trusted</code>, když by server původ té aplikace odmítl — dřív, než passkey ve správci hesel vznikne.</p>
   <p><b>Aplikace</b> v tom případě ukáže dialog <i>Server tuto aplikaci nepotvrdil</i> s adresou serveru, balíčkem a otiskem certifikátu (Kopírovat) a při check-inu hlásí serveru svůj certifikát. <b>Konzole</b> › Android › Security › <i>Passkeys on Android</i> projde řetězec jako telefon — co by server vrátil, co vrací veřejná adresa, co vidí Google — s verdiktem (<code>ok</code>, <code>blocked</code>, <code>not-json</code>, <code>missing-cert</code>, <code>google-stale</code>, <code>no-certs</code>), radami, blokem pro nginx a tlačítkem <i>Trust for passkeys</i> u certifikátů telefonů. <b><code>update.sh</code></b> po každé aktualizaci veřejný soubor ověří a při blokaci vypíše opravu. Podrobně v <code>docs/registration.md</code>.</p>
 </section>
 
@@ -2281,6 +2282,15 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
       <tr><td><b>Post-kvantový hybrid</b> (ML-KEM + ECDH) pro párové klíče</td><td>„Sklidit teď, rozšifrovat později“; až to WebCrypto nabídne nativně.</td><td><span class="badge">P3</span></td><td>M</td></tr>
     </tbody>
   </table>
+</section>
+
+<section class="doc" id="zmeny-641" data-group="Plán">
+  <h2>Změny v 6.4.1<a class="anchor" href="#zmeny-641">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>Opraveno</h4><p>Android: server odmítne obřad passkeye pro build, jehož certifikát nezná (<code>403 app-not-trusted</code>), <b>dřív než passkey vznikne</b> — žádné osiřelé passkeye ve správci hesel; aplikace ukáže dialog s certifikátem. Odmítnutý původ při <code>register/verify</code> má kód <code>origin-not-allowed</code>.</p></div>
+    <div class="card"><h4>Změněno</h4><p>Uživatelské jméno z registrace <code>XXXX-XXXX-XXXX-XXXX</code> (0-9 a-z A-Z, ≈ 95 bitů). Název passkeye <code>ISO2-scramble(Jméno-Příjmení-Mobil)</code>, např. <code>CZ-Mi3ale-Ko38a-7a73kassa</code>. Verze 6.4.1 (versionCode 60401).</p></div>
+  </div>
+  <p class="muted">Podrobně: <code>CHANGELOG.md</code>, <code>docs/registration.md</code>. Tato dokumentace odpovídá kódu verze 6.4.1.</p>
 </section>
 
 <section class="doc" id="zmeny-640" data-group="Plán">
