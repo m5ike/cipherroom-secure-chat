@@ -5,6 +5,68 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.3.0] – 2026-09-30
+
+**NFC, celý.** Nástroj NFC ve webu i v aplikaci Android čte, zapisuje a
+emuluje karty přes vybranou čtečku (interní, USB, Bluetooth) a nese vlastní
+šifrovanou **kartu M5Cet** se záznamy (záloha passkey a identity, jednorázová
+i běžná zpráva, server a místnost, externí klíč, kontakt, Wi-Fi, přihlášení
+k URL). Model ve Functions umí přes `m5.nfc` ovládat čtečku volajícího
+obousměrně. Jen standardní operace nad kartami, které držíte — žádné
+prolamování neznámých klíčů; EMV a e-ID jen veřejná data.
+
+### Přidáno — web i Android
+- **Výběr čtečky**: interní anténa (WebNFC / `NfcAdapter`), USB PC/SC (CCID —
+  ACR122U, ACR1252U…), Bluetooth (PN532 / bridge), na webu i sériová (PN532).
+- **Technologie karet**: M5Cet karta, připojka, NDEF (Type 1–5), MIFARE
+  Classic 1K/4K/Mini, Ultralight, NTAG 213/215/216, DESFire EV1/2/3, ISO-DEP,
+  ISO/IEC 14443 A/B, ISO/IEC 15693, FeliCa, EMV (veřejné), e-ID/MRTD (veřejné).
+  Souvislý sken ukáže UID, typ a veřejný záznam; „Spustit funkci" nabídne
+  přesně operace daného typu.
+- **Operace**: čtení UID a veřejných dat, NDEF čtení/zápis/uzamčení; MIFARE
+  Classic čtení/zápis/dump/obnova s vaším **slovníkem klíčů**; Ultralight/NTAG
+  stránky, heslo, čítač; DESFire seznam aplikací a souborů + čtení/zápis
+  s klíčem; ISO 15693 bloky; FeliCa systémy; EMV veřejná data (PPSE, štítky,
+  maskovaný PAN); e-ID typ dokumentu; **změna UID** na magic kartách;
+  APDU konzole. Co daná čtečka neumí, je zřetelně vypnuté, ne předstírané.
+- **Karta M5Cet**: šifrovaný kontejner záznamů na NFC tagu (NDEF externí typ
+  `m5cet.cz:card`), každý záznam zvlášť AES-GCM — klíč z **PINu (6–18 číslic,
+  externí, otevře na jakémkoli zařízení)** nebo z **účtu/passkey (interní, jen
+  vaše zařízení)**. Jednorázový záznam se po zobrazení z karty smaže. Čtení
+  vypíše záznamy s akcí zobrazit / uložit / spustit. **Vizuální builder**
+  vytváří a upravuje karty (přidání záznamů, typ šifrování, jednorázovost,
+  velikost vs. kapacita tagu). Formát je bajtově shodný na webu i v Androidu
+  (ověřeno testem).
+- **Functions `m5.nfc`**: objekt (reader/enum/card/scan/read/write/emulate +
+  `m5.nfc.m5` pro kartu M5Cet), JS i Python. Volání se stane **NFC interakcí**
+  běhu (stejný kanál jako dotazy a formuláře): model čeká, příkaz dojde
+  k volajícímu, jeho zařízení ho provede a vrátí výsledek — i z běhu spuštěného
+  webhookem (server může iniciovat). Uzly ve vizuálním builderu, balíčky
+  `nfc-scan` / `nfc-uid` / `nfc-open` a ukázkové modely.
+
+### Přidáno — Android
+- Nástroj NFC přepracován do plné parity s webem: abstrakce čtečky (interní +
+  USB host PC/SC + rozhraní pro BLE), detekce technologie, čtení/zápis/emulace,
+  `M5Card.java` jako bajtově shodný port formátu, builder karet, HCE emulace
+  karty M5Cet i připojky. Původní připojka (čtení/zápis/emulace) zůstává
+  kompatibilní s webem.
+
+### Změněno
+- Verze 6.3.0 (versionCode aplikace 60300). Instalátor 3.1.0.
+- Přírůstky designu Androidu po oblastech v `server/android/design-63-nfc.ts`.
+- `npm run android:release` (podepsané vydání) a `update.sh --android`
+  (sestaví podepsané vydání pro Android po úspěšné aktualizaci serveru —
+  vyžaduje Android SDK a keystore; selhání jen varuje).
+
+### Bezpečnost
+- Model nikdy nedostane ani nepošle klíč či PIN karty: chráněná karta se
+  používá přes `secretRef` (jméno, které zařízení vyřeší lokálně), server
+  odstraní tajné argumenty na vstupu i výstupu. `m5.nfc` je pod přístupovými
+  právy modulu NFC jako `m5.telephony`.
+- Klíč karty M5Cet se neukládá; PIN se nikam nezapisuje. Kód nedělá obnovu
+  neznámých klíčů (nested/darkside/hardnested) ani klonování platebních karet;
+  EMV a e-ID jsou jen veřejná data.
+
 ## [6.2.0] – 2026-09-30
 
 **Bubliny, které řeknou všechno.** U každé zprávy je ikona (i) s detailem:

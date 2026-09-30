@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **6.2.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **6.3.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 6.2.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-6.2.0.pdf`](docs/site/m5cet-dokumentace-6.2.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 6.3.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-6.3.0.pdf`](docs/site/m5cet-dokumentace-6.3.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -775,7 +775,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.2.0        | aktuální — **detail zprávy** (i) s časovou osou všech stavů a potvrzeními od každého příjemce, **skrýt / smazat** zprávu ve svém pohledu (audit `message`, bez obsahu), **náhled mapy** u polohy (dlaždice přes server, karta Map preview v konzoli), náhledy médií a patička příloh — web i Android; Android: panel lidí jako na webu, propojení s kontakty telefonu, šablony vzhledu s barevnými variantami, Nástroje jako plovoucí okno, mikrofon nahrává, opravy registrace QR a passkeys, PIN pro každou obrazovku |
+| 6.3.0        | aktuální — **NFC nástroj** (web i Android): výběr čtečky (interní/USB/Bluetooth), technologie karet (MIFARE Classic/Ultralight/NTAG/DESFire, NDEF, ISO 14443/15693, FeliCa, EMV a e-ID veřejně), čtení/zápis/změna UID/emulace, šifrovaná **karta M5Cet** se záznamy (záloha passkey/identity, jednorázová zpráva, Wi-Fi, kontakt, server+místnost…) a její vizuální builder; `m5.nfc` ve Functions ovládá čtečku volajícího obousměrně (uzly builderu, balíčky `nfc-scan`/`nfc-uid`/`nfc-open`). `npm run android:release`, `update.sh --android` |
+| 6.2.0        | **detail zprávy** (i) s časovou osou všech stavů a potvrzeními od každého příjemce, **skrýt / smazat** zprávu ve svém pohledu (audit `message`, bez obsahu), **náhled mapy** u polohy (dlaždice přes server, karta Map preview v konzoli), náhledy médií a patička příloh — web i Android; Android: panel lidí jako na webu, propojení s kontakty telefonu, šablony vzhledu s barevnými variantami, Nástroje jako plovoucí okno, mikrofon nahrává, opravy registrace QR a passkeys, PIN pro každou obrazovku |
 | 6.1.0        | konzole: **menu sbalitelné na ikony** s tooltipy, **rozvržení stránek** (Přehled a záložky Functions) odemykané zámkem — přesun, velikost, řádky, skrytí, zarovnání; uloží se zamčením do nastavení administrátora (`/api/admin/me/prefs`), jde vrátit; Functions: **IDE na celou obrazovku**, statistiky schované do řádku, ikony na záložkách a tlačítkách, nové webhooky, plány, běhy a tutoriál; potvrzení doručení a přečtení mezi připojenými, poloha ve zprávě, passkeys pro aplikaci Android |
 | 6.0.0        | **aplikace pro Android** jako framework (obrazovky, téma, animace, texty a knihovny z konzole; zašifrované a podepsané balíčky s návratem; biometrie a PIN s wipe; šifrovaná data v Keystore; řídicí zprávy přes FCM; vydání APK; záznam hovorů); sekce *Android* v konzoli s builderem a živým náhledem; **víc místností naráz** na webu i v telefonu; seznam lidí u okraje s automatickým schováním; **m5adm** (administrace jako SDK, řízení místností, oznámení operátora) a **m5.telephony** (hovory, SMS, chatovací sítě, lookup, HLR, telefonní most); `npm run android:build` |
 | 5.3.0        | **vstupní body** modelu (execute, response, button, form, error, víc webhooků s vlastními URL) se vstupy u každého; `m5.model` (sezení: calls, current, last, session, cache); **výsledek jako seznam** výstupů, každý vykreslený samostatně; nové výstupy zvuk, video, **tlačítka**, **formuláře** (form builder), **kód v prohlížeči** v izolovaném rámu; odpověď na zprávu modelu; `/help` a ukázky 1.1.0 s tlačítky a formuláři; tutoriál 10–16 |
