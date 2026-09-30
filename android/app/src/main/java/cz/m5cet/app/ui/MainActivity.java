@@ -110,10 +110,13 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         String room = i.getStringExtra("room");
         if (room != null) pendingRoom = room;
         Uri data = i.getData();
-        if (data != null && "m5cet".equals(data.getScheme()) && "enroll".equals(data.getHost())) {
-            form.put("server", data.getQueryParameter("server") == null ? "" : data.getQueryParameter("server"));
-            form.put("code", data.getQueryParameter("code") == null ? "" : data.getQueryParameter("code"));
-            form.put("kid", data.getQueryParameter("kid") == null ? "" : data.getQueryParameter("kid"));
+        // 6.2: the console's QR link fills the enrolment form — at a cold start (route() shows it
+        // next) and while the app is open (onNewIntent: the enrolment screen comes forward).
+        // Taken once: not again after a recreate(), nor from the recent apps once enrolled.
+        if (data != null && "m5cet".equalsIgnoreCase(data.getScheme()) && "enroll".equalsIgnoreCase(data.getHost())) {
+            boolean again = (i.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0;
+            if (!again || !app.config.enrolled()) cz.m5cet.app.ui.parts.Forms.enrollLink(this, data.toString());
+            i.setData(null);
         }
         if (Intent.ACTION_SEND.equals(i.getAction()) && "text/plain".equals(i.getType())) pendingShare = i.getStringExtra(Intent.EXTRA_TEXT);
     }
@@ -193,7 +196,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     /* --------------------------------------------------------------- lock */
 
     private void setupLock() {
-        try { lockState.put("mode", "pin").put("setup", true).put("step", "enter").put("error", "").put("wait", 0).put("attempts", 0).put("left", app.lock.maxAttempts()).put("biometricAvailable", false); } catch (JSONException ignored) { }
+        try { lockState.put("mode", "pin").put("setup", true).put("step", "enter").put("error", "").put("wait", 0).put("attempts", 0).put("left", app.lock.maxAttempts()).put("biometricAvailable", false).put("wide", lockWide()); } catch (JSONException ignored) { }
         form.remove("pin1");
         stack.clear();
         showScreen("lock", true);
@@ -203,12 +206,25 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         boolean bio = app.lock.biometricAvailable();
         try {
             lockState.put("mode", bio ? "biometric" : "pin").put("setup", false).put("step", "enter").put("error", lockState.optString("error", ""))
-                .put("wait", app.lock.waitSeconds()).put("attempts", app.lock.attempts()).put("left", app.lock.left()).put("biometricAvailable", bio);
+                .put("wait", app.lock.waitSeconds()).put("attempts", app.lock.attempts()).put("left", app.lock.left()).put("biometricAvailable", bio).put("wide", lockWide());
         } catch (JSONException ignored) { }
         stack.clear();
         showScreen("lock", true);
         if (app.lock.waitSeconds() > 0) Io.mainLater(this::tickWait, 1000);
         else if (bio && !"off".equals(app.lock.biometricMode())) Io.mainLater(this::promptBiometric, 250);
+    }
+
+    /** 6.2: $lock.wide — the window is wider than tall (landscape, a split screen side by side). */
+    private boolean lockWide() {
+        android.content.res.Configuration c = getResources().getConfiguration();
+        return c.screenWidthDp > c.screenHeightDp;
+    }
+
+    /** From the lock pad when the window changed (fold, turn, split): the lock tree may lay out anew. */
+    public void lockResized() {
+        if (!screen.equals("lock") || lockWide() == lockState.optBoolean("wide")) return;
+        try { lockState.put("wide", lockWide()); } catch (JSONException ignored) { }
+        refresh();
     }
 
     private void tickWait() {
@@ -251,7 +267,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
 
     private void handleLockResult(AppLock.Result r) {
         switch (r) {
-            case OK: try { lockState.put("error", ""); } catch (JSONException ignored) { } enterApp(); break;
+            // 6.2: the account's session is checked (and unlocked with the kept root) once the vault is open
+            case OK: try { lockState.put("error", ""); } catch (JSONException ignored) { } app.account.restore(); enterApp(); break;
             case WIPED: flash("", app.t("lock.wiped"), "error"); Io.mainLater(app::restart, 2500); break;
             default:
                 try { lockState.put("error", r == AppLock.Result.WAIT ? "" : app.t("lock.wrongPin")); } catch (JSONException ignored) { }
@@ -491,10 +508,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     /* ------------------------------------------------------- account (6.1) */
 
     public void accountSignIn(boolean signUp) {
-        cz.m5cet.app.account.Account.Done done = (ok, err) -> {
-            flash("", ok ? app.t("set.user.viaPasskey") + " · " + app.account.username() : (err == null ? app.t("voice.failed") : err), ok ? "success" : "error");
-            refresh();
-        };
+        // 6.2: what follows a ceremony — a notice, or a choice (unknown passkey → create an account…)
+        cz.m5cet.app.account.Account.Outcome done = r -> cz.m5cet.app.account.AccountDialogs.after(this, signUp, r);
         if (signUp) app.account.signUp(this, done); else app.account.signIn(this, done);
     }
 
