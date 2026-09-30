@@ -47,22 +47,37 @@ public final class Account {
     /** How a ceremony ended: code tells the UI which answer it gets (AccountDialogs). */
     public static final class Result {
         public final boolean ok;
-        /** "", cancelled, no-passkey, unsupported, unknown-passkey, no-prf, wrong-key, orphan. */
+        /** "", cancelled, no-passkey, unsupported, unknown-passkey, no-prf, wrong-key, orphan; 6.4: rp-unverified, taken. */
         public final String code;
         public final String message;
         /** The account's root lives only on this phone. */
         public final boolean deviceBound;
         /** The account's username — or the stale passkey's, for unknown-passkey. */
         public final String username;
+        /** 6.4: the server's per-field errors (taken: someone registered that e-mail / phone meanwhile); empty otherwise. */
+        public final JSONObject errors;
 
-        Result(boolean ok, String code, String message, boolean deviceBound, String username) {
+        Result(boolean ok, String code, String message, boolean deviceBound, String username) { this(ok, code, message, deviceBound, username, null); }
+
+        Result(boolean ok, String code, String message, boolean deviceBound, String username, JSONObject errors) {
             this.ok = ok; this.code = code == null ? "" : code; this.message = message == null ? "" : message; this.deviceBound = deviceBound; this.username = username == null ? "" : username;
+            this.errors = errors == null ? new JSONObject() : errors;
         }
         static Result success(boolean deviceBound, String username) { return new Result(true, "", "", deviceBound, username); }
         static Result failure(String code, String message, String username) { return new Result(false, code, message, false, username); }
     }
 
     public interface Outcome { void done(Result r); }
+
+    /**
+     * 6.4: how the creation of an account goes, step by step (the
+     * registration's list): "passkey" (the ceremony), "keys" (the root and
+     * its key proof), "register" (the server takes the passkey) — each
+     * "run", then "ok" or "fail". On the main thread.
+     */
+    public interface Steps { void step(String id, String state); }
+
+    private static void step(Steps steps, String id, String state) { if (steps != null) Io.main(() -> steps.step(id, state)); }
 
     /** The recovery code (shown once), or why there is none. */
     public interface CodeDone { void done(String code, Result failure); }
@@ -249,22 +264,49 @@ public final class Account {
         Io.bg(() -> {
             try {
                 JSONObject answer = call("POST", "/api/account/register/options", new JSONObject(), false);
-                JSONObject options = AccountKeys.withPrf(answer.getJSONObject("publicKey"));
-                String rpId = options.getJSONObject("rp").getString("id");
-                JSONObject user = options.optJSONObject("user");
-                String username = answer.optString("username", user == null ? "" : user.optString("name"));
-                Io.main(() -> Passkeys.create(activity, options, new Passkeys.Result() {
-                    @Override public void ok(JSONObject registration) {
-                        // From here on a passkey exists on the phone: the server must hear of it.
-                        rootFor(activity, rpId, registration, prf -> Io.bg(() -> finishSignUp(registration, username, rpId, prf, done)));
-                    }
-                    @Override public void failed(String code, String message) { done.done(Result.failure(code, message, "")); }
-                }));
+                create(activity, answer.getJSONObject("publicKey"), answer.optString("username", ""), null, done);
             } catch (Exception e) {
                 Log.w("account", "sign-up failed: " + e.getMessage());
                 report(done, Result.failure("", e.getMessage(), ""));
             }
         });
+    }
+
+    /**
+     * 6.4 registration: the passkey for the account /register/start put
+     * aside (its creation options and username) — the same ceremony, PRF,
+     * root, key proof and /register/verify as signUp; steps hears each one.
+     */
+    public void register(Activity activity, JSONObject publicKey, String username, Steps steps, Outcome done) {
+        try {
+            create(activity, publicKey, username, steps, done);
+        } catch (Exception e) {
+            Log.w("account", "registration failed: " + e.getMessage());
+            report(done, Result.failure("", e.getMessage(), username));
+        }
+    }
+
+    /**
+     * A new passkey from the server's creation options (with the PRF
+     * extension asked for), its root, then /register/verify — shared by
+     * "Create an account" and the registration (6.4). Any thread; the
+     * ceremony runs on the main one.
+     */
+    private void create(Activity activity, JSONObject publicKey, String username, Steps steps, Outcome done) throws JSONException {
+        JSONObject options = AccountKeys.withPrf(publicKey);
+        String rpId = options.getJSONObject("rp").getString("id");
+        JSONObject user = options.optJSONObject("user");
+        String name = username == null || username.isEmpty() ? (user == null ? "" : user.optString("name")) : username;
+        step(steps, "passkey", "run");
+        Io.main(() -> Passkeys.create(activity, options, new Passkeys.Result() {
+            @Override public void ok(JSONObject registration) {
+                // From here on a passkey exists on the phone: the server must hear of it.
+                step(steps, "passkey", "ok");
+                step(steps, "keys", "run");
+                rootFor(activity, rpId, registration, prf -> Io.bg(() -> finishSignUp(registration, name, rpId, prf, steps, done)));
+            }
+            @Override public void failed(String code, String message) { step(steps, "passkey", "fail"); done.done(Result.failure(code, message, "")); }
+        }));
     }
 
     /**
@@ -292,29 +334,43 @@ public final class Account {
         }), 400);
     }
 
-    private void finishSignUp(JSONObject registration, String username, String rpId, byte[] prf, Outcome done) {
+    private void finishSignUp(JSONObject registration, String username, String rpId, byte[] prf, Steps steps, Outcome done) {
         String server = app.config.server();
         boolean bound = prf == null;
         // No PRF at all: a root made here, kept before the server hears of it.
         byte[] root = bound ? Crypto.random(32) : prf;
         String pendingId = username.isEmpty() ? AccountKeys.credentialId(registration) : username;
+        boolean asked = false;
         try {
             if (bound) {
                 try { roots().put(server, pendingId, root, AccountKeys.credentialId(registration), false); }
                 catch (GeneralSecurityException e) { throw new IOException("the account key could not be stored on this phone", e); }
             }
-            Sent sent = send("POST", "/api/account/register/verify", new JSONObject().put("credential", AccountKeys.strip(registration)).put("keyProof", AccountKeys.keyProof(root)), false);
+            String keyProof = AccountKeys.keyProof(root);
+            step(steps, "keys", "ok");
+            step(steps, "register", "run");
+            asked = true;
+            Sent sent = send("POST", "/api/account/register/verify", new JSONObject().put("credential", AccountKeys.strip(registration)).put("keyProof", keyProof), false);
             if (sent.refused()) {
                 // The server refused it: no account exists for this passkey.
                 if (bound) roots().remove(server, pendingId);
+                step(steps, "register", "fail");
+                Server.HttpError refusal = (Server.HttpError) sent.error;
+                if (refusal.status == 409 && "taken".equals(refusal.code)) {
+                    // 6.4: someone registered that e-mail or phone meanwhile — back to the form with the fields.
+                    report(done, new Result(false, "taken", refusal.getMessage(), false, username, refusal.body.optJSONObject("errors")));
+                    return;
+                }
                 report(done, Result.failure("orphan", t("passkey.orphan").replace("{user}", username).replace("{reason}", String.valueOf(sent.error.getMessage())), username));
                 return;
             }
             if (sent.answer == null) {
                 // Maybe registered, maybe not: a device root stays (a later sign-in with the passkey finds it).
+                step(steps, "register", "fail");
                 report(done, Result.failure("orphan", t("passkey.orphanOffline").replace("{user}", username), username));
                 return;
             }
+            step(steps, "register", "ok");
             JSONObject answer = sent.answer;
             String id = accountId(answer.optJSONObject("account"), pendingId);
             if (bound) {
@@ -328,10 +384,41 @@ public final class Account {
             report(done, Result.success(bound, username()));
         } catch (Exception e) {
             Log.w("account", "sign-up failed: " + e.getMessage());
+            step(steps, asked ? "register" : "keys", "fail");
             report(done, Result.failure("orphan", t("passkey.orphan").replace("{user}", username).replace("{reason}", String.valueOf(e.getMessage())), username));
         } finally {
             Crypto.wipe(root);
         }
+    }
+
+    /* ------------------------------------------------ registration (6.4) */
+
+    /**
+     * Seals the registration record (Registration.record) with the vault key
+     * and stores it as the account vault's own "registration" part — next to
+     * the profile, which the web rewrites from its preferences. Nothing of it
+     * leaves the phone unsealed. done runs on the main thread.
+     */
+    public void saveRegistration(JSONObject record, Done done) {
+        Io.bg(() -> {
+            byte[] root = root(), key = null;
+            try {
+                if (root == null || !signedIn()) throw new IOException(t("passkey.noRoot"));
+                key = AccountKeys.profileKey(root);
+                // A lost answer may simply be asked again: the same part is stored again.
+                Sent sent = send("PUT", "/api/account/vault", new JSONObject().put("registration", AccountKeys.sealProfile(record, key)), true);
+                if (sent.answer == null) throw sent.error;
+                JSONObject s = state();
+                if (sent.answer.optJSONObject("account") != null) { s.put("account", sent.answer.optJSONObject("account")); save(s); }
+                Io.main(() -> done.done(true, null));
+            } catch (Exception e) {
+                Log.w("account", "registration → vault: " + e.getMessage());
+                Io.main(() -> done.done(false, e.getMessage()));
+            } finally {
+                Crypto.wipe(root);
+                Crypto.wipe(key);
+            }
+        });
     }
 
     /* ------------------------------------------------ more ways into it */
@@ -530,7 +617,9 @@ public final class Account {
                 .put("signedInAt", state().optLong("at"))
                 // 6.2: a device-bound account, and what this phone can add to reach it elsewhere
                 .put("deviceBound", signedIn() && deviceBound()).put("canSeal", hasRoot())
-                .put("recovery", recovery != null && recovery.optBoolean("set")).put("recoverySince", recovery == null ? 0 : recovery.optLong("createdAt"));
+                .put("recovery", recovery != null && recovery.optBoolean("set")).put("recoverySince", recovery == null ? 0 : recovery.optLong("createdAt"))
+                // 6.4: the account was made through the registration (name, mobile, e-mail checked by the server)
+                .put("registered", signedIn() && a.optBoolean("registered"));
         } catch (JSONException ignored) { }
         return o;
     }

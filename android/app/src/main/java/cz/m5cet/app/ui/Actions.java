@@ -123,6 +123,8 @@ public final class Actions {
                 // 6.2 fixes: reaching a device-bound account elsewhere
                 case "account.recovery": cz.m5cet.app.account.AccountDialogs.recoveryCode(a); break;
                 case "account.addPasskey": cz.m5cet.app.account.AccountDialogs.addPasskey(a); break;
+                // 6.4: registration (name, country, mobile, e-mail → an account with a passkey)
+                case "account.register": cz.m5cet.app.account.RegisterDialog.show(a); break;
                 case "pin.change": a.parts.changePin(); break;
                 case "biometric.toggle": a.toggleBiometric(); break;
                 case "wipe.ask": a.parts.askWipe(); break;
