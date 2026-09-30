@@ -217,6 +217,7 @@ public final class RoomSession {
     private void onFrame(String text) {
         JSONObject f;
         try { f = new JSONObject(text); } catch (JSONException e) { return; }
+        people.onFrame(f); // 6.2 people: signed-in connections, away members
         switch (f.optString("type")) {
             case "joined": {
                 myId = f.optString("peerId", myId);
@@ -386,6 +387,7 @@ public final class RoomSession {
                 if ("key-mismatch".equals(refused)) { notice = app.t("room.keyMismatch"); status = "mismatch"; changed(); return; }
                 if (refused != null) { Log.w("room", "bad hello from " + p.name); return; }
                 p.publicKey = raw.optString("pk");
+                people.onHello(p.id, raw); // 6.2 people: the username it names, when the channel opened
                 JSONArray caps = raw.optJSONArray("caps");
                 p.bin = false;
                 if (caps != null) for (int i = 0; i < caps.length(); i++) if ("bin".equals(caps.optString(i))) p.bin = true;
@@ -921,6 +923,93 @@ public final class RoomSession {
     }
 
     /* ---------------------------------------------------- 6.2 people */
+
+    /** 6.2 People: usernames, signed-in connections, away members, statistics (PeerFacts). */
+    final PeerFacts people = new PeerFacts();
+
+    /**
+     * 6.2: everyone of the room for the People widget — me, the peers and the
+     * signed-in members who are away: [{id, name, me, channel (open |
+     * connecting | closed | away), username, signedIn, since, audio, signed
+     * (a valid hello), changed, publicKey, app, rtt (ms, -1 = unknown)}].
+     * An away member's id is "away:" + the server's account reference.
+     */
+    public JSONArray peopleScope() {
+        JSONArray out = new JSONArray();
+        try {
+            if (connected()) {
+                String user = app.accountName();
+                out.put(new JSONObject().put("id", myId).put("name", userName).put("me", true).put("channel", "open").put("username", user)
+                    .put("signedIn", !user.isEmpty()).put("since", (double) people.joinedAt).put("audio", calls.state()).put("signed", true)
+                    .put("changed", false).put("publicKey", myPublicKey()).put("app", "").put("rtt", -1.0));
+            }
+            java.util.Set<String> here = new java.util.HashSet<>();
+            for (Peer p : new ArrayList<>(peers.values())) {
+                PeerFacts.Facts f = people.get(p.id);
+                String account = people.account(p.id);
+                if (!account.isEmpty()) here.add(account);
+                cz.m5cet.app.contacts.RtcStats.Summary st = f == null ? null : f.stats;
+                String channel = "open".equals(p.status) ? "open" : "closed".equals(p.status) ? "closed" : "connecting";
+                out.put(new JSONObject().put("id", p.id).put("name", p.name).put("me", false).put("channel", channel)
+                    .put("username", f == null ? "" : f.username).put("signedIn", !account.isEmpty()).put("since", f == null ? 0.0 : (double) f.since)
+                    .put("audio", p.audio).put("signed", p.verified).put("changed", p.changed).put("publicKey", p.publicKey == null ? "" : p.publicKey)
+                    .put("app", f == null ? "" : f.app).put("rtt", st == null ? -1.0 : (double) st.rttMs));
+            }
+            for (PeerFacts.Away w : people.away()) {
+                if (here.contains(w.account)) continue;
+                out.put(new JSONObject().put("id", "away:" + w.account).put("name", w.name).put("me", false).put("channel", "away")
+                    .put("username", people.userOf(w.account)).put("signedIn", true).put("since", (double) w.since).put("audio", "off")
+                    .put("signed", false).put("changed", false).put("publicKey", "").put("app", "").put("rtt", -1.0));
+            }
+        } catch (JSONException ignored) { }
+        return out;
+    }
+
+    /** 6.2: a peer's connection statistics (null before the first reading). */
+    public cz.m5cet.app.contacts.RtcStats.Summary peerStats(String peerId) {
+        PeerFacts.Facts f = people.get(peerId);
+        return f == null ? null : f.stats;
+    }
+
+    /** 6.2: this device's key in the room (the other half of a safety number); "" before it connected. */
+    public String myPublicKey() { ChatIdentity i = identity; return i == null ? "" : i.publicKey; }
+
+    /**
+     * 6.2: the room is still settling — it is connecting, joined moments ago,
+     * or a peer's channel is not open (or has not said hello) yet — so a
+     * contact's "message via M5cet" waits a little before it says "not online".
+     */
+    public boolean peopleSettling(long now) {
+        if (!connected()) return wanted && !"mismatch".equals(status);
+        if (now - people.joinedAt < 8000) return true;
+        for (Peer p : new ArrayList<>(peers.values())) {
+            if ("closed".equals(p.status)) continue;
+            if (!"open".equals(p.status) || people.get(p.id) == null) return true;
+        }
+        return false;
+    }
+
+    /** 6.2: reads each open peer connection's statistics; `each` runs after every reading (on a WebRTC thread). */
+    public void refreshStats(Runnable each) {
+        post(() -> {
+            for (Peer p : new ArrayList<>(peers.values())) {
+                if (p.pc == null || !"open".equals(p.status)) continue;
+                String id = p.id;
+                try {
+                    p.pc.getStats(report -> {
+                        Map<String, cz.m5cet.app.contacts.RtcStats.Entry> all = new HashMap<>();
+                        for (Map.Entry<String, org.webrtc.RTCStats> e : report.getStatsMap().entrySet()) {
+                            all.put(e.getKey(), new cz.m5cet.app.contacts.RtcStats.Entry(e.getValue().getType(), e.getValue().getMembers()));
+                        }
+                        people.stats(id, cz.m5cet.app.contacts.RtcStats.parse(all, System.currentTimeMillis()));
+                        if (each != null) each.run();
+                    });
+                } catch (RuntimeException e) {
+                    Log.d("room", "stats of " + id + ": " + e.getMessage());
+                }
+            }
+        });
+    }
 
     /* --------------------------------------------------- 6.2 bubbles */
 }

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 6.2 people: the app's own account type — it only carries the rows linking M5cet people
+     to the phone's contacts (contacts.AddressBook). No sign-in, no credentials. -->
+<account-authenticator xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accountType="cz.m5cet.app"
+    android:icon="@mipmap/ic_launcher"
+    android:smallIcon="@mipmap/ic_launcher"
+    android:label="@string/people_account" />

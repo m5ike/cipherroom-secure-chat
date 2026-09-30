@@ -131,6 +131,10 @@ public final class Actions {
                 // ---- 6.2 fixes (lock, enrolment, passkeys) ----
 
                 // ---- 6.2 people (People widget, contacts) ----
+                case "people.open": case "people.select": case "people.all": case "people.none": case "people.message": case "people.call":
+                case "people.video": case "people.verify": case "people.link": case "people.unlink": case "people.unlinkAll":
+                    a.parts.people().run(action, s);
+                    break;
 
                 // ---- 6.2 bubbles (message details, attachments, hide/delete) ----
 

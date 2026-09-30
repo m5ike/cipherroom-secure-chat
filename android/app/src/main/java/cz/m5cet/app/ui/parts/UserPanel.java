@@ -32,6 +32,10 @@ import cz.m5cet.app.ui.Ui;
  * after a few seconds without a touch or on a tap outside. The trees
  * ("users", "users.item", "users.handle") and the timing (animations.users)
  * come from the design.
+ *
+ * 6.2: the people as the web's recipients widget shows them — avatar, status,
+ * signal, a checkbox for who gets the next message, "Vybrat vše" / "Zrušit
+ * výběr" — and a tap opens a person's detail (People).
  */
 final class UserPanel extends FrameLayout implements Renderer.Slot {
     private static final long HIDE_AFTER = 5000;
@@ -88,13 +92,27 @@ final class UserPanel extends FrameLayout implements Renderer.Slot {
         if (v) postDelayed(hideLater, 800);
     }
 
+    /**
+     * The panel's scope. 6.2: each person as the web's recipients widget shows
+     * them (People.users: status, signal, avatar, selection, contact link) and
+     * the selection's summary for the last row ("Vybrat vše" / "Zrušit výběr").
+     */
     private Map<String, Object> scope() {
         RoomSession r = a.app().rooms.activeSession();
-        JSONArray users = r == null ? new JSONArray() : r.usersScope();
+        JSONArray users = a.parts.people().users(r);
+        int selectable = 0, selected = 0;
+        for (int i = 0; i < users.length(); i++) {
+            JSONObject u = users.optJSONObject(i);
+            if (u.optBoolean("selectable")) selectable++;
+            if (u.optBoolean("selected")) selected++;
+        }
         JSONObject s = state();
         Map<String, Object> m = new HashMap<>();
         m.put("users", users);
         m.put("count", (double) users.length());
+        m.put("selectable", (double) selectable);
+        m.put("selectedCount", (double) selected);
+        m.put("allSelected", selectable > 0 && selected == selectable);
         m.put("dock", s.optString("dock", "right"));
         m.put("autoHide", s.optBoolean("autoHide"));
         m.put("edge", s.optString("dock", "right"));
@@ -111,6 +129,45 @@ final class UserPanel extends FrameLayout implements Renderer.Slot {
         panel.bind(sc::get);
         handle.bind(sc::get);
         layoutPanel(false);
+        if (!ticking && isAttachedToWindow()) { ticking = true; postDelayed(statsTick, 1000); }
+    }
+
+    /* ------------------------------------------------ signal (6.2) */
+
+    /** While the panel is shown, the peers' connection statistics are read every few seconds (the signal bars). */
+    private boolean ticking = false, refreshQueued = false;
+    private final Runnable statsTick = new Runnable() {
+        @Override public void run() {
+            RoomSession r = a.app().rooms.activeSession();
+            boolean shown = isAttachedToWindow() && getVisibility() == VISIBLE && (revealed || !state().optBoolean("autoHide"));
+            if (!isAttachedToWindow() || getVisibility() != VISIBLE) { ticking = false; return; }
+            if (shown && r != null) r.refreshStats(() -> post(UserPanel.this::refreshSoon));
+            postDelayed(this, 3000);
+        }
+    };
+
+    /** One rebind for the readings that arrive together (the panel stays where it is, mid-slide too). */
+    private void refreshSoon() {
+        if (refreshQueued) return;
+        refreshQueued = true;
+        postDelayed(() -> {
+            refreshQueued = false;
+            if (getVisibility() != VISIBLE) return;
+            Map<String, Object> sc = scope();
+            panel.bind(sc::get);
+            handle.bind(sc::get);
+        }, 200);
+    }
+
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (!ticking && getVisibility() == VISIBLE) { ticking = true; postDelayed(statsTick, 1000); }
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        removeCallbacks(statsTick);
+        ticking = false;
+        super.onDetachedFromWindow();
     }
 
     private void layoutPanel(boolean animate) {

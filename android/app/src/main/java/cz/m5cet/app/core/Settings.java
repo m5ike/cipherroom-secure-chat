@@ -60,6 +60,7 @@ public final class Settings {
         // 6.2 fixes (lock, enrolment, passkeys)
 
         // 6.2 people (People widget, contacts)
+        DEFAULTS.put("people.contacts", true);           // link people with the phone's contacts ("message / call via M5cet" there); off removes the rows
 
         // 6.2 bubbles (map preview, message details, hide/delete)
 

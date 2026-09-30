@@ -512,6 +512,35 @@ public final class Parts {
 
     /* ---------------------------------------------------- 6.2 people */
 
+    private People people;
+
+    /** 6.2: the People widget's model and actions (selection, a person's detail, calls, contacts). */
+    public People people() {
+        if (people == null) people = new People(a, this);
+        return people;
+    }
+
+    /** 6.2: the composer's text field gets the focus and the keyboard (a private message was chosen). */
+    public void focusComposer() {
+        android.widget.EditText field = composer == null ? null : findField(composer);
+        if (field == null) return;
+        field.requestFocus();
+        android.view.inputmethod.InputMethodManager im = a.getSystemService(android.view.inputmethod.InputMethodManager.class);
+        if (im != null) im.showSoftInput(field, 0);
+    }
+
+    private static android.widget.EditText findField(View v) {
+        if (v instanceof android.widget.EditText) return (android.widget.EditText) v;
+        if (v instanceof ViewGroup) for (int i = 0; i < ((ViewGroup) v).getChildCount(); i++) {
+            android.widget.EditText e = findField(((ViewGroup) v).getChildAt(i));
+            if (e != null) return e;
+        }
+        return null;
+    }
+
+    /** 6.2: the screen the open sheet shows ("" without one). */
+    String sheetScreen() { return sheet == null || sheetScreen == null ? "" : sheetScreen; }
+
     /* --------------------------------------------------- 6.2 bubbles */
 
     /* ------------------------------------------------------ 6.2 look */

@@ -47,6 +47,7 @@ const ICONS = [
   // 6.2 fixes
 
   // 6.2 people
+  "signal-medium", "circle-off", "contact-round", "unlink", "message-square-lock", "shield-question-mark", "list-checks", "list-x",
 
   // 6.2 bubbles
 

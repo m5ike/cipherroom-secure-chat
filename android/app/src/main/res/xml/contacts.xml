@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 6.2 people: the rows a linked contact shows in the Contacts app. data1 = the M5cet
+     account username, data2 = "M5cet" (summary), data3 = "Zpráva přes M5cet" /
+     "Volat přes M5cet" (detail). A tap opens the row (ACTION_VIEW on its MIME type)
+     in MainActivity. The MIME types match contacts.AddressBook. -->
+<ContactsAccountType xmlns:android="http://schemas.android.com/apk/res/android">
+    <ContactsDataKind
+        android:mimeType="vnd.android.cursor.item/vnd.cz.m5cet.message"
+        android:icon="@drawable/ic_people_message"
+        android:summaryColumn="data2"
+        android:detailColumn="data3" />
+    <ContactsDataKind
+        android:mimeType="vnd.android.cursor.item/vnd.cz.m5cet.call"
+        android:icon="@drawable/ic_people_call"
+        android:summaryColumn="data2"
+        android:detailColumn="data3" />
+</ContactsAccountType>
