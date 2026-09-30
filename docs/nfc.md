@@ -57,6 +57,13 @@ Common to every card: **scan**, **read UID**, **read public data**, and a raw
   services. **EMV** — PPSE and the application labels, and where freely readable
   the masked PAN and expiry, read-only. **e-ID** — the document type and the data
   the holder unlocks by typing the CAN/MRZ; no cloning, no signing.
+- **ISO-DEP / EMV — Application template** — next to *Select application* a
+  filled-down-arrow button drops a menu of the operator's saved APDU templates
+  (`m5mobile.define.apduTemplates`, an array of `{ label, apdu }` — see
+  [define.md](define.md)). Picking one sends its APDU over ISO-DEP and shows the
+  response, on the phone (a popup menu) and on the web (a dropdown that loads and
+  runs it in the APDU console). Read-only, standard SELECT/APDU — the same stance
+  as the rest of the tool.
 - **Change UID** — set the UID / block 0 on a Gen1a (backdoor) or Gen2 magic
   card you own.
 

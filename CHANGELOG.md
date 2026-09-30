@@ -51,6 +51,36 @@ prolamování neznámých klíčů; EMV a e-ID jen veřejná data.
   karty M5Cet i připojky. Původní připojka (čtení/zápis/emulace) zůstává
   kompatibilní s webem.
 
+### Přidáno — Define (`m5mobile.define`)
+- **Typované proměnné a konstanty** definované jednou v konzoli
+  (Android › *Define*) a předané všem běhům jako živé hodnoty pod
+  `m5mobile.define.<název>`: skalár (`string`, `text`, `integer`, `float`,
+  `boolean`, `bytes`, `script`, `enum`) i dynamický typ (`object`, `array`,
+  `class`) do libovolné hloubky. **GUI builder**: vlevo navigátor (název +
+  ikona typu, proměnná / konstanta), vpravo obsah — přejmenování, změna typu,
+  rozsah (`android`/`web`/`both`), max. velikost; skalár jako input nebo
+  textarea (nad 512 znaků), dynamický typ jako rekurzivní builder (klíč, typ
+  hodnoty, max. velikost). Uloženo jako JSON přes `PUT /api/admin/define`,
+  validováno sdíleným modulem (`client/src/lib/define/schema.ts`).
+- Hodnoty dostane **Web** (`GET /api/define?scope=web`, `window.m5mobile.define`
+  a hook `useDefine()`), **Android** (`app().define`, v obrazovkách
+  `define.<název>`, sync při check-inu, cache ve vaultu) i **Functions** (Modely,
+  balíčky a nástroje — `m5mobile.define.<název>` v JS i Pythonu). Podrobně
+  `docs/define.md`.
+- **Šablona aplikace (APDU)**: u karet ISO-DEP a EMV je vedle *Vybrat aplikaci*
+  tlačítko s ikonou plné šipky dolů, které rozbalí menu operátorových šablon
+  (`m5mobile.define.apduTemplates`, pole `{ label, apdu }`). Vybraná šablona
+  pošle APDU přes ISO-DEP a ukáže odpověď — na telefonu (PopupMenu) i na webu
+  (dropdown, který ji načte a spustí v APDU konzoli).
+
+### Opraveno
+- **Zápis karty M5Cet funguje na jakémkoli tagu** s dostatkem paměti, ne jen na
+  už zformátovaných NDEF tazích: na Androidu i webu se zápis nově řídí podle
+  technologie — **MIFARE Classic** (MAD + NDEF, klíče `D3F7…` / factory),
+  **Ultralight** a formátovatelné tagy — s typovanými chybami (jen ke čtení,
+  málo paměti, chybí klíč, nepodporováno) místo tichého selhání. WebNFC zapíše
+  na jedno přiložení.
+
 ### Změněno
 - Verze 6.3.0 (versionCode aplikace 60300). Instalátor 3.1.0.
 - Přírůstky designu Androidu po oblastech v `server/android/design-63-nfc.ts`.
