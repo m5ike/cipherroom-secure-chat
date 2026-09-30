@@ -41,6 +41,7 @@ import { isThemeId, type ThemeId } from "./lib/theme-catalog";
 import { t, type Lang } from "./lib/i18n";
 import { linkify } from "./lib/linkify";
 import { formatBytes } from "./lib/format";
+import { DEFAULT_MAP_PREVIEW } from "./lib/client-config";
 import type { AccountSummary } from "./lib/account";
 import { dockPatch, isWidgetDock, type WidgetDock, type WidgetState } from "./lib/preferences";
 
@@ -120,6 +121,8 @@ function SampleBubble({ m, cfg, lang }: { m: SampleMessage; cfg: LayoutConfig; l
     systemCollapseAfterSec: 0,
     tree: layoutTree(cfg, kind === "sys" ? "message.sys" : kind === "out" ? "message.out" : "message.in"),
     blocks: layoutBlocks(cfg),
+    // 6.2: the map preview as the operator set it up (the tiles come through this server).
+    mapPolicy: DEFAULT_MAP_PREVIEW,
     ...(m.extra as Partial<MessageBubbleProps>),
   };
   if (props.secure && !cfg.flags.showLockIcon) props.secure = false;

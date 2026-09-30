@@ -128,7 +128,10 @@ export function messageInfoTree(): LNode {
           text: "{$identity.text}",
         }),
       },
-      { id: "kinds", label: "{_'msginfo.kinds'}", if: "($flags|length) > 0", value: "{$flags|join:' · '}" },
+      // 6.2: every kind (text, file, location, private…), not only the three send options.
+      { id: "kinds", label: "{_'msginfo.kinds'}", if: "($kinds|length) > 0", value: "{$kinds|join:' · '}" },
+      { id: "size", label: "{_'msginfo.size'}", if: "$sizeText", value: "{$sizeText}" },
+      { id: "expires", label: "{_'msginfo.expires'}", if: "$expiresText", value: "{$expiresText}" },
     ])),
     n("panel", { id: "msginfo-audit", name: "Audit trail" }, [
       n("panel", { id: "audit-k", attrs: { class: "userinfo-row__k mb-1" }, text: "{_'msginfo.audit'}" }),
@@ -137,6 +140,18 @@ export function messageInfoTree(): LNode {
           n("area", { id: "audit-dot", attrs: { class: "msg-audit__dot", "aria-hidden": "true" } }, []),
           n("area", { id: "audit-state", attrs: { class: "msg-audit__state" }, text: "{$a.label|t}" }),
           n("area", { id: "audit-time", attrs: { class: "msg-audit__time" }, text: "{$a.time}{if $a.meta} · {$a.meta}{/if}" }),
+        ]),
+      ]),
+    ]),
+    // 6.2: who got my message and when (the away relay's and the peers' receipts).
+    n("panel", { id: "msginfo-receipts", name: "Receipts", if: "$receipts" }, [
+      n("panel", { id: "receipts-k", attrs: { class: "userinfo-row__k mb-1" }, text: "{_'msginfo.receipts'}" }),
+      n("list", { id: "msg-receipts", tag: "ul", attrs: { class: "msg-receipts", "data-testid": "msg-receipts" } }, [
+        n("item", { id: "receipt", name: "A recipient", each: "$receipts", as: "r", key: "$r.name" }, [
+          n("area", { id: "receipt-name", attrs: { class: "msg-receipts__name" }, text: "{$r.name}" }),
+          n("area", { id: "receipt-steps", attrs: { class: "msg-receipts__steps" } }, [
+            n("area", { id: "receipt-step", name: "A step", each: "$r.steps", as: "s", key: "$s.state", attrs: { class: "msg-receipts__step is-{$s.state}" }, text: "{$s.label|t} {$s.time}" }),
+          ]),
         ]),
       ]),
     ]),
@@ -160,7 +175,34 @@ export function messageInfoTree(): LNode {
         chip("attach-forward", "forward", "msginfo.forward", { attrs: { type: "button", class: "ai-chip" }, on: { click: { action: "forward" } } }),
       ]),
     ]),
+    n("panel", { id: "attach-share-menu", name: "Share menu", if: "$attachment && $shareMenu", attrs: { class: "msg-file__menu is-static", role: "menu" } }, [
+      chip("attach-copy-name", "copy", "msg.file.copyName", { attrs: { type: "button", class: "ai-chip", role: "menuitem" }, on: { click: { action: "copyName" } } }),
+      n("paragraph", { id: "attach-share-note", attrs: { class: "msg-file__menu-note" }, text: "{_'msg.file.noShare'}" }),
+    ]),
     chip("msginfo-forward", "forward", "msginfo.forward", { if: "!$attachment", attrs: { type: "button", class: "ai-chip" }, on: { click: { action: "forward" } } }),
+    // 6.2: hide or remove it — in my view only; the server's audit journal is told that it happened, never what.
+    n("panel", { id: "msginfo-manage", name: "Hide and delete", if: "$canManage", attrs: { class: "msg-manage", "data-testid": "msginfo-manage" } }, [
+      n("panel", { id: "hidden-state", name: "Hidden until", if: "$hiddenText", attrs: { class: "msg-manage__row" } }, [
+        n("area", { id: "hidden-text", attrs: { class: "msg-manage__label" } }, [icon("eye-off", "h-3.5 w-3.5", {}, { id: "hidden-icon" }), text(" {$hiddenText}", { id: "hidden-text-value" })]),
+        chip("msginfo-unhide", "eye", "msginfo.unhide", { attrs: { type: "button", class: "ai-chip", "data-testid": "msginfo-unhide" }, on: { click: { action: "unhide" } } }),
+      ]),
+      n("panel", { id: "hide", name: "Hide", if: "!$hiddenText && !$confirmDelete", attrs: { class: "msg-manage__row" } }, [
+        n("area", { id: "hide-label", attrs: { class: "msg-manage__label" } }, [icon("eye-off", "h-3.5 w-3.5", {}, { id: "hide-icon" }), text(" {_'msginfo.hide'}", { id: "hide-text" })]),
+        n("button", {
+          id: "hide-choice", name: "A duration", each: "$hideChoices", as: "c", key: "$c.id",
+          attrs: { type: "button", class: "ai-chip", "data-testid": "msginfo-hide-{$c.id}" }, on: { click: { action: "hide", arg: "$c.id" } }, text: "{$c.label|t}",
+        }),
+      ]),
+      n("paragraph", { id: "hide-help", if: "!$confirmDelete", attrs: { class: "msg-manage__help" }, text: "{_'msginfo.hide.help'}" }),
+      chip("msginfo-delete", "trash", "msginfo.delete", { if: "!$confirmDelete", attrs: { type: "button", class: "ai-chip msg-manage__delete", "data-testid": "msginfo-delete" }, on: { click: { action: "delete" } } }),
+      n("panel", { id: "delete-confirm", name: "Delete: are you sure", if: "$confirmDelete", attrs: { class: "msg-manage__confirm", role: "alertdialog", "aria-label": "{_'msginfo.delete'}" } }, [
+        n("paragraph", { id: "delete-question", text: "{_'msginfo.delete.confirm'}" }),
+        n("panel", { id: "delete-buttons", attrs: { class: "flex flex-wrap gap-2" } }, [
+          n("button", { id: "delete-yes", attrs: { type: "button", class: "acc-btn acc-btn--small acc-btn--danger", "data-testid": "msginfo-delete-yes" }, on: { click: { action: "deleteConfirm" } }, text: "{_'msginfo.delete.yes'}" }),
+          n("button", { id: "delete-no", attrs: { type: "button", class: "acc-btn acc-btn--small", "data-testid": "msginfo-delete-no" }, on: { click: { action: "deleteCancel" } }, text: "{_'msginfo.delete.no'}" }),
+        ]),
+      ]),
+    ]),
   ]);
 }
 
@@ -289,8 +331,17 @@ export const DIALOG_CONTRACTS: Record<DialogId, LayoutContract> = {
       { path: "$cryptoVersion", type: "number", description: "The encryption's version." },
       { path: "$sealedWith", type: "text", description: "sender-key, pair or room." },
       { path: "$identity", type: "object", description: "The sender's identity: .text, .tone (ok / warn / muted)." },
-      { path: "$flags", type: "list", description: "The kinds of message." },
-      { path: "$audit", type: "list", description: "Its steps: .label (a translation key), .time, .meta." },
+      { path: "$flags", type: "list", description: "The send options it had (hold to read, vanishing, sealed)." },
+      { path: "$kinds", type: "list", description: "6.2: every kind, worded (text, file, location, private, reply…)." },
+      { path: "$sizeText", type: "text", description: "6.2: its size: the text's bytes and the file's." },
+      { path: "$expiresText", type: "text", description: "6.2: when it disappears (a message with a lifetime)." },
+      { path: "$audit", type: "list", description: "Its steps: .state, .label (a translation key), .time (with the date when not today), .meta." },
+      { path: "$receipts", type: "list", description: "6.2: my message by recipient: .name, .steps (.state, .label, .time)." },
+      { path: "$shareMenu", type: "yes/no", description: "6.2: the share menu is open (the browser cannot share the file)." },
+      { path: "$canManage", type: "yes/no", description: "6.2: it can be hidden and deleted here." },
+      { path: "$hiddenText", type: "text", description: "6.2: “Hidden until …” while it is hidden." },
+      { path: "$hideChoices", type: "list", description: "6.2: the hide durations: .id (15m, 1h, 8h, 1d, signin), .label (a translation key)." },
+      { path: "$confirmDelete", type: "yes/no", description: "6.2: asking whether to delete." },
       { path: "$cipher", type: "text", description: "The encrypted data." },
       { path: "$cipherShort", type: "text", description: "Its first 220 characters." },
       { path: "$plaintext", type: "text", description: "The text (none when sealed)." },
@@ -300,6 +351,12 @@ export const DIALOG_CONTRACTS: Record<DialogId, LayoutContract> = {
       { name: "copyCipher", description: "Copy the encrypted data." },
       { name: "share", description: "Share the file." },
       { name: "forward", description: "Forward the message." },
+      { name: "copyName", description: "6.2: copy the file's name (the share menu)." },
+      { name: "hide", description: "6.2: hide it in my view (the argument: 15m, 1h, 8h, 1d or signin).", arg: "$c.id" },
+      { name: "unhide", description: "6.2: show it again." },
+      { name: "delete", description: "6.2: ask whether to delete it." },
+      { name: "deleteConfirm", description: "6.2: delete it from this browser (and its stored history)." },
+      { name: "deleteCancel", description: "6.2: keep it." },
     ],
     slots: [],
     refs: [],

@@ -19,6 +19,7 @@
 
 import { toBase64, fromBase64 } from "./crypto";
 import type { ChatMessage } from "./chat-types";
+import { deleteMessage, endHides } from "./message-hide";
 
 export type ChatRetention = "ephemeral" | "session" | "server";
 
@@ -75,16 +76,27 @@ export function historyStats(messages: ChatMessage[]): { messages: number; bytes
 /** Messages restored from storage, keeping only ones that still make sense.
  *  A message is ours if it was stored as ours, or carries our current peer
  *  id — ids change between page loads, so comparing ids alone made our own
- *  earlier messages look like someone else's. */
-export function sanitizeRestored(value: unknown, myPeerId?: string): ChatMessage[] {
+ *  earlier messages look like someone else's.
+ *  6.2: a hide and a deletion (message-hide.ts) come back with it; with
+ *  `signIn` (a sign-in, or a guest's new page load) the hides "until the next
+ *  sign-in" end here, and timed ones that ran out end in any case. */
+export function sanitizeRestored(value: unknown, myPeerId?: string, opts: { signIn?: boolean } = {}): ChatMessage[] {
   if (!Array.isArray(value)) return [];
   const now = Date.now();
-  return value
+  const restored = value
     .filter((m): m is ChatMessage => Boolean(m) && typeof m === "object" && typeof (m as ChatMessage).id === "string" && typeof (m as ChatMessage).createdAt === "number")
     .filter((m) => typeof m.text === "string" || m.attachment)
     .filter((m) => !m.expiresAt || m.expiresAt > now)
     .slice(-HISTORY_LIMITS.maxMessages)
-    .map((m) => ({ ...m, text: typeof m.text === "string" ? m.text : "", mine: m.mine === true || Boolean(myPeerId && m.senderId === myPeerId) }));
+    .map((m) => {
+      const out: ChatMessage = { ...m, text: typeof m.text === "string" ? m.text : "", mine: m.mine === true || Boolean(myPeerId && m.senderId === myPeerId) };
+      const h = m.hidden as unknown as { at?: unknown; until?: unknown } | undefined;
+      if (h !== undefined && !(h && typeof h === "object" && typeof h.at === "number" && typeof h.until === "number" && h.until >= 0)) delete out.hidden;
+      if (out.deletedAt !== undefined && typeof out.deletedAt !== "number") delete out.deletedAt;
+      // A tombstone keeps nothing of what was said.
+      return typeof out.deletedAt === "number" ? deleteMessage(out, out.deletedAt) : out;
+    });
+  return endHides(restored, now, opts.signIn === true);
 }
 
 /** A message as it may leave this browser for a store it does not control:

@@ -479,7 +479,7 @@
     commands: ["Commands & push", "Operator commands to devices, Web Push", loadCommands],
     admins: ["Administrators", "Who may use this console, and as what", loadAdmins],
     alerts: ["Alerts", "What the server watches for when nobody is looking", loadAlerts],
-    client: ["Client & addons", "Saved connections and GUI templates for every user", loadClient],
+    client: ["Client & addons", "Saved connections, GUI templates and the map preview for every user", loadClient],
     layout: ["Layout builder", "Styles and text templates for every client", null],
     telephony: ["Telephony & SIP", "Voice and SMS providers, webhooks, trunks", null],
     plugins: ["AI & speech", "Connectors and their live log", null],
@@ -1387,11 +1387,14 @@
 
   let clientCfg = null;
   let clientCatalog = { themes: [], icons: [] };
+  /** 6.2: the map preview as the server defaults it (GET …/client-config › defaults.map). */
+  let mapDefaults = null;
 
   async function loadClient() {
     const r = await api("/api/admin/client-config");
     clientCfg = r.config;
     clientCatalog = r.catalog || clientCatalog;
+    mapDefaults = (r.defaults && r.defaults.map) || mapDefaults;
     renderClient(r);
   }
 
@@ -1433,7 +1436,167 @@
     clear(icons);
     for (const v of ["theme", ...(clientCatalog.icons || [])]) icons.append(h("option", { value: v, selected: v === c.appearance.defaultIcons || undefined }, v === "theme" ? "as the template" : v));
     $("#cxLock").checked = c.appearance.lockTheme;
+    if (c.map) fillMap(c.map);
   }
+
+  /* ------------------------------------------------ 6.2: the map preview */
+  //
+  // Every MapPreviewPolicy field (client/src/lib/client-config.ts), and a live
+  // preview drawn the way a message draws it (client/src/lib/map-preview.ts):
+  // Web Mercator, 256 px tiles of GET /api/map/tile/{z}/{x}/{y}, the sample
+  // position exactly in the middle. The server fetches tiles from the SAVED
+  // provider, so a new provider shows after saving.
+
+  const MAP_SAMPLE = { lat: 50.0875, lon: 14.4213, acc: 12, name: "Jana" };
+  const MAP_TILE = 256;
+  const MAP_MAX_LAT = 85.05112878;
+
+  function fillMap(m) {
+    $("#mpEnabled").checked = m.enabled;
+    $("#mpGray").checked = m.grayscale;
+    $("#mpTiles").value = m.tiles;
+    $("#mpSubdomains").value = m.subdomains;
+    $("#mpAttribution").value = m.attribution;
+    $("#mpZoom").value = String(m.zoom);
+    $("#mpWidth").value = String(m.width);
+    $("#mpHeight").value = String(m.height);
+    $("#mpCache").value = String(m.cacheHours);
+    $("#mpPin").value = m.pinColor;
+    $("#mpAccentTheme").checked = !m.accent;
+    $("#mpAccent").value = m.accent || "#2563eb";
+    $("#mpAccent").disabled = !m.accent;
+    $("#mpLabel").checked = m.label;
+    $("#mpCoords").checked = m.showCoords;
+    drawMapPreview();
+  }
+
+  const clampInt = (v, lo, hi, dflt) => { const n = Math.round(Number(v)); return Number.isFinite(n) && String(v).trim() !== "" ? Math.max(lo, Math.min(hi, n)) : dflt; };
+
+  /** The form as a MapPreviewPolicy (the server checks it again). */
+  function collectMap() {
+    const saved = (clientCfg && clientCfg.map) || mapDefaults || {};
+    return {
+      enabled: $("#mpEnabled").checked,
+      tiles: $("#mpTiles").value.trim(),
+      subdomains: $("#mpSubdomains").value.trim(),
+      attribution: $("#mpAttribution").value.trim(),
+      zoom: clampInt($("#mpZoom").value, 3, 19, saved.zoom || 16),
+      width: clampInt($("#mpWidth").value, 160, 640, saved.width || 280),
+      height: clampInt($("#mpHeight").value, 100, 480, saved.height || 160),
+      pinColor: $("#mpPin").value.toLowerCase(),
+      accent: $("#mpAccentTheme").checked ? "" : $("#mpAccent").value.toLowerCase(),
+      label: $("#mpLabel").checked,
+      showCoords: $("#mpCoords").checked,
+      grayscale: $("#mpGray").checked,
+      cacheHours: clampInt($("#mpCache").value, 1, 720, saved.cacheHours || 168),
+    };
+  }
+
+  /** A template the server would take: https (http for this machine), {z} {x} {y}, no credentials. */
+  function tileTemplateOk(text) {
+    if (!text || text.length > 300 || !/\{z\}/.test(text) || !/\{x\}/.test(text) || !/\{y\}/.test(text)) return false;
+    let url;
+    try { url = new URL(text.replace(/\{[a-z]\}/g, "0")); } catch { return false; }
+    const local = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(url.hostname);
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return false;
+    return !(url.username || url.password || url.hash);
+  }
+
+  function worldPixel(lat, lon, zoom) {
+    const size = MAP_TILE * 2 ** zoom;
+    const s = Math.sin((Math.max(-MAP_MAX_LAT, Math.min(MAP_MAX_LAT, lat)) * Math.PI) / 180);
+    return { x: ((lon + 180) / 360) * size, y: (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * size };
+  }
+
+  /** Black or white text on a caption colour (WCAG luminance), as the app picks it. */
+  function textOn(hex) {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex);
+    if (!m) return "#ffffff";
+    const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; };
+    const l = 0.2126 * lin(parseInt(m[1], 16)) + 0.7152 * lin(parseInt(m[2], 16)) + 0.0722 * lin(parseInt(m[3], 16));
+    return (l + 0.05) / 0.05 > 1.05 / (l + 0.05) ? "#000000" : "#ffffff";
+  }
+
+  function mapPin(color) {
+    const svg = s("svg", { viewBox: "0 0 24 24", class: "mp-pin", "aria-hidden": "true", fill: color, stroke: "#ffffff", "stroke-width": "1.4", "stroke-linejoin": "round" });
+    svg.append(
+      s("path", { d: "M20 10c0 4.993-5.539 10.193-7.399 11.799a1 1 0 0 1-1.202 0C9.539 20.193 4 14.993 4 10a8 8 0 0 1 16 0" }),
+      s("circle", { cx: "12", cy: "10", r: "3", fill: "#ffffff", stroke: "none" }),
+    );
+    return svg;
+  }
+
+  function drawMapPreview() {
+    const box = $("#mpPreview");
+    if (!box) return;
+    const m = collectMap();
+    const saved = (clientCfg && clientCfg.map) || {};
+    const dirty = Boolean(clientCfg) && JSON.stringify(m) !== JSON.stringify({ ...collectMapShape(saved) });
+    $("#mpDirty").hidden = !dirty;
+    $("#mpAccent").disabled = $("#mpAccentTheme").checked;
+    const tilesInput = $("#mpTiles");
+    tilesInput.classList.toggle("input--bad", !tileTemplateOk(m.tiles));
+    clear(box);
+    const note = $("#mpPreviewNote");
+    if (!m.enabled) {
+      box.append(h("div", { class: "mp-off" }, "Off — a message shows only the pin link (📍 → OpenStreetMap)."));
+      note.textContent = "";
+      return;
+    }
+    const tiles = h("div", { class: `mp-box${m.grayscale ? " is-gray" : ""}`, style: `width:${m.width}px;height:${m.height}px` });
+    const c = worldPixel(MAP_SAMPLE.lat, MAP_SAMPLE.lon, m.zoom);
+    const x0 = c.x - m.width / 2;
+    const y0 = c.y - m.height / 2;
+    const n = 2 ** m.zoom;
+    for (let ty = Math.floor(y0 / MAP_TILE); ty * MAP_TILE < y0 + m.height; ty++) {
+      if (ty < 0 || ty >= n) continue;
+      for (let tx = Math.floor(x0 / MAP_TILE); tx * MAP_TILE < x0 + m.width; tx++) {
+        const wx = ((tx % n) + n) % n;
+        tiles.append(h("img", {
+          class: "mp-tile", alt: "", draggable: "false", decoding: "async",
+          src: `${state.base}/api/map/tile/${m.zoom}/${wx}/${ty}`,
+          style: `left:${Math.round(tx * MAP_TILE - x0)}px;top:${Math.round(ty * MAP_TILE - y0)}px`,
+          onerror: (e) => { e.target.classList.add("is-missing"); note.textContent = "Some tiles did not load — is the provider reachable from the server, and is the map preview saved as on?"; },
+        }));
+      }
+    }
+    const pin = mapPin(m.pinColor);
+    pin.setAttribute("style", `left:${m.width / 2}px;top:${m.height / 2}px`);
+    tiles.append(pin);
+    if (m.attribution) tiles.append(h("span", { class: "mp-attr" }, m.attribution));
+    const wrap = h("div", { class: "mp-card", style: `width:${m.width}px` }, tiles);
+    if (m.label) {
+      const cap = h("div", { class: "mp-caption" }, `${MAP_SAMPLE.name}'s current position`);
+      if (m.accent) cap.setAttribute("style", `background:${m.accent};color:${textOn(m.accent)}`);
+      wrap.append(cap);
+    }
+    if (m.showCoords) wrap.append(h("div", { class: "mp-coords" }, `${MAP_SAMPLE.lat.toFixed(5)}, ${MAP_SAMPLE.lon.toFixed(5)} ± ${MAP_SAMPLE.acc} m`));
+    box.append(wrap);
+    note.textContent = m.tiles !== saved.tiles || m.subdomains !== saved.subdomains
+      ? "The tiles above are the saved provider's — save to see the new one."
+      : `${m.width} × ${m.height} px at zoom ${m.zoom}; the pin marks the exact position.`;
+  }
+
+  /** The saved policy in the form's key order (for the unsaved-changes badge). */
+  function collectMapShape(m) {
+    return {
+      enabled: m.enabled, tiles: m.tiles, subdomains: m.subdomains, attribution: m.attribution, zoom: m.zoom, width: m.width, height: m.height,
+      pinColor: m.pinColor, accent: m.accent, label: m.label, showCoords: m.showCoords, grayscale: m.grayscale, cacheHours: m.cacheHours,
+    };
+  }
+
+  $("#clientMap").addEventListener("input", () => drawMapPreview());
+  $("#clientMap").addEventListener("change", () => drawMapPreview());
+  $("#clientMap").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const map = collectMap();
+    if (!tileTemplateOk(map.tiles)) { toast("The tile provider must be an https:// template with {z}, {x} and {y}.", "err"); $("#mpTiles").focus(); return; }
+    if (map.subdomains && !/^[a-z0-9]{1,8}$/i.test(map.subdomains)) { toast("Subdomains: up to 8 letters or digits (e.g. abc).", "err"); return; }
+    if (/\{s\}/.test(map.tiles) && !map.subdomains) { toast("The template has {s}: give its subdomains (e.g. abc).", "err"); return; }
+    void saveClient({ map });
+  });
+  $("#mpRevert").addEventListener("click", () => { if (clientCfg && clientCfg.map) fillMap(clientCfg.map); });
+  $("#mpDefaults").addEventListener("click", () => { if (mapDefaults) fillMap(mapDefaults); });
 
   function renderServers(servers) {
     fillTable($("#cxServers"), servers.map((srv, i) => [

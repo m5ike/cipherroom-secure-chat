@@ -83,6 +83,10 @@ const MESSAGE_INFO: MessageInfo = {
   cipher: "U2FsdGVkX1+q9w3n0bZ4…".repeat(8), plaintext: "Ahoj, v kolik se sejdeme?", flags: ["reply"], cryptoVersion: 3, sealedWith: "pair",
   audit: [{ state: "created", at: NOW }, { state: "encrypted", at: NOW + 40, meta: "AES-GCM" }, { state: "sent", at: NOW + 90 }, { state: "delivered", at: NOW + 420 }],
   identity: { text: "Ověřený klíč", tone: "ok" },
+  // 6.2
+  kinds: ["text", "reply", "private"],
+  size: { text: 26, file: 0 },
+  receipts: [{ name: "Alice", delivered: NOW + 420, read: NOW + 61_000 }, { name: "Carol", stored: NOW + 150 }],
 };
 
 const PEERS = [
@@ -193,7 +197,7 @@ export function AppPart({ layout, variant: v, lang }: { layout: LayoutId; varian
       const info: MessageInfo = v === "file"
         ? { ...MESSAGE_INFO, attachment: { name: "report.pdf", mime: "application/pdf", size: 48_213, url: "" } }
         : v === "sealed" ? { ...MESSAGE_INFO, secure: false, cipher: undefined, plaintext: undefined, flags: [], identity: { text: "?", tone: "muted" }, cryptoVersion: undefined } : MESSAGE_INFO;
-      node = win(t(lang, "msginfo.title"), <MessageInfoView info={info} lang={lang} onForward={noop} />);
+      node = win(t(lang, "msginfo.title"), <MessageInfoView info={info} lang={lang} onForward={noop} actions={{ onHide: noop, onUnhide: noop, onDelete: noop }} />);
       break;
     }
     case "dialog.integrity":

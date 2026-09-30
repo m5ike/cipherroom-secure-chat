@@ -224,6 +224,51 @@ Umístění, posouvání (`transform`) a načasování drží komponenta
   `--c-widget-slide-ease` (jen když se liší od výchozích). Při
   `prefers-reduced-motion: reduce` se panel jen ukáže / skryje, bez posunu.
 
+## Bublina zprávy: mapa, soubory, detail, skrytí (6.2)
+
+Nové části bubliny jsou prvky výchozích stromů `message.in` / `message.out`
+(`client/src/lib/layouts/message.ts`), takže je správce může v builderu
+přesunout, přestylovat nebo schovat:
+
+- **`map` — Map preview** (odkaz na celou mapu): `map-box` s dlaždicemi
+  (`map-tile`, opakování `$map.tiles` jako `$tile`, CSS z dat `$tile.style`),
+  špendlík `map-pin` (`$map.pinStyle`: poloha a barva), `map-attribution`,
+  popisek `map-caption` („Aktuální poloha: Jana“, `$map.captionStyle` =
+  barva popisku, jinak primární barva šablony) a `map-coords`. Hodnota
+  `$map` (`client/src/lib/map-preview.ts`) je `null`, když je náhled mapy v
+  konzoli vypnutý — pak se ukáže dřívější špendlík v hlavičce
+  (`loc`, `if: $loc && !$map`). Dlaždice jdou přes server
+  (`/api/map/tile/{z}/{x}/{y}`), CSP zůstává `img-src 'self'`.
+- **`attachment` — co jde ze souboru ukázat**: obrázek, `attach-video`
+  (`<video controls>`), `attach-audio`, `attach-pdf` (karta PDF — bez
+  vloženého prohlížeče, ten by potřeboval `frame-src blob:`) a
+  `attach-text` (první řádky textu / Markdownu jako prostý text). Zvuk a
+  video hrají z `blob:` URL (`$attachment.mediaUrl`) — `media-src` nepovoluje
+  `data:`.
+- **`files` — Attachments footer** (`<footer>`): řádek `file` pro každý
+  soubor (`$attachments` jako `$f`: `.icon`, `.name`, `.sizeText`,
+  `.available`, `.dropped`) s tlačítky `file-save`, `file-share`,
+  `file-forward` (akce `save`, `share`, `forward`, argument `$f.index`) a
+  nabídkou sdílení `file-share-menu` (`$shareMenu === $f.index`; akce
+  `copyName`, `save`, `closeShare`), když prohlížeč neumí sdílet soubor
+  (Web Share API s `files`).
+- **`info`** — tlačítko (i) otevře okno detailu; **`hidden-tag`** a třída
+  `msg-bubble--hidden` ukazují skrytou zprávu, když chat skryté zobrazuje
+  (`chat`: tlačítko `show-hidden`, `$hiddenCount`, `$showHidden`,
+  `$showHiddenText`, akce `toggleHidden`).
+
+Okno detailu (`dialog.messageInfo`) má navíc řádky `size` a `expires`,
+`kinds` ze všech druhů zprávy (`$kinds`), časovou osu se všemi stavy a
+časem (`$audit`: `created`, `encrypted`, `sent`, `queued`, `stored` —
+„uloženo na serveru (šifrovaně)“, `forwarded`, `delivered`, `read`,
+`received`, `decrypted`, `displayed`, `revealed`, `opened`, `expired`,
+`hidden`, `unhidden` — stejný slovník jako aplikace pro Android),
+doručenky podle příjemců (`msginfo-receipts`, `$receipts`) a část
+`msginfo-manage`: skrýt na 15 min / 1 h / 8 h / 1 den / do příštího
+přihlášení (`$hideChoices`, akce `hide` s argumentem `$c.id`), znovu
+zobrazit (`unhide`), smazat s potvrzením (`delete` → `$confirmDelete` →
+`deleteConfirm` / `deleteCancel`).
+
 ## Uložení a API
 
 `LAYOUT_DATA_FILE` | `$DATA_DIR/layout.json` | `./.m5cet/layout.json`

@@ -132,6 +132,13 @@ import {
   AccountError, type StepState,
 } from "./lib/account";
 import { createHistoryStore, createServerSealer, prepareHistory, sanitizeRestored, type ChatRetention } from "./lib/chat-history";
+import {
+  auditEntry, createAuditQueue, deleteMessage, endHides, hiddenCount, hideMessage, hideUntil, isDeleted, isHidden, mergeWithDeletions, nextHideEnd,
+  postMessageAudit, unhideMessage, type HideChoice, type MessageAuditAction,
+} from "./lib/message-hide";
+import { messageKinds, messageSize, receiptsOf, timelineOf, withAudit } from "./lib/message-timeline";
+import { forgetBlob, rememberBlob } from "./lib/attachment-media";
+import type { MapPreviewPolicy } from "./lib/client-config";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
 import { createFlashQueue, kindForText, type FlashMessage } from "./lib/flash";
 import { createOutbox } from "./lib/outbox";
@@ -352,6 +359,10 @@ type RowActions = {
   vanished: (id: string) => void;
   displayed: (id: string) => void;
   jump: (id: string) => void;
+  /** 6.2: timeline steps from the bubble, and its short notices. */
+  revealed: (id: string) => void;
+  opened: (id: string) => void;
+  notice: (text: string) => void;
 };
 
 type MessageRowProps = {
@@ -365,6 +376,8 @@ type MessageRowProps = {
   room: string;
   avatar: string;
   delivery: MsgState | undefined;
+  /** 6.2: the operator's map preview (client config › map). */
+  mapPolicy: MapPreviewPolicy;
   act: { current: RowActions };
 };
 
@@ -379,7 +392,7 @@ function layoutBlocksOf(cfg: LayoutConfig): Record<string, LNode> {
 
 /** One message in the conversation. Memoized: typing in the composer, a
  *  peer's status or a new message elsewhere leave it alone. */
-const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutCtx, lang, timezone, room, avatar, delivery, act }: MessageRowProps) {
+const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutCtx, lang, timezone, room, avatar, delivery, mapPolicy, act }: MessageRowProps) {
   const isSystem = message.senderId === "system";
   const styleKey = styleKeyFor(message.senderName, message.senderId);
   const vars = {
@@ -432,6 +445,11 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutC
       replyTo={message.replyTo}
       forwardedFrom={message.forwardedFrom}
       loc={message.loc}
+      mapPolicy={mapPolicy}
+      hidden={Boolean(message.hidden)}
+      onRevealed={(id) => act.current.revealed(id)}
+      onOpened={(id) => act.current.opened(id)}
+      onNotice={(text) => act.current.notice(text)}
       bubbleStyle={bubbleStyleFrom(perStyle)}
       badge={badge}
       head={head}
@@ -616,6 +634,9 @@ function ChatApp() {
     vanished: (id) => onMessageVanished(id),
     displayed: (id) => onMessageDisplayed(id),
     jump: (id) => scrollToMessage(id),
+    revealed: (id) => addStep(id, "revealed"),
+    opened: (id) => addStep(id, "opened"),
+    notice: (text) => setNotice(text),
   };
 
   const socketRef = useRef<WebSocket | null>(null);
@@ -781,12 +802,16 @@ function ChatApp() {
     [peers],
   );
 
+  // 6.2: messages I hid stay out until their time is up — or while I ask to see them.
+  const [showHidden, setShowHidden] = useState(false);
+  const hiddenNow = useMemo(() => hiddenCount(messages, now), [messages, now]);
+  useEffect(() => { if (hiddenNow === 0) setShowHidden(false); }, [hiddenNow]);
   const visibleMessages = useMemo(() => {
-    const filtered = messages.filter((message) => (!message.expiresAt || message.expiresAt > now) && (!tagFilter || tagsIn(message.text || "").includes(tagFilter)));
+    const filtered = messages.filter((message) => !isDeleted(message) && (showHidden || !isHidden(message, now)) && (!message.expiresAt || message.expiresAt > now) && (!tagFilter || tagsIn(message.text || "").includes(tagFilter)));
     const sec = (room && prefs.roomSecurity[room]) || DEFAULT_ROOM_SECURITY;
     if (sec.sort === "desc") return [...filtered].reverse();
     return filtered;
-  }, [messages, now, prefs.roomSecurity, room, tagFilter]);
+  }, [messages, now, prefs.roomSecurity, room, tagFilter, showHidden]);
 
   // A long conversation renders its newest MESSAGE_WINDOW messages; older
   // ones come in steps on request. (Off-screen bubbles also skip layout and
@@ -1136,12 +1161,10 @@ function ChatApp() {
   /** Away members appear in the recipients list under this id. */
   const awayKey = (accountId: string) => `away:${accountId}`;
 
-  /** Merge restored / relayed messages into the conversation, by id and time. */
+  /** Merge restored / relayed messages into the conversation, by id and time.
+   *  6.2: a message deleted here stays deleted, whichever copy comes back (message-hide.ts). */
   function mergeMessages(current: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
-    if (incoming.length === 0) return current;
-    const byId = new Map(current.map((m) => [m.id, m]));
-    for (const m of incoming) if (!byId.has(m.id)) byId.set(m.id, m);
-    return Array.from(byId.values()).sort((a, b) => a.createdAt - b.createdAt);
+    return mergeWithDeletions(current, incoming);
   }
 
   /** What the vault keeps for this conversation (trimmed, never the cipher). */
@@ -1193,7 +1216,8 @@ function ChatApp() {
     try {
       const { profile, chat } = await loadVault<Partial<Preferences>>();
       if (profile) setPrefs(profile);
-      const restored = chat ? sanitizeRestored(chat.messages, myIdRef.current) : [];
+      // Opened at a sign-in: the hides "until the next sign-in" end (6.2).
+      const restored = chat ? sanitizeRestored(chat.messages, myIdRef.current, { signIn: true }) : [];
       if (restored.length) setMessages((cur) => mergeMessages(cur, restored));
       void logAccountEvent("decrypt-ok", { messages: restored.length, profile: Boolean(profile) });
       void logAccountEvent("data-loaded", { messages: restored.length });
@@ -1265,6 +1289,8 @@ function ChatApp() {
    */
   async function afterSignIn(acc: AccountSummary, report: (id: string, state: StepState, detail?: string) => void, kind: SignInProgress["kind"], started: number) {
     setAccount(acc);
+    // 6.2: a sign-in ends the hides "until the next sign-in".
+    setMessages((cur) => endHides(cur, Date.now(), true));
     // Server-enhanced is now available; a live P2P session keeps its mode.
     setPrefs(desiredRef.current === "connected" ? { chatRetention: "server" } : { chatRetention: "server", mode: "server" });
     retentionRef.current = "server";
@@ -1934,16 +1960,18 @@ function ChatApp() {
 
   // Expired messages leave at the moment they expire. One timer for the
   // earliest expiry — not a re-render of the whole screen every second.
+  // 6.2: the same timer brings a hidden message back when its hide ends.
   useEffect(() => {
     let next = Infinity;
     for (const m of messages) if (m.expiresAt && m.expiresAt < next) next = m.expiresAt;
+    next = Math.min(next, nextHideEnd(messages, Date.now()) ?? Infinity);
     if (next === Infinity) return;
     const id = window.setTimeout(() => {
       const t = Date.now();
       setNow(t);
       setMessages((current) => {
-        const kept = current.filter((message) => !message.expiresAt || message.expiresAt > t);
-        return kept.length === current.length ? current : kept;
+        const kept = endHides(current.filter((message) => !message.expiresAt || message.expiresAt > t), t);
+        return kept.length === current.length && kept.every((m, i) => m === current[i]) ? current : kept;
       });
     }, Math.max(50, Math.min(next - Date.now() + 20, 2_147_000_000)));
     return () => window.clearTimeout(id);
@@ -2193,6 +2221,7 @@ function ChatApp() {
         // meta.mime is already reduced to a type that is safe to open from
         // a blob: URL of this origin (file-transfer.ts checkMeta).
         const url = URL.createObjectURL(blob);
+        rememberBlob(url, blob);
         systemMessage(t(lang, proof.verified ? "file.verified" : "file.unverified").replace("{name}", meta.name), { kind: proof.verified ? "success" : "info" });
         void identityFor(proof.signer, meta.senderName).then((identity) => {
           setMessages((current) => current.some((m) => m.id === meta.transferId) ? current : [
@@ -2690,7 +2719,8 @@ function ChatApp() {
       setMessages([]);
       relaySendersRef.current.clear();
     } else if (retentionRef.current === "session") {
-      const restored = await historyRef.current.load(nextRoom);
+      // 6.2: for a guest this is the next page load (in this page the live copy wins the merge).
+      const restored = endHides(await historyRef.current.load(nextRoom), Date.now(), !accountRef.current);
       if (restored.length > 0) {
         setMessages((cur) => mergeMessages(cur, restored));
         systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
@@ -2703,7 +2733,7 @@ function ChatApp() {
         ...await readServerMessages({ room: nextRoom }), // written by 3.0 under the plain name
       ];
       const opened = await Promise.all(rows.map((r) => serverSealerRef.current.open(r.id, r.payload)));
-      const restored = sanitizeRestored(opened.filter((m) => m !== null), nextPeerId);
+      const restored = sanitizeRestored(opened.filter((m) => m !== null), nextPeerId, { signIn: true });
       if (restored.length > 0) {
         setMessages((cur) => mergeMessages(cur, restored));
         systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
@@ -3597,7 +3627,77 @@ function ChatApp() {
   }
 
   function onMessageVanished(id: string) {
-    setMessages((cur) => cur.map((m) => (m.id === id ? { ...m, vanished: true, vanishedAt: m.vanishedAt ?? Date.now(), audit: [...(m.audit ?? []), { state: "discarded" as const, at: Date.now() }] } : m)));
+    const at = Date.now();
+    setMessages((cur) => cur.map((m) => (m.id === id ? { ...withAudit(m, "expired", at), vanished: true, vanishedAt: m.vanishedAt ?? at } : m)));
+  }
+
+  /** 6.2: a step of a message's timeline (revealed, opened…). */
+  function addStep(id: string, state: MsgState, meta?: string) {
+    const at = Date.now();
+    setMessages((cur) => {
+      let changed = false;
+      const next = cur.map((m) => {
+        if (m.id !== id) return m;
+        const out = withAudit(m, state, at, meta);
+        if (out !== m) changed = true;
+        return out;
+      });
+      return changed ? next : cur;
+    });
+  }
+
+  /*
+   * 6.2: hide and delete, in this browser's view only (message-hide.ts). The
+   * stored history follows (persistTick), and the server's audit journal is
+   * told that it happened — the action, the message id, the room's blind id,
+   * kinds, mine, a hide's end; never the text, a file or a key. Only to this
+   * site's own server: a room on another server stays unknown here.
+   */
+  const auditQueueRef = useRef<ReturnType<typeof createAuditQueue> | null>(null);
+  if (!auditQueueRef.current) {
+    auditQueueRef.current = createAuditQueue((body) => postMessageAudit(body, accountToken()), { client: () => prefsRef.current.deviceId || undefined });
+  }
+  const [persistTick, setPersistTick] = useState(0);
+  useEffect(() => { if (persistTick > 0) void persistChat(true).catch(() => undefined); }, [persistTick]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function journal(action: MessageAuditAction, m: ChatMessage, at: number, until?: number) {
+    const blindRoom = keyRef.current?.roomId;
+    if (!blindRoom || !onHomeServer()) return;
+    auditQueueRef.current!.push(auditEntry(action, m, blindRoom, at, until));
+  }
+
+  function hideMsg(id: string, choice: HideChoice) {
+    const at = Date.now();
+    const m = messagesRef.current.find((x) => x.id === id);
+    if (!m || isDeleted(m)) return;
+    const until = hideUntil(choice, at);
+    setMessages((cur) => cur.map((x) => (x.id === id ? hideMessage(x, until, at) : x)));
+    setMsgInfoFor(null);
+    setPersistTick((n) => n + 1);
+    journal("hide", m, at, until);
+  }
+
+  function unhideMsg(id: string) {
+    const at = Date.now();
+    const m = messagesRef.current.find((x) => x.id === id);
+    if (!m?.hidden) return;
+    setMessages((cur) => cur.map((x) => (x.id === id ? unhideMessage(x, at) : x)));
+    setPersistTick((n) => n + 1);
+    journal("unhide", m, at);
+  }
+
+  function deleteMsg(id: string) {
+    const at = Date.now();
+    const m = messagesRef.current.find((x) => x.id === id);
+    if (!m || isDeleted(m)) return;
+    // A received big file lives in this page's memory as a blob: URL — let it go.
+    const url = m.attachment?.dataUrl ?? "";
+    if (url.startsWith("blob:")) { forgetBlob(url); try { URL.revokeObjectURL(url); } catch { /* already gone */ } }
+    setMessages((cur) => cur.map((x) => (x.id === id ? deleteMessage(x, at) : x)));
+    setMsgInfoFor(null);
+    if (replyingTo?.id === id) setReplyingTo(null);
+    setPersistTick((n) => n + 1);
+    journal("delete", m, at);
   }
 
   /** Record that a message became visible (adds a "displayed" audit event once). */
@@ -3676,8 +3776,14 @@ function ChatApp() {
       cipher: m.cipher,
       plaintext: plain,
       flags: [m.flags?.tap ? t(lang, "msgkind.tap") : "", m.flags?.vanishSeconds ? t(lang, "msgkind.vanish") : "", m.flags?.sealed ? t(lang, "msgkind.sealed") : ""].filter(Boolean),
-      audit: m.audit ?? [{ state: m.mine ? "created" : "received", at: m.createdAt }],
-      attachment: m.attachment ? { name: m.attachment.name, mime: m.attachment.mime, size: m.attachment.size, url: m.attachment.dataUrl } : undefined,
+      // 6.2: every state with its time, every kind, the size, receipts by recipient, a hide.
+      audit: timelineOf(m),
+      kinds: messageKinds(m).map((k) => t(lang, `msgkind.k.${k}`)),
+      size: messageSize(m),
+      expiresAt: m.expiresAt || undefined,
+      receipts: receiptsOf(m),
+      hiddenUntil: m.hidden && isHidden(m, Date.now()) ? m.hidden.until : undefined,
+      attachment: m.attachment && m.attachment.dataUrl ? { name: m.attachment.name, mime: m.attachment.mime, size: m.attachment.size, url: m.attachment.dataUrl } : undefined,
     };
   }
 
@@ -4655,12 +4761,16 @@ function ChatApp() {
           newestFirst,
           showEarlierText: t(lang, "chat.showEarlier").replace("{n}", String(hiddenMessages)),
           messages: renderedMessages,
+          hiddenCount: hiddenNow,
+          showHidden,
+          showHiddenText: t(lang, showHidden ? "chat.hidden.hide" : "chat.hidden.show").replace("{n}", String(hiddenNow)),
         },
         actions: {
           disconnect: () => userDisconnect(),
           copyRoom: () => void copyRoom(),
           openRoom: () => setActivePanel("join"),
           showEarlier: () => setMessageWindow((n) => n + MESSAGE_WINDOW),
+          toggleHidden: () => setShowHidden((v) => !v),
         },
         refs: { dock: dockAnchorRef as never, end: messageEndRef as never },
         slots: {
@@ -4692,6 +4802,7 @@ function ChatApp() {
                 room={room}
                 avatar={prefs.avatar}
                 delivery={deliveryStateOf(message)}
+                mapPolicy={clientConfig.map}
                 act={rowActionsRef}
               />
             );
@@ -5170,7 +5281,12 @@ function ChatApp() {
         if (!m) return null;
         return (
           <SimpleModal title={t(lang, "msginfo.title")} onClose={() => setMsgInfoFor(null)}>
-            <MessageInfoView info={buildMessageInfo(m)} lang={lang} onForward={() => { setMsgInfoFor(null); void forwardMessage(m); }} />
+            <MessageInfoView
+              info={buildMessageInfo(m)}
+              lang={lang}
+              onForward={() => { setMsgInfoFor(null); void forwardMessage(m); }}
+              actions={{ onHide: (choice) => hideMsg(m.id, choice), onUnhide: () => unhideMsg(m.id), onDelete: () => deleteMsg(m.id) }}
+            />
           </SimpleModal>
         );
       })() : null}

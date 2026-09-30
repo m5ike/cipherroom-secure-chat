@@ -14,14 +14,19 @@ export type AttachmentMeta = {
   dropped?: boolean;
 };
 
-/** Where a message stands. The last four only exist for a signed-in user:
- *  the server took it (stored), handed it on (forwarded / delivered) or the
- *  recipient opened it (read). */
+/** Where a message stands. The away relay's four only exist for a signed-in
+ *  recipient: the server took it (stored — cached on the server, encrypted),
+ *  handed it on (forwarded / delivered) or the recipient opened it (read).
+ *  6.2 — the vocabulary the Android app shares (message-timeline.ts):
+ *  revealed (a hold-to-read message shown), opened (a sealed one opened with
+ *  its code), expired (a vanishing one ran out), hidden / unhidden (in this
+ *  view only). "discarded" is what 6.1 and older recorded for "expired". */
 export type MsgState =
   | "created" | "encrypted" | "sent" | "received" | "decrypted" | "displayed" | "discarded"
   /** Waiting in the local outbox for a recipient to come online (light mode). */
   | "queued"
-  | "stored" | "forwarded" | "delivered" | "read";
+  | "stored" | "forwarded" | "delivered" | "read"
+  | "revealed" | "opened" | "expired" | "hidden" | "unhidden";
 
 export type MessageAudit = { state: MsgState; at: number; meta?: string };
 
@@ -62,6 +67,12 @@ export type ChatMessage = {
   sealedWith?: "sender-key" | "pair" | "room";
   /** Who signed it, and how that compares with what we saw before. */
   identity?: MessageIdentity;
+  /** 6.2: hidden in this view since `at` until `until` (ms; 0 = until the
+   *  next sign-in — for a guest, the next page load). message-hide.ts. */
+  hidden?: { at: number; until: number };
+  /** 6.2: deleted from this view — what is left is a tombstone without any
+   *  content, kept so the message does not come back from a store or relay. */
+  deletedAt?: number;
 };
 
 /** verified: signed, key as pinned (or first seen) · changed: signed, but

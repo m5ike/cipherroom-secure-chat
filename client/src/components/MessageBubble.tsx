@@ -9,9 +9,15 @@
 //           genuinely visible (tab focused, in view, and — for a tap message —
 //           while it is being held open).
 //   sealed  a locked body that needs a per-message code to read.
+//
+// 6.2: files are shown in the bubble (a picture, a video, a sound, a PDF
+// card, a text's first lines) and listed in a footer with save / share /
+// forward; a position becomes a small map (lib/map-preview.ts). Revealing a
+// hold-to-read message and opening a sealed one are reported to the app
+// (onRevealed / onOpened) for the message's timeline.
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { t, type Lang } from "../lib/i18n";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { t, tf, type Lang } from "../lib/i18n";
 import type { MsgState } from "../lib/chat-types";
 import { openSealed, type MsgFlags } from "../lib/message-kinds";
 import type { LNode } from "../lib/layout-tree";
@@ -21,8 +27,14 @@ import { renderLayout, type LayoutEnv } from "./LayoutView";
 import { Markdown } from "./Markdown";
 import { FnOutputs } from "./fn/FnOutputs";
 import { osmLink } from "../lib/maps";
+import type { MapPreviewPolicy } from "../lib/client-config";
+import { mapView } from "../lib/map-preview";
+import {
+  MEDIA_ICON, attachmentBlob, dataUrlBytes, dataUrlToBlob, mediaKindOf, openAttachment, saveAttachment, shareAttachment, textPreview, type MediaKind,
+} from "../lib/attachment-media";
+import "../bubbles.css";
 
-export type BubbleAttachment = { kind: "file" | "image"; name: string; mime: string; size: number; dataUrl: string };
+export type BubbleAttachment = { kind: "file" | "image"; name: string; mime: string; size: number; dataUrl: string; dropped?: boolean };
 
 export type MessageBubbleProps = {
   id: string;
@@ -48,6 +60,15 @@ export type MessageBubbleProps = {
   forwardedFrom?: string;
   /** 6.1: the sender's position when writing (a map pin). */
   loc?: { lat: number; lon: number; acc?: number };
+  /** 6.2: the operator's map preview (client config › map); without it, the pin link. */
+  mapPolicy?: MapPreviewPolicy;
+  /** 6.2: hidden in this view (drawn while the conversation shows hidden messages). */
+  hidden?: boolean;
+  /** 6.2: a hold-to-read message was revealed / a sealed one opened with its code. */
+  onRevealed?: (id: string) => void;
+  onOpened?: (id: string) => void;
+  /** 6.2: a short notice (a file name copied). */
+  onNotice?: (text: string) => void;
   bubbleStyle?: CSSProperties;
   badge: ReactNode; // <UserBadge/> (others) or plain name label (self/system)
   lang: Lang;
@@ -132,6 +153,46 @@ function useVanishRing(totalSec: number | undefined, active: boolean, onDone: ()
   return remaining;
 }
 
+/** A file's bytes made playable here: the CSP's media-src takes blob: but not
+ *  data:, so an inline file (a data: URL) plays from a blob: URL of its own. */
+function usePlayableUrl(url: string | undefined, mime: string, wanted: boolean): string | undefined {
+  const convert = wanted && Boolean(url?.startsWith("data:")) && typeof URL !== "undefined" && typeof URL.createObjectURL === "function";
+  const [blobUrl, setBlobUrl] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (!convert || !url) { setBlobUrl(undefined); return; }
+    const blob = dataUrlToBlob(url, mime);
+    if (!blob) return;
+    const made = URL.createObjectURL(blob);
+    setBlobUrl(made);
+    return () => URL.revokeObjectURL(made);
+  }, [convert, url, mime]);
+  if (!wanted) return undefined;
+  return convert ? blobUrl : url;
+}
+
+/** The first lines of a text file: at once from a data: URL, a moment later from a received blob. */
+function useTextPreview(att: BubbleAttachment | undefined, kind: MediaKind | null): { text: string; more: boolean } | null {
+  const url = kind === "text" ? att?.dataUrl ?? "" : "";
+  const size = att?.size ?? 0;
+  const inline = useMemo(() => {
+    if (!url.startsWith("data:")) return null;
+    const bytes = dataUrlBytes(url, 4096);
+    return bytes ? textPreview(bytes, 6, 480, size) : null;
+  }, [url, size]);
+  const [later, setLater] = useState<{ text: string; more: boolean } | null>(null);
+  useEffect(() => {
+    setLater(null);
+    if (!url.startsWith("blob:") || !att) return;
+    const blob = attachmentBlob(att);
+    if (!blob) return;
+    let live = true;
+    void blob.slice(0, 4096).arrayBuffer().then((buf) => { if (live) setLater(textPreview(new Uint8Array(buf), 6, 480, blob.size)); }).catch(() => undefined);
+    return () => { live = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [url]);
+  return inline ?? later;
+}
+
 export function MessageBubble(props: MessageBubbleProps) {
   const { flags, mine, isSystem, lang, id } = props;
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -147,6 +208,12 @@ export function MessageBubble(props: MessageBubbleProps) {
   const sealedOpen = !sealed || sealText !== null;
   const tap = Boolean(flags?.tap);
   const revealed = sealedOpen && (!tap || holding);
+
+  // 6.2: each reveal of a hold-to-read message is a step of its timeline.
+  useEffect(() => {
+    if (tap && holding && sealedOpen && !props.vanished) props.onRevealed?.(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tap, holding, sealedOpen]);
 
   // Vanish counts only while the reader can actually see the content.
   const counting = Boolean(flags?.vanishSeconds) && tabVisible && inView && revealed && !props.vanished;
@@ -183,6 +250,7 @@ export function MessageBubble(props: MessageBubbleProps) {
       const opened = await openSealed(props.text, flags.sealed, codeInput.trim());
       setSealText(opened);
       setCodeError(false);
+      props.onOpened?.(id);
     } catch {
       setCodeError(true);
     }
@@ -194,9 +262,30 @@ export function MessageBubble(props: MessageBubbleProps) {
   const style: CSSProperties = { ...(props.bubbleStyle ?? {}) };
   if (flags?.vanishSeconds) (style as Record<string, string>)["--vp"] = String(remaining);
 
+  // 6.2: the file — what can be shown of it, and the footer's row.
+  const att = props.attachment;
+  const mediaKind = att ? mediaKindOf(att) : null;
+  const available = Boolean(att && att.dataUrl && !att.dropped);
+  const playable = usePlayableUrl(att?.dataUrl, att?.mime ?? "", available && (mediaKind === "audio" || mediaKind === "video"));
+  const preview = useTextPreview(available ? att : undefined, mediaKind);
+  const [shareMenu, setShareMenu] = useState<number | null>(null);
+  const hasPreview = available && (mediaKind === "image" || mediaKind === "video" || mediaKind === "audio" || mediaKind === "pdf" || (mediaKind === "text" && Boolean(preview)));
+
+  // 6.2: the position as a map (null: the policy is off → the pin link).
+  const { loc, mapPolicy, senderName } = props;
+  const map = useMemo(() => {
+    if (!loc || !mapPolicy) return null;
+    return mapView(loc, mapPolicy, { caption: tf(lang, "msg.map.caption", { name: senderName }), url: osmLink({ lat: loc.lat, lng: loc.lon, ts: 0 }, 17) });
+  }, [loc, mapPolicy, lang, senderName]);
+
+  async function shareFile() {
+    if (!att) return;
+    if (shareMenu === 0) { setShareMenu(null); return; }
+    if (!(await shareAttachment(att))) setShareMenu(0);
+  }
+
   // 4.0.5: the bubble is a layout (lib/layouts/message.ts) the operator can
   // redesign in the console; these are the values and actions it may use.
-  const att = props.attachment;
   const data: Record<string, unknown> = {
     id,
     mine,
@@ -225,7 +314,19 @@ export function MessageBubble(props: MessageBubbleProps) {
     loc: props.loc ? { lat: props.loc.lat, lon: props.loc.lon, acc: props.loc.acc ?? null, url: osmLink({ lat: props.loc.lat, lng: props.loc.lon, ts: 0 }, 17) } : null,
     replyTo: props.replyTo ?? null,
     bodyText,
-    attachment: att ? { ...att, isImage: att.kind === "image", isAudio: att.kind !== "image" && att.mime.startsWith("audio/"), sizeText: props.formatSize(att.size) } : null,
+    attachment: att
+      ? {
+          ...att, kind: mediaKind, sizeText: props.formatSize(att.size),
+          isImage: mediaKind === "image", isAudio: mediaKind === "audio", isVideo: mediaKind === "video", isPdf: mediaKind === "pdf", isText: mediaKind === "text",
+          mediaUrl: playable ?? "", preview: preview?.text ?? "", previewMore: Boolean(preview?.more), hasPreview,
+        }
+      : null,
+    attachments: att && mediaKind
+      ? [{ index: 0, name: att.name, mime: att.mime, kind: mediaKind, icon: MEDIA_ICON[mediaKind], sizeText: props.formatSize(att.size), available, dropped: !available }]
+      : null,
+    shareMenu,
+    map,
+    hidden: Boolean(props.hidden),
     sealCode: sealed && mine ? props.sealCode ?? "" : "",
     codeInput,
     codeError,
@@ -260,6 +361,15 @@ export function MessageBubble(props: MessageBubbleProps) {
       codeSubmit: () => void submitCode(),
       reply: () => props.onReply?.(),
       forward: () => props.onForward?.(),
+      // 6.2: the footer's buttons (the argument is the file's index; one file per message today).
+      save: () => { if (att) saveAttachment(att); setShareMenu(null); },
+      share: () => void shareFile(),
+      open: () => { if (att) openAttachment(att); },
+      copyName: () => {
+        if (att) void navigator.clipboard?.writeText(att.name).then(() => props.onNotice?.(t(lang, "msg.file.nameCopied")), () => undefined);
+        setShareMenu(null);
+      },
+      closeShare: () => setShareMenu(null),
     },
   };
   return renderLayout(props.tree ?? DEFAULT_MESSAGE_TREES[isSystem ? "sys" : mine ? "out" : "in"], env);

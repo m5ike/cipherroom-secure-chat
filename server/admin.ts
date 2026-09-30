@@ -109,6 +109,11 @@ app.use("/admin/functions", express.json({ limit: "8mb" }));
 app.use(express.json({ limit: "256kb" }));
 // The console's API: live state is in the main service.
 app.use("/api/admin", (req, res) => { void forward(req, res, req.originalUrl); });
+// 6.2: map tiles for the console's Map preview card and the Layout builder's
+// preview (img-src 'self'): the main service proxies and caches them. Behind
+// nginx, /api/ goes to the main service anyway; this serves a console opened
+// straight on ADMIN_PORT.
+app.get("/api/map/tile/:z/:x/:y", (req, res) => { void forward(req, res, req.originalUrl); });
 
 // ---- Auth middleware ---------------------------------------------------
 const ADMIN_API_TOKEN = process.env.ADMIN_API_TOKEN?.trim() || "";
