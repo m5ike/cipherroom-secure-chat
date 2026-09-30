@@ -12,7 +12,7 @@ import type { CardTransport, CardIdentity, WaitOpts, TransportCapabilities, RawO
 import { u8 } from "../cards/apdu";
 import {
   Pn532, getFirmwareVersion, samConfigure, listPassiveTargetTypeA,
-  inDataExchange, inCommunicateThru, inRelease, type Duplex,
+  inDataExchange, inCommunicateThru, inRelease, mifareReadBlockPn532, mifareWriteBlockPn532, type Duplex,
 } from "./pn532";
 
 const NUS_SERVICE = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
@@ -197,6 +197,16 @@ export class WebBluetoothPn532Transport implements CardTransport {
 
   async transceiveRaw(frame: Uint8Array, opts?: RawOpts): Promise<Uint8Array> {
     return inCommunicateThru(this.deviceOrThrow(), frame, { timeoutMs: opts?.timeoutMs });
+  }
+
+  /** MIFARE Classic block read via InDataExchange (keeps the Crypto-1 session). */
+  async mifareReadBlock(block: number, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array): Promise<Uint8Array> {
+    return mifareReadBlockPn532(this.deviceOrThrow(), this.currentTg, block, keyType, key, uid);
+  }
+
+  /** MIFARE Classic block write via InDataExchange. */
+  async mifareWriteBlock(block: number, data: Uint8Array, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array): Promise<void> {
+    return mifareWriteBlockPn532(this.deviceOrThrow(), this.currentTg, block, data, keyType, key, uid);
   }
 
   async releaseCard(): Promise<void> { if (this.dev) await inRelease(this.dev, this.currentTg); }

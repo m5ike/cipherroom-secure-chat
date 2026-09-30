@@ -135,6 +135,12 @@ export class WebNfcTransport implements CardTransport {
 
   async writeNdef(records: NdefRecord[], opts: { signal?: AbortSignal; overwrite?: boolean } = {}): Promise<void> {
     if (!this.reader) throw new NfcError("not-connected", "Call connect() first");
+    // A scan left running by an earlier waitForCard would fight write() for the
+    // next tap. Stop it so write() waits for and owns the tag on its own —
+    // Web NFC's write() blocks until a tag is presented, so we must NOT have
+    // consumed the tag with waitForCard beforehand.
+    this.scanAbort?.abort();
+    this.scanAbort = null;
     try {
       await this.reader.write({ records: records.map(toWriteRecord) }, { overwrite: opts.overwrite ?? true, signal: opts.signal });
     } catch (err) {

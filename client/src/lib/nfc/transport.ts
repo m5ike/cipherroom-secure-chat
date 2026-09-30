@@ -67,6 +67,13 @@ export interface CardTransport {
   transceiveRaw?(frame: Uint8Array, opts?: RawOpts): Promise<Uint8Array>;
   /** Mifare Classic authentication through the reader. */
   mifareAuth?(block: number, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array): Promise<boolean>;
+  /** Mifare Classic block read via the reader's own crypto path (authenticate
+   *  + read in one session). Preferred over mifareAuth + raw READ for readers
+   *  whose raw channel does not keep the Crypto-1 session (PN532). */
+  mifareReadBlock?(block: number, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array): Promise<Uint8Array>;
+  /** Mifare Classic block write via the reader's own crypto path (authenticate
+   *  + write in one session). Preferred over mifareAuth + raw WRITE. */
+  mifareWriteBlock?(block: number, data: Uint8Array, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array): Promise<void>;
   /** Release the current card (halt) so the next waitForCard sees a fresh activation. */
   releaseCard?(): Promise<void>;
   /** Web NFC only: write NDEF records. Other transports write through card drivers. */

@@ -284,4 +284,43 @@ export async function inRelease(dev: Pn532, tg = 0x00): Promise<void> {
   try { await dev.command(PN532.InRelease, u8(tg)); } catch { /* card already gone */ }
 }
 
+/* ---------- MIFARE Classic via InDataExchange (keeps the Crypto-1 session) --
+
+The PN532 applies the Crypto-1 cipher only for InDataExchange, not for the raw
+InCommunicateThru channel, so MIFARE Classic block I/O after an authentication
+MUST go through InDataExchange. All three run against the currently selected
+target (`tg`). For a 7-byte-UID card the authentication uses the last 4 UID
+bytes (NXP). Needs a real reader/tag to verify.                                */
+
+/** MIFARE Classic authenticate: InDataExchange [0x60|0x61, block, key(6),
+ *  uid(4)]. Returns false when the card rejects the key. */
+export async function mifareAuthenticate(
+  dev: Pn532, tg: number, block: number, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array,
+): Promise<boolean> {
+  if (key.length !== 6) throw new NfcError("protocol", "Mifare key must be 6 bytes");
+  const serial = uid.length > 4 ? uid.subarray(uid.length - 4) : uid;
+  const cmd = keyType === "A" ? 0x60 : 0x61;
+  try { await inDataExchange(dev, tg, concat(u8(cmd, block), key, serial)); return true; }
+  catch (e) { if (NfcError.is(e, "card-error")) return false; throw e; }
+}
+
+/** Authenticate the block's sector, then read the 16-byte block (0x30). */
+export async function mifareReadBlockPn532(
+  dev: Pn532, tg: number, block: number, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array,
+): Promise<Uint8Array> {
+  if (!(await mifareAuthenticate(dev, tg, block, keyType, key, uid))) throw new NfcError("auth-failed", `Key ${keyType} did not open block ${block}`);
+  const r = await inDataExchange(dev, tg, u8(0x30, block));
+  if (r.length < 16) throw new NfcError("card-error", `READ block ${block} returned ${r.length} B`);
+  return r.slice(0, 16);
+}
+
+/** Authenticate the block's sector, then write the 16-byte block (0xA0). */
+export async function mifareWriteBlockPn532(
+  dev: Pn532, tg: number, block: number, data: Uint8Array, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array,
+): Promise<void> {
+  if (data.length !== 16) throw new NfcError("protocol", "A Mifare block is 16 bytes");
+  if (!(await mifareAuthenticate(dev, tg, block, keyType, key, uid))) throw new NfcError("auth-failed", `Key ${keyType} did not open block ${block}`);
+  await inDataExchange(dev, tg, concat(u8(0xa0, block), data));
+}
+
 export { hex };

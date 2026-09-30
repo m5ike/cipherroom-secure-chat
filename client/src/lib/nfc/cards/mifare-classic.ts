@@ -7,6 +7,7 @@
 
 import { NfcError } from "../errors";
 import { unhex, hex } from "./apdu";
+import { buildT2TlvArea } from "./ndef";
 
 export type MifareType = "1k" | "4k" | "mini";
 
@@ -139,4 +140,124 @@ export type SectorTrailer = { keyA: Uint8Array; access: Uint8Array; keyB: Uint8A
 export function parseTrailer(block: Uint8Array): SectorTrailer {
   if (block.length !== 16) throw new NfcError("invalid-argument", "Trailer must be 16 bytes");
   return { keyA: block.slice(0, 6), access: block.slice(6, 9), keyB: block.slice(10, 16), gpb: block[9] };
+}
+
+/* ---------- MIFARE Classic as an NFC Forum tag: MAD + NDEF (NXP AN1305) ----
+
+A MIFARE Classic tag carries NDEF as the plain Type 2 NDEF TLV laid across the
+data blocks, indexed by the MIFARE Application Directory (MAD) in sector 0.
+Every layout function here is PURE and unit-tested; the actual authenticated
+block writes live in tag-io.ts (writeMifareClassicNdef) and need a real
+reader/tag to verify end to end.
+
+We use MAD1 only (sector 0, blocks 1 & 2 → sectors 1..15). On a 4K card that
+covers the lower 1K region; the upper sectors would need a MAD2 in sector 16,
+which we do not write, so 4K capacity is reported as the 1K region.            */
+
+/** NDEF application AID as stored in the MAD (two bytes 0x03 0xE1). */
+export const MAD_NDEF_AID = Uint8Array.from([0x03, 0xe1]);
+/** MAD info byte: no card-publisher sector. */
+export const MAD_INFO_BYTE = 0x00;
+
+/**
+ * CRC-8/MAD (NXP AN10787): polynomial 0x1D, preset 0xC7, MSB-first, no final
+ * XOR. Computed over the MAD area AFTER the CRC byte (INFO byte + AID entries)
+ * and stored in byte 0 of the MAD.
+ */
+export function madCrc8(data: Uint8Array): number {
+  let crc = 0xc7;
+  for (const b of data) {
+    crc ^= b;
+    for (let i = 0; i < 8; i++) {
+      const msb = crc & 0x80;
+      crc = (crc << 1) & 0xff;
+      if (msb) crc ^= 0x1d;
+    }
+  }
+  return crc & 0xff;
+}
+
+/** Build the MAD1 blocks (sector 0, blocks 1 & 2), marking `ndefSectors`
+ *  (1..15) as NDEF and the rest unused. */
+export function buildMad1(ndefSectors: Iterable<number>): { block1: Uint8Array; block2: Uint8Array } {
+  const set = new Set(ndefSectors);
+  const area = new Uint8Array(32); // [CRC][INFO][AID s1 .. AID s15]
+  area[1] = MAD_INFO_BYTE;
+  for (let s = 1; s <= 15; s++) {
+    if (set.has(s)) { area[2 * s] = MAD_NDEF_AID[0]; area[2 * s + 1] = MAD_NDEF_AID[1]; }
+  }
+  area[0] = madCrc8(area.subarray(1));
+  return { block1: area.slice(0, 16), block2: area.slice(16, 32) };
+}
+
+/** Sector-0 trailer for a MAD card: MAD key A (A0A1A2A3A4A5), GPB 0xC1
+ *  (MAD v1, multi-application), key B FFFFFFFFFFFF. */
+export function madSectorTrailer(): Uint8Array {
+  const out = new Uint8Array(16);
+  out.set(unhex("A0A1A2A3A4A5"), 0);
+  out.set(Uint8Array.from([0x78, 0x77, 0x88]), 6); // access: read free (A), write (B)
+  out[9] = 0xc1;
+  out.set(unhex("FFFFFFFFFFFF"), 10);
+  return out;
+}
+
+/** Data sectors usable for NDEF (sector 0 holds the MAD; MAD1 addresses 1..15). */
+export function ndefDataSectors(type: MifareType): number[] {
+  const last = type === "mini" ? 4 : 15;
+  const out: number[] = [];
+  for (let s = 1; s <= last; s++) out.push(s);
+  return out;
+}
+
+/** Usable NDEF area (bytes) for a MIFARE Classic tech: 3 data blocks/sector. */
+export function mifareClassicNdefCapacity(type: MifareType): number {
+  return ndefDataSectors(type).length * 3 * 16;
+}
+
+export type ClassicBlockWrite = { block: number; data: Uint8Array; trailer: boolean };
+export type ClassicNdefPlan = { writes: ClassicBlockWrite[]; capacity: number; needed: number };
+
+/**
+ * The ordered block-write plan to store an NDEF message on a MIFARE Classic
+ * card as an NFC Forum tag: MAD1 + MAD trailer in sector 0, then the NDEF TLV
+ * (the same 0x03 … 0xFE framing as a Type 2 tag) across the data sectors,
+ * each followed by an NDEF data trailer. Pure. Throws NfcError("too-small")
+ * when the message does not fit.
+ */
+export function planMifareClassicNdef(type: MifareType, ndefMessage: Uint8Array): ClassicNdefPlan {
+  const capacity = mifareClassicNdefCapacity(type);
+  const tlv = buildT2TlvArea(ndefMessage); // NDEF TLV + terminator
+  const needed = tlv.length;
+  if (needed > capacity) {
+    throw new NfcError("too-small", `MIFARE Classic NDEF needs ${needed} B, holds ${capacity} B`, `${needed}/${capacity}`);
+  }
+  const padded = new Uint8Array(Math.ceil(tlv.length / 16) * 16);
+  padded.set(tlv);
+
+  const data: ClassicBlockWrite[] = [];
+  const used = new Set<number>();
+  let off = 0;
+  for (const s of ndefDataSectors(type)) {
+    if (off >= padded.length) break;
+    used.add(s);
+    const first = sectorFirstBlock(s);
+    for (let i = 0; i < 3 && off < padded.length; i++) {
+      data.push({ block: first + i, data: padded.slice(off, off + 16), trailer: false });
+      off += 16;
+    }
+    data.push({ block: sectorTrailerBlock(s), data: ndefDataTrailer(), trailer: true });
+  }
+
+  const { block1, block2 } = buildMad1(used);
+  const mad: ClassicBlockWrite[] = [
+    { block: 1, data: block1, trailer: false },
+    { block: 2, data: block2, trailer: false },
+    { block: 3, data: madSectorTrailer(), trailer: true },
+  ];
+  return { writes: [...mad, ...data], capacity, needed };
+}
+
+/** Whether a SAK marks a MIFARE Classic family card (1K / 4K / Mini). */
+export function isMifareClassicSak(sak: number | undefined): boolean {
+  return sak !== undefined && ((sak & 0xff) === 0x08 || (sak & 0xff) === 0x18 || (sak & 0xff) === 0x09);
 }

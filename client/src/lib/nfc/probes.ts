@@ -123,7 +123,12 @@ export async function writeType4Ndef(t: CardTransport, records: NdefRecord[]): P
   expectOk(splitResponse(await send(ISO.selectByFid(T4T.CC_FID))), "SELECT CC");
   const cc = await transmitSmart(send, ISO.readBinary(0, 15));
   const ccInfo = parseT4Cc(cc.data);
-  if (ccInfo.writeAccess !== 0x00) throw new NfcError("card-error", "NDEF file is write-protected");
+  if (ccInfo.writeAccess !== 0x00) throw new NfcError("read-only", "The NDEF file is write-protected");
+  // The NDEF file holds a 2-byte NLEN plus the message; guard capacity up front.
+  const needed = 2 + msg.length;
+  if (ccInfo.ndefMaxSize && needed > ccInfo.ndefMaxSize) {
+    throw new NfcError("too-small", `Type 4 NDEF needs ${needed} B, file holds ${ccInfo.ndefMaxSize} B`, `${needed}/${ccInfo.ndefMaxSize}`);
+  }
   expectOk(splitResponse(await send(ISO.selectByFid(ccInfo.ndefFid))), "SELECT NDEF file");
   // Zero NLEN first, write body, then set NLEN (per the Type 4 spec write flow).
   expectOk(splitResponse(await send(ISO.updateBinary(0, u8(0x00, 0x00)))), "Zero NLEN");

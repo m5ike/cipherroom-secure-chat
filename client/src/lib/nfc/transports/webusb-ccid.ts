@@ -337,6 +337,19 @@ export class WebUsbCcidTransport implements CardTransport {
     if (r.sw !== 0x9000) throw new NfcError("card-error", `Write block ${block} SW ${hex([r.sw >> 8, r.sw & 0xff])}`);
   }
 
+  /** Authenticate the sector, then read the block — the PC/SC (FF 82/86/B0)
+   *  path the ACR122 keeps the Crypto-1 session for. */
+  async mifareReadBlock(block: number, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array): Promise<Uint8Array> {
+    if (!(await this.mifareAuth(block, keyType, key, uid))) throw new NfcError("auth-failed", `Key ${keyType} did not open block ${block}`);
+    return this.readBlock(block);
+  }
+
+  /** Authenticate the sector, then write the block (FF 82/86/D6). */
+  async mifareWriteBlock(block: number, data: Uint8Array, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array): Promise<void> {
+    if (!(await this.mifareAuth(block, keyType, key, uid))) throw new NfcError("auth-failed", `Key ${keyType} did not open block ${block}`);
+    await this.writeBlock(block, data);
+  }
+
   async releaseCard(): Promise<void> { try { await this.powerOff(); } catch { /* ignore */ } }
 
   onDisconnect(cb: () => void): () => void { this.disconnectCbs.add(cb); return () => this.disconnectCbs.delete(cb); }

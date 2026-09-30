@@ -17,6 +17,8 @@ import {
   externalRecord, decodeRecord, TNF, typeString, type NdefRecord,
 } from "./cards/ndef";
 import { readNdefAuto, writeType2Ndef, writeType4Ndef } from "./probes";
+import { writeMifareClassicNdef } from "./cards/tag-io";
+import { isMifareClassicSak } from "./cards/mifare-classic";
 import {
   M5CARD_EXTERNAL_TYPE, M5_RECORD_TYPES, isM5Card, decodeContainer, removeRecord,
   type SealedRecord, type M5Record,
@@ -63,12 +65,21 @@ export async function readM5Card(t: CardTransport, id: CardIdentity): Promise<M5
 }
 
 /** Write a container's bytes to the tag as the M5Cet external record. Chooses
- *  the write path by transport (Web NFC → writeNdef, ISO-DEP → Type 4, else
- *  Type 2 raw). */
-export async function writeM5Card(t: CardTransport, id: CardIdentity, container: Bytes, opts: { signal?: AbortSignal } = {}): Promise<void> {
+ *  the write path by transport and tag:
+ *    Web NFC        → the platform's NDEF write (any NDEF-writable tag)
+ *    ISO-DEP (T4T)  → Type 4 file write
+ *    MIFARE Classic → MAD + NDEF TLV across sectors (never Type 2 pages)
+ *    else raw       → Type 2 page write (Ultralight / NTAG)
+ *  `keys` seeds the MIFARE Classic sector dictionary (public defaults are
+ *  always tried on top). */
+export async function writeM5Card(t: CardTransport, id: CardIdentity, container: Bytes, opts: { signal?: AbortSignal; keys?: Uint8Array[] } = {}): Promise<void> {
   const records = [containerRecord(container)];
   if (t.id === "webnfc" && t.writeNdef) { await t.writeNdef(records, { overwrite: true, signal: opts.signal }); return; }
   if (id.isoDep || (id.sak !== undefined && (id.sak & 0x20) !== 0)) { await writeType4Ndef(t, records); return; }
+  // MIFARE Classic is not a Type 2 tag: it needs sector auth + MAD, not 0xA2
+  // page writes. Route it explicitly (and surface a clear error if the reader
+  // can't drive it) instead of silently failing down the Type 2 path.
+  if (isMifareClassicSak(id.sak)) { await writeMifareClassicNdef(t, id, records, { keys: opts.keys, signal: opts.signal }); return; }
   if (t.transceiveRaw) { await writeType2Ndef(t, records); return; }
   throw new NfcError("not-supported-by-transport", "This reader has no NDEF write path for this tag");
 }

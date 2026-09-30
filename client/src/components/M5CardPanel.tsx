@@ -22,6 +22,7 @@ import {
 import type { Bytes } from "../lib/crypto";
 import { currentAccount, confirmAccountRoot, isSignedIn } from "../lib/account";
 import type { CardTransport, CardIdentity } from "../lib/nfc/transport";
+import { NfcError } from "../lib/nfc/errors";
 
 export type M5CardPanelProps = {
   lang: Lang;
@@ -92,6 +93,24 @@ function vcardOf(d: { name?: string; tel?: string; email?: string; org?: string;
 function wifiString(d: { ssid?: string; password?: string; auth?: string; hidden?: boolean }): string {
   const esc = (s: string) => s.replace(/([\\;,:"])/g, "\\$1");
   return `WIFI:T:${d.auth ?? "WPA"};S:${esc(d.ssid ?? "")};P:${esc(d.password ?? "")};${d.hidden ? "H:true;" : ""};`;
+}
+
+/** A localized, human message for a card-write failure (the write helpers
+ *  raise typed NfcError codes with a machine `detail`). */
+function writeErrorText(lang: Lang, err: unknown): string {
+  if (NfcError.is(err)) {
+    switch (err.code) {
+      case "read-only": return translate(lang, "nfc.err.readOnly");
+      case "too-small": {
+        const [need, have] = (err.detail ?? "").split("/");
+        return translate(lang, "nfc.err.tooSmall").replace("{need}", need ?? "?").replace("{have}", have ?? "?");
+      }
+      case "no-key": return translate(lang, "nfc.err.noKey").replace("{sector}", err.detail ?? "?");
+      case "not-supported-by-transport": return translate(lang, "nfc.err.notWritable");
+      default: return err.message;
+    }
+  }
+  return err instanceof Error ? err.message : String(err);
 }
 
 export function M5CardPanel(props: M5CardPanelProps): React.JSX.Element {
@@ -197,12 +216,22 @@ export function M5CardPanel(props: M5CardPanelProps): React.JSX.Element {
     if (needsInternal) { if (!isSignedIn()) { onSystem(`NFC: ${tr("nfc.build.needAccount")}`); return; } root = (await confirmAccountRoot()) as Bytes | null; }
     const records: M5Record[] = drafts.map((d) => ({ id: 0, type: d.type, mode: d.mode, oneTime: d.oneTime, data: finalizeData(d) }));
     const bytes = await buildCard(records, cardKeys(needsExternal ? buildPin : null, root));
-    const id = identity ?? await t.waitForCard({ timeoutMs: 30_000, signal });
-    if (!identity) setIdentity(id);
-    await writeM5Card(t, id, bytes, { signal });
-    log("info", `${tr("nfc.build.written")} (${bytes.length} B)`);
-    onSystem(`NFC: ${tr("nfc.build.written")}`);
-  }), [run, getTransport, drafts, buildPin, identity, setIdentity, onSystem, tr, log]);
+    // Web NFC's write() waits for the tag itself, so we must NOT consume it
+    // with waitForCard first; other readers need the identity to pick a write
+    // path (Type 4 / MIFARE Classic / Type 2).
+    let id: CardIdentity;
+    if (t.id === "webnfc") id = identity ?? { uid: new Uint8Array(0), tech: "iso14443a", isoDep: false, hints: [] };
+    else { id = identity ?? await t.waitForCard({ timeoutMs: 30_000, signal }); if (!identity) setIdentity(id); }
+    try {
+      await writeM5Card(t, id, bytes, { signal });
+      log("info", `${tr("nfc.build.written")} (${bytes.length} B)`);
+      onSystem(`NFC: ${tr("nfc.build.written")} (${bytes.length} B)`);
+    } catch (err) {
+      const msg = writeErrorText(lang, err);
+      log("err", msg);
+      onSystem(`NFC: ${msg}`);
+    }
+  }), [run, getTransport, drafts, buildPin, identity, setIdentity, onSystem, tr, log, lang]);
 
   const loadFromCard = useCallback(() => run("m5-edit", async (signal) => {
     const t = getTransport();

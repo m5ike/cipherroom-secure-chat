@@ -13,9 +13,10 @@
 import type { CardTransport, CardIdentity } from "../transport";
 import { NfcError } from "../errors";
 import { concat, u8, hex } from "./apdu";
+import { encodeNdefMessage, type NdefRecord } from "./ndef";
 import {
   sectorCount, sectorFirstBlock, blocksInSector, sectorTrailerBlock, sectorOfBlock,
-  isSectorTrailer, defaultKeyBytes, type MifareType,
+  isSectorTrailer, defaultKeyBytes, planMifareClassicNdef, type MifareType,
 } from "./mifare-classic";
 
 /* ---------------------------------------------------------- Mifare Classic */
@@ -147,6 +148,76 @@ export async function classicRestore(
     }
   }
   return { written, skipped };
+}
+
+/* ---------------------------------------------- Mifare Classic NDEF write */
+
+/** Find the first dictionary key that opens a sector by probing a data read
+ *  (non-destructive), preferring the reader's crypto-aware read. */
+async function discoverSectorKey(
+  t: CardTransport, sector: number, keys: Uint8Array[], uid: Uint8Array,
+): Promise<{ key: Uint8Array; keyType: "A" | "B" } | null> {
+  if (t.mifareReadBlock) {
+    const first = sectorFirstBlock(sector);
+    for (const key of keys) {
+      for (const keyType of ["A", "B"] as const) {
+        try { await t.mifareReadBlock(first, keyType, key, uid); return { key, keyType }; }
+        catch (e) { if (!NfcError.is(e, "auth-failed") && !NfcError.is(e, "card-error")) throw e; }
+      }
+    }
+    return null;
+  }
+  return authSectorWith(t, sector, keys, uid);
+}
+
+/**
+ * Write an NDEF message onto a MIFARE Classic card as an NFC Forum tag:
+ * format the MAD (sector 0) and lay the NDEF TLV across the data sectors,
+ * authenticating each sector from the key dictionary (seeded with the public
+ * transport / MAD / NDEF keys). Prefers the reader's crypto-aware block write
+ * (mifareWriteBlock); falls back to mifareAuth + raw WRITE for readers that
+ * keep the Crypto-1 session on their raw channel.
+ *
+ * The block LAYOUT is pure and unit-tested (planMifareClassicNdef); the
+ * authenticated writes here need a real reader/tag to verify end to end.
+ * Throws: "too-small" (message does not fit), "no-key" (a sector's key is not
+ * in the dictionary, detail = sector), "not-supported-by-transport" (the
+ * reader cannot write MIFARE Classic sectors at all).
+ */
+export async function writeMifareClassicNdef(
+  t: CardTransport, id: CardIdentity, records: NdefRecord[],
+  opts: { keys?: Uint8Array[]; signal?: AbortSignal } = {},
+): Promise<{ written: number }> {
+  const canWriteBlock = typeof t.mifareWriteBlock === "function";
+  const canRaw = !!(t.mifareAuth && t.transceiveRaw);
+  if (!canWriteBlock && !canRaw) {
+    throw new NfcError("not-supported-by-transport", "This reader cannot write MIFARE Classic sectors");
+  }
+  const type = mifareTypeOf(id);
+  const plan = planMifareClassicNdef(type, encodeNdefMessage(records)); // throws "too-small"
+  const keys = [...(opts.keys ?? []), ...defaultKeyBytes()];
+
+  // Group the plan by sector, preserving order (sector 0 / MAD first).
+  const bySector = new Map<number, typeof plan.writes>();
+  const order: number[] = [];
+  for (const w of plan.writes) {
+    const s = sectorOfBlock(w.block);
+    if (!bySector.has(s)) { bySector.set(s, []); order.push(s); }
+    bySector.get(s)!.push(w);
+  }
+
+  let written = 0;
+  for (const sector of order) {
+    if (opts.signal?.aborted) throw new NfcError("aborted", "Write cancelled");
+    const auth = await discoverSectorKey(t, sector, keys, id.uid);
+    if (!auth) throw new NfcError("no-key", `No key opens sector ${sector}`, String(sector));
+    for (const w of bySector.get(sector)!) {
+      if (t.mifareWriteBlock) await t.mifareWriteBlock(w.block, w.data, auth.keyType, auth.key, id.uid);
+      else await writeBlockRaw(t, w.block, w.data); // sector stays authenticated from discoverSectorKey
+      written++;
+    }
+  }
+  return { written };
 }
 
 /* ------------------------------------------------------ Ultralight / NTAG */

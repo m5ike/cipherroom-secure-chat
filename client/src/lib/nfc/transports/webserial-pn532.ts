@@ -10,7 +10,7 @@ import { concat, u8, splitResponse, apdu as buildApdu, bytesEqual, hex } from ".
 import { encodeNdefMessage, buildT4NdefFile, T4T, type NdefRecord } from "../cards/ndef";
 import {
   Pn532, PN532, getFirmwareVersion, samConfigure, listPassiveTargetTypeA,
-  inDataExchange, inCommunicateThru, inRelease, type Duplex,
+  inDataExchange, inCommunicateThru, inRelease, mifareReadBlockPn532, mifareWriteBlockPn532, type Duplex,
 } from "./pn532";
 
 /* ---------- Web Serial typings (subset) ---------- */
@@ -154,6 +154,17 @@ export class WebSerialPn532Transport implements CardTransport {
 
   async transceiveRaw(frame: Uint8Array, opts?: RawOpts): Promise<Uint8Array> {
     return inCommunicateThru(this.device(), frame, { timeoutMs: opts?.timeoutMs });
+  }
+
+  /** MIFARE Classic block read via InDataExchange (keeps the Crypto-1 session,
+   *  which the raw InCommunicateThru channel does not). */
+  async mifareReadBlock(block: number, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array): Promise<Uint8Array> {
+    return mifareReadBlockPn532(this.device(), this.currentTg, block, keyType, key, uid);
+  }
+
+  /** MIFARE Classic block write via InDataExchange. */
+  async mifareWriteBlock(block: number, data: Uint8Array, keyType: "A" | "B", key: Uint8Array, uid: Uint8Array): Promise<void> {
+    return mifareWriteBlockPn532(this.device(), this.currentTg, block, data, keyType, key, uid);
   }
 
   async releaseCard(): Promise<void> { if (this.dev) await inRelease(this.dev, this.currentTg); }

@@ -16,7 +16,10 @@ export type NfcErrorCode =
   | "protocol" // malformed frame / unexpected answer from reader
   | "card-error" // card answered with an error status (SW != 9000, NAK, ...)
   | "auth-failed" // Mifare authentication rejected
-  | "not-supported-by-transport" // e.g. APDU on Web NFC
+  | "not-supported-by-transport" // e.g. APDU on Web NFC, or a tag this reader can't write
+  | "read-only" // the tag / NDEF file refuses writes (locked or write-protected)
+  | "too-small" // the data does not fit the tag (detail = "needed/available")
+  | "no-key" // no key in the dictionary opens a sector (detail = sector number)
   | "invalid-argument"
   | "busy";
 
