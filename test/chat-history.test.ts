@@ -69,10 +69,18 @@ describe("prepareHistory", () => {
   });
 
   it("leaves out messages that already vanished and trims long audit trails", () => {
+    // 6.2: every step is shown in the details window — a short trail stays whole,
+    // a long one keeps its first step and the newest (200 in all).
     const audit = Array.from({ length: 30 }, (_, i) => ({ state: "sent" as const, at: i }));
     const kept = prepareHistory([message({ vanished: true, vanishedAt: Date.now() }), message({ id: "keep", audit })]);
     expect(kept.map((m) => m.id)).toEqual(["keep"]);
-    expect(kept[0].audit).toHaveLength(12);
+    expect(kept[0].audit).toHaveLength(30);
+    const long = Array.from({ length: 250 }, (_, i) => ({ state: "delivered" as const, at: i }));
+    const trimmed = prepareHistory([message({ id: "long", audit: long })])[0].audit!;
+    expect(trimmed).toHaveLength(200);
+    expect(trimmed[0].at).toBe(0);
+    expect(trimmed[1].at).toBe(51);
+    expect(trimmed[199].at).toBe(249);
   });
 });
 

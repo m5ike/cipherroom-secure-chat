@@ -36,6 +36,9 @@ export function isChatRetention(value: unknown): value is ChatRetention {
   return value === "ephemeral" || value === "session" || value === "server";
 }
 
+/** Timeline steps kept per stored message (the first and the newest). */
+const AUDIT_KEEP = 200;
+
 /** Strips a message down to what is worth storing. */
 function slim(message: ChatMessage): ChatMessage {
   const { cipher: _cipher, ...rest } = message;
@@ -47,7 +50,9 @@ function slim(message: ChatMessage): ChatMessage {
       out.attachment = { ...out.attachment, dataUrl: "", dropped: true };
     }
   }
-  if (out.audit && out.audit.length > 12) out.audit = out.audit.slice(-12);
+  // 6.2: the details window shows every step and each recipient's receipts, so keep
+  // them — the first step (when it was written) and the newest, 200 in all (as Android).
+  if (out.audit && out.audit.length > AUDIT_KEEP) out.audit = [out.audit[0], ...out.audit.slice(-(AUDIT_KEEP - 1))];
   return out;
 }
 
