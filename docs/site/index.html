@@ -161,7 +161,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
 </head>
 <body>
 <header class="top">
-  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 6.3.0</small></a>
+  <a class="logo" href="#uvod"><span class="logo__mark">M5</span> M5cet <small>dokumentace 6.4.0</small></a>
   <div class="search" role="search">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
     <input id="q" type="search" placeholder="Hledat v dokumentaci…" autocomplete="off" aria-label="Hledat v dokumentaci" />
@@ -169,7 +169,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <div class="results" id="results" role="listbox"></div>
   </div>
   <button class="btn" id="theme" type="button" title="Světlý / tmavý motiv">◐</button>
-  <a class="btn" href="m5cet-dokumentace-6.3.0.pdf" download>PDF</a>
+  <a class="btn" href="m5cet-dokumentace-6.4.0.pdf" download>PDF</a>
 </header>
 <div class="layout">
 <nav class="toc" id="toc" aria-label="Obsah"></nav>
@@ -183,6 +183,7 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
   </div>
   <div class="grid2">
     <div class="card"><h4>Pro koho je co</h4><p><b>Uživatel</b> — <a href="#rezimy">režimy</a>, <a href="#sifrovani">co šifrování chrání</a>. <b>Vývojář</b> — <a href="#architektura">architektura</a>, <a href="#protokol">protokol v2</a>, <a href="#api">API</a>. <b>Mobil</b> — <a href="#android">aplikace pro Android</a>. <b>Provozovatel</b> — <a href="#nasazeni">nasazení</a>, <a href="#administrace">administrace</a>, <a href="#audit">audit</a>, <a href="#bezpecnost">bezpečnost</a>.</p></div>
+    <div class="card"><h4>Co je nového v 6.4</h4><p><a href="#registrace"><b>Registrace</b></a> formulářem ve webu i v Androidu: jméno, příjmení, země (vyhledávací výběr), mobil a e-mail — server ověří mobil, doménu e-mailu (MX) a jedinečnost, vygeneruje uživatelské jméno, vyžádá passkey a data zařízení srovná s novým účtem; osobní údaje zůstávají šifrovaně v trezoru uživatele. <a href="#passkeys-android"><b>Passkeys na Androidu</b></a>: aplikace řekne, proč doména passkeye nepotvrdila (a ukáže svůj certifikát), konzole zkontroluje <code>assetlinks.json</code> z internetu i u Googlu a certifikát telefonu jde jedním klikem označit jako důvěryhodný. Přehled v <a href="#zmeny-640">seznamu změn 6.4</a>.</p></div>
     <div class="card"><h4>Co je nového v 6.3</h4><p><a href="#nfc-tool"><b>NFC, celý</b></a>: nástroj NFC ve webu i v Androidu čte, zapisuje a emuluje karty přes vybranou čtečku (interní, USB PC/SC, Bluetooth), pozná technologie (MIFARE Classic/Ultralight/NTAG/DESFire, NDEF, ISO 14443/15693, FeliCa, EMV a e-ID veřejně) a nabídne přesně jejich operace včetně změny UID na magic kartách. Vlastní šifrovaná <a href="#m5cet-karta"><b>karta M5Cet</b></a> nese záznamy (záloha passkey a identity, jednorázová i běžná zpráva, server a místnost, Wi-Fi, kontakt, přihlášení k URL) šifrované PINem nebo passkeyem, s vizuálním builderem. Model ve Functions ovládá čtečku volajícího přes <a href="#m5nfc"><code>m5.nfc</code></a> obousměrně. Nově i <a href="#define"><b>Define</b></a>: typované proměnné a konstanty z konzole (<code>m5mobile.define</code>) živě ve webu, Androidu i Functions. Přehled v <a href="#zmeny-630">seznamu změn 6.3</a>.</p></div>
     <div class="card"><h4>Co je nového v 6.2</h4><p><a href="#zpravy-62"><b>Bubliny, které řeknou všechno</b></a>: ikona (i) otevře detail zprávy s časovou osou všech stavů (odesláno, ve frontě, uloženo na serveru šifrovaně, doručeno, přečteno, zobrazeno, vypršelo…) a potvrzeními od každého příjemce; zprávu jde <b>skrýt</b> (15 min až do dalšího přihlášení) nebo <b>smazat</b> ze svého pohledu — server se dozví jen <i>že</i> (audit <code>message</code>), nikdy obsah. <b>Náhled mapy</b> u polohy (dlaždice přes server, nastavení v konzoli), náhledy médií a patička příloh s uložením, sdílením a přeposláním. <a href="#android-62"><b>Android</b></a>: panel lidí jako na webu, propojení s kontakty telefonu, šablony vzhledu s barevnými variantami, Nástroje jako plovoucí okno, mikrofon nahrává hlasovou zprávu, opravy registrace QR kódem a passkeys, PIN pro každou obrazovku. Přehled v <a href="#zmeny-620">seznamu změn 6.2</a> (a <a href="#zmeny-610">6.1</a>).</p></div>
     <div class="card"><h4>Co je nového v 6.0</h4><p><a href="#android"><b>Aplikace pro Android</b></a> jako framework M5cet: <a href="#android-design">obrazovky, téma, animace a knihovny</a> z konzole, <a href="#android-buildy">zašifrované a podepsané balíčky</a> s návratem k funkční verzi, <a href="#android-zamek">biometrie a PIN</a> s wipe po opakovaných chybách, <a href="#android-sifrovani">šifrovaná data v telefonu</a>, <a href="#android-push">řídicí zprávy přes FCM</a>, <a href="#android-vydani">vydání APK</a>, záznam hovorů. <a href="#vic-mistnosti"><b>Víc místností naráz</b></a> s odznaky a chytrým přepínáním, <a href="#seznam-lidi">seznam lidí u okraje</a> s automatickým schováním. <a href="#m5adm"><b>m5adm</b></a> — administrace z funkcí, <a href="#mistnosti-rizeni">řízení místností</a> a oznámení operátora. <a href="#m5-telephony"><b>m5.telephony</b></a> — hovory, zprávy a čísla z funkcí, <a href="#telefonni-most">telefonní most</a>. Přehled v <a href="#zmeny-600">seznamu změn 6.0</a>.</p></div>
@@ -801,6 +802,34 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
     <figure><img src="img/signup-steps.png" alt="Registrace přes /signup" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 18 — /signup: účet s vygenerovaným uživatelským jménem, ověřený globální klíč a průběh všech kroků.</figcaption></figure>
     <figure><img src="img/room-need-signin.png" alt="Server-enhanced vyžaduje přihlášení" style="width:100%;border:1px solid var(--border);border-radius:12px" /><figcaption>Obr. 19 — Nepřihlášený uživatel: Server-enhanced odkazuje do okna Spojení, Připojit je neaktivní.</figcaption></figure>
   </div>
+</section>
+
+<section class="doc" id="registrace" data-group="Doručování">
+  <h2>Registrace <span class="badge b-acc">6.4</span><a class="anchor" href="#registrace">#</a></h2>
+  <p class="lead">Účet s passkeyem jde vedle anonymního „Vytvořit účet“ založit i <b>registračním formulářem</b>: jméno, příjmení, země, mobil a e-mail. Menu <i>Registrace</i> (pro nepřihlášené), tlačítko v okně Připojení a v Androidu <i>Nastavení › Uživatel</i> a ⋮ menu. Podrobně v <code>docs/registration.md</code>.</p>
+  <ul>
+    <li><b>Země</b> je vyhledávací výběr (název, kód i předvolba, bez ohledu na diakritiku), <b>mobil</b> má předvolbu země. Obě aplikace i server kontrolují stejným modulem (<code>client/src/lib/registration/form.ts</code>).</li>
+    <li>Server navíc ověří, že číslo může být <b>mobil</b> (ne pevná linka, VoIP ani placená linka), že <b>doména e-mailu</b> existuje a přijímá poštu (<b>MX</b>, ne null MX) a že e-mail ani mobil ještě <b>nejsou registrované</b>.</li>
+    <li>Pak vygeneruje <b>uživatelské jméno</b> o 10 znacích (≈ 49,5 bitu), vyžádá <b>passkey</b> (PRF → kořen účtu → klíče, stejně jako „Vytvořit účet“), zaregistruje účet, uloží profil šifrovaně do trezoru a <b>srovná a synchronizuje</b> data zařízení s novým účtem.</li>
+  </ul>
+  <div class="warn"><b>Osobní údaje zůstávají uživateli.</b> Server nemá jméno, zemi, telefon ani e-mail v čitelné podobě: účet nese jen HMAC-SHA256 normalizovaného e-mailu a mobilu (náhodný pepř v <code>registration.json</code>), profil je zašifrovaný klientem ve slotu trezoru <code>registration</code>. Audit zapisuje jen názvy polí a kódy chyb; kontrola jedinečnosti má vlastní limit (20 dotazů / 10 min / adresa).</div>
+  <table>
+    <tr><th>Endpoint</th><th>Co dělá</th></tr>
+    <tr><td><code>GET /api/account/countries</code></td><td>země s předvolbou (<code>{ code, dial }</code>)</td></tr>
+    <tr><td><code>POST /api/account/register/check</code></td><td>formulář → normalizované hodnoty nebo kódy chyb polí (<code>required</code>, <code>too-long</code>, <code>invalid</code>, <code>not-mobile</code>, <code>no-domain</code>, <code>no-mx</code>, <code>dns-unavailable</code>, <code>taken</code>)</td></tr>
+    <tr><td><code>POST /api/account/register/start</code></td><td>znovu ověří → uživatelské jméno a volby passkeye; výzva nese otisky kontaktů</td></tr>
+    <tr><td><code>POST /api/account/register/verify</code></td><td>beze změny; souběh dvou registrací → 409 <code>taken</code></td></tr>
+  </table>
+</section>
+
+<section class="doc" id="passkeys-android" data-group="Doručování">
+  <h2>Passkeys na Androidu <span class="badge b-acc">6.4</span><a class="anchor" href="#passkeys-android">#</a></h2>
+  <p class="lead">Aplikace pro Android se přihlašuje <b>stejnými passkeyi jako prohlížeč</b> (Credential Manager). Android to dovolí, jen když doména passkeyů v <code>https://&lt;doména&gt;/.well-known/assetlinks.json</code> uvádí aplikaci (<code>cz.m5cet.app</code>) a SHA-256 certifikátu, kterým je podepsaná — a ten soubor dorazí z internetu až k aplikaci. Jinak každý passkey na Androidu selže s <code>SecurityError</code> („The incoming request cannot be validated“).</p>
+  <ul>
+    <li><b>Proxy blokuje <code>/.well-known/</code></b> — hostingové panely často zakazují cesty s tečkou; soubor pak vrací 403 nebo HTML. Oprava: přesná <code>location = /.well-known/assetlinks.json { proxy_pass … }</code> v bloku <code>server</code> (má přednost před <code>location ~ /\.</code>), <code>nginx -t</code> a reload — viz <a href="#nasazeni">nasazení</a>.</li>
+    <li><b>Certifikát buildu není uvedený</b> — server uvádí certifikáty vydání (Android › Releases), <code>ANDROID_DEBUG_CERT_SHA256</code> a nově ty, které operátor v konzoli označí jako <b>důvěryhodné pro passkeys</b> (jen <code>assetlinks.json</code> a WebAuthn origin — nikdy kontrola vydání APK).</li>
+  </ul>
+  <p><b>Aplikace</b> v tom případě ukáže dialog <i>Server tuto aplikaci nepotvrdil</i> s adresou serveru, balíčkem a otiskem certifikátu (Kopírovat) a při check-inu hlásí serveru svůj certifikát. <b>Konzole</b> › Android › Security › <i>Passkeys on Android</i> projde řetězec jako telefon — co by server vrátil, co vrací veřejná adresa, co vidí Google — s verdiktem (<code>ok</code>, <code>blocked</code>, <code>not-json</code>, <code>missing-cert</code>, <code>google-stale</code>, <code>no-certs</code>), radami, blokem pro nginx a tlačítkem <i>Trust for passkeys</i> u certifikátů telefonů. <b><code>update.sh</code></b> po každé aktualizaci veřejný soubor ověří a při blokaci vypíše opravu. Podrobně v <code>docs/registration.md</code>.</p>
 </section>
 
 <section class="doc" id="uloziste" data-group="Doručování">
@@ -2252,6 +2281,16 @@ curl -s https://chat.example.com/api/health   <span class="c"># {"ok":true,"prot
       <tr><td><b>Post-kvantový hybrid</b> (ML-KEM + ECDH) pro párové klíče</td><td>„Sklidit teď, rozšifrovat později“; až to WebCrypto nabídne nativně.</td><td><span class="badge">P3</span></td><td>M</td></tr>
     </tbody>
   </table>
+</section>
+
+<section class="doc" id="zmeny-640" data-group="Plán">
+  <h2>Změny v 6.4<a class="anchor" href="#zmeny-640">#</a></h2>
+  <div class="grid2">
+    <div class="card"><h4>Přidáno</h4><p><b>Web i Android</b>: <a href="#registrace">registrace</a> formulářem (jméno, příjmení, země s vyhledáváním, mobil, e-mail) s kontrolou mobilu, MX domény e-mailu a jedinečnosti; 10znakové uživatelské jméno, passkey (PRF), profil v šifrovaném slotu trezoru <code>registration</code>, synchronizace dat zařízení. <b>Android</b>: dialog s certifikátem aplikace, když doména passkey nepotvrdí; certifikát hlášený při check-inu. <b>Konzole</b>: <a href="#passkeys-android">Passkeys on Android</a> — kontrola <code>assetlinks.json</code> z internetu i u Googlu, důvěra certifikátu pro passkeys. <code>update.sh</code> upozorní na blokující proxy.</p></div>
+    <div class="card"><h4>Změněno</h4><p>Verze 6.4.0 (versionCode aplikace 60400), instalátor 3.2.0. Trezor účtu má slot <code>registration</code> (soubor, SQLCipher, <code>/api/account/vault</code>). Přírůstky designu Androidu v <code>server/android/design-64-registration.ts</code> — na zařízení s buildem designu z konzole po publikování nového buildu.</p></div>
+    <div class="card"><h4>Bezpečnost</h4><p>Jméno, země, telefon ani e-mail nejsou na serveru čitelně: účet nese jen HMAC otisky e-mailu a mobilu (pepř v <code>registration.json</code>), profil šifruje klient. Kontrola jedinečnosti má vlastní limit a audit (jen kódy chyb). Certifikát důvěryhodný pro passkeys se nepromítne do kontroly vydání APK.</p></div>
+  </div>
+  <p class="muted">Podrobný seznam: <code>CHANGELOG.md</code>. Registrace a passkeys na Androidu: <code>docs/registration.md</code>. Tato dokumentace odpovídá kódu verze 6.4.0.</p>
 </section>
 
 <section class="doc" id="zmeny-630" data-group="Plán">

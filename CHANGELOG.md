@@ -5,6 +5,75 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.4.0] – 2026-09-30
+
+**Registrace a passkeys na Androidu.** Nový registrační formulář (web
+i Android) vytvoří účet s passkeyem ze jména, země, mobilu a e-mailu —
+server ověří číslo (musí jít o mobil), doménu e-mailu (existuje a má MX)
+a že e-mail ani mobil ještě nejsou zaregistrované; osobní údaje přitom
+nikdy neukládá v čitelné podobě. A proč na Androidu nešlo přihlášení
+passkeyem: produkční proxy blokuje `/.well-known/assetlinks.json` (HTTP 403)
+a telefon běží s buildem podepsaným ladicím certifikátem, který server
+nezná — aplikace i konzole to teď přesně řeknou a konzole nabídne opravu.
+
+### Přidáno — web i Android
+- **Registrace** (menu *Registrace* pro nepřihlášené, tlačítko v okně
+  Připojení na webu a v *Nastavení › Uživatel* na Androidu, ⋮ menu místnosti
+  a seznamu místností): jméno, příjmení, **země** (vyhledávací výběr podle
+  názvu, kódu i předvolby, bez ohledu na diakritiku), **mobil** (s předvolbou
+  země) a **e-mail**. Kontroly v obou klientech (sdílený modul
+  `client/src/lib/registration/form.ts`) a znovu na serveru: platné číslo,
+  a to mobil (ne pevná linka, VoIP ani placená linka — plná metadata
+  libphonenumber), e-mail syntakticky i přes DNS (doména existuje, má MX
+  a nejde o null MX), jedinečnost e-mailu i mobilu.
+- Server vygeneruje **uživatelské jméno** o 10 znacích (bez zaměnitelných
+  znaků, ≈ 49,5 bitu), vyžádá **passkey** (PRF → kořen účtu → klíče, stejně
+  jako „Vytvořit účet“), zaregistruje účet, uloží profil šifrovaně do
+  **trezoru** a srovná a synchronizuje data zařízení s novým účtem.
+- API: `GET /api/account/countries`, `POST /api/account/register/check`,
+  `POST /api/account/register/start` (ověří znovu; výzva nese otisky
+  kontaktů), `register/verify` je uloží a jedinečnost ověří ještě jednou
+  (souběh → 409 `taken`). Anonymní „Vytvořit účet“ zůstává beze změny.
+
+### Přidáno — passkeys na Androidu
+- Aplikace při selhání passkeye kvůli neověřené doméně (WebAuthn
+  `SecurityError`, „The incoming request cannot be validated“) ukáže dialog
+  *Server tuto aplikaci nepotvrdil* s adresou serveru, balíčkem a SHA-256
+  podpisového certifikátu (Kopírovat). Při každém check-inu hlásí serveru
+  svůj certifikát.
+- Konzole › Android › Security › **Passkeys on Android**: kontrola celého
+  řetězce jako z telefonu — co by server vrátil, co vrací veřejná adresa
+  `assetlinks.json` z internetu (stav, typ obsahu, otisky), co vidí Google
+  (Digital Asset Links), známé certifikáty (vydání / env / důvěryhodné)
+  a certifikáty hlášené telefony; verdikt, rady a blok pro nginx.
+  Certifikát telefonu jde jedním klikem **označit jako důvěryhodný pro
+  passkeys** (`androidConfig().passkeyCertSha256` — jen `assetlinks.json`
+  a WebAuthn origin aplikace, nikdy kontrola vydání APK).
+- `update.sh` po každé aktualizaci ověří veřejné `assetlinks.json` a když
+  ho proxy blokuje, vypíše přesný blok `location =` pro nginx. Aktualizaci
+  nikdy neshodí.
+
+### Změněno
+- Verze 6.4.0 (versionCode aplikace 60400). Instalátor 3.2.0.
+- Trezor účtu má nový šifrovaný slot `registration` (soubor, databáze
+  SQLCipher, `GET/PUT /api/account/vault`) — ukládání profilu z předvoleb ho
+  nepřepíše.
+- Přírůstky designu Androidu v `server/android/design-64-registration.ts`
+  (menu, texty). Vestavěný design aplikace je obsahuje; zařízení, které má
+  nainstalovaný build designu z konzole, je uvidí až po publikování nového
+  buildu (Android › Builds).
+
+### Bezpečnost
+- Jméno, země, telefon ani e-mail nejsou na serveru v čitelné podobě: účet
+  nese jen HMAC-SHA256 normalizovaného e-mailu a mobilu (náhodný pepř
+  v `registration.json`, 0600, nebo `REGISTRATION_PEPPER`), profil je
+  zašifrovaný klientem. Audit zapisuje jen názvy polí a kódy chyb.
+- Kontrola jedinečnosti je věštírna („je tento e-mail registrovaný?“), proto
+  má vlastní limit (20 dotazů / 10 min / adresa) a zapisuje se do auditu.
+- Certifikát důvěryhodný pro passkeys otevírá passkeys serveru každé
+  aplikaci s tím podpisem — konzole to před potvrzením řekne; do vydání APK
+  se nepromítne.
+
 ## [6.3.0] – 2026-09-30
 
 **NFC, celý.** Nástroj NFC ve webu i v aplikaci Android čte, zapisuje a

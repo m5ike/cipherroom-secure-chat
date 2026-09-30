@@ -117,6 +117,33 @@ server {
 }
 ```
 
+#### Passkeys na Androidu: `/.well-known/assetlinks.json` (od 6.4.0)
+
+Aplikace pro Android používá passkeys serveru jen tehdy, když
+`https://<doména>/.well-known/assetlinks.json` dorazí z internetu až
+k aplikaci. Hostingové panely (ISPConfig, Plesk…) často zakazují všechny
+cesty s tečkou (`location ~ /\. { deny all; }`) nebo si `/.well-known/`
+drží pro certifikáty — soubor pak vrací 403 nebo HTML stránku a každé
+přihlášení passkeyem na Androidu selže („The incoming request cannot be
+validated“). Přesná `location =` má přednost před regexem, stačí ji přidat
+do bloku `server` (v panelu do vlastních direktiv nginx):
+
+```nginx
+location = /.well-known/assetlinks.json {
+    proxy_pass http://127.0.0.1:5000;
+    proxy_http_version 1.1;
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+}
+```
+
+Pak `sudo nginx -t && sudo systemctl reload nginx` a v konzoli Android ›
+Security › *Passkeys on Android* „Re-check“ (Google si soubor pár minut
+drží v mezipaměti). Konfigurace z instalátoru a `deploy/nginx/m5cet.conf`
+ho propouštějí už teď; `update.sh` po každé aktualizaci upozorní, když ne.
+Podrobně `docs/registration.md`.
+
 ### Caddy (alternativa)
 
 ```caddy

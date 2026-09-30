@@ -211,6 +211,34 @@ Podrobně v [`accounts-away.md`](accounts-away.md). Pro model hrozeb:
   (kompromitovaný endpoint, rozšíření) to nechrání — může požádat o
   dešifrování stejně jako aplikace.
 
+## Registrace formulářem (od 6.4.0)
+
+Registrace vytváří účet s passkeyem ze jména, země, mobilu a e-mailu
+(podrobně `docs/registration.md`). Co server o člověku ví:
+
+* **Nic v čitelné podobě.** Účet nese jen `contact` — HMAC-SHA256
+  normalizovaného e-mailu a mobilu klíčovaný náhodným pepřem
+  (`registration.json`, 0600, nebo `REGISTRATION_PEPPER`). Stačí to na
+  odmítnutí druhé registrace se stejným e-mailem či číslem; zpět na údaje
+  se z toho nedostane nikdo bez pepře. Mobilní čísla mají malý prostor —
+  kdo má pepř (tedy server), je umí dohledat hrubou silou; proto pepř
+  neopouští server a otisky neopouštějí `accounts.json`.
+* **Profil je šifrovaný klientem** (slot `registration` v trezoru, klíč
+  z PRF passkeye) — server ho uloží, ale neotevře.
+* Hodnoty projdou serverem jen přechodně při `check`/`start` (rozbor čísla,
+  dotaz DNS na MX domény). Nezapisují se do logu ani auditu — ten nese jen
+  názvy polí a kódy chyb.
+* Kontrola jedinečnosti odpovídá na otázku „je tento e-mail registrovaný?“
+  — je to věštírna, proto má vlastní limit (20 dotazů / 10 min / adresa)
+  a zapisuje se do auditu (`account.register.check`).
+* Smazání účtu uvolní jeho e-mail i mobil (otisky zmizí s účtem).
+
+Passkeys aplikace pro Android navíc závisí na `/.well-known/assetlinks.json`
+na doméně passkeyů: certifikát, který tam server uvede (vydání, env nebo
+„důvěryhodný pro passkeys“ z konzole), dává každé aplikaci s tímto podpisem
+přístup k passkeyům serveru. Důvěryhodný certifikát se nikdy nepromítne do
+kontroly vydání APK (`certSha256`).
+
 ## Serverové úložiště (od 2.10.0)
 
 Podrobně v [`storage.md`](storage.md). Pro model hrozeb:
