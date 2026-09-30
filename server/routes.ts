@@ -67,6 +67,7 @@ import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
 import { accountGroups, registerAdminClientConfigRoutes, registerClientConfigRoutes } from "./client-config";
+import { registerAdminDefineRoutes, registerDefineRoutes } from "./define";
 import { registerMapTileRoutes } from "./map-tiles";
 import { registerMessageAuditRoutes } from "./message-audit";
 import { requireModule } from "./access";
@@ -247,6 +248,8 @@ export async function registerRoutes(
   // The addons the operator switches on (saved connections, GUI templates).
   registerAdminMenuConfigRoutes(app);
   registerModulesAdminRoutes(app);
+  // 6.3: m5mobile.define — the operator's typed definitions (Android › Define).
+  registerAdminDefineRoutes(app);
   // 6.0: the Android app — the console's side (devices, builds, releases, push)
   // and the devices' own API (/api/android/*).
   registerAndroidAdminRoutes(app);
@@ -294,6 +297,7 @@ export async function registerRoutes(
   registerClientConfigRoutes(app);
   registerMenuConfigRoutes(app);
   // 6.2: the map preview's tiles (through this server) and hide/delete in the audit journal.
+  registerDefineRoutes(app);
   registerMapTileRoutes(app);
   registerMessageAuditRoutes(app);
 
