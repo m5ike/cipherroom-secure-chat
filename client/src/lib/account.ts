@@ -384,6 +384,18 @@ async function confirmRoot(): Promise<Uint8Array> {
   return openRoot(sealed.wrapped, confirmed.secret, WRAP_INFO.passkey);
 }
 
+/** The account root for the NFC "internal" M5Cet card key (6.3).
+ *
+ *  An internal record is sealed with HKDF(root, …) so the card opens only on
+ *  this account's own devices; the workbench and the m5.nfc bridge need the
+ *  root to open or write one. The root is never kept at rest — this asks for a
+ *  passkey the same way adding one does — so a caller invokes it once per
+ *  open/write. Returns null when nobody is signed in on this device. */
+export async function confirmAccountRoot(): Promise<Uint8Array | null> {
+  if (!session) return null;
+  return confirmRoot();
+}
+
 /** Adds another passkey (another device, a security key) to the account. */
 export async function addPasskey(label: string): Promise<AccountSummary> {
   if (!session) throw new Error("Not signed in.");

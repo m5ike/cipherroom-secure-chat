@@ -283,4 +283,119 @@
   animation: nfcwb-spin 0.7s linear infinite;
 }
 @keyframes nfcwb-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .nfcwb__spin { animation-duration: 2s; } }
+@media (prefers-reduced-motion: reduce) { .nfcwb__spin, .nfcwb__spinicon { animation-duration: 2s; } }
+
+.nfcwb__spinicon { animation: nfcwb-spin 0.7s linear infinite; }
+
+/* ---- 6.3: function menu, key dictionary, tech chips, M5Cet ---- */
+
+.nfcwb__btn--icon { min-height: 1.75rem; padding: 0 0.4375rem; }
+
+.nfcwb__inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 0.75rem;
+}
+.nfcwb__inline > span { color: hsl(var(--muted-foreground)); }
+
+.nfcwb__mono { font-family: var(--font-mono); word-break: break-all; }
+
+/* per-type function menu (task 3) */
+.nfcwb__ops {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: 0.375rem;
+}
+.nfcwb__op {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.125rem;
+  padding: 0.4375rem 0.5rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.nfcwb__op:hover:not(:disabled) { background: hsl(var(--accent)); }
+.nfcwb__op:disabled { opacity: 0.5; cursor: not-allowed; }
+.nfcwb__op-needs { font-size: 0.5625rem; font-weight: 500; color: hsl(var(--muted-foreground)); }
+.nfcwb__op-off { font-size: 0.5625rem; font-weight: 500; color: hsl(var(--destructive)); }
+
+/* supported technologies (task 2) */
+.nfcwb__techs { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.nfcwb__techchip {
+  padding: 0.125rem 0.4375rem;
+  border-radius: 999px;
+  font-size: 0.625rem;
+  font-weight: 600;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+}
+.nfcwb__techchip--on { background: hsl(var(--primary) / 0.18); color: hsl(var(--primary)); }
+
+/* mifare key dictionary */
+.nfcwb__keys { display: flex; flex-wrap: wrap; gap: 0.25rem; }
+.nfcwb__keychip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.125rem 0.125rem 0.4375rem;
+  border-radius: 0.5rem;
+  background: hsl(var(--muted));
+  font-size: 0.6875rem;
+}
+
+.nfcwb__ndeflist { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+.nfcwb__ndeflist li { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; font-size: 0.75rem; }
+
+/* M5Cet reader + builder (tasks 5 & 6) */
+.nfcwb__m5 { display: flex; flex-direction: column; gap: 0.5rem; }
+.nfcwb__subtabs { display: flex; gap: 0.25rem; }
+.nfcwb__m5list, .nfcwb__drafts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.375rem; }
+.nfcwb__m5rec {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4375rem 0.5rem;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+}
+.nfcwb__m5icon { width: 1.125rem; height: 1.125rem; flex: none; color: hsl(var(--muted-foreground)); }
+.nfcwb__m5body { flex: 1; display: flex; align-items: center; gap: 0.375rem; flex-wrap: wrap; font-size: 0.8125rem; }
+.nfcwb__detail {
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0.375rem 0 0;
+  max-height: 12rem;
+  overflow: auto;
+}
+.nfcwb__draft {
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.625rem;
+  padding: 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+}
+.nfcwb__draft-head { display: flex; align-items: center; gap: 0.375rem; }
+.nfcwb__draft-opts { justify-content: space-between; }
+
+.nfcwb__capacity {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.6875rem;
+  color: hsl(var(--muted-foreground));
+  font-variant-numeric: tabular-nums;
+}
+.nfcwb__meter { height: 0.375rem; border-radius: 999px; background: hsl(var(--muted)); overflow: hidden; }
+.nfcwb__meter > span { display: block; height: 100%; background: hsl(var(--primary)); transition: width 0.15s ease; }
+.nfcwb__meter > span.nfcwb__meter--over { background: hsl(var(--destructive)); }
+.nfcwb__over { color: hsl(var(--destructive)); }
