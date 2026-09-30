@@ -10,6 +10,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import cz.m5cet.app.account.Account;
 import cz.m5cet.app.chat.Rooms;
 import cz.m5cet.app.core.Config;
+import cz.m5cet.app.core.Define;
 import cz.m5cet.app.core.Events;
 import cz.m5cet.app.core.Io;
 import cz.m5cet.app.core.Log;
@@ -39,6 +40,7 @@ public final class M5 extends Application {
 
     public Vault vault;
     public Config config;
+    public Define define; // 6.3 define
     public Settings settings;
     public Server server;
     public Events events;
@@ -65,6 +67,7 @@ public final class M5 extends Application {
         instance = this;
         vault = new Vault(this);
         config = new Config(vault);
+        define = new Define(this); // 6.3 define
         settings = new Settings(vault);
         server = new Server(config);
         events = new Events(this);

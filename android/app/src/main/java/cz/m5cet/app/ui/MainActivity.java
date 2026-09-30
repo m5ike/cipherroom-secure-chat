@@ -442,6 +442,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         s.put("app", appScope());
         s.put("form", new JSONObject(form));
         s.put("settings", app.settings.scope());
+        s.put("define", app.define.all()); // 6.3 define: $define.<name> reads m5mobile.define
         s.put("account", app.account.scope());
         switch (id) {
             case "splash": s.put("status", splashStatus); s.put("busy", true); break;
