@@ -20,6 +20,9 @@
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.NFC" />
+    <!-- 6.2 people: linking people with the phone's contacts (asked for when the user links one). -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
@@ -66,7 +69,44 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- 6.2 people: "Zpráva přes M5cet" / "Volat přes M5cet" tapped on a linked contact in the
+                 Contacts app (contacts.ContactIntents; the MIME types of res/xml/contacts.xml). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="vnd.android.cursor.item/vnd.cz.m5cet.message" />
+                <data android:mimeType="vnd.android.cursor.item/vnd.cz.m5cet.call" />
+            </intent-filter>
         </activity>
+
+        <!-- ================= 6.2 people: links between M5cet people and the phone's contacts =================
+             An account type of the app's own (no password, never synced) whose raw contacts carry the
+             M5cet rows, kept together with the contacts the user chose (contacts.AddressBook). -->
+        <service
+            android:name=".contacts.AuthenticatorService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accounts.AccountAuthenticator" />
+            </intent-filter>
+            <meta-data android:name="android.accounts.AccountAuthenticator" android:resource="@xml/authenticator" />
+        </service>
+        <!-- The contacts "sync adapter": it never syncs; the Contacts app reads the rows' kinds from its meta-data. -->
+        <service
+            android:name=".contacts.SyncService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.content.SyncAdapter" />
+            </intent-filter>
+            <meta-data android:name="android.content.SyncAdapter" android:resource="@xml/syncadapter" />
+            <meta-data android:name="android.provider.CONTACTS_STRUCTURE" android:resource="@xml/contacts" />
+        </service>
+        <!-- "Propojit s kontaktem": opens the contact picker and links the chosen contact (no UI of its own). -->
+        <activity
+            android:name=".contacts.LinkActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+        <!-- ================================================================================================= -->
 
         <service
             android:name=".push.FcmService"

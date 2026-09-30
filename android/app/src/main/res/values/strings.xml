@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name" translatable="false">M5cet</string>
     <string name="nfc_card_service">M5cet — a room\'s connection card</string>
+    <!-- 6.2 people: the account that holds the links to the phone's contacts (Settings › Accounts). -->
+    <string name="people_account" translatable="false">M5cet</string>
 </resources>

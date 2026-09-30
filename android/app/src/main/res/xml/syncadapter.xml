@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 6.2 people: a contacts "sync adapter" for the app's account type. It never syncs
+     (nothing of the contacts leaves the phone); it exists so the Contacts app reads
+     the data kinds of res/xml/contacts.xml. -->
+<sync-adapter xmlns:android="http://schemas.android.com/apk/res/android"
+    android:contentAuthority="com.android.contacts"
+    android:accountType="cz.m5cet.app"
+    android:supportsUploading="false"
+    android:userVisible="false"
+    android:allowParallelSyncs="false"
+    android:isAlwaysSyncable="true" />

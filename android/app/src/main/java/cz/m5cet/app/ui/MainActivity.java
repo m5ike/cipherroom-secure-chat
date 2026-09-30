@@ -123,6 +123,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         // 6.2 fixes (enrolment link)
 
         // 6.2 people (a contact's M5cet row: message / call)
+        cz.m5cet.app.contacts.ContactIntents.accept(this, i);
 
     }
 
