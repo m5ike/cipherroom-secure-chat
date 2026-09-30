@@ -150,6 +150,16 @@ export const SDK_SPEC: SdkObject[] = [
     m("actions", "m5.telephony.actions.say(text)", "m5.telephony.actions.say(text)", "Call logic: say, play, pause, gather({ digits, fn }), record, redirect, hangup."),
     m("providers", "await m5.telephony.providers()", "await m5.telephony.providers()", "The providers and what each can do / is configured for.", true),
   ] },
+  { name: "nfc", doc: "The caller's NFC hardware (6.3), two-way: the model asks for an NFC op, the caller's device runs it on the reader and returns the result. Every op id is one the catalogue knows (scan, read-uid/-public, ndef-read/-write, classic-read/-write, ntag/ul pages, DESFire files, the M5Cet card, emulate). A protected card is used by name — command.secretRef — so a key or PIN never crosses to the model, and the device never returns one. A person's run needs their NFC module access; a webhook's or a schedule's run the model's grant.", methods: [
+    m("reader", "m5.nfc.reader(kind)", "m5.nfc.reader(kind)", "The NFC scoped to a reader (\"internal\", \"usb\", \"bluetooth\", \"serial\"): the same ops, sent to that reader."),
+    m("enum", "await m5.nfc.enum({ reader })", "await m5.nfc.enum(reader=None)", "What the device offers now: its readers and the card technologies it can talk to.", true),
+    m("card", "await m5.nfc.card({ timeout })", "await m5.nfc.card(timeout=20)", "Waits for a card and returns its identity — uid, technology, ATQA/SAK/ATS/ATR, memory.", true),
+    m("scan", "await m5.nfc.scan({ tech, timeout })", "await m5.nfc.scan(tech=None, timeout=20)", "Reads a presented card's public identity and NDEF.", true),
+    m("read", "await m5.nfc.read({ what, tech, secretRef, args })", "await m5.nfc.read(what='public', secretRef=None)", "Reads a card: what = uid | public | ndef | sector | page | file | dump | counter (a protected read names a saved key with secretRef).", true),
+    m("write", "await m5.nfc.write({ what, ndef, data, records, secretRef })", "await m5.nfc.write(what='ndef', ndef=None, secretRef=None)", "Writes a card: what = ndef | block | page | uid | record | lock | restore (keys are named with secretRef, never sent).", true),
+    m("emulate", "await m5.nfc.emulate({ tech, records, secretRef })", "await m5.nfc.emulate(records=None, secretRef=None)", "Has the device act as a card (HCE): an M5Cet card, a connection tag or a Type 4 tag.", true),
+    m("m5", "await m5.nfc.m5.read({ records, secretRef })", "await m5.nfc.m5.read(records=None, secretRef=None)", "The M5Cet card: read (open records), write / build (seal records onto a tag), erase (remove one), emulate.", true),
+  ] },
   { name: "codes", doc: "2D and bar codes: QR, Data Matrix, PDF417, Aztec, Code128, EAN/UPC…", methods: [
     m("qr", "await m5.codes.qr(text, { scale })", "await m5.codes.qr(text, scale=...)", "A QR code as SVG (or PNG).", true),
     m("barcode", "await m5.codes.barcode(type, text)", "await m5.codes.barcode(type, text)", "Any symbology by name → SVG/PNG.", true),

@@ -175,10 +175,14 @@ export type Chain = {
  *              API): which parts — call, sms, lookup, hlr, message, did — and
  *              which numbers ("number:+420*"). A person's run also needs their own
  *              Telephony & SIP rights.
+ *   nfc        m5.nfc for runs nobody started (a webhook, a schedule, the API):
+ *              drive the caller's NFC hardware. A person's run needs their own
+ *              NFC module access instead (6.3).
  */
 export type ModelGrants = {
   admin?: { enabled: boolean; role: AdminRole; areas: string[] };
   telephony?: { enabled: boolean; rights: string[] };
+  nfc?: { enabled: boolean };
 };
 
 export type Model = {

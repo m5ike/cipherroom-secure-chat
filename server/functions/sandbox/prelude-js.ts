@@ -305,6 +305,62 @@ return function setup(host, ctxJson) {
     log: (filter) => tel("log", filter || {}),
     actions,
   };
+
+  /* ---- m5.nfc (6.3): drive the caller's NFC hardware, two-way ---- */
+  // Each op becomes an NfcCommand the runner sends to the caller's device as an
+  // "nfc" interaction; the device runs it on the reader and answers with an
+  // NfcResult, which resolves the await. A protected card is used by name
+  // (secretRef) — a key or PIN never crosses this boundary.
+  const nfcSend = (op, reader, opts) => {
+    const o = opts && typeof opts === "object" ? opts : {};
+    return acall("nfc", {
+      op,
+      reader: reader || (typeof o.reader === "string" ? o.reader : undefined),
+      tech: typeof o.tech === "string" ? o.tech : undefined,
+      timeout: o.timeout === undefined ? undefined : Number(o.timeout),
+      args: o.args && typeof o.args === "object" ? o.args : undefined,
+      secretRef: typeof o.secretRef === "string" ? o.secretRef : undefined,
+      records: Array.isArray(o.records) ? o.records : undefined,
+    });
+  };
+  const NFC_READ_OP = { uid: "read-uid", public: "read-public", ndef: "ndef-read", sector: "classic-read", sectors: "classic-read", dump: "classic-dump", page: "ntag-read", pages: "ntag-read", ultralight: "ul-read", file: "desfire-read", files: "desfire-files", apps: "desfire-apps", counter: "ntag-counter", vicinity: "v-read", felica: "felica-read", apdu: "raw-apdu" };
+  const NFC_WRITE_OP = { ndef: "ndef-write", block: "classic-write", sector: "classic-write", page: "ntag-write", ultralight: "ul-write", uid: "write-uid", lock: "ndef-lock", record: "m5-write", records: "m5-write", restore: "classic-restore", vicinity: "v-write" };
+  // Record content (a Wi-Fi login, a URL login) is payload the model builds, so
+  // it travels in args.records; command.records is only record-type names to open.
+  const nfcWriteArgs = (o) => {
+    const a = { ...(o.args && typeof o.args === "object" ? o.args : {}) };
+    for (const k of ["ndef", "data", "uid", "block", "page", "value"]) if (o[k] !== undefined) a[k] = o[k];
+    if (Array.isArray(o.records)) a.records = o.records;
+    return a;
+  };
+  function makeNfc(reader) {
+    return {
+      // A scoped copy whose ops go to a chosen reader.
+      reader: (kind) => makeNfc(String(kind)),
+      // Ask the device what it can do right now (readers, card technologies).
+      enum: (opts) => nfcSend("enum", reader, opts),
+      // Wait for a card and return its identity only.
+      card: (opts) => nfcSend("read-uid", reader, opts),
+      // Read a presented card's public identity and NDEF (kept in a scan loop).
+      scan: (opts) => nfcSend("scan", reader, opts),
+      // Read a card. what: uid | public | ndef | sector | page | file | dump | counter…
+      read: (opts) => { const o = opts && typeof opts === "object" ? opts : {}; const op = o.op ? String(o.op) : (NFC_READ_OP[String(o.what || "public")] || "read-public"); return nfcSend(op, reader, o); },
+      // Write a card. what: ndef | block | page | uid | record | lock | restore.
+      write: (opts) => { const o = opts && typeof opts === "object" ? opts : {}; const op = o.op ? String(o.op) : (NFC_WRITE_OP[String(o.what || "ndef")] || "ndef-write"); return nfcSend(op, reader, { ...o, args: nfcWriteArgs(o), records: undefined }); },
+      // Have the device act as a card (HCE).
+      emulate: (opts) => { const o = opts && typeof opts === "object" ? opts : {}; const op = o.op ? String(o.op) : (o.tech === "connection-tag" ? "conn-emulate" : "m5-emulate"); return nfcSend(op, reader, { ...o, args: nfcWriteArgs(o), records: undefined }); },
+      // The M5Cet card: open records, seal records onto a tag, erase one, emulate.
+      m5: {
+        read: (opts) => nfcSend("m5-read", reader, opts),
+        write: (records, opts) => { const o = opts && typeof opts === "object" ? opts : {}; return nfcSend("m5-write", reader, { ...o, args: nfcWriteArgs({ ...o, records: Array.isArray(records) ? records : o.records }), records: undefined }); },
+        build: (records, opts) => { const o = opts && typeof opts === "object" ? opts : {}; return nfcSend("m5-write", reader, { ...o, args: nfcWriteArgs({ ...o, records: Array.isArray(records) ? records : o.records }), records: undefined }); },
+        erase: (opts) => nfcSend("m5-erase", reader, opts),
+        emulate: (opts) => nfcSend("m5-emulate", reader, opts),
+      },
+    };
+  }
+  const nfc = makeNfc(undefined);
+
   const m5adm = {
     info: () => acall("adm.info"),
     overview: ops("overview", ["get", "system", "alerts", "db", "backups", "metrics", "whoami"]),
@@ -552,6 +608,7 @@ return function setup(host, ctxJson) {
       },
     },
     telephony,
+    nfc,
     sleep: (ms) => acall("sleep", Number(ms)),
     // Ask the caller and wait for the answer (live). prompt → a choice or text;
     // form → an object of the field values.

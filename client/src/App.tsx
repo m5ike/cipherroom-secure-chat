@@ -102,6 +102,9 @@ import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./
 import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
 import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgState } from "./lib/chat-types";
 import { fetchCommandState, parseCommandLine, buildInputs, runCommandStream, answerInteraction, outputsToMarkdown, sendFnEventStream, sendFnReport, type Command, type FnEventBody, type Interaction, type RunDone } from "./lib/functions";
+// 6.3 nfc: an "nfc" interaction is run on this device's NFC bridge, not shown as a dialog.
+import { runNfcCommand } from "./lib/nfc/bridge";
+import type { NfcCommand } from "./lib/nfc/command";
 import { shareableOutputs } from "./lib/fn-outputs";
 import { FnHostContext, type FnHost } from "./components/fn/FnOutputs";
 import { isInlineImage } from "./lib/validate";
@@ -3522,6 +3525,23 @@ function ChatApp() {
     setTimeout(() => document.getElementById("message")?.focus(), 0);
   }
 
+  /** 6.3 nfc: a running model asked to drive this device's NFC hardware. An
+   *  "nfc" interaction is not a dialog — run the command on the caller's NFC
+   *  bridge (bridge.ts; the web workbench or the Android service registers the
+   *  executor) and answer with the NfcResult; other interactions open the dialog. */
+  function handleFnInteraction(i: Interaction) {
+    if (i.kind === "nfc") {
+      const runId = i.runId || runCmdRunIdRef.current || "";
+      const token = runCmdTokenRef.current;
+      const command = (i.spec.command ?? { op: "scan" }) as NfcCommand;
+      void runNfcCommand(command)
+        .then((result) => answerInteraction(runId, i.id, result, token))
+        .catch((e) => answerInteraction(runId, i.id, { status: "error", message: e instanceof Error ? e.message : String(e) }, token));
+      return;
+    }
+    setInteraction(i);
+  }
+
   /** Runs a chat command and shows the result: a model posting to the room
    *  sends its output as an ordinary end-to-end-encrypted message; a
    *  caller-only model shows it just to the person who ran it. */
@@ -3540,7 +3560,7 @@ function ChatApp() {
       { keyword: command.keyword, inputs, room: room || null, client: prefs.deviceId || null, lang, token, signal: ctrl.signal },
       {
         onStart: (id) => { runCmdRunIdRef.current = id; },
-        onInteraction: (i) => setInteraction(i),
+        onInteraction: handleFnInteraction, // 6.3 nfc: routes "nfc" to the device bridge
         onError: (e) => { setInteraction(null); systemMessage(tf(lang, "functions.failed", { name: command.name, message: e.message }), { kind: "error", chatOnly: true }); },
         onDone: (r) => {
           setInteraction(null);
@@ -3591,7 +3611,7 @@ function ChatApp() {
       ev,
       {
         onStart: (id) => { runCmdRunIdRef.current = id; runCmdTokenRef.current = token; },
-        onInteraction: (i) => setInteraction(i),
+        onInteraction: handleFnInteraction, // 6.3 nfc: routes "nfc" to the device bridge
         onError: (e) => {
           setInteraction(null);
           if (e.code === "expired") systemMessage(tf(lang, "fnui.expired", { keyword: meta.keyword }), { kind: "warning" });

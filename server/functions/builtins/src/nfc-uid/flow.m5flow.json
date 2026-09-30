@@ -1,0 +1,92 @@
+{
+  "format": "m5flow",
+  "version": 1,
+  "lang": "js",
+  "name": "Card UID",
+  "summary": "Read only a card's UID / serial",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "nfc.read",
+      "x": 120,
+      "y": 120,
+      "params": {
+        "what": "uid",
+        "timeout": 20
+      },
+      "values": {}
+    },
+    {
+      "id": "n2",
+      "type": "flow.return",
+      "x": 620,
+      "y": 260,
+      "params": {},
+      "values": {}
+    },
+    {
+      "id": "n4",
+      "type": "text.template",
+      "x": 460,
+      "y": 100,
+      "params": {
+        "template": "**Card** — UID `{uid}` ({status})"
+      },
+      "values": {}
+    },
+    {
+      "id": "n5",
+      "type": "out.markdown",
+      "x": 720,
+      "y": 100,
+      "params": {},
+      "values": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e3",
+      "from": {
+        "node": "n1",
+        "port": "result"
+      },
+      "to": {
+        "node": "n2",
+        "port": "value"
+      }
+    },
+    {
+      "id": "e6",
+      "from": {
+        "node": "n1",
+        "port": "uid"
+      },
+      "to": {
+        "node": "n4",
+        "port": "uid"
+      }
+    },
+    {
+      "id": "e7",
+      "from": {
+        "node": "n1",
+        "port": "status"
+      },
+      "to": {
+        "node": "n4",
+        "port": "status"
+      }
+    },
+    {
+      "id": "e8",
+      "from": {
+        "node": "n4",
+        "port": "text"
+      },
+      "to": {
+        "node": "n5",
+        "port": "text"
+      }
+    }
+  ]
+}

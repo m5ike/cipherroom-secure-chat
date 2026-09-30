@@ -30,6 +30,7 @@ import { endpointOf, endpointTypes, endpointsOf, entryOf, eventInputs } from "./
 import { admInfo, endAdmRun, hostAdm, type AdmContext } from "./host-adm";
 import { consoleGrant, isAdmArea } from "./adm-token";
 import { hostTelephony } from "./host-telephony";
+import { nfcAllowed, nfcSpend, sanitizeNfcCommand, sanitizeNfcResult } from "./host-nfc";
 import { setHandlerRunner } from "../telephony/engine";
 import type { TelOwner } from "../telephony/tel-store";
 
@@ -173,7 +174,8 @@ function closeCall(chainId: string, callId: number, patch: Pick<ChainCall, "stat
 
 /* ---------------------------------------------------- live interactions */
 
-type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; kind?: "prompt" | "form"; spec?: unknown; at?: number };
+type InteractionKind = "prompt" | "form" | "nfc";
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; kind?: InteractionKind; spec?: unknown; at?: number };
 const interactions = new Map<string, Map<string, Pending>>();
 const PROMPT_TTL_MS = 5 * 60 * 1000;
 
@@ -211,8 +213,9 @@ function endInteractions(runId: string, why: string): void {
   for (const p of forRun.values()) { clearTimeout(p.timer); p.reject(new InteractionError("cancelled", why)); }
 }
 
-/** Registers a question and waits for its answer (or a timeout). */
-function ask(runId: string, kind: "prompt" | "form", spec: unknown, control: Parameters<RunHandlers["host"]>[2]): Promise<unknown> {
+/** Registers a question and waits for its answer (or a timeout). `ttlMs`
+ *  overrides the default wait (an NFC op may sit waiting for a card). */
+function ask(runId: string, kind: InteractionKind, spec: unknown, control: Parameters<RunHandlers["host"]>[2], ttlMs = PROMPT_TTL_MS): Promise<unknown> {
   const id = newId("int");
   return control.wait(new Promise<unknown>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -220,7 +223,7 @@ function ask(runId: string, kind: "prompt" | "form", spec: unknown, control: Par
       forRun?.delete(id);
       if (forRun && !forRun.size) interactions.delete(runId);
       reject(new InteractionError("timeout", "the question was not answered in time"));
-    }, PROMPT_TTL_MS);
+    }, Math.max(1000, Math.min(ttlMs, PROMPT_TTL_MS)));
     timer.unref?.();
     let forRun = interactions.get(runId);
     if (!forRun) { forRun = new Map(); interactions.set(runId, forRun); }
@@ -346,6 +349,19 @@ function hostHandler(model: Model, sessionId: string, runId: string, caller: Cal
     if (fn === "adm.info") return admInfo(admContext(model, caller, runId));
     // 6.0: m5.telephony — calls, SMS, chat messages, lookups, the audio bridge.
     if (fn === "telephony") return control.wait(hostTelephony(String(args[0] ?? ""), Array.isArray(args[1]) ? args[1] : [], { model, caller, runId, chainId: chain?.id ?? "" }));
+    // 6.3: m5.nfc — the op runs on the caller's DEVICE. Gate (a person's own NFC
+    // access, or the model's grant for a run nobody started), strip any raw key /
+    // PIN, then ask the device as an "nfc" interaction and wait for the NfcResult.
+    // Works for a streaming caller and for a webhook caller that polls the run's
+    // open interactions (openInteractions) and answers them.
+    if (fn === "nfc") {
+      const nctx = { model, caller, runId };
+      nfcAllowed(nctx);
+      nfcSpend(nctx);
+      const command = sanitizeNfcCommand(args[0]);
+      const ttlMs = (command.timeout ? command.timeout * 1000 : 20_000) + 20_000;
+      return ask(runId, "nfc", { command }, control, ttlMs).then((result) => sanitizeNfcResult(result));
+    }
     if (fn === "webhook.create") return makeWebhook(runId, (args[0] ?? {}) as { once?: boolean; durable?: boolean; ttl?: unknown }, model, sessionId, caller);
     if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
     const scopeName = (raw: unknown): string => {

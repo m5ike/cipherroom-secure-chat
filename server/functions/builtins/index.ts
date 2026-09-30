@@ -83,7 +83,22 @@ const TELEPHONY: BuiltinDef[] = [
     model: telModel("phone-bridge", "Phone bridge", "Lend a phone number that connects a caller to a room member", [{ name: "room", type: "string", required: true }, { name: "member", type: "string", required: true }, { name: "minutes", type: "integer", min: 1, max: 120 }, { name: "mode", type: "enum", values: ["auto", "audio", "text"] }]) },
 ];
 
-export const BUILTINS_ALL: readonly BuiltinDef[] = [...BUILTINS, ...TELEPHONY];
+/* 6.3: m5.nfc — example packages built as flows (script/gen-nfc-flows.ts): each
+   runs an NFC op on the CALLER'S device (an "nfc" run interaction) and shows the
+   result. Installed switched off — the person needs NFC access and a reader. */
+const NFC_V = "1.0.0";
+const NFC_LIMITS = { wallMs: 180_000, stepMs: 60_000 };
+const nfcModel = (keyword: string, name: string, summary: string): BuiltinModel => ({ keyword, name, summary, inputs: [], visibility: "caller", limits: NFC_LIMITS, off: true });
+const NFC: BuiltinDef[] = [
+  { name: "nfc-scan", kind: "demo", version: NFC_V, description: "Scan a tapped card and show its public identity and NDEF (m5.nfc.scan).",
+    model: nfcModel("nfc-scan", "Scan a card", "Read a tapped card's identity and NDEF") },
+  { name: "nfc-uid", kind: "demo", version: NFC_V, description: "Read only a card's UID / serial number (m5.nfc.read).",
+    model: nfcModel("nfc-uid", "Card UID", "Read only a card's UID / serial") },
+  { name: "nfc-m5", kind: "demo", version: NFC_V, description: "Open an M5Cet card and list its records (m5.nfc.m5.read).",
+    model: nfcModel("nfc-open", "Open an M5Cet card", "List the records on an M5Cet card") },
+];
+
+export const BUILTINS_ALL: readonly BuiltinDef[] = [...BUILTINS, ...TELEPHONY, ...NFC];
 
 export const BUILTIN_BY_NAME: Readonly<Record<string, BuiltinDef>> = Object.fromEntries(BUILTINS_ALL.map((b) => [b.name, b]));
 

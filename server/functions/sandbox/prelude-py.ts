@@ -493,6 +493,62 @@ def _telephony_ns():
         actions=_NS(say=_say, play=_play, pause=_pause, gather=_gather, record=_record, redirect=_redirect, hangup=_hangup_action),
     )
 
+# ---- m5.nfc (6.3): drive the caller's NFC hardware, two-way ----
+# Each op becomes an NfcCommand the runner sends to the caller's device as an
+# "nfc" interaction; the device runs it on the reader and answers with an
+# NfcResult. A protected card is used by name (secretRef) — a key or PIN never
+# crosses this boundary.
+
+_NFC_READ_OP = {"uid": "read-uid", "public": "read-public", "ndef": "ndef-read", "sector": "classic-read", "sectors": "classic-read", "dump": "classic-dump", "page": "ntag-read", "pages": "ntag-read", "ultralight": "ul-read", "file": "desfire-read", "files": "desfire-files", "apps": "desfire-apps", "counter": "ntag-counter", "vicinity": "v-read", "felica": "felica-read", "apdu": "raw-apdu"}
+_NFC_WRITE_OP = {"ndef": "ndef-write", "block": "classic-write", "sector": "classic-write", "page": "ntag-write", "ultralight": "ul-write", "uid": "write-uid", "lock": "ndef-lock", "record": "m5-write", "records": "m5-write", "restore": "classic-restore", "vicinity": "v-write"}
+
+def _nfc_send(op, reader, o):
+    o = o or {}
+    return _acall("nfc", {
+        "op": op,
+        "reader": reader if reader else (o.get("reader") if isinstance(o.get("reader"), str) else None),
+        "tech": o.get("tech") if isinstance(o.get("tech"), str) else None,
+        "timeout": o.get("timeout"),
+        "args": o.get("args") if isinstance(o.get("args"), dict) else None,
+        "secretRef": o.get("secretRef") if isinstance(o.get("secretRef"), str) else None,
+        "records": o.get("records") if isinstance(o.get("records"), list) else None,
+    })
+
+# Record content is payload the model builds, so it travels in args.records;
+# command.records is only record-type names to open.
+def _nfc_write_args(o):
+    a = dict(o.get("args")) if isinstance(o.get("args"), dict) else {}
+    for k in ("ndef", "data", "uid", "block", "page", "value"):
+        if o.get(k) is not None:
+            a[k] = o[k]
+    if isinstance(o.get("records"), list):
+        a["records"] = o["records"]
+    return a
+
+def _make_nfc(reader):
+    def read(what="public", **o):
+        return _nfc_send(o.get("op") or _NFC_READ_OP.get(str(what), "read-public"), reader, o)
+    def write(what="ndef", **o):
+        return _nfc_send(o.get("op") or _NFC_WRITE_OP.get(str(what), "ndef-write"), reader, {**o, "args": _nfc_write_args(o), "records": None})
+    def emulate(**o):
+        return _nfc_send(o.get("op") or ("conn-emulate" if o.get("tech") == "connection-tag" else "m5-emulate"), reader, {**o, "args": _nfc_write_args(o), "records": None})
+    def m5_write(records=None, **o):
+        return _nfc_send("m5-write", reader, {**o, "args": _nfc_write_args({**o, "records": records if isinstance(records, list) else o.get("records")}), "records": None})
+    return _NS(
+        reader=lambda kind: _make_nfc(str(kind)),
+        enum=lambda **o: _nfc_send("enum", reader, o),
+        card=lambda **o: _nfc_send("read-uid", reader, o),
+        scan=lambda **o: _nfc_send("scan", reader, o),
+        read=read,
+        write=write,
+        emulate=emulate,
+        m5=_NS(read=lambda **o: _nfc_send("m5-read", reader, o), write=m5_write, build=m5_write,
+               erase=lambda **o: _nfc_send("m5-erase", reader, o), emulate=lambda **o: _nfc_send("m5-emulate", reader, o)),
+    )
+
+def _nfc_ns():
+    return _make_nfc(None)
+
 _ctx = {}
 m5 = None
 m5adm = None
@@ -592,6 +648,7 @@ def _setup(ctx):
         ),
         functions=_NS(list=lambda: _acall("functions.list"), get=_functions_get),
         telephony=_telephony_ns(),
+        nfc=_nfc_ns(),
         sleep=lambda ms: _acall("sleep", ms),
         prompt=lambda spec=None, **kw: _acall("prompt", {"text": spec} if isinstance(spec, str) else (spec or kw)),
         form=lambda spec=None, **kw: _acall("form", spec or kw),

@@ -1,0 +1,61 @@
+{
+  "format": "m5flow",
+  "version": 1,
+  "lang": "js",
+  "name": "Open an M5Cet card",
+  "summary": "List the records on an M5Cet card",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "nfc.m5.read",
+      "x": 120,
+      "y": 120,
+      "params": {
+        "timeout": 30
+      },
+      "values": {}
+    },
+    {
+      "id": "n2",
+      "type": "flow.return",
+      "x": 620,
+      "y": 260,
+      "params": {},
+      "values": {}
+    },
+    {
+      "id": "n4",
+      "type": "out.json",
+      "x": 460,
+      "y": 100,
+      "params": {
+        "title": "M5Cet records"
+      },
+      "values": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e3",
+      "from": {
+        "node": "n1",
+        "port": "result"
+      },
+      "to": {
+        "node": "n2",
+        "port": "value"
+      }
+    },
+    {
+      "id": "e5",
+      "from": {
+        "node": "n1",
+        "port": "result"
+      },
+      "to": {
+        "node": "n4",
+        "port": "value"
+      }
+    }
+  ]
+}

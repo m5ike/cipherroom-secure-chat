@@ -25,7 +25,11 @@ const authHeaders = (token: string | null): Record<string, string> => (token ? {
 export type PromptSpec = { text?: string; choices?: string[]; placeholder?: string };
 export type FormField = { name: string; label?: string; type?: string; required?: boolean; placeholder?: string; values?: string[] };
 export type FormSpec = { title?: string; text?: string; fields: FormField[]; submit?: string };
-export type Interaction = { runId: string; id: string; kind: "prompt" | "form"; spec: PromptSpec & FormSpec };
+import type { NfcCommand } from "./nfc/command";
+/** 6.3: an "nfc" interaction carries an NfcCommand the caller's device runs (no dialog). */
+export type NfcSpec = { command?: NfcCommand };
+export type InteractionKind = "prompt" | "form" | "nfc";
+export type Interaction = { runId: string; id: string; kind: InteractionKind; spec: PromptSpec & FormSpec & NfcSpec };
 
 /** A finished run as the chat gets it (5.3: the processing session, the call, what the model answers). */
 export type RunDone = {
@@ -37,7 +41,7 @@ export type RunDone = {
 
 export type StreamHandlers = {
   onStart?: (runId: string) => void;
-  onInteraction?: (i: { runId: string; id: string; kind: "prompt" | "form"; spec: PromptSpec & FormSpec }) => void;
+  onInteraction?: (i: Interaction) => void;
   onProgress?: (p: number, text: string) => void;
   onDone?: (r: RunDone) => void;
   onError?: (e: { code: string; message: string }) => void;
