@@ -12,6 +12,7 @@ import android.text.style.ClickableSpan;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.StyleSpan;
 import android.text.util.Linkify;
+import android.util.LruCache;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.MotionEvent;
@@ -36,18 +37,31 @@ import cz.m5cet.app.ui.Icons;
 import cz.m5cet.app.ui.MainActivity;
 import cz.m5cet.app.ui.Renderer;
 import cz.m5cet.app.ui.Ui;
+import cz.m5cet.app.ui.bubble.Hides;
+import cz.m5cet.app.ui.bubble.MapPolicy;
 import cz.m5cet.app.ui.media.AudioBar;
+import cz.m5cet.app.ui.media.Previews;
 import cz.m5cet.app.ui.media.VaultMedia;
+import cz.m5cet.app.ui.media.VideoBox;
 
 /**
  * The body of a message bubble (6.1, slot "msgBody" in message.in / .out):
  * what the design's elements cannot draw — a sealed message and its code, a
  * held ("tap") message, a vanishing one and its time, the text with links,
- * mentions and tags, a command's outputs, and the attachment (a picture, a
- * voice message, a video, a file with its transfer).
+ * mentions and tags, a command's outputs, and the attachment.
+ *
+ * 6.2: a position message is a map (MapBubble; the text and the pin when
+ * the operator switched maps off or the server cannot be reached); an
+ * attachment shows a preview — a picture, a voice or audio player, a video
+ * played in place, the first page of a PDF, the first lines of a text —
+ * and under it a footer: its type, name and size with save, share and
+ * forward. Revealing a held message and opening a sealed one are steps of
+ * the message's timeline.
  */
 final class MsgBody extends LinearLayout implements Renderer.Slot {
     private static final Pattern MENTION = Pattern.compile("(^|[\\s(])([@#])([\\p{L}\\p{N}_][\\p{L}\\p{N}_.-]{0,39})");
+    /** Text previews and a PDF's page count / a video's size and length (by message id); the pictures are in Parts.imageCache. */
+    private static final LruCache<String, Object> META = new LruCache<>(300);
     private final MainActivity a;
     private final Parts parts;
     private String boundKey = "";
@@ -63,6 +77,8 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
 
     private M5 app() { return a.app(); }
     private int dp(float v) { return Ui.dp(getContext(), v); }
+    /** The widest a map or a preview gets: the bubble's content (300 dp less its padding). */
+    private int maxW() { return dp(276); }
 
     @Override
     public void bindSlot(Expr.Scope scope) {
@@ -71,11 +87,15 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
         ChatMessage m = (ChatMessage) o;
         if (current != m) holding = false;
         current = m;
-        String key = m.id + "|" + m.vanished + "|" + (m.sealPlain != null) + "|" + holding + "|" + m.status + "|" + Math.round(m.fileProgress * 50) + "|" + (m.filePath != null) + "|" + m.visibleText().length();
+        MapPolicy map = MapBubble.policyFor(app(), m);
+        String key = m.id + "|" + m.vanished + "|" + (m.sealPlain != null) + "|" + holding + "|" + Math.round(m.fileProgress * 50) + "|" + (m.filePath != null) + "|" + m.visibleText().length()
+            + "|" + (map == null ? "" : map.hashCode()) + "|" + m.hiddenUntil;
         if (key.equals(boundKey)) return;
         boundKey = key;
         build(m);
     }
+
+    private void rebuild(ChatMessage m) { if (current == m) { boundKey = ""; build(m); } }
 
     private void build(ChatMessage m) {
         removeAllViews();
@@ -83,20 +103,29 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
         int fg = Ui.color(getContext(), plain ? "@onSurface" : m.mine ? "@onBubbleOut" : "@onBubbleIn", Color.BLACK);
         int accent = m.mine ? fg : Ui.color(getContext(), "@primary", Color.BLUE);
         if (m.vanished) { addView(note(app().t("msg.vanished"), fg, true)); return; }
+        if (m.hiddenUntil != 0 && Hides.hidden(m, System.currentTimeMillis())) addView(note(hiddenNote(m), fg, true)); // shown only with "show hidden"
         boolean hidden = false;
         if (m.sealed != null && m.sealPlain == null) { addView(sealedBox(m, fg, accent)); hidden = true; }
         if (m.sealed != null && m.mine && m.sealCode != null) addView(note(app().t("msg.yourCode") + ": " + m.sealCode, fg, false));
         if (m.tap && !holding) { addView(holdChip(m, fg, accent)); hidden = true; }
         if (!hidden) {
+            MapPolicy map = MapBubble.policyFor(app(), m);
+            boolean positionMap = map != null && cz.m5cet.app.ui.bubble.Kinds.isPositionMessage(m);
             if (m.fnDraw() != null && m.fnDraw().optJSONArray("outputs") != null && m.fnDraw().optJSONArray("outputs").length() > 0) parts.fnOutputs(this, m, fg);
+            else if (positionMap) addView(MapBubble.build(a, parts, m, map, fg, maxW(), () -> rebuild(m)));
             else if (!m.visibleText().isEmpty()) addView(text(m.visibleText(), fg, accent));
-            if (m.fileName != null) addView(attachment(m, fg, accent));
+            if (m.fileName != null) attachment(m, fg, accent);
         }
         if (m.tap && holding) addView(note("👁 " + app().t("msg.holding"), fg, false));
         if (m.vanishSeconds > 0 && !m.vanished) {
             long left = Math.max(0, m.vanishSeconds - m.vanishedMs / 1000);
             addView(note("⏳ " + left + " s", fg, false));
         }
+    }
+
+    private String hiddenNote(ChatMessage m) {
+        if (m.hiddenUntil == ChatMessage.UNTIL_SIGNIN) return app().t("msg.hiddenSignin");
+        return app().t("msg.hiddenUntil") + " " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date(m.hiddenUntil));
     }
 
     /* -------------------------------------------------------------- text */
@@ -172,6 +201,7 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
                 Io.main(() -> {
                     if (plain == null) { open.setEnabled(true); open.setText(app().t("msg.open")); err.setText(app().t("msg.wrongCode")); err.setVisibility(VISIBLE); return; }
                     m.sealPlain = plain;
+                    if (m.mark("opened")) parts.touched(m);
                     boundKey = "";
                     build(m);
                 });
@@ -187,7 +217,14 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
     private View holdChip(ChatMessage m, int fg, int accent) {
         TextView c = chip("👁 " + app().t("msg.holdToReveal"), fg, accent);
         c.setOnTouchListener((v, e) -> {
-            if (e.getAction() == MotionEvent.ACTION_DOWN) { holding = true; parts.holding.add(m.id); boundKey = ""; build(m); return true; }
+            if (e.getAction() == MotionEvent.ACTION_DOWN) {
+                holding = true;
+                parts.holding.add(m.id);
+                if (m.mark("revealed")) parts.touched(m); // the first time it was shown
+                boundKey = "";
+                build(m);
+                return true;
+            }
             return false;
         });
         return c;
@@ -217,92 +254,213 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
 
     /* -------------------------------------------------------- attachment */
 
-    private View attachment(ChatMessage m, int fg, int accent) {
+    /** The preview (when the type has one and the file is here), then the footer. */
+    private void attachment(ChatMessage m, int fg, int accent) {
         boolean ready = m.fileDataUrl != null || (m.filePath != null && m.fileProgress < 0 && m.fileProgress > -2);
-        String mime = m.fileMime == null ? "" : m.fileMime;
-        if (ready && m.fileImage) return picture(m);
-        if (ready && mime.startsWith("audio/")) {
-            AudioBar bar = new AudioBar(getContext(), fg, accent);
-            bar.set(() -> VaultMedia.source(app(), m), 0);
-            return bar;
+        Previews.Type type = Previews.type(m);
+        View preview = null;
+        if (ready) switch (type) {
+            case IMAGE: preview = picture(m); break;
+            case AUDIO: {
+                AudioBar bar = new AudioBar(getContext(), fg, accent);
+                bar.set(() -> VaultMedia.source(app(), m), 0);
+                preview = bar;
+                break;
+            }
+            case VIDEO: preview = video(m); break;
+            case PDF: preview = pdf(m, fg); break;
+            case TEXT: preview = textHead(m, fg); break;
+            default: break;
         }
-        return fileCard(m, fg, accent, ready);
+        if (preview != null) addView(preview);
+        addView(footer(m, type, fg, accent, ready));
+    }
+
+    private LayoutParams gap(int w, int h) {
+        LayoutParams lp = new LayoutParams(w, h);
+        lp.topMargin = dp(4);
+        return lp;
     }
 
     private View picture(ChatMessage m) {
         ImageView iv = new ImageView(getContext());
         iv.setAdjustViewBounds(true);
         iv.setMaxHeight(dp(300));
-        iv.setMaxWidth(dp(260));
+        iv.setMaxWidth(maxW());
         iv.setScaleType(ImageView.ScaleType.FIT_START);
         iv.setClipToOutline(true);
-        iv.setBackground(Ui.shape(Color.TRANSPARENT, dp(12), 0, 0));
         iv.setContentDescription(m.fileName);
         Bitmap cached = parts.imageCache.get(m.id);
-        if (cached != null) iv.setImageBitmap(cached);
-        else Io.bg(() -> {
-            Bitmap b = VaultMedia.bitmap(app(), m, 1280);
-            if (b != null) { parts.imageCache.put(m.id, b); Io.main(() -> iv.setImageBitmap(b)); }
-        });
+        if (cached != null) {
+            iv.setBackground(Ui.shape(Color.TRANSPARENT, dp(12), 0, 0));
+            iv.setImageBitmap(cached);
+            iv.setLayoutParams(gap(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        } else {
+            // A placeholder of a picture's size while it is decoded, so the list does not jump twice.
+            iv.setBackground(Ui.shape(Ui.alpha(Color.GRAY, 0.18f), dp(12), 0, 0));
+            iv.setLayoutParams(gap(dp(200), dp(150)));
+            Io.bg(() -> {
+                Bitmap b = VaultMedia.bitmap(app(), m, 1280);
+                if (b == null) return;
+                parts.imageCache.put(m.id, b);
+                Io.main(() -> {
+                    iv.setBackground(Ui.shape(Color.TRANSPARENT, dp(12), 0, 0));
+                    iv.setLayoutParams(gap(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                    iv.setImageBitmap(b);
+                });
+            });
+        }
         iv.setOnClickListener(v -> parts.viewImage(m));
-        LayoutParams lp = new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.topMargin = dp(4);
-        iv.setLayoutParams(lp);
         return iv;
     }
 
-    private View fileCard(ChatMessage m, int fg, int accent, boolean ready) {
-        LinearLayout card = new LinearLayout(getContext());
-        card.setOrientation(VERTICAL);
-        card.setPadding(dp(10), dp(8), dp(10), dp(8));
-        card.setBackground(Ui.shape(Ui.alpha(fg, 0.08f), dp(12), 0, 0));
+    private View video(ChatMessage m) {
+        VideoBox box = new VideoBox(getContext(), maxW());
+        box.set(() -> VaultMedia.source(app(), m));
+        box.setLayoutParams(gap(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        Bitmap poster = parts.imageCache.get(m.id + "#poster");
+        Object meta = META.get(m.id + "#video");
+        if (meta instanceof long[]) { long[] v = (long[]) meta; box.frame(poster, (int) v[0], (int) v[1], v[2]); }
+        else Io.bg(() -> {
+            Previews.Frame f = Previews.videoFrame(app(), m, 720);
+            if (f == null) return;
+            if (f.bitmap != null) parts.imageCache.put(m.id + "#poster", f.bitmap);
+            META.put(m.id + "#video", new long[]{f.width, f.height, f.durationMs});
+            Io.main(() -> box.frame(f.bitmap, f.width, f.height, f.durationMs));
+        });
+        return box;
+    }
+
+    /** The first page (a white sheet, the page count in its corner); a tap opens it in another app. */
+    private View pdf(ChatMessage m, int fg) {
+        FrameLayout box = new FrameLayout(getContext());
+        box.setClipToOutline(true);
+        box.setBackground(Ui.shape(Color.WHITE, dp(10), dp(1), Ui.alpha(fg, 0.2f)));
+        ImageView iv = new ImageView(getContext());
+        iv.setAdjustViewBounds(true);
+        iv.setMaxHeight(dp(260));
+        iv.setScaleType(ImageView.ScaleType.FIT_START);
+        iv.setContentDescription(m.fileName);
+        box.addView(iv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        TextView badge = new TextView(getContext());
+        badge.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        badge.setTextColor(Color.WHITE);
+        badge.setPadding(dp(6), dp(2), dp(6), dp(2));
+        badge.setBackground(Ui.shape(0xAA000000, dp(8), 0, 0));
+        FrameLayout.LayoutParams bl = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.END);
+        bl.setMargins(0, 0, dp(6), dp(6));
+        box.addView(badge, bl);
+        badge.setVisibility(GONE);
+        int w = Math.min(maxW(), dp(220));
+        box.setLayoutParams(gap(w, dp(120)));
+        Runnable[] show = new Runnable[1];
+        show[0] = () -> {
+            Bitmap b = parts.imageCache.get(m.id + "#pdf");
+            Object pages = META.get(m.id + "#pdf");
+            if (b == null) return;
+            iv.setImageBitmap(b);
+            box.setLayoutParams(gap(w, ViewGroup.LayoutParams.WRAP_CONTENT));
+            if (pages instanceof Integer) { badge.setText("PDF · " + pages + " " + app().t("file.pages")); badge.setVisibility(VISIBLE); }
+        };
+        if (parts.imageCache.get(m.id + "#pdf") != null) show[0].run();
+        else Io.bg(() -> {
+            Previews.Page p = Previews.pdfFirstPage(app(), m, Math.min(1080, w * 2));
+            if (p == null) { Io.main(() -> box.setVisibility(GONE)); return; }
+            parts.imageCache.put(m.id + "#pdf", p.bitmap);
+            META.put(m.id + "#pdf", p.pages);
+            Io.main(show[0]);
+        });
+        box.setOnClickListener(v -> parts.openFile(m));
+        return box;
+    }
+
+    /** The first lines of a text file (a tap opens it). */
+    private View textHead(ChatMessage m, int fg) {
+        TextView t = new TextView(getContext());
+        t.setTextColor(fg);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f);
+        t.setMaxLines(8);
+        t.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        String name = m.fileName == null ? "" : m.fileName.toLowerCase(java.util.Locale.ROOT);
+        if (!name.endsWith(".md") && !name.endsWith(".markdown") && !name.endsWith(".txt")) t.setTypeface(Typeface.MONOSPACE);
+        t.setPadding(dp(10), dp(8), dp(10), dp(8));
+        t.setBackground(Ui.shape(Ui.alpha(fg, 0.07f), dp(10), 0, 0));
+        t.setLayoutParams(gap(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        Object cached = META.get(m.id + "#text");
+        if (cached instanceof String) t.setText((String) cached);
+        else {
+            t.setText("…");
+            Io.bg(() -> {
+                String head = Previews.textHead(app(), m, 8);
+                if (head == null || head.isEmpty()) { Io.main(() -> t.setVisibility(GONE)); return; }
+                META.put(m.id + "#text", head);
+                Io.main(() -> t.setText(head));
+            });
+        }
+        t.setOnClickListener(v -> parts.openFile(m));
+        return t;
+    }
+
+    /** Under the content: the type, name and size, then save, share and forward (or the transfer's progress). */
+    private View footer(ChatMessage m, Previews.Type type, int fg, int accent, boolean ready) {
+        LinearLayout box = new LinearLayout(getContext());
+        box.setOrientation(VERTICAL);
+        box.setPadding(0, dp(6), 0, 0);
         LinearLayout row = new LinearLayout(getContext());
         row.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout what = new LinearLayout(getContext());
+        what.setGravity(Gravity.CENTER_VERTICAL);
         ImageView ic = new ImageView(getContext());
-        String mime = m.fileMime == null ? "" : m.fileMime;
-        ic.setImageDrawable(Icons.drawable(getContext(), mime.startsWith("video/") ? "video" : mime.startsWith("image/") ? "image" : mime.startsWith("audio/") ? "mic" : "file-text", dp(22), accent));
-        row.addView(ic);
+        ic.setImageDrawable(Icons.drawable(getContext(), Previews.icon(type), dp(20), accent));
+        what.addView(ic);
         LinearLayout col = new LinearLayout(getContext());
         col.setOrientation(VERTICAL);
-        col.setPadding(dp(10), 0, 0, 0);
+        col.setPadding(dp(8), 0, dp(4), 0);
         TextView name = new TextView(getContext());
         name.setText(m.fileName);
         name.setTextColor(fg);
-        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
-        name.setMaxLines(2);
+        name.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        name.setSingleLine(true);
         name.setEllipsize(android.text.TextUtils.TruncateAt.MIDDLE);
         col.addView(name);
-        String sub = Ui.size(m.fileSize) + (mime.isEmpty() ? "" : " · " + mime);
+        String sub = Ui.size(m.fileSize);
         if (m.fileProgress == -2) sub = "⚠ " + app().t("file.failed");
         else if (m.fileProgress >= 0) sub = Math.round(m.fileProgress * 100) + " % · " + Ui.size(m.fileSize);
-        else if (m.filePath != null && !m.mine) sub += m.fileVerified ? " · ✓" : "";
-        col.addView(note(sub, fg, false));
-        row.addView(col, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        card.addView(row);
+        else if (m.filePath != null && !m.mine && m.fileVerified) sub += " · ✓";
+        TextView size = note(sub, fg, false);
+        size.setPadding(0, 0, 0, 0);
+        size.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11.5f);
+        col.addView(size);
+        what.addView(col, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        row.addView(what, new LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        if (ready) {
+            what.setBackground(Ui.ripple(null, Ui.alpha(fg, 0.16f)));
+            what.setOnClickListener(v -> parts.openFile(m));
+            what.setContentDescription(app().t("file.open") + " " + m.fileName);
+            row.addView(action("download", app().t("file.save"), fg, v -> parts.saveFile(m)));
+            row.addView(action("share-2", app().t("file.share"), fg, v -> parts.shareFile(m)));
+            row.addView(action("forward", app().t("msg.forward"), fg, v -> parts.forward(m)));
+        }
+        box.addView(row);
         if (m.fileProgress >= 0) {
             ProgressBar p = new ProgressBar(getContext(), null, android.R.attr.progressBarStyleHorizontal);
             p.setMax(1000);
             p.setProgress((int) Math.round(m.fileProgress * 1000));
             p.setProgressTintList(android.content.res.ColorStateList.valueOf(accent));
-            card.addView(p, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)));
+            box.addView(p, new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(6)));
         }
-        if (ready) {
-            LinearLayout acts = new LinearLayout(getContext());
-            acts.setGravity(Gravity.END);
-            acts.setPadding(0, dp(6), 0, 0);
-            TextView open = chip(app().t("file.open"), fg, accent);
-            open.setOnClickListener(v -> parts.openFile(m));
-            TextView save = chip(app().t("file.save"), fg, accent);
-            save.setOnClickListener(v -> parts.saveFile(m));
-            acts.addView(open);
-            LayoutParams sl = new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            sl.setMarginStart(dp(8));
-            acts.addView(save, sl);
-            card.addView(acts);
-        }
-        FrameLayout wrap = new FrameLayout(getContext());
-        wrap.setPadding(0, dp(4), 0, 0);
-        wrap.addView(card);
-        return wrap;
+        return box;
+    }
+
+    private View action(String icon, String label, int fg, View.OnClickListener click) {
+        ImageView b = new ImageView(getContext());
+        b.setScaleType(ImageView.ScaleType.CENTER);
+        b.setImageDrawable(Icons.drawable(getContext(), icon, dp(18), fg));
+        b.setBackground(Ui.ripple(null, Ui.alpha(fg, 0.2f)));
+        b.setContentDescription(label);
+        b.setTooltipText(label);
+        b.setOnClickListener(click);
+        b.setLayoutParams(new LayoutParams(dp(34), dp(34)));
+        return b;
     }
 }

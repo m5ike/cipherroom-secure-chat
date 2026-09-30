@@ -10,7 +10,8 @@ import java.util.List;
 /**
  * A message as the app shows and keeps it: the decrypted payload plus how it
  * arrived and where it is (6.1: the web client's message kinds, recipients,
- * expiry, the position in the header, function outputs, delivery states).
+ * expiry, the position in the header, function outputs, delivery states;
+ * 6.2: every state with its time — the timeline — and a hide in this view).
  */
 public final class ChatMessage {
     public String id;
@@ -72,6 +73,30 @@ public final class ChatMessage {
     /** A read receipt went for it (not stored). */
     transient boolean readSent;
 
+    // 6.2 — the timeline and a hide
+    /** One step of a message's life: the state, when, and for whom or how (a recipient's name, "p2p", "relay"…). */
+    public static final class Step {
+        public final String state;
+        public final long at;
+        public final String meta;
+        public Step(String state, long at, String meta) { this.state = state; this.at = at; this.meta = meta == null ? "" : meta; }
+    }
+    /**
+     * Every state with its time, in the web's words (MessageInfoModal):
+     * created, encrypted, sent, received, decrypted, displayed, discarded,
+     * queued, stored, forwarded, delivered, read, revealed, opened, expired,
+     * hidden, unhidden. Kept with the message in the history.
+     */
+    private final List<Step> timeline = new ArrayList<>();
+    static final int TIMELINE_MAX = 200;
+    /** Hidden in this device's view until this time (ms); {@link #UNTIL_SIGNIN} = until the app is unlocked again; 0 = shown. */
+    public long hiddenUntil;
+    public static final long UNTIL_SIGNIN = -1;
+    /** A hide until the next sign-in: the unlock it belongs to (it ends with the next one). */
+    public String hiddenFor;
+    /** Deleted on this device: the list drops its row (not stored — the message is gone from the history). */
+    public transient boolean deleted;
+
     public static ChatMessage system(String roomKey, String text) {
         ChatMessage m = new ChatMessage();
         m.id = "sys-" + Long.toString(System.nanoTime(), 36);
@@ -101,10 +126,66 @@ public final class ChatMessage {
         return -1;
     }
 
-    /** Moves the status up (never down): sent < stored < forwarded < delivered < read. */
+    /** Moves the status up (never down): sent < stored < forwarded < delivered < read; each move is a step of the timeline. */
     public boolean raise(String s) {
+        if (!up(s)) return false;
+        mark(s);
+        return true;
+    }
+
+    /** A state for one recipient (a receipt, the relay's report): always a step naming them; the status only moves up. */
+    public boolean raise(String s, String who) {
+        mark(s, who);
+        return up(s);
+    }
+
+    private boolean up(String s) {
         if (rank(s) > rank(status) || ("queued".equals(status) && rank(s) >= rank("sent"))) { status = s; return true; }
         return false;
+    }
+
+    /* ---------------------------------------------------------- timeline */
+
+    public boolean mark(String state) { return mark(state, "", System.currentTimeMillis()); }
+    public boolean mark(String state, String meta) { return mark(state, meta, System.currentTimeMillis()); }
+
+    /** Adds a step; the same state with the same meta counts once (only hidden / unhidden repeat). */
+    public boolean mark(String state, String meta, long at) {
+        String mt = meta == null ? "" : meta;
+        boolean repeats = "hidden".equals(state) || "unhidden".equals(state);
+        synchronized (timeline) {
+            if (!repeats) for (Step st : timeline) if (st.state.equals(state) && st.meta.equals(mt)) return false;
+            timeline.add(new Step(state, at, mt));
+            while (timeline.size() > TIMELINE_MAX) timeline.remove(1); // the first ("created") stays
+            return true;
+        }
+    }
+
+    public boolean has(String state) {
+        synchronized (timeline) { for (Step st : timeline) if (st.state.equals(state)) return true; }
+        return false;
+    }
+
+    /** The steps in the order they happened. */
+    public List<Step> timeline() {
+        List<Step> out;
+        synchronized (timeline) { out = new ArrayList<>(timeline); }
+        java.util.Collections.sort(out, (x, y) -> Long.compare(x.at, y.at));
+        return out;
+    }
+
+    private JSONArray timelineJson() {
+        JSONArray a = new JSONArray();
+        synchronized (timeline) {
+            for (Step st : timeline) {
+                try {
+                    JSONObject o = new JSONObject().put("state", st.state).put("at", st.at);
+                    if (!st.meta.isEmpty()) o.put("meta", st.meta);
+                    a.put(o);
+                } catch (JSONException ignored) { }
+            }
+        }
+        return a;
     }
 
     /** The scope the message layouts see as $msg. */
@@ -149,6 +230,9 @@ public final class ChatMessage {
             if (vanishedMs > 0) o.put("vanishedMs", vanishedMs);
             if (sourceAudio != null) o.put("sourceAudio", sourceAudio);
             o.put("receipts", receipts).put("relayed", relayed);
+            JSONArray tl = timelineJson();
+            if (tl.length() > 0) o.put("timeline", tl);
+            if (hiddenUntil != 0) o.put("hiddenUntil", hiddenUntil).put("hiddenFor", hiddenFor == null ? "" : hiddenFor);
         } catch (JSONException ignored) { }
         return o;
     }
@@ -191,6 +275,14 @@ public final class ChatMessage {
         JSONObject rc = o.optJSONObject("receipts");
         if (rc != null) for (java.util.Iterator<String> it = rc.keys(); it.hasNext(); ) { String k = it.next(); try { m.receipts.put(k, rc.opt(k)); } catch (JSONException ignored) { } }
         m.relayed = o.optBoolean("relayed");
+        JSONArray tl = o.optJSONArray("timeline");
+        if (tl != null) for (int i = 0; i < tl.length() && i < TIMELINE_MAX; i++) {
+            JSONObject st = tl.optJSONObject(i);
+            if (st != null && !st.optString("state").isEmpty()) m.timeline.add(new Step(st.optString("state"), st.optLong("at"), st.optString("meta", "")));
+        }
+        m.hiddenUntil = o.optLong("hiddenUntil");
+        String hf = o.optString("hiddenFor", "");
+        m.hiddenFor = hf.isEmpty() ? null : hf;
         return m;
     }
 }

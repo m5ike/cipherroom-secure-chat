@@ -31,6 +31,9 @@ import cz.m5cet.app.ui.Expr;
 import cz.m5cet.app.ui.MainActivity;
 import cz.m5cet.app.ui.Renderer;
 import cz.m5cet.app.ui.Ui;
+import cz.m5cet.app.ui.bubble.Hides;
+import cz.m5cet.app.ui.bubble.Kinds;
+import cz.m5cet.app.ui.bubble.MapPolicy;
 
 /**
  * The messages of the room on screen: a RecyclerView whose rows are the
@@ -43,8 +46,13 @@ import cz.m5cet.app.ui.Ui;
  * the conversation. A long press offers reply, copy, forward, the map and
  * the recording; a horizontal fling moves to the previous / next connected
  * room.
+ *
+ * 6.2: hidden messages are left out until their time passes (or the next
+ * unlock), "Hidden (n)" shows them for a moment; a received message's first
+ * time on screen is its "displayed" step; $msg also has position (a
+ * position message), mapPreview (its bubble draws the map) and hidden.
  */
-final class MessageList extends FrameLayout implements Renderer.Slot {
+final class MessageList extends FrameLayout implements Renderer.Slot, Hides.Listener, MapPolicy.Listener {
     private static final int IN = 0, OUT = 1, SYS = 2;
     private final MainActivity a;
     private final Parts parts;
@@ -59,6 +67,12 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
     private final boolean[] legacyImage = new boolean[3];
     private long lastTick = 0;
     private final Runnable ticker = this::tick;
+    /** 6.2: hidden messages shown for now ("Hidden (n)"), how many there are, and when the next timed hide ends. */
+    private boolean peek;
+    private int hiddenCount;
+    private final java.util.Set<String> hiddenIds = new java.util.HashSet<>();
+    private long nextHideEnd = Long.MAX_VALUE;
+    private final TextView hiddenBar;
 
     MessageList(MainActivity a, Parts parts) {
         super(a);
@@ -95,6 +109,14 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
         LayoutParams fl = new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         fl.bottomMargin = Ui.dp(a, 8);
         addView(filterBar, fl);
+        hiddenBar = new TextView(a);
+        hiddenBar.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        hiddenBar.setPadding(Ui.dp(a, 10), Ui.dp(a, 4), Ui.dp(a, 10), Ui.dp(a, 4));
+        hiddenBar.setVisibility(GONE);
+        hiddenBar.setOnClickListener(v -> toggleHidden());
+        LayoutParams hl = new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
+        hl.setMargins(0, Ui.dp(a, 6), Ui.dp(a, 10), 0);
+        addView(hiddenBar, hl);
         GestureDetector swipe = new GestureDetector(a, new GestureDetector.SimpleOnGestureListener() {
             @Override public boolean onFling(MotionEvent e1, MotionEvent e2, float vx, float vy) {
                 if (e1 == null || Math.abs(vx) < 2200 || Math.abs(vx) < Math.abs(vy) * 2) return false;
@@ -129,13 +151,29 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
         applyFilter();
         if (!items.isEmpty()) list.scrollToPosition(items.size() - 1);
         refreshHeaderState();
+        post(this::markShown);
     }
 
     private void applyFilter() {
         items.clear();
-        for (ChatMessage m : all) if (matches(m)) items.add(m);
+        long now = System.currentTimeMillis();
+        RoomSession r = a.app().rooms.session(roomKey);
+        hiddenIds.clear();
+        for (ChatMessage m : all) {
+            if (Hides.endIfOver(m, now) && r != null) r.touched(m);
+            boolean hidden = m.hiddenUntil != 0 && Hides.hidden(m, now);
+            if (hidden) hiddenIds.add(m.id);
+            if (matches(m) && (!hidden || peek)) items.add(m);
+        }
+        hiddenCount = hiddenIds.size();
+        nextHideEnd = Hides.nextEnd(all, now);
+        if (hiddenCount == 0) peek = false;
         RecyclerView.Adapter<?> ad = list.getAdapter();
         if (ad != null) ad.notifyDataSetChanged();
+        hiddenBar.setVisibility(hiddenCount == 0 ? GONE : VISIBLE);
+        hiddenBar.setText((peek ? "🙈 " + a.app().t("msg.hideHidden") : "👁 " + a.app().t("msg.showHidden")) + " (" + hiddenCount + ")");
+        hiddenBar.setTextColor(Ui.color(getContext(), "@onSurface", Color.BLACK));
+        hiddenBar.setBackground(Ui.shape(Ui.color(getContext(), "@surfaceVariant", Color.LTGRAY), Ui.dp(getContext(), 999), 0, 0));
         filterBar.setVisibility(tag.isEmpty() ? GONE : VISIBLE);
         filterBar.setText("#" + tag + "   ✕");
         filterBar.setTextColor(Ui.color(getContext(), "@onPrimary", Color.WHITE));
@@ -157,6 +195,22 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
     /** Shows only the messages with #tag ("" = all again). */
     void filter(String t) { tag = t == null ? "" : t; applyFilter(); if (!items.isEmpty()) list.scrollToPosition(items.size() - 1); }
 
+    /** "Hidden (n)": the hidden messages in their places for now (dimmed), or out of the list again. */
+    void toggleHidden() { peek = !peek && hiddenCount > 0; applyFilter(); }
+
+    private boolean shows(ChatMessage m) {
+        return !m.deleted && matches(m) && (peek || m.hiddenUntil == 0 || !Hides.hidden(m, System.currentTimeMillis()));
+    }
+
+    /** A hide began or ended, or the app was unlocked (hides "until the next sign-in" end). */
+    @Override public void onHidesChanged() { if (isAttachedToWindow()) applyFilter(); }
+
+    /** The operator's map policy came or changed, or the server stopped answering: the bubbles draw again. */
+    @Override public void onMapPolicy() {
+        RecyclerView.Adapter<?> ad = list.getAdapter();
+        if (ad != null && isAttachedToWindow()) ad.notifyDataSetChanged();
+    }
+
     void refreshHeaderState() {
         RoomSession r = a.app().rooms.activeSession();
         if (r == null || !r.key.equals(roomKey)) { load(); return; }
@@ -175,7 +229,7 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
         if (!m.roomKey.equals(roomKey)) return;
         for (int i = all.size() - 1; i >= 0 && i >= all.size() - 30; i--) if (all.get(i).id.equals(m.id)) return;
         all.add(m);
-        if (!matches(m)) return;
+        if (!shows(m)) return;
         boolean atBottom = lm.findLastVisibleItemPosition() >= items.size() - 2;
         items.add(m);
         animateId = m.id;
@@ -186,10 +240,15 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
         post(this::markShown);
     }
 
-    /** A message changed (state, progress, receipts) or went (expiry): its row follows. */
+    /** A message changed (state, progress, receipts) or went (expiry): its row follows. 6.2: hidden, shown again, deleted. */
     void changed(ChatMessage m) {
         if (!m.roomKey.equals(roomKey)) return;
         int at = indexOf(m.id);
+        boolean known = at >= 0 || all.contains(m);
+        if (m.deleted) all.remove(m);
+        boolean nowHidden = m.hiddenUntil != 0 && Hides.hidden(m, System.currentTimeMillis());
+        boolean hideChange = m.deleted || (at >= 0) != shows(m) || nowHidden != hiddenIds.contains(m.id);
+        if (known && hideChange) { applyFilter(); return; }
         if (at < 0) return;
         RecyclerView.Adapter<?> ad = list.getAdapter();
         if (m.expired(System.currentTimeMillis()) && m.ttlMinutes > 0) {
@@ -209,8 +268,20 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
 
     /* ---------------------------------------------- shown / vanishing */
 
-    @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); lastTick = System.currentTimeMillis(); postDelayed(ticker, 250); }
-    @Override protected void onDetachedFromWindow() { removeCallbacks(ticker); super.onDetachedFromWindow(); }
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        lastTick = System.currentTimeMillis();
+        postDelayed(ticker, 250);
+        Hides.addListener(this);
+        MapPolicy.addListener(this);
+    }
+
+    @Override protected void onDetachedFromWindow() {
+        removeCallbacks(ticker);
+        Hides.removeListener(this);
+        MapPolicy.removeListener(this);
+        super.onDetachedFromWindow();
+    }
 
     private boolean watching() {
         return a.app().inForeground() && !a.app().lock.isLocked() && "room".equals(a.screen());
@@ -221,6 +292,7 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
         long now = System.currentTimeMillis();
         long delta = Math.min(1000, now - lastTick);
         lastTick = now;
+        if (now >= nextHideEnd) applyFilter(); // a timed hide is over: the message is back
         RoomSession r = a.app().rooms.activeSession();
         if (watching() && r != null && !items.isEmpty()) {
             int first = Math.max(0, lm.findFirstVisibleItemPosition()), last = Math.min(items.size() - 1, lm.findLastVisibleItemPosition());
@@ -244,7 +316,13 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
         if (!watching() || r == null || items.isEmpty()) return;
         int first = Math.max(0, lm.findFirstVisibleItemPosition()), last = Math.min(items.size() - 1, lm.findLastVisibleItemPosition());
         List<ChatMessage> shown = new ArrayList<>();
-        for (int i = first; i <= last && i >= 0; i++) shown.add(items.get(i));
+        boolean steps = false;
+        for (int i = first; i <= last && i >= 0; i++) {
+            ChatMessage m = items.get(i);
+            shown.add(m);
+            if (!m.mine && !"sys".equals(m.kind)) steps |= m.mark("displayed"); // 6.2: its first time on screen
+        }
+        if (steps) r.touched(shown.get(0));
         r.markRead(shown);
     }
 
@@ -288,7 +366,13 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
         @Override public void onBindViewHolder(Holder h, int i) {
             ChatMessage m = items.get(i);
             Map<String, Object> s = new HashMap<>();
-            s.put("msg", m.scope());
+            JSONObject ms = m.scope();
+            boolean hidden = m.hiddenUntil != 0 && Hides.hidden(m, System.currentTimeMillis());
+            try {
+                boolean position = Kinds.isPositionMessage(m);
+                ms.put("position", position).put("mapPreview", position && MapBubble.policyFor(a.app(), m) != null).put("hidden", hidden);
+            } catch (org.json.JSONException ignored) { }
+            s.put("msg", ms);
             s.put("_msg", m);
             s.put("settings", a.app().settings.scope());
             h.bound.bind(s::get);
@@ -303,6 +387,7 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
                 h.image.setVisibility(GONE);
             }
             h.itemView.setOnLongClickListener(v -> { menu(v, m); return true; });
+            h.itemView.setAlpha(hidden ? 0.55f : 1f); // a hidden one while "Hidden (n)" shows it
         }
 
         @Override public int getItemCount() { return items.size(); }
@@ -315,9 +400,9 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
         pm.getMenu().add(0, 1, 1, app.t("notify.reply"));
         if (!m.visibleText().isEmpty() && (m.sealed == null || m.sealPlain != null)) pm.getMenu().add(0, 2, 2, app.t("msg.copy"));
         pm.getMenu().add(0, 3, 3, app.t("msg.forward"));
-        if (m.loc != null) pm.getMenu().add(0, 4, 4, app.t("msg.map"));
+        if (Kinds.position(m) != null) pm.getMenu().add(0, 4, 4, app.t("msg.map"));
         if (m.sourceAudio != null) pm.getMenu().add(0, 5, 5, app.t("msg.source"));
-        if (m.fileName != null && (m.fileDataUrl != null || m.filePath != null)) { pm.getMenu().add(0, 6, 6, app.t("file.open")); pm.getMenu().add(0, 7, 7, app.t("file.save")); }
+        if (m.fileName != null && (m.fileDataUrl != null || m.filePath != null)) { pm.getMenu().add(0, 6, 6, app.t("file.open")); pm.getMenu().add(0, 7, 7, app.t("file.save")); pm.getMenu().add(0, 10, 7, app.t("file.share")); }
         if (!m.visibleText().isEmpty() && m.sealed == null) pm.getMenu().add(0, 8, 8, app.t("msg.speak"));
         pm.getMenu().add(0, 9, 9, app.t("msg.info"));
         pm.setOnMenuItemClickListener(mi -> {
@@ -329,6 +414,7 @@ final class MessageList extends FrameLayout implements Renderer.Slot {
                 case 5: parts.playSource(m); break;
                 case 6: parts.openFile(m); break;
                 case 7: parts.saveFile(m); break;
+                case 10: parts.shareFile(m); break;
                 case 8: app.voice.say(m.visibleText()); break;
                 case 9: parts.messageInfo(m); break;
                 default: break;
