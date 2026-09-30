@@ -83,7 +83,12 @@ public final class Sheets {
         int width = free > 0 ? Math.min(free - 2 * margin, max) : ViewGroup.LayoutParams.MATCH_PARENT;
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(width, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
         lp.setMargins(margin, 0, margin, margin);
-        if (content.getBackground() == null) content.setBackground(Ui.shape(Ui.color(c, "@surface", Color.WHITE), Ui.dp(c, dock ? 22 : 24), 0, 0));
+        float radius = Ui.dp(c, dock ? 22 : 24);
+        if (content.getBackground() == null) content.setBackground(Ui.shape(Ui.color(c, "@surface", Color.WHITE), radius, 0, 0));
+        // Always a rounded card (a tree without a radius — "join" — too); the shadow follows it.
+        content.setOutlineProvider(new android.view.ViewOutlineProvider() {
+            @Override public void getOutline(View v, android.graphics.Outline o) { o.setRoundRect(0, 0, v.getWidth(), v.getHeight(), radius); }
+        });
         content.setElevation(Ui.dp(c, dock ? 10 : 12));
         content.setClipToOutline(true);
         FrameLayout layer;

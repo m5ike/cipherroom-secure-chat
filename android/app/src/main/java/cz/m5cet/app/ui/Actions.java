@@ -92,6 +92,9 @@ public final class Actions {
                 // 6.1: sheets, the composer, message kinds and actions on a message
                 case "sheet.open": a.parts.showSheet(s); break;
                 case "sheet.close": a.parts.closeOverlay(); break;
+                // 6.2 look: the look changed in place (the screen is drawn again, no restart)
+                case "look.set": { int eq = s.indexOf('='); if (eq > 0) cz.m5cet.app.ui.look.Look.set(s.substring(0, eq).trim(), s.substring(eq + 1).trim()); break; }
+                case "look.reset": cz.m5cet.app.ui.look.Look.reset(); break;
                 case "compose": a.parts.composerAction(s, null); break;
                 case "message.kind": a.parts.messageKind(s); break;
                 case "message.recipients": a.parts.closeOverlay(); a.parts.pickRecipients(); break;

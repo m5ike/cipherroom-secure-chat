@@ -53,6 +53,19 @@ public final class Settings {
         DEFAULTS.put("appearance.fontScale", 1.0);
         DEFAULTS.put("appearance.density", "normal");    // compact | normal | comfortable
         DEFAULTS.put("appearance.bubbles", "rounded");   // rounded | square | minimal
+        DEFAULTS.put("appearance.preset", "design");     // the template: design (the design's own look) or a web template id (6.1's key, missing here until 6.2)
+        // 6.2 look (ui/look/Look.java): these apply in place — the screen is drawn again
+        DEFAULTS.put("look.variant", "");                // the template's colour variant (ui/look/Palette; "" = its own colour)
+        DEFAULTS.put("look.font", "");                   // "" = the template's / design's; sans | serif | mono | condensed | medium | light | casual | cursive
+        DEFAULTS.put("look.motion", "normal");           // off | subtle | normal | lively
+        DEFAULTS.put("look.speed", 1.0);                 // animation speed: 0.5 (slow) … 2 (fast)
+        DEFAULTS.put("look.buttons", "filled");          // the main buttons: filled | tonal | outlined | text
+        DEFAULTS.put("look.shape", "pill");              // buttons, chips, fields: pill | rounded | square
+        DEFAULTS.put("look.press", "ripple");            // ripple | scale | none
+        DEFAULTS.put("look.haptics", true);              // a short tick on buttons
+        DEFAULTS.put("look.toolsDock", true);            // Tools as a floating dock above the composer (else a sheet from the bottom)
+        DEFAULTS.put("look.hintSendOptions", false);     // the one-time "hold Send for more" hint was shown
+        DEFAULTS.put("look.v", 0.0);                     // the look settings' version (ui/look/Migration)
         // NFC
         DEFAULTS.put("nfc.emulate", false);              // answer as a tag with the room invite
         // Security (the SYS tier is readable while the app is locked, so the PIN pad can read these)

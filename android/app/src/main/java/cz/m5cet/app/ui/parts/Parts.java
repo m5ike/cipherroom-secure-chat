@@ -17,6 +17,7 @@ import cz.m5cet.app.ui.Expr;
 import cz.m5cet.app.ui.MainActivity;
 import cz.m5cet.app.ui.Renderer;
 import cz.m5cet.app.ui.Ui;
+import cz.m5cet.app.ui.look.Sheets;
 
 /**
  * The app's native parts that screens place with slot elements, and the
@@ -417,30 +418,24 @@ public final class Parts {
 
     /* ------------------------------------------------------------ overlay */
 
-    /** A sheet over the screen (a design screen rendered in a card, e.g. "join" or "update"). */
+    /**
+     * A sheet over the screen (a design screen rendered in a card, e.g. "join"
+     * or "update"). 6.2 (ui/look/Sheets): a "sheet" root may ask to float as a
+     * dock just above the composer instead, and to fade away once one of its
+     * elements runs an action (the Tools).
+     */
     void showSheet(String screenId, Expr.Scope scope) {
+        // The tap on the dock's own button that just closed the dock does not open it again.
+        if (Sheets.justClosed(screenId)) return;
         closeOverlay();
         JSONObject tree = app().design().screen(screenId);
         if (tree == null) return;
-        Renderer.Bound b = a.renderer().build(tree);
+        Renderer renderer = Sheets.dismissOnAction(tree, scope, a.tr()) ? new Renderer(a, Sheets.dismissing(a, this::closeOverlay)) : a.renderer();
+        Renderer.Bound b = renderer.build(tree);
         b.bind(scope);
         sheetBound = b;
         sheetScreen = screenId;
-        FrameLayout scrim = new FrameLayout(a);
-        scrim.setBackgroundColor(Ui.color(a, "@scrim", 0x99000000));
-        scrim.setOnClickListener(v -> closeOverlay());
-        View content = b.root();
-        content.setClickable(true);
-        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM);
-        if (content.getBackground() == null) content.setBackground(Ui.shape(Ui.color(a, "@surface", Color.WHITE), Ui.dp(a, 24), 0, 0));
-        content.setElevation(Ui.dp(a, 12));
-        scrim.addView(content, lp);
-        a.overlay().addView(scrim, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        sheet = scrim;
-        JSONObject dialog = app().design().anim("dialog");
-        content.setTranslationY(Ui.dp(a, 40));
-        content.setAlpha(0f);
-        content.animate().translationY(0).alpha(1f).setDuration(dialog.optLong("ms", 220)).setInterpolator(Ui.easing(dialog.optString("easing", "decelerate"))).start();
+        sheet = Sheets.show(a.overlay(), screenId, b.root(), Sheets.dock(tree, scope, a.tr()), composer, app().design().anim("dialog"), this::closeOverlay);
     }
 
     /** Binds the open sheet again (a setting it shows changed). */
@@ -458,7 +453,7 @@ public final class Parts {
         sheet = null;
         sheetBound = null;
         sheetScreen = null;
-        s.animate().alpha(0f).setDuration(160).withEndAction(() -> a.overlay().removeView(s)).start();
+        Sheets.hide(a.overlay(), s);
         return true;
     }
 
