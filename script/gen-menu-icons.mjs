@@ -44,6 +44,14 @@ const ICONS = [
   "hammer", "audio-lines", "switch-camera", "log-in", "speaker", "pause", "navigation", "sun-moon", "volume-1",
   "wand-sparkles", "scan-line", "text-cursor-input", "route", "locate-fixed", "file-up", "camera-off", "ear", "speech",
   "type", "contrast", "shield-user", "shuffle",
+  // 6.2 fixes
+
+  // 6.2 people
+
+  // 6.2 bubbles
+
+  // 6.2 look
+
 ];
 
 // 4.13: every icon the app's components draw — the Layout builder's layouts
