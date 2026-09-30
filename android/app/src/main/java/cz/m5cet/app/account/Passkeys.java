@@ -21,6 +21,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.Collections;
+import java.util.Locale;
 
 import cz.m5cet.app.core.Log;
 
@@ -52,7 +53,7 @@ final class Passkeys {
                 @Override public void onError(CreateCredentialException e) {
                     String dom = e instanceof CreatePublicKeyCredentialDomException ? ((CreatePublicKeyCredentialDomException) e).getDomError().getType() : "";
                     Log.w("account", "passkey create: " + e.getType() + " " + dom + " " + e.getMessage());
-                    r.failed(codeOf(e.getClass().getSimpleName(), e.getType(), dom), String.valueOf(e.getErrorMessage() == null ? e.getType() : e.getErrorMessage()));
+                    r.failed(codeOf(e.getClass().getSimpleName(), e.getType(), dom, e.getMessage()),String.valueOf(e.getErrorMessage() == null ? e.getType() : e.getErrorMessage()));
                 }
             });
     }
@@ -72,20 +73,27 @@ final class Passkeys {
                 @Override public void onError(GetCredentialException e) {
                     String dom = e instanceof GetPublicKeyCredentialDomException ? ((GetPublicKeyCredentialDomException) e).getDomError().getType() : "";
                     Log.w("account", "passkey get: " + e.getType() + " " + dom + " " + e.getMessage());
-                    r.failed(codeOf(e.getClass().getSimpleName(), e.getType(), dom), String.valueOf(e.getErrorMessage() == null ? e.getType() : e.getErrorMessage()));
+                    r.failed(codeOf(e.getClass().getSimpleName(), e.getType(), dom, e.getMessage()),String.valueOf(e.getErrorMessage() == null ? e.getType() : e.getErrorMessage()));
                 }
             });
     }
 
+    static String codeOf(String exceptionClass, String type, String domError) { return codeOf(exceptionClass, type, domError, null); }
+
     /**
-     * What a Credential Manager failure means for the flow: "cancelled" (the
-     * person closed the sheet, or the provider refused — WebAuthn's
-     * NotAllowedError), "no-passkey" (none for this server on the phone),
-     * "unsupported" (no provider can do it), "exists" (this passkey is
-     * already there), else "".
+     * What a Credential Manager failure means for the flow: "rp-unverified"
+     * (6.4: the server's domain does not vouch for this app — no
+     * /.well-known/assetlinks.json listing its package and signing
+     * certificate: WebAuthn's SecurityError, "The incoming request cannot be
+     * validated"), "cancelled" (the person closed the sheet, or the provider
+     * refused — WebAuthn's NotAllowedError), "no-passkey" (none for this
+     * server on the phone), "unsupported" (no provider can do it), "exists"
+     * (this passkey is already there), else "".
      */
-    static String codeOf(String exceptionClass, String type, String domError) {
+    static String codeOf(String exceptionClass, String type, String domError, String message) {
         String c = exceptionClass == null ? "" : exceptionClass, t = type == null ? "" : type, d = domError == null ? "" : domError;
+        String m = message == null ? "" : message.toLowerCase(Locale.ROOT);
+        if (d.endsWith("TYPE_SECURITY_ERROR") || t.endsWith("TYPE_SECURITY_ERROR") || m.contains("cannot be validated")) return "rp-unverified";
         if (c.contains("Cancellation") || t.endsWith("TYPE_USER_CANCELED") || d.endsWith("TYPE_NOT_ALLOWED_ERROR")) return "cancelled";
         if (c.equals("NoCredentialException") || t.endsWith("TYPE_NO_CREDENTIAL")) return "no-passkey";
         if (c.contains("ProviderConfiguration") || c.contains("Unsupported") || c.contains("NoCreateOption")) return "unsupported";

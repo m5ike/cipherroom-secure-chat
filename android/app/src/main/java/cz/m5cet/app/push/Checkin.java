@@ -110,6 +110,9 @@ public final class Checkin {
                 .put("sdk", android.os.Build.VERSION.SDK_INT).put("locale", app.lang())
                 .put("state", state());
             if (!app.push.token().isEmpty()) body.put("fcmToken", app.push.token());
+            // 6.4: the signing certificate (SHA-256), so the console can list this app in assetlinks.json (passkeys)
+            String cert = cz.m5cet.app.account.AppCert.sha256(app);
+            if (!cert.isEmpty()) body.put("certSha256", cert);
             JSONObject answer = app.server.checkin(body);
             last = System.currentTimeMillis();
             boolean hadFcm = app.config.fcm() != null;

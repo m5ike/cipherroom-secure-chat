@@ -131,5 +131,70 @@ public class AccountKeysTest {
         assertEquals("", AccountKeys.handleName(new JSONObject().put("response", new JSONObject())));
         assertEquals("", AccountKeys.handleName(new JSONObject().put("response", new JSONObject().put("userHandle", Crypto.b64url(new byte[]{0, 1, 2})))));
         assertEquals("", AccountKeys.handleName(null));
+        // 6.4: a registered account's username (10 of abcdefghjkmnpqrstuvwxyz23456789).
+        assertEquals("k7mq3xp9ab", AccountKeys.handleName(new JSONObject().put("response", new JSONObject().put("userHandle", Crypto.b64url(Crypto.utf8("k7mq3xp9ab"))))));
+    }
+
+    /* ------------------------------------------------------ vault (6.4) */
+
+    /** Made by the web's own deriveKey + sealProfile (IV fixed to 0x30…0x3b) from ROOT. */
+    static final String WEB_REGISTRATION = "MDEyMzQ1Njc4OTo7YMQEAIfxdtDjgKB97Caxu8AUZ3tuNNvKng7s/8MReuYP8N36QyRRwVem59RKnqzcSM80uV4GbYxfuimwME+3LWOCJsZP5DVow+W+TDhbwHi5Aj37alM6dWKC8j7BWmrBCE4vb8Cfgs63t5BOULCEGjY5ARX7lgaqLMu0LJYkfwaL5G44wcPfNGrvKg1y8H1B61PO2w8TbJTxvg==";
+    static final String WEB_REGISTRATION_JSON = "{\"v\":1,\"firstName\":\"Jan\",\"lastName\":\"Novák\",\"country\":\"CZ\",\"phone\":\"+420777123456\",\"email\":\"jan@example.cz\",\"registeredAt\":1760000000000}";
+
+    /** The same keys with the same values (flat objects; the JVM's org.json does not keep the order). */
+    static void assertSameJson(JSONObject expected, JSONObject actual) {
+        assertEquals(expected.length(), actual.length());
+        for (java.util.Iterator<String> it = expected.keys(); it.hasNext(); ) {
+            String k = it.next();
+            assertEquals(k, String.valueOf(expected.opt(k)), String.valueOf(actual.opt(k)));
+        }
+    }
+
+    @Test
+    public void opensWhatTheWebSealedInTheVault() throws Exception {
+        JSONObject r = AccountKeys.openProfile(WEB_REGISTRATION, AccountKeys.profileKey(ROOT));
+        assertEquals(1, r.getInt("v"));
+        assertEquals("Novák", r.getString("lastName"));
+        assertEquals("+420777123456", r.getString("phone"));
+        assertEquals(1760000000000L, r.getLong("registeredAt"));
+        // Another root (another account's key) does not open it.
+        try { AccountKeys.openProfile(WEB_REGISTRATION, AccountKeys.profileKey(SECRET)); fail(); } catch (GeneralSecurityException expected) { }
+        // Nor does the key proof's or a wrap's key: the vault key has its own info.
+        assertFalse(Crypto.b64url(AccountKeys.profileKey(ROOT)).equals(AccountKeys.keyProof(ROOT)));
+    }
+
+    @Test
+    public void sealsTheVaultAsTheWeb() throws Exception {
+        // The same key, IV and JSON text give exactly the web's bytes: iv ‖ AES-GCM, no AAD (the web's openProfile opens it).
+        byte[] iv = new byte[12];
+        for (int i = 0; i < 12; i++) iv[i] = (byte) (0x30 + i);
+        byte[] key = AccountKeys.profileKey(ROOT);
+        assertEquals(WEB_REGISTRATION, Crypto.b64(Crypto.concat(iv, Crypto.gcmSeal(key, iv, Crypto.utf8(WEB_REGISTRATION_JSON), null))));
+        // …and sealProfile is that (the JVM's org.json orders keys its own way, so the text is compared opened).
+        String sealed = AccountKeys.sealProfile(new JSONObject(WEB_REGISTRATION_JSON), key, iv);
+        assertArrayEquals(iv, java.util.Arrays.copyOf(Crypto.unb64(sealed), 12));
+        assertSameJson(new JSONObject(WEB_REGISTRATION_JSON), AccountKeys.openProfile(sealed, key));
+    }
+
+    @Test
+    public void theRegistrationPartRoundTrip() throws Exception {
+        byte[] key = AccountKeys.profileKey(Crypto.random(32));
+        JSONObject record = Registration.record(new JSONObject().put("firstName", "Zoë").put("lastName", "O’Neil").put("country", "IE")
+            .put("phone", "+353851234567").put("email", "zoe@example.ie"), 1760000000000L);
+        String a = AccountKeys.sealProfile(record, key), b = AccountKeys.sealProfile(record, key);
+        assertFalse(a.equals(b));   // a fresh IV each time
+        JSONObject back = AccountKeys.openProfile(a, key);
+        assertSameJson(record, back);
+        assertSameJson(record, AccountKeys.openProfile(b, key));
+        // Tampered, cut short or not base64: an error, never a guess.
+        byte[] raw = Crypto.unb64(a);
+        raw[raw.length - 1] ^= 1;
+        try { AccountKeys.openProfile(Crypto.b64(raw), key); fail(); } catch (GeneralSecurityException expected) { }
+        try { AccountKeys.openProfile(Crypto.b64(new byte[20]), key); fail(); } catch (GeneralSecurityException expected) { }
+        try { AccountKeys.openProfile("***", key); fail(); } catch (GeneralSecurityException expected) { }
+        // Sealed JSON that is not an object.
+        byte[] iv = Crypto.random(12);
+        String notObject = Crypto.b64(Crypto.concat(iv, Crypto.gcmSeal(key, iv, Crypto.utf8("[1,2]"), null)));
+        try { AccountKeys.openProfile(notObject, key); fail(); } catch (GeneralSecurityException expected) { }
     }
 }

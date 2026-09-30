@@ -28,7 +28,10 @@ public final class Server {
     public static final class HttpError extends IOException {
         public final int status;
         public final String code;
-        HttpError(int status, String code, String message) { super(message); this.status = status; this.code = code; }
+        /** The whole JSON answer (6.4: a form's per-field "errors"); empty when there was none. */
+        public final transient JSONObject body;
+        HttpError(int status, String code, String message) { this(status, code, message, null); }
+        HttpError(int status, String code, String message, JSONObject body) { super(message); this.status = status; this.code = code; this.body = body == null ? new JSONObject() : body; }
     }
 
     public interface Progress { void on(long done, long total); }
@@ -103,14 +106,15 @@ public final class Server {
             }
             String message = "HTTP " + status;
             String code = "";
+            JSONObject err = null;
             try (InputStream in = c.getErrorStream()) {
                 if (in != null) {
-                    JSONObject err = new JSONObject(new String(readAll(in, -1, null, 64 * 1024), "UTF-8"));
+                    err = new JSONObject(new String(readAll(in, -1, null, 64 * 1024), "UTF-8"));
                     message = err.optString("message", message);
                     code = err.optString("code", "");
                 }
             } catch (JSONException | IOException ignored) { }
-            throw new HttpError(status, code, message);
+            throw new HttpError(status, code, message, err);
         } finally {
             c.disconnect();
         }

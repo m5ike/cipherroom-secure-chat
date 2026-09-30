@@ -21,6 +21,8 @@ import cz.m5cet.app.security.Crypto;
  *   sealed root AES-GCM(HKDF(secret, PRF_SALT, info), root), AAD
  *               "m5cet:account-root:v1" — for a passkey added later (secret =
  *               its PRF output) or the recovery code (secret = its kek)
+ *   vault key   HKDF(root, PRF_SALT, "m5cet:profile:v1"): the vault's parts
+ *               (profile, registration…), base64(iv ‖ AES-GCM(JSON)) — 6.4
  */
 final class AccountKeys {
     private AccountKeys() {}
@@ -53,6 +55,31 @@ final class AccountKeys {
         try { return Crypto.gcmOpen(k, Crypto.unb64(wrapped.optString("iv")), Crypto.unb64(wrapped.optString("ct")), WRAP_AAD); }
         catch (IllegalArgumentException e) { throw new GeneralSecurityException("the sealed account key is malformed"); }
         finally { Crypto.wipe(k); }
+    }
+
+    /* ------------------------------------------------------------- vault */
+
+    private static final byte[] PROFILE_INFO = Crypto.utf8("m5cet:profile:v1");
+
+    /** 6.4: the vault key (web: deriveAccountKeys → key) — HKDF(root, PRF_SALT, "m5cet:profile:v1"), AES-256-GCM. */
+    static byte[] profileKey(byte[] root) { return Crypto.hkdf(root, PRF_SALT, PROFILE_INFO, 32); }
+
+    /** Seals a vault part (web: sealProfile): base64(iv ‖ AES-GCM(JSON)), no AAD. */
+    static String sealProfile(JSONObject value, byte[] key) { return sealProfile(value, key, Crypto.random(12)); }
+
+    static String sealProfile(JSONObject value, byte[] key, byte[] iv) {
+        return Crypto.b64(Crypto.concat(iv, Crypto.gcmSeal(key, iv, Crypto.utf8(value.toString()), null)));
+    }
+
+    /** Opens a vault part (web: openProfile); a JSON object, or an error — never a guess. */
+    static JSONObject openProfile(String ciphertext, byte[] key) throws GeneralSecurityException {
+        byte[] all;
+        try { all = Crypto.unb64(ciphertext); } catch (IllegalArgumentException e) { throw new GeneralSecurityException("the vault is malformed"); }
+        if (all.length < 12 + 16) throw new GeneralSecurityException("the vault is too short");
+        byte[] plain = Crypto.gcmOpen(key, java.util.Arrays.copyOfRange(all, 0, 12), java.util.Arrays.copyOfRange(all, 12, all.length), null);
+        try { return new JSONObject(Crypto.str(plain)); }
+        catch (JSONException e) { throw new GeneralSecurityException("the vault's profile is not a JSON object"); }
+        finally { Crypto.wipe(plain); }
     }
 
     /** Does the server's answer carry a root sealed for this passkey? */

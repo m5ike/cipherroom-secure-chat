@@ -23,6 +23,10 @@ import cz.m5cet.app.ui.Ui;
  * another passkey) — and the recovery code, shown once. Making a recovery
  * code or adding a passkey is confirmed with one of the account's passkeys
  * first (Account.confirm), as on the web.
+ *
+ * 6.4: when the phone refuses the server's passkeys because the server's
+ * domain does not vouch for this app (assetlinks.json), every one of these
+ * answers says exactly that, with the certificate the operator has to trust.
  */
 public final class AccountDialogs {
     private AccountDialogs() {}
@@ -47,6 +51,7 @@ public final class AccountDialogs {
         String server = host(a.app().config.server());
         switch (r.code) {
             case "cancelled": a.flash("", t(a, "passkey.cancelled"), "info"); break;
+            case "rp-unverified": rpUnverified(a); break;
             case "unknown-passkey": {
                 // Most likely left over from a sign-up the server never finished (before 6.2: no PRF when creating).
                 String name = r.username.isEmpty() ? "M5cet" : "M5cet · " + r.username;
@@ -58,6 +63,80 @@ public final class AccountDialogs {
             case "no-prf": case "wrong-key": case "orphan": notice(a, t(a, "passkey.problem"), r.message); break;
             default: a.flash("", r.message.isEmpty() ? t(a, "voice.failed") : r.message, "error");
         }
+    }
+
+    /** The server's host for its /.well-known/ address: no scheme, port or path (chat.example.com). */
+    static String rpHost(String server) {
+        try {
+            String h = java.net.URI.create(server == null ? "" : server.trim()).getHost();
+            if (h != null && !h.isEmpty()) return h;
+        } catch (IllegalArgumentException ignored) { }
+        return host(server).replaceFirst("[:/].*$", "");
+    }
+
+    /**
+     * 6.4: the phone's Credential Manager refused the server's passkeys here —
+     * the server's domain does not vouch for this app (its
+     * /.well-known/assetlinks.json does not list this package with this
+     * signing certificate). Says so, and what the operator needs: the
+     * certificate's fingerprint (to copy) and the package.
+     */
+    public static void rpUnverified(MainActivity a) {
+        if (gone(a)) return;
+        String hostName = rpHost(a.app().config.server());
+        String fingerprint = AppCert.colons(AppCert.sha256(a));
+        LinearLayout box = new LinearLayout(a);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setPadding(Ui.dp(a, 24), Ui.dp(a, 8), Ui.dp(a, 24), 0);
+        TextView text = new TextView(a);
+        text.setText(t(a, "passkey.rpText").replace("{host}", hostName));
+        text.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        text.setTextColor(Ui.color(a, "@onSurface", Color.BLACK));
+        text.setTextIsSelectable(true);
+        box.addView(text);
+        box.addView(caption(a, t(a, "passkey.rpCert")));
+        box.addView(mono(a, fingerprint.isEmpty() ? "—" : fingerprint));
+        box.addView(caption(a, t(a, "passkey.rpPackage")));
+        box.addView(mono(a, a.getPackageName()));
+        android.widget.ScrollView scroll = new android.widget.ScrollView(a);
+        scroll.addView(box);
+        AlertDialog dialog = new AlertDialog.Builder(a).setTitle(t(a, "passkey.rpTitle")).setView(scroll)
+            .setPositiveButton(t(a, "nav.close"), null)
+            .setNeutralButton(t(a, "passkey.rpCopy"), null)
+            .create();
+        dialog.setOnShowListener(d -> {
+            android.widget.Button copy = dialog.getButton(AlertDialog.BUTTON_NEUTRAL);
+            copy.setEnabled(!fingerprint.isEmpty());
+            copy.setOnClickListener(v -> {
+                // The dialog stays: the package is right there too.
+                ClipboardManager cm = a.getSystemService(ClipboardManager.class);
+                if (cm == null) return;
+                cm.setPrimaryClip(ClipData.newPlainText("SHA-256", fingerprint));
+                ((TextView) v).setText("✓ " + t(a, "passkey.rpCopy"));
+            });
+        });
+        dialog.show();
+    }
+
+    private static TextView caption(MainActivity a, String s) {
+        TextView c = new TextView(a);
+        c.setText(s);
+        c.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        c.setTextColor(Ui.color(a, "@muted", Color.GRAY));
+        c.setPadding(0, Ui.dp(a, 14), 0, Ui.dp(a, 4));
+        return c;
+    }
+
+    private static TextView mono(MainActivity a, String s) {
+        TextView v = new TextView(a);
+        v.setText(s);
+        v.setTypeface(Typeface.MONOSPACE);
+        v.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+        v.setTextColor(Ui.color(a, "@onSurface", Color.BLACK));
+        v.setTextIsSelectable(true);
+        v.setPadding(Ui.dp(a, 10), Ui.dp(a, 8), Ui.dp(a, 10), Ui.dp(a, 8));
+        v.setBackground(Ui.shape(Ui.color(a, "@surfaceVariant", Color.LTGRAY), Ui.dp(a, 8), 0, 0));
+        return v;
     }
 
     private static void offerAccount(MainActivity a, String title, String text) {
@@ -102,6 +181,7 @@ public final class AccountDialogs {
             a.refresh();
             if (code != null) { showCode(a, code); return; }
             if (failure != null && failure.code.equals("cancelled")) a.flash("", t(a, "passkey.cancelled"), "info");
+            else if (failure != null && failure.code.equals("rp-unverified")) rpUnverified(a);
             else a.flash("", failure == null || failure.message.isEmpty() ? t(a, "voice.failed") : failure.message, "error");
         });
     }
@@ -155,6 +235,7 @@ public final class AccountDialogs {
             a.refresh();
             if (r.ok) a.flash("", t(a, "passkey.added"), "success");
             else if (r.code.equals("cancelled")) a.flash("", t(a, "passkey.cancelled"), "info");
+            else if (r.code.equals("rp-unverified")) rpUnverified(a);
             else if (r.code.equals("exists")) a.flash("", t(a, "passkey.exists"), "warn");
             else if (r.code.equals("orphan") || r.code.equals("unsupported")) notice(a, t(a, "passkey.problem"), r.code.equals("orphan") ? r.message : t(a, "passkey.unsupported"));
             else a.flash("", r.message.isEmpty() ? t(a, "voice.failed") : r.message, "error");
