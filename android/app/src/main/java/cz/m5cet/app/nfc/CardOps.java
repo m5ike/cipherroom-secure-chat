@@ -22,6 +22,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
+import cz.m5cet.app.core.Log;
+
 /**
  * The per-technology functions on a presented android.nfc {@link Tag} (6.3) —
  * the same op ids as {@link NfcCatalog} / the web workbench, implemented with
@@ -69,6 +71,250 @@ public final class CardOps {
         f.connect();
         try { f.format(msg); } finally { close(f); }
     }
+
+    /* --------------------------------------------- NDEF onto any usable tag */
+
+    /** A write that failed for a reason the user can act on (typed, so the UI localizes it). */
+    public static final class NfcWriteException extends IOException {
+        public static final int READ_ONLY = 1, TOO_SMALL = 2, NO_KEY = 3, NOT_WRITABLE = 4;
+        public final int kind, needed, available, sector;
+        NfcWriteException(int kind, int needed, int available, int sector) {
+            super(reason(kind, needed, available, sector));
+            this.kind = kind; this.needed = needed; this.available = available; this.sector = sector;
+        }
+        private static String reason(int kind, int needed, int available, int sector) {
+            switch (kind) {
+                case READ_ONLY: return "read-only";
+                case TOO_SMALL: return "too-small (needs " + needed + " B, holds " + available + " B)";
+                case NO_KEY: return "no-key-for-sector " + sector;
+                default: return "not-writable";
+            }
+        }
+    }
+
+    /**
+     * Write an NDEF message onto whatever the tag can take — the write path the
+     * M5Cet builder (and the generic NDEF write) uses. Unlike {@link #ndefWrite}
+     * this also NDEF-formats a bare MIFARE Classic (MAD + TLV) and writes the TLV
+     * straight into an Ultralight/NTAG's user pages. Returns the NDEF byte count.
+     * {@code keys} is the user's key dictionary for a MIFARE Classic (see
+     * {@link #keyDictionary}); the well-known factory/MAD/NDEF keys are added.
+     */
+    public static int ndefWriteAny(Tag tag, NdefMessage msg, List<byte[]> keys) throws IOException, FormatException {
+        byte[] bytes = msg.toByteArray();
+        Ndef ndef = Ndef.get(tag);
+        if (ndef != null) {
+            ndef.connect();
+            try {
+                Log.i("nfc", "ndefWriteAny: Ndef " + ndef.getType() + " cap=" + ndef.getMaxSize() + " writable=" + ndef.isWritable() + " need=" + bytes.length);
+                if (!ndef.isWritable()) throw new NfcWriteException(NfcWriteException.READ_ONLY, bytes.length, ndef.getMaxSize(), 0);
+                if (ndef.getMaxSize() < bytes.length) throw new NfcWriteException(NfcWriteException.TOO_SMALL, bytes.length, ndef.getMaxSize(), 0);
+                ndef.writeNdefMessage(msg);
+                return bytes.length;
+            } finally { close(ndef); }
+        }
+        NdefFormatable f = NdefFormatable.get(tag);
+        if (f != null) {
+            f.connect();
+            try { Log.i("nfc", "ndefWriteAny: NdefFormatable.format " + bytes.length + " B"); f.format(msg); return bytes.length; }
+            finally { close(f); }
+        }
+        MifareClassic mc = MifareClassic.get(tag);
+        if (mc != null) return classicNdefWrite(mc, bytes, keys);
+        MifareUltralight ul = MifareUltralight.get(tag);
+        if (ul != null) return ultralightNdefWrite(ul, bytes);
+        Log.w("nfc", "ndefWriteAny: tag has no writable technology");
+        throw new NfcWriteException(NfcWriteException.NOT_WRITABLE, bytes.length, 0, 0);
+    }
+
+    /* ---- MIFARE Classic: NDEF-format (MAD) then write the message as a TLV ---- */
+
+    /** MAD key A, NDEF key A and the well-known trailers/AID — a card written as NDEF uses these. */
+    static final byte[] MAD_KEY = unhex("A0A1A2A3A4A5");
+    static final byte[] NDEF_KEY = unhex("D3F7D3F7D3F7");
+    private static final byte[] FACTORY_KEY = unhex("FFFFFFFFFFFF");
+    private static final byte[] MAD_TRAILER_V1 = unhex("A0A1A2A3A4A5787788C1FFFFFFFFFFFF");
+    private static final byte[] MAD_TRAILER_V2 = unhex("A0A1A2A3A4A5787788C2FFFFFFFFFFFF");
+    private static final byte[] NDEF_TRAILER = unhex("D3F7D3F7D3F77F078840FFFFFFFFFFFF");
+    private static final byte[] NDEF_AID = {0x03, (byte) 0xE1};   // the NFC Forum NDEF application in the MAD
+
+    private static int classicNdefWrite(MifareClassic mc, byte[] ndef, List<byte[]> userKeys) throws IOException {
+        byte[] tlv = ndefTlv(ndef);
+        List<byte[]> keys = new ArrayList<>(userKeys);
+        addKey(keys, FACTORY_KEY); addKey(keys, MAD_KEY); addKey(keys, NDEF_KEY);
+        mc.connect();
+        try {
+            int sectorCount = mc.getSectorCount();
+            int capacity = classicDataCapacity(sectorCount);
+            Log.i("nfc", "classicNdefWrite: sectors=" + sectorCount + " capacity=" + capacity + " tlv=" + tlv.length);
+            if (tlv.length > capacity) throw new NfcWriteException(NfcWriteException.TOO_SMALL, tlv.length, capacity, 0);
+            boolean[] used = new boolean[sectorCount];
+            int off = 0;
+            for (int s : ndefDataSectors(sectorCount)) {
+                if (off >= tlv.length) break;
+                byte[] key = authenticate(mc, s, keys);
+                if (key == null) throw new NfcWriteException(NfcWriteException.NO_KEY, tlv.length, capacity, s);
+                int first = mc.sectorToBlock(s), n = mc.getBlockCountInSector(s);
+                for (int b = 0; b < n - 1 && off < tlv.length; b++) {       // data blocks; skip the trailer
+                    byte[] block = new byte[16];
+                    int len = Math.min(16, tlv.length - off);
+                    System.arraycopy(tlv, off, block, 0, len);
+                    mc.writeBlock(first + b, block);
+                    off += len;
+                }
+                mc.writeBlock(first + n - 1, NDEF_TRAILER);                 // NDEF key A, public read / key-B write
+                used[s] = true;
+                Log.i("nfc", "classicNdefWrite: sector " + s + " written (key " + TagTech.hex(key) + ")");
+            }
+            writeMad(mc, keys, used, sectorCount);
+            Log.i("nfc", "classicNdefWrite: done, " + ndef.length + " B NDEF");
+            return ndef.length;
+        } finally { close(mc); }
+    }
+
+    /** Write the MAD in sector 0 (and sector 16 on 4K), marking every used NDEF sector. */
+    private static void writeMad(MifareClassic mc, List<byte[]> keys, boolean[] used, int sectorCount) throws IOException {
+        int version = sectorCount > 16 ? 2 : 1;
+        if (authenticate(mc, 0, keys) == null) throw new NfcWriteException(NfcWriteException.NO_KEY, 0, 0, 0);
+        byte[] mad1 = buildMad1(used);
+        mc.writeBlock(1, java.util.Arrays.copyOfRange(mad1, 0, 16));
+        mc.writeBlock(2, java.util.Arrays.copyOfRange(mad1, 16, 32));
+        mc.writeBlock(3, version == 2 ? MAD_TRAILER_V2 : MAD_TRAILER_V1);
+        if (sectorCount > 16) {
+            if (authenticate(mc, 16, keys) == null) throw new NfcWriteException(NfcWriteException.NO_KEY, 0, 0, 16);
+            byte[] mad2 = buildMad2(used, sectorCount);
+            int first = mc.sectorToBlock(16);
+            mc.writeBlock(first, java.util.Arrays.copyOfRange(mad2, 0, 16));
+            mc.writeBlock(first + 1, java.util.Arrays.copyOfRange(mad2, 16, 32));
+            mc.writeBlock(first + 2, java.util.Arrays.copyOfRange(mad2, 32, 48));
+            mc.writeBlock(first + 3, MAD_TRAILER_V2);
+        }
+        Log.i("nfc", "classicNdefWrite: MAD" + version + " written");
+    }
+
+    /* ---- MIFARE Ultralight / NTAG: the TLV straight into the user pages ---- */
+
+    private static int ultralightNdefWrite(MifareUltralight ul, byte[] ndef) throws IOException {
+        byte[] tlv = ndefTlv(ndef);
+        ul.connect();
+        try {
+            int capacity = ultralightCapacity(ul);
+            Log.i("nfc", "ultralightNdefWrite: capacity=" + capacity + " tlv=" + tlv.length);
+            if (capacity > 0 && tlv.length > capacity) throw new NfcWriteException(NfcWriteException.TOO_SMALL, tlv.length, capacity, 0);
+            maybeWriteCc(ul, capacity);
+            byte[] buf = java.util.Arrays.copyOf(tlv, (tlv.length + 3) & ~3);   // whole pages
+            for (int p = 0; p * 4 < buf.length; p++) {
+                ul.writePage(4 + p, java.util.Arrays.copyOfRange(buf, p * 4, p * 4 + 4));   // page 4 = first user page
+            }
+            Log.i("nfc", "ultralightNdefWrite: done, " + ndef.length + " B NDEF");
+            return ndef.length;
+        } finally { close(ul); }
+    }
+
+    /** The user memory of an Ultralight/NTAG in bytes (from its CC, then its type), or 0 when unknown. */
+    private static int ultralightCapacity(MifareUltralight ul) {
+        try {
+            byte[] cc = ul.readPages(3);                                // page 3 is the Capability Container
+            if (cc != null && cc.length >= 4 && (cc[0] & 0xff) == 0xE1) return (cc[2] & 0xff) * 8;
+        } catch (IOException ignored) { }
+        switch (ul.getType()) {
+            case MifareUltralight.TYPE_ULTRALIGHT: return 48;           // pages 4..15
+            case MifareUltralight.TYPE_ULTRALIGHT_C: return 144;        // pages 4..39
+            default: return 0;                                         // unknown — write best-effort, per-page errors surface
+        }
+    }
+
+    /** A blank tag has no CC to make it discoverable — write one (guarded: never over an existing CC). */
+    private static void maybeWriteCc(MifareUltralight ul, int capacity) {
+        try {
+            byte[] cc = ul.readPages(3);
+            if (cc != null && cc.length >= 4 && (cc[0] & 0xff) == 0xE1) return;
+            int size = capacity > 0 ? capacity : 48;
+            ul.writePage(3, new byte[]{(byte) 0xE1, 0x10, (byte) (size / 8), 0x00});
+            Log.i("nfc", "ultralightNdefWrite: wrote CC for " + size + " B");
+        } catch (IOException e) {
+            Log.w("nfc", "ultralightNdefWrite: CC not written: " + e.getMessage());
+        }
+    }
+
+    /* ---- pure byte-layout helpers (no hardware) — see NfcWriteTest ---- */
+
+    /** The NDEF Message TLV: 0x03, length (1 byte, or 0xFF + u16 for ≥255), the message, 0xFE terminator. */
+    static byte[] ndefTlv(byte[] ndef) {
+        java.io.ByteArrayOutputStream w = new java.io.ByteArrayOutputStream();
+        w.write(0x03);
+        if (ndef.length < 0xFF) {
+            w.write(ndef.length);
+        } else {
+            w.write(0xFF);
+            w.write((ndef.length >>> 8) & 0xff);
+            w.write(ndef.length & 0xff);
+        }
+        w.write(ndef, 0, ndef.length);
+        w.write(0xFE);
+        return w.toByteArray();
+    }
+
+    /** Blocks in a sector: 4 for the first 32 sectors, 16 for the large 4K sectors. */
+    static int blocksInSector(int sector) { return sector < 32 ? 4 : 16; }
+
+    /** The NDEF data sectors (every sector but the MAD sectors 0 and — on 4K — 16). */
+    static int[] ndefDataSectors(int sectorCount) {
+        List<Integer> out = new ArrayList<>();
+        for (int s = 0; s < sectorCount; s++) {
+            if (s == 0 || (s == 16 && sectorCount > 16)) continue;
+            out.add(s);
+        }
+        int[] arr = new int[out.size()];
+        for (int i = 0; i < arr.length; i++) arr[i] = out.get(i);
+        return arr;
+    }
+
+    /** The usable NDEF-TLV bytes on a MIFARE Classic with {@code sectorCount} sectors (1K→720, 4K→3360). */
+    static int classicDataCapacity(int sectorCount) {
+        int cap = 0;
+        for (int s : ndefDataSectors(sectorCount)) cap += (blocksInSector(s) - 1) * 16;
+        return cap;
+    }
+
+    /** MAD1 (32 bytes: block 1 ‖ block 2) marking sectors 1..15 that carry NDEF with the 0x03E1 AID. */
+    static byte[] buildMad1(boolean[] used) {
+        byte[] mad = new byte[32];
+        mad[1] = 0x01;                                                  // info byte (card-publisher sector)
+        for (int s = 1; s <= 15; s++) {
+            boolean on = s < used.length && used[s];
+            mad[2 * s] = on ? NDEF_AID[0] : 0x00;
+            mad[2 * s + 1] = on ? NDEF_AID[1] : 0x00;
+        }
+        mad[0] = madCrc(java.util.Arrays.copyOfRange(mad, 1, 32));
+        return mad;
+    }
+
+    /** MAD2 (48 bytes) marking sectors 17..39 that carry NDEF (4K). */
+    static byte[] buildMad2(boolean[] used, int sectorCount) {
+        byte[] mad = new byte[48];
+        mad[1] = 0x00;                                                  // MAD2 info byte
+        for (int s = 17; s <= 39; s++) {
+            int i = s - 17;
+            boolean on = s < sectorCount && s < used.length && used[s];
+            mad[2 + 2 * i] = on ? NDEF_AID[0] : 0x00;
+            mad[2 + 2 * i + 1] = on ? NDEF_AID[1] : 0x00;
+        }
+        mad[0] = madCrc(java.util.Arrays.copyOfRange(mad, 1, 48));
+        return mad;
+    }
+
+    /** The MAD CRC-8 (poly 0x1D, preset 0xC7) over the MAD bytes after the CRC byte. */
+    static byte madCrc(byte[] data) {
+        int crc = 0xC7;
+        for (byte v : data) {
+            crc ^= (v & 0xff);
+            for (int i = 0; i < 8; i++) crc = (crc & 0x80) != 0 ? ((crc << 1) ^ 0x1D) & 0xff : (crc << 1) & 0xff;
+        }
+        return (byte) crc;
+    }
+
+    private static void addKey(List<byte[]> keys, byte[] k) { if (!contains(keys, k)) keys.add(k); }
 
     /** Lock the tag's NDEF permanently (read-only). */
     public static void ndefLock(Tag tag) throws IOException {

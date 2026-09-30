@@ -202,16 +202,21 @@ final class NfcCardBuilder extends ScrollView implements Renderer.Slot {
         return b;
     }
 
-    /** Estimate the container size (no crypto): 7 header + Σ(37 overhead + json + 16 GCM tag). */
+    /**
+     * Estimate the NDEF size against real tag capacities (no crypto): the container
+     * is 7 header + Σ(37 overhead + json + 16 GCM tag), and the NDEF external record
+     * (m5cet.cz:card) adds 16 B (19 B once the payload reaches 256). The fit names
+     * the smallest tag that holds it — MIFARE Classic 1K/4K included, not just NTAG.
+     */
     private void updateSize() {
         int size = 7;
         for (Draft d : drafts) size += 37 + d.data.toString().getBytes(StandardCharsets.UTF_8).length + 16;
-        String fit;
-        if (size <= 144) fit = "NTAG213";
-        else if (size <= 504) fit = "NTAG215";
-        else if (size <= 888) fit = "NTAG216";
-        else fit = app().t("nfc.builder.big");
-        sizeLabel.setText(app().t("nfc.builder.size") + ": " + size + " B · " + fit);
+        int ndef = size + (size < 256 ? 16 : 19);
+        int[] caps = {144, 504, 716, 888, 3352};
+        String[] names = {"NTAG213", "NTAG215", "MIFARE Classic 1K", "NTAG216", "MIFARE Classic 4K"};
+        String fit = app().t("nfc.builder.big");
+        for (int i = 0; i < caps.length; i++) if (ndef <= caps[i]) { fit = names[i]; break; }
+        sizeLabel.setText(app().t("nfc.builder.size") + ": " + ndef + " B · " + fit);
     }
 
     /* ------------------------------------------------------------- write */
@@ -248,10 +253,25 @@ final class NfcCardBuilder extends ScrollView implements Renderer.Slot {
 
     private void writeTo(Tag tag, byte[] container) {
         try {
-            CardOps.ndefWrite(tag, new NdefMessage(new NdefRecord[]{NdefRecord.createExternal("m5cet.cz", "card", container)}));
-            Io.main(() -> { reader.stopScan(); a.flash("", app().t("nfc.done.written"), "success"); });
+            NdefMessage msg = new NdefMessage(new NdefRecord[]{NdefRecord.createExternal("m5cet.cz", "card", container)});
+            java.util.List<byte[]> keys = CardOps.keyDictionary(app().settings.str("nfc.keyDictionary"));
+            cz.m5cet.app.core.Log.i("nfc", "builder: writing M5Cet card (NDEF " + msg.toByteArray().length + " B)");
+            final int n = CardOps.ndefWriteAny(tag, msg, keys);
+            Io.main(() -> { reader.stopScan(); a.flash("", app().t("nfc.done.writtenBytes").replace("{0}", String.valueOf(n)), "success"); });
+        } catch (CardOps.NfcWriteException e) {
+            Io.main(() -> a.flash("", writeError(e), "warn"));
         } catch (Exception e) {
             Io.main(() -> a.flash("", e.getMessage(), "warn"));
+        }
+    }
+
+    /** A writable, localized message for a typed write failure. */
+    private String writeError(CardOps.NfcWriteException e) {
+        switch (e.kind) {
+            case CardOps.NfcWriteException.READ_ONLY: return app().t("nfc.err.readOnly");
+            case CardOps.NfcWriteException.TOO_SMALL: return app().t("nfc.err.tooSmall").replace("{0}", String.valueOf(e.needed)).replace("{1}", String.valueOf(e.available));
+            case CardOps.NfcWriteException.NO_KEY: return app().t("nfc.err.noKey").replace("{0}", String.valueOf(e.sector));
+            default: return app().t("nfc.err.notWritable");
         }
     }
 

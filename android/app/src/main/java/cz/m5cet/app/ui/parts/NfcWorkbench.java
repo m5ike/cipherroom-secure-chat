@@ -248,7 +248,8 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             }
         } catch (Exception e) {
             Log.w("nfc", "op failed: " + e.getMessage());
-            Io.main(() -> refreshStatus("⚠ " + (e.getMessage() == null ? "error" : e.getMessage())));
+            final String m = e instanceof CardOps.NfcWriteException ? writeErr(e) : ("⚠ " + (e.getMessage() == null ? "error" : e.getMessage()));
+            Io.main(() -> refreshStatus(m));
         }
         if (!scanning) Io.main(reader::stopScan);
     }
@@ -259,7 +260,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         switch (op) {
             case "ndef-read": out = CardOps.ndefRead(tag); break;
             case "ndef-lock": CardOps.ndefLock(tag); out.put("done", app().t("nfc.done.locked")); break;
-            case "ndef-write": if (armedArg != null) { CardOps.ndefWrite(tag, new NdefMessage(NdefRecord.createTextRecord(null, new String(armedArg, StandardCharsets.UTF_8)))); out.put("done", app().t("nfc.done.written")); } break;
+            case "ndef-write": if (armedArg != null) { CardOps.ndefWriteAny(tag, new NdefMessage(NdefRecord.createTextRecord(null, new String(armedArg, StandardCharsets.UTF_8))), keys()); out.put("done", app().t("nfc.done.written")); } break;
             case "classic-read": out = CardOps.classicRead(tag, keys()); break;
             case "classic-dump": out = CardOps.classicDump(tag, keys()); lastDump = out; break;
             case "classic-restore": if (lastDump != null) out.put("restored", CardOps.classicRestore(tag, lastDump, keys())); else out.put("note", app().t("nfc.restore.none")); break;
@@ -333,7 +334,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         JSONObject card = r == null ? null : app().rooms.cardOf(r.key);
         if (card == null) throw new Exception(app().t("rooms.empty"));
         try { card.put("app", cz.m5cet.app.BuildConfig.VERSION_NAME); } catch (Exception ignored) { }
-        CardOps.ndefWrite(tag, Nfc.message(Nfc.seal(card, p)));
+        CardOps.ndefWriteAny(tag, Nfc.message(Nfc.seal(card, p)), keys());
     }
 
     /* --------------------------------------------------------- M5Cet card */
@@ -479,11 +480,11 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         // Rewrite the card without the one-time record on the next tap.
         reader.startScan(tag -> {
             try {
-                CardOps.ndefWrite(tag, new NdefMessage(new NdefRecord[]{NdefRecord.createExternal("m5cet.cz", "card", rewritten)}));
+                CardOps.ndefWriteAny(tag, new NdefMessage(new NdefRecord[]{NdefRecord.createExternal("m5cet.cz", "card", rewritten)}), keys());
                 scanning = false;
                 Io.main(() -> { refreshStatus(app().t("nfc.onetime.erased") + " ✓"); reader.stopScan(); });
             } catch (Exception e) {
-                Io.main(() -> a.flash("", e.getMessage(), "warn"));
+                Io.main(() -> a.flash("", writeErr(e), "warn"));
             }
         });
     }
@@ -522,6 +523,18 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
     }
 
     private String pinText() { return pin.getText().toString().trim(); }
+
+    /** A writable, localized message for a write failure (typed reasons localized, others verbatim). */
+    private String writeErr(Exception e) {
+        if (!(e instanceof CardOps.NfcWriteException)) return e.getMessage() == null ? "error" : e.getMessage();
+        CardOps.NfcWriteException w = (CardOps.NfcWriteException) e;
+        switch (w.kind) {
+            case CardOps.NfcWriteException.READ_ONLY: return app().t("nfc.err.readOnly");
+            case CardOps.NfcWriteException.TOO_SMALL: return app().t("nfc.err.tooSmall").replace("{0}", String.valueOf(w.needed)).replace("{1}", String.valueOf(w.available));
+            case CardOps.NfcWriteException.NO_KEY: return app().t("nfc.err.noKey").replace("{0}", String.valueOf(w.sector));
+            default: return app().t("nfc.err.notWritable");
+        }
+    }
 
     private void refreshStatus(String s) { Io.main(() -> status.setText(s)); }
 
