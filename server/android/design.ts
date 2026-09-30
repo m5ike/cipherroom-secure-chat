@@ -15,7 +15,7 @@ import { randomBytes } from "node:crypto";
 import { MENU_ICONS } from "../../client/src/lib/menu-icons-data";
 import { checkExpr, checkTemplate } from "./expr";
 import { ACTIONS_61, ELEMENTS_61, MENUS_61, SCREENS_61, SCREENS_TREES_61, SLOTS_61, STRINGS_61, TOGGLE_PROPS_61, messageIn61, messageOut61, roomBar61 } from "./design-61";
-import { ACTIONS_62, ELEMENTS_62, MENUS_62, SCREENS_62, SCREENS_TREES_62, SLOTS_62, STRINGS_62, patch62 } from "./design-62";
+import { ACTIONS_62, ELEMENTS_62, MENUS_62, SCREENS_62, SCREENS_TREES_62, SLOTS_62, STRINGS_62, THEME_62, patch62 } from "./design-62";
 import { androidDir } from "./store";
 
 /* ================================================================ catalog */
@@ -387,6 +387,10 @@ export const DEFAULT_THEME: Theme = {
   font: "sans",
   density: "normal",
 };
+// 6.2 look: calmer default tokens (design-62-look.ts).
+Object.assign(DEFAULT_THEME.light, THEME_62.light);
+Object.assign(DEFAULT_THEME.dark, THEME_62.dark);
+DEFAULT_THEME.radius = THEME_62.radius;
 
 export type AnimSpec = { type: string; ms: number; easing: string; delay?: number };
 export type Animations = {

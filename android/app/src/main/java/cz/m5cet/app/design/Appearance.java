@@ -1,5 +1,6 @@
 package cz.m5cet.app.design;
 
+import android.content.Context;
 import android.graphics.Color;
 
 import org.json.JSONArray;
@@ -12,16 +13,22 @@ import java.util.Map;
 
 import cz.m5cet.app.M5;
 import cz.m5cet.app.core.Log;
+import cz.m5cet.app.ui.look.Look;
+import cz.m5cet.app.ui.look.Palette;
 
 /**
  * The user's look on top of the design (6.1, Settings › Appearance):
  *  - a template of the web client (assets/m5/themes.json, taken from the
  *    web's CSS by the build): its colours replace the design's tokens; a
- *    template with one tone keeps it (like on the web);
+ *    template with one tone keeps it (like on the web); 6.2: its corner
+ *    radius and font family too;
+ *  - 6.2: a colour variant of the template (ui/look/Palette: its own
+ *    colour or one of six or more that suit it, shaded for the tone) for
+ *    primary, accent and my bubbles;
  *  - the tone (system / light / dark);
  *  - an accent — the web's presets (red, orange, green, blue, violet; one
- *    shade for dark, a darker one for light) or #rrggbb — for primary and
- *    my bubbles;
+ *    shade for dark, a darker one for light) or #rrggbb — 6.1's key, still
+ *    honoured when no variant is chosen;
  *  - the text size, the density and the bubbles' shape (the Renderer).
  */
 public final class Appearance {
@@ -41,6 +48,9 @@ public final class Appearance {
         ACCENTS.put("violet", new float[][]{{265, 84, 68}, {264, 62, 46}});
     }
 
+    /** The web's template families, in its picker's order (the design's own look first). */
+    private static final String[] FAMILIES = {"system", "studio", "classic"};
+
     public static synchronized JSONArray themes() {
         if (themes != null) return themes;
         try (InputStream in = M5.get().getAssets().open("m5/themes.json")) {
@@ -58,56 +68,137 @@ public final class Appearance {
         return null;
     }
 
-    /** $presets for the Appearance screen: the design's own look first, then the web's templates. */
+    public static boolean hasTemplate(String id) { return id != null && theme(id) != null; }
+
+    private static String preset() { return M5.get().settings.str("appearance.preset"); }
+
+    /** The look changed (Look's settings watch): colours are worked out again. */
+    public static synchronized void invalidate() { cache.clear(); cacheKey = ""; }
+
+    /**
+     * $presets for the Appearance screen: the design's own look first, then
+     * the web's templates by family — each with the colours of its preview
+     * card (bg, surface, fg, primary, onPrimary in the tone it would show),
+     * whether it is chosen, and its colour variants ({value, label, color,
+     * on, selected}; the template's own colour first, value "").
+     */
     public static JSONArray presets(String lang, String designLabel) {
         JSONArray out = new JSONArray();
+        M5 app = M5.get();
+        String current = preset(), variant = app.settings.str(Look.VARIANT);
+        boolean userDark = userDark(app);
         try {
-            out.put(new JSONObject().put("value", "design").put("label", designLabel));
+            out.put(entry(app, "design", designLabel, "design", null, current, variant, userDark));
             JSONArray t = themes();
+            for (String family : FAMILIES) {
+                for (int i = 0; i < t.length(); i++) {
+                    JSONObject th = t.optJSONObject(i);
+                    if (!family.equals(th.optString("family", "classic"))) continue;
+                    JSONObject label = th.optJSONObject("label");
+                    out.put(entry(app, th.optString("id"), label == null ? th.optString("id") : label.optString(lang, label.optString("en")), family, th, current, variant, userDark));
+                }
+            }
+            // Templates of a family this app does not know yet (an older themes.json) at the end.
             for (int i = 0; i < t.length(); i++) {
                 JSONObject th = t.optJSONObject(i);
+                String f = th.optString("family", "classic");
+                if (f.equals("system") || f.equals("studio") || f.equals("classic")) continue;
                 JSONObject label = th.optJSONObject("label");
-                out.put(new JSONObject().put("value", th.optString("id")).put("label", label == null ? th.optString("id") : label.optString(lang, label.optString("en"))));
+                out.put(entry(app, th.optString("id"), label == null ? th.optString("id") : label.optString(lang, label.optString("en")), f, th, current, variant, userDark));
             }
         } catch (org.json.JSONException ignored) { }
         return out;
     }
 
-    /** A template with a single tone decides the tone (null = the user's choice applies). */
-    public static Boolean forcedDark() {
-        JSONObject th = theme(M5.get().settings.str("appearance.preset"));
-        if (th == null) return null;
+    private static JSONObject entry(M5 app, String id, String label, String family, JSONObject th, String current, String variant, boolean userDark) throws org.json.JSONException {
+        boolean chosen = id.equals(current) || (id.equals("design") && (current.isEmpty() || theme(current) == null));
+        Boolean forced = th == null ? null : forced(th);
+        boolean dark = forced != null ? forced : userDark;
+        JSONObject tokens = th == null ? designTokens(app, dark) : tones(th, dark);
+        String primary = tokens.optString("primary", "#888888");
+        JSONObject e = new JSONObject().put("value", id).put("label", label).put("family", family).put("selected", chosen)
+            .put("tone", forced == null ? "both" : forced ? "dark" : "light")
+            .put("bg", tokens.optString("background", "#808080")).put("surface", tokens.optString("surface", "#909090"))
+            .put("fg", tokens.optString("onSurface", "#000000")).put("primary", primary).put("onPrimary", tokens.optString("onPrimary", "#ffffff"));
+        JSONArray vs = new JSONArray();
+        vs.put(new JSONObject().put("value", "").put("label", app.t("look.variant.own")).put("color", primary).put("on", tokens.optString("onPrimary", "#ffffff"))
+            .put("selected", chosen && !Palette.has(id, variant)));
+        for (String v : Palette.variants(id)) {
+            Integer c = Palette.color(id, v, dark);
+            if (c == null) continue;
+            vs.put(new JSONObject().put("value", v).put("label", app.t("color." + v)).put("color", Palette.hex(c)).put("on", Palette.hex(Palette.onColor(c)))
+                .put("selected", chosen && v.equals(variant)));
+        }
+        e.put("variants", vs);
+        return e;
+    }
+
+    /** The template's tokens for a tone (its only tone when it has one). */
+    private static JSONObject tones(JSONObject th, boolean dark) {
+        JSONObject tone = th.optJSONObject(dark ? "dark" : "light");
+        if (tone == null) { JSONArray tones = th.optJSONArray("tones"); tone = tones == null ? null : th.optJSONObject(tones.optString(0)); }
+        return tone == null ? new JSONObject() : tone;
+    }
+
+    /** The design's own tokens (not the user's overrides). */
+    private static JSONObject designTokens(M5 app, boolean dark) {
+        JSONObject theme = app.design().theme;
+        JSONObject tone = theme == null ? null : theme.optJSONObject(dark ? "dark" : "light");
+        return tone == null ? new JSONObject() : tone;
+    }
+
+    private static Boolean forced(JSONObject th) {
         JSONArray tones = th.optJSONArray("tones");
         if (tones == null || tones.length() != 1) return null;
         return "dark".equals(tones.optString(0));
     }
 
+    /** A template with a single tone decides the tone (null = the user's choice applies). */
+    public static Boolean forcedDark() {
+        JSONObject th = theme(preset());
+        return th == null ? null : forced(th);
+    }
+
+    /** The tone the user chose (Settings › Appearance › Tone, else the 5.x choice, else the system's). */
+    public static boolean userDark(Context c) {
+        M5 app = M5.get();
+        String t61 = app.settings.str("appearance.tone");
+        if (t61.equals("dark")) return true;
+        if (t61.equals("light")) return false;
+        String tone = app.config.tone();
+        if (tone.equals("dark")) return true;
+        if (tone.equals("light")) return false;
+        int mode = c.getResources().getConfiguration().uiMode & android.content.res.Configuration.UI_MODE_NIGHT_MASK;
+        return mode == android.content.res.Configuration.UI_MODE_NIGHT_YES;
+    }
+
     /** The colour a token has in the user's look, or null (the design's own). */
     public static synchronized Integer override(String token, boolean dark) {
         M5 app = M5.get();
-        String preset = app.settings.str("appearance.preset"), accent = app.settings.str("appearance.accent");
-        String key = preset + "|" + accent;
+        String preset = preset(), accent = app.settings.str("appearance.accent"), variant = app.settings.str(Look.VARIANT);
+        String key = preset + "|" + accent + "|" + variant;
         if (!key.equals(cacheKey)) { cache.clear(); cacheKey = key; }
         String k = token + (dark ? "|d" : "|l");
         if (cache.containsKey(k)) return cache.get(k);
-        Integer v = compute(token, dark, preset, accent);
+        Integer v = compute(token, dark, preset, accent, variant);
         cache.put(k, v);
         return v;
     }
 
-    private static Integer compute(String token, boolean dark, String preset, String accent) {
-        if (!accent.isEmpty() && (token.equals("primary") || token.equals("accent") || token.equals("bubbleOut") || token.equals("onPrimary") || token.equals("onBubbleOut"))) {
-            Integer a = accentColor(accent, dark);
-            if (a != null) {
-                if (token.equals("onPrimary") || token.equals("onBubbleOut")) return readableOn(a);
-                return a;
-            }
+    private static boolean accentToken(String token) {
+        return token.equals("primary") || token.equals("accent") || token.equals("bubbleOut") || token.equals("onPrimary") || token.equals("onBubbleOut");
+    }
+
+    private static Integer compute(String token, boolean dark, String preset, String accent, String variant) {
+        if (accentToken(token)) {
+            // 6.2: the template's colour variant, else 6.1's accent.
+            String template = theme(preset) == null ? "design" : preset;
+            Integer a = Palette.has(template, variant) ? Palette.color(template, variant, dark) : accent.isEmpty() ? null : accentColor(accent, dark);
+            if (a != null) return token.equals("onPrimary") || token.equals("onBubbleOut") ? readableOn(a) : a;
         }
         JSONObject th = theme(preset);
         if (th == null) return null;
-        JSONObject tone = th.optJSONObject(dark ? "dark" : "light");
-        if (tone == null) { JSONArray tones = th.optJSONArray("tones"); tone = tones == null ? null : th.optJSONObject(tones.optString(0)); }
-        String hex = tone == null ? null : tone.optString(token, null);
+        String hex = tones(th, dark).optString(token, null);
         try { return hex == null ? null : Color.parseColor(hex); } catch (IllegalArgumentException e) { return null; }
     }
 
@@ -125,16 +216,23 @@ public final class Appearance {
     }
 
     /** White or near-black, whichever reads better on c (color.ts readableOn). */
-    static int readableOn(int c) {
-        double lum = 0.2126 * lin(Color.red(c)) + 0.7152 * lin(Color.green(c)) + 0.0722 * lin(Color.blue(c));
-        double white = 1.05 / (lum + 0.05), black = (lum + 0.05) / (lum(0x0b, 0x0d, 0x10) + 0.05);
-        return white >= black ? Color.WHITE : 0xFF0B0D10;
-    }
-
-    private static double lum(int r, int g, int b) { return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b); }
-    private static double lin(int v) { double c = v / 255.0; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+    static int readableOn(int c) { return Palette.onColor(c); }
 
     /* ---------------------------------------------------- the Renderer */
+
+    /** 6.2: the template's corner radius (dp), else the design's. */
+    public static int radius(Design d) {
+        JSONObject th = theme(preset());
+        if (th != null && th.has("radius")) return Math.max(0, Math.min(28, th.optInt("radius", 14)));
+        return d == null ? 14 : d.radius();
+    }
+
+    /** 6.2: the template's font (sans / serif / mono), or null (the design's). */
+    public static String templateFont() {
+        JSONObject th = theme(preset());
+        String f = th == null ? "" : th.optString("font", "");
+        return f.isEmpty() ? null : f;
+    }
 
     public static float fontScale() {
         double s = M5.get().settings.num("appearance.fontScale");

@@ -10,6 +10,9 @@ import * as P from "./design-62-people";
 import * as B from "./design-62-bubbles";
 import * as L from "./design-62-look";
 
+/** 6.2 look: calmer default theme tokens (applied to DEFAULT_THEME in design.ts). */
+export const THEME_62 = L.THEME_62_LOOK;
+
 export const ELEMENTS_62: ElementDef[] = [...F.ELEMENTS_62_FIXES, ...P.ELEMENTS_62_PEOPLE, ...B.ELEMENTS_62_BUBBLES, ...L.ELEMENTS_62_LOOK];
 export const ACTIONS_62: Array<{ action: string; arg: string; help: string }> = [...F.ACTIONS_62_FIXES, ...P.ACTIONS_62_PEOPLE, ...B.ACTIONS_62_BUBBLES, ...L.ACTIONS_62_LOOK];
 export const SLOTS_62: Array<{ name: string; label: string; screens: string[] }> = [...F.SLOTS_62_FIXES, ...P.SLOTS_62_PEOPLE, ...B.SLOTS_62_BUBBLES, ...L.SLOTS_62_LOOK];

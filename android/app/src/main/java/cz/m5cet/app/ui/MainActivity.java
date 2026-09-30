@@ -514,7 +514,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             case "voice.lang": voices = null; loadVoices(); break;
             case "calls.speaker": { cz.m5cet.app.chat.RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().route(); break; }
             default:
-                if (key.startsWith("appearance.")) Io.mainLater(this::recreate, 150);
+                // appearance.* / look.*: ui/look/Look redraws the screen in place (6.2) — no restart.
+                break;
         }
     }
 

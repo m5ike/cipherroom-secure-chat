@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 6.2 (ui/look/Look.java): the font family of Settings › Appearance, laid over
+     the activity's theme so text the native parts draw themselves follows it. -->
+<resources>
+    <style name="M5.Font.Sans" parent=""><item name="android:fontFamily">sans-serif</item></style>
+    <style name="M5.Font.Serif" parent=""><item name="android:fontFamily">serif</item></style>
+    <style name="M5.Font.Mono" parent=""><item name="android:fontFamily">monospace</item></style>
+    <style name="M5.Font.Condensed" parent=""><item name="android:fontFamily">sans-serif-condensed</item></style>
+    <style name="M5.Font.Medium" parent=""><item name="android:fontFamily">sans-serif-medium</item></style>
+    <style name="M5.Font.Light" parent=""><item name="android:fontFamily">sans-serif-light</item></style>
+    <style name="M5.Font.Casual" parent=""><item name="android:fontFamily">casual</item></style>
+    <style name="M5.Font.Cursive" parent=""><item name="android:fontFamily">cursive</item></style>
+</resources>

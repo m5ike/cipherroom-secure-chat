@@ -92,6 +92,9 @@ public final class Actions {
                 // 6.1: sheets, the composer, message kinds and actions on a message
                 case "sheet.open": a.parts.showSheet(s); break;
                 case "sheet.close": a.parts.closeOverlay(); break;
+                // 6.2 look: the look changed in place (the screen is drawn again, no restart)
+                case "look.set": { int eq = s.indexOf('='); if (eq > 0) cz.m5cet.app.ui.look.Look.set(s.substring(0, eq).trim(), s.substring(eq + 1).trim()); break; }
+                case "look.reset": cz.m5cet.app.ui.look.Look.reset(); break;
                 case "compose": a.parts.composerAction(s, null); break;
                 case "message.kind": a.parts.messageKind(s); break;
                 case "message.recipients": a.parts.closeOverlay(); a.parts.pickRecipients(); break;
@@ -129,7 +132,7 @@ public final class Actions {
                 case "call.camera": { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().toggleCamera(); break; }
                 case "call.switchCamera": { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().switchCamera(); break; }
                 case "call.speaker": app.settings.toggle("calls.speaker"); { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().route(); } a.refresh(); break;
-                case "appearance.reset": for (String k : new String[]{"appearance.tone", "appearance.preset", "appearance.accent", "appearance.fontScale", "appearance.density", "appearance.bubbles"}) app.settings.set(k, cz.m5cet.app.core.Settings.DEFAULTS.get(k)); a.recreate(); break;
+                case "appearance.reset": cz.m5cet.app.ui.look.Look.reset(); break;
                 // ---- 6.2 fixes (lock, enrolment, passkeys) ----
 
                 // ---- 6.2 people (People widget, contacts) ----
