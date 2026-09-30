@@ -34,6 +34,12 @@
   let screenId = "room";
   let selected = "";
   let designTab = "screens";
+  // 6.3: the Define tab (m5mobile.define) — the working set, the last-saved defs
+  // as JSON (for the dirty check), the selected row, and the last save error.
+  let defineSet = null;
+  let defineSavedJson = "";
+  let defineSel = 0;
+  let defineError = "";
   let previewDark = false;
   let previewLang = "cs";
 
@@ -80,13 +86,13 @@
     if (!el) return;
     clear(el);
     const bar = h("div", { class: "seg ai-tabs", role: "tablist" });
-    for (const [id, label] of [["overview", "Overview"], ["devices", "Devices"], ["push", "Push"], ["design", "Design"], ["builds", "Builds"], ["releases", "Releases"], ["security", "Security"], ["events", "Events"]]) {
+    for (const [id, label] of [["overview", "Overview"], ["devices", "Devices"], ["push", "Push"], ["design", "Design"], ["define", "Define"], ["builds", "Builds"], ["releases", "Releases"], ["security", "Security"], ["events", "Events"]]) {
       bar.append(h("button", { type: "button", role: "tab", "aria-pressed": tab === id ? "true" : "false", "data-read": "1", onclick: () => { tab = id; render(); } }, label));
     }
     el.append(bar);
     const body = h("div", { class: "stack" });
     el.append(body);
-    const views = { overview: overviewView, devices: devicesView, push: pushView, design: designView, builds: buildsView, releases: releasesView, security: securityView, events: eventsView };
+    const views = { overview: overviewView, devices: devicesView, push: pushView, design: designView, define: defineView, builds: buildsView, releases: releasesView, security: securityView, events: eventsView };
     void (views[tab] || overviewView)(body);
     C.applyRoleGates();
   }
@@ -2448,6 +2454,496 @@
     card.append(list);
     draw();
     body.append(card);
+  }
+
+  /* ============================================================= 6.3: define
+   * A visual builder for the operator's typed definitions (m5mobile.define):
+   * variables and constants, each a tree of typed nodes. Saved as one JSON
+   * DefineSet through /api/admin/define and delivered to both apps and to
+   * Functions, where they read as m5mobile.define.<name>. The server
+   * re-validates the whole set on save (and rejects a definition over its
+   * maxSize), so this only has to build to the same shape. DOM nodes and
+   * textContent throughout — never innerHTML. */
+
+  const DEF_TYPES = ["string", "text", "integer", "float", "boolean", "bytes", "script", "enum", "object", "array", "class"];
+  const DEF_SCALARS = new Set(["string", "text", "integer", "float", "boolean", "bytes", "script", "enum"]);
+  const DEF_SCOPES = ["both", "android", "web"];
+  const DEF_IDENT = /^[A-Za-z_][A-Za-z0-9_]{0,63}$/;
+  // A short, distinct badge per DefType (a text badge, coloured in the CSS).
+  const DEF_TBADGE = { string: "str", text: "txt", integer: "int", float: "flt", boolean: "bool", bytes: "hex", script: "</>", enum: "enum", object: "{}", array: "[]", class: "cls" };
+
+  /** The materialized JSON value of a node — mirrors the contract exactly, so
+   *  the local byte readout matches what the server measures. */
+  function defMaterialize(node) {
+    if (!node || typeof node !== "object") return null;
+    switch (node.type) {
+      case "string": case "text": return String(node.value ?? "");
+      case "integer": { const n = Math.trunc(Number(node.value)); return Number.isFinite(n) ? n : 0; }
+      case "float": { const n = Number(node.value); return Number.isFinite(n) ? n : 0; }
+      case "boolean": return Boolean(node.value);
+      case "bytes": return String(node.value ?? "").toLowerCase().replace(/[^0-9a-f]/g, "");
+      case "enum": return String(node.value ?? "");
+      case "script": return { __m5script: true, code: String(node.value ?? ""), lang: node.lang === "py" ? "py" : "js" };
+      case "object": case "class": { const o = {}; for (const e of node.entries || []) o[String(e.key ?? "")] = defMaterialize(e.node); return o; }
+      case "array": return (node.items || []).map(defMaterialize);
+      default: return null;
+    }
+  }
+  const defBytes = (value) => new TextEncoder().encode(JSON.stringify(value === undefined ? null : value)).length;
+
+  /** A fresh node of a given type, with sensible defaults. */
+  function defNewNode(type) {
+    switch (type) {
+      case "text": return { type: "text", value: "" };
+      case "integer": return { type: "integer", value: 0 };
+      case "float": return { type: "float", value: 0 };
+      case "boolean": return { type: "boolean", value: false };
+      case "bytes": return { type: "bytes", value: "" };
+      case "script": return { type: "script", value: "", lang: "js" };
+      case "enum": return { type: "enum", options: ["one", "two"], value: "one" };
+      case "object": return { type: "object", name: "", entries: [] };
+      case "class": return { type: "class", name: "", entries: [] };
+      case "array": return { type: "array", items: [] };
+      default: return { type: "string", value: "" };
+    }
+  }
+
+  /** A new node for a changed type, carrying the value over where it makes sense. */
+  function defRetype(old, type) {
+    const n = defNewNode(type);
+    const stringy = new Set(["string", "text", "script", "bytes"]);
+    if (stringy.has(old.type) && stringy.has(type) && typeof old.value === "string") n.value = old.value;
+    else if ((old.type === "integer" || old.type === "float") && (type === "integer" || type === "float")) n.value = type === "integer" ? Math.trunc(Number(old.value) || 0) : (Number(old.value) || 0);
+    else if (old.type === "enum" && stringy.has(type)) n.value = String(old.value ?? "");
+    else if (stringy.has(old.type) && type === "enum") { const v = String(old.value ?? ""); if (v) { n.options = [v]; n.value = v; } }
+    return n;
+  }
+
+  /** Replace a node's contents in place, so the parent's reference still holds. */
+  function defAssign(target, src) { for (const k of Object.keys(target)) delete target[k]; Object.assign(target, src); }
+
+  /** Normalize whatever the server returns to the exact contract shape, so the
+   *  builder is robust and the PUT body always matches. */
+  function defNormalizeNode(n) {
+    if (!n || typeof n !== "object" || !DEF_TYPES.includes(n.type)) return defNewNode("string");
+    switch (n.type) {
+      case "object": case "class": return { type: n.type, name: typeof n.name === "string" ? n.name : "", entries: (Array.isArray(n.entries) ? n.entries : []).map((e) => ({ key: typeof (e && e.key) === "string" ? e.key : "", node: defNormalizeNode(e && e.node), maxSize: Math.max(0, Math.trunc(Number(e && e.maxSize) || 0)) })) };
+      case "array": return { type: "array", items: (Array.isArray(n.items) ? n.items : []).map(defNormalizeNode) };
+      case "enum": { const options = Array.isArray(n.options) ? n.options.map(String) : []; return { type: "enum", options, value: options.includes(n.value) ? n.value : (options[0] ?? "") }; }
+      case "script": return { type: "script", value: typeof n.value === "string" ? n.value : "", lang: n.lang === "py" ? "py" : "js" };
+      case "boolean": return { type: "boolean", value: Boolean(n.value) };
+      case "integer": return { type: "integer", value: Math.trunc(Number(n.value) || 0) };
+      case "float": return { type: "float", value: Number(n.value) || 0 };
+      case "bytes": return { type: "bytes", value: typeof n.value === "string" ? n.value : "" };
+      default: return { type: n.type, value: typeof n.value === "string" ? n.value : "" };
+    }
+  }
+  function defNormalizeDef(d) {
+    d = d && typeof d === "object" ? d : {};
+    return {
+      name: typeof d.name === "string" ? d.name : "",
+      kind: d.kind === "constant" ? "constant" : "variable",
+      node: defNormalizeNode(d.node),
+      maxSize: Math.max(0, Math.trunc(Number(d.maxSize) || 0)),
+      scope: (d.scope === "android" || d.scope === "web" || d.scope === "both") ? d.scope : "both",
+      note: typeof d.note === "string" ? d.note : "",
+    };
+  }
+  function defNormalize(raw) {
+    const set = raw && typeof raw === "object" ? raw : {};
+    return { version: 1, updatedAt: Number(set.updatedAt) || 0, defs: (Array.isArray(set.defs) ? set.defs : []).map(defNormalizeDef) };
+  }
+
+  const defTypeBadge = (type) => h("span", { class: `and-tbadge and-tbadge--${type}`, title: type }, DEF_TBADGE[type] || "?");
+  function defScopeBadge(scope) { const s = scope || "both"; return badge(s, s === "android" ? "ok" : s === "web" ? "info" : "accent"); }
+  const defField = (label, el) => h("label", { class: "field and-def-field" }, h("span", { class: "label" }, label), el);
+  function ctrlBtn(label, title, onclick, disabled, extraCls) { return h("button", { class: `btn btn--xs${extraCls ? ` ${extraCls}` : ""}`, type: "button", title, "aria-label": title, onclick, disabled: disabled || false }, label); }
+
+  /* --------------------------------------------------------- the value editor */
+
+  /** Build the editor for one node into `container`. `changed` bubbles a dirty
+   *  signal (and updates the size readouts); structural edits rebuild in place. */
+  function defBuildNode(container, node, changed, opts = {}) {
+    const depth = opts.depth || 0;
+    const ro = Boolean(opts.readOnly);
+    clear(container);
+    container.classList.toggle("and-nest", depth > 0);
+
+    const typeSel = h("select", { class: "input input--sm" }, ...DEF_TYPES.map((t) => h("option", { value: t }, t)));
+    typeSel.value = node.type;
+    typeSel.disabled = ro;
+    typeSel.addEventListener("change", () => {
+      defAssign(node, defRetype(node, typeSel.value));
+      changed();
+      defBuildNode(container, node, changed, opts);
+      if (opts.onRetype) opts.onRetype();
+    });
+    container.append(defField("Type", typeSel));
+
+    container.append(DEF_SCALARS.has(node.type) ? defScalarEditor(node, changed, ro) : defContainerEditor(node, changed, opts));
+  }
+
+  function defScalarEditor(node, changed, ro) {
+    switch (node.type) {
+      case "integer": case "float": {
+        const inp = h("input", { class: "input input--sm", type: "number", step: node.type === "integer" ? "1" : "any", value: String(node.value ?? 0), disabled: ro });
+        inp.addEventListener("input", () => { node.value = node.type === "integer" ? Math.trunc(Number(inp.value) || 0) : (Number(inp.value) || 0); changed(); });
+        return defField("Value", inp);
+      }
+      case "boolean": {
+        const cb = h("input", { type: "checkbox", disabled: ro });
+        cb.checked = Boolean(node.value);
+        cb.addEventListener("change", () => { node.value = cb.checked; changed(); });
+        return h("label", { class: "row small and-def-check" }, cb, h("span", {}, "Value (on = true)"));
+      }
+      case "enum": return defEnumEditor(node, changed, ro);
+      case "script": {
+        const langSel = h("select", { class: "input input--sm", disabled: ro }, h("option", { value: "js" }, "js"), h("option", { value: "py" }, "py"));
+        langSel.value = node.lang === "py" ? "py" : "js";
+        langSel.addEventListener("change", () => { node.lang = langSel.value; changed(); });
+        const ta = h("textarea", { class: "input mono and-def-ta", rows: "6", spellcheck: "false", disabled: ro }, String(node.value ?? ""));
+        ta.addEventListener("input", () => { node.value = ta.value; changed(); });
+        return h("div", { class: "stack" }, defField("Language", langSel), defField("Script", ta));
+      }
+      case "bytes": {
+        const ta = h("textarea", { class: "input mono and-def-ta", rows: "3", spellcheck: "false", placeholder: "hex, e.g. 00ff1a", disabled: ro }, String(node.value ?? ""));
+        const note = h("div", { class: "small muted" });
+        const refresh = () => {
+          const clean = ta.value.toLowerCase().replace(/[^0-9a-f]/g, "");
+          const bad = ta.value.length > 0 && (/[^0-9a-f\s]/i.test(ta.value) || clean.length % 2 !== 0);
+          ta.classList.toggle("is-invalid", bad);
+          note.textContent = `${clean.length >> 1} byte${(clean.length >> 1) === 1 ? "" : "s"}${clean.length % 2 ? " · odd digit — needs pairs" : ""}`;
+        };
+        ta.addEventListener("input", () => { node.value = ta.value; refresh(); changed(); });
+        refresh();
+        return h("div", { class: "stack" }, defField("Bytes (hex)", ta), note);
+      }
+      default: return defStringEditor(node, changed, ro); // string / text
+    }
+  }
+
+  /** string is an input until it passes 512 chars, then a textarea; text is
+   *  always a textarea. The swap keeps focus and caret. */
+  function defStringEditor(node, changed, ro) {
+    const box = h("div", {});
+    const build = () => {
+      clear(box);
+      const long = node.type === "text" || String(node.value ?? "").length > 512;
+      const el = long
+        ? h("textarea", { class: "input and-def-ta", rows: node.type === "text" ? "5" : "3", disabled: ro }, String(node.value ?? ""))
+        : h("input", { class: "input input--sm", type: "text", value: String(node.value ?? ""), disabled: ro });
+      el.addEventListener("input", () => {
+        node.value = el.value;
+        changed();
+        if (node.type === "string" && (el.value.length > 512) !== long) {
+          const caret = el.selectionStart;
+          build();
+          const next = box.querySelector("input, textarea");
+          if (next) { next.focus(); try { next.setSelectionRange(caret, caret); } catch (_) { /* input types without a range */ } }
+        }
+      });
+      box.append(defField(node.type === "text" ? "Text" : "Value", el));
+    };
+    build();
+    return box;
+  }
+
+  function defEnumEditor(node, changed, ro) {
+    const box = h("div", { class: "stack" });
+    const build = () => {
+      clear(box);
+      if (!Array.isArray(node.options)) node.options = [];
+      const options = node.options;
+      const list = h("div", { class: "stack and-def-optlist" });
+      const valSel = h("select", { class: "input input--sm", disabled: ro });
+      const syncValues = () => {
+        clear(valSel);
+        (options.length ? options : [""]).forEach((o) => valSel.append(h("option", { value: o }, o || "—")));
+        valSel.value = options.includes(node.value) ? node.value : (options[0] ?? "");
+        node.value = valSel.value;
+      };
+      options.forEach((optv, i) => {
+        const inp = h("input", { class: "input input--sm", type: "text", value: String(optv), disabled: ro });
+        inp.addEventListener("input", () => { const before = options[i]; options[i] = inp.value; if (node.value === before) node.value = inp.value; syncValues(); changed(); });
+        const up = ctrlBtn("↑", "Move up", () => { [options[i - 1], options[i]] = [options[i], options[i - 1]]; changed(); build(); }, ro || i === 0);
+        const dn = ctrlBtn("↓", "Move down", () => { [options[i + 1], options[i]] = [options[i], options[i + 1]]; changed(); build(); }, ro || i === options.length - 1);
+        const rm = ctrlBtn("×", "Remove", () => { const removed = options.splice(i, 1)[0]; if (node.value === removed) node.value = options[0] ?? ""; changed(); build(); }, ro, "btn--danger");
+        list.append(h("div", { class: "row and-def-optrow" }, h("span", { class: "muted small" }, `${i + 1}.`), inp, up, dn, rm));
+      });
+      box.append(defField("Options", list));
+      if (!ro) box.append(h("button", { class: "btn btn--sm", type: "button", onclick: () => { options.push(`option${options.length + 1}`); changed(); build(); } }, "+ Option"));
+      valSel.addEventListener("change", () => { node.value = valSel.value; changed(); });
+      syncValues();
+      box.append(defField("Value", valSel));
+    };
+    build();
+    return box;
+  }
+
+  function defContainerEditor(node, changed, opts) {
+    const ro = Boolean(opts.readOnly);
+    const box = h("div", { class: "stack" });
+    if (node.type === "object" || node.type === "class") {
+      const nameInp = h("input", { class: "input input--sm mono", type: "text", value: node.name || "", placeholder: node.type === "class" ? "ClassName (optional)" : "name (optional)", disabled: ro });
+      nameInp.addEventListener("input", () => { node.name = nameInp.value; changed(); });
+      box.append(defField(node.type === "class" ? "Class name (optional)" : "Name (optional)", nameInp));
+      if (!Array.isArray(node.entries)) node.entries = [];
+      const entriesBox = h("div", { class: "stack and-def-entries" });
+      const draw = () => {
+        clear(entriesBox);
+        if (!node.entries.length) entriesBox.append(h("div", { class: "empty small" }, "No fields."));
+        node.entries.forEach((entry, i) => entriesBox.append(defEntryCard(node, entry, i, changed, opts, draw)));
+      };
+      draw();
+      box.append(defField("Fields", entriesBox));
+      if (!ro) box.append(h("button", { class: "btn btn--sm", type: "button", onclick: () => { node.entries.push({ key: `field${node.entries.length + 1}`, node: defNewNode("string"), maxSize: 0 }); changed(); draw(); } }, "+ Field"));
+    } else {
+      if (!Array.isArray(node.items)) node.items = [];
+      const itemsBox = h("div", { class: "stack and-def-entries" });
+      const draw = () => {
+        clear(itemsBox);
+        if (!node.items.length) itemsBox.append(h("div", { class: "empty small" }, "No items."));
+        node.items.forEach((item, i) => itemsBox.append(defItemCard(node, item, i, changed, opts, draw)));
+      };
+      draw();
+      box.append(defField("Items", itemsBox));
+      if (!ro) box.append(h("button", { class: "btn btn--sm", type: "button", onclick: () => { node.items.push(defNewNode("string")); changed(); draw(); } }, "+ Item"));
+    }
+    return box;
+  }
+
+  function defEntryCard(parent, entry, i, changed, opts, redraw) {
+    const ro = Boolean(opts.readOnly);
+    const sizeLine = h("div", { class: "small muted and-def-size" });
+    function updateSize() {
+      const bytes = defBytes(defMaterialize(entry.node));
+      const max = entry.maxSize || 0;
+      const over = max > 0 && bytes > max;
+      sizeLine.textContent = `${bytes} B${max ? ` / ${max} B` : " · unlimited"}${over ? " — over the limit" : ""}`;
+      sizeLine.classList.toggle("is-over", over);
+    }
+    const entryChanged = () => { updateSize(); changed(); };
+    const keyInp = h("input", { class: "input input--sm mono", type: "text", value: String(entry.key ?? ""), placeholder: "key", disabled: ro });
+    keyInp.addEventListener("input", () => { entry.key = keyInp.value; entryChanged(); });
+    const typeSel = h("select", { class: "input input--sm", disabled: ro }, ...DEF_TYPES.map((t) => h("option", { value: t }, t)));
+    typeSel.value = entry.node.type;
+    typeSel.addEventListener("change", () => { defAssign(entry.node, defRetype(entry.node, typeSel.value)); entryChanged(); redraw(); });
+    const maxInp = h("input", { class: "input input--sm and-def-max", type: "number", min: "0", step: "1", value: String(entry.maxSize ?? 0), title: "Max size in bytes (0 = unlimited)", disabled: ro });
+    maxInp.addEventListener("input", () => { entry.maxSize = Math.max(0, Math.trunc(Number(maxInp.value) || 0)); entryChanged(); });
+    const up = ctrlBtn("↑", "Move up", () => { parent.entries.splice(i - 1, 0, parent.entries.splice(i, 1)[0]); changed(); redraw(); }, ro || i === 0);
+    const dn = ctrlBtn("↓", "Move down", () => { parent.entries.splice(i + 1, 0, parent.entries.splice(i, 1)[0]); changed(); redraw(); }, ro || i === parent.entries.length - 1);
+    const rm = ctrlBtn("×", "Remove", () => { parent.entries.splice(i, 1); changed(); redraw(); }, ro, "btn--danger");
+    const inner = h("div", { class: "and-def-inner" });
+    defBuildNode(inner, entry.node, entryChanged, { ...opts, depth: (opts.depth || 0) + 1 });
+    updateSize();
+    return h("div", { class: "card and-def-entry" },
+      h("div", { class: "row and-def-entryhead" }, h("span", { class: "muted small" }, `${i + 1}.`), keyInp, defTypeBadge(entry.node.type), typeSel, h("label", { class: "and-def-maxlbl small muted" }, "max", maxInp), h("span", { class: "spacer" }), up, dn, rm),
+      sizeLine, inner);
+  }
+
+  function defItemCard(parent, item, i, changed, opts, redraw) {
+    const ro = Boolean(opts.readOnly);
+    const sizeLine = h("div", { class: "small muted and-def-size" });
+    function updateSize() {
+      const bytes = defBytes(defMaterialize(item));
+      sizeLine.textContent = `${bytes} B`;
+    }
+    const itemChanged = () => { updateSize(); changed(); };
+    const typeSel = h("select", { class: "input input--sm", disabled: ro }, ...DEF_TYPES.map((t) => h("option", { value: t }, t)));
+    typeSel.value = item.type;
+    typeSel.addEventListener("change", () => { defAssign(item, defRetype(item, typeSel.value)); itemChanged(); redraw(); });
+    const up = ctrlBtn("↑", "Move up", () => { parent.items.splice(i - 1, 0, parent.items.splice(i, 1)[0]); changed(); redraw(); }, ro || i === 0);
+    const dn = ctrlBtn("↓", "Move down", () => { parent.items.splice(i + 1, 0, parent.items.splice(i, 1)[0]); changed(); redraw(); }, ro || i === parent.items.length - 1);
+    const rm = ctrlBtn("×", "Remove", () => { parent.items.splice(i, 1); changed(); redraw(); }, ro, "btn--danger");
+    const inner = h("div", { class: "and-def-inner" });
+    defBuildNode(inner, item, itemChanged, { ...opts, depth: (opts.depth || 0) + 1 });
+    updateSize();
+    return h("div", { class: "card and-def-entry" },
+      h("div", { class: "row and-def-entryhead" }, h("span", { class: "muted small" }, `${i + 1}.`), defTypeBadge(item.type), typeSel, h("span", { class: "spacer" }), up, dn, rm),
+      sizeLine, inner);
+  }
+
+  /* ------------------------------------------------------------- the Define tab */
+
+  async function defineView(body) {
+    if (!defineSet) {
+      const r = await guarded(() => api("/api/admin/define"));
+      if (!r) return;
+      defineSet = defNormalize(r.define);
+      defineSavedJson = JSON.stringify(defineSet.defs);
+      defineSel = 0;
+    }
+    const edit = may("settings");
+    if (defineSel >= defineSet.defs.length) defineSel = Math.max(0, defineSet.defs.length - 1);
+
+    let saveBtn = null;
+    let revertBtn = null;
+    let sizeFn = null;
+    const status = h("span", { class: "and-def__status muted small", role: "status" });
+    const dirty = () => JSON.stringify(defineSet.defs) !== defineSavedJson;
+    const updateStatus = () => {
+      if (defineError) { status.textContent = defineError; status.classList.add("is-err"); }
+      else { status.textContent = dirty() ? "unsaved changes" : "saved"; status.classList.remove("is-err"); }
+      if (saveBtn) saveBtn.disabled = !dirty();
+      if (revertBtn) revertBtn.disabled = !dirty();
+    };
+    const changed = () => { defineError = ""; if (sizeFn) sizeFn(); updateStatus(); };
+
+    const nav = h("div", { class: "and-def__nav" });
+    const content = h("div", { class: "and-def__body" });
+
+    function uniqueDefName(base) {
+      let b = DEF_IDENT.test(base) ? base : "value";
+      b = b.slice(0, 60);
+      const names = new Set(defineSet.defs.map((d) => d.name));
+      if (!names.has(b)) return b;
+      let n = 1;
+      let cand;
+      do { cand = `${b}_${n++}`; } while (names.has(cand));
+      return cand;
+    }
+    function addDef() {
+      defineSet.defs.push({ name: uniqueDefName("value"), kind: "variable", node: defNewNode("string"), maxSize: 0, scope: "both", note: "" });
+      defineSel = defineSet.defs.length - 1;
+      changed(); renderNav(); renderContent();
+    }
+    function dupDef() {
+      const src = defineSet.defs[defineSel];
+      if (!src) return;
+      const copy = defNormalizeDef(JSON.parse(JSON.stringify(src)));
+      copy.name = uniqueDefName(src.name ? `${src.name}_copy` : "value");
+      defineSet.defs.splice(defineSel + 1, 0, copy);
+      defineSel += 1;
+      changed(); renderNav(); renderContent();
+    }
+    function removeDef() {
+      const d = defineSet.defs[defineSel];
+      if (!d) return;
+      if (!confirm(`Remove the definition "${d.name || "(unnamed)"}"?`)) return;
+      defineSet.defs.splice(defineSel, 1);
+      if (defineSel >= defineSet.defs.length) defineSel = Math.max(0, defineSet.defs.length - 1);
+      changed(); renderNav(); renderContent();
+    }
+    function revert() {
+      defineSet.defs = JSON.parse(defineSavedJson);
+      defineError = "";
+      if (defineSel >= defineSet.defs.length) defineSel = Math.max(0, defineSet.defs.length - 1);
+      renderNav(); renderContent(); updateStatus();
+    }
+    async function doSave() {
+      const defs = defineSet.defs;
+      for (let j = 0; j < defs.length; j++) {
+        if (!DEF_IDENT.test(defs[j].name || "")) { defineSel = j; renderNav(); renderContent(); toast(`"${defs[j].name || "(unnamed)"}" is not a valid identifier.`, "err"); return; }
+        if (defs.some((o, k) => k !== j && o.name === defs[j].name)) { defineSel = j; renderNav(); renderContent(); toast(`The name "${defs[j].name}" is used by more than one definition.`, "err"); return; }
+      }
+      try {
+        const r = await api("/api/admin/define", { method: "PUT", body: { define: { version: 1, updatedAt: Date.now(), defs: defineSet.defs } } });
+        defineSet = defNormalize(r.define);
+        defineSavedJson = JSON.stringify(defineSet.defs);
+        defineError = "";
+        if (defineSel >= defineSet.defs.length) defineSel = Math.max(0, defineSet.defs.length - 1);
+        toast("Definitions saved. Packages, Models, Functions and both apps read them as m5mobile.define.<name>.", "ok");
+        renderNav(); renderContent(); updateStatus();
+      } catch (err) {
+        defineError = err.message;
+        updateStatus();
+        toast(err.message, "err");
+      }
+    }
+
+    function renderNav() {
+      clear(nav);
+      const defs = defineSet.defs;
+      nav.append(h("div", { class: "and-def__navhead" },
+        h("span", { class: "small muted" }, `${defs.length} definition${defs.length === 1 ? "" : "s"}`),
+        edit ? h("button", { class: "btn btn--xs btn--primary", type: "button", onclick: addDef }, "+ Definition") : null));
+      const list = h("div", { class: "and-def__list" });
+      if (!defs.length) list.append(h("div", { class: "empty small" }, "No definitions yet."));
+      defs.forEach((d, i) => {
+        list.append(h("button", { type: "button", class: `and-defrow${i === defineSel ? " on" : ""}`, "data-read": "1", onclick: () => { defineSel = i; renderNav(); renderContent(); } },
+          defTypeBadge(d.node.type),
+          h("span", { class: "and-defrow__name mono" }, d.name || "(unnamed)"),
+          d.kind === "constant" ? h("span", { class: "and-defrow__const", title: "constant" }, "const") : null,
+          defScopeBadge(d.scope)));
+      });
+      nav.append(list);
+      if (edit && defs.length) nav.append(h("div", { class: "and-def__navfoot" },
+        h("button", { class: "btn btn--xs", type: "button", onclick: dupDef }, "Duplicate"),
+        h("button", { class: "btn btn--xs btn--danger", type: "button", onclick: removeDef }, "Remove")));
+    }
+
+    function renderContent() {
+      clear(content);
+      sizeFn = null;
+      const defs = defineSet.defs;
+      if (!defs.length) { content.append(h("div", { class: "card empty" }, edit ? "No definition yet — add one on the left." : "No definitions.")); return; }
+      const def = defs[defineSel];
+      const ro = !edit;
+
+      const path = h("span", { class: "mono" }, `m5mobile.define.${def.name || "…"}`);
+      const nameInp = h("input", { class: "input input--sm mono", type: "text", value: def.name || "", placeholder: "identifier", disabled: ro });
+      const nameMsg = h("div", { class: "small and-def-namemsg" });
+      const validateName = () => {
+        const v = nameInp.value;
+        const okId = DEF_IDENT.test(v);
+        const dup = defs.some((d, j) => j !== defineSel && d.name === v);
+        nameInp.classList.toggle("is-invalid", !okId || dup);
+        nameMsg.textContent = !okId ? "Letters, digits and underscore; start with a letter or underscore; at most 64 characters." : dup ? "Another definition already uses this name." : "";
+        nameMsg.classList.toggle("is-err", Boolean(!okId || dup));
+      };
+      nameInp.addEventListener("input", () => { def.name = nameInp.value; path.textContent = `m5mobile.define.${def.name || "…"}`; validateName(); changed(); renderNav(); });
+
+      const kindSel = h("select", { class: "input input--sm", disabled: ro }, h("option", { value: "variable" }, "variable"), h("option", { value: "constant" }, "constant"));
+      kindSel.value = def.kind === "constant" ? "constant" : "variable";
+      kindSel.addEventListener("change", () => { def.kind = kindSel.value; changed(); renderNav(); });
+
+      const scopeSel = h("select", { class: "input input--sm", disabled: ro }, ...DEF_SCOPES.map((s) => h("option", { value: s }, s)));
+      scopeSel.value = def.scope || "both";
+      scopeSel.addEventListener("change", () => { def.scope = scopeSel.value; changed(); renderNav(); });
+
+      const maxInp = h("input", { class: "input input--sm and-def-max", type: "number", min: "0", step: "1", value: String(def.maxSize ?? 0), disabled: ro });
+      maxInp.addEventListener("input", () => { def.maxSize = Math.max(0, Math.trunc(Number(maxInp.value) || 0)); changed(); });
+
+      const noteInp = h("input", { class: "input input--sm", type: "text", value: def.note || "", placeholder: "note (optional)", disabled: ro });
+      noteInp.addEventListener("input", () => { def.note = noteInp.value; changed(); });
+
+      validateName();
+      content.append(h("div", { class: "card stack" },
+        h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Definition"), h("div", { class: "card__hint" }, "Reached as "), path),
+        h("div", { class: "and-def-meta" }, defField("Name", nameInp), defField("Kind", kindSel), defField("Scope", scopeSel), defField("Max size (bytes, 0 = unlimited)", maxInp)),
+        nameMsg,
+        defField("Note", noteInp)));
+
+      const valueBox = h("div", {});
+      defBuildNode(valueBox, def.node, changed, { readOnly: ro, depth: 0, onRetype: renderNav });
+      const defSize = h("div", { class: "small and-def-size and-def-size--total" });
+      const updateDefSize = () => {
+        const bytes = defBytes(defMaterialize(def.node));
+        const max = def.maxSize || 0;
+        const over = max > 0 && bytes > max;
+        defSize.textContent = `Materialized size: ${bytes} B${max ? ` / ${max} B limit` : " · unlimited"}${over ? " — over the limit; the server will reject the save" : ""}`;
+        defSize.classList.toggle("is-over", over);
+      };
+      sizeFn = updateDefSize;
+      updateDefSize();
+      content.append(h("div", { class: "card stack" },
+        h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Value"), h("div", { class: "card__hint" }, "The type, and the value the definition holds. Objects, classes and arrays nest.")),
+        valueBox, defSize));
+    }
+
+    saveBtn = edit ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: doSave }, "Save") : null;
+    revertBtn = edit ? h("button", { class: "btn btn--sm", type: "button", onclick: revert }, "Revert") : null;
+    body.append(h("div", { class: "card" },
+      h("div", { class: "card__head" },
+        h("div", { class: "card__title" }, "Typed definitions (m5mobile.define)"),
+        h("div", { class: "card__hint" }, "The operator's variables and constants, delivered to both apps and Functions."),
+        h("span", { class: "card__actions" }, status, saveBtn, revertBtn))));
+    body.append(h("div", { class: "and-def" }, nav, content));
+    body.append(h("div", { class: "muted small and-def-help" }, "Each becomes m5mobile.define.<name> in Packages, Models, Functions and both apps. The server re-checks every definition against its max size when you save."));
+
+    renderNav();
+    renderContent();
+    updateStatus();
   }
 
   C.addRoute("android", ["Android", "Devices, builds, releases, design and security of the Android app", load]);

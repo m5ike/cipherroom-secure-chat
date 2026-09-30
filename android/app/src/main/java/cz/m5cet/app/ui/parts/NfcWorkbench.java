@@ -602,7 +602,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             if (op.id.equals("scan") || op.id.equals("read-uid")) continue; // scan is the top button
             if (i % perRow == 0) { rowv = new LinearLayout(a); rowv.setPadding(0, Ui.dp(a, 4), 0, 0); opsBox.addView(rowv); }
             TextView b = ToolPanels.button(a, op.label, opIcon(op), false);
-            b.setOnClickListener(v -> onOpClicked(tech, op));
+            b.setOnClickListener(v -> onOpClicked(tech, op, v));
             LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
             lp.setMarginEnd(Ui.dp(a, 6));
             rowv.addView(b, lp);
@@ -611,14 +611,16 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
     }
 
     private String opIcon(NfcCatalog.Op op) {
+        if (op.id.equals("app-template")) return "square-arrow-down"; // a dropdown of APDU templates
         if (op.kind.equals("write")) return "pencil";
         if (op.kind.equals("emulate")) return "smartphone";
         return "eye";
     }
 
     /** Clicking an op: writes/UID/APDU gather input first, then arm and tap. */
-    private void onOpClicked(String tech, NfcCatalog.Op op) {
+    private void onOpClicked(String tech, NfcCatalog.Op op, android.view.View anchor) {
         switch (op.id) {
+            case "app-template": showAppTemplates(anchor); return;
             case "m5-emulate": {
                 byte[] c = lastContainerForEmulate;
                 if (c == null) { a.flash("", app().t("nfc.m5.buildFirst"), "info"); a.showScreen("nfc.builder", true); }
@@ -635,6 +637,33 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             case "write-uid": askHex(app().t("nfc.uid.prompt"), hex -> arm(op.id, -1, CardOps.unhex(hex))); return;
             default: arm(op.id); return;
         }
+    }
+
+    /**
+     * 6.3: the "Application template" dropdown — a menu of the operator's saved APDU
+     * application templates (m5mobile.define › apduTemplates), each an object
+     * { label, apdu } with apdu a hex string. Picking one arms and sends it like
+     * Select application (a SELECT/APDU over ISO-DEP) and shows the response.
+     */
+    private void showAppTemplates(android.view.View anchor) {
+        org.json.JSONArray tpls = app().define == null ? null : app().define.arr("apduTemplates");
+        if (tpls == null || tpls.length() == 0) { a.flash("", app().t("nfc.tpl.none"), "info"); return; }
+        android.widget.PopupMenu menu = new android.widget.PopupMenu(a, anchor);
+        for (int i = 0; i < tpls.length(); i++) {
+            org.json.JSONObject t = tpls.optJSONObject(i);
+            String label = t == null ? "" : t.optString("label", t.optString("name", ""));
+            menu.getMenu().add(0, i, i, label.isEmpty() ? "APDU " + (i + 1) : label);
+        }
+        menu.setOnMenuItemClickListener(item -> {
+            org.json.JSONObject t = tpls.optJSONObject(item.getItemId());
+            String hex = t == null ? "" : t.optString("apdu", t.optString("apduHex", "")).replaceAll("[^0-9A-Fa-f]", "");
+            byte[] apdu = hex.length() >= 8 && hex.length() % 2 == 0 ? CardOps.unhex(hex) : new byte[0];
+            if (apdu.length == 0) { a.flash("", app().t("nfc.tpl.bad"), "warn"); return true; }
+            a.flash("", t.optString("label", t.optString("name", "APDU")), "info");
+            arm("select-aid", -1, apdu);
+            return true;
+        });
+        menu.show();
     }
 
     private byte[] lastContainerForEmulate;

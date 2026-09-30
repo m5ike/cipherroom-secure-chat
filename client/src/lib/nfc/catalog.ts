@@ -117,6 +117,7 @@ export const NFC_CATALOG: TechInfo[] = [
   ]),
   T("iso-dep", "ISO-DEP (ISO 14443-4)", "ISO 14443-4 / ISO 7816", "", [
     { id: "select-aid", label: "Select application", kind: "read", help: "SELECT an AID and talk to it with APDUs." },
+    { id: "app-template", label: "Application template", kind: "read", help: "Send a saved APDU application template (the operator's apduTemplates in Android › Define)." },
   ]),
   T("iso14443a", "ISO/IEC 14443 Type A", "ISO 14443-3A", "", []),
   T("iso14443b", "ISO/IEC 14443 Type B", "ISO 14443-3B", "", []),
@@ -130,6 +131,7 @@ export const NFC_CATALOG: TechInfo[] = [
   ]),
   T("emv", "EMV payment card", "ISO 14443-4 · EMV", "", [
     { id: "emv-public", label: "Read public data", kind: "read", help: "Only the freely readable data (PPSE, the card's application labels, and where allowed the masked PAN and expiry). No PIN, no signing, no transaction." },
+    { id: "app-template", label: "Application template", kind: "read", help: "Send a saved APDU application template (the operator's apduTemplates in Android › Define)." },
   ]),
   T("eid", "Electronic ID / MRTD", "ISO 14443-4 · ICAO 9303 / eIDAS", "", [
     { id: "eid-public", label: "Read public info", kind: "read", help: "The document type and the data the holder unlocks with the CAN/MRZ they type. No cloning, no signing." },

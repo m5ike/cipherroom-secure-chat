@@ -149,7 +149,8 @@ public final class NfcCatalog {
             op("desfire-write", "Write file", "write", "key", "Write a file after authenticating with its key.")
         ))));
         c.add(t(ISO_DEP, "ISO-DEP (ISO 14443-4)", "ISO 14443-4 / ISO 7816", "", Arrays.asList(
-            op("select-aid", "Select application", "read", null, "SELECT an AID and talk to it with APDUs.")
+            op("select-aid", "Select application", "read", null, "SELECT an AID and talk to it with APDUs."),
+            op("app-template", "Application template", "read", null, "Send a saved APDU application template (apduTemplates in Android › Define).")
         )));
         c.add(t(ISO14443A, "ISO/IEC 14443 Type A", "ISO 14443-3A", "", Collections.emptyList()));
         c.add(t(ISO14443B, "ISO/IEC 14443 Type B", "ISO 14443-3B", "", Collections.emptyList()));
@@ -162,7 +163,8 @@ public final class NfcCatalog {
             op("felica-read", "Read service", "read", "key", "Read a service's blocks (Read Without Encryption for public ones).")
         )));
         c.add(t(EMV, "EMV payment card", "ISO 14443-4 · EMV", "", Arrays.asList(
-            op("emv-public", "Read public data", "read", null, "Only the freely readable data (PPSE, the card's application labels, and where allowed the masked PAN and expiry). No PIN, no signing, no transaction.")
+            op("emv-public", "Read public data", "read", null, "Only the freely readable data (PPSE, the card's application labels, and where allowed the masked PAN and expiry). No PIN, no signing, no transaction."),
+            op("app-template", "Application template", "read", null, "Send a saved APDU application template (apduTemplates in Android › Define).")
         )));
         c.add(t(EID, "Electronic ID / MRTD", "ISO 14443-4 · ICAO 9303 / eIDAS", "", Arrays.asList(
             op("eid-public", "Read public info", "read", null, "The document type and the data the holder unlocks with the CAN/MRZ they type. No cloning, no signing.")

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Usb, Radio, Bluetooth, Smartphone, Plug, PlugZap, ScanLine, KeyRound,
   Download, Upload, Cpu, TerminalSquare, CreditCard, Copy, Trash2, Play, Square, Loader2, Lock, Fingerprint,
+  SquareArrowDown,
 } from "lucide-react";
 import "./nfc-workbench.css";
 import {
@@ -31,6 +32,7 @@ import { createWebExecutor, techForCardType } from "../lib/nfc/web-executor";
 import { registerNfcExecutor } from "../lib/nfc/bridge";
 import { nominalCapacity } from "../lib/nfc/m5cet-card";
 import { t as translate, type Lang } from "../lib/i18n";
+import { useDefine } from "../lib/define/client";
 import { M5CardPanel } from "./M5CardPanel";
 import type { M5Record } from "../lib/nfc/m5card";
 
@@ -369,14 +371,41 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
   const [apduText, setApduText] = useState("00A404000E325041592E5359532E444446303100\n00B0000000");
   const [apduContinue, setApduContinue] = useState(false);
 
-  const doApdu = useCallback(() => runTask("apdu", async () => {
+  // Run a newline-separated APDU script (each line one hex APDU). Shared by the
+  // APDU console's Run button and the Application-template menu, so a template
+  // sends its saved APDUs immediately with its own text (not the stale state).
+  const runApduText = useCallback((text: string) => runTask("apdu", async () => {
     const tr = transportRef.current;
     if (!tr) { onSystem(`NFC: ${t("nfc.connectFirst")}`); return; }
     if (!tr.capabilities.apdu) { addLog("err", t("nfc.apdu.unsupported")); return; }
-    const apdus = apduText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).map((l) => unhex(l));
+    const apdus = text.split(/\r?\n/).map((l) => l.trim().replace(/[^0-9A-Fa-f]/g, "")).filter(Boolean).map((l) => unhex(l));
+    if (!apdus.length) { addLog("err", t("nfc.tpl.bad")); return; }
     const steps = await runApduScript(tr, apdus, { continueOnError: apduContinue });
     for (const s of steps) { addLog("tx", `→ ${hex(s.apdu, " ")}`); addLog(s.ok ? "rx" : "err", `← ${hex(s.response.data, " ")} ${hex([s.response.sw1, s.response.sw2])} ; ${s.note}`); }
-  }), [runTask, apduText, apduContinue, addLog, onSystem, t]);
+  }), [runTask, apduContinue, addLog, onSystem, t]);
+
+  const doApdu = useCallback(() => runApduText(apduText), [runApduText, apduText]);
+
+  /* --------------------- application templates (define) --------------- */
+  // Operator-defined APDU application templates: m5mobile.define.apduTemplates,
+  // an array of { label?/name?, apdu?/apduHex? } served to the web app. The
+  // "Application template" op (next to Select application) opens this menu.
+  const define = useDefine();
+  const [tplOpen, setTplOpen] = useState(false);
+  const apduTemplates = useMemo(() => {
+    const v = (define.values as Record<string, unknown>).apduTemplates;
+    return Array.isArray(v) ? (v.filter((x) => x && typeof x === "object") as Record<string, unknown>[]) : [];
+  }, [define.values]);
+
+  const applyTemplate = useCallback((tpl: Record<string, unknown>) => {
+    const raw = String(tpl.apdu ?? tpl.apduHex ?? tpl.value ?? "");
+    const clean = raw.split(/\r?\n/).map((l) => l.trim().replace(/[^0-9A-Fa-f]/g, "")).filter(Boolean).join("\n");
+    if (clean.replace(/\s/g, "").length < 8) { onSystem(`NFC: ${t("nfc.tpl.bad")}`); return; }
+    setApduText(clean);
+    setTplOpen(false);
+    setTab("apdu");
+    void runApduText(clean);
+  }, [runApduText, onSystem, t]);
 
   /* ---------------------------- emulation ---------------------------- */
 
@@ -413,6 +442,7 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
       case "ul-read": case "ul-write": case "ntag-read": case "ntag-write": case "ntag-counter": case "ul-password": case "ntag-password": return caps.raw;
       case "write-uid": return caps.raw || caps.mifareAuth;
       case "raw-apdu": case "select-aid": case "desfire-apps": case "emv-public": case "eid-public": return caps.apdu;
+      case "app-template": return caps.apdu;
       case "m5-read": case "m5-write": case "m5-erase": case "conn-read": return caps.write || caps.raw || caps.apdu;
       case "m5-emulate": case "conn-emulate": return caps.emulate;
       default: return false; // desfire-files/read/write, felica-*, v-* — not on the web readers yet
@@ -432,7 +462,8 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
       case "emv-public": runProbe("select-ppse"); break;
       case "eid-public": runProbe("select-mrtd"); break;
       case "desfire-apps": runProbe("get-version"); break;
-      case "raw-apdu": case "select-aid": setTab("apdu"); break;
+      case "raw-apdu": case "select-aid": setTab("apdu"); setTplOpen(false); break;
+      case "app-template": setTplOpen((v) => !v); break;
       case "m5-read": case "m5-write": case "m5-erase": setTab("m5"); break;
       case "conn-read": case "conn-write": setTab("conn"); break;
       case "m5-emulate": case "conn-emulate": setTab("emulate"); break;
@@ -524,6 +555,22 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
                   );
                 })}
               </div>
+
+              {/* Application templates (m5mobile.define.apduTemplates) */}
+              {tplOpen && ops.some((o) => o.id === "app-template") ? (
+                <div className="nfcwb__tplmenu" role="menu">
+                  <div className="nfcwb__tplmenu-title"><SquareArrowDown width={13} height={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />{t("nfc.tpl.title")}</div>
+                  {apduTemplates.length === 0
+                    ? <div className="nfcwb__tplmenu-empty">{t("nfc.tpl.none")}</div>
+                    : apduTemplates.map((tpl, i) => (
+                        <button key={i} type="button" role="menuitem" className="nfcwb__tplmenu-item" disabled={!connected || !!busy}
+                          onClick={() => applyTemplate(tpl)}>
+                          <span>{String(tpl.label ?? tpl.name ?? `APDU ${i + 1}`)}</span>
+                          {tpl.aid ? <span className="nfcwb__hint">{String(tpl.aid)}</span> : null}
+                        </button>
+                      ))}
+                </div>
+              ) : null}
 
               {/* Change UID (magic cards) */}
               <div className="nfcwb__section-title"><span><Fingerprint width={13} height={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />{t("nfc.uid.change")}</span></div>

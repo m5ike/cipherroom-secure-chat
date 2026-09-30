@@ -240,6 +240,10 @@ const cs: Dict = {
   "nfc.op.felica-read": "Číst službu",
   "nfc.op.emv-public": "Přečíst veřejná data",
   "nfc.op.eid-public": "Přečíst veřejné info",
+  "nfc.op.app-template": "Šablona aplikace",
+  "nfc.tpl.title": "Šablony aplikací (APDU)",
+  "nfc.tpl.none": "Žádné šablony — přidej je v Android › Menu › Define (apduTemplates).",
+  "nfc.tpl.bad": "Šablona nemá platné APDU (hex).",
 };
 
 const en: Dict = {
@@ -456,6 +460,10 @@ const en: Dict = {
   "nfc.op.felica-read": "Read service",
   "nfc.op.emv-public": "Read public data",
   "nfc.op.eid-public": "Read public info",
+  "nfc.op.app-template": "Application template",
+  "nfc.tpl.title": "Application templates (APDU)",
+  "nfc.tpl.none": "No templates — add them in Android › Menu › Define (apduTemplates).",
+  "nfc.tpl.bad": "That template has no valid APDU (hex).",
 };
 
 const de: Dict = {
@@ -672,6 +680,10 @@ const de: Dict = {
   "nfc.op.felica-read": "Dienst lesen",
   "nfc.op.emv-public": "Öffentliche Daten lesen",
   "nfc.op.eid-public": "Öffentliche Info lesen",
+  "nfc.op.app-template": "Anwendungsvorlage",
+  "nfc.tpl.title": "Anwendungsvorlagen (APDU)",
+  "nfc.tpl.none": "Keine Vorlagen — füge sie unter Android › Menü › Define (apduTemplates) hinzu.",
+  "nfc.tpl.bad": "Diese Vorlage hat kein gültiges APDU (Hex).",
 };
 
 export const NFC_I18N = { cs, en, de };

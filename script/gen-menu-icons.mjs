@@ -46,6 +46,7 @@ const ICONS = [
   "hammer", "audio-lines", "switch-camera", "log-in", "speaker", "pause", "navigation", "sun-moon", "volume-1",
   "wand-sparkles", "scan-line", "text-cursor-input", "route", "locate-fixed", "file-up", "camera-off", "ear", "speech",
   "type", "contrast", "shield-user", "shuffle",
+  "square-arrow-down",
   // 6.2 fixes
 
   // 6.2 people
