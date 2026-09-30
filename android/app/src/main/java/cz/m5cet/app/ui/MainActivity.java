@@ -152,8 +152,18 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     }
 
     private void applySecureFlag() {
-        if (app.lock.screenshots()) getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        if (app.lock.screenshots() || debugScreenshots()) getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
         else getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+    }
+
+    /**
+     * Debug builds only: screenshots for testing on a device, switched on by a marker in the
+     * app's private files (adb shell run-as cz.m5cet.app touch files/debug-screenshots) —
+     * reachable only with run-as, which already reads everything the app has. Release builds
+     * never look.
+     */
+    private boolean debugScreenshots() {
+        return BuildConfig.DEBUG && new java.io.File(getFilesDir(), "debug-screenshots").exists();
     }
 
     @Override
