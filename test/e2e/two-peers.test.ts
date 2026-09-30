@@ -97,13 +97,16 @@ async function joinRoom(name: string): Promise<{ page: Page; errors: string[] }>
   return { page, errors };
 }
 
-// Saves the received attachment the way a user would (clicking the link) and
+// Saves the received attachment the way a user would (its Save button) and
 // hashes it in Node. fetch() on the blob:/data: href is not an option: the
 // app's CSP connect-src rightly does not allow those schemes.
 async function sha256OfDownload(page: Page, fileName: string): Promise<{ size: number; sha256: string }> {
-  const link = page.locator(`a[download="${fileName}"]`).first();
-  await link.waitFor({ state: "attached", timeout: 60_000 });
-  const [download] = await Promise.all([page.waitForEvent("download", { timeout: 30_000 }), link.click()]);
+  // 6.2: a file of a message is a row in the bubble's footer (name, size,
+  // save / share / forward); Save appears once the whole file is there.
+  const row = page.locator(".msg-file", { has: page.locator(".msg-file__name", { hasText: fileName }) }).first();
+  const save = row.locator('[data-testid^="file-save-"]');
+  await save.waitFor({ state: "attached", timeout: 60_000 });
+  const [download] = await Promise.all([page.waitForEvent("download", { timeout: 30_000 }), save.click()]);
   const path = await download.path();
   const body = await readFile(path);
   return { size: body.byteLength, sha256: createHash("sha256").update(body).digest("hex") };

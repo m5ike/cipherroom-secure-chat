@@ -5,6 +5,23 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [Unreleased]
+
+### Opraveno
+- Konzole na úzké obrazovce: řádek statistik Functions (`white-space:
+  nowrap`) roztahoval stránku do šířky — pod 820 px přetékala vodorovně;
+  panely rozvržení pod sebou už nedrží svou minimální šířku, tabulky v nich
+  se posouvají uvnitř; na telefonu se horní lišta zalomí (titulek, pod ním
+  nástroje a účet), nadpisy skupin menu jsou přes celý řádek a tabulky
+  přenesené Telefonie se posouvají. Na 390, 760 i 1024 px žádná stránka
+  konzole nepřetéká.
+- Rozvržení: zvětšení panelu klávesnicí (Shift+→) nepřekročí šířku řádku
+  (jako tažení myší) a respektuje minimum panelu.
+- Testy: E2E přenosu souborů (`two-peers`, `relay-files`) ukládají soubor
+  tlačítkem *Uložit* v patičce bubliny (od 6.2 tam není odkaz
+  `a[download]`); `nfc-workbench` odpovídá na `/api/define` sám, místo
+  pokusu o spojení na `localhost:3000`.
+
 ## [6.4.1] – 2026-09-30
 
 **Žádné osiřelé passkeye, nové uživatelské jméno a název klíče.** Registrace

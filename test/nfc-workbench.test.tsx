@@ -5,7 +5,11 @@ import { NfcWorkbench } from "../client/src/components/NfcWorkbench";
 const base = { appVersion: "2.7.0", onConnect: vi.fn(), onSystem: vi.fn() } as const;
 
 describe("NfcWorkbench (6.3)", () => {
-  beforeEach(() => cleanup());
+  beforeEach(() => {
+    cleanup();
+    // useDefine() fetches /api/define: answer it here instead of the network (jsdom → localhost:3000).
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ values: {}, updatedAt: 0 }), { headers: { "content-type": "application/json" } })));
+  });
 
   it("lists the four readers and marks them unavailable in a headless env", () => {
     render(<NfcWorkbench lang="en" session={null} {...base} />);

@@ -196,7 +196,12 @@
       const step = e.ctrlKey || e.metaKey ? 80 : 20;
       if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
         e.preventDefault();
-        if (e.shiftKey) { const w = wrap.getBoundingClientRect().width; state.w[id] = Math.round(Math.max(MIN_W, w + (e.key === "ArrowRight" ? step : -step))); keep(); wraps.get(id)?.querySelector(".pl-grip")?.focus(); }
+        if (e.shiftKey) {
+          // Never wider than the row (as with the mouse).
+          const w = wrap.getBoundingClientRect().width, max = root.getBoundingClientRect().width;
+          state.w[id] = Math.round(Math.min(max, Math.max(byId.get(id).min || MIN_W, w + (e.key === "ArrowRight" ? step : -step))));
+          keep(); wraps.get(id)?.querySelector(".pl-grip")?.focus();
+        }
         else moveBy(id, e.key === "ArrowRight" ? 1 : -1);
       } else if ((e.key === "ArrowUp" || e.key === "ArrowDown") && e.altKey) {
         e.preventDefault();
