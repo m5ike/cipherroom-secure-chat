@@ -106,7 +106,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         box.addView(scanRow);
 
         // PIN (for the M5Cet card and the connection tag) and the key dictionary.
-        pin = field(app().t("nfc.pin"), InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        pin = field(app().t("nfc.work.pin"), InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
         box.addView(pin);
         keyDict = field(app().t("nfc.keys.hint"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         keyDict.setText(app().settings.str("nfc.keyDictionary"));
@@ -407,7 +407,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         Io.bg(() -> {
             try {
                 String p = pinText();
-                M5Card.KeyProvider keys = M5Card.keys(Nfc.validPin(p) ? p : null, accountRoot());
+                M5Card.KeyProvider keys = M5Card.keys(M5Card.isValidPin(p) ? p : null, accountRoot());
                 M5Card.Record rec = M5Card.open(s, keys);
                 Io.main(() -> actOnRecord(container, rec));
             } catch (Exception e) {

@@ -221,7 +221,7 @@ final class NfcCardBuilder extends ScrollView implements Renderer.Slot {
         final String p = pin.getText().toString().trim();
         boolean anyExternal = false, anyInternal = false;
         for (Draft d : drafts) { if (d.internal) anyInternal = true; else anyExternal = true; }
-        if (anyExternal && !Nfc.validPin(p)) { a.flash("", app().t("nfc.pin"), "warn"); pin.requestFocus(); return; }
+        if (anyExternal && !M5Card.isValidPin(p)) { a.flash("", app().t("nfc.builder.pin"), "warn"); pin.requestFocus(); return; }
         if (anyInternal && accountRoot() == null) { a.flash("", app().t("nfc.builder.needAccount"), "warn"); return; }
         Io.bg(() -> {
             try {
@@ -231,7 +231,7 @@ final class NfcCardBuilder extends ScrollView implements Renderer.Slot {
                     r.oneTime = d.oneTime;
                     recs.add(r);
                 }
-                final byte[] container = M5Card.buildCard(recs, M5Card.keys(Nfc.validPin(p) ? p : null, accountRoot()));
+                final byte[] container = M5Card.buildCard(recs, M5Card.keys(M5Card.isValidPin(p) ? p : null, accountRoot()));
                 Io.main(() -> armWrite(container));
             } catch (Exception e) {
                 Io.main(() -> a.flash("", e.getMessage(), "error"));
