@@ -33,6 +33,7 @@ import { hostTelephony } from "./host-telephony";
 import { nfcAllowed, nfcSpend, sanitizeNfcCommand, sanitizeNfcResult } from "./host-nfc";
 import { setHandlerRunner } from "../telephony/engine";
 import type { TelOwner } from "../telephony/tel-store";
+import { defineStore } from "../define"; // 6.3 define: the operator's typed constants/variables
 
 /** Bytes a sandbox sent as {"$b": base64}; null for anything else. */
 function taggedBytes(v: unknown): Buffer | null {
@@ -109,6 +110,7 @@ export function buildSpec(model: Model, inputs: Record<string, unknown>, caller:
       sys: { version: buildInfo().version, instance: process.env.INSTANCE_ID?.trim() || "m5cet" },
       session: { id: opts.sessionId },
       ...(opts.model ? { model: opts.model } : {}),
+      define: defineStore.values("both"), // 6.3 define: per-run snapshot of m5mobile.define
     },
     limits,
   };
@@ -612,6 +614,7 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
       sys: { version: buildInfo().version, instance: process.env.INSTANCE_ID?.trim() || "m5cet" },
       session: { id: sessionId },
       model: modelContext({ id: "", name: "draft", keyword: "" }, chain, callId, type, type, draftTypes.length ? draftTypes : ["execute"]),
+      define: defineStore.values("both"), // 6.3 define: per-run snapshot of m5mobile.define
     },
     limits,
   };

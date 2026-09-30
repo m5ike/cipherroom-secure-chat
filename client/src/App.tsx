@@ -18,6 +18,7 @@ import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURI
 import { linkify, tagsIn } from "./lib/linkify";
 import { fetchPushStatus, subscribeToPush, ensureServiceWorker, sendTestPush, showLocalTestNotification } from "./lib/push";
 import { dispatchInternal, installPublicAPI } from "./lib/cipherroom-api";
+import { bootstrapDefine } from "./lib/define/client"; // 6.3 define
 import { applyTheme, applyTypography, applyColorOverrides, applyEffects, applyChatSurface } from "./lib/themes";
 import { ensureFonts, GOOGLE_FONTS } from "./lib/fonts";
 import { applyDeviceAttributes, deviceInfo, fullscreenSupported, toggleFullscreen, watchFullscreen } from "./lib/device";
@@ -1955,6 +1956,7 @@ function ChatApp() {
 
   useEffect(() => {
     installPublicAPI();
+    bootstrapDefine(); // 6.3 define: publish window.m5mobile = { define } and fetch it
   }, []);
 
   useEffect(() => {

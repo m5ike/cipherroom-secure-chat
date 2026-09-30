@@ -54,6 +54,10 @@ export type RunContext = {
   sys: { version: string; instance: string };
   session: { id: string };
   model?: ModelContext;
+  /** 6.3 define: a per-run snapshot of m5mobile.define — the operator's typed
+   *  constants/variables, already materialized (name → value; a script value is
+   *  { __m5script, code, lang }). Absent → the runtime exposes an empty object. */
+  define?: Record<string, unknown>;
 };
 
 export type RunSpec = {
