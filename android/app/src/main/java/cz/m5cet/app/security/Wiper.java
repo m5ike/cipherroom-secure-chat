@@ -42,6 +42,9 @@ public final class Wiper {
             Log.e("wipe", "the wipe event could not be prepared", e);
         }
         try { app.rooms.disconnectAll(); } catch (Throwable ignored) { }
+        // 6.2: the M5cet rows in the phone's address book (usernames of linked people) and our account go too —
+        // also for a remote wipe, when no screen is there to do it.
+        try { cz.m5cet.app.contacts.AddressBook.removeAll(app); } catch (Throwable ignored) { }
         app.vault.lock();
         Log.clear();
         Keystore.deleteAll();
