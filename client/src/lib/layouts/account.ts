@@ -182,6 +182,7 @@ export function accessTree(): LNode {
     n("panel", { id: "access-buttons", attrs: { class: "flex flex-wrap items-center gap-2" } }, [
       iconButton(b, "account-signin", "lock-keyhole-open", "h-4 w-4", "{_'id.signIn'}", { if: "!$signedIn", attrs: { type: "button", class: "acc-btn acc-btn--primary", disabled: "=$blocked", "data-testid": "account-signin" }, on: { click: { action: "signIn" } } }),
       iconButton(b, "account-register", "user-plus", "h-4 w-4", "{_'id.register'}", { if: "!$signedIn", attrs: { type: "button", class: "acc-btn", disabled: "=$blocked", "data-testid": "account-register" }, on: { click: { action: "register" } } }),
+      iconButton(b, "account-register-form", "contact-round", "h-4 w-4", "{_'menu.register'}", { if: "$canRegisterForm", attrs: { type: "button", class: "acc-btn", disabled: "=$blocked", "data-testid": "account-register-form" }, on: { click: { action: "registerForm" } } }),
       iconButton(b, "account-signout-wipe", "log-out", "h-4 w-4", "{_'id.signOut'}", { if: "$signedIn", attrs: { type: "button", class: "acc-btn", disabled: "=$busy", "data-testid": "account-signout-wipe" }, on: { click: { action: "signOutWipe" } } }),
     ]),
     n("list", { id: "signin-steps", name: "Sign-in steps", tag: "ol", if: "($steps|length) > 0", attrs: { class: "id-steps", "data-testid": "signin-steps", "aria-label": "{_'id.steps'}" } }, [
@@ -300,6 +301,7 @@ export const ACCOUNT_CONTRACTS: Record<AccountId, LayoutContract> = {
       { path: "$error", type: "object", description: "Why it stopped: .code, .title, .hint, .detail, .logged." },
       { path: "$done", type: "text", description: "What went well." },
       { path: "$canRecover", type: "yes/no", description: "A recovery code can be used." },
+      { path: "$canRegisterForm", type: "yes/no", description: "The registration form can be opened (6.4)." },
       { path: "$recovering", type: "yes/no", description: "The recovery form is open." },
       { path: "$recoverCode", type: "text", description: "The code typed." },
       { path: "$recoverCodeOk", type: "yes/no", description: "It is long enough." },
@@ -320,6 +322,7 @@ export const ACCOUNT_CONTRACTS: Record<AccountId, LayoutContract> = {
     actions: [
       { name: "signIn", description: "Sign in with a passkey." },
       { name: "register", description: "Register." },
+      { name: "registerForm", description: "Open the registration form (6.4)." },
       { name: "signOutWipe", description: "Sign out and wipe this device." },
       { name: "recoverOpen", description: "Open the recovery form." },
       { name: "recover", description: "Use the recovery code.", event: "submit" },

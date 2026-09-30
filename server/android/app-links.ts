@@ -6,25 +6,41 @@
 //
 // Only certificates the server knows: those of the releases (Android ›
 // Releases learns them, androidConfig().certSha256) and, for development
-// builds, ANDROID_DEBUG_CERT_SHA256 (hex, comma separated). Exact values —
-// never a pattern. Without any, no assetlinks.json (404) and no app origin.
+// builds, ANDROID_DEBUG_CERT_SHA256 (hex, comma separated) or — 6.4 — the
+// ones the operator trusted for passkeys in the console
+// (androidConfig().passkeyCertSha256, never valid for a release). Exact
+// values — never a pattern. Without any, no assetlinks.json (404) and no app
+// origin.
 
 import type { Express } from "express";
 import { androidConfig } from "./config";
 
 const HEX64 = /^[0-9a-f]{64}$/;
 
+export type CertSource = "release" | "env" | "trusted";
+
+/** Every known fingerprint (hex) and where it comes from. */
+export function androidCertSources(): Map<string, CertSource[]> {
+  const out = new Map<string, CertSource[]>();
+  const add = (raw: unknown, source: CertSource) => {
+    const hex = String(raw).trim().toLowerCase().replace(/:/g, "");
+    if (!HEX64.test(hex)) return;
+    const list = out.get(hex) ?? [];
+    if (!list.includes(source)) list.push(source);
+    out.set(hex, list);
+  };
+  let release: string[] = [];
+  let trusted: string[] = [];
+  try { release = androidConfig().certSha256; trusted = androidConfig().passkeyCertSha256 ?? []; } catch { /* no config yet */ }
+  for (const raw of release) add(raw, "release");
+  for (const raw of (process.env.ANDROID_DEBUG_CERT_SHA256 ?? "").split(",")) add(raw, "env");
+  for (const raw of trusted) add(raw, "trusted");
+  return out;
+}
+
 /** Hex SHA-256 fingerprints of the certificates the app may be signed with. */
 export function androidCertFingerprints(): string[] {
-  const out = new Set<string>();
-  let fromConfig: string[] = [];
-  try { fromConfig = androidConfig().certSha256; } catch { fromConfig = []; }
-  const fromEnv = (process.env.ANDROID_DEBUG_CERT_SHA256 ?? "").split(",");
-  for (const raw of [...fromConfig, ...fromEnv]) {
-    const hex = String(raw).trim().toLowerCase().replace(/:/g, "");
-    if (HEX64.test(hex)) out.add(hex);
-  }
-  return [...out];
+  return [...androidCertSources().keys()];
 }
 
 /** The WebAuthn origins of the app's builds. */

@@ -11,7 +11,7 @@
 //                                          against the account's verifier;
 //                                          unlocks the session (4.0)       (Bearer, locked ok)
 //   GET    /api/account/me                 summary: sizes, dates, counts, audit   (Bearer)
-//   GET    /api/account/vault              encrypted profile + chat blobs         (Bearer)
+//   GET    /api/account/vault              encrypted profile + chat blobs (6.4: + registration) (Bearer)
 //   PUT    /api/account/vault              store encrypted blobs                  (Bearer)
 //   POST   /api/account/event              client-reported: decrypt-ok / -failed,
 //                                          data-loaded / data-cleared             (Bearer)
@@ -32,6 +32,15 @@
 //   DELETE /api/account/sessions/:id       end one of them                        (Bearer)
 //   PUT    /api/account/identity           the account's public signing key      (Bearer)
 //
+//   6.4 — registration with a form (registration.ts):
+//   GET    /api/account/countries          ISO code + calling code of every country
+//   POST   /api/account/register/check     {firstName, lastName, country, phone, email}
+//                                          → normalized fields, or per-field error codes
+//   POST   /api/account/register/start     the same, checked again → a new username
+//                                          (REGISTERED_USERNAME_RE) + creation options;
+//                                          the challenge carries the contact hashes and
+//                                          /register/verify stores them on the account
+//
 // Challenges are random, single-use and expire after 2 minutes; the one a
 // response answers is read from its clientDataJSON and must have been issued
 // for that ceremony. rpId: WEBAUTHN_RP_ID, else the PUBLIC_BASE_URL host,
@@ -48,6 +57,8 @@ import { audit } from "../monitor/audit";
 import { ACCOUNT_LIMITS, accountStore as defaultStore, usernameOf, type AccountRecord, type AccountStore } from "./store";
 import { userHandleFor, usernameFromHandle } from "./username";
 import { androidAppOrigins } from "../android/app-links";
+import { checkRegistrationOnServer, errorSummary } from "./registration";
+import { countryList } from "../../client/src/lib/registration/form";
 import {
   SUPPORTED_ALGS, b64urlToBuffer, verifyAssertion, verifyRegistration,
   type AssertionResponseJSON, type RegistrationResponseJSON, type RpPolicy,
@@ -57,22 +68,25 @@ const env = (name: string) => process.env[name]?.trim() || "";
 const CHALLENGE_TTL_MS = 2 * 60 * 1000;
 
 type Purpose = "register" | "signin" | "add-passkey" | "recover";
+type Contact = { email: string; phone: string };
+
 class Challenges {
-  private map = new Map<string, { purpose: Purpose; at: number; userName?: string }>();
-  issue(purpose: Purpose, userName?: string): string {
+  private map = new Map<string, { purpose: Purpose; at: number; userName?: string; contact?: Contact }>();
+  /** 6.4: a registration's challenge also carries its contact hashes (never the values). */
+  issue(purpose: Purpose, userName?: string, contact?: Contact): string {
     const now = Date.now();
     for (const [k, v] of this.map) if (now - v.at > CHALLENGE_TTL_MS) this.map.delete(k);
     if (this.map.size > 10_000) this.map.clear();
     const c = randomBytes(32).toString("base64url");
-    this.map.set(c, { purpose, at: now, userName });
+    this.map.set(c, { purpose, at: now, userName, ...(contact ? { contact } : {}) });
     return c;
   }
   /** Consumes the challenge if it was issued for `purpose` and is still fresh. */
-  take(challenge: string, purpose: Purpose): { userName?: string } | null {
+  take(challenge: string, purpose: Purpose): { userName?: string; contact?: Contact } | null {
     const v = this.map.get(challenge);
     this.map.delete(challenge);
     if (!v || v.purpose !== purpose || Date.now() - v.at > CHALLENGE_TTL_MS) return null;
-    return { userName: v.userName };
+    return { userName: v.userName, ...(v.contact ? { contact: v.contact } : {}) };
   }
 }
 
@@ -188,27 +202,70 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
 
   // 4.0: the server picks the username (unique, the account's primary key)
   // and puts it into the passkey — name, display name and user handle.
-  app.post("/api/account/register/options", ceremonyLimiter, (req: Request, res: Response) => {
+  const registrationOptions = (req: Request, challenge: string, username: string) => {
     const policy = rpPolicyFor(req);
+    return {
+      challenge,
+      rp: { id: policy.rpId, name: "M5cet" },
+      user: { id: userHandleFor(username), name: username, displayName: `M5cet · ${username}` },
+      pubKeyCredParams: SUPPORTED_ALGS.map((alg) => ({ type: "public-key", alg })),
+      authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
+      attestation: "none",
+      timeout: 60_000,
+    };
+  };
+
+  app.post("/api/account/register/options", ceremonyLimiter, (req: Request, res: Response) => {
     let username: string;
     try { username = store.newUsername(); } catch {
       adminLog("account.register.failed", "warn", req, { status: "no-username" });
       return res.status(503).json({ ok: false, message: "No free username; try again." });
     }
     const challenge = challenges.issue("register", username);
-    res.json({
-      ok: true,
-      username,
-      publicKey: {
-        challenge,
-        rp: { id: policy.rpId, name: "M5cet" },
-        user: { id: userHandleFor(username), name: username, displayName: `M5cet · ${username}` },
-        pubKeyCredParams: SUPPORTED_ALGS.map((alg) => ({ type: "public-key", alg })),
-        authenticatorSelection: { residentKey: "required", requireResidentKey: true, userVerification: "required" },
-        attestation: "none",
-        timeout: 60_000,
-      },
-    });
+    res.json({ ok: true, username, publicKey: registrationOptions(req, challenge, username) });
+  });
+
+  /* ------------------------------------------------ registration (6.4) */
+
+  // The check answers whether an e-mail or phone is registered, so it is an
+  // oracle: tighter than the passkey ceremonies, and audited (codes only).
+  const registrationLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { ok: false, message: "Too many registration attempts; wait a few minutes." },
+  });
+
+  app.get("/api/account/countries", (_req: Request, res: Response) => {
+    res.setHeader("Cache-Control", "public, max-age=86400");
+    res.json({ ok: true, countries: countryList() });
+  });
+
+  app.post("/api/account/register/check", registrationLimiter, async (req: Request, res: Response) => {
+    const r = await checkRegistrationOnServer(req.body, store);
+    if (!r.ok) {
+      adminLog("account.register.check", r.status === 409 ? "notice" : "info", req, { status: String(r.status), detail: { fields: errorSummary(r.errors) } });
+      return res.status(r.status).json({ ok: false, errors: r.errors, message: r.message });
+    }
+    res.json({ ok: true, normalized: r.normalized });
+  });
+
+  // Checked again, never trusting an earlier /check: the challenge issued
+  // here carries the contact hashes, so the client cannot swap them.
+  app.post("/api/account/register/start", registrationLimiter, async (req: Request, res: Response) => {
+    const r = await checkRegistrationOnServer(req.body, store);
+    if (!r.ok) {
+      adminLog("account.register.check", r.status === 409 ? "notice" : "info", req, { status: String(r.status), detail: { fields: errorSummary(r.errors), step: "start" } });
+      return res.status(r.status).json({ ok: false, errors: r.errors, message: r.message });
+    }
+    let username: string;
+    try { username = store.newRegisteredUsername(); } catch {
+      adminLog("account.register.failed", "warn", req, { status: "no-username" });
+      return res.status(503).json({ ok: false, message: "No free username; try again." });
+    }
+    const challenge = challenges.issue("register", username, r.hashes);
+    res.json({ ok: true, username, normalized: r.normalized, publicKey: registrationOptions(req, challenge, username) });
   });
 
   app.post("/api/account/register/verify", ceremonyLimiter, (req: Request, res: Response) => {
@@ -233,9 +290,13 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       adminLog("account.register.failed", "warn", req, { status: "attestation", detail: { error: r.error.slice(0, 80) } });
       return res.status(400).json({ ok: false, message: `Passkey registration rejected: ${r.error}` });
     }
-    const created = store.create(r.credential, { username: issued.userName });
+    const created = store.create(r.credential, { username: issued.userName, ...(issued.contact ? { contact: issued.contact } : {}) });
     if (!created.ok) {
       adminLog("account.register.failed", "warn", req, { status: "store", detail: { reason: created.reason } });
+      if (created.taken) {
+        const errors = { ...(created.taken.email ? { email: "taken" } : {}), ...(created.taken.phone ? { phone: "taken" } : {}) };
+        return res.status(409).json({ ok: false, code: "taken", errors, message: "An account with this e-mail or phone was registered meanwhile." });
+      }
       return res.status(409).json({ ok: false, message: created.reason });
     }
     store.setKeyVerifier(created.account.id, keyProof);
@@ -243,7 +304,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     hooks.onAuthenticated?.(created.account.id, "register", clientInfo(req));
     const token = store.issueToken(created.account.id, Date.now(), clientInfo(req));
     eventStore.record({ kind: "account-register", meta: { accountId: created.account.id } });
-    adminLog("account.register", "notice", req, { accountId: created.account.id, status: "ok", detail: { username: created.account.id, alg: r.credential.alg } });
+    adminLog("account.register", "notice", req, { accountId: created.account.id, status: "ok", detail: { username: created.account.id, alg: r.credential.alg, form: Boolean(issued.contact) } });
     res.json({ ok: true, token, account: summaryOf(created.account.id, tokenHash(token)) });
   });
 
@@ -333,11 +394,11 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       profileBytes: vault.profile?.ct.length ?? 0,
       chatBytes: vault.chat?.ct.length ?? 0,
     });
-    res.json({ ok: true, profile: vault.profile ?? null, chat: vault.chat ?? null, connections: vault.connections ?? null });
+    res.json({ ok: true, profile: vault.profile ?? null, chat: vault.chat ?? null, connections: vault.connections ?? null, registration: vault.registration ?? null });
   });
 
   app.put("/api/account/vault", requireAccount, (req: AuthedRequest, res: Response) => {
-    const body = (req.body || {}) as { profile?: unknown; chat?: { ct?: unknown; messages?: unknown; messageBytes?: unknown; rooms?: unknown }; connections?: { ct?: unknown; count?: unknown } };
+    const body = (req.body || {}) as { profile?: unknown; chat?: { ct?: unknown; messages?: unknown; messageBytes?: unknown; rooms?: unknown }; connections?: { ct?: unknown; count?: unknown }; registration?: unknown };
     const patch: Parameters<AccountStore["putVault"]>[1] = {};
     if (body.profile !== undefined) patch.profile = String(body.profile);
     if (body.chat !== undefined) {
@@ -351,7 +412,8 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     if (body.connections !== undefined) {
       patch.connections = { ct: String(body.connections?.ct ?? ""), count: Number(body.connections?.count) || 0 };
     }
-    if (!patch.profile && !patch.chat && !patch.connections) return res.status(400).json({ ok: false, message: "Nothing to store." });
+    if (body.registration !== undefined) patch.registration = String(body.registration);
+    if (!patch.profile && !patch.chat && !patch.connections && !patch.registration) return res.status(400).json({ ok: false, message: "Nothing to store." });
     const r = store.putVault(req.account!.id, patch);
     if (!r.ok) return res.status(413).json({ ok: false, message: r.reason });
     // One audit line per minute per account, not one per autosave.

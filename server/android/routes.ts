@@ -214,6 +214,9 @@ export function registerAndroidRoutes(app: Express): void {
       locale: str(b.locale, 20) || device.locale,
       fcmToken: typeof b.fcmToken === "string" ? str(b.fcmToken, 400) : device.fcmToken,
     };
+    // 6.4: which certificate signed this build — the console compares it with assetlinks.json.
+    const cert = str(b.certSha256, 64).toLowerCase();
+    if (/^[0-9a-f]{64}$/.test(cert)) updated.certSha256 = cert;
     androidStore.devices.put(updated);
     const build = latestBuildFor(updated.appCode, c.policy.update.channel);
     const release = latestReleaseFor(updated);

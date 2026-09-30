@@ -35,9 +35,12 @@ import { RecipientsWidget, type WidgetPeer } from "./components/RecipientsWidget
 import { AudioRecorder } from "./components/AudioRecorder";
 import type { UserInfo } from "./components/UserInfoModal";
 import type { MessageInfo } from "./components/MessageInfoModal";
+import type { RegisterResult } from "./components/RegistrationDialog";
+import type { RegistrationInput } from "./lib/registration/form";
 // The NFC / smart-card workbench pulls in the transport + card-parsing tree;
 // load it only when the panel opens so the initial bundle stays lean.
 const NfcWorkbench = lazy(() => import("./components/NfcWorkbench").then((m) => ({ default: m.NfcWorkbench })));
+const RegistrationDialog = lazy(() => import("./components/RegistrationDialog").then((m) => ({ default: m.RegistrationDialog })));
 // Loaded on first use: the Appearance screen and the Edit Mode inspector.
 const AppearancePanel = lazy(() => import("./components/AppearancePanel").then((m) => ({ default: m.AppearancePanel })));
 const StyleInspector = lazy(() => import("./components/StyleInspector").then((m) => ({ default: m.StyleInspector })));
@@ -131,7 +134,7 @@ import { AudioControls, PeerList, VideoControls } from "./components/CallPanels"
 import { ConnectionPanel, FilesPanel, LocationPanel, SpeechPanel, type ConnLogEvent } from "./components/ToolPanels";
 import {
   accountStatus, accountSupported, accountToken, addPasskey, createRecoveryCode, currentAccount, deleteAccount as deleteServerAccount,
-  endSession, linkPushSubscription, loadVault, logAccountEvent, recoverWithCode, refreshAccount, registerAccount, removePasskey,
+  endSession, linkPushSubscription, loadVault, logAccountEvent, recoverWithCode, refreshAccount, registerAccount, removePasskey, saveRegistration,
   removeRecoveryCode, restoreSession, saveVault, loadConnectionsVault, signInWithPasskey, signOutAccount, type AccountStatus, type AccountSummary,
   AccountError, type StepState,
 } from "./lib/account";
@@ -583,6 +586,8 @@ function ChatApp() {
   const autoConnectDoneRef = useRef(false);
   const [accStatus, setAccStatus] = useState<AccountStatus | null>(null);
   const [accBusy, setAccBusy] = useState(false);
+  /** 6.4: the registration form dialog. */
+  const [showRegistration, setShowRegistration] = useState(false);
   const [accMsg, setAccMsg] = useState("");
   /** 4.0: the sign-in / registration in progress (or just finished) — its checked steps. */
   const [signin, setSignin] = useState<SignInProgress | null>(null);
@@ -999,6 +1004,7 @@ function ChatApp() {
         if (prefs.notificationsEnabled) disableNotifications(); else void enableNotifications();
         break;
       case "clearQuit": void clearAndQuit(); break;
+      case "register": if (!account) setShowRegistration(true); break;
       default: break;
     }
   }
@@ -1381,6 +1387,49 @@ function ChatApp() {
       await afterSignIn(acc, progress.report, "register", started);
       progress.done(tf(lang, "id.done.register", { username }));
     });
+  }
+
+  /**
+   * 6.4: registration with the form. The server checked the fields; /start
+   * issues the username and the passkey options, registerAccount runs the
+   * same passkey / key / database steps as "Create an account", the profile
+   * goes into its own sealed vault slot, and afterSignIn straightens and
+   * syncs this device's data into the new account. Field errors go back to
+   * the dialog instead of the Connection window.
+   */
+  async function registerWithForm(form: RegistrationInput): Promise<RegisterResult> {
+    const { start } = await import("./lib/registration/client");
+    const started = performance.now();
+    setAccBusy(true);
+    setAccMsg("");
+    try {
+      const issued = await start(form);
+      if (!issued.ok) {
+        return { ok: false, fields: issued.errors, message: issued.status === 429 ? t(lang, "reg.err.rate") : Object.keys(issued.errors).length ? "" : tf(lang, "reg.err.server", { message: issued.message }) };
+      }
+      const progress = startSignInProgress("register");
+      let acc: AccountSummary;
+      try {
+        acc = await registerAccount(progress.report, issued.preset);
+      } catch (err) {
+        progress.fail(err);
+        const e = err instanceof AccountError ? err : null;
+        if (e?.code === "cancelled") return { ok: false };
+        return { ok: false, fields: e?.fields, message: e?.code === "taken" ? "" : tf(lang, "reg.err.server", { message: (err as Error).message }) };
+      }
+      const username = acc.username ?? acc.id;
+      // The account exists either way; a failed save leaves the profile to the
+      // next attempt from the account window rather than undoing the registration.
+      await saveRegistration({ ...issued.normalized, registeredAt: Date.now() }).catch((err) => {
+        setAccMsg(tf(lang, "reg.saveFailed", { message: (err as Error).message }));
+      });
+      systemMessage(tf(lang, "reg.done", { username }));
+      await afterSignIn(acc, progress.report, "register", started);
+      progress.done(tf(lang, "reg.done", { username }));
+      return { ok: true };
+    } finally {
+      setAccBusy(false);
+    }
   }
 
   /** "Sign out — wipe the session and its data": the server keeps the sealed
@@ -5154,6 +5203,7 @@ function ChatApp() {
               progress={signin}
               onSignIn={() => void signInToAccount()}
               onRegister={() => void createAccount()}
+              onRegisterForm={() => setShowRegistration(true)}
               onSignOutAndWipe={() => void signOutAndWipe()}
               onRecover={(code) => void recoverAccount(code)}
               actions={accountActions}
@@ -5272,6 +5322,11 @@ function ChatApp() {
       ) : null}
 
       {/* The signed-in user: what the server holds for them */}
+      {showRegistration ? (
+        <Suspense fallback={null}>
+          <RegistrationDialog lang={lang} signedIn={Boolean(account)} onClose={() => setShowRegistration(false)} onRegister={registerWithForm} />
+        </Suspense>
+      ) : null}
       {showAccount && account ? (
         <SimpleModal title={t(lang, "acc.title")} onClose={() => setShowAccount(false)}>
           <AccountInfoModal

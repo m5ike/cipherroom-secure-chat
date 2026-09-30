@@ -45,6 +45,8 @@ export type Device = {
   signKey: string; encKey: string; kid: string; fcmToken: string;
   status: DeviceStatus; enrolledAt: number; enrolledWith: string; lastSeen: number; lastIp: string;
   state: DeviceState; notes: string;
+  /** 6.4: SHA-256 (hex) of the certificate the app on this device is signed with (reported at check-in). */
+  certSha256?: string;
 };
 
 export type BuildStatus = "ready" | "published" | "withdrawn";

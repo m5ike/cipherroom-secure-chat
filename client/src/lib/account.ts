@@ -28,6 +28,7 @@ import {
 } from "./passkey";
 import { accountSigningKey, certifyDevice, ed25519Supported, loadIdentity, saveAttestation } from "./identity";
 import { generateRecoveryCode, recoveryMaterial } from "./recovery";
+import type { RegistrationProfile } from "./registration/form";
 import {
   forgetDatabaseKey, openUserDatabase, promoteSessionToAccount, recallDatabaseKey,
   rememberDatabaseKey, setStorageToken, storageSessionId,
@@ -43,6 +44,8 @@ export type AccountSummary = {
   /** Groups the account belongs to ("user" and the operator's own ones). */
   groups?: string[];
   keyVerified?: boolean;
+  /** 6.4: created with the registration form (its profile is in the vault's registration slot). */
+  registered?: boolean;
   credentialId: string;
   alg: number;
   userName: string;
@@ -157,6 +160,7 @@ async function api<T>(path: string, init: RequestInit = {}, token?: string): Pro
   if (!res.ok) {
     throw Object.assign(new Error(typeof json.message === "string" ? json.message : `Server error ${res.status}.`), {
       status: res.status, code: typeof json.code === "string" ? json.code : "",
+      ...(json.errors && typeof json.errors === "object" ? { fields: json.errors as Record<string, string> } : {}),
     });
   }
   return json as T;
@@ -174,10 +178,11 @@ export type AccountErrorCode =
   | "no-prf"            // the authenticator cannot produce a key
   | "cancelled"         // the user closed the passkey prompt
   | "unavailable"       // accounts are not offered / network
+  | "taken"             // 6.4: the form's e-mail or phone registered meanwhile (fields)
   | "server";
 
 export class AccountError extends Error {
-  constructor(readonly code: AccountErrorCode, message: string) {
+  constructor(readonly code: AccountErrorCode, message: string, readonly fields?: Record<string, string>) {
     super(message);
     this.name = "AccountError";
   }
@@ -190,8 +195,9 @@ export type StepReporter = (step: SignInStep, state: StepState, detail?: string)
 
 function asAccountError(err: unknown, fallback: AccountErrorCode = "server"): AccountError {
   if (err instanceof AccountError) return err;
-  const e = err as { name?: string; code?: string; status?: number; message?: string };
+  const e = err as { name?: string; code?: string; status?: number; message?: string; fields?: Record<string, string> };
   if (e?.name === "NotAllowedError" || e?.name === "AbortError") return new AccountError("cancelled", e.message || "cancelled");
+  if (e?.code === "taken" || (e?.fields && e?.status === 409)) return new AccountError("taken", e.message ?? "taken", e.fields);
   if (e?.name === "PasskeyNoPrfError" || /PRF/i.test(e?.message ?? "")) return new AccountError("no-prf", e.message ?? "no PRF");
   const known: AccountErrorCode[] = ["unknown-passkey", "rejected", "wrong-key"];
   if (e?.code && (known as string[]).includes(e.code)) return new AccountError(e.code as AccountErrorCode, e.message ?? e.code);
@@ -228,13 +234,17 @@ export function isSignedIn(): boolean {
  *  account is created: an account whose data nobody could ever decrypt is
  *  worse than none, and this way a device without PRF leaves nothing
  *  behind on the server. */
-export async function registerAccount(report: StepReporter = () => undefined): Promise<AccountSummary> {
+export async function registerAccount(
+  report: StepReporter = () => undefined,
+  /** 6.4: the options /api/account/register/start issued for the registration form. */
+  preset?: { publicKey: ServerCreationOptions; username: string },
+): Promise<AccountSummary> {
   let created: Awaited<ReturnType<typeof createPasskey>>;
   let result: { token: string; account: AccountSummary };
   report("passkey", "run");
   try {
     // 4.0: the server picks the username and puts it into the passkey.
-    const options = await api<{ publicKey: ServerCreationOptions; username: string }>("/api/account/register/options", { method: "POST", body: "{}" });
+    const options = preset ?? await api<{ publicKey: ServerCreationOptions; username: string }>("/api/account/register/options", { method: "POST", body: "{}" });
     created = await createPasskey(options.publicKey);
     // The first passkey's PRF output is the account root; the server keeps
     // only the hash of the proof derived from it.
@@ -537,6 +547,25 @@ export async function loadVault<P, C = unknown>(): Promise<{ profile: P | null; 
   if (raw.chat?.ct) out.chat = await openProfile<ChatVaultPayload>(raw.chat.ct, session.key);
   if (raw.connections?.ct) out.connections = await openProfile<C>(raw.connections.ct, session.key);
   return out;
+}
+
+/**
+ * 6.4: the registration form's profile — its own sealed vault slot, so the
+ * app's profile saves (preferences) never overwrite it. Sealed with the vault
+ * key like the rest; the server stores ciphertext it cannot open.
+ */
+export async function saveRegistration(profile: RegistrationProfile): Promise<AccountSummary | null> {
+  if (!session) return null;
+  const registration = await sealProfile({ v: 1, ...profile }, session.key);
+  const r = await api<{ account: AccountSummary }>("/api/account/vault", { method: "PUT", body: JSON.stringify({ registration }) }, session.token);
+  session.account = r.account;
+  return r.account;
+}
+
+export async function loadRegistration(): Promise<RegistrationProfile | null> {
+  if (!session) return null;
+  const raw = await api<{ registration?: { ct: string } | null }>("/api/account/vault", {}, session.token);
+  return raw.registration?.ct ? openProfile<RegistrationProfile>(raw.registration.ct, session.key) : null;
 }
 
 /** Only the saved connections (connections.ts), opened with the vault key. */

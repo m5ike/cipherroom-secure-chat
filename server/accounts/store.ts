@@ -34,12 +34,18 @@
 // every further passkey — and for a recovery code — the browser stores the
 // root sealed under a key only that passkey (or code) can produce
 // (`wrapped`). The server keeps blobs it cannot open.
+//
+// Registration (6.4): an account created with the registration form carries
+// `contact` — HMAC-SHA256 of its normalized e-mail and phone, keyed with a
+// random pepper in registration.json next to the accounts (0600) — so the
+// same e-mail or phone cannot register twice. The name, country, phone and
+// e-mail themselves live only in the encrypted vault.
 
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { accessSync, constants as fsConstants, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { StoredCredential } from "./webauthn";
-import { generateUsername } from "./username";
+import { generateRegisteredUsername, generateUsername } from "./username";
 
 export const ACCOUNT_LIMITS = {
   maxAccounts: 5000,
@@ -88,6 +94,13 @@ export type AccountRecord = {
   username?: string;
   /** 4.0: SHA-256 (hex) of the key proof the passkey's PRF output yields. */
   keyVerifier?: string;
+  /**
+   * 6.4: registered with the form — keyed hashes (HMAC-SHA256 with the
+   * store's pepper, hex) of the normalized e-mail and phone, so a second
+   * registration with either is refused. The values themselves are only in
+   * the account's encrypted vault (profile.registration).
+   */
+  contact?: { email: string; phone: string; at: number };
   /** Kept for older readers: the username (before 4.0: the name typed at registration). */
   userName: string;
   createdAt: number;
@@ -119,7 +132,13 @@ export type MailItem = {
   bytes: number;
 };
 
-type VaultFile = { profile?: { ct: string; updatedAt: number }; chat?: { ct: string; updatedAt: number }; connections?: { ct: string; updatedAt: number } };
+type VaultFile = {
+  profile?: { ct: string; updatedAt: number };
+  chat?: { ct: string; updatedAt: number };
+  connections?: { ct: string; updatedAt: number };
+  /** 6.4: the registration form's profile (name, country, phone, e-mail), sealed by the client. */
+  registration?: { ct: string; updatedAt: number };
+};
 
 /**
  * Where a user's sealed vault lives. By default it is a file next to the
@@ -204,6 +223,9 @@ export class AccountStore {
   private loaded = false;
   private accounts = new Map<string, AccountRecord>();
   private byCredential = new Map<string, string>();
+  /** 6.4: "e:<hmac>" / "p:<hmac>" → account id (registered accounts). */
+  private byContact = new Map<string, string>();
+  private pepper: Buffer | null = null;
   private sessions = new Map<string, Session>();
   private persistTimer: ReturnType<typeof setTimeout> | null = null;
   /** Files the disk refused (read-only install): kept in memory instead. */
@@ -297,6 +319,7 @@ export class AccountStore {
     this.stamps.set(this.indexPath(), this.stampOf(this.indexPath()));
     this.accounts.clear();
     this.byCredential.clear();
+    this.byContact.clear();
     const data = this.read<{ accounts?: Record<string, AccountRecord> }>(this.indexPath(), {});
     for (const rec of Object.values(data.accounts ?? {})) {
       if (!rec || typeof rec.id !== "string" || !rec.credential?.credentialId) continue;
@@ -306,6 +329,7 @@ export class AccountStore {
       this.accounts.set(rec.id, rec);
       this.byCredential.set(rec.credential.credentialId, rec.id);
       for (const extra of rec.credentials ?? []) this.byCredential.set(extra.credentialId, rec.id);
+      this.indexContact(rec);
     }
   }
 
@@ -389,22 +413,92 @@ export class AccountStore {
     return generateUsername((name) => this.usernameTaken(name));
   }
 
+  /* ------------------------------------------------------- registration */
+
+  private registrationPath() { return join(this.dir, "registration.json"); }
+
+  /**
+   * The pepper keying the contact hashes: REGISTRATION_PEPPER (hex, 32+
+   * bytes) or a random one created once in registration.json. Lose it and
+   * the stored hashes stop matching — the accounts stay valid, but an e-mail
+   * or phone registered before could register again.
+   */
+  private contactPepper(): Buffer {
+    if (this.pepper) return this.pepper;
+    const fromEnv = (process.env.REGISTRATION_PEPPER ?? "").trim();
+    if (/^[0-9a-fA-F]{64,}$/.test(fromEnv)) return (this.pepper = Buffer.from(fromEnv, "hex"));
+    this.load();
+    const path = this.registrationPath();
+    const stored = (): Buffer | null => {
+      const s = this.read<{ pepper?: unknown }>(path, {});
+      return typeof s.pepper === "string" && /^[0-9a-f]{64}$/.test(s.pepper) ? Buffer.from(s.pepper, "hex") : null;
+    };
+    let pepper = stored();
+    if (!pepper) {
+      const fresh = randomBytes(32);
+      const body = { v: 1, pepper: fresh.toString("hex"), createdAt: Date.now() };
+      try {
+        // Exclusive create: two instances starting together agree on one pepper.
+        writeFileSync(path, JSON.stringify(body), { mode: 0o600, flag: "wx" });
+        pepper = fresh;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") pepper = stored();
+        if (!pepper) { this.memory.set(path, body); pepper = fresh; } // read-only disk: this run only
+      }
+    }
+    return (this.pepper = pepper);
+  }
+
+  /** The keyed hashes of a normalized e-mail and an E.164 phone. */
+  contactHashes(email: string, phone: string): { email: string; phone: string } {
+    const key = this.contactPepper();
+    const mac = (kind: string, value: string) => createHmac("sha256", key).update(`${kind}\0${value}`).digest("hex");
+    return { email: mac("email", email), phone: mac("phone", phone) };
+  }
+
+  /** Which of the two already belongs to an account. */
+  contactTaken(hashes: { email: string; phone: string }): { email: boolean; phone: boolean } {
+    this.load();
+    return { email: this.byContact.has(`e:${hashes.email}`), phone: this.byContact.has(`p:${hashes.phone}`) };
+  }
+
+  private indexContact(rec: AccountRecord): void {
+    if (!rec.contact) return;
+    if (/^[0-9a-f]{64}$/.test(rec.contact.email)) this.byContact.set(`e:${rec.contact.email}`, rec.id);
+    if (/^[0-9a-f]{64}$/.test(rec.contact.phone)) this.byContact.set(`p:${rec.contact.phone}`, rec.id);
+  }
+
+  /** A free username for a registration (username.ts, REGISTERED_USERNAME_RE). */
+  newRegisteredUsername(): string {
+    return generateRegisteredUsername((name) => this.usernameTaken(name));
+  }
+
   /**
    * Creates an account. With `{ username }` (every registration since 4.0)
    * the id is that username; with a plain string (older callers, tests) the
    * id is derived from the credential and the string is the old display name.
    */
-  create(credential: StoredCredential, input: string | { username: string; keyVerifier?: string }, now = Date.now()): { ok: true; account: AccountRecord } | { ok: false; reason: string } {
+  create(
+    credential: StoredCredential,
+    input: string | { username: string; keyVerifier?: string; contact?: { email: string; phone: string } },
+    now = Date.now(),
+  ): { ok: true; account: AccountRecord } | { ok: false; reason: string; taken?: { email: boolean; phone: boolean } } {
     this.load();
     if (this.byCredential.has(credential.credentialId)) return { ok: false, reason: "credential already registered" };
     if (this.accounts.size >= ACCOUNT_LIMITS.maxAccounts) return { ok: false, reason: "account store full" };
     const named = typeof input === "object";
     if (named && (!ID.test(input.username) || this.usernameTaken(input.username))) return { ok: false, reason: "username taken" };
+    // Checked again here: another registration may have taken it since /register/start.
+    if (named && input.contact) {
+      const taken = this.contactTaken(input.contact);
+      if (taken.email || taken.phone) return { ok: false, reason: "contact taken", taken };
+    }
     const account: AccountRecord = {
       id: named ? input.username : accountIdFor(credential.credentialId),
       credential,
       ...(named ? { username: input.username } : {}),
       ...(named && input.keyVerifier ? { keyVerifier: input.keyVerifier } : {}),
+      ...(named && input.contact ? { contact: { email: input.contact.email, phone: input.contact.phone, at: now } } : {}),
       userName: (named ? input.username : input).trim().slice(0, ACCOUNT_LIMITS.maxUserNameChars),
       createdAt: now,
       lastLoginAt: now,
@@ -416,7 +510,8 @@ export class AccountStore {
     };
     this.accounts.set(account.id, account);
     this.byCredential.set(credential.credentialId, account.id);
-    this.addAudit(account.id, "register", { alg: credential.alg, username: usernameOf(account) }, now);
+    this.indexContact(account);
+    this.addAudit(account.id, "register", { alg: credential.alg, username: usernameOf(account), ...(account.contact ? { form: true } : {}) }, now);
     this.persist();
     return { ok: true, account };
   }
@@ -711,7 +806,7 @@ export class AccountStore {
 
   putVault(
     accountId: string,
-    patch: { profile?: string; chat?: { ct: string; messages: number; messageBytes: number; rooms: number }; connections?: { ct: string; count: number } },
+    patch: { profile?: string; chat?: { ct: string; messages: number; messageBytes: number; rooms: number }; connections?: { ct: string; count: number }; registration?: string },
     now = Date.now(),
   ): { ok: true } | { ok: false; reason: string } {
     const acc = this.get(accountId);
@@ -725,6 +820,9 @@ export class AccountStore {
     }
     if (patch.connections !== undefined && (typeof patch.connections.ct !== "string" || !b64.test(patch.connections.ct) || patch.connections.ct.length > ACCOUNT_LIMITS.maxConnectionsChars)) {
       return { ok: false, reason: "connections ciphertext invalid or too large" };
+    }
+    if (patch.registration !== undefined && (typeof patch.registration !== "string" || !b64.test(patch.registration) || patch.registration.length > ACCOUNT_LIMITS.maxProfileChars)) {
+      return { ok: false, reason: "registration ciphertext invalid or too large" };
     }
     const vault = this.getVault(accountId);
     if (patch.profile !== undefined) {
@@ -747,6 +845,7 @@ export class AccountStore {
       acc.vault.connectionsBytes = patch.connections.ct.length;
       acc.vault.connectionsUpdatedAt = now;
     }
+    if (patch.registration !== undefined) vault.registration = { ct: patch.registration, updatedAt: now };
     // The user's own encrypted database when it is open, the file otherwise.
     if (!vaultBackend?.write(accountId, vault)) this.write(this.vaultPath(accountId), vault);
     this.persist();
@@ -892,6 +991,8 @@ export class AccountStore {
     this.accounts.delete(accountId);
     this.byCredential.delete(acc.credential.credentialId);
     for (const extra of acc.credentials ?? []) this.byCredential.delete(extra.credentialId);
+    // A deleted account frees its e-mail and phone for a new registration.
+    for (const [key, id] of this.byContact) if (id === accountId) this.byContact.delete(key);
     this.revokeAll(accountId, "deleted");
     vaultBackend?.erase(accountId);
     this.remove(this.vaultPath(accountId));
@@ -946,6 +1047,8 @@ export class AccountStore {
       alg: acc.credential.alg,
       userName: usernameOf(acc),
       keyVerified: Boolean(acc.keyVerifier),
+      /** 6.4: created with the registration form (its profile is in the vault). */
+      registered: Boolean(acc.contact),
       createdAt: acc.createdAt,
       lastLoginAt: acc.lastLoginAt,
       loginCount: acc.loginCount,

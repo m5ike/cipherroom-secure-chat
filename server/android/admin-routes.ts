@@ -12,6 +12,10 @@
 //   GET/POST /builds, GET /builds/:id, /content, /deploy, POST /builds/:id/publish|withdraw|restore, DELETE
 //   GET    /releases, POST /releases/upload (raw APK), PATCH/DELETE /releases/:id,
 //          POST /releases/:id/publish|withdraw, GET /releases/:id/apk
+//   GET    /passkeys                Passkeys on Android: assetlinks.json as the internet and
+//                                   Google see it vs. the certificates known and reported (6.4)
+//   POST   /passkeys/trust          {sha256} trust a certificate for passkeys only (settings)
+//   DELETE /passkeys/trust/:sha256  stop trusting it
 
 import express, { type Express, type Request, type Response } from "express";
 import { createReadStream, existsSync } from "node:fs";
@@ -30,6 +34,8 @@ import { fcmReady } from "./fcm";
 import { readApk } from "./apk";
 import { releaseSignedString, signP1363 } from "./crypto";
 import { androidStore, newId, type CommandKind, type Device, type Release } from "./store";
+import { passkeySelfCheck } from "./passkeys-check";
+import { rpPolicyFor } from "../accounts/routes";
 
 /** What a console request needs of the Android module (Modules & groups). */
 export function androidConsoleRight(req: Request): Needs | null {
@@ -460,6 +466,45 @@ export function registerAndroidAdminRoutes(app: Express): void {
     androidStore.removeFile(androidStore.releaseFile(x.id));
     log(req, "release.delete", { versionName: x.versionName }, "warn", x.id);
     res.json({ ok: true });
+  });
+
+  /* ------------------------------------------------ passkeys on Android (6.4) */
+
+  const passkeyReport = (req: Request) => passkeySelfCheck({
+    rpId: rpPolicyFor(req).rpId,
+    packageName: androidConfig().packageName,
+    port: Number(process.env.PORT) || 5000,
+    devices: androidStore.devices.list({ limit: 2000 }),
+  });
+
+  r.get("/passkeys", async (req, res) => {
+    res.json(await passkeyReport(req));
+  });
+
+  // For passkeys only: a trusted certificate goes into assetlinks.json and the
+  // WebAuthn app origin, never into the release check (certSha256).
+  r.post("/passkeys/trust", async (req, res) => {
+    const sha = String((req.body as { sha256?: unknown } | undefined)?.sha256 ?? "").toLowerCase().replace(/[^0-9a-f]/g, "");
+    if (!/^[0-9a-f]{64}$/.test(sha)) return res.status(400).json({ ok: false, message: "A SHA-256 fingerprint (64 hex digits) is needed." });
+    const c = structuredClone(androidConfig());
+    if (!c.passkeyCertSha256.includes(sha)) {
+      if (c.passkeyCertSha256.length >= 8) return res.status(400).json({ ok: false, message: "Eight trusted certificates at most; remove one first." });
+      c.passkeyCertSha256.push(sha);
+      saveAndroidConfig(c, who(req));
+      log(req, "passkeys.trust", { cert: sha.slice(0, 16) }, "warn");
+    }
+    res.json(await passkeyReport(req));
+  });
+
+  r.delete("/passkeys/trust/:sha", async (req, res) => {
+    const sha = String(req.params.sha).toLowerCase();
+    const c = structuredClone(androidConfig());
+    if (c.passkeyCertSha256.includes(sha)) {
+      c.passkeyCertSha256 = c.passkeyCertSha256.filter((x) => x !== sha);
+      saveAndroidConfig(c, who(req));
+      log(req, "passkeys.untrust", { cert: sha.slice(0, 16) }, "notice");
+    }
+    res.json(await passkeyReport(req));
   });
 
   app.use("/api/admin/android", consoleGuard("android", androidConsoleRight), r);

@@ -300,7 +300,7 @@ export const USER_MIGRATIONS: Migration[] = [
     name: "003-vault",
     sql: `
       CREATE TABLE IF NOT EXISTS vault (
-        part       TEXT PRIMARY KEY,           -- 'profile' | 'chat' | 'connections' (3.2)
+        part       TEXT PRIMARY KEY,           -- 'profile' | 'chat' | 'connections' (3.2) | 'registration' (6.4)
         ct         TEXT NOT NULL,
         updated_at INTEGER NOT NULL
       );

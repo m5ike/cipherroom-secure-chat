@@ -38,7 +38,7 @@ export const USERNAME_RE = /^[a-z]+-[a-z]+-[a-z0-9]{4,6}$/;
 export const ACCOUNT_ID_RE = /^[A-Za-z0-9_-]{10,64}$/;
 
 export function isUsername(value: unknown): value is string {
-  return typeof value === "string" && USERNAME_RE.test(value) && value.length <= 40;
+  return typeof value === "string" && (USERNAME_RE.test(value) || REGISTERED_USERNAME_RE.test(value)) && value.length <= 40;
 }
 
 function pick<T>(list: readonly T[], byte: number): T {
@@ -66,6 +66,21 @@ export function generateUsername(taken: (name: string) => boolean, random: (n: n
     const length = attempt < 20 ? 4 : attempt < 40 ? 5 : 6;
     const name = `${pick(ADJECTIVES, a)}-${pick(NOUNS, b)}-${tail(length, random)}`;
     if (!taken(name.toLowerCase())) return name;
+  }
+  throw new Error("no free username");
+}
+
+/**
+ * 6.4: the username of an account registered with the form — ten characters
+ * from TAIL (31 symbols, no look-alikes): 31^10 ≈ 8.2·10^14, about 49.5 bits,
+ * letters and digits only. It is not derived from anything the person typed.
+ */
+export const REGISTERED_USERNAME_RE = /^[a-hjkmnp-z2-9]{10}$/;
+
+export function generateRegisteredUsername(taken: (name: string) => boolean, random: (n: number) => Uint8Array = (n) => randomBytes(n)): string {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const name = tail(10, random);
+    if (!taken(name)) return name;
   }
   throw new Error("no free username");
 }

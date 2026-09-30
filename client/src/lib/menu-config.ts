@@ -98,6 +98,7 @@ export const MENU_PANELS = [
 export const MENU_FNS: ReadonlyArray<{ id: string; label: string; param?: string }> = [
   { id: "openRoom", label: "Open the Room window" },
   { id: "signIn", label: "Sign in (the Connection window)" },
+  { id: "register", label: "Registration (the form: name, country, phone, e-mail)" },
   { id: "connectDefault", label: "Connect the default saved connection" },
   { id: "disconnect", label: "Disconnect from the room" },
   { id: "toggleEditMode", label: "Edit Mode on / off" },
@@ -211,6 +212,7 @@ export const DEFAULT_MENU_CONFIG: MenuConfig = {
       item("btn-privacy", "privacy", "eye", "menu.privacy"),
       item("btn-analytics", "analytics", "activity", "menu.analytics"),
       item("btn-profile", "profile", "user", "menu.profile"),
+      { kind: "item", id: "btn-register", icon: "contact-round", label: "@menu.register", action: { type: "fn", fn: "register" }, when: "signedOut" },
     ] },
   ],
   footer: [

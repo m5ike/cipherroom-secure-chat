@@ -4,7 +4,8 @@
 //                        counts, away state and the server-side activity log
 //   AccountAccess        (Connection window) the ONLY place to sign in with a
 //                        passkey, register one, add passkeys and set the
-//                        recovery code (4.0) — with the checked sign-in steps
+//                        recovery code (4.0) — with the checked sign-in steps;
+//                        6.4: also opens the registration form
 //   ChatRetentionSection the "chat data and history" choice in Connection
 //
 // 4.13: each is a layout ("dialog.account", "panel.access",
@@ -139,7 +140,7 @@ const STEP_ICON: Record<StepState, string> = { run: "loader-circle", ok: "circle
  * signs in, registers, is added, and where the recovery code is set (4.0).
  */
 export function AccountAccess({
-  account, status, supported, busy, message, lang, nickname, progress, onSignIn, onRegister, onSignOutAndWipe, onRecover, actions = {},
+  account, status, supported, busy, message, lang, nickname, progress, onSignIn, onRegister, onRegisterForm, onSignOutAndWipe, onRecover, actions = {},
 }: {
   account: AccountSummary | null;
   status: AccountStatus | null;
@@ -152,6 +153,8 @@ export function AccountAccess({
   progress: SignInProgress | null;
   onSignIn: () => void;
   onRegister: () => void;
+  /** 6.4: open the registration form (name, country, phone, e-mail). */
+  onRegisterForm?: () => void;
   onSignOutAndWipe: () => void;
   /** Every passkey lost — come back with the recovery code. */
   onRecover?: (code: string) => void;
@@ -189,6 +192,7 @@ export function AccountAccess({
       } : null,
       done: progress?.done && !err ? progress.done : "",
       canRecover: Boolean(!account && onRecover && supported && status?.available !== false),
+      canRegisterForm: Boolean(!account && onRegisterForm && supported && status?.available !== false),
       recovering,
       recoverCode: code,
       recoverCodeOk: code.replace(/[\s-]/g, "").length >= 26,
@@ -214,6 +218,7 @@ export function AccountAccess({
     actions: {
       signIn: () => onSignIn(),
       register: () => onRegister(),
+      registerForm: () => onRegisterForm?.(),
       signOutWipe: () => onSignOutAndWipe(),
       recoverOpen: () => setRecovering(true),
       recover: (e) => { (e as FormEvent).preventDefault(); onRecover?.(code); },

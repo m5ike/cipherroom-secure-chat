@@ -6,7 +6,7 @@
 # arrays, no ${var,,}, no mapfile, and empty arrays are expanded with the
 # ${arr[@]+"${arr[@]}"} idiom so `set -u` does not trip.
 
-M5_INSTALLER_VERSION="3.1.0"
+M5_INSTALLER_VERSION="3.2.0"
 
 DRY_RUN="${DRY_RUN:-0}"
 ASSUME_YES="${ASSUME_YES:-0}"

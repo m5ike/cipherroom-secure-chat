@@ -181,9 +181,11 @@ describe("MainMenu", () => {
     expect(screen.getByTestId("speeddial-user").textContent).toContain("Alice");
     expect(panel.querySelectorAll(".menu-group-label").length).toBe(MENU_GROUPS.length);
     // headings must not become focus stops: every menuitem is still a button —
-    // one per entry, plus the Appearance shortcut in the quick row on top.
+    // one per entry, plus the Appearance shortcut in the quick row on top and
+    // (6.4) Registration, a function item shown while signed out.
     const items = Array.from(panel.querySelectorAll('[role="menuitem"]'));
-    expect(items.length).toBe(MENU_ENTRIES.length + 1);
+    expect(items.length).toBe(MENU_ENTRIES.length + 2);
+    expect(panel.querySelector('[data-testid="speeddial-btn-register"]')).not.toBeNull();
     expect(items.every((el) => el.tagName === "BUTTON")).toBe(true);
     expect(panel.querySelectorAll('[role="menuitem"][data-panel]').length).toBe(MENU_ENTRIES.length);
   });

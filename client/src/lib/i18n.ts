@@ -6,6 +6,7 @@ import { CONNECTIONS_I18N } from "./i18n-connections";
 import { IDENTITY_I18N } from "./i18n-identity";
 import { BUBBLES_I18N } from "./i18n-bubbles";
 import { NFC_I18N } from "./i18n-nfc";
+import { REGISTRATION_I18N } from "./i18n-registration";
 // Simple i18n. Strings live in this file; no extra deps. Add keys as needed.
 
 export type Lang = "cs" | "en" | "de";
@@ -1395,9 +1396,9 @@ const de: Dict = {
 };
 
 const dicts: Record<Lang, Dict> = {
-  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs, ...APP_I18N.cs, ...CONNECTIONS_I18N.cs, ...IDENTITY_I18N.cs, ...BUBBLES_I18N.cs, ...NFC_I18N.cs },
-  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en, ...APP_I18N.en, ...CONNECTIONS_I18N.en, ...IDENTITY_I18N.en, ...BUBBLES_I18N.en, ...NFC_I18N.en },
-  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de, ...APP_I18N.de, ...CONNECTIONS_I18N.de, ...IDENTITY_I18N.de, ...BUBBLES_I18N.de, ...NFC_I18N.de },
+  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs, ...APP_I18N.cs, ...CONNECTIONS_I18N.cs, ...IDENTITY_I18N.cs, ...BUBBLES_I18N.cs, ...NFC_I18N.cs, ...REGISTRATION_I18N.cs },
+  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en, ...APP_I18N.en, ...CONNECTIONS_I18N.en, ...IDENTITY_I18N.en, ...BUBBLES_I18N.en, ...NFC_I18N.en, ...REGISTRATION_I18N.en },
+  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de, ...APP_I18N.de, ...CONNECTIONS_I18N.de, ...IDENTITY_I18N.de, ...BUBBLES_I18N.de, ...NFC_I18N.de, ...REGISTRATION_I18N.de },
 };
 
 export function detectLang(stored: string | undefined): Lang {

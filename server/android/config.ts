@@ -53,6 +53,12 @@ export type AndroidConfig = {
   packageName: string;
   /** SHA-256 (hex) of the certificates releases may be signed with; learned from the first release when empty. */
   certSha256: string[];
+  /**
+   * 6.4: further certificates trusted for passkeys ONLY (assetlinks.json and
+   * the WebAuthn app origin) — e.g. a developer's debug build. Never accepted
+   * for a release upload; that is what certSha256 decides.
+   */
+  passkeyCertSha256: string[];
   rev: string;
   updatedAt: number;
   updatedBy: string;
@@ -73,6 +79,7 @@ export const DEFAULT_CONFIG: AndroidConfig = {
   fcm: { enabled: false, client: null, serviceAccount: null, serviceAccountEmail: "", projectId: "" },
   packageName: "cz.m5cet.app",
   certSha256: [],
+  passkeyCertSha256: [],
   rev: "",
   updatedAt: 0,
   updatedBy: "",
@@ -161,6 +168,7 @@ function sanitizeConfig(raw: unknown): AndroidConfig {
     },
     packageName: /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(pkg) ? pkg : DEFAULT_CONFIG.packageName,
     certSha256: Array.isArray(c.certSha256) ? c.certSha256.filter((x): x is string => typeof x === "string" && /^[0-9a-f]{64}$/.test(x)).slice(0, 8) : [],
+    passkeyCertSha256: Array.isArray(c.passkeyCertSha256) ? c.passkeyCertSha256.filter((x): x is string => typeof x === "string" && /^[0-9a-f]{64}$/.test(x)).slice(0, 8) : [],
     rev: str(c.rev, 40),
     updatedAt: typeof c.updatedAt === "number" ? c.updatedAt : 0,
     updatedBy: str(c.updatedBy, 120),
