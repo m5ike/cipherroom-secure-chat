@@ -48,7 +48,99 @@ export type ClientConfig = {
   groups: GroupDef[];
   /** 5.2: the message box — which characters open which suggestions, and tags to offer. */
   composer: ComposerPolicy;
+  /** 6.2: the map drawn in a message that carries a position (web and Android alike). */
+  map: MapPreviewPolicy;
 };
+
+/**
+ * 6.2: the map preview in a message with a position. The tiles come through
+ * this server (GET /api/map/tile/{z}/{x}/{y}), so a client never reveals its
+ * address to the tile provider and the web's CSP stays 'self'; the operator
+ * picks the provider (`tiles`, a raster URL template) and the look.
+ */
+export type MapPreviewPolicy = {
+  /** Draw a map in the bubble (off: only the pin link, as before 6.2). */
+  enabled: boolean;
+  /** Upstream raster tiles: https://…/{z}/{x}/{y}.png, {s} for a subdomain. */
+  tiles: string;
+  /** Subdomains for {s} ("abc"); "" when the template has none. */
+  subdomains: string;
+  /** Shown in the map's corner (the provider's licence). */
+  attribution: string;
+  /** Zoom of the preview, 3–19. */
+  zoom: number;
+  /** Size of the preview in CSS px / dp. */
+  width: number;
+  height: number;
+  /** The pin's colour (#rrggbb). */
+  pinColor: string;
+  /** The caption's background (#rrggbb; "" = the theme's primary colour). */
+  accent: string;
+  /** The caption under the pin: "Jana's current position". */
+  label: boolean;
+  /** Latitude, longitude and accuracy under the map. */
+  showCoords: boolean;
+  /** Draw the tiles in grey (a calmer bubble). */
+  grayscale: boolean;
+  /** How long the server keeps a tile, in hours (1–720). */
+  cacheHours: number;
+};
+
+export const DEFAULT_MAP_PREVIEW: MapPreviewPolicy = {
+  enabled: true,
+  tiles: "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+  subdomains: "",
+  attribution: "© OpenStreetMap",
+  zoom: 16,
+  width: 280,
+  height: 160,
+  pinColor: "#e11d48",
+  accent: "",
+  label: true,
+  showCoords: true,
+  grayscale: false,
+  cacheHours: 168,
+};
+
+/** A raster tile URL template the server may fetch: https (http only for this machine), {z} {x} {y}, no credentials. */
+export function normalizeTileTemplate(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const text = raw.trim();
+  if (!text || text.length > 300 || !/\{z\}/.test(text) || !/\{x\}/.test(text) || !/\{y\}/.test(text)) return null;
+  let url: URL;
+  try { url = new URL(text.replace(/\{[a-z]\}/g, "0")); } catch { return null; }
+  const local = /^(localhost|127\.0\.0\.1|\[::1\])$/i.test(url.hostname);
+  if (url.protocol !== "https:" && !(url.protocol === "http:" && local)) return null;
+  if (url.username || url.password || url.hash) return null;
+  return text;
+}
+
+const hexColor = (v: unknown, dflt: string, allowEmpty = false) =>
+  typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v.trim()) ? v.trim().toLowerCase() : allowEmpty && v === "" ? "" : dflt;
+
+export function sanitizeMapPreview(raw: unknown): MapPreviewPolicy {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const d = DEFAULT_MAP_PREVIEW;
+  const n = (v: unknown, lo: number, hi: number, dflt: number) => (typeof v === "number" && Number.isFinite(v) ? Math.max(lo, Math.min(hi, Math.round(v))) : dflt);
+  const b = (v: unknown, dflt: boolean) => (typeof v === "boolean" ? v : dflt);
+  // eslint-disable-next-line no-control-regex
+  const text = (v: unknown, dflt: string, max: number) => (typeof v === "string" ? v.replace(/[\u0000-\u001f\u007f<>]/g, "").trim().slice(0, max) : dflt);
+  return {
+    enabled: b(r.enabled, d.enabled),
+    tiles: normalizeTileTemplate(r.tiles) ?? d.tiles,
+    subdomains: typeof r.subdomains === "string" && /^[a-z0-9]{0,8}$/i.test(r.subdomains) ? r.subdomains : d.subdomains,
+    attribution: text(r.attribution, d.attribution, 120),
+    zoom: n(r.zoom, 3, 19, d.zoom),
+    width: n(r.width, 160, 640, d.width),
+    height: n(r.height, 100, 480, d.height),
+    pinColor: hexColor(r.pinColor, d.pinColor),
+    accent: hexColor(r.accent, d.accent, true),
+    label: b(r.label, d.label),
+    showCoords: b(r.showCoords, d.showCoords),
+    grayscale: b(r.grayscale, d.grayscale),
+    cacheHours: n(r.cacheHours, 1, 720, d.cacheHours),
+  };
+}
 
 export type ComposerAction = "functions" | "mentions" | "tags";
 export type ComposerPolicy = { triggers: Array<{ char: string; action: ComposerAction }>; tags: string[] };
@@ -95,6 +187,7 @@ export const DEFAULT_CLIENT_CONFIG: ClientConfig = {
   modules: {},
   groups: [],
   composer: DEFAULT_COMPOSER,
+  map: DEFAULT_MAP_PREVIEW,
 };
 
 /**
@@ -174,6 +267,7 @@ export function sanitizeClientConfig(raw: unknown): ClientConfig {
     modules: sanitizeModules(r.modules, groups),
     groups,
     composer: sanitizeComposer(r.composer),
+    map: sanitizeMapPreview(r.map),
   };
 }
 

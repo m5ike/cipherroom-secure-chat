@@ -67,6 +67,8 @@ import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
 import { accountGroups, registerAdminClientConfigRoutes, registerClientConfigRoutes } from "./client-config";
+import { registerMapTileRoutes } from "./map-tiles";
+import { registerMessageAuditRoutes } from "./message-audit";
 import { requireModule } from "./access";
 import { registerAdminMenuConfigRoutes, registerMenuConfigRoutes } from "./menu-config";
 import { registerModulesAdminRoutes } from "./modules-routes";
@@ -291,6 +293,9 @@ export async function registerRoutes(
   registerLayoutRoutes(app);
   registerClientConfigRoutes(app);
   registerMenuConfigRoutes(app);
+  // 6.2: the map preview's tiles (through this server) and hide/delete in the audit journal.
+  registerMapTileRoutes(app);
+  registerMessageAuditRoutes(app);
 
   app.get("/api/health", (_req, res) => {
     const b = buildInfo();

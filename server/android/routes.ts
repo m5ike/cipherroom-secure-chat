@@ -25,6 +25,7 @@ import { enrollSignedString, publicKeyOf, releaseSignedString, requestSignedStri
 import { acknowledge, pendingFor } from "./commands";
 import { deployFile, latestBuildFor, MIN_APP_CODE } from "./bundle";
 import { fcmReady } from "./fcm";
+import { recordMessageAction, sanitizeMessageAudit } from "../message-audit";
 import { androidStore, newId, type AndroidEvent, type Device, type DeviceState, type EventLevel, type LocationPoint, type Release } from "./store";
 
 const MAX_SKEW = 5 * 60 * 1000;
@@ -271,6 +272,24 @@ export function registerAndroidRoutes(app: Express): void {
     }
     if (wiped) androidStore.devices.put({ ...device, status: "wiped", fcmToken: "", lastSeen: Date.now() });
     res.json({ ok: true, stored });
+  });
+
+  // 6.2: a message hidden or deleted in the app's own view — into the audit journal
+  // (server/message-audit.ts); the message itself never comes here.
+  r.post("/message-audit", signedBy(), (req: Signed, res) => {
+    const device = req.device!;
+    const b = bodyJson(req);
+    const list = Array.isArray(b.actions) ? b.actions.slice(0, 50) : [b];
+    const account = typeof b.account === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(b.account) ? b.account : "";
+    let recorded = 0;
+    for (const raw of list) {
+      const input = sanitizeMessageAudit(raw);
+      if (!input) continue;
+      recordMessageAction(input, { actor: account || `device:${device.id}`, deviceId: device.id, ip: truncateIp(req.ip), via: "android" });
+      recorded++;
+    }
+    if (!recorded) return res.status(400).json({ ok: false, message: "Not a message action." });
+    res.json({ ok: true, recorded });
   });
 
   // 6.1: positions for tracking — only when the user switched it on in the app and

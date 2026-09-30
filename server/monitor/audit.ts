@@ -9,6 +9,8 @@
 //   admin          what the operator did (commands, retention, toggles)
 //   network        connections opened and closed, protocol handshakes
 //   system         start-up, driver availability, sweeps, internal errors
+//   message        (6.2) a person hid or deleted a message in their own view —
+//                  the message id, kind and room hash, never its content
 //
 // Each entry carries a timestamp, a level, the actor and target (peer or
 // account ids), a hash of the room, sizes and a state, plus a free-form
@@ -22,7 +24,7 @@
 // exactly the metadata an end-to-end encrypted chat should not keep by
 // default. Everything else is always recorded.
 
-export type AuditCategory = "security" | "account" | "communication" | "storage" | "admin" | "network" | "system";
+export type AuditCategory = "security" | "account" | "communication" | "storage" | "admin" | "network" | "system" | "message";
 export type AuditLevel = "debug" | "info" | "notice" | "warn" | "error";
 
 export type AuditEntry = {
