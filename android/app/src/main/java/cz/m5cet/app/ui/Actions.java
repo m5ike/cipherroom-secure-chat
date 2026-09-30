@@ -96,6 +96,8 @@ public final class Actions {
                 case "message.kind": a.parts.messageKind(s); break;
                 case "message.recipients": a.parts.closeOverlay(); a.parts.pickRecipients(); break;
                 case "msg.map": case "msg.source": case "msg.open": a.parts.onMessageAction(action, s); break;
+                // 6.2 bubbles: the details (timeline, hide, delete), a header position's map, the attachment's actions, hidden messages
+                case "msg.info": case "msg.mapPreview": case "msg.save": case "msg.share": case "msg.forward": case "msg.showHidden": a.parts.onMessageAction(action, s); break;
                 // voice
                 case "voice.speak": if (!s.isEmpty()) app.voice.say(s); break;
                 case "voice.stop": app.voice.stopSpeaking(); break;

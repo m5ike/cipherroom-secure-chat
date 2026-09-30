@@ -429,6 +429,7 @@ public final class RoomSession {
         m.verified = opened.signer != null && opened.signer.valid && !p.changed;
         m.changed = p.changed;
         if (m.expired(System.currentTimeMillis())) return;
+        arrived(m, "p2p");
         add(m, true);
         if (app.settings.bool("messages.receipts")) queueReceipt(p.id, "delivered", m.id);
         scheduleExpiry();
@@ -494,6 +495,7 @@ public final class RoomSession {
         m.mine = true;
         m.verified = true;
         m.status = "sending";
+        m.mark("created", "", m.createdAt);
         m.tap = o.tap;
         m.vanishSeconds = o.vanishSeconds > 0 ? Math.max(Payloads.VANISH_MIN, Math.min(Payloads.VANISH_MAX, o.vanishSeconds)) : 0;
         m.to.addAll(o.recipientNames);
@@ -521,6 +523,7 @@ public final class RoomSession {
                 JSONObject meta = new JSONObject();
                 m.text = Sealed.seal(m.sealPlain, m.sealCode, meta)[0];
                 m.sealed = meta;
+                m.mark("encrypted", "code");
                 deliverIt.run();
             } catch (GeneralSecurityException e) {
                 Log.e("room", "sealing failed", e);
@@ -532,15 +535,18 @@ public final class RoomSession {
     }
 
     private void finishSend(ChatMessage m, Outgoing o) {
-        if (keys == null) { m.status = "queued"; rooms.messageChanged(this, m); return; }
+        if (keys == null) { m.status = "queued"; m.mark("queued"); rooms.messageChanged(this, m); return; }
         m.senderId = myId;
         JSONObject payload = payloadOf(m);
         if (payload == null) return;
         java.util.Set<String> targets = o.recipients.isEmpty() ? null : o.recipients;
+        m.mark("encrypted");
+        String to = openNames(targets);
         int sent = deliver(payload, targets);
-        if (sent > 0) m.raise("sent");
+        if (sent > 0) m.raise("sent", to);
         else {
             m.status = "queued";
+            m.mark("queued");
             synchronized (outbox) {
                 outbox.add(new Queued(m, Envelopes.sealMessage(keys, m.id, payload, identity), targets));
                 while (outbox.size() > 200) outbox.remove(0);
@@ -643,6 +649,7 @@ public final class RoomSession {
             m.relayed = true;
             m.verified = opened.signer != null && opened.signer.valid;
             if (m.expired(System.currentTimeMillis())) continue;
+            arrived(m, "relay");
             add(m, true);
         }
         if (ack.length() > 0) try { sendServer(new JSONObject().put("type", "relay-ack").put("ids", ack)); } catch (JSONException ignored) { }
@@ -663,7 +670,8 @@ public final class RoomSession {
         synchronized (messages) { for (int i = messages.size() - 1; i >= 0; i--) if (messages.get(i).id.equals(messageId)) { hit = messages.get(i); break; } }
         if (hit == null || !hit.mine) return;
         try { if (ChatMessage.rank(state) > ChatMessage.rank(hit.receipts.optString(who, ""))) hit.receipts.put(who.isEmpty() ? "relay" : who, state); } catch (JSONException ignored) { }
-        if (hit.raise(state)) rooms.messageChanged(this, hit);
+        hit.raise(state, who.isEmpty() ? "relay" : who);
+        rooms.messageChanged(this, hit); // a new step of the timeline even when the status stays
     }
 
     /* ------------------------------------------------------------ outbox */
@@ -747,7 +755,8 @@ public final class RoomSession {
                 if (!m.mine || !ids.contains(m.id)) continue;
                 String before = m.receipts.optString(p.id, "");
                 if (ChatMessage.rank(r.state) > ChatMessage.rank(before)) try { m.receipts.put(p.id, r.state); } catch (JSONException ignored) { }
-                if (m.raise(r.state)) changedOnes.add(m);
+                m.raise(r.state, p.name);
+                changedOnes.add(m); // the timeline has the recipient's step even when the status stays
             }
         }
         for (ChatMessage m : changedOnes) rooms.messageChanged(this, m);
@@ -784,14 +793,79 @@ public final class RoomSession {
                 if (m.expired(now)) { it.remove(); gone.add(m); }
             }
         }
-        for (ChatMessage m : gone) { m.vanished = true; rooms.messageChanged(this, m); }
+        for (ChatMessage m : gone) { m.vanished = true; m.mark("expired", "ttl"); rooms.messageChanged(this, m); }
         if (!gone.isEmpty()) History.saveSoon(app, key, this);
         scheduleExpiry();
     }
 
     /** A vanishing message ran out on this device (the UI counts its time on screen). */
     public void vanished(ChatMessage m) {
-        post(() -> { m.vanished = true; rooms.messageChanged(this, m); History.saveSoon(app, key, this); });
+        post(() -> { m.vanished = true; m.mark("expired", "vanish"); rooms.messageChanged(this, m); History.saveSoon(app, key, this); });
+    }
+
+    /* ------------------------------------- 6.2 bubbles (timeline, hide, delete) */
+
+    /** A message that came in: created (the sender's clock), received and decrypted now — via "p2p" or "relay". */
+    private static void arrived(ChatMessage m, String via) {
+        long now = System.currentTimeMillis();
+        m.mark("created", "", m.createdAt);
+        m.mark("received", via, now);
+        m.mark("decrypted", "", now);
+    }
+
+    /** The names of the open peers a message goes to now (the timeline's "sent"). */
+    private String openNames(java.util.Set<String> targets) {
+        List<String> names = new ArrayList<>();
+        for (Peer p : new ArrayList<>(peers.values())) if (p.open() && (targets == null || targets.contains(p.id))) names.add(p.name);
+        return String.join(", ", names);
+    }
+
+    /** The room as the server knows it (the audit journal hashes it like its other entries). */
+    public String roomId() { RoomKeys k = keys; return k == null ? "" : k.roomId; }
+
+    /** A step only this device keeps (displayed, revealed, opened, a hide ended): into the history soon. */
+    public void touched(ChatMessage m) { History.saveSoon(app, key, this); }
+
+    /** Hides the message in this view until then (ChatMessage.UNTIL_SIGNIN with the unlock it belongs to), or shows it again (until = 0). */
+    public void hide(ChatMessage m, long until, String unlock, String why) {
+        post(() -> {
+            m.hiddenUntil = until;
+            m.hiddenFor = until == ChatMessage.UNTIL_SIGNIN ? unlock : null;
+            m.mark(until == 0 ? "unhidden" : "hidden", why);
+            rooms.messageChanged(this, m);
+            History.saveSoon(app, key, this);
+        });
+    }
+
+    /**
+     * Deleted on this device: out of the view, the outbox and the stored
+     * history at once — not from anyone else's. Its file (and a transcript's
+     * recording) goes too when no other message of any room points to it
+     * (a forward shares the vault file).
+     */
+    public void deleteLocal(ChatMessage m) {
+        post(() -> {
+            synchronized (messages) { messages.remove(m); }
+            synchronized (outbox) { outbox.removeIf(q -> q.message == m); }
+            m.deleted = true;
+            History.save(app, key, messagesCopy());
+            rooms.messageChanged(this, m);
+            String[] files = {m.filePath, m.sourceAudio};
+            Io.bg(() -> {
+                for (String id : files) {
+                    if (id == null || id.isEmpty() || fileInUse(id)) continue;
+                    try { cz.m5cet.app.security.FileVault.delete(app, id); } catch (IllegalArgumentException ignored) { }
+                }
+            });
+        });
+    }
+
+    private boolean fileInUse(String id) {
+        for (Rooms.Saved s : rooms.saved()) {
+            RoomSession r = rooms.session(s.key);
+            for (ChatMessage x : r != null ? r.messagesCopy() : History.load(app, s.key)) if (id.equals(x.filePath) || id.equals(x.sourceAudio)) return true;
+        }
+        return false;
     }
 
     /** audio ↔ text calls: what a peer said, as its message here (local only), with the recording behind it. */
@@ -829,7 +903,7 @@ public final class RoomSession {
 
     /* ------------------------------------------------------------- files */
 
-    void addFile(ChatMessage m) { add(m, !m.mine); }
+    void addFile(ChatMessage m) { if (!m.mine) arrived(m, ""); add(m, !m.mine); }
     void fileChanged(ChatMessage m) { rooms.messageChanged(this, m); }
     void fileDone(ChatMessage m) { rooms.messageChanged(this, m); History.saveSoon(app, key, this); }
     void systemNotice(String text) { post(() -> system(text)); }
@@ -859,6 +933,7 @@ public final class RoomSession {
         m.fileSize = size;
         m.filePath = vaultId;
         m.fileProgress = 0;
+        m.mark("created", "", m.createdAt);
         if (o != null) m.loc = o.loc;
         post(() -> { m.senderId = myId; add(m, false); files.send(vaultId, name, m.fileMime, size, m); });
         return m;

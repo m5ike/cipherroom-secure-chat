@@ -99,11 +99,19 @@ public final class Parts {
     /* ------------------------------------------------ tools and settings (6.1) */
 
     public void onMessageAction(String action, String id) {
+        if (action.equals("msg.showHidden")) { if (messages != null) messages.toggleHidden(); return; }
         ChatMessage m = find(id);
         if (m == null) return;
-        if (action.equals("msg.map")) openMap(m);
-        else if (action.equals("msg.source")) playSource(m);
-        else openFile(m);
+        switch (action) {
+            case "msg.map": openMap(m); break;
+            case "msg.mapPreview": mapPreview(m); break;
+            case "msg.source": playSource(m); break;
+            case "msg.info": messageInfo(m); break;
+            case "msg.save": if (m.fileName != null) saveFile(m); break;
+            case "msg.share": if (m.fileName != null) shareFile(m); break;
+            case "msg.forward": forward(m); break;
+            default: openFile(m);
+        }
     }
 
     public String composerText() { return composer == null ? "" : composer.text(); }
@@ -225,29 +233,105 @@ public final class Parts {
         });
     }
 
-    /** Forward (App.tsx:3565): same text and attachment, "forwarded from", no kinds; a sealed one only when opened. */
+    /**
+     * Forward (App.tsx:3565): same text and attachment, "forwarded from", no
+     * kinds; a sealed one only when opened. 6.2: to a room, then to everyone
+     * there or one person (privately) — a file from the vault goes to the
+     * whole room (a transfer has no private form).
+     */
     void forward(ChatMessage m) {
-        RoomSession r = app().rooms.activeSession();
-        if (r == null) return;
         java.util.List<RoomSession> rooms = app().rooms.connectedSessions();
+        if (rooms.isEmpty()) { a.flash("", app().t("room.offline"), "warn"); return; }
         String[] names = new String[rooms.size()];
         for (int i = 0; i < rooms.size(); i++) names[i] = rooms.get(i).label;
-        new android.app.AlertDialog.Builder(a).setTitle(app().t("msg.forward")).setItems(names, (d, w) -> {
-            cz.m5cet.app.chat.Outgoing o = new cz.m5cet.app.chat.Outgoing();
-            o.text = m.visibleText();
-            o.forwardedFrom = m.forwardedFrom != null ? m.forwardedFrom : m.senderName;
-            if (m.fileDataUrl != null) { o.fileName = m.fileName; o.fileMime = m.fileMime; o.dataUrl = m.fileDataUrl; o.fileSize = m.fileSize; o.fileImage = m.fileImage; }
+        secureDialog(new android.app.AlertDialog.Builder(a).setTitle(app().t("msg.forward")).setItems(names, (d, w) -> {
             RoomSession to = rooms.get(w);
-            if (m.filePath != null && m.fileDataUrl == null) to.sendFile(m.filePath, m.fileName, m.fileMime, m.fileSize, o);
-            else to.send(o);
-            a.flash("", "✓ " + to.label, "success");
-        }).show();
+            org.json.JSONArray peers = to.peersScope();
+            boolean vaultFile = m.filePath != null && m.fileDataUrl == null;
+            if (peers.length() == 0 || vaultFile) { forwardTo(m, to, null, null); return; }
+            String[] who = new String[peers.length() + 1];
+            who[0] = app().t("msg.everyone") + " · " + to.label;
+            for (int i = 0; i < peers.length(); i++) who[i + 1] = peers.optJSONObject(i).optString("name");
+            secureDialog(new android.app.AlertDialog.Builder(a).setTitle(app().t("msg.forwardTo")).setItems(who, (d2, w2) -> {
+                org.json.JSONObject p = w2 == 0 ? null : peers.optJSONObject(w2 - 1);
+                forwardTo(m, to, p == null ? null : p.optString("id"), p == null ? null : p.optString("name"));
+            }));
+        }));
     }
 
-    /** The pin on a map: the phone's map app (geo:), else OpenStreetMap. */
+    private void forwardTo(ChatMessage m, RoomSession to, String peerId, String peerName) {
+        cz.m5cet.app.chat.Outgoing o = new cz.m5cet.app.chat.Outgoing();
+        o.text = m.visibleText();
+        o.forwardedFrom = m.forwardedFrom != null ? m.forwardedFrom : m.senderName;
+        if (m.fileDataUrl != null) { o.fileName = m.fileName; o.fileMime = m.fileMime; o.dataUrl = m.fileDataUrl; o.fileSize = m.fileSize; o.fileImage = m.fileImage; }
+        if (peerId != null) { o.recipients.add(peerId); o.recipientNames.add(peerName); }
+        if (m.filePath != null && m.fileDataUrl == null) to.sendFile(m.filePath, m.fileName, m.fileMime, m.fileSize, o);
+        else to.send(o);
+        a.flash("", "✓ " + (peerName != null ? peerName + " · " : "") + to.label, "success");
+    }
+
+    /** A dialog of the app keeps screenshots out like the app does (its own window). */
+    private android.app.AlertDialog secureDialog(android.app.AlertDialog.Builder b) {
+        android.app.AlertDialog d = b.create();
+        if ((a.getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_SECURE) != 0 && d.getWindow() != null)
+            d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+        d.show();
+        return d;
+    }
+
+    /** The Android share sheet with the file (a content:// URI read through the vault; plaintext only to the app the user picks). */
+    void shareFile(ChatMessage m) {
+        if (m.fileName == null) return;
+        android.net.Uri uri = cz.m5cet.app.ui.media.VaultMedia.uriFor(app(), m);
+        android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_SEND)
+            .setType(m.fileMime == null || m.fileMime.isEmpty() ? "application/octet-stream" : m.fileMime)
+            .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        i.setClipData(android.content.ClipData.newRawUri(m.fileName, uri));
+        try { a.startActivity(android.content.Intent.createChooser(i, m.fileName)); }
+        catch (RuntimeException e) { a.flash("", app().t("file.noApp"), "warn"); }
+    }
+
+    /** A step only this device keeps (displayed, revealed, opened): stored with the message. */
+    void touched(ChatMessage m) {
+        RoomSession r = app().rooms.session(m.roomKey);
+        if (r != null) r.touched(m);
+    }
+
+    /** A deleted message's pictures and previews go from memory too. */
+    void forget(ChatMessage m) {
+        for (String k : new String[]{m.id, m.id + "#poster", m.id + "#pdf"}) imageCache.remove(k);
+        MsgBody.forget(m.id);
+        holding.remove(m.id);
+    }
+
+    /**
+     * The pin of a header position (location.inHeader): the same map as a
+     * position message, in a dialog; without maps (switched off, no server)
+     * straight to the full map as before.
+     */
+    void mapPreview(ChatMessage m) {
+        cz.m5cet.app.ui.bubble.MapPolicy p = MapBubble.policyFor(app(), m);
+        if (p == null) { openMap(m); return; }
+        int fg = Ui.color(a, "@onSurface", Color.BLACK);
+        android.widget.LinearLayout box = new android.widget.LinearLayout(a);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
+        android.app.AlertDialog[] shown = new android.app.AlertDialog[1];
+        box.addView(MapBubble.build(a, this, m, p, fg, a.getResources().getDisplayMetrics().widthPixels - Ui.dp(a, 88), () -> {
+            if (shown[0] != null) shown[0].dismiss();
+            openMap(m);
+        }));
+        shown[0] = secureDialog(new android.app.AlertDialog.Builder(a).setTitle(m.senderName).setView(box)
+            .setPositiveButton(app().t("map.open"), (d, w) -> openMap(m))
+            .setNegativeButton(app().t("nav.close"), null));
+    }
+
+    /** The pin on a map: the phone's map app (geo:), else OpenStreetMap. 6.2: also a position message from the web (the text only). */
     void openMap(ChatMessage m) {
-        if (m.loc == null) return;
-        double lat = m.loc.optDouble("lat"), lon = m.loc.optDouble("lon");
+        org.json.JSONObject pos = cz.m5cet.app.ui.bubble.Kinds.position(m);
+        if (pos == null) return;
+        double lat = pos.optDouble("lat"), lon = pos.optDouble("lon");
         try {
             a.startActivity(new android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(cz.m5cet.app.location.Where.geoUri(lat, lon, m.senderName))));
         } catch (RuntimeException e) {
@@ -268,29 +352,11 @@ public final class Parts {
         bar.toggle();
     }
 
-    /** What the app knows of a message (like the web's message info). */
+    /** What the app knows of a message (like the web's message info). 6.2: a details view with the timeline, hide and delete. */
     void messageInfo(ChatMessage m) {
-        StringBuilder b = new StringBuilder();
-        java.text.DateFormat df = java.text.DateFormat.getDateTimeInstance();
-        b.append(app().t("msg.info.sent")).append(": ").append(df.format(new java.util.Date(m.createdAt))).append('\n');
-        b.append(app().t("msg.info.from")).append(": ").append(m.mine ? app().t("users.me") : m.senderName).append('\n');
-        if (m.mine) b.append(app().t("msg.info.state")).append(": ").append(app().t("msg.state." + m.status)).append('\n');
-        if (m.receipts.length() > 0) for (java.util.Iterator<String> it = m.receipts.keys(); it.hasNext(); ) { String k = it.next(); b.append("  · ").append(peerName(k)).append(": ").append(app().t("msg.state." + m.receipts.optString(k))).append('\n'); }
-        if (!m.to.isEmpty()) b.append(app().t("msg.info.to")).append(": ").append(String.join(", ", m.to)).append('\n');
-        if (m.expiresAt > 0) b.append(app().t("msg.info.expires")).append(": ").append(df.format(new java.util.Date(m.expiresAt))).append('\n');
-        if (m.vanishSeconds > 0) b.append(app().t("msgkind.vanish")).append(": ").append(m.vanishSeconds).append(" s\n");
-        if (m.sealed != null) b.append(app().t("msgkind.sealed")).append('\n');
-        if (m.tap) b.append(app().t("msgkind.tap")).append('\n');
-        if (m.loc != null) b.append(app().t("msg.map")).append(": ").append(m.loc.optDouble("lat")).append(", ").append(m.loc.optDouble("lon")).append(" (±").append(m.loc.optLong("acc")).append(" m)\n");
-        b.append(app().t("msg.info.verified")).append(": ").append(m.verified ? "✓" : m.changed ? "⚠" : "—");
-        new android.app.AlertDialog.Builder(a).setTitle(app().t("msg.info")).setMessage(b.toString()).setPositiveButton("OK", null).show();
-    }
-
-    private String peerName(String peerId) {
-        RoomSession r = app().rooms.activeSession();
-        if (r == null) return peerId;
-        String n = r.peerName(peerId);
-        return n == null ? peerId : n;
+        RoomSession r = app().rooms.session(m.roomKey);
+        if (r == null || "sys".equals(m.kind)) return;
+        MsgDetails.show(a, this, r, m);
     }
 
     /* ----------------------------------------------------------- composer */
