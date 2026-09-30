@@ -24,7 +24,8 @@
     "gen:builtins": "node script/gen-builtins.mjs",
     "check:menu:verbose": "bash -x scripts/pre-commit-check.sh",
     "android:assets": "tsx script/android-assets.ts",
-    "android:build": "node script/android-build.mjs"
+    "android:build": "node script/android-build.mjs",
+    "android:release": "node script/android-build.mjs --release"
   },
   "dependencies": {
     "@jitl/quickjs-ng-wasmfile-release-sync": "^0.32.0",
