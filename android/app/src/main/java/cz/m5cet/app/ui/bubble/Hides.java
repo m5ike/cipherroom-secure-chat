@@ -19,9 +19,9 @@ public final class Hides {
     private Hides() {}
 
     public static final long SIGNIN = ChatMessage.UNTIL_SIGNIN;
-    /** The choices of the details view, in order; the timeline's meta names them. */
+    /** The choices of the details view, in order; the "hidden" step's meta names them ("signin" is an unhide's: after a new sign-in). */
     public static final long[] FOR = {15 * 60_000L, 3_600_000L, 8 * 3_600_000L, 86_400_000L, SIGNIN};
-    public static final String[] NAMES = {"15m", "1h", "8h", "1d", "signin"};
+    public static final String[] NAMES = {"15m", "1h", "8h", "1d", "until-signin"};
 
     public interface Listener { void onHidesChanged(); }
 

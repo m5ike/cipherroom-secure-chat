@@ -257,6 +257,27 @@ public class BubblesTest {
         assertFalse(Hides.hidden(m, 5, "unlock-A"));
     }
 
+    /** Every word the bubbles look up is in the design's strings (server/android/design-62-bubbles.ts), in all three languages. */
+    @Test public void theDesignHasEveryWord() throws Exception {
+        java.nio.file.Path ts = cz.m5cet.app.InteropTest.fixtures().getParent().getParent().resolve("server/android/design-62-bubbles.ts");
+        String src = new String(java.nio.file.Files.readAllBytes(ts), java.nio.charset.StandardCharsets.UTF_8);
+        List<String> keys = new java.util.ArrayList<>();
+        for (String n : Hides.NAMES) { keys.add("msginfo.hide." + n); keys.add("msginfo.meta." + n); }
+        for (String s : new String[]{"created", "encrypted", "sent", "received", "decrypted", "displayed", "discarded", "queued", "stored", "forwarded", "delivered", "read", "revealed", "opened", "expired", "hidden", "unhidden"}) keys.add("msginfo.state." + s);
+        for (String meta : new String[]{"p2p", "relay", "code", "ttl", "vanish", "time", "signin", "user"}) keys.add("msginfo.meta." + meta);
+        for (String k : new String[]{"text", "file", "image", "audio", "video", "location", "tap", "vanish", "sealed", "fn", "private", "forwarded", "reply", "transcript"}) keys.add("msginfo.kind." + k);
+        keys.addAll(Arrays.asList("map.caption", "map.captionMine", "map.open", "file.share", "file.pages", "msg.forwardTo", "msg.showHidden", "msg.hideHidden", "msg.hiddenUntil", "msg.hiddenSignin",
+            "msginfo.when", "msginfo.sender", "msginfo.recipients", "msginfo.everyone", "msginfo.size", "msginfo.sizeText", "msginfo.sizeFile", "msginfo.verified", "msginfo.changed", "msginfo.expires",
+            "msginfo.hidden", "msginfo.kinds", "msginfo.audit", "msginfo.receipts", "msginfo.attachment", "msginfo.hideTitle", "msginfo.unhide", "msginfo.hiddenFlash", "msginfo.delete",
+            "msginfo.deleteYes", "msginfo.cancel", "msginfo.deleteAsk", "msginfo.deleted", "msginfo.auditNote"));
+        for (String k : keys) {
+            int count = 0;
+            for (int at = src.indexOf("\"" + k + "\":"); at >= 0; at = src.indexOf("\"" + k + "\":", at + 1)) count++;
+            assertEquals(k + " in cs, en and de", 3, count);
+        }
+        assertTrue(src.contains("{name}"));
+    }
+
     @Test public void theNextTimedHideToEnd() {
         ChatMessage a = msg("a"), b = msg("b"), c = msg("c");
         a.hiddenUntil = 5000;
