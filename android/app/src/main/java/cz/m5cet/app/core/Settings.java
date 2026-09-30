@@ -68,6 +68,10 @@ public final class Settings {
         DEFAULTS.put("look.v", 0.0);                     // the look settings' version (ui/look/Migration)
         // NFC
         DEFAULTS.put("nfc.emulate", false);              // answer as a tag with the room invite
+        // 6.3 nfc (the workbench): the saved reader and the key-dictionary policy
+        DEFAULTS.put("nfc.reader", "internal");          // internal | usb | bluetooth (the chosen reader)
+        DEFAULTS.put("nfc.keyDictionary", "");           // the user's MIFARE key list (newline/space-separated 12-hex keys); NOT recovery
+        DEFAULTS.put("nfc.saveKeys", false);             // keep the key dictionary across sessions (else only in the open workbench)
         // Security (the SYS tier is readable while the app is locked, so the PIN pad can read these)
         DEFAULTS.put("security.shufflePin", false);      // the PIN keys are not in order and reshuffle after every tap
         // 6.2 fixes (lock, enrolment, passkeys)

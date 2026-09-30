@@ -1,17 +1,22 @@
 package cz.m5cet.app.nfc;
 
 import android.nfc.NdefMessage;
+import android.nfc.NdefRecord;
 import android.nfc.cardemulation.HostApduService;
 import android.os.Bundle;
 
 import java.util.Arrays;
 
 /**
- * The phone as an NFC Forum Type 4 tag (6.1) carrying the app's own
- * connection card — only while the user has it on (NFC › Be a card) and
- * only the NDEF application (AID D2760000850101): SELECT the application,
- * SELECT the capability container (E103) or the NDEF file (E104), READ
- * BINARY. Nothing is writable; with no card set it answers "not found".
+ * The phone as an NFC Forum Type 4 tag (6.1, extended 6.3) carrying one of the
+ * app's own cards — only while the user has it on (NFC › Be a card) and only
+ * the NDEF application (AID D2760000850101): SELECT the application, SELECT the
+ * capability container (E103) or the NDEF file (E104), READ BINARY. Nothing is
+ * writable; with no card set it answers "not found".
+ *
+ * 6.3: besides the room connection tag (a MIME record), it can hold an M5Cet
+ * card — the encrypted container in an NDEF external record m5cet.cz:card — so
+ * another phone (or the web workbench) reads it off the emulated tag.
  */
 public final class CardService extends HostApduService {
     private static final byte[] AID = {(byte) 0xD2, 0x76, 0x00, 0x00, (byte) 0x85, 0x01, 0x01};
@@ -29,6 +34,20 @@ public final class CardService extends HostApduService {
         System.arraycopy(m, 0, f, 2, m.length);
         ndefFile = f;
     }
+
+    /** 6.3: answer as a Type 4 tag holding an M5Cet card (the container in an external record). */
+    public static void serveM5Card(byte[] container) {
+        serve(new NdefMessage(new NdefRecord[]{NdefRecord.createExternal("m5cet.cz", "card", container)}));
+    }
+
+    /** 6.3: answer as the room connection tag (its MIME record); see {@link Nfc#message}. */
+    public static void serveConnection(NdefMessage connection) { serve(connection); }
+
+    /** Stop emulating (answer "not found"). */
+    public static void stopServing() { serve(null); }
+
+    /** Whether the phone is answering as a card now. */
+    public static boolean serving() { return ndefFile != null; }
 
     private byte[] selected;
 

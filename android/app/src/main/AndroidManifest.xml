@@ -25,6 +25,9 @@
     <uses-permission android:name="android.permission.WRITE_CONTACTS" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />
     <uses-feature android:name="android.hardware.nfc.hce" android:required="false" />
+    <!-- 6.3 nfc: an optional USB-host PC/SC (CCID) reader (e.g. ACR122U / ACR1252U over OTG).
+         Permission for a specific device is asked at runtime (UsbManager); no extra <uses-permission>. -->
+    <uses-feature android:name="android.hardware.usb.host" android:required="false" />
     <uses-feature android:name="android.hardware.location" android:required="false" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />

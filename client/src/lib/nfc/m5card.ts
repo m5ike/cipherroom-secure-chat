@@ -8,7 +8,7 @@
 // same thing. Nothing here is web- or NDEF-specific.
 //
 //   container = "M5CD" | ver(1) | flags(1) | count(1) | record*
-//   record    = type(1) | mode(1) | rflags(1) | id(4) | salt(1+n) | iv(1+n)
+//   record    = type(1) | mode(1) | rflags(1) | id(3) | salt(1+n) | iv(1+n)
 //               | ct(u16 BE + bytes)            ct = AES-GCM(plaintext)
 //               AAD = "M5CD" | ver | type | id
 //

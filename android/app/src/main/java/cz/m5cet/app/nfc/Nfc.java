@@ -214,7 +214,7 @@ public final class Nfc {
         message = "written";
     }
 
-    static NdefMessage message(String blob) {
+    public static NdefMessage message(String blob) {
         return new NdefMessage(new NdefRecord[]{NdefRecord.createMime(MIME, blob.getBytes(StandardCharsets.UTF_8))});
     }
 

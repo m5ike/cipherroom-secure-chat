@@ -345,6 +345,14 @@ public final class Account {
     /** Can this phone seal the root for a recovery code or another passkey? */
     public boolean hasRoot() { return signedIn() && !state().optString("root").isEmpty(); }
 
+    /**
+     * 6.3: the account root for an internal (passkey) M5Cet card record —
+     * HKDF(root, salt, "m5cet:nfc:card:v1"). Available while signed in (the
+     * session holds it); null otherwise, and the workbench then asks the user
+     * to sign in. The bytes never leave the device.
+     */
+    public byte[] cardRoot() { return hasRoot() ? root() : null; }
+
     /** A sign-in or a confirmation this recent stands for the person: no second prompt. */
     private static final long FRESH_MS = 5 * 60_000;
 
