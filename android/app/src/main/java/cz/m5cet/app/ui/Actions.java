@@ -114,6 +114,9 @@ public final class Actions {
                 case "account.signin": a.accountSignIn(false); break;
                 case "account.signup": a.accountSignIn(true); break;
                 case "account.signout": a.accountSignOut("everywhere".equals(s)); break;
+                // 6.2 fixes: reaching a device-bound account elsewhere
+                case "account.recovery": cz.m5cet.app.account.AccountDialogs.recoveryCode(a); break;
+                case "account.addPasskey": cz.m5cet.app.account.AccountDialogs.addPasskey(a); break;
                 case "pin.change": a.parts.changePin(); break;
                 case "biometric.toggle": a.toggleBiometric(); break;
                 case "wipe.ask": a.parts.askWipe(); break;

@@ -1,25 +1,15 @@
 package cz.m5cet.app.account;
 
 import android.app.Activity;
-import android.os.CancellationSignal;
+import android.os.Build;
 
-import androidx.credentials.CreateCredentialResponse;
-import androidx.credentials.CreatePublicKeyCredentialRequest;
-import androidx.credentials.CreatePublicKeyCredentialResponse;
-import androidx.credentials.CredentialManager;
-import androidx.credentials.CredentialManagerCallback;
-import androidx.credentials.GetCredentialRequest;
-import androidx.credentials.GetCredentialResponse;
-import androidx.credentials.GetPublicKeyCredentialOption;
-import androidx.credentials.PublicKeyCredential;
-import androidx.credentials.exceptions.CreateCredentialException;
-import androidx.credentials.exceptions.GetCredentialException;
-
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
-import java.util.Collections;
+import java.security.GeneralSecurityException;
+import java.util.function.Consumer;
 
 import cz.m5cet.app.M5;
 import cz.m5cet.app.core.Io;
@@ -40,6 +30,13 @@ import cz.m5cet.app.security.Vault;
  * vault's user tier, so the session survives a restart without a new
  * ceremony (sliding 12 h, at most 7 days on the server).
  *
+ * 6.2: a provider that withholds PRF when creating gets a PRF-only assertion
+ * right away (as the web does); one with no PRF at all (Samsung Pass) gets a
+ * device-bound account — a random root kept in DeviceRoots, usable elsewhere
+ * after a recovery code or a PRF passkey is added from here. Once a passkey
+ * exists, the server is always asked to register it, or the person is told
+ * exactly which passkey to delete.
+ *
  * The token authorises the server's APIs for this person (commands, the AI
  * assistant, speech — their groups instead of "guest") and the relay for
  * members who are away.
@@ -47,16 +44,47 @@ import cz.m5cet.app.security.Vault;
 public final class Account {
     public interface Done { void done(boolean ok, String error); }
 
-    static final byte[] PRF_SALT = Crypto.utf8("m5cet:passkey:prf:v1");
+    /** How a ceremony ended: code tells the UI which answer it gets (AccountDialogs). */
+    public static final class Result {
+        public final boolean ok;
+        /** "", cancelled, no-passkey, unsupported, unknown-passkey, no-prf, wrong-key, orphan. */
+        public final String code;
+        public final String message;
+        /** The account's root lives only on this phone. */
+        public final boolean deviceBound;
+        /** The account's username — or the stale passkey's, for unknown-passkey. */
+        public final String username;
+
+        Result(boolean ok, String code, String message, boolean deviceBound, String username) {
+            this.ok = ok; this.code = code == null ? "" : code; this.message = message == null ? "" : message; this.deviceBound = deviceBound; this.username = username == null ? "" : username;
+        }
+        static Result success(boolean deviceBound, String username) { return new Result(true, "", "", deviceBound, username); }
+        static Result failure(String code, String message, String username) { return new Result(false, code, message, false, username); }
+    }
+
+    public interface Outcome { void done(Result r); }
+
+    /** The recovery code (shown once), or why there is none. */
+    public interface CodeDone { void done(String code, Result failure); }
+
     static final String RECORD = "account";
 
     private final M5 app;
     private JSONObject state;
+    private DeviceRoots roots;
 
     public Account(M5 app) { this.app = app; }
 
+    private synchronized DeviceRoots roots() {
+        if (roots == null) roots = new DeviceRoots(app.vault);
+        return roots;
+    }
+
     private synchronized JSONObject state() {
-        if (state == null) state = app.vault.unlocked() ? app.vault.json(Vault.Tier.USER, RECORD) : new JSONObject();
+        if (state != null) return state;
+        // Read only once the vault is open: an empty state read while locked must not stick.
+        if (!app.vault.unlocked()) return new JSONObject();
+        state = app.vault.json(Vault.Tier.USER, RECORD);
         return state;
     }
 
@@ -72,9 +100,13 @@ public final class Account {
     public String token() { return state().optString("token"); }
     public String username() { JSONObject a = state().optJSONObject("account"); return a == null ? "" : a.optString("username", a.optString("id")); }
     public JSONObject summary() { JSONObject a = state().optJSONObject("account"); return a == null ? new JSONObject() : a; }
+    /** The account's root is kept only on this phone (its passkey has no PRF). */
+    public boolean deviceBound() { return state().optBoolean("deviceBound"); }
 
     /** The Authorization header value for the server's APIs ("" without an account). */
     public String bearer() { String t = token(); return t.isEmpty() ? "" : "Bearer " + t; }
+
+    private String t(String key) { return app.t(key); }
 
     /* -------------------------------------------------------------- http */
 
@@ -86,104 +118,341 @@ public final class Account {
         catch (JSONException e) { throw new IOException("not a JSON answer"); }
     }
 
+    /** What a call that must get through ended with. */
+    private static final class Sent {
+        JSONObject answer;
+        IOException error;
+        /** A try failed on the network: the server may have acted on it although no answer came. */
+        boolean unsure;
+        /** The server itself said no, and nothing before may have reached it. */
+        boolean refused() { return answer == null && error instanceof Server.HttpError && !unsure; }
+    }
+
+    /** A call that must get through: network failures are tried again twice (a refusal by the server is not). */
+    private Sent send(String method, String path, JSONObject body, boolean auth) {
+        Sent s = new Sent();
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try { s.answer = call(method, path, body, auth); s.error = null; return s; }
+            catch (Server.HttpError e) { s.error = e; return s; }
+            catch (IOException e) {
+                s.error = e;
+                s.unsure = true;
+                if (attempt == 2) break;
+                Log.w("account", path + ": " + e.getMessage() + " — trying again");
+                try { Thread.sleep(1500L * (attempt + 1)); } catch (InterruptedException x) { Thread.currentThread().interrupt(); break; }
+            }
+        }
+        return s;
+    }
+
+    private static void report(Outcome done, Result r) { Io.main(() -> done.done(r)); }
+
+    private static String accountId(JSONObject account, String fallback) {
+        if (account == null) return fallback;
+        String id = account.optString("id", account.optString("username", ""));
+        return id.isEmpty() ? fallback : id;
+    }
+
     /* ---------------------------------------------------------- sign in */
 
     /** Sign in with a passkey (discoverable: the system shows the person's passkeys for this server). */
-    public void signIn(Activity activity, Done done) {
+    public void signIn(Activity activity, Outcome done) {
         Io.bg(() -> {
             try {
                 JSONObject options = call("POST", "/api/account/signin/options", new JSONObject(), false).getJSONObject("publicKey");
-                JSONObject request = new JSONObject().put("challenge", options.getString("challenge")).put("rpId", options.getString("rpId"))
-                    .put("userVerification", "required").put("timeout", options.optLong("timeout", 60_000))
-                    .put("extensions", new JSONObject().put("prf", new JSONObject().put("eval", new JSONObject().put("first", Crypto.b64url(PRF_SALT)))));
-                GetCredentialRequest req = new GetCredentialRequest(Collections.singletonList(new GetPublicKeyCredentialOption(request.toString())));
-                Io.main(() -> CredentialManager.create(activity).getCredentialAsync(activity, req, new CancellationSignal(), activity.getMainExecutor(),
-                    new CredentialManagerCallback<GetCredentialResponse, GetCredentialException>() {
-                        @Override public void onResult(GetCredentialResponse r) {
-                            if (!(r.getCredential() instanceof PublicKeyCredential)) { done.done(false, "not a passkey"); return; }
-                            String json = ((PublicKeyCredential) r.getCredential()).getAuthenticationResponseJson();
-                            Io.bg(() -> finishSignIn(json, done));
-                        }
-                        @Override public void onError(GetCredentialException e) { Log.w("account", "passkey: " + e.getType() + " " + e.getMessage()); done.done(false, String.valueOf(e.getMessage())); }
-                    }));
+                JSONObject request = AccountKeys.withPrf(new JSONObject().put("challenge", options.getString("challenge")).put("rpId", options.getString("rpId"))
+                    .put("userVerification", "required").put("timeout", options.optLong("timeout", 60_000)));
+                String rpId = options.getString("rpId");
+                Io.main(() -> Passkeys.get(activity, request, new Passkeys.Result() {
+                    @Override public void ok(JSONObject credential) { Io.bg(() -> finishSignIn(credential, rpId, done)); }
+                    @Override public void failed(String code, String message) { done.done(Result.failure(code, message, "")); }
+                }));
             } catch (Exception e) {
                 Log.w("account", "sign-in failed: " + e.getMessage());
-                Io.main(() -> done.done(false, e.getMessage()));
+                report(done, Result.failure("", e.getMessage(), ""));
             }
         });
     }
 
-    private void finishSignIn(String responseJson, Done done) {
-        String token = null;
+    private void finishSignIn(JSONObject credential, String rpId, Outcome done) {
+        String server = app.config.server();
+        byte[] prf = AccountKeys.prfOf(credential);
+        byte[] root = null;
+        String token = null, id = "";
+        DeviceRoots.Entry kept = null;
         try {
-            JSONObject credential = new JSONObject(responseJson);
-            byte[] prf = prfOf(credential);
-            if (prf == null) throw new IOException("this passkey cannot derive keys (no PRF) — use another passkey or the web app");
-            JSONObject answer = call("POST", "/api/account/signin/verify", new JSONObject().put("credential", strip(credential)), false);
+            JSONObject answer;
+            try {
+                answer = call("POST", "/api/account/signin/verify", new JSONObject().put("credential", AccountKeys.strip(credential)), false);
+            } catch (Server.HttpError e) {
+                if (e.status != 404 && !"unknown-passkey".equals(e.code)) throw e;
+                // Left over from a sign-up the server never finished: a root kept for it is of no use.
+                String stale = AccountKeys.handleName(credential);
+                DeviceRoots.Entry pending = roots().get(server, stale);
+                if (pending != null) { if (!pending.confirmed) roots().remove(server, stale); Crypto.wipe(pending.root); }
+                report(done, Result.failure("unknown-passkey", e.getMessage(), stale));
+                return;
+            }
             token = answer.getString("token");
+            JSONObject account = answer.optJSONObject("account");
+            id = accountId(account, AccountKeys.handleName(credential));
+            kept = roots().get(server, id);
             JSONObject wrapped = answer.optJSONObject("wrapped");
-            byte[] root = wrapped == null ? prf : openRoot(wrapped, prf, "m5cet:root-wrap:passkey:v1");
-            JSONObject s = new JSONObject().put("token", token).put("account", answer.optJSONObject("account")).put("root", Crypto.b64(root)).put("at", System.currentTimeMillis());
+            // The root: kept here for a device-bound account; else sealed for this passkey
+            // (added later), else this passkey's PRF output; a pending device root last.
+            boolean bound = false;
+            if (kept != null && kept.confirmed) { root = kept.root.clone(); bound = true; }
+            else if (prf != null && AccountKeys.sealed(wrapped)) root = AccountKeys.openRoot(wrapped, prf, AccountKeys.WRAP_PASSKEY);
+            else if (prf != null) root = prf.clone();
+            else if (kept != null) { root = kept.root.clone(); bound = true; }
+            else throw new Failure("no-prf", t("passkey.noPrf").replace("{user}", id));
+            JSONObject s = new JSONObject().put("token", token).put("account", account).put("root", Crypto.b64(root)).put("at", System.currentTimeMillis())
+                .put("deviceBound", bound).put("rpId", rpId);
             save(s);
-            JSONObject unlocked = call("POST", "/api/account/unlock", new JSONObject().put("keyProof", keyProof(root)), true);
+            JSONObject unlocked;
+            try {
+                unlocked = call("POST", "/api/account/unlock", new JSONObject().put("keyProof", AccountKeys.keyProof(root)), true);
+            } catch (Server.HttpError e) {
+                if (e.status != 403) throw e;
+                if (bound && !kept.confirmed) roots().remove(server, id);
+                throw new Failure("wrong-key", t(bound ? "passkey.wrongKeyDevice" : "passkey.wrongKey").replace("{user}", id));
+            }
             s.put("account", unlocked.optJSONObject("account"));
             save(s);
-            Crypto.wipe(prf);
-            app.events.add("account-signin", cz.m5cet.app.core.Events.detail("username", username()));
-            Log.i("account", "signed in as " + username());
+            if (bound && !kept.confirmed) roots().confirm(server, id, id);
+            app.events.add("account-signin", cz.m5cet.app.core.Events.detail("username", username(), "deviceBound", bound));
+            Log.i("account", "signed in as " + username() + (bound ? " (device-bound)" : ""));
             app.rooms.onAccountChanged();
-            Io.main(() -> done.done(true, null));
+            report(done, Result.success(bound, username()));
         } catch (Exception e) {
             Log.w("account", "sign-in failed: " + e.getMessage());
-            if (token != null) { final String t = token; Io.bg(() -> { try { signOutWith(t, false); } catch (IOException ignored) { } }); }
+            if (token != null) { final String tk = token; Io.bg(() -> { try { signOutWith(tk, false); } catch (IOException ignored) { } }); }
             save(new JSONObject());
-            Io.main(() -> done.done(false, e.getMessage()));
+            report(done, e instanceof Failure ? Result.failure(((Failure) e).code, e.getMessage(), id) : Result.failure("", e.getMessage(), id));
+        } finally {
+            Crypto.wipe(prf);
+            Crypto.wipe(root);
+            if (kept != null) Crypto.wipe(kept.root);
         }
+    }
+
+    /** A failure the UI answers in its own way (see Result.code). */
+    static final class Failure extends Exception {
+        final String code;
+        Failure(String code, String message) { super(message); this.code = code; }
     }
 
     /* ---------------------------------------------------------- sign up */
 
     /** A new account with a new passkey (the server picks the username). */
-    public void signUp(Activity activity, Done done) {
+    public void signUp(Activity activity, Outcome done) {
         Io.bg(() -> {
             try {
-                JSONObject options = call("POST", "/api/account/register/options", new JSONObject(), false).getJSONObject("publicKey");
-                options.put("extensions", new JSONObject().put("prf", new JSONObject().put("eval", new JSONObject().put("first", Crypto.b64url(PRF_SALT)))));
-                CreatePublicKeyCredentialRequest req = new CreatePublicKeyCredentialRequest(options.toString());
-                Io.main(() -> CredentialManager.create(activity).createCredentialAsync(activity, req, new CancellationSignal(), activity.getMainExecutor(),
-                    new CredentialManagerCallback<CreateCredentialResponse, CreateCredentialException>() {
-                        @Override public void onResult(CreateCredentialResponse r) {
-                            if (!(r instanceof CreatePublicKeyCredentialResponse)) { done.done(false, "not a passkey"); return; }
-                            String json = ((CreatePublicKeyCredentialResponse) r).getRegistrationResponseJson();
-                            Io.bg(() -> finishSignUp(activity, json, done));
-                        }
-                        @Override public void onError(CreateCredentialException e) { Log.w("account", "passkey: " + e.getType() + " " + e.getMessage()); done.done(false, String.valueOf(e.getMessage())); }
-                    }));
+                JSONObject answer = call("POST", "/api/account/register/options", new JSONObject(), false);
+                JSONObject options = AccountKeys.withPrf(answer.getJSONObject("publicKey"));
+                String rpId = options.getJSONObject("rp").getString("id");
+                JSONObject user = options.optJSONObject("user");
+                String username = answer.optString("username", user == null ? "" : user.optString("name"));
+                Io.main(() -> Passkeys.create(activity, options, new Passkeys.Result() {
+                    @Override public void ok(JSONObject registration) {
+                        // From here on a passkey exists on the phone: the server must hear of it.
+                        rootFor(activity, rpId, registration, prf -> Io.bg(() -> finishSignUp(registration, username, rpId, prf, done)));
+                    }
+                    @Override public void failed(String code, String message) { done.done(Result.failure(code, message, "")); }
+                }));
             } catch (Exception e) {
-                Io.main(() -> done.done(false, e.getMessage()));
+                Log.w("account", "sign-up failed: " + e.getMessage());
+                report(done, Result.failure("", e.getMessage(), ""));
             }
         });
     }
 
-    private void finishSignUp(Activity activity, String responseJson, Done done) {
+    /**
+     * A new passkey's PRF output: from the create answer, else from an
+     * assertion with just that passkey right away (web: passkey.ts
+     * createPasskey → prfSecretFor). null when the provider has none. Runs on
+     * the main thread; then gets its answer there.
+     */
+    private void rootFor(Activity activity, String rpId, JSONObject registration, Consumer<byte[]> then) {
+        byte[] direct = AccountKeys.prfOf(registration);
+        if (direct != null) { then.accept(direct); return; }
+        JSONObject request;
+        try { request = AccountKeys.prfRequest(rpId, registration, Crypto.random(32)); }
+        catch (JSONException e) { then.accept(null); return; }
+        Log.i("account", "no PRF when creating — asking the new passkey for it");
+        // A moment for the create sheet to go away before the next one comes up.
+        Io.mainLater(() -> Passkeys.get(activity, request, new Passkeys.Result() {
+            @Override public void ok(JSONObject assertion) {
+                boolean same = AccountKeys.credentialId(assertion).equals(AccountKeys.credentialId(registration));
+                byte[] prf = same ? AccountKeys.prfOf(assertion) : null;
+                if (prf == null) Log.i("account", same ? "the passkey gives no PRF" : "another passkey answered");
+                then.accept(prf);
+            }
+            @Override public void failed(String code, String message) { Log.i("account", "no PRF from the new passkey: " + code + " " + message); then.accept(null); }
+        }), 400);
+    }
+
+    private void finishSignUp(JSONObject registration, String username, String rpId, byte[] prf, Outcome done) {
+        String server = app.config.server();
+        boolean bound = prf == null;
+        // No PRF at all: a root made here, kept before the server hears of it.
+        byte[] root = bound ? Crypto.random(32) : prf;
+        String pendingId = username.isEmpty() ? AccountKeys.credentialId(registration) : username;
         try {
-            JSONObject credential = new JSONObject(responseJson);
-            byte[] prf = prfOf(credential);
-            if (prf == null) {
-                // Some providers give PRF only on an assertion: sign in with the new passkey right away (web: passkey.ts:228).
-                Io.main(() -> done.done(false, "this passkey provider gives no PRF when creating — sign in with it now"));
+            if (bound) {
+                try { roots().put(server, pendingId, root, AccountKeys.credentialId(registration), false); }
+                catch (GeneralSecurityException e) { throw new IOException("the account key could not be stored on this phone", e); }
+            }
+            Sent sent = send("POST", "/api/account/register/verify", new JSONObject().put("credential", AccountKeys.strip(registration)).put("keyProof", AccountKeys.keyProof(root)), false);
+            if (sent.refused()) {
+                // The server refused it: no account exists for this passkey.
+                if (bound) roots().remove(server, pendingId);
+                report(done, Result.failure("orphan", t("passkey.orphan").replace("{user}", username).replace("{reason}", String.valueOf(sent.error.getMessage())), username));
                 return;
             }
-            JSONObject answer = call("POST", "/api/account/register/verify", new JSONObject().put("credential", strip(credential)).put("keyProof", keyProof(prf)), false);
-            JSONObject s = new JSONObject().put("token", answer.getString("token")).put("account", answer.optJSONObject("account")).put("root", Crypto.b64(prf)).put("at", System.currentTimeMillis());
-            save(s);
-            Crypto.wipe(prf);
-            Log.i("account", "account created: " + username());
+            if (sent.answer == null) {
+                // Maybe registered, maybe not: a device root stays (a later sign-in with the passkey finds it).
+                report(done, Result.failure("orphan", t("passkey.orphanOffline").replace("{user}", username), username));
+                return;
+            }
+            JSONObject answer = sent.answer;
+            String id = accountId(answer.optJSONObject("account"), pendingId);
+            if (bound) {
+                try { roots().confirm(server, pendingId, id); } catch (GeneralSecurityException e) { Log.e("account", "the device root could not be confirmed", e); }
+            }
+            save(new JSONObject().put("token", answer.getString("token")).put("account", answer.optJSONObject("account")).put("root", Crypto.b64(root))
+                .put("at", System.currentTimeMillis()).put("deviceBound", bound).put("rpId", rpId));
+            app.events.add("account-signin", cz.m5cet.app.core.Events.detail("username", username(), "created", true, "deviceBound", bound));
+            Log.i("account", "account created: " + username() + (bound ? " (device-bound: the passkey has no PRF)" : ""));
             app.rooms.onAccountChanged();
-            Io.main(() -> done.done(true, null));
+            report(done, Result.success(bound, username()));
         } catch (Exception e) {
             Log.w("account", "sign-up failed: " + e.getMessage());
-            Io.main(() -> done.done(false, e.getMessage()));
+            report(done, Result.failure("orphan", t("passkey.orphan").replace("{user}", username).replace("{reason}", String.valueOf(e.getMessage())), username));
+        } finally {
+            Crypto.wipe(root);
+        }
+    }
+
+    /* ------------------------------------------------ more ways into it */
+
+    /** The account root kept with the session (null without one). */
+    private byte[] root() {
+        String r = state().optString("root");
+        try { return r.isEmpty() ? null : Crypto.unb64(r); } catch (IllegalArgumentException e) { return null; }
+    }
+
+    /** Can this phone seal the root for a recovery code or another passkey? */
+    public boolean hasRoot() { return signedIn() && !state().optString("root").isEmpty(); }
+
+    /** A sign-in or a confirmation this recent stands for the person: no second prompt. */
+    private static final long FRESH_MS = 5 * 60_000;
+
+    /**
+     * One of the account's passkeys confirms it is the person (web:
+     * confirmWithPasskey) before the root this phone keeps is sealed for a
+     * recovery code or another passkey — an unlocked phone left on the table
+     * is not enough to take the account elsewhere. A local challenge: nothing
+     * of it goes to the server. then runs on the main thread.
+     */
+    private void confirm(Activity activity, Runnable then, Outcome failed) {
+        JSONObject s = state();
+        if (System.currentTimeMillis() - Math.max(s.optLong("at"), s.optLong("confirmedAt")) < FRESH_MS) { then.run(); return; }
+        Io.bg(() -> {
+            try {
+                String rpId = state().optString("rpId");
+                if (rpId.isEmpty()) rpId = call("GET", "/api/account/status", null, false).getString("rpId");
+                JSONArray ids = AccountKeys.credentialIds(summary());
+                JSONObject request = AccountKeys.confirmRequest(rpId, ids, Crypto.random(32));
+                Io.main(() -> Passkeys.get(activity, request, new Passkeys.Result() {
+                    @Override public void ok(JSONObject assertion) {
+                        if (!AccountKeys.contains(ids, AccountKeys.credentialId(assertion))) { failed.done(Result.failure("", t("passkey.notThisAccount").replace("{user}", username()), username())); return; }
+                        try { JSONObject st = state(); st.put("confirmedAt", System.currentTimeMillis()); save(st); } catch (JSONException ignored) { }
+                        then.run();
+                    }
+                    @Override public void failed(String code, String message) { failed.done(Result.failure(code, message, username())); }
+                }));
+            } catch (Exception e) {
+                report(failed, Result.failure("", e.getMessage(), username()));
+            }
+        });
+    }
+
+    /** Creates (or replaces) the recovery code (web: createRecoveryCode), after a passkey confirmed the person; the code is shown once. */
+    public void createRecoveryCode(Activity activity, CodeDone done) {
+        if (!hasRoot()) { done.done(null, Result.failure("", t("passkey.noRoot"), username())); return; }
+        confirm(activity, () -> Io.bg(() -> {
+            byte[] root = root();
+            RecoveryCode.Material m = null;
+            try {
+                if (root == null || !signedIn()) throw new IOException(t("passkey.noRoot"));
+                String code = RecoveryCode.generate();
+                m = RecoveryCode.material(code);
+                JSONObject body = new JSONObject().put("id", m.id).put("verifier", m.verifier).put("wrapped", AccountKeys.sealRoot(root, m.secret, AccountKeys.WRAP_RECOVERY));
+                // Idempotent (the same code again), so a lost answer may simply be asked again.
+                Sent sent = send("PUT", "/api/account/recovery", body, true);
+                if (sent.answer == null) throw sent.error;
+                JSONObject s = state();
+                s.put("account", sent.answer.optJSONObject("account"));
+                save(s);
+                app.events.add("account-recovery-set", cz.m5cet.app.core.Events.detail("username", username()));
+                Io.main(() -> done.done(code, null));
+            } catch (Exception e) {
+                Log.w("account", "recovery code: " + e.getMessage());
+                Io.main(() -> done.done(null, Result.failure("", e.getMessage(), username())));
+            } finally {
+                Crypto.wipe(root);
+                if (m != null) Crypto.wipe(m.secret);
+            }
+        }), r -> done.done(null, r));
+    }
+
+    /** Adds a passkey with PRF (another provider, a security key), after a passkey confirmed the person: the root is sealed for it (web: addPasskey). */
+    public void addPasskey(Activity activity, Outcome done) {
+        if (!hasRoot()) { done.done(Result.failure("", t("passkey.noRoot"), username())); return; }
+        confirm(activity, () -> Io.bg(() -> {
+            try {
+                if (!hasRoot()) throw new IOException(t("passkey.noRoot"));
+                JSONObject options = AccountKeys.withPrf(call("POST", "/api/account/passkeys/options", new JSONObject(), true).getJSONObject("publicKey"));
+                String rpId = options.getJSONObject("rp").getString("id");
+                Io.main(() -> Passkeys.create(activity, options, new Passkeys.Result() {
+                    @Override public void ok(JSONObject registration) { rootFor(activity, rpId, registration, prf -> Io.bg(() -> finishAdd(registration, prf, done))); }
+                    @Override public void failed(String code, String message) { done.done(Result.failure(code, message, username())); }
+                }));
+            } catch (Exception e) {
+                Log.w("account", "add passkey: " + e.getMessage());
+                report(done, Result.failure("", e.getMessage(), username()));
+            }
+        }), done);
+    }
+
+    private void finishAdd(JSONObject registration, byte[] prf, Outcome done) {
+        String user = username();
+        byte[] root = root();
+        try {
+            // Without PRF nothing can be sealed for it, and the server takes no passkey without its sealed root.
+            if (prf == null) { report(done, Result.failure("orphan", t("passkey.addNoPrf").replace("{user}", user), user)); return; }
+            if (root == null) throw new IOException(t("passkey.noRoot"));
+            String label = ("Android · " + Build.MANUFACTURER + " " + Build.MODEL).trim();
+            JSONObject body = new JSONObject().put("credential", AccountKeys.strip(registration)).put("wrapped", AccountKeys.sealRoot(root, prf, AccountKeys.WRAP_PASSKEY))
+                .put("label", label.length() > 40 ? label.substring(0, 40) : label);
+            Sent sent = send("POST", "/api/account/passkeys/verify", body, true);
+            if (sent.answer == null) {
+                String why = sent.refused() ? t("passkey.orphan").replace("{reason}", String.valueOf(sent.error.getMessage())) : t("passkey.orphanOffline");
+                report(done, Result.failure("orphan", why.replace("{user}", user), user));
+                return;
+            }
+            JSONObject s = state();
+            s.put("account", sent.answer.optJSONObject("account"));
+            save(s);
+            Log.i("account", "passkey added to " + user);
+            report(done, Result.success(deviceBound(), user));
+        } catch (Exception e) {
+            Log.w("account", "add passkey failed: " + e.getMessage());
+            report(done, Result.failure("orphan", t("passkey.orphan").replace("{user}", user).replace("{reason}", String.valueOf(e.getMessage())), user));
+        } finally {
+            Crypto.wipe(prf);
+            Crypto.wipe(root);
         }
     }
 
@@ -199,7 +468,7 @@ public final class Account {
                 JSONObject s = state();
                 if (me.optBoolean("locked")) {
                     byte[] root = Crypto.unb64(s.optString("root"));
-                    me = call("POST", "/api/account/unlock", new JSONObject().put("keyProof", keyProof(root)), true);
+                    me = call("POST", "/api/account/unlock", new JSONObject().put("keyProof", AccountKeys.keyProof(root)), true);
                     Crypto.wipe(root);
                 }
                 s.put("account", me.optJSONObject("account"));
@@ -213,6 +482,7 @@ public final class Account {
         });
     }
 
+    /** Ends the session here (or everywhere); a device root stays for the next sign-in. */
     public void signOut(boolean everywhere, Done done) {
         String t = token();
         save(new JSONObject());
@@ -229,33 +499,7 @@ public final class Account {
         Server.send(app.config.server() + "/api/account/signout", "POST", Crypto.utf8("{\"everywhere\":" + everywhere + "}"), headers, null, 64 * 1024);
     }
 
-    /* ------------------------------------------------------------ crypto */
-
-    /** clientExtensionResults.prf.results.first (base64url) of a credential response. */
-    static byte[] prfOf(JSONObject credential) {
-        JSONObject ext = credential.optJSONObject("clientExtensionResults");
-        JSONObject prf = ext == null ? null : ext.optJSONObject("prf");
-        JSONObject results = prf == null ? null : prf.optJSONObject("results");
-        String first = results == null ? "" : results.optString("first", "");
-        if (first.isEmpty()) return null;
-        try { return Crypto.unb64url(first.replace("=", "")); } catch (IllegalArgumentException e) { return null; }
-    }
-
-    /** What the server reads of a credential (webauthn.ts): id, rawId, type, response. */
-    static JSONObject strip(JSONObject c) throws JSONException {
-        return new JSONObject().put("id", c.getString("id")).put("rawId", c.optString("rawId", c.getString("id"))).put("type", "public-key").put("response", c.getJSONObject("response"));
-    }
-
-    static String keyProof(byte[] root) {
-        return Crypto.b64url(Crypto.hkdf(root, PRF_SALT, Crypto.utf8("m5cet:key-proof:v1"), 32));
-    }
-
-    /** passkey.ts openRoot: AES-GCM(HKDF(prf, PRF_SALT, info)), AAD "m5cet:account-root:v1". */
-    static byte[] openRoot(JSONObject wrapped, byte[] prf, String info) throws java.security.GeneralSecurityException {
-        byte[] k = Crypto.hkdf(prf, PRF_SALT, Crypto.utf8(info), 32);
-        try { return Crypto.gcmOpen(k, Crypto.unb64(wrapped.optString("iv")), Crypto.unb64(wrapped.optString("ct")), Crypto.utf8("m5cet:account-root:v1")); }
-        finally { Crypto.wipe(k); }
-    }
+    /* ------------------------------------------------------------- scope */
 
     static String joined(org.json.JSONArray list) {
         StringBuilder b = new StringBuilder();
@@ -263,18 +507,22 @@ public final class Account {
         return b.toString();
     }
 
-    /** For the settings: the passkey in use (short), sessions, groups. */
+    /** For the settings: the passkey in use (short), sessions, groups, how the account can be reached. */
     public JSONObject scope() {
         JSONObject a = summary();
         JSONObject o = new JSONObject();
         try {
             String cred = a.optString("credentialId");
+            JSONObject recovery = a.optJSONObject("recovery");
             o.put("signedIn", signedIn()).put("username", username()).put("credential", cred.length() > 12 ? cred.substring(0, 12) + "…" : cred)
                 .put("passkeys", a.optJSONArray("passkeys") == null ? 0 : a.optJSONArray("passkeys").length())
                 .put("sessions", a.optJSONArray("sessions") == null ? 0 : a.optJSONArray("sessions").length())
                 .put("groups", joined(a.optJSONArray("groups")))
                 .put("since", a.optLong("createdAt")).put("lastLogin", a.optLong("lastLoginAt")).put("keyVerified", a.optBoolean("keyVerified"))
-                .put("signedInAt", state().optLong("at"));
+                .put("signedInAt", state().optLong("at"))
+                // 6.2: a device-bound account, and what this phone can add to reach it elsewhere
+                .put("deviceBound", signedIn() && deviceBound()).put("canSeal", hasRoot())
+                .put("recovery", recovery != null && recovery.optBoolean("set")).put("recoverySince", recovery == null ? 0 : recovery.optLong("createdAt"));
         } catch (JSONException ignored) { }
         return o;
     }
