@@ -268,7 +268,61 @@ update_cmd() {
 
   printf '\n%s%s%s  v%s (%s)\n' "${C_GRN}" "$(L 'M5cet is up to date.' 'M5cet je aktuální.')" "${C_RST}" "${INSTALLED_VERSION:-?}" "${INSTALLED_COMMIT:0:12}"
   info "$(L 'Backup of the previous state:' 'Záloha předchozího stavu:') ${LAST_BACKUP}"
+  check_assetlinks || true
   [ "${BUILD_ANDROID}" = "1" ] && build_android_release || true
+}
+
+# 6.4: Android passkeys (Credential Manager) need
+# https://DOMAIN/.well-known/assetlinks.json to reach the app from the
+# internet. Hosting panels often deny everything under /.well-known/ (or
+# every dot path), so say so after an update, with the fix. Informational
+# only: nothing here can fail the update.
+check_assetlinks() {
+  [ -n "${DOMAIN:-}" ] || return 0
+  [ "${DRY_RUN}" = "1" ] && return 0
+  if ! have curl; then
+    info "$(L 'Skipping the Android passkey check: curl is missing.' 'Přeskakuji kontrolu passkeys pro Android: chybí curl.')"
+    return 0
+  fi
+  local url="https://${DOMAIN}/.well-known/assetlinks.json" out code ctype="" json="0" why
+  # The same upstream as write_nginx_site: a wildcard bind is reached on loopback.
+  local upstream="${BIND_ADDRESS:-127.0.0.1}"
+  case "${upstream}" in 0.0.0.0|::|'') upstream="127.0.0.1" ;; esac
+  # curl prints "000 " when nothing answers; "|| true" inside, so no ERR trap fires in the subshell.
+  out="$(curl -s -m 10 -o /dev/null -w '%{http_code} %{content_type}' "${url}" 2>/dev/null || true)"
+  code="${out%% *}"
+  case "${out}" in *' '*) ctype="${out#* }" ;; esac
+  [ -n "${code}" ] || code="000"
+  case "${ctype}" in *[Jj][Ss][Oo][Nn]*) json="1" ;; esac
+  if [ "${code}" = "200" ] && [ "${json}" = "1" ]; then
+    log "$(L "Android passkeys: ${url} reaches the app (HTTP 200, JSON)." "Passkeys pro Android: ${url} se dostane k aplikaci (HTTP 200, JSON).")"
+    return 0
+  fi
+  if [ "${code}" = "404" ] && [ "${json}" = "1" ]; then
+    info "$(L "Android passkeys: ${url} reaches the app, but it knows no Android certificate yet — upload a release in the console (Android › Releases) or trust a device certificate (Android › Security › Passkeys on Android)." \
+              "Passkeys pro Android: ${url} se dostane k aplikaci, ale ta zatím nezná žádný certifikát Androidu — nahrajte vydání v konzoli (Android › Releases) nebo označte certifikát zařízení jako důvěryhodný (Android › Security › Passkeys on Android).")"
+    return 0
+  fi
+  if [ "${code}" = "000" ]; then why="$(L 'no answer' 'žádná odpověď')"; else why="HTTP ${code}${ctype:+, ${ctype}}"; fi
+  warn "$(L "Android passkeys will fail: ${url} → ${why}. The reverse proxy blocks /.well-known/assetlinks.json (or does not pass it to the app)." \
+            "Passkeys pro Android nebudou fungovat: ${url} → ${why}. Reverzní proxy blokuje /.well-known/assetlinks.json (nebo ho nepředává aplikaci).")"
+  if [ "${code}" = "000" ]; then
+    warn "$(L "No answer at all: if this server cannot reach its own public address, check from another machine: curl -i ${url}" \
+              "Žádná odpověď: pokud server nedosáhne na vlastní veřejnou adresu, ověřte to z jiného stroje: curl -i ${url}")"
+  fi
+  warn "$(L "Add this to the nginx server block of ${DOMAIN} (e.g. the hosting panel's custom nginx directives):" \
+            "Přidejte toto do bloku server v nginx pro ${DOMAIN} (např. vlastní direktivy nginx v hostingovém panelu):")"
+  cat >&2 <<EOF
+
+    location = /.well-known/assetlinks.json {
+        proxy_pass http://${upstream}:${APP_PORT:-5000};
+        proxy_set_header Host \$host;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+EOF
+  warn "$(L 'then run: sudo nginx -t && sudo systemctl reload nginx' 'pak spusťte: sudo nginx -t && sudo systemctl reload nginx')"
+  return 0
 }
 
 # 6.3: build a signed Android release from the updated sources (opt-in, --android).

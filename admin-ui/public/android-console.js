@@ -12,7 +12,8 @@
 //              restore, inspect, deploy files for chosen devices
 //   Releases   APK versions: upload (package and certificate checked), publish
 //   Security   lock policy (biometrics, PIN, attempts, wipe, wait, auto-lock),
-//              polling, updates, rooms; enrolment mode and codes (QR)
+//              polling, updates, rooms; enrolment mode and codes (QR);
+//              passkeys on Android (the assetlinks.json self-check, 6.4)
 //   Events     what devices reported (failed unlocks, wipes, updates, crashes)
 //
 // Same rules as console.js: DOM nodes and textContent, never innerHTML.
@@ -550,7 +551,11 @@
     } }, "Save the policy"), h("button", { class: "btn", type: "button", onclick: async () => {
       if (may("push")) { const r = await guarded(() => api("/api/admin/android/commands", { method: "POST", body: { kind: "config" } })); if (r) toast(`${r.results.length} devices asked to fetch it now.`, "ok"); }
     } }, "Tell the devices now")));
+    // 6.4: the passkey check starts now (it fetches the public URL and asks
+    // Google, so it is the slow one) and lands below the enrolment codes.
+    const passkeys = passkeysCard();
     await codesCard(body);
+    body.append(passkeys);
   }
 
   async function codesCard(body) {
@@ -573,6 +578,212 @@
       } }, "New code")) : null,
       shown,
       r.codes.length ? h("div", { class: "table-wrap table-wrap--short" }, h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, ...["For", "Uses", "Expires", "Made by", ""].map((x) => h("th", {}, x)))), tb)) : h("div", { class: "muted small" }, "No codes.")));
+  }
+
+  /* ============================================ 6.4: passkeys on Android */
+
+  // Credential Manager on the phone offers this server's passkeys to the app
+  // only when https://<rpId>/.well-known/assetlinks.json is reachable from the
+  // internet and lists the app's package with its signing certificate. The
+  // server fetches its own public URL and asks Google's Digital Asset Links
+  // API (what the phone trusts; it caches for minutes); this card shows both,
+  // the certificates the phones report, and the proxy fix when it is blocked.
+
+  const hexOf = (s) => String(s || "").replace(/[^0-9a-f]/gi, "").toLowerCase();
+  const fpPairs = (s) => hexOf(s).toUpperCase().match(/../g) || [];
+  const fpFull = (s) => fpPairs(s).join(":");
+  const fpShort = (s) => { const p = fpPairs(s); return p.length > 6 ? `${p.slice(0, 3).join(":")}…${p.slice(-2).join(":")}` : p.join(":"); };
+
+  function copyText(text, note) {
+    const fail = () => toast("Could not copy — select the text and copy it by hand.", "err");
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => toast(note || "Copied.", "ok"), fail);
+      else fail();
+    } catch { fail(); }
+  }
+
+  /** A fingerprint, shortened (the whole one on hover), with a copy button and whatever follows it. */
+  function fpChip(sha, ...extra) {
+    const full = fpFull(sha);
+    return h("span", { class: "and-pk__fp" },
+      h("code", { title: full }, fpShort(sha)),
+      h("button", { class: "btn btn--xs", type: "button", "data-read": "1", title: `Copy ${full}`, "aria-label": `Copy the fingerprint ${full}`, onclick: () => copyText(full, "Fingerprint copied.") }, C.icon ? C.icon("copy") : "Copy"),
+      ...extra);
+  }
+
+  const PK_SOURCES = {
+    release: ["release", "ok", "Learned from an uploaded APK release"],
+    env: ["env", "info", "ANDROID_DEBUG_CERT_SHA256 in the server's environment"],
+    trusted: ["trusted", "accent", "Trusted in this card"],
+  };
+  const srcBadge = (s) => { const [text, tone, title] = PK_SOURCES[s] || [s, "", ""]; const b = badge(text, tone); if (title) b.title = title; return b; };
+
+  const PK_VERDICT = {
+    ok: "Android passkeys work: the public file lists the app's certificates and Google sees them.",
+    blocked: "Android passkeys fail: the public assetlinks.json does not reach the app.",
+    "not-json": "Android passkeys fail: the public assetlinks.json answers, but not with JSON.",
+    "missing-cert": "A phone's app is signed with a certificate the server does not list — passkeys fail in it.",
+    "google-stale": "Google still sees an older file. It refreshes within minutes — Re-check later.",
+    "no-certs": "No Android certificate is known yet, so there is nothing to publish.",
+  };
+
+  /** The fingerprints the statements (assetlinks.json) give our package. */
+  function statementFps(statements, pkg) {
+    const out = [];
+    for (const s of Array.isArray(statements) ? statements : []) {
+      const t = s && s.target;
+      if (!t || t.namespace !== "android_app" || (pkg && t.package_name !== pkg)) continue;
+      for (const f of t.sha256_cert_fingerprints || []) out.push(f);
+    }
+    return out;
+  }
+
+  /** The Security tab's "Passkeys on Android" card: returned at once (checking…), it fills itself. */
+  function passkeysCard() {
+    const body = h("div", { class: "and-pk__body" }, h("div", { class: "muted small" }, "Checking — the server fetches its public assetlinks.json and asks Google…"));
+    const recheck = h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: () => check() }, "Re-check");
+    const card = h("div", { class: "card stack and-pk" },
+      h("div", { class: "card__head" },
+        h("div", { class: "card__title" }, "Passkeys on Android"),
+        h("div", { class: "card__hint" }, "The phone offers this server's passkeys to the app only when the public assetlinks.json lists the app's package and signing certificate. Google caches the file for a few minutes."),
+        h("div", { class: "card__actions" }, recheck)),
+      body);
+    let busy = false;
+    let shown = false;
+    const setBusy = (on) => { busy = on; recheck.disabled = on; body.classList.toggle("is-busy", on && shown); };
+
+    async function check() {
+      if (busy) return;
+      setBusy(true);
+      try { draw(await api("/api/admin/android/passkeys")); }
+      catch (err) { shown = false; clear(body).append(h("div", { class: "err small" }, `The check failed: ${err.message}`)); }
+      finally { setBusy(false); }
+    }
+    /** Trust / untrust answer with the check after the change. */
+    async function change(fn, okText) {
+      if (busy) return;
+      setBusy(true);
+      try { const r = await guarded(fn, okText); if (r) draw(r); }
+      finally { setBusy(false); }
+    }
+    const trust = (sha) => {
+      if (!confirm(`Trust this signing certificate for passkeys?\n\n${fpFull(sha)}\n\nAny app signed with this certificate will be able to use this server's passkeys. Trust only your own development builds.`)) return;
+      void change(() => api("/api/admin/android/passkeys/trust", { method: "POST", body: { sha256: sha } }), "Trusted. Google picks it up within minutes — Re-check then.");
+    };
+    const untrust = (sha) => {
+      if (!confirm(`Stop trusting this certificate for passkeys?\n\n${fpFull(sha)}\n\nApps signed with it lose this server's passkeys once Google refreshes.`)) return;
+      void change(() => api(`/api/admin/android/passkeys/trust/${encodeURIComponent(sha)}`, { method: "DELETE" }), "No longer trusted.");
+    };
+
+    function draw(r) {
+      shown = true;
+      const pkg = r.packageName || "";
+      const ext = r.external || {};
+      const g = r.google || {};
+      const certs = Array.isArray(r.certs) ? r.certs : [];
+      const devices = Array.isArray(r.devices) ? r.devices : [];
+      const certBy = new Map(certs.map((c) => [hexOf(c.sha256), c]));
+      const extSet = new Set((ext.fingerprints || []).map(hexOf));
+      const gSet = new Set((g.fingerprints || []).map(hexOf));
+      const deviceSet = new Set(devices.map((d) => hexOf(d.sha256)));
+      const settings = may("settings");
+      const plural = (n, one) => `${n} ${one}${n === 1 ? "" : "s"}`;
+
+      const good = r.verdict === "ok";
+      const hints = (Array.isArray(r.hints) ? r.hints : []).filter(Boolean);
+      const verdict = h("div", { class: `and-pk__verdict ${good ? "is-ok" : "is-warn"}`, role: "status" },
+        h("strong", {}, PK_VERDICT[r.verdict] || `Look at the details below (${r.verdict || "no verdict"}).`),
+        hints.length ? h("ul", {}, ...hints.map((x) => h("li", {}, x))) : null);
+
+      const mark = (state) => h("span", { class: `and-pk__mark is-${state}`, role: "img", "aria-label": { ok: "fine", warn: "warning", bad: "failing" }[state] }, { ok: "✓", warn: "!", bad: "✗" }[state]);
+      const row = (state, label, ...detail) => h("div", { class: "and-pk__row" }, mark(state), h("div", { class: "and-pk__label" }, label), h("div", { class: "and-pk__detail" }, ...detail));
+      const fps = (chips) => (chips.length ? h("div", { class: "and-pk__fps" }, ...chips) : null);
+
+      // This server: what it would publish (with where each certificate comes from).
+      const local = [...certs.map((c) => ({ sha: c.sha256, cert: c }))];
+      for (const f of statementFps(r.local && r.local.statements, pkg)) if (!certBy.has(hexOf(f))) { certBy.set(hexOf(f), null); local.push({ sha: f, cert: null }); }
+      const localOk = Boolean(r.local && r.local.statements) && local.length > 0;
+      const localChips = local.map(({ sha, cert }) => {
+        const sources = (cert && cert.sources) || [];
+        const orphanTrust = settings && sources.includes("trusted") && !deviceSet.has(hexOf(sha));
+        return fpChip(sha, ...sources.map(srcBadge),
+          cert && cert.published === false ? badge("not public", "warn") : null,
+          orphanTrust ? h("button", { class: "btn btn--xs", type: "button", onclick: () => untrust(cert.sha256) }, "Untrust") : null);
+      });
+      const serverRow = row(localOk ? "ok" : "bad", "This server",
+        h("div", {}, localOk ? `Publishes ${plural(local.length, "certificate")} for ${pkg || "the app"}.` : "Publishes nothing — no Android certificate is known yet (upload a release, or trust a phone's certificate below)."),
+        fps(localChips));
+
+      // The public URL, as the internet sees it.
+      const extOk = ext.status === 200 && ext.json === true && extSet.size > 0;
+      const extLine = !ext.status
+        ? `Not reachable from the server: ${ext.error || "no answer"}`
+        : `HTTP ${ext.status} · ${ext.contentType || "no content type"}${ext.json ? "" : " · not JSON"}${ext.status === 200 && ext.json && !extSet.size ? ` · no certificate for ${pkg || "the app"}` : ""}`;
+      const publicRow = row(extOk ? "ok" : "bad", "Public URL",
+        ext.url ? h("a", { class: "mono small", href: ext.url, target: "_blank", rel: "noopener noreferrer" }, ext.url) : null,
+        h("div", { class: extOk ? "" : "err" }, extLine),
+        ext.status && ext.error ? h("div", { class: "muted small" }, ext.error) : null,
+        fps([...(ext.fingerprints || [])].map((f) => fpChip(f))));
+
+      // Google's Digital Asset Links API: what Credential Manager trusts.
+      const same = gSet.size === extSet.size && [...extSet].every((x) => gSet.has(x));
+      const gState = !g.ok || !gSet.size ? "bad" : extOk && !same ? "warn" : "ok";
+      const gLine = !g.ok ? `Not verified: ${g.error || "no answer"}`
+        : !gSet.size ? `Sees no certificate for ${pkg || "the app"}.`
+        : gState === "warn" ? `Sees ${plural(gSet.size, "certificate")} — not the same as the public file yet (it caches for a few minutes).`
+        : `Sees ${plural(gSet.size, "certificate")}.`;
+      const googleRow = row(gState, "Google",
+        h("div", { class: gState === "bad" ? "err" : gState === "warn" ? "warn" : "" }, gLine),
+        g.debug ? h("div", { class: "and-pk__debug muted", title: g.debug }, g.debug) : null,
+        fps([...(g.fingerprints || [])].map((f) => fpChip(f))));
+
+      // The proxy fix, when the public URL does not reach the app.
+      const needsFix = (r.verdict === "blocked" || r.verdict === "not-json") && r.nginx;
+      const fix = needsFix ? h("div", { class: "stack and-pk__fix" },
+        h("div", { class: "row" }, h("strong", {}, "Let the file through the proxy"), h("span", { class: "spacer" }),
+          h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: () => copyText(r.nginx, "nginx snippet copied.") }, C.icon ? C.icon("copy") : null, "Copy")),
+        h("pre", { class: "code" }, r.nginx),
+        h("div", { class: "muted small" }, "Add this to the site's nginx server block (e.g. the hosting panel's custom nginx directives), reload nginx, then Re-check. An exact ", h("code", {}, "location ="), " wins over the usual ", h("code", {}, "location ~ /\\."), " deny rule.")) : null;
+
+      // The certificates the enrolled phones report at check-in.
+      const devRows = devices.map((d) => {
+        const key = hexOf(d.sha256);
+        const cert = certBy.get(key) || null;
+        const sources = new Set((cert && cert.sources) || []);
+        if (d.release) sources.add("release");
+        if (d.trusted) sources.add("trusted");
+        const listed = sources.size > 0;
+        const names = Array.isArray(d.names) ? d.names : [];
+        return h("tr", {},
+          h("td", {}, fpChip(d.sha256)),
+          h("td", {}, String(d.devices ?? names.length), names.length ? h("div", { class: "muted small" }, names.join(", ")) : null),
+          h("td", { title: when(d.lastSeen) }, ago(d.lastSeen)),
+          h("td", {}, h("div", { class: "row and-pk__badges" }, ...(listed ? [...sources].map(srcBadge) : [badge("not listed", "warn")])),
+            listed && !extSet.has(key) ? h("div", { class: "muted small" }, "not public yet") : null),
+          h("td", {}, settings ? h("div", { class: "row and-pk__badges" },
+            !listed ? h("button", { class: "btn btn--sm", type: "button", onclick: () => trust(d.sha256) }, "Trust for passkeys") : null,
+            sources.has("trusted") ? h("button", { class: "btn btn--sm", type: "button", onclick: () => untrust(cert ? cert.sha256 : d.sha256) }, "Untrust") : null) : null));
+      });
+      const phones = h("div", { class: "stack and-pk__phones" },
+        h("div", { class: "and-pk__sub" }, "Certificates the phones report"),
+        devRows.length
+          ? h("div", { class: "table-wrap table-wrap--short" }, h("table", { class: "tbl" },
+            h("thead", {}, h("tr", {}, ...["Signing certificate", "Phones", "Last seen", "Listed", ""].map((x) => h("th", {}, x)))),
+            h("tbody", {}, ...devRows)))
+          : h("div", { class: "muted small" }, "No enrolled phone has reported its signing certificate yet (apps report it at check-in)."),
+        devRows.length && !settings ? h("div", { class: "muted small" }, "Trusting a certificate needs the settings right.") : null);
+
+      // Element.append would print a null as "null": leave the missing parts out.
+      clear(body).append(...[
+        h("div", { class: "and-pk__meta" }, `Relying party ${r.rpId || "—"} · package ${pkg || "—"}`),
+        verdict,
+        h("div", { class: "and-pk__rows" }, serverRow, publicRow, googleRow),
+        fix,
+        phones].filter(Boolean));
+    }
+
+    void check();
+    return card;
   }
 
   /* ============================================================= events */
