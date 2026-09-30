@@ -5,6 +5,155 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.2.0] – 2026-09-30
+
+**Bubliny, které řeknou všechno.** U každé zprávy je ikona (i) s detailem:
+datum a čas, velikost, druh, příjemci a **všechny stavy s časem** (odesílá,
+ve frontě, uloženo na serveru šifrovaně, doručeno, přečteno, zobrazeno,
+vypršelo…), potvrzení od každého příjemce zvlášť. Zprávu jde **skrýt**
+(15 min – do dalšího přihlášení) nebo **smazat** ze svého pohledu — server se
+dozví jen *že* se to stalo (audit, kategorie `message`), nikdy obsah. Poloha
+má **náhled mapy s ulicemi** a špendlíkem, přílohy náhledy a patičku
+s uložením, sdílením a přeposláním. Aplikace pro Android dostala panel lidí
+jako na webu, propojení s kontakty telefonu, nový vzhled se šablonami
+a opravy registrace QR kódem, passkeys a obrazovky PIN.
+
+### Přidáno — web i Android
+- **Detail zprávy** (ikona (i) v bublině): datum a čas, odesílatel, příjemci,
+  velikost (text / soubor), druhy (klikací, mizející, zapečetěná, soukromá,
+  přeposlaná, odpověď, výstup funkce, přepis), expirace a **časová osa** —
+  společný slovník obou klientů: `created`, `encrypted`, `sent`, `received`,
+  `decrypted`, `displayed`, `queued`, `stored` (uloženo na serveru,
+  šifrovaně), `forwarded`, `delivered`, `read` a nově `revealed` (klikací
+  zpráva zobrazena), `opened` (zapečetěná otevřena), `expired` (mizející /
+  TTL), `hidden`, `unhidden`; potvrzení doručení a přečtení u každého
+  příjemce zvlášť.
+- **Skrýt a smazat** v detailu: skrýt na 15 min, 1 h, 8 h, 1 den nebo do
+  dalšího přihlášení (web: host do dalšího načtení stránky; Android: do
+  dalšího odemčení); smazat (po potvrzení) odstraní bublinu z tohoto
+  zařízení i uložené historie — ostatním zůstává. „Zobrazit skryté (n)“
+  v místnosti. Obojí se zapíše do auditu: `POST /api/chat/message-audit`
+  (web, s tokenem účtu, když je přihlášený) a `POST
+  /api/android/message-audit` (podepsané klíčem zařízení) — akce, id zprávy,
+  hash místnosti, druhy, vlastní / cizí, konec skrytí; **nikdy text**.
+- **Náhled mapy** ve zprávě s polohou: dlaždice s ulicemi vystředěné na
+  polohu, špendlík uprostřed s popiskem „Aktuální poloha: <jméno>“, souřadnice
+  ± přesnost, atribuce, volitelně šedě; klepnutí otevře celou mapu. Dlaždice
+  jdou přes server (`GET /api/map/tile/{z}/{x}/{y}`, mezipaměť na disku
+  a v paměti, `Cache-Control: private`), takže poskytovatel mapy nevidí
+  adresu klienta a CSP webu zůstává `img-src 'self'`.
+- **Média v bublině**: video přímo v bublině, zvuk, náhled textu / Markdownu
+  (první řádky), PDF (Android: první strana přes PdfRenderer — na Androidu
+  11+ v anonymní paměti, nikdy na disku; web: karta s Otevřít / Uložit),
+  obrázky jako dosud. **Patička příloh**: ikona typu, název, velikost
+  a tlačítka uložit, sdílet (systémové sdílení / Web Share, jinak nabídka) a
+  přeposlat.
+- **Konzole**: karta **Map preview** v *Client & addons* (poskytovatel
+  dlaždic, subdomény, atribuce, zoom, velikost, barva špendlíku a popisku,
+  popisek, souřadnice, šedé dlaždice, doba v mezipaměti) s živým náhledem;
+  nová kategorie auditu **message** ve filtru Auditu. Politika `map` je
+  součástí konfigurace klienta (`client/src/lib/client-config.ts`,
+  `MapPreviewPolicy`) a platí pro web i Android. Admin služba přeposílá
+  `/api/map/tile/*` hlavní službě (náhled v konzoli na ADMIN_PORT).
+- **Layout builder**: nové uzly zpráv `map` (`map-box`, `map-tile`,
+  `map-pin`, `map-caption`, `map-coords`, `map-attribution`), `attach-video`,
+  `attach-pdf`, `attach-text`, patička `files` (`file`, `file-save`,
+  `file-share`, `file-forward`), `hidden-tag`; v chatu `show-hidden`;
+  v okně detailu `size`, `expires`, `msginfo-receipts`, `msginfo-manage`.
+
+### Přidáno — Android
+- **Panel lidí jako na webu**: monogram (nebo fotka propojeného kontaktu),
+  jméno a `@účet`, ikona stavu (online, light = host bez účtu přes P2P, dnd =
+  v hovoru, away = server drží zprávy, připojuje se, offline), štít ověření,
+  signál (4 čárky z RTT spojení WebRTC), **zaškrtávátko** komu jde příští
+  zpráva a řádek *Vybrat vše* / *Zrušit výběr*. Klepnutí na člověka otevře
+  detail: účet, peer id, stav, jak dlouho je připojený, spojení (přímo /
+  TURN, kandidáti, RTT, kodeky, DTLS a SRTP), otisky klíčů a bezpečnostní
+  číslo s ověřením; akce soukromá zpráva, hovor, video, ověřit, propojit
+  s kontaktem.
+- **Propojení s kontakty telefonu**: u kontaktu se přidá pole M5cet
+  s uživatelským jménem (vlastní typ účtu a sync adapter,
+  `vnd.cz.m5cet.message` / `vnd.cz.m5cet.call`). *Zpráva přes M5cet* /
+  *Volat přes M5cet* v aplikaci Kontakty najde člověka přihlášeného v některé
+  z připojených místností a otevře **soukromou zprávu jen jemu**, nebo zahájí
+  hovor; když není online, řekne to. Jen pro lidi s účtem, jen pro jména
+  propojená v této aplikaci; nastavení *Lidé a kontakty* (vypnutí odstraní
+  řádky i účet, wipe také).
+- **Vzhled** (Nastavení › Vzhled, s živým náhledem): 13 šablon z webu, u
+  každé **6–8 barevných variant** (kontrast hlídaný pro světlý i tmavý tón),
+  9 písem, 5 velikostí, pohyb (vypnuto / jemný / normální / živý + rychlost),
+  tlačítka (plná / tónová / obrysová / textová; zaoblená / pilulka / hranatá;
+  odezva vlnka / zmenšení / žádná; haptika). Změny se projeví hned, bez
+  restartu obrazovky. Klidnější výchozí barvy, ploché horní lišty s linkou,
+  avatar místnosti v liště.
+- **Nástroje (kladívko)** jako kompaktní plovoucí okno přichycené dole nad
+  řádkem zprávy; po klepnutí na nástroj zmizí, klepnutí mimo nebo Zpět ho
+  zavře (nastavení vrátí list zespodu).
+- **Tlačítko Odeslat** ukazuje, komu zpráva půjde: celá místnost = odznak
+  skupiny, jen vybraní = jiná barva a odznak jedné postavy; tři tečky v rohu
+  a jednorázová nápověda „Podržením zobrazíte další volby“.
+- **Mikrofon vedle Odeslat nahrává hlasovou zprávu** (jako web); diktování
+  má vlastní ikonu v poli zprávy (podržení = jeho nastavení). Po povolení
+  mikrofonu nebo fotoaparátu akce pokračuje sama (`withPermission`), chyby
+  (žádný mikrofon, odepřeno, zablokováno, obsazeno, příliš krátké) jsou vidět.
+- **Klávesnice PIN**: všech deset číslic s písmeny jako na telefonu (2 = ABC
+  … 9 = WXYZ), každá klávesa jiná barva; Nastavení › Zabezpečení › *Míchat
+  klávesy PIN* (`security.shufflePin`) — číslice nejsou v pořadí a po každém
+  ťuknutí se přemíchají (proti pohledu přes rameno a otiskům na skle).
+- **Obrazovka PIN**: klávesy se velikostí přizpůsobí místu (40–84 dp, i
+  krycí displej Fold6, rozdělená obrazovka, na šířku hlavička vedle
+  klávesnice), karta s tečkami, zatřesení při chybě, podržení ⌫ smaže vše.
+- **Passkey účet vázaný na telefon**: poskytovatel bez PRF (např. Samsung
+  Pass) dostane náhodný kořen uložený v uživatelské vrstvě trezoru (přežije
+  odhlášení); v Nastavení › Uživatel obnovovací kód a přidání passkeye s PRF.
+
+### Opraveno
+- **Aplikace Android padala při spuštění** (6.1.0): obsluha příkazů `fn`
+  četla aplikaci dřív, než ji aktivita nastavila (NullPointerException
+  v `Fn.commands()`), a Android se vracel na plochu.
+- **Registrace QR kódem** (`m5cet://enroll?server=…&kid=…`): když byla
+  aplikace otevřená, odkaz přišel přes `onNewIntent` a pole formuláře zůstala
+  prázdná. Odkaz teď rozebere testovaný parser, formulář převezme novější
+  vyplnění, ukáže klíč serveru z QR a bez kódu zaostří jeho pole; už
+  registrované zařízení to řekne.
+- **„Tento passkey není na serveru registrovaný“**: registrace skončila před
+  `/register/verify`, když passkey při vytvoření nedal PRF — v telefonu zůstal
+  osiřelý passkey. Teď následuje ověření jen pro PRF (jako web), jinak účet
+  vázaný na telefon; registrace se vždy dokončí nebo řekne přesně co dál;
+  osiřelý passkey nabídne *Vytvořit účet*.
+- Po odemčení vypadal účet jako odhlášený (stav se četl ze zamčeného trezoru);
+  `Account.restore()` se po odemčení nevolal.
+- Mikrofon a fotoaparát po povolení oprávnění nic neudělaly (aplikace neměla
+  obsluhu výsledku).
+- Výběr šablony vzhledu se neukládal (`appearance.preset` chybělo mezi
+  výchozími klíči); každá změna vzhledu restartovala aktivitu.
+- Úchyt listů byl neviditelný (spacer nekreslil pozadí), řádky s `wrap` se
+  nezalamovaly.
+- Web: tlačítko (i) nešlo stisknout (hlavička bubliny ležela nad ním);
+  vložený zvuk z `data:` URL by v produkční CSP nehrál; uložená historie
+  držela jen posledních 12 kroků časové osy (teď první + nejnovější, 200).
+- Android: `readAllBytes`/`transferTo` (API 33) v přehrávání médií na
+  Androidu 10–12.
+
+### Bezpečnost
+- Audit skrytí / smazání nese jen metadata (akce, id zprávy, hash místnosti,
+  druhy, konec skrytí); web posílá místnost jako její slepé id. Obsah zprávy
+  ani soubor server nikdy nedostane.
+- Dlaždice mapy jen přes server; v telefonu jen v paměti (dlaždice prozrazuje,
+  kde někdo byl); nginx (repo i instalátor) má pro `/api/map/tile/` vypnutý
+  access log. Poskytovatel dlaždic je https (http jen pro tento stroj),
+  bez přihlašovacích údajů.
+- Kontakty: řádky M5cet obsahují jen uživatelské jméno; zařízení reaguje jen
+  na jména propojená v aplikaci; wipe (i vzdálený) je odstraní.
+- Debug build dovolí snímky obrazovky jen se značkou v soukromých souborech
+  aplikace (`run-as`); release na ni nehledí.
+
+### Změněno
+- Verze 6.2.0 (versionCode aplikace 60200).
+- Design aplikace Android: přírůstky 6.2 po oblastech v
+  `server/android/design-62-{fixes,people,bubbles,look}.ts`, spojené v
+  `design-62.ts`.
+
 ## [6.1.0] – 2026-09-30
 
 **Konzole po svém.** Boční menu se sbalí na šířku ikon, stránky konzole

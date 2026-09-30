@@ -581,6 +581,19 @@ server {
         proxy_buffering off;
     }
 
+    # 6.2: map preview tiles through the app — not in the access log: a tile's
+    # coordinates next to the visitor's address say where someone was looking.
+    location /api/map/tile/ {
+        access_log off;
+        proxy_pass http://${upstream}:${APP_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_connect_timeout 60s;
+    }
+
     # 6.0: an APK release uploaded from the console (Android › Releases).
     location = /api/admin/android/releases/upload {
         client_max_body_size 300m;
