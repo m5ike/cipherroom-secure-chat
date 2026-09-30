@@ -32,6 +32,7 @@ DIR_ARG=""
 NO_FETCH="0"
 NO_ROLLBACK="0"
 SKIP_TESTS="0"
+BUILD_ANDROID="0"
 SET_KEYS=""          # names changed on the command line (values live in SET_<n>)
 SET_COUNT=0
 ORIG_ARGS=("$@")
@@ -58,6 +59,7 @@ $(L 'Options' 'Volby'):
   --dir PATH           $(L 'installation to act on (default: auto-detect)' 'instalace, se kterou pracovat (výchozí: autodetekce)')
   --ui auto|text|dialog   --lang cs|en
   -n, --non-interactive   -y, --yes   --dry-run   --verbose   --skip-tests
+  --android            $(L 'also build a signed Android release (needs the Android SDK + a keystore)' 'sestaví i podepsané vydání pro Android (vyžaduje Android SDK + keystore)')
 EOF
 }
 
@@ -93,6 +95,7 @@ parse_args() {
       --dry-run)      DRY_RUN="1" ;;
       --verbose)      VERBOSE="1" ;;
       --skip-tests)   SKIP_TESTS="1" ;;
+      --android)      BUILD_ANDROID="1" ;;
       -h|--help)      usage; exit 0 ;;
       --version)      echo "${M5_INSTALLER_VERSION}"; exit 0 ;;
       *) usage >&2; die "$(L 'Unknown option:' 'Neznámá volba:') $1" ;;
@@ -265,6 +268,25 @@ update_cmd() {
 
   printf '\n%s%s%s  v%s (%s)\n' "${C_GRN}" "$(L 'M5cet is up to date.' 'M5cet je aktuální.')" "${C_RST}" "${INSTALLED_VERSION:-?}" "${INSTALLED_COMMIT:0:12}"
   info "$(L 'Backup of the previous state:' 'Záloha předchozího stavu:') ${LAST_BACKUP}"
+  [ "${BUILD_ANDROID}" = "1" ] && build_android_release || true
+}
+
+# 6.3: build a signed Android release from the updated sources (opt-in, --android).
+# Runs npm run android:release, which produces a signed APK when the keystore
+# env is set (M5_KEYSTORE, M5_KEYSTORE_PASSWORD, M5_KEY_ALIAS, M5_KEY_PASSWORD)
+# and needs a JDK 17+ and the Android SDK. A failure here only warns — the
+# server update already succeeded.
+build_android_release() {
+  if ! command -v java >/dev/null 2>&1; then
+    warn "$(L 'Skipping the Android build: no JDK found (needs JDK 17+ and the Android SDK).' 'Přeskočeno sestavení Androidu: nenalezen JDK (vyžaduje JDK 17+ a Android SDK).')"
+    return 0
+  fi
+  step "$(L 'Building a signed Android release (npm run android:release)' 'Sestavuji podepsané vydání pro Android (npm run android:release)')"
+  if run_sh "cd '${INSTALL_DIR}' && env -u NODE_ENV npm run android:release"; then
+    info "$(L 'Android release built under android/app/build/outputs/apk/release.' 'Vydání pro Android je v android/app/build/outputs/apk/release.')"
+  else
+    warn "$(L 'The Android build failed (SDK or keystore missing?). The server update is unaffected.' 'Sestavení Androidu selhalo (chybí SDK nebo keystore?). Aktualizace serveru tím není dotčena.')"
+  fi
 }
 
 rollback_cmd() {
