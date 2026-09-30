@@ -274,6 +274,19 @@ export const ADM_SPEC: SdkObject[] = [
   ] },
 ];
 
+/**
+ * 6.3: m5mobile — the operator's typed constants and variables (Android ›
+ * Define), materialized to live values and handed to every runtime, read-only.
+ * m5mobile.define.<name> (Python: m5mobile.define["name"] or attribute access)
+ * is the value; a `script` definition arrives as data ({ __m5script, code,
+ * lang }), never run. A per-run snapshot: the values are read once at run start.
+ */
+export const MOBILE_SPEC: SdkObject[] = [
+  { name: "define", doc: "The operator's typed constants/variables from Android › Define, as live values (m5mobile.define.<name>). Read-only; a script value stays as data ({ __m5script, code, lang }).", methods: [
+    m("<name>", "m5mobile.define.NAME", "m5mobile.define[\"NAME\"]", "One definition's materialized value: a scalar, object, array, bytes (hex), enum, or a { __m5script } script (not run)."),
+  ] },
+];
+
 export function sdkDts(): string {
   const lines = ["// The m5 SDK available to a function (JavaScript).", "declare global {", "  const m5: {"];
   for (const obj of SDK_SPEC) {
@@ -294,7 +307,13 @@ export function sdkDts(): string {
     for (const meth of obj.methods) if (!meth.js.startsWith("await room.")) lines.push(`      /** ${meth.doc} */ ${meth.name}: any;`);
     lines.push("    };");
   }
-  lines.push("  };", "}", "export {};");
+  lines.push("  };");
+  // 6.3: m5mobile.define — the operator's typed constants/variables.
+  lines.push("  /** 6.3: the operator's typed constants/variables from Android › Define, materialized as live values (read-only). */");
+  lines.push("  const m5mobile: {");
+  for (const obj of MOBILE_SPEC) lines.push(`    /** ${obj.doc} */ ${obj.name}: Record<string, any>;`);
+  lines.push("  };");
+  lines.push("}", "export {};");
   return lines.join("\n");
 }
 
@@ -309,6 +328,11 @@ export function sdkCompletions(): Array<{ path: string; label: string; detail: s
     if (obj.name === "info") { out.push({ path: "m5adm", label: "info", detail: obj.methods[0].js, doc: obj.doc, async: true }); continue; }
     out.push({ path: "m5adm", label: obj.name, detail: `m5adm.${obj.name}`, doc: obj.doc, async: false });
     for (const meth of obj.methods) out.push({ path: meth.js.startsWith("await room.") ? "room" : `m5adm.${obj.name}`, label: meth.name, detail: meth.js, doc: meth.doc, async: Boolean(meth.async) });
+  }
+  // 6.3: m5mobile.define — discoverable in the editor after "m5mobile.".
+  for (const obj of MOBILE_SPEC) {
+    out.push({ path: "m5mobile", label: obj.name, detail: `m5mobile.${obj.name}`, doc: obj.doc, async: false });
+    for (const meth of obj.methods) out.push({ path: `m5mobile.${obj.name}`, label: meth.name, detail: meth.js, doc: meth.doc, async: Boolean(meth.async) });
   }
   return out;
 }

@@ -66,6 +66,22 @@ class _NS:
     def __repr__(self):
         return "<m5 " + ", ".join(k for k in self.__dict__ if not k.startswith("_")) + ">"
 
+# 6.3 define: m5mobile.define — the operator's typed constants/variables read by
+# item (define["name"]) or attribute (define.name); read-only. A script value
+# stays as data ({"__m5script": True, "code": ..., "lang": ...}), never run.
+class _DefineNS(dict):
+    def __getattr__(self, k):
+        try:
+            return self[k]
+        except KeyError:
+            raise AttributeError(k)
+    def __setattr__(self, k, v):
+        raise AttributeError("m5mobile.define is read-only")
+    def __setitem__(self, k, v):
+        raise TypeError("m5mobile.define is read-only")
+    def __delitem__(self, k):
+        raise TypeError("m5mobile.define is read-only")
+
 class Output(dict):
     """An output of a run (m5.out.*)."""
 
@@ -664,6 +680,15 @@ def _setup(ctx):
     adm_mod.__dict__.update({k: v for k, v in m5adm.__dict__.items()})
     _sys.modules["m5adm"] = adm_mod
     _builtins.m5adm = m5adm
+    # 6.3 define: m5mobile.define — the operator's typed constants/variables
+    # (Android › Define), a per-run snapshot (ctx["define"], materialized on the
+    # server). Read-only; a script value stays as data ({"__m5script": ...}).
+    _d = ctx.get("define")
+    m5mobile = _NS(define=_DefineNS(_d if isinstance(_d, dict) else {}))
+    mob_mod = _types.ModuleType("m5mobile", "The M5cet mobile definitions (6.3).")
+    mob_mod.__dict__.update({k: v for k, v in m5mobile.__dict__.items()})
+    _sys.modules["m5mobile"] = mob_mod
+    _builtins.m5mobile = m5mobile
     _sys.stdout = _Stream("stdout")
     _sys.stderr = _Stream("stderr")
 

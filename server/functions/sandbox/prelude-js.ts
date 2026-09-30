@@ -618,10 +618,17 @@ return function setup(host, ctxJson) {
   };
   // m5adm is m5.adm too (one object).
   Object.defineProperty(m5, "adm", { value: m5adm, enumerable: false });
+  // 6.3 define: m5mobile.define — the operator's typed constants/variables
+  // (Android › Define), a per-run snapshot (ctx.define, materialized on the
+  // server). Read-only/frozen; a script value stays as data ({__m5script}),
+  // never auto-evaluated.
+  const m5mobile = { define: ctx.define && typeof ctx.define === "object" ? ctx.define : {} };
   freeze(m5);
   freeze(m5adm);
+  freeze(m5mobile);
   Object.defineProperty(globalThis, "m5", { value: m5, enumerable: false, writable: false, configurable: false });
   Object.defineProperty(globalThis, "m5adm", { value: m5adm, enumerable: false, writable: false, configurable: false });
+  Object.defineProperty(globalThis, "m5mobile", { value: m5mobile, enumerable: false, writable: false, configurable: false });
   Object.defineProperty(globalThis, "console", { value: console, enumerable: false, writable: true, configurable: true });
 
   // The driver module calls this once with the entry module.
