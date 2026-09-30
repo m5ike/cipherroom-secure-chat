@@ -133,7 +133,11 @@ public final class Previews {
                 //noinspection ResultOfMethodCallIgnored
                 dir.mkdirs();
                 tmp = File.createTempFile("p", ".pdf", dir);
-                try (InputStream in = VaultMedia.open(app, m); OutputStream out = new FileOutputStream(tmp)) { in.transferTo(out); }
+                try (InputStream in = VaultMedia.open(app, m); OutputStream out = new FileOutputStream(tmp)) {
+                    byte[] buf = new byte[64 * 1024];
+                    int n;
+                    while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+                }
                 pfd = ParcelFileDescriptor.open(tmp, ParcelFileDescriptor.MODE_READ_ONLY);
                 //noinspection ResultOfMethodCallIgnored
                 tmp.delete();

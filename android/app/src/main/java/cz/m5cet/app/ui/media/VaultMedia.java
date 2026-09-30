@@ -48,7 +48,7 @@ public final class VaultMedia {
     /** A picture of the message, scaled to at most maxPx (null when it is not one or cannot be read). */
     public static Bitmap bitmap(M5 app, ChatMessage m, int maxPx) {
         try (InputStream in = open(app, m)) {
-            byte[] b = in.readAllBytes();
+            byte[] b = readAll(in);
             BitmapFactory.Options o = new BitmapFactory.Options();
             o.inJustDecodeBounds = true;
             BitmapFactory.decodeByteArray(b, 0, b.length, o);
@@ -67,7 +67,7 @@ public final class VaultMedia {
     public static MediaDataSource source(M5 app, ChatMessage m) throws IOException {
         if (m.fileDataUrl != null) {
             byte[] b;
-            try (InputStream in = open(app, m)) { b = in.readAllBytes(); }
+            try (InputStream in = open(app, m)) { b = readAll(in); }
             return new MediaDataSource() {
                 @Override public int readAt(long pos, byte[] buf, int off, int len) { if (pos >= b.length) return -1; int n = (int) Math.min(len, b.length - pos); System.arraycopy(b, (int) pos, buf, off, n); return n; }
                 @Override public long getSize() { return b.length; }
@@ -107,7 +107,20 @@ public final class VaultMedia {
 
     /** Copies the plaintext to a stream the user chose (Save as…). */
     public static void copyTo(M5 app, ChatMessage m, OutputStream out) throws IOException {
-        try (InputStream in = open(app, m); OutputStream o = out) { in.transferTo(o); }
+        try (InputStream in = open(app, m); OutputStream o = out) {
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) o.write(buf, 0, n);
+        }
+    }
+
+    /** InputStream.readAllBytes / transferTo are Android 13+; the app runs from Android 10. */
+    static byte[] readAll(InputStream in) throws IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] buf = new byte[64 * 1024];
+        int n;
+        while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+        return out.toByteArray();
     }
 
     /**

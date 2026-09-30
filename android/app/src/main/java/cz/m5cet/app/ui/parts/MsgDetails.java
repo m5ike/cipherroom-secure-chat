@@ -119,7 +119,6 @@ final class MsgDetails implements Rooms.Listener {
     private void fill() {
         content.removeAllViews();
         header();
-        section(null);
         DateFormat full = DateFormat.getDateTimeInstance(DateFormat.LONG, DateFormat.MEDIUM);
         row(t("msginfo.when"), full.format(new Date(m.createdAt)));
         row(t("msginfo.sender"), m.mine ? t("users.me") + " (" + m.senderName + ")" : m.senderName);
@@ -139,24 +138,23 @@ final class MsgDetails implements Rooms.Listener {
     private void header() {
         LinearLayout bar = new LinearLayout(a);
         bar.setGravity(Gravity.CENTER_VERTICAL);
-        ImageView handle = new ImageView(a);
         TextView title = new TextView(a);
         title.setText(t("msg.info"));
         title.setTextColor(fg);
         title.setTextSize(TypedValue.COMPLEX_UNIT_SP, 19);
         title.setTypeface(Typeface.DEFAULT_BOLD);
         bar.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        handle.setImageDrawable(Icons.drawable(a, "x", dp(22), fg));
-        handle.setScaleType(ImageView.ScaleType.CENTER);
-        handle.setBackground(Ui.ripple(null, Ui.alpha(fg, 0.16f)));
-        handle.setContentDescription(t("nav.close"));
-        handle.setOnClickListener(v -> dialog.dismiss());
-        bar.addView(handle, new LinearLayout.LayoutParams(dp(44), dp(44)));
+        ImageView close = new ImageView(a);
+        close.setImageDrawable(Icons.drawable(a, "x", dp(22), fg));
+        close.setScaleType(ImageView.ScaleType.CENTER);
+        close.setBackground(Ui.ripple(null, Ui.alpha(fg, 0.16f)));
+        close.setContentDescription(t("nav.close"));
+        close.setOnClickListener(v -> dialog.dismiss());
+        bar.addView(close, new LinearLayout.LayoutParams(dp(44), dp(44)));
         content.addView(bar);
     }
 
     private void section(String title) {
-        if (title == null) return;
         TextView s = new TextView(a);
         s.setText(title);
         s.setTextColor(primary);

@@ -144,7 +144,9 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
 
     private void load() {
         RoomSession r = a.app().rooms.activeSession();
+        String was = roomKey;
         roomKey = r == null ? "" : r.key;
+        if (!roomKey.equals(was)) peek = false;
         all.clear();
         long now = System.currentTimeMillis();
         if (r != null) for (ChatMessage m : r.messagesCopy()) if (!m.expired(now)) all.add(m);
@@ -320,7 +322,8 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
         for (int i = first; i <= last && i >= 0; i++) {
             ChatMessage m = items.get(i);
             shown.add(m);
-            if (!m.mine && !"sys".equals(m.kind)) steps |= m.mark("displayed"); // 6.2: its first time on screen
+            // 6.2: its first time on screen (not for a message from before the timeline: that time would say nothing)
+            if (!m.mine && !"sys".equals(m.kind) && m.has("received")) steps |= m.mark("displayed");
         }
         if (steps) r.touched(shown.get(0));
         r.markRead(shown);

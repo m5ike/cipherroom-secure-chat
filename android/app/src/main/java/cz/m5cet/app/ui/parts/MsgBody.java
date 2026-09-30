@@ -75,6 +75,9 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
         setOrientation(VERTICAL);
     }
 
+    /** A deleted message's previews leave memory too. */
+    static void forget(String id) { for (String k : new String[]{id + "#text", id + "#pdf", id + "#video"}) META.remove(k); }
+
     private M5 app() { return a.app(); }
     private int dp(float v) { return Ui.dp(getContext(), v); }
     /** The widest a map or a preview gets: the bubble's content (300 dp less its padding). */

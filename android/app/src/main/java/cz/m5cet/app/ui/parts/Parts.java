@@ -298,9 +298,10 @@ public final class Parts {
         if (r != null) r.touched(m);
     }
 
-    /** A deleted message's pictures go from memory too. */
+    /** A deleted message's pictures and previews go from memory too. */
     void forget(ChatMessage m) {
         for (String k : new String[]{m.id, m.id + "#poster", m.id + "#pdf"}) imageCache.remove(k);
+        MsgBody.forget(m.id);
         holding.remove(m.id);
     }
 

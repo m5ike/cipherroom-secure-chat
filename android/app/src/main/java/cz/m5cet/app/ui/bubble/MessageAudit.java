@@ -29,19 +29,22 @@ public final class MessageAudit {
     private static final Object LOCK = new Object();
     private static volatile boolean sending;
 
-    /** One action; until = a hide's end (ms), 0 = until the next sign-in (and for unhide / delete). */
+    /** One action; until = a hide's end (ms), 0 = until the next sign-in (and for unhide / delete). Kept at once, sent in the background. */
     public static void add(M5 app, String action, RoomSession r, ChatMessage m, long until) {
+        JSONObject a;
         try {
-            JSONObject a = entry(action, m, r.roomId(), until, System.currentTimeMillis());
+            a = entry(action, m, r.roomId(), until, System.currentTimeMillis());
             a.put("roomKey", r.key); // this device's, to find the room's id later; dropped before sending
+        } catch (JSONException e) { Log.w("audit", "not queued: " + e.getMessage()); return; }
+        Io.bg(() -> {
             synchronized (LOCK) {
                 JSONArray q = queue(app);
                 q.put(a);
                 while (q.length() > MAX) q.remove(0);
                 save(app, q);
             }
-        } catch (JSONException e) { Log.w("audit", "not queued: " + e.getMessage()); }
-        flush(app);
+            flush(app);
+        });
     }
 
     /** The body's action as the server checks it (sanitizeMessageAudit). */
