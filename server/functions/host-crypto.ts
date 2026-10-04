@@ -4,7 +4,7 @@
 // (host-pure.ts); these need libraries or Node APIs, so they run here and the
 // sandbox reaches them with `await m5.crypto.<area>.<op>(...)`.
 
-import { createHmac, createSign, createVerify, createPrivateKey, createPublicKey, X509Certificate, timingSafeEqual } from "node:crypto";
+import { createHmac, createSign, createVerify, createPrivateKey, createPublicKey, X509Certificate, timingSafeEqual, type KeyObject } from "node:crypto";
 import { Buffer } from "node:buffer";
 
 export class CryptoError extends Error {
@@ -46,20 +46,54 @@ function jwtDecode(token: string): { header: unknown; payload: unknown; signatur
   catch { return bad("the JWT is malformed"); }
 }
 
+/** The curve each ES algorithm is defined for (RFC 7518 §3.4). */
+const EC_CURVE: Record<string, string> = { ES256: "prime256v1", ES384: "secp384r1", ES512: "secp521r1" };
+
+/**
+ * The algorithms a key may verify (6.7, audit S2). The token's header names
+ * its algorithm, so the key decides which family is acceptable: a PEM key or
+ * certificate never as an HMAC secret (otherwise a token "signed" with HS256
+ * and the public key as the secret verifies), an RSA key for RS/PS, an EC key
+ * for the ES algorithm of its curve, and anything else is a shared secret for
+ * HS only.
+ */
+function jwtAlgorithmsFor(keyText: string): { key: KeyObject | null; algs: Set<string> } {
+  if (!/-----BEGIN [A-Z0-9 ]+-----/.test(keyText)) return { key: null, algs: new Set(Object.keys(HMAC)) };
+  let key: KeyObject;
+  try { key = createPublicKey(keyText); } catch (err) { throw new CryptoError("bad-argument", `the key is not a usable public key: ${(err as Error).message}`); }
+  const type = key.asymmetricKeyType;
+  if (type === "rsa") return { key, algs: new Set(Object.keys(RSA)) };
+  if (type === "rsa-pss") return { key, algs: new Set(["PS256", "PS384", "PS512"]) };
+  if (type === "ec") {
+    const curve = key.asymmetricKeyDetails?.namedCurve ?? "";
+    return { key, algs: new Set(Object.keys(EC).filter((a) => EC_CURVE[a] === curve)) };
+  }
+  return { key, algs: new Set() };
+}
+
 function jwtVerify(token: string, keyOrSecret: unknown, opts: Record<string, unknown> = {}): unknown {
   const parts = String(token).split(".");
   if (parts.length !== 3) throw new CryptoError("invalid", "not a JWT");
   const [h, p, s] = parts;
-  const header = JSON.parse(unb64url(h).toString("utf8")) as { alg?: string };
+  let header: { alg?: string };
+  try { header = JSON.parse(unb64url(h).toString("utf8")) as { alg?: string }; } catch { throw new CryptoError("invalid", "the JWT is malformed"); }
   const alg = String(header.alg ?? "").toUpperCase();
-  if (opts.alg && String(opts.alg).toUpperCase() !== alg) throw new CryptoError("invalid", `unexpected alg ${alg}`);
+  // The caller's choice first (opts.alg, or a list in opts.algorithms) …
+  const wanted = [opts.alg, ...(Array.isArray(opts.algorithms) ? opts.algorithms : [])].filter(Boolean).map((a) => String(a).toUpperCase());
+  if (wanted.length && !wanted.includes(alg)) throw new CryptoError("invalid", `unexpected alg ${alg}`);
+  // … and always the key's family: the header alone never picks HMAC for a public key.
+  const keyText = asText(keyOrSecret, "key");
+  const allowed = jwtAlgorithmsFor(keyText);
+  if (!(alg in HMAC) && !(alg in RSA) && !(alg in EC)) throw new CryptoError("invalid", `unsupported alg ${alg}`);
+  if (!allowed.algs.has(alg)) {
+    throw new CryptoError("invalid", allowed.key ? `alg ${alg} cannot be verified with this ${allowed.key.asymmetricKeyType ?? ""} key` : `alg ${alg} needs a public key (PEM), not a shared secret`);
+  }
   const signingInput = `${h}.${p}`;
   const sig = unb64url(s);
   let ok = false;
-  if (alg in HMAC) { const mac = createHmac(HMAC[alg as keyof typeof HMAC], asText(keyOrSecret, "secret")).update(signingInput).digest(); ok = sig.length === mac.length && timingSafeEqual(sig, mac); }
-  else if (alg in RSA) { const v = createVerify(RSA[alg as keyof typeof RSA]); v.update(signingInput); ok = v.verify({ key: createPublicKey(asText(keyOrSecret, "key")), ...(alg.startsWith("PS") ? { padding: 6, saltLength: 32 } : {}) }, sig); }
-  else if (alg in EC) { const v = createVerify(EC[alg as keyof typeof EC]); v.update(signingInput); ok = v.verify({ key: createPublicKey(asText(keyOrSecret, "key")), dsaEncoding: "ieee-p1363" }, sig); }
-  else throw new CryptoError("invalid", `unsupported alg ${alg}`);
+  if (alg in HMAC) { const mac = createHmac(HMAC[alg as keyof typeof HMAC], keyText).update(signingInput).digest(); ok = sig.length === mac.length && timingSafeEqual(sig, mac); }
+  else if (alg in RSA) { const v = createVerify(RSA[alg as keyof typeof RSA]); v.update(signingInput); ok = v.verify({ key: allowed.key!, ...(alg.startsWith("PS") ? { padding: 6, saltLength: 32 } : {}) }, sig); }
+  else { const v = createVerify(EC[alg as keyof typeof EC]); v.update(signingInput); ok = v.verify({ key: allowed.key!, dsaEncoding: "ieee-p1363" }, sig); }
   if (!ok) throw new CryptoError("invalid", "the signature does not verify");
   const payload = JSON.parse(unb64url(p).toString("utf8")) as Record<string, unknown>;
   const now = Math.floor(Date.now() / 1000);
