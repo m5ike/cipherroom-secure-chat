@@ -126,23 +126,39 @@ public final class Notify {
         } catch (RuntimeException ignored) { }
     }
 
-    /** New messages of a room (only a count and the sender when the app is locked). */
+    /**
+     * New messages of a room. 6.7 (audit S11): while the app is locked (or the
+     * caller asks), only neutral text — no message, sender, room name, room
+     * shortcut or reply; the lock screen always gets the neutral public version.
+     */
     public void message(String roomKey, String roomName, String sender, String text, boolean hideContent) {
         if (!allowed()) return;
+        boolean hide = hideContent || app.lock.isLocked();
+        String appName = app.design().appName(), neutral = app.t("notify.message");
         Person me = new Person.Builder().setName(app.config.userName().isEmpty() ? "me" : app.config.userName()).build();
-        Notification.MessagingStyle style = new Notification.MessagingStyle(me).setConversationTitle(roomName).setGroupConversation(true);
-        style.addMessage(hideContent ? app.t("notify.message") : text, System.currentTimeMillis(), new Person.Builder().setName(sender).build());
-        RemoteInput reply = new RemoteInput.Builder(KEY_REPLY).setLabel(app.t("notify.reply")).build();
-        Intent ri = new Intent(app, ReplyReceiver.class).putExtra("room", roomKey);
-        PendingIntent replyPi = PendingIntent.getBroadcast(app, roomKey.hashCode(), ri, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
-        Notification.Action action = new Notification.Action.Builder(Icon.createWithResource(app, R.drawable.ic_stat_m5), app.t("notify.reply"), replyPi).addRemoteInput(reply).setAllowGeneratedReplies(true).build();
-        roomShortcut(roomKey, roomName);
-        Notification n = new Notification.Builder(app, CH_MESSAGES)
-            .setSmallIcon(R.drawable.ic_stat_m5).setStyle(style).setShortcutId(shortcutId(roomKey))
+        Notification.MessagingStyle style = new Notification.MessagingStyle(me).setConversationTitle(hide ? appName : roomName).setGroupConversation(true);
+        style.addMessage(hide ? neutral : text, System.currentTimeMillis(), new Person.Builder().setName(hide ? appName : sender).build());
+        Notification.Builder b = new Notification.Builder(app, CH_MESSAGES)
+            .setSmallIcon(R.drawable.ic_stat_m5).setStyle(style)
             .setContentIntent(open(roomKey, roomKey.hashCode())).setAutoCancel(true)
-            .setCategory(Notification.CATEGORY_MESSAGE).addAction(action)
-            .setVisibility(Notification.VISIBILITY_PRIVATE).build();
-        nm().notify(roomKey.hashCode(), n);
+            .setCategory(Notification.CATEGORY_MESSAGE)
+            .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(appName, neutral));
+        if (!hide) {
+            RemoteInput reply = new RemoteInput.Builder(KEY_REPLY).setLabel(app.t("notify.reply")).build();
+            Intent ri = new Intent(app, ReplyReceiver.class).putExtra("room", roomKey);
+            PendingIntent replyPi = PendingIntent.getBroadcast(app, roomKey.hashCode(), ri, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
+            Notification.Action.Builder ab = new Notification.Action.Builder(Icon.createWithResource(app, R.drawable.ic_stat_m5), app.t("notify.reply"), replyPi).addRemoteInput(reply).setAllowGeneratedReplies(true);
+            if (android.os.Build.VERSION.SDK_INT >= 31) ab.setAuthenticationRequired(true); // replying needs the phone unlocked
+            roomShortcut(roomKey, roomName);
+            b.setShortcutId(shortcutId(roomKey)).addAction(ab.build());
+        }
+        nm().notify(roomKey.hashCode(), b.build());
+    }
+
+    /** What the lock screen shows of a message notification: the app's name and "New message". */
+    private Notification neutral(String title, String text) {
+        return new Notification.Builder(app, CH_MESSAGES).setSmallIcon(R.drawable.ic_stat_m5)
+            .setContentTitle(title).setContentText(text).setCategory(Notification.CATEGORY_MESSAGE).build();
     }
 
     public void clearRoom(String roomKey) {
