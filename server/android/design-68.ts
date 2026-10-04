@@ -6,8 +6,9 @@ import type { ElementDef, ANode, MenuItem, ScreenDef } from "./design";
 import type { DesignArea } from "./design-67";
 import { AREA as SEND } from "./design-68-send";
 import { AREA as CALLLOG } from "./design-68-calllog";
+import { AREA as CONVERSATIONS } from "./design-68-conversations";
 
-const AREAS: DesignArea[] = [SEND, CALLLOG];
+const AREAS: DesignArea[] = [SEND, CALLLOG, CONVERSATIONS];
 
 export const ELEMENTS_68: ElementDef[] = AREAS.flatMap((a) => a.elements ?? []);
 export const ACTIONS_68: Array<{ action: string; arg: string; help: string }> = AREAS.flatMap((a) => a.actions ?? []);
