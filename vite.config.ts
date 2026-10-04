@@ -140,7 +140,9 @@ export default defineConfig({
       allow: Array.from(new Set([repoRoot, repoRootReal])),
       // Only genuine secrets/state — a blanket "**/.*" would also hit
       // node_modules/.vite (the optimized-deps cache) once these rules apply.
-      deny: [".env", ".env.*", "**/.git/**", "**/.m5cet/**", "*.key", "*.pem"],
+      // 6.7 (F-27): every .env* (a hand-made .env-bak, .env.local…) and
+      // backup copies, not only .env and .env.<x>.
+      deny: [".env*", "*.bak", "*~", "**/.git/**", "**/.m5cet/**", "*.key", "*.pem"],
     },
     headers: {
       "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0",

@@ -8,8 +8,10 @@ tool_calls
 
 # Secrets must never enter a build layer (ADMIN_API_TOKEN, VAPID private key,
 # TURN credentials). Runtime config comes from the container environment.
-.env
-.env.*
+# 6.7 (F-27): every .env* — a hand-made .env-bak too (the build stage's
+# COPY . . would put it into the build cache).
+.env*
+*.bak
 !.env.example
 
 # Not needed to build the image.
