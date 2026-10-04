@@ -25,6 +25,8 @@ import { sipStore, type SipTrunkInput } from "./sip";
 import { TelephonyNotConfiguredError, isE164, isProvider } from "./types";
 import { telephonyEvents } from "./webhooks";
 import { checkAccess, requestSubject } from "../access";
+import { noteLegacySend, OutboundRefused, planOutbound, type OutboundPlan } from "./control/enforce";
+import { placeCall, TelError } from "./engine";
 
 const MAX_SMS_CHARS = 1600;   // ~10 GSM segments; a hard body cap
 const MAX_NUMBER_CHARS = 20;
@@ -55,6 +57,28 @@ function telephonyRight(req: Request, action: "call" | "sms", to: string): boole
   return checkAccess("telephony", requestSubject(req), { right: [[action], [`number:${to}`]], path: `${req.method} ${req.path} → ${to}`, ip: (req.ip || "").replace(/^::ffff:/, ""), via: "app" }).allowed;
 }
 
+/** 6.9: the hourly budget's key for an app request — the account, else the address. */
+function requestBy(req: Request): { by: string; groups: string[] } {
+  const s = requestSubject(req);
+  return { by: s.kind === "user" ? `user:${s.name}` : `ip:${(req.ip || "").replace(/^::ffff:/, "")}`, groups: s.groups };
+}
+
+/**
+ * 6.9: the outbound permissions and rules (control/enforce.ts) for an app
+ * request — the plan, or null after answering the refusal (403 a rule / a
+ * blocked number / a country, 429 a limit, 503 a missing trunk).
+ */
+async function planned(res: Response, kind: "call" | "sms", to: string, who: { by: string; groups: string[] }, provider: string): Promise<OutboundPlan | null> {
+  try {
+    return await planOutbound({ kind, to, by: who.by, groups: who.groups, source: "api", ...(provider ? { provider } : {}) });
+  } catch (err) {
+    if (!(err instanceof OutboundRefused)) throw err;
+    const status = err.code === "telephony-limit" || err.code === "telephony-busy" ? 429 : err.code === "not-configured" ? 503 : 403;
+    res.status(status).json({ ok: false, code: err.code, message: err.message });
+    return null;
+  }
+}
+
 /* -------------------------------------------------- client-facing routes */
 
 export function registerTelephonyRoutes(app: Express): void {
@@ -70,12 +94,15 @@ export function registerTelephonyRoutes(app: Express): void {
     if (!telephonyRight(req, "sms", to)) return res.status(403).json({ ok: false, code: "module-denied", message: `Sending SMS to ${to} is not among your rights (Modules & groups › Telephony & SIP).` });
     const text = typeof body.text === "string" ? body.text.slice(0, MAX_SMS_CHARS) : "";
     if (!text.trim()) return res.status(400).json({ ok: false, message: "text required." });
+    const who = requestBy(req);
+    if (!(await planned(res, "sms", to, who, ""))) return;
     const connector = getSms(typeof body.connector === "string" ? body.connector : undefined);
     if (!connector || !connector.status().configured) {
       return res.status(503).json({ ok: false, message: connector?.status().reason || "No SMS connector configured." });
     }
     try {
       const result = await pluginLog.time("admin", connector.id, "sms send", () => connector.sendSms({ to, text }));
+      noteLegacySend("sms", who.by);
       res.json({ ok: true, ...result });
     } catch (err) {
       const code = err instanceof TelephonyNotConfiguredError ? 503 : 502;
@@ -89,12 +116,29 @@ export function registerTelephonyRoutes(app: Express): void {
     const to = readNumber(body.to);
     if (!isE164(to)) return res.status(400).json({ ok: false, message: "to must be an E.164 number, e.g. +14155550123." });
     if (!telephonyRight(req, "call", to)) return res.status(403).json({ ok: false, code: "module-denied", message: `Calling ${to} is not among your rights (Modules & groups › Telephony & SIP).` });
-    const connector = getVoice(typeof body.connector === "string" ? body.connector : undefined);
+    const who = requestBy(req);
+    const asked = typeof body.connector === "string" ? body.connector : "";
+    const route = await planned(res, "call", to, who, asked);
+    if (!route) return;
+    // A SIP trunk or a TSA: the engine places it (its own webhooks, the trunk's caller ID).
+    if (route.via || route.tsa) {
+      try {
+        const call = await placeCall({ to, owner: null, by: who.by, groups: who.groups, source: "api", planned: route });
+        return res.json({ ok: true, id: call.id, provider: call.provider, status: call.status, ...(route.via ? { trunk: route.via.trunk.id } : {}), ...(route.tsa ? { tsa: route.tsa } : {}) });
+      } catch (err) {
+        const e = err as { code?: string; name?: string; message?: string };
+        const status = e.code === "not-configured" || e.name === "ProviderNotConfigured" ? 503 : err instanceof TelError ? 400 : 502;
+        return res.status(status).json({ ok: false, ...(e.code ? { code: e.code } : {}), message: e.message ?? "the call failed" });
+      }
+    }
+    // The rule's provider application, or (pass) today's choice.
+    const connector = getVoice(route.provider || asked || undefined);
     if (!connector || !connector.status().configured) {
       return res.status(503).json({ ok: false, message: connector?.status().reason || "No voice connector configured." });
     }
     try {
       const result = await pluginLog.time("admin", connector.id, "call place", () => connector.placeCall({ to }));
+      noteLegacySend("call", who.by);
       res.json({ ok: true, ...result, note: CALL_MEDIA_NOTE });
     } catch (err) {
       const code = err instanceof TelephonyNotConfiguredError ? 503 : 502;

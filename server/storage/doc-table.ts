@@ -43,13 +43,13 @@ export class DocTable<T extends { id: string }> {
     return (d.prepare(`DELETE FROM ${this.name} WHERE id = ?`).run(id) as { changes: number }).changes > 0;
   }
 
-  /** Newest first. */
-  list(opts: { device?: string; limit?: number; before?: number; filter?: (v: T) => boolean } = {}): T[] {
+  /** Newest first. `after` (6.9): only rows sorted after it (the last hour's calls). */
+  list(opts: { device?: string; limit?: number; before?: number; after?: number; filter?: (v: T) => boolean } = {}): T[] {
     const limit = Math.max(1, Math.min(opts.limit ?? 500, 5000));
     const d = this.db();
     if (!d) {
       return [...this.mem.values()]
-        .filter((v) => (!opts.device || this.deviceOf(v) === opts.device) && (opts.before === undefined || this.sortOf(v) < opts.before) && (!opts.filter || opts.filter(v)))
+        .filter((v) => (!opts.device || this.deviceOf(v) === opts.device) && (opts.before === undefined || this.sortOf(v) < opts.before) && (opts.after === undefined || this.sortOf(v) > opts.after) && (!opts.filter || opts.filter(v)))
         .sort((a, b) => this.sortOf(b) - this.sortOf(a))
         .slice(0, limit)
         .map((v) => structuredClone(v));
@@ -58,6 +58,7 @@ export class DocTable<T extends { id: string }> {
     const args: unknown[] = [];
     if (opts.device) { where.push("device = ?"); args.push(opts.device); }
     if (opts.before !== undefined) { where.push("sort < ?"); args.push(opts.before); }
+    if (opts.after !== undefined) { where.push("sort > ?"); args.push(opts.after); }
     const sql = `SELECT data FROM ${this.name}${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY sort DESC`;
     if (!opts.filter) return (d.prepare(`${sql} LIMIT ?`).all(...args, limit) as Array<Pick<Row, "data">>).map((r) => JSON.parse(r.data) as T);
     // A filter runs in JS: walk the rows until the limit is filled.

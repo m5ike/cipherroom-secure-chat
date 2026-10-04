@@ -304,9 +304,20 @@ return function setup(host, ctxJson) {
       list: (filter) => tel("did.list", filter || {}),
       release: (id) => tel("did.release", typeof id === "object" && id ? id.id : id),
     },
+    // 6.9: route codes — a caller who types one in a TSA's Route audio is connected to the room / the member.
+    // add(code, type = "room", ttl = 600, { room, user, label, maxUses }) or add({ code, type, ttl, room, … });
+    // code "" / null = a random one; room = this run's room; a "user" code's member = the caller.
+    inroute: {
+      add: (code, type, ttl, opts) => tel("inroute.add", code && typeof code === "object"
+        ? code
+        : { ...(opts && typeof opts === "object" ? opts : {}), code: code === undefined || code === null ? "" : String(code), ...(type !== undefined && type !== null ? { type: String(type) } : {}), ...(ttl !== undefined && ttl !== null ? { ttl: Number(ttl) } : {}) }),
+      del: (code) => tel("inroute.del", typeof code === "object" && code ? String(code.code) : String(code)),
+      list: (filter) => tel("inroute.list", filter || {}),
+    },
     log: (filter) => tel("log", filter || {}),
     actions,
   };
+  telephony.inroute.delete = telephony.inroute.del;
 
   /* ---- m5.nfc (6.3): drive the caller's NFC hardware, two-way ---- */
   // Each op becomes an NfcCommand the runner sends to the caller's device as an

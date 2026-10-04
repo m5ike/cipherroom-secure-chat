@@ -77,9 +77,14 @@ const TEL_RIGHTS: RightDef[] = [
   { right: "lookup", label: "Number lookup", help: "Functions: m5.telephony.lookup (the providers' paid data)" },
   { right: "hlr", label: "HLR", help: "Functions: m5.telephony.hlr — reachability, roaming" },
   { right: "did", label: "Temporary numbers", help: "Functions: m5.telephony.did — a phone number and code that connect a caller to a room member" },
+  // 6.9: the inroute table, and the Telephony & SIP console's parts.
+  { right: "inroute", label: "Route codes", help: "Functions: m5.telephony.inroute.add / del / list — codes that route a caller's audio to a room or a member" },
   { right: "number:*", label: "Numbers", help: "Where to: number:+420*, -number:+1900*" },
-  { right: "settings", label: "Console: providers, SIP trunks, webhooks" },
-  { right: "test", label: "Console: test calls and SMS" },
+  { right: "settings", label: "Console: providers, SIP trunks, webhooks, permissions, route codes" },
+  { right: "routing", label: "Console: inbound and outbound routing rules" },
+  { right: "tsa", label: "Console: Telephony & SIP Applications (TSA editor, publish)" },
+  { right: "log", label: "Console: the event log in full (parsed and raw webhook data)" },
+  { right: "test", label: "Console: test calls, SMS, webhooks, routing, the simulator" },
 ];
 const ANDROID_RIGHTS: RightDef[] = [
   { right: "devices", label: "Devices", help: "Rename, block, retire, delete enrolled devices" },

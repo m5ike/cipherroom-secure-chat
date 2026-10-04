@@ -137,6 +137,19 @@ export const LESSONS: Lesson[] = [
     sample: "export async function execute() {\n  const r = await m5.nfc.emv.report({ format: \"html\", send: true, history: true });\n  if (!r.ok) return m5.out.flash(r.message || r.status, \"warning\");\n  return m5.out.table([\"date\", \"amount\", \"currency\", \"merchant\"], r.history.map((t) => [t.date, t.amount, t.currency, t.merchant]), { title: r.summary });\n}\n",
     expect: "",
   },
+  // 6.9: the inroute table — route codes that connect a phone caller to a room or a member.
+  {
+    id: "inroute", title: "20 · Route codes: a caller into the room", lang: "js",
+    body: "A **route code** connects someone on the phone to this room. `m5.telephony.inroute.add(code, type, ttl, { room, user, label, maxUses })` puts a 4–6 digit code into the **inroute table**: whoever calls one of the operator's numbers and types it at a TSA's **Route audio** is connected both ways — to the whole room (`\"room\"`) or to one member (`\"user\"`) — until the code expires (`ttl` seconds, default 600). An empty code gets a random one (never 0000, 1234 and the like); `room` defaults to the room the command ran in (`m5.caller.room`), a `\"user\"` code's member to the caller. `list()` gives the model's live codes, `del(code)` removes one (in Python `delete`).\n\nThe worked example: create a code, **tell the member** the number and the code — *call +420 … and type 4 8 3 9 2 0* — and the caller types it. It needs the **inroute** right (Modules & groups › Telephony & SIP; a webhook's or a schedule's run: the model's grant) and, for the call itself, an inbound rule that runs a TSA with Route audio (Telephony & SIP › Routing). The log shows codes masked (`•••••0`); the console's own table shows them in full.\n\nIn the Builder: **Telephony › inroute.add / inroute.del / inroute.list**.",
+    sample: "export async function execute() {\n  // The room of the chat run; the console's test run has none, so it names one.\n  const room = m5.caller.room || \"r3.tutorial-room\";\n  const entry = await m5.telephony.inroute.add(\"\", \"room\", 300, { room, label: \"Tutorial\" });\n  const mine = await m5.telephony.inroute.list();\n  const until = new Date(entry.expiresAt).toISOString().slice(11, 16);\n  return [\n    m5.out.markdown(`**Route code ${entry.code}** — call the room's number and type it (valid until ${until} UTC).`),\n    m5.out.table([\"code\", \"type\", \"label\", \"uses\"], mine.map((e) => [e.code, e.type, e.label, e.uses]), { title: \"Your live codes\" }),\n  ];\n}\n",
+    expect: "Route code",
+  },
+  {
+    id: "inroute-py", title: "21 · Route codes in Python", lang: "py",
+    body: "The same in **Python**: `add(code, type, ttl, room=…, user=…, label=…, max_uses=…)` — here a one-time code (`max_uses=1`) for one member, removed again with `delete` (`del` is a Python keyword). A code a TSA has used `max_uses` times disappears by itself.",
+    sample: "async def execute(**inputs):\n    room = m5.caller.room or \"r3.tutorial-room\"\n    entry = await m5.telephony.inroute.add(None, \"user\", 120, room=room, user=\"@alice\", max_uses=1)\n    removed = await m5.telephony.inroute.delete(entry[\"code\"])\n    left = await m5.telephony.inroute.list()\n    return m5.out.json({\"code\": entry[\"code\"], \"for\": entry[\"user\"], \"removed\": removed, \"left\": len(left)})\n",
+    expect: "removed",
+  },
 ];
 
 /** The lessons as the console needs them (the sample entry is always `execute`). */

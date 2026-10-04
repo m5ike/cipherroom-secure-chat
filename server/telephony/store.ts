@@ -1,6 +1,8 @@
 // Persistent storage for the telephony module: SIP trunks (incl. their
 // passwords — they are needed to reach the trunk) and the admin-chosen default
-// providers. One small JSON file, written atomically with mode 0600.
+// providers — and (6.9) the control plane's permissions and routing rules
+// (control/store.ts), plus any other section a part keeps here. One small
+// JSON file, written atomically with mode 0600.
 //
 // Where:  TELEPHONY_DATA_FILE            explicit path, or
 //         $DATA_DIR/telephony.json       when DATA_DIR is set (Docker: mount a
@@ -34,7 +36,12 @@ export type PersistedTrunk = {
   updatedAt: number;
 };
 
-export type TelephonyFile = { version: 1; settings: PersistedSettings; trunks: PersistedTrunk[] };
+/**
+ * 6.9: the sections other parts keep in the file (control/store.ts: permissions,
+ * rules) ride along untouched — every writer reads, changes its own section and
+ * writes the rest back as it found it.
+ */
+export type TelephonyFile = { version: 1; settings: PersistedSettings; trunks: PersistedTrunk[]; [section: string]: unknown };
 
 const EMPTY: TelephonyFile = { version: 1, settings: {}, trunks: [] };
 
@@ -68,7 +75,9 @@ export function loadTelephonyFile(): { data: TelephonyFile; mtimeMs: number; exi
   try {
     const raw = readFileSync(file, "utf8");
     const parsed = JSON.parse(raw) as Partial<TelephonyFile>;
+    const { version: _version, settings: _settings, trunks: _trunks, ...sections } = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
     const data: TelephonyFile = {
+      ...sections,
       version: 1,
       settings: parsed.settings && typeof parsed.settings === "object" ? { ...parsed.settings } : {},
       trunks: Array.isArray(parsed.trunks) ? parsed.trunks.filter((t) => t && typeof t === "object" && typeof (t as PersistedTrunk).id === "string") as PersistedTrunk[] : [],

@@ -212,8 +212,17 @@ později v modelu, funkcí = běh čeká a `on_answer` vrací logiku živého
 hovoru), `wait`, `say`, `hangup`, `steer`, `calls.*`, `actions.*` (say, play,
 pause, gather, record, redirect, hangup), `sms`, `whatsapp`, `viber`,
 `messenger`, `messages.get`, `lookup` (offline číslovací plán + data
-poskytovatelů), `hlr`, `did.*`, `log`, `providers()`. Podrobně v dokumentaci
+poskytovatelů), `hlr`, `did.*`, `log`, `providers()` a od 6.9
+`inroute.add / del / list` (kódy, které volajícího propojí s místností nebo
+členem — právo `inroute`). Podrobně v dokumentaci
 (`docs/site/index.html#m5-telephony`).
+
+**6.9:** každý odchozí hovor a SMS (funkce, `POST /api/telephony/call|sms`,
+konzole) projde oprávněními a odchozími pravidly — blokovaná čísla a země,
+hodinový rozpočet volajícího, souběžné hovory, pravidlo (stav odmítne,
+aplikace poskytovatele, SIP trunk s vlastním caller ID, TSA po přijetí),
+nejdelší hovor. Oprávnění, pravidla, vzory čísel, časová okna, tabulka
+inroute a její SDK: [`telephony-routing.md`](telephony-routing.md).
 
 | Poskytovatel | Umí |
 |---|---|

@@ -491,6 +491,27 @@ async def _tel_call(spec=None, **kw):
 def _id_of(x):
     return x.get("id") if isinstance(x, dict) else x
 
+# 6.9: route codes. add(code=None, type="room", ttl=600, room=None, user=None, label=None, max_uses=0)
+# or add({"code": ..., "type": ...}); "del" is a Python keyword: delete(code) (also del_ and getattr(…, "del")).
+def _inroute_add(code=None, type=None, ttl=None, opts=None, **kw):
+    if isinstance(code, dict):
+        spec = {**code, **kw}
+    else:
+        spec = {**(opts or {}), **kw, "code": "" if code is None else str(code)}
+        if type is not None:
+            spec["type"] = str(type)
+        if ttl is not None:
+            spec["ttl"] = ttl
+    if "max_uses" in spec:
+        spec["maxUses"] = spec.pop("max_uses")
+    return _tel("inroute.add", spec)
+
+def _inroute_del(code):
+    return _tel("inroute.del", str(code.get("code")) if isinstance(code, dict) else str(code))
+
+def _inroute_ns():
+    return _NS(**{"add": _inroute_add, "delete": _inroute_del, "del": _inroute_del, "del_": _inroute_del, "remove": _inroute_del, "list": lambda **f: _tel("inroute.list", f)})
+
 def _telephony_ns():
     return _NS(
         providers=lambda: _tel("providers"),
@@ -512,6 +533,7 @@ def _telephony_ns():
                 list=lambda **f: _tel("did.list", f), release=lambda session: _tel("did.release", _id_of(session))),
         log=lambda **f: _tel("log", f),
         actions=_NS(say=_say, play=_play, pause=_pause, gather=_gather, record=_record, redirect=_redirect, hangup=_hangup_action),
+        inroute=_inroute_ns(),
     )
 
 # ---- m5.nfc (6.3): drive the caller's NFC hardware, two-way ----

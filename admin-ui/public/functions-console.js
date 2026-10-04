@@ -993,7 +993,7 @@
   // 6.0: what the model's code may do beyond its caller — m5adm (only an owner grants it, and a
   // model that has it is the owner's to change) and m5.telephony for runs nobody started.
   const ADM_AREAS = [["overview", "Overview"], ["rooms", "Rooms"], ["connections", "Connections"], ["traffic", "Live traffic"], ["modules", "Modules & groups"], ["users", "Users & passkeys"], ["queue", "Message queue"], ["audit", "Audit log"], ["commands", "Commands & push"], ["admins", "Administrators"]];
-  const TEL_RIGHTS = [["call", "calls"], ["sms", "SMS"], ["lookup", "number lookup"], ["hlr", "HLR"], ["message", "WhatsApp · Viber · Messenger"], ["did", "temporary numbers (audio bridge)"]];
+  const TEL_RIGHTS = [["call", "calls"], ["sms", "SMS"], ["lookup", "number lookup"], ["hlr", "HLR"], ["message", "WhatsApp · Viber · Messenger"], ["did", "temporary numbers (audio bridge)"], ["inroute", "route codes (m5.telephony.inroute)"]];
   function grantsField(m, ro) {
     m.grants = m.grants || {};
     const owner = C.can("owner");
