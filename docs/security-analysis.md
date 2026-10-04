@@ -1197,7 +1197,8 @@ SMTP, web push, telefonie); viz `docs/audit-6.7.md`, kap. 6.
 ## 12. Stav 6.10: nové části a srovnání
 
 > **Stav kódu:** rozpracovaná verze 6.10.0, výchozí commit `addff2a9` (větev `android_application`),
-> opravy této revize `16695a1b`, `327c9efc`, `76bdbc03`; analýza ke dni 2026-10-05.
+> opravy této revize `16695a1b`, `327c9efc`, `76bdbc03`; Android G-20 až G-24 `e3fefe00`, G-17 na
+> Androidu `9086ab31` (web `4a7f5fce`); analýza ke dni 2026-10-05.
 > **Rozsah:** všechno, co přibylo od kap. 11 (`28f10ad0`): 6.8 (záznam hovorů a konverzace na
 > Androidu, volby odeslání, `API_RATE_LIMIT`, oprava velkých souborů), 6.9 (Telephony & SIP —
 > webhooky, pravidla, TSA, route kódy, zvuk hovoru do místnosti, konzole) a 6.10 (šablony APDU,
@@ -1215,8 +1216,8 @@ SMTP, web push, telefonie); viz `docs/audit-6.7.md`, kap. 6.
 1. **Verdikt se nemění: ≈ 4,5 / 10 vůči Signalu.** Kryptografické jádro je dobré; chybí obnova po kompromitaci (PCS) i post-kvantová ochrana, web doručuje server, identita je TOFU podle jména a kód nikdo nezávislý neauditoval.
 2. **Telefonie 6.9 je největší nová plocha útoku.** Měla tři vážné chyby, opravené v této revizi: padělaný nepodepsaný webhook řídil aplikace TSA — SMS, HTTP, funkce, route kódy, zvuk do místnosti (G-01); čtenář konzole obešel práva změnou velikosti písmen v adrese (G-02); bez pravidla modulu mohl kdokoli z internetu volat a psát SMS na účet provozovatele (G-04).
 3. **Web:** „soukromá" příloha či hlasová zpráva pro nepřítomné mohla odejít celé místnosti (G-10) — opraveno.
-4. **Android (jen nález, opravu dělá jiný agent):** design podepsaný serverem po jednom klepnutí dál vynese dešifrovaný text (G-20, třída F-01); oznámení z doby před automatickým zámkem si nechají obsah (G-22).
-5. **Otevřené:** hádání route kódů s podvrženým číslem (G-05), toll fraud v TSA (G-06), nešifrovaná `telephony.db` (G-07), data karet NFC na server bez souhlasu (G-17).
+4. **Android (opraveno v `e3fefe00`):** design podepsaný serverem po jednom klepnutí vynášel dešifrovaný text (G-20, třída F-01) a přepínal soukromé volby (G-21); oznámení z doby před automatickým zámkem si nechávala obsah (G-22). Model funkce dostane data karty jen se souhlasem držitele, výchozí je zamaskované (G-17, web `4a7f5fce`, Android `9086ab31`).
+5. **Otevřené:** hádání route kódů s podvrženým číslem (G-05), toll fraud v TSA (G-06), nešifrovaná `telephony.db` (G-07).
 6. **Proti komerčním messengerům** je M5cet slabší než Signal, iMessage (PQ3), WhatsApp a Threema v protokolu a ověřitelnosti. Silnější je než výchozí chaty Telegramu, které server čte. Záměrně se liší: bez telefonního čísla, jen na vlastním serveru.
 
 ### 12.1 Co přibylo od 6.7 a jakou plochu útoku to otevírá
@@ -1254,14 +1255,14 @@ SMTP, web push, telefonie); viz `docs/audit-6.7.md`, kap. 6.
 | G-14 | **Nízká** | otevřené | Plaintext na server bez jasného upozornění: „Poslat jako hlas" bere první TTS konektor (může být cloud) a čip v composeru to neříká; odpověď funkci se zapnutým „zapečetěno" jde jako plaintext i s citovaným textem | `client/src/lib/speak-send.ts:48`; `client/src/App.tsx:3684` | čip „Jako hlas — text čte server (<poskytovatel>)"; „zapečetěno" u odpovědi funkci odmítnout |
 | G-15 | **Nízká** | otevřené | Konzole: koncepty TSA a schránka editoru v `localStorage` bez vazby na administrátora, nesmažou se při odhlášení; hlavičky uzlu HTTP mohou nést doslovná tajemství (místo `{secret:…}`) | `admin-ui/public/tsa-editor.js:35-36`, `:92-94`; `server/telephony/tsa/catalog.ts:374` | `sessionStorage` nebo klíč podle administrátora; validátor varuje u doslovného `Authorization` |
 | G-16 | **Informativní** | otevřené | `replace()` ve vzorcích TSA ořízne až výsledek — mezivýsledek může mít miliony znaků (DoS jen autorem TSA nebo daty z HTTP) | `server/telephony/tsa/formula.ts:544-548` | spočítat délku předem (`count × len(with)`) a odmítnout nad `FORMULA_LIMITS.string` |
-| G-17 | **Střední** | jen nález (NFC) | Čtení karty spuštěné modelem (`emv-read`, `eid-read`) vrací serveru PAN, data stopy 2 a všechny záznamy, u e-ID MRZ a fotografii — bez dialogu souhlasu; „zprávu" sestavuje server | `client/src/App.tsx:3751-3765` (bez dialogu); `client/src/lib/nfc/web-executor.ts:188-193`; `client/src/lib/functions.ts:103-109` | dialog souhlasu na běh se seznamem dat; výchozí výsledek maskovaný (bez `pan`, 5A/57/56/9F6B/9F1F a záznamů) |
+| G-17 | **Střední** | **opraveno** — web `4a7f5fce` (jiný agent), Android `9086ab31` | Čtení karty spuštěné modelem (`emv-read`, `eid-read`) vrací serveru PAN, data stopy 2 a všechny záznamy, u e-ID MRZ a fotografii — bez dialogu souhlasu; „zprávu" sestavuje server | `client/src/App.tsx:3751-3765` (bez dialogu); `client/src/lib/nfc/web-executor.ts:188-193`; `client/src/lib/functions.ts:103-109` | web: `client/src/lib/nfc/consent.ts`, `client/src/App.tsx:3787-3791`. Android: `A/nfc/ModelNfc.java:779` (`consent` — tytéž řádky jako web), `:855` (`masked`: bez pole `pan`, 5A / stopy maskované v elementech, záznamech, logu i přepisu — pravidla `TemplateViews` z G-19, 6 + 4 číslice; surová data s PAN se nepošlou; u dokladu bez řádků MRZ, volitelných údajů, fotografie, obrázků, DG11/12/13/16 a souborů, číslo dokladu maskované), `:850` (`declined`); `A/ui/parts/NfcModelSheet.java:416`, `:427` (list jmenuje model a vypíše, co odejde; „Poslat (zamaskované)“ je výchozí, „Poslat vše“ řekne, co přidá, „Neposílat“ i zavření listu = `denied`); test `ModelNfcConsentTest`, `android-security-610`. **Zbývá:** ověřit na skutečné kartě (§ 12.9) |
 | G-18 | **Střední** | jen nález (NFC) | `raw-apdu` z modelu obchází `allowWrites` (VERIFY, GENERATE AC, UPDATE, DESFire FormatPICC); šablony 6.10 se deklarují „jen pro čtení", ale krok `{ apdu }` bere libovolný hex | `client/src/lib/nfc/web-executor.ts:205-210`, `:216`; `client/src/lib/nfc/apdu-templates.ts:18-19`, `:194-212` | allowlist CLA/INS (A4, B0, B2, CA, A8, C0, DESFire 60/AF/6A/6E/45) v `web-executor`, v `templateProblems` i v Androidu |
 | G-19 | **Střední** | jen nález (NFC) | „Maskovaná" zpráva o kartě maskuje PAN jen jako desítkový řetězec — v hex záznamech (tag 56 Track 1 v ASCII-hex) zůstane celý, i v příloze `emv-records.txt` a JSON | `client/src/lib/nfc/card-report.ts:141-145`, `:198-219` | maskovat i ASCII-hex podobu PAN; hodnoty 56/57/9F6B/9F1F redigovat bez `fullPan` |
-| G-20 | **Vysoká** | jen nález (Android) | **Třída F-01 trvá:** akce designu s počítaným argumentem mají v rozsahu dešifrovaná data (`$msg`, od 6.8 `$log` se všemi místnostmi a `$composer.sealCode`). Kanály k serveru: `setting.set` na `notify.quietFrom={$msg.text}` → synchronizace `PUT /api/account/notify` za 1,5 s; počítaný `lib.run` / klíč nastavení skončí v logu, který vrací podepsaný příkaz `status`; `url.open` zobrazí jen 299 znaků a otevře celou adresu; `profile.public` | `A/core/Settings.java:131-158`; `A/push/NotifyPrefs.java:146-152`, `:161`, `:185`; `A/ui/Actions.java:197`; `A/push/Control.java:69-70`; `A/ui/DesignUrls.java:46-50` | počítaný argument zakázat pro `lib.run`, `url.open`, `profile.public` a klíč `setting.set`; hodnoty `setting.set` validovat podle klíče (např. `notify.quietFrom` = `\d{2}:\d{2}`); nelogovat počítané hodnoty; `url.open` nad 300 znaků odmítnout |
-| G-21 | **Střední** | jen nález (Android) | `setting.set` / `toggle` z designu potichu zapne soukromé volby 6.8: `callLog` + `calls.logName=people` (jména místností a lidí do systémového záznamu hovorů), `conversations.names`, `notify.privacy`, `voice.engine=server` (+ trvalé „jako hlas" = každá zpráva na TTS serveru) | `A/core/Settings.java:49-51`, `:132-145`; `A/telecom/ConversationPlan.java:47-50`; `A/ui/parts/CallLogUi.java:242-246` | sada `PRIVACY_KEYS`, kterou akce designu měnit nesmí (jen vlastní přepínač uživatele nebo nativní potvrzení) |
-| G-22 | **Střední** | jen nález (Android) | Oznámení zveřejněná před **automatickým** zámkem si nechají místnost, odesílatele i text; automatický zámek nevyvolá událost; `VISIBILITY_PRIVATE` při výchozím systémovém „zobrazit vše" ukáže na zamčené obrazovce plný obsah (komentáře v kódu tvrdí opak); widget konverzací drží poslední text | `A/telecom/Notify.java:147-159`; `A/telecom/CallRing.java:56-60`, `:88`; `A/security/AppLock.java:171-187` | `Notify.neutralizeAll()` při přechodu do zámku (časovač / alarm konverzací, `onLocked`); volitelně `VISIBILITY_SECRET`; opravit komentáře |
-| G-23 | **Nízká–střední** | jen nález (Android) | Exportovaná aktivita věří extra `room` od libovolné aplikace (připojí místnost, kterou uživatel opustil); PendingIntent přímé odpovědi je `FLAG_MUTABLE` a extra `room` jde přepsat (posluchač oznámení pošle odpověď do jiné místnosti) | `A/ui/MainActivity.java:117-118`, `:238-243`; `A/telecom/Notify.java:120-121`; `A/push/ReplyReceiver.java:16-20` | `room` jen s tokenem procesu (jako `CallRing.TOKEN`); záměr nikdy nepřipojí místnost; HMAC `tag` v odpovědi |
-| G-24 | **Nízká** | jen nález (Android) | Drobnosti 6.8: neutralizace jmen zkratek má mezery (časovač jen `if (named)`, při rate-limitu zůstanou cached / pinned, alarm se po restartu ztratí, staré ikony s monogramem); výchozí `conversations.names = true`; oprava legacy záznamů nečistí `CACHED_*` sloupce; dialogy Záznamu bez `FLAG_SECURE`; seznam Záznamu v paměti po autozámku | `A/telecom/Conversations.java:155-163`, `:189`, `:286-301`; `A/telecom/CallLogBridge.java:173-177`; `A/ui/parts/CallLogUi.java:45`, `:82`, `:204-234` | viz doporučení u řádků (zprávy agenta Androidu); výchozí jména vypnout nebo jen při odemčené aplikaci |
+| G-20 | **Vysoká** | **opraveno** `e3fefe00` | **Třída F-01 trvá:** akce designu s počítaným argumentem mají v rozsahu dešifrovaná data (`$msg`, od 6.8 `$log` se všemi místnostmi a `$composer.sealCode`). Kanály k serveru: `setting.set` na `notify.quietFrom={$msg.text}` → synchronizace `PUT /api/account/notify` za 1,5 s; počítaný `lib.run` / klíč nastavení skončí v logu, který vrací podepsaný příkaz `status`; `url.open` zobrazí jen 299 znaků a otevře celou adresu; `profile.public` | `A/core/Settings.java:131-158`; `A/push/NotifyPrefs.java:146-152`, `:161`, `:185`; `A/ui/Actions.java:197`; `A/push/Control.java:69-70`; `A/ui/DesignUrls.java:46-50` | `A/ui/ActionGuard.java:70` — surový argument jde z `Renderer` (`A/ui/Renderer.java:69`), menu, řádků se swipe i knihoven do `A/ui/Actions.java:43`; počítaný argument se odmítne u `lib.run`, `url.open`, `fn.run`, `profile.public` (výjimka: přesně uživatelské jméno osoby otevřené v aplikaci, `A/ui/parts/People.java:215`) a u klíče `setting.set` / `look.set` / `setting.toggle`; `A/core/SettingSchema.java:139` — pravidlo pro každý klíč (rozsahy, výčty, vzory; `notify.quietFrom` = `HH:MM`), kontroluje ho `Settings.set` i čtení (`A/core/Settings.java:124-125`, `:143`); log bez argumentů a hodnot (`Actions.java:42`, `:218`, `:237`; `Settings.java:141`; `A/ui/MainActivity.java:392`); `url.open` nad 300 znaků, s mezerou, řídicím nebo `\p{Cf}` znakem se odmítne místo zkrácení (`A/ui/DesignUrls.java:54`); testy `ActionGuardTest`, `SettingSchemaTest`, `DesignUrlsTest`. **Zbývá:** `share` / `copy` s počítaným textem (vždy přes uživatele — systémový výběr, schránka); hodnota v mezích pravidla nese nanejvýš pár bitů (jazyk, čas) a ty ze `notify.*` design nastavit nesmí (G-21) |
+| G-21 | **Střední** | **opraveno** `e3fefe00` | `setting.set` / `toggle` z designu potichu zapne soukromé volby 6.8: `callLog` + `calls.logName=people` (jména místností a lidí do systémového záznamu hovorů), `conversations.names`, `notify.privacy`, `voice.engine=server` (+ trvalé „jako hlas" = každá zpráva na TTS serveru) | `A/core/Settings.java:49-51`, `:132-145`; `A/telecom/ConversationPlan.java:47-50`; `A/ui/parts/CallLogUi.java:242-246` | `A/core/SettingSchema.java:126` — `callLog`, `calls.*`, `conversations.*`, `notify.*`, `location.*`, `security.*`, `voice.engine` / `autoplay` / `dictateSend`, `nfc.emulate`, `nfc.keyDictionary`, potvrzení o doručení a přečtení, `people.contacts`: akce designu (`setting.set`, `setting.toggle`, krok knihovny, handler `change`) je nezmění (`A/ui/ActionGuard.java:94`); mění je jen klepnutí uživatele na vlastní přepínač / volbu toho nastavení; test `ActionGuardTest`, `SettingSchemaTest`. **Zbývá:** design může přepínač soukromé volby nakreslit s klamavým popiskem (klepnutí je uživatelovo) — nativní potvrzení neděláme |
+| G-22 | **Střední** | **opraveno** `e3fefe00` | Oznámení zveřejněná před **automatickým** zámkem si nechají místnost, odesílatele i text; automatický zámek nevyvolá událost; `VISIBILITY_PRIVATE` při výchozím systémovém „zobrazit vše" ukáže na zamčené obrazovce plný obsah (komentáře v kódu tvrdí opak); widget konverzací drží poslední text | `A/telecom/Notify.java:147-159`; `A/telecom/CallRing.java:56-60`, `:88`; `A/security/AppLock.java:171-187` | `A/telecom/Notify.java:268` `neutralizeAll()` — každé oznámení zprávy, šablony serveru, vyzvánění a zmeškaného hovoru zveřejněné za odemčení (značka `:186`, `:232`; `A/telecom/CallRing.java:95`, `:119`) se znovu zveřejní jen s názvem aplikace a neutrálním textem, bez odpovědi a bez zvuku; volá ho `lockNow` (`A/M5.java:157`, `:166`), časovač / alarm automatického zámku, teď vždy po odchodu do pozadí (`A/telecom/Conversations.java:158`, `:170`), a start procesu (`M5.java:98`); komentáře o zamčené obrazovce opraveny. **Zbývá:** `VISIBILITY_SECRET` nezaveden; mezi uzamčením telefonu a automatickým zámkem aplikace ukáže zamčená obrazovka s „zobrazit vše“ obsah jako jiné messengery; widget konverzací neověřen na zařízení |
+| G-23 | **Nízká–střední** | **opraveno** `e3fefe00` | Exportovaná aktivita věří extra `room` od libovolné aplikace (připojí místnost, kterou uživatel opustil); PendingIntent přímé odpovědi je `FLAG_MUTABLE` a extra `room` jde přepsat (posluchač oznámení pošle odpověď do jiné místnosti) | `A/ui/MainActivity.java:117-118`, `:238-243`; `A/telecom/Notify.java:120-121`; `A/push/ReplyReceiver.java:16-20` | `A/security/IntentSeal.java` — místnost oznámení a přímé odpovědi nese HMAC štítek klíčem procesu (`A/telecom/Notify.java:90`, `:135`); `A/ui/MainActivity.java:120` bere `room` jen se štítkem a jednou, `:245` otevře jen místnost, ve které aplikace je (nikdy nepřipojí); `A/telecom/ReplyReceiver.java:26` odmítne změněnou místnost; test `IntentSealTest`. **Zbývá:** oznámení z předchozího procesu po jeho ukončení otevře aplikaci, ne místnost |
+| G-24 | **Nízká** | **opraveno** `e3fefe00` (výchozí `conversations.names` beze změny) | Drobnosti 6.8: neutralizace jmen zkratek má mezery (časovač jen `if (named)`, při rate-limitu zůstanou cached / pinned, alarm se po restartu ztratí, staré ikony s monogramem); výchozí `conversations.names = true`; oprava legacy záznamů nečistí `CACHED_*` sloupce; dialogy Záznamu bez `FLAG_SECURE`; seznam Záznamu v paměti po autozámku | `A/telecom/Conversations.java:155-163`, `:189`, `:286-301`; `A/telecom/CallLogBridge.java:173-177`; `A/ui/parts/CallLogUi.java:45`, `:82`, `:204-234` | `A/telecom/Conversations.java:251` (časovač i při jménech zveřejněných v pozadí), `:395` (rate-limit: cached pryč, pinned vypnuté do dalšího zveřejnění), `:383` (vyřazená zkratka: ikona aplikace a intent bez id), `:219` + manifest (`BOOT_COMPLETED`: jména zbylá před restartem neutrálně); `A/telecom/CallLogBridge.java:180`, `:200`, `:207` (sloupce `CACHED_*` a `geocoded_location` řádků aplikace prázdné, i řádků opravených v 6.8); `A/ui/parts/CallLogUi.java:214`, `:229`, `:244` (dialogy Záznamu přes `SecureDialog`), `:106` (seznam pryč i po autozámku); test `CallLogBridgeTest`. **Zbývá:** připnutá zkratka si při rate-limitu ponechá popisek (systém ho vypnuté nechá); výchozí `conversations.names = true` beze změny (jména jen při odemčené aplikaci) |
 
 **G-01 podrobněji.** Webhook bez podpisu je u Telnyxu a Vonage možný, protože ověřovací materiál
 je volitelný (`TELNYX_PUBLIC_KEY` je jiný údaj než API klíč; `VONAGE_SIGNATURE_SECRET` jiný než
@@ -1326,7 +1327,7 @@ v obou službách. Všechny cesty v kódu jsou malými písmeny a klienti je tak
 
 | ID | Stav 6.10 | Doklad | Poznámka |
 |---|---|---|---|
-| F-01 | **částečně** (zhoršeno rozsahem) | viz G-20 | obrázky jsou ošetřené, akce s počítaným argumentem ne; 6.8 přidalo do rozsahu `$log` a kód zapečetění |
+| F-01 | **částečně → lépe** | viz G-20 (`e3fefe00`) | obrázky jsou ošetřené; akce s počítaným argumentem, které by data vynesly (`url.open`, `lib.run`, `fn.run`, `profile.public`, klíč nastavení), aplikace odmítne a hodnoty nastavení drží pravidla; zbývá `share` / `copy` (přes uživatele) a obcházitelná serverová kontrola výrazu |
 | F-02 | otevřené | `client/src/lib/integrity.ts:7-15`, `:49` (manifest od téhož serveru) | beze změny |
 | F-03 | **částečně** (drobný posun) | `server/functions/sandbox/pool.ts:113-116` (`--permission` / `--experimental-permission` podle verze Node) | `_module` Pyodide dál není v `NEUTERED` (`engine-py.ts:31`); bez bwrap / jiného uživatele. TSA nástroj Function spouští modely i pro anonymního volajícího (`tsa/deps.ts:116-133`) — sandbox je teď dosažitelný z telefonní linky |
 | F-04 | **částečně** | `client/src/lib/passphrase-strength.ts:152`, `client/src/components/RoomDialog.tsx:156`; `server/monitor/traffic.ts:120-123` | beze změny; G-03 omezilo, kdo v konzoli vidí slepá ID |
@@ -1335,7 +1336,7 @@ v obou službách. Všechny cesty v kódu jsou malými písmeny a klienti je tak
 | F-13 | otevřené | `client/src/App.tsx:1628-1638` (nový pin = „verified") | beze změny |
 | F-15 | otevřené (rozšířeno) | `client/src/lib/rtc.ts:7-8` | k tomu telefonie: čísla volajících, časy a délky hovorů, přepisy v `telephony.db` (G-07); číslo volajícího vidí všichni na hubu (G-09) |
 | F-17 | **částečně → lépe** | G-01 (opraveno), G-08 (otevřené) | nepodepsaný webhook už nic nespustí; přehrání v okně trvá |
-| F-18 | otevřené (rozšířeno) | `server/functions/store.ts:173-180` (obyčejný SQLite) | k tomu `telephony.db` (G-07) a NFC data na server bez souhlasu (G-17) |
+| F-18 | otevřené (rozšířeno) | `server/functions/store.ts:173-180` (obyčejný SQLite) | k tomu `telephony.db` (G-07); NFC data jdou na server jen se souhlasem, výchozí zamaskovaná (G-17 opraveno) |
 | F-29 | otevřené | `.github/workflows/ci.yml:55` (`npm ci --no-audit`) | žádný nezávislý audit; kap. 11 i 12 jsou revize kódu s pomocí AI |
 
 ### 12.5 Hodnocení po oblastech (6.10)
@@ -1351,7 +1352,7 @@ Stupnice stejná jako v kap. 1 (10 = dnešní Signal v dané oblasti).
 | Dopředná utajenost, PCS, post-kvantová ochrana | 3 | **3** | beze změny; ostatní mezitím přidali PQ ratchet |
 | Ochrana metadat | 3 | **3** | telefonie (opt-in) ukládá čísla, časy a přepisy (G-07, G-09) |
 | Webový klient | 6 | **6** | opravy G-10, G-11; kód dál doručuje server (F-02), výběr příjemců neplatí všude (G-12) |
-| Aplikace pro Android | 6 | **5** | třída F-01 je dál zneužitelná po jednom klepnutí, nově s `$log` (G-20); soukromé volby 6.8 jdou přepnout designem (G-21); oznámení po autozámku (G-22) |
+| Aplikace pro Android | 6 | **6** | před opravami 5: třída F-01 byla zneužitelná po jednom klepnutí, nově s `$log` (G-20); soukromé volby 6.8 šly přepnout designem (G-21); oznámení po autozámku (G-22). Opraveno v `e3fefe00` (G-20 až G-24) a `9086ab31` (souhlas s daty karty, G-17); zbývá `share` / `copy` s počítaným textem, pepř PINu bez hardwarového limitu, ověření na zařízení |
 | Server a provoz | 5 | **5** | telefonie 6.9 přinesla tři vysoké nálezy (G-01, G-02, G-04 — bez nich by to byla 4), opravené; zbývá brute force kódů, toll fraud v TSA, nešifrované `telephony.db` / `functions.db`, sandbox bez izolace (G-05–G-07, F-03, F-18) |
 | Ověřitelnost (audity, formální důkazy, reprodukovatelné buildy) | 1 | **1** | beze změny (F-29) |
 | **Celkově** | **≈ 4,5** | **≈ 4,5** | opravené chyby vyvažuje nová plocha útoku; návrhové mezery z kap. 1 trvají |
@@ -1364,7 +1365,8 @@ neauditoval (F-29).
 
 Verze 6.8–6.10 přidaly hodně funkcí. Telefonie je z definice mimo E2EE a řídí ji kdokoli, kdo zavolá.
 Nejzávažnější nové chyby byly v řízení přístupu a v ověřování vstupů, ne v kryptografii; ty
-v serveru a na webu jsou opravené. Pro Android a NFC zůstávají doporučené opravy G-17 až G-24.
+v serveru a na webu jsou opravené, na Androidu také (G-17, G-20 až G-24: `e3fefe00`, `9086ab31`); stav G-18
+a G-19 viz jejich řádky.
 Pro firemní nasazení s telefonií doporučujeme:
 * nastavit `TELNYX_PUBLIC_KEY` / `VONAGE_SIGNATURE_SECRET`,
 * napsat pravidlo modulu Telephony & SIP,
@@ -1384,10 +1386,10 @@ má dva režimy, proto ho tabulka uvádí jednou.
 | Ověření identity | TOFU podle **jména**, bezpečnostní čísla + QR; bez transparentnosti | čísla + QR, key transparency [7] | 3 úrovně, QR [10] | QR + AKD [19] | volitelné Contact Key Verification (key transparency) [44] | tajné chaty: obrázek / emoji klíče; výchozí chaty nemají co ověřovat | otisky, X.509 (MLS) [21] | cross-signing [25] | Account ID = klíč |
 | Metadata | server zná jména, členství, účty, časy; peery vidí IP; telefonie ukládá čísla a přepisy | sealed sender, minimum dat [4][5] | minimum [13] | sbírá metadata [17] | Apple vidí vyhledávání klíčů a směrování (IDS) [45]; rozsah vydávaných dat neověřen | server drží obsah cloudových chatů, kontakty a telefonní číslo; od 09/2024 vydá IP a číslo na soudní příkaz [52] | neověřeno | homeserver drží historii a metadata [29] | onion routing [32] |
 | Telefonní číslo | **ne** | volitelné (beta) [6] | ne [13] | ano [18] | Apple ID nebo číslo | **ano** (pro registraci) [48] | ne | ne | ne |
-| Důvěra v server / vlastní hosting | **jen vlastní server**; provozovatel je pro obsah důvěryhodný (F-01/G-20, F-02) | centrální, kód serveru veřejný | centrální; OnPrem [14] | centrální, uzavřený | centrální, uzavřený | centrální, server uzavřený | centrální; on-prem, federace [21] | vlastní homeserver, federace | síť uzlů [37] |
+| Důvěra v server / vlastní hosting | **jen vlastní server**; provozovatel je pro obsah důvěryhodný (F-02; design Androidu po opravě G-20 omezen) | centrální, kód serveru veřejný | centrální; OnPrem [14] | centrální, uzavřený | centrální, uzavřený | centrální, server uzavřený | centrální; on-prem, federace [21] | vlastní homeserver, federace | síť uzlů [37] |
 | Audity / formální analýza | **žádné** (jen revize s AI) | formální analýzy PQXDH a SPQR [3][9] | audity, formální důkaz Ibex [11][15] | NCC [19][20] | formální analýzy PQ3 (Tamarin; redukční důkaz) [42][43] | akademické útoky a důkaz pro MTProto 2.0 (2022) [51] | Kudelski / X41 [23] | Least Authority; nálezy 2023 [30][31] | Quarkslab 2021 [36] |
 | Reprodukovatelné buildy / ověřitelné doručení kódu | **ne**; web doručuje server | Android [8] | Android experimentálně [14] | ne | ne (uzavřený kód) | klienti open source, reprodukovatelné buildy iOS / Android deklarované [50] | backend [21] | nedeklaruje | nenalezeno |
-| Bezpečnost platformy | Android: Keystore, PIN se zámkem a wipe, `FLAG_SECURE`; web v prohlížeči; **design podepsaný serverem umí vynášet** (G-20) | podepsané aplikace z obchodů | podepsané aplikace | podepsané aplikace | BlastDoor, Lockdown Mode [47]; v minulosti zero-click řetězce (FORCEDENTRY 2021 [53]) | podepsané aplikace | podepsané aplikace | podepsané aplikace | podepsané aplikace |
+| Bezpečnost platformy | Android: Keystore, PIN se zámkem a wipe, `FLAG_SECURE`; web v prohlížeči; design podepsaný serverem dešifrovaná data už nevynese (G-20, `e3fefe00`), dál ale kreslí celé UI | podepsané aplikace z obchodů | podepsané aplikace | podepsané aplikace | BlastDoor, Lockdown Mode [47]; v minulosti zero-click řetězce (FORCEDENTRY 2021 [53]) | podepsané aplikace | podepsané aplikace | podepsané aplikace | podepsané aplikace |
 | Přídavná plocha útoku na serveru | **velká:** Functions (sandbox bez izolace procesu, F-03), telefonie (webhooky, TSA, route kódy, zvuk do místnosti), AI a řeč, NFC, MDM Androidu | minimální (bez serverové logiky nad obsahem) | minimální | ochrana proti spamu, Meta AI (opt-in, neověřeno) | Apple Intelligence (zařízení / Private Cloud Compute — neověřeno do detailu) | boti, mini aplikace, cloudové chaty | integrace (firemní) | boti a bridge na homeserveru | minimální |
 
 **Rozbor.**
@@ -1396,7 +1398,8 @@ má dva režimy, proto ho tabulka uvádí jednou.
   * **Protokol.** Signal, WhatsApp, iMessage a Wire mají PCS. Signal a iMessage mají i
     post-kvantovou ochranu v ratchetu. M5cet nemá ani jedno.
   * **Model důvěry k provozovateli.** U komerčních aplikací musí zlý provozovatel podvrhnout
-    podepsanou aplikaci v obchodě. U M5cet stačí změnit web nebo podepsat design (F-02, G-20).
+    podepsanou aplikaci v obchodě. U M5cet stačí změnit web (F-02); podepsaný design Androidu
+    po opravě G-20 dešifrovaná data nevynese, ale dál kreslí celé UI (klamavé popisky).
   * **Identita.** Signal, WhatsApp a iMessage mají transparentní logy klíčů. M5cet má TOFU podle
     jména.
   * **Ověřitelnost.** Ostatní mají audity nebo formální analýzy. Chyby se tam hledají i našly díky
@@ -1418,11 +1421,12 @@ má dva režimy, proto ho tabulka uvádí jednou.
 
 ### 12.7 Doporučení (pořadí)
 
-1. **Hned (Android, jiný agent):**
+1. **Hned (Android) — hotovo v `e3fefe00`:**
    * G-20: počítaný argument u síťových akcí zakázat, `setting.set` validovat podle klíče a nelogovat
      hodnoty.
    * G-21: privacy klíče mimo dosah designu.
    * G-22: neutralizovat oznámení při zámku.
+   * Zbývá: ověřit G-22 a G-24 na zařízení (zamčená obrazovka, widget konverzací, restart).
 2. **Hned (provoz):** nastavit podpisové klíče webhooků, pravidlo modulu Telephony & SIP a `countries`.
    Route kódy dávat jen 6místné s krátkým TTL. Po G-01 / G-04 bez toho telefonie nepůjde nebo
    bude odmítat — to je záměr.
@@ -1434,7 +1438,8 @@ má dva režimy, proto ho tabulka uvádí jednou.
 4. **Krátkodobě (web, NFC):**
    * G-12 až G-14: výběr příjemců všude, zachovat nebo odmítnout volby zprávy, upozornit na
      plaintext TTS.
-   * G-17 až G-19: souhlas s odesláním dat karty, allowlist APDU, úplné maskování PAN.
+   * G-17 až G-19: souhlas s odesláním dat karty (hotovo: web `4a7f5fce`, Android `9086ab31`), allowlist
+     APDU, úplné maskování PAN.
 5. **Střednědobě a dlouhodobě (návrh):** beze změny proti kap. 8 — PCS a PQ (libsignal / MLS),
    ověřitelné doručení webu, identita vázaná na klíč s transparentností, šifrovaná schránka pro
    příjemce, nezávislý audit.
@@ -1458,8 +1463,13 @@ má dva režimy, proto ho tabulka uvádí jednou.
 
 * **Nic z telefonie neběželo proti skutečnému poskytovateli.** Útok G-01 je odvozený z kódu a
   ověřený testem s podvrženými API; G-05 / G-06 jsou odvozené z kódu.
-* **Android (G-20 až G-24) a NFC (G-17 až G-19) jsou revize kódu bez zařízení a bez karty.** Neověřeno:
-  * chování zamčené obrazovky na Fold6 (G-22),
+* **Android (G-20 až G-24) a NFC (G-17 až G-19) jsou revize kódu bez zařízení a bez karty.** Opravy
+  G-17 a G-20 až G-24 na Androidu ověřují JVM testy (590, `testDebugUnitTest`), sestavení a lint, ne
+  telefon. Neověřeno:
+  * chování zamčené obrazovky na Fold6 (G-22) — přepsání oznámení při autozámku a po startu procesu,
+    widget konverzací,
+  * zkratky po restartu telefonu a při rate-limitu (G-24),
+  * dialog souhlasu s daty karty se skutečnou kartou a modelem (G-17),
   * výskyt tagu 56 na skutečných kartách (G-19),
   * zda zálohy záznamu hovorů v telefonu nesou jména (G-21).
 * Opravy G-01 / G-04 mění chování. Nasazení s Telnyx / Vonage bez podpisových klíčů nebo bez
