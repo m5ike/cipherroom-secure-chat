@@ -482,12 +482,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
                 s.put("security", jo("biometricAvailable", !"off".equals(app.lock.biometricMode()) && Biometric.available(this), "biometric", app.vault.bioEnrolled(),
                     "pinLength", (double) app.lock.pinLength(), "maxAttempts", (double) app.lock.maxAttempts(), "wipe", app.config.lockPolicy().optBoolean("wipe", true), "screenshots", app.lock.screenshots()));
                 break;
-            case "attach": case "send.options": {
-                String text = parts.composerText();
-                s.put("composer", jo("hasText", !text.trim().isEmpty(), "tap", Boolean.TRUE.equals(form.get("msgTap")), "vanish", form.get("msgVanish") == null ? 0.0 : Expr.num(form.get("msgVanish")),
-                    "sealed", form.get("msgSeal") != null, "private", form.get("msgTo") != null));
-                break;
-            }
+            case "attach": case "send.options": s.put("composer", parts.composerScope()); break; // 6.8: + asVoice, voiceText, sealCode, count
             case "tools": s.put("tools", jo("ai", true, "voice", true, "nfc", cz.m5cet.app.nfc.Nfc.available(this))); break;
             case "call.options": { cz.m5cet.app.chat.RoomSession r = app.rooms.activeSession(); s.put("call", jo("active", r != null && !"off".equals(r.calls().state()))); break; }
             case "ai": s.put("ai", parts.aiScope()); break;

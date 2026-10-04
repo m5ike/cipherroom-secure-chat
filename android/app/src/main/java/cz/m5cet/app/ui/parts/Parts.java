@@ -385,16 +385,37 @@ public final class Parts {
         }
     }
 
-    /** message.kind: tap | vanish:<s> | seal[:<code>] | normal — for the next message. */
+    /** message.kind: tap | vanish[:<s>] | seal[:<code>] | normal — for the next message. */
     public void messageKind(String arg) {
         java.util.Map<String, Object> f = a.form();
         String k = arg == null ? "" : arg.trim();
         if (k.equals("normal")) { f.remove("msgTap"); f.remove("msgVanish"); f.remove("msgSeal"); }
         else if (k.equals("tap")) { if (Boolean.TRUE.equals(f.get("msgTap"))) f.remove("msgTap"); else f.put("msgTap", true); }
+        // 6.8: "vanish" without seconds switches it off again (the attach sheet's chip stayed on).
+        else if (k.equals("vanish") && f.containsKey("msgVanish")) f.remove("msgVanish");
         else if (k.startsWith("vanish")) { int s = k.indexOf(':') > 0 ? (int) Expr.num(k.substring(k.indexOf(':') + 1)) : (int) app().settings.num("messages.vanishSeconds"); if (s > 0) f.put("msgVanish", (double) s); else f.remove("msgVanish"); }
         else if (k.startsWith("seal")) { if (f.containsKey("msgSeal") && k.indexOf(':') < 0) f.remove("msgSeal"); else f.put("msgSeal", k.indexOf(':') > 0 ? k.substring(k.indexOf(':') + 1) : cz.m5cet.app.chat.Sealed.newCode()); }
         if (composer != null) composer.refreshKinds();
         a.refresh();
+    }
+
+    /**
+     * 6.8 send.option: an option of "Send another way" on / off
+     * (chat/SendPlan.apply) — the sheet stays open, its rows follow.
+     */
+    public void sendOption(String arg) {
+        int vanish = (int) app().settings.num("messages.vanishSeconds");
+        if (!cz.m5cet.app.chat.SendPlan.apply(a.form(), arg, vanish, cz.m5cet.app.chat.Sealed::newCode)) return;
+        if (composer != null) composer.refreshKinds();
+        a.refresh();
+    }
+
+    /** $composer of the "attach" and "send.options" sheets: the field and the options of the next message (6.8: as voice, speak it and send text, the code). */
+    public JSONObject composerScope() {
+        cz.m5cet.app.chat.SendPlan p = cz.m5cet.app.chat.SendPlan.of(a.form());
+        return MainActivity.jo("hasText", !composerText().trim().isEmpty(), "tap", p.tap, "vanish", (double) p.vanishSeconds,
+            "sealed", p.sealed(), "sealCode", p.sealCode == null ? "" : p.sealCode, "asVoice", p.asVoice, "voiceText", p.voiceText,
+            "count", (double) p.count(), "private", a.form().get("msgTo") != null);
     }
 
     /** message.recipients: pick who gets the next message (none = everyone). */
@@ -515,10 +536,13 @@ public final class Parts {
     public boolean closeOverlay() {
         if (sheet == null) return false;
         View s = sheet;
+        // 6.8: a code typed in "send.options" shows in the composer's chips once the sheet goes.
+        boolean options = "send.options".equals(sheetScreen);
         sheet = null;
         sheetBound = null;
         sheetScreen = null;
         Sheets.hide(a.overlay(), s);
+        if (options && composer != null) composer.refreshKinds();
         return true;
     }
 
