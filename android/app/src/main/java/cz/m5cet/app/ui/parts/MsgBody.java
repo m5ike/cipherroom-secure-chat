@@ -335,6 +335,23 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
         return c;
     }
 
+    /** 6.7: is this body drawing m now (HoldArea finds its row's body). */
+    boolean showing(ChatMessage m) { return m != null && current == m; }
+
+    /** 6.7: held from beside the bubble (HoldArea) — the same as holding the chip; letting go hides it again. */
+    void hold(ChatMessage m, boolean on) {
+        if (m == null) return;
+        if (!on) parts.holding.remove(m.id);
+        if (current != m || !m.tap || holding == on) return;
+        holding = on;
+        if (on) {
+            parts.holding.add(m.id);
+            if (m.mark("revealed")) parts.touched(m); // the first time it was shown
+        }
+        boundKey = "";
+        build(m);
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     @Override public boolean dispatchTouchEvent(MotionEvent e) {
         if (holding && (e.getAction() == MotionEvent.ACTION_UP || e.getAction() == MotionEvent.ACTION_CANCEL)) {

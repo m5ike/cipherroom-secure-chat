@@ -36,6 +36,26 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.fingerprint" android:required="false" />
 
+    <!-- 6.7 location: the navigation and ride apps a position can open (location/GeoLinks.java
+         names the same packages) and every app that opens geo: — visible to the picker on Android 11+. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="geo" />
+        </intent>
+        <package android:name="com.google.android.apps.maps" />
+        <package android:name="com.waze" />
+        <package android:name="cz.seznam.mapy" />
+        <package android:name="net.osmand.plus" />
+        <package android:name="net.osmand" />
+        <package android:name="com.sygic.aura" />
+        <package android:name="com.here.app.maps" />
+        <package android:name="com.ubercab" />
+        <package android:name="ee.mtakso.client" />
+        <package android:name="com.adleritech.app.liftago.passenger" />
+        <package android:name="taxi.android.client" />
+    </queries>
+
     <application
         android:name=".M5"
         android:label="@string/app_name"

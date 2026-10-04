@@ -32,10 +32,12 @@ export function messageTree(kind: MessageKind): LNode {
     icon("eye-off", "h-3 w-3 opacity-70", { "aria-label": "{_'msgkind.vanish'}" }, { id: "icon-vanish", if: "$vanishing" }),
     icon("scroll-text", "h-3 w-3 opacity-70", { "aria-label": "{_'msgkind.sealed'}" }, { id: "icon-sealed", if: "$sealed" }),
     // 6.1: where the sender was (a pin; the Android app puts it into the header on request).
-    // 6.2: only when the map preview is off — otherwise the map in the body shows it.
-    n("link", {
-      id: "loc", name: "Position", if: "$loc && !$map",
-      attrs: { class: "msg-loc", href: "{$loc.url}", target: "_blank", rel: "noopener noreferrer", title: "{_'msg.loc'}", "aria-label": "{_'msg.loc'}", "data-testid": "msg-loc" },
+    // 6.7: the pin of the Android app — the map and the ways there open in a window
+    // (a position message shows its place chip in the body instead).
+    n("button", {
+      id: "loc", name: "Position", if: "$place && !$place.message",
+      attrs: { type: "button", class: "msg-loc", title: "{_'msg.loc'}", "aria-label": "{_'msg.loc'}", "data-testid": "msg-loc" },
+      on: { click: { action: "place" } },
     }, [icon("map-pin", "h-3 w-3", {}, { id: "loc-icon" })]),
     // 6.2: shown while the conversation shows hidden messages too.
     sys ? null : n("area", { id: "hidden-tag", name: "Hidden", if: "$hidden", attrs: { class: "msg-hidden-tag", "data-testid": "msg-hidden-{$id}" } }, [
@@ -125,25 +127,17 @@ export function messageTree(kind: MessageKind): LNode {
     }),
   ]);
 
-  // 6.2: the position as a small map (client config › map), tiles through this
-  // server; the pin is exactly in the middle. A click opens the full map.
-  const map = n("link", {
-    id: "map", name: "Map preview", if: "$map",
-    attrs: {
-      class: "msg-map{if $map.gray} is-gray{/if}", href: "{$map.url}", target: "_blank", rel: "noopener noreferrer",
-      title: "{_'msg.map.open'}", "data-testid": "msg-map-{$id}",
-    },
+  // 6.7: a position message is its place: a chip with the pin and the
+  // coordinates. The map is no longer drawn in the bubble — a click opens it
+  // in a window with the ways there (navigation, a ride). $map stays for
+  // layouts that still draw it.
+  const place = n("button", {
+    id: "place", name: "Position (opens the map)", if: "$place.message",
+    attrs: { type: "button", class: "msg-place", title: "{_'msg.place.open'}", "data-testid": "msg-place-{$id}" },
+    on: { click: { action: "place" } },
   }, [
-    n("panel", { id: "map-box", name: "Tiles", styleBind: "$map.style", attrs: { class: "msg-map__box", role: "img", "aria-label": "{_'msg.map.alt'}" } }, [
-      n("image", {
-        id: "map-tile", name: "A tile", each: "$map.tiles", as: "tile", key: "$tile.key", styleBind: "$tile.style",
-        attrs: { src: "=$tile.src", alt: "", class: "msg-map__tile", loading: "lazy", decoding: "async", draggable: "false" },
-      }),
-      icon("map-pin", "msg-map__pin", { "aria-hidden": "true" }, { id: "map-pin", styleBind: "$map.pinStyle" }),
-      n("area", { id: "map-attribution", name: "Attribution", if: "$map.attribution", attrs: { class: "msg-map__attr" }, text: "{$map.attribution}" }),
-    ]),
-    n("panel", { id: "map-caption", name: "Caption", if: "$map.caption", styleBind: "$map.captionStyle", attrs: { class: "msg-map__caption" }, text: "{$map.caption}" }),
-    n("panel", { id: "map-coords", name: "Coordinates", if: "$map.coords", attrs: { class: "msg-map__coords" }, text: "{$map.coords}" }),
+    icon("map-pin", "msg-place__icon", { "aria-hidden": "true" }, { id: "place-icon" }),
+    n("area", { id: "place-text", name: "Coordinates", attrs: { class: "msg-place__text" }, text: "{if $place.live}{_'msg.place.live'} · {/if}{$place.coords}" }),
   ]);
 
   // 6.2: every file of the message: its kind, name and size, and save, share
@@ -183,12 +177,12 @@ export function messageTree(kind: MessageKind): LNode {
     }, [icon("timer", "h-4 w-4", {}, { id: "tap-icon" }), text(" {_'msgkind.tap.hold'}", { id: "tap-text" })]),
     n("panel", { id: "body", name: "Body", if: "!($tap && !$revealed)", attrs: sys ? { class: "msg-sys__body" } : {}, on: holdEvents }, [
       // A <div>, not a <p>: a command's output (5.3) holds headings, tables, forms and buttons.
-      n("paragraph", { id: "text", name: "Text", if: "$bodyText", tag: "div", attrs: { class: "msg-bubble__text" } }, [
+      n("paragraph", { id: "text", name: "Text", if: sys ? "$bodyText" : "$bodyText && !$place.message", tag: "div", attrs: { class: "msg-bubble__text" } }, [
         text("{$bodyText}", { id: "text-body", props: { format: "links" } }),
         sys ? n("area", { id: "sys-more", attrs: { class: "msg-sys__more", "aria-hidden": "true" }, text: "…" }) : null,
       ]),
       attachment,
-      sys ? null : map,
+      sys ? null : place,
     ]),
     sys ? null : files,
     n("paragraph", { id: "seal-code", name: "Your code", if: "$sealed && $mine && $sealCode", attrs: { class: "msg-seal__code" } }, [
@@ -210,19 +204,28 @@ export function messageTree(kind: MessageKind): LNode {
     }, [icon("forward", "h-3.5 w-3.5", {}, { id: "forward-icon" }), text(" {_'msginfo.forward'}", { id: "forward-text" })]),
   ]);
 
+  // 6.7: beside a hold-to-read bubble, the rest of the row holds it open too —
+  // a short text is not under the finger. A short hold first, so a scroll
+  // that starts there reveals nothing.
+  const holdSide = sys ? null : n("panel", {
+    id: "hold-side", name: "Hold area (beside the bubble)", if: "$tap && !$vanished && !($sealed && !$sealedOpen)",
+    attrs: { class: "msg-hold-side", "aria-hidden": "true", "data-testid": "msg-hold-side-{$id}" },
+    on: { pointerdown: { action: "holdSideStart" }, pointerup: { action: "holdEnd" }, pointerleave: { action: "holdEnd" }, pointercancel: { action: "holdEnd" } },
+  });
+
+  const bubble = n("panel", {
+    id: "bubble", name: "Bubble",
+    attrs: {
+      class: `msg-bubble ${bubbleKind}{if $queued} msg-bubble--queued{/if}{if $fnRunning} msg-bubble--fn-running{/if}{if $private} msg-bubble--private{/if}{if $vanishing} vanish-ring{/if}{if $vanished} msg-bubble--vanished{/if}{if $collapsed} msg-bubble--sys-collapsed{/if}{if $hidden} msg-bubble--hidden{/if}`,
+      "data-private": "=$private ? '1' : null",
+      "data-collapsed": "=$collapsed ? '1' : null",
+    },
+    styleBind: "$bubbleStyle",
+    ...(sys ? { on: { mouseenter: { action: "unfold" }, click: { action: "unfold" } } } : {}),
+  }, [info, head, forwarded, quote, privateTag, tombstone, seal, open, actions]);
+
   return n("panel", {
     id: "row", name: "Message row", tag: "article", ref: "root",
     attrs: { "data-testid": "message-{$id}", "data-sealed": "=$sealedWith", class: `msg-row flex ${kind === "out" ? "justify-end" : "justify-start"}` },
-  }, [
-    n("panel", {
-      id: "bubble", name: "Bubble",
-      attrs: {
-        class: `msg-bubble ${bubbleKind}{if $queued} msg-bubble--queued{/if}{if $fnRunning} msg-bubble--fn-running{/if}{if $private} msg-bubble--private{/if}{if $vanishing} vanish-ring{/if}{if $vanished} msg-bubble--vanished{/if}{if $collapsed} msg-bubble--sys-collapsed{/if}{if $hidden} msg-bubble--hidden{/if}`,
-        "data-private": "=$private ? '1' : null",
-        "data-collapsed": "=$collapsed ? '1' : null",
-      },
-      styleBind: "$bubbleStyle",
-      ...(sys ? { on: { mouseenter: { action: "unfold" }, click: { action: "unfold" } } } : {}),
-    }, [info, head, forwarded, quote, privateTag, tombstone, seal, open, actions]),
-  ]);
+  }, kind === "out" ? [holdSide, bubble] : [bubble, holdSide]);
 }

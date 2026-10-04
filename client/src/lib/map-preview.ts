@@ -113,3 +113,70 @@ export function mapView(
     url: opts.url,
   };
 }
+
+/* ------------------------------------------------ 6.7: the place of a message */
+
+/**
+ * The web's and the app's position message: "📍 50.08804, 14.42076 (±12 m)
+ * https://…" ("📍 live …" while sharing) — the pattern of the Android app's
+ * Kinds.POSITION.
+ */
+const POSITION_RE = /^\s*📍\s*(live\s+)?(-?\d{1,2}(?:\.\d+)?),\s*(-?\d{1,3}(?:\.\d+)?)(?:\s*\(±\s*(\d+)\s*m\))?/u;
+
+/** Where a message points: its header position (loc), else a position message's text. */
+export type Place = {
+  lat: number;
+  lon: number;
+  acc: number | null;
+  /** "📍 live …": a position being shared live. */
+  live: boolean;
+  /** The message IS the position: the bubble draws the place chip instead of the text. */
+  message: boolean;
+  /** "50.08750, 14.42130 ± 12 m". */
+  coords: string;
+};
+
+const inWorld = (lat: number, lon: number) => Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+
+/** The place of a message (null: none). A sealed message's text is not read (as Kinds.position). */
+export function placeOf(text: string | undefined, loc: { lat: number; lon: number; acc?: number | null } | undefined, sealed = false): Place | null {
+  const m = !sealed && text ? POSITION_RE.exec(text) : null;
+  const message = Boolean(m && inWorld(Number(m[2]), Number(m[3])));
+  if (loc && inWorld(loc.lat, loc.lon)) {
+    const acc = typeof loc.acc === "number" && Number.isFinite(loc.acc) && loc.acc > 0 ? loc.acc : null;
+    return { lat: loc.lat, lon: loc.lon, acc, live: Boolean(m?.[1]), message, coords: formatCoords(loc.lat, loc.lon, acc) };
+  }
+  if (!m || !message) return null;
+  const lat = Number(m[2]), lon = Number(m[3]);
+  const acc = m[4] && Number(m[4]) > 0 ? Number(m[4]) : null;
+  return { lat, lon, acc, live: Boolean(m[1]), message: true, coords: formatCoords(lat, lon, acc) };
+}
+
+/**
+ * The map of the place window: laid out for a box up to maxWidth wide with
+ * the tiles placed from its centre, so a narrower window (a phone) crops
+ * both sides alike and the pin stays in the middle.
+ */
+export type SheetMap = {
+  height: number;
+  gray: boolean;
+  tiles: Array<{ key: string; src: string; style: Record<string, string> }>;
+  pinColor: string;
+  attribution: string;
+};
+
+export function sheetMap(lat: number, lon: number, policy: MapPreviewPolicy, maxWidth = 640): SheetMap | null {
+  if (!policy.enabled || !inWorld(lat, lon)) return null;
+  // The operator's aspect at the window's usual width, within reason.
+  const height = Math.max(160, Math.min(320, Math.round((policy.height / Math.max(1, policy.width)) * 420)));
+  const mosaic = mapMosaic(lat, lon, policy.zoom, maxWidth, height);
+  const half = maxWidth / 2;
+  const fromCentre = (left: number) => `calc(50% ${left - half < 0 ? "-" : "+"} ${Math.abs(left - half)}px)`;
+  return {
+    height,
+    gray: policy.grayscale,
+    tiles: mosaic.tiles.map((t) => ({ key: `${t.z}/${t.x}/${t.y}/${t.left}`, src: t.src, style: { left: fromCentre(t.left), top: `${t.top}px`, width: `${TILE_SIZE}px`, height: `${TILE_SIZE}px` } })),
+    pinColor: policy.pinColor,
+    attribution: policy.attribution,
+  };
+}
