@@ -527,3 +527,8 @@
 }
 .nfcwb__mrtd-kv { flex: 1; min-width: 12rem; }
 .nfcwb__mrtd-dgs { gap: 0.25rem; align-items: center; }
+
+/* 6.6: the full report (the chat's own formatter) with its export and files */
+.nfcwb__report { margin-top: 0.75rem; border-top: 1px solid hsl(var(--border)); padding-top: 0.5rem; }
+.nfcwb__report > summary { cursor: pointer; font-weight: 600; margin-bottom: 0.4rem; }
+.nfcwb__report-export, .nfcwb__report-files { flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.45rem; }

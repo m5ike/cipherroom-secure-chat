@@ -7,6 +7,7 @@
 import { createElement, Fragment, useMemo, type CSSProperties, type ReactNode } from "react";
 import { parseFnHtml, type HtmlNode } from "../../lib/fn-html";
 import type { FnOutput } from "../../lib/fn-outputs";
+import "./fn.css";
 
 const VOID = new Set(["br", "hr", "img", "col", "wbr"]);
 

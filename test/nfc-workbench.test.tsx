@@ -169,3 +169,29 @@ describe("NfcWorkbench MRTD result widget (6.5)", () => {
     expect(screen.getByText(/Give the MRZ to open the chip/i)).toBeTruthy();
   });
 });
+
+describe("the full card report in the workbench (6.6)", () => {
+  beforeEach(() => cleanup());
+
+  it("renders the chat's report — history, escaped text — with exports and files", async () => {
+    const { CardReportView } = await import("../client/src/components/NfcWorkbench");
+    const emv: EmvData = { scheme: "Visa", aids: ["A0000000031010"], apps: [{ aid: "A0000000031010", label: "VISA", scheme: "Visa", pan: "4111111111111111", panMasked: "411111••••••1111", cardholder: "<b>X</b>", logSfi: 11, log: [{ date: "2025-09-14", amount: "12.30", currency: "CZK", merchant: "BILLA", raw: "00" }], tags: [], records: [{ sfi: 1, record: 1, hex: "70" }] }] };
+    const view = render(<CardReportView data={{ status: "ok", emv }} lang="en" />);
+    expect(view.getByText("Full report")).toBeTruthy();
+    expect(view.getByText("HTML report")).toBeTruthy();
+    expect(view.getAllByText("emv-history.csv").length).toBe(2); // the download button + the report's attachment list
+    expect(view.getByText("BILLA")).toBeTruthy();
+    expect(view.getByText("<b>X</b>")).toBeTruthy(); // card text stays text
+    expect(view.container.querySelector(".fn-html b")).toBeNull();
+    expect(view.container.querySelector("table.m5h-grid")).toBeTruthy();
+  });
+
+  it("shows an e-ID report with its photo in Czech", async () => {
+    const { CardReportView } = await import("../client/src/components/NfcWorkbench");
+    const mrtd: MrtdData = { present: true, access: "bac", mrzInfo: { documentCode: "P", surname: "NOVAK", givenNames: "JAN", documentNumber: "X1" }, images: [{ group: "DG2", kind: "face", mime: "image/jpeg", data: "/9j/4AAQ", name: "face.jpg" }] };
+    const view = render(<CardReportView data={{ status: "ok", mrtd }} lang="cs" />);
+    expect(view.getByText("Celý výpis")).toBeTruthy();
+    expect(view.getByText("Cestovní pas · JAN NOVAK")).toBeTruthy();
+    expect(view.container.querySelector("img")?.getAttribute("src")).toBe("data:image/jpeg;base64,/9j/4AAQ");
+  });
+});

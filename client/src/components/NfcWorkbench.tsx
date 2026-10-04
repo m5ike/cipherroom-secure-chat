@@ -30,7 +30,9 @@ import {
 import { classicDump, classicWriteBlock, classicRestore, ultralightReadPages, ntagReadCounter, writeUidGen1a, writeUidGen2, buildBlock0, type ClassicDump } from "../lib/nfc/cards/tag-io";
 import { readEmv, emvSummary } from "../lib/nfc/cards/emv";
 import { readMrtd, mrtdSummary, type MrtdOptions } from "../lib/nfc/cards/mrtd";
-import type { EmvData, MrtdData } from "../lib/nfc/command";
+import type { EmvData, MrtdData, NfcResult } from "../lib/nfc/command";
+import { cardReport, cardReportDocument } from "../lib/nfc/card-report";
+import { FnHtml } from "./fn/FnHtml";
 import { createWebExecutor, techForCardType } from "../lib/nfc/web-executor";
 import { registerNfcExecutor } from "../lib/nfc/bridge";
 import { nominalCapacity } from "../lib/nfc/m5cet-card";
@@ -425,12 +427,11 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
     if (!tr.capabilities.apdu) { addLog("err", t("nfc.apdu.unsupported")); return; }
     const mrz = eidMrz.trim();
     const opts: MrtdOptions = { readPhoto: eidPhoto };
-    if (mrz) opts.mrz = mrz;
-    else {
-      if (!eidDoc.trim() || !eidDob.trim() || !eidExp.trim()) { addLog("err", t("nfc.eid.needMrz")); onSystem(`NFC: ${t("nfc.eid.needMrz")}`); return; }
-      opts.key = { documentNumber: eidDoc.trim(), dateOfBirth: eidDob.trim(), dateOfExpiry: eidExp.trim() };
-    }
+    // 6.6: the CAN alone opens a PACE document; a passport needs the MRZ (or its three fields).
     if (eidCan.trim()) opts.can = eidCan.trim();
+    if (mrz) opts.mrz = mrz;
+    else if (eidDoc.trim() && eidDob.trim() && eidExp.trim()) opts.key = { documentNumber: eidDoc.trim(), dateOfBirth: eidDob.trim(), dateOfExpiry: eidExp.trim() };
+    else if (!opts.can) { addLog("err", t("nfc.eid.needMrz")); onSystem(`NFC: ${t("nfc.eid.needMrz")}`); return; }
     const d = await readMrtd(tr, opts);
     setMrtdResult(d); setEmvResult(null); setTab("result");
     const s = mrtdSummary(d);
@@ -824,6 +825,7 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
 
           {emvResult ? <EmvResultView data={emvResult} lang={lang} /> : null}
           {mrtdResult ? <MrtdResultView data={mrtdResult} lang={lang} /> : null}
+          {emvResult || mrtdResult ? <CardReportView data={emvResult ? { status: "ok", emv: emvResult } : { status: "ok", mrtd: mrtdResult! }} lang={lang} onSaved={(name) => addLog("info", t("nfc.report.saved").replace("{name}", name))} /> : null}
           {!emvResult && !mrtdResult && !eidOpen ? <p className="nfcwb__hint">{t("nfc.result.empty")}</p> : null}
         </div>
       ) : null}
@@ -953,6 +955,50 @@ export function MrtdResultView({ data, lang }: { data: MrtdData; lang: Lang }): 
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * 6.6: the full report — the same formatter the chat and the Builder's
+ * NFC.EMV / NFC.e-ID tools use (card-report.ts), shown as the chat shows it,
+ * with an export in each format and every attachment to download.
+ */
+export function CardReportView({ data, lang, onSaved }: { data: NfcResult; lang: Lang; onSaved?: (name: string) => void }): React.JSX.Element {
+  const tr = (k: string) => translate(lang, k);
+  const report = useMemo(() => cardReport(data, "html", { lang }), [data, lang]);
+  const base = report.kind === "mrtd" ? "e-id" : report.kind === "emv" ? "emv" : "card";
+  const save = (name: string, mime: string, body: BlobPart) => {
+    const u = URL.createObjectURL(new Blob([body], { type: mime }));
+    const a = document.createElement("a");
+    a.href = u; a.download = name; a.rel = "noopener";
+    document.body.appendChild(a); a.click(); a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(u), 10_000);
+    onSaved?.(name);
+  };
+  const fromB64 = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const exportAs = (format: "html" | "json" | "csv" | "text") => {
+    if (format === "html") { save(`${base}-report.html`, "text/html", cardReportDocument(data, { lang })); return; }
+    const r = cardReport(data, format, { lang });
+    save(`${base}.${format === "text" ? "txt" : format}`, r.mime, String(r.value));
+  };
+  return (
+    <details className="nfcwb__report" open>
+      <summary>{tr("nfc.report.full")}</summary>
+      <div className="nfcwb__row nfcwb__report-export">
+        <span className="nfcwb__hint">{tr("nfc.report.export")}:</span>
+        <button type="button" className="nfcwb__btn" onClick={() => exportAs("html")}><Download width={12} height={12} /> {tr("nfc.report.html")}</button>
+        <button type="button" className="nfcwb__btn" onClick={() => exportAs("json")}><Download width={12} height={12} /> JSON</button>
+        <button type="button" className="nfcwb__btn" onClick={() => exportAs("csv")}><Download width={12} height={12} /> CSV</button>
+        <button type="button" className="nfcwb__btn" onClick={() => exportAs("text")}><Download width={12} height={12} /> Text</button>
+      </div>
+      {report.files.length ? (
+        <div className="nfcwb__row nfcwb__report-files">
+          <span className="nfcwb__hint">{tr("nfc.report.files")}:</span>
+          {report.files.map((f) => <button key={f.name} type="button" className="nfcwb__btn nfcwb__btn--icon" onClick={() => save(f.name, "application/octet-stream", fromB64(f.data))}><Download width={12} height={12} /> {f.name}</button>)}
+        </div>
+      ) : null}
+      <FnHtml o={{ type: "html", html: String(report.value) }} />
+    </details>
   );
 }
 
