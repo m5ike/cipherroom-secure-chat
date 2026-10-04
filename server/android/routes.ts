@@ -75,9 +75,11 @@ function signedBy(opts: { skew?: number; allowStatus?: Device["status"][] } = {}
     };
     if (!device) return refuse(401, "unknown-device", "This device is not enrolled on this server.");
     if (!Number.isFinite(t) || Math.abs(now - t) > (opts.skew ?? MAX_SKEW)) return refuse(401, "clock", "The request time is too far from the server's — check the device clock.");
-    if (!/^[A-Za-z0-9_-]{16,40}$/.test(nonce) || !nonceFresh(`${id}:${nonce}`, now)) return refuse(401, "replay", "This request was already used.");
+    if (!/^[A-Za-z0-9_-]{16,40}$/.test(nonce) || nonces.has(`${id}:${nonce}`)) return refuse(401, "replay", "This request was already used.");
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (!verifyP1363(device.signKey, requestSignedString(req.method, req.originalUrl, time, nonce, raw), sig)) return refuse(401, "bad-signature", "The request signature is not valid.");
+    // 6.7 (audit N12): the nonce is kept only once the signature holds — unsigned requests cannot fill the map.
+    if (!nonceFresh(`${id}:${nonce}`, now)) return refuse(401, "replay", "This request was already used.");
     if (device.status !== "active" && !(opts.allowStatus ?? []).includes(device.status)) return refuse(403, `device-${device.status}`, `This device is ${device.status}.`);
     req.device = device;
     next();

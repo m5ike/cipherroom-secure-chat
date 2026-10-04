@@ -2,6 +2,7 @@
 // 6.7 (security analysis F-16): the Android device policy (lock, wipe, screenshots, logs…)
 // comes signed by the server's Android key for one device, with its time — at enrolment
 // and at every check-in. The app applies nothing else (android/…/security/SignedPolicy.java).
+// Also audit N12: a forged request does not use up a device's nonce.
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -58,5 +59,16 @@ describe("6.7 F-16: the signed device policy", () => {
     const forged = { ...check.policySigned, policy: check.policySigned.policy.replace('"screenshots":false', '"screenshots":true') };
     expect(forged.policy).not.toBe(check.policySigned.policy);
     expect(verify(forged, dev.id)).toBe(false);
+  });
+
+  it("N12: a request with a bad signature does not use up its nonce", async () => {
+    const raw = Buffer.from(JSON.stringify({ state: {} }));
+    const t = String(Date.now()), nonce = randomBytes(16).toString("base64url");
+    const post = (sig: string) => fetch(`${base}/api/android/checkin`, { method: "POST", headers: { "x-m5-device": dev.id, "x-m5-time": t, "x-m5-nonce": nonce, "x-m5-signature": sig, "content-type": "application/json" }, body: raw });
+    const forged = crypto.signP1363(crypto.newP256().privateKey, crypto.requestSignedString("POST", "/api/android/checkin", t, nonce, raw));
+    expect((await post(forged)).status).toBe(401);
+    const good = crypto.signP1363(dev.sign.privateKey, crypto.requestSignedString("POST", "/api/android/checkin", t, nonce, raw));
+    expect((await post(good)).status).toBe(200);
+    expect((await post(good)).status).toBe(401); // and the real one only once
   });
 });
