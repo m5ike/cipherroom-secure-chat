@@ -6,6 +6,7 @@
 //   /help syntax | webhooks | api | tags | all
 //   /help endpoints | results | buttons | forms | browser | model   (5.3)
 //   /help android | rooms | telephony | adm                           (6.0)
+//   /help nfc | html                                                  (6.6)
 //   /help ?               pick a command from a list
 //
 // Entry points (1.1): execute; button — the topic buttons under an answer;
@@ -81,6 +82,7 @@ const RESULTS = [
   "- **sound** and **video** (`m5.out.audio`, `m5.out.video`), a **notice** (`m5.out.flash`), an app **panel** (`m5.out.window`)",
   "- **buttons** (`m5.out.button`) and **forms** (`m5.out.form`) — they call the command's button / form entry point",
   "- **browser code** (`m5.out.js`) — JavaScript for your browser, in a sandbox",
+  "- **formatted HTML** (`m5.out.html`) — headings, tables, lists, pictures; sanitized, so only document markup shows (`/help html`)",
   "",
   "```js",
   "return [",
@@ -155,8 +157,35 @@ const TELEPHONY = [
   "- Who may: your **Telephony & SIP** rights (calls, SMS, messages, lookup, HLR, temporary numbers, which numbers); a webhook's or a schedule's run needs the model's own grant.",
 ].join("\n");
 
-const TOPICS = { adm: ADM, m5adm: ADM, admin: ADM, telephony: TELEPHONY, tel: TELEPHONY, calls: TELEPHONY, android: ANDROID, phone: ANDROID, app: ANDROID, rooms: ROOMS, multi: ROOMS, syntax: SYNTAX, endpoints: ENDPOINTS, entry: ENDPOINTS, model: MODEL, session: MODEL, results: RESULTS, result: RESULTS, buttons: BUTTONS, button: BUTTONS, forms: FORMS, form: FORMS, browser: BROWSER, js: BROWSER };
-const TOPIC_BUTTONS = [["syntax", "How to call"], ["results", "Results"], ["endpoints", "Entry points"], ["buttons", "Buttons"], ["forms", "Forms"], ["browser", "Browser code"], ["model", "m5.model"], ["webhooks", "Webhooks"], ["rooms", "Several rooms"], ["android", "Android app"], ["telephony", "Phones"], ["adm", "m5adm"]];
+const NFC = [
+  "## 📇 NFC cards — EMV, e-ID, e-passports (6.6)",
+  "Commands that read a card **at your own device** — the phone's NFC (Android app, Android Chrome) or a USB / Bluetooth reader. The operator switches them on; you need the NFC module.",
+  "- `/emv` — a **payment card**: every application, every record, the counters and the **transaction history** the card keeps, formatted in the chat (the number masked), with the history as CSV and the raw records to download.",
+  "- `/emv-history` — just the card's **transactions** as a table.",
+  "- `/eid` — your **ID card or passport**: a form asks for the **CAN** (the 6 digits on an EU ID card) or the **MRZ**; the chip opens with **PACE** or **BAC** (its own access control) and every readable data group is shown — the MRZ data, the **photo** and signature, more personal and document details, the **security check** (each group against EF.SOD). EF.SOD, DG14, DG15 and JPEG 2000 pictures come as files.",
+  "- `/nfc-scan`, `/nfc-uid`, `/nfc-open` — a card's identity and NDEF, its UID, an M5Cet card's records.",
+  "- **Read-only, your own card**: never a PIN, never a payment, never a write; fingerprints (DG3/DG4) need a government certificate and are not read.",
+  "",
+  "**Build your own** — Functions › Builder has the palette groups **NFC.EMV** (*EMV: read everything*, *EMV → format*, *EMV: transaction history*) and **NFC.e-ID** (*e-ID: read everything*, *e-ID → format*, *e-ID: pictures*), plus *Card → format*, *Show card report* and *Send HTML*. Each read takes a **format**: `html` (everything for the chat: pictures inline, the rest as files), `object`, `array` (rows), `json`, `text`, `csv`.",
+  "",
+  "```js",
+  "const r = await m5.nfc.emv.report({ format: \"html\", send: true });   // read + show",
+  "const csv = m5.nfc.emv.format(r.data, \"csv\").value;                  // the same read as CSV",
+  "const id = await m5.nfc.eid.report({ can: \"123456\", format: \"object\" });",
+  "return [m5.out.image(id.photo.image, id.photo.mime), m5.out.json(id.result)];",
+  "```",
+  "Python: `await m5.nfc.emv.report(format=\"html\", send=True)`, `m5.nfc.format(data, \"csv\", full_pan=False)`.",
+].join("\n");
+
+const HTML = [
+  "## 🧾 Formatted HTML — m5.out.html (6.6)",
+  "`m5.out.html(html, { title })` shows document markup in the chat: headings, paragraphs, lists, **tables**, `details`, figures, links (http, https, mailto) and **pictures** as `data:image/…;base64` URIs.",
+  "- It is **sanitized** by the server and again by every app that shows it: no scripts, styles, forms, frames or event handlers; `class` keeps only the report classes `m5h-…`, `style` only harmless properties.",
+  "- The NFC card reports use it (`m5.nfc.format(data, \"html\")`), and so can any function — e.g. `m5.out.html(\"<h3>Hi</h3><table class=\\\"m5h-grid\\\">…</table>\")`.",
+].join("\n");
+
+const TOPICS = { adm: ADM, m5adm: ADM, admin: ADM, telephony: TELEPHONY, tel: TELEPHONY, calls: TELEPHONY, android: ANDROID, phone: ANDROID, app: ANDROID, rooms: ROOMS, multi: ROOMS, syntax: SYNTAX, endpoints: ENDPOINTS, entry: ENDPOINTS, model: MODEL, session: MODEL, results: RESULTS, result: RESULTS, buttons: BUTTONS, button: BUTTONS, forms: FORMS, form: FORMS, browser: BROWSER, js: BROWSER, nfc: NFC, emv: NFC, eid: NFC, card: NFC, cards: NFC, passport: NFC, html: HTML };
+const TOPIC_BUTTONS = [["syntax", "How to call"], ["results", "Results"], ["endpoints", "Entry points"], ["buttons", "Buttons"], ["forms", "Forms"], ["browser", "Browser code"], ["model", "m5.model"], ["webhooks", "Webhooks"], ["rooms", "Several rooms"], ["android", "Android app"], ["telephony", "Phones"], ["nfc", "NFC cards"], ["adm", "m5adm"]];
 const topicButtons = (skip) => m5.out.buttons(TOPIC_BUTTONS.filter(([t]) => t !== skip).map(([t, title]) => ({ name: "topic", title, data: { topic: t }, css: "small ghost" })));
 
 const WEBHOOKS = [
@@ -195,7 +224,7 @@ export async function execute({ topic } = {}) {
 
   const md = [`# 🆘 Help — ${commands.length} command${commands.length === 1 ? "" : "s"} for ${m5.caller.name || "you"}`];
   md.push(commands.length ? table(["Command", "What it does", "Parameters"], commands.map((c) => [`\`/${c.keyword}\``, c.summary || c.name, c.inputs.map((i) => (i.required ? `<${i.name}>` : `[${i.name}]`)).join(" ")])) : "_No command is available to you on this server._");
-  md.push("**More:** `/help <command>` for one command · `/help syntax` · `/help results` · `/help endpoints` · `/help buttons` · `/help forms` · `/help browser` · `/help model` · `/help webhooks` · `/help tags` · `/help rooms` · `/help android` · `/help telephony` · `/help adm` · `/help ?` — or reply to this message with a command's name.");
+  md.push("**More:** `/help <command>` for one command · `/help syntax` · `/help results` · `/help endpoints` · `/help buttons` · `/help forms` · `/help browser` · `/help model` · `/help webhooks` · `/help tags` · `/help rooms` · `/help android` · `/help telephony` · `/help nfc` · `/help html` · `/help adm` · `/help ?` — or reply to this message with a command's name.");
   if (t === "all") {
     md.push(SYNTAX, RESULTS, ENDPOINTS, BUTTONS, FORMS, BROWSER, MODEL, WEBHOOKS);
     for (const c of commands) md.push(`### /${c.keyword} — ${c.name}\n${c.summary || ""}\n\n\`${sig(c)}\` — e.g. \`${example(c)[0]}\``);

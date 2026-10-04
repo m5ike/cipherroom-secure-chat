@@ -68,8 +68,8 @@ describe("built-in packages", () => {
       expect(c.current, def.name).toBe(true);
       if (def.model) expect(c.model?.enabled, def.name).toBe(true);
     }
-    const dns = functionsStore.versionByName("dns", "1.2.0")!;
-    expect(dns.manifest.dependencies).toEqual({ netkit: "1.2.0" });
+    const dns = functionsStore.versionByName("dns", "1.3.0")!;
+    expect(dns.manifest.dependencies).toEqual({ netkit: "1.3.0" });
     // A second seed does nothing; installing again changes nothing.
     expect(await seedBuiltins("test")).toEqual([]);
     expect(installBuiltin("whois", "test").every((r) => r.package === "unchanged")).toBe(true);
@@ -113,7 +113,9 @@ describe("built-in packages", () => {
     const { endpointsOf } = await import("../server/functions/endpoints");
     expect(endpointsOf(m).map((e) => e.type)).toEqual(expect.arrayContaining(["execute", "response", "button", "error"]));
     const r = await run("help", {});
-    expect(r.values.map((o) => o.type)).toEqual(["markdown", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button", "button"].slice(0, r.values.length));
+    expect(r.values[0].type).toBe("markdown");
+    expect(r.values.slice(1).every((o) => o.type === "button")).toBe(true);
+    expect(r.values.some((o) => (o as { data?: { topic?: string } }).data?.topic === "nfc")).toBe(true); // 6.6
     const topic = r.values.find((o) => o.type === "button" && (o as { data?: { topic?: string } }).data?.topic === "forms") as { name: string; data: unknown };
     expect(topic).toBeTruthy();
     const ep = (type: string) => endpointsOf(m).find((e) => e.type === type)!;
@@ -134,8 +136,8 @@ describe("built-in packages", () => {
     const marker = join(DATA, "functions", "builtins.json");
     writeFileSync(marker, JSON.stringify({ netkit: "1.0.0", help: "1.0.0", whois: "1.0.0", dns: "1.0.0", web: "1.0.0", mail: "1.0.0", domain: "1.0.0" }));
     const results = await seedBuiltins("test");
-    expect(results!.every((x) => x.package === "unchanged")).toBe(true); // 1.2.0 is there already
-    expect(JSON.parse(readFileSync(marker, "utf8")).dns).toBe("1.2.0");
+    expect(results!.every((x) => x.package === "unchanged")).toBe(true); // 1.3.0 is there already
+    expect(JSON.parse(readFileSync(marker, "utf8")).dns).toBe("1.3.0");
   }, 60_000);
 
   it("a missing input without anyone to ask is a clear error", async () => {

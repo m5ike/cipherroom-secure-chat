@@ -16,7 +16,7 @@ const { LESSONS } = await import("../server/functions/tutorial");
 const { runAdhoc, closeRunner } = await import("../server/functions/runner");
 const { functionsStore } = await import("../server/functions/store");
 
-const SELF_CONTAINED = new Set(["hello", "inputs", "log", "session-cache", "codes", "python", "results", "buttons", "forms", "model", "browser", "results-py"]);
+const SELF_CONTAINED = new Set(["hello", "inputs", "log", "session-cache", "codes", "python", "results", "buttons", "forms", "model", "browser", "results-py", "html", "nfc-report"]);
 const caller = { kind: "console" as const, account: "", name: "t", groups: [], room: "r", client: "c", lang: "cs", tz: "UTC" };
 
 beforeAll(() => functionsStore.ready());
@@ -55,7 +55,7 @@ describe("tutorial lessons run", () => {
       expect(r.run.status).toBe("done");
       expect(r.values.length).toBeGreaterThan(0);
       if (lesson.expect) {
-        const text = r.outputs.map((o) => (o as { text?: string; value?: unknown }).text ?? ((o as { value?: unknown }).value !== undefined ? JSON.stringify((o as { value: unknown }).value) : "")).join(" ");
+        const text = r.outputs.map((o) => (o as { text?: string; html?: string; value?: unknown }).text ?? (o as { html?: string }).html ?? ((o as { value?: unknown }).value !== undefined ? JSON.stringify((o as { value: unknown }).value) : "")).join(" ");
         expect(text).toContain(lesson.expect);
       }
     }, 30_000);

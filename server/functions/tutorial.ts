@@ -118,6 +118,25 @@ export const LESSONS: Lesson[] = [
     sample: "async def execute(**inputs):\n    return [\n        m5.out.markdown(\"# From Python\"),\n        m5.out.button({\"name\": \"hi\", \"title\": \"Say hi\"}),\n    ]\n\nasync def button(name, data=None, event=None, **inputs):\n    return m5.out.flash(\"Hi from \" + m5.model.type, \"success\")\n",
     expect: "From Python",
   },
+  // 6.6: formatted HTML and NFC card reports.
+  {
+    id: "html", title: "17 · Formatted HTML", lang: "js",
+    body: "`m5.out.html(html, { title })` shows **document markup** in the chat — headings, tables, lists, `details`, pictures as `data:image` URIs, links. The server and every viewer **sanitize** it: no scripts, styles, forms or handlers; `class` keeps only the report classes (`m5h-kv`, `m5h-grid`, `m5h-badge--ok`…), `style` only harmless properties.\n\nRun it — the `<script>` disappears, the table stays.",
+    sample: "export async function execute() {\n  const rows = [[\"DNS\", \"ok\"], [\"Mail\", \"warning\"]];\n  return m5.out.html(`<h3>Report</h3>\n    <table class=\"m5h-grid\"><thead><tr><th>Check</th><th>Result</th></tr></thead>\n    <tbody>${rows.map(([a, b]) => `<tr><td>${m5.codec.html.escape(a)}</td><td>${m5.codec.html.escape(b)}</td></tr>`).join(\"\")}</tbody></table>\n    <script>alert(\"never runs\")</script>`, { title: \"Checks\" });\n}\n",
+    expect: "Report",
+  },
+  {
+    id: "nfc-report", title: "18 · NFC card reports", lang: "js",
+    body: "`m5.nfc.format(read, format)` turns any NFC read — an EMV card, an e-ID, a plain scan — into a report: `html` (for the chat: pictures inline, everything else as files), `object`, `array` (rows), `json`, `text` or `csv`. `m5.nfc.outputs(report)` gives its outputs. The card number is masked unless you pass `{ fullPan: true }`.\n\nThis sample formats a fixed read (no card needed) — try `\"csv\"` or `\"text\"` instead of `\"html\"`.",
+    sample: "const READ = { status: \"ok\", emv: { scheme: \"Visa\", aids: [\"A0000000031010\"], apps: [{ aid: \"A0000000031010\", label: \"VISA\", scheme: \"Visa\",\n  pan: \"4111111111111111\", expiry: \"2029-12\", logSfi: 11, tags: [],\n  log: [{ date: \"2025-09-14\", time: \"18:30:05\", amount: \"12.30\", currency: \"CZK\", merchant: \"BILLA\" }] }] } };\n\nexport async function execute() {\n  const report = m5.nfc.format(READ, \"html\");\n  m5.log.info(\"report\", { title: report.title, files: report.files.map((f) => f.name) });\n  return m5.nfc.outputs(report);\n}\n",
+    expect: "411111",
+  },
+  {
+    id: "nfc-read", title: "19 · Reading a card (EMV, e-ID)", lang: "js",
+    body: "`m5.nfc.emv.report(opts)` asks **the caller's device** to read a payment card — every application and record, the counters, the **transaction history** — and formats it; `send: true` shows it at once. `m5.nfc.eid.report({ can })` opens an ID card with the CAN printed on it (PACE) — or a passport with its MRZ (BAC) — and reads every data group: the MRZ, the photo, the signature, more details, the security check. Read-only, the caller's own card.\n\nRun it from the chat (`/command`) with a phone or a reader at hand. In the Builder the same is **NFC.EMV › EMV: read everything** and **NFC.e-ID › e-ID: read everything**.",
+    sample: "export async function execute() {\n  const r = await m5.nfc.emv.report({ format: \"html\", send: true, history: true });\n  if (!r.ok) return m5.out.flash(r.message || r.status, \"warning\");\n  return m5.out.table([\"date\", \"amount\", \"currency\", \"merchant\"], r.history.map((t) => [t.date, t.amount, t.currency, t.merchant]), { title: r.summary });\n}\n",
+    expect: "",
+  },
 ];
 
 /** The lessons as the console needs them (the sample entry is always `execute`). */

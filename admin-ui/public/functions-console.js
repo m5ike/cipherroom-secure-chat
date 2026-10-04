@@ -1186,7 +1186,7 @@
       liveRunInto(result, { adhoc: { lang: lesson.lang, files: { [file]: getCode() }, file, fn: "execute" }, inputs: lesson.inputs || {} }, {
         onDone: (ev) => {
           if (!ev.ok) return;
-          const text = (ev.outputs || []).map((o) => o.text || (o.value !== undefined ? JSON.stringify(o.value) : "")).join(" ");
+          const text = (ev.outputs || []).map((o) => o.text || o.html || (o.value !== undefined ? JSON.stringify(o.value) : "")).join(" ");
           const ok = ev.run.status === "done" && (!lesson.expect || text.includes(lesson.expect));
           if (ok) { markLesson(lesson.id); result.prepend(h("div", { class: "fn-flash fn-flash--success" }, "✓ Lesson complete")); }
           else if (ev.run.status === "done" && lesson.expect) result.prepend(h("div", { class: "fn-flash fn-flash--warning" }, `Ran, but the output did not contain “${lesson.expect}”.`));
