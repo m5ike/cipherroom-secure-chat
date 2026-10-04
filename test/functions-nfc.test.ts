@@ -106,6 +106,37 @@ describe("the nfc interaction round-trip", () => {
     } finally { dev.off(); }
   }, 30_000);
 
+  it("6.5: m5.nfc.emv.read() sends emv-read and resolves with the parsed EMV data", async () => {
+    const dev = withDevice(() => ({ status: "ok", card: { uid: "11", tech: "emv", label: "EMV" }, emv: { scheme: "Visa", aids: ["A0000000031010"], apps: [{ aid: "A0000000031010", label: "VISA", scheme: "Visa", pan: "4111111111111111", panMasked: "411111••••••1111", expiry: "2029-12", tags: [{ tag: "5A", name: "Application PAN", value: "4111111111111111", hex: "4111111111111111" }] }] } }));
+    try {
+      const files = { "index.js": "export async function execute(){ const r = await m5.nfc.emv.read({ timeout: 5 }); return m5.out.json(r); }" };
+      const r = await runAdhoc({ lang: "js", files, entry: { file: "index.js", fn: "execute" }, inputs: {}, limits: { wallMs: 4000 } }, caller);
+      expect(r.run.error).toBeNull();
+      expect(dev.seen.map((c) => c.op)).toEqual(["emv-read"]);
+      const v = (r.value as { value: { emv: { scheme: string; apps: Array<{ panMasked: string }> } } }).value;
+      expect(v.emv.scheme).toBe("Visa");
+      expect(v.emv.apps[0].panMasked).toBe("411111••••••1111");
+    } finally { dev.off(); }
+  }, 30_000);
+
+  it("6.5: m5.nfc.eid.read({ fields }) sends mrtd-read with the MRZ key and returns the document data (Python)", async () => {
+    const dev = withDevice((c) => {
+      // The BAC fields the holder gave travel as args — not a card key.
+      expect(c.op).toBe("mrtd-read");
+      expect(c.args).toMatchObject({ documentNumber: "L898902C", dateOfBirth: "690806", dateOfExpiry: "940623" });
+      return { status: "ok", card: { uid: "22", tech: "eid", label: "MRTD" }, mrtd: { present: true, access: "bac", dataGroups: ["DG1", "DG2"], mrzInfo: { surname: "ERIKSSON", givenNames: "ANNA MARIA", documentNumber: "L898902C" }, photo: "QUJD", photoMime: "image/jpeg" } };
+    });
+    try {
+      const files = { "index.py": "async def execute(**inputs):\n    r = await m5.nfc.eid.read(document_number='L898902C', date_of_birth='690806', date_of_expiry='940623')\n    return m5.out.json(r)\n" };
+      const r = await runAdhoc({ lang: "py", files, entry: { file: "index.py", fn: "execute" }, inputs: {}, limits: { wallMs: 4000 } }, caller);
+      expect(r.run.error).toBeNull();
+      const v = (r.value as { value: { mrtd: { access: string; mrzInfo: { surname: string }; photo: string } } }).value;
+      expect(v.mrtd.access).toBe("bac");
+      expect(v.mrtd.mrzInfo.surname).toBe("ERIKSSON");
+      expect(v.mrtd.photo).toBe("QUJD");
+    } finally { dev.off(); }
+  }, 30_000);
+
   it("never sends a raw key/PIN in the command, and never returns one", async () => {
     // The device is asked to authenticate a MIFARE sector; the model wrongly puts a
     // key and pin in args, and the executor wrongly tries to return them.

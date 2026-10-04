@@ -359,7 +359,7 @@ return function setup(host, ctxJson) {
       },
       // 6.5 EMV: read the holder/public data a terminal reads (read-only, no PIN, no cryptogram).
       emv: {
-        read: (opts) => nfcSend("emv-read", reader, opts),
+        read: (opts) => { const o = opts && typeof opts === "object" ? opts : {}; const args = { ...(o.args && typeof o.args === "object" ? o.args : {}) }; if (o.maxApps !== undefined) args.maxApps = o.maxApps; return nfcSend("emv-read", reader, { ...o, args }); },
       },
       // 6.5 e-ID / e-passport (MRTD): open the holder's own document with the MRZ or CAN they give, read DG1/DG2.
       eid: {

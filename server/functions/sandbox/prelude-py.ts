@@ -550,12 +550,25 @@ def _make_nfc(reader):
         return _nfc_send(o.get("op") or ("conn-emulate" if o.get("tech") == "connection-tag" else "m5-emulate"), reader, {**o, "args": _nfc_write_args(o), "records": None})
     def m5_write(records=None, **o):
         return _nfc_send("m5-write", reader, {**o, "args": _nfc_write_args({**o, "records": records if isinstance(records, list) else o.get("records")}), "records": None})
+    # The e-ID / EMV reads accept snake_case (document_number) or camelCase; the
+    # command's args are camelCase (what the device reader reads).
+    _EID_ALIASES = {"mrz": "mrz", "document_number": "documentNumber", "documentNumber": "documentNumber",
+                    "date_of_birth": "dateOfBirth", "dateOfBirth": "dateOfBirth", "date_of_expiry": "dateOfExpiry",
+                    "dateOfExpiry": "dateOfExpiry", "can": "can", "read_photo": "readPhoto", "readPhoto": "readPhoto",
+                    "max_apps": "maxApps", "maxApps": "maxApps"}
     def eid_read(**o):
         args = dict(o.get("args") or {})
-        for k in ("mrz", "documentNumber", "dateOfBirth", "dateOfExpiry", "can", "readPhoto", "maxApps"):
+        for k, dest in _EID_ALIASES.items():
             if o.get(k) is not None:
-                args[k] = o[k]
+                args[dest] = o[k]
         return _nfc_send("mrtd-read", reader, {**o, "args": args, "records": None})
+    def emv_read(**o):
+        args = dict(o.get("args") or {})
+        if o.get("max_apps") is not None:
+            args["maxApps"] = o["max_apps"]
+        if o.get("maxApps") is not None:
+            args["maxApps"] = o["maxApps"]
+        return _nfc_send("emv-read", reader, {**o, "args": args})
     return _NS(
         reader=lambda kind: _make_nfc(str(kind)),
         enum=lambda **o: _nfc_send("enum", reader, o),
@@ -567,7 +580,7 @@ def _make_nfc(reader):
         m5=_NS(read=lambda **o: _nfc_send("m5-read", reader, o), write=m5_write, build=m5_write,
                erase=lambda **o: _nfc_send("m5-erase", reader, o), emulate=lambda **o: _nfc_send("m5-emulate", reader, o)),
         # 6.5 EMV (read-only, no PIN / no cryptogram) and MRTD e-ID / e-passport (holder's own document).
-        emv=_NS(read=lambda **o: _nfc_send("emv-read", reader, o)),
+        emv=_NS(read=emv_read),
         eid=_NS(read=eid_read),
     )
 
