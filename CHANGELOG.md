@@ -7,14 +7,17 @@ projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
 ## [6.6.0] – 2026-10-04
 
-**Hloubkové čtení EMV a e-ID, výpisy karet v šesti formátech a formátované
-HTML z funkcí.** Čtečka ve webu přečte z platební karty i historii transakcí,
-čítače a všechny soubory a z e-ID / e-pasu každou datovou skupinu, kterou smí
-číst běžná čtečka, s obrázky a bezpečnostními objekty — pořád jen ke čtení,
-vlastní karta či doklad. Jakékoli čtení se dá převést na výpis (HTML, objekt,
-řádky, JSON, text, CSV); funkce mohou posílat sanitizované HTML
-(`m5.out.html`). Nové nástroje vizuálního tvůrce NFC.EMV a NFC.e-ID a z nich
-příkazy `/emv`, `/emv-history` a `/eid`.
+**Hloubkové čtení EMV a e-ID s PACE, výpisy karet v šesti formátech
+a formátované HTML z funkcí.** Čtečka ve webu i v aplikaci pro Android přečte
+z platební karty i historii transakcí, čítače a všechny soubory a z e-ID /
+e-pasu každou datovou skupinu, kterou smí číst běžná čtečka, s obrázky
+a bezpečnostními objekty; doklad otevře přes PACE (CAN nebo MRZ) nebo BAC —
+pořád jen ke čtení, vlastní karta či doklad. Jakékoli čtení se dá převést na
+výpis (HTML, objekt, řádky, JSON, text, CSV); funkce mohou posílat
+sanitizované HTML (`m5.out.html`). Nové nástroje vizuálního tvůrce NFC.EMV
+a NFC.e-ID a z nich příkazy `/emv`, `/emv-history` a `/eid`; klíč dokladu
+zadává držitel na svém zařízení a na server nejde. Aplikace pro Android sama
+odpovídá na NFC požadavek modelu.
 
 ### Přidáno
 - **Hloubkové čtení EMV** (`client/src/lib/nfc/cards/emv.ts`). Po SELECT
@@ -38,9 +41,40 @@ příkazy `/emv`, `/emv-history` a `/eid`.
   jako `images[]` (JPEG / PNG k zobrazení, JPEG 2000 ke stažení), surové soubory
   jako `raw[]` (`EF.SOD.bin`, `document-signer.cer`, `DG*.bin`…), seznam všech
   zkoušených souborů se stavem a velikostí. Volby `readPhoto` a `all`.
-- **PACE** (`pace.ts`): PACE s CAN nebo MRZ (ECDH generic mapping, secure
-  messaging AES nebo 3DES); čtečka zkusí nejdřív PACE a když neuspěje, použije
-  BAC. Samotný CAN otevře doklad s PACE (pole CAN v pracovišti stačí samo).
+- **PACE** (`pace.ts` — `establishPace`, `aes.ts`, `ec.ts`, `sm.ts`): PACE
+  s CAN nebo MRZ — ECDH generic mapping na standardizovaných parametrech 12, 13,
+  15, 16, 17 a 18 (NIST P-256/384/521, brainpoolP256/384/512r1), secure
+  messaging AES-128/192/256 (`aesChannel`) nebo 3DES (kanál BAC s nulovým SSC).
+  Nabídne-li EF.CardAccess variantu, kterou čtečka umí, zkusí nejdřív PACE;
+  jinak, nebo když PACE selže, BAC s MRZ. Samotný CAN otevře doklad s PACE
+  (pole CAN v pracovišti stačí samo). Bajtově ověřeno proti ukázkovým příkladům
+  ICAO 9303-11 (dodatky G.1 a I.1) a BSI TR-03110 EAC2
+  (`test/fixtures/pace-vectors.json`).
+- **Aplikace pro Android — hloubkové čtení a PACE**: nativní čtečka
+  (`nfc/EmvReader.java`, `MrtdReader.java`) čte EMV do hloubky (historie, GET
+  DATA, každý soubor) a e-ID každou skupinu s obrázky a kontrolou otisků proti
+  EF.SOD; doklad otevírá přes PACE (`PaceProtocol.java`, `Pace.java`,
+  `Aes.java`, `EcCurve.java`, `AesSm.java` — port webové implementace na
+  stejných vektorech) nebo BAC. Pracoviště v aplikaci čtení ukáže (historie
+  jako tabulka, GET DATA, záznamy; držitel vedle obličeje, DG11 / DG12, všechny
+  obrázky, bezpečnostní objekty a soubory); operace se jmenuje *Read document
+  (PACE / BAC)*.
+- **Aplikace pro Android odpovídá na NFC požadavek modelu**
+  (`ui/parts/NfcModelSheet.java`, `nfc/ModelNfc.java`, `ModelNfcDevice.java`,
+  `ReaderMode.java`; interakce `nfc` přes `fn/Run.java` a `ui/parts/Fn.java`):
+  zespodu panel s tím, co model chce, výzvou přiložit kartu k zadní straně
+  telefonu, odpočtem a tlačítkem *Zrušit* (odpověď `timeout` „Cancelled“).
+  Čte vestavěným NFC telefonu, nebo USB čtečkou, kterou uživatel už povolil
+  v pracovišti; Bluetooth a sériová čtečka dostanou `unsupported`, zápis
+  a emulace `denied`, `raw-apdu` / `select-aid` a další čtení mimo seznam pro
+  model `unsupported`. Při vypnutém NFC odpověď `unsupported` a panel nabídne
+  nastavení NFC.
+- **Klíč dokladu se zadává na zařízení**
+  (`client/src/lib/nfc/document-key.ts`): čtení e-ID bez klíče (bez `can`,
+  `mrz` i trojice `documentNumber` + `dateOfBirth` + `dateOfExpiry`) se nejdřív
+  zeptá držitele na CAN / MRZ — ve webu v dialogu interakce
+  (`handleFnInteraction` v `App.tsx`), na Androidu v panelu NFC — a klíč
+  použije jen pro toto čtení.
 - **Výpisy karet** (`client/src/lib/nfc/card-report.ts`): jakékoli čtení (EMV,
   e-ID, prostý sken) jako `html` | `object` | `array` | `json` | `text` | `csv`,
   popisky česky, anglicky nebo německy, PAN maskovaný (není-li `fullPan`),
@@ -56,7 +90,10 @@ příkazy `/emv`, `/emv-history` a `/eid`.
   http(s) / mailto), třídy jen `m5h-*`, `style` jen neškodné vlastnosti; čistí ho
   server i každý prohlížeč a vykresluje se jako prvky DOM. Konzole ho ukazuje
   ve výsledcích běhů týmž sanitizérem (`window.M5Html`).
-- Aplikace pro Android výstup `html` vykresluje ve WebView s vypnutým JavaScriptem a zablokovanou sítí.
+- **Aplikace pro Android vykreslí výstup `html`**: týž sanitizér přenesený do
+  Javy (`fn/FnHtml.java`, bajtově shodný výsledek) a uzamčené WebView
+  (`fn/FnHtmlView.java`) — vypnutý JavaScript, zablokovaná síť, žádné soubory,
+  CSP jen pro obrázky `data:` a vlastní styl, odkazy otevírá aplikace ven.
 - **SDK** (JS i Python): `m5.nfc.emv.read({ maxApps, history, deep })`,
   `emv.report`, `emv.format`, `emv.history`; `m5.nfc.eid.read({ …, all })`,
   `eid.report`, `eid.format`, `eid.images`; `m5.nfc.format`, `m5.nfc.outputs`,
@@ -69,8 +106,9 @@ příkazy `/emv`, `/emv-history` a `/eid`.
   format* a *Show card report*, v Output *Send HTML*.
 - **Příkazy `/emv`, `/emv-history`, `/eid`** (balíčky `nfc-emv`,
   `nfc-emv-history`, `nfc-eid`, toky z `script/gen-nfc-flows.ts`): celé čtení
-  karty jako výpis v chatu, historie transakcí jako tabulka, formulář pro CAN /
-  MRZ a celé čtení dokladu. Instalují se **vypnuté**, viditelnost *caller*.
+  karty jako výpis v chatu, historie transakcí jako tabulka a celé čtení
+  dokladu (`/eid` nemá formulář na serveru: čte hned, s limitem 90 s, a na CAN
+  / MRZ se zeptá zařízení). Instalují se **vypnuté**, viditelnost *caller*.
 - **`/help nfc`** a **`/help html`**, tlačítko *NFC cards* pod `/help`; lekce
   tutoriálu **17 · Formatted HTML**, **18 · NFC card reports**, **19 · Reading a
   card (EMV, e-ID)**.
@@ -81,12 +119,22 @@ příkazy `/emv`, `/emv-history` a `/eid`.
   znaků) na aplikaci; e-ID nejvýš 12 obrázků (≤ 400 000 znaků base64 každý,
   1 400 000 celkem) a 32 surových souborů (≤ 400 000, 1 200 000 celkem),
   textová pole oříznutá.
-- Pracoviště čte EMV až z 8 aplikací (dřív 4) a e-ID přijme samotný CAN.
+- Pracoviště čte EMV až z 8 aplikací (dřív 4) a e-ID přijme samotný CAN;
+  operace čtení dokladu se jmenuje *Read document (PACE / BAC)*.
+- Vykonavatel ve webu (`web-executor.ts`), který odpovídá na NFC příkazy
+  modelu, předá čtečce každou volbu: u EMV `maxApps` (výchozí 8, dřív 4),
+  `history` a `deep`, u e-ID klíč, `readPhoto` a `all`.
 - Typy `EmvApp`, `EmvData`, `MrtdData`, `MrtdAccessArgs` (`client/src/lib/nfc/command.ts`)
   mají nová pole; `OUTPUT_TYPES` má `html`.
 - Vestavěné balíčky 1.3.0 (balíčky NFC 1.0.0). Bundle sandboxu ve vývoji se
   přestaví i při změně klientských souborů, které přibaluje (výpisy karet,
   sanitizér HTML). Verze 6.6.0 (package.json); instalátor zůstává 3.2.0.
+
+### Opraveno
+- Uvnitř 3DES secure messagingu (BAC i PACE s 3DES) platí stavové slovo, které
+  čip chránil v DO'99' — skutečný stav příkazu; čip může venku odpovědět 9000,
+  když soubor chybí (6A82) nebo ho chrání EAC (6982) (`bac.ts`, jako
+  `Bac.java` v aplikaci pro Android).
 
 ### Bezpečnost
 - **HTML z funkce je cizí vstup.** Peer může poslat zprávu s výstupy, proto ho
@@ -99,24 +147,44 @@ příkazy `/emv`, `/emv-history` a `/eid`.
 - **Pasivní autentizace je jen kontrola otisků** proti EF.SOD — podpis EF.SOD
   ani certifikát podepisovatele se neověřují (žádný seznam CSCA), AA / CA se
   neprovádí. Výsledek neříká, že je doklad pravý.
+- **Klíč dokladu se neposílá.** CAN / MRZ, na které se zařízení zeptá, zůstane
+  na zařízení a použije se jen pro dané čtení; na server nejde a mezi vstupy
+  běhu není (`/eid` už nemá formulář na serveru). Aplikace pro Android pole po
+  zadání vymaže a CAN ve zprávách odpovědi maskuje. Předá-li model `can` /
+  `mrz` sám, pocházejí z jeho vlastních vstupů.
 - **Model dostane, co přečetl**: celý PAN (maskuje až výpis) a u e-ID osobní
-  údaje a obrázky. Vstupy a výstupy běhu (u `/eid` i CAN / MRZ a výpis
-  s fotografií) leží ve `functions.db` do `FUNCTIONS_RUNS_DAYS` a vidí je
-  operátor s přístupem k běhům.
+  údaje a obrázky. Vstupy a výstupy běhu (u `/eid` výpis s fotografií) leží ve
+  `functions.db` do `FUNCTIONS_RUNS_DAYS` (výchozí 30 dní) a vidí je operátor
+  s přístupem k běhům.
+- **Model na Androidu jen čte**: zápis a emulace karty `denied`, surové APDU
+  (`raw-apdu`, `select-aid`) a ostatní čtení mimo seznam pro model
+  `unsupported`.
 
 ### Testy
 - `test/nfc-emv-deep.test.ts`, `test/nfc-mrtd-deep.test.ts` (simulovaný čip),
+  `test/nfc-pace.test.ts` (AES / CMAC, křivky, ukázkové příklady ICAO a BSI,
+  simulovaný čip s PACE), `test/nfc-document-key.test.ts`,
   `test/nfc-card-report.test.ts`, `test/fn-html.test.tsx`,
-  `test/nfc-builtins.test.ts`; rozšířené `functions-nfc`, `functions-builtins`,
-  `functions-tutorial` a `nfc-workbench`.
+  `test/console-html-output.test.ts`, `test/nfc-builtins.test.ts`; rozšířené
+  `functions-nfc`, `functions-builtins`, `functions-tutorial` a
+  `nfc-workbench`. Android: `PaceTest`, `EmvDeepTest`, `MrtdDeepTest`,
+  `ModelNfcTest`, `FnHtmlTest` (shoda s `fn-html.ts` na sdílených případech),
+  rozšířený `RunTest`.
 
 ### Známá omezení
-- Vykonavatel pracoviště ve webu (`web-executor.ts`), který odpovídá na NFC
-  příkazy modelu, předá čtečce jen `maxApps` (výchozí tam 4) a u e-ID klíč a
-  `readPhoto`; `history`, `deep` a `all` zatím ne — čtení z funkce je vždy celé.
-- Nativní čtečka aplikace pro Android čte EMV a e-ID jako v 6.5 a aplikace
-  neobsluhuje NFC příkazy modelu (`/emv`, `/eid` potřebují web s otevřeným
-  nástrojem NFC a čtečkou USB, Bluetooth nebo sériovou).
+- Pasivní autentizace porovnává jen otisky: podpis EF.SOD ani podepisovatel
+  proti seznamu CSCA se neověřují a AA / CA se neprovádí.
+- DG3 / DG4 (otisky prstů, duhovka) vyžadují EAC a nečtou se.
+- PACE: DH mapping, Integrated Mapping, CAM a jiné křivky než standardizované
+  parametry 12, 13, 15–18 čtečka neumí (takový doklad otevře jen BAC s MRZ,
+  nabízí-li ho).
+- Na Androidu model čte jen vestavěným NFC telefonu nebo povolenou USB
+  čtečkou — Bluetooth ani sériová čtečka pro model nejde.
+- Výstupy běhu (výpis včetně fotografie) se drží v historii běhů na serveru.
+- Zatím nic nebylo přečteno ze skutečné karty ani dokladu na zařízení: PACE,
+  BAC a hloubkové čtení EMV / e-ID jsou ověřené jen ukázkovými příklady ze
+  specifikací a simulovanými čipy v testech, panel modelu na Androidu jen
+  jednotkovými testy (`ModelNfcTest`).
 
 ## [6.5.0] – 2026-10-04
 

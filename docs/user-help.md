@@ -181,21 +181,27 @@ Když je správce zapne a máš přístup k modulu NFC, tyto příkazy přečtou
 - **`/emv-history`** — jen transakce z karty jako tabulka. Ne každá karta
   čitelnou historii vede — pak je tabulka prázdná; když se čtení nepovede,
   upozornění řekne proč.
-- **`/eid`** — občanka nebo pas: formulář se zeptá na **CAN** (6 číslic na
-  občance) nebo na **MRZ** (2–3 řádky dole na datové stránce pasu), případně
-  číslo dokladu, datum narození a platnost (RRMMDD). Pak přilož doklad. Výpis
-  ukáže údaje z MRZ, fotografii a podpis, další osobní údaje a údaje o dokladu a
-  kontrolu otisků skupin proti EF.SOD; bezpečnostní soubory a obrázky JPEG 2000
-  jsou ke stažení. Otisky prstů ani duhovka se nečtou.
+- **`/eid`** — občanka nebo pas: tvoje zařízení se zeptá na **CAN** (6 číslic
+  na občance) nebo na **MRZ** (2–3 řádky dole na datové stránce pasu), případně
+  číslo dokladu, datum narození a platnost (RRMMDD). Klíč zůstane v zařízení,
+  použije se jen pro toto čtení a na server se neposílá. Pak přilož doklad —
+  čip se otevře přes PACE nebo BAC. Výpis ukáže údaje z MRZ, fotografii a
+  podpis, další osobní údaje a údaje o dokladu a kontrolu otisků skupin proti
+  EF.SOD; bezpečnostní soubory a obrázky JPEG 2000 jsou ke stažení. Otisky
+  prstů ani duhovka se nečtou.
 - Nikdy PIN, nikdy platba, nikdy zápis. Výsledek vidíš jen ty, do místnosti
   nejde.
 - Na webu musí být otevřený **nástroj NFC** s připojenou čtečkou (USB,
   Bluetooth nebo sériová) — vestavěné NFC telefonu v Chrome čte jen NDEF.
-  Aplikace pro Android tyto příkazy zatím neobslouží.
-- **Pozor:** výsledek běhu i to, co zadáš do formuláře (CAN, MRZ), se uloží
+- **Aplikace pro Android** příkazy obslouží sama: zespodu vyjede panel
+  s výzvou přiložit kartu k zadní straně telefonu, s odpočtem a tlačítkem
+  *Zrušit*. Čte vestavěným NFC telefonu, nebo USB čtečkou, kterou jsi už
+  povolil v nástroji NFC (Bluetooth ani sériová čtečka tu nejde). Když je NFC
+  vypnuté, panel to řekne a nabídne nastavení NFC.
+- **Pozor:** výsledek běhu (výpis s fotografií a osobními údaji) se uloží
   u běhu na serveru (výchozí 30 dní) a správce s přístupem k běhům ho může
-  otevřít. Samotný nástroj NFC (*Celý výpis* a jeho export) zůstává jen
-  v prohlížeči.
+  otevřít. CAN ani MRZ, které zadáš na zařízení, mezi tím nejsou. Samotný
+  nástroj NFC (*Celý výpis* a jeho export) zůstává jen v prohlížeči.
 
 ## English
 
@@ -318,22 +324,29 @@ read a card **at your device** — read-only, your own card or document:
 - **`/emv-history`** — just the card's transactions as a table. Not every card
   keeps a readable history — the table is then empty; when the read fails, a
   notice says why.
-- **`/eid`** — an ID card or passport: a form asks for the **CAN** (the 6 digits
-  on an ID card) or the **MRZ** (the 2–3 lines at the bottom of a passport's
-  data page), or the document number, date of birth and expiry (YYMMDD). Then
-  hold the document to the reader. The report shows the MRZ data, the photo and
-  signature, more personal and document details and the check of each group's
-  hash against EF.SOD; the security files and JPEG 2000 pictures are offered
-  for download. Fingerprints and iris are never read.
+- **`/eid`** — an ID card or passport: your device asks for the **CAN** (the 6
+  digits on an ID card) or the **MRZ** (the 2–3 lines at the bottom of a
+  passport's data page), or the document number, date of birth and expiry
+  (YYMMDD). The key stays on the device, is used for this read only and is not
+  sent to the server. Then hold the document to the reader — the chip opens
+  with PACE or BAC. The report shows the MRZ data, the photo and signature, more
+  personal and document details and the check of each group's hash against
+  EF.SOD; the security files and JPEG 2000 pictures are offered for download.
+  Fingerprints and iris are never read.
 - Never a PIN, never a payment, never a write. Only you see the result; it is
   not posted to the room.
 - On the web the **NFC tool** must be open with a reader connected (USB,
-  Bluetooth or serial) — a phone's built-in NFC in Chrome reads NDEF only. The
-  Android app does not run these commands yet.
-- **Note:** the run's result and what you type into the form (CAN, MRZ) are
+  Bluetooth or serial) — a phone's built-in NFC in Chrome reads NDEF only.
+- The **Android app** runs these commands itself: a sheet slides up asking you
+  to hold the card to the back of your phone, with a countdown and *Cancel*. It
+  reads with the phone's own NFC, or with a USB reader you already allowed in
+  the NFC tool (not a Bluetooth or serial reader). When NFC is off, the sheet
+  says so and offers the NFC settings.
+- **Note:** the run's result (the report with the photo and personal data) is
   kept with the run on the server (30 days by default), and an operator with
-  access to runs can open them. The NFC tool itself (*Full report* and its
-  exports) stays in your browser.
+  access to runs can open it. The CAN or MRZ you type on your device is not part
+  of it. The NFC tool itself (*Full report* and its exports) stays in your
+  browser.
 
 ## Deutsch
 
@@ -457,20 +470,28 @@ dein eigenes Dokument:
 - **`/emv-history`** — nur die Transaktionen der Karte als Tabelle. Nicht jede
   Karte führt einen lesbaren Verlauf — dann bleibt die Tabelle leer; misslingt
   das Lesen, sagt ein Hinweis, warum.
-- **`/eid`** — Personalausweis oder Reisepass: ein Formular fragt nach der
+- **`/eid`** — Personalausweis oder Reisepass: dein Gerät fragt nach der
   **CAN** (6 Ziffern auf dem Ausweis) oder der **MRZ** (die 2–3 Zeilen unten auf
   der Datenseite des Passes), oder nach Dokumentnummer, Geburtsdatum und Ablauf
-  (JJMMTT). Dann das Dokument an den Leser halten. Der Bericht zeigt die
-  MRZ-Daten, Foto und Unterschrift, weitere persönliche und Dokumentangaben und
-  die Prüfung jeder Gruppe gegen EF.SOD; die Sicherheitsdateien und
-  JPEG-2000-Bilder gibt es zum Herunterladen. Fingerabdrücke und Iris werden nie
-  gelesen.
+  (JJMMTT). Der Schlüssel bleibt auf dem Gerät, dient nur diesem Lesevorgang
+  und wird nicht an den Server gesendet. Dann das Dokument an den Leser halten —
+  der Chip öffnet sich mit PACE oder BAC. Der Bericht zeigt die MRZ-Daten, Foto
+  und Unterschrift, weitere persönliche und Dokumentangaben und die Prüfung
+  jeder Gruppe gegen EF.SOD; die Sicherheitsdateien und JPEG-2000-Bilder gibt es
+  zum Herunterladen. Fingerabdrücke und Iris werden nie gelesen.
 - Nie eine PIN, nie eine Zahlung, nie ein Schreibzugriff. Nur du siehst das
   Ergebnis; es geht nicht in den Raum.
 - Im Web muss das **NFC-Werkzeug** mit einem verbundenen Leser offen sein (USB,
   Bluetooth oder seriell) — das eingebaute NFC des Telefons liest in Chrome nur
-  NDEF. Die Android-App führt diese Befehle noch nicht aus.
-- **Hinweis:** das Ergebnis und was du ins Formular eingibst (CAN, MRZ) werden
-  mit dem Lauf auf dem Server gespeichert (standardmäßig 30 Tage), und ein
-  Betreiber mit Zugriff auf die Läufe kann sie öffnen. Das NFC-Werkzeug selbst
+  NDEF.
+- Die **Android-App** führt diese Befehle selbst aus: von unten erscheint ein
+  Fenster, das bittet, die Karte an die Rückseite des Telefons zu halten, mit
+  Countdown und *Abbrechen*. Sie liest mit dem eingebauten NFC des Telefons
+  oder mit einem USB-Leser, den du im NFC-Werkzeug schon erlaubt hast (kein
+  Bluetooth- oder serieller Leser). Ist NFC aus, sagt das Fenster es und bietet
+  die NFC-Einstellungen an.
+- **Hinweis:** das Ergebnis des Laufs (der Bericht mit Foto und persönlichen
+  Daten) wird mit dem Lauf auf dem Server gespeichert (standardmäßig 30 Tage),
+  und ein Betreiber mit Zugriff auf die Läufe kann es öffnen. Die CAN oder MRZ,
+  die du auf dem Gerät eingibst, gehört nicht dazu. Das NFC-Werkzeug selbst
   (*Vollständiger Bericht* und seine Exporte) bleibt in deinem Browser.

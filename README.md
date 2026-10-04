@@ -156,16 +156,20 @@ místnosti.
   zapisuje a emuluje karty přes interní, USB, Bluetooth nebo sériovou čtečku a
   nese šifrovanou kartu M5Cet. Platební kartu (EMV) a e-ID / e-pas jen
   **čte** — vlastní kartu či doklad, bez PINu, transakce a zápisu. Od 6.6 ve
-  webu **hloubkově**: z karty i čítače, **historii transakcí** a všechny
-  soubory, z dokladu (otevřeného klíčem z MRZ nebo CAN) každou skupinu, kterou
-  smí běžná čtečka, s obrázky, kontrolou otisků proti EF.SOD a surovými
-  soubory. Každé čtení jde převést na **výpis** — HTML, objekt, řádky, JSON,
-  text nebo CSV (cs/en/de, PAN maskovaný) — v pracovišti s exportem, ve
-  funkcích přes `m5.nfc.format` / `m5.nfc.emv.report` / `m5.nfc.eid.report`,
-  ve vizuálním tvůrci nástroji NFC.EMV a NFC.e-ID; příkazy `/emv`,
-  `/emv-history` a `/eid` (instalují se vypnuté). Funkce smí poslat i
+  webu i v aplikaci pro Android **hloubkově**: z karty i čítače, **historii
+  transakcí** a všechny soubory, z dokladu (otevřeného přes **PACE** nebo BAC
+  klíčem z MRZ nebo CAN) každou skupinu, kterou smí běžná čtečka, s obrázky,
+  kontrolou otisků proti EF.SOD a surovými soubory. Každé čtení jde převést na
+  **výpis** — HTML, objekt, řádky, JSON, text nebo CSV (cs/en/de, PAN
+  maskovaný) — v pracovišti s exportem, ve funkcích přes `m5.nfc.format` /
+  `m5.nfc.emv.report` / `m5.nfc.eid.report`, ve vizuálním tvůrci nástroji
+  NFC.EMV a NFC.e-ID; příkazy `/emv`, `/emv-history` a `/eid` (instalují se
+  vypnuté; CAN / MRZ pro `/eid` zadává držitel na svém zařízení a na server
+  nejde). Na NFC požadavek modelu odpoví web s otevřeným nástrojem NFC i sama
+  aplikace pro Android (panel s výzvou přiložit kartu). Funkce smí poslat i
   **formátované HTML** (`m5.out.html`) — server i každý prohlížeč z něj nechají
-  jen dokumentový markup. Viz [`docs/nfc.md`](docs/nfc.md) a
+  jen dokumentový markup, aplikace pro Android ho ukáže v uzamčeném WebView.
+  Viz [`docs/nfc.md`](docs/nfc.md) a
   [dokumentace › NFC](docs/site/index.html#nfc-tool).
 - **Příkazy jako rozhovor (5.3)** — model má **vstupní body**: execute
   (start), **response** (odpověď na jeho zprávu), **button**, **form**,
@@ -634,7 +638,8 @@ serverem — viz [`docs/nfc.md`](docs/nfc.md).
 Od 6.3 je to celý nástroj NFC (čtečky, technologie karet, karta M5Cet,
 `m5.nfc` ve funkcích); 6.5 přidala čtení EMV a e-ID / e-pasu, 6.6 jejich
 hloubkové čtení (historie transakcí, všechny soubory, každá čitelná datová
-skupina dokladu) a výpisy karet v šesti formátech. Podrobně v
+skupina dokladu) na webu i v Androidu, PACE, výpisy karet v šesti formátech
+a odpovědi aplikace pro Android na NFC požadavek modelu. Podrobně v
 [`docs/nfc.md`](docs/nfc.md).
 
 ---
@@ -796,7 +801,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.6.0        | aktuální — **NFC: hloubkové čtení** (web) jen ke čtení: EMV s GET DATA (čítače), **historií transakcí** z logu karty a všemi soubory; e-ID / e-pas s EF.SOD (kontrola otisků skupin), DG1, všemi obličeji v DG2, DG5, DG7, DG11–DG16 (DG3/DG4 ne), obrázky a surovými soubory ke stažení; **výpisy karet** v šesti formátech (HTML, objekt, řádky, JSON, text, CSV; cs/en/de, maskovaný PAN), *Celý výpis* s exportem v pracovišti; **`m5.out.html`** — sanitizované HTML z funkcí; SDK `m5.nfc.emv/eid.report/format`, `m5.nfc.format/outputs/document`; nástroje tvůrce NFC.EMV a NFC.e-ID; příkazy `/emv`, `/emv-history`, `/eid` (vypnuté); `/help nfc`, `/help html`, lekce tutoriálu 17–19 |
+| 6.6.0        | aktuální — **NFC: hloubkové čtení** (web i Android) jen ke čtení: EMV s GET DATA (čítače), **historií transakcí** z logu karty a všemi soubory; e-ID / e-pas přes **PACE** (CAN nebo MRZ; ECDH generic mapping, AES / 3DES) nebo BAC, s EF.SOD (kontrola otisků skupin), DG1, všemi obličeji v DG2, DG5, DG7, DG11–DG16 (DG3/DG4 ne), obrázky a surovými soubory ke stažení; klíč dokladu se zadává na zařízení a na server nejde; aplikace pro Android odpovídá na NFC požadavek modelu (panel, NFC telefonu nebo povolená USB čtečka) a výstup `html` ukáže v uzamčeném WebView; **výpisy karet** v šesti formátech (HTML, objekt, řádky, JSON, text, CSV; cs/en/de, maskovaný PAN), *Celý výpis* s exportem v pracovišti; **`m5.out.html`** — sanitizované HTML z funkcí; SDK `m5.nfc.emv/eid.report/format`, `m5.nfc.format/outputs/document`; nástroje tvůrce NFC.EMV a NFC.e-ID; příkazy `/emv`, `/emv-history`, `/eid` (vypnuté); `/help nfc`, `/help html`, lekce tutoriálu 17–19 |
 | 6.5.0        | **NFC: čtení EMV a e-ID / e-pasu** (web i Android) jen ke čtení: EMV `PPSE → AID → GPO → záznamy` (AIDy, štítky, maskovaný PAN, platnost, držitel, ATC…), e-ID / e-pas přes BAC z MRZ nebo CAN (DG1 + DG2) — bez PINu, kryptogramu, transakce a zápisu, žádné klonování; `m5.nfc.emv` / `m5.nfc.eid` ve Functions, `apduTemplates` s op i apdu šablonami a tlačítkem v konzoli; `/příkaz` v chatu se ukáže hned jako pulzující bublina s indikátorem, výsledek nahradí indikátor na místě |
 | 6.4.1        | Android: server odmítne obřad passkeye pro build, jehož certifikát nezná, **dřív než passkey vznikne** (žádné osiřelé passkeye); uživatelské jméno `XXXX-XXXX-XXXX-XXXX` (0-9 a-z A-Z), název passkeye `ISO2-scramble(Jméno-Příjmení-Mobil)` |
 | 6.4.0        | **registrace** (web i Android): jméno, příjmení, země (vyhledávací výběr), mobil a e-mail — server ověří mobil (ne pevnou linku/VoIP), doménu e-mailu (DNS, MX) a jedinečnost; údaje jen šifrovaně v trezoru, server drží pouze HMAC otisky. **Passkeys na Androidu**: dialog s certifikátem aplikace, v konzoli kontrola `assetlinks.json` (z internetu i u Googlu) a důvěra certifikátu jedním klikem, `update.sh` upozorní na blokující proxy |
