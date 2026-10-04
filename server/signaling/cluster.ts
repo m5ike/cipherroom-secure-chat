@@ -5,6 +5,8 @@
 // other instances, and routes what those members need:
 //
 //   join / leave / update   membership, announced by the member's instance
+//                           (6.7: a leave carries `held` when the connection
+//                           went without a goodbye — presence.ts)
 //   state / hello / bye     a whole instance's members (start, stop, resync)
 //   beat                    liveness; an instance silent for 20 s is gone
 //   room / chunk            a frame for everyone in a room (proxy frames,
@@ -28,7 +30,13 @@ export type MemberView = {
   accountId?: string;
   resumeHash?: string;
   binary?: boolean;
+  /** 6.7: presence — the app in the foreground, and when it last was. */
+  foreground?: boolean;
+  lastSeen?: number;
 };
+
+/** 6.7: a member whose connection went without a goodbye (presence.ts › HeldMember). */
+export type HeldView = { name: string; joinedAt: number; lastSeen: number; since: number; accountId?: string; resumeHash?: string; tokenHash?: string };
 
 export type RemoteMember = MemberView & { inst: string };
 
@@ -49,7 +57,9 @@ export type ClusterHooks = {
   toTransferSender(room: string, transferId: string, payload: Record<string, unknown>): void;
   evictLocal(room: string, peerId: string): void;
   revoke(accountId: string, hash: string | null, reason: string): void;
-  away(room: string, accountId: string, entry: { name: string; since: number } | null): void;
+  away(room: string, accountId: string, entry: { name: string; since: number; lastSeen?: number } | null): void;
+  /** 6.7: a member elsewhere is gone — for good (null), or held (its connection went, or its instance did). */
+  left(room: string, peerId: string, held: HeldView | null): void;
 };
 
 const BEAT_MS = 5_000;
@@ -100,7 +110,7 @@ export class ClusterRooms {
   /* ------------------------------------------------------------ announces */
 
   join(room: string, member: MemberView): void { this.bus.publish({ t: "join", room, member }); }
-  leave(room: string, peerId: string): void { this.bus.publish({ t: "leave", room, peerId }); }
+  leave(room: string, peerId: string, held?: HeldView): void { this.bus.publish({ t: "leave", room, peerId, ...(held ? { held } : {}) }); }
   update(room: string, member: MemberView): void { this.bus.publish({ t: "update", room, member }); }
   broadcast(room: string, payload: Record<string, unknown>, except?: string): void { this.bus.publish({ t: "room", room, payload, ...(except ? { except } : {}) }); }
   chunk(room: string, raw: Buffer, json: Record<string, unknown>, except?: string): void {
@@ -108,7 +118,7 @@ export class ClusterRooms {
   }
   toSender(room: string, transferId: string, payload: Record<string, unknown>): void { this.bus.publish({ t: "to-sender", room, transferId, payload }); }
   revoke(accountId: string, hash: string | null, reason: string): void { this.bus.publish({ t: "revoke", accountId, hash, reason }); }
-  away(room: string, accountId: string, entry: { name: string; since: number } | null): void { this.bus.publish({ t: "away", room, accountId, entry }); }
+  away(room: string, accountId: string, entry: { name: string; since: number; lastSeen?: number } | null): void { this.bus.publish({ t: "away", room, accountId, entry }); }
 
   /** SDP/ICE for a member elsewhere; false when nobody holds that peer id. */
   signal(room: string, target: string, payload: Record<string, unknown>): boolean {
@@ -162,13 +172,15 @@ export class ClusterRooms {
           const known = this.member(room, msg.member.peerId);
           if (!known) return;
           this.remote.get(room)!.set(msg.member.peerId, { ...msg.member, inst: from });
+          // 6.7: only the presence changed (peer-presence went as a room frame): nothing to announce.
+          if (known.name === msg.member.name && known.accountId === msg.member.accountId) return;
           this.hooks.updated(room, msg.member);
         }
         return;
       case "leave":
         if (room && typeof msg.peerId === "string" && this.member(room, msg.peerId)?.inst === from) {
           this.drop(room, msg.peerId);
-          this.hooks.toLocal(room, { type: "peer-left", peerId: msg.peerId });
+          this.hooks.left(room, msg.peerId, isHeld(msg.held) ? msg.held : null);
         }
         return;
       case "room":
@@ -191,8 +203,9 @@ export class ClusterRooms {
         return;
       case "away":
         if (room && typeof msg.accountId === "string") {
-          const e = msg.entry as { name?: unknown; since?: unknown } | null;
-          this.hooks.away(room, msg.accountId, e && typeof e.name === "string" && typeof e.since === "number" ? { name: e.name, since: e.since } : null);
+          const e = msg.entry as { name?: unknown; since?: unknown; lastSeen?: unknown } | null;
+          this.hooks.away(room, msg.accountId, e && typeof e.name === "string" && typeof e.since === "number"
+            ? { name: e.name, since: e.since, ...(typeof e.lastSeen === "number" ? { lastSeen: e.lastSeen } : {}) } : null);
         }
         return;
     }
@@ -215,12 +228,17 @@ export class ClusterRooms {
     if (map.size === 0) this.remote.delete(room);
   }
 
+  /** An instance went: its members lost their connection, they did not leave (6.7: held). */
   private dropInstance(inst: string): void {
+    const now = this.now();
     for (const [room, map] of this.remote) {
       for (const [peerId, m] of map) {
         if (m.inst !== inst) continue;
         map.delete(peerId);
-        this.hooks.toLocal(room, { type: "peer-left", peerId });
+        this.hooks.left(room, peerId, {
+          name: m.name, joinedAt: m.joinedAt, lastSeen: m.foreground === false ? m.lastSeen ?? now : now, since: now,
+          ...(m.accountId ? { accountId: m.accountId } : {}), ...(m.resumeHash ? { resumeHash: m.resumeHash } : {}),
+        });
       }
       if (map.size === 0) this.remote.delete(room);
     }
@@ -243,6 +261,10 @@ function isObject(v: unknown): v is Record<string, unknown> {
 }
 function str(v: unknown): string | undefined {
   return typeof v === "string" ? v : undefined;
+}
+function isHeld(v: unknown): v is HeldView {
+  const h = v as HeldView | null;
+  return Boolean(h) && typeof h === "object" && typeof h!.name === "string" && typeof h!.joinedAt === "number" && typeof h!.lastSeen === "number" && typeof h!.since === "number";
 }
 function isView(v: unknown): v is MemberView {
   const m = v as MemberView | null;

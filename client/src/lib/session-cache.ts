@@ -7,7 +7,8 @@
 //              when the tab/window closes. It survives reloads only.
 //   idle       untouched for SESSION_IDLE_LIMIT_MS (1 h) -> wiped.
 //   contents   name, room id, room key (passphrase) and the DESIRED state
-//              ("connected" | "disconnected") the app must enforce.
+//              ("connected" | "disconnected") the app must enforce; 6.7: the
+//              resume secret, so a reload returns as the same room member.
 //
 // Protection: the record is AES-GCM encrypted with a key generated per tab as
 // a NON-EXTRACTABLE CryptoKey and parked in IndexedDB. Script (ours, or an
@@ -35,6 +36,8 @@ export type SessionData = {
   server?: string;
   /** The saved connection the session came from, so its statistics go on. */
   profileId?: string;
+  /** 6.7: the peer id and resume secret of the last `joined` — a reload comes back as the same member. */
+  resume?: { room: string; peerId: string; secret: string };
 };
 
 export const SESSION_IDLE_LIMIT_MS = 60 * 60 * 1000;
@@ -199,6 +202,8 @@ export function createSessionCache(opts: { vault?: KeyVault; storage?: Storage; 
           name: data.name, room: data.room, passphrase: data.passphrase, desired: rec.off ? "disconnected" : data.desired,
           ...(typeof data.server === "string" && data.server ? { server: data.server } : {}),
           ...(typeof data.profileId === "string" && data.profileId ? { profileId: data.profileId } : {}),
+          ...(data.resume && typeof data.resume.room === "string" && typeof data.resume.peerId === "string" && typeof data.resume.secret === "string"
+            ? { resume: { room: data.resume.room, peerId: data.resume.peerId, secret: data.resume.secret } } : {}),
         };
       } catch {
         await clear();

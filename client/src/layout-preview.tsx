@@ -184,6 +184,12 @@ function previewWidgetState(kind: "widget" | "fab" | "handle", variant: string):
   };
 }
 
+/** 6.7: the sample people with a presence — online, away (12 min), far away (2 h) — so the status dot shows. */
+function previewPresence(p: WidgetPeer, i: number): WidgetPeer {
+  const ago = [0, 0, 12 * 60_000, 2 * 60 * 60_000][i % 4];
+  return { ...p, presence: { connected: p.status === "open", foreground: ago === 0, lastSeen: Date.now() - ago } };
+}
+
 function PreviewWidget({ cfg, variant, lang, kind }: { cfg: LayoutConfig; variant: string; lang: Lang; kind: "widget" | "fab" | "handle" }) {
   const [state, setState] = useState<WidgetState>(() => previewWidgetState(kind, variant));
   const [selected, setSelected] = useState(new Set(["p1"]));
@@ -195,7 +201,7 @@ function PreviewWidget({ cfg, variant, lang, kind }: { cfg: LayoutConfig; varian
   ];
   return (
     <RecipientsWidget
-      peers={peers}
+      peers={peers.map(previewPresence)}
       room="tym-brno"
       state={state}
       selected={selected}

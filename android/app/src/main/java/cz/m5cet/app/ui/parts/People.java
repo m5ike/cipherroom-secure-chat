@@ -27,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import cz.m5cet.app.M5;
 import cz.m5cet.app.chat.RoomSession;
 import cz.m5cet.app.contacts.AddressBook;
+import cz.m5cet.app.contacts.LastSeen;
 import cz.m5cet.app.contacts.Avatars;
 import cz.m5cet.app.contacts.LinkActivity;
 import cz.m5cet.app.contacts.Match;
@@ -124,7 +125,8 @@ public final class People {
                 // The 6.0 trees: a valid hello with an unchanged key; "away" as a flag.
                 .put("verified", u.optBoolean("signed") && !u.optBoolean("changed")).put("away", Presence.AWAY.equals(status));
         } catch (JSONException ignored) { }
-        return u;
+        // 6.7: the status dot and "last seen …" (online / away / far away).
+        return LastSeen.decorate(u, app::t, System.currentTimeMillis());
     }
 
     private JSONObject find(RoomSession r, String id) {

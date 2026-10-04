@@ -381,12 +381,12 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
   <table>
     <thead><tr><th>type</th><th>Pole</th><th>Význam</th><th>Třída limitu</th></tr></thead>
     <tbody>
-      <tr><td><code>join</code></td><td><code>protocol, room, name, peerId?, resume?, auth?, away</code></td><td>Vstup do místnosti; <code>auth</code> = session token účtu</td><td>signaling</td></tr>
+      <tr><td><code>join</code></td><td><code>protocol, room, name, peerId?, resume?, auth?, away, foreground?</code></td><td>Vstup do místnosti; <code>auth</code> = session token účtu; <code>foreground</code> (6.7) = aplikace je v popředí</td><td>signaling</td></tr>
       <tr><td><code>auth</code></td><td><code>token | null, away</code></td><td>Přihlásit / odhlásit účet bez opuštění místnosti</td><td>signaling</td></tr>
       <tr><td><code>leave</code></td><td><code>away</code></td><td>Odchod; <code>away:true</code> = zůstat jako nepřítomný (relay)</td><td>signaling</td></tr>
       <tr><td><code>signal</code></td><td><code>target, payload</code></td><td>SDP/ICE pro jednoho peera; ve v2 <code>{sealed:{v,iv,ciphertext}}</code></td><td>signaling</td></tr>
       <tr><td><code>ping</code></td><td><code>t</code></td><td>Aplikační heartbeat a měření RTT</td><td>heartbeat</td></tr>
-      <tr><td><code>presence</code></td><td><code>away</code></td><td>Stránka odložena / zpět (lifecycle)</td><td>presence</td></tr>
+      <tr><td><code>presence</code></td><td><code>away, foreground?</code></td><td>Stránka odložena / zpět (lifecycle); <code>foreground</code> (6.7) = aplikace v popředí / na pozadí — místnost ji uslyší jako <code>peer-presence</code></td><td>presence</td></tr>
       <tr><td><code>relay</code></td><td><code>messageId, to[], envelope, expiresAt?</code></td><td>Šifrová obálka pro nepřítomné členy (odkazy z <code>away[]</code>)</td><td>relay</td></tr>
       <tr><td><code>relay-ack</code></td><td><code>ids[]</code> (≤ 500)</td><td>Potvrzení zpracování doručených položek</td><td>relay</td></tr>
       <tr><td><code>receipt</code></td><td><code>messageIds[]</code> (≤ 200), <code>state</code></td><td>Přečteno / doručeno — jen pro zprávy, které server tomuto čtenáři doručil</td><td>receipt</td></tr>
@@ -401,8 +401,9 @@ svg .arrow { fill: var(--muted); } svg .arrow-acc { fill: var(--accent); } svg .
     <thead><tr><th>type</th><th>Kdy</th></tr></thead>
     <tbody>
       <tr><td><code>hello</code></td><td>Hned po otevření: <code>protocol</code>, navržené <code>peerId</code>, <code>connId</code>, <code>limits</code></td></tr>
-      <tr><td><code>joined</code></td><td>Odpověď na <code>join</code>: přidělené <code>peerId</code>, <code>resume</code>, <code>peers[]</code>, <code>away[]</code>, <code>account</code></td></tr>
-      <tr><td><code>peer-joined</code> / <code>peer-left</code> / <code>peer-updated</code></td><td>Změny v místnosti (<code>peer-updated</code> = přihlášení/odhlášení bez odchodu)</td></tr>
+      <tr><td><code>joined</code></td><td>Odpověď na <code>join</code>: přidělené <code>peerId</code>, <code>resume</code>, <code>peers[]</code> (6.7: s <code>foreground</code> a <code>lastSeen</code>), <code>away[]</code>, <code>held[]</code> (6.7), <code>account</code></td></tr>
+      <tr><td><code>peer-joined</code> / <code>peer-left</code> / <code>peer-updated</code></td><td>Změny v místnosti (<code>peer-updated</code> = přihlášení/odhlášení bez odchodu; <code>peer-left</code> s <code>held: true</code> = spojení spadlo, člen zůstává v seznamu jako pryč — 6.7)</td></tr>
+      <tr><td><code>peer-presence</code> <span class="badge b-acc">6.7</span></td><td>Člen dal aplikaci do pozadí nebo zpět: <code>peerId, foreground, lastSeen</code></td></tr>
       <tr><td><code>peer-away</code> / <code>peer-back</code> / <code>peer-gone</code></td><td>Člen s účtem je nepřítomen / zpět / odhlášen (relay pro něj končí)</td></tr>
       <tr><td><code>signal</code>, <code>signal-undeliverable</code></td><td>Signál od peera / cíl v místnosti není</td></tr>
       <tr><td><code>relay-status</code></td><td><code>stored | forwarded | duplicate | delivered | read | rejected</code> pro odeslanou zprávu</td></tr>
@@ -978,6 +979,28 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
     <li><b>Telefon</b>: přilepení míří nejdřív dolů a funguje klepáním.</li>
     <li>Volba se ukládá s ostatním vzhledem a u přihlášeného uživatele se synchronizuje s účtem; nastavení z doby před 6.0 se převede (přilepené okno = vpravo).</li>
     <li><b>Layout builder</b>: nové rozvržení <code>widget.handle</code> (úchyt — výchozí ikona <code>users</code> a počet, obojí jde změnit), nové proměnné a akce widgetu pro okraje a nastavení operátora pro rychlost zajetí (<code>widgetSlideMs</code>, 0–1000 ms, výchozí 220) a křivku (<code>widgetSlideEasing</code>). Když systém žádá omezený pohyb, okno se ukáže a schová bez animace.</li>
+  </ul>
+</section>
+
+<section class="doc" id="pritomnost" data-group="Klient">
+  <h2>Přítomnost a „naposledy online" <span class="badge b-acc">6.7</span><a class="anchor" href="#pritomnost">#</a></h2>
+  <p class="lead">Kdo se nepřihlásil k odchodu (nekliknul <b>Odpojit</b>), zůstává v seznamu lidí v místnosti — i když mu spadla síť, zavřel kartu nebo dal aplikaci do pozadí. U každého je barevná tečka a „naposledy online …".</p>
+  <table>
+    <thead><tr><th>Tečka</th><th>Kdy</th></tr></thead>
+    <tbody>
+      <tr><td>zelená — online</td><td>připojen s aplikací v popředí, nebo naposledy viděn nejvýš před 5 minutami</td></tr>
+      <tr><td>žlutá — pryč</td><td>naposledy viděn před 5 až 60 minutami</td></tr>
+      <tr><td>oranžová — dlouho pryč</td><td>naposledy viděn před víc než hodinou</td></tr>
+    </tbody>
+  </table>
+  <ul>
+    <li><b>Naposledy viděn</b> = kdy měl člen naposledy otevřenou aplikaci (v popředí) a byl připojený. Klient to hlásí rámcem <code>presence {away, foreground}</code> (web: skrytá karta po 1,5 s, jiná aplikace po 30 s; Android: aplikace na pozadí), server to pošle členům té místnosti jako <code>peer-presence</code>. Tečka se přebarví i bez nové zprávy (časovač).</li>
+    <li><b>Spadlé spojení není odchod</b>: místnost dostane <code>peer-left</code> s <code>held: true</code>, jménem a <code>lastSeen</code>; nově příchozí ho vidí v <code>joined.held</code>. Po návratu s tajemstvím <code>resume</code> z posledního <code>joined</code> je to týž člen (stejné <code>peerId</code>, žádný dvojník) — web si ho drží v šifrované session cache karty, Android v trezoru, takže přežije i reload nebo ukončení procesu. Bez tajemství jeho <code>peerId</code> nikdo nedostane. Přihlášený člen, který přijde znovu (i bez tajemství), nahradí svůj starý záznam.</li>
+    <li><b>Kdy člen ze seznamu zmizí</b>: odchod na vlastní žádost (<code>leave</code>), odpojení operátorem (člen i celá místnost), zrušená relace účtu, vyhazov serverem (limity) a <code>PRESENCE_MAX_AWAY_DAYS</code> bez návratu (výchozí 7 dní, <code>0</code> = nikdy). Na webu ani hodina bez aktivity (konec session cache) z místnosti neodhlašuje.</li>
+    <li><b>Účty a relay</b>: přihlášený člen se zapnutým away dál dostává zprávy přes server (<code>peer-away</code> nese i <code>lastSeen</code>, ukládá se s účtem a přežije restart); zprávy pro hosta bez účtu server nedrží — jen ho vede jako pryč.</li>
+    <li><b>Soukromí</b>: přítomnost a <code>lastSeen</code> vidí jen členové téže místnosti; jiná místnost se o ní nedozví. Obsah zpráv server dál nevidí.</li>
+    <li><b>Kde</b>: widget příjemců, okno „Lidé v místnosti" a detail člověka na webu; panel lidí a detail osoby v aplikaci Android. Layout builder: proměnné <code>.presence</code>, <code>.presenceLabel</code>, <code>.seenText</code> u lidí.</li>
+    <li>Držené členy (bez spojení) má server v paměti; restart zapomene hosty, přihlášené pokryté relayem obnoví z účtů. V clusteru je drží každá instance a návrat jde na kteroukoli.</li>
   </ul>
 </section>
 
@@ -2214,6 +2237,7 @@ REDIS_URL=redis://:heslo@127.0.0.1:6379/0  CLUSTER_SECRET=$(openssl rand -base64
       <tr><td><code>WEBAUTHN_RP_ID</code>, <code>WEBAUTHN_ORIGINS</code>, <code>PUBLIC_BASE_URL</code></td><td>—</td><td>doména passkeys a povolené originy; bez nich produkce varuje. <code>PUBLIC_BASE_URL</code> od 6.0 potřebuje i <a href="#tel-webhooky">m5.telephony</a> (webhooky hovorů) a registrace aplikace pro Android (QR kód)</td></tr>
       <tr><td><code>STORAGE_DIR</code>, <code>STORAGE_MASTER_KEY</code>, <code>STORAGE_KEY_FILE</code></td><td>—</td><td>úložiště a jeho master klíč</td></tr>
       <tr><td><code>ACCOUNTS_DIR</code>, <code>RELAY_RETENTION_DAYS</code></td><td>—, 30</td><td>účty; jak dlouho čeká položka fronty bez vlastního TTL</td></tr>
+      <tr><td><code>PRESENCE_MAX_AWAY_DAYS</code> <span class="badge b-acc">6.7</span></td><td>7</td><td><a href="#pritomnost">přítomnost</a>: kolik dní zůstane v seznamu místnosti člen, jehož spojení spadlo a nevrátil se (desetinná čísla jdou; <code>0</code> = navždy)</td></tr>
       <tr><td><code>TURN_SERVER_URL</code>, <code>TURN_USERNAME</code>, <code>TURN_CREDENTIAL</code></td><td>—</td><td>TURN pro striktní NAT (statické přístupy — server varuje)</td></tr>
       <tr><td><code>TURN_SECRET</code>, <code>TURN_TTL_SECONDS</code>, <code>STUN_URLS</code> <span class="badge b-acc">3.1</span></td><td>—, 3600, Google STUN</td><td>krátkodobé TURN přístupy (coturn <code>use-auth-secret</code>); vlastní STUN servery</td></tr>
       <tr><td><code>ADMIN_TOKENS</code> <span class="badge b-acc">3.1</span></td><td>—</td><td>další administrátoři: <code>jméno:role:token,…</code> (role <code>owner</code>, <code>operator</code>, <code>auditor</code>)</td></tr>

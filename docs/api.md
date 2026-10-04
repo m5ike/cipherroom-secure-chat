@@ -28,7 +28,7 @@ Frame format: JSON. Rámce delší než **128 000 znaků** server tiše zahodí
 { "type": "storage",   "id": "42", "op": "kv.put", "payload": { ... }, "auth": "token?", "session": "id?" }
 { "type": "relay",     "messageId": "...", "to": ["accountId"], "envelope": { "iv", "ciphertext" } }
 { "type": "relay-ack", "ids": ["mailId"] }
-{ "type": "presence",  "away": true }
+{ "type": "presence",  "away": true, "foreground": false }
 { "type": "receipt",   "to": { "peerId?", "accountId?" }, "messageIds": ["..."], "state": "delivered|read" }
 { "type": "command-poll", "deviceId": "string?" }
 { "type": "command-ack",  "commandId": "string", "result": "string?" }
@@ -46,6 +46,19 @@ klient opouštěl místnost: server pro něj začne (nebo přestane) přebírat
 zprávy a po návratu hned pošle, co nasbíral. Viz
 [`lifecycle-and-notices.md`](lifecycle-and-notices.md).
 
+**Přítomnost (6.7).** `presence.foreground` (a `join.foreground`, výchozí
+`true`) říká, jestli má člen aplikaci v popředí; starší klient bez pole se
+čte jako `foreground = !away`. Server drží u každého člena `foreground`
+a `lastSeen` (kdy měl naposledy aplikaci otevřenou a byl připojený) a změnu
+pošle **jen členům té místnosti** jako `peer-presence`. Spojení, které spadne
+bez `leave`, není odchod: místnost dostane `peer-left` s `held: true`
+a člen zůstane v seznamu (`joined.held`), dokud se nevrátí se svým `resume`
+(týž `peerId`), neodejde, nebo ho server neodstraní (operátor, zrušená
+relace, vyhazov, `PRESENCE_MAX_AWAY_DAYS` — výchozí 7 dní, `0` = nikdy).
+Prahy stavu (online ≤ 5 min, pryč ≤ 60 min, jinak dlouho pryč) jsou
+v `client/src/lib/presence.ts`. Podrobně
+[`accounts-away.md`](accounts-away.md#4-přítomnost-a-naposledy-online-67).
+
 `auth` + `away` zapínají **stav away**: přihlášený uživatel (passkey účet)
 zůstane v místnosti i po ztrátě socketu a server za něj přebírá zprávy
 (`relay` → schránka → `relay-deliver` po návratu). Jeden socket smí poslat
@@ -56,11 +69,14 @@ Server odpovídá:
 
 ```json
 { "type": "hello",       "peerId": "...", "cache": "no-store", "ip": "proxied|direct" }
-{ "type": "joined",      "peerId": "...", "room": "...", "peers": [{ "peerId", "name", "joinedAt", "accountId?" }],
-  "away": [{ "accountId", "name", "since" }], "account": { "id", "away" } | { "invalid": true } | null, "policy": { ... } }
-{ "type": "peer-joined", "peerId": "...", "name": "...", "joinedAt": 0, "accountId?": "..." }
+{ "type": "joined",      "peerId": "...", "room": "...", "peers": [{ "peerId", "name", "joinedAt", "accountId?", "foreground", "lastSeen" }],
+  "away": [{ "accountId", "name", "since", "lastSeen" }], "held": [{ "peerId", "name", "joinedAt", "lastSeen", "since", "accountId?" }],
+  "account": { "id", "away" } | { "invalid": true } | null, "policy": { ... } }
+{ "type": "peer-joined", "peerId": "...", "name": "...", "joinedAt": 0, "accountId?": "...", "foreground": true, "lastSeen": 0 }
 { "type": "peer-left",   "peerId": "..." }
-{ "type": "peer-away",   "accountId": "...", "peerId": "...", "name": "...", "since": 0 }
+{ "type": "peer-left",   "peerId": "...", "held": true, "name": "...", "joinedAt": 0, "lastSeen": 0, "since": 0, "accountId?": "..." }
+{ "type": "peer-presence", "peerId": "...", "foreground": false, "lastSeen": 0 }
+{ "type": "peer-away",   "accountId": "...", "peerId": "...", "name": "...", "since": 0, "lastSeen": 0 }
 { "type": "peer-back",   "accountId": "...", "peerId": "...", "name": "..." }
 { "type": "peer-gone",   "accountId": "..." }
 { "type": "relay-deliver", "items": [{ "id", "kind", "messageId", "from", "envelope?", "status?", "storedAt" }] }
@@ -215,7 +231,9 @@ znaků. Výzva je jednorázová, platnost 2 minuty. Tokeny žijí 12 h a jen
 v paměti — restart odhlásí.
 
 Proměnné prostředí: `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `ACCOUNTS_DIR`
-(jinak `$DATA_DIR/accounts`), `RELAY_RETENTION_DAYS` (30).
+(jinak `$DATA_DIR/accounts`), `RELAY_RETENTION_DAYS` (30),
+`PRESENCE_MAX_AWAY_DAYS` (7; jak dlouho zůstane v seznamu člen, jehož
+spojení spadlo; desetinná čísla jdou, `0` = navždy).
 
 ### Retence
 

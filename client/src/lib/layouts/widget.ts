@@ -12,10 +12,16 @@ export function widgetTree(): LNode {
     attrs: { class: "recip-row{if !$p.reachable} is-offline{/if}{if $p.away} is-away{/if}", "data-testid": "recip-{$p.id}" },
   }, [
     n("avatar", { id: "peer-avatar", props: { name: "{$p.name}", avatar: "{$p.avatar}", size: "26" } }),
+    // 6.7: online (green), away (yellow), far away (orange) — its tooltip says when they were last seen.
+    n("area", {
+      id: "peer-presence", name: "Status dot", if: "$p.presence",
+      attrs: { class: "presence-dot presence-dot--{$p.presence}", role: "img", title: "{$p.presenceLabel} · {$p.seenText}", "aria-label": "{$p.presenceLabel} · {$p.seenText}", "data-testid": "presence-{$p.id}" },
+    }),
     n("area", { id: "peer-name", attrs: { class: "recip-name" } }, [
       text("{$p.name}", { id: "peer-name-text" }),
       n("area", { id: "peer-away", if: "$p.away", attrs: { class: "recip-away-tag" } }, [icon("moon", "h-3 w-3", {}, { id: "peer-away-icon" }), text("{_'away.badge'}", { id: "peer-away-text" })]),
-      text(" · {_'recipients.offline'}", { id: "peer-offline", if: "!$p.away && !$p.online" }),
+      text(" · {_'recipients.offline'}", { id: "peer-offline", if: "!$p.away && !$p.online && !$p.seenText" }),
+      n("area", { id: "peer-seen", name: "Last seen", tag: "span", if: "$p.seenText && $p.presence !== 'online'", attrs: { class: "recip-seen" }, text: " · {$p.seenText}" }),
     ]),
     n("area", {
       id: "latency", name: "Latency", attrs: { class: "lat-meter lat-{$p.tone}", title: "{$p.rttTitle}", "aria-hidden": "true" },

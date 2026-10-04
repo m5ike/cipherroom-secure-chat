@@ -21,6 +21,7 @@ import { loadIdentity, type Identity } from "./identity";
 import { validatePayload } from "./validate";
 import type { ChatMessage } from "./chat-types";
 import { newId } from "./id";
+import { PresenceSignal } from "./presence-book";
 
 export type HubTarget = {
   /** Identifies the room across servers: "<server or local>|<room>". */
@@ -90,8 +91,21 @@ export class BackgroundRoom {
   private attempts = 0;
   private retry: ReturnType<typeof setTimeout> | null = null;
   private ping: ReturnType<typeof setInterval> | null = null;
+  /** 6.7: the app is in the foreground — this room's members see the same presence as the room on screen's. */
+  private foreground = true;
+  private readonly presence = new PresenceSignal((frame) => {
+    const socket = this.socket;
+    if (!socket || socket.readyState !== 1 || this.status !== "joined") return false;
+    try { socket.send(JSON.stringify(frame)); return true; } catch { return false; }
+  });
 
   constructor(readonly target: HubTarget, private readonly deps: HubDeps, private readonly emit: (event: HubEvent) => void) {}
+
+  /** 6.7: the app went to the background or came back (presence, last seen). */
+  setForeground(on: boolean): void {
+    this.foreground = on;
+    this.presence.set({ away: false, foreground: on });
+  }
 
   view(): HubRoomView {
     let users = this.status === "joined" ? 1 : 0;
@@ -130,8 +144,9 @@ export class BackgroundRoom {
       this.attempts = 0;
       socket.send(JSON.stringify({
         type: "join", protocol: 2, room: this.keys!.roomId, name: this.target.name,
-        peerId: this.myId || newId("peer"), ...(this.resume ? { resume: this.resume } : {}), away: false,
+        peerId: this.myId || newId("peer"), ...(this.resume ? { resume: this.resume } : {}), away: false, foreground: this.foreground,
       }));
+      this.presence.reset({ away: false, foreground: this.foreground });
       if (this.ping) clearInterval(this.ping);
       this.ping = setInterval(() => { try { socket.send(JSON.stringify({ type: "ping", t: Date.now() })); } catch { /* closing */ } }, 25_000);
     };
@@ -349,8 +364,15 @@ export class RoomHub {
   private readonly messageListeners = new Set<(e: Extract<HubEvent, { type: "message" }>) => void>();
   private snapshot: HubRoomView[] = [];
   private scheduled = false;
+  private foreground = true;
 
   constructor(private readonly deps: HubDeps, readonly limit = 8) {}
+
+  /** 6.7: the app went to the background or came back — every background room tells its members. */
+  setForeground(on: boolean): void {
+    this.foreground = on;
+    for (const room of this.rooms.values()) room.setForeground(on);
+  }
 
   subscribe = (fn: () => void): (() => void) => { this.listeners.add(fn); return () => this.listeners.delete(fn); };
   list = (): HubRoomView[] => this.snapshot;
@@ -381,6 +403,7 @@ export class RoomHub {
       if (event.type === "message") for (const fn of this.messageListeners) fn(event);
       this.publish();
     });
+    if (!this.foreground) room.setForeground(false);
     this.rooms.set(target.key, room);
     void room.start().catch(() => { room.status = "offline"; this.publish(); });
     this.publish();

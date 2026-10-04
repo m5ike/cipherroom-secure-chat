@@ -112,7 +112,8 @@ export type AccountRecord = {
     connections?: number; connectionsBytes?: number; connectionsUpdatedAt?: number;
   };
   push: PushTarget[];
-  away: Array<{ room: string; name: string; since: number }>;
+  /** Rooms where the relay covers for the account; 6.7 `lastSeen`: when they last had the app open there. */
+  away: Array<{ room: string; name: string; since: number; lastSeen?: number }>;
   audit: AuditEntry[];
 };
 
@@ -922,11 +923,11 @@ export class AccountStore {
   }
 
   /** The relay's record of an away room: cheap, written to disk shortly. */
-  noteAway(accountId: string, room: string, name: string, since = Date.now()): void {
+  noteAway(accountId: string, room: string, name: string, since = Date.now(), lastSeen?: number): void {
     const acc = this.get(accountId);
     if (!acc) return;
     acc.away = acc.away.filter((a) => a.room !== room);
-    acc.away.push({ room, name: name.slice(0, 48), since });
+    acc.away.push({ room, name: name.slice(0, 48), since, ...(lastSeen ? { lastSeen } : {}) });
     if (acc.away.length > ACCOUNT_LIMITS.maxAwayRooms) acc.away.splice(0, acc.away.length - ACCOUNT_LIMITS.maxAwayRooms);
     this.persistSoon();
   }
@@ -939,10 +940,10 @@ export class AccountStore {
   }
 
   /** Every away record, to restore the relay after a restart. */
-  allAway(): Array<{ accountId: string; room: string; name: string; since: number }> {
+  allAway(): Array<{ accountId: string; room: string; name: string; since: number; lastSeen?: number }> {
     this.load();
-    const out: Array<{ accountId: string; room: string; name: string; since: number }> = [];
-    for (const acc of this.accounts.values()) for (const a of acc.away) out.push({ accountId: acc.id, room: a.room, name: a.name, since: a.since });
+    const out: Array<{ accountId: string; room: string; name: string; since: number; lastSeen?: number }> = [];
+    for (const acc of this.accounts.values()) for (const a of acc.away) out.push({ accountId: acc.id, room: a.room, name: a.name, since: a.since, ...(a.lastSeen ? { lastSeen: a.lastSeen } : {}) });
     return out;
   }
 
