@@ -5,7 +5,52 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
-## [Unreleased]
+## [6.5.0] – 2026-10-04
+
+**Čtení EMV karty a e-ID / e-pasu v nástroji NFC a plynulejší běh
+`/příkazů`.** Nástroj NFC (web i Android) čte platební kartu (EMV) a
+elektronický pas či občanku (e-ID, MRTD) — vždy jen jako čtečka, veřejná /
+držitelova data, bez PINu, kryptogramu, transakce a bez zápisu; e-ID / e-pas se
+otevře jen přístupem řízeným samotným dokladem (BAC) z MRZ nebo CAN, které
+držitel zadá. V chatu se spuštění `/příkazu` modelu ukáže okamžitě jako vlastní
+bublina odesílatele a výsledek nahradí indikátor na místě.
+
+### Přidáno
+- **Plynulý běh `/příkazu` (web i Android).** Spuštění chatovacího `/příkazu`
+  (volání modelu) se hned ukáže jako **vlastní bublina odesílatele**: bublina
+  jemně pulzuje a pod dotazem je vycentrovaný třítečkový indikátor s názvem
+  modelu. Jakmile model odpoví, indikátor se **na místě** nahradí výsledkem
+  (odpověď jen pro volajícího rovnou v bublině) nebo krátkým stavovým štítkem
+  (odpověď šla do místnosti jako vlastní zpráva, nebo chyba). `FnMeta` má nově
+  pole `query` / `pending` / `status`; i18n klíče `functions.running` a
+  `functions.sentToRoom`.
+- **Čtení EMV karty (jen ke čtení, vlastní karta).** `PPSE → SELECT AID → GET
+  PROCESSING OPTIONS → READ RECORD`; rozparsuje AIDy, štítky aplikací, PAN
+  (maskovaný), platnost, držitele, zemi vydavatele, pořadové číslo PANu, ATC,
+  čítač pokusů o PIN a celý strom tagů. Nikdy PIN, nikdy kryptogram ani
+  transakce, nikdy zápis — stejné bajty, jaké přečte bezkontaktní terminál.
+  Operace pracoviště „Read card data"; `m5.nfc.emv.read()` ve Functions
+  (výsledek `.emv`).
+- **Čtení e-ID / e-pasu (MRTD, ICAO 9303).** BAC — přístup řízený samotným
+  dokladem, klíč z MRZ (číslo dokladu + datum narození + platnost) nebo z CAN,
+  který držitel zadá — pak DG1 (údaje MRZ) a DG2 (fotografie) přes zabezpečené
+  zprávy (secure messaging). Vlastní doklad držitele, jen ke čtení. DES/3DES +
+  retail MAC + odvození klíče BAC + secure messaging jsou bajtově shodné
+  s ukázkovým příkladem ICAO 9303 (jednotkové testy). Operace pracoviště „Read
+  document (BAC)"; `m5.nfc.eid.read({ mrz | documentNumber+dateOfBirth+dateOfExpiry | can, readPhoto })`
+  (výsledek `.mrtd` s `mrzInfo` a fotografií).
+- **apduTemplates — op i apdu šablony.** `m5mobile.define.apduTemplates` zná
+  nově dva druhy položek: **op šablony** `{ label, op:"emv-read"|"eid-read", args? }`
+  (celé dynamické čtení) a **apdu šablony** `{ label, apdu }` (surové SELECTy pro
+  APDU konzoli). V konzoli (Android › Define) tlačítko **Load standard EMV /
+  e-ID templates** sestaví a uloží standardní sadu
+  (`client/src/lib/nfc/apdu-templates.ts`) jedním klikem — nahradí případnou
+  stávající `apduTemplates` po potvrzení, ostatní definice ponechá.
+
+### Změněno
+- `m5.nfc` má nově obory `emv` a `eid` (JS i Python); op id na drátě jsou
+  `emv-read` a `mrtd-read`.
+- Verze 6.5.0 (package.json); instalátor zůstává 3.2.0.
 
 ### Opraveno
 - Konzole na úzké obrazovce: řádek statistik Functions (`white-space:
@@ -21,6 +66,17 @@ projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
   tlačítkem *Uložit* v patičce bubliny (od 6.2 tam není odkaz
   `a[download]`); `nfc-workbench` odpovídá na `/api/define` sám, místo
   pokusu o spojení na `localhost:3000`.
+
+### Bezpečnost
+- **Jen ke čtení, žádné klonování.** EMV i e-ID / e-pas se pouze čtou: žádný
+  PIN (čítač pokusů o PIN se jen přečte, nikdy neověřuje), žádný kryptogram ani
+  transakce (`GENERATE AC` se nespouští), žádný zápis a žádné klonování.
+- **BAC je přístup řízený samotným dokladem.** e-ID / e-pas otevře jen ten, kdo
+  doklad fyzicky drží a přečte jeho MRZ nebo CAN — není to čtení cizího pasu „ze
+  vzduchu".
+- **Držitel čte svou vlastní kartu / doklad, model dostane jen data zpět.**
+  `m5.nfc.emv` / `eid` nikdy nedostanou klíč ani PIN; server ořízne, co se vrací
+  (host-nfc: jen držitelova / veřejná pole, fotografie omezená).
 
 ## [6.4.1] – 2026-09-30
 

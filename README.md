@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **6.4.1** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **6.5.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 6.4.1 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-6.4.1.pdf`](docs/site/m5cet-dokumentace-6.4.1.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 6.5.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-6.5.0.pdf`](docs/site/m5cet-dokumentace-6.5.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -775,7 +775,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.4.1        | aktuální — Android: server odmítne obřad passkeye pro build, jehož certifikát nezná, **dřív než passkey vznikne** (žádné osiřelé passkeye); uživatelské jméno `XXXX-XXXX-XXXX-XXXX` (0-9 a-z A-Z), název passkeye `ISO2-scramble(Jméno-Příjmení-Mobil)` |
+| 6.5.0        | aktuální — **NFC: čtení EMV a e-ID / e-pasu** (web i Android) jen ke čtení: EMV `PPSE → AID → GPO → záznamy` (AIDy, štítky, maskovaný PAN, platnost, držitel, ATC…), e-ID / e-pas přes BAC z MRZ nebo CAN (DG1 + DG2) — bez PINu, kryptogramu, transakce a zápisu, žádné klonování; `m5.nfc.emv` / `m5.nfc.eid` ve Functions, `apduTemplates` s op i apdu šablonami a tlačítkem v konzoli; `/příkaz` v chatu se ukáže hned jako pulzující bublina s indikátorem, výsledek nahradí indikátor na místě |
+| 6.4.1        | Android: server odmítne obřad passkeye pro build, jehož certifikát nezná, **dřív než passkey vznikne** (žádné osiřelé passkeye); uživatelské jméno `XXXX-XXXX-XXXX-XXXX` (0-9 a-z A-Z), název passkeye `ISO2-scramble(Jméno-Příjmení-Mobil)` |
 | 6.4.0        | **registrace** (web i Android): jméno, příjmení, země (vyhledávací výběr), mobil a e-mail — server ověří mobil (ne pevnou linku/VoIP), doménu e-mailu (DNS, MX) a jedinečnost; údaje jen šifrovaně v trezoru, server drží pouze HMAC otisky. **Passkeys na Androidu**: dialog s certifikátem aplikace, v konzoli kontrola `assetlinks.json` (z internetu i u Googlu) a důvěra certifikátu jedním klikem, `update.sh` upozorní na blokující proxy |
 | 6.3.0        | **NFC nástroj** (web i Android): výběr čtečky (interní/USB/Bluetooth), technologie karet (MIFARE Classic/Ultralight/NTAG/DESFire, NDEF, ISO 14443/15693, FeliCa, EMV a e-ID veřejně), čtení/zápis/změna UID/emulace, šifrovaná **karta M5Cet** se záznamy (záloha passkey/identity, jednorázová zpráva, Wi-Fi, kontakt, server+místnost…) a její vizuální builder; `m5.nfc` ve Functions ovládá čtečku volajícího obousměrně (uzly builderu, balíčky `nfc-scan`/`nfc-uid`/`nfc-open`). `npm run android:release`, `update.sh --android` |
 | 6.2.0        | **detail zprávy** (i) s časovou osou všech stavů a potvrzeními od každého příjemce, **skrýt / smazat** zprávu ve svém pohledu (audit `message`, bez obsahu), **náhled mapy** u polohy (dlaždice přes server, karta Map preview v konzoli), náhledy médií a patička příloh — web i Android; Android: panel lidí jako na webu, propojení s kontakty telefonu, šablony vzhledu s barevnými variantami, Nástroje jako plovoucí okno, mikrofon nahrává, opravy registrace QR a passkeys, PIN pro každou obrazovku |

@@ -54,21 +54,101 @@ Common to every card: **scan**, **read UID**, **read public data**, and a raw
   authenticating with its key (AES / 2K3DES). On the web this needs a reader with
   an auth stack; where it isn't reachable the op is shown disabled.
 - **ISO 15693** — read/write blocks. **FeliCa** — read systems and public
-  services. **EMV** — PPSE and the application labels, and where freely readable
-  the masked PAN and expiry, read-only. **e-ID** — the document type and the data
-  the holder unlocks by typing the CAN/MRZ; no cloning, no signing.
+  services. **EMV** — *Read card data* (6.5): PPSE → SELECT AID → GET PROCESSING
+  OPTIONS → READ RECORD, then the records' BER-TLV is parsed and labelled, all
+  read-only — see [EMV — read the card data](#emv--read-the-card-data).
+  **e-ID / e-passport** — *Read document (BAC)* (6.5): opens the holder's own
+  chip with BAC from the MRZ or CAN and reads DG1 + DG2 — see
+  [e-ID / e-passport (BAC)](#e-id--e-passport-bac). No cloning, no signing.
 - **ISO-DEP / EMV — Application template** — next to *Select application* a
-  filled-down-arrow button drops a menu of the operator's saved APDU templates
-  (`m5mobile.define.apduTemplates`, an array of `{ label, apdu }` — see
-  [define.md](define.md)). Picking one sends its APDU over ISO-DEP and shows the
-  response, on the phone (a popup menu) and on the web (a dropdown that loads and
-  runs it in the APDU console). Read-only, standard SELECT/APDU — the same stance
-  as the rest of the tool.
+  filled-down-arrow button drops a menu of the operator's saved templates
+  (`m5mobile.define.apduTemplates` — see [define.md](define.md) and
+  [APDU templates](#apdu-templates)). Two kinds of entry: an **op template**
+  (`{ label, op }`) runs a full dynamic read (`emv-read` / `eid-read`); an
+  **apdu template** (`{ label, apdu }`) sends one raw SELECT/command over
+  ISO-DEP and shows the response. On the phone it is a popup menu, on the web a
+  dropdown that loads and runs the entry in the APDU console. Read-only,
+  standard SELECT/APDU — the same stance as the rest of the tool.
 - **Change UID** — set the UID / block 0 on a Gen1a (backdoor) or Gen2 magic
   card you own.
 
 Where an operation isn't reachable on the chosen reader it is disabled with a
 clear note rather than faked; reading the UID and public data always works.
+
+### EMV — read the card data
+
+The workbench op **Read card data** (6.5) reads an EMV payment card exactly the
+way a contactless terminal's first pass does, and no further. The sequence is
+the standard one:
+
+1. **PPSE** — `SELECT 2PAY.SYS.DDF01` lists the card's applications (the AIDs,
+   by the directory's priority). With no PPSE the reader falls back to the
+   well-known candidate AIDs and keeps the ones the card selects.
+2. **SELECT AID** — opens each application (up to four) and reads its FCI.
+3. **GET PROCESSING OPTIONS** — sends the card its PDOL filled with a terminal's
+   default data objects so it returns its AIP and AFL. These defaults only make
+   the card hand over its records; they do **not** authorise or run a transaction.
+4. **READ RECORD** — reads the files the AFL points at (a light scan of the first
+   files when there is no AFL).
+
+The records' BER-TLV is parsed into a full tag tree, and the known elements are
+labelled (`client/src/lib/nfc/emv-tags.ts`): the **AIDs** and **application
+labels**, the **PAN** (tag 5A or the Track 2 equivalent, shown masked), the
+**expiry** (5F24) and effective date (5F25), the **cardholder** name (5F20,
+absent on most contactless cards), the **issuer country** (5F28), the **PAN
+sequence** (5F34), the **ATC** (9F36) and the **PIN-try counter** (9F17, read as
+a value — never checked), plus the PPSE's TLV as a readable tree.
+
+**Strict read-only.** The reader never verifies a PIN (the PIN-try counter is
+read, never a VERIFY), never runs `GENERATE AC` for a real transaction, never
+reads a cryptogram, and writes nothing — the same bytes a payment terminal sees
+on the holder's own card. No cloning.
+
+### e-ID / e-passport (BAC)
+
+The workbench op **Read document (BAC)** (6.5) reads an electronic passport or
+e-ID (an MRTD, ICAO 9303) — the holder's own document, read-only.
+
+**BAC (Basic Access Control)** is the *document's own* access control: the chip
+will not answer until the reader proves it can already see the document's
+printed data. The BAC key is derived from three fields of the **MRZ** (the
+machine-readable zone printed in the document) — the **document number**, the
+**date of birth** and the **date of expiry** — or from a **CAN** (the 6-digit
+Card Access Number) the holder supplies. So a document can only be read by
+someone who physically holds it and can read its MRZ or CAN; it is not an
+over-the-air read of a stranger's passport.
+
+After BAC opens the chip, the reader reads over **secure messaging** (encrypted
+and MAC'd with the session keys BAC establishes): **EF.COM** (which data groups
+are present), **DG1** (the MRZ fields — document code and number, issuer,
+nationality, name, date of birth, sex, date of expiry) and **DG2** (the face
+image, JPEG or JPEG 2000). The DES/3DES, retail MAC, BAC key derivation and
+secure messaging are byte-exact to the ICAO 9303 worked example and unit-tested
+(`client/src/lib/nfc/cards/bac.ts`, `des.ts`). PACE-only documents (no BAC) are
+reported, not forced. Read-only: it reads only the groups a border reader reads,
+and writes nothing.
+
+### APDU templates
+
+The **Application template** button reads one array define,
+`m5mobile.define.apduTemplates` — the operator's saved set of templates. An
+entry is one of two shapes:
+
+- **op template** — `{ label, op: "emv-read" | "eid-read", args? }`. Runs a full
+  dynamic read; the reader drives the whole sequence itself (PDOL / AFL for EMV,
+  BAC + secure messaging for e-ID). `args` carries defaults, e.g.
+  `{ readPhoto: false }` for an MRZ-only e-ID read.
+- **apdu template** — `{ label, apdu: "<hex>" }`. Sends one raw command (a
+  `SELECT`, a `GET PROCESSING OPTIONS`…) over ISO-DEP and shows the response in
+  the APDU console.
+
+Either may also carry `aid` (for display) and `note` (one line). The standard
+set — PPSE/PSE selects, the common payment-scheme AIDs, the eMRTD application
+and EF selects, plus the full `emv-read` / `eid-read` ops —
+ships in `client/src/lib/nfc/apdu-templates.ts`
+(`STANDARD_APDU_TEMPLATES`). An operator loads it in one click with
+**Console › Android › Define › Load standard EMV / e-ID templates** (see
+[define.md](define.md)); the console writes it as the `apduTemplates` constant.
 
 ## The M5Cet card
 
@@ -142,11 +222,48 @@ const uid  = await m5.nfc.card();              // identity only
 const dump = await m5.nfc.read({ what: "dump", secretRef: "keyset:door" });
 await m5.nfc.write({ what: "ndef", ndef: [{ kind: "uri", data: "https://…" }] });
 const card = await m5.nfc.m5.read({ records: ["wifi"] });
+const pay  = await m5.nfc.emv.read();          // 6.5: result.emv
+const doc  = await m5.nfc.eid.read({ mrz });   // 6.5: result.mrtd
 const readers = await m5.nfc.enum();           // readers + technologies now
 ```
 
-Python mirrors it (`await m5.nfc.scan()`, `m5.nfc.m5.read(...)`). `m5.nfc.reader(kind)`
+Python mirrors it (`await m5.nfc.scan()`, `m5.nfc.m5.read(...)`,
+`m5.nfc.emv.read(...)`, `m5.nfc.eid.read(...)`). `m5.nfc.reader(kind)`
 scopes the following calls to a reader.
+
+### `m5.nfc.emv` / `m5.nfc.eid` (6.5)
+
+Both drive the caller's reader the same bidirectional way — read-only, the
+holder's own card or document, the public / holder data a terminal reads.
+
+```js
+// EMV — read the card's applications and records (PPSE → AID → GPO → records).
+const { emv } = await m5.nfc.emv.read({ timeout, maxApps });
+//   emv.scheme                         Visa / Mastercard / Amex / … (top AID)
+//   emv.aids   : string[]              every AID the card offered (hex)
+//   emv.apps[] : { aid, label, scheme, pan, panMasked, expiry, cardholder,
+//                  effective, issuerCountry, panSequence, atc, pinTryCounter,
+//                  tags[{ tag, name, value, hex }] }
+//   emv.tree                           the PPSE's TLV as a readable tree
+
+// e-ID / e-passport — open with BAC (the holder's MRZ or CAN) and read DG1 + DG2.
+const { mrtd } = await m5.nfc.eid.read({
+  mrz,                                  // the whole MRZ (BAC key derived from it)
+  // or the three BAC fields instead:  documentNumber, dateOfBirth, dateOfExpiry (YYMMDD)
+  // or a Card Access Number:          can
+  readPhoto,                            // default true; false = DG1 only, faster
+});
+//   mrtd.access     : "none" | "bac" | "pace"
+//   mrtd.dataGroups : string[]         e.g. ["DG1","DG2"]
+//   mrtd.mrzInfo    : { documentNumber, issuer, nationality, surname,
+//                       givenNames, dateOfBirth, sex, dateOfExpiry, … }
+//   mrtd.photo, mrtd.photoMime         the face image, base64 (when readPhoto)
+```
+
+The op ids on the wire are `emv-read` and `mrtd-read`. The server bounds what
+comes back (`server/functions/host-nfc.ts`): holder / public string fields only
+(capped), and the photo capped (base64 ≤ ~400 kB). As everywhere in `m5.nfc`,
+no key or PIN ever reaches the model, and nothing is written.
 
 Under the hood an `m5.nfc` call becomes an **NFC interaction** on the run's live
 channel (the same one prompts and forms use): the model's `await` suspends, the
@@ -179,4 +296,7 @@ Card reads and writes happen on the device. An M5Cet record's plaintext never
 reaches the server; only the ciphertext rides a tag. A tag is exposed media —
 anyone in proximity can read its bytes — so the PIN or the account key is the
 real boundary, not the air gap. The tool does no key recovery and no payment-card
-cloning; EMV and e-ID are public-presence reads only.
+cloning. EMV is read-only — the holder's own card, the public / holder data a
+terminal reads, never a PIN, cryptogram or transaction; an e-ID / e-passport is
+opened only with the holder's own MRZ or CAN (the document's own BAC) and read,
+never written.

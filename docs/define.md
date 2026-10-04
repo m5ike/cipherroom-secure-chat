@@ -82,17 +82,33 @@ set) over its max size is refused at save with the offending names.
 ## Example: NFC application templates
 
 The NFC tool's **Application template** button (next to *Select application* on
-ISO-DEP and EMV cards) reads one array define, `apduTemplates`:
+ISO-DEP and EMV cards) reads one array define, `apduTemplates`. An entry is one
+of two shapes — an **op template** that runs a full dynamic read, or an **apdu
+template** that sends one raw command (6.5):
 
 ```jsonc
 // a "constant" array of objects
 [
-  { "label": "PPSE",     "apdu": "00A404000E325041592E5359532E444446303100" },
-  { "label": "Visa AID", "apdu": "00A4040007A000000003101000" }
+  // op template — the reader drives the whole read (emv-read / eid-read)
+  { "label": "Scan / Read EMV — all", "op": "emv-read",
+    "note": "PPSE → every application → GPO → records; parse the holder data." },
+  { "label": "Scan / Read e-passport — no photo", "op": "eid-read",
+    "args": { "readPhoto": false } },
+  // apdu template — one raw SELECT / command sent over ISO-DEP
+  { "label": "SELECT PPSE", "apdu": "00A404000E325041592E5359532E444446303100" },
+  { "label": "SELECT AID — Visa", "apdu": "00A4040007A000000003101000",
+    "aid": "A0000000031010" }
 ]
 ```
 
-Each item is `{ label, apdu }` — `apdu` a hex string (a `bytes` entry
-materializes to lowercase hex). Picking one from the dropdown sends that APDU
-over ISO-DEP and shows the response, on the phone and on the web. See
+Each item carries a `label` and either an `op` (`emv-read` / `eid-read`, with an
+optional `args`) or an `apdu` (a hex string), plus an optional `aid` and `note`.
+Picking an op template runs the full read; picking an apdu template sends that
+APDU over ISO-DEP and shows the response, on the phone and on the web.
+
+You do not have to type the set in by hand: the Define builder has a **Load
+standard EMV / e-ID templates** button (operator right) that builds this
+`apduTemplates` constant from the standard set
+(`client/src/lib/nfc/apdu-templates.ts`) and saves it — replacing an existing
+`apduTemplates` after a confirm, keeping every other definition. See
 [`nfc.md`](nfc.md).
