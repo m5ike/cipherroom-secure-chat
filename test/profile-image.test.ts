@@ -6,15 +6,15 @@
 // byte cap, and a data: URL that lies about its format is refused.
 
 import { describe, it, expect } from "vitest";
-import { checkImageDataUrl, cropFor, encodeUnderCap, sniffImage, stripImageMetadata, toDataUrl } from "../client/src/lib/profile/image";
+import { checkImageDataUrl, cropFor, encodeUnderCap, imageSize, MAX_SIDE, sniffImage, stripImageMetadata, toDataUrl } from "../client/src/lib/profile/image";
 import { PROFILE_LIMITS } from "../client/src/lib/profile/model";
 
 const ascii = (s: string) => Array.from(s, (c) => c.charCodeAt(0));
 const text = (b: Uint8Array) => String.fromCharCode(...b);
 const seg = (marker: number, body: number[]) => [0xff, marker, ((body.length + 2) >> 8) & 0xff, (body.length + 2) & 0xff, ...body];
 
-/** A JPEG skeleton: JFIF, an EXIF block with a GPS position, a comment, a table, the scan. */
-function jpegWithExif(): Uint8Array {
+/** A JPEG skeleton: JFIF, an EXIF block with a GPS position, a comment, a table, a frame of w × h, the scan. */
+function jpegWithExif(w = 64, h = 48): Uint8Array {
   return Uint8Array.from([
     0xff, 0xd8,
     ...seg(0xe0, [...ascii("JFIF\0"), 1, 1, 0, 0, 1, 0, 1, 0, 0]),
@@ -22,6 +22,7 @@ function jpegWithExif(): Uint8Array {
     ...seg(0xed, ascii("Photoshop 3.0\0IPTC by-line: Alice")),
     ...seg(0xfe, ascii("taken at home")),
     ...seg(0xdb, [0, ...Array.from({ length: 64 }, (_, i) => i + 1)]),
+    ...seg(0xc0, [8, h >> 8, h & 0xff, w >> 8, w & 0xff, 1, 1, 0x11, 0]),
     ...seg(0xda, [1, 1, 0, 0, 0x3f, 0]),
     0x12, 0x34, 0xff, 0x00, 0x56, 0xff, 0xd0, 0x78,
     0xff, 0xd9,
@@ -125,6 +126,20 @@ describe("a data: URL handed to the server or a peer", () => {
     big.set(jpegWithExif().slice(0, 4));
     expect(checkImageDataUrl(toDataUrl(big, "image/jpeg"), PROFILE_LIMITS.avatarBytes)).toBe("");
     expect(checkImageDataUrl(toDataUrl(jpegWithExif(), "image/jpeg"), 10)).toBe("");
+  });
+});
+
+describe("the size in pixels", () => {
+  it("is read from the header of a JPEG, a PNG and a WebP", () => {
+    expect(imageSize(jpegWithExif(640, 480))).toEqual({ w: 640, h: 480 });
+    expect(imageSize(pngWithText())).toEqual({ w: 1, h: 1 });
+    expect(imageSize(webpWithExif())).toEqual({ w: 1, h: 1 });
+  });
+
+  it("a small file that would unpack into an enormous picture is refused", () => {
+    expect(checkImageDataUrl(toDataUrl(jpegWithExif(30_000, 30_000), "image/jpeg"), PROFILE_LIMITS.avatarBytes)).toBe("");
+    expect(checkImageDataUrl(toDataUrl(jpegWithExif(MAX_SIDE + 1, 10), "image/jpeg"), PROFILE_LIMITS.avatarBytes)).toBe("");
+    expect(checkImageDataUrl(toDataUrl(jpegWithExif(1200, 400), "image/jpeg"), PROFILE_LIMITS.avatarBytes)).not.toBe("");
   });
 });
 

@@ -3,7 +3,8 @@
 // only: no EXIF, no GPS, no camera serial) at a capped size, then encoded as
 // JPEG under a byte cap. stripImageMetadata() is the second line: it drops
 // every metadata segment / chunk from a JPEG, PNG or WebP byte for byte. The
-// server runs it (checkImageDataUrl) over whatever a PUT hands it, too.
+// server runs it (checkImageDataUrl) over whatever a PUT hands it, and a
+// receiver over a member's pictures — with their size in pixels capped.
 
 import { PROFILE_LIMITS } from "./model";
 
@@ -122,6 +123,37 @@ export function stripImageMetadata(bytes: Uint8Array): Uint8Array | null {
   }
 }
 
+/** Width and height from the header (JPEG SOF, PNG IHDR, WebP VP8 / VP8L / VP8X), or null. */
+export function imageSize(b: Uint8Array): { w: number; h: number } | null {
+  const mime = sniffImage(b);
+  if (mime === "image/png") return b.length >= 24 ? { w: ((b[16] << 24) | (b[17] << 16) | (b[18] << 8) | b[19]) >>> 0, h: ((b[20] << 24) | (b[21] << 16) | (b[22] << 8) | b[23]) >>> 0 } : null;
+  if (mime === "image/webp") {
+    const tag = String.fromCharCode(b[12], b[13], b[14], b[15]);
+    if (tag === "VP8X" && b.length >= 30) return { w: 1 + (b[24] | (b[25] << 8) | (b[26] << 16)), h: 1 + (b[27] | (b[28] << 8) | (b[29] << 16)) };
+    if (tag === "VP8 " && b.length >= 30) return { w: (b[26] | (b[27] << 8)) & 0x3fff, h: (b[28] | (b[29] << 8)) & 0x3fff };
+    if (tag === "VP8L" && b.length >= 25) return { w: 1 + (b[21] | ((b[22] & 0x3f) << 8)), h: 1 + ((b[22] >> 6) | (b[23] << 2) | ((b[24] & 0x0f) << 10)) };
+    return null;
+  }
+  if (mime !== "image/jpeg") return null;
+  let i = 2;
+  while (i + 9 < b.length) {
+    if (b[i] !== 0xff) return null;
+    const marker = b[i + 1];
+    if (marker === 0xff) { i += 1; continue; }
+    if ((marker >= 0xd0 && marker <= 0xd7) || marker === 0x01) { i += 2; continue; }
+    const len = (b[i + 2] << 8) | b[i + 3];
+    // Start of frame (baseline, progressive, …): not DHT (C4), JPG (C8) or DAC (CC).
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) return { h: (b[i + 5] << 8) | b[i + 6], w: (b[i + 7] << 8) | b[i + 8] };
+    if (marker === 0xda || len < 2) return null;
+    i += 2 + len;
+  }
+  return null;
+}
+
+/** No side longer than this, and no more pixels than that: a small file may not unpack into gigabytes. */
+export const MAX_SIDE = 4096;
+export const MAX_PIXELS = 8_000_000;
+
 /* ------------------------------------------------------------ data URLs */
 
 function b64encode(bytes: Uint8Array): string {
@@ -153,6 +185,8 @@ export function checkImageDataUrl(value: unknown, maxBytes: number): string {
   let bytes: Uint8Array;
   try { bytes = b64decode(m[2]); } catch { return ""; }
   if (bytes.length > maxBytes || sniffImage(bytes) !== m[1]) return "";
+  const size = imageSize(bytes);
+  if (!size || size.w < 1 || size.h < 1 || size.w > MAX_SIDE || size.h > MAX_SIDE || size.w * size.h > MAX_PIXELS) return "";
   const clean = stripImageMetadata(bytes);
   return clean ? toDataUrl(clean, m[1] as ImageMime) : "";
 }

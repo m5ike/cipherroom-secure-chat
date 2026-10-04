@@ -14,7 +14,8 @@
 // rev), so a member who leaves and comes back (or sits in two rooms) costs
 // one small frame. Android mirrors this in ProfileRoom.java.
 
-import { normalizeShared, type SharedProfile } from "./model";
+import { normalizeShared, PROFILE_LIMITS, type SharedProfile } from "./model";
+import { checkImageDataUrl } from "./image";
 
 export const PROFILE_CAP = "profile";
 
@@ -29,7 +30,12 @@ export function parseProfileFrame(p: Record<string, unknown>): ProfileFrame | nu
   if (p.want === true) return rev ? { rev, want: true } : null;
   if (p.profile !== undefined) {
     const profile = normalizeShared(p.profile);
-    return profile && rev ? { rev, profile } : null;
+    if (!profile || !rev) return null;
+    // A member's pictures are checked like the server checks them: their real
+    // format, their size in pixels (no decompression bombs), no metadata.
+    if (profile.avatar) { const a = checkImageDataUrl(profile.avatar, PROFILE_LIMITS.avatarBytes); if (a) profile.avatar = a; else delete profile.avatar; }
+    if (profile.cover) { const c = checkImageDataUrl(profile.cover, PROFILE_LIMITS.coverBytes); if (c) profile.cover = c; else delete profile.cover; }
+    return { rev, profile };
   }
   return { rev };
 }
@@ -158,6 +164,8 @@ export class ProfileExchange {
   /** Peers whose hello offered the "profile" capability. */
   readonly peers = new Set<string>();
   private answered = new Map<string, number>();
+  /** The version asked of each peer: only that copy is taken (nobody fills the cache unasked). */
+  private asked = new Map<string, string>();
 
   constructor(readonly profiles: RoomProfiles, private readonly deps: ExchangeDeps) {}
 
@@ -181,8 +189,16 @@ export class ProfileExchange {
       if (!(await this.deps.send(peerId, fullFrameOf(view)))) await this.deps.send(peerId, fullFrameOf(view, true));
       return;
     }
-    if (frame.profile) { this.profiles.received(peerId, owner, frame); return; }
-    if (this.profiles.announced(peerId, owner, frame.rev) === "request") await this.deps.send(peerId, { rev: frame.rev, want: true });
+    if (frame.profile) {
+      if (this.asked.get(peerId) !== frame.rev) return;
+      this.asked.delete(peerId);
+      this.profiles.received(peerId, owner, frame);
+      return;
+    }
+    if (this.profiles.announced(peerId, owner, frame.rev) === "request") {
+      this.asked.set(peerId, frame.rev);
+      await this.deps.send(peerId, { rev: frame.rev, want: true });
+    }
   }
 
   /** My profile changed (saved, signed in or out): everyone who speaks profiles learns the new rev. */
@@ -193,6 +209,7 @@ export class ProfileExchange {
 
   forget(peerId: string): void {
     this.peers.delete(peerId);
+    this.asked.delete(peerId);
     this.profiles.forget(peerId);
     for (const key of this.answered.keys()) if (key.startsWith(`${peerId}|`)) this.answered.delete(key);
   }

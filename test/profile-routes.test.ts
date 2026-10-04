@@ -77,6 +77,7 @@ const JPEG_WITH_GPS = toDataUrl(Uint8Array.from([
   0xff, 0xd8,
   ...seg(0xe0, [...ascii("JFIF\0"), 1, 1, 0, 0, 1, 0, 1, 0, 0]),
   ...seg(0xe1, [...ascii("Exif\0\0"), ...ascii("GPSLatitude=49.1951")]),
+  ...seg(0xc0, [8, 0, 64, 0, 64, 1, 1, 0x11, 0]),
   ...seg(0xda, [1, 1, 0, 0, 0x3f, 0]),
   0x11, 0x22, 0xff, 0xd9,
 ]), "image/jpeg");

@@ -115,6 +115,23 @@ describe("the exchange", () => {
     expect(wire.filter((w) => w.frame.profile)).toHaveLength(2);
   });
 
+  it("a copy nobody asked for is not taken (no filling the cache unasked)", async () => {
+    const view = viewFor(aliceCard(), "room");
+    const { bob } = pair({ aliceView: () => view });
+    await bob.receive("alice", { rev: view.rev, profile: view });
+    expect(bob.profiles.of("alice")).toBeNull();
+  });
+
+  it("a member's pictures are checked on arrival: one that would unpack into an enormous picture is dropped", () => {
+    // A 1×1 PNG whose header claims 30000 × 30000 pixels.
+    const bytes = Uint8Array.from(atob(PNG.split(",")[1]), (c) => c.charCodeAt(0));
+    bytes.set([0, 0, 0x75, 0x30, 0, 0, 0x75, 0x30], 16);
+    const bomb = `data:image/png;base64,${btoa(String.fromCharCode(...bytes))}`;
+    const frame = parseProfileFrame({ rev: "abc", profile: { v: 1, nickname: "Bob", avatar: bomb, cover: PNG, fields: [] } })!;
+    expect(frame.profile?.avatar).toBeUndefined();
+    expect(frame.profile?.cover).toBe(PNG);
+  });
+
   it("a frame too large for the channel goes again without the background", async () => {
     const card = aliceCard();
     const { bob, alice } = pair({ aliceView: () => viewFor(card, "room"), fit: (f) => !f.profile?.cover });

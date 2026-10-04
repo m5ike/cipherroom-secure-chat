@@ -127,6 +127,8 @@ public final class ProfileRoom {
         private final Deps deps;
         private final Set<String> peers = new HashSet<>();
         private final Map<String, Long> answered = new HashMap<>();
+        /** The version asked of each peer: only that copy is taken (nobody fills the cache unasked). */
+        private final Map<String, String> asked = new HashMap<>();
         /** The account key that signed each peer's messages (a public profile's is compared with it). */
         private final Map<String, String> accountKeys = new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -158,8 +160,14 @@ public final class ProfileRoom {
                 if (!deps.send(peerId, full(view, false))) deps.send(peerId, full(view, true));
                 return;
             }
-            if (frame.has("profile")) { cache.received(peerId, owner, frame); return; }
+            if (frame.has("profile")) {
+                if (!rev.equals(asked.get(peerId))) return;
+                asked.remove(peerId);
+                cache.received(peerId, owner, frame);
+                return;
+            }
             if ("request".equals(cache.announced(peerId, owner, rev))) {
+                asked.put(peerId, rev);
                 try { deps.send(peerId, new JSONObject().put("rev", rev).put("want", true)); } catch (JSONException ignored) { }
             }
         }
@@ -176,6 +184,7 @@ public final class ProfileRoom {
 
         public void forget(String peerId) {
             peers.remove(peerId);
+            asked.remove(peerId);
             accountKeys.remove(peerId);
             cache.forget(peerId);
             answered.keySet().removeIf(k -> k.startsWith(peerId + "|"));

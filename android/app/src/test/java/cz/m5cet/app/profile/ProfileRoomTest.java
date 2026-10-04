@@ -146,6 +146,16 @@ public class ProfileRoomTest {
     }
 
     @Test
+    public void aCopyNobodyAskedForIsNotTaken() throws Exception {
+        JSONObject view = ProfileCard.viewFor(ProfileCardTest.card(), "room");
+        Wire w = new Wire();
+        w.node("alice", new JSONObject[] { view });
+        ProfileRoom.Exchange bob = w.node("bob", new JSONObject[] { null });
+        bob.receive("alice", ProfileRoom.parse(ProfileRoom.full(view, false)));
+        assertNull(bob.cache.of("alice"));
+    }
+
+    @Test
     public void nobodyPlantsACopyUnderSomeoneElsesVersion() throws Exception {
         ProfileRoom.Cache cache = new ProfileRoom.Cache(8);
         JSONObject real = ProfileCard.viewFor(ProfileCardTest.card(), "room");
