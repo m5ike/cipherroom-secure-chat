@@ -90,6 +90,45 @@ public final class VaultMedia {
             .appendPath(m.roomKey == null ? "" : m.roomKey).appendPath(m.id).appendPath(m.fileName == null ? "file" : m.fileName).build();
     }
 
+    /* ------------------------------------------------ 6.10: bytes in memory */
+
+    /** Something the app made (a card read's JSON) that another app may read: kept in memory only, never on the disk. */
+    private static final class Blob {
+        final String name, mime; final byte[] data; final long at;
+        Blob(String name, String mime, byte[] data) { this.name = name; this.mime = mime; this.data = data; this.at = System.currentTimeMillis(); }
+    }
+
+    private static final long BLOB_TTL = 60 * 60 * 1000L;
+    private static final int BLOB_MAX = 8;
+    private static final java.util.LinkedHashMap<String, Blob> BLOBS = new java.util.LinkedHashMap<>();
+
+    /**
+     * 6.10: content://<package>.files/mem/<token>/<name> — bytes the app made
+     * (a template run's output) for the share sheet, served from memory like a
+     * vault file is decrypted into a pipe: no plaintext on the disk. The token is
+     * random; the newest few are kept, each for an hour, only while the app is
+     * unlocked, and the URI works only for the intent's receiver.
+     */
+    public static Uri memoryUri(M5 app, String name, String mime, byte[] data) {
+        String token = cz.m5cet.app.security.Crypto.hex(cz.m5cet.app.security.Crypto.random(16));
+        synchronized (BLOBS) {
+            long now = System.currentTimeMillis();
+            BLOBS.values().removeIf(b -> now - b.at > BLOB_TTL);
+            while (BLOBS.size() >= BLOB_MAX) BLOBS.remove(BLOBS.keySet().iterator().next());
+            BLOBS.put(token, new Blob(name, mime, data));
+        }
+        return new Uri.Builder().scheme("content").authority(app.getPackageName() + ".files").appendPath("mem").appendPath(token).appendPath(name).build();
+    }
+
+    private static Blob blob(Uri uri) {
+        java.util.List<String> p = uri.getPathSegments();
+        if (p.size() != 3 || !"mem".equals(p.get(0))) return null;
+        synchronized (BLOBS) {
+            Blob b = BLOBS.get(p.get(1));
+            return b == null || System.currentTimeMillis() - b.at > BLOB_TTL ? null : b;
+        }
+    }
+
     /** Where the camera app writes a photo: content://<package>.files/capture (a file in the cache, deleted after sending). */
     public static Uri captureUri(M5 app) {
         java.io.File f = captureFile(app);
@@ -143,6 +182,8 @@ public final class VaultMedia {
         }
 
         @Override public String getType(Uri uri) {
+            Blob b = blob(uri);
+            if (b != null) return b.mime;
             ChatMessage m = find(uri);
             return m == null || m.fileMime == null ? "application/octet-stream" : m.fileMime;
         }
@@ -157,6 +198,17 @@ public final class VaultMedia {
             if (!"r".equals(mode)) throw new FileNotFoundException("read only");
             M5 app = M5.get();
             if (app.lock.isLocked()) throw new FileNotFoundException("the app is locked");
+            Blob b = blob(uri);
+            if (b != null) {
+                try {
+                    ParcelFileDescriptor[] pipe = ParcelFileDescriptor.createPipe();
+                    Io.bg(() -> {
+                        try (OutputStream out = new ParcelFileDescriptor.AutoCloseOutputStream(pipe[1])) { out.write(b.data); }
+                        catch (IOException e) { Log.w("media", "provider: " + e.getMessage()); }
+                    });
+                    return pipe[0];
+                } catch (IOException e) { throw new FileNotFoundException(e.getMessage()); }
+            }
             ChatMessage m = find(uri);
             if (m == null) throw new FileNotFoundException("no such file");
             try {
@@ -170,8 +222,10 @@ public final class VaultMedia {
         }
 
         @Override public Cursor query(Uri uri, String[] projection, String sel, String[] args, String sort) {
-            ChatMessage m = find(uri);
             MatrixCursor c = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
+            Blob b = blob(uri);
+            if (b != null) { c.addRow(new Object[]{b.name, (long) b.data.length}); return c; }
+            ChatMessage m = find(uri);
             if (m != null) c.addRow(new Object[]{m.fileName, m.fileSize});
             return c;
         }

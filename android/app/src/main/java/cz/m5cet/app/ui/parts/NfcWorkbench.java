@@ -24,13 +24,18 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import cz.m5cet.app.M5;
+import cz.m5cet.app.chat.ChatMessage;
+import cz.m5cet.app.chat.Payloads;
 import cz.m5cet.app.chat.RoomSession;
 import cz.m5cet.app.core.Io;
 import cz.m5cet.app.core.Log;
+import cz.m5cet.app.nfc.Apdu;
+import cz.m5cet.app.nfc.ApduTemplates;
 import cz.m5cet.app.nfc.CardOps;
 import cz.m5cet.app.nfc.CardService;
 import cz.m5cet.app.nfc.InternalReader;
@@ -40,6 +45,8 @@ import cz.m5cet.app.nfc.Nfc;
 import cz.m5cet.app.nfc.NfcCatalog;
 import cz.m5cet.app.nfc.Records;
 import cz.m5cet.app.nfc.TagTech;
+import cz.m5cet.app.nfc.TemplateRunner;
+import cz.m5cet.app.nfc.TemplateViews;
 import cz.m5cet.app.nfc.UsbReader;
 import cz.m5cet.app.ui.Expr;
 import cz.m5cet.app.ui.Icons;
@@ -58,6 +65,12 @@ import cz.m5cet.app.ui.Ui;
  * Because an android {@link Tag} is only valid for a moment after it is
  * discovered, an operation is ARMED and then runs on the next tap; a plain scan
  * just detects and shows the card.
+ *
+ * 6.10: application templates (m5mobile.define › apduTemplates) — a picker by
+ * card type; a template runs ALL its steps ({@link TemplateRunner}, read-only)
+ * with a progress line and Cancel; its output switches between in / out, raw,
+ * JSON and readable ({@link TemplateViews}, card numbers masked unless asked
+ * for) and is shared, forwarded to a user or kept as a note to myself.
  */
 final class NfcWorkbench extends ScrollView implements Renderer.Slot {
     private final MainActivity a;
@@ -77,6 +90,15 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
     private JSONObject lastDump;             // the last MIFARE Classic dump, for restore
     private MrtdReader.Options armedMrtdOpts; // the BAC key/MRZ gathered before an eid-read tap
     private String tech = NfcCatalog.UNKNOWN;
+
+    // 6.10: application templates — the one waiting for the tap, the run in progress (Cancel), the last run's output.
+    private ApduTemplates.Template armedTemplate;
+    private volatile TemplateRunner running;
+    private TemplateRunner.Result lastRun;
+    private String outView = TemplateViews.READABLE;
+    /** G-19: the card number and track data as read — only when the user turns it on (off again for each run). */
+    private boolean fullPan;
+    private TextView progressText;
 
     NfcWorkbench(MainActivity a) {
         super(a);
@@ -133,6 +155,15 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         m5.addView(open);
         m5.addView(build, bl);
         box.addView(m5);
+
+        // 6.10: an application template — a complete read of a card type — whatever the card turns out to be.
+        LinearLayout tplRow = new LinearLayout(a);
+        tplRow.setGravity(Gravity.CENTER);
+        tplRow.setPadding(0, Ui.dp(a, 6), 0, Ui.dp(a, 2));
+        TextView tpl = ToolPanels.button(a, app().t("nfc.tpl.open"), "square-arrow-down", false);
+        tpl.setOnClickListener(this::showAppTemplates);
+        tplRow.addView(tpl);
+        box.addView(tplRow);
 
         opsBox = new LinearLayout(a);
         opsBox.setOrientation(LinearLayout.VERTICAL);
@@ -289,6 +320,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
                 return;
             }
             case "write-uid": if (armedArg != null) { CardOps.writeUid(tag, armedArg, keys()); out.put("done", app().t("nfc.done.uid")); } else out.put("note", app().t("nfc.uid.need")); break;
+            case "app-template": runTemplateOnTag(tag, card); return;
             case "m5-read": openM5Records(container); return;
             case "conn-read": openConnection(conn); return;
             case "conn-write": writeConnection(tag); out.put("done", app().t("nfc.done.written")); break;
@@ -721,165 +753,170 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
             if (card != null) drawCardInfo(card);
             refreshStatus(MrtdReader.summary(mrtd));
-            JSONArray images = mrtd.optJSONArray("images");
-
-            // The holder (DG1) beside the face.
-            LinearLayout box = cardBox();
-            JSONObject m = mrtd.optJSONObject("mrzInfo");
-            if (m == null) {
-                box.addView(ToolPanels.label(a, app().t("nfc.eid.title"), 16, fg, true));
-                box.addView(ToolPanels.label(a, mrtd.optString("message", MrtdReader.summary(mrtd)), 13, muted, false));
-            } else {
-                LinearLayout row = new LinearLayout(a);
-                row.setOrientation(LinearLayout.HORIZONTAL);
-                String photo = mrtd.optString("photo", "");
-                if (!photo.isEmpty()) {
-                    LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                    pl.setMarginEnd(Ui.dp(a, 12));
-                    row.addView(picture(photo, mrtd.optString("photoMime", ""), null, 104, muted), pl);
-                }
-                LinearLayout col = new LinearLayout(a);
-                col.setOrientation(LinearLayout.VERTICAL);
-                String name = (m.optString("givenNames", "") + " " + m.optString("surname", "")).trim();
-                col.addView(ToolPanels.label(a, name.isEmpty() ? app().t("nfc.eid.title") : name, 16, fg, true));
-                addField(col, app().t("nfc.eid.docCode"), m.optString("documentCode", ""), fg);
-                addField(col, app().t("nfc.eid.docNumber"), m.optString("documentNumber", ""), fg);
-                addField(col, app().t("nfc.eid.nationality"), m.optString("nationality", ""), fg);
-                addField(col, app().t("nfc.eid.issuer"), m.optString("issuer", ""), fg);
-                addField(col, app().t("nfc.eid.dobLabel"), m.optString("dateOfBirth", ""), fg);
-                addField(col, app().t("nfc.eid.sex"), m.optString("sex", ""), fg);
-                addField(col, app().t("nfc.eid.expiryLabel"), m.optString("dateOfExpiry", ""), fg);
-                row.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-                box.addView(row);
-            }
-            // How the chip was opened: BAC, or PACE (and what the chip offers).
-            String access = mrtd.optString("access", "none");
-            JSONObject pace = mrtd.optJSONObject("pace");
-            if (!access.equals("none")) {
-                String how = access.toUpperCase(java.util.Locale.ROOT);
-                if (access.equals("pace") && pace != null) how += " · " + pace.optString("protocol", "") + (pace.has("password") ? " · " + pace.optString("password").toUpperCase(java.util.Locale.ROOT) : "");
-                addField(box, app().t("nfc.eid.access"), how, fg);
-            }
-            if (pace != null && pace.optBoolean("supported") && !pace.optBoolean("used")) {
-                String offered = pace.optString("protocol", "PACE");
-                if (pace.has("parameterId")) {
-                    String p = cz.m5cet.app.nfc.Pace.PARAMETERS.get(pace.optInt("parameterId"));
-                    offered += " (" + (p != null ? p : String.valueOf(pace.optInt("parameterId"))) + ")";
-                }
-                addField(box, app().t("nfc.eid.paceOffered"), offered + " — " + app().t("nfc.eid.notUsed"), muted);
-            }
-            JSONArray dg = mrtd.optJSONArray("dataGroups");
-            if (dg != null && dg.length() > 0) addField(box, app().t("nfc.eid.dataGroups"), join(dg, ", "), muted);
-            if (m != null && !mrtd.optString("message", "").isEmpty()) box.addView(ToolPanels.label(a, mrtd.optString("message"), 12, muted, false));
-            result.addView(box);
-
-            // DG11 — personal details.
-            JSONObject p = mrtd.optJSONObject("personal");
-            if (p != null && p.length() > 0) {
-                LinearLayout b = cardBox();
-                b.addView(ToolPanels.label(a, app().t("nfc.eid.personal"), 15, fg, true));
-                String[][] keys = {{"fullName", "nfc.eid.fullName"}, {"otherNames", "nfc.eid.otherNames"}, {"personalNumber", "nfc.eid.personalNumber"},
-                    {"fullDateOfBirth", "nfc.eid.fullDob"}, {"placeOfBirth", "nfc.eid.placeOfBirth"}, {"address", "nfc.eid.address"}, {"telephone", "nfc.eid.telephone"},
-                    {"profession", "nfc.eid.profession"}, {"title", "nfc.eid.titleField"}, {"personalSummary", "nfc.eid.summary"},
-                    {"otherTravelDocuments", "nfc.eid.otherDocs"}, {"custody", "nfc.eid.custody"}};
-                for (String[] k : keys) addField(b, app().t(k[1]), valueOf(p, k[0]), fg);
-                result.addView(b);
-            }
-            // DG12 — document details.
-            JSONObject d = mrtd.optJSONObject("document");
-            if (d != null && d.length() > 0) {
-                LinearLayout b = cardBox();
-                b.addView(ToolPanels.label(a, app().t("nfc.eid.document"), 15, fg, true));
-                String[][] keys = {{"issuingAuthority", "nfc.eid.issuingAuthority"}, {"dateOfIssue", "nfc.eid.dateOfIssue"}, {"otherPersons", "nfc.eid.otherPersons"},
-                    {"endorsements", "nfc.eid.endorsements"}, {"taxExit", "nfc.eid.taxExit"}, {"personalizationTime", "nfc.eid.personalized"},
-                    {"personalizationDevice", "nfc.eid.personalizationDevice"}};
-                for (String[] k : keys) addField(b, app().t(k[1]), valueOf(d, k[0]), fg);
-                result.addView(b);
-            }
-            // DG13 / DG16.
-            String optional = mrtd.optString("optional", "");
-            JSONArray notify = mrtd.optJSONArray("personsToNotify");
-            if (!optional.isEmpty() || (notify != null && notify.length() > 0)) {
-                LinearLayout b = cardBox();
-                if (!optional.isEmpty()) { b.addView(sectionTitle(app().t("nfc.eid.optional"))); b.addView(ToolPanels.label(a, optional, 13, fg, false)); }
-                if (notify != null && notify.length() > 0) {
-                    b.addView(sectionTitle(app().t("nfc.eid.notify")));
-                    for (int i = 0; i < notify.length(); i++) b.addView(ToolPanels.label(a, notify.optString(i), 13, fg, false));
-                }
-                result.addView(b);
-            }
-
-            // Every picture the document holds (the face beside the holder is not repeated).
-            if (images != null && images.length() > 0) {
-                LinearLayout strip = new LinearLayout(a);
-                strip.setOrientation(LinearLayout.HORIZONTAL);
-                boolean faceShown = m != null && !mrtd.optString("photo", "").isEmpty();
-                int shown = 0;
-                for (int i = 0; i < images.length(); i++) {
-                    JSONObject img = images.optJSONObject(i);
-                    if (img == null) continue;
-                    if (faceShown && "face".equals(img.optString("kind")) && img.optString("data").equals(mrtd.optString("photo"))) { faceShown = false; continue; }
-                    LinearLayout.LayoutParams il = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                    il.setMarginEnd(Ui.dp(a, 10));
-                    int w = "document".equals(img.optString("kind")) ? 200 : 120;
-                    strip.addView(picture(img.optString("data"), img.optString("mime"), imageLabel(img.optString("kind")) + " · " + img.optString("group"), w, muted), il);
-                    shown++;
-                }
-                if (shown > 0) {
-                    LinearLayout b = cardBox();
-                    b.addView(ToolPanels.label(a, app().t("nfc.eid.images") + " (" + shown + ")", 15, fg, true));
-                    android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(a);
-                    hs.setPadding(0, Ui.dp(a, 6), 0, 0);
-                    hs.addView(strip);
-                    b.addView(hs);
-                    result.addView(b);
-                }
-            }
-
-            // The security objects: passive authentication, the signer, the protocols, the AA key.
-            JSONObject sec = mrtd.optJSONObject("security");
-            if (sec != null && sec.length() > 0) {
-                LinearLayout b = cardBox();
-                b.addView(ToolPanels.label(a, app().t("nfc.eid.security"), 15, fg, true));
-                String passive = sec.optString("passive", "");
-                if (!passive.isEmpty()) {
-                    int ok = Ui.color(a, "@success", 0xFF2e7d32), bad = Ui.color(a, "@danger", 0xFFdc2626);
-                    String text = passive.equals("ok") ? "✓ " + app().t("nfc.eid.passiveOk") : passive.equals("mismatch") ? "✗ " + app().t("nfc.eid.passiveBad") : "— " + app().t("nfc.eid.passiveNone");
-                    addField(b, app().t("nfc.eid.passive"), text, passive.equals("ok") ? ok : passive.equals("mismatch") ? bad : muted);
-                }
-                addField(b, app().t("nfc.eid.hash"), sec.optString("hashAlgorithm", ""), fg);
-                JSONObject signer = sec.optJSONObject("signer");
-                if (signer != null) {
-                    addField(b, app().t("nfc.eid.signer"), signer.optString("subject", ""), fg);
-                    addField(b, app().t("nfc.eid.signedBy"), signer.optString("issuer", ""), fg);
-                    String validity = (signer.optString("notBefore", "") + " – " + signer.optString("notAfter", "")).trim();
-                    if (!validity.equals("–")) addField(b, app().t("nfc.eid.validity"), validity, fg);
-                    addField(b, app().t("nfc.eid.serial"), signer.optString("serial", ""), muted);
-                }
-                JSONArray protocols = sec.optJSONArray("protocols");
-                if (protocols != null && protocols.length() > 0) addField(b, app().t("nfc.eid.protocols"), join(protocols, ", "), fg);
-                addField(b, app().t("nfc.eid.aaKey"), sec.optString("activeAuthKey", ""), fg);
-                addField(b, app().t("nfc.eid.lds"), mrtd.optString("ldsVersion", ""), muted);
-                addField(b, app().t("nfc.eid.unicode"), mrtd.optString("unicodeVersion", ""), muted);
-                result.addView(b);
-            }
-
-            // Every file tried, and how it went.
-            JSONArray files = mrtd.optJSONArray("files");
-            if (files != null && files.length() > 0) {
-                LinearLayout b = cardBox();
-                b.addView(ToolPanels.label(a, app().t("nfc.eid.files"), 15, fg, true));
-                for (int i = 0; i < files.length(); i++) {
-                    JSONObject f = files.optJSONObject(i);
-                    if (f != null) b.addView(fileRow(f, fg, muted));
-                }
-                result.addView(b);
-            }
-
-            LinearLayout note = cardBox();
-            note.addView(ToolPanels.label(a, app().t("nfc.readonly.help"), 12, muted, false));
-            result.addView(note);
+            drawMrtd(result, mrtd, fg, muted);
         });
+    }
+
+    /** The e-ID read (6.6) drawn into {@code into} — the workbench's own read, and an e-ID template's readable view (6.10). */
+    private void drawMrtd(LinearLayout into, JSONObject mrtd, int fg, int muted) {
+        JSONArray images = mrtd.optJSONArray("images");
+
+        // The holder (DG1) beside the face.
+        LinearLayout box = cardBox();
+        JSONObject m = mrtd.optJSONObject("mrzInfo");
+        if (m == null) {
+            box.addView(ToolPanels.label(a, app().t("nfc.eid.title"), 16, fg, true));
+            box.addView(ToolPanels.label(a, mrtd.optString("message", MrtdReader.summary(mrtd)), 13, muted, false));
+        } else {
+            LinearLayout row = new LinearLayout(a);
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            String photo = mrtd.optString("photo", "");
+            if (!photo.isEmpty()) {
+                LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                pl.setMarginEnd(Ui.dp(a, 12));
+                row.addView(picture(photo, mrtd.optString("photoMime", ""), null, 104, muted), pl);
+            }
+            LinearLayout col = new LinearLayout(a);
+            col.setOrientation(LinearLayout.VERTICAL);
+            String name = (m.optString("givenNames", "") + " " + m.optString("surname", "")).trim();
+            col.addView(ToolPanels.label(a, name.isEmpty() ? app().t("nfc.eid.title") : name, 16, fg, true));
+            addField(col, app().t("nfc.eid.docCode"), m.optString("documentCode", ""), fg);
+            addField(col, app().t("nfc.eid.docNumber"), m.optString("documentNumber", ""), fg);
+            addField(col, app().t("nfc.eid.nationality"), m.optString("nationality", ""), fg);
+            addField(col, app().t("nfc.eid.issuer"), m.optString("issuer", ""), fg);
+            addField(col, app().t("nfc.eid.dobLabel"), m.optString("dateOfBirth", ""), fg);
+            addField(col, app().t("nfc.eid.sex"), m.optString("sex", ""), fg);
+            addField(col, app().t("nfc.eid.expiryLabel"), m.optString("dateOfExpiry", ""), fg);
+            row.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+            box.addView(row);
+        }
+        // How the chip was opened: BAC, or PACE (and what the chip offers).
+        String access = mrtd.optString("access", "none");
+        JSONObject pace = mrtd.optJSONObject("pace");
+        if (!access.equals("none")) {
+            String how = access.toUpperCase(java.util.Locale.ROOT);
+            if (access.equals("pace") && pace != null) how += " · " + pace.optString("protocol", "") + (pace.has("password") ? " · " + pace.optString("password").toUpperCase(java.util.Locale.ROOT) : "");
+            addField(box, app().t("nfc.eid.access"), how, fg);
+        }
+        if (pace != null && pace.optBoolean("supported") && !pace.optBoolean("used")) {
+            String offered = pace.optString("protocol", "PACE");
+            if (pace.has("parameterId")) {
+                String p = cz.m5cet.app.nfc.Pace.PARAMETERS.get(pace.optInt("parameterId"));
+                offered += " (" + (p != null ? p : String.valueOf(pace.optInt("parameterId"))) + ")";
+            }
+            addField(box, app().t("nfc.eid.paceOffered"), offered + " — " + app().t("nfc.eid.notUsed"), muted);
+        }
+        JSONArray dg = mrtd.optJSONArray("dataGroups");
+        if (dg != null && dg.length() > 0) addField(box, app().t("nfc.eid.dataGroups"), join(dg, ", "), muted);
+        if (m != null && !mrtd.optString("message", "").isEmpty()) box.addView(ToolPanels.label(a, mrtd.optString("message"), 12, muted, false));
+        into.addView(box);
+
+        // DG11 — personal details.
+        JSONObject p = mrtd.optJSONObject("personal");
+        if (p != null && p.length() > 0) {
+            LinearLayout b = cardBox();
+            b.addView(ToolPanels.label(a, app().t("nfc.eid.personal"), 15, fg, true));
+            String[][] keys = {{"fullName", "nfc.eid.fullName"}, {"otherNames", "nfc.eid.otherNames"}, {"personalNumber", "nfc.eid.personalNumber"},
+                {"fullDateOfBirth", "nfc.eid.fullDob"}, {"placeOfBirth", "nfc.eid.placeOfBirth"}, {"address", "nfc.eid.address"}, {"telephone", "nfc.eid.telephone"},
+                {"profession", "nfc.eid.profession"}, {"title", "nfc.eid.titleField"}, {"personalSummary", "nfc.eid.summary"},
+                {"otherTravelDocuments", "nfc.eid.otherDocs"}, {"custody", "nfc.eid.custody"}};
+            for (String[] k : keys) addField(b, app().t(k[1]), valueOf(p, k[0]), fg);
+            into.addView(b);
+        }
+        // DG12 — document details.
+        JSONObject d = mrtd.optJSONObject("document");
+        if (d != null && d.length() > 0) {
+            LinearLayout b = cardBox();
+            b.addView(ToolPanels.label(a, app().t("nfc.eid.document"), 15, fg, true));
+            String[][] keys = {{"issuingAuthority", "nfc.eid.issuingAuthority"}, {"dateOfIssue", "nfc.eid.dateOfIssue"}, {"otherPersons", "nfc.eid.otherPersons"},
+                {"endorsements", "nfc.eid.endorsements"}, {"taxExit", "nfc.eid.taxExit"}, {"personalizationTime", "nfc.eid.personalized"},
+                {"personalizationDevice", "nfc.eid.personalizationDevice"}};
+            for (String[] k : keys) addField(b, app().t(k[1]), valueOf(d, k[0]), fg);
+            into.addView(b);
+        }
+        // DG13 / DG16.
+        String optional = mrtd.optString("optional", "");
+        JSONArray notify = mrtd.optJSONArray("personsToNotify");
+        if (!optional.isEmpty() || (notify != null && notify.length() > 0)) {
+            LinearLayout b = cardBox();
+            if (!optional.isEmpty()) { b.addView(sectionTitle(app().t("nfc.eid.optional"))); b.addView(ToolPanels.label(a, optional, 13, fg, false)); }
+            if (notify != null && notify.length() > 0) {
+                b.addView(sectionTitle(app().t("nfc.eid.notify")));
+                for (int i = 0; i < notify.length(); i++) b.addView(ToolPanels.label(a, notify.optString(i), 13, fg, false));
+            }
+            into.addView(b);
+        }
+
+        // Every picture the document holds (the face beside the holder is not repeated).
+        if (images != null && images.length() > 0) {
+            LinearLayout strip = new LinearLayout(a);
+            strip.setOrientation(LinearLayout.HORIZONTAL);
+            boolean faceShown = m != null && !mrtd.optString("photo", "").isEmpty();
+            int shown = 0;
+            for (int i = 0; i < images.length(); i++) {
+                JSONObject img = images.optJSONObject(i);
+                if (img == null) continue;
+                if (faceShown && "face".equals(img.optString("kind")) && img.optString("data").equals(mrtd.optString("photo"))) { faceShown = false; continue; }
+                LinearLayout.LayoutParams il = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                il.setMarginEnd(Ui.dp(a, 10));
+                int w = "document".equals(img.optString("kind")) ? 200 : 120;
+                strip.addView(picture(img.optString("data"), img.optString("mime"), imageLabel(img.optString("kind")) + " · " + img.optString("group"), w, muted), il);
+                shown++;
+            }
+            if (shown > 0) {
+                LinearLayout b = cardBox();
+                b.addView(ToolPanels.label(a, app().t("nfc.eid.images") + " (" + shown + ")", 15, fg, true));
+                android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(a);
+                hs.setPadding(0, Ui.dp(a, 6), 0, 0);
+                hs.addView(strip);
+                b.addView(hs);
+                into.addView(b);
+            }
+        }
+
+        // The security objects: passive authentication, the signer, the protocols, the AA key.
+        JSONObject sec = mrtd.optJSONObject("security");
+        if (sec != null && sec.length() > 0) {
+            LinearLayout b = cardBox();
+            b.addView(ToolPanels.label(a, app().t("nfc.eid.security"), 15, fg, true));
+            String passive = sec.optString("passive", "");
+            if (!passive.isEmpty()) {
+                int ok = Ui.color(a, "@success", 0xFF2e7d32), bad = Ui.color(a, "@danger", 0xFFdc2626);
+                String text = passive.equals("ok") ? "✓ " + app().t("nfc.eid.passiveOk") : passive.equals("mismatch") ? "✗ " + app().t("nfc.eid.passiveBad") : "— " + app().t("nfc.eid.passiveNone");
+                addField(b, app().t("nfc.eid.passive"), text, passive.equals("ok") ? ok : passive.equals("mismatch") ? bad : muted);
+            }
+            addField(b, app().t("nfc.eid.hash"), sec.optString("hashAlgorithm", ""), fg);
+            JSONObject signer = sec.optJSONObject("signer");
+            if (signer != null) {
+                addField(b, app().t("nfc.eid.signer"), signer.optString("subject", ""), fg);
+                addField(b, app().t("nfc.eid.signedBy"), signer.optString("issuer", ""), fg);
+                String validity = (signer.optString("notBefore", "") + " – " + signer.optString("notAfter", "")).trim();
+                if (!validity.equals("–")) addField(b, app().t("nfc.eid.validity"), validity, fg);
+                addField(b, app().t("nfc.eid.serial"), signer.optString("serial", ""), muted);
+            }
+            JSONArray protocols = sec.optJSONArray("protocols");
+            if (protocols != null && protocols.length() > 0) addField(b, app().t("nfc.eid.protocols"), join(protocols, ", "), fg);
+            addField(b, app().t("nfc.eid.aaKey"), sec.optString("activeAuthKey", ""), fg);
+            addField(b, app().t("nfc.eid.lds"), mrtd.optString("ldsVersion", ""), muted);
+            addField(b, app().t("nfc.eid.unicode"), mrtd.optString("unicodeVersion", ""), muted);
+            into.addView(b);
+        }
+
+        // Every file tried, and how it went.
+        JSONArray files = mrtd.optJSONArray("files");
+        if (files != null && files.length() > 0) {
+            LinearLayout b = cardBox();
+            b.addView(ToolPanels.label(a, app().t("nfc.eid.files"), 15, fg, true));
+            for (int i = 0; i < files.length(); i++) {
+                JSONObject f = files.optJSONObject(i);
+                if (f != null) b.addView(fileRow(f, fg, muted));
+            }
+            into.addView(b);
+        }
+
+        LinearLayout note = cardBox();
+        note.addView(ToolPanels.label(a, app().t("nfc.readonly.help"), 12, muted, false));
+        into.addView(note);
     }
 
     /** One file of the document: its name and id, its status (read / protected (EAC) / absent / error), size and hash check. */
@@ -1098,31 +1135,417 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         }
     }
 
+    /* ------------------------------------------- 6.10 application templates */
+
+    /** Text the screen shows of a view at most (Share gives the whole output). */
+    private static final int SCREEN_MAX = 80_000;
+    /** A text message's limit (Payloads takes 64 000); longer goes as a file. */
+    private static final int MESSAGE_MAX = 60_000;
+    /** The share sheet's text; longer goes as a file (a binder transaction has its limit). */
+    private static final int SHARE_TEXT_MAX = 100_000;
+    /** A note's inline file (the history keeps a data URL below 800 000 characters); larger goes to the vault. */
+    private static final int NOTE_INLINE_MAX = 560 * 1024;
+
+    private String t(String key) { return app().t(key); }
+
+    private TemplateViews.Labels labels() { return this::t; }
+
     /**
-     * 6.3: the "Application template" dropdown — a menu of the operator's saved APDU
-     * application templates (m5mobile.define › apduTemplates), each an object
-     * { label, apdu } with apdu a hex string. Picking one arms and sends it like
-     * Select application (a SELECT/APDU over ISO-DEP) and shows the response.
+     * 6.10: the "Application template" picker — m5mobile.define › apduTemplates
+     * (the contract client/src/lib/nfc/apdu-templates.ts), grouped by the card
+     * type each reads, with its note. A template with a problem (a bad command,
+     * a command that is not a read — G-18) is listed, not runnable, and says
+     * why; an older entry (≤ 6.9: command lines, one whole read) is marked.
+     * Picking one runs ALL its steps on the next card.
      */
     private void showAppTemplates(android.view.View anchor) {
-        org.json.JSONArray tpls = app().define == null ? null : app().define.arr("apduTemplates");
-        if (tpls == null || tpls.length() == 0) { a.flash("", app().t("nfc.tpl.none"), "info"); return; }
-        android.widget.PopupMenu menu = new android.widget.PopupMenu(a, anchor);
-        for (int i = 0; i < tpls.length(); i++) {
-            org.json.JSONObject t = tpls.optJSONObject(i);
-            String label = t == null ? "" : t.optString("label", t.optString("name", ""));
-            menu.getMenu().add(0, i, i, label.isEmpty() ? "APDU " + (i + 1) : label);
+        JSONArray raw = app().define == null ? null : app().define.arr("apduTemplates");
+        List<ApduTemplates.Template> all = ApduTemplates.parse(raw);
+        if (all.isEmpty()) { a.flash("", t("nfc.tpl.none"), "info"); return; }
+        LinearLayout list = new LinearLayout(a);
+        list.setOrientation(LinearLayout.VERTICAL);
+        list.setPadding(Ui.dp(a, 12), Ui.dp(a, 4), Ui.dp(a, 12), Ui.dp(a, 8));
+        android.app.AlertDialog[] dialog = new android.app.AlertDialog[1];
+        String[] groups = {ApduTemplates.EMV, ApduTemplates.EMRTD, ApduTemplates.DESFIRE, ApduTemplates.ISO7816, ""};
+        for (String g : groups) {
+            boolean head = false;
+            for (ApduTemplates.Template tp : all) {
+                String c = ApduTemplates.CARDS.contains(tp.cardType()) ? tp.cardType() : "";
+                if (!c.equals(g)) continue;
+                if (!head) { list.addView(sectionTitle(t("nfc.tpl.group." + (g.isEmpty() ? "other" : g)))); head = true; }
+                list.addView(templateRow(tp, () -> { if (dialog[0] != null) dialog[0].dismiss(); pickTemplate(tp); }));
+            }
         }
-        menu.setOnMenuItemClickListener(item -> {
-            org.json.JSONObject t = tpls.optJSONObject(item.getItemId());
-            String hex = t == null ? "" : t.optString("apdu", t.optString("apduHex", "")).replaceAll("[^0-9A-Fa-f]", "");
-            byte[] apdu = hex.length() >= 8 && hex.length() % 2 == 0 ? CardOps.unhex(hex) : new byte[0];
-            if (apdu.length == 0) { a.flash("", app().t("nfc.tpl.bad"), "warn"); return true; }
-            a.flash("", t.optString("label", t.optString("name", "APDU")), "info");
-            arm("select-aid", -1, apdu);
-            return true;
+        ScrollView sv = new ScrollView(a);
+        sv.addView(list);
+        dialog[0] = new android.app.AlertDialog.Builder(a).setTitle(t("nfc.tpl.title")).setView(sv).setNegativeButton(t("nav.close"), null).create();
+        dialog[0].show();
+    }
+
+    /** One template in the picker: its label, its note, how many steps (or that it is an older entry), and why it cannot run. */
+    private View templateRow(ApduTemplates.Template tp, Runnable pick) {
+        int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY), danger = Ui.color(a, "@danger", 0xFFdc2626);
+        LinearLayout row = new LinearLayout(a);
+        row.setOrientation(LinearLayout.VERTICAL);
+        row.setPadding(Ui.dp(a, 10), Ui.dp(a, 8), Ui.dp(a, 10), Ui.dp(a, 8));
+        row.addView(ToolPanels.label(a, tp.label, 15, fg, true));
+        if (!tp.note.isEmpty()) row.addView(ToolPanels.label(a, tp.note, 12, muted, false));
+        String meta = tp.legacy == null ? t("nfc.tpl.steps").replace("{0}", String.valueOf(tp.steps.size()))
+            : t("op".equals(tp.legacy) ? "nfc.tpl.legacyOp" : "nfc.tpl.legacy");
+        row.addView(ToolPanels.label(a, meta, 11, muted, false));
+        if (!tp.runnable()) {
+            String why = tp.problems.isEmpty() ? "—" : String.join("; ", tp.problems);
+            row.addView(ToolPanels.label(a, t("nfc.tpl.cantRun").replace("{0}", why), 12, danger, false));
+            row.setAlpha(0.6f);
+            row.setEnabled(false);
+        } else {
+            row.setBackground(Ui.ripple(Ui.shape(Color.TRANSPARENT, Ui.dp(a, 12), 0, 0), Ui.alpha(Ui.color(a, "@primary", Color.BLUE), 0.2f)));
+            row.setOnClickListener(v -> pick.run());
+        }
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = Ui.dp(a, 2);
+        row.setLayoutParams(lp);
+        return row;
+    }
+
+    /** An e-ID template asks the holder's key first (its args preset what to read); the others wait for the card. */
+    private void pickTemplate(ApduTemplates.Template tp) {
+        ApduTemplates.Step eid = tp.eidRead();
+        if (eid != null) {
+            askMrtd(eid.args.optBoolean("readPhoto", true), eid.args.optBoolean("all", true), opts -> startTemplate(tp, opts));
+            return;
+        }
+        startTemplate(tp, null);
+    }
+
+    /** On a permitted USB reader the template runs at once; on the phone's antenna with the next card. */
+    private void startTemplate(ApduTemplates.Template tp, MrtdReader.Options opts) {
+        armedTemplate = tp;
+        armedMrtdOpts = opts;
+        if (NfcCatalog.READER_USB.equals(app().settings.str("nfc.reader"))) {
+            UsbReader u = cz.m5cet.app.nfc.ModelNfcDevice.permittedUsb(a);
+            if (u != null) { runTemplateOnUsb(u, tp, opts); return; }
+        }
+        arm("app-template");
+        refreshStatus(tp.label + " — " + t("nfc.tpl.hold"));
+    }
+
+    /** On the NFC thread: the card's ISO-DEP, every step of the armed template. */
+    private void runTemplateOnTag(Tag tag, JSONObject card) throws IOException {
+        ApduTemplates.Template tp = armedTemplate;
+        if (tp == null) { showCard(card, null); return; }
+        android.nfc.tech.IsoDep iso = android.nfc.tech.IsoDep.get(tag);
+        if (iso == null) { showCard(card, null); refreshStatus(t("nfc.tpl.noIsoDep")); return; }
+        iso.connect();
+        try {
+            // A deep read is a few hundred APDUs; give each one time.
+            iso.setTimeout(5000);
+            runTemplate(tp, armedMrtdOpts, iso::transceive, card);
+        } finally {
+            try { iso.close(); } catch (IOException ignored) { }
+        }
+        // The output stays on the screen: the next card is a new scan.
+        scanning = false;
+    }
+
+    private void runTemplateOnUsb(UsbReader u, ApduTemplates.Template tp, MrtdReader.Options opts) {
+        refreshStatus(t("nfc.tpl.usb"));
+        Io.bg(() -> {
+            try {
+                if (!u.connect()) { refreshStatus(t("nfc.tpl.noCard")); return; }
+                JSONObject card = new JSONObject().put("label", u.name());
+                byte[] atr = u.atr();
+                if (atr != null && atr.length > 0) card.put("atr", Apdu.hex(atr));
+                runTemplate(tp, opts, u::transceive, card);
+            } catch (IOException | org.json.JSONException e) {
+                refreshStatus("⚠ " + (e.getMessage() == null ? "error" : e.getMessage()));
+            } finally {
+                u.disconnect();
+            }
         });
-        menu.show();
+    }
+
+    /** Runs every step (on the caller's thread — never the UI's), with the progress on the screen, then shows the output. */
+    private void runTemplate(ApduTemplates.Template tp, MrtdReader.Options opts, Apdu.Transceiver card, JSONObject cardInfo) {
+        TemplateRunner runner = new TemplateRunner(tp).mrtd(opts).listener(new TemplateRunner.Listener() {
+            @Override public void onStep(int n, int total, String label) { Io.main(() -> progress(n, total, label)); }
+            @Override public void onExchange(TemplateRunner.Exchange e) { }
+        });
+        running = runner;
+        Io.main(() -> showProgress(tp));
+        TemplateRunner.Result r = runner.run(card);
+        r.cardInfo = cardInfo;
+        running = null;
+        armedTemplate = null;
+        Io.main(() -> {
+            lastRun = r;
+            outView = TemplateViews.READABLE;
+            fullPan = false;
+            showRun();
+        });
+    }
+
+    private void showProgress(ApduTemplates.Template tp) {
+        result.removeAllViews();
+        opsBox.removeAllViews();
+        int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
+        LinearLayout box = cardBox();
+        box.addView(ToolPanels.label(a, tp.label, 16, fg, true));
+        progressText = ToolPanels.label(a, "…", 13, muted, false);
+        progressText.setPadding(0, Ui.dp(a, 4), 0, 0);
+        box.addView(progressText);
+        TextView cancel = ToolPanels.button(a, t("nfc.tpl.cancel"), "x", false);
+        cancel.setOnClickListener(v -> { TemplateRunner r = running; if (r != null) r.cancel(); v.setEnabled(false); v.setAlpha(0.5f); });
+        LinearLayout.LayoutParams cl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cl.topMargin = Ui.dp(a, 10);
+        box.addView(cancel, cl);
+        result.addView(box);
+    }
+
+    private void progress(int n, int total, String label) {
+        String s = t("nfc.tpl.running").replace("{0}", String.valueOf(n)).replace("{1}", String.valueOf(total)).replace("{2}", label);
+        if (progressText != null) progressText.setText(s);
+        status.setText(s);
+    }
+
+    /** How the run went, in one line. */
+    private String runSummary(TemplateRunner.Result r) {
+        String sym = "error".equals(r.status()) ? "✗ " : "warn".equals(r.status()) ? "⚠ " : "✓ ";
+        if (r.cancelled) return sym + t("nfc.tpl.cancelled");
+        if (r.error != null) return sym + t("nfc.tpl.failed").replace("{0}", r.error);
+        return sym + t("nfc.tpl.done").replace("{0}", String.valueOf(r.exchanges.size())).replace("{1}", String.format(java.util.Locale.ROOT, "%.1f", r.ms / 1000.0));
+    }
+
+    /**
+     * The output of a run: the template and how it went, the three icons
+     * (Share, Forward to a user, Keep for myself), the switch of the views (in
+     * / out · raw · JSON · readable) and the view — card numbers masked unless
+     * the user turns on the full data (G-19).
+     */
+    private void showRun() {
+        TemplateRunner.Result r = lastRun;
+        if (r == null) return;
+        result.removeAllViews();
+        opsBox.removeAllViews();
+        int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
+        int statusColor = "error".equals(r.status()) ? Ui.color(a, "@danger", 0xFFdc2626) : "warn".equals(r.status()) ? Ui.color(a, "@warning", 0xFFb45309) : Ui.color(a, "@success", 0xFF2e7d32);
+        LinearLayout head = cardBox();
+        LinearLayout top = new LinearLayout(a);
+        top.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout col = new LinearLayout(a);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.addView(ToolPanels.label(a, r.label, 16, fg, true));
+        col.addView(ToolPanels.label(a, runSummary(r), 12, statusColor, false));
+        top.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        top.addView(iconButton("share-2", t("nfc.out.share"), v -> shareOutput()));
+        top.addView(iconButton("forward", t("nfc.out.forward"), v -> forwardOutput()));
+        top.addView(iconButton("lock", t("nfc.out.toMyself"), v -> keepForMyself()));
+        head.addView(top);
+        LinearLayout.LayoutParams sl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        sl.topMargin = Ui.dp(a, 12);
+        head.addView(viewSwitch(), sl);
+        if (TemplateViews.masks(r)) {
+            CheckBox full = new CheckBox(a);
+            full.setText(t("nfc.out.fullPan"));
+            full.setTextColor(fg);
+            full.setChecked(fullPan);
+            full.setOnCheckedChangeListener((b, on) -> { fullPan = on; showRun(); });
+            head.addView(full);
+            if (!fullPan) head.addView(ToolPanels.label(a, t("nfc.out.masked"), 12, muted, false));
+        }
+        result.addView(head);
+        drawView(result, r);
+        refreshStatus(runSummary(r));
+    }
+
+    /** The four views as a segmented switch (the design's colours); readable after a run. */
+    private View viewSwitch() {
+        int primary = Ui.color(a, "@primary", Color.BLUE);
+        LinearLayout seg = new LinearLayout(a);
+        seg.setPadding(Ui.dp(a, 3), Ui.dp(a, 3), Ui.dp(a, 3), Ui.dp(a, 3));
+        seg.setBackground(Ui.shape(Ui.color(a, "@surfaceVariant", Color.LTGRAY), Ui.dp(a, 999), 0, 0));
+        String[][] views = {{TemplateViews.IO, "nfc.out.io"}, {TemplateViews.RAW, "nfc.out.raw"}, {TemplateViews.JSON, "nfc.out.json"}, {TemplateViews.READABLE, "nfc.out.readable"}};
+        for (String[] v : views) {
+            boolean on = v[0].equals(outView);
+            TextView b = new TextView(a);
+            b.setText(t(v[1]));
+            b.setGravity(Gravity.CENTER);
+            b.setSingleLine(true);
+            b.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            b.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13);
+            b.setTypeface(on ? Typeface.DEFAULT_BOLD : Typeface.DEFAULT);
+            b.setTextColor(on ? Ui.color(a, "@onPrimary", Color.WHITE) : Ui.color(a, "@onSurface", Color.BLACK));
+            b.setPadding(Ui.dp(a, 4), Ui.dp(a, 8), Ui.dp(a, 4), Ui.dp(a, 8));
+            b.setBackground(on ? Ui.shape(primary, Ui.dp(a, 999), 0, 0) : Ui.ripple(Ui.shape(Color.TRANSPARENT, Ui.dp(a, 999), 0, 0), Ui.alpha(primary, 0.2f)));
+            b.setSelected(on);
+            b.setContentDescription(t(v[1]));
+            b.setOnClickListener(x -> { if (!v[0].equals(outView)) { outView = v[0]; showRun(); } });
+            seg.addView(b, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        }
+        return seg;
+    }
+
+    /** An icon that acts on the output (its name as the description and the tooltip). */
+    private View iconButton(String icon, String desc, View.OnClickListener l) {
+        int primary = Ui.color(a, "@primary", Color.BLUE);
+        ImageView iv = new ImageView(a);
+        iv.setImageDrawable(Icons.drawable(a, icon, Ui.dp(a, 22), primary));
+        iv.setScaleType(ImageView.ScaleType.CENTER);
+        iv.setContentDescription(desc);
+        iv.setTooltipText(desc);
+        iv.setBackground(Ui.ripple(Ui.shape(Ui.alpha(primary, 0.12f), Ui.dp(a, 999), 0, 0), Ui.alpha(primary, 0.25f)));
+        iv.setOnClickListener(l);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(Ui.dp(a, 42), Ui.dp(a, 42));
+        lp.setMarginStart(Ui.dp(a, 6));
+        iv.setLayoutParams(lp);
+        return iv;
+    }
+
+    /** The current view: readable draws the EMV applications and the e-ID natively (the face beside the holder) above the rest as text. */
+    private void drawView(LinearLayout into, TemplateRunner.Result r) {
+        int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
+        if (!TemplateViews.READABLE.equals(outView)) {
+            if (r.exchanges.isEmpty()) { LinearLayout b = cardBox(); b.addView(ToolPanels.label(a, t("nfc.out.empty"), 13, muted, false)); into.addView(b); return; }
+            into.addView(textBox(TemplateViews.view(outView, r, labels(), fullPan), fg, muted));
+            return;
+        }
+        if (r.emv != null) {
+            JSONObject emv = fullPan ? r.emv : TemplateViews.maskedEmv(r.emv, TemplateViews.pans(r));
+            JSONArray apps = emv.optJSONArray("apps");
+            if (apps != null) for (int i = 0; i < apps.length(); i++) { JSONObject x = apps.optJSONObject(i); if (x != null) into.addView(emvApp(x, fg, muted)); }
+        }
+        if (r.mrtd != null) drawMrtd(into, r.mrtd, fg, muted);
+        into.addView(textBox(TemplateViews.readable(r, labels(), false, fullPan), fg, muted));
+    }
+
+    /** Monospaced, selectable text — at most {@link #SCREEN_MAX} characters on the screen. */
+    private View textBox(String text, int fg, int muted) {
+        LinearLayout b = cardBox();
+        boolean cut = text.length() > SCREEN_MAX;
+        TextView tv = mono(cut ? text.substring(0, SCREEN_MAX) + "\n…" : text, 11.5f, fg);
+        tv.setTextIsSelectable(true);
+        b.addView(tv);
+        if (cut) b.addView(ToolPanels.label(a, t("nfc.out.truncated"), 12, muted, false));
+        return b;
+    }
+
+    /** The current view's text, as shared (masked unless the full data is on). */
+    private String outputText(TemplateRunner.Result r) { return TemplateViews.view(outView, r, labels(), fullPan); }
+
+    /** A file name for the output: nfc-<template>-<date>. */
+    private static String fileBase(TemplateRunner.Result r) {
+        String base = r.label.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9]+", "-").replaceAll("^-+|-+$", "");
+        if (base.length() > 40) base = base.substring(0, 40).replaceAll("-+$", "");
+        String when = new java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.ROOT).format(new java.util.Date());
+        return "nfc-" + (base.isEmpty() ? "card" : base) + "-" + when;
+    }
+
+    /** Share: the system share sheet — the text, or the JSON (and a very long text) as a file served from memory, never written to the disk. */
+    private void shareOutput() {
+        TemplateRunner.Result r = lastRun;
+        if (r == null) return;
+        String text = outputText(r);
+        boolean json = TemplateViews.JSON.equals(outView);
+        try {
+            if (json || text.length() > SHARE_TEXT_MAX) {
+                String name = fileBase(r) + (json ? ".json" : ".txt");
+                String mime = json ? "application/json" : "text/plain";
+                android.net.Uri uri = cz.m5cet.app.ui.media.VaultMedia.memoryUri(app(), name, mime, text.getBytes(StandardCharsets.UTF_8));
+                android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_SEND).setType(mime)
+                    .putExtra(android.content.Intent.EXTRA_STREAM, uri).putExtra(android.content.Intent.EXTRA_SUBJECT, r.label)
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                i.setClipData(android.content.ClipData.newRawUri(name, uri));
+                a.startActivity(android.content.Intent.createChooser(i, name));
+            } else {
+                android.content.Intent i = new android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                    .putExtra(android.content.Intent.EXTRA_TEXT, text).putExtra(android.content.Intent.EXTRA_SUBJECT, r.label);
+                a.startActivity(android.content.Intent.createChooser(i, t("nfc.out.share")));
+            }
+        } catch (RuntimeException e) {
+            a.flash("", t("file.noApp"), "warn");
+        }
+    }
+
+    /**
+     * Forward to a user: the chat's own forward (Parts.forward — a room, then
+     * everyone there or one member) with the output as the message: the text,
+     * or the JSON (and a text too long for a message) as a file — inline when
+     * small, else through the vault (a transfer goes to the whole room).
+     */
+    private void forwardOutput() {
+        TemplateRunner.Result r = lastRun;
+        if (r == null) return;
+        String text = outputText(r);
+        boolean json = TemplateViews.JSON.equals(outView);
+        ChatMessage m = new ChatMessage();
+        m.id = "nfc-" + Long.toString(System.nanoTime(), 36);
+        m.senderName = "NFC";
+        m.forwardedFrom = "NFC · " + r.label;
+        if (!json && text.length() <= MESSAGE_MAX) {
+            m.text = text;
+            a.parts.forward(m);
+            return;
+        }
+        if (!json) a.flash("", t("nfc.out.asFile"), "info");
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        m.text = r.label;
+        m.fileName = fileBase(r) + (json ? ".json" : ".txt");
+        m.fileMime = Payloads.safeMime(json ? "application/json" : "text/plain");
+        m.fileSize = bytes.length;
+        if (bytes.length <= Composer.INLINE_MAX) {
+            m.fileDataUrl = "data:" + m.fileMime + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP);
+            a.parts.forward(m);
+            return;
+        }
+        Io.bg(() -> {
+            try {
+                String id = "out-" + System.nanoTime();
+                try (cz.m5cet.app.security.FileVault.Writer w = new cz.m5cet.app.security.FileVault.Writer(app(), id)) { w.write(bytes, 0, bytes.length); }
+                m.filePath = id;
+                Io.main(() -> a.parts.forward(m));
+            } catch (Exception e) {
+                Io.main(() -> a.flash("", e.getMessage(), "error"));
+            }
+        });
+    }
+
+    /**
+     * Keep for myself: a note in the current room's history — visible only on
+     * this device, never sent (RoomSession.addNote, kind "note"): the text, or
+     * the JSON (and a long text) as its file.
+     */
+    private void keepForMyself() {
+        TemplateRunner.Result r = lastRun;
+        if (r == null) return;
+        RoomSession room = app().rooms.activeSession();
+        if (room == null) { a.flash("", t("nfc.out.noRoom"), "warn"); return; }
+        String text = outputText(r);
+        boolean json = TemplateViews.JSON.equals(outView);
+        String head = "🔒 " + t("nfc.out.noteHead") + " · " + r.label;
+        String me = t("nfc.out.me");
+        if (!json && text.length() <= MESSAGE_MAX) {
+            room.addNote(head + "\n\n" + text, null, null, null, null, 0, me);
+            a.flash("", t("nfc.out.noted").replace("{0}", room.label), "success");
+            return;
+        }
+        byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+        String name = fileBase(r) + (json ? ".json" : ".txt");
+        String mime = Payloads.safeMime(json ? "application/json" : "text/plain");
+        if (bytes.length <= NOTE_INLINE_MAX) {
+            room.addNote(head, name, mime, "data:" + mime + ";base64," + Base64.encodeToString(bytes, Base64.NO_WRAP), null, bytes.length, me);
+            a.flash("", t("nfc.out.noted").replace("{0}", room.label), "success");
+            return;
+        }
+        Io.bg(() -> {
+            try {
+                String id = "note-" + System.nanoTime();
+                try (cz.m5cet.app.security.FileVault.Writer w = new cz.m5cet.app.security.FileVault.Writer(app(), id)) { w.write(bytes, 0, bytes.length); }
+                room.addNote(head, name, mime, null, id, bytes.length, me);
+                Io.main(() -> a.flash("", t("nfc.out.noted").replace("{0}", room.label), "success"));
+            } catch (Exception e) {
+                Io.main(() -> a.flash("", e.getMessage(), "error"));
+            }
+        });
     }
 
     private byte[] lastContainerForEmulate;
@@ -1138,14 +1561,17 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
      * or a pasted MRZ, and / or the CAN printed on the document (PACE), with the
      * "read photo" and "every data group" toggles.
      */
-    private void askMrtd(OnMrtd cb) {
+    private void askMrtd(OnMrtd cb) { askMrtd(true, true, cb); }
+
+    /** 6.10: an e-ID template's args preset what to read (the photo, every group); the holder may change it. */
+    private void askMrtd(boolean photoOn, boolean allOn, OnMrtd cb) {
         EditText doc = new EditText(a); doc.setHint(app().t("nfc.eid.docNumber")); doc.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         EditText dob = new EditText(a); dob.setHint(app().t("nfc.eid.dob")); dob.setInputType(InputType.TYPE_CLASS_NUMBER);
         EditText exp = new EditText(a); exp.setHint(app().t("nfc.eid.expiry")); exp.setInputType(InputType.TYPE_CLASS_NUMBER);
         EditText can = new EditText(a); can.setHint(app().t("nfc.eid.can")); can.setInputType(InputType.TYPE_CLASS_NUMBER);
         EditText mrz = new EditText(a); mrz.setHint(app().t("nfc.eid.mrz")); mrz.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS); mrz.setMinLines(2);
-        CheckBox photo = new CheckBox(a); photo.setText(app().t("nfc.eid.photo")); photo.setChecked(true); photo.setTextColor(Ui.color(a, "@onSurface", Color.BLACK));
-        CheckBox all = new CheckBox(a); all.setText(app().t("nfc.eid.all")); all.setChecked(true); all.setTextColor(Ui.color(a, "@onSurface", Color.BLACK));
+        CheckBox photo = new CheckBox(a); photo.setText(app().t("nfc.eid.photo")); photo.setChecked(photoOn); photo.setTextColor(Ui.color(a, "@onSurface", Color.BLACK));
+        CheckBox all = new CheckBox(a); all.setText(app().t("nfc.eid.all")); all.setChecked(allOn); all.setTextColor(Ui.color(a, "@onSurface", Color.BLACK));
         LinearLayout l = new LinearLayout(a); l.setOrientation(LinearLayout.VERTICAL); l.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
         l.addView(doc); l.addView(dob); l.addView(exp); l.addView(mrz); l.addView(can); l.addView(photo); l.addView(all);
         ScrollView sv = new ScrollView(a); sv.addView(l);
