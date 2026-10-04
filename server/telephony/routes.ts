@@ -54,7 +54,12 @@ function readNumber(raw: unknown): string {
  * some out. Logged, allowed or refused.
  */
 function telephonyRight(req: Request, action: "call" | "sms", to: string): boolean {
-  return checkAccess("telephony", requestSubject(req), { right: [[action], [`number:${to}`]], path: `${req.method} ${req.path} → ${to}`, ip: (req.ip || "").replace(/^::ffff:/, ""), via: "app" }).allowed;
+  const c = checkAccess("telephony", requestSubject(req), { right: [[action], [`number:${to}`]], path: `${req.method} ${req.path} → ${to}`, ip: (req.ip || "").replace(/^::ffff:/, ""), via: "app" });
+  // 6.10 (security review G-04): a module without a rule is "on for everyone with every right" —
+  // for these two billable routes that meant anyone on the internet (the app sends no account
+  // token here) could call and text any allowed number on the operator's account. They now
+  // need a rule the operator wrote (Modules & groups › Telephony & SIP; "guest" for everyone).
+  return c.allowed && c.reason !== "unlisted";
 }
 
 /** 6.9: the hourly budget's key for an app request — the account, else the address. */

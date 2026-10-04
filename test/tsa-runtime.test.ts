@@ -26,6 +26,7 @@ const { setTsaDeps, resetTsaDeps } = await import("../server/telephony/tsa/deps"
 const { defaultParams } = await import("../server/telephony/tsa/catalog");
 const { simStart, simEvent, simGet } = await import("../server/telephony/tsa/simulator");
 const { addAudioFile } = await import("../server/telephony/tsa/files");
+const { hashRoom } = await import("../server/monitor/traffic");
 const { wavEncode, tone } = await import("../server/telephony/audio");
 import type { CallAction } from "../server/telephony/providers/types";
 import type { TsaEdge, TsaGraph, TsaNode, TsaNodeType } from "../server/telephony/tsa/types";
@@ -543,7 +544,10 @@ describe("TSA runtime: Route audio", () => {
     expect(inroute.get("123456")!.uses).toBe(1);
     const end = await resumeTsa(t.session.id, { kind: "route", ok: true });
     expect(end.actions[0]).toEqual({ say: { text: "Konec.", language: "cs-CZ" } });
-    expect(logs.some((l) => /audio routed to room r3\.room by code ••••56/.test(String(l.summary)))).toBe(true);
+    // 6.10 (G-03): the log names the room by its hash, never its blind id.
+    expect(logs.some((l) => String(l.summary).includes(`audio routed to room ${hashRoom("r3.room")} by code ••••56`))).toBe(true);
+    // (the fake media hook's own detail names the room; the real one gives its hash)
+    expect(logs.map((l) => String(l.summary)).join("\n")).not.toContain("r3.room");
   });
 
   it("code errors: bad format, unknown, expired — counted; after the per-call limit no more lookups", async () => {
@@ -691,7 +695,7 @@ describe("the simulator", () => {
     // The code the simulation added routes in the simulation (and nothing is really routed).
     const t2 = await simEvent(session.id, { kind: "digits", digits: "250000" });
     expect(t2.turn.waiting).toMatchObject({ for: "route" });
-    expect(t2.turn.steps.join("\n")).toMatch(/WOULD be routed to room r3\.r/);
+    expect(t2.turn.steps.join("\n")).toContain(`WOULD be routed to room ${hashRoom("r3.r")}`);
     const t3 = await simEvent(session.id, { kind: "route", ok: true });
     expect(t3.turn.play[0]).toMatchObject({ kind: "say", text: "routed" });
   });

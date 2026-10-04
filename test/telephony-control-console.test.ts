@@ -262,4 +262,28 @@ describe("which right a console request needs", () => {
       expect(String(denied.body.message)).toContain("routing");
     } finally { role = "owner"; }
   });
+
+  it("6.10 (G-03): the inroute table in full only with \"settings\"; a reader sees the last digit and the room's hash", async () => {
+    const { hashRoom } = await import("../server/monitor/traffic");
+    const a = await call("POST", "/admin/telephony/inroute", { type: "room", room: "r3.secret-room", ttl: 120 });
+    const code = (a.body.entry as { code: string }).code;
+    const full = await call("GET", "/admin/telephony/inroute");
+    expect(full.body.masked).toBe(false);
+    expect(full.body.entries).toEqual(expect.arrayContaining([expect.objectContaining({ code, room: "r3.secret-room" })]));
+    const cfg = clientConfigStore.get();
+    const rule = cfg.modules.telephony!;
+    // An auditor-like reader: the module, no "settings".
+    clientConfigStore.set({ ...cfg, modules: { ...cfg.modules, telephony: { ...rule, grants: [...(rule.grants ?? []), { group: "admin-auditor", rights: ["log"] }] } } });
+    role = "auditor";
+    try {
+      const masked = await call("GET", "/admin/telephony/inroute");
+      expect(masked.status).toBe(200);
+      expect(masked.body.masked).toBe(true);
+      const text = JSON.stringify(masked.body.entries);
+      expect(text).not.toContain(code);
+      expect(text).not.toContain("r3.secret-room");
+      expect(masked.body.entries).toEqual(expect.arrayContaining([expect.objectContaining({ code: `•••••${code.slice(-1)}`, room: hashRoom("r3.secret-room") })]));
+    } finally { role = "owner"; clientConfigStore.set(cfg); }
+    expect((await call("DELETE", `/admin/telephony/inroute/${code}`)).status).toBe(200);
+  });
 });

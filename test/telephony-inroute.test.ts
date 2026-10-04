@@ -21,6 +21,7 @@ const { telHooks } = await import("../server/telephony/control/hooks");
 const { savePermissions } = await import("../server/telephony/control/store");
 const { telStore } = await import("../server/telephony/tel-store");
 const { INROUTE_DEFAULT_TTL } = await import("../server/telephony/control/types");
+const { hashRoom } = await import("../server/monitor/traffic");
 
 type Logged = { kind: string; level?: string; summary: string; parsed?: unknown };
 const logged: Logged[] = [];
@@ -157,7 +158,9 @@ describe("the log", () => {
     const text = JSON.stringify(mine);
     expect(text).not.toMatch(/905217|905218|48213|70391/);
     expect(text).toContain("•••••7");
-    expect(mine.some((l) => /route code •••••7 added → room r3\.log/.test(l.summary))).toBe(true);
+    // 6.10 (G-03): the room by its hash, never its blind id (the log is read without "settings").
+    expect(mine.some((l) => l.summary.includes(`route code •••••7 added → room ${hashRoom("r3.log")}`))).toBe(true);
+    expect(text).not.toContain("r3.log");
     expect(mine.some((l) => /removed by admin:eva/.test(l.summary))).toBe(true);
     expect(mine.some((l) => /wrong route code •••••8 from \+15550100/.test(l.summary))).toBe(true);
     // A chosen guessable code is allowed, and logged as a warning.

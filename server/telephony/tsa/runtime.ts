@@ -641,7 +641,8 @@ async function routeAudio(ctx: Ctx, node: TsaNode): Promise<Outcome> {
   if (consume && tsaDb.count(usedKey) > 0) return codeError(ctx, node, "the one-time code was used already");
   setOut(ctx, node, "type", entry.type);
   setOut(ctx, node, "target", entry.type === "user" ? entry.user : entry.room);
-  const what = entry.type === "user" ? `member ${entry.user} of room ${entry.room}` : `room ${entry.room}`;
+  // 6.10 (G-03): the log and the trace name the room by its hash, never its blind id.
+  const what = entry.type === "user" ? `member ${entry.user} of room ${hashRoom(entry.room) ?? "?"}` : `room ${hashRoom(entry.room) ?? "?"}`;
   if (ctx.sim) {
     return { wait: "route", actions: [], note: `the code is right: the audio WOULD be routed to ${what} (simulated — send a "route" event to end it)` };
   }
@@ -657,7 +658,7 @@ async function routeAudio(ctx: Ctx, node: TsaNode): Promise<Outcome> {
   }
   try { await telHooks.inroute?.used(entry.code); } catch { /* counting a use never breaks the call */ }
   if (consume) tsaDb.bump(usedKey, Math.max(60_000, entry.expiresAt - d.now()));
-  log(ctx, "notice", `audio routed to ${what} by code ${mask(entry.code)}`, { type: entry.type, room: entry.room, user: entry.user, detail: r.detail });
+  log(ctx, "notice", `audio routed to ${what} by code ${mask(entry.code)}`, { type: entry.type, room: hashRoom(entry.room) ?? "", user: entry.user, detail: r.detail });
   const actions = [...r.actions];
   const last = actions.at(-1);
   if (!last || !("redirect" in last || "hangup" in last)) actions.push({ redirect: { url: cbUrl(ctx, node.id, "played") } });
