@@ -1,7 +1,5 @@
 package cz.m5cet.app.chat;
 
-import android.provider.CallLog;
-
 import org.webrtc.AudioSource;
 import org.webrtc.AudioTrack;
 import org.webrtc.Camera2Enumerator;
@@ -14,9 +12,11 @@ import org.webrtc.VideoTrack;
 
 import java.util.Collections;
 
+import cz.m5cet.app.core.Io;
 import cz.m5cet.app.core.Log;
 import cz.m5cet.app.rtc.Rtc;
 import cz.m5cet.app.telecom.CallLogBridge;
+import cz.m5cet.app.telecom.CallRing;
 
 /**
  * Calls in a room, as the web client does them: no ringing — tracks are
@@ -24,7 +24,9 @@ import cz.m5cet.app.telecom.CallLogBridge;
  * and "audio-status" tells the others. Media is DTLS-SRTP end to end
  * between the phones; the extra frame encryption of browsers ("media" in
  * the hello) is not announced, so browsers talk to this app without it.
- * When the call ends, the phone's call log can record it (settings).
+ * 6.8: what a call was for me (incoming, outgoing, missed, declined —
+ * CallTrack) goes into the app's call history and, when on, the phone's call
+ * log (CallLogBridge); a call someone else starts rings (CallRing).
  */
 public final class Calls {
     private final RoomSession room;
@@ -131,7 +133,6 @@ public final class Calls {
             if (audioSource != null) { audioSource.dispose(); audioSource = null; }
             if (was) {
                 long seconds = (System.currentTimeMillis() - startedAt) / 1000;
-                CallLogBridge.record(room.app, room.label, videoOn, CallLog.Calls.OUTGOING_TYPE, startedAt, seconds);
                 room.broadcastAudio("off");
                 Log.i("call", "call ended in " + room.logName() + " after " + seconds + " s");
             }
@@ -229,6 +230,52 @@ public final class Calls {
             p.remoteVideo = null;
             VideoListener l = videoListener;
             if (l != null) l.onVideo(room);
+        }
+    }
+
+    /* ------------------------------------------------ 6.8: the call log */
+
+    private final CallTrack track = new CallTrack();
+    private java.util.concurrent.ScheduledFuture<?> recheck;
+
+    /** The others whose audio is on (live or muted), by their names in the room. */
+    private java.util.List<String> live() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (Peer p : new java.util.ArrayList<>(room.peers.values())) if (p.audio != null && !"off".equals(p.audio) && !"closed".equals(p.status)) out.add(p.name);
+        return out;
+    }
+
+    private boolean peerVideo() {
+        for (Peer p : new java.util.ArrayList<>(room.peers.values())) if (p.remoteVideo != null && p.audio != null && !"off".equals(p.audio)) return true;
+        return false;
+    }
+
+    /** Someone else is in a call here now. */
+    public boolean othersInCall() { return !live().isEmpty(); }
+
+    /** The room changed (RoomSession.changed): what the call is now for me. */
+    void track() {
+        apply(track.update(System.currentTimeMillis(), !"off".equals(state), videoOn, live(), peerVideo()));
+    }
+
+    /** I declined the ring (CallRing's Decline). */
+    public void decline() { apply(track.decline()); }
+
+    /** The room is going away: what was open is recorded now (on the room's thread, before it stops). */
+    void flush() { apply(track.flush(System.currentTimeMillis())); }
+
+    private void apply(CallTrack.Step s) {
+        for (CallTrack.Record r : s.records) CallLogBridge.logged(room.app, room.key, room.label, r);
+        if (s.ring || s.ringOver || !s.records.isEmpty()) Io.bg(() -> {
+            // In this order: a ring that is over gives its place to the missed call.
+            if (s.ringOver) CallRing.over(room.app, room.key);
+            if (s.ring) CallRing.ring(room.app, room.key, room.label, s.who, s.video);
+            for (CallTrack.Record r : s.records) if (CallTrack.MISSED.equals(r.kind)) CallRing.missed(room.app, room.key, room.label, r.people.isEmpty() ? "" : r.people.get(0), r.video, r.at);
+        });
+        if (s.recheckAt > 0) {
+            java.util.concurrent.ScheduledFuture<?> old = recheck;
+            if (old != null) old.cancel(false);
+            recheck = Io.later(() -> room.post(this::track), Math.max(100, s.recheckAt - System.currentTimeMillis() + 50));
         }
     }
 }

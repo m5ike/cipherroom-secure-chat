@@ -9,6 +9,9 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.WRITE_CALL_LOG" />
+    <!-- 6.8: a self-managed calling account, only so that the phone's call log names the app of its
+         entries (telecom/CallLogBridge); no call ever goes through Telecom. -->
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
@@ -170,6 +173,18 @@
 
         <receiver android:name=".update.InstallReceiver" android:exported="false" />
         <receiver android:name=".telecom.ReplyReceiver" android:exported="false" />
+        <!-- 6.8: Decline on a call's ring (telecom/CallRing). -->
+        <receiver android:name=".telecom.CallRing$Receiver" android:exported="false" />
+        <!-- 6.8: the service of the calling account the call log entries name; it refuses every
+             connection (the rooms' calls are WebRTC, never Telecom's). -->
+        <service
+            android:name=".telecom.M5ConnectionService"
+            android:exported="true"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
 
         <!-- One APK for any server: Firebase starts with the server's settings, not a google-services.json. -->
         <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />

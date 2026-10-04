@@ -50,6 +50,8 @@ public final class Wiper {
         } catch (Exception e) {
             Log.e("wipe", "the wipe event could not be prepared", e);
         }
+        // 6.8: the app's calls leave the phone's call log, its calling account Telecom, its call history the vault.
+        try { cz.m5cet.app.telecom.CallLogBridge.wipe(app); } catch (Throwable ignored) { }
         try { app.rooms.disconnectAll(); } catch (Throwable ignored) { }
         teardown(app);
         // 6.2: the M5cet rows in the phone's address book (usernames of linked people) and our account go too —

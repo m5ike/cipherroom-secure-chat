@@ -403,8 +403,11 @@ public final class Rooms {
         return null;
     }
 
+    /** 6.8: the room is on screen now (open, the app in front and unlocked). */
+    public boolean onScreen(String key) { return visible && key != null && key.equals(active) && app.inForeground() && !app.lock.isLocked(); }
+
     void onMessage(RoomSession r, ChatMessage m, boolean fresh) {
-        boolean onScreen = visible && r.key.equals(active) && app.inForeground() && !app.lock.isLocked();
+        boolean onScreen = onScreen(r.key);
         if (fresh && !onScreen) {
             r.unread++;
             app.notify.message(r.key, r.label, m.senderName, notifyText(m), app.lock.isLocked());

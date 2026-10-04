@@ -108,7 +108,8 @@ public final class RoomSession {
     public long lastActivity() { return lastActivity; }
     public boolean connected() { return "joined".equals(status); }
 
-    void changed() { rooms.roomChanged(this); }
+    /** Something of the room changed (6.8: its call too — Calls.track works out what the call is for me). */
+    void changed() { calls.track(); rooms.roomChanged(this); }
 
     /* ------------------------------------------------------------ connect */
 
@@ -218,7 +219,8 @@ public final class RoomSession {
 
     void destroy() {
         disconnect();
-        post(() -> { if (keys != null) keys.wipe(); exec.shutdown(); });
+        // 6.8: a call still open here is recorded before the room's thread stops.
+        post(() -> { calls.flush(); if (keys != null) keys.wipe(); exec.shutdown(); });
     }
 
     /* ---------------------------------------------------------- frames */

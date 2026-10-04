@@ -47,6 +47,8 @@ public final class Settings {
         DEFAULTS.put("calls.audioText", false);          // outgoing calls start in audio ↔ text mode
         DEFAULTS.put("calls.speaker", true);
         DEFAULTS.put("callLog", false);                  // (5.x key, kept at the top level)
+        DEFAULTS.put("calls.logName", "app");            // 6.8: a phone call log entry names app | room | people (telecom/CallLogBridge; only the app while locked)
+        DEFAULTS.put("calls.history", true);             // 6.8: keep the app's own call history (chat/CallHistory, the History screen)
         // Appearance (on top of the design's theme)
         DEFAULTS.put("appearance.tone", "system");       // system | light | dark
         DEFAULTS.put("appearance.accent", "");           // "" = the design's primary, or #rrggbb

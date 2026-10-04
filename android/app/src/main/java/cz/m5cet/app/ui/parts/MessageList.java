@@ -199,6 +199,18 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
     /** "Hidden (n)": the hidden messages in their places for now (dimmed), or out of the list again. */
     void toggleHidden() { peek = !peek && hiddenCount > 0; applyFilter(); }
 
+    /** 6.8 (the History screen): scrolls to a message of this room, when it is in the list; whether it was. */
+    boolean reveal(String id) {
+        if (id == null) return false;
+        if (!tag.isEmpty()) { tag = ""; applyFilter(); }
+        for (int i = 0; i < items.size(); i++) {
+            if (!id.equals(items.get(i).id)) continue;
+            lm.scrollToPositionWithOffset(i, Ui.dp(getContext(), 96));
+            return true;
+        }
+        return false;
+    }
+
     private boolean shows(ChatMessage m) {
         return !m.deleted && matches(m) && (peek || m.hiddenUntil == 0 || !Hides.hidden(m, System.currentTimeMillis()));
     }
