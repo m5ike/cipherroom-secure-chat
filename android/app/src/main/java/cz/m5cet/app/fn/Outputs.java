@@ -20,7 +20,8 @@ import java.util.regex.PatternSyntaxException;
  * sanitize), what a room message may carry (shareable), its Markdown (the
  * message's text for older apps, search and forwarding), a form's fields,
  * masks and value checks. An output is a JSONObject with a "type"; lists are
- * JSONArrays, as they travel in a message's flags.fn.
+ * JSONArrays, as they travel in a message's flags.fn. 6.6 adds formatted
+ * HTML, sanitized by FnHtml (fn-html.ts).
  */
 public final class Outputs {
     private Outputs() {}
@@ -32,7 +33,7 @@ public final class Outputs {
     /** What this app puts into a room message. */
     public static final int ROOM_MAX_TOTAL = 700_000;
 
-    static final List<String> OUTPUT_TYPES = Arrays.asList("text", "markdown", "code", "table", "json", "image", "file", "flash", "window", "audio", "video", "button", "form", "js");
+    static final List<String> OUTPUT_TYPES = Arrays.asList("text", "markdown", "code", "table", "json", "image", "file", "flash", "window", "audio", "video", "button", "form", "js", "html");
     static final List<String> FORM_FIELD_TYPES = Arrays.asList(
         "text", "textarea", "number", "range", "tel", "email", "url", "password",
         "date", "time", "datetime", "month", "color", "masked",
@@ -338,6 +339,12 @@ public final class Outputs {
                 return good(obj("type", "js", "code", code, "args", Js.plain(o.opt("args"), 64_000), "title", opt(o.opt("title"), 200),
                     "height", height, "hidden", isTrue(o.opt("hidden")) ? true : null));
             }
+            case "html": {
+                // 6.6: formatted HTML — document markup only (FnHtml), sanitized here and again where it is drawn.
+                String html = str(o.opt("html"), Math.min(maxChars, FnHtml.MAX));
+                if (html == null) return bad(type, "html must be a string (up to " + FnHtml.MAX + " characters)");
+                return good(obj("type", "html", "html", FnHtml.sanitize(html), "title", opt(o.opt("title"), 300)));
+            }
             default: return bad(type, "unknown");
         }
     }
@@ -408,6 +415,7 @@ public final class Outputs {
                 case "audio": case "video": parts.add("_(" + s(o, "type") + (truthy(o, "title") ? ": " + s(o, "title") : "") + ")_"); break;
                 case "button": parts.add("[" + (truthy(o, "icon") ? s(o, "icon") + " " : "") + s(o, "title") + "]"); break;
                 case "form": parts.add("**" + (truthy(o, "title") ? s(o, "title") : "Form") + "**" + (truthy(o, "text") ? "\n" + s(o, "text") : "")); break;
+                case "html": parts.add((truthy(o, "title") ? "**" + s(o, "title") + "**\n\n" : "") + FnHtml.text(FnHtml.parse(s(o, "html")))); break;
                 default: break; // window, js: nothing to read
             }
         }
