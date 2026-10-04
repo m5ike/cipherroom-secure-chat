@@ -2765,6 +2765,70 @@
     return { version: 1, updatedAt: Number(set.updatedAt) || 0, defs: (Array.isArray(set.defs) ? set.defs : []).map(defNormalizeDef) };
   }
 
+  /* 6.5: the standard EMV / e-ID APDU templates — transcribed from
+   * client/src/lib/nfc/apdu-templates.ts (STANDARD_APDU_TEMPLATES). Two kinds of
+   * entry: op templates { label, op:"emv-read"|"eid-read", args? } run a full
+   * dynamic read, apdu templates { label, apdu } send one raw SELECT/command.
+   * The operator loads them into m5mobile.define.apduTemplates with one click;
+   * the NFC workbench's "Application template" menu and m5.nfc read them. All
+   * read-only, public / holder data — no PIN, no cryptogram, no write. */
+  function defStandardApduTemplates() {
+    const selectAid = (aid) => `00A40400${(aid.length / 2).toString(16).padStart(2, "0").toUpperCase()}${aid}00`;
+    const PPSE = "00A404000E325041592E5359532E444446303100"; // 2PAY.SYS.DDF01
+    const PSE = "00A404000E315041592E5359532E444446303100";  // 1PAY.SYS.DDF01
+    return [
+      // EMV: the full reads a card reader app offers.
+      { label: "Scan / Read EMV — all", op: "emv-read", note: "PPSE → every application → GPO → records; parse the holder data." },
+      { label: "Scan / Read EMV — Visa", op: "emv-read", aid: "A0000000031010", note: "Read and parse, favouring the Visa application." },
+      { label: "Scan / Read EMV — Mastercard", op: "emv-read", aid: "A0000000041010", note: "Read and parse, favouring the Mastercard application." },
+      { label: "Scan / Read EMV — American Express", op: "emv-read", aid: "A00000002501", note: "Read and parse, favouring the Amex application." },
+      // e-ID / e-passport (MRTD): BAC read.
+      { label: "Scan / Read e-passport (BAC)", op: "eid-read", note: "Open with the MRZ (passport no. + DOB + expiry) and read DG1 (MRZ) + DG2 (face)." },
+      { label: "Scan / Read e-ID (BAC)", op: "eid-read", note: "Open an e-ID with the MRZ or CAN and read the MRZ data and photo." },
+      { label: "Scan / Read e-passport — no photo", op: "eid-read", args: { readPhoto: false }, note: "DG1 (the MRZ data) only — skip the face for a faster read." },
+      // Raw selects for the APDU console.
+      { label: "SELECT PPSE (2PAY.SYS.DDF01)", apdu: PPSE, note: "The contactless payment directory." },
+      { label: "SELECT PSE (1PAY.SYS.DDF01)", apdu: PSE, note: "The contact payment directory." },
+      { label: "SELECT AID — Visa credit/debit", apdu: selectAid("A0000000031010"), aid: "A0000000031010" },
+      { label: "SELECT AID — Visa Electron", apdu: selectAid("A0000000032010"), aid: "A0000000032010" },
+      { label: "SELECT AID — Mastercard", apdu: selectAid("A0000000041010"), aid: "A0000000041010" },
+      { label: "SELECT AID — Maestro", apdu: selectAid("A0000000043060"), aid: "A0000000043060" },
+      { label: "SELECT AID — American Express", apdu: selectAid("A00000002501"), aid: "A00000002501" },
+      { label: "SELECT AID — JCB", apdu: selectAid("A0000000651010"), aid: "A0000000651010" },
+      { label: "SELECT AID — Discover", apdu: selectAid("A0000001523010"), aid: "A0000001523010" },
+      { label: "SELECT AID — UnionPay", apdu: selectAid("A000000333010101"), aid: "A000000333010101" },
+      { label: "GET PROCESSING OPTIONS (empty PDOL)", apdu: "80A8000002830000", note: "After a SELECT AID whose FCI has no PDOL." },
+      { label: "SELECT eMRTD application", apdu: selectAid("A0000002471001"), aid: "A0000002471001", note: "The ICAO 9303 LDS1 application (passport / e-ID)." },
+      { label: "GET CHALLENGE (8 bytes)", apdu: "0084000008", note: "First step of BAC — the chip's RND.ICC." },
+      { label: "SELECT EF.COM", apdu: "00A4020C02011E", note: "The data-group list (after the chip is opened)." },
+      { label: "SELECT EF.DG1 (MRZ)", apdu: "00A4020C020101" },
+      { label: "SELECT EF.DG2 (face)", apdu: "00A4020C020102" },
+    ];
+  }
+
+  /** The templates as a DefNode: an array of objects, each entry a string (or a
+   *  boolean for args.readPhoto). Mirrors the schema's DefNode / DefEntry shape
+   *  exactly ({ key, node }; a string value is { type:"string", value }). */
+  function defApduTemplatesNode() {
+    const strEntry = (key, value) => ({ key, node: { type: "string", value: String(value) } });
+    const items = defStandardApduTemplates().map((t) => {
+      const entries = [strEntry("label", t.label)];
+      if (t.op) entries.push(strEntry("op", t.op));
+      if (t.apdu) entries.push(strEntry("apdu", t.apdu));
+      if (t.aid) entries.push(strEntry("aid", t.aid));
+      if (t.note) entries.push(strEntry("note", t.note));
+      if (t.args && typeof t.args === "object") {
+        const argEntries = Object.keys(t.args).map((k) => ({
+          key: k,
+          node: typeof t.args[k] === "boolean" ? { type: "boolean", value: t.args[k] } : { type: "string", value: String(t.args[k]) },
+        }));
+        entries.push({ key: "args", node: { type: "object", entries: argEntries } });
+      }
+      return { type: "object", entries };
+    });
+    return { type: "array", items };
+  }
+
   const defTypeBadge = (type) => h("span", { class: `and-tbadge and-tbadge--${type}`, title: type }, DEF_TBADGE[type] || "?");
   function defScopeBadge(scope) { const s = scope || "both"; return badge(s, s === "android" ? "ok" : s === "web" ? "info" : "accent"); }
   const defField = (label, el) => h("label", { class: "field and-def-field" }, h("span", { class: "label" }, label), el);
@@ -3062,6 +3126,28 @@
       }
     }
 
+    async function loadApduTemplates() {
+      const def = { name: "apduTemplates", kind: "constant", node: defApduTemplatesNode(), maxSize: 0, scope: "both", note: "Standard EMV / e-ID APDU templates (6.5)." };
+      const idx = defineSet.defs.findIndex((d) => d.name === "apduTemplates");
+      if (idx >= 0 && !confirm("A definition named \"apduTemplates\" already exists. Replace it with the standard EMV / e-ID set? Other definitions are kept.")) return;
+      if (idx >= 0) defineSet.defs[idx] = def; else defineSet.defs.push(def);
+      defineSel = idx >= 0 ? idx : defineSet.defs.length - 1;
+      try {
+        const r = await api("/api/admin/define", { method: "PUT", body: { define: { version: 1, updatedAt: Date.now(), defs: defineSet.defs } } });
+        defineSet = defNormalize(r.define);
+        defineSavedJson = JSON.stringify(defineSet.defs);
+        defineError = "";
+        defineSel = Math.max(0, defineSet.defs.findIndex((d) => d.name === "apduTemplates"));
+        const count = defStandardApduTemplates().length;
+        toast(`Loaded ${count} standard EMV / e-ID templates into m5mobile.define.apduTemplates.`, "ok");
+        renderNav(); renderContent(); updateStatus();
+      } catch (err) {
+        defineError = err.message;
+        renderNav(); renderContent(); updateStatus();
+        toast(err.message, "err");
+      }
+    }
+
     function renderNav() {
       clear(nav);
       const defs = defineSet.defs;
@@ -3144,11 +3230,12 @@
 
     saveBtn = edit ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: doSave }, "Save") : null;
     revertBtn = edit ? h("button", { class: "btn btn--sm", type: "button", onclick: revert }, "Revert") : null;
+    const templatesBtn = edit ? h("button", { class: "btn btn--sm", type: "button", title: "Build m5mobile.define.apduTemplates from the standard EMV / e-ID set and save it", onclick: loadApduTemplates }, "Load standard EMV / e-ID templates") : null;
     body.append(h("div", { class: "card" },
       h("div", { class: "card__head" },
         h("div", { class: "card__title" }, "Typed definitions (m5mobile.define)"),
         h("div", { class: "card__hint" }, "The operator's variables and constants, delivered to both apps and Functions."),
-        h("span", { class: "card__actions" }, status, saveBtn, revertBtn))));
+        h("span", { class: "card__actions" }, templatesBtn, status, saveBtn, revertBtn))));
     body.append(h("div", { class: "and-def" }, nav, content));
     body.append(h("div", { class: "muted small and-def-help" }, "Each becomes m5mobile.define.<name> in Packages, Models, Functions and both apps. The server re-checks every definition against its max size when you save."));
 
