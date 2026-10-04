@@ -122,6 +122,7 @@ import { SimpleModal } from "./components/SimpleModal";
 import { RoomDialog, RoomTabs, type RoomTab, type RoomTarget } from "./components/RoomDialog";
 import { RoomBar, type RoomBarItem } from "./components/RoomBar";
 import { PhoneBridgePanel } from "./components/PhoneBridgePanel";
+import { StartScreen } from "./components/StartScreen";
 import { PhoneBridgeClient, bridgeUrl, callFromFrame, type PhoneCall } from "./lib/phone-bridge";
 import { createRoomHub, roomKeyOf, type HubTarget, type RoomHub } from "./lib/room-hub";
 import { cleanUsername, sessionUsername } from "./lib/username";
@@ -4946,6 +4947,24 @@ function ChatApp() {
               />
             );
           },
+          // 6.7: no message yet — the start screen, its own layout ("start").
+          start: () => (
+            <StartScreen
+              lang={lang}
+              title={renderTemplate(layout.templates.chatEmptyTitle, { title: t(lang, "chat.empty.title"), appName: "M5cet" }, layout.partials)}
+              body={renderTemplate(layout.templates.chatEmptyBody, { body: t(lang, "chat.empty.body"), appName: "M5cet" }, layout.partials)}
+              status={status}
+              connected={desired === "connected"}
+              room={room}
+              signedIn={Boolean(account)}
+              username={account ? account.username ?? account.userName ?? "" : ""}
+              serverMode={prefs.mode === "server"}
+              profiles={cxEligible ? cxState.profiles.map((p) => ({ id: p.id, label: p.label })) : []}
+              onOpenRoom={() => setActivePanel("join")}
+              onConnectProfile={(id) => void connectProfile(id)}
+              onSignIn={() => setActivePanel("connection")}
+            />
+          ),
           composer: () => renderLayout(layoutTree(layout, "composer", layoutCtx), {
             ...layoutEnvBase,
             data: {

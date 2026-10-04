@@ -17,6 +17,7 @@ import { SHARE_CONTRACTS } from "./share";
 import { PHONE_CONTRACTS } from "./phone";
 import { CONNECTION_CONTRACTS } from "./connections";
 import { AI_CONTRACTS } from "./ai";
+import { START_CONTRACT } from "./start";
 
 export type ContractVar = { path: string; type: "text" | "number" | "yes/no" | "list" | "object"; description: string };
 export type ContractAction = { name: string; description: string; arg?: string; event?: string };
@@ -116,7 +117,7 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
     refs: [],
   },
   chat: {
-    description: "The window under the bar: the info bar, the conversation (file cards, messages, the empty state) and the composer.",
+    description: "The window under the bar: the info bar, the conversation (file cards, messages, the start screen while there is none) and the composer.",
     vars: [
       { path: "$notice", type: "text", description: "The last notice." },
       { path: "$room", type: "text", description: "The room." },
@@ -125,8 +126,8 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
       { path: "$copied", type: "yes/no", description: "The room was just copied." },
       { path: "$transfers", type: "list", description: "File transfers in progress (for the file card part)." },
       { path: "$empty", type: "yes/no", description: "No messages yet." },
-      { path: "$emptyTitle", type: "text", description: "The empty state's title (the old template)." },
-      { path: "$emptyBody", type: "text", description: "The empty state's text (the old template)." },
+      { path: "$emptyTitle", type: "text", description: "The empty state's title (the old template; 6.7: the start screen has it as $title)." },
+      { path: "$emptyBody", type: "text", description: "The empty state's text (the old template; 6.7: the start screen has it as $body)." },
       { path: "$messages", type: "list", description: "The messages shown (for the message part)." },
       { path: "$hiddenMessages", type: "number", description: "Earlier messages not shown." },
       { path: "$newestFirst", type: "yes/no", description: "Newest at the top." },
@@ -146,6 +147,7 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
       { name: "transfer", description: "A file transfer card.", arg: "a transfer ($tr)" },
       { name: "message", description: "A message — its layout is Incoming / Outgoing / System message.", arg: "a message ($m)" },
       { name: "composer", description: "The composer — its own layout." },
+      { name: "start", description: "6.7: the start screen (no message yet) — its own layout." },
     ],
     refs: [
       { name: "dock", description: "The info bar (its bottom edge docks the recipients widget)." },
@@ -284,4 +286,6 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
   ...PHONE_CONTRACTS,
   ...CONNECTION_CONTRACTS,
   ...AI_CONTRACTS,
+  // 6.7
+  start: START_CONTRACT,
 };

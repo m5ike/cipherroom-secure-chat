@@ -31,6 +31,8 @@ import { isLayoutId, LAYOUT_GROUP, LAYOUT_IDS, type LayoutId } from "./lib/layou
 import { LayoutProvider } from "./components/LayoutProvider";
 import { RoomBar, type RoomBarItem } from "./components/RoomBar";
 import { PhoneBridgePanel } from "./components/PhoneBridgePanel";
+import { StartScreen } from "./components/StartScreen";
+import { startProps } from "./layout-samples";
 import type { PhoneCall } from "./lib/phone-bridge";
 import { AppPart, isDriving } from "./layout-preview-parts";
 import { checkDom, checkTree, type A11yIssue } from "./lib/layout-a11y";
@@ -263,7 +265,10 @@ function View({ req }: { req: Request }) {
     content = header();
   } else if (req.layout === "chat") {
     const messages = v === "empty" ? [] : messagesFor("chat", "all");
+    const emptyTitle = renderTemplate(cfg.templates.chatEmptyTitle, { title: t(lang, "chat.empty.title"), appName: "M5cet" }, cfg.partials);
+    const emptyBody = renderTemplate(cfg.templates.chatEmptyBody, { body: t(lang, "chat.empty.body"), appName: "M5cet" }, cfg.partials);
     content = (
+      <LayoutProvider config={cfg} ctx={NO_CTX}>
       <div className="flex min-h-[100dvh] flex-col">
         {header()}
         {renderLayout(layoutTree(cfg, "chat"), {
@@ -276,8 +281,8 @@ function View({ req }: { req: Request }) {
             copied: false,
             transfers: v === "transfers" ? [{ id: "t1", name: "photos.zip", size: 8_400_000, direction: "in" }, { id: "t2", name: "report.pdf", size: 912_000, direction: "out" }] : [],
             empty: messages.length === 0,
-            emptyTitle: renderTemplate(cfg.templates.chatEmptyTitle, { title: t(lang, "chat.empty.title"), appName: "M5cet" }, cfg.partials),
-            emptyBody: renderTemplate(cfg.templates.chatEmptyBody, { body: t(lang, "chat.empty.body"), appName: "M5cet" }, cfg.partials),
+            emptyTitle,
+            emptyBody,
             hiddenMessages: v === "earlier" ? 12 : 0,
             newestFirst: false,
             showEarlierText: t(lang, "chat.showEarlier").replace("{n}", "12"),
@@ -291,9 +296,12 @@ function View({ req }: { req: Request }) {
             },
             message: (m) => <SampleBubble m={m as SampleMessage} cfg={cfg} lang={lang} />,
             composer: () => <PreviewComposer cfg={cfg} env={env} variant="plain" lang={lang} />,
+            // 6.7: the start screen — its own layout ("start").
+            start: () => <StartScreen {...startProps("start", lang)} title={emptyTitle} body={emptyBody} />,
           },
         })}
       </div>
+      </LayoutProvider>
     );
   } else if (req.layout === "composer") {
     content = <div className="flex min-h-[100dvh] flex-col justify-end"><PreviewComposer key={v} cfg={cfg} env={env} variant={v} lang={lang} /></div>;
@@ -328,6 +336,23 @@ function View({ req }: { req: Request }) {
     content = (
       <LayoutProvider config={cfg} ctx={NO_CTX}>
         <div className="chat-surface min-h-[100dvh] p-4"><PhoneBridgePanel key={v} lang={lang} calls={[call]} onTakeAudio={() => undefined} onTakeText={() => undefined} onReply={() => undefined} onMute={() => undefined} onHangup={() => undefined} onDismiss={() => undefined} /></div>
+      </LayoutProvider>
+    );
+  } else if (req.layout === "start") {
+    // 6.7: the start screen, where the chat window draws it (no message yet).
+    const props = startProps(v, lang);
+    content = (
+      <LayoutProvider config={cfg} ctx={NO_CTX}>
+        <div className="flex h-dvh flex-col chat-canvas">
+          <div className="flex-1 min-h-0 overflow-y-auto chat-surface p-3 sm:p-5">
+            <StartScreen
+              key={v}
+              {...props}
+              title={renderTemplate(cfg.templates.chatEmptyTitle, { title: props.title, appName: "M5cet" }, cfg.partials)}
+              body={renderTemplate(cfg.templates.chatEmptyBody, { body: props.body, appName: "M5cet" }, cfg.partials)}
+            />
+          </div>
+        </div>
       </LayoutProvider>
     );
   } else if (req.layout === "widget" || req.layout === "widget.fab" || req.layout === "widget.handle") {
