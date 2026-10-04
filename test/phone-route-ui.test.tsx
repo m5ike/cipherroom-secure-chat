@@ -9,7 +9,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { PhoneBridgePanel, type PhoneBridgePanelProps } from "../client/src/components/PhoneBridgePanel";
 import { setLayoutPreviewMode } from "../client/src/components/LayoutView";
-import { bridgeUrl, callFromFrame, levelBars, type PhoneCall } from "../client/src/lib/phone-bridge";
+import { bridgeUrl, callFromFrame, levelBars, withServer, type PhoneCall } from "../client/src/lib/phone-bridge";
 import { RoomHub, roomKeyOf } from "../client/src/lib/room-hub";
 import { DEFAULT_LAYOUTS } from "../client/src/lib/layouts";
 import { LAYOUT_CONTRACTS } from "../client/src/lib/layouts/contracts";
@@ -67,6 +67,17 @@ describe("routed calls from the frames", () => {
     expect(got[0]).toMatchObject({ label: "Team", socketUrl: "wss://other.example/ws", frame: { route: "room", token: "tok-1" } });
     expect(bridgeUrl(got[0].socketUrl, "tok-1")).toBe("wss://other.example/media/tel/client/tok-1");
     hub.clear();
+  });
+
+  it("6.10 (G-11): a re-offer of a known call keeps the server that offered it", () => {
+    const first = withServer(callFromFrame(incoming)!, undefined, "wss://other.example/ws");
+    expect(first.socketUrl).toBe("wss://other.example/ws");
+    // The same session offered again (a member back with a new peer id) — callFromFrame makes a fresh call…
+    const again = callFromFrame({ ...incoming, token: "tok-2" }, first)!;
+    expect(again.socketUrl).toBeUndefined();
+    // …and the server stays the first one, never the room on screen's.
+    expect(withServer(again, first, "")).toMatchObject({ token: "tok-2", socketUrl: "wss://other.example/ws" });
+    expect(withServer(again, first, "wss://other.example/ws").socketUrl).toBe("wss://other.example/ws");
   });
 
   it("the level meter's bars: silence 0, a loud line 5", () => {

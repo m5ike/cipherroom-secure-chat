@@ -21,9 +21,21 @@ import { telStore } from "./tel-store";
 import { isProvider, type TelephonyProvider } from "./types";
 import { inboundThroughRules } from "./control/calls";
 import { mountWebhookLog } from "./control/log";
-import { whContext } from "./control/wh-context";
+import { whContext, whNote } from "./control/wh-context";
 
 const limiter = rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many webhook requests." } });
+
+/**
+ * 6.10 (security review G-01): an inbound call drives billable and privileged
+ * work — the rules, a TSA (SMS, transfers, HTTP, functions, room messages,
+ * route codes and the room's audio), the audio bridge. A webhook whose
+ * signature could not be checked (TELNYX_PUBLIC_KEY / VONAGE_SIGNATURE_SECRET
+ * not set) is anybody's request, so it does none of that unless the operator
+ * says so with TELEPHONY_ALLOW_UNSIGNED=1; it is answered as before 6.9.
+ */
+export function unsignedCallsAllowed(): boolean {
+  return process.env.TELEPHONY_ALLOW_UNSIGNED?.trim() === "1";
+}
 
 /**
  * An inbound call (or, Telnyx, any event of a bridge / SDK call) through the provider's own webhook.
@@ -37,6 +49,14 @@ async function inbound(provider: TelephonyProvider, type: string, req: Request) 
   const isVoice = (provider === "twilio" && type === "voice") || (provider === "vonage" && type === "answer") || (provider === "telnyx" && type === "events");
   const isStatus = (provider === "twilio" && type === "voice_status") || (provider === "vonage" && type === "events");
   if (!isVoice && !isStatus) return null;
+  // Every caller of this hook verified the request first (verifyRequest fills the context).
+  const ctx = whContext(req);
+  if (ctx.verified !== true && !unsignedCallsAllowed()) {
+    const key = provider === "telnyx" ? "TELNYX_PUBLIC_KEY" : provider === "vonage" ? "VONAGE_SIGNATURE_SECRET" : "TWILIO_AUTH_TOKEN";
+    whNote(req, { refused: `not signed — no rules, TSA or bridge (set ${key}, or TELEPHONY_ALLOW_UNSIGNED=1)` });
+    ctx.summary = `unsigned call webhook ignored (set ${key})`;
+    return null;
+  }
   await telStore.ready();
   const query = stringParams(req.query);
   const events = a.parseCallEvent(req.body, query);

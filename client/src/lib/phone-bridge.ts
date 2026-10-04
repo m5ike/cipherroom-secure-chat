@@ -52,6 +52,17 @@ export type PhoneCall = {
 const routeOf = (v: unknown): PhoneCall["route"] => (v === "room" || v === "user" ? v : "");
 const countOf = (v: unknown, fallback: number): number => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.round(v)) : fallback);
 
+/**
+ * 6.10 (security review G-11): the server a call's media socket goes to — the
+ * one whose signaling sent this frame, else the one that offered the call
+ * first. A re-offer ("incoming" again for a known session) used to drop it, and
+ * the member's media token then went to the server of the room on screen.
+ */
+export function withServer(next: PhoneCall, prev: PhoneCall | undefined, socketUrl: string): PhoneCall {
+  const server = socketUrl || prev?.socketUrl;
+  return server ? { ...next, socketUrl: server } : next;
+}
+
 /** A "phone-bridge" frame → a call (or an update of one). */
 export function callFromFrame(frame: Record<string, unknown>, prev?: PhoneCall): PhoneCall | null {
   const session = typeof frame.session === "string" ? frame.session : "";

@@ -304,7 +304,22 @@ describe("outbound calls and SMS go through the permissions and the rules", () =
 describe("the app's POST /api/telephony/call|sms", () => {
   const post = async (path: string, body: unknown) => { const r = await realFetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() as Record<string, unknown> }; };
 
+  it("6.10 (G-04): without a rule for the module (\"on for everyone\") nobody may call or text through the app", async () => {
+    const cfg = clientConfigStore.get();
+    const { telephony: _t, ...rest } = cfg.modules;
+    clientConfigStore.set({ ...cfg, modules: rest });
+    try {
+      expect(await post("/api/telephony/call", { to: "+420603999111" })).toMatchObject({ status: 403, body: { code: "module-denied" } });
+      expect(await post("/api/telephony/sms", { to: "+420603999111", text: "x" })).toMatchObject({ status: 403, body: { code: "module-denied" } });
+      expect(telStore.calls.list({ limit: 1000, filter: (c) => c.to === "+420603999111" })).toEqual([]);
+    } finally { clientConfigStore.set(cfg); }
+  });
+
   it("refuses a blocked number and a rule's state; a SIP trunk rule places the call through the engine", async () => {
+    // 6.10 (G-04): the operator's rule lets guests (the app sends no account token) call and text.
+    const cfg = clientConfigStore.get();
+    clientConfigStore.set({ ...cfg, modules: { ...cfg.modules, telephony: { enabled: true, defaultAccess: "deny", groupAccess: "allow", groups: [], grants: [{ group: "guest", rights: ["call", "sms"] }], log: "off" } } });
+    try {
     expect(await post("/api/telephony/call", { to: "+19005550100" })).toMatchObject({ status: 403, body: { code: "route-refused" } });
     expect(saveRules("outbound", [
       { id: "closed", label: "Closed", match: { to: ["+4930*"] }, service: { kind: "app", provider: "twilio" }, target: { kind: "state", state: "congestion" } },
@@ -317,5 +332,6 @@ describe("the app's POST /api/telephony/call|sms", () => {
     // The trunk's own caller ID when the rule leaves it empty.
     expect(telStore.calls.get(String(viaTrunk.body.id))).toMatchObject({ from: "+420222111999", by: expect.stringMatching(/^ip:/), route: { rule: "trunk", service: "sip" } });
     expect(saveRules("outbound", [], "test").ok).toBe(true);
+    } finally { clientConfigStore.set(cfg); }
   }, 60_000);
 });

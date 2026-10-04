@@ -15,6 +15,7 @@
 // (docs/android-architecture.md §1.4). The body is read raw for that.
 
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import { EXACT_ROUTER } from "../exact-routing";
 import { rateLimit } from "express-rate-limit";
 import { createReadStream, existsSync, statSync } from "node:fs";
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -160,7 +161,7 @@ function codeMatches(code: string): string | null {
 }
 
 export function registerAndroidRoutes(app: Express): void {
-  const r = express.Router();
+  const r = express.Router(EXACT_ROUTER);
   // The body is read raw: the signature covers the exact bytes.
   r.use(express.raw({ type: () => true, limit: "1mb" }));
   r.use((_req, res, next) => { res.setHeader("Cache-Control", "no-store"); void androidStore.ready().then(() => next(), next); });

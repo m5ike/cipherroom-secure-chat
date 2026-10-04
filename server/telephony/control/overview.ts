@@ -45,8 +45,8 @@ export async function telephonyOverview(now = Date.now()): Promise<OverviewAnswe
   if (!base) warnings.push("PUBLIC_BASE_URL is not set: providers cannot reach this server's webhooks, so inbound calls, TSA callbacks and delivery reports do not arrive.");
   else if (!/^https:\/\//.test(base)) warnings.push(`PUBLIC_BASE_URL (${base}) is not https: providers refuse or warn about plain-http webhooks, and media streams need wss.`);
   if (!callers.length) warnings.push("No provider is configured for calls (Telephony › Providers names the variables to set).");
-  if (callers.some((p) => p.id === "telnyx") && !env("TELNYX_PUBLIC_KEY")) warnings.push("TELNYX_PUBLIC_KEY is not set: Telnyx webhooks are accepted unverified.");
-  if (callers.some((p) => p.id === "vonage") && !env("VONAGE_SIGNATURE_SECRET")) warnings.push("VONAGE_SIGNATURE_SECRET is not set: Vonage webhooks are accepted unverified.");
+  if (callers.some((p) => p.id === "telnyx") && !env("TELNYX_PUBLIC_KEY")) warnings.push(`TELNYX_PUBLIC_KEY is not set: Telnyx webhooks are accepted unverified${process.env.TELEPHONY_ALLOW_UNSIGNED?.trim() === "1" ? " and drive inbound calls (TELEPHONY_ALLOW_UNSIGNED=1) — anybody can forge a call" : "; inbound calls do not reach the rules, TSAs or the bridge"}.`);
+  if (callers.some((p) => p.id === "vonage") && !env("VONAGE_SIGNATURE_SECRET")) warnings.push(`VONAGE_SIGNATURE_SECRET is not set: Vonage webhooks are accepted unverified${process.env.TELEPHONY_ALLOW_UNSIGNED?.trim() === "1" ? " and drive inbound calls (TELEPHONY_ALLOW_UNSIGNED=1) — anybody can forge a call" : "; inbound calls do not reach the rules, TSAs or the bridge"}.`);
   const p = getPermissions();
   if (callers.length && !inbound.some((r) => r.enabled) && p.defaults.inbound.kind === "state") warnings.push(`No inbound rule is on: every inbound call gets the default "${p.defaults.inbound.state}".`);
   const byId = new Map(tsas.map((t) => [t.id, t]));

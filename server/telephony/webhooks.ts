@@ -23,8 +23,10 @@
 // recent when it carries a timestamp, and a JWT must carry `iat` within ten
 // minutes and a `payload_hash` whenever the request has a body.
 //
-// Events never trigger a billable action; they feed an in-memory event log
-// (admin console) and the inbound-DID routing decision from the SIP store.
+// Events feed the event log (admin console) and the inbound-DID routing
+// decision from the SIP store. Since 6.9 a call webhook also reaches the
+// inbound rules, TSAs and the audio bridge (tel-routes.ts) — 6.10 (G-01):
+// only a VERIFIED one does, unless TELEPHONY_ALLOW_UNSIGNED=1.
 
 import { createHash, createHmac, createPublicKey, randomUUID, timingSafeEqual, verify as cryptoVerify } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";

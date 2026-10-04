@@ -27,6 +27,19 @@ export type QueuedMessage<Envelope = unknown> = {
   expiresAt: number;
 };
 
+/**
+ * 6.10 (security review G-10): the peers a queued message is for. A send to
+ * everyone queues for everyone ([]); a private send keeps its chosen peers;
+ * a private send with nobody of the selection reachable (all of them away and
+ * the server did not take it, or a dead channel) is NOT queued — null — because
+ * an empty list here means "everyone in the room": the next flush would have
+ * given a private attachment, voice message or text to the whole room.
+ */
+export function queueTargets(targets: ReadonlySet<string> | undefined): string[] | null {
+  if (targets === undefined) return [];
+  return targets.size > 0 ? Array.from(targets) : null;
+}
+
 export type OutboxLimits = {
   maxMessages: number;
   maxAttempts: number;

@@ -39,8 +39,10 @@ import { applyTrustProxy } from "./trust-proxy";
 import { ensureMainGroups } from "./access";
 import { accessLog } from "./access-log";
 import { apiLimitConfig, hasOwnBucket } from "./api-limit";
+import { exactRouting } from "./exact-routing";
 
-const app = express();
+// 6.10 (G-02): paths match exactly, as the console guards compare them.
+const app = exactRouting(express());
 const httpServer = createServer(app);
 
 // Before the limiters: behind nginx the real client is in X-Forwarded-For;

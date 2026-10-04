@@ -20,6 +20,8 @@ Object.assign(process.env, {
   PUBLIC_BASE_URL: "https://chat.test",
   TWILIO_ACCOUNT_SID: "AC00000000000000000000000000000001", TWILIO_AUTH_TOKEN: "twilio-test-token", TWILIO_FROM: "+15005550006",
   TELNYX_API_KEY: "KEY-test", TELNYX_CONNECTION_ID: "conn-1", TELNYX_FROM: "+15005550007",
+  // Telnyx / Vonage webhooks are unsigned here: 6.10 (G-01) lets them drive calls only when allowed.
+  TELEPHONY_ALLOW_UNSIGNED: "1",
 });
 delete process.env.TELNYX_PUBLIC_KEY;
 delete process.env.VONAGE_SIGNATURE_SECRET;
@@ -213,6 +215,39 @@ describe("inbound calls through the rules", () => {
   it("an outbound call answered at the voice URL is not routed as inbound", async () => {
     await twilio("/wh/twilio/voice", { CallSid: cid("CA"), From: "+15005550006", To: "+420777000009", Direction: "outbound-api", CallStatus: "in-progress" });
     expect(decide).not.toHaveBeenCalled();
+  });
+});
+
+/* ====================================================== 6.10 G-01: unsigned */
+
+describe("6.10 (G-01): an unsigned call webhook never reaches the rules, a TSA or the bridge", () => {
+  beforeEach(() => { delete process.env.TELEPHONY_ALLOW_UNSIGNED; });
+  afterAll(() => { process.env.TELEPHONY_ALLOW_UNSIGNED = "1"; });
+
+  it("a forged Vonage answer and a forged Telnyx call.initiated (no webhook key) start nothing", async () => {
+    routes["+15005550030"] = { kind: "tsa", tsa: "ivr" };
+    script = () => [{ gather: { action: "x", input: ["dtmf"], digits: 6 } }];
+    const v = await post("/wh/vonage/answer", { uuid: cid("vu"), conversation_uuid: "c", from: "420777000031", to: "15005550030" });
+    expect(v.status).toBe(200);
+    // The pre-6.9 greeting, no NCCO with a TSA callback (that would hand the forger the call's capability).
+    expect(v.text).not.toContain("/wh/tel/");
+    await post("/wh/telnyx/events", telnyx("call.initiated", { call_control_id: cid("v3:"), direction: "incoming", from: "+420777000032", to: "+15005550030", state: "parked" }));
+    await post("/wh/tel/in/vonage", { uuid: cid("vu"), conversation_uuid: "c", from: "420777000033", to: "15005550030" });
+    expect(decide).not.toHaveBeenCalled();
+    expect(tsa.start).not.toHaveBeenCalled();
+    expect(telnyxCmds()).toEqual([]);
+    await logFlushed();
+    const { entries } = await queryLog({ kind: "webhook", provider: "vonage" });
+    expect(entries.some((e) => /unsigned call webhook ignored \(set VONAGE_SIGNATURE_SECRET\)/.test(e.summary))).toBe(true);
+  });
+
+  it("a signed Twilio webhook still goes through the rules; TELEPHONY_ALLOW_UNSIGNED=1 lets unsigned ones in", async () => {
+    routes["+15005550031"] = { kind: "state", state: "busy" };
+    expect((await twilio("/wh/twilio/voice", { CallSid: cid("CA"), From: "+420777000034", To: "+15005550031", Direction: "inbound" })).text).toContain('<Reject reason="busy"/>');
+    expect(decide).toHaveBeenCalledTimes(1);
+    process.env.TELEPHONY_ALLOW_UNSIGNED = "1";
+    await post("/wh/vonage/answer", { uuid: cid("vu"), conversation_uuid: "c", from: "420777000035", to: "15005550031" });
+    expect(decide).toHaveBeenCalledTimes(2);
   });
 });
 

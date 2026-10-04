@@ -49,8 +49,10 @@ import { buildInfo } from "./build-info";
 import { isAuthorizedHeader } from "./admin-auth";
 import { createHash } from "node:crypto";
 import { ADMIN_COMMAND_ALLOWLIST } from "./routes-admin-shared";
+import { exactRouting } from "./exact-routing";
 
-const app = express();
+// 6.10 (G-02): paths match exactly, as the console guards compare them.
+const app = exactRouting(express());
 // Same proxy trust as the main app, so req.ip is the client and not nginx.
 applyTrustProxy(app);
 app.disable("etag");

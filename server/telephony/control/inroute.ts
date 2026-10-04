@@ -27,6 +27,7 @@ import { telStore } from "../tel-store";
 import { INROUTE_CODE, INROUTE_DEFAULT_TTL, type InrouteEntry, type InrouteType } from "./types";
 import { telHooks, telLog, telPermissions } from "./hooks";
 import { numberDigits } from "./match";
+import { hashRoom } from "../../monitor/traffic";
 
 export class InrouteError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "InrouteError"; }
@@ -72,8 +73,10 @@ function view(r: Row): InrouteEntry {
   return { code: r.code, type: r.type, room: r.room, user: r.user, label: r.label, ttlSec: r.ttlSec, createdAt: r.createdAt, expiresAt: r.expiresAt, createdBy: { ...r.createdBy }, uses: r.uses, maxUses: r.maxUses };
 }
 
-/** The log's view: the code masked. */
-const logged = (r: Row | InrouteEntry) => ({ code: maskCode(r.code), type: r.type, room: r.room, user: r.user, label: r.label, expiresAt: r.expiresAt, createdBy: r.createdBy, uses: r.uses, maxUses: r.maxUses });
+/** The log's view: the code masked, the room as its hash (6.10 G-03: never the blind id — the log is read without the "settings" right). */
+const logged = (r: Row | InrouteEntry) => ({ code: maskCode(r.code), type: r.type, room: hashRoom(r.room) ?? "", user: r.user, label: r.label, expiresAt: r.expiresAt, createdBy: r.createdBy, uses: r.uses, maxUses: r.maxUses });
+/** "room <hash>" / "<member> in room <hash>" for a log line. */
+const target = (r: Pick<InrouteEntry, "type" | "room" | "user">) => (r.type === "room" ? `room ${hashRoom(r.room) ?? "?"}` : `${r.user} in room ${hashRoom(r.room) ?? "?"}`);
 
 /**
  * A code a guesser tries first: one digit repeated (0000), a run up or down
@@ -192,7 +195,7 @@ export async function inrouteAdd(spec: InrouteSpec): Promise<InrouteEntry> {
   }
   telLog({
     kind: "inroute", level: wanted && trivialCode(wanted) ? "warn" : "info",
-    summary: `route code ${maskCode(row.code)} added → ${row.type === "room" ? `room ${row.room}` : `${row.user} in ${row.room}`} for ${ttlSec} s by ${owner}${wanted && trivialCode(wanted) ? " (an easily guessed code)" : ""}`,
+    summary: `route code ${maskCode(row.code)} added → ${target(row)} for ${ttlSec} s by ${owner}${wanted && trivialCode(wanted) ? " (an easily guessed code)" : ""}`,
     parsed: logged(row),
   });
   return view(row);
@@ -219,7 +222,7 @@ export async function inrouteUsed(code: string): Promise<void> {
   const done = row.maxUses > 0 && row.uses >= row.maxUses;
   if (done) codes.delete(c);
   else codes.put(row);
-  telLog({ kind: "inroute", level: "info", summary: `route code ${maskCode(c)} used (${row.uses}${row.maxUses ? `/${row.maxUses}` : ""}) → ${row.type === "room" ? `room ${row.room}` : `${row.user} in ${row.room}`}${done ? " — used up, removed" : ""}`, parsed: logged(row) });
+  telLog({ kind: "inroute", level: "info", summary: `route code ${maskCode(c)} used (${row.uses}${row.maxUses ? `/${row.maxUses}` : ""}) → ${target(row)}${done ? " — used up, removed" : ""}`, parsed: logged(row) });
 }
 
 /**

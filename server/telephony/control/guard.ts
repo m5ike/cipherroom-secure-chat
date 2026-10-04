@@ -14,7 +14,9 @@ type Compiled = { ep: Endpoint; re: RegExp; params: number };
 
 const COMPILED: Compiled[] = TELEPHONY_API.map((ep) => ({
   ep,
-  re: new RegExp(`^${ep.path.split("/").map((seg) => (seg.startsWith(":") ? "[^/]+" : seg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("/")}$`),
+  // 6.10 (G-02): case-insensitive like a default Express router — the apps route exactly
+  // (exact-routing.ts), and a guard must never be the looser of the two.
+  re: new RegExp(`^${ep.path.split("/").map((seg) => (seg.startsWith(":") ? "[^/]+" : seg.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))).join("/")}$`, "i"),
   params: ep.path.split("/").filter((s) => s.startsWith(":")).length,
 }));
 

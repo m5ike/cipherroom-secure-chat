@@ -22,6 +22,9 @@ Object.assign(process.env, {
   TWILIO_ACCOUNT_SID: "AC00000000000000000000000000000001", TWILIO_AUTH_TOKEN: "twilio-test-token", TWILIO_FROM: "+15005550006",
   TELNYX_API_KEY: "KEY-test", TELNYX_CONNECTION_ID: "conn-1", TELNYX_FROM: "+15005550007",
   TELEPHONY_DID_POOL: "+15005550006",
+  // Telnyx / Vonage webhooks are unsigned here (no TELNYX_PUBLIC_KEY / VONAGE_SIGNATURE_SECRET):
+  // 6.10 (G-01) lets them drive calls only when the operator allows it.
+  TELEPHONY_ALLOW_UNSIGNED: "1",
 });
 
 // AI & speech: a transcription and a voice without a real engine.

@@ -8,7 +8,8 @@
 //   PUT    /admin/telephony/rules/inbound      replace the list (order = priority)    routing
 //   PUT    /admin/telephony/rules/outbound                                             routing
 //   POST   /admin/telephony/rules/test         dry run: RouteQuestion → RouteDecision (optionally over a draft)
-//   GET    /admin/telephony/inroute            the live inroute table (codes in full)
+//   GET    /admin/telephony/inroute            the live inroute table (codes and rooms in full with
+//                                              "settings"; else masked — 6.10 G-03)
 //   POST   /admin/telephony/inroute            add a code (tests)                      settings
 //   DELETE /admin/telephony/inroute/:code      remove one                              settings
 //
@@ -22,7 +23,9 @@ import type { InrouteEntry, RouteQuestion, TelPermissions } from "./types";
 import type { InrouteAddBody, PermissionsAnswer, RulesAnswer } from "./api-contract";
 import { checkInbound, checkOutbound, checkPermissions, controlMeta, getPermissions, getRules, PERMISSION_BOUNDS, ROUTE_SOURCES, savePermissions, saveRules, type Problem } from "./store";
 import { decideWith } from "./rules";
-import { InrouteError, inrouteAdd, inrouteDel, inrouteList } from "./inroute";
+import { InrouteError, inrouteAdd, inrouteDel, inrouteList, maskCode } from "./inroute";
+import { consoleCan } from "../../access";
+import { hashRoom } from "../../monitor/traffic";
 import { CALL_PROVIDERS } from "./store";
 
 const adminOf = (res: Response): string => String(res.locals.adminName ?? "admin").slice(0, 80);
@@ -68,6 +71,11 @@ function questionOf(raw: unknown): { q: RouteQuestion } | { problem: string } {
       ...(source ? { source: source as RouteQuestion["source"] } : {}),
     },
   };
+}
+
+/** An inroute entry for a reader without "settings": the code's last digit, the room's hash. */
+export function maskedEntry(e: InrouteEntry): InrouteEntry {
+  return { ...e, code: maskCode(e.code), room: hashRoom(e.room) ?? "" };
 }
 
 function inrouteFailed(res: Response, err: unknown) {
@@ -126,10 +134,15 @@ export function registerControlRoutes(app: Express): void {
 
   /* ---------------------------------------------------------- inroute */
 
-  app.get("/admin/telephony/inroute", async (_req: Request, res: Response) => {
+  // 6.10 (G-03): a live code is a key to a room's audio (dial the number, type it) and the room
+  // is its blind id (an offline test of the room key, and the hub's address of the room). Only
+  // who may change the table ("settings") reads them in full; everyone else sees the last digit
+  // and the room's hash, as in the log.
+  app.get("/admin/telephony/inroute", async (req: Request, res: Response) => {
     try {
       const entries: InrouteEntry[] = await inrouteList({ limit: 5000 });
-      res.json({ ok: true, entries, limits: getPermissions().inroute });
+      const full = consoleCan(req, res, "telephony", [["settings"]], false);
+      res.json({ ok: true, entries: full ? entries : entries.map(maskedEntry), masked: !full, limits: getPermissions().inroute });
     } catch (err) { inrouteFailed(res, err); }
   });
 
