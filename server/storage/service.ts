@@ -50,6 +50,11 @@ export const SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 
+function envMegabytes(name: string, fallback: number): number {
+  const n = Number(process.env[name]?.trim());
+  return (Number.isFinite(n) && n > 0 ? n : fallback) * 1024 * 1024;
+}
+
 export type StorageLimits = {
   accountQuotaBytes: number;
   sessionQuotaBytes: number;
@@ -59,6 +64,12 @@ export type StorageLimits = {
   sessionsPerClientPerHour: number;
   /** Live session databases on the whole server. */
   maxLiveSessions: number;
+  /** 6.7 (S7): live session databases one client may hold at once. */
+  liveSessionsPerClient: number;
+  /** 6.7 (S7): bytes all live session databases may use together
+   *  (STORAGE_SESSION_BUDGET_MB); when spent, no new session starts and an
+   *  existing one cannot grow. */
+  sessionBudgetBytes: number;
   logLinesPerHour: number;
   transfersPerHour: number;
   /** A client-supplied log / transfer detail, as JSON. */
@@ -79,6 +90,8 @@ export const STORAGE_LIMITS: Readonly<StorageLimits> = {
   idleHandleMs: 5 * 60 * 1000,
   sessionsPerClientPerHour: 30,
   maxLiveSessions: 5_000,
+  liveSessionsPerClient: 20,
+  sessionBudgetBytes: envMegabytes("STORAGE_SESSION_BUDGET_MB", 2048),
   logLinesPerHour: 600,
   transfersPerHour: 200,
   clientDetailBytes: 1024,
@@ -238,7 +251,36 @@ export class StorageService {
       mustExist: row.schemaVersion > 0,
       quotaBytes: kind === "account" ? this.limits.accountQuotaBytes : this.limits.sessionQuotaBytes,
       limits: this.userLimits,
+      ...(kind === "session" ? { sharedBudget: this.sessionBudget } : {}),
     };
+  }
+
+  /* ------------------------------------------- session budget (6.7, S7) */
+
+  private budgetCache = { at: 0, bytes: 0 };
+
+  /** Bytes the live session databases use (the index's sizes, refreshed on
+   *  use; cached for a few seconds — it is asked on every session write). */
+  sessionBytes(now = Date.now()): number {
+    if (now - this.budgetCache.at > 5_000) {
+      try { this.budgetCache = { at: now, bytes: this.global.liveSessionBytes(now) }; } catch { /* keep the last value */ }
+    }
+    return this.budgetCache.bytes;
+  }
+
+  private readonly sessionBudget = { exceeded: () => this.sessionBytes() >= this.limits.sessionBudgetBytes };
+
+  /** Which live session databases each client started (memory: a restart forgets it). */
+  private clientSessions = new Map<string, Set<string>>();
+
+  private liveSessionsOf(clientKey: string, now: number): Set<string> {
+    const ids = this.clientSessions.get(clientKey) ?? new Set<string>();
+    for (const id of ids) {
+      const row = this.global.getDatabase(id);
+      if (!row || !this.sessionLive(row, now)) ids.delete(id);
+    }
+    if (ids.size === 0) this.clientSessions.delete(clientKey);
+    return ids;
   }
 
   private created(row: DatabaseRow): void {
@@ -275,7 +317,15 @@ export class StorageService {
       this.log({ level: "warn", source: "server", event: "storage.session.capacity" });
       throw new SessionLimitError("global", "this server is holding as many temporary databases as it can; try again later");
     }
-    if (meta.clientKey !== undefined && !this.quotas.session.take(`c:${meta.clientKey.slice(0, 80)}`, this.limits.sessionsPerClientPerHour, now)) {
+    if (this.sessionBytes(now) >= this.limits.sessionBudgetBytes) {
+      this.log({ level: "warn", source: "server", event: "storage.session.budget" });
+      throw new SessionLimitError("global", "this server's space for temporary databases is used up; try again later");
+    }
+    const client = meta.clientKey !== undefined ? `c:${meta.clientKey.slice(0, 80)}` : null;
+    if (client && this.liveSessionsOf(client, now).size >= this.limits.liveSessionsPerClient) {
+      throw new SessionLimitError("client", "this address already holds as many temporary databases as it may; try again later");
+    }
+    if (client && !this.quotas.session.take(client, this.limits.sessionsPerClientPerHour, now)) {
       throw new SessionLimitError("client", "too many new sessions from this address; try again later");
     }
     const sessionId = `sess-${randomBytes(18).toString("base64url")}`;
@@ -289,6 +339,10 @@ export class StorageService {
       key.fill(0);
     }
     this.touched.set(row.id, now);
+    if (client) {
+      if (!this.clientSessions.has(client) && this.clientSessions.size >= 50_000) this.clientSessions.delete(this.clientSessions.keys().next().value as string);
+      this.clientSessions.set(client, (this.clientSessions.get(client) ?? new Set<string>()).add(row.id));
+    }
     this.log({ level: "info", source: "server", event: "storage.session.created", sessionId, detail: { databaseId: row.id } });
     return { sessionId, databaseId: row.id, expiresAt };
   }

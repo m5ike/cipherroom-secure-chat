@@ -93,6 +93,10 @@ export type UserDatabaseOptions = {
   /** Bytes this database may use; 0 = unlimited. */
   quotaBytes?: number;
   limits?: Partial<UserLimits>;
+  /** 6.7 (audit S7): a budget shared with other databases (anonymous
+   *  sessions). While it is spent, a write may not grow this database past
+   *  the largest size it already had. */
+  sharedBudget?: { exceeded(): boolean };
 };
 
 export type MessagePage = { messages: StoredMessage[]; more: boolean; lastSeq: number };
@@ -110,9 +114,15 @@ export class UserDatabase {
   private readonly limits: UserLimits;
   private readonly statements = new Map<string, SqliteStatement>();
 
+  private readonly sharedBudget: { exceeded(): boolean } | null;
+  /** The largest size this handle has seen (the shared budget's baseline). */
+  private highWater = 0;
+
   constructor(readonly id: string, private readonly db: SqliteDatabase, options: UserDatabaseOptions = {}) {
     this.quotaBytes = Math.max(0, options.quotaBytes ?? 0);
     this.limits = { ...USER_LIMITS, ...(options.limits ?? {}) };
+    this.sharedBudget = options.sharedBudget ?? null;
+    if (this.sharedBudget) { try { this.highWater = this.usedBytes(); } catch { this.highWater = 0; } }
   }
 
   private touch() { this.lastUsedAt = Date.now(); }
@@ -158,9 +168,13 @@ export class UserDatabase {
 
   /** Throws (and so rolls back the surrounding transaction) past the quota. */
   private checkQuota(): void {
-    if (this.quotaBytes <= 0) return;
+    if (this.quotaBytes <= 0 && !this.sharedBudget) return;
     const used = this.usedBytes();
-    if (used > this.quotaBytes) throw new QuotaExceededError(used, this.quotaBytes);
+    if (this.quotaBytes > 0 && used > this.quotaBytes) throw new QuotaExceededError(used, this.quotaBytes);
+    if (this.sharedBudget) {
+      if (used > this.highWater && this.sharedBudget.exceeded()) throw new QuotaExceededError(used, this.highWater);
+      this.highWater = Math.max(this.highWater, used);
+    }
   }
 
   /* ----------------------------------------------------------- settings */
