@@ -47,6 +47,28 @@ const cs: Dict = {
   "proto.dropped": "Zpráva od {name} byla zahozena (neplatný nebo opakovaný obsah).",
   "file.verified": "Soubor {name} ověřen — otisk celého souboru a podpis odesílatele sedí.",
   "file.unverified": "Soubor {name} přišel od staršího klienta — bez ověření otisku.",
+  // 6.7 (audit V2): another member's function outputs — browser code waits for the viewer
+  "fnui.peerAsk": "Spustit kód v prohlížeči od {name}?",
+  "fnui.peerNote": "Poslal ho člen místnosti, ne aplikace. Poběží izolovaně, ale smí na internet a odpovídat modelu tvým jménem, když s ním pracuješ.",
+  "fnui.peerRun": "Spustit",
+  "fnui.peerCode": "Kód v prohlížeči od {name} (izolovaně)",
+  "fnui.peerHidden": "Skrytý kód v prohlížeči od {name} se nespustil.",
+  // 6.7 (F-04): the room key's strength
+  "key.strength": "Síla klíče: {level} (~{bits} bitů)",
+  "key.level.empty": "—",
+  "key.level.weak": "slabý",
+  "key.level.fair": "ujde",
+  "key.level.strong": "silný",
+  "key.hint.short": "Je krátký — použij aspoň 16 znaků nebo 5 náhodných slov.",
+  "key.hint.common": "Obsahuje běžné heslo nebo slovo (heslo, rodina, praha…).",
+  "key.hint.pattern": "Opakování a řady (aaa, 1234, qwertz) skoro nic nepřidají.",
+  "key.hint.year": "Roky a data se hádají snadno.",
+  "key.hint.context": "Obsahuje název místnosti nebo tvoje jméno — ty útočník zná.",
+  "key.hint.classes": "Jen malá písmena — přidej délku nebo další slova.",
+  "key.generate": "Vygenerovat silný klíč",
+  "key.weak.held": "Tento klíč je pro novou místnost příliš slabý: kdo má data serveru, může ho uhodnout offline. Zvol silnější (nebo ho vygeneruj). Připojuješ-li se do místnosti, která už tento klíč používá, stiskni Připojit znovu.",
+  // 6.7 (audit N29): a card's link that is not https
+  "nfc.urlRefused": "Odkaz z karty se neotevřel — otevírají se jen adresy https://.",
 };
 
 const en: Dict = {
@@ -93,6 +115,28 @@ const en: Dict = {
   "proto.dropped": "A message from {name} was dropped (invalid or repeated content).",
   "file.verified": "File {name} verified — the whole-file digest and the sender's signature match.",
   "file.unverified": "File {name} came from an older client — its digest was not verified.",
+  // 6.7 (audit V2): another member's function outputs — browser code waits for the viewer
+  "fnui.peerAsk": "Run browser code from {name}?",
+  "fnui.peerNote": "A room member sent it, not the app. It runs sandboxed, but it may reach the internet and answer the model in your name while you use it.",
+  "fnui.peerRun": "Run",
+  "fnui.peerCode": "Browser code from {name} (sandboxed)",
+  "fnui.peerHidden": "Hidden browser code from {name} was not run.",
+  // 6.7 (F-04): the room key's strength
+  "key.strength": "Key strength: {level} (~{bits} bits)",
+  "key.level.empty": "—",
+  "key.level.weak": "weak",
+  "key.level.fair": "fair",
+  "key.level.strong": "strong",
+  "key.hint.short": "It is short — use at least 16 characters or 5 random words.",
+  "key.hint.common": "It contains a common password or word (password, family, love…).",
+  "key.hint.pattern": "Repeats and sequences (aaa, 1234, qwerty) add almost nothing.",
+  "key.hint.year": "Years and dates are easy to guess.",
+  "key.hint.context": "It contains the room's name or your name — an attacker knows those.",
+  "key.hint.classes": "Lowercase letters only — make it longer or add words.",
+  "key.generate": "Generate a strong key",
+  "key.weak.held": "This key is too weak for a new room: whoever holds the server's data could guess it offline. Choose a stronger one (or generate it). If you are joining a room that already uses this key, press Connect again.",
+  // 6.7 (audit N29): a card's link that is not https
+  "nfc.urlRefused": "The card's link was not opened — only https:// addresses open.",
 };
 
 const de: Dict = {
@@ -139,6 +183,28 @@ const de: Dict = {
   "proto.dropped": "Eine Nachricht von {name} wurde verworfen (ungültiger oder wiederholter Inhalt).",
   "file.verified": "Datei {name} geprüft — Prüfsumme der ganzen Datei und Signatur des Absenders stimmen.",
   "file.unverified": "Datei {name} kam von einem älteren Client — ohne Prüfung der Prüfsumme.",
+  // 6.7 (audit V2): another member's function outputs — browser code waits for the viewer
+  "fnui.peerAsk": "Browser-Code von {name} ausführen?",
+  "fnui.peerNote": "Ein Raummitglied hat ihn geschickt, nicht die App. Er läuft isoliert, darf aber ins Internet und dem Modell in deinem Namen antworten, während du ihn benutzt.",
+  "fnui.peerRun": "Ausführen",
+  "fnui.peerCode": "Browser-Code von {name} (isoliert)",
+  "fnui.peerHidden": "Versteckter Browser-Code von {name} wurde nicht ausgeführt.",
+  // 6.7 (F-04): the room key's strength
+  "key.strength": "Schlüsselstärke: {level} (~{bits} Bit)",
+  "key.level.empty": "—",
+  "key.level.weak": "schwach",
+  "key.level.fair": "mittel",
+  "key.level.strong": "stark",
+  "key.hint.short": "Er ist kurz — nimm mindestens 16 Zeichen oder 5 zufällige Wörter.",
+  "key.hint.common": "Er enthält ein häufiges Passwort oder Wort (Passwort, Familie, Liebe…).",
+  "key.hint.pattern": "Wiederholungen und Folgen (aaa, 1234, qwertz) bringen fast nichts.",
+  "key.hint.year": "Jahreszahlen und Daten sind leicht zu erraten.",
+  "key.hint.context": "Er enthält den Raumnamen oder deinen Namen — die kennt ein Angreifer.",
+  "key.hint.classes": "Nur Kleinbuchstaben — mach ihn länger oder nimm mehr Wörter.",
+  "key.generate": "Starken Schlüssel erzeugen",
+  "key.weak.held": "Dieser Schlüssel ist für einen neuen Raum zu schwach: Wer die Daten des Servers hat, kann ihn offline erraten. Wähle einen stärkeren (oder erzeuge ihn). Wenn du einem Raum beitrittst, der diesen Schlüssel schon nutzt, drücke noch einmal Verbinden.",
+  // 6.7 (audit N29): a card's link that is not https
+  "nfc.urlRefused": "Der Link der Karte wurde nicht geöffnet — nur https://-Adressen werden geöffnet.",
 };
 
 export const SECURITY_I18N = { cs, en, de } as const;

@@ -92,8 +92,18 @@ export async function scanOnce(timeoutMs = 30_000): Promise<ReadResult> {
     return { ok: false, reason: (err as Error).message || "scan-error" };
   }
   return await new Promise<ReadResult>((resolve) => {
-    reader.addEventListener("reading", (ev: unknown) => {
+    // 6.7 (N30): one answer, whichever comes first — and the scan stops with it. The timeout
+    // used to stop the scan and leave this promise pending forever (the UI hung).
+    let settled = false;
+    const finish = (r: ReadResult) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeout);
+      resolve(r);
+      if (!ac.signal.aborted) ac.abort();
+    };
+    ac.signal.addEventListener("abort", () => finish({ ok: false, reason: "timeout" }), { once: true });
+    reader.addEventListener("reading", (ev: unknown) => {
       const message = (ev as { message?: { records?: Array<{ recordType: string; data?: ArrayBuffer }> } }).message;
       const records = message?.records || [];
       for (const r of records) {
@@ -102,12 +112,12 @@ export async function scanOnce(timeoutMs = 30_000): Promise<ReadResult> {
           const view = new Uint8Array(r.data as ArrayBuffer);
           const langLen = view[0] & 0x3f;
           const text = new TextDecoder().decode(view.slice(1 + langLen));
-          if (text.startsWith("m5cet:nfc:v1:")) return resolve({ ok: true, blob: text });
+          if (text.startsWith("m5cet:nfc:v1:")) return finish({ ok: true, blob: text });
         }
       }
-      resolve({ ok: false, reason: "Tag nemá M5cet payload." });
+      finish({ ok: false, reason: "Tag nemá M5cet payload." });
     });
-    reader.addEventListener("readingerror", () => resolve({ ok: false, reason: "reading-error" }));
+    reader.addEventListener("readingerror", () => finish({ ok: false, reason: "reading-error" }));
   });
 }
 

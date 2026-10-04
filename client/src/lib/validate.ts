@@ -160,6 +160,12 @@ export type ProfilePayload = { kind: "profile"; id: string; createdAt: number; s
 /** Ids the app itself uses for its own notices; a peer may not borrow them. */
 const RESERVED_SENDERS = new Set(["system", "self", "server", "admin"]);
 
+/** 6.7: an id only this app gives — its own notices, or a caller-only function
+ *  answer ("function:<keyword>", whose outputs act by themselves). Never a peer's. */
+export function isReservedSender(id: string): boolean {
+  return RESERVED_SENDERS.has(id) || id.startsWith("function:");
+}
+
 /**
  * Checks a decrypted payload. `transportSender` is who actually delivered
  * it (the data channel's peer, or the peer the server says relayed it) —
@@ -174,7 +180,7 @@ export function validatePayload(value: unknown, opts: PayloadOpts = {}): ChatPay
   const now = opts.now ?? Date.now();
   const id = str(p.id, PAYLOAD_LIMITS.idChars);
   const senderId = str(p.senderId, PAYLOAD_LIMITS.idChars);
-  if (!id || !senderId || RESERVED_SENDERS.has(senderId)) return null;
+  if (!id || !senderId || isReservedSender(senderId)) return null;
   if (opts.myId && senderId === opts.myId) return null;
   if (opts.transportSender && senderId !== opts.transportSender) return null;
   const createdAt = typeof p.createdAt === "number" && Number.isFinite(p.createdAt) ? Math.min(p.createdAt, now + PAYLOAD_LIMITS.futureSkewMs) : now;

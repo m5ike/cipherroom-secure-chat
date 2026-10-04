@@ -113,6 +113,11 @@ textarea.fn-input { resize: vertical; }
 .fn-js--hidden { position: absolute; width: 0; height: 0; overflow: hidden; }
 .fn-js__title { font-size: 0.8rem; font-weight: 600; color: hsl(var(--muted-foreground)); }
 .fn-js__frame { width: 100%; border: 0; border-radius: 0.6rem; background: transparent; color-scheme: normal; display: block; }
+/* 6.7: another member's browser code waits for the viewer's click */
+.fn-peer-code { display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; padding: 0.5rem 0.7rem; border-radius: 0.6rem; border: 1px dashed hsl(var(--border)); background: hsl(var(--muted) / 0.5); font-size: 0.85rem; }
+.fn-peer-code__title { color: hsl(var(--muted-foreground)); }
+.fn-peer-code__note { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+.fn-peer-code--hidden { font-size: 0.75rem; color: hsl(var(--muted-foreground)); border-style: dotted; }
 
 @media (max-width: 520px) {
   .fn-form__grid { grid-template-columns: 1fr !important; }
@@ -124,7 +129,7 @@ textarea.fn-input { resize: vertical; }
 /* 6.6: formatted HTML (m5.out.html) — the m5h-* report classes, themed. */
 .fn-html { display: flex; flex-direction: column; gap: 0.3rem; max-width: 100%; }
 .fn-html__title { font-weight: 600; font-size: 0.9rem; }
-.fn-html__body { font-size: 0.88rem; line-height: 1.45; overflow-wrap: anywhere; }
+.fn-html__body { font-size: 0.88rem; line-height: 1.45; overflow-wrap: anywhere; overflow: auto; contain: paint; } /* 6.7 (N26): never paints over other messages */
 .fn-html__body :is(h1, h2, h3, h4, h5, h6) { margin: 0.6rem 0 0.3rem; line-height: 1.25; }
 .fn-html__body h1 { font-size: 1.25rem; } .fn-html__body h2 { font-size: 1.12rem; } .fn-html__body :is(h3, h4) { font-size: 0.98rem; } .fn-html__body :is(h5, h6) { font-size: 0.9rem; }
 .fn-html__body p { margin: 0.3rem 0; }

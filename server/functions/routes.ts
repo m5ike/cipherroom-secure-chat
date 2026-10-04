@@ -34,6 +34,7 @@ import { checkAccess, userSubject, type Check, type Needs } from "../access";
 import { modelVisible, runNeeds } from "./visibility";
 import { seedBuiltins } from "./builtins";
 import { registerSandboxPage } from "./sandbox-page";
+import { mayContinue } from "./chain-access";
 
 /** Auto mode: how long a webhook waits for the run before answering 202. */
 const AUTO_WAIT_MS = Math.max(1000, Number(process.env.WEBHOOK_AUTO_WAIT_MS) || 25_000);
@@ -225,7 +226,9 @@ export function registerFunctionsRoutes(app: Express): void {
     if (!model || !model.enabled || !access?.allowed || !allowed(model, caller, access)) return res.status(404).json({ ok: false, code: "no-command", message: "No such command, or it is not available to you." });
     const chainId = typeof body.chain === "string" ? body.chain : "";
     const chain = chainId ? functionsStore.chain(chainId) : null;
-    if (!chain || chain.modelId !== model.id) return res.status(410).json({ ok: false, code: "expired", message: `This conversation with /${model.keyword || model.name} is over — run the command again.` });
+    // 6.7 (V2): only its opener, or a member of the room it was posted to, continues a session —
+    // a session id put into a forged message does not let the viewers' clicks drive someone else's run.
+    if (!chain || chain.modelId !== model.id || !mayContinue(chain, caller, model)) return res.status(410).json({ ok: false, code: "expired", message: `This conversation with /${model.keyword || model.name} is over — run the command again.` });
     const callIdx = Number.isInteger(body.call) ? Number(body.call) : chain.calls.length - 1;
     const origin = chain.calls[callIdx] ?? chain.calls.at(-1);
     const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");

@@ -165,6 +165,10 @@ export type IncomingFileState = {
   digests?: Array<Bytes | null>;
   /** v2: who signed the meta (the end frame must come from the same key). */
   signer?: Signer | null;
+  /** 6.7 (S19): the peer whose channel delivered the meta (P2P) or whom the server named (proxy). */
+  from?: string;
+  /** 6.7 (S20): the last frame, for the idle sweep. */
+  lastFrameAt?: number;
 };
 
 /** What the receiver learns about a finished file besides its bytes. */
@@ -200,7 +204,7 @@ import {
 } from "./envelope";
 import { decodeChunk, encodeChunk, FRAME_P2P_CHUNK, FRAME_PROXY_CHUNK } from "./binary-frames";
 import type { Identity } from "./identity";
-import { safeFileName, safeMime } from "./validate";
+import { isReservedSender, safeFileName, safeMime } from "./validate";
 
 /** RoomKeys (crypto v2) or a bare AES key (v1). */
 export type TransferKey = CryptoKey | RoomKeys;
@@ -211,12 +215,22 @@ export function isRoomKeys(key: TransferKey): key is RoomKeys {
   return (version === 2 || version === 3) && Boolean((key as RoomKeys).files);
 }
 
-/** Chunk sizes a sender may choose, and how many chunks one file may have
- *  (2 M × the 32 KiB default = 64 GiB) — the receiver allocates a slot per
- *  chunk, so a meta claiming billions of them must not get that far. */
+/** Chunk sizes a sender may choose, and how many chunks one file may have —
+ *  the receiver allocates a slot per chunk, so a meta claiming billions of
+ *  them must not get that far.
+ *  6.7 (audit S20): a received file is held in this page's memory until it is
+ *  complete, so a receiver takes at most INCOMING_MAX_BYTES (2 GiB, as the
+ *  Android app), in at most 128 Ki chunks (16 KiB each for 2 GiB; a meta of
+ *  1-byte chunks used to make two arrays of 2 M slots each), a few at a
+ *  time, and forgets one that went quiet. */
 const MIN_CHUNK = 1;
 const MAX_CHUNK = 1024 * 1024;
-export const MAX_TOTAL_CHUNKS = 2_000_000;
+export const INCOMING_MAX_BYTES = 2 * 1024 ** 3;
+export const MAX_TOTAL_CHUNKS = 128 * 1024;
+/** Files arriving at once: in all, and from one sender. */
+export const MAX_INCOMING = { total: 16, perSender: 4 } as const;
+/** A transfer with no frame for this long is dropped (its memory freed). */
+export const INCOMING_IDLE_MS = 2 * 60_000;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -647,6 +661,19 @@ function requestResend(
 export type IncomingRegistry = Map<string, IncomingFileState>;
 export function newIncomingRegistry(): IncomingRegistry { return new Map(); }
 
+/** 6.7 (S20): drops transfers that went quiet (no frame for INCOMING_IDLE_MS) and frees their memory. Returns their ids. */
+export function sweepIncoming(registry: IncomingRegistry, now = Date.now(), cb?: IncomingCallbacks): string[] {
+  const gone: string[] = [];
+  for (const [id, state] of registry) {
+    if (now - (state.lastFrameAt ?? now) < INCOMING_IDLE_MS) continue;
+    state.cancelled = true;
+    registry.delete(id);
+    gone.push(id);
+    cb?.onError?.(id, "The file stopped arriving (no data for 2 minutes).");
+  }
+  return gone;
+}
+
 export type IncomingCallbacks = {
   onMeta?: (meta: FileMetaPlain, transport: FileTransport) => void;
   /** Chunks that never arrived; the caller sends the request to the sender. */
@@ -674,6 +701,11 @@ export function handleIncomingFrame(
   frame: FileTransferEnvelope,
   hardLimitBytes: number,
   cb: IncomingCallbacks,
+  /** 6.7 (S19): who delivered the frame — the data channel's peer, or the
+   *  sender the server names on a relayed frame. Undefined only where the
+   *  transport binds the sender itself (relayed binary chunks: the server
+   *  checks they come from the transfer's sender). */
+  from?: string,
 ): Promise<void> {
   let queues = frameQueues.get(registry);
   if (!queues) { queues = new Map(); frameQueues.set(registry, queues); }
@@ -681,7 +713,7 @@ export function handleIncomingFrame(
   const previous = queues.get(transferId) ?? Promise.resolve();
   const current = previous
     .catch(() => undefined)
-    .then(() => processIncomingFrame(key, registry, frame, hardLimitBytes, cb));
+    .then(() => processIncomingFrame(key, registry, frame, hardLimitBytes, cb, from));
   queues.set(transferId, current);
   // Drop the queue once this transfer goes quiet, so the map cannot grow.
   void current.catch(() => undefined).then(() => {
@@ -700,7 +732,8 @@ export function checkMeta(raw: unknown, transferId: string, hardLimitBytes: numb
   const chunkSize = m.chunkSize;
   const totalChunks = m.totalChunks;
   if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) return "Invalid file size.";
-  if (size > hardLimitBytes) return `File too large (${size} > ${hardLimitBytes} bytes).`;
+  const limit = Math.min(hardLimitBytes, INCOMING_MAX_BYTES);
+  if (size > limit) return `File too large (${size} > ${limit} bytes).`;
   if (typeof chunkSize !== "number" || !Number.isInteger(chunkSize) || chunkSize < MIN_CHUNK || chunkSize > MAX_CHUNK) return "Invalid chunk size.";
   if (totalChunks !== Math.max(1, Math.ceil(size / chunkSize))) return "Chunk count does not match the file size.";
   if (totalChunks > MAX_TOTAL_CHUNKS) return "Too many chunks.";
@@ -726,15 +759,30 @@ async function processIncomingFrame(
   frame: FileTransferEnvelope,
   hardLimitBytes: number,
   cb: IncomingCallbacks,
+  from?: string,
 ): Promise<void> {
   const transport: FileTransport = frame.transport === "proxy" ? "proxy" : "p2p";
   // proxy-* and file-* frames share one lifecycle.
   const kind = frame.kind.replace(/^proxy-/, "file-");
   const transferId = frame.transferId;
+  // 6.7 (S19/S20): a transfer's chunks, end and cancel come from whoever sent its meta —
+  // another member cannot cancel it, fill its slots or end it.
+  const existing = registry.get(transferId);
+  if (existing && kind !== "file-meta") {
+    if (existing.from !== undefined && from !== undefined && from !== existing.from) return;
+    existing.lastFrameAt = Date.now();
+  }
 
   if (kind === "file-meta") {
     const f = frame as { iv: string; ciphertext: string; v?: number };
     if (registry.has(transferId)) return; // a repeated meta changes nothing
+    // 6.7 (S20): a few files at a time; one that went quiet makes room.
+    sweepIncoming(registry, Date.now(), cb);
+    const fromSender = from === undefined ? 0 : [...registry.values()].filter((st) => st.from === from).length;
+    if (registry.size >= MAX_INCOMING.total || fromSender >= MAX_INCOMING.perSender) {
+      cb.onError?.(transferId, "Too many files arriving at once — ask the sender to try again shortly.");
+      return;
+    }
     try {
       const v2 = f.v === 2 && isRoomKeys(key);
       let fk: CryptoKey;
@@ -754,6 +802,20 @@ async function processIncomingFrame(
         cb.onError?.(transferId, meta);
         return;
       }
+      // 6.7 (S19): the file is from the peer that delivered it — as a chat message is
+      // (validate.ts) — and never under an id the app keeps for itself ("system"…).
+      if (from !== undefined) {
+        if (meta.senderId && meta.senderId !== from) {
+          cb.onError?.(transferId, "The file names another sender than the peer that sent it.");
+          return;
+        }
+        meta.senderId = from;
+        if (meta.senderName === "peer-") meta.senderName = `peer-${from.slice(-4)}`;
+      }
+      if (!meta.senderId || isReservedSender(meta.senderId)) {
+        cb.onError?.(transferId, "The file names no valid sender.");
+        return;
+      }
       if (signer && !signer.valid) {
         cb.onError?.(transferId, "The file's signature does not verify.");
         return;
@@ -767,6 +829,8 @@ async function processIncomingFrame(
         version: v2 ? 2 : 1,
         key: fk,
         ...(v2 ? { digests: new Array<Bytes | null>(meta.totalChunks).fill(null), signer } : {}),
+        ...(from !== undefined ? { from } : {}),
+        lastFrameAt: Date.now(),
       });
       cb.onMeta?.(meta, transport);
     } catch (err) {

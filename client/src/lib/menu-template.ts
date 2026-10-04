@@ -21,6 +21,8 @@
 // only to https or this site, actions only from the menu's list — an
 // operator cannot inject a script into every user's menu.
 
+import { isSitePath } from "./site-path";
+
 /* ======================================================================= */
 /*  Parsing                                                                */
 /* ======================================================================= */
@@ -757,8 +759,9 @@ export function isSafeAction(value: string, panels: readonly string[], fns: read
 
 function safeUrl(value: string, forImage: boolean): string | null {
   const v = value.trim();
-  if (forImage) return /^\/(?!\/)[^\s]*$/.test(v) || /^data:image\/(png|gif|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(v) ? v : null;
-  if (/^https:\/\/[^\s]+$/i.test(v) || /^mailto:[^\s]+$/i.test(v) || /^\/(?!\/)[^\s]*$/.test(v) || /^#[\w-]*$/.test(v)) return v;
+  // 6.7 (N22): a path of this site is isSitePath() — not "/\\other.host".
+  if (forImage) return (isSitePath(v) && !/\s/.test(v)) || /^data:image\/(png|gif|jpeg|webp);base64,[a-z0-9+/=]+$/i.test(v) ? v : null;
+  if (/^https:\/\/[^\s]+$/i.test(v) || /^mailto:[^\s]+$/i.test(v) || (isSitePath(v) && !/\s/.test(v)) || /^#[\w-]*$/.test(v)) return v;
   return null;
 }
 

@@ -16,6 +16,7 @@ import {
   type EditResult, type Keepalive, type ProfileInput,
 } from "../lib/connections";
 import type { ChatRetention } from "../lib/chat-history";
+import { generateRoomKey } from "../lib/passphrase-strength";
 import { SimpleModal } from "./SimpleModal";
 import { NeedSignIn } from "./NeedSignIn";
 import { ShareConnection } from "./SharePanel";
@@ -58,18 +59,8 @@ const TTL_OPTIONS = [0, 5, 60, 60 * 24, 60 * 24 * 7];
 const RETENTIONS: ChatRetention[] = ["ephemeral", "session", "server"];
 const KEEPALIVES: Keepalive[] = ["conservative", "balanced", "aggressive"];
 
-/** 24 characters from 57 look-alike-free ones (~140 bits), without modulo bias. */
-function randomKey(): string {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
-  const limit = 256 - (256 % alphabet.length);
-  let out = "";
-  while (out.length < 24) {
-    for (const b of crypto.getRandomValues(new Uint8Array(32))) {
-      if (b < limit && out.length < 24) out += alphabet[b % alphabet.length];
-    }
-  }
-  return out.replace(/(.{6})(?=.)/g, "$1-");
-}
+/** 24 characters from 57 look-alike-free ones (~140 bits) — shared with the Room window (6.7). */
+const randomKey = generateRoomKey;
 
 const value = (e: unknown) => (e as ChangeEvent<HTMLInputElement | HTMLSelectElement>).target.value;
 const checked = (e: unknown) => (e as ChangeEvent<HTMLInputElement>).target.checked;

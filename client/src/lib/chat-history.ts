@@ -20,6 +20,8 @@
 import { toBase64, fromBase64 } from "./crypto";
 import type { ChatMessage } from "./chat-types";
 import { deleteMessage, endHides } from "./message-hide";
+import { validateAttachment } from "./validate";
+import { sanitizeFnOutputs } from "./fn-outputs";
 
 export type ChatRetention = "ephemeral" | "session" | "server";
 
@@ -95,6 +97,16 @@ export function sanitizeRestored(value: unknown, myPeerId?: string, opts: { sign
     .slice(-HISTORY_LIMITS.maxMessages)
     .map((m) => {
       const out: ChatMessage = { ...m, text: typeof m.text === "string" ? m.text : "", mine: m.mine === true || Boolean(myPeerId && m.senderId === myPeerId) };
+      // 6.7 (S17): what a stored message carries is checked again, as a peer's would be:
+      // a file keeps a type that is safe to open here (never text/html in this origin), a
+      // blob: URL of an earlier page is gone, a function's outputs pass the output rules.
+      if (m.attachment !== undefined) {
+        const a = m.attachment as unknown as Record<string, unknown> | null;
+        const url = a && typeof a.dataUrl === "string" ? a.dataUrl : "";
+        const checked = validateAttachment(a && !url.startsWith("data:") ? { ...a, dataUrl: "", dropped: url !== "" || a.dropped === true } : a);
+        if (checked) out.attachment = checked; else delete out.attachment;
+      }
+      if (out.flags?.fn?.outputs) out.flags = { ...out.flags, fn: { ...out.flags.fn, outputs: sanitizeFnOutputs(out.flags.fn.outputs, HISTORY_LIMITS.maxBytes) } };
       const h = m.hidden as unknown as { at?: unknown; until?: unknown } | undefined;
       if (h !== undefined && !(h && typeof h === "object" && typeof h.at === "number" && typeof h.until === "number" && h.until >= 0)) delete out.hidden;
       if (out.deletedAt !== undefined && typeof out.deletedAt !== "number") delete out.deletedAt;
@@ -195,11 +207,14 @@ export function createServerSealer(opts: { keys?: Map<string, CryptoKey> } = {})
       ));
       return { sealed: 1, iv: toBase64(iv), ct: toBase64(ct) };
     },
-    /** Opens a sealed row (bound to its message id); a row written before
-     *  sealing existed is returned as it is. Null when it does not open. */
+    /** Opens a sealed row (bound to its message id). Null when it does not
+     *  open — and (6.7, audit S17) for any row that is not sealed: such a row
+     *  can only have come from the server itself (rows from before sealing
+     *  expired with their one-day session long ago), and the server is who
+     *  this sealing protects the history from. */
     async open(id: string, value: unknown): Promise<unknown | null> {
       const row = value as Partial<SealedRow> | null;
-      if (!row || row.sealed !== 1) return value;
+      if (!row || row.sealed !== 1) return null;
       const k = await key(false);
       if (!k || typeof row.iv !== "string" || typeof row.ct !== "string") return null;
       try {

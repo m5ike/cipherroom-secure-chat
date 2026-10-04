@@ -81,6 +81,8 @@ beforeAll(async () => {
 afterAll(() => { server?.close(); closeRunner(); });
 
 const user = { kind: "user" as const, account: "a1", name: "alice", groups: ["user"], room: "r1", client: "c1", lang: "en", tz: "UTC" };
+/** The same browser without an account: the app's events below come from it (client c1). */
+const guestC1 = { ...user, kind: "guest" as const, account: "", name: "guest" };
 const model = () => functionsStore.model("ep-model")!;
 const post = (path: string, body: unknown) => fetch(`${base}${path}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
@@ -123,7 +125,7 @@ describe("entry points on a model", () => {
 describe("a list result, m5.model and the events", () => {
   let chain = "";
   it("execute returns a list: every item is an output, the session opens with call 0", async () => {
-    const r = await execute(model(), { topic: "dns" }, user, { executor: "chat" });
+    const r = await execute(model(), { topic: "dns" }, guestC1, { executor: "chat" });
     expect(r.run.error).toBeNull();
     expect(r.values.map((o) => o.type)).toEqual(["markdown", "flash", "button", "form", "js"]);
     expect(r.values[2]).toMatchObject({ type: "button", name: "more", title: "More", data: { n: 1 }, css: "primary", icon: "➕" });
@@ -137,7 +139,7 @@ describe("a list result, m5.model and the events", () => {
   }, 30_000);
 
   it("a click runs the button entry point in the same session: calls, current, last, its session and cache", async () => {
-    const res = await post("/api/functions/event", { keyword: "ep", chain, call: 0, type: "button", name: "more", data: { n: 1 } });
+    const res = await post("/api/functions/event", { keyword: "ep", chain, client: "c1", call: 0, type: "button", name: "more", data: { n: 1 } });
     const d = await res.json();
     expect(res.status).toBe(200);
     expect(d.outputs[0].value).toMatchObject({ name: "more", n: 1, event: "click", type: "button", call: 1, first: "execute", last: "execute", lastResultItems: 5, topic: "dns", hits: 1 });
@@ -145,15 +147,15 @@ describe("a list result, m5.model and the events", () => {
   }, 30_000);
 
   it("a form: the declared inputs are read from its values and checked", async () => {
-    const ok = await (await post("/api/functions/event", { keyword: "ep", chain, type: "form", name: "ask", values: { email: "a@b.cz" } })).json();
+    const ok = await (await post("/api/functions/event", { keyword: "ep", chain, client: "c1", type: "form", name: "ask", values: { email: "a@b.cz" } })).json();
     expect(ok.outputs[0].text).toBe("form ask a@b.cz a@b.cz");
-    const bad = await post("/api/functions/event", { keyword: "ep", chain, type: "form", name: "ask", values: { email: "nope" } });
+    const bad = await post("/api/functions/event", { keyword: "ep", chain, client: "c1", type: "form", name: "ask", values: { email: "nope" } });
     expect(bad.status).toBe(400);
     expect((await bad.json()).message).toMatch(/e-mail/);
   }, 30_000);
 
   it("a reply calls the response entry point with the text (and the inputs read from it)", async () => {
-    const d = await (await post("/api/functions/event", { keyword: "ep", chain, type: "response", text: "example.org", message: { text: "Hi dns" }, call: 0 })).json();
+    const d = await (await post("/api/functions/event", { keyword: "ep", chain, client: "c1", type: "response", text: "example.org", message: { text: "Hi dns" }, call: 0 })).json();
     expect(d.outputs[0].text).toBe("reply example.org / host=example.org / to call 0");
   }, 30_000);
 
@@ -184,10 +186,55 @@ describe("a list result, m5.model and the events", () => {
   }, 30_000);
 
   it("the browser reports an output it could not show: logged in the run, the error entry point answers", async () => {
-    const d = await (await post("/api/functions/event", { keyword: "ep", chain, call: 0, type: "error", error: { type: "RenderError", message: "audio failed" }, output: 2 })).json();
+    const d = await (await post("/api/functions/event", { keyword: "ep", chain, client: "c1", call: 0, type: "error", error: { type: "RenderError", message: "audio failed" }, output: 2 })).json();
     expect(d.outputs[0].text).toBe("sorry: audio failed (execute, client)");
     const run0 = functionsStore.chain(chain)!.calls[0].run;
     expect(functionsStore.logs(run0).some((l) => /^browser: RenderError: audio failed/.test(l.msg))).toBe(true);
+  }, 30_000);
+});
+
+describe("who may continue a session (6.7, V2)", () => {
+  // The same package as a model that posts its answers to the room.
+  beforeAll(() => {
+    const ep = model();
+    saveModel({ ...ep, id: "ep-room", keyword: "eproom", executors: { chat: { enabled: true, visibility: "room" }, console: { enabled: true } }, endpoints: endpointsOf(ep).filter((e) => e.type !== "webhook") as never }, "op");
+  });
+  const roomModel = () => functionsStore.model("ep-room")!;
+  const click = (body: Record<string, unknown>) => post("/api/functions/event", { type: "button", name: "more", data: { n: 1 }, ...body });
+
+  it("a caller-only session: only its opener — a forged message in a room does not let a member's click drive it", async () => {
+    const r = await execute(model(), { topic: "mine" }, { ...guestC1, client: "c-alice", room: "r3.room" }, { executor: "chat" });
+    expect(functionsStore.chain(r.chain)!.opener).toEqual({ kind: "guest", account: "", client: "c-alice", executor: "chat", room: null });
+    // Another member of the same room (another client), naming the same room: refused, like an expired session.
+    const other = await click({ keyword: "ep", chain: r.chain, client: "c-bob", room: "r3.room" });
+    expect(other.status).toBe(410);
+    expect((await other.json()).code).toBe("expired");
+    expect((await click({ keyword: "ep", chain: r.chain })).status).toBe(410); // nobody at all
+    expect((await click({ keyword: "ep", chain: r.chain, client: "c-alice" })).status).toBe(200); // the opener
+  }, 30_000);
+
+  it("a session posted to a room: its members continue it, members of another room do not", async () => {
+    const r = await execute(roomModel(), { topic: "poll" }, { ...guestC1, client: "c-alice", room: "r3.room" }, { executor: "chat" });
+    expect(functionsStore.chain(r.chain)!.opener).toMatchObject({ client: "c-alice", room: "r3.room" });
+    expect((await click({ keyword: "eproom", chain: r.chain, client: "c-bob", room: "r3.room" })).status).toBe(200);
+    expect((await click({ keyword: "eproom", chain: r.chain, client: "c-mallory", room: "r3.elsewhere" })).status).toBe(410);
+    expect((await click({ keyword: "eproom", chain: r.chain, client: "c-mallory" })).status).toBe(410);
+    // Browser reports (log / error) go through the same check.
+    const log = await post("/api/functions/event", { keyword: "eproom", chain: r.chain, client: "c-mallory", room: "r3.elsewhere", type: "log", message: "hi" });
+    expect(log.status).toBe(410);
+  }, 30_000);
+
+  it("an account opener is matched by its account, not by a client id anyone could name", async () => {
+    const r = await execute(model(), { topic: "acct" }, { ...user, client: "c-shared" }, { executor: "chat" });
+    expect((await click({ keyword: "ep", chain: r.chain, client: "c-shared" })).status).toBe(410);
+  }, 30_000);
+
+  it("a session saved before 6.7 (no opener) is not continued from the app", async () => {
+    const r = await execute(model(), { topic: "old" }, guestC1, { executor: "chat" });
+    const { opener: _o, ...old } = functionsStore.chain(r.chain)!;
+    functionsStore.saveChain({ ...old, id: "chn_legacy0000aa" });
+    expect(functionsStore.chain("chn_legacy0000aa")!.opener).toBeUndefined();
+    expect((await click({ keyword: "ep", chain: "chn_legacy0000aa", client: "c1" })).status).toBe(410);
   }, 30_000);
 });
 

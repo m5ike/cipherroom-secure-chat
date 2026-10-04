@@ -373,8 +373,11 @@ export function MessageBubble(props: MessageBubbleProps) {
     formats: { links: (s) => {
       if (!flags?.fn || sealed) return props.renderText(s);
       const fn = flags.fn;
+      // 6.7 (V2): outputs only this browser produced (my own run, a caller-only answer)
+      // act by themselves; in another member's message they wait for the viewer.
+      const ownOutputs = mine || props.senderId.startsWith("function:");
       const result = fn.outputs?.length
-        ? <FnOutputs outputs={fn.outputs} meta={fn} createdAt={props.createdAt} />
+        ? <FnOutputs outputs={fn.outputs} meta={fn} createdAt={props.createdAt} from={ownOutputs ? undefined : { name: props.senderName }} />
         : <Markdown text={s} className="md-fn" />;
       // 6.5: a call's own bubble shows the query, then the loading / result / status.
       if (fn.query !== undefined || fn.pending || fn.status) {

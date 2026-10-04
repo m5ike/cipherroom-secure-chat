@@ -37,7 +37,12 @@ function relayText() {
 /** Same-origin path ("/signin") or an http(s) URL of this site; anything else → "/". */
 function safeUrl(value) {
   const url = String(value || "/").slice(0, 512);
-  if (url.startsWith("/") && !url.startsWith("//")) return url;
+  // 6.7 (N22): not "/\\other.host" nor "/<tab>/other.host" — a parser reads both as //other.host.
+  // eslint-disable-next-line no-control-regex
+  if (url.startsWith("/") && !url.startsWith("//") && !/[\\\u0000-\u001f\u007f]/.test(url)) {
+    try { if (new URL(url, self.location.origin).origin === self.location.origin) return url; } catch (_err) { /* not a URL */ }
+    return "/";
+  }
   try {
     const parsed = new URL(url);
     if (parsed.origin === self.location.origin) return parsed.pathname + parsed.search;

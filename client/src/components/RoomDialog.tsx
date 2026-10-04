@@ -22,6 +22,9 @@ import type { ConnectionsState } from "../lib/connections";
 import { NeedSignIn } from "./NeedSignIn";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
+import { KeyStrength } from "./KeyStrength";
+import { normalizeRoomName } from "../lib/connections";
+import { estimatePassphrase, generateRoomKey, weakKeyBlocks } from "../lib/passphrase-strength";
 import "../room.css";
 
 export type RoomTab = "light" | "server";
@@ -84,6 +87,8 @@ export type RoomDialogProps = {
   onSignIn: () => void;
   /** Share this room — the always-visible part below the buttons. */
   share: ReactNode;
+  /** 6.7 (F-04): a Connect held back for a weak key — the app shows why (the dialog's own layout may not). */
+  onWeakKey?: (text: string) => void;
   /** 6.0: several rooms at once — which connections are checked, which run
    *  in the background, their people and unread counts. */
   multi?: {
@@ -136,9 +141,23 @@ export function RoomDialog(props: RoomDialogProps) {
   const needsSignIn = tab === "server" && !saved.signedIn;
   const manual = tab === "light" || (!needsSignIn && (!listed || selected === "manual"));
 
+  // 6.7 (F-04): the typed key's strength. A weak one for a room this browser does not know
+  // (no saved connection with it) is held back once: a second Connect confirms that the room
+  // already exists with this key — asking the server first would hand it the blind id to guess against.
+  const { name: typedName, room: typedRoom, passphrase: typedKey } = props.fields;
+  const estimate = useMemo(() => estimatePassphrase(typedKey, { room: typedRoom, name: typedName }), [typedKey, typedRoom, typedName]);
+  const keySig = `${normalizeRoomName(typedRoom)}\u0000${typedKey}`;
+  const knownKey = profiles.some((p) => !p.server && p.room === normalizeRoomName(typedRoom) && p.passphrase === typedKey);
+  const [heldKey, setHeldKey] = useState<string | null>(null);
+
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (joined) { props.onReconnect(); return; }
+    if (!selectedProfile && manual && weakKeyBlocks(estimate, { known: knownKey, confirmed: heldKey === keySig })) {
+      setHeldKey(keySig);
+      props.onWeakKey?.(t(lang, "key.weak.held"));
+      return;
+    }
     props.onConnect(selectedProfile ? { kind: "profile", id: selectedProfile.id } : { kind: "manual" });
   };
 
@@ -174,6 +193,7 @@ export function RoomDialog(props: RoomDialogProps) {
       tab, locked, joined, busy, signedIn: saved.signedIn, savedEnabled: saved.enabled, listed, needsSignIn, manual,
       items, selected, fields: props.fields, showKey, connectLabel,
       multiOn: Boolean(multi?.on) && listed && tab === "server", multiCount,
+      keyLevel: estimate.level,
     },
     actions: {
       submit: (event) => submit(event as FormEvent),
@@ -195,6 +215,9 @@ export function RoomDialog(props: RoomDialogProps) {
     slots: {
       needSignIn: () => <NeedSignIn lang={lang} onOpen={locked ? undefined : props.onSignIn} text={t(lang, "room.signin.text")} testId="room-need" />,
       share: () => props.share,
+      keyStrength: () => (manual && !locked
+        ? <KeyStrength lang={lang} estimate={estimate} held={heldKey === keySig && estimate.level === "weak"} onGenerate={() => { props.onField({ passphrase: generateRoomKey() }); setShowKey(true); }} />
+        : null),
     },
   });
 }
