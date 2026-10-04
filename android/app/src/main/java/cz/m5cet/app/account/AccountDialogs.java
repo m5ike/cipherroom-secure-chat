@@ -61,6 +61,8 @@ public final class AccountDialogs {
             case "no-passkey": offerAccount(a, t(a, "passkey.noneTitle"), t(a, "passkey.noneText").replace("{server}", server)); break;
             case "unsupported": notice(a, t(a, "passkey.problem"), t(a, "passkey.unsupported")); break;
             case "no-prf": case "wrong-key": case "orphan": notice(a, t(a, "passkey.problem"), r.message); break;
+            // 6.8: the server's request limit (429), not the passkey.
+            case "rate-limited": notice(a, t(a, "passkey.rateLimitedTitle"), t(a, "passkey.rateLimitedText").replace("{server}", server)); break;
             default: a.flash("", r.message.isEmpty() ? t(a, "voice.failed") : r.message, "error");
         }
     }

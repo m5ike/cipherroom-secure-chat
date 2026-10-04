@@ -17,6 +17,14 @@ public class AccountRefusalTest {
         assertEquals("", Account.refusalCode("origin-not-allowed"));
     }
 
+    /** 6.8: the server's request limit is not a passkey problem. */
+    @Test public void tooManyRequestsReadsAsRateLimited() {
+        assertEquals("rate-limited", Account.refusalCode(429, ""));
+        assertEquals("rate-limited", Account.refusalCode(429, "app-not-trusted"));
+        assertEquals("rp-unverified", Account.refusalCode(403, "app-not-trusted"));
+        assertEquals("", Account.refusalCode(400, "taken"));
+    }
+
     @Test public void onlyServerRefusalsAreMapped() {
         assertEquals("", Account.codeOf(new java.io.IOException("offline")));
         assertEquals("", Account.codeOf(new IllegalStateException("x")));

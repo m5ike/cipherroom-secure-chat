@@ -171,7 +171,10 @@ public final class Account {
     /** 6.4.1: "app-not-trusted" — refused before any passkey existed, this build's certificate unknown to the server — reads as rp-unverified. */
     static String refusalCode(String serverCode) { return "app-not-trusted".equals(serverCode) ? "rp-unverified" : ""; }
 
-    static String codeOf(Exception e) { return e instanceof Server.HttpError ? refusalCode(((Server.HttpError) e).code) : ""; }
+    /** 6.8: a 429 is the server's request limit, not the passkey (AccountDialogs says so). */
+    static String refusalCode(int status, String serverCode) { return status == 429 ? "rate-limited" : refusalCode(serverCode); }
+
+    static String codeOf(Exception e) { return e instanceof Server.HttpError ? refusalCode(((Server.HttpError) e).status, ((Server.HttpError) e).code) : ""; }
 
     private static String accountId(JSONObject account, String fallback) {
         if (account == null) return fallback;
@@ -254,7 +257,7 @@ public final class Account {
             Log.w("account", "sign-in failed: " + e.getMessage());
             if (token != null) { final String tk = token; Io.bg(() -> { try { signOutWith(tk, false); } catch (IOException ignored) { } }); }
             save(new JSONObject());
-            report(done, e instanceof Failure ? Result.failure(((Failure) e).code, e.getMessage(), id) : Result.failure("", e.getMessage(), id));
+            report(done, e instanceof Failure ? Result.failure(((Failure) e).code, e.getMessage(), id) : Result.failure(codeOf(e), e.getMessage(), id));
         } finally {
             Crypto.wipe(prf);
             Crypto.wipe(root);
