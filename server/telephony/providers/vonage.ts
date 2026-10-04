@@ -178,6 +178,8 @@ function dialNcco(d: Extract<CallAction, { dial: unknown }>["dial"]): Record<str
     endpoint: [viaSip ? { type: "sip", uri: sipTarget(d.to, d.kind, d.trunk) } : { type: "phone", number: digits(d.to) }],
     ...(from ? { from } : {}),
     ...(d.timeout ? { timeout: Math.min(120, Math.max(1, Math.round(d.timeout))) } : {}),
+    // 6.10 (G-06): the longest bridged call, seconds (Vonage's default and most: 7200).
+    ...(d.timeLimit ? { limit: Math.min(7200, Math.max(1, Math.round(d.timeLimit))) } : {}),
     // synchronous: busy / unanswered / failed… are POSTed to eventUrl, whose NCCO replaces this one
     eventType: "synchronous", eventUrl: [d.action], eventMethod: "POST",
   });

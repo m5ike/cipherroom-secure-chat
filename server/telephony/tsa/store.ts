@@ -234,8 +234,9 @@ export class TsaStore {
   /** Every problem of a graph, the HTTP tool checked against the current permissions. */
   problems(graph: unknown): TsaProblem[] {
     let hosts: string[] | undefined;
-    try { hosts = telPermissions().tsa.httpHosts; } catch { hosts = undefined; }
-    return validateGraph(graph, { httpHosts: hosts });
+    let countries: string[] | undefined;
+    try { const p = telPermissions(); hosts = p.tsa.httpHosts; countries = p.outbound.countries; } catch { hosts = undefined; }
+    return validateGraph(graph, { httpHosts: hosts, ...(countries ? { countries } : {}) });
   }
 
   publish(id: string, by: string): { tsa: Tsa; problems: TsaProblem[] } {

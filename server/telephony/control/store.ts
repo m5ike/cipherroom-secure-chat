@@ -51,6 +51,9 @@ export const PERMISSION_BOUNDS = {
   "inroute.maxActivePerOwner": [1, 10_000],
   "inroute.maxAttemptsPerCall": [1, 10],
   "inroute.maxFailuresPerCallerPerHour": [1, 1000],
+  "inroute.maxFailuresPerDidPerHour": [1, 10_000],
+  "inroute.maxFailuresPerMinute": [1, 1000],
+  "inroute.maxFailuresPerHour": [1, 10_000],
   "tsa.recordingDays": [1, 3650],
   "log.days": [1, 3650],
 } as const satisfies Record<string, readonly [number, number]>;
@@ -256,10 +259,11 @@ export function checkPermissions(raw: unknown, base: TelPermissions = DEFAULT_PE
   let countries = base.outbound.countries;
   if (ob.countries !== undefined) {
     countries = [];
-    if (!Array.isArray(ob.countries)) c.problem("outbound.countries", "a list of ISO 3166 codes (CZ, SK, DE…); empty = any");
+    if (!Array.isArray(ob.countries)) c.problem("outbound.countries", "a list of ISO 3166 codes (CZ, SK, DE…) or * (any); empty = any, but a TSA only your own countries");
     for (const x of Array.isArray(ob.countries) ? ob.countries : []) {
       const code = str(x).toUpperCase();
-      if (!/^([A-Z]{2}|001)$/.test(code)) c.problem("outbound.countries", `"${code.slice(0, 8)}" is not an ISO 3166 alpha-2 code`);
+      // 6.10 (G-06): "*" = any country, for a TSA too.
+      if (!/^([A-Z]{2}|001|\*)$/.test(code)) c.problem("outbound.countries", `"${code.slice(0, 8)}" is not an ISO 3166 alpha-2 code (or * for any)`);
       else if (!countries.includes(code)) countries.push(code);
     }
     if (countries.length > RULE_LIMITS.countries) c.problem("outbound.countries", `at most ${RULE_LIMITS.countries}`);
@@ -296,6 +300,10 @@ export function checkPermissions(raw: unknown, base: TelPermissions = DEFAULT_PE
       maxActivePerOwner: num(c, "inroute.maxActivePerOwner", ir.maxActivePerOwner, base.inroute.maxActivePerOwner),
       maxAttemptsPerCall: num(c, "inroute.maxAttemptsPerCall", ir.maxAttemptsPerCall, base.inroute.maxAttemptsPerCall),
       maxFailuresPerCallerPerHour: num(c, "inroute.maxFailuresPerCallerPerHour", ir.maxFailuresPerCallerPerHour, base.inroute.maxFailuresPerCallerPerHour),
+      // 6.10 (G-05): a file saved by 6.9 has none of these — the defaults apply.
+      maxFailuresPerDidPerHour: num(c, "inroute.maxFailuresPerDidPerHour", ir.maxFailuresPerDidPerHour, base.inroute.maxFailuresPerDidPerHour ?? DEFAULT_PERMISSIONS.inroute.maxFailuresPerDidPerHour),
+      maxFailuresPerMinute: num(c, "inroute.maxFailuresPerMinute", ir.maxFailuresPerMinute, base.inroute.maxFailuresPerMinute ?? DEFAULT_PERMISSIONS.inroute.maxFailuresPerMinute),
+      maxFailuresPerHour: num(c, "inroute.maxFailuresPerHour", ir.maxFailuresPerHour, base.inroute.maxFailuresPerHour ?? DEFAULT_PERMISSIONS.inroute.maxFailuresPerHour),
     },
     tsa: {
       httpHosts: httpHosts.slice(0, RULE_LIMITS.hosts),

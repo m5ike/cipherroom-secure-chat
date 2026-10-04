@@ -543,8 +543,21 @@ function callFn(name: string, args: unknown[], scope: FormulaScope): unknown {
     }
     case "replace": {
       const text = s(0), find = s(1), repl = s(2);
-      if (!find) return text;
-      return cap(text.split(find).join(repl));
+      if (!find) return cap(text);
+      // 6.10 (G-16): built piece by piece and stopped at the limit — split/join made the
+      // whole result first (64 Ki one-character matches × a 16 000-character replacement
+      // is a gigabyte string) and only then cut it.
+      const max = FORMULA_LIMITS.string;
+      let out = "";
+      let at = 0;
+      while (out.length <= max) {
+        const i = text.indexOf(find, at);
+        out += text.slice(at, Math.min(i < 0 ? text.length : i, at + max + 1 - out.length));
+        if (i < 0 || out.length > max) break;
+        out += repl.slice(0, max + 1 - out.length);
+        at = i + find.length;
+      }
+      return cap(out);
     }
     case "min": case "max": {
       const flat = args.flatMap((a) => (Array.isArray(a) ? a.slice(0, 1000) : [a])).filter((a) => !nullish(a));

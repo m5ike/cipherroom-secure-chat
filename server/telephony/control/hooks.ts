@@ -42,6 +42,10 @@ export type TelHooks = {
     /** Counts a use (and removes the entry when maxUses is reached). */
     used(code: string): Promise<void>;
     add(spec: { code?: string; digits?: number; type: InrouteEntry["type"]; room: string; user?: string; ttl?: number; label?: string; maxUses?: number; createdBy: InrouteEntry["createdBy"] }): Promise<InrouteEntry>;
+    /** 6.10 (G-05): may this call try a code now — null, or why not (a lockout of the module or the DID, the caller over budget). */
+    guard?(who: { caller: string; did: string }): Promise<string | null>;
+    /** 6.10 (G-05): a wrong code — counted per caller, per DID and module-wide (a burst trips a lockout). */
+    failure?(who: { caller: string; did: string }, detail: { code?: string; callId?: string; provider?: string }): Promise<void>;
   };
   tsa?: {
     start(call: TsaCallRef, tsaId: string, opts?: { draft?: boolean; vars?: Record<string, unknown> }): Promise<TsaTurn>;

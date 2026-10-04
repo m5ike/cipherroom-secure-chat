@@ -220,6 +220,9 @@
     state.admin = null;
     state.token = "";
     try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
+    // 6.10 (G-15): the TSA editor's unsaved copies and clipboard belong to this administrator's session
+    // (and 6.9 left them in localStorage for whoever used the browser next).
+    try { if (window.M5TsaEditor && window.M5TsaEditor.forgetLocal) void window.M5TsaEditor.forgetLocal(); } catch { /* the editor is not loaded */ }
     stopLive();
     $("#shell").hidden = true;
     $("#login").hidden = false;

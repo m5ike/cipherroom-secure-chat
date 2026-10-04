@@ -9,7 +9,8 @@
 //                  session keeps running the graph it started with
 //   tsa_audio      synthesized speech (AI & speech TTS) the provider fetches
 //                  from /wh/tsa/audio/<token>, until it expires
-//   tsa_marks      small counters: wrong route codes per caller and hour,
+//   tsa_marks      small counters: SMS and dials per TSA and hour (6.10: wrong
+//                  route codes are counted by control/inroute.ts),
 //                  one-use codes already used
 //
 // Without the SQLite driver everything lives in memory (one process).

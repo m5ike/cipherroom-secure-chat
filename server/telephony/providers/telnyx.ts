@@ -272,6 +272,8 @@ function command(action: CallAction, clientState?: string): { cmd: string; body:
         ...(d.callerName ? { from_display_name: d.callerName.replace(/[^A-Za-z0-9 _~!.+-]/g, "").slice(0, 128) } : {}),
         ...(d.presentation === "restricted" ? { privacy: "id" } : {}),
         ...(d.timeout ? { timeout_secs: Math.min(600, Math.max(5, Math.round(d.timeout))) } : {}),
+        // 6.10 (G-06): the longest bridged call (Telnyx: 30 … 14 400 s, default 4 hours).
+        ...(d.timeLimit ? { time_limit_secs: Math.min(14_400, Math.max(30, Math.round(d.timeLimit))) } : {}),
         ...(d.trunk?.username ? { sip_auth_username: d.trunk.username } : {}),
         ...(d.trunk?.password ? { sip_auth_password: d.trunk.password } : {}),
         ...(d.trunk?.transport ? { sip_transport_protocol: d.trunk.transport.toUpperCase() } : {}),

@@ -194,6 +194,27 @@ describe("validate: parameters", () => {
     expect(has(withNode(node("i", "inroute_add", { room: "r3.abc", type: "user", user: "" }, { inputs: 0 })), /member to route to/, "error")).toBe(true);
     expect(has(withNode(node("i", "inroute_add", { room: "r3.abc", code: "12" }, { inputs: 0 })), /4–6 digits/, "error")).toBe(true);
   });
+
+  it("6.10 (G-15): an HTTP header with a secret written out is an error — {secret:NAME} is the way", () => {
+    const http = (headers: string[]) => withNode(node("x", "http", { url: "https://crm.test/a", headers }));
+    for (const h of ["Authorization: Bearer sk_live_51Hx9", "Authorization: Basic dXNlcjpwYXNzd29yZA==", "X-Api-Key: 3f9a8b7c6d5e4f", "Cookie: session=ab12cd34ef56", "X-Custom: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig", "X-Auth-Token: 9c1f0e2d3b4a5968"]) {
+      expect(msgs(http([h]), "error"), h).toEqual([expect.stringMatching(/Headers: ".+" holds a secret written out — put it in the server's environment as TSA_SECRET_<NAME> and write \{secret:NAME\}/)]);
+    }
+    for (const h of ["Authorization: Bearer {secret:CRM}", "Authorization: Basic {secret:BASIC}", "X-Api-Key: {secret:KEY}", "Authorization: Bearer {IN1}", "Content-Type: application/json", "Accept: application/vnd.github+json", "X-Token-Type: bearer-access", "Cookie: lang=cs", "X-Request-Id: {call.id}"]) {
+      expect(msgs(http([h]), "error"), h).toEqual([]);
+    }
+  });
+
+  it("6.10 (G-06): an SMS to the caller's (fakeable) number is a warning only while Countries = * (any)", () => {
+    const sms = (to?: string) => withNode(node("s", "sms", { text: "x", ...(to === undefined ? {} : { to }) }, { inputs: 0 }));
+    const warn = (g: TsaGraph, countries: string[]) => validateGraph(g, { countries }).filter((p) => p.level === "warning" && /SMS pumping/.test(p.message));
+    expect(warn(sms(), ["*"])).toHaveLength(1);
+    expect(warn(sms("{call.from}"), ["*"])).toHaveLength(1);
+    expect(warn(sms(""), ["*"])).toHaveLength(1);
+    expect(warn(sms(), [])).toHaveLength(0);
+    expect(warn(sms(), ["CZ"])).toHaveLength(0);
+    expect(warn(sms("+420603123456"), ["*"])).toHaveLength(0);
+  });
 });
 
 describe("validate: the flow", () => {

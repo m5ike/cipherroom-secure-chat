@@ -185,6 +185,8 @@ function dialVerb(d: Extract<CallAction, { dial: unknown }>["dial"]): string {
   const open = `<Dial${attrs([
     ["action", d.action], ["method", "POST"],
     ["timeout", d.timeout ? Math.min(600, Math.max(5, Math.round(d.timeout))) : undefined],
+    // 6.10 (G-06): the longest bridged call (Twilio's default is 4 hours).
+    ["timeLimit", d.timeLimit ? Math.min(14_400, Math.max(1, Math.round(d.timeLimit))) : undefined],
     ["callerId", callerId], ["record", d.record ? "record-from-answer" : undefined],
   ])}>`;
   if (!viaSip) return `${open}<Number>${xmlEscape(d.to)}</Number></Dial>`;

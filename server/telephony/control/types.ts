@@ -160,10 +160,15 @@ export type TelPermissions = {
     maxTtlSec: number;
     /** Live codes per model (or console administrator). */
     maxActivePerOwner: number;
-    /** Wrong codes in one call before route_audio stops taking codes (on_code_error each time). */
+    /** Wrong codes in one call; the one that reaches it ends the call (6.10, G-05 — before: on_code_error from then on). */
     maxAttemptsPerCall: number;
-    /** Wrong codes from one caller number per hour before it is refused outright. */
+    /** Wrong codes from one caller number per hour before it is refused outright (the caller ID can be faked — see below). */
     maxFailuresPerCallerPerHour: number;
+    /** 6.10 (G-05): wrong codes on one number called (DID) per hour; then route codes on it pause (a lockout that doubles, 1 min … 1 h). */
+    maxFailuresPerDidPerHour: number;
+    /** 6.10 (G-05): wrong codes on the whole module per minute and per hour; then route codes pause for everyone (the same lockout). */
+    maxFailuresPerMinute: number;
+    maxFailuresPerHour: number;
   };
   tsa: {
     /** The http tool: hosts it may reach (exact or *.example.com); [] = the tool is off. */
@@ -190,7 +195,7 @@ export type TelPermissions = {
 export const DEFAULT_PERMISSIONS: TelPermissions = {
   outbound: { countries: [], blocked: ["+1900*", "+1976*", "+44870*", "+44871*", "+44872*", "+44873*", "+4290*", "+42097*", "+881*", "+882*", "+883*"], maxConcurrentCalls: 5, callsPerHour: 30, smsPerHour: 60, maxMinutes: 30 },
   inbound: { maxConcurrentCalls: 10, perCallerPerHour: 20 },
-  inroute: { maxTtlSec: 86_400, maxActivePerOwner: 50, maxAttemptsPerCall: 3, maxFailuresPerCallerPerHour: 10 },
+  inroute: { maxTtlSec: 86_400, maxActivePerOwner: 50, maxAttemptsPerCall: 3, maxFailuresPerCallerPerHour: 10, maxFailuresPerDidPerHour: 30, maxFailuresPerMinute: 10, maxFailuresPerHour: 100 },
   tsa: { httpHosts: [], functions: true, recordingDays: 30 },
   log: { days: 30, keepRaw: true },
   defaults: { inbound: { kind: "state", state: "busy" }, outbound: { kind: "pass" } },
@@ -203,7 +208,9 @@ export const DEFAULT_PERMISSIONS: TelPermissions = {
  * numbers and reaches a TSA's Route audio with this code gets their audio
  * routed both ways — to the whole room (every member connected with audio,
  * mixed) or to one member. Codes are 4–6 digits, unique among live codes,
- * and expire after their TTL (default 600 s).
+ * and expire after their TTL (default 600 s). 6.10 (G-05): a code that lives
+ * longer than INROUTE_SHORT_TTL needs 6 digits, and at most 1 in
+ * INROUTE_SPARSENESS codes of each length is live at a time.
  */
 export type InrouteType = "room" | "user";
 
@@ -228,6 +235,12 @@ export type InrouteEntry = {
 
 export const INROUTE_CODE = /^\d{4,6}$/;
 export const INROUTE_DEFAULT_TTL = 600;
+/** 6.10 (G-05): codes that live longer than this (seconds) are 6 digits. */
+export const INROUTE_SHORT_TTL = 600;
+/** 6.10 (G-05): at most 10^digits / this many live codes of one length (4 digits: 10, 5: 100, 6: 1000). */
+export const INROUTE_SPARSENESS = 1000;
+/** The fewest digits a code with this TTL may have. */
+export const inrouteMinDigits = (ttlSec: number): number => (ttlSec > INROUTE_SHORT_TTL ? 6 : 4);
 
 /* ----------------------------------------------------------------- log */
 

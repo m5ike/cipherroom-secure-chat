@@ -17,7 +17,7 @@
 
 import { dataInputs, flowOutputs, toolOf, type TsaParamDef, type TsaToolDef } from "./catalog";
 import { formulaRefs, parseFormula, validTimezone } from "./formula";
-import { hasPlaceholders, templateRefs, withoutPlaceholders } from "./template";
+import { hasPlaceholders, literalSecretHeader, templateRefs, withoutPlaceholders } from "./template";
 import { NODE_ID, TSA_LIMITS, isTsaNodeType, type TsaEdge, type TsaGraph, type TsaNode, type TsaProblem } from "./types";
 
 /* ----------------------------------------------------------------- index */
@@ -279,6 +279,17 @@ function checkParams(node: TsaNode, tool: TsaToolDef, ix: GraphIndex, opts: Vali
         }
       }
       if (Array.isArray(p.headers)) for (const h of p.headers as unknown[]) if (String(h).trim() && !/^[A-Za-z0-9-]{1,64}\s*:/.test(String(h))) add("error", `header "${String(h).slice(0, 40)}" is not "Name: value".`);
+      // 6.10 (G-15): a credential written out is readable by every console reader, in exports and local copies.
+      if (Array.isArray(p.headers)) for (const h of p.headers as unknown[]) {
+        const name = literalSecretHeader(h);
+        if (name) add("error", `Headers: "${name.slice(0, 64)}" holds a secret written out — put it in the server's environment as TSA_SECRET_<NAME> and write {secret:NAME} here (the graph is readable in the console and in exports).`);
+      }
+      break;
+    }
+    case "sms": {
+      // 6.10 (G-06): the caller's number can be faked — with Countries = * anyone can make this TSA text any country.
+      const to = str("to").trim();
+      if ((!to || /\{call\.from\}/.test(to)) && opts.countries?.includes("*")) add("warning", "texts the caller's number, which a caller can fake — with Telephony › Permissions › Countries = * anyone can make this TSA send SMS to any country at your cost (SMS pumping). List your countries instead.");
       break;
     }
     case "dial": {
@@ -343,6 +354,8 @@ function reach(from: string[], ix: GraphIndex, stopAt?: string): Set<string> {
 export type ValidateOptions = {
   /** The HTTP tool's allowlist (telPermissions().tsa.httpHosts); undefined: not checked. */
   httpHosts?: string[];
+  /** 6.10 (G-06): telPermissions().outbound.countries — "*" makes an SMS to the caller's (fakeable) number a warning. */
+  countries?: string[];
 };
 
 /** Everything: the shape, the parameters and the flow. */

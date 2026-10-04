@@ -13,6 +13,19 @@ export type MemberTarget = { peerId?: string; accountId?: string; name?: string 
 export type RoomNotice = { kind: "message"; text: string; level?: string; from?: string };
 export type TrunkCredentials = { id: string; host: string; username?: string; password?: string; transport?: "udp" | "tcp" | "tls" };
 
+/**
+ * 6.10 (security review G-06): a TSA's SMS or Dial asked of the module's
+ * outbound checks — control/enforce.ts planOutbound, the same as
+ * m5.telephony's, with "tsa:<id>" as the budget key: the countries (empty =
+ * only your own, `own` being the call's own numbers), the blocked numbers,
+ * the live calls, the outbound rules, the longest call. `dry`: the simulator
+ * (nothing counted, nothing logged).
+ */
+export type TsaOutboundAsk = { kind: "call" | "sms"; to: string; tsa: string; provider: string; own: string[]; timeLimitSec?: number; dry: boolean };
+export type TsaOutboundPlan =
+  | { ok: true; timeLimitSec: number; rule: string; ruleLabel: string; provider: string; trunk?: TrunkCredentials; callerId?: string; callerName?: string; presentation?: "allowed" | "restricted" }
+  | { ok: false; code: string; message: string };
+
 export type TsaDeps = {
   now(): number;
   random(): number;
@@ -21,7 +34,9 @@ export type TsaDeps = {
   stt(input: { audio: Uint8Array; mime: string; language?: string; console: boolean; actor: string }): Promise<string>;
   /** A provider's recording (its auth where the URL is the provider's), or a data: URL in the simulator. */
   fetchRecording(provider: string, url: string, opts: { allowData: boolean }): Promise<{ bytes: Uint8Array; mime: string }>;
-  sendSms(input: { to: string; from?: string; text: string }): Promise<{ id: string; status: string }>;
+  /** 6.10: `tsa` / `own` — sent as "tsa:<id>" through the outbound checks (its budget, your own countries). */
+  sendSms(input: { to: string; from?: string; text: string; tsa?: string; own?: string[] }): Promise<{ id: string; status: string }>;
+  outbound(ask: TsaOutboundAsk): Promise<TsaOutboundPlan>;
   /** Posts a server notice into a room (main service only; null elsewhere). Returns how many got it. */
   notice: ((roomHash: string, n: RoomNotice, target?: MemberTarget) => number) | null;
   http(spec: { method: string; url: string; headers: Record<string, string>; body?: string; timeoutMs: number; maxBytes: number }): Promise<{ status: number; text: string; json?: unknown }>;
@@ -102,8 +117,31 @@ export const realDeps: TsaDeps = {
 
   async sendSms(input) {
     const { sendMessage } = await import("../engine");
-    const m = await sendMessage({ channel: "sms", to: input.to, ...(input.from ? { from: input.from } : {}), text: input.text, owner: null });
+    const m = await sendMessage({
+      channel: "sms", to: input.to, ...(input.from ? { from: input.from } : {}), text: input.text, owner: null,
+      // 6.10 (G-06): the TSA's own budget and the countries a TSA may reach (before: "anonymous", any country).
+      ...(input.tsa ? { by: `tsa:${input.tsa}`, source: "tsa" as const, own: input.own ?? [] } : {}),
+    });
     return { id: m.id, status: m.status };
+  },
+
+  async outbound(ask) {
+    const { planOutbound, OutboundRefused } = await import("../control/enforce");
+    try {
+      const plan = await planOutbound({
+        kind: ask.kind, to: ask.to, by: `tsa:${ask.tsa}`, source: "tsa", own: ask.own, dry: ask.dry,
+        ...(ask.provider ? { provider: ask.provider } : {}), ...(ask.timeLimitSec ? { timeLimitSec: ask.timeLimitSec } : {}),
+      });
+      const via = plan.via;
+      return {
+        ok: true, timeLimitSec: plan.timeLimitSec, rule: plan.decision?.rule ?? "", ruleLabel: plan.decision?.ruleLabel ?? "", provider: plan.provider,
+        ...(via ? { trunk: { ...via.trunk }, ...(via.callerName ? { callerName: via.callerName } : {}), ...(via.presentation ? { presentation: via.presentation } : {}) } : {}),
+        ...(plan.from ? { callerId: plan.from } : {}),
+      };
+    } catch (err) {
+      if (err instanceof OutboundRefused) return { ok: false, code: err.code, message: err.message };
+      throw err;
+    }
   },
 
   notice: null,

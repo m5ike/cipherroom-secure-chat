@@ -30,7 +30,7 @@ import {
 } from "./providers/types";
 import { telnyxPendingActions, telnyxWaitsFor } from "./providers/telnyx";
 import { publicBaseUrl } from "./connectors";
-import { stringParams, verifyRequest } from "./webhooks";
+import { replayAck, stringParams, verifyRequest } from "./webhooks";
 import { telId, telStore, telToken, type HandlerEvent, type TelCall, type TelMessage, type TelOwner } from "./tel-store";
 import { isE164, isProvider } from "./types";
 // 6.9: the control plane — outbound rules and limits; the TSA a rule routes a call to.
@@ -554,6 +554,8 @@ export type SendMessageOptions = {
   /** 6.9: who sends it, for the hourly SMS budget (default: the owner's model, else "anonymous"). */
   by?: string;
   source?: OutboundSource;
+  /** 6.10 (G-06): a TSA's SMS — the call's own numbers (the countries it may reach when none are set). */
+  own?: string[];
 };
 
 /** Sends an SMS or a chat message. 6.9: the outbound permissions first (countries, blocked numbers, the SMS budget). */
@@ -561,7 +563,7 @@ export async function sendMessage(o: SendMessageOptions): Promise<TelMessage> {
   await telStore.ready();
   if (o.channel !== "messenger" && !isE164(o.to)) throw new TelError("bad-argument", "to must be an E.164 number, e.g. +420603123456");
   const by = o.by || byOf(o.owner);
-  await plan({ kind: o.channel === "sms" ? "sms" : "message", to: o.to, by, source: o.source ?? (o.owner ? "function" : "api") });
+  await plan({ kind: o.channel === "sms" ? "sms" : "message", to: o.to, by, source: o.source ?? (o.owner ? "function" : "api"), ...(o.own ? { own: o.own } : {}) });
   const a = pickAdapter(o.channel, o.provider);
   const now = Date.now();
   const msg: TelMessage = {
@@ -650,6 +652,11 @@ export async function telWebhook(req: Req, token: string, kind: string): Promise
   if (v.enforced && !v.verified) {
     telStore.record({ kind: "webhook", level: "warn", ref: call?.id ?? msg?.id ?? "", provider, summary: `webhook ${kind}: signature verification FAILED (refused)`, detail: {} });
     return { status: 403, type: "application/json", body: "{\"ok\":false,\"message\":\"signature verification failed\"}" };
+  }
+  // 6.10 (G-08): a copy of a request already taken — another "digit", another status — is acknowledged, not processed.
+  if (v.replay) {
+    telStore.record({ kind: "webhook", level: "notice", ref: call?.id ?? msg?.id ?? "", provider, summary: `webhook ${kind}: a copy of a request already taken (replay or retry) — not processed`, detail: {} });
+    return replayAck(provider, type);
   }
   if (msg) return handleMessageWebhook(msg, req.body, query);
   return handleCallWebhook(call!, kind, req.body, query);

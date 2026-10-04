@@ -86,7 +86,7 @@
   const DEFAULT_PERMISSIONS = {
     outbound: { countries: [], blocked: ["+1900*", "+1976*", "+44870*", "+44871*", "+44872*", "+44873*", "+4290*", "+42097*", "+881*", "+882*", "+883*"], maxConcurrentCalls: 5, callsPerHour: 30, smsPerHour: 60, maxMinutes: 30 },
     inbound: { maxConcurrentCalls: 10, perCallerPerHour: 20 },
-    inroute: { maxTtlSec: 86400, maxActivePerOwner: 50, maxAttemptsPerCall: 3, maxFailuresPerCallerPerHour: 10 },
+    inroute: { maxTtlSec: 86400, maxActivePerOwner: 50, maxAttemptsPerCall: 3, maxFailuresPerCallerPerHour: 10, maxFailuresPerDidPerHour: 30, maxFailuresPerMinute: 10, maxFailuresPerHour: 100 },
     tsa: { httpHosts: [], functions: true, recordingDays: 30 },
     log: { days: 30, keepRaw: true },
     defaults: { inbound: { kind: "state", state: "busy" }, outbound: { kind: "pass" } },
@@ -117,7 +117,7 @@
     return "use +420123456789 (exact), +4202* (a prefix), * (any), sip:*@host or a leading - (not)";
   }
   const e164Problem = (n) => (E164.test(String(n || "").trim()) ? null : "E.164: + country code and 7–15 digits (+420123456789)");
-  const countryProblem = (c) => (/^[A-Z]{2}$/.test(String(c || "")) ? null : "two letters, ISO 3166 (CZ, SK, DE…)");
+  const countryProblem = (c) => (/^([A-Z]{2}|\*)$/.test(String(c || "")) ? null : "two letters, ISO 3166 (CZ, SK, DE…), or * for any");
   const hostProblem = (v) => (/^(\*\.)?([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z][a-z0-9-]*[a-z0-9]$/i.test(String(v || "")) || /^\d{1,3}(\.\d{1,3}){3}$/.test(String(v || "")) ? null : "a host name (api.example.com) or *.example.com");
   const groupProblem = (g) => (/^[\w.@:+-]{1,64}$/.test(String(g || "")) ? null : "a group id (letters, digits, - _ .)");
   function timezoneProblem(tz) {
@@ -1006,7 +1006,7 @@
     const dis = ro || undefined;
     const n = (v, min, max, testid) => numberInput(v, min, max, { disabled: dis, "data-testid": testid });
 
-    const countries = chips(perms.outbound.countries, { validate: countryProblem, upper: true, placeholder: "CZ, SK, DE… (empty = any)", label: "Countries", disabled: ro, testid: "tel-perm-countries" });
+    const countries = chips(perms.outbound.countries, { validate: countryProblem, upper: true, placeholder: "CZ, SK, DE… or * (empty: see below)", label: "Countries", disabled: ro, testid: "tel-perm-countries" });
     const blocked = chips(perms.outbound.blocked, { validate: patternProblem, placeholder: "+1900*", label: "Blocked numbers", disabled: ro, testid: "tel-perm-blocked" });
     const outConc = n(perms.outbound.maxConcurrentCalls, 0, 1000, "tel-perm-out-conc");
     const outCalls = n(perms.outbound.callsPerHour, 0, 100000, "tel-perm-out-calls");
@@ -1018,6 +1018,9 @@
     const irActive = n(perms.inroute.maxActivePerOwner, 1, 10000, "tel-perm-ir-active");
     const irAttempts = n(perms.inroute.maxAttemptsPerCall, 1, 20, "tel-perm-ir-attempts");
     const irFail = n(perms.inroute.maxFailuresPerCallerPerHour, 1, 1000, "tel-perm-ir-fail");
+    const irDid = n(perms.inroute.maxFailuresPerDidPerHour, 1, 10000, "tel-perm-ir-did");
+    const irMin = n(perms.inroute.maxFailuresPerMinute, 1, 1000, "tel-perm-ir-min");
+    const irHour = n(perms.inroute.maxFailuresPerHour, 1, 10000, "tel-perm-ir-hour");
     const hosts = chips(perms.tsa.httpHosts, { validate: hostProblem, placeholder: "api.example.com, *.example.org (empty = the http tool is off)", label: "HTTP hosts", disabled: ro, testid: "tel-perm-hosts" });
     const fns = toggle("Applications may run Functions models (the function tool)", perms.tsa.functions, { disabled: dis, "data-testid": "tel-perm-fns" });
     const recDays = n(perms.tsa.recordingDays, 0, 3650, "tel-perm-rec-days");
@@ -1032,7 +1035,7 @@
     const collect = () => ({
       outbound: { countries: countries.values(), blocked: blocked.values(), maxConcurrentCalls: numberOf(outConc, 0, 1000), callsPerHour: numberOf(outCalls, 0, 100000), smsPerHour: numberOf(outSms, 0, 100000), maxMinutes: numberOf(outMin, 1, 1440) },
       inbound: { maxConcurrentCalls: numberOf(inConc, 0, 1000), perCallerPerHour: numberOf(inCaller, 0, 10000) },
-      inroute: { maxTtlSec: numberOf(irTtl, 60, 30 * 86400), maxActivePerOwner: numberOf(irActive, 1, 10000), maxAttemptsPerCall: numberOf(irAttempts, 1, 20), maxFailuresPerCallerPerHour: numberOf(irFail, 1, 1000) },
+      inroute: { maxTtlSec: numberOf(irTtl, 60, 30 * 86400), maxActivePerOwner: numberOf(irActive, 1, 10000), maxAttemptsPerCall: numberOf(irAttempts, 1, 20), maxFailuresPerCallerPerHour: numberOf(irFail, 1, 1000), maxFailuresPerDidPerHour: numberOf(irDid, 1, 10000), maxFailuresPerMinute: numberOf(irMin, 1, 1000), maxFailuresPerHour: numberOf(irHour, 1, 10000) },
       tsa: { httpHosts: hosts.values(), functions: fns.box.checked, recordingDays: numberOf(recDays, 0, 3650) },
       log: { days: numberOf(logDays, 1, 3650), keepRaw: keepRaw.box.checked },
       defaults: { inbound: defIn.value(), outbound: defOut.value() },
@@ -1082,14 +1085,15 @@
       problemsEl,
       h("div", { class: "grid grid--2" },
         sec("Outbound calls & SMS", "Where calls and messages may go, and how many.",
-          h("div", { class: "tel-span2" }, field("Countries (ISO 3166)", countries.el, "Empty = any country.")),
+          h("div", { class: "tel-span2" }, field("Countries (ISO 3166)", countries.el, "Empty = any country for functions and the app, but an application (TSA) — which anyone who calls drives, with a caller ID that can be faked — only your own countries (those of your numbers and of the number called). * = any country, for a TSA too.")),
           h("div", { class: "tel-span2" }, field("Never dialled", blocked.el, "Premium-rate, satellite… patterns as in the rules; a rule cannot override them.")),
           field("Concurrent calls", outConc), field("Calls per caller and hour", outCalls), field("SMS per caller and hour", outSms), field("Longest call (minutes)", outMin)),
         h("div", { class: "stack" },
           sec("Inbound calls", "Flood and toll protection.",
             field("Concurrent calls", inConc), field("Calls from one number per hour", inCaller, "Then the caller gets busy.")),
           sec("Route codes", "m5.telephony.inroute.add and the Route audio tool.",
-            field("Longest TTL (seconds)", irTtl), field("Live codes per owner", irActive), field("Wrong codes per call", irAttempts), field("Wrong codes per caller and hour", irFail, "Then the caller is refused outright."))),
+            field("Longest TTL (seconds)", irTtl, "Over 10 minutes a code has 6 digits."), field("Live codes per owner", irActive), field("Wrong codes per call", irAttempts, "The one that reaches it ends the call."), field("Wrong codes per caller and hour", irFail, "Then the caller is refused outright — but a caller ID can be faked, hence the limits below."),
+            field("Wrong codes per number called and hour", irDid, "Then codes on that number pause: 1 min, doubling up to 1 h."), field("Wrong codes per minute (all numbers)", irMin, "Then codes pause for everyone, the same way."), field("Wrong codes per hour (all numbers)", irHour))),
         sec("Applications (TSA)", "What call flows may reach.",
           h("div", { class: "tel-span2" }, field("HTTP tool: hosts", hosts.el, "Exact host or *.example.com. Empty = the http tool is off.")),
           fns.el, field("Keep recordings (days)", recDays)),

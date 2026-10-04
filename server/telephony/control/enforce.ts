@@ -22,6 +22,7 @@ import { FINAL_CALL_STATUSES } from "../providers/types";
 import type { RouteDecision, RouteService } from "./types";
 import { sipStore } from "../sip";
 import { isE164 } from "../types";
+import { numberInfo } from "../numbers";
 import { telStore } from "../tel-store";
 import { getPermissions } from "./store";
 import { decideNow, permissionRefusal, serviceText, targetText } from "./rules";
@@ -45,6 +46,14 @@ export type OutboundAsk = {
   provider?: string;
   /** Ring timeout + call length the caller asked for, seconds (clamped to maxMinutes). */
   timeLimitSec?: number;
+  /**
+   * 6.10 (G-06): a TSA's send — the numbers of its call that are the
+   * operator's (the number called): with no countries set, a TSA may reach
+   * only the countries of these and of the configured numbers (ownCountries).
+   */
+  own?: string[];
+  /** 6.10: the simulator — the same checks, but nothing is counted against a budget and nothing is logged. */
+  dry?: boolean;
 };
 
 export type OutboundPlan = {
@@ -94,10 +103,42 @@ export async function liveOutboundCalls(now = Date.now()): Promise<number> {
   return telStore.calls.list({ after: now - window, limit: 5000, filter: (c) => c.direction === "outbound" && !FINAL_CALL_STATUSES.includes(c.status) }).length;
 }
 
+/* -------------------------------------------------- own countries (6.10) */
+
+const env = (name: string): string => process.env[name]?.trim() || "";
+
+/** The operator's own numbers: the providers' senders, the bridge's DID pool, the SIP trunks' DIDs and caller IDs. */
+export function ownNumbers(): string[] {
+  const out: string[] = [];
+  for (const k of ["TWILIO_FROM", "TELNYX_FROM", "VONAGE_FROM"]) out.push(env(k));
+  for (const p of env("TELEPHONY_DID_POOL").split(/[,\s]+/)) out.push(p.replace(/^(twilio|telnyx|vonage):/, ""));
+  try {
+    for (const t of sipStore.list()) out.push(...t.didNumbers, t.callerIdNumber);
+  } catch { /* no trunks */ }
+  return out.filter(Boolean);
+}
+
+/**
+ * 6.10 (G-06): the countries a TSA may call and text while
+ * permissions.outbound.countries is empty — those of the operator's own
+ * numbers (ownNumbers) and of the call's own numbers (`extra`: the number
+ * called). Vonage sends digits without "+": tried both ways.
+ */
+export function ownCountries(extra: readonly string[] = []): string[] {
+  const out = new Set<string>();
+  for (const raw of [...ownNumbers(), ...extra]) {
+    const n = String(raw).trim();
+    if (!n || /^sips?:/i.test(n)) continue;
+    const iso = numberInfo(n)?.iso2 || (/^\d{7,15}$/.test(n) ? numberInfo(`+${n}`)?.iso2 : "") || "";
+    if (/^[A-Z]{2}$/.test(iso)) out.add(iso);
+  }
+  return [...out].sort();
+}
+
 /* ----------------------------------------------------------------- plan */
 
 function refuse(ask: OutboundAsk, code: string, message: string, decision: RouteDecision | null = null): never {
-  telLog({ kind: "route", level: "notice", direction: "outbound", rule: decision?.rule ?? "", summary: `${ask.kind} to ${ask.to} refused: ${message}`, parsed: { ask: { ...ask, groups: ask.groups ?? [] }, decision } });
+  if (!ask.dry) telLog({ kind: "route", level: "notice", direction: "outbound", rule: decision?.rule ?? "", summary: `${ask.kind} to ${ask.to} refused: ${message}`, parsed: { ask: { ...ask, groups: ask.groups ?? [] }, decision } });
   throw new OutboundRefused(code, message, decision);
 }
 
@@ -115,16 +156,18 @@ export async function planOutbound(ask: OutboundAsk): Promise<OutboundPlan> {
 
   // Messenger's "to" is a page-scoped id, not a number: no country / pattern to check.
   if (ask.kind !== "message" || isE164(ask.to)) {
-    const why = permissionRefusal(ask.to, p);
+    // 6.10 (G-06): what a TSA sends, with no countries set, stays in the operator's own countries.
+    const own = ask.source === "tsa" && !p.outbound.countries.length ? ownCountries(ask.own) : undefined;
+    const why = permissionRefusal(ask.to, p, own);
     if (why) refuse(ask, "route-refused", why);
   }
   if (ask.kind === "message") return plain;
 
   const budget = ask.kind === "call" ? p.outbound.callsPerHour : p.outbound.smsPerHour;
-  if ((await sentLastHour(ask.kind, ask.by)) >= budget) refuse(ask, "telephony-limit", `at most ${budget} ${ask.kind === "call" ? "calls" : "SMS"} an hour for one caller (Telephony › Permissions)`);
+  if (!ask.dry && (await sentLastHour(ask.kind, ask.by)) >= budget) refuse(ask, "telephony-limit", `at most ${budget} ${ask.kind === "call" ? "calls" : "SMS"} an hour for one caller (Telephony › Permissions)`);
   if (ask.kind === "sms") return plain;
 
-  if ((await liveOutboundCalls()) >= p.outbound.maxConcurrentCalls) refuse(ask, "telephony-busy", `${p.outbound.maxConcurrentCalls} outbound calls are going on — the most at once (Telephony › Permissions)`);
+  if (!ask.dry && (await liveOutboundCalls()) >= p.outbound.maxConcurrentCalls) refuse(ask, "telephony-busy", `${p.outbound.maxConcurrentCalls} outbound calls are going on — the most at once (Telephony › Permissions)`);
 
   const decision = decideNow({ direction: "outbound", from: "", to: ask.to, groups: ask.groups ?? [], source: ask.source, ...(ask.provider ? { provider: ask.provider as ProviderId } : {}) });
   const t = decision.target;
@@ -144,6 +187,7 @@ export async function planOutbound(ask: OutboundAsk): Promise<OutboundPlan> {
     };
     plan.from = s.callerId.number || trunk.callerIdNumber || "";
   }
+  if (ask.dry) return plan;
   telLog({
     kind: "route", level: "info", direction: "outbound", rule: decision.rule ?? "",
     summary: `call to ${ask.to} → ${targetText(t)} through ${serviceText(s)}${decision.rule ? ` (rule "${decision.ruleLabel}")` : " (default)"}`,
