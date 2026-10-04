@@ -15,6 +15,8 @@
 // that arrived in chunks already is a blob: URL; its Blob is remembered here
 // (rememberBlob) — fetch() of a blob: URL is not what connect-src 'self' allows.
 
+import { safeMime } from "./validate";
+
 export type MediaKind = "image" | "video" | "audio" | "pdf" | "text" | "file";
 
 type AttachmentLike = { kind: "file" | "image"; name: string; mime: string; size: number; dataUrl: string };
@@ -80,7 +82,9 @@ export function forgetBlob(url: string): void {
 /** The file's bytes as a Blob: decoded from a data: URL, or the one remembered for a blob: URL. */
 export function attachmentBlob(a: AttachmentLike): Blob | null {
   if (!a.dataUrl) return null;
-  if (a.dataUrl.startsWith("data:")) return dataUrlToBlob(a.dataUrl, a.mime || "application/octet-stream");
+  // 6.7 (S17): the blob gets a type safe to open in this origin, whatever the message claims —
+  // a text/html (or SVG) blob: opened from here would be a page of this origin.
+  if (a.dataUrl.startsWith("data:")) return dataUrlToBlob(a.dataUrl, safeMime(a.mime));
   return blobs.get(a.dataUrl) ?? null;
 }
 

