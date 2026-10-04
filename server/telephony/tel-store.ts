@@ -80,6 +80,12 @@ export type TelCall = {
   error: string;
   /** Steering from a waiting run (sync mode): the latest actions it asked for. */
   steer: { seq: number; actions: CallAction[] } | null;
+  /** 6.9: who placed it, for the per-caller hourly limit ("model:<id>", "user:<account>"…). */
+  by?: string;
+  /** 6.9: the outbound rule that routed it ("" = the default) and how. */
+  route?: { rule: string; label: string; service: "app" | "sip" | ""; target: string };
+  /** 6.9: the TSA this call runs (a rule's target) and its session once started. */
+  tsa?: { id: string; session: string };
 };
 
 export type TelMessage = {
@@ -99,6 +105,8 @@ export type TelMessage = {
   updatedAt: number;
   parts: number | null;
   price: string;
+  /** 6.9: who sent it, for the per-caller hourly limit. */
+  by?: string;
 };
 
 export type BridgeStatus = "waiting" | "ringing" | "verifying" | "connected" | "ended" | "expired" | "released";
@@ -178,6 +186,12 @@ class TelStore {
     })();
     return this.opening;
   }
+
+  /**
+   * 6.9: the open database (null in memory mode or before ready()) — a part with
+   * its own tables (control/inroute.ts) creates them on it, additively.
+   */
+  handle(): SqliteDatabase | null { return this.db; }
 
   status(): { persistent: boolean; file: string; reason: string } {
     return { persistent: Boolean(this.db), file: telDbPath(), reason: this.reason };

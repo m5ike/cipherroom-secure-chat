@@ -1302,7 +1302,7 @@ obálka  = { v: 3, id, sk: &lt;ID řetězu&gt;, n, iv, ciphertext }</code></pre>
       <tr><td>Functions</td><td><code>model:dns*</code>, <code>package:net*</code>, <code>-model:whois</code>, <code>run</code>; konzole <code>edit</code>, <code>publish</code>, <code>webhooks</code></td><td>seznam příkazů a běh v chatu, API, webhooky, <code>m5.functions.list()</code>; <code>/admin/functions/*</code></td></tr>
       <tr><td>AI</td><td><code>provider:openai</code>, <code>model:anthropic/claude*</code>, <code>-provider:elevenlabs</code>, <code>chat</code>; konzole <code>settings</code>, <code>playground</code></td><td>seznam modelů a každé volání (asistent, funkce); <code>/admin/ai*</code></td></tr>
       <tr><td>Speech</td><td><code>provider:local</code>, <code>model:local/piper-cs*</code>, <code>tts</code>, <code>stt</code></td><td>převod řeči a hlasy</td></tr>
-      <tr><td>Telephony &amp; SIP</td><td><code>sms</code>, <code>call</code>, od 6.0 <code>message</code>, <code>lookup</code>, <code>hlr</code>, <code>did</code> (<a href="#tel-prava">m5.telephony</a>); <code>number:+420*</code>, <code>-number:+1900*</code>; konzole <code>settings</code>, <code>test</code></td><td><code>/api/telephony/sms|call</code> podle cílového čísla; <code>/admin/telephony/*</code></td></tr>
+      <tr><td>Telephony &amp; SIP</td><td><code>sms</code>, <code>call</code>, od 6.0 <code>message</code>, <code>lookup</code>, <code>hlr</code>, <code>did</code>, od 6.9 <code>inroute</code> (<a href="#tel-prava">m5.telephony</a>); <code>number:+420*</code>, <code>-number:+1900*</code>; konzole <code>settings</code>, <code>test</code>, od 6.9 <code>routing</code>, <code>tsa</code>, <code>log</code></td><td><code>/api/telephony/sms|call</code> podle cílového čísla; <code>/admin/telephony/*</code></td></tr>
       <tr><td>Layout / Menu builder</td><td><code>edit</code>, <code>publish</code>, <code>history</code></td><td>zápisy v <code>/admin/layout*</code> a <code>/api/admin/menu-config</code> (čtení smí každý s přístupem)</td></tr>
     </tbody>
   </table>
@@ -1834,9 +1834,14 @@ room = <span class="k">await</span> m5adm.rooms.get(room_id)
       <tr><td><code>whatsapp</code>, <code>viber</code>, <code>messenger</code>, <code>messages.get</code></td><td>zprávy do chatovacích sítí (WhatsApp mimo 24 h okno šablonou)</td></tr>
       <tr><td><code>lookup(číslo, { offline, fields, providers, country })</code>, <code>hlr(číslo)</code></td><td>vše o čísle: země, typ, formáty, časová pásma (offline, zdarma), operátor, jméno, přenesení, roaming (placené údaje poskytovatelů, sloučené); HLR: připojení, roaming, síť</td></tr>
       <tr><td><code>did.{allocate, get, list, release}</code></td><td>dočasné číslo pro telefonní most (níže)</td></tr>
+      <tr><td><code>inroute.{add, del, list}</code> <span class="badge b-acc">6.9</span></td><td>kódy pro směrování zvuku: <code>add(code, type = "room", ttl = 600, { room, user, label, maxUses })</code> přidá 4–6místný kód (prázdný = náhodný) do tabulky inroute — kdo zavolá na příchozí číslo a zadá ho v nástroji <i>Route audio</i> aplikace TSA, je propojen s celou místností nebo jedním členem, dokud kód nevyprší; <code>room</code> = místnost běhu, <code>user</code> = volající; <code>del(code)</code> (v Pythonu <code>delete</code>), <code>list()</code> = živé kódy modelu. Právo <code>inroute</code>; podrobně <code>docs/telephony-routing.md</code></td></tr>
       <tr><td><code>log({ kind, limit })</code>, <code>providers()</code></td><td>log telefonie; poskytovatelé a co umějí</td></tr>
     </tbody>
   </table>
+  <p><b>6.9:</b> každý odchozí hovor a SMS projde oprávněními a odchozími pravidly modulu (Telephony &amp; SIP › Permissions, Routing): blokovaná čísla a země, hodinový rozpočet volajícího, souběžné hovory, pravidlo — stav hovor odmítne (<code>route-refused</code>), služba vybere aplikaci poskytovatele nebo SIP trunk s vlastním caller ID, cíl TSA spustí aplikaci po přijetí — a nejdelší hovor (<code>telephony-limit</code>, <code>telephony-busy</code>).</p>
+<pre><code><span class="c">// Kód pro místnost: člen ho řekne volajícímu, ten ho zadá v Route audio</span>
+<span class="k">const</span> e = <span class="k">await</span> m5.telephony.inroute.add(<span class="s">""</span>, <span class="s">"room"</span>, <span class="n">600</span>, { label: <span class="s">"Recepce"</span> });
+<span class="k">await</span> m5.caller.send(m5.out.markdown(<span class="s">`Zavolejte na +420 222 111 000 a zadejte **${e.code}**.`</span>));</code></pre>
 <pre><code><span class="c">// Zavolat, přečíst text a po zavěšení nahlásit výsledek (obsluha jménem = asynchronně)</span>
 <span class="k">const</span> call = <span class="k">await</span> m5.telephony.call({ to: <span class="s">"+420601234567"</span>, say: <span class="s">"Dobrý den, tady M5cet."</span>, on_hangup: <span class="s">"hotovo"</span> });
 
@@ -1854,7 +1859,7 @@ msg = <span class="k">await</span> m5.telephony.sms(to=<span class="s">"+4206012
   </table>
   <h3 id="tel-prava">Kdo smí</h3>
   <ul>
-    <li><b>Běh člověka</b> (chat, konzole) potřebuje jeho práva modulu <i>Telephony &amp; SIP</i>: k <code>call</code> a <code>sms</code> přibyla <code>message</code> (WhatsApp · Viber · Messenger), <code>lookup</code>, <code>hlr</code>, <code>did</code> a čísla <code>number:+420*</code> (<a href="#moduly-granty">granty</a>).</li>
+    <li><b>Běh člověka</b> (chat, konzole) potřebuje jeho práva modulu <i>Telephony &amp; SIP</i>: k <code>call</code> a <code>sms</code> přibyla <code>message</code> (WhatsApp · Viber · Messenger), <code>lookup</code>, <code>hlr</code>, <code>did</code>, od 6.9 <code>inroute</code> (kódy pro směrování zvuku) a čísla <code>number:+420*</code> (<a href="#moduly-granty">granty</a>).</li>
     <li><b>Běh, který nikdo nespustil</b> (webhook, plán, API, obsluha od poskytovatele), potřebuje grant modelu: Functions › model › <i>Beyond the caller</i> › m5.telephony — práva a vzory čísel.</li>
     <li>Placené operace jednoho modelu omezuje <code>TELEPHONY_FN_RATE</code> (výchozí 30 za minutu).</li>
   </ul>
@@ -1871,7 +1876,7 @@ msg = <span class="k">await</span> m5.telephony.sms(to=<span class="s">"+4206012
   <h3 id="tel-balicky">Balíčky, tvůrce a konzole</h3>
   <ul>
     <li><b>Vestavěné balíčky</b> — instalují se <b>vypnuté</b>, protože stojí peníze: <code>tel-call</code> (<code>/call</code>), <code>tel-sms</code> (<code>/sms</code>), <code>tel-whatsapp</code>, <code>tel-viber</code>, <code>tel-messenger</code>, <code>tel-lookup</code> (<code>/lookup</code>), <code>tel-hlr</code> (<code>/hlr</code>), <code>tel-did</code> (<code>/phone-bridge</code>). Každý je tok, který otevře vizuální tvůrce: vstupní bod execute ukáže formulář (kontrola vzorů, povinných polí a rozsahů v prohlížeči i na serveru), form převede hodnoty na parametry funkce, error vysvětlí chybu.</li>
-    <li><b>Vizuální tvůrce</b>: skupina <i>Telephony</i> — Phone call, SMS, WhatsApp / Viber / Messenger, Number lookup, HLR, Temporary number, Call logic; každý uzel má vstup <code>options</code> pro hodnoty z formuláře.</li>
+    <li><b>Vizuální tvůrce</b>: skupina <i>Telephony</i> — Phone call, SMS, WhatsApp / Viber / Messenger, Number lookup, HLR, Temporary number, Call logic, od 6.9 inroute.add, inroute.del, inroute.list; každý uzel má vstup <code>options</code> pro hodnoty z formuláře.</li>
     <li><b>Konzole › Telephony &amp; SIP</b>: karta <i>m5.telephony</i> — poskytovatelé a schopnosti, půjčená čísla (s uvolněním), hovory, zprávy, log (<code>GET /api/admin/telephony/sdk</code>).</li>
   </ul>
   <h3 id="tel-omezeni">Poctivá omezení</h3>

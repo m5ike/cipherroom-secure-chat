@@ -11,6 +11,12 @@
 //        Beyond the caller): the same rights, given to the model
 // Paid operations are counted per model: TELEPHONY_FN_RATE a minute
 // (default 30), so a loop cannot run up a bill.
+//
+// 6.9: every call and SMS then goes through the control plane (the outbound
+// permissions and rules, telephony/control/enforce.ts) on the caller's
+// hourly budget ("model:<id>", or the person for a draft) — and
+// m5.telephony.inroute.* (the "inroute" right) adds, removes and lists the
+// model's route codes (telephony/control/inroute.ts).
 
 import { checkAccess, adminSubject, userSubject, type Subject } from "../access";
 import { accountStore, usernameOf } from "../accounts/store";
@@ -24,6 +30,8 @@ import {
 import { telStore, HANDLER_EVENTS, type HandlerEvent, type TelOwner } from "../telephony/tel-store";
 import { lookupNumber, hlrNumber } from "../telephony/lookup";
 import { allocateBridge, bridgeView, getBridge, listBridges, releaseBridge } from "../telephony/bridge";
+import { InrouteError, inrouteAdd, inrouteDel, inrouteList } from "../telephony/control/inroute";
+import type { InrouteEntry } from "../telephony/control/types";
 import { parseEntry, type Caller, type Model } from "./types";
 
 export class TelCallError extends Error {
@@ -81,6 +89,16 @@ function ownerOf(ctx: TelContext): TelOwner | null {
   return { modelId: ctx.model.id, entry: `${e.pkg}@${e.version}:${e.file}`, chainId: ctx.chainId, runId: ctx.runId, caller: ctx.caller, test: false };
 }
 
+/** 6.9: whose hourly budget a call / SMS counts against — the saved model, else the person running a draft. */
+function byOf(ctx: TelContext): string {
+  if (ctx.model.id && ctx.model.id !== "__adhoc__") return `model:${ctx.model.id}`;
+  const c = ctx.caller;
+  return c.kind === "console" ? `admin:${c.name}` : c.kind === "user" ? `user:${c.account || c.name}` : `${c.kind}:${c.client || c.name}`;
+}
+
+/** 6.9: the groups an outbound rule may name — the person's (Modules & groups); none for a run nobody started. */
+const groupsOf = (ctx: TelContext): string[] => (PERSONS.has(ctx.caller.kind) ? subjectOf(ctx.caller).groups : []);
+
 /* ------------------------------------------------------------------ calls */
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : v === undefined || v === null ? "" : String(v));
@@ -115,9 +133,38 @@ async function call(ctx: TelContext, spec: Record<string, unknown>) {
     mode: raw ? "native" : spec.mode === "sync" ? "sync" : "async",
     actions: actions as PlaceCallOptions["actions"], ...(raw ? { raw } : {}), handlers,
     ...(spec.machineDetection ? { machineDetection: true } : {}),
-    owner,
+    owner, by: byOf(ctx), groups: groupsOf(ctx), source: "function",
   };
   return callView(await placeCall(o));
+}
+
+/* ------------------------------------------------------- route codes (6.9) */
+
+/** Whose route codes these are: the saved model, or the person's draft. */
+function inrouteOwner(ctx: TelContext): InrouteEntry["createdBy"] {
+  const id = ctx.model.id && ctx.model.id !== "__adhoc__" ? ctx.model.id : `draft:${ctx.caller.kind === "user" ? ctx.caller.account || ctx.caller.name : ctx.caller.name}`;
+  return { kind: "model", id, ...(ctx.runId ? { run: ctx.runId } : {}) };
+}
+
+/**
+ * m5.telephony.inroute.add(code, type = "room", ttl = 600, { room, user, label, maxUses }):
+ * the room defaults to the run's room (m5.caller.room), a "user" code's member
+ * to the person running it ("@account").
+ */
+async function inrouteAddOp(ctx: TelContext, spec: Record<string, unknown>): Promise<InrouteEntry> {
+  telAllowed(ctx, "inroute");
+  const type = str(spec.type) || "room";
+  const room = str(spec.room) || str(ctx.caller.room);
+  if (!room) throw new TelCallError("bad-argument", "room: the room's blind id (r3.…) — this run has none (m5.caller.room); pass { room }");
+  let user = str(spec.user);
+  if (type === "user" && !user && ctx.caller.kind === "user") user = `@${ctx.caller.name}`;
+  return inrouteAdd({
+    code: str(spec.code), ...(spec.digits !== undefined ? { digits: Number(spec.digits) } : {}),
+    type: type as InrouteEntry["type"], room, user,
+    ...(spec.ttl !== undefined && spec.ttl !== null ? { ttl: Number(spec.ttl) } : {}),
+    label: str(spec.label), maxUses: Number(spec.maxUses ?? spec.max_uses) || 0,
+    createdBy: inrouteOwner(ctx),
+  });
 }
 
 /* --------------------------------------------------------------- the calls */
@@ -142,7 +189,7 @@ const OPS: Record<string, Op> = {
     const to = str(s.to);
     telAllowed(ctx, "sms", to);
     spend(ctx);
-    return messageView(await sendMessage({ channel: "sms", to, ...(s.from ? { from: str(s.from) } : {}), text: str(s.text), ...(s.provider ? { provider: str(s.provider) } : {}), options: obj(s.options), ...(s.on_status || s.onStatus ? { onStatus: str(s.on_status ?? s.onStatus) } : {}), owner: ownerOf(ctx) }));
+    return messageView(await sendMessage({ channel: "sms", to, ...(s.from ? { from: str(s.from) } : {}), text: str(s.text), ...(s.provider ? { provider: str(s.provider) } : {}), options: obj(s.options), ...(s.on_status || s.onStatus ? { onStatus: str(s.on_status ?? s.onStatus) } : {}), owner: ownerOf(ctx), by: byOf(ctx), source: "function" }));
   },
   message: async (ctx, a) => {
     const channel = str(a[0]) as "whatsapp" | "viber" | "messenger";
@@ -157,7 +204,7 @@ const OPS: Record<string, Op> = {
       ...(tpl.name ? { template: { name: str(tpl.name), language: str(tpl.language) || "en", ...(Array.isArray(tpl.params) ? { params: tpl.params.map(str) } : {}) } } : {}),
       ...(obj(s.media).url ? { media: { url: str(obj(s.media).url), type: (["image", "audio", "video", "file"].includes(str(obj(s.media).type)) ? str(obj(s.media).type) : "image") as "image" } } : {}),
       ...(s.category ? { category: str(s.category) } : {}), ...(s.tag ? { tag: str(s.tag) } : {}),
-      ...(s.on_status || s.onStatus ? { onStatus: str(s.on_status ?? s.onStatus) } : {}), owner: ownerOf(ctx),
+      ...(s.on_status || s.onStatus ? { onStatus: str(s.on_status ?? s.onStatus) } : {}), owner: ownerOf(ctx), by: byOf(ctx), source: "function",
     }));
   },
   "messages.get": async (_ctx, a) => { await telStore.ready(); const m = telStore.messages.get(str(a[0])); return m ? messageView(m) : null; },
@@ -177,6 +224,10 @@ const OPS: Record<string, Op> = {
   "did.get": async (_ctx, a) => { const b = await getBridge(str(a[0])); return b ? bridgeView(b) : null; },
   "did.list": async (ctx, a) => (await listBridges(obj(a[0]), ownerOf(ctx)?.modelId)).map(bridgeView),
   "did.release": async (ctx, a) => { telAllowed(ctx, "did"); return releaseBridge(str(a[0]), "released by the function"); },
+  // 6.9: the inroute table — the model's own route codes.
+  "inroute.add": (ctx, a) => inrouteAddOp(ctx, obj(a[0])),
+  "inroute.del": async (ctx, a) => { telAllowed(ctx, "inroute"); return inrouteDel(str(a[0]), { owner: inrouteOwner(ctx), by: inrouteOwner(ctx).id }); },
+  "inroute.list": async (ctx, a) => { telAllowed(ctx, "inroute"); return inrouteList({ owner: inrouteOwner(ctx), limit: Number(obj(a[0]).limit) || 1000 }); },
   log: async (_ctx, a) => {
     await telStore.ready();
     const f = obj(a[0]);
@@ -193,7 +244,7 @@ export async function hostTelephony(op: string, args: unknown[], ctx: TelContext
   try { return await fn(ctx, args); }
   catch (err) {
     if (err instanceof TelCallError) throw err;
-    if (err instanceof TelError) throw new TelCallError(err.code, err.message);
+    if (err instanceof TelError || err instanceof InrouteError) throw new TelCallError(err.code, err.message);
     const e = err as { name?: string; status?: number; message?: string };
     if (e.name === "ProviderNotConfigured") throw new TelCallError("not-configured", e.message ?? "not configured");
     if (e.name === "ProviderError") throw new TelCallError(e.status === 400 ? "bad-argument" : "provider-error", e.message ?? "provider error");

@@ -33,6 +33,11 @@ import { publicBaseUrl } from "./connectors";
 import { stringParams, verifyRequest } from "./webhooks";
 import { telId, telStore, telToken, type HandlerEvent, type TelCall, type TelMessage, type TelOwner } from "./tel-store";
 import { isE164, isProvider } from "./types";
+// 6.9: the control plane — outbound rules and limits; the TSA a rule routes a call to.
+import { OutboundRefused, planOutbound, type OutboundAsk, type OutboundPlan, type OutboundSource } from "./control/enforce";
+import { telHooks, type TsaCallRef } from "./control/hooks";
+import type { TsaEvent } from "./tsa/types";
+import "./control/inroute"; // registers telHooks.inroute where calls run (route_audio)
 
 export class TelError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "TelError"; }
@@ -141,9 +146,54 @@ function holdActions(call: TelCall): CallAction[] {
   return [{ pause: { seconds: 5 } }, { redirect: { url: hookUrl(call.token, "answer", { hold: "1" }) } }];
 }
 
-/** The logic for an answered call: a steer from the waiting run, the answer handler, the call's actions — or hang up. */
+/* -------------------------------------------------------------- TSA (6.9) */
+
+/** The call as the TSA runtime sees it. */
+const tsaRef = (call: TelCall): TsaCallRef => ({ id: call.id, token: call.token, provider: call.provider, direction: call.direction, from: call.from, to: call.to, did: call.direction === "outbound" ? call.from : call.to });
+
+/**
+ * A call a rule routed to a TSA runs it when answered (telHooks.tsa, the TSA
+ * runtime). Without the runtime in this process the call goes on with its
+ * own logic (and the log says why); a TSA that cannot start hangs up.
+ */
+async function tsaStart(call: TelCall): Promise<CallAction[] | null> {
+  if (!call.tsa || call.tsa.session) return null;
+  if (!telHooks.tsa) {
+    note(call, `the outbound rule routes this call to TSA ${call.tsa.id}, but the TSA runtime is not loaded here — the call goes on with its own logic`, "warn");
+    return null;
+  }
+  try {
+    const turn = await telHooks.tsa.start(tsaRef(call), call.tsa.id);
+    call.tsa = { id: call.tsa.id, session: turn.session.id };
+    save(call);
+    return turn.actions;
+  } catch (err) {
+    note(call, `TSA ${call.tsa.id} could not start: ${(err as Error).message.slice(0, 200)}`, "warn");
+    return [{ hangup: {} }];
+  }
+}
+
+/** What a webhook of a TSA's call tells the waiting TSA (digits / speech, a recording). */
+function tsaEventOf(kind: string, events: NormalizedCallEvent[]): TsaEvent {
+  const ev = events.find((e) => e.digits !== undefined || e.speech !== undefined || e.recordingUrl !== undefined) ?? events[0];
+  if (kind === "record") return { kind: "recording", url: ev?.recordingUrl ?? "", durationSec: ev?.recordingSec ?? 0, ...(ev?.digits ? { digit: ev.digits } : {}), ...(ev?.recordingUrl ? {} : { timedOut: true }) };
+  if (ev?.speech !== undefined) return { kind: "speech", text: ev.speech, ...(ev.confidence !== undefined ? { confidence: ev.confidence } : {}), ...(ev.speech ? {} : { timedOut: true }) };
+  return { kind: "digits", digits: ev?.digits ?? "", ...(ev?.digits ? {} : { timedOut: true }) };
+}
+
+/** Resumes the call's TSA with an event; its next actions (hang up when it fails). */
+async function tsaResume(call: TelCall, event: TsaEvent): Promise<CallAction[]> {
+  try { return (await telHooks.tsa!.resume(call.tsa!.session, event)).actions; }
+  catch (err) { note(call, `TSA ${call.tsa?.id}: ${(err as Error).message.slice(0, 200)}`, "warn"); return [{ hangup: {} }]; }
+}
+
+/** The logic for an answered call: a steer from the waiting run, its TSA, the answer handler, the call's actions — or hang up. */
 async function answerLogic(call: TelCall): Promise<CallAction[]> {
   if (call.steer?.actions.length) return resolveActions(call, call.steer.actions);
+  if (call.tsa) {
+    const fromTsa = await tsaStart(call);
+    if (fromTsa) return fromTsa;
+  }
   if (call.handlers.answer) {
     const fromHandler = actionsOf(await handlerInTime(call, "answer"));
     if (fromHandler) return resolveActions(call, fromHandler);
@@ -189,40 +239,74 @@ export type PlaceCallOptions = {
   handlers?: Partial<Record<HandlerEvent, string>>;
   machineDetection?: boolean;
   owner: TelOwner | null;
+  /** 6.9: who places it, for the hourly budget (default: the owner's model, else "anonymous"). */
+  by?: string;
+  /** 6.9: the caller's groups (outbound rules may name them; default: the owner's caller's). */
+  groups?: string[];
+  /** 6.9: what places it (outbound rules may name it; default: function with an owner, else api). */
+  source?: OutboundSource;
+  /** 6.9: the control plane's plan, when the caller asked it already (the app's POST /api/telephony/call). */
+  planned?: OutboundPlan;
 };
 
-/** Places a call; its record exists (with its webhooks) before the provider is asked. */
+/** The hourly-budget key of a call or message without an explicit one. */
+export const byOf = (owner: TelOwner | null): string =>
+  owner ? (owner.modelId ? `model:${owner.modelId}` : `${owner.caller.kind}:${owner.caller.account || owner.caller.name}`) : "anonymous";
+
+/** The control plane's verdict (control/enforce.ts); a refusal becomes a TelError with its code. */
+async function plan(ask: OutboundAsk): Promise<OutboundPlan> {
+  try { return await planOutbound(ask); }
+  catch (err) { if (err instanceof OutboundRefused) throw new TelError(err.code, err.message); throw err; }
+}
+
+/**
+ * Places a call; its record exists (with its webhooks) before the provider is
+ * asked. 6.9: first the outbound permissions and rules — they may refuse it,
+ * pick the provider, dial it over a SIP trunk with their caller ID, or run a
+ * TSA when it is answered.
+ */
 export async function placeCall(o: PlaceCallOptions): Promise<TelCall> {
   await telStore.ready();
   if (!isE164(o.to)) throw new TelError("bad-argument", "to must be an E.164 number, e.g. +420603123456");
   if (o.from && !isE164(o.from) && !/^sip:/.test(o.from)) throw new TelError("bad-argument", "from must be an E.164 number (or empty: the provider's default)");
-  const a = pickAdapter("call", o.provider);
+  const by = o.by || byOf(o.owner);
+  const route = o.planned ?? await plan({
+    kind: "call", to: o.to, by, groups: o.groups ?? o.owner?.caller.groups ?? [], source: o.source ?? (o.owner ? "function" : "api"),
+    ...(o.provider ? { provider: o.provider } : {}), ...(o.timeLimit ? { timeLimitSec: Number(o.timeLimit) } : {}),
+  });
+  const a = pickAdapter("call", route.provider || o.provider);
   const now = Date.now();
   const mode = o.raw ? "native" : o.mode ?? "async";
+  const from = route.from || o.from || "";
   const call: TelCall = {
     id: telId("tc"), token: telToken(), provider: a.id, providerCallId: "", direction: "outbound",
-    from: o.from ?? "", to: o.to, status: "queued", mode,
+    from, to: o.to, status: "queued", mode,
     actions: o.actions ?? [], handlers: o.handlers ?? {}, owner: o.owner,
     pending: [], waitFor: null, gatherFn: "", events: [], seq: 0,
-    timeoutSec: clampTimeout(o.timeout), timeLimitSec: Math.max(0, Math.floor(o.timeLimit ?? 0)),
+    timeoutSec: clampTimeout(o.timeout), timeLimitSec: route.timeLimitSec,
     createdAt: now, updatedAt: now, answeredAt: null, endedAt: null, durationSec: null, bridge: "", error: "", steer: null,
+    by,
+    ...(route.decision ? { route: { rule: route.decision.rule ?? "", label: route.decision.ruleLabel, service: route.service?.kind ?? "", target: route.decision.target.kind === "tsa" ? `tsa:${route.decision.target.tsa}` : route.decision.target.kind } } : {}),
+    ...(route.tsa ? { tsa: { id: route.tsa, session: "" } } : {}),
   };
   save(call);
   try {
     const telnyx = a.id === "telnyx";
     const r = await a.placeCall!({
-      to: o.to, from: o.from ?? "", timeout: call.timeoutSec, ...(call.timeLimitSec ? { timeLimit: call.timeLimitSec } : {}),
+      to: o.to, from, timeout: call.timeoutSec, ...(call.timeLimitSec ? { timeLimit: call.timeLimitSec } : {}),
       eventUrl: hookUrl(call.token, "event"),
       // Twilio / Vonage ask for the logic when answered; Telnyx is told on call.answered.
-      ...(o.raw ? { raw: o.raw } : telnyx ? {} : { answerUrl: hookUrl(call.token, "answer") }),
+      // A TSA's call always asks (the TSA decides when answered), even with native logic given.
+      ...(o.raw && !route.tsa ? { raw: o.raw } : telnyx ? {} : { answerUrl: hookUrl(call.token, "answer") }),
       clientState: call.id,
       ...(o.machineDetection ? { machineDetection: true } : {}),
+      // An outbound rule's SIP trunk (its credentials go to the provider only; never logged).
+      ...(route.via ? { via: route.via } : {}),
     });
     call.providerCallId = r.id;
     call.status = r.status;
-    if (!call.from) call.from = "";
     save(call);
-    note(call, `call to ${call.to} placed (${a.id}, ${mode})`, "info", { timeout: call.timeoutSec });
+    note(call, `call to ${call.to} placed (${a.id}, ${mode}${route.via ? `, SIP trunk ${route.via.trunk.id}` : ""}${route.tsa ? `, TSA ${route.tsa}` : ""})`, "info", { timeout: call.timeoutSec, timeLimit: call.timeLimitSec, rule: route.decision?.rule ?? "" });
     return call;
   } catch (err) {
     call.status = "failed";
@@ -357,10 +441,20 @@ export async function handleCallWebhook(call: TelCall, kind: string, body: unkno
   if (call.bridge && bridgeObserver && events.length) bridgeObserver(call, events);
 
   // Final statuses and "status" run their handlers after the provider has its answer.
+  const tsaRuns = Boolean(call.tsa?.session && telHooks.tsa);
   const later = () => {
     for (const h of finals) void handler(call, h);
     if (call.handlers.status && events.length) void handler(call, "status");
+    // 6.9: a TSA's call that ended tells the TSA (its on_hangup branch).
+    if (tsaRuns && finals.length) { const ev = events.find((e) => e.status && FINAL_CALL_STATUSES.includes(e.status)); void tsaResume(call, { kind: "hangup", ...(ev?.cause ? { cause: ev.cause } : ev?.status ? { cause: ev.status } : {}) }); }
   };
+
+  // 6.9: digits, speech or a recording for the TSA the call runs → its next actions.
+  if (tsaRuns && (kind === "gather" || kind === "record")) {
+    const actions = await tsaResume(call, tsaEventOf(kind, events));
+    later();
+    return rendered(call, actions);
+  }
 
   if (kind === "answer") {
     if (!call.answeredAt) { call.answeredAt = Date.now(); save(call); }
@@ -395,6 +489,10 @@ export async function handleCallWebhook(call: TelCall, kind: string, body: unkno
         if (type === "call.gather.ended" && call.bridge && bridgeDigits) {
           call.pending = [];
           await execute(call, await bridgeDigits(call, ev.digits ?? "")).catch((err) => note(call, `actions failed: ${(err as Error).message}`, "warn"));
+        } else if (type === "call.gather.ended" && tsaRuns) {
+          // 6.9: the TSA reads the digits / speech and says what comes next.
+          call.pending = [];
+          await execute(call, await tsaResume(call, tsaEventOf("gather", [ev]))).catch((err) => note(call, `actions failed: ${(err as Error).message}`, "warn"));
         } else if (type === "call.gather.ended") {
           const out = actionsOf(await handler(call, "digits", call.gatherFn));
           const next = out ? resolveActions(call, out) : call.pending.length ? call.pending : call.mode === "sync" ? [] : [{ hangup: {} } as CallAction];
@@ -429,16 +527,22 @@ export type SendMessageOptions = {
   options?: Record<string, unknown>;
   onStatus?: string;
   owner: TelOwner | null;
+  /** 6.9: who sends it, for the hourly SMS budget (default: the owner's model, else "anonymous"). */
+  by?: string;
+  source?: OutboundSource;
 };
 
+/** Sends an SMS or a chat message. 6.9: the outbound permissions first (countries, blocked numbers, the SMS budget). */
 export async function sendMessage(o: SendMessageOptions): Promise<TelMessage> {
   await telStore.ready();
   if (o.channel !== "messenger" && !isE164(o.to)) throw new TelError("bad-argument", "to must be an E.164 number, e.g. +420603123456");
+  const by = o.by || byOf(o.owner);
+  await plan({ kind: o.channel === "sms" ? "sms" : "message", to: o.to, by, source: o.source ?? (o.owner ? "function" : "api") });
   const a = pickAdapter(o.channel, o.provider);
   const now = Date.now();
   const msg: TelMessage = {
     id: telId("tm"), token: telToken(), provider: a.id, providerId: "", channel: o.channel, from: o.from ?? "", to: o.to, status: "queued",
-    owner: o.owner, onStatus: o.onStatus ?? "", events: [], createdAt: now, updatedAt: now, parts: null, price: "",
+    owner: o.owner, onStatus: o.onStatus ?? "", events: [], createdAt: now, updatedAt: now, parts: null, price: "", by,
   };
   telStore.messages.put(msg);
   let statusUrl = "";

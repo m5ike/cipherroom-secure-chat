@@ -258,6 +258,18 @@ export class SipTrunkStore {
     return Array.from(this.map.values()).map((t) => this.redact(t));
   }
 
+  /**
+   * 6.9: what the provider needs to dial over a trunk (an outbound rule's "sip"
+   * service → PlaceCallInput.via) — the ONLY way the password leaves this store,
+   * straight into the provider request; never returned to a client or logged.
+   */
+  dialCredentials(id: string): { id: string; host: string; username: string; password: string; callerIdName: string; callerIdNumber: string } | null {
+    this.reloadIfChanged();
+    const t = this.map.get(id);
+    if (!t) return null;
+    return { id: t.id, host: t.port && t.port !== 5060 ? `${t.host}:${t.port}` : t.host, username: t.authUser || t.username, password: t.password, callerIdName: t.callerIdName, callerIdNumber: t.callerIdNumber };
+  }
+
   remove(id: string): boolean | "readonly" {
     this.reloadIfChanged();
     const cur = this.map.get(id);

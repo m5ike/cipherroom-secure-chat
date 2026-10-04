@@ -37,6 +37,8 @@ import { consoleGuard, ensureMainGroups } from "./access";
 import { accessLog } from "./access-log";
 import { registerAccessRoutes, aiConsoleRight } from "./access-routes";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
+import { registerControlRoutes } from "./telephony/control/routes";
+import { telephonyConsoleRight } from "./telephony/control/guard";
 import { registerAdminLayoutRoutes } from "./layout";
 import { distPublicDir } from "./layout-catalog";
 import { applyTrustProxy } from "./trust-proxy";
@@ -196,12 +198,14 @@ app.use("/admin", requireAuth);
 app.use("/admin/functions", consoleGuard("functions", functionsConsoleRight));
 app.use("/admin/ai", consoleGuard("ai", aiConsoleRight));
 app.use("/admin/plugins", consoleGuard("ai", aiConsoleRight)); // the AI & speech console's earlier addresses
-app.use("/admin/telephony", consoleGuard("telephony", (req) => (req.method === "GET" ? null : req.path.startsWith("/test") ? [["test", "settings"]] : [["settings"]])));
+// 6.9: each endpoint's right from the console API contract (telephony/control/api-contract.ts).
+app.use("/admin/telephony", consoleGuard("telephony", telephonyConsoleRight));
 app.use("/admin/layout", consoleGuard("layout", (req) => (req.method === "GET" ? null : req.path.includes("/restore") ? [["history", "edit"]] : req.path.startsWith("/reset") ? [["publish"]] : [["edit", "publish"]])));
 registerAccessRoutes(app);
 
 // Telephony + SIP console (all under /admin, so behind the auth middleware).
 registerAdminTelephonyRoutes(app);
+registerControlRoutes(app); // 6.9: permissions, routing rules, the inroute table
 // Layout / template builder (persisted, served to clients via /api/layout).
 registerAdminLayoutRoutes(app);
 
