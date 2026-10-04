@@ -23,6 +23,7 @@ import type { Bytes } from "../lib/crypto";
 import { currentAccount, confirmAccountRoot, isSignedIn } from "../lib/account";
 import type { CardTransport, CardIdentity } from "../lib/nfc/transport";
 import { NfcError } from "../lib/nfc/errors";
+import { isHttpsUrl } from "../lib/site-path";
 
 export type M5CardPanelProps = {
   lang: Lang;
@@ -170,7 +171,8 @@ export function M5CardPanel(props: M5CardPanelProps): React.JSX.Element {
       else { onImport?.(rec); setDetail({ rec }); onSystem(`NFC: ${tr(RECORD_META[rec.type].label)} → ${tr("nfc.rec.import")}`); }
     } else { // run
       if (rec.type === "server-room" && onJoinRoom) onJoinRoom({ room: String(d.room ?? ""), passphrase: String(d.passphrase ?? ""), name: typeof d.name === "string" ? d.name : undefined });
-      else { const url = String(d.url ?? ""); if (url) window.open(url, "_blank", "noopener"); }
+      // 6.7 (N29): only an https: link opens — never javascript:, data: or blob: from a card.
+      else { const url = String(d.url ?? ""); if (isHttpsUrl(url)) window.open(url, "_blank", "noopener"); else if (url) onSystem(`NFC: ${tr("nfc.urlRefused")}`); }
     }
   }, [container, identity, getTransport, sealed, onSystem, tr, onImport, onJoinRoom]);
 

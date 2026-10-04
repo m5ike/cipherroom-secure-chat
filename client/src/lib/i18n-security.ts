@@ -67,6 +67,8 @@ const cs: Dict = {
   "key.hint.classes": "Jen malá písmena — přidej délku nebo další slova.",
   "key.generate": "Vygenerovat silný klíč",
   "key.weak.held": "Tento klíč je pro novou místnost příliš slabý: kdo má data serveru, může ho uhodnout offline. Zvol silnější (nebo ho vygeneruj). Připojuješ-li se do místnosti, která už tento klíč používá, stiskni Připojit znovu.",
+  // 6.7 (audit N29): a card's link that is not https
+  "nfc.urlRefused": "Odkaz z karty se neotevřel — otevírají se jen adresy https://.",
 };
 
 const en: Dict = {
@@ -133,6 +135,8 @@ const en: Dict = {
   "key.hint.classes": "Lowercase letters only — make it longer or add words.",
   "key.generate": "Generate a strong key",
   "key.weak.held": "This key is too weak for a new room: whoever holds the server's data could guess it offline. Choose a stronger one (or generate it). If you are joining a room that already uses this key, press Connect again.",
+  // 6.7 (audit N29): a card's link that is not https
+  "nfc.urlRefused": "The card's link was not opened — only https:// addresses open.",
 };
 
 const de: Dict = {
@@ -199,6 +203,8 @@ const de: Dict = {
   "key.hint.classes": "Nur Kleinbuchstaben — mach ihn länger oder nimm mehr Wörter.",
   "key.generate": "Starken Schlüssel erzeugen",
   "key.weak.held": "Dieser Schlüssel ist für einen neuen Raum zu schwach: Wer die Daten des Servers hat, kann ihn offline erraten. Wähle einen stärkeren (oder erzeuge ihn). Wenn du einem Raum beitrittst, der diesen Schlüssel schon nutzt, drücke noch einmal Verbinden.",
+  // 6.7 (audit N29): a card's link that is not https
+  "nfc.urlRefused": "Der Link der Karte wurde nicht geöffnet — nur https://-Adressen werden geöffnet.",
 };
 
 export const SECURITY_I18N = { cs, en, de } as const;

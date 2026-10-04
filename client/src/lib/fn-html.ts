@@ -58,6 +58,10 @@ function safeStyle(style: string): string {
     const value = decl.slice(i + 1).trim();
     if (!STYLE_PROPS.has(prop) || !value || value.length > 160) continue;
     if (/url\s*\(|expression|javascript:|@import|\\|[<>{}]|behavior|var\s*\(|attr\s*\(/i.test(value)) continue;
+    // 6.7 (N26): nothing that reaches out of the output's box over other messages —
+    // no negative margins, no sizes relative to the window.
+    if (prop.startsWith("margin") && /(^|[\s(,])-\s*[\d.]/.test(value)) continue;
+    if (/\d\s*(d|s|l)?v(w|h|min|max|i|b)\b/i.test(value)) continue;
     if (prop === "display" && !/^(inline|inline-block|block|flex|inline-flex|grid|table|table-row|table-cell|none)$/.test(value)) continue;
     out.push(`${prop}: ${value}`);
   }

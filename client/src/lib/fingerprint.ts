@@ -140,9 +140,16 @@ export function persistFingerprint(peerId: string, digest: string): Record<strin
     firstSeenAt: existing?.firstSeenAt || now,
     lastSeenAt: now,
   };
-  saveFingerprints(map);
-  return map;
+  // 6.7 (audit N27): peer ids are new for every session, so this map only ever grew — a
+  // readable log of every contact. Keep the most recently seen ones only.
+  const others = Object.entries(map).filter(([id]) => id !== peerId).sort((a, b) => String(b[1].lastSeenAt).localeCompare(String(a[1].lastSeenAt))).slice(0, FINGERPRINTS_KEPT - 1);
+  const trimmed = Object.fromEntries([[peerId, map[peerId]], ...others]);
+  saveFingerprints(trimmed);
+  return trimmed;
 }
+
+/** How many peers' DTLS fingerprints this browser keeps (6.7). */
+export const FINGERPRINTS_KEPT = 100;
 
 /**
  * Remove a fingerprint entry (e.g. when a peer leaves for good).

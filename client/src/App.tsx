@@ -112,6 +112,7 @@ import type { NfcCommand } from "./lib/nfc/command";
 import { DOCUMENT_KEY_FIELDS, documentKeyValid, needsDocumentKey, withDocumentKey } from "./lib/nfc/document-key";
 import { shareableOutputs } from "./lib/fn-outputs";
 import { historyRoomsToRead, serverRoomId } from "./lib/room-privacy";
+import { isSitePath } from "./lib/site-path";
 import { FnHostContext, type FnHost } from "./components/fn/FnOutputs";
 import { isInlineImage } from "./lib/validate";
 import { DEFAULT_PROXY_LIMITS, extractPeerAddress, normalizeRoom, proxyPacer, type ProxyLimits } from "./lib/app-helpers";
@@ -985,7 +986,7 @@ function ChatApp() {
   function runMenuAction(action: MenuAction) {
     if (action.type === "url") {
       // sanitizeMenuConfig keeps only https:// and this site's paths.
-      if (!/^https:\/\/\S+$/i.test(action.href) && !/^\/(?!\/)\S*$/.test(action.href)) return;
+      if (!/^https:\/\/\S+$/i.test(action.href) && !(isSitePath(action.href) && !/\s/.test(action.href))) return; // 6.7 (N22)
       if (action.newTab) window.open(action.href, "_blank", "noopener,noreferrer");
       else window.location.assign(action.href);
       return;

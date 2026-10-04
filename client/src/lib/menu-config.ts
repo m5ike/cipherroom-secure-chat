@@ -19,6 +19,7 @@
 // focus, current), and be shown only for a module or a situation.
 
 import { MENU_ICONS } from "./menu-icons-data";
+import { isSitePath } from "./site-path";
 import { MODULE_IDS } from "./modules";
 
 /* ------------------------------------------------------------------ style */
@@ -303,7 +304,7 @@ function sanitizeAction(raw: unknown): MenuAction {
   if (r.type === "url") {
     const href = clean(r.href, 400).trim();
     // Only this site (a path) or https; never javascript: or data:.
-    if (/^https:\/\/[^\s]+$/i.test(href) || /^\/(?!\/)[^\s]*$/.test(href)) return { type: "url", href, ...(r.newTab === true ? { newTab: true } : {}) };
+    if (/^https:\/\/[^\s]+$/i.test(href) || (isSitePath(href) && !/\s/.test(href))) return { type: "url", href, ...(r.newTab === true ? { newTab: true } : {}) }; // 6.7 (N22)
   }
   return { type: "none" };
 }

@@ -24,6 +24,7 @@
 // inline event handlers. The renderer never uses innerHTML.
 
 import { sanitizeStyle, type ElementStyle } from "./menu-config";
+import { isSitePath } from "./site-path";
 
 /* ------------------------------------------------------------- palette */
 
@@ -354,7 +355,8 @@ export function isSafeUrl(value: string, opts: { data?: boolean } = {}): boolean
   if (!v) return true;
   if (/^(javascript|vbscript|file):/i.test(v.replace(/[\s\u0000-\u001f]/g, ""))) return false;
   if (/^https:\/\//i.test(v) || /^mailto:|^tel:/i.test(v)) return true;
-  if (/^\/(?!\/)|^\.\.?\/|^#|^\?/.test(v)) return true;
+  if (v.startsWith("/")) return isSitePath(v); // 6.7 (N22): not "/\\host", not "/\t/host"
+  if (/^\.\.?\/|^#|^\?/.test(v) && !/[\\\u0000-\u001f]/.test(v)) return true;
   if (/^data:image\/(png|jpe?g|gif|webp|avif);/i.test(v)) return true;
   if (opts.data && (/^blob:/i.test(v) || (/^data:/i.test(v) && !/^data:(text\/html|image\/svg|application\/xhtml|text\/xml|application\/xml)/i.test(v)))) return true;
   return false;
