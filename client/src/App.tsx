@@ -133,7 +133,7 @@ import { RoomDialog, RoomTabs, type RoomTab, type RoomTarget } from "./component
 import { RoomBar, type RoomBarItem } from "./components/RoomBar";
 import { PhoneBridgePanel } from "./components/PhoneBridgePanel";
 import { StartScreen } from "./components/StartScreen";
-import { PhoneBridgeClient, bridgeUrl, callFromFrame, type PhoneCall } from "./lib/phone-bridge";
+import { PhoneBridgeClient, bridgeUrl, callFromFrame, withServer, type PhoneCall } from "./lib/phone-bridge";
 import { createRoomHub, roomKeyOf, type HubTarget, type RoomHub } from "./lib/room-hub";
 import { cleanUsername, sessionUsername } from "./lib/username";
 import { clearCard, currentCard, loadCard, myRoomView, onCardChange } from "./lib/profile/client";
@@ -165,7 +165,7 @@ import type { MapPreviewPolicy } from "./lib/client-config";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
 import { appInForeground, useRoomPresence } from "./lib/use-room-presence";
 import { createFlashQueue, kindForText, type FlashMessage } from "./lib/flash";
-import { createOutbox } from "./lib/outbox";
+import { createOutbox, queueTargets } from "./lib/outbox";
 import { FlashMessages } from "./components/FlashMessages";
 import {
   attachStorageSocket, forgetServerData, putMessages as putServerMessages,
@@ -1751,10 +1751,11 @@ function ChatApp() {
     const session = String(f.session ?? "");
     setPhoneCalls((cur) => {
       const prev = cur.find((c) => c.session === session);
-      const next = callFromFrame(f, prev);
-      if (!next) return cur;
-      // The media socket goes to the server whose signaling offered the call.
-      if (!prev && socketUrl) next.socketUrl = socketUrl;
+      const made = callFromFrame(f, prev);
+      if (!made) return cur;
+      // The media socket goes to the server whose signaling offered the call
+      // (6.10 G-11: a re-offer keeps it too — withServer).
+      const next = withServer(made, prev, socketUrl);
       return prev ? cur.map((c) => (c.session === next.session ? next : c)) : [...cur, next].slice(-3);
     });
     if (f.event === "incoming") {
@@ -3570,12 +3571,15 @@ function ChatApp() {
     const relayed = relayToAway(payload.id, envelope, away, send?.sealed ? undefined : text);
     // Nobody could take it: in light mode it waits in the outbox and the
     // bubble shows it as sending, rather than the message being refused.
-    const queued = sent === 0 && relayed === 0
+    // 6.10 (G-10): a private send whose chosen people are all unreachable is
+    // refused instead — the outbox reads "no targets" as the whole room.
+    const queueFor = queueTargets(opts.targets);
+    const queued = sent === 0 && relayed === 0 && queueFor !== null
       && outboxRef.current.add({
         messageId: payload.id,
         room: roomRef.current ?? "",
         envelope,
-        targets: opts.targets ? Array.from(opts.targets) : [],
+        targets: queueFor,
         toNames: opts.toNames ?? [],
         createdAt: createdAt,
         expiresAt: computeExpiry(ttlMinutes, createdAt) ?? 0,
@@ -3618,7 +3622,7 @@ function ChatApp() {
         systemMessage(t(lang, "app.waitingForRecipient"));
       }
     } else {
-      setNotice(t(lang, "app.queueFailed"));
+      setNotice(t(lang, queueFor === null ? "app.privateNobody" : "app.queueFailed"));
     }
   }
 

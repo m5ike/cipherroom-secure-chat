@@ -3,7 +3,9 @@
 // them, so they wait here and are retried when a channel opens.
 
 import { describe, it, expect, vi } from "vitest";
-import { createOutbox, OUTBOX_LIMITS, type QueuedMessage } from "../client/src/lib/outbox";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { createOutbox, OUTBOX_LIMITS, queueTargets, type QueuedMessage } from "../client/src/lib/outbox";
 
 type Env = { iv: string; ciphertext: string };
 
@@ -110,5 +112,21 @@ describe("what it gives up on", () => {
     expect(outbox.remove("a")).toBe(false);
     outbox.clear();
     expect(outbox.size()).toBe(0);
+  });
+});
+
+describe("6.10 (G-10): a private send is never queued for the whole room", () => {
+  it("everyone → [], chosen peers → their ids, a private send with nobody reachable → not queued", () => {
+    expect(queueTargets(undefined)).toEqual([]);
+    expect(queueTargets(new Set(["p-1", "p-2"]))).toEqual(["p-1", "p-2"]);
+    // All chosen people away (and the relay did not take it): an empty list would mean "everyone".
+    expect(queueTargets(new Set())).toBeNull();
+  });
+
+  it("App.tsx queues through queueTargets and refuses the private send with nobody reachable", () => {
+    const src = readFileSync(join(process.cwd(), "client/src/App.tsx"), "utf8");
+    expect(src).toContain("const queueFor = queueTargets(opts.targets);");
+    expect(src).toMatch(/sent === 0 && relayed === 0 && queueFor !== null/);
+    expect(src).not.toMatch(/targets: opts\.targets \? Array\.from\(opts\.targets\) : \[\]/);
   });
 });
