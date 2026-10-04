@@ -131,26 +131,35 @@ public final class Parts {
     public void aiClear() { if (aiChat != null) aiChat.clear(); }
     public JSONObject aiScope() { return aiChat == null ? new JSONObject() : aiChat.scope(); }
 
-    /** Change the PIN: two fields in a dialog (the vault re-wraps the user key). */
+    /**
+     * Change the PIN: the current one, then the new one twice (the vault re-wraps the user key).
+     * 6.7 (audit N18): the current PIN is asked for and counted like an unlock attempt — an
+     * unlocked phone left on a table no longer lets anyone set their own PIN; the dialog is FLAG_SECURE.
+     */
     public void changePin() {
         M5 app = app();
-        android.widget.EditText p1 = new android.widget.EditText(a), p2 = new android.widget.EditText(a);
-        for (android.widget.EditText e : new android.widget.EditText[]{p1, p2}) e.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        android.widget.EditText p0 = new android.widget.EditText(a), p1 = new android.widget.EditText(a), p2 = new android.widget.EditText(a);
+        for (android.widget.EditText e : new android.widget.EditText[]{p0, p1, p2}) e.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        p0.setHint(app.t("lock.enterPin"));
         p1.setHint(app.t("lock.setPin"));
         p2.setHint(app.t("lock.confirmPin"));
         android.widget.LinearLayout l = new android.widget.LinearLayout(a);
         l.setOrientation(android.widget.LinearLayout.VERTICAL);
         l.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
+        l.addView(p0);
         l.addView(p1);
         l.addView(p2);
-        new android.app.AlertDialog.Builder(a).setTitle(app.t("settings.changePin")).setView(l)
+        SecureDialog.show(a, new android.app.AlertDialog.Builder(a).setTitle(app.t("settings.changePin")).setView(l)
             .setPositiveButton("OK", (d, w) -> {
                 String a1 = p1.getText().toString(), a2 = p2.getText().toString();
                 if (a1.length() < app.lock.pinLength() || !a1.equals(a2)) { a.flash("", app.t("lock.pinMismatch"), "error"); return; }
+                cz.m5cet.app.security.AppLock.Result r = app.lock.confirmPin(p0.getText().toString());
+                if (r == cz.m5cet.app.security.AppLock.Result.WIPED) { a.flash("", app.t("lock.wiped"), "error"); cz.m5cet.app.core.Io.mainLater(app::restart, 2500); return; }
+                if (r != cz.m5cet.app.security.AppLock.Result.OK) { a.flash("", app.t("lock.wrongPin"), "error"); return; }
                 try { app.vault.changePin(a1); a.flash("", app.t("settings.changePin") + " ✓", "success"); }
                 catch (Exception e) { a.flash("", e.getMessage(), "error"); }
             })
-            .setNegativeButton(app.t("nav.close"), null).show();
+            .setNegativeButton(app.t("nav.close"), null));
     }
 
     /** Erase everything — asked first. */

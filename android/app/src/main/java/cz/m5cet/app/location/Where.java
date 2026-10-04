@@ -70,6 +70,8 @@ public final class Where {
         Location r = recent();
         if (r != null) { Io.main(() -> fix.on(r)); return; }
         try {
+            // 6.7 (audit V5): getCurrentLocation is API 30; Android 10 asks for a single update.
+            if (Build.VERSION.SDK_INT < 30) { singleUpdate(fix); return; }
             CancellationSignal cancel = new CancellationSignal();
             Io.mainLater(cancel::cancel, 20_000);
             lm().getCurrentLocation(provider(), cancel, app.getMainExecutor(), l -> {
@@ -80,6 +82,31 @@ public final class Where {
             Log.w("where", "no fix: " + e.getMessage());
             Io.main(() -> fix.on(lastKnown()));
         }
+    }
+
+    /** Android 10: one update (at most 20 s), else the last known fix. */
+    @SuppressWarnings({"MissingPermission", "deprecation"})
+    private void singleUpdate(Fix fix) {
+        final boolean[] done = {false};
+        LocationListener once = new LocationListener() {
+            @Override public void onLocationChanged(Location l) {
+                if (done[0]) return;
+                done[0] = true;
+                if (l != null) last = l;
+                fix.on(l != null ? l : lastKnown());
+            }
+            // Abstract before API 30: without them Android 10 throws AbstractMethodError.
+            @Override public void onStatusChanged(String p, int status, android.os.Bundle extras) { }
+            @Override public void onProviderEnabled(String p) { }
+            @Override public void onProviderDisabled(String p) { }
+        };
+        lm().requestSingleUpdate(provider(), once, Looper.getMainLooper());
+        Io.mainLater(() -> {
+            if (done[0]) return;
+            done[0] = true;
+            try { lm().removeUpdates(once); } catch (RuntimeException ignored) { }
+            fix.on(lastKnown());
+        }, 20_000);
     }
 
     @SuppressWarnings("MissingPermission")
@@ -140,6 +167,7 @@ public final class Where {
         if (pol != null) every = Math.max(every, pol.optLong("minSeconds", 15) * 1000);
         tracker = new LocationListener() {
             @Override public void onLocationChanged(Location l) { last = l; queue(l); }
+            @SuppressWarnings("deprecation") @Override public void onStatusChanged(String p, int status, android.os.Bundle extras) { } // abstract before API 30 (6.7, V5)
             @Override public void onProviderDisabled(String p) { }
             @Override public void onProviderEnabled(String p) { }
         };

@@ -147,8 +147,13 @@ public final class Apdu {
         return new int[]{length, 1 + n};
     }
 
+    /** 6.7 (audit N18): how deep constructed tags are opened — a card's nesting cannot overflow the stack. */
+    static final int MAX_TLV_DEPTH = 32;
+
     /** Parse a sequence of BER-TLV objects; constructed tags recurse into children. 00/FF padding is skipped. */
-    public static List<Tlv> decodeTlv(byte[] buf, boolean recurse) {
+    public static List<Tlv> decodeTlv(byte[] buf, boolean recurse) { return decodeTlv(buf, recurse, 0); }
+
+    private static List<Tlv> decodeTlv(byte[] buf, boolean recurse, int depth) {
         List<Tlv> out = new ArrayList<>();
         int off = 0;
         while (off < buf.length) {
@@ -162,8 +167,8 @@ public final class Apdu {
             byte[] value = slice(buf, start, start + l[0]);
             boolean constructed = (buf[off] & 0x20) != 0;
             Tlv node = new Tlv(t[0], slice(buf, off, off + t[1]), l[0], value, constructed);
-            if (constructed && recurse) {
-                try { node.children = decodeTlv(value, true); } catch (RuntimeException e) { node.children = null; }
+            if (constructed && recurse && depth < MAX_TLV_DEPTH) {
+                try { node.children = decodeTlv(value, true, depth + 1); } catch (RuntimeException e) { node.children = null; }
             }
             out.add(node);
             off = start + l[0];

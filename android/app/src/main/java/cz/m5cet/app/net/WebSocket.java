@@ -69,6 +69,7 @@ public final class WebSocket {
             int port = uri.getPort() > 0 ? uri.getPort() : tls ? 443 : 80;
             Socket s = new Socket();
             s.connect(new InetSocketAddress(host, port), 15_000);
+            s.setSoTimeout(20_000); // 6.7 (audit N18): TLS and the upgrade may not hang for ever (0 again once open)
             s.setTcpNoDelay(true);
             s.setKeepAlive(true);
             if (tls) {

@@ -51,9 +51,12 @@ final class Passkeys {
                     catch (JSONException e) { r.failed("", "the passkey's answer is not JSON"); }
                 }
                 @Override public void onError(CreateCredentialException e) {
-                    String dom = e instanceof CreatePublicKeyCredentialDomException ? ((CreatePublicKeyCredentialDomException) e).getDomError().getType() : "";
-                    Log.w("account", "passkey create: " + e.getType() + " " + dom + " " + e.getMessage());
-                    r.failed(codeOf(e.getClass().getSimpleName(), e.getType(), dom, e.getMessage()),String.valueOf(e.getErrorMessage() == null ? e.getType() : e.getErrorMessage()));
+                    // 6.7 (lint RestrictedApi): getType()/getErrorMessage() are internal to androidx.credentials —
+                    // the class names say the same (DomError subclasses: SecurityError, NotAllowedError…).
+                    String dom = e instanceof CreatePublicKeyCredentialDomException ? ((CreatePublicKeyCredentialDomException) e).getDomError().getClass().getSimpleName() : "";
+                    String kind = e.getClass().getSimpleName();
+                    Log.w("account", "passkey create: " + kind + " " + dom + " " + e.getMessage());
+                    r.failed(codeOf(kind, "", dom, e.getMessage()), e.getMessage() == null ? kind : e.getMessage());
                 }
             });
     }
@@ -71,9 +74,10 @@ final class Passkeys {
                     catch (JSONException e) { r.failed("", "the passkey's answer is not JSON"); }
                 }
                 @Override public void onError(GetCredentialException e) {
-                    String dom = e instanceof GetPublicKeyCredentialDomException ? ((GetPublicKeyCredentialDomException) e).getDomError().getType() : "";
-                    Log.w("account", "passkey get: " + e.getType() + " " + dom + " " + e.getMessage());
-                    r.failed(codeOf(e.getClass().getSimpleName(), e.getType(), dom, e.getMessage()),String.valueOf(e.getErrorMessage() == null ? e.getType() : e.getErrorMessage()));
+                    String dom = e instanceof GetPublicKeyCredentialDomException ? ((GetPublicKeyCredentialDomException) e).getDomError().getClass().getSimpleName() : "";
+                    String kind = e.getClass().getSimpleName();
+                    Log.w("account", "passkey get: " + kind + " " + dom + " " + e.getMessage());
+                    r.failed(codeOf(kind, "", dom, e.getMessage()), e.getMessage() == null ? kind : e.getMessage());
                 }
             });
     }
@@ -93,11 +97,12 @@ final class Passkeys {
     static String codeOf(String exceptionClass, String type, String domError, String message) {
         String c = exceptionClass == null ? "" : exceptionClass, t = type == null ? "" : type, d = domError == null ? "" : domError;
         String m = message == null ? "" : message.toLowerCase(Locale.ROOT);
-        if (d.endsWith("TYPE_SECURITY_ERROR") || t.endsWith("TYPE_SECURITY_ERROR") || m.contains("cannot be validated")) return "rp-unverified";
-        if (c.contains("Cancellation") || t.endsWith("TYPE_USER_CANCELED") || d.endsWith("TYPE_NOT_ALLOWED_ERROR")) return "cancelled";
+        // A DOM error comes as its type ("…TYPE_SECURITY_ERROR") or, since 6.7, as its class name ("SecurityError").
+        if (d.endsWith("TYPE_SECURITY_ERROR") || d.equals("SecurityError") || t.endsWith("TYPE_SECURITY_ERROR") || m.contains("cannot be validated")) return "rp-unverified";
+        if (c.contains("Cancellation") || t.endsWith("TYPE_USER_CANCELED") || d.endsWith("TYPE_NOT_ALLOWED_ERROR") || d.equals("NotAllowedError")) return "cancelled";
         if (c.equals("NoCredentialException") || t.endsWith("TYPE_NO_CREDENTIAL")) return "no-passkey";
         if (c.contains("ProviderConfiguration") || c.contains("Unsupported") || c.contains("NoCreateOption")) return "unsupported";
-        if (d.endsWith("TYPE_INVALID_STATE_ERROR")) return "exists";
+        if (d.endsWith("TYPE_INVALID_STATE_ERROR") || d.equals("InvalidStateError")) return "exists";
         return "";
     }
 }

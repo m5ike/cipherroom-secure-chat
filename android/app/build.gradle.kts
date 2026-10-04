@@ -3,8 +3,9 @@
 //
 // Optional build properties (gradle.properties, -P… or environment):
 //   m5.server       the server the app enrols with by default (https://…)
-//   m5.serverKey    the kid of the server's Android key; the app then refuses
-//                   any other key at enrolment (pinning from the first start)
+//   m5.serverKey    the kid (or SHA-256 fingerprint) of the server's Android key;
+//                   the app then refuses any other key at enrolment (pinning from
+//                   the first start; 6.7: checked against the key itself)
 //   m5.keystore / m5.keystorePassword / m5.keyAlias / m5.keyPassword
 //                   the release signing key (M5_KEYSTORE… in the environment)
 

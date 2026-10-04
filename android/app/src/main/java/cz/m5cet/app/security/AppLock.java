@@ -27,7 +27,7 @@ public final class AppLock {
     private final M5 app;
     /** The UI is locked (the data key may still be in memory for the open rooms). */
     private volatile boolean uiLocked = true;
-    private long backgroundSince = 0;
+    private volatile long backgroundSince = 0;
 
     public AppLock(M5 app) { this.app = app; }
 
@@ -40,10 +40,20 @@ public final class AppLock {
     public boolean wipeOnMax() { return policy().optBoolean("wipe", true); }
     public String biometricMode() { return policy().optString("biometric", "optional"); }
     public boolean screenshots() { return policy().optBoolean("screenshots", false); }
-    public int autolockSeconds() { return Math.max(0, policy().optInt("autolockSeconds", 60)); }
+    public int autolockSeconds() { return Math.max(0, Math.min(86_400, policy().optInt("autolockSeconds", 60))); }
 
     public boolean isSetUp() { return app.vault.hasUserKey(); }
-    public boolean isLocked() { return uiLocked || !app.vault.unlocked(); }
+    /**
+     * 6.7 (audit S11): also locked once the app has been in the background
+     * longer than the auto-lock allows — not only after it comes back to the
+     * foreground — so notifications (Rooms → Notify) go neutral in time.
+     */
+    public boolean isLocked() { return uiLocked || !app.vault.unlocked() || autolockDue(backgroundSince, System.currentTimeMillis(), autolockSeconds()); }
+
+    /** In the background (since > 0) at least the auto-lock time: locked, as if it had come back. */
+    static boolean autolockDue(long backgroundSince, long now, int autolockSeconds) {
+        return backgroundSince > 0 && now - backgroundSince >= autolockSeconds * 1000L;
+    }
     public int attempts() { return state().optInt("attempts", 0); }
     public int left() { return Math.max(0, maxAttempts() - attempts()); }
 
@@ -61,14 +71,32 @@ public final class AppLock {
         Log.i("lock", "PIN set up");
     }
 
-    private void reset() {
-        try { save(new JSONObject().put("attempts", 0).put("until", 0)); } catch (JSONException ignored) { }
-    }
+    private void reset() { save(LockCounter.fresh()); }
 
-    public Result unlockWithPin(String pin) {
+    public synchronized Result unlockWithPin(String pin) { return attemptPin(pin, true); }
+
+    /** 6.7 (audit N18): the current PIN before a change — counted (and wiped after) like an unlock. */
+    public synchronized Result confirmPin(String pin) { return attemptPin(pin, false); }
+
+    private Result attemptPin(String pin, boolean unlock) {
+        // An attempt the app was killed in the middle of counts as a failure first.
+        if (LockCounter.interrupted(state())) {
+            Result r = failed("pin-interrupted");
+            if (r != Result.WRONG) return r;
+        }
         if (waitSeconds() > 0) return Result.WAIT;
+        // 6.7 (audit S10): the attempt is counted and stored BEFORE the slow derivation (PBKDF2 +
+        // Keystore), so killing the app meanwhile cannot undo it. Not stored → not checked.
         try {
-            if (app.vault.unlockWithPin(pin)) { succeeded("pin"); return Result.OK; }
+            JSONObject s = state();
+            LockCounter.begin(s, System.currentTimeMillis());
+            app.vault.put(Vault.Tier.SYS, "lock", Crypto.utf8(s.toString()));
+        } catch (GeneralSecurityException | JSONException e) {
+            Log.e("lock", "the attempt could not be counted; not checking the PIN", e);
+            return Result.WAIT;
+        }
+        try {
+            if (app.vault.unlockWithPin(pin)) { if (unlock) succeeded("pin"); else reset(); return Result.OK; }
         } catch (GeneralSecurityException e) {
             Log.e("lock", "PIN unlock failed", e);
         }
@@ -76,7 +104,8 @@ public final class AppLock {
     }
 
     private void succeeded(String how) {
-        int before = attempts();
+        JSONObject s = state();
+        int before = s.optInt("attempts", 0) - (LockCounter.interrupted(s) ? 1 : 0); // not the attempt that just opened it
         reset();
         uiLocked = false;
         if (before > 0) app.events.add("unlock", Events.detail("method", how, "after", before));
@@ -86,29 +115,24 @@ public final class AppLock {
     /** A failure of either kind; decides on the wait, the lock-out or the wipe. */
     public synchronized Result failed(String how) {
         JSONObject s = state();
-        int attempts = s.optInt("attempts", 0) + 1;
-        long now = System.currentTimeMillis();
+        LockCounter.Outcome o;
         try {
-            s.put("attempts", attempts).put("last", now);
-            if (attempts >= maxAttempts()) {
-                app.events.add("lockout", Events.detail("attempts", attempts, "method", how, "wipe", wipeOnMax()));
-                if (wipeOnMax()) {
-                    save(s);
-                    Wiper.wipe(app, "attempts", false, attempts);
-                    return Result.WIPED;
-                }
-                s.put("until", now + 3600_000L);
-                save(s);
-                return Result.LOCKED_OUT;
-            }
-            if (policy().optBoolean("backoff", true) && attempts >= 3) {
-                long wait = Math.min(3600L, 30L << Math.min(10, attempts - 3));
-                s.put("until", now + wait * 1000);
-            }
-            save(s);
-        } catch (JSONException ignored) { }
-        app.events.add("unlock-failed", Events.detail("attempts", attempts, "method", how, "left", Math.max(0, maxAttempts() - attempts)));
-        return Result.WRONG;
+            o = LockCounter.settle(s, System.currentTimeMillis(), maxAttempts(), wipeOnMax(), policy().optBoolean("backoff", true));
+        } catch (JSONException e) {
+            o = LockCounter.Outcome.WRONG;
+        }
+        int attempts = s.optInt("attempts", 0);
+        save(s);
+        if (o == LockCounter.Outcome.WRONG) {
+            app.events.add("unlock-failed", Events.detail("attempts", attempts, "method", how, "left", Math.max(0, maxAttempts() - attempts)));
+            return Result.WRONG;
+        }
+        app.events.add("lockout", Events.detail("attempts", attempts, "method", how, "wipe", o == LockCounter.Outcome.WIPE));
+        if (o == LockCounter.Outcome.WIPE) {
+            Wiper.wipe(app, "attempts", false, attempts);
+            return Result.WIPED;
+        }
+        return Result.LOCKED_OUT;
     }
 
     /* ---------------------------------------------------------- biometrics */
@@ -148,7 +172,7 @@ public final class AppLock {
 
     /** On return to the app: locks the UI when it was away longer than the policy allows. */
     public void onForeground() {
-        if (backgroundSince > 0 && System.currentTimeMillis() - backgroundSince >= autolockSeconds() * 1000L) uiLocked = true;
+        if (autolockDue(backgroundSince, System.currentTimeMillis(), autolockSeconds())) uiLocked = true;
         backgroundSince = 0;
     }
 

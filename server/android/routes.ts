@@ -22,7 +22,7 @@ import { audit } from "../monitor/audit";
 import { truncateIp } from "../monitor/traffic";
 import { buildInfo } from "../build-info";
 import { androidConfig } from "./config";
-import { enrollSignedString, publicKeyOf, releaseSignedString, requestSignedString, verifyP1363, kidOf } from "./crypto";
+import { enrollSignedString, publicKeyOf, releaseSignedString, requestSignedString, verifyP1363, kidOf, signPolicy } from "./crypto";
 import { acknowledge, pendingFor } from "./commands";
 import { deployFile, latestBuildFor, MIN_APP_CODE } from "./bundle";
 import { fcmReady } from "./fcm";
@@ -79,9 +79,11 @@ function signedBy(opts: { skew?: number; allowStatus?: Device["status"][] } = {}
     };
     if (!device) return refuse(401, "unknown-device", "This device is not enrolled on this server.");
     if (!Number.isFinite(t) || Math.abs(now - t) > (opts.skew ?? MAX_SKEW)) return refuse(401, "clock", "The request time is too far from the server's — check the device clock.");
-    if (!/^[A-Za-z0-9_-]{16,40}$/.test(nonce) || !nonceFresh(`${id}:${nonce}`, now)) return refuse(401, "replay", "This request was already used.");
+    if (!/^[A-Za-z0-9_-]{16,40}$/.test(nonce) || nonces.has(`${id}:${nonce}`)) return refuse(401, "replay", "This request was already used.");
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (!verifyP1363(device.signKey, requestSignedString(req.method, req.originalUrl, time, nonce, raw), sig)) return refuse(401, "bad-signature", "The request signature is not valid.");
+    // 6.7 (audit N12): the nonce is kept only once the signature holds — unsigned requests cannot fill the map.
+    if (!nonceFresh(`${id}:${nonce}`, now)) return refuse(401, "replay", "This request was already used.");
     if (device.status !== "active" && !(opts.allowStatus ?? []).includes(device.status)) return refuse(403, `device-${device.status}`, `This device is ${device.status}.`);
     req.device = device;
     next();
@@ -203,6 +205,7 @@ export function registerAndroidRoutes(app: Express): void {
     const key = androidStore.signingKey();
     res.json({
       ok: true, deviceId: device.id, policy: c.policy, pollSeconds: c.policy.pollMinutes * 60,
+      policySigned: signPolicy(key.privateKey, device.id, c.policy), // 6.7 (F-16): the app applies only this
       server: { kid: key.kid, publicKey: key.publicKey, fingerprint: key.fingerprint },
       fcm: c.fcm.enabled && c.fcm.client ? c.fcm.client : null,
     });
@@ -226,6 +229,7 @@ export function registerAndroidRoutes(app: Express): void {
     const release = latestReleaseFor(updated);
     res.json({
       ok: true, time: Date.now(), policy: c.policy, pollSeconds: c.policy.pollMinutes * 60,
+      policySigned: signPolicy(androidStore.signingKey().privateKey, updated.id, c.policy), // 6.7 (F-16)
       fcm: c.fcm.enabled && c.fcm.client ? c.fcm.client : null, push: fcmReady().ready ? "fcm" : "poll",
       commands: pendingFor(updated),
       bundle: build ? { id: build.id, number: build.number, version: build.version, size: build.fileSize, minAppCode: build.minAppCode, notes: build.notes } : null,

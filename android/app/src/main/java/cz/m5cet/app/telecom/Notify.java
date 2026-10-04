@@ -130,14 +130,20 @@ public final class Notify {
             .setCategories(Collections.singleton("cz.m5cet.app.category.ROOM"))
             .setPerson(new Person.Builder().setName(name).build())
             .build();
-        try { sm.pushDynamicShortcut(s); } catch (RuntimeException ignored) { }
+        try {
+            // 6.7 (audit V5): pushDynamicShortcut is API 30; Android 10 adds it the older way.
+            if (android.os.Build.VERSION.SDK_INT >= 30) sm.pushDynamicShortcut(s);
+            else sm.addDynamicShortcuts(Collections.singletonList(s));
+        } catch (RuntimeException ignored) { }
     }
 
     private Notification.Action replyAction(String roomKey) {
         RemoteInput reply = new RemoteInput.Builder(KEY_REPLY).setLabel(app.t("notify.reply")).build();
         Intent ri = new Intent(app, ReplyReceiver.class).putExtra("room", roomKey);
         PendingIntent replyPi = PendingIntent.getBroadcast(app, roomKey.hashCode(), ri, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
-        return new Notification.Action.Builder(Icon.createWithResource(app, R.drawable.ic_stat_m5), app.t("notify.reply"), replyPi).addRemoteInput(reply).setAllowGeneratedReplies(true).build();
+        Notification.Action.Builder ab = new Notification.Action.Builder(Icon.createWithResource(app, R.drawable.ic_stat_m5), app.t("notify.reply"), replyPi).addRemoteInput(reply).setAllowGeneratedReplies(true);
+        if (android.os.Build.VERSION.SDK_INT >= 31) ab.setAuthenticationRequired(true); // audit S11: replying needs the phone unlocked
+        return ab.build();
     }
 
     /** 6.7: the template's accent ("#rrggbb"), or none. */
@@ -152,26 +158,30 @@ public final class Notify {
      * (within the operator's maximum) how much: the content only at "content",
      * never while the app is locked; the sender from "sender" on, the room's
      * name from "room" on. The template's accent, sound and actions apply.
+     * Audit S11: while the app is locked, only neutral text — no message,
+     * sender, room name, room shortcut or reply; the lock screen always gets the
+     * neutral public version.
      */
     public void message(String roomKey, String roomName, String sender, String text, boolean hideContent) {
         if (!allowed()) return;
         NotifyPrefs prefs = NotifyPrefs.get(app);
         if (!prefs.allows("message", System.currentTimeMillis())) return;
-        int level = NotifyTemplate.rank(prefs.localPrivacy("message", hideContent));
+        boolean locked = app.lock.isLocked();
+        int level = locked ? 0 : NotifyTemplate.rank(prefs.localPrivacy("message", hideContent));
         JSONObject tpl = prefs.template("message");
-        String appName = app.design().appName();
+        String appName = app.design().appName(), neutral = app.t("notify.message");
         Person me = new Person.Builder().setName(app.config.userName().isEmpty() ? "me" : app.config.userName()).build();
         Notification.MessagingStyle style = new Notification.MessagingStyle(me).setConversationTitle(level >= 2 ? roomName : appName).setGroupConversation(true);
-        style.addMessage(level >= 3 ? text : app.t("notify.message"), System.currentTimeMillis(), new Person.Builder().setName(level >= 1 ? sender : appName).build());
+        style.addMessage(level >= 3 ? text : neutral, System.currentTimeMillis(), new Person.Builder().setName(level >= 1 ? sender : appName).build());
         boolean sound = tpl == null || tpl.optBoolean("sound", true);
         Notification.Builder b = new Notification.Builder(app, sound ? CH_MESSAGES : CH_QUIET)
             .setSmallIcon(R.drawable.ic_stat_m5).setStyle(style)
             .setContentIntent(open(roomKey, roomKey.hashCode())).setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
-            .setVisibility(Notification.VISIBILITY_PRIVATE);
+            .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(appName, neutral));
         // The conversation shortcut carries the room's name: only where the room may show.
         if (level >= 2) { roomShortcut(roomKey, roomName); b.setShortcutId(shortcutId(roomKey)); }
-        if (tpl == null || tpl.optBoolean("actions", true)) b.addAction(replyAction(roomKey));
+        if (!locked && (tpl == null || tpl.optBoolean("actions", true))) b.addAction(replyAction(roomKey));
         Integer color = accent(tpl == null ? null : tpl.optString("accent"));
         if (color != null) b.setColor(color);
         nm().notify(roomKey.hashCode(), b.build());
@@ -195,7 +205,8 @@ public final class Notify {
         if (given != null) for (java.util.Iterator<String> it = given.keys(); it.hasNext(); ) { String k = it.next(); if (!k.equals("preview")) vars.put(k, given.optString(k)); }
         if (!vars.containsKey("app") || vars.get("app").isEmpty()) vars.put("app", app.design().appName());
         RoomSession room = p.optString("room").isEmpty() || app.rooms == null ? null : app.rooms.byServerId(p.optString("room"));
-        if (room != null && NotifyTemplate.rank(privacy) >= 2) vars.put("room", room.label);
+        boolean locked = app.lock.isLocked();
+        if (room != null && !locked && NotifyTemplate.rank(privacy) >= 2) vars.put("room", room.label);
         JSONObject tpl = p.optJSONObject("tpl");
         String[] tb = tpl != null
             ? NotifyTemplate.notification(tpl.optString("title"), tpl.optString("body"), vars, privacy)
@@ -209,13 +220,19 @@ public final class Notify {
             .setStyle(new Notification.BigTextStyle().bigText(tb[1])).setAutoCancel(true)
             .setContentIntent(open(room == null ? null : room.key, id))
             .setCategory(kind.equals("call") ? Notification.CATEGORY_CALL : Notification.CATEGORY_MESSAGE)
-            .setVisibility(Notification.VISIBILITY_PRIVATE);
+            .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(app.design().appName(), app.t("notify.message")));
         if (p.optLong("at") > 0) b.setWhen(p.optLong("at")).setShowWhen(true);
         if (!"none".equals(p.optString("group")) && !tag.isEmpty()) b.setGroup(tag);
         Integer color = accent(p.optString("accent"));
         if (color != null) b.setColor(color);
-        if (p.optBoolean("actions") && room != null && (kind.equals("message") || kind.equals("mention"))) b.addAction(replyAction(room.key));
+        if (p.optBoolean("actions") && !locked && room != null && (kind.equals("message") || kind.equals("mention"))) b.addAction(replyAction(room.key));
         nm().notify(id, b.build());
+    }
+
+    /** What the lock screen shows of a message notification: the app's name and "New message". */
+    private Notification neutral(String title, String text) {
+        return new Notification.Builder(app, CH_MESSAGES).setSmallIcon(R.drawable.ic_stat_m5)
+            .setContentTitle(title).setContentText(text).setCategory(Notification.CATEGORY_MESSAGE).build();
     }
 
     public void clearRoom(String roomKey) {

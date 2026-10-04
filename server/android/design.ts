@@ -38,7 +38,7 @@ export const ELEMENTS: ElementDef[] = [
   { el: "card", label: "Card", group: "layout", container: true, text: false, props: [], help: "A raised surface with rounded corners." },
   { el: "text", label: "Text", group: "content", container: false, text: true, props: [P("variant", "select", "Style", { options: ["body", "title", "headline", "display", "caption", "label", "mono"] }), P("align", "select", "Alignment", { options: ["start", "center", "end"] }), P("links", "bool", "Clickable links")], help: "A text template: {$var}, {_'key'}, {=expression}." },
   { el: "icon", label: "Icon", group: "content", container: false, text: false, props: [P("icon", "icon", "Icon"), P("size", "number", "Size (dp)"), P("color", "color", "Colour")], help: "A lucide icon, drawn natively." },
-  { el: "image", label: "Image", group: "content", container: false, text: false, props: [P("src", "image", "Image", { help: "asset:<name> from the design's assets, or an https URL" }), P("fit", "select", "Fit", { options: ["cover", "contain", "center"] }), P("ratio", "number", "Width / height")], help: "A picture." },
+  { el: "image", label: "Image", group: "content", container: false, text: false, props: [P("src", "image", "Image", { help: "asset:<name> from the design's assets, or a fixed https URL on a host in ANDROID_DESIGN_IMAGE_HOSTS (never computed: 6.7, F-01)" }), P("fit", "select", "Fit", { options: ["cover", "contain", "center"] }), P("ratio", "number", "Width / height")], help: "A picture." },
   { el: "avatar", label: "Avatar", group: "content", container: false, text: false, props: [P("name", "text", "Name (initials, colour)"), P("size", "number", "Size (dp)")], help: "A round badge with initials." },
   { el: "badge", label: "Badge", group: "content", container: false, text: true, props: [P("icon", "icon", "Icon"), P("color", "color", "Colour")], help: "A small pill with a number or a word." },
   { el: "chip", label: "Chip", group: "content", container: false, text: true, props: [P("icon", "icon", "Icon"), P("selected", "expr", "Selected")], help: "A compact choice." },
@@ -591,6 +591,43 @@ const COLOR_RE = /^(@[A-Za-z]+|#[0-9a-fA-F]{6}|#[0-9a-fA-F]{8})$/;
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/i;
 
 /** Is a value an expression ("=…"); if so, is it valid? */
+/**
+ * 6.7 (security analysis F-01, critical): what of a design may reach the network.
+ * The app renders the design with decrypted messages in scope ($msg, $form, $user…);
+ * an image fetched from "https://x/{$msg.text}" carried the plaintext to that server.
+ *
+ *   image src   asset:<name> (a template only for the asset's name), an expression only
+ *               for a local source (asset:/data:, no web address in it), or a FIXED https URL
+ *               on a host listed in ANDROID_DESIGN_IMAGE_HOSTS (comma-separated; none by default)
+ *   url.open    a fixed https address (no {…} / =expression)
+ *
+ * The app enforces the same at run time (android/…/ui/DesignUrls.java).
+ */
+export function designImageHosts(): Set<string> {
+  return new Set((process.env.ANDROID_DESIGN_IMAGE_HOSTS ?? "").split(",").map((h) => h.trim().toLowerCase()).filter(Boolean));
+}
+
+export function checkImageSrc(s: string, hosts: Set<string> = designImageHosts()): string | null {
+  if (s.startsWith("=")) {
+    return /https?:|\/\//i.test(s) ? "a computed image may only name an asset: or data: source, never a web address" : null;
+  }
+  if (s.includes("{")) {
+    return /^asset:/.test(s) ? null : "an image address must not contain {…} — it would carry what the app shows (messages, form fields) to that server";
+  }
+  if (/^asset:[A-Za-z0-9._-]{1,60}$/.test(s)) return null;
+  if (!/^https:\/\/[^\s"'<>]{4,500}$/.test(s)) return "must be asset:<name> or an https URL";
+  let host = "";
+  try { host = new URL(s).hostname.toLowerCase(); } catch { return "not a valid https URL"; }
+  if (!hosts.has(host)) return `remote images only from the hosts in ANDROID_DESIGN_IMAGE_HOSTS — ${host} is not one of them`;
+  return null;
+}
+
+export function checkActionArg(action: string, arg: string): string | null {
+  if (action !== "url.open") return null;
+  if (arg.startsWith("=") || arg.includes("{")) return "url.open takes a fixed https address — no {…} or =expression (it would carry data off the phone)";
+  return /^https:\/\/[^\s"'<>]{4,500}$/.test(arg) ? null : "url.open takes an https address";
+}
+
 function checkValue(v: string, where: string, problems: string[], kind: "text" | "value"): void {
   if (v.startsWith("=")) { const e = checkExpr(v.slice(1)); if (e) problems.push(`${where}: ${e}`); return; }
   if (kind === "text") { const e = checkTemplate(v); if (e) problems.push(`${where}: ${e}`); }
@@ -625,7 +662,7 @@ function sanitizeNode(raw: unknown, path: string, problems: string[], ctx: { cou
         if (p.kind === "slot" && !SLOT_SET.has(s)) { problems.push(`${where}: unknown app part "${s}"`); continue; }
         if (p.kind === "select" && !s.startsWith("=") && p.options && !p.options.includes(s)) { problems.push(`${where}: ${p.name} must be one of ${p.options.join(", ")}`); continue; }
         if (p.kind === "color" && !s.startsWith("=") && !COLOR_RE.test(s)) { problems.push(`${where}: ${p.name} is not a colour`); continue; }
-        if (p.kind === "image" && !s.startsWith("=") && !/^(asset:[A-Za-z0-9._-]{1,60}|https:\/\/[^\s"'<>]{4,500})$/.test(s)) { problems.push(`${where}: ${p.name} must be asset:<name> or an https URL`); continue; }
+        if (p.kind === "image") { const e = checkImageSrc(s); if (e) { problems.push(`${where}: ${p.name}: ${e}`); continue; } }
         checkValue(s, `${where} ${p.name}`, problems, p.kind === "text" ? "text" : "value");
         if (p.kind === "expr" && !s.startsWith("=")) { const e = checkExpr(s); if (e) { problems.push(`${where} ${p.name}: ${e}`); continue; } }
         props[p.name] = s;
@@ -678,6 +715,7 @@ function sanitizeNode(raw: unknown, path: string, problems: string[], ctx: { cou
       const arg = (h as { arg?: unknown }).arg;
       const handler: { action: string; arg?: string } = { action };
       if (typeof arg === "string" && arg) { handler.arg = arg.slice(0, 600); checkValue(handler.arg, `${where} on.${ev}`, problems, "text"); }
+      { const e = checkActionArg(action, handler.arg ?? ""); if (e) { problems.push(`${where} on.${ev}: ${e}`); continue; } }
       on[ev] = handler;
     }
     if (Object.keys(on).length) node.on = on;
@@ -759,6 +797,7 @@ export function sanitizeDesign(raw: unknown): AndroidDesign {
       checkValue(label, `menus.${menuId}[${i}] label`, problems, "text");
       const item: MenuItem = { id: typeof o.id === "string" && ID_RE.test(o.id) ? o.id : `item-${i}`, icon, label, action };
       if (typeof o.arg === "string" && o.arg) item.arg = o.arg.slice(0, 300);
+      { const e = checkActionArg(action, item.arg ?? ""); if (e) { problems.push(`menus.${menuId}[${i}]: ${e}`); return []; } }
       if (typeof o.if === "string" && o.if.trim()) { const e = checkExpr(o.if); if (e) problems.push(`menus.${menuId}[${i}] if: ${e}`); else item.if = o.if.trim(); }
       return [item];
     });
@@ -789,6 +828,7 @@ export function sanitizeDesign(raw: unknown): AndroidDesign {
       if (typeof o.do !== "string" || !ACTION_SET.has(o.do) || o.do === "lib.run") { problems.push(`libraries.${name}[${i}]: unknown or nested action "${String(o.do)}"`); return []; }
       const step: LibStep = { do: o.do };
       if (typeof o.arg === "string" && o.arg) { step.arg = o.arg.slice(0, 600); checkValue(step.arg, `libraries.${name}[${i}] arg`, problems, "text"); }
+      { const e = checkActionArg(o.do, step.arg ?? ""); if (e) { problems.push(`libraries.${name}[${i}]: ${e}`); return []; } }
       if (typeof o.if === "string" && o.if.trim()) { const e = checkExpr(o.if); if (e) problems.push(`libraries.${name}[${i}] if: ${e}`); else step.if = o.if.trim(); }
       return [step];
     });

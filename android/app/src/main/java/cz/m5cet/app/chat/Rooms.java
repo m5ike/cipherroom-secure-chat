@@ -125,6 +125,12 @@ public final class Rooms {
         return identity;
     }
 
+    /** 6.7 (S15): the key id pinned for this name in this room ("" when none), without pinning anything. */
+    synchronized String pinned(String room, String name) {
+        if (name == null) return "";
+        return app.vault.json(Vault.Tier.USER, "pins").optString(room + "\u0000" + name.trim().toLowerCase(java.util.Locale.ROOT), "");
+    }
+
     /** Trust on first use: room + name → key id. "new", "match" or "changed". */
     synchronized String pin(String room, String name, String kid) {
         JSONObject pins = app.vault.json(Vault.Tier.USER, "pins");

@@ -75,7 +75,7 @@ public final class Actions {
                 case "update.install": a.parts.installUpdate(); break;
                 case "update.later": a.parts.closeOverlay(); break;
                 case "flash": a.flash("", s, "info"); break;
-                case "url.open": a.openUrl(s); break;
+                case "url.open": DesignUrls.confirmOpen(a, s); break; // 6.7 (F-01): the address is shown first
                 case "copy": a.copy(s); a.flash("", "✓", "success"); break;
                 case "share": a.share(s); break;
                 case "fn.run": { RoomSession r = app.rooms.activeSession(); if (r != null && s.startsWith("/")) r.send(s, null, null, null, null, 0); break; }

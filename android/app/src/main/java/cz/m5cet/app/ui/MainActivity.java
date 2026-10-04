@@ -54,6 +54,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     private String screen = "";
     private final ArrayDeque<String> stack = new ArrayDeque<>();
     private final Map<String, Object> form = new HashMap<>();
+    /** 6.7 (audit S14): the first entry of a new PIN — kept here, never in $form, which the design sees. */
+    private String setupPin;
     private boolean animate = true;
     private long splashSince;
     private String splashStatus = "";
@@ -67,17 +69,17 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         app = M5.get();
-        getWindow().setDecorFitsSystemWindows(false);
+        SystemBars.edgeToEdge(getWindow());
         root = new FrameLayout(this);
         screenBox = new FrameLayout(this);
         overlay = new FrameLayout(this);
         root.addView(screenBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(overlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
-            screenBox.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            overlay.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            return WindowInsets.CONSUMED;
+            int[] bars = SystemBars.insets(insets);
+            screenBox.setPadding(bars[0], bars[1], bars[2], bars[3]);
+            overlay.setPadding(bars[0], bars[1], bars[2], bars[3]);
+            return SystemBars.consumed(insets);
         });
         setContentView(root);
         renderer = new Renderer(this, this);
@@ -236,7 +238,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
 
     private void setupLock() {
         try { lockState.put("mode", "pin").put("setup", true).put("step", "enter").put("error", "").put("wait", 0).put("attempts", 0).put("left", app.lock.maxAttempts()).put("biometricAvailable", false).put("wide", lockWide()); } catch (JSONException ignored) { }
-        form.remove("pin1");
+        setupPin = null;
         stack.clear();
         showScreen("lock", true);
     }
@@ -278,20 +280,20 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         if (lockState.optBoolean("setup")) {
             if (pin.length() < app.lock.pinLength()) return;
             if ("enter".equals(lockState.optString("step"))) {
-                form.put("pin1", pin);
+                setupPin = pin;
                 try { lockState.put("step", "confirm").put("error", ""); } catch (JSONException ignored) { }
                 refresh();
                 return;
             }
-            if (!pin.equals(form.get("pin1"))) {
-                form.remove("pin1");
+            if (!pin.equals(setupPin)) {
+                setupPin = null;
                 try { lockState.put("step", "enter").put("error", app.t("lock.pinMismatch")); } catch (JSONException ignored) { }
                 refresh();
                 return;
             }
             try {
                 app.lock.setUp(pin);
-                form.remove("pin1");
+                setupPin = null;
                 if (!"off".equals(app.lock.biometricMode()) && Biometric.available(this)) enrollBiometric();
                 else enterApp();
             } catch (Exception e) {
@@ -322,11 +324,9 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         if (bioPrompt != null) bioPrompt.cancel();
         bioPrompt = Biometric.prompt(this, cipher, app.t("lock.bioPrompt"), app.design().appName(), app.t("lock.bioCancel"), new Biometric.Callback() {
             @Override public void success(Cipher c) { bioPrompt = null; handleLockResult(app.lock.bioSucceeded(c)); }
-            @Override public void rejected() {
-                AppLock.Result r = app.lock.failed("biometric");
-                if (r == AppLock.Result.WIPED) { if (bioPrompt != null) bioPrompt.cancel(); handleLockResult(r); }
-                else { try { lockState.put("attempts", app.lock.attempts()).put("left", app.lock.left()); } catch (JSONException ignored) { } refresh(); }
-            }
+            // 6.7 (audit N18): a finger that does not match is no guess at the PIN — BiometricPrompt locks
+            // the sensor after a few; it no longer counts toward the wipe (a child's fingers could wipe it).
+            @Override public void rejected() { refresh(); }
             @Override public void error(int code, CharSequence message) { bioPrompt = null; try { lockState.put("mode", "pin"); } catch (JSONException ignored) { } refresh(); }
         });
     }
@@ -394,13 +394,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         animate = false;
         app.rooms.setVisible(id.equals("room"));
         getWindow().setStatusBarColor(Color.TRANSPARENT);
-        View decor = getWindow().getDecorView();
-        decor.getWindowInsetsController();
-        boolean dark = Ui.dark(this);
-        if (decor.getWindowInsetsController() != null) {
-            decor.getWindowInsetsController().setSystemBarsAppearance(dark ? 0 : android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
-        }
+        SystemBars.lightBars(getWindow(), !Ui.dark(this));
     }
 
     /** Binds the current screen again with fresh data (cheap: no views are rebuilt). */
@@ -439,7 +433,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     public Expr.Scope scopeFor(String id) {
         Map<String, Object> s = new HashMap<>();
         s.put("app", appScope());
-        s.put("form", new JSONObject(form));
+        // 6.7 (audit S14): the lock and enrolment screens do not see $form (nothing typed elsewhere leaks there).
+        s.put("form", id.equals("lock") || id.equals("enroll") ? new JSONObject() : new JSONObject(form));
         s.put("settings", app.settings.scope());
         s.put("define", app.define.all()); // 6.3 define: $define.<name> reads m5mobile.define
         s.put("account", app.account.scope());

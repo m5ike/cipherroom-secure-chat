@@ -324,13 +324,13 @@ public final class People {
         hint.setText(fill(t("people.verify.hint"), name, ""));
         hint.setPadding(0, Ui.dp(a, 14), 0, 0);
         box.addView(hint);
-        new android.app.AlertDialog.Builder(a).setTitle(t("people.safety")).setView(box)
+        SecureDialog.show(a, new android.app.AlertDialog.Builder(a).setTitle(t("people.safety")).setView(box) // 6.7 N18
             .setPositiveButton(done ? t("people.verify.undo") : t("people.verify.match"), (d, w) -> {
                 Store.setVerified(app(), kid, !done);
                 if (!done) a.flash("", fill(t("people.verify.done"), name, ""), "success");
                 refreshAll();
             })
-            .setNegativeButton(t("nav.close"), null).show();
+            .setNegativeButton(t("nav.close"), null));
     }
 
     /** "Propojit s kontaktem": the phone's contact picker, then the M5cet rows on the chosen contact. */

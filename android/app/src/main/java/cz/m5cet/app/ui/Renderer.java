@@ -727,7 +727,10 @@ public final class Renderer {
                     break;
                 }
                 case "image": {
-                    String src = Expr.toText(propValue("src", sc));
+                    // 6.7 (F-01): a computed src may name only a local source; a remote one only as a literal.
+                    JSONObject ps = node.optJSONObject("props");
+                    Object rawSrc = ps == null ? null : ps.opt("src");
+                    String src = DesignUrls.image(rawSrc instanceof String ? (String) rawSrc : null, Expr.toText(propValue("src", sc)));
                     RatioImageView iv = (RatioImageView) view;
                     Object ratio = propValue("ratio", sc);
                     iv.ratio = ratio instanceof Number ? ((Number) ratio).floatValue() : parseF(ratio, 0);
@@ -972,7 +975,7 @@ public final class Renderer {
                     c.setConnectTimeout(10_000);
                     c.setReadTimeout(20_000);
                     byte[] b;
-                    try (java.io.InputStream in = c.getInputStream()) { b = in.readAllBytes(); }
+                    try (java.io.InputStream in = c.getInputStream()) { b = cz.m5cet.app.core.Streams.readAll(in, 16L << 20); }
                     Bitmap bm = decodeScaled(b, 1600);
                     if (bm == null) return;
                     cache.put(src, bm);

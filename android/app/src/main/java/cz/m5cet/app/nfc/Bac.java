@@ -202,7 +202,9 @@ public final class Bac {
             else if (tag == 0x8e) do8e = v;
         }
         byte[] n = Des.pad(Apdu.concat(s.ssc, do87, do99));
-        if (do8e.length > 0 && !Apdu.hex(Des.retailMac(s.ksmac, n)).equals(Apdu.hex(do8e)))
+        // 6.7 (audit N18): data or a protected status without DO'8E was taken unchecked — a relay could strip the MAC.
+        if (do8e.length == 0 && (do87.length > 0 || do99.length > 0)) throw new IllegalStateException("secure messaging: the response carries no MAC");
+        if (do8e.length > 0 && !java.security.MessageDigest.isEqual(Des.retailMac(s.ksmac, n), do8e))
             throw new IllegalStateException("secure-messaging MAC did not verify");
         // 6.6: the processing status the chip protected (DO'99') is the command's
         // real status — a chip may answer 9000 outside while a file is absent (6A82)
