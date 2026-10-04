@@ -83,14 +83,25 @@ public final class Config {
         put("serverKey", s.getString("publicKey"));
         put("serverKid", s.getString("kid"));
         put("serverFingerprint", Ec.fingerprint(s.getString("publicKey"))); // computed here, not taken from the server
+        data().remove("policyAt"); // a new server: its own policy clock
         applyServerAnswer(answer);
         save();
     }
 
-    /** Policy, poll interval and Firebase settings from an enrolment or a check-in. */
+    /**
+     * Policy, poll interval and Firebase settings from an enrolment or a check-in.
+     * 6.7 (F-16): the policy only as the pinned server key signed it for this
+     * device, and never an older one; an unsigned "policy" is ignored.
+     */
     public synchronized void applyServerAnswer(JSONObject answer) {
-        JSONObject policy = answer.optJSONObject("policy");
-        if (policy != null) put("policy", policy);
+        JSONObject signed = answer.optJSONObject("policySigned");
+        JSONObject policy = cz.m5cet.app.security.SignedPolicy.open(signed, serverKey(), deviceId(), data().optLong("policyAt", 0));
+        if (policy != null) {
+            put("policy", policy);
+            put("policyAt", signed.optLong("at"));
+        } else if (signed != null || answer.has("policy")) {
+            Log.w("config", signed == null ? "an unsigned policy was ignored" : "a policy with a bad or old signature was ignored");
+        }
         if (answer.has("pollSeconds")) put("pollSeconds", answer.optInt("pollSeconds", 1800));
         if (answer.has("fcm")) put("fcm", answer.optJSONObject("fcm"));
     }

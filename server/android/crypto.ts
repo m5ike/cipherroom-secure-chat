@@ -262,3 +262,19 @@ export const enrollSignedString = (signKey: string, encKey: string, time: number
 
 export const pushSignedString = (deviceId: string, id: string, w: EciesWire): string =>
   ["m5push/1", deviceId, id, w.e, w.iv, w.ct].join("|");
+
+/**
+ * 6.7 (security analysis F-16): the device policy (lock, wipe, screenshots, logs,
+ * location…) is signed for one device, with its time — the app applies only a policy
+ * the pinned server key signed for it, never an older one than it has
+ * (android/…/security/SignedPolicy.java).
+ */
+export const policySignedString = (deviceId: string, at: number, policyJson: string): string =>
+  ["m5policy/1", deviceId, at, policyJson].join("|");
+
+export type SignedPolicy = { at: number; policy: string; sig: string };
+
+export function signPolicy(privateKey: KeyObject, deviceId: string, policy: unknown, at = Date.now()): SignedPolicy {
+  const json = JSON.stringify(policy);
+  return { at, policy: json, sig: signP1363(privateKey, policySignedString(deviceId, at, json)) };
+}

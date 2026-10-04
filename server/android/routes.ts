@@ -21,7 +21,7 @@ import { audit } from "../monitor/audit";
 import { truncateIp } from "../monitor/traffic";
 import { buildInfo } from "../build-info";
 import { androidConfig } from "./config";
-import { enrollSignedString, publicKeyOf, releaseSignedString, requestSignedString, verifyP1363, kidOf } from "./crypto";
+import { enrollSignedString, publicKeyOf, releaseSignedString, requestSignedString, verifyP1363, kidOf, signPolicy } from "./crypto";
 import { acknowledge, pendingFor } from "./commands";
 import { deployFile, latestBuildFor, MIN_APP_CODE } from "./bundle";
 import { fcmReady } from "./fcm";
@@ -199,6 +199,7 @@ export function registerAndroidRoutes(app: Express): void {
     const key = androidStore.signingKey();
     res.json({
       ok: true, deviceId: device.id, policy: c.policy, pollSeconds: c.policy.pollMinutes * 60,
+      policySigned: signPolicy(key.privateKey, device.id, c.policy), // 6.7 (F-16): the app applies only this
       server: { kid: key.kid, publicKey: key.publicKey, fingerprint: key.fingerprint },
       fcm: c.fcm.enabled && c.fcm.client ? c.fcm.client : null,
     });
@@ -222,6 +223,7 @@ export function registerAndroidRoutes(app: Express): void {
     const release = latestReleaseFor(updated);
     res.json({
       ok: true, time: Date.now(), policy: c.policy, pollSeconds: c.policy.pollMinutes * 60,
+      policySigned: signPolicy(androidStore.signingKey().privateKey, updated.id, c.policy), // 6.7 (F-16)
       fcm: c.fcm.enabled && c.fcm.client ? c.fcm.client : null, push: fcmReady().ready ? "fcm" : "poll",
       commands: pendingFor(updated),
       bundle: build ? { id: build.id, number: build.number, version: build.version, size: build.fileSize, minAppCode: build.minAppCode, notes: build.notes } : null,
