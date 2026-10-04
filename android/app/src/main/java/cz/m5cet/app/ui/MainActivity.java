@@ -63,6 +63,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     private CancellationSignal bioPrompt;
     private String pendingRoom;
     private String pendingShare;
+    /** 6.8: a room's conversation shortcut, or a direct share into it (telecom/Conversations), until the rooms are read. */
+    private String pendingConversation;
     public final Parts parts = new Parts(this);
 
     @Override
@@ -114,6 +116,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         if (i == null) return;
         String room = i.getStringExtra("room");
         if (room != null) pendingRoom = room;
+        String conversation = i.getStringExtra(Intent.EXTRA_SHORTCUT_ID);
+        if (conversation != null) pendingConversation = conversation;
         Uri data = i.getData();
         // 6.2: the console's QR link fills the enrolment form — at a cold start (route() shows it
         // next) and while the app is open (onNewIntent: the enrolment screen comes forward).
@@ -215,6 +219,12 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     }
 
     private void openPendingRoom() {
+        if (pendingConversation != null) {
+            // 6.8: the shortcut carries only its id (nothing of the room's name): its room, if still saved.
+            String k = cz.m5cet.app.telecom.Conversations.get(app).roomOf(pendingConversation);
+            pendingConversation = null;
+            if (k != null) pendingRoom = k;
+        }
         if (pendingRoom != null) {
             String k = pendingRoom;
             pendingRoom = null;

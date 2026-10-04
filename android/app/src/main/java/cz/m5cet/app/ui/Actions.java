@@ -135,6 +135,8 @@ public final class Actions {
                 case "notify.up": case "notify.down": case "notify.use": case "notify.drop": case "notify.test": case "notify.sync":
                     cz.m5cet.app.push.NotifyPrefs.get(app).run(a, action, s);
                     break;
+                // 6.8 conversations: the phone's settings of the room on screen as a conversation (priority…)
+                case "conversations.settings": cz.m5cet.app.telecom.Conversations.openSettings(a, s); break;
                 // calls
                 case "call.audioText": {
                     RoomSession r = app.rooms.activeSession();
