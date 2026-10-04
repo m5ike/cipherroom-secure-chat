@@ -159,7 +159,7 @@ const TELEPHONY = [
 
 const NFC = [
   "## 📇 NFC cards — EMV, e-ID, e-passports (6.6)",
-  "Commands that read a card **at your own device** — the phone's NFC (Android app, Android Chrome) or a USB / Bluetooth reader. The operator switches them on; you need the NFC module.",
+  "Commands that read a card **at your own device** — in the **Android app** the phone's own NFC (a sheet asks you to hold the card), in the **browser** a USB / Bluetooth reader in the NFC tool (the browser's own WebNFC reads only NDEF tags, not payment cards or documents). The operator switches them on; you need the NFC module.",
   "- `/emv` — a **payment card**: every application, every record, the counters and the **transaction history** the card keeps, formatted in the chat (the number masked), with the history as CSV and the raw records to download.",
   "- `/emv-history` — just the card's **transactions** as a table.",
   "- `/eid` — your **ID card or passport**: your device asks for the **CAN** (the 6 digits on an EU ID card) or the **MRZ** and keeps it (it is not sent to the server); the chip opens with **PACE** or **BAC** (its own access control) and every readable data group is shown — the MRZ data, the **photo** and signature, more personal and document details, the **security check** (each group against EF.SOD). EF.SOD, DG14, DG15 and JPEG 2000 pictures come as files.",
