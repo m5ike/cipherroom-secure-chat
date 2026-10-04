@@ -111,6 +111,7 @@ import { runNfcCommand } from "./lib/nfc/bridge";
 import type { NfcCommand } from "./lib/nfc/command";
 import { DOCUMENT_KEY_FIELDS, documentKeyValid, needsDocumentKey, withDocumentKey } from "./lib/nfc/document-key";
 import { shareableOutputs } from "./lib/fn-outputs";
+import { historyRoomsToRead, serverRoomId } from "./lib/room-privacy";
 import { FnHostContext, type FnHost } from "./components/fn/FnOutputs";
 import { isInlineImage } from "./lib/validate";
 import { DEFAULT_PROXY_LIMITS, extractPeerAddress, normalizeRoom, proxyPacer, type ProxyLimits } from "./lib/app-helpers";
@@ -1209,7 +1210,8 @@ function ChatApp() {
       const sealer = serverSealerRef.current;
       const rows = await Promise.all(prepareHistory(messagesRef.current).map(async (m) => {
         const payload = await sealer.seal(m);
-        return payload ? { id: m.id, room: keyRef.current?.roomId ?? currentRoom, createdAt: m.createdAt, senderId: "", senderName: "", mine: m.mine, expiresAt: m.expiresAt ?? 0, payload } : null;
+        const blind = serverRoomId(keyRef.current); // 6.7 (S21): never the plain name
+        return payload && blind ? { id: m.id, room: blind, createdAt: m.createdAt, senderId: "", senderName: "", mine: m.mine, expiresAt: m.expiresAt ?? 0, payload } : null;
       }));
       await putServerMessages(rows.filter((r): r is NonNullable<typeof r> => r !== null));
       return;
@@ -2785,11 +2787,8 @@ function ChatApp() {
       }
     } else if (retentionRef.current === "server" && !accountRef.current && storageSessionId()) {
       // The server kept this session's conversation (no passkey yet).
-      const blind = keyRef.current?.roomId;
-      const rows = [
-        ...(blind && blind !== nextRoom ? await readServerMessages({ room: blind }) : []),
-        ...await readServerMessages({ room: nextRoom }), // written by 3.0 under the plain name
-      ];
+      // 6.7 (S21): by the blind id only — never the room's name (the KDF salt).
+      const rows = (await Promise.all(historyRoomsToRead(keyRef.current).map((r) => readServerMessages({ room: r })))).flat();
       const opened = await Promise.all(rows.map((r) => serverSealerRef.current.open(r.id, r.payload)));
       const restored = sanitizeRestored(opened.filter((m) => m !== null), nextPeerId, { signIn: true });
       if (restored.length > 0) {
@@ -2976,7 +2975,7 @@ function ChatApp() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               kind: "client-join",
-              room: roomRef.current,
+              room: serverRoomId(keyRef.current), // 6.7 (S21): the blind id, not the name
               peerId: myIdRef.current,
               meta: { peers: frame.peers.length, deviceId: prefs.deviceId },
             }),
@@ -3649,7 +3648,7 @@ function ChatApp() {
       audit: [{ state: "displayed" as const, at: Date.now() }],
     }]);
     await runCommandStream(
-      { keyword: command.keyword, inputs, room: room || null, client: prefs.deviceId || null, lang, token, signal: ctrl.signal },
+      { keyword: command.keyword, inputs, room: serverRoomId(keyRef.current), client: prefs.deviceId || null, lang, token, signal: ctrl.signal },
       {
         onStart: (id) => { runCmdRunIdRef.current = id; },
         onInteraction: handleFnInteraction, // 6.3 nfc: routes "nfc" to the device bridge
@@ -3724,7 +3723,7 @@ function ChatApp() {
     const token = accountToken() ?? null;
     let ok = false;
     await sendFnEventStream(
-      { model: meta.model, keyword: meta.keyword, chain: meta.chain, call: meta.call, room: room || null, client: prefs.deviceId || null, lang, token },
+      { model: meta.model, keyword: meta.keyword, chain: meta.chain, call: meta.call, room: serverRoomId(keyRef.current), client: prefs.deviceId || null, lang, token },
       ev,
       {
         onStart: (id) => { runCmdRunIdRef.current = id; runCmdTokenRef.current = token; },
@@ -3751,7 +3750,7 @@ function ChatApp() {
   /** 5.3: an output the browser could not show, or a line from browser code — logged with the run; the error entry point may answer. */
   async function fnReport(meta: FnMeta, ev: Extract<FnEventBody, { type: "error" | "log" }>): Promise<void> {
     if (!meta.chain) return;
-    const r = await sendFnReport({ model: meta.model, keyword: meta.keyword, chain: meta.chain, call: meta.call, room: room || null, client: prefs.deviceId || null, lang, token: accountToken() ?? null }, ev);
+    const r = await sendFnReport({ model: meta.model, keyword: meta.keyword, chain: meta.chain, call: meta.call, room: serverRoomId(keyRef.current), client: prefs.deviceId || null, lang, token: accountToken() ?? null }, ev);
     if (r && ev.type === "error" && !ev.fromError) showFnResult({ ...r, visibility: r.visibility ?? "caller" }, meta, { origin: "error" });
   }
 
