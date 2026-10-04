@@ -387,6 +387,14 @@ public final class Rooms {
     public void onAccountChanged() {
         for (RoomSession r : sessions.values()) r.sendAuth();
         emit();
+        cz.m5cet.app.push.NotifyPrefs.get(app).onAccountChanged(); // 6.7: the settings and this device's link follow
+    }
+
+    /** 6.7: the open room the server knows by this id (a notification names it), or null. */
+    public RoomSession byServerId(String id) {
+        if (id == null || id.isEmpty()) return null;
+        for (RoomSession r : sessions.values()) if (r.keys != null && id.equals(r.keys.roomId)) return r;
+        return null;
     }
 
     void onMessage(RoomSession r, ChatMessage m, boolean fresh) {

@@ -1,5 +1,75 @@
 # Push notifications
 
+## 6.7: notifications with a fallback (server/notify)
+
+A signed-in member who is **away** in a room (docs/accounts-away.md) is
+woken by the **notifier** (`server/notify/dispatch.ts`), not by a fixed web
+push any more:
+
+1. **Who** — never the sender, never an account with an awake socket in the
+   room, never an account that is gone.
+2. **Whether** — the operator offers the kind (`message`, `mention`, `call`,
+   `function`, `summon`, `test`), the user did not switch it (or everything)
+   off, it is not their quiet hours, the kind's throttle per account and
+   room (30 s for messages) and the account's hourly limit allow it.
+3. **What** — the kind's template (title and body in cs / en / de) in the
+   user's language, at the privacy level the user chose within the
+   operator's maximum: `neutral` (nothing about who or where), `sender`,
+   `room`, `content`. The server fills in what it knows (the sender's
+   display name, how many messages wait, the time); the **room's name** only
+   the device knows (the server sees an opaque room id), a **preview** only a
+   device that decrypted the message itself — no push ever carries content.
+4. **How** — the user's channel order (else the operator's), channels the
+   operator switched on, the server can use and the account has an endpoint
+   with: **Android** (a `notify` control message, ECIES-sealed for the one
+   device and signed — FCM sees ciphertext), **web push** (RFC 8291,
+   encrypted for the browser; TTL / Urgency / Topic set), **e-mail** (the
+   operator's SMTP relay, only to an address its owner confirmed). The first
+   channel where an endpoint takes it wins; an HTTP error, a dead token or a
+   timeout moves on to the next.
+5. **Afterwards** — dead endpoints are forgotten (web push 404 / 410 — read
+   from web-push's `statusCode`; before 6.7 the code looked for it in the
+   message text, which never matched, so dead subscriptions were never
+   pruned —, a wiped / retired Android device, an address the relay refuses
+   with 5xx at RCPT), every attempt goes to the operator's log (console ›
+   Notifications; no content) and the audit journal (`notify.sent` /
+   `notify.failed`).
+
+Templates: `{name}`, `{name|fallback}`, `[optional part]` (dropped when a
+variable in it is empty or hidden), `\` escapes. Values are put in once and
+never read as a template, lose control and bidi characters, and are bounded.
+The same rules run in `client/src/lib/notify-template.ts` (server + web),
+`client/public/sw.js` and `android/…/push/NotifyTemplate.java`; the shared
+vectors are `test/fixtures/notify-templates.json`.
+
+| Method | Path | Who |
+| ------ | ---- | --- |
+| GET | `/api/notify/config` | anyone — the templates and switches (no SMTP) |
+| GET/PUT | `/api/account/notify` | the account — its choice: `{ on, kinds, privacy, order, quiet, lang }`, and its endpoints |
+| POST | `/api/account/notify/test` | the account — `{ channel? }`, one test through its channels (6 / min) |
+| POST/DELETE | `/api/account/notify/email` | the account — an address (a confirmation mail goes to it; 5 / h) |
+| GET | `/api/notify/email/confirm?t=…` | the link in that mail |
+| DELETE | `/api/account/push` | the account — `{ endpoint }`: this browser stops being woken |
+| POST | `/api/android/notify` | a device (signed with its key) — `{ token, on }`: wake it for that session's account |
+| GET/PUT | `/api/admin/notify` | the console — settings (the SMTP password is sealed; `""` keeps it, `null` removes it) |
+| POST | `/api/admin/notify/preview`, `/test`, `/email/test`; GET `/log` | the console |
+
+Settings live in `$DATA_DIR/notify/` (`NOTIFY_DIR`): `config.json` (the
+operator's) and `accounts.json` (each user's choice, device links, e-mail
+addresses) — both 0600. A device link ends with the session it was made
+with (sign-out, sign-out everywhere); deleting the account deletes the rest.
+
+Clients: the web's Notifications panel has the user's own settings (a
+guest's stay in the browser and steer only the page's own notifications);
+enabling notifications while signed in links this browser at once, turning
+them off unlinks it; a message with `@name` tells the relay it mentions
+that away member (the only thing the server learns). The page's own
+notifications (it decrypted the message) follow the same template and the
+user's level. On Android, Settings › Notifications is a screen of the
+design; signed in, the app joins its rooms "away-capable" (`notify.away`)
+so the server keeps its messages while it is closed and wakes it with a
+sealed `notify` message, which the app draws with its own room name.
+
 ## Two delivery paths
 
 1. **Web Push** (real, requires VAPID + `web-push` package and a public

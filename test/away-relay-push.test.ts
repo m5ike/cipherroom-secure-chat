@@ -1,31 +1,39 @@
 // @vitest-environment node
 //
 // The away relay as a unit (server/signaling/relay.ts) over the in-memory
-// queue: waking an away user with a push, quotas, signing out, ordered
-// delivery under a lease, and the rules that keep receipts honest.
+// queue: waking an away user (6.7: through the notifier, here with its web
+// push channel and a stand-in for the push service), quotas, signing out,
+// ordered delivery under a lease, and the rules that keep receipts honest.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { WebSocket } from "ws";
-import { AccountStore, type PushTarget } from "../server/accounts/store";
+import { AccountStore } from "../server/accounts/store";
 import { MemoryQueue } from "../server/accounts/memqueue";
 import { QUEUE_LIMITS } from "../server/accounts/mailqueue";
-import { AwayRelay, type RelayPeer } from "../server/signaling/relay";
+import { AwayRelay, type RelayPeer, type WakeRequest } from "../server/signaling/relay";
 import { accountRef } from "../server/signaling/refs";
 import type { StoredCredential } from "../server/accounts/webauthn";
+import { Notifier } from "../server/notify/dispatch";
+import { NotifyStore } from "../server/notify/store";
+import { webPushChannel } from "../server/notify/channels";
+import { DEFAULT_NOTIFY_CONFIG } from "../server/notify/config";
+import type { WebPushResult } from "../server/push";
 
 const credential = (id: string): StoredCredential => ({ credentialId: id, publicKeyJwk: { kty: "EC", crv: "P-256", x: "x", y: "y" }, alg: -7, signCount: 1 });
 const ENVELOPE = { iv: "aXY=", ciphertext: "Y3Q=" };
 
 let dir = "";
 let store: AccountStore;
+let notifyStore: NotifyStore;
 let queue: MemoryQueue;
 let rooms: Map<string, Map<string, RelayPeer>>;
 let sent: Array<{ socket: WebSocket; payload: Record<string, unknown> }>;
-let pushed: Array<{ target: PushTarget; payload: { url: string; body: string; kind?: string } }>;
-let pushResult: { ok: boolean; error?: string };
+let pushed: Array<{ endpoint: string; payload: Record<string, unknown> }>;
+let wakes: WakeRequest[];
+let pushResult: WebPushResult;
 let now = 1_700_000_000_000;
 
 function peer(id: string, room: string | null, name: string, extra: Partial<RelayPeer> = {}): RelayPeer {
@@ -39,14 +47,24 @@ function peer(id: string, room: string | null, name: string, extra: Partial<Rela
 }
 
 function makeRelay() {
-  return new AwayRelay(
+  let relay: AwayRelay | null = null;
+  const notifier = new Notifier({
+    accounts: store,
+    store: notifyStore,
+    config: () => DEFAULT_NOTIFY_CONFIG,
+    channels: [webPushChannel({ accounts: store, ready: () => true, send: async (target, payload) => { pushed.push({ endpoint: target.endpoint, payload }); return pushResult; } })],
+    present: (accountId, room) => relay?.present(accountId, room) ?? false,
+    now: () => now,
+  });
+  relay = new AwayRelay(
     store,
     rooms,
     (socket, payload) => { sent.push({ socket, payload: payload as Record<string, unknown> }); return true; },
     () => queue,
-    async (target, payload) => { pushed.push({ target, payload }); return pushResult; },
+    async (req) => { wakes.push(req); return notifier.notify(req); },
     () => now,
   );
+  return relay;
 }
 
 function account(name: string) {
@@ -62,16 +80,18 @@ const to = (room: string, accountId: string) => [accountRef(room, accountId)];
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "m5cet-relay-push-"));
   store = new AccountStore(dir);
+  notifyStore = new NotifyStore(() => join(dir, "notify"));
   queue = new MemoryQueue(() => now);
   rooms = new Map();
   sent = [];
   pushed = [];
+  wakes = [];
   pushResult = { ok: true };
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("waking an away user", () => {
-  it("pushes a flash message that opens /signin", async () => {
+  it("pushes a notification that opens /signin — no content, and by default no sender or room", async () => {
     const relay = makeRelay();
     const acc = account("Alice");
     store.addPush(acc.id, { endpoint: "https://push.example/alice", keys: { p256dh: "p", auth: "a" } }, now);
@@ -81,14 +101,26 @@ describe("waking an away user", () => {
     await relay.relay(bob, { messageId: "m1", to: to("alpha", acc.id), envelope: ENVELOPE });
 
     expect(statuses()).toEqual(["stored"]);
+    expect(wakes).toEqual([{ accountId: acc.id, room: "alpha", kind: "message", from: { name: "Bob" }, count: 1 }]);
     expect(pushed).toHaveLength(1);
-    expect(pushed[0].payload).toMatchObject({ url: "/signin", kind: "relay" });
+    expect(pushed[0].payload).toMatchObject({ url: "/signin", kind: "message", title: "M5cet", body: "New message", privacy: "neutral" });
     // A locked screen shows it: no content, no sender, no room.
     const text = JSON.stringify(pushed[0].payload);
     expect(text).not.toContain(ENVELOPE.ciphertext);
     expect(text).not.toContain("Bob");
     expect(text).not.toContain("alpha");
     expect(store.get(acc.id)!.audit.map((e) => e.kind)).toContain("push-sent");
+  });
+
+  it("shows the sender only when the user chose it", async () => {
+    const relay = makeRelay();
+    const acc = account("Alice");
+    store.addPush(acc.id, { endpoint: "https://push.example/alice", keys: { p256dh: "p", auth: "a" } }, now);
+    notifyStore.setPrefs(acc.id, { privacy: "sender" });
+    away(relay, acc.id, "alpha", "Alice");
+    await relay.relay(peer("bob", "alpha", "Bob"), { messageId: "m1", to: to("alpha", acc.id), envelope: ENVELOPE });
+    expect(pushed[0].payload).toMatchObject({ body: "Bob: New message", privacy: "sender" });
+    expect(JSON.stringify(pushed[0].payload)).not.toContain("alpha"); // the room id only from "room" on
   });
 
   it("throttles a burst to one wake-up per room", async () => {
@@ -105,19 +137,31 @@ describe("waking an away user", () => {
     now += 31_000; // past the throttle window
     await relay.relay(bob, { messageId: "m4", to: to("alpha", acc.id), envelope: ENVELOPE });
     expect(pushed).toHaveLength(2);
+    expect(pushed[1].payload.body).toBe("New message (4)");
   });
 
-  it("forgets an endpoint the push service reports as gone", async () => {
+  it("forgets an endpoint the push service reports as gone (the status, not the message text)", async () => {
     const relay = makeRelay();
     const acc = account("Alice");
     store.addPush(acc.id, { endpoint: "https://push.example/dead", keys: { p256dh: "p", auth: "a" } }, now);
     away(relay, acc.id, "alpha", "Alice");
-    pushResult = { ok: false, error: "Received unexpected response code 410" };
+    // What sendWebPush makes of web-push's WebPushError("Received unexpected response code", 410).
+    pushResult = { ok: false, status: 410, gone: true, error: "410: Received unexpected response code" };
 
     await relay.relay(peer("bob", "alpha", "Bob"), { messageId: "m1", to: to("alpha", acc.id), envelope: ENVELOPE });
     expect(store.get(acc.id)!.push).toHaveLength(0);
     // The message itself is still waiting for her.
     expect(queue.pending(acc.id, "alpha")).toHaveLength(1);
+  });
+
+  it("keeps an endpoint that failed for another reason", async () => {
+    const relay = makeRelay();
+    const acc = account("Alice");
+    store.addPush(acc.id, { endpoint: "https://push.example/busy", keys: { p256dh: "p", auth: "a" } }, now);
+    away(relay, acc.id, "alpha", "Alice");
+    pushResult = { ok: false, status: 503, gone: false, error: "503: Received unexpected response code" };
+    await relay.relay(peer("bob", "alpha", "Bob"), { messageId: "m1", to: to("alpha", acc.id), envelope: ENVELOPE });
+    expect(store.get(acc.id)!.push).toHaveLength(1);
   });
 
   it("stores without a push when no device is linked", async () => {
@@ -127,6 +171,42 @@ describe("waking an away user", () => {
     await relay.relay(peer("bob", "alpha", "Bob"), { messageId: "m1", to: to("alpha", acc.id), envelope: ENVELOPE });
     expect(pushed).toHaveLength(0);
     expect(statuses()).toEqual(["stored"]);
+  });
+
+  it("names the kind from the sender's hints: a mention for the mentioned only, a call for all", async () => {
+    const relay = makeRelay();
+    const alice = account("Alice");
+    const carol = account("Carol");
+    away(relay, alice.id, "alpha", "Alice");
+    away(relay, carol.id, "alpha", "Carol");
+    const bob = peer("bob", "alpha", "Bob");
+    const refs = [accountRef("alpha", alice.id), accountRef("alpha", carol.id)];
+    await relay.relay(bob, { messageId: "m1", to: refs, envelope: ENVELOPE, mention: [refs[1]] });
+    expect(wakes.map((w) => [w.accountId, w.kind])).toEqual([[alice.id, "message"], [carol.id, "mention"]]);
+    wakes = [];
+    await relay.relay(bob, { messageId: "m2", to: refs, envelope: ENVELOPE, call: true });
+    expect(wakes.map((w) => w.kind)).toEqual(["call", "call"]);
+  });
+
+  it("an operator's summons goes through the notifier as its own kind", async () => {
+    const relay = makeRelay();
+    const acc = account("Alice");
+    store.addPush(acc.id, { endpoint: "https://push.example/alice", keys: { p256dh: "p", auth: "a" } }, now);
+    expect(await relay.summon(acc.id, "alpha")).toBe(true);
+    expect(pushed[0].payload).toMatchObject({ kind: "summon", body: "The operator asks you back" });
+    const none = account("Nobody");
+    expect(await relay.summon(none.id, "alpha")).toBe(false); // no endpoint: nothing sent
+  });
+
+  it("never wakes a member who is present in the room", async () => {
+    const relay = makeRelay();
+    const acc = account("Alice");
+    store.addPush(acc.id, { endpoint: "https://push.example/alice", keys: { p256dh: "p", auth: "a" } }, now);
+    away(relay, acc.id, "alpha", "Alice");
+    // An awake tab of hers in the room (the away entry is stale).
+    peer("alice-tab", "alpha", "Alice", { accountId: acc.id });
+    await relay.relay(peer("bob", "alpha", "Bob"), { messageId: "m1", to: to("alpha", acc.id), envelope: ENVELOPE });
+    expect(pushed).toHaveLength(0);
   });
 });
 

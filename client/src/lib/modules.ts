@@ -113,7 +113,7 @@ export const MODULE_CATALOG: readonly ModuleDef[] = [
   { id: "rooms", label: "Several rooms", description: "Keep several rooms connected at once: the room bar (unread and people counts, switching) and the Room window's checkboxes.", panels: [] },
   { id: "invites", label: "Invitations", description: "Share a room or a saved connection with a link and a code.", panels: [] },
   { id: "connections", label: "Saved connections", description: "Rooms saved in the account (Server-enhanced).", panels: ["connections"] },
-  { id: "notifications", label: "Notifications", description: "Local notifications and web push.", panels: ["notifications"] },
+  { id: "notifications", label: "Notifications", description: "Local notifications, web push, the Android app and e-mail with a fallback (console: Notifications).", panels: ["notifications"], console: "notifications" },
   { id: "analytics", label: "Analytics", description: "The analytics consent screen.", panels: ["analytics"] },
   { id: "appearance", label: "Appearance", description: "Templates, fonts, colours.", panels: ["appearance"] },
   { id: "editMode", label: "Edit Mode", description: "The in-page style editor.", panels: [] },

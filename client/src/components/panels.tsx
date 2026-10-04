@@ -5,6 +5,7 @@
 // lib/layouts/settings.ts) drawn in the large window; what they do stays here.
 
 import { NeedSignIn } from "./NeedSignIn";
+import { NotifySettings } from "./NotifySettings";
 import { useEffect, useState, type ChangeEvent } from "react";
 import { Modal } from "./Modal";
 import { renderLayout } from "./LayoutView";
@@ -162,6 +163,7 @@ export function NotificationsPanel({
   onTestLocal,
   signedIn = true,
   onOpenConnection,
+  notifyOffline = false,
 }: PanelBaseProps & {
   onEnable: () => Promise<void>;
   onDisable: () => void;
@@ -169,6 +171,8 @@ export function NotificationsPanel({
   /** 4.0: web push through the server belongs to a signed-in account. */
   signedIn?: boolean;
   onOpenConnection?: () => void;
+  /** 6.7: the layout builder's preview — the user's settings drawn without asking the server. */
+  notifyOffline?: boolean;
   onTestPush?: () => Promise<{ ok: boolean; reason?: string }>;
   onTestLocal?: () => Promise<{ ok: boolean; reason?: string }>;
 }) {
@@ -185,7 +189,11 @@ export function NotificationsPanel({
           testLocal: async () => { if (!onTestLocal) return; const r = await onTestLocal(); setTestResult(r.ok ? "Local test sent." : `Local test failed: ${r.reason}`); },
           testPush: async () => { if (!onTestPush) return; const r = await onTestPush(); setTestResult(r.ok ? "Push test sent." : `Push test failed: ${r.reason}`); },
         },
-        slots: { needSignIn: () => <NeedSignIn lang={lang} onOpen={onOpenConnection} testId="notif-need-signin" /> },
+        slots: {
+          needSignIn: () => <NeedSignIn lang={lang} onOpen={onOpenConnection} testId="notif-need-signin" />,
+          // 6.7: the user's own choice — kinds, privacy, channel order, quiet hours, a test.
+          notifyPrefs: () => (open ? <NotifySettings lang={lang} signedIn={signedIn} offline={notifyOffline} /> : null),
+        },
       })}
     </Modal>
   );

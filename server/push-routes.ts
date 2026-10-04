@@ -93,17 +93,20 @@ export function registerPushRoutes(app: Express): void {
       }
       // Fixed text: a leaked id can at most repeat the test notification.
       const r = await sendWebPush(sub, SELF_TEST);
+      // 6.7: the push service says the subscription is dead (404 / 410): forget it.
+      if (r.gone) pushSubscriptions.delete(id);
       eventStore.record({ kind: "push-test", meta: { mode: "self", ok: r.ok } });
       return res.status(r.ok ? 200 : 502).json({ ok: r.ok, mode: "self", error: r.error });
     }
 
-    const targets = Array.from(pushSubscriptions.values());
+    const targets = Array.from(pushSubscriptions.entries());
     if (targets.length === 0) return res.status(404).json({ ok: false, message: "No subscriptions yet." });
     const title = typeof body.title === "string" && body.title.trim() ? body.title.slice(0, 64) : "M5cet";
     const text = typeof body.body === "string" && body.body.trim() ? body.body.slice(0, 200) : "Test push from the operator.";
     const results: Array<{ endpoint: string; ok: boolean; error?: string }> = [];
-    for (const sub of targets) {
+    for (const [subId, sub] of targets) {
       const r = await sendWebPush(sub, { title, body: text });
+      if (r.gone) pushSubscriptions.delete(subId);
       results.push({ endpoint: sub.endpoint.slice(0, 80), ok: r.ok, error: r.error });
     }
     const sent = results.filter((r) => r.ok).length;

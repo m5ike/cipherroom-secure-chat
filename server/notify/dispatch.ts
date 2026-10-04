@@ -1,0 +1,254 @@
+// The notifier (6.7): one notification for one account, through the first
+// channel that takes it.
+//
+//   1. who: never the sender, never someone who is present (an awake socket
+//      in the room), never an account that is gone
+//   2. whether: the operator offers the kind, the user did not switch it (or
+//      everything) off, it is not their quiet hours, the kind's throttle
+//      (per account and room) and the account's hourly limit allow it
+//   3. what: the kind's template in the user's language, at the privacy
+//      level the user chose within what the operator allows — rendered by
+//      the server with what it legitimately knows (the sender's display
+//      name, a count, the time); the room's name and any preview only the
+//      receiving device can add
+//   4. how: the user's channel order (else the operator's), only channels
+//      the operator switched on, the server can use, and the account has an
+//      endpoint with; the first channel where an endpoint takes it wins,
+//      a failure (HTTP error, dead token, timeout) moves on to the next
+//   5. afterwards: every attempt in the operator's log (no content — there
+//      is none), dead endpoints forgotten, an audit entry.
+
+import { randomBytes } from "node:crypto";
+import type { AccountStore } from "../accounts/store";
+import { audit } from "../monitor/audit";
+import { hashRoom } from "../monitor/traffic";
+import {
+  effectivePrivacy, inQuietHours, renderNotification, timeIn, visibleVars,
+  type NotifyChannel, type NotifyKind, type NotifyPrivacy, type UserNotifyPrefs,
+} from "../../client/src/lib/notify-template";
+import type { NotifyConfig } from "./config";
+import type { NotifyStore } from "./store";
+import type { Attempt, Channel, NotifyPayload } from "./channels";
+
+export type NotifyRequest = {
+  accountId: string;
+  kind: NotifyKind;
+  /** The room id the server knows (opaque). */
+  room?: string;
+  from?: { name?: string; accountId?: string };
+  /** Messages waiting for the account in the room. */
+  count?: number;
+  /** Only these channels (a test of one channel). */
+  only?: NotifyChannel[];
+  /** Who asked (the console, the user's own test) — for the log. */
+  by?: string;
+};
+
+export type NotifyOutcome = {
+  ok: boolean;
+  /** The channel that took it. */
+  channel?: NotifyChannel;
+  /** Why nothing was sent. */
+  skipped?: string;
+  attempts: Attempt[];
+  /** The channels tried, in order. */
+  order: NotifyChannel[];
+};
+
+export type LogEntry = {
+  id: number;
+  at: number;
+  kind: NotifyKind;
+  account: string;
+  room?: string;
+  outcome: "sent" | "failed" | "skipped";
+  reason?: string;
+  channel?: NotifyChannel;
+  order: NotifyChannel[];
+  attempts: Attempt[];
+  by?: string;
+};
+
+export type NotifierDeps = {
+  accounts: Pick<AccountStore, "get" | "addAudit">;
+  store: NotifyStore;
+  config: () => NotifyConfig;
+  channels: Channel[];
+  /** An awake socket of the account in the room. */
+  present?: (accountId: string, room: string) => boolean;
+  now?: () => number;
+};
+
+const LOG_SIZE = 1000;
+
+export class Notifier {
+  private last = new Map<string, number>();
+  private hourly = new Map<string, number[]>();
+  private ring: LogEntry[] = [];
+  private nextId = 1;
+  private counts = { sent: 0, failed: 0, skipped: 0 };
+  private byChannel = new Map<NotifyChannel, { ok: number; failed: number; gone: number }>();
+
+  constructor(private readonly deps: NotifierDeps) {}
+
+  private now(): number { return (this.deps.now ?? Date.now)(); }
+
+  /** The channels for this account, in the order they are tried. */
+  async orderFor(accountId: string, prefs: UserNotifyPrefs, config: NotifyConfig, hasPrefs: boolean, only?: NotifyChannel[]): Promise<{ order: NotifyChannel[]; why: string[] }> {
+    const on = config.channels.filter((c) => c.on).map((c) => c.id);
+    const wanted = hasPrefs ? prefs.order.filter((c) => on.includes(c)) : on;
+    const why: string[] = [];
+    const order: NotifyChannel[] = [];
+    for (const id of wanted) {
+      if (only && !only.includes(id)) continue;
+      const ch = this.deps.channels.find((c) => c.id === id);
+      if (!ch) continue;
+      const ready = ch.ready(config);
+      if (!ready.ready) { why.push(`${id}: ${ready.reason}`); continue; }
+      if ((await ch.targets(accountId)) === 0) { why.push(`${id}: no endpoint`); continue; }
+      order.push(id);
+    }
+    return { order, why };
+  }
+
+  /** The payload for one account (exported for the console's preview and tests). */
+  payloadFor(req: NotifyRequest, prefs: UserNotifyPrefs, config: NotifyConfig, channel: NotifyChannel | "" = ""): NotifyPayload {
+    const tpl = config.templates[req.kind];
+    const privacy: NotifyPrivacy = effectivePrivacy(tpl, prefs);
+    const at = this.now();
+    const vars = visibleVars({
+      app: config.appName,
+      sender: req.from?.name ?? "",
+      count: req.count ?? "",
+      time: timeIn(at, prefs.quiet.tz),
+      channel,
+    }, privacy);
+    const lang = prefs.lang;
+    const { title, body } = renderNotification(tpl, lang, vars, privacy);
+    const roomTag = req.room ? hashRoom(req.room) ?? "" : "";
+    const tag = tpl.group === "room" && roomTag ? `m5-${roomTag}` : tpl.group === "kind" ? `m5-${req.kind}` : `m5-${randomBytes(4).toString("hex")}`;
+    const shown = Object.fromEntries(Object.entries(vars).filter(([, v]) => v)) as Record<string, string>;
+    const showsRoom = privacy === "room" || privacy === "content";
+    return {
+      v: 1,
+      id: randomBytes(9).toString("base64url"),
+      kind: req.kind,
+      title,
+      body,
+      tpl: { title: tpl.title[lang] || tpl.title.en, body: tpl.body[lang] || tpl.body.en },
+      vars: shown,
+      privacy,
+      ...(showsRoom && req.room ? { room: req.room } : {}),
+      tag,
+      group: tpl.group,
+      icon: tpl.icon,
+      accent: tpl.accent,
+      sound: tpl.sound,
+      vibrate: tpl.vibrate,
+      sticky: tpl.sticky,
+      actions: tpl.actions,
+      url: req.kind === "test" || req.kind === "function" ? "/" : "/signin",
+      lang,
+      at,
+    };
+  }
+
+  /** `quiet`: counted, not written to the log (a burst of messages would fill it with "throttled"). */
+  private skip(req: NotifyRequest, reason: string, quiet = false): NotifyOutcome {
+    if (quiet) this.counts.skipped += 1;
+    else this.record(req, { outcome: "skipped", reason, order: [], attempts: [] });
+    return { ok: false, skipped: reason, attempts: [], order: [] };
+  }
+
+  private record(req: NotifyRequest, e: Pick<LogEntry, "outcome" | "reason" | "channel" | "order" | "attempts">): void {
+    this.counts[e.outcome] += 1;
+    for (const a of e.attempts) {
+      const c = this.byChannel.get(a.channel) ?? { ok: 0, failed: 0, gone: 0 };
+      if (a.ok) c.ok += 1; else c.failed += 1;
+      if (a.gone) c.gone += 1;
+      this.byChannel.set(a.channel, c);
+    }
+    this.ring.push({ id: this.nextId++, at: this.now(), kind: req.kind, account: req.accountId, ...(req.room ? { room: hashRoom(req.room) } : {}), ...(req.by ? { by: req.by } : {}), ...e });
+    if (this.ring.length > LOG_SIZE) this.ring.splice(0, this.ring.length - LOG_SIZE);
+  }
+
+  /** Sends one notification (or says why not). Never throws. */
+  async notify(req: NotifyRequest): Promise<NotifyOutcome> {
+    const config = this.deps.config();
+    const now = this.now();
+    if (!config.enabled) return this.skip(req, "notifications are off (operator)");
+    const acc = this.deps.accounts.get(req.accountId);
+    if (!acc) return this.skip(req, "no such account");
+    if (req.from?.accountId && req.from.accountId === req.accountId) return this.skip(req, "the sender themselves");
+    if (req.room && this.deps.present?.(req.accountId, req.room)) return this.skip(req, "present in the room");
+    const tpl = config.templates[req.kind];
+    if (!tpl.on) return this.skip(req, `${req.kind}: off (operator)`);
+    const prefs = this.deps.store.prefs(req.accountId);
+    const test = req.kind === "test";
+    if (!test) {
+      if (!prefs.on) return this.skip(req, "off (user)");
+      if (prefs.kinds[req.kind] === false) return this.skip(req, `${req.kind}: off (user)`);
+      if (inQuietHours(prefs.quiet, now)) return this.skip(req, "quiet hours");
+    }
+    // The kind's throttle, per account and room.
+    const key = `${req.accountId}|${req.room ?? ""}|${req.kind}`;
+    if (tpl.throttle > 0 && now - (this.last.get(key) ?? -Infinity) < tpl.throttle * 1000) return this.skip(req, "throttled", true);
+    // The account's hourly limit (tests have their own).
+    const hk = `${req.accountId}|${test ? "test" : "all"}`;
+    const recent = (this.hourly.get(hk) ?? []).filter((t) => now - t < 3_600_000);
+    if (recent.length >= (test ? config.limits.testsPerHour : config.limits.perHour)) { this.hourly.set(hk, recent); return this.skip(req, "hourly limit"); }
+
+    const { order, why } = await this.orderFor(req.accountId, prefs, config, this.deps.store.hasPrefs(req.accountId), req.only);
+    if (order.length === 0) return this.skip(req, why.length ? `no channel (${why.join("; ")})` : "no channel");
+
+    this.last.set(key, now);
+    if (this.last.size > 50_000) this.last.clear();
+    recent.push(now);
+    this.hourly.set(hk, recent);
+    if (this.hourly.size > 50_000) this.hourly.clear();
+
+    const attempts: Attempt[] = [];
+    let channel: NotifyChannel | undefined;
+    for (const id of order) {
+      const ch = this.deps.channels.find((c) => c.id === id)!;
+      const payload = this.payloadFor(req, prefs, config, id);
+      let got: Attempt[];
+      try {
+        got = await ch.send({ accountId: req.accountId, payload, config });
+      } catch (err) {
+        got = [{ channel: id, target: "?", ok: false, error: (err as Error).message.slice(0, 200), ms: 0 }];
+      }
+      attempts.push(...got);
+      if (got.some((a) => a.ok)) { channel = id; break; }
+    }
+
+    const roomHash = req.room ? hashRoom(req.room) : undefined;
+    const sentTo = attempts.filter((a) => a.ok).length;
+    if (channel) {
+      this.record(req, { outcome: "sent", channel, order, attempts });
+      this.deps.accounts.addAudit(req.accountId, "push-sent", { devices: sentTo, channel, kind: req.kind });
+      audit.add({ category: "account", event: "notify.sent", accountId: req.accountId, roomHash, status: channel, detail: { kind: req.kind, tried: attempts.length, ...(req.by ? { by: req.by } : {}) } });
+      return { ok: true, channel, attempts, order };
+    }
+    this.record(req, { outcome: "failed", reason: "every channel failed", order, attempts });
+    audit.add({ category: "account", level: "notice", event: "notify.failed", accountId: req.accountId, roomHash, status: "failed", detail: { kind: req.kind, order, errors: attempts.map((a) => `${a.channel}: ${a.error ?? "?"}`).slice(0, 6) } });
+    return { ok: false, attempts, order };
+  }
+
+  /** The operator's log, newest first. */
+  log(filter: { account?: string; outcome?: string; channel?: string; limit?: number } = {}): LogEntry[] {
+    const out: LogEntry[] = [];
+    for (let i = this.ring.length - 1; i >= 0 && out.length < (filter.limit ?? 200); i -= 1) {
+      const e = this.ring[i];
+      if (filter.account && e.account !== filter.account) continue;
+      if (filter.outcome && e.outcome !== filter.outcome) continue;
+      if (filter.channel && e.channel !== filter.channel && !e.attempts.some((a) => a.channel === filter.channel)) continue;
+      out.push(e);
+    }
+    return out;
+  }
+
+  stats() {
+    return { ...this.counts, channels: Object.fromEntries(this.byChannel) };
+  }
+}

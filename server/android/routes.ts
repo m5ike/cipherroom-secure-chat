@@ -4,6 +4,7 @@
 //   POST /enroll               register a device (its keys, proof of holding them, a code if required)
 //   POST /checkin        (s)   report state, get the policy, pending commands, the newest bundle / release
 //   POST /ack            (s)   the outcome of a command
+//   POST /notify         (s)   6.7: { token, on } wake this device for the signed-in account (server/notify)
 //   POST /events         (s)   security and update events (also signed long ago: after a wipe)
 //   GET  /bundles/:id    (s)   a published build, its key wrapped for this device
 //   GET  /releases/:id   (s)   an APK release and the server's signature over it
@@ -26,6 +27,9 @@ import { acknowledge, pendingFor } from "./commands";
 import { deployFile, latestBuildFor, MIN_APP_CODE } from "./bundle";
 import { fcmReady } from "./fcm";
 import { recordMessageAction, sanitizeMessageAudit } from "../message-audit";
+import { accountStore } from "../accounts/store";
+import { androidNotifyLink } from "../notify/routes";
+import { notifyStore } from "../notify/store";
 import { androidStore, newId, type AndroidEvent, type Device, type DeviceState, type EventLevel, type LocationPoint, type Release } from "./store";
 
 const MAX_SKEW = 5 * 60 * 1000;
@@ -244,6 +248,13 @@ export function registerAndroidRoutes(app: Express): void {
       audit.add({ category: "security", level: "warn", event: "android.device.remote-wiped", target: device.id, detail: { by: cmd.createdBy } });
     }
     res.json({ ok: true, status: cmd.status });
+  });
+
+  // 6.7: the device (its key) and the account (its session token) together: the
+  // notifier wakes this device for that account from now on — or no longer.
+  r.post("/notify", signedBy(), (req: Signed, res) => {
+    const out = androidNotifyLink(notifyStore, accountStore, req.device!, bodyJson(req));
+    res.status(out.status).json(out.json);
   });
 
   r.post("/events", signedBy({ skew: EVENT_SKEW, allowStatus: ["wiped"] }), (req: Signed, res) => {

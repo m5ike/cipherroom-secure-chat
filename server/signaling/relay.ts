@@ -4,7 +4,8 @@
 // stays in the room as AWAY. Others keep writing: the sender's client hands
 // the room-key ciphertext to the server, which queues it (OfflineQueue —
 // SQLite, or memory when there is no database), answers "stored" on the
-// member's behalf and tries to wake their browser with a push. When the
+// member's behalf and asks the notifier (6.7, server/notify) to wake them —
+// on Android, by web push or by e-mail, whichever works first. When the
 // member is back, the queue is handed over in order under a lease; only an
 // acknowledgement removes an item, and each acknowledgement turns into
 // "delivered" for its sender.
@@ -23,7 +24,7 @@
 //     once, including on sockets that are still open.
 
 import type { WebSocket } from "ws";
-import type { AccountStore, PushTarget } from "../accounts/store";
+import type { AccountStore } from "../accounts/store";
 import type { OfflineQueue, QueueEnvelope, QueueItem } from "../accounts/mailqueue";
 import { accountRef, resolveRef } from "./refs";
 import { audit } from "../monitor/audit";
@@ -48,7 +49,18 @@ export type RelayPeer = {
 
 type Rooms = Map<string, Map<string, RelayPeer>>;
 type SendFn = (socket: WebSocket, payload: unknown) => boolean;
-type PushFn = (target: PushTarget, payload: { title: string; body: string; url: string; tag: string; kind?: string }) => Promise<{ ok: boolean; error?: string }>;
+
+/** 6.7: what the relay asks the notifier (server/notify) for — who, which
+ *  room, what kind, from whom; the notifier decides the channel, the text
+ *  and whether at all (throttles, the user's choice, quiet hours). */
+export type WakeRequest = {
+  accountId: string;
+  room: string;
+  kind: "message" | "mention" | "call" | "summon";
+  from: { name: string; accountId?: string };
+  count?: number;
+};
+export type WakeFn = (req: WakeRequest) => Promise<{ ok: boolean; skipped?: string }>;
 
 /** 6.7: `lastSeen` — when they last had the app open (the room shows how long ago). */
 type AwayEntry = { name: string; since: number; lastSeen?: number };
@@ -60,23 +72,26 @@ export type RelayCluster = {
   away(room: string, accountId: string, entry: AwayEntry | null): void;
 };
 
-const PUSH_THROTTLE_MS = 30_000;
 const DELIVER_BATCH = 50;
 
 export class AwayRelay {
   /** room → accountId → away entry. The truth lives here, not on disk. */
   private awayByRoom = new Map<string, Map<string, AwayEntry>>();
   cluster: RelayCluster | null = null;
-  private lastPush = new Map<string, number>();
 
   constructor(
     private readonly accounts: AccountStore,
     private readonly rooms: Rooms,
     private readonly send: SendFn,
     private readonly queue: () => OfflineQueue | null,
-    private readonly push?: PushFn,
+    private readonly wakeFn?: WakeFn,
     private readonly now: () => number = Date.now,
   ) {}
+
+  /** 6.7: an awake socket of the account in the room — the notifier never wakes someone who is there. */
+  present(accountId: string, room: string): boolean {
+    return this.awake(room, accountId).length > 0;
+  }
 
   /* ------------------------------------------------------------ helpers */
 
@@ -249,7 +264,7 @@ export class AwayRelay {
   /* -------------------------------------------------------------- relay */
 
   /** A sender relays room-key ciphertext to members it cannot reach. */
-  async relay(client: RelayPeer, frame: { messageId: string; to: string[]; envelope: QueueEnvelope; expiresAt?: number }): Promise<void> {
+  async relay(client: RelayPeer, frame: { messageId: string; to: string[]; envelope: QueueEnvelope; expiresAt?: number; mention?: string[]; call?: boolean }): Promise<void> {
     const room = client.room;
     if (!room) return;
     const queue = this.queue();
@@ -263,6 +278,9 @@ export class AwayRelay {
       ...this.members(room).map((p) => p.accountId).filter((a): a is string => Boolean(a)),
     ]);
     const from = { peerId: client.id, name: client.name, ...(client.accountId ? { accountId: client.accountId } : {}) };
+    // 6.7: the notifier may try several channels (each with its timeout): one
+    // recipient's wake-up does not hold up the next one's "stored".
+    const wakes: Array<Promise<boolean>> = [];
 
     for (const ref of frame.to) {
       const accountId = resolveRef(room, ref, candidates);
@@ -293,9 +311,13 @@ export class AwayRelay {
         status(ref, "forwarded", name);
       } else {
         status(ref, "stored", name);
-        await this.wake(accountId, room, client.name);
+        // 6.7: the sender's client may say the message calls or mentions this
+        // recipient (its own choice; the server cannot read the message).
+        const kind = frame.call ? "call" : frame.mention?.includes(ref) ? "mention" : "message";
+        wakes.push(this.wake(accountId, room, { name: client.name, ...(client.accountId ? { accountId: client.accountId } : {}) }, kind));
       }
     }
+    await Promise.all(wakes);
   }
 
   /** The recipient processed delivered items: drop them, tell the senders. */
@@ -384,40 +406,29 @@ export class AwayRelay {
   /* ---------------------------------------------------------------- wake */
 
   /** 6.0: the operator calls a signed-in member back to a room (m5room.connect):
-   *  the same neutral wake-up push a relayed message sends (throttled alike). */
+   *  a "summon" notification through the notifier (6.7: any channel, not only web push). */
   async summon(accountId: string, room: string): Promise<boolean> {
-    const acc = this.accounts.get(accountId);
-    if (!this.push || !acc || acc.push.length === 0) return false;
-    await this.wake(accountId, room, "operator");
-    return true;
+    if (!this.wakeFn || !this.accounts.get(accountId)) return false;
+    return this.wake(accountId, room, { name: "operator" }, "summon");
   }
 
-  private async wake(accountId: string, room: string, fromName: string): Promise<void> {
-    if (!this.push) return;
-    const acc = this.accounts.get(accountId);
-    if (!acc || acc.push.length === 0) return;
-    const key = `${accountId}|${room}`;
-    if (this.now() - (this.lastPush.get(key) ?? 0) < PUSH_THROTTLE_MS) return;
-    this.lastPush.set(key, this.now());
-    if (this.lastPush.size > 20_000) this.lastPush.clear();
-    let sent = 0;
-    // A neutral wake-up: the push payload is encrypted for the browser
-    // (RFC 8291), but the notification shows on a locked screen — no name,
-    // no room. The service worker words it in the device's language.
-    void fromName;
-    for (const target of acc.push) {
-      const r = await this.push(target, {
-        title: "M5cet",
-        body: "",
-        url: "/signin",
-        tag: `m5cet-away-${hashRoom(room)}`,
-        kind: "relay",
-      });
-      if (r.ok) sent += 1;
-      else if (/\b(404|410)\b/.test(r.error ?? "")) this.accounts.removePushEndpoint(accountId, target.endpoint);
+  /** 6.7: the notifier (server/notify/dispatch.ts) picks the channel — Android,
+   *  web push, e-mail, in the user's order with a fallback — and the text by
+   *  the operator's template at the user's privacy level; it also throttles
+   *  and never wakes the sender or someone who is present. The relay used to
+   *  push a fixed text to web push only, and could not tell a dead
+   *  subscription (web-push's error message carries no status code). */
+  private async wake(accountId: string, room: string, from: WakeRequest["from"], kind: WakeRequest["kind"]): Promise<boolean> {
+    if (!this.wakeFn) return false;
+    let count: number | undefined;
+    try { count = this.queue()?.pending(accountId, room).filter((i) => i.kind === "message").length; } catch { /* only a number in the text */ }
+    try {
+      const r = await this.wakeFn({ accountId, room, kind, from, ...(count ? { count } : {}) });
+      audit.add({ category: "account", event: "relay.push", accountId, roomHash: hashRoom(room), status: r.ok ? "sent" : r.skipped ?? "failed" });
+      return r.ok;
+    } catch {
+      return false;
     }
-    this.accounts.addAudit(accountId, "push-sent", { devices: sent });
-    audit.add({ category: "account", event: "relay.push", accountId, roomHash: hashRoom(room), status: `${sent}/${acc.push.length}` });
   }
 
   stats() {

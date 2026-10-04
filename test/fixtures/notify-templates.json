@@ -1,0 +1,642 @@
+{
+ "about": "Shared vectors of the notification templates (6.7): written by test/notify-template-vectors.test.ts from client/src/lib/notify-template.ts; the service worker and android NotifyTemplateTest.java are checked against them.",
+ "cases": [
+  {
+   "template": "{app}[ · {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "neutral",
+   "text": "M5cet"
+  },
+  {
+   "template": "[{sender}: ]{preview|New message}[ ({count})]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "neutral",
+   "text": "New message (3)"
+  },
+  {
+   "template": "{sender|Someone} is calling you",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "neutral",
+   "text": "Someone is calling you"
+  },
+  {
+   "template": "{app}[ · {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "sender",
+   "text": "M5cet"
+  },
+  {
+   "template": "[{sender}: ]{preview|New message}[ ({count})]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "sender",
+   "text": "Bob: New message (3)"
+  },
+  {
+   "template": "{sender|Someone} is calling you",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "sender",
+   "text": "Bob is calling you"
+  },
+  {
+   "template": "{app}[ · {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "room",
+   "text": "M5cet · Team"
+  },
+  {
+   "template": "[{sender}: ]{preview|New message}[ ({count})]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "room",
+   "text": "Bob: New message (3)"
+  },
+  {
+   "template": "{sender|Someone} is calling you",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "room",
+   "text": "Bob is calling you"
+  },
+  {
+   "template": "{app}[ · {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "content",
+   "text": "M5cet · Team"
+  },
+  {
+   "template": "[{sender}: ]{preview|New message}[ ({count})]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "content",
+   "text": "Bob: Hello there (3)"
+  },
+  {
+   "template": "{sender|Someone} is calling you",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "content",
+   "text": "Bob is calling you"
+  },
+  {
+   "template": "[{sender}: ]{preview|Nová zpráva}",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Eve‮⁦gnp.exe\r\nBcc: x\u0000​",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "privacy": "sender",
+   "text": "Evegnp.exe Bcc: x: Nová zpráva"
+  },
+  {
+   "template": "{sender}",
+   "vars": {
+    "sender": "{room} [x] \\{",
+    "room": "Secret"
+   },
+   "privacy": "room",
+   "text": "{room} [x] \\{"
+  },
+  {
+   "template": "\\{app\\} \\[{app}\\] a\\\\b",
+   "vars": {
+    "app": "A"
+   },
+   "privacy": "neutral",
+   "text": "{app} [A] a\\b"
+  },
+  {
+   "template": "{app",
+   "vars": {
+    "app": "A"
+   },
+   "privacy": "neutral",
+   "text": "{app"
+  },
+  {
+   "template": "a [b {room|r} c] d",
+   "vars": {},
+   "privacy": "content",
+   "text": "a b r c d"
+  },
+  {
+   "template": "x [a [b] c] y {nope}",
+   "vars": {
+    "app": "A"
+   },
+   "privacy": "content",
+   "text": "x a [b c] y"
+  },
+  {
+   "template": "{sender}{sender}{sender}",
+   "vars": {
+    "sender": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   },
+   "privacy": "sender",
+   "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  },
+  {
+   "template": "{preview}",
+   "vars": {
+    "preview": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+   },
+   "privacy": "content",
+   "text": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
+  },
+  {
+   "template": "{count} {count|none}",
+   "vars": {
+    "count": "1"
+   },
+   "privacy": "neutral",
+   "text": "none"
+  },
+  {
+   "template": "{app|M5\\|cet} {sender|a\\}b}",
+   "vars": {},
+   "privacy": "neutral",
+   "text": "M5|cet a}b"
+  },
+  {
+   "template": "  spaced  out  [{time}]  ",
+   "vars": {
+    "time": "07:00"
+   },
+   "privacy": "neutral",
+   "text": "spaced out 07:00"
+  },
+  {
+   "template": "unclosed [part {app}",
+   "vars": {
+    "app": "A"
+   },
+   "privacy": "neutral",
+   "text": "unclosed part A"
+  },
+  {
+   "template": "unclosed [part {room}",
+   "vars": {
+    "app": "A"
+   },
+   "privacy": "neutral",
+   "text": "unclosed"
+  }
+ ],
+ "notifications": [
+  {
+   "kind": "message",
+   "lang": "cs",
+   "privacy": "room",
+   "title": "{app}[ · {room}]",
+   "body": "[{sender}: ]{preview|Nová zpráva}[ ({count})]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Team",
+    "body": "Bob: Nová zpráva (3)"
+   }
+  },
+  {
+   "kind": "message",
+   "lang": "en",
+   "privacy": "room",
+   "title": "{app}[ · {room}]",
+   "body": "[{sender}: ]{preview|New message}[ ({count})]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Team",
+    "body": "Bob: New message (3)"
+   }
+  },
+  {
+   "kind": "message",
+   "lang": "de",
+   "privacy": "room",
+   "title": "{app}[ · {room}]",
+   "body": "[{sender}: ]{preview|Neue Nachricht}[ ({count})]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Team",
+    "body": "Bob: Neue Nachricht (3)"
+   }
+  },
+  {
+   "kind": "mention",
+   "lang": "cs",
+   "privacy": "room",
+   "title": "{app}[ · {room}]",
+   "body": "[{sender}: ]{preview|Někdo vás zmínil}",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Team",
+    "body": "Bob: Někdo vás zmínil"
+   }
+  },
+  {
+   "kind": "mention",
+   "lang": "en",
+   "privacy": "room",
+   "title": "{app}[ · {room}]",
+   "body": "[{sender}: ]{preview|You were mentioned}",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Team",
+    "body": "Bob: You were mentioned"
+   }
+  },
+  {
+   "kind": "mention",
+   "lang": "de",
+   "privacy": "room",
+   "title": "{app}[ · {room}]",
+   "body": "[{sender}: ]{preview|Sie wurden erwähnt}",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Team",
+    "body": "Bob: Sie wurden erwähnt"
+   }
+  },
+  {
+   "kind": "call",
+   "lang": "cs",
+   "privacy": "room",
+   "title": "{app}[ · {room}]",
+   "body": "{sender|Někdo} vám volá",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Team",
+    "body": "Bob vám volá"
+   }
+  },
+  {
+   "kind": "call",
+   "lang": "en",
+   "privacy": "room",
+   "title": "{app}[ · {room}]",
+   "body": "{sender|Someone} is calling you",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Team",
+    "body": "Bob is calling you"
+   }
+  },
+  {
+   "kind": "call",
+   "lang": "de",
+   "privacy": "room",
+   "title": "{app}[ · {room}]",
+   "body": "{sender|Jemand} ruft Sie an",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Team",
+    "body": "Bob ruft Sie an"
+   }
+  },
+  {
+   "kind": "function",
+   "lang": "cs",
+   "privacy": "room",
+   "title": "{app}",
+   "body": "Příkaz doběhl[ v {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet",
+    "body": "Příkaz doběhl v Team"
+   }
+  },
+  {
+   "kind": "function",
+   "lang": "en",
+   "privacy": "room",
+   "title": "{app}",
+   "body": "A command finished[ in {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet",
+    "body": "A command finished in Team"
+   }
+  },
+  {
+   "kind": "function",
+   "lang": "de",
+   "privacy": "room",
+   "title": "{app}",
+   "body": "Ein Befehl ist fertig[ in {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet",
+    "body": "Ein Befehl ist fertig in Team"
+   }
+  },
+  {
+   "kind": "summon",
+   "lang": "cs",
+   "privacy": "room",
+   "title": "{app}",
+   "body": "Operátor vás volá zpět[ do {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet",
+    "body": "Operátor vás volá zpět do Team"
+   }
+  },
+  {
+   "kind": "summon",
+   "lang": "en",
+   "privacy": "room",
+   "title": "{app}",
+   "body": "The operator asks you back[ to {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet",
+    "body": "The operator asks you back to Team"
+   }
+  },
+  {
+   "kind": "summon",
+   "lang": "de",
+   "privacy": "room",
+   "title": "{app}",
+   "body": "Der Betreiber bittet Sie zurück[ in {room}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet",
+    "body": "Der Betreiber bittet Sie zurück in Team"
+   }
+  },
+  {
+   "kind": "test",
+   "lang": "cs",
+   "privacy": "room",
+   "title": "{app} · test",
+   "body": "Upozornění fungují[ — {channel}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · test",
+    "body": "Upozornění fungují — android"
+   }
+  },
+  {
+   "kind": "test",
+   "lang": "en",
+   "privacy": "room",
+   "title": "{app} · test",
+   "body": "Notifications work[ — {channel}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · test",
+    "body": "Notifications work — android"
+   }
+  },
+  {
+   "kind": "test",
+   "lang": "de",
+   "privacy": "room",
+   "title": "{app} · Test",
+   "body": "Benachrichtigungen funktionieren[ — {channel}]",
+   "vars": {
+    "app": "M5cet",
+    "sender": "Bob",
+    "room": "Team",
+    "count": "3",
+    "time": "10:42",
+    "preview": "Hello there",
+    "channel": "android"
+   },
+   "expect": {
+    "title": "M5cet · Test",
+    "body": "Benachrichtigungen funktionieren — android"
+   }
+  }
+ ]
+}

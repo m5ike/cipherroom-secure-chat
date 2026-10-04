@@ -301,6 +301,8 @@ export function notificationsTree(): LNode {
         n("paragraph", {id:"text-notif-test-result",tag:"p",if:"$testResult",attrs:{class:"text-xs text-muted-foreground","data-testid":"text-notif-test-result"},text:"{$testResult}"}),
       ]),
     ]),
+    // 6.7: the user's own choice (NotifySettings).
+    n("slot", {id:"part-notify-prefs",slot:"notifyPrefs"}),
   ]);
 }
 
@@ -471,7 +473,7 @@ export const SETTINGS_CONTRACTS: Record<SettingsId, LayoutContract> = {
     description: "Notifications: on / off, web push, and tests.",
     vars: [PREFS, { path: "$pushAvailable", type: "yes/no", description: "The server has web push (VAPID)." }, { path: "$signedIn", type: "yes/no", description: "Signed in (web push needs it)." }, { path: "$lang", type: "text", description: "The language (cs, en, de)." }, { path: "$canTestLocal", type: "yes/no", description: "A local test is possible." }, { path: "$canTestPush", type: "yes/no", description: "A push test is possible." }, { path: "$testResult", type: "text", description: "What a test said." }],
     actions: [{ name: "enable", description: "Turn notifications on." }, { name: "disable", description: "Turn them off." }, { name: "testLocal", description: "Send a local test." }, { name: "testPush", description: "Send a web push test." }],
-    slots: [{ name: "needSignIn", description: "“Sign in first” (signed out)." }], refs: [],
+    slots: [{ name: "needSignIn", description: "“Sign in first” (signed out)." }, { name: "notifyPrefs", description: "6.7: the user's own notification settings — kinds, privacy, channel order, quiet hours, e-mail, a preview and a test." }], refs: [],
   },
   "panel.analytics": {
     description: "Analytics: the consent.",

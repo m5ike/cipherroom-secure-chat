@@ -38,7 +38,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
-import type { AccountStore, PushTarget } from "../accounts/store";
+import type { AccountStore } from "../accounts/store";
 import { tokenHash } from "../accounts/store";
 import type { OfflineQueue } from "../accounts/mailqueue";
 import { FileProxy } from "../file-proxy";
@@ -55,7 +55,7 @@ import { ClusterRooms, type HeldView, type MemberView } from "./cluster";
 import { isFrameError, KNOWN_FEATURES, MAX_FRAME_BYTES, parseFrame, PROTOCOL_VERSION, type ClientFrame } from "./frames";
 import { ConnectionGate, limitClassOf, LIMITS, PROXY_BYTES, SocketLimiter } from "./limits";
 import { accountRef } from "./refs";
-import { AwayRelay, type RelayPeer } from "./relay";
+import { AwayRelay, type RelayPeer, type WakeFn } from "./relay";
 import { HeldBook, maxAwayMs, type HeldMember } from "./presence";
 import { seenAt } from "../../client/src/lib/presence";
 
@@ -80,12 +80,11 @@ export type HubClient = RelayPeer & {
   removed?: boolean;
 };
 
-type PushFn = (target: PushTarget, payload: { title: string; body: string; url: string; tag: string; kind?: string }) => Promise<{ ok: boolean; error?: string }>;
-
 export type HubOptions = {
   accounts: AccountStore;
   queue: () => OfflineQueue | null;
-  push?: PushFn;
+  /** 6.7: wakes an away member (server/notify — Android, web push, e-mail with a fallback). */
+  wake?: WakeFn;
   storageFrame: (socket: WebSocket, state: StorageSocketState, frame: StorageFrame, send: (socket: WebSocket, payload: unknown) => void) => void;
   /** Per-socket storage state; the address counts toward the session caps. */
   newStorageState: (ip: string) => StorageSocketState;
@@ -192,7 +191,7 @@ export class SignalingHub {
       this.rooms as unknown as Map<string, Map<string, RelayPeer>>,
       (socket, payload) => this.send(socket, payload),
       opts.queue,
-      opts.push,
+      opts.wake,
     );
     this.relay.restore(opts.accounts.allAway());
     this.unsubscribe = opts.accounts.onRevoke((accountId, hash, reason) => {

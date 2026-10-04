@@ -17,6 +17,7 @@ import { detectCapabilities } from "./lib/capabilities";
 import { clearPreferences, loadPreferences, savePreferences, DEFAULT_ROOM_SECURITY, type Preferences, type WidgetState } from "./lib/preferences";
 import { linkify, tagsIn } from "./lib/linkify";
 import { fetchPushStatus, subscribeToPush, ensureServiceWorker, sendTestPush, showLocalTestNotification } from "./lib/push";
+import { forgetWorkerRoomNames, loadAccountNotify, mentionedAway, setCurrentNotifyPrefs, showLocalNotification, tellWorkerRoomName, unlinkPushSubscription } from "./lib/notify-client"; // 6.7 notify
 import { dispatchInternal, installPublicAPI } from "./lib/cipherroom-api";
 import { bootstrapDefine } from "./lib/define/client"; // 6.3 define
 import { applyTheme, applyTypography, applyColorOverrides, applyEffects, applyChatSurface } from "./lib/themes";
@@ -1268,6 +1269,8 @@ function ChatApp() {
    *  wake it while the user is away. */
   async function linkPushForAccount() {
     try {
+      // 6.7: only when notifications are on in this browser (it used to link any subscription it found).
+      if (!prefsRef.current.notificationsEnabled) return;
       if (!("serviceWorker" in navigator)) return;
       const registration = await navigator.serviceWorker.getRegistration();
       const subscription = await registration?.pushManager.getSubscription();
@@ -1547,10 +1550,12 @@ function ChatApp() {
   }
 
   /** Hands an already-encrypted envelope to the server for away members. */
-  function relayToAway(messageId: string, envelope: DataChannelEnvelope, targets: AwayPeer[]): number {
+  function relayToAway(messageId: string, envelope: DataChannelEnvelope, targets: AwayPeer[], text?: string): number {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN || targets.length === 0) return 0;
-    socket.send(JSON.stringify({ type: "relay", messageId, to: targets.map((a) => a.accountId), envelope }));
+    // 6.7: "@name" makes their notification a mention (only that reaches the server).
+    const mention = mentionedAway(text, targets);
+    socket.send(JSON.stringify({ type: "relay", messageId, to: targets.map((a) => a.accountId), envelope, ...(mention.length ? { mention } : {}) }));
     return targets.length;
   }
 
@@ -1668,13 +1673,17 @@ function ChatApp() {
   switchRoomRef.current = switchRoom;
 
   // A message in a background room: a notification that brings the room on screen.
+  // 6.7: by the operator's template and the user's choice (kinds, privacy, quiet hours).
   useEffect(() => hub.onMessage((e) => {
-    if (!notificationsEnabledRef.current || typeof Notification === "undefined" || Notification.permission !== "granted") return;
-    try {
-      const note = new Notification(tf(lang, "rooms.notify.title", { room: e.label, name: e.message.senderName }), { body: e.message.flags?.sealed ? "🔒" : e.message.text || "📎", tag: `m5cet-room-${e.key}` });
-      note.onclick = () => { window.focus(); note.close(); void switchRoomRef.current(e.key); };
-    } catch { /* not allowed here */ }
+    if (!notificationsEnabledRef.current) return;
+    const note = showLocalNotification({ kind: "message", room: e.label, sender: e.message.senderName, text: e.message.flags?.sealed ? "🔒" : e.message.text || "📎", tag: `m5cet-room-${e.key}` }, { lang: lang === "cs" || lang === "de" ? lang : "en" });
+    if (note) note.onclick = () => { window.focus(); note.close(); void switchRoomRef.current(e.key); };
   }), [hub, lang]);
+  // 6.7: local notifications follow the account's choice once signed in, this browser's otherwise.
+  useEffect(() => {
+    if (!account) { setCurrentNotifyPrefs(null); forgetWorkerRoomNames(); return; }
+    void loadAccountNotify().catch(() => undefined);
+  }, [account?.id]);
   // Unread elsewhere in the tab's title: "(3) M5cet".
   const unreadElsewhere = hubRooms.reduce((n, r) => n + r.unread, 0);
   useEffect(() => {
@@ -2565,14 +2574,11 @@ function ChatApp() {
         "Notification" in window &&
         Notification.permission === "granted"
       ) {
-        try {
-          new Notification(`M5cet · ${plaintext.senderName}`, {
-            body: plaintext.flags?.sealed ? "🔒" : plaintext.text || "(attachment)",
-            tag: "m5cet",
-          });
-        } catch {
-          // ignore
-        }
+        // 6.7: by the template and the user's choice; the page decrypted it, so it may show the text.
+        showLocalNotification(
+          { kind: "message", room: roomRef.current || undefined, sender: plaintext.senderName, text: plaintext.flags?.sealed ? "🔒" : plaintext.text || "📎", tag: "m5cet" },
+          { lang: lang === "cs" || lang === "de" ? lang : "en" },
+        );
       }
     };
   }
@@ -2924,6 +2930,8 @@ function ChatApp() {
         foreground,
       }));
       if (onHomeServer()) socket.send(JSON.stringify({ type: "command-poll", deviceId: prefs.deviceId }));
+      // 6.7: the service worker may name this room in a push (memory only, never sent anywhere).
+      if (onHomeServer()) tellWorkerRoomName(keyRef.current?.roomId, nextRoom);
       startHeartbeat();
       setConnStatus({
         state: "open",
@@ -3504,7 +3512,7 @@ function ChatApp() {
     // Away members are not on a data channel: the server takes the ciphertext
     // for them and answers with "stored" / "delivered".
     const away = opts.away ?? [];
-    const relayed = relayToAway(payload.id, envelope, away);
+    const relayed = relayToAway(payload.id, envelope, away, send?.sealed ? undefined : text);
     // Nobody could take it: in light mode it waits in the outbox and the
     // bubble shows it as sending, rather than the message being refused.
     const queued = sent === 0 && relayed === 0
@@ -4207,6 +4215,9 @@ function ChatApp() {
     const result = await subscribeToPush(pushVapidKey, prefs.deviceId);
     if (result.ok) {
       setPrefs({ notificationsEnabled: true });
+      // 6.7: signed in already — the account gets this browser now, not at the next sign-in.
+      prefsRef.current = { ...prefsRef.current, notificationsEnabled: true };
+      if (accountRef.current) await linkPushForAccount();
       systemMessage(t(lang, "app.notify.push"));
     } else {
       setNotice(result.reason || t(lang, "app.notify.pushFailed"));
@@ -4215,6 +4226,14 @@ function ChatApp() {
 
   function disableNotifications() {
     setPrefs({ notificationsEnabled: false });
+    prefsRef.current = { ...prefsRef.current, notificationsEnabled: false };
+    // 6.7: and the server stops waking this browser (it kept the link until the subscription died).
+    if (accountRef.current && "serviceWorker" in navigator) {
+      void navigator.serviceWorker.getRegistration()
+        .then((reg) => reg?.pushManager.getSubscription())
+        .then((sub) => (sub ? unlinkPushSubscription(sub.endpoint) : false))
+        .catch(() => false);
+    }
     systemMessage(t(lang, "app.notify.off"));
   }
 

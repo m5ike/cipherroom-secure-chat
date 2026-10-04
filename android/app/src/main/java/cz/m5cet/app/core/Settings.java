@@ -72,6 +72,8 @@ public final class Settings {
         DEFAULTS.put("nfc.reader", "internal");          // internal | usb | bluetooth (the chosen reader)
         DEFAULTS.put("nfc.keyDictionary", "");           // the user's MIFARE key list (newline/space-separated 12-hex keys); NOT recovery
         DEFAULTS.put("nfc.saveKeys", false);             // keep the key dictionary across sessions (else only in the open workbench)
+        // 6.7 notify (push/NotifyPrefs: kinds, privacy, channel order, quiet hours, away-capable)
+        cz.m5cet.app.push.NotifyPrefs.defaults(DEFAULTS);
         // Security (the SYS tier is readable while the app is locked, so the PIN pad can read these)
         DEFAULTS.put("security.shufflePin", false);      // the PIN keys are not in order and reshuffle after every tap
         // 6.2 fixes (lock, enrolment, passkeys)

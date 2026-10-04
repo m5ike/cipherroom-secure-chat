@@ -12,11 +12,21 @@ type WebPushModule = {
   sendNotification: (
     sub: { endpoint: string; keys?: { p256dh?: string; auth?: string } },
     payload: string,
+    options?: WebPushOptions,
   ) => Promise<unknown>;
 };
 
+/** What web-push takes besides the payload (RFC 8030: TTL, Urgency, Topic). */
+export type WebPushOptions = { TTL?: number; urgency?: "very-low" | "low" | "normal" | "high"; topic?: string; timeout?: number };
+
 let webpush: WebPushModule | null = null;
 let initialized = false;
+
+/** Tests: replace the web-push module (null: load the real one again). */
+export function setWebPushModule(mod: WebPushModule | null): void {
+  webpush = mod;
+  initialized = mod !== null;
+}
 
 async function loadWebPush(): Promise<WebPushModule | null> {
   if (initialized) return webpush;
@@ -65,10 +75,16 @@ export function isWebPushReady(): boolean {
   return Boolean(process.env.VAPID_PUBLIC_KEY?.trim() && process.env.VAPID_PRIVATE_KEY?.trim());
 }
 
+/** The outcome of one push. `status` is the push service's HTTP answer when
+ *  it gave one; `gone` means the subscription is dead for good (404 / 410,
+ *  RFC 8030 §7.3) and should be forgotten. */
+export type WebPushResult = { ok: boolean; error?: string; status?: number; gone?: boolean };
+
 export async function sendWebPush(
   sub: StoredSubscription,
-  payload: { title?: string; body?: string; tag?: string; url?: string; requireInteraction?: boolean; kind?: string },
-): Promise<{ ok: boolean; error?: string }> {
+  payload: Record<string, unknown> & { title?: string; body?: string; tag?: string; url?: string; requireInteraction?: boolean; kind?: string },
+  options?: WebPushOptions,
+): Promise<WebPushResult> {
   if (!isWebPushReady()) return { ok: false, error: "VAPID keys not configured" };
   const wp = await loadWebPush();
   if (!wp) return { ok: false, error: "web-push module unavailable" };
@@ -80,9 +96,16 @@ export async function sendWebPush(
     await wp.sendNotification(
       { endpoint: sub.endpoint, keys: { p256dh: sub.keys.p256dh, auth: sub.keys.auth } },
       JSON.stringify(payload),
+      ...(options ? [options] : []),
     );
     return { ok: true };
   } catch (err) {
-    return { ok: false, error: (err as Error).message || String(err) };
+    // web-push's WebPushError says only "Received unexpected response code";
+    // the status is on the error object (6.7: it used to be looked for in the
+    // message, which never matched — dead subscriptions were never pruned).
+    const status = Number((err as { statusCode?: unknown }).statusCode);
+    const code = Number.isFinite(status) && status > 0 ? status : undefined;
+    const message = (err as Error).message || String(err);
+    return { ok: false, error: code ? `${code}: ${message}` : message, ...(code ? { status: code } : {}), gone: code === 404 || code === 410 };
   }
 }

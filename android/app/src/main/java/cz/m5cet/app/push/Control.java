@@ -81,6 +81,12 @@ public final class Control {
                     ack(id, true, new JSONObject().put("shown", true), null);
                     break;
                 }
+                // 6.7: a notification by the operator's template (server/notify), drawn with what only the app knows.
+                case "notify": {
+                    app.notify.templated(payload, false);
+                    ack(id, true, new JSONObject().put("shown", true), null);
+                    break;
+                }
                 case "update":
                 case "config":
                     ack(id, true, new JSONObject().put("checking", true), null);
