@@ -108,6 +108,13 @@ export type PlaceCallInput = {
   /** Echoed back in every event (Telnyx client_state, base64 by the adapter). */
   clientState?: string;
   machineDetection?: boolean;
+  /**
+   * 6.9: carried over the operator's SIP trunk (an outbound rule's "sip" service): the
+   * provider dials sip:<to>@<trunk host> (Twilio <Dial><Sip>, Telnyx dial to a SIP URI,
+   * Vonage connect sip endpoint) with this caller ID. Credentials come from sip.ts and are
+   * never logged.
+   */
+  via?: { kind: "sip"; trunk: { id: string; host: string; username?: string; password?: string; transport?: "udp" | "tcp" | "tls" }; callerName?: string; presentation?: "allowed" | "restricted" };
 };
 
 export type PlaceCallResult = { id: string; provider: ProviderId; status: CallStatus; raw: unknown };
@@ -117,7 +124,9 @@ export type NormalizedCallEvent = {
   /** The provider's call id (Twilio CallSid, Telnyx call_control_id, Vonage uuid). */
   callId: string;
   status: CallStatus | null;
-  kind: "status" | "answer" | "dtmf" | "gather" | "speak-ended" | "playback-ended" | "stream" | "machine" | "other";
+  kind: "status" | "answer" | "dtmf" | "gather" | "speak-ended" | "playback-ended" | "stream" | "machine" | "other"
+    /** 6.9 */
+    | "speech" | "recording" | "dial";
   from?: string;
   to?: string;
   direction?: "inbound" | "outbound";
@@ -130,6 +139,16 @@ export type NormalizedCallEvent = {
   clientState?: string;
   /** The provider's event id (dedupe). */
   eventId?: string;
+  /** 6.9: a speech gather's result (Twilio SpeechResult, Vonage speech.results[0], Telnyx transcription). */
+  speech?: string;
+  confidence?: number;
+  /** 6.9: a finished recording (a URL the provider serves; fetch it with the provider's auth). */
+  recordingUrl?: string;
+  recordingSec?: number;
+  /** 6.9: how a dial / transfer ended (Twilio DialCallStatus, Vonage connect status, Telnyx bridge / transfer outcome). */
+  dialStatus?: "answered" | "busy" | "no-answer" | "failed" | "canceled";
+  /** 6.9: the SIP URI dialled (inbound over a SIP domain / trunk), when the provider tells it. */
+  sipUri?: string;
   raw: unknown;
 };
 
