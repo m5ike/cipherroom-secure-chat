@@ -432,3 +432,98 @@
 .nfcwb__meter > span { display: block; height: 100%; background: hsl(var(--primary)); transition: width 0.15s ease; }
 .nfcwb__meter > span.nfcwb__meter--over { background: hsl(var(--destructive)); }
 .nfcwb__over { color: hsl(var(--destructive)); }
+
+/* ---- 6.5: EMV card + MRTD (e-ID / e-passport) read results ---- */
+
+/* e-ID MRZ / CAN input form */
+.nfcwb__eidform {
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.625rem;
+  padding: 0.625rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  background: hsl(var(--muted) / 0.35);
+}
+.nfcwb__eidform-foot { justify-content: space-between; }
+
+/* EMV result */
+.nfcwb__emv {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+.nfcwb__emv-head {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  padding: 0.625rem 0.75rem;
+  border-radius: 0.625rem;
+  border: 1px solid hsl(var(--card-border));
+  background: linear-gradient(135deg, hsl(var(--primary) / 0.14), hsl(var(--primary) / 0.04));
+}
+.nfcwb__emv-badge { flex: none; color: hsl(var(--primary)); }
+.nfcwb__emv-headtext { display: flex; flex-direction: column; gap: 0.125rem; min-width: 0; }
+.nfcwb__emv-scheme { font-weight: 700; font-size: 0.9375rem; letter-spacing: -0.01em; }
+.nfcwb__emv-pan { font-size: 0.875rem; letter-spacing: 0.04em; word-break: break-all; }
+
+.nfcwb__emv-app {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  padding-top: 0.375rem;
+  border-top: 1px dashed hsl(var(--border));
+}
+.nfcwb__emv-app:first-of-type { border-top: none; padding-top: 0; }
+.nfcwb__emv-panrow { display: flex; align-items: center; gap: 0.25rem; flex-wrap: wrap; }
+
+/* collapsible full tag table */
+.nfcwb__tagdetails {
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.75rem;
+}
+.nfcwb__tagdetails > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 0.25rem 0;
+  color: hsl(var(--muted-foreground));
+  user-select: none;
+}
+.nfcwb__tagscroll { overflow-x: auto; margin-top: 0.25rem; }
+.nfcwb__tagtable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.6875rem;
+}
+.nfcwb__tagtable th,
+.nfcwb__tagtable td {
+  text-align: left;
+  padding: 0.25rem 0.4375rem;
+  border-bottom: 1px solid hsl(var(--border));
+  vertical-align: top;
+  word-break: break-word;
+}
+.nfcwb__tagtable th { color: hsl(var(--muted-foreground)); font-weight: 600; }
+.nfcwb__tagtable td.nfcwb__mono { white-space: nowrap; }
+
+/* MRTD result */
+.nfcwb__mrtd { display: flex; flex-direction: column; gap: 0.625rem; }
+.nfcwb__mrtd-main {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.nfcwb__mrtd-photo {
+  width: auto;
+  max-width: 7.5rem;
+  max-height: 10rem;
+  border-radius: 0.5rem;
+  border: 1px solid hsl(var(--card-border));
+  object-fit: cover;
+  background: hsl(var(--muted));
+}
+.nfcwb__mrtd-kv { flex: 1; min-width: 12rem; }
+.nfcwb__mrtd-dgs { gap: 0.25rem; align-items: center; }

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, fireEvent, cleanup, screen } from "@testing-library/react";
-import { NfcWorkbench } from "../client/src/components/NfcWorkbench";
+import { NfcWorkbench, EmvResultView, MrtdResultView } from "../client/src/components/NfcWorkbench";
+import type { EmvData, MrtdData } from "../client/src/lib/nfc/command";
 
 const base = { appVersion: "2.7.0", onConnect: vi.fn(), onSystem: vi.fn() } as const;
 
@@ -54,5 +55,117 @@ describe("NfcWorkbench (6.3)", () => {
     expect(screen.getAllByText("Encrypted message").length).toBeGreaterThan(1);
     // The capacity gauge shows a byte size.
     expect(screen.getByText(/Size:/)).toBeTruthy();
+  });
+
+  it("shows the Card data tab with the read-only stance and the EMV / e-ID read buttons", () => {
+    render(<NfcWorkbench lang="en" session={null} {...base} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Card data" }));
+    // The read-only stance is spelled out.
+    expect(screen.getByText(/No PIN, no cryptogram, no cloning/i)).toBeTruthy();
+    // Both reads are offered (disabled until a reader with an APDU channel is connected).
+    const emv = screen.getByRole("button", { name: /Read card data/i }) as HTMLButtonElement;
+    const eid = screen.getByRole("button", { name: /Read document \(BAC\)/i }) as HTMLButtonElement;
+    expect(emv).toBeTruthy();
+    expect(eid).toBeTruthy();
+    expect(emv.disabled).toBe(true);
+    expect(eid.disabled).toBe(true);
+    // Nothing read yet.
+    expect(screen.getByText(/No card read yet/i)).toBeTruthy();
+  });
+});
+
+/* 6.5 — the EMV / MRTD result widgets render from fixed data. */
+
+const EMV: EmvData = {
+  scheme: "Visa",
+  aids: ["A0000000031010"],
+  tree: "6F ...",
+  apps: [
+    {
+      aid: "A0000000031010",
+      label: "VISA CREDIT",
+      scheme: "Visa",
+      pan: "4111111111111111",
+      panMasked: "411111••••••1111",
+      expiry: "2027-11",
+      cardholder: "JOHN DOE",
+      issuerCountry: "Czechia",
+      effective: "2023-11",
+      panSequence: "01",
+      atc: 42,
+      pinTryCounter: 3,
+      tags: [
+        { tag: "5A", name: "Application PAN", value: "4111111111111111", hex: "4111111111111111" },
+        { tag: "5F24", name: "Application Expiration Date", value: "2027-11", hex: "271130" },
+      ],
+    },
+  ],
+};
+
+const MRTD: MrtdData = {
+  present: true,
+  access: "bac",
+  dataGroups: ["DG1", "DG2"],
+  mrzInfo: {
+    documentCode: "P",
+    documentNumber: "L898902C3",
+    issuer: "UTO",
+    nationality: "UTO",
+    surname: "ERIKSSON",
+    givenNames: "ANNA MARIA",
+    dateOfBirth: "1974-08-12",
+    sex: "F",
+    dateOfExpiry: "2012-04-15",
+  },
+  // A 1x1 transparent PNG, enough to assert the <img> renders.
+  photo: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=",
+  photoMime: "image/png",
+};
+
+describe("NfcWorkbench EMV result widget (6.5)", () => {
+  beforeEach(() => cleanup());
+
+  it("shows the scheme, masked PAN, holder fields and reveals the full PAN", () => {
+    render(<EmvResultView data={EMV} lang="en" />);
+    expect(screen.getByText("Visa")).toBeTruthy();
+    // Masked PAN is shown by default in the header + holder field.
+    expect(screen.getAllByText("411111••••••1111").length).toBeGreaterThan(0);
+    // Holder fields (not duplicated in the tag table fixture).
+    expect(screen.getByText("JOHN DOE")).toBeTruthy();
+    expect(screen.getByText("Czechia")).toBeTruthy();
+    expect(screen.getAllByText("2027-11").length).toBeGreaterThan(0);
+    // Toggling "show full PAN" reveals the PAN in at least one more place.
+    const before = screen.queryAllByText("4111111111111111").length;
+    fireEvent.click(screen.getByLabelText("Show full PAN"));
+    expect(screen.queryAllByText("4111111111111111").length).toBeGreaterThan(before);
+    // The toggle flips to "hide".
+    expect(screen.getByLabelText("Hide PAN")).toBeTruthy();
+  });
+
+  it("renders the collapsible full tag table", () => {
+    render(<EmvResultView data={EMV} lang="en" />);
+    expect(screen.getByText(/All data elements/)).toBeTruthy();
+    expect(screen.getByText("Application Expiration Date")).toBeTruthy();
+  });
+});
+
+describe("NfcWorkbench MRTD result widget (6.5)", () => {
+  beforeEach(() => cleanup());
+
+  it("shows the MRZ fields, data groups and the face photo", () => {
+    render(<MrtdResultView data={MRTD} lang="en" />);
+    expect(screen.getByText("ANNA MARIA ERIKSSON")).toBeTruthy();
+    expect(screen.getByText("L898902C3")).toBeTruthy();
+    expect(screen.getByText("1974-08-12")).toBeTruthy();
+    expect(screen.getByText("DG1")).toBeTruthy();
+    expect(screen.getByText("DG2")).toBeTruthy();
+    const img = screen.getByAltText("Document photo") as HTMLImageElement;
+    expect(img.src).toContain("data:image/png;base64,");
+  });
+
+  it("warns (not errors) when the chip could not be opened", () => {
+    const none: MrtdData = { present: true, access: "none", message: "Give the MRZ to open the chip with BAC." };
+    render(<MrtdResultView data={none} lang="en" />);
+    expect(screen.getByText(/Give the MRZ to open the chip/i)).toBeTruthy();
   });
 });

@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Usb, Radio, Bluetooth, Smartphone, Plug, PlugZap, ScanLine, KeyRound,
   Download, Upload, Cpu, TerminalSquare, CreditCard, Copy, Trash2, Play, Square, Loader2, Lock, Fingerprint,
-  SquareArrowDown,
+  SquareArrowDown, Eye, EyeOff, IdCard,
 } from "lucide-react";
 import "./nfc-workbench.css";
 import {
@@ -28,6 +28,9 @@ import {
   selectPpse, selectMrtd, runApduScript,
 } from "../lib/nfc/probes";
 import { classicDump, classicWriteBlock, classicRestore, ultralightReadPages, ntagReadCounter, writeUidGen1a, writeUidGen2, buildBlock0, type ClassicDump } from "../lib/nfc/cards/tag-io";
+import { readEmv, emvSummary } from "../lib/nfc/cards/emv";
+import { readMrtd, mrtdSummary, type MrtdOptions } from "../lib/nfc/cards/mrtd";
+import type { EmvData, MrtdData } from "../lib/nfc/command";
 import { createWebExecutor, techForCardType } from "../lib/nfc/web-executor";
 import { registerNfcExecutor } from "../lib/nfc/bridge";
 import { nominalCapacity } from "../lib/nfc/m5cet-card";
@@ -75,7 +78,7 @@ function ReaderIcon({ kind }: { kind: ReaderKind }) {
 
 type LogKind = "tx" | "rx" | "info" | "err";
 type LogEntry = { id: number; kind: LogKind; text: string };
-type Tab = "card" | "ndef" | "mifare" | "m5" | "conn" | "apdu" | "emulate";
+type Tab = "card" | "ndef" | "mifare" | "m5" | "conn" | "apdu" | "emulate" | "result";
 
 function loadKeys(): string[] {
   try { const raw = localStorage.getItem(KEYS_STORE); const v = raw ? JSON.parse(raw) : []; return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []; } catch { return []; }
@@ -386,6 +389,54 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
 
   const doApdu = useCallback(() => runApduText(apduText), [runApduText, apduText]);
 
+  /* --------------------- EMV + MRTD reads (6.5, read-only) ----------- */
+  // Both drive the tested reader core (lib/nfc/cards/emv + mrtd) and show the
+  // holder/public data a terminal reads — no PIN, no cryptogram, no cloning.
+  const [emvResult, setEmvResult] = useState<EmvData | null>(null);
+  const [mrtdResult, setMrtdResult] = useState<MrtdData | null>(null);
+  // MRZ / CAN input for the MRTD read (the document's own access control).
+  const [eidOpen, setEidOpen] = useState(false);
+  const [eidDoc, setEidDoc] = useState("");
+  const [eidDob, setEidDob] = useState("");
+  const [eidExp, setEidExp] = useState("");
+  const [eidMrz, setEidMrz] = useState("");
+  const [eidCan, setEidCan] = useState("");
+  const [eidPhoto, setEidPhoto] = useState(true);
+
+  const doEmvRead = useCallback(() => runTask("emv-read", async () => {
+    const tr = transportRef.current;
+    if (!tr) { onSystem(`NFC: ${t("nfc.connectFirst")}`); return; }
+    if (!tr.capabilities.apdu) { addLog("err", t("nfc.apdu.unsupported")); return; }
+    const d = await readEmv(tr);
+    setEmvResult(d); setMrtdResult(null); setTab("result");
+    const s = emvSummary(d);
+    addLog("rx", s); onSystem(`NFC: ${s}`);
+  }), [runTask, addLog, onSystem, t]);
+
+  // Opens the MRZ/CAN form (optionally pre-setting readPhoto from a template).
+  const openEidForm = useCallback((args?: Record<string, unknown>) => {
+    if (args && typeof args.readPhoto === "boolean") setEidPhoto(args.readPhoto);
+    setEidOpen(true); setTab("result");
+  }, []);
+
+  const doEidRead = useCallback(() => runTask("eid-read", async () => {
+    const tr = transportRef.current;
+    if (!tr) { onSystem(`NFC: ${t("nfc.connectFirst")}`); return; }
+    if (!tr.capabilities.apdu) { addLog("err", t("nfc.apdu.unsupported")); return; }
+    const mrz = eidMrz.trim();
+    const opts: MrtdOptions = { readPhoto: eidPhoto };
+    if (mrz) opts.mrz = mrz;
+    else {
+      if (!eidDoc.trim() || !eidDob.trim() || !eidExp.trim()) { addLog("err", t("nfc.eid.needMrz")); onSystem(`NFC: ${t("nfc.eid.needMrz")}`); return; }
+      opts.key = { documentNumber: eidDoc.trim(), dateOfBirth: eidDob.trim(), dateOfExpiry: eidExp.trim() };
+    }
+    if (eidCan.trim()) opts.can = eidCan.trim();
+    const d = await readMrtd(tr, opts);
+    setMrtdResult(d); setEmvResult(null); setTab("result");
+    const s = mrtdSummary(d);
+    addLog(d.access === "none" ? "info" : "rx", s); onSystem(`NFC: ${s}`);
+  }), [runTask, eidMrz, eidPhoto, eidDoc, eidDob, eidExp, eidCan, addLog, onSystem, t]);
+
   /* --------------------- application templates (define) --------------- */
   // Operator-defined APDU application templates: m5mobile.define.apduTemplates,
   // an array of { label?/name?, apdu?/apduHex? } served to the web app. The
@@ -398,14 +449,19 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
   }, [define.values]);
 
   const applyTemplate = useCallback((tpl: Record<string, unknown>) => {
+    setTplOpen(false);
+    // 6.5 op templates drive a full dynamic read; apdu templates keep the old
+    // behaviour (load into the console and run).
+    const op = typeof tpl.op === "string" ? tpl.op : "";
+    if (op === "emv-read") { doEmvRead(); return; }
+    if (op === "eid-read") { openEidForm(tpl.args && typeof tpl.args === "object" ? tpl.args as Record<string, unknown> : undefined); return; }
     const raw = String(tpl.apdu ?? tpl.apduHex ?? tpl.value ?? "");
     const clean = raw.split(/\r?\n/).map((l) => l.trim().replace(/[^0-9A-Fa-f]/g, "")).filter(Boolean).join("\n");
     if (clean.replace(/\s/g, "").length < 8) { onSystem(`NFC: ${t("nfc.tpl.bad")}`); return; }
     setApduText(clean);
-    setTplOpen(false);
     setTab("apdu");
     void runApduText(clean);
-  }, [runApduText, onSystem, t]);
+  }, [runApduText, onSystem, t, doEmvRead, openEidForm]);
 
   /* ---------------------------- emulation ---------------------------- */
 
@@ -442,6 +498,7 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
       case "ul-read": case "ul-write": case "ntag-read": case "ntag-write": case "ntag-counter": case "ul-password": case "ntag-password": return caps.raw;
       case "write-uid": return caps.raw || caps.mifareAuth;
       case "raw-apdu": case "select-aid": case "desfire-apps": case "emv-public": case "eid-public": return caps.apdu;
+      case "emv-read": case "eid-read": return caps.apdu;
       case "app-template": return caps.apdu;
       case "m5-read": case "m5-write": case "m5-erase": case "conn-read": return caps.write || caps.raw || caps.apdu;
       case "m5-emulate": case "conn-emulate": return caps.emulate;
@@ -461,6 +518,8 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
       case "ntag-counter": doCounter(); break;
       case "emv-public": runProbe("select-ppse"); break;
       case "eid-public": runProbe("select-mrtd"); break;
+      case "emv-read": doEmvRead(); break;
+      case "eid-read": openEidForm(); break;
       case "desfire-apps": runProbe("get-version"); break;
       case "raw-apdu": case "select-aid": setTab("apdu"); setTplOpen(false); break;
       case "app-template": setTplOpen((v) => !v); break;
@@ -469,7 +528,7 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
       case "m5-emulate": case "conn-emulate": setTab("emulate"); break;
       default: onSystem(`NFC: ${op.label} — ${t("nfc.ops.notOnReader")}`);
     }
-  }, [toggleScan, doReadOnce, doReadNdef, doDump, doUlRead, doCounter, runProbe, onSystem, t]);
+  }, [toggleScan, doReadOnce, doReadNdef, doDump, doUlRead, doCounter, runProbe, doEmvRead, openEidForm, onSystem, t]);
 
   const capacityBytes = useMemo(() => nominalCapacity(tech) ?? nominalCapacity("ndef"), [tech]);
 
@@ -510,9 +569,9 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
 
       {/* tabs */}
       <div className="nfcwb__tabs" role="tablist">
-        {(["card", "ndef", "mifare", "m5", "conn", "apdu", "emulate"] as Tab[]).map((id) => (
+        {(["card", "result", "ndef", "mifare", "m5", "conn", "apdu", "emulate"] as Tab[]).map((id) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} className="nfcwb__tab" onClick={() => setTab(id)}>
-            {id === "card" ? t("nfc.card") : id === "ndef" ? t("nfc.ndef") : id === "mifare" ? "Mifare" : id === "m5" ? t("nfc.m5") : id === "conn" ? t("nfc.conn") : id === "apdu" ? t("nfc.apdu") : t("nfc.emulate")}
+            {id === "card" ? t("nfc.card") : id === "result" ? t("nfc.result") : id === "ndef" ? t("nfc.ndef") : id === "mifare" ? "Mifare" : id === "m5" ? t("nfc.m5") : id === "conn" ? t("nfc.conn") : id === "apdu" ? t("nfc.apdu") : t("nfc.emulate")}
           </button>
         ))}
       </div>
@@ -722,6 +781,53 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
         </div>
       ) : null}
 
+      {/* EMV / e-ID results (6.5) */}
+      {tab === "result" ? (
+        <div className="nfcwb__section">
+          <div className="nfcwb__section-title"><span><CreditCard width={14} height={14} style={{ verticalAlign: "-2px", marginRight: 4 }} />{t("nfc.result")}</span></div>
+          <div className="nfcwb__banner nfcwb__banner--warn">{t("nfc.read.stance")}</div>
+          <div className="nfcwb__row">
+            <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={doEmvRead} disabled={!connected || !!busy || !caps?.apdu}>{busy === "emv-read" ? busyIcon : <CreditCard width={14} height={14} />} {t("nfc.op.emv-read")}</button>
+            <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={() => openEidForm()} disabled={!connected || !!busy || !caps?.apdu}>{busy === "eid-read" ? busyIcon : <IdCard width={14} height={14} />} {t("nfc.op.eid-read")}</button>
+          </div>
+          {!caps?.apdu ? <div className="nfcwb__banner nfcwb__banner--warn">{t("nfc.apdu.unsupported")}</div> : null}
+
+          {eidOpen ? (
+            <div className="nfcwb__eidform">
+              <div className="nfcwb__section-title"><span><Fingerprint width={13} height={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />{t("nfc.eid.formTitle")}</span></div>
+              <p className="nfcwb__hint">{t("nfc.eid.mrzHint")}</p>
+              <div className="nfcwb__grid2">
+                <label className="nfcwb__label">{t("nfc.eid.docNumber")}
+                  <input className="nfcwb__input nfcwb__mono" value={eidDoc} onChange={(e) => setEidDoc(e.target.value.toUpperCase())} placeholder="L898902C3" autoComplete="off" />
+                </label>
+                <label className="nfcwb__label">{t("nfc.eid.dob")}
+                  <input className="nfcwb__input nfcwb__mono" value={eidDob} inputMode="numeric" onChange={(e) => setEidDob(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder={t("nfc.eid.yymmdd")} />
+                </label>
+              </div>
+              <div className="nfcwb__grid2">
+                <label className="nfcwb__label">{t("nfc.eid.expiry")}
+                  <input className="nfcwb__input nfcwb__mono" value={eidExp} inputMode="numeric" onChange={(e) => setEidExp(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder={t("nfc.eid.yymmdd")} />
+                </label>
+                <label className="nfcwb__label">{t("nfc.eid.can")}
+                  <input className="nfcwb__input nfcwb__mono" value={eidCan} inputMode="numeric" onChange={(e) => setEidCan(e.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="123456" />
+                </label>
+              </div>
+              <label className="nfcwb__label">{t("nfc.eid.mrz")}
+                <textarea className="nfcwb__textarea" value={eidMrz} onChange={(e) => setEidMrz(e.target.value)} spellCheck={false} placeholder={"P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<\nL898902C36UTO7408122F1204159ZE184226B<<<<<10"} />
+              </label>
+              <div className="nfcwb__row nfcwb__eidform-foot">
+                <label className="nfcwb__inline"><input type="checkbox" checked={eidPhoto} onChange={(e) => setEidPhoto(e.target.checked)} /> {t("nfc.eid.photo")}</label>
+                <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={doEidRead} disabled={!connected || !!busy || !caps?.apdu}>{busy === "eid-read" ? busyIcon : <ScanLine width={14} height={14} />} {t("nfc.eid.read")}</button>
+              </div>
+            </div>
+          ) : null}
+
+          {emvResult ? <EmvResultView data={emvResult} lang={lang} /> : null}
+          {mrtdResult ? <MrtdResultView data={mrtdResult} lang={lang} /> : null}
+          {!emvResult && !mrtdResult && !eidOpen ? <p className="nfcwb__hint">{t("nfc.result.empty")}</p> : null}
+        </div>
+      ) : null}
+
       {/* LOG */}
       <div className="nfcwb__section">
         <div className="nfcwb__section-title">
@@ -735,6 +841,117 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
           {log.length === 0 ? <span className="nfcwb__log-info">—</span> : log.map((l) => <div key={l.id} className={`nfcwb__log-${l.kind}`}>{l.text}</div>)}
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ 6.5 */
+// Pure presentational widgets for the EMV / MRTD reads. Kept exported so they
+// can be rendered from a fixed EmvData / MrtdData in a test.
+
+/** EMV card: header + holder fields (+ show-full-PAN toggle) + full tag table. */
+export function EmvResultView({ data, lang }: { data: EmvData; lang: Lang }): React.JSX.Element {
+  const tr = (k: string) => translate(lang, k);
+  const [showPan, setShowPan] = useState(false);
+  const top = data.apps[0];
+  const copyPan = (pan?: string) => { if (pan) void navigator.clipboard?.writeText(pan); };
+  return (
+    <div className="nfcwb__emv">
+      <div className="nfcwb__emv-head">
+        <CreditCard className="nfcwb__emv-badge" width={22} height={22} />
+        <div className="nfcwb__emv-headtext">
+          <div className="nfcwb__emv-scheme">{top?.scheme || top?.label || tr("nfc.emv.title")}</div>
+          <div className="nfcwb__emv-pan nfcwb__mono">
+            {(showPan ? top?.pan : top?.panMasked) || top?.pan || "—"}
+            {top?.expiry ? <span className="nfcwb__hint">  ·  {top.expiry}</span> : null}
+          </div>
+        </div>
+      </div>
+
+      {data.apps.length === 0 ? (
+        <p className="nfcwb__hint">{tr("nfc.emv.none")}{data.aids.length ? ` ${tr("nfc.emv.aids")}: ${data.aids.join(", ")}` : ""}</p>
+      ) : data.apps.map((app, i) => (
+        <div key={app.aid + i} className="nfcwb__emv-app">
+          {data.apps.length > 1 ? (
+            <div className="nfcwb__section-title"><span>{tr("nfc.emv.app").replace("{n}", String(i + 1))} — {app.scheme || app.label || app.aid}</span></div>
+          ) : null}
+          <dl className="nfcwb__kv">
+            {app.label ? <><dt>{tr("nfc.emv.label")}</dt><dd>{app.label}</dd></> : null}
+            {app.pan ? (
+              <>
+                <dt>{tr("nfc.emv.pan")}</dt>
+                <dd className="nfcwb__emv-panrow">
+                  <span className="nfcwb__mono">{showPan ? app.pan : (app.panMasked || app.pan)}</span>
+                  <button type="button" className="nfcwb__btn nfcwb__btn--icon" title={showPan ? tr("nfc.emv.hidePan") : tr("nfc.emv.showPan")} aria-label={showPan ? tr("nfc.emv.hidePan") : tr("nfc.emv.showPan")} onClick={() => setShowPan((v) => !v)}>{showPan ? <EyeOff width={12} height={12} /> : <Eye width={12} height={12} />}</button>
+                  <button type="button" className="nfcwb__btn nfcwb__btn--icon" title={tr("nfc.emv.copyPan")} aria-label={tr("nfc.emv.copyPan")} onClick={() => copyPan(app.pan)}><Copy width={12} height={12} /></button>
+                </dd>
+              </>
+            ) : null}
+            {app.expiry ? <><dt>{tr("nfc.emv.expiry")}</dt><dd>{app.expiry}</dd></> : null}
+            {app.cardholder ? <><dt>{tr("nfc.emv.cardholder")}</dt><dd>{app.cardholder}</dd></> : null}
+            {app.issuerCountry ? <><dt>{tr("nfc.emv.issuerCountry")}</dt><dd>{app.issuerCountry}</dd></> : null}
+            {app.effective ? <><dt>{tr("nfc.emv.effective")}</dt><dd>{app.effective}</dd></> : null}
+            {app.panSequence ? <><dt>{tr("nfc.emv.panSequence")}</dt><dd>{app.panSequence}</dd></> : null}
+            {app.atc !== undefined ? <><dt>{tr("nfc.emv.atc")}</dt><dd>{app.atc}</dd></> : null}
+            {app.pinTryCounter !== undefined ? <><dt>{tr("nfc.emv.pinTryCounter")}</dt><dd>{app.pinTryCounter}</dd></> : null}
+            <dt>{tr("nfc.emv.aid")}</dt><dd className="nfcwb__mono">{app.aid}</dd>
+          </dl>
+          {app.tags.length ? (
+            <details className="nfcwb__tagdetails">
+              <summary>{tr("nfc.emv.tags")} ({app.tags.length})</summary>
+              <div className="nfcwb__tagscroll">
+                <table className="nfcwb__tagtable">
+                  <thead><tr><th>{tr("nfc.emv.tag")}</th><th>{tr("nfc.emv.name")}</th><th>{tr("nfc.emv.value")}</th><th>{tr("nfc.emv.hex")}</th></tr></thead>
+                  <tbody>
+                    {app.tags.map((tg, j) => (
+                      <tr key={tg.tag + j}><td className="nfcwb__mono">{tg.tag}</td><td>{tg.name}</td><td>{tg.value}</td><td className="nfcwb__mono">{tg.hex}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </details>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** MRTD: the MRZ fields, the data-group list, and the face when present. */
+export function MrtdResultView({ data, lang }: { data: MrtdData; lang: Lang }): React.JSX.Element {
+  const tr = (k: string) => translate(lang, k);
+  const m = data.mrzInfo;
+  const name = m ? [m.givenNames, m.surname].filter(Boolean).join(" ") : "";
+  return (
+    <div className="nfcwb__mrtd">
+      {data.access === "none" ? (
+        <div className="nfcwb__banner nfcwb__banner--warn">{data.message || tr("nfc.eid.wrongKey")}</div>
+      ) : null}
+
+      {m ? (
+        <div className="nfcwb__mrtd-main">
+          {data.photo ? (
+            <img className="nfcwb__mrtd-photo" src={`data:${data.photoMime || "image/jpeg"};base64,${data.photo}`} alt={tr("nfc.eid.photoAlt")} />
+          ) : null}
+          <dl className="nfcwb__kv nfcwb__mrtd-kv">
+            {name ? <><dt>{tr("nfc.eid.name")}</dt><dd>{name}</dd></> : null}
+            {m.documentNumber ? <><dt>{tr("nfc.eid.docNumber")}</dt><dd className="nfcwb__mono">{m.documentNumber}</dd></> : null}
+            {m.nationality ? <><dt>{tr("nfc.eid.nationality")}</dt><dd>{m.nationality}</dd></> : null}
+            {m.dateOfBirth ? <><dt>{tr("nfc.eid.dob")}</dt><dd>{m.dateOfBirth}</dd></> : null}
+            {m.sex ? <><dt>{tr("nfc.eid.sex")}</dt><dd>{m.sex}</dd></> : null}
+            {m.dateOfExpiry ? <><dt>{tr("nfc.eid.expiry")}</dt><dd>{m.dateOfExpiry}</dd></> : null}
+            {m.issuer ? <><dt>{tr("nfc.eid.issuer")}</dt><dd>{m.issuer}</dd></> : null}
+            {m.documentCode ? <><dt>{tr("nfc.eid.docCode")}</dt><dd>{m.documentCode}</dd></> : null}
+          </dl>
+        </div>
+      ) : (data.access !== "none" && data.message ? <p className="nfcwb__hint">{data.message}</p> : null)}
+
+      {data.dataGroups && data.dataGroups.length ? (
+        <div className="nfcwb__row nfcwb__mrtd-dgs">
+          <span className="nfcwb__hint">{tr("nfc.eid.dataGroups")}:</span>
+          {data.dataGroups.map((dg) => <span key={dg} className="nfcwb__techchip nfcwb__techchip--on">{dg}</span>)}
+        </div>
+      ) : null}
     </div>
   );
 }
