@@ -145,7 +145,8 @@ textarea.fn-input { resize: vertical; }
 .m5h-kv th { color: hsl(var(--muted-foreground)); font-weight: 500; width: 36%; padding: 0.15rem 0.6rem 0.15rem 0; }
 .m5h-kv td { padding: 0.15rem 0; }
 .m5h-kv--mono td, .m5h-mono, .m5h-pre { font-family: var(--font-mono); font-size: 0.78rem; }
-.m5h-grid th { border-bottom: 1px solid hsl(var(--border)); font-weight: 600; white-space: nowrap; }
+.m5h-grid th { border-bottom: 1px solid hsl(var(--border)); font-weight: 600; }
+.m5h-grid :is(th, td) { white-space: nowrap; overflow-wrap: normal; }
 .m5h-grid tbody tr:nth-child(even) td { background: hsl(var(--muted) / 0.6); }
 .m5h-scroll { overflow-x: auto; max-width: 100%; }
 .m5h-id { display: flex; gap: 0.8rem; align-items: flex-start; flex-wrap: wrap; }

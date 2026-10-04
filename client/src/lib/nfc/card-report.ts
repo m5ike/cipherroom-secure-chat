@@ -93,6 +93,7 @@ const CS: Partial<Record<Key, string>> = {
   protected: "chráněno (EAC)", absent: "chybí", error: "chyba", readOk: "přečteno", images: "Obrázky", face: "Obličej", portrait: "Portrét", signature: "Podpis", documentImage: "Doklad",
   otherImage: "Obrázek", jp2: "JPEG 2000 — v příloze ke stažení", attachments: "Přílohy", ndef: "Záznamy NDEF", m5records: "Záznamy M5Cet", data: "Data", yes: "ano", no: "ne",
   passport: "Cestovní pas", idCard: "Občanský průkaz", travelDocument: "Cestovní doklad",
+  lds: "Verze LDS", unicode: "Verze Unicode", hashAlgorithm: "Hash", none: "—", aid: "AID",
 };
 const DE: Partial<Record<Key, string>> = {
   card: "Karte", technology: "Technologie", memory: "Speicher", status: "Status", message: "Meldung", application: "Anwendung", label: "Name", scheme: "Netz",
@@ -106,6 +107,9 @@ const DE: Partial<Record<Key, string>> = {
   passiveOk: "alle gelesenen Gruppen stimmen mit EF.SOD überein", passiveBad: "eine Gruppe stimmt NICHT mit EF.SOD überein", passiveNone: "nicht geprüft", files: "Dateien", file: "Datei",
   size: "Größe", protected: "geschützt (EAC)", absent: "fehlt", error: "Fehler", readOk: "gelesen", images: "Bilder", face: "Gesicht", signature: "Unterschrift", attachments: "Anhänge",
   yes: "ja", no: "nein", passport: "Reisepass", idCard: "Personalausweis", travelDocument: "Reisedokument",
+  lds: "LDS-Version", unicode: "Unicode-Version", personsToNotify: "Zu benachrichtigende Personen", optional: "Optionale Angaben (DG13)",
+  signer: "Dokumentensigner", signerIssuer: "Ausgestellt von (CSCA)", validity: "Gültigkeit", protocols: "Protokolle", activeAuthKey: "Schlüssel der aktiven Authentisierung",
+  portrait: "Porträt", documentImage: "Dokument", otherImage: "Bild", jp2: "JPEG 2000 — als Anhang zum Herunterladen", ndef: "NDEF-Datensätze", m5records: "M5Cet-Datensätze", data: "Daten",
 };
 const LANGS: Record<CardReportLang, Partial<Record<Key, string>>> = { en: EN, cs: CS, de: DE };
 
@@ -179,7 +183,7 @@ function buildEmv(L: (k: Key) => string, r: NfcResult, d: EmvData, o: CardReport
   const sections: Section[] = [];
   const cs = cardSection(L, r);
   if (cs) sections.push(cs);
-  sections.push({ id: "aids", title: L("aids"), rows: [[L("aids"), d.aids.join(", ") || L("none")], [L("read"), `${d.deep === false ? L("aflOnly") : L("deep")}${d.apdus ? ` · ${d.apdus} ${L("apdus")}` : ""}`]] });
+  sections.push({ id: "aids", title: L("aids"), rows: [[L("aid"), d.aids.join(", ") || L("none")], [L("read"), `${d.deep === false ? L("aflOnly") : L("deep")}${d.apdus ? ` · ${d.apdus} ${L("apdus")}` : ""}`]] });
 
   const files: CardFile[] = [];
   const histCsv: string[][] = [];
@@ -200,7 +204,7 @@ function buildEmv(L: (k: Key) => string, r: NfcResult, d: EmvData, o: CardReport
     if (a.logSfi !== undefined || log.length) {
       sections.push({
         id: `history${i}`, title: `${L("history")}${n} (${log.length})`, rows: [],
-        ...(log.length ? { table: { columns: [...used.map(([, k]) => L(k)), ...extra], rows: log.map((e) => [...used.map(([k]) => e[k] ?? ""), ...extra.map((k) => e[k] ?? "")]) } } : { note: L("noHistory") }),
+        ...(log.length ? { table: { columns: [...used.map(([, k]) => (k === "atc" ? "ATC" : L(k))), ...extra], rows: log.map((e) => [...used.map(([k]) => e[k] ?? ""), ...extra.map((k) => e[k] ?? "")]) } } : { note: L("noHistory") }),
       });
       for (const e of log) histCsv.push([name, e.date ?? "", e.time ?? "", e.amount ?? "", e.currency ?? "", e.merchant ?? "", e.type ?? "", e.country ?? "", e.atc ?? "", e.cid ?? "", e.raw ?? ""]);
     }
@@ -433,7 +437,7 @@ export const CARD_REPORT_CSS = `body{font:14px/1.45 system-ui,-apple-system,Sego
 .m5h-sec{margin:14px 0}.m5h-sec h4,.m5h-sec summary{font-size:15px;font-weight:650;margin:0 0 6px;cursor:default}
 .m5h-kv,.m5h-grid{border-collapse:collapse;width:100%}.m5h-kv th{text-align:left;font-weight:500;color:#6e6e73;width:34%;vertical-align:top;padding:3px 10px 3px 0}
 .m5h-kv td,.m5h-grid td,.m5h-grid th{padding:3px 8px;vertical-align:top;word-break:break-word}.m5h-grid th{text-align:left;border-bottom:1px solid #d2d2d7}
-.m5h-grid tr:nth-child(even) td{background:#f5f5f7}.m5h-kv--mono td,.m5h-mono,.m5h-pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.m5h-grid tr:nth-child(even) td{background:#f5f5f7}.m5h-grid td,.m5h-grid th{white-space:nowrap;word-break:normal}.m5h-kv--mono td,.m5h-mono,.m5h-pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 .m5h-pre{white-space:pre-wrap;word-break:break-all;background:#f5f5f7;padding:8px;border-radius:6px}.m5h-scroll{overflow-x:auto}
 .m5h-id{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}.m5h-photos{display:flex;gap:12px;flex-wrap:wrap}
 .m5h-photo{margin:0;max-width:180px}.m5h-photo img{max-width:180px;max-height:240px;border-radius:6px;border:1px solid #d2d2d7}
