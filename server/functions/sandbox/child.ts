@@ -1,8 +1,11 @@
 // A sandbox process (dist/sandbox.cjs, 4.15): warms up one interpreter,
 // runs one function, exits.
 //
-//   node --permission --allow-fs-read=<its own files> --disallow-code-generation-from-strings
-//        --max-old-space-size=… sandbox.cjs --lang=js|py --pyodide=<dir> --quickjs=<wasm>
+//   node --permission --allow-fs-read=<this script> --allow-fs-read=<pyodide dir | quickjs wasm>
+//        --disallow-code-generation-from-strings --max-old-space-size=…
+//        sandbox.cjs --lang=js|py --pyodide=<dir> --quickjs=<wasm>
+//
+// (the command line is built by sandboxArgs in pool.ts; 6.7 — audit V1)
 //
 // The runner (pool.ts) starts it with an empty environment and speaks NDJSON
 // over stdin/stdout (protocol.ts). Order matters: the Node escape hatches go

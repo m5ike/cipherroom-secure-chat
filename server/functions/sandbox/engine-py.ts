@@ -43,11 +43,14 @@ export async function loadPython(dir: string, bridge: () => Bridge): Promise<Pyt
     env: { HOME: "/m5", PYTHONHASHSEED: "random" },
   });
   const version = py.version;
-  py.registerJsModule("_m5host", {
+  // The host bridge is the one JavaScript object the Python SDK keeps (its
+  // functions' __globals__ reach it). No prototype: `_h.constructor` is not
+  // Object; its functions' `.constructor` is sealed by harden.ts (6.7, V1).
+  py.registerJsModule("_m5host", Object.assign(Object.create(null) as object, {
     sync: (fn: string, args: string) => bridge().sync(String(fn), String(args)),
     call_async: (fn: string, args: string) => bridge().async(String(fn), String(args)),
     emit: (kind: string, json: string) => bridge().emit(String(kind), String(json)),
-  });
+  }));
   py.runPython(PRELUDE_PY);
   const execute = py.globals.get("_m5_execute");
   py.runPython("_seal()");

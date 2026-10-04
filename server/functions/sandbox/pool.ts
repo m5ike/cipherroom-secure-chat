@@ -98,11 +98,33 @@ type Child = {
   killed: boolean;
 };
 
-function startChild(lang: Lang, paths: SandboxPaths, memoryMb: number): Child {
+/**
+ * The command line of a sandbox process (6.7, audit V1). The first wall is
+ * Node's permission model: the process may read only its own script, the
+ * interpreter it loads (the QuickJS .wasm for JavaScript, the Pyodide folder
+ * for Python) and nothing else; it writes no file and may not start
+ * processes, workers, addons, WASI or the inspector (none of the --allow-*
+ * flags for those is given). Strings never become code: eval, Function and
+ * its async/generator kin throw, so a script that reaches the process's
+ * JavaScript (Python can, through a JsProxy) cannot compile its way to
+ * import(). WebAssembly compilation is not affected by that flag.
+ */
+export function sandboxArgs(lang: Lang, paths: SandboxPaths, memoryMb: number): string[] {
   // A generous ceiling for the V8 heap around the interpreter; the real
   // per-run limit is enforced by the interpreter and by the watchdog below.
   const heapCap = Math.max(256, Math.round(memoryMb * 1.5) + 128);
-  const args = [`--max-old-space-size=${heapCap}`, paths.script, `--lang=${lang}`, `--pyodide=${paths.pyodide}`, `--quickjs=${paths.quickjs}`];
+  const reads = [paths.script, lang === "py" ? paths.pyodide : paths.quickjs];
+  return [
+    "--permission",
+    ...reads.map((p) => `--allow-fs-read=${p}`),
+    "--disallow-code-generation-from-strings",
+    `--max-old-space-size=${heapCap}`,
+    paths.script, `--lang=${lang}`, `--pyodide=${paths.pyodide}`, `--quickjs=${paths.quickjs}`,
+  ];
+}
+
+function startChild(lang: Lang, paths: SandboxPaths, memoryMb: number): Child {
+  const args = sandboxArgs(lang, paths, memoryMb);
   const proc = spawn(process.execPath, args, { stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH ?? "" } });
   const child: Child = { proc, lang, engine: "", buffer: "", onMessage: null, busy: false, killed: false, ready: Promise.resolve() };
   proc.stderr?.setEncoding("utf8");

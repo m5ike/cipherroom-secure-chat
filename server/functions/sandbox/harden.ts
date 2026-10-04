@@ -4,15 +4,19 @@
 // The first walls are outside this file: the interpreter is WebAssembly
 // (QuickJS, Pyodide), the process runs under Node's permission model (reads
 // only its own files, writes nothing, no child processes, workers, addons,
-// WASI or inspector), strings never become code, the environment is empty
-// and, on Linux with bubblewrap, the process has no network namespace at all.
+// WASI or inspector — the flags are set by sandboxArgs in pool.ts, 6.7),
+// strings never become code (--disallow-code-generation-from-strings) and the
+// environment is empty. There is no OS-level jail (bubblewrap/nsjail) yet: the
+// network is closed only by the stubs below.
 //
 // Python code in Pyodide can reach this process's JavaScript (`import js`
-// is blocked, but a determined script finds a way), so this layer assumes
-// it has: the network modules Node's permission model does not cover
-// (net, tls, dgram, http, https, http2, dns) refuse, the ES module views of
-// them are resynchronised, and the process-level escape hatches (signals to
-// other processes, raw bindings, native addons, reports) throw.
+// is blocked, but a determined script finds a way — any JsProxy will do), so
+// this layer assumes it has: the network modules Node's permission model does
+// not cover (net, tls, dgram, http, https, http2, dns) refuse, the ES module
+// views of them are resynchronised, the process-level escape hatches (signals
+// to other processes, raw bindings, native addons, reports) throw, and the
+// code constructors are no longer reachable through `fn.constructor`
+// (sealCodeConstructors, 6.7 — audit V1).
 
 import { createRequire } from "node:module";
 
@@ -137,8 +141,36 @@ export function installWasmMemoryCap(): (maxBytes: number) => void {
   return (maxBytes) => { cap = maxBytes; };
 }
 
+/**
+ * `anyFunction.constructor` is the global Function constructor (and the async
+ * and generator ones for those kinds), which is how a script holding any
+ * JavaScript function — Python gets one through any JsProxy, e.g. the SDK's
+ * host bridge — would compile code and reach import(). V8 already refuses to
+ * compile strings (--disallow-code-generation-from-strings); this takes the
+ * constructors off the prototypes as well, so the path does not exist even if
+ * a future flag change or a development run without the flag let it compile.
+ * `fn.constructor.name` keeps its value for code that only reads the name.
+ */
+export function sealCodeConstructors(): void {
+  const kinds: Array<[string, unknown]> = [
+    ["Function", function () { /* plain */ }],
+    ["AsyncFunction", async function () { /* async */ }],
+    ["GeneratorFunction", function* () { /* generator */ }],
+    ["AsyncGeneratorFunction", async function* () { /* async generator */ }],
+  ];
+  for (const [name, sample] of kinds) {
+    const prototype = Object.getPrototypeOf(sample) as object;
+    const sealed = function sealedConstructor(): never { throw new SandboxDenied(`the ${name} constructor`); };
+    Object.defineProperty(sealed, "name", { value: name });
+    try {
+      Object.defineProperty(prototype, "constructor", { value: sealed, writable: false, configurable: false, enumerable: false });
+    } catch { /* already sealed */ }
+  }
+}
+
 /** Removes the globals the function code must not see. */
 export function scrubGlobals(): void {
+  sealCodeConstructors();
   const g = globalThis as Record<string, unknown>;
   for (const name of SCRUBBED_GLOBALS) {
     try { delete g[name]; } catch { /* non-configurable */ }
