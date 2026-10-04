@@ -40,8 +40,9 @@ import java.util.function.Consumer;
 /**
  * A function's outputs in a message, drawn natively (FnOutputs.tsx): text,
  * Markdown, code, tables, JSON, images, files, notices, sound and video,
- * buttons (side by side), forms. Browser JavaScript and app panels are the
- * web app's; here they are a note.
+ * buttons (side by side), forms — and formatted HTML (6.6) in a locked-down
+ * WebView (FnHtmlView). Browser JavaScript and app panels are the web app's;
+ * here they are a note.
  *
  * Each item stands on its own: one that fails to draw becomes a short note
  * and is reported once (Host.report → Commands.report, whose error entry
@@ -72,6 +73,7 @@ public final class FnView extends LinearLayout {
     private final Theme theme;
     private final Host host;
     private final List<FnMedia> media = new ArrayList<>();
+    private final List<FnHtmlView> pages = new ArrayList<>();
     private String key = "";
     private JSONObject meta;
     private int generation;
@@ -129,10 +131,12 @@ public final class FnView extends LinearLayout {
         }
     }
 
-    /** Stops sound and video (the row went away). */
+    /** Stops sound and video and lets go of HTML pages (the row went away). */
     public void release() {
         for (FnMedia m : media) m.release();
         media.clear();
+        for (FnHtmlView p : pages) p.release();
+        pages.clear();
     }
 
     @Override protected void onDetachedFromWindow() {
@@ -191,6 +195,12 @@ public final class FnView extends LinearLayout {
                 return m;
             }
             case "form": return form(index, o);
+            case "html": {
+                // Outputs come here as they were sent (a peer's too): Outputs.check's limits here, the sanitizing in FnHtmlView.
+                if (!(o.opt("html") instanceof String) || o.optString("html").length() > FnHtml.MAX) return null;
+                String title = o.opt("title") instanceof String ? cut(o.optString("title"), 300) : "";
+                return titled(new JSONObject().put("title", title), html(index, o));
+            }
             case "js":
                 // Hidden browser code is an effect of the web app; nothing to show.
                 if (Boolean.TRUE.equals(o.opt("hidden"))) return null;
@@ -240,7 +250,7 @@ public final class FnView extends LinearLayout {
         return h;
     }
 
-    /** A JSON value or a table with its title above. */
+    /** A JSON value, a table or an HTML page with its title above. */
     private View titled(JSONObject o, View body) {
         String title = o.opt("title") instanceof String ? o.optString("title") : "";
         if (title.isEmpty()) return body;
@@ -366,6 +376,14 @@ public final class FnView extends LinearLayout {
             row.addView(b, lp);
         }
         return row;
+    }
+
+    /** Formatted HTML (6.6): sanitized again and shown in a WebView without scripts or network; a long-pressed picture opens like image(). */
+    private View html(int index, JSONObject o) {
+        FnHtmlView v = new FnHtmlView(getContext(), theme, o.optString("html"), host::openLink,
+            (name, mime, data) -> host.file(name, mime, data, true), (why) -> failed(index, "HtmlError", why));
+        pages.add(v);
+        return v;
     }
 
     /** A notice in the message; the app shows it too while the message is fresh (once). */
