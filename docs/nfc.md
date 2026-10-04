@@ -1,4 +1,4 @@
-# NFC / RFID (6.3)
+# NFC / RFID (6.3 – 6.6)
 
 The NFC workbench — in the web client and, to parity, in the Android app —
 reads, writes and emulates NFC cards, and carries the app's own encrypted
@@ -9,8 +9,18 @@ read a card's public identity and NDEF; read and write sectors, pages or files
 with the keys you supply (a key dictionary, as MIFARE Classic Tool uses); change
 the UID of a UID-changeable ("magic") card you own; emulate your own cards; and
 the M5Cet card in full. It does **not** recover unknown keys (no nested /
-darkside / hardnested) and does not clone payment cards — EMV and e-ID are read
-as **public data only** (no PIN, no signing, no transaction).
+darkside / hardnested) and does not clone payment cards — EMV and e-ID are
+**read-only**: what a payment terminal or a border reader may read from the
+holder's own card or document (no PIN, no signing, no transaction, no write).
+
+6.6 reads them **in depth** — an EMV card's counters, transaction history and
+every file; an e-ID's every data group a reader may open, its pictures and
+security objects — and turns any read into a **card report** (HTML, object,
+rows, JSON, text, CSV). The deep reads are in the web client's reader
+(`client/src/lib/nfc/cards/emv.ts`, `mrtd.ts`); the Android app's native
+reader still reads EMV and e-ID as in 6.5. On the web, EMV and e-ID need a
+reader that exchanges APDUs — USB, Bluetooth or serial; WebNFC reaches NDEF
+only.
 
 ## Readers
 
@@ -54,12 +64,15 @@ Common to every card: **scan**, **read UID**, **read public data**, and a raw
   authenticating with its key (AES / 2K3DES). On the web this needs a reader with
   an auth stack; where it isn't reachable the op is shown disabled.
 - **ISO 15693** — read/write blocks. **FeliCa** — read systems and public
-  services. **EMV** — *Read card data* (6.5): PPSE → SELECT AID → GET PROCESSING
-  OPTIONS → READ RECORD, then the records' BER-TLV is parsed and labelled, all
-  read-only — see [EMV — read the card data](#emv--read-the-card-data).
-  **e-ID / e-passport** — *Read document (BAC)* (6.5): opens the holder's own
-  chip with BAC from the MRZ or CAN and reads DG1 + DG2 — see
-  [e-ID / e-passport (BAC)](#e-id--e-passport-bac). No cloning, no signing.
+  services. **EMV** — *Read card data* (6.5, deep read 6.6): PPSE → SELECT
+  AID → GET DATA → the transaction log → GET PROCESSING OPTIONS → READ RECORD
+  (the AFL's records and every other short file), then the records' BER-TLV is
+  parsed and labelled, all read-only — see
+  [EMV — read the card data](#emv--read-the-card-data).
+  **e-ID / e-passport** — *Read document (BAC)* (6.5, every data group 6.6):
+  opens the holder's own chip with the key they supply and reads every data
+  group a reader may — see [e-ID / e-passport](#e-id--e-passport). No cloning,
+  no signing.
 - **ISO-DEP / EMV — Application template** — next to *Select application* a
   filled-down-arrow button drops a menu of the operator's saved templates
   (`m5mobile.define.apduTemplates` — see [define.md](define.md) and
@@ -77,56 +90,181 @@ clear note rather than faked; reading the UID and public data always works.
 
 ### EMV — read the card data
 
-The workbench op **Read card data** (6.5) reads an EMV payment card exactly the
-way a contactless terminal's first pass does, and no further. The sequence is
-the standard one:
+The workbench op **Read card data** (6.5, deep read 6.6) reads an EMV payment
+card the way a contactless terminal does before a transaction, and no further
+(`client/src/lib/nfc/cards/emv.ts`). The sequence:
 
 1. **PPSE** — `SELECT 2PAY.SYS.DDF01` lists the card's applications (the AIDs,
    by the directory's priority). With no PPSE the reader falls back to the
    well-known candidate AIDs and keeps the ones the card selects.
-2. **SELECT AID** — opens each application (up to four) and reads its FCI.
-3. **GET PROCESSING OPTIONS** — sends the card its PDOL filled with a terminal's
+2. **SELECT AID** — opens each application and reads its FCI: up to `maxApps`
+   applications (default 8, at most 16; 6.5 opened four).
+3. **GET DATA** (6.6) — asks the application for the data objects a terminal
+   may ask for: the **ATC** (9F36), the **last online ATC** (9F13), the
+   **PIN-try counter** (9F17), the **log entry** (9F4D — which short file holds
+   the transaction log, and how many records) and the **log format** (9F4F),
+   plus a few balance / issuer objects (9F50, 9F51, 9F5D, 9F6D, 9F6E, 9F79,
+   DF60–DF62). Whatever the card answers is kept; what it refuses is skipped.
+4. **The transaction log** (6.6, `history`, on by default) — read **before**
+   GET PROCESSING OPTIONS, while no transaction is under way. When the FCI or
+   GET DATA gives a log entry, the reader reads that file's records (up to the
+   count the card gives — 30 when it gives none — at most 50, stopping at the
+   first record the card refuses) and decodes each one by the card's own log
+   format: `date`, `time`, `amount` and `otherAmount` (in major units, by the
+   currency's exponent), `currency` and `country` (as letters), `type`
+   (purchase, cash, refund…), `merchant`, `atc`, `cid` (approved / declined /
+   online, from the cryptogram information data); any other element stays under
+   its tag. Empty slots are skipped; `raw` keeps each record's hex. Without a log
+   format only the raw records are kept. Not every card keeps a readable log.
+5. **GET PROCESSING OPTIONS** — sends the card its PDOL filled with a terminal's
    default data objects so it returns its AIP and AFL. These defaults only make
    the card hand over its records; they do **not** authorise or run a transaction.
-4. **READ RECORD** — reads the files the AFL points at (a light scan of the first
-   files when there is no AFL).
+6. **READ RECORD** — reads the files the AFL points at. With a **deep** read
+   (6.6, `deep`, on by default) the reader then tries every other short file,
+   SFI 1–30, record by record (up to 16 per file, a file that refuses a record
+   is left at once; 240 extra READ RECORDs per card at most), skipping the log's
+   file. Without `deep` and without an AFL it scans the first four files only,
+   as 6.5 did.
 
 The records' BER-TLV is parsed into a full tag tree, and the known elements are
 labelled (`client/src/lib/nfc/emv-tags.ts`): the **AIDs** and **application
-labels**, the **PAN** (tag 5A or the Track 2 equivalent, shown masked), the
-**expiry** (5F24) and effective date (5F25), the **cardholder** name (5F20,
-absent on most contactless cards), the **issuer country** (5F28), the **PAN
-sequence** (5F34), the **ATC** (9F36) and the **PIN-try counter** (9F17, read as
-a value — never checked), plus the PPSE's TLV as a readable tree.
+labels**, the **PAN** (tag 5A or the Track 2 equivalent; the workbench shows it
+masked), the **expiry** (5F24) and effective date (5F25), the **cardholder** name
+(5F20, absent on most contactless cards), the **issuer country** (5F28), the
+**PAN sequence** (5F34), the **ATC** (9F36), the **last online ATC** (9F13) and
+the **PIN-try counter** (9F17, read as a value — never checked), plus the PPSE's
+TLV as a readable tree. 6.6 also keeps, per application, the **AIP** and **AFL**
+(hex), what **GET DATA** answered, the log's format and file, the decoded
+**history**, and **every record as read** (SFI, record number, hex — the log's
+records marked). The read says whether it was deep and how many APDUs it took.
 
 **Strict read-only.** The reader never verifies a PIN (the PIN-try counter is
 read, never a VERIFY), never runs `GENERATE AC` for a real transaction, never
-reads a cryptogram, and writes nothing — the same bytes a payment terminal sees
-on the holder's own card. No cloning.
+reads a cryptogram, and writes nothing — GET DATA and READ RECORD only read what
+the card shows any terminal, the history included. No cloning.
 
-### e-ID / e-passport (BAC)
+### e-ID / e-passport
 
-The workbench op **Read document (BAC)** (6.5) reads an electronic passport or
-e-ID (an MRTD, ICAO 9303) — the holder's own document, read-only.
+The workbench op **Read document (BAC)** (6.5; every data group 6.6) reads an
+electronic passport or e-ID (an MRTD, ICAO 9303) — the holder's own document,
+read-only (`client/src/lib/nfc/cards/mrtd.ts`).
 
-**BAC (Basic Access Control)** is the *document's own* access control: the chip
-will not answer until the reader proves it can already see the document's
-printed data. The BAC key is derived from three fields of the **MRZ** (the
-machine-readable zone printed in the document) — the **document number**, the
-**date of birth** and the **date of expiry** — or from a **CAN** (the 6-digit
-Card Access Number) the holder supplies. So a document can only be read by
-someone who physically holds it and can read its MRZ or CAN; it is not an
-over-the-air read of a stranger's passport.
+**Opening the chip.** The chip will not answer until the reader proves it can
+already see the document's printed data — the *document's own* access control.
+The holder supplies the **MRZ** (the machine-readable zone printed in the
+document: the whole zone, or just the **document number**, **date of birth**
+and **date of expiry**), or the **CAN** (the 6-digit Card Access Number printed
+on an ID card). So a document can only be read by someone who physically holds
+it and can read its MRZ or CAN; it is not an over-the-air read of a stranger's
+passport. Before opening, the reader reads **EF.CardAccess** — readable without
+a key — and records the security protocols the chip announces
+(`mrtd.security.protocols`).
 
-After BAC opens the chip, the reader reads over **secure messaging** (encrypted
-and MAC'd with the session keys BAC establishes): **EF.COM** (which data groups
-are present), **DG1** (the MRZ fields — document code and number, issuer,
-nationality, name, date of birth, sex, date of expiry) and **DG2** (the face
-image, JPEG or JPEG 2000). The DES/3DES, retail MAC, BAC key derivation and
-secure messaging are byte-exact to the ICAO 9303 worked example and unit-tested
-(`client/src/lib/nfc/cards/bac.ts`, `des.ts`). PACE-only documents (no BAC) are
-reported, not forced. Read-only: it reads only the groups a border reader reads,
-and writes nothing.
+**PACE** (6.6, `client/src/lib/nfc/cards/pace.ts`) — PACE with the CAN or the
+MRZ (ECDH generic mapping, AES or 3DES secure messaging): when EF.CardAccess
+lists a PACE variant, the reader tries PACE first and falls back to BAC. The CAN
+alone opens a PACE document; a passport without PACE needs the MRZ. `mrtd.pace`
+says what the chip offers (`supported`, `protocol`, `parameterId`) and, when PACE
+opened it, `used` and `password` (`can` or `mrz`); `mrtd.access` is then `pace`.
+
+**BAC (Basic Access Control).** The BAC key is derived from the three MRZ
+fields. The DES/3DES, retail MAC, BAC key derivation and secure messaging are
+byte-exact to the ICAO 9303 worked example and unit-tested
+(`client/src/lib/nfc/cards/bac.ts`, `des.ts`, `sm.ts`); `mrtd.access` is `bac`.
+When the chip cannot be opened, `mrtd.message` says why and no data group is
+read.
+
+**What is read** — over **secure messaging**, everything a reader may read
+without a government terminal certificate:
+
+| File | What it gives |
+|------|---------------|
+| **EF.COM** | which data groups are present, the LDS and Unicode versions |
+| **EF.SOD** | each group's hash, the hash algorithm, the document signer certificate (subject, issuer, serial, validity) |
+| **DG1** | the MRZ fields — document code and number, issuer, nationality, name, date of birth, sex, date of expiry, optional data |
+| **DG2** | **every** face image (each biometric block), JPEG or JPEG 2000 |
+| **DG5 / DG7** | displayed portrait(s), signature or usual mark image(s) |
+| **DG11** | more personal details — full name, other names, personal number, full date of birth, place of birth, address, telephone, profession, title, personal summary, other travel documents, custody; a proof-of-citizenship image |
+| **DG12** | more document details — issuing authority, date of issue, other persons, endorsements, tax / exit, personalization time and system; front / rear document images |
+| **DG13** | optional country-defined details (as text when it is text, else hex) |
+| **DG14 / DG15** | the security protocols the chip supports; the Active Authentication public key (RSA size, or EC curve) |
+| **DG16** | persons to notify |
+
+**DG3 / DG4** (fingerprints, iris) need Extended Access Control — a government
+terminal certificate — and are **not read**: they are listed as *protected*. The
+reader reads the groups EF.COM lists (when EF.COM gives none: DG1, DG2, DG5,
+DG7, DG11–DG16), each up to a size cap (DG2 96 kB…), with extended-offset READ
+BINARY beyond 32 kB; a group cut short is marked *truncated*. Every file tried
+is listed with its status (read / protected / absent / error) and size.
+
+**Passive authentication — the hash check.** Each group read in full is hashed
+and compared with the hash EF.SOD lists for it (`hashOk` per file;
+`security.passive` is `ok`, `mismatch` or `unchecked`). That shows the data
+matches what EF.SOD lists — **no more**: the signature on EF.SOD is not
+verified, the document signer certificate is **not** checked against a CSCA
+list, and Active / Chip Authentication are not run (DG14 / DG15 are only
+decoded). The report says *passive authentication*, but read it as an integrity
+check of the read, not as proof the document is genuine.
+
+**Pictures and files.** Every picture becomes `mrtd.images[]` — `{ group, kind
+(face | portrait | signature | document | other), mime, data (base64), name }`
+(e.g. `face.jpg`, `face-2.jp2`, `signature.png`, `document-front.jpg`);
+`photo` / `photoMime` stay the first face, as in 6.5. The raw files are
+`mrtd.raw[]` for download: `EF.CardAccess.bin`, `EF.COM.bin`, `EF.SOD.bin`,
+`document-signer.cer`, `DG1.bin`, `DG11.bin` … `DG16.bin`. Options:
+`readPhoto: false` skips the picture groups (DG2, DG5, DG7) and the scans in
+DG11 / DG12; `all: false` reads only DG1 and DG2 (and skips EF.SOD).
+
+Read-only: it never writes. Unit tests drive the reader against a simulated
+BAC chip (`test/nfc-mrtd-deep.test.ts`: every group, a hash mismatch, DG1 / DG2
+only, a wrong MRZ, no key) and parse EF.SOD, DG11, DG12, DG15 and SecurityInfos
+on their own.
+
+### Card reports (6.6)
+
+`client/src/lib/nfc/card-report.ts` turns any read — an `NfcResult`, or just
+its `emv` / `mrtd` part; an EMV card, an e-ID, a plain scan — into a report in
+one of six formats. It is one pure module (no DOM, no Node): the Functions
+sandbox formats with it (`m5.nfc.format`, `m5.nfc.emv.report`…, the Builder's
+NFC nodes) and the workbench exports with it.
+
+| Format | `value` | `mime` |
+|--------|---------|--------|
+| `html` | every field for the chat: sections, key–value tables, the history as a table, collapsible data elements / GET DATA / records / files, the face beside the holder's data, the other pictures inline (`data:` URIs), JPEG 2000 pictures as placeholders, the attachments listed — a fragment styled by the `m5h-*` classes ([`m5.out.html`](functions-architecture.md)) | `text/html` |
+| `object` | one normalized object (`type: "emv" \| "mrtd" \| "card"`, title, summary, the card, the applications or the holder / personal / document / security parts, files, images with sizes) | `application/json` |
+| `array` | the same as rows `{ section, field, value }` | `application/json` |
+| `json` | the object as JSON text | `application/json` |
+| `text` | a plain-text report | `text/plain` |
+| `csv` | the rows as CSV (`section,field,value`) | `text/csv` |
+
+A report is `{ kind, format, value, mime, title, summary, images[], files[] }`;
+`images` and `files` are `{ name, mime, data }` (base64). **Images** are the
+pictures a browser shows (JPEG, PNG, GIF, WebP); everything else is a **file**
+to download — for EMV `emv-history.csv` (every application's log) and
+`emv-records.txt` (every record and the PPSE tree), for an e-ID the JPEG 2000
+pictures and the raw files above (`EF.SOD.bin`, `document-signer.cer`,
+`DG14.bin`…), for a plain read `card-data.bin`.
+
+Options: `lang` — labels in `en`, `cs` or `de` (in Functions the caller's
+language by default); `fullPan` — the whole card number (the holder's own card);
+by default the PAN is **masked** in the report (first six and last four digits),
+in the tag values, GET DATA and the records' hex too; `title`; `images: false`
+leaves the pictures out; `attachments: false` the files. **Card text is never
+trusted**: every value is HTML-escaped in the `html` view, and the chat
+sanitizes the result again like any `m5.out.html`. `cardReportDocument()` wraps
+the `html` view into a standalone HTML document with its own styles (the
+workbench's *HTML report* download, `m5.nfc.document`). Unit tests:
+`test/nfc-card-report.test.ts`.
+
+### The workbench's full report (6.6)
+
+After an EMV or e-ID read, the workbench's result tab shows **Full report** —
+the `html` report exactly as the chat renders it (`FnHtml`) — with **Export**:
+*HTML report* (the standalone document, `emv-report.html` / `e-id-report.html`),
+**JSON**, **CSV** and **Text**, and **Files to download** — a button for each
+attachment (`EF.SOD.bin`, `document-signer.cer`, `emv-history.csv`…). The card
+number stays masked in every export. Downloads are made in the browser; nothing
+is sent anywhere. Labels follow the app's language.
 
 ### APDU templates
 
@@ -222,48 +360,88 @@ const uid  = await m5.nfc.card();              // identity only
 const dump = await m5.nfc.read({ what: "dump", secretRef: "keyset:door" });
 await m5.nfc.write({ what: "ndef", ndef: [{ kind: "uri", data: "https://…" }] });
 const card = await m5.nfc.m5.read({ records: ["wifi"] });
-const pay  = await m5.nfc.emv.read();          // 6.5: result.emv
-const doc  = await m5.nfc.eid.read({ mrz });   // 6.5: result.mrtd
+const pay  = await m5.nfc.emv.read();          // 6.5: result.emv (6.6: history, every file)
+const doc  = await m5.nfc.eid.read({ mrz });   // 6.5: result.mrtd (6.6: every data group)
+const rep  = await m5.nfc.emv.report({ format: "html", send: true }); // 6.6: read + format + show
 const readers = await m5.nfc.enum();           // readers + technologies now
 ```
 
 Python mirrors it (`await m5.nfc.scan()`, `m5.nfc.m5.read(...)`,
-`m5.nfc.emv.read(...)`, `m5.nfc.eid.read(...)`). `m5.nfc.reader(kind)`
-scopes the following calls to a reader.
+`m5.nfc.emv.read(...)`, `m5.nfc.eid.read(...)`, `m5.nfc.emv.report(...)`).
+`m5.nfc.reader(kind)` scopes the following calls to a reader.
 
-### `m5.nfc.emv` / `m5.nfc.eid` (6.5)
+### `m5.nfc.emv` / `m5.nfc.eid` — the reads (6.5, deep 6.6)
 
 Both drive the caller's reader the same bidirectional way — read-only, the
-holder's own card or document, the public / holder data a terminal reads.
+holder's own card or document, what a terminal or a border reader may read.
 
 ```js
-// EMV — read the card's applications and records (PPSE → AID → GPO → records).
-const { emv } = await m5.nfc.emv.read({ timeout, maxApps });
+// EMV — PPSE → SELECT → GET DATA → the log → GPO → READ RECORD (AFL; deep: every file).
+const { emv } = await m5.nfc.emv.read({ timeout, maxApps, history, deep });
 //   emv.scheme                         Visa / Mastercard / Amex / … (top AID)
 //   emv.aids   : string[]              every AID the card offered (hex)
 //   emv.apps[] : { aid, label, scheme, pan, panMasked, expiry, cardholder,
-//                  effective, issuerCountry, panSequence, atc, pinTryCounter,
+//                  effective, issuerCountry, panSequence, atc, lastOnlineAtc,
+//                  pinTryCounter, aip, afl, logSfi, logFormat,
+//                  log[{ date, time, amount, otherAmount, currency, country, type,
+//                        merchant, atc, cid, raw, … }],
+//                  getData[{ tag, name, value, hex }],
+//                  records[{ sfi, record, hex, log? }],
 //                  tags[{ tag, name, value, hex }] }
 //   emv.tree                           the PPSE's TLV as a readable tree
+//   emv.deep, emv.apdus                deep read or AFL only; APDUs it took
 
-// e-ID / e-passport — open with BAC (the holder's MRZ or CAN) and read DG1 + DG2.
+// e-ID / e-passport — opened with the holder's MRZ or CAN, every data group a reader may read.
 const { mrtd } = await m5.nfc.eid.read({
-  mrz,                                  // the whole MRZ (BAC key derived from it)
-  // or the three BAC fields instead:  documentNumber, dateOfBirth, dateOfExpiry (YYMMDD)
-  // or a Card Access Number:          can
-  readPhoto,                            // default true; false = DG1 only, faster
+  mrz,                                  // the whole MRZ
+  // or the three MRZ fields instead:  documentNumber, dateOfBirth, dateOfExpiry (YYMMDD)
+  // or the Card Access Number:        can
+  readPhoto,                            // default true (also `photo`); false = no pictures
+  all,                                  // 6.6, default true; false = DG1 + DG2 only
 });
 //   mrtd.access     : "none" | "bac" | "pace"
-//   mrtd.dataGroups : string[]         e.g. ["DG1","DG2"]
-//   mrtd.mrzInfo    : { documentNumber, issuer, nationality, surname,
-//                       givenNames, dateOfBirth, sex, dateOfExpiry, … }
-//   mrtd.photo, mrtd.photoMime         the face image, base64 (when readPhoto)
+//   mrtd.pace       : { supported, protocol, parameterId, used, password }
+//   mrtd.dataGroups : string[]         what EF.COM lists, e.g. ["DG1","DG2","DG11","DG14"]
+//   mrtd.ldsVersion, mrtd.unicodeVersion
+//   mrtd.mrzInfo    : { documentCode, documentNumber, issuer, nationality, surname,
+//                       givenNames, dateOfBirth, sex, dateOfExpiry, optionalData, mrz }
+//   mrtd.personal (DG11), mrtd.document (DG12), mrtd.optional (DG13),
+//   mrtd.personsToNotify (DG16)
+//   mrtd.images[]   : { group, kind, mime, data, name }   every picture, base64
+//   mrtd.photo, mrtd.photoMime         the first face, base64 (as in 6.5)
+//   mrtd.files[]    : { name, fid, status, size, hashOk, message }
+//   mrtd.raw[]      : { name, mime, data }               EF.SOD.bin, document-signer.cer, DG*.bin…
+//   mrtd.security   : { hashAlgorithm, passive, signer{ subject, issuer, serial,
+//                       notBefore, notAfter }, protocols, activeAuthKey }
 ```
 
+Python takes the same as keywords: `m5.nfc.emv.read(max_apps=…, history=…,
+deep=…, timeout=…)`, `m5.nfc.eid.read(mrz=…, document_number=…,
+date_of_birth=…, date_of_expiry=…, can=…, read_photo=…, all=…)` (`photo=`
+too; the camelCase names are accepted as well).
+
 The op ids on the wire are `emv-read` and `mrtd-read`. The server bounds what
-comes back (`server/functions/host-nfc.ts`): holder / public string fields only
-(capped), and the photo capped (base64 ≤ ~400 kB). As everywhere in `m5.nfc`,
-no key or PIN ever reaches the model, and nothing is written.
+comes back (`server/functions/host-nfc.ts`), field by field: for EMV at most 16
+applications, 256 data elements, 60 log entries, 32 GET DATA answers and 320
+records (hex ≤ 1 024 characters) each; for an e-ID the strings capped (MRZ
+fields 120 characters, DG11 / DG12 / DG16 500, DG13 4 000), at most 12 pictures (JPEG, JPEG 2000, PNG,
+GIF or WebP; base64 ≤ 400 000 characters each, 1 400 000 together), at most 32
+raw files (≤ 400 000 each, 1 200 000 together), the photo ≤ 400 000; anything
+else is dropped. As everywhere in `m5.nfc`, no card key or PIN ever reaches the
+model, and nothing is written. The model does receive what it asked to read —
+the PAN unmasked (the holder's own card) and, for an e-ID, the holder's personal
+data and pictures; only a report masks the PAN.
+
+**On the web in 6.6.0** the workbench's executor (`client/src/lib/nfc/web-executor.ts`)
+passes the reader only `maxApps` (default **4** there; the workbench's own read
+opens 8) and, for an e-ID, the key fields and `readPhoto`; `history`, `deep` and
+`all` are not forwarded yet, so a model's read from a web device is always the
+full read — the history, every file, every data group. The reads need a reader
+that exchanges APDUs — a USB (PC/SC, CCID), Bluetooth or serial (PN532) reader;
+WebNFC in Android Chrome reaches NDEF only.
+
+The Android app does not run a model's `m5.nfc` commands in 6.6.0 — it has no
+executor for the run's `nfc` interaction.
 
 Under the hood an `m5.nfc` call becomes an **NFC interaction** on the run's live
 channel (the same one prompts and forms use): the model's `await` suspends, the
@@ -282,6 +460,57 @@ protected card it passes `secretRef` — a name the device resolves locally
 The server strips any secret-named argument on the way in and whitelists the
 result on the way out.
 
+### Card reports in Functions (6.6)
+
+One host-side formatter (`card-report.ts`, called from `server/functions/sandbox/host-pure.ts`)
+for JavaScript and Python — see [Card reports](#card-reports-66).
+
+```js
+// Read, format and (send: true) show it — what the Builder's NFC.EMV / NFC.e-ID tools run.
+const r  = await m5.nfc.emv.report({ format: "html", send: true, history: true, deep: true,
+                                     fullPan: false, maxApps: 8, timeout: 30 });
+const id = await m5.nfc.eid.report({ mrz, format: "object", photo: true, all: true });
+//   → { ok, status, message, format, result, title, summary, data,
+//       images[{ name, mime, image }], files[{ name, mime, data }], history, photo, outputs }
+
+m5.nfc.emv.format(r.data, "csv", { fullPan: false }); // a read you have, in another format
+m5.nfc.emv.history(r.data);                           // its transactions as rows
+m5.nfc.eid.format(id.data, "text");
+m5.nfc.eid.images(id.data);                           // every picture: [{ name, mime, image }]
+m5.nfc.format(anyRead, "json", { lang: "cs", title, images, attachments }); // any read, a scan too
+m5.nfc.outputs(report);                               // a report's outputs for the chat
+m5.nfc.document(anyRead, { lang, fullPan });          // a standalone HTML document (text)
+```
+
+- **`emv.report(opts)` / `eid.report(opts)`** read (with the options of
+  `read`), format (`format`, `fullPan`, `lang`, `title`, `images`,
+  `attachments`) and, with `send: true` (default `false` in the SDK), show the
+  outputs to the caller during the run. They return `ok` (the read's status is
+  `ok`), `status`, `message`, `format`, `result` (the formatted value), `title`,
+  `summary`, `data` (the read as it came back), `images` (the pictures a browser
+  shows, as bytes), `files` (base64), `history` (EMV rows, else `[]`), `photo`
+  (`{ name, mime, image }` of the face or portrait, or `null`) and `outputs`
+  (what `m5.nfc.outputs` gives; a failed read adds a warning flash first).
+- **`m5.nfc.format(data, format, opts)`** (also `emv.format`, `eid.format`) →
+  the report object `{ kind, format, value, mime, title, summary, images, files }`.
+  `lang` defaults to the caller's language.
+- **`emv.history(data)`** → `[{ application, date, time, amount, currency,
+  merchant, type, country, atc, cid, raw, … }]`; **`eid.images(data)`** → every
+  picture as `{ name, mime, image }` (bytes, JPEG 2000 included).
+- **`m5.nfc.outputs(report)`** → `html`: one `m5.out.html`; `text`: text; `json`
+  / `csv`: a code block and the same as a file (`emv.json`, `e-id.csv`…);
+  `array`: a table (section, field, value); `object`: JSON. A non-`html` format
+  adds the pictures as images; every format adds the files as files.
+- **`m5.nfc.document(data, opts)`** → a standalone HTML document (with its
+  styles) as text, for a file to download or keep.
+
+Python: `await m5.nfc.emv.report(format="html", send=True, history=True,
+deep=True, full_pan=False, max_apps=8, timeout=30)`, `await
+m5.nfc.eid.report(mrz=…, format="object", photo=True, all=True)`,
+`m5.nfc.format(data, "csv", full_pan=False, lang="cs")`, `m5.nfc.emv.history(data)`,
+`m5.nfc.eid.images(data)`, `m5.nfc.outputs(report)`, `m5.nfc.document(data, lang="en")`
+— the results are dicts with the same keys.
+
 ### Builder nodes and packages
 
 The visual flow builder has an **NFC** node group (scan, read, write, M5Cet
@@ -290,13 +519,84 @@ command packages: **`/nfc-scan`** (scan a card), **`/nfc-uid`** (its UID only)
 and **`/nfc-open`** (open an M5Cet card). They ship **off** — a model needs a
 device with NFC access — and an operator turns them on in Functions.
 
+6.6 adds two palette groups and three nodes (`server/functions/flow.ts`):
+
+| Group | Node | Inputs | Parameters | Outputs |
+|-------|------|--------|------------|---------|
+| **NFC.EMV** | **EMV: read everything** | — | Format (html), Show in the chat (on), Transaction history (on), Every file (deep read) (on), Whole card number (off), Applications at most (8), Reader (the device's default / internal / usb / bluetooth / serial), Wait for a card (30 s) | result, data, ok, status, summary, history, files, report |
+| | **EMV → format** | data | Format, Whole card number | result, files, summary, report |
+| | **EMV: transaction history** | data | — | rows, count |
+| **NFC.e-ID** | **e-ID: read everything** | can, mrz, documentNumber, dateOfBirth, dateOfExpiry (YYMMDD) | Format (html), Show in the chat (on), Pictures (on), Every data group (on), Reader, Wait for a card (45 s) | result, data, ok, status, summary, holder (DG1), photo, images, files, report |
+| | **e-ID → format** | data | Format | result, images, files, summary, report |
+| | **e-ID: pictures** | data | — | images, first (the face), count |
+| **NFC** | **Card → format** | data (any read) | Format, Whole card number | result, title, summary, images, files, report |
+| | **Show card report** | report | — | — (shows the report's outputs) |
+| **Output** | **Send HTML** | html | Title | — (`m5.out.html`) |
+
+*Format* is one of `html`, `object`, `array`, `json`, `text`, `csv`. The two
+*read everything* nodes compile to `m5.nfc.emv.report` / `m5.nfc.eid.report`,
+the others to `format`, `history`, `images`, `outputs` and `m5.out.html` — in
+JavaScript or Python. On the canvas a *read everything* node shows its format
+and "→ chat" when it shows the report.
+
+**Built-in packages (6.6)** — built as flows from these tools
+(`script/gen-nfc-flows.ts` writes `flow.m5flow.json`, `index.js` and a README to
+`server/functions/builtins/src/nfc-*`), version 1.0.0, visibility *caller*,
+installed **switched off** like the others:
+
+- **`/emv`** (`nfc-emv`) — *EMV: read everything* (html, shown in the chat,
+  history and deep read on, 8 applications, 45 s) → Result (the one-line
+  summary). The chat gets the report — the card number masked — with
+  `emv-history.csv` and `emv-records.txt` to download.
+- **`/emv-history`** (`nfc-emv-history`) — *EMV: read everything* (object,
+  not shown) → If the read is ok → *EMV: transaction history* → Send table
+  (date, time, amount, currency, merchant, type, country, ATC); otherwise a
+  warning flash with the read's message.
+- **`/eid`** (`nfc-eid`) — `execute` sends a form (the CAN, or the MRZ, or the
+  document number, date of birth and date of expiry); its `form` function runs
+  *e-ID: read everything* (html, shown in the chat, pictures and every data group
+  on, 60 s) → Result.
+
+Each has an `error` function that flashes what went wrong. The tests
+(`test/nfc-builtins.test.ts`) check that each flow compiles to exactly the file
+that runs.
+
+### `/help nfc`, `/help html` and the tutorial (6.6)
+
+`/help nfc` (also `emv`, `eid`, `card`, `cards`, `passport`) explains the three
+commands, the Builder groups and the report formats with a JS / Python example;
+`/help html` explains `m5.out.html`; the topic buttons under `/help` gain *NFC
+cards*. The console's tutorial adds **17 · Formatted HTML**, **18 · NFC card
+reports** (formats a fixed EMV read, no card needed) and **19 · Reading a card
+(EMV, e-ID)** (`server/functions/tutorial.ts`). `/help` and the other general
+built-ins are version 1.3.0; the NFC packages stay 1.0.0.
+
 ## Privacy and scope
 
 Card reads and writes happen on the device. An M5Cet record's plaintext never
 reaches the server; only the ciphertext rides a tag. A tag is exposed media —
 anyone in proximity can read its bytes — so the PIN or the account key is the
 real boundary, not the air gap. The tool does no key recovery and no payment-card
-cloning. EMV is read-only — the holder's own card, the public / holder data a
-terminal reads, never a PIN, cryptogram or transaction; an e-ID / e-passport is
-opened only with the holder's own MRZ or CAN (the document's own BAC) and read,
-never written.
+cloning. EMV is read-only — the holder's own card, what a terminal reads (the
+transaction log included), never a PIN, cryptogram or transaction; an e-ID /
+e-passport is opened only with the key the holder supplies (the document's own
+access control) and read, never written. DG3 / DG4 (fingerprints, iris) are
+never read.
+
+What 6.6 adds to think about:
+
+- **A workbench read stays in the browser.** The report and its exports are
+  made on the device; nothing is uploaded.
+- **A model's read passes the server.** For `/emv`, `/eid` or any model, the
+  device sends the read to the server, which bounds it (above) and hands it to
+  the sandbox; the model's outputs — the report with the face picture, the
+  personal data, the files — are run outputs. Runs are kept in
+  `$DATA_DIR/functions/functions.db` with their inputs (for `/eid` the CAN or
+  MRZ the form sent) and outputs until `FUNCTIONS_RUNS_DAYS` (30 days by
+  default), and an operator with access to *Functions › Runs* can open them.
+  The built-in commands' visibility is *caller*: the report is shown only to the
+  person who ran it, not posted to the room.
+- **Masking is for the report.** `fullPan` is off by default; the read itself
+  (`data`) carries the PAN.
+- **The e-ID check is partial.** Passive authentication here is the hash check
+  only — no EF.SOD signature, no CSCA list, no Active / Chip Authentication.
