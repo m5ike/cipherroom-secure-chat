@@ -37,4 +37,13 @@ public class PasskeysTest {
         assertEquals("exists", Passkeys.codeOf("CreatePublicKeyCredentialDomException", "x", "androidx.credentials.TYPE_INVALID_STATE_ERROR", "already registered"));
         assertEquals("", Passkeys.codeOf("GetCredentialUnknownException", "x", "", "something else"));
     }
+
+    /** 6.7: the app no longer reads the library-internal getType(); a DOM error is named by its class. */
+    @Test
+    public void domErrorClassNames() {
+        assertEquals("rp-unverified", Passkeys.codeOf("GetPublicKeyCredentialDomException", "", "SecurityError", null));
+        assertEquals("cancelled", Passkeys.codeOf("CreatePublicKeyCredentialDomException", "", "NotAllowedError", "denied"));
+        assertEquals("exists", Passkeys.codeOf("CreatePublicKeyCredentialDomException", "", "InvalidStateError", null));
+        assertEquals("", Passkeys.codeOf("GetPublicKeyCredentialDomException", "", "UnknownError", null));
+    }
 }

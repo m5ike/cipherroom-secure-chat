@@ -54,7 +54,7 @@ public final class Appearance {
     public static synchronized JSONArray themes() {
         if (themes != null) return themes;
         try (InputStream in = M5.get().getAssets().open("m5/themes.json")) {
-            themes = new JSONArray(new String(in.readAllBytes(), StandardCharsets.UTF_8));
+            themes = new JSONArray(new String(cz.m5cet.app.core.Streams.readAll(in), StandardCharsets.UTF_8));
         } catch (Exception e) {
             Log.w("look", "no templates: " + e.getMessage());
             themes = new JSONArray();

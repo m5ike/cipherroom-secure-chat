@@ -17,7 +17,7 @@ public final class InstallReceiver extends BroadcastReceiver {
         String message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE);
         M5 app = M5.get();
         if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-            Intent confirm = intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
+            Intent confirm = confirmIntent(intent);
             if (confirm != null) {
                 confirm.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 ctx.startActivity(confirm);
@@ -31,5 +31,13 @@ public final class InstallReceiver extends BroadcastReceiver {
             Log.w("release", "install failed (" + status + "): " + message);
             app.events.add("update-failed", Events.detail("kind", "release", "status", status, "error", message == null ? "" : message));
         }
+    }
+
+    /** 6.7 (audit V5): the typed getParcelableExtra exists from API 33; the app runs from 29. */
+    @SuppressWarnings("deprecation")
+    private static Intent confirmIntent(Intent intent) {
+        if (android.os.Build.VERSION.SDK_INT >= 33) return intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent.class);
+        android.os.Parcelable p = intent.getParcelableExtra(Intent.EXTRA_INTENT);
+        return p instanceof Intent ? (Intent) p : null;
     }
 }

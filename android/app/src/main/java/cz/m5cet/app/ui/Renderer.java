@@ -966,7 +966,7 @@ public final class Renderer {
                     c.setConnectTimeout(10_000);
                     c.setReadTimeout(20_000);
                     byte[] b;
-                    try (java.io.InputStream in = c.getInputStream()) { b = in.readAllBytes(); }
+                    try (java.io.InputStream in = c.getInputStream()) { b = cz.m5cet.app.core.Streams.readAll(in, 16L << 20); }
                     Bitmap bm = decodeScaled(b, 1600);
                     if (bm == null) return;
                     cache.put(src, bm);

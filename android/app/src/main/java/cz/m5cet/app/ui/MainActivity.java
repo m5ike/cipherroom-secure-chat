@@ -68,17 +68,17 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     protected void onCreate(Bundle saved) {
         super.onCreate(saved);
         app = M5.get();
-        getWindow().setDecorFitsSystemWindows(false);
+        SystemBars.edgeToEdge(getWindow());
         root = new FrameLayout(this);
         screenBox = new FrameLayout(this);
         overlay = new FrameLayout(this);
         root.addView(screenBox, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.addView(overlay, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         root.setOnApplyWindowInsetsListener((v, insets) -> {
-            android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
-            screenBox.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            overlay.setPadding(bars.left, bars.top, bars.right, bars.bottom);
-            return WindowInsets.CONSUMED;
+            int[] bars = SystemBars.insets(insets);
+            screenBox.setPadding(bars[0], bars[1], bars[2], bars[3]);
+            overlay.setPadding(bars[0], bars[1], bars[2], bars[3]);
+            return SystemBars.consumed(insets);
         });
         setContentView(root);
         renderer = new Renderer(this, this);
@@ -395,13 +395,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         animate = false;
         app.rooms.setVisible(id.equals("room"));
         getWindow().setStatusBarColor(Color.TRANSPARENT);
-        View decor = getWindow().getDecorView();
-        decor.getWindowInsetsController();
-        boolean dark = Ui.dark(this);
-        if (decor.getWindowInsetsController() != null) {
-            decor.getWindowInsetsController().setSystemBarsAppearance(dark ? 0 : android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
-                android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS | android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);
-        }
+        SystemBars.lightBars(getWindow(), !Ui.dark(this));
     }
 
     /** Binds the current screen again with fresh data (cheap: no views are rebuilt). */

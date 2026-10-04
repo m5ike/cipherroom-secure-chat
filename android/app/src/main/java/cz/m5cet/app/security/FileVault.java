@@ -210,7 +210,7 @@ public final class FileVault {
     }
 
     public static byte[] readAll(M5 app, String id) throws IOException, GeneralSecurityException {
-        try (InputStream in = open(app, id)) { return in.readAllBytes(); }
+        try (InputStream in = open(app, id)) { return cz.m5cet.app.core.Streams.readAll(in); }
     }
 
     static void readFully(InputStream in, byte[] b) throws IOException {

@@ -91,9 +91,10 @@ public final class UsbReader implements Reader, Reader.ApduChannel {
             }
         };
         IntentFilter filter = new IntentFilter(ACTION_PERMISSION);
-        // The permission broadcast is explicit (our own package); Android 13+ still wants the flag.
-        if (android.os.Build.VERSION.SDK_INT >= 33) context.registerReceiver(r, filter, Context.RECEIVER_NOT_EXPORTED);
-        else context.registerReceiver(r, filter);
+        // The permission broadcast is explicit (our own package), and the receiver is not exported:
+        // 6.7 (audit N18): below Android 13 a receiver without the flag was open to any app (a forged
+        // "granted"); ContextCompat guards it there with the app's own signature permission.
+        androidx.core.content.ContextCompat.registerReceiver(context, r, filter, androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED);
         // The PendingIntent must be mutable on Android 12+ so UsbManager can fill in the result extras.
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (android.os.Build.VERSION.SDK_INT >= 31 ? PendingIntent.FLAG_MUTABLE : 0);
         PendingIntent pi = PendingIntent.getBroadcast(context, 0, new Intent(ACTION_PERMISSION).setPackage(context.getPackageName()), flags);

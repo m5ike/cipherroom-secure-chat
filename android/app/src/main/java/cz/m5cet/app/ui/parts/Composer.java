@@ -533,7 +533,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         Io.bg(() -> {
             try (InputStream in = a.getContentResolver().openInputStream(uri)) {
                 if (in == null) return;
-                byte[] raw = in.readAllBytes();
+                byte[] raw = cz.m5cet.app.core.Streams.readAll(in);
                 Bitmap bm = BitmapFactory.decodeByteArray(raw, 0, raw.length);
                 if (bm == null) { Io.main(() -> sendFileUri(uri)); return; }
                 float scale = Math.min(1f, 1600f / Math.max(bm.getWidth(), bm.getHeight()));
@@ -573,7 +573,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
             try (InputStream in = a.getContentResolver().openInputStream(uri)) {
                 if (in == null) return;
                 if (fsize >= 0 && fsize <= INLINE_MAX) {
-                    byte[] b = in.readAllBytes();
+                    byte[] b = cz.m5cet.app.core.Streams.readAll(in);
                     Io.main(() -> sendBytes(r, b, fname, fmime, false));
                     return;
                 }

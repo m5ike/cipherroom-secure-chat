@@ -119,7 +119,11 @@ public final class Notify {
             .setCategories(Collections.singleton("cz.m5cet.app.category.ROOM"))
             .setPerson(new Person.Builder().setName(name).build())
             .build();
-        try { sm.pushDynamicShortcut(s); } catch (RuntimeException ignored) { }
+        try {
+            // 6.7 (audit V5): pushDynamicShortcut is API 30; Android 10 adds it the older way.
+            if (android.os.Build.VERSION.SDK_INT >= 30) sm.pushDynamicShortcut(s);
+            else sm.addDynamicShortcuts(Collections.singletonList(s));
+        } catch (RuntimeException ignored) { }
     }
 
     /** New messages of a room (only a count and the sender when the app is locked). */
