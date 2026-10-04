@@ -67,7 +67,10 @@ const cs: Dict = {
   "speakSend.err.sealed": "Individuálně šifrovanou zprávu nejde poslat jako hlas — hlasová zpráva by kódem zašifrovaná nebyla. Vypněte jednu z těch dvou voleb.",
   "speakSend.err.too-long": "Na hlasovou zprávu je text moc dlouhý (nejvýš {max} znaků). Zkraťte ho, nebo vypněte Poslat jako hlas.",
   "speakSend.err.too-big": "Z tak dlouhého textu je hlasová zpráva moc velká pro vybrané příjemce nebo pro klikací či mizející zprávu (velké soubory jdou všem v místnosti). Zkraťte text.",
-  "speakSend.on": "Jako hlasová zpráva",
+  // 6.10 (G-14): the chip says who reads the text; the first voice message in a room asks.
+  "speakSend.on": "Jako hlas — text čte server",
+  "speakSend.confirm": "Text hlasové zprávy přečte převod textu na řeč na serveru ({provider}) — server i tato služba ho uvidí čitelně. Hlasová zpráva pak odejde šifrovaně. Pokračovat? (V této místnosti se už nezeptám.)",
+  "speakSend.err.declined": "Nic se neodeslalo.",
 };
 
 const en: Dict = {
@@ -130,7 +133,9 @@ const en: Dict = {
   "speakSend.err.sealed": "An individually encrypted message cannot be sent as voice — the voice message would not be encrypted with the code. Turn off one of the two options.",
   "speakSend.err.too-long": "The text is too long for a voice message (at most {max} characters). Shorten it, or turn off Send as voice.",
   "speakSend.err.too-big": "A voice message from this long a text is too big for chosen recipients or for a tap-to-reveal or disappearing message (big files go to everyone in the room). Shorten the text.",
-  "speakSend.on": "As a voice message",
+  "speakSend.on": "As voice — the server reads the text",
+  "speakSend.confirm": "The text of the voice message is read by the server's text to speech ({provider}) — the server and that service see it in clear. The voice message then goes encrypted. Go on? (Not asked again in this room.)",
+  "speakSend.err.declined": "Nothing was sent.",
 };
 
 const de: Dict = {
@@ -193,7 +198,9 @@ const de: Dict = {
   "speakSend.err.sealed": "Eine individuell verschlüsselte Nachricht lässt sich nicht als Sprache senden — die Sprachnachricht wäre nicht mit dem Code verschlüsselt. Schalten Sie eine der beiden Optionen aus.",
   "speakSend.err.too-long": "Der Text ist für eine Sprachnachricht zu lang (höchstens {max} Zeichen). Kürzen Sie ihn oder schalten Sie Als Sprache senden aus.",
   "speakSend.err.too-big": "Aus so langem Text wird die Sprachnachricht zu groß für ausgewählte Empfänger oder für eine Halten- oder verschwindende Nachricht (große Dateien gehen an alle im Raum). Kürzen Sie den Text.",
-  "speakSend.on": "Als Sprachnachricht",
+  "speakSend.on": "Als Sprache — der Server liest den Text",
+  "speakSend.confirm": "Den Text der Sprachnachricht liest die Sprachausgabe des Servers ({provider}) — der Server und dieser Dienst sehen ihn im Klartext. Die Sprachnachricht geht dann verschlüsselt. Fortfahren? (In diesem Raum wird nicht mehr gefragt.)",
+  "speakSend.err.declined": "Nichts wurde gesendet.",
 };
 
 export const VOICE_I18N = { cs, en, de };
