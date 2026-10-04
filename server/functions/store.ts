@@ -43,7 +43,7 @@ const jsonParse = <T>(v: unknown, fallback: T): T => {
 type PackageRow = { id: string; name: string; language: string; description: string; draft: string | null; created_at: number; updated_at: number; updated_by: string };
 type VersionRow = { package_id: string; version: string; manifest: string; files: string; fingerprint: string; status: string; test: string | null; created_at: number; created_by: string; published_at: number | null };
 type ModelRow = { id: string; name: string; keyword: string; summary: string; entry: string; on_event: string; runtime: string; inputs: string; outputs: string; limits: string; executors: string; groups: string; enabled: number; revision: number; created_at: number; updated_at: number; updated_by: string; endpoints?: string; grants?: string };
-type RunRow = { id: string; model_id: string; entry: string; lang: string; executor: string; caller: string; session_id: string; parent: string | null; status: string; inputs: string; outputs: string; error: string | null; test: number; queued_at: number; started_at: number | null; finished_at: number | null; ms: number; mem_mb: number; chain_id?: string; call_id?: number | null; endpoint?: string };
+type RunRow = { id: string; model_id: string; entry: string; lang: string; executor: string; caller: string; session_id: string; parent: string | null; status: string; inputs: string; outputs: string; error: string | null; test: number; queued_at: number; started_at: number | null; finished_at: number | null; ms: number; mem_mb: number; chain_id?: string; call_id?: number | null; endpoint?: string; sensitive?: number };
 
 function toPackage(r: PackageRow): Package {
   return { id: r.id, name: r.name, language: r.language as Package["language"], description: r.description, draft: r.draft, createdAt: r.created_at, updatedAt: r.updated_at, updatedBy: r.updated_by };
@@ -56,7 +56,7 @@ function toModel(r: ModelRow): Model {
 }
 function toRun(r: RunRow): Run {
   return { id: r.id, modelId: r.model_id, entry: r.entry, lang: r.lang as Run["lang"], executor: r.executor, caller: jsonParse(r.caller, {} as Caller), sessionId: r.session_id, parent: r.parent, status: r.status as RunStatus, inputs: jsonParse(r.inputs, {}), outputs: jsonParse(r.outputs, []), error: jsonParse(r.error, null), test: Boolean(r.test), queuedAt: r.queued_at, startedAt: r.started_at, finishedAt: r.finished_at, ms: r.ms, memMb: r.mem_mb,
-    ...(r.chain_id ? { chainId: r.chain_id } : {}), ...(typeof r.call_id === "number" ? { callId: r.call_id } : {}), ...(r.endpoint ? { endpoint: r.endpoint as Run["endpoint"] } : {}) };
+    ...(r.chain_id ? { chainId: r.chain_id } : {}), ...(typeof r.call_id === "number" ? { callId: r.call_id } : {}), ...(r.endpoint ? { endpoint: r.endpoint as Run["endpoint"] } : {}), ...(r.sensitive ? { sensitive: true } : {}) };
 }
 function toChain(r: Record<string, unknown>): Chain {
   const opener = typeof r.opener === "string" && r.opener ? jsonParse<Chain["opener"] | null>(r.opener, null) : null;
@@ -131,7 +131,33 @@ const MIGRATIONS: Array<[table: string, column: string, definition: string]> = [
   ["runs", "endpoint", "TEXT NOT NULL DEFAULT ''"],
   // 6.7: who opened a processing session and the room it was shared to (chain-access.ts).
   ["model_chains", "opener", "TEXT NOT NULL DEFAULT ''"],
+  // 6.7 (F-18): a run that read a card is pruned after FUNCTIONS_NFC_RUN_HOURS.
+  ["runs", "sensitive", "INTEGER NOT NULL DEFAULT 0"],
 ];
+
+/** How long a run that read a card (m5.nfc) is kept: FUNCTIONS_NFC_RUN_HOURS, default 24. */
+export const nfcRunKeepMs = () => Math.max(1, Number(process.env.FUNCTIONS_NFC_RUN_HOURS) || 24) * 3_600_000;
+
+/* ------------------------------------------------ key–value limits (6.7) */
+
+/** 6.7 (audit N16): m5.session / m5.cache had no limit on a value's size or
+ *  the number of keys — one model could fill the disk. Per scope (a session,
+ *  a cache scope): */
+export const KV_LIMITS = { valueBytes: 1024 * 1024, keyChars: 512, keysPerScope: 10_000, bytesPerScope: 64 * 1024 * 1024 } as const;
+
+export class KvLimitError extends Error {
+  readonly code = "kv-limit";
+  constructor(message: string) { super(message); this.name = "KvLimitError"; }
+}
+
+/** Refuses a write that would break KV_LIMITS; `scope` is what the caller sees. */
+function checkKv(key: string, json: string, scope: { exists: boolean; oldBytes: number; keys: number; bytes: number }): void {
+  if (key.length > KV_LIMITS.keyChars) throw new KvLimitError(`a key is at most ${KV_LIMITS.keyChars} characters`);
+  const size = Buffer.byteLength(json);
+  if (size > KV_LIMITS.valueBytes) throw new KvLimitError(`a stored value is at most ${KV_LIMITS.valueBytes} bytes as JSON (this one is ${size})`);
+  if (!scope.exists && scope.keys >= KV_LIMITS.keysPerScope) throw new KvLimitError(`a session or cache scope holds at most ${KV_LIMITS.keysPerScope} keys`);
+  if (scope.bytes - scope.oldBytes + size > KV_LIMITS.bytesPerScope) throw new KvLimitError(`a session or cache scope holds at most ${KV_LIMITS.bytesPerScope} bytes`);
+}
 
 /* ---------------------------------------------------------- the store */
 
@@ -265,10 +291,10 @@ class FunctionsStore {
 
   saveRun(r: Run): void {
     if (!this.d) return this.mem.saveRun(r);
-    this.d.prepare(`INSERT INTO runs (id, model_id, entry, lang, executor, caller, session_id, parent, status, inputs, outputs, error, test, queued_at, started_at, finished_at, ms, mem_mb, chain_id, call_id, endpoint)
-      VALUES (@id, @model_id, @entry, @lang, @executor, @caller, @session_id, @parent, @status, @inputs, @outputs, @error, @test, @queued_at, @started_at, @finished_at, @ms, @mem_mb, @chain_id, @call_id, @endpoint)
-      ON CONFLICT(id) DO UPDATE SET status=@status, outputs=@outputs, error=@error, started_at=@started_at, finished_at=@finished_at, ms=@ms, mem_mb=@mem_mb`)
-      .run({ id: r.id, model_id: r.modelId, entry: r.entry, lang: r.lang, executor: r.executor, caller: JSON.stringify(r.caller), session_id: r.sessionId, parent: r.parent, status: r.status, inputs: JSON.stringify(r.inputs), outputs: JSON.stringify(r.outputs), error: r.error ? JSON.stringify(r.error) : null, test: r.test ? 1 : 0, queued_at: r.queuedAt, started_at: r.startedAt, finished_at: r.finishedAt, ms: r.ms, mem_mb: r.memMb, chain_id: r.chainId ?? "", call_id: r.callId ?? null, endpoint: r.endpoint ?? "" });
+    this.d.prepare(`INSERT INTO runs (id, model_id, entry, lang, executor, caller, session_id, parent, status, inputs, outputs, error, test, queued_at, started_at, finished_at, ms, mem_mb, chain_id, call_id, endpoint, sensitive)
+      VALUES (@id, @model_id, @entry, @lang, @executor, @caller, @session_id, @parent, @status, @inputs, @outputs, @error, @test, @queued_at, @started_at, @finished_at, @ms, @mem_mb, @chain_id, @call_id, @endpoint, @sensitive)
+      ON CONFLICT(id) DO UPDATE SET status=@status, outputs=@outputs, error=@error, started_at=@started_at, finished_at=@finished_at, ms=@ms, mem_mb=@mem_mb, sensitive=MAX(sensitive, @sensitive)`)
+      .run({ id: r.id, model_id: r.modelId, entry: r.entry, lang: r.lang, executor: r.executor, caller: JSON.stringify(r.caller), session_id: r.sessionId, parent: r.parent, status: r.status, inputs: JSON.stringify(r.inputs), outputs: JSON.stringify(r.outputs), error: r.error ? JSON.stringify(r.error) : null, test: r.test ? 1 : 0, queued_at: r.queuedAt, started_at: r.startedAt, finished_at: r.finishedAt, ms: r.ms, mem_mb: r.memMb, chain_id: r.chainId ?? "", call_id: r.callId ?? null, endpoint: r.endpoint ?? "", sensitive: r.sensitive ? 1 : 0 });
   }
   run(id: string): Run | null {
     if (!this.d) return this.mem.run(id);
@@ -318,8 +344,13 @@ class FunctionsStore {
   }
   sessionSet(sessionId: string, key: string, value: unknown, ttlMs: number | null): void {
     if (!this.d) return this.mem.sessionSet(sessionId, key, value, ttlMs);
-    const expires = ttlMs ? Date.now() + ttlMs : null;
-    this.d.prepare("INSERT OR REPLACE INTO session_kv (session_id, key, value, expires_at) VALUES (?, ?, ?, ?)").run(sessionId, key, JSON.stringify(value ?? null), expires);
+    const now = Date.now();
+    const expires = ttlMs ? now + ttlMs : null;
+    const json = JSON.stringify(value ?? null);
+    const old = this.d.prepare("SELECT length(CAST(value AS BLOB)) AS n FROM session_kv WHERE session_id = ? AND key = ?").get(sessionId, key) as { n: number } | undefined;
+    const all = this.d.prepare("SELECT count(*) AS c, COALESCE(sum(length(CAST(value AS BLOB))), 0) AS b FROM session_kv WHERE session_id = ? AND (expires_at IS NULL OR expires_at > ?)").get(sessionId, now) as { c: number; b: number };
+    checkKv(key, json, { exists: Boolean(old), oldBytes: old?.n ?? 0, keys: all.c, bytes: all.b });
+    this.d.prepare("INSERT OR REPLACE INTO session_kv (session_id, key, value, expires_at) VALUES (?, ?, ?, ?)").run(sessionId, key, json, expires);
   }
   sessionDelete(sessionId: string, key: string): void {
     if (!this.d) return this.mem.sessionDelete(sessionId, key);
@@ -340,8 +371,13 @@ class FunctionsStore {
   }
   cacheSet(scope: string, key: string, value: unknown, ttlMs: number | null): void {
     if (!this.d) return this.mem.cacheSet(scope, key, value, ttlMs);
-    const expires = ttlMs ? Date.now() + ttlMs : null;
-    this.d.prepare("INSERT OR REPLACE INTO cache_kv (scope, key, value, expires_at, lock_token) VALUES (?, ?, ?, ?, NULL)").run(scope, key, JSON.stringify(value ?? null), expires);
+    const now = Date.now();
+    const expires = ttlMs ? now + ttlMs : null;
+    const json = JSON.stringify(value ?? null);
+    const old = this.d.prepare("SELECT length(CAST(value AS BLOB)) AS n FROM cache_kv WHERE scope = ? AND key = ?").get(scope, key) as { n: number } | undefined;
+    const all = this.d.prepare("SELECT count(*) AS c, COALESCE(sum(length(CAST(value AS BLOB))), 0) AS b FROM cache_kv WHERE scope = ? AND (expires_at IS NULL OR expires_at > ?)").get(scope, now) as { c: number; b: number };
+    checkKv(key, json, { exists: Boolean(old), oldBytes: old?.n ?? 0, keys: all.c, bytes: all.b });
+    this.d.prepare("INSERT OR REPLACE INTO cache_kv (scope, key, value, expires_at, lock_token) VALUES (?, ?, ?, ?, NULL)").run(scope, key, json, expires);
   }
   cacheIncr(scope: string, key: string, by: number, ttlMs: number | null): number {
     const cur = this.cacheGet(scope, key);
@@ -481,6 +517,10 @@ class FunctionsStore {
     this.d.prepare("DELETE FROM webhooks WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
     this.d.prepare("DELETE FROM run_logs WHERE run_id IN (SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?)").run(runCutoff);
     this.d.prepare("DELETE FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?").run(runCutoff);
+    // 6.7 (F-18): a run that read a card goes much sooner (its inputs, outputs and logs hold personal data).
+    const nfcCutoff = Math.max(runCutoff, now - nfcRunKeepMs());
+    this.d.prepare("DELETE FROM run_logs WHERE run_id IN (SELECT id FROM runs WHERE sensitive = 1 AND finished_at IS NOT NULL AND finished_at < ?)").run(nfcCutoff);
+    this.d.prepare("DELETE FROM runs WHERE sensitive = 1 AND finished_at IS NOT NULL AND finished_at < ?").run(nfcCutoff);
   }
 }
 
@@ -547,12 +587,24 @@ class MemoryStore {
     const id = newId("ses"); this.sess.set(id, { id, modelId, scopeKey, expires: null }); return id;
   }
   sessionGet(sessionId: string, key: string, now: number): unknown { const r = this.skv.get(`${sessionId}\0${key}`); return r && (r.expires === null || r.expires > now) ? r.value : null; }
-  sessionSet(sessionId: string, key: string, value: unknown, ttlMs: number | null): void { this.skv.set(`${sessionId}\0${key}`, { value: value ?? null, expires: ttlMs ? Date.now() + ttlMs : null }); }
+  sessionSet(sessionId: string, key: string, value: unknown, ttlMs: number | null): void { this.memCheck(this.skv, sessionId, key, value); this.skv.set(`${sessionId}\0${key}`, { value: value ?? null, expires: ttlMs ? Date.now() + ttlMs : null }); }
+  /** KV_LIMITS for the in-memory store too. */
+  private memCheck(map: Map<string, { value: unknown; expires: number | null }>, scope: string, key: string, value: unknown): void {
+    const now = Date.now();
+    let keys = 0; let bytes = 0; let oldBytes = 0; let exists = false;
+    for (const [k, v] of map) {
+      if (!k.startsWith(`${scope}\0`) || (v.expires !== null && v.expires <= now)) continue;
+      const n = Buffer.byteLength(JSON.stringify(v.value ?? null));
+      keys++; bytes += n;
+      if (k === `${scope}\0${key}`) { exists = true; oldBytes = n; }
+    }
+    checkKv(key, JSON.stringify(value ?? null), { exists, oldBytes, keys, bytes });
+  }
   sessionDelete(sessionId: string, key: string): void { this.skv.delete(`${sessionId}\0${key}`); }
   sessionKeys(sessionId: string, now: number): string[] { const out: string[] = []; for (const [k, v] of this.skv) { const [sid, key] = k.split("\0"); if (sid === sessionId && (v.expires === null || v.expires > now)) out.push(key); } return out; }
 
   cacheGet(scope: string, key: string, now: number): unknown { const r = this.ckv.get(`${scope}\0${key}`); return r && (r.expires === null || r.expires > now) ? r.value : null; }
-  cacheSet(scope: string, key: string, value: unknown, ttlMs: number | null): void { this.ckv.set(`${scope}\0${key}`, { value: value ?? null, expires: ttlMs ? Date.now() + ttlMs : null }); }
+  cacheSet(scope: string, key: string, value: unknown, ttlMs: number | null): void { this.memCheck(this.ckv, scope, key, value); this.ckv.set(`${scope}\0${key}`, { value: value ?? null, expires: ttlMs ? Date.now() + ttlMs : null }); }
   cacheDelete(scope: string, key: string): void { this.ckv.delete(`${scope}\0${key}`); }
 
   private sch = new Map<string, Schedule>();
@@ -590,6 +642,8 @@ class MemoryStore {
   chains(modelId: string, limit: number): Chain[] { return [...this.chs.values()].filter((c) => c.modelId === modelId).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit).map((c) => structuredClone(c)); }
 
   prune(runCutoff: number, now: number): void {
+    const nfcCutoff = Math.max(runCutoff, now - nfcRunKeepMs());
+    for (const [id, r] of this.rns) if (r.sensitive && r.finishedAt !== null && r.finishedAt < nfcCutoff) this.rns.delete(id);
     for (const [id, c] of this.chs) if (c.updatedAt < runCutoff) { this.chs.delete(id); for (const k of [...this.skv.keys()]) if (k.startsWith(`${c.sessionId}\0`)) this.skv.delete(k); for (const k of [...this.ckv.keys()]) if (k.startsWith(`chain:${id}\0`)) this.ckv.delete(k); }
     for (const [k, v] of this.skv) if (v.expires !== null && v.expires <= now) this.skv.delete(k);
     for (const [k, v] of this.ckv) if (v.expires !== null && v.expires <= now) this.ckv.delete(k);

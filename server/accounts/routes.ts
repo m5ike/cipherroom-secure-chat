@@ -61,7 +61,7 @@ import type { Express, NextFunction, Request, Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { eventStore } from "../events";
 import { audit } from "../monitor/audit";
-import { ACCOUNT_LIMITS, accountStore as defaultStore, usernameOf, type AccountRecord, type AccountStore } from "./store";
+import { ACCOUNT_LIMITS, accountCap, accountStore as defaultStore, usernameOf, type AccountRecord, type AccountStore } from "./store";
 import { userHandleFor, usernameFromHandle } from "./username";
 import { androidAppOrigins, androidCertFingerprints } from "../android/app-links";
 import { checkRegistrationOnServer, errorSummary, passkeyName } from "./registration";
@@ -330,6 +330,8 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     const created = store.create(r.credential, { username: issued.userName, ...(issued.contact ? { contact: issued.contact } : {}) });
     if (!created.ok) {
       adminLog("account.register.failed", "warn", req, { status: "store", detail: { reason: created.reason } });
+      // 6.7 (S8): the operator hears about a full store (ACCOUNTS_MAX).
+      if (created.reason === "account store full") audit.add({ category: "security", level: "warn", event: "accounts.full", status: String(accountCap()) });
       if (created.taken) {
         const errors = { ...(created.taken.email ? { email: "taken" } : {}), ...(created.taken.phone ? { phone: "taken" } : {}) };
         return res.status(409).json({ ok: false, code: "taken", errors, message: "An account with this e-mail or phone was registered meanwhile." });

@@ -402,6 +402,11 @@ export class GlobalStore {
     return (this.sql("SELECT * FROM databases ORDER BY created_at DESC LIMIT ?").all(Math.max(1, Math.min(1000, limit))) as Array<Record<string, unknown>>).map(toDatabase);
   }
 
+  /** Bytes of the session databases that have not expired (6.7, S7: the shared budget). */
+  liveSessionBytes(now = Date.now()): number {
+    return Number((this.sql("SELECT COALESCE(sum(bytes), 0) AS n FROM databases WHERE owner_kind = 'session' AND (expires_at = 0 OR expires_at > ?)").get(now) as { n?: number } | undefined)?.n ?? 0);
+  }
+
   /** Session databases that have not expired (the global cap counts these). */
   countLiveSessions(now = Date.now()): number {
     return Number((this.sql("SELECT count(*) AS n FROM databases WHERE owner_kind = 'session' AND (expires_at = 0 OR expires_at > ?)").get(now) as { n?: number } | undefined)?.n ?? 0);

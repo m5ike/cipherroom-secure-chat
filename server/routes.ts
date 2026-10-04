@@ -28,13 +28,14 @@
 // logging is gated by LOG_EVENTS and only stores opaque ids + timestamps.
 
 import type { Express, Request, Response } from "express";
+import { rateLimit } from "express-rate-limit";
 import type { Server } from 'node:http';
 import { eventStore } from "./events";
 import { buildModuleManifest } from "./modules";
 import { pushSubscriptions } from "./routes-admin-shared";
 import { registerRetentionRoutes, startRetentionSchedule } from "./retention-routes";
 import { registerPushRoutes } from "./push-routes";
-import { consentLedger, deviceAuditLog, deviceSettings } from "./device-state";
+import { consentLedger, deviceAuditLog, deviceSettings, getConsent, getDeviceSettings, putConsent, putDeviceSettings } from "./device-state";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 import { registerAiRoutes } from "./ai/routes";
 import { registerFunctionsRoutes } from "./functions/routes";
@@ -177,8 +178,14 @@ export async function registerRoutes(
     return { pending: st.queued + st.delivering, bytes: st.bytes };
   });
   const queueSweep = setInterval(() => {
-    const swept = offlineQueue().sweep();
-    if (swept.expired + swept.purged > 0) audit.add({ category: "storage", event: "queue.sweep", detail: swept });
+    // 6.7 (N7): a busy or full database (SQLITE_BUSY / SQLITE_FULL) must not
+    // take the process down from a timer.
+    try {
+      const swept = offlineQueue().sweep();
+      if (swept.expired + swept.purged > 0) audit.add({ category: "storage", event: "queue.sweep", detail: swept });
+    } catch (err) {
+      audit.add({ category: "storage", level: "warn", event: "queue.sweep-failed", detail: { error: (err as Error)?.message?.slice(0, 200) ?? String(err) } });
+    }
   }, 10 * 60 * 1000);
   queueSweep.unref?.();
 
@@ -269,7 +276,10 @@ export async function registerRoutes(
   }, () => buildModuleManifest(eventStore.backend).features);
 
   // Prometheus: /metrics with METRICS_TOKEN (or any administrator's token).
-  app.get("/metrics", (req, res) => {
+  // 6.7 (N10): it is outside /api, so it gets the console's budget for
+  // refused requests — otherwise any admin token could be guessed here freely.
+  const metricsRefused = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, message: "too many refused requests\n" });
+  app.get("/metrics", metricsRefused, (req, res) => {
     const metricsToken = process.env.METRICS_TOKEN?.trim();
     const header = req.header("authorization") ?? "";
     const same = (x: string, y: string) => timingSafeEqual(createHash("sha256").update(x).digest(), createHash("sha256").update(y).digest());
@@ -383,16 +393,17 @@ export async function registerRoutes(
   app.get("/api/settings", (req: Request, res: Response) => {
     const deviceId = safeDeviceId(req.query.deviceId);
     if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
-    const record = deviceSettings.get(deviceId);
-    res.json({ ok: true, deviceId, settings: record?.payload ?? null, updatedAt: record?.updatedAt ?? null });
+    const record = getDeviceSettings(deviceId);
+    res.json({ ok: true, deviceId, settings: record?.settings ?? null, updatedAt: record?.updatedAt ?? null });
   });
 
   app.post("/api/settings", (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
     const deviceId = safeDeviceId(body.deviceId);
     if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
-    const payload = (body.settings && typeof body.settings === "object" ? body.settings : {}) as Record<string, unknown>;
-    deviceSettings.set(deviceId, { deviceId, payload, updatedAt: Date.now() });
+    // 6.7 (V4): bounded — size per device, number of devices, expiry.
+    const stored = putDeviceSettings(deviceId, body.settings);
+    if (!stored.ok) return res.status(stored.status).json({ ok: false, message: stored.message });
     eventStore.record({ kind: "settings-sync", meta: { deviceId } });
     res.json({ ok: true });
   });
@@ -425,7 +436,7 @@ export async function registerRoutes(
     const deviceId = safeDeviceId(body.deviceId);
     if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
     const opt = body.analyticsConsent === true;
-    consentLedger.set(deviceId, { deviceId, analyticsConsent: opt, updatedAt: Date.now() });
+    putConsent(deviceId, opt);
     eventStore.record({ kind: "analytics-consent", meta: { deviceId, opt } });
     res.json({ ok: true, analyticsConsent: opt });
   });
@@ -433,7 +444,7 @@ export async function registerRoutes(
   app.get("/api/analytics/consent", (req: Request, res: Response) => {
     const deviceId = safeDeviceId(req.query.deviceId);
     if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
-    res.json({ ok: true, record: consentLedger.get(deviceId) ?? null });
+    res.json({ ok: true, record: getConsent(deviceId) });
   });
 
   // ---------- File proxy diagnostics (server-enhanced mode) ----------

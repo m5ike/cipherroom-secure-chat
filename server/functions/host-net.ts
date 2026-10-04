@@ -4,10 +4,15 @@
 // and never to a private, loopback, link-local or cloud-metadata address, on
 // the first hop or any redirect. The hostname is resolved and checked, then
 // the request is pinned to that address so a name that flips after the check
-// (DNS rebinding) cannot slip through.
+// (DNS rebinding) cannot slip through (6.7, F-14: node:http(s) with a fixed
+// lookup — the undici Agent it used to ask for was never installed).
 
 import { lookup as dnsLookup, promises as dnsp } from "node:dns";
-import { isIP } from "node:net";
+import { request as httpReq, type IncomingMessage } from "node:http";
+import { request as httpsReq } from "node:https";
+import { isIP, type LookupFunction } from "node:net";
+import { Readable } from "node:stream";
+import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib";
 import { Buffer } from "node:buffer";
 
 export class NetError extends Error {
@@ -36,17 +41,50 @@ export function isBlockedIp(ip: string): boolean {
     if (a >= 224) return true;                                      // multicast + reserved
     return false;
   }
-  if (v === 6) {
-    const ip6 = ip.toLowerCase().replace(/^\[|\]$/g, "");
-    if (ip6 === "::1" || ip6 === "::") return true;                 // loopback / unspecified
-    if (ip6.startsWith("fe80") || ip6.startsWith("fc") || ip6.startsWith("fd")) return true; // link-local / unique-local
-    if (ip6.startsWith("ff")) return true;                          // multicast
-    // IPv4-mapped (::ffff:a.b.c.d) — check the embedded v4.
-    const m = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(ip6);
-    if (m) return isBlockedIp(m[1]);
+  if (v === 6 || isIP(ip.replace(/^\[|\]$/g, "")) === 6) {
+    // 6.7 (F-14 / audit N13): every spelling of an address is expanded
+    // first (::ffff:7f00:1 is ::ffff:127.0.0.1), and the IPv4 an address
+    // carries (mapped, compatible, NAT64, 6to4) is checked as IPv4.
+    const h = ipv6Hextets(ip.replace(/^\[|\]$/g, ""));
+    if (!h) return true;
+    const v4 = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+    const zero = (from: number, to: number) => h.slice(from, to).every((x) => x === 0);
+    if (zero(0, 8)) return true;                                    // :: unspecified
+    if (zero(0, 7) && h[7] === 1) return true;                      // ::1 loopback
+    if (zero(0, 5) && h[5] === 0xffff) return isBlockedIp(v4(h[6], h[7]));  // ::ffff:0:0/96 IPv4-mapped
+    if (zero(0, 6)) return isBlockedIp(v4(h[6], h[7]));             // ::/96 IPv4-compatible (deprecated)
+    if (h[0] === 0x64 && h[1] === 0xff9b && zero(2, 6)) return isBlockedIp(v4(h[6], h[7])); // 64:ff9b::/96 NAT64
+    if (h[0] === 0x64 && h[1] === 0xff9b && h[2] === 1) return true; // 64:ff9b:1::/48 local-use NAT64
+    if (h[0] === 0x2002) return isBlockedIp(v4(h[1], h[2]));        // 2002::/16 6to4
+    if (h[0] === 0x2001 && h[1] === 0) return true;                 // 2001::/32 Teredo (an obfuscated IPv4)
+    if (h[0] === 0x0100 && zero(1, 4)) return true;                 // 100::/64 discard
+    if ((h[0] & 0xffc0) === 0xfe80 || (h[0] & 0xffc0) === 0xfec0) return true; // fe80::/10 link-local, fec0::/10 site-local
+    if ((h[0] & 0xfe00) === 0xfc00) return true;                    // fc00::/7 unique-local
+    if ((h[0] & 0xff00) === 0xff00) return true;                    // ff00::/8 multicast
     return false;
   }
   return true; // not an IP literal → refuse (we only pin to resolved IPs)
+}
+
+/** The eight 16-bit groups of an IPv6 literal (a dotted IPv4 tail allowed); null if it is not one. */
+function ipv6Hextets(ip: string): number[] | null {
+  let s = ip.toLowerCase().split("%")[0];
+  const tail = /(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(s);
+  if (tail) {
+    const b = tail.slice(1).map(Number);
+    if (b.some((n) => n > 255)) return null;
+    s = `${s.slice(0, tail.index)}${((b[0] << 8) | b[1]).toString(16)}:${((b[2] << 8) | b[3]).toString(16)}`;
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const part = (x: string) => (x ? x.split(":") : []);
+  const head = part(halves[0]);
+  const rest = halves.length === 2 ? part(halves[1]) : [];
+  const fill = 8 - head.length - rest.length;
+  if (halves.length === 2 ? fill < 1 : fill !== 0) return null;
+  const all = [...head, ...Array(halves.length === 2 ? fill : 0).fill("0"), ...rest];
+  if (all.length !== 8 || all.some((g) => !/^[0-9a-f]{1,4}$/.test(g))) return null;
+  return all.map((g) => parseInt(g, 16));
 }
 
 // Development / tests may allow private addresses (to reach a local test
@@ -54,8 +92,10 @@ export function isBlockedIp(ip: string): boolean {
 const allowLocal = () => process.env.FUNCTIONS_HTTP_ALLOW_LOCAL === "1";
 
 /** Resolves a hostname and returns a safe address to connect to, or throws. */
-async function resolveSafe(hostname: string): Promise<{ address: string; family: number }> {
+async function resolveSafe(rawHostname: string): Promise<{ address: string; family: number }> {
   const ok = allowLocal();
+  // URL.hostname keeps an IPv6 literal's brackets ("[::1]").
+  const hostname = rawHostname.replace(/^\[|\]$/g, "");
   if (isIP(hostname)) {
     if (!ok && isBlockedIp(hostname)) throw new NetError("ssrf", `${hostname} is a private or reserved address`);
     return { address: hostname, family: isIP(hostname) };
@@ -116,40 +156,91 @@ export async function httpRequest(spec: HttpSpec, bytesOf: (v: unknown) => Buffe
     if (u.protocol !== "http:" && u.protocol !== "https:") throw new NetError("scheme", "only http(s) is allowed");
     const pin = await resolveSafe(u.hostname);
     // Pin the connection to the checked address (defeats DNS rebinding).
-    const dispatcher = pinnedDispatcher(u, pin.address);
-    let res: Response;
-    const init = { method, headers, body: body as BodyInit | undefined, redirect: "manual" as const, signal: deadline, ...(dispatcher ? { dispatcher } : {}) };
+    let res: PinnedResponse;
     try {
-      res = await fetch(u, init as RequestInit);
+      res = await pinnedRequest(u, pin, { method, headers, body, signal: deadline });
     } catch (err) {
-      if ((err as Error).name === "TimeoutError") throw new NetError("timeout", `the request took longer than ${timeout} ms`);
+      if (deadline.aborted || (err as Error).name === "TimeoutError") throw new NetError("timeout", `the request took longer than ${timeout} ms`);
       throw new NetError("network", (err as Error).message);
     }
     const loc = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && loc) {
-      if (redirect === "error") throw new NetError("redirect", `the server redirected to ${loc}`);
+      if (redirect === "error") { res.discard(); throw new NetError("redirect", `the server redirected to ${loc}`); }
       if (redirect === "manual") return await readResponse(res, u.href, maxBytes, started);
+      res.discard();
       if (++hops > maxRedirects) throw new NetError("redirect", "too many redirects");
-      url = new URL(loc, u).href;
+      const next = new URL(loc, u);
+      // Credentials are for the origin they were given to (as fetch does).
+      if (next.origin !== u.origin) for (const h of ["authorization", "cookie", "proxy-authorization"]) headers.delete(h);
+      url = next.href;
       continue;
     }
     return await readResponse(res, u.href, maxBytes, started);
   }
 }
 
-/** An undici dispatcher that connects to a fixed IP but keeps the URL's host
- *  (SNI, Host header). Returns undefined when undici is unavailable. */
-function pinnedDispatcher(u: URL, address: string): unknown {
-  try {
-    // Node's global fetch is undici; Agent + connect.lookup pins the address.
-    const { Agent } = require("undici") as { Agent: new (o: object) => unknown };
-    return new Agent({ connect: { lookup: (_h: string, _o: unknown, cb: (e: Error | null, a: string, f: number) => void) => cb(null, address, isIP(address) || 4) } });
-  } catch {
-    return undefined; // fall back to a normal connect (already SSRF-checked above)
-  }
+/** What readResponse needs of a response. */
+type PinnedResponse = { status: number; statusText: string; ok: boolean; headers: Headers; body: ReadableStream<Uint8Array> | null; discard(): void };
+
+/**
+ * One HTTP(S) request whose connection goes to `pin` — the address
+ * resolveSafe resolved and checked — while the URL's host stays the Host
+ * header, the TLS server name and the name the certificate is checked
+ * against (6.7, F-14). The guard used to hand this to an undici Agent that
+ * was never installed, so fetch silently resolved the name a second time
+ * and a name that flipped to 127.0.0.1 after the check (DNS rebinding) got
+ * through. Like fetch, it asks for and decodes gzip / deflate / br.
+ */
+function pinnedRequest(u: URL, pin: { address: string; family: number }, init: { method: string; headers: Headers; body: string | Uint8Array | undefined; signal: AbortSignal }): Promise<PinnedResponse> {
+  const lookup = ((_host: string, options: { all?: boolean }, cb: (...args: unknown[]) => void) => {
+    const family = pin.family || isIP(pin.address) || 4;
+    if (options?.all) cb(null, [{ address: pin.address, family }]);
+    else cb(null, pin.address, family);
+  }) as unknown as LookupFunction;
+  const headers: Record<string, string> = {};
+  init.headers.forEach((v, k) => { headers[k] = v; });
+  headers["accept"] ??= "*/*";
+  headers["user-agent"] ??= "node";
+  headers["accept-encoding"] ??= "gzip, deflate, br";
+  const hostname = u.hostname.replace(/^\[|\]$/g, "");
+  const options = {
+    method: init.method,
+    host: hostname,
+    port: u.port || (u.protocol === "https:" ? 443 : 80),
+    path: `${u.pathname}${u.search}`,
+    headers,
+    lookup,
+    signal: init.signal,
+    ...(u.protocol === "https:" && !isIP(hostname) ? { servername: hostname } : {}),
+    agent: false as const,
+  };
+  return new Promise<PinnedResponse>((resolve, reject) => {
+    const req = (u.protocol === "https:" ? httpsReq : httpReq)(options, (res: IncomingMessage) => {
+      const h = new Headers();
+      for (let i = 0; i < res.rawHeaders.length; i += 2) { try { h.append(res.rawHeaders[i], res.rawHeaders[i + 1]); } catch { /* a header fetch would refuse too */ } }
+      const status = res.statusCode ?? 0;
+      const empty = init.method === "HEAD" || status === 204 || status === 304;
+      const encoding = String(res.headers["content-encoding"] ?? "").trim().toLowerCase();
+      const decoder = empty ? null : encoding === "gzip" || encoding === "x-gzip" ? createGunzip() : encoding === "deflate" ? createInflate() : encoding === "br" ? createBrotliDecompress() : null;
+      const stream: Readable = decoder ? res.pipe(decoder) : res;
+      if (decoder) res.on("error", (err) => decoder.destroy(err));
+      if (empty) res.resume();
+      resolve({
+        status,
+        statusText: res.statusMessage ?? "",
+        ok: status >= 200 && status < 300,
+        headers: h,
+        body: empty ? null : Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>,
+        discard: () => { res.destroy(); },
+      });
+    });
+    req.on("error", reject);
+    if (init.body !== undefined) req.end(typeof init.body === "string" ? init.body : Buffer.from(init.body.buffer, init.body.byteOffset, init.body.byteLength));
+    else req.end();
+  });
 }
 
-async function readResponse(res: Response, finalUrl: string, maxBytes: number, started: number): Promise<Record<string, unknown>> {
+async function readResponse(res: PinnedResponse, finalUrl: string, maxBytes: number, started: number): Promise<Record<string, unknown>> {
   const reader = res.body?.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;

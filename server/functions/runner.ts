@@ -178,6 +178,10 @@ function closeCall(chainId: string, callId: number, patch: Pick<ChainCall, "stat
 /* ---------------------------------------------------- live interactions */
 
 type InteractionKind = "prompt" | "form" | "nfc";
+
+/** 6.7 (F-18): runs that read a card (an answered m5.nfc call) — their
+ *  record is marked sensitive and pruned after FUNCTIONS_NFC_RUN_HOURS. */
+const cardRuns = new Set<string>();
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: ReturnType<typeof setTimeout>; kind?: InteractionKind; spec?: unknown; at?: number };
 const interactions = new Map<string, Map<string, Pending>>();
 const PROMPT_TTL_MS = 5 * 60 * 1000;
@@ -363,7 +367,7 @@ function hostHandler(model: Model, sessionId: string, runId: string, caller: Cal
       nfcSpend(nctx);
       const command = sanitizeNfcCommand(args[0]);
       const ttlMs = (command.timeout ? command.timeout * 1000 : 20_000) + 20_000;
-      return ask(runId, "nfc", { command }, control, ttlMs).then((result) => sanitizeNfcResult(result));
+      return ask(runId, "nfc", { command }, control, ttlMs).then((result) => { cardRuns.add(runId); return sanitizeNfcResult(result); });
     }
     if (fn === "webhook.create") return makeWebhook(runId, (args[0] ?? {}) as { once?: boolean; durable?: boolean; ttl?: unknown }, model, sessionId, caller);
     if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
@@ -532,6 +536,7 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
   run.finishedAt = Date.now();
   run.ms = result.ms;
   run.memMb = result.memMb;
+  if (cardRuns.delete(runId)) run.sensitive = true;
   functionsStore.saveRun(run);
   runEvents.emit("run", { runId, type: "status", status: run.status, error: run.error, ms: run.ms, memMb: run.memMb });
   const problems = [...rejectedLive, ...rejected.map((r) => `result[${r.index}]: ${r.reason}`)];
@@ -648,6 +653,7 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
   const finalOutputs = [...outputs, ...values];
   run.status = result.ok ? "done" : result.error.type === "TimeLimit" ? "timed-out" : "failed";
   run.outputs = finalOutputs; run.error = result.ok ? null : result.error; run.finishedAt = Date.now(); run.ms = result.ms; run.memMb = result.memMb;
+  if (cardRuns.delete(runId)) run.sensitive = true;
   functionsStore.saveRun(run);
   runEvents.emit("run", { runId, type: "status", status: run.status, error: run.error, ms: run.ms, memMb: run.memMb });
   const problems = [...rejectedLive, ...rejected.map((r) => `result[${r.index}]: ${r.reason}`)];

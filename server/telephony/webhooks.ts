@@ -15,6 +15,13 @@
 // mismatch). When it is absent the event is accepted but stored with
 // verified=false and a warning is logged — set TELNYX_PUBLIC_KEY /
 // VONAGE_SIGNATURE_SECRET (Twilio uses its auth token) to close that gap.
+// 6.7 (F-17): enforced means fail-closed — a request without its signature
+// is refused like one with a wrong signature. Vonage: an SMS webhook without
+// `sig` is refused once VONAGE_SIGNATURE_SECRET is set (turn on signed
+// webhooks for the SMS API; VONAGE_ALLOW_UNSIGNED_SMS=1 keeps the old
+// behaviour for an account that cannot sign them), a signed one must be
+// recent when it carries a timestamp, and a JWT must carry `iat` within ten
+// minutes and a `payload_hash` whenever the request has a body.
 //
 // Events never trigger a billable action; they feed an in-memory event log
 // (admin console) and the inbound-DID routing decision from the SIP store.
@@ -142,6 +149,11 @@ export function verifyTelnyxSignature(rawBody: Buffer | string, timestamp: strin
   }
 }
 
+/** How old a signed Vonage webhook may be (its JWT `iat`, an SMS `timestamp`), seconds. */
+const VONAGE_MAX_AGE_SEC = 600;
+const VONAGE_MAX_SKEW_SEC = 60;
+const fresh = (t: number, now = Math.floor(Date.now() / 1000)) => Number.isFinite(t) && t <= now + VONAGE_MAX_SKEW_SEC && now - t <= VONAGE_MAX_AGE_SEC;
+
 /** Vonage signed webhooks: HS256 JWT in Authorization, payload_hash = sha256(body). */
 export function verifyVonageJwtWebhook(authHeader: string | undefined, rawBody: Buffer | string, secret: string): boolean {
   if (!authHeader || !secret) return false;
@@ -149,12 +161,16 @@ export function verifyVonageJwtWebhook(authHeader: string | undefined, rawBody: 
   if (!m) return false;
   const claims = verifyJwtHS256(m[1], secret);
   if (!claims) return false;
+  // 6.7 (F-17): a token without a recent `iat` could be replayed forever.
+  if (typeof claims.iat !== "number" || !fresh(claims.iat)) return false;
+  const body = Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody);
   const hash = claims.payload_hash;
   if (typeof hash === "string" && hash) {
-    const actual = createHash("sha256").update(Buffer.isBuffer(rawBody) ? rawBody : Buffer.from(rawBody)).digest("hex");
+    const actual = createHash("sha256").update(body).digest("hex");
     return actual.toLowerCase() === hash.toLowerCase();
   }
-  return true;
+  // A token that does not bind the body is good only for a request without one.
+  return body.length === 0;
 }
 
 /** Vonage SMS API "signed webhooks" (md5 method): md5("&k=v" sorted, excluding sig, + secret). */
@@ -240,8 +256,11 @@ export function verifyRequest(provider: TelephonyProvider, type: string, req: Re
   if (!secret) return { verified: false, enforced: false };
   if (type === "sms" || type === "sms_status") {
     // Legacy SMS API: only signed when "signed webhooks" is on for the account.
+    // 6.7 (F-17): with the secret set an unsigned one is refused (fail-closed),
+    // unless the operator says the account cannot sign them.
     const params = { ...stringParams(req.query), ...stringParams(req.body) };
-    if (!params.sig) return { verified: false, enforced: false };
+    if (!params.sig) return env("VONAGE_ALLOW_UNSIGNED_SMS") === "1" ? { verified: false, enforced: false } : { verified: false, enforced: true };
+    if (params.timestamp && !fresh(Number(params.timestamp))) return { verified: false, enforced: true };
     return { verified: verifyVonageLegacySig(params, secret), enforced: true };
   }
   return { verified: verifyVonageJwtWebhook(req.headers.authorization, rawBodyOf(req), secret), enforced: true };

@@ -271,6 +271,9 @@ export type Run = {
   chainId?: string;
   callId?: number;
   endpoint?: EndpointType;
+  /** 6.7 (F-18): the run read a card (m5.nfc) — its record holds personal
+   *  data (e-ID, card reports), so it is kept only FUNCTIONS_NFC_RUN_HOURS. */
+  sensitive?: boolean;
 };
 
 /* ------------------------------------------------------------ schedules */

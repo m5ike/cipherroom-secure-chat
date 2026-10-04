@@ -83,7 +83,9 @@ describe("routes", () => {
     expect(res.status).toBe(200);
     const entry = audit.recent({ category: "message" }).find((e) => e.event === "message.delete");
     expect(entry).toBeTruthy();
-    expect(entry!.actor).toBe("guest:c1");
+    // 6.7 (S9): a guest's client id is its own claim — not the actor.
+    expect(entry!.actor).toBe("guest");
+    expect(entry!.detail).toMatchObject({ claimedClient: "c1" });
     expect(entry!.roomHash).toBeTruthy();
     expect(entry!.roomHash).not.toContain("Team");
     expect(JSON.stringify(entry)).not.toContain("never stored");

@@ -37,6 +37,7 @@ import { isE164 } from "./types";
 import { numberInfo } from "./numbers";
 import { publicBaseUrl } from "./connectors";
 import { stt, tts, type Caller as AiCaller } from "../ai/service";
+import { claimUpgradePath } from "../upgrade-guard";
 import { Framer, Segmenter, StreamResampler, mulawDecode, mulawEncode, pcm16FromLE, pcm16ToLE, resample, wavDecode, wavEncode } from "./audio";
 
 const env = (name: string): string => (process.env[name]?.trim() || "");
@@ -505,23 +506,27 @@ function clientSocket(b: BridgeSession, ws: WebSocket): void {
 }
 
 let wss: WebSocketServer | null = null;
+const MEDIA_PATH = /^\/media\/tel\/(client\/)?([A-Za-z0-9_-]{16,64})$/;
 let sweeper: ReturnType<typeof setInterval> | null = null;
 
 /** Main service: the media WebSockets (/media/tel/…) and the sweep of expired sessions. */
 export function attachBridgeMedia(server: Server): void {
   wss ??= new WebSocketServer({ noServer: true, maxPayload: 4 * 1024 * 1024, perMessageDeflate: false });
+  // 6.7 (S3): other upgrade paths are closed by the guard, not left open.
+  claimUpgradePath(server, MEDIA_PATH);
   server.on("upgrade", (req: IncomingMessage, socket: Duplex, head: Buffer) => {
     let path = "";
     try { path = new URL(req.url ?? "/", "http://x").pathname; } catch { return; }
-    const m = /^\/media\/tel\/(client\/)?([A-Za-z0-9_-]{16,64})$/.exec(path);
+    const m = MEDIA_PATH.exec(path);
     if (!m || !wss) return;
     void (async () => {
       const b = await sessionBy(m[1] ? "clientToken" : "mediaToken", m[2]);
       if (!b) { socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"); socket.destroy(); return; }
       wss!.handleUpgrade(req, socket, head, (ws) => (m[1] ? clientSocket(b, ws) : providerSocket(b, ws)));
-    })();
+    })().catch(() => socket.destroy());
   });
-  sweeper ??= setInterval(() => void sweep(), 30_000);
+  // 6.7 (N7): a failing sweep is logged, not an unhandled rejection.
+  sweeper ??= setInterval(() => { sweep().catch((err) => console.warn(`[telephony] bridge sweep failed: ${(err as Error)?.message ?? err}`)); }, 30_000);
   sweeper.unref?.();
 }
 

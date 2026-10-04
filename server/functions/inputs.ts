@@ -9,6 +9,7 @@
 
 import { RunRefused } from "./runner";
 import type { InputSpec } from "./types";
+import { RegexBudgetError, SafeRegex } from "./safe-regex";
 
 const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$/;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -43,9 +44,15 @@ function checkRange(field: string, n: number, spec: InputSpec): void {
 
 function checkPattern(field: string, s: string, spec: InputSpec): void {
   if (!spec.pattern) return;
-  let re: RegExp;
-  try { re = new RegExp(spec.pattern); } catch { return; }
-  if (!re.test(s)) fail(field, "does not match the required pattern");
+  // 6.7 (audit N15): the operator's pattern runs on the service's event loop
+  // over an input of up to 1 MB — guarded like the m5adm filters (S1): a
+  // backtracking pattern gets a time budget instead of the whole service.
+  // The whole value is checked (cutting it would change the verdict).
+  let re: SafeRegex;
+  try { re = new SafeRegex(spec.pattern, "", { maxSubject: Number.POSITIVE_INFINITY, budgetMs: 100, stepMs: 100 }); } catch { return; }
+  let ok: boolean;
+  try { ok = re.test(s); } catch (err) { if (err instanceof RegexBudgetError) fail(field, "could not be checked against its pattern in time"); throw err; }
+  if (!ok) fail(field, "does not match the required pattern");
 }
 
 function coerce(spec: InputSpec, value: unknown): unknown {

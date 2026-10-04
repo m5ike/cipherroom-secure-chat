@@ -49,6 +49,7 @@ import { roomRegistry } from "../room-registry";
 import { classifyFrame, hashRoom, traffic, truncateIp } from "../monitor/traffic";
 import type { StorageFrame, StorageSocketState } from "../storage/ws";
 import type { TrustProxyValue } from "../trust-proxy";
+import { claimUpgradePath } from "../upgrade-guard";
 import { isBinaryError, parseBinaryChunk, type BinaryProxyChunk } from "./binary";
 import type { ClusterBus } from "../cluster/bus";
 import { ClusterRooms, type HeldView, type MemberView } from "./cluster";
@@ -353,6 +354,8 @@ export class SignalingHub {
       if (pathname !== this.path) return; // someone else's (e.g. Vite HMR)
       this.upgrade(req, socket, head);
     });
+    // 6.7 (S3): an upgrade to a path nobody serves is answered and closed.
+    claimUpgradePath(server, this.path);
     this.heartbeat = setInterval(() => this.beat(), this.opts.heartbeatMs ?? HEARTBEAT_MS);
     this.heartbeat.unref?.();
   }
@@ -368,7 +371,23 @@ export class SignalingHub {
       audit.add({ category: "network", level: "notice", event: "ws.refused", ip: truncateIp(ip), status: refused });
       return refuse(socket, refused === "server-full" ? 503 : 429, refused);
     }
-    this.wss.handleUpgrade(req, socket, head, (ws) => this.connected(ws, req, ip));
+    // 6.7 (V3): the slot comes back through closed() once the socket is a
+    // WebSocket; a handshake that fails before that (a bad key or version,
+    // the client gone) never reaches the callback, so it is returned here.
+    let handed = false;
+    const giveBack = () => { if (!handed) { handed = true; this.gate.release(ip); } };
+    socket.once("close", giveBack);
+    try {
+      this.wss.handleUpgrade(req, socket, head, (ws) => {
+        socket.off("close", giveBack);
+        if (handed) { ws.terminate(); return; }
+        handed = true;
+        this.connected(ws, req, ip);
+      });
+    } catch {
+      giveBack();
+      socket.destroy();
+    }
   }
 
   /** Stops accepting, closes every socket (clients reconnect elsewhere). */

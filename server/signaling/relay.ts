@@ -142,10 +142,16 @@ export class AwayRelay {
     const lastSeen = seen && seen <= since ? seen : since;
     map.set(accountId, { name, since, lastSeen });
     this.cluster?.away(room, accountId, { name, since, lastSeen });
+    // 6.7 (S5): the account store keeps an account away in at most
+    // ACCOUNT_LIMITS.maxAwayRooms rooms (the oldest goes); the relay follows
+    // it, so join+leave in ever new rooms cannot grow this map without bound.
+    const before = this.accounts.get(accountId)?.away.map((a) => a.room) ?? [];
     this.accounts.noteAway(accountId, room, name, since, lastSeen);
+    const kept = new Set(this.accounts.get(accountId)?.away.map((a) => a.room) ?? []);
     this.accounts.addAudit(accountId, "away", { room: hashRoom(room) ?? "" });
     this.broadcast(room, { type: "peer-away", ...this.refs(room, accountId), name, since, lastSeen });
     audit.add({ category: "account", event: "relay.away", accountId, roomHash: hashRoom(room) });
+    for (const dropped of before) if (dropped !== room && !kept.has(dropped)) this.clearAway(accountId, dropped);
     return true;
   }
 

@@ -93,15 +93,16 @@ async function forward(req: express.Request, res: express.Response, path: string
   }
 }
 
-app.use("/api/admin/menu-config", express.json({ limit: "1mb" }));
-// 6.0: an APK release goes to the main service as the raw file; the Android
-// design (screens, strings, small assets) is bigger than the default.
-app.use("/api/admin/android/releases/upload", (req, res, next) => {
-  // Read the body only for someone with a token (the main service checks it for real).
+// Read a large body only for someone with a token (the main service checks it for real; 6.7 S4).
+const bearerFirst: express.RequestHandler = (req, res, next) => {
   if (!/^Bearer \S{16,}/.test(String(req.headers.authorization ?? ""))) return res.status(401).json({ ok: false, message: "Unauthorized." });
   next();
-}, express.raw({ type: () => true, limit: "300mb" }));
-app.use("/api/admin/android/design", express.json({ limit: "8mb" }));
+};
+app.use("/api/admin/menu-config", bearerFirst, express.json({ limit: "1mb" }));
+// 6.0: an APK release goes to the main service as the raw file; the Android
+// design (screens, strings, small assets) is bigger than the default.
+app.use("/api/admin/android/releases/upload", bearerFirst, express.raw({ type: () => true, limit: "300mb" }));
+app.use("/api/admin/android/design", bearerFirst, express.json({ limit: "8mb" }));
 // 4.0.5: the Layout builder saves whole element trees.
 app.use("/admin/layout", express.json({ limit: "4mb" }));
 // Package drafts and imports are bigger than the default 256 kB.
@@ -276,7 +277,8 @@ if (appDist) {
   app.get("/layout-preview.html", (_req, res) => {
     res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
     res.setHeader("X-Frame-Options", "SAMEORIGIN");
-    res.sendFile(path.join(appDist, "layout-preview.html"));
+    // Relative to a root: an install under a dot-directory still serves (6.7, S6).
+    res.sendFile("layout-preview.html", { root: appDist });
   });
   app.use("/assets", express.static(path.join(appDist, "assets"), { maxAge: 0, etag: true, fallthrough: false }));
 }
@@ -294,7 +296,7 @@ if (uiDir) {
     });
   }
   app.use("/", express.static(uiDir, { maxAge: 0, etag: false }));
-  app.get("/", (_req, res) => res.sendFile(path.join(uiDir, "index.html")));
+  app.get("/", (_req, res) => res.sendFile("index.html", { root: uiDir }));
 } else {
   app.get("/", (_req, res) => {
     res.type("text/plain").send([

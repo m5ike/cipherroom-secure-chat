@@ -108,10 +108,12 @@ Text hlášky pro `<Say>` / NCCO: `TELEPHONY_GREETING`.
 |---|---|---|
 | Twilio | `X-Twilio-Signature` = base64(HMAC‑SHA1(auth token, URL + seřazené parametry)) | `TWILIO_AUTH_TOKEN` (máš už kvůli odesílání) |
 | Telnyx | Ed25519 nad `<timestamp>|<tělo>`, tolerance 5 min | `TELNYX_PUBLIC_KEY` (portál → API Keys → Public Key) |
-| Vonage | `Authorization: Bearer <HS256 JWT>`, `payload_hash` = SHA‑256 těla; legacy SMS API volitelně `sig` (md5) | `VONAGE_SIGNATURE_SECRET` |
+| Vonage | `Authorization: Bearer <HS256 JWT>` s `iat` (nejvýš 10 min staré) a `payload_hash` = SHA‑256 těla; legacy SMS API `sig` (md5, `timestamp` nejvýš 10 min) | `VONAGE_SIGNATURE_SECRET` |
 
-Když je ověřovací materiál nastaven, kontrola je **vynucená** — špatný podpis =
-`403`. Když nastaven není, událost se přijme, ale uloží jako **neověřená** a do
+Když je ověřovací materiál nastaven, kontrola je **vynucená** — špatný **i chybějící**
+podpis = `403` (6.7). U Vonage proto zapni podepsané webhooky i pro SMS API;
+účet, který je podepsat neumí, nastaví `VONAGE_ALLOW_UNSIGNED_SMS=1` (SMS bez
+`sig` se pak přijmou jako neověřené). Když nastaven není, událost se přijme, ale uloží jako **neověřená** a do
 logu jde varování. Události nikdy nespouští nic placeného; jen se logují,
 zobrazují v adminu a u příchozích SMS/hovorů se dopočítá **routing DID → SIP
 trunk**.

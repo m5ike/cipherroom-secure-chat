@@ -18,6 +18,7 @@
 
 import { createHash } from "node:crypto";
 import { ADM_AREAS, mintAdmToken, type AdmArea, type AdmGrant } from "./adm-token";
+import { SafeRegex } from "./safe-regex";
 
 export class AdmCallError extends Error {
   constructor(readonly code: string, message: string) { super(message); this.name = "AdmCallError"; }
@@ -104,21 +105,27 @@ const idPart = (v: unknown) => encodeURIComponent(str(v).slice(0, 200));
  * "/^eva/i" — or a bare pattern ("^eva", case-sensitive). The subject is
  * cut to 200 characters and patterns with nested quantifiers are refused:
  * a filter can come from a caller's input, and it runs in the service.
+ * 6.7 (audit S1): that refusal is only a helpful early error — the old
+ * check let ((a+))+$ and (a|a)+$ through. What keeps the service running is
+ * SafeRegex: a pattern that could backtrack is matched under a timeout and a
+ * time budget per call (safe-regex.ts).
  */
-export function filterRegex(value: unknown): RegExp {
+export function filterRegex(value: unknown): SafeRegex {
   const raw = str(value);
   if (raw.length > 300) throw new AdmCallError("bad-argument", "a filter pattern is at most 300 characters");
   const m = /^\/(.*)\/([a-z]*)$/s.exec(raw);
   const body = m ? m[1] : raw;
   const flags = m ? [...new Set(m[2].split("").filter((f) => "imsu".includes(f)))].join("") : "";
   if (/\([^)]*[+*}][^)]*\)\s*[+*{]/.test(body)) throw new AdmCallError("bad-argument", "a filter pattern may not repeat a repeated group (e.g. (a+)+)");
-  try { return new RegExp(body, flags); } catch (err) { throw new AdmCallError("bad-argument", `a filter pattern: ${(err as Error).message}`); }
+  try { return new SafeRegex(body, flags, { maxSubject: 200 }); } catch (err) { throw new AdmCallError("bad-argument", `a filter pattern: ${(err as Error).message}`); }
 }
-const test = (re: RegExp, s: unknown) => { re.lastIndex = 0; return re.test(str(s).slice(0, 200)); };
+const test = (re: SafeRegex, s: unknown) => re.test(str(s));
+/** Matches all the subjects a filter will see in one guarded step (S1). */
+const prime = (re: SafeRegex | null, subjects: unknown[]) => { re?.prime(subjects.map(str)); };
 
 export const ROOM_FILTER_KEYS = ["room_username", "system_username", "system_passkey_id", "system_group", "room_id", "room_label", "room_tag"] as const;
 type RoomFilterKey = typeof ROOM_FILTER_KEYS[number];
-type RoomFilter = { key: RoomFilterKey; re: RegExp };
+type RoomFilter = { key: RoomFilterKey; re: SafeRegex };
 
 /** [{ key, value }], [[key, value]], or { key: value } → filters (all must match). */
 export function roomFilters(raw: unknown): RoomFilter[] {
@@ -160,6 +167,20 @@ function roomView(snap: Json | null, record: Json | null): RoomView {
     updatedAt: typeof r.updatedAt === "number" ? r.updatedAt : null,
     updatedBy: str(r.updatedBy),
   };
+}
+
+/** What a room filter key looks at in a room. */
+function roomSubjects(room: RoomView, key: RoomFilterKey): unknown[] {
+  const people = [...room.members, ...room.away];
+  switch (key) {
+    case "room_id": return [room.id];
+    case "room_label": return [room.label];
+    case "room_tag": return room.tags;
+    case "room_username": return people.map((p) => p.name);
+    case "system_username": return people.map((p) => p.username).filter(Boolean);
+    case "system_passkey_id": return people.flatMap((p) => p.passkeys ?? []);
+    case "system_group": return people.flatMap((p) => p.groups ?? []);
+  }
 }
 
 function roomMatches(room: RoomView, filters: RoomFilter[], any: boolean): boolean {
@@ -219,7 +240,9 @@ const ROOMS: Record<string, Op> = {
   list: async (ctx, args) => {
     const filters = roomFilters(args[0]);
     const any = (args[1] as Json | undefined)?.match === "any";
-    return (await allRooms(ctx)).filter((r) => roomMatches(r, filters, any));
+    const rooms = await allRooms(ctx);
+    for (const f of filters) prime(f.re, rooms.flatMap((r) => roomSubjects(r, f.key)));
+    return rooms.filter((r) => roomMatches(r, filters, any));
   },
   get: async (ctx, args) => {
     const id = roomIdOf(args[0]);
@@ -297,7 +320,9 @@ const CONNECTIONS: Record<string, Op> = {
     const f = a0(args);
     const re = (k: string) => (f[k] !== undefined ? filterRegex(f[k]) : null);
     const [ip, name, peer, account, room] = [re("ip"), re("name"), re("peer"), re("account"), f.room !== undefined ? roomIdOf(f.room) : null];
-    return (await conns(ctx)).filter((c) => (!ip || test(ip, c.ip)) && (!name || test(name, c.name)) && (!peer || test(peer, c.peerId)) && (!account || test(account, c.accountId)) && (!room || c.roomHash === room));
+    const list = await conns(ctx);
+    prime(ip, list.map((c) => c.ip)); prime(name, list.map((c) => c.name)); prime(peer, list.map((c) => c.peerId)); prime(account, list.map((c) => c.accountId));
+    return list.filter((c) => (!ip || test(ip, c.ip)) && (!name || test(name, c.name)) && (!peer || test(peer, c.peerId)) && (!account || test(account, c.accountId)) && (!room || c.roomHash === room));
   },
   get: async (ctx, args) => (await conns(ctx)).find((c) => c.id === str(args[0])) ?? null,
   close: async (ctx, args) => Boolean(await api(ctx, "POST", `/connections/${idPart(args[0])}/close`, {}, true)),
@@ -409,7 +434,11 @@ const USERS: Record<string, Op> = {
     const f = a0(args);
     const re = (k: string) => (f[k] !== undefined ? filterRegex(f[k]) : null);
     const [username, group, passkey, id] = [re("username"), re("group"), re("passkey"), re("id")];
-    return (await usersAll(ctx)).filter((u) => (!username || test(username, u.username)) && (!id || test(id, u.id))
+    const all = await usersAll(ctx);
+    prime(username, all.map((u) => u.username)); prime(id, all.map((u) => u.id));
+    prime(group, all.flatMap((u) => (u.groups as string[] | undefined) ?? []));
+    prime(passkey, all.flatMap((u) => ((u.passkeys as Json[] | undefined) ?? []).map((p) => p.credentialId)));
+    return all.filter((u) => (!username || test(username, u.username)) && (!id || test(id, u.id))
       && (!group || ((u.groups as string[] | undefined) ?? []).some((g) => test(group, g)))
       && (!passkey || ((u.passkeys as Json[] | undefined) ?? []).some((p) => test(passkey, p.credentialId))));
   },
@@ -429,8 +458,9 @@ const PASSKEYS: Record<string, Op> = {
     const f = a0(args);
     const re = f.id !== undefined ? filterRegex(f.id) : null;
     const user = f.username !== undefined ? filterRegex(f.username) : null;
-    return (await usersAll(ctx)).flatMap((u) => ((u.passkeys as Json[] | undefined) ?? []).map((p): Json => ({ ...p, accountId: u.id, username: u.username })))
-      .filter((p) => (!re || test(re, p.credentialId)) && (!user || test(user, p.username)));
+    const all = (await usersAll(ctx)).flatMap((u) => ((u.passkeys as Json[] | undefined) ?? []).map((p): Json => ({ ...p, accountId: u.id, username: u.username })));
+    prime(re, all.map((p) => p.credentialId)); prime(user, all.map((p) => p.username));
+    return all.filter((p) => (!re || test(re, p.credentialId)) && (!user || test(user, p.username)));
   },
   get: async (ctx, args) => (await PASSKEYS.list(ctx, [{}]) as Json[]).find((p) => p.credentialId === str(args[0])) ?? null,
   delete: async (ctx, args) => {

@@ -37,10 +37,19 @@ const MAX_SKEW = 5 * 60 * 1000;
 const EVENT_SKEW = 30 * 24 * 60 * 60 * 1000;
 
 const nonces = new Map<string, number>();
-function nonceFresh(nonce: string, now: number): boolean {
+/**
+ * A nonce is remembered for as long as its request's time is accepted (6.7,
+ * audit N12): /events accepts a 30-day skew, but a nonce was forgotten after
+ * 10 minutes — the same signed request could be replayed for a month. Only
+ * requests whose signature verified get here, so the map holds what enrolled
+ * devices sent.
+ */
+function nonceFresh(nonce: string, now: number, skew = MAX_SKEW): boolean {
   if (nonces.size > 50_000) for (const [n, until] of nonces) if (until < now) nonces.delete(n);
+  // Still full of live nonces: the oldest goes (Map order is insertion order).
+  while (nonces.size > 200_000) nonces.delete(nonces.keys().next().value as string);
   if (nonces.has(nonce)) return false;
-  nonces.set(nonce, now + 2 * MAX_SKEW);
+  nonces.set(nonce, now + 2 * skew);
   return true;
 }
 
@@ -79,11 +88,11 @@ function signedBy(opts: { skew?: number; allowStatus?: Device["status"][] } = {}
     };
     if (!device) return refuse(401, "unknown-device", "This device is not enrolled on this server.");
     if (!Number.isFinite(t) || Math.abs(now - t) > (opts.skew ?? MAX_SKEW)) return refuse(401, "clock", "The request time is too far from the server's — check the device clock.");
-    if (!/^[A-Za-z0-9_-]{16,40}$/.test(nonce) || nonces.has(`${id}:${nonce}`)) return refuse(401, "replay", "This request was already used.");
+    if (!/^[A-Za-z0-9_-]{16,40}$/.test(nonce)) return refuse(401, "replay", "This request was already used.");
     const raw = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
     if (!verifyP1363(device.signKey, requestSignedString(req.method, req.originalUrl, time, nonce, raw), sig)) return refuse(401, "bad-signature", "The request signature is not valid.");
-    // 6.7 (audit N12): the nonce is kept only once the signature holds — unsigned requests cannot fill the map.
-    if (!nonceFresh(`${id}:${nonce}`, now)) return refuse(401, "replay", "This request was already used.");
+    // 6.7 (N12): the nonce is spent only by a request that verified, and kept for the whole accepted window.
+    if (!nonceFresh(`${id}:${nonce}`, now, opts.skew ?? MAX_SKEW)) return refuse(401, "replay", "This request was already used.");
     if (device.status !== "active" && !(opts.allowStatus ?? []).includes(device.status)) return refuse(403, `device-${device.status}`, `This device is ${device.status}.`);
     req.device = device;
     next();
