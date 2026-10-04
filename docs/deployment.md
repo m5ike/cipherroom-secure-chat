@@ -54,6 +54,11 @@ vyžadovaly by přepis `server/routes.ts`.
 
 - 1 vCPU, 512 MB RAM, 1 GB disk pro hlavní službu.
 - Node.js ≥ 22, doporučeno 24 LTS (pokud běžíte bez Dockeru). Node 20 je EOL.
+  **6.7:** sandbox Funkcí startuje Node s `--permission`; tento přepínač
+  (bez `experimental`) má Node podle svého changelogu až od 22.13 / 23.5 —
+  na starším 22.x se sandbox nespustí („the sandbox process exited before it
+  was ready“). Ověřeno jen na Node 24 (CI, Docker); `engines` v
+  `package.json` i instalátor zatím hlídají jen hlavní verzi 22.
 - Public IPv4 nebo CDN front. WebRTC potřebuje secure context (HTTPS / WSS).
 - Pokud máte symetrický NAT / carrier-grade NAT na klientech, doplňte vlastní
   TURN server (např. `coturn`) a propagujte ho přes `iceServers` v App.tsx.
@@ -70,6 +75,13 @@ vlastní `Content-Security-Policy`, musí od 3.1 obsahovat
 `script-src 'self' 'wasm-unsafe-eval'` (Argon2id) — viz
 [`deploy/nginx/m5cet.conf`](../deploy/nginx/m5cet.conf). Více instancí za
 jedním upstreamem: [dokumentace › Více instancí](site/index.html#cluster).
+**6.7:** referenční `deploy/nginx/m5cet.conf` (statika ze `dist/public`)
+nově směruje na aplikaci i `location /hooks/` (webhooky Funkcí,
+`client_max_body_size 6m`, `proxy_read_timeout 120s`) a
+`location = /fn-sandbox.html` (rám, ve kterém běží prohlížečový kód funkcí)
+a CSP statiky má `frame-src 'self'` — bez toho za ní webhooky modelů ani
+`m5.browser.run` nefungovaly (audit S16). Konfigurace z instalátoru posílá
+na aplikaci všechno a změnu nepotřebuje.
 Ruční minimum vypadá takto (doplňte si stejné limity):
 
 ```nginx
@@ -300,6 +312,65 @@ zálohovat ho; jinak si server vygeneruje `storage.key` v adresáři úložišt�
 (`/var/backups/m5cet/<čas>-<akce>/`, u uživatelské instalace
 `<dir>/.m5cet/backups/`) a drží posledních `BACKUP_KEEP` (5) záloh;
 `update.sh --rollback` se k poslední vrátí.
+
+## Přechod na 6.7
+
+Nové proměnné prostředí (všechny volitelné; instalátor je nezná — `update.sh
+--set` je odmítne, ale řádky přidané do `.env` ručně zachová):
+
+| Proměnná | Výchozí | Význam |
+|---|---|---|
+| `PRESENCE_MAX_AWAY_DAYS` | 7 | kolik dní zůstane v seznamu místnosti člen, jehož spojení spadlo (desetinná čísla jdou, `0` = navždy) |
+| `ACCOUNTS_MAX` | 5000 | strop účtů; plné úložiště nejdřív (nejvýš jednou za 10 min) odstraní až 100 nikdy nepoužitých registrací starších než týden, pak registrace vrací `409` a audit `accounts.full` |
+| `STORAGE_SESSION_BUDGET_MB` | 2048 | sdílený rozpočet bajtů všech anonymních databází relací; navíc nejvýš 20 živých relací na adresu klienta |
+| `FUNCTIONS_NFC_RUN_HOURS` | 24 (min. 1) | jak dlouho se drží běh funkce, který přečetl kartu (`m5.nfc`), i s logy — ostatní běhy dál `FUNCTIONS_RUNS_DAYS` |
+| `VONAGE_ALLOW_UNSIGNED_SMS` | — | `1` = přijmout Vonage SMS bez `sig` (jako neověřené), i když je nastaven `VONAGE_SIGNATURE_SECRET` |
+| `ANDROID_DESIGN_IMAGE_HOSTS` | žádný | hostitelé (čárkami), ze kterých smí design Androidu brát pevné https obrázky |
+| `NOTIFY_DIR` | `$DATA_DIR/notify` | nastavení upozornění (`config.json`, `accounts.json`; SMTP se nastavuje v konzoli, proměnné `SMTP_*` neexistují) |
+
+Co si operátor po nasazení všimne:
+
+- **Aplikaci pro Android 6.7 nasaďte spolu se serverem 6.7.** Aplikace 6.7
+  použije jen politiku zámku **podepsanou** serverem pro dané zařízení; se
+  starším serverem změny politiky ignoruje (zařízení drží poslední uloženou,
+  nově zapsané výchozí hodnoty aplikace). Server 6.7 posílá podepsanou
+  i nepodepsanou politiku, takže starší aplikace fungují dál — bez té
+  ochrany.
+- **Design Androidu:** obrázek s počítanou adresou (`=…`, `{…}`) smí být jen
+  `asset:` nebo `data:image/`, vzdálený https obrázek jen jako pevná adresa
+  z hostitele v `ANDROID_DESIGN_IMAGE_HOSTS` (výchozí žádný), `url.open`
+  jen pevná https adresa. Uložení takového designu vrátí `400` se seznamem
+  problémů. **Uložený `design.json`, který tato pravidla poruší, server při
+  čtení tiše nahradí výchozím designem** — po aktualizaci design v konzoli
+  zkontrolujte a uložte znovu.
+- **Výchozí design 6.7 obaluje řádky místností prvkem `swipe`**, který
+  aplikace starší než 6.7 nezná (prázdné řádky). Server ani konzole to
+  nehlídají a tlačítko *Build now* posílá `minAppCode` vždy 60000 — build
+  pro starší aplikace nedělejte, nebo zvyšte `minAppCode` přes
+  `POST /api/admin/android/builds` (`minAppCode: 60700`).
+- **Vonage:** se `VONAGE_SIGNATURE_SECRET` dostane SMS bez `sig` nebo se
+  starým `timestamp` `403`, JWT musí mít `iat` nejvýš 10 min starý
+  a `payload_hash` u každého těla (viz [`telephony.md`](telephony.md)).
+- **Audit zpráv (`/api/chat/message-audit`):** aktér je jen uživatelské
+  jméno ověřeného tokenu, jinak `guest` (dřív `guest:<klient>`; id klienta
+  je teď v `detail.claimedClient`); rozpočet 300 záznamů / h na adresu hosta
+  (IPv6 po /64) a 3000 / h na účet, pak `429`.
+- **Funkce:** relace zpracování z doby před 6.7 (bez záznamu, kdo ji
+  otevřel) aplikace nepokračuje — každá událost dostane `410` „…is over — run
+  the command again“; nový běh funguje. `m5.caller.room` je slepé id
+  místnosti (`r3.…`, u místností v2 nic), ne čitelný název — modely, které
+  podle názvu rozlišovaly místnosti, je třeba upravit. Aplikace pro Android
+  starší než 6.7 posílá ještě čitelný název, takže její pokračování
+  sdílených relací dostanou `410`. Hodnoty `m5.session` / `m5.cache`: nejvýš
+  1 MiB, klíč 512 znaků, 10 000 klíčů a 64 MiB na scope (`kv-limit`).
+- **`/metrics`:** po 30 odmítnutých požadavcích za 15 min z jedné adresy
+  `429` i se správným tokenem až do konce okna — zkontrolujte `TRUST_PROXY`.
+- **WebSocket:** upgrade na jinou cestu než `/ws`, telefonní média nebo Vite
+  HMR dostane `404` a socket se zavře.
+- **Instalace pod adresářem s tečkou** (např. `~/.local/share/m5cet`) už
+  nevrací 404 na assety ani konzoli.
+- Starší řádky serverové historie hosta uložené pod čitelným názvem
+  místnosti (3.0) se už nečtou.
 
 ## Hardening checklist
 

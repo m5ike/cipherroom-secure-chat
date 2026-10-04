@@ -717,6 +717,9 @@ instalují **vypnuté**, s viditelností *caller* (viz [`nfc.md`](nfc.md)).
 | Zneužití z chatu | model viditelný jen skupinám; limity na uživatele a místnost; ověření vstupů na serveru; audit spuštění |
 | Podvržený webhook | HMAC s časovým razítkem, jednorázové tokeny běhu, TTL, IP seznam |
 | Prompt injection | výstupy nástrojů jako data; potvrzení akcí se side-efekty; oddělené role zpráv |
+| Únik ze sandboxu (6.7, audit V1 / F-03) | dítě sandboxu s permission modelem Node (`--permission`, čtení jen skriptu a interpretu, `--disallow-code-generation-from-strings`, prostředí jen `PATH`); bez bubblewrap / nsjail |
+| Cizí kód z výstupů funkcí (6.7, V2 / F-08) | kód v prohlížeči ve zprávě jiného člena běží až po kliknutí (skrytý nikdy), smí poslat nejvýš 20 událostí jen během aktivace uživatelem; relaci zpracování pokračuje jen ten, kdo ji otevřel, nebo člen místnosti, kam model psal (`chain-access.ts`, jinak `410`) |
+| ReDoS, JWT, SSRF (6.7) | regexy filtrů a `pattern` přes `SafeRegex` s časovým rozpočtem; `jwt.verify` váže algoritmus na typ klíče; SSRF guard se připojuje na ověřenou adresu a při přesměrování na jiný origin zahodí `Authorization` / `Cookie`; KV `m5.session` / `m5.cache` s limity (1 MiB hodnota, 10 000 klíčů, 64 MiB na scope) |
 | Podvržené HTML ve výstupu (6.6) | `m5.out.html` jen dokumentový markup (`fn-html.ts`): server ho vyčistí, peer i každý prohlížeč znovu, vykresluje se jako prvky DOM bez `innerHTML`; jen třídy `m5h-*`, obrázky jen `data:image`, odkazy jen http(s) / mailto (kap. 9.1) |
 | E2EE | co odchází na server, je vidět předem; server nečte místnost; výstupy do místnosti šifruje klient |
 | Škodlivý autor | autor = operátor; publikaci modelu s novými oprávněními schvaluje vlastník; audit (neměnný řetěz ze 3.1) |
@@ -809,7 +812,16 @@ proti autorovi. Sandbox proces si při startu ještě jako lehkou hygienu zaslep
 síťové a procesní moduly Node a odstraní nepotřebné globály
 (`server/functions/sandbox/harden.ts`), ale agresivní vrstva z prvního
 návrhu — sondy útoků, uzamčení přes `node --permission` a bubblewrap — se
-nepoužívá. Nespuštěné části: samostatný démon `m5cet-runner` s frontou
+nepoužívá. **6.7 (audit V1 / F-03):** Python model se přes most Pyodide
+dostal k `node:fs` hostitele, proto dítě sandboxu teď běží s permission
+modelem Node — `--permission`, `--allow-fs-read` jen pro vlastní skript
+a interpret (složka Pyodide nebo `.wasm` QuickJS; žádný zápis, procesy,
+workery, addony), `--disallow-code-generation-from-strings`, v prostředí jen
+`PATH` (`server/functions/sandbox/pool.ts`); konstruktory `Function` /
+`AsyncFunction` jsou odstavené z prototypů a most `_m5host` nemá prototyp
+(`harden.ts`). Bubblewrap / nsjail ani jiný uživatel dál nejsou, síť zavírají
+jen stuby v `harden.ts` a přepínač `--permission` má Node podle changelogu až
+od 22.13 / 23.5 (ověřeno na Node 24). Nespuštěné části: samostatný démon `m5cet-runner` s frontou
 (běhy zatím běží v procesu služby, těžká práce je v sandbox procesu; fronta
 nad SQLite/Redis přijde se škálováním), `trace`/přehrání běhu, tutoriál,
 `m5.http`/`dns`/`codes` a plné `crypto` (etapa 4), běh v prohlížeči
@@ -846,6 +858,8 @@ nad SQLite/Redis přijde se škálováním), `trace`/přehrání běhu, tutoriá
    (enumerace nebezpečných API, uzamčení oprávnění, bwrap) z kap. 4.2 —
    ta je zbytečná a v etapě 2 se vypustila. Systémový Python v nsjail a plné
    uzamčení zůstávají pro budoucí spouštění cizího kódu (nad rámec 5.0).
+   *(6.7: audit ukázal, že Python model se k souborům hostitele dostal, takže
+   uzamčení oprávnění Node se zapnulo — viz kap. 16, *Stav etapy 2*; bwrap ne.)*
 
 Verze: etapa 1 = **4.14**, další etapy 4.15–4.19, celek **5.0**.
 

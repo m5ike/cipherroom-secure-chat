@@ -19,21 +19,41 @@ push any more:
    display name, how many messages wait, the time); the **room's name** only
    the device knows (the server sees an opaque room id), a **preview** only a
    device that decrypted the message itself — no push ever carries content.
-4. **How** — the user's channel order (else the operator's), channels the
+4. **How** — the user's channel order once they saved their settings (the
+   Android app saves them at sign-in and on every change, so for its users the
+   user's order always applies), otherwise the operator's; only channels the
    operator switched on, the server can use and the account has an endpoint
    with: **Android** (a `notify` control message, ECIES-sealed for the one
-   device and signed — FCM sees ciphertext), **web push** (RFC 8291,
-   encrypted for the browser; TTL / Urgency / Topic set), **e-mail** (the
-   operator's SMTP relay, only to an address its owner confirmed). The first
-   channel where an endpoint takes it wins; an HTTP error, a dead token or a
-   timeout moves on to the next.
+   device and signed — FCM sees ciphertext; HIGH priority, TTL 1 h),
+   **web push** (RFC 8291, encrypted for the browser; TTL / Urgency / Topic
+   set), **e-mail** (the operator's SMTP relay, only to an address its owner
+   confirmed; **off by default** and ready only with an SMTP host and a From
+   address). Defaults: android → webpush → email. The first channel where an
+   endpoint takes it wins; a non-2xx answer, a thrown error, a dead token or a
+   timeout (10 s for web push and SMTP, 15 s for FCM) moves on to the next. A
+   failed FCM send is not queued for the device's next check-in.
 5. **Afterwards** — dead endpoints are forgotten (web push 404 / 410 — read
    from web-push's `statusCode`; before 6.7 the code looked for it in the
    message text, which never matched, so dead subscriptions were never
-   pruned —, a wiped / retired Android device, an address the relay refuses
-   with 5xx at RCPT), every attempt goes to the operator's log (console ›
-   Notifications; no content) and the audit journal (`notify.sent` /
-   `notify.failed`).
+   pruned —, a device that is no longer active (wiped, retired, blocked) or
+   gone, an address the relay refuses with 5xx at RCPT; FCM `UNREGISTERED`
+   only clears the device's token), attempts go to the operator's log
+   (console › Notifications › *Test & log*: the last 1000 since the server
+   started, in memory, no content; throttled skips are only counted) and the
+   audit journal (`notify.sent` / `notify.failed`).
+
+Which kinds fire today: `message` and `mention` (from the away relay),
+`summon` (the operator calls an away member back, `m5room.connect`) and `test`
+(the user's or the console's test). `call` and `function` exist in the
+templates, the settings and the console, but no client or server code sends
+them yet — only the console test reaches them.
+
+Before 6.7 the Android app was never woken: it signed in with `away: false`
+(so the server neither kept it away nor queued its messages), and the relay's
+wake-up went only to web push subscriptions, with a fixed text. Now the app
+joins "away-capable" when *The server keeps my messages and wakes me* is on
+(`notify.away`), links the device with `POST /api/android/notify`, and the
+`android` channel reaches it.
 
 Templates: `{name}`, `{name|fallback}`, `[optional part]` (dropped when a
 variable in it is empty or hidden), `\` escapes. Values are put in once and
@@ -47,7 +67,7 @@ vectors are `test/fixtures/notify-templates.json`.
 | GET | `/api/notify/config` | anyone — the templates and switches (no SMTP) |
 | GET/PUT | `/api/account/notify` | the account — its choice: `{ on, kinds, privacy, order, quiet, lang }`, and its endpoints |
 | POST | `/api/account/notify/test` | the account — `{ channel? }`, one test through its channels (6 / min) |
-| POST/DELETE | `/api/account/notify/email` | the account — an address (a confirmation mail goes to it; 5 / h) |
+| POST/DELETE | `/api/account/notify/email` | the account — an address (a confirmation mail goes to it, the link is valid 48 h; POST 5 / h; `409` when the server sends no e-mail) |
 | GET | `/api/notify/email/confirm?t=…` | the link in that mail |
 | DELETE | `/api/account/push` | the account — `{ endpoint }`: this browser stops being woken |
 | POST | `/api/android/notify` | a device (signed with its key) — `{ token, on }`: wake it for that session's account |
@@ -56,21 +76,38 @@ vectors are `test/fixtures/notify-templates.json`.
 
 Settings live in `$DATA_DIR/notify/` (`NOTIFY_DIR`): `config.json` (the
 operator's) and `accounts.json` (each user's choice, device links, e-mail
-addresses) — both 0600. A device link ends with the session it was made
-with (sign-out, sign-out everywhere); deleting the account deletes the rest.
+addresses) — directory 0700, files 0600. A device link ends with the session
+it was made with (sign-out, sign-out everywhere); deleting the account deletes
+the rest. At most 5 Android device links and 5 web push endpoints per
+account. The SMTP password is sealed with the storage master key and never
+sent to the console (only "set"). There are no `SMTP_*` environment
+variables — SMTP is configured in the console (*E-mail* tab); e-mail links use
+`PUBLIC_BASE_URL`.
 
 Clients: the web's Notifications panel has the user's own settings (a
-guest's stay in the browser and steer only the page's own notifications);
-enabling notifications while signed in links this browser at once, turning
-them off unlinks it; a message with `@name` tells the relay it mentions
-that away member (the only thing the server learns). The page's own
-notifications (it decrypted the message) follow the same template and the
-user's level. On Android, Settings › Notifications is a screen of the
-design; signed in, the app joins its rooms "away-capable" (`notify.away`)
-so the server keeps its messages while it is closed and wakes it with a
-sealed `notify` message, which the app draws with its own room name.
+guest's stay in the browser — `localStorage` `m5cet:notify:prefs` — and steer
+only the page's own notifications); enabling notifications while signed in
+links this browser at once, turning them off unlinks it; a message with
+`@name` tells the relay it mentions that away member (the only thing the
+server learns; not for sealed messages). The page's own notifications (it
+decrypted the message) follow the same template and the user's level — with
+no level chosen they show the content, capped by the operator's maximum; the
+service worker gets the names of the page's rooms (`notify-rooms`, memory
+only) to fill in `{room}`. On Android, Settings › Notifications is a screen of
+the design (no e-mail entry there — the address is set on the web); signed in
+and with *The server keeps my messages and wakes me* on, the app joins its
+rooms "away-capable" (`notify.away`) so the server keeps its messages while it
+is closed and wakes it with a sealed `notify` message, which the app draws
+with its own room name — only at the `room` level or above and never while
+the app is locked (then no reply either; the sender's name still shows at the
+`sender` level). The quiet hours (from–to, across midnight when from > to, in
+the user's time zone) hold back everything except `test` — calls too.
 
-## Two delivery paths
+Known rough edges: the Android string `notify.noFcm` says a wake-up "waits for
+the next check-in", but nothing is queued (see 4. above); the console's hint
+says `UNREGISTERED` tokens are "forgotten", while only the token is cleared.
+
+## Web push basics (since 2.x)
 
 1. **Web Push** (real, requires VAPID + `web-push` package and a public
    server). Used when `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` are set.
@@ -98,10 +135,12 @@ can at most repeat the fixed test notification — custom text needs the
 token. Before 2.8.1 a request without an id pushed caller-supplied text to
 another user's device without any authentication.
 
-The full `PushSubscription` (endpoint + p256dh + auth keys) is stored
-**in memory only**. Restart the server and the table is empty. There is no
-unsubscribe endpoint; entries leave via `/api/audit/purge`, a retention run
-or a restart.
+The full `PushSubscription` (endpoint + p256dh + auth keys) of this test
+table is stored **in memory only**. Restart the server and the table is
+empty. An anonymous subscription has no unsubscribe endpoint; it leaves via
+`/api/audit/purge`, a retention run, a restart or (6.7) a 404 / 410 from its
+push service. A signed-in browser's endpoint lives with the account and is
+removed with `DELETE /api/account/push` (6.7).
 
 The VAPID **private** key never leaves the server; clients receive only the
 public key. `/admin/test/push` lives in the separate admin process, which
@@ -151,13 +190,16 @@ or via `install.sh`'s prompts.
 
 `client/public/sw.js` handles three events:
 
-- `push` — extracts `{ title, body, url, tag, requireInteraction }` from
-  the encrypted payload and shows the OS notification.
+- `push` — 6.7: a templated payload (`v: 1` — the kind's template, the
+  variables the server may show, the privacy level) is rendered with the same
+  rules as `notify-template.ts`, the room's name filled in from what the page
+  told it, a `preview` never taken from the server; an older payload
+  `{ title, body, url, tag, requireInteraction }` is shown as before.
 - `notificationclick` — focuses an existing tab if any, otherwise opens
   a new one at the URL embedded in the payload.
-- `message` — accepts `{ type: "show-test-notification" }` from the
-  page, used by the Test Local button to verify the worker without
-  needing the push service.
+- `message` — `{ type: "show-test-notification" }` (the Test Local button),
+  `notify-rooms` / `notify-forget` (6.7: room names for `{room}`, in memory)
+  and `version` (the integrity check asks for the worker's build).
 
 ## OS / browser limitations
 

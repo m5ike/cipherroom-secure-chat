@@ -115,21 +115,35 @@ One state machine on both platforms — `client/src/lib/dictation.ts` (web) and
 
     idle ─start→ starting ─(ready)→ listening
     listening ─(the recogniser ended by itself: a pause)→ restarting → starting …
-    any ─stop→ stopping ─(last words, end — or 1.5–2 s)→ idle
+    any ─stop→ stopping ─(last words, end — or the finish time)→ idle
     any ─abort, or a fatal error (no permission, no microphone)→ idle
     (Android) any ─the app speaks→ paused ─resume→ starting
+
+The finish time is 1.5 s on Android (`DictationMachine.java`) and 2 s for the
+browser's recogniser (`dictation.ts`); the web's server engine waits up to
+120 s for the transcription and does not restart. After too many silent
+restarts in a row (6 on the web, 8 on Android) dictation ends with
+`dict.err.ended` ("I heard nothing").
 
 A stop always ends it: the recogniser is asked to stop (`rec.stop()` /
 `stopListening()`), so the last words still land in the field; a restart that
 was pending is cancelled; a recogniser that has not ended within the finish
 time is aborted (Android: cancelled and destroyed — each session has its own
 `SpeechRecognizer`, so a stopped one cannot keep the microphone); events of an
-old session are ignored. The same button again, *Send*, leaving the room (the
-composer goes away), a voice recording starting and (Android) the app going to
-the background all stop it. Errors are said in words (`dict.err.*`). The 6.1
-bug: the Android composer's icon did not follow the dictation's real state (a
-recogniser error left a "stop" icon whose tap started dictation again), and
-leaving the screen kept dictating and recording.
+old session are ignored (a session generation). What stops it: the same
+button again, leaving the room (the composer goes away), a voice recording
+starting and (Android) the app going to the background. *Send* differs: on
+Android it stops, waits for the last words and then sends; on the web sending
+(or clearing) the field **aborts** dictation — words still in progress are
+dropped (`ComposerVoice.tsx`). Errors are said in words (`dict.err.*`).
+
+Before 6.7: on Android a stop called `cancel()` + `destroy()` on one shared,
+reused recogniser (the last words were lost), the composer's icon did not
+follow the dictation's real state (a recogniser error left a "stop" icon whose
+tap started dictation again), and leaving the screen or sending the app to the
+background kept dictating and recording. The web had no dictation in the
+composer; the Speech panel's recognition (`speech.ts`) never restarted after
+the browser ended it on a pause.
 
 Engines: the browser's Web Speech recogniser; where the browser has none and
 the operator offers server transcription (Server-enhanced), the microphone is
@@ -138,18 +152,24 @@ Android: the phone's recogniser (on the device when it can).
 
 ### Speak and send
 
-- **Send the text as voice** — the field's text, or (empty field) what is
-  dictated now, spoken and sent as an end-to-end encrypted voice message exactly
-  like a recorded one (no text goes along). Android (`voice/SpeakSend.java`,
-  `ui/parts/ComposerVoice.java`): the phone's TextToSpeech into AAC, or — with
-  *Settings › Voice › On the server* — the operator's speech module (a WAV from
-  Piper is re-encoded to AAC). Web (`lib/speak-send.ts`): the server's voice only
-  — `speechSynthesis` plays straight to the speakers and cannot be recorded;
-  without server text-to-speech the app says so instead of doing nothing. The
-  server sees the text it speaks (the button's hint says so).
-- **Speak it, send text** — live dictation into the field; stopping (■ or
-  *Send*) sends the text as an ordinary message. Android without a recogniser
-  and with the server's speech chosen: recorded and transcribed by the server.
+- **Send the text as voice** — the field's text spoken and sent as an
+  end-to-end encrypted voice message exactly like a recorded one (no text goes
+  along; before 6.7 the Android clip carried the field's text as a caption).
+  Android (`voice/SpeakSend.java`, `ui/parts/ComposerVoice.java`; a long press
+  on *Send* or the microphone opens the send options): with an empty field,
+  what is dictated now; the phone's TextToSpeech into AAC, or — with *Settings ›
+  Voice › On the server* — the operator's speech module (a WAV from Piper is
+  re-encoded to AAC). Web (`lib/speak-send.ts`; the send options behind the
+  arrow by *Send* or a long press on *Send*, and the Speech panel): only with
+  text in the field; the server's voice only — `speechSynthesis` plays straight
+  to the speakers and cannot be recorded; without server text-to-speech the
+  app says so instead of doing nothing. The server sees the text it speaks
+  (the button's hint says so).
+- **Speak it, send text** (Android only) — live dictation into the field;
+  stopping (■ or *Send*) sends the text as an ordinary message. Without a
+  recogniser and with the server's speech chosen: recorded and transcribed by
+  the server (before 6.7 this path ran the phone's recogniser on the recording,
+  which works only on Android 13+).
 
 ### The voice changer
 
@@ -168,13 +188,16 @@ anonymous (−3/−6 + 35 % whisper), custom (pitch, formant, robot Hz, echo mix
 and delay, whisper, gain).
 
 The chain (`client/src/lib/voice-fx.ts`, `android/.../voice/VoiceFx.java`):
-an STFT phase vocoder (1024-sample frames at 48 kHz, 512 at 16 kHz, 75 %
-overlap) divides the spectrum by its smoothed envelope, shifts the excitation by
-the pitch ratio and lays it under the envelope stretched by the formant ratio —
-pitch and formant move separately; whisper replaces the excitation with noise;
-then a ring modulator, a feedback delay, gain and a soft limiter. The delay is
-one frame (≈ 21 ms at 48 kHz) and stays the same whatever the preset, so presets
-change live without a gap. CPU: ~1 % of one core at 48 kHz.
+an STFT phase vocoder (1024-sample frames above 32 kHz — 44.1 and 48 kHz —,
+512 below, e.g. 16 kHz; 75 % overlap) divides the spectrum by its smoothed
+envelope, shifts the excitation by the pitch ratio and lays it under the
+envelope stretched by the formant ratio — pitch and formant move separately;
+whisper replaces the excitation with noise; then a ring modulator, a feedback
+delay, gain and a soft limiter. The delay is one frame (≈ 21 ms at 48 kHz,
+≈ 32 ms for Android's 16 kHz voice messages) and stays the same whatever the
+preset, so presets change live without a gap. Cost: not measured on devices;
+the unit test only checks that 10 s of 48 kHz audio are processed in under
+5 s.
 
 Where it runs — every microphone of the app, on the device, before encoding and
 encryption; nothing is sent anywhere for it:
@@ -183,22 +206,29 @@ encryption; nothing is sent anywhere for it:
   microphone (calls, voice messages, the phone bridge, server dictation, the
   test). With the module allowed and the switch on, the capture goes through an
   AudioWorklet (`voice-fx.worklet.ts`, served from the app's origin) into a
-  `MediaStreamDestination`; the processed track replaces the raw one (a call
-  that was already running switches over with `RTCRtpSender.replaceTrack`).
+  `MediaStreamDestination`; the processed track replaces the raw one (switched
+  on while a call is running, the call switches over with
+  `RTCRtpSender.replaceTrack`; switched off mid-call, the chain becomes
+  transparent — same delay, no gap — rather than swapping the track back).
   Stopping the processed track stops the microphone and closes the graph.
   Without AudioWorklet, or when the graph cannot start, the raw microphone is
   used and the panel says why.
 - **Android** — `voice/MicFx.java`: voice messages, "speak it, send text"
   recordings and the test pass it in `Audio.Recorder` (PCM before AAC);
-  **calls** pass it in WebRTC's capture callback (`JavaAudioDeviceModule`'s
-  audio buffer callback, before `nativeDataIsRecorded`), in place, on the
-  recording thread — so calls are covered too.
+  **calls** pass it in the audio buffer callback of WebRTC's
+  `JavaAudioDeviceModule` (`Rtc.java` → `CallAudio.onCapture` →
+  `MicFx.onCapture`), in place, on the recording thread — so calls are covered
+  too. Whether the module is allowed the app learns from the client
+  configuration (`FxGate.java`, asked again every 10 minutes).
 - **Not covered** — dictation by the browser's or the phone's recogniser: the
-  platform listens to the microphone itself and returns only text. Echo
-  cancellation runs on the raw capture before the chain; without headphones the
-  other side may hear the echo of their own voice changed.
+  platform listens to the microphone itself and returns only text. On Android
+  the hardware echo canceller and noise suppressor (`Rtc.java`) work on the raw
+  capture before the callback; how a browser's own echo cancellation combines
+  with the changed voice was not measured. Without headphones the other side
+  may hear the echo of their own voice changed.
 
-Settings: web *Menu › Voice changer* (`panel.voiceChanger` layout); Android
+Settings: web *Menu › Tools › Voice changer* (`panel.voiceChanger` layout;
+the item shows only when the module is allowed); Android
 *Settings › Voice › Voice changer* (`settings.voiceFx`, design area
 `server/android/design-67-voice.ts`). *Try it* records 4 s through the same path
 and plays them back; nothing is kept.

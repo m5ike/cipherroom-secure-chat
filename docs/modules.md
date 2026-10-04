@@ -75,3 +75,46 @@ POST /api/peering/handshake           → { from, to, ciphertext }
 
 V této fázi M5cet stále používá symetrický klíč odvozený z passphrase (sdílený
 out-of-band). Asymetrický handshake zůstává TODO.
+
+## 5. Moduly aplikace a skupiny (konzole › *Modules & groups*)
+
+Vedle manifestu výše má aplikace od 4.0 **katalog modulů**
+(`client/src/lib/modules.ts`, `MODULE_CATALOG`; v 6.7 20 modulů: `audio`,
+`video`, `files`, `location`, `speech`, `ai`, `functions`, `telephony`,
+`layout`, `android`, `menu`, `nfc`, `rooms`, `invites`, `connections`,
+`notifications`, `analytics`, `appearance`, `editMode`, `voiceChanger`).
+Pravidla modulů a skupiny ukládá konzole do konfigurace klienta
+(`modules`, `groups`); katalog dostává konzole přes
+`/api/admin/client-config` (`catalog.modules`). Podrobně
+[dokumentace › Moduly a skupiny](site/index.html#moduly).
+
+Kdo smí modul používat, rozhoduje `decide(policy, id, groups)`:
+
+1. **žádné pravidlo** → modul je zapnutý pro všechny (`unlisted`) —
+   **kromě modulu s `offByDefault`** (6.7), ten je bez pravidla vypnutý
+   (`off`);
+2. `enabled: false` → vypnuto pro všechny;
+3. člen hlavní skupiny `mod-<modul>` (moduly s právy) → vše;
+4. člen přístupové skupiny → `groupAccess` (výchozí allow), jinak
+   `defaultAccess` (výchozí deny, když pravidlo skupiny vyjmenovává, jinak
+   allow);
+5. **granty** skupin uživatele přidají (`model:dns*`) nebo uberou
+   (`-model:admin*`) části; samotný grant pustí dovnitř jen s těmi částmi.
+
+### `voiceChanger` a `offByDefault` (6.7)
+
+`offByDefault?: boolean` má zatím jen modul **`voiceChanger`** (měnič hlasu,
+panel `voiceChanger`; viz [`speech.md`](speech.md#the-voice-changer)). Bez
+pravidla je vypnutý; operátor ho zapne zaškrtnutím *On* v *Modules & groups*
+(a uložením), případně omezí přístupem a granty v *Settings…* jako jiný
+modul. Konzole u něj ukazuje *On* nezaškrtnuté a odznak „off“, ve sloupci
+služby „in the browser“ (nemá serverovou část); vypnutí pravidlo smaže
+(výchozí stav), zapnutí ho uloží.
+
+Modul hlídá jen klient — server pro měnič hlasu žádný endpoint nemá, zvuk
+neopouští zařízení: web `setVoiceFxAllowed(moduleOn("voiceChanger"))`
+(`App.tsx`), Android `voice/FxGate.java` (konfiguraci klienta se ptá znovu
+každých 10 minut, po chybě za minutu). Teprve s povoleným modulem si každý
+uživatel měnič zapne u sebe (web *Menu › Tools › Voice changer*, Android
+*Settings › Voice › Voice changer*); položka webového menu bez modulu není
+vidět, obrazovka na Androidu řekne, že ho provozovatel nezapnul.

@@ -52,8 +52,10 @@ wire     = { e: SPKI(eph) b64, iv: b64, ct: b64 }
 Hlavičky `X-M5-Device`, `X-M5-Time` (ms), `X-M5-Nonce` (16 B b64url),
 `X-M5-Signature` = podpis nad
 `"m5android/1|" + METHOD + "|" + cesta?dotaz + "|" + time + "|" + nonce + "|" + b64(SHA-256(tělo))`.
-Server ověří klíčem uloženým při registraci, čas ±5 min, nonce jen jednou (10 min),
-stav zařízení `active`.
+Server ověří klíčem uloženým při registraci, čas ±5 min, nonce jen jednou,
+stav zařízení `active`. Od 6.7 (audit N12) se nonce spotřebuje až po ověření
+podpisu a drží se po celé okno času požadavku (u `/events`, kde čas smí být
+až 30 dní starý, tedy 2 × 30 dní; mapa s pevným stropem).
 
 ### 1.5 Registrace
 `POST /api/android/enroll` `{code?, name, model, manufacturer, os, sdk, appVersion,
@@ -62,6 +64,16 @@ appCode, locale, signKey, encKey, fcmToken?, time, proof}`, kde `proof` je podpi
 držení). Odpověď `{deviceId, policy, server:{kid, publicKey}, fcm, pollSeconds}`.
 Režim registrace (admin): `open`, `code` (jednorázové/vícenásobné kódy), `closed`.
 Odkaz `m5cet://enroll?server=…&code=…&kid=…` (QR z adminu) vyplní vše najednou.
+
+**Pin klíče serveru (6.7, audit V6 / F-05, `security/ServerPin.java`).** Do
+6.6 se porovnával jen řetězec `kid`, který server sám poslal. Teď musí být
+klíč P-256 SPKI, `kid` ze serveru musí být kid tohoto klíče a každý pin
+(`m5.serverKey` z buildu — kid nebo SHA-256 otisk —, `kid` z QR) musí
+označovat **klíč**; `/enroll` musí vrátit tentýž klíč jako `/info`
+a `Config.enrolled` cizí kid odmítne. Bez pinu z buildu i z QR zůstává
+zápis důvěrou při prvním použití (TOFU). Od 6.7 server posílá i
+**podepsanou politiku** `policySigned = {at, policy, sig}` (ECDSA klíčem
+Androidu nad `m5policy/1|deviceId|at|JSON`) — viz kap. 3.
 
 ### 1.6 Balíček `.m5ab`
 ```
@@ -120,10 +132,40 @@ na síť, interval z policy (výchozí 30 min), a `POST /api/android/checkin` vr
 Policy z adminu (`/api/admin/android/config`): `biometric` (`required`/`optional`/`off`),
 `pinLength` (4–12), `maxAttempts` (3–20), `wipe` (smazat po vyčerpání),
 `backoff` (prodleva od 3. chyby: 30 s × 2^n, max 1 h), `autolockSeconds`,
-`screenshots`. Každý neúspěch (PIN, odmítnutá biometrie) zvýší počítadlo v systémové
+`screenshots`. Každý neúspěšný PIN zvýší počítadlo v systémové
 vrstvě; po `maxAttempts` aplikace podepíše událost `wipe` (uloží ji mimo mazaná
 data), smaže vše a událost odešle, jakmile to jde. Server ji zapíše do auditu
 (`security`/`warn`), zobrazí v adminu a spustí alert.
+
+Změny 6.7 (audit S10–S14, N18, F-16):
+
+* **Podepsaná politika** (`security/SignedPolicy.java`, `Config.applyServerAnswer`):
+  aplikace použije jen politiku podepsanou připnutým klíčem serveru pro toto
+  zařízení a ne starší než naposledy použitou (`policyAt`); jinou ignoruje
+  (zůstane poslední podepsaná, nebo výchozí hodnoty aplikace);
+  `autolockSeconds` nejvýš 24 h. Server 6.7 posílá podepsanou i
+  nepodepsanou, takže starší aplikace fungují dál; aplikace 6.7 se starším
+  serverem změny politiky nepřijme.
+* **Pokus o PIN se počítá první** (`security/LockCounter.java`): zvýší se,
+  označí a uloží **před** PBKDF2 / Keystore; zabití aplikace během derivace
+  pokus nezruší. Derivace dál běží na UI vlákně.
+* **Odmítnutý otisk prstu se nepočítá** (snímač po několika chybách zamyká
+  systém); změna PINu vyžaduje současný PIN, počítaný jako pokus.
+* **Zamčeno i na pozadí**: `AppLock.isLocked()` platí i na pozadí po uplynutí
+  `autolockSeconds`, takže notifikace zpráv zneutrální hned (jen „Nová
+  zpráva“, bez odesílatele, místnosti, zkratky a odpovědi); veřejná verze na
+  zamčené obrazovce je vždy neutrální a odpověď z notifikace (API 31+) chce
+  odemčený telefon.
+* **Wipe** (`Wiper.teardown`) zruší i notifikace a zkratky, zastaví
+  `CallService` / `LocationService`, HCE kartu a joby; vzdálený wipe ukončí
+  proces (`finishAndRemoveTask`, `killProcess`).
+* **Argon2id** běží vždy jen jedna derivace naráz (64 MiB).
+* Obrazovky `lock` a `enroll` dostávají prázdné `$form`; nový PIN je
+  v soukromém poli, ne v `$form`.
+
+Zbývá (F-16): pepř PINu `m5.pep` bez vazby na ověření uživatele či
+hardwarový limit pokusů, čítač pokusů v souboru trezoru (obnova starší
+kopie ho vrátí), „zamknout“ nezahodí datový klíč, žádný nouzový PIN.
 
 ## 4. Framework: obrazovky, šablony, animace
 
@@ -225,3 +267,65 @@ npm run android:build -- --release --upload https://chat.example.com --token <to
   do místností Light · P2P a zprávy přijímá, když je připojená.
 * Šifrování snímků hovorů (vložené proudy prohlížeče) aplikace neoznamuje:
   hovor s prohlížečem jde přes DTLS-SRTP bez této vrstvy navíc.
+
+## 10. Co přinesla 6.7
+
+Každá oblast 6.7 má svůj soubor designu na serveru
+(`server/android/design-67-{presence,location,notify,voice,look,profile}.ts`,
+složené v `design-67.ts`) a vlastní i18n.
+
+* **Android 10–12 znovu běží** (audit V5): volání API 30 / 33 jsou ošetřená
+  (`ui/SystemBars`, `core/Streams.readAll` místo `readAllBytes`, typované
+  `getParcelableExtra` až od 33, `pushDynamicShortcut` a `getCurrentLocation`
+  od 30); `lintDebug` 0 chyb (bylo 30). Na zařízení s Androidem 10–12
+  neověřeno.
+* **Design nevynese zprávy** (F-01, `ui/DesignUrls.java`): počítaný `src`
+  obrázku smí být jen `asset:` nebo `data:image/`, vzdálený https obrázek
+  jen přesně pevná adresa z designu; `url.open` otevře adresu až po
+  potvrzení s ukázaným hostitelem. Server totéž kontroluje při uložení
+  (`checkImageSrc` / `checkActionArg` v `design.ts`, hostitelé
+  `ANDROID_DESIGN_IMAGE_HOSTS`). Zbývá: `url.open` s adresou poskládanou
+  z dat jde pořád jedním potvrzeným klepnutím; `setting.set` / `toggle`
+  smí design použít na jakýkoli známý klíč (sledování polohy, hlas přes
+  server, emulace NFC); `share` / `copy` berou počítaný text.
+* **„Ověřeno“** (F-07, `chat/Verified.java`): P2P podpis klíčem z hello
+  připnutým pod jménem peeru; relay: kid podpisu = TOFU pin pro (místnost,
+  `senderName`).
+* **Model běží pod slepým id místnosti** (`ui/parts/Fn.java`, `r3.…`), ne pod
+  čitelným názvem; názvy místností a jména peerů nejdou do logu, který vrací
+  příkaz `status` (v ladicím buildu se ale akce designu logují i s
+  argumenty).
+* **Přítomnost** (`chat/RoomPresence.java`, `chat/Resume.java`,
+  `contacts/LastSeen.java`): aplikace hlásí popředí / pozadí, tajemství
+  `resume` drží v trezoru (nejvýš 64 místností), takže se po ukončení
+  procesu vrátí jako týž člen; tečka a „Naposledy online“ v panelu lidí
+  a v detailu osoby.
+* **Poloha** (`location/GeoLinks.java`, `ui/parts/PlaceSheet.java`,
+  `ui/parts/HoldArea.java`, `ui/bubble/HoldGesture.java`): okno místa
+  s navigací (nainstalované aplikace, pak web), odvozem a kopírováním;
+  oblast pro podržení vedle bubliny „podržet a číst“. Zpráva s polohou dál
+  ukazuje mapu přímo v bublině (na rozdíl od webu).
+* **Vzhled** (`ui/look/Menus.java`, `Swipe.java`, `SwipeRow.java`,
+  `Palette.java`, `ui/parts/RoomEdit.java`): šest šablon (forest, sunset,
+  lavender, mocha, arctic, ink; světlá i tmavá) — `themes.json` jich má 19;
+  nabídky s ikonami v barvách designu; prvek designu **`swipe`** (`right`,
+  `left` = id menu, `rightColor`, `leftColor`) a akce `room.delete`,
+  `room.clone`, `room.edit` s obrazovkou `room.edit`. Výchozí design obaluje
+  `rooms.item` prvkem `swipe`; aplikace starší než 6.7 neznámý prvek kreslí
+  jako prázdný — build s ním pro ně nepublikujte (`minAppCode` z konzole je
+  vždy 60000).
+* **Profil** (`profile/*`, `ui/parts/ProfileUi.java`): editor v *Nastavení ›
+  Uživatel › Veřejný profil*, rámce profilu v místnosti párovým klíčem
+  (`ProfileRoom.java`), obrázky zmenšené a bez metadat (`ProfileImages.java`).
+  Obrázky, které přijdou od ostatních, aplikace jen normalizuje (formát,
+  velikost) — kontrolu pixelů a odstranění metadat jako web nedělá.
+* **Upozornění** (`push/NotifyPrefs.java`, `push/NotifyTemplate.java`,
+  `telecom/Notify.java`): obrazovka *Nastavení › Oznámení*, šablony
+  operátora, úrovně soukromí, tiché hodiny; zařízení se propojí
+  s účtem (`POST /api/android/notify`) a server ho budí zapečetěnou řídicí
+  zprávou `notify` — do 6.7 se aplikace nepřipojovala jako „away“ a server
+  ji nebudil.
+* **Hlas** (`voice/DictationMachine.java`, `SpeakSend.java`, `VoiceFx.java`,
+  `MicFx.java`, `FxGate.java`, `ui/parts/ComposerVoice.java`): diktování,
+  které se zastaví, poslat jako hlas, nadiktovat a poslat text, měnič hlasu
+  i pro hovory — viz [`speech.md`](speech.md#dictation-that-stops-speak-and-send-the-voice-changer-67).

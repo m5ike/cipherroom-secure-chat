@@ -1,16 +1,22 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **6.6.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **6.7.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 6.6.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-6.6.0.pdf`](docs/site/m5cet-dokumentace-6.6.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 6.7.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-6.7.0.pdf`](docs/site/m5cet-dokumentace-6.7.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
 vyměňují text, soubory, audio, video, polohu, NFC tagy a stav přítomnosti
-přes WebRTC DataChannel (DTLS) a media DTLS-SRTP. Server je pouze
-signalizační relé (WebSocket `/ws`) a nikdy nevidí ani obsah zpráv, ani klíč
-místnosti.
+přes WebRTC DataChannel (DTLS) a media DTLS-SRTP. Server je pro chat
+signalizační relé (WebSocket `/ws`) a nikdy nevidí klíč místnosti ani obsah
+end-to-end šifrovaných zpráv — zprávy pro nepřítomné, zapečetěnou historii
+a soubory přes relay drží jen jako šifrový text. **Čitelně** dostane jen to,
+co uživatel pošle službám serveru: příkazy Functions (`/příkaz`), AI
+asistentovi, řeči (přepis, převod textu na řeč), telefonii a veřejné části
+profilu (6.7) — vše volitelné a zapínané provozovatelem. Kód webu doručuje
+server, takže proti zlému provozovateli web nechrání; podrobný model důvěry
+je v [`docs/security-analysis.md`](docs/security-analysis.md).
 
 ```text
 ┌──────────────────┐       /ws (WSS, signaling only)        ┌──────────────────┐
@@ -171,6 +177,52 @@ místnosti.
   jen dokumentový markup, aplikace pro Android ho ukáže v uzamčeném WebView.
   Viz [`docs/nfc.md`](docs/nfc.md) a
   [dokumentace › NFC](docs/site/index.html#nfc-tool).
+- **Přítomnost a „naposledy online“ (6.7)** — kdo neklikne *Odpojit*,
+  zůstává v seznamu lidí, i když mu spadne síť nebo dá aplikaci do pozadí
+  (server ho drží, po návratu je to týž člen); ze seznamu zmizí po odchodu,
+  odpojení operátorem, zrušené relaci, vyhazovu nebo po
+  `PRESENCE_MAX_AWAY_DAYS` (7 dní). Tečka zelená (online, ≤ 5 min), žlutá
+  (pryč, 5–60 min), oranžová (dlouho pryč) a „Naposledy online před …“ — web
+  i Android, jen pro členy téže místnosti.
+  Viz [`docs/accounts-away.md`](docs/accounts-away.md#4-přítomnost-a-naposledy-online-67).
+- **Poloha s navigací a odvozem (6.7)** — na webu místo mapy v bublině
+  špendlík se souřadnicemi; okno polohy s mapou, *Navigovat* (Google Maps,
+  Apple Maps, Waze, Mapy.com, OpenStreetMap; na Androidu nainstalované
+  aplikace, pak web), *Odvoz* (Uber s cílem; Bolt, Liftago a FREENOW se
+  zkopírovanými souřadnicemi) a *Kopírovat*. Zprávu „podržet a číst“ jde
+  podržet i za místo vedle bubliny. Viz [`docs/maps-location.md`](docs/maps-location.md).
+- **Upozornění s náhradními cestami (6.7)** — server budí nepřítomné členy
+  postupně aplikací pro Android (zapečetěná řídicí zpráva přes FCM), web
+  push a e-mailem přes SMTP operátora; mrtvé koncové body zapomene. Operátor
+  v konzoli nastaví šablony každého druhu (cs/en/de, náhled), maximální
+  úroveň soukromí a limity; uživatel na webu i v Androidu co, jak podrobně
+  (nic / kdo / kde / náhled jen na zařízení), kudy a tiché hodiny. Viz
+  [`docs/push.md`](docs/push.md).
+- **Hlas (6.7)** — diktování, které se zastaví, *poslat jako hlas* (text
+  přečtený hlasem jako šifrovaná hlasová zpráva), na Androidu *nadiktovat
+  a poslat text* a **měnič hlasu** (modul vypnutý, dokud ho operátor
+  nezapne; předvolby i vlastní výška, formanty, robot, ozvěna, šepot) pro
+  všechno, co aplikace nahrává mikrofonem včetně hovorů — přímo v zařízení,
+  před šifrováním. Viz [`docs/speech.md`](docs/speech.md).
+- **Veřejný profil (6.7)** — fotka, pozadí, veřejná přezdívka, „o mně“
+  a údaje; u každé položky *jen já* (trezor účtu), *členové místností*
+  (párovým klíčem P2P) nebo *veřejné* (`GET /api/profile/:username`);
+  obrázky zmenšené a bez metadat, moderace v konzoli.
+- **Android 6.7** — šest nových šablon (světlé i tmavé), nabídky s ikonami
+  v barvách designu, přejetí po řádku místnosti (*Smazat* / *Klonovat* /
+  *Upravit*) a prvek designu `swipe`.
+- **Úvodní obrazovka jako rozvržení (6.7)** — `start` v Layout builderu
+  (zámek, nadpis, text, *Připojit*, uložená připojení); builder má 50
+  rozvržení. Viz [`docs/layout-builder.md`](docs/layout-builder.md).
+- **Bezpečnostní analýza a audit 6.7** — analýza z kódu se srovnáním se
+  Signalem, Threemou, WhatsAppem, Wire, Matrixem a Session
+  ([`docs/security-analysis.md`](docs/security-analysis.md)) a audit všech
+  komponent ([`docs/audit-6.7.md`](docs/audit-6.7.md)); 6.7 opravila
+  kritický únik přes design Androidu, sandbox Funkcí (permission model Node),
+  pin klíče serveru na Androidu, spouštění cizího kódu z výstupů funkcí,
+  únik názvu místnosti a řadu nálezů dostupnosti. Návrhové mezery (web
+  doručovaný serverem, heslo jako kořen důvěry, statické klíče bez obnovy
+  po kompromitaci) trvají.
 - **Příkazy jako rozhovor (5.3)** — model má **vstupní body**: execute
   (start), **response** (odpověď na jeho zprávu), **button**, **form**,
   **error** a libovolný počet **webhooků** s vlastními URL, každý se svými
@@ -361,8 +413,12 @@ Od 4.0 je Server-enhanced **jen pro přihlášené passkey** — nepřihlášen�
 uživatel má volby neaktivní s odkazem do okna *Spojení* (tam jediném se
 passkey vytváří a přihlašuje).
 
-**Žádný režim** nikdy neumožní serveru číst obsah zpráv — to je nemožné z
-podstaty (klíč je odvozen v prohlížeči).
+**Žádný režim** neumožní serveru číst obsah end-to-end šifrovaných zpráv —
+klíč je odvozen v prohlížeči. Výjimkou je to, co uživatel pošle službám
+serveru (Functions, AI, řeč, telefonie, veřejný profil): to server vidí
+čitelně. A protože kód webu doručuje server, chrání šifrování jen proti
+serveru, který kód klientů nemění (viz
+[`docs/security-analysis.md`](docs/security-analysis.md), F-02).
 
 ---
 
@@ -546,6 +602,12 @@ Vyžaduje:
 - udělené povolení v prohlížeči,
 - nainstalovaný service worker.
 
+**Od 6.7** budí nepřítomné přihlášené členy notifikátor (`server/notify/*`):
+kanály v pořadí uživatele (výchozí aplikace pro Android → web push → e-mail)
+se zálohou na další, šablony a úrovně soukromí z konzole (*Notifications*),
+volba každého uživatele a tiché hodiny; push nikdy nenese obsah. Podrobně
+[`docs/push.md`](docs/push.md).
+
 Browser **nemůže** být donucen běžet na pozadí. Push doručení je *best effort* —
 mobilní OS může endpoint zmrazit. Detaily: [`docs/push.md`](docs/push.md),
 [`docs/browser-limitations.md`](docs/browser-limitations.md).
@@ -584,6 +646,11 @@ přečte každý model; ostatní formáty engine převede přes `ffmpeg`, pokud 
 na serveru. K rozbalení modelů je potřeba `bzip2` (instalátor i obraz
 Dockeru ho přidají).
 
+**6.7:** diktování v poli zprávy (web i Android), *poslat jako hlas* (na webu
+hlasem serveru) a měnič hlasu — modul `voiceChanger`, vypnutý, dokud ho
+operátor nezapne; mění hlas hovorů, hlasových zpráv a nahrávek pro přepis
+v zařízení, rozpoznávání řeči prohlížeče ani telefonu se netýká.
+
 Viz [`docs/speech.md`](docs/speech.md).
 
 ---
@@ -620,7 +687,10 @@ Viz [`docs/files.md`](docs/files.md).
 
 `navigator.geolocation` + odkaz na OpenStreetMap (`?mlat=…&mlon=…#map=15/lat/lon`).
 Zachycené souřadnice cestují stejným šifrovaným DataChannelem jako text.
-Volitelný preview tile fetch z OSM tile serveru (operátor opt-in).
+Náhled mapy (od 6.2) stahuje dlaždice přes server (`/api/map/tile/…`). Od
+6.7 web ukazuje polohu jako špendlík se souřadnicemi a mapu, navigaci,
+odvoz a kopírování v okně polohy (Android dál kreslí mapu v bublině a otevírá
+totéž okno).
 Detaily: [`docs/maps-location.md`](docs/maps-location.md).
 
 ---
@@ -698,6 +768,13 @@ je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
   jen v paměti procesu (retenční sweep je maže průběžně, restart úplně).
 - `App.tsx` (~4 000 řádků) pokrývají hlavně e2e testy.
 - Historii prohlížeče web smazat neumí; pozvánky nepřežijí restart serveru.
+- **6.7:** nic z novinek 6.7 zatím neběželo na skutečném telefonu ani proti
+  skutečným poskytovatelům (FCM, SMTP, web push) a měnič hlasu nebyl
+  vyzkoušen na zařízení; návrhové mezery bezpečnosti (web doručovaný
+  serverem, heslo místnosti jako kořen důvěry, statické klíče zařízení bez
+  obnovy po kompromitaci, žádný externí audit) trvají — viz
+  [`CHANGELOG.md`](CHANGELOG.md) › 6.7.0 › Známá omezení a
+  [`docs/security-analysis.md`](docs/security-analysis.md#11-stav-po-opravách-67).
 
 ---
 
@@ -801,7 +878,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.6.0        | aktuální — **NFC: hloubkové čtení** (web i Android) jen ke čtení: EMV s GET DATA (čítače), **historií transakcí** z logu karty a všemi soubory; e-ID / e-pas přes **PACE** (CAN nebo MRZ; ECDH generic mapping, AES / 3DES) nebo BAC, s EF.SOD (kontrola otisků skupin), DG1, všemi obličeji v DG2, DG5, DG7, DG11–DG16 (DG3/DG4 ne), obrázky a surovými soubory ke stažení; klíč dokladu se zadává na zařízení a na server nejde; aplikace pro Android odpovídá na NFC požadavek modelu (panel, NFC telefonu nebo povolená USB čtečka) a výstup `html` ukáže v uzamčeném WebView; **výpisy karet** v šesti formátech (HTML, objekt, řádky, JSON, text, CSV; cs/en/de, maskovaný PAN), *Celý výpis* s exportem v pracovišti; **`m5.out.html`** — sanitizované HTML z funkcí; SDK `m5.nfc.emv/eid.report/format`, `m5.nfc.format/outputs/document`; nástroje tvůrce NFC.EMV a NFC.e-ID; příkazy `/emv`, `/emv-history`, `/eid` (vypnuté); `/help nfc`, `/help html`, lekce tutoriálu 17–19 |
+| 6.7.0        | aktuální — **přítomnost**: členové zůstávají v místnosti, dokud neodejdou nebo je server neodstraní (`PRESENCE_MAX_AWAY_DAYS`), na pozadí jsou pryč, „naposledy online“ se zelenou / žlutou / oranžovou tečkou (web i Android); **poloha** za ikonou s oknem *Navigovat* / *Odvoz* / *Kopírovat* a oblast pro podržení vedle bubliny „podržet a číst“; **upozornění** v pořadí kanálů se zálohou (FCM zapečetěné → web push → e-mail přes SMTP operátora), šablony a náhled v konzoli, úrovně soukromí, volba uživatele a tiché hodiny, oprava pročišťování mrtvých odběrů a buzení Androidu; **hlas**: diktování, které se zastaví, poslat jako hlas, měnič hlasu (modul, výchozí vypnutý); **veřejný profil** (fotka, pozadí, přezdívka, o mně, údaje — jen já / členové místností / veřejné); úvodní obrazovka jako rozvržení `start`; Android: šest šablon, nabídky s ikonami, přejetí po řádku místnosti; **bezpečnost**: analýza a audit 6.7, opravy serveru (sandbox Funkcí, WS brána, SSRF, telefonie, limity), webu (výstupy funkcí od členů, historie, sender keys, soubory, název místnosti, síla klíče) a Androidu (design nevynese zprávy, pin klíče serveru, PIN, notifikace při zámku, wipe, Android 10–12, podepsaná politika) |
+| 6.6.0        | **NFC: hloubkové čtení** (web i Android) jen ke čtení: EMV s GET DATA (čítače), **historií transakcí** z logu karty a všemi soubory; e-ID / e-pas přes **PACE** (CAN nebo MRZ; ECDH generic mapping, AES / 3DES) nebo BAC, s EF.SOD (kontrola otisků skupin), DG1, všemi obličeji v DG2, DG5, DG7, DG11–DG16 (DG3/DG4 ne), obrázky a surovými soubory ke stažení; klíč dokladu se zadává na zařízení a na server nejde; aplikace pro Android odpovídá na NFC požadavek modelu (panel, NFC telefonu nebo povolená USB čtečka) a výstup `html` ukáže v uzamčeném WebView; **výpisy karet** v šesti formátech (HTML, objekt, řádky, JSON, text, CSV; cs/en/de, maskovaný PAN), *Celý výpis* s exportem v pracovišti; **`m5.out.html`** — sanitizované HTML z funkcí; SDK `m5.nfc.emv/eid.report/format`, `m5.nfc.format/outputs/document`; nástroje tvůrce NFC.EMV a NFC.e-ID; příkazy `/emv`, `/emv-history`, `/eid` (vypnuté); `/help nfc`, `/help html`, lekce tutoriálu 17–19 |
 | 6.5.0        | **NFC: čtení EMV a e-ID / e-pasu** (web i Android) jen ke čtení: EMV `PPSE → AID → GPO → záznamy` (AIDy, štítky, maskovaný PAN, platnost, držitel, ATC…), e-ID / e-pas přes BAC z MRZ nebo CAN (DG1 + DG2) — bez PINu, kryptogramu, transakce a zápisu, žádné klonování; `m5.nfc.emv` / `m5.nfc.eid` ve Functions, `apduTemplates` s op i apdu šablonami a tlačítkem v konzoli; `/příkaz` v chatu se ukáže hned jako pulzující bublina s indikátorem, výsledek nahradí indikátor na místě |
 | 6.4.1        | Android: server odmítne obřad passkeye pro build, jehož certifikát nezná, **dřív než passkey vznikne** (žádné osiřelé passkeye); uživatelské jméno `XXXX-XXXX-XXXX-XXXX` (0-9 a-z A-Z), název passkeye `ISO2-scramble(Jméno-Příjmení-Mobil)` |
 | 6.4.0        | **registrace** (web i Android): jméno, příjmení, země (vyhledávací výběr), mobil a e-mail — server ověří mobil (ne pevnou linku/VoIP), doménu e-mailu (DNS, MX) a jedinečnost; údaje jen šifrovaně v trezoru, server drží pouze HMAC otisky. **Passkeys na Androidu**: dialog s certifikátem aplikace, v konzoli kontrola `assetlinks.json` (z internetu i u Googlu) a důvěra certifikátu jedním klikem, `update.sh` upozorní na blokující proxy |
@@ -840,23 +918,25 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/architecture.md`](docs/architecture.md)          | Hlubší architektura, transport, crypto vrstvy  |
 | [`docs/api.md`](docs/api.md)                            | `WSS /ws` rámce + všechny `/api/*` endpointy   |
 | [`docs/admin.md`](docs/admin.md)                        | Admin API + GUI                                |
-| [`docs/modules.md`](docs/modules.md)                    | Modulový registr, frontend i server            |
-| [`docs/user-help.md`](docs/user-help.md)                | Uživatelská nápověda (CZ + EN + DE), aplikace pro Android |
+| [`docs/modules.md`](docs/modules.md)                    | Modulový registr, frontend i server; moduly a skupiny, `offByDefault` a měnič hlasu (6.7) |
+| [`docs/user-help.md`](docs/user-help.md)                | Uživatelská nápověda (CZ + EN + DE), aplikace pro Android; 6.7: přítomnost, poloha, upozornění, hlas, veřejný profil, gesta v Androidu |
 | [`docs/developer-guide.md`](docs/developer-guide.md)    | Vývojářský průvodce, build, struktura          |
-| [`docs/security-model.md`](docs/security-model.md)      | Bezpečnostní model, threat model               |
+| [`docs/security-model.md`](docs/security-model.md)      | Bezpečnostní model, threat model, známé mezery (stav 6.7) |
+| [`docs/security-analysis.md`](docs/security-analysis.md) | Bezpečnostní analýza z kódu (6.7): model důvěry, kryptografie, platformy, srovnání se Signalem a dalšími, nálezy F-01…F-31, roadmapa, stav po opravách 6.7 |
+| [`docs/audit-6.7.md`](docs/audit-6.7.md)                | Audit komponent 6.7: testy, buildy, závislosti, nálezy podle závažnosti a co 6.7 opravila (server, web, Android) |
 | [`docs/deployment.md`](docs/deployment.md)              | Ruční nasazení, PaaS (DO / Railway / Render / Fly.io), TLS, reverse proxy |
 | [`docs/troubleshooting.md`](docs/troubleshooting.md)    | Řešení potíží                                  |
 | [`docs/calls.md`](docs/calls.md)                        | Audio / video volání                           |
 | [`docs/connection-keeper.md`](docs/connection-keeper.md)| Heartbeat + reconnect                          |
 | [`docs/files.md`](docs/files.md)                        | Šifrovaný file transfer                        |
-| [`docs/maps-location.md`](docs/maps-location.md)        | Mapy / lokace                                  |
+| [`docs/maps-location.md`](docs/maps-location.md)        | Mapy / lokace; okno polohy s navigací a odvozem (6.7) |
 | [`docs/nfc.md`](docs/nfc.md)                            | Nástroj NFC, čtečky, karta M5Cet, čtení EMV a e-ID / e-pasu (hloubkově 6.6), výpisy karet, `m5.nfc`, uzly tvůrce a příkazy `/emv`, `/emv-history`, `/eid` |
-| [`docs/push.md`](docs/push.md)                          | Web Push                                       |
-| [`docs/accounts-away.md`](docs/accounts-away.md)        | Passkey účty, data chatu, stav away + relay    |
+| [`docs/push.md`](docs/push.md)                          | Upozornění 6.7 (kanály se zálohou, šablony, soukromí, tiché hodiny) a Web Push |
+| [`docs/accounts-away.md`](docs/accounts-away.md)        | Passkey účty, data chatu, stav away + relay, přítomnost a „naposledy online“ (6.7) |
 | [`docs/storage.md`](docs/storage.md)                    | Serverové úložiště: SQLite + SQLCipher, API    |
 | [`docs/lifecycle-and-notices.md`](docs/lifecycle-and-notices.md) | Pozastavení okna, flash oznámení, fronta zpráv |
-| [`docs/speech.md`](docs/speech.md)                      | Web Speech API; serverové hlasy a přepis (4.14) |
-| [`docs/android-architecture.md`](docs/android-architecture.md) | Aplikace pro Android (6.0): klíče a formáty (podpisy, ECIES, balíček `.m5ab`, push), úložiště a zámek, framework obrazovek, aktualizace a návrat, víc místností, server, sestavení |
+| [`docs/speech.md`](docs/speech.md)                      | Web Speech API; serverové hlasy a přepis (4.14); diktování, poslat jako hlas, měnič hlasu (6.7) |
+| [`docs/android-architecture.md`](docs/android-architecture.md) | Aplikace pro Android (6.0): klíče a formáty (podpisy, ECIES, balíček `.m5ab`, push), úložiště a zámek, framework obrazovek, aktualizace a návrat, víc místností, server, sestavení; co přinesla 6.7 |
 | [`docs/functions-architecture.md`](docs/functions-architecture.md) | Architektura frameworku funkcí (JS / Python ve WASM, balíčky, modely, `/příkazy` v chatu, webhooky, IDE, formátované HTML `m5.out.html` 6.6) a rozhodnutí; etapa 1 = AI a řeč 4.14 |
 | [`docs/browser-limitations.md`](docs/browser-limitations.md) | Co prohlížeč (ne)umí                       |
 | [`docs/build-and-deploy.md`](docs/build-and-deploy.md)  | npm workflow, PWA, sanity checky               |
@@ -865,7 +945,7 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/modes.md`](docs/modes.md)                        | Režimy Light / Server-enhanced, jejich parametry a soubory; Firebase |
 | [`docs/session-and-sharing.md`](docs/session-and-sharing.md) | Session cache, vynucený stav, pozvánky s kódem, Smazat vše a odejít |
 | [`docs/telephony.md`](docs/telephony.md)                | Hovory a SMS (Twilio / Telnyx / Vonage vč. JWT), volba providera, perzistentní SIP trunky + `.env`, webhooky `/wh/*` s ověřením podpisů; m5.telephony z funkcí a telefonní most (6.0) |
-| [`docs/layout-builder.md`](docs/layout-builder.md)      | Layout builder (GUI designer): rozvržení jako stromy prvků, paleta, našeptávání, šablony, náhled aplikace, texty a chování zpráv; varianty, historie, sloučení po aktualizaci, vložení HTML, přístupnost (4.13) |
+| [`docs/layout-builder.md`](docs/layout-builder.md)      | Layout builder (GUI designer): rozvržení jako stromy prvků, paleta, našeptávání, šablony, náhled aplikace, texty a chování zpráv; varianty, historie, sloučení po aktualizaci, vložení HTML, přístupnost (4.13); úvodní obrazovka `start` a měnič hlasu (6.7) |
 | [`docs/appearance.md`](docs/appearance.md)              | Obrazovka Vzhled (71 Google Fonts, paleta, typografie), mobilní layout podle zařízení a prohlížeče, celá obrazovka, Edit Mode s inspektorem CSS |
 | [`docs/knowledge-base.md`](docs/knowledge-base.md)      | Znalostní báze: mapa kódu, co server vidí, známé mezery |
 | [`docs/optimizations.md`](docs/optimizations.md)        | Změřené optimalizace a jak je reprodukovat     |

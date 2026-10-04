@@ -61,3 +61,15 @@ proměnné ze skutečného prostředí mají přednost. `.env` je v `.dockerigno
 | `LOG_EVENTS=1`             | Zapne `eventStore` (memory nebo `DATABASE_URL`).      |
 | `DATABASE_URL`             | SQLite/Postgres pro events.                          |
 | `VITE_SIGNALING_URL`       | Externí WSS pro signaling (split deploy).            |
+| `PRESENCE_MAX_AWAY_DAYS`   | 6.7: dny, po které zůstane v místnosti člen bez spojení (7; `0` = navždy). |
+| `ACCOUNTS_MAX`             | 6.7: strop účtů (5000).                              |
+| `STORAGE_SESSION_BUDGET_MB`| 6.7: rozpočet anonymních databází relací (2048).     |
+| `FUNCTIONS_NFC_RUN_HOURS`  | 6.7: retence běhů funkcí, které četly kartu (24 h).  |
+| `VONAGE_ALLOW_UNSIGNED_SMS`| 6.7: `1` = přijmout Vonage SMS bez podpisu.          |
+| `ANDROID_DESIGN_IMAGE_HOSTS`| 6.7: povolení hostitelé obrázků v designu Androidu (výchozí žádný). |
+| `NOTIFY_DIR`               | 6.7: nastavení upozornění (`$DATA_DIR/notify`).      |
+
+Úplný seznam proměnných je v [dokumentaci › Nasazení](site/index.html#promenne),
+změny 6.7 v [`deployment.md`](deployment.md#přechod-na-67). `.dockerignore`
+od 6.7 vynechává `.env*` (kromě `.env.example`) a zálohy `*.bak`; vývojový
+server je navíc nepouští (`vite.config.ts`, `fs.deny`).
