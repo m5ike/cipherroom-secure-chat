@@ -447,7 +447,9 @@ export function rendered(call: TelCall, actions: CallAction[]): WebhookReply {
 
 /** A request to /wh/tel/<token>/<kind>. */
 export async function handleCallWebhook(call: TelCall, kind: string, body: unknown, query: Record<string, string>): Promise<WebhookReply> {
-  if (call.tsa && tsaCalls) return tsaCalls(call, kind, body, query);
+  // A TSA's call is driven by control/calls.ts; without the TSA runtime in this process it
+  // falls through to the engine (which keeps the call's own logic and logs why).
+  if (call.tsa && tsaCalls && telHooks.tsa) return tsaCalls(call, kind, body, query);
   if (kind === "tsa") return { status: 404, type: "application/json", body: "{\"ok\":false}" };
   const a = adapter(call.provider);
   const events = a?.parseCallEvent ? a.parseCallEvent(body, query) : [];

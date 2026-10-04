@@ -40,6 +40,7 @@ import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerControlRoutes } from "./telephony/control/routes";
 import { telephonyConsoleRight } from "./telephony/control/guard";
 import { registerTsaRoutes } from "./telephony/tsa/routes";
+import { registerOverviewRoute } from "./telephony/control/overview";
 import { registerTelTestRoutes } from "./telephony/control/tests";
 import { registerAdminLayoutRoutes } from "./layout";
 import { distPublicDir } from "./layout-catalog";
@@ -212,6 +213,7 @@ registerTelTestRoutes(app); // 6.9: Telephony › Tests + Log (and the log of co
 registerAdminTelephonyRoutes(app);
 registerControlRoutes(app); // 6.9: permissions, routing rules, the inroute table
 registerTsaRoutes(app); // 6.9: Telephony & SIP Applications — the editor's API and the simulator
+registerOverviewRoute(app); // 6.9: Telephony › Overview
 // Layout / template builder (persisted, served to clients via /api/layout).
 registerAdminLayoutRoutes(app);
 

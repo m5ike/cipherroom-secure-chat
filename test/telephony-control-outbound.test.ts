@@ -271,8 +271,9 @@ describe("outbound calls and SMS go through the permissions and the rules", () =
     const started: unknown[] = [];
     const resumed: unknown[] = [];
     telHooks.tsa = {
-      start: async (call, tsaId) => { started.push({ call, tsaId }); return { session: { id: "tsa-s1" } as never, actions: [{ say: { text: "Rate us 1 to 5" } }, { gather: { action: `https://chat.test/wh/tel/${call.token}/gather`, digits: 1 } }] }; },
-      resume: async (session, event) => { resumed.push({ session, event }); return { session: { id: session } as never, actions: [{ say: { text: "Thank you" } }, { hangup: {} }] }; },
+      // The runtime's own callback URL (/wh/tel/<token>/tsa?s=<session>&n=<node>), driven by control/calls.ts.
+      start: async (call, tsaId) => { started.push({ call, tsaId }); return { session: { id: "tsa-s1", status: "waiting" } as never, actions: [{ say: { text: "Rate us 1 to 5" } }, { gather: { action: `https://chat.test/wh/tel/${call.token}/tsa?s=tsa-s1&n=rate`, digits: 1 } }] }; },
+      resume: async (session, event) => { resumed.push({ session, event }); return { session: { id: session, status: "ended" } as never, actions: [{ say: { text: "Thank you" } }, { hangup: {} }] }; },
     };
     try {
       sent.length = 0;
@@ -286,8 +287,8 @@ describe("outbound calls and SMS go through the permissions and the rules", () =
       const next = await twilio(pathOf(action), { CallSid: `CA${callSeq}`, CallStatus: "in-progress", Digits: "5" });
       expect(next.text).toContain("Thank you");
       expect(next.text).toContain("<Hangup");
-      expect(resumed).toEqual([{ session: "tsa-s1", event: { kind: "digits", digits: "5" } }]);
-      expect(telStore.calls.list({ limit: 1 })[0].tsa).toEqual({ id: "survey", session: "tsa-s1" });
+      expect(resumed).toEqual([{ session: "tsa-s1", event: expect.objectContaining({ kind: "digits", digits: "5" }) }]);
+      expect(telStore.calls.list({ limit: 1 })[0].tsa).toMatchObject({ id: "survey", session: "tsa-s1" });
     } finally { telHooks.tsa = undefined; }
 
     // No TSA runtime in this process: the call says its own text (and the log says why).
