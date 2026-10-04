@@ -533,32 +533,71 @@ public final class CardOps {
     }
 
     /**
-     * EMV full read (6.5): PPSE → SELECT AID → GPO → READ RECORD, then the records
-     * parsed into the holder data a terminal reads (the web EmvReader, ported).
-     * Read-only — no PIN, no cryptogram, no transaction. Returns the {@code emv}
-     * JSONObject of the NfcResult contract.
+     * EMV full read (6.5, deep 6.6): PPSE → SELECT AID → GET DATA → the transaction
+     * log → GPO → READ RECORD (the AFL's and, deep, every other short file), then
+     * the records parsed into the holder data a terminal reads (the web EmvReader,
+     * ported). Read-only — no PIN, no cryptogram, no transaction. Returns the
+     * {@code emv} JSONObject of the NfcResult contract.
      */
-    public static JSONObject emvRead(Tag tag, int maxApps) throws IOException, JSONException {
+    public static JSONObject emvRead(Tag tag, EmvReader.Options opts) throws IOException, JSONException {
         IsoDep iso = IsoDep.get(tag);
         if (iso == null) throw new IOException("not-iso-dep");
         iso.connect();
-        try { iso.setTimeout(5000); return EmvReader.readEmv(iso::transceive, maxApps); }
+        try { iso.setTimeout(5000); return EmvReader.readEmv(iso::transceive, opts); }
         finally { close(iso); }
+    }
+
+    /** EMV full read with {@code maxApps} applications at most and the default deep read. */
+    public static JSONObject emvRead(Tag tag, int maxApps) throws IOException, JSONException {
+        return emvRead(tag, new EmvReader.Options(maxApps));
     }
 
     /* -------------------------------------------------------------- e-ID */
 
     /**
-     * e-ID / MRTD full read (6.5): opens the chip with the holder's own MRZ (or
-     * its three fields) over BAC — the document's own access control — and reads
-     * DG1 (the MRZ) and DG2 (the face) over secure messaging (the web MrtdReader,
-     * ported). Read-only. Returns the {@code mrtd} JSONObject of the contract.
+     * e-ID / MRTD full read (6.5, deep 6.6): opens the chip with the holder's own
+     * MRZ (or its three fields) or CAN — PACE where the chip offers a variant this
+     * reader runs, else BAC: the document's own access control — and reads over
+     * secure messaging EF.COM, EF.SOD and every data group a border reader may
+     * (the web MrtdReader, ported), checking each against EF.SOD. Read-only.
+     * Returns the {@code mrtd} JSONObject of the contract.
      */
     public static JSONObject eidRead(Tag tag, MrtdReader.Options opts) throws IOException, JSONException {
         IsoDep iso = IsoDep.get(tag);
         if (iso == null) throw new IOException("not-iso-dep");
         iso.connect();
+        // A deep read is a few hundred APDUs; give each one time (a big face, a slow chip).
         try { iso.setTimeout(5000); return MrtdReader.readMrtd(iso::transceive, opts); }
+        finally { close(iso); }
+    }
+
+    /**
+     * 6.6: the NfcResult of a model / workbench card read — {@code emv-read} or
+     * {@code eid-read} / {@code mrtd-read} — with the op's {@code args} passed
+     * through (EMV: maxApps, history, deep; MRTD: mrz, documentNumber +
+     * dateOfBirth + dateOfExpiry, can, readPhoto, all), as command.ts and
+     * web-executor.ts define it: {status, emv | mrtd, message}. Null for another op.
+     */
+    public static JSONObject readResult(String op, Apdu.Transceiver t, JSONObject args) throws IOException, JSONException {
+        switch (op) {
+            case "emv-read": {
+                JSONObject emv = EmvReader.readEmv(t, EmvReader.Options.fromArgs(args));
+                return new JSONObject().put("status", "ok").put("emv", emv).put("message", EmvReader.emvSummary(emv));
+            }
+            case "eid-read": case "mrtd-read": {
+                JSONObject mrtd = MrtdReader.readMrtd(t, MrtdReader.Options.fromArgs(args));
+                return new JSONObject().put("status", MrtdReader.statusFor(mrtd)).put("mrtd", mrtd).put("message", MrtdReader.summary(mrtd));
+            }
+            default: return null;
+        }
+    }
+
+    /** {@link #readResult} against a tapped tag (ISO-DEP). */
+    public static JSONObject readResult(String op, Tag tag, JSONObject args) throws IOException, JSONException {
+        IsoDep iso = IsoDep.get(tag);
+        if (iso == null) throw new IOException("not-iso-dep");
+        iso.connect();
+        try { iso.setTimeout(5000); return readResult(op, iso::transceive, args); }
         finally { close(iso); }
     }
 

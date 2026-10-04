@@ -208,7 +208,12 @@ public final class Apdu {
                 sb.append(pad).append(tagHex).append(" (").append(n.length).append(")\n");
                 sb.append(formatTlv(n.children, depth + 1)).append("\n");
             } else {
-                sb.append(pad).append(tagHex).append(" (").append(n.length).append(") ").append(hexSpaced(n.value)).append("\n");
+                sb.append(pad).append(tagHex).append(" (").append(n.length).append(") ").append(hexSpaced(n.value));
+                // Printable values also as text (apdu.ts formatTlv).
+                boolean printable = n.value.length > 0;
+                for (byte b : n.value) if ((b & 0xff) < 0x20 || (b & 0xff) >= 0x7f) { printable = false; break; }
+                if (printable) sb.append("  \"").append(new String(n.value, java.nio.charset.StandardCharsets.US_ASCII)).append('"');
+                sb.append("\n");
             }
         }
         // trim one trailing newline to mirror join("\n")
