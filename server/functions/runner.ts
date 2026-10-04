@@ -33,6 +33,7 @@ import { hostTelephony } from "./host-telephony";
 import { nfcAllowed, nfcSpend, sanitizeNfcCommand, sanitizeNfcResult } from "./host-nfc";
 import { setHandlerRunner } from "../telephony/engine";
 import type { TelOwner } from "../telephony/tel-store";
+import { openerOf } from "./chain-access";
 import { defineStore } from "../define"; // 6.3 define: the operator's typed constants/variables
 
 /** Bytes a sandbox sent as {"$b": base64}; null for anything else. */
@@ -473,7 +474,11 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
     const found = functionsStore.chain(opts.chainId);
     if (!found || found.modelId !== model.id) throw new RunRefused("no-chain", "That conversation with the model is over (or belongs to another model).");
     chain = found;
-  } else chain = newChain(model.id);
+  } else {
+    chain = newChain(model.id);
+    // 6.7: who may continue it from the app (chain-access.ts).
+    chain.opener = openerOf(model, caller, opts.executor);
+  }
   const callType = opts.callType ?? ep.type;
   const callId = openCall(chain, { type: callType, parms: storedInputs(inputs), http: opts.http ?? null, run: runId, at: Date.now(), by: caller.name });
   const context = modelContext(model, chain, callId, callType, ep.id, endpointTypes(model));

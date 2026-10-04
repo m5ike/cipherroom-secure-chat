@@ -38,6 +38,28 @@ export const FnHostContext = createContext<FnHost | null>(null);
 /** A message is "fresh" for this long: its notices, sounds, panels and hidden browser code happen once, not on every redraw of the history. */
 export const FN_FRESH_MS = 30_000;
 
+/**
+ * 6.7 (audit V2): outputs in another member's message. Any member can write
+ * any "outputs" into a message of their own, so nothing in one acts by
+ * itself: no notice in the app's own flash bar, no panel opened, no sound
+ * started, and browser code only after the viewer's click ("Run browser code
+ * from <sender>?") — hidden browser code from someone else never runs. Once
+ * started, that code reaches the model only while the viewer is using it
+ * (a recent click or key press) and a limited number of times; its notices
+ * carry the sender's name. A failed output is logged with the run, but the
+ * model's error entry point is not run in the viewer's name.
+ */
+export type FnPeer = { name: string };
+/** Events a peer's browser code may send to the model in the viewer's name, per start. */
+export const PEER_JS_EVENTS = 20;
+
+/** Is the viewer using the page right now (a click or key press moments ago, here or in the sandbox frame)? */
+function viewerActive(): boolean {
+  const ua = typeof navigator !== "undefined" ? (navigator as Navigator & { userActivation?: { isActive: boolean } }).userActivation : undefined;
+  // Browsers without the API: the start click and the event budget are the limit.
+  return ua ? ua.isActive : true;
+}
+
 type Item = { kind: "one"; index: number; output: FnOutput } | { kind: "buttons"; items: Array<{ index: number; output: Extract<FnOutput, { type: "button" }> }> };
 
 /** Buttons next to each other form one row. */
@@ -84,6 +106,7 @@ function useBlobUrl(data: string, mime: string): string {
 const cellText = (v: unknown) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 
 function FnMedia({ o, fresh, onError, lang }: { o: Extract<FnOutput, { type: "audio" | "video" }>; fresh: boolean; onError: (e: Error) => void; lang: Lang }) {
+  // `fresh` is false for a peer's message: its sound or video waits for the viewer's play.
   const url = useBlobUrl(o.data, o.mime);
   const ref = useRef<HTMLAudioElement & HTMLVideoElement>(null);
   const [blocked, setBlocked] = useState(false);
@@ -159,8 +182,40 @@ function FnFlash({ o, fresh, host }: { o: Extract<FnOutput, { type: "flash" }>; 
   return <div className={`fn-flash fn-flash--${o.level}`} role="status">{o.text}</div>;
 }
 
-function renderOne(o: FnOutput, ctx: { meta?: FnMeta; host: FnHost; fresh: boolean; onError: (e: Error) => void }): ReactNode {
-  const { host, fresh, onError, meta } = ctx;
+/** 6.7: a peer's browser code — a card naming the sender until the viewer starts it. */
+function FnPeerJs({ o, peer, meta, host, onError }: { o: Extract<FnOutput, { type: "js" }>; peer: FnPeer; meta?: FnMeta; host: FnHost; onError: (e: Error) => void }) {
+  const [started, setStarted] = useState(false);
+  const budget = useRef(PEER_JS_EVENTS);
+  if (o.hidden) return <div className="fn-peer-code fn-peer-code--hidden" role="note" data-testid="fn-peer-hidden">{tf(host.lang, "fnui.peerHidden", { name: peer.name })}</div>;
+  if (!started) {
+    return (
+      <div className="fn-peer-code" role="group" data-testid="fn-peer-code">
+        <div className="fn-peer-code__text">{tf(host.lang, "fnui.peerAsk", { name: peer.name })}{o.title ? <span className="fn-peer-code__title"> · {o.title}</span> : null}</div>
+        <div className="fn-peer-code__note">{t(host.lang, "fnui.peerNote")}</div>
+        <button type="button" className="fn-btn fn-btn--small" data-testid="fn-peer-run" onClick={() => setStarted(true)}>{t(host.lang, "fnui.peerRun")}</button>
+      </div>
+    );
+  }
+  // What the code may do in the viewer's name: only while they use it, and only so often.
+  const spend = () => meta?.chain && viewerActive() && --budget.current >= 0;
+  return (
+    <div className="fn-peer-code__run">
+      <div className="fn-js__title" data-testid="fn-peer-started">{tf(host.lang, "fnui.peerCode", { name: peer.name })}</div>
+      <FnSandbox o={o} title={tf(host.lang, "fnui.peerCode", { name: peer.name })} bridge={{
+        flash: (text, level) => host.flash(`${peer.name}: ${text}`, level),
+        send: (name, data) => { if (spend()) void host.event(meta!, { type: "button", name, data, source: "js" }); },
+        submit: (name, values) => { if (spend()) void host.event(meta!, { type: "form", name, values, source: "js" }); },
+        log: (level, message) => { if (meta?.chain) host.report(meta, { type: "log", level, message }); },
+        error: onError,
+        tone: host.tone,
+        lang: host.lang,
+      }} />
+    </div>
+  );
+}
+
+function renderOne(o: FnOutput, ctx: { meta?: FnMeta; host: FnHost; fresh: boolean; onError: (e: Error) => void; peer?: FnPeer }): ReactNode {
+  const { host, fresh, onError, meta, peer } = ctx;
   switch (o.type) {
     case "text": return <div className="fn-text">{o.text}</div>;
     case "markdown": return <Markdown text={o.text} className="md-fn" />;
@@ -191,6 +246,8 @@ function renderOne(o: FnOutput, ctx: { meta?: FnMeta; host: FnHost; fresh: boole
     }
     case "html": return <FnHtml o={o} />;
     case "js": {
+      // 6.7: someone else's browser code runs only when the viewer says so.
+      if (peer) return <FnPeerJs o={o} peer={peer} meta={meta} host={host} onError={onError} />;
       // Hidden browser code is an effect: it runs once, when the message is new; a visible one is a widget and runs whenever it is shown.
       if (o.hidden && !fresh) return null;
       return <FnSandbox o={o} title={t(host.lang, "fnui.browserCode")} bridge={{
@@ -207,18 +264,21 @@ function renderOne(o: FnOutput, ctx: { meta?: FnMeta; host: FnHost; fresh: boole
   return null;
 }
 
-/** A function's outputs: every one shown, played or run — each on its own. */
-export function FnOutputs({ outputs, meta, createdAt, fresh: freshProp, fromError = meta?.origin === "error" }: { outputs: readonly FnOutput[]; meta?: FnMeta; createdAt?: number; fresh?: boolean; fromError?: boolean }) {
+/** A function's outputs: every one shown, played or run — each on its own.
+ *  `from`: they came in another member's message (6.7 — see FnPeer). */
+export function FnOutputs({ outputs, meta, createdAt, fresh: freshProp, fromError = meta?.origin === "error", from }: { outputs: readonly FnOutput[]; meta?: FnMeta; createdAt?: number; fresh?: boolean; fromError?: boolean; from?: FnPeer }) {
   const host = useContext(FnHostContext) ?? FALLBACK_HOST;
   // Decided once, when the message first shows: a redraw later does not stop (or repeat) what it started.
-  const [fresh] = useState(() => freshProp ?? (createdAt !== undefined && Date.now() - createdAt < FN_FRESH_MS));
+  // A peer's message is never "fresh": its notices, panels and sounds wait for the viewer.
+  const [fresh] = useState(() => !from && (freshProp ?? (createdAt !== undefined && Date.now() - createdAt < FN_FRESH_MS)));
   const items = useMemo(() => groupOutputs(outputs), [outputs]);
   const reported = useRef(new Set<number>());
   const report = (index: number, err: Error) => {
     if (reported.current.has(index)) return;
     reported.current.add(index);
     if (!meta?.chain) { console.warn("[m5cet] function output", index, err); return; }
-    try { host.report(meta, { type: "error", error: { type: err.name || "RenderError", message: String(err.message || err).slice(0, 1500), ...(err.stack ? { stack: err.stack.slice(0, 4000) } : {}) }, output: index, fromError }); }
+    // A peer's output: logged with the run, but the error entry point does not run in the viewer's name (fromError).
+    try { host.report(meta, { type: "error", error: { type: err.name || "RenderError", message: String(err.message || err).slice(0, 1500), ...(err.stack ? { stack: err.stack.slice(0, 4000) } : {}) }, output: index, fromError: fromError || Boolean(from) }); }
     catch (e) { console.warn("[m5cet] could not report a function output error", e); }
   };
   return (
@@ -232,7 +292,7 @@ export function FnOutputs({ outputs, meta, createdAt, fresh: freshProp, fromErro
         const onError = (e: Error) => report(it.index, e);
         return (
           <div key={it.index} className={`fn-item fn-item--${it.output.type}`}>
-            <ItemBoundary lang={host.lang} onError={onError}>{renderOne(it.output, { meta, host, fresh, onError })}</ItemBoundary>
+            <ItemBoundary lang={host.lang} onError={onError}>{renderOne(it.output, { meta, host, fresh, onError, peer: from })}</ItemBoundary>
           </div>
         );
       })}

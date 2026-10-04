@@ -113,6 +113,11 @@ textarea.fn-input { resize: vertical; }
 .fn-js--hidden { position: absolute; width: 0; height: 0; overflow: hidden; }
 .fn-js__title { font-size: 0.8rem; font-weight: 600; color: hsl(var(--muted-foreground)); }
 .fn-js__frame { width: 100%; border: 0; border-radius: 0.6rem; background: transparent; color-scheme: normal; display: block; }
+/* 6.7: another member's browser code waits for the viewer's click */
+.fn-peer-code { display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; padding: 0.5rem 0.7rem; border-radius: 0.6rem; border: 1px dashed hsl(var(--border)); background: hsl(var(--muted) / 0.5); font-size: 0.85rem; }
+.fn-peer-code__title { color: hsl(var(--muted-foreground)); }
+.fn-peer-code__note { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+.fn-peer-code--hidden { font-size: 0.75rem; color: hsl(var(--muted-foreground)); border-style: dotted; }
 
 @media (max-width: 520px) {
   .fn-form__grid { grid-template-columns: 1fr !important; }

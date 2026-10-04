@@ -164,6 +164,20 @@ export type Chain = {
   calls: ChainCall[];
   createdAt: number;
   updatedAt: number;
+  /** 6.7: who opened it, and the (blind) room its outputs were posted to — who may continue it (chain-access.ts). */
+  opener?: ChainOpener;
+};
+
+/** 6.7: the first call's caller, as a session keeps it (chain-access.ts). */
+export type ChainOpener = {
+  kind: Caller["kind"];
+  /** Account id, "" for a guest. */
+  account: string;
+  /** A guest's client id (the app's device id). */
+  client: string | null;
+  executor: string;
+  /** The blind room id the outputs went to: set only for a chat run of a model that posts to the room. */
+  room: string | null;
 };
 
 /**

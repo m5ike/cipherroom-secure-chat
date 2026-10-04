@@ -47,6 +47,12 @@ const cs: Dict = {
   "proto.dropped": "Zpráva od {name} byla zahozena (neplatný nebo opakovaný obsah).",
   "file.verified": "Soubor {name} ověřen — otisk celého souboru a podpis odesílatele sedí.",
   "file.unverified": "Soubor {name} přišel od staršího klienta — bez ověření otisku.",
+  // 6.7 (audit V2): another member's function outputs — browser code waits for the viewer
+  "fnui.peerAsk": "Spustit kód v prohlížeči od {name}?",
+  "fnui.peerNote": "Poslal ho člen místnosti, ne aplikace. Poběží izolovaně, ale smí na internet a odpovídat modelu tvým jménem, když s ním pracuješ.",
+  "fnui.peerRun": "Spustit",
+  "fnui.peerCode": "Kód v prohlížeči od {name} (izolovaně)",
+  "fnui.peerHidden": "Skrytý kód v prohlížeči od {name} se nespustil.",
 };
 
 const en: Dict = {
@@ -93,6 +99,12 @@ const en: Dict = {
   "proto.dropped": "A message from {name} was dropped (invalid or repeated content).",
   "file.verified": "File {name} verified — the whole-file digest and the sender's signature match.",
   "file.unverified": "File {name} came from an older client — its digest was not verified.",
+  // 6.7 (audit V2): another member's function outputs — browser code waits for the viewer
+  "fnui.peerAsk": "Run browser code from {name}?",
+  "fnui.peerNote": "A room member sent it, not the app. It runs sandboxed, but it may reach the internet and answer the model in your name while you use it.",
+  "fnui.peerRun": "Run",
+  "fnui.peerCode": "Browser code from {name} (sandboxed)",
+  "fnui.peerHidden": "Hidden browser code from {name} was not run.",
 };
 
 const de: Dict = {
@@ -139,6 +151,12 @@ const de: Dict = {
   "proto.dropped": "Eine Nachricht von {name} wurde verworfen (ungültiger oder wiederholter Inhalt).",
   "file.verified": "Datei {name} geprüft — Prüfsumme der ganzen Datei und Signatur des Absenders stimmen.",
   "file.unverified": "Datei {name} kam von einem älteren Client — ohne Prüfung der Prüfsumme.",
+  // 6.7 (audit V2): another member's function outputs — browser code waits for the viewer
+  "fnui.peerAsk": "Browser-Code von {name} ausführen?",
+  "fnui.peerNote": "Ein Raummitglied hat ihn geschickt, nicht die App. Er läuft isoliert, darf aber ins Internet und dem Modell in deinem Namen antworten, während du ihn benutzt.",
+  "fnui.peerRun": "Ausführen",
+  "fnui.peerCode": "Browser-Code von {name} (isoliert)",
+  "fnui.peerHidden": "Versteckter Browser-Code von {name} wurde nicht ausgeführt.",
 };
 
 export const SECURITY_I18N = { cs, en, de } as const;

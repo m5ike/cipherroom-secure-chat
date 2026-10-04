@@ -59,7 +59,8 @@ function toRun(r: RunRow): Run {
     ...(r.chain_id ? { chainId: r.chain_id } : {}), ...(typeof r.call_id === "number" ? { callId: r.call_id } : {}), ...(r.endpoint ? { endpoint: r.endpoint as Run["endpoint"] } : {}) };
 }
 function toChain(r: Record<string, unknown>): Chain {
-  return { id: String(r.id), modelId: String(r.model_id), sessionId: String(r.session_id), source: jsonParse(r.source, { kind: "model" } as Chain["source"]), calls: jsonParse(r.calls, []), createdAt: Number(r.created_at), updatedAt: Number(r.updated_at) };
+  const opener = typeof r.opener === "string" && r.opener ? jsonParse<Chain["opener"] | null>(r.opener, null) : null;
+  return { id: String(r.id), modelId: String(r.model_id), sessionId: String(r.session_id), source: jsonParse(r.source, { kind: "model" } as Chain["source"]), calls: jsonParse(r.calls, []), createdAt: Number(r.created_at), updatedAt: Number(r.updated_at), ...(opener ? { opener } : {}) };
 }
 
 const SCHEMA = `
@@ -116,7 +117,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
   once INTEGER NOT NULL DEFAULT 0, expires_at INTEGER, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS model_chains (
   id TEXT PRIMARY KEY, model_id TEXT NOT NULL, session_id TEXT NOT NULL, source TEXT NOT NULL DEFAULT '{"kind":"model"}',
-  calls TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+  calls TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, opener TEXT NOT NULL DEFAULT '');
 CREATE INDEX IF NOT EXISTS model_chains_updated ON model_chains(updated_at);
 `;
 
@@ -128,6 +129,8 @@ const MIGRATIONS: Array<[table: string, column: string, definition: string]> = [
   ["runs", "chain_id", "TEXT NOT NULL DEFAULT ''"],
   ["runs", "call_id", "INTEGER"],
   ["runs", "endpoint", "TEXT NOT NULL DEFAULT ''"],
+  // 6.7: who opened a processing session and the room it was shared to (chain-access.ts).
+  ["model_chains", "opener", "TEXT NOT NULL DEFAULT ''"],
 ];
 
 /* ---------------------------------------------------------- the store */
@@ -451,8 +454,9 @@ class FunctionsStore {
   }
   saveChain(c: Chain): void {
     if (!this.d) return this.mem.saveChain(c);
-    this.d.prepare(`INSERT INTO model_chains (id, model_id, session_id, source, calls, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET calls=excluded.calls, updated_at=excluded.updated_at`).run(c.id, c.modelId, c.sessionId, JSON.stringify(c.source), JSON.stringify(c.calls), c.createdAt, c.updatedAt);
+    // The opener is written once, with the session: a later call never changes who it belongs to.
+    this.d.prepare(`INSERT INTO model_chains (id, model_id, session_id, source, calls, created_at, updated_at, opener) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET calls=excluded.calls, updated_at=excluded.updated_at`).run(c.id, c.modelId, c.sessionId, JSON.stringify(c.source), JSON.stringify(c.calls), c.createdAt, c.updatedAt, c.opener ? JSON.stringify(c.opener) : "");
   }
   /** A model's recent processing sessions (the console). */
   chains(modelId: string, limit = 50): Chain[] {
