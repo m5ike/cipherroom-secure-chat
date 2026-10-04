@@ -325,11 +325,9 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         if (bioPrompt != null) bioPrompt.cancel();
         bioPrompt = Biometric.prompt(this, cipher, app.t("lock.bioPrompt"), app.design().appName(), app.t("lock.bioCancel"), new Biometric.Callback() {
             @Override public void success(Cipher c) { bioPrompt = null; handleLockResult(app.lock.bioSucceeded(c)); }
-            @Override public void rejected() {
-                AppLock.Result r = app.lock.failed("biometric");
-                if (r == AppLock.Result.WIPED) { if (bioPrompt != null) bioPrompt.cancel(); handleLockResult(r); }
-                else { try { lockState.put("attempts", app.lock.attempts()).put("left", app.lock.left()); } catch (JSONException ignored) { } refresh(); }
-            }
+            // 6.7 (audit N18): a finger that does not match is no guess at the PIN — BiometricPrompt locks
+            // the sensor after a few; it no longer counts toward the wipe (a child's fingers could wipe it).
+            @Override public void rejected() { refresh(); }
             @Override public void error(int code, CharSequence message) { bioPrompt = null; try { lockState.put("mode", "pin"); } catch (JSONException ignored) { } refresh(); }
         });
     }

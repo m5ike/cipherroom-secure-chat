@@ -73,7 +73,12 @@ public final class AppLock {
 
     private void reset() { save(LockCounter.fresh()); }
 
-    public synchronized Result unlockWithPin(String pin) {
+    public synchronized Result unlockWithPin(String pin) { return attemptPin(pin, true); }
+
+    /** 6.7 (audit N18): the current PIN before a change — counted (and wiped after) like an unlock. */
+    public synchronized Result confirmPin(String pin) { return attemptPin(pin, false); }
+
+    private Result attemptPin(String pin, boolean unlock) {
         // An attempt the app was killed in the middle of counts as a failure first.
         if (LockCounter.interrupted(state())) {
             Result r = failed("pin-interrupted");
@@ -91,7 +96,7 @@ public final class AppLock {
             return Result.WAIT;
         }
         try {
-            if (app.vault.unlockWithPin(pin)) { succeeded("pin"); return Result.OK; }
+            if (app.vault.unlockWithPin(pin)) { if (unlock) succeeded("pin"); else reset(); return Result.OK; }
         } catch (GeneralSecurityException e) {
             Log.e("lock", "PIN unlock failed", e);
         }

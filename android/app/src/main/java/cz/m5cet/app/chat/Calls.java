@@ -77,7 +77,7 @@ public final class Calls {
             room.broadcastAudio("live");
             route();
             room.changed();
-            Log.i("call", "audio on in " + room.label);
+            Log.i("call", "audio on in " + room.logName());
         });
     }
 
@@ -133,7 +133,7 @@ public final class Calls {
                 long seconds = (System.currentTimeMillis() - startedAt) / 1000;
                 CallLogBridge.record(room.app, room.label, videoOn, CallLog.Calls.OUTGOING_TYPE, startedAt, seconds);
                 room.broadcastAudio("off");
-                Log.i("call", "call ended in " + room.label + " after " + seconds + " s");
+                Log.i("call", "call ended in " + room.logName() + " after " + seconds + " s");
             }
             videoOn = false;
             cameraOn = true;

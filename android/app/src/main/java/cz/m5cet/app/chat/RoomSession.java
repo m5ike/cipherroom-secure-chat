@@ -121,12 +121,12 @@ public final class RoomSession {
                     notice = app.t("app.decrypting");
                     long t0 = System.currentTimeMillis();
                     keys = RoomKeys.derive(room, passphrase);
-                    Log.i("room", "keys for " + label + " in " + (System.currentTimeMillis() - t0) + " ms");
+                    Log.i("room", "keys for " + logName() + " in " + (System.currentTimeMillis() - t0) + " ms");
                 }
                 if (identity == null) identity = rooms.identity();
                 openSocket();
             } catch (Exception e) {
-                Log.e("room", "cannot connect " + label, e);
+                Log.e("room", "cannot connect " + logName(), e);
                 status = "offline";
                 notice = e.getMessage() == null ? "" : e.getMessage();
                 changed();
@@ -174,7 +174,7 @@ public final class RoomSession {
         ws = null;
         if (heartbeat != null) { heartbeat.cancel(false); heartbeat = null; }
         status = "offline";
-        Log.i("room", label + " signaling closed " + code + " " + reason);
+        Log.i("room", logName() + " signaling closed " + code + " " + reason);
         changed();
         if (code == 4001 || code == 4003) { wanted = false; notice = code == 4001 ? "replaced" : "closed by the server"; return; }
         if (wanted) scheduleRetry();
@@ -263,7 +263,7 @@ public final class RoomSession {
             // 6.1, with an account: the server keeps messages for members who are away.
             case "relay-deliver": onRelayDeliver(f.optJSONArray("items")); break;
             case "relay-status": onRelayStatus(f); break;
-            case "auth-result": Log.i("room", label + " account: " + (f.optBoolean("ok") ? "on" : f.optString("message"))); break;
+            case "auth-result": Log.i("room", logName() + " account: " + (f.optBoolean("ok") ? "on" : f.optString("message"))); break;
             case "proxy-ack": if (!f.optBoolean("accepted", true)) systemNotice("⚠ " + f.optString("reason")); break;
             case "closed-by-server": notice = f.optString("reason"); changed(); break;
             case "server-notice": onServerNotice(f); break;
@@ -279,7 +279,7 @@ public final class RoomSession {
             }
             case "error": {
                 notice = f.optString("message");
-                Log.w("room", label + ": " + notice);
+                Log.w("room", logName() + ": " + notice);
                 // 6.0: the operator closed the room, or it is full — not a network problem to retry.
                 String code = f.optString("code");
                 if ("room-blocked".equals(code) || "room-full".equals(code)) {
@@ -385,7 +385,7 @@ public final class RoomSession {
             case "hello": {
                 String refused = senderKeys.acceptHello(keys, identity, raw, p.id, myId);
                 if ("key-mismatch".equals(refused)) { notice = app.t("room.keyMismatch"); status = "mismatch"; changed(); return; }
-                if (refused != null) { Log.w("room", "bad hello from " + p.name); return; }
+                if (refused != null) { Log.w("room", "bad hello from " + p.id); return; }
                 p.publicKey = raw.optString("pk");
                 people.onHello(p.id, raw); // 6.2 people: the username it names, when the channel opened
                 JSONArray caps = raw.optJSONArray("caps");
@@ -436,6 +436,12 @@ public final class RoomSession {
     }
 
     private void system(String text) { add(ChatMessage.system(key, text), false); }
+
+    /**
+     * 6.7 (audit N18 / F-10): how the log names this room — never by its name (the room name is the
+     * salt of its key, and the log reaches the server through the "status" command).
+     */
+    String logName() { return "room#" + Integer.toHexString(System.identityHashCode(this) & 0xffff); }
 
     /**
      * 6.0: the operator speaks (the console, a function's m5room.wall_msg / user_msg /

@@ -456,10 +456,10 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             case "wifi": {
                 StringBuilder sb = new StringBuilder(app().t("nfc.rec.wifi")).append("\nSSID: ").append(d.optString("ssid"));
                 if (!d.optString("password").isEmpty()) sb.append("\n").append(app().t("nfc.wifi.pw")).append(": ").append(d.optString("password"));
-                new android.app.AlertDialog.Builder(a).setTitle(app().t("nfc.rec.wifi")).setMessage(sb.toString())
+                SecureDialog.show(a, new android.app.AlertDialog.Builder(a).setTitle(app().t("nfc.rec.wifi")).setMessage(sb.toString()) // 6.7 N18: the password
                     .setPositiveButton(app().t("nfc.wifi.settings"), (di, w) -> { try { a.startActivity(new android.content.Intent(android.provider.Settings.ACTION_WIFI_SETTINGS)); } catch (RuntimeException e) { a.flash("", app().t("file.noApp"), "warn"); } })
                     .setNeutralButton(app().t("msg.copy"), (di, w) -> a.copy(d.optString("password")))
-                    .setNegativeButton(app().t("nav.close"), null).show();
+                    .setNegativeButton(app().t("nav.close"), null));
                 break;
             }
             case "contact": {
@@ -1149,7 +1149,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         LinearLayout l = new LinearLayout(a); l.setOrientation(LinearLayout.VERTICAL); l.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
         l.addView(doc); l.addView(dob); l.addView(exp); l.addView(mrz); l.addView(can); l.addView(photo); l.addView(all);
         ScrollView sv = new ScrollView(a); sv.addView(l);
-        new android.app.AlertDialog.Builder(a).setTitle(app().t("nfc.eid.title")).setView(sv)
+        SecureDialog.show(a, new android.app.AlertDialog.Builder(a).setTitle(app().t("nfc.eid.title")).setView(sv) // 6.7 N18: MRZ / CAN
             .setPositiveButton(app().t("nfc.eid.read"), (d, w) -> {
                 MrtdReader.Options o = new MrtdReader.Options();
                 String mrzText = mrz.getText().toString().trim();
@@ -1167,7 +1167,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
                 o.all = all.isChecked();
                 cb.run(o);
             })
-            .setNegativeButton(app().t("nav.close"), null).show();
+            .setNegativeButton(app().t("nav.close"), null));
     }
 
     private void askText(String title, OnText cb) {

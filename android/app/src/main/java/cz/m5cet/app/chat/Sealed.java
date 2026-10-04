@@ -28,7 +28,7 @@ public final class Sealed {
     private Sealed() {}
 
     static final String ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
-    static final int ROUNDS = 600_000, LEGACY_ROUNDS = 150_000;
+    static final int ROUNDS = 600_000, LEGACY_ROUNDS = 150_000, MAX_ROUNDS = 2_000_000;
     private static final SecureRandom RNG = new SecureRandom();
 
     /** A new random code, XXXX-XXXX-XXXX (rejection sampling: no modulo bias). */
@@ -70,7 +70,10 @@ public final class Sealed {
     public static String open(String ciphertext, JSONObject meta, String code) {
         try {
             boolean v2 = meta.optInt("v", 1) == 2;
-            int rounds = v2 ? (int) meta.optLong("it", ROUNDS) : LEGACY_ROUNDS;
+            long it = v2 ? meta.optLong("it", ROUNDS) : LEGACY_ROUNDS;
+            // 6.7 (audit N18): the count comes from the sender — a huge one froze the phone for hours.
+            if (it < 1 || it > MAX_ROUNDS) return null;
+            int rounds = (int) it;
             byte[] k = key(v2 ? normalize(code) : code, unb64(meta.optString("salt")), rounds);
             Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
             c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(k, "AES"), new GCMParameterSpec(128, unb64(meta.optString("iv"))));
