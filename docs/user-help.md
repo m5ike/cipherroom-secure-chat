@@ -242,7 +242,9 @@ Když je správce zapne a máš přístup k modulu NFC, tyto příkazy přečtou
   zprávy* (šipka u *Odeslat* nebo dlouhý stisk *Odeslat*) je zaškrtávací
   volba *Poslat jako hlas*. Když je zaškrtnutá, *Odeslat* (i Enter) pošle
   místo textu hlasovou zprávu; tlačítko *Odeslat* pak ukazuje reproduktor,
-  číslo u šipky volbu započítá a pod polem stojí *Jako hlasová zpráva*.
+  číslo u šipky volbu započítá a pod polem stojí *Jako hlas — text čte
+  server*. První hlasová zpráva v místnosti řekne, která služba převodu řeči
+  text přečte (může to být cloud), a zeptá se; *Zrušit* nic neodešle (6.10).
   Zůstane zapnutá i pro další zprávy jako ostatní typy zprávy — vypneš ji
   odškrtnutím nebo *Vyčistit* (po znovunačtení stránky je vypnutá). Klikací
   a mizející volba platí i pro hlasovou zprávu, vybraní příjemci také
@@ -331,6 +333,11 @@ Když je správce zapne a máš přístup k modulu NFC, tyto příkazy přečtou
 - **Soukromí**: nic se nikam neposílá, dokud neklepneš na odkaz; mapa jde
   přes server M5cet. Klepnutím na navigaci nebo odvoz ale předáš souřadnice
   té službě (Uberu i jméno odesílatele polohy, když poloha není tvoje).
+- **Komu poloha jde (web, 6.10)**: jako zpráva — vybraným příjemcům, nebo
+  všem, když je zapnuté odesílání všem. Průběžná poloha si výběr zapamatuje
+  při spuštění (pozdější změna výběru ji nerozšíří) a dostanou ji jen vybraní,
+  kteří jsou právě připojení. Stejně jde i soubor z panelu *Soubory* a text
+  z panelu *Řeč*.
 
 ### Zprávy „podržet a číst“ (6.7)
 Zprávu, která se ukáže jen při podržení, teď jde podržet i za **prázdné

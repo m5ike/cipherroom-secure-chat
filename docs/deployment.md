@@ -336,6 +336,69 @@ cest).
 `<dir>/.m5cet/backups/`) a drží posledních `BACKUP_KEEP` (5) záloh;
 `update.sh --rollback` se k poslední vrátí.
 
+## Přechod na 6.10
+
+Bezpečnostní revize 6.10 ([`security-analysis.md`](security-analysis.md) › 12, nálezy G-05,
+G-06, G-08, G-12 – G-16) mění chování telefonie, editoru TSA a webu. Nové proměnné prostředí
+tyto opravy nepřinášejí; nové limity jsou v *Telephony › Permissions* (soubor uložený verzí 6.9
+je nemá — platí výchozí hodnoty z tabulky).
+
+**Telephony & SIP — aplikace (TSA):**
+
+- **Prázdné `outbound.countries` znamená pro TSA jen vaše vlastní země.** SMS a přepojení (Dial)
+  z TSA řídí kdokoli, kdo zavolá, a číslo volajícího jde podvrhnout (SMS pumping). Vlastní země
+  se odvodí z čísel serveru (`TWILIO_FROM`, `TELNYX_FROM`, `VONAGE_FROM`, `TELEPHONY_DID_POOL`,
+  DID a caller ID SIP trunků) a z čísla, na které se volalo. Funkce, aplikace a testy konzole
+  s prázdným seznamem smějí dál kamkoli. **Kdo z TSA posílá SMS nebo přepojuje do zahraničí,
+  musí země vyjmenovat**, nebo zadat `*` (celý svět, i pro TSA — validátor pak varuje u SMS na
+  `{call.from}`). Odmítnutí je v logu (`route`, `tsa`) a uzel jde do `on_failed`.
+- **Dial / transfer prochází stejnými kontrolami jako `m5.telephony.call`** (`planOutbound`
+  s klíčem rozpočtu `tsa:<id>`): země, blokovaná čísla, souběh odchozích hovorů, **odchozí
+  pravidla** — pravidlo se stavem odmítne přepojení i při *Route through: application / SIP
+  trunk* (6.9 je obešlo) — a nejdelší hovor: přepojení dostane časový limit
+  `outbound.maxMinutes` (nejvýš zbytek *Longest call* ze Startu TSA; Twilio `timeLimit`, Vonage
+  `limit`, Telnyx `time_limit_secs`). Přepojení jedné TSA za hodinu nejvýš `callsPerHour`.
+- **SMS z TSA má vlastní hodinový rozpočet** (`smsPerHour` pod klíčem `tsa:<id>`, dřív sdílené
+  `anonymous`).
+- **Route kódy:** zvolený snadno uhodnutelný kód (`0000`, `1234`, `1212`, rok…) se **odmítne**
+  (`bad-argument`, 6.9 jen varovala); kód s platností nad 10 minut musí mít **6 číslic** (zvolený
+  kratší se odmítne, náhodný se prodlouží); živých kódů jedné délky je nejvýš 10 (4 číslice),
+  100 (5) a 1000 (6) — pak `inroute-limit`. Špatné kódy se počítají i na volané číslo a za celý
+  modul; po vyčerpání rozpočtu se kódy na tom čísle, resp. všude, **pozastaví** (1 min,
+  opakovaně až 60 min) — i správný kód pak dostane `on_code_error`. Kód, který dosáhne
+  `maxAttemptsPerCall` (výchozí 3), **ukončí hovor** krátkou omluvou (6.9: `on_code_error` dál).
+  Každá pauza je varování v logu a bezpečnostní událost auditu `telephony.inroute.lockout`
+  (počítá se do alertu *security-warnings*).
+- **Webhooky:** podepsaný webhook Telnyx / Vonage, který server už zpracoval (stejné id události,
+  `jti`, `sig`), dostane `200` s `{"ok":true,"duplicate":true}` (odpověď hovoru Vonage prázdné
+  NCCO) a nezpracuje se. Týká se i opakovaného doručení téže události poskytovatelem.
+- **Editor TSA:** neuložená místní kopie a schránka jsou v `sessionStorage` (jen ta karta
+  prohlížeče, zmizí se zavřením a odhlášením) a bez hodnot hlaviček, které vypadají jako
+  tajemství; kopie, které 6.9 nechala v `localStorage`, editor při otevření převezme a odtud
+  smaže. **TSA s doslovným tajemstvím v hlavičce nástroje HTTP** (`Authorization: Bearer …`,
+  `X-Api-Key: …`, `Cookie: …`, JWT) **nejde publikovat** — dejte hodnotu do prostředí serveru jako
+  `TSA_SECRET_<JMÉNO>` a do hlavičky `{secret:JMÉNO}`. Už publikovaná verze běží dál.
+
+| Oprávnění | Výchozí | Rozsah | Význam |
+|---|---|---|---|
+| `inroute.maxFailuresPerDidPerHour` | 30 | 1–10 000 | špatné kódy na jedno volané číslo za hodinu, pak pauza kódů na něm |
+| `inroute.maxFailuresPerMinute` | 10 | 1–1000 | špatné kódy za minutu v celém modulu, pak pauza všude |
+| `inroute.maxFailuresPerHour` | 100 | 1–10 000 | totéž za hodinu |
+| `outbound.countries` | `[]` | ISO kódy nebo `*` | nově `*` = kamkoli; `[]` = kamkoli, ale TSA jen vlastní země |
+
+**Web:**
+
+- Soubor z panelu *Soubory*, poloha (jednorázová i průběžná) a text z panelu *Řeč* jdou jen
+  vybraným příjemcům, jako zpráva (6.9 vždy celé místnosti). Průběžná poloha si výběr zafixuje
+  při spuštění; když je vybraný jen nepřítomný člověk, nespustí se.
+- Příloha nese klikací a mizející volbu; co u souboru nejde (individuální šifrování, u velkého
+  souboru všechny volby), aplikace vyjmenuje a zeptá se. *Přeposlat* zachová klikací a mizející
+  zprávu a vlastní individuálně šifrovanou zprávu znovu zašifruje jejím kódem; zprávu, jejíž kód
+  nemá, přeposlat nedovolí.
+- *Poslat jako hlas*: pod polem stojí „Jako hlas — text čte server" a první hlasová zpráva
+  v místnosti jmenuje službu převodu řeči a zeptá se. Odpověď funkci s volbou *Individuálně
+  šifrovaná* se odmítne (text čte server).
+
 ## Přechod na 6.9
 
 Telephony & SIP je v 6.9 přestavěné (stránka konzole, pravidla, TSA, route

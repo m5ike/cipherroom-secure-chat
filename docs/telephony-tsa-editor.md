@@ -112,6 +112,14 @@ po potvrzení zavolá `POST …/publish` — hovory od té chvíle běží novou
 * **Místní kopie** — neuložený koncept se průběžně ukládá do úložiště prohlížeče
   (`m5cet:tsa-draft:<id>`). Při dalším otevření editor nabídne *Restore* /
   *Discard* (a upozorní, když se mezitím změnil koncept na serveru).
+  6.10 (G-15): kopie i schránka (C / V) jsou v `sessionStorage` — jen v této kartě,
+  zmizí jejím zavřením a **odhlášením z konzole** — a bez hodnot hlaviček nástroje
+  HTTP, které vypadají jako tajemství (zůstane `Authorization: `; banner to řekne).
+  Kopie, které 6.9 nechala v `localStorage`, editor při otevření převezme a odtud smaže.
+* **Tajemství v hlavičkách** — pole *Headers* hned upozorní na doslovné tajemství
+  (JWT, `Bearer/Basic …`, hodnota hlavičky typu `Authorization`, `Cookie`, `*-Key`,
+  `*-Token`); server to hlásí jako chybu a TSA nepublikuje. Patří do prostředí
+  serveru jako `TSA_SECRET_<JMÉNO>`, do hlavičky `{secret:JMÉNO}`.
 * **Zavření s neuloženými změnami** se zeptá: *Keep editing*, *Discard*,
   *Save draft*. I zavření prohlížeče se zeptá.
 * **Export** stáhne uložený koncept (`GET …/export`) jako JSON.
@@ -155,7 +163,7 @@ jeden tah hovoru (`SimTurn`):
 |---|---|
 | Delete / Backspace | smaže vybrané nástroje nebo drát |
 | Ctrl/⌘+Z, Ctrl/⌘+Y (i Ctrl/⌘+Shift+Z) | zpět, znovu |
-| C, V | kopírovat, vložit (i do jiné TSA v tomtéž prohlížeči) |
+| C, V | kopírovat, vložit (i do jiné TSA v téže kartě prohlížeče) |
 | D | duplikovat výběr |
 | Ctrl/⌘+X | vyjmout |
 | A | ukázat vše |

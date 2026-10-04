@@ -149,6 +149,16 @@ Vonage proto nastav `TELNYX_PUBLIC_KEY` / `VONAGE_SIGNATURE_SECRET`; jen pro zko
 bez podpisu je `TELEPHONY_ALLOW_UNSIGNED=1` (Overview pak varuje, že hovor může
 padělat kdokoli). Twilio je ověřené vždy (`TWILIO_AUTH_TOKEN`).
 
+**6.10 (G-08) — přehrání:** zachycený podepsaný webhook platí po celé okno
+poskytovatele (Telnyx 5 min, Vonage JWT 10 min). Server si proto každý ověřený
+požadavek pamatuje 15 minut podle toho, co ho dělá jedinečným — Telnyx id události
+(`data.id`, jinak podpis), Vonage `jti` JWT (jinak celý token), podepsaná SMS Vonage
+`sig` — a jeho kopii odpoví `200` (`{"ok":true,"duplicate":true}`, odpověď hovoru
+Vonage prázdné NCCO), aniž by ji zpracoval; stejně dopadne i opakované doručení téže
+události poskytovatelem. Twilio se neklíčuje: jeho podpis čas neobsahuje a dva
+skutečné požadavky mohou být shodné (stejná klávesa ve stejném menu). Paměť je
+v procesu hlavní služby (`server/telephony/webhooks.ts` › `replayKey`).
+
 **6.10 (G-04):** `POST /api/telephony/call|sms` z aplikace vyžaduje pravidlo modulu
 Telephony & SIP, které provozovatel napsal (Modules & groups) — modul „bez pravidla"
 (dřív „pro všechny") volat ani psát nedovolí. Aplikace posílá tyto požadavky bez

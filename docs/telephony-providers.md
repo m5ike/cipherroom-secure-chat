@@ -107,7 +107,7 @@ musí nést `s` = session toho hovoru.
 | `redirect` | `<Redirect method="POST">` |
 | `hangup` | `<Hangup/>` |
 | `sendDigits` | `<Play digits="1w2#"/>` (`w` 0,5 s, `W` 1 s) |
-| `dial` (číslo) | `<Dial action method timeout callerId record="record-from-answer"><Number>+420…</Number></Dial>` → akce dostane `DialCallStatus` (`completed` = přijato, `busy`, `no-answer`, `failed`, `canceled`), `DialCallDuration` |
+| `dial` (číslo) | `<Dial action method timeout timeLimit callerId record="record-from-answer"><Number>+420…</Number></Dial>` (6.10: `timeLimit` = nejdelší přepojený hovor, nejvýš 14 400 s) → akce dostane `DialCallStatus` (`completed` = přijato, `busy`, `no-answer`, `failed`, `canceled`), `DialCallDuration` |
 | `dial` (SIP / přes trunk) | `<Dial …><Sip username password>sip:…;transport=tls</Sip></Dial>` → navíc `DialSipResponseCode` |
 | `reject` | `<Reject reason="busy\|rejected"/>` — **jen jako první sloveso** nepřijatého hovoru (Twilio ho pak neúčtuje); `congestion` se hraje jako `busy`; později se z něj stane `<Hangup/>` |
 
@@ -189,7 +189,7 @@ Odkazy: [Gather](https://www.twilio.com/docs/voice/twiml/gather) ·
 | `redirect` | pro TSA **`notify`** (odpověď webhooku nahradí NCCO); jinak `executeActions` = transfer na URL |
 | `hangup` | konec NCCO |
 | `sendDigits` | v NCCO nelze → `PUT /v1/calls/{uuid}/dtmf` (`w` → `p` 0,5 s) |
-| `dial` | `connect` (`endpoint` phone / sip, `from`, `timeout`, `eventType: "synchronous"`, `eventUrl` = zpětné URL) + **`notify`** po skončení spojené nohy; `record` → `record` na pozadí (`split: conversation`) před `connect` |
+| `dial` | `connect` (`endpoint` phone / sip, `from`, `timeout`, 6.10 `limit` = nejdelší přepojený hovor, nejvýš 7200 s, `eventType: "synchronous"`, `eventUrl` = zpětné URL) + **`notify`** po skončení spojené nohy; `record` → `record` na pozadí (`split: conversation`) před `connect` |
 | `reject` | nelze — NCCO skončí |
 
 Specifika TSA: `connect` se `eventType: synchronous` pošle na `eventUrl`
@@ -269,7 +269,7 @@ událost, která čekání ukončí, posune TSA dál.
 | `redirect` | pro TSA rovnou běhové prostředí (bez HTTP); jiné URL Call Control neumí | — |
 | `hangup` | `hangup` | — |
 | `sendDigits` | `send_dtmf` (`duration_millis` 100–500) | — |
-| `dial` | `transfer` (`to`, `from`, `from_display_name`, `privacy`, `timeout_secs`, `sip_auth_*`, `sip_transport_protocol`, `record: record-from-answer`, `webhook_url` = zpětné URL, `park_after_unbridge: self`) | `call.hangup` **druhé nohy** na zpětném URL (přijato podle `call.answered` / `call.bridged`; jinak `user_busy` → busy, `timeout` → no-answer…) |
+| `dial` | `transfer` (`to`, `from`, `from_display_name`, `privacy`, `timeout_secs`, 6.10 `time_limit_secs` (30–14 400 s), `sip_auth_*`, `sip_transport_protocol`, `record: record-from-answer`, `webhook_url` = zpětné URL, `park_after_unbridge: self`) | `call.hangup` **druhé nohy** na zpětném URL (přijato podle `call.answered` / `call.bridged`; jinak `user_busy` → busy, `timeout` → no-answer…) |
 | `reject` | `reject` `cause`: `USER_BUSY` (486), `CALL_REJECTED` (603), congestion → `TEMPORARILY_UNAVAILABLE` (480) — jen nepřijatý hovor; přijatý se zavěsí | — |
 
 ### Caller ID, DTMF, řeč, nahrávání
