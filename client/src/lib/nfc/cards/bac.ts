@@ -66,7 +66,8 @@ export function mrzKeyFromMrz(mrz: string): MrzKey | null {
 
 /* ------------------------------------------------------------ key derivation */
 
-function fixParity(k: Uint8Array): Uint8Array {
+/** Sets each byte's DES parity bit (odd parity). */
+export function fixParity(k: Uint8Array): Uint8Array {
   const out = k.slice();
   for (let i = 0; i < out.length; i++) { let b = out[i] & 0xfe, ones = 0; for (let j = 1; j < 8; j++) ones += (b >> j) & 1; out[i] = b | (ones % 2 === 0 ? 1 : 0); }
   return out;
