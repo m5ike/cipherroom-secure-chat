@@ -48,7 +48,11 @@ import cz.m5cet.app.ui.Ui;
  * reading and the result line. It runs the op through {@link ModelNfc} on the
  * phone's own antenna (reader mode, borrowed from whoever held it and given
  * back) or on a USB reader the user already allowed in the workbench, and
- * answers the run with the NfcResult.
+ * answers the run with the NfcResult. 6.10 (security analysis G-17): a result
+ * with card data (a card number, track data, a document's holder, MRZ or
+ * photo) goes only after the holder chose what — the sheet names the model and
+ * lists it; "Send (masked)" is the default, "Send everything" says what it
+ * adds, "Don't send" (or closing the sheet) answers "denied" (ModelNfc.consent).
  *
  * An e-ID read that came without the document key asks the holder for the CAN
  * or the MRZ here first; it is used for this read only and never sent.
@@ -59,7 +63,7 @@ import cz.m5cet.app.ui.Ui;
  * "Cancelled" }. Writes and emulation never get a sheet: they are refused.
  */
 final class NfcModelSheet {
-    private enum State { KEY, WAIT, READ, DONE }
+    private enum State { KEY, WAIT, READ, CONSENT, DONE }
 
     private final MainActivity a;
     final String runId;
@@ -75,6 +79,7 @@ final class NfcModelSheet {
 
     private volatile State state = State.WAIT;
     private volatile boolean over;             // answered (or the run went away): nothing more is sent
+    private volatile JSONObject consenting;    // 6.10 (G-17): the read's result while the holder decides what of it goes
     private final AtomicBoolean taken = new AtomicBoolean();
     private boolean holdsReader;
     private Application.ActivityLifecycleCallbacks lifecycle;
@@ -167,7 +172,7 @@ final class NfcModelSheet {
             if ((a.getWindow().getAttributes().flags & WindowManager.LayoutParams.FLAG_SECURE) != 0) w.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
         }
         // Back, the close button, the activity going away: cancel unless answered.
-        dialog.setOnDismissListener(d -> { answerOnce(ModelNfc.cancelled()); release(); unwatchLifecycle(); });
+        dialog.setOnDismissListener(d -> { answerOnce(closingAnswer()); release(); unwatchLifecycle(); });
     }
 
     private M5 app() { return a.app(); }
@@ -405,9 +410,61 @@ final class NfcModelSheet {
 
     private void done(JSONObject r) {
         if (over) return;
-        answerOnce(r);
         release();
+        // 6.10 (G-17): card data goes to the server and the model only with the holder's yes.
+        ModelNfc.Consent consent = ModelNfc.consent(r);
+        if (consent.sensitive && dialog.isShowing()) { askConsent(r, consent); return; }
+        if (consent.sensitive) { answerOnce(ModelNfc.declined(r)); return; } // no one to ask: nothing leaves
+        answerOnce(r);
         showResult(r);
+    }
+
+    /**
+     * 6.10 (G-17): what the read found, for which model, and the choice —
+     * "Send (masked)" first and highlighted (the default), "Send everything"
+     * only when it adds something, "Don't send". Closing the sheet now is a no.
+     */
+    private void askConsent(JSONObject r, ModelNfc.Consent consent) {
+        state = State.CONSENT;
+        consenting = r;
+        body.removeAllViews();
+        body.addView(line(t("nfc.consent.title"), 16, fg, true));
+        body.addView(line(ModelNfc.consentText(consent, modelName, this::t), 13, fg, false));
+        LinearLayout col = new LinearLayout(a);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setPadding(0, dp(12), 0, 0);
+        TextView maskedB = ToolPanels.button(a, t("nfc.consent.sendMasked"), "shield-check", true);
+        maskedB.setOnClickListener(v -> consented(ModelNfc.masked(r)));
+        col.addView(maskedB, consentButton());
+        if (!consent.full.isEmpty()) {
+            TextView fullB = ToolPanels.button(a, t("nfc.consent.sendFull"), "send", false);
+            fullB.setOnClickListener(v -> consented(r));
+            col.addView(fullB, consentButton());
+        }
+        TextView noB = ToolPanels.button(a, t("nfc.consent.dontSend"), "x", false);
+        noB.setOnClickListener(v -> consented(ModelNfc.declined(r)));
+        col.addView(noB, consentButton());
+        body.addView(col);
+        maskedB.requestFocus();
+    }
+
+    private LinearLayout.LayoutParams consentButton() {
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.topMargin = dp(8);
+        return lp;
+    }
+
+    private void consented(JSONObject sent) {
+        if (over) return;
+        consenting = null;
+        answerOnce(sent);
+        showResult(sent);
+    }
+
+    /** What closing the sheet answers: "Cancelled", or — while asking for consent — the holder's no. */
+    private JSONObject closingAnswer() {
+        JSONObject r = consenting;
+        return r != null ? ModelNfc.declined(r) : ModelNfc.cancelled();
     }
 
     /** The result line: ✓ and what was read, or ⚠ and why not (the answer is already sent). */
@@ -424,9 +481,17 @@ final class NfcModelSheet {
             case "no-card": head = "⚠ " + t("nfc.model.lost"); break;
             case "auth-failed": head = "⚠ " + t("nfc.model.authFailed"); break;
             case "unsupported": head = "⚠ " + t("nfc.model.notThisCard"); break;
+            case "denied": head = t("nfc.consent.notSent"); break; // 6.10 (G-17): the holder's no
             default: head = "⚠ " + t("nfc.model.error"); break;
         }
-        body.addView(line(head, 16, ok ? success : danger, true));
+        body.addView(line(head, 16, ok ? success : "denied".equals(status) ? fg : danger, true));
+        if ("denied".equals(status)) {
+            TextView closeD = ToolPanels.button(a, t("nav.close"), "check", false);
+            closeD.setOnClickListener(v -> close());
+            body.addView(buttons(closeD));
+            Io.mainLater(autoClose, 2500);
+            return;
+        }
         String detail = r.optString("message", "");
         JSONObject card = r.optJSONObject("card");
         if (detail.isEmpty() && card != null) detail = (card.optString("label", "") + " · " + card.optString("uid", "")).trim();
@@ -490,7 +555,7 @@ final class NfcModelSheet {
         if (dialog.isShowing()) {
             try { dialog.dismiss(); return; } catch (RuntimeException ignored) { /* the window is gone already */ }
         }
-        answerOnce(ModelNfc.cancelled());
+        answerOnce(closingAnswer());
         release();
         unwatchLifecycle();
     }

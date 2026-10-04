@@ -9,10 +9,13 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
+import java.util.Collections;
 import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -36,6 +39,12 @@ import java.util.regex.Pattern;
  * Read-only: no PIN / VERIFY, no GENERATE AC, no write — the readers never send
  * one, and nothing here passes a raw APDU through. An answer never carries a key,
  * a PIN, a CAN or the args the command came with.
+ *
+ * 6.10 (security analysis G-17): an answer with card data — a payment card's
+ * number and tracks, a document's holder, MRZ, photo — leaves only with the
+ * holder's yes: {@link #consent} lists what would go, the sheet asks, and
+ * "send masked" (the default, {@link #masked}), "send everything" or "don't
+ * send" ({@link #declined}) answers — as the web does (consent.ts).
  */
 public final class ModelNfc {
     private ModelNfc() {}
@@ -641,6 +650,260 @@ public final class ModelNfc {
             out.add(new NdefRec(h & 0x07, type, id, payload));
             if ((h & 0x40) != 0) break; // ME
         }
+        return out;
+    }
+
+    /* ------------------------------------------------- consent (6.10, G-17) */
+
+    /*
+     * The holder's consent before a MODEL gets a card's data — client/src/lib/
+     * nfc/consent.ts, the same lines and the same masking. The read happens on
+     * this phone; what it found would go to the server and the model. Before
+     * it does, the sheet names the model and lists exactly what goes:
+     *
+     *   masked (the default)  the card number masked everywhere (the PAN field
+     *                         dropped, 5A masked and the track data redacted in
+     *                         the elements, the records, the log and any
+     *                         transcript — TemplateViews' rules, G-19); of a
+     *                         document: no MRZ lines, no photo or images, no
+     *                         DG11 / DG12 / DG13 / DG16 details, no raw files,
+     *                         the document number masked; raw bytes that hold a
+     *                         card number withheld
+     *   full                  everything the read found
+     *   nothing               the model is told the holder did not send it
+     */
+
+    /** One line of what would be sent: a design key (nfc.consent.*) and its values. */
+    public static final class ConsentLine {
+        public final String key;
+        public final Map<String, String> vars;
+        ConsentLine(String key, String... kv) {
+            this.key = key;
+            Map<String, String> m = new LinkedHashMap<>();
+            for (int i = 0; i + 1 < kv.length; i += 2) m.put(kv[i], kv[i + 1]);
+            this.vars = Collections.unmodifiableMap(m);
+        }
+    }
+
+    /** What a model's NFC result would send, masked and in full. */
+    public static final class Consent {
+        /** The result carries card data a model should not get without the holder's yes. */
+        public final boolean sensitive;
+        /** What goes with "send masked". */
+        public final List<ConsentLine> masked;
+        /** What "send everything" adds. */
+        public final List<ConsentLine> full;
+        Consent(List<ConsentLine> masked, List<ConsentLine> full) {
+            this.masked = Collections.unmodifiableList(masked);
+            this.full = Collections.unmodifiableList(full);
+            this.sensitive = !masked.isEmpty() || !full.isEmpty();
+        }
+    }
+
+    private static final Pattern PAN = Pattern.compile("^\\d{12,19}$");
+    private static final Pattern HEX = Pattern.compile("^([0-9A-F]{2})+$");
+
+    /** "5413330089020011" → "541333••••••0011" (as the sheet and the web show a card number). */
+    static String maskPanDigits(String pan) {
+        return pan.length() >= 10 ? pan.substring(0, 6) + repeat('•', pan.length() - 10) + pan.substring(pan.length() - 4) : pan;
+    }
+
+    /** A document number with all but its last three characters hidden. */
+    static String maskDocNumber(String s) {
+        return s.length() > 3 ? repeat('•', s.length() - 3) + s.substring(s.length() - 3) : s;
+    }
+
+    private static String repeat(char c, int n) { StringBuilder sb = new StringBuilder(); for (int i = 0; i < n; i++) sb.append(c); return sb.toString(); }
+
+    /** The card numbers in an answer (hex): every 5A / 57 / 9F6B / 56 it holds (pan-mask.ts pansInHex). */
+    static Set<String> pansInHex(String h) {
+        Set<String> out = new LinkedHashSet<>();
+        String u = h == null ? "" : h.toUpperCase(Locale.ROOT);
+        if (u.isEmpty() || !HEX.matcher(u).matches()) return out;
+        byte[] b = Apdu.unhex(u);
+        for (int[] n : TemplateViews.nodes(b)) {
+            String p = TemplateViews.panOf(Apdu.tagHex(n[0]), Apdu.slice(b, n[1], n[1] + n[2]));
+            if (p != null) out.add(p);
+        }
+        return out;
+    }
+
+    /** Every card number an EMV read holds: each application's PAN, and any in its elements or records (pansOfEmv). */
+    static Set<String> pansOfEmv(JSONObject emv) {
+        Set<String> out = new LinkedHashSet<>();
+        JSONArray apps = emv == null ? null : emv.optJSONArray("apps");
+        if (apps == null) return out;
+        for (int i = 0; i < apps.length(); i++) {
+            JSONObject a = apps.optJSONObject(i);
+            if (a == null) continue;
+            if (PAN.matcher(a.optString("pan", "")).matches()) out.add(a.optString("pan"));
+            for (String list : new String[]{"tags", "getData"}) {
+                JSONArray tags = a.optJSONArray(list);
+                if (tags != null) for (int j = 0; j < tags.length(); j++) {
+                    JSONObject t = tags.optJSONObject(j);
+                    if (t == null || !TemplateViews.SENSITIVE.contains(t.optString("tag"))) continue;
+                    String hx = t.optString("hex", "").toUpperCase(Locale.ROOT);
+                    if (!HEX.matcher(hx).matches()) continue;
+                    String p = TemplateViews.panOf(t.optString("tag"), Apdu.unhex(hx));
+                    if (p != null) out.add(p);
+                }
+            }
+            JSONArray recs = a.optJSONArray("records");
+            if (recs != null) for (int j = 0; j < recs.length(); j++) {
+                JSONObject rec = recs.optJSONObject(j);
+                if (rec != null) out.addAll(pansInHex(rec.optString("hex", "")));
+            }
+        }
+        return out;
+    }
+
+    /** The result's card numbers: the EMV read's and any in its transcript. */
+    static Set<String> pans(JSONObject r) {
+        Set<String> out = pansOfEmv(r.optJSONObject("emv"));
+        JSONArray tr = r.optJSONArray("transcript");
+        if (tr != null) for (int i = 0; i < tr.length(); i++) {
+            JSONObject e = tr.optJSONObject(i);
+            if (e != null) out.addAll(pansInHex(e.optString("response", "")));
+        }
+        return out;
+    }
+
+    private static byte[] b64(String s) {
+        try { return Base64.getDecoder().decode(s); } catch (IllegalArgumentException e) { return new byte[0]; }
+    }
+
+    private static String text(JSONObject o, String k) { return o == null ? "" : o.optString(k, ""); }
+    private static String or(String a, String b) { return a == null || a.isEmpty() ? b : a; }
+
+    /** What a model's NFC result would send, masked and in full (consent.ts nfcConsent). */
+    public static Consent consent(JSONObject r) {
+        List<ConsentLine> masked = new ArrayList<>(), full = new ArrayList<>();
+        if (r == null) return new Consent(masked, full);
+        Set<String> pans = pans(r);
+        JSONObject emv = r.optJSONObject("emv");
+        JSONArray apps = emv == null ? null : emv.optJSONArray("apps"), aids = emv == null ? null : emv.optJSONArray("aids");
+        int nApps = apps == null ? 0 : apps.length(), nAids = aids == null ? 0 : aids.length();
+        if (emv != null && nApps + nAids > 0) {
+            for (int i = 0; i < nApps; i++) {
+                JSONObject a = apps.optJSONObject(i);
+                if (a == null) continue;
+                String pan = text(a, "pan");
+                masked.add(new ConsentLine("nfc.consent.emvApp", "app", or(text(a, "scheme"), or(text(a, "label"), text(a, "aid"))),
+                    "pan", or(text(a, "panMasked"), pan.isEmpty() ? "—" : maskPanDigits(pan)), "expiry", or(text(a, "expiry"), "—")));
+                if (!text(a, "cardholder").isEmpty()) masked.add(new ConsentLine("nfc.consent.cardholder", "name", text(a, "cardholder")));
+                if (arr(a, "log") > 0) masked.add(new ConsentLine("nfc.consent.history", "n", String.valueOf(arr(a, "log"))));
+                if (arr(a, "records") > 0) masked.add(new ConsentLine("nfc.consent.records", "n", String.valueOf(arr(a, "records"))));
+            }
+            if (nApps == 0) {
+                List<String> list = new ArrayList<>();
+                for (int i = 0; i < nAids; i++) list.add(aids.optString(i));
+                masked.add(new ConsentLine("nfc.consent.aids", "aids", String.join(", ", list)));
+            }
+            if (!pans.isEmpty()) full.add(new ConsentLine("nfc.consent.fullPan", "n", String.valueOf(pans.size())));
+        }
+        JSONObject m = r.optJSONObject("mrtd");
+        if (m != null && (!"none".equals(m.optString("access", "none")) || m.has("mrzInfo"))) {
+            JSONObject z = m.optJSONObject("mrzInfo");
+            String name = (text(z, "givenNames") + " " + text(z, "surname")).trim();
+            String doc = text(z, "documentNumber");
+            masked.add(new ConsentLine("nfc.consent.holder", "name", or(name, "—"), "doc", doc.isEmpty() ? "—" : maskDocNumber(doc)));
+            if (!text(z, "mrz").isEmpty() || !doc.isEmpty() || !text(z, "optionalData").isEmpty()) full.add(new ConsentLine("nfc.consent.mrz"));
+            int images = m.has("images") ? arr(m, "images") : (m.has("photo") && !m.optString("photo").isEmpty() ? 1 : 0);
+            if (images > 0) full.add(new ConsentLine("nfc.consent.images", "n", String.valueOf(images)));
+            if (m.has("personal") || m.has("document") || m.has("optional") || arr(m, "personsToNotify") > 0) full.add(new ConsentLine("nfc.consent.details"));
+            if (arr(m, "raw") > 0) full.add(new ConsentLine("nfc.consent.files", "n", String.valueOf(arr(m, "raw"))));
+        }
+        if (arr(r, "transcript") > 0) masked.add(new ConsentLine(pans.isEmpty() ? "nfc.consent.transcript" : "nfc.consent.transcriptMasked", "n", String.valueOf(arr(r, "transcript"))));
+        if (!r.optString("data", "").isEmpty()) {
+            byte[] d = b64(r.optString("data"));
+            if (!pansInHex(Apdu.hex(d)).isEmpty()) full.add(new ConsentLine("nfc.consent.dataPan", "n", String.valueOf(d.length)));
+            else masked.add(new ConsentLine("nfc.consent.data", "n", String.valueOf(d.length)));
+        }
+        return new Consent(masked, full);
+    }
+
+    /** A design text with its {name} placeholders filled. */
+    static String fill(String text, Map<String, String> vars) {
+        String out = text;
+        for (Map.Entry<String, String> e : vars.entrySet()) out = out.replace("{" + e.getKey() + "}", e.getValue());
+        return out;
+    }
+
+    /**
+     * The consent question as the sheet shows it (consent.ts consentPrompt):
+     * who asks and what goes, then what "send everything" adds.
+     */
+    public static String consentText(Consent c, String model, java.util.function.Function<String, String> t) {
+        List<String> lines = new ArrayList<>();
+        Map<String, String> who = new LinkedHashMap<>();
+        who.put("model", model == null || model.trim().isEmpty() ? t.apply("nfc.consent.aModel") : model.trim());
+        lines.add(fill(t.apply("nfc.consent.text"), who));
+        for (ConsentLine l : c.masked) lines.add("• " + fill(t.apply(l.key), l.vars));
+        if (!c.full.isEmpty()) {
+            lines.add(t.apply("nfc.consent.fullAdds"));
+            for (ConsentLine l : c.full) lines.add("• " + fill(t.apply(l.key), l.vars));
+        }
+        return String.join("\n", lines);
+    }
+
+    /** The holder said no: what the model is told (the card's identity stays, as on the web). */
+    public static JSONObject declined(JSONObject r) {
+        return result("denied", r == null ? null : r.optJSONObject("card"), "The holder did not send the card's data to the model.");
+    }
+
+    /** The result as "send masked" sends it (consent.ts maskNfcResult). */
+    public static JSONObject masked(JSONObject r) {
+        if (r == null) return null;
+        Set<String> pans = pans(r);
+        TemplateViews.Mask mask = new TemplateViews.Mask(pans);
+        try {
+            JSONObject out = new JSONObject(r.toString());
+            JSONObject emv = r.optJSONObject("emv");
+            if (emv != null) out.put("emv", TemplateViews.maskedEmv(emv, pans));
+            JSONObject m = r.optJSONObject("mrtd");
+            if (m != null) out.put("mrtd", maskMrtd(m));
+            JSONArray tr = out.optJSONArray("transcript");
+            if (tr != null) for (int i = 0; i < tr.length(); i++) {
+                JSONObject e = tr.optJSONObject(i);
+                if (e != null && e.has("response")) e.put("response", mask.hex(e.optString("response").toUpperCase(Locale.ROOT)));
+            }
+            if (!r.optString("data", "").isEmpty() && !pansInHex(Apdu.hex(b64(r.optString("data")))).isEmpty()) out.remove("data");
+            if (r.has("message")) {
+                String msg = maskPansInText(r.optString("message"), pans);
+                String doc = m == null ? "" : text(m.optJSONObject("mrzInfo"), "documentNumber");
+                if (!doc.isEmpty()) msg = msg.replace(doc, maskDocNumber(doc));
+                out.put("message", msg);
+            }
+            return out;
+        } catch (JSONException e) { throw new IllegalStateException(e); }
+    }
+
+    /** Text with every given card number masked — as digits and as their ASCII codes in hex (pan-mask.ts maskPans). */
+    static String maskPansInText(String s, Set<String> pans) {
+        String out = s;
+        for (String p : pans) {
+            if (!PAN.matcher(p).matches()) continue;
+            out = out.replace(p, TemplateViews.maskDigits(p));
+            String ascii = TemplateViews.asciiHex(p), maskedAscii = ascii.substring(0, 12) + repeat('X', (p.length() - 10) * 2) + ascii.substring(ascii.length() - 8);
+            out = Pattern.compile(Pattern.quote(ascii), Pattern.CASE_INSENSITIVE).matcher(out).replaceAll(maskedAscii);
+        }
+        return out;
+    }
+
+    /** What of a document "send masked" keeps: no MRZ lines or optional data, the document number masked, no photo, images, details or raw files. */
+    static JSONObject maskMrtd(JSONObject d) throws JSONException {
+        JSONObject out = new JSONObject();
+        for (String k : new String[]{"present", "access", "pace", "dataGroups", "ldsVersion", "unicodeVersion"}) if (d.has(k)) out.put(k, d.opt(k));
+        JSONObject z = d.optJSONObject("mrzInfo");
+        if (z != null) {
+            JSONObject mz = new JSONObject(z.toString());
+            mz.remove("mrz");
+            mz.remove("optionalData");
+            String doc = z.optString("documentNumber", "");
+            if (!doc.isEmpty()) mz.put("documentNumber", maskDocNumber(doc));
+            out.put("mrzInfo", mz);
+        }
+        for (String k : new String[]{"files", "security", "message"}) if (d.has(k)) out.put(k, d.opt(k));
         return out;
     }
 

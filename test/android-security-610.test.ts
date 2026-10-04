@@ -19,7 +19,7 @@ const java = (p: string) => app(`java/cz/m5cet/app/${p}`);
 describe("android 6.10 security — the texts", () => {
   it("every refusal text exists in Czech, English and German, also in the default design", () => {
     const keys = Object.keys(AREA.strings?.en ?? {});
-    expect(keys.sort()).toEqual(["security.refused", "security.urlRefused"]);
+    expect(keys.filter((k) => k.startsWith("security.")).sort()).toEqual(["security.refused", "security.urlRefused"]);
     for (const k of keys) {
       for (const l of ["cs", "en", "de"] as const) {
         expect(AREA.strings?.[l]?.[k], `${l} ${k}`).toBeTruthy();
@@ -33,6 +33,31 @@ describe("android 6.10 security — the texts", () => {
     expect(java("ui/Actions.java")).toContain('app.t("security.refused")');
     expect(java("ui/DesignUrls.java")).toContain('t("security.urlRefused")');
     for (const k of ["notify.message", "ring.call", "ring.missed"]) for (const l of ["cs", "en", "de"] as const) expect(DEFAULT_STRINGS[l][k], `${l} ${k}`).toBeTruthy();
+  });
+});
+
+describe("android 6.10 security — G-17: a model's card read asks first", () => {
+  it("the consent texts are the web's keys, and every one the app uses exists", () => {
+    const used = new Set<string>();
+    for (const f of ["nfc/ModelNfc.java", "ui/parts/NfcModelSheet.java"]) for (const m of java(f).matchAll(/"(nfc\.consent\.[A-Za-z]+)"/g)) used.add(m[1]);
+    expect(used.size).toBeGreaterThan(20);
+    for (const k of used) for (const l of ["cs", "en", "de"] as const) expect(DEFAULT_STRINGS[l][k], `${l} ${k}`).toBeTruthy();
+    // The same keys as the web's prompt (client/src/lib/i18n-nfc.ts), plus the sheet's "not sent".
+    const web = new Set([...readFileSync(new URL("../client/src/lib/i18n-nfc.ts", import.meta.url), "utf8").matchAll(/"(nfc\.consent\.[A-Za-z]+)":/g)].map((m) => m[1]));
+    for (const k of web) expect(used.has(k) || k === "nfc.consent.notSent", k).toBe(true);
+    // The placeholders the app fills.
+    expect(DEFAULT_STRINGS.cs["nfc.consent.text"]).toContain("{model}");
+    expect(DEFAULT_STRINGS.de["nfc.consent.emvApp"]).toMatch(/\{app\}.*\{pan\}.*\{expiry\}/);
+  });
+
+  it("the sheet asks before it answers, masked by default; closing is a no", () => {
+    const sheet = java("ui/parts/NfcModelSheet.java");
+    expect(sheet).toContain("ModelNfc.Consent consent = ModelNfc.consent(r);");
+    expect(sheet).toMatch(/if \(consent\.sensitive && dialog\.isShowing\(\)\) \{ askConsent\(r, consent\); return; \}/);
+    expect(sheet).toContain('t("nfc.consent.sendMasked"), "shield-check", true');
+    expect(sheet).toContain("consented(ModelNfc.masked(r))");
+    expect(sheet).toContain("consented(ModelNfc.declined(r))");
+    expect(sheet).toContain("return r != null ? ModelNfc.declined(r) : ModelNfc.cancelled();");
   });
 });
 
