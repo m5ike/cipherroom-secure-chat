@@ -58,7 +58,9 @@ export type HubDeps = {
   identity: () => Promise<Identity | null>;
 };
 
-export type HubEvent = { type: "change" } | { type: "message"; key: string; label: string; message: ChatMessage };
+export type HubEvent = { type: "change" } | { type: "message"; key: string; label: string; message: ChatMessage }
+  /** 6.9: a phone call offered to the members of a background room (a call routed into it), or its update / end. */
+  | { type: "phone"; key: string; label: string; frame: Record<string, unknown>; socketUrl: string };
 
 export const roomKeyOf = (room: string, server = "") => `${server || "local"}|${room}`;
 
@@ -189,6 +191,7 @@ export class BackgroundRoom {
       case "peer-joined": if (typeof f.peerId === "string") this.names.set(f.peerId, String(f.name ?? "")); return;
       case "peer-updated": { const p = this.peers.get(String(f.peerId)); if (p) p.name = String(f.name ?? p.name); return; }
       case "peer-left": this.dropPeer(String(f.peerId)); return;
+      case "phone-bridge": this.emit({ type: "phone", key: this.target.key, label: this.target.label, frame: f, socketUrl: this.socket?.url ?? "" }); return;
       case "signal": {
         const source = String(f.source ?? "");
         const link = this.peers.get(source);
@@ -362,6 +365,7 @@ export class RoomHub {
   private readonly rooms = new Map<string, BackgroundRoom>();
   private readonly listeners = new Set<() => void>();
   private readonly messageListeners = new Set<(e: Extract<HubEvent, { type: "message" }>) => void>();
+  private readonly phoneListeners = new Set<(e: Extract<HubEvent, { type: "phone" }>) => void>();
   private snapshot: HubRoomView[] = [];
   private scheduled = false;
   private foreground = true;
@@ -380,6 +384,12 @@ export class RoomHub {
   onMessage(fn: (e: Extract<HubEvent, { type: "message" }>) => void): () => void {
     this.messageListeners.add(fn);
     return () => this.messageListeners.delete(fn);
+  }
+
+  /** 6.9: phone calls offered in a background room. */
+  onPhone(fn: (e: Extract<HubEvent, { type: "phone" }>) => void): () => void {
+    this.phoneListeners.add(fn);
+    return () => this.phoneListeners.delete(fn);
   }
 
   private publish(): void {
@@ -401,6 +411,7 @@ export class RoomHub {
     if (this.rooms.size >= this.limit) return false;
     const room = new BackgroundRoom(target, this.deps, (event) => {
       if (event.type === "message") for (const fn of this.messageListeners) fn(event);
+      if (event.type === "phone") { for (const fn of this.phoneListeners) fn(event); return; }
       this.publish();
     });
     if (!this.foreground) room.setForeground(false);

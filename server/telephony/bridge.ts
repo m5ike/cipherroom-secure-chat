@@ -505,8 +505,18 @@ function clientSocket(b: BridgeSession, ws: WebSocket): void {
   bridgeFor(b).attachClient(ws);
 }
 
+/**
+ * 6.9: other owners of /media/tel/… — route_audio's routed calls
+ * (route-audio.ts) have their own tokens. A claim answers for a token it
+ * knows with the socket's handler, or null; a token nobody claims is looked
+ * up among the bridge's sessions as before.
+ */
+export type MediaClaim = (side: "provider" | "client", token: string) => ((ws: WebSocket) => void) | null;
+const mediaClaims: MediaClaim[] = [];
+export function claimMedia(fn: MediaClaim): void { if (!mediaClaims.includes(fn)) mediaClaims.push(fn); }
+
 let wss: WebSocketServer | null = null;
-const MEDIA_PATH = /^\/media\/tel\/(client\/)?([A-Za-z0-9_-]{16,64})$/;
+const MEDIA_PATH =/^\/media\/tel\/(client\/)?([A-Za-z0-9_-]{16,64})$/;
 let sweeper: ReturnType<typeof setInterval> | null = null;
 
 /** Main service: the media WebSockets (/media/tel/…) and the sweep of expired sessions. */
@@ -519,6 +529,10 @@ export function attachBridgeMedia(server: Server): void {
     try { path = new URL(req.url ?? "/", "http://x").pathname; } catch { return; }
     const m = MEDIA_PATH.exec(path);
     if (!m || !wss) return;
+    for (const claim of mediaClaims) {
+      const handler = claim(m[1] ? "client" : "provider", m[2]);
+      if (handler) { wss.handleUpgrade(req, socket, head, handler); return; }
+    }
     void (async () => {
       const b = await sessionBy(m[1] ? "clientToken" : "mediaToken", m[2]);
       if (!b) { socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n"); socket.destroy(); return; }
