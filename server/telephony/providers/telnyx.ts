@@ -14,6 +14,7 @@
 // separate busy / no-answer event — call.hangup's hangup_cause says it.
 
 import { isE164 } from "../types";
+import { degrade, isSipAddress, sipTarget } from "./sip-uri";
 import {
   ProviderError, ProviderNotConfigured,
   type AvailableNumber, type CallAction, type CallStatus, type Capability, type ChatChannel, type ChatMessageInput,
@@ -131,7 +132,10 @@ const dataOf = (j: Record<string, unknown>) => (j.data ?? {}) as Record<string, 
 export function telnyxWaitsFor(action: CallAction): string | null {
   if ("say" in action || "pause" in action) return "call.speak.ended";
   if ("play" in action) return "call.playback.ended";
-  if ("gather" in action) return "call.gather.ended";
+  // 6.9: a speech-only gather is a transcription (call.transcription, is_final).
+  if ("gather" in action) return action.gather.input?.length && !action.gather.input.includes("dtmf") ? "call.transcription" : "call.gather.ended";
+  // 6.9: a dial is a transfer; it ends with the other leg's call.hangup (the original leg is parked).
+  if ("dial" in action) return "call.hangup";
   // A stream holds the call like Twilio's <Connect><Stream> / Vonage's connect:
   // what follows it runs when the stream stops.
   if ("stream" in action) return "streaming.stopped";
@@ -148,7 +152,7 @@ export function telnyxWaitsFor(action: CallAction): string | null {
 export function telnyxPendingActions(actions: CallAction[]): [CallAction[], CallAction[]] {
   for (let i = 0; i < actions.length; i += 1) {
     const a = actions[i];
-    if ("hangup" in a) return [actions.slice(0, i + 1), []];
+    if ("hangup" in a || "reject" in a) return [actions.slice(0, i + 1), []];
     if (telnyxWaitsFor(a)) return [actions.slice(0, i + 1), actions.slice(i + 1)];
   }
   return [actions.slice(), []];
@@ -192,6 +196,13 @@ function command(action: CallAction, clientState?: string): { cmd: string; body:
   if ("play" in action) {
     return { cmd: "playback_start", body: { audio_url: action.play.url, ...(action.play.loop ? { loop: action.play.loop } : {}), ...cs } };
   }
+  if ("gather" in action && action.gather.input?.length && !action.gather.input.includes("dtmf")) {
+    // 6.9: speech: Call Control's gather is DTMF only — a real-time transcription of the
+    // caller (inbound track) gives the words; the first final call.transcription is the answer.
+    const g = action.gather;
+    if (g.prompt) degrade("telnyx", "a spoken prompt inside a speech gather (transcription_start has none); the TSA layer speaks it first");
+    return { cmd: "transcription_start", body: { language: (g.language || "en").split("-")[0], interim_results: false, transcription_tracks: "inbound", ...cs } };
+  }
   if ("gather" in action) {
     const g = action.gather;
     const digits: Record<string, unknown> = {};
@@ -227,15 +238,72 @@ function command(action: CallAction, clientState?: string): { cmd: string; body:
   }
   if ("record" in action) {
     const r = action.record;
-    // timeout_secs: stop after that much silence, like Twilio's <Record> (its default is 5 s).
+    // timeout_secs: stop after that much silence, like Twilio's <Record> (its default is 5 s; 0 = never).
+    // 6.9: trim, the provider's transcription. A finish key has no record_start field: the TSA
+    // layer watches call.dtmf.received and sends record_stop.
     return {
       cmd: "record_start",
-      body: { format: "mp3", channels: "single", play_beep: r.beep ?? true, ...(r.maxSeconds ? { max_length: r.maxSeconds } : {}), timeout_secs: 5, ...cs },
+      body: {
+        format: "mp3", channels: "single", play_beep: r.beep ?? true, ...(r.maxSeconds ? { max_length: r.maxSeconds } : {}),
+        timeout_secs: r.silenceSeconds !== undefined ? Math.max(0, Math.round(r.silenceSeconds)) : 5,
+        ...(r.trim ? { trim: "trim-silence" } : {}),
+        ...(r.transcribe ? { transcription: true, ...(r.language ? { transcription_language: r.language } : {}) } : {}),
+        ...cs,
+      },
+    };
+  }
+  if ("sendDigits" in action) {
+    const t = action.sendDigits;
+    if (t.mode && t.mode !== "rfc2833") degrade("telnyx", `DTMF as ${t.mode}; send_dtmf sends RFC 2833`);
+    return { cmd: "send_dtmf", body: { digits: t.digits.replace(/[^0-9A-D*#wW]/g, ""), ...(t.toneMs ? { duration_millis: Math.min(500, Math.max(100, Math.round(t.toneMs))) } : {}), ...cs } };
+  }
+  if ("reject" in action) {
+    // An unanswered call only (the TSA layer hangs up an answered one).
+    return { cmd: "reject", body: { cause: TELNYX_REJECT_CAUSE[action.reject.reason], ...cs } };
+  }
+  if ("dial" in action) {
+    const d = action.dial;
+    const viaSip = d.kind === "sip" || !!d.trunk;
+    return {
+      cmd: "transfer",
+      body: {
+        to: viaSip ? sipTarget(d.to, d.kind, d.trunk) : d.to,
+        ...(d.callerId ? { from: d.callerId } : {}),
+        ...(d.callerName ? { from_display_name: d.callerName.replace(/[^A-Za-z0-9 _~!.+-]/g, "").slice(0, 128) } : {}),
+        ...(d.presentation === "restricted" ? { privacy: "id" } : {}),
+        ...(d.timeout ? { timeout_secs: Math.min(600, Math.max(5, Math.round(d.timeout))) } : {}),
+        ...(d.trunk?.username ? { sip_auth_username: d.trunk.username } : {}),
+        ...(d.trunk?.password ? { sip_auth_password: d.trunk.password } : {}),
+        ...(d.trunk?.transport ? { sip_transport_protocol: d.trunk.transport.toUpperCase() } : {}),
+        ...(d.record ? { record: "record-from-answer" } : {}),
+        // The other leg's events (answered, hangup) go to the dial's own URL; when it hangs
+        // up, this leg is parked (not hung up) so the flow can go on.
+        webhook_url: d.action, webhook_url_method: "POST", park_after_unbridge: "self",
+        ...cs,
+      },
     };
   }
   if ("hangup" in action) return { cmd: "hangup", body: { ...cs } };
   if ("redirect" in action) throw badRequest("Call Control has no redirect: run the next logic with executeActions instead.");
   throw badRequest(`unknown call action ${cut(JSON.stringify(action))}.`);
+}
+
+/** 6.9: the commands an action list becomes (what executeActions would send, for previews and the TSA layer). */
+export function telnyxCommands(actions: CallAction[], clientState?: string): Array<{ cmd: string; body: Record<string, unknown> }> {
+  return actions.map((a) => command(a, clientState));
+}
+
+/** 6.9: a refused call's state → Telnyx reject cause (486 busy, 603 decline; congestion → 480, the nearest). */
+export const TELNYX_REJECT_CAUSE: Record<"busy" | "congestion" | "rejected", string> = {
+  busy: "USER_BUSY", rejected: "CALL_REJECTED", congestion: "TEMPORARILY_UNAVAILABLE",
+};
+
+/** 6.9: how the other leg of a dial (transfer) ended, by its call.hangup cause. */
+export function telnyxDialStatus(cause: string | undefined, answered: boolean): NonNullable<NormalizedCallEvent["dialStatus"]> {
+  if (answered) return "answered";
+  const s = TELNYX_HANGUP_STATUS[String(cause ?? "")];
+  if (s === "busy" || s === "no-answer" || s === "canceled") return s;
+  return "failed";
 }
 
 /* ---------------------------------------------------------------- mapping */
@@ -291,10 +359,18 @@ export class TelnyxAdapter implements ProviderAdapter {
     const connection = connectionId("call");
     const from = input.from || env(FROM);
     if (!from) throw new ProviderNotConfigured("telnyx", "call", `Telnyx call has no caller id: set ${FROM} or pass from.`);
+    // 6.9: over the operator's SIP trunk — dial sip:<number>@<trunk host> with the trunk's digest
+    // credentials, the caller ID number and name (SIP From display name) and, withheld, privacy "id".
+    const via = input.via?.kind === "sip" ? input.via : null;
     const body: Record<string, unknown> = {
       connection_id: connection,
-      to,
+      to: via ? sipTarget(to, "number", via.trunk) : to,
       from,
+      ...(via?.callerName ? { from_display_name: via.callerName.replace(/[^A-Za-z0-9 _~!.+-]/g, "").slice(0, 128) } : {}),
+      ...(via?.presentation === "restricted" ? { privacy: "id" } : {}),
+      ...(via?.trunk.username ? { sip_auth_username: via.trunk.username } : {}),
+      ...(via?.trunk.password ? { sip_auth_password: via.trunk.password } : {}),
+      ...(via?.trunk.transport ? { sip_transport_protocol: via.trunk.transport.toUpperCase() } : {}),
       // The API minimum is 5 s (maximum 600).
       timeout_secs: Math.min(600, Math.max(5, Math.round(input.timeout))),
       webhook_url: input.eventUrl,
@@ -333,6 +409,26 @@ export class TelnyxAdapter implements ProviderAdapter {
     await request(key, "POST", `/calls/${encodeURIComponent(callId)}/actions/hangup`, {});
   }
 
+  /** 6.9: one call-control command as is (record_stop, transcription_stop, gather_stop, reject…). */
+  async sendCommand(callId: string, cmd: string, body: Record<string, unknown> = {}): Promise<void> {
+    if (!/^[a-z_]{3,40}$/.test(cmd)) throw badRequest(`unknown command ${cut(cmd)}.`);
+    const key = apiKey("call");
+    await request(key, "POST", `/calls/${encodeURIComponent(callId)}/actions/${cmd}`, body);
+  }
+
+  /** 6.9: dial-pad tones into a live call (send_dtmf; "w" 0.5 s, "W" 1 s). */
+  async sendDtmf(callId: string, digits: string, toneMs?: number): Promise<void> {
+    const c = command({ sendDigits: { digits, ...(toneMs ? { toneMs } : {}) } });
+    if (!c.body.digits) throw badRequest("sendDigits needs at least one of 0-9 A-D * # (w / W pause).");
+    await this.sendCommand(callId, c.cmd, c.body);
+  }
+
+  /** 6.9: refuse an unanswered inbound call (486 busy, 603 rejected, 480 for congestion). */
+  async reject(callId: string, reason: "busy" | "congestion" | "rejected", ctx?: { clientState?: string }): Promise<void> {
+    const c = command({ reject: { reason } }, ctx?.clientState);
+    await this.sendCommand(callId, c.cmd, c.body);
+  }
+
   /**
    * A v2 webhook envelope {data:{event_type, id, payload}} → one event. Only call
    * and streaming events are call events; anything else (message.*) → [].
@@ -360,6 +456,8 @@ export class TelnyxAdapter implements ProviderAdapter {
       eventId: str(data.id),
       raw: j,
     };
+    // 6.9: a call to a SIP URI (the application's SIP subdomain, a SIP connection).
+    if (isSipAddress(str(p.to)) || /@/.test(String(p.to ?? ""))) ev.sipUri = str(p.to);
     if (typeof p.client_state === "string" && p.client_state) {
       try { ev.clientState = unb64(p.client_state); } catch { /* keep undefined */ }
     }
@@ -387,6 +485,25 @@ export class TelnyxAdapter implements ProviderAdapter {
         break;
       case "call.playback.ended":
         ev.kind = "playback-ended"; ev.cause = str(p.status);
+        break;
+      // 6.9
+      case "call.transcription": {
+        const t = (p.transcription_data ?? {}) as { transcript?: string; confidence?: number | string; is_final?: boolean };
+        ev.kind = "speech"; ev.speech = String(t.transcript ?? "");
+        const c = Number(t.confidence);
+        if (t.confidence !== undefined && Number.isFinite(c)) ev.confidence = c;
+        if (t.is_final === false) ev.cause = "interim";
+        break;
+      }
+      case "call.recording.saved": {
+        const urls = (p.recording_urls ?? p.public_recording_urls ?? {}) as { mp3?: string; wav?: string };
+        ev.kind = "recording"; ev.recordingUrl = str(urls.mp3) ?? str(urls.wav);
+        const start = Date.parse(String(p.recording_started_at ?? "")); const end = Date.parse(String(p.recording_ended_at ?? ""));
+        if (Number.isFinite(start) && Number.isFinite(end) && end >= start) ev.recordingSec = Math.round((end - start) / 1000);
+        break;
+      }
+      case "call.bridged":
+        ev.kind = "dial"; ev.dialStatus = "answered";
         break;
       case "call.machine.detection.ended":
       case "call.machine.premium.detection.ended": {

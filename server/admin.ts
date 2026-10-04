@@ -40,6 +40,7 @@ import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerControlRoutes } from "./telephony/control/routes";
 import { telephonyConsoleRight } from "./telephony/control/guard";
 import { registerTsaRoutes } from "./telephony/tsa/routes";
+import { registerTelTestRoutes } from "./telephony/control/tests";
 import { registerAdminLayoutRoutes } from "./layout";
 import { distPublicDir } from "./layout-catalog";
 import { applyTrustProxy } from "./trust-proxy";
@@ -207,6 +208,7 @@ app.use("/admin/layout", consoleGuard("layout", (req) => (req.method === "GET" ?
 registerAccessRoutes(app);
 
 // Telephony + SIP console (all under /admin, so behind the auth middleware).
+registerTelTestRoutes(app); // 6.9: Telephony › Tests + Log (and the log of console changes)
 registerAdminTelephonyRoutes(app);
 registerControlRoutes(app); // 6.9: permissions, routing rules, the inroute table
 registerTsaRoutes(app); // 6.9: Telephony & SIP Applications — the editor's API and the simulator

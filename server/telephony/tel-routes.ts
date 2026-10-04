@@ -19,23 +19,42 @@ import { bridgeView, didPool, inboundBridge, releaseBridge } from "./bridge";
 import { setInboundHook, stringParams, verifyRequest } from "./webhooks";
 import { telStore } from "./tel-store";
 import { isProvider, type TelephonyProvider } from "./types";
+import { inboundThroughRules } from "./control/calls";
+import { mountWebhookLog } from "./control/log";
+import { whContext } from "./control/wh-context";
 
 const limiter = rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many webhook requests." } });
 
-/** An inbound call (or, Telnyx, any event of a bridge / SDK call) through the provider's own webhook. */
+/**
+ * An inbound call (or, Telnyx, any event of a bridge / SDK call) through the provider's own webhook.
+ * 6.9: a number the bridge lends keeps the bridge; any other inbound call goes through the inbound
+ * rules (control/calls.ts) when they are loaded; the status events of a call that runs a TSA
+ * (Twilio's status callback, the Vonage application's event URL) reach it here.
+ */
 async function inbound(provider: TelephonyProvider, type: string, req: Request) {
   const a = adapter(provider);
   if (!a?.parseCallEvent) return null;
   const isVoice = (provider === "twilio" && type === "voice") || (provider === "vonage" && type === "answer") || (provider === "telnyx" && type === "events");
-  if (!isVoice) return null;
+  const isStatus = (provider === "twilio" && type === "voice_status") || (provider === "vonage" && type === "events");
+  if (!isVoice && !isStatus) return null;
   await telStore.ready();
-  const events = a.parseCallEvent(req.body, stringParams(req.query));
+  const query = stringParams(req.query);
+  const events = a.parseCallEvent(req.body, query);
+  if (isStatus) {
+    for (const ev of events) {
+      const known = telStore.callByProviderId(provider, ev.callId);
+      if (known?.tsa) { whContext(req).callId = known.id; return handleCallWebhook(known, "event", req.body, query); }
+    }
+    return null;
+  }
   for (const ev of events) {
     const known = telStore.callByProviderId(provider, ev.callId);
-    if (known) return handleCallWebhook(known, provider === "telnyx" ? "event" : "answer", req.body, stringParams(req.query));
+    if (known) { whContext(req).callId = known.id; return handleCallWebhook(known, provider === "telnyx" ? "event" : "answer", req.body, query); }
     if (ev.kind === "answer" || ev.direction === "inbound") {
       const r = await inboundBridge(provider as ProviderId, ev);
-      if (r) return r.reply;
+      if (r) { whContext(req).callId = r.call.id; return r.reply; }
+      const routed = await inboundThroughRules(provider as ProviderId, ev, req);
+      if (routed) return routed;
     }
   }
   return null;
@@ -43,6 +62,8 @@ async function inbound(provider: TelephonyProvider, type: string, req: Request) 
 
 export function registerTelEngineRoutes(app: Express): void {
   setInboundHook(inbound);
+  // 6.9: every /wh request is logged (once, whichever registers first).
+  mountWebhookLog(app);
 
   // Inbound calls to a lent number (Twilio points the number here on allocation).
   app.all("/wh/tel/in/:provider", limiter, async (req: Request, res: Response) => {
@@ -65,7 +86,9 @@ export function registerTelEngineRoutes(app: Express): void {
   app.all("/wh/tel/:token/:kind", limiter, async (req: Request, res: Response) => {
     const token = String(req.params.token);
     const kind = String(req.params.kind);
-    if (!/^[A-Za-z0-9_-]{16,64}$/.test(token) || !["answer", "event", "gather", "record", "status"].includes(kind)) return res.status(404).json({ ok: false });
+    // 6.9: "tsa" — a TSA turn's callback (?s=<session>&n=<node>[&e=played]; control/calls.ts).
+    if (!/^[A-Za-z0-9_-]{16,64}$/.test(token) || !["answer", "event", "gather", "record", "status", "tsa"].includes(kind)) return res.status(404).json({ ok: false });
+    whContext(req).type = kind;
     try {
       const r = await telWebhook(req as Parameters<typeof telWebhook>[0], token, kind);
       res.status(r.status).type(r.type).send(r.body);

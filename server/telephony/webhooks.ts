@@ -36,6 +36,8 @@ import { greetingText, providerWebhookSpecs, publicBaseUrl } from "./connectors"
 import { verifyJwtHS256 } from "./jwt";
 import { sipStore, type SipRouteDecision } from "./sip";
 import { dataDir } from "./store";
+import { mountWebhookLog } from "./control/log";
+import { whContext } from "./control/wh-context";
 import { isProvider, type TelephonyProvider, type WebhookVerify } from "./types";
 
 const env = (name: string): string => (process.env[name]?.trim() || "");
@@ -237,6 +239,17 @@ export type Verification = { verified: boolean; enforced: boolean };
 
 /** 6.0: also the m5.telephony webhooks (engine.ts) — the same signatures per provider. */
 export function verifyRequest(provider: TelephonyProvider, type: string, req: Request): Verification {
+  const v = verifyRequestOnly(provider, type, req);
+  // 6.9: the webhook log (control/log.ts) says whether this request was verified.
+  const ctx = whContext(req);
+  ctx.provider = provider;
+  ctx.type ??= type;
+  ctx.verified = v.verified;
+  ctx.enforced = v.enforced;
+  return v;
+}
+
+function verifyRequestOnly(provider: TelephonyProvider, type: string, req: Request): Verification {
   if (provider === "twilio") {
     const token = env("TWILIO_AUTH_TOKEN");
     if (!token) return { verified: false, enforced: false };
@@ -322,6 +335,8 @@ const whLimiter = rateLimit({
 
 /** Mount on the MAIN app. Providers must be able to reach it (nginx: proxy /wh/ to the app). */
 export function registerWebhookRoutes(app: Express): void {
+  // 6.9: one line in the event log per webhook, on every /wh path (control/log.ts).
+  mountWebhookLog(app);
   app.all("/wh/:provider/:type", whLimiter, async (req: Request, res: Response) => {
     const provider = String(req.params.provider);
     const type = String(req.params.type);
@@ -335,6 +350,7 @@ export function registerWebhookRoutes(app: Express): void {
       return res.status(403).json({ ok: false, message: "signature verification failed" });
     }
     const ev = telephonyEvents.record(normalize(provider, type, req, v));
+    whContext(req).event = ev;
     pluginLog.record({
       level: v.verified ? "info" : "warn", kind: "admin", connector: provider,
       message: `webhook ${type}: ${ev.summary}${v.verified ? "" : " (unverified — set " + webhookVerificationStatus(provider).needs + ")"}${ev.route ? ` → trunk ${ev.route.trunkId}` : ""}`,

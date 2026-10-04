@@ -12,6 +12,7 @@
 //   - Test credentials never fire status callbacks.
 
 import { isE164 } from "../types";
+import { degrade, isSipAddress, sipTarget } from "./sip-uri";
 import {
   ProviderError, ProviderNotConfigured,
   type AvailableNumber, type CallAction, type CallStatus, type Capability, type ChatChannel, type ChatMessageInput, type ChatMessageResult,
@@ -160,6 +161,37 @@ function sayVerb(text: string, voice?: string, language?: string, loop?: number)
   return `<Say${attrs([["voice", twilioVoice(voice)], ["language", language], ["loop", loop]])}>${xmlEscape(text)}</Say>`;
 }
 
+/** Twilio's DialCallStatus → the neutral dial outcome ("completed" = it was answered and has ended). */
+export const TWILIO_DIAL_STATUS: Record<string, NonNullable<NormalizedCallEvent["dialStatus"]>> = {
+  completed: "answered", answered: "answered", busy: "busy", "no-answer": "no-answer", failed: "failed", canceled: "canceled",
+};
+
+/**
+ * 6.9 <Dial>: a <Number>, or a <Sip> URI — a SIP address, or a number over the
+ * operator's trunk (sip:+420…@host, the trunk's digest credentials as the
+ * <Sip> username / password). callerId must be a number Twilio lets you
+ * present (owned, verified, or the call's own To / From); towards SIP any
+ * alphanumeric string, so "restricted" sends "anonymous" there. Twilio has no
+ * caller name and no withheld number towards the PSTN (logged, not sent).
+ */
+function dialVerb(d: Extract<CallAction, { dial: unknown }>["dial"]): string {
+  const viaSip = d.kind === "sip" || !!d.trunk;
+  let callerId = d.callerId || undefined;
+  if (d.presentation === "restricted") {
+    if (viaSip) callerId = "anonymous";
+    else degrade("twilio", "a withheld caller ID towards the phone network (<Dial> to a <Number>); the number is presented");
+  }
+  if (d.callerName) degrade("twilio", "a caller ID name on <Dial>; only the number is presented");
+  const open = `<Dial${attrs([
+    ["action", d.action], ["method", "POST"],
+    ["timeout", d.timeout ? Math.min(600, Math.max(5, Math.round(d.timeout))) : undefined],
+    ["callerId", callerId], ["record", d.record ? "record-from-answer" : undefined],
+  ])}>`;
+  if (!viaSip) return `${open}<Number>${xmlEscape(d.to)}</Number></Dial>`;
+  const uri = sipTarget(d.to, d.kind, d.trunk);
+  return `${open}<Sip${attrs([["username", d.trunk?.username || undefined], ["password", d.trunk?.password || undefined]])}>${xmlEscape(uri)}</Sip></Dial>`;
+}
+
 function verb(a: CallAction): string {
   if ("say" in a) return sayVerb(a.say.text, a.say.voice, a.say.language, a.say.loop);
   if ("play" in a) return `<Play${attrs([["loop", a.play.loop]])}>${xmlEscape(a.play.url)}</Play>`;
@@ -170,12 +202,31 @@ function verb(a: CallAction): string {
     // ("#" is Twilio's default when finishOnKey is not given) the length is
     // checked on our side; numDigits only when the finish key is disabled ("").
     const numDigits = g.digits && g.finishOnKey === "" ? g.digits : undefined;
+    // 6.9: speech — Twilio's own recognition; the result comes to `action` as SpeechResult + Confidence.
+    const input = g.input?.length ? [...new Set(g.input)].sort().join(" ") : "dtmf";
+    const speech = input.includes("speech");
     const open = `<Gather${attrs([
-      ["input", "dtmf"], ["action", g.action], ["method", "POST"],
+      ["input", input], ["action", g.action], ["method", "POST"],
       ["timeout", g.timeout], ["finishOnKey", g.finishOnKey], ["numDigits", numDigits],
+      ["speechTimeout", speech ? (g.speechTimeout ? Math.max(1, Math.round(g.speechTimeout)) : "auto") : undefined],
+      ["language", speech ? g.language : undefined],
+      ["hints", speech && g.hints?.length ? g.hints.map((h) => h.replace(/,/g, " ").trim()).filter(Boolean).slice(0, 500).join(",") : undefined],
     ])}>`;
     const prompt = g.prompt ? sayVerb(g.prompt, g.voice, g.language) : "";
     return `${open}${prompt}</Gather>`;
+  }
+  if ("dial" in a) return dialVerb(a.dial);
+  // <Reject> refuses an unanswered call without billing it — only as the first verb
+  // (later, Twilio has answered and it ends the call). Twilio knows busy and rejected;
+  // congestion is played as busy.
+  if ("reject" in a) {
+    if (a.reject.reason === "congestion") degrade("twilio", "a congestion state (<Reject> knows busy and rejected); busy is played");
+    return `<Reject${attrs([["reason", a.reject.reason === "rejected" ? "rejected" : "busy"]])}/>`;
+  }
+  // Dial-pad tones into the call: <Play digits> ("w" = 0.5 s, "W" = 1 s). Twilio sends them RFC 2833.
+  if ("sendDigits" in a) {
+    if (a.sendDigits.mode && a.sendDigits.mode !== "rfc2833") degrade("twilio", `DTMF as ${a.sendDigits.mode}; sent as RFC 2833 (<Play digits>)`);
+    return `<Play${attrs([["digits", a.sendDigits.digits.replace(/[^0-9A-D*#wW]/g, "")]])}/>`;
   }
   if ("stream" in a) {
     const { url, params } = splitStreamUrl(a.stream.url, a.stream.params);
@@ -184,7 +235,18 @@ function verb(a: CallAction): string {
     return `<Connect><Stream${attrs([["url", url]])}>${children}</Stream></Connect>`;
   }
   if ("record" in a) {
-    return `<Record${attrs([["action", a.record.action], ["method", "POST"], ["maxLength", a.record.maxSeconds], ["playBeep", a.record.beep]])}/>`;
+    const r = a.record;
+    // 6.9: finishOnKey "any" = every key; "" cannot be expressed (Twilio's default ends on any key).
+    if (r.finishOnKey === "") degrade("twilio", "a recording no key can end (<Record> always ends on a key); any key ends it");
+    const finish = r.finishOnKey === "any" ? "1234567890*#" : r.finishOnKey ? r.finishOnKey.replace(/[^0-9*#]/g, "") || undefined : undefined;
+    return `<Record${attrs([
+      ["action", r.action], ["method", "POST"], ["maxLength", r.maxSeconds], ["playBeep", r.beep],
+      // timeout = seconds of silence that end it; 0 turns that off
+      ["timeout", r.silenceSeconds !== undefined ? Math.max(0, Math.round(r.silenceSeconds)) : undefined],
+      ["finishOnKey", finish],
+      ["trim", r.trim === undefined ? undefined : r.trim ? "trim-silence" : "do-not-trim"],
+      ["transcribe", r.transcribe || undefined],
+    ])}/>`;
   }
   if ("redirect" in a) return `<Redirect method="POST">${xmlEscape(a.redirect.url)}</Redirect>`;
   if ("hangup" in a) return "<Hangup/>";
@@ -257,8 +319,20 @@ export class TwilioAdapter implements ProviderAdapter {
     if (!input.eventUrl) throw badRequest("eventUrl is required.");
 
     const form = new URLSearchParams();
-    form.append("To", to);
-    form.append("From", from);
+    // 6.9: over the operator's SIP trunk — To is sip:<number>@<trunk host>, the trunk's
+    // digest credentials go as SipAuthUsername / SipAuthPassword, and From (towards SIP
+    // the user part of P-Asserted-Identity) may be any string: "anonymous" withholds it.
+    const via = input.via?.kind === "sip" ? input.via : null;
+    if (via) {
+      form.append("To", sipTarget(to, "number", via.trunk));
+      form.append("From", via.presentation === "restricted" ? "anonymous" : from);
+      if (via.trunk.username) form.append("SipAuthUsername", via.trunk.username);
+      if (via.trunk.password) form.append("SipAuthPassword", via.trunk.password);
+      if (via.callerName) degrade("twilio", "a caller ID name on an outbound call; only the number is presented");
+    } else {
+      form.append("To", to);
+      form.append("From", from);
+    }
     form.append("Timeout", String(Math.min(600, Math.max(1, Math.round(input.timeout)))));
     if (input.timeLimit) form.append("TimeLimit", String(Math.max(1, Math.round(input.timeLimit))));
     // One source of logic only: Twilio ignores Twiml when Url is given. The
@@ -310,15 +384,20 @@ export class TwilioAdapter implements ProviderAdapter {
     if (!callId) return [];
     const answeredBy = f.AnsweredBy || "";
     const isMachine = answeredBy.startsWith("machine") || answeredBy === "fax";
+    // 6.9: a <Dial action> (DialCallStatus), a <Record action> (RecordingUrl — its
+    // Digits is the key that ended it, or "hangup"), a speech <Gather> (SpeechResult).
     let kind: NormalizedCallEvent["kind"];
-    if ("Digits" in f) kind = "gather";
+    if (f.DialCallStatus) kind = "dial";
+    else if (f.RecordingUrl) kind = "recording";
+    else if ("SpeechResult" in f) kind = "speech";
+    else if ("Digits" in f) kind = "gather";
     else if (isMachine) kind = "machine";
     else if (f.CallbackSource) kind = "status";
-    else if (f.RecordingUrl) kind = "other";
     else kind = "answer";
     const direction = f.Direction ? (f.Direction === "inbound" ? "inbound" : "outbound") : undefined;
-    const duration = f.CallDuration !== undefined && f.CallDuration !== "" ? Number(f.CallDuration) : undefined;
-    return [{
+    const num = (v: string | undefined) => { const n = v !== undefined && v !== "" ? Number(v) : NaN; return Number.isFinite(n) ? n : undefined; };
+    const recordingKey = kind === "recording" && f.Digits && f.Digits !== "hangup" ? f.Digits : undefined;
+    const ev: NormalizedCallEvent = {
       provider: this.id,
       callId,
       status: isMachine ? "machine" : (CALL_STATUS[f.CallStatus] ?? null),
@@ -326,13 +405,24 @@ export class TwilioAdapter implements ProviderAdapter {
       from: str(f.From),
       to: str(f.To),
       direction,
-      digits: "Digits" in f ? f.Digits : undefined,
-      durationSec: duration !== undefined && Number.isFinite(duration) ? duration : undefined,
-      sipCode: str(f.SipResponseCode),
-      cause: str(answeredBy) ?? str(f.ErrorCode),
+      digits: kind === "recording" ? recordingKey : "Digits" in f && kind === "gather" ? f.Digits : undefined,
+      durationSec: kind === "dial" ? num(f.DialCallDuration) : num(f.CallDuration),
+      sipCode: str(f.DialSipResponseCode) ?? str(f.SipResponseCode),
+      cause: str(answeredBy) ?? str(f.ErrorCode) ?? (kind === "recording" && f.Digits === "hangup" ? "hangup" : undefined),
       eventId: f.SequenceNumber !== undefined ? `${callId}:${f.SequenceNumber}` : undefined,
       raw: f,
-    }];
+    };
+    if (kind === "dial") ev.dialStatus = TWILIO_DIAL_STATUS[f.DialCallStatus] ?? "failed";
+    if (kind === "speech") {
+      ev.speech = f.SpeechResult;
+      const c = num(f.Confidence);
+      if (c !== undefined) ev.confidence = c;
+    }
+    if (f.RecordingUrl) { ev.recordingUrl = f.RecordingUrl; ev.recordingSec = num(f.RecordingDuration); }
+    // A call to a SIP Domain: To (and often From) are SIP URIs; SipDomain names the domain.
+    if (isSipAddress(f.To)) ev.sipUri = f.To;
+    else if (f.SipDomain && isSipAddress(f.Called)) ev.sipUri = f.Called;
+    return [ev];
   }
 
   /* ------------------------------------------------------------ messaging */

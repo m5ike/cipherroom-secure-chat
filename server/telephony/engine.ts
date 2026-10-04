@@ -26,7 +26,7 @@ import type { Request } from "express";
 import { adapter, pick } from "./providers";
 import {
   FINAL_CALL_STATUSES, ProviderError, ProviderNotConfigured,
-  type CallAction, type CallStatus, type ChatChannel, type NormalizedCallEvent, type ProviderAdapter, type ProviderId,
+  type CallAction, type CallStatus, type ChatChannel, type NormalizedCallEvent, type PlaceCallInput, type ProviderAdapter, type ProviderId,
 } from "./providers/types";
 import { telnyxPendingActions, telnyxWaitsFor } from "./providers/telnyx";
 import { publicBaseUrl } from "./connectors";
@@ -78,6 +78,15 @@ export type CallObserver = (call: TelCall, events: NormalizedCallEvent[]) => voi
 let bridgeDigits: DigitsInterceptor | null = null;
 let bridgeObserver: CallObserver | null = null;
 export function setBridgeHooks(digits: DigitsInterceptor | null, observer: CallObserver | null): void { bridgeDigits = digits; bridgeObserver = observer; }
+
+/**
+ * 6.9: a call that runs a TSA (call.tsa) is driven by the control layer
+ * (control/calls.ts): its answer, events and the TSA's own callbacks
+ * (/wh/tel/<token>/tsa). It registers here — it imports the engine.
+ */
+export type TsaCallHandler = (call: TelCall, kind: string, body: unknown, query: Record<string, string>) => Promise<WebhookReply>;
+let tsaCalls: TsaCallHandler | null = null;
+export function setTsaCallHandler(fn: TsaCallHandler | null): void { tsaCalls = fn; }
 
 /** How long an answer / gather webhook waits for a handler (the provider waits ~10 s; Vonage 5). */
 const SYNC_HANDLER_MS = 4_500;
@@ -157,18 +166,20 @@ const tsaRef = (call: TelCall): TsaCallRef => ({ id: call.id, token: call.token,
  * own logic (and the log says why); a TSA that cannot start hangs up.
  */
 async function tsaStart(call: TelCall): Promise<CallAction[] | null> {
-  if (!call.tsa || call.tsa.session) return null;
+  // The fallback when control/calls.ts (which drives TSA calls — setTsaCallHandler) is not loaded in this process.
+  const st = call.tsa;
+  if (!st || st.session) return null;
   if (!telHooks.tsa) {
-    note(call, `the outbound rule routes this call to TSA ${call.tsa.id}, but the TSA runtime is not loaded here — the call goes on with its own logic`, "warn");
+    note(call, `the outbound rule routes this call to TSA ${st.id}, but the TSA runtime is not loaded here — the call goes on with its own logic`, "warn");
     return null;
   }
   try {
-    const turn = await telHooks.tsa.start(tsaRef(call), call.tsa.id);
-    call.tsa = { id: call.tsa.id, session: turn.session.id };
+    const turn = await telHooks.tsa.start(tsaRef(call), st.id);
+    call.tsa = { ...st, session: turn.session.id, status: "running" };
     save(call);
     return turn.actions;
   } catch (err) {
-    note(call, `TSA ${call.tsa.id} could not start: ${(err as Error).message.slice(0, 200)}`, "warn");
+    note(call, `TSA ${st.id} could not start: ${(err as Error).message.slice(0, 200)}`, "warn");
     return [{ hangup: {} }];
   }
 }
@@ -247,6 +258,10 @@ export type PlaceCallOptions = {
   source?: OutboundSource;
   /** 6.9: the control plane's plan, when the caller asked it already (the app's POST /api/telephony/call). */
   planned?: OutboundPlan;
+  /** 6.9: carried over this SIP trunk (a console test); else the outbound rule's. */
+  via?: PlaceCallInput["via"];
+  /** 6.9: the call runs this TSA when answered (a console test); else the outbound rule's target. */
+  tsa?: { id: string; rule?: string };
 };
 
 /** The hourly-budget key of a call or message without an explicit one. */
@@ -278,6 +293,9 @@ export async function placeCall(o: PlaceCallOptions): Promise<TelCall> {
   const now = Date.now();
   const mode = o.raw ? "native" : o.mode ?? "async";
   const from = route.from || o.from || "";
+  // An explicit trunk / TSA (a console test) wins over the rule's.
+  const via = o.via ?? route.via;
+  const tsaId = o.tsa?.id || route.tsa || "";
   const call: TelCall = {
     id: telId("tc"), token: telToken(), provider: a.id, providerCallId: "", direction: "outbound",
     from, to: o.to, status: "queued", mode,
@@ -287,7 +305,7 @@ export async function placeCall(o: PlaceCallOptions): Promise<TelCall> {
     createdAt: now, updatedAt: now, answeredAt: null, endedAt: null, durationSec: null, bridge: "", error: "", steer: null,
     by,
     ...(route.decision ? { route: { rule: route.decision.rule ?? "", label: route.decision.ruleLabel, service: route.service?.kind ?? "", target: route.decision.target.kind === "tsa" ? `tsa:${route.decision.target.tsa}` : route.decision.target.kind } } : {}),
-    ...(route.tsa ? { tsa: { id: route.tsa, session: "" } } : {}),
+    ...(tsaId ? { tsa: { id: tsaId, rule: o.tsa?.rule ?? route.decision?.rule ?? "", did: from, service: via ? "sip" as const : "app" as const, session: "", status: "pending" as const, queue: [], wait: null, dial: null } } : {}),
   };
   save(call);
   try {
@@ -297,11 +315,11 @@ export async function placeCall(o: PlaceCallOptions): Promise<TelCall> {
       eventUrl: hookUrl(call.token, "event"),
       // Twilio / Vonage ask for the logic when answered; Telnyx is told on call.answered.
       // A TSA's call always asks (the TSA decides when answered), even with native logic given.
-      ...(o.raw && !route.tsa ? { raw: o.raw } : telnyx ? {} : { answerUrl: hookUrl(call.token, "answer") }),
+      ...(o.raw && !tsaId ? { raw: o.raw } : telnyx ? {} : { answerUrl: hookUrl(call.token, "answer") }),
       clientState: call.id,
       ...(o.machineDetection ? { machineDetection: true } : {}),
-      // An outbound rule's SIP trunk (its credentials go to the provider only; never logged).
-      ...(route.via ? { via: route.via } : {}),
+      // A SIP trunk — the console test's, else the outbound rule's (its credentials go to the provider only; never logged).
+      ...(via ? { via } : {}),
     });
     call.providerCallId = r.id;
     call.status = r.status;
@@ -395,7 +413,9 @@ export async function waitCall(id: string, cursor: number, timeoutMs: number): P
 
 const HANDLER_OF: Partial<Record<CallStatus, HandlerEvent>> = { completed: "hangup", busy: "busy", "no-answer": "noanswer", failed: "failed", canceled: "failed", machine: "machine" };
 
-/** Applies one provider event to a call; returns true when the status moved. */
+/** Applies one provider event to a call; returns true when the status moved. (6.9: also the TSA layer's.) */
+export function applyCallEvent(call: TelCall, ev: NormalizedCallEvent): boolean { return apply(call, ev); }
+
 function apply(call: TelCall, ev: NormalizedCallEvent): boolean {
   if (ev.eventId && call.events.some((e) => e.note === ev.eventId)) return false; // a retried webhook
   const was = call.status;
@@ -427,6 +447,8 @@ export function rendered(call: TelCall, actions: CallAction[]): WebhookReply {
 
 /** A request to /wh/tel/<token>/<kind>. */
 export async function handleCallWebhook(call: TelCall, kind: string, body: unknown, query: Record<string, string>): Promise<WebhookReply> {
+  if (call.tsa && tsaCalls) return tsaCalls(call, kind, body, query);
+  if (kind === "tsa") return { status: 404, type: "application/json", body: "{\"ok\":false}" };
   const a = adapter(call.provider);
   const events = a?.parseCallEvent ? a.parseCallEvent(body, query) : [];
   const finals: HandlerEvent[] = [];

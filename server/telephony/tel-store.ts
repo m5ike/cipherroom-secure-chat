@@ -13,6 +13,7 @@ import { loadSqliteDriver, type SqliteDatabase } from "../storage/db";
 import { DocTable } from "../storage/doc-table";
 import type { CallAction, CallStatus, ProviderId } from "./providers/types";
 import type { Caller } from "../functions/types";
+import type { TelLogEntry as TelEventLogEntry } from "./control/types";
 
 export const telId = (prefix: string): string => `${prefix}_${Date.now().toString(36)}${randomBytes(6).toString("hex")}`;
 /** A webhook capability: 192 random bits (the URL is the secret, the provider's signature the proof). */
@@ -84,8 +85,44 @@ export type TelCall = {
   by?: string;
   /** 6.9: the outbound rule that routed it ("" = the default) and how. */
   route?: { rule: string; label: string; service: "app" | "sip" | ""; target: string };
-  /** 6.9: the TSA this call runs (a rule's target) and its session once started. */
-  tsa?: { id: string; session: string };
+  /** 6.9: the call runs a TSA (Telephony & SIP Application) — its session and, for Telnyx, where it is. */
+  tsa?: TelTsaState;
+};
+
+/**
+ * 6.9: a call that runs a TSA (control/calls.ts). Twilio and Vonage ask for
+ * each turn's logic at the TSA's callback URLs; Telnyx (asynchronous call
+ * control) is driven from here: the actions still to run and the event the
+ * call waits for.
+ */
+export type TelTsaState = {
+  /** The TSA, and what chose it (the inbound / outbound rule, or the console). */
+  id: string;
+  rule: string;
+  /** The number the routing saw (the DID called; a test SIP address's test DID). */
+  did: string;
+  service: "app" | "sip";
+  /** The runtime's session ("" until started). */
+  session: string;
+  status: "pending" | "running" | "ended";
+  /** Telnyx: what is left of the current turn, and what the call waits for. */
+  queue: CallAction[];
+  wait: TelTsaWait | null;
+  /** A dial (transfer) in progress: its other leg. */
+  dial: { leg: string; answeredAt: number | null; durationSec?: number } | null;
+};
+
+export type TelTsaWait = {
+  /** The provider event that ends the wait (call.speak.ended, call.gather.ended…). */
+  event: string;
+  /** The TSA callback URL of the waiting action (its s / n / e say where to resume). */
+  url: string;
+  kind: "continue" | "digits" | "speech" | "recording" | "dial" | "stream";
+  finishOnKey?: string;
+  input?: Array<"dtmf" | "speech">;
+  /** A speech gather: the words heard so far; a recording: the key that ended it. */
+  heard?: string;
+  key?: string;
 };
 
 export type TelMessage = {
@@ -163,6 +200,12 @@ class TelStore {
   readonly messages = new DocTable<TelMessage>("messages", () => this.db, (v) => v.createdAt, (v) => v.token);
   readonly bridges = new DocTable<BridgeSession>("bridges", () => this.db, (v) => v.createdAt, (v) => v.number);
   readonly log = new DocTable<TelLogEntry>("log", () => this.db, (v) => v.at, (v) => v.ref);
+  /** 6.9: the module's event log (Telephony › Log; control/log.ts) — filtered by call. */
+  readonly events = new DocTable<TelEventLogEntry>("tel_log", () => this.db, (v) => v.at, (v) => v.callId);
+
+  private mirror: ((e: TelLogEntry) => void) | null = null;
+  /** 6.9: every record() line is also written to the event log (control/log.ts sets this). */
+  setRecordMirror(fn: ((e: TelLogEntry) => void) | null): void { this.mirror = fn; }
 
   ready(): Promise<void> {
     if (this.db) return Promise.resolve();
@@ -177,7 +220,7 @@ class TelStore {
         const db = new Driver(file, { timeout: 5000 });
         db.pragma("journal_mode = WAL");
         db.pragma("busy_timeout = 5000");
-        for (const t of [this.calls, this.messages, this.bridges, this.log]) db.exec(t.schema());
+        for (const t of [this.calls, this.messages, this.bridges, this.log, this.events]) db.exec(t.schema());
         this.db = db;
         this.reason = "";
       } catch (err) {
@@ -208,6 +251,7 @@ class TelStore {
   record(e: Omit<TelLogEntry, "id" | "at"> & { at?: number }): TelLogEntry {
     const entry: TelLogEntry = { id: telId("tl"), at: e.at ?? Date.now(), ...e, summary: e.summary.slice(0, 300) };
     this.log.put(entry);
+    if (this.mirror) { try { this.mirror(entry); } catch { /* the log never breaks a call */ } }
     return entry;
   }
 
@@ -216,7 +260,7 @@ class TelStore {
     try { this.db?.close(); } catch { /* closed */ }
     this.db = null;
     this.opening = null;
-    for (const t of [this.calls, this.messages, this.bridges, this.log]) t.clearMemory();
+    for (const t of [this.calls, this.messages, this.bridges, this.log, this.events]) t.clearMemory();
   }
 }
 

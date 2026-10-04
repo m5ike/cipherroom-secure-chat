@@ -42,9 +42,10 @@ export function pick(capability: Capability, preferred?: ProviderId | string): P
   return ALL.find((a) => configuredFor(a, capability));
 }
 
-export { TwilioAdapter, renderTwiml, xmlEscape, splitStreamUrl, twilioVoice } from "./twilio";
-export { TelnyxAdapter, telnyxPendingActions, telnyxWaitsFor, telnyxVoice, TELNYX_HANGUP_STATUS } from "./telnyx";
-export { VonageAdapter, renderNcco, VONAGE_CALL_STATUS } from "./vonage";
+export { TwilioAdapter, renderTwiml, xmlEscape, splitStreamUrl, twilioVoice, TWILIO_DIAL_STATUS } from "./twilio";
+export { TelnyxAdapter, telnyxPendingActions, telnyxWaitsFor, telnyxVoice, telnyxCommands, telnyxDialStatus, TELNYX_HANGUP_STATUS, TELNYX_REJECT_CAUSE } from "./telnyx";
+export { VonageAdapter, renderNcco, vonageDtmf, VONAGE_CALL_STATUS } from "./vonage";
+export { sipTarget, sipUser, sipHost, isSipAddress } from "./sip-uri";
 export { HlrLookupsAdapter, hlrLookupsSignature } from "./hlrlookups";
 export { MetaAdapter } from "./meta";
 export * from "./types";
