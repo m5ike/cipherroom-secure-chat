@@ -113,6 +113,8 @@ return function setup(host, ctxJson) {
     buttons: (list) => (Array.isArray(list) ? list : []).map((b) => out.button(b)),
     form: (spec) => mark({ type: "form", ...plain(spec || {}) }),
     js: (code, args, opts) => mark({ type: "js", code: typeof code === "function" ? "(" + String(code) + ")(m5.args)" : String(code), ...(args === undefined ? {} : { args: plain(args) }), ...(opts ? plain(opts) : {}) }),
+    // 6.6: formatted HTML — document markup only (the host and every viewer sanitize it).
+    html: (html, opts) => mark({ type: "html", html: String(html), ...(opts && opts.title ? { title: String(opts.title) } : {}) }),
   };
   function media(opts) {
     const o = opts ? plain(opts) : {};
@@ -125,7 +127,7 @@ return function setup(host, ctxJson) {
   }
   // A plain object is an output when its type is one and it has a key of that type
   // ({ type: "flash", text }); { type: "button", data } is data. m5.out.* objects always are.
-  const OUT_KEYS = { text: ["text"], markdown: ["text"], code: ["text"], table: ["columns", "rows"], json: ["value"], image: ["data", "mime"], file: ["name", "data"], flash: ["text"], window: ["id"], audio: ["data", "mime"], video: ["data", "mime"], button: ["name", "title"], form: ["fields", "panels"], js: ["code"] };
+  const OUT_KEYS = { text: ["text"], markdown: ["text"], code: ["text"], table: ["columns", "rows"], json: ["value"], image: ["data", "mime"], file: ["name", "data"], flash: ["text"], window: ["id"], audio: ["data", "mime"], video: ["data", "mime"], button: ["name", "title"], form: ["fields", "panels"], js: ["code"], html: ["html"] };
   const isOut = (v) => v !== null && typeof v === "object" && (OUTPUTS.has(v) || (!Array.isArray(v) && !asBytes(v) && typeof v.type === "string" && Object.prototype.hasOwnProperty.call(OUT_KEYS, v.type) && OUT_KEYS[v.type].some((k) => k in v)));
   function asOutput(v) {
     if (v === undefined || v === null) return null;
@@ -333,6 +335,50 @@ return function setup(host, ctxJson) {
     if (Array.isArray(o.records)) a.records = o.records;
     return a;
   };
+  /* ---- 6.6: card reports — an EMV / e-ID / any card read in a format ---- */
+  const nfcObj = (v) => (v && typeof v === "object" ? v : {});
+  const NFC_FORMATS = ["html", "object", "array", "json", "text", "csv"];
+  const nfcFormatOf = (f) => (NFC_FORMATS.includes(String(f)) ? String(f) : "html");
+  const nfcReportOpts = (o) => ({ fullPan: o.fullPan === true, lang: typeof o.lang === "string" ? o.lang : ctx.caller.lang, ...(o.title !== undefined && o.title !== "" ? { title: String(o.title) } : {}), attachments: o.attachments !== false, images: o.images !== false });
+  const nfcFormat = (data, format, opts) => call("nfc.report", data === undefined ? null : data, nfcFormatOf(format), nfcReportOpts(nfcObj(opts)));
+  const nfcImages = (data) => call("nfc.images", data === undefined ? null : data).map((i) => ({ name: i.name, mime: i.mime, image: call("codec.b64.dec", i.data) }));
+  const emvRead = (reader, opts) => { const o = nfcObj(opts); const args = { ...(o.args && typeof o.args === "object" ? o.args : {}) }; for (const k of ["maxApps", "history", "deep"]) if (o[k] !== undefined) args[k] = o[k]; return nfcSend("emv-read", reader, { ...o, args }); };
+  const eidRead = (reader, opts) => { const o = nfcObj(opts); const args = { ...(o.args && typeof o.args === "object" ? o.args : {}) }; for (const k of ["mrz", "documentNumber", "dateOfBirth", "dateOfExpiry", "can", "readPhoto", "all"]) if (o[k] !== undefined && o[k] !== null && o[k] !== "") args[k] = o[k]; if (o.photo !== undefined && args.readPhoto === undefined) args.readPhoto = o.photo !== false; return nfcSend("mrtd-read", reader, { ...o, args, records: undefined }); };
+  /** A report's outputs for the chat: the formatted value, the pictures, the files to download. */
+  function nfcOutputs(rep) {
+    if (!rep || typeof rep !== "object") return [];
+    const list = [];
+    const base = rep.kind === "mrtd" ? "e-id" : rep.kind === "emv" ? "emv" : "card";
+    const v = rep.value;
+    const file = (name, mime, text) => mark({ type: "file", name, mime, data: call("codec.b64.enc", String(text)) });
+    switch (rep.format) {
+      case "html": list.push(out.html(v)); break;
+      case "text": list.push(out.text(v)); break;
+      case "json": list.push(out.code(v, "json"), file(base + ".json", "application/json", v)); break;
+      case "csv": list.push(out.code(v, "csv"), file(base + ".csv", "text/csv", v)); break;
+      case "array": list.push(Array.isArray(v) && v.length ? out.table(["section", "field", "value"], v.map((r) => [r.section, r.field, r.value]), { title: rep.title }) : out.json(v, { title: rep.title })); break;
+      default: list.push(out.json(v, { title: rep.title }));
+    }
+    if (rep.format !== "html") for (const i of rep.images || []) list.push(mark({ type: "image", mime: String(i.mime), data: String(i.data), alt: String(i.name) }));
+    for (const f of rep.files || []) list.push(mark({ type: "file", name: String(f.name), mime: String(f.mime), data: String(f.data) }));
+    return list;
+  }
+  /** Read, format, and (send: true) show it: what the Builder's NFC.EMV / NFC.e-ID nodes run. */
+  async function nfcReportRun(read, o) {
+    const data = await read();
+    const rep = nfcFormat(data, o.format, o);
+    const ok = Boolean(data && data.status === "ok");
+    const outputs = nfcOutputs(rep);
+    if (!ok) outputs.unshift(out.flash((data && data.message) || "NFC: " + ((data && data.status) || "error"), "warning"));
+    if (o.send === true) for (const x of outputs) emit("out", x);
+    const images = (rep.images || []).map((i) => ({ name: i.name, mime: i.mime, image: call("codec.b64.dec", i.data) }));
+    const pics = call("nfc.images", data);
+    const face = pics.find((i) => /^(face|portrait)/.test(i.name));
+    return {
+      ok, status: (data && data.status) || "error", message: (data && data.message) || "", format: rep.format, result: rep.value, title: rep.title, summary: rep.summary,
+      data, images, files: rep.files, history: call("nfc.history", data), photo: face ? { name: face.name, mime: face.mime, image: call("codec.b64.dec", face.data) } : null, outputs,
+    };
+  }
   function makeNfc(reader) {
     return {
       // A scoped copy whose ops go to a chosen reader.
@@ -357,14 +403,26 @@ return function setup(host, ctxJson) {
         erase: (opts) => nfcSend("m5-erase", reader, opts),
         emulate: (opts) => nfcSend("m5-emulate", reader, opts),
       },
-      // 6.5 EMV: read the holder/public data a terminal reads (read-only, no PIN, no cryptogram).
+      // 6.5 EMV: read the holder/public data a terminal reads (read-only, no PIN, no cryptogram);
+      // 6.6: with the transaction history and every file, and as a report in a format.
       emv: {
-        read: (opts) => { const o = opts && typeof opts === "object" ? opts : {}; const args = { ...(o.args && typeof o.args === "object" ? o.args : {}) }; if (o.maxApps !== undefined) args.maxApps = o.maxApps; return nfcSend("emv-read", reader, { ...o, args }); },
+        read: (opts) => emvRead(reader, opts),
+        report: (opts) => { const o = nfcObj(opts); return nfcReportRun(() => emvRead(reader, o), o); },
+        format: (data, format, opts) => nfcFormat(data, format, opts),
+        history: (data) => call("nfc.history", data === undefined ? null : data),
       },
-      // 6.5 e-ID / e-passport (MRTD): open the holder's own document with the MRZ or CAN they give, read DG1/DG2.
+      // 6.5 e-ID / e-passport (MRTD): open the holder's own document with the MRZ or CAN they give;
+      // 6.6: every data group, the pictures, the security objects — and as a report.
       eid: {
-        read: (opts) => { const o = opts && typeof opts === "object" ? opts : {}; const args = { ...(o.args && typeof o.args === "object" ? o.args : {}) }; for (const k of ["mrz", "documentNumber", "dateOfBirth", "dateOfExpiry", "can", "readPhoto", "maxApps"]) if (o[k] !== undefined) args[k] = o[k]; return nfcSend("mrtd-read", reader, { ...o, args, records: undefined }); },
+        read: (opts) => eidRead(reader, opts),
+        report: (opts) => { const o = nfcObj(opts); return nfcReportRun(() => eidRead(reader, o), o); },
+        format: (data, format, opts) => nfcFormat(data, format, opts),
+        images: (data) => nfcImages(data),
       },
+      // 6.6: any read as a report (html, object, array, json, text, csv), its outputs for the chat, a standalone HTML file.
+      format: (data, format, opts) => nfcFormat(data, format, opts),
+      outputs: (report) => nfcOutputs(report),
+      document: (data, opts) => call("nfc.document", data === undefined ? null : data, nfcReportOpts(nfcObj(opts))),
     };
   }
   const nfc = makeNfc(undefined);

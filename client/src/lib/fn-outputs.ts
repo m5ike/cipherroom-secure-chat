@@ -7,7 +7,9 @@
 // A function returns one output, or a list of them; each becomes one record
 // the app shows (text, a table…), plays (audio), runs (browser JavaScript in a
 // sandbox) or lets someone answer (a button, a form — they call the model's
-// "button" / "form" entry point).
+// "button" / "form" entry point). 6.6 adds formatted HTML (fn-html.ts).
+
+import { FN_HTML_MAX, fnHtmlText, parseFnHtml, sanitizeFnHtml } from "./fn-html";
 
 export type FlashLevel = "info" | "success" | "warning" | "error";
 
@@ -98,9 +100,11 @@ export type FnOutput =
   | { type: "video"; mime: string; data: string; title?: string; autoplay?: boolean; loop?: boolean }
   | ({ type: "button" } & ButtonSpec)
   | ({ type: "form" } & FormSpec)
-  | { type: "js"; code: string; args?: unknown; title?: string; height?: number; hidden?: boolean };
+  | { type: "js"; code: string; args?: unknown; title?: string; height?: number; hidden?: boolean }
+  /** 6.6: formatted HTML — document markup only, sanitized (fn-html.ts) by the server and again by every viewer. */
+  | { type: "html"; html: string; title?: string };
 
-export const OUTPUT_TYPES = ["text", "markdown", "code", "table", "json", "image", "file", "flash", "window", "audio", "video", "button", "form", "js"] as const;
+export const OUTPUT_TYPES = ["text", "markdown", "code", "table", "json", "image", "file", "flash", "window", "audio", "video", "button", "form", "js", "html"] as const;
 export type OutputType = FnOutput["type"];
 
 /** How big one output may be (bytes of text / base64). The run's own limit is lower. */
@@ -290,6 +294,12 @@ export function checkFnOutput(v: unknown, maxChars = OUTPUT_MAX_CHARS): OutputCh
       const args = plainJson(v.args, 64_000);
       return { ok: true, output: { type: "js", code, ...(args !== undefined ? { args } : {}), ...(title ? { title } : {}), ...(height !== undefined ? { height } : {}), ...(v.hidden === true ? { hidden: true } : {}) } };
     }
+    case "html": {
+      const html = str(v.html, Math.min(maxChars, FN_HTML_MAX));
+      if (html === null) return bad(`html must be a string (up to ${FN_HTML_MAX} characters)`);
+      const title = opt(v.title, 300);
+      return { ok: true, output: { type: "html", html: sanitizeFnHtml(html), ...(title ? { title } : {}) } };
+    }
   }
   return bad("unknown");
 }
@@ -346,6 +356,7 @@ export function outputsToMarkdown(outputs: readonly FnOutput[]): string {
       case "audio": case "video": parts.push(`_(${o.type}${o.title ? `: ${o.title}` : ""})_`); break;
       case "button": parts.push(`[${o.icon ? `${o.icon} ` : ""}${o.title}]`); break;
       case "form": parts.push(`**${o.title || "Form"}**${o.text ? `\n${o.text}` : ""}`); break;
+      case "html": parts.push((o.title ? `**${o.title}**\n\n` : "") + fnHtmlText(parseFnHtml(o.html))); break;
       case "window": case "js": break;
     }
   }

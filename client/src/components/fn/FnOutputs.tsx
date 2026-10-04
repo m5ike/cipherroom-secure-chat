@@ -17,6 +17,7 @@ import { t, tf, type Lang } from "../../lib/i18n";
 import { Markdown } from "../Markdown";
 import { FnForm } from "./FnForm";
 import { FnSandbox } from "./FnSandbox";
+import { FnHtml } from "./FnHtml";
 import "./fn.css";
 
 /** What the app gives the outputs: how to reach the model, show a notice, open a panel. */
@@ -188,6 +189,7 @@ function renderOne(o: FnOutput, ctx: { meta?: FnMeta; host: FnHost; fresh: boole
         </div>
       );
     }
+    case "html": return <FnHtml o={o} />;
     case "js": {
       // Hidden browser code is an effect: it runs once, when the message is new; a visible one is a widget and runs whenever it is shown.
       if (o.hidden && !fresh) return null;

@@ -169,6 +169,13 @@ export const ADM_CALLS: string[] = [
   "push.status", "push.send",
   "admins.list", "admins.get", "admins.set", "admins.delete",
 ];
+/** 6.6: the card report formats (client/src/lib/nfc/card-report.ts) and the NFC nodes' shared params. */
+export const CARD_FORMATS = ["html", "object", "array", "json", "text", "csv"] as const;
+const cardFormat = (v: unknown) => ((CARD_FORMATS as readonly string[]).includes(String(v)) ? String(v) : "html");
+const CARD_FORMAT: FlowParam = { name: "format", label: "Format", type: "enum", values: [...CARD_FORMATS], default: "html", help: "html — everything formatted for the chat (pictures inline, other data as files); object / array (rows) / json / text / csv for code or files." };
+const SEND_TO_CHAT: FlowParam = { name: "send", label: "Show in the chat", type: "boolean", default: true, help: "Shows the report — with its pictures and files — to the caller at once." };
+const NFC_READER: FlowParam = { name: "reader", label: "Reader", type: "enum", values: ["", "internal", "usb", "bluetooth", "serial"], default: "" };
+
 export const NODES: NodeDef[] = [
   /* ------------------------------------------------------------ flow */
   { type: "flow.input", group: "Flow", title: "Input", doc: "A value the caller gives (a model input): its name, type and default.",
@@ -393,6 +400,13 @@ export const NODES: NodeDef[] = [
     params: [{ name: "code", label: "Code (JavaScript, in the browser)", type: "jscode", default: "m5.flash(\"Hello from the browser!\", \"success\");" }, { name: "title", label: "Title", type: "string", default: "" }, { name: "height", label: "Height px (0: fits)", type: "number", default: 0 }, { name: "hidden", label: "Hidden (an effect)", type: "boolean", default: false }],
     js: (g) => { const o = { ...(g.p.title ? { title: String(g.p.title) } : {}), ...(Number(g.p.height) > 0 ? { height: Number(g.p.height) } : {}), ...(g.p.hidden ? { hidden: true } : {}) }; return `await m5.caller.send(m5.out.js(${g.lit(String(g.p.code ?? ""))}, ${g.in.args}${Object.keys(o).length ? `, ${g.lit(o)}` : ""}))`; },
     py: (g) => `await m5.caller.send(m5.out.js(${g.lit(String(g.p.code ?? ""))}, ${g.in.args}${g.p.title ? `, title=${g.lit(String(g.p.title))}` : ""}${Number(g.p.height) > 0 ? `, height=${Number(g.p.height)}` : ""}${g.p.hidden ? ", hidden=True" : ""}))`,
+  },
+
+  { type: "out.html", group: "Output", title: "Send HTML", doc: "Formatted HTML in the chat: headings, tables, lists, details, figures, links and pictures as data:image URIs. Scripts, styles, forms and handlers are removed (the server and every viewer sanitize it).",
+    inputs: [P("html", "text", { required: true, placeholder: "<h3>Hello</h3>" })], outputs: [], effect: true,
+    params: [{ name: "title", label: "Title", type: "string", default: "" }],
+    js: (g) => { g.use("str"); return `await m5.caller.send(m5.out.html(__str(${g.in.html})${g.p.title ? `, { title: ${g.lit(String(g.p.title))} }` : ""}))`; },
+    py: (g) => { g.use("str"); return `await m5.caller.send(m5.out.html(_str(${g.in.html})${g.p.title ? `, title=${g.lit(String(g.p.title))}` : ""}))`; },
   },
 
   /* ------------------------------------------------------------ entry points (5.3) */
@@ -656,6 +670,55 @@ export const NODES: NodeDef[] = [
     params: [{ name: "reader", label: "Reader (empty: any)", type: "enum", values: ["", "internal", "usb", "bluetooth", "serial"], default: "" }],
     js: (g) => { g.use("clean"); return `await m5.nfc.enum(__clean({ reader: ${g.lit(String(g.p.reader ?? ""))} }))`; },
     py: (g) => { g.use("clean"); return `await m5.nfc.enum(**_clean({"reader": ${g.lit(String(g.p.reader ?? ""))}}))`; },
+  },
+
+  // 6.6: any read as a report, and a report shown in the chat.
+  { type: "nfc.format", group: "NFC", title: "Card → format", doc: "Formats any NFC read (a scan, an EMV card, an e-ID) as html, object, array (rows), json, text or csv — with the card's pictures and the files to download (base64). Labels in the caller's language.",
+    inputs: [P("data", "object", { required: true })], outputs: [FIELD("result", ...prop("value"), "any", "formatted"), FIELD("title", ...prop("title"), "text"), FIELD("summary", ...prop("summary"), "text"), FIELD("images", ...prop("images"), "list"), FIELD("files", ...prop("files"), "list"), OUT("report", "object")],
+    params: [CARD_FORMAT, { name: "fullPan", label: "Whole card number (else masked)", type: "boolean", default: false }],
+    js: (g) => `m5.nfc.format(${g.in.data}, ${g.lit(cardFormat(g.p.format))}, { fullPan: ${g.p.fullPan === true} })`,
+    py: (g) => `m5.nfc.format(${g.in.data}, ${g.lit(cardFormat(g.p.format))}, full_pan=${g.p.fullPan === true ? "True" : "False"})`,
+  },
+  { type: "nfc.show", group: "NFC", title: "Show card report", doc: "Shows a report from “Card → format” in the chat: the formatted value (HTML, a table, JSON, text or CSV), the pictures, and the files to download.",
+    inputs: [P("report", "object", { required: true })], outputs: [], effect: true,
+    js: (g) => `await m5.caller.send(m5.nfc.outputs(${g.in.report}))`, py: (g) => `await m5.caller.send(m5.nfc.outputs(${g.in.report}))`,
+  },
+
+  /* ------------------------------------------------------------ NFC.EMV (6.6) */
+  { type: "nfc.emv.report", group: "NFC.EMV", title: "EMV: read everything", doc: "Waits for a payment card at the caller's device and reads everything a terminal may: every application, every record (deep: every file), the counters and the transaction history — then formats it (html, object, array, json, text, csv) and, with “Show in the chat”, shows it with the history as CSV and the records to download. Read-only: never a PIN, never a payment, never a write.",
+    inputs: [], outputs: [FIELD("result", ...prop("result"), "any", "formatted"), FIELD("data", ...prop("data"), "object", "the read"), FIELD("ok", ...prop("ok"), "boolean"), FIELD("status", ...prop("status"), "text"), FIELD("summary", ...prop("summary"), "text"), FIELD("history", ...prop("history"), "list"), FIELD("files", ...prop("files"), "list"), OUT("report", "object")], effect: true,
+    params: [CARD_FORMAT, SEND_TO_CHAT, { name: "history", label: "Transaction history", type: "boolean", default: true }, { name: "deep", label: "Every file (deep read)", type: "boolean", default: true }, { name: "fullPan", label: "Whole card number (else masked)", type: "boolean", default: false }, { name: "maxApps", label: "Applications at most", type: "number", default: 8 }, NFC_READER, { name: "timeout", label: "Wait for a card (s)", type: "number", default: 30 }],
+    js: (g) => { g.use("clean"); return `await m5.nfc.emv.report(__clean({ format: ${g.lit(cardFormat(g.p.format))}, send: ${g.p.send !== false}, history: ${g.p.history !== false}, deep: ${g.p.deep !== false}, fullPan: ${g.p.fullPan === true}, maxApps: ${Number(g.p.maxApps) > 0 ? Number(g.p.maxApps) : 8}, reader: ${g.lit(String(g.p.reader ?? ""))}, timeout: ${Number(g.p.timeout) > 0 ? Number(g.p.timeout) : "undefined"} }))`; },
+    py: (g) => { g.use("clean"); const b = (v: boolean) => (v ? "True" : "False"); return `await m5.nfc.emv.report(**_clean({"format": ${g.lit(cardFormat(g.p.format))}, "send": ${b(g.p.send !== false)}, "history": ${b(g.p.history !== false)}, "deep": ${b(g.p.deep !== false)}, "full_pan": ${b(g.p.fullPan === true)}, "max_apps": ${Number(g.p.maxApps) > 0 ? Number(g.p.maxApps) : 8}, "reader": ${g.lit(String(g.p.reader ?? ""))}, "timeout": ${Number(g.p.timeout) > 0 ? Number(g.p.timeout) : "None"}}))`; },
+  },
+  { type: "nfc.emv.format", group: "NFC.EMV", title: "EMV → format", doc: "Formats an EMV read (from “EMV: read everything” → data) in another format — the PAN masked unless asked.",
+    inputs: [P("data", "object", { required: true })], outputs: [FIELD("result", ...prop("value"), "any", "formatted"), FIELD("files", ...prop("files"), "list"), FIELD("summary", ...prop("summary"), "text"), OUT("report", "object")],
+    params: [CARD_FORMAT, { name: "fullPan", label: "Whole card number (else masked)", type: "boolean", default: false }],
+    js: (g) => `m5.nfc.emv.format(${g.in.data}, ${g.lit(cardFormat(g.p.format))}, { fullPan: ${g.p.fullPan === true} })`,
+    py: (g) => `m5.nfc.emv.format(${g.in.data}, ${g.lit(cardFormat(g.p.format))}, full_pan=${g.p.fullPan === true ? "True" : "False"})`,
+  },
+  { type: "nfc.emv.history", group: "NFC.EMV", title: "EMV: transaction history", doc: "The transactions an EMV read found in the card's log, newest first: date, time, amount, currency, merchant, type, country, ATC — one row each (wire it to “Send table”).",
+    inputs: [P("data", "object", { required: true })], outputs: [OUT("rows", "list"), FIELD("count", (v) => `${v}.length`, (v) => `len(${v})`, "number")],
+    js: (g) => `m5.nfc.emv.history(${g.in.data})`, py: (g) => `m5.nfc.emv.history(${g.in.data})`,
+  },
+
+  /* ------------------------------------------------------------ NFC.e-ID (6.6) */
+  { type: "nfc.eid.report", group: "NFC.e-ID", title: "e-ID: read everything", doc: "Waits for an e-ID card or e-passport at the caller's device, opens it with the CAN printed on it (PACE) or the MRZ (BAC) — the holder's own key — and reads every data group it may: the MRZ, the face, portrait and signature, more personal and document details, the security objects (each group checked against EF.SOD). Formats it (html shows the photo inline; EF.SOD, DG14, DG15 and JPEG 2000 come as files) and, with “Show in the chat”, shows it. Read-only.",
+    inputs: [P("can", "text", { placeholder: "123456" }), P("mrz", "text"), P("documentNumber", "text"), P("dateOfBirth", "text", { placeholder: "YYMMDD" }), P("dateOfExpiry", "text", { placeholder: "YYMMDD" })],
+    outputs: [FIELD("result", ...prop("result"), "any", "formatted"), FIELD("data", ...prop("data"), "object", "the read"), FIELD("ok", ...prop("ok"), "boolean"), FIELD("status", ...prop("status"), "text"), FIELD("summary", ...prop("summary"), "text"),
+      FIELD("holder", (v) => `${v}?.data?.mrtd?.mrzInfo`, (v) => `(((${v} or {}).get("data") or {}).get("mrtd") or {}).get("mrzInfo")`, "object", "holder (DG1)"), FIELD("photo", ...prop("photo"), "bytes"), FIELD("images", ...prop("images"), "list"), FIELD("files", ...prop("files"), "list"), OUT("report", "object")], effect: true,
+    params: [CARD_FORMAT, SEND_TO_CHAT, { name: "photo", label: "Pictures (face, signature…)", type: "boolean", default: true }, { name: "all", label: "Every data group", type: "boolean", default: true }, NFC_READER, { name: "timeout", label: "Wait for a card (s)", type: "number", default: 45 }],
+    js: (g) => { g.use("clean"); g.use("str"); const s = (k: string) => `__str(${g.in[k]}) || undefined`; return `await m5.nfc.eid.report(__clean({ can: ${s("can")}, mrz: ${s("mrz")}, documentNumber: ${s("documentNumber")}, dateOfBirth: ${s("dateOfBirth")}, dateOfExpiry: ${s("dateOfExpiry")}, format: ${g.lit(cardFormat(g.p.format))}, send: ${g.p.send !== false}, photo: ${g.p.photo !== false}, all: ${g.p.all !== false}, reader: ${g.lit(String(g.p.reader ?? ""))}, timeout: ${Number(g.p.timeout) > 0 ? Number(g.p.timeout) : "undefined"} }))`; },
+    py: (g) => { g.use("clean"); g.use("str"); const s = (k: string) => `_str(${g.in[k]}) or None`; const b = (v: boolean) => (v ? "True" : "False"); return `await m5.nfc.eid.report(**_clean({"can": ${s("can")}, "mrz": ${s("mrz")}, "document_number": ${s("documentNumber")}, "date_of_birth": ${s("dateOfBirth")}, "date_of_expiry": ${s("dateOfExpiry")}, "format": ${g.lit(cardFormat(g.p.format))}, "send": ${b(g.p.send !== false)}, "photo": ${b(g.p.photo !== false)}, "all": ${b(g.p.all !== false)}, "reader": ${g.lit(String(g.p.reader ?? ""))}, "timeout": ${Number(g.p.timeout) > 0 ? Number(g.p.timeout) : "None"}}))`; },
+  },
+  { type: "nfc.eid.format", group: "NFC.e-ID", title: "e-ID → format", doc: "Formats an e-ID / e-passport read (from “e-ID: read everything” → data) in another format.",
+    inputs: [P("data", "object", { required: true })], outputs: [FIELD("result", ...prop("value"), "any", "formatted"), FIELD("images", ...prop("images"), "list"), FIELD("files", ...prop("files"), "list"), FIELD("summary", ...prop("summary"), "text"), OUT("report", "object")],
+    params: [CARD_FORMAT],
+    js: (g) => `m5.nfc.eid.format(${g.in.data}, ${g.lit(cardFormat(g.p.format))})`, py: (g) => `m5.nfc.eid.format(${g.in.data}, ${g.lit(cardFormat(g.p.format))})`,
+  },
+  { type: "nfc.eid.images", group: "NFC.e-ID", title: "e-ID: pictures", doc: "The pictures an e-ID read holds — faces (DG2), portrait (DG5), signature (DG7), document scans (DG11 / DG12) — each { name, mime, image }; “first” is the face, ready for “Send image”.",
+    inputs: [P("data", "object", { required: true })], outputs: [OUT("images", "list"), FIELD("first", (v) => `(${v}[0] ?? null)`, (v) => `(${v}[0] if ${v} else None)`, "bytes"), FIELD("count", (v) => `${v}.length`, (v) => `len(${v})`, "number")],
+    js: (g) => `m5.nfc.eid.images(${g.in.data})`, py: (g) => `m5.nfc.eid.images(${g.in.data})`,
   },
 
   /* ------------------------------------------------------------ administration (6.0, m5adm) */

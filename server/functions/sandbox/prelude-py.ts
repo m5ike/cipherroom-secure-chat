@@ -135,12 +135,17 @@ def _out_js(code, args=None, **opts):
     o = Output(type="js", code=str(code), **_plain(opts))
     if args is not None: o["args"] = _plain(args)
     return o
+# 6.6: formatted HTML — document markup only (the host and every viewer sanitize it).
+def _out_html(html, title=None):
+    o = Output(type="html", html=str(html))
+    if title: o["title"] = str(title)
+    return o
 
 # A plain dict is an output when its type is one and it has a key of that type
 # ({"type": "flash", "text": …}); {"type": "button", "data": …} is data.
 _OUT_KEYS = {"text": ("text",), "markdown": ("text",), "code": ("text",), "table": ("columns", "rows"), "json": ("value",), "image": ("data", "mime"),
              "file": ("name", "data"), "flash": ("text",), "window": ("id",), "audio": ("data", "mime"), "video": ("data", "mime"),
-             "button": ("name", "title"), "form": ("fields", "panels"), "js": ("code",)}
+             "button": ("name", "title"), "form": ("fields", "panels"), "js": ("code",), "html": ("html",)}
 
 def _is_out(v):
     if isinstance(v, Output): return True
@@ -555,19 +560,19 @@ def _make_nfc(reader):
     _EID_ALIASES = {"mrz": "mrz", "document_number": "documentNumber", "documentNumber": "documentNumber",
                     "date_of_birth": "dateOfBirth", "dateOfBirth": "dateOfBirth", "date_of_expiry": "dateOfExpiry",
                     "dateOfExpiry": "dateOfExpiry", "can": "can", "read_photo": "readPhoto", "readPhoto": "readPhoto",
-                    "max_apps": "maxApps", "maxApps": "maxApps"}
+                    "photo": "readPhoto", "all": "all"}
+    _EMV_ALIASES = {"max_apps": "maxApps", "maxApps": "maxApps", "history": "history", "deep": "deep"}
     def eid_read(**o):
         args = dict(o.get("args") or {})
         for k, dest in _EID_ALIASES.items():
-            if o.get(k) is not None:
+            if o.get(k) is not None and o.get(k) != "":
                 args[dest] = o[k]
         return _nfc_send("mrtd-read", reader, {**o, "args": args, "records": None})
     def emv_read(**o):
         args = dict(o.get("args") or {})
-        if o.get("max_apps") is not None:
-            args["maxApps"] = o["max_apps"]
-        if o.get("maxApps") is not None:
-            args["maxApps"] = o["maxApps"]
+        for k, dest in _EMV_ALIASES.items():
+            if o.get(k) is not None:
+                args[dest] = o[k]
         return _nfc_send("emv-read", reader, {**o, "args": args})
     return _NS(
         reader=lambda kind: _make_nfc(str(kind)),
@@ -579,10 +584,74 @@ def _make_nfc(reader):
         emulate=emulate,
         m5=_NS(read=lambda **o: _nfc_send("m5-read", reader, o), write=m5_write, build=m5_write,
                erase=lambda **o: _nfc_send("m5-erase", reader, o), emulate=lambda **o: _nfc_send("m5-emulate", reader, o)),
-        # 6.5 EMV (read-only, no PIN / no cryptogram) and MRTD e-ID / e-passport (holder's own document).
-        emv=_NS(read=emv_read),
-        eid=_NS(read=eid_read),
+        # 6.5 EMV (read-only, no PIN / no cryptogram) and MRTD e-ID / e-passport (holder's own document);
+        # 6.6: the history, every file and data group, and a report in a format.
+        emv=_NS(read=emv_read, report=lambda **o: _nfc_report_run(lambda: emv_read(**o), o), format=_nfc_format,
+                history=lambda data: _call("nfc.history", data)),
+        eid=_NS(read=eid_read, report=lambda **o: _nfc_report_run(lambda: eid_read(**o), o), format=_nfc_format, images=_nfc_images),
+        format=_nfc_format,
+        outputs=_nfc_outputs,
+        document=lambda data, **o: _call("nfc.document", data, _nfc_report_opts(o)),
     )
+
+# ---- 6.6: card reports — an EMV / e-ID / any card read in a format ----
+_NFC_FORMATS = ("html", "object", "array", "json", "text", "csv")
+
+def _nfc_report_opts(o):
+    o = o or {}
+    lang = o.get("lang") if isinstance(o.get("lang"), str) else (_ctx.get("caller") or {}).get("lang")
+    out = {"fullPan": bool(o.get("full_pan", o.get("fullPan", False))), "lang": lang,
+           "attachments": o.get("attachments", True) is not False, "images": o.get("images", True) is not False}
+    if o.get("title"):
+        out["title"] = str(o["title"])
+    return out
+
+def _nfc_format(data, format="html", **o):
+    return _call("nfc.report", data, str(format) if str(format) in _NFC_FORMATS else "html", _nfc_report_opts(o))
+
+def _nfc_images(data):
+    return [{"name": i["name"], "mime": i["mime"], "image": _call("codec.b64.dec", i["data"])} for i in _call("nfc.images", data)]
+
+def _nfc_outputs(rep):
+    """A report's outputs for the chat: the formatted value, the pictures, the files to download."""
+    if not isinstance(rep, dict):
+        return []
+    outs = []
+    base = "e-id" if rep.get("kind") == "mrtd" else ("emv" if rep.get("kind") == "emv" else "card")
+    v = rep.get("value"); fmt = rep.get("format")
+    def file(name, mime, text): return Output(type="file", name=name, mime=mime, data=_call("codec.b64.enc", str(text)))
+    if fmt == "html": outs.append(_out_html(v))
+    elif fmt == "text": outs.append(_out_text(v))
+    elif fmt == "json": outs += [_out_code(v, "json"), file(base + ".json", "application/json", v)]
+    elif fmt == "csv": outs += [_out_code(v, "csv"), file(base + ".csv", "text/csv", v)]
+    elif fmt == "array" and isinstance(v, list) and v:
+        outs.append(_out_table(["section", "field", "value"], [[r.get("section"), r.get("field"), r.get("value")] for r in v], title=rep.get("title")))
+    else: outs.append(_out_json(v, title=rep.get("title")))
+    if fmt != "html":
+        for i in rep.get("images") or []:
+            outs.append(Output(type="image", mime=str(i["mime"]), data=str(i["data"]), alt=str(i["name"])))
+    for x in rep.get("files") or []:
+        outs.append(Output(type="file", name=str(x["name"]), mime=str(x["mime"]), data=str(x["data"])))
+    return outs
+
+async def _nfc_report_run(read, o):
+    """Read, format, and (send=True) show it: what the Builder's NFC.EMV / NFC.e-ID nodes run."""
+    data = await read()
+    rep = _nfc_format(data, o.get("format", "html"), **{k: v for k, v in o.items() if k != "format"})
+    ok = isinstance(data, dict) and data.get("status") == "ok"
+    outs = _nfc_outputs(rep)
+    if not ok:
+        outs.insert(0, _out_flash((data or {}).get("message") or ("NFC: " + str((data or {}).get("status") or "error")), "warning"))
+    if o.get("send") is True:
+        for x in outs:
+            _emit("out", dict(x))
+    pics = _call("nfc.images", data)
+    face = next((i for i in pics if str(i.get("name", "")).startswith(("face", "portrait"))), None)
+    return {"ok": ok, "status": (data or {}).get("status") or "error", "message": (data or {}).get("message") or "", "format": rep["format"],
+            "result": rep["value"], "title": rep["title"], "summary": rep["summary"], "data": data,
+            "images": [{"name": i["name"], "mime": i["mime"], "image": _call("codec.b64.dec", i["data"])} for i in rep.get("images") or []],
+            "files": rep.get("files") or [], "history": _call("nfc.history", data),
+            "photo": {"name": face["name"], "mime": face["mime"], "image": _call("codec.b64.dec", face["data"])} if face else None, "outputs": outs}
 
 def _nfc_ns():
     return _make_nfc(None)
@@ -607,7 +676,7 @@ def _setup(ctx):
         log=_NS(debug=lambda msg, **f: _write("debug", msg, f), info=lambda msg, **f: _write("info", msg, f),
                 warn=lambda msg, **f: _write("warn", msg, f), error=lambda msg, **f: _write("error", msg, f), trace=_trace),
         out=_NS(text=_out_text, markdown=_out_markdown, code=_out_code, table=_out_table, json=_out_json, image=_out_image, file=_out_file,
-                audio=_out_audio, video=_out_video, flash=_out_flash, window=_out_window, button=_out_button, buttons=_out_buttons, form=_out_form, js=_out_js),
+                audio=_out_audio, video=_out_video, flash=_out_flash, window=_out_window, button=_out_button, buttons=_out_buttons, form=_out_form, js=_out_js, html=_out_html),
         model=_model_ns(ctx),
         browser=_NS(run=_browser_run, play=_browser_play, flash=_browser_flash, open=_browser_open),
         session=_NS(id=ctx["session"]["id"],

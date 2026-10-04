@@ -20,7 +20,7 @@
 import { checkAccess, adminSubject, userSubject, type Subject } from "../access";
 import { accountStore, usernameOf } from "../accounts/store";
 import { clientConfigStore } from "../client-config";
-import { normalizeCommand, type EmvApp, type EmvData, type MrtdData, type NfcCommand, type NfcResult, type NfcResultStatus } from "../../client/src/lib/nfc/command";
+import { normalizeCommand, type CardFile, type EmvApp, type EmvData, type EmvTag, type MrtdData, type MrtdDocument, type MrtdFileInfo, type MrtdImage, type MrtdPersonal, type MrtdSecurity, type NfcCommand, type NfcResult, type NfcResultStatus } from "../../client/src/lib/nfc/command";
 import type { NfcTech } from "../../client/src/lib/nfc/catalog";
 import type { M5RecordType } from "../../client/src/lib/nfc/m5card";
 import type { Caller, Model } from "./types";
@@ -120,33 +120,118 @@ export function sanitizeNfcResult(raw: unknown): NfcResult {
   return out;
 }
 
-/** 6.5: EMV read data — holder / public fields only, bounded. */
+const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const B64 = /^[A-Za-z0-9+/]*={0,2}$/;
+const tagList = (v: unknown, max: number): EmvTag[] => (Array.isArray(v) ? v.slice(0, max).map((tg) => { const y = (tg && typeof tg === "object" ? tg : {}) as Record<string, unknown>; return { tag: strReq(y.tag).slice(0, 8), name: strReq(y.name).slice(0, 80), value: strReq(y.value).slice(0, 256), hex: strReq(y.hex).slice(0, 512) }; }) : []);
+/** A string record (a log entry, a personal detail): keys and values bounded. */
+function strRecord(v: unknown, maxKeys: number, maxLen: number): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  for (const [k, x] of Object.entries(v as Record<string, unknown>).slice(0, maxKeys)) if (/^[A-Za-z0-9_]{1,24}$/.test(k) && typeof x === "string") out[k] = x.slice(0, maxLen);
+  return out;
+}
+const strList = (v: unknown, max: number, len: number): string[] | undefined => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string").slice(0, max).map((x) => x.slice(0, len)) : undefined);
+const fileName = (v: unknown) => strReq(v).replace(/[^\w.+-]/g, "_").slice(0, 80) || "file.bin";
+
+/** 6.5: EMV read data — holder / public fields only, bounded (6.6: the history, the records, GET DATA). */
 function sanitizeEmv(r: Record<string, unknown>): EmvData {
-  const apps = Array.isArray(r.apps) ? r.apps.slice(0, 8).map((a) => {
+  const apps = Array.isArray(r.apps) ? r.apps.slice(0, 16).map((a) => {
     const x = (a && typeof a === "object" ? a : {}) as Record<string, unknown>;
-    const app: EmvApp = { aid: strReq(x.aid).slice(0, 32).toUpperCase(), tags: Array.isArray(x.tags) ? x.tags.slice(0, 128).map((tg) => { const y = (tg && typeof tg === "object" ? tg : {}) as Record<string, unknown>; return { tag: strReq(y.tag).slice(0, 8), name: strReq(y.name).slice(0, 80), value: strReq(y.value).slice(0, 256), hex: strReq(y.hex).slice(0, 512) }; }) : [] };
-    for (const k of ["label", "scheme", "pan", "panMasked", "expiry", "cardholder", "effective", "issuerCountry", "panSequence"] as const) if (str(x[k])) (app as Record<string, unknown>)[k] = str(x[k])!.slice(0, 64);
-    if (typeof x.atc === "number") app.atc = x.atc;
-    if (typeof x.pinTryCounter === "number") app.pinTryCounter = x.pinTryCounter;
+    const app: EmvApp = { aid: strReq(x.aid).slice(0, 32).toUpperCase(), tags: tagList(x.tags, 256) };
+    for (const k of ["label", "scheme", "pan", "panMasked", "expiry", "cardholder", "effective", "issuerCountry", "panSequence", "aip", "afl"] as const) if (str(x[k])) (app as Record<string, unknown>)[k] = str(x[k])!.slice(0, 64);
+    if (str(x.logFormat)) app.logFormat = str(x.logFormat)!.slice(0, 128);
+    for (const k of ["atc", "pinTryCounter", "lastOnlineAtc", "logSfi"] as const) { const n = num(x[k]); if (n !== undefined) app[k] = n; }
+    if (Array.isArray(x.log)) app.log = x.log.slice(0, 60).map((e) => strRecord(e, 24, 256));
+    if (Array.isArray(x.getData)) app.getData = tagList(x.getData, 32);
+    if (Array.isArray(x.records)) app.records = x.records.slice(0, 320).map((rec) => { const y = (rec && typeof rec === "object" ? rec : {}) as Record<string, unknown>; return { sfi: num(y.sfi) ?? 0, record: num(y.record) ?? 0, hex: strReq(y.hex).replace(/[^0-9A-Fa-f]/g, "").slice(0, 1024), ...(y.log === true ? { log: true } : {}) }; });
     return app;
   }) : [];
   const out: EmvData = { aids: Array.isArray(r.aids) ? r.aids.filter((a): a is string => typeof a === "string").slice(0, 16).map((a) => a.toUpperCase().slice(0, 32)) : [], apps };
   if (str(r.scheme)) out.scheme = str(r.scheme)!.slice(0, 40);
   if (str(r.tree)) out.tree = str(r.tree)!.slice(0, 4000);
+  if (typeof r.deep === "boolean") out.deep = r.deep;
+  const apdus = num(r.apdus); if (apdus !== undefined) out.apdus = apdus;
   return out;
 }
 
-/** 6.5: MRTD read data — the holder's own document, bounded; photo capped. */
+/** The pictures and files a document may hand over, by count and size (base64 only). */
+const IMAGE_BUDGET = 1_400_000;
+const RAW_BUDGET = 1_200_000;
+
+/** 6.5: MRTD read data — the holder's own document, bounded; photo capped (6.6: every group, the pictures, the security objects). */
 function sanitizeMrtd(r: Record<string, unknown>): MrtdData {
   const access = r.access === "bac" || r.access === "pace" ? r.access : "none";
   const out: MrtdData = { present: Boolean(r.present), access };
-  if (Array.isArray(r.dataGroups)) out.dataGroups = r.dataGroups.filter((x): x is string => typeof x === "string").slice(0, 16);
+  if (r.pace && typeof r.pace === "object") {
+    const p = r.pace as Record<string, unknown>;
+    out.pace = { supported: p.supported === true, ...(str(p.protocol) ? { protocol: str(p.protocol)!.slice(0, 60) } : {}), ...(num(p.parameterId) !== undefined ? { parameterId: num(p.parameterId) } : {}), ...(p.used === true ? { used: true } : {}), ...(p.password === "mrz" || p.password === "can" ? { password: p.password } : {}) };
+  }
+  if (Array.isArray(r.dataGroups)) out.dataGroups = r.dataGroups.filter((x): x is string => typeof x === "string").slice(0, 20);
+  if (str(r.ldsVersion)) out.ldsVersion = str(r.ldsVersion)!.slice(0, 12);
+  if (str(r.unicodeVersion)) out.unicodeVersion = str(r.unicodeVersion)!.slice(0, 12);
   if (r.mrzInfo && typeof r.mrzInfo === "object") {
     const m = r.mrzInfo as Record<string, unknown>;
     out.mrzInfo = {};
     for (const k of ["documentCode", "documentNumber", "issuer", "nationality", "surname", "givenNames", "dateOfBirth", "sex", "dateOfExpiry", "optionalData", "mrz"] as const) if (str(m[k])) out.mrzInfo[k] = str(m[k])!.slice(0, 120);
   }
-  if (str(r.photo) && str(r.photoMime)) { const b64 = str(r.photo)!; if (b64.length <= 400_000) { out.photo = b64; out.photoMime = str(r.photoMime)!.slice(0, 40); } }
+  if (r.personal && typeof r.personal === "object") {
+    const p = r.personal as Record<string, unknown>;
+    const pers: MrtdPersonal = {};
+    for (const k of ["fullName", "personalNumber", "fullDateOfBirth", "placeOfBirth", "address", "telephone", "profession", "title", "personalSummary", "custody"] as const) if (str(p[k])) pers[k] = str(p[k])!.slice(0, 500);
+    const on = strList(p.otherNames, 16, 200); if (on?.length) pers.otherNames = on;
+    const td = strList(p.otherTravelDocuments, 16, 60); if (td?.length) pers.otherTravelDocuments = td;
+    if (Object.keys(pers).length) out.personal = pers;
+  }
+  if (r.document && typeof r.document === "object") {
+    const d = r.document as Record<string, unknown>;
+    const doc: MrtdDocument = {};
+    for (const k of ["issuingAuthority", "dateOfIssue", "endorsements", "taxExit", "personalizationTime", "personalizationDevice"] as const) if (str(d[k])) doc[k] = str(d[k])!.slice(0, 500);
+    const op = strList(d.otherPersons, 16, 200); if (op?.length) doc.otherPersons = op;
+    if (Object.keys(doc).length) out.document = doc;
+  }
+  if (str(r.optional)) out.optional = str(r.optional)!.slice(0, 4000);
+  const notify = strList(r.personsToNotify, 16, 500); if (notify?.length) out.personsToNotify = notify;
+  if (str(r.photo) && str(r.photoMime)) { const b64 = str(r.photo)!; if (b64.length <= 400_000 && B64.test(b64)) { out.photo = b64; out.photoMime = str(r.photoMime)!.slice(0, 40); } }
+  if (Array.isArray(r.images)) {
+    let used = 0;
+    const imgs: MrtdImage[] = [];
+    for (const im of r.images.slice(0, 12)) {
+      const x = (im && typeof im === "object" ? im : {}) as Record<string, unknown>;
+      const data = strReq(x.data), mime = strReq(x.mime);
+      if (!data || data.length > 400_000 || !B64.test(data) || !/^image\/(jpeg|jp2|png|gif|webp)$/.test(mime) || used + data.length > IMAGE_BUDGET) continue;
+      used += data.length;
+      const kind = ["face", "portrait", "signature", "document", "other"].includes(strReq(x.kind)) ? strReq(x.kind) as MrtdImage["kind"] : "other";
+      imgs.push({ group: strReq(x.group).slice(0, 8), kind, mime, data, name: fileName(x.name) });
+    }
+    if (imgs.length) out.images = imgs;
+  }
+  if (Array.isArray(r.files)) out.files = r.files.slice(0, 32).map((f) => {
+    const x = (f && typeof f === "object" ? f : {}) as Record<string, unknown>;
+    const status = ["read", "protected", "absent", "error"].includes(strReq(x.status)) ? strReq(x.status) as MrtdFileInfo["status"] : "error";
+    return { name: strReq(x.name).slice(0, 16), fid: strReq(x.fid).slice(0, 8), status, ...(num(x.size) !== undefined ? { size: num(x.size) } : {}), ...(typeof x.hashOk === "boolean" ? { hashOk: x.hashOk } : {}), ...(str(x.message) ? { message: str(x.message)!.slice(0, 200) } : {}) };
+  });
+  if (Array.isArray(r.raw)) {
+    let used = 0;
+    const raw: CardFile[] = [];
+    for (const f of r.raw.slice(0, 32)) {
+      const x = (f && typeof f === "object" ? f : {}) as Record<string, unknown>;
+      const data = strReq(x.data);
+      if (!data || data.length > 400_000 || !B64.test(data) || used + data.length > RAW_BUDGET) continue;
+      used += data.length;
+      raw.push({ name: fileName(x.name), mime: /^[\w.+-]+\/[\w.+-]+$/.test(strReq(x.mime)) ? strReq(x.mime) : "application/octet-stream", data });
+    }
+    if (raw.length) out.raw = raw;
+  }
+  if (r.security && typeof r.security === "object") {
+    const sec = r.security as Record<string, unknown>;
+    const s: MrtdSecurity = {};
+    if (str(sec.hashAlgorithm)) s.hashAlgorithm = str(sec.hashAlgorithm)!.slice(0, 20);
+    if (sec.passive === "ok" || sec.passive === "mismatch" || sec.passive === "unchecked") s.passive = sec.passive;
+    if (sec.signer && typeof sec.signer === "object") { const g = strRecord(sec.signer, 5, 300); const signer: NonNullable<MrtdSecurity["signer"]> = {}; for (const k of ["subject", "issuer", "serial", "notBefore", "notAfter"] as const) if (g[k]) signer[k] = g[k]; if (Object.keys(signer).length) s.signer = signer; }
+    const pr = strList(sec.protocols, 24, 80); if (pr?.length) s.protocols = pr;
+    if (str(sec.activeAuthKey)) s.activeAuthKey = str(sec.activeAuthKey)!.slice(0, 80);
+    if (Object.keys(s).length) out.security = s;
+  }
   if (str(r.message)) out.message = str(r.message)!.slice(0, 500);
   return out;
 }

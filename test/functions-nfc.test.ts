@@ -32,7 +32,7 @@ afterAll(() => closeRunner());
 /* -------------------------------------------------------- the SDK surface */
 
 describe("m5.nfc SDK surface", () => {
-  const OPS = ["reader", "enum", "card", "scan", "read", "write", "emulate", "m5", "emv", "eid"];
+  const OPS = ["reader", "enum", "card", "scan", "read", "write", "emulate", "m5", "emv", "eid", "format", "outputs", "document"];
 
   it("the spec has one nfc object with exactly its ops", () => {
     const nfc = SDK_SPEC.find((o) => o.name === "nfc");
@@ -135,6 +135,52 @@ describe("the nfc interaction round-trip", () => {
       expect(v.mrtd.mrzInfo.surname).toBe("ERIKSSON");
       expect(v.mrtd.photo).toBe("QUJD");
     } finally { dev.off(); }
+  }, 30_000);
+
+  it("6.6: m5.nfc.emv.report() reads everything, formats it as HTML and shows it with its files (JS)", async () => {
+    const emv = { scheme: "Visa", aids: ["A0000000031010"], deep: true, apps: [{ aid: "A0000000031010", label: "VISA", scheme: "Visa", pan: "4111111111111111", panMasked: "411111••••••1111", expiry: "2029-12", atc: 7, logSfi: 11,
+      log: [{ date: "2025-09-14", time: "18:30:05", amount: "123.45", currency: "CZK", merchant: "BILLA", raw: "01" }], tags: [{ tag: "5A", name: "Application PAN", value: "4111111111111111", hex: "4111111111111111" }], records: [{ sfi: 1, record: 1, hex: "5A084111111111111111" }] }] };
+    const dev = withDevice(() => ({ status: "ok", card: { uid: "08AABBCC", tech: "emv", label: "EMV" }, emv }));
+    try {
+      const files = { "index.js": "export async function execute(){ const r = await m5.nfc.emv.report({ format: 'html', send: true, deep: true, history: true, maxApps: 2 }); return m5.out.json({ ok: r.ok, format: r.format, history: r.history.length, files: r.files.map((f) => f.name), summary: r.summary, outputs: r.outputs.length }); }" };
+      const r = await runAdhoc({ lang: "js", files, entry: { file: "index.js", fn: "execute" }, inputs: {}, limits: { wallMs: 6000 } }, caller);
+      expect(r.run.error).toBeNull();
+      expect(dev.seen[0]).toMatchObject({ op: "emv-read", args: { deep: true, history: true, maxApps: 2 } });
+      const sent = r.run.outputs as Array<{ type: string; html?: string; name?: string }>;
+      expect(sent.map((o) => o.type)).toEqual(["html", "file", "file", "json"]);
+      expect(sent[0].html).toContain("m5h-report--emv");
+      expect(sent[0].html).toContain("Historie transakcí"); // the caller speaks Czech
+      expect(sent[0].html).not.toContain("4111111111111111");
+      expect(sent.filter((o) => o.type === "file").map((o) => o.name)).toEqual(["emv-history.csv", "emv-records.txt"]);
+      expect((sent[3] as unknown as { value: unknown }).value).toMatchObject({ ok: true, format: "html", history: 1, files: ["emv-history.csv", "emv-records.txt"], outputs: 3 });
+    } finally { dev.off(); }
+  }, 30_000);
+
+  it("6.6: m5.nfc.eid.report() opens with the CAN and gives CSV + the photo (Python)", async () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 0xff, 0xd9]).toString("base64");
+    const dev = withDevice(() => ({ status: "ok", mrtd: { present: true, access: "pace", mrzInfo: { documentCode: "ID", documentNumber: "AB123", surname: "NOVAK", givenNames: "JAN" }, images: [{ group: "DG2", kind: "face", mime: "image/jpeg", data: jpeg, name: "face.jpg" }], raw: [{ name: "EF.SOD.bin", mime: "application/octet-stream", data: "AAEC" }] } }));
+    try {
+      const files = { "index.py": "async def execute(**inputs):\n    r = await m5.nfc.eid.report(can='123456', format='csv', send=True, photo=True, all=True)\n    return m5.out.json({'ok': r['ok'], 'photo': r['photo']['mime'], 'size': len(r['photo']['image']), 'csv': r['result'].splitlines()[0]})\n" };
+      const r = await runAdhoc({ lang: "py", files, entry: { file: "index.py", fn: "execute" }, inputs: {}, limits: { wallMs: 8000 } }, caller);
+      expect(r.run.error).toBeNull();
+      expect(dev.seen[0]).toMatchObject({ op: "mrtd-read", args: { can: "123456", readPhoto: true, all: true } });
+      const sent = r.run.outputs as Array<{ type: string; name?: string; lang?: string; mime?: string }>;
+      expect(sent.map((o) => o.type)).toEqual(["code", "file", "image", "file", "json"]);
+      expect(sent[0].lang).toBe("csv");
+      expect(sent[1].name).toBe("e-id.csv");
+      expect(sent[2].mime).toBe("image/jpeg");
+      expect(sent[3].name).toBe("EF.SOD.bin");
+      expect((sent[4] as unknown as { value: unknown }).value).toEqual({ ok: true, photo: "image/jpeg", size: 8, csv: "section,field,value" });
+    } finally { dev.off(); }
+  }, 30_000);
+
+  it("6.6: m5.nfc.format() turns any read into a report, and m5.out.html is sanitized by the host", async () => {
+    const files = { "index.js": "export async function execute(){ const rep = m5.nfc.format({ status: 'ok', card: { uid: '04AA', tech: 'ntag21x', label: 'NTAG' } }, 'text'); return [m5.out.text(rep.value.split('\\n')[0]), m5.out.html('<h2 onclick=\"x()\">Hi</h2><script>bad()</script><img src=\"https://evil/x.png\"><a href=\"javascript:alert(1)\">a</a>')]; }" };
+    const r = await runAdhoc({ lang: "js", files, entry: { file: "index.js", fn: "execute" }, inputs: {}, limits: { wallMs: 4000 } }, caller);
+    expect(r.run.error).toBeNull();
+    const outs = r.run.outputs as Array<{ type: string; text?: string; html?: string }>;
+    expect(outs[0].text).toBe("NTAG · 04AA");
+    expect(outs[1]).toEqual({ type: "html", html: "<h2>Hi</h2><a>a</a>" });
   }, 30_000);
 
   it("never sends a raw key/PIN in the command, and never returns one", async () => {
@@ -261,13 +307,17 @@ describe("Builder nodes generate m5.nfc.* calls", () => {
   const single = (type: string, lang: "js" | "py") => {
     const flow = F.emptyFlow(lang);
     const n = F.newNode(flow, type, 0, 0);
-    for (const p of F.inputsOf(n)) if (p.required) n.values![p.name] = p.type === "list" ? "[]" : p.type === "json" ? "{}" : "x";
+    for (const p of F.inputsOf(n)) if (p.required) n.values![p.name] = p.type === "list" ? "[]" : p.type === "json" || p.type === "object" ? "{}" : "x";
     flow.nodes.push(n);
     return F.compileFlow(flow).code;
   };
   const cases: Array<[string, string]> = [
     ["nfc.scan", "m5.nfc.scan("], ["nfc.read", "m5.nfc.read("], ["nfc.write", "m5.nfc.write("],
     ["nfc.m5.read", "m5.nfc.m5.read("], ["nfc.m5.build", "m5.nfc.m5.build("], ["nfc.emulate", "m5.nfc.emulate("], ["nfc.enum", "m5.nfc.enum("],
+    // 6.6: the NFC.EMV / NFC.e-ID tools, the report helpers and HTML.
+    ["nfc.emv.report", "m5.nfc.emv.report("], ["nfc.emv.format", "m5.nfc.emv.format("], ["nfc.emv.history", "m5.nfc.emv.history("],
+    ["nfc.eid.report", "m5.nfc.eid.report("], ["nfc.eid.format", "m5.nfc.eid.format("], ["nfc.eid.images", "m5.nfc.eid.images("],
+    ["nfc.format", "m5.nfc.format("], ["nfc.show", "m5.nfc.outputs("], ["out.html", "m5.out.html("],
   ];
 
   it("each NFC node compiles to its call in JavaScript and Python", () => {
@@ -276,6 +326,37 @@ describe("Builder nodes generate m5.nfc.* calls", () => {
       expect(single(type, "py"), `${type} py`).toContain(expected);
     }
   });
+
+  it("6.6: the NFC.EMV and NFC.e-ID tools sit in their own palette groups", () => {
+    expect(F.GROUPS).toEqual(expect.arrayContaining(["NFC", "NFC.EMV", "NFC.e-ID"]));
+    expect(F.NODES.filter((d) => d.group === "NFC.EMV").map((d) => d.type)).toEqual(["nfc.emv.report", "nfc.emv.format", "nfc.emv.history"]);
+    expect(F.NODES.filter((d) => d.group === "NFC.e-ID").map((d) => d.type)).toEqual(["nfc.eid.report", "nfc.eid.format", "nfc.eid.images"]);
+    expect(F.NODE_BY_TYPE["nfc.emv.report"].params!.find((p) => p.name === "format")!.values).toEqual(["html", "object", "array", "json", "text", "csv"]);
+  });
+
+  it("6.6: a flow — e-ID read → its photo → Send image, CSV → Result — runs end to end (Python and JS)", async () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 9, 9, 0xff, 0xd9]).toString("base64");
+    for (const lang of ["py", "js"] as const) {
+      const dev = withDevice(() => ({ status: "ok", mrtd: { present: true, access: "bac", mrzInfo: { documentCode: "P", documentNumber: "X1", surname: "DOE", givenNames: "JANE" }, images: [{ group: "DG2", kind: "face", mime: "image/jpeg", data: jpeg, name: "face.jpg" }] } }));
+      try {
+        const flow = F.emptyFlow(lang);
+        const read = F.newNode(flow, "nfc.eid.report", 0, 0);
+        read.params = { ...read.params, format: "csv", send: false };
+        read.values = { can: "654321" };
+        flow.nodes.push(read);
+        const img = F.newNode(flow, "out.image", 300, 0); flow.nodes.push(img);
+        const ret = F.newNode(flow, "flow.return", 300, 200); flow.nodes.push(ret);
+        flow.edges.push({ id: "e1", from: { node: read.id, port: "photo" }, to: { node: img.id, port: "image" } }, { id: "e2", from: { node: read.id, port: "result" }, to: { node: ret.id, port: "value" } });
+        const c = F.compileFlow(flow);
+        const r = await runAdhoc({ lang, files: { [c.file]: c.code }, entry: { file: c.file, fn: "execute" }, inputs: {}, limits: { wallMs: 8000 } }, caller);
+        expect(r.run.error, lang).toBeNull();
+        expect(dev.seen[0], lang).toMatchObject({ op: "mrtd-read", args: { can: "654321", readPhoto: true, all: true } });
+        const outs = r.run.outputs as Array<{ type: string; mime?: string; data?: string; text?: string }>;
+        expect(outs[0], lang).toMatchObject({ type: "image", mime: "image/jpeg", data: jpeg });
+        expect(String(outs[1].text), lang).toMatch(/^section,field,value/);
+      } finally { dev.off(); }
+    }
+  }, 40_000);
 
   it("read/write map the chosen op and never emit a raw key field", () => {
     const flow = F.emptyFlow("js");

@@ -120,3 +120,43 @@ textarea.fn-input { resize: vertical; }
   .fn-form__field--left { grid-template-columns: 1fr; }
   .fn-form__field--left .fn-form__label { padding-top: 0; }
 }
+
+/* 6.6: formatted HTML (m5.out.html) — the m5h-* report classes, themed. */
+.fn-html { display: flex; flex-direction: column; gap: 0.3rem; max-width: 100%; }
+.fn-html__title { font-weight: 600; font-size: 0.9rem; }
+.fn-html__body { font-size: 0.88rem; line-height: 1.45; overflow-wrap: anywhere; }
+.fn-html__body :is(h1, h2, h3, h4, h5, h6) { margin: 0.6rem 0 0.3rem; line-height: 1.25; }
+.fn-html__body h1 { font-size: 1.25rem; } .fn-html__body h2 { font-size: 1.12rem; } .fn-html__body :is(h3, h4) { font-size: 0.98rem; } .fn-html__body :is(h5, h6) { font-size: 0.9rem; }
+.fn-html__body p { margin: 0.3rem 0; }
+.fn-html__body :is(ul, ol) { margin: 0.3rem 0; padding-left: 1.3rem; }
+.fn-html__body table { border-collapse: collapse; font-size: 0.84rem; }
+.fn-html__body :is(th, td) { padding: 0.2rem 0.5rem; vertical-align: top; text-align: left; }
+.fn-html__body pre, .fn-html__body code { font-family: var(--font-mono); font-size: 0.8rem; }
+.fn-html__body pre { white-space: pre-wrap; word-break: break-all; margin: 0.3rem 0; padding: 0.5rem 0.6rem; border-radius: 0.5rem; background: hsl(var(--muted)); max-height: 22rem; overflow: auto; }
+.fn-html__body a { color: hsl(var(--primary)); text-decoration: underline; }
+.fn-html__body img { max-width: 100%; height: auto; }
+.fn-html__body details > summary { cursor: pointer; font-weight: 600; margin: 0.35rem 0; }
+.m5h-head { margin-bottom: 0.4rem; }
+.m5h-title { font-size: 1.05rem; font-weight: 700; }
+.m5h-sub, .m5h-muted { color: hsl(var(--muted-foreground)); }
+.m5h-sec { margin: 0.55rem 0; }
+.m5h-sec > h4, .m5h-sec > summary { font-size: 0.92rem; font-weight: 650; margin: 0 0 0.3rem; }
+.m5h-kv, .m5h-grid { width: 100%; border-collapse: collapse; }
+.m5h-kv th { color: hsl(var(--muted-foreground)); font-weight: 500; width: 36%; padding: 0.15rem 0.6rem 0.15rem 0; }
+.m5h-kv td { padding: 0.15rem 0; }
+.m5h-kv--mono td, .m5h-mono, .m5h-pre { font-family: var(--font-mono); font-size: 0.78rem; }
+.m5h-grid th { border-bottom: 1px solid hsl(var(--border)); font-weight: 600; white-space: nowrap; }
+.m5h-grid tbody tr:nth-child(even) td { background: hsl(var(--muted) / 0.6); }
+.m5h-scroll { overflow-x: auto; max-width: 100%; }
+.m5h-id { display: flex; gap: 0.8rem; align-items: flex-start; flex-wrap: wrap; }
+.m5h-id > .m5h-kv { flex: 1 1 14rem; width: auto; }
+.m5h-photos { display: flex; gap: 0.7rem; flex-wrap: wrap; }
+.m5h-photo { margin: 0; max-width: 11rem; }
+.m5h-photo img { display: block; max-width: 11rem; max-height: 14rem; border-radius: 0.5rem; border: 1px solid hsl(var(--border)); background: #fff; }
+.m5h-photo figcaption { font-size: 0.75rem; color: hsl(var(--muted-foreground)); margin-top: 0.2rem; }
+.m5h-ph { width: 7.5rem; height: 9rem; display: flex; align-items: center; justify-content: center; border: 1px dashed hsl(var(--border)); border-radius: 0.5rem; color: hsl(var(--muted-foreground)); font-size: 0.8rem; }
+.m5h-badge { display: inline-block; padding: 0 0.4rem; border-radius: 0.6rem; font-size: 0.75rem; vertical-align: middle; }
+.m5h-badge--ok { background: hsl(142 60% 45% / 0.18); color: hsl(142 60% 32%); }
+.m5h-badge--err { background: hsl(0 80% 55% / 0.18); color: hsl(0 70% 42%); }
+.m5h-badge--warn { background: hsl(38 90% 55% / 0.2); color: hsl(30 80% 35%); }
+.m5h-files { margin: 0; padding-left: 1.1rem; }

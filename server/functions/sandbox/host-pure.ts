@@ -8,6 +8,8 @@
 
 import { Buffer } from "node:buffer";
 import { createCipheriv, createDecipheriv, createHash, createHmac, getHashes, hkdfSync, pbkdf2Sync, randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
+import { cardHistory, cardImages, cardReport, cardReportDocument, type CardReportOptions } from "../../../client/src/lib/nfc/card-report";
+import { sanitizeFnHtml } from "../../../client/src/lib/fn-html";
 import { brotliCompressSync, brotliDecompressSync, deflateRawSync, deflateSync, gunzipSync, gzipSync, inflateRawSync, inflateSync, constants as zlib } from "node:zlib";
 
 export class HostError extends Error {
@@ -249,7 +251,19 @@ function aesKey(v: unknown): Buffer {
 
 type Fn = (...args: unknown[]) => unknown;
 
+const reportOpts = (v: unknown): CardReportOptions => {
+  const o = (v && typeof v === "object" && !Array.isArray(v) ? v : {}) as Record<string, unknown>;
+  return { fullPan: o.fullPan === true, attachments: o.attachments !== false, images: o.images !== false, ...(typeof o.lang === "string" ? { lang: o.lang.slice(0, 8) } : {}), ...(typeof o.title === "string" && o.title ? { title: o.title.slice(0, 200) } : {}) };
+};
+
 export const PURE: Record<string, Fn> = {
+  // 6.6: card reports — an NFC read (EMV, e-ID, any card) as html / object / array / json / text / csv,
+  // one formatter for JavaScript and Python (client/src/lib/nfc/card-report.ts).
+  "nfc.report": (input, format, opts) => cardReport(input, String(format ?? "html"), reportOpts(opts)),
+  "nfc.history": (input) => cardHistory(input),
+  "nfc.images": (input) => cardImages(input),
+  "nfc.document": (input, opts) => cardReportDocument(input, reportOpts(opts)),
+  "html.sanitize": (html) => sanitizeFnHtml(String(html ?? "")),
   "codec.b64.enc": (v, url) => bytesOf(v).toString(url ? "base64url" : "base64"),
   "codec.b64.dec": (v) => { if (typeof v !== "string") throw bad("base64 text expected"); return tag(Buffer.from(v, /[-_]/.test(v) ? "base64url" : "base64")); },
   "codec.b32.enc": (v, pad) => base32(bytesOf(v), pad !== false),
