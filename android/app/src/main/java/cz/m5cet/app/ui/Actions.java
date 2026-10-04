@@ -103,6 +103,11 @@ public final class Actions {
                 case "msg.map": case "msg.source": case "msg.open": a.parts.onMessageAction(action, s); break;
                 // 6.2 bubbles: the details (timeline, hide, delete), a header position's map, the attachment's actions, hidden messages
                 case "msg.info": case "msg.mapPreview": case "msg.save": case "msg.share": case "msg.forward": case "msg.showHidden": a.parts.onMessageAction(action, s); break;
+                // 6.10 chat: a quote's tap (the original), a sender's avatar (their room profile), the forward sheet's steps
+                case "msg.quote": a.parts.quote(s); break;
+                case "msg.sender": a.parts.showSender(s); break;
+                case "msg.forwardRoom": a.parts.forwardRoom(s); break;
+                case "msg.forwardTo": a.parts.forwardTo(s); break;
                 // voice
                 case "voice.speak": if (!s.isEmpty()) app.voice.say(s); break;
                 case "voice.stop": app.voice.stopSpeaking(); break;
@@ -164,6 +169,8 @@ public final class Actions {
                 case "profile.open": case "profile.pick": case "profile.clear": case "profile.field": case "profile.sync": case "profile.save": case "profile.public":
                     cz.m5cet.app.ui.parts.ProfileUi.run(a, action, s);
                     break;
+                // 6.10: who sees one item — a menu at its chip
+                case "profile.audience": cz.m5cet.app.ui.parts.ProfileUi.audienceMenu(a, s, source); break;
 
                 // ---- 6.8 the History screen and the phone's call log ----
                 case "calllog.open": case "calllog.refresh": case "calllog.item": case "calllog.call": case "calllog.clear": case "calllog.system":

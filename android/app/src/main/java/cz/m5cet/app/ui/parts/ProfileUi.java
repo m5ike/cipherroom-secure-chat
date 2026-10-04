@@ -32,6 +32,7 @@ import cz.m5cet.app.core.Log;
 import cz.m5cet.app.profile.ProfileCard;
 import cz.m5cet.app.profile.ProfileImages;
 import cz.m5cet.app.profile.Profiles;
+import cz.m5cet.app.profile.WhoSees;
 import cz.m5cet.app.ui.MainActivity;
 import cz.m5cet.app.ui.Ui;
 
@@ -40,6 +41,11 @@ import cz.m5cet.app.ui.Ui;
  * editor's actions and its $profile, the field dialog, the pictures picked
  * for it, and what the People widget and a person's detail show of the
  * profiles members share. The model and the rules are in cz.m5cet.app.profile.
+ *
+ * 6.10: who sees what — the editor's summary ($profile.whoSees) and each
+ * field's audience chip (profile.audience, a menu of the three), the card
+ * on top of Settings ($myProfile), and a sender's sheet ($form.sender: what
+ * they share with the room, from a tap on their avatar).
  */
 public final class ProfileUi {
     private ProfileUi() {}
@@ -62,6 +68,8 @@ public final class ProfileUi {
         listen(a, profiles);
         switch (action) {
             case "profile.open":
+                // 6.10: also from a sheet (my own detail, my own avatar): the sheet goes first.
+                a.parts.closeOverlay();
                 draft = null;
                 msg = "";
                 edit(a, profiles.card());
@@ -204,13 +212,149 @@ public final class ProfileUi {
                 String type = f.optString("type"), value = f.optString("value");
                 fields.put(new JSONObject().put("index", (double) i).put("type", type).put("typeLabel", app.t("pf.type." + type)).put("icon", Profiles.icon(type))
                     .put("label", f.optString("label")).put("value", value).put("audience", f.optString("audience")).put("audIcon", Profiles.audienceIcon(f.optString("audience")))
+                    .put("audLabel", audienceLabel(app, f.optString("audience"))) // 6.10: the field's audience chip
                     .put("invalid", !value.trim().isEmpty() && ProfileCard.cleanValue(type, value).isEmpty()));
             }
             o.put("fields", fields).put("canAdd", in.length() < ProfileCard.FIELDS);
+            // 6.10: who sees what, by name — as the draft stands now.
+            JSONObject sees = WhoSees.summary(draft);
+            o.put("whoSees", new JSONObject().put("public", named(app, draft, sees.optJSONArray("public")))
+                .put("room", named(app, draft, sees.optJSONArray("room"))).put("me", named(app, draft, sees.optJSONArray("me"))));
             String aud = formText(a.form(), "pfPreview");
             JSONObject preview = labelled(app, Profiles.drawn(ProfileCard.viewFor(draft, ProfileCard.isAudience(aud) ? aud : "room")));
             if (preview == null) preview = new JSONObject();
             o.put("preview", preview.put("empty", ProfileCard.isEmptyView(preview)));
+        } catch (JSONException ignored) { }
+        return o;
+    }
+
+    /* ------------------------------------------- 6.10 who sees what */
+
+    /** An audience's name as a chip says it (room members short). */
+    private static String audienceLabel(M5 app, String audience) {
+        String a = ProfileCard.isAudience(audience) ? audience : "me";
+        return app.t("pf.aud." + a + ("room".equals(a) ? ".short" : ""));
+    }
+
+    /** {count, text}: how many items, and their names ("nothing" for none). */
+    private static JSONObject named(M5 app, JSONObject card, JSONArray keys) throws JSONException {
+        List<String> names = new ArrayList<>();
+        JSONArray fields = card.optJSONArray("fields");
+        for (int i = 0; keys != null && i < keys.length(); i++) {
+            String k = keys.optString(i);
+            if (k.startsWith("field:")) {
+                JSONObject f = fields == null ? null : fields.optJSONObject(Integer.parseInt(k.substring(6)));
+                if (f != null) names.add(f.optString("label").isEmpty() ? app.t("pf.type." + f.optString("type")) : f.optString("label"));
+            } else {
+                names.add(app.t("pf." + k));
+            }
+        }
+        return new JSONObject().put("count", (double) names.size()).put("text", names.isEmpty() ? app.t("pf.who.nothing") : android.text.TextUtils.join(", ", names));
+    }
+
+    /**
+     * profile.audience: who sees one item (a field's index, or nickname /
+     * about / avatar / cover) — a menu of the three audiences at the item's
+     * chip, the current one checked.
+     */
+    public static void audienceMenu(MainActivity a, String which, View anchor) {
+        if (draft == null || which == null) return;
+        sync(a);
+        M5 app = a.app();
+        String formKey = baseAudienceKey(which);
+        JSONObject item;
+        if (formKey != null) item = draft.optJSONObject(which);
+        else {
+            int i;
+            try { i = (int) Double.parseDouble(which); } catch (NumberFormatException e) { return; }
+            JSONArray fields = draft.optJSONArray("fields");
+            item = fields == null ? null : fields.optJSONObject(i);
+        }
+        if (item == null) return;
+        JSONObject target = item;
+        String current = item.optString("audience", "me");
+        List<cz.m5cet.app.ui.look.Menus.Item> items = new ArrayList<>();
+        for (String aud : AUDIENCES) {
+            items.add(new cz.m5cet.app.ui.look.Menus.Item(Profiles.audienceIcon(aud), app.t("pf.aud." + aud), false, aud.equals(current), () -> {
+                // The four base items are bound to the form (their switches): set it there, sync() takes it.
+                if (formKey != null) a.form().put(formKey, aud);
+                else try { target.put("audience", aud); } catch (JSONException ignored) { }
+                sync(a);
+                a.refresh();
+            }));
+        }
+        cz.m5cet.app.ui.look.Menus.show(anchor, items);
+    }
+
+    private static String baseAudienceKey(String item) {
+        switch (item) {
+            case "nickname": return "pfNickAud";
+            case "about": return "pfAboutAud";
+            case "avatar": return "pfAvatarAud";
+            case "cover": return "pfCoverAud";
+            default: return null;
+        }
+    }
+
+    /**
+     * $myProfile of Settings (the card on top): my name (the public nickname,
+     * else the username), my photo, and how many items each audience sees.
+     * The card opens in the background the first time (ready then).
+     */
+    public static JSONObject summary(MainActivity a) {
+        M5 app = a.app();
+        Profiles profiles = Profiles.of(app);
+        listen(a, profiles);
+        boolean signedIn = app.account.signedIn();
+        JSONObject card = signedIn ? profiles.card() : null;
+        String user = app.accountName();
+        JSONObject o = new JSONObject();
+        try {
+            String nick = card == null || card.optJSONObject("nickname") == null ? "" : card.optJSONObject("nickname").optString("value");
+            String photo = card == null || card.optJSONObject("avatar") == null ? "" : card.optJSONObject("avatar").optString("value");
+            o.put("signedIn", signedIn).put("ready", card != null).put("nickname", nick).put("photo", photo)
+                .put("name", !nick.isEmpty() ? nick : !user.isEmpty() ? user : app.t("set.user.signedOut"));
+            if (card != null) {
+                JSONObject who = WhoSees.summary(card);
+                o.put("counts", new JSONObject().put("public", (double) who.optJSONArray("public").length())
+                    .put("room", (double) who.optJSONArray("room").length()).put("me", (double) who.optJSONArray("me").length()));
+            }
+        } catch (JSONException ignored) { }
+        return o;
+    }
+
+    /* --------------------------------------------------- 6.10 a sender */
+
+    /**
+     * $form.sender (message.sender): who wrote a message and what they share
+     * with the room — only their room view, checked again (WhoSees.senderView);
+     * for my own message what members see of me. Their name here, the
+     * nickname they share, the username, whether they are still here and a
+     * private message is possible.
+     */
+    public static JSONObject sender(M5 app, RoomSession r, cz.m5cet.app.chat.ChatMessage m) {
+        boolean me = m.mine;
+        boolean function = m.senderId != null && m.senderId.startsWith("function:");
+        JSONObject person = null;
+        if (!me && !function) {
+            JSONArray all = r.peopleScope();
+            for (int i = 0; i < all.length(); i++) if (m.senderId.equals(all.optJSONObject(i).optString("id"))) person = all.optJSONObject(i);
+        }
+        String channel = person == null ? "" : person.optString("channel");
+        JSONObject view = WhoSees.senderView(me || function ? null : r.profileOf(m.senderId), me ? Profiles.of(app).card() : null, me);
+        String name = m.senderName == null || m.senderName.isEmpty() ? "?" : m.senderName;
+        String nick = view == null ? "" : view.optString("nickname");
+        JSONObject o = new JSONObject();
+        try {
+            o.put("id", m.senderId).put("name", name).put("me", me).put("function", function)
+                .put("present", me || person != null && !"closed".equals(channel))
+                .put("canMessage", !me && "open".equals(channel))
+                .put("username", me ? app.accountName() : person == null ? "" : person.optString("username"))
+                .put("title", nick.isEmpty() ? name : nick).put("nickDiffers", !nick.isEmpty() && !nick.equalsIgnoreCase(name))
+                .put("photo", view == null ? "" : view.optString("avatar"))
+                .put("has", view != null);
+            JSONObject drawn = view == null ? null : labelled(app, Profiles.drawn(view));
+            o.put("profile", drawn == null ? new JSONObject().put("fields", new JSONArray()) : drawn);
         } catch (JSONException ignored) { }
         return o;
     }
