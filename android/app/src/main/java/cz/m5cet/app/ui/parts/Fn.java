@@ -92,7 +92,10 @@ final class Fn {
     private Run.Origin origin() {
         M5 app = app();
         RoomSession r = app.rooms.activeSession();
-        return new Run.Origin(r == null ? null : r.label, app.config.deviceId(), app.lang(), TimeZone.getDefault().getID());
+        // 6.7 (audit S21 / V2): the room's blind id (r3.…), never its plain name — the server keys
+        // a model's session by it, and the name is the key derivation's salt.
+        String id = r == null ? "" : r.roomId();
+        return new Run.Origin(id.matches("r3\\.[A-Za-z0-9_-]{16,}") ? id : null, app.config.deviceId(), app.lang(), TimeZone.getDefault().getID());
     }
 
     /** Loads the operator's composer triggers and the account's command list (both cached). */
