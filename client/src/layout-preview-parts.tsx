@@ -76,6 +76,8 @@ function Direct({ id, lang, data }: { id: LayoutId; lang: Lang; data: Record<str
 const USER_INFO: UserInfo = {
   name: "Bob", username: "rychly-orel-2x9d", avatar: "🦊", peerId: "p-0123456789abcdef0123", self: false, connectedForMs: 3_723_000, ip: "203.0.113.9", candidateType: "srflx",
   transport: "p2p-direct", appType: "M5cet web", usesServer: true, sentBytes: 2_345_678, recvBytes: 912, security: "DTLS-SRTP · AES-GCM", fingerprint: "AB:CD:EF:01:23:45",
+  // 6.7: connected, the app in the background for 20 minutes (away) — by the real clock, as the dot reads it.
+  presence: { connected: true, foreground: false, lastSeen: Date.now() - 20 * 60_000 },
 };
 
 const MESSAGE_INFO: MessageInfo = {

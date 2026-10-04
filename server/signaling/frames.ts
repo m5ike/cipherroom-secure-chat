@@ -21,12 +21,14 @@ export type SealedSignal = { sealed: { v: 2; iv: string; ciphertext: string } };
 export type Envelope = Record<string, string | number>;
 
 export type ClientFrame =
-  | { type: "join"; protocol: number; room: string; name: string; peerId?: string; resume?: string; auth?: string; away: boolean; features?: string[] }
+  | { type: "join"; protocol: number; room: string; name: string; peerId?: string; resume?: string; auth?: string; away: boolean; features?: string[]; foreground?: boolean }
   | { type: "auth"; token: string | null; away: boolean }
   | { type: "leave"; away: boolean }
   | { type: "signal"; target: string; payload: SessionDescription | IceCandidate | SealedSignal }
   | { type: "ping"; t: number }
-  | { type: "presence"; away: boolean }
+  // `away`: the page is put aside, cover for me (relay.ts); 6.7 `foreground`:
+  // the app is open in the foreground or not (presence, last seen).
+  | { type: "presence"; away: boolean; foreground?: boolean }
   | { type: "relay"; messageId: string; to: string[]; envelope: Envelope; expiresAt?: number }
   | { type: "relay-ack"; ids: string[] }
   | { type: "receipt"; messageIds: string[]; state: "read" | "delivered"; to?: { peerId?: string; accountId?: string } }
@@ -169,6 +171,8 @@ export function parseFrame(raw: string | Buffer): ClientFrame | FrameError {
         const features = f.features.filter((x): x is string => typeof x === "string" && KNOWN_FEATURES.has(x)).slice(0, 8);
         if (features.length) frame.features = [...new Set(features)];
       }
+      // 6.7: joined with the app in the background (absent: the foreground).
+      if (typeof f.foreground === "boolean") frame.foreground = f.foreground;
       return frame;
     }
     case "auth": {
@@ -186,7 +190,7 @@ export function parseFrame(raw: string | Buffer): ClientFrame | FrameError {
     case "ping":
       return { type: "ping", t: typeof f.t === "number" && Number.isFinite(f.t) ? f.t : Date.now() };
     case "presence":
-      return { type: "presence", away: bool(f.away) };
+      return typeof f.foreground === "boolean" ? { type: "presence", away: bool(f.away), foreground: f.foreground } : { type: "presence", away: bool(f.away) };
     case "relay": {
       const messageId = id(f.messageId);
       const to = ids(f.to, 50);

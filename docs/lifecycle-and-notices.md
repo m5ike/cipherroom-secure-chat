@@ -36,17 +36,19 @@ rovnou zahodit a později postavit znovu. Modul `lifecycle.ts` poslouchá
 
 - uloží se chat (podle zvoleného režimu, viz [`accounts-away.md`](accounts-away.md)),
 - zapamatuje se, jestli **měl** být chat připojený a v jaké místnosti,
-- u **server-enhanced + přihlášeného** uživatele jde na server rámec
-  `{"type":"presence","away":true}` — server od té chvíle zprávy pro tohoto
-  uživatele **přebírá a drží**, i když socket ještě žije (pozastavená
-  stránka nemusí spustit vůbec nic),
-- ostatní v místnosti dostanou `peer-away`.
+- na server jde `{"type":"presence","away":…,"foreground":false}` (6.7: od
+  každého; ostatní v místnosti dostanou `peer-presence` a u člověka se začne
+  počítat „naposledy online"),
+- u **server-enhanced + přihlášeného** uživatele je v něm `away: true` —
+  server od té chvíle zprávy pro tohoto uživatele **přebírá a drží**, i když
+  socket ještě žije (pozastavená stránka nemusí spustit vůbec nic),
+- ostatní v místnosti dostanou `peer-away` (jen u toho přihlášeného).
 
 ### Co se stane při probuzení
 
 - pokud měl být chat připojený a socket nepřežil → znovu se připojí do
   stejné místnosti,
-- pokud socket žije → jde `{"type":"presence","away":false}`, server pošle
+- pokud socket žije → jde `{"type":"presence","away":false,"foreground":true}`, server pošle
   `presence-ack` a hned za ním **všechno, co mezitím nasbíral**
   (`relay-deliver`); klient to dešifruje, potvrdí (`relay-ack`) a odesílatelé
   vidí *doručeno*,

@@ -58,6 +58,11 @@ export function userInfoTree(): LNode {
       ]),
     ]),
     n("panel", { id: "userinfo-grid", name: "Facts", attrs: { class: "userinfo-grid" } }, rows(n, [
+      // 6.7: online / away / far away, and when they were last seen.
+      { id: "presence", label: "{_'presence.state'}", if: "$presence", value: n("area", { id: "userinfo-presence", attrs: { class: "userinfo-presence", "data-testid": "userinfo-presence" } }, [
+        n("area", { id: "userinfo-presence-dot", attrs: { class: "presence-dot presence-dot--{$presence}", "aria-hidden": "true" } }),
+        text("{$presenceLabel} · {$seenText}", { id: "userinfo-presence-text" }),
+      ]) },
       { id: "username", label: "{_'id.username'}", if: "$username", value: n("area", { id: "userinfo-username", attrs: { class: "font-mono", "data-testid": "userinfo-username" }, text: "{$username}" }) },
       { id: "duration", label: "{_'userinfo.duration'}", value: "{$duration}" },
       { id: "ip", label: "{_'userinfo.ip'}", value: "{=$ip || ('userinfo.ip.unknown'|t)}" },
@@ -290,6 +295,9 @@ export const DIALOG_CONTRACTS: Record<DialogId, LayoutContract> = {
       { path: "$avatar", type: "text", description: "Their avatar." },
       { path: "$peerShort", type: "text", description: "The end of their peer id." },
       { path: "$username", type: "text", description: "Their username (account or session)." },
+      { path: "$presence", type: "text", description: "6.7: online, away or far (from when they were last seen); nothing for me." },
+      { path: "$presenceLabel", type: "text", description: "6.7: the presence in words." },
+      { path: "$seenText", type: "text", description: "6.7: “In the app right now” or “Last seen 12 min ago”." },
       { path: "$duration", type: "text", description: "How long they are connected." },
       { path: "$ip", type: "text", description: "Their address (when ICE shows it)." },
       { path: "$candidateType", type: "text", description: "host, srflx, prflx or relay." },

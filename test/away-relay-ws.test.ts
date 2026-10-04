@@ -173,7 +173,8 @@ describe("away relay", () => {
 
     const dave = await join(room, "Dave");
     const carolRef = ref(room, carol.accountId);
-    expect(dave.joined.away).toEqual([{ account: carolRef, accountId: carolRef, name: "Carol", since: expect.any(Number) }]);
+    // 6.7: with when she was last seen (the app open while connected).
+    expect(dave.joined.away).toEqual([{ account: carolRef, accountId: carolRef, name: "Carol", since: expect.any(Number), lastSeen: expect.any(Number) }]);
     await dave.client.close();
   });
 

@@ -14,6 +14,14 @@
 //             sending end, and a signed-in member with away enabled stays
 //             in the room as away (relay.ts)
 //
+// Presence (6.7): a connection that goes without a `leave` (a dropped
+// network, a backgrounded app, a closed tab) is not a goodbye — the member
+// stays in the room's list as held (presence.ts) until they come back with
+// their resume secret, leave on purpose, or the server removes them. Every
+// member carries `foreground` and `lastSeen` (when they last had the app
+// open while connected); a `presence` frame switches foreground, and the
+// room hears it as `peer-presence`. Only the room's own members see it.
+//
 // Identity rules that changed from version 1:
 //   - a peer id already used in the room is not taken over; the joiner gets
 //     a fresh one unless it proves it is the same client (the resume secret
@@ -43,11 +51,13 @@ import type { StorageFrame, StorageSocketState } from "../storage/ws";
 import type { TrustProxyValue } from "../trust-proxy";
 import { isBinaryError, parseBinaryChunk, type BinaryProxyChunk } from "./binary";
 import type { ClusterBus } from "../cluster/bus";
-import { ClusterRooms, type MemberView } from "./cluster";
+import { ClusterRooms, type HeldView, type MemberView } from "./cluster";
 import { isFrameError, KNOWN_FEATURES, MAX_FRAME_BYTES, parseFrame, PROTOCOL_VERSION, type ClientFrame } from "./frames";
 import { ConnectionGate, limitClassOf, LIMITS, PROXY_BYTES, SocketLimiter } from "./limits";
 import { accountRef } from "./refs";
 import { AwayRelay, type RelayPeer } from "./relay";
+import { HeldBook, maxAwayMs, type HeldMember } from "./presence";
+import { seenAt } from "../../client/src/lib/presence";
 
 export type HubClient = RelayPeer & {
   joinedAt: number;
@@ -63,6 +73,11 @@ export type HubClient = RelayPeer & {
   deviceId?: string;
   /** Joined with the "bin" feature: gets file chunks as binary messages. */
   binary?: boolean;
+  /** 6.7: the app is in the foreground, and when it last was (presence). */
+  foreground: boolean;
+  lastSeen: number;
+  /** 6.7: the server ended this connection (kick, the operator): not held. */
+  removed?: boolean;
 };
 
 type PushFn = (target: PushTarget, payload: { title: string; body: string; url: string; tag: string; kind?: string }) => Promise<{ ok: boolean; error?: string }>;
@@ -82,6 +97,8 @@ export type HubOptions = {
   path?: string;
   heartbeatMs?: number;
   gate?: ConnectionGate;
+  /** 6.7: how long a held member stays listed (default PRESENCE_MAX_AWAY_DAYS; 0 = for ever). */
+  maxAwayMs?: number;
 };
 
 /** Beyond this, a slow receiver gets no more file chunks (it asks again later). */
@@ -154,6 +171,9 @@ export class SignalingHub {
   readonly relay: AwayRelay;
   readonly proxy = new FileProxy();
   readonly gate: ConnectionGate;
+  /** 6.7: members whose connection went without a goodbye. */
+  readonly held = new HeldBook();
+  private readonly maxAwayMs: number;
   private readonly clients = new Map<string, HubClient>();
   private readonly wss: WebSocketServer;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
@@ -165,6 +185,7 @@ export class SignalingHub {
   constructor(private readonly opts: HubOptions) {
     this.path = opts.path ?? "/ws";
     this.gate = opts.gate ?? ConnectionGate.fromEnv();
+    this.maxAwayMs = opts.maxAwayMs ?? maxAwayMs();
     this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES, perMessageDeflate: false });
     this.relay = new AwayRelay(
       opts.accounts,
@@ -188,9 +209,15 @@ export class SignalingHub {
     this.opts.accounts.shareDisk();
     const cluster = new ClusterRooms(bus, {
       localRooms: () => [...this.rooms].map(([room, members]) => ({ room, members: [...members.values()].map((m) => this.memberView(m)) })),
-      joined: (room, m) => this.broadcast(room, { type: "peer-joined", ...this.publicView(room, m) }),
+      joined: (room, m) => {
+        // Back on another instance: our copy of the held member goes (6.7).
+        this.held.take(room, m.peerId);
+        this.broadcast(room, { type: "peer-joined", ...this.publicView(room, m) });
+      },
       updated: (room, m) => this.broadcast(room, { type: "peer-updated", peerId: m.peerId, name: m.name, ...(m.accountId ? this.refFields(room, m.accountId) : { account: null, accountId: null }) }),
       toLocal: (room, payload, except) => {
+        // Gone for good elsewhere (the operator): our held copy goes too (6.7).
+        if (payload.type === "peer-left" && !payload.held && typeof payload.peerId === "string") this.held.take(room, payload.peerId);
         for (const peer of this.members(room)) if (peer.id !== except) this.send(peer.socket, payload, peer);
       },
       chunkToLocal: (room, raw, json, except) => {
@@ -214,6 +241,16 @@ export class SignalingHub {
       },
       revoke: (accountId, hash, reason) => this.onRevoke(accountId, hash, reason as Parameters<SignalingHub["onRevoke"]>[2], true),
       away: (room, accountId, entry) => this.relay.applyRemoteAway(room, accountId, entry),
+      left: (room, peerId, held) => {
+        if (!held) {
+          this.held.take(room, peerId);
+          this.broadcast(room, { type: "peer-left", peerId });
+          return;
+        }
+        const member: HeldMember = { peerId, ...held, remote: true };
+        this.held.hold(room, member);
+        this.broadcast(room, this.heldFrame(room, member));
+      },
     });
     this.relay.cluster = {
       broadcast: (room, payload, except) => cluster.broadcast(room, payload, except),
@@ -230,12 +267,76 @@ export class SignalingHub {
       ...(peer.accountId ? { accountId: peer.accountId } : {}),
       ...(peer.resumeHash ? { resumeHash: peer.resumeHash } : {}),
       ...(peer.binary ? { binary: true } : {}),
+      foreground: peer.foreground, lastSeen: peer.lastSeen,
     };
   }
 
   /** What a client learns about a member: account ids become room-scoped references. */
   private publicView(room: string, m: MemberView) {
-    return { peerId: m.peerId, name: m.name, joinedAt: m.joinedAt, ...(m.accountId ? this.refFields(room, m.accountId) : {}) };
+    const foreground = m.foreground !== false;
+    return {
+      peerId: m.peerId, name: m.name, joinedAt: m.joinedAt, ...(m.accountId ? this.refFields(room, m.accountId) : {}),
+      foreground, lastSeen: seenAt({ connected: true, foreground, lastSeen: m.lastSeen ?? 0 }, Date.now()),
+    };
+  }
+
+  /* -------------------------------------------------------- presence (6.7) */
+
+  /** A held member as the room sees it (`joined.held`, and the held `peer-left`). */
+  private heldView(room: string, h: HeldMember) {
+    return { peerId: h.peerId, name: h.name, joinedAt: h.joinedAt, lastSeen: h.lastSeen, since: h.since, ...(h.accountId ? this.refFields(room, h.accountId) : {}) };
+  }
+
+  /** The member's connection went, they did not leave: listed as away until they come back. */
+  private heldFrame(room: string, h: HeldMember) {
+    return { type: "peer-left", held: true, ...this.heldView(room, h) };
+  }
+
+  /** What other instances keep of a held member (cluster.ts). */
+  private heldForCluster(h: HeldMember): HeldView {
+    return {
+      name: h.name, joinedAt: h.joinedAt, lastSeen: h.lastSeen, since: h.since,
+      ...(h.accountId ? { accountId: h.accountId } : {}), ...(h.resumeHash ? { resumeHash: h.resumeHash } : {}), ...(h.tokenHash ? { tokenHash: h.tokenHash } : {}),
+    };
+  }
+
+  /** A held member is gone for good: the room forgets them (`everywhere`: on every instance). */
+  private forgetHeld(room: string, peerId: string, everywhere: boolean): boolean {
+    if (!this.held.take(room, peerId)) return false;
+    if (everywhere) this.broadcastAll(room, { type: "peer-left", peerId });
+    else this.broadcast(room, { type: "peer-left", peerId });
+    return true;
+  }
+
+  /** The app went to the background, or came back to the foreground. */
+  private setForeground(client: HubClient, foreground: boolean): void {
+    const now = Date.now();
+    if (client.foreground === foreground) {
+      if (foreground) client.lastSeen = now;
+      return;
+    }
+    // Either way they had the app open until (or from) now.
+    client.foreground = foreground;
+    client.lastSeen = now;
+    const room = client.room;
+    if (!room) return;
+    this.broadcastAll(room, { type: "peer-presence", peerId: client.id, foreground, lastSeen: now }, client);
+    this.cluster?.update(room, this.memberView(client));
+  }
+
+  /** A signed-in member came back on another connection: held entries of the same account in the room go. */
+  private dropHeldOfAccount(room: string, accountId: string, except: string): void {
+    for (const h of this.held.list(room)) if (h.accountId === accountId && h.peerId !== except) this.forgetHeld(room, h.peerId, true);
+  }
+
+  /** Held members listed longer than the operator allows go (PRESENCE_MAX_AWAY_DAYS). Every instance sweeps its own copies. */
+  sweepHeld(now = Date.now()): number {
+    const gone = this.held.expire(now, this.maxAwayMs);
+    for (const { room, member } of gone) {
+      this.broadcast(room, { type: "peer-left", peerId: member.peerId });
+      if (!member.remote) audit.add({ category: "communication", event: "room.held-expired", peerId: member.peerId, accountId: member.accountId, roomHash: hashRoom(room) });
+    }
+    return gone.length;
   }
 
   /** A frame for the room on this instance and on the others. */
@@ -353,6 +454,8 @@ export class SignalingHub {
       storage: this.opts.newStorageState(ip),
       alive: true,
       closed: false,
+      foreground: true,
+      lastSeen: Date.now(),
     };
     this.clients.set(client.connId, client);
     this.socketIndex.set(socket, client);
@@ -384,17 +487,20 @@ export class SignalingHub {
     this.gate.release(client.ip);
     this.relay.release(client);
     this.endTransfersOf(client);
-    // Losing the socket is not a goodbye: a signed-in member with away
-    // enabled stays reachable through the relay.
-    this.leaveRoom(client, true);
+    if (client.foreground) client.lastSeen = Date.now();
+    // Losing the socket is not a goodbye: the member stays in the room as
+    // held (6.7) unless the server ended the connection, and a signed-in
+    // member with away enabled stays reachable through the relay.
+    this.leaveRoom(client, true, false, !client.removed);
     const info = traffic.closeConnection(client.connId);
     if (code !== 1000 && code !== 1001 && code !== 1005) {
       audit.add({ category: "network", level: "debug", event: "ws.closed", peerId: client.id, ip: truncateIp(client.ip), status: String(code), detail: info ? { frames: info.framesIn + info.framesOut, bytes: info.bytesIn + info.bytesOut } : undefined });
     }
   }
 
-  /** Pings every socket; one that did not answer the last ping is gone. */
+  /** Pings every socket; one that did not answer the last ping is gone. Held members past their time go. */
   private beat(): void {
+    this.sweepHeld();
     for (const client of this.clients.values()) {
       if (!client.alive) {
         audit.add({ category: "network", level: "debug", event: "ws.heartbeat-timeout", peerId: client.id, ip: truncateIp(client.ip) });
@@ -474,6 +580,7 @@ export class SignalingHub {
 
   private kick(client: HubClient, reason: string): void {
     audit.add({ category: "security", level: "warn", event: "ws.kicked", peerId: client.id, accountId: client.accountId, ip: truncateIp(client.ip), status: reason });
+    client.removed = true; // removed by the server: not held (6.7)
     try { client.socket.close(1008, reason); } catch { /* ignore */ }
   }
 
@@ -487,6 +594,9 @@ export class SignalingHub {
         this.send(client.socket, { type: "pong", t: frame.t, serverTs: Date.now() }, client);
         return;
       case "presence": {
+        // 6.7: foreground or not (clients before 6.7 only said away); first,
+        // so the relay's away entry carries the right "last seen".
+        this.setForeground(client, frame.foreground ?? !frame.away);
         const away = this.relay.setPresence(client, frame.away);
         traffic.updateConnection(client.connId, { away: frame.away });
         this.send(client.socket, { type: "presence-ack", away }, client);
@@ -545,8 +655,9 @@ export class SignalingHub {
     const record = roomRegistry.get(hash);
     if (record?.maxMembers) {
       const here = this.rooms.get(room);
-      const count = (here?.size ?? 0) + (this.cluster?.members(room).length ?? 0);
-      const returning = Boolean(frame.peerId && here?.has(frame.peerId));
+      // 6.7: held members are still members; one of them coming back is not a newcomer.
+      const count = (here?.size ?? 0) + (this.cluster?.members(room).length ?? 0) + this.held.count(room);
+      const returning = Boolean(frame.peerId && (here?.has(frame.peerId) || this.held.get(room, frame.peerId)));
       if (count >= record.maxMembers && !returning) {
         audit.add({ category: "communication", level: "notice", event: "join.room-full", peerId: client.id, roomHash: hash, detail: { max: record.maxMembers } });
         return this.error(client, "room-full", `This room takes at most ${record.maxMembers} people.`, { max: record.maxMembers });
@@ -560,7 +671,19 @@ export class SignalingHub {
     const wanted = frame.peerId;
     let peerId = client.id;
     const remoteHolder = wanted ? this.cluster?.member(room, wanted) : undefined;
-    if (wanted && remoteHolder && !members.has(wanted)) {
+    const heldHolder = wanted && !members.has(wanted) ? this.held.get(room, wanted) : undefined;
+    /** 6.7: the held member this client is (it proved it with the resume secret). */
+    let resumed: HeldMember | null = null;
+    if (wanted && heldHolder) {
+      // Away, not gone: the id is theirs — only the same client takes it back.
+      const held = Buffer.from(heldHolder.resumeHash ?? "", "base64url");
+      if (frame.resume && held.length === 32 && timingSafeEqual(sha(frame.resume), held)) {
+        peerId = wanted;
+        resumed = this.held.take(room, wanted);
+      } else {
+        audit.add({ category: "security", level: "notice", event: "join.peer-id-taken", peerId: wanted, roomHash: hashRoom(room), ip: truncateIp(client.ip) });
+      }
+    } else if (wanted && remoteHolder && !members.has(wanted)) {
       // Held on another instance: only the same client (resume secret) takes it over.
       const held = Buffer.from(remoteHolder.resumeHash ?? "", "base64url");
       if (frame.resume && held.length === 32 && timingSafeEqual(sha(frame.resume), held)) {
@@ -589,11 +712,21 @@ export class SignalingHub {
     const account = this.resolveAccount(client, frame.auth ?? null, frame.away);
     client.room = room;
 
+    // 6.7: presence. In the foreground: seen now. In the background: when
+    // they were last seen — as the held entry or the relay remembers it.
+    const now = Date.now();
+    client.foreground = frame.foreground !== false;
+    client.lastSeen = client.foreground ? now : resumed?.lastSeen ?? (account ? this.relay.lastSeenOf(account, room) : undefined) ?? now;
+    // The same account back on another connection: no second entry for it.
+    if (account) this.dropHeldOfAccount(room, account, client.id);
+
     const view = (peer: HubClient) => ({
       peerId: peer.id,
       name: peer.name,
       joinedAt: peer.joinedAt,
       ...(peer.accountId ? this.refFields(room, peer.accountId) : {}),
+      foreground: peer.foreground,
+      lastSeen: seenAt({ connected: true, foreground: peer.foreground, lastSeen: peer.lastSeen }, now),
     });
     const existing = [...members.values()].map(view);
     for (const m of this.cluster?.members(room) ?? []) if (m.peerId !== client.id) existing.push(this.publicView(room, m));
@@ -609,6 +742,8 @@ export class SignalingHub {
       peers: existing,
       // Signed-in members who are away: messages to them go through the relay.
       away: this.relay.awayList(room, client.accountId).map((a) => ({ ...a, accountId: a.account })),
+      // 6.7: members whose connection went without a goodbye: listed as away.
+      held: this.held.list(room).filter((h) => h.peerId !== client.id).map((h) => this.heldView(room, h)),
       account: account
         ? { ...this.refFields(room, account), away: Boolean(client.awayEnabled) }
         : frame.auth ? { invalid: true } : null,
@@ -658,6 +793,7 @@ export class SignalingHub {
       if (room && accountId) this.relay.onJoin(client);
       return;
     }
+    if (accountId) this.dropHeldOfAccount(room, accountId, client.id);
     this.broadcast(room, { type: "peer-updated", peerId: client.id, name: client.name, ...(accountId ? this.refFields(room, accountId) : { account: null, accountId: null }) }, client);
     this.cluster?.update(room, this.memberView(client));
     if (accountId) this.relay.onJoin(client);
@@ -665,15 +801,27 @@ export class SignalingHub {
   }
 
   /** `wantsAway`: a signed-in member with away enabled stays in the room as
-   *  away instead of leaving. `quiet`: the same peer is coming right back. */
-  private leaveRoom(client: HubClient, wantsAway: boolean, quiet = false): void {
+   *  away instead of leaving. `quiet`: the same peer is coming right back.
+   *  6.7 `hold`: the connection went without a goodbye — the member stays
+   *  listed as away (held) until they come back or the server removes them. */
+  private leaveRoom(client: HubClient, wantsAway: boolean, quiet = false, hold = false): void {
     const room = client.room;
     if (!room) return;
     const members = this.rooms.get(room);
     if (members?.get(client.id) === client) members.delete(client.id);
     client.room = null;
     if (members && members.size === 0) this.rooms.delete(room);
-    if (!quiet) {
+    if (!quiet && hold) {
+      const member: HeldMember = {
+        peerId: client.id, name: client.name, joinedAt: client.joinedAt, lastSeen: client.lastSeen, since: Date.now(),
+        ...(client.accountId ? { accountId: client.accountId } : {}), ...(client.tokenHash ? { tokenHash: client.tokenHash } : {}),
+        ...(client.resumeHash ? { resumeHash: client.resumeHash } : {}),
+      };
+      // Pushed out by the limits (the oldest held members): gone for good.
+      for (const old of this.held.hold(room, member)) this.broadcastAll(old.room, { type: "peer-left", peerId: old.member.peerId });
+      this.broadcast(room, this.heldFrame(room, member));
+      this.cluster?.leave(room, client.id, this.heldForCluster(member));
+    } else if (!quiet) {
       this.broadcast(room, { type: "peer-left", peerId: client.id });
       this.cluster?.leave(room, client.id);
     }
@@ -770,6 +918,11 @@ export class SignalingHub {
       this.send(client.socket, { type: "account-revoked", reason }, client);
       if (client.room) this.broadcast(client.room, { type: "peer-updated", peerId: client.id, name: client.name, account: null, accountId: null }, client);
     }
+    // 6.7: held entries of the ended session (all of the account's when it signed out everywhere) go.
+    // Every instance does this with its own copies, so the room hears it from each one once.
+    for (const { room, member } of this.held.ofAccount(accountId)) {
+      if (hash === null || member.tokenHash === hash) this.forgetHeld(room, member.peerId, false);
+    }
     if (hash === null) this.relay.forget(accountId, !remote);
     if (remote) return;
     audit.add({ category: "account", level: "notice", event: "session.revoked", accountId, status: reason, detail: { scope: hash === null ? "all" : "one" } });
@@ -802,6 +955,7 @@ export class SignalingHub {
     const client = this.clients.get(connId);
     if (!client) return false;
     audit.add({ category: "admin", level: "notice", event: "ws.closed-by-admin", peerId: client.id, accountId: client.accountId, status: reason.slice(0, 80) });
+    client.removed = true; // the operator ended it: not held (6.7)
     this.send(client.socket, { type: "closed-by-server", reason: reason.slice(0, 120) }, client);
     try { client.socket.close(4003, reason.slice(0, 100)); } catch { /* ignore */ }
     return true;
@@ -812,6 +966,8 @@ export class SignalingHub {
   /** The room whose hash this is, among the rooms open on this instance. */
   private roomOfHash(hash: string): string | null {
     for (const room of this.rooms.keys()) if (hashRoom(room) === hash) return room;
+    // 6.7: a room where everybody is away (held) is still a room.
+    for (const room of this.held.roomNames()) if (hashRoom(room) === hash) return room;
     return null;
   }
 
@@ -855,9 +1011,15 @@ export class SignalingHub {
     let n = 0;
     for (const peer of this.matching(room, target)) {
       this.send(peer.socket, { type: "closed-by-server", reason: reason.slice(0, 120) }, peer);
+      peer.removed = true;
       this.leaveRoom(peer, false);
       try { peer.socket.close(4003, reason.slice(0, 100)); } catch { /* ignore */ }
       n += 1;
+    }
+    // 6.7: members who are away (held) go as well — on every instance.
+    for (const h of this.held.list(room)) {
+      if (target && !memberMatches({ id: h.peerId, accountId: h.accountId, name: h.name }, target)) continue;
+      if (this.forgetHeld(room, h.peerId, true)) n += 1;
     }
     audit.add({ category: "admin", level: "notice", event: "room.disconnect", roomHash: hash, status: `${n}`, detail: { reason: reason.slice(0, 80) } });
     return n;
@@ -888,14 +1050,18 @@ export class SignalingHub {
 
   /** What the operator console shows for rooms. Room names are not shown. */
   snapshot() {
-    return [...this.rooms.entries()].map(([room, members]) => ({
+    const names = new Set([...this.rooms.keys(), ...this.held.roomNames()]);
+    return [...names].map((room) => ({
       room: hashRoom(room) ?? "",
       roomHash: hashRoom(room) ?? "",
-      peers: [...members.values()].map((p) => ({
+      peers: [...(this.rooms.get(room)?.values() ?? [])].map((p) => ({
         peerId: p.id, name: p.name, joinedAt: p.joinedAt, connId: p.connId, protocol: p.protocol,
         ...(p.accountId ? { accountId: p.accountId } : {}), away: Boolean(p.suspended),
+        foreground: p.foreground, lastSeen: p.foreground ? Date.now() : p.lastSeen,
       })),
       away: this.relay.awayAccounts(room),
+      // 6.7: connection gone, not left.
+      held: this.held.list(room).map((h) => ({ peerId: h.peerId, name: h.name, joinedAt: h.joinedAt, lastSeen: h.lastSeen, since: h.since, ...(h.accountId ? { accountId: h.accountId } : {}) })),
     }));
   }
 
@@ -903,7 +1069,7 @@ export class SignalingHub {
     let members = 0;
     for (const m of this.rooms.values()) members += m.size;
     return {
-      connections: this.clients.size, rooms: this.rooms.size, members, gate: this.gate.stats(), relay: this.relay.stats(), proxy: this.proxy.stats(),
+      connections: this.clients.size, rooms: this.rooms.size, members, held: this.held.total(), gate: this.gate.stats(), relay: this.relay.stats(), proxy: this.proxy.stats(),
       cluster: this.cluster ? { ...this.cluster.bus.status(), instances: this.cluster.instances() } : { kind: "local" as const, instances: [] },
     };
   }

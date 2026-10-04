@@ -139,6 +139,60 @@ značka stavu: hodiny (podrženo) → fajfka (odesláno) → dvojitá fajfka
 (doručeno) → modrá dvojitá fajfka (přečteno). Detail s časy je v okně
 informací o zprávě.
 
+## 4. Přítomnost a „naposledy online" (6.7)
+
+Kdo neklikl **Odpojit**, zůstává v seznamu lidí v místnosti — i když mu
+spadla síť, zavřel kartu, prohlížeč kartu uspal nebo Android aplikaci poslal
+do pozadí. Ostatní ho vidí s barevnou tečkou:
+
+| Tečka | Kdy |
+| --- | --- |
+| zelená (online) | připojen s aplikací v popředí, nebo naposledy viděn ≤ 5 min |
+| žlutá (pryč) | naposledy viděn před 5–60 min |
+| oranžová (dlouho pryč) | naposledy viděn před víc než hodinou |
+
+Prahy jsou na jednom místě (`client/src/lib/presence.ts`, používá je server
+i web; Android má kopii v `contacts/LastSeen.java`).
+
+- **lastSeen** = kdy měl člen naposledy aplikaci otevřenou (v popředí)
+  a byl připojený. Klient posílá `presence {away, foreground}` — web při
+  uspání / probuzení stránky (`lib/lifecycle.ts`, včetně místností na pozadí),
+  Android při přechodu aplikace do pozadí a zpět; změny bližší než ~6 s se
+  sloučí (jde jen poslední), ať klient nenarazí na limit serveru (10 naráz,
+  pak 1 za 5 s) — hned jde jen uspání, po kterém už stránka nemusí běžet,
+  a návrat, když server mezitím držel zprávy (`away`).
+  Server změnu pošle
+  členům té místnosti jako `peer-presence {peerId, foreground, lastSeen}`.
+- **Spadlé spojení** (bez `leave`): server člena drží (`server/signaling/presence.ts`),
+  místnost dostane `peer-left` s `held: true` a nově příchozí ho najdou
+  v `joined.held`. Vrátí-li se klient s tajemstvím `resume` z posledního
+  `joined`, je to týž člen (stejné `peerId`) — web drží tajemství v šifrované
+  session cache karty (přežije reload), Android v trezoru (přežije ukončení
+  procesu). Cizí klient bez tajemství `peerId` drženého člena nedostane.
+  Přihlášený člen, který přijde znovu (i bez tajemství), svůj starý záznam
+  nahradí — žádný dvojník.
+- **Ze seznamu zmizí** po `leave` (tlačítko Odpojit), po odpojení operátorem
+  (člen i celá místnost, i když jsou všichni jen drženi), po zrušení relace
+  účtu, po vyhazovu serverem (limity) a po `PRESENCE_MAX_AWAY_DAYS` dnech bez
+  návratu (výchozí **7**, desetinná čísla jdou, **0 = nikdy**; kontroluje se
+  s heartbeatem každých 30 s). Na webu ani hodina bez aktivity — konec session
+  cache s klíčem místnosti — člena z místnosti neodhlásí (odchází bez `leave`).
+- **Relay** zůstává, jak byl: přihlášený člen se zapnutým away dál dostává
+  zprávy přes schránku; jeho záznam `peer-away` nese i `lastSeen` a ukládá se
+  s účtem (`away[].lastSeen` v `accounts.json`), takže přežije restart. Klienti
+  takového člena ukážou jednou (záznam relaye má přednost před drženým
+  záznamem téhož účtu). Pro hosta bez účtu server zprávy nedrží — jen ho vede
+  jako pryč; po návratu se WebRTC spojí znovu.
+- **Soukromí**: `foreground`, `lastSeen` i držené členy vidí jen členové téže
+  místnosti (stejně jako člena samotného); jiné místnosti se nic nepošle.
+  Server se o obsahu zpráv nic nového nedozví.
+- Držené členy má server **v paměti**: restart zapomene hosty (klienti se
+  připojí znovu), přihlášené pokryté relayem obnoví z účtů. V clusteru drží
+  kopii každá instance (zpráva `leave` s `held`) a návrat jde na kteroukoli;
+  nově spuštěná instance o dříve držených neví.
+- Konzole: `snapshot()` místností ukazuje u členů `foreground` / `lastSeen`
+  a seznam `held`; `stats()` počet držených.
+
 ## Retence
 
 Nedoručené položky schránky mizí po `RELAY_RETENTION_DAYS` (výchozí 30),

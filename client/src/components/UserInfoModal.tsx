@@ -13,6 +13,9 @@ import { safetyNumber } from "../lib/identity";
 import { t, type Lang } from "../lib/i18n";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
+import type { PresenceFacts } from "../lib/presence";
+import { presenceView, usePresenceClock } from "../lib/presence-book";
+import "../presence.css";
 
 export type UserInfo = {
   /** The nickname shown in the room. */
@@ -32,6 +35,8 @@ export type UserInfo = {
   recvBytes: number;
   security: string;
   fingerprint?: string;
+  /** 6.7: foreground / last seen (lib/presence.ts) — the status and "last seen …". */
+  presence?: PresenceFacts;
   /** 3.1: both device keys, to compare safety numbers; and what can be done. */
   safety?: {
     mine: string;
@@ -103,9 +108,12 @@ export function UserInfoView({ info, lang }: { info: UserInfo; lang: Lang }) {
   }, [safety?.mine, safety?.theirs]); // eslint-disable-line react-hooks/exhaustive-deps
   const canScan = typeof window !== "undefined" && "BarcodeDetector" in window && Boolean(navigator.mediaDevices?.getUserMedia);
   const digits = number.replace(/\s/g, "");
+  const now = usePresenceClock();
+  const seen = info.presence && !info.self ? presenceView(info.presence, now, lang) : { presence: "", presenceLabel: "", seenText: "" };
   return renderLayout(tree, {
     ...base,
     data: {
+      ...seen,
       name: info.name, avatar: info.avatar, peerShort: info.peerId.slice(-16), username: info.username, duration: dur(info.connectedForMs, lang),
       ip: info.ip, candidateType: info.candidateType, transport: info.transport, appType: info.appType, usesServer: info.usesServer,
       sent: bytes(info.sentBytes), recv: bytes(info.recvBytes), security: info.security, fingerprint: info.fingerprint,

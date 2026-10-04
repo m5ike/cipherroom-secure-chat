@@ -142,9 +142,12 @@ final class UserPanel extends FrameLayout implements Renderer.Slot {
             boolean shown = isAttachedToWindow() && getVisibility() == VISIBLE && (revealed || !state().optBoolean("autoHide"));
             if (!isAttachedToWindow() || getVisibility() != VISIBLE) { ticking = false; return; }
             if (shown && r != null) r.refreshStats(() -> post(UserPanel.this::refreshSoon));
+            // 6.7: the status dots change colour as minutes pass — also with nobody's connection to read.
+            if (shown && ++presenceTicks % 10 == 0) refreshSoon();
             postDelayed(this, 3000);
         }
     };
+    private int presenceTicks = 0;
 
     /** One rebind for the readings that arrive together (the panel stays where it is, mid-slide too). */
     private void refreshSoon() {

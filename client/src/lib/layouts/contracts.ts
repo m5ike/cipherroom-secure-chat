@@ -211,7 +211,7 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
       { path: "$accent", type: "text", description: "The colour the user picked." },
       { path: "$accentValue", type: "text", description: "The colour for a colour input." },
       { path: "$hasPeers", type: "yes/no", description: "Anybody here." },
-      { path: "$peers", type: "list", description: "People: .id, .name, .avatar, .status, .away, .online, .reachable, .checked, .disabled, .tone, .rttTitle, .bars (.on, .height)." },
+      { path: "$peers", type: "list", description: "People: .id, .name, .avatar, .status, .away, .online, .reachable, .checked, .disabled, .tone, .rttTitle, .bars (.on, .height); 6.7: .presence (online, away or far — for the status dot), .presenceLabel, .seenText (“Last seen 12 min ago”)." },
     ],
     actions: [
       { name: "startDrag", description: "Start moving the panel (pointer down on the head): a docked one undocks, dropped near an edge it docks there.", event: "pointerdown" },

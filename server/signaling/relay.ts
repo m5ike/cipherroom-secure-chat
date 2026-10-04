@@ -40,6 +40,8 @@ export type RelayPeer = {
   awayEnabled?: boolean;
   /** This socket's page is suspended (presence: away). */
   suspended?: boolean;
+  /** 6.7: when the member last had the app open while connected (presence). */
+  lastSeen?: number;
   /** Queue items handed to this socket and not yet acknowledged. */
   leased?: Set<string>;
 };
@@ -48,7 +50,8 @@ type Rooms = Map<string, Map<string, RelayPeer>>;
 type SendFn = (socket: WebSocket, payload: unknown) => boolean;
 type PushFn = (target: PushTarget, payload: { title: string; body: string; url: string; tag: string; kind?: string }) => Promise<{ ok: boolean; error?: string }>;
 
-type AwayEntry = { name: string; since: number };
+/** 6.7: `lastSeen` — when they last had the app open (the room shows how long ago). */
+type AwayEntry = { name: string; since: number; lastSeen?: number };
 
 /** Other instances (signaling/cluster.ts): away notices reach their sockets
  *  too, and the away state is the same everywhere. */
@@ -116,16 +119,17 @@ export class AwayRelay {
     return this.awayByRoom.get(room)?.has(accountId) ?? false;
   }
 
-  private setAway(accountId: string, room: string, name: string): boolean {
+  private setAway(accountId: string, room: string, name: string, seen?: number): boolean {
     let map = this.awayByRoom.get(room);
     if (!map) { map = new Map(); this.awayByRoom.set(room, map); }
     if (map.has(accountId)) return false;
     const since = this.now();
-    map.set(accountId, { name, since });
-    this.cluster?.away(room, accountId, { name, since });
-    this.accounts.noteAway(accountId, room, name, since);
+    const lastSeen = seen && seen <= since ? seen : since;
+    map.set(accountId, { name, since, lastSeen });
+    this.cluster?.away(room, accountId, { name, since, lastSeen });
+    this.accounts.noteAway(accountId, room, name, since, lastSeen);
     this.accounts.addAudit(accountId, "away", { room: hashRoom(room) ?? "" });
-    this.broadcast(room, { type: "peer-away", ...this.refs(room, accountId), name, since });
+    this.broadcast(room, { type: "peer-away", ...this.refs(room, accountId), name, since, lastSeen });
     audit.add({ category: "account", event: "relay.away", accountId, roomHash: hashRoom(room) });
     return true;
   }
@@ -143,13 +147,19 @@ export class AwayRelay {
   }
 
   /** Away members to list in the `joined` frame. */
-  awayList(room: string, viewer?: string): Array<{ account: string; name: string; since: number }> {
-    const out: Array<{ account: string; name: string; since: number }> = [];
+  awayList(room: string, viewer?: string): Array<{ account: string; name: string; since: number; lastSeen: number }> {
+    const out: Array<{ account: string; name: string; since: number; lastSeen: number }> = [];
     for (const [accountId, entry] of this.awayByRoom.get(room) ?? []) {
       if (accountId === viewer) continue;
-      out.push({ account: this.ref(room, accountId), name: entry.name, since: entry.since });
+      out.push({ account: this.ref(room, accountId), name: entry.name, since: entry.since, lastSeen: entry.lastSeen ?? entry.since });
     }
     return out;
+  }
+
+  /** 6.7: when an away member was last seen in the room (undefined when not away). */
+  lastSeenOf(accountId: string, room: string): number | undefined {
+    const entry = this.awayByRoom.get(room)?.get(accountId);
+    return entry ? entry.lastSeen ?? entry.since : undefined;
   }
 
   /** Away members with their real account ids — for the operator only. */
@@ -161,11 +171,11 @@ export class AwayRelay {
   }
 
   /** Restores away state after a restart (from the account store). */
-  restore(entries: Array<{ accountId: string; room: string; name: string; since: number }>): void {
+  restore(entries: Array<{ accountId: string; room: string; name: string; since: number; lastSeen?: number }>): void {
     for (const e of entries) {
       let map = this.awayByRoom.get(e.room);
       if (!map) { map = new Map(); this.awayByRoom.set(e.room, map); }
-      map.set(e.accountId, { name: e.name, since: e.since });
+      map.set(e.accountId, { name: e.name, since: e.since, ...(e.lastSeen ? { lastSeen: e.lastSeen } : {}) });
     }
   }
 
@@ -188,7 +198,7 @@ export class AwayRelay {
       if (!client.awayEnabled) return false;
       // Another awake tab of the same person keeps them present.
       if (this.awake(room, client.accountId, client).length > 0) return false;
-      this.setAway(client.accountId, room, client.name);
+      this.setAway(client.accountId, room, client.name, client.lastSeen);
       return true;
     }
     this.clearAway(client.accountId, room, client);
@@ -200,7 +210,7 @@ export class AwayRelay {
     if (!client.accountId || !client.awayEnabled || !wantsAway) return false;
     if (this.awake(room, client.accountId, client).length > 0) return false;
     if (!this.accounts.get(client.accountId)) return false; // deleted meanwhile
-    return this.setAway(client.accountId, room, client.name);
+    return this.setAway(client.accountId, room, client.name, client.lastSeen);
   }
 
   /** Hands the client what waited for it in this room, under a lease. */

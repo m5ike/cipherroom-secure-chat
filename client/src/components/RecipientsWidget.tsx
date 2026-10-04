@@ -17,10 +17,14 @@ import type { LNode } from "../lib/layout-tree";
 import { DEFAULT_LAYOUTS } from "../lib/layouts";
 import { useLayout } from "./LayoutProvider";
 import { renderLayout, type LayoutEnv } from "./LayoutView";
+import type { PresenceFacts } from "../lib/presence";
+import { presenceView, usePresenceClock } from "../lib/presence-book";
+import "../presence.css";
 
 /** "away": signed in, not connected right now — the server holds messages
- *  for them (server/accounts/relay.ts), so they stay selectable. */
-export type WidgetPeer = { id: string; name: string; status: "connecting" | "open" | "closed" | "away"; rttMs?: number; avatar?: string; since?: number };
+ *  for them (server/accounts/relay.ts), so they stay selectable.
+ *  6.7 `presence`: foreground / last seen — the status dot and "last seen …". */
+export type WidgetPeer = { id: string; name: string; status: "connecting" | "open" | "closed" | "away"; rttMs?: number; avatar?: string; since?: number; presence?: PresenceFacts };
 
 /** The latency meter's data: four bars, how many lit, and a tone. */
 function latency(rttMs: number | undefined, open: boolean) {
@@ -184,6 +188,8 @@ export function RecipientsWidget({
   const hoverOpenedAt = useRef(0);
   const focusOnOpen = useRef(false);
   const { tree: providedHandle } = useLayout("widget.handle");
+  // 6.7: the dots change colour as minutes pass.
+  const now = usePresenceClock();
 
   const dock = widgetDock(state);
   const docked = dock !== "none";
@@ -443,7 +449,9 @@ export function RecipientsWidget({
     // selected just like a connected peer.
     const reachable = online || away;
     const checked = reachable && (state.autoRoom || selected.has(p.id));
-    return { id: p.id, name: p.name, avatar: p.avatar ?? "", status: p.status, away, online, reachable, checked, disabled: !reachable || state.autoRoom, ...latency(p.rttMs, online) };
+    // 6.7: online / away / far away and "last seen …" ("" without presence facts).
+    const seen = p.presence ? presenceView(p.presence, now, lang) : { presence: "", presenceLabel: "", seenText: "" };
+    return { id: p.id, name: p.name, avatar: p.avatar ?? "", status: p.status, away, online, reachable, checked, disabled: !reachable || state.autoRoom, ...latency(p.rttMs, online), ...seen };
   });
   const configRows = [
     { key: "width", label: t(lang, "recipients.cfg.width"), min: 180, max: 420, step: 10, value: state.width, display: `${state.width}px` },

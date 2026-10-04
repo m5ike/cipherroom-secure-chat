@@ -135,6 +135,28 @@ describe("one room on two instances", () => {
     expect(mallory.peerId).not.toBe(alice.peerId);
   });
 
+  it("keeps a member whose connection went on every instance, and lets them back on another one (6.7)", async () => {
+    const alice = await join(a, "held", "Alice");
+    const bob = await join(b, "held", "Bob");
+    await alice.client.next("peer-joined");
+    await new Promise<void>((resolve) => { alice.client.socket.once("close", () => resolve()); alice.client.socket.terminate(); });
+    expect(await bob.client.next("peer-left")).toMatchObject({ peerId: alice.peerId, held: true, name: "Alice" });
+    await settle();
+    expect(b.hub.held.total()).toBe(1);
+
+    // A newcomer on B sees her held; without the secret her id stays hers.
+    const mallory = await join(b, "held", "Mallory", { peerId: alice.peerId, resume: "A".repeat(32) });
+    expect(mallory.peerId).not.toBe(alice.peerId);
+    expect(mallory.joined.held).toEqual([expect.objectContaining({ peerId: alice.peerId })]);
+
+    // She comes back on B: the same peer, and A forgets its copy.
+    const again = await join(b, "held", "Alice", { peerId: alice.peerId, resume: alice.joined.resume });
+    expect(again.peerId).toBe(alice.peerId);
+    await settle();
+    expect(a.hub.held.total()).toBe(0);
+    expect(b.hub.held.total()).toBe(0);
+  });
+
   it("forgets the members of an instance that stops", async () => {
     const alice = await join(a, "bye", "Alice");
     const bob = await join(b, "bye", "Bob");

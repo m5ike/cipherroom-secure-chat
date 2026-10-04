@@ -17,8 +17,13 @@ export function peersTree(): LNode {
     n("panel", { id: "list-peers", name: "People", if: "($peers|length) > 0", attrs: { class: "space-y-2", "data-testid": "list-peers" } }, [
       n("panel", { id: "peer", name: "A person", each: "$peers", as: "p", key: "$p.id", attrs: { class: "flex items-center justify-between gap-3 rounded-2xl bg-background p-3" } }, [
         n("panel", { id: "peer-names", attrs: { class: "min-w-0" } }, [
-          n("paragraph", { id: "peer-name", attrs: { class: "truncate text-sm font-medium", "data-testid": "text-peer-{$p.id}" }, text: "{$p.name}" }),
+          n("paragraph", { id: "peer-name", attrs: { class: "flex items-center gap-2 truncate text-sm font-medium", "data-testid": "text-peer-{$p.id}" } }, [
+            // 6.7: online (green), away (yellow), far away (orange).
+            n("area", { id: "peer-presence", name: "Status dot", if: "$p.presence", attrs: { class: "presence-dot presence-dot--{$p.presence}", role: "img", title: "{$p.presenceLabel} · {$p.seenText}", "aria-label": "{$p.presenceLabel}", "data-testid": "presence-{$p.id}" } }),
+            n("area", { id: "peer-name-text", tag: "span", attrs: { class: "truncate" }, text: "{$p.name}" }),
+          ]),
           n("paragraph", { id: "peer-id", attrs: { class: "font-mono text-xs text-muted-foreground" }, text: "{$p.short}" }),
+          n("paragraph", { id: "peer-seen", name: "Last seen", if: "$p.seenText && $p.presence !== 'online'", attrs: { class: "text-xs text-muted-foreground" }, text: "{$p.seenText}" }),
         ]),
         n("panel", { id: "peer-state", attrs: { class: "flex items-center gap-1" } }, [
           icon("mic", "h-4 w-4 text-emerald-500", { "aria-label": "audio live" }, { id: "peer-live", if: "$p.audio === 'live'" }),
@@ -211,7 +216,7 @@ type ToolId = "part.peers" | "part.audio" | "part.video" | "panel.files" | "pane
 export const TOOL_CONTRACTS: Record<ToolId, LayoutContract> = {
   "part.peers": {
     description: "Who is in the room.",
-    vars: [{ path: "$peers", type: "list", description: "People: .id, .name, .short, .status (open / connecting / closed), .audio (live / muted)." }],
+    vars: [{ path: "$peers", type: "list", description: "People: .id, .name, .short, .status (open / connecting / closed; 6.7: away — the connection went, not left), .audio (live / muted); 6.7: .presence (online, away or far — the status dot), .presenceLabel, .seenText (“Last seen 12 min ago”)." }],
     actions: [], slots: [], refs: [],
   },
   "part.audio": {

@@ -1,0 +1,33 @@
+/* 6.7 presence: a member's status dot — online (green), away (yellow), far
+   away (orange) — from lib/presence.ts. The colours are theme tokens, with
+   a light and a dark tone (themes set data-tone on the root). */
+
+:root {
+  --presence-online: 146 64% 36%;
+  --presence-away: 43 96% 44%;
+  --presence-far: 24 94% 48%;
+}
+:root[data-tone="dark"] {
+  --presence-online: 146 62% 50%;
+  --presence-away: 48 96% 55%;
+  --presence-far: 25 95% 60%;
+}
+
+.presence-dot {
+  display: inline-block;
+  flex: none;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 9999px;
+  background: hsl(var(--presence-online));
+  box-shadow: 0 0 0 2px hsl(var(--card));
+}
+.presence-dot--away { background: hsl(var(--presence-away)); }
+.presence-dot--far { background: hsl(var(--presence-far)); }
+
+/* In the recipients list: on the avatar's lower corner. */
+.recip-row > .presence-dot { align-self: flex-end; position: relative; margin: 0 0 0.2rem -0.85rem; }
+.recip-seen { font-size: 0.7rem; opacity: 0.75; font-style: normal; }
+
+/* In a person's details: the dot before the words. */
+.userinfo-presence { display: inline-flex; align-items: center; gap: 0.4rem; }

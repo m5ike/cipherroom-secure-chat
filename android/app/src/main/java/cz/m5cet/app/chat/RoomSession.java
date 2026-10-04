@@ -124,6 +124,12 @@ public final class RoomSession {
                     Log.i("room", "keys for " + label + " in " + (System.currentTimeMillis() - t0) + " ms");
                 }
                 if (identity == null) identity = rooms.identity();
+                foreground = app.inForeground();
+                // 6.7: back as the same member after Android ended the process (the server kept us listed).
+                if (myId.isEmpty() && resumeSecret.isEmpty()) {
+                    String[] back = Resume.load(app, key);
+                    if (back != null) { myId = back[0]; resumeSecret = back[1]; }
+                }
                 openSocket();
             } catch (Exception e) {
                 Log.e("room", "cannot connect " + label, e);
@@ -158,9 +164,10 @@ public final class RoomSession {
         try {
             JSONObject join = new JSONObject().put("type", "join").put("protocol", 2).put("room", keys.roomId)
                 .put("name", userName).put("peerId", myId.isEmpty() ? "peer-" + Crypto.hex(Crypto.random(12)) : myId).put("away", false)
-                .put("features", new JSONArray().put("bin"));
+                .put("features", new JSONArray().put("bin")).put("foreground", foreground);
             if (!resumeSecret.isEmpty()) join.put("resume", resumeSecret);
             w.send(join.toString());
+            sentForeground = foreground;
         } catch (JSONException ignored) { }
         if (heartbeat != null) heartbeat.cancel(false);
         heartbeat = Io.TIMER.scheduleWithFixedDelay(() -> post(() -> {
@@ -218,10 +225,12 @@ public final class RoomSession {
         JSONObject f;
         try { f = new JSONObject(text); } catch (JSONException e) { return; }
         people.onFrame(f); // 6.2 people: signed-in connections, away members
+        presence.onFrame(f); // 6.7 presence: foreground, last seen, held members
         switch (f.optString("type")) {
             case "joined": {
                 myId = f.optString("peerId", myId);
                 resumeSecret = f.optString("resume", "");
+                Resume.save(app, key, myId, resumeSecret);
                 status = "joined";
                 notice = "";
                 JSONArray list = f.optJSONArray("peers");
@@ -231,6 +240,7 @@ public final class RoomSession {
                     if (p != null) createPeer(p.optString("peerId"), p.optString("name"), true);
                 }
                 sendAuth();
+                sendPresence(); // 6.7: the app went to the background while joining
                 // Peers of an earlier connection that are gone for good.
                 for (Peer p : new ArrayList<>(peers.values())) if (p.pc == null || "closed".equals(p.status)) dropPeer(p.id, false);
                 changed();
@@ -250,7 +260,8 @@ public final class RoomSession {
                 if (p != null) { p.name = f.optString("name", p.name); changed(); }
                 break;
             }
-            case "peer-left": dropPeer(f.optString("peerId"), true); break;
+            // 6.7 held: the connection went, they did not leave — still listed, as away (RoomPresence).
+            case "peer-left": dropPeer(f.optString("peerId"), true, f.optBoolean("held")); break;
             case "signal": onSignal(f.optString("source"), f.optJSONObject("payload")); break;
             case "rate-limited": notice = "rate limited: " + f.optString("frame"); changed(); break;
             // 6.1: files the server relays (nobody had an open channel to the sender).
@@ -301,12 +312,14 @@ public final class RoomSession {
         changed();
     }
 
-    private void dropPeer(String peerId, boolean announce) {
+    private void dropPeer(String peerId, boolean announce) { dropPeer(peerId, announce, false); }
+
+    private void dropPeer(String peerId, boolean announce, boolean held) {
         Peer p = peers.remove(peerId);
         senderKeys.forgetPeer(peerId);
         if (p != null) {
             p.close();
-            if (announce) system(p.name + " ↘");
+            if (announce) system(p.name + (held ? " ☾ " + app.t("presence.wentAway") : " ↘"));
         }
         changed();
     }
@@ -1089,6 +1102,7 @@ public final class RoomSession {
                     .put("username", people.userOf(w.account)).put("signedIn", true).put("since", (double) w.since).put("audio", "off")
                     .put("signed", false).put("changed", false).put("publicKey", "").put("app", "").put("rtt", -1.0));
             }
+            addPresence(out);
         } catch (JSONException ignored) { }
         return out;
     }
@@ -1140,4 +1154,61 @@ public final class RoomSession {
     }
 
     /* --------------------------------------------------- 6.2 bubbles */
+
+    /* -------------------------------------------------- 6.7 presence */
+
+    /** 6.7: who is online, away or far away (server frames), and the members whose connection went. */
+    final RoomPresence presence = new RoomPresence();
+    /** The app is in the foreground (what the room is told), and what the server knows. */
+    private volatile boolean foreground = true;
+    private boolean sentForeground = true;
+    private long presenceAt = 0;
+    private ScheduledFuture<?> presenceTimer;
+    /** The server's rate limit: a burst, then one presence frame per 5 s — changes closer than this wait, and only the latest goes. */
+    private static final long PRESENCE_GAP_MS = 6_000;
+
+    /** 6.7: the app went to the background or came back — the room sees it (presence, last seen). */
+    void setForeground(boolean on) {
+        post(() -> { foreground = on; sendPresence(); });
+    }
+
+    private void sendPresence() {
+        if (presenceTimer != null) { presenceTimer.cancel(false); presenceTimer = null; }
+        WebSocket w = ws;
+        if (w == null || !w.isOpen() || !connected() || foreground == sentForeground) return;
+        long wait = presenceAt + PRESENCE_GAP_MS - System.currentTimeMillis();
+        if (wait > 0) { presenceTimer = Io.TIMER.schedule(() -> post(this::sendPresence), wait, TimeUnit.MILLISECONDS); return; }
+        // away stays false: the app keeps receiving in the background, the relay need not cover for it.
+        w.send("{\"type\":\"presence\",\"away\":false,\"foreground\":" + foreground + "}");
+        sentForeground = foreground;
+        presenceAt = System.currentTimeMillis();
+    }
+
+    /** 6.7: each person's presence (.connected, .foreground, .lastSeen; contacts/LastSeen words it) and the held members, listed as away. */
+    private void addPresence(JSONArray out) throws JSONException {
+        long now = System.currentTimeMillis();
+        java.util.Set<String> ids = new java.util.HashSet<>(), awayRefs = new java.util.HashSet<>();
+        for (int i = 0; i < out.length(); i++) {
+            JSONObject u = out.optJSONObject(i);
+            if (u == null) continue;
+            String id = u.optString("id");
+            ids.add(id);
+            if (u.optBoolean("me")) { u.put("connected", true).put("foreground", foreground).put("lastSeen", (double) now); continue; }
+            if (id.startsWith("away:")) {
+                String ref = id.substring(5);
+                awayRefs.add(ref);
+                long seen = presence.awayLastSeen(ref);
+                u.put("connected", false).put("foreground", false).put("lastSeen", seen > 0 ? (double) seen : u.optDouble("since", 0));
+                continue;
+            }
+            RoomPresence.Live lv = presence.live(id);
+            u.put("connected", true).put("foreground", lv == null || lv.foreground).put("lastSeen", lv == null ? 0.0 : (double) lv.lastSeen);
+        }
+        for (RoomPresence.Held h : presence.held(ids, awayRefs)) {
+            out.put(new JSONObject().put("id", h.peerId).put("name", h.name).put("me", false).put("channel", "held")
+                .put("username", h.account.isEmpty() ? "" : people.userOf(h.account)).put("signedIn", !h.account.isEmpty()).put("since", (double) h.since)
+                .put("audio", "off").put("signed", false).put("changed", false).put("publicKey", "").put("app", "").put("rtt", -1.0)
+                .put("connected", false).put("foreground", false).put("lastSeen", (double) h.lastSeen));
+        }
+    }
 }

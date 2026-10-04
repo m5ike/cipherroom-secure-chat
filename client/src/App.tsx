@@ -148,6 +148,7 @@ import { messageKinds, messageSize, receiptsOf, timelineOf, withAudit } from "./
 import { forgetBlob, rememberBlob } from "./lib/attachment-media";
 import type { MapPreviewPolicy } from "./lib/client-config";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
+import { appInForeground, useRoomPresence } from "./lib/use-room-presence";
 import { createFlashQueue, kindForText, type FlashMessage } from "./lib/flash";
 import { createOutbox } from "./lib/outbox";
 import { FlashMessages } from "./components/FlashMessages";
@@ -201,7 +202,8 @@ type SignalFrame =
   | ({ type: "peer-updated"; peerId: string; name: string } & AccountRefFields)
   | { type: "relay-deliver"; items: RelayItem[] }
   | { type: "relay-status"; messageId: string; recipient: { name: string } & AccountRefFields; state: MsgState | "rejected" | "duplicate"; at: number; reason?: string }
-  | { type: "peer-left"; peerId: string }
+  // 6.7 `held`: the connection went, they did not leave — still listed, as away (lib/presence-book.ts).
+  | { type: "peer-left"; peerId: string; held?: boolean }
   | { type: "signal"; source: string; payload: unknown }
   | { type: "signal-undeliverable"; target: string }
   | { type: "hello"; peerId: string; protocol?: number; features?: string[]; limits?: { proxy?: ProxyLimits } }
@@ -599,6 +601,8 @@ function ChatApp() {
   const [awayPeers, setAwayPeers] = useState<AwayPeer[]>([]);
   const accountRef = useRef<AccountSummary | null>(null);
   const awayPeersRef = useRef<AwayPeer[]>([]);
+  /** 6.7: who is online, away or far away — and members whose connection went (held). */
+  const presence = useRoomPresence(() => socketRef.current);
   const messagesRef = useRef<ChatMessage[]>([]);
   const retentionRef = useRef<ChatRetention>(initialPrefs.chatRetention);
   const historyRef = useRef(createHistoryStore());
@@ -2804,6 +2808,7 @@ function ChatApp() {
     }
     setPeers([]);
     setAwayPeers([]);
+    presence.reset();
     // Compute the deterministic room-key fingerprint (DPA anchor). We
     // hash a constant-length string derived from the room id so the
     // fingerprint is independent of the password length but only changes
@@ -2830,6 +2835,9 @@ function ChatApp() {
       reconnectAttemptsRef.current = 0;
       // A signed-in user with server-side history joins with their account
       // token and asks the server to stay in the room for them (away relay).
+      // 6.7: and says whether the app is in the foreground (presence).
+      const foreground = appInForeground();
+      presence.signal.reset({ away: false, foreground });
       socket.send(JSON.stringify({
         type: "join",
         protocol: 2,
@@ -2842,6 +2850,7 @@ function ChatApp() {
         ...(onHomeServer() && accountToken() ? { auth: accountToken() } : {}),
         away: onHomeServer() && retentionRef.current === "server" && Boolean(accountRef.current) && activeProfileRef.current?.away !== false,
         features: ["bin"],
+        foreground,
       }));
       if (onHomeServer()) socket.send(JSON.stringify({ type: "command-poll", deviceId: prefs.deviceId }));
       startHeartbeat();
@@ -2884,6 +2893,7 @@ function ChatApp() {
       }
       let frame: SignalFrame;
       try { frame = JSON.parse(String(event.data)) as SignalFrame; } catch { return; }
+      presence.onFrame(frame); // 6.7: foreground, last seen, held members
 
       if (frame.type === "pong") {
         const rtt = Math.max(0, Date.now() - (frame.t || 0));
@@ -2956,6 +2966,10 @@ function ChatApp() {
           setMyId(frame.peerId);
         }
         resumeRef.current = frame.resume ? { room: roomRef.current, peerId: frame.peerId, secret: frame.resume } : null;
+        // 6.7: a reload comes back as this member (the server keeps us listed meanwhile), not as a second one.
+        if (resumeRef.current && passphraseRef.current && intentRef.current) {
+          void sessionCacheRef.current.save({ name: nameRef.current, room: roomInputRef.current, passphrase: passphraseRef.current, desired: "connected", ...sessionOrigin(), resume: resumeRef.current }).catch(() => undefined);
+        }
         setStatus("joined");
         systemMessage(tf(lang, "app.joined", { room: roomRef.current, n: frame.peers.length }));
         cx("connected", tf(lang, "app.joined", { room: roomRef.current, n: frame.peers.length }), { peers: frame.peers.length + 1 });
@@ -3118,7 +3132,7 @@ function ChatApp() {
         handle?.pc.close();
         peersRef.current.delete(frame.peerId);
         setPeers((current) => current.filter((peer) => peer.id !== frame.peerId));
-        systemMessage(tf(lang, "app.peerLeft", { name: handle?.name && !handle.name.startsWith("peer-") ? handle.name : `peer-${frame.peerId.slice(-4)}` }));
+        systemMessage(tf(lang, frame.held ? "presence.wentAway" : "app.peerLeft", { name: handle?.name && !handle.name.startsWith("peer-") ? handle.name : `peer-${frame.peerId.slice(-4)}` }));
         cx("peer-left", handle?.name);
       }
 
@@ -3301,7 +3315,8 @@ function ChatApp() {
     };
   }
 
-  function disconnect(showMessage = true) {
+  /** 6.7 `goodbye` false: end the session here without leaving the room — the server keeps us listed as away. */
+  function disconnect(showMessage = true, goodbye = true) {
     if (status === "joined") cx("disconnected");
     // Only this path tears down the connection permanently. Server- or
     // browser-initiated close should reach here ONLY if the user clicked
@@ -3317,7 +3332,7 @@ function ChatApp() {
     // Leaving on purpose while the server keeps our history: stay in the room
     // as away so messages still reach us (server/accounts/relay.ts).
     const stayAway = retentionRef.current === "server" && Boolean(accountRef.current);
-    try { socketRef.current?.send(JSON.stringify({ type: "leave", away: stayAway })); } catch { /* ignore */ }
+    if (goodbye) try { socketRef.current?.send(JSON.stringify({ type: "leave", away: stayAway })); } catch { /* ignore */ }
     socketRef.current?.close();
     socketRef.current = null;
     peersRef.current.forEach((peer) => {
@@ -3946,7 +3961,8 @@ function ChatApp() {
     const open = handle?.channel?.readyState === "open";
     const transport: UserInfo["transport"] = !open ? "connecting" : net?.candidateType === "relay" ? "p2p-relay" : "p2p-direct";
     return {
-      name: handle?.name || target.slice(-6), peerId: target, self: false,
+      name: handle?.name || presence.book.heldEntry(target)?.name || awayPeers.find((a) => awayKey(a.accountId) === target)?.name || target.slice(-6), peerId: target, self: false,
+      presence: presence.factsOf(target),
       username: peerUsersRef.current.get(target),
       connectedForMs: st ? Date.now() - st.openedAt : null,
       ip: net?.ip, candidateType: net?.candidateType, transport,
@@ -4267,14 +4283,13 @@ function ChatApp() {
     };
     // Save first: a freeze or a pagehide may be the last code we run.
     void persistChat(true).catch(() => undefined);
+    hubRef.current?.setForeground(false);
     if (!connected) return;
-    // Server-enhanced and signed in: ask the server to answer for us.
-    if (accountRef.current && retentionRef.current === "server") {
-      try {
-        socket!.send(JSON.stringify({ type: "presence", away: true }));
-        suspendedStateRef.current.away = true;
-      } catch { /* the socket went first */ }
-    }
+    // 6.7: the room sees us go to the background (presence, last seen) — and,
+    // server-enhanced and signed in, the server answers for us meanwhile.
+    const coverMe = Boolean(accountRef.current && retentionRef.current === "server");
+    presence.signal.set({ away: coverMe, foreground: false }, event.final);
+    suspendedStateRef.current.away = coverMe;
     void sendServerLog("debug", "page.suspended", { reason: event.reason, final: event.final });
   }, []);
 
@@ -4287,6 +4302,7 @@ function ChatApp() {
     // The page was thrown away and rebuilt: the startup effects restore the
     // session from the cache, so there is nothing to repair here.
     if (event.wasDiscarded) return;
+    hubRef.current?.setForeground(true);
 
     const resumeAllowed = !activeProfileRef.current || connectionsRef.current!.get().settings.reconnectOnResume;
     if (wanted?.desired === "connected" && !clientStoppedRef.current && resumeAllowed) {
@@ -4297,10 +4313,8 @@ function ChatApp() {
       } else {
         // Still connected: tell the server we are back. It answers with
         // everything it took for us while we were away (relay-deliver),
-        // and the room sees peer-back.
-        if (wanted.away) {
-          try { socket!.send(JSON.stringify({ type: "presence", away: false })); } catch { /* ignore */ }
-        }
+        // and the room sees peer-back — and (6.7) peer-presence.
+        presence.signal.set({ away: false, foreground: true }, wanted.away);
         // Same session: settings and data stay; make sure the account is
         // still announced and the heartbeat is running.
         announceAccountToServer();
@@ -4694,6 +4708,7 @@ function ChatApp() {
       const serverOk = !saved.server || serverAllowed(clientConfig.connections, saved.server);
       if (saved.server && serverOk) activeServerRef.current = saved.server;
       if (saved.profileId) pendingProfileIdRef.current = saved.profileId;
+      if (saved.resume) resumeRef.current = saved.resume; // 6.7: the same member as before the reload
       if (!serverOk) { setNotice(t(lang, "cx.err.server")); return; }
       if (saved.desired === "connected") {
         systemMessage(t(lang, "session.restored"));
@@ -4714,7 +4729,9 @@ function ChatApp() {
     const timer = window.setInterval(() => {
       const idle = cache.idleMs();
       if (idle !== null && idle > SESSION_IDLE_LIMIT_MS) {
-        disconnect(false);
+        // 6.7: the room key leaves this tab, but nobody asked to leave the
+        // room — no goodbye, so the server keeps us listed as away.
+        disconnect(false, false);
         void cache.clear();
         setPassphrase(""); setSessionPassphrase(""); passphraseRef.current = "";
         setNotice(t(lang, "session.expired"));
@@ -5111,7 +5128,7 @@ function ChatApp() {
       {/* Peers modal */}
       {activePanel === "peers" ? (
         <SimpleModal title={t(lang, "menu.peers")} onClose={() => setActivePanel(null)}>
-          <PeerList peers={peers} lang={lang} />
+          <PeerList peers={peers} lang={lang} presence={presence} />
         </SimpleModal>
       ) : null}
 
@@ -5365,9 +5382,11 @@ function ChatApp() {
       {status === "joined" ? (
         <RecipientsWidget
           peers={[
-            ...peers.map((p): WidgetPeer => ({ id: p.id, name: p.name, status: p.status, rttMs: p.status === "open" ? connStatus?.rttMs : undefined })),
+            ...peers.filter((p) => !presence.isHeld(p.id)).map((p): WidgetPeer => ({ id: p.id, name: p.name, status: p.status, rttMs: p.status === "open" ? connStatus?.rttMs : undefined, presence: presence.factsOf(p.id) })),
             // Signed-in members the server answers for: still addressable.
-            ...awayPeers.map((a): WidgetPeer => ({ id: awayKey(a.accountId), name: a.name, status: "away", since: a.since })),
+            ...awayPeers.map((a): WidgetPeer => ({ id: awayKey(a.accountId), name: a.name, status: "away", since: a.since, presence: presence.factsOf(awayKey(a.accountId)) })),
+            // 6.7: their connection went, they did not leave: listed as away until they are back.
+            ...presence.held([], awayPeers.map((a) => a.accountId)).map((h): WidgetPeer => ({ id: h.peerId, name: h.name, status: "closed", presence: presence.factsOf(h.peerId) })),
           ]}
           room={room}
           state={widget}

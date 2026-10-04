@@ -288,11 +288,15 @@ public final class Rooms {
         if (v && r != null) { r.unread = 0; app.notify.clearRoom(r.key); emit(); }
     }
 
-    public void onForeground() { }
+    /** 6.7: every room tells its members the app is back in the foreground (presence, last seen). */
+    public void onForeground() {
+        for (RoomSession r : sessions.values()) r.setForeground(true);
+    }
 
+    /** The app went to the background: rooms stay connected (6.7: and listed — as away after a while). */
     public void onBackground() {
         visible = false;
-        for (RoomSession r : sessions.values()) History.save(app, r.key, r.messagesCopy());
+        for (RoomSession r : sessions.values()) { History.save(app, r.key, r.messagesCopy()); r.setForeground(false); }
     }
 
     void roomChanged(RoomSession r) { emit(); }
