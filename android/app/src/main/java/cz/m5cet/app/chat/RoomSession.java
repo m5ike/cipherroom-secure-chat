@@ -1030,6 +1030,41 @@ public final class RoomSession {
         });
     }
 
+    /**
+     * 6.10: a note to myself — kept in this room's history on this device and
+     * never sent: no channel, no relay, no receipt (kind "note", which a peer's
+     * payload can never be: Payloads takes only "text"). Mine, "displayed" like a
+     * command call, its "to" naming only me so the bubble says it is private. The
+     * NFC tool keeps a card read this way: the text, and a file (inline, or a
+     * vault file for a large one).
+     */
+    public void addNote(String text, String fileName, String fileMime, String dataUrl, String filePath, long fileSize, String toLabel) {
+        post(() -> {
+            ChatMessage m = new ChatMessage();
+            m.id = "note-" + Crypto.hex(Crypto.random(10));
+            m.roomKey = key;
+            m.kind = "note";
+            m.senderId = myId == null ? "" : myId;
+            m.senderName = userName;
+            m.text = text == null ? "" : text;
+            m.createdAt = System.currentTimeMillis();
+            m.mine = true;
+            m.verified = true;
+            m.status = "displayed";
+            m.mark("created", "", m.createdAt);
+            if (toLabel != null && !toLabel.isEmpty()) m.to.add(toLabel);
+            if (fileName != null) {
+                m.fileName = fileName;
+                m.fileMime = fileMime;
+                m.fileDataUrl = dataUrl;
+                m.filePath = filePath;
+                m.fileSize = fileSize;
+            }
+            add(m, false);
+            changed();
+        });
+    }
+
     /* ------------------------------------------------------------- files */
 
     void addFile(ChatMessage m) { if (!m.mine) arrived(m, ""); add(m, !m.mine); }
