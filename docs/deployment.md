@@ -383,6 +383,7 @@ zachová):
 | `STORAGE_SESSION_BUDGET_MB` | 2048 | sdílený rozpočet bajtů všech anonymních databází relací; navíc nejvýš 20 živých relací na adresu klienta |
 | `FUNCTIONS_NFC_RUN_HOURS` | 24 (min. 1) | jak dlouho se drží běh funkce, který přečetl kartu (`m5.nfc`), i s logy — ostatní běhy dál `FUNCTIONS_RUNS_DAYS` |
 | `VONAGE_ALLOW_UNSIGNED_SMS` | — | `1` = přijmout Vonage SMS bez `sig` (jako neověřené), i když je nastaven `VONAGE_SIGNATURE_SECRET` |
+| `TELEPHONY_ALLOW_UNSIGNED` | — | 6.10: `1` = neověřený webhook hovoru (Telnyx bez `TELNYX_PUBLIC_KEY`, Vonage bez `VONAGE_SIGNATURE_SECRET`) smí spustit pravidla, TSA a audio most — jen pro zkoušky, hovor pak může padělat kdokoli |
 | `ANDROID_DESIGN_IMAGE_HOSTS` | žádný | hostitelé (čárkami), ze kterých smí design Androidu brát pevné https obrázky |
 | `NOTIFY_DIR` | `$DATA_DIR/notify` | nastavení upozornění (`config.json`, `accounts.json`; SMTP se nastavuje v konzoli, proměnné `SMTP_*` neexistují) |
 

@@ -139,9 +139,20 @@ Když je ověřovací materiál nastaven, kontrola je **vynucená** — špatný
 podpis = `403` (6.7). U Vonage proto zapni podepsané webhooky i pro SMS API;
 účet, který je podepsat neumí, nastaví `VONAGE_ALLOW_UNSIGNED_SMS=1` (SMS bez
 `sig` se pak přijmou jako neověřené). Když nastaven není, událost se přijme, ale uloží jako **neověřená** a do
-logu jde varování. Události nikdy nespouští nic placeného; jen se logují,
-zobrazují v adminu a u příchozích SMS/hovorů se dopočítá **routing DID → SIP
-trunk**.
+logu jde varování; jen se loguje, zobrazí v adminu a u příchozích SMS/hovorů se
+dopočítá **routing DID → SIP trunk**.
+
+**6.10 (bezpečnostní revize G-01):** neověřený webhook hovoru **nedojde k pravidlům
+směrování, TSA ani audio mostu** — padělaný „příchozí hovor" by jinak mohl řídit TSA
+(SMS na účet provozovatele, HTTP, funkce, route kódy, zvuk do místnosti). U Telnyx a
+Vonage proto nastav `TELNYX_PUBLIC_KEY` / `VONAGE_SIGNATURE_SECRET`; jen pro zkoušky
+bez podpisu je `TELEPHONY_ALLOW_UNSIGNED=1` (Overview pak varuje, že hovor může
+padělat kdokoli). Twilio je ověřené vždy (`TWILIO_AUTH_TOKEN`).
+
+**6.10 (G-04):** `POST /api/telephony/call|sms` z aplikace vyžaduje pravidlo modulu
+Telephony & SIP, které provozovatel napsal (Modules & groups) — modul „bez pravidla"
+(dřív „pro všechny") volat ani psát nedovolí. Aplikace posílá tyto požadavky bez
+tokenu účtu, takže pro web dej právo `call` / `sms` skupině `guest`.
 
 ### Kde události vidíš
 
