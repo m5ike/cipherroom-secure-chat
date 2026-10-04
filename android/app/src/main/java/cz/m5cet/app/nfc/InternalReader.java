@@ -31,19 +31,23 @@ public final class InternalReader implements Reader, Reader.TagSource {
         return n != null && n.isEnabled();
     }
 
-    @Override public void startScan(TagListener listener) {
-        NfcAdapter n = NfcAdapter.getDefaultAdapter(activity);
-        if (n == null) return;
-        int flags = NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_NFC_B
-            | NfcAdapter.FLAG_READER_NFC_F | NfcAdapter.FLAG_READER_NFC_V
-            | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK | NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS;
+    /** Every technology, the raw tag (no NDEF check), no platform sound. */
+    public static final int FLAGS = NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_NFC_B
+        | NfcAdapter.FLAG_READER_NFC_F | NfcAdapter.FLAG_READER_NFC_V
+        | NfcAdapter.FLAG_READER_SKIP_NDEF_CHECK | NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS;
+
+    /** The presence check every 250 ms (a card taken away is noticed quickly). */
+    public static Bundle extras() {
         Bundle extras = new Bundle();
         extras.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, 250);
-        n.enableReaderMode(activity, listener::onTag, flags, extras);
+        return extras;
     }
 
-    @Override public void stopScan() {
-        NfcAdapter n = NfcAdapter.getDefaultAdapter(activity);
-        if (n != null) try { n.disableReaderMode(activity); } catch (RuntimeException ignored) { }
+    @Override public void startScan(TagListener listener) {
+        if (NfcAdapter.getDefaultAdapter(activity) == null) return;
+        // 6.6: through ReaderMode, so a model's read can borrow it and hand it back.
+        ReaderMode.enable(activity, this, listener::onTag, FLAGS, extras());
     }
+
+    @Override public void stopScan() { ReaderMode.release(activity, this); }
 }

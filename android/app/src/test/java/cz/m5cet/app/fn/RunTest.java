@@ -48,6 +48,20 @@ public class RunTest {
     }
 
     @Test
+    public void anNfcAskKeepsItsKindAndCommand() throws Exception {
+        Heard h = new Heard();
+        Api.Stream s = Run.stream(h);
+        s.event("interaction", new JSONObject("{\"runId\":\"run_2\",\"id\":\"int_9\",\"kind\":\"nfc\",\"spec\":{\"command\":{\"op\":\"emv-read\",\"args\":{\"maxApps\":2}}}}"));
+        assertEquals("nfc", h.asked.kind);
+        assertEquals("run_2", h.asked.runId);
+        assertEquals("int_9", h.asked.id);
+        assertEquals("emv-read", h.asked.spec.getJSONObject("command").optString("op"));
+        Heard other = new Heard();
+        Run.stream(other).event("interaction", new JSONObject("{\"runId\":\"r\",\"id\":\"i\",\"kind\":\"weird\",\"spec\":{}}"));
+        assertEquals("prompt", other.asked.kind);
+    }
+
+    @Test
     public void failuresAndAStreamThatStops() throws Exception {
         Heard a = new Heard();
         Run.stream(a).fail(new Api.Failure(404, "no-command", "No such command, or it is not available to you."));

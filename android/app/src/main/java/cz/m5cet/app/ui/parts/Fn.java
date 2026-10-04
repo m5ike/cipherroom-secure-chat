@@ -133,15 +133,19 @@ final class Fn {
         final String query = "/" + keyword + (p.argText == null || p.argText.trim().isEmpty() ? "" : " " + p.argText.trim());
         final cz.m5cet.app.chat.ChatMessage call = r != null ? r.startFnCall(keyword, name, query) : null;
         if (running != null) running.cancel();
+        if (nfcSheet != null) { nfcSheet.close(); nfcSheet = null; }   // the replaced run's card read is cancelled
         running = c.run(bearer(), keyword, cmd.model, inputs, origin(), new Run.Listener() {
-            @Override public void interaction(Run.Interaction i) { Io.main(() -> ask(i)); }
+            private volatile String runId = "";
+            @Override public void start(String id) { runId = id == null ? "" : id; }
+            @Override public void interaction(Run.Interaction i) { Io.main(() -> ask(i, name)); }
             @Override public void error(String code, String message) {
                 Io.main(() -> {
+                    runEnded(runId);
                     if (call != null) r.fnCallStatus(call, "error", message == null || message.isEmpty() ? app.t("functions.failed") : message);
                     else a.flash("", app.t("functions.failed") + (message == null || message.isEmpty() ? "" : ": " + message), "error");
                 });
             }
-            @Override public void done(Run.Done d) { Io.main(() -> deliver(r, d, keyword, name, visibility, call)); }
+            @Override public void done(Run.Done d) { Io.main(() -> { runEnded(d.runId.isEmpty() ? runId : d.runId); deliver(r, d, keyword, name, visibility, call); }); }
         }, exec);
         return true;
     }
@@ -201,7 +205,16 @@ final class Fn {
 
     /* --------------------------------------------------- a running question */
 
-    private void ask(Run.Interaction i) {
+    /** The open "nfc" sheet (6.6), at most one: a new NFC ask replaces it. */
+    private NfcModelSheet nfcSheet;
+
+    /**
+     * A running model's question. 6.6: an "nfc" interaction is not a question —
+     * the model asks this phone to read a card: the NFC sheet runs it and answers
+     * with the NfcResult (the web's handleFnInteraction → runNfcCommand).
+     */
+    private void ask(Run.Interaction i, String modelName) {
+        if ("nfc".equals(i.kind)) { nfc(i, modelName); return; }
         final android.app.AlertDialog[] holder = new android.app.AlertDialog[1];
         Consumer<Object> answer = value -> {
             commands().answer(bearer(), i.runId, i.id, value);
@@ -216,6 +229,18 @@ final class Fn {
         holder[0].show();
     }
 
+    private void nfc(Run.Interaction i, String modelName) {
+        if (nfcSheet != null) { nfcSheet.close(); nfcSheet = null; }   // an older ask still open: cancelled
+        final String bearer = bearer();
+        final Commands c = commands();
+        nfcSheet = NfcModelSheet.start(a, i.runId, i.spec, modelName, result -> c.answer(bearer, i.runId, i.id, result));
+    }
+
+    /** The run is over: a sheet still waiting for its card has nothing more to answer. */
+    private void runEnded(String runId) {
+        if (nfcSheet != null && (runId == null || runId.isEmpty() || runId.equals(nfcSheet.runId))) { nfcSheet.runEnded(); nfcSheet = null; }
+    }
+
     /* ------------------------------------------------------ outputs (bubble) */
 
     FnView view() { return new FnView(a, theme, host); }
@@ -224,9 +249,12 @@ final class Fn {
         @Override public void event(JSONObject meta, JSONObject ev, Consumer<Boolean> done) {
             RoomSession r = app().rooms.activeSession();
             running = commands().event(bearer(), meta, ev, origin(), new Run.Listener() {
-                @Override public void interaction(Run.Interaction i) { Io.main(() -> ask(i)); }
+                private volatile String runId = "";
+                @Override public void start(String id) { runId = id == null ? "" : id; }
+                @Override public void interaction(Run.Interaction i) { Io.main(() -> ask(i, meta.optString("name"))); }
                 @Override public void error(String code, String message) {
                     Io.main(() -> {
+                        runEnded(runId);
                         if ("expired".equals(code)) a.flash("", app().t("fnui.expired"), "warn");
                         else a.flash("", app().t("fnui.eventFailed") + (message == null || message.isEmpty() ? "" : ": " + message), "error");
                         done.accept(false);
@@ -234,6 +262,7 @@ final class Fn {
                 }
                 @Override public void done(Run.Done d) {
                     Io.main(() -> {
+                        runEnded(d.runId.isEmpty() ? runId : d.runId);
                         deliver(r, d, meta.optString("keyword"), meta.optString("name"), d.visibility == null ? "caller" : d.visibility, null);
                         done.accept(!d.failedUnanswered());
                     });
