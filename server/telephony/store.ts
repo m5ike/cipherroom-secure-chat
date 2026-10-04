@@ -16,6 +16,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync, accessSync, constants } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import type { TestSipAddress } from "./control/types";
 
 export type PersistedSettings = { smsProvider?: string; voiceProvider?: string };
 
@@ -34,7 +35,11 @@ export type PersistedTrunk = {
   updatedAt: number;
 };
 
-export type TelephonyFile = { version: 1; settings: PersistedSettings; trunks: PersistedTrunk[] };
+export type TelephonyFile = {
+  version: 1; settings: PersistedSettings; trunks: PersistedTrunk[];
+  /** 6.9: the test inbound SIP address (Telephony › Tests; control/sip-address.ts). No password is kept. */
+  testSip?: TestSipAddress | null;
+};
 
 const EMPTY: TelephonyFile = { version: 1, settings: {}, trunks: [] };
 
@@ -72,6 +77,8 @@ export function loadTelephonyFile(): { data: TelephonyFile; mtimeMs: number; exi
       version: 1,
       settings: parsed.settings && typeof parsed.settings === "object" ? { ...parsed.settings } : {},
       trunks: Array.isArray(parsed.trunks) ? parsed.trunks.filter((t) => t && typeof t === "object" && typeof (t as PersistedTrunk).id === "string") as PersistedTrunk[] : [],
+      // 6.9: kept through every read-modify-write of the other sections.
+      ...(parsed.testSip && typeof parsed.testSip === "object" && typeof (parsed.testSip as TestSipAddress).uri === "string" ? { testSip: parsed.testSip as TestSipAddress } : {}),
     };
     return { data, mtimeMs: statSync(file).mtimeMs, exists: true };
   } catch {

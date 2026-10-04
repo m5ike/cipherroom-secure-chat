@@ -13,6 +13,7 @@
 
 import { TelephonyNotConfiguredError, isE164 } from "../types";
 import { vonageJwt, vonageVoiceReadiness } from "../connectors";
+import { degrade, isSipAddress, sipTarget } from "./sip-uri";
 import {
   ProviderError, ProviderNotConfigured,
   type AvailableNumber, type CallAction, type CallStatus, type Capability, type ChatChannel, type ChatMessageInput,
@@ -153,19 +154,65 @@ function silence(seconds: number): Record<string, unknown> {
   return { action: "talk", text: `<speak>${parts.join("")}</speak>` };
 }
 
+/** "w" (0.5 s) / "W" (1 s) pauses → Vonage's "p" (0.5 s); only the keys Vonage plays. */
+export const vonageDtmf = (digits: string): string => String(digits).replace(/W/g, "pp").replace(/w/g, "p").replace(/[^0-9*#p]/g, "");
+
+/** A URL with one more query parameter. */
+function withParam(url: string, key: string, value: string): string {
+  try { const u = new URL(url); u.searchParams.set(key, value); return u.toString(); } catch { return `${url}${url.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(value)}`; }
+}
+
+/** 6.9 dial → connect (+ a record of the whole conversation, + a notify when the connected leg ends). */
+function dialNcco(d: Extract<CallAction, { dial: unknown }>["dial"]): Record<string, unknown>[] {
+  const out: Record<string, unknown>[] = [];
+  const viaSip = d.kind === "sip" || !!d.trunk;
+  // NCCO's sip endpoint has no digest credentials: the trunk must accept Vonage by its address (or a PSIP domain).
+  if (d.trunk?.password || d.trunk?.username) degrade("vonage", "SIP digest credentials on connect (the trunk must allow Vonage's addresses); the call goes without them");
+  if (d.callerName) degrade("vonage", "a caller ID name on connect; only the number is presented");
+  // A `from` that is not one of your Vonage numbers makes the caller ID unknown — the nearest to withheld.
+  const from = d.presentation === "restricted" ? "anonymous" : d.callerId ? digits(d.callerId) : undefined;
+  // An asynchronous record (no end condition) runs in the background for the whole connect.
+  if (d.record) out.push({ action: "record", eventUrl: [withParam(d.action, "x", "dialrec")], eventMethod: "POST", split: "conversation", channels: 2 });
+  out.push({
+    action: "connect",
+    endpoint: [viaSip ? { type: "sip", uri: sipTarget(d.to, d.kind, d.trunk) } : { type: "phone", number: digits(d.to) }],
+    ...(from ? { from } : {}),
+    ...(d.timeout ? { timeout: Math.min(120, Math.max(1, Math.round(d.timeout))) } : {}),
+    // synchronous: busy / unanswered / failed… are POSTed to eventUrl, whose NCCO replaces this one
+    eventType: "synchronous", eventUrl: [d.action], eventMethod: "POST",
+  });
+  // The connected leg hung up: the NCCO goes on here, and notify asks for what follows.
+  out.push({ action: "notify", payload: { m5: "dial-ended" }, eventUrl: [d.action], eventMethod: "POST" });
+  return out;
+}
+
 /**
  * The actions as an NCCO. A talk / stream right before a gather gets bargeIn,
  * so the caller can type while it plays. There is no NCCO hangup action: the
- * call ends when the NCCO runs out, so rendering stops at a hangup. NCCO has
- * no redirect either (see VonageAdapter.executeActions).
+ * call ends when the NCCO runs out, so rendering stops at a hangup (and at a
+ * reject: an NCCO cannot refuse a call — it ends at once). NCCO has no
+ * redirect either (see VonageAdapter.executeActions); with
+ * `redirectAsNotify` (6.9, the TSA callbacks) a redirect becomes a notify,
+ * whose answer replaces the NCCO — the same thing. sendDigits cannot be said
+ * in an NCCO: the TSA layer sends them with sendDtmf (PUT …/dtmf).
  */
-export function renderNcco(actions: CallAction[]): Record<string, unknown>[] {
+export function renderNcco(actions: CallAction[], opts: { redirectAsNotify?: boolean } = {}): Record<string, unknown>[] {
   const ncco: Record<string, unknown>[] = [];
   for (let i = 0; i < actions.length; i += 1) {
     const a = actions[i];
     const next = actions[i + 1];
     const bargeIn = !!next && "gather" in next;
     if ("hangup" in a) break;
+    if ("reject" in a) {
+      degrade("vonage", `refusing a call as ${a.reject.reason} (no NCCO action refuses a call); the call ends at once`);
+      break;
+    }
+    if ("redirect" in a && opts.redirectAsNotify) {
+      ncco.push({ action: "notify", payload: { m5: "redirect" }, eventUrl: [a.redirect.url], eventMethod: "POST" });
+      break; // the notify's answer replaces whatever would follow
+    }
+    if ("sendDigits" in a) { degrade("vonage", "DTMF inside an NCCO; sent through the REST API (PUT /v1/calls/{uuid}/dtmf) instead"); continue; }
+    if ("dial" in a) { ncco.push(...dialNcco(a.dial)); break; }
     if ("say" in a) {
       // Vonage talk has language + style (a number), not voice names.
       ncco.push({ action: "talk", text: a.say.text, ...(a.say.language ? { language: a.say.language } : {}), ...(a.say.loop ? { loop: a.say.loop } : {}), ...(bargeIn ? { bargeIn: true } : {}) });
@@ -176,13 +223,27 @@ export function renderNcco(actions: CallAction[]): Record<string, unknown>[] {
     } else if ("gather" in a) {
       const g = a.gather;
       if (g.prompt) ncco.push({ action: "talk", text: g.prompt, ...(g.language ? { language: g.language } : {}), bargeIn: true });
-      const dtmf: Record<string, unknown> = {
-        maxDigits: Math.min(20, Math.max(1, g.digits ?? 20)),
-        // finishOnKey defaults to "#" as on Twilio; any other key cannot be expressed.
-        submitOnHash: (g.finishOnKey ?? "#") === "#",
-      };
-      if (g.timeout) dtmf.timeOut = Math.min(30, Math.max(1, Math.round(g.timeout)));
-      ncco.push({ action: "input", type: ["dtmf"], dtmf, eventUrl: [g.action], eventMethod: "POST" });
+      const type = g.input?.length ? [...new Set(g.input)].sort() : ["dtmf"];
+      const input: Record<string, unknown> = { action: "input", type };
+      if (type.includes("dtmf")) {
+        const dtmf: Record<string, unknown> = {
+          maxDigits: Math.min(20, Math.max(1, g.digits ?? 20)),
+          // finishOnKey defaults to "#" as on Twilio; any other key cannot be expressed.
+          submitOnHash: (g.finishOnKey ?? "#") === "#",
+        };
+        if (g.timeout) dtmf.timeOut = Math.min(30, Math.max(1, Math.round(g.timeout)));
+        input.dtmf = dtmf;
+      }
+      if (type.includes("speech")) {
+        // 6.9: Vonage's recognition; the result comes to eventUrl as speech.results[0].text / confidence.
+        input.speech = {
+          ...(g.language ? { language: g.language } : {}),
+          ...(g.hints?.length ? { context: g.hints.slice(0, 100) } : {}),
+          ...(g.speechTimeout ? { endOnSilence: Math.min(10, Math.max(0.4, g.speechTimeout)) } : {}),
+          ...(g.timeout ? { startTimeout: Math.min(60, Math.max(1, Math.round(g.timeout))) } : {}),
+        };
+      }
+      ncco.push({ ...input, eventUrl: [g.action], eventMethod: "POST" });
     } else if ("stream" in a) {
       const rate = a.stream.rate ?? 16000;
       ncco.push({
@@ -192,11 +253,23 @@ export function renderNcco(actions: CallAction[]): Record<string, unknown>[] {
     } else if ("record" in a) {
       // A record action only blocks the NCCO while a stop condition is set (verify):
       // "#", 5 s of silence (Twilio's default) or the length limit.
-      ncco.push({
-        action: "record", eventUrl: [a.record.action], eventMethod: "POST",
-        beepStart: a.record.beep ?? true, endOnKey: "#", endOnSilence: 5,
-        ...(a.record.maxSeconds ? { timeOut: Math.min(7200, Math.max(3, Math.round(a.record.maxSeconds))) } : {}),
-      });
+      const r = a.record;
+      // 6.9: endOnKey is one key ("any" → "#", the nearest); "" = no key. endOnSilence is 3–10 s; 0 = off.
+      if (r.finishOnKey === "any") degrade("vonage", "a recording any key ends (endOnKey is one key); # ends it");
+      const key = r.finishOnKey === undefined || r.finishOnKey === "any" ? "#" : r.finishOnKey.replace(/[^0-9*#]/g, "").slice(0, 1);
+      const silence = r.silenceSeconds === undefined ? 5 : r.silenceSeconds <= 0 ? 0 : Math.min(10, Math.max(3, Math.round(r.silenceSeconds)));
+      if (r.trim) degrade("vonage", "trimming a recording's silence; it is kept whole");
+      const rec: Record<string, unknown> = {
+        action: "record", eventUrl: [r.action], eventMethod: "POST",
+        beepStart: r.beep ?? true,
+        ...(key ? { endOnKey: key } : {}),
+        ...(silence ? { endOnSilence: silence } : {}),
+        ...(r.maxSeconds ? { timeOut: Math.min(7200, Math.max(3, Math.round(r.maxSeconds))) } : {}),
+      };
+      // Nothing would end it: the length limit keeps the NCCO waiting for it (synchronous).
+      if (!key && !silence && !r.maxSeconds) rec.timeOut = 7200;
+      if (r.transcribe) rec.transcription = { ...(r.language ? { language: r.language } : {}), eventUrl: [withParam(r.action, "x", "transcript")], eventMethod: "POST" };
+      ncco.push(rec);
     } else if ("redirect" in a) {
       throw badRequest("NCCO has no redirect action; use executeActions([{ redirect }]) (a transfer to the URL) instead.");
     } else {
@@ -282,8 +355,14 @@ export class VonageAdapter implements ProviderAdapter {
     if (!input.eventUrl) throw badRequest("eventUrl is required.");
     const from = input.from || env(FROM);
     if (!from) throw new ProviderNotConfigured("vonage", "call", `Vonage call has no caller id: set ${FROM} or pass from.`);
+    // 6.9: over the operator's SIP trunk — a sip endpoint (sip:<number>@<trunk host>). The Voice
+    // API sends no digest credentials: the trunk must accept Vonage by address (or a PSIP domain).
+    const via = input.via?.kind === "sip" ? input.via : null;
+    if (via?.trunk.password || via?.trunk.username) degrade("vonage", "SIP digest credentials on an outbound call (the trunk must allow Vonage's addresses); the call goes without them");
+    if (via?.callerName) degrade("vonage", "a caller ID name on an outbound call; only the number is presented");
+    if (via?.presentation === "restricted") degrade("vonage", "a withheld caller ID on an outbound call; the number is presented");
     const body: Record<string, unknown> = {
-      to: [{ type: "phone", number: digits(to) }],
+      to: [via ? { type: "sip", uri: sipTarget(to, "number", via.trunk) } : { type: "phone", number: digits(to) }],
       from: { type: "phone", number: digits(from) },
       ringing_timer: Math.min(120, Math.max(1, Math.round(input.timeout))),
       event_url: [input.eventUrl],
@@ -307,6 +386,13 @@ export class VonageAdapter implements ProviderAdapter {
    * URL's NCCO; an NCCO that renders empty (starts with hangup) hangs up.
    */
   async executeActions(callId: string, actions: CallAction[]): Promise<void> {
+    // 6.9: dial-pad tones go through the REST API first (an NCCO cannot send them).
+    const tones = actions.filter((a): a is Extract<CallAction, { sendDigits: unknown }> => "sendDigits" in a);
+    for (const t of tones) await this.sendDtmf(callId, t.sendDigits.digits);
+    if (tones.length) {
+      actions = actions.filter((a) => !("sendDigits" in a));
+      if (!actions.length) return;
+    }
     const first = actions[0];
     let destination: Record<string, unknown>;
     if (first && "redirect" in first) destination = { type: "ncco", url: [first.redirect.url] };
@@ -322,6 +408,14 @@ export class VonageAdapter implements ProviderAdapter {
   async hangup(callId: string): Promise<void> {
     const token = jwt("call");
     await request(`Bearer ${token}`, "PUT", `${API}/v1/calls/${encodeURIComponent(callId)}`, { json: { action: "hangup" } });
+  }
+
+  /** 6.9: dial-pad tones into a live call (PUT /v1/calls/{uuid}/dtmf; "p" = 0.5 s pause). */
+  async sendDtmf(callId: string, tones: string): Promise<void> {
+    const d = vonageDtmf(tones);
+    if (!d) throw badRequest("sendDigits needs at least one of 0-9 * # (w / W pause).");
+    const token = jwt("call");
+    await request(`Bearer ${token}`, "PUT", `${API}/v1/calls/${encodeURIComponent(callId)}/dtmf`, { json: { digits: d } });
   }
 
   /**
@@ -349,10 +443,27 @@ export class VonageAdapter implements ProviderAdapter {
       eventId: status && f.timestamp ? `${callId}:${status}:${String(f.timestamp)}` : undefined,
       raw: f,
     };
-    if (dtmf && typeof dtmf === "object") {
+    // 6.9: speech recognition (input type speech) and recordings; a call over a SIP domain.
+    const speech = f.speech as { results?: Array<{ text?: string; confidence?: string | number }>; timeout_reason?: string; error?: string } | undefined;
+    const typed = dtmf && typeof dtmf === "object" && String(dtmf.digits ?? "") !== "";
+    if (str(f.endpoint_type) === "sip" || isSipAddress(str(f.to)) || /@/.test(String(f.to ?? ""))) ev.sipUri = str(f.to);
+    if (speech && typeof speech === "object" && !typed) {
+      ev.kind = "speech";
+      const best = Array.isArray(speech.results) ? speech.results[0] : undefined;
+      ev.speech = String(best?.text ?? "");
+      const c = Number(best?.confidence);
+      if (best && Number.isFinite(c)) ev.confidence = c;
+      if (!best) ev.cause = str(speech.timeout_reason) ?? str(speech.error) ?? "timeout";
+    } else if (dtmf && typeof dtmf === "object") {
       ev.kind = "gather";
       ev.digits = String(dtmf.digits ?? "");
       if (dtmf.timed_out) ev.cause = "timeout";
+    } else if (f.recording_url && !status) {
+      ev.kind = "recording";
+      ev.recordingUrl = String(f.recording_url);
+      const start = Date.parse(String(f.start_time ?? "")); const end = Date.parse(String(f.end_time ?? ""));
+      if (Number.isFinite(start) && Number.isFinite(end) && end >= start) ev.recordingSec = Math.round((end - start) / 1000);
+      if (str(f.recording_uuid)) ev.eventId = `${callId}:rec:${String(f.recording_uuid)}`;
     } else if (status === "machine" || status === "human") {
       ev.kind = "machine";
       ev.status = status === "machine" ? "machine" : null;

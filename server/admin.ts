@@ -37,6 +37,7 @@ import { consoleGuard, ensureMainGroups } from "./access";
 import { accessLog } from "./access-log";
 import { registerAccessRoutes, aiConsoleRight } from "./access-routes";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
+import { registerTelTestRoutes } from "./telephony/control/tests";
 import { registerAdminLayoutRoutes } from "./layout";
 import { distPublicDir } from "./layout-catalog";
 import { applyTrustProxy } from "./trust-proxy";
@@ -201,6 +202,7 @@ app.use("/admin/layout", consoleGuard("layout", (req) => (req.method === "GET" ?
 registerAccessRoutes(app);
 
 // Telephony + SIP console (all under /admin, so behind the auth middleware).
+registerTelTestRoutes(app); // 6.9: Telephony › Tests + Log (and the log of console changes)
 registerAdminTelephonyRoutes(app);
 // Layout / template builder (persisted, served to clients via /api/layout).
 registerAdminLayoutRoutes(app);

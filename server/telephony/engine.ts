@@ -26,7 +26,7 @@ import type { Request } from "express";
 import { adapter, pick } from "./providers";
 import {
   FINAL_CALL_STATUSES, ProviderError, ProviderNotConfigured,
-  type CallAction, type CallStatus, type ChatChannel, type NormalizedCallEvent, type ProviderAdapter, type ProviderId,
+  type CallAction, type CallStatus, type ChatChannel, type NormalizedCallEvent, type PlaceCallInput, type ProviderAdapter, type ProviderId,
 } from "./providers/types";
 import { telnyxPendingActions, telnyxWaitsFor } from "./providers/telnyx";
 import { publicBaseUrl } from "./connectors";
@@ -73,6 +73,15 @@ export type CallObserver = (call: TelCall, events: NormalizedCallEvent[]) => voi
 let bridgeDigits: DigitsInterceptor | null = null;
 let bridgeObserver: CallObserver | null = null;
 export function setBridgeHooks(digits: DigitsInterceptor | null, observer: CallObserver | null): void { bridgeDigits = digits; bridgeObserver = observer; }
+
+/**
+ * 6.9: a call that runs a TSA (call.tsa) is driven by the control layer
+ * (control/calls.ts): its answer, events and the TSA's own callbacks
+ * (/wh/tel/<token>/tsa). It registers here — it imports the engine.
+ */
+export type TsaCallHandler = (call: TelCall, kind: string, body: unknown, query: Record<string, string>) => Promise<WebhookReply>;
+let tsaCalls: TsaCallHandler | null = null;
+export function setTsaCallHandler(fn: TsaCallHandler | null): void { tsaCalls = fn; }
 
 /** How long an answer / gather webhook waits for a handler (the provider waits ~10 s; Vonage 5). */
 const SYNC_HANDLER_MS = 4_500;
@@ -189,6 +198,10 @@ export type PlaceCallOptions = {
   handlers?: Partial<Record<HandlerEvent, string>>;
   machineDetection?: boolean;
   owner: TelOwner | null;
+  /** 6.9: carried over the operator's SIP trunk (an outbound rule's "sip" service). */
+  via?: PlaceCallInput["via"];
+  /** 6.9: the call runs this TSA when answered (an outbound rule's target, a console test). */
+  tsa?: { id: string; rule?: string };
 };
 
 /** Places a call; its record exists (with its webhooks) before the provider is asked. */
@@ -206,12 +219,14 @@ export async function placeCall(o: PlaceCallOptions): Promise<TelCall> {
     pending: [], waitFor: null, gatherFn: "", events: [], seq: 0,
     timeoutSec: clampTimeout(o.timeout), timeLimitSec: Math.max(0, Math.floor(o.timeLimit ?? 0)),
     createdAt: now, updatedAt: now, answeredAt: null, endedAt: null, durationSec: null, bridge: "", error: "", steer: null,
+    ...(o.tsa ? { tsa: { id: o.tsa.id, rule: o.tsa.rule ?? "", did: o.from ?? "", service: o.via ? "sip" as const : "app" as const, session: "", status: "pending" as const, queue: [], wait: null, dial: null } } : {}),
   };
   save(call);
   try {
     const telnyx = a.id === "telnyx";
     const r = await a.placeCall!({
       to: o.to, from: o.from ?? "", timeout: call.timeoutSec, ...(call.timeLimitSec ? { timeLimit: call.timeLimitSec } : {}),
+      ...(o.via ? { via: o.via } : {}),
       eventUrl: hookUrl(call.token, "event"),
       // Twilio / Vonage ask for the logic when answered; Telnyx is told on call.answered.
       ...(o.raw ? { raw: o.raw } : telnyx ? {} : { answerUrl: hookUrl(call.token, "answer") }),
@@ -311,7 +326,9 @@ export async function waitCall(id: string, cursor: number, timeoutMs: number): P
 
 const HANDLER_OF: Partial<Record<CallStatus, HandlerEvent>> = { completed: "hangup", busy: "busy", "no-answer": "noanswer", failed: "failed", canceled: "failed", machine: "machine" };
 
-/** Applies one provider event to a call; returns true when the status moved. */
+/** Applies one provider event to a call; returns true when the status moved. (6.9: also the TSA layer's.) */
+export function applyCallEvent(call: TelCall, ev: NormalizedCallEvent): boolean { return apply(call, ev); }
+
 function apply(call: TelCall, ev: NormalizedCallEvent): boolean {
   if (ev.eventId && call.events.some((e) => e.note === ev.eventId)) return false; // a retried webhook
   const was = call.status;
@@ -343,6 +360,8 @@ export function rendered(call: TelCall, actions: CallAction[]): WebhookReply {
 
 /** A request to /wh/tel/<token>/<kind>. */
 export async function handleCallWebhook(call: TelCall, kind: string, body: unknown, query: Record<string, string>): Promise<WebhookReply> {
+  if (call.tsa && tsaCalls) return tsaCalls(call, kind, body, query);
+  if (kind === "tsa") return { status: 404, type: "application/json", body: "{\"ok\":false}" };
   const a = adapter(call.provider);
   const events = a?.parseCallEvent ? a.parseCallEvent(body, query) : [];
   const finals: HandlerEvent[] = [];
