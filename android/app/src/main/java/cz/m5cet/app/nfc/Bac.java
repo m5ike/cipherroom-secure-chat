@@ -204,6 +204,10 @@ public final class Bac {
         byte[] n = Des.pad(Apdu.concat(s.ssc, do87, do99));
         if (do8e.length > 0 && !Apdu.hex(Des.retailMac(s.ksmac, n)).equals(Apdu.hex(do8e)))
             throw new IllegalStateException("secure-messaging MAC did not verify");
+        // 6.6: the processing status the chip protected (DO'99') is the command's
+        // real status — a chip may answer 9000 outside while a file is absent (6A82)
+        // or EAC-protected (6982) inside.
+        if (do99.length == 4) sw = ((do99[2] & 0xff) << 8) | (do99[3] & 0xff);
         if (encData.length == 0) return new Sm(new byte[0], sw);
         return new Sm(Des.unpad(Des.tdesCbcDecrypt(s.ksenc, encData)), sw);
     }

@@ -164,12 +164,12 @@ public final class NfcCatalog {
         )));
         c.add(t(EMV, "EMV payment card", "ISO 14443-4 · EMV", "", Arrays.asList(
             op("emv-public", "Read public data", "read", null, "Only the freely readable data (PPSE, the card's application labels, and where allowed the masked PAN and expiry). No PIN, no signing, no transaction."),
-            op("emv-read", "Read card data", "read", null, "Read the card's applications and records (PPSE → SELECT AID → GPO → READ RECORD) and parse the holder data a terminal reads: AIDs, labels, PAN, expiry, name, counters. Read-only — no PIN, no cryptogram, no transaction."),
+            op("emv-read", "Read card data", "read", null, "Read every application on the card (PPSE → SELECT AID → GET DATA → the transaction log → GPO → READ RECORD) and every file it has, and parse what a terminal reads: AIDs, labels, PAN, expiry, name, the counters (ATC, last online ATC, PIN tries left) and the transaction history (date, time, amount, currency, merchant). Read-only — no PIN, no cryptogram, no transaction."),
             op("app-template", "Application template", "read", null, "Send a saved APDU application template (apduTemplates in Android › Define).")
         )));
         c.add(t(EID, "Electronic ID / MRTD", "ISO 14443-4 · ICAO 9303 / eIDAS", "", Arrays.asList(
             op("eid-public", "Read public info", "read", null, "The document type and the data the holder unlocks with the CAN/MRZ they type. No cloning, no signing."),
-            op("eid-read", "Read document (BAC)", "read", "key", "Open the chip with the holder's own MRZ (passport no. + date of birth + expiry) or CAN — the document's own access control — and read DG1 (the MRZ data) and DG2 (the face) over secure messaging. The holder's own document, read-only.")
+            op("eid-read", "Read document (BAC)", "read", "key", "Open the chip with the holder's own MRZ (passport no. + date of birth + expiry) or CAN — the document's own access control: BAC, PACE-ready (EF.CardAccess is read and PACE used where this reader runs the chip's variant) — and read every data group over secure messaging: EF.COM, EF.SOD, DG1 (the MRZ), DG2 (the faces), DG5/DG7 (portrait, signature), DG11/DG12 (personal and document details), DG13 (optional details), DG14 (security protocols), DG15 (the Active Authentication key), DG16 (persons to notify). DG3/DG4 (fingerprints, iris) need EAC and are left alone. Every group read is checked against its hash in EF.SOD (passive authentication). The holder's own document, read-only.")
         )));
         c.add(new TechInfo(UNKNOWN, "Unknown card", "—", "", Collections.<Op>emptyList()));
         CATALOG = Collections.unmodifiableList(c);

@@ -281,7 +281,8 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             case "felica-systems": out = CardOps.felicaSystems(tag); break;
             case "emv-public": out = CardOps.emvPublic(tag); break;
             case "eid-public": out = CardOps.eidPublic(tag); break;
-            case "emv-read": showEmv(card, CardOps.emvRead(tag, 4)); return;
+            // 6.6: the deep read — every application, the history, every file (read-only).
+            case "emv-read": showEmv(card, CardOps.emvRead(tag, new cz.m5cet.app.nfc.EmvReader.Options())); return;
             case "eid-read": case "mrtd-read": {
                 MrtdReader.Options o = armedMrtdOpts != null ? armedMrtdOpts : new MrtdReader.Options();
                 showMrtd(card, CardOps.eidRead(tag, o));
@@ -610,9 +611,13 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         });
     }
 
-    /* ------------------------------------------------------- 6.5 EMV / e-ID */
+    /* ------------------------------------------------- 6.5 / 6.6 EMV / e-ID */
 
-    /** The EMV read result: parsed holder fields per application and a scrollable tag list. */
+    /**
+     * The EMV read result (6.6 deep read): per application its holder fields and
+     * counters, the transaction history as a table, what GET DATA answered, and
+     * the data elements and the raw records as collapsible lists.
+     */
     private void showEmv(JSONObject card, JSONObject emv) {
         Io.main(() -> {
             result.removeAllViews();
@@ -630,39 +635,85 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             }
             for (int i = 0; i < apps.length(); i++) {
                 JSONObject app = apps.optJSONObject(i);
-                if (app == null) continue;
-                LinearLayout box = cardBox();
-                String head = app.optString("scheme", app.optString("label", app.optString("aid", "")));
-                box.addView(ToolPanels.label(a, head, 16, fg, true));
-                if (!app.optString("label", "").isEmpty() && !app.optString("label").equals(head)) box.addView(ToolPanels.label(a, app.optString("label"), 13, muted, false));
-                addField(box, "PAN", app.optString("panMasked", app.optString("pan", "")), fg);
-                addField(box, app().t("nfc.emv.expiry"), app.optString("expiry", ""), fg);
-                addField(box, app().t("nfc.emv.cardholder"), app.optString("cardholder", ""), fg);
-                addField(box, app().t("nfc.emv.effective"), app.optString("effective", ""), fg);
-                addField(box, app().t("nfc.emv.issuer"), app.optString("issuerCountry", ""), fg);
-                if (app.has("atc")) addField(box, "ATC", String.valueOf(app.optInt("atc")), fg);
-                if (app.has("pinTryCounter")) addField(box, app().t("nfc.emv.ptc"), String.valueOf(app.optInt("pinTryCounter")), fg);
-                addField(box, "AID", app.optString("aid", ""), muted);
-                JSONArray tags = app.optJSONArray("tags");
-                if (tags != null && tags.length() > 0) {
-                    box.addView(ToolPanels.label(a, app().t("nfc.emv.tags") + " (" + tags.length() + ")", 12, muted, false));
-                    for (int j = 0; j < tags.length(); j++) {
-                        JSONObject tg = tags.optJSONObject(j);
-                        if (tg == null) continue;
-                        TextView row = ToolPanels.label(a, tg.optString("tag") + "  " + tg.optString("name") + ": " + tg.optString("value"), 12, muted, false);
-                        row.setTypeface(Typeface.MONOSPACE);
-                        box.addView(row);
-                    }
-                }
-                result.addView(box);
+                if (app != null) result.addView(emvApp(app, fg, muted));
             }
             LinearLayout note = cardBox();
+            String how = app().t(emv.optBoolean("deep", false) ? "nfc.emv.readDeep" : "nfc.emv.readAfl").replace("{0}", String.valueOf(emv.optInt("apdus", 0)));
+            if (emv.has("apdus")) note.addView(ToolPanels.label(a, how, 12, muted, false));
             note.addView(ToolPanels.label(a, app().t("nfc.readonly.help"), 12, muted, false));
             result.addView(note);
         });
     }
 
-    /** The e-ID / MRTD read result: the MRZ fields, the data groups and the face. */
+    /** One EMV application: fields, counters, the history, GET DATA, the elements and the records. */
+    private View emvApp(JSONObject app, int fg, int muted) {
+        LinearLayout box = cardBox();
+        String head = app.optString("scheme", app.optString("label", app.optString("aid", "")));
+        box.addView(ToolPanels.label(a, head, 16, fg, true));
+        if (!app.optString("label", "").isEmpty() && !app.optString("label").equals(head)) box.addView(ToolPanels.label(a, app.optString("label"), 13, muted, false));
+        addField(box, "PAN", app.optString("panMasked", app.optString("pan", "")), fg);
+        addField(box, app().t("nfc.emv.expiry"), app.optString("expiry", ""), fg);
+        addField(box, app().t("nfc.emv.cardholder"), app.optString("cardholder", ""), fg);
+        addField(box, app().t("nfc.emv.effective"), app.optString("effective", ""), fg);
+        addField(box, app().t("nfc.emv.issuer"), app.optString("issuerCountry", ""), fg);
+        addField(box, app().t("nfc.emv.panSeq"), app.optString("panSequence", ""), fg);
+        if (app.has("atc")) addField(box, app().t("nfc.emv.atc"), String.valueOf(app.optLong("atc")), fg);
+        if (app.has("lastOnlineAtc")) addField(box, app().t("nfc.emv.lastOnlineAtc"), String.valueOf(app.optLong("lastOnlineAtc")), fg);
+        if (app.has("pinTryCounter")) addField(box, app().t("nfc.emv.ptc"), String.valueOf(app.optLong("pinTryCounter")), fg);
+        addField(box, "AID", app.optString("aid", ""), muted);
+        addField(box, "AIP", app.optString("aip", ""), muted);
+        addField(box, "AFL", app.optString("afl", ""), muted);
+
+        // The transaction history (newest first, as the card keeps it).
+        JSONArray log = app.optJSONArray("log");
+        box.addView(sectionTitle(app().t("nfc.emv.history") + (log != null && log.length() > 0 ? " (" + log.length() + ")" : "")));
+        if (log == null || log.length() == 0) box.addView(ToolPanels.label(a, app().t("nfc.emv.noHistory"), 12, muted, false));
+        else {
+            List<String[]> rows = new java.util.ArrayList<>();
+            for (int j = 0; j < log.length(); j++) {
+                JSONObject e = log.optJSONObject(j);
+                if (e == null) continue;
+                String amount = (e.optString("amount", "") + " " + e.optString("currency", "")).trim();
+                rows.add(new String[]{e.optString("date", ""), e.optString("time", ""), amount, e.optString("merchant", ""), e.optString("type", "")});
+            }
+            table(box, new String[]{app().t("nfc.emv.date"), app().t("nfc.emv.time"), app().t("nfc.emv.amount"), app().t("nfc.emv.merchant"), app().t("nfc.emv.type")},
+                new float[]{1.25f, 0.95f, 1.2f, 1.4f, 1f}, rows, 2);
+            if (app.has("logSfi")) box.addView(ToolPanels.label(a, "SFI " + app.optInt("logSfi") + (app.optString("logFormat", "").isEmpty() ? "" : " · " + app.optString("logFormat")), 11, muted, false));
+        }
+
+        // What GET DATA answered (counters, the log entry and format, balances).
+        JSONArray gd = app.optJSONArray("getData");
+        if (gd != null && gd.length() > 0) {
+            box.addView(sectionTitle(app().t("nfc.emv.getData")));
+            for (int j = 0; j < gd.length(); j++) {
+                JSONObject g = gd.optJSONObject(j);
+                if (g != null) box.addView(mono(g.optString("tag") + "  " + g.optString("name") + ": " + g.optString("value"), 12, fg));
+            }
+        }
+
+        JSONArray tags = app.optJSONArray("tags");
+        if (tags != null && tags.length() > 0) collapsible(box, app().t("nfc.emv.tags") + " (" + tags.length() + ")", body -> {
+            for (int j = 0; j < tags.length(); j++) {
+                JSONObject tg = tags.optJSONObject(j);
+                if (tg != null) body.addView(mono(tg.optString("tag") + "  " + tg.optString("name") + ": " + tg.optString("value"), 12, muted));
+            }
+        });
+        JSONArray recs = app.optJSONArray("records");
+        if (recs != null && recs.length() > 0) collapsible(box, app().t("nfc.emv.records") + " (" + recs.length() + ")", body -> {
+            for (int j = 0; j < recs.length(); j++) {
+                JSONObject r = recs.optJSONObject(j);
+                if (r == null) continue;
+                String head2 = "SFI " + r.optInt("sfi") + " · #" + r.optInt("record") + (r.optBoolean("log") ? " · " + app().t("nfc.emv.log") : "");
+                TextView h = ToolPanels.label(a, head2, 12, fg, true);
+                h.setPadding(0, Ui.dp(a, 6), 0, 0);
+                body.addView(h);
+                body.addView(mono(spaced(r.optString("hex", "")), 11, muted));
+            }
+        });
+        return box;
+    }
+
+    /** The e-ID / MRTD read result (6.6): the holder beside the face, DG11 / DG12, every picture, the security objects and the files. */
     private void showMrtd(JSONObject card, JSONObject mrtd) {
         Io.main(() -> {
             result.removeAllViews();
@@ -670,53 +721,329 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
             if (card != null) drawCardInfo(card);
             refreshStatus(MrtdReader.summary(mrtd));
+            JSONArray images = mrtd.optJSONArray("images");
+
+            // The holder (DG1) beside the face.
             LinearLayout box = cardBox();
             JSONObject m = mrtd.optJSONObject("mrzInfo");
             if (m == null) {
                 box.addView(ToolPanels.label(a, app().t("nfc.eid.title"), 16, fg, true));
                 box.addView(ToolPanels.label(a, mrtd.optString("message", MrtdReader.summary(mrtd)), 13, muted, false));
             } else {
+                LinearLayout row = new LinearLayout(a);
+                row.setOrientation(LinearLayout.HORIZONTAL);
+                String photo = mrtd.optString("photo", "");
+                if (!photo.isEmpty()) {
+                    LinearLayout.LayoutParams pl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    pl.setMarginEnd(Ui.dp(a, 12));
+                    row.addView(picture(photo, mrtd.optString("photoMime", ""), null, 104, muted), pl);
+                }
+                LinearLayout col = new LinearLayout(a);
+                col.setOrientation(LinearLayout.VERTICAL);
                 String name = (m.optString("givenNames", "") + " " + m.optString("surname", "")).trim();
-                box.addView(ToolPanels.label(a, name.isEmpty() ? app().t("nfc.eid.title") : name, 16, fg, true));
-                addField(box, app().t("nfc.eid.docNumber"), m.optString("documentNumber", ""), fg);
-                addField(box, app().t("nfc.eid.nationality"), m.optString("nationality", ""), fg);
-                addField(box, app().t("nfc.eid.issuer"), m.optString("issuer", ""), fg);
-                addField(box, app().t("nfc.eid.dobLabel"), m.optString("dateOfBirth", ""), fg);
-                addField(box, app().t("nfc.eid.sex"), m.optString("sex", ""), fg);
-                addField(box, app().t("nfc.eid.expiryLabel"), m.optString("dateOfExpiry", ""), fg);
+                col.addView(ToolPanels.label(a, name.isEmpty() ? app().t("nfc.eid.title") : name, 16, fg, true));
+                addField(col, app().t("nfc.eid.docCode"), m.optString("documentCode", ""), fg);
+                addField(col, app().t("nfc.eid.docNumber"), m.optString("documentNumber", ""), fg);
+                addField(col, app().t("nfc.eid.nationality"), m.optString("nationality", ""), fg);
+                addField(col, app().t("nfc.eid.issuer"), m.optString("issuer", ""), fg);
+                addField(col, app().t("nfc.eid.dobLabel"), m.optString("dateOfBirth", ""), fg);
+                addField(col, app().t("nfc.eid.sex"), m.optString("sex", ""), fg);
+                addField(col, app().t("nfc.eid.expiryLabel"), m.optString("dateOfExpiry", ""), fg);
+                row.addView(col, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+                box.addView(row);
+            }
+            // How the chip was opened: BAC, or PACE (and what the chip offers).
+            String access = mrtd.optString("access", "none");
+            JSONObject pace = mrtd.optJSONObject("pace");
+            if (!access.equals("none")) {
+                String how = access.toUpperCase(java.util.Locale.ROOT);
+                if (access.equals("pace") && pace != null) how += " · " + pace.optString("protocol", "") + (pace.has("password") ? " · " + pace.optString("password").toUpperCase(java.util.Locale.ROOT) : "");
+                addField(box, app().t("nfc.eid.access"), how, fg);
+            }
+            if (pace != null && pace.optBoolean("supported") && !pace.optBoolean("used")) {
+                String offered = pace.optString("protocol", "PACE");
+                if (pace.has("parameterId")) {
+                    String p = cz.m5cet.app.nfc.Pace.PARAMETERS.get(pace.optInt("parameterId"));
+                    offered += " (" + (p != null ? p : String.valueOf(pace.optInt("parameterId"))) + ")";
+                }
+                addField(box, app().t("nfc.eid.paceOffered"), offered + " — " + app().t("nfc.eid.notUsed"), muted);
             }
             JSONArray dg = mrtd.optJSONArray("dataGroups");
-            if (dg != null && dg.length() > 0) {
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < dg.length(); i++) sb.append(i > 0 ? ", " : "").append(dg.optString(i));
-                addField(box, app().t("nfc.eid.dataGroups"), sb.toString(), muted);
-            }
+            if (dg != null && dg.length() > 0) addField(box, app().t("nfc.eid.dataGroups"), join(dg, ", "), muted);
+            if (m != null && !mrtd.optString("message", "").isEmpty()) box.addView(ToolPanels.label(a, mrtd.optString("message"), 12, muted, false));
             result.addView(box);
-            // The face, where DG2 carried one.
-            String photo = mrtd.optString("photo", "");
-            if (!photo.isEmpty()) {
-                String mime = mrtd.optString("photoMime", "");
-                Bitmap bmp = null;
-                try { byte[] img = Base64.decode(photo, Base64.DEFAULT); bmp = BitmapFactory.decodeByteArray(img, 0, img.length); } catch (RuntimeException ignored) { }
-                LinearLayout pb = cardBox();
-                pb.addView(ToolPanels.label(a, app().t("nfc.eid.photo"), 12, muted, false));
-                if (bmp != null) {
-                    ImageView iv = new ImageView(a);
-                    iv.setImageBitmap(bmp);
-                    iv.setAdjustViewBounds(true);
-                    LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(Ui.dp(a, 140), ViewGroup.LayoutParams.WRAP_CONTENT);
-                    ip.topMargin = Ui.dp(a, 6);
-                    pb.addView(iv, ip);
-                } else {
-                    // A JPEG 2000 face may not decode on Android — show the fields and note the format.
-                    pb.addView(ToolPanels.label(a, app().t("nfc.eid.photoFormat").replace("{0}", mime.isEmpty() ? "?" : mime), 13, fg, false));
-                }
-                result.addView(pb);
+
+            // DG11 — personal details.
+            JSONObject p = mrtd.optJSONObject("personal");
+            if (p != null && p.length() > 0) {
+                LinearLayout b = cardBox();
+                b.addView(ToolPanels.label(a, app().t("nfc.eid.personal"), 15, fg, true));
+                String[][] keys = {{"fullName", "nfc.eid.fullName"}, {"otherNames", "nfc.eid.otherNames"}, {"personalNumber", "nfc.eid.personalNumber"},
+                    {"fullDateOfBirth", "nfc.eid.fullDob"}, {"placeOfBirth", "nfc.eid.placeOfBirth"}, {"address", "nfc.eid.address"}, {"telephone", "nfc.eid.telephone"},
+                    {"profession", "nfc.eid.profession"}, {"title", "nfc.eid.titleField"}, {"personalSummary", "nfc.eid.summary"},
+                    {"otherTravelDocuments", "nfc.eid.otherDocs"}, {"custody", "nfc.eid.custody"}};
+                for (String[] k : keys) addField(b, app().t(k[1]), valueOf(p, k[0]), fg);
+                result.addView(b);
             }
+            // DG12 — document details.
+            JSONObject d = mrtd.optJSONObject("document");
+            if (d != null && d.length() > 0) {
+                LinearLayout b = cardBox();
+                b.addView(ToolPanels.label(a, app().t("nfc.eid.document"), 15, fg, true));
+                String[][] keys = {{"issuingAuthority", "nfc.eid.issuingAuthority"}, {"dateOfIssue", "nfc.eid.dateOfIssue"}, {"otherPersons", "nfc.eid.otherPersons"},
+                    {"endorsements", "nfc.eid.endorsements"}, {"taxExit", "nfc.eid.taxExit"}, {"personalizationTime", "nfc.eid.personalized"},
+                    {"personalizationDevice", "nfc.eid.personalizationDevice"}};
+                for (String[] k : keys) addField(b, app().t(k[1]), valueOf(d, k[0]), fg);
+                result.addView(b);
+            }
+            // DG13 / DG16.
+            String optional = mrtd.optString("optional", "");
+            JSONArray notify = mrtd.optJSONArray("personsToNotify");
+            if (!optional.isEmpty() || (notify != null && notify.length() > 0)) {
+                LinearLayout b = cardBox();
+                if (!optional.isEmpty()) { b.addView(sectionTitle(app().t("nfc.eid.optional"))); b.addView(ToolPanels.label(a, optional, 13, fg, false)); }
+                if (notify != null && notify.length() > 0) {
+                    b.addView(sectionTitle(app().t("nfc.eid.notify")));
+                    for (int i = 0; i < notify.length(); i++) b.addView(ToolPanels.label(a, notify.optString(i), 13, fg, false));
+                }
+                result.addView(b);
+            }
+
+            // Every picture the document holds (the face beside the holder is not repeated).
+            if (images != null && images.length() > 0) {
+                LinearLayout strip = new LinearLayout(a);
+                strip.setOrientation(LinearLayout.HORIZONTAL);
+                boolean faceShown = m != null && !mrtd.optString("photo", "").isEmpty();
+                int shown = 0;
+                for (int i = 0; i < images.length(); i++) {
+                    JSONObject img = images.optJSONObject(i);
+                    if (img == null) continue;
+                    if (faceShown && "face".equals(img.optString("kind")) && img.optString("data").equals(mrtd.optString("photo"))) { faceShown = false; continue; }
+                    LinearLayout.LayoutParams il = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+                    il.setMarginEnd(Ui.dp(a, 10));
+                    int w = "document".equals(img.optString("kind")) ? 200 : 120;
+                    strip.addView(picture(img.optString("data"), img.optString("mime"), imageLabel(img.optString("kind")) + " · " + img.optString("group"), w, muted), il);
+                    shown++;
+                }
+                if (shown > 0) {
+                    LinearLayout b = cardBox();
+                    b.addView(ToolPanels.label(a, app().t("nfc.eid.images") + " (" + shown + ")", 15, fg, true));
+                    android.widget.HorizontalScrollView hs = new android.widget.HorizontalScrollView(a);
+                    hs.setPadding(0, Ui.dp(a, 6), 0, 0);
+                    hs.addView(strip);
+                    b.addView(hs);
+                    result.addView(b);
+                }
+            }
+
+            // The security objects: passive authentication, the signer, the protocols, the AA key.
+            JSONObject sec = mrtd.optJSONObject("security");
+            if (sec != null && sec.length() > 0) {
+                LinearLayout b = cardBox();
+                b.addView(ToolPanels.label(a, app().t("nfc.eid.security"), 15, fg, true));
+                String passive = sec.optString("passive", "");
+                if (!passive.isEmpty()) {
+                    int ok = Ui.color(a, "@success", 0xFF2e7d32), bad = Ui.color(a, "@danger", 0xFFdc2626);
+                    String text = passive.equals("ok") ? "✓ " + app().t("nfc.eid.passiveOk") : passive.equals("mismatch") ? "✗ " + app().t("nfc.eid.passiveBad") : "— " + app().t("nfc.eid.passiveNone");
+                    addField(b, app().t("nfc.eid.passive"), text, passive.equals("ok") ? ok : passive.equals("mismatch") ? bad : muted);
+                }
+                addField(b, app().t("nfc.eid.hash"), sec.optString("hashAlgorithm", ""), fg);
+                JSONObject signer = sec.optJSONObject("signer");
+                if (signer != null) {
+                    addField(b, app().t("nfc.eid.signer"), signer.optString("subject", ""), fg);
+                    addField(b, app().t("nfc.eid.signedBy"), signer.optString("issuer", ""), fg);
+                    String validity = (signer.optString("notBefore", "") + " – " + signer.optString("notAfter", "")).trim();
+                    if (!validity.equals("–")) addField(b, app().t("nfc.eid.validity"), validity, fg);
+                    addField(b, app().t("nfc.eid.serial"), signer.optString("serial", ""), muted);
+                }
+                JSONArray protocols = sec.optJSONArray("protocols");
+                if (protocols != null && protocols.length() > 0) addField(b, app().t("nfc.eid.protocols"), join(protocols, ", "), fg);
+                addField(b, app().t("nfc.eid.aaKey"), sec.optString("activeAuthKey", ""), fg);
+                addField(b, app().t("nfc.eid.lds"), mrtd.optString("ldsVersion", ""), muted);
+                addField(b, app().t("nfc.eid.unicode"), mrtd.optString("unicodeVersion", ""), muted);
+                result.addView(b);
+            }
+
+            // Every file tried, and how it went.
+            JSONArray files = mrtd.optJSONArray("files");
+            if (files != null && files.length() > 0) {
+                LinearLayout b = cardBox();
+                b.addView(ToolPanels.label(a, app().t("nfc.eid.files"), 15, fg, true));
+                for (int i = 0; i < files.length(); i++) {
+                    JSONObject f = files.optJSONObject(i);
+                    if (f != null) b.addView(fileRow(f, fg, muted));
+                }
+                result.addView(b);
+            }
+
             LinearLayout note = cardBox();
             note.addView(ToolPanels.label(a, app().t("nfc.readonly.help"), 12, muted, false));
             result.addView(note);
         });
+    }
+
+    /** One file of the document: its name and id, its status (read / protected (EAC) / absent / error), size and hash check. */
+    private View fileRow(JSONObject f, int fg, int muted) {
+        String status = f.optString("status", "error");
+        int bad = Ui.color(a, "@danger", 0xFFdc2626), ok = Ui.color(a, "@success", 0xFF2e7d32);
+        LinearLayout row = new LinearLayout(a);
+        row.setPadding(0, Ui.dp(a, 3), 0, Ui.dp(a, 3));
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        TextView name = ToolPanels.label(a, f.optString("name") + "  " + f.optString("fid"), 13, fg, true);
+        name.setTypeface(Typeface.create(Typeface.MONOSPACE, Typeface.BOLD));
+        row.addView(name, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.1f));
+        String st;
+        switch (status) {
+            case "read": st = app().t("nfc.eid.st.read"); break;
+            case "protected": st = app().t("nfc.eid.st.protected"); break;
+            case "absent": st = app().t("nfc.eid.st.absent"); break;
+            default: st = app().t("nfc.eid.st.error");
+        }
+        if (f.has("size")) st += " · " + sizeText(f.optInt("size"));
+        if (!f.optString("message", "").isEmpty()) st += " · " + f.optString("message");
+        int color = status.equals("read") ? fg : status.equals("error") ? bad : muted;
+        row.addView(ToolPanels.label(a, st, 12, color, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 2f));
+        if (f.has("hashOk")) {
+            boolean good = f.optBoolean("hashOk");
+            row.addView(ToolPanels.label(a, good ? "✓" : "✗", 15, good ? ok : bad, true));
+        }
+        return row;
+    }
+
+    private String imageLabel(String kind) {
+        switch (kind) {
+            case "face": return app().t("nfc.eid.img.face");
+            case "portrait": return app().t("nfc.eid.img.portrait");
+            case "signature": return app().t("nfc.eid.img.signature");
+            case "document": return app().t("nfc.eid.img.document");
+            default: return app().t("nfc.eid.img.other");
+        }
+    }
+
+    /**
+     * A picture from the document, {@code widthDp} wide, with an optional caption.
+     * BitmapFactory cannot decode JPEG 2000 (many faces are) — that shows a
+     * labelled placeholder instead.
+     */
+    private View picture(String b64, String mime, String caption, int widthDp, int muted) {
+        LinearLayout col = new LinearLayout(a);
+        col.setOrientation(LinearLayout.VERTICAL);
+        Bitmap bmp = decodeImage(b64);
+        if (bmp != null) {
+            ImageView iv = new ImageView(a);
+            iv.setImageBitmap(bmp);
+            iv.setAdjustViewBounds(true);
+            if (caption != null) iv.setContentDescription(caption);
+            col.addView(iv, new LinearLayout.LayoutParams(Ui.dp(a, widthDp), ViewGroup.LayoutParams.WRAP_CONTENT));
+        } else {
+            String format = "image/jp2".equals(mime) ? "JPEG 2000" : (mime == null || mime.isEmpty() ? "?" : mime);
+            TextView ph = ToolPanels.label(a, app().t("nfc.eid.cantShow").replace("{0}", format), 12, muted, false);
+            ph.setGravity(Gravity.CENTER);
+            ph.setPadding(Ui.dp(a, 8), Ui.dp(a, 8), Ui.dp(a, 8), Ui.dp(a, 8));
+            ph.setBackground(Ui.shape(Ui.color(a, "@surfaceVariant", Color.LTGRAY), Ui.dp(a, 10), Ui.dp(a, 1), Ui.color(a, "@border", Color.LTGRAY)));
+            col.addView(ph, new LinearLayout.LayoutParams(Ui.dp(a, widthDp), Ui.dp(a, Math.max(72, widthDp * 4 / 3))));
+        }
+        if (caption != null) {
+            TextView c = ToolPanels.label(a, caption, 11, muted, false);
+            c.setMaxWidth(Ui.dp(a, widthDp));
+            c.setPadding(0, Ui.dp(a, 3), 0, 0);
+            col.addView(c);
+        }
+        return col;
+    }
+
+    /** Decodes a base64 picture, scaled down when it is large; null when Android cannot decode it (JPEG 2000). */
+    private static Bitmap decodeImage(String b64) {
+        try {
+            byte[] img = Base64.decode(b64, Base64.DEFAULT);
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(img, 0, img.length, bounds);
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null;
+            BitmapFactory.Options o = new BitmapFactory.Options();
+            o.inSampleSize = 1;
+            while (Math.max(bounds.outWidth, bounds.outHeight) / o.inSampleSize > 1600) o.inSampleSize *= 2;
+            return BitmapFactory.decodeByteArray(img, 0, img.length, o);
+        } catch (RuntimeException e) { return null; }
+    }
+
+    private TextView sectionTitle(String s) {
+        TextView t = ToolPanels.label(a, s, 12, Ui.color(a, "@muted", Color.GRAY), true);
+        t.setPadding(0, Ui.dp(a, 10), 0, Ui.dp(a, 3));
+        return t;
+    }
+
+    private TextView mono(String s, float sp, int color) {
+        TextView t = ToolPanels.label(a, s, sp, color, false);
+        t.setTypeface(Typeface.MONOSPACE);
+        return t;
+    }
+
+    private interface Fill { void into(LinearLayout body); }
+
+    /** A list behind a header that opens and closes it; the rows are built on the first open. */
+    private void collapsible(LinearLayout box, String title, Fill fill) {
+        TextView head = ToolPanels.label(a, "▸ " + title, 13, Ui.color(a, "@primary", Color.BLUE), true);
+        head.setPadding(0, Ui.dp(a, 10), 0, Ui.dp(a, 4));
+        LinearLayout body = new LinearLayout(a);
+        body.setOrientation(LinearLayout.VERTICAL);
+        body.setVisibility(View.GONE);
+        boolean[] built = {false};
+        head.setOnClickListener(v -> {
+            if (!built[0]) { fill.into(body); built[0] = true; }
+            boolean open = body.getVisibility() != View.VISIBLE;
+            body.setVisibility(open ? View.VISIBLE : View.GONE);
+            head.setText((open ? "▾ " : "▸ ") + title);
+        });
+        box.addView(head);
+        box.addView(body);
+    }
+
+    /** A small table: a header row, a rule, then the rows; {@code endColumn} is right-aligned (amounts). */
+    private void table(LinearLayout box, String[] head, float[] weights, List<String[]> rows, int endColumn) {
+        int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
+        box.addView(tableRow(head, weights, muted, true, endColumn));
+        View rule = new View(a);
+        rule.setBackgroundColor(Ui.color(a, "@border", Color.LTGRAY));
+        box.addView(rule, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, Ui.dp(a, 1))));
+        for (String[] r : rows) box.addView(tableRow(r, weights, fg, false, endColumn));
+    }
+
+    private View tableRow(String[] cells, float[] weights, int color, boolean bold, int endColumn) {
+        LinearLayout row = new LinearLayout(a);
+        row.setPadding(0, Ui.dp(a, 3), 0, Ui.dp(a, 3));
+        for (int i = 0; i < cells.length; i++) {
+            TextView c = ToolPanels.label(a, cells[i] == null ? "" : cells[i], 12, color, bold);
+            c.setPadding(0, 0, Ui.dp(a, 6), 0);
+            if (i == endColumn) c.setGravity(Gravity.END);
+            row.addView(c, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, weights[i]));
+        }
+        return row;
+    }
+
+    /** A field's text: a string, or a list joined by ", ". */
+    private static String valueOf(JSONObject o, String key) {
+        JSONArray arr = o.optJSONArray(key);
+        return arr != null ? join(arr, ", ") : o.optString(key, "");
+    }
+
+    private static String join(JSONArray a, String sep) {
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < a.length(); i++) { if (i > 0) sb.append(sep); sb.append(a.optString(i)); }
+        return sb.toString();
+    }
+
+    /** Hex in byte pairs ("70 0F 5A…"), for the records list. */
+    private static String spaced(String hex) {
+        StringBuilder sb = new StringBuilder(hex.length() * 3 / 2);
+        for (int i = 0; i + 1 < hex.length(); i += 2) { if (i > 0) sb.append(' '); sb.append(hex, i, i + 2); }
+        return sb.toString();
+    }
+
+    private static String sizeText(int n) {
+        if (n < 1024) return n + " B";
+        if (n < 1024 * 1024) return n < 10_240 ? String.format(java.util.Locale.ROOT, "%.1f kB", n / 1024.0) : (n / 1024) + " kB";
+        return String.format(java.util.Locale.ROOT, "%.1f MB", n / 1024.0 / 1024.0);
     }
 
     private void addField(LinearLayout box, String label, String value, int color) {
@@ -806,7 +1133,11 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
     private interface OnBlock { void run(int block, byte[] data); }
     private interface OnMrtd { void run(MrtdReader.Options opts); }
 
-    /** The e-ID / MRTD access dialog: the BAC key (document number + DOB + expiry), a CAN, or a pasted MRZ, and a "read photo" toggle. */
+    /**
+     * The e-ID / MRTD access dialog: the BAC key (document number + DOB + expiry)
+     * or a pasted MRZ, and / or the CAN printed on the document (PACE), with the
+     * "read photo" and "every data group" toggles.
+     */
     private void askMrtd(OnMrtd cb) {
         EditText doc = new EditText(a); doc.setHint(app().t("nfc.eid.docNumber")); doc.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         EditText dob = new EditText(a); dob.setHint(app().t("nfc.eid.dob")); dob.setInputType(InputType.TYPE_CLASS_NUMBER);
@@ -814,22 +1145,26 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         EditText can = new EditText(a); can.setHint(app().t("nfc.eid.can")); can.setInputType(InputType.TYPE_CLASS_NUMBER);
         EditText mrz = new EditText(a); mrz.setHint(app().t("nfc.eid.mrz")); mrz.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS); mrz.setMinLines(2);
         CheckBox photo = new CheckBox(a); photo.setText(app().t("nfc.eid.photo")); photo.setChecked(true); photo.setTextColor(Ui.color(a, "@onSurface", Color.BLACK));
+        CheckBox all = new CheckBox(a); all.setText(app().t("nfc.eid.all")); all.setChecked(true); all.setTextColor(Ui.color(a, "@onSurface", Color.BLACK));
         LinearLayout l = new LinearLayout(a); l.setOrientation(LinearLayout.VERTICAL); l.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
-        l.addView(doc); l.addView(dob); l.addView(exp); l.addView(can); l.addView(mrz); l.addView(photo);
+        l.addView(doc); l.addView(dob); l.addView(exp); l.addView(mrz); l.addView(can); l.addView(photo); l.addView(all);
         ScrollView sv = new ScrollView(a); sv.addView(l);
         new android.app.AlertDialog.Builder(a).setTitle(app().t("nfc.eid.title")).setView(sv)
             .setPositiveButton(app().t("nfc.eid.read"), (d, w) -> {
                 MrtdReader.Options o = new MrtdReader.Options();
                 String mrzText = mrz.getText().toString().trim();
+                String canText = can.getText().toString().trim();
+                if (!canText.isEmpty()) o.can = canText;
                 if (!mrzText.isEmpty()) o.mrz = mrzText;
                 else {
                     String dn = doc.getText().toString().trim(), db = dob.getText().toString().trim(), ex = exp.getText().toString().trim();
-                    if (dn.isEmpty() || db.isEmpty() || ex.isEmpty()) { a.flash("", app().t("nfc.eid.needKey"), "warn"); return; }
-                    o.key = new cz.m5cet.app.nfc.Bac.MrzKey(dn, db, ex);
+                    boolean anyKey = !dn.isEmpty() || !db.isEmpty() || !ex.isEmpty();
+                    // The CAN alone opens a PACE document; otherwise the three BAC fields are needed.
+                    if ((anyKey || canText.isEmpty()) && (dn.isEmpty() || db.isEmpty() || ex.isEmpty())) { a.flash("", app().t("nfc.eid.needKey"), "warn"); return; }
+                    if (anyKey) o.key = new cz.m5cet.app.nfc.Bac.MrzKey(dn, db, ex);
                 }
-                String canText = can.getText().toString().trim();
-                if (!canText.isEmpty()) o.can = canText;
                 o.readPhoto = photo.isChecked();
+                o.all = all.isChecked();
                 cb.run(o);
             })
             .setNegativeButton(app().t("nav.close"), null).show();
