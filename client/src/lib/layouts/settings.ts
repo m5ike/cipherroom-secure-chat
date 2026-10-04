@@ -37,6 +37,16 @@ export function profileTree(): LNode {
         ]),
       ]),
     ]),
+    // 6.7: the profile card — photo, background, public nickname, about and fields, each with its audience.
+    n("panel", {id:"profile-card-section",name:"Public profile",tag:"section",if:"$account",attrs:{class:"mb-5 space-y-3"}}, [
+      n("panel", {id:"profile-card-head",tag:"div",attrs:{class:"flex items-start gap-3"}}, [
+        n("panel", {id:"profile-card-icon",tag:"div",attrs:{class:"mt-0.5 text-primary"}}, [
+          n("icon", {id:"icon-globe",props:{icon:"globe"},attrs:{class:"h-4 w-4"}}),
+        ]),
+        n("heading", {id:"profile-card-title",tag:"h3",attrs:{class:"text-sm font-semibold tracking-tight"},text:"{_'pf.title'}"}),
+      ]),
+      n("slot", {id:"profile-card",name:"Profile card editor",slot:"card"}),
+    ]),
     n("panel", {id:"mb-5-2",name:"PassKey profile (server)",tag:"section",attrs:{class:"mb-5 space-y-3"}}, [
       n("panel", {id:"flex-2",tag:"div",attrs:{class:"flex items-start gap-3"}}, [
         n("panel", {id:"mt-0-5-2",tag:"div",attrs:{class:"mt-0.5 text-primary"}}, [
@@ -437,7 +447,7 @@ export const SETTINGS_CONTRACTS: Record<SettingsId, LayoutContract> = {
     description: "Profile: the name, avatar and bio, and saving the profile with the account.",
     vars: [PREFS, { path: "$account", type: "object", description: "The signed-in account (.username, .id), or nothing." }, { path: "$busy", type: "yes/no", description: "Saving." }, { path: "$msg", type: "text", description: "What saving said." }, { path: "$canOpenConnection", type: "yes/no", description: "The Connection window can be opened." }],
     actions: [SET_TEXT, { name: "save", description: "Save the profile with the account." }, { name: "openConnection", description: "Open the Connection window (sign in)." }],
-    slots: [], refs: [],
+    slots: [{ name: "card", description: "6.7: the profile card's editor — photo, background, public nickname, about and fields, each only for me / room members / public, with a preview per audience." }], refs: [],
   },
   "panel.settings": {
     description: "Settings: the language, the time zone, where appearance went, the largest attachment.",

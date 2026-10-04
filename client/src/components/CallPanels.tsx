@@ -8,9 +8,14 @@ import type { AudioStatus, PeerView } from "../lib/app-types";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
 
-export function PeerList({ peers, lang }: { peers: PeerView[]; lang: Lang }) {
+export function PeerList({ peers, lang, onInfo }: { peers: PeerView[]; lang: Lang; onInfo?: (peerId: string) => void }) {
   const { tree, base } = useLayoutBase("part.peers", lang);
-  return renderLayout(tree, { ...base, data: { peers: peers.map((p) => ({ id: p.id, name: p.name, short: p.id.slice(-12), status: p.status, audio: p.audio })) } });
+  return renderLayout(tree, {
+    ...base,
+    data: { peers: peers.map((p) => ({ id: p.id, name: p.name, short: p.id.slice(-12), status: p.status, audio: p.audio })) },
+    // 6.7: a person's details and profile.
+    actions: { info: (_e: unknown, id: unknown) => onInfo?.(String(id)) },
+  });
 }
 
 export function AudioControls({ audioStatus, audioPeerCount, connected, onJoin, onLeave, onToggleMute, lang, media, mediaDetail }: { audioStatus: AudioStatus; audioPeerCount: number; connected: boolean; onJoin: () => void; onLeave: () => void; onToggleMute: () => void; lang: Lang; media: Record<string, "e2ee" | "partial" | "off"> | null; mediaDetail?: string }) {

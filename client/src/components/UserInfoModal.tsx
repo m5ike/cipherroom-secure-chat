@@ -13,6 +13,7 @@ import { safetyNumber } from "../lib/identity";
 import { t, type Lang } from "../lib/i18n";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
+import { PeerProfile, type PeerProfileInfo } from "./PeerProfile";
 
 export type UserInfo = {
   /** The nickname shown in the room. */
@@ -40,6 +41,8 @@ export type UserInfo = {
     onVerified: () => void;
     onExclude: () => void;
   };
+  /** 6.7: their profile (what they share with the room) and the key that signed their messages. */
+  profile?: PeerProfileInfo;
 };
 
 const QR_PREFIX = "M5CET-SN:1:";
@@ -118,6 +121,7 @@ export function UserInfoView({ info, lang }: { info: UserInfo; lang: Lang }) {
     },
     slots: {
       qr: () => <QrCodeView value={`${QR_PREFIX}${digits}`} size={160} />,
+      profile: () => (info.profile ? <PeerProfile info={info.profile} name={info.name} username={info.username} lang={lang} /> : null),
       scanner: () => (
         <QrScanner
           onClose={() => setScanning(false)}

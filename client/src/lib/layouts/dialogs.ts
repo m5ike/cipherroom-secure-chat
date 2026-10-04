@@ -57,6 +57,8 @@ export function userInfoTree(): LNode {
         n("panel", { id: "userinfo-peer", attrs: { class: "font-mono text-xs text-muted-foreground" }, text: "{$peerShort}" }),
       ]),
     ]),
+    // 6.7: their profile — what they share with the room, and their public one on request.
+    n("slot", { id: "userinfo-profile", name: "Profile", slot: "profile" }),
     n("panel", { id: "userinfo-grid", name: "Facts", attrs: { class: "userinfo-grid" } }, rows(n, [
       { id: "username", label: "{_'id.username'}", if: "$username", value: n("area", { id: "userinfo-username", attrs: { class: "font-mono", "data-testid": "userinfo-username" }, text: "{$username}" }) },
       { id: "duration", label: "{_'userinfo.duration'}", value: "{$duration}" },
@@ -316,6 +318,7 @@ export const DIALOG_CONTRACTS: Record<DialogId, LayoutContract> = {
     slots: [
       { name: "qr", description: "The safety number as a QR code." },
       { name: "scanner", description: "The camera, scanning." },
+      { name: "profile", description: "6.7: their profile — what they share with the room (end-to-end encrypted), and on request the public profile of their username." },
     ],
     refs: [],
   },

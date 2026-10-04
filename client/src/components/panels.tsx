@@ -13,6 +13,7 @@ import { langLabel, SUPPORTED_LANGS, t, type Lang } from "@/lib/i18n";
 import { DEFAULT_ROOM_SECURITY, type Preferences, type RoomSecurity } from "@/lib/preferences";
 import { Fingerprint, formatFingerprint, loadFingerprints } from "@/lib/fingerprint";
 import { currentAccount, saveVault } from "@/lib/account";
+import { ProfileEditor } from "./ProfileEditor";
 
 type PanelBaseProps = {
   open: boolean;
@@ -49,6 +50,8 @@ export function ProfilePanel({ open, onClose, prefs, setPrefs, lang, onOpenConne
         ...base,
         data: { prefs, account: account ? { username: account.username, id: account.id } : null, busy, msg, canOpenConnection: Boolean(onOpenConnection) },
         actions: { ...prefActions(setPrefs), save: () => void onSave(), openConnection: () => onOpenConnection?.() },
+        // 6.7: the profile card (sealed in its own vault slot; its public part on the server).
+        slots: { card: () => <ProfileEditor lang={lang} signedIn={Boolean(account)} /> },
       })}
     </Modal>
   );
