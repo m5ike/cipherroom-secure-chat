@@ -118,14 +118,12 @@ public final class Nfc {
         NfcAdapter n = NfcAdapter.getDefaultAdapter(activity);
         if (n == null) { mode = "idle"; message = "unavailable"; emit(); return; }
         int flags = NfcAdapter.FLAG_READER_NFC_A | NfcAdapter.FLAG_READER_NFC_B | NfcAdapter.FLAG_READER_NFC_F | NfcAdapter.FLAG_READER_NFC_V;
-        n.enableReaderMode(activity, this::onTag, flags, null);
+        // 6.6: through ReaderMode, so a model's read can borrow it and hand it back.
+        ReaderMode.enable(activity, this, this::onTag, flags, null);
         emit();
     }
 
-    private void stopReader() {
-        NfcAdapter n = NfcAdapter.getDefaultAdapter(activity);
-        if (n != null) try { n.disableReaderMode(activity); } catch (RuntimeException ignored) { }
-    }
+    private void stopReader() { ReaderMode.release(activity, this); }
 
     /** On the NFC thread: read or write, then back to idle. */
     private void onTag(Tag tag) {

@@ -565,9 +565,14 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             Intent i;
             if ("notifications".equals(what)) i = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, getPackageName());
             else if ("location".equals(what)) i = new Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS);
+            else if ("nfc".equals(what)) i = new Intent(android.provider.Settings.ACTION_NFC_SETTINGS);
             else i = new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()));
             startActivity(i);
-        } catch (RuntimeException e) { Log.w("ui", "settings: " + e.getMessage()); }
+        } catch (RuntimeException e) {
+            Log.w("ui", "settings: " + e.getMessage());
+            // 6.6: a phone without an NFC settings screen of its own keeps it under the wireless settings.
+            if ("nfc".equals(what)) try { startActivity(new Intent(android.provider.Settings.ACTION_WIRELESS_SETTINGS)); } catch (RuntimeException ignored) { }
+        }
     }
 
     /* ------------------------------------------------- scopes of 6.1 */

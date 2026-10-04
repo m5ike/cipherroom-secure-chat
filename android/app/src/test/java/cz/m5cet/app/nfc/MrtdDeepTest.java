@@ -97,12 +97,12 @@ public class MrtdDeepTest {
         return f;
     }
 
-    private static Map<Integer, byte[]> files() { return files(-1); }
+    static Map<Integer, byte[]> files() { return files(-1); }
 
     /* ------------------------------------------------------------ the chip */
 
     /** A BAC chip from the spec: plain until mutual authentication, then every APDU in SM. */
-    private static final class Chip implements Apdu.Transceiver {
+    static final class Chip implements Apdu.Transceiver {
         final List<String> log = new ArrayList<>();
         /** Every file id the chip was asked to SELECT (plain or in SM, decrypted). */
         final List<Integer> selected = new ArrayList<>();

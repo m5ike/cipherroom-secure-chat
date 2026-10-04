@@ -58,7 +58,11 @@ public final class Run {
         void error(String code, String message);
     }
 
-    /** A running command's question: kind "prompt" (text, choices, placeholder) or "form" (title, text, fields, submit). */
+    /**
+     * A running command's question: kind "prompt" (text, choices, placeholder),
+     * "form" (title, text, fields, submit) or, 6.3, "nfc" (spec.command: an NFC op
+     * for this device's reader — answered with an NfcResult, not shown as a question).
+     */
     public static final class Interaction {
         public final String runId;
         public final String id;
@@ -87,7 +91,8 @@ public final class Run {
         Interaction(JSONObject d) {
             runId = string(d, "runId");
             id = string(d, "id");
-            kind = "form".equals(d.opt("kind")) ? "form" : "prompt";
+            Object k = d.opt("kind");
+            kind = "form".equals(k) ? "form" : "nfc".equals(k) ? "nfc" : "prompt";
             JSONObject s = d.optJSONObject("spec");
             spec = s == null ? new JSONObject() : s;
         }
