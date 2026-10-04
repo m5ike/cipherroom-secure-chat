@@ -1,0 +1,59 @@
+/* 6.7: the place of a message — the pin and the place chip in a bubble, the
+   hold area beside a hold-to-read bubble, and the place window
+   (components/LocationSheet.tsx). The map's tiles and pin reuse the 6.2
+   preview's classes (bubbles.css). */
+
+/* ---------- In the bubble ---------- */
+.msg-loc {
+  display: inline-flex; align-items: center; justify-content: center; width: 1.35rem; height: 1.35rem;
+  border-radius: 9999px; color: inherit; opacity: 0.75; cursor: pointer;
+}
+.msg-loc:hover, .msg-loc:focus-visible { opacity: 1; background: hsl(var(--background) / 0.5); }
+.msg-bubble--mine .msg-loc:hover, .msg-bubble--mine .msg-loc:focus-visible { background: hsl(0 0% 100% / 0.2); }
+
+.msg-place {
+  display: inline-flex; align-items: center; gap: 0.4rem; max-width: 100%; margin-top: 0.15rem; padding: 0.4rem 0.7rem;
+  border-radius: 9999px; border: 1px solid hsl(var(--primary) / 0.35); background: hsl(var(--primary) / 0.1);
+  color: inherit; font-size: 0.8rem; font-variant-numeric: tabular-nums; text-align: start; cursor: pointer;
+}
+.msg-place:hover, .msg-place:focus-visible { background: hsl(var(--primary) / 0.18); }
+.msg-place__icon { width: 1rem; height: 1rem; flex: none; color: hsl(var(--primary)); }
+.msg-bubble--mine .msg-place { border-color: hsl(0 0% 100% / 0.4); background: hsl(0 0% 100% / 0.14); }
+.msg-bubble--mine .msg-place__icon { color: inherit; }
+.msg-place__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Beside a hold-to-read bubble: the rest of the row is held too (a finger
+   there does not cover a short text). A vertical pan still scrolls. */
+.msg-hold-side { flex: 1 1 auto; align-self: stretch; min-width: 2.5rem; touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: pointer; }
+
+/* ---------- The place window ---------- */
+.loc-sheet__map { display: block; border-radius: 0.85rem; overflow: hidden; color: inherit; text-decoration: none; }
+.loc-sheet__map:focus-visible { outline: 2px solid hsl(var(--ring, var(--primary))); outline-offset: 2px; }
+.loc-sheet__box { position: relative; display: block; width: 100%; overflow: hidden; background: hsl(var(--muted)); }
+.loc-sheet__map.is-gray .msg-map__tile { filter: grayscale(1) contrast(1.05); }
+.loc-sheet__pin { position: absolute; left: 50%; width: 0; height: 0; }
+.loc-sheet__pin .msg-map__pin { left: 0; top: 0; }
+.loc-sheet__coords { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.6rem 0 0; font-size: 0.85rem; font-variant-numeric: tabular-nums; user-select: all; }
+.loc-sheet__live {
+  padding: 0.05rem 0.45rem; border-radius: 9999px; font-size: 0.7rem; font-weight: 600; user-select: none;
+  background: hsl(var(--primary)); color: hsl(var(--primary-foreground));
+}
+.loc-sheet__acts { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-top: 0.75rem; }
+.loc-sheet__act {
+  display: inline-flex; flex: 1 1 7rem; flex-direction: column; align-items: center; gap: 0.25rem; padding: 0.55rem 0.5rem;
+  border-radius: 0.85rem; border: 1px solid hsl(var(--border)); background: hsl(var(--card, var(--background)));
+  color: inherit; font-size: 0.78rem; font-weight: 600;
+}
+.loc-sheet__act:hover, .loc-sheet__act:focus-visible { background: hsl(var(--accent)); }
+.loc-sheet__act.is-open { border-color: hsl(var(--primary) / 0.6); background: hsl(var(--primary) / 0.1); }
+.loc-sheet__act-icon { width: 1.3rem; height: 1.3rem; color: hsl(var(--primary)); }
+.loc-sheet__apps { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.6rem 0 0; padding: 0; list-style: none; }
+.loc-sheet__app {
+  display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.7rem; border-radius: 0.7rem;
+  color: inherit; text-decoration: none; font-size: 0.88rem;
+}
+.loc-sheet__app:hover, .loc-sheet__app:focus-visible { background: hsl(var(--accent)); }
+.loc-sheet__app-icon { width: 1rem; height: 1rem; flex: none; opacity: 0.7; }
+.loc-sheet__app-name { flex: 1 1 auto; font-weight: 600; }
+.loc-sheet__app-note { font-size: 0.7rem; opacity: 0.7; text-align: end; }
+.loc-sheet__note { margin: 0.75rem 0 0; font-size: 0.7rem; opacity: 0.65; }

@@ -17,28 +17,17 @@ const base: MessageBubbleProps = {
 };
 const b64 = (s: string) => btoa(String.fromCharCode(...new TextEncoder().encode(s)));
 
+// 6.7: the map left the bubble — the pin opens it in the place window
+// (test/location-sheet.test.tsx draws its tiles, links and lists).
 describe("the map of a position", () => {
-  it("draws tiles of this server around the pin, the caption and the coordinates", () => {
+  it("is not drawn in the bubble: the pin is, as in the Android app", () => {
     const { container } = render(<MessageBubble {...base} loc={{ lat: 50.0875, lon: 14.4213, acc: 12 }} mapPolicy={{ ...DEFAULT_MAP_PREVIEW, grayscale: true, accent: "#ffee00" }} />);
-    const map = screen.getByTestId("msg-map-m1");
-    expect(map.getAttribute("href")).toContain("openstreetmap.org");
-    expect(map.getAttribute("rel")).toBe("noopener noreferrer");
-    expect(map.className).toContain("is-gray");
-    const tiles = [...map.querySelectorAll("img.msg-map__tile")];
-    expect(tiles.map((i) => i.getAttribute("src"))).toEqual(["/api/map/tile/16/35392/22201", "/api/map/tile/16/35393/22201"]);
-    expect((tiles[0] as HTMLElement).style.left).toBe("-197px");
-    const pin = map.querySelector(".msg-map__pin") as HTMLElement;
-    expect(pin.style.left).toBe("140px");
-    expect(pin.style.top).toBe("80px");
-    expect(map.querySelector(".msg-map__caption")?.textContent).toBe("Aktuální poloha: Jana");
-    expect((map.querySelector(".msg-map__caption") as HTMLElement).style.background).toMatch(/#ffee00|255, 238, 0/);
-    expect(map.querySelector(".msg-map__coords")?.textContent).toBe("50.08750, 14.42130 ± 12 m");
-    expect(map.querySelector(".msg-map__attr")?.textContent).toBe("© OpenStreetMap");
-    // With the map, the header's pin link steps aside.
-    expect(container.querySelector("[data-testid=msg-loc]")).toBeNull();
+    expect(screen.queryByTestId("msg-map-m1")).toBeNull();
+    expect(container.querySelector("img.msg-map__tile")).toBeNull();
+    expect(container.querySelector("[data-testid=msg-loc]")?.tagName).toBe("BUTTON");
   });
 
-  it("falls back to the pin link when the operator turned the map off", () => {
+  it("keeps the pin when the operator turned the map off", () => {
     const { container } = render(<MessageBubble {...base} loc={{ lat: 50.0875, lon: 14.4213 }} mapPolicy={{ ...DEFAULT_MAP_PREVIEW, enabled: false }} />);
     expect(screen.queryByTestId("msg-map-m1")).toBeNull();
     expect(container.querySelector("[data-testid=msg-loc]")).not.toBeNull();

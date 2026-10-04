@@ -68,6 +68,7 @@ public final class Parts {
             case "callVideo": return callVideo = new CallParts.Video(a, this);
             case "settingsList": return new SettingsList(a, this);
             case "msgBody": return new MsgBody(a, this);
+            case "msgHold": return new HoldArea(a, this, bound); // 6.7: beside a hold-to-read bubble
             case "voicePad": return voicePad = new ToolPanels.VoicePad(a);
             case "nfcPanel": return nfcPanel = new ToolPanels.NfcPanel(a);
             // 6.3 nfc: the NFC workbench and the M5Cet card builder (parity with the web).
@@ -276,7 +277,7 @@ public final class Parts {
     }
 
     /** A dialog of the app keeps screenshots out like the app does (its own window). */
-    private android.app.AlertDialog secureDialog(android.app.AlertDialog.Builder b) {
+    android.app.AlertDialog secureDialog(android.app.AlertDialog.Builder b) {
         android.app.AlertDialog d = b.create();
         if ((a.getWindow().getAttributes().flags & android.view.WindowManager.LayoutParams.FLAG_SECURE) != 0 && d.getWindow() != null)
             d.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
@@ -312,25 +313,10 @@ public final class Parts {
 
     /**
      * The pin of a header position (location.inHeader): the same map as a
-     * position message, in a dialog; without maps (switched off, no server)
-     * straight to the full map as before.
+     * position message, in a dialog. 6.7: the place sheet — the map (when
+     * maps are on), the coordinates, Navigate / Ride / Copy (PlaceSheet).
      */
-    void mapPreview(ChatMessage m) {
-        cz.m5cet.app.ui.bubble.MapPolicy p = MapBubble.policyFor(app(), m);
-        if (p == null) { openMap(m); return; }
-        int fg = Ui.color(a, "@onSurface", Color.BLACK);
-        android.widget.LinearLayout box = new android.widget.LinearLayout(a);
-        box.setOrientation(android.widget.LinearLayout.VERTICAL);
-        box.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
-        android.app.AlertDialog[] shown = new android.app.AlertDialog[1];
-        box.addView(MapBubble.build(a, this, m, p, fg, a.getResources().getDisplayMetrics().widthPixels - Ui.dp(a, 88), () -> {
-            if (shown[0] != null) shown[0].dismiss();
-            openMap(m);
-        }));
-        shown[0] = secureDialog(new android.app.AlertDialog.Builder(a).setTitle(m.senderName).setView(box)
-            .setPositiveButton(app().t("map.open"), (d, w) -> openMap(m))
-            .setNegativeButton(app().t("nav.close"), null));
-    }
+    void mapPreview(ChatMessage m) { PlaceSheet.show(a, this, m); }
 
     /** The pin on a map: the phone's map app (geo:), else OpenStreetMap. 6.2: also a position message from the web (the text only). */
     void openMap(ChatMessage m) {

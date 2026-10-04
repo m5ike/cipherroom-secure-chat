@@ -55,11 +55,12 @@ function sod(groups: Record<number, Uint8Array>, tamper?: number) {
 
 /* ------------------------------------------------------------ the chip */
 
-type Chip = { transport: CardTransport; log: string[] };
+type Chip = { transport: CardTransport; log: string[]; selects: number[] };
 
 /** A BAC chip from the spec: plain until mutual authentication, then every APDU in SM. */
 function bacChip(key: MrzKey, files: Record<number, Uint8Array>, opts: { cardAccess?: Uint8Array } = {}): Chip {
   const log: string[] = [];
+  const selects: number[] = []; // file ids selected, as the chip decrypted them
   let kenc: Uint8Array, kmac: Uint8Array;
   let rndIcc: Uint8Array | null = null;
   let session: { ksenc: Uint8Array; ksmac: Uint8Array; ssc: Uint8Array } | null = null;
@@ -75,6 +76,7 @@ function bacChip(key: MrzKey, files: Record<number, Uint8Array>, opts: { cardAcc
     if (ins === 0xa4 && p1 === 0x04) { appSelected = hex(data).toUpperCase() === "A0000002471001"; return { data: new Uint8Array(0), sw: appSelected ? 0x9000 : 0x6a82 }; }
     if (ins === 0xa4) {
       const fid = (data[0] << 8) | data[1];
+      selects.push(fid);
       if (fid === 0x011c && opts.cardAccess) { selected = fid; return { data: new Uint8Array(0), sw: 0x9000 }; }
       if (fid === 0x0103 || fid === 0x0104) return { data: new Uint8Array(0), sw: 0x6982 };
       if (!(fid in files)) return { data: new Uint8Array(0), sw: 0x6a82 };
@@ -135,6 +137,7 @@ function bacChip(key: MrzKey, files: Record<number, Uint8Array>, opts: { cardAcc
   };
   return {
     log,
+    selects,
     transport: { kind: "usb", label: "sim", connected: true, waitForCard: async () => ({ uid: u8(1, 2, 3, 4) }), transmit } as unknown as CardTransport,
   };
 }
@@ -167,7 +170,8 @@ describe("the deep MRTD read (BAC chip)", () => {
     expect(d.document?.personalizationTime).toBe("2024-01-10 09:30:00");
     // Fingerprints are EAC — never tried.
     expect(d.files?.find((f) => f.name === "DG3")?.status).toBe("protected");
-    expect(chip.log.some((l) => /^0CA4020C.*0103/.test(l))).toBe(false);
+    expect(chip.selects).not.toContain(0x0103); // never tried (the SM traffic is encrypted, so look at what the chip decrypted)
+    expect(chip.selects).toContain(0x0101);
     // Images: the face and the signature, as JPEG.
     expect(d.images?.map((i) => [i.kind, i.group, i.mime, i.name])).toEqual([["face", "DG2", "image/jpeg", "face.jpg"], ["signature", "DG7", "image/jpeg", "signature.jpg"]]);
     expect(d.photoMime).toBe("image/jpeg");

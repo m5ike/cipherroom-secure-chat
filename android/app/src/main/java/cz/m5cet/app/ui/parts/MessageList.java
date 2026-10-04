@@ -413,7 +413,7 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
                 case 1: parts.replyTo(m.id); break;
                 case 2: parts.copyMessage(m.id); break;
                 case 3: parts.forward(m); break;
-                case 4: parts.openMap(m); break;
+                case 4: parts.mapPreview(m); break; // 6.7: the place sheet (map, navigation, a ride)
                 case 5: parts.playSource(m); break;
                 case 6: parts.openFile(m); break;
                 case 7: parts.saveFile(m); break;

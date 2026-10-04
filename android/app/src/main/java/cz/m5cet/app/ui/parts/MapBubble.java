@@ -28,6 +28,7 @@ import cz.m5cet.app.ui.bubble.MapPreview;
  * the dialog behind a header position's pin. The operator's size, centred
  * on the point with the pin and "<sender>'s current position", the
  * coordinates under it when the policy says so; a tap opens the full map.
+ * 6.7: in the bubble a tap opens the place sheet (PlaceSheet) first.
  */
 final class MapBubble {
     private MapBubble() {}
@@ -48,9 +49,15 @@ final class MapBubble {
 
     /**
      * The map, at most maxWidth px wide (the operator's aspect kept);
-     * onFail runs on the UI thread when no tile came.
+     * onFail runs on the UI thread when no tile came. 6.7: a tap opens the
+     * place sheet (its map, navigation and ride apps).
      */
     static View build(MainActivity a, Parts parts, ChatMessage m, MapPolicy p, int fg, int maxWidth, Runnable onFail) {
+        return build(a, parts, m, p, fg, maxWidth, () -> parts.mapPreview(m), onFail);
+    }
+
+    /** The map with its own tap (onClick); the place sheet's map opens the full map. */
+    static View build(MainActivity a, Parts parts, ChatMessage m, MapPolicy p, int fg, int maxWidth, Runnable onClick, Runnable onFail) {
         M5 app = a.app();
         JSONObject pos = Kinds.position(m);
         LinearLayout col = new LinearLayout(a);
@@ -77,7 +84,7 @@ final class MapBubble {
             failed.put(m.id, System.currentTimeMillis());
             if (onFail != null) onFail.run();
         });
-        iv.setOnClickListener(v -> parts.openMap(m));
+        iv.setOnClickListener(v -> { if (onClick != null) onClick.run(); else parts.openMap(m); });
         col.addView(iv, new LinearLayout.LayoutParams(w, h));
         if (p.showCoords) {
             TextView t = new TextView(a);

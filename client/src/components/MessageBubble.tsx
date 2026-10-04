@@ -15,6 +15,10 @@
 // forward; a position becomes a small map (lib/map-preview.ts). Revealing a
 // hold-to-read message and opening a sealed one are reported to the app
 // (onRevealed / onOpened) for the message's timeline.
+//
+// 6.7: the map is no longer in the bubble — a pin (a position message: its
+// place chip) opens it in a window with navigation and ride apps
+// (LocationSheet); beside a hold-to-read bubble the row holds it open too.
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { t, tf, type Lang } from "../lib/i18n";
@@ -29,7 +33,8 @@ import { FnOutputs } from "./fn/FnOutputs";
 import { FnLoading, FnStatusChip } from "./fn/FnLoading";
 import { osmLink } from "../lib/maps";
 import type { MapPreviewPolicy } from "../lib/client-config";
-import { mapView } from "../lib/map-preview";
+import { mapView, placeOf } from "../lib/map-preview";
+import { LocationSheet } from "./LocationSheet";
 import {
   MEDIA_ICON, attachmentBlob, dataUrlBytes, dataUrlToBlob, mediaKindOf, openAttachment, saveAttachment, shareAttachment, textPreview, type MediaKind,
 } from "../lib/attachment-media";
@@ -93,6 +98,9 @@ export type MessageBubbleProps = {
   /** The head of my own / a system message: avatar, header text, logo. */
   head?: { showAvatar?: boolean; avatar?: string; headerText?: string; showLogo?: boolean };
 };
+
+/** 6.7: how long the area beside a hold-to-read bubble is held before it reveals. */
+const HOLD_SIDE_MS = 180;
 
 /** The app's own layouts of the three kinds. */
 const DEFAULT_MESSAGE_TREES: Record<MessageKind, LNode> = { in: DEFAULT_LAYOUTS["message.in"], out: DEFAULT_LAYOUTS["message.out"], sys: DEFAULT_LAYOUTS["message.sys"] };
@@ -278,6 +286,12 @@ export function MessageBubble(props: MessageBubbleProps) {
     if (!loc || !mapPolicy) return null;
     return mapView(loc, mapPolicy, { caption: tf(lang, "msg.map.caption", { name: senderName }), url: osmLink({ lat: loc.lat, lng: loc.lon, ts: 0 }, 17) });
   }, [loc, mapPolicy, lang, senderName]);
+  // 6.7: where the message points (its header position, or a position message's text) — opened in a window.
+  const place = useMemo(() => placeOf(props.text, loc, sealed), [props.text, loc, sealed]);
+  const [placeOpen, setPlaceOpen] = useState(false);
+  // The hold area beside the bubble reveals after a short hold (a scroll starting there reveals nothing).
+  const holdTimer = useRef<number | null>(null);
+  useEffect(() => () => { if (holdTimer.current !== null) window.clearTimeout(holdTimer.current); }, []);
 
   async function shareFile() {
     if (!att) return;
@@ -328,6 +342,7 @@ export function MessageBubble(props: MessageBubbleProps) {
       : null,
     shareMenu,
     map,
+    place,
     hidden: Boolean(props.hidden),
     sealCode: sealed && mine ? props.sealCode ?? "" : "",
     codeInput,
@@ -340,7 +355,14 @@ export function MessageBubble(props: MessageBubbleProps) {
     headerText: props.head?.headerText ?? "",
     showLogo: Boolean(props.head?.showLogo),
   };
-  const hold = (on: boolean) => () => { if (tap) setHolding(on); };
+  const hold = (on: boolean) => () => {
+    if (holdTimer.current !== null) { window.clearTimeout(holdTimer.current); holdTimer.current = null; }
+    if (tap) setHolding(on);
+  };
+  const holdSoon = () => {
+    if (!tap || holdTimer.current !== null) return;
+    holdTimer.current = window.setTimeout(() => { holdTimer.current = null; setHolding(true); }, HOLD_SIDE_MS);
+  };
   const env: LayoutEnv = {
     data,
     lang,
@@ -378,6 +400,8 @@ export function MessageBubble(props: MessageBubbleProps) {
       unfold: () => { if (isSystem) sysUnfold(); },
       holdStart: hold(true),
       holdEnd: hold(false),
+      holdSideStart: holdSoon,
+      place: () => { if (place) setPlaceOpen(true); },
       codeChange: (e) => { setCodeInput((e as { target: HTMLInputElement }).target.value); setCodeError(false); },
       codeKey: (e) => { if ((e as { key?: string }).key === "Enter") void submitCode(); },
       codeSubmit: () => void submitCode(),
@@ -394,5 +418,12 @@ export function MessageBubble(props: MessageBubbleProps) {
       closeShare: () => setShareMenu(null),
     },
   };
-  return renderLayout(props.tree ?? DEFAULT_MESSAGE_TREES[isSystem ? "sys" : mine ? "out" : "in"], env);
+  const bubble = renderLayout(props.tree ?? DEFAULT_MESSAGE_TREES[isSystem ? "sys" : mine ? "out" : "in"], env);
+  if (!placeOpen || !place) return bubble;
+  return (
+    <>
+      {bubble}
+      <LocationSheet id={id} place={place} senderName={senderName} mine={mine} mapPolicy={mapPolicy} lang={lang} onClose={() => setPlaceOpen(false)} onNotice={props.onNotice} />
+    </>
+  );
 }
