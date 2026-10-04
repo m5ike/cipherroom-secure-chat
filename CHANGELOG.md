@@ -5,6 +5,119 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.6.0] – 2026-10-04
+
+**Hloubkové čtení EMV a e-ID, výpisy karet v šesti formátech a formátované
+HTML z funkcí.** Čtečka ve webu přečte z platební karty i historii transakcí,
+čítače a všechny soubory a z e-ID / e-pasu každou datovou skupinu, kterou smí
+číst běžná čtečka, s obrázky a bezpečnostními objekty — pořád jen ke čtení,
+vlastní karta či doklad. Jakékoli čtení se dá převést na výpis (HTML, objekt,
+řádky, JSON, text, CSV); funkce mohou posílat sanitizované HTML
+(`m5.out.html`). Nové nástroje vizuálního tvůrce NFC.EMV a NFC.e-ID a z nich
+příkazy `/emv`, `/emv-history` a `/eid`.
+
+### Přidáno
+- **Hloubkové čtení EMV** (`client/src/lib/nfc/cards/emv.ts`). Po SELECT
+  každé aplikace (nově až 8, `maxApps` 1–16) **GET DATA** — ATC, poslední online
+  ATC, čítač pokusů o PIN, záznam a formát logu (9F4D / 9F4F) a několik
+  zůstatkových / vydavatelských objektů; **log transakcí** (`history`) se čte
+  ještě **před** GET PROCESSING OPTIONS ze souboru, který karta uvede, a každý
+  záznam se dekóduje podle formátu logu karty (datum, čas, částka, měna, země,
+  typ, obchodník, ATC, výsledek); po záznamech z AFL **hloubkové čtení**
+  (`deep`) zkusí každý krátký soubor SFI 1–30 (nejvýš 240 READ RECORD navíc).
+  Výsledek nese navíc AIP, AFL, odpovědi GET DATA, formát a soubor logu,
+  historii, každý přečtený záznam (SFI, číslo, hex), příznak `deep` a počet APDU.
+- **Hloubkové čtení e-ID / e-pasu** (`mrtd.ts`, `asn1.ts`, `sm.ts`). Před
+  otevřením EF.CardAccess (protokoly, které čip ohlásí); přes secure messaging
+  EF.COM (skupiny, verze LDS a Unicode), **EF.SOD** (otisky skupin, algoritmus,
+  certifikát podepisovatele dokladu), DG1, **DG2 se všemi obličeji**, DG5
+  (portrét), DG7 (podpis), DG11 (další osobní údaje), DG12 (údaje o dokladu,
+  skeny), DG13, DG14 (bezpečnostní protokoly), DG15 (klíč aktivní autentizace),
+  DG16 (osoby k vyrozumění); DG3 / DG4 jen jako „chráněno (EAC)“. Každá celá
+  skupina se porovná s otiskem v EF.SOD (`hashOk`, `security.passive`). Obrázky
+  jako `images[]` (JPEG / PNG k zobrazení, JPEG 2000 ke stažení), surové soubory
+  jako `raw[]` (`EF.SOD.bin`, `document-signer.cer`, `DG*.bin`…), seznam všech
+  zkoušených souborů se stavem a velikostí. Volby `readPhoto` a `all`.
+- **PACE** (`pace.ts`): PACE s CAN nebo MRZ (ECDH generic mapping, secure
+  messaging AES nebo 3DES); čtečka zkusí nejdřív PACE a když neuspěje, použije
+  BAC. Samotný CAN otevře doklad s PACE (pole CAN v pracovišti stačí samo).
+- **Výpisy karet** (`client/src/lib/nfc/card-report.ts`): jakékoli čtení (EMV,
+  e-ID, prostý sken) jako `html` | `object` | `array` | `json` | `text` | `csv`,
+  popisky česky, anglicky nebo německy, PAN maskovaný (není-li `fullPan`),
+  každý text z karty escapovaný; obrázky k zobrazení zvlášť od souborů ke
+  stažení (`emv-history.csv`, `emv-records.txt`, bezpečnostní objekty, JPEG
+  2000); samostatný HTML dokument se styly.
+- **Pracoviště NFC — Celý výpis**: po čtení EMV nebo e-ID výpis tak, jak ho
+  ukáže chat, s exportem *HTML výpis*, JSON, CSV, Text a tlačítkem pro každou
+  přílohu — vše v prohlížeči.
+- **`m5.out.html(html, { title })`** — formátované HTML ve výstupu funkce
+  (`client/src/lib/fn-html.ts`, `FnHtml.tsx`): jen dokumentový markup (nadpisy,
+  odstavce, seznamy, tabulky, `details`, obrázky jako `data:image`, odkazy
+  http(s) / mailto), třídy jen `m5h-*`, `style` jen neškodné vlastnosti; čistí ho
+  server i každý prohlížeč a vykresluje se jako prvky DOM. Konzole ho ukazuje
+  ve výsledcích běhů týmž sanitizérem (`window.M5Html`).
+- Aplikace pro Android výstup `html` vykresluje ve WebView s vypnutým JavaScriptem a zablokovanou sítí.
+- **SDK** (JS i Python): `m5.nfc.emv.read({ maxApps, history, deep })`,
+  `emv.report`, `emv.format`, `emv.history`; `m5.nfc.eid.read({ …, all })`,
+  `eid.report`, `eid.format`, `eid.images`; `m5.nfc.format`, `m5.nfc.outputs`,
+  `m5.nfc.document`. `*.report` přečte, naformátuje a s `send: true` výpis hned
+  ukáže; vrací `{ ok, status, message, format, result, title, summary, data,
+  images, files, history, photo, outputs }`.
+- **Vizuální tvůrce**: skupiny **NFC.EMV** (*EMV: read everything*, *EMV →
+  format*, *EMV: transaction history*) a **NFC.e-ID** (*e-ID: read
+  everything*, *e-ID → format*, *e-ID: pictures*), ve skupině NFC *Card →
+  format* a *Show card report*, v Output *Send HTML*.
+- **Příkazy `/emv`, `/emv-history`, `/eid`** (balíčky `nfc-emv`,
+  `nfc-emv-history`, `nfc-eid`, toky z `script/gen-nfc-flows.ts`): celé čtení
+  karty jako výpis v chatu, historie transakcí jako tabulka, formulář pro CAN /
+  MRZ a celé čtení dokladu. Instalují se **vypnuté**, viditelnost *caller*.
+- **`/help nfc`** a **`/help html`**, tlačítko *NFC cards* pod `/help`; lekce
+  tutoriálu **17 · Formatted HTML**, **18 · NFC card reports**, **19 · Reading a
+  card (EMV, e-ID)**.
+
+### Změněno
+- `host-nfc.ts` propustí nová pole čtení s rozpočty: EMV nejvýš 16 aplikací,
+  256 prvků, 60 záznamů logu, 32 odpovědí GET DATA a 320 záznamů (hex ≤ 1 024
+  znaků) na aplikaci; e-ID nejvýš 12 obrázků (≤ 400 000 znaků base64 každý,
+  1 400 000 celkem) a 32 surových souborů (≤ 400 000, 1 200 000 celkem),
+  textová pole oříznutá.
+- Pracoviště čte EMV až z 8 aplikací (dřív 4) a e-ID přijme samotný CAN.
+- Typy `EmvApp`, `EmvData`, `MrtdData`, `MrtdAccessArgs` (`client/src/lib/nfc/command.ts`)
+  mají nová pole; `OUTPUT_TYPES` má `html`.
+- Vestavěné balíčky 1.3.0 (balíčky NFC 1.0.0). Bundle sandboxu ve vývoji se
+  přestaví i při změně klientských souborů, které přibaluje (výpisy karet,
+  sanitizér HTML). Verze 6.6.0 (package.json); instalátor zůstává 3.2.0.
+
+### Bezpečnost
+- **HTML z funkce je cizí vstup.** Peer může poslat zprávu s výstupy, proto ho
+  čistí server, příjemce při přijetí i každé vykreslení; nikdy `innerHTML`,
+  žádné skripty, styly, formuláře, rámy ani obsluhy událostí, obrázky jen
+  vložená data.
+- **Pořád jen ke čtení.** EMV: GET DATA a READ RECORD, nikdy VERIFY, `GENERATE
+  AC`, kryptogram, transakce ani zápis. e-ID: jen klíčem, který držitel opíše
+  z dokladu; DG3 / DG4 se nečtou.
+- **Pasivní autentizace je jen kontrola otisků** proti EF.SOD — podpis EF.SOD
+  ani certifikát podepisovatele se neověřují (žádný seznam CSCA), AA / CA se
+  neprovádí. Výsledek neříká, že je doklad pravý.
+- **Model dostane, co přečetl**: celý PAN (maskuje až výpis) a u e-ID osobní
+  údaje a obrázky. Vstupy a výstupy běhu (u `/eid` i CAN / MRZ a výpis
+  s fotografií) leží ve `functions.db` do `FUNCTIONS_RUNS_DAYS` a vidí je
+  operátor s přístupem k běhům.
+
+### Testy
+- `test/nfc-emv-deep.test.ts`, `test/nfc-mrtd-deep.test.ts` (simulovaný čip),
+  `test/nfc-card-report.test.ts`, `test/fn-html.test.tsx`,
+  `test/nfc-builtins.test.ts`; rozšířené `functions-nfc`, `functions-builtins`,
+  `functions-tutorial` a `nfc-workbench`.
+
+### Známá omezení
+- Vykonavatel pracoviště ve webu (`web-executor.ts`), který odpovídá na NFC
+  příkazy modelu, předá čtečce jen `maxApps` (výchozí tam 4) a u e-ID klíč a
+  `readPhoto`; `history`, `deep` a `all` zatím ne — čtení z funkce je vždy celé.
+- Nativní čtečka aplikace pro Android čte EMV a e-ID jako v 6.5 a aplikace
+  neobsluhuje NFC příkazy modelu (`/emv`, `/eid` potřebují web s otevřeným
+  nástrojem NFC a čtečkou USB, Bluetooth nebo sériovou).
+
 ## [6.5.0] – 2026-10-04
 
 **Čtení EMV karty a e-ID / e-pasu v nástroji NFC a plynulejší běh

@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **6.5.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **6.6.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 6.5.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-6.5.0.pdf`](docs/site/m5cet-dokumentace-6.5.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 6.6.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-6.6.0.pdf`](docs/site/m5cet-dokumentace-6.6.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -152,6 +152,21 @@ místnosti.
   `/lookup`, `/hlr`, `/phone-bridge` … se instalují vypnuté. Viz
   [dokumentace › m5adm](docs/site/index.html#m5adm) a
   [› m5.telephony](docs/site/index.html#m5-telephony).
+- **NFC: karty, EMV a e-ID (6.3–6.6)** — nástroj NFC (web i Android) čte,
+  zapisuje a emuluje karty přes interní, USB, Bluetooth nebo sériovou čtečku a
+  nese šifrovanou kartu M5Cet. Platební kartu (EMV) a e-ID / e-pas jen
+  **čte** — vlastní kartu či doklad, bez PINu, transakce a zápisu. Od 6.6 ve
+  webu **hloubkově**: z karty i čítače, **historii transakcí** a všechny
+  soubory, z dokladu (otevřeného klíčem z MRZ nebo CAN) každou skupinu, kterou
+  smí běžná čtečka, s obrázky, kontrolou otisků proti EF.SOD a surovými
+  soubory. Každé čtení jde převést na **výpis** — HTML, objekt, řádky, JSON,
+  text nebo CSV (cs/en/de, PAN maskovaný) — v pracovišti s exportem, ve
+  funkcích přes `m5.nfc.format` / `m5.nfc.emv.report` / `m5.nfc.eid.report`,
+  ve vizuálním tvůrci nástroji NFC.EMV a NFC.e-ID; příkazy `/emv`,
+  `/emv-history` a `/eid` (instalují se vypnuté). Funkce smí poslat i
+  **formátované HTML** (`m5.out.html`) — server i každý prohlížeč z něj nechají
+  jen dokumentový markup. Viz [`docs/nfc.md`](docs/nfc.md) a
+  [dokumentace › NFC](docs/site/index.html#nfc-tool).
 - **Příkazy jako rozhovor (5.3)** — model má **vstupní body**: execute
   (start), **response** (odpověď na jeho zprávu), **button**, **form**,
   **error** a libovolný počet **webhooků** s vlastními URL, každý se svými
@@ -616,6 +631,12 @@ Web NFC (Android Chrome). Schopnosti:
 Plugin registry umožňuje rozšíření o hardware čtečky (PC/SC, EMV) nasazené
 serverem — viz [`docs/nfc.md`](docs/nfc.md).
 
+Od 6.3 je to celý nástroj NFC (čtečky, technologie karet, karta M5Cet,
+`m5.nfc` ve funkcích); 6.5 přidala čtení EMV a e-ID / e-pasu, 6.6 jejich
+hloubkové čtení (historie transakcí, všechny soubory, každá čitelná datová
+skupina dokladu) a výpisy karet v šesti formátech. Podrobně v
+[`docs/nfc.md`](docs/nfc.md).
+
 ---
 
 ## Privacy / audit erase / TTL
@@ -775,7 +796,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.5.0        | aktuální — **NFC: čtení EMV a e-ID / e-pasu** (web i Android) jen ke čtení: EMV `PPSE → AID → GPO → záznamy` (AIDy, štítky, maskovaný PAN, platnost, držitel, ATC…), e-ID / e-pas přes BAC z MRZ nebo CAN (DG1 + DG2) — bez PINu, kryptogramu, transakce a zápisu, žádné klonování; `m5.nfc.emv` / `m5.nfc.eid` ve Functions, `apduTemplates` s op i apdu šablonami a tlačítkem v konzoli; `/příkaz` v chatu se ukáže hned jako pulzující bublina s indikátorem, výsledek nahradí indikátor na místě |
+| 6.6.0        | aktuální — **NFC: hloubkové čtení** (web) jen ke čtení: EMV s GET DATA (čítače), **historií transakcí** z logu karty a všemi soubory; e-ID / e-pas s EF.SOD (kontrola otisků skupin), DG1, všemi obličeji v DG2, DG5, DG7, DG11–DG16 (DG3/DG4 ne), obrázky a surovými soubory ke stažení; **výpisy karet** v šesti formátech (HTML, objekt, řádky, JSON, text, CSV; cs/en/de, maskovaný PAN), *Celý výpis* s exportem v pracovišti; **`m5.out.html`** — sanitizované HTML z funkcí; SDK `m5.nfc.emv/eid.report/format`, `m5.nfc.format/outputs/document`; nástroje tvůrce NFC.EMV a NFC.e-ID; příkazy `/emv`, `/emv-history`, `/eid` (vypnuté); `/help nfc`, `/help html`, lekce tutoriálu 17–19 |
+| 6.5.0        | **NFC: čtení EMV a e-ID / e-pasu** (web i Android) jen ke čtení: EMV `PPSE → AID → GPO → záznamy` (AIDy, štítky, maskovaný PAN, platnost, držitel, ATC…), e-ID / e-pas přes BAC z MRZ nebo CAN (DG1 + DG2) — bez PINu, kryptogramu, transakce a zápisu, žádné klonování; `m5.nfc.emv` / `m5.nfc.eid` ve Functions, `apduTemplates` s op i apdu šablonami a tlačítkem v konzoli; `/příkaz` v chatu se ukáže hned jako pulzující bublina s indikátorem, výsledek nahradí indikátor na místě |
 | 6.4.1        | Android: server odmítne obřad passkeye pro build, jehož certifikát nezná, **dřív než passkey vznikne** (žádné osiřelé passkeye); uživatelské jméno `XXXX-XXXX-XXXX-XXXX` (0-9 a-z A-Z), název passkeye `ISO2-scramble(Jméno-Příjmení-Mobil)` |
 | 6.4.0        | **registrace** (web i Android): jméno, příjmení, země (vyhledávací výběr), mobil a e-mail — server ověří mobil (ne pevnou linku/VoIP), doménu e-mailu (DNS, MX) a jedinečnost; údaje jen šifrovaně v trezoru, server drží pouze HMAC otisky. **Passkeys na Androidu**: dialog s certifikátem aplikace, v konzoli kontrola `assetlinks.json` (z internetu i u Googlu) a důvěra certifikátu jedním klikem, `update.sh` upozorní na blokující proxy |
 | 6.3.0        | **NFC nástroj** (web i Android): výběr čtečky (interní/USB/Bluetooth), technologie karet (MIFARE Classic/Ultralight/NTAG/DESFire, NDEF, ISO 14443/15693, FeliCa, EMV a e-ID veřejně), čtení/zápis/změna UID/emulace, šifrovaná **karta M5Cet** se záznamy (záloha passkey/identity, jednorázová zpráva, Wi-Fi, kontakt, server+místnost…) a její vizuální builder; `m5.nfc` ve Functions ovládá čtečku volajícího obousměrně (uzly builderu, balíčky `nfc-scan`/`nfc-uid`/`nfc-open`). `npm run android:release`, `update.sh --android` |
@@ -823,14 +845,14 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 | [`docs/connection-keeper.md`](docs/connection-keeper.md)| Heartbeat + reconnect                          |
 | [`docs/files.md`](docs/files.md)                        | Šifrovaný file transfer                        |
 | [`docs/maps-location.md`](docs/maps-location.md)        | Mapy / lokace                                  |
-| [`docs/nfc.md`](docs/nfc.md)                            | Web NFC + plugin čtečky                        |
+| [`docs/nfc.md`](docs/nfc.md)                            | Nástroj NFC, čtečky, karta M5Cet, čtení EMV a e-ID / e-pasu (hloubkově 6.6), výpisy karet, `m5.nfc`, uzly tvůrce a příkazy `/emv`, `/emv-history`, `/eid` |
 | [`docs/push.md`](docs/push.md)                          | Web Push                                       |
 | [`docs/accounts-away.md`](docs/accounts-away.md)        | Passkey účty, data chatu, stav away + relay    |
 | [`docs/storage.md`](docs/storage.md)                    | Serverové úložiště: SQLite + SQLCipher, API    |
 | [`docs/lifecycle-and-notices.md`](docs/lifecycle-and-notices.md) | Pozastavení okna, flash oznámení, fronta zpráv |
 | [`docs/speech.md`](docs/speech.md)                      | Web Speech API; serverové hlasy a přepis (4.14) |
 | [`docs/android-architecture.md`](docs/android-architecture.md) | Aplikace pro Android (6.0): klíče a formáty (podpisy, ECIES, balíček `.m5ab`, push), úložiště a zámek, framework obrazovek, aktualizace a návrat, víc místností, server, sestavení |
-| [`docs/functions-architecture.md`](docs/functions-architecture.md) | Architektura frameworku funkcí (JS / Python ve WASM, balíčky, modely, `/příkazy` v chatu, webhooky, IDE) a rozhodnutí; etapa 1 = AI a řeč 4.14 |
+| [`docs/functions-architecture.md`](docs/functions-architecture.md) | Architektura frameworku funkcí (JS / Python ve WASM, balíčky, modely, `/příkazy` v chatu, webhooky, IDE, formátované HTML `m5.out.html` 6.6) a rozhodnutí; etapa 1 = AI a řeč 4.14 |
 | [`docs/browser-limitations.md`](docs/browser-limitations.md) | Co prohlížeč (ne)umí                       |
 | [`docs/build-and-deploy.md`](docs/build-and-deploy.md)  | npm workflow, PWA, sanity checky               |
 | [`INSTALL.md`](INSTALL.md)                              | `install.sh` / `update.sh` / `uninstall.sh`: režimy, parametry, zálohy, rollback |

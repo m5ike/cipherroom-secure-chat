@@ -215,7 +215,7 @@ světem, je asynchronní. Typy pro našeptávání v IDE generuje jeden zdroj
 | `m5.session` | `id`; `get / set / delete / keys`, TTL na klíč; rozsah model × volající × místnost |
 | `m5.cache` | sdílená cache s TTL: `get / set / incr / delete / lock`; rozsahy `run`, `session`, `model`, `global` (jen s oprávněním); sdílená runnerem i aplikací |
 | `m5.log` | `debug / info / warn / error` + strukturovaná pole; `trace(label, fn)` měří úsek; vše v logu běhu a v IDE živě |
-| `m5.out` | výstupy: `text`, `markdown`, `code(lang)`, `table`, `image(bytes, mime)`, `file`, `json`, `chart` (data → bezpečný SVG), `form` (schéma), `buttons` (akce s `on_event`) |
+| `m5.out` | výstupy: `text`, `markdown`, `code(lang)`, `table`, `image(bytes, mime)`, `file`, `json`, `chart` (data → bezpečný SVG), `form` (schéma), `buttons` (akce s `on_event`); od 6.6 `html(html, { title })` — sanitizované HTML (kap. 9.1) |
 | `m5.prompt / m5.form` | dotaz za běhu (text, volba, potvrzení) a formulář ze schématu; živé čekání |
 | `m5.expect / m5.webhook` | očekávaná událost pro trvalé pokračování; `webhook.create({ ttl, once, secret })` → URL vázaná na běh a session; `webhook.wait(...)` |
 | `m5.http` | `get/post/put/patch/delete/request`: hlavičky, cookie jar (v rámci session), JSON, `FormData` (i soubory), raw tělo, přesměrování, časový limit, velikost; jen hosté povolení modelem, ochrana SSRF |
@@ -414,7 +414,8 @@ z doby před 5.3 se čte jako execute + jeho webhook.
 > `/fn-sandbox.html` (iframe `sandbox="allow-scripts"`, CSP `sandbox
 > allow-scripts`, neprůhledný origin, zprávy resize/flash/send/submit/log/error
 > s limitem). Tabulka níže je původní návrh; skutečné typy: text, markdown,
-> code, table, json, image, file, flash, window, audio, video, button, form, js.
+> code, table, json, image, file, flash, window, audio, video, button, form, js
+> a od 6.6 **html** (kap. 9.1).
 
 | Výstup | Jak se ukáže |
 |---|---|
@@ -427,6 +428,55 @@ z doby před 5.3 se čte jako execute + jeho webhook.
 | `openWindow` | otevře okno aplikace ze seznamu povolených (s argumenty) |
 | `progress` | průběh v kartě běhu |
 | stream | AI text přibývá v bublině živě (SSE / WS) |
+
+### 9.1 Formátované HTML — `m5.out.html` (6.6, hotovo)
+
+`m5.out.html(html, { title })` (Python `m5.out.html(html, title=None)`, ve
+vizuálním tvůrci uzel *Send HTML* ve skupině Output) pošle text HTML; ukáže se
+z něj jen **dokumentový markup**. Jeden čistý parser bez DOM
+(`client/src/lib/fn-html.ts`) sdílí server, chat i konzole:
+
+- **Zůstane**: `div`, `span`, `p`, `br`, `hr`, `b`, `strong`, `i`, `em`, `u`,
+  `s`, `small`, `mark`, `code`, `kbd`, `samp`, `var`, `pre`, `sub`, `sup`,
+  `abbr`, `time`, `q`, `cite`, `del`, `ins`, `h1`–`h6`, `ul`, `ol`, `li`, `dl`,
+  `dt`, `dd`, `blockquote`, `section`, `article`, `header`, `footer`, `aside`,
+  `figure`, `figcaption`, `details`, `summary`, tabulky (`table`, `caption`,
+  `thead`, `tbody`, `tfoot`, `tr`, `th`, `td`, `colgroup`, `col`), `a`, `img`.
+  Jiná neznámá značka zmizí, její text zůstane.
+- **Zmizí i s obsahem**: `script`, `style`, `iframe`, `object`, `embed`,
+  `template`, `noscript`, `svg`, `math`, `form`, `input`, `button`, `textarea`,
+  `select`, `option`, `link`, `meta`, `base`, `frame`, `frameset`, `audio`,
+  `video`, `source`, `track`, `canvas`, `title`, `head`, `dialog`, `portal`,
+  `applet`; komentáře a `<!…>` / `<?…>`.
+- **Atributy**: jen `class`, `style`, `title`, `lang`, `dir` a podle značky
+  `href` (`a`), `src` / `alt` / `width` / `height` (`img`), `colspan` /
+  `rowspan` (a `scope` u `th`), `span` (`col`, `colgroup`), `start` /
+  `reversed` (`ol`), `datetime` (`time`), `open` (`details`); každé `on…` a
+  ostatní pryč. `class` drží jen třídy `m5h-…` (nejvýš 8) — funkce se tak
+  nepřestrojí za aplikaci. `style` jen vyjmenované vlastnosti (barvy, písmo,
+  zarovnání, okraje, rámečky, rozměry, flex, přetečení…), hodnota do 160 znaků
+  bez `url(`, `expression`, `javascript:`, `@import`, `var(`, `attr(`,
+  zpětného lomítka a `< > { }`, `display` jen z bezpečného výčtu. `href` jen
+  `http(s)://` a `mailto:`; `src` jen `data:image/(png|jpeg|gif|webp|bmp);base64,…`
+  — obrázek bez platného `src` zmizí celý. Čísla (`width`, `colspan`…) v mezích.
+- **Meze**: 2 000 000 znaků, 20 000 uzlů, hloubka 48; parser je lineární i na
+  nepřátelském vstupu (`test/fn-html.test.tsx`).
+
+**Kdo čistí.** Server při kontrole výstupu (`checkFnOutput` → `sanitizeFnHtml`;
+ukládá se znovu serializovaný bezpečný strom), peer při příjmu zprávy do
+místnosti (`sanitizeFnOutputs` ve `validate.ts`) a každý prohlížeč **znovu** při
+vykreslení: chat (`client/src/components/fn/FnHtml.tsx`) i konzole
+(`admin-ui/public/functions-outputs.js` přes `window.M5Html` — tentýž parser
+přibalený do `m5-editor.js`) z bezpečného stromu staví **prvky DOM, nikdy
+`innerHTML`**; styly jdou přes CSSOM, odkazy se otevírají ven (`target=_blank`,
+`rel="noopener noreferrer nofollow"`), obrázky `loading=lazy` (v chatu i
+`referrerpolicy=no-referrer`). Text zprávy (starší aplikace, hledání,
+přeposlání) je čistý text stromu. Vzhled tříd `m5h-*` (`m5h-kv`, `m5h-grid`,
+`m5h-sec`, `m5h-badge--ok`, `m5h-photo`…) má chat v `fn.css` a konzole v
+`console.css`; používají je výpisy karet NFC (`m5.nfc.format(data, "html")`,
+viz [`nfc.md`](nfc.md)).
+
+Aplikace pro Android výstup `html` vykresluje ve WebView s vypnutým JavaScriptem a zablokovanou sítí.
 
 ## 10. AI a řeč: vrstva poskytovatelů
 
@@ -590,6 +640,16 @@ co uloží server (`PUT /admin/functions/packages/:id/flow`, `POST
 - **Kontrola**: neznámý uzel, chybějící povinný vstup, dva dráty do jednoho
   vstupu, drát do zaniklého portu, kruh, dvě stejná jména vstupů; uzly Input
   dají schéma vstupů modelu (`flowInputs`).
+- **Karty NFC (6.6)**: skupiny palety **NFC.EMV** (*EMV: read everything*,
+  *EMV → format*, *EMV: transaction history*) a **NFC.e-ID** (*e-ID: read
+  everything*, *e-ID → format*, *e-ID: pictures*), ve skupině NFC navíc
+  *Card → format* a *Show card report*, ve skupině Output *Send HTML*. Uzly
+  *read everything* se přeloží na `m5.nfc.emv.report` / `m5.nfc.eid.report`
+  (parametry formát `html | object | array | json | text | csv`, *Show in the
+  chat*, historie, hluboké čtení, celé číslo karty, obrázky, všechny datové
+  skupiny, čtečka, čekání na kartu), ostatní na `format`, `history`, `images`,
+  `outputs` a `m5.out.html`. Porty a parametry podrobně v
+  [`nfc.md`](nfc.md#builder-nodes-and-packages).
 
 ### 11.3 Živé běhy konzole (5.1, hotovo)
 
@@ -630,6 +690,16 @@ zapnutý model; galerie v *Functions › Packages* je doinstaluje znovu
 (`GET /admin/functions/builtins`, `POST /admin/functions/builtins/:name/install`).
 `/help` čte `m5.functions.list()` — ukáže jen to, co smí volající spustit.
 
+6.6 (vestavěné balíčky 1.3.0): `/help nfc` a `/help html`; tutoriál má lekce
+**17 · Formatted HTML**, **18 · NFC card reports** a **19 · Reading a card
+(EMV, e-ID)** (`server/functions/tutorial.ts`). Přibyly balíčky NFC postavené
+jako toky z nástrojů NFC.EMV / NFC.e-ID (`script/gen-nfc-flows.ts`):
+**`/emv`** (`nfc-emv` — celé čtení platební karty jako výpis v chatu),
+**`/emv-history`** (`nfc-emv-history` — historie transakcí jako tabulka) a
+**`/eid`** (`nfc-eid` — formulář pro CAN / MRZ, pak celé čtení dokladu). Jako
+ostatní balíčky NFC se instalují **vypnuté**, s viditelností *caller* (viz
+[`nfc.md`](nfc.md)).
+
 ## 12. Bezpečnost
 
 | Hrozba | Opatření |
@@ -641,6 +711,7 @@ zapnutý model; galerie v *Functions › Packages* je doinstaluje znovu
 | Zneužití z chatu | model viditelný jen skupinám; limity na uživatele a místnost; ověření vstupů na serveru; audit spuštění |
 | Podvržený webhook | HMAC s časovým razítkem, jednorázové tokeny běhu, TTL, IP seznam |
 | Prompt injection | výstupy nástrojů jako data; potvrzení akcí se side-efekty; oddělené role zpráv |
+| Podvržené HTML ve výstupu (6.6) | `m5.out.html` jen dokumentový markup (`fn-html.ts`): server ho vyčistí, peer i každý prohlížeč znovu, vykresluje se jako prvky DOM bez `innerHTML`; jen třídy `m5h-*`, obrázky jen `data:image`, odkazy jen http(s) / mailto (kap. 9.1) |
 | E2EE | co odchází na server, je vidět předem; server nečte místnost; výstupy do místnosti šifruje klient |
 | Škodlivý autor | autor = operátor; publikaci modelu s novými oprávněními schvaluje vlastník; audit (neměnný řetěz ze 3.1) |
 

@@ -239,6 +239,68 @@ na doméně passkeyů: certifikát, který tam server uvede (vydání, env nebo
 přístup k passkeyům serveru. Důvěryhodný certifikát se nikdy nepromítne do
 kontroly vydání APK (`certSha256`).
 
+## HTML ve výstupech funkcí a čtení karet NFC (od 6.6.0)
+
+### `m5.out.html`
+
+Funkce smí poslat formátované HTML (podrobně
+[`functions-architecture.md` › 9.1](functions-architecture.md)). Hrozba: HTML
+nepíše jen důvěryhodný operátor — **peer** může do místnosti poslat zprávu
+s libovolnými „výstupy“ (`flags.fn.outputs`), takže každý prohlížeč musí
+s HTML zacházet jako s cizím vstupem. Opatření:
+
+- **Jeden sanitizér, víc kontrol.** `client/src/lib/fn-html.ts` (čistý parser
+  bez DOM) nechá jen dokumentový markup: žádné `script`, `style`, `iframe`,
+  `object`, `svg`, `form`, `input`, `button`, média ani `meta` / `link` / `base`
+  (zmizí i s obsahem), žádné atributy `on…`; `class` jen `m5h-…` (funkce se
+  nepřestrojí za prvky aplikace), `style` jen vyjmenované vlastnosti bez
+  `url(`, `expression`, `javascript:`, `@import`, `var(`, `attr(`; odkazy jen
+  `http(s)` a `mailto`, obrázky jen `data:image/…;base64`. Server ho použije při
+  kontrole výstupu a ukládá už vyčištěný strom; **příjemce zprávy ho použije
+  znovu** (`sanitizeFnOutputs` ve `validate.ts`) a **vykreslení znovu**
+  (`FnHtml.tsx`, v konzoli `functions-outputs.js` přes `window.M5Html`) — server
+  ani odesílatel tedy nejsou kořenem důvěry.
+- **Žádné `innerHTML`.** Chat i konzole staví z bezpečného stromu prvky DOM
+  (React elementy, `document.createElement`, styly přes CSSOM). Odkazy se
+  otevírají ven s `rel="noopener noreferrer nofollow"`; obrázky jsou jen
+  vložená data, takže zobrazení zprávy nic nestahuje z cizích serverů.
+- **Meze** proti zahlcení: 2 000 000 znaků, 20 000 uzlů, hloubka 48, lineární
+  parser (test na nepřátelský vstup v `test/fn-html.test.tsx`).
+
+Aplikace pro Android výstup `html` vykresluje ve WebView s vypnutým JavaScriptem a zablokovanou sítí.
+
+### Čtení karet NFC
+
+Hloubková čtení EMV a e-ID / e-pasu (podrobně [`nfc.md`](nfc.md)) zůstávají
+**jen ke čtení** a jen na kartě či dokladu, který člověk drží:
+
+- **EMV**: GET DATA a READ RECORD čtou to, co karta ukáže každému terminálu —
+  čítače, historii transakcí, soubory. Nikdy VERIFY (PIN), nikdy `GENERATE AC`,
+  žádný kryptogram ani transakce, žádný zápis.
+- **e-ID / e-pas**: čip se otevře jen **přístupem řízeným samotným dokladem** —
+  klíčem z MRZ nebo CAN, které držitel opíše z dokladu; kdo doklad nedrží, ho
+  nepřečte. DG3 / DG4 (otisky prstů, duhovka) vyžadují Extended Access Control
+  (certifikát státního terminálu) a nečtou se.
+
+PACE (6.6) je stejně jako BAC přístupové řízení samotného dokladu — PACE s CAN nebo MRZ (ECDH generic mapping, secure messaging AES nebo 3DES); čtečka zkusí nejdřív PACE a když neuspěje, použije BAC.
+
+- **Pasivní autentizace je jen kontrola otisků.** Otisk každé přečtené skupiny
+  se porovná s otiskem v EF.SOD. **Podpis EF.SOD se neověřuje, certifikát
+  podepisovatele dokladu se neověřuje proti seznamu CSCA** a aktivní ani čipová
+  autentizace (AA / CA) se neprovádí. Výsledek „passive ok“ tedy říká, že data
+  sedí s EF.SOD, ne že je doklad pravý — klon s okopírovanými soubory by prošel.
+- **Model dostane, co se přečetlo.** Server výsledek ze zařízení ořízne
+  (`host-nfc.ts`: jen známá pole, délky, počty a velikosti obrázků a souborů) a
+  nikdy nepustí klíč karty ani PIN. PAN ale model dostane celý (vlastní karta
+  držitele; maskuje ho až výpis, `fullPan` je ve výchozím stavu vypnuté), u e-ID
+  osobní údaje a fotografie.
+- **Běhy se ukládají.** Vstupy a výstupy běhu — u `/eid` zadaný CAN či MRZ,
+  výpis s fotografií a osobními údaji — leží v `$DATA_DIR/functions/functions.db`
+  (SQLite, soubor 0600, nešifrovaný) do `FUNCTIONS_RUNS_DAYS` (výchozí 30 dní) a
+  operátor s přístupem k *Functions › Runs* je vidí. Vestavěné příkazy mají
+  viditelnost *caller* — výpis nejde do místnosti. Čtení v nástroji NFC
+  (*Celý výpis*, export) zůstává v prohlížeči.
+
 ## Serverové úložiště (od 2.10.0)
 
 Podrobně v [`storage.md`](storage.md). Pro model hrozeb:
