@@ -125,3 +125,12 @@ describe("S9 — the message audit journal", () => {
     expect(takeMessageAuditBudget("a", 4, 15, t + 60 * 60 * 1000)).toBe(4);
   });
 });
+
+describe("N10 — /metrics has a budget for refused requests", () => {
+  it("wrong tokens are cut off after 30 attempts (it is outside /api's limiter)", async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < 32; i++) statuses.push((await fetch(`${base}/metrics`, { headers: { Authorization: `Bearer guess-${i}` } })).status);
+    expect(statuses.slice(0, 30).every((s) => s === 401)).toBe(true);
+    expect(statuses.slice(30)).toEqual([429, 429]);
+  });
+});

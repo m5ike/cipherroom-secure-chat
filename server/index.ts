@@ -285,3 +285,13 @@ async function shutdown(signal: string): Promise<void> {
 }
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 process.once("SIGINT", () => void shutdown("SIGINT"));
+
+// 6.7 (N7): a promise nobody awaited that fails (a timer's database call on a
+// full disk, a provider callback) is logged and audited instead of ending the
+// process — which would drop every socket and all in-memory state. A thrown
+// exception still ends it (its state may be broken).
+process.on("unhandledRejection", (reason) => {
+  const message = reason instanceof Error ? reason.message : String(reason);
+  console.error("unhandled rejection:", reason);
+  try { audit.add({ category: "system", level: "error", event: "process.unhandled-rejection", detail: { error: message.slice(0, 300) } }); } catch { /* the audit itself failed */ }
+});

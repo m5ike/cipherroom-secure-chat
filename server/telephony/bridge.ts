@@ -525,7 +525,8 @@ export function attachBridgeMedia(server: Server): void {
       wss!.handleUpgrade(req, socket, head, (ws) => (m[1] ? clientSocket(b, ws) : providerSocket(b, ws)));
     })().catch(() => socket.destroy());
   });
-  sweeper ??= setInterval(() => void sweep(), 30_000);
+  // 6.7 (N7): a failing sweep is logged, not an unhandled rejection.
+  sweeper ??= setInterval(() => { sweep().catch((err) => console.warn(`[telephony] bridge sweep failed: ${(err as Error)?.message ?? err}`)); }, 30_000);
   sweeper.unref?.();
 }
 

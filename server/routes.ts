@@ -28,6 +28,7 @@
 // logging is gated by LOG_EVENTS and only stores opaque ids + timestamps.
 
 import type { Express, Request, Response } from "express";
+import { rateLimit } from "express-rate-limit";
 import type { Server } from 'node:http';
 import { eventStore } from "./events";
 import { buildModuleManifest } from "./modules";
@@ -175,8 +176,14 @@ export async function registerRoutes(
     return { pending: st.queued + st.delivering, bytes: st.bytes };
   });
   const queueSweep = setInterval(() => {
-    const swept = offlineQueue().sweep();
-    if (swept.expired + swept.purged > 0) audit.add({ category: "storage", event: "queue.sweep", detail: swept });
+    // 6.7 (N7): a busy or full database (SQLITE_BUSY / SQLITE_FULL) must not
+    // take the process down from a timer.
+    try {
+      const swept = offlineQueue().sweep();
+      if (swept.expired + swept.purged > 0) audit.add({ category: "storage", event: "queue.sweep", detail: swept });
+    } catch (err) {
+      audit.add({ category: "storage", level: "warn", event: "queue.sweep-failed", detail: { error: (err as Error)?.message?.slice(0, 200) ?? String(err) } });
+    }
   }, 10 * 60 * 1000);
   queueSweep.unref?.();
 
@@ -261,7 +268,10 @@ export async function registerRoutes(
   }, () => buildModuleManifest(eventStore.backend).features);
 
   // Prometheus: /metrics with METRICS_TOKEN (or any administrator's token).
-  app.get("/metrics", (req, res) => {
+  // 6.7 (N10): it is outside /api, so it gets the console's budget for
+  // refused requests — otherwise any admin token could be guessed here freely.
+  const metricsRefused = rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, message: "too many refused requests\n" });
+  app.get("/metrics", metricsRefused, (req, res) => {
     const metricsToken = process.env.METRICS_TOKEN?.trim();
     const header = req.header("authorization") ?? "";
     const same = (x: string, y: string) => timingSafeEqual(createHash("sha256").update(x).digest(), createHash("sha256").update(y).digest());

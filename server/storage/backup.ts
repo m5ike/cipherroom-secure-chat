@@ -67,8 +67,9 @@ export class BackupManager {
   start(): void {
     if (this.timer || !this.scheduled) return;
     this.timer = setInterval(() => {
-      void this.run("schedule");
-      this.integrity();
+      // 6.7 (N7): a failed backup or check is reported, never a crash from a timer.
+      this.run("schedule").catch((err) => console.warn(`[backup] scheduled backup failed: ${(err as Error)?.message ?? err}`));
+      try { this.integrity(); } catch (err) { console.warn(`[backup] integrity check failed: ${(err as Error)?.message ?? err}`); }
     }, this.intervalHours * 60 * 60 * 1000);
     this.timer.unref?.();
   }
