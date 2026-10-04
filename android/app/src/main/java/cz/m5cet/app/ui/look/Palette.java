@@ -39,6 +39,8 @@ public final class Palette {
         named("brown", 24, .45f); named("slate", 215, .22f);
         // Nord's muted ones: frost, steel, sage, sand, terracotta, plum.
         named("frost", 193, .43f); named("steel", 213, .32f); named("sage", 92, .28f); named("sand", 40, .60f); named("clay", 14, .50f); named("plum", 311, .22f);
+        // 6.7: the app's own templates' (design-67-look.ts NEW_HUES_67).
+        named("moss", 105, .38f); named("lilac", 272, .55f); named("ice", 198, .62f); named("cocoa", 22, .42f); named("gold", 44, .85f);
 
         // "design" is the design's own look; its list starts with the web's five accents (the 6.1 appearance.accent values).
         template("design", "red", "orange", "green", "blue", "violet", "teal", "pink");
@@ -55,6 +57,13 @@ public final class Palette {
         template("sakura", "pink", "rose", "magenta", "purple", "coral", "mint");
         template("ocean", "teal", "cyan", "sky", "blue", "indigo", "coral", "emerald");
         template("graphite", "orange", "amber", "red", "blue", "green", "slate");
+        // 6.7: the app's own templates (design-67-look.ts THEMES_67_LOOK; not on the web).
+        template("forest", "moss", "emerald", "teal", "sage", "amber", "clay", "sky");
+        template("sunset", "orange", "amber", "gold", "coral", "rose", "violet", "magenta");
+        template("lavender", "lilac", "violet", "purple", "indigo", "pink", "plum", "mint");
+        template("mocha", "cocoa", "brown", "clay", "amber", "sand", "sage", "rose");
+        template("arctic", "ice", "sky", "blue", "cyan", "teal", "indigo", "frost");
+        template("ink", "slate", "blue", "red", "green", "amber", "violet", "pink");
     }
 
     /** The variants a template offers (an unknown template gets the design's list). */

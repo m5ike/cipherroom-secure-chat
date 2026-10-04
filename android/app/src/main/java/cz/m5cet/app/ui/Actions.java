@@ -38,6 +38,8 @@ public final class Actions {
                 case "rooms.connect": app.rooms.connectSelected(); a.refresh(); break;
                 case "room.leave": app.rooms.leave(s); if (app.rooms.activeSession() == null) a.showScreen("rooms", true); else a.refresh(); break;
                 case "room.forget": app.rooms.forget(s); a.refresh(); break;
+                // 6.7 look: a saved room's swipe actions (asked delete, clone, edit)
+                case "room.delete": case "room.clone": case "room.edit": cz.m5cet.app.ui.parts.RoomEdit.run(a, action, s); break;
                 case "message.send": a.parts.sendComposer(); break;
                 case "message.reply": a.parts.replyTo(s); break;
                 case "message.copy": a.parts.copyMessage(s); break;
