@@ -7,7 +7,14 @@
 2. Klikni na logo nebo „Připojit" — otevře se dialog místnosti.
 3. Vyplň jméno, Room ID a klíč místnosti. Klíč sdílej s druhou stranou
    **mimo tento chat** (signal, papír, telefon).
-4. Po stisku Připojit se klíč odvodí lokálně (PBKDF2). Server klíč nikdy nevidí.
+4. Po stisku Připojit se klíč odvodí lokálně (Argon2id). Server klíč nikdy nevidí.
+5. **Síla klíče (6.7)** — pod polem klíče je měřidlo (slabý / ujde / silný,
+   odhad v bitech) s radami a tlačítkem *Vygenerovat silný klíč*. Slabý klíč
+   pro místnost zadanou ručně (není mezi uloženými připojeními) aplikace
+   poprvé nepustí a vysvětlí proč: kdo má data serveru, může slabý klíč
+   uhodnout offline. Připojuješ-li se do místnosti, která už tento klíč
+   používá, stiskni *Připojit* ještě jednou. (Jen web; aplikace pro Android
+   sílu klíče zatím neměří.)
 
 ### Přepínání témat
 Lišta nahoře → ikona palety → vyber Motorsport Dark / Glass Light / Terminal Secure.
@@ -102,8 +109,9 @@ zavřená. Obsah zpráv server nevidí ani v jednom režimu. Podrobně
 Podrobně [`session-and-sharing.md`](session-and-sharing.md).
 
 ### Notifikace
-Lišta → zvonek. Pokud server má nakonfigurované VAPID klíče, použije se Web Push.
-Jinak fallback na lokální notifikace v tabu.
+Menu › *Notifikace*. Pokud server má nakonfigurované VAPID klíče, použije se Web Push.
+Jinak fallback na lokální notifikace v tabu. Od 6.7 tam je i vlastní volba
+upozornění — viz [Upozornění (6.7)](#upozornění-67).
 
 ### Analytika a souhlas
 Souhlas je opt-in. Bez něj klient neposílá žádné `POST /api/events`. Po souhlasu se
@@ -125,10 +133,13 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
   si ho.
 - **PIN a biometrie** — nastavte PIN; když to telefon umí, nabídne se otisk
   prstu nebo obličej. Aplikace se zamkne sama po chvíli na pozadí.
-  **Pozor:** každý špatný PIN i odmítnutý prst se počítá. Od třetí chyby se
-  čeká (30 s, pak déle) a po posledním povoleném pokusu (nastavuje správce)
-  aplikace **smaže všechna svá data** — místnosti, zprávy i klíče. Počet
-  zbývajících pokusů je vidět na obrazovce zámku.
+  **Pozor:** každý špatný PIN se počítá — i když aplikaci během ověřování
+  zavřete (od 6.7 se pokus zapíše dřív, než se PIN ověří). Odmítnutý prst se
+  od 6.7 nepočítá (po několika nezdarech zamkne snímač sám systém). Od třetí
+  chyby se čeká (30 s, pak déle) a po posledním povoleném pokusu (nastavuje
+  správce) aplikace **smaže všechna svá data** — místnosti, zprávy i klíče.
+  Počet zbývajících pokusů je vidět na obrazovce zámku. Změna PINu chce
+  současný PIN.
 - **Víc místností naráz** — v seznamu místností zaškrtněte ty, které chcete
   mít připojené, a klepněte na *Připojit vybrané*. U každé je počet lidí a
   nepřečtených zpráv. Nad chatem je lišta připojených místností; přejetím
@@ -142,8 +153,11 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
   stiskem zprávy na ni odpovíte nebo ji zkopírujete. Obrázek pošlete ikonou
   vlevo od pole. Hovor ikonou telefonu; když ho v nastavení povolíte, objeví
   se hovory i v systémovém záznamu hovorů.
-- **Notifikace** — na zprávu jde odpovědět přímo z notifikace; když je
-  aplikace zamčená, notifikace ukáže jen „Nová zpráva“.
+- **Notifikace** — na zprávu jde odpovědět přímo z notifikace (na Androidu 12
+  a novějším až po odemčení telefonu); když je aplikace zamčená — od 6.7 i na
+  pozadí po uplynutí automatického zamčení —, notifikace zprávy ukáže jen
+  „Nová zpráva“, bez odesílatele, místnosti a odpovědi, a na zamčené obrazovce
+  telefonu je vždy jen tato neutrální verze.
 - **Aktualizace** — nový vzhled nebo novou verzi aplikace nabídne karta
   aktualizace. Když se nový vzhled nepovede, aplikace se sama vrátí
   k předchozímu.
@@ -204,27 +218,168 @@ Když je správce zapne a máš přístup k modulu NFC, tyto příkazy přečtou
   nástroj NFC (*Celý výpis* a jeho export) zůstává jen v prohlížeči.
 
 ### Hlas: diktování, odeslat jako hlas, měnič hlasu (6.7)
-- **Diktování** — ikona řeči v poli zprávy (web: tlačítko vedle mikrofonu).
-  Text se píše do pole, jak mluvíš, a poslech běží, dokud ho nezastavíš: znovu
-  ikona (čtvereček), *Odeslat*, odchod z místnosti nebo aplikace v pozadí —
-  poslední slova se ještě dopíšou a mikrofon se uvolní.
-- **Poslat text jako hlas** (dlouhý stisk *Odeslat*; web: šipka u *Odeslat*) —
-  text z pole (a je-li pole prázdné, to, co teď nadiktuješ) přečte hlas a
-  odejde jako šifrovaná hlasová zpráva, stejně jako nahraná. Android: hlas
-  telefonu, nebo hlas serveru, když je v *Nastavení › Hlas* zvoleno *Na
-  serveru*. Web: jen hlas serveru (hlasy prohlížeče nahrát nejdou) — server
-  text uvidí; když převod textu na řeč nezapnul správce, aplikace to řekne.
-- **Nadiktovat a poslat text** — mluvíš, text se píše do pole; ■ nebo
-  *Odeslat* ho pošle jako obyčejnou zprávu.
-- **Měnič hlasu** — modul, který zapíná správce (konzole › *Moduly a skupiny*;
-  jinak je vypnutý). Pak si ho každý zapne u sebe: web *Menu › Měnič hlasu*,
+- **Diktování** — ikona řeči v poli zprávy (web: tlačítko vedle mikrofonu;
+  ukáže se, jen když prohlížeč rozpoznávání řeči umí, nebo v režimu
+  Server-enhanced, když server nabízí přepis). Text se píše do pole, jak
+  mluvíš, a poslech běží, dokud ho nezastavíš — po pauze se rozpoznávání samo
+  znovu rozběhne (po několika tichých pokusech za sebou skončí hláškou „Nic
+  jsem neslyšel“). Zastaví ho znovu ikona (čtvereček): poslední slova se ještě
+  dopíšou a mikrofon se uvolní. Diktování skončí i odchodem z místnosti; na
+  webu odeslání nebo smazání pole diktování přeruší (rozpracovaná slova se
+  zahodí), na Androidu *Odeslat* počká na poslední slova a pak zprávu pošle
+  a diktování skončí i s aplikací v pozadí.
+- **Poslat text jako hlas** — text z pole přečte hlas a odejde jako šifrovaná
+  hlasová zpráva, stejně jako nahraná (bez textu). Web: šipka u *Odeslat*
+  nebo dlouhý stisk *Odeslat* › *Poslat jako hlas* (jde jen s textem v poli;
+  také v panelu *Řeč*); jen hlas serveru (hlasy prohlížeče nahrát nejdou) —
+  server text uvidí; když převod textu na řeč nezapnul správce, aplikace to
+  řekne. Android: dlouhý stisk *Odeslat* (nebo mikrofonu) otevře volby
+  odeslání; je-li pole prázdné, přečte to, co teď nadiktuješ; hlas telefonu,
+  nebo hlas serveru, když je v *Nastavení › Hlas* zvoleno *Na serveru*.
+- **Nadiktovat a poslat text** (jen Android, ve volbách odeslání) — mluvíš,
+  text se píše do pole; ■ nebo *Odeslat* ho pošle jako obyčejnou zprávu.
+- **Měnič hlasu** — modul, který zapíná správce (konzole › *Modules &
+  groups*; bez toho je vypnutý). Pak si ho každý zapne u sebe: web *Menu ›
+  Nástroje › Měnič hlasu* (položka je vidět, jen když ho správce zapnul),
   Android *Nastavení › Hlas › Měnič hlasu*. Předvolby (vyšší, nižší, hluboký,
   robot, ozvěna, šepot, anonym) nebo vlastní výška, barva (formanty), robot,
   ozvěna, šepot a hlasitost; *Vyzkoušet* nahraje 4 s a přehraje je. Mění hlas
-  v hovorech a hlasových zprávách přímo v zařízení, ještě před šifrováním —
-  kvůli tomu nikam neodchází žádný zvuk. Diktování (rozpoznávání řeči
-  prohlížeče nebo telefonu) poslouchá mikrofon samo a dává jen text; na něj se
-  měnič nevztahuje.
+  všeho, co aplikace nahrává mikrofonem — hovorů, hlasových zpráv a nahrávek
+  pro přepis na serveru (na webu i telefonního mostu) — přímo v zařízení,
+  ještě před šifrováním; kvůli tomu nikam neodchází žádný zvuk. Diktování
+  rozpoznáváním řeči prohlížeče nebo telefonu poslouchá mikrofon samo a dává
+  jen text; na něj se měnič nevztahuje. Bez sluchátek může druhá strana
+  v hovoru slyšet ozvěnu svého hlasu změněnou. Aplikace pro Android se
+  o zapnutí modulu dozví nejpozději do 10 minut.
+
+### Kdo je v místnosti: přítomnost a „naposledy online“ (6.7)
+- Kdo místnost neopustí tlačítkem **Odpojit**, zůstává v seznamu lidí — i když
+  mu spadne síť, zavře kartu nebo dá aplikaci do pozadí. Když mu spojení
+  spadne, ukáže se v chatu řádek „‹jméno› je pryč — spojení se přerušilo,
+  v místnosti zůstává.“
+- U každého je barevná tečka a „Naposledy online před …“ (kdy měl naposledy
+  aplikaci otevřenou a byl připojený):
+  - **zelená — Online**: má aplikaci teď otevřenou, nebo ji naposledy měl
+    nejvýš před 5 minutami (kdo dá aplikaci do pozadí, je prvních 5 minut
+    ještě zelený);
+  - **žlutá — Pryč**: naposledy online před 5 až 60 minutami;
+  - **oranžová — Dlouho pryč**: před víc než hodinou (nebo nevíme kdy).
+- Web hlásí kartu na pozadí po 1,5 s a přepnutí do jiné aplikace (karta
+  zůstane vidět) po 30 s; Android hned, jak aplikace odejde do pozadí. Tečky
+  se přebarvují samy, i když nikdo nepíše.
+- **Kde to vidíš** — web: tečka u avataru ve widgetu příjemců, okno *Peers*
+  (menu) a detail člověka (řádek *Přítomnost*); Android: panel lidí
+  a detail osoby (řádek *Naposledy online*; kdo je bez spojení, má ikonu
+  měsíce).
+- **Kdy člověk ze seznamu zmizí** — když klikne *Odpojit*; když ho (nebo
+  celou místnost) odpojí operátor; když server zruší jeho přihlášení
+  (odhlášení všude) nebo ho vyhodí kvůli limitům; a když se do 7 dní nevrátí
+  (operátor to mění proměnnou `PRESENCE_MAX_AWAY_DAYS`). Restart serveru
+  zapomene lidi bez spojení — kromě přihlášených, pro které server drží
+  zprávy.
+- **Návrat** — po obnovení stránky (v téže kartě) nebo po znovuotevření
+  aplikace pro Android jsi v místnosti zase ty, ne nový člen. Zavřená karta
+  na webu si to nepamatuje: host se vrátí jako nový člen (starý záznam
+  zůstane, dokud nevyprší); přihlášený uživatel svůj starý záznam nahradí.
+- Přihlášený uživatel, pro kterého server drží zprávy (stav away), zůstává
+  v místnosti jako nepřítomný i po *Odpojit* — tak jako dřív.
+- Přítomnost a „naposledy online“ vidí jen lidé v téže místnosti (a operátor
+  v konzoli); obsah zpráv server dál nevidí.
+
+### Poloha: navigovat, odvoz, kopírovat (6.7)
+- **Web**: zpráva s polohou ukazuje v bublině místo mapy **špendlík se
+  souřadnicemi** (u živé polohy „živě“); zpráva, která polohu nese
+  v hlavičce, má v záhlaví ikonu špendlíku. Klepnutí otevře okno polohy:
+  mapa (pokud ji správce zapnul; klepnutím se otevře OpenStreetMap),
+  souřadnice s přesností a tlačítka **Navigovat**, **Odvoz** a
+  **Kopírovat**.
+  - *Navigovat*: Google Maps, Apple Maps, Waze, Mapy.com nebo OpenStreetMap
+    (v prohlížeči na Androidu i mapová aplikace telefonu).
+  - *Odvoz*: Uber s vyplněným cílem; Bolt, Liftago a FREENOW cíl převzít
+    neumějí — otevře se jejich stránka a souřadnice se zkopírují („Cíl je ve
+    schránce — vložte ho v aplikaci.“).
+  - *Kopírovat*: souřadnice ve tvaru `50.087500, 14.421300`.
+- **Android**: zpráva s polohou dál ukazuje malou mapu (je-li zapnutá);
+  klepnutí na ni nebo *Poloha na mapě* v nabídce dlouhého stisku otevře
+  stejné okno. *Navigovat* nabídne nejdřív nainstalované aplikace (Google
+  Maps, Waze, Mapy.com, OsmAnd, Sygic, HERE WeGo a další mapové aplikace),
+  pak webové odkazy těch nenainstalovaných. *Odvoz*: Uber (aplikace, jinak
+  web); u Boltu, Liftaga a FREENOW se souřadnice zkopírují a otevře se
+  aplikace, jinak jejich stránka.
+- **Soukromí**: nic se nikam neposílá, dokud neklepneš na odkaz; mapa jde
+  přes server M5cet. Klepnutím na navigaci nebo odvoz ale předáš souřadnice
+  té službě (Uberu i jméno odesílatele polohy, když poloha není tvoje).
+
+### Zprávy „podržet a číst“ (6.7)
+Zprávu, která se ukáže jen při podržení, teď jde podržet i za **prázdné
+místo vedle bubliny** — text tak není pod prstem. Odkryje se po krátkém
+podržení (asi 0,2 s), takže posouvání chatu, které tam začne, nic neodkryje.
+Platí na webu i v aplikaci pro Android.
+
+### Upozornění (6.7)
+- **Kde**: web *Menu › Notifikace* (část *Moje upozornění*), Android
+  *Nastavení › Oznámení*.
+- **Co jde nastavit**: upozornění zapnout / vypnout; na co upozorňovat (nové
+  zprávy, zmínky o mně, výzvy operátora; *Hovory* a *Výsledky příkazů* jsou
+  v nabídce připravené, ale server je zatím sám neposílá); **co upozornění
+  ukáže** — *nic, jen že něco přišlo* / *kdo píše* / *kdo píše a v které
+  místnosti* / *také náhled zprávy* (náhled umí jen zařízení, které zprávu
+  samo dešifruje; server úroveň může omezit); **tiché hodiny** (od–do, i přes
+  půlnoc; v tu dobu nepřijde nic kromě testu) a *Poslat zkušební upozornění*.
+- **Kudy** (jen přihlášení): pořadí cest — aplikace pro Android, prohlížeč
+  (web push), e-mail. Když první cesta selže, server zkusí další. E-mail jde
+  jen tehdy, když ho správce zapnul a ty jsi adresu potvrdil odkazem
+  z potvrzovacího e-mailu (platí 48 h); adresa se zadává na webu.
+- **Android**: přepínač *Server drží mé zprávy a probudí mě* — zprávy čekají
+  na serveru zašifrované a upozornění přijde zapečetěné jen pro tento telefon;
+  aplikace sama doplní název místnosti. Je-li aplikace zamčená, nedoplní ho
+  a upozornění nemá odpověď (jméno odesílatele ukáže, dovolí-li to tvoje
+  úroveň); na zamčené obrazovce telefonu je vždy jen „Nová zpráva“.
+- **Bez přihlášení** platí volba jen pro upozornění, která ukazuje otevřená
+  stránka.
+- **Zmínka**: napíšeš-li ve zprávě `@jméno` člověka, který je pryč, dostane
+  upozornění „zmínka“ (server se dozví jen to, komu, ne text).
+
+### Veřejný profil (6.7)
+- **Kde**: web *Profil* (část *Veřejný profil*), Android *Nastavení ›
+  Uživatel › Veřejný profil*. Potřebuje přihlášení passkeyem.
+- **Co v něm je**: profilová fotka, fotka na pozadí, veřejná přezdívka,
+  „O mně“ a až 24 dalších údajů (jméno, telefon, e-mail, adresa, web,
+  sociální síť, organizace, narozeniny, jiné).
+- **U každé položky zvolíš, kdo ji uvidí**:
+  - *Jen já* — zůstane zapečetěné v trezoru tvého účtu;
+  - *Členové místností* (Android: *Místnosti*) — pošle se šifrovaně
+    (end-to-end, párovým klíčem) lidem v místnostech, do kterých vstoupíš;
+    server to nepřečte;
+  - *Veřejné* — uloží se na serveru a přečte si to každý, kdo zná tvé
+    uživatelské jméno; server to vidí.
+
+  Nové položky jsou *Jen já*, přezdívka je výchozí *Veřejné*. *Jak mě vidí
+  ostatní* ukáže náhled pro každé publikum.
+- **Obrázky** se před uložením zmenší a překódují do JPEG a metadata (EXIF,
+  poloha GPS, fotoaparát) se zahodí.
+- **Přezdívka** se předvyplní jako tvé jméno, když vstupuješ do místnosti
+  (u uloženého připojení na Androidu má přednost jméno uložené v něm);
+  v místnosti ho můžeš změnit.
+- **Profil druhých**: v detailu člověka je, co sdílí v místnosti; *Zobrazit
+  veřejný profil @jméno* ho načte ze serveru až na požádání. Patří-li
+  veřejný profil účtu, který podepisuje zprávy tohoto člověka, aplikace to
+  řekne.
+- Operátor může veřejný profil účtu odebrat (konzole); zveřejnit ho pak jde
+  znovu.
+
+### Aplikace pro Android: vzhled a gesta v seznamu místností (6.7)
+- **Šest nových šablon vzhledu** — Les, Západ slunce, Levandule, Moka,
+  Arktida a Inkoust, každá světlá i tmavá (*Nastavení › Vzhled*).
+- **Nabídky s ikonami** v barvách vzhledu (hlavní menu, menu místnosti,
+  dlouhý stisk zprávy…); nebezpečné volby (smazat, wipe) jsou červené.
+- **Přejetí po řádku místnosti**: doprava → **Smazat** (po potvrzení
+  místnost opustí, odebere ze seznamu a smaže její historii v tomto telefonu;
+  ostatních se to netýká); doleva → **Klonovat** (uloží kopii pod dalším
+  volným jménem, např. „Tým 2“, se stejným klíčem a přezdívkou; nepřipojí ji)
+  a **Upravit** (jméno, místnost a klíč; nový název místnosti znamená novou
+  místnost — stará historie zůstane v telefonu; připojená se připojí znovu).
+  Stejné akce nabízí TalkBack.
 
 ## English
 
@@ -232,7 +387,14 @@ Když je správce zapne a máš přístup k modulu NFC, tyto příkazy přečtou
 1. Open the app in a modern browser.
 2. Click the brand logo or "Connect" to open the room dialog.
 3. Provide name, Room ID and the room key. Share the key out-of-band.
-4. The key is derived locally with PBKDF2 — the server never sees it.
+4. The key is derived locally with Argon2id — the server never sees it.
+5. **Key strength (6.7)** — under the key field there is a meter (weak / fair /
+   strong, an estimate in bits) with tips and a *Generate a strong key* button.
+   A weak key for a room typed in by hand (not a saved connection) is held back
+   the first time, with the reason: whoever holds the server's data could guess
+   a weak key offline. If you are joining a room that already uses this key,
+   press *Connect* again. (Web only; the Android app does not measure key
+   strength yet.)
 
 ### Themes
 Top bar → palette icon → pick Motorsport Dark, Glass Light, or Terminal Secure.
@@ -294,10 +456,13 @@ Same as the Czech section above.
   remembers it.
 - **PIN and biometrics** — choose a PIN; where the phone can, fingerprint or
   face unlock is offered. The app locks itself after a while in the background.
-  **Careful:** every wrong PIN and every rejected finger counts. From the third
-  failure you wait (30 s, then longer), and after the last allowed attempt
-  (set by the administrator) the app **erases all its data** — rooms, messages
-  and keys. The lock screen shows the attempts left.
+  **Careful:** every wrong PIN counts — even when you close the app while it
+  checks (from 6.7 the attempt is written down before the PIN is checked). A
+  rejected finger no longer counts from 6.7 (the system locks the sensor after
+  a few). From the third failure you wait (30 s, then longer), and after the
+  last allowed attempt (set by the administrator) the app **erases all its
+  data** — rooms, messages and keys. The lock screen shows the attempts left.
+  Changing the PIN asks for the current one.
 - **Several rooms at once** — tick the rooms you want connected and tap
   *Connect selected*. Each shows its number of people and unread messages. A
   bar of connected rooms sits above the chat; swipe left or right to move to
@@ -310,8 +475,11 @@ Same as the Czech section above.
   press on a message replies to it or copies it. Send a picture with the icon
   left of the field. Call with the phone icon; if you allow it in the settings,
   calls also appear in the phone's call log.
-- **Notifications** — reply straight from a notification; while the app is
-  locked a notification only says "New message".
+- **Notifications** — reply straight from a notification (on Android 12 and
+  newer only after unlocking the phone); while the app is locked — from 6.7
+  also in the background once the auto-lock time has passed — a message
+  notification only says "New message", without sender, room or reply, and
+  the phone's lock screen always shows just this neutral version.
 - **Updates** — a new look or a new version of the app is offered on an update
   card. If a new look fails, the app goes back to the previous one by itself.
 
@@ -373,28 +541,171 @@ read a card **at your device** — read-only, your own card or document:
 
 ### Voice: dictation, send as voice, the voice changer (6.7)
 - **Dictation** — the speech icon in the message field (web: the button next to
-  the microphone). The text appears as you speak, and listening goes on until
-  you stop it: the icon again (a square), *Send*, leaving the room or the app
-  going to the background — the last words still arrive and the microphone is
-  released.
-- **Send the text as voice** (long-press *Send*; web: the arrow by *Send*) —
-  the field's text (or, with an empty field, what you dictate now) is read by a
-  voice and goes as an encrypted voice message, just like a recorded one.
-  Android: the phone's voice, or the server's when *Settings › Voice* says *On
-  the server*. Web: the server's voice only (the browser's voices cannot be
-  recorded) — the server sees the text; without the operator's text to speech
-  the app says so.
-- **Speak it, send text** — you speak, the text appears in the field; ■ or
-  *Send* sends it as an ordinary message.
+  the microphone; it shows only where the browser recognises speech, or in
+  Server-enhanced when the server offers transcription). The text appears as
+  you speak, and listening goes on until you stop it — after a pause the
+  recogniser starts again by itself (after several silent restarts in a row it
+  ends with "I heard nothing"). The icon again (a square) stops it: the last
+  words still arrive and the microphone is released. Leaving the room ends it
+  too; on the web, sending or clearing the field cancels it (words still in
+  progress are dropped); on Android *Send* waits for the last words and then
+  sends, and the app going to the background ends it as well.
+- **Send the text as voice** — the field's text is read by a voice and goes as
+  an encrypted voice message, just like a recorded one (without the text).
+  Web: the arrow by *Send* or a long press on *Send* › *Send as voice* (only
+  with text in the field; also in the *Speech* panel); the server's voice only
+  (the browser's voices cannot be recorded) — the server sees the text;
+  without the operator's text to speech the app says so. Android: a long press
+  on *Send* (or the microphone) opens the send options; with an empty field it
+  reads what you dictate now; the phone's voice, or the server's when
+  *Settings › Voice* says *On the server*.
+- **Speak it, send text** (Android only, in the send options) — you speak,
+  the text appears in the field; ■ or *Send* sends it as an ordinary message.
 - **Voice changer** — a module the operator turns on (console › *Modules &
   groups*; off otherwise). Then everyone switches it on for themselves: web
-  *Menu › Voice changer*, Android *Settings › Voice › Voice changer*. Presets
-  (higher, lower, deep, robot, echo, whisper, anonymous) or your own pitch,
-  timbre (formants), robot, echo, whisper and volume; *Try it* records 4 s and
-  plays them back. It changes the voice of calls and voice messages on the
-  device, before encryption — no audio leaves it for this. Dictation (the
-  browser's or phone's speech recognition) listens to the microphone itself and
-  gives only text; the voice changer does not apply to it.
+  *Menu › Tools › Voice changer* (the item shows only once the operator turned
+  it on), Android *Settings › Voice › Voice changer*. Presets (higher, lower,
+  deep, robot, echo, whisper, anonymous) or your own pitch, timbre (formants),
+  robot, echo, whisper and volume; *Try it* records 4 s and plays them back.
+  It changes the voice of everything the app records from the microphone —
+  calls, voice messages and recordings sent for transcription on the server
+  (on the web, the phone bridge too) — on the device, before encryption; no
+  audio leaves it for this. Dictation by the browser's or phone's speech
+  recognition listens to the microphone itself and gives only text; the voice
+  changer does not apply to it. Without headphones the other side of a call
+  may hear the echo of their own voice changed. The Android app learns that
+  the module was turned on within 10 minutes.
+
+### Who is in the room: presence and "last seen" (6.7)
+- Whoever does not leave with **Disconnect** stays in the room's list of
+  people — even when their network drops, they close the tab or send the app
+  to the background. When their connection drops, the chat shows "‹name› is
+  away — the connection went, they stay in the room."
+- Everyone has a coloured dot and "Last seen … ago" (when they last had the
+  app open while connected):
+  - **green — Online**: the app is open now, or was at most 5 minutes ago
+    (someone who sends the app to the background stays green for the first
+    5 minutes);
+  - **yellow — Away**: last seen 5 to 60 minutes ago;
+  - **orange — Far away**: more than an hour ago (or not known).
+- The web reports a tab in the background after 1.5 s and another app in
+  front (the tab still visible) after 30 s; Android as soon as the app goes to
+  the background. The dots recolour by themselves, even when nobody writes.
+- **Where** — web: the dot on the avatar in the recipients widget, the
+  *Peers* window (menu) and a person's details (*Presence* row);
+  Android: the people panel and a person's detail (*Last seen* row; someone
+  without a connection has a moon icon).
+- **When someone leaves the list** — when they press *Disconnect*; when the
+  operator disconnects them (or the whole room); when the server revokes their
+  sign-in (sign out everywhere) or throws them out for its limits; and when
+  they do not come back within 7 days (the operator changes this with
+  `PRESENCE_MAX_AWAY_DAYS`). A server restart forgets people without a
+  connection — except signed-in ones whose messages the server keeps.
+- **Coming back** — after reloading the page (in the same tab) or reopening
+  the Android app you are the same member again, not a new one. A closed tab
+  on the web does not remember it: a guest comes back as a new member (the old
+  entry stays until it expires); a signed-in user replaces their old entry.
+- A signed-in user whose messages the server keeps (away) stays in the room
+  as absent even after *Disconnect* — as before.
+- Presence and "last seen" are seen only by people in the same room (and the
+  operator in the console); the server still sees no message content.
+
+### Position: navigate, ride, copy (6.7)
+- **Web**: a message with a position shows a **pin with the coordinates** in
+  the bubble instead of a map ("live" for a live position); a message that
+  carries the position in its header has a pin icon in the head. A tap opens
+  the position window: the map (if the operator turned it on; a tap opens
+  OpenStreetMap), the coordinates with their accuracy and the buttons
+  **Navigate**, **Ride** and **Copy**.
+  - *Navigate*: Google Maps, Apple Maps, Waze, Mapy.com or OpenStreetMap (in
+    a browser on Android also the phone's map app).
+  - *Ride*: Uber with the destination filled in; Bolt, Liftago and FREENOW
+    cannot take a destination — their page opens and the coordinates are
+    copied ("The destination is on the clipboard — paste it in the app.").
+  - *Copy*: the coordinates as `50.087500, 14.421300`.
+- **Android**: a position message still shows a small map (when it is on); a
+  tap on it, or *Position on a map* in the long-press menu, opens the same
+  window. *Navigate* offers the installed apps first (Google Maps, Waze,
+  Mapy.com, OsmAnd, Sygic, HERE WeGo and other map apps), then the web links
+  of those not installed. *Ride*: Uber (the app, else the web); for Bolt,
+  Liftago and FREENOW the coordinates are copied and the app opens, else
+  their page.
+- **Privacy**: nothing is sent anywhere until you tap a link; the map comes
+  through the M5cet server. Tapping a navigation or ride app does hand the
+  coordinates to that service (to Uber also the sender's name, when the
+  position is not yours).
+
+### "Hold to read" messages (6.7)
+A message shown only while held can now also be held by the **empty space
+beside its bubble** — so the text is not under your finger. It opens after a
+short hold (about 0.2 s), so a scroll that starts there reveals nothing. On
+the web and in the Android app.
+
+### Notifications (6.7)
+- **Where**: web *Menu › Notifications* (part *My notifications*), Android
+  *Settings › Notifications*.
+- **What you choose**: notifications on / off; what about (new messages,
+  mentions of me, the operator calling me back; *Calls* and *Command results*
+  are offered but the server does not send them by itself yet); **what a
+  notification shows** — *nothing, only that something came* / *who writes* /
+  *who writes, and in which room* / *a preview too* (only a device that
+  decrypts the message itself can preview it; the server may limit the
+  level); **quiet hours** (from–to, also across midnight; nothing but a test
+  comes then) and *Send a test notification*.
+- **How** (signed in only): the order of the ways — the Android app, the
+  browser (web push), e-mail. When the first way fails, the server tries the
+  next. E-mail goes only when the operator turned it on and you confirmed the
+  address with the link in the confirmation mail (valid 48 h); the address is
+  entered on the web.
+- **Android**: the switch *The server keeps my messages and wakes me* —
+  messages wait on the server encrypted and the notification comes sealed for
+  this phone only; the app fills in the room's name itself. While the app is
+  locked it does not, and the notification has no reply (it shows the
+  sender's name if your level allows); the phone's lock screen always shows
+  only "New message".
+- **Not signed in**, the choice applies only to the notifications the open
+  page shows.
+- **Mentions**: write `@name` of someone who is away and they get a "mention"
+  notification (the server learns only whom, not the text).
+
+### Public profile (6.7)
+- **Where**: web *Profile* (part *Public profile*), Android *Settings › User
+  › Public profile*. It needs a passkey sign-in.
+- **What it holds**: a profile photo, a background photo, a public nickname,
+  "About me" and up to 24 more items (name, phone, e-mail, address, web,
+  social network, organisation, birthday, other).
+- **For each item you choose who sees it**:
+  - *Only me* — stays sealed in your account's vault;
+  - *Room members* (Android: *Rooms*) — sent end-to-end encrypted (with the
+    pair key) to the people in the rooms you join; the server cannot read it;
+  - *Public* — stored on the server, readable by anyone who knows your
+    username; the server sees it.
+
+  New items are *Only me*, the nickname defaults to *Public*. *How others see
+  me* previews each audience.
+- **Pictures** are scaled down and re-encoded as JPEG before saving, and their
+  metadata (EXIF, GPS position, camera) is dropped.
+- **The nickname** pre-fills your name when you join a room (on Android a
+  saved connection's own name wins); you can change it there.
+- **Other people's profiles**: a person's details show what they share in the
+  room; *Show the public profile @name* fetches it from the server only when
+  you ask. When the public profile belongs to the account that signs this
+  person's messages, the app says so.
+- The operator can remove an account's public profile (console); it can be
+  published again.
+
+### Android app: look and gestures in the room list (6.7)
+- **Six new templates** — Forest, Sunset, Lavender, Mocha, Arctic and Ink,
+  each light and dark (*Settings › Appearance*).
+- **Menus with icons** in the look's colours (main menu, room menu, a
+  message's long press…); dangerous choices (delete, wipe) are red.
+- **Swipe a room's row**: right → **Delete** (after a confirmation it leaves
+  the room, removes it from the list and deletes its history on this phone;
+  nobody else is affected); left → **Clone** (saves a copy under the next free
+  name, e.g. "Team 2", with the same key and nickname; does not connect it)
+  and **Edit** (name, room and key; a new room name means a new room — the old
+  history stays on the phone; a connected room reconnects). TalkBack offers
+  the same actions.
 
 ## Deutsch
 
@@ -402,7 +713,15 @@ read a card **at your device** — read-only, your own card or document:
 1. App in einem modernen Browser öffnen.
 2. Brand-Logo oder "Verbinden" klicken, Raum-Dialog erscheint.
 3. Name, Raum-ID und Raum-Schlüssel angeben. Schlüssel out-of-band teilen.
-4. PBKDF2 leitet den Schlüssel lokal ab — Server sieht ihn nie.
+4. Argon2id leitet den Schlüssel lokal ab — Server sieht ihn nie.
+5. **Schlüsselstärke (6.7)** — unter dem Schlüsselfeld steht eine Anzeige
+   (schwach / mittel / stark, Schätzung in Bit) mit Tipps und dem Knopf
+   *Starken Schlüssel erzeugen*. Einen schwachen Schlüssel für einen von Hand
+   eingegebenen Raum (keine gespeicherte Verbindung) hält die App beim ersten
+   Mal zurück und sagt warum: Wer die Daten des Servers hat, kann einen
+   schwachen Schlüssel offline erraten. Trittst du einem Raum bei, der diesen
+   Schlüssel schon nutzt, drücke noch einmal *Verbinden*. (Nur im Web; die
+   Android-App misst die Schlüsselstärke noch nicht.)
 
 ### Vorlagen
 Top-Leiste → Paletten-Icon → Motorsport Dark / Glass Light / Terminal Secure.
@@ -467,10 +786,13 @@ Siehe Czech-Abschnitt oben.
   Servers und merkt ihn sich.
 - **PIN und Biometrie** — eine PIN festlegen; wo das Telefon es kann, wird
   Fingerabdruck oder Gesicht angeboten. Die App sperrt sich nach einer Weile im
-  Hintergrund. **Achtung:** jede falsche PIN und jeder abgelehnte Finger zählt.
-  Ab dem dritten Fehler wird gewartet (30 s, dann länger), nach dem letzten
-  erlaubten Versuch (vom Administrator festgelegt) **löscht die App alle ihre
-  Daten** — Räume, Nachrichten und Schlüssel.
+  Hintergrund. **Achtung:** jede falsche PIN zählt — auch wenn du die App
+  während der Prüfung schließt (seit 6.7 wird der Versuch notiert, bevor die
+  PIN geprüft wird). Ein abgelehnter Finger zählt seit 6.7 nicht mehr (den
+  Sensor sperrt nach einigen Fehlversuchen das System). Ab dem dritten Fehler
+  wird gewartet (30 s, dann länger), nach dem letzten erlaubten Versuch (vom
+  Administrator festgelegt) **löscht die App alle ihre Daten** — Räume,
+  Nachrichten und Schlüssel. Zum Ändern der PIN braucht es die aktuelle.
 - **Mehrere Räume gleichzeitig** — die gewünschten Räume ankreuzen und
   *Ausgewählte verbinden* tippen. Jeder zeigt die Zahl der Personen und
   ungelesenen Nachrichten; über dem Chat eine Leiste der verbundenen Räume,
@@ -479,8 +801,12 @@ Siehe Czech-Abschnitt oben.
   angedockt anheften oder automatisch ausblenden (ein kleiner Griff bleibt am
   Rand, Tippen fährt es heraus).
 - **Nachrichten, Anrufe, Benachrichtigungen** — Ende-zu-Ende-verschlüsselt wie
-  im Web; Antworten direkt aus der Benachrichtigung; Anrufe auf Wunsch im
-  Anrufprotokoll des Telefons.
+  im Web; Antworten direkt aus der Benachrichtigung (ab Android 12 erst nach
+  dem Entsperren des Telefons); Anrufe auf Wunsch im Anrufprotokoll des
+  Telefons. Ist die App gesperrt — seit 6.7 auch im Hintergrund nach Ablauf
+  der automatischen Sperre —, zeigt eine Nachrichten-Benachrichtigung nur
+  „Neue Nachricht“, ohne Absender, Raum und Antwort; der Sperrbildschirm des
+  Telefons zeigt immer nur diese neutrale Fassung.
 - **Updates** — ein neues Aussehen oder eine neue Version wird auf einer Karte
   angeboten; misslingt ein neues Aussehen, kehrt die App selbst zum vorigen zurück.
 
@@ -546,27 +872,183 @@ dein eigenes Dokument:
 
 ### Sprache: Diktat, als Sprache senden, Stimmverzerrer (6.7)
 - **Diktat** — das Sprach-Symbol im Nachrichtenfeld (Web: der Knopf neben dem
-  Mikrofon). Der Text erscheint, während du sprichst, und das Zuhören geht
-  weiter, bis du es beendest: das Symbol noch einmal (ein Quadrat), *Senden*,
-  der Raum verlassen oder die App im Hintergrund — die letzten Worte kommen
-  noch an und das Mikrofon wird frei.
-- **Text als Sprache senden** (lange auf *Senden* drücken; Web: der Pfeil bei
-  *Senden*) — der Text im Feld (oder, bei leerem Feld, was du jetzt diktierst)
-  wird von einer Stimme gelesen und geht als verschlüsselte Sprachnachricht,
-  genau wie eine aufgenommene. Android: die Stimme des Telefons, oder die des
-  Servers, wenn in *Einstellungen › Sprache* *Auf dem Server* gewählt ist. Web:
-  nur die Stimme des Servers (die Stimmen des Browsers lassen sich nicht
-  aufnehmen) — der Server sieht den Text; ohne Sprachausgabe des Betreibers
-  sagt die App es.
-- **Sprechen, als Text senden** — du sprichst, der Text erscheint im Feld; ■
-  oder *Senden* schickt ihn als normale Nachricht.
+  Mikrofon; er erscheint nur, wo der Browser Sprache erkennt, oder im Modus
+  Server-enhanced, wenn der Server Transkription anbietet). Der Text erscheint,
+  während du sprichst, und das Zuhören geht weiter, bis du es beendest — nach
+  einer Pause startet die Erkennung von selbst neu (nach mehreren stillen
+  Neustarts hintereinander endet sie mit „Ich habe nichts gehört“). Das Symbol noch
+  einmal (ein Quadrat) beendet es: die letzten Worte kommen noch an und das
+  Mikrofon wird frei. Den Raum zu verlassen beendet es auch; im Web bricht
+  Senden oder Leeren des Felds das Diktat ab (Worte in Arbeit gehen verloren),
+  unter Android wartet *Senden* auf die letzten Worte und sendet dann, und die
+  App im Hintergrund beendet es ebenfalls.
+- **Text als Sprache senden** — der Text im Feld wird von einer Stimme gelesen
+  und geht als verschlüsselte Sprachnachricht, genau wie eine aufgenommene
+  (ohne den Text). Web: der Pfeil bei *Senden* oder langes Drücken auf
+  *Senden* › *Als Sprache senden* (nur mit Text im Feld; auch im Panel
+  *Sprache*); nur die Stimme des Servers (die Stimmen des Browsers lassen sich
+  nicht aufnehmen) — der Server sieht den Text; ohne Sprachausgabe des
+  Betreibers sagt die App es. Android: langes Drücken auf *Senden* (oder das
+  Mikrofon) öffnet die Sendeoptionen; bei leerem Feld wird gelesen, was du
+  jetzt diktierst; die Stimme des Telefons, oder die des Servers, wenn in
+  *Einstellungen › Sprache* *Auf dem Server* gewählt ist.
+- **Sprechen, als Text senden** (nur Android, in den Sendeoptionen) — du
+  sprichst, der Text erscheint im Feld; ■ oder *Senden* schickt ihn als
+  normale Nachricht.
 - **Stimmverzerrer** — ein Modul, das der Betreiber einschaltet (Konsole ›
-  *Module & Gruppen*; sonst aus). Dann schaltet ihn jeder für sich ein: Web
-  *Menü › Stimmverzerrer*, Android *Einstellungen › Sprache › Stimmverzerrer*.
-  Voreinstellungen (höher, tiefer, tief, Roboter, Echo, Flüstern, anonym) oder
-  eigene Tonhöhe, Klangfarbe (Formanten), Roboter, Echo, Flüstern und
-  Lautstärke; *Testen* nimmt 4 s auf und spielt sie ab. Er verändert die
-  Stimme in Anrufen und Sprachnachrichten auf dem Gerät, vor der
-  Verschlüsselung — dafür verlässt kein Ton das Gerät. Das Diktat (die
-  Spracherkennung des Browsers oder Telefons) hört das Mikrofon selbst und
-  liefert nur Text; dafür gilt der Stimmverzerrer nicht.
+  *Modules & groups*; sonst aus). Dann schaltet ihn jeder für sich ein: Web
+  *Menü › Werkzeuge › Stimmverzerrer* (der Eintrag erscheint erst, wenn der
+  Betreiber ihn eingeschaltet hat), Android *Einstellungen › Sprache ›
+  Stimmverzerrer*. Voreinstellungen (höher, tiefer, tief, Roboter, Echo,
+  Flüstern, anonym) oder eigene Tonhöhe, Klangfarbe (Formanten), Roboter,
+  Echo, Flüstern und Lautstärke; *Testen* nimmt 4 s auf und spielt sie ab. Er
+  verändert die Stimme von allem, was die App mit dem Mikrofon aufnimmt —
+  Anrufe, Sprachnachrichten und Aufnahmen zur Transkription auf dem Server
+  (im Web auch die Telefonbrücke) — auf dem Gerät, vor der Verschlüsselung;
+  dafür verlässt kein Ton das Gerät. Das Diktat über die Spracherkennung des
+  Browsers oder Telefons hört das Mikrofon selbst und liefert nur Text; dafür
+  gilt der Stimmverzerrer nicht. Ohne Kopfhörer kann die Gegenseite im Anruf
+  das Echo der eigenen Stimme verändert hören. Die Android-App erfährt
+  spätestens nach 10 Minuten, dass das Modul eingeschaltet wurde.
+
+### Wer im Raum ist: Anwesenheit und „zuletzt online“ (6.7)
+- Wer den Raum nicht mit **Trennen** verlässt, bleibt in der Personenliste —
+  auch wenn das Netz weg ist, der Tab geschlossen oder die App im Hintergrund.
+  Fällt die Verbindung weg, steht im Chat „‹Name› ist abwesend — die
+  Verbindung ist weg, bleibt aber im Raum.“
+- Jede Person hat einen farbigen Punkt und „Zuletzt online vor …“ (wann sie
+  die App zuletzt offen hatte und verbunden war):
+  - **grün — Online**: die App ist jetzt offen oder war es vor höchstens
+    5 Minuten (wer die App in den Hintergrund schickt, bleibt die ersten
+    5 Minuten grün);
+  - **gelb — Abwesend**: zuletzt online vor 5 bis 60 Minuten;
+  - **orange — Länger abwesend**: vor mehr als einer Stunde (oder unbekannt).
+- Das Web meldet einen Tab im Hintergrund nach 1,5 s und eine andere App im
+  Vordergrund (Tab noch sichtbar) nach 30 s; Android sofort, wenn die App in
+  den Hintergrund geht. Die Punkte färben sich von selbst um, auch wenn
+  niemand schreibt.
+- **Wo** — Web: der Punkt am Avatar im Empfänger-Widget, das Fenster
+  *Peers* (Menü) und die Details einer Person (Zeile *Anwesenheit*);
+  Android: das Personen-Panel und das Personen-Detail (Zeile *Zuletzt online*;
+  wer keine Verbindung hat, trägt ein Mond-Symbol).
+- **Wann jemand aus der Liste verschwindet** — mit *Trennen*; wenn der
+  Betreiber die Person (oder den ganzen Raum) trennt; wenn der Server ihre
+  Anmeldung widerruft (überall abmelden) oder sie wegen seiner Limits
+  hinauswirft; und wenn sie nicht binnen 7 Tagen zurückkommt (der Betreiber
+  ändert das mit `PRESENCE_MAX_AWAY_DAYS`). Ein Neustart des Servers vergisst
+  Personen ohne Verbindung — außer angemeldeten, deren Nachrichten der Server
+  hält.
+- **Zurückkommen** — nach dem Neuladen der Seite (im selben Tab) oder dem
+  erneuten Öffnen der Android-App bist du wieder dieselbe Person, kein neues
+  Mitglied. Ein geschlossener Tab im Web merkt sich das nicht: ein Gast kommt
+  als neues Mitglied zurück (der alte Eintrag bleibt, bis er abläuft); eine
+  angemeldete Person ersetzt ihren alten Eintrag.
+- Wer angemeldet ist und Nachrichten vom Server halten lässt (abwesend),
+  bleibt auch nach *Trennen* als abwesend im Raum — wie bisher.
+- Anwesenheit und „zuletzt online“ sehen nur Personen im selben Raum (und der
+  Betreiber in der Konsole); Nachrichteninhalte sieht der Server weiterhin
+  nicht.
+
+### Standort: navigieren, Fahrt, kopieren (6.7)
+- **Web**: eine Nachricht mit Standort zeigt in der Blase statt einer Karte
+  **eine Nadel mit den Koordinaten** („live“ bei einem Live-Standort); eine
+  Nachricht, die den Standort im Kopf trägt, hat dort ein Nadel-Symbol. Ein
+  Tippen öffnet das Standort-Fenster: die Karte (wenn der Betreiber sie
+  eingeschaltet hat; Tippen öffnet OpenStreetMap), die Koordinaten mit
+  Genauigkeit und die Knöpfe **Navigieren**, **Fahrt** und **Kopieren**.
+  - *Navigieren*: Google Maps, Apple Maps, Waze, Mapy.com oder OpenStreetMap
+    (in einem Browser unter Android auch die Karten-App des Telefons).
+  - *Fahrt*: Uber mit eingetragenem Ziel; Bolt, Liftago und FREENOW können
+    kein Ziel übernehmen — ihre Seite öffnet sich und die Koordinaten werden
+    kopiert („Das Ziel ist in der Zwischenablage — fügen Sie es in der App
+    ein.“).
+  - *Kopieren*: die Koordinaten als `50.087500, 14.421300`.
+- **Android**: eine Standort-Nachricht zeigt weiterhin eine kleine Karte (wenn
+  sie eingeschaltet ist); Tippen darauf oder *Standort auf der Karte* im Menü
+  des langen Drückens öffnet dasselbe Fenster. *Navigieren* bietet zuerst die
+  installierten Apps (Google Maps, Waze, Mapy.com, OsmAnd, Sygic, HERE WeGo
+  und andere Karten-Apps), dann die Web-Links der nicht installierten.
+  *Fahrt*: Uber (die App, sonst das Web); bei Bolt, Liftago und FREENOW werden
+  die Koordinaten kopiert und die App öffnet sich, sonst ihre Seite.
+- **Datenschutz**: nichts wird gesendet, bis du auf einen Link tippst; die
+  Karte kommt über den M5cet-Server. Wer auf eine Navigations- oder Fahr-App
+  tippt, gibt dieser die Koordinaten (Uber auch den Namen des Absenders, wenn
+  der Standort nicht deiner ist).
+
+### Nachrichten „zum Lesen halten“ (6.7)
+Eine Nachricht, die nur beim Halten sichtbar ist, lässt sich jetzt auch über
+den **leeren Platz neben ihrer Blase** halten — so liegt der Text nicht unter
+dem Finger. Sie öffnet sich nach kurzem Halten (etwa 0,2 s), ein Scrollen, das
+dort beginnt, zeigt also nichts. Im Web und in der Android-App.
+
+### Benachrichtigungen (6.7)
+- **Wo**: Web *Menü › Benachrichtigungen* (Teil *Meine Benachrichtigungen*),
+  Android *Einstellungen › Benachrichtigungen*.
+- **Was du wählst**: Benachrichtigungen an / aus; worüber (neue Nachrichten,
+  Erwähnungen, Rückrufe des Betreibers; *Anrufe* und *Befehlsergebnisse*
+  stehen zur Wahl, der Server sendet sie aber noch nicht von selbst); **was
+  eine Benachrichtigung zeigt** — *nichts, nur dass etwas kam* / *wer
+  schreibt* / *wer schreibt und in welchem Raum* / *auch eine Vorschau* (eine
+  Vorschau kann nur ein Gerät zeigen, das die Nachricht selbst entschlüsselt;
+  der Server kann die Stufe begrenzen); **Ruhezeiten** (von–bis, auch über
+  Mitternacht; dann kommt nichts außer einem Test) und
+  *Testbenachrichtigung senden*.
+- **Wie** (nur angemeldet): die Reihenfolge der Wege — die Android-App, der
+  Browser (Web-Push), E-Mail. Scheitert der erste Weg, versucht der Server den
+  nächsten. E-Mail geht nur, wenn der Betreiber sie eingeschaltet hat und du
+  die Adresse über den Link in der Bestätigungs-Mail bestätigt hast (48 h
+  gültig); die Adresse wird im Web eingetragen.
+- **Android**: der Schalter *Der Server hält meine Nachrichten und weckt
+  mich* — Nachrichten warten verschlüsselt auf dem Server, die
+  Benachrichtigung kommt nur für dieses Telefon versiegelt; den Raumnamen
+  setzt die App selbst ein. Ist die App gesperrt, tut sie das nicht und die
+  Benachrichtigung hat keine Antwort (den Absender zeigt sie, wenn deine Stufe
+  es erlaubt); der Sperrbildschirm des Telefons zeigt immer nur „Neue
+  Nachricht“.
+- **Ohne Anmeldung** gilt die Wahl nur für die Benachrichtigungen, die die
+  offene Seite zeigt.
+- **Erwähnung**: schreibst du `@Name` einer abwesenden Person, bekommt sie
+  eine „Erwähnung“ (der Server erfährt nur, wen, nicht den Text).
+
+### Öffentliches Profil (6.7)
+- **Wo**: Web *Profil* (Teil *Öffentliches Profil*), Android *Einstellungen ›
+  Benutzer › Öffentliches Profil*. Es braucht eine Anmeldung mit Passkey.
+- **Was es enthält**: Profilfoto, Hintergrundfoto, öffentlicher Spitzname,
+  „Über mich“ und bis zu 24 weitere Angaben (Name, Telefon, E-Mail, Adresse,
+  Web, soziales Netz, Organisation, Geburtstag, Sonstiges).
+- **Für jede Angabe wählst du, wer sie sieht**:
+  - *Nur ich* — bleibt versiegelt im Tresor deines Kontos;
+  - *Raummitglieder* (Android: *Räume*) — geht Ende-zu-Ende-verschlüsselt
+    (mit dem Paarschlüssel) an die Personen in den Räumen, denen du beitrittst;
+    der Server kann es nicht lesen;
+  - *Öffentlich* — liegt auf dem Server und ist für jeden lesbar, der deinen
+    Benutzernamen kennt; der Server sieht es.
+
+  Neue Angaben sind *Nur ich*, der Spitzname ist standardmäßig *Öffentlich*.
+  *Wie andere mich sehen* zeigt die Vorschau je Publikum.
+- **Bilder** werden vor dem Speichern verkleinert und als JPEG neu kodiert,
+  ihre Metadaten (EXIF, GPS-Position, Kamera) werden verworfen.
+- **Der Spitzname** füllt deinen Namen vor, wenn du einem Raum beitrittst
+  (unter Android hat der Name einer gespeicherten Verbindung Vorrang); dort
+  kannst du ihn ändern.
+- **Profile anderer**: die Details einer Person zeigen, was sie im Raum
+  teilt; *Öffentliches Profil von @Name anzeigen* holt es erst auf Wunsch vom
+  Server. Gehört das öffentliche Profil zu dem Konto, das die Nachrichten
+  dieser Person signiert, sagt die App es.
+- Der Betreiber kann das öffentliche Profil eines Kontos entfernen (Konsole);
+  es lässt sich danach wieder veröffentlichen.
+
+### Android-App: Aussehen und Gesten in der Raumliste (6.7)
+- **Sechs neue Vorlagen** — Wald, Sonnenuntergang, Lavendel, Mokka, Arktis
+  und Tinte, jede hell und dunkel (*Einstellungen › Aussehen*).
+- **Menüs mit Symbolen** in den Farben des Aussehens (Hauptmenü, Raummenü,
+  langes Drücken auf eine Nachricht…); gefährliche Einträge (löschen, Wipe)
+  sind rot.
+- **Wischen über eine Raumzeile**: nach rechts → **Löschen** (nach einer
+  Bestätigung verlässt die App den Raum, nimmt ihn aus der Liste und löscht
+  seinen Verlauf auf diesem Telefon; andere betrifft das nicht); nach links →
+  **Klonen** (speichert eine Kopie unter dem nächsten freien Namen, z. B.
+  „Team 2“, mit demselben Schlüssel und Spitznamen; verbindet sie nicht) und
+  **Bearbeiten** (Name, Raum und Schlüssel; ein neuer Raumname bedeutet einen
+  neuen Raum — der alte Verlauf bleibt auf dem Telefon; ein verbundener Raum
+  verbindet sich neu). TalkBack bietet dieselben Aktionen.

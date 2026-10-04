@@ -5,6 +5,343 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.7.0] – 2026-10-04
+
+**Přítomnost a „naposledy online“, poloha s navigací a odvozem, upozornění se
+záložními cestami, hlas (diktování, poslat jako hlas, měnič hlasu), veřejný
+profil, nový vzhled aplikace pro Android — a bezpečnostní analýza s auditem,
+podle kterých 6.7 opravila desítky nálezů na serveru, na webu i v aplikaci
+pro Android.** Člen
+místnosti zůstává v seznamu, dokud sám neodejde nebo ho server neodstraní,
+a ostatní vidí, kdy byl naposledy online. Poloha se otevírá v okně s mapou,
+navigací (Google Maps, Apple Maps, Waze, Mapy.com, OpenStreetMap), odvozem
+(Uber, Bolt, Liftago, FREENOW) a kopírováním. Nepřítomné budí server přes
+aplikaci pro Android, web push nebo e-mail podle šablon operátora a volby
+uživatele. Kritický únik přes design Androidu, chybějící zeď sandboxu Funkcí,
+obejitelný pin klíče serveru a spouštění cizího kódu z výstupů funkcí jsou
+opravené; návrhové mezery (web doručovaný serverem, heslo místnosti jako kořen
+důvěry, statické klíče bez obnovy po kompromitaci) trvají.
+
+### Přidáno
+- **Přítomnost a „naposledy online“** (`server/signaling/presence.ts`,
+  `client/src/lib/presence.ts`, `presence-book.ts`, `use-room-presence.ts`;
+  Android `chat/RoomPresence.java`, `chat/Resume.java`,
+  `contacts/LastSeen.java`). Spojení, které spadne bez `leave`, není odchod:
+  server člena **drží** (`peer-left` s `held: true`, nově příchozí ho vidí
+  v `joined.held`) a návrat se stejným tajemstvím `resume` je týž člen (stejné
+  `peerId`) — web drží tajemství v šifrované session cache karty (přežije
+  reload, ne zavření karty), Android v trezoru (nejvýš 64 místností, přežije
+  ukončení procesu). Ze seznamu člen zmizí po `leave` (*Odpojit*), odpojení
+  operátorem (člen i celá místnost), zrušení relace účtu, vyhazovu serverem
+  (limity) nebo po `PRESENCE_MAX_AWAY_DAYS` dnech bez návratu (výchozí 7,
+  `0` = nikdy; měřeno od ztráty spojení, kontrola s heartbeatem každých 30 s).
+  Klient hlásí popředí / pozadí (`presence {away, foreground}`; web skrytou
+  kartu po 1,5 s, jinou aplikaci po 30 s, změny bližší než 6 s slučuje;
+  Android hned), server pošle `peer-presence {peerId, foreground, lastSeen}`
+  jen členům té místnosti. Stav: **online** (v popředí, nebo naposledy viděn
+  ≤ 5 min; zelená), **pryč** (5–60 min; žlutá), **dlouho pryč** (> 60 min
+  nebo neznámo; oranžová) a „Naposledy online před …“ — ve widgetu příjemců,
+  okně *Peers* a detailu člověka na webu, v panelu lidí a detailu osoby na
+  Androidu (bez spojení ikona měsíce). Držení členové jsou jen v paměti
+  (nejvýš 200 na místnost a 20 000 celkem, počítají se do `maxMembers`);
+  v clusteru je drží každá instance.
+- **Poloha za ikonou s oknem Navigovat / Odvoz / Kopírovat**
+  (`client/src/lib/geo-links.ts`, `components/LocationSheet.tsx`; Android
+  `location/GeoLinks.java`, `ui/parts/PlaceSheet.java`). Web: zpráva
+  s polohou ukazuje místo mapy čip se špendlíkem a souřadnicemi („živě“ u živé
+  polohy), poloha v hlavičce špendlík v záhlaví; okno polohy má mapu (přes
+  server), souřadnice s přesností, **Navigovat** (Google Maps, Apple Maps,
+  Waze, Mapy.com, OpenStreetMap; v prohlížeči na Androidu i `geo:`),
+  **Odvoz** (Uber s vyplněným cílem; Bolt, Liftago a FREENOW cíl převzít
+  neumějí — otevře se jejich stránka a souřadnice se zkopírují) a
+  **Kopírovat** (`50.087500, 14.421300`). Android: nainstalované aplikace
+  (Google Maps, Waze, Mapy.com, OsmAnd, Sygic, HERE WeGo, další `geo:`),
+  pak webové odkazy; Uber aplikací nebo webem, u Boltu, Liftaga a FREENOW
+  zkopírované souřadnice a spuštěná aplikace. Odkazy nic nestahují, dokud na
+  ně uživatel neklepne.
+- **Oblast pro podržení vedle bubliny „podržet a číst“** (web `hold-side`,
+  Android slot `msgHold`, `ui/parts/HoldArea.java`,
+  `ui/bubble/HoldGesture.java`): zprávu jde podržet i za prázdné místo vedle
+  bubliny; odkryje se po 180 ms, posun, který tam začne, nic neodkryje.
+- **Upozornění se záložními cestami** (`server/notify/*`). Kanály v pořadí
+  uživatele (jinak operátora; výchozí `android` → `webpush` → `email`):
+  **aplikace pro Android** (řídicí zpráva `notify`, zapečetěná ECIES pro jedno
+  zařízení a podepsaná — FCM vidí jen šifrový text), **web push** (RFC 8291)
+  a **e-mail** přes SMTP operátora (výchozí vypnutý, jen na potvrzenou
+  adresu). První cesta, kterou koncový bod přijme, vyhrává; chyba, mrtvý
+  token nebo timeout jde na další. Druhy `message`, `mention`, `call`,
+  `function`, `summon`, `test` s vlastním omezením četnosti (zprávy 30 s na
+  účet a místnost) a hodinovým limitem účtu (60, testy 10). Šablony každého
+  druhu (titulek a text cs / en / de, `{proměnná}`, `{proměnná|záloha}`,
+  `[nepovinná část]`), stejná pravidla na serveru, webu, v service workeru
+  i v Androidu (`notify-template.ts`, `sw.js`, `push/NotifyTemplate.java`,
+  společné vektory `test/fixtures/notify-templates.json`). Úrovně soukromí
+  `neutral` / `sender` / `room` / `content` v mezích maxima operátora —
+  název místnosti doplní jen zařízení, náhled jen zařízení, které zprávu samo
+  dešifrovalo; push obsah nikdy nenese. Zmínka `@jméno` nepřítomného člena
+  (`relay.mention`) z upozornění udělá druh „mention“.
+- **Konzole › Notifications** (`admin-ui/public/notify-console.js`): přepínač
+  posílání, kanály (zapnutí, pořadí, připravenost), šablony každého druhu
+  s živým náhledem (renderuje server), výchozí a maximální soukromí, ikona,
+  barva, seskupení, omezení četnosti, zvuk / vibrace / trvalé / akce; SMTP
+  (heslo zapečetěné master klíčem, do konzole se nevrací) s testovacím
+  e-mailem; limity; test a log (posledních 1000 pokusů od startu, bez
+  obsahu); audit `notify.sent` / `notify.failed`.
+- **Volba upozornění každého uživatele** — web *Menu › Notifikace* (*Moje upozornění*,
+  `NotifySettings.tsx`), Android *Nastavení › Oznámení*: zapnout, druhy,
+  úroveň soukromí s náhledem, tiché hodiny (od–do, i přes půlnoc; v tu dobu
+  nic kromě testu), přihlášený i pořadí kanálů a (web) adresa pro e-mail
+  s potvrzovacím odkazem (48 h); testovací upozornění. Host má volbu jen
+  v prohlížeči pro vlastní upozornění stránky. Android: *Server drží mé
+  zprávy a probudí mě* (`notify.away`) — aplikace se připojuje „away“
+  a propojí zařízení s účtem (`POST /api/android/notify`).
+- **Diktování v poli zprávy** (`client/src/lib/dictation.ts`,
+  `components/ComposerVoice.tsx`; Android `voice/DictationMachine.java`) —
+  jeden stavový automat na obou platformách: poslech běží do zastavení, po
+  pauze se sám obnoví (po 6 / 8 tichých pokusech skončí), zastavení počká na
+  poslední slova; na webu Web Speech, nebo v Server-enhanced nahrávka
+  přepsaná serverem.
+- **Poslat jako hlas** (`client/src/lib/speak-send.ts`, `voice/SpeakSend.java`)
+  — text z pole jako šifrovaná hlasová zpráva (bez textu); web jen hlasem
+  serveru (server text vidí), Android hlasem telefonu nebo serveru, s prázdným
+  polem to, co uživatel nadiktuje. Android navíc **nadiktovat a poslat text**.
+- **Měnič hlasu** (`client/src/lib/voice-fx.ts`, `voice-fx.worklet.ts`,
+  `mic.ts`, `components/VoiceChangerPanel.tsx`; Android `voice/VoiceFx.java`,
+  `MicFx.java`, `FxGate.java`) — modul `voiceChanger` (`offByDefault`: bez
+  pravidla vypnutý), uživatel si ho pak zapne u sebe (web *Menu › Nástroje ›
+  Měnič hlasu*, Android *Nastavení › Hlas › Měnič hlasu*). Předvolby vyšší,
+  nižší, hluboký, robot, ozvěna, šepot, anonym a vlastní (výška, formanty,
+  robot, ozvěna, šepot, hlasitost) — stejná čísla na obou platformách
+  (`test/fixtures/voice-fx.json`); fázový vokodér STFT s posunem výšky
+  a formantů zvlášť, zpoždění jeden rámec. Běží v zařízení před kódováním
+  a šifrováním pro všechno, co aplikace nahrává mikrofonem — hovory (web
+  `RTCRtpSender.replaceTrack`, Android zpětné volání `JavaAudioDeviceModule`),
+  hlasové zprávy, telefonní most, nahrávky pro přepis; *Vyzkoušet* nahraje
+  4 s. Rozpoznávání řeči prohlížeče a telefonu se netýká.
+- **Úvodní obrazovka jako rozvržení `start`** v Layout builderu
+  (`client/src/lib/layouts/start.ts`, `components/StartScreen.tsx`): zámek,
+  nadpis a text z *Texts & behaviour*, *Připojit*; hodnoty `$status`,
+  `$connected`, `$signedIn`, `$profiles`… a akce `openRoom`, `connectProfile`,
+  `signIn`.
+- **Veřejný profil** (`server/accounts/public-profile.ts`,
+  `client/src/lib/profile/*`, `ProfileEditor.tsx`, `PeerProfile.tsx`;
+  Android `profile/*`, `ui/parts/ProfileUi.java`): profilová fotka (256 px),
+  fotka na pozadí (1200 × 400), veřejná přezdívka, „o mně“ a až 24 údajů;
+  u každé položky **jen já** (celá karta zapečetěná v trezoru, slot `card`),
+  **členové místností** (rámce `profile` jednomu peeru párovým klíčem —
+  nikdy klíčem místnosti ani přes server; příjemce drží jen kopii, o kterou
+  požádal) nebo **veřejné** (`GET /api/profile/:username`, `PUT` / `DELETE
+  /api/profile`). Obrázky se v klientovi zmenší a překódují do JPEG, server
+  ověří formát a rozměry a odstraní metadata. Přezdívka předvyplní jméno při
+  vstupu do místnosti; detail člověka ukáže sdílený profil a na požádání
+  veřejný (s ověřením, že patří účtu, který podepisuje jeho zprávy). Konzole:
+  zobrazit a odebrat veřejný profil účtu.
+- **Android: vzhled** (`server/android/design-67-look.ts`, `ui/look/*`):
+  šest šablon — Les, Západ slunce, Levandule, Moka, Arktida, Inkoust, každá
+  světlá i tmavá (`themes.json` jich má 19), pět nových barevných variant;
+  **nabídky s ikonami** v barvách designu (nebezpečné volby červeně);
+  **přejetí po řádku místnosti** — doprava *Smazat* (s potvrzením), doleva
+  *Klonovat* (kopie pod dalším volným jménem) a *Upravit* (obrazovka
+  `room.edit`), i pro TalkBack; nový prvek designu **`swipe`** (`right`,
+  `left` = id menu, `rightColor`, `leftColor`) a akce `room.delete`,
+  `room.clone`, `room.edit`.
+- **Síla klíče místnosti** (F-04, `client/src/lib/passphrase-strength.ts`,
+  `KeyStrength.tsx`): v okně Místnost měřidlo (slabý < 40 b, silný ≥ 64 b),
+  rady cs / en / de a *Vygenerovat silný klíč*; slabý klíč ručně zadané
+  místnosti, která není uloženým připojením, se poprvé zadrží, druhé
+  *Připojit* ho pustí. Nový slot `keyStrength` v rozvržení `room`.
+- **Bezpečnostní analýza** (`docs/security-analysis.md`) — model důvěry,
+  kryptografie, platformy, srovnání se Signalem, Threemou, WhatsAppem, Wire,
+  Matrixem a Session, 31 nálezů a roadmapa; kapitola 11 se stavem po
+  opravách 6.7. **Audit komponent** (`docs/audit-6.7.md`) — testy, buildy,
+  závislosti, nálezy V1–V6, S1–S21, N1–N32 a co 6.7 opravila.
+- Nové proměnné prostředí: `PRESENCE_MAX_AWAY_DAYS` (7), `ACCOUNTS_MAX`
+  (5000), `STORAGE_SESSION_BUDGET_MB` (2048), `FUNCTIONS_NFC_RUN_HOURS` (24),
+  `VONAGE_ALLOW_UNSIGNED_SMS`, `ANDROID_DESIGN_IMAGE_HOSTS` (žádný),
+  `NOTIFY_DIR` (`$DATA_DIR/notify`).
+
+### Změněno
+- Rámce: `join.foreground`, `presence.foreground`, `joined.peers[].foreground
+  / lastSeen`, `joined.held[]`, `peer-left.held`, nový `peer-presence`,
+  `peer-away.lastSeen` (uloženo s účtem); `relay.mention[]`, `relay.call`.
+- **Místnost jde na server jen jako slepé id** (S21 / F-10,
+  `client/src/lib/room-privacy.ts`; Android `ui/parts/Fn.java`): serverová
+  historie hosta, analytika a běhy funkcí. `m5.caller.room` je proto slepé id
+  (`r3.…`; u místností v2 nic), ne čitelný název; řádky historie uložené pod
+  čitelným názvem (3.0) se už nečtou.
+- **Relace zpracování funkce** si pamatuje, kdo ji otevřel, a u modelu
+  s viditelností „room“ slepé id místnosti (`server/functions/chain-access.ts`,
+  sloupec `model_chains.opener`); událost přijme jen od něj nebo od člena té
+  místnosti, jinak `410`. Relace z doby před 6.7 se z aplikace nepokračují.
+- **Aplikace pro Android přijme jen podepsanou politiku zámku**
+  (`policySigned`; F-16) — server 6.7 a aplikaci 6.7 je třeba nasadit spolu
+  (se starším serverem zůstanou výchozí nebo poslední podepsané hodnoty).
+- **Design Androidu**: obrázek s počítanou adresou jen `asset:` / `data:image/`,
+  vzdálený jen pevná https adresa z `ANDROID_DESIGN_IMAGE_HOSTS`, `url.open`
+  jen pevná https adresa a v aplikaci po potvrzení (F-01). Výchozí design
+  obaluje řádky místností prvkem `swipe`.
+- **Webhooky telefonie se nastaveným materiálem selhávají zavřeně** (F-17):
+  Vonage SMS bez `sig` → `403` (výjimka `VONAGE_ALLOW_UNSIGNED_SMS=1`),
+  podepsaná SMS se starým `timestamp` → `403`, JWT Vonage s `iat` nejvýš
+  10 min a `payload_hash` u každého těla.
+- **Audit zpráv** (`/api/chat/message-audit`): aktér jen z ověřeného tokenu,
+  jinak `guest` (id klienta v `detail.claimedClient`); rozpočet 300 / h na
+  adresu hosta (IPv6 po /64) a 3000 / h na účet.
+- Výchozí bublina zprávy na webu nekreslí mapu (`$map` zůstává pro vlastní
+  rozvržení; nové `$place`, akce `place`, `holdSideStart`). Layout builder má
+  50 rozvržení (App 12, Panels 25: nové `start` a `panel.voiceChanger`);
+  `dialog.userInfo` slot `profile` a přítomnost, `panel.profile` slot `card`,
+  `panel.notifications` slot `notifyPrefs`, `panel.speech` tlačítko *Poslat
+  jako hlas*.
+- Modul `notifications` popisuje i aplikaci pro Android a e-mail; katalog
+  modulů má 20 položek a příznak `offByDefault`.
+- Referenční `deploy/nginx/m5cet.conf`: `location /hooks/`,
+  `location = /fn-sandbox.html` a `frame-src 'self'` v CSP (S16).
+  `.dockerignore` a `fs.deny` vývojového serveru: `.env*`, `*.bak` (F-27).
+- `npm audit fix`: `ip-address` 10.7.3, `qs` 6.16.0 (N19).
+- Verze 6.7.0 (package.json, aplikace pro Android `versionCode` 60700);
+  instalátor zůstává 3.2.0.
+
+### Opraveno
+- **Mrtvé odběry web push se nikdy nemazaly**: kód hledal 404 / 410 v textu
+  chyby, `web-push` ho dává v `statusCode`. Teď se zapomenou (i neaktivní
+  zařízení Androidu a adresa, kterou SMTP odmítne 5xx u RCPT).
+- **Aplikace pro Android se nikdy neprobudila**: přihlašovala se s
+  `away: false` (server její zprávy nedržel) a probuzení šlo jen na web push.
+- **Diktování na Androidu se nezastavilo správně** — zastavení zahodilo
+  poslední slova (sdílený rozpoznávač, `cancel()` + `destroy()`), ikona
+  neodpovídala skutečnému stavu (po chybě „stop“, jehož klepnutí diktování
+  znovu spustilo) a odchod z obrazovky nebo aplikace v pozadí dál diktoval
+  a nahrával. Web: rozpoznávání v panelu Řeč se po pauze už neobnovilo.
+- **Poslat jako hlas na Androidu**: prázdné pole tiše nic neudělalo, šel jen
+  hlas telefonu a hlasová zpráva nesla text pole jako popisek; „nadiktovat
+  a poslat text“ fungovalo jen na Androidu 13+.
+- **Android 10–12 padal** (V5): nechráněná volání API 30 / 33
+  (`readAllBytes`, okna a insety, `getParcelableExtra`, `pushDynamicShortcut`,
+  `getCurrentLocation`) — `lintDebug` 0 chyb (bylo 30).
+- **Statika pod adresářem s tečkou vracela 404** (S6, `res.sendFile` bez
+  `root`) — týkalo se instalací pod `~/.něco/` i E2E testů v agentních
+  worktree (53 / 72 selhalo, teď 72 / 72).
+- Referenční nginx nesměroval webhooky Funkcí ani rám sandboxu (S16).
+- Časovače serveru (sweep fronty, zálohy, telefonní most) a nezachycené
+  odmítnutí Promise už neshodí proces (N7).
+- WebNFC `scanOnce` po timeoutu nevisí (N30); odkaz z karty NFC jen `https:`
+  (N29).
+
+### Bezpečnost
+- **Server** (`docs/audit-6.7.md` › 8): sandbox Funkcí běží s permission
+  modelem Node (`--permission`, čtení jen vlastního skriptu a interpretu,
+  `--disallow-code-generation-from-strings`, konstruktory `Function` odstavené
+  — sonda z auditu už soubor hostitele nepřečte; V1 / F-03, bubblewrap dál
+  není); slot brány WS se vrátí i po vadném handshaku a neznámé cesty
+  upgradu dostanou `404` (V3, S3); `/api/settings` a souhlasy omezené
+  (16 kB, 5000 zařízení; V4); regexy filtrů `m5adm` a `pattern` vstupů přes
+  `SafeRegex` s časovým rozpočtem (S1, N15); `jwt.verify` váže algoritmus na
+  typ klíče (S2); limity `/api/admin` berou token funkce až po ověření HMAC,
+  velká těla až po autentizaci (S4); away relay drží strop 20 místností
+  (S5); anonymní relace úložiště max. 20 na klienta a sdílený rozpočet (S7);
+  strop účtů s úklidem nepoužitých registrací (S8); audit zpráv s aktérem
+  z tokenu a rozpočtem (S9); `/metrics` s limiterem odmítnutých (N10); nonce
+  Androidu až po podpisu a po celé okno (N12); SSRF guard se připojuje na
+  ověřenou adresu, zahazuje `Authorization` / `Cookie` při přesměrování na
+  jiný origin a zná NAT64 / Teredo / `fec0::/10` (F-14, N13); KV funkcí
+  s limity (N16); běh s `m5.nfc` se smaže po 24 h (F-18).
+- **Web** (`docs/audit-6.7.md` › „Opraveno v 6.7 (web)“): výstupy funkcí ve
+  zprávě jiného člena samy nic nedělají — kód v prohlížeči až po kliknutí,
+  skrytý nikdy, nejvýš 20 událostí na spuštění a jen během aktivace
+  uživatelem (V2 / F-08); nezapečetěné řádky serverové historie se odmítnou,
+  obnovené zprávy se znovu validují, příloha se nikdy neotevře jako HTML /
+  SVG tohoto originu (S17 / F-11); řetězy sender keys klíčované odesílatelem
+  a id (S18); soubor vázaný na peera, který ho doručil, a stropy příjmu
+  (2 GiB, 128 Ki bloků, 16 přenosů, 4 od jednoho odesílatele) a paměti
+  (S19, S20); název místnosti už na server nejde (S21 / F-10); síla klíče
+  (F-04); cesty „na tomto webu“ bez `/\host` (N22), HTML výstup bez
+  záporných okrajů a jednotek okna (N26), otisky DTLS max. 100 peerů (N27).
+- **Android** (`docs/audit-6.7.md` › „Opraveno v 6.7 (Android)“): **design
+  už nevynese dešifrované zprávy** (F-01, kritická); pin klíče serveru váže
+  veřejný klíč, ne řetězec `kid` (V6 / F-05); pokus o PIN se započítá před
+  derivací (S10); notifikace neutrální, kdykoli je aplikace zamčená — i na
+  pozadí po auto-locku —, odpověď chce odemčený telefon (S11); wipe zruší
+  notifikace, zkratky a služby a vzdálený wipe ukončí proces (S12); Argon2id
+  jen jedna derivace naráz (S13); nový PIN mimo `$form`, obrazovky zámku
+  a zápisu s prázdným `$form` (S14); „ověřeno“ jen s klíčem připnutým pod
+  jménem odesílatele (S15 / F-07); podepsaná politika (F-16); dialogy
+  s tajemstvím `FLAG_SECURE`, změna PINu se současným PINem, odmítnutý prst
+  se do wipe nepočítá, hranice TLV a BAC MAC, timeout WebSocketu, názvy
+  místností mimo log (N18).
+- Upozornění: push nese jen šablonu a proměnné, které úroveň uživatele
+  dovolí, nikdy obsah; název místnosti doplní zařízení. Veřejný profil:
+  server vidí jen položky označené „veřejné“; „členové místností“ jdou jen
+  P2P párovým klíčem. Přítomnost a `lastSeen` dostávají jen členové téže
+  místnosti (a operátor) — server ale nově zná, kdy kdo měl aplikaci otevřenou
+  a koho zpráva zmiňuje.
+
+### Testy
+- Nové: `presence`, `presence-hub`, `presence-web`, `geo-links`,
+  `location-sheet`, `notify-server`, `notify-client`, `notify-console`,
+  `notify-template-vectors`, `dictation`, `mic`, `voice-fx`, `voice-ui`,
+  `android-voice`, `start-screen`, `profile-model`, `profile-image`,
+  `profile-room`, `profile-routes`, `profile-client`, `android-profile`,
+  `android-look-67`, `passphrase-strength`, `room-privacy`,
+  `file-transfer-hardening`, `web-low-findings-67`, `functions-sandbox-wall`,
+  `functions-safe-regex`, `functions-jwt-alg`, `functions-ssrf-pin`,
+  `functions-kv-limits`, `functions-nfc-retention`, `signaling-upgrade-guard`,
+  `unauth-state-bounds`, `admin-limits`, `away-relay-bound`,
+  `storage-session-budget`, `accounts-cap`, `static-dotdir`,
+  `nginx-reference`, `telephony-webhooks-failclosed`, `backup-timer`,
+  `dev-secrets-deny`, `android-design-urls`, `android-policy-signed`;
+  rozšířené `chat-history`, `sender-keys`, `fn-outputs`,
+  `functions-endpoints`, `android-server`, `cluster-hub`, `away-relay-*`,
+  E2E konzole. `npx vitest run`: 212 souborů, 2421 testů (4 přeskočené).
+- Android (JVM): `RoomPresenceTest`, `LastSeenTest`, `GeoLinksTest`,
+  `HoldGestureTest`, `NotifyTemplateTest`, `DictationMachineTest`,
+  `SpeakSendTest`, `VoiceFxTest`, `FxGateTest`, `ProfileCardTest`,
+  `ProfileImagesTest`, `ProfileRoomTest`, `SwipeTest`, `ButtonsTest`,
+  `RoomsCloneTest`, `DesignUrlsTest`, `ServerPinTest`, `SignedPolicyTest`,
+  `LockCounterTest`, `VerifiedTest`, `Argon2SerialTest`, `SealedBoundTest`,
+  `StreamsTest`, `HardeningTest`.
+
+### Známá omezení
+- **Nic z 6.7 neběželo na skutečném telefonu** — ani opravy pádů na
+  Androidu 10–12, wipe, notifikace při zámku, přejetí po místnostech, okno
+  polohy s aplikacemi, profil, upozornění ani měnič hlasu (ověřeno jen
+  jednotkovými testy JVM, sestavením a lintem).
+- **Žádný skutečný poskytovatel**: FCM, SMTP relay ani push služby prohlížečů
+  nebyly s 6.7 vyzkoušené; kanály jsou ověřené jen testy s podvrženými
+  transporty.
+- **Měnič hlasu** nebyl vyzkoušen na zařízení ani v hovoru; jeho zátěž
+  procesoru na telefonu není změřená (test jen ověří, že 10 s zvuku zpracuje
+  rychleji než za 5 s); jak se s ním potká potlačení ozvěny prohlížeče,
+  nevíme.
+- Upozornění druhu **Hovory** a **Výsledky příkazů** jsou v nastavení a
+  šablonách, ale žádný klient ani server je zatím neposílá (`relay.call`
+  nikdo nenastavuje). Upozornění ze serveru při zamčené aplikaci pro Android
+  ukáže jméno odesílatele, dovolí-li to úroveň (ne místnost, obsah ani
+  odpověď).
+- **Aplikace pro Android starší než 6.7 a výchozí design 6.7**: prvek `swipe`
+  nezná a řádky místností nakreslí prázdné; konzole posílá `minAppCode`
+  vždy 60000 a nic na to neupozorní. Uložený design, který porušuje nová
+  pravidla adres (F-01), server tiše nahradí výchozím.
+- Na Androidu zpráva s polohou dál kreslí mapu přímo v bublině (web ukazuje
+  čip). Síla klíče se měří jen na webu v okně Místnost (ne u uložených
+  připojení ani na Androidu) a slabý klíč pustí druhé *Připojit*.
+- Přítomnost: držení členové jsou jen v paměti (restart zapomene hosty);
+  zavřená karta na webu zapomene tajemství `resume` (host se vrátí jako nový
+  člen); přihlášený člen se serverovým uchováním zpráv zůstává po *Odpojit*
+  jako nepřítomný a `PRESENCE_MAX_AWAY_DAYS` ani odpojení místnosti se na
+  takový záznam nevztahují.
+- Sandbox Funkcí potřebuje Node s přepínačem `--permission` (podle changelogu
+  Node od 22.13 / 23.5), `engines` hlídá jen `>=22`; bubblewrap / izolace
+  procesu dál chybí. `npm audit` (s vývojovými závislostmi) hlásí 5 vysokých
+  v řetězu tailwind 3 → braces.
+- **Návrhové mezery z bezpečnostní analýzy trvají**: statické klíče zařízení
+  bez obnovy po kompromitaci a bez post-kvantové ochrany (F-06), kód webu
+  doručovaný serverem (F-02), sdílené heslo jako kořen důvěry se slepým ID
+  jako offline orákulem (F-04), schránka pod klíčem místnosti (F-09), TOFU
+  podle jména (F-13), metadata (F-15), nešifrovaná `functions.db` (F-18).
+  **Žádný nezávislý audit** — analýza i audit 6.7 jsou revize kódu s pomocí
+  AI (F-29). Stav každého nálezu: `docs/security-analysis.md`, kap. 11.
+
 ## [6.6.0] – 2026-10-04
 
 **Hloubkové čtení EMV a e-ID s PACE, výpisy karet v šesti formátech

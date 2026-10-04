@@ -26,7 +26,7 @@ Frame format: JSON. Rámce delší než **128 000 znaků** server tiše zahodí
 { "type": "ping",   "t": 1700000000000 }
 { "type": "leave",  "away": true }
 { "type": "storage",   "id": "42", "op": "kv.put", "payload": { ... }, "auth": "token?", "session": "id?" }
-{ "type": "relay",     "messageId": "...", "to": ["accountId"], "envelope": { "iv", "ciphertext" } }
+{ "type": "relay",     "messageId": "...", "to": ["accountId"], "envelope": { "iv", "ciphertext" }, "mention?": ["accountId"], "call?": true }
 { "type": "relay-ack", "ids": ["mailId"] }
 { "type": "presence",  "away": true, "foreground": false }
 { "type": "receipt",   "to": { "peerId?", "accountId?" }, "messageIds": ["..."], "state": "delivered|read" }
@@ -40,6 +40,12 @@ Frame format: JSON. Rámce delší než **128 000 znaků** server tiše zahodí
 Sanitizace při `join`: `room` ≤ 64 znaků (fallback `default`), `peerId` ≤ 64,
 `name` ≤ 48 (fallback `Anonymous`), znaková sada `[a-zA-Z0-9 ._-]`. Strop
 počtu peerů na místnost není.
+
+**Upozornění (6.7).** `relay.mention` (≤ 50, jen účty, které jsou i v `to`)
+říká, že zpráva toho nepřítomného člena zmiňuje — server mu pošle upozornění
+druhu `mention` místo `message`; web ho vyplní z `@jméno` (u zapečetených
+zpráv ne). `relay.call` server přijme (druh `call`), žádný klient ho zatím
+neposílá. Obsah zprávy server ani tak nevidí.
 
 Rámec `presence` hlásí, že prohlížeč stránku odložil (nebo vrátil), aniž by
 klient opouštěl místnost: server pro něj začne (nebo přestane) přebírat
@@ -141,8 +147,40 @@ Neznámá cesta pod `/api/` vrací `index.html` (SPA fallback), ne `404`.
     (i požadavek **bez `id`** se bere jako broadcast). Pošle text všem
     subskripcím → `{ ok, mode: "broadcast", sent, failed, results[] }`.
     Bez tokenu `401` / `503` (kontroluje se dřív než cokoli jiného).
-- Odhlášení (`unsubscribe`) neexistuje; subskripce mizí přes `/api/audit/purge`,
-  retenci nebo restart.
+- Odhlášení (`unsubscribe`) anonymní subskripce neexistuje; mizí přes
+  `/api/audit/purge`, retenci, restart nebo (6.7) odpověď 404 / 410 push
+  služby. Odběr přihlášeného prohlížeče patří k účtu a ruší se
+  `DELETE /api/account/push` (6.7, níže).
+
+### Upozornění (6.7, `server/notify/*`, podrobně [`push.md`](push.md))
+
+| Metoda a cesta | Kdo | Poznámka |
+|---|---|---|
+| `GET /api/notify/config` | kdokoli | šablony, druhy a přepínače kanálů (bez SMTP) |
+| `GET \| PUT /api/account/notify` | `Bearer <token>` + modul `notifications` | volba účtu `{ on, kinds, privacy, order, quiet, lang }` a jeho koncové body |
+| `POST /api/account/notify/test` | totéž | `{ channel? }`; 6 / min na IP a `testsPerHour` účtu; `200` / `409` nic neodešlo / `502` žádná cesta to nevzala |
+| `POST \| DELETE /api/account/notify/email` | totéž | adresa pro upozornění — přijde potvrzovací e-mail (odkaz platí 48 h); POST 5 / h; `409`, když server e-maily neposílá |
+| `GET /api/notify/email/confirm?t=…` | odkaz z e-mailu | potvrdí adresu |
+| `DELETE /api/account/push` | `Bearer <token>` | `{ endpoint }` — tento prohlížeč přestane být buzen |
+| `POST /api/android/notify` | zařízení (podepsaný požadavek) | `{ token, on }` — budit zařízení pro účet té relace |
+| `GET \| PUT /api/admin/notify`, `POST /api/admin/notify/preview \| test \| email/test`, `GET /api/admin/notify/log` | admin token, oblast konzole `notifications` (změny potřebují `edit`) | nastavení operátora; heslo SMTP zapečetěné (`""` ponechá, `null` smaže); náhled šablony renderuje server |
+
+### Veřejný profil (6.7, `server/accounts/public-profile.ts`)
+
+| Metoda a cesta | Kdo | Poznámka |
+|---|---|---|
+| `GET /api/profile/:username` | kdokoli | veřejná část profilu `{ ok, username, profile, updatedAt, accountKey? }`; uživatelské jméno bez ohledu na velikost písmen; `404 no-profile` (chybí profil i účet — neodliší se); 60 / min na IP |
+| `GET \| PUT \| DELETE /api/profile` | `Bearer <token>` (jinak `401 signed-out`) | vlastní veřejná část; `PUT { profile }` → `400 invalid \| bad-image \| empty`, `413 too-large`; PUT/DELETE 30 / 10 min na účet |
+| `GET \| DELETE /api/admin/users/:id/public-profile` | admin token — čtení auditor, smazání operátor | moderace: zobrazit / odebrat (audit `admin.user.profile-removed`); uživatel může profil zveřejnit znovu |
+
+Obě veřejné odpovědi mají `Cache-Control: no-store`; celé `/api/profile*` má
+vlastní limit 600 / 15 min a tělo JSON do 1 MB. Server ukládá jen
+normalizovanou veřejnou část (`$ACCOUNTS_DIR/profiles/<id>.json`, 0600);
+obrázky (`data:` JPEG / PNG / WebP) neskóduje znovu, ale ověří skutečný formát,
+velikost (≤ 4096 px na stranu, ≤ 8 000 000 px) a odstraní metadata. Položky
+„jen já“ jsou v trezoru účtu (slot `card`, `GET /api/account/vault?only=card`),
+položky „členové místností“ jdou jen P2P párovým klíčem (`{kind:"profile"}` —
+viz DataChannel níže). Smazání účtu smaže i veřejný profil.
 
 ### Events (server-enhanced mode)
 
@@ -155,6 +193,9 @@ Neznámá cesta pod `/api/` vrací `index.html` (SPA fallback), ne `404`.
 - `GET /api/settings?deviceId=...` → `{ ok, deviceId, settings, updatedAt }`
 - `POST /api/settings` → `{ deviceId, settings }`. Vlastní obsah neinterpretovaný —
   kientský JSON. Doporučujeme klást jen ne-tajná data (téma, jazyk, font).
+  Od 6.7 (audit V4) nejvýš 16 kB na zařízení (`413`), nejvýš 5000 zařízení
+  (nejstarší zápis vypadne) a záznam po retenci zmizí i při čtení. Kdo zná
+  `deviceId`, dál nastavení čte i přepisuje (vazba na doklad zařízení chybí).
 
 ### Audit
 
@@ -219,7 +260,7 @@ drží jen šifrový text. Celé to popisuje
 | `POST /api/account/register/options` \| `/verify` | — (výzva) | vytvoření účtu |
 | `POST /api/account/signin/options` \| `/verify` | — (výzva) | přihlášení |
 | `GET /api/account/me` | `Bearer <token>` | velikosti, data, počty, audit |
-| `GET \| PUT /api/account/vault` | `Bearer <token>` | zapečetěný profil + chat |
+| `GET \| PUT /api/account/vault` | `Bearer <token>` | zapečetěný profil + chat (a další sloty; 6.7: `card` — karta profilu se všemi publiky, ≤ 400 000 znaků; `GET …?only=card` vrátí jen ji) |
 | `POST /api/account/event` | `Bearer <token>` | `decrypt-ok`, `decrypt-failed`, `data-loaded`, `data-cleared`, `chat-restored` |
 | `POST /api/account/push` | `Bearer <token>` | propojení Web Push odběru |
 | `POST /api/account/signout` | `Bearer <token>` | zneplatnění tokenu (`everywhere`) |
@@ -233,7 +274,10 @@ v paměti — restart odhlásí.
 Proměnné prostředí: `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `ACCOUNTS_DIR`
 (jinak `$DATA_DIR/accounts`), `RELAY_RETENTION_DAYS` (30),
 `PRESENCE_MAX_AWAY_DAYS` (7; jak dlouho zůstane v seznamu člen, jehož
-spojení spadlo; desetinná čísla jdou, `0` = navždy).
+spojení spadlo; desetinná čísla jdou, `0` = navždy), `ACCOUNTS_MAX` (5000,
+6.7; plné úložiště nejdřív odstraní nejvýš 100 nikdy nepoužitých registrací
+starších než týden, pak registrace vrací `409 account store full` a audit
+`accounts.full`).
 
 ### Retence
 
@@ -289,6 +333,17 @@ type DecryptedPayload =
       status: "off" | "joining" | "live" | "muted";
     };
 ```
+
+**Profil v místnosti (6.7, `client/src/lib/profile/room.ts`, Android
+`profile/ProfileRoom.java`).** Payload `{ kind: "profile", id, createdAt,
+senderId, senderName, rev, want?, profile? }` jde vždy jednomu peeru,
+zapečetěný **párovým klíčem** (`sealPrivate`) — nikdy klíčem místnosti
+a nikdy přes server; nezapečetěný se odmítne. Tři tvary: oznámení `{rev}`
+(peeru, jehož hello nabízí schopnost `profile`, a všem, když se profil
+změní), žádost `{rev, want: true}` a celý `{rev, profile}`. Příjemce přijme
+celý profil jen pro `rev`, o který sám požádal, a drží ho podle klíče
+zařízení odesílatele a `rev` (LRU 64); odpověď nejvýš jednou za 30 s na peer
+a verzi; rámec nad 240 000 znaků se pošle znovu bez obrázku pozadí.
 
 ## Frontend window API
 

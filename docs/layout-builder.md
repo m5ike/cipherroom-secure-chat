@@ -9,7 +9,7 @@ vykresloval kód (ověřeno porovnáním DOM starých a nových komponent ve
 svůj vlastní [Menu builder](site/index.html#menu-builder).
 
 **4.13:** rozvržením je celá aplikace — i okno Místnost, okna, dialogy a
-panely (44 rozvržení v pěti sekcích, od 4.14 i asistent AI — 45, od 6.0 i úchyt widgetu příjemců — 46); k tomu varianty pro skupiny uživatelů a
+panely (44 rozvržení v pěti sekcích, od 4.14 i asistent AI — 45, od 6.0 i úchyt widgetu příjemců, lišta místností a karta telefonního mostu — 48, od 6.7 i úvodní obrazovka a měnič hlasu — **50**: App 12, Room window 2, Windows 2, Dialogs & parts 9, Panels 25); k tomu varianty pro skupiny uživatelů a
 šablony vzhledu, historie verzí s rozdíly a návratem, třícestné sloučení
 vlastního rozvržení s novým výchozím po aktualizaci aplikace, vložení HTML
 jako prvků a kontrola přístupnosti.
@@ -19,7 +19,7 @@ jako prvků a kontrola přístupnosti.
 | id | Co to je | Živé části (sloty) |
 |---|---|---|
 | `header` | lišta nahoře: logo, stav spojení, přepínač připojení, účet, menu, celá obrazovka | `signedIn`, `menu` |
-| `chat` | okno pod lištou: informační pruh, konverzace, prázdný stav | `transfer`, `message`, `composer` |
+| `chat` | okno pod lištou: informační pruh, konverzace, prázdný stav | `transfer`, `message`, `composer`, 6.7: `start` (úvodní obrazovka, `if: $empty`) |
 | `message.in` | zpráva od někoho jiného | `badge` (odznak odesílatele) |
 | `message.out` | moje zpráva | — |
 | `message.sys` | systémové oznámení | — |
@@ -27,16 +27,20 @@ jako prvků a kontrola přístupnosti.
 | `widget` | panel příjemců — plovoucí, nebo (6.0) ukotvený vlevo, vpravo či dole | — |
 | `widget.fab` | minimalizovaný widget (tlačítko) | — |
 | `widget.handle` | 6.0: úchyt ukotveného, automaticky skrývaného widgetu (záložka na okraji) | — |
+| `room.bar` | 6.0: lišta místností (víc místností naráz) | — |
+| `phone.bridge` | 6.0: karta hovoru telefonního mostu, který se vám nabízí | — |
+| `start` | 6.7: úvodní obrazovka — co okno chatu ukazuje, dokud v něm není zpráva (po spuštění i v místnosti před první zprávou): zámek, nadpis, text a *Připojit* | — |
 
-Od 4.13 dalších 36 rozvržení (`client/src/lib/layouts/{windows,room,dialogs,account,settings,tools,share,phone,connections}.ts`),
+Od 4.13 dalších 36 rozvržení (`client/src/lib/layouts/{windows,room,dialogs,account,settings,tools,share,phone,connections}.ts`;
+později `ai.ts` 4.14, `roombar.ts` a `phonebridge.ts` 6.0, `start.ts` a `voice.ts` 6.7),
 v builderu v sekcích (`LAYOUT_GROUP`):
 
 | Sekce | id |
 |---|---|
-| Room window | `room.tabs` (záložky v záhlaví), `room` (obsah okna Místnost; slot `share`, `needSignIn`) |
+| Room window | `room.tabs` (záložky v záhlaví), `room` (obsah okna Místnost; slot `share`, `needSignIn`, 6.7 `keyStrength` — měřidlo síly klíče, hodnota `$keyLevel`) |
 | Windows | `window` (okno panelu, `SimpleModal`), `window.large` (velké okno / šuplík, `Modal`) |
 | Dialogs & parts | `part.needSignIn`, `part.signedIn`, `dialog.userInfo`, `dialog.messageInfo`, `dialog.integrity`, `part.shareResult`, `panel.share`, `panel.shareConnection`, `part.invite` |
-| Panels | `panel.ai` (asistent AI, 4.14), `dialog.account`, `panel.access`, `panel.retention`, `panel.profile`, `panel.settings`, `panel.privacy`, `panel.encryption`, `panel.notifications`, `panel.analytics`, `panel.roomSecurity`, `panel.trust`, `part.peers`, `part.audio`, `part.video`, `panel.files`, `panel.location`, `panel.speech`, `panel.connection`, `panel.phone`, `panel.connections`, `part.connectionEdit`, `part.connectionDetail`, `part.connectionSettings` |
+| Panels | `panel.ai` (asistent AI, 4.14), `dialog.account`, `panel.access`, `panel.retention`, `panel.profile`, `panel.settings`, `panel.privacy`, `panel.encryption`, `panel.notifications`, `panel.analytics`, `panel.roomSecurity`, `panel.trust`, `part.peers`, `part.audio`, `part.video`, `panel.files`, `panel.location`, `panel.speech`, `panel.connection`, `panel.phone`, `panel.connections`, `part.connectionEdit`, `part.connectionDetail`, `part.connectionSettings`, `panel.voiceChanger` (měnič hlasu, 6.7) |
 
 Komponenty si strom berou z `LayoutProvider` (`useLayout(id)` /
 `useLayoutBase(id, lang)`): varianta pro skupiny a šablonu diváka, jinak
@@ -188,7 +192,10 @@ Záložka *Texts & behaviour* drží dřívější nastavení: krátké texty
 odpovědět / přeposlat, logo, datum, sbalování systémových zpráv) a rychlé
 barvy komponent (CSS proměnné `--c-<komponenta>-…`). Rozvržení tyto texty
 používají jako hodnoty (`$headerText`, `$timeLabel`, `$placeholder`,
-`$title`, `$emptyTitle`, `$emptyBody`).
+`$title`, `$emptyTitle`, `$emptyBody`). Od 6.7 dostává `chatEmptyTitle` /
+`chatEmptyBody` (výchozí „Čistá ephemeral místnost“ a „Žádná historie,
+žádné ukládání…“) rozvržení `start` jako `$title` / `$body`; `chat` je má
+dál jako `$emptyTitle` / `$emptyBody`.
 
 ## Ukotvený widget příjemců a jeho úchyt (6.0)
 
@@ -268,6 +275,51 @@ doručenky podle příjemců (`msginfo-receipts`, `$receipts`) a část
 přihlášení (`$hideChoices`, akce `hide` s argumentem `$c.id`), znovu
 zobrazit (`unhide`), smazat s potvrzením (`delete` → `$confirmDelete` →
 `deleteConfirm` / `deleteCancel`).
+
+**6.7:** výchozí bublina mapu **nekreslí** — `$map` zůstává jen pro vlastní
+rozvržení, která ho chtějí. Nově `$place` (kam zpráva ukazuje: poloha
+z hlavičky, nebo zpráva s polohou „📍 lat, lon …“ — `.lat`, `.lon`, `.acc`,
+`.coords`, `.live`, `.message`), v hlavičce tlačítko `loc` (špendlík, `if:
+$place && !$place.message`) a v těle čip `place` (špendlík + souřadnice,
+`if: $place.message`); oba spouští akci `place`, která otevře okno polohy
+(`components/LocationSheet.tsx` — mapa, *Navigovat*, *Odvoz*, *Kopírovat*;
+samo rozvržením není). Vedle bubliny „podržet a číst“ je oblast `hold-side`
+(`if: $tap && !$vanished && !($sealed && !$sealedOpen)`, akce
+`holdSideStart` při `pointerdown` — odkryje po 180 ms, posun, který tam
+začne, nic neodkryje).
+
+## 6.7: úvodní obrazovka, měnič hlasu a další části
+
+- **`start`** (`client/src/lib/layouts/start.ts`, sekce App, popisek „Start
+  screen (Connect, no message yet)“) — dřív část rozvržení `chat`, teď
+  vlastní; kreslí ji `components/StartScreen.tsx` ve slotu `start` okna
+  chatu. Výchozí strom: karta se zámkem, `$title`, `$body` a tlačítko
+  *Připojit* (akce `openRoom`, `data-testid="button-open-join"`; bez
+  podmínky, takže je vidět i v připojené místnosti). Kontrakt: hodnoty
+  `$title`, `$body`, `$status`, `$connected`, `$room`, `$signedIn`,
+  `$username`, `$serverMode`, `$profiles` (uložená připojení, z nichž jde
+  připojit odtud: `.id`, `.label`); akce `openRoom`, `connectProfile` (id
+  připojení), `signIn`; žádné sloty. Situace náhledu: *The app just
+  started*, *In a room, no message yet*, *Signed in, saved connections*.
+- **`panel.voiceChanger`** (`layouts/voice.ts`, sekce Panels) — měnič hlasu:
+  hodnoty `$allowed`, `$supported`, `$micAvailable`, `$on`, `$active`,
+  `$preset`, `$presets`, `$custom`, `$params`, `$testing`, `$live`,
+  `$liveText`, `$error`; akce `toggle`, `preset`, `param`, `reset`, `test`,
+  `stopTest`; situace on / custom / off.
+- **`room`** — slot `keyStrength` (měřidlo síly klíče, F-04) a hodnota
+  `$keyLevel`.
+- **`dialog.userInfo`** — řádek přítomnosti (`$presence`, `$presenceLabel`,
+  `$seenText`), slot `profile` (profil, který člen sdílí v místnosti)
+  a akce `profile`.
+- **`part.peers`** — u `$peers` pole `.presence`, `.presenceLabel`,
+  `.seenText` a prvky `peer-presence` / `peer-seen`; widget příjemců
+  ukazuje tečku a „Naposledy online …“.
+- **`panel.profile`** — slot `card` (editor veřejného profilu);
+  **`panel.notifications`** — slot `notifyPrefs` (vlastní volba
+  upozornění); **`panel.speech`** — tlačítko `speech-send-voice`
+  (`$sendVoiceOn`, `$voiceBusy`, akce `sendVoice`).
+- Builder v konzoli tak má 12 rozvržení v sekci App a 25 v Panels
+  (`test/e2e/admin-console.test.ts`).
 
 ## Uložení a API
 

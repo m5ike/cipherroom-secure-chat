@@ -1,5 +1,15 @@
 # M5cet — bezpečnostní model
 
+> **6.7.0:** podrobná bezpečnostní analýza z kódu (model důvěry, kryptografie,
+> platformy, srovnání se Signalem, Threemou, WhatsAppem, Wire, Matrixem
+> a Session, 31 nálezů F-01…F-31 a roadmapa) je v
+> [`security-analysis.md`](security-analysis.md) — včetně kapitoly *Stav po
+> opravách 6.7*; audit komponent (testy, buildy, nálezy V/S/N a co 6.7
+> opravila na serveru, webu a Androidu) v [`audit-6.7.md`](audit-6.7.md).
+> Tento dokument je starší a vrstvený po verzích; kde se s analýzou liší,
+> platí analýza a kód. Aktuální stav známých mezer je v
+> [tabulce níže](#známé-mezery-stav-67).
+
 > **Od 3.1.0** platí šifrování v3: Argon2id (64 MiB) ve Web Workeru, slepé ID místnosti (server
 > nezná název), živé zprávy pod klíči odesílatelů s ratchetem (forward secrecy, vyloučení člena),
 > soukromé zprávy pod párovými klíči (ECDH), identita zařízení potvrzená účtem (Ed25519),
@@ -14,18 +24,30 @@ chránit nemůže**. Je psán pro ty, kdo M5cet nasazují nebo auditují.
 
 ## TL;DR
 
-- Server vidí signalizační rámce (SDP/ICE) a (volitelně) opaque metadata.
-  **Nikdy** plaintext ani klíč. Chatové zprávy přes server nejdou vůbec (ani
-  jako ciphertext). **Výjimky:** soubory v *proxy* režimu posílají přes `/ws`
-  IV a ciphertext chunků (viz „Známé mezery") a zprávy pro účastníka ve stavu
-  **away** (viz níže) — v obou případech jen ciphertext klíčem místnosti,
-  který server nemá.
-- Šifrování: AES-GCM 256, IV 12 B per frame, klíč PBKDF2-SHA256
-  (250 000 iter), salt obsahuje `room id`. Klíč je `extractable: false`.
-- WebRTC media: standardní DTLS-SRTP, řešený prohlížečem.
+- Server vidí signalizaci (SDP/ICE — od 3.0 zapečetěné klíčem signalizace)
+  a metadata (slepé ID místnosti, přezdívky v místnosti, členství, účty,
+  časy, IP, od 6.7 i přítomnost a „naposledy online“). Klíč místnosti ani
+  heslo nikdy. Jako **ciphertext** přes něj jdou zprávy pro nepřítomné
+  (relay, pod klíčem místnosti — 30 dní), zapečetěná serverová historie,
+  soubory přes relay a profil „jen já“ v trezoru účtu. **Čitelně** vidí jen
+  to, co uživatel pošle službám serveru: příkazy Functions, AI, řeč
+  (přepis, převod textu na řeč, „poslat jako hlas“ na webu), telefonii
+  a veřejný profil (6.7).
+- Šifrování v3 (od 3.1): heslo místnosti → Argon2id (64 MiB, 3 průchody,
+  sůl z názvu místnosti) → HKDF klíče podle účelu; AES-256-GCM s associated
+  data, IV 12 B náhodné, klíče `extractable: false`; živé zprávy pod klíči
+  odesílatelů s hash ratchetem, soukromé pod párovými klíči (ECDH).
+  Obálky v1 / v2 (PBKDF2) se dál otevírají.
+- WebRTC media: DTLS-SRTP a kde prohlížeč umí `RTCRtpScriptTransform`, navíc
+  E2EE rámců hovoru klíčem páru.
+- **Kód webu doručuje server** (F-02) — proti zlému provozovateli web
+  nechrání; aplikace pro Android kreslí designy podepsané serverem (od 6.7 už
+  nemohou vynést dešifrované zprávy, F-01).
 - Admin příkazy jsou **whitelisted** a **token-protected**. Cokoli mimo
   allowlist je shozeno na úrovni serveru.
-- Klíč místnosti se sdílí **out-of-band**.
+- Klíč místnosti se sdílí **out-of-band**; je kořenem důvěry místnosti
+  (členství není spravované). Od 6.7 web sílu klíče měří a slabý klíč pro
+  ručně zadanou místnost napoprvé zadrží (F-04).
 
 ## Aktiva (assets)
 
@@ -45,8 +67,11 @@ chránit nemůže**. Je psán pro ty, kdo M5cet nasazují nebo auditují.
 2. **Aktivní MITM** — bez TLS by mohl podstrčit jiný server. Proto je
    produkce vždy za HTTPS / WSS s ověřeným certifikátem (`install.sh
    --enable-tls`).
-3. **Compromised server** — i kdyby byl server kompromitovaný, nikdy nezíská
-   plaintext: klíč nikdy neopustí prohlížeč.
+3. **Compromised server** — pasivně kompromitovaný server plaintext živých
+   zpráv nezíská: klíč nikdy neopustí prohlížeč. **Aktivní** zlý server ale
+   může klientovi doručit jiný kód webu (F-02) a slabé heslo místnosti
+   hádat offline proti slepému ID (F-04) — viz
+   [`security-analysis.md`](security-analysis.md#34-kompromitovaný-server-s3).
 4. **Compromised endpoint** — pokud útočník ovládá prohlížeč jednoho z
    účastníků, je hra u konce. Žádné kryptografické řešení tomu nezabrání.
 5. **Phishing / sdílení klíče přes nezabezpečený kanál** — uživatelé musí
@@ -80,6 +105,13 @@ chránit nemůže**. Je psán pro ty, kdo M5cet nasazují nebo auditují.
 ## Crypto detaily
 
 ### Odvození klíče
+
+> Historický formát v1 (do 2.x). Od 3.1 platí v3:
+> `seed = Argon2id(NFC(passphrase), salt = "m5cet:room:v3:" || název, 64 MiB, 3)`,
+> z něj HKDF-SHA256 klíče `message`, `signal`, `files`, kontrolní hodnota
+> a slepé ID `r3.…` (`client/src/lib/envelope.ts`, `deriveRoomKeys`). Obálky
+> v1 se dál otevírají (F-20).
+
 ```
 material  = PBKDF2( passphrase, salt = "CipherRoom:v1:" || roomId,
                     iter = 250 000, hash = SHA-256 )
@@ -361,24 +393,38 @@ Podrobně v [`storage.md`](storage.md). Pro model hrozeb:
 - **Nová závislost**: nativní modul `better-sqlite3-multiple-ciphers`. Když
   se nenačte, úložiště se vypne a server relayuje dál.
 
-## Známé mezery (stav 2.5.0)
+## Známé mezery (stav 6.7)
 
-Zjištěno revizí kódu a měřením 2026-09-21. Opravené řádky jsou označené
-verzí; ostatní vyžadují návrhové rozhodnutí. Berte je v úvahu při nasazení
-i auditu.
+Tabulka vznikla revizí kódu a měřením 2026-09-21 (stav 2.5.0); řádky 1–10
+jsou aktualizované ke stavu 6.7.0 (commit `28f10ad0`) podle
+[`audit-6.7.md`](audit-6.7.md) (kap. 5 a „Opraveno v 6.7“) a kódu, řádky
+11–20 jsou hlavní otevřené návrhové mezery z
+[`security-analysis.md`](security-analysis.md) (kap. 7 a *Stav po opravách
+6.7*). Opravené řádky jsou označené verzí; ostatní vyžadují návrhové
+rozhodnutí. Berte je v úvahu při nasazení i auditu.
 
-| # | Mezera | Dopad | Doporučení |
+| # | Mezera | Stav 6.7 / dopad | Doporučení |
 |---|--------|-------|------------|
-| 1 | Rate limit WS upgradu se nikdy nespustí (Express middleware není na cestě `upgrade`; změřeno 45/45 přijato při limitu 30/min) | neomezený počet spojení z jedné IP | limitovat v `verifyClient` / vlastním `upgrade` handleru, nebo v reverse proxy (`limit_conn`) |
-| 2 | ~~Není nastaveno `trust proxy`~~ **opraveno ve 2.8.0** | IP klienta z `X-Forwarded-For` jen od důvěryhodné proxy; limity jsou per návštěvník | `TRUST_PROXY` (výchozí loopback, v kontejneru i privátní rozsahy; počet hopů / seznam) |
+| 1 | ~~Rate limit WS upgradu se nikdy nespustí~~ **opraveno ve 3.0** (brána spojení v `upgrade` handleru, `WS_CONNECTS_PER_MINUTE` …); **6.7:** slot brány se vrátí i po vadném handshaku (V3, `server/signaling/hub.ts`) a upgrade na neznámou cestu dostane `404` a zavře se (S3, `server/upgrade-guard.ts`) | zbývá: IPv6 adresy brána nespojuje po /64 | limity i v reverse proxy (`limit_conn`); IPv6 klíčovat po /64 |
+| 2 | ~~Není nastaveno `trust proxy`~~ **opraveno ve 2.8.0** | IP klienta z `X-Forwarded-For` jen od důvěryhodné proxy; limity jsou per návštěvník. Vrstva WS určuje adresu klienta po svém (audit N9, neopraveno) | `TRUST_PROXY` (výchozí loopback, v kontejneru i privátní rozsahy; počet hopů / seznam) |
 | 3 | ~~`POST /api/push/test`, `GET|POST /api/admin/retention*` bez autentizace~~ **opraveno ve 2.8.1** | bez tokenu už jen self-test push na vlastní id odběru (pevný text); broadcast a retence jen s `ADMIN_API_TOKEN` (`503` bez něj, `401` se špatným; porovnání v konstantním čase, `server/admin-auth.ts`) | routy zůstávají v hlavní službě — stav, na který působí, žije v její paměti; admin proces má prázdné kopie (viz ř. 9 a `docs/admin.md`). Token ≥ 32 B. |
-| 4 | `GET /api/turn` vydává statické TURN údaje komukoli | zneužití TURN relaye | efemérní údaje (coturn `use-auth-secret`) |
-| 5 | Proxy relay souborů: server drží IV + ciphertext (prvních 256 znaků) v paměti, ale data nedoručuje | funkce nefunguje; metadata o přenosu (počet chunků ≈ velikost) jsou serveru viditelná | dokončit relay, nebo proxy režim vypnout |
-| 6 | TOFU otisky klíčované náhodným `peerId` relace; při neshodě se přepíší | panel „Důvěra" nikdy nezachytí změnu protistrany — **nespoléhat na něj** | klíčovat stabilní identitou; při neshodě nepřepisovat bez potvrzení |
-| 7 | „Otisk místnosti" = SHA-256 jen z room ID | neověřuje shodu klíče/passphrase | odvodit z klíče (např. HKDF → krátký kód k porovnání) |
-| 8 | CSP `script-src unsafe-inline unsafe-eval` | oslabená obrana proti XSS | pro produkci zpřísnit (nonce/hash), ponechat jen pro dev |
-| 9 | Admin služba nemá Helmet ani rate limit | brute-force tokenu není brzděn | držet na loopbacku / za proxy s allowlistem; token ≥ 32 B |
-| 10 | `download-file-from-admin`: potvrzovací dialog ukazuje jen název, ne URL | uživatel nevidí, odkud stahuje | zobrazit i origin |
+| 4 | `GET /api/turn` vydává TURN údaje komukoli — **částečně** (3.1: krátkodobé údaje s `TURN_SECRET`) | statické `TURN_USERNAME` / `TURN_CREDENTIAL` se dál přijímají (jen varování v auditu) a `/api/turn` je veřejné (F-28) | `TURN_SECRET` (coturn `use-auth-secret`); TURN jen pro připojené sockety |
+| 5 | ~~Proxy relay souborů nedoručuje~~ **opraveno ve 3.1** | server přeposílá neprůhledné bloky a těla neukládá; metadata o přenosu (počet bloků ≈ velikost) vidí. Jedna IP smí obsadit všech 64 slotů (N5, neopraveno) | limit přenosů na IP |
+| 6 | TOFU otisky DTLS klíčované náhodným `peerId` relace; při neshodě se přepíší — **trvá** (6.7: úložiště drží jen 100 posledních peerů, N27) | panel „Důvěra" nikdy nezachytí změnu protistrany — **nespoléhat na něj** | klíčovat stabilní identitou; při neshodě nepřepisovat bez potvrzení (F-25) |
+| 7 | „Otisk místnosti" = SHA-256 jen z názvu místnosti — **trvá** (`client/src/App.tsx`, `sha256Hex("m5cet:room:…")`) | neověřuje shodu klíče/passphrase | odvodit z klíče (např. HKDF → krátký kód k porovnání) (F-25) |
+| 8 | ~~CSP `script-src unsafe-inline unsafe-eval`~~ **opraveno pro produkci** | produkce `script-src 'self' 'wasm-unsafe-eval'`; `unsafe-inline` / `unsafe-eval` jen vývojový server; `style-src 'unsafe-inline'` zůstává | — |
+| 9 | Admin služba nemá Helmet ani rate limit — **z velké části opraveno** | vlastní bezpečnostní hlavičky a CSP, limiter odmítnutých pokusů; **6.7 (S4):** velká těla (design Androidu 8 MB, menu 1 MB, APK) se čtou až po ověření tokenu, token funkce (`m5f1.`) obchází limity jen s platným HMAC; `/metrics` má limiter odmítnutých (N10) | držet na loopbacku / za proxy s allowlistem; token ≥ 32 B |
+| 10 | `download-file-from-admin`: potvrzovací dialog ukazuje jen název, ne URL — **trvá** (`client/src/App.tsx`, `window.confirm`) | uživatel nevidí, odkud stahuje (adresa je omezená na https) | zobrazit i origin |
+| 11 | **Kód webu doručuje server** (F-02) — trvá | aktivní zlý server může klientovi poslat jiný kód; `integrity.ts` porovnává s manifestem téhož serveru | podepsaná vydání, reprodukovatelný bundle, ověřování mimo server |
+| 12 | **Statické klíče zařízení, žádná obnova po kompromitaci** (F-06) — trvá | párové klíče ze statického ECDH, jen hash ratchet sender keys; žádný DH ratchet, X3DH/PQXDH ani post-kvantová ochrana | efemérní ECDH v hello; libsignal / MLS |
+| 13 | **Heslo místnosti je kořen důvěry** (F-04) — **částečně** (6.7: web sílu měří, slabý klíč ručně zadané místnosti napoprvé zadrží) | druhé *Připojit* slabý klíč pustí; uložená připojení a Android sílu neměří; slepé ID je offline orákulum; výchozí klíč není náhodný; členství není spravované | náhodný klíč jako výchozí, pozvánky a správa členství |
+| 14 | **Zprávy pro nepřítomné, outbox a soubory pod statickým klíčem místnosti** (F-09) — trvá | kdo zná heslo, přečte schránku 30 dní zpětně | šifrovat pro příjemce (klíč účtu / prekeys) |
+| 15 | **TOFU podle zobrazovaného jména** (F-13) — trvá | první kontakt se ukáže jako „ověřeno“; bez revokace zařízení a transparentnosti klíčů | odlišit „nový“ od „ověřený“, seznam a revokace zařízení |
+| 16 | **Metadata** (F-15) — trvá | server zná jména, členství, účty, časy, plné IP v access logu 30 dní, od 6.7 i přítomnost a koho zpráva zmiňuje; peery si vidí IP | „jen přes TURN“, vlastní STUN, kratší IP v logu, padding |
+| 17 | **Sandbox Funkcí** (F-03) — **částečně** (6.7: Node permission model, jen čtení vlastních souborů, bez generování kódu z řetězců, prostředí jen `PATH`) | bez bubblewrap / kontejneru a jiného uživatele; síť zavírají jen stuby v JS; interní `_module` Pyodide je dosažitelný | izolace procesu (bwrap / nsjail), oddělený uživatel |
+| 18 | **`functions.db` nešifrovaná** (F-18) — **částečně** (6.7: běh s `m5.nfc` se smaže po `FUNCTIONS_NFC_RUN_HOURS`, výchozí 24 h) | ostatní běhy, logy webhooků (plné IP) a PAN 30 dní čitelně na disku | SQLCipher s master klíčem |
+| 19 | **Design Androidu** (F-01) — **kritický únik opraven v 6.7** | obrázek s počítanou adresou už zprávy nevynese a `url.open` chce potvrzení s ukázanou adresou; design ale smí `setting.set` na citlivé klíče a `url.open` s adresou poskládanou z dat projde po jednom potvrzení | zakázat citlivé klíče, `url.open` jen pevné adresy i v aplikaci |
+| 20 | **Žádný nezávislý audit, formální analýza ani reprodukovatelný build** (F-29) | dokumenty analýzy a auditu jsou revize kódu s pomocí AI, ne externí audit | externí audit, SAST a audit závislostí v CI |
 
 Co naopak ověřeno **je**: obálka obsahuje jen `iv` + `ciphertext`, IV má 12 B
 a je náhodné pro každý rámec i chunk, klíč je neexportovatelný, špatná

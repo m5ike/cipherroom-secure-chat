@@ -23,6 +23,7 @@
 8. [Roadmapa](#8-roadmapa)
 9. [Co nebylo ověřeno](#9-co-nebylo-ověřeno)
 10. [Nesoulad dokumentace s kódem](#10-nesoulad-dokumentace-s-kódem)
+11. [Stav po opravách 6.7](#11-stav-po-opravách-67) (doplněno po vydání, commit `28f10ad0`)
 
 ---
 
@@ -1105,3 +1106,80 @@ vyžaduje změnu protokolu nebo modelu, ne jen opravu chyby. `android/…` zname
 ---
 
 *Analýza vznikla revizí kódu s pomocí AI (Claude). Neslouží jako náhrada nezávislého auditu.*
+
+---
+
+## 11. Stav po opravách 6.7
+
+> **Stav kódu:** 6.7.0, commit `28f10ad0` (větev `android_application`), po sloučení
+> oprav serveru, webu a Androidu (`docs/audit-6.7.md`, kapitoly „Opraveno v 6.7“).
+> Kapitoly 1–10 výše popisují stav **před** opravami (`594202f5`) a zůstávají beze
+> změny. Každý řádek níže je ověřený proti kódu `28f10ad0` (ne podle textu auditu);
+> `A/` = `android/app/src/main/java/cz/m5cet/app/`. Stav: **opraveno** · **částečně**
+> · **otevřené**.
+
+| ID | Stav | Commit | Doklad v kódu | Co zbývá |
+|---|---|---|---|---|
+| F-01 | **částečně** — kritický únik opraven | `d5d6b818`, `9bdb4cdc` | `A/ui/DesignUrls.java:33` (počítaný `src` jen `asset:` / `data:image/`, vzdálený jen přesně pevná adresa), `:43` (`url.open` po potvrzení); `server/android/design.ts:610`, `:625` (`checkImageSrc`, `checkActionArg`, `ANDROID_DESIGN_IMAGE_HOSTS`) | `url.open` s adresou poskládanou z dat projde jedním potvrzeným klepnutím; `setting.set` / `toggle` smí na každý známý klíč (`A/core/Settings.java`: sledování polohy, hlas přes server, emulace NFC); `share` / `copy` berou počítaný text; serverová kontrola výrazu (`/https?:|\/\//`) jde obejít skládáním řetězců — drží jen kontrola v aplikaci |
+| F-02 | otevřené | — | `client/src/lib/integrity.ts:60-61`, `:72` (jen názvy souborů, manifest od téhož serveru) | podepsaná vydání, ověřování mimo server |
+| F-03 | **částečně** | `14590ef0` | `server/functions/sandbox/pool.ts:118-120` (`--permission`, `--allow-fs-read` jen pro skript a interpret, `--disallow-code-generation-from-strings`), `:128` (prostředí dítěte jen `PATH`); `harden.ts` (konstruktory `Function` odstavené) | bez bubblewrap / nsjail a jiného uživatele; síť zavírají jen stuby v JS (permission model Node síť nepokrývá); interní `_module` Pyodide není v `NEUTERED` (`engine-py.ts:31`). Přepínač `--permission` má Node podle changelogu až od 22.13 / 23.5, `engines` říká `>=22` |
+| F-04 | **částečně** (varování) | `bc850f12`, `9107eb8b` | `client/src/lib/passphrase-strength.ts:152` (`weakKeyBlocks`), `client/src/components/RoomDialog.tsx:156` | slabý klíč se zadrží jen jednou (druhé *Připojit* projde) a jen v ručně zadané místnosti na webu — uložená připojení ani Android sílu neměří; výchozí klíč není náhodný; `hashRoom` bez tajné soli (`server/monitor/traffic.ts:120-123`); slepé ID zůstává orákulum (offline pokus stojí jedno Argon2id) |
+| F-05 | **opraveno** | `76c472e8` | `A/security/ServerPin.java:28` (`check`), `:51` (`same`); `A/ui/parts/Forms.java:219`, `:222` | bez pinu z buildu i z QR je zápis dál TOFU |
+| F-06 | otevřené | — | `client/src/lib/sender-keys.ts:172-184` (hello nese dlouhodobý DH klíč), `client/src/lib/identity.ts:59-62`, `A/chat/SenderKeys.java:118` | efemérní ECDH, DH ratchet (PCS), PQ |
+| F-07 | **opraveno** | `1d712f9a` | `A/chat/Verified.java:21` (P2P: klíč z hello, jméno peeru), `:28` (relay: kid = pin); `A/chat/RoomSession.java:451`, `:724` | první kontakt je dál TOFU (jako web, F-13) |
+| F-08 | **částečně** | `1c007087` | `client/src/components/fn/FnOutputs.tsx:54` (`PEER_JS_EVENTS = 20`), `:58` (`userActivation`) — kód od jiného člena až po kliknutí, skrytý nikdy; `server/functions/chain-access.ts:47` (`mayContinue`) → `server/functions/routes.ts:231` (`410`) | CSP sandboxu dál `img-src … https:` a `connect-src https:` (`server/functions/sandbox-page.ts:20`, `:23`) — po kliknutí může cizí kód poslat data na libovolný https server; tlačítka ve zprávě modelu od jiného člena posílají událost s tokenem diváka po jednom kliknutí |
+| F-09 | otevřené | — | `client/src/App.tsx:3539-3549` (jedna obálka klíčem místnosti pro relay i outbox); `server/accounts/mailqueue.ts:77` (30 dní) | šifrovat položky schránky pro příjemce |
+| F-10 | **opraveno** (web i Android) | `6d4b49aa`, `4a1078a8`, `75ef3f7d` | `client/src/lib/room-privacy.ts:14` (`serverRoomId`: slepé `r3.…` nebo nic) pro historii, analytiku a funkce; `A/ui/parts/Fn.java:98` (slepé id); jména místností a peerů mimo log příkazu `status` | v **ladicím** buildu `A/ui/Actions.java:28` loguje každou akci designu s argumentem (i čitelný název místnosti) a s politikou `logs: "all"` ho příkaz `status` vrátí — release build `Log.d` nezapisuje |
+| F-11 | **opraveno** | `a366786e` | `client/src/lib/chat-history.ts:217` (nezapečetěný řádek se odmítne), obnovené zprávy znovu přes `validateAttachment` / pravidla výstupů funkcí, `safeMime()` pro bloby | — |
+| F-12 | otevřené | — | `client/src/lib/nfc.ts:30-43`, `A/nfc/Nfc.java:30-40` (4–16 číslic, PBKDF2 200 000) | Argon2id a dlouhý náhodný kód, nebo odkaz + oddělené tajemství |
+| F-13 | otevřené | — | `client/src/App.tsx:1633-1637` (poprvé viděný klíč = „verified“), piny podle (místnost, jméno) | odlišit „nový“ / „ověřený“, revokace zařízení, transparentnost klíčů (N23 odloženo) |
+| F-14 | **částečně** (připnutí opraveno) | `2043c239` | `server/functions/host-net.ts:157-161` (připojení na ověřenou adresu), `:194-198` (`node:http(s)` s pevným `lookup`), `:174` (`Authorization` / `Cookie` pryč při přesměrování na jiný origin); NAT64, Teredo, `fec0::/10` blokované | `/web` je dál dostupné hostům po zapnutí Functions (`server/functions/builtins/index.ts:47`, viditelnost `caller`); URL zpětného volání webhooku volí volající (projde ale guardem) |
+| F-15 | otevřené | — | `client/src/lib/rtc.ts:7-8` (Google STUN, `iceTransportPolicy: "all"`); `server/access.ts:94` (plná IP), 30 dní | vše; 6.7 navíc dává serveru přítomnost / „naposledy online“ a seznam zmíněných účtů (`relay.mention`) |
+| F-16 | **částečně** | `68c2243f`, `e6b9ce09`, `75ef3f7d` | `A/security/SignedPolicy.java:31` (`open`: podpis, zařízení, ne starší), `server/android/routes.ts:217`, `:241` (`policySigned`); `A/security/LockCounter.java` (pokus uložen před derivací) | pepř `m5.pep` bez ověření uživatele a hardwarového limitu; čítač v souboru trezoru (starší kopie ho vrátí); „zamknout“ nezahodí DEK; žádný nouzový PIN |
+| F-17 | **částečně** | `d41469a3` | `server/telephony/webhooks.ts:262` (Vonage SMS bez `sig` → `403`, výjimka `VONAGE_ALLOW_UNSIGNED_SMS=1`), `:164` (JWT s čerstvým `iat` ≤ 10 min, `payload_hash`) | bez nastaveného materiálu se webhook dál přijme jako neověřený (záměr); `exp` JWT nepovinné; žádná cache `jti`; legacy SMS `sig` bez `timestamp` nemá kontrolu stáří |
+| F-18 | **částečně** | `190ea08f` | `server/functions/store.ts:139` (`FUNCTIONS_NFC_RUN_HOURS`, výchozí 24 h, běh `sensitive`), `:180` (dál obyčejný SQLite) | `functions.db` nešifrovaná; log webhooků výchozí „full“ s plnou IP; PAN uložen; ostatní běhy 30 dní |
+| F-19 | otevřené | — | `client/src/lib/media-frames.ts:33-43` (4 B sůl + čítač), `client/src/lib/media-e2ee.worker.ts:41` (nezapečetěné rámce projdou) | klíč na hovor / SFrame |
+| F-20 | otevřené | — | `client/src/lib/envelope.ts:211-227` (v2 a v1 se otevírají); varování jen `sec.legacyPeer` (`App.tsx:2557`) | ukončit v1 / v2 |
+| F-21 | otevřené | — | `client/src/lib/envelope.ts:314-332` (viděná id jen v paměti) | trvalý seznam, dolní mez `createdAt` (N32 odloženo) |
+| F-22 | **částečně** | `1c007087` | `client/src/components/fn/FnOutputs.tsx` (kód od člena až po kliknutí, flash nese jméno odesílatele), `client/src/lib/validate.ts` (`function:*` jako odesílatel odmítnut) | formuláře od člena (i pole `password`) se dál vykreslí a odešlou; `replyTo` / „přeposláno“ volný text; jména bez normalizace bidi / homoglyfů; `from` oznámení libovolné |
+| F-23 | otevřené | — | `server/storage/global-store.ts:698` (řádek bez hashe = „unchained“, ne chyba) | připnout klíč kontrolních bodů mimo DB |
+| F-24 | otevřené | — | `server/accounts/webauthn.ts:80-82` (bez `WEBAUTHN_ORIGINS` každá https subdoména rpId) | výchozí přesný seznam originů |
+| F-25 | **částečně** | `dac281a1` (N27) | `client/src/lib/fingerprint.ts:152` (úložiště otisků max. 100 peerů) | otisky DTLS dál podle `peerId`; otisk místnosti z názvu (`App.tsx:2927`); text „PBKDF2 … 250 000“ v `client/src/lib/i18n.ts:177` (a en / de) a `layouts/settings.ts` |
+| F-26 | otevřené | — | `client/src/lib/passkey.ts:129-144` (sloty bez AAD); `session-cache.ts` (`touchedAt` mimo AEAD) | AAD se jménem slotu a verzí; „Smazat vše“ neodvolá token (N24 odloženo) |
+| F-27 | **částečně** | `79c48cf1` | `vite.config.ts:145` (`deny`: `.env*`, `*.bak`, `*~`), `.dockerignore` (`.env*`, `*.bak`) | dev i hlavní server dál poslouchá na `0.0.0.0` (`server/index.ts:252`, `HOST` to změní); `fs.allow` celý repozitář |
+| F-28 | otevřené | — | `server/routes.ts:357` (`/api/turn` bez autentizace), `server/share.ts:31` (2 000), `server/file-proxy.ts:24` (64), `server/functions/sandbox/pool.ts` (bez stropu souběžných sandboxů) | stropy na IP / účet, fronta sandboxů (6.7 omezila jiné věci: brána WS, relace úložiště, audit) |
+| F-29 | otevřené | `09f6c307` (jednorázový `npm audit fix`) | `.github/workflows/ci.yml:55` (`npm ci --no-audit`, bez SAST); `Dockerfile` (`node:24-slim` podle tagu); `server/ai/local-speech.ts` (modely bez kontroly hashe) | `npm audit --omit=dev` je čisté, celý `npm audit` hlásí 5 vysokých (dev řetěz tailwind 3 → braces); audit, formální analýza, reprodukovatelný build |
+| F-30 | otevřené | — | `client/src/lib/envelope.ts:156` (`signBody`, ECDSA), `client/src/lib/identity.ts:196` (Ed25519) | vědomé rozhodnutí zdokumentovat |
+| F-31 | **opraveno v dokumentaci 6.7** | (dokumentační commit 6.7) | `README.md` — úvod a režimy nově říkají, kdy server obsah vidí (Functions, AI, řeč, telefonie, veřejný profil) | UI (texty u funkcí a AI) beze změny |
+
+### Revidované hodnocení (6.7.0)
+
+| Oblast | Před 6.7 | 6.7 | Proč |
+|---|---:|---:|---|
+| Šifrování živých zpráv (P2P) | 7 | **7** | návrh beze změny; kolize `keyId` sender keys opravena (S18) |
+| Zprávy přes server, soubory, offline doručení | 4 | **4** | historii už server nepodvrhne (F-11), soubor je vázaný na peera (S19); schránka pořád pod klíčem místnosti (F-09) |
+| Správa klíčů a odvozování | 5 | **6** | čitelný název místnosti (sůl) už na server nejde (F-10); síla klíče se měří, ale nevynucuje (F-04) |
+| Identita a ověřování | 3 | **3** | „ověřeno“ na Androidu opraveno (F-07); TOFU podle jména, první kontakt jako „ověřeno“ a chybějící revokace trvají (F-13) |
+| Dopředná utajenost, PCS, post-kvantová ochrana | 3 | **3** | beze změny (F-06) |
+| Ochrana metadat | 3 | **3** | název místnosti už neteče (F-10), ale server nově zná přítomnost, „naposledy online“ a zmínky (F-15) |
+| Webový klient | 5 | **6** | cizí kód z výstupů funkcí jen po kliknutí a bez cizí relace (F-08), historie, soubory a paměť ošetřené (S17–S20); kód dál doručuje server (F-02) |
+| Aplikace pro Android | 4 | **6** | design už zprávy nevynese (F-01), pin klíče serveru (F-05), „ověřeno“ (F-07), podepsaná politika, PIN počítaný předem, neutrální notifikace, úplný wipe, Android 10–12 (F-16, S10–S13, V5); zbývá `setting.set` / `url.open` v designu a pepř PINu bez hardwarového limitu |
+| Server a provoz | 4 | **5** | sandbox s permission modelem (F-03), připnutí SSRF (F-14), webhooky telefonie fail-closed (F-17), omezený stav bez přihlášení, regexy a WS brána (V3, V4, S1–S9); bez izolace procesu a s nešifrovanou `functions.db` (F-18) |
+| Ověřitelnost (audity, formální důkazy, reprodukovatelné buildy) | 1 | **1** | audit 6.7 i tato analýza jsou revize kódu s pomocí AI, ne externí audit (F-29) |
+| **Celkově** | **≈ 4** | **≈ 4,5** | implementační chyby s nejvyšší závažností jsou opravené nebo zúžené; zbývají návrhové mezery |
+
+**Verdikt po 6.7.** M5cet ani po opravách **není bezpečnostně srovnatelný se Signalem
+ani s Threemou**, ale už ho od nich dělí hlavně **návrh**, ne chyby v implementaci:
+kritický únik přes design Androidu (F-01), obejitelný pin klíče serveru (F-05),
+falešné „ověřeno“ (F-07), podvržená historie (F-11) a únik názvu místnosti (F-10)
+jsou opravené; sandbox Funkcí (F-03), spouštění cizího kódu z výstupů funkcí
+(F-08), SSRF (F-14), telefonie (F-17) a zámek Androidu (F-16) jsou výrazně zúžené.
+Zůstávají návrhové mezery z kap. 1: **web doručovaný serverem** (F-02), **sdílené
+heslo jako kořen důvěry** se slepým ID jako orákulem (F-04), **statické klíče
+zařízení bez obnovy po kompromitaci** a bez post-kvantové ochrany (F-06), **schránka
+pod klíčem místnosti** (F-09), **TOFU podle jména** (F-13) a **metadata** (F-15) —
+a dál **žádný nezávislý audit** ani reprodukovatelný build (F-29). Nic z oprav 6.7
+nebylo vyzkoušeno na skutečném zařízení ani proti skutečným poskytovatelům (FCM,
+SMTP, web push, telefonie); viz `docs/audit-6.7.md`, kap. 6.
+
+*Kapitola 11 vznikla stejně jako zbytek analýzy — revizí kódu s pomocí AI (Claude).*

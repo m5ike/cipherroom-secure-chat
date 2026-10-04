@@ -181,7 +181,12 @@ i web; Android má kopii v `contacts/LastSeen.java`).
   zprávy přes schránku; jeho záznam `peer-away` nese i `lastSeen` a ukládá se
   s účtem (`away[].lastSeen` v `accounts.json`), takže přežije restart. Klienti
   takového člena ukážou jednou (záznam relaye má přednost před drženým
-  záznamem téhož účtu). Pro hosta bez účtu server zprávy nedrží — jen ho vede
+  záznamem téhož účtu). Na webu odchází přihlášený člen se serverovým
+  uchováním zpráv i tlačítkem *Odpojit* s `leave {away: true}` — zůstane
+  tedy v seznamu jako nepřítomný; na jeho záznam relaye se
+  `PRESENCE_MAX_AWAY_DAYS` ani odpojení místnosti operátorem nevztahují
+  (drží se s účtem, nejvýš 20 místností; končí odhlášením nebo zrušením
+  relace). Pro hosta bez účtu server zprávy nedrží — jen ho vede
   jako pryč; po návratu se WebRTC spojí znovu.
 - **Soukromí**: `foreground`, `lastSeen` i držené členy vidí jen členové téže
   místnosti (stejně jako člena samotného); jiné místnosti se nic nepošle.

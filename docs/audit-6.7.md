@@ -426,7 +426,7 @@ Na skutečném zařízení (Android 10–12 ani Fold6) **neověřeno**.
 **Neopraveno (záměrně, s důvodem):**
 
 - **F-16 — zbytek:** ověřovač PINu vázaný na hardware (pepř `m5.pep` s `setUnlockedDeviceRequired` / StrongBox s limitem pokusů — nový klíč znamená migraci obalu PINu, bez testu na zařízení příliš riskantní), čítač pokusů odolný proti vrácení starší kopie souboru (Keystore nemá monotónní čítač pro aplikace), zahození DEK při „zamknout", nouzový PIN. Útočník s rootem nebo spuštěním kódu jako aplikace tak dál může PIN hádat offline přes Keystore pepř.
-- **F-01 — zbytek:** design dál smí `setting.set` / `setting.toggle` na citlivé klíče (sledování polohy, hlas přes server, emulace NFC) po klepnutí uživatele; `$form.nfcPin` (PIN NFC karty) je dál pole designu — ven ho už nedostane, ale design ho vidí.
+- **F-01 — zbytek:** design dál smí `setting.set` / `setting.toggle` na citlivé klíče (sledování polohy, hlas přes server, emulace NFC) po klepnutí uživatele; `url.open` s adresou poskládanou z dat projde po jednom potvrzení. *(Oprava po vydání: `$form.nfcPin` v původním textu neplatí — PIN NFC karty je nativní pole `ui/parts/ToolPanels.java`, mimo `$form`; zmínka zůstala jen v nápovědě akcí `nfc.read` / `nfc.write` v `server/android/design-61.ts`.)*
 - **S10 — derivace na UI vlákně** (jank / ANR na pomalých zařízeních): zůstává; přesun na pozadí mění tok zamykací obrazovky.
 - **N18:** čekání podle systémových hodin (potřebuje `elapsedRealtime` + počítání restartů); `CallService` končí jen akcí `call.end` (oblast hovorů); nečitelný záznam trezoru → nová identita (potřebuje UX obnovy); tiché aktualizace APK a 80/400 MB v paměti (streamované stahování, ne rychlá oprava); ochrana proti downgradu bundlu (operátor vrací verzi zrušením publikace nejnovějšího buildu — nejdřív pravidlo na serveru); debug/release se stejným `applicationId` a důvěrou v uživatelské CA (vývojový postup); NFC karta se 4místným PINem (formát zapsaných karet).
 - **N20:** Android job v CI — runner potřebuje platformu SDK 37, tady neověřitelné (RestrictedApi část je opravená v `b0b77407`).
@@ -462,7 +462,7 @@ Neopraveno (web, nízké) a proč:
 - **N31** (plaintext v systémových notifikacích) — volba „skrýt obsah" patří k paralelní práci na notifikacích (6.7 notify), aby se nekřížily úpravy `App.tsx`.
 - **N32** (replay guard jen v paměti) — perzistence viděných id by v efemérním režimu ukládala stopu konverzace; potřebuje rozhodnutí o režimech.
 - Z V2 zůstává **CSP sandboxu** s `connect-src https:` / `img-src https:` — kód modelu legitimně volá API; cizí kód teď běží až po vědomém kliknutí. Z S20 zůstává streamování velkých souborů do OPFS.
-- **Android** (mimo web): `ui/parts/Fn.java:95` posílá do funkcí čitelný název místnosti (F-10). Dokud nebude posílat slepé id, server relaci otevřenou z Androidu v místnosti nespojí s webovými členy (a naopak) — kliknutí napříč platformami na tlačítka zprávy modelu vrátí „relace skončila".
+- **Android** (mimo web): `ui/parts/Fn.java:95` posílá do funkcí čitelný název místnosti (F-10). Dokud nebude posílat slepé id, server relaci otevřenou z Androidu v místnosti nespojí s webovými členy (a naopak) — kliknutí napříč platformami na tlačítka zprávy modelu vrátí „relace skončila“. *(Opraveno před vydáním v `4a1078a8`: aplikace posílá slepé id `r3.…`, `ui/parts/Fn.java:95-98`; aplikace starší než 6.7 posílá čitelný název dál.)*
 
 ## 8. Opraveno v 6.7 (server)
 
