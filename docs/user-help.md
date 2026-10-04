@@ -466,6 +466,41 @@ Platí na webu i v aplikaci pro Android.
   *Odebrat hovory této aplikace ze záznamu telefonu* je zase smaže;
   *Smazat všechna data* je smaže také.
 
+### Aplikace pro Android: gesta v chatu a profil (6.10)
+- **Odpovědět** — bublinu zprávy táhni **doprava**; za hranou cvakne vibrace
+  a po puštění se zpráva přichytí nad pole jako citace. V odeslané odpovědi
+  je citovaná zpráva malá karta nahoře; **klepnutí na ni** posune chat
+  k původní zprávě a krátce ji zvýrazní.
+- **Přeposlat** — bublinu táhni **doleva**: vybereš místnost, pak všechny
+  v ní, nebo jednoho člověka soukromě.
+- **Jiná místnost** — rychlé přejetí mimo bublinu (vedle ní, po avataru)
+  přepne na sousední připojenou místnost jako dřív. Odpovědět a přeposlat
+  jdou dál i z nabídky po podržení zprávy.
+- **Avatar** odesílatele je nahoře u zprávy a o něco větší; **klepnutí**
+  ukáže, co ten člověk sdílí s členy místnosti (fotka, přezdívka, o mně,
+  údaje) — jen to, co ti dovolil.
+- **Můj profil** — karta nahoře v Nastavení, položka *Můj profil* v hlavní
+  nabídce a *Upravit můj profil* u tebe v panelu lidí. V editoru *Kdo co
+  vidí* ukazuje, co uvidí kdo; u každého údaje vybereš *jen já*, *členové
+  místností* nebo *veřejné*.
+
+### NFC šablony: úplné čtení karty (6.10)
+- *Šablony* (na webu u dat karty; v aplikaci pro Android *Šablona aplikace*) nabízí šablony správce podle typu karty: platební
+  karty (všechny aplikace, Visa, Mastercard, Maestro, Amex, JCB, Discover,
+  UnionPay…), e-ID / e-pas, MIFARE DESFire, obecná čipová karta. Šablona
+  provede **všechny kroky** čtení po sobě (krok n / m, *Zrušit*).
+- Výstup přepínáš: **surový vstup / výstup** (každý příkaz a odpověď),
+  **surový** (jen odpovědi), **JSON** a **čitelný** (srozumitelně: aplikace,
+  držitel, platnost, čítače, historie plateb, údaje dokladu s fotkou).
+- Tři ikony: **Sdílet**, **Přeposlat** (místnost → všem / jednomu) a
+  **Sobě** — soukromá poznámka v historii místnosti, vidíš ji jen ty
+  a nikam se neposílá.
+- Čísla karet jsou ve všech pohledech **zamaskovaná** (prvních 6 a posledních
+  4 číslic); *Celá čísla karet* je ukáže jen pro tento běh. Šablony jen čtou
+  — nic nezapíšou, neověří PIN ani nezaplatí.
+- Když čtení spustí **funkce (model)**, před odesláním výsledku na server se
+  zeptá: *Odeslat (maskovaně)* — výchozí, *Odeslat vše*, nebo *Neodesílat*.
+
 ## English
 
 ### First run
@@ -869,6 +904,43 @@ the web and in the Android app.
   apps do not show the name and say "Unknown" (with M5cet's icon). *Remove
   this app's calls from the phone's call log* deletes them again; *Erase all
   data* does too.
+
+### Android app: chat gestures and profile (6.10)
+- **Reply** — drag a message bubble **right**; past the mark the phone
+  ticks, and on release the message sticks above the field as a quote. In
+  the sent reply the quoted message is a small card at the top; **tap it**
+  and the chat scrolls to the original and flashes it.
+- **Forward** — drag the bubble **left**: pick a room, then everyone in it
+  or one person privately.
+- **Another room** — a quick fling off the bubbles (beside them, on an
+  avatar) still moves to the next connected room. Reply and forward are also
+  in the long-press menu.
+- The sender's **avatar** sits at the top of the message and is a little
+  larger; **tap** it to see what that person shares with the room's members
+  (photo, nickname, about, details) — only what they allow you.
+- **My profile** — a card at the top of Settings, *My profile* in the main
+  menu and *Edit my profile* on your own entry in the People panel. In the
+  editor, *Who sees what* shows what each audience sees; each detail is
+  *only me*, *room members* or *public*.
+
+### NFC templates: a complete card read (6.10)
+- *Templates* (on the web, with the card data; in the Android app *Application template*) offers the operator's templates by card
+  type: payment cards (every application, Visa, Mastercard, Maestro, Amex,
+  JCB, Discover, UnionPay…), e-ID / e-passport, MIFARE DESFire, a generic
+  smart card. A template runs **every step** of the read in turn (step n / m,
+  *Cancel*).
+- Switch the output: **raw in / out** (each command and answer), **raw**
+  (answers only), **JSON** and **readable** (plain language: applications,
+  holder, expiry, counters, payment history, the document's data and photo).
+- Three icons: **Share**, **Forward** (a room → everyone / one person) and
+  **To myself** — a private note in the room's history that only you see
+  and that is never sent.
+- Card numbers are **masked** in every view (first 6 and last 4 digits);
+  *Full card numbers* shows them for this run only. Templates only read —
+  they never write, verify a PIN or pay.
+- When a **function (model)** starts the read, you are asked before the
+  result goes to the server: *Send (masked)* — the default, *Send
+  everything*, or *Don't send*.
 
 ## Deutsch
 
@@ -1303,3 +1375,41 @@ dort beginnt, zeigt also nichts. Im Web und in der Android-App.
   Name der App geschrieben. Manche Telefon-Apps zeigen den Namen nicht und
   schreiben „Unbekannt“ (mit dem Symbol von M5cet). *Anrufe dieser App aus der
   Anrufliste entfernen* löscht sie wieder; *Alle Daten löschen* ebenfalls.
+
+### Android-App: Gesten im Chat und Profil (6.10)
+- **Antworten** — eine Nachrichtenblase nach **rechts** ziehen; ab der Marke
+  vibriert das Telefon, beim Loslassen hängt die Nachricht als Zitat über dem
+  Feld. In der gesendeten Antwort ist die zitierte Nachricht eine kleine
+  Karte oben; **antippen** scrollt zum Original und hebt es kurz hervor.
+- **Weiterleiten** — die Blase nach **links** ziehen: einen Raum wählen, dann
+  alle darin oder eine Person privat.
+- **Anderer Raum** — ein schnelles Wischen neben den Blasen (daneben, über
+  einen Avatar) wechselt wie bisher zum nächsten verbundenen Raum. Antworten
+  und Weiterleiten gibt es auch im Menü nach langem Drücken.
+- Der **Avatar** des Absenders steht oben an der Nachricht und ist etwas
+  größer; **antippen** zeigt, was diese Person mit den Raummitgliedern teilt
+  (Foto, Spitzname, Über mich, Angaben) — nur, was sie dir erlaubt.
+- **Mein Profil** — eine Karte oben in den Einstellungen, *Mein Profil* im
+  Hauptmenü und *Mein Profil bearbeiten* bei dir im Personen-Panel. Im Editor
+  zeigt *Wer sieht was*, was jedes Publikum sieht; jede Angabe ist *nur ich*,
+  *Raummitglieder* oder *öffentlich*.
+
+### NFC-Vorlagen: eine Karte vollständig lesen (6.10)
+- *Vorlagen* (im Web bei den Kartendaten; in der Android-App *Anwendungsvorlage*) bietet die Vorlagen des Betreibers nach
+  Kartentyp: Zahlungskarten (alle Anwendungen, Visa, Mastercard, Maestro,
+  Amex, JCB, Discover, UnionPay…), e-ID / e-Pass, MIFARE DESFire, eine
+  allgemeine Chipkarte. Eine Vorlage führt **alle Schritte** nacheinander aus
+  (Schritt n / m, *Abbrechen*).
+- Die Ausgabe umschalten: **roh ein / aus** (jeder Befehl und jede Antwort),
+  **roh** (nur Antworten), **JSON** und **lesbar** (verständlich:
+  Anwendungen, Inhaber, Gültigkeit, Zähler, Zahlungsverlauf, die Daten des
+  Ausweises mit Foto).
+- Drei Symbole: **Teilen**, **Weiterleiten** (ein Raum → alle / eine Person)
+  und **An mich** — eine private Notiz im Verlauf des Raums, die nur du
+  siehst und die nie gesendet wird.
+- Kartennummern sind in jeder Ansicht **maskiert** (erste 6 und letzte 4
+  Ziffern); *Vollständige Kartennummern* zeigt sie nur für diesen Lauf.
+  Vorlagen lesen nur — sie schreiben nie, prüfen keine PIN und bezahlen nicht.
+- Startet eine **Funktion (Modell)** das Lesen, wirst du gefragt, bevor das
+  Ergebnis an den Server geht: *Senden (maskiert)* — die Vorgabe, *Alles
+  senden* oder *Nicht senden*.

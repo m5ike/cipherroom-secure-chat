@@ -5,6 +5,109 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.10.0] – 2026-10-05
+
+**Šablony APDU jako úplná čtení typů karet (web i Android), gesta v chatu
+aplikace pro Android, profil na očích — a bezpečnostní revize 6.10 se dvěma
+koly oprav.** Kontrola definic `m5mobile.define.apduTemplates` ukázala, že
+většina standardních šablon byl jediný příkaz (SELECT, GET CHALLENGE…), který
+sám kartu nepřečte, a že Android šablony s celým čtením (`op`) odmítal jako
+neplatné. Revize našla v nové telefonii tři vážné chyby (padělaný webhook,
+obejití práv velikostí písmen, anonymní hovory) a na Androidu návrat třídy
+F-01 — všechno opravené; verdikt vůči Signalu zůstává ≈ 4,5 / 10.
+
+### Přidáno
+- **Šablony = úplné čtení typu karty** (`client/src/lib/nfc/apdu-templates.ts`):
+  kroky — pevný příkaz (`apdu`, `expect`, `optional`, `more` pro odpovědi po
+  rámcích) nebo operace čtečky (`select-ppse`, `select-pse`, `select-aid`,
+  `get-data`, `read-log`, `gpo`, `read-afl`, `read-files`, `for-each-aid`,
+  `eid-read`, `emv-read`). Standardní sada: platební karta (všechny aplikace,
+  kontaktní PSE), Visa, Visa Electron, V PAY, Mastercard, Maestro, Amex, JCB,
+  Discover, UnionPay (debetní, kreditní) — SELECT, čítače a zůstatky (GET DATA),
+  historie plateb, GPO, záznamy AFL, ostatní soubory SFI 1–30; e-ID / e-pas
+  (vše, jen MRZ); MIFARE DESFire (verze, všechny aplikace, volná paměť,
+  nastavení klíčů); obecná karta ISO 7816-4 (MF, EF.DIR 1–8, EF.ATR). Starší
+  záznamy běží dál.
+- **Běh šablony** na webu (`template-runner.ts`) i v Androidu (`TemplateRunner`):
+  všechny kroky po sobě s průběhem a *Zrušit*, každé APDU zaznamenané (i
+  zabezpečený kanál e-ID); **pohledy** surový vstup / výstup, surový, JSON,
+  čitelný (zpráva o kartě 6.6, DESFire dekódovaný, stavová slova vysvětlená);
+  ikony **Sdílet**, **Přeposlat** (místnost → všem / jednomu) a **Sobě**
+  (nový druh zprávy „poznámka": jen moje, nikdy neodeslaná). `m5.nfc` umí
+  `app-template`; konzole i testovací data Androidu drží stejnou sadu.
+- **Gesta bublin (Android):** doprava = odpovědět, doleva = přeposlat (list
+  místnost → všem / jednomu); citovaná zpráva jako karta nahoře v odpovědi,
+  klepnutí posune na originál; rychlé přejetí mimo bublinu dál přepíná
+  místnosti; v RTL zrcadleně; akce i pro TalkBack.
+- **Avatar** nahoře u zprávy, větší, klepnutím profil sdílený s místností
+  (`message.sender`); v řadě zpráv jednoho odesílatele jen u první.
+- **Můj profil** na očích: karta nahoře v Nastavení, *Můj profil* v hlavní
+  nabídce, *Upravit můj profil* v panelu lidí, *Kdo co vidí* v editoru.
+- **Bezpečnostní analýza, kap. 12** (`docs/security-analysis.md`): nová plocha
+  útoku 6.8–6.10, nálezy G-01 – G-24, stav nálezů F z 6.7, hodnocení po
+  oblastech, srovnání se Signalem, Threemou, WhatsAppem, iMessage, Telegramem,
+  Wire, Element/Matrix a Session.
+
+### Opraveno (bezpečnost — revize 6.10)
+- **G-01 (vysoká):** neověřený webhook hovoru (Telnyx bez veřejného klíče,
+  Vonage bez tajemství podpisu) spouštěl pravidla, TSA i audio most — padělaný
+  hovor mohl posílat SMS, volat HTTP a funkce, zkoušet route kódy. Teď ne
+  (vědomě `TELEPHONY_ALLOW_UNSIGNED=1`).
+- **G-02:** čtenář konzole obešel práva velikostí písmen v cestě — směrování
+  rozlišuje velikost písmen (`server/exact-routing.ts`).
+- **G-03:** route kódy a slepá ID místností zamaskované pro čtenáře a v logu.
+- **G-04 (vysoká):** modul bez pravidla dovolil hovory a SMS komukoli —
+  `/api/telephony/call|sms` teď pravidlo vyžaduje.
+- **G-05:** hádání route kódů — limity i na volané číslo a celý modul,
+  pauzy s eskalací, audit `telephony.inroute.lockout`, ukončení hovoru po
+  limitu pokusů, 6 číslic nad 10 min, odmítnuté triviální kódy.
+- **G-06:** toll fraud v TSA — SMS a Dial přes stejné kontroly jako funkce
+  (země, blokovaná čísla, pravidla, rozpočty), časový limit přepojení, prázdný
+  seznam zemí pro TSA = jen vlastní země.
+- **G-08:** zachycený podepsaný webhook se znovu nezpracuje (15 min).
+- **G-10 (soukromí):** soukromá zpráva / příloha pro nepřítomné mohla skončit
+  u celé místnosti; **G-12:** panel Soubory, poloha a panel Řeč ignorovaly
+  výběr příjemců; **G-13:** volby zprávy se u příloh a přeposlání tiše ztrácely;
+  **G-14:** text pro řeč serveru bez upozornění; **G-11:** znovu nabídnutý
+  telefonní hovor ztratil server.
+- **G-15, G-16:** editor TSA nedrží koncepty a tajemství v `localStorage`;
+  `replace()` ve vzorcích omezený.
+- **NFC (G-17 – G-19):** výsledek čtení spuštěného modelem odejde až po
+  souhlasu (výchozí maskovaný), šablony a surová APDU jen ke čtení (allowlist
+  příkazů), čísla karet maskovaná i v hex a datech stopy.
+- **Android (G-20 – G-24):** design už nedá data zpráv do citlivých akcí
+  a nemění soukromé volby (schéma pro každou volbu), oznámení se při zámku
+  zneutralizují, intent s cizí místností se ignoruje, zbytky zkratek / záznamu
+  hovorů / Záznamu.
+- Šablony: aplikace pro Android odmítala šablony s celým čtením; preferovaná
+  AID u `emv-read` se ignorovala (web i Android).
+
+### Změněno
+- Build výchozího designu potřebuje aplikaci 6.10 (`minAppCode` 61000).
+- Chování po aktualizaci (webhooky bez podpisu, pravidlo pro telefonní panel,
+  země TSA, route kódy, vlastní designy, šablony): `docs/deployment.md` ›
+  Přechod na 6.10.
+
+### Testy
+- `npx vitest run`: 244 souborů, 2933 testů (4 přeskočené); E2E 72 / 72;
+  Android 591 testů JVM (`TemplateRunnerTest`, `TemplateViewsTest`,
+  `BubbleSwipeTest`, `ReplyQuoteTest`, `WhoSeesTest`, `ActionGuardTest`,
+  `SettingSchemaTest`, `IntentSealTest`, `ModelNfcConsentTest`…), `lintDebug`
+  0 chyb. Šablony běží na simulovaných kartách (EMV, BAC, DESFire EV1,
+  ISO 7816 s 61xx / 6Cxx).
+
+### Známá omezení
+- **Nic z 6.10 neběželo se skutečnou kartou ani na telefonu** (gesta, citace,
+  profil, zámek, sdílení, souhlas) ani proti skutečnému poskytovateli
+  telefonie (časové limity přepojení, `jti` Vonage).
+- Čitelný pohled šablony má na webu a v Androidu jiné rozložení (stejné
+  hodnoty). Velký soubor dál nenese klikací / mizející volbu (aplikace to
+  řekne). Mezi zámkem telefonu a automatickým zámkem aplikace může zamčená
+  obrazovka nastavená na „zobrazit vše" ukázat obsah zprávy.
+- Otevřené návrhové nálezy: nešifrovaná `telephony.db` (G-07), slepé ID jako
+  klíč k hubu (G-09) a mezery z kap. 1 (F-02, F-04, F-06, F-09, F-13, F-15,
+  F-18, F-29 — žádný nezávislý audit).
+
 ## [6.9.0] – 2026-10-04
 
 **Telephony & SIP jako ústředna.** Nová stránka konzole; oprávnění; pravidla

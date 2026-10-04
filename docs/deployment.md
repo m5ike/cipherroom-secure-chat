@@ -343,6 +343,38 @@ G-06, G-08, G-12 – G-16) mění chování telefonie, editoru TSA a webu. Nové
 tyto opravy nepřinášejí; nové limity jsou v *Telephony › Permissions* (soubor uložený verzí 6.9
 je nemá — platí výchozí hodnoty z tabulky).
 
+**Po aktualizaci nejdřív (první kolo revize, G-01 – G-04, G-10):**
+
+- **Neověřený webhook hovoru už nic nespustí.** Telnyx bez `TELNYX_PUBLIC_KEY` a Vonage bez
+  `VONAGE_SIGNATURE_SECRET` přestanou směrovat příchozí hovory přes pravidla, TSA a audio most
+  (dřív tím šlo hovor padělat). Doplňte klíč podpisu, nebo — vědomě — `TELEPHONY_ALLOW_UNSIGNED=1`
+  (Overview pak varuje).
+- **Telefonní panel webu potřebuje pravidlo modulu** Telephony & SIP: bez něj
+  `POST /api/telephony/call|sms` odmítne (dřív modul bez pravidla dovolil hovory a SMS komukoli
+  z internetu). Web neposílá token účtu, takže pravidlo má dát `call` / `sms` skupině `guest`
+  (nebo jen přihlášeným, pokud panel posílá token).
+- **Cesty konzole a API rozlišují velikost písmen** (`/admin/telephony/LOG/…` už nevede na stejný
+  handler jako `/log/…` a neobejde práva).
+- Čtenář konzole bez práva `settings` vidí route kódy a slepá ID místností zamaskované.
+
+**Aplikace pro Android 6.10:**
+
+- **Build výchozího designu potřebuje aplikaci 6.10** (`minAppCode` 61000 — gesta bublin, citace,
+  profil, šablony NFC); starší telefony si nechají build, který mají.
+- **Design už nesmí** do citlivých akcí (`lib.run`, `url.open`, `profile.public`, `fn.run`, klíč
+  `setting.set` / `look.set` / `setting.toggle`) dát počítaný argument z dat zpráv a nesmí měnit
+  soukromé volby (záznam hovorů, konverzace, upozornění, poloha, zabezpečení, hlas, potvrzení
+  přečtení, kontakty); každá volba má schéma hodnot. **Vlastní design operátora**, který na tom
+  stavěl, akci neprovede („Tuto akci vzhledu aplikace neprovedla: mohla by z telefonu odnést data nebo změnit nastavení soukromí.") — upravte ho.
+- Oznámení se při zámku aplikace přepíšou na neutrální text; intent s cizím `room` aplikace
+  ignoruje (jen vlastní zapečetěný).
+
+**NFC (web i Android):** šablony `apduTemplates` mají nový formát (kroky — úplné čtení typu
+karty); staré záznamy běží dál, ale **Console › Android › Define › Load standard templates** je
+nahradí úplnou sadou. Šablony i surová APDU z modelu jsou **jen ke čtení** (zápis, VERIFY,
+GENERATE AC se odmítnou); výsledek čtení spuštěného modelem odejde serveru až po souhlasu
+uživatele (výchozí maskovaný).
+
 **Telephony & SIP — aplikace (TSA):**
 
 - **Prázdné `outbound.countries` znamená pro TSA jen vaše vlastní země.** SMS a přepojení (Dial)

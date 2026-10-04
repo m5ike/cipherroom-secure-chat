@@ -224,7 +224,8 @@ describe("the log", () => {
     const mine = logged.filter((l) => l.kind === "inroute");
     expect(mine.length).toBeGreaterThanOrEqual(4);
     const text = JSON.stringify(mine);
-    expect(text).not.toMatch(/905217|905218|48213|70391/);
+    // Whole numbers only: the entries carry millisecond timestamps, which may contain these digits.
+    expect(text).not.toMatch(/(?<!\d)(905217|905218|48213|70391)(?!\d)/);
     expect(text).toContain("•••••7");
     // 6.10 (G-03): the room by its hash, never its blind id (the log is read without "settings").
     expect(mine.some((l) => l.summary.includes(`route code •••••7 added → room ${hashRoom("r3.log")}`))).toBe(true);
