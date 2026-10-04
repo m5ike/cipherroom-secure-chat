@@ -93,15 +93,16 @@ async function forward(req: express.Request, res: express.Response, path: string
   }
 }
 
-app.use("/api/admin/menu-config", express.json({ limit: "1mb" }));
-// 6.0: an APK release goes to the main service as the raw file; the Android
-// design (screens, strings, small assets) is bigger than the default.
-app.use("/api/admin/android/releases/upload", (req, res, next) => {
-  // Read the body only for someone with a token (the main service checks it for real).
+// Read a large body only for someone with a token (the main service checks it for real; 6.7 S4).
+const bearerFirst: express.RequestHandler = (req, res, next) => {
   if (!/^Bearer \S{16,}/.test(String(req.headers.authorization ?? ""))) return res.status(401).json({ ok: false, message: "Unauthorized." });
   next();
-}, express.raw({ type: () => true, limit: "300mb" }));
-app.use("/api/admin/android/design", express.json({ limit: "8mb" }));
+};
+app.use("/api/admin/menu-config", bearerFirst, express.json({ limit: "1mb" }));
+// 6.0: an APK release goes to the main service as the raw file; the Android
+// design (screens, strings, small assets) is bigger than the default.
+app.use("/api/admin/android/releases/upload", bearerFirst, express.raw({ type: () => true, limit: "300mb" }));
+app.use("/api/admin/android/design", bearerFirst, express.json({ limit: "8mb" }));
 // 4.0.5: the Layout builder saves whole element trees.
 app.use("/admin/layout", express.json({ limit: "4mb" }));
 // Package drafts and imports are bigger than the default 256 kB.

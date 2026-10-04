@@ -25,7 +25,7 @@ import type { Request } from 'express';
 import helmet from "helmet";
 import { rateLimit } from "express-rate-limit";
 import { requireAdminToken } from "./admin-auth";
-import { isAdmToken } from "./functions/adm-token";
+import { mountAdminRequestGuards } from "./admin-limits";
 import { registerRoutes, signalingHub } from "./routes";
 import { clusterBus } from "./cluster/bus";
 import { accountStore } from "./accounts/store";
@@ -112,28 +112,14 @@ app.use(
   rateLimit({ windowMs: 15 * 60 * 1000, limit: 1_500, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many requests from this network." } }),
   express.raw({ type: () => true, limit: "1mb" }),
 );
-// The Android design carries screens, strings and small assets.
-app.use("/api/admin/android/design", express.json({ limit: "8mb" }));
 app.use("/api/account/vault", express.json({ limit: "8mb" }));
 // Conversations arrive in batches; this parser has to come before the
 // global one to win.
 app.use("/api/storage", express.json({ limit: "12mb" }));
-// The menu builder saves a whole menu, HTML blocks included.
-app.use("/api/admin/menu-config", express.json({ limit: "1mb" }));
-// The operator console: a busy operator is not a flood, a wrong token is.
-// Refused requests count against a small budget (token guessing), all
-// requests against a generous one.
-// 6.0: a function's calls (m5adm, a signed m5f1 token) come from this host
-// too — they get a bucket per model instead, so a busy script cannot use
-// up the console's.
-const bearerOf = (req: express.Request) => (req.header("authorization") ?? "").replace(/^Bearer\s+/, "");
-const fnModelOf = (req: express.Request) => { try { return String(JSON.parse(Buffer.from(bearerOf(req).slice(5).split(".")[0] ?? "", "base64url").toString("utf8")).m ?? "?"); } catch { return "?"; } };
-app.use(
-  "/api/admin",
-  rateLimit({ windowMs: 15 * 60 * 1000, limit: 30, skipSuccessfulRequests: true, standardHeaders: true, legacyHeaders: false, skip: (req) => isAdmToken(bearerOf(req)), message: { ok: false, message: "Too many refused admin requests." } }),
-  rateLimit({ windowMs: 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false, skip: (req) => isAdmToken(bearerOf(req)), message: { ok: false, message: "Too many admin requests." } }),
-  rateLimit({ windowMs: 60 * 1000, limit: 1_200, standardHeaders: true, legacyHeaders: false, skip: (req) => !isAdmToken(bearerOf(req)), keyGenerator: (req) => `fn:${fnModelOf(req)}`, message: { ok: false, message: "Too many administration calls from this function." } }),
-);
+// The operator console's limits (per token kind; a function's token only
+// counts once it verifies), then the large admin bodies (the Android design,
+// the menu) — read only for an administrator (admin-limits.ts, 6.7 S4).
+mountAdminRequestGuards(app);
 // 6.0: an APK release is uploaded as the raw file — only an operator's
 // request is read at all (up to 300 MB), and only after the limits above.
 app.use("/api/admin/android/releases/upload", requireAdminToken(undefined, "operator"), express.raw({ type: () => true, limit: "300mb" }));
