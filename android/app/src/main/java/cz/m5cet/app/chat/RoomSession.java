@@ -426,7 +426,7 @@ public final class RoomSession {
         while (seen.size() > 20_000) seen.remove(seen.iterator().next());
         if ("audio-status".equals(m.kind)) { p.audio = m.text; calls.onPeerAudio(p, m.text); changed(); return; }
         m.roomKey = key;
-        m.verified = opened.signer != null && opened.signer.valid && !p.changed;
+        m.verified = Verified.p2p(opened.signer, p.publicKey, p.changed, m.senderName, p.name); // 6.7 S15: the pinned key, under its name
         m.changed = p.changed;
         if (m.expired(System.currentTimeMillis())) return;
         arrived(m, "p2p");
@@ -647,7 +647,7 @@ public final class RoomSession {
             if (m == null || !seen.add(m.id) || "audio-status".equals(m.kind)) continue;
             m.roomKey = key;
             m.relayed = true;
-            m.verified = opened.signer != null && opened.signer.valid;
+            m.verified = Verified.relay(opened.signer, rooms.pinned(room, m.senderName)); // 6.7 S15: only the key pinned for that name
             if (m.expired(System.currentTimeMillis())) continue;
             arrived(m, "relay");
             add(m, true);
