@@ -816,8 +816,9 @@ Zvuk hovorů se na serveru překódovává — **telefonie je mimo E2EE** ([`bri
 ### 5.4 Administrátorská konzole
 
 * Token konzole jen v `sessionStorage` a jen se „zapamatovat" ([`console.js:164-167`](../admin-ui/public/console.js)).
-* DOM se staví helperem `h()` s textovými uzly; jediná `innerHTML` místa escapují
-  ([`legacy-tools.js:41-80`](../admin-ui/public/legacy-tools.js)); CSP konzole `script-src 'self'`
+* DOM se staví helperem `h()` s textovými uzly; od 6.9 konzole `innerHTML` nepoužívá vůbec
+  (poslední místa v `legacy-tools.js` zmizela s novou stránkou Telephony & SIP,
+  [`telephony-console.js`](../admin-ui/public/telephony-console.js)); CSP konzole `script-src 'self'`
   ([`server/admin.ts:168`](../server/admin.ts)).
 * Role vynucuje server: GET/HEAD = auditor, ostatní = operátor, správa administrátorů = owner,
   tokeny funkcí s oblastmi ([`admin-auth.ts:28-72`](../server/admin-auth.ts),
