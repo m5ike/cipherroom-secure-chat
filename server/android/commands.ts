@@ -15,8 +15,9 @@ import { androidStore, newId, type Command, type CommandKind, type Device } from
 
 export const COMMAND_KINDS: readonly CommandKind[] = ["ping", "status", "flash", "push", "update", "lock", "wipe", "config"];
 
-const TTL_S: Record<CommandKind, number> = { ping: 600, status: 3600, flash: 3600, push: 86_400, update: 86_400, lock: 7 * 86_400, wipe: 30 * 86_400, config: 7 * 86_400 };
-const HIGH: ReadonlySet<CommandKind> = new Set(["flash", "push", "lock", "wipe"]);
+// 6.7: "notify" is not in COMMAND_KINDS — the notifier (server/notify) sends it, the console does not.
+export const TTL_S: Record<CommandKind, number> = { ping: 600, status: 3600, flash: 3600, push: 86_400, update: 86_400, lock: 7 * 86_400, wipe: 30 * 86_400, config: 7 * 86_400, notify: 3600 };
+const HIGH: ReadonlySet<CommandKind> = new Set(["flash", "push", "lock", "wipe", "notify"]);
 const COLLAPSE: ReadonlySet<CommandKind> = new Set(["status", "update", "config"]);
 
 export type CommandWire = { m5: "1"; i: string } & EciesWire & { s: string };

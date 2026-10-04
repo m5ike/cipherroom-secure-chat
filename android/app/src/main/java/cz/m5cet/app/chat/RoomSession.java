@@ -618,7 +618,10 @@ public final class RoomSession {
             WebSocket w = ws;
             String token = app.account.token();
             if (w == null || !w.isOpen() || !connected() || token.isEmpty()) return;
-            try { w.send(new JSONObject().put("type", "auth").put("token", token).put("away", false).toString()); } catch (JSONException ignored) { }
+            // 6.7: with notifications on, the server covers for this device while the app is closed
+            // (keeps its messages, wakes it — server/notify) instead of dropping it from the room.
+            boolean away = cz.m5cet.app.push.NotifyPrefs.get(app).awayWanted();
+            try { w.send(new JSONObject().put("type", "auth").put("token", token).put("away", away).toString()); } catch (JSONException ignored) { }
         });
     }
 

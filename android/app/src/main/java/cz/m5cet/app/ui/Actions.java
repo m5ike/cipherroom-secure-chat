@@ -129,6 +129,10 @@ public final class Actions {
                 case "biometric.toggle": a.toggleBiometric(); break;
                 case "wipe.ask": a.parts.askWipe(); break;
                 case "system.settings": a.systemSettings(s); break;
+                // 6.7 notify: the channel order, a test, sending the settings now
+                case "notify.up": case "notify.down": case "notify.use": case "notify.drop": case "notify.test": case "notify.sync":
+                    cz.m5cet.app.push.NotifyPrefs.get(app).run(a, action, s);
+                    break;
                 // calls
                 case "call.audioText": {
                     RoomSession r = app.rooms.activeSession();

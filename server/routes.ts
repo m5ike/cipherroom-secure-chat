@@ -62,7 +62,8 @@ import { system } from "./monitor/system";
 import { resolveTrustProxy } from "./trust-proxy";
 import { registerAccountRoutes } from "./accounts/routes";
 import { registerAppLinks } from "./android/app-links";
-import { sendWebPush } from "./push";
+import { createNotifierService } from "./notify/service";
+import { registerNotifyRoutes } from "./notify/routes";
 import { registerTelephonyRoutes } from "./telephony/routes";
 import { registerWebhookRoutes } from "./telephony/webhooks";
 import { registerLayoutRoutes } from "./layout";
@@ -180,11 +181,15 @@ export async function registerRoutes(
   }, 10 * 60 * 1000);
   queueSweep.unref?.();
 
+  // 6.7: the notifier (notify/*) — Android, web push and e-mail in each user's
+  // order with a fallback, by the operator's templates; never someone present.
+  const notify = createNotifierService(accountStore, (accountId, room) => hub?.relay.present(accountId, room) ?? false);
+
   // The signaling hub (signaling/hub.ts): /ws, protocol v2, the away relay.
   hub = new SignalingHub({
     accounts: accountStore,
     queue: offlineQueue,
-    push: (target, payload) => sendWebPush(target, payload),
+    wake: (req) => notify.notifier.notify(req),
     storageFrame: (socket, state, frame, reply) => handleStorageFrame(socket, state, frame, reply),
     newStorageState: (ip) => newStorageSocketState(ip),
     trustProxy: resolveTrustProxy(process.env.TRUST_PROXY).value,
@@ -254,6 +259,8 @@ export async function registerRoutes(
   // and the devices' own API (/api/android/*).
   registerAndroidAdminRoutes(app);
   registerAndroidRoutes(app);
+  // 6.7: notifications — the user's choice, tests, e-mail, the console's Notifications.
+  registerNotifyRoutes(app, { accounts: accountStore, ...notify });
   registerAdminClientConfigRoutes(app, () => {
     const all = accountStore.all();
     const withConnections = all.filter((a) => (a.vault.connections ?? 0) > 0);

@@ -27,7 +27,8 @@ export type ClientFrame =
   | { type: "signal"; target: string; payload: SessionDescription | IceCandidate | SealedSignal }
   | { type: "ping"; t: number }
   | { type: "presence"; away: boolean }
-  | { type: "relay"; messageId: string; to: string[]; envelope: Envelope; expiresAt?: number }
+  // 6.7: mention — the recipients (of `to`) the message mentions; call — it rings them. Hints for the notification's kind only.
+  | { type: "relay"; messageId: string; to: string[]; envelope: Envelope; expiresAt?: number; mention?: string[]; call?: boolean }
   | { type: "relay-ack"; ids: string[] }
   | { type: "receipt"; messageIds: string[]; state: "read" | "delivered"; to?: { peerId?: string; accountId?: string } }
   | { type: "command-poll"; deviceId: string }
@@ -194,6 +195,9 @@ export function parseFrame(raw: string | Buffer): ClientFrame | FrameError {
       if (!messageId || !to || to.length === 0 || !envelope) return fail("relay needs messageId, to[] and an envelope");
       const frame: ClientFrame = { type: "relay", messageId, to: [...new Set(to)], envelope };
       if (typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt)) frame.expiresAt = f.expiresAt;
+      const mention = f.mention === undefined ? null : ids(f.mention, 50);
+      if (mention && mention.length) frame.mention = mention.filter((m) => frame.to.includes(m));
+      if (f.call === true) frame.call = true;
       return frame;
     }
     case "relay-ack": {

@@ -233,7 +233,7 @@ export function AppPart({ layout, variant: v, lang }: { layout: LayoutId; varian
     case "panel.privacy": node = <PrivacyPanel {...panel} onLocalPurge={noop} onServerPurge={async () => ({ ok: true, message: "" })} />; break;
     case "panel.encryption": node = <EncryptionPanel {...panel} />; break;
     case "panel.notifications":
-      node = <NotificationsPanel {...panel} onEnable={async () => undefined} onDisable={noop} pushAvailable={v !== "off"} signedIn={v !== "off"} onTestLocal={async () => ({ ok: true })} onTestPush={async () => ({ ok: true })} />;
+      node = <NotificationsPanel {...panel} notifyOffline onEnable={async () => undefined} onDisable={noop} pushAvailable={v !== "off"} signedIn={v !== "off"} onTestLocal={async () => ({ ok: true })} onTestPush={async () => ({ ok: true })} />;
       break;
     case "panel.analytics": node = <AnalyticsPanel {...panel} />; break;
     case "panel.roomSecurity": node = <RoomSecurityPanel {...panel} room={v === "none" ? "" : "tym-brno"} />; break;

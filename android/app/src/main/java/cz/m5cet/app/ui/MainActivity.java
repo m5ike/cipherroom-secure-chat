@@ -481,6 +481,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
                 break;
             }
             case "settings.appearance": s.put("presets", cz.m5cet.app.design.Appearance.presets(app.lang(), app.design().appName())); break;
+            case "settings.notify": s.put("notify", cz.m5cet.app.push.NotifyPrefs.get(app).scope()); break; // 6.7 notify
             case "settings.security":
                 s.put("security", jo("biometricAvailable", !"off".equals(app.lock.biometricMode()) && Biometric.available(this), "biometric", app.vault.bioEnrolled(),
                     "pinLength", (double) app.lock.pinLength(), "maxAttempts", (double) app.lock.maxAttempts(), "wipe", app.config.lockPolicy().optBoolean("wipe", true), "screenshots", app.lock.screenshots()));

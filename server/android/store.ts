@@ -68,7 +68,8 @@ export type Release = {
   source: "upload" | "build";
 };
 
-export type CommandKind = "ping" | "status" | "flash" | "push" | "update" | "lock" | "wipe" | "config";
+/** 6.7: "notify" — a notification by the server's template (server/notify), sent by the notifier, not from the console. */
+export type CommandKind = "ping" | "status" | "flash" | "push" | "update" | "lock" | "wipe" | "config" | "notify";
 export type CommandStatus = "queued" | "sent" | "delivered" | "done" | "failed" | "expired";
 export type Command = {
   id: string; deviceId: string; kind: CommandKind; payload: Record<string, unknown>;
