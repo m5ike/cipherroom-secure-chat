@@ -230,6 +230,8 @@ describe("the sealed card in the vault", () => {
     // A preference save does not touch it.
     await call("PUT", "/api/account/vault", a.token, { profile: Buffer.from("prefs").toString("base64") });
     expect((await call("GET", "/api/account/vault", a.token)).json.card.ct).toBe(ct);
+    // Only the card, when that is all a device asks for (the chat can be megabytes).
+    expect((await call("GET", "/api/account/vault?only=card", a.token)).json).toEqual({ ok: true, card: { ct, updatedAt: expect.any(Number) } });
     // Not base64, or too large: refused.
     expect((await call("PUT", "/api/account/vault", a.token, { card: "not base64 !" })).status).toBe(413);
     expect((await call("PUT", "/api/account/vault", a.token, { card: "A".repeat(400_004) })).status).toBe(413);

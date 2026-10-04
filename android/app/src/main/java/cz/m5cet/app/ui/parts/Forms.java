@@ -252,7 +252,8 @@ public final class Forms {
             super(a);
             setOrientation(VERTICAL);
             M5 app = a.app();
-            EditText name = field(a, app.t("join.name"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS, app.config.userName());
+            // 6.7: the public nickname pre-fills the name (it can still be changed for this room).
+            EditText name = field(a, app.t("join.name"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS, cz.m5cet.app.profile.Profiles.of(app).prefill(app.config.userName()));
             EditText room = field(a, app.t("join.room"), InputType.TYPE_CLASS_TEXT, "");
             EditText pass = field(a, app.t("join.passphrase"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD, "");
             TextView go = button(a, app.t("join.submit"));

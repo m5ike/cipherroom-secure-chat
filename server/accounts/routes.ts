@@ -432,6 +432,8 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
       profileBytes: vault.profile?.ct.length ?? 0,
       chatBytes: vault.chat?.ct.length ?? 0,
     });
+    // 6.7: ?only=card — opening the profile card does not fetch the chat with it.
+    if (req.query.only === "card") return res.json({ ok: true, card: vault.card ?? null });
     res.json({ ok: true, profile: vault.profile ?? null, chat: vault.chat ?? null, connections: vault.connections ?? null, registration: vault.registration ?? null, card: vault.card ?? null });
   });
 

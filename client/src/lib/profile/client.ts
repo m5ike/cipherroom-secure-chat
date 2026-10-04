@@ -46,7 +46,7 @@ async function call<T>(path: string, init: RequestInit = {}, token = accountToke
 export async function loadCard(): Promise<ProfileCard | null> {
   const key = vaultKey();
   if (!key || !accountToken()) { set(null); return null; }
-  const raw = await call<{ card?: { ct: string } | null }>("/api/account/vault");
+  const raw = await call<{ card?: { ct: string } | null }>("/api/account/vault?only=card");
   const opened = raw.card?.ct ? normalizeCard(await openProfile<unknown>(raw.card.ct, key)) : emptyCard();
   set(opened);
   return opened;

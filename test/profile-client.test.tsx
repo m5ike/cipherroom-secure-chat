@@ -109,10 +109,10 @@ describe("saving the card", () => {
 describe("loading the card", () => {
   it("opens the vault's slot, or starts an empty (private) one", async () => {
     const sealed = await sealProfile(CARD(), session.key!);
-    replies["GET /api/account/vault"] = () => json({ ok: true, card: { ct: sealed } });
+    replies["GET /api/account/vault?only=card"] = () => json({ ok: true, card: { ct: sealed } });
     expect((await loadCard())?.nickname.value).toBe("Alice");
     expect(myRoomView()?.about).toBe("Only my friends in rooms");
-    replies["GET /api/account/vault"] = () => json({ ok: true, card: null });
+    replies["GET /api/account/vault?only=card"] = () => json({ ok: true, card: null });
     const empty = await loadCard();
     expect(empty?.about.audience).toBe("me");
     expect(myRoomView(empty)).toBeNull();

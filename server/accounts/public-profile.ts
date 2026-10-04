@@ -91,10 +91,11 @@ export function checkPublicProfile(input: unknown): { ok: true; profile: SharedP
   if (!input || typeof input !== "object") return { ok: false, code: "invalid", message: "A profile is required." };
   if (JSON.stringify(input).length > SHARED_PROFILE_MAX_CHARS) return { ok: false, code: "too-large", message: "The profile is too large." };
   const raw = input as { avatar?: unknown; cover?: unknown };
-  const avatar = raw.avatar === undefined ? "" : checkImageDataUrl(raw.avatar, PROFILE_LIMITS.avatarBytes);
-  const cover = raw.cover === undefined ? "" : checkImageDataUrl(raw.cover, PROFILE_LIMITS.coverBytes);
-  if (raw.avatar !== undefined && !avatar) return { ok: false, code: "bad-image", message: "The photo is not a JPEG, PNG or WebP within the size limit." };
-  if (raw.cover !== undefined && !cover) return { ok: false, code: "bad-image", message: "The background is not a JPEG, PNG or WebP within the size limit." };
+  const given = (v: unknown) => v !== undefined && v !== null && v !== "";
+  const avatar = given(raw.avatar) ? checkImageDataUrl(raw.avatar, PROFILE_LIMITS.avatarBytes) : "";
+  const cover = given(raw.cover) ? checkImageDataUrl(raw.cover, PROFILE_LIMITS.coverBytes) : "";
+  if (given(raw.avatar) && !avatar) return { ok: false, code: "bad-image", message: "The photo is not a JPEG, PNG or WebP within the size limit." };
+  if (given(raw.cover) && !cover) return { ok: false, code: "bad-image", message: "The background is not a JPEG, PNG or WebP within the size limit." };
   const profile = normalizeShared({ ...(input as object), ...(avatar ? { avatar } : {}), ...(cover ? { cover } : {}) });
   if (!profile) return { ok: false, code: "invalid", message: "Not a profile." };
   if (isEmptyView(profile)) return { ok: false, code: "empty", message: "Nothing public in it; withdraw it instead (DELETE)." };

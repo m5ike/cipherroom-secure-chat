@@ -470,6 +470,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
                 break;
             }
             case "settings.user": s.put("keys", keysScope()); s.put("connection", connectionScope()); break;
+            case "settings.profile": s.put("profile", cz.m5cet.app.ui.parts.ProfileUi.scope(this)); break; // 6.7
             case "settings.voice": case "voice": case "dictate.options":
                 loadVoices();
                 s.put("voices", voices);
@@ -705,6 +706,9 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         if (request == 7302 && result == RESULT_OK && data != null) parts.savedTo(data.getData());
         if (request == 7303 && result == RESULT_OK && data != null && data.getData() != null) parts.pickedFile(data.getData());
         if (request == 7304 && result == RESULT_OK) parts.captured();
+        // 6.7: the profile's photo / background
+        if ((request == cz.m5cet.app.ui.parts.ProfileUi.PICK_AVATAR || request == cz.m5cet.app.ui.parts.ProfileUi.PICK_COVER) && result == RESULT_OK && data != null && data.getData() != null)
+            cz.m5cet.app.ui.parts.ProfileUi.picked(this, request == cz.m5cet.app.ui.parts.ProfileUi.PICK_COVER ? "cover" : "avatar", data.getData());
     }
 
     public boolean has(String perm) { return checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED; }
