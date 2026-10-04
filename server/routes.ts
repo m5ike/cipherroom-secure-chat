@@ -43,6 +43,7 @@ import { registerTelEngineRoutes } from "./telephony/tel-routes";
 import { attachBridgeMedia, setBridgeNotifier } from "./telephony/bridge";
 // 6.9: route_audio — a call's audio into a room / to a member (registers telHooks.routeAudio).
 import { setRouteHub } from "./telephony/route-audio";
+import { registerTsaMediaRoutes } from "./telephony/tsa/media";
 import { accountStore, accountsDir } from "./accounts/store";
 import { storage } from "./storage/service";
 import { registerStorageRoutes } from "./storage/routes";
@@ -317,6 +318,8 @@ export async function registerRoutes(
     send: (room, peerId, payload) => signaling.sendToPeer(room, peerId, payload),
     accountMembers: (accountId) => signaling.accountMembers(accountId),
   });
+  // 6.9: TSAs — the audio providers fetch (/wh/tsa/…), the runtime, and room messages through the hub.
+  registerTsaMediaRoutes(app, { notice: (hash, n, target) => signaling.notice(hash, n, target) });
   // Admin-edited layout / templates for every client (GET /api/layout).
   registerLayoutRoutes(app);
   registerClientConfigRoutes(app);

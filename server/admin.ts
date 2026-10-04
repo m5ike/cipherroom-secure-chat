@@ -39,6 +39,7 @@ import { registerAccessRoutes, aiConsoleRight } from "./access-routes";
 import { registerAdminTelephonyRoutes } from "./telephony/routes";
 import { registerControlRoutes } from "./telephony/control/routes";
 import { telephonyConsoleRight } from "./telephony/control/guard";
+import { registerTsaRoutes } from "./telephony/tsa/routes";
 import { registerAdminLayoutRoutes } from "./layout";
 import { distPublicDir } from "./layout-catalog";
 import { applyTrustProxy } from "./trust-proxy";
@@ -109,6 +110,8 @@ app.use("/api/admin/android/design", bearerFirst, express.json({ limit: "8mb" })
 app.use("/admin/layout", express.json({ limit: "4mb" }));
 // Package drafts and imports are bigger than the default 256 kB.
 app.use("/admin/functions", express.json({ limit: "8mb" }));
+// 6.9: TSA graphs, imports, simulator recordings and the Play tool's audio files.
+app.use(["/admin/telephony/tsa", "/admin/telephony/sim"], bearerFirst, express.json({ limit: "16mb" }));
 app.use(express.json({ limit: "256kb" }));
 // The console's API: live state is in the main service.
 app.use("/api/admin", (req, res) => { void forward(req, res, req.originalUrl); });
@@ -206,6 +209,7 @@ registerAccessRoutes(app);
 // Telephony + SIP console (all under /admin, so behind the auth middleware).
 registerAdminTelephonyRoutes(app);
 registerControlRoutes(app); // 6.9: permissions, routing rules, the inroute table
+registerTsaRoutes(app); // 6.9: Telephony & SIP Applications — the editor's API and the simulator
 // Layout / template builder (persisted, served to clients via /api/layout).
 registerAdminLayoutRoutes(app);
 
