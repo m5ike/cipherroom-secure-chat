@@ -20,6 +20,7 @@ import { ACTIONS_63, ELEMENTS_63, MENUS_63, SCREENS_63, SCREENS_TREES_63, SLOTS_
 import { ACTIONS_64, ELEMENTS_64, MENUS_64, SCREENS_64, SCREENS_TREES_64, SLOTS_64, STRINGS_64, patch64, patchMenus64 } from "./design-64";
 import { ACTIONS_67, ELEMENTS_67, MENUS_67, SCREENS_67, SCREENS_TREES_67, SLOTS_67, STRINGS_67, patch67, patchMenus67 } from "./design-67";
 import { ACTIONS_68, ELEMENTS_68, MENUS_68, SCREENS_68, SCREENS_TREES_68, SLOTS_68, STRINGS_68, patch68, patchMenus68 } from "./design-68";
+import { ACTIONS_610, ELEMENTS_610, MENUS_610, SCREENS_610, SCREENS_TREES_610, SLOTS_610, STRINGS_610, patch610, patchMenus610 } from "./design-610";
 import { androidDir } from "./store";
 
 /* ================================================================ catalog */
@@ -57,6 +58,7 @@ export const ELEMENTS: ElementDef[] = [
   ...ELEMENTS_64,
   ...ELEMENTS_67,
   ...ELEMENTS_68,
+  ...ELEMENTS_610,
   { el: "slot", label: "App part", group: "logic", container: false, text: false, props: [P("name", "slot", "Part")], help: "A native component of the app (message list, composer…)." },
 ];
 
@@ -130,6 +132,7 @@ export const ACTIONS: Array<{ action: string; arg: string; help: string }> = [
   ...ACTIONS_64,
   ...ACTIONS_67,
   ...ACTIONS_68,
+  ...ACTIONS_610,
 ];
 
 export const SLOTS: Array<{ name: string; label: string; screens: string[] }> = [
@@ -154,6 +157,7 @@ export const SLOTS: Array<{ name: string; label: string; screens: string[] }> = 
   ...SLOTS_64,
   ...SLOTS_67,
   ...SLOTS_68,
+  ...SLOTS_610,
 ];
 
 export type ScreenDef = { id: string; label: string; group: "app" | "room" | "parts" | "system"; vars: string[]; sample: Record<string, unknown>; help: string };
@@ -190,6 +194,7 @@ export const SCREENS: ScreenDef[] = [
   ...SCREENS_64,
   ...SCREENS_67,
   ...SCREENS_68,
+  ...SCREENS_610,
 ];
 export const SCREEN_IDS = SCREENS.map((s) => s.id);
 
@@ -397,6 +402,9 @@ patch67(DEFAULT_SCREENS);
 // 6.8 (design-68-*.ts), after 6.7.
 Object.assign(DEFAULT_SCREENS, SCREENS_TREES_68);
 patch68(DEFAULT_SCREENS);
+// 6.10 (design-610-*.ts), after 6.8.
+Object.assign(DEFAULT_SCREENS, SCREENS_TREES_610);
+patch610(DEFAULT_SCREENS);
 
 /* ================================================================== theme */
 
@@ -505,6 +513,7 @@ for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_63[lang])
 for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_64[lang]);
 for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_67[lang]);
 for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_68[lang]);
+for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_610[lang]);
 
 /* ================================================================== menus */
 
@@ -537,10 +546,12 @@ Object.assign(DEFAULT_MENUS, MENUS_63);
 Object.assign(DEFAULT_MENUS, MENUS_64);
 Object.assign(DEFAULT_MENUS, MENUS_67);
 Object.assign(DEFAULT_MENUS, MENUS_68);
+Object.assign(DEFAULT_MENUS, MENUS_610);
 // 6.4: Registration in the room's and the room list's menus (items added, not whole menus).
 patchMenus64(DEFAULT_MENUS);
 patchMenus67(DEFAULT_MENUS);
 patchMenus68(DEFAULT_MENUS);
+patchMenus610(DEFAULT_MENUS);
 
 /* ============================================================== libraries */
 
