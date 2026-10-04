@@ -476,7 +476,11 @@ přeposlání) je čistý text stromu. Vzhled tříd `m5h-*` (`m5h-kv`, `m5h-gri
 `console.css`; používají je výpisy karet NFC (`m5.nfc.format(data, "html")`,
 viz [`nfc.md`](nfc.md)).
 
-Aplikace pro Android výstup `html` vykresluje ve WebView s vypnutým JavaScriptem a zablokovanou sítí.
+Aplikace pro Android výstup `html` čistí týmž sanitizérem, přeneseným do Javy
+(`fn/FnHtml.java`, bajtově shodný výsledek se `sanitizeFnHtml`), a vykresluje
+ho v uzamčeném WebView (`fn/FnHtmlView.java`): vypnutý JavaScript, zablokovaná
+síť, žádné soubory, Content-Security-Policy, která pustí jen obrázky `data:`
+a vlastní styl; odkaz (http(s), mailto) otevře aplikace ven.
 
 ## 10. AI a řeč: vrstva poskytovatelů
 
@@ -696,9 +700,11 @@ zapnutý model; galerie v *Functions › Packages* je doinstaluje znovu
 jako toky z nástrojů NFC.EMV / NFC.e-ID (`script/gen-nfc-flows.ts`):
 **`/emv`** (`nfc-emv` — celé čtení platební karty jako výpis v chatu),
 **`/emv-history`** (`nfc-emv-history` — historie transakcí jako tabulka) a
-**`/eid`** (`nfc-eid` — formulář pro CAN / MRZ, pak celé čtení dokladu). Jako
-ostatní balíčky NFC se instalují **vypnuté**, s viditelností *caller* (viz
-[`nfc.md`](nfc.md)).
+**`/eid`** (`nfc-eid` — bez formuláře na serveru: `execute` hned spustí celé
+čtení dokladu s časovým limitem 90 s a bez klíče, takže se na CAN / MRZ zeptá
+zařízení volajícího a použije ho jen pro toto čtení; na server klíč nejde,
+model dostane, co vrátí čip — výpis, fotografii). Jako ostatní balíčky NFC se
+instalují **vypnuté**, s viditelností *caller* (viz [`nfc.md`](nfc.md)).
 
 ## 12. Bezpečnost
 

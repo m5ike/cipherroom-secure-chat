@@ -267,7 +267,11 @@ s HTML zacházet jako s cizím vstupem. Opatření:
 - **Meze** proti zahlcení: 2 000 000 znaků, 20 000 uzlů, hloubka 48, lineární
   parser (test na nepřátelský vstup v `test/fn-html.test.tsx`).
 
-Aplikace pro Android výstup `html` vykresluje ve WebView s vypnutým JavaScriptem a zablokovanou sítí.
+Aplikace pro Android výstup `html` čistí týmž sanitizérem přeneseným do Javy
+(`fn/FnHtml.java`) a vykresluje ho v uzamčeném WebView (`fn/FnHtmlView.java`):
+vypnutý JavaScript, zablokovaná síť, žádný přístup k souborům,
+Content-Security-Policy `default-src 'none'` (jen obrázky `data:` a vlastní
+styl); odkazy otevírá aplikace ven, nic se nenačítá na místě.
 
 ### Čtení karet NFC
 
@@ -282,7 +286,18 @@ Hloubková čtení EMV a e-ID / e-pasu (podrobně [`nfc.md`](nfc.md)) zůstávaj
   nepřečte. DG3 / DG4 (otisky prstů, duhovka) vyžadují Extended Access Control
   (certifikát státního terminálu) a nečtou se.
 
-PACE (6.6) je stejně jako BAC přístupové řízení samotného dokladu — PACE s CAN nebo MRZ (ECDH generic mapping, secure messaging AES nebo 3DES); čtečka zkusí nejdřív PACE a když neuspěje, použije BAC.
+PACE (6.6, web `pace.ts`, Android `PaceProtocol.java`) je stejně jako BAC
+přístupové řízení samotného dokladu, ne jeho obcházení — heslem je CAN nebo MRZ
+z dokladu; ECDH generic mapping na standardizovaných parametrech 12, 13, 15–18
+(NIST P-256/384/521, brainpoolP256/384/512r1), secure messaging AES-128/192/256
+nebo 3DES. Nabídne-li EF.CardAccess variantu, kterou čtečka umí, zkusí nejdřív
+PACE; jinak, nebo když PACE selže, otevře doklad přes BAC, má-li MRZ. DH
+mapping, Integrated Mapping, CAM ani jiné křivky čtečka neumí. Implementace je
+bajtově ověřená proti ukázkovým příkladům ICAO 9303-11 (dodatky G.1 a I.1)
+a BSI TR-03110 (`test/nfc-pace.test.ts`, Android `PaceTest.java`).
+Uvnitř 3DES secure
+messagingu platí stavové slovo chráněné v DO'99' (skutečný stav příkazu, ne
+vnější 9000).
 
 - **Pasivní autentizace je jen kontrola otisků.** Otisk každé přečtené skupiny
   se porovná s otiskem v EF.SOD. **Podpis EF.SOD se neověřuje, certifikát
@@ -294,12 +309,29 @@ PACE (6.6) je stejně jako BAC přístupové řízení samotného dokladu — PA
   nikdy nepustí klíč karty ani PIN. PAN ale model dostane celý (vlastní karta
   držitele; maskuje ho až výpis, `fullPan` je ve výchozím stavu vypnuté), u e-ID
   osobní údaje a fotografie.
-- **Běhy se ukládají.** Vstupy a výstupy běhu — u `/eid` zadaný CAN či MRZ,
-  výpis s fotografií a osobními údaji — leží v `$DATA_DIR/functions/functions.db`
-  (SQLite, soubor 0600, nešifrovaný) do `FUNCTIONS_RUNS_DAYS` (výchozí 30 dní) a
-  operátor s přístupem k *Functions › Runs* je vidí. Vestavěné příkazy mají
-  viditelnost *caller* — výpis nejde do místnosti. Čtení v nástroji NFC
-  (*Celý výpis*, export) zůstává v prohlížeči.
+- **Klíč dokladu se zadává na zařízení** (6.6, `client/src/lib/nfc/document-key.ts`).
+  Čtení e-ID (`eid-read` / `mrtd-read`), jehož argumenty nemají `can`, `mrz`
+  ani všechna tři pole `documentNumber` + `dateOfBirth` + `dateOfExpiry`,
+  zařízení volajícího nespustí, dokud se držitele samo nezeptá — ve webu
+  v dialogu interakce (`handleFnInteraction` v `App.tsx`), v aplikaci pro
+  Android v panelu NFC (`NfcModelSheet.java`; pole se po zadání vymažou, CAN se
+  ve zprávách odpovědi maskuje). Klíč se přidá jen k příkazu tohoto čtení
+  a **na server nejde**; běh dostane, co vrátí čip. `/eid` proto nemá formulář
+  na serveru. Předá-li model `can` / `mrz` sám, je to jeho volba a pochází
+  z jeho vlastních vstupů.
+- **Běhy se ukládají.** Vstupy a výstupy běhu — u `/eid` výpis s fotografií
+  a osobními údaji (CAN ani MRZ zadaný na zařízení mezi vstupy není) — leží
+  v `$DATA_DIR/functions/functions.db` (SQLite, soubor 0600, nešifrovaný) do
+  `FUNCTIONS_RUNS_DAYS` (výchozí 30 dní) a operátor s přístupem
+  k *Functions › Runs* je vidí. Vestavěné příkazy mají viditelnost *caller* —
+  výpis nejde do místnosti. Čtení v nástroji NFC (*Celý výpis*, export) zůstává
+  v prohlížeči.
+- **Aplikace pro Android odpovídá na NFC požadavek modelu** (6.6) jen čtením:
+  zápis a emulace karty modelem jsou `denied`, ostatní operace katalogu, které
+  model na Androidu nedostane (`raw-apdu`, `select-aid`, sektory MIFARE
+  Classic…), `unsupported`; čte vestavěným NFC telefonu nebo USB čtečkou,
+  kterou uživatel povolil v pracovišti (Bluetooth / sériová `unsupported`),
+  a uživatel vidí panel s odpočtem a tlačítkem *Zrušit*.
 
 ## Serverové úložiště (od 2.10.0)
 

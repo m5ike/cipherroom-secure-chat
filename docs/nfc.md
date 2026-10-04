@@ -16,11 +16,15 @@ holder's own card or document (no PIN, no signing, no transaction, no write).
 6.6 reads them **in depth** — an EMV card's counters, transaction history and
 every file; an e-ID's every data group a reader may open, its pictures and
 security objects — and turns any read into a **card report** (HTML, object,
-rows, JSON, text, CSV). The deep reads are in the web client's reader
-(`client/src/lib/nfc/cards/emv.ts`, `mrtd.ts`); the Android app's native
-reader still reads EMV and e-ID as in 6.5. On the web, EMV and e-ID need a
-reader that exchanges APDUs — USB, Bluetooth or serial; WebNFC reaches NDEF
-only.
+rows, JSON, text, CSV). An e-ID opens with **PACE** (the CAN or the MRZ) or
+BAC. The deep reads are in the web client's reader
+(`client/src/lib/nfc/cards/emv.ts`, `mrtd.ts`, `pace.ts`) and, ported, in the
+Android app's native reader (`nfc/EmvReader.java`, `MrtdReader.java`,
+`PaceProtocol.java`), whose workbench shows them too. A model's NFC request is
+answered by the web workbench and, in 6.6, by the Android app itself (a sheet
+on the phone — see [`m5.nfc` on Android](#on-android-the-apps-nfc-sheet-66)).
+On the web, EMV and e-ID need a reader that exchanges APDUs — USB, Bluetooth or
+serial; WebNFC reaches NDEF only.
 
 ## Readers
 
@@ -69,10 +73,10 @@ Common to every card: **scan**, **read UID**, **read public data**, and a raw
   (the AFL's records and every other short file), then the records' BER-TLV is
   parsed and labelled, all read-only — see
   [EMV — read the card data](#emv--read-the-card-data).
-  **e-ID / e-passport** — *Read document (BAC)* (6.5, every data group 6.6):
-  opens the holder's own chip with the key they supply and reads every data
-  group a reader may — see [e-ID / e-passport](#e-id--e-passport). No cloning,
-  no signing.
+  **e-ID / e-passport** — *Read document (PACE / BAC)* (6.5, every data group
+  and PACE 6.6): opens the holder's own chip with the key they supply and reads
+  every data group a reader may — see [e-ID / e-passport](#e-id--e-passport).
+  No cloning, no signing.
 - **ISO-DEP / EMV — Application template** — next to *Select application* a
   filled-down-arrow button drops a menu of the operator's saved templates
   (`m5mobile.define.apduTemplates` — see [define.md](define.md) and
@@ -145,9 +149,10 @@ the card shows any terminal, the history included. No cloning.
 
 ### e-ID / e-passport
 
-The workbench op **Read document (BAC)** (6.5; every data group 6.6) reads an
-electronic passport or e-ID (an MRTD, ICAO 9303) — the holder's own document,
-read-only (`client/src/lib/nfc/cards/mrtd.ts`).
+The workbench op **Read document (PACE / BAC)** (6.5; every data group and
+PACE 6.6) reads an electronic passport or e-ID (an MRTD, ICAO 9303) — the
+holder's own document, read-only (`client/src/lib/nfc/cards/mrtd.ts`; on
+Android `nfc/MrtdReader.java`, the same reader ported).
 
 **Opening the chip.** The chip will not answer until the reader proves it can
 already see the document's printed data — the *document's own* access control.
@@ -160,17 +165,40 @@ passport. Before opening, the reader reads **EF.CardAccess** — readable withou
 a key — and records the security protocols the chip announces
 (`mrtd.security.protocols`).
 
-**PACE** (6.6, `client/src/lib/nfc/cards/pace.ts`) — PACE with the CAN or the
-MRZ (ECDH generic mapping, AES or 3DES secure messaging): when EF.CardAccess
-lists a PACE variant, the reader tries PACE first and falls back to BAC. The CAN
-alone opens a PACE document; a passport without PACE needs the MRZ. `mrtd.pace`
-says what the chip offers (`supported`, `protocol`, `parameterId`) and, when PACE
-opened it, `used` and `password` (`can` or `mrz`); `mrtd.access` is then `pace`.
+**PACE** (6.6) — Password Authenticated Connection Establishment, ICAO 9303-11
+§4.4 / BSI TR-03110, with the **CAN** or the **MRZ** as the password, on the web
+(`client/src/lib/nfc/cards/pace.ts` — `establishPace` — with `aes.ts`, `ec.ts`
+and `sm.ts`) and on Android (`nfc/PaceProtocol.java`; `Pace.java` reads the
+PACEInfo and its `establish` delegates to `PaceProtocol`; `Aes.java`,
+`EcCurve.java`, `AesSm.java`). It runs the **ECDH generic mapping** on the
+standardized domain parameters **12, 13, 15, 16, 17 and 18** (NIST P-256,
+brainpoolP256r1, NIST P-384, brainpoolP384r1, brainpoolP512r1, NIST P-521),
+with **AES-128 / 192 / 256 or 3DES** secure messaging (AES: `aesChannel`;
+3DES: the BAC channel with a zero SSC). Not supported: the DH mapping,
+Integrated Mapping, Chip Authentication Mapping (CAM) and other curves. When
+EF.CardAccess offers a variant the reader runs, it tries PACE first (the
+strongest cipher offered; with the CAN when one is given, else the MRZ); when
+it offers none the reader runs — or PACE fails — and the MRZ is given, it opens
+the document with BAC. The CAN alone therefore opens a PACE document; a
+passport without PACE needs the MRZ. `mrtd.pace` says what the chip offers
+(`supported`, `protocol`, `parameterId`) and, when PACE opened it, `used` and
+`password` (`can` or `mrz`); `mrtd.access` is then `pace`. The implementation is
+pinned byte for byte to the worked examples of ICAO 9303-11 Appendix G.1
+(PACE-ECDH-GM-AES-128), Appendix I.1 (its mapping, key agreement and tokens)
+and the BSI TR-03110 EAC2 worked example (the logged PACE exchange and the
+secure-messaging APDUs after it) — `test/nfc-pace.test.ts` with
+`test/fixtures/pace-vectors.json`, and on Android
+`android/app/src/test/java/cz/m5cet/app/nfc/PaceTest.java` on the same vectors;
+both also open a simulated PACE chip with the CAN and the MRZ.
 
 **BAC (Basic Access Control).** The BAC key is derived from the three MRZ
 fields. The DES/3DES, retail MAC, BAC key derivation and secure messaging are
 byte-exact to the ICAO 9303 worked example and unit-tested
 (`client/src/lib/nfc/cards/bac.ts`, `des.ts`, `sm.ts`); `mrtd.access` is `bac`.
+Inside 3DES secure messaging (BAC, and PACE with 3DES) the status word the chip
+protected in DO'99' is taken as the command's real one (6.6, `bac.ts` and
+Android `Bac.java`) — a chip may answer 9000 outside while the file is absent
+(6A82) or EAC-protected (6982) inside.
 When the chip cannot be opened, `mrtd.message` says why and no data group is
 read.
 
@@ -217,8 +245,9 @@ DG11 / DG12; `all: false` reads only DG1 and DG2 (and skips EF.SOD).
 
 Read-only: it never writes. Unit tests drive the reader against a simulated
 BAC chip (`test/nfc-mrtd-deep.test.ts`: every group, a hash mismatch, DG1 / DG2
-only, a wrong MRZ, no key) and parse EF.SOD, DG11, DG12, DG15 and SecurityInfos
-on their own.
+only, a wrong MRZ, no key) and a simulated PACE chip (`test/nfc-pace.test.ts`),
+and parse EF.SOD, DG11, DG12, DG15 and SecurityInfos on their own; the Android
+reader is tested the same way (`MrtdDeepTest.java`, `PaceTest.java`).
 
 ### Card reports (6.6)
 
@@ -258,13 +287,18 @@ workbench's *HTML report* download, `m5.nfc.document`). Unit tests:
 
 ### The workbench's full report (6.6)
 
-After an EMV or e-ID read, the workbench's result tab shows **Full report** —
-the `html` report exactly as the chat renders it (`FnHtml`) — with **Export**:
+In the web client, after an EMV or e-ID read, the workbench's result tab shows
+**Full report** — the `html` report exactly as the chat renders it (`FnHtml`) —
+with **Export**:
 *HTML report* (the standalone document, `emv-report.html` / `e-id-report.html`),
 **JSON**, **CSV** and **Text**, and **Files to download** — a button for each
 attachment (`EF.SOD.bin`, `document-signer.cer`, `emv-history.csv`…). The card
 number stays masked in every export. Downloads are made in the browser; nothing
-is sent anywhere. Labels follow the app's language.
+is sent anywhere. Labels follow the app's language. The Android workbench
+shows the deep read in its own views (6.6): per EMV application the holder
+fields and counters, the history as a table, GET DATA, the data elements and
+records; for an e-ID the holder beside the face, DG11 / DG12, every picture,
+the security objects and the files.
 
 ### APDU templates
 
@@ -274,7 +308,7 @@ entry is one of two shapes:
 
 - **op template** — `{ label, op: "emv-read" | "eid-read", args? }`. Runs a full
   dynamic read; the reader drives the whole sequence itself (PDOL / AFL for EMV,
-  BAC + secure messaging for e-ID). `args` carries defaults, e.g.
+  PACE or BAC + secure messaging for e-ID). `args` carries defaults, e.g.
   `{ readPhoto: false }` for an MRZ-only e-ID read.
 - **apdu template** — `{ label, apdu: "<hex>" }`. Sends one raw command (a
   `SELECT`, a `GET PROCESSING OPTIONS`…) over ISO-DEP and shows the response in
@@ -392,10 +426,12 @@ const { emv } = await m5.nfc.emv.read({ timeout, maxApps, history, deep });
 //   emv.deep, emv.apdus                deep read or AFL only; APDUs it took
 
 // e-ID / e-passport — opened with the holder's MRZ or CAN, every data group a reader may read.
+// No key in the call: the caller's device asks the holder for it (below).
 const { mrtd } = await m5.nfc.eid.read({
   mrz,                                  // the whole MRZ
   // or the three MRZ fields instead:  documentNumber, dateOfBirth, dateOfExpiry (YYMMDD)
   // or the Card Access Number:        can
+  // or none of them:                  the device asks
   readPhoto,                            // default true (also `photo`); false = no pictures
   all,                                  // 6.6, default true; false = DG1 + DG2 only
 });
@@ -432,24 +468,21 @@ model, and nothing is written. The model does receive what it asked to read —
 the PAN unmasked (the holder's own card) and, for an e-ID, the holder's personal
 data and pictures; only a report masks the PAN.
 
-**On the web in 6.6.0** the workbench's executor (`client/src/lib/nfc/web-executor.ts`)
-passes the reader only `maxApps` (default **4** there; the workbench's own read
-opens 8) and, for an e-ID, the key fields and `readPhoto`; `history`, `deep` and
-`all` are not forwarded yet, so a model's read from a web device is always the
-full read — the history, every file, every data group. The reads need a reader
-that exchanges APDUs — a USB (PC/SC, CCID), Bluetooth or serial (PN532) reader;
+**On the web** the workbench's executor (`client/src/lib/nfc/web-executor.ts`)
+passes the reader every option of the command: for EMV `maxApps` (default 8),
+`history` and `deep` (both on unless `false`); for an e-ID the key fields,
+`readPhoto` and `all` (both on unless `false`). The reads need a reader that
+exchanges APDUs — a USB (PC/SC, CCID), Bluetooth or serial (PN532) reader;
 WebNFC in Android Chrome reaches NDEF only.
-
-The Android app does not run a model's `m5.nfc` commands in 6.6.0 — it has no
-executor for the run's `nfc` interaction.
 
 Under the hood an `m5.nfc` call becomes an **NFC interaction** on the run's live
 channel (the same one prompts and forms use): the model's `await` suspends, the
-command streams to the caller, the client's NFC bridge runs it and answers with
-the result, which resolves the call. It works from an `execute` run and from a
+command streams to the caller, the caller's device runs it and answers with the
+result, which resolves the call. It works from an `execute` run and from a
 webhook-entered run, so a webhook can initiate an NFC command and receive the
-result. The caller's device must have the NFC workbench active (that registers
-the executor); otherwise a call returns `status: "unsupported"`.
+result. In the web client the NFC workbench must be open (it registers the
+executor), otherwise a call returns `status: "unsupported"`; the Android app
+answers on its own (below).
 
 **Access** is gated like `m5.telephony`: a person's run needs their NFC module
 access, a webhook's or a schedule's run the model's grant.
@@ -459,6 +492,55 @@ protected card it passes `secretRef` — a name the device resolves locally
 (a saved key set, or the account) — and the device never returns the key.
 The server strips any secret-named argument on the way in and whitelists the
 result on the way out.
+
+### The e-ID key is asked on the device (6.6)
+
+A model may ask for an e-ID read without the key. An `eid-read` / `mrtd-read`
+whose args carry none of `can`, `mrz`, or all three of `documentNumber` +
+`dateOfBirth` + `dateOfExpiry` (`needsDocumentKey`,
+`client/src/lib/nfc/document-key.ts`) is not run as it came: the caller's
+device first asks the holder for the **CAN** or the **MRZ** (or the three
+fields) — in the web client locally in the interaction dialog
+(`handleFnInteraction` in `client/src/App.tsx`, asking again until the entry is
+usable: a 6-digit CAN, an MRZ, or the document number with both dates as
+YYMMDD), in the Android app in the NFC sheet (same rule). The key is added to
+this read's command only (`withDocumentKey`) and used there; it is **never sent
+to the server** — the interaction is answered with what the chip returned (the
+report data, the photo; DG1 holds the document's own MRZ data), not with the
+key. Cancelling answers `status: "timeout"` ("Cancelled"). A model may still
+pass `can` / `mrz` itself (`m5.nfc.eid.read` / `eid.report` args) — then it is
+the model's choice, and they come from its own inputs, which the run history
+keeps as they were.
+
+### On Android: the app's NFC sheet (6.6)
+
+The Android app answers a model's NFC request itself (`ui/parts/NfcModelSheet.java`,
+`nfc/ModelNfc.java`, `nfc/ModelNfcDevice.java`, `nfc/ReaderMode.java`; the run's
+`nfc` interaction comes through `fn/Run.java` and `ui/parts/Fn.java`):
+
+- A **sheet from the bottom** says what is asked and by which model, then
+  *Hold the card to the back of your phone*, with a **countdown** (the
+  command's `timeout`: default 20 s, 1–120) and **Cancel**. Closing it before an
+  answer answers `timeout` ("Cancelled"); a newer ask replaces an open sheet.
+- **The reader**: the phone's own NFC by default (reader mode, borrowed from
+  the workbench or whoever holds it and given back afterwards), or a **USB**
+  (CCID) reader the user already allowed in the workbench — when the command
+  asks for `usb`, or names no reader and the workbench's choice is USB (or the
+  phone has no NFC). A **Bluetooth** or **serial** reader is answered
+  `unsupported`.
+- **What runs**: `scan`, `read-uid`, `read-public`, `ndef-read`, `m5-read`,
+  `emv-public`, `emv-read`, `eid-public`, `eid-read` / `mrtd-read`, and `enum`
+  (no card: the readers and technologies). EMV and e-ID reads take the same
+  options as on the web (`maxApps`, `history`, `deep`; the key, `readPhoto`,
+  `all`) and run on the native readers, PACE included. Writes and emulation are
+  **`denied`**; the other reads of the catalogue — `raw-apdu`, `select-aid`,
+  MIFARE Classic sectors and dumps, page and block reads, DESFire and FeliCa
+  reads — are refused for a model (`unsupported`: use the NFC workbench).
+- **NFC off**: the answer is `unsupported`, and the sheet says so with a button
+  to the NFC settings.
+- **The e-ID key**: asked in the sheet as above; the fields are cleared once the
+  read starts, and a CAN that shows up in a reader's message is masked in the
+  answer.
 
 ### Card reports in Functions (6.6)
 
@@ -552,10 +634,12 @@ installed **switched off** like the others:
   not shown) → If the read is ok → *EMV: transaction history* → Send table
   (date, time, amount, currency, merchant, type, country, ATC); otherwise a
   warning flash with the read's message.
-- **`/eid`** (`nfc-eid`) — `execute` sends a form (the CAN, or the MRZ, or the
-  document number, date of birth and date of expiry); its `form` function runs
-  *e-ID: read everything* (html, shown in the chat, pictures and every data group
-  on, 60 s) → Result.
+- **`/eid`** (`nfc-eid`) — no server form: `execute` runs *e-ID: read
+  everything* at once (html, shown in the chat, pictures and every data group
+  on, 90 s) → Result, without a key, so the caller's device asks for the CAN,
+  or the MRZ, or the document number, date of birth and date of expiry
+  ([above](#the-e-id-key-is-asked-on-the-device-66)) and uses it for this read
+  only.
 
 Each has an `error` function that flashes what went wrong. The tests
 (`test/nfc-builtins.test.ts`) check that each flow compiles to exactly the file
@@ -591,9 +675,11 @@ What 6.6 adds to think about:
   device sends the read to the server, which bounds it (above) and hands it to
   the sandbox; the model's outputs — the report with the face picture, the
   personal data, the files — are run outputs. Runs are kept in
-  `$DATA_DIR/functions/functions.db` with their inputs (for `/eid` the CAN or
-  MRZ the form sent) and outputs until `FUNCTIONS_RUNS_DAYS` (30 days by
-  default), and an operator with access to *Functions › Runs* can open them.
+  `$DATA_DIR/functions/functions.db` with their inputs and outputs until
+  `FUNCTIONS_RUNS_DAYS` (30 days by default), and an operator with access to
+  *Functions › Runs* can open them. The e-ID key the device asked for is not
+  among them — it stays on the device ([above](#the-e-id-key-is-asked-on-the-device-66));
+  a CAN or MRZ a model passes itself comes from its own inputs, which are kept.
   The built-in commands' visibility is *caller*: the report is shown only to the
   person who ran it, not posted to the room.
 - **Masking is for the report.** `fullPan` is off by default; the read itself
