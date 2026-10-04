@@ -15,6 +15,7 @@
 
 import type { NfcTech, ReaderKind } from "./catalog";
 import type { M5RecordType } from "./m5card";
+import type { TemplateExchange } from "./apdu-templates";
 
 export const NFC_INTERACTION = "nfc" as const;
 
@@ -126,6 +127,8 @@ export type EmvReadArgs = {
   history?: boolean;
   /** Read every file the card has, not only the AFL's records (default true). */
   deep?: boolean;
+  /** 6.10: the application to read first (hex AID) — what an older op template "favours". */
+  aid?: string;
 };
 
 /* ------------------------------------------- MRTD / e-ID / e-Passport (6.5) */
@@ -290,6 +293,10 @@ export type NfcResult = {
   emv?: EmvData;
   /** 6.5: a full MRTD read (e-ID / e-Passport), opened with the holder's MRZ or CAN. */
   mrtd?: MrtdData;
+  /** 6.10: an APDU template's run (op "app-template"): which one, and how it went. */
+  template?: { label: string; ok: boolean; problems: string[]; steps: number; ms: number };
+  /** 6.10: every APDU of that run, in order (template-runner.ts). Card numbers are masked unless the holder sent them in full. */
+  transcript?: TemplateExchange[];
   /** Human message for a non-ok status. */
   message?: string;
 };

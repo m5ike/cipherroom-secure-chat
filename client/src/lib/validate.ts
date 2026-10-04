@@ -200,6 +200,7 @@ export function validatePayload(value: unknown, opts: PayloadOpts = {}): ChatPay
     const frame = opts.profiles ? parseProfileFrame(p) : null;
     return frame ? { kind: "profile", id, createdAt, senderId, senderName, ...frame } : null;
   }
+  // 6.10: anything but a chat message is dropped here — a "note" (to myself) is only ever made locally.
   if (p.kind !== undefined && p.kind !== "text") return null;
   const text = p.text === undefined ? "" : str(p.text, PAYLOAD_LIMITS.textChars);
   if (text === null) return null;
