@@ -399,3 +399,46 @@ Reprodukční skripty (mimo repozitář, ve scratchpadu auditu):
 `core/settings-heap.mjs` (V4), `core/upgrade-hang.ts` (S3), `core/away-growth.ts` (S5),
 `core/persist-cost.mjs` (N2), `web/xss.mts` (V2, sanitizer), `web/sk.mts` (S18),
 `web/pins.mts` (N23). V1, S1, S6, V5 a N13 jsem napsal a spustil sám; V3, S3 a S5 jsem po dílčích revizích spustil znovu se stejným výsledkem. Dílčí revize (server-jádro, web, Android, Funkce) proběhly paralelně; jejich nálezy jsem před zařazením ověřil v kódu, u N13 jsem závažnost snížil (původně „vysoká") na základě vlastního testu.
+
+## 8. Opraveno v 6.7 (server)
+
+Opravy serverových nálezů na větvi agenta, každá s regresním testem, který
+na původním kódu selže (u V1, V3, S3, S6, S16, F-14, F-27, N7 a N12 ověřeno
+spuštěním proti původnímu souboru). Celkem po opravách: `npx tsc` ✅,
+`npx vitest run` ✅ 185 souborů / 2113 testů (4 přeskočené), `npm run build` ✅,
+`npm run test:e2e` spuštěné přímo z `.claude/worktrees/…` ✅ (viz S6).
+
+| # | Opraveno v 6.7 | Commit | Test |
+|---|---|---|---|
+| V1 | Dítě sandboxu běží s `--permission` (čte jen svůj skript a interpret — složku Pyodide nebo `.wasm` QuickJS; žádný zápis, procesy, workery, addony, WASI, inspector) a `--disallow-code-generation-from-strings` (Pyodide i QuickJS s tím běží, ověřeno i na `dist/sandbox.cjs`); konstruktory `Function`/`AsyncFunction`/generátorů jsou odstavené z prototypů (`sealCodeConstructors`), most `_m5host` nemá prototyp. Sonda z auditu už soubor hostitele nepřečte. Bubblewrap/nsjail z dokumentace dál **není** (síť zavírají jen stuby v `harden.ts`), komentáře opraveny. | `14590ef0` | `test/functions-sandbox-wall.test.ts` |
+| V3 | Slot brány se vrátí při zavření socketu, který se nestal WebSocketem (vadný klíč/verze/metoda, odchod uprostřed handshaku). | `f80878b8` | `test/signaling-upgrade-guard.test.ts` |
+| V4 | `/api/settings`: JSON jako text, max 16 kB na zařízení, max 5000 zařízení (nejstarší zápis jde pryč), záznam po retenci zmizí i při čtení; totéž omezení počtu pro `consentLedger`. Vazba na doklad zařízení **ne** (žádný klient endpoint nepoužívá; zbývá). | `e0dd9dcf` | `test/unauth-state-bounds.test.ts` |
+| S1 | Filtry `m5adm`: `SafeRegex` (`server/functions/safe-regex.ts`) — jednoduchý vzor (bez kvantifikované skupiny, zpětné reference a lookaroundu, nejvýš 1 kvantifikátor) nativně do 1000 znaků, jinak přes `node:vm` s timeoutem a časovým rozpočtem na volání; všechny subjekty filtru v jednom hlídaném kroku. | `1e165d7e` | `test/functions-safe-regex.test.ts` |
+| S2 | `jwt.verify`: rodinu algoritmu určuje klíč — PEM nikdy HS*, RSA jen RS/PS, EC jen ES své křivky, sdílené tajemství jen HS; `opts.alg`/`opts.algorithms` dál zužují. | `f4d9d5c6` | `test/functions-jwt-alg.test.ts` |
+| S3 | `server/upgrade-guard.ts`: koncové body si nárokují cesty (`/ws`, `/media/tel/…`, `/vite-hmr`), ostatní upgrade → 404 a `destroy()`. | `f80878b8` | `test/signaling-upgrade-guard.test.ts` |
+| S4 | Limity `/api/admin` berou token funkce až po ověření HMAC (bucket podle podepsaného modelu); parsery 8 MB (Android design) a 1 MB (menu) až za limity a za `requireAdminToken` (`server/admin-limits.ts`); admin služba čte velká těla jen s bearerem. `requestTimeout`/`headersTimeout` nesníženy (upload APK 300 MB). | `818e4631` | `test/admin-limits.test.ts` |
+| S5 | `AwayRelay.setAway` drží stejný strop 20 místností na účet jako úložiště (vypadlé místnosti → `peer-back`). Expirace away záznamů **ne** (změnila by presence; souběžně na ní pracuje presence agent). | `67b08077` | `test/away-relay-bound.test.ts` |
+| S6 | `res.sendFile(jméno, { root })` v `static.ts` a `admin.ts`: tečka v cestě instalace nevadí, dotfile v URL dál odmítnut. E2E z `.claude/worktrees`: před opravou 53/72 selhalo, po ní 72/72 (jedno zastaralé očekávání E2E z commitu `5ab9bcc0` opraveno v `1c8820ee`). | `baaa1625` | `test/static-dotdir.test.ts` |
+| S7 | Anonymní relace: nejvýš 20 živých na klienta, sdílený rozpočet bajtů `STORAGE_SESSION_BUDGET_MB` (výchozí 2048) — po jeho vyčerpání nová relace nevznikne a žádná databáze relace neroste. | `3ff5b864` | `test/storage-session-budget.test.ts` |
+| S8 | Strop `ACCOUNTS_MAX` (výchozí 5000); plné úložiště uvolní místo jen odstraněním účtů nepoužitých od registrace (starší než týden, jediné přihlášení, prázdný trezor vč. registračního slotu, žádný další passkey, recovery, identita, push, away, mailbox ani živá relace), nejstarší napřed; plné úložiště = audit `accounts.full`. Registrant, který naplní trezor, se neodstraní — proti tomu zvýšit strop, pozvánky/PoW jsou další krok. | `f7e1d963` | `test/accounts-cap.test.ts` |
+| S9 | Aktér auditu zpráv jen z ověřeného tokenu (jinak `guest`, id klienta jako `detail.claimedClient`); hodinový rozpočet záznamů (host/adresa 300, IPv6 po /64; účet 3000). Prořez žurnálu po kategoriích **ne** — mazání uprostřed by rozbilo hash řetěz. | `e0dd9dcf` | `test/unauth-state-bounds.test.ts` |
+| S16 | Referenční nginx: `location /hooks/` (6 MB) a `location = /fn-sandbox.html` na aplikaci, CSP SPA s `frame-src 'self'`. | `4b0ab301` | `test/nginx-reference.test.ts` |
+| N7 | Časovače (sweep fronty, plánovaná záloha + kontrola integrity, sweep telefonního mostu) chybu ohlásí, nespadnou; hlavní služba při `unhandledRejection` loguje a audituje místo ukončení. | `d5f6aedf` | `test/backup-timer.test.ts` |
+| N10 | `/metrics` má limiter odmítnutých požadavků (30 / 15 min). Minimální délka tokenu ne (rozbilo by krátké `ADMIN_API_TOKEN`). | `d5f6aedf` | `test/unauth-state-bounds.test.ts` |
+| N11 | Viz F-17 (Vonage SMS bez `sig` se secretem → 403, JWT s povinným čerstvým `iat` a `payload_hash`). | `d41469a3` | `test/telephony-webhooks-failclosed.test.ts` |
+| N12 | Android: nonce se spotřebuje až po ověření podpisu a drží se po celé okno času požadavku (u `/events` 2 × 30 dní; mapa s pevným stropem). | `137a2089` | `test/android-server.test.ts` |
+| N13 | Viz F-14 (všechny zápisy IPv6, vložená IPv4 v mapped/compatible/NAT64/6to4; literály IPv6 v URL se kontrolují jako adresy). | `2043c239` | `test/functions-ssrf-pin.test.ts` |
+| N15 | `pattern` vstupů přes `SafeRegex` nad celou hodnotou s rozpočtem 100 ms. | `1e165d7e` | `test/functions-safe-regex.test.ts` |
+| N16 | KV funkcí: hodnota max 1 MiB, klíč 512 znaků, scope max 10 000 klíčů a 64 MiB; chyba `kv-limit`. | `a1fb4bbc` | `test/functions-kv-limits.test.ts` |
+| N19 | `npm audit fix`: `ip-address` 10.7.3, `qs` 6.16.0 (jen `package-lock.json`); `npm audit --omit=dev` = 0. Zbývá jen dev řetěz tailwind 3 → braces (5 high, oprava = tailwind 4, major). | `09f6c307` | — |
+
+Z bezpečnostní analýzy (`docs/security-analysis.md`, commit `c043abef`), na pokyn integrátora:
+
+| # | Opraveno v 6.7 | Commit | Test |
+|---|---|---|---|
+| F-14 | SSRF guard se připojuje na adresu, kterou zkontroloval: `node:http(s)` s `lookup` vracejícím jen ověřenou adresu (Host, SNI i kontrola certifikátu podle URL; gzip/deflate/br jako dřív) — `undici` nebyl nainstalovaný a `fetch` jméno resolvoval znovu. Při přesměrování na jiný origin se zahodí `Authorization`/`Cookie`; blokováno NAT64 local-use, Teredo, `fec0::/10`, `100::/64`. `/web` pro hosty a URL zpětného volání webhooku **ne** (mimo zadání). | `2043c239` | `test/functions-ssrf-pin.test.ts` |
+| F-17 | Webhooky telefonie fail-closed, je-li materiál nastaven: Vonage SMS bez `sig` → 403 (výjimka jen `VONAGE_ALLOW_UNSIGNED_SMS=1`), podepsaná SMS se starým `timestamp` → 403, Vonage JWT musí mít `iat` ≤ 10 min a `payload_hash` u každého těla; Twilio/Telnyx chybějící podpis už odmítaly — test teď pokrývá každou cestu. Bez materiálu zůstává zdokumentované přijetí jako neověřené. `jti` cache ne (opakované doručení po 5xx by se odmítlo). `docs/telephony.md` doplněno. | `d41469a3` | `test/telephony-webhooks-failclosed.test.ts` |
+| F-18 | Běh funkce s odpovězeným `m5.nfc` se označí `sensitive` a hodinový prořez ho i s logy smaže po `FUNCTIONS_NFC_RUN_HOURS` (výchozí 24 h místo 30 dní); záznam je do té doby úplný (dotazování webhookem funguje). Šifrování `functions.db` master klíčem zůstává plnou opravou — soubor čtou hlavní i admin proces, je to samostatná koordinovaná změna. Záznamy volání v `model_chains` (parametry/výsledek) se zkrácenou retencí **ne**. | `190ea08f` | `test/functions-nfc-retention.test.ts` |
+| F-27 | `fs.deny` dev serveru a `.dockerignore` pokrývají `.env*` (příklad zůstává) a `*.bak`, dev server i `*~`. `.env-bak` uživatele zůstal nedotčen. Bind dev serveru na `127.0.0.1` **ne** (mimo zadání). | `79c48cf1` | `test/dev-secrets-deny.test.ts` |
+
+**Neopraveno (serverové nízké nálezy):** N1, N3, N4, N6, N9, N21 (signalizace/hub a relay — souběžně je mění presence agent), N2 (persistence `accounts.json` = přechod na SQLite, ne rychlá oprava), N5 (limit file-proxy na IP potřebuje IP z hubu; `Set` sekvencí nese počet unikátních bloků pro opakované odeslání), N8 (start clusteru bez `CLUSTER_SECRET` odmítnout = změna chování nasazení), N14 (vazba odpovědi na volajícího potřebuje identitu relace v API), N17 (RSS mimo Linux bez nové závislosti), N20 (CI, Android job). Webové S17–S21 a V2 řeší webový agent.
