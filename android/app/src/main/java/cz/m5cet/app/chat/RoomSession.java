@@ -23,6 +23,8 @@ import cz.m5cet.app.M5;
 import cz.m5cet.app.core.Io;
 import cz.m5cet.app.core.Log;
 import cz.m5cet.app.net.WebSocket;
+import cz.m5cet.app.profile.ProfileRoom;
+import cz.m5cet.app.profile.Profiles;
 import cz.m5cet.app.security.Crypto;
 
 /**
@@ -317,6 +319,7 @@ public final class RoomSession {
     private void dropPeer(String peerId, boolean announce, boolean held) {
         Peer p = peers.remove(peerId);
         senderKeys.forgetPeer(peerId);
+        if (profiles != null) profiles.forget(peerId);
         if (p != null) {
             p.close();
             if (announce) system(p.name + (held ? " ☾ " + app.t("presence.wentAway") : " ↘"));
@@ -377,7 +380,8 @@ public final class RoomSession {
         // caps: "bin" = we read binary file chunks; no "media" (call frames are not sealed by this app).
         JSONObject hello = senderKeys.hello(keys, identity, myId, p.id, null);
         try {
-            hello.put("caps", new JSONArray().put("bin"));
+            // 6.7: "profile" = we speak the room's profile frames (ProfileRoom).
+            hello.put("caps", new JSONArray().put("bin").put(ProfileRoom.CAP));
             String user = app.accountName();
             if (!user.isEmpty()) hello.put("user", user);
         } catch (JSONException ignored) { }
@@ -410,6 +414,7 @@ public final class RoomSession {
                 if (p.changed) system("⚠ " + p.name + ": identity changed");
                 JSONObject sk = senderKeys.senderKeyFor(keys, myId, p.id);
                 if (sk != null) p.send(sk.toString());
+                profiles().hello(p.id, caps); // 6.7: the pair key exists now — they learn my profile's version
                 changed();
                 return;
             }
@@ -431,6 +436,10 @@ public final class RoomSession {
             system("⚠ " + p.name + ": undecryptable message");
             return;
         }
+        // 6.7: a member's profile — only sealed for us alone (a pair envelope).
+        JSONObject profileFrame = profileFrame(opened.payload, p.id);
+        if (profileFrame != null) { if ("pair".equals(SenderKeys.kind(raw))) profiles().receive(p.id, profileFrame); return; }
+        if (opened.signer != null && opened.signer.valid && opened.signer.accountValid) profiles().signedBy(p.id, opened.signer.accountKey);
         Payloads.Receipt receipt = Payloads.receipt(opened.payload, p.id, myId);
         if (receipt != null) { applyReceipt(p, receipt); return; }
         ChatMessage m = Payloads.validate(opened.payload, p.id, myId);
@@ -449,6 +458,49 @@ public final class RoomSession {
     }
 
     private void system(String text) { add(ChatMessage.system(key, text), false); }
+
+    /* ------------------------------------------------------ profiles (6.7) */
+
+    private ProfileRoom.Exchange profiles;
+
+    /** The room's side of the profile frames (ProfileRoom), on the room's thread. */
+    private ProfileRoom.Exchange profiles() {
+        if (profiles != null) return profiles;
+        profiles = new ProfileRoom.Exchange(Profiles.of(app).cache, new ProfileRoom.Deps() {
+            /** Sealed with the pair key to that one peer — never the room key, never via the server. */
+            @Override public boolean send(String peerId, JSONObject frame) {
+                Peer p = peers.get(peerId);
+                if (p == null || !p.open() || keys == null || !senderKeys.hasPair(peerId)) return false;
+                try {
+                    JSONObject payload = new JSONObject(frame.toString()).put("kind", "profile").put("id", "prof-" + Crypto.hex(Crypto.random(12)))
+                        .put("createdAt", System.currentTimeMillis()).put("senderId", myId).put("senderName", userName);
+                    String sealed = senderKeys.sealPrivate(keys, payload.getString("id"), payload, myId, peerId, identity).toString();
+                    if (sealed.length() > ProfileRoom.FRAME_MAX_CHARS) return false;
+                    p.send(sealed);
+                    return true;
+                } catch (JSONException | RuntimeException e) { return false; }
+            }
+            @Override public JSONObject myView() { return Profiles.of(app).roomView(); }
+            @Override public String ownerOf(String peerId) { Peer p = peers.get(peerId); return p == null || p.publicKey == null || p.publicKey.isEmpty() ? null : p.publicKey; }
+            @Override public long now() { return System.currentTimeMillis(); }
+        });
+        return profiles;
+    }
+
+    /** A checked profile frame from this channel's peer (bound to it, never ours), or null. */
+    private JSONObject profileFrame(JSONObject payload, String peerId) {
+        if (payload == null || !"profile".equals(payload.optString("kind")) || !peerId.equals(payload.optString("senderId")) || peerId.equals(myId)) return null;
+        return ProfileRoom.parse(payload);
+    }
+
+    /** 6.7: my profile changed — every member who speaks profiles learns its version. */
+    public void profileChanged() { post(() -> { if (keys != null) profiles().changed(); }); }
+
+    /** 6.7: what a member shares with the room (null: nothing, or an app without profiles). */
+    public JSONObject profileOf(String peerId) { return Profiles.of(app).cache.of(peerId); }
+
+    /** 6.7: the account key that signed a member's messages ("" = none yet). */
+    public String accountKeyOf(String peerId) { ProfileRoom.Exchange x = profiles; return x == null ? "" : x.accountKey(peerId); }
 
     /**
      * 6.0: the operator speaks (the console, a function's m5room.wall_msg / user_msg /

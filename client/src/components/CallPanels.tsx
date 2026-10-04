@@ -11,8 +11,8 @@ import { presenceView, usePresenceClock } from "../lib/presence-book";
 import type { RoomPresence } from "../lib/use-room-presence";
 import "../presence.css";
 
-/** 6.7 `presence`: each person's status dot and "last seen …", and the members whose connection went (held, listed as away). */
-export function PeerList({ peers, lang, presence }: { peers: PeerView[]; lang: Lang; presence?: RoomPresence }) {
+/** 6.7 `presence`: each person's status dot and "last seen …", and the members whose connection went (held, listed as away); 6.7 profile: `info` opens a person's details and profile. */
+export function PeerList({ peers, lang, presence, onInfo }: { peers: PeerView[]; lang: Lang; presence?: RoomPresence; onInfo?: (peerId: string) => void }) {
   const { tree, base } = useLayoutBase("part.peers", lang);
   const now = usePresenceClock();
   const seen = (id: string) => (presence ? presenceView(presence.factsOf(id), now, lang) : { presence: "", presenceLabel: "", seenText: "" });
@@ -21,7 +21,11 @@ export function PeerList({ peers, lang, presence }: { peers: PeerView[]; lang: L
     ...peers.filter((p) => !presence?.isHeld(p.id)).map((p) => ({ id: p.id, name: p.name, short: p.id.slice(-12), status: p.status as string, audio: p.audio as string, ...seen(p.id) })),
     ...(presence?.held([], []) ?? []).map((h) => ({ id: h.peerId, name: h.name, short: h.peerId.slice(-12), status: "away", audio: "off", ...seen(h.peerId) })),
   ];
-  return renderLayout(tree, { ...base, data: { peers: list } });
+  return renderLayout(tree, {
+    ...base,
+    data: { peers: list },
+    actions: { info: (_e: unknown, id: unknown) => onInfo?.(String(id)) },
+  });
 }
 
 export function AudioControls({ audioStatus, audioPeerCount, connected, onJoin, onLeave, onToggleMute, lang, media, mediaDetail }: { audioStatus: AudioStatus; audioPeerCount: number; connected: boolean; onJoin: () => void; onLeave: () => void; onToggleMute: () => void; lang: Lang; media: Record<string, "e2ee" | "partial" | "off"> | null; mediaDetail?: string }) {

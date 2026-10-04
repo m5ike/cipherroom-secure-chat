@@ -26,6 +26,7 @@ export function peersTree(): LNode {
           n("paragraph", { id: "peer-seen", name: "Last seen", if: "$p.seenText && $p.presence !== 'online'", attrs: { class: "text-xs text-muted-foreground" }, text: "{$p.seenText}" }),
         ]),
         n("panel", { id: "peer-state", attrs: { class: "flex items-center gap-1" } }, [
+          n("button", { id: "peer-profile", name: "Profile", attrs: { type: "button", class: "rounded-full p-1 text-muted-foreground hover:bg-accent", title: "{_'pf.open'}", "aria-label": "{_'pf.open'}", "data-testid": "peer-profile-{$p.id}" }, on: { click: { action: "info", arg: "$p.id" } } }, [icon("circle-user-round", "h-4 w-4", { "aria-hidden": "true" }, { id: "peer-profile-icon" })]),
           icon("mic", "h-4 w-4 text-emerald-500", { "aria-label": "audio live" }, { id: "peer-live", if: "$p.audio === 'live'" }),
           icon("mic-off", "h-4 w-4 text-amber-500", { "aria-label": "audio muted" }, { id: "peer-muted", if: "$p.audio === 'muted'" }),
           n("area", {
@@ -217,7 +218,7 @@ export const TOOL_CONTRACTS: Record<ToolId, LayoutContract> = {
   "part.peers": {
     description: "Who is in the room.",
     vars: [{ path: "$peers", type: "list", description: "People: .id, .name, .short, .status (open / connecting / closed; 6.7: away — the connection went, not left), .audio (live / muted); 6.7: .presence (online, away or far — the status dot), .presenceLabel, .seenText (“Last seen 12 min ago”)." }],
-    actions: [], slots: [], refs: [],
+    actions: [{ name: "info", description: "6.7: open a person's details and profile.", arg: "their id ($p.id)" }], slots: [], refs: [],
   },
   "part.audio": {
     description: "The voice call: join, mute, leave, and whether its media is encrypted end to end.",

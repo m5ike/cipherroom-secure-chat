@@ -267,7 +267,7 @@ public final class Forms {
             // 6.7: a saved room's Edit (RoomEdit) fills the form with it, and Save changes it.
             Object editKey = a.form().remove(RoomEdit.EDIT);
             cz.m5cet.app.chat.Rooms.Saved edit = editKey == null ? null : app.rooms.savedRoom(String.valueOf(editKey));
-            EditText name = field(a, app.t("join.name"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS, edit != null && !edit.userName.isEmpty() ? edit.userName : app.config.userName());
+            EditText name = field(a, app.t("join.name"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS, edit != null && !edit.userName.isEmpty() ? edit.userName : cz.m5cet.app.profile.Profiles.of(app).prefill(app.config.userName())); // 6.7: the public nickname pre-fills a new room's name
             EditText room = field(a, app.t("join.room"), InputType.TYPE_CLASS_TEXT, edit == null ? "" : edit.label);
             EditText pass = field(a, app.t("join.passphrase"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD, edit == null ? "" : edit.passphrase);
             TextView go = edit == null ? button(a, app.t("join.submit"), "log-in") : button(a, app.t("room.edit.save"), "save");

@@ -53,9 +53,9 @@ export type MailboxItem = {
 export type UserEvent = { at: number; kind: string; meta?: unknown };
 
 export type VaultPart = { ct: string; updatedAt: number };
-export type VaultParts = { profile?: VaultPart; chat?: VaultPart; connections?: VaultPart; registration?: VaultPart };
-/** The sealed parts of an account vault (3.2 added the saved connections). */
-export const VAULT_PARTS = ["profile", "chat", "connections", "registration"] as const;
+export type VaultParts = { profile?: VaultPart; chat?: VaultPart; connections?: VaultPart; registration?: VaultPart; card?: VaultPart };
+/** The sealed parts of an account vault (3.2 added the saved connections, 6.7 the profile card). */
+export const VAULT_PARTS = ["profile", "chat", "connections", "registration", "card"] as const;
 
 /** The kv key the account vault used to live under; nobody may write it. */
 export const VAULT_KEY = "vault";
@@ -209,7 +209,7 @@ export class UserDatabase {
     for (const row of rows) {
       if ((VAULT_PARTS as readonly string[]).includes(row.part)) vault[row.part as (typeof VAULT_PARTS)[number]] = { ct: String(row.ct), updatedAt: Number(row.updated_at) };
     }
-    return vault.profile || vault.chat || vault.connections || vault.registration ? vault : null;
+    return vault.profile || vault.chat || vault.connections || vault.registration || vault.card ? vault : null;
   }
 
   /** Stores the parts given. With `onlyNewer`, a part only replaces one

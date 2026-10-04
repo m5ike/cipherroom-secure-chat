@@ -95,7 +95,7 @@ public final class People {
         List<JSONObject> list = new ArrayList<>();
         for (int i = 0; i < base.length(); i++) {
             JSONObject u = base.optJSONObject(i);
-            if (u != null) list.add(enrich(u, sel));
+            if (u != null) list.add(ProfileUi.decorate(app(), r, enrich(u, sel))); // 6.7: a shared profile photo
         }
         list.sort(Comparator.comparingInt((JSONObject u) -> u.optBoolean("me") ? -1 : Presence.rank(u.optString("status"))));
         for (JSONObject u : list) out.put(u);
@@ -164,7 +164,7 @@ public final class People {
                 .put("room", r.label).put("contactsOn", app().settings.bool("people.contacts"))
                 .put("others", (double) Math.max(0, r.userCount() - 1));
         } catch (JSONException ignored) { }
-        return u;
+        return ProfileUi.detail(app(), r, u); // 6.7: what they share, their public profile when asked for
     }
 
     /** A linked contact's photo as a data: URL ("" until it is read, or without one); read once, in the background. */

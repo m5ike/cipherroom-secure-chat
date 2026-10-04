@@ -8,7 +8,8 @@
 //
 // Colours are plain hex, applied locally and stored per user. Avatars are a
 // monogram or a short emoji — never a remote URL (CSP blocks those and a
-// peer-supplied URL must not trigger a request).
+// peer-supplied URL must not trigger a request); 6.7: or a profile photo,
+// which is only ever an inline data: image (profile/model.ts checked it).
 
 import { useEffect, useRef, useState } from "react";
 import { Info, KeyRound, PaintBucket, SquareDashed, RotateCcw } from "lucide-react";
@@ -35,7 +36,15 @@ const SWATCHES = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#14b8a6", "#3b82f
 
 type Tab = "info" | "font" | "bckg" | "border";
 
+/** 6.7: a profile photo — an inline JPEG / PNG / WebP, nothing that loads from anywhere. */
+export function isPhotoAvatar(avatar?: string): avatar is string {
+  return typeof avatar === "string" && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(avatar);
+}
+
 export function Avatar({ name, avatar, size = 32, className = "" }: { name: string; avatar?: string; size?: number; className?: string }) {
+  if (isPhotoAvatar(avatar)) {
+    return <img className={`user-avatar ${className}`} src={avatar} alt="" aria-hidden="true" width={size} height={size} style={{ width: size, height: size, objectFit: "cover" }} />;
+  }
   const glyph = avatarGlyphFor(name, avatar);
   const hue = hueFor((name || "?").toLowerCase());
   return (

@@ -154,6 +154,11 @@ public final class Actions {
                     a.parts.people().run(action, s);
                     break;
 
+                // ---- 6.7 profile (the profile card, a person's public profile) ----
+                case "profile.open": case "profile.pick": case "profile.clear": case "profile.field": case "profile.sync": case "profile.save": case "profile.public":
+                    cz.m5cet.app.ui.parts.ProfileUi.run(a, action, s);
+                    break;
+
                 // ---- 6.2 bubbles (message details, attachments, hide/delete) ----
 
                 // ---- 6.2 look (templates, Tools dock, send button, microphone) ----

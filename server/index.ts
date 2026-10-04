@@ -54,7 +54,7 @@ const apiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   // The vault and the storage API have their own, larger buckets (below).
-  skip: (req) => req.originalUrl.startsWith("/api/account/vault") || req.originalUrl.startsWith("/api/storage") || req.originalUrl.startsWith("/api/admin") || req.originalUrl.startsWith("/api/android"),
+  skip: (req) => req.originalUrl.startsWith("/api/account/vault") || req.originalUrl.startsWith("/api/storage") || req.originalUrl.startsWith("/api/admin") || req.originalUrl.startsWith("/api/android") || req.originalUrl.startsWith("/api/profile"),
   message: { ok: false, message: "Too many requests, please try again later." },
 });
 
@@ -111,6 +111,13 @@ app.use(
   "/api/android",
   rateLimit({ windowMs: 15 * 60 * 1000, limit: 1_500, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many requests from this network." } }),
   express.raw({ type: () => true, limit: "1mb" }),
+);
+// 6.7: public profiles — lookups by username, and an owner's PUT with two
+// small images (public-profile.ts limits each route further).
+app.use(
+  "/api/profile",
+  rateLimit({ windowMs: 15 * 60 * 1000, limit: 600, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many profile requests." } }),
+  express.json({ limit: "1mb" }),
 );
 // The Android design carries screens, strings and small assets.
 app.use("/api/admin/android/design", express.json({ limit: "8mb" }));

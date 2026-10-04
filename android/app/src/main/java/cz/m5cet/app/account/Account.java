@@ -434,6 +434,49 @@ public final class Account {
         });
     }
 
+    /* ------------------------------------------------ profile card (6.7) */
+
+    /**
+     * The profile card (profile/ProfileCard) from the vault's own "card"
+     * part, opened with the vault key; null when there is none yet. Blocking
+     * (a background thread): only that part is fetched (?only=card).
+     */
+    public JSONObject loadCard() throws IOException, GeneralSecurityException {
+        byte[] root = root(), key = null;
+        try {
+            if (root == null || !signedIn()) throw new IOException(t("passkey.noRoot"));
+            JSONObject card = call("GET", "/api/account/vault?only=card", null, true).optJSONObject("card");
+            if (card == null || card.optString("ct").isEmpty()) return null;
+            key = AccountKeys.profileKey(root);
+            return AccountKeys.openProfile(card.optString("ct"), key);
+        } finally {
+            Crypto.wipe(root);
+            Crypto.wipe(key);
+        }
+    }
+
+    /** Seals the whole card (every audience) with the vault key into the vault's "card" part. Blocking. */
+    public void saveCard(JSONObject card) throws IOException {
+        byte[] root = root(), key = null;
+        try {
+            if (root == null || !signedIn()) throw new IOException(t("passkey.noRoot"));
+            key = AccountKeys.profileKey(root);
+            Sent sent = send("PUT", "/api/account/vault", new JSONObject().put("card", AccountKeys.sealProfile(card, key)), true);
+            if (sent.answer == null) throw sent.error;
+        } catch (JSONException e) {
+            throw new IOException(e.getMessage());
+        } finally {
+            Crypto.wipe(root);
+            Crypto.wipe(key);
+        }
+    }
+
+    /** The public profile API (/api/profile…): the owner's PUT / DELETE / GET (auth), anyone's GET by username. Blocking. */
+    public JSONObject profileApi(String method, String path, JSONObject body, boolean auth) throws IOException {
+        if (!path.startsWith("/api/profile")) throw new IOException("not a profile path");
+        return call(method, path, body, auth);
+    }
+
     /* ------------------------------------------------ more ways into it */
 
     /** The account root kept with the session (null without one). */

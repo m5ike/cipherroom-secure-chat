@@ -1010,6 +1010,33 @@
   $("#userFilter").addEventListener("input", renderUsers);
   const algName = (alg) => ({ "-7": "ES256", "-8": "EdDSA", "-257": "RS256" })[String(alg)] || String(alg);
 
+  /**
+   * 6.7: an account's public profile in its drawer — only what the user
+   * marked public (the rest never reaches the server). Removing it is the
+   * moderation step: audited, and the user can publish again.
+   */
+  async function showPublicProfile(id, box) {
+    let data = null;
+    try { data = await api(`/api/admin/users/${encodeURIComponent(id)}/public-profile`); } catch { data = null; }
+    clear(box);
+    const p = data && data.profile;
+    if (!p) { box.append(h("span", { class: "muted" }, "None — nothing of this account is public.")); return; }
+    const img = (src, style) => (typeof src === "string" && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(src) ? h("img", { src, alt: "", style }) : null);
+    box.append(
+      img(p.cover, "display:block;width:100%;max-height:140px;object-fit:cover;border-radius:8px;margin-bottom:8px"),
+      h("div", { class: "row" },
+        img(p.avatar, "width:48px;height:48px;border-radius:50%;object-fit:cover"),
+        h("strong", {}, p.nickname || "—"),
+        h("span", { class: "muted small" }, `published ${ago(data.updatedAt)}`)),
+      p.about ? h("p", { class: "small", style: "white-space:pre-wrap" }, p.about) : null,
+      (p.fields || []).length ? kv(h("dl", { class: "kv" }), p.fields.map((f) => [f.label || f.type, f.value])) : null,
+      h("div", { class: "row" }, h("button", { class: "btn btn--danger", onclick: async () => {
+        if (!confirm("Remove this public profile? Nobody will find it by the username any more; the user can publish again.")) return;
+        try { await api(`/api/admin/users/${encodeURIComponent(id)}/public-profile`, { method: "DELETE" }); toast("Public profile removed.", "ok"); showPublicProfile(id, box); } catch (e) { toast(e.message, "err"); }
+      } }, "Remove public profile…")),
+    );
+  }
+
   async function openUser(id) {
     let detail;
     try { detail = await api(`/api/admin/users/${encodeURIComponent(id)}`); } catch (e) { toast(e.message, "err"); return; }
@@ -1037,6 +1064,10 @@
           try { await api(`/api/admin/users/${encodeURIComponent(id)}?confirm=${encodeURIComponent(id)}`, { method: "DELETE" }); toast("Account deleted.", "ok"); closeDrawer(); loadUsers(); } catch (e) { toast(e.message, "err"); }
         } }, "Delete account…")));
       const section = (title, content) => body.append(h("h3", {}, title), content);
+      // 6.7: what anyone can read of this account by its username.
+      const profileBox = h("div", {}, h("span", { class: "muted" }, "Loading…"));
+      section("Public profile", profileBox);
+      void showPublicProfile(id, profileBox);
       const t = (cols, rows, empty) => {
         const table = h("table", { class: "t" }, h("thead", {}, h("tr", {}, cols.map((c) => h("th", {}, c)))), h("tbody"));
         fillTable(table, rows, empty);

@@ -61,6 +61,7 @@ import { audit } from "./monitor/audit";
 import { system } from "./monitor/system";
 import { resolveTrustProxy } from "./trust-proxy";
 import { registerAccountRoutes } from "./accounts/routes";
+import { registerPublicProfileRoutes } from "./accounts/public-profile";
 import { registerAppLinks } from "./android/app-links";
 import { sendWebPush } from "./push";
 import { registerTelephonyRoutes } from "./telephony/routes";
@@ -300,6 +301,8 @@ export async function registerRoutes(
   registerDefineRoutes(app);
   registerMapTileRoutes(app);
   registerMessageAuditRoutes(app);
+  // 6.7: the public part of users' profiles (and its moderation in the console).
+  registerPublicProfileRoutes(app, accountStore);
 
   app.get("/api/health", (_req, res) => {
     const b = buildInfo();

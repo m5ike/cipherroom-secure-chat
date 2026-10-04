@@ -126,6 +126,9 @@ import { StartScreen } from "./components/StartScreen";
 import { PhoneBridgeClient, bridgeUrl, callFromFrame, type PhoneCall } from "./lib/phone-bridge";
 import { createRoomHub, roomKeyOf, type HubTarget, type RoomHub } from "./lib/room-hub";
 import { cleanUsername, sessionUsername } from "./lib/username";
+import { clearCard, currentCard, loadCard, myRoomView, onCardChange } from "./lib/profile/client";
+import { prefillNickname, type ProfileCard, type SharedProfile } from "./lib/profile/model";
+import { FRAME_MAX_CHARS, PROFILE_CAP, ProfileExchange, RoomProfiles, type ProfileFrame } from "./lib/profile/room";
 import { installNavigationGuard, releaseNavigationGuard, type BlockedBy } from "./lib/nav-guard";
 import { moduleAllowed, moduleOfPanel } from "./lib/modules";
 import { fetchMenuConfig, loadCachedMenuConfig } from "./lib/menu-config-client";
@@ -386,6 +389,8 @@ type MessageRowProps = {
   timezone: string;
   room: string;
   avatar: string;
+  /** 6.7: the sender's profile photo (what they share with the room). */
+  peerAvatar?: string;
   delivery: MsgState | undefined;
   /** 6.2: the operator's map preview (client config › map). */
   mapPolicy: MapPreviewPolicy;
@@ -403,7 +408,7 @@ function layoutBlocksOf(cfg: LayoutConfig): Record<string, LNode> {
 
 /** One message in the conversation. Memoized: typing in the composer, a
  *  peer's status or a new message elsewhere leave it alone. */
-const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutCtx, lang, timezone, room, avatar, delivery, mapPolicy, act }: MessageRowProps) {
+const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutCtx, lang, timezone, room, avatar, peerAvatar, delivery, mapPolicy, act }: MessageRowProps) {
   const isSystem = message.senderId === "system";
   const styleKey = styleKeyFor(message.senderName, message.senderId);
   const vars = {
@@ -419,6 +424,7 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutC
     <UserBadge
       name={message.senderName}
       senderId={message.senderId}
+      avatar={peerAvatar}
       mine={false}
       style={perStyle}
       onChangeStyle={(patch) => act.current.setMessageStyle(styleKey, patch)}
@@ -579,6 +585,15 @@ function ChatApp() {
   const [sessionUser, setSessionUser] = useState("");
   /** The usernames peers told us in their hello. */
   const peerUsersRef = useRef(new Map<string, string>());
+  /** 6.7: my profile card (signed in), and what the room's members share with me (end-to-end encrypted). */
+  const [card, setCard] = useState<ProfileCard | null>(() => currentCard());
+  const roomProfilesRef = useRef(new RoomProfiles());
+  const [peerProfiles, setPeerProfiles] = useState<Record<string, SharedProfile>>({});
+  /** The account key that signed a peer's messages (a public profile's is compared with it). */
+  const peerAccountKeysRef = useRef(new Map<string, string>());
+  /** The name field was typed in this session: the public nickname no longer pre-fills it. */
+  const nameTypedRef = useRef(false);
+  const profileExchangeRef = useRef<ProfileExchange | null>(null);
   /** A restored session's saved connection, bound once the vault opens. */
   const pendingProfileIdRef = useRef<string | null>(null);
   /** The Room window's tab when the user picked one; otherwise it follows the session. */
@@ -1962,6 +1977,32 @@ function ChatApp() {
     }
   }
 
+  /**
+   * 6.7: profiles in the room (profile/room.ts) — a frame to one peer at a
+   * time, sealed with the pair key: never the room key, never via the server.
+   * False when it cannot go, or would not fit one data channel message.
+   */
+  async function sendProfileFrame(peerId: string, frame: ProfileFrame): Promise<boolean> {
+    const keys = keyRef.current;
+    const store = senderKeysRef.current;
+    const channel = peersRef.current.get(peerId)?.channel;
+    if (!keys || channel?.readyState !== "open" || !store.hasPair(peerId)) return false;
+    const payload = { kind: "profile", id: newId("prof"), createdAt: Date.now(), senderId: myIdRef.current, senderName: nameRef.current, ...frame };
+    const envelope = await store.sealPrivate(keys, payload.id, payload, myIdRef.current, peerId, identityRef.current);
+    if (!envelope) return false;
+    const text = JSON.stringify(envelope);
+    if (text.length > FRAME_MAX_CHARS) return false;
+    try { channel.send(text); return true; } catch { return false; }
+  }
+
+  function profileExchange(): ProfileExchange {
+    return profileExchangeRef.current ??= new ProfileExchange(roomProfilesRef.current, {
+      send: (peerId, frame) => sendProfileFrame(peerId, frame),
+      myView: () => myRoomView(),
+      ownerOf: (peerId) => senderKeysRef.current.pairOf(peerId)?.peerPublicKey ?? null,
+    });
+  }
+
   /** A peer's receipt for messages of mine: a delivered / read audit entry per peer (the bubble shows the highest). */
   function applyReceipt(who: string, state: "delivered" | "read", ids: string[]) {
     const wanted = new Set(ids);
@@ -1981,6 +2022,27 @@ function ChatApp() {
   useEffect(() => {
     nameRef.current = name;
   }, [name]);
+
+  // 6.7: the profile card follows the account — opened from the vault at a
+  // sign-in, gone from memory at a sign-out (it stays sealed in the vault).
+  useEffect(() => onCardChange(setCard), []);
+  useEffect(() => roomProfilesRef.current.subscribe(() => setPeerProfiles(roomProfilesRef.current.snapshot())), []);
+  useEffect(() => {
+    if (!account) { clearCard(); return; }
+    void loadCard().catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.id]);
+  // The public nickname pre-fills the room's name field — not in a room, and
+  // not once the user typed a name there (they can always change it).
+  useEffect(() => {
+    if (!card || nameTypedRef.current || status !== "idle") return;
+    const next = prefillNickname(card, nameRef.current);
+    if (next !== nameRef.current) setName(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [card?.nickname.value]);
+  // What room members may see of me changed: everyone who speaks profiles learns the new version.
+  const myRoomRev = card ? myRoomView(card)?.rev ?? "" : "";
+  useEffect(() => { void profileExchange().changed(); }, [myRoomRev]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     audioStatusRef.current = audioStatus;
@@ -2337,7 +2399,7 @@ function ChatApp() {
         void (async () => {
           const identity = identityRef.current ?? (identityRef.current = await loadIdentity());
           const hello = await senderKeysRef.current.hello(keys, identity, myIdRef.current, peerId);
-          const caps = mediaE2eeRef.current.supported ? ["bin", "media"] : ["bin"];
+          const caps = [...(mediaE2eeRef.current.supported ? ["bin", "media"] : ["bin"]), PROFILE_CAP];
           // `user`: this session's username (the peer's claim, like its nickname).
           try { channel.send(JSON.stringify({ ...hello, caps, ...(sessionUserRef.current ? { user: sessionUserRef.current } : {}) })); } catch { /* closing */ }
         })();
@@ -2398,6 +2460,8 @@ function ChatApp() {
         // Our current chain, so they can read what we say from now on.
         const sk = await senderKeysRef.current.senderKeyFor(keys, myIdRef.current, peerId);
         if (sk) { try { channel.send(JSON.stringify(sk)); } catch { /* closing */ } }
+        // 6.7: the pair key exists now — they learn my profile's version.
+        void profileExchange().hello(peerId, raw.caps);
         return;
       }
 
@@ -2445,10 +2509,11 @@ function ChatApp() {
         return;
       }
       if (opened.version === 1) warnOnce(`legacy:${peerId}`, t(lang, "sec.legacyPeer").replace("{name}", peerName()));
+      if (opened.signer?.valid && opened.signer.account?.valid) peerAccountKeysRef.current.set(peerId, opened.signer.account.publicKey);
 
       // Checked, bounded, and bound to this channel's peer: a payload
       // naming another sender (or us) is not shown.
-      const plaintext = validatePayload(opened.payload, { transportSender: peerId, myId: myIdRef.current, receipts: true });
+      const plaintext = validatePayload(opened.payload, { transportSender: peerId, myId: myIdRef.current, receipts: true, profiles: true });
       if (!plaintext) {
         warnOnce(`dropped:${peerId}`, t(lang, "proto.dropped").replace("{name}", peerName()));
         return;
@@ -2462,6 +2527,11 @@ function ChatApp() {
       if (plaintext.kind === "receipt") {
         // Only sealed for us alone (a pair envelope) counts: a receipt is not a room-wide claim.
         if (sealedWith === "pair") applyReceipt(peerName(), plaintext.state, plaintext.ids);
+        return;
+      }
+      if (plaintext.kind === "profile") {
+        // 6.7: only sealed for us alone (a pair envelope) — a profile goes to one member at a time.
+        if (sealedWith === "pair") void profileExchange().receive(peerId, plaintext);
         return;
       }
       if (messagesRef.current.some((m) => m.id === plaintext.id)) return;
@@ -3132,6 +3202,8 @@ function ChatApp() {
         if (handle) detachAudioElement(handle);
         handle?.pc.close();
         peersRef.current.delete(frame.peerId);
+        profileExchange().forget(frame.peerId);
+        peerAccountKeysRef.current.delete(frame.peerId);
         setPeers((current) => current.filter((peer) => peer.id !== frame.peerId));
         systemMessage(tf(lang, frame.held ? "presence.wentAway" : "app.peerLeft", { name: handle?.name && !handle.name.startsWith("peer-") ? handle.name : `peer-${frame.peerId.slice(-4)}` }));
         cx("peer-left", handle?.name);
@@ -3952,6 +4024,8 @@ function ChatApp() {
         connectedForMs: null, transport: "self", appType: "M5cet Web",
         usesServer: prefs.mode === "server", sentBytes: 0, recvBytes: 0,
         security: "AES-GCM 256 (E2EE)",
+        // 6.7: how room members see me.
+        ...(card ? { avatar: card.avatar.value || undefined, profile: { room: myRoomView(card), self: true } } : {}),
       };
     }
     const handle = peersRef.current.get(target);
@@ -3971,6 +4045,9 @@ function ChatApp() {
       sentBytes: st?.sent ?? 0, recvBytes: st?.recv ?? 0,
       security: fp ? "DTLS-SRTP + AES-GCM 256" : "AES-GCM 256 (E2EE)",
       fingerprint: fp ? formatFingerprint(fp) : undefined,
+      // 6.7: what they share with the room, and the account key that signed their messages.
+      avatar: peerProfiles[target]?.avatar,
+      profile: { room: peerProfiles[target] ?? null, accountKey: peerAccountKeysRef.current.get(target) },
       ...(pair && identityRef.current ? {
         safety: {
           mine: identityRef.current.publicKey,
@@ -4004,6 +4081,7 @@ function ChatApp() {
     try { handle?.pc.close(); } catch { /* ignore */ }
     if (handle) detachAudioElement(handle);
     peersRef.current.delete(peerId);
+    profileExchange().forget(peerId);
     setPeers((current) => current.filter((p) => p.id !== peerId));
     setUserInfoFor(null);
     systemMessage(t(lang, "sec.excluded").replace("{name}", handle?.name || peerId.slice(-6)), { kind: "warning" });
@@ -4957,7 +5035,8 @@ function ChatApp() {
                 lang={lang}
                 timezone={prefs.timezone}
                 room={room}
-                avatar={prefs.avatar}
+                avatar={card?.avatar.value || prefs.avatar}
+                peerAvatar={message.mine ? undefined : peerProfiles[message.senderId]?.avatar}
                 delivery={deliveryStateOf(message)}
                 mapPolicy={clientConfig.map}
                 act={rowActionsRef}
@@ -5147,7 +5226,7 @@ function ChatApp() {
       {/* Peers modal */}
       {activePanel === "peers" ? (
         <SimpleModal title={t(lang, "menu.peers")} onClose={() => setActivePanel(null)}>
-          <PeerList peers={peers} lang={lang} presence={presence} />
+          <PeerList peers={peers} lang={lang} presence={presence} onInfo={(id) => setUserInfoFor(id)} />
         </SimpleModal>
       ) : null}
 
@@ -5341,7 +5420,7 @@ function ChatApp() {
             busy={status === "deriving" || status === "connecting"}
             fields={{ name, room: roomInput, passphrase }}
             onField={(patch) => {
-              if (patch.name !== undefined) setName(patch.name);
+              if (patch.name !== undefined) { nameTypedRef.current = true; setName(patch.name); }
               if (patch.room !== undefined) setRoomInput(patch.room);
               if (patch.passphrase !== undefined) setPassphrase(patch.passphrase);
             }}
@@ -5401,7 +5480,7 @@ function ChatApp() {
       {status === "joined" ? (
         <RecipientsWidget
           peers={[
-            ...peers.filter((p) => !presence.isHeld(p.id)).map((p): WidgetPeer => ({ id: p.id, name: p.name, status: p.status, rttMs: p.status === "open" ? connStatus?.rttMs : undefined, presence: presence.factsOf(p.id) })),
+            ...peers.filter((p) => !presence.isHeld(p.id)).map((p): WidgetPeer => ({ id: p.id, name: p.name, status: p.status, rttMs: p.status === "open" ? connStatus?.rttMs : undefined, presence: presence.factsOf(p.id), avatar: peerProfiles[p.id]?.avatar })),
             // Signed-in members the server answers for: still addressable.
             ...awayPeers.map((a): WidgetPeer => ({ id: awayKey(a.accountId), name: a.name, status: "away", since: a.since, presence: presence.factsOf(awayKey(a.accountId)) })),
             // 6.7: their connection went, they did not leave: listed as away until they are back.

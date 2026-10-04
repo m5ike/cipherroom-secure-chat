@@ -11,6 +11,7 @@
 import { sanitizeFnOutputs } from "./fn-outputs";
 import { clampVanishSeconds, type MsgFlags } from "./message-kinds";
 import type { AttachmentMeta } from "./chat-types";
+import { parseProfileFrame, type ProfileFrame } from "./profile/room";
 
 export const PAYLOAD_LIMITS = {
   idChars: 96,
@@ -153,6 +154,9 @@ export function validateLoc(v: unknown): MessageLoc | undefined {
 
 export type AudioStatusPayload = { kind: "audio-status"; id: string; createdAt: number; senderId: string; senderName: string; status: "off" | "joining" | "live" | "muted" };
 
+/** 6.7: a member's profile — announce / request / full (profile/room.ts); only for callers passing { profiles: true }. */
+export type ProfilePayload = { kind: "profile"; id: string; createdAt: number; senderId: string; senderName: string } & ProfileFrame;
+
 /** Ids the app itself uses for its own notices; a peer may not borrow them. */
 const RESERVED_SENDERS = new Set(["system", "self", "server", "admin"]);
 
@@ -161,10 +165,10 @@ const RESERVED_SENDERS = new Set(["system", "self", "server", "admin"]);
  * it (the data channel's peer, or the peer the server says relayed it) —
  * the payload's own senderId must match, and may never be ours.
  */
-export function validatePayload(
-  value: unknown,
-  opts: { transportSender?: string; myId?: string; now?: number; receipts?: boolean } = {},
-): ChatPayload | AudioStatusPayload | ReceiptPayload | null {
+type PayloadOpts = { transportSender?: string; myId?: string; now?: number; receipts?: boolean; profiles?: boolean };
+export function validatePayload(value: unknown, opts: PayloadOpts & { profiles: true }): ChatPayload | AudioStatusPayload | ReceiptPayload | ProfilePayload | null;
+export function validatePayload(value: unknown, opts?: PayloadOpts & { profiles?: false }): ChatPayload | AudioStatusPayload | ReceiptPayload | null;
+export function validatePayload(value: unknown, opts: PayloadOpts = {}): ChatPayload | AudioStatusPayload | ReceiptPayload | ProfilePayload | null {
   if (!value || typeof value !== "object") return null;
   const p = value as Record<string, unknown>;
   const now = opts.now ?? Date.now();
@@ -185,6 +189,10 @@ export function validatePayload(
     if (!opts.receipts || (p.state !== "delivered" && p.state !== "read") || !Array.isArray(p.ids)) return null;
     const ids = p.ids.filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 80).slice(0, 50);
     return ids.length ? { kind: "receipt", id, createdAt, senderId, senderName, state: p.state, ids } : null;
+  }
+  if (p.kind === "profile") {
+    const frame = opts.profiles ? parseProfileFrame(p) : null;
+    return frame ? { kind: "profile", id, createdAt, senderId, senderName, ...frame } : null;
   }
   if (p.kind !== undefined && p.kind !== "text") return null;
   const text = p.text === undefined ? "" : str(p.text, PAYLOAD_LIMITS.textChars);

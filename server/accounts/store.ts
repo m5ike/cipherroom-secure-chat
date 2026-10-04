@@ -54,6 +54,8 @@ export const ACCOUNT_LIMITS = {
   maxChatChars: 6_000_000,
   /** Saved connections with their logs and statistics (sealed by the browser). */
   maxConnectionsChars: 1_500_000,
+  /** 6.7: the profile card (photo, background, nickname, fields — every audience), sealed by the client. */
+  maxCardChars: 400_000,
   maxMailboxItems: 500,
   maxMailboxBytes: 4_000_000,
   maxItemBytes: 130_000,
@@ -139,6 +141,8 @@ type VaultFile = {
   connections?: { ct: string; updatedAt: number };
   /** 6.4: the registration form's profile (name, country, phone, e-mail), sealed by the client. */
   registration?: { ct: string; updatedAt: number };
+  /** 6.7: the profile card — what the user marked "only me" never leaves it unsealed. */
+  card?: { ct: string; updatedAt: number };
 };
 
 /**
@@ -807,7 +811,7 @@ export class AccountStore {
 
   putVault(
     accountId: string,
-    patch: { profile?: string; chat?: { ct: string; messages: number; messageBytes: number; rooms: number }; connections?: { ct: string; count: number }; registration?: string },
+    patch: { profile?: string; chat?: { ct: string; messages: number; messageBytes: number; rooms: number }; connections?: { ct: string; count: number }; registration?: string; card?: string },
     now = Date.now(),
   ): { ok: true } | { ok: false; reason: string } {
     const acc = this.get(accountId);
@@ -824,6 +828,9 @@ export class AccountStore {
     }
     if (patch.registration !== undefined && (typeof patch.registration !== "string" || !b64.test(patch.registration) || patch.registration.length > ACCOUNT_LIMITS.maxProfileChars)) {
       return { ok: false, reason: "registration ciphertext invalid or too large" };
+    }
+    if (patch.card !== undefined && (typeof patch.card !== "string" || !b64.test(patch.card) || patch.card.length > ACCOUNT_LIMITS.maxCardChars)) {
+      return { ok: false, reason: "profile card ciphertext invalid or too large" };
     }
     const vault = this.getVault(accountId);
     if (patch.profile !== undefined) {
@@ -847,6 +854,7 @@ export class AccountStore {
       acc.vault.connectionsUpdatedAt = now;
     }
     if (patch.registration !== undefined) vault.registration = { ct: patch.registration, updatedAt: now };
+    if (patch.card !== undefined) vault.card = { ct: patch.card, updatedAt: now };
     // The user's own encrypted database when it is open, the file otherwise.
     if (!vaultBackend?.write(accountId, vault)) this.write(this.vaultPath(accountId), vault);
     this.persist();
