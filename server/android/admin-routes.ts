@@ -18,6 +18,7 @@
 //   DELETE /passkeys/trust/:sha256  stop trusting it
 
 import express, { type Express, type Request, type Response } from "express";
+import { EXACT_ROUTER } from "../exact-routing";
 import { createReadStream, existsSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { renderSVG } from "uqr";
@@ -60,7 +61,7 @@ const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice
 const devicePublic = (d: Device) => ({ ...d, signKey: undefined, encKey: undefined, fcmToken: undefined, push: d.fcmToken ? "fcm" : "poll" });
 
 export function registerAndroidAdminRoutes(app: Express): void {
-  const r = express.Router();
+  const r = express.Router(EXACT_ROUTER);
   r.use((_req, _res, next) => { void androidStore.ready().then(() => next(), next); });
   const who = (req: Request) => adminName(req);
   const log = (req: Request, event: string, detail?: Record<string, unknown>, level: "info" | "notice" | "warn" = "notice", target?: string) =>

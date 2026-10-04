@@ -22,6 +22,7 @@
 //   GET    /admin/functions/sdk                  the SDK spec for the editor
 
 import express, { type Express, type NextFunction, type Request, type Response } from "express";
+import { EXACT_ROUTER } from "../exact-routing";
 import { functionsStore } from "./store";
 import { createPackage, deleteModel, deletePackage, exportPackage, importPackage, publishDraft, saveDraft, saveModel, PackageError, TEMPLATES, DRAFT } from "./packages";
 import { answerRun, execute, exportedFunctions, functionsPublicUrl, runAdhoc, runErrorEndpoint, runEvents, RunRefused, type ExecuteResult } from "./runner";
@@ -222,7 +223,7 @@ export function functionsConsoleRight(req: Request): Needs | null {
 
 export function registerFunctionsAdminRoutes(app: Express): void {
   void functionsStore.ready(); // open the store at boot; hot paths await it too
-  const r = express.Router();
+  const r = express.Router(EXACT_ROUTER);
   r.use(express.json({ limit: "8mb" }));
 
   const operator = (_req: Request, res: Response, next: NextFunction) => {
