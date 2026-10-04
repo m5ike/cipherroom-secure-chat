@@ -166,6 +166,40 @@ describe("no raw key/PIN (unit)", () => {
   it("an unknown status becomes error", () => {
     expect(HostNfc.sanitizeNfcResult({ status: "totally-made-up" }).status).toBe("error");
   });
+
+  it("6.5: whitelists EMV read data (holder fields) and caps/keeps the tags", () => {
+    const res = HostNfc.sanitizeNfcResult({
+      status: "ok",
+      emv: {
+        scheme: "Visa", aids: ["A0000000031010", 42], tree: "x".repeat(5000),
+        apps: [{ aid: "a0000000031010", label: "VISA", scheme: "Visa", pan: "4111111111111111", panMasked: "411111••••••1111", expiry: "2029-12", atc: 5, pinTryCounter: 3, secretKey: "leak", tags: [{ tag: "5A", name: "Application PAN", value: "4111111111111111", hex: "4111111111111111", junk: 1 }] }],
+      },
+    });
+    expect(res.emv!.scheme).toBe("Visa");
+    expect(res.emv!.aids).toEqual(["A0000000031010"]); // non-strings dropped, upper-cased
+    expect(res.emv!.tree!.length).toBe(4000); // capped
+    const app = res.emv!.apps[0];
+    expect(app.aid).toBe("A0000000031010");
+    expect(app.pan).toBe("4111111111111111");
+    expect(app.atc).toBe(5);
+    expect(app.pinTryCounter).toBe(3);
+    expect((app as Record<string, unknown>).secretKey).toBeUndefined(); // unknown field dropped
+    expect(app.tags[0]).toEqual({ tag: "5A", name: "Application PAN", value: "4111111111111111", hex: "4111111111111111" });
+  });
+
+  it("6.5: whitelists MRTD read data and caps an oversize photo", () => {
+    const ok = HostNfc.sanitizeNfcResult({
+      status: "ok",
+      mrtd: { present: true, access: "bac", dataGroups: ["DG1", "DG2"], mrzInfo: { surname: "ERIKSSON", givenNames: "ANNA MARIA", documentNumber: "L898902C", secret: "x" }, photo: "QUJD", photoMime: "image/jpeg" },
+    });
+    expect(ok.mrtd!.access).toBe("bac");
+    expect(ok.mrtd!.mrzInfo).toEqual({ surname: "ERIKSSON", givenNames: "ANNA MARIA", documentNumber: "L898902C" });
+    expect(ok.mrtd!.photo).toBe("QUJD");
+    // A photo above the cap (400 kB base64) is dropped, the rest stays.
+    const big = HostNfc.sanitizeNfcResult({ status: "ok", mrtd: { present: true, access: "bac", photo: "A".repeat(500_000), photoMime: "image/jpeg" } });
+    expect(big.mrtd!.photo).toBeUndefined();
+    expect(big.mrtd!.access).toBe("bac");
+  });
 });
 
 /* --------------------------------------------------------------- gating */
