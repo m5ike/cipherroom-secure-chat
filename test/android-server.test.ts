@@ -287,6 +287,17 @@ describe("a device's life through the API", () => {
     expect(tampered.status).toBe(401);
   });
 
+  it("6.7 (N12): a request whose signature fails does not spend the nonce", async () => {
+    const nonce = randomBytes(16).toString("base64url");
+    const time = String(Date.now());
+    const forged = crypto.signP1363(crypto.newP256().privateKey, crypto.requestSignedString("POST", "/api/android/checkin", time, nonce, Buffer.from("{}")));
+    const bad = await fetch(`${base}/api/android/checkin`, { method: "POST", headers: { "x-m5-device": dev.id, "x-m5-time": time, "x-m5-nonce": nonce, "x-m5-signature": forged }, body: "{}" });
+    expect(bad.status).toBe(401);
+    // The device's own request with that nonce still goes through, once.
+    expect((await signed("POST", "/api/android/checkin", { state: {} }, { nonce })).status).toBe(200);
+    expect((await signed("POST", "/api/android/checkin", { state: {} }, { nonce })).status).toBe(401);
+  });
+
   it("gets a published build, encrypted for it, and opens it", async () => {
     const created = await admin("POST", "/builds", { notes: "first", channel: "stable" });
     expect(created.status).toBe(200);
