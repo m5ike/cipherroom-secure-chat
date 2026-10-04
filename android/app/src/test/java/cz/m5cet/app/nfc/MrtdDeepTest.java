@@ -18,6 +18,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Test;
 
+import java.io.IOException;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.util.ArrayList;
@@ -381,13 +382,13 @@ public class MrtdDeepTest {
     }
 
     @Test
-    public void paceIsASeamThatSaysItIsNotAvailableYet() {
-        Pace.Info info = Pace.parseSecurityInfos(T(0x31, T(0x30, oid("0.4.0.127.0.7.2.2.4.2.2"), integer(2), integer(12)))).pace.get(0);
+    public void paceRefusesAVariantThisReaderDoesNotRun() {
+        Pace.Info dh = Pace.parseSecurityInfos(T(0x31, T(0x30, oid("0.4.0.127.0.7.2.2.4.1.2"), integer(2), integer(0)))).pace.get(0);
         try {
-            Pace.establish(cmd -> { throw new AssertionError("no APDU yet"); }, info, Pace.Password.can("123456"));
-            fail("PACE is not implemented yet");
+            Pace.establish(cmd -> { throw new IOException("no APDU for an unsupported variant"); }, dh, Pace.Password.can("123456"));
+            fail("DH is not a variant this reader runs");
         } catch (Pace.UnsupportedException e) {
-            assertTrue(e.getMessage().contains("PACE ECDH-GM AES-128"));
+            assertTrue(e.getMessage().contains("PACE DH-GM AES-128"));
         } catch (Exception e) {
             fail("expected UnsupportedException, got " + e);
         }

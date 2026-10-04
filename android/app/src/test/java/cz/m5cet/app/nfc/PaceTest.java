@@ -810,6 +810,29 @@ public class PaceTest {
     }
 
     /** EF.CardAccess in the clear → the PACEInfo to run → PACE → the eMRTD application over SM (mrtd.ts's order). */
+    /** The reader end to end (6.6 integration): MrtdReader opens a PACE-only chip with the CAN alone. */
+    @Test
+    public void theReaderOpensAPaceOnlyChipWithTheCan() throws Exception {
+        for (String name : new String[]{"AES-128 / brainpoolP256r1", "3DES / NIST P-256"}) {
+            MrtdReader.Options o = new MrtdReader.Options();
+            o.can = CAN;
+            org.json.JSONObject d = MrtdReader.readMrtd(new SimChip(SUITES.get(name)), o);
+            assertEquals(name, "pace", d.getString("access"));
+            assertEquals(name, "can", d.getJSONObject("pace").getString("password"));
+            assertTrue(name, d.getJSONObject("pace").getBoolean("used"));
+            assertEquals(name, "ERIKSSON", d.getJSONObject("mrzInfo").getString("surname"));
+            assertEquals(name, "face", d.getJSONArray("images").getJSONObject(0).getString("kind"));
+            assertFalse(name, d.has("message"));
+        }
+        // A wrong CAN: nothing read, and the reason.
+        MrtdReader.Options bad = new MrtdReader.Options();
+        bad.can = "654321";
+        org.json.JSONObject d = MrtdReader.readMrtd(new SimChip(SUITES.get("AES-128 / brainpoolP256r1")), bad);
+        assertEquals("none", d.getString("access"));
+        assertTrue(d.getString("message"), d.getString("message").startsWith("PACE: "));
+        assertFalse(d.has("mrzInfo"));
+    }
+
     private static PaceProtocol.Session open(SimChip chip, PaceProtocol.Password pw) throws IOException {
         PaceProtocol.SecurityInfos si = PaceProtocol.parseSecurityInfos(readFile(plain(chip), 0x011c));
         assertEquals(2, si.pace.size());

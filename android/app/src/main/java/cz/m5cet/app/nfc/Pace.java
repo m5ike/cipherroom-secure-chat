@@ -17,9 +17,10 @@ import java.util.Map;
  * bypass — and many EU ID cards offer only PACE.
  *
  * This class reads what the chip announces (EF.CardAccess / DG14 → SecurityInfos
- * → PACEInfo) and chooses the variant; {@link #establish} is the seam the
- * protocol plugs into. It is not implemented yet (the web side is being written
- * too): it throws {@link UnsupportedException}, and the reader falls back to BAC.
+ * → PACEInfo) and chooses the variant; {@link #establish} runs the protocol
+ * ({@link PaceProtocol} — generic mapping over ECDH on the six standardized
+ * curves, AES or 3DES secure messaging, pinned to the ICAO 9303 and BSI
+ * TR-03110 worked examples) and gives the reader its secure-messaging channel.
  */
 public final class Pace {
     private Pace() {}
@@ -132,10 +133,21 @@ public final class Pace {
 
     /**
      * Runs PACE with the holder's CAN or MRZ and returns the secure-messaging
-     * channel. Not implemented in this version: throws {@link UnsupportedException}
-     * so the reader falls back to BAC (as the web reader does today).
+     * channel. A variant this reader does not run → {@link UnsupportedException};
+     * a password the chip refuses → a {@link PaceProtocol.PaceException} with code
+     * "auth-failed" (the reader then tries BAC when it has the MRZ).
      */
     public static SmChannel establish(Apdu.Transceiver t, Info info, Password password) throws IOException {
-        throw new UnsupportedException("PACE (" + info.name + ") is not available in this version yet");
+        if (!supported(info)) throw new UnsupportedException(info.name + (info.parameterId == null ? "" : " (" + (PARAMETERS.containsKey(info.parameterId) ? PARAMETERS.get(info.parameterId) : String.valueOf(info.parameterId)) + ")") + " is not a variant this reader runs");
+        PaceProtocol.Info pi = new PaceProtocol.Info(info.oid, info.name, info.version, info.parameterId, info.agreement, info.mapping, info.cipher);
+        PaceProtocol.Password pw = "can".equals(password.kind) ? PaceProtocol.Password.ofCan(password.can) : PaceProtocol.Password.ofMrz(password.key);
+        PaceProtocol.Session session = PaceProtocol.establish(t, pi, pw);
+        return new SmChannel() {
+            @Override public String kind() { return "pace"; }
+            @Override public Reply send(byte[] cmd) throws IOException {
+                Bac.Sm r = session.send(cmd);
+                return new Reply(r.data, r.sw);
+            }
+        };
     }
 }
