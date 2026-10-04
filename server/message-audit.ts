@@ -53,7 +53,7 @@ export function sanitizeMessageAudit(raw: unknown): MessageAuditInput | null {
 }
 
 /** Who did it, as the audit journal names them. */
-export type MessageActor = { actor: string; accountId?: string; deviceId?: string; ip?: string; via: "web" | "android" };
+export type MessageActor = { actor: string; accountId?: string; deviceId?: string; ip?: string; via: "web" | "android"; claimedClient?: string };
 
 export function recordMessageAction(input: MessageAuditInput, who: MessageActor): void {
   audit.add({
@@ -69,6 +69,7 @@ export function recordMessageAction(input: MessageAuditInput, who: MessageActor)
       messageId: input.messageId,
       via: who.via,
       ...(who.deviceId ? { device: who.deviceId } : {}),
+      ...(who.claimedClient ? { claimedClient: who.claimedClient } : {}),
       ...(input.mine !== undefined ? { mine: input.mine } : {}),
       ...(input.kinds?.length ? { kinds: input.kinds } : {}),
       ...(input.until !== undefined ? { until: input.until } : {}),
@@ -76,6 +77,42 @@ export function recordMessageAction(input: MessageAuditInput, who: MessageActor)
     },
   });
 }
+
+/* ---------------------------------------- journal budget (6.7, audit S9) */
+
+/** Entries per hour a caller may add to the journal: a guest (by address —
+ *  its client id is its own claim) and a signed-in account. The journal
+ *  keeps a fixed number of rows, so an unbounded writer would push the real
+ *  security events out. */
+export const MESSAGE_AUDIT_BUDGET = { guestPerHour: 300, accountPerHour: 3_000 };
+const BUDGET_WINDOW_MS = 60 * 60 * 1000;
+const budgets = new Map<string, { start: number; used: number }>();
+
+/** An IPv6 address counts by its /64 (one subscriber), IPv4 by itself. */
+function addressKey(ip: string | undefined): string {
+  const raw = String(ip ?? "").replace(/^::ffff:/, "");
+  return raw.includes(":") ? `${raw.split(":").slice(0, 4).join(":")}::/64` : raw;
+}
+
+/** Takes up to `want` entries from the caller's budget; returns how many it may record. */
+export function takeMessageAuditBudget(key: string, want: number, limit: number, now = Date.now()): number {
+  let b = budgets.get(key);
+  if (!b || now - b.start >= BUDGET_WINDOW_MS) {
+    if (!b && budgets.size >= 20_000) {
+      for (const [k, v] of budgets) if (now - v.start >= BUDGET_WINDOW_MS) budgets.delete(k);
+      // Still full: the oldest window goes (Map order is insertion order).
+      if (budgets.size >= 20_000) budgets.delete(budgets.keys().next().value as string);
+    }
+    b = { start: now, used: 0 };
+    budgets.set(key, b);
+  }
+  const granted = Math.max(0, Math.min(want, limit - b.used));
+  b.used += granted;
+  return granted;
+}
+
+/** Tests: forget every caller's budget. */
+export function resetMessageAuditBudgets(): void { budgets.clear(); }
 
 export function registerMessageAuditRoutes(app: Express): void {
   const limiter = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many message actions; wait a moment." } });
@@ -87,21 +124,24 @@ export function registerMessageAuditRoutes(app: Express): void {
     const header = req.header("authorization") || "";
     const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
     const account = token ? accountStore.resolveToken(token) : null;
+    // 6.7 (S9): the actor is who the server knows — the account behind a
+    // valid token, else "guest". A guest's client id is only its claim: it
+    // goes into the detail, marked as such, never into the actor.
     const client = typeof body.client === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(body.client) ? body.client : undefined;
     const who: MessageActor = {
-      actor: account ? usernameOf(account) : client ? `guest:${client}` : "guest",
+      actor: account ? usernameOf(account) : "guest",
       accountId: account?.id,
       ip: truncateIp(req.ip),
       via: "web",
+      ...(!account && client ? { claimedClient: client } : {}),
     };
-    let recorded = 0;
-    for (const raw of list) {
-      const input = sanitizeMessageAudit(raw);
-      if (!input) continue;
-      recordMessageAction(input, who);
-      recorded++;
-    }
-    if (!recorded) return res.status(400).json({ ok: false, message: "Not a message action." });
-    res.json({ ok: true, recorded });
+    const inputs = list.map(sanitizeMessageAudit).filter((x): x is MessageAuditInput => x !== null);
+    if (!inputs.length) return res.status(400).json({ ok: false, message: "Not a message action." });
+    const granted = account
+      ? takeMessageAuditBudget(`acct:${account.id}`, inputs.length, MESSAGE_AUDIT_BUDGET.accountPerHour)
+      : takeMessageAuditBudget(`ip:${addressKey(req.ip)}`, inputs.length, MESSAGE_AUDIT_BUDGET.guestPerHour);
+    if (!granted) return res.status(429).json({ ok: false, message: "Too many message actions recorded this hour." });
+    for (const input of inputs.slice(0, granted)) recordMessageAction(input, who);
+    res.json({ ok: true, recorded: granted, ...(granted < inputs.length ? { dropped: inputs.length - granted } : {}) });
   });
 }

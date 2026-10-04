@@ -34,7 +34,7 @@ import { buildModuleManifest } from "./modules";
 import { pushSubscriptions } from "./routes-admin-shared";
 import { registerRetentionRoutes, startRetentionSchedule } from "./retention-routes";
 import { registerPushRoutes } from "./push-routes";
-import { consentLedger, deviceAuditLog, deviceSettings } from "./device-state";
+import { consentLedger, deviceAuditLog, deviceSettings, getConsent, getDeviceSettings, putConsent, putDeviceSettings } from "./device-state";
 import { registerShareRoutes, registerGoodbyeRoute } from "./share";
 import { registerAiRoutes } from "./ai/routes";
 import { registerFunctionsRoutes } from "./functions/routes";
@@ -373,16 +373,17 @@ export async function registerRoutes(
   app.get("/api/settings", (req: Request, res: Response) => {
     const deviceId = safeDeviceId(req.query.deviceId);
     if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
-    const record = deviceSettings.get(deviceId);
-    res.json({ ok: true, deviceId, settings: record?.payload ?? null, updatedAt: record?.updatedAt ?? null });
+    const record = getDeviceSettings(deviceId);
+    res.json({ ok: true, deviceId, settings: record?.settings ?? null, updatedAt: record?.updatedAt ?? null });
   });
 
   app.post("/api/settings", (req: Request, res: Response) => {
     const body = (req.body || {}) as Record<string, unknown>;
     const deviceId = safeDeviceId(body.deviceId);
     if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
-    const payload = (body.settings && typeof body.settings === "object" ? body.settings : {}) as Record<string, unknown>;
-    deviceSettings.set(deviceId, { deviceId, payload, updatedAt: Date.now() });
+    // 6.7 (V4): bounded — size per device, number of devices, expiry.
+    const stored = putDeviceSettings(deviceId, body.settings);
+    if (!stored.ok) return res.status(stored.status).json({ ok: false, message: stored.message });
     eventStore.record({ kind: "settings-sync", meta: { deviceId } });
     res.json({ ok: true });
   });
@@ -415,7 +416,7 @@ export async function registerRoutes(
     const deviceId = safeDeviceId(body.deviceId);
     if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
     const opt = body.analyticsConsent === true;
-    consentLedger.set(deviceId, { deviceId, analyticsConsent: opt, updatedAt: Date.now() });
+    putConsent(deviceId, opt);
     eventStore.record({ kind: "analytics-consent", meta: { deviceId, opt } });
     res.json({ ok: true, analyticsConsent: opt });
   });
@@ -423,7 +424,7 @@ export async function registerRoutes(
   app.get("/api/analytics/consent", (req: Request, res: Response) => {
     const deviceId = safeDeviceId(req.query.deviceId);
     if (!deviceId) return res.status(400).json({ ok: false, message: "deviceId required." });
-    res.json({ ok: true, record: consentLedger.get(deviceId) ?? null });
+    res.json({ ok: true, record: getConsent(deviceId) });
   });
 
   // ---------- File proxy diagnostics (server-enhanced mode) ----------

@@ -32,8 +32,8 @@ const TOKEN = "retention-op-token";
 function seed(now: number) {
   deviceSettings.clear(); deviceAuditLog.clear(); consentLedger.clear(); pushSubscriptions.clear();
   // settings window 10 d: 20 d old → expired (the old code used the 40 d data window and kept it)
-  deviceSettings.set("set-old", { deviceId: "set-old", updatedAt: now - 20 * DAY, payload: {} });
-  deviceSettings.set("set-new", { deviceId: "set-new", updatedAt: now - 2 * DAY, payload: {} });
+  deviceSettings.set("set-old", { deviceId: "set-old", updatedAt: now - 20 * DAY, payload: "{}" });
+  deviceSettings.set("set-new", { deviceId: "set-new", updatedAt: now - 2 * DAY, payload: "{}" });
   // audit window 60 d
   deviceAuditLog.set("dev-a", [{ kind: "x", at: now - 70 * DAY }, { kind: "y", at: now - 1 * DAY }]);
   deviceAuditLog.set("dev-b", [{ kind: "z", at: now - 80 * DAY }]);
