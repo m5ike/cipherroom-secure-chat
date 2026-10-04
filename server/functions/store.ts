@@ -43,7 +43,7 @@ const jsonParse = <T>(v: unknown, fallback: T): T => {
 type PackageRow = { id: string; name: string; language: string; description: string; draft: string | null; created_at: number; updated_at: number; updated_by: string };
 type VersionRow = { package_id: string; version: string; manifest: string; files: string; fingerprint: string; status: string; test: string | null; created_at: number; created_by: string; published_at: number | null };
 type ModelRow = { id: string; name: string; keyword: string; summary: string; entry: string; on_event: string; runtime: string; inputs: string; outputs: string; limits: string; executors: string; groups: string; enabled: number; revision: number; created_at: number; updated_at: number; updated_by: string; endpoints?: string; grants?: string };
-type RunRow = { id: string; model_id: string; entry: string; lang: string; executor: string; caller: string; session_id: string; parent: string | null; status: string; inputs: string; outputs: string; error: string | null; test: number; queued_at: number; started_at: number | null; finished_at: number | null; ms: number; mem_mb: number; chain_id?: string; call_id?: number | null; endpoint?: string };
+type RunRow = { id: string; model_id: string; entry: string; lang: string; executor: string; caller: string; session_id: string; parent: string | null; status: string; inputs: string; outputs: string; error: string | null; test: number; queued_at: number; started_at: number | null; finished_at: number | null; ms: number; mem_mb: number; chain_id?: string; call_id?: number | null; endpoint?: string; sensitive?: number };
 
 function toPackage(r: PackageRow): Package {
   return { id: r.id, name: r.name, language: r.language as Package["language"], description: r.description, draft: r.draft, createdAt: r.created_at, updatedAt: r.updated_at, updatedBy: r.updated_by };
@@ -56,7 +56,7 @@ function toModel(r: ModelRow): Model {
 }
 function toRun(r: RunRow): Run {
   return { id: r.id, modelId: r.model_id, entry: r.entry, lang: r.lang as Run["lang"], executor: r.executor, caller: jsonParse(r.caller, {} as Caller), sessionId: r.session_id, parent: r.parent, status: r.status as RunStatus, inputs: jsonParse(r.inputs, {}), outputs: jsonParse(r.outputs, []), error: jsonParse(r.error, null), test: Boolean(r.test), queuedAt: r.queued_at, startedAt: r.started_at, finishedAt: r.finished_at, ms: r.ms, memMb: r.mem_mb,
-    ...(r.chain_id ? { chainId: r.chain_id } : {}), ...(typeof r.call_id === "number" ? { callId: r.call_id } : {}), ...(r.endpoint ? { endpoint: r.endpoint as Run["endpoint"] } : {}) };
+    ...(r.chain_id ? { chainId: r.chain_id } : {}), ...(typeof r.call_id === "number" ? { callId: r.call_id } : {}), ...(r.endpoint ? { endpoint: r.endpoint as Run["endpoint"] } : {}), ...(r.sensitive ? { sensitive: true } : {}) };
 }
 function toChain(r: Record<string, unknown>): Chain {
   return { id: String(r.id), modelId: String(r.model_id), sessionId: String(r.session_id), source: jsonParse(r.source, { kind: "model" } as Chain["source"]), calls: jsonParse(r.calls, []), createdAt: Number(r.created_at), updatedAt: Number(r.updated_at) };
@@ -128,7 +128,12 @@ const MIGRATIONS: Array<[table: string, column: string, definition: string]> = [
   ["runs", "chain_id", "TEXT NOT NULL DEFAULT ''"],
   ["runs", "call_id", "INTEGER"],
   ["runs", "endpoint", "TEXT NOT NULL DEFAULT ''"],
+  // 6.7 (F-18): a run that read a card is pruned after FUNCTIONS_NFC_RUN_HOURS.
+  ["runs", "sensitive", "INTEGER NOT NULL DEFAULT 0"],
 ];
+
+/** How long a run that read a card (m5.nfc) is kept: FUNCTIONS_NFC_RUN_HOURS, default 24. */
+export const nfcRunKeepMs = () => Math.max(1, Number(process.env.FUNCTIONS_NFC_RUN_HOURS) || 24) * 3_600_000;
 
 /* ---------------------------------------------------------- the store */
 
@@ -262,10 +267,10 @@ class FunctionsStore {
 
   saveRun(r: Run): void {
     if (!this.d) return this.mem.saveRun(r);
-    this.d.prepare(`INSERT INTO runs (id, model_id, entry, lang, executor, caller, session_id, parent, status, inputs, outputs, error, test, queued_at, started_at, finished_at, ms, mem_mb, chain_id, call_id, endpoint)
-      VALUES (@id, @model_id, @entry, @lang, @executor, @caller, @session_id, @parent, @status, @inputs, @outputs, @error, @test, @queued_at, @started_at, @finished_at, @ms, @mem_mb, @chain_id, @call_id, @endpoint)
-      ON CONFLICT(id) DO UPDATE SET status=@status, outputs=@outputs, error=@error, started_at=@started_at, finished_at=@finished_at, ms=@ms, mem_mb=@mem_mb`)
-      .run({ id: r.id, model_id: r.modelId, entry: r.entry, lang: r.lang, executor: r.executor, caller: JSON.stringify(r.caller), session_id: r.sessionId, parent: r.parent, status: r.status, inputs: JSON.stringify(r.inputs), outputs: JSON.stringify(r.outputs), error: r.error ? JSON.stringify(r.error) : null, test: r.test ? 1 : 0, queued_at: r.queuedAt, started_at: r.startedAt, finished_at: r.finishedAt, ms: r.ms, mem_mb: r.memMb, chain_id: r.chainId ?? "", call_id: r.callId ?? null, endpoint: r.endpoint ?? "" });
+    this.d.prepare(`INSERT INTO runs (id, model_id, entry, lang, executor, caller, session_id, parent, status, inputs, outputs, error, test, queued_at, started_at, finished_at, ms, mem_mb, chain_id, call_id, endpoint, sensitive)
+      VALUES (@id, @model_id, @entry, @lang, @executor, @caller, @session_id, @parent, @status, @inputs, @outputs, @error, @test, @queued_at, @started_at, @finished_at, @ms, @mem_mb, @chain_id, @call_id, @endpoint, @sensitive)
+      ON CONFLICT(id) DO UPDATE SET status=@status, outputs=@outputs, error=@error, started_at=@started_at, finished_at=@finished_at, ms=@ms, mem_mb=@mem_mb, sensitive=MAX(sensitive, @sensitive)`)
+      .run({ id: r.id, model_id: r.modelId, entry: r.entry, lang: r.lang, executor: r.executor, caller: JSON.stringify(r.caller), session_id: r.sessionId, parent: r.parent, status: r.status, inputs: JSON.stringify(r.inputs), outputs: JSON.stringify(r.outputs), error: r.error ? JSON.stringify(r.error) : null, test: r.test ? 1 : 0, queued_at: r.queuedAt, started_at: r.startedAt, finished_at: r.finishedAt, ms: r.ms, mem_mb: r.memMb, chain_id: r.chainId ?? "", call_id: r.callId ?? null, endpoint: r.endpoint ?? "", sensitive: r.sensitive ? 1 : 0 });
   }
   run(id: string): Run | null {
     if (!this.d) return this.mem.run(id);
@@ -477,6 +482,10 @@ class FunctionsStore {
     this.d.prepare("DELETE FROM webhooks WHERE expires_at IS NOT NULL AND expires_at <= ?").run(now);
     this.d.prepare("DELETE FROM run_logs WHERE run_id IN (SELECT id FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?)").run(runCutoff);
     this.d.prepare("DELETE FROM runs WHERE finished_at IS NOT NULL AND finished_at < ?").run(runCutoff);
+    // 6.7 (F-18): a run that read a card goes much sooner (its inputs, outputs and logs hold personal data).
+    const nfcCutoff = Math.max(runCutoff, now - nfcRunKeepMs());
+    this.d.prepare("DELETE FROM run_logs WHERE run_id IN (SELECT id FROM runs WHERE sensitive = 1 AND finished_at IS NOT NULL AND finished_at < ?)").run(nfcCutoff);
+    this.d.prepare("DELETE FROM runs WHERE sensitive = 1 AND finished_at IS NOT NULL AND finished_at < ?").run(nfcCutoff);
   }
 }
 
@@ -586,6 +595,8 @@ class MemoryStore {
   chains(modelId: string, limit: number): Chain[] { return [...this.chs.values()].filter((c) => c.modelId === modelId).sort((a, b) => b.updatedAt - a.updatedAt).slice(0, limit).map((c) => structuredClone(c)); }
 
   prune(runCutoff: number, now: number): void {
+    const nfcCutoff = Math.max(runCutoff, now - nfcRunKeepMs());
+    for (const [id, r] of this.rns) if (r.sensitive && r.finishedAt !== null && r.finishedAt < nfcCutoff) this.rns.delete(id);
     for (const [id, c] of this.chs) if (c.updatedAt < runCutoff) { this.chs.delete(id); for (const k of [...this.skv.keys()]) if (k.startsWith(`${c.sessionId}\0`)) this.skv.delete(k); for (const k of [...this.ckv.keys()]) if (k.startsWith(`chain:${id}\0`)) this.ckv.delete(k); }
     for (const [k, v] of this.skv) if (v.expires !== null && v.expires <= now) this.skv.delete(k);
     for (const [k, v] of this.ckv) if (v.expires !== null && v.expires <= now) this.ckv.delete(k);
