@@ -387,6 +387,8 @@
       case "out.button": { const b = p.button && typeof p.button === "object" ? p.button : {}; return `${b.icon ? b.icon + " " : ""}${b.title || "button"} → ${b.name || ""}`; }
       case "out.form": { const f = p.form && typeof p.form === "object" ? p.form : {}; return `${f.title || f.name || "form"}`; }
       case "out.js": return String(p.code ?? "").replace(/\n/g, " ").slice(0, 40);
+      // 6.6: the NFC.EMV / NFC.e-ID tools — the format, and whether they show it in the chat.
+      case "nfc.emv.report": case "nfc.eid.report": return `${p.format || "html"}${p.send !== false ? " · → chat" : ""}`;
       default: {
         const def = defOf(n);
         const first = (def.params || []).find((x) => x.type === "enum");

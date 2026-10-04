@@ -25,6 +25,7 @@ import { json, jsonParseLinter } from "@codemirror/lang-json";
 import { StateField, type EditorState as State } from "@codemirror/state";
 import { tags as t } from "@lezer/highlight";
 import * as Flow from "../../server/functions/flow";
+import { parseFnHtml } from "../../client/src/lib/fn-html";
 
 export type Lang = "js" | "py" | "json" | "text";
 type SdkMethod = { name: string; js: string; py: string; doc: string; async?: boolean };
@@ -491,6 +492,9 @@ export function langOf(file: string): Lang {
 
 const api = { create, show, langOf, toSnippet, SNIPPETS, version: "5.3" };
 const flowApi = { ...Flow };
-declare global { interface Window { M5Editor?: typeof api; M5Flow?: typeof flowApi } }
+// 6.6: the chat's HTML sanitizer, so the console shows m5.out.html exactly as safely as the app.
+const htmlApi = { parse: parseFnHtml };
+declare global { interface Window { M5Editor?: typeof api; M5Flow?: typeof flowApi; M5Html?: typeof htmlApi } }
 window.M5Editor = api;
 window.M5Flow = flowApi;
+window.M5Html = htmlApi;

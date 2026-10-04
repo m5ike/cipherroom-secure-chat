@@ -1,0 +1,327 @@
+{
+  "format": "m5flow",
+  "version": 1,
+  "lang": "js",
+  "name": "Read an e-ID / e-passport",
+  "summary": "Every data group of your ID card or passport, with the photo",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "out.form",
+      "x": 80,
+      "y": 120,
+      "params": {
+        "form": {
+          "name": "nfc-eid",
+          "title": "Read an e-ID / e-passport",
+          "text": "Your own document: the CAN opens an ID card (PACE), the MRZ a passport (BAC). Then hold it to your phone or reader.",
+          "submit": "Read",
+          "labels": "top",
+          "fields": [
+            {
+              "name": "can",
+              "type": "text",
+              "label": "CAN — the 6 digits printed on the card",
+              "pattern": "^[0-9]{6}$",
+              "placeholder": "123456",
+              "help": "On an EU ID card: the 6-digit number on the front. Passports: leave it empty and give the MRZ or the three fields below."
+            },
+            {
+              "name": "mrz",
+              "type": "textarea",
+              "label": "or the MRZ (the 2–3 lines at the bottom of the data page)",
+              "rows": 3
+            },
+            {
+              "name": "documentNumber",
+              "type": "text",
+              "label": "or the document number",
+              "placeholder": "L898902C"
+            },
+            {
+              "name": "dateOfBirth",
+              "type": "text",
+              "label": "Date of birth (YYMMDD)",
+              "pattern": "^[0-9]{6}$",
+              "placeholder": "690806"
+            },
+            {
+              "name": "dateOfExpiry",
+              "type": "text",
+              "label": "Date of expiry (YYMMDD)",
+              "pattern": "^[0-9]{6}$",
+              "placeholder": "940623"
+            }
+          ]
+        }
+      },
+      "values": {}
+    }
+  ],
+  "edges": [],
+  "functions": {
+    "form": {
+      "nodes": [
+        {
+          "id": "n2",
+          "type": "flow.event",
+          "x": 40,
+          "y": 80,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n3",
+          "type": "nfc.eid.report",
+          "x": 460,
+          "y": 120,
+          "params": {
+            "format": "html",
+            "send": true,
+            "photo": true,
+            "all": true,
+            "timeout": 60
+          },
+          "values": {}
+        },
+        {
+          "id": "n4",
+          "type": "flow.return",
+          "x": 760,
+          "y": 200,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n6",
+          "type": "data.get",
+          "x": 240,
+          "y": 80,
+          "params": {
+            "path": "can"
+          },
+          "values": {}
+        },
+        {
+          "id": "n9",
+          "type": "data.get",
+          "x": 240,
+          "y": 160,
+          "params": {
+            "path": "mrz"
+          },
+          "values": {}
+        },
+        {
+          "id": "n12",
+          "type": "data.get",
+          "x": 240,
+          "y": 240,
+          "params": {
+            "path": "documentNumber"
+          },
+          "values": {}
+        },
+        {
+          "id": "n15",
+          "type": "data.get",
+          "x": 240,
+          "y": 320,
+          "params": {
+            "path": "dateOfBirth"
+          },
+          "values": {}
+        },
+        {
+          "id": "n18",
+          "type": "data.get",
+          "x": 240,
+          "y": 400,
+          "params": {
+            "path": "dateOfExpiry"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e5",
+          "from": {
+            "node": "n3",
+            "port": "summary"
+          },
+          "to": {
+            "node": "n4",
+            "port": "value"
+          }
+        },
+        {
+          "id": "e7",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n6",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e8",
+          "from": {
+            "node": "n6",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "can"
+          }
+        },
+        {
+          "id": "e10",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n9",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e11",
+          "from": {
+            "node": "n9",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "mrz"
+          }
+        },
+        {
+          "id": "e13",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n12",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e14",
+          "from": {
+            "node": "n12",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "documentNumber"
+          }
+        },
+        {
+          "id": "e16",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n15",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e17",
+          "from": {
+            "node": "n15",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "dateOfBirth"
+          }
+        },
+        {
+          "id": "e19",
+          "from": {
+            "node": "n2",
+            "port": "values"
+          },
+          "to": {
+            "node": "n18",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e20",
+          "from": {
+            "node": "n18",
+            "port": "value"
+          },
+          "to": {
+            "node": "n3",
+            "port": "dateOfExpiry"
+          }
+        }
+      ]
+    },
+    "error": {
+      "nodes": [
+        {
+          "id": "n21",
+          "type": "flow.event",
+          "x": 40,
+          "y": 60,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n22",
+          "type": "data.get",
+          "x": 240,
+          "y": 60,
+          "params": {
+            "path": "message"
+          },
+          "values": {}
+        },
+        {
+          "id": "n23",
+          "type": "out.flash",
+          "x": 460,
+          "y": 60,
+          "params": {
+            "level": "error"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e24",
+          "from": {
+            "node": "n21",
+            "port": "error"
+          },
+          "to": {
+            "node": "n22",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e25",
+          "from": {
+            "node": "n22",
+            "port": "value"
+          },
+          "to": {
+            "node": "n23",
+            "port": "text"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -28,6 +28,8 @@ const req = createRequire(here);
 export type SandboxPaths = { script: string; pyodide: string; quickjs: string };
 let cachedPaths: Promise<SandboxPaths> | null = null;
 let devBuild: Promise<string> | null = null;
+/** Files outside this folder the sandbox bundles (host-pure.ts imports them). */
+const SHARED_SOURCES = ["../../../client/src/lib/nfc/card-report.ts", "../../../client/src/lib/nfc/command.ts", "../../../client/src/lib/fn-html.ts"];
 
 /** Development and tests: bundle the sandbox from source once per change. */
 async function buildDevScript(): Promise<string> {
@@ -35,6 +37,8 @@ async function buildDevScript(): Promise<string> {
   const files = readdirSync(srcDir).filter((f) => f.endsWith(".ts")).sort();
   const hash = createHash("sha256");
   for (const f of files) hash.update(f).update(String(statSync(join(srcDir, f)).mtimeMs));
+  // 6.6: the pure helpers also bundle the client's card reports and HTML sanitizer.
+  for (const f of SHARED_SOURCES) { const p = join(srcDir, f); hash.update(f).update(existsSync(p) ? String(statSync(p).mtimeMs) : "-"); }
   const out = join(tmpdir(), "m5cet-sandbox", hash.digest("hex").slice(0, 16), "sandbox.cjs");
   if (existsSync(out)) return out;
   mkdirSync(dirname(out), { recursive: true });

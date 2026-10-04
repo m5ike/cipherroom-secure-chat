@@ -99,8 +99,41 @@
       case "button": return buttonsRow([o], ctx);
       case "form": return consoleForm(o, ctx, false);
       case "js": return jsBlock(o, ctx);
+      case "html": return htmlBlock(o);
       default: return null;
     }
+  }
+
+  /**
+   * 6.6: formatted HTML (m5.out.html) — the chat's own sanitizer (window.M5Html,
+   * fn-html.ts) gives a safe tree; it is built as DOM nodes, styles through the
+   * CSSOM (never an attribute string or innerHTML), links open outside.
+   */
+  const HTML_VOID = new Set(["br", "hr", "img", "col", "wbr"]);
+  function htmlNodes(list) {
+    const out = [];
+    for (const n of list) {
+      if (typeof n === "string") { out.push(document.createTextNode(n)); continue; }
+      const el = document.createElement(n.t);
+      for (const [k, v] of Object.entries(n.a)) {
+        if (k === "style") { for (const decl of v.split(";")) { const i = decl.indexOf(":"); if (i > 0) el.style.setProperty(decl.slice(0, i).trim(), decl.slice(i + 1).trim()); } }
+        else el.setAttribute(k, v);
+      }
+      if (n.t === "a") { el.target = "_blank"; el.rel = "noopener noreferrer nofollow"; }
+      if (n.t === "img") el.loading = "lazy";
+      if (!HTML_VOID.has(n.t)) el.append(...htmlNodes(n.c));
+      out.push(el);
+    }
+    return out;
+  }
+  function htmlBlock(o) {
+    const box = h("div", { class: "fn-html" });
+    if (o.title) box.append(h("div", { class: "fn-html__title" }, o.title));
+    const body = h("div", { class: "fn-html__body" });
+    if (window.M5Html) body.append(...htmlNodes(window.M5Html.parse(String(o.html || ""))));
+    else body.append(h("pre", { class: "fn-code" }, String(o.html || "")));
+    box.append(body);
+    return box;
   }
 
   const reachable = (ctx) => Boolean(ctx && ctx.chain);

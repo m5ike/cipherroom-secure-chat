@@ -1,0 +1,104 @@
+{
+  "format": "m5flow",
+  "version": 1,
+  "lang": "js",
+  "name": "Read a payment card (EMV)",
+  "summary": "Everything a payment card shows a terminal, with its transaction history",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "nfc.emv.report",
+      "x": 120,
+      "y": 120,
+      "params": {
+        "format": "html",
+        "send": true,
+        "history": true,
+        "deep": true,
+        "fullPan": false,
+        "maxApps": 8,
+        "timeout": 45
+      },
+      "values": {}
+    },
+    {
+      "id": "n2",
+      "type": "flow.return",
+      "x": 480,
+      "y": 160,
+      "params": {},
+      "values": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e3",
+      "from": {
+        "node": "n1",
+        "port": "summary"
+      },
+      "to": {
+        "node": "n2",
+        "port": "value"
+      }
+    }
+  ],
+  "functions": {
+    "error": {
+      "nodes": [
+        {
+          "id": "n4",
+          "type": "flow.event",
+          "x": 40,
+          "y": 60,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n5",
+          "type": "data.get",
+          "x": 240,
+          "y": 60,
+          "params": {
+            "path": "message"
+          },
+          "values": {}
+        },
+        {
+          "id": "n6",
+          "type": "out.flash",
+          "x": 460,
+          "y": 60,
+          "params": {
+            "level": "error"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e7",
+          "from": {
+            "node": "n4",
+            "port": "error"
+          },
+          "to": {
+            "node": "n5",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e8",
+          "from": {
+            "node": "n5",
+            "port": "value"
+          },
+          "to": {
+            "node": "n6",
+            "port": "text"
+          }
+        }
+      ]
+    }
+  }
+}

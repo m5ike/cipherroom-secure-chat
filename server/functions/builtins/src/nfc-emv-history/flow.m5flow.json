@@ -1,0 +1,217 @@
+{
+  "format": "m5flow",
+  "version": 1,
+  "lang": "js",
+  "name": "Card transaction history",
+  "summary": "The transactions a payment card keeps in its log",
+  "nodes": [
+    {
+      "id": "n1",
+      "type": "nfc.emv.report",
+      "x": 80,
+      "y": 120,
+      "params": {
+        "format": "object",
+        "send": false,
+        "history": true,
+        "deep": false,
+        "fullPan": false,
+        "maxApps": 8,
+        "timeout": 45
+      },
+      "values": {}
+    },
+    {
+      "id": "n2",
+      "type": "logic.if",
+      "x": 380,
+      "y": 120,
+      "params": {},
+      "values": {}
+    },
+    {
+      "id": "n3",
+      "type": "nfc.emv.history",
+      "x": 660,
+      "y": 60,
+      "params": {},
+      "values": {}
+    },
+    {
+      "id": "n4",
+      "type": "out.table",
+      "x": 920,
+      "y": 60,
+      "params": {
+        "columns": "date, time, amount, currency, merchant, type, country, atc",
+        "title": "Transaction history"
+      },
+      "values": {}
+    },
+    {
+      "id": "n5",
+      "type": "data.get",
+      "x": 660,
+      "y": 260,
+      "params": {
+        "path": "message"
+      },
+      "values": {}
+    },
+    {
+      "id": "n6",
+      "type": "out.flash",
+      "x": 920,
+      "y": 260,
+      "params": {
+        "level": "warning"
+      },
+      "values": {}
+    },
+    {
+      "id": "n7",
+      "type": "flow.return",
+      "x": 380,
+      "y": 360,
+      "params": {},
+      "values": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e8",
+      "from": {
+        "node": "n1",
+        "port": "ok"
+      },
+      "to": {
+        "node": "n2",
+        "port": "condition"
+      }
+    },
+    {
+      "id": "e9",
+      "from": {
+        "node": "n1",
+        "port": "data"
+      },
+      "to": {
+        "node": "n2",
+        "port": "value"
+      }
+    },
+    {
+      "id": "e10",
+      "from": {
+        "node": "n2",
+        "port": "then"
+      },
+      "to": {
+        "node": "n3",
+        "port": "data"
+      }
+    },
+    {
+      "id": "e11",
+      "from": {
+        "node": "n3",
+        "port": "rows"
+      },
+      "to": {
+        "node": "n4",
+        "port": "rows"
+      }
+    },
+    {
+      "id": "e12",
+      "from": {
+        "node": "n2",
+        "port": "else"
+      },
+      "to": {
+        "node": "n5",
+        "port": "object"
+      }
+    },
+    {
+      "id": "e13",
+      "from": {
+        "node": "n5",
+        "port": "value"
+      },
+      "to": {
+        "node": "n6",
+        "port": "text"
+      }
+    },
+    {
+      "id": "e14",
+      "from": {
+        "node": "n1",
+        "port": "summary"
+      },
+      "to": {
+        "node": "n7",
+        "port": "value"
+      }
+    }
+  ],
+  "functions": {
+    "error": {
+      "nodes": [
+        {
+          "id": "n15",
+          "type": "flow.event",
+          "x": 40,
+          "y": 60,
+          "params": {},
+          "values": {}
+        },
+        {
+          "id": "n16",
+          "type": "data.get",
+          "x": 240,
+          "y": 60,
+          "params": {
+            "path": "message"
+          },
+          "values": {}
+        },
+        {
+          "id": "n17",
+          "type": "out.flash",
+          "x": 460,
+          "y": 60,
+          "params": {
+            "level": "error"
+          },
+          "values": {}
+        }
+      ],
+      "edges": [
+        {
+          "id": "e18",
+          "from": {
+            "node": "n15",
+            "port": "error"
+          },
+          "to": {
+            "node": "n16",
+            "port": "object"
+          }
+        },
+        {
+          "id": "e19",
+          "from": {
+            "node": "n16",
+            "port": "value"
+          },
+          "to": {
+            "node": "n17",
+            "port": "text"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -175,7 +175,7 @@ function buildEmv(L: (k: Key) => string, r: NfcResult, d: EmvData, o: CardReport
   const first = d.apps[0];
   const title = o.title || [first?.scheme || first?.label || d.scheme || "EMV", first ? pan(first) : ""].filter(Boolean).join(" · ");
   const historyCount = d.apps.reduce((n, a) => n + (a.log?.length ?? 0), 0);
-  const subtitle = [first?.label && first.label !== first.scheme ? first.label : "", first?.expiry ? `${L("expiry")} ${first.expiry}` : "", historyCount ? `${historyCount} × ${L("history").toLowerCase()}` : ""].filter(Boolean).join(" · ");
+  const subtitle = [first?.label && first.label !== first.scheme ? first.label : "", first?.expiry ? `${L("expiry")} ${first.expiry}` : "", historyCount ? `${L("history")}: ${historyCount}` : ""].filter(Boolean).join(" · ");
   const sections: Section[] = [];
   const cs = cardSection(L, r);
   if (cs) sections.push(cs);
@@ -220,7 +220,7 @@ function buildEmv(L: (k: Key) => string, r: NfcResult, d: EmvData, o: CardReport
     if (recs.length) files.push({ name: "emv-records.txt", mime: "text/plain", data: b64OfText(`${title}\n\n${recs.join("\n")}${d.tree ? `\nPPSE\n${d.tree}\n` : ""}`) });
   }
   const object = clean({ type: "emv", title, summary: "", card: r.card, scheme: d.scheme, aids: d.aids, applications: apps, ppse: d.tree, deep: d.deep, apdus: d.apdus, status: r.status, message: r.message });
-  const summary = [title, first?.expiry, historyCount ? `${historyCount} ${L("history").toLowerCase()}` : ""].filter(Boolean).join(" · ");
+  const summary = [title, first?.expiry, historyCount ? `${L("history")}: ${historyCount}` : ""].filter(Boolean).join(" · ");
   object.summary = summary;
   return { kind: "emv", title, subtitle, summary, sections, object, images: [], files, jp2: [] };
 }
@@ -275,7 +275,7 @@ function buildMrtd(L: (k: Key) => string, r: NfcResult, d: MrtdData, o: CardRepo
     optional: d.optional, personsToNotify: d.personsToNotify, security: clean({ ...s, ldsVersion: d.ldsVersion, unicodeVersion: d.unicodeVersion }), files: d.files,
     images: all.map((i) => ({ ...i, size: b64Size(i.data) })), attachments: d.raw, status: r.status, message: d.message ?? r.message,
   });
-  const summary = [title, m.documentNumber, m.nationality, all.length ? `${all.length} ${L("images").toLowerCase()}` : "", d.access !== "none" ? d.access.toUpperCase() : ""].filter(Boolean).join(" · ");
+  const summary = [title, m.documentNumber, m.nationality, all.length ? `${L("images")}: ${all.length}` : "", d.access !== "none" ? d.access.toUpperCase() : ""].filter(Boolean).join(" · ");
   object.summary = summary;
   return { kind: "mrtd", title, subtitle, summary, sections, object, images, files, jp2 };
 }

@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const VENDOR_BUNDLES = [
-  { entry: "admin-ui/src/m5-editor.ts", out: "admin-ui/public/vendor/m5-editor.js", sources: ["admin-ui/src/m5-editor.ts", "server/functions/flow.ts"] },
+  { entry: "admin-ui/src/m5-editor.ts", out: "admin-ui/public/vendor/m5-editor.js", sources: ["admin-ui/src/m5-editor.ts", "server/functions/flow.ts", "client/src/lib/fn-html.ts"] },
 ];
 
 /** Builds the console's bundles (esbuild is a build-time dependency). */

@@ -1639,7 +1639,7 @@
       const box = h("div", { class: "fn-out" });
       // 5.3: sound, video, buttons, forms, browser code (functions-outputs.js); clicks and forms run the entry points.
       const X = window.M5FnOut;
-      const special = X && ["audio", "video", "button", "form", "js"].includes(o.type) ? X.render(o, ctx || null) : null;
+      const special = X && ["audio", "video", "button", "form", "js", "html"].includes(o.type) ? X.render(o, ctx || null) : null;
       if (special) { box.append(special); return box; }
       if (o.title) box.append(h("div", { class: "muted small" }, o.title));
       switch (o.type) {
