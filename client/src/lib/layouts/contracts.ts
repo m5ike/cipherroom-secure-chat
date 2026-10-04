@@ -18,6 +18,7 @@ import { PHONE_CONTRACTS } from "./phone";
 import { CONNECTION_CONTRACTS } from "./connections";
 import { AI_CONTRACTS } from "./ai";
 import { START_CONTRACT } from "./start";
+import { VOICE_CONTRACTS } from "./voice";
 
 export type ContractVar = { path: string; type: "text" | "number" | "yes/no" | "list" | "object"; description: string };
 export type ContractAction = { name: string; description: string; arg?: string; event?: string };
@@ -291,4 +292,5 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
   ...AI_CONTRACTS,
   // 6.7
   start: START_CONTRACT,
+  ...VOICE_CONTRACTS,
 };

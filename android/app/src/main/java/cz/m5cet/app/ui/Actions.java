@@ -167,6 +167,13 @@ public final class Actions {
 
                 // ---- 6.2 look (templates, Tools dock, send button, microphone) ----
 
+                // ---- 6.7 voice (the voice changer: test, reset) ----
+                case "voiceFx.test":
+                    if (!a.has(Manifest.permission.RECORD_AUDIO)) { a.askPermissions(Manifest.permission.RECORD_AUDIO); break; }
+                    cz.m5cet.app.voice.FxTest.toggle(app, a::refresh);
+                    break;
+                case "voiceFx.reset": cz.m5cet.app.voice.MicFx.resetCustom(app); a.refresh(); break;
+
                 default: Log.w("action", "unknown action " + action);
             }
         } catch (RuntimeException e) {

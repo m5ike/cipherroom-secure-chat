@@ -11,6 +11,8 @@
 // This is not the room's end-to-end encrypted audio: the phone network
 // carries it, and the server bridges it (the panel says so).
 
+import { openMic } from "./mic";
+
 export const BRIDGE_RATE = 16_000;
 
 export type PhoneCallState = "ringing" | "connecting" | "audio" | "text" | "ended";
@@ -116,7 +118,8 @@ export class PhoneBridgeClient {
   /** Takes the call as audio: the caller plays here, the microphone goes to them. */
   async takeAudio(): Promise<void> {
     const ws = await this.open();
-    this.mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+    // 6.7: mic.ts — through the voice changer when it is on.
+    this.mic = await openMic({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
     this.ctx = new AudioContext();
     const source = this.ctx.createMediaStreamSource(this.mic);
     this.node = this.ctx.createScriptProcessor(2048, 1, 1);

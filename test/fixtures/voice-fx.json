@@ -1,0 +1,53 @@
+{
+  "about": "6.7 voice changer: the presets, the ranges, the defaults and the operator's gate, as both clients must have them (client/src/lib/voice-fx.ts, voice-fx-settings.ts, modules.ts; android voice/VoiceFx.java, voice/FxGate.java). test/voice-fx.test.ts and the JVM VoiceFxTest read this file.",
+  "keys": ["pitch", "formant", "robot", "echo", "echoMs", "echoFeedback", "whisper", "gain"],
+  "presetIds": ["off", "higher", "lower", "deep", "robot", "echo", "whisper", "anonymous", "custom"],
+  "presets": {
+    "off": { "pitch": 0, "formant": 0, "robot": 0, "echo": 0, "echoMs": 250, "echoFeedback": 0.35, "whisper": 0, "gain": 0 },
+    "higher": { "pitch": 4, "formant": 3, "robot": 0, "echo": 0, "echoMs": 250, "echoFeedback": 0.35, "whisper": 0, "gain": 0 },
+    "lower": { "pitch": -4, "formant": -3, "robot": 0, "echo": 0, "echoMs": 250, "echoFeedback": 0.35, "whisper": 0, "gain": 0 },
+    "deep": { "pitch": -7, "formant": -5, "robot": 0, "echo": 0, "echoMs": 250, "echoFeedback": 0.35, "whisper": 0, "gain": 0 },
+    "robot": { "pitch": 0, "formant": 0, "robot": 70, "echo": 0, "echoMs": 250, "echoFeedback": 0.35, "whisper": 0, "gain": 2 },
+    "echo": { "pitch": 0, "formant": 0, "robot": 0, "echo": 0.5, "echoMs": 280, "echoFeedback": 0.45, "whisper": 0, "gain": 0 },
+    "whisper": { "pitch": 0, "formant": 0, "robot": 0, "echo": 0, "echoMs": 250, "echoFeedback": 0.35, "whisper": 1, "gain": 2 },
+    "anonymous": { "pitch": -3, "formant": -6, "robot": 0, "echo": 0, "echoMs": 250, "echoFeedback": 0.35, "whisper": 0.35, "gain": 2 }
+  },
+  "limits": {
+    "pitch": [-12, 12], "formant": [-12, 12], "robot": [0, 400], "echo": [0, 1], "echoMs": [40, 1000], "echoFeedback": [0, 0.9], "whisper": [0, 1], "gain": [-12, 12]
+  },
+  "defaults": {
+    "on": false,
+    "preset": "deep",
+    "custom": { "pitch": -5, "formant": -3, "robot": 0, "echo": 0, "echoMs": 250, "echoFeedback": 0.35, "whisper": 0, "gain": 0 }
+  },
+  "frames": [
+    { "rate": 48000, "size": 1024 },
+    { "rate": 44100, "size": 1024 },
+    { "rate": 16000, "size": 512 },
+    { "rate": 8000, "size": 512 }
+  ],
+  "sines": [
+    { "rate": 48000, "hz": 220, "params": { "pitch": 12 }, "peakHz": 440 },
+    { "rate": 48000, "hz": 220, "params": { "pitch": -12 }, "peakHz": 110 },
+    { "rate": 48000, "hz": 220, "params": { "pitch": 7 }, "peakHz": 329.63 },
+    { "rate": 16000, "hz": 300, "params": { "pitch": -5 }, "peakHz": 224.75 },
+    { "rate": 16000, "hz": 300, "params": { "pitch": 5 }, "peakHz": 400.45 }
+  ],
+  "rings": [
+    { "rate": 48000, "hz": 1000, "robot": 100, "sidebands": [900, 1100] },
+    { "rate": 16000, "hz": 500, "robot": 70, "sidebands": [430, 570] }
+  ],
+  "gate": [
+    { "about": "no rule: off by default", "rule": null, "groups": ["user"], "allowed": false },
+    { "about": "no rule, a guest", "rule": null, "groups": ["guest"], "allowed": false },
+    { "about": "turned off", "rule": { "enabled": false, "groups": [], "defaultAccess": "allow", "groupAccess": "allow", "grants": [] }, "groups": ["user"], "allowed": false },
+    { "about": "turned on for everyone", "rule": { "enabled": true, "groups": [], "defaultAccess": "allow", "groupAccess": "allow", "grants": [] }, "groups": ["user"], "allowed": true },
+    { "about": "turned on for everyone, a guest", "rule": { "enabled": true, "groups": [], "defaultAccess": "allow", "groupAccess": "allow", "grants": [] }, "groups": ["guest"], "allowed": true },
+    { "about": "only the staff group: not in it", "rule": { "enabled": true, "groups": ["staff"], "defaultAccess": "deny", "groupAccess": "allow", "grants": [] }, "groups": ["user"], "allowed": false },
+    { "about": "only the staff group: in it", "rule": { "enabled": true, "groups": ["staff"], "defaultAccess": "deny", "groupAccess": "allow", "grants": [] }, "groups": ["user", "staff"], "allowed": true },
+    { "about": "everyone but the kids group", "rule": { "enabled": true, "groups": ["kids"], "defaultAccess": "allow", "groupAccess": "deny", "grants": [] }, "groups": ["user", "kids"], "allowed": false },
+    { "about": "denied by default, a grant lets signed-in users in", "rule": { "enabled": true, "groups": [], "defaultAccess": "deny", "groupAccess": "allow", "grants": [{ "group": "user", "rights": ["*"] }] }, "groups": ["user"], "allowed": true },
+    { "about": "a grant for users does not reach guests", "rule": { "enabled": true, "groups": [], "defaultAccess": "deny", "groupAccess": "allow", "grants": [{ "group": "user", "rights": ["*"] }] }, "groups": ["guest"], "allowed": false },
+    { "about": "a grant that only takes away lets nobody in", "rule": { "enabled": true, "groups": [], "defaultAccess": "deny", "groupAccess": "allow", "grants": [{ "group": "user", "rights": ["-x"] }] }, "groups": ["user"], "allowed": false }
+  ]
+}

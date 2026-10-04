@@ -4,7 +4,7 @@
 // two or all three — is allowed.
 
 import { useEffect, useRef, useState } from "react";
-import { Send, ChevronUp, Timer, EyeOff, ScrollText, Dice5 } from "lucide-react";
+import { Send, ChevronUp, Timer, EyeOff, ScrollText, Dice5, Volume2 } from "lucide-react";
 import { t, type Lang } from "../lib/i18n";
 import { VANISH_PRESETS, generateSealCode } from "../lib/message-kinds";
 
@@ -22,13 +22,16 @@ export function activeCount(s: SendState): number {
 }
 
 export function SendOptions({
-  value, onChange, onSend, canSend, lang,
+  value, onChange, onSend, canSend, lang, onSendAsVoice, voiceBusy = false,
 }: {
   value: SendState;
   onChange: (next: SendState) => void;
   onSend: () => void;
   canSend: boolean;
   lang: Lang;
+  /** 6.7: the text spoken by the server's voice and sent as a voice message. */
+  onSendAsVoice?: () => void;
+  voiceBusy?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const longRef = useRef<number | null>(null);
@@ -133,6 +136,20 @@ export function SendOptions({
                   <Dice5 className="h-4 w-4" />
                 </button>
               </div>
+            ) : null}
+
+            {onSendAsVoice ? (
+              <button
+                type="button"
+                className="send-pop__row"
+                style={{ width: "100%", textAlign: "start", background: "none", border: 0, font: "inherit", color: "inherit", cursor: "pointer" }}
+                disabled={!canSend || voiceBusy}
+                onClick={() => { setOpen(false); onSendAsVoice(); }}
+                data-testid="opt-send-voice"
+              >
+                <Volume2 className="h-4 w-4" />
+                <span><strong>{t(lang, voiceBusy ? "speakSend.busy" : "speakSend.button")}</strong><em>{t(lang, "speakSend.hint")}</em></span>
+              </button>
             ) : null}
 
             <div className="send-pop__foot">

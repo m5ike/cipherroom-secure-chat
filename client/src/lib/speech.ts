@@ -10,6 +10,9 @@
 //     pick male/female/child-ish voices when they exist on the OS. True
 //     voice cloning requires a server-side model and explicit consent and
 //     is intentionally NOT implemented here. See docs/speech.md.
+//   - 6.7: the real-time voice changer of the microphone is voice-fx.ts /
+//     mic.ts; dictation that stops for real is dictation.ts (startRecognition
+//     below stays for older callers).
 
 import { toWav16k } from "./wav";
 
@@ -147,8 +150,8 @@ export async function fetchServerSpeechStatus(): Promise<ServerSpeechStatus> {
   }
 }
 
-/** Server text-to-speech: returns an <audio>-playable object URL, or an error. */
-export async function serverTts(text: string, opts: { connector?: string; voice?: string } = {}): Promise<{ ok: true; url: string; mime: string } | { ok: false; message: string }> {
+/** 6.7: server text-to-speech as audio bytes (a voice message is made of them). */
+export async function serverTtsBlob(text: string, opts: { connector?: string; voice?: string } = {}): Promise<{ ok: true; blob: Blob; mime: string } | { ok: false; message: string }> {
   try {
     const res = await fetch("/api/speech/tts", {
       method: "POST",
@@ -158,11 +161,17 @@ export async function serverTts(text: string, opts: { connector?: string; voice?
     const json = await res.json().catch(() => ({})) as { ok?: boolean; audioBase64?: string; mime?: string; message?: string };
     if (!res.ok || !json.ok || !json.audioBase64) return { ok: false, message: json.message || `HTTP ${res.status}` };
     const bytes = Uint8Array.from(atob(json.audioBase64), (c) => c.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: json.mime || "audio/mpeg" }));
-    return { ok: true, url, mime: json.mime || "audio/mpeg" };
+    const mime = json.mime || "audio/mpeg";
+    return { ok: true, blob: new Blob([bytes], { type: mime }), mime };
   } catch (err) {
     return { ok: false, message: (err as Error).message };
   }
+}
+
+/** Server text-to-speech: returns an <audio>-playable object URL, or an error. */
+export async function serverTts(text: string, opts: { connector?: string; voice?: string } = {}): Promise<{ ok: true; url: string; mime: string } | { ok: false; message: string }> {
+  const r = await serverTtsBlob(text, opts);
+  return r.ok ? { ok: true, url: URL.createObjectURL(r.blob), mime: r.mime } : r;
 }
 
 /** Server speech-to-text: raw audio bytes in, transcript out. */

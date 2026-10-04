@@ -78,9 +78,15 @@ public final class CallAudio {
     /**
      * JavaAudioDeviceModule's buffer callback (the recording thread): in this
      * mode the microphone is replaced by the queued speech, else by silence.
+     * Out of this mode (6.7) the microphone's buffer goes through MicFx, in
+     * place, before WebRTC encodes it.
      */
     public long onCapture(ByteBuffer buffer, int format, int channels, int rate, int bytes, long ts) {
-        if (!active) return ts;
+        if (!active) {
+            // 6.7: a normal call — the microphone through the voice changer (when it is on).
+            if (format == android.media.AudioFormat.ENCODING_PCM_16BIT) MicFx.onCapture(buffer, channels, rate, bytes);
+            return ts;
+        }
         ShortBufferView out = new ShortBufferView(buffer, bytes);
         synchronized (speech) {
             for (int i = 0; i < out.frames(channels); i++) {

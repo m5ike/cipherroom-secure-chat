@@ -85,6 +85,8 @@ public final class Settings {
 
         // 6.2 look (templates, colour variants, fonts, buttons, Tools dock)
 
+        // 6.7 voice: the voice changer (voiceFx.*)
+        cz.m5cet.app.voice.MicFx.defaults(DEFAULTS);
     }
 
     private final Vault vault;

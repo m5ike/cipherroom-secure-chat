@@ -41,6 +41,8 @@ public final class Speech {
     public Speech(M5 app) { this.app = app; }
 
     public boolean speaking() { return speaking; }
+    /** 6.7: the phone has a text-to-speech engine that started (false before the first use or without one). */
+    public boolean ready() { return ready; }
     public void setOnStateChange(Runnable r) { onStateChange = r; }
 
     private synchronized void whenReady(Runnable r) {
@@ -56,7 +58,8 @@ public final class Speech {
             }
             if (!ready) { Log.w("voice", "text to speech is not available (" + status + ")"); for (Runnable x : run) x.run(); return; }
             tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
-                @Override public void onStart(String id) { speaking = true; changed(); }
+                // 6.7: a file being made ("f…") is not the phone speaking.
+                @Override public void onStart(String id) { if (id.startsWith("u")) { speaking = true; changed(); } }
                 @Override public void onDone(String id) { finished(id, true); }
                 @Override public void onError(String id) { finished(id, false); }
                 @Override public void onStop(String id, boolean interrupted) { finished(id, false); }
@@ -66,7 +69,7 @@ public final class Speech {
     }
 
     private void finished(String id, boolean ok) {
-        speaking = false;
+        if (id.startsWith("u")) speaking = false;
         Done d = callbacks.remove(id);
         changed();
         if (d != null) Io.main(() -> d.done(ok));
@@ -82,7 +85,8 @@ public final class Speech {
     }
 
     private void configure() {
-        tts.setLanguage(locale());
+        int lang = tts.setLanguage(locale());
+        if (lang == TextToSpeech.LANG_MISSING_DATA || lang == TextToSpeech.LANG_NOT_SUPPORTED) Log.w("voice", "no " + locale().toLanguageTag() + " voice on this phone (" + lang + ")");
         String name = app.settings.str("voice.voice");
         if (!name.isEmpty()) {
             Voice chosen = null;
@@ -117,7 +121,8 @@ public final class Speech {
             configure();
             String id = "f" + System.nanoTime();
             callbacks.put(id, done);
-            int r = tts.synthesizeToFile(text, new Bundle(), wav, id);
+            int max = TextToSpeech.getMaxSpeechInputLength();
+            int r = tts.synthesizeToFile(text.length() > max ? text.substring(0, max) : text, new Bundle(), wav, id);
             if (r != TextToSpeech.SUCCESS) finished(id, false);
         });
     }

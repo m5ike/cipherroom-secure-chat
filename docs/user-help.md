@@ -203,6 +203,29 @@ Když je správce zapne a máš přístup k modulu NFC, tyto příkazy přečtou
   otevřít. CAN ani MRZ, které zadáš na zařízení, mezi tím nejsou. Samotný
   nástroj NFC (*Celý výpis* a jeho export) zůstává jen v prohlížeči.
 
+### Hlas: diktování, odeslat jako hlas, měnič hlasu (6.7)
+- **Diktování** — ikona řeči v poli zprávy (web: tlačítko vedle mikrofonu).
+  Text se píše do pole, jak mluvíš, a poslech běží, dokud ho nezastavíš: znovu
+  ikona (čtvereček), *Odeslat*, odchod z místnosti nebo aplikace v pozadí —
+  poslední slova se ještě dopíšou a mikrofon se uvolní.
+- **Poslat text jako hlas** (dlouhý stisk *Odeslat*; web: šipka u *Odeslat*) —
+  text z pole (a je-li pole prázdné, to, co teď nadiktuješ) přečte hlas a
+  odejde jako šifrovaná hlasová zpráva, stejně jako nahraná. Android: hlas
+  telefonu, nebo hlas serveru, když je v *Nastavení › Hlas* zvoleno *Na
+  serveru*. Web: jen hlas serveru (hlasy prohlížeče nahrát nejdou) — server
+  text uvidí; když převod textu na řeč nezapnul správce, aplikace to řekne.
+- **Nadiktovat a poslat text** — mluvíš, text se píše do pole; ■ nebo
+  *Odeslat* ho pošle jako obyčejnou zprávu.
+- **Měnič hlasu** — modul, který zapíná správce (konzole › *Moduly a skupiny*;
+  jinak je vypnutý). Pak si ho každý zapne u sebe: web *Menu › Měnič hlasu*,
+  Android *Nastavení › Hlas › Měnič hlasu*. Předvolby (vyšší, nižší, hluboký,
+  robot, ozvěna, šepot, anonym) nebo vlastní výška, barva (formanty), robot,
+  ozvěna, šepot a hlasitost; *Vyzkoušet* nahraje 4 s a přehraje je. Mění hlas
+  v hovorech a hlasových zprávách přímo v zařízení, ještě před šifrováním —
+  kvůli tomu nikam neodchází žádný zvuk. Diktování (rozpoznávání řeči
+  prohlížeče nebo telefonu) poslouchá mikrofon samo a dává jen text; na něj se
+  měnič nevztahuje.
+
 ## English
 
 ### First run
@@ -347,6 +370,31 @@ read a card **at your device** — read-only, your own card or document:
   access to runs can open it. The CAN or MRZ you type on your device is not part
   of it. The NFC tool itself (*Full report* and its exports) stays in your
   browser.
+
+### Voice: dictation, send as voice, the voice changer (6.7)
+- **Dictation** — the speech icon in the message field (web: the button next to
+  the microphone). The text appears as you speak, and listening goes on until
+  you stop it: the icon again (a square), *Send*, leaving the room or the app
+  going to the background — the last words still arrive and the microphone is
+  released.
+- **Send the text as voice** (long-press *Send*; web: the arrow by *Send*) —
+  the field's text (or, with an empty field, what you dictate now) is read by a
+  voice and goes as an encrypted voice message, just like a recorded one.
+  Android: the phone's voice, or the server's when *Settings › Voice* says *On
+  the server*. Web: the server's voice only (the browser's voices cannot be
+  recorded) — the server sees the text; without the operator's text to speech
+  the app says so.
+- **Speak it, send text** — you speak, the text appears in the field; ■ or
+  *Send* sends it as an ordinary message.
+- **Voice changer** — a module the operator turns on (console › *Modules &
+  groups*; off otherwise). Then everyone switches it on for themselves: web
+  *Menu › Voice changer*, Android *Settings › Voice › Voice changer*. Presets
+  (higher, lower, deep, robot, echo, whisper, anonymous) or your own pitch,
+  timbre (formants), robot, echo, whisper and volume; *Try it* records 4 s and
+  plays them back. It changes the voice of calls and voice messages on the
+  device, before encryption — no audio leaves it for this. Dictation (the
+  browser's or phone's speech recognition) listens to the microphone itself and
+  gives only text; the voice changer does not apply to it.
 
 ## Deutsch
 
@@ -495,3 +543,30 @@ dein eigenes Dokument:
   und ein Betreiber mit Zugriff auf die Läufe kann es öffnen. Die CAN oder MRZ,
   die du auf dem Gerät eingibst, gehört nicht dazu. Das NFC-Werkzeug selbst
   (*Vollständiger Bericht* und seine Exporte) bleibt in deinem Browser.
+
+### Sprache: Diktat, als Sprache senden, Stimmverzerrer (6.7)
+- **Diktat** — das Sprach-Symbol im Nachrichtenfeld (Web: der Knopf neben dem
+  Mikrofon). Der Text erscheint, während du sprichst, und das Zuhören geht
+  weiter, bis du es beendest: das Symbol noch einmal (ein Quadrat), *Senden*,
+  der Raum verlassen oder die App im Hintergrund — die letzten Worte kommen
+  noch an und das Mikrofon wird frei.
+- **Text als Sprache senden** (lange auf *Senden* drücken; Web: der Pfeil bei
+  *Senden*) — der Text im Feld (oder, bei leerem Feld, was du jetzt diktierst)
+  wird von einer Stimme gelesen und geht als verschlüsselte Sprachnachricht,
+  genau wie eine aufgenommene. Android: die Stimme des Telefons, oder die des
+  Servers, wenn in *Einstellungen › Sprache* *Auf dem Server* gewählt ist. Web:
+  nur die Stimme des Servers (die Stimmen des Browsers lassen sich nicht
+  aufnehmen) — der Server sieht den Text; ohne Sprachausgabe des Betreibers
+  sagt die App es.
+- **Sprechen, als Text senden** — du sprichst, der Text erscheint im Feld; ■
+  oder *Senden* schickt ihn als normale Nachricht.
+- **Stimmverzerrer** — ein Modul, das der Betreiber einschaltet (Konsole ›
+  *Module & Gruppen*; sonst aus). Dann schaltet ihn jeder für sich ein: Web
+  *Menü › Stimmverzerrer*, Android *Einstellungen › Sprache › Stimmverzerrer*.
+  Voreinstellungen (höher, tiefer, tief, Roboter, Echo, Flüstern, anonym) oder
+  eigene Tonhöhe, Klangfarbe (Formanten), Roboter, Echo, Flüstern und
+  Lautstärke; *Testen* nimmt 4 s auf und spielt sie ab. Er verändert die
+  Stimme in Anrufen und Sprachnachrichten auf dem Gerät, vor der
+  Verschlüsselung — dafür verlässt kein Ton das Gerät. Das Diktat (die
+  Spracherkennung des Browsers oder Telefons) hört das Mikrofon selbst und
+  liefert nur Text; dafür gilt der Stimmverzerrer nicht.

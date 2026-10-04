@@ -33,7 +33,13 @@ import { MessageBubble } from "./components/MessageBubble";
 import { UserBadge } from "./components/UserBadge";
 import { SendOptions, DEFAULT_SEND_STATE, type SendState } from "./components/SendOptions";
 import { RecipientsWidget, type WidgetPeer } from "./components/RecipientsWidget";
-import { AudioRecorder } from "./components/AudioRecorder";
+// 6.7 voice: dictation + recorder in the composer, the voice changer, speak and send.
+import { ComposerVoice } from "./components/ComposerVoice";
+import { VoiceChangerPanel } from "./components/VoiceChangerPanel";
+import { isProcessed, openMic, processStream, setVoiceFxAllowed, voiceFxActive } from "./lib/mic";
+import { onVoiceFxChange } from "./lib/voice-fx-settings";
+import { textToVoiceFile } from "./lib/speak-send";
+import { fetchServerSpeechStatus, serverTtsBlob } from "./lib/speech";
 import type { UserInfo } from "./components/UserInfoModal";
 import type { MessageInfo } from "./components/MessageInfoModal";
 import type { RegisterResult } from "./components/RegistrationDialog";
@@ -362,6 +368,7 @@ export type PanelKey =
   | "phone"
   | "connection"
   | "connections"
+  | "voiceChanger"
   | null;
 
 type RowActions = {
@@ -549,6 +556,7 @@ function ChatApp() {
   const [pushAvailable, setPushAvailable] = useState(false);
   const [pushVapidKey, setPushVapidKey] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<PanelKey>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false); // 6.7: a text being turned into a voice message
   const [now, setNow] = useState(Date.now());
 
   // --- message kinds + recipient selection ---
@@ -927,6 +935,21 @@ function ChatApp() {
   const layoutCtx = useMemo<LayoutContext>(() => ({ groups: myGroups, theme: effectiveTheme }), [myGroups, effectiveTheme]);
   const moduleOn = useCallback((id: string) => moduleAllowed(clientConfig.modules, id, myGroups), [clientConfig.modules, myGroups]);
   const panelVisible = useCallback((panel: PanelKey) => { const m = moduleOfPanel(String(panel)); return !m || moduleOn(m); }, [moduleOn]);
+  // 6.7: the voice changer may be on (the operator's module). Switched on while a
+  // call runs: its microphone goes through it from now on (the senders get the new track).
+  useEffect(() => { setVoiceFxAllowed(moduleOn("voiceChanger")); }, [moduleOn]);
+  useEffect(() => onVoiceFxChange(() => {
+    const raw = localAudioStreamRef.current;
+    if (!raw || isProcessed(raw) || !voiceFxActive()) return;
+    void processStream(raw).then((next) => {
+      const track = next.getAudioTracks()[0];
+      if (next === raw || !track || localAudioStreamRef.current !== raw) return;
+      track.enabled = raw.getAudioTracks()[0]?.enabled ?? true; // muted stays muted
+      peersRef.current.forEach((peer) => peer.outgoingAudioSenders.forEach((sender) => { void sender.replaceTrack(track).catch(() => undefined); }));
+      localAudioStreamRef.current = next;
+      if (localVideoStreamRef.current === raw) localVideoStreamRef.current = next;
+    });
+  }), []);
   const fnHost = useMemo<FnHost>(() => ({
     lang,
     event: (meta, ev) => fnEventRef.current(meta, ev),
@@ -4095,25 +4118,45 @@ function ChatApp() {
     systemMessage(t(lang, "sec.excluded").replace("{name}", handle?.name || peerId.slice(-6)), { kind: "warning" });
   }
 
-  /** Send a chosen or recorded file to the current recipients. */
-  async function sendPickedFile(file: File) {
+  /**
+   * Send a chosen or recorded file to the current recipients. 6.7: `caption` —
+   * the text that goes along ("" for a voice message made from that text); true when it went.
+   */
+  async function sendPickedFile(file: File, caption = messageInput.trim()): Promise<boolean> {
     const rec = resolveRecipients();
-    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return false; }
     // Sealing a binary body is not supported yet; tap/vanish still apply.
     const attachOpts: SendState = { ...sendOpts, sealed: false, sealCode: "" };
     try {
       if (file.size > INLINE_ATTACHMENT_LIMIT) {
         // Too big to embed in a chat envelope: same encrypted channel, sent in
         // 32 KiB chunks. Text typed alongside goes out as its own message.
-        const text = messageInput.trim();
+        const text = caption;
         if (text) await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames });
         await sendLargeFileToAll(file);
-        return;
+        return true;
       }
       const attachment = await fileToAttachment(file);
-      await sendChatPayload(messageInput.trim(), { attachment, send: attachOpts, targets: rec.targets, toNames: rec.toNames });
+      await sendChatPayload(caption, { attachment, send: attachOpts, targets: rec.targets, toNames: rec.toNames });
+      return true;
     } catch (err) {
       setNotice((err as Error).message);
+      return false;
+    }
+  }
+
+  /** 6.7: speak and send — the text by the server's voice, sent as an E2EE voice message (no caption). */
+  async function sendTextAsVoice(text: string, fromComposer: boolean): Promise<boolean> {
+    if (voiceBusy) return false;
+    setVoiceBusy(true);
+    try {
+      const made = await textToVoiceFile(text, { status: fetchServerSpeechStatus, tts: serverTtsBlob });
+      if (!made.ok) { setNotice(made.error === "tts-failed" ? tf(lang, "speakSend.err.tts-failed", { msg: made.message ?? "" }) : t(lang, `speakSend.err.${made.error}`)); return false; }
+      const sent = await sendPickedFile(made.file, "");
+      if (sent && fromComposer) setMessageInput("");
+      return sent;
+    } finally {
+      setVoiceBusy(false);
     }
   }
 
@@ -4136,7 +4179,7 @@ function ChatApp() {
     }
     try {
       setAudioStatus("joining");
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      const stream = await openMic({ audio: true, video: false }); // 6.7: through the voice changer when it is on
       localAudioStreamRef.current = stream;
       const tracks = stream.getAudioTracks();
       peersRef.current.forEach((peer) => {
@@ -4450,7 +4493,7 @@ function ChatApp() {
     }
     try {
       setAudioStatus("joining");
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await openMic({ // 6.7: the voice through the voice changer when it is on
         audio: true,
         video: { width: { ideal: 1280 }, height: { ideal: 720 } },
       });
@@ -5111,12 +5154,16 @@ function ChatApp() {
             },
             refs: { fileInput: fileInputRef as never, imageInput: imageInputRef as never },
             slots: {
+              // 6.7: dictation into the field next to the voice-message recorder
               recorder: () => (
-                <AudioRecorder
+                <ComposerVoice
                   lang={lang}
                   disabled={openPeerCount === 0}
+                  text={messageInput}
+                  setText={setMessageInput}
                   onRecorded={(file) => void sendPickedFile(file)}
                   onError={(msg) => setNotice(msg)}
+                  serverMode={prefs.mode === "server"}
                 />
               ),
               sendOptions: () => (
@@ -5126,6 +5173,8 @@ function ChatApp() {
                   onSend={() => void sendMessage()}
                   canSend={canSend}
                   lang={lang}
+                  onSendAsVoice={() => void sendTextAsVoice(messageInput, true)}
+                  voiceBusy={voiceBusy}
                 />
               ),
             },
@@ -5337,9 +5386,17 @@ function ChatApp() {
             recognitionRef={recognitionRef}
             onSendText={(text) => void sendChatPayload(text)}
             onInsertText={(text) => setMessageInput((cur) => (cur ? `${cur} ${text}` : text))}
+            onSendVoice={(text) => sendTextAsVoice(text, false)}
             serverMode={prefs.mode === "server"}
             lang={lang}
           />
+        </SimpleModal>
+      ) : null}
+
+      {/* 6.7: the voice changer (the operator's module; on / off per client) */}
+      {activePanel === "voiceChanger" ? (
+        <SimpleModal title={t(lang, "vfx.title")} onClose={() => setActivePanel(null)}>
+          <VoiceChangerPanel lang={lang} allowed={moduleOn("voiceChanger")} />
         </SimpleModal>
       ) : null}
 
