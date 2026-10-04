@@ -33,14 +33,14 @@ import { randomBytes } from "node:crypto";
 import { hashRoom } from "../../monitor/traffic";
 import { publicBaseUrl } from "../connectors";
 import { telHooks, telLog, telPermissions, type TsaCallRef, type TsaTurn } from "../control/hooks";
-import { INROUTE_CODE, type InrouteEntry } from "../control/types";
+import { INROUTE_CODE, INROUTE_SHORT_TTL, inrouteMinDigits, type InrouteEntry } from "../control/types";
 import { normalizeNumber, numberInfo } from "../numbers";
-import type { CallAction, ProviderId } from "../providers/types";
+import type { CallAction } from "../providers/types";
 import { telId } from "../tel-store";
 import { isE164 } from "../types";
 import { dataInputs, toolOf } from "./catalog";
 import { tsaDb, type Cursor, type StoredSession } from "./db";
-import { tsaDeps } from "./deps";
+import { tsaDeps, type TsaOutboundPlan } from "./deps";
 import { getAudioFile } from "./files";
 import { clockIn, formulaEquals, looksNumeric, runFormula, textOf, truthy, type FormulaScope } from "./formula";
 import { tsaStore } from "./store";
@@ -187,15 +187,21 @@ export function globMatch(pattern: string, value: string): boolean {
   return p === pattern.length;
 }
 
-/** May a TSA dial / text this number? The reason when not. */
-export function numberRefused(to: string): string | null {
-  const o = telPermissions().outbound;
-  if (o.blocked.some((p) => globMatch(p.replace(/^-/, ""), to))) return "the permissions block this number";
-  if (o.countries.length && to.startsWith("+")) {
-    const iso = numberInfo(to)?.iso2 ?? "";
-    if (!o.countries.includes(iso)) return `calls to ${iso || "this country"} are not allowed (Telephony › Permissions)`;
+/** 6.10 (G-06): the numbers of this call that are the operator's — the number called (inbound), our caller ID (outbound). */
+const ownNumbersOf = (s: StoredSession): string[] => (s.direction === "inbound" ? [s.call.did, s.call.to] : [s.call.from]).filter(Boolean);
+
+/**
+ * 6.10 (G-06): a TSA's SMS / Dial against the module's outbound checks
+ * (tsaDeps().outbound → control/enforce.ts planOutbound, by "tsa:<id>").
+ * When they cannot answer, the send is refused (fail closed).
+ */
+async function outboundCheck(ctx: Ctx, ask: { kind: "call" | "sms"; to: string; dry: boolean; timeLimitSec?: number }): Promise<TsaOutboundPlan> {
+  const s = ctx.s;
+  try {
+    return await tsaDeps().outbound({ ...ask, tsa: s.tsaId, provider: s.provider, own: ownNumbersOf(s) });
+  } catch (err) {
+    return { ok: false, code: "unavailable", message: `the outbound checks could not answer (${(err as Error).message.slice(0, 120)})` };
   }
-  return null;
 }
 
 const hourKey = (ms: number) => Math.floor(ms / 3600_000);
@@ -427,14 +433,17 @@ async function runNode(ctx: Ctx, node: TsaNode): Promise<Outcome> {
       if (!isE164(to)) return { go: "on_failed", note: `not a phone number: "${to.slice(0, 30)}"`, level: "warn" };
       const text = tpl(ctx, node, "text").trim().slice(0, 1600);
       if (!text) return { go: "on_failed", note: "the text is empty", level: "warn" };
-      const refused = numberRefused(to);
-      if (refused) { log(ctx, "warn", `SMS to ${to} refused: ${refused}`); return { go: "on_failed", note: refused, level: "warn" }; }
+      // 6.10 (G-06): the module's outbound checks, as m5.telephony's (the caller's number can be faked:
+      // with no countries set, a TSA texts only your own countries). Checked here without counting;
+      // the send itself goes through them again as "tsa:<id>" (its hourly budget).
+      const checked = await outboundCheck(ctx, { kind: "sms", to, dry: true });
+      if (!checked.ok) { log(ctx, "warn", `SMS to ${to} refused: ${checked.message}`); return { go: "on_failed", note: checked.message, level: "warn" }; }
       if (ctx.sim) return { go: "next", note: `SMS to ${to} (simulated, not sent): ${text.slice(0, 120)}` };
       const perHour = telPermissions().outbound.smsPerHour;
       if (tsaDb.bump(`sms:${s.tsaId}:${hourKey(d.now())}`, 3600_000) > perHour) { log(ctx, "warn", `SMS to ${to} refused: more than ${perHour} SMS an hour from this TSA`); return { go: "on_failed", note: "the hourly SMS limit", level: "warn" }; }
       try {
         const from = tpl(ctx, node, "from").trim();
-        const r = await d.sendSms({ to, ...(from ? { from } : {}), text });
+        const r = await d.sendSms({ to, ...(from ? { from } : {}), text, tsa: s.tsaId, own: ownNumbersOf(s) });
         log(ctx, "info", `SMS to ${to}: ${r.status}`);
         return { go: "next", note: `SMS to ${to}: ${r.status}` };
       } catch (err) {
@@ -485,7 +494,9 @@ async function runNode(ctx: Ctx, node: TsaNode): Promise<Outcome> {
       const code = tpl(ctx, node, "code").trim();
       if (code && !INROUTE_CODE.test(code)) return { go: "on_failed", note: "a code is 4–6 digits", level: "warn" };
       const ttl = Math.round(clamp(param(node, "ttl"), 30, Math.min(86_400, telPermissions().inroute.maxTtlSec), 600));
-      const digits = Math.round(clamp(param(node, "digits"), 4, 6, 6));
+      // 6.10 (G-05): a code valid for more than 10 minutes has 6 digits (the table refuses a shorter one; the simulator too).
+      if (code && code.length < inrouteMinDigits(ttl)) return { go: "on_failed", note: `a code valid for more than ${INROUTE_SHORT_TTL / 60} minutes has 6 digits`, level: "warn" };
+      const digits = Math.max(inrouteMinDigits(ttl), Math.round(clamp(param(node, "digits"), 4, 6, 6)));
       if (ctx.sim) {
         const c = code || String(Math.floor(d.random() * 10 ** digits)).padStart(digits, "0");
         const now = d.now();
@@ -609,11 +620,36 @@ async function transcribe(ctx: Ctx, url: string, language: string): Promise<stri
   return (await d.stt({ audio: rec.bytes, mime: rec.mime, language, console: ctx.sim, actor: `tsa:${ctx.s.tsaId}` })).slice(0, TSA_LIMITS.textLength);
 }
 
-function codeError(ctx: Ctx, node: TsaNode, why: string): Outcome {
+const TOO_MANY_CODES: Record<string, string> = {
+  cs: "Příliš mnoho chybných kódů. Na shledanou.",
+  sk: "Príliš veľa chybných kódov. Dovidenia.",
+  de: "Zu viele falsche Codes. Auf Wiederhören.",
+  pl: "Zbyt wiele błędnych kodów. Do widzenia.",
+  en: "Too many wrong codes. Goodbye.",
+};
+
+/** The caller and the number called, for the route-code limits (6.10 G-05: the DID is the part a caller cannot fake). */
+const codeWho = (s: StoredSession) => ({ caller: s.call.from, did: s.call.did || s.call.to });
+
+/**
+ * A wrong route code. Counted for this call — the one that reaches
+ * maxAttemptsPerCall ENDS the call (6.10, G-05) — and, unless `counted` is
+ * false (a code refused before it was looked up), by the inroute table per
+ * caller, per number called and module-wide.
+ */
+async function codeError(ctx: Ctx, node: TsaNode, why: string, counted = true, code = ""): Promise<Outcome> {
   const s = ctx.s;
   s.routeAttempts += 1;
-  if (!ctx.sim && s.call.from) tsaDb.bump(`rf:${s.call.from}:${hourKey(tsaDeps().now())}`, 3600_000);
-  log(ctx, "notice", `wrong route code (${why}); attempt ${s.routeAttempts} of ${telPermissions().inroute.maxAttemptsPerCall}`);
+  const max = telPermissions().inroute.maxAttemptsPerCall;
+  if (counted && !ctx.sim && telHooks.inroute?.failure) {
+    try { await telHooks.inroute.failure(codeWho(s), { code, callId: s.callId, provider: s.provider }); }
+    catch { /* counting never breaks the call */ }
+  }
+  if (s.routeAttempts >= max) {
+    log(ctx, "warn", `wrong route code (${why}); ${max} in this call — the call is ended`);
+    return { end: [{ say: { text: TOO_MANY_CODES[s.lang.slice(0, 2)] ?? TOO_MANY_CODES.en, language: s.lang } }, { hangup: {} }], how: `${why} — ${max} wrong route codes, hung up` };
+  }
+  log(ctx, "notice", `wrong route code (${why}); attempt ${s.routeAttempts} of ${max}`);
   return { go: "on_code_error", note: why };
 }
 
@@ -622,10 +658,12 @@ async function routeAudio(ctx: Ctx, node: TsaNode): Promise<Outcome> {
   const d = tsaDeps();
   if (s.offline) return { end: [], how: "the caller hung up" };
   const perms = telPermissions().inroute;
-  if (s.routeAttempts >= perms.maxAttemptsPerCall) return { go: "on_code_error", note: `no more codes in this call (${perms.maxAttemptsPerCall} wrong already)` };
-  if (!ctx.sim && s.call.from && tsaDb.count(`rf:${s.call.from}:${hourKey(d.now())}`) >= perms.maxFailuresPerCallerPerHour) {
-    log(ctx, "warn", `route codes from ${s.call.from} refused for this hour (${perms.maxFailuresPerCallerPerHour} wrong)`);
-    return { go: "on_code_error", note: "too many wrong codes from this caller this hour" };
+  if (s.routeAttempts >= perms.maxAttemptsPerCall) return { end: [{ hangup: {} }], how: `no more codes in this call (${perms.maxAttemptsPerCall} wrong already)` };
+  // 6.10 (G-05): a lockout (the module's or this number's) or a caller over budget — the code is not even looked up.
+  if (!ctx.sim && telHooks.inroute?.guard) {
+    let refused: string | null = null;
+    try { refused = await telHooks.inroute.guard(codeWho(s)); } catch { refused = null; }
+    if (refused) { log(ctx, "warn", `route code refused: ${refused}`); return codeError(ctx, node, refused, false); }
   }
   const key = textOf(inputsOf(ctx, node).KEY).trim();
   if (!INROUTE_CODE.test(key)) return codeError(ctx, node, key ? "not 4–6 digits" : "no code");
@@ -635,10 +673,10 @@ async function routeAudio(ctx: Ctx, node: TsaNode): Promise<Outcome> {
     try { entry = await telHooks.inroute.lookup(key); }
     catch (err) { log(ctx, "warn", `inroute lookup failed: ${(err as Error).message.slice(0, 120)}`); return { go: "on_failed", note: "the inroute lookup failed", level: "warn" }; }
   }
-  if (!entry || entry.expiresAt <= d.now()) return codeError(ctx, node, entry ? "the code expired" : "no such code");
+  if (!entry || entry.expiresAt <= d.now()) return codeError(ctx, node, entry ? "the code expired" : "no such code", true, key);
   const consume = param(node, "consume") === true;
   const usedKey = `used:${entry.code}:${entry.createdAt}`;
-  if (consume && tsaDb.count(usedKey) > 0) return codeError(ctx, node, "the one-time code was used already");
+  if (consume && tsaDb.count(usedKey) > 0) return codeError(ctx, node, "the one-time code was used already", true, key);
   setOut(ctx, node, "type", entry.type);
   setOut(ctx, node, "target", entry.type === "user" ? entry.user : entry.room);
   // 6.10 (G-03): the log and the trace name the room by its hash, never its blind id.
@@ -652,7 +690,7 @@ async function routeAudio(ctx: Ctx, node: TsaNode): Promise<Outcome> {
   try { r = await telHooks.routeAudio(s.ref, entry, { announce: tpl(ctx, node, "announce").trim(), mode, sessionId: s.id }); }
   catch (err) { log(ctx, "warn", `routing failed: ${(err as Error).message.slice(0, 160)}`); return { go: "on_failed", note: "routing failed", level: "warn" }; }
   if (!r.ok) {
-    if (r.reason === "code") return codeError(ctx, node, r.detail || "the code was refused");
+    if (r.reason === "code") return codeError(ctx, node, r.detail || "the code was refused", true, key);
     log(ctx, "warn", `routing failed: ${r.detail.slice(0, 160)}`);
     return { go: "on_failed", note: r.detail || "routing failed", level: "warn" };
   }
@@ -675,12 +713,19 @@ async function dial(ctx: Ctx, node: TsaNode): Promise<Outcome> {
     const n = isE164(to) ? to : normalizeNumber(to);
     if (!n) return { go: "on_failed", note: `not a phone number: "${to.slice(0, 30)}"`, level: "warn" };
     to = n;
-    const refused = numberRefused(to);
-    if (refused) { log(ctx, "warn", `dial ${to} refused: ${refused}`); return { go: "on_failed", note: refused, level: "warn" }; }
   } else {
     if (!/^sip:/i.test(to)) to = `sip:${to}`;
     if (!/^sip:[^\s@]+@[^\s@]+$/i.test(to)) return { go: "on_failed", note: `not a SIP URI: "${to.slice(0, 40)}"`, level: "warn" };
   }
+  // 6.10 (G-06): every dial / transfer goes through the module's outbound checks, as m5.telephony's —
+  // the countries (empty: a TSA only your own), the blocked numbers, the live calls, the outbound
+  // rules (a state refuses it whatever "Route through" says), the longest call — as "tsa:<id>".
+  const plan = await outboundCheck(ctx, { kind: "call", to, dry: ctx.sim, timeLimitSec: Math.max(1, Math.floor((s.deadline - d.now()) / 1000)) });
+  if (!plan.ok) { log(ctx, "notice", `dial ${to} refused: ${plan.message}`); return { go: "on_failed", note: plan.message, level: "warn" }; }
+  // The TSA's own hourly budget of dials (a transfer is not a call tel-store places, so the plan cannot count it).
+  const callsPerHour = telPermissions().outbound.callsPerHour;
+  const dialKey = `dial:${s.tsaId}:${hourKey(d.now())}`;
+  if (!ctx.sim && tsaDb.count(dialKey) >= callsPerHour) { log(ctx, "warn", `dial ${to} refused: more than ${callsPerHour} calls an hour from this TSA`); return { go: "on_failed", note: "the hourly call limit", level: "warn" }; }
   let callerId = tpl(ctx, node, "callerIdNumber").trim();
   let callerName = tpl(ctx, node, "callerIdName").trim();
   let presentation: "allowed" | "restricted" = "allowed";
@@ -688,21 +733,15 @@ async function dial(ctx: Ctx, node: TsaNode): Promise<Outcome> {
   const via = str(param(node, "via")) || "rules";
   const notes: string[] = [];
   if (via === "rules") {
-    if (telHooks.decide) {
-      try {
-        const dec = await telHooks.decide({ direction: "outbound", from: callerId || s.call.did || s.call.to, to, provider: s.provider as ProviderId, source: "tsa" });
-        if (dec.target.kind === "state") { log(ctx, "notice", `dial ${to} refused by the outbound rules (${dec.target.state}${dec.ruleLabel ? `, ${dec.ruleLabel}` : ""})`); return { go: "on_failed", note: `the outbound rules refuse it (${dec.target.state})`, level: "warn" }; }
-        if (dec.service?.kind === "sip") {
-          trunk = await d.trunk(dec.service.trunk, !ctx.sim);
-          if (!trunk) return { go: "on_failed", note: `the rule's SIP trunk "${dec.service.trunk}" is not there`, level: "warn" };
-          callerId ||= dec.service.callerId.number;
-          callerName ||= dec.service.callerId.name;
-          presentation = dec.service.callerId.presentation;
-        }
-        if (dec.service && dec.service.provider !== s.provider) notes.push(`the rule names ${dec.service.provider}; a transfer goes through this call's provider (${s.provider})`);
-        if (dec.rule) notes.push(`rule ${dec.ruleLabel || dec.rule}`);
-      } catch (err) { notes.push(`the outbound rules could not answer (${(err as Error).message.slice(0, 80)})`); }
-    } else notes.push("no outbound rules — through the call's provider");
+    if (plan.trunk) {
+      // The simulator never carries a trunk's password.
+      trunk = ctx.sim ? { ...plan.trunk, password: undefined } : plan.trunk;
+      callerId ||= plan.callerId ?? "";
+      callerName ||= plan.callerName ?? "";
+      presentation = plan.presentation ?? "allowed";
+    }
+    if (plan.provider && plan.provider !== s.provider) notes.push(`the rule names ${plan.provider}; a transfer goes through this call's provider (${s.provider})`);
+    if (plan.rule) notes.push(`rule ${plan.ruleLabel || plan.rule}`);
   } else if (via === "trunk") {
     trunk = await d.trunk(str(param(node, "trunk")), !ctx.sim);
     if (!trunk) return { go: "on_failed", note: `no SIP trunk "${str(param(node, "trunk")).slice(0, 40)}"`, level: "warn" };
@@ -711,10 +750,12 @@ async function dial(ctx: Ctx, node: TsaNode): Promise<Outcome> {
   const timeout = Math.round(clamp(param(node, "timeout"), 5, 120, 30));
   const action: CallAction = { dial: {
     to, kind, action: cbUrl(ctx, node.id), ...(callerId ? { callerId } : {}), ...(callerName ? { callerName } : {}), presentation, timeout,
+    timeLimit: plan.timeLimitSec,
     ...(param(node, "record") === true ? { record: true } : {}), ...(trunk ? { trunk } : {}),
   } };
+  if (!ctx.sim) tsaDb.bump(dialKey, 3600_000);
   const where = `${to}${trunk ? ` over SIP trunk ${trunk.id}` : ""}`;
-  log(ctx, "info", `dials ${where}`, { callerId, notes });
+  log(ctx, "info", `dials ${where} (at most ${plan.timeLimitSec} s)`, { callerId, notes, timeLimitSec: plan.timeLimitSec });
   return { wait: "dial", actions: [action], timeoutSec: timeout, note: `${ctx.sim ? "would dial" : "dials"} ${where}${notes.length ? ` — ${notes.join("; ")}` : ""}` };
 }
 

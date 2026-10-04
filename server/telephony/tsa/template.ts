@@ -78,6 +78,37 @@ export function hasPlaceholders(src: unknown): boolean {
 /** The text without its placeholders (to check what is left of a literal: digits, a URL's scheme). */
 export const withoutPlaceholders = (src: string): string => src.replace(PLACEHOLDER, "");
 
+/* ------------------------------------------------ literal secrets (6.10) */
+// Security review G-15: an HTTP header of a TSA is stored in the graph — seen
+// by everyone who may read the console, in exports, in the editor's local
+// copy. A credential belongs in the server's environment (TSA_SECRET_<NAME>)
+// and in the header as {secret:NAME}. The editor (admin-ui/public/tsa-editor.js
+// › literalSecretHeader) mirrors this check.
+
+/** Header names that carry credentials. */
+const CREDENTIAL_HEADER = /^(proxy-)?authorization$|^cookie$|api[-_]?key|apikey|token|secret|passw|^x-auth|signature|credential/i;
+const AUTH_SCHEME_LITERAL = /\b(Bearer|Basic|Token|Digest)\s+[A-Za-z0-9._~+/=-]{8,}/i;
+const JWT_LIKE = /eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\./;
+
+/**
+ * The header's name when this "Name: value" line holds a secret written out
+ * (not as {secret:NAME}): a JWT, an auth scheme with a literal token, or a
+ * credential header (Authorization, Cookie, X-Api-Key, …-Token…) whose value,
+ * placeholders aside, has a token-like run (8+ characters with a digit, or 20+).
+ */
+export function literalSecretHeader(line: unknown): string | null {
+  if (typeof line !== "string") return null;
+  const i = line.indexOf(":");
+  if (i <= 0) return null;
+  const name = line.slice(0, i).trim();
+  const value = withoutPlaceholders(line.slice(i + 1)).trim();
+  if (!value) return null;
+  if (JWT_LIKE.test(value) || AUTH_SCHEME_LITERAL.test(value)) return name;
+  if (!CREDENTIAL_HEADER.test(name)) return null;
+  const runs = value.match(/[A-Za-z0-9._~+/=-]{8,}/g) ?? [];
+  return runs.some((r) => /\d/.test(r) || r.length >= 20) ? name : null;
+}
+
 /**
  * "Read numbers digit by digit" for text to speech: every run of two or more
  * digits is spaced out — "Your code is 1234" → "Your code is 1 2 3 4".

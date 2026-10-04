@@ -16,7 +16,7 @@ import { publicBaseUrl } from "./connectors";
 import type { ProviderId } from "./providers/types";
 import { handleCallWebhook, telWebhook, callView, messageView } from "./engine";
 import { bridgeView, didPool, inboundBridge, releaseBridge } from "./bridge";
-import { setInboundHook, stringParams, verifyRequest } from "./webhooks";
+import { replayAck, setInboundHook, stringParams, verifyRequest } from "./webhooks";
 import { telStore } from "./tel-store";
 import { isProvider, type TelephonyProvider } from "./types";
 import { inboundThroughRules } from "./control/calls";
@@ -91,6 +91,8 @@ export function registerTelEngineRoutes(app: Express): void {
     if (!isProvider(provider)) return res.status(404).json({ ok: false });
     const v = verifyRequest(provider, "voice", req);
     if (v.enforced && !v.verified) return res.status(403).json({ ok: false, message: "signature verification failed" });
+    // 6.10 (G-08): a copy of a request already taken is acknowledged, not processed.
+    if (v.replay) { const ack = replayAck(provider, provider === "vonage" ? "answer" : "voice"); return res.status(ack.status).type(ack.type).send(ack.body); }
     try {
       const r = await inbound(provider, provider === "twilio" ? "voice" : provider === "vonage" ? "answer" : "events", req);
       if (r) return res.status(r.status).type(r.type).send(r.body);

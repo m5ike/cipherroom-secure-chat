@@ -27,6 +27,8 @@ const { defaultParams } = await import("../server/telephony/tsa/catalog");
 const { simStart, simEvent, simGet } = await import("../server/telephony/tsa/simulator");
 const { addAudioFile } = await import("../server/telephony/tsa/files");
 const { hashRoom } = await import("../server/monitor/traffic");
+const realInroute = await import("../server/telephony/control/inroute");
+const { permissionRefusal } = await import("../server/telephony/control/rules");
 const { wavEncode, tone } = await import("../server/telephony/audio");
 import type { CallAction } from "../server/telephony/providers/types";
 import type { TsaEdge, TsaGraph, TsaNode, TsaNodeType } from "../server/telephony/tsa/types";
@@ -35,7 +37,7 @@ import type { InrouteEntry, TelLogEntry, TelPermissions } from "../server/teleph
 /* ---------------------------------------------------------------- fakes */
 
 const WAV = wavEncode(tone(440, 100, 16_000), 16_000);
-const sent: Record<string, unknown[]> = { sms: [], notice: [], http: [], fn: [], steer: [], tts: [], stt: [] };
+const sent: Record<string, unknown[]> = { sms: [], notice: [], http: [], fn: [], steer: [], tts: [], stt: [], outbound: [] };
 const logs: Array<Partial<TelLogEntry>> = [];
 let clock = Date.UTC(2026, 9, 5, 7, 30); // Monday 09:30 in Prague
 let permissions: TelPermissions = structuredClone(DEFAULT_PERMISSIONS);
@@ -55,6 +57,22 @@ function deps() {
     runFunction: async (model, inputs) => { sent.fn.push({ model, inputs }); return { answer: 42 }; },
     steer: async (callId, actions) => { sent.steer.push({ callId, actions }); },
     trunk: async (id, withSecret) => (id === "prague1" ? { id, host: "sip.example.com", username: "user", ...(withSecret ? { password: "pw-secret" } : {}) } : null),
+    // 6.10 (G-06): planOutbound's part, over these permissions and the stub rules (control/enforce.ts has its own tests).
+    outbound: async (ask) => {
+      sent.outbound.push(ask);
+      const own = permissions.outbound.countries.length ? undefined : ["CZ"];
+      const why = permissionRefusal(ask.to, permissions, own);
+      if (why) return { ok: false, code: "route-refused", message: why };
+      const timeLimitSec = Math.min(permissions.outbound.maxMinutes * 60, ask.timeLimitSec ?? Infinity);
+      if (ask.kind === "sms") return { ok: true, timeLimitSec, rule: "", ruleLabel: "", provider: "" };
+      const dec = await telHooks.decide!({ direction: "outbound", from: "", to: ask.to, source: "tsa" });
+      if (dec.target.kind === "state") return { ok: false, code: "route-refused", message: `the outbound rule "${dec.ruleLabel}" refuses it (${dec.target.state})` };
+      const sip = dec.service?.kind === "sip" ? dec.service : null;
+      return {
+        ok: true, timeLimitSec, rule: dec.rule ?? "", ruleLabel: dec.ruleLabel, provider: dec.service?.provider ?? "",
+        ...(sip ? { trunk: { id: "prague1", host: "sip.example.com", username: "user", password: "pw-secret" }, callerId: sip.callerId.number, callerName: sip.callerId.name, presentation: sip.callerId.presentation } : {}),
+      };
+    },
   });
 }
 
@@ -491,7 +509,10 @@ describe("TSA runtime: Dial", () => {
   it("through the outbound rules (a SIP trunk with its caller ID); the password never stays in the session", async () => {
     const t = await run(tsa(mk({})));
     const d = (t.actions[0] as Extract<CallAction, { dial: unknown }>).dial;
-    expect(d).toMatchObject({ to: "+420603000111", kind: "number", callerId: "+420222000111", callerName: "M5cet", timeout: 30, trunk: { id: "prague1", host: "sip.example.com", password: "pw-secret" } });
+    // 6.10 (G-06): the bridged call has a time limit (permissions.outbound.maxMinutes, here 30 min).
+    expect(d).toMatchObject({ to: "+420603000111", kind: "number", callerId: "+420222000111", callerName: "M5cet", timeout: 30, timeLimit: 1800, trunk: { id: "prague1", host: "sip.example.com", password: "pw-secret" } });
+    // …asked of the module's outbound checks as the TSA, with the number called as the call's own.
+    expect(sent.outbound.at(-1)).toMatchObject({ kind: "call", to: "+420603000111", tsa: t.session.tsaId, provider: "twilio", own: ["+420222333444", "+420222333444"], dry: false });
     expect(d.action).toMatch(/n=d$/);
     expect(JSON.stringify(tsaDb.sessions.get(t.session.id))).not.toContain("pw-secret");
     // A repeated callback gets the dial again — with the password looked up again.
@@ -505,13 +526,33 @@ describe("TSA runtime: Dial", () => {
   it("refused by the rules or the permissions → on_failed; a SIP URI; caller ID defaults to the DID", async () => {
     expect((await run(tsa(mk({ to: "+19005550100" })))).session.trace.find((e) => e.node === "d")?.port).toBe("on_failed");
     permissions.outbound.countries = ["SK"];
-    expect((await run(tsa(mk({})))).session.trace.find((e) => e.node === "d")?.note).toMatch(/not allowed/);
+    expect((await run(tsa(mk({})))).session.trace.find((e) => e.node === "d")?.note).toMatch(/may go only to SK/);
+    permissions = structuredClone(DEFAULT_PERMISSIONS);
+    // 6.10 (G-06): no countries set — a TSA dials only your own countries (a transfer abroad is refused) …
+    expect((await run(tsa(mk({ to: "+447700900123" })))).session.trace.find((e) => e.node === "d")?.note).toMatch(/only your own countries \(CZ\)/);
+    // … and even "Route through: the provider's application" cannot skip a rule that refuses (6.9 did).
+    expect((await run(tsa(mk({ to: "+19005550100", via: "app" })))).session.trace.find((e) => e.node === "d")?.port).toBe("on_failed");
+    permissions.outbound.countries = ["*"];
+    expect(kinds((await run(tsa(mk({ to: "+447700900123" })))).actions)).toEqual(["dial"]);
     permissions = structuredClone(DEFAULT_PERMISSIONS);
     const t = await run(tsa(mk({ kind: "sip", to: "alice@pbx.example.com", via: "app" })));
     expect((t.actions[0] as Extract<CallAction, { dial: unknown }>).dial).toMatchObject({ to: "sip:alice@pbx.example.com", kind: "sip", callerId: "+420222333444" });
     expect(globMatch("+1900*", "+19005550100")).toBe(true);
     expect(globMatch("sip:*@example.com", "sip:a@example.com")).toBe(true);
     expect(globMatch("+4202*", "+4206")).toBe(false);
+  });
+
+  it("6.10 (G-06): the time limit is the shorter of maxMinutes and what is left of the TSA's own longest call; dials per TSA and hour are limited", async () => {
+    const g = new G().node("start", "start", { maxMinutes: 5 }).node("d", "dial", { to: "+420603000111" }).flow("start", "next", "d");
+    const id = tsa(g);
+    let t = await run(id);
+    expect((t.actions[0] as Extract<CallAction, { dial: unknown }>).dial.timeLimit).toBe(300);
+    permissions.outbound.callsPerHour = 2;
+    t = await run(id);
+    expect(kinds(t.actions)).toEqual(["dial"]);
+    t = await run(id);
+    expect(t.session.trace.find((e) => e.node === "d")).toMatchObject({ port: "on_failed", note: "the hourly call limit" });
+    expect(logs.some((l) => /more than 2 calls an hour from this TSA/.test(String(l.summary)))).toBe(true);
   });
 
   it("an answered dial continues when that call ends", async () => {
@@ -550,19 +591,45 @@ describe("TSA runtime: Route audio", () => {
     expect(logs.map((l) => String(l.summary)).join("\n")).not.toContain("r3.room");
   });
 
-  it("code errors: bad format, unknown, expired — counted; after the per-call limit no more lookups", async () => {
+  it("code errors: bad format, unknown, expired — counted; the wrong code that reaches the per-call limit ends the call (6.10 G-05)", async () => {
     inroute.set("111111", entry("111111", { expiresAt: clock - 1 }));
+    const failures: unknown[] = [];
+    telHooks.inroute!.failure = async (who, detail) => { failures.push({ who, detail }); };
     const t = await run(tsa(mk()));
     let r = await resumeTsa(t.session.id, { kind: "digits", digits: "12" });
     // The TTS (a key stops it) becomes the next Read DTMF's prompt.
     expect(r.actions[0]).toMatchObject({ gather: { prompt: "Špatný kód.", digits: 6 } });
     r = await resumeTsa(t.session.id, { kind: "digits", digits: "999999" });
     expect(r.session.trace.filter((e) => e.port === "on_code_error").map((e) => e.note)).toEqual(["not 4–6 digits", "no such code"]);
+    // Every wrong code is counted by the table — with the number called, which a caller cannot fake.
+    expect(failures).toEqual([
+      { who: { caller: "+420603123456", did: "+420222333444" }, detail: { code: "", callId: t.session.callId, provider: "twilio" } },
+      { who: { caller: "+420603123456", did: "+420222333444" }, detail: { code: "999999", callId: t.session.callId, provider: "twilio" } },
+    ]);
     r = await resumeTsa(t.session.id, { kind: "digits", digits: "111111" });
-    expect(r.session.trace.filter((e) => e.port === "on_code_error").at(-1)?.note).toBe("the code expired");
-    inroute.set("222222", entry("222222"));
-    r = await resumeTsa(t.session.id, { kind: "digits", digits: "222222" });
-    expect(r.session.trace.filter((e) => e.port === "on_code_error").at(-1)?.note).toMatch(/no more codes in this call/);
+    expect(r.actions).toEqual([{ say: { text: "Příliš mnoho chybných kódů. Na shledanou.", language: "cs-CZ" } }, { hangup: {} }]);
+    expect(r.session.status).toBe("ended");
+    expect(r.session.trace.at(-1)?.note).toMatch(/the code expired — 3 wrong route codes, hung up/);
+    expect(logs.some((l) => l.level === "warn" && /3 in this call — the call is ended/.test(String(l.summary)))).toBe(true);
+  });
+
+  it("6.10 (G-05): a lockout or a caller over budget (the table's guard) refuses the code without looking it up and without counting it", async () => {
+    inroute.set("123456", entry("123456"));
+    const looked: string[] = [];
+    const counted: unknown[] = [];
+    const lookup = telHooks.inroute!.lookup;
+    telHooks.inroute!.lookup = async (code) => { looked.push(code); return lookup(code); };
+    telHooks.inroute!.guard = async (who) => (who.did === "+420222333444" ? "route codes are paused on this number for 42 s — too many wrong codes" : null);
+    telHooks.inroute!.failure = async (who) => { counted.push(who); };
+    const t = await run(tsa(mk()));
+    const r = await resumeTsa(t.session.id, { kind: "digits", digits: "123456" });
+    expect(r.session.trace.filter((e) => e.port === "on_code_error").at(-1)?.note).toMatch(/paused on this number for 42 s/);
+    expect(looked).toEqual([]);
+    expect(counted).toEqual([]);
+    // Another number of the operator is not paused.
+    const t2 = await run(tsa(mk()), { to: "+420222333999", did: "+420222333999" });
+    expect(kinds((await resumeTsa(t2.session.id, { kind: "digits", digits: "123456" })).actions)).toEqual(["say", "stream", "redirect"]);
+    expect(looked).toEqual(["123456"]);
   });
 
   it("failed: the media cannot route, or no media part at all", async () => {
@@ -600,12 +667,23 @@ describe("TSA runtime: Route audio", () => {
     const t2 = await run(id);
     const r = await resumeTsa(t2.session.id, { kind: "digits", digits: "123456" });
     expect(r.session.trace.filter((e) => e.port === "on_code_error").at(-1)?.note).toMatch(/one-time code was used/);
+    // The real table's counters (control/inroute.ts) behind the hook.
+    await realInroute.resetInrouteFailures();
+    telHooks.inroute!.guard = (who) => realInroute.inrouteGuard(who, clock);
+    telHooks.inroute!.failure = async (who, detail) => { await realInroute.inrouteFailure(who, detail, clock); };
     permissions.inroute.maxFailuresPerCallerPerHour = 1;
     const t3 = await run(id, { from: "+420777000999" });
     await resumeTsa(t3.session.id, { kind: "digits", digits: "000000" });
     const t4 = await run(id, { from: "+420777000999" });
     const r4 = await resumeTsa(t4.session.id, { kind: "digits", digits: "123456" });
     expect(r4.session.trace.filter((e) => e.port === "on_code_error").at(-1)?.note).toMatch(/too many wrong codes from this caller/);
+    // A guesser who fakes a new caller ID each call still hits the number's budget.
+    permissions.inroute.maxFailuresPerCallerPerHour = 1000;
+    permissions.inroute.maxFailuresPerDidPerHour = 3;
+    for (let i = 1; i <= 2; i++) await resumeTsa((await run(id, { from: `+1555000000${i}` })).session.id, { kind: "digits", digits: "000000" });
+    const r5 = await resumeTsa((await run(id, { from: "+15550000009" })).session.id, { kind: "digits", digits: "123456" });
+    expect(r5.session.trace.filter((e) => e.port === "on_code_error").at(-1)?.note).toMatch(/paused on this number for 60 s/);
+    await realInroute.resetInrouteFailures();
   });
 });
 
@@ -625,7 +703,8 @@ describe("TSA runtime: integrations", () => {
       .data("name", "value", "log", "IN1").data("look", "country", "log", "IN2").data("add", "code", "log", "IN3").data("fn", "result", "log", "IN4");
     const t = await run(tsa(g));
     expect(t.session.status).toBe("ended");
-    expect(sent.sms).toEqual([{ to: "+420603123456", text: "Díky za hovor z +420603123456" }]);
+    // 6.10 (G-06): sent as the TSA (its budget), with the call's own number for the countries check.
+    expect(sent.sms).toEqual([{ to: "+420603123456", text: "Díky za hovor z +420603123456", tsa: t.session.tsaId, own: ["+420222333444", "+420222333444"] }]);
     expect(sent.http[0]).toMatchObject({ method: "POST", url: "https://api.crm.test/caller?n=%2B420603123456", headers: { authorization: "Bearer s3cret", "content-type": "application/json" }, body: "{\"n\":\"+420603123456\"}" });
     expect(sent.fn[0]).toEqual({ model: "crm-model", inputs: { call: expect.objectContaining({ from: "+420603123456" }), in1: "Eva", in2: "+420222333444" } });
     expect(logs.some((l) => l.level === "notice" && /Eva CZ 654321 \{"answer":42\}/.test(String(l.summary)))).toBe(true);
@@ -648,6 +727,20 @@ describe("TSA runtime: integrations", () => {
     const t = await run(tsa(g));
     expect(t.session.trace.find((e) => e.node === "sms")?.port).toBe("on_failed");
     expect(sent.sms).toHaveLength(0);
+  });
+
+  it("6.10 (G-06): SMS pumping — a faked caller number abroad gets no SMS while no countries are set (only your own); * opens it", async () => {
+    const g = new G().node("start", "start").node("sms", "sms", { text: "Děkujeme za hovor" }).flow("start", "next", "sms");
+    const id = tsa(g);
+    const t = await run(id, { from: "+2348031234567" });
+    expect(t.session.trace.find((e) => e.node === "sms")).toMatchObject({ port: "on_failed", note: expect.stringMatching(/only your own countries \(CZ\)/) });
+    expect(sent.sms).toHaveLength(0);
+    expect(logs.some((l) => /SMS to \+2348031234567 refused/.test(String(l.summary)))).toBe(true);
+    permissions.outbound.countries = ["*"];
+    await run(id, { from: "+2348031234567" });
+    expect(sent.sms).toHaveLength(1);
+    // The simulator asks without counting.
+    expect(sent.outbound.every((a) => (a as { dry: boolean }).dry === true)).toBe(true);
   });
 });
 

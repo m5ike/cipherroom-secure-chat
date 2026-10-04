@@ -208,6 +208,21 @@ describe("formula: safety", () => {
     expect(r.length).toBeLessThanOrEqual(16_000);
   });
 
+  it("6.10 (G-16): replace() never builds more than the limit, however many matches", () => {
+    // 64 Ki one-character matches × 16 000 characters each would be a gigabyte string before the cut.
+    const t0 = Date.now();
+    const r = ev("replace(IN1, \"a\", IN2)", { inputs: { IN1: "a".repeat(65_536), IN2: "b".repeat(16_000) } }) as string;
+    expect(r).toBe("b".repeat(16_000));
+    expect(Date.now() - t0).toBeLessThan(500);
+    // The same result as before when it fits; the tail after the last match is kept.
+    expect(ev("replace(IN1, \"--\", \"+\")", { inputs: { IN1: "a--b----c--" } })).toBe("a+b++c+");
+    expect(ev("replace(IN1, \"x\", \"yy\")", { inputs: { IN1: "1x2x3" } })).toBe("1yy2yy3");
+    const long = ev("replace(IN1, \"q\", \"z\")", { inputs: { IN1: "a".repeat(20_000) } }) as string;
+    expect(long).toBe("a".repeat(16_000));
+    const mixed = ev("replace(IN1, \"a\", \"bc\")", { inputs: { IN1: "a".repeat(10_000) } }) as string;
+    expect(mixed).toBe("bc".repeat(8_000));
+  });
+
   it("no regular expression is ever built from the formula (patterns are plain text)", () => {
     expect(ev("replace(\"a.b.c\", \".\", \"-\")")).toBe("a-b-c");
     expect(ev("contains(\"(a+)+$\", \"(a+)+\")")).toBe(true);

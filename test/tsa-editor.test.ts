@@ -101,6 +101,7 @@ beforeEach(async () => {
   closed = [];
   toast.mockClear();
   localStorage.clear();
+  sessionStorage.clear();
   await E().open("main-ivr", { onClose: (r: any) => closed.push(r) });
   await settle();
 });
@@ -546,7 +547,9 @@ describe("unsaved work", () => {
     const ed = E().current();
     ed.addNode("pause", 0, 900);
     await settle();
-    expect(JSON.parse(localStorage.getItem("m5cet:tsa-draft:main-ivr")!).graph.nodes.length).toBe(4);
+    // 6.10 (G-15): this tab's storage, not localStorage.
+    expect(JSON.parse(sessionStorage.getItem("m5cet:tsa-draft:main-ivr")!).graph.nodes.length).toBe(4);
+    expect(localStorage.getItem("m5cet:tsa-draft:main-ivr")).toBeNull();
     expect($('[data-testid="tsa-dirty"]').textContent).toContain("Unsaved");
     $('[data-testid="tsa-close"]').click();
     await settle();
@@ -566,9 +569,73 @@ describe("unsaved work", () => {
     await settle();
     ($('[data-testid="tsa-dialog"] [data-value="discard"]') as HTMLButtonElement).click();
     expect(await closing).toBe(true);
-    expect(localStorage.getItem("m5cet:tsa-draft:main-ivr")).toBeNull();
+    expect(sessionStorage.getItem("m5cet:tsa-draft:main-ivr")).toBeNull();
     expect($('[data-testid="tsa-editor"]')).toBeNull();
     expect(document.documentElement.classList.contains("tsa-open")).toBe(false);
+  });
+
+  it("6.10 (G-15): a secret written out in an HTTP header is never kept in the browser; the field warns; a 6.9 local copy leaves localStorage", async () => {
+    const ed = E().current();
+    const id = ed.addNode("http", 0, 900).id;
+    ed.setParam(id, "url", "https://crm.test/a");
+    ed.setParam(id, "headers", ["Authorization: Bearer sk_live_51Hx9QwErTy", "X-Api-Key: {secret:CRM}", "Accept: application/json"]);
+    await settle();
+    // The local copy has the header, not its value; the banner will say so.
+    const kept = JSON.parse(sessionStorage.getItem("m5cet:tsa-draft:main-ivr")!);
+    expect(JSON.stringify(kept)).not.toContain("sk_live");
+    expect(kept.graph.nodes.find((n: any) => n.id === id).params.headers).toEqual(["Authorization: ", "X-Api-Key: {secret:CRM}", "Accept: application/json"]);
+    expect(kept.stripped).toBe(true);
+    // The clipboard too.
+    ed.select(id);
+    key("c");
+    expect(sessionStorage.getItem("m5cet:tsa-clipboard")).not.toContain("sk_live");
+    expect(localStorage.getItem("m5cet:tsa-clipboard")).toBeNull();
+    // The inspector warns at the field; the browser's own check (when the server's does not answer) says it is an error.
+    expect($('[data-testid="tsa-header-secret"]').textContent).toMatch(/^Authorization: a secret written out/);
+    expect(E().literalSecretHeader("Authorization: Bearer {secret:CRM}")).toBeNull();
+    expect(E().literalSecretHeader("X-Auth-Token: 9c1f0e2d3b4a5968")).toBe("X-Auth-Token");
+    await E().close(true);
+    // A copy 6.9 left in localStorage: taken into this tab without the secret, and gone from localStorage.
+    sessionStorage.clear();
+    const legacy = { at: 1, base: 0, name: "Main IVR", description: "", tags: [], graph: { nodes: [...baseTsa().graph.nodes, { id: "h", type: "http", x: 0, y: 0, params: { url: "https://crm.test/a", headers: ["Cookie: session=ab12cd34ef56"] } }], edges: baseTsa().graph.edges } };
+    localStorage.setItem("m5cet:tsa-draft:main-ivr", JSON.stringify(legacy));
+    localStorage.setItem("m5cet:tsa-clipboard", JSON.stringify({ nodes: [], edges: [] }));
+    await E().open("main-ivr");
+    await settle();
+    expect(localStorage.getItem("m5cet:tsa-draft:main-ivr")).toBeNull();
+    expect(localStorage.getItem("m5cet:tsa-clipboard")).toBeNull();
+    expect(sessionStorage.getItem("m5cet:tsa-draft:main-ivr")).toContain("Cookie: ");
+    expect(sessionStorage.getItem("m5cet:tsa-draft:main-ivr")).not.toContain("ab12cd34ef56");
+    $('[data-testid="tsa-restore"]').click();
+    expect(graph().nodes.find((n: any) => n.id === "h").params.headers).toEqual(["Cookie: "]);
+  });
+
+  it("6.10 (G-15): signing out of the console closes the editor and forgets every local copy and the clipboard", async () => {
+    E().current().addNode("pause", 0, 900);
+    await settle();
+    key("a", { ctrlKey: true });
+    key("c");
+    localStorage.setItem("m5cet:tsa-draft:old-one", "{}");
+    localStorage.setItem("m5cet:console:theme", "dark");
+    expect(sessionStorage.getItem("m5cet:tsa-draft:main-ivr")).not.toBeNull();
+    // console.js › signOut calls this.
+    expect(readFileSync(join(PUB, "console.js"), "utf8")).toMatch(/M5TsaEditor\.forgetLocal\(\)/);
+    await E().forgetLocal();
+    expect($('[data-testid="tsa-editor"]')).toBeNull();
+    expect(Object.keys(sessionStorage).filter((k) => k.startsWith("m5cet:tsa-"))).toEqual([]);
+    expect(localStorage.getItem("m5cet:tsa-draft:old-one")).toBeNull();
+    expect(localStorage.getItem("m5cet:console:theme")).toBe("dark");
+    await E().open("main-ivr");
+    await settle();
+    expect($('[data-testid="tsa-restore"]')).toBeNull();
+  });
+
+  it("6.10 (G-15): the browser's check of a literal secret matches the server's", async () => {
+    const { literalSecretHeader } = await import("../server/telephony/tsa/template");
+    for (const h of ["Authorization: Bearer sk_live_51Hx9", "Authorization: Basic dXNlcjpwYXNzd29yZA==", "X-Api-Key: 3f9a8b7c6d5e4f", "Cookie: session=ab12cd34ef56", "X-Custom: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig",
+      "Authorization: Bearer {secret:CRM}", "X-Api-Key: {secret:KEY}", "Authorization: Bearer {IN1}", "Content-Type: application/json", "X-Token-Type: bearer-access", "Cookie: lang=cs", "nonsense", ""]) {
+      expect(E().literalSecretHeader(h), h).toBe(literalSecretHeader(h));
+    }
   });
 
   it("saves from the close dialog", async () => {

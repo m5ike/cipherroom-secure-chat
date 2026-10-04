@@ -27,6 +27,8 @@
 // decision from the SIP store. Since 6.9 a call webhook also reaches the
 // inbound rules, TSAs and the audio bridge (tel-routes.ts) — 6.10 (G-01):
 // only a VERIFIED one does, unless TELEPHONY_ALLOW_UNSIGNED=1.
+// 6.10 (G-08): a verified request is remembered for its replay window (see
+// replayKey below); a second copy is acknowledged but not processed.
 
 import { createHash, createHmac, createPublicKey, randomUUID, timingSafeEqual, verify as cryptoVerify } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -39,7 +41,7 @@ import { verifyJwtHS256 } from "./jwt";
 import { sipStore, type SipRouteDecision } from "./sip";
 import { dataDir } from "./store";
 import { mountWebhookLog } from "./control/log";
-import { whContext } from "./control/wh-context";
+import { whContext, whNote } from "./control/wh-context";
 import { isProvider, type TelephonyProvider, type WebhookVerify } from "./types";
 
 const env = (name: string): string => (process.env[name]?.trim() || "");
@@ -237,18 +239,90 @@ function escapeXml(s: string): string {
 
 const cap = (v: unknown, n = 200) => (typeof v === "string" ? v.slice(0, n) : undefined);
 
-export type Verification = { verified: boolean; enforced: boolean };
+/** `replay`: a verified request this process has already taken — acknowledge it, do nothing (6.10, G-08). */
+export type Verification = { verified: boolean; enforced: boolean; replay?: boolean };
+
+/* ---------------------------------------------------------------- replays */
+// 6.10 (security review G-08): a captured, correctly signed webhook stays
+// valid for its provider's window — Telnyx accepts a timestamp up to 300 s
+// off, a Vonage JWT's `iat` 10 minutes — so it could be sent again and again
+// (another "digit" for a TSA, another inbound call). Every verified request
+// is remembered here by what makes it unique, for longer than that window:
+//   Telnyx   the event id (data.id), else the signature
+//   Vonage   the JWT's `jti`, else the whole token; a signed SMS by its `sig`
+// A second copy is answered 200 and not processed (a provider's own retry of
+// an event we took is the same thing and is skipped the same way). Twilio is
+// not keyed: its signature binds no time and two genuine requests can be
+// identical (the same key pressed at the same menu twice), so its replays
+// are bounded only by TLS and the per-call / per-session state. The memory
+// is per process — webhooks land on the main service.
+
+const REPLAY_TTL_MS = 15 * 60_000;
+const REPLAY_MAX = 50_000;
+const seenWebhooks = new Map<string, number>();
+
+/** What makes this verified request unique, or null when nothing does (Twilio). */
+export function replayKey(provider: TelephonyProvider, type: string, req: Pick<Request, "headers" | "body" | "query">): string | null {
+  if (provider === "telnyx") {
+    const body = (req.body && typeof req.body === "object" ? req.body : {}) as { data?: { id?: unknown } };
+    const id = typeof body.data?.id === "string" ? body.data.id.slice(0, 200) : "";
+    if (id) return `telnyx:event:${id}`;
+    const sig = String(req.headers["telnyx-signature-ed25519"] || "");
+    return sig ? `telnyx:sig:${createHash("sha256").update(sig).digest("hex")}` : null;
+  }
+  if (provider === "vonage") {
+    if (type === "sms" || type === "sms_status") {
+      const sig = String({ ...stringParams(req.query), ...stringParams(req.body) }.sig || "").toUpperCase();
+      return sig ? `vonage:sig:${sig.slice(0, 128)}` : null;
+    }
+    const m = /^Bearer\s+(.+)$/i.exec(String(req.headers.authorization || "").trim());
+    if (!m) return null;
+    const parts = m[1].split(".");
+    let jti = "";
+    try { const claims = JSON.parse(Buffer.from(parts[1] ?? "", "base64url").toString("utf8")) as { jti?: unknown }; jti = typeof claims.jti === "string" ? claims.jti.slice(0, 200) : ""; } catch { /* the verifier read it already */ }
+    return jti ? `vonage:jti:${jti}` : `vonage:jwt:${createHash("sha256").update(m[1]).digest("hex")}`;
+  }
+  return null;
+}
+
+/** True when this key was seen within the window; otherwise remembers it. */
+export function seenBefore(key: string, now = Date.now()): boolean {
+  const until = seenWebhooks.get(key);
+  if (until !== undefined && until > now) return true;
+  if (seenWebhooks.size >= REPLAY_MAX) {
+    for (const [k, t] of seenWebhooks) { if (t <= now) seenWebhooks.delete(k); }
+    // Still full of live keys: the oldest go (insertion order).
+    for (const k of seenWebhooks.keys()) { if (seenWebhooks.size < REPLAY_MAX) break; seenWebhooks.delete(k); }
+  }
+  seenWebhooks.set(key, now + REPLAY_TTL_MS);
+  return false;
+}
+
+/** Tests: forget the requests seen. */
+export function resetWebhookReplays(): void { seenWebhooks.clear(); }
 
 /** 6.0: also the m5.telephony webhooks (engine.ts) — the same signatures per provider. */
 export function verifyRequest(provider: TelephonyProvider, type: string, req: Request): Verification {
-  const v = verifyRequestOnly(provider, type, req);
+  const v: Verification = verifyRequestOnly(provider, type, req);
+  // 6.10 (G-08): only a verified request is remembered (an unverified one proves nothing).
+  if (v.verified) {
+    const key = replayKey(provider, type, req);
+    if (key && seenBefore(key)) v.replay = true;
+  }
   // 6.9: the webhook log (control/log.ts) says whether this request was verified.
   const ctx = whContext(req);
   ctx.provider = provider;
   ctx.type ??= type;
   ctx.verified = v.verified;
   ctx.enforced = v.enforced;
+  if (v.replay) { whNote(req, { replay: "a copy of a request already taken — acknowledged, not processed" }); ctx.summary = `${provider} ${type}: a replayed / repeated webhook ignored`; }
   return v;
+}
+
+/** The answer to a replayed request: a plain acknowledgement in the provider's format. */
+export function replayAck(provider: TelephonyProvider, type: string): { status: number; type: string; body: string } {
+  if (provider === "vonage" && type === "answer") return { status: 200, type: "application/json", body: "[]" };
+  return { status: 200, type: "application/json", body: "{\"ok\":true,\"duplicate\":true}" };
 }
 
 function verifyRequestOnly(provider: TelephonyProvider, type: string, req: Request): Verification {
@@ -350,6 +424,11 @@ export function registerWebhookRoutes(app: Express): void {
     if (v.enforced && !v.verified) {
       pluginLog.record({ level: "warn", kind: "admin", connector: provider, message: `webhook ${type}: signature verification FAILED (rejected)` });
       return res.status(403).json({ ok: false, message: "signature verification failed" });
+    }
+    if (v.replay) {
+      pluginLog.record({ level: "warn", kind: "admin", connector: provider, message: `webhook ${type}: a copy of a request already taken (replay or retry) — acknowledged, not processed` });
+      const ack = replayAck(provider, type);
+      return res.status(ack.status).type(ack.type).send(ack.body);
     }
     const ev = telephonyEvents.record(normalize(provider, type, req, v));
     whContext(req).event = ev;

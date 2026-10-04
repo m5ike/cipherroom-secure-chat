@@ -100,7 +100,7 @@ export const TSA_CATALOG: TsaToolDef[] = [
   {
     type: "dial", group: "call", label: "Dial / transfer", icon: "phone-forwarded", accent: "primary", flowIn: true,
     summary: "Connects the caller to a number or a SIP address.",
-    help: "Dials a phone number (E.164) or a SIP URI and bridges the caller to it — through the provider's application or through a SIP trunk, with your caller ID. When the other side hangs up, the flow continues by how the dial ended. " + TEMPLATE_HELP,
+    help: "Dials a phone number (E.164) or a SIP URI and bridges the caller to it — through the provider's application or through a SIP trunk, with your caller ID. When the other side hangs up, the flow continues by how the dial ended. Every dial goes through the module's outbound checks (countries — none set: only your own —, blocked numbers, the outbound rules, the hourly budget) and lasts at most Permissions › Longest call (6.10). " + TEMPLATE_HELP,
     flowOut: [
       { port: "on_answered", label: "on_answered", help: "Answered; continues after that call ends." },
       { port: "on_busy", label: "on_busy" }, { port: "on_no_answer", label: "on_no_answer" }, FAILED,
@@ -341,7 +341,7 @@ export const TSA_CATALOG: TsaToolDef[] = [
   /* ========================================================= integration */
   {
     type: "sms", group: "integration", label: "Send SMS", icon: "message-square-text", accent: "primary", flowIn: true, flowOut: [NEXT, FAILED],
-    summary: "Sends an SMS (to the caller by default).", help: TEMPLATE_HELP,
+    summary: "Sends an SMS (to the caller by default).", help: "Through the module's outbound checks, as the TSA: the countries (none set: only your own — the caller's number can be faked), the blocked numbers, the hourly SMS budget. " + TEMPLATE_HELP,
     dynamicInputs: DYN(1),
     params: [
       { key: "to", label: "To", kind: "text", default: "{call.from}" },
@@ -371,7 +371,7 @@ export const TSA_CATALOG: TsaToolDef[] = [
     params: [
       { key: "method", label: "Method", kind: "select", default: "GET", options: opt("GET", "POST", "PUT", "PATCH", "DELETE") },
       { key: "url", label: "URL", kind: "text", required: true, placeholder: "https://crm.example.com/api/caller?n={call.from}" },
-      { key: "headers", label: "Headers", kind: "list", help: "One per line: Name: value. Secrets: {secret:NAME} from Functions › Secrets." },
+      { key: "headers", label: "Headers", kind: "list", help: "One per line: Name: value. A token or password goes in as {secret:NAME} — the server's TSA_SECRET_NAME; written out it is readable in the console and in exports, and the TSA cannot be published (6.10)." },
       { key: "body", label: "Body", kind: "textarea", when: { method: ["POST", "PUT", "PATCH"] } },
       { key: "timeout", label: "Timeout (s)", kind: "number", default: 5, min: 1, max: 15 },
     ],

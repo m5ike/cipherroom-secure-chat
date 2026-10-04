@@ -60,7 +60,7 @@ editor, kontroluje validátor a kterou provádí runtime. `{IN1}` v textu = šab
 |---|---|---|---|
 | **Start** | `next`; data `from`, `to`, `did`, `direction`, `provider`, `call_id` | *Answer the call* (ano), *Default language* (cs-CZ…), *Longest call* (min., 1–240) | Kde hovor vstupuje. Právě jeden v TSA. Jazyk platí pro TTS, STT a omluvu při chybě. Bez přijetí mohou další uzly hovor ještě odmítnout stavem. |
 | **Hang up / state** | — | *End as*: hangup, busy, congestion, rejected | `hangup` ukončí hovor. Stav odmítne **nepřijatý** příchozí hovor (`reject`); po přijetí už jen zavěsí. |
-| **Dial / transfer** | `on_answered`, `on_busy`, `on_no_answer`, `on_failed`; data `status`, `duration` | *Destination* (číslo / SIP URI), *To* (šablona), *Route through* (odchozí pravidla / aplikace poskytovatele / SIP trunk), *SIP trunk*, *Caller ID number/name*, *Ring for* (5–120 s), *Record* | Přepojí volajícího. Přes **pravidla**: zeptá se odchozích pravidel (`telHooks.decide`, zdroj `tsa`) — stav = `on_failed`, služba SIP = vytáčí se přes trunk s jeho caller ID. Číslo musí projít oprávněními (blokované prefixy, povolené země). Caller ID bez nastavení = volané DID. Po skončení přepojeného hovoru tok pokračuje podle výsledku. |
+| **Dial / transfer** | `on_answered`, `on_busy`, `on_no_answer`, `on_failed`; data `status`, `duration` | *Destination* (číslo / SIP URI), *To* (šablona), *Route through* (odchozí pravidla / aplikace poskytovatele / SIP trunk), *SIP trunk*, *Caller ID number/name*, *Ring for* (5–120 s), *Record* | Přepojí volajícího. Každé přepojení (6.10) projde odchozími kontrolami modulu jako `m5.telephony.call` (`planOutbound`, rozpočet `tsa:<id>`): země (prázdný seznam = jen vlastní země), blokovaná čísla, souběh, **odchozí pravidla** — stav = `on_failed` při jakékoli volbě *Route through* — a nejdelší hovor: přepojený hovor má časový limit `outbound.maxMinutes` (nejvýš zbytek *Longest call*). Přes **pravidla** navíc služba SIP = vytáčí se přes trunk s jeho caller ID. Jedna TSA přepojí za hodinu nejvýš `callsPerHour`. Caller ID bez nastavení = volané DID. Po skončení přepojeného hovoru tok pokračuje podle výsledku. |
 | **Pause** | `next` | *Seconds* (0,5–60) | Ticho. |
 | **Send DTMF** | `next`, `on_failed` | *Digits* (`0-9 * # A-D`, `w` = 0,5 s pauza, šablona), *Type* (RFC 2833, in-band, SIP INFO), *Tone length* | Pošle tóny do hovoru (pobočka za ústřednou, PIN). |
 
@@ -75,9 +75,15 @@ editor, kontroluje validátor a kterou provádí runtime. `{IN1}` v textu = šab
 | **Route audio** | `on_success`, `on_code_error`, `on_failed`; data `type`, `target`; vstup **KEY** | *One use only*, *Say when connected* (šablona), *When nobody can take audio* (on_failed / textový režim) | KEY = kód 4–6 číslic. Hledá se v tabulce inroute (`telHooks.inroute.lookup`). Špatný formát, neznámý nebo prošlý kód = `on_code_error` (počítá se). Platný kód → média (`telHooks.routeAudio`) vrátí akce, které zvuk propojí oběma směry do místnosti nebo k členovi; `on_success` následuje, až propojený zvuk skončí. Nejde propojit (nikdo připojený, poskytovatel neumí stream, chybí mediální část) = `on_failed`. |
 
 **Počítání špatných kódů.** V jednom hovoru nejvýš
-`permissions.inroute.maxAttemptsPerCall` (výchozí 3) — pak už Route audio kódy
-nebere (rovnou `on_code_error`). Za hodinu z jednoho čísla volajícího nejvýš
-`maxFailuresPerCallerPerHour` (10), pak je číslo na zbytek hodiny odmítáno.
+`permissions.inroute.maxAttemptsPerCall` (výchozí 3) — 6.10: kód, který limitu
+dosáhne, **hovor ukončí** (krátká omluva v jazyce Startu a zavěšení). Za hodinu
+z jednoho čísla volajícího nejvýš `maxFailuresPerCallerPerHour` (10), pak je
+číslo na zbytek hodiny odmítáno. Protože číslo volajícího jde podvrhnout,
+počítají se špatné kódy i **na volané číslo** (`maxFailuresPerDidPerHour`, 30)
+a **za celý modul** (`maxFailuresPerMinute` 10, `maxFailuresPerHour` 100); po
+vyčerpání se kódy na tom čísle, resp. všude, pozastaví (1 min, opakovaně až
+60 min) a Route audio kód ani nehledá — `on_code_error` s důvodem
+(`control/inroute.ts` › `inrouteGuard`, `inrouteFailure`).
 *One use only* si použitý kód pamatuje (do jeho vypršení) a podruhé ho odmítne.
 Kód je v logu vždy maskovaný (`••••56`).
 
@@ -111,12 +117,12 @@ se ukládá se session.
 
 | Nástroj | Výstupy | Parametry | Co dělá |
 |---|---|---|---|
-| **Send SMS** | `next`, `on_failed` | *To* (výchozí `{call.from}`), *Text*, *From* | SMS cestou enginu (`m5.telephony` — výchozí SMS poskytovatel). Číslo musí projít oprávněními; jedna TSA nejvýš `permissions.outbound.smsPerHour` SMS za hodinu. |
+| **Send SMS** | `next`, `on_failed` | *To* (výchozí `{call.from}`), *Text*, *From* | SMS cestou enginu (`m5.telephony` — výchozí SMS poskytovatel) jako `tsa:<id>`: číslo musí projít oprávněními — 6.10: s prázdnými *Countries* jen do vlastních zemí (číslo volajícího jde podvrhnout, „SMS pumping“), `*` = kamkoli (pak validátor u `{call.from}` varuje); jedna TSA nejvýš `permissions.outbound.smsPerHour` SMS za hodinu. |
 | **Message to a room** | `next`, `on_failed` | *Where* (místnost / místnost inroute kódu z `IN1`), *Room* (slepé id `r3.…`), *Only to member*, *Text* | Oznámení serveru do místnosti (jako zpráva operátora; není koncově šifrované). `on_failed`, když v místnosti nikdo není připojen (oznámení se neukládají) nebo když uzel běží mimo hlavní službu. Člen: `p-…` = id peeru, jinak jméno (`@` se ignoruje). |
-| **HTTP request** | `on_success` (2xx), `on_failed`; data `status`, `body`, `json` | *Method*, *URL* (https, šablona — dosazené hodnoty se URL-kódují), *Headers* (`Jméno: hodnota`, `{secret:JMENO}`), *Body*, *Timeout* (1–15 s) | Jen https, jen hosté z `permissions.tsa.httpHosts` (přesně, nebo `*.example.com` = poddomény); prázdný seznam = nástroj vypnutý. Požadavek jde přes SSRF-bezpečného klienta Functions (žádné privátní adresy, připnutí DNS), přesměrování se odmítá, odpověď nejvýš 256 kB. JSON čte vzorec: `get(IN1, "customer.name")`. |
+| **HTTP request** | `on_success` (2xx), `on_failed`; data `status`, `body`, `json` | *Method*, *URL* (https, šablona — dosazené hodnoty se URL-kódují), *Headers* (`Jméno: hodnota`, `{secret:JMENO}` — 6.10: doslovné tajemství, např. `Authorization: Bearer abc123…`, je chyba, která blokuje publikování; editor ho neukládá do prohlížeče), *Body*, *Timeout* (1–15 s) | Jen https, jen hosté z `permissions.tsa.httpHosts` (přesně, nebo `*.example.com` = poddomény); prázdný seznam = nástroj vypnutý. Požadavek jde přes SSRF-bezpečného klienta Functions (žádné privátní adresy, připnutí DNS), přesměrování se odmítá, odpověď nejvýš 256 kB. JSON čte vzorec: `get(IN1, "customer.name")`. |
 | **Run function** | `next`, `on_failed`; data `result` | *Model*, *Timeout* (1–60 s) | Spustí vstupní bod `execute` modelu Functions se vstupy `{ in1, in2, …, call }`; model vidí `m5.caller.kind = "telephony"` (není to osoba — platí granty modelu *Beyond the caller*). Vypíná `permissions.tsa.functions`. |
 | **Number info** | `next`; data `country`, `type`, `national`, `e164`, `valid`; vstup `IN1` | — | Offline z vestavěných číslovacích plánů (bez placeného lookupu). Bez `IN1` = volající. |
-| **Add route code** | `next`, `on_failed`; data `code`, `expires` | *Code* (prázdné = náhodný), *Digits*, *Route to* (místnost / člen), *Room*, *Member*, *Valid for* (s) | Jako `m5.telephony.inroute.add` (`telHooks.inroute.add`), `createdBy: { kind: "tsa" }`. TTL nejvýš `permissions.inroute.maxTtlSec`. |
+| **Add route code** | `next`, `on_failed`; data `code`, `expires` | *Code* (prázdné = náhodný), *Digits*, *Route to* (místnost / člen), *Room*, *Member*, *Valid for* (s) | Jako `m5.telephony.inroute.add` (`telHooks.inroute.add`), `createdBy: { kind: "tsa" }`. TTL nejvýš `permissions.inroute.maxTtlSec`; 6.10: nad 10 min má kód 6 číslic (*Digits* se zvýší, kratší zvolený kód = `on_failed`), snadno uhodnutelný zvolený kód se odmítne. |
 | **Log** | `next` | *Level*, *Text* | Řádek do logu modulu (*Telephony › Log*, druh `tsa`). |
 
 ---
@@ -168,7 +174,7 @@ prioritu jako `not`, tedy `!a == b` je `not (a == b)`.
 | `startswith(t, p)`, `endswith(t, s)` | `startswith(call.from, "+420")` | |
 | `digits(x)` | `digits("+420 603-123")` | `"420603123"` |
 | `substr(t, od, délka?)` | `substr("abcdef", 1, 3)`, `substr(t, -4)` | `"bcd"`, poslední 4 |
-| `replace(t, co, čím)` | `replace("a-b", "-", " ")` | prostý text, všechny výskyty |
+| `replace(t, co, čím)` | `replace("a-b", "-", " ")` | prostý text, všechny výskyty (6.10: skládá se jen do limitu 16 000 znaků) |
 | `min(…)`, `max(…)` | `max(IN1, 3)` | |
 | `abs(x)`, `round(x, míst?)` | `round(2.345, 2)` | 2.35 |
 | `now()` | | Unix čas v sekundách |

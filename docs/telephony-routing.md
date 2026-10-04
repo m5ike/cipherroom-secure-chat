@@ -33,7 +33,7 @@ platí pro všechny a žádné pravidlo je nepřebije.
 
 | Pole | Výchozí | Rozsah | Význam |
 |---|---|---|---|
-| `outbound.countries` | `[]` (kamkoli) | ISO 3166 alpha-2 (`CZ`, `SK`…, `001` = negeografická) | kam smějí hovory **i** zprávy |
+| `outbound.countries` | `[]` (kamkoli; **TSA jen vlastní země**) | ISO 3166 alpha-2 (`CZ`, `SK`…, `001` = negeografická), `*` = kamkoli | kam smějí hovory **i** zprávy. 6.10 (G-06): prázdný seznam pustí funkce, aplikaci a konzoli kamkoli, ale SMS a přepojení **TSA** jen do zemí čísel provozovatele (`TWILIO_FROM`, `TELNYX_FROM`, `VONAGE_FROM`, `TELEPHONY_DID_POOL`, DID a caller ID trunků) a volaného čísla; `*` = celý svět pro všechny |
 | `outbound.blocked` | `+1900*`, `+1976*`, `+44870–3*`, `+4290*`, `+42097*`, `+881–3*` | vzory | nikdy nevytočit (prémiová, satelitní…) |
 | `outbound.maxConcurrentCalls` | 5 | 1–1000 | souběžné odchozí hovory celého modulu |
 | `outbound.callsPerHour` | 30 | 1–10 000 | hovory **jednoho volajícího** za hodinu |
@@ -43,8 +43,11 @@ platí pro všechny a žádné pravidlo je nepřebije.
 | `inbound.perCallerPerHour` | 20 | 1–10 000 | hovory z jednoho čísla za hodinu (pak „busy“) |
 | `inroute.maxTtlSec` | 86 400 | 60–604 800 | nejdelší platnost kódu |
 | `inroute.maxActivePerOwner` | 50 | 1–10 000 | živé kódy jednoho modelu / administrátora / TSA |
-| `inroute.maxAttemptsPerCall` | 3 | 1–10 | špatné kódy v jednom hovoru |
-| `inroute.maxFailuresPerCallerPerHour` | 10 | 1–1000 | špatné kódy z jednoho čísla za hodinu, pak odmítnuto |
+| `inroute.maxAttemptsPerCall` | 3 | 1–10 | špatné kódy v jednom hovoru — ten, který limitu dosáhne, hovor ukončí (6.10) |
+| `inroute.maxFailuresPerCallerPerHour` | 10 | 1–1000 | špatné kódy z jednoho čísla za hodinu, pak odmítnuto (číslo volajícího jde podvrhnout — proto další tři) |
+| `inroute.maxFailuresPerDidPerHour` | 30 | 1–10 000 | 6.10: špatné kódy na jedno **volané** číslo za hodinu, pak se kódy na něm pozastaví (1 min, opakovaně až 60 min) |
+| `inroute.maxFailuresPerMinute` | 10 | 1–1000 | 6.10: špatné kódy za minutu v celém modulu, pak pauza kódů všude |
+| `inroute.maxFailuresPerHour` | 100 | 1–10 000 | 6.10: totéž za hodinu |
 | `tsa.httpHosts` | `[]` (nástroj HTTP vypnutý) | `api.example.com`, `*.example.com` | kam smí nástroj HTTP v TSA |
 | `tsa.functions` | ano | | smí TSA spouštět modely |
 | `tsa.recordingDays` | 30 | 1–3650 | jak dlouho držet nahrávky |
@@ -158,8 +161,9 @@ stejný webhook jako aplikace — v pravidle je rozliší `service: "sip"`.
 ### Co se děje s odchozím hovorem (`enforce.ts`)
 
 Každý odchozí hovor a SMS — `m5.telephony.call` / `sms` / `whatsapp`…,
-aplikační `POST /api/telephony/call|sms`, testy konzole — projde v tomto
-pořadí:
+aplikační `POST /api/telephony/call|sms`, testy konzole a od 6.10 (G-06) i
+**SMS a Dial / transfer v TSA** (rozpočet `tsa:<id>`; simulátor kontroluje
+bez počítání) — projde v tomto pořadí:
 
 1. **země a blokovaná čísla** (`outbound.countries`, `outbound.blocked`) —
    odmítne `route-refused` dřív, než se zeptá poskytovatele;
@@ -172,6 +176,14 @@ pořadí:
    poskytovatele (pravidlo má přednost před `provider` v požadavku), SIP
    trunk předá `via` a caller ID, TSA se spustí po přijetí;
 5. hovory: **nejdelší hovor** (`maxMinutes`) → časový limit u poskytovatele.
+
+U TSA navíc: přepojení podléhá pravidlům i při *Route through: application /
+SIP trunk* (stav odmítne; službu pravidla použije jen volba *the outbound
+rules*), přepojení dostane časový limit (`maxMinutes`, nejvýš zbytek
+*Longest call* TSA — Twilio `<Dial timeLimit>`, Vonage `connect.limit`,
+Telnyx `transfer.time_limit_secs`) a jedna TSA přepojí za hodinu nejvýš
+`callsPerHour` (přepojení není hovor, který zapisuje `tel-store`, proto ho
+počítá runtime TSA v `tsa_marks`).
 
 Každé rozhodnutí jde do logu (kind `route`) s důvody. Aplikační route vrací
 403 (pravidlo, blokované číslo, země), 429 (limity), 503 (chybí trunk).
@@ -205,7 +217,7 @@ propojí zvuk oběma směry.
 
 | Pole | Význam |
 |---|---|
-| `code` | 4–6 číslic, jedinečný mezi živými kódy (prošlý se dá znovu použít) |
+| `code` | 4–6 číslic, jedinečný mezi živými kódy (prošlý se dá znovu použít); 6.10: s platností nad 10 min 6 číslic, snadno uhodnutelný zvolený kód se odmítne, živých kódů jedné délky nejvýš 10 / 100 / 1000 |
 | `type`, `room`, `user` | kam; `room` je slepé ID místnosti (`r3.…`), nikdy její jméno |
 | `ttlSec`, `createdAt`, `expiresAt` | platnost: 30 s … `inroute.maxTtlSec` |
 | `uses`, `maxUses` | kolikrát kód hovor propojil; po `maxUses` zmizí (0 = až do vypršení) |
@@ -246,18 +258,30 @@ Ve **vizuálním tvůrci**: *Telephony › inroute.add / inroute.del /
 inroute.list*. V **tutoriálu** konzole Functions lekce 20 a 21.
 
 Pro media část (Route audio) jsou k dispozici `telHooks.inroute.lookup /
-used / add` a funkce `inrouteFailure(volající)` / `inrouteBlocked(volající)`
-z `control/inroute.ts`.
+used / add / guard / failure` a funkce `inrouteGuard({ caller, did })`,
+`inrouteFailure({ caller, did }, detail)`, `inrouteBlocked(volající, did?)`
+a `inrouteLockouts()` z `control/inroute.ts`.
 
 ## 7. Bezpečnost
 
 - **Hádání kódů**: náhodné kódy z `crypto.randomInt`, bez snadno uhodnutelných
-  (`0000`, `1234`, `9876`, `1212`, `123123`, roky `19xx`/`20xx`); zvolený
-  takový kód se povolí, ale zaloguje jako varování. Špatné kódy se počítají
-  na volající číslo a hodinu (`maxFailuresPerCallerPerHour`) — pak je číslo
-  odmítnuto úplně; v jednom hovoru nejvýš `maxAttemptsPerCall` pokusů. Skrytá
-  čísla sdílejí jeden čítač („anonymous“). Čím delší kód a kratší TTL, tím
-  líp: 6 číslic, minuty, ne dny; jednorázové kódy `maxUses: 1`.
+  (`0000`, `1234`, `9876`, `1212`, `123123`, roky `19xx`/`20xx`); 6.10 (G-05):
+  zvolený takový kód se **odmítne**, kód s platností nad 10 minut má 6 číslic
+  a živých kódů jedné délky je nejvýš 1 z 1000 (10 / 100 / 1000), aby
+  náhodný pokus skoro nikdy nic netrefil. Číslo volajícího jde podvrhnout
+  (CLI spoofing, libovolné SIP `From`), proto se špatné kódy počítají třikrát:
+  na volající číslo a hodinu (`maxFailuresPerCallerPerHour` — pak je číslo
+  odmítnuto), **na volané číslo (DID)** a hodinu (`maxFailuresPerDidPerHour`)
+  a **za celý modul** za minutu a hodinu (`maxFailuresPerMinute`,
+  `maxFailuresPerHour`). Po vyčerpání rozpočtu DID nebo modulu se kódy
+  **pozastaví** — 1 min, při opakování do hodiny dvojnásobek až 60 min; během
+  pauzy se kód ani nehledá (i správný dostane `on_code_error`) a pauza je
+  varování v logu i bezpečnostní událost auditu `telephony.inroute.lockout`
+  (alert konzole *security-warnings*). Úmyslně vyvolaná pauza je cena za
+  limit, který caller ID neobejde. V jednom hovoru nejvýš `maxAttemptsPerCall`
+  pokusů — ten poslední hovor ukončí. Skrytá čísla sdílejí jeden čítač
+  („anonymous“). Čím delší kód a kratší TTL, tím líp: 6 číslic, minuty, ne
+  dny; jednorázové kódy `maxUses: 1`.
 - **TTL** je vždy omezené (`maxTtlSec`), prošlé kódy se mažou (průběžně a při
   čtení), jeden vlastník má nejvýš `maxActivePerOwner` živých kódů.
 - **Log** kódy maskuje (`•••••7`): přidání, použití, odstranění i špatný
@@ -269,7 +293,10 @@ z `control/inroute.ts`.
   šifrovaný**.
 - **Odchozí podvody** (toll fraud): blokovaná prémiová a satelitní čísla,
   země, hodinový rozpočet na volajícího a souběžné hovory platí pro všechny
-  cesty (funkce, aplikace, konzole) a žádné pravidlo je nepřebije.
+  cesty (funkce, aplikace, konzole, od 6.10 i SMS a přepojení TSA) a žádné
+  pravidlo je nepřebije. TSA s prázdným seznamem zemí smí jen do vlastních
+  zemí — SMS na číslo volajícího (`{call.from}`) tak nejde poslat na
+  podvržené drahé zahraniční číslo („SMS pumping“).
 - **Tajemství**: hesla SIP trunků zůstávají v datovém souboru (0600), do
   pravidel se ukládá jen ID trunku; heslo jde výhradně poskytovateli.
 

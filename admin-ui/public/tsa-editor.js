@@ -89,9 +89,52 @@
   const pad2 = (n) => String(n).padStart(2, "0");
   const clock = (t) => { const d = new Date(t); return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`; };
   const when = (t) => { if (!t) return "—"; const d = new Date(t); return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`; };
-  const lsGet = (k) => { try { return JSON.parse(localStorage.getItem(k) || "null"); } catch { return null; } };
-  const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };
-  const lsDel = (k) => { try { localStorage.removeItem(k); } catch { /* storage blocked */ } };
+  // 6.10 (security review G-15): the unsaved local copy and the clipboard live
+  // in sessionStorage — this tab only, gone when it closes and when the
+  // administrator signs out (console.js) — not in localStorage, where any
+  // later user of the browser found them. Secrets written out in an HTTP
+  // header are never stored there (stripSecrets); the editor warns about them
+  // and the server refuses to publish them (validate.ts, {secret:NAME} instead).
+  const lsGet = (k) => { try { return JSON.parse(sessionStorage.getItem(k) || "null"); } catch { return null; } };
+  const lsSet = (k, v) => { try { sessionStorage.setItem(k, JSON.stringify(v)); return true; } catch { return false; } };
+  const lsDel = (k) => { try { sessionStorage.removeItem(k); localStorage.removeItem(k); } catch { /* storage blocked */ } };
+  /** A copy kept by 6.9 in localStorage: taken over (stripped) into this tab's storage, and removed there. */
+  function legacyTake(k) {
+    let v = null;
+    try { v = JSON.parse(localStorage.getItem(k) || "null"); localStorage.removeItem(k); } catch { v = null; }
+    if (v && !lsGet(k)) lsSet(k, stripSecrets(v));
+    return v;
+  }
+
+  /* ===================================================== literal secrets */
+
+  // Mirrors server/telephony/tsa/template.ts › literalSecretHeader (a test keeps them in step).
+  const CREDENTIAL_HEADER = /^(proxy-)?authorization$|^cookie$|api[-_]?key|apikey|token|secret|passw|^x-auth|signature|credential/i;
+  const AUTH_SCHEME_LITERAL = /\b(Bearer|Basic|Token|Digest)\s+[A-Za-z0-9._~+/=-]{8,}/i;
+  const JWT_LIKE = /eyJ[A-Za-z0-9_-]{4,}\.[A-Za-z0-9_-]{4,}\./;
+  const PLACEHOLDER = /\{(?:IN([1-9]\d{0,2})|\$([A-Za-z_][A-Za-z0-9_]{0,31})|call\.([a-z]{2,9})|secret:([A-Za-z0-9_]{1,64}))\}/g;
+  /** The header's name when a "Name: value" line holds a secret written out (not {secret:NAME}), else null. */
+  function literalSecretHeader(line) {
+    if (typeof line !== "string") return null;
+    const i = line.indexOf(":");
+    if (i <= 0) return null;
+    const name = line.slice(0, i).trim();
+    const value = line.slice(i + 1).replace(PLACEHOLDER, "").trim();
+    if (!value) return null;
+    if (JWT_LIKE.test(value) || AUTH_SCHEME_LITERAL.test(value)) return name;
+    if (!CREDENTIAL_HEADER.test(name)) return null;
+    return (value.match(/[A-Za-z0-9._~+/=-]{8,}/g) || []).some((r) => /\d/.test(r) || r.length >= 20) ? name : null;
+  }
+  /** Nodes / a draft with every secret-looking header value emptied ("Authorization: "), for the browser's storage. */
+  function stripSecrets(v) {
+    const out = clone(v);
+    const nodes = out && (out.graph ? out.graph.nodes : out.nodes);
+    for (const n of Array.isArray(nodes) ? nodes : []) {
+      if (n && n.params && Array.isArray(n.params.headers)) n.params.headers = n.params.headers.map((h) => { const name = literalSecretHeader(h); return name ? `${name}: ` : h; });
+    }
+    return out;
+  }
+  const secretHeaders = (rows) => (Array.isArray(rows) ? rows : []).map(literalSecretHeader).filter(Boolean);
 
   /* ============================================================== model */
   // The catalog's helpers (catalog.ts: flowOutputs, dataInputs, defaultParams)
@@ -455,7 +498,7 @@
     if (!force && isDirty()) {
       const v = await dialog({
         title: "Unsaved changes",
-        body: [h("p", {}, `“${S.name || S.id}” has changes that are not saved to the server.`), h("p", { class: "muted small" }, "A local copy stays in this browser either way, and the editor offers it the next time.")],
+        body: [h("p", {}, `“${S.name || S.id}” has changes that are not saved to the server.`), h("p", { class: "muted small" }, "A local copy stays in this tab either way (until it closes or you sign out; secrets in HTTP headers are not kept), and the editor offers it the next time.")],
         buttons: [{ label: "Keep editing", value: "stay" }, { label: "Discard", value: "discard", tone: "danger" }, { label: "Save draft", value: "save", tone: "primary", disabled: S.ro }],
         cancel: "stay",
       });
@@ -1443,7 +1486,7 @@
     const ids = S.sel.nodes;
     clipboard = { nodes: S.graph.nodes.filter((n) => ids.has(n.id)).map(clone), edges: S.graph.edges.filter((e) => ids.has(e.from.node) && ids.has(e.to.node)).map(clone) };
     S.pastes = 0;
-    lsSet(LS_CLIP, clipboard);
+    lsSet(LS_CLIP, stripSecrets(clipboard));
     toast(`Copied ${plural(clipboard.nodes.length, "tool")}.`);
     return true;
   }
@@ -1956,6 +1999,17 @@
       }
       case "list": {
         const rows = Array.isArray(v) ? v.map(String) : typeof v === "string" && v ? v.split("\n") : [];
+        if (n.type === "http" && p.key === "headers") {
+          // 6.10 (G-15): a secret written out here is readable by every console reader and in exports.
+          const warn = h("div", { class: "tsa-fb tsa-fb--warning", role: "alert", "data-testid": "tsa-header-secret" });
+          const check = (list) => {
+            const names = secretHeaders(list);
+            warn.hidden = !names.length;
+            warn.textContent = names.length ? `${names.join(", ")}: a secret written out — anyone who can read the console (and every export) sees it, and it cannot be published. Put it in the server's environment as TSA_SECRET_NAME and write {secret:NAME} here.` : "";
+          };
+          check(rows);
+          return wrap(lbl, listEditor(n, p, rows, base, check), warn, fb, help);
+        }
         return wrap(lbl, listEditor(n, p, rows, base), fb, help);
       }
       case "voice": {
@@ -2015,7 +2069,7 @@
   }
 
   /** One string per row: add, edit, move, remove (a Switch's rows are its case outputs). */
-  function listEditor(n, p, initial, base) {
+  function listEditor(n, p, initial, base, onRows) {
     let rows = [...initial];
     /** The rows as the graph has them — a row emptied while retyping it is not committed (its wire stays) until the field is left. */
     let committed = [...initial];
@@ -2024,6 +2078,7 @@
       const value = rows.filter((r) => r.trim() !== "");
       setParam(n, p.key, value, { oldRows: committed, newRows: [...rows], rowMap: map });
       committed = [...rows];
+      if (onRows) onRows(value);
     };
     const draw = (focus) => {
       clear(box);
@@ -2195,6 +2250,7 @@
         if (p.required && empty) { out.push({ level: "error", node: n.id, port: p.key, message: `${p.label} is required.` }); continue; }
         if (p.kind === "formula" && !empty) { const c = checkFormula(v, n, p.required); if (c) out.push({ level: c.level, node: n.id, port: p.key, message: `${p.label}: ${c.message}` }); }
         if (p.kind === "number" && typeof v === "number" && ((p.min !== undefined && v < p.min) || (p.max !== undefined && v > p.max))) out.push({ level: "error", node: n.id, port: p.key, message: `${p.label} is out of ${p.min}–${p.max}.` });
+        if (n.type === "http" && p.key === "headers") for (const name of secretHeaders(v)) out.push({ level: "error", node: n.id, port: p.key, message: `Headers: "${name}" holds a secret written out — use {secret:NAME} (TSA_SECRET_NAME on the server).` });
       }
       for (const p of t.dataIn || []) if (n.type === "route_audio" && !g.edges.some((e) => e.to.node === n.id && e.to.port === p.port)) out.push({ level: "error", node: n.id, port: p.port, message: `${p.port} is not wired — ${p.help || "it needs a value"}` });
       if (t.flowIn && !reached.has(n.id)) out.push({ level: "warning", node: n.id, port: "in", message: "Nothing leads here — it never runs." });
@@ -2357,17 +2413,22 @@
     if (!S) return;
     const key = LS_DRAFT + S.id;
     if (!isDirty()) { lsDel(key); return; }
-    lsSet(key, { at: Date.now(), base: S.tsa.updatedAt || 0, name: S.name, description: S.description, tags: S.tags, graph: serializeGraph(S.graph) });
+    const graph = serializeGraph(S.graph);
+    const kept = stripSecrets({ graph });
+    lsSet(key, { at: Date.now(), base: S.tsa.updatedAt || 0, name: S.name, description: S.description, tags: S.tags, graph: kept.graph, ...(JSON.stringify(kept.graph) !== JSON.stringify(graph) ? { stripped: true } : {}) });
   }
 
   function offerLocalCopy() {
     const key = LS_DRAFT + S.id;
+    // 6.9 kept these in localStorage: moved into this tab (secrets stripped) and removed there.
+    legacyTake(key);
+    legacyTake(LS_CLIP);
     const c = lsGet(key);
     if (!c || !c.graph || !Array.isArray(c.graph.nodes) || !Array.isArray(c.graph.edges)) return;
     const theirs = JSON.stringify({ name: c.name || "", description: c.description || "", tags: Array.isArray(c.tags) ? c.tags : [], graph: c.graph });
     if (theirs === S.savedJson) { lsDel(key); return; }
     const stale = (S.tsa.updatedAt || 0) > (c.base || 0);
-    banner("local", "history", `This browser kept unsaved changes from ${when(c.at)}${stale ? " — the server's draft has changed since" : ""}.`, [
+    banner("local", "history", `This browser kept unsaved changes from ${when(c.at)}${stale ? " — the server's draft has changed since" : ""}.${c.stripped ? " Secrets written out in HTTP headers were not kept — use {secret:NAME}." : ""}`, [
       h("button", { type: "button", class: "btn btn--xs btn--primary", "data-testid": "tsa-restore", onclick: () => {
         snapshot();
         S.name = c.name || ""; S.description = c.description || ""; S.tags = Array.isArray(c.tags) ? c.tags : [];
@@ -2951,5 +3012,16 @@
     current: () => (S ? handle() : null),
     close: (force) => closeEditor(force),
     config: CFG,
+    /** 6.10 (G-15): the literal-secret check (as the server's) and what the browser's storage keeps of a graph. */
+    literalSecretHeader,
+    stripSecrets,
+    /** 6.10 (G-15): sign-out — closes the editor and forgets every local copy and the clipboard (this tab's, and what 6.9 left in localStorage). */
+    forgetLocal: async () => {
+      if (S) await closeEditor(true);
+      clipboard = null;
+      for (const store of [sessionStorage, localStorage]) {
+        try { for (let i = store.length - 1; i >= 0; i--) { const k = store.key(i); if (k && k.startsWith("m5cet:tsa-")) store.removeItem(k); } } catch { /* storage blocked */ }
+      }
+    },
   };
 })();

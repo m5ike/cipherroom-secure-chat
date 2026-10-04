@@ -266,6 +266,35 @@ describe("outbound calls and SMS go through the permissions and the rules", () =
     expect(savePermissions({ outbound: { maxConcurrentCalls: 1000 } }, "test").ok).toBe(true);
   }, 60_000);
 
+  it("6.10 (G-06): a TSA's SMS / Dial go through the same checks as m5.telephony — as tsa:<id>, your own countries when none are set, rules, time limit", async () => {
+    const { realDeps } = await import("../server/telephony/tsa/deps");
+    const { ownCountries, ownNumbers } = await import("../server/telephony/control/enforce");
+    // TWILIO_FROM (+1500…) and the SIP trunk's numbers are yours; the number a call came in on too.
+    expect(ownNumbers()).toContain("+15005550006");
+    expect(ownCountries()).toContain("US");
+    expect(ownCountries(["+420222333444"])).toEqual(expect.arrayContaining(["CZ", "US"]));
+    expect(savePermissions({ outbound: { countries: [], callsPerHour: 1000, smsPerHour: 2, maxMinutes: 30 } }, "test").ok).toBe(true);
+    const own = ["+420222333444"];
+    // Abroad (no countries set): refused for the TSA, while a function may (empty = any for it).
+    expect(await realDeps.outbound({ kind: "sms", to: "+2348031234567", tsa: "ivr", provider: "twilio", own, dry: false })).toMatchObject({ ok: false, code: "route-refused", message: expect.stringMatching(/only your own countries/) });
+    expect(await realDeps.outbound({ kind: "call", to: "+420603000111", tsa: "ivr", provider: "twilio", own, dry: false, timeLimitSec: 99_999 })).toMatchObject({ ok: true, timeLimitSec: 1800 });
+    // A rule that refuses refuses the TSA's transfer too (6.9: the Dial skipped the rules when not routed "through the rules").
+    expect(saveRules("outbound", [{ id: "no-cz-mobile", label: "No CZ mobiles", match: { to: ["+420603*"] }, service: { kind: "app", provider: "twilio" }, target: { kind: "state", state: "rejected" } }], "test").ok).toBe(true);
+    expect(await realDeps.outbound({ kind: "call", to: "+420603000111", tsa: "ivr", provider: "twilio", own, dry: true })).toMatchObject({ ok: false, message: "the outbound rule \"No CZ mobiles\" refuses it (rejected)" });
+    expect(saveRules("outbound", [], "test").ok).toBe(true);
+    // The SMS itself goes as "tsa:<id>": its own hourly budget, the countries again.
+    sent.length = 0;
+    await realDeps.sendSms({ to: "+420603000111", text: "díky", tsa: "ivr", own });
+    await realDeps.sendSms({ to: "+420603000112", text: "díky", tsa: "ivr", own });
+    await expect(realDeps.sendSms({ to: "+420603000113", text: "díky", tsa: "ivr", own })).rejects.toMatchObject({ code: "telephony-limit" });
+    await expect(realDeps.sendSms({ to: "+2348031234567", text: "díky", tsa: "other", own })).rejects.toMatchObject({ code: "route-refused" });
+    expect(telStore.messages.list({ limit: 5 }).filter((m) => m.by === "tsa:ivr")).toHaveLength(2);
+    // * opens the world, for a TSA too.
+    expect(savePermissions({ outbound: { countries: ["*"], smsPerHour: 1000 } }, "test").ok).toBe(true);
+    expect(await realDeps.outbound({ kind: "sms", to: "+2348031234567", tsa: "ivr", provider: "twilio", own, dry: true })).toMatchObject({ ok: true });
+    expect(savePermissions({ outbound: { countries: [] } }, "test").ok).toBe(true);
+  }, 60_000);
+
   it("a TSA target: the answered call runs the TSA, its digits resume it; without the runtime the call keeps its own logic", async () => {
     expect(saveRules("outbound", [{ id: "survey", label: "Survey", match: { to: ["+420777*"] }, service: { kind: "app", provider: "twilio" }, target: { kind: "tsa", tsa: "survey" } }], "test").ok).toBe(true);
     const started: unknown[] = [];

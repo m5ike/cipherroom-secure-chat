@@ -198,4 +198,20 @@ describe("outbound decisions", () => {
     expect(permissionRefusal("+881612345678", perms({ countries: ["CZ"], blocked: [] }))).toMatch(/only to CZ — \+881612345678 is in 001/);
     expect(targetText({ kind: "state", state: "busy" })).toBe("state busy");
   });
+
+  it("6.10 (G-06): countries — empty = any, but for a TSA (own given) only your own; * = any for everyone", () => {
+    const any = perms({ countries: [] });
+    expect(permissionRefusal("+4930123456", any)).toBeNull();
+    expect(permissionRefusal("+4930123456", any, ["CZ"])).toMatch(/an application \(TSA\) may call and text only your own countries \(CZ\).*\+4930123456 is in DE/);
+    expect(permissionRefusal("+420603123456", any, ["CZ"])).toBeNull();
+    // Nothing to derive them from: refused, with what to set.
+    expect(permissionRefusal("+420603123456", any, [])).toMatch(/no number of yours tells which.*Countries \(\* = any\)/);
+    const star = perms({ countries: ["*"] });
+    expect(permissionRefusal("+4930123456", star, ["CZ"])).toBeNull();
+    expect(permissionRefusal("+19005550100", star, ["CZ"])).toMatch(/is blocked/);
+    // An explicit list is the list, for a TSA too.
+    expect(permissionRefusal("+4930123456", perms({ countries: ["DE"] }), ["CZ"])).toBeNull();
+    // A SIP URI has no country.
+    expect(permissionRefusal("sip:alice@pbx.example.com", any, [])).toBeNull();
+  });
 });

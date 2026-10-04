@@ -48,14 +48,27 @@ const byPriority = <T extends { priority: number }>(list: readonly T[]): T[] => 
 /**
  * The module's own outbound limits a rule cannot lift: the countries calls and
  * SMS may go to, and the blocked destinations. A refusal reason, or null.
+ *
+ * Countries: a list of ISO codes; "*" = any country; empty = any country —
+ * except (6.10, G-06) for what a TSA sends (`own` given: a caller of a TSA is
+ * anybody, its caller ID can be faked), where empty means only the operator's
+ * own countries, `own` (enforce.ts ownCountries: those of the configured
+ * numbers and of the number called).
  */
-export function permissionRefusal(to: string, p: TelPermissions): string | null {
+export function permissionRefusal(to: string, p: TelPermissions, own?: readonly string[]): string | null {
   const hit = p.outbound.blocked.find((b) => patternMatches(b.replace(/^-/, ""), to));
   if (hit) return `the destination ${to} is blocked (Telephony › Permissions: ${hit})`;
-  if (p.outbound.countries.length && !/^sips?:/i.test(to)) {
+  if (/^sips?:/i.test(to) || p.outbound.countries.includes("*")) return null;
+  const list = p.outbound.countries.length ? p.outbound.countries : own;
+  if (list) {
     const info = numberInfo(to);
     const country = info?.iso2 ?? "";
-    if (!country || !p.outbound.countries.includes(country)) return `calls and messages may go only to ${p.outbound.countries.join(", ")} — ${to} is ${country ? `in ${country}` : "not a number of a known country"} (Telephony › Permissions)`;
+    if (!list.length) return `an application (TSA) may call and text only your own countries — no number of yours tells which (set TWILIO_FROM / TELNYX_FROM / VONAGE_FROM or SIP trunk numbers), so set Telephony › Permissions › Countries (* = any)`;
+    if (!country || !list.includes(country)) {
+      return p.outbound.countries.length
+        ? `calls and messages may go only to ${list.join(", ")} — ${to} is ${country ? `in ${country}` : "not a number of a known country"} (Telephony › Permissions)`
+        : `an application (TSA) may call and text only your own countries (${list.join(", ")}) while Telephony › Permissions › Countries is empty — ${to} is ${country ? `in ${country}` : "not a number of a known country"} (list the countries, or * for any)`;
+    }
   }
   return null;
 }

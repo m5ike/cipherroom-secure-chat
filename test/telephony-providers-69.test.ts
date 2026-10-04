@@ -80,6 +80,9 @@ describe("Twilio 6.9", () => {
     expect(sip).toContain('<Dial action="https://x/d" method="POST" callerId="anonymous"><Sip>sip:alice@pbx.example.com</Sip></Dial>');
     const trunk = tw.renderActions([{ dial: { to: E164, kind: "number", action: "https://x/d", callerId: "+420222111000", trunk: TRUNK, timeout: 2 } }]).body;
     expect(trunk).toContain('<Dial action="https://x/d" method="POST" timeout="5" callerId="+420222111000"><Sip username="u1" password="trunk-pass-9">sip:+420777123456@sip.example.com;transport=tls</Sip></Dial>');
+    // 6.10 (G-06): the longest bridged call (Twilio's own default is 4 hours).
+    expect(tw.renderActions([{ dial: { to: E164, kind: "number", action: "https://x/d", timeLimit: 1800 } }]).body).toContain('<Dial action="https://x/d" method="POST" timeLimit="1800"><Number>');
+    expect(tw.renderActions([{ dial: { to: E164, kind: "number", action: "https://x/d", timeLimit: 99_999 } }]).body).toContain('timeLimit="14400"');
   });
 
   it("reject (busy / rejected; congestion plays busy) and sendDigits as <Play digits>", () => {
@@ -149,6 +152,9 @@ describe("Vonage 6.9", () => {
     expect(viaTrunk[0]).toEqual({ action: "record", eventUrl: ["https://x/d?x=dialrec"], eventMethod: "POST", split: "conversation", channels: 2 });
     expect(viaTrunk[1]).toMatchObject({ action: "connect", endpoint: [{ type: "sip", uri: "sip:+420777123456@sip.example.com;transport=tls" }], from: "anonymous" });
     expect(JSON.stringify(viaTrunk)).not.toContain("trunk-pass-9");
+    // 6.10 (G-06): the longest bridged call → connect's `limit` (at most 7200 s at Vonage).
+    expect(renderNcco([{ dial: { to: E164, kind: "number", action: "https://x/d", timeLimit: 1800 } }])[0]).toMatchObject({ action: "connect", limit: 1800 });
+    expect(renderNcco([{ dial: { to: E164, kind: "number", action: "https://x/d", timeLimit: 14_400 } }])[0]).toMatchObject({ limit: 7200 });
   });
 
   it("reject ends the NCCO (it cannot refuse); sendDigits is left out; a redirect becomes a notify only when asked", () => {
@@ -228,6 +234,9 @@ describe("Telnyx 6.9", () => {
       webhook_url: "https://x/tsa?s=1&n=d", webhook_url_method: "POST", park_after_unbridge: "self", client_state: cs,
     } });
     expect(cmds[6]).toEqual({ cmd: "transfer", body: { to: E164, webhook_url: "https://x/d", webhook_url_method: "POST", park_after_unbridge: "self", client_state: cs } });
+    // 6.10 (G-06): the longest bridged call → time_limit_secs (Telnyx: 30 … 14 400).
+    expect(telnyxCommands([{ dial: { to: E164, kind: "number", action: "https://x/d", timeLimit: 1800 } }])[0].body).toMatchObject({ time_limit_secs: 1800 });
+    expect(telnyxCommands([{ dial: { to: E164, kind: "number", action: "https://x/d", timeLimit: 5 } }])[0].body).toMatchObject({ time_limit_secs: 30 });
     expect(cmds[7]).toEqual({ cmd: "record_start", body: { format: "mp3", channels: "single", play_beep: false, max_length: 30, timeout_secs: 0, trim: "trim-silence", transcription: true, transcription_language: "cs", client_state: cs } });
   });
 

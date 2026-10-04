@@ -17,7 +17,8 @@
 
 import type { ServerSpeechStatus } from "./speech";
 
-export type SpeakSendError = "empty" | "no-tts" | "tts-failed";
+/** 6.10: "declined" — the person did not agree that the server's speech provider reads the text (nothing was sent). */
+export type SpeakSendError = "empty" | "no-tts" | "tts-failed" | "declined";
 
 export type SpeakSendDeps = {
   /** /api/speech/status (which voices this user may use). */
@@ -26,7 +27,33 @@ export type SpeakSendDeps = {
   /** A chosen server voice (else the first the server offers). */
   connector?: string;
   now?: () => number;
+  /**
+   * 6.10 (security review G-14): asked before the text leaves for the
+   * server, with the speech provider that will read it (its label, e.g. a
+   * cloud service) — false sends nothing. App.tsx asks the first time in a
+   * room (serverVoiceConsent).
+   */
+  confirm?: (provider: string) => boolean | Promise<boolean>;
 };
+
+/* -------------------------------------- 6.10 (G-14): who reads the text */
+
+const voiceConsent = new Set<string>();
+/**
+ * Whether the text may go to the server's speech provider in this room: true
+ * when the person agreed earlier in this page's life, else `ask()` (and a yes
+ * is remembered for the room). The text of a voice message is plaintext to
+ * the server and to the provider it uses — the message itself is end to end
+ * encrypted — so this is asked, not just written in a hint.
+ */
+export function serverVoiceConsent(room: string, ask: () => boolean): boolean {
+  if (voiceConsent.has(room)) return true;
+  if (!ask()) return false;
+  voiceConsent.add(room);
+  return true;
+}
+/** Tests (and a sign-out): ask again everywhere. */
+export function resetServerVoiceConsent(): void { voiceConsent.clear(); }
 
 /** The longest text spoken into one message (the server's limit is larger; a voice message stays short). */
 export const SPEAK_SEND_MAX = 2000;
@@ -46,6 +73,11 @@ export async function textToVoiceFile(text: string, deps: SpeakSendDeps): Promis
   const status = await deps.status().catch(() => null);
   if (!status?.tts.enabled || status.tts.connectors.length === 0) return { ok: false, error: "no-tts" };
   const connector = deps.connector && status.tts.connectors.some((c) => c.id === deps.connector) ? deps.connector : status.tts.connectors[0].id;
+  // 6.10 (G-14): before the text leaves — say who reads it.
+  if (deps.confirm) {
+    const provider = status.tts.connectors.find((c) => c.id === connector)?.label || connector;
+    if (!(await deps.confirm(provider))) return { ok: false, error: "declined" };
+  }
   const r = await deps.tts(clean, { connector }).catch((err: Error) => ({ ok: false as const, message: err.message }));
   if (!r.ok) return { ok: false, error: "tts-failed", message: r.message };
   if (r.blob.size === 0) return { ok: false, error: "tts-failed", message: "empty audio" };

@@ -75,8 +75,10 @@ export type CallAction =
    * 6.9: connect the caller to a number or a SIP URI (a transfer / bridge). `action` is the
    * absolute URL the dial's outcome is POSTed to (answered + duration, busy, no-answer, failed);
    * `trunk` dials over the operator's SIP trunk (credentials from sip.ts, never logged).
+   * 6.10 (G-06): `timeLimit` — the longest the bridged call may last, seconds (Twilio
+   * <Dial timeLimit>, Vonage connect `limit`, Telnyx transfer `time_limit_secs`).
    */
-  | { dial: { to: string; kind: "number" | "sip"; action: string; callerId?: string; callerName?: string; presentation?: "allowed" | "restricted"; timeout?: number; record?: boolean; trunk?: { id: string; host: string; username?: string; password?: string; transport?: "udp" | "tcp" | "tls" } } }
+  | { dial: { to: string; kind: "number" | "sip"; action: string; callerId?: string; callerName?: string; presentation?: "allowed" | "restricted"; timeout?: number; timeLimit?: number; record?: boolean; trunk?: { id: string; host: string; username?: string; password?: string; transport?: "udp" | "tcp" | "tls" } } }
   /** 6.9: refuse an unanswered inbound call with a state (an answered one is hung up). */
   | { reject: { reason: "busy" | "congestion" | "rejected" } };
 

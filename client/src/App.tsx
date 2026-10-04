@@ -38,7 +38,8 @@ import { ComposerVoice } from "./components/ComposerVoice";
 import { VoiceChangerPanel } from "./components/VoiceChangerPanel";
 import { isProcessed, openMic, processStream, setVoiceFxAllowed, voiceFxActive } from "./lib/mic";
 import { onVoiceFxChange } from "./lib/voice-fx-settings";
-import { textToVoiceFile, sendFromComposer, voiceTooBigFor, SPEAK_SEND_MAX } from "./lib/speak-send";
+import { textToVoiceFile, sendFromComposer, voiceTooBigFor, SPEAK_SEND_MAX, serverVoiceConsent } from "./lib/speak-send";
+import { attachmentKinds, forwardPlan, largeFileTargets, liveLocationTargets } from "./lib/send-plan";
 import { fetchServerSpeechStatus, serverTtsBlob } from "./lib/speech";
 import type { UserInfo } from "./components/UserInfoModal";
 import type { MessageInfo } from "./components/MessageInfoModal";
@@ -491,7 +492,8 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutC
       formatSize={formatBytes}
       onInfo={isSystem ? undefined : (mid) => act.current.showInfo(mid)}
       onReply={isSystem || !layout.flags.showActions ? undefined : () => act.current.reply(message)}
-      onForward={isSystem || !layout.flags.showActions ? undefined : () => act.current.forward(message)}
+      // 6.10 (G-13): a sealed message whose code this app does not have cannot be forwarded (send-plan.ts › forwardPlan).
+      onForward={isSystem || !layout.flags.showActions || !forwardPlan(message).ok ? undefined : () => act.current.forward(message)}
       deliveryState={delivery}
       onDisplayed={(id) => act.current.displayed(id)}
       onReplyJump={(id) => act.current.jump(id)}
@@ -3691,6 +3693,8 @@ function ChatApp() {
     const replied = replyingTo ? messages.find((m) => m.id === replyingTo.id) : undefined;
     const target = replied?.flags?.fn;
     if (replyingTo && replied && target?.chain && (target.events ? target.events.includes("response") : commands.find((c) => c.keyword === target.keyword)?.events?.includes("response"))) {
+      // 6.10 (G-14): the reply is the function's input — the server reads it (and the quote); a seal would only pretend.
+      if (sendOpts.sealed) { setNotice(t(lang, "app.fnReply.sealed")); return; }
       const quote = { id: replyingTo.id, senderName: replyingTo.senderName, text: replyingTo.text };
       if (replied.senderId.startsWith("function:")) {
         // The model's message was only here (caller-only): so is the reply.
@@ -4070,10 +4074,12 @@ function ChatApp() {
   async function forwardMessage(m: ChatMessage) {
     const rec = resolveRecipients();
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
-    const body = m.flags?.sealed && m.mine ? (m.sealPlain ?? "") : m.text;
-    await sendChatPayload(body, {
+    // 6.10 (G-13): forwarded as it was — tap / vanish kept, an own sealed message sealed again with its code; one without the code is refused.
+    const plan = forwardPlan(m);
+    if (!plan.ok) { setNotice(t(lang, "app.forward.sealed")); return; }
+    await sendChatPayload(plan.text, {
       attachment: m.attachment,
-      send: DEFAULT_SEND_STATE,
+      send: plan.send,
       targets: rec.targets,
       toNames: rec.toNames,
       away: rec.away,
@@ -4215,8 +4221,11 @@ function ChatApp() {
   async function sendPickedFile(file: File, caption = messageInput.trim(), replyTo?: { id: string; senderName: string; text: string }): Promise<boolean> {
     const rec = resolveRecipients();
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return false; }
-    // Sealing a binary body is not supported yet; tap/vanish still apply.
-    const attachOpts: SendState = { ...sendOpts, sealed: false, sealCode: "" };
+    // Sealing a binary body is not supported; tap/vanish apply inline, nothing applies to a large file.
+    // 6.10 (G-13): what cannot apply is said and asked before the file goes — never sent plainer in silence.
+    const kinds = attachmentKinds(sendOpts, file.size > INLINE_ATTACHMENT_LIMIT);
+    if (kinds.dropped.length && !window.confirm(tf(lang, "app.send.kindsDropped", { what: kinds.dropped.map((k) => t(lang, `msgkind.${k}`)).join(", ") }))) return false;
+    const attachOpts: SendState = kinds.send;
     try {
       if (file.size > INLINE_ATTACHMENT_LIMIT) {
         // Too big to embed in a chat envelope: same encrypted channel, sent in
@@ -4248,7 +4257,12 @@ function ChatApp() {
     if (!resolveRecipients()) { setNotice(t(lang, "recipients.noneNotice")); return false; }
     setVoiceBusy(true);
     try {
-      const made = await textToVoiceFile(text, { status: fetchServerSpeechStatus, tts: serverTtsBlob });
+      const made = await textToVoiceFile(text, {
+        status: fetchServerSpeechStatus, tts: serverTtsBlob,
+        // 6.10 (G-14): the first time in a room, say who reads the text (the server's speech provider) and ask.
+        confirm: (provider) => serverVoiceConsent(roomRef.current ?? "", () => window.confirm(tf(lang, "speakSend.confirm", { provider }))),
+      });
+      if (!made.ok && made.error === "declined") return false;
       if (!made.ok) {
         const why = made.error === "tts-failed" ? tf(lang, "speakSend.err.tts-failed", { msg: made.message ?? "" }) : t(lang, `speakSend.err.${made.error}`);
         // From the composer the way out is the option itself: say where it is.
@@ -4888,31 +4902,42 @@ function ChatApp() {
     const file = event.target.files?.[0];
     event.target.value = "";
     if (!file) return;
-    await sendLargeFileToAll(file);
+    // 6.10 (G-12): to the chosen people like a message (6.9: the whole room, whatever was chosen).
+    const to = largeFileTargets(resolveRecipients());
+    if (!to.ok) { setNotice(t(lang, to.error === "none" ? "recipients.noneNotice" : "files.chosenAway")); return; }
+    await sendLargeFileToAll(file, to.targets);
   }
 
   async function shareCurrentLocation() {
     const caps = detectGeolocation();
     if (!caps.available) { setNotice(caps.reason || "Geolocation unavailable."); return; }
+    // 6.10 (G-12): a location goes to the chosen people like a message (6.9: always the whole room).
+    const rec = resolveRecipients();
+    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
     try {
       const pos = await getCurrentPosition();
       const link = osmLink(pos);
-      await sendChatPayload(`📍 ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} (±${Math.round(pos.accuracy ?? 0)} m) ${link}`);
+      await sendChatPayload(`📍 ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} (±${Math.round(pos.accuracy ?? 0)} m) ${link}`, { targets: rec.targets, toNames: rec.toNames, away: rec.away });
     } catch (err) {
       setNotice(tf(lang, "app.location.failed", { msg: (err as Error).message }));
     }
   }
 
   function startContinuousLocation() {
+    // 6.10 (G-12): the recipients are fixed now and never widen; only those connected get an update.
+    const rec = resolveRecipients();
+    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+    if (rec.targets && rec.targets.size === 0) { setNotice(t(lang, "app.location.chosenAway")); return; }
     locationWatcherRef.current?.stop();
     locationWatcherRef.current = watchPosition(
       (pos) => {
         const link = osmLink(pos);
-        void sendChatPayload(`📍 live ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} ${link}`);
+        const to = liveLocationTargets(rec, (id) => peersRef.current.get(id)?.channel?.readyState === "open");
+        if (to.send) void sendChatPayload(`📍 live ${pos.lat.toFixed(5)}, ${pos.lng.toFixed(5)} ${link}`, { targets: to.targets, toNames: rec.toNames });
       },
       (msg) => setNotice(tf(lang, "app.location.error", { msg })),
     );
-    if (locationWatcherRef.current) systemMessage(t(lang, "app.location.started"));
+    if (locationWatcherRef.current) systemMessage(rec.targets ? tf(lang, "app.location.startedTo", { names: (rec.toNames ?? []).join(", ") }) : t(lang, "app.location.started"));
   }
 
   function stopContinuousLocation() {
@@ -5596,7 +5621,12 @@ function ChatApp() {
         <SimpleModal title="Speech (TTS / STT / revoice)" onClose={() => setActivePanel(null)}>
           <SpeechPanel
             recognitionRef={recognitionRef}
-            onSendText={(text) => void sendChatPayload(text)}
+            onSendText={(text) => {
+              // 6.10 (G-12): to the chosen people like a message (6.9: always the whole room).
+              const rec = resolveRecipients();
+              if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+              void sendChatPayload(text, { targets: rec.targets, toNames: rec.toNames, away: rec.away });
+            }}
             onInsertText={(text) => setMessageInput((cur) => (cur ? `${cur} ${text}` : text))}
             onSendVoice={(text) => sendTextAsVoice(text, false)}
             serverMode={prefs.mode === "server"}
