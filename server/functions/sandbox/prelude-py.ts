@@ -550,6 +550,12 @@ def _make_nfc(reader):
         return _nfc_send(o.get("op") or ("conn-emulate" if o.get("tech") == "connection-tag" else "m5-emulate"), reader, {**o, "args": _nfc_write_args(o), "records": None})
     def m5_write(records=None, **o):
         return _nfc_send("m5-write", reader, {**o, "args": _nfc_write_args({**o, "records": records if isinstance(records, list) else o.get("records")}), "records": None})
+    def eid_read(**o):
+        args = dict(o.get("args") or {})
+        for k in ("mrz", "documentNumber", "dateOfBirth", "dateOfExpiry", "can", "readPhoto", "maxApps"):
+            if o.get(k) is not None:
+                args[k] = o[k]
+        return _nfc_send("mrtd-read", reader, {**o, "args": args, "records": None})
     return _NS(
         reader=lambda kind: _make_nfc(str(kind)),
         enum=lambda **o: _nfc_send("enum", reader, o),
@@ -560,6 +566,9 @@ def _make_nfc(reader):
         emulate=emulate,
         m5=_NS(read=lambda **o: _nfc_send("m5-read", reader, o), write=m5_write, build=m5_write,
                erase=lambda **o: _nfc_send("m5-erase", reader, o), emulate=lambda **o: _nfc_send("m5-emulate", reader, o)),
+        # 6.5 EMV (read-only, no PIN / no cryptogram) and MRTD e-ID / e-passport (holder's own document).
+        emv=_NS(read=lambda **o: _nfc_send("emv-read", reader, o)),
+        eid=_NS(read=eid_read),
     )
 
 def _nfc_ns():

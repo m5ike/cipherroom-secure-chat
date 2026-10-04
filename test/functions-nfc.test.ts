@@ -32,9 +32,9 @@ afterAll(() => closeRunner());
 /* -------------------------------------------------------- the SDK surface */
 
 describe("m5.nfc SDK surface", () => {
-  const OPS = ["reader", "enum", "card", "scan", "read", "write", "emulate", "m5"];
+  const OPS = ["reader", "enum", "card", "scan", "read", "write", "emulate", "m5", "emv", "eid"];
 
-  it("the spec has one nfc object with exactly the eight ops", () => {
+  it("the spec has one nfc object with exactly its ops", () => {
     const nfc = SDK_SPEC.find((o) => o.name === "nfc");
     expect(nfc, "an nfc SdkObject").toBeTruthy();
     expect(nfc!.methods.map((m) => m.name).sort()).toEqual([...OPS].sort());

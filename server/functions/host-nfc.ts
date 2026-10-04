@@ -20,7 +20,7 @@
 import { checkAccess, adminSubject, userSubject, type Subject } from "../access";
 import { accountStore, usernameOf } from "../accounts/store";
 import { clientConfigStore } from "../client-config";
-import { normalizeCommand, type NfcCommand, type NfcResult, type NfcResultStatus } from "../../client/src/lib/nfc/command";
+import { normalizeCommand, type EmvApp, type EmvData, type MrtdData, type NfcCommand, type NfcResult, type NfcResultStatus } from "../../client/src/lib/nfc/command";
 import type { NfcTech } from "../../client/src/lib/nfc/catalog";
 import type { M5RecordType } from "../../client/src/lib/nfc/m5card";
 import type { Caller, Model } from "./types";
@@ -114,6 +114,39 @@ export function sanitizeNfcResult(raw: unknown): NfcResult {
   if (Array.isArray(r.ndef)) out.ndef = r.ndef.slice(0, 64).map((n) => { const x = (n && typeof n === "object" ? n : {}) as Record<string, unknown>; return { kind: strReq(x.kind), ...(str(x.type) ? { type: str(x.type) } : {}), ...(str(x.text) ? { text: str(x.text) } : {}), ...(str(x.lang) ? { lang: str(x.lang) } : {}), ...(str(x.data) ? { data: str(x.data) } : {}) }; });
   if (str(r.data)) out.data = str(r.data);
   if (Array.isArray(r.records)) out.records = r.records.slice(0, 64).map((rec) => { const x = (rec && typeof rec === "object" ? rec : {}) as Record<string, unknown>; return { id: Number(x.id) || 0, type: str(x.type) as M5RecordType, oneTime: Boolean(x.oneTime), summary: strReq(x.summary) }; });
+  if (r.emv && typeof r.emv === "object") out.emv = sanitizeEmv(r.emv as Record<string, unknown>);
+  if (r.mrtd && typeof r.mrtd === "object") out.mrtd = sanitizeMrtd(r.mrtd as Record<string, unknown>);
+  if (str(r.message)) out.message = str(r.message)!.slice(0, 500);
+  return out;
+}
+
+/** 6.5: EMV read data — holder / public fields only, bounded. */
+function sanitizeEmv(r: Record<string, unknown>): EmvData {
+  const apps = Array.isArray(r.apps) ? r.apps.slice(0, 8).map((a) => {
+    const x = (a && typeof a === "object" ? a : {}) as Record<string, unknown>;
+    const app: EmvApp = { aid: strReq(x.aid).slice(0, 32).toUpperCase(), tags: Array.isArray(x.tags) ? x.tags.slice(0, 128).map((tg) => { const y = (tg && typeof tg === "object" ? tg : {}) as Record<string, unknown>; return { tag: strReq(y.tag).slice(0, 8), name: strReq(y.name).slice(0, 80), value: strReq(y.value).slice(0, 256), hex: strReq(y.hex).slice(0, 512) }; }) : [] };
+    for (const k of ["label", "scheme", "pan", "panMasked", "expiry", "cardholder", "effective", "issuerCountry", "panSequence"] as const) if (str(x[k])) (app as Record<string, unknown>)[k] = str(x[k])!.slice(0, 64);
+    if (typeof x.atc === "number") app.atc = x.atc;
+    if (typeof x.pinTryCounter === "number") app.pinTryCounter = x.pinTryCounter;
+    return app;
+  }) : [];
+  const out: EmvData = { aids: Array.isArray(r.aids) ? r.aids.filter((a): a is string => typeof a === "string").slice(0, 16).map((a) => a.toUpperCase().slice(0, 32)) : [], apps };
+  if (str(r.scheme)) out.scheme = str(r.scheme)!.slice(0, 40);
+  if (str(r.tree)) out.tree = str(r.tree)!.slice(0, 4000);
+  return out;
+}
+
+/** 6.5: MRTD read data — the holder's own document, bounded; photo capped. */
+function sanitizeMrtd(r: Record<string, unknown>): MrtdData {
+  const access = r.access === "bac" || r.access === "pace" ? r.access : "none";
+  const out: MrtdData = { present: Boolean(r.present), access };
+  if (Array.isArray(r.dataGroups)) out.dataGroups = r.dataGroups.filter((x): x is string => typeof x === "string").slice(0, 16);
+  if (r.mrzInfo && typeof r.mrzInfo === "object") {
+    const m = r.mrzInfo as Record<string, unknown>;
+    out.mrzInfo = {};
+    for (const k of ["documentCode", "documentNumber", "issuer", "nationality", "surname", "givenNames", "dateOfBirth", "sex", "dateOfExpiry", "optionalData", "mrz"] as const) if (str(m[k])) out.mrzInfo[k] = str(m[k])!.slice(0, 120);
+  }
+  if (str(r.photo) && str(r.photoMime)) { const b64 = str(r.photo)!; if (b64.length <= 400_000) { out.photo = b64; out.photoMime = str(r.photoMime)!.slice(0, 40); } }
   if (str(r.message)) out.message = str(r.message)!.slice(0, 500);
   return out;
 }

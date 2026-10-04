@@ -131,10 +131,12 @@ export const NFC_CATALOG: TechInfo[] = [
   ]),
   T("emv", "EMV payment card", "ISO 14443-4 · EMV", "", [
     { id: "emv-public", label: "Read public data", kind: "read", help: "Only the freely readable data (PPSE, the card's application labels, and where allowed the masked PAN and expiry). No PIN, no signing, no transaction." },
+    { id: "emv-read", label: "Read card data", kind: "read", help: "Read the card's applications and records (PPSE → SELECT AID → GPO → READ RECORD) and parse the holder data a terminal reads: AIDs, labels, PAN, expiry, name, counters. Read-only — no PIN, no cryptogram, no transaction." },
     { id: "app-template", label: "Application template", kind: "read", help: "Send a saved APDU application template (the operator's apduTemplates in Android › Define)." },
   ]),
   T("eid", "Electronic ID / MRTD", "ISO 14443-4 · ICAO 9303 / eIDAS", "", [
     { id: "eid-public", label: "Read public info", kind: "read", help: "The document type and the data the holder unlocks with the CAN/MRZ they type. No cloning, no signing." },
+    { id: "eid-read", label: "Read document (BAC)", kind: "read", needs: "key", help: "Open the chip with the holder's own MRZ (passport no. + date of birth + expiry) or CAN — the document's own access control — and read DG1 (the MRZ data) and DG2 (the face) over secure messaging. The holder's own document, read-only." },
   ]),
   T("unknown", "Unknown card", "—", "", []),
 ];

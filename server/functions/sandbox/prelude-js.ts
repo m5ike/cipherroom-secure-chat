@@ -357,6 +357,14 @@ return function setup(host, ctxJson) {
         erase: (opts) => nfcSend("m5-erase", reader, opts),
         emulate: (opts) => nfcSend("m5-emulate", reader, opts),
       },
+      // 6.5 EMV: read the holder/public data a terminal reads (read-only, no PIN, no cryptogram).
+      emv: {
+        read: (opts) => nfcSend("emv-read", reader, opts),
+      },
+      // 6.5 e-ID / e-passport (MRTD): open the holder's own document with the MRZ or CAN they give, read DG1/DG2.
+      eid: {
+        read: (opts) => { const o = opts && typeof opts === "object" ? opts : {}; const args = { ...(o.args && typeof o.args === "object" ? o.args : {}) }; for (const k of ["mrz", "documentNumber", "dateOfBirth", "dateOfExpiry", "can", "readPhoto", "maxApps"]) if (o[k] !== undefined) args[k] = o[k]; return nfcSend("mrtd-read", reader, { ...o, args, records: undefined }); },
+      },
     };
   }
   const nfc = makeNfc(undefined);

@@ -23,6 +23,8 @@ import { decodeRecord, type NdefRecord } from "./cards/ndef";
 import { hex, unhex, splitResponse, describeSw } from "./cards/apdu";
 import { classicDump, ultralightReadPages, ntagReadCounter } from "./cards/tag-io";
 import { readM5Card, lockedSummaries } from "./m5cet-card";
+import { readEmv, emvSummary } from "./cards/emv";
+import { readMrtd, mrtdSummary } from "./cards/mrtd";
 import type { NfcCommand, NfcResult, NfcResultStatus } from "./command";
 
 /** What the platform (the workbench) gives the executor. */
@@ -182,6 +184,20 @@ export function createWebExecutor(deps: WebExecutorDeps) {
         case "eid-public": {
           const r = await selectMrtd(t);
           return { status: "ok", card, message: `MRTD ${r.present ? "present" : "absent"} (${r.sw}). Public presence only — no BAC/PACE, no data.` };
+        }
+        case "emv-read": {
+          // Read-only: PPSE → SELECT AID → GPO → READ RECORD, then parse the holder data.
+          const d = await readEmv(t, { maxApps: typeof command.args?.maxApps === "number" ? command.args.maxApps : 4 });
+          return { status: "ok", card, emv: d, message: emvSummary(d) };
+        }
+        case "eid-read":
+        case "mrtd-read": {
+          // The holder opens their own document with the MRZ (or CAN) they supply.
+          const a = command.args ?? {};
+          const key = typeof a.documentNumber === "string" && typeof a.dateOfBirth === "string" && typeof a.dateOfExpiry === "string"
+            ? { documentNumber: a.documentNumber, dateOfBirth: a.dateOfBirth, dateOfExpiry: a.dateOfExpiry } : undefined;
+          const d = await readMrtd(t, { mrz: typeof a.mrz === "string" ? a.mrz : undefined, key, can: typeof a.can === "string" ? a.can : undefined, readPhoto: a.readPhoto !== false });
+          return { status: d.mrzInfo || d.access !== "none" ? "ok" : "auth-failed", card, mrtd: d, message: mrtdSummary(d) };
         }
 
         case "raw-apdu":
