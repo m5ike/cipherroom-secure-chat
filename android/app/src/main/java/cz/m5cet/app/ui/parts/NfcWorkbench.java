@@ -1,5 +1,7 @@
 package cz.m5cet.app.ui.parts;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.nfc.NdefMessage;
@@ -7,11 +9,14 @@ import android.nfc.NdefRecord;
 import android.nfc.Tag;
 import android.nfc.tech.Ndef;
 import android.text.InputType;
+import android.util.Base64;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.CheckBox;
 import android.widget.EditText;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -30,6 +35,7 @@ import cz.m5cet.app.nfc.CardOps;
 import cz.m5cet.app.nfc.CardService;
 import cz.m5cet.app.nfc.InternalReader;
 import cz.m5cet.app.nfc.M5Card;
+import cz.m5cet.app.nfc.MrtdReader;
 import cz.m5cet.app.nfc.Nfc;
 import cz.m5cet.app.nfc.NfcCatalog;
 import cz.m5cet.app.nfc.Records;
@@ -69,6 +75,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
     private byte[] armedArg;                 // an op's binary argument (a block to write, a UID…)
     private int armedBlock = -1;
     private JSONObject lastDump;             // the last MIFARE Classic dump, for restore
+    private MrtdReader.Options armedMrtdOpts; // the BAC key/MRZ gathered before an eid-read tap
     private String tech = NfcCatalog.UNKNOWN;
 
     NfcWorkbench(MainActivity a) {
@@ -274,6 +281,12 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             case "felica-systems": out = CardOps.felicaSystems(tag); break;
             case "emv-public": out = CardOps.emvPublic(tag); break;
             case "eid-public": out = CardOps.eidPublic(tag); break;
+            case "emv-read": showEmv(card, CardOps.emvRead(tag, 4)); return;
+            case "eid-read": case "mrtd-read": {
+                MrtdReader.Options o = armedMrtdOpts != null ? armedMrtdOpts : new MrtdReader.Options();
+                showMrtd(card, CardOps.eidRead(tag, o));
+                return;
+            }
             case "write-uid": if (armedArg != null) { CardOps.writeUid(tag, armedArg, keys()); out.put("done", app().t("nfc.done.uid")); } else out.put("note", app().t("nfc.uid.need")); break;
             case "m5-read": openM5Records(container); return;
             case "conn-read": openConnection(conn); return;
@@ -555,27 +568,31 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             .setNeutralButton(app().t("msg.copy"), (d, w) -> a.copy(body)).show();
     }
 
+    /** Draws the detected card box and its op buttons (call on the main thread). */
+    private void drawCardInfo(JSONObject card) {
+        int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
+        refreshStatus(card.optString("label", tech));
+        LinearLayout ci = cardBox();
+        ci.addView(ToolPanels.label(a, card.optString("label"), 16, fg, true));
+        if (!card.optString("uid").isEmpty()) ci.addView(ToolPanels.label(a, "UID " + card.optString("uid"), 13, muted, false));
+        String meta = card.optString("sak", "").isEmpty() ? "" : "SAK " + card.optString("sak");
+        if (!card.optString("atqa", "").isEmpty()) meta += (meta.isEmpty() ? "" : " · ") + "ATQA " + card.optString("atqa");
+        if (!card.optString("ats", "").isEmpty()) meta += (meta.isEmpty() ? "" : " · ") + "ATS " + card.optString("ats");
+        if (!meta.isEmpty()) ci.addView(ToolPanels.label(a, meta, 12, muted, false));
+        if (!card.optString("memory", "").isEmpty()) ci.addView(ToolPanels.label(a, card.optString("memory"), 12, muted, false));
+        JSONArray tl = card.optJSONArray("techList");
+        if (tl != null) { StringBuilder t = new StringBuilder(); for (int i = 0; i < tl.length(); i++) t.append(i > 0 ? " · " : "").append(tl.optString(i)); ci.addView(ToolPanels.label(a, t.toString(), 12, muted, false)); }
+        result.addView(ci);
+        buildOps(card.optString("tech", tech));
+    }
+
     /** Redraws the detected card, its op buttons and any op result. */
     private void showCard(JSONObject card, JSONObject opResult) {
         Io.main(() -> {
             result.removeAllViews();
             opsBox.removeAllViews();
             int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
-            if (card != null) {
-                refreshStatus(card.optString("label", tech));
-                LinearLayout ci = cardBox();
-                ci.addView(ToolPanels.label(a, card.optString("label"), 16, fg, true));
-                if (!card.optString("uid").isEmpty()) ci.addView(ToolPanels.label(a, "UID " + card.optString("uid"), 13, muted, false));
-                String meta = card.optString("sak", "").isEmpty() ? "" : "SAK " + card.optString("sak");
-                if (!card.optString("atqa", "").isEmpty()) meta += (meta.isEmpty() ? "" : " · ") + "ATQA " + card.optString("atqa");
-                if (!card.optString("ats", "").isEmpty()) meta += (meta.isEmpty() ? "" : " · ") + "ATS " + card.optString("ats");
-                if (!meta.isEmpty()) ci.addView(ToolPanels.label(a, meta, 12, muted, false));
-                if (!card.optString("memory", "").isEmpty()) ci.addView(ToolPanels.label(a, card.optString("memory"), 12, muted, false));
-                JSONArray tl = card.optJSONArray("techList");
-                if (tl != null) { StringBuilder t = new StringBuilder(); for (int i = 0; i < tl.length(); i++) t.append(i > 0 ? " · " : "").append(tl.optString(i)); ci.addView(ToolPanels.label(a, t.toString(), 12, muted, false)); }
-                result.addView(ci);
-                buildOps(card.optString("tech", tech));
-            }
+            if (card != null) drawCardInfo(card);
             if (opResult != null) {
                 LinearLayout r = cardBox();
                 if (opResult.has("done")) r.addView(ToolPanels.label(a, "✓ " + opResult.optString("done"), 14, Ui.color(a, "@success", 0xFF2e7d32), true));
@@ -591,6 +608,120 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
                 result.addView(r);
             }
         });
+    }
+
+    /* ------------------------------------------------------- 6.5 EMV / e-ID */
+
+    /** The EMV read result: parsed holder fields per application and a scrollable tag list. */
+    private void showEmv(JSONObject card, JSONObject emv) {
+        Io.main(() -> {
+            result.removeAllViews();
+            opsBox.removeAllViews();
+            int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
+            if (card != null) drawCardInfo(card);
+            refreshStatus(cz.m5cet.app.nfc.EmvReader.emvSummary(emv));
+            JSONArray apps = emv.optJSONArray("apps");
+            if (apps == null || apps.length() == 0) {
+                LinearLayout r = cardBox();
+                r.addView(ToolPanels.label(a, cz.m5cet.app.nfc.EmvReader.emvSummary(emv), 14, fg, true));
+                r.addView(ToolPanels.label(a, app().t("nfc.readonly.help"), 12, muted, false));
+                result.addView(r);
+                return;
+            }
+            for (int i = 0; i < apps.length(); i++) {
+                JSONObject app = apps.optJSONObject(i);
+                if (app == null) continue;
+                LinearLayout box = cardBox();
+                String head = app.optString("scheme", app.optString("label", app.optString("aid", "")));
+                box.addView(ToolPanels.label(a, head, 16, fg, true));
+                if (!app.optString("label", "").isEmpty() && !app.optString("label").equals(head)) box.addView(ToolPanels.label(a, app.optString("label"), 13, muted, false));
+                addField(box, "PAN", app.optString("panMasked", app.optString("pan", "")), fg);
+                addField(box, app().t("nfc.emv.expiry"), app.optString("expiry", ""), fg);
+                addField(box, app().t("nfc.emv.cardholder"), app.optString("cardholder", ""), fg);
+                addField(box, app().t("nfc.emv.effective"), app.optString("effective", ""), fg);
+                addField(box, app().t("nfc.emv.issuer"), app.optString("issuerCountry", ""), fg);
+                if (app.has("atc")) addField(box, "ATC", String.valueOf(app.optInt("atc")), fg);
+                if (app.has("pinTryCounter")) addField(box, app().t("nfc.emv.ptc"), String.valueOf(app.optInt("pinTryCounter")), fg);
+                addField(box, "AID", app.optString("aid", ""), muted);
+                JSONArray tags = app.optJSONArray("tags");
+                if (tags != null && tags.length() > 0) {
+                    box.addView(ToolPanels.label(a, app().t("nfc.emv.tags") + " (" + tags.length() + ")", 12, muted, false));
+                    for (int j = 0; j < tags.length(); j++) {
+                        JSONObject tg = tags.optJSONObject(j);
+                        if (tg == null) continue;
+                        TextView row = ToolPanels.label(a, tg.optString("tag") + "  " + tg.optString("name") + ": " + tg.optString("value"), 12, muted, false);
+                        row.setTypeface(Typeface.MONOSPACE);
+                        box.addView(row);
+                    }
+                }
+                result.addView(box);
+            }
+            LinearLayout note = cardBox();
+            note.addView(ToolPanels.label(a, app().t("nfc.readonly.help"), 12, muted, false));
+            result.addView(note);
+        });
+    }
+
+    /** The e-ID / MRTD read result: the MRZ fields, the data groups and the face. */
+    private void showMrtd(JSONObject card, JSONObject mrtd) {
+        Io.main(() -> {
+            result.removeAllViews();
+            opsBox.removeAllViews();
+            int fg = Ui.color(a, "@onSurface", Color.BLACK), muted = Ui.color(a, "@muted", Color.GRAY);
+            if (card != null) drawCardInfo(card);
+            refreshStatus(MrtdReader.summary(mrtd));
+            LinearLayout box = cardBox();
+            JSONObject m = mrtd.optJSONObject("mrzInfo");
+            if (m == null) {
+                box.addView(ToolPanels.label(a, app().t("nfc.eid.title"), 16, fg, true));
+                box.addView(ToolPanels.label(a, mrtd.optString("message", MrtdReader.summary(mrtd)), 13, muted, false));
+            } else {
+                String name = (m.optString("givenNames", "") + " " + m.optString("surname", "")).trim();
+                box.addView(ToolPanels.label(a, name.isEmpty() ? app().t("nfc.eid.title") : name, 16, fg, true));
+                addField(box, app().t("nfc.eid.docNumber"), m.optString("documentNumber", ""), fg);
+                addField(box, app().t("nfc.eid.nationality"), m.optString("nationality", ""), fg);
+                addField(box, app().t("nfc.eid.issuer"), m.optString("issuer", ""), fg);
+                addField(box, app().t("nfc.eid.dobLabel"), m.optString("dateOfBirth", ""), fg);
+                addField(box, app().t("nfc.eid.sex"), m.optString("sex", ""), fg);
+                addField(box, app().t("nfc.eid.expiryLabel"), m.optString("dateOfExpiry", ""), fg);
+            }
+            JSONArray dg = mrtd.optJSONArray("dataGroups");
+            if (dg != null && dg.length() > 0) {
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < dg.length(); i++) sb.append(i > 0 ? ", " : "").append(dg.optString(i));
+                addField(box, app().t("nfc.eid.dataGroups"), sb.toString(), muted);
+            }
+            result.addView(box);
+            // The face, where DG2 carried one.
+            String photo = mrtd.optString("photo", "");
+            if (!photo.isEmpty()) {
+                String mime = mrtd.optString("photoMime", "");
+                Bitmap bmp = null;
+                try { byte[] img = Base64.decode(photo, Base64.DEFAULT); bmp = BitmapFactory.decodeByteArray(img, 0, img.length); } catch (RuntimeException ignored) { }
+                LinearLayout pb = cardBox();
+                pb.addView(ToolPanels.label(a, app().t("nfc.eid.photo"), 12, muted, false));
+                if (bmp != null) {
+                    ImageView iv = new ImageView(a);
+                    iv.setImageBitmap(bmp);
+                    iv.setAdjustViewBounds(true);
+                    LinearLayout.LayoutParams ip = new LinearLayout.LayoutParams(Ui.dp(a, 140), ViewGroup.LayoutParams.WRAP_CONTENT);
+                    ip.topMargin = Ui.dp(a, 6);
+                    pb.addView(iv, ip);
+                } else {
+                    // A JPEG 2000 face may not decode on Android — show the fields and note the format.
+                    pb.addView(ToolPanels.label(a, app().t("nfc.eid.photoFormat").replace("{0}", mime.isEmpty() ? "?" : mime), 13, fg, false));
+                }
+                result.addView(pb);
+            }
+            LinearLayout note = cardBox();
+            note.addView(ToolPanels.label(a, app().t("nfc.readonly.help"), 12, muted, false));
+            result.addView(note);
+        });
+    }
+
+    private void addField(LinearLayout box, String label, String value, int color) {
+        if (value == null || value.isEmpty()) return;
+        box.addView(ToolPanels.label(a, label + ": " + value, 14, color, false));
     }
 
     /** The op buttons for the detected technology (from the shared catalogue). */
@@ -629,6 +760,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             }
             case "conn-emulate": emulateConnection(); return;
             case "m5-write": a.showScreen("nfc.builder", true); return;
+            case "eid-read": case "mrtd-read": askMrtd(opts -> { armedMrtdOpts = opts; arm("eid-read"); }); return;
             case "raw-apdu": case "select-aid": askHex(app().t("nfc.apdu.prompt"), hex -> arm(op.id, -1, CardOps.unhex(hex))); return;
             case "ndef-write": askText(app().t("nfc.ndef.prompt"), t -> arm(op.id, -1, t.getBytes(StandardCharsets.UTF_8))); return;
             case "classic-write": askBlockHex(32, (blk, data) -> arm(op.id, blk, data)); return;
@@ -672,6 +804,36 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
 
     private interface OnText { void run(String s); }
     private interface OnBlock { void run(int block, byte[] data); }
+    private interface OnMrtd { void run(MrtdReader.Options opts); }
+
+    /** The e-ID / MRTD access dialog: the BAC key (document number + DOB + expiry), a CAN, or a pasted MRZ, and a "read photo" toggle. */
+    private void askMrtd(OnMrtd cb) {
+        EditText doc = new EditText(a); doc.setHint(app().t("nfc.eid.docNumber")); doc.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        EditText dob = new EditText(a); dob.setHint(app().t("nfc.eid.dob")); dob.setInputType(InputType.TYPE_CLASS_NUMBER);
+        EditText exp = new EditText(a); exp.setHint(app().t("nfc.eid.expiry")); exp.setInputType(InputType.TYPE_CLASS_NUMBER);
+        EditText can = new EditText(a); can.setHint(app().t("nfc.eid.can")); can.setInputType(InputType.TYPE_CLASS_NUMBER);
+        EditText mrz = new EditText(a); mrz.setHint(app().t("nfc.eid.mrz")); mrz.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS); mrz.setMinLines(2);
+        CheckBox photo = new CheckBox(a); photo.setText(app().t("nfc.eid.photo")); photo.setChecked(true); photo.setTextColor(Ui.color(a, "@onSurface", Color.BLACK));
+        LinearLayout l = new LinearLayout(a); l.setOrientation(LinearLayout.VERTICAL); l.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
+        l.addView(doc); l.addView(dob); l.addView(exp); l.addView(can); l.addView(mrz); l.addView(photo);
+        ScrollView sv = new ScrollView(a); sv.addView(l);
+        new android.app.AlertDialog.Builder(a).setTitle(app().t("nfc.eid.title")).setView(sv)
+            .setPositiveButton(app().t("nfc.eid.read"), (d, w) -> {
+                MrtdReader.Options o = new MrtdReader.Options();
+                String mrzText = mrz.getText().toString().trim();
+                if (!mrzText.isEmpty()) o.mrz = mrzText;
+                else {
+                    String dn = doc.getText().toString().trim(), db = dob.getText().toString().trim(), ex = exp.getText().toString().trim();
+                    if (dn.isEmpty() || db.isEmpty() || ex.isEmpty()) { a.flash("", app().t("nfc.eid.needKey"), "warn"); return; }
+                    o.key = new cz.m5cet.app.nfc.Bac.MrzKey(dn, db, ex);
+                }
+                String canText = can.getText().toString().trim();
+                if (!canText.isEmpty()) o.can = canText;
+                o.readPhoto = photo.isChecked();
+                cb.run(o);
+            })
+            .setNegativeButton(app().t("nav.close"), null).show();
+    }
 
     private void askText(String title, OnText cb) {
         EditText e = new EditText(a);

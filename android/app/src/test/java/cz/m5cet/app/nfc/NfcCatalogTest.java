@@ -67,6 +67,16 @@ public class NfcCatalogTest {
     }
 
     @Test
+    public void emvAndEidReadOps() {
+        // 6.5: the full EMV read and the BAC document read (mirror catalog.ts).
+        assertTrue(NfcCatalog.supportsOp(NfcCatalog.EMV, "emv-read"));
+        assertTrue(NfcCatalog.supportsOp(NfcCatalog.EID, "eid-read"));
+        assertEquals("read", NfcCatalog.findOp(NfcCatalog.EMV, "emv-read").kind);
+        assertEquals("read", NfcCatalog.findOp(NfcCatalog.EID, "eid-read").kind);
+        assertEquals("key", NfcCatalog.findOp(NfcCatalog.EID, "eid-read").needs);
+    }
+
+    @Test
     public void unknownTechFallsBack() {
         assertEquals(NfcCatalog.UNKNOWN, NfcCatalog.techInfo("no-such-tech").tech);
         assertTrue(NfcCatalog.opsFor("no-such-tech").isEmpty());
