@@ -81,34 +81,59 @@ set) over its max size is refused at save with the offending names.
 
 ## Example: NFC application templates
 
-The NFC tool's **Application template** button (next to *Select application* on
-ISO-DEP and EMV cards) reads one array define, `apduTemplates`. An entry is one
-of two shapes — an **op template** that runs a full dynamic read, or an **apdu
-template** that sends one raw command (6.5):
+The NFC tool's **Application template** menu (next to *Select application*, and
+**Templates** on *Card data*) reads one array define, `apduTemplates`. Since
+6.10 each entry is the **complete read of one card type**: a list of `steps` the
+tool runs one after another, recording every command and response. A step is a
+fixed command (`{ apdu }`) or a reader operation (`{ op }`) whose command depends
+on what the card answered before:
 
 ```jsonc
 // a "constant" array of objects
 [
-  // op template — the reader drives the whole read (emv-read / eid-read)
-  { "label": "Scan / Read EMV — all", "op": "emv-read",
-    "note": "PPSE → every application → GPO → records; parse the holder data." },
-  { "label": "Scan / Read e-passport — no photo", "op": "eid-read",
-    "args": { "readPhoto": false } },
-  // apdu template — one raw SELECT / command sent over ISO-DEP
-  { "label": "SELECT PPSE", "apdu": "00A404000E325041592E5359532E444446303100" },
-  { "label": "SELECT AID — Visa", "apdu": "00A4040007A000000003101000",
-    "aid": "A0000000031010" }
+  { "label": "Mastercard (credit / debit)", "card": "emv", "aid": "A0000000041010",
+    "note": "Mastercard: SELECT, counters, history, GPO, records.",
+    "steps": [
+      { "op": "select-ppse", "optional": true },          // the directory, if the card has one
+      { "op": "select-aid", "aid": "A0000000041010" },     // the application (its PDOL, its log entry)
+      { "op": "get-data", "tags": ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F6E"] },
+      { "op": "read-log" },                                // the transaction history
+      { "op": "gpo" },                                     // GET PROCESSING OPTIONS, PDOL filled, no transaction
+      { "op": "read-afl" },                                // the records the AFL lists
+      { "op": "read-files", "sfi": [1, 10], "records": [1, 16] }
+    ] },
+  { "label": "MIFARE DESFire — version", "card": "desfire",
+    "steps": [
+      { "apdu": "9060000000", "label": "GetVersion — hardware", "expect": ["91AF"] },
+      { "apdu": "90AF000000", "label": "GetVersion — software", "expect": ["91AF"] },
+      { "apdu": "90AF000000", "label": "GetVersion — UID, batch, date", "expect": ["9100"] }
+    ] },
+  { "label": "e-ID — MRZ data only", "card": "emrtd",
+    "steps": [{ "op": "eid-read", "args": { "readPhoto": false, "all": false } }] }
 ]
 ```
 
-Each item carries a `label` and either an `op` (`emv-read` / `eid-read`, with an
-optional `args`) or an `apdu` (a hex string), plus an optional `aid` and `note`.
-Picking an op template runs the full read; picking an apdu template sends that
-APDU over ISO-DEP and shows the response, on the phone and on the web.
+A template has a `label`, `steps`, and optionally `card` (`emv`, `emrtd`,
+`desfire`, `iso7816` — it groups the menu and picks the readable report),
+`note` and `aid`. A fixed command may say `expect` (the status words that count
+as success, `xx` a wildcard byte; `9000` by default — 61xx / 6Cxx are followed
+up automatically) and `optional` (a failure is a warning, the run goes on). The
+reader operations (`select-ppse`, `select-pse`, `select-aid`, `get-data`,
+`read-log`, `gpo`, `read-afl`, `read-files`, `for-each-aid`, `eid-read`) are
+described in [`nfc.md`](nfc.md#apdu-templates). Templates are **read-only**: a
+command that is not a read (VERIFY, GENERATE AC, UPDATE / WRITE, PUT DATA …) is
+refused, and the builder says so under the value.
+
+Older entries (≤ 6.9) still run, as a one-step template: `{ label, op:
+"emv-read" | "eid-read", args?, aid? }` (the `aid` is now read first) or `{
+label, apdu }` (one command per line).
 
 You do not have to type the set in by hand: the Define builder has a **Load
-standard EMV / e-ID templates** button (operator right) that builds this
+standard APDU templates** button (operator right) that builds this
 `apduTemplates` constant from the standard set
-(`client/src/lib/nfc/apdu-templates.ts`) and saves it — replacing an existing
-`apduTemplates` after a confirm, keeping every other definition. See
-[`nfc.md`](nfc.md).
+(`client/src/lib/nfc/apdu-templates.ts`, `STANDARD_APDU_TEMPLATES` — every
+payment scheme, every application of a payment card over PPSE or PSE, e-ID /
+e-passport, DESFire, ISO 7816) and saves it — replacing an existing
+`apduTemplates` after a confirm, keeping every other definition. Under an
+`apduTemplates` value the builder lists each template's problems (or says each
+can run). See [`nfc.md`](nfc.md#apdu-templates).

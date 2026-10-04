@@ -748,7 +748,7 @@
   /* A running command's live question (m5.prompt / m5.form). */
   .fn-ask { gap: 0.5rem; padding: 0.75rem; }
   .fn-ask__title { font-weight: 600; }
-  .fn-ask__text { color: hsl(var(--foreground)); }
+  .fn-ask__text { color: hsl(var(--foreground)); white-space: pre-line; overflow-wrap: anywhere; }
   .fn-ask__choices { display: flex; flex-wrap: wrap; gap: 0.4rem; }
   .fn-ask__row { display: flex; gap: 0.4rem; }
   .fn-ask__form { display: flex; flex-direction: column; gap: 0.5rem; }

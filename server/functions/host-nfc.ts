@@ -116,9 +116,31 @@ export function sanitizeNfcResult(raw: unknown): NfcResult {
   if (Array.isArray(r.records)) out.records = r.records.slice(0, 64).map((rec) => { const x = (rec && typeof rec === "object" ? rec : {}) as Record<string, unknown>; return { id: Number(x.id) || 0, type: str(x.type) as M5RecordType, oneTime: Boolean(x.oneTime), summary: strReq(x.summary) }; });
   if (r.emv && typeof r.emv === "object") out.emv = sanitizeEmv(r.emv as Record<string, unknown>);
   if (r.mrtd && typeof r.mrtd === "object") out.mrtd = sanitizeMrtd(r.mrtd as Record<string, unknown>);
+  // 6.10: an APDU template's run (app-template) — what it was, and its transcript (hex only; "X" is a masked digit).
+  if (r.template && typeof r.template === "object") {
+    const x = r.template as Record<string, unknown>;
+    out.template = { label: strReq(x.label).slice(0, 120), ok: x.ok === true, problems: strList(x.problems, 32, 300) ?? [], steps: num(x.steps) ?? 0, ms: num(x.ms) ?? 0 };
+  }
+  if (Array.isArray(r.transcript)) {
+    const hexish = (v: unknown, max: number) => strReq(v).replace(/[^0-9A-Fa-fXx]/g, "").toUpperCase().slice(0, max);
+    let used = 0;
+    const list: NonNullable<NfcResult["transcript"]> = [];
+    for (const e of r.transcript.slice(0, 3000)) {
+      const x = (e && typeof e === "object" ? e : {}) as Record<string, unknown>;
+      const command = hexish(x.command, 1024), response = hexish(x.response, 4096);
+      if (used + command.length + response.length > TRANSCRIPT_BUDGET) break;
+      used += command.length + response.length;
+      const status = x.status === "ok" || x.status === "warn" || x.status === "error" ? x.status : "error";
+      list.push({ step: num(x.step) ?? 0, label: strReq(x.label).slice(0, 160), op: strReq(x.op).slice(0, 24), command, response, sw: hexish(x.sw, 4), status, ms: num(x.ms) ?? 0 });
+    }
+    out.transcript = list;
+  }
   if (str(r.message)) out.message = str(r.message)!.slice(0, 500);
   return out;
 }
+
+/** How much transcript hex a result may carry (an e-ID read with its face is a few hundred kB). */
+const TRANSCRIPT_BUDGET = 1_500_000;
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 const B64 = /^[A-Za-z0-9+/]*={0,2}$/;

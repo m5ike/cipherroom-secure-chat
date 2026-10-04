@@ -113,10 +113,12 @@ import { M5Logo } from "./components/M5Logo";
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
 import { parseShareFragment, type ShareLinkParts, type SharePayload } from "./lib/share-link";
 import type { AttachmentMeta, ChatMessage, MessageAudit, MessageIdentity, MsgState } from "./lib/chat-types";
+import type { ChatResult, ForwardBody, ForwardRoom, ForwardTarget, NfcChatBridge } from "./components/NfcTemplatePanel";
 import { fetchCommandState, parseCommandLine, buildInputs, runCommandStream, answerInteraction, outputsToMarkdown, sendFnEventStream, sendFnReport, type Command, type FnEventBody, type Interaction, type RunDone } from "./lib/functions";
 // 6.3 nfc: an "nfc" interaction is run on this device's NFC bridge, not shown as a dialog.
 import { runNfcCommand } from "./lib/nfc/bridge";
-import type { NfcCommand } from "./lib/nfc/command";
+import type { NfcCommand, NfcResult } from "./lib/nfc/command";
+import { consentPrompt, maskNfcResult, nfcConsent, type NfcConsent } from "./lib/nfc/consent";
 import { DOCUMENT_KEY_FIELDS, documentKeyValid, needsDocumentKey, withDocumentKey } from "./lib/nfc/document-key";
 import { shareableOutputs } from "./lib/fn-outputs";
 import { historyRoomsToRead, serverRoomId } from "./lib/room-privacy";
@@ -838,6 +840,19 @@ function ChatApp() {
   const hub = hubRef.current;
   const hubRooms = useSyncExternalStore(hub.subscribe, hub.list, hub.list);
   const carryRef = useRef(new Map<string, ChatMessage[]>());
+  // 6.10: the NFC workbench's chat side (Forward / To myself) — a stable object
+  // whose calls reach this render's functions (set where they are defined).
+  const statusRef = useRef(status);
+  statusRef.current = status;
+  type NfcLatest = { sendChatPayload: typeof sendChatPayload; sendLargeFileToAll: typeof sendLargeFileToAll; currentHubTarget: typeof currentHubTarget; switchRoom: typeof switchRoom };
+  const nfcLatestRef = useRef<NfcLatest>(null as unknown as NfcLatest);
+  const nfcChatImplRef = useRef<NfcChatBridge | null>(null);
+  const nfcChat = useMemo<NfcChatBridge>(() => ({
+    rooms: () => nfcChatImplRef.current?.rooms() ?? [],
+    forward: (target, body) => nfcChatImplRef.current?.forward(target, body) ?? Promise.resolve({ ok: false }),
+    noteRoom: () => nfcChatImplRef.current?.noteRoom() ?? null,
+    noteToSelf: (body) => nfcChatImplRef.current?.noteToSelf(body) ?? Promise.resolve({ ok: false }),
+  }), []);
   const [multiSel, setMultiSel] = useState<Set<string>>(() => new Set());
   // 6.0: phone calls offered to this member (the audio bridge) and the ones taken here.
   const [phoneCalls, setPhoneCalls] = useState<PhoneCall[]>([]);
@@ -3516,9 +3531,12 @@ function ChatApp() {
       fn?: FnMeta;
       /** 5.3: the sender's own copy keeps the full outputs (the room's may leave large media out). */
       fnLocal?: FnMeta;
+      /** 6.10: sent from elsewhere (the NFC workbench) — the composer's draft and its reply stay. */
+      keepComposer?: boolean;
     } = {},
-  ) {
-    if (!keyRef.current) return;
+  ): Promise<boolean> {
+    // 6.10: true when it went (sent, relayed or queued) — the NFC forward says so.
+    if (!keyRef.current) return false;
     const { perMessage } = ttlForRoom();
     const ttlMinutes = perMessage > 0 ? perMessage : undefined;
     const createdAt = Date.now();
@@ -3560,7 +3578,7 @@ function ChatApp() {
     // The room-key copy is for away members (relay) and the outbox; peers
     // online get their own, stronger copy (deliverToPeers).
     const envelope = await sealForRoom(payload);
-    if (!envelope) return;
+    if (!envelope) return false;
     audit.push({ state: "encrypted", at: Date.now() });
     const delivered = await deliverToPeers(payload, envelope, opts.targets);
     const sent = delivered.sent;
@@ -3612,14 +3630,17 @@ function ChatApp() {
           forwardedFrom: opts.forwardedFrom,
         },
       ]);
-      setMessageInput("");
-      setReplyingTo(null);
+      if (!opts.keepComposer) {
+        setMessageInput("");
+        setReplyingTo(null);
+      }
       if (queued) {
         systemMessage(t(lang, "app.waitingForRecipient"));
       }
-    } else {
-      setNotice(t(lang, "app.queueFailed"));
+      return true;
     }
+    setNotice(t(lang, "app.queueFailed"));
+    return false;
   }
 
   /** Resolve the current recipient selection into concrete targets + names.
@@ -3756,7 +3777,16 @@ function ChatApp() {
           if (!values) { await answerInteraction(runId, i.id, { status: "timeout", message: "Cancelled" }, token); return; }
           command = withDocumentKey(command, values);
         }
-        const result = await runNfcCommand(command).catch((e) => ({ status: "error" as const, message: e instanceof Error ? e.message : String(e) }));
+        const result: NfcResult = await runNfcCommand(command).catch((e) => ({ status: "error" as const, message: e instanceof Error ? e.message : String(e) }));
+        // 6.10 (G-17): what the read found goes to the server and the model only with the
+        // holder's yes — the dialog names it and the model; masked unless they send it all.
+        const consent = nfcConsent(result);
+        if (consent.sensitive) {
+          const choice = await askNfcConsent(consent, fnRunRef.current);
+          if (!choice) { await answerInteraction(runId, i.id, { status: "denied", ...(result.card ? { card: result.card } : {}), message: "The holder did not send the card's data to the model." }, token); return; }
+          await answerInteraction(runId, i.id, choice === "full" ? result : maskNfcResult(result), token);
+          return;
+        }
         await answerInteraction(runId, i.id, result, token);
       })();
       return;
@@ -3764,12 +3794,24 @@ function ChatApp() {
     setInteraction(i);
   }
 
+  /** 6.10 (G-17): which model's run is asking (named in the consent dialog). */
+  const fnRunRef = useRef("");
+  /** 6.10 (G-17): asks the holder, locally, whether a model may have what an NFC read found — "masked", "full" or null. */
+  function askNfcConsent(c: NfcConsent, model: string): Promise<"masked" | "full" | null> {
+    const p = consentPrompt(c, model, (key, vars) => tf(lang, key, vars ?? {}));
+    return new Promise((resolve) => {
+      const id = `local_consent_${Date.now().toString(36)}`;
+      localAskRef.current = { id, resolve: (v) => resolve(p.pick(v)) };
+      setInteraction({ runId: "", id, kind: "prompt", spec: { title: p.title, text: p.text, choices: p.choices } as unknown as Interaction["spec"] });
+    });
+  }
+
   /** 6.6: asks for the document key in the interaction dialog, locally (nothing is sent). */
-  const localAskRef = useRef<{ id: string; resolve: (v: Record<string, unknown> | null) => void } | null>(null);
+  const localAskRef = useRef<{ id: string; resolve: (v: unknown) => void } | null>(null);
   function askDocumentKey(invalid = false): Promise<Record<string, unknown> | null> {
     return new Promise((resolve) => {
       const id = `local_${Date.now().toString(36)}`;
-      localAskRef.current = { id, resolve: (v) => { if (v && !documentKeyValid(v)) { void askDocumentKey(true).then(resolve); return; } resolve(v); } };
+      localAskRef.current = { id, resolve: (raw) => { const v = raw && typeof raw === "object" ? raw as Record<string, unknown> : null; if (v && !documentKeyValid(v)) { void askDocumentKey(true).then(resolve); return; } resolve(v); } };
       setInteraction({
         runId: "", id, kind: "form",
         spec: {
@@ -3792,6 +3834,7 @@ function ChatApp() {
     setReplyingTo(null);
     setCmdOpen(false);
     const fn = { keyword: command.keyword, name: command.name };
+    fnRunRef.current = `${command.name} (/${command.keyword})`;
     const token = accountToken() ?? null;
     runCmdAbortRef.current?.abort();
     const ctrl = new AbortController();
@@ -3880,6 +3923,7 @@ function ChatApp() {
   /** 5.3: a click, a form or a reply for a model's message — its entry point answers in that message's processing session. */
   async function fnEvent(meta: FnMeta, ev: Exclude<FnEventBody, { type: "error" | "log" }>): Promise<boolean> {
     if (!meta.chain) return false;
+    fnRunRef.current = `${meta.name} (/${meta.keyword})`;
     const token = accountToken() ?? null;
     let ok = false;
     await sendFnEventStream(
@@ -3921,7 +3965,7 @@ function ChatApp() {
     setInteraction(null);
     // 6.6: a local question (the document key) is answered here, never sent.
     const local = localAskRef.current;
-    if (local && local.id === i.id) { localAskRef.current = null; local.resolve(value && typeof value === "object" ? value as Record<string, unknown> : null); return; }
+    if (local && local.id === i.id) { localAskRef.current = null; local.resolve(value ?? null); return; }
     await answerInteraction(i.runId || runCmdRunIdRef.current || "", i.id, value, runCmdTokenRef.current);
   }
 
@@ -4226,6 +4270,99 @@ function ChatApp() {
     if (!file) return;
     await sendPickedFile(file);
   }
+
+  /* ------------------------------------------ 6.10: NFC outputs into the chat */
+  // The NFC workbench's template output (NfcTemplatePanel): Forward — a room I
+  // am in, then everyone or one member, as a message or a file — and To myself:
+  // a note in the history of the room on screen that only I see and that is
+  // never sent (ChatMessage.kind = "note" — the kind Android has; new in 6.10). A
+  // background room only receives (room-hub.ts), so forwarding there brings it
+  // on screen first (the smart switch) and waits until it has joined.
+  nfcLatestRef.current = { sendChatPayload, sendLargeFileToAll, currentHubTarget, switchRoom };
+
+  function nfcRooms(): ForwardRoom[] {
+    const out: ForwardRoom[] = [];
+    const cur = nfcLatestRef.current.currentHubTarget();
+    if (cur && statusRef.current === "joined") {
+      const members = [
+        ...[...peersRef.current.values()].filter((p) => p.channel?.readyState === "open").map((p) => ({ id: p.id, name: p.name || p.id.slice(-4) })),
+        ...awayPeersRef.current.map((a) => ({ id: awayKey(a.accountId), name: a.name })),
+      ];
+      out.push({ key: cur.key, label: cur.label, current: true, members });
+    }
+    for (const r of hub.list()) if (!out.some((o) => o.key === r.key) && r.status === "joined") out.push({ key: r.key, label: r.label, current: false, members: r.members ?? [] });
+    return out;
+  }
+
+  async function nfcForward(target: ForwardTarget, body: ForwardBody): Promise<ChatResult> {
+    const L = nfcLatestRef.current;
+    const until = async (cond: () => boolean, ms: number) => {
+      const end = Date.now() + ms;
+      while (!cond()) { if (Date.now() >= end) return false; await new Promise((r) => window.setTimeout(r, 250)); }
+      return true;
+    };
+    const open = (id: string) => peersRef.current.get(id)?.channel?.readyState === "open";
+    let switched = false;
+    if (L.currentHubTarget()?.key !== target.roomKey) {
+      const bg = hub.list().find((r) => r.key === target.roomKey);
+      if (!bg) return { ok: false, message: t(lang, "nfc.tpl.fwd.notJoined") };
+      await L.switchRoom(target.roomKey);
+      switched = true;
+      if (!(await until(() => statusRef.current === "joined" && Boolean(keyRef.current) && roomRef.current === bg.room, 30_000))) return { ok: false, message: t(lang, "nfc.tpl.fwd.notJoined") };
+    }
+    let targets: Set<string> | undefined;
+    let toNames: string[] | undefined;
+    let away: AwayPeer[] = [];
+    if (target.member) {
+      // The room on screen knows the member by id; after a switch the ids are new — by name.
+      const m = target.member;
+      const peerId = () => (open(m.id) ? m.id : [...peersRef.current.values()].find((p) => p.name === m.name && open(p.id))?.id);
+      const awayOne = () => awayPeersRef.current.find((a) => awayKey(a.accountId) === m.id || a.name === m.name);
+      await until(() => Boolean(peerId() || awayOne()), switched ? 10_000 : 0);
+      const id = peerId();
+      const a = id ? undefined : awayOne();
+      if (!id && !a) return { ok: false, message: m.name };
+      targets = new Set(id ? [id] : []);
+      toNames = [id ? peersRef.current.get(id)?.name || m.name : a!.name];
+      away = a ? [a] : [];
+    } else {
+      // Everyone, present or away (whatever the recipients widget says).
+      if (switched) await until(() => [...peersRef.current.values()].some((p) => open(p.id)) || awayPeersRef.current.length > 0, 8_000);
+      away = awayPeersRef.current;
+    }
+    try {
+      if (body.kind === "text") return { ok: await L.sendChatPayload(body.text, { targets, toNames, away, forwardedFrom: "NFC", keepComposer: true }) };
+      if (body.file.size > INLINE_ATTACHMENT_LIMIT) {
+        // Too big for a message: the chunked transfer, to the people online (as a file picked by hand).
+        if (targets && targets.size === 0) return { ok: false, message: t(lang, "files.chosenAway") };
+        await L.sendChatPayload(body.caption, { targets, toNames, forwardedFrom: "NFC", keepComposer: true });
+        await L.sendLargeFileToAll(body.file, targets);
+        return { ok: true };
+      }
+      const attachment = await fileToAttachment(body.file);
+      return { ok: await L.sendChatPayload(body.caption, { attachment, targets, toNames, forwardedFrom: "NFC", keepComposer: true }) };
+    } catch (err) {
+      return { ok: false, message: (err as Error).message };
+    }
+  }
+
+  async function nfcNoteToSelf(body: { text: string; file?: File }): Promise<ChatResult> {
+    const room = roomRef.current;
+    if (!room) return { ok: false, message: t(lang, "nfc.tpl.self.noRoom") };
+    let attachment: AttachmentMeta | undefined;
+    try { if (body.file) attachment = await fileToAttachment(body.file); } catch (err) { return { ok: false, message: (err as Error).message }; }
+    const at = Date.now();
+    setMessages((cur) => [...cur, {
+      id: newId("note"), senderId: myIdRef.current || "me", senderName: nameRef.current || "me",
+      text: body.text, createdAt: at, mine: true, secure: true, ...(attachment ? { attachment } : {}),
+      kind: "note", to: [t(lang, "nfc.note.onlyMe")],
+      audit: [{ state: "created", at, meta: "note to self — kept here, never sent" }],
+    }]);
+    setPersistTick((n) => n + 1);
+    return { ok: true, message: tf(lang, "nfc.tpl.self.saved", { room: activeProfileRef.current?.label ?? room }) };
+  }
+
+  nfcChatImplRef.current = { rooms: nfcRooms, forward: nfcForward, noteRoom: () => (roomRef.current ? activeProfileRef.current?.label ?? roomRef.current : null), noteToSelf: nfcNoteToSelf };
 
   function insertEmoji(emoji: string) {
     setMessageInput((current) => `${current}${emoji}`);
@@ -5439,6 +5576,7 @@ function ChatApp() {
               appVersion={APP_VERSION}
               session={status === "joined" && sessionPassphrase && room ? { room, passphrase: sessionPassphrase, name: nameRef.current } : null}
               onSystem={systemMessage}
+              chat={nfcChat}
               onConnect={(p) => {
                 setRoomInput(p.room); setPassphrase(p.passphrase); if (p.name) setName(p.name);
                 setActivePanel(null);

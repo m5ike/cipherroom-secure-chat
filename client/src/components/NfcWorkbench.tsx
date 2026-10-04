@@ -36,10 +36,12 @@ import { FnHtml } from "./fn/FnHtml";
 import { createWebExecutor, techForCardType } from "../lib/nfc/web-executor";
 import { registerNfcExecutor } from "../lib/nfc/bridge";
 import { nominalCapacity } from "../lib/nfc/m5cet-card";
-import { t as translate, type Lang } from "../lib/i18n";
+import { t as translate, tf, type Lang } from "../lib/i18n";
 import { useDefine } from "../lib/define/client";
 import { M5CardPanel } from "./M5CardPanel";
 import type { M5Record } from "../lib/nfc/m5card";
+import { runTemplate, type EidKey, type TemplateProgress, type TemplateRun } from "../lib/nfc/template-runner";
+import { TemplateMenu, TemplateRunView, type NfcChatBridge } from "./NfcTemplatePanel";
 
 export type NfcWorkbenchProps = {
   lang: Lang;
@@ -47,6 +49,8 @@ export type NfcWorkbenchProps = {
   appVersion: string;
   onConnect: (p: { room: string; passphrase: string; name?: string }) => void;
   onSystem: (message: string) => void;
+  /** 6.10: the chat side of a template's output — forward it to a room, keep it as a note to myself. */
+  chat?: NfcChatBridge | null;
 };
 
 const READER_TRANSPORT: Record<ReaderKind, TransportId> = {
@@ -87,7 +91,7 @@ function loadKeys(): string[] {
 }
 
 export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
-  const { lang, session, appVersion, onConnect, onSystem } = props;
+  const { lang, session, appVersion, onConnect, onSystem, chat } = props;
   const t = useCallback((k: string) => translate(lang, k), [lang]);
 
   const transports = useMemo<TransportInfo[]>(() => listTransports(), []);
@@ -128,11 +132,17 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
   const selectedTransport = byId.get(READER_TRANSPORT[reader]);
 
   // Register the web executor for m5.nfc while the workbench is mounted.
+  // 6.10: a model's app-template picks from the define's templates; an e-ID
+  // step without a key asks the holder in the e-ID form (as a template run here).
+  const templatesRef = useRef<unknown[]>([]);
+  const askEidRef = useRef<((label: string, args: { readPhoto?: boolean }) => Promise<EidKey | null>) | null>(null);
   useEffect(() => {
     const unregister = registerNfcExecutor(createWebExecutor({
       getTransport: () => transportRef.current,
       resolveKeys: () => keyBytesRef.current,
       allowWrites: false,
+      templates: () => templatesRef.current,
+      askEidKey: (args) => askEidRef.current?.("m5.nfc", args) ?? Promise.resolve(null),
     }));
     return unregister;
   }, []);
@@ -376,9 +386,8 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
   const [apduText, setApduText] = useState("00A404000E325041592E5359532E444446303100\n00B0000000");
   const [apduContinue, setApduContinue] = useState(false);
 
-  // Run a newline-separated APDU script (each line one hex APDU). Shared by the
-  // APDU console's Run button and the Application-template menu, so a template
-  // sends its saved APDUs immediately with its own text (not the stale state).
+  // Run a newline-separated APDU script (each line one hex APDU) — the APDU
+  // console's Run button. (6.10: templates run through template-runner.ts.)
   const runApduText = useCallback((text: string) => runTask("apdu", async () => {
     const tr = transportRef.current;
     if (!tr) { onSystem(`NFC: ${t("nfc.connectFirst")}`); return; }
@@ -421,48 +430,94 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
     setEidOpen(true); setTab("result");
   }, []);
 
+  /** The document's key from the form: the CAN, the MRZ, or its three fields (null — and a note — when none is complete). */
+  const eidKeyFromForm = useCallback((): EidKey | null => {
+    const key: EidKey = {};
+    const mrz = eidMrz.trim();
+    // 6.6: the CAN alone opens a PACE document; a passport needs the MRZ (or its three fields).
+    if (eidCan.trim()) key.can = eidCan.trim();
+    if (mrz) key.mrz = mrz;
+    else if (eidDoc.trim() && eidDob.trim() && eidExp.trim()) key.key = { documentNumber: eidDoc.trim(), dateOfBirth: eidDob.trim(), dateOfExpiry: eidExp.trim() };
+    else if (!key.can) { addLog("err", t("nfc.eid.needMrz")); onSystem(`NFC: ${t("nfc.eid.needMrz")}`); return null; }
+    return key;
+  }, [eidMrz, eidCan, eidDoc, eidDob, eidExp, addLog, onSystem, t]);
+
   const doEidRead = useCallback(() => runTask("eid-read", async () => {
     const tr = transportRef.current;
     if (!tr) { onSystem(`NFC: ${t("nfc.connectFirst")}`); return; }
     if (!tr.capabilities.apdu) { addLog("err", t("nfc.apdu.unsupported")); return; }
-    const mrz = eidMrz.trim();
-    const opts: MrtdOptions = { readPhoto: eidPhoto };
-    // 6.6: the CAN alone opens a PACE document; a passport needs the MRZ (or its three fields).
-    if (eidCan.trim()) opts.can = eidCan.trim();
-    if (mrz) opts.mrz = mrz;
-    else if (eidDoc.trim() && eidDob.trim() && eidExp.trim()) opts.key = { documentNumber: eidDoc.trim(), dateOfBirth: eidDob.trim(), dateOfExpiry: eidExp.trim() };
-    else if (!opts.can) { addLog("err", t("nfc.eid.needMrz")); onSystem(`NFC: ${t("nfc.eid.needMrz")}`); return; }
+    const key = eidKeyFromForm();
+    if (!key) return;
+    const opts: MrtdOptions = { readPhoto: eidPhoto, ...key };
     const d = await readMrtd(tr, opts);
     setMrtdResult(d); setEmvResult(null); setTab("result");
     const s = mrtdSummary(d);
     addLog(d.access === "none" ? "info" : "rx", s); onSystem(`NFC: ${s}`);
-  }), [runTask, eidMrz, eidPhoto, eidDoc, eidDob, eidExp, eidCan, addLog, onSystem, t]);
+  }), [runTask, eidKeyFromForm, eidPhoto, addLog, onSystem, t]);
 
   /* --------------------- application templates (define) --------------- */
-  // Operator-defined APDU application templates: m5mobile.define.apduTemplates,
-  // an array of { label?/name?, apdu?/apduHex? } served to the web app. The
-  // "Application template" op (next to Select application) opens this menu.
+  // 6.10: m5mobile.define.apduTemplates — each entry the complete read of one
+  // card type (apdu-templates.ts). The "Application template" op (and the
+  // Templates button on Card data) opens the menu; picking one RUNS EVERY STEP
+  // (template-runner.ts) with live progress, and the output is shown on Card
+  // data in four views with Share / Forward / To myself (NfcTemplatePanel).
   const define = useDefine();
   const [tplOpen, setTplOpen] = useState(false);
   const apduTemplates = useMemo(() => {
     const v = (define.values as Record<string, unknown>).apduTemplates;
     return Array.isArray(v) ? (v.filter((x) => x && typeof x === "object") as Record<string, unknown>[]) : [];
   }, [define.values]);
+  const [tplRun, setTplRun] = useState<TemplateRun | null>(null);
+  const [tplProgress, setTplProgress] = useState<(TemplateProgress & { template: string }) | null>(null);
+  // An e-ID step waits for the holder's key: the form on Card data answers it.
+  const eidAskRef = useRef<((key: EidKey | null) => void) | null>(null);
+  const [eidAsking, setEidAsking] = useState<string | null>(null);
+  const answerEidAsk = useCallback((key: EidKey | null) => {
+    const resolve = eidAskRef.current;
+    eidAskRef.current = null;
+    setEidAsking(null);
+    resolve?.(key);
+  }, []);
+  /** Opens the e-ID form for a template's e-ID step; resolves with the key, or null (skipped / cancelled). */
+  const askEidKeyViaForm = useCallback((label: string, args: { readPhoto?: boolean }) => new Promise<EidKey | null>((resolve) => {
+    eidAskRef.current?.(null);
+    eidAskRef.current = resolve;
+    if (typeof args.readPhoto === "boolean") setEidPhoto(args.readPhoto);
+    setEidAsking(label); setEidOpen(true); setTab("result");
+  }), []);
+  templatesRef.current = apduTemplates;
+  askEidRef.current = askEidKeyViaForm;
 
-  const applyTemplate = useCallback((tpl: Record<string, unknown>) => {
+  const runTemplateNow = useCallback((tpl: Record<string, unknown>) => {
     setTplOpen(false);
-    // 6.5 op templates drive a full dynamic read; apdu templates keep the old
-    // behaviour (load into the console and run).
-    const op = typeof tpl.op === "string" ? tpl.op : "";
-    if (op === "emv-read") { doEmvRead(); return; }
-    if (op === "eid-read") { openEidForm(tpl.args && typeof tpl.args === "object" ? tpl.args as Record<string, unknown> : undefined); return; }
-    const raw = String(tpl.apdu ?? tpl.apduHex ?? tpl.value ?? "");
-    const clean = raw.split(/\r?\n/).map((l) => l.trim().replace(/[^0-9A-Fa-f]/g, "")).filter(Boolean).join("\n");
-    if (clean.replace(/\s/g, "").length < 8) { onSystem(`NFC: ${t("nfc.tpl.bad")}`); return; }
-    setApduText(clean);
-    setTab("apdu");
-    void runApduText(clean);
-  }, [runApduText, onSystem, t, doEmvRead, openEidForm]);
+    runTask("template", async (signal) => {
+      const tr = transportRef.current;
+      if (!tr) { onSystem(`NFC: ${t("nfc.connectFirst")}`); return; }
+      const label = String(tpl.label ?? tpl.name ?? "APDU");
+      setTab("result"); setTplRun(null); setEmvResult(null); setMrtdResult(null);
+      setTplProgress({ step: 0, total: 0, label: t("nfc.scan.waiting"), op: "", exchanges: 0, template: label });
+      signal.addEventListener("abort", () => answerEidAsk(null), { once: true });
+      let run: TemplateRun;
+      try {
+        // A card must be in the field (the PN532 readers activate it here).
+        if (!identity) setIdentity(await tr.waitForCard({ timeoutMs: 30_000, signal }));
+        addLog("info", `▶ ${label}`);
+        run = await runTemplate(tr, tpl, {
+          signal,
+          onStep: (p) => setTplProgress({ ...p, template: label }),
+          askEidKey: (args) => askEidKeyViaForm(label, args),
+        });
+      } finally { setTplProgress(null); answerEidAsk(null); }
+      setTplRun(run);
+      const s = run.ok
+        ? `${label}: ${tf(lang, "nfc.tpl.done", { n: run.exchanges.length, s: (run.ms / 1000).toFixed(1) })}`
+        : `${label}: ${run.cancelled ? t("nfc.tpl.cancelled") : run.problems.join("; ")}`;
+      addLog(run.ok ? "rx" : "err", s);
+      onSystem(`NFC: ${s}`);
+    });
+  }, [runTask, identity, addLog, onSystem, t, lang, answerEidAsk, askEidKeyViaForm]);
+  const cancelTemplate = useCallback(() => { answerEidAsk(null); abortRef.current?.abort(); }, [answerEidAsk]);
+  const continueTemplate = useCallback(() => { const key = eidKeyFromForm(); if (key) answerEidAsk(key); }, [eidKeyFromForm, answerEidAsk]);
 
   /* ---------------------------- emulation ---------------------------- */
 
@@ -618,18 +673,7 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
 
               {/* Application templates (m5mobile.define.apduTemplates) */}
               {tplOpen && ops.some((o) => o.id === "app-template") ? (
-                <div className="nfcwb__tplmenu" role="menu">
-                  <div className="nfcwb__tplmenu-title"><SquareArrowDown width={13} height={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />{t("nfc.tpl.title")}</div>
-                  {apduTemplates.length === 0
-                    ? <div className="nfcwb__tplmenu-empty">{t("nfc.tpl.none")}</div>
-                    : apduTemplates.map((tpl, i) => (
-                        <button key={i} type="button" role="menuitem" className="nfcwb__tplmenu-item" disabled={!connected || !!busy}
-                          onClick={() => applyTemplate(tpl)}>
-                          <span>{String(tpl.label ?? tpl.name ?? `APDU ${i + 1}`)}</span>
-                          {tpl.aid ? <span className="nfcwb__hint">{String(tpl.aid)}</span> : null}
-                        </button>
-                      ))}
-                </div>
+                <TemplateMenu lang={lang} templates={apduTemplates} disabled={!connected || !!busy || !caps?.apdu} onPick={runTemplateNow} onClose={() => setTplOpen(false)} />
               ) : null}
 
               {/* Change UID (magic cards) */}
@@ -790,12 +834,20 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
           <div className="nfcwb__row">
             <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={doEmvRead} disabled={!connected || !!busy || !caps?.apdu}>{busy === "emv-read" ? busyIcon : <CreditCard width={14} height={14} />} {t("nfc.op.emv-read")}</button>
             <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={() => openEidForm()} disabled={!connected || !!busy || !caps?.apdu}>{busy === "eid-read" ? busyIcon : <IdCard width={14} height={14} />} {t("nfc.op.eid-read")}</button>
+            <button type="button" className="nfcwb__btn" aria-expanded={tplOpen} onClick={() => setTplOpen((v) => !v)} disabled={!connected || !!busy || !caps?.apdu}>{busy === "template" ? busyIcon : <SquareArrowDown width={14} height={14} />} {t("nfc.tpl.run")}</button>
           </div>
           {!caps?.apdu ? <div className="nfcwb__banner nfcwb__banner--warn">{t("nfc.apdu.unsupported")}</div> : null}
+          {tplOpen ? <TemplateMenu lang={lang} templates={apduTemplates} disabled={!connected || !!busy || !caps?.apdu} onPick={runTemplateNow} onClose={() => setTplOpen(false)} /> : null}
+
+          {tplRun || tplProgress ? (
+            <TemplateRunView lang={lang} run={tplRun} progress={tplProgress} onCancel={cancelTemplate} chat={chat}
+              onNotice={(s) => { addLog("info", s); onSystem(`NFC: ${s}`); }} />
+          ) : null}
 
           {eidOpen ? (
             <div className="nfcwb__eidform">
               <div className="nfcwb__section-title"><span><Fingerprint width={13} height={13} style={{ verticalAlign: "-2px", marginRight: 4 }} />{t("nfc.eid.formTitle")}</span></div>
+              {eidAsking ? <div className="nfcwb__banner nfcwb__banner--warn">{tf(lang, "nfc.tpl.eidAsk", { label: eidAsking })}</div> : null}
               <p className="nfcwb__hint">{t("nfc.eid.mrzHint")}</p>
               <div className="nfcwb__grid2">
                 <label className="nfcwb__label">{t("nfc.eid.docNumber")}
@@ -817,8 +869,17 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
                 <textarea className="nfcwb__textarea" value={eidMrz} onChange={(e) => setEidMrz(e.target.value)} spellCheck={false} placeholder={"P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<\nL898902C36UTO7408122F1204159ZE184226B<<<<<10"} />
               </label>
               <div className="nfcwb__row nfcwb__eidform-foot">
-                <label className="nfcwb__inline"><input type="checkbox" checked={eidPhoto} onChange={(e) => setEidPhoto(e.target.checked)} /> {t("nfc.eid.photo")}</label>
-                <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={doEidRead} disabled={!connected || !!busy || !caps?.apdu}>{busy === "eid-read" ? busyIcon : <ScanLine width={14} height={14} />} {t("nfc.eid.read")}</button>
+                {eidAsking ? (
+                  <>
+                    <button type="button" className="nfcwb__btn" onClick={() => answerEidAsk(null)}>{t("nfc.tpl.eidSkip")}</button>
+                    <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={continueTemplate}><ScanLine width={14} height={14} /> {t("nfc.tpl.eidContinue")}</button>
+                  </>
+                ) : (
+                  <>
+                    <label className="nfcwb__inline"><input type="checkbox" checked={eidPhoto} onChange={(e) => setEidPhoto(e.target.checked)} /> {t("nfc.eid.photo")}</label>
+                    <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={doEidRead} disabled={!connected || !!busy || !caps?.apdu}>{busy === "eid-read" ? busyIcon : <ScanLine width={14} height={14} />} {t("nfc.eid.read")}</button>
+                  </>
+                )}
               </div>
             </div>
           ) : null}
@@ -826,7 +887,7 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
           {emvResult ? <EmvResultView data={emvResult} lang={lang} /> : null}
           {mrtdResult ? <MrtdResultView data={mrtdResult} lang={lang} /> : null}
           {emvResult || mrtdResult ? <CardReportView data={emvResult ? { status: "ok", emv: emvResult } : { status: "ok", mrtd: mrtdResult! }} lang={lang} onSaved={(name) => addLog("info", t("nfc.report.saved").replace("{name}", name))} /> : null}
-          {!emvResult && !mrtdResult && !eidOpen ? <p className="nfcwb__hint">{t("nfc.result.empty")}</p> : null}
+          {!emvResult && !mrtdResult && !eidOpen && !tplRun && !tplProgress ? <p className="nfcwb__hint">{t("nfc.result.empty")}</p> : null}
         </div>
       ) : null}
 

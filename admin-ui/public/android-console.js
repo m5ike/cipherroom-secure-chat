@@ -2767,68 +2767,181 @@
     return { version: 1, updatedAt: Number(set.updatedAt) || 0, defs: (Array.isArray(set.defs) ? set.defs : []).map(defNormalizeDef) };
   }
 
-  /* 6.5: the standard EMV / e-ID APDU templates — transcribed from
-   * client/src/lib/nfc/apdu-templates.ts (STANDARD_APDU_TEMPLATES). Two kinds of
-   * entry: op templates { label, op:"emv-read"|"eid-read", args? } run a full
-   * dynamic read, apdu templates { label, apdu } send one raw SELECT/command.
-   * The operator loads them into m5mobile.define.apduTemplates with one click;
-   * the NFC workbench's "Application template" menu and m5.nfc read them. All
-   * read-only, public / holder data — no PIN, no cryptogram, no write. */
+  /* 6.10: the standard APDU templates — a TRANSCRIBED copy of
+   * client/src/lib/nfc/apdu-templates.ts (STANDARD_APDU_TEMPLATES); the test
+   * test/android-console-templates.test.ts evaluates this function and checks it
+   * equals the TypeScript set exactly, so the two cannot drift. Each template
+   * is the COMPLETE read of one card type: steps run one after another — fixed
+   * commands ({ apdu }) or reader operations ({ op }) whose command depends on
+   * the card's earlier answers (the PDOL, the AFL, the directory's AIDs). The
+   * operator loads them into m5mobile.define.apduTemplates with one click; the
+   * web and Android NFC tools run the chosen one. All read-only, public /
+   * holder data — no PIN, no cryptogram, no write. */
   function defStandardApduTemplates() {
-    const selectAid = (aid) => `00A40400${(aid.length / 2).toString(16).padStart(2, "0").toUpperCase()}${aid}00`;
-    const PPSE = "00A404000E325041592E5359532E444446303100"; // 2PAY.SYS.DDF01
-    const PSE = "00A404000E315041592E5359532E444446303100";  // 1PAY.SYS.DDF01
+    const EMV_COUNTERS = ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F6E"];
+    const EMV_APP = (aid) => [
+      { op: "select-aid", ...(aid ? { aid } : {}) },
+      { op: "get-data", tags: EMV_COUNTERS, label: "Counters and log format (GET DATA)" },
+      { op: "read-log", label: "Transaction history" },
+      { op: "gpo", label: "GET PROCESSING OPTIONS (no transaction)" },
+      { op: "read-afl", label: "Records the AFL lists" },
+      { op: "read-files", sfi: [1, 10], records: [1, 16], label: "Other short files (deep)" },
+    ];
+    const SCHEME = (label, aid, note) => ({ label, card: "emv", aid, note, steps: [{ op: "select-ppse", optional: true }, ...EMV_APP(aid)] });
     return [
-      // EMV: the full reads a card reader app offers.
-      { label: "Scan / Read EMV — all", op: "emv-read", note: "PPSE → every application → GPO → records; parse the holder data." },
-      { label: "Scan / Read EMV — Visa", op: "emv-read", aid: "A0000000031010", note: "Read and parse, favouring the Visa application." },
-      { label: "Scan / Read EMV — Mastercard", op: "emv-read", aid: "A0000000041010", note: "Read and parse, favouring the Mastercard application." },
-      { label: "Scan / Read EMV — American Express", op: "emv-read", aid: "A00000002501", note: "Read and parse, favouring the Amex application." },
-      // e-ID / e-passport (MRTD): BAC read.
-      { label: "Scan / Read e-passport (BAC)", op: "eid-read", note: "Open with the MRZ (passport no. + DOB + expiry) and read DG1 (MRZ) + DG2 (face)." },
-      { label: "Scan / Read e-ID (BAC)", op: "eid-read", note: "Open an e-ID with the MRZ or CAN and read the MRZ data and photo." },
-      { label: "Scan / Read e-passport — no photo", op: "eid-read", args: { readPhoto: false }, note: "DG1 (the MRZ data) only — skip the face for a faster read." },
-      // Raw selects for the APDU console.
-      { label: "SELECT PPSE (2PAY.SYS.DDF01)", apdu: PPSE, note: "The contactless payment directory." },
-      { label: "SELECT PSE (1PAY.SYS.DDF01)", apdu: PSE, note: "The contact payment directory." },
-      { label: "SELECT AID — Visa credit/debit", apdu: selectAid("A0000000031010"), aid: "A0000000031010" },
-      { label: "SELECT AID — Visa Electron", apdu: selectAid("A0000000032010"), aid: "A0000000032010" },
-      { label: "SELECT AID — Mastercard", apdu: selectAid("A0000000041010"), aid: "A0000000041010" },
-      { label: "SELECT AID — Maestro", apdu: selectAid("A0000000043060"), aid: "A0000000043060" },
-      { label: "SELECT AID — American Express", apdu: selectAid("A00000002501"), aid: "A00000002501" },
-      { label: "SELECT AID — JCB", apdu: selectAid("A0000000651010"), aid: "A0000000651010" },
-      { label: "SELECT AID — Discover", apdu: selectAid("A0000001523010"), aid: "A0000001523010" },
-      { label: "SELECT AID — UnionPay", apdu: selectAid("A000000333010101"), aid: "A000000333010101" },
-      { label: "GET PROCESSING OPTIONS (empty PDOL)", apdu: "80A8000002830000", note: "After a SELECT AID whose FCI has no PDOL." },
-      { label: "SELECT eMRTD application", apdu: selectAid("A0000002471001"), aid: "A0000002471001", note: "The ICAO 9303 LDS1 application (passport / e-ID)." },
-      { label: "GET CHALLENGE (8 bytes)", apdu: "0084000008", note: "First step of BAC — the chip's RND.ICC." },
-      { label: "SELECT EF.COM", apdu: "00A4020C02011E", note: "The data-group list (after the chip is opened)." },
-      { label: "SELECT EF.DG1 (MRZ)", apdu: "00A4020C020101" },
-      { label: "SELECT EF.DG2 (face)", apdu: "00A4020C020102" },
+      {
+        label: "Payment card (EMV) — every application", card: "emv",
+        note: "PPSE → each application: SELECT, counters, history, GPO, records, other files.",
+        steps: [{ op: "select-ppse", optional: true }, { op: "for-each-aid", max: 8, steps: EMV_APP() }],
+      },
+      {
+        label: "Payment card (EMV, contact / PSE) — every application", card: "emv",
+        note: "For a USB / contact reader: PSE → each application, as above.",
+        steps: [{ op: "select-pse", optional: true }, { op: "for-each-aid", max: 8, steps: EMV_APP() }],
+      },
+      SCHEME("Visa (credit / debit)", "A0000000031010", "Visa: SELECT, counters, history, GPO, records."),
+      SCHEME("Visa Electron", "A0000000032010", "Visa Electron: SELECT, counters, history, GPO, records."),
+      SCHEME("V PAY", "A0000000032020", "V PAY: SELECT, counters, history, GPO, records."),
+      SCHEME("Mastercard (credit / debit)", "A0000000041010", "Mastercard: SELECT, counters, history, GPO, records."),
+      SCHEME("Maestro", "A0000000043060", "Maestro: SELECT, counters, history, GPO, records."),
+      SCHEME("American Express", "A00000002501", "Amex: SELECT, counters, history, GPO, records."),
+      SCHEME("JCB", "A0000000651010", "JCB: SELECT, counters, history, GPO, records."),
+      SCHEME("Discover / Diners", "A0000001523010", "Discover: SELECT, counters, history, GPO, records."),
+      SCHEME("UnionPay (debit)", "A000000333010101", "UnionPay debit: SELECT, counters, history, GPO, records."),
+      SCHEME("UnionPay (credit)", "A000000333010102", "UnionPay credit: SELECT, counters, history, GPO, records."),
+      {
+        label: "e-ID / e-passport (PACE or BAC) — everything", card: "emrtd",
+        note: "EF.CardAccess → PACE with the CAN (or the MRZ), else BAC → EF.COM, EF.SOD, DG1 (MRZ), DG2 (face), DG7, DG11–DG15 … (the key is asked on the device).",
+        steps: [{ op: "eid-read", args: { readPhoto: true, all: true } }],
+      },
+      {
+        label: "e-ID / e-passport — MRZ data only (fast)", card: "emrtd",
+        note: "Opens the document and reads EF.COM, EF.SOD and DG1 (the MRZ data) — no photo.",
+        steps: [{ op: "eid-read", args: { readPhoto: false, all: false } }],
+      },
+      {
+        label: "MIFARE DESFire — version, applications, free memory", card: "desfire",
+        note: "Native DESFire commands wrapped in ISO 7816 (no keys): GetVersion (3 frames), GetApplicationIDs, GetFreeMemory, GetKeySettings of the PICC.",
+        steps: [
+          { apdu: "9060000000", label: "GetVersion — hardware", expect: ["91AF"] },
+          { apdu: "90AF000000", label: "GetVersion — software", expect: ["91AF"] },
+          { apdu: "90AF000000", label: "GetVersion — UID, batch, production date", expect: ["9100"] },
+          { apdu: "906A000000", label: "GetApplicationIDs", expect: ["9100", "91AF"], optional: true },
+          { apdu: "906E000000", label: "GetFreeMemory", expect: ["9100"], optional: true },
+          { apdu: "9045000000", label: "GetKeySettings (PICC)", expect: ["9100"], optional: true },
+        ],
+      },
+      {
+        label: "Smart card (ISO 7816-4) — master file, EF.DIR, EF.ATR", card: "iso7816",
+        note: "Any ISO-DEP card: SELECT MF, the application directory EF.DIR (its records) and EF.ATR — what a generic card publishes.",
+        steps: [
+          { apdu: "00A4000C023F00", label: "SELECT MF (3F00)", optional: true },
+          { apdu: "00A4020C022F00", label: "SELECT EF.DIR (2F00)", optional: true },
+          { apdu: "00B2010400", label: "READ RECORD 1 of EF.DIR", optional: true },
+          { apdu: "00B2020400", label: "READ RECORD 2 of EF.DIR", optional: true },
+          { apdu: "00B2030400", label: "READ RECORD 3 of EF.DIR", optional: true },
+          { apdu: "00B2040400", label: "READ RECORD 4 of EF.DIR", optional: true },
+          { apdu: "00A4020C022F01", label: "SELECT EF.ATR (2F01)", optional: true },
+          { apdu: "00B0000000", label: "READ BINARY EF.ATR", optional: true },
+        ],
+      },
     ];
   }
 
-  /** The templates as a DefNode: an array of objects, each entry a string (or a
-   *  boolean for args.readPhoto). Mirrors the schema's DefNode / DefEntry shape
-   *  exactly ({ key, node }; a string value is { type:"string", value }). */
+  /** Any JSON value as a DefNode (the schema's shape: { type, value } scalars,
+   *  { type:"object", entries:[{ key, node }] }, { type:"array", items }); a
+   *  whole number is an integer, any other number a float. */
+  function defNodeOfValue(v) {
+    if (Array.isArray(v)) return { type: "array", items: v.map(defNodeOfValue) };
+    if (v && typeof v === "object") return { type: "object", entries: Object.keys(v).map((key) => ({ key, node: defNodeOfValue(v[key]) })) };
+    if (typeof v === "boolean") return { type: "boolean", value: v };
+    if (typeof v === "number") return Number.isInteger(v) ? { type: "integer", value: v } : { type: "float", value: v };
+    return { type: "string", value: v === null || v === undefined ? "" : String(v) };
+  }
+
+  /** The standard templates as the DefNode m5mobile.define.apduTemplates holds. */
   function defApduTemplatesNode() {
-    const strEntry = (key, value) => ({ key, node: { type: "string", value: String(value) } });
-    const items = defStandardApduTemplates().map((t) => {
-      const entries = [strEntry("label", t.label)];
-      if (t.op) entries.push(strEntry("op", t.op));
-      if (t.apdu) entries.push(strEntry("apdu", t.apdu));
-      if (t.aid) entries.push(strEntry("aid", t.aid));
-      if (t.note) entries.push(strEntry("note", t.note));
-      if (t.args && typeof t.args === "object") {
-        const argEntries = Object.keys(t.args).map((k) => ({
-          key: k,
-          node: typeof t.args[k] === "boolean" ? { type: "boolean", value: t.args[k] } : { type: "string", value: String(t.args[k]) },
-        }));
-        entries.push({ key: "args", node: { type: "object", entries: argEntries } });
+    return defNodeOfValue(defStandardApduTemplates());
+  }
+
+  /* 6.10: templateSteps / templateProblems — transcribed from apdu-templates.ts
+   * (the same test checks they agree): what is wrong with a template, shown
+   * under an apduTemplates value before the apps refuse to run it. */
+  function defTemplateSteps(x) {
+    if (Array.isArray(x.steps) && x.steps.length) return x.steps;
+    if (x.op === "emv-read") return [{ op: "emv-read", args: { ...(x.args || {}), ...(x.aid ? { aid: x.aid } : {}) } }];
+    if (x.op === "eid-read") return [{ op: "eid-read", args: x.args || {} }];
+    const raw = String(x.apdu ?? x.apduHex ?? "");
+    return raw.split(/\r?\n/).map((l) => l.replace(/[^0-9A-Fa-f]/g, "")).filter((hx) => hx.length >= 8 && hx.length % 2 === 0).map((hx) => ({ apdu: hx.toUpperCase() }));
+  }
+  /* G-18: READ_ONLY_COMMANDS / readCommand / commandProblem of apdu-templates.ts (and
+   * Android's ApduTemplates) — a template only reads: "not a read command: 00 20 (VERIFY)". */
+  const DEF_READ_ONLY = {
+    iso: { A4: "SELECT", B0: "READ BINARY", B2: "READ RECORD", CA: "GET DATA", C0: "GET RESPONSE" },
+    emv: { A8: "GET PROCESSING OPTIONS", CA: "GET DATA", C0: "GET RESPONSE" },
+    desfire: { "60": "GetVersion", AF: "GetVersion (additional frame)", "6A": "GetApplicationIDs", "6E": "GetFreeMemory", "45": "GetKeySettings" },
+    channel: { "84": "GET CHALLENGE", "82": "EXTERNAL AUTHENTICATE", "22": "MANAGE SECURITY ENVIRONMENT", "86": "GENERAL AUTHENTICATE", B1: "READ BINARY (odd)" },
+  };
+  const DEF_INS_NAMES = {
+    0x20: "VERIFY", 0x21: "VERIFY", 0x24: "CHANGE REFERENCE DATA", 0x2c: "RESET RETRY COUNTER", 0xae: "GENERATE AC",
+    0xd6: "UPDATE BINARY", 0xd7: "UPDATE BINARY", 0xdc: "UPDATE RECORD", 0xdd: "UPDATE RECORD", 0xe2: "APPEND RECORD",
+    0xda: "PUT DATA", 0xdb: "PUT DATA", 0xd0: "WRITE BINARY", 0xd1: "WRITE BINARY", 0xd2: "WRITE RECORD", 0xe0: "CREATE FILE",
+    0xe4: "DELETE FILE", 0x0e: "ERASE BINARY", 0x0f: "ERASE BINARY", 0x44: "ACTIVATE FILE", 0x04: "DEACTIVATE FILE",
+    0xe6: "TERMINATE DF", 0xe8: "TERMINATE CARD", 0x88: "INTERNAL AUTHENTICATE", 0x84: "GET CHALLENGE", 0x82: "EXTERNAL AUTHENTICATE",
+    0x86: "GENERAL AUTHENTICATE", 0x22: "MANAGE SECURITY ENVIRONMENT", 0x2a: "PERFORM SECURITY OPERATION", 0x1e: "APPLICATION BLOCK",
+    0x18: "APPLICATION UNBLOCK", 0x16: "CARD BLOCK", 0xb1: "READ BINARY (odd)",
+  };
+  const DEF_DESFIRE_NAMES = {
+    0xfc: "FormatPICC", 0xda: "DeleteApplication", 0xca: "CreateApplication", 0x3d: "WriteData", 0x3b: "WriteRecord",
+    0xc4: "ChangeKey", 0x54: "ChangeKeySettings", 0x0a: "Authenticate", 0x1a: "AuthenticateISO", 0xaa: "AuthenticateAES",
+    0xdf: "DeleteFile", 0x5f: "ChangeFileSettings", 0x0c: "Credit", 0xdc: "Debit", 0xc7: "CommitTransaction", 0x5c: "SetConfiguration",
+  };
+  function defReadCommand(cla, ins) {
+    const i = (ins & 0xff).toString(16).padStart(2, "0").toUpperCase();
+    if ((cla & 0xe0) === 0x00 || (cla & 0xc0) === 0x40) return i in DEF_READ_ONLY.iso;
+    if ((cla & 0xf0) === 0x80) return i in DEF_READ_ONLY.emv;
+    if (cla === 0x90) return i in DEF_READ_ONLY.desfire;
+    return false;
+  }
+  function defCommandProblem(apdu) {
+    const hx = String(apdu == null ? "" : apdu).replace(/\s/g, "").toUpperCase();
+    if (hx.length < 4 || !/^[0-9A-F]+$/.test(hx)) return `not a read command: ${hx}`;
+    const cla = parseInt(hx.slice(0, 2), 16), ins = parseInt(hx.slice(2, 4), 16);
+    if (defReadCommand(cla, ins)) return null;
+    const name = cla === 0x90 ? DEF_DESFIRE_NAMES[ins] : DEF_INS_NAMES[ins];
+    return `not a read command: ${hx.slice(0, 2)} ${hx.slice(2, 4)}${name ? ` (${name})` : ""}`;
+  }
+  function defTemplateProblems(t) {
+    const out = [];
+    if (!t || typeof t !== "object") return ["not an object"];
+    if (typeof t.label !== "string" || !t.label.trim()) out.push("no label");
+    const steps = defTemplateSteps(t);
+    if (!steps.length) out.push("nothing to run: no steps, op or apdu");
+    const walk = (list, depth) => {
+      if (depth > 2) { out.push("for-each-aid nested too deep"); return; }
+      for (const s of list) {
+        if ("apdu" in s) {
+          const hx = String(s.apdu).replace(/\s/g, "");
+          if (!/^[0-9A-Fa-f]{8,522}$/.test(hx) || hx.length % 2) { out.push(`bad command ${String(s.apdu).slice(0, 20)}`); continue; }
+          const refused = defCommandProblem(hx);
+          if (refused) out.push(refused);
+          continue;
+        }
+        if (s.op === "select-aid" && s.aid !== undefined && !/^[0-9A-Fa-f]{10,32}$/.test(s.aid)) out.push(`bad AID ${s.aid}`);
+        if (s.op === "get-data" && (!Array.isArray(s.tags) || !s.tags.every((g) => /^[0-9A-Fa-f]{4}$/.test(g)))) out.push("get-data needs 2-byte tags");
+        if (s.op === "for-each-aid") walk(Array.isArray(s.steps) ? s.steps : [], depth + 1);
       }
-      return { type: "object", entries };
-    });
-    return { type: "array", items };
+    };
+    walk(steps, 0);
+    return out;
+  }
+
+  /** The apduTemplates check under the value: how many templates, and each one's problems. */
+  function defTemplatesCheck(value) {
+    if (!Array.isArray(value)) return { ok: false, lines: ["apduTemplates should be an array of templates — { label, card?, note?, steps: [...] }."] };
+    const lines = [];
+    value.forEach((t, i) => { const p = defTemplateProblems(t); if (p.length) lines.push(`#${i + 1} ${t && typeof t === "object" && t.label ? t.label : "(no label)"}: ${p.join("; ")}`); });
+    return { ok: !lines.length, lines: lines.length ? lines : [`${value.length} template${value.length === 1 ? "" : "s"} — each can run.`] };
   }
 
   const defTypeBadge = (type) => h("span", { class: `and-tbadge and-tbadge--${type}`, title: type }, DEF_TBADGE[type] || "?");
@@ -3129,9 +3242,9 @@
     }
 
     async function loadApduTemplates() {
-      const def = { name: "apduTemplates", kind: "constant", node: defApduTemplatesNode(), maxSize: 0, scope: "both", note: "Standard EMV / e-ID APDU templates (6.5)." };
+      const def = { name: "apduTemplates", kind: "constant", node: defApduTemplatesNode(), maxSize: 0, scope: "both", note: "Standard APDU templates (6.10): the complete read of each card type — EMV, e-ID, DESFire, ISO 7816." };
       const idx = defineSet.defs.findIndex((d) => d.name === "apduTemplates");
-      if (idx >= 0 && !confirm("A definition named \"apduTemplates\" already exists. Replace it with the standard EMV / e-ID set? Other definitions are kept.")) return;
+      if (idx >= 0 && !confirm("A definition named \"apduTemplates\" already exists. Replace it with the standard set (EMV, e-ID, DESFire, ISO 7816)? Other definitions are kept.")) return;
       if (idx >= 0) defineSet.defs[idx] = def; else defineSet.defs.push(def);
       defineSel = idx >= 0 ? idx : defineSet.defs.length - 1;
       try {
@@ -3141,7 +3254,7 @@
         defineError = "";
         defineSel = Math.max(0, defineSet.defs.findIndex((d) => d.name === "apduTemplates"));
         const count = defStandardApduTemplates().length;
-        toast(`Loaded ${count} standard EMV / e-ID templates into m5mobile.define.apduTemplates.`, "ok");
+        toast(`Loaded ${count} standard APDU templates (EMV, e-ID, DESFire, ISO 7816) into m5mobile.define.apduTemplates.`, "ok");
         renderNav(); renderContent(); updateStatus();
       } catch (err) {
         defineError = err.message;
@@ -3216,23 +3329,32 @@
       const valueBox = h("div", {});
       defBuildNode(valueBox, def.node, changed, { readOnly: ro, depth: 0, onRetype: renderNav });
       const defSize = h("div", { class: "small and-def-size and-def-size--total" });
+      // 6.10: an apduTemplates value says, template by template, what would keep it from running.
+      const tplCheck = h("div", { class: "small and-def-tplcheck" });
       const updateDefSize = () => {
-        const bytes = defBytes(defMaterialize(def.node));
+        const value = defMaterialize(def.node);
+        const bytes = defBytes(value);
         const max = def.maxSize || 0;
         const over = max > 0 && bytes > max;
         defSize.textContent = `Materialized size: ${bytes} B${max ? ` / ${max} B limit` : " · unlimited"}${over ? " — over the limit; the server will reject the save" : ""}`;
         defSize.classList.toggle("is-over", over);
+        clear(tplCheck);
+        if (def.name === "apduTemplates") {
+          const check = defTemplatesCheck(value);
+          tplCheck.classList.toggle("is-err", !check.ok);
+          tplCheck.append(h("strong", {}, check.ok ? "APDU templates: " : "APDU templates — problems: "), ...check.lines.map((l) => h("div", {}, l)));
+        }
       };
       sizeFn = updateDefSize;
       updateDefSize();
       content.append(h("div", { class: "card stack" },
         h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Value"), h("div", { class: "card__hint" }, "The type, and the value the definition holds. Objects, classes and arrays nest.")),
-        valueBox, defSize));
+        valueBox, defSize, tplCheck));
     }
 
     saveBtn = edit ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: doSave }, "Save") : null;
     revertBtn = edit ? h("button", { class: "btn btn--sm", type: "button", onclick: revert }, "Revert") : null;
-    const templatesBtn = edit ? h("button", { class: "btn btn--sm", type: "button", title: "Build m5mobile.define.apduTemplates from the standard EMV / e-ID set and save it", onclick: loadApduTemplates }, "Load standard EMV / e-ID templates") : null;
+    const templatesBtn = edit ? h("button", { class: "btn btn--sm", type: "button", title: "Build m5mobile.define.apduTemplates from the standard set — the complete read of each card type (EMV, e-ID, DESFire, ISO 7816) — and save it", onclick: loadApduTemplates }, "Load standard APDU templates") : null;
     body.append(h("div", { class: "card" },
       h("div", { class: "card__head" },
         h("div", { class: "card__title" }, "Typed definitions (m5mobile.define)"),

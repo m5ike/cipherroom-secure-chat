@@ -77,15 +77,14 @@ Common to every card: **scan**, **read UID**, **read public data**, and a raw
   and PACE 6.6): opens the holder's own chip with the key they supply and reads
   every data group a reader may — see [e-ID / e-passport](#e-id--e-passport).
   No cloning, no signing.
-- **ISO-DEP / EMV — Application template** — next to *Select application* a
-  filled-down-arrow button drops a menu of the operator's saved templates
-  (`m5mobile.define.apduTemplates` — see [define.md](define.md) and
-  [APDU templates](#apdu-templates)). Two kinds of entry: an **op template**
-  (`{ label, op }`) runs a full dynamic read (`emv-read` / `eid-read`); an
-  **apdu template** (`{ label, apdu }`) sends one raw SELECT/command over
-  ISO-DEP and shows the response. On the phone it is a popup menu, on the web a
-  dropdown that loads and runs the entry in the APDU console. Read-only,
-  standard SELECT/APDU — the same stance as the rest of the tool.
+- **ISO-DEP / EMV — Application template** — next to *Select application* (and
+  as **Templates** on *Card data*, for any card) a menu of the operator's saved
+  templates (`m5mobile.define.apduTemplates` — see [define.md](define.md) and
+  [APDU templates](#apdu-templates)), grouped by card type. 6.10: picking one
+  **runs every step** of it — the complete read of that card type — with live
+  progress, and shows the output in four views (raw in/out, raw, JSON,
+  readable) with Share, Forward and To-myself. Read-only — the same stance as
+  the rest of the tool.
 - **Change UID** — set the UID / block 0 on a Gen1a (backdoor) or Gen2 magic
   card you own.
 
@@ -302,25 +301,138 @@ the security objects and the files.
 
 ### APDU templates
 
-The **Application template** button reads one array define,
-`m5mobile.define.apduTemplates` — the operator's saved set of templates. An
-entry is one of two shapes:
+The **Application template** menu reads one array define,
+`m5mobile.define.apduTemplates` — the operator's saved set. 6.10: a template is
+the **complete read of one card type**, and picking it runs **all its steps**
+one after another, recording every command and response (web:
+`client/src/lib/nfc/template-runner.ts`; Android ports the same contract,
+`client/src/lib/nfc/apdu-templates.ts`).
 
-- **op template** — `{ label, op: "emv-read" | "eid-read", args? }`. Runs a full
-  dynamic read; the reader drives the whole sequence itself (PDOL / AFL for EMV,
-  PACE or BAC + secure messaging for e-ID). `args` carries defaults, e.g.
-  `{ readPhoto: false }` for an MRZ-only e-ID read.
-- **apdu template** — `{ label, apdu: "<hex>" }`. Sends one raw command (a
-  `SELECT`, a `GET PROCESSING OPTIONS`…) over ISO-DEP and shows the response in
-  the APDU console.
+**Why fixed commands alone are not enough.** Before 6.10 the standard set was
+single commands — one SELECT, one GET CHALLENGE — that read nothing by
+themselves. A payment card's read depends on its own answers: the PDOL that GET
+PROCESSING OPTIONS must fill, the AFL that says which records to read, the AIDs
+its directory lists; and an e-ID speaks only through secure messaging opened
+with the holder's key. So a template mixes **fixed commands** and **reader
+operations** — the EMV / e-ID readers' own steps (`readEmv()` is built from the
+same functions, `cards/emv.ts`).
 
-Either may also carry `aid` (for display) and `note` (one line). The standard
-set — PPSE/PSE selects, the common payment-scheme AIDs, the eMRTD application
-and EF selects, plus the full `emv-read` / `eid-read` ops —
-ships in `client/src/lib/nfc/apdu-templates.ts`
-(`STANDARD_APDU_TEMPLATES`). An operator loads it in one click with
-**Console › Android › Define › Load standard EMV / e-ID templates** (see
-[define.md](define.md)); the console writes it as the `apduTemplates` constant.
+```jsonc
+{ "label": "Payment card (EMV) — every application", "card": "emv",
+  "note": "PPSE → each application: SELECT, counters, history, GPO, records, other files.",
+  "steps": [
+    { "op": "select-ppse", "optional": true },
+    { "op": "for-each-aid", "max": 8, "steps": [
+      { "op": "select-aid" },
+      { "op": "get-data", "tags": ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F6E"], "label": "Counters and log format (GET DATA)" },
+      { "op": "read-log", "label": "Transaction history" },
+      { "op": "gpo", "label": "GET PROCESSING OPTIONS (no transaction)" },
+      { "op": "read-afl", "label": "Records the AFL lists" },
+      { "op": "read-files", "sfi": [1, 10], "records": [1, 16], "label": "Other short files (deep)" } ] } ] }
+```
+
+A template: `label`, `steps`, optional `card` (`emv` · `emrtd` · `desfire` ·
+`iso7816` — groups the menu, picks the readable report), `note`, `aid`. The steps:
+
+| Step | What it does |
+|---|---|
+| `{ apdu, label?, optional?, expect? }` | A fixed command (hex). `expect`: the status words that count as success (`9000` by default; `xx` = any byte). 61xx → GET RESPONSE and 6Cxx → sent again with the right Le are followed automatically, and every APDU of that dance is recorded. |
+| `select-ppse` | SELECT 2PAY.SYS.DDF01 (contactless directory) → the AIDs it lists, by priority. |
+| `select-pse` | SELECT 1PAY.SYS.DDF01 (contact directory) → its short file (tag 88), whose records list the AIDs. |
+| `select-aid` | SELECT `aid` — or, inside `for-each-aid`, the current one. Keeps the FCI (PDOL, label, log entry). |
+| `get-data` | GET DATA (80 CA) of each `tags` entry — ATC, last online ATC, PIN try counter (read as a counter, never verified), log entry and format… A tag the card lacks is no error. |
+| `read-log` | The transaction log: 9F4D (SFI, count) + 9F4F (format) — asked if not known yet — then READ RECORD of each entry, decoded. |
+| `gpo` | GET PROCESSING OPTIONS with the PDOL filled with a terminal's neutral defaults → AIP + AFL. No transaction is made. |
+| `read-afl` | READ RECORD of every record the AFL lists. |
+| `read-files` | READ RECORD over `sfi` × `records` (a deep read beyond the AFL); a file stops at its first "not found". |
+| `for-each-aid` | Runs its `steps` for every AID the directory listed — else the template's `aids`, else the well-known payment AIDs that answer a SELECT — at most `max` (8). |
+| `eid-read` | The e-ID / e-passport read (`args.readPhoto`, `args.all`): EF.CardAccess → PACE (CAN / MRZ) or BAC → secure messaging → EF.COM, EF.SOD, every readable DG. The key is asked on the device (the workbench's e-ID form; `m5.nfc`: the model's `mrz` / `can`, else the holder types it). |
+| `emv-read` | The whole 6.6 EMV read in one step (older templates). |
+
+**When a step fails.** An `optional` step that fails is a warning; the run goes
+on. A failed SELECT (`select-*`) or fixed command ends the run — inside
+`for-each-aid` it ends that application and the loop goes on. A refused GET
+PROCESSING OPTIONS is an error, but the files are still read. `get-data`,
+`read-log`, `read-afl`, `read-files` only gather — what the card lacks is no
+error. An e-ID read without a key (or with a wrong one) fails without reading.
+Every problem is listed with the output.
+
+**Read-only (G-18).** One allowlist (`READ_ONLY_COMMANDS`, `readCommand`,
+`commandProblem` in `apdu-templates.ts`; the console and Android's
+`ApduTemplates` have the same): the interindustry class (CLA 00–1F, 40–7F)
+SELECT A4, READ BINARY B0, READ RECORD B2, GET DATA CA, GET RESPONSE C0; EMV's
+class (CLA 80–8F) GET PROCESSING OPTIONS A8, GET DATA CA, GET RESPONSE C0;
+DESFire (CLA 90) GetVersion 60 (+ its frames AF), GetApplicationIDs 6A,
+GetFreeMemory 6E, GetKeySettings 45. The document's secure channel — GET
+CHALLENGE 84, EXTERNAL AUTHENTICATE 82, MSE 22, GENERAL AUTHENTICATE 86 and the
+odd READ BINARY B1 — is allowed only inside `eid-read`. Anything else — VERIFY,
+GENERATE AC, INTERNAL AUTHENTICATE, UPDATE / WRITE / APPEND / ERASE, PUT DATA,
+CREATE / DELETE, a DESFire write or key change — makes `templateProblems()`
+refuse the template with *not a read command: 00 20 (VERIFY)* (the menu shows it
+disabled with the reason, the console's Define builder lists it); the runner
+checks every fixed command again, and every APDU — the readers' own included —
+passes the list on its way to the card (a refused one is never sent).
+
+**Older entries** (≤ 6.9) still run as one-step templates: `{ label, op:
+"emv-read", aid? }` (the `aid` is read first — before 6.10 it was ignored),
+`{ label, op: "eid-read", args? }`, `{ label, apdu }` (one command per line —
+shown as *older entry* in the menu).
+
+**The standard set** (`STANDARD_APDU_TEMPLATES`): every application of a payment
+card (PPSE, and PSE for a contact reader); one template per scheme — Visa, Visa
+Electron, V PAY, Mastercard, Maestro, American Express, JCB, Discover / Diners,
+UnionPay debit and credit; e-ID / e-passport everything, and MRZ data only;
+MIFARE DESFire (version, applications, free memory, key settings); a generic ISO
+7816-4 card (MF, EF.DIR's records, EF.ATR). An operator loads it in one click:
+**Console › Android › Define › Load standard APDU templates** (see
+[define.md](define.md)); the console's copy is checked against this one by a
+test (`test/android-console-templates.test.ts`), so they cannot drift.
+
+**The output** — four views of one run (`template-views.ts`):
+
+- **Raw in/out** — every command and its response, the same text as on
+  Android: `→ 00A4040007A000000004101000` / `← 6F1E… 9000 (OK)` (the status
+  word explained by `describeSw`); a command the card did not answer shows
+  `← (no answer)`; an e-ID's secure-messaging APDUs appear as they go to the
+  card (protected).
+- **Raw** — the responses only, `<data> <SW>` per line.
+- **JSON** — the exchanges: `[{ step, label, op, command, response, sw, status, ms }]`;
+  `step` is the number of the step that sent the APDU (in the order the steps
+  ran), `label` its label — inside `for-each-aid` prefixed with the AID
+  (`A0000000041010 · GET PROCESSING OPTIONS …`), in an e-ID read with what was
+  being read (`… · EF.COM`, `… · DG1`).
+- **Readable** — for EMV and e-ID the 6.6 card report; for any other card a
+  generic report: each step's answer as BER-TLV with the EMV / ISO 7816 names,
+  a DESFire's GetVersion decoded (vendor, type, version — EV1 / EV2 / EV3 —,
+  storage, UID, batch, production week and year), its applications, free
+  memory and key settings, every status word explained (ISO 7816-4, DESFire 91xx).
+
+**Card numbers and track data are masked (G-19)** in every view, the
+responses of the io / raw / json transcript included (`pan-mask.ts`, the same
+rules as Android): a PAN read anywhere (5A, Track 2 57 / 9F6B, Track 1 56) keeps
+its first six and last four digits — in BCD and in ASCII hex alike — and the
+track data (57 / 9F6B after the "D", the rest of 56, all of 9F1F / 9F20) is "X".
+The hex stays a string of the same length, so the JSON stays valid. A notice
+above the views says so, and the **Full card numbers** switch — shown only when
+something was masked, off by default and again after every run — shows the
+bytes as read; what is shared, forwarded or kept follows it. The readable
+view's 6.6 card report masks the same way.
+
+**Three actions** above the output (icons):
+
+- **Share** — the system share sheet (Web Share): the view's text, or the JSON
+  as a `.json` file; without a share sheet the text is copied and saved as a file.
+- **Forward** — pick a room you are in (the one on screen or one kept in the
+  background — sending there brings it on screen first), then *everyone* or one
+  member, and send the view's text as a chat message, or the JSON as a file (a
+  text over 60 000 characters goes as a `.txt` file). End-to-end encrypted like
+  any message; marked *Forwarded from NFC*.
+- **To myself** — a note in the history of the room on screen that **only you
+  see and that is never sent**: a local message kind `note` (web:
+  `ChatMessage.kind = "note"`, the same kind as on Android; shown as *private
+  to: only me — a note, not sent*), kept with the room's history by the room's
+  retention (none when the history is ephemeral). A message of that kind
+  arriving from the network is dropped.
 
 ## The M5Cet card
 
@@ -403,6 +515,17 @@ const readers = await m5.nfc.enum();           // readers + technologies now
 Python mirrors it (`await m5.nfc.scan()`, `m5.nfc.m5.read(...)`,
 `m5.nfc.emv.read(...)`, `m5.nfc.eid.read(...)`, `m5.nfc.emv.report(...)`).
 `m5.nfc.reader(kind)` scopes the following calls to a reader.
+
+6.10: a model can run an [APDU template](#apdu-templates) too —
+`await m5.nfc.read({ op: "app-template", args: { label } })` (one of
+`m5mobile.define.apduTemplates`; or `args.index`, or the model's own
+`args.template`; an e-ID step takes `mrz` / `can` from `args`, else the holder
+types it). On the web it runs through the same runner as the workbench; the
+answer adds `template: { label, ok, problems, steps, ms }` and `transcript` (the
+exchanges, as the JSON view) to the usual `emv` / `mrtd`. Templates and raw
+APDUs (`raw-apdu`) only read — a command off the read-only list is `denied`.
+Before any of it reaches the model the holder is asked
+([privacy](#privacy-and-scope)).
 
 ### `m5.nfc.emv` / `m5.nfc.eid` — the reads (6.5, deep 6.6)
 
@@ -683,6 +806,21 @@ What 6.6 adds to think about:
   The built-in commands' visibility is *caller*: the report is shown only to the
   person who ran it, not posted to the room.
 - **Masking is for the report.** `fullPan` is off by default; the read itself
-  (`data`) carries the PAN.
+  (`data`) carries the PAN — 6.10: unless the holder sends it masked (below).
+- **6.10: a model gets a read only with the holder's yes (G-17).** When a
+  model's NFC request found card data (an EMV read, an e-ID, a template's
+  transcript, raw bytes), the web app asks before answering — naming the model
+  and exactly what would go (e.g. *Mastercard: card number 541333••••••0011,
+  expires 2028-12 · the transaction history · the APDU transcript*) and what
+  *Send everything* adds. **Send (masked)** is first: the card number masked
+  in every field, record and transcript (5A, Track 1 and 2), a document's MRZ
+  lines, full number, optional data, photo, pictures, DG11 – DG16 details and raw
+  files left out. *Don't send* answers the model `denied`. This is the web app
+  (`App.tsx`, `lib/nfc/consent.ts`); the Android app's own NFC sheet follows
+  the same rule in its port.
+- **6.10: card numbers in every form (G-19).** The masking covers Track 1 (56)
+  in ASCII as well as 5A / 57 / 9F6B in BCD, and redacts the track data (57 /
+  9F6B after the "D", 56, 9F1F, 9F20) — in the card report, and in every view
+  of a template run ([above](#apdu-templates)).
 - **The e-ID check is partial.** Passive authentication here is the hash check
   only — no EF.SOD signature, no CSCA list, no Active / Chip Authentication.

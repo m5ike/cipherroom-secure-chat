@@ -17,7 +17,8 @@
 // records, the history as CSV — is `files`, for download. Card text is never
 // trusted: every value is escaped.
 
-import type { CardFile, EmvApp, EmvData, EmvLogEntry, MrtdData, MrtdImage, NfcResult } from "./command";
+import type { CardFile, EmvApp, EmvData, EmvLogEntry, EmvTag, MrtdData, MrtdImage, NfcResult } from "./command";
+import { maskAnswer, maskPans, maskValue, PAN_TAGS, pansOfEmv } from "./pan-mask";
 
 export const CARD_REPORT_FORMATS = ["html", "object", "array", "json", "text", "csv"] as const;
 export type CardReportFormat = (typeof CARD_REPORT_FORMATS)[number];
@@ -137,11 +138,9 @@ function sizeText(n: number): string {
 function maskPan(pan: string): string {
   return pan.length >= 10 ? `${pan.slice(0, 6)}${"•".repeat(pan.length - 10)}${pan.slice(-4)}` : pan;
 }
-/** The PAN's digits hidden inside hex / text (records, Track 2). */
+/** The PAN's digits hidden inside hex / text (records, Track 2) — 6.10 (G-19): its ASCII-hex form too (Track 1, tags 56 / 9F1F). */
 function maskIn(s: string, pans: string[]): string {
-  let out = s;
-  for (const p of pans) if (p.length >= 10) out = out.split(p).join(`${p.slice(0, 6)}${"X".repeat(p.length - 10)}${p.slice(-4)}`);
-  return out;
+  return maskPans(s, pans);
 }
 
 /** What the input is: an NfcResult, a bare EmvData / MrtdData. */
@@ -173,9 +172,14 @@ function cardSection(L: (k: Key) => string, r: NfcResult): Section | null {
 }
 
 function buildEmv(L: (k: Key) => string, r: NfcResult, d: EmvData, o: CardReportOptions): Built {
-  const pans = d.apps.map((a) => a.pan).filter((p): p is string => Boolean(p));
+  // 6.10 (G-19): every card number the read holds — 5A, Track 2 (57 / 9F6B), Track 1 (56), the records.
+  const pans = pansOfEmv(d);
   const pan = (a: EmvApp) => (a.pan ? (o.fullPan ? a.pan : a.panMasked || maskPan(a.pan)) : undefined);
   const mask = (s: string) => (o.fullPan ? s : maskIn(s, pans));
+  // A record / log record (hex): its sensitive elements masked (Track 1 / 2, discretionary data), then the PAN.
+  const maskHex = (s: string) => (o.fullPan ? s : maskAnswer(s, pans));
+  // An element: the PAN and track elements show only their masked hex (as on Android).
+  const tagView = (t: EmvTag): EmvTag => (o.fullPan ? t : (PAN_TAGS as readonly string[]).includes(t.tag) ? { ...t, value: maskValue(t.tag, t.hex), hex: maskValue(t.tag, t.hex) } : { ...t, value: mask(t.value), hex: mask(t.hex) });
   const first = d.apps[0];
   const title = o.title || [first?.scheme || first?.label || d.scheme || "EMV", first ? pan(first) : ""].filter(Boolean).join(" · ");
   const historyCount = d.apps.reduce((n, a) => n + (a.log?.length ?? 0), 0);
@@ -206,21 +210,21 @@ function buildEmv(L: (k: Key) => string, r: NfcResult, d: EmvData, o: CardReport
         id: `history${i}`, title: `${L("history")}${n} (${log.length})`, rows: [],
         ...(log.length ? { table: { columns: [...used.map(([, k]) => (k === "atc" ? "ATC" : L(k))), ...extra], rows: log.map((e) => [...used.map(([k]) => e[k] ?? ""), ...extra.map((k) => e[k] ?? "")]) } } : { note: L("noHistory") }),
       });
-      for (const e of log) histCsv.push([name, e.date ?? "", e.time ?? "", e.amount ?? "", e.currency ?? "", e.merchant ?? "", e.type ?? "", e.country ?? "", e.atc ?? "", e.cid ?? "", e.raw ?? ""]);
+      for (const e of log) histCsv.push([name, e.date ?? "", e.time ?? "", e.amount ?? "", e.currency ?? "", e.merchant ?? "", e.type ?? "", e.country ?? "", e.atc ?? "", e.cid ?? "", e.raw ? maskHex(e.raw) : ""]);
     }
-    const tagRows: Array<[string, string]> = a.tags.map((t) => [`${t.tag} ${t.name}`, mask(t.value === t.hex ? t.hex : `${t.value}${t.value !== t.hex ? `  (${t.hex})` : ""}`)]);
+    const tagRows: Array<[string, string]> = a.tags.map(tagView).map((t) => [`${t.tag} ${t.name}`, t.value === t.hex ? t.hex : `${t.value}${t.value !== t.hex ? `  (${t.hex})` : ""}`]);
     sections.push({ id: `tags${i}`, title: `${L("dataElements")}${n} (${a.tags.length})`, rows: tagRows, mono: true, collapsed: true });
-    if (a.getData?.length) sections.push({ id: `gd${i}`, title: `${L("getData")}${n}`, rows: a.getData.map((t) => [`${t.tag} ${t.name}`, mask(t.value)]), mono: true, collapsed: true });
-    if (a.records?.length) sections.push({ id: `rec${i}`, title: `${L("records")}${n} (${a.records.length})`, rows: [], pre: a.records.map((rec) => `SFI ${String(rec.sfi).padStart(2)} · ${String(rec.record).padStart(2)}${rec.log ? " (log)" : ""}  ${mask(rec.hex)}`).join("\n"), collapsed: true });
+    if (a.getData?.length) sections.push({ id: `gd${i}`, title: `${L("getData")}${n}`, rows: a.getData.map(tagView).map((t) => [`${t.tag} ${t.name}`, t.value]), mono: true, collapsed: true });
+    if (a.records?.length) sections.push({ id: `rec${i}`, title: `${L("records")}${n} (${a.records.length})`, rows: [], pre: a.records.map((rec) => `SFI ${String(rec.sfi).padStart(2)} · ${String(rec.record).padStart(2)}${rec.log ? " (log)" : ""}  ${maskHex(rec.hex)}`).join("\n"), collapsed: true });
     return clean({
       aid: a.aid, label: a.label, scheme: a.scheme, pan: pan(a), expiry: a.expiry, effective: a.effective, cardholder: a.cardholder, issuerCountry: a.issuerCountry,
       panSequence: a.panSequence, atc: a.atc, lastOnlineAtc: a.lastOnlineAtc, pinTryCounter: a.pinTryCounter, aip: a.aip, afl: a.afl, logSfi: a.logSfi, logFormat: a.logFormat,
-      history: log, data: a.tags.map((t) => ({ ...t, value: mask(t.value), hex: mask(t.hex) })), getData: a.getData, records: a.records?.map((rec) => ({ ...rec, hex: mask(rec.hex) })),
+      history: log.map((e) => (e.raw ? { ...e, raw: maskHex(e.raw) } : e)), data: a.tags.map(tagView), getData: a.getData?.map(tagView), records: a.records?.map((rec) => ({ ...rec, hex: maskHex(rec.hex) })),
     });
   });
   if (o.attachments !== false) {
     if (histCsv.length) files.push({ name: "emv-history.csv", mime: "text/csv", data: b64OfText(csv([["application", "date", "time", "amount", "currency", "merchant", "type", "country", "atc", "result", "raw"], ...histCsv])) });
-    const recs = d.apps.flatMap((a) => (a.records ?? []).map((rec) => `${a.aid}  SFI ${rec.sfi} record ${rec.record}${rec.log ? " (log)" : ""}\n${mask(rec.hex)}\n`));
+    const recs = d.apps.flatMap((a) => (a.records ?? []).map((rec) => `${a.aid}  SFI ${rec.sfi} record ${rec.record}${rec.log ? " (log)" : ""}\n${maskHex(rec.hex)}\n`));
     if (recs.length) files.push({ name: "emv-records.txt", mime: "text/plain", data: b64OfText(`${title}\n\n${recs.join("\n")}${d.tree ? `\nPPSE\n${d.tree}\n` : ""}`) });
   }
   const object = clean({ type: "emv", title, summary: "", card: r.card, scheme: d.scheme, aids: d.aids, applications: apps, ppse: d.tree, deep: d.deep, apdus: d.apdus, status: r.status, message: r.message });

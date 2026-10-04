@@ -12,6 +12,12 @@
 //     locally from `secretRef`; they drive an operation but never leave.
 //   • writes only happen when the platform allows them (a model does not
 //     silently rewrite a user's card) — otherwise the op is "denied".
+//     6.10 (G-18): that includes a raw APDU — raw-apdu / select-aid send only
+//     the reads of READ_ONLY_COMMANDS (apdu-templates.ts) unless writes are
+//     allowed — and an APDU template (app-template), which the runner keeps
+//     read-only whatever the platform says.
+// What a read found reaches the model only after the holder's consent
+// (App.tsx + consent.ts, G-17): masked by default.
 
 import { toBase64 } from "../crypto";
 import type { CardTransport, CardIdentity } from "./transport";
@@ -26,6 +32,8 @@ import { readM5Card, lockedSummaries } from "./m5cet-card";
 import { readEmv, emvSummary } from "./cards/emv";
 import { readMrtd, mrtdSummary } from "./cards/mrtd";
 import type { NfcCommand, NfcResult, NfcResultStatus } from "./command";
+import { readOnlyRefusal } from "./apdu-templates";
+import { runTemplate, type EidKey } from "./template-runner";
 
 /** What the platform (the workbench) gives the executor. */
 export type WebExecutorDeps = {
@@ -37,7 +45,21 @@ export type WebExecutorDeps = {
   allowWrites?: boolean;
   /** Default seconds to wait for a card when the command gives none. */
   defaultTimeout?: number;
+  /** 6.10: m5mobile.define.apduTemplates — what app-template's args.label / args.index pick from. */
+  templates?: () => unknown[];
+  /** 6.10: an e-ID step of a template without the key in the command: the holder types it on the device. */
+  askEidKey?: (args: { readPhoto?: boolean; all?: boolean }) => Promise<EidKey | null>;
 };
+
+/** The document key a command carries (the CAN, the MRZ, or its three fields), or null. */
+function eidKeyOf(a: Record<string, unknown>): EidKey | null {
+  const s = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const key: EidKey = {};
+  if (s(a.can)) key.can = s(a.can);
+  if (s(a.mrz)) key.mrz = s(a.mrz);
+  else if (s(a.documentNumber) && s(a.dateOfBirth) && s(a.dateOfExpiry)) key.key = { documentNumber: s(a.documentNumber), dateOfBirth: s(a.dateOfBirth), dateOfExpiry: s(a.dateOfExpiry) };
+  return key.can || key.mrz || key.key ? key : null;
+}
 
 const CARD_TYPE_TO_TECH: Record<CardType, NfcTech> = {
   "mifare-classic-1k": "mifare-classic-1k",
@@ -122,8 +144,8 @@ export function createWebExecutor(deps: WebExecutorDeps) {
       const tech = command.tech && command.tech !== "unknown" ? command.tech : techOf(id);
       const card = cardField(id, tech);
 
-      // A command may narrow to a tech that does not support the op.
-      if (tech !== "unknown" && op !== "scan" && !supportsOp(tech, op)) {
+      // A command may narrow to a tech that does not support the op (a template names its own card type).
+      if (tech !== "unknown" && op !== "scan" && op !== "app-template" && !supportsOp(tech, op)) {
         return { status: "unsupported", card, message: `${techInfo(tech).label} does not support "${op}".` };
       }
 
@@ -206,8 +228,37 @@ export function createWebExecutor(deps: WebExecutorDeps) {
         case "select-aid": {
           const hexApdu = typeof command.args?.apdu === "string" ? command.args.apdu : null;
           if (!hexApdu) return { status: "error", card, message: "raw-apdu needs args.apdu (hex)." };
+          // 6.10 (G-18): a model's raw APDU only reads (apdu-templates.ts READ_ONLY_COMMANDS) — unless the platform allows writes.
+          const refused = readOnlyRefusal(hexApdu);
+          if (refused && !deps.allowWrites) return { status: "denied", card, message: `${refused}. Run other commands in the NFC workbench.` };
           const resp = splitResponse(await t.transmit(unhex(hexApdu)));
           return { status: "ok", card, data: toBase64(resp.data), message: `SW ${describeSw(resp.sw)}` };
+        }
+
+        case "app-template": {
+          // 6.10: one of m5mobile.define.apduTemplates (args.label / args.index) or the model's own
+          // (args.template), run step by step (template-runner.ts) — read-only, every APDU recorded.
+          const a = command.args ?? {};
+          const list = deps.templates?.() ?? [];
+          const tpl = a.template && typeof a.template === "object" ? a.template as Record<string, unknown>
+            : typeof a.label === "string" ? list.find((x) => x && typeof x === "object" && (x as Record<string, unknown>).label === a.label) as Record<string, unknown> | undefined
+              : typeof a.index === "number" ? list[a.index] as Record<string, unknown> | undefined : undefined;
+          if (!tpl) return { status: "error", card, message: "app-template needs args.template (a template), or args.label / args.index (one of m5mobile.define.apduTemplates)." };
+          const run = await runTemplate(t, tpl, {
+            signal,
+            // An e-ID step: the key the model passed (mrz / can / the three BAC fields), else the holder's, asked on the device.
+            askEidKey: async (args) => eidKeyOf(a) ?? (deps.askEidKey ? deps.askEidKey(args) : null),
+          });
+          const label = run.label;
+          return {
+            status: run.ok ? "ok" : run.cancelled ? "timeout" : run.problems.some((p) => p.includes("not a read command")) ? "denied" : "error",
+            card,
+            ...(run.data.emv ? { emv: run.data.emv } : {}),
+            ...(run.data.mrtd ? { mrtd: run.data.mrtd } : {}),
+            template: { label, ok: run.ok, problems: run.problems, steps: new Set(run.exchanges.map((e) => e.step)).size, ms: run.ms },
+            transcript: run.exchanges,
+            message: run.ok ? `${label}: ${run.exchanges.length} APDUs` : `${label}: ${run.problems.join("; ")}`,
+          };
         }
 
         default:

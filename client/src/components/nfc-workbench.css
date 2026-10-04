@@ -360,6 +360,31 @@
 .nfcwb__tplmenu-item:hover:not(:disabled) { background: hsl(var(--accent)); }
 .nfcwb__tplmenu-item:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* 6.10: the menu grouped by card type; a run's progress, views and actions */
+.nfcwb__tplmenu-title { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.nfcwb__tplgroup { display: flex; flex-direction: column; gap: 0.0625rem; }
+.nfcwb__tplgroup + .nfcwb__tplgroup { border-top: 1px solid hsl(var(--border)); margin-top: 0.25rem; padding-top: 0.25rem; }
+.nfcwb__tplgroup-title { font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: hsl(var(--muted-foreground)); padding: 0.25rem 0.375rem 0.125rem; }
+.nfcwb__tplmenu-main { display: flex; flex-direction: column; gap: 0.0625rem; min-width: 0; }
+.nfcwb__tplmenu-label { overflow-wrap: anywhere; }
+.nfcwb__tplmenu-problem { font-size: 0.6875rem; font-weight: 500; color: hsl(var(--destructive)); }
+.nfcwb__tplmenu-meta { flex: none; font-size: 0.625rem; font-weight: 600; color: hsl(var(--muted-foreground)); white-space: nowrap; }
+.nfcwb__tplmenu-meta--legacy { padding: 0 0.375rem; border-radius: 999px; background: hsl(var(--muted)); }
+.nfcwb__tplrun { display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid hsl(var(--border)); border-radius: 0.625rem; padding: 0.5rem; }
+.nfcwb__tplrun-actions { gap: 0.25rem; flex-wrap: nowrap; }
+.nfcwb__tplprogress { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.nfcwb__tplprogress-text { flex: 1; min-width: 10rem; font-size: 0.75rem; overflow-wrap: anywhere; }
+.nfcwb__tplprogress > .nfcwb__progress { flex-basis: 100%; }
+.nfcwb__banner--ok { background: hsl(142 55% 42% / 0.12); border-color: hsl(142 55% 42% / 0.4); color: hsl(142 60% 26%); }
+:root[data-theme="motorsport"] .nfcwb__banner--ok,
+:root[data-theme="terminal"] .nfcwb__banner--ok,
+:root[data-tone="dark"] .nfcwb__banner--ok { color: hsl(142 60% 62%); }
+.nfcwb__tplproblems { margin: 0.25rem 0 0; padding-left: 1.1rem; overflow-wrap: anywhere; }
+.nfcwb__tplout { max-height: 26rem; overflow: auto; margin: 0; }
+.nfcwb__tplout--readable { border: 1px solid hsl(var(--border)); border-radius: 0.625rem; padding: 0.5rem; }
+.nfcwb__fwd { display: flex; flex-direction: column; gap: 0.5rem; border: 1px solid hsl(var(--border)); border-radius: 0.625rem; padding: 0.5rem; background: hsl(var(--muted) / 0.35); }
+.nfcwb__fwd-set { display: flex; flex-direction: column; gap: 0.25rem; border: 0; margin: 0; padding: 0; min-width: 0; }
+
 /* supported technologies (task 2) */
 .nfcwb__techs { display: flex; flex-wrap: wrap; gap: 0.25rem; }
 .nfcwb__techchip {
