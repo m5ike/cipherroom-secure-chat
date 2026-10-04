@@ -164,6 +164,8 @@ export function composerTree(): LNode {
         n("area", { id: "hint-everyone", name: "To everyone", if: "$everyone", attrs: { class: "recipient-hint" } }, [icon("users", "h-3 w-3", {}, { id: "hint-everyone-icon" }), text(" {_'recipients.everyone'}", { id: "hint-everyone-text" })]),
         n("area", { id: "hint-none", name: "To nobody", if: "!$everyone && !$recipientNames", attrs: { class: "recipient-hint is-warn" }, text: "{_'recipients.none'}" }),
         n("area", { id: "hint-private", name: "Privately to", if: "!$everyone && $recipientNames", attrs: { class: "recipient-hint is-private" } }, [icon("lock", "h-3 w-3", {}, { id: "hint-private-icon" }), text(" {$recipientNames}", { id: "hint-private-text" })]),
+        // 6.8: "Send as voice" ticked in the send options
+        n("area", { id: "hint-voice", name: "As a voice message", if: "$sendAsVoice", attrs: { class: "recipient-hint is-voice", "data-testid": "composer-hint-voice" } }, [icon("volume-2", "h-3 w-3", {}, { id: "hint-voice-icon" }), text(" {if $voiceBusy}{_'speakSend.busy'}{else}{_'speakSend.on'}{/if}", { id: "hint-voice-text" })]),
         n("paragraph", { id: "hint", attrs: { class: "composer-hint" }, text: "{_'composer.attachHint'}" }),
       ]),
       n("input", { id: "file-input", ref: "fileInput", attrs: { type: "file", class: "hidden", "data-testid": "input-file" }, on: { change: { action: "attachment" } } }),

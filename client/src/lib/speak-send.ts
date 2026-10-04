@@ -8,7 +8,12 @@
 // voices (speechSynthesis) play straight to the speakers and cannot be
 // recorded, so without the module there is no voice message — a clear error
 // instead. The server sees the text it speaks (an explicit choice: the
-// button says so); the message itself goes end to end encrypted.
+// option says so); the message itself goes end to end encrypted.
+//
+// 6.8: in the web composer it is a checkbox of the send options ("Send as
+// voice", SendState.asVoice) — while it is ticked, Send sends the voice
+// message instead of the text (composerSendRoute below). The Speech panel
+// keeps its own one-off button.
 
 import type { ServerSpeechStatus } from "./speech";
 
@@ -46,4 +51,52 @@ export async function textToVoiceFile(text: string, deps: SpeakSendDeps): Promis
   if (r.blob.size === 0) return { ok: false, error: "tts-failed", message: "empty audio" };
   const mime = (r.mime || r.blob.type || "audio/mpeg").split(";")[0].trim();
   return { ok: true, file: new File([r.blob], voiceFileName(mime, (deps.now ?? Date.now)()), { type: mime }) };
+}
+
+/* ---------------------------------------------- 6.8: the composer's Send */
+
+/** Why the composer's text does not go as a voice message (nothing is sent). */
+export type VoiceSendBlock = "sealed" | "too-long";
+
+/**
+ * 6.8: what Send (the button, Enter) does with the composer's text. "Send as
+ * voice" ticked in the send options: a voice message INSTEAD of the text;
+ * not ticked: the text. Two combinations are refused rather than bent:
+ *  - sealed (individually encrypted): the seal covers a text body only, so
+ *    the voice would reach the room unsealed — and the text is never sent in
+ *    clear in its place;
+ *  - longer than one voice message holds (SPEAK_SEND_MAX): refused rather
+ *    than spoken cut short.
+ */
+export function composerSendRoute(
+  text: string,
+  send: { asVoice?: boolean; sealed?: boolean },
+): { route: "text" } | { route: "voice" } | { route: "refuse"; error: VoiceSendBlock } {
+  if (!send.asVoice) return { route: "text" };
+  if (send.sealed) return { route: "refuse", error: "sealed" };
+  if (text.trim().length > SPEAK_SEND_MAX) return { route: "refuse", error: "too-long" };
+  return { route: "voice" };
+}
+
+/** 6.8: Send from the composer down the route above — exactly one of the paths runs. */
+export async function sendFromComposer(
+  text: string,
+  send: { asVoice?: boolean; sealed?: boolean },
+  paths: { text: () => Promise<unknown>; voice: () => Promise<unknown>; refuse: (error: VoiceSendBlock) => void },
+): Promise<"text" | "voice" | "refused"> {
+  const r = composerSendRoute(text, send);
+  if (r.route === "refuse") { paths.refuse(r.error); return "refused"; }
+  if (r.route === "voice") { await paths.voice(); return "voice"; }
+  await paths.text();
+  return "text";
+}
+
+/**
+ * 6.8: a voice message too big for a chat message goes as a file transfer —
+ * to EVERYONE connected in the room, without tap-to-reveal or vanishing. So a
+ * big one is refused when it was meant for chosen people only, or as one of
+ * those kinds (the caller says so) rather than sent wider or plainer.
+ */
+export function voiceTooBigFor(size: number, inlineLimit: number, opts: { toChosen: boolean; tap: boolean; vanish: boolean }): boolean {
+  return size > inlineLimit && (opts.toChosen || opts.tap || opts.vanish);
 }

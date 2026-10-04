@@ -140,9 +140,9 @@ function messagesFor(layout: LayoutId, variant: string): SampleMessage[] {
 /** The composer with its own little state, so the preview can be tried out. */
 function PreviewComposer({ cfg, env, variant, lang }: { cfg: LayoutConfig; env: Omit<LayoutEnv, "data">; variant: string; lang: Lang }) {
   const [emojiOpen, setEmojiOpen] = useState(variant === "emoji");
-  const [text, setText] = useState(variant === "plain" ? "Tomorrow at 9?" : "");
+  const [text, setText] = useState(variant === "plain" || variant === "voice" ? "Tomorrow at 9?" : "");
   const [reply, setReply] = useState(variant === "reply");
-  const [send, setSend] = useState(DEFAULT_SEND_STATE);
+  const [send, setSend] = useState(variant === "voice" ? { ...DEFAULT_SEND_STATE, asVoice: true } : DEFAULT_SEND_STATE);
   const peers = variant === "alone" ? 0 : 2;
   return renderLayout(layoutTree(cfg, "composer"), {
     ...env,
@@ -157,6 +157,8 @@ function PreviewComposer({ cfg, env, variant, lang }: { cfg: LayoutConfig; env: 
       messageInput: text,
       everyone: variant !== "private",
       recipientNames: variant === "private" ? "Bob, Carol" : "",
+      sendAsVoice: send.asVoice,
+      voiceBusy: false,
     },
     actions: {
       submit: (e) => { (e as Event).preventDefault?.(); setText(""); },
@@ -167,7 +169,7 @@ function PreviewComposer({ cfg, env, variant, lang }: { cfg: LayoutConfig; env: 
     },
     slots: {
       recorder: () => <AudioRecorder lang={lang} disabled={peers === 0} onRecorded={noop} onError={noop} />,
-      sendOptions: () => <SendOptions value={send} onChange={setSend} onSend={noop} canSend={text.trim().length > 0 && peers > 0} lang={lang} />,
+      sendOptions: () => <SendOptions value={send} onChange={setSend} onSend={noop} canSend={text.trim().length > 0 && peers > 0} lang={lang} voiceOption />,
     },
   });
 }

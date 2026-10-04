@@ -23,7 +23,7 @@ jako prvků a kontrola přístupnosti.
 | `message.in` | zpráva od někoho jiného | `badge` (odznak odesílatele) |
 | `message.out` | moje zpráva | — |
 | `message.sys` | systémové oznámení | — |
-| `composer` | psaní a odeslání | `recorder`, `sendOptions` |
+| `composer` | psaní a odeslání; 6.8: `$sendAsVoice` (v *Typu zprávy* je zaškrtnuté *Poslat jako hlas*), `$voiceBusy`, prvek `hint-voice` pod polem | `recorder`, `sendOptions` |
 | `widget` | panel příjemců — plovoucí, nebo (6.0) ukotvený vlevo, vpravo či dole | — |
 | `widget.fab` | minimalizovaný widget (tlačítko) | — |
 | `widget.handle` | 6.0: úchyt ukotveného, automaticky skrývaného widgetu (záložka na okraji) | — |
