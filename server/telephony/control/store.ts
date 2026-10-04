@@ -27,6 +27,7 @@ import { isE164 } from "../types";
 import { GROUP_ID_RE } from "../../../client/src/lib/modules";
 import { patternProblem, windowProblem } from "./match";
 import { telHooks, telLog } from "./hooks";
+import { setTsaUsageSource, tsaStore } from "../tsa/store";
 
 export type Problem = { path: string; message: string };
 type StateTarget = Extract<RouteTarget, { kind: "state" }>;
@@ -376,6 +377,14 @@ export function savePermissions(raw: unknown, by: string): SaveResult<TelPermiss
 /** PUT /admin/telephony/rules/inbound|outbound — replaces the list (its order is the priority). */
 export function saveRules(direction: "inbound" | "outbound", raw: unknown, by: string): SaveResult<InboundRule[] | OutboundRule[]> {
   const r = direction === "inbound" ? checkInbound(raw) : checkOutbound(raw);
+  // 6.9: a rule's TSA should exist and be published — said as a note (a TSA can also be
+  // created or deleted later; its calls fail with a log line until it is there).
+  for (const rule of r.rules) {
+    if (rule.target.kind !== "tsa") continue;
+    const tsa = tsaStore.get(rule.target.tsa);
+    if (!tsa) r.notes.push(`${rule.label || rule.id}: there is no TSA "${rule.target.tsa}" — its calls fail until there is`);
+    else if (!tsa.published) r.notes.push(`${rule.label || rule.id}: the TSA "${tsa.name}" is not published yet — its calls fail until it is`);
+  }
   if (r.problems.length) return refused(r.problems);
   const { data } = loadTelephonyFile();
   const cur = obj(data.rules);
@@ -397,3 +406,15 @@ export function resetControlCache(): void { cache = null; }
 
 // The current TelPermissions for every part (telPermissions() in hooks.ts).
 telHooks.permissions = getPermissions;
+
+// 6.9: which rules (and defaults) use a TSA — the TSA list's "used by" and its delete guard.
+setTsaUsageSource((id) => {
+  const out: string[] = [];
+  const { inbound, outbound } = getRules();
+  for (const r of inbound) if (r.target.kind === "tsa" && r.target.tsa === id) out.push(`inbound: ${r.label || r.id}`);
+  for (const r of outbound) if (r.target.kind === "tsa" && r.target.tsa === id) out.push(`outbound: ${r.label || r.id}`);
+  const d = getPermissions().defaults;
+  if (d.inbound.kind === "tsa" && d.inbound.tsa === id) out.push("default: inbound");
+  if (d.outbound.kind === "tsa" && d.outbound.tsa === id) out.push("default: outbound");
+  return out;
+});
