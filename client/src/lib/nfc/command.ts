@@ -47,6 +47,18 @@ export type NfcResultStatus = "ok" | "no-card" | "timeout" | "unsupported" | "de
 /** One parsed EMV data element (its tag, EMV name, printable value and raw hex). */
 export type EmvTag = { tag: string; name: string; value: string; hex: string };
 
+/**
+ * 6.6: one entry of a card's transaction log (history), decoded by the card's
+ * own log format (9F4F). Known keys: date (YYYY-MM-DD), time (HH:MM:SS),
+ * amount / otherAmount (major units, e.g. "12.34"), currency (alpha), country,
+ * type (purchase, cash…), merchant, atc, cid; any other element is kept under
+ * its tag hex. `raw` is the record as read (hex).
+ */
+export type EmvLogEntry = Record<string, string>;
+
+/** 6.6: one record as read (SFI / record number) — the raw bytes, hex. */
+export type EmvRecord = { sfi: number; record: number; hex: string; log?: boolean };
+
 /** One application on an EMV card — public / holder data a terminal reads. */
 export type EmvApp = {
   /** The AID (hex). */
@@ -73,8 +85,20 @@ export type EmvApp = {
   atc?: number;
   /** PIN try counter value as read (tag 9F17) — never a PIN, never a verify. */
   pinTryCounter?: number;
-  /** Decoded transaction log (tags 9F4D / 9F4F), where the card exposes one. */
-  log?: Array<Record<string, string>>;
+  /** 6.6: the last online ATC register (tag 9F13). */
+  lastOnlineAtc?: number;
+  /** 6.6: application interchange profile and file locator, hex (from GPO). */
+  aip?: string;
+  afl?: string;
+  /** Decoded transaction log (tags 9F4D / 9F4F), where the card exposes one — newest first. */
+  log?: EmvLogEntry[];
+  /** 6.6: the log's own format (the 9F4F DOL, hex) and where it lives. */
+  logFormat?: string;
+  logSfi?: number;
+  /** 6.6: what GET DATA answered (counters, log format, balances). */
+  getData?: EmvTag[];
+  /** 6.6: every record read — the AFL's and, with a deep read, any other file. */
+  records?: EmvRecord[];
   /** Every element parsed from this application's records. */
   tags: EmvTag[];
 };
@@ -88,6 +112,20 @@ export type EmvData = {
   apps: EmvApp[];
   /** The PPSE's TLV as a readable tree. */
   tree?: string;
+  /** 6.6: how the read went — deep (every file) or the AFL only, with the history. */
+  deep?: boolean;
+  /** 6.6: how many APDUs the read took. */
+  apdus?: number;
+};
+
+/** EMV read options (args of the emv-read op). */
+export type EmvReadArgs = {
+  /** How many applications to open (default 8). */
+  maxApps?: number;
+  /** Read the transaction log (default true). */
+  history?: boolean;
+  /** Read every file the card has, not only the AFL's records (default true). */
+  deep?: boolean;
 };
 
 /* ------------------------------------------- MRTD / e-ID / e-Passport (6.5) */
@@ -108,17 +146,104 @@ export type MrtdMrz = {
   mrz?: string;
 };
 
+/** 6.6: DG11 — additional personal details (each where the document has it). */
+export type MrtdPersonal = {
+  fullName?: string;
+  otherNames?: string[];
+  personalNumber?: string;
+  fullDateOfBirth?: string;
+  placeOfBirth?: string;
+  address?: string;
+  telephone?: string;
+  profession?: string;
+  title?: string;
+  personalSummary?: string;
+  otherTravelDocuments?: string[];
+  custody?: string;
+};
+
+/** 6.6: DG12 — additional document details. */
+export type MrtdDocument = {
+  issuingAuthority?: string;
+  dateOfIssue?: string;
+  otherPersons?: string[];
+  endorsements?: string;
+  taxExit?: string;
+  personalizationTime?: string;
+  personalizationDevice?: string;
+};
+
+/** 6.6: one elementary file of the document and what became of it. */
+export type MrtdFileInfo = {
+  /** DG1…DG16, COM, SOD, CardAccess. */
+  name: string;
+  /** File id, hex (0101…). */
+  fid: string;
+  /** read — protected (EAC: needs a terminal certificate) — absent — error. */
+  status: "read" | "protected" | "absent" | "error";
+  size?: number;
+  /** Its hash matches the one in EF.SOD (passive authentication), when checked. */
+  hashOk?: boolean;
+  message?: string;
+};
+
+/** 6.6: an image the document holds (face, portrait, signature, document scans). */
+export type MrtdImage = {
+  /** Where it came from: DG2, DG5, DG7, DG11, DG12. */
+  group: string;
+  kind: "face" | "portrait" | "signature" | "document" | "other";
+  mime: string;
+  /** base64. */
+  data: string;
+  name: string;
+};
+
+/** 6.6: a binary file for download (EF.SOD, DG14, DG15, raw groups…). */
+export type CardFile = { name: string; mime: string; data: string };
+
+/** 6.6: the document's security objects, as read (nothing here is verified against a CSCA list). */
+export type MrtdSecurity = {
+  /** The hash EF.SOD uses (SHA-256…). */
+  hashAlgorithm?: string;
+  /** Passive authentication of what was read: every hash matched, one did not, or it could not be checked. */
+  passive?: "ok" | "mismatch" | "unchecked";
+  /** The document signer certificate (from EF.SOD). */
+  signer?: { subject?: string; issuer?: string; serial?: string; notBefore?: string; notAfter?: string };
+  /** Security protocols the chip announces (EF.CardAccess, DG14): PACE, Chip / Terminal / Active Authentication. */
+  protocols?: string[];
+  /** DG15: the Active Authentication key (RSA 1024, EC 256…). */
+  activeAuthKey?: string;
+};
+
 export type MrtdData = {
   present: boolean;
   /** How the chip was opened: none (just detected), BAC or PACE. */
   access: "none" | "bac" | "pace";
+  /** 6.6: PACE as the chip offers it (EF.CardAccess) — and the protocol used. */
+  pace?: { supported: boolean; protocol?: string; parameterId?: number; used?: boolean; password?: "mrz" | "can" };
   /** The data groups EF.COM lists (e.g. ["DG1","DG2"]). */
   dataGroups?: string[];
+  /** 6.6: LDS / Unicode versions from EF.COM. */
+  ldsVersion?: string;
+  unicodeVersion?: string;
   /** DG1 fields (the MRZ). */
   mrzInfo?: MrtdMrz;
+  /** 6.6: DG11 / DG12 / DG13 / DG16. */
+  personal?: MrtdPersonal;
+  document?: MrtdDocument;
+  optional?: string;
+  personsToNotify?: string[];
   /** DG2 face image, base64 — the holder's own document. */
   photo?: string;
   photoMime?: string;
+  /** 6.6: every image the document holds (DG2 faces, DG5 portrait, DG7 signature, DG11/DG12 scans). */
+  images?: MrtdImage[];
+  /** 6.6: every file tried, and how it went. */
+  files?: MrtdFileInfo[];
+  /** 6.6: the binary files for download (EF.SOD, DG14, DG15, other raw groups, JPEG 2000 images). */
+  raw?: CardFile[];
+  /** 6.6: EF.SOD, DG14, DG15 and EF.CardAccess, decoded. */
+  security?: MrtdSecurity;
   message?: string;
 };
 
@@ -134,6 +259,10 @@ export type MrtdAccessArgs = {
   dateOfExpiry?: string;
   /** A 6-digit Card Access Number (PACE), for cards that require it. */
   can?: string;
+  /** Read the images (DG2, DG5, DG7, scans) — default true. */
+  readPhoto?: boolean;
+  /** 6.6: read every data group the document lists, not only DG1 / DG2 (default true). */
+  all?: boolean;
 };
 
 /** What the device answers. Never carries a key or a card PIN. */
