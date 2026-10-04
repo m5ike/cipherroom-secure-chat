@@ -13,6 +13,8 @@ import android.content.LocusId;
 import android.content.pm.PackageManager;
 import android.graphics.drawable.Icon;
 import android.net.Uri;
+import android.os.Bundle;
+import android.service.notification.StatusBarNotification;
 
 import org.json.JSONObject;
 
@@ -23,8 +25,10 @@ import cz.m5cet.app.M5;
 import cz.m5cet.app.R;
 import cz.m5cet.app.chat.RoomSession;
 import cz.m5cet.app.core.Io;
+import cz.m5cet.app.core.Log;
 import cz.m5cet.app.push.NotifyPrefs;
 import cz.m5cet.app.push.NotifyTemplate;
+import cz.m5cet.app.security.IntentSeal;
 import cz.m5cet.app.ui.MainActivity;
 
 /**
@@ -75,9 +79,18 @@ public final class Notify {
     }
 
     private PendingIntent open(String room, int code) {
-        Intent i = new Intent(app, MainActivity.class).setAction(Intent.ACTION_VIEW).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
-        if (room != null && !room.isEmpty()) i.putExtra("room", room);
-        return PendingIntent.getActivity(app, code, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        return PendingIntent.getActivity(app, code, openRoom(app, room), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    /**
+     * The app's own intent that opens a room (a notification's tap): the room
+     * with this process's tag (6.10, G-23 — MainActivity takes a room only so,
+     * and only one the app is in; it never joins one from an intent).
+     */
+    static Intent openRoom(Context c, String room) {
+        Intent i = new Intent(c, MainActivity.class).setAction(Intent.ACTION_VIEW).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+        if (room != null && !room.isEmpty()) i.putExtra("room", room).putExtra(IntentSeal.EXTRA, IntentSeal.tag(IntentSeal.OPEN, room));
+        return i;
     }
 
     /** The server's flash: in the app when it is visible, else a heads-up notice. */
@@ -117,7 +130,9 @@ public final class Notify {
 
     private Notification.Action replyAction(String roomKey) {
         RemoteInput reply = new RemoteInput.Builder(KEY_REPLY).setLabel(app.t("notify.reply")).build();
-        Intent ri = new Intent(app, ReplyReceiver.class).putExtra("room", roomKey);
+        // Mutable (the system fills in the text), so whoever holds it could change "room" too: the tag binds
+        // the room to this notification (6.10, G-23 — ReplyReceiver checks it).
+        Intent ri = new Intent(app, ReplyReceiver.class).putExtra("room", roomKey).putExtra(IntentSeal.EXTRA, IntentSeal.tag(IntentSeal.REPLY, roomKey));
         PendingIntent replyPi = PendingIntent.getBroadcast(app, roomKey.hashCode(), ri, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_MUTABLE);
         Notification.Action.Builder ab = new Notification.Action.Builder(Icon.createWithResource(app, R.drawable.ic_stat_m5), app.t("notify.reply"), replyPi).addRemoteInput(reply).setAllowGeneratedReplies(true);
         if (android.os.Build.VERSION.SDK_INT >= 31) ab.setAuthenticationRequired(true); // audit S11: replying needs the phone unlocked
@@ -137,8 +152,11 @@ public final class Notify {
      * never while the app is locked; the sender from "sender" on, the room's
      * name from "room" on. The template's accent, sound and actions apply.
      * Audit S11: while the app is locked, only neutral text — no message,
-     * sender, room name, room shortcut or reply; the lock screen always gets the
-     * neutral public version.
+     * sender, room name, room shortcut or reply. One posted while it was not
+     * locked becomes neutral when it locks (neutralizeAll, 6.10 G-22). The
+     * phone's lock screen shows the neutral public version only where the user
+     * hides sensitive content there; with "show all content" (the system's
+     * default) it shows the notification itself — as it is at that moment.
      */
     public void message(String roomKey, String roomName, String sender, String text, boolean hideContent) {
         if (!allowed()) return;
@@ -165,6 +183,7 @@ public final class Notify {
         if (!locked && (tpl == null || tpl.optBoolean("actions", true))) b.addAction(replyAction(roomKey));
         Integer color = accent(tpl == null ? null : tpl.optString("accent"));
         if (color != null) b.setColor(color);
+        b.addExtras(neutralMark("notify.message", locked));
         nm().notify(roomKey.hashCode(), b.build());
     }
 
@@ -210,13 +229,73 @@ public final class Notify {
         Integer color = accent(p.optString("accent"));
         if (color != null) b.setColor(color);
         if (p.optBoolean("actions") && !locked && room != null && (kind.equals("message") || kind.equals("mention"))) b.addAction(replyAction(room.key));
+        b.addExtras(neutralMark(kind.equals("call") ? "ring.call" : "notify.message", locked));
         nm().notify(id, b.build());
     }
 
-    /** What the lock screen shows of a message notification: the app's name and "New message". */
+    /**
+     * What the lock screen shows of a message notification where the user
+     * hides sensitive content there: the app's name and "New message".
+     */
     private Notification neutral(String title, String text) {
         return new Notification.Builder(app, CH_MESSAGES).setSmallIcon(R.drawable.ic_stat_m5)
             .setContentTitle(title).setContentText(text).setCategory(Notification.CATEGORY_MESSAGE).build();
+    }
+
+    /* --------------------------------------------- 6.10 (G-22): the lock */
+
+    /** A notification that may name a room or a person or show a message carries the key of its neutral text… */
+    static final String EXTRA_NEUTRAL = "cz.m5cet.neutral";
+    /** …and whether it is neutral already (posted while the app was locked, or made so). */
+    static final String EXTRA_IS_NEUTRAL = "cz.m5cet.isNeutral";
+
+    static Bundle neutralMark(String textKey, boolean neutralAlready) {
+        Bundle b = new Bundle();
+        b.putString(EXTRA_NEUTRAL, textKey);
+        b.putBoolean(EXTRA_IS_NEUTRAL, neutralAlready);
+        return b;
+    }
+
+    /**
+     * The app locked — lockNow, or the auto-lock time passed in the background
+     * (Conversations' timer and alarm; AppLock has no event for it) — or a new
+     * process started (it starts locked): every notification of the app that
+     * may name a room or a person or show a message is posted again with only
+     * the app's name and its neutral text ("New message", "Call", "Missed
+     * call"), its tap and its deletion kept, a direct reply dropped (Join and
+     * Decline of a ring stay), quietly (no new sound). Any thread.
+     */
+    public void neutralizeAll() {
+        NotificationManager nm = nm();
+        if (nm == null) return;
+        StatusBarNotification[] active;
+        try { active = nm.getActiveNotifications(); } catch (RuntimeException e) { Log.w("notify", "the notifications could not be read: " + e.getClass().getSimpleName()); return; }
+        String appName = app.design().appName();
+        int n = 0;
+        for (StatusBarNotification sbn : active) {
+            Notification old = sbn.getNotification();
+            Bundle x = old == null ? null : old.extras;
+            String key = x == null ? null : x.getString(EXTRA_NEUTRAL);
+            if (key == null || x.getBoolean(EXTRA_IS_NEUTRAL, false)) continue;
+            long timeout = old.getTimeoutAfter();
+            long left = timeout > 0 ? sbn.getPostTime() + timeout - System.currentTimeMillis() : 0;
+            if (timeout > 0 && left <= 0) { nm.cancel(sbn.getTag(), sbn.getId()); continue; }
+            String text = app.t(key);
+            String channel = old.getChannelId() == null ? CH_MESSAGES : old.getChannelId();
+            Notification.Builder b = new Notification.Builder(app, channel)
+                .setSmallIcon(R.drawable.ic_stat_m5).setContentTitle(appName).setContentText(text)
+                .setCategory(old.category).setWhen(old.when).setShowWhen(true).setOnlyAlertOnce(true)
+                .setAutoCancel((old.flags & Notification.FLAG_AUTO_CANCEL) != 0)
+                .setContentIntent(old.contentIntent).setDeleteIntent(old.deleteIntent)
+                .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(appName, text))
+                .addExtras(neutralMark(key, true));
+            if (old.getGroup() != null) b.setGroup(old.getGroup());
+            if (left > 0) b.setTimeoutAfter(left);
+            if (old.actions != null) for (Notification.Action act : old.actions) if (act.getRemoteInputs() == null) b.addAction(act);
+            try { nm.notify(sbn.getTag(), sbn.getId(), b.build()); n++; }
+            catch (RuntimeException e) { nm.cancel(sbn.getTag(), sbn.getId()); }
+        }
+        if (n > 0) Log.i("notify", n + " notifications made neutral (locked)");
     }
 
     public void clearRoom(String roomKey) {

@@ -87,7 +87,7 @@ final class RoomList extends FrameLayout implements Renderer.Slot {
             Map<String, Object> s = new HashMap<>();
             s.put("room", rooms.optJSONObject(i));
             h.bound.bind(s::get);
-            if (h.swipe != null) h.swipe.bind(SwipeRow.roomDefaults(), s::get, a.tr(), a.app().design(), (v, d) -> Ui.color(a, v, d), (act, arg, v) -> a.action(act, arg, s::get, v));
+            if (h.swipe != null) h.swipe.bind(SwipeRow.roomDefaults(), s::get, a.tr(), a.app().design(), (v, d) -> Ui.color(a, v, d), (act, raw, arg, v) -> a.action(act, raw, arg, s::get, v));
         }
         @Override public int getItemCount() { return rooms.length(); }
     }

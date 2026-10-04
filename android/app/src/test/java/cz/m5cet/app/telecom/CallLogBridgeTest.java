@@ -57,4 +57,22 @@ public class CallLogBridgeTest {
     public void legacyRowsAreTheOnesWithTheRoomAsTheirNumber() {
         assertEquals("number LIKE 'm5cet:%'", CallLogBridge.LEGACY);
     }
+
+    @Test
+    public void whatAPhoneAppLookedUpForTheOldNumbersGoes() {
+        // 6.10 (G-24): the formatted "m5cet:<room>", the room's name as keypad digits, a matched contact…
+        java.util.Map<String, Object> c = CallLogBridge.clearedCache();
+        for (String col : new String[]{ CallLog.Calls.CACHED_FORMATTED_NUMBER, CallLog.Calls.CACHED_NORMALIZED_NUMBER, CallLog.Calls.CACHED_MATCHED_NUMBER,
+            CallLog.Calls.CACHED_LOOKUP_URI, CallLog.Calls.CACHED_NUMBER_TYPE, CallLog.Calls.CACHED_NUMBER_LABEL, CallLog.Calls.CACHED_PHOTO_URI, CallLog.Calls.GEOCODED_LOCATION }) {
+            assertTrue(col, c.containsKey(col));
+            org.junit.Assert.assertNull(col, c.get(col));
+        }
+        assertEquals("NOT NULL in the provider", 0L, c.get(CallLog.Calls.CACHED_PHOTO_ID));
+        assertFalse("the entry's chosen name stays", c.containsKey(CallLog.Calls.CACHED_NAME));
+        assertFalse(c.containsKey(CallLog.Calls.NUMBER));
+        // The app's rows: its calling account's, the old ones (fixed or not) — two arguments.
+        assertTrue(CallLogBridge.OURS.contains(CallLogBridge.LEGACY));
+        assertTrue(CallLogBridge.OURS.contains(CallLog.Calls.PHONE_ACCOUNT_COMPONENT_NAME + " = ?"));
+        assertEquals(2, CallLogBridge.OURS.chars().filter(ch -> ch == '?').count());
+    }
 }

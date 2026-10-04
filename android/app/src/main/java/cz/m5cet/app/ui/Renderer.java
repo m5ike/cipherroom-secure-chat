@@ -60,7 +60,15 @@ public final class Renderer {
         Design design();
         boolean dark();
         Expr.Translate tr();
-        void action(String action, Object arg, Expr.Scope scope, View source);
+        /**
+         * An action of the design: raw is its argument as the design wrote it
+         * ("=expression", a template, a literal; null: none), arg its value in
+         * the element's scope — 6.10 (G-20): ui/ActionGuard refuses a computed
+         * argument where it could carry data off the phone.
+         */
+        void action(String action, String raw, Object arg, Expr.Scope scope, View source);
+        /** An action of the app's own code (a value without a raw text counts as computed). */
+        default void action(String action, Object arg, Expr.Scope scope, View source) { action(action, null, arg, scope, source); }
         /** A native part; bind is called with the part's scope on every bind of its tree. */
         View slot(String name, Bound bound);
         Map<String, Object> form();
@@ -450,7 +458,7 @@ public final class Renderer {
             if (change != null) {
                 Expr.Scope sc = n -> n.equals("value") ? value : base.get(n);
                 String arg = change.optString("arg", null);
-                r.host.action(change.optString("action"), arg == null ? null : Expr.value(arg, sc, r.host.tr()), sc, source);
+                r.host.action(change.optString("action"), arg, arg == null ? null : Expr.value(arg, sc, r.host.tr()), sc, source);
             }
         }
 
@@ -505,7 +513,7 @@ public final class Renderer {
             String arg = handler.optString("arg", null);
             Expr.Scope sc = scope == null ? n -> null : scope;
             Object value = arg == null ? null : Expr.value(arg, sc, r.host.tr());
-            r.host.action(handler.optString("action"), value, sc, source);
+            r.host.action(handler.optString("action"), arg, value, sc, source);
         }
 
         /* ------------------------------------------------------------ bind */
@@ -854,7 +862,7 @@ public final class Renderer {
                     if (view instanceof Slot) ((Slot) view).bindSlot(sc);
                     break;
                 }
-                case "swipe": ((cz.m5cet.app.ui.look.SwipeRow) view).bind(node.optJSONObject("props"), sc, tr, r.host.design(), r::color, (a, arg, v) -> r.host.action(a, arg, sc, v)); break;
+                case "swipe": ((cz.m5cet.app.ui.look.SwipeRow) view).bind(node.optJSONObject("props"), sc, tr, r.host.design(), r::color, (a, raw, arg, v) -> r.host.action(a, raw, arg, sc, v)); break;
                 default: break;
             }
             if (!animated) {

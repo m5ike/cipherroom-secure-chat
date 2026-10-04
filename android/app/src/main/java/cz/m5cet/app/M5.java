@@ -95,6 +95,7 @@ public final class M5 extends Application {
             Checkin.schedule(this);
             events.flush();
             cz.m5cet.app.telecom.CallLogBridge.fixLegacy(this); // 6.8: old call log rows lose their dialable "number"
+            if (lock.isLocked()) notify.neutralizeAll(); // 6.10 (G-22): a process starts locked — what an earlier one showed goes neutral
         });
         registerActivityLifecycleCallbacks(new Lifecycle());
         cz.m5cet.app.telecom.Conversations.get(this).start(); // 6.8: the rooms as Android conversations
@@ -153,7 +154,19 @@ public final class M5 extends Application {
         emit("unlocked");
     }
 
-    public void onLocked() { emit("locked"); }
+    public void onLocked() { whenLocked(); emit("locked"); }
+
+    /**
+     * 6.10 (G-22, G-24): what a lock takes away at once — at lockNow, and when
+     * the auto-lock time passes in the background (AppLock has no event for
+     * it: Conversations' timer and alarm call this) or a process starts (it
+     * starts locked): the notifications go neutral, the History's list leaves
+     * the memory. Any thread.
+     */
+    public void whenLocked() {
+        if (notify != null) notify.neutralizeAll();
+        cz.m5cet.app.ui.parts.CallLogUi.forget();
+    }
 
     public void onWiped() { emit("wiped"); }
 

@@ -147,19 +147,29 @@ public final class Conversations implements Rooms.Listener, M5.Listener, Setting
     }
 
     /**
-     * In the background the app locks by time (AppLock: no event): when the
-     * shortcuts carry names, they go neutral then — a timer, and an alarm in
-     * case the process is frozen or gone by then (a new process starts
-     * locked and does the same).
+     * In the background the app locks by time (AppLock: no event): then the
+     * shortcuts go neutral, and — 6.10 (G-22, G-24) — so do the notifications
+     * posted while it was unlocked and the History's list leaves the memory
+     * (M5.whenLocked) — a timer, and an alarm in case the process is frozen
+     * or gone by then (a new process starts locked and does the same). Armed
+     * whenever the app goes to the background (6.8 only when shortcuts were
+     * named: a notification's content stayed).
      */
-    private void onBackground() {
-        if (!named) return;
+    private void onBackground() { armLockCheck(); }
+
+    private void armLockCheck() {
         long ms = app.lock.autolockSeconds() * 1000L + 2_000;
         synchronized (timing) {
             if (lockCheck != null) lockCheck.cancel(false);
-            lockCheck = Io.later(() -> Io.bg(this::run), ms);
+            lockCheck = Io.later(() -> Io.bg(this::lockCheck), ms);
         }
         alarm(ms);
+    }
+
+    /** The auto-lock time has passed (the timer, the alarm): what a lock hides goes, the shortcuts follow. */
+    void lockCheck() {
+        if (app.lock.isLocked()) app.whenLocked();
+        run();
     }
 
     /** A publish soon (changes close together become one). */
@@ -196,7 +206,23 @@ public final class Conversations implements Rooms.Listener, M5.Listener, Setting
             M5 app = M5.get();
             if (app == null) return;
             PendingResult done = goAsync();
-            Io.bg(() -> { try { get(app).run(); } finally { done.finish(); } });
+            Io.bg(() -> { try { get(app).lockCheck(); } finally { done.finish(); } });
+        }
+    }
+
+    /**
+     * 6.10 (G-24): after a restart of the phone. Shortcuts outlive it, the
+     * alarm does not: names the last publish left (the phone went off before
+     * the auto-lock time) go neutral now — the process starts locked, without
+     * the rooms (run → neutralizeExisting). Nothing to do when they were neutral.
+     */
+    public static final class Boot extends BroadcastReceiver {
+        @Override public void onReceive(Context c, Intent i) {
+            if (i == null || !Intent.ACTION_BOOT_COMPLETED.equals(i.getAction())) return;
+            M5 app = M5.get();
+            if (app == null) return;
+            PendingResult done = goAsync();
+            Io.bg(() -> { try { Conversations conv = get(app); if (conv.wasNamed()) conv.run(); } finally { done.finish(); } });
         }
     }
 
@@ -221,11 +247,20 @@ public final class Conversations implements Rooms.Listener, M5.Listener, Setting
 
     private synchronized void storeNamed(boolean v) {
         named = v;
+        // 6.10 (G-24): names published while the app is in the background (a notification's shortcut) — the lock check is armed.
+        if (v && visible == 0) {
+            boolean armed;
+            synchronized (timing) { armed = lockCheck != null && !lockCheck.isDone(); }
+            if (!armed) armLockCheck();
+        }
         JSONObject o = store();
         if (o.optBoolean("named") == v && o.has("k")) return;
         try { o.put("named", v); } catch (JSONException ignored) { }
         app.vault.putJson(Vault.Tier.SYS, STORE, o);
     }
+
+    /** Whether the last publish carried the rooms' names (kept across starts). */
+    synchronized boolean wasNamed() { return named || store().optBoolean("named"); }
 
     private int privacyRank() { return NotifyTemplate.rank(NotifyPrefs.get(app).localPrivacy("message", false)); }
 
@@ -286,7 +321,7 @@ public final class Conversations implements Rooms.Listener, M5.Listener, Setting
         if (!sm.setDynamicShortcuts(infos)) {
             // Rate-limited (the background): a name must not stay in the launcher or the share sheet.
             Log.w(TAG, "rate-limited — again in the foreground");
-            if (!names) { sm.removeAllDynamicShortcuts(); published.clear(); }
+            if (!names) { sm.removeAllDynamicShortcuts(); published.clear(); if (wasNamed()) dropNamed(sm); }
             return false;
         }
         published.clear();
@@ -334,14 +369,42 @@ public final class Conversations implements Rooms.Listener, M5.Listener, Setting
         retire(sm, retire);
     }
 
-    /** Pinned shortcuts cannot be removed by the app: renamed to the app's name (when the system allows) and disabled. */
+    /**
+     * Pinned shortcuts cannot be removed by the app: renamed to the app's
+     * name, with the app's icon instead of the room's monogram and an intent
+     * without the id (6.10, G-24) — when the system allows — and disabled.
+     */
     private void retire(ShortcutManager sm, List<String> ids) {
         if (ids.isEmpty()) return;
         String appName = app.design().appName();
         List<ShortcutInfo> renamed = new ArrayList<>();
-        for (String id : ids) renamed.add(new ShortcutInfo.Builder(app, id).setShortLabel(appName).setLongLabel(appName).build());
+        Icon icon = Icon.createWithResource(app, cz.m5cet.app.R.mipmap.ic_launcher);
+        Intent plain = new Intent(app, MainActivity.class).setAction(Intent.ACTION_MAIN);
+        for (String id : ids) renamed.add(new ShortcutInfo.Builder(app, id).setShortLabel(appName).setLongLabel(appName).setIcon(icon).setIntent(plain).build());
         try { sm.updateShortcuts(renamed); } catch (RuntimeException ignored) { }
         sm.disableShortcuts(ids, tr("conversations.gone", appName));
+    }
+
+    /**
+     * 6.10 (G-24): rate-limited while names must go (the background) — the
+     * dynamic ones are gone already; the cached ones (a notification's) go
+     * too, and a pinned one, which cannot be renamed now, is disabled until
+     * the next publish (removeStale enables it again, and renames it). The
+     * system keeps a disabled pinned shortcut's label: that is the limit.
+     */
+    private void dropNamed(ShortcutManager sm) {
+        try {
+            if (Build.VERSION.SDK_INT >= 30) {
+                List<String> cached = ConversationPlan.stale(idsOf(sm.getShortcuts(ShortcutManager.FLAG_MATCH_CACHED)), Collections.emptySet());
+                if (!cached.isEmpty()) sm.removeLongLivedShortcuts(cached);
+            }
+            List<String> pinned = new ArrayList<>();
+            for (ShortcutInfo si : sm.getPinnedShortcuts()) if (ConversationPlan.ours(si.getId()) && si.isEnabled()) pinned.add(si.getId());
+            if (!pinned.isEmpty()) sm.disableShortcuts(pinned, app.design().appName());
+            lastSet = "";
+        } catch (RuntimeException e) {
+            Log.w(TAG, "the named shortcuts could not be dropped: " + e.getClass().getSimpleName());
+        }
     }
 
     /** Switched off: every conversation of the app goes. */

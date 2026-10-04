@@ -114,8 +114,11 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
 
     private void handleIntent(Intent i) {
         if (i == null) return;
-        String room = i.getStringExtra("room");
-        if (room != null) pendingRoom = room;
+        // 6.10 (G-23): the activity is exported — a room only from the app's own intents (a notification's tap,
+        // with this process's tag: telecom/Notify.openRoom), taken once; openPendingRoom opens only a room the app is in.
+        String room = i.getStringExtra("room"), seal = i.getStringExtra(cz.m5cet.app.security.IntentSeal.EXTRA);
+        if (room != null && cz.m5cet.app.security.IntentSeal.valid(cz.m5cet.app.security.IntentSeal.OPEN, room, seal)) pendingRoom = room;
+        i.removeExtra(cz.m5cet.app.security.IntentSeal.EXTRA);
         String conversation = i.getStringExtra(Intent.EXTRA_SHORTCUT_ID);
         if (conversation != null) pendingConversation = conversation;
         Uri data = i.getData();
@@ -238,8 +241,14 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         if (pendingRoom != null) {
             String k = pendingRoom;
             pendingRoom = null;
-            app.rooms.switchTo(k);
-            showScreen("room", true);
+            // 6.10 (G-23): an intent never joins a room — only one the app is in (connected, or reconnecting) comes forward.
+            if (app.rooms.session(k) != null) {
+                app.rooms.switchTo(k);
+                showScreen("room", true);
+            } else {
+                pendingShare = null; // shared into that room: not into another one
+                showScreen("rooms", true);
+            }
         }
         if (pendingShare != null && app.rooms.activeSession() != null) {
             form.put("composer", pendingShare);
@@ -379,7 +388,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     public void showScreen(String id, boolean transition) {
         Design d = app.design();
         JSONObject tree = d.screen(id);
-        if (tree == null) { Log.w("ui", "no screen " + id); return; }
+        // 6.10 (G-20): not the id — a design's screen.open may have computed it from data, and the log reaches the console.
+        if (tree == null) { Log.w("ui", "a screen the design does not have was asked for"); return; }
         if (!screen.isEmpty() && !screen.equals(id) && !id.equals("lock") && !id.equals("enroll") && !screen.equals("splash") && !screen.equals("lock")) stack.push(screen);
         String from = screen;
         screen = id;
@@ -628,8 +638,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     @Override public View slot(String name, Renderer.Bound bound) { return parts.create(name, bound); }
 
     @Override
-    public void action(String action, Object arg, Expr.Scope scope, View source) {
-        Actions.run(this, action, arg, scope, source, 0);
+    public void action(String action, String raw, Object arg, Expr.Scope scope, View source) {
+        Actions.run(this, action, raw, arg, scope, source, 0);
     }
 
     public FrameLayout overlay() { return overlay; }
@@ -702,7 +712,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             if (!cond.isEmpty() && !Expr.truthy(Expr.eval(cond, sc, tr()))) continue;
             String act = it.optString("action"), a = it.optString("arg", null);
             list.add(new cz.m5cet.app.ui.look.Menus.Item(it.optString("icon"), Expr.render(it.optString("label"), sc, tr()), cz.m5cet.app.ui.look.Menus.dangerous(act), false,
-                () -> action(act, a == null ? null : Expr.value(a, sc, tr()), sc, anchor)));
+                () -> action(act, a, a == null ? null : Expr.value(a, sc, tr()), sc, anchor)));
         }
         cz.m5cet.app.ui.look.Menus.show(anchor, list);
     }

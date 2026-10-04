@@ -23,10 +23,29 @@ public final class Actions {
 
     static String text(Object arg) { return arg == null ? "" : Expr.toText(arg); }
 
+    /** An action of the app's own code: it carries no argument the design computed. */
     public static void run(MainActivity a, String action, Object arg, Expr.Scope scope, View source, int depth) {
+        run(a, action, null, arg, scope, source, depth);
+    }
+
+    /**
+     * An action of the design (a tree's event, a menu item, a swipe, a
+     * library step): raw is its argument as the design wrote it, arg its value
+     * now. 6.10 (G-20, G-21): ActionGuard refuses a computed argument where it
+     * could carry data off the phone, and a design's change of a privacy
+     * setting. Neither the argument nor a refused value is logged (the log
+     * reaches the console).
+     */
+    public static void run(MainActivity a, String action, String raw, Object arg, Expr.Scope scope, View source, int depth) {
         M5 app = a.app();
         String s = text(arg);
-        Log.d("action", action + (s.isEmpty() ? "" : " " + s));
+        Log.d("action", action);
+        String refused = ActionGuard.check(action, raw, arg, "profile.public".equals(action) ? a.parts.people().shownUsername() : null);
+        if (refused != null) {
+            Log.w("action", action + " refused: " + refused);
+            a.flash("", app.t("security.refused"), "warn");
+            return;
+        }
         try {
             switch (action) {
                 case "screen.open": a.showScreen(s.isEmpty() ? "rooms" : s, true); break;
@@ -86,6 +105,7 @@ public final class Actions {
                 }
                 case "lib.run": runLibrary(a, s, scope, source, depth); break;
                 case "setting.set": {
+                    // The key is the design's literal and no privacy one, the value within its rule (ActionGuard, Settings.set).
                     int eq = s.indexOf('=');
                     if (eq > 0 && app.settings.set(s.substring(0, eq).trim(), s.substring(eq + 1).trim())) { a.settingChanged(s.substring(0, eq).trim()); a.refresh(); }
                     break;
@@ -194,7 +214,8 @@ public final class Actions {
                 default: Log.w("action", "unknown action " + action);
             }
         } catch (RuntimeException e) {
-            Log.e("action", action + " failed", e);
+            // The kind of failure only: its message may quote the argument.
+            Log.e("action", action + " failed: " + e.getClass().getSimpleName(), null);
         }
     }
 
@@ -211,9 +232,9 @@ public final class Actions {
                 String cond = st.optString("if", "");
                 if (!cond.isEmpty() && !Expr.truthy(Expr.eval(cond, scope, a.tr()))) continue;
                 String arg = st.optString("arg", null);
-                run(a, st.getString("do"), arg == null ? null : Expr.value(arg, scope, a.tr()), scope, source, depth + 1);
+                run(a, st.getString("do"), arg, arg == null ? null : Expr.value(arg, scope, a.tr()), scope, source, depth + 1);
             } catch (JSONException | RuntimeException e) {
-                Log.e("action", "library " + name + " step " + i + " failed", e);
+                Log.e("action", "library " + name + " step " + i + " failed: " + e.getClass().getSimpleName(), null);
                 return;
             }
         }

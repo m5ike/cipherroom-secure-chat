@@ -50,15 +50,17 @@ public final class SwipeRow extends FrameLayout {
     /** A menu item resolved in the row's scope. */
     public static final class Action {
         public final String icon, label, action;
+        /** The argument as the menu item wrote it (6.10, G-20: ui/ActionGuard checks it) and its value in the row's scope. */
+        public final String raw;
         public final Object arg;
-        Action(String icon, String label, String action, Object arg) { this.icon = icon; this.label = label; this.action = action; this.arg = arg; }
+        Action(String icon, String label, String action, String raw, Object arg) { this.icon = icon; this.label = label; this.action = action; this.raw = raw; this.arg = arg; }
     }
 
     /** A design colour ("@primary", "#rrggbb") → ARGB. */
     public interface Colors { int of(String value, int fallback); }
 
-    /** Runs an action of the design (the renderer's host). */
-    public interface Run { void run(String action, Object arg, View source); }
+    /** Runs an action of the design (the renderer's host): raw is its argument as the design wrote it. */
+    public interface Run { void run(String action, String raw, Object arg, View source); }
 
     /** What the rooms' rows swipe to (RoomList, when the design's rooms.item has no swipe of its own). */
     public static JSONObject roomDefaults() {
@@ -175,7 +177,7 @@ public final class SwipeRow extends FrameLayout {
             try {
                 if (!cond.isEmpty() && !Expr.truthy(Expr.eval(cond, scope, tr))) continue;
                 String arg = it.optString("arg", null);
-                out.add(new Action(it.optString("icon", "circle"), Expr.render(it.optString("label"), scope, tr), it.optString("action"), arg == null ? null : Expr.value(arg, scope, tr)));
+                out.add(new Action(it.optString("icon", "circle"), Expr.render(it.optString("label"), scope, tr), it.optString("action"), arg, arg == null ? null : Expr.value(arg, scope, tr)));
             } catch (RuntimeException e) {
                 cz.m5cet.app.core.Log.w("swipe", menuId + "[" + i + "]: " + e.getMessage());
             }
@@ -233,7 +235,7 @@ public final class SwipeRow extends FrameLayout {
     }
 
     private void fire(Action a, View source) {
-        if (run != null) run.run(a.action, a.arg, source);
+        if (run != null) run.run(a.action, a.raw, a.arg, source);
     }
 
     /* ----------------------------------------------------------- layout */

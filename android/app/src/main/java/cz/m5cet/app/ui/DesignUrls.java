@@ -3,6 +3,8 @@ package cz.m5cet.app.ui;
 import android.app.AlertDialog;
 import android.net.Uri;
 
+import java.util.regex.Pattern;
+
 /**
  * 6.7 (security analysis F-01, critical): what of the server's design may
  * reach the network. The design is signed by the server, but the end-to-end
@@ -14,10 +16,19 @@ import android.net.Uri;
  *   image src   a computed value may only name a local source (asset:…,
  *               data:image/…); a remote https image only as a fixed literal
  *               of the design (nothing from $msg, $form, $user… in it)
- *   url.open    the person sees the address and confirms before it opens
+ *   url.open    the design's literal only (6.10, G-20: ui/ActionGuard), and
+ *               the person sees the whole address and confirms before it
+ *               opens — an address too long to read, or with spaces or
+ *               hidden (bidi, zero-width) characters, is refused instead of
+ *               being shown cut short
  */
 public final class DesignUrls {
     private DesignUrls() {}
+
+    /** url.open: longer than this cannot be read in a dialog — refused, not cut. */
+    static final int URL_MAX = 300;
+    /** Spaces of any kind, control characters, and invisible formatting (bidi overrides, zero-width…). */
+    private static final Pattern HIDDEN = Pattern.compile("[\\s\\p{Z}\\p{Cc}\\p{Cf}]");
 
     /** The value is computed from data at bind time: an expression or a template. */
     static boolean dynamic(String raw) {
@@ -39,14 +50,22 @@ public final class DesignUrls {
         return !dynamic(raw) && raw.trim().equals(src) ? src : "";
     }
 
-    /** url.open from the design: the address is shown (host first) and opens only when confirmed. */
+    /** 6.10 (G-20): whether url.open may offer this address — https, at most URL_MAX characters, all of it visible. */
+    static boolean openable(String url) {
+        return url != null && url.startsWith("https://") && url.length() > "https://".length() && url.length() <= URL_MAX && !HIDDEN.matcher(url).find();
+    }
+
+    /** url.open from the design: the whole address is shown (host first) and opens only when confirmed. */
     static void confirmOpen(MainActivity a, String url) {
-        if (url == null || !url.startsWith("https://")) return;
+        if (!openable(url)) {
+            cz.m5cet.app.core.Log.w("action", "url.open refused: not an address the person could read in full");
+            a.flash("", a.app().t("security.urlRefused"), "warn");
+            return;
+        }
         String host = Uri.parse(url).getHost();
-        String shown = url.length() > 300 ? url.substring(0, 299) + "…" : url;
         new AlertDialog.Builder(a)
             .setTitle(host == null ? url : host)
-            .setMessage(shown)
+            .setMessage(url)
             .setPositiveButton(a.app().t("msg.open"), (d, w) -> a.openUrl(url))
             .setNegativeButton(a.app().t("nav.close"), null)
             .show();

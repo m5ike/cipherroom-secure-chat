@@ -270,7 +270,9 @@ public final class Expr {
         if (obj == null) return null;
         boolean numeric = key instanceof Number || (key instanceof String && !((String) key).isEmpty() && ((String) key).chars().allMatch(Character::isDigit));
         if (numeric) {
-            int i = key instanceof Number ? ((Number) key).intValue() : Integer.parseInt((String) key);
+            int i;
+            // A number too long for an index is no index (and its text must not end up in an error's message).
+            try { i = key instanceof Number ? ((Number) key).intValue() : Integer.parseInt((String) key); } catch (NumberFormatException e) { return null; }
             if (key instanceof Number && ((Number) key).doubleValue() != i) return null;
             if (obj instanceof JSONArray) return i >= 0 && i < ((JSONArray) obj).length() ? norm(((JSONArray) obj).opt(i)) : null;
             if (obj instanceof List) return i >= 0 && i < ((List<?>) obj).size() ? norm(((List<?>) obj).get(i)) : null;
@@ -386,6 +388,35 @@ public final class Expr {
 
     public static String checkTemplate(String src) {
         try { parseTemplate(src); return null; } catch (IllegalArgumentException e) { return e.getMessage(); }
+    }
+
+    /**
+     * 6.10 (security analysis G-20): whether a prop or an action's argument
+     * reads data — an "=expression" or a template whose placeholder names a
+     * variable ($msg, $form, $log…, also inside a translation's expression).
+     * Literals and translations ({_'key'}) are the design's own text. What
+     * cannot be parsed counts as reading data (fail closed).
+     */
+    public static boolean readsData(String src) {
+        if (src == null) return false;
+        try {
+            if (src.startsWith("=")) return reads(parse(src.substring(1)));
+            if (src.indexOf('{') < 0) return false;
+            for (Part p : parseTemplate(src)) if (p.expr != null && reads(p.expr)) return true;
+            return false;
+        } catch (IllegalArgumentException e) {
+            return true;
+        }
+    }
+
+    static boolean reads(Node n) {
+        if (n instanceof Lit || n instanceof Tr) return false;
+        if (n instanceof Get) return reads(((Get) n).obj) || reads(((Get) n).key);
+        if (n instanceof Un) return reads(((Un) n).a);
+        if (n instanceof And) return reads(((And) n).a) || reads(((And) n).b);
+        if (n instanceof If) return reads(((If) n).c) || reads(((If) n).a) || reads(((If) n).b);
+        if (n instanceof Bin) return reads(((Bin) n).a) || reads(((Bin) n).b);
+        return true; // a variable — or a node this check does not know
     }
 
     /** A prop or style value: "=expression" → its value, anything else → the rendered template. */
