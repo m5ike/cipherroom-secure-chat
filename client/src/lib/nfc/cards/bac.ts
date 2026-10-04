@@ -143,7 +143,7 @@ export function protectApdu(s: BacSession, apduBytes: Uint8Array): Uint8Array {
 
 /** Unwraps a secure-messaging response → the plaintext data and the real SW. */
 export function unprotectResponse(s: BacSession, resp: Uint8Array): { data: Uint8Array; sw: number } {
-  const sw = (resp[resp.length - 2] << 8) | resp[resp.length - 1];
+  let sw = (resp[resp.length - 2] << 8) | resp[resp.length - 1];
   const body = resp.slice(0, resp.length - 2);
   incSsc(s.ssc);
   let i = 0;
@@ -159,6 +159,9 @@ export function unprotectResponse(s: BacSession, resp: Uint8Array): { data: Uint
   }
   const n = pad(concat(s.ssc, do87, do99));
   if (do8e.length && hex(retailMac(s.ksmac, n)) !== hex(do8e)) throw new Error("secure-messaging MAC did not verify");
+  // 6.6: the status the chip protected (DO'99') is the command's real one — a chip may
+  // answer 9000 outside while the file is absent (6A82) or EAC-protected (6982) inside.
+  if (do99.length === 4) sw = (do99[2] << 8) | do99[3];
   if (encData.length === 0) return { data: new Uint8Array(0), sw };
   const dec = tdesCbcDecrypt(s.ksenc, encData);
   return { data: unpadLocal(dec), sw };

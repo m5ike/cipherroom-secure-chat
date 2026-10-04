@@ -64,7 +64,7 @@ describe("NfcWorkbench (6.3)", () => {
     expect(screen.getByText(/No PIN, no cryptogram, no cloning/i)).toBeTruthy();
     // Both reads are offered (disabled until a reader with an APDU channel is connected).
     const emv = screen.getByRole("button", { name: /Read card data/i }) as HTMLButtonElement;
-    const eid = screen.getByRole("button", { name: /Read document \(BAC\)/i }) as HTMLButtonElement;
+    const eid = screen.getByRole("button", { name: /Read document \(PACE \/ BAC\)/i }) as HTMLButtonElement;
     expect(emv).toBeTruthy();
     expect(eid).toBeTruthy();
     expect(emv.disabled).toBe(true);
