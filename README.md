@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **6.7.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **6.8.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 6.7.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-6.7.0.pdf`](docs/site/m5cet-dokumentace-6.7.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 6.8.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-6.8.0.pdf`](docs/site/m5cet-dokumentace-6.8.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -768,6 +768,10 @@ je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
   jen v paměti procesu (retenční sweep je maže průběžně, restart úplně).
 - `App.tsx` (~4 000 řádků) pokrývají hlavně e2e testy.
 - Historii prohlížeče web smazat neumí; pozvánky nepřežijí restart serveru.
+- **6.8:** záznam hovorů, zvonění, konverzace Androidu a volby odeslání
+  neběžely na skutečném telefonu; zavolat zpět ze záznamu telefonu přes
+  M5cet Android nedovolí (volá se ze Záznamu v aplikaci) — viz
+  [`CHANGELOG.md`](CHANGELOG.md) › 6.8.0 › Známá omezení.
 - **6.7:** nic z novinek 6.7 zatím neběželo na skutečném telefonu ani proti
   skutečným poskytovatelům (FCM, SMTP, web push) a měnič hlasu nebyl
   vyzkoušen na zařízení; návrhové mezery bezpečnosti (web doručovaný
@@ -878,7 +882,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.7.0        | aktuální — **přítomnost**: členové zůstávají v místnosti, dokud neodejdou nebo je server neodstraní (`PRESENCE_MAX_AWAY_DAYS`), na pozadí jsou pryč, „naposledy online“ se zelenou / žlutou / oranžovou tečkou (web i Android); **poloha** za ikonou s oknem *Navigovat* / *Odvoz* / *Kopírovat* a oblast pro podržení vedle bubliny „podržet a číst“; **upozornění** v pořadí kanálů se zálohou (FCM zapečetěné → web push → e-mail přes SMTP operátora), šablony a náhled v konzoli, úrovně soukromí, volba uživatele a tiché hodiny, oprava pročišťování mrtvých odběrů a buzení Androidu; **hlas**: diktování, které se zastaví, poslat jako hlas, měnič hlasu (modul, výchozí vypnutý); **veřejný profil** (fotka, pozadí, přezdívka, o mně, údaje — jen já / členové místností / veřejné); úvodní obrazovka jako rozvržení `start`; Android: šest šablon, nabídky s ikonami, přejetí po řádku místnosti; **bezpečnost**: analýza a audit 6.7, opravy serveru (sandbox Funkcí, WS brána, SSRF, telefonie, limity), webu (výstupy funkcí od členů, historie, sender keys, soubory, název místnosti, síla klíče) a Androidu (design nevynese zprávy, pin klíče serveru, PIN, notifikace při zámku, wipe, Android 10–12, podepsaná politika) |
+| 6.8.0        | aktuální — **hovory v záznamu telefonu** (příchozí / odchozí / zmeškané / odmítnuté, zvonění, oprávnění, neutrální jména) a **Záznam** hovorů a zpráv v aplikaci pro Android; **místnosti jako konverzace Androidu** (zkratky, sdílení, oznámení-konverzace, neutrální názvy při zámku); **volby odeslání jako volby příští zprávy** — web: *Poslat jako hlas* je zaškrtávací, Android: *Odeslat jinak* se zeleným zaškrtnutím a polem pro individuální kód; **limit API** nastaví operátor (`API_RATE_LIMIT`, `API_RATE_WINDOW_MIN`), dlaždice mapy a přihlášení passkey se do něj nepočítají; oprava: velký soubor pro vybrané lidi šel celé místnosti |
+| 6.7.0        | **přítomnost**: členové zůstávají v místnosti, dokud neodejdou nebo je server neodstraní (`PRESENCE_MAX_AWAY_DAYS`), na pozadí jsou pryč, „naposledy online“ se zelenou / žlutou / oranžovou tečkou (web i Android); **poloha** za ikonou s oknem *Navigovat* / *Odvoz* / *Kopírovat* a oblast pro podržení vedle bubliny „podržet a číst“; **upozornění** v pořadí kanálů se zálohou (FCM zapečetěné → web push → e-mail přes SMTP operátora), šablony a náhled v konzoli, úrovně soukromí, volba uživatele a tiché hodiny, oprava pročišťování mrtvých odběrů a buzení Androidu; **hlas**: diktování, které se zastaví, poslat jako hlas, měnič hlasu (modul, výchozí vypnutý); **veřejný profil** (fotka, pozadí, přezdívka, o mně, údaje — jen já / členové místností / veřejné); úvodní obrazovka jako rozvržení `start`; Android: šest šablon, nabídky s ikonami, přejetí po řádku místnosti; **bezpečnost**: analýza a audit 6.7, opravy serveru (sandbox Funkcí, WS brána, SSRF, telefonie, limity), webu (výstupy funkcí od členů, historie, sender keys, soubory, název místnosti, síla klíče) a Androidu (design nevynese zprávy, pin klíče serveru, PIN, notifikace při zámku, wipe, Android 10–12, podepsaná politika) |
 | 6.6.0        | **NFC: hloubkové čtení** (web i Android) jen ke čtení: EMV s GET DATA (čítače), **historií transakcí** z logu karty a všemi soubory; e-ID / e-pas přes **PACE** (CAN nebo MRZ; ECDH generic mapping, AES / 3DES) nebo BAC, s EF.SOD (kontrola otisků skupin), DG1, všemi obličeji v DG2, DG5, DG7, DG11–DG16 (DG3/DG4 ne), obrázky a surovými soubory ke stažení; klíč dokladu se zadává na zařízení a na server nejde; aplikace pro Android odpovídá na NFC požadavek modelu (panel, NFC telefonu nebo povolená USB čtečka) a výstup `html` ukáže v uzamčeném WebView; **výpisy karet** v šesti formátech (HTML, objekt, řádky, JSON, text, CSV; cs/en/de, maskovaný PAN), *Celý výpis* s exportem v pracovišti; **`m5.out.html`** — sanitizované HTML z funkcí; SDK `m5.nfc.emv/eid.report/format`, `m5.nfc.format/outputs/document`; nástroje tvůrce NFC.EMV a NFC.e-ID; příkazy `/emv`, `/emv-history`, `/eid` (vypnuté); `/help nfc`, `/help html`, lekce tutoriálu 17–19 |
 | 6.5.0        | **NFC: čtení EMV a e-ID / e-pasu** (web i Android) jen ke čtení: EMV `PPSE → AID → GPO → záznamy` (AIDy, štítky, maskovaný PAN, platnost, držitel, ATC…), e-ID / e-pas přes BAC z MRZ nebo CAN (DG1 + DG2) — bez PINu, kryptogramu, transakce a zápisu, žádné klonování; `m5.nfc.emv` / `m5.nfc.eid` ve Functions, `apduTemplates` s op i apdu šablonami a tlačítkem v konzoli; `/příkaz` v chatu se ukáže hned jako pulzující bublina s indikátorem, výsledek nahradí indikátor na místě |
 | 6.4.1        | Android: server odmítne obřad passkeye pro build, jehož certifikát nezná, **dřív než passkey vznikne** (žádné osiřelé passkeye); uživatelské jméno `XXXX-XXXX-XXXX-XXXX` (0-9 a-z A-Z), název passkeye `ISO2-scramble(Jméno-Příjmení-Mobil)` |

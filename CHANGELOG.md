@@ -5,6 +5,124 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.8.0] – 2026-10-04
+
+**Hovory v záznamu telefonu a Záznam hovorů a zpráv v aplikaci, místnosti
+jako konverzace Androidu, volby odeslání jako volby příští zprávy (web
+i Android) a limit API, který nastaví operátor.** Android nemá systémový
+„záznam zpráv“, do kterého by směl zapisovat jiný messenger (SMS historii
+píše jen výchozí SMS aplikace) — proto zprávy dostaly vlastní Záznam
+v aplikaci a místnosti se v telefonu chovají jako konverzace, tak jako
+u Signalu a WhatsAppu.
+
+### Přidáno
+- **Hovory v záznamu telefonu** (Android, `telecom/CallLogBridge`,
+  `chat/CallTrack`): jeden záznam na hovor — odchozí, příchozí, zmeškaný,
+  odmítnutý — s časem, délkou a příznakem videa; spojení, které spadne
+  a do 20 s se vrátí, je pořád jeden hovor. Zapnutí v *Nastavení › Hovory*
+  si řekne o oprávnění zápisu do záznamu hovorů (odmítnuté přepínač vrátí);
+  záznamy aplikace jdou ze záznamu telefonu odebrat a *Smazat všechna data*
+  je odebere také. Jméno záznamu je výchozí jen „M5cet“ (záznam hovorů
+  telefonu čte každá aplikace s oprávněním ke čtení) — název místnosti nebo
+  i lidé jen na přání (`calls.logName`), při zamčené aplikaci nikdy.
+- **Zvonění hovoru** (`telecom/CallRing`): když někdo jiný v místnosti
+  zahájí hovor, přijde upozornění s *Připojit* / *Odmítnout*; skončí-li hovor
+  beze mě, změní se na tiché „zmeškaný hovor“. Řídí se přepínačem Hovory,
+  tichými hodinami a úrovní soukromí, při zámku jen název aplikace.
+- **Záznam** (obrazovka `log`, ikona v liště místností i hlavní menu): hovory
+  a zprávy ze všech místností v jednom časovém seznamu, filtry vše / hovory /
+  zprávy / zmeškané, hledání bez ohledu na diakritiku, klepnutí otevře
+  místnost u zprávy, zavolání zpět po potvrzení. Hovory z nového šifrovaného
+  záznamu v trezoru (nejvýš 500 / 90 dní, jde vypnout a smazat), zprávy
+  z historie místností (nic se nezdvojuje); zapečetěné, mizející,
+  klikací a skryté zprávy jen jako druh, nikdy text.
+- **Místnosti jako konverzace Androidu** (`telecom/Conversations`,
+  `ConversationPlan`): připojené místnosti jsou dlouhodobé zkratky
+  konverzací (sekce *Konverzace* v oznámeních, widget, horní řada sdílení),
+  nejvýš 8 podle poslední aktivity; sdílení textu z jiné aplikace do
+  místnosti ho vloží do pole (neodešle). Názvy místností jen při odemčené
+  aplikaci, se zapnutým *Zobrazovat názvy místností* a úrovní soukromí, která
+  název dovolí — jinak „Konverzace 1, 2…“; po automatickém zámku je
+  přejmenuje časovač i alarm. Id zkratek jsou HMAC klíče místnosti (už ne
+  klíč sám). Vypnutí (`conversations.on`) zkratky odstraní. V menu místnosti
+  *Konverzace v telefonu* otevře nastavení její konverzace (Android 11+).
+- **Odeslat jinak** (Android, `chat/SendPlan`): každá položka je volba
+  příští zprávy — jako hlas, nadiktovat a poslat text, individuální kód,
+  mizející, klikací; zapnutá má ikonu se zeleným zaškrtnutím, list zůstane
+  otevřený, *Hotovo* / *Vypnout vše*. Individuální kód má pole a kostku,
+  která kód vymyslí (prázdné pole = nový náhodný kód pro každou zprávu).
+  Volby se použijí až při *Odeslat* (tlačítko, Enter, diktování, které
+  odesílá); „jako hlas“ a „nadiktovat a poslat text“ se vylučují.
+- **Poslat jako hlas je zaškrtávací volba** (web, *Typ zprávy*,
+  `client/src/lib/speak-send.ts`): zaškrtnutá posílá místo textu zvuk
+  (převod textu na řeč); tlačítko Odeslat ukáže reproduktor. Klikací,
+  mizející, vybraní příjemci i odpověď jdou s hlasovou zprávou; zapečetěnou
+  hlasovou zprávu poslat nejde — odeslání se odmítne s vysvětlením, text
+  nikdy neodejde nezapečetěný. Příkazy a odpovědi funkcím zůstávají textem.
+  Text nad 2000 znaků se odmítne (dřív se potichu zkrátil).
+- **Limit veřejného API nastaví operátor** (`server/api-limit.ts`):
+  `API_RATE_LIMIT` (požadavků na adresu, výchozí 100) a
+  `API_RATE_WINDOW_MIN` (okno v minutách, výchozí 15); server je vypíše při
+  startu, neplatné ohlásí; instalátor je zná (`update.sh --set`).
+
+### Změněno
+- Do obecného limitu API se nepočítají cesty s vlastním limitem: **dlaždice
+  mapy** (300 / min), **přihlášení, registrace a obnova passkey** (30 / 10 min),
+  trezor, úložiště, konzole, Android a profily. Stránka s několika mapami
+  dřív limit vyčerpala a další přihlášení passkey skončilo `429`.
+- Odmítnuté přihlášení (`429`) na webu i v Androidu říká, že jde o limit
+  serveru, ne o passkey (web i za kolik minut to zkusit znovu).
+- Volby odeslání zůstávají zapnuté i po odeslání (web je tak měl vždy;
+  Android dřív kód, mizení a klikací po každé zprávě vypnul).
+- Build, jehož design použije prvek nebo akci 6.8, potřebuje aplikaci 6.8
+  (`minAppCode` 60800); výchozí design ji potřebuje.
+
+### Opraveno
+- **Velký soubor pro vybrané lidi šel celé místnosti** (web): soubor nad
+  512 KB (i hlasová zpráva) šel všem otevřeným kanálům, nebo přes relay
+  serveru, který doručí celé místnosti, ať byl výběr jakýkoli. Teď jen
+  přímými kanály vybraných (`largeFileRoute`), nikdy přes relay; bez nich
+  se odeslání odmítne.
+- **Záznam hovoru z 6.7 šel „zavolat zpět“ přes SIM**: číslo
+  `m5cet:<místnost>` telefon převedl na číslice klávesnice
+  (`m5cet:team` → 652388326) a vytočil je. Nové záznamy číslo nemají;
+  staré se při startu aplikace jednou opraví (číslo i název místnosti
+  pryč).
+- Záznam hovorů v 6.7 zapisoval každý hovor jako odchozí a jen když běžel
+  zvuk; přepínač si o oprávnění nikdy neřekl.
+- *Mizející* v listu přílohy (Android) už jde zase vypnout.
+
+### Testy
+- Nové: `api-limit`, `large-file-route`, `send-as-voice`,
+  `android-send-68`, `android-conversations-68`, `android-calllog-68`;
+  rozšířené `account-client`, `account-panel`, `android-min-app-code`,
+  `android-server`, `voice-ui`. `npx vitest run`: 219 souborů, 2501 testů
+  (4 přeskočené).
+- Android (JVM, 506 testů): `SendPlanTest`, `ConversationPlanTest`,
+  `CallTrackTest`, `CallHistoryTest`, `ActivityLogTest`, `CallLogBridgeTest`,
+  rozšířený `AccountRefusalTest`; `lintDebug` 0 chyb.
+
+### Známá omezení
+- **Nic z 6.8 neběželo na skutečném telefonu** (záznam hovorů, zvonění,
+  konverzace, sdílení, volby odeslání) ani se dvěma lidmi a hlasem
+  serveru na webu — ověřeno jednotkovými testy, sestavením a lintem.
+- **Zavolat zpět ze záznamu telefonu přes M5cet nejde**: Android 10–16
+  u záznamu cizí aplikace vytočí číslo jako běžný hovor (proto číslo
+  nemají); volá se zpět ze Záznamu v aplikaci. Aplikace registruje
+  vlastní volající účet jen kvůli označení zdroje — jak záznam vypadá, se
+  liší podle aplikace Telefon (některé napíšou „Neznámé“). Hovor, který
+  proběhne, když místnost není připojená, zaznamenat nejde.
+- Konverzace: žádné bubliny (aplikace má jedinou aktivitu s zámkem
+  a designem), sdílení jen textu (obrázek se v aplikaci posílá hned po
+  výběru), oznámení ze šablon serveru nejsou konverzace, oznámení zobrazená
+  před zamčením si názvy nechají; vlastní nastavení konverzací z 6.7 se
+  ztratí (nová id).
+- Hlasová zpráva nemůže nést individuální kód (web ani Android). Velké
+  soubory (nad 512 KB) dál nenesou klikací / mizející a nedostanou je
+  nepřítomní.
+- Klávesnice se může naučit napsaný individuální kód (pole designu nemá typ
+  „bez návrhů“).
+
 ## [6.7.0] – 2026-10-04
 
 **Přítomnost a „naposledy online“, poloha s navigací a odvozem, upozornění se
