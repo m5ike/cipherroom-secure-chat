@@ -147,7 +147,8 @@ import {
   postMessageAudit, unhideMessage, type HideChoice, type MessageAuditAction,
 } from "./lib/message-hide";
 import { messageKinds, messageSize, receiptsOf, timelineOf, withAudit } from "./lib/message-timeline";
-import { forgetBlob, rememberBlob } from "./lib/attachment-media";
+import { forgetBlob, rememberBlob, releaseBlobUrl } from "./lib/attachment-media";
+import { capMessages, withReleasedFiles } from "./lib/memory-caps";
 import type { MapPreviewPolicy } from "./lib/client-config";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
 import { createFlashQueue, kindForText, type FlashMessage } from "./lib/flash";
@@ -1170,6 +1171,14 @@ function ChatApp() {
   useEffect(() => { accountRef.current = account; }, [account]);
   useEffect(() => { awayPeersRef.current = awayPeers; }, [awayPeers]);
   useEffect(() => { messagesRef.current = messages; }, [messages]);
+  // 6.7 (S20): the newest messages within MESSAGE_CAP stay; the files of those that fall off are released.
+  useEffect(() => {
+    const { dropped } = capMessages(messages);
+    if (!dropped.length) return;
+    for (const m of dropped) if (m.attachment?.dataUrl) releaseBlobUrl(m.attachment.dataUrl);
+    const gone = new Set(dropped.map((m) => m.id));
+    setMessages((cur) => cur.filter((m) => !gone.has(m.id)));
+  }, [messages]);
   useEffect(() => { retentionRef.current = prefs.chatRetention; }, [prefs.chatRetention]);
   useEffect(() => { prefsRef.current = prefs; }, [prefs]);
 
@@ -2281,7 +2290,9 @@ function ChatApp() {
         // meta.mime is already reduced to a type that is safe to open from
         // a blob: URL of this origin (file-transfer.ts checkMeta).
         const url = URL.createObjectURL(blob);
-        rememberBlob(url, blob);
+        // 6.7 (S20): older received files may make room (their messages say the file is gone).
+        const released = rememberBlob(url, blob);
+        if (released.length) setMessages((cur) => withReleasedFiles(cur, released));
         systemMessage(t(lang, proof.verified ? "file.verified" : "file.unverified").replace("{name}", meta.name), { kind: proof.verified ? "success" : "info" });
         void identityFor(proof.signer, meta.senderName).then((identity) => {
           setMessages((current) => current.some((m) => m.id === meta.transferId) ? current : [
@@ -2362,7 +2373,7 @@ function ChatApp() {
             channel.send(JSON.stringify({ kind: "file-need", transferId, seqs, transport: "p2p" }));
             return true;
           } catch { return false; }
-        }));
+        }), peerId); // 6.7 (S19): bound to this channel's peer
         return;
       }
       const dataStr = String(event.data);
@@ -2423,7 +2434,7 @@ function ChatApp() {
             channel.send(JSON.stringify({ kind: "file-need", transferId, seqs, transport: "p2p" }));
             return true;
           } catch { return false; } // channel gone: the end-of-transfer error follows
-        }));
+        }), peerId); // 6.7 (S19): bound to this channel's peer
         return;
       }
 
@@ -3179,7 +3190,7 @@ function ChatApp() {
           if (sock?.readyState !== WebSocket.OPEN) return false;
           sock.send(JSON.stringify({ type: "proxy-need", transferId, seqs }));
           return true;
-        }));
+        }), typeof frame.from === "string" && frame.from ? frame.from : undefined); // 6.7 (S19): the sender the server relayed it from
         return;
       }
     };

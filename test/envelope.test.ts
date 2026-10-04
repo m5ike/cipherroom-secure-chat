@@ -169,7 +169,7 @@ describe("files, version 2", () => {
   it("refuses a meta that claims billions of chunks, before allocating anything", async () => {
     const legacy = await keys.legacy();
     const { encryptJSON } = await import("../client/src/lib/file-transfer");
-    const meta = await encryptJSON(legacy, { transferId: "xfer-huge", name: "x", mime: "x/y", size: 4e9, totalChunks: 4e9, chunkSize: 1, senderId: "p", senderName: "M", createdAt: 1 });
+    const meta = await encryptJSON(legacy, { transferId: "xfer-huge", name: "x", mime: "x/y", size: 1e9, totalChunks: 1e9, chunkSize: 1, senderId: "p", senderName: "M", createdAt: 1 });
     const errors: string[] = [];
     await handleIncomingFrame(keys, newIncomingRegistry(), { kind: "file-meta", transferId: "xfer-huge", transport: "p2p", ...meta }, 1e12, { onError: (_id, m) => errors.push(m) });
     expect(errors).toEqual(["Too many chunks."]);

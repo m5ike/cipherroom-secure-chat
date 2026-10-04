@@ -71,12 +71,35 @@ export function dataUrlToBlob(url: string, type: string): Blob | null {
 
 const blobs = new Map<string, Blob>();
 
-/** A blob: URL this page made for a received file, and its Blob. */
-export function rememberBlob(url: string, blob: Blob): void {
+/** 6.7 (audit S20): received files kept in this page's memory — the oldest go
+ *  (their blob: URL revoked) beyond this many, or beyond this many bytes. The
+ *  newest one always stays, however big. */
+export const BLOB_BUDGET = { files: 200, bytes: 1024 ** 3 } as const;
+
+/** A blob: URL this page made for a received file, and its Blob. Returns the
+ *  URLs released to stay within BLOB_BUDGET (their files are gone). */
+export function rememberBlob(url: string, blob: Blob, budget: { files: number; bytes: number } = BLOB_BUDGET): string[] {
+  blobs.delete(url);
   blobs.set(url, blob);
+  let total = 0;
+  for (const b of blobs.values()) total += b.size;
+  const released: string[] = [];
+  for (const [u, b] of blobs) {
+    if (blobs.size <= 1 || (blobs.size <= budget.files && total <= budget.bytes)) break;
+    releaseBlobUrl(u);
+    total -= b.size;
+    released.push(u);
+  }
+  return released;
 }
 export function forgetBlob(url: string): void {
   blobs.delete(url);
+}
+/** Forgets a received file and revokes its blob: URL (a deleted or dropped message). */
+export function releaseBlobUrl(url: string): void {
+  if (!url.startsWith("blob:")) return;
+  blobs.delete(url);
+  try { URL.revokeObjectURL(url); } catch { /* already gone */ }
 }
 
 /** The file's bytes as a Blob: decoded from a data: URL, or the one remembered for a blob: URL. */
