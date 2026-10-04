@@ -475,6 +475,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
                 s.put("voices", voices);
                 s.put("voice", jo("dictating", app.voice.dictating(), "listening", app.voice.listening(), "speaking", app.voice.speaking(), "available", cz.m5cet.app.voice.Dictation.available(app)));
                 break;
+            case "settings.voiceFx": s.put("voiceFx", cz.m5cet.app.voice.FxTest.scope(app)); break; // 6.7 voice changer
             case "settings.location": {
                 JSONObject pol = app.config.policy().optJSONObject("location");
                 s.put("location", jo("permitted", app.where.permitted(), "tracking", app.where.tracking(), "allowed", pol == null || pol.optBoolean("track", true)));

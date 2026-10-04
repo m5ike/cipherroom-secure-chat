@@ -44,6 +44,8 @@ export type ModuleDef = {
   console?: string;
   /** 5.2: the parts of the module a grant can give or take away. */
   rights?: readonly RightDef[];
+  /** 6.7: off until the operator turns it on (no rule = off, not "everyone"). */
+  offByDefault?: boolean;
 };
 
 const FN_RIGHTS: RightDef[] = [
@@ -117,6 +119,8 @@ export const MODULE_CATALOG: readonly ModuleDef[] = [
   { id: "analytics", label: "Analytics", description: "The analytics consent screen.", panels: ["analytics"] },
   { id: "appearance", label: "Appearance", description: "Templates, fonts, colours.", panels: ["appearance"] },
   { id: "editMode", label: "Edit Mode", description: "The in-page style editor.", panels: [] },
+  // 6.7: every microphone of the app through an effect chain on the device (mic.ts, voice/MicFx.java).
+  { id: "voiceChanger", label: "Voice changer", description: "Changes the voice in calls, voice messages and recorded dictation on the device (presets, pitch, formant, robot, echo, whisper); no audio leaves the device for it. Off until turned on here; then each user switches it on in their client.", panels: ["voiceChanger"], offByDefault: true },
 ];
 
 export const MODULE_IDS: readonly string[] = MODULE_CATALOG.map((m) => m.id);
@@ -329,7 +333,7 @@ const NONE = compileRights([]);
  */
 export function decide(policy: Record<string, Partial<ModuleRule> | undefined>, id: string, userGroups: readonly string[]): Decision {
   const rule = policy[id];
-  if (!rule) return { allowed: true, reason: "unlisted", rights: ALL };
+  if (!rule) return MODULE_BY_ID[id]?.offByDefault ? { allowed: false, reason: "off", rights: NONE } : { allowed: true, reason: "unlisted", rights: ALL };
   if (rule.enabled === false) return { allowed: false, reason: "off", rights: NONE };
   if (MODULE_BY_ID[id]?.rights && userGroups.includes(mainGroupOf(id))) return { allowed: true, reason: "main-group", rights: ALL };
   // A 4.0 rule (enabled + groups) reads as: listed groups only, or everyone.
@@ -347,7 +351,7 @@ export function decide(policy: Record<string, Partial<ModuleRule> | undefined>, 
   return { allowed: base || granted, reason, rights: compileRights(list) };
 }
 
-/** May someone in `userGroups` use the module? Unlisted modules are on for all. */
+/** May someone in `userGroups` use the module? Unlisted modules are on for all (but those off by default). */
 export function moduleAllowed(policy: Record<string, Partial<ModuleRule> | undefined>, id: string, userGroups: readonly string[]): boolean {
   return decide(policy, id, userGroups).allowed;
 }

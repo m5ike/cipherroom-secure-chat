@@ -26,8 +26,10 @@
   const logFilter = { module: "", decision: "", subject: "", days: "2", auto: false };
 
   const DEFAULT_RULE = { enabled: true, groups: [], defaultAccess: "allow", groupAccess: "allow", grants: [], log: "all" };
-  const ruleOf = (id) => ({ ...DEFAULT_RULE, ...(config.modules[id] || {}), groups: [...((config.modules[id] || {}).groups || [])], grants: [...((config.modules[id] || {}).grants || [])].map((g) => ({ group: g.group, rights: [...g.rights] })) });
-  const isDefault = (r) => r.enabled && !r.groups.length && r.defaultAccess === "allow" && r.groupAccess === "allow" && !r.grants.length && r.log === "all";
+  // 6.7: a module off by default (the voice changer) has no rule while it is off.
+  const offByDefault = (id) => Boolean(((catalog.modules || []).find((m) => m.id === id) || {}).offByDefault);
+  const ruleOf = (id) => ({ ...DEFAULT_RULE, enabled: !offByDefault(id), ...(config.modules[id] || {}), groups: [...((config.modules[id] || {}).groups || [])], grants: [...((config.modules[id] || {}).grants || [])].map((g) => ({ group: g.group, rights: [...g.rights] })) });
+  const isDefault = (r, id) => r.enabled === !offByDefault(id) && !r.groups.length && r.defaultAccess === "allow" && r.groupAccess === "allow" && !r.grants.length && r.log === "all";
   const REASON = { off: "module off", "main-group": "main group", "group-allow": "access group — allow", "group-deny": "access group — deny", "default-allow": "default — allow", "default-deny": "default — deny", grant: "grant", unlisted: "no rule — everyone", right: "not among the rights", owner: "console owner" };
 
   async function load() {
@@ -113,7 +115,7 @@
       if (on) r.enabled = on.checked;
       if (log) r.log = log.value;
       // Only what differs from "on for everyone, all logged" is stored.
-      if (!isDefault(r)) out[m.id] = r;
+      if (!isDefault(r, m.id)) out[m.id] = r;
     }
     return out;
   }
@@ -251,7 +253,7 @@
       config.modules = { ...config.modules, [m.id]: rule };
       const modules = collectModules();
       modules[m.id] = rule; // the dialog's on/off and log win over the table's
-      if (isDefault(rule)) delete modules[m.id];
+      if (isDefault(rule, m.id)) delete modules[m.id];
       try {
         const r = await api("/api/admin/client-config", { method: "PUT", body: { config: { ...config, modules, groups: config.groups } } });
         config = r.config;

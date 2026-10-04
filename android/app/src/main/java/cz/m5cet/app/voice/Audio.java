@@ -29,9 +29,14 @@ public final class Audio {
 
     public static final int RATE = 16_000;
 
-    /** Records 16 kHz mono PCM until stop(); level() is 0–1 for a meter. */
+    /**
+     * Records 16 kHz mono PCM until stop(); level() is 0–1 for a meter.
+     * 6.7: every buffer passes the voice changer first (MicFx) — what is kept
+     * (and sent) is the changed voice when it is on.
+     */
     public static final class Recorder {
         private final ByteArrayOutputStream pcm = new ByteArrayOutputStream();
+        private final MicFx.Stream fx = new MicFx.Stream(RATE);
         private AudioRecord rec;
         private Thread thread;
         private volatile boolean running;
@@ -51,15 +56,23 @@ public final class Audio {
             }
             running = true;
             startedAt = System.currentTimeMillis();
+            AudioRecord r = rec;
             thread = new Thread(() -> {
+                short[] samples = new short[1600];
                 byte[] buf = new byte[3200];
                 while (running) {
-                    int n = rec.read(buf, 0, buf.length);
+                    int n = r.read(samples, 0, samples.length);
                     if (n <= 0) continue;
-                    synchronized (pcm) { if (pcm.size() < 60 * 60 * RATE * 2) pcm.write(buf, 0, n); }
+                    fx.process(samples, 0, n, 1);
                     long sum = 0;
-                    for (int i = 0; i + 1 < n; i += 2) { short s = (short) ((buf[i] & 0xff) | (buf[i + 1] << 8)); sum += (long) s * s; }
-                    level = (float) Math.min(1, Math.sqrt(sum / (double) Math.max(1, n / 2)) / 8000.0);
+                    for (int i = 0; i < n; i++) {
+                        short s = samples[i];
+                        buf[i * 2] = (byte) s;
+                        buf[i * 2 + 1] = (byte) (s >> 8);
+                        sum += (long) s * s;
+                    }
+                    synchronized (pcm) { if (pcm.size() < 60 * 60 * RATE * 2) pcm.write(buf, 0, n * 2); }
+                    level = (float) Math.min(1, Math.sqrt(sum / (double) Math.max(1, n)) / 8000.0);
                 }
             }, "m5-rec");
             thread.start();
@@ -69,12 +82,26 @@ public final class Audio {
         public float level() { return level; }
         public long elapsedMs() { return running ? System.currentTimeMillis() - startedAt : 0; }
 
-        /** Stops and returns the PCM. */
+        /**
+         * Stops (the microphone is released) and returns the PCM. 6.7: the
+         * voice changer's delay is cut from the start and its tail flushed,
+         * so the recording lines up with what was said.
+         */
         public byte[] stop() {
             running = false;
             try { if (thread != null) thread.join(500); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             if (rec != null) { try { rec.stop(); } catch (RuntimeException ignored) { } rec.release(); rec = null; }
-            synchronized (pcm) { return pcm.toByteArray(); }
+            byte[] all;
+            synchronized (pcm) { all = pcm.toByteArray(); }
+            int delay = fx.latency();
+            if (delay == 0) return all;
+            short[] tail = new short[delay];
+            fx.process(tail, 0, delay, 1);
+            byte[] out = new byte[all.length];
+            int skip = Math.min(all.length, delay * 2);
+            System.arraycopy(all, skip, out, 0, all.length - skip);
+            for (int i = 0, at = all.length - skip; i < delay && at + 1 < out.length; i++, at += 2) { out[at] = (byte) tail[i]; out[at + 1] = (byte) (tail[i] >> 8); }
+            return out;
         }
     }
 
@@ -85,8 +112,10 @@ public final class Audio {
         Pcm(byte[] d, int r) { data = d; rate = r; }
     }
 
-    public static Pcm readWav(File f) throws IOException {
-        byte[] b = Files.readAllBytes(f.toPath());
+    public static Pcm readWav(File f) throws IOException { return readWav(Files.readAllBytes(f.toPath())); }
+
+    /** 6.7: a WAV's bytes (the server's Piper voices answer with one). */
+    public static Pcm readWav(byte[] b) throws IOException {
         ByteBuffer bb = ByteBuffer.wrap(b).order(ByteOrder.LITTLE_ENDIAN);
         if (b.length < 44 || bb.getInt(0) != 0x46464952 || bb.getInt(8) != 0x45564157) throw new IOException("not a WAV file");
         int at = 12, channels = 1, rate = RATE, bits = 16;
@@ -95,12 +124,15 @@ public final class Audio {
             if (id == 0x20746d66) { channels = bb.getShort(at + 10); rate = bb.getInt(at + 12); bits = bb.getShort(at + 22); }
             if (id == 0x61746164) {
                 if (bits != 16) throw new IOException("WAV is not 16-bit");
-                int n = Math.min(len < 0 ? b.length - at - 8 : len, b.length - at - 8);
+                // A streamed WAV may say 0 or -1 here (the engine never went back to fill it in): the rest of the file.
+                int n = Math.min(len <= 0 ? b.length - at - 8 : len, b.length - at - 8);
+                n -= n & 1;
                 byte[] data = new byte[n];
                 System.arraycopy(b, at + 8, data, 0, n);
                 if (channels == 2) data = mono(data);
                 return new Pcm(data, rate);
             }
+            if (len < 0) break; // a broken chunk: never walk backwards
             at += 8 + len + (len & 1);
         }
         throw new IOException("WAV without data");
@@ -188,12 +220,24 @@ public final class Audio {
     /** A WAV header + PCM (for players that want a file). */
     public static void writeWav(byte[] pcm, int rate, File out) throws IOException {
         try (RandomAccessFile f = new RandomAccessFile(out, "rw")) {
-            ByteBuffer h = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
-            h.putInt(0x46464952).putInt(36 + pcm.length).putInt(0x45564157).putInt(0x20746d66).putInt(16).putShort((short) 1).putShort((short) 1)
-                .putInt(rate).putInt(rate * 2).putShort((short) 2).putShort((short) 16).putInt(0x61746164).putInt(pcm.length);
             f.setLength(0);
-            f.write(h.array());
+            f.write(wavHeader(pcm.length, rate));
             f.write(pcm);
         }
+    }
+
+    /** 6.7: a WAV in memory (16-bit mono) — what the server's transcription reads. */
+    public static byte[] wavBytes(byte[] pcm, int rate) {
+        byte[] out = new byte[44 + pcm.length];
+        System.arraycopy(wavHeader(pcm.length, rate), 0, out, 0, 44);
+        System.arraycopy(pcm, 0, out, 44, pcm.length);
+        return out;
+    }
+
+    private static byte[] wavHeader(int dataLength, int rate) {
+        ByteBuffer h = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN);
+        h.putInt(0x46464952).putInt(36 + dataLength).putInt(0x45564157).putInt(0x20746d66).putInt(16).putShort((short) 1).putShort((short) 1)
+            .putInt(rate).putInt(rate * 2).putShort((short) 2).putShort((short) 16).putInt(0x61746164).putInt(dataLength);
+        return h.array();
     }
 }

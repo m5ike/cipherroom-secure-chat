@@ -115,7 +115,15 @@ final class ToolPanels {
                 a.showScreen("room", true);
             });
             addView(toChat, tl);
-            a.app().voice.setStateListener(this::refresh);
+            refresh();
+        }
+
+        /** 6.7: one of the voice's listeners (the composer is another). */
+        private final Runnable sync = this::refresh;
+
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            a.app().voice.addStateListener(sync);
             refresh();
         }
 
@@ -145,7 +153,8 @@ final class ToolPanels {
 
         @Override protected void onDetachedFromWindow() {
             super.onDetachedFromWindow();
-            a.app().voice.setStateListener(null);
+            a.app().voice.removeStateListener(sync);
+            // Leaving the voice screen stops dictation (the last words still come into the transcript).
             if (a.app().voice.dictating()) a.app().voice.stopDictation();
         }
 

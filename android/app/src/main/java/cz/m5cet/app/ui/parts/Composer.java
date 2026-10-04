@@ -47,7 +47,6 @@ import cz.m5cet.app.ui.Ui;
 import cz.m5cet.app.ui.look.Look;
 import cz.m5cet.app.ui.look.SendButton;
 import cz.m5cet.app.voice.Audio;
-import cz.m5cet.app.voice.Dictation;
 import cz.m5cet.app.voice.Voice;
 
 /**
@@ -67,6 +66,9 @@ import cz.m5cet.app.voice.Voice;
  *    synthesis), or record and send it as text (recognition).
  * Small files (and pictures) go inline in the message like the web's; larger
  * ones by file transfer from the vault.
+ * 6.7: dictation and "speak and send" live in ComposerVoice (dictation stops
+ * for real; leaving the room stops it and drops a recording; the voice
+ * changer is in the recording path — voice/MicFx).
  */
 final class Composer extends LinearLayout implements Renderer.Slot {
     static final int PICK = 7301, PICK_FILE = 7303, CAPTURE = 7304;
@@ -87,7 +89,10 @@ final class Composer extends LinearLayout implements Renderer.Slot {
     private ChatMessage replyTo;
     private Audio.Recorder recorder;
     private String recMode = "";
-    private String dictatedBase = "";
+    /** 6.7: dictation and speak-and-send. */
+    private final ComposerVoice voice;
+    /** 6.7: the app went to the background: a recording is dropped, the microphone freed. */
+    private final Runnable dropRecording = () -> stopRecording(false);
     /** The one-time "hold for more" bubble over Send, while it is shown. */
     private View hint;
     /** The microphone was asked for and the answer is not in yet (a refusal is said when the dialog is gone). */
@@ -220,6 +225,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         recBar.addView(done, dl);
         addView(recBar);
 
+        voice = new ComposerVoice(this, a);
         a.parts.composer = this;
         refreshKinds();
         warmLocation();
@@ -300,11 +306,17 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         super.onDetachedFromWindow();
         hideHint(true);
         getViewTreeObserver().removeOnWindowFocusChangeListener(focusBack);
+        // 6.7: leaving the room stops dictation (the words stay) and drops a recording — the microphone is free.
+        voice.detached();
+        app().voice.removeBackgroundListener(dropRecording);
+        stopRecording(false);
     }
 
     @Override protected void onAttachedToWindow() {
         super.onAttachedToWindow();
         getViewTreeObserver().addOnWindowFocusChangeListener(focusBack);
+        voice.attached();
+        app().voice.addBackgroundListener(dropRecording);
     }
 
     /* ------------------------------------------- the microphone (6.2) */
@@ -325,7 +337,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
      * user allows it; a phone without one, a refusal and a "never ask again"
      * are said on screen instead of nothing happening.
      */
-    private void withMic(Runnable then) {
+    void withMic(Runnable then) {
         if (!a.getPackageManager().hasSystemFeature(PackageManager.FEATURE_MICROPHONE)) { a.flash("", app().t("look.mic.none"), "error"); return; }
         if (a.has(Manifest.permission.RECORD_AUDIO)) { then.run(); return; }
         if (micAsked && !a.shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)) { a.flash("", app().t("look.mic.blocked"), "warn"); return; }
@@ -346,6 +358,8 @@ final class Composer extends LinearLayout implements Renderer.Slot {
     }
 
     String text() { return input.getText().toString(); }
+    EditText field() { return input; }
+    boolean recording() { return recorder != null; }
     void setText(String t) { input.setText(t); input.setSelection(input.getText().length()); }
 
     /* ------------------------------------------------------ kinds */
@@ -423,6 +437,12 @@ final class Composer extends LinearLayout implements Renderer.Slot {
     /* -------------------------------------------------------- send */
 
     void send() {
+        // 6.7: while dictating, Send finishes the words first (then it goes).
+        if (voice.interceptSend()) return;
+        sendNow();
+    }
+
+    void sendNow() {
         String text = input.getText().toString().trim();
         RoomSession r = app().rooms.activeSession();
         if (text.isEmpty() || r == null) return;
@@ -432,7 +452,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         clearAfterSend();
     }
 
-    private void clearAfterSend() {
+    void clearAfterSend() {
         input.setText("");
         setReply(null);
         Map<String, Object> f = a.form();
@@ -443,31 +463,29 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         warmLocation();
     }
 
-    /** send.options › "as voice": the text spoken (speech synthesis) and sent as a voice message. */
-    void sendAsVoice() {
-        String text = input.getText().toString().trim();
-        RoomSession r = app().rooms.activeSession();
-        if (text.isEmpty() || r == null) return;
-        a.flash("", app().t("voice.synthesizing"), "info");
-        app().voice.textToVoiceMessage(text, (clip, err) -> {
-            if (clip == null) { a.flash("", app().t("voice.failed") + (err == null ? "" : ": " + err), "error"); return; }
-            sendAudio(r, clip);
-            clearAfterSend();
-        });
-    }
+    /** send.options › "as voice": the text (or, empty, what is dictated now) spoken and sent as a voice message (6.7: ComposerVoice). */
+    void sendAsVoice() { voice.asVoice(); }
 
     /* ---------------------------------------------------- recording */
 
-    /** Records a voice message ("voice") or speech to send as text ("text") — asking for the microphone first. */
+    /** Records a voice message ("voice") or speech to send as text ("text": 6.7 dictation, ComposerVoice) — asking for the microphone first. */
     void record(String mode) {
         if (recorder != null) return;
+        if (mode.equals("text")) { voice.asText(); return; }
         withMic(() -> startRecording(mode));
+    }
+
+    /** 6.7: "speak it, send text" without the phone's recogniser: recorded, then the server transcribes it. */
+    void recordForText() {
+        if (recorder != null) return;
+        withMic(() -> startRecording("text"));
     }
 
     private void startRecording(String mode) {
         if (recorder != null || !isAttachedToWindow()) return;
-        if (app().voice.dictating()) toggleDictation();
+        voice.recordingStarts();
         hideHint(true);
+        cz.m5cet.app.voice.MicFx.recompute(app()); // 6.7: the voice changer's settings for this recording
         recorder = new Audio.Recorder();
         // Another app (a call, a recorder) may hold the microphone.
         if (!recorder.start()) { recorder = null; a.flash("", app().t("look.mic.busy"), "error"); return; }
@@ -500,11 +518,13 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         if (pcm.length < Audio.RATE) { a.flash("", app().t("look.mic.short"), "info"); return; }
         if (recMode.equals("text")) {
             a.flash("", app().t("voice.recognizing"), "info");
-            app().voice.voiceToText(pcm, Audio.RATE, (text, err) -> {
+            Voice.Result<String> heard = (text, err) -> {
                 if (text == null || text.trim().isEmpty()) { a.flash("", app().t(text == null ? "voice.failed" : "voice.nothingHeard"), "warn"); return; }
                 r.send(outgoing(text.trim()));
                 clearAfterSend();
-            });
+            };
+            if ("server".equals(app().settings.str("voice.engine"))) app().voice.serverVoiceToText(pcm, Audio.RATE, heard);
+            else app().voice.voiceToText(pcm, Audio.RATE, heard);
             return;
         }
         Io.bg(() -> {
@@ -522,6 +542,13 @@ final class Composer extends LinearLayout implements Renderer.Slot {
     private void sendAudio(RoomSession r, Voice.Clip clip) {
         String name = "hlas-" + System.currentTimeMillis() + ".m4a";
         sendBytes(r, clip.bytes, name, clip.mime, false);
+    }
+
+    /** 6.7: a spoken text as a voice message — like a recorded one, without the text along. */
+    void sendVoiceClip(RoomSession r, Voice.Clip clip) {
+        String m = clip.mime == null ? "" : clip.mime;
+        String ext = m.contains("mp4") || m.contains("aac") ? "m4a" : m.contains("wav") ? "wav" : m.contains("ogg") ? "ogg" : m.contains("webm") ? "webm" : "mp3";
+        sendBytes(r, clip.bytes, "hlas-" + System.currentTimeMillis() + "." + ext, m.isEmpty() ? "audio/mpeg" : m, false, "");
     }
 
     /* ------------------------------------------------ pictures, files */
@@ -595,9 +622,14 @@ final class Composer extends LinearLayout implements Renderer.Slot {
 
     /** Bytes of a file: inline (≤ INLINE_MAX, safe type) or through the vault by transfer. */
     private void sendBytes(RoomSession r, byte[] b, String name, String mime, boolean image) {
+        sendBytes(r, b, name, mime, image, input.getText().toString().trim());
+    }
+
+    /** caption: the text that goes along (6.7: "" for a voice message made of the text). */
+    private void sendBytes(RoomSession r, byte[] b, String name, String mime, boolean image, String caption) {
         String safe = Payloads.safeMime(mime);
         if (b.length <= INLINE_MAX) {
-            Outgoing o = outgoing(input.getText().toString().trim());
+            Outgoing o = outgoing(caption);
             o.fileName = name;
             o.fileMime = safe;
             o.fileSize = b.length;
@@ -659,34 +691,15 @@ final class Composer extends LinearLayout implements Renderer.Slot {
 
     /* ------------------------------------------------------- dictation */
 
-    void toggleDictation() {
-        Voice v = app().voice;
-        if (v.dictating()) { v.stopDictation(); dictateIcon(false); return; }
-        if (!Dictation.available(app())) { a.flash("", app().t("look.dictate.none"), "warn"); return; }
-        withMic(this::startDictation);
-    }
+    /** The dictation icon: start, or stop (the last words still come) — 6.7: ComposerVoice. */
+    void toggleDictation() { voice.toggleDictation(); }
 
-    private void startDictation() {
-        Voice v = app().voice;
-        if (v.dictating() || recorder != null || !isAttachedToWindow()) return;
-        dictatedBase = input.getText().toString();
-        if (!dictatedBase.isEmpty() && !dictatedBase.endsWith(" ")) dictatedBase += " ";
-        v.dictate((text, done) -> {
-            input.setText(dictatedBase + text);
-            input.setSelection(input.getText().length());
-            if (done) {
-                dictatedBase = input.getText().toString() + " ";
-                if (app().settings.bool("voice.dictateSend")) send();
-            }
-        });
-        dictateIcon(true);
-    }
-
-    /** While dictating: a stop square in the danger colour, and the field says it listens. */
-    private void dictateIcon(boolean on) {
+    /** While dictating (or speaking a text): a stop square in the danger colour, and the field says what happens. */
+    void dictateIcon(boolean on, String hint) {
         int c = on ? Ui.color(getContext(), "@danger", Color.RED) : Ui.color(getContext(), "@muted", Color.GRAY);
         dictate.setImageDrawable(Icons.drawable(getContext(), on ? "square" : "speech", Ui.dp(getContext(), on ? 18 : 22), c));
-        input.setHint(app().t(on ? "voice.listening" : "room.typeMessage"));
+        dictate.setContentDescription(app().t(on ? "dict.stop" : "voice.dictate"));
+        input.setHint(hint);
     }
 
     /* ----------------------------------------------------- suggestions */

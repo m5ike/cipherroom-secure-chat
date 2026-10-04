@@ -150,7 +150,12 @@ export function speechTree(): LNode {
         text("{_'app.speech.revoice'}", { id: "speech-revoice-text" }),
       ]),
       n("button", { id: "speech-insert", attrs: { type: "button", disabled: "=!$hasText", class: `${SECONDARY} disabled:opacity-60`, "data-testid": "speech-insert" }, on: { click: { action: "insert" } }, text: "{_'speech.insert'}" }),
-      n("button", { id: "speech-send", attrs: { type: "button", class: SECONDARY }, on: { click: { action: "send" } }, text: "{_'app.speech.send'}" }),
+      n("button", { id: "speech-send", attrs: { type: "button", disabled: "=!$hasText", class: `${SECONDARY} disabled:opacity-60` }, on: { click: { action: "send" } }, text: "{_'app.speech.send'}" }),
+      // 6.7: the text spoken by the server's voice and sent as a voice message
+      n("button", {
+        id: "speech-send-voice", if: "$sendVoiceOn", attrs: { type: "button", disabled: "=$voiceBusy || !$hasText", class: `${SECONDARY} disabled:opacity-60`, title: "{_'speakSend.hint'}", "data-testid": "speech-send-voice" },
+        on: { click: { action: "sendVoice" } }, text: "{if $voiceBusy}{_'speakSend.busy'}{else}{_'speakSend.button'}{/if}",
+      }),
     ]),
     n("panel", { id: "speech-partial", if: "$partial", attrs: { class: "rounded-xl border border-border bg-background p-2 text-xs italic" }, text: "{$partial}" }),
     n("panel", { id: "speech-server", name: "Server voices", if: "$serverMode && ($serverVoices|length) > 0", attrs: { class: "rounded-xl border border-border bg-background p-2 text-xs" } }, [
@@ -256,6 +261,7 @@ export const TOOL_CONTRACTS: Record<ToolId, LayoutContract> = {
       { path: "$sttAvailable", type: "yes/no", description: "This browser listens." }, { path: "$listening", type: "yes/no", description: "Listening now." }, { path: "$revoice", type: "yes/no", description: "Speak what was heard." },
       { path: "$partial", type: "text", description: "What is being heard." }, { path: "$serverMode", type: "yes/no", description: "Server-enhanced." }, { path: "$serverVoices", type: "list", description: "The server's voices: .id, .label." },
       { path: "$serverVoice", type: "text", description: "The server voice." }, { path: "$serverBusy", type: "yes/no", description: "The server speaks." },
+      { path: "$sendVoiceOn", type: "yes/no", description: "6.7: the text can be sent as a voice message." }, { path: "$voiceBusy", type: "yes/no", description: "6.7: turning the text into a voice message." },
     ],
     actions: [
       { name: "voiceLang", description: "The language chosen.", event: "change" }, { name: "preset", description: "The preset chosen.", event: "change" }, { name: "voice", description: "The voice chosen.", event: "change" },
@@ -263,6 +269,7 @@ export const TOOL_CONTRACTS: Record<ToolId, LayoutContract> = {
       { name: "listen", description: "Listen." }, { name: "stopListening", description: "Stop listening." }, { name: "revoice", description: "Revoice on / off.", event: "change" },
       { name: "insert", description: "Put the text into the composer." }, { name: "send", description: "Send the text." }, { name: "serverVoice", description: "A server voice chosen.", event: "change" },
       { name: "speakServer", description: "Speak with the server's voice." },
+      { name: "sendVoice", description: "6.7: send the text as a voice message (the server's voice)." },
     ],
     slots: [], refs: [],
   },

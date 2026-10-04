@@ -93,6 +93,8 @@ export type ElementStyle = StateStyle & {
 export const MENU_PANELS = [
   "join", "roomSecurity", "encryption", "trust", "peers", "connection", "connections", "audio", "video", "files", "location",
   "speech", "ai", "phone", "nfc", "appearance", "settings", "notifications", "privacy", "analytics", "profile",
+  // 6.7
+  "voiceChanger",
 ] as const;
 
 export const MENU_FNS: ReadonlyArray<{ id: string; label: string; param?: string }> = [
@@ -201,6 +203,8 @@ export const DEFAULT_MENU_CONFIG: MenuConfig = {
     ] },
     { kind: "section", id: "tools", label: "@menu.group.tools", children: [
       item("btn-speech", "speech", "volume-2", "menu.speech"),
+      // 6.7: shown only when the operator turned the voice changer module on
+      item("btn-voice-changer", "voiceChanger", "wand-sparkles", "menu.voiceChanger"),
       item("btn-ai", "ai", "sparkles", "menu.ai"),
       item("btn-phone", "phone", "phone", "menu.phone"),
       item("btn-nfc", "nfc", "nfc", "menu.nfc"),

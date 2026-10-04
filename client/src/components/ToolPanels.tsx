@@ -4,13 +4,15 @@
 // 4.13: each is a layout ("panel.files", "panel.location", "panel.speech",
 // "panel.connection" — lib/layouts/tools.ts); what they do stays here.
 
-import { useEffect, useRef, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
 import { t, type Lang } from "../lib/i18n";
 import { formatBytes } from "../lib/format";
 import { detectGeolocation } from "../lib/maps";
-import { detectSpeechCaps, fetchServerSpeechStatus, listVoices, serverTts, speak, startRecognition, stopSpeaking, type ServerSpeechStatus, type ServerVoiceInfo, type VoicePreset } from "../lib/speech";
+import { detectSpeechCaps, fetchServerSpeechStatus, listVoices, serverTts, speak, stopSpeaking, type ServerSpeechStatus, type ServerVoiceInfo, type VoicePreset } from "../lib/speech";
+import { browserEngine } from "../lib/dictation";
+import { dictationMessage, useDictation } from "./ComposerVoice";
 import type { ConnectionStatus, KeepaliveStrategy } from "../lib/connection-keeper";
 import type { Preferences } from "../lib/preferences";
 import type { DesiredState } from "../lib/session-cache";
@@ -70,11 +72,13 @@ export function LocationPanel({
 }
 
 export function SpeechPanel({
-  recognitionRef, onSendText, onInsertText, serverMode, lang, loadServerStatus = fetchServerSpeechStatus,
+  recognitionRef, onSendText, onInsertText, onSendVoice, serverMode, lang, loadServerStatus = fetchServerSpeechStatus,
 }: {
   recognitionRef: React.MutableRefObject<{ stop: () => void } | null>;
   onSendText: (text: string) => void;
   onInsertText: (text: string) => void;
+  /** 6.7: the text as a voice message (the server's voice); true when it went. */
+  onSendVoice?: (text: string) => Promise<boolean>;
   serverMode: boolean;
   lang: Lang;
   /** Where the server voices come from (the Layout builder's preview gives its own). */
@@ -88,6 +92,28 @@ export function SpeechPanel({
   const [voices, setVoices] = useState<SpeechSynthesisVoice[]>([]);
   const [partial, setPartial] = useState("");
   const [revoice, setRevoice] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  // 6.7: dictation that stops when asked (and when the window closes), the text finished.
+  const engine = useMemo(() => browserEngine(), []);
+  const revoiceRef = useRef({ revoice, voiceLang, preset, voiceURI });
+  revoiceRef.current = { revoice, voiceLang, preset, voiceURI };
+  const dict = useDictation({
+    lang: voiceLang,
+    engine,
+    onText: (piece, final) => {
+      if (!final) { setPartial(piece); return; }
+      setPartial("");
+      setText((prev) => `${prev} ${piece}`.trim());
+      const r = revoiceRef.current;
+      if (r.revoice) speak({ text: piece, lang: r.voiceLang, preset: r.preset, voiceURI: r.voiceURI || null });
+    },
+    onError: (code) => setPartial(`(${dictationMessage(lang, code)})`),
+  });
+  const listening = dict.state !== "idle";
+  useEffect(() => {
+    recognitionRef.current = listening ? { stop: () => dict.stop() } : null;
+    if (!listening) setPartial((p) => (p.startsWith("(") ? p : ""));
+  }, [listening]); // eslint-disable-line react-hooks/exhaustive-deps
   // Server voices (ElevenLabs / OpenAI …), only in Server-enhanced mode.
   const [serverVoices, setServerVoices] = useState<ServerVoiceInfo[]>([]);
   const [serverVoice, setServerVoice] = useState<string>("");
@@ -128,19 +154,19 @@ export function SpeechPanel({
 
   function startStt() {
     setPartial("");
-    recognitionRef.current = startRecognition(voiceLang, {
-      onPartial: setPartial,
-      onFinal: (txt) => {
-        setText((prev) => `${prev} ${txt}`.trim());
-        if (revoice) speak({ text: txt, lang: voiceLang, preset, voiceURI: voiceURI || null });
-      },
-      onError: (msg) => setPartial(`(error: ${msg})`),
-      onEnd: () => setPartial(""),
-    }, true);
+    dict.start();
   }
   function stopStt() {
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
+    dict.stop();
+  }
+
+  async function sendVoice() {
+    if (!onSendVoice || !text.trim() || voiceBusy) return;
+    dict.stop();
+    setVoiceBusy(true);
+    const sent = await onSendVoice(text).catch(() => false);
+    setVoiceBusy(false);
+    if (sent) setText("");
   }
 
   const { tree, base } = useLayoutBase("panel.speech", lang);
@@ -152,8 +178,9 @@ export function SpeechPanel({
       presets: ["neutral", "male", "female", "child"],
       voices: voices.filter((v) => v.lang.toLowerCase().startsWith(voiceLang.toLowerCase().slice(0, 2))).map((v) => ({ uri: v.voiceURI, name: v.name, lang: v.lang })),
       voiceLang, preset, voiceURI, text, hasText: Boolean(text.trim()),
-      ttsAvailable: caps.ttsAvailable, sttAvailable: caps.sttAvailable, listening: Boolean(recognitionRef.current), revoice, partial,
+      ttsAvailable: caps.ttsAvailable, sttAvailable: caps.sttAvailable, listening, revoice, partial,
       serverMode, serverVoices: serverVoices.map((v) => ({ id: v.id, label: v.label })), serverVoice, serverBusy,
+      sendVoiceOn: Boolean(onSendVoice), voiceBusy,
     },
     actions: {
       voiceLang: (e) => setVoiceLang(value(e)),
@@ -165,10 +192,11 @@ export function SpeechPanel({
       listen: () => startStt(),
       stopListening: () => stopStt(),
       revoice: (e) => setRevoice((e as ChangeEvent<HTMLInputElement>).target.checked),
-      insert: () => { onInsertText(text); setText(""); },
-      send: () => { onSendText(text); setText(""); },
+      insert: () => { dict.stop(); onInsertText(text); setText(""); },
+      send: () => { if (!text.trim()) return; dict.stop(); onSendText(text.trim()); setText(""); },
       serverVoice: (e) => setServerVoice(value(e)),
       speakServer: () => void speakServer(),
+      sendVoice: () => void sendVoice(),
     },
   });
 }

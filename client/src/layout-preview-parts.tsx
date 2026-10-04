@@ -26,6 +26,8 @@ import { InvitePrompt, ShareConnection, ShareResult, ShareSection } from "./comp
 import { PhonePanel } from "./components/PhonePanel";
 import { ConnectionsPanel } from "./components/ConnectionsPanel";
 import { AiPanel, type AiTurnView } from "./components/AiPanel";
+import { VoiceChangerPanel } from "./components/VoiceChangerPanel";
+import { DEFAULT_VOICE_FX } from "./lib/voice-fx-settings";
 import type { AiState, AiStatus, aiChat } from "./lib/ai";
 import { connectionsProps, noop, roomProps, sampleAccount, SAMPLE_STATUS } from "./layout-samples";
 
@@ -274,6 +276,10 @@ export function AppPart({ layout, variant: v, lang }: { layout: LayoutId; varian
       node = win(t(lang, "menu.ai"), <AiPanel lang={lang} onInsert={noop} onSignIn={noop} loadStatus={AI_STATUS[state] ?? AI_STATUS.ready} chat={writingChat} initialTurns={v === "ready" ? AI_TURNS : undefined} />);
       break;
     }
+    // 6.7: the voice changer (a fixed sample: nothing is saved)
+    case "panel.voiceChanger":
+      node = win(t(lang, "vfx.title"), <VoiceChangerPanel lang={lang} allowed={v !== "off"} supported sample={{ ...DEFAULT_VOICE_FX, on: v !== "off", preset: v === "custom" ? "custom" : "deep" }} />);
+      break;
     case "panel.connections":
       node = win(t(lang, "cx.title"), <ConnectionsPanel {...connectionsProps(v, lang)} />);
       break;
