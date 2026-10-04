@@ -63,10 +63,10 @@ const PACKAGES: NfcPackage[] = [
   },
   {
     name: "nfc-eid", keyword: "eid", title: "Read an e-ID / e-passport", summary: "Every data group of your ID card or passport, with the photo",
-    description: "Asks for the CAN printed on your ID card (6 digits) — or the MRZ / document number, date of birth and expiry of a passport — then reads the chip at your device: PACE with the CAN, or BAC with the MRZ (the document's own access control). It shows everything the chip gives a reader: the MRZ data, the photo and signature, more personal and document details, and the security check (every group against EF.SOD); the security objects and JPEG 2000 pictures come as files to download. Your own document, read-only.",
+    description: "Your device asks for the CAN printed on your ID card (6 digits) — or the MRZ / document number, date of birth and expiry of a passport — then reads the chip: PACE with the CAN, or BAC with the MRZ (the document's own access control). It shows everything the chip gives a reader: the MRZ data, the photo and signature, more personal and document details, and the security check (every group against EF.SOD); the security objects and JPEG 2000 pictures come as files to download. Your own document, read-only.",
     node: { type: "nfc.eid.report" }, show: { kind: "json", title: "" },
     build: eidFlow,
-    more: "Built from the Builder's NFC.e-ID tools: execute shows a form; its form function reads with “e-ID: read everything” (format html, show in the chat) → Result (the one-line summary); the error function flashes what went wrong. The CAN or MRZ goes to your device only for this read.",
+    more: "Built from the Builder's NFC.e-ID tools: “e-ID: read everything” (format html, show in the chat) → Result (the one-line summary); the error function flashes what went wrong. The CAN or MRZ is typed on your device and used there for this read only — it is not sent to the server. What the chip gives (the report, the photo) is the command's result, kept in the run history like any result.",
   },
 ];
 
@@ -129,31 +129,14 @@ function historyFlow(): Flow {
     functions: { error: errorGraph() } });
 }
 
-/** The e-ID form: the CAN, or the MRZ / the three BAC fields. */
-export const EID_FORM_FIELDS = [
-  { name: "can", type: "text", label: "CAN — the 6 digits printed on the card", pattern: "^[0-9]{6}$", placeholder: "123456", help: "On an EU ID card: the 6-digit number on the front. Passports: leave it empty and give the MRZ or the three fields below." },
-  { name: "mrz", type: "textarea", label: "or the MRZ (the 2–3 lines at the bottom of the data page)", rows: 3 },
-  { name: "documentNumber", type: "text", label: "or the document number", placeholder: "L898902C" },
-  { name: "dateOfBirth", type: "text", label: "Date of birth (YYMMDD)", pattern: "^[0-9]{6}$", placeholder: "690806" },
-  { name: "dateOfExpiry", type: "text", label: "Date of expiry (YYMMDD)", pattern: "^[0-9]{6}$", placeholder: "940623" },
-];
-
 function eidFlow(): Flow {
   seq = 0;
-  // execute: the form.
-  const form = node("out.form", 80, 120, { form: { name: "nfc-eid", title: "Read an e-ID / e-passport", text: "Your own document: the CAN opens an ID card (PACE), the MRZ a passport (BAC). Then hold it to your phone or reader.", submit: "Read", labels: "top", fields: EID_FORM_FIELDS } });
-  // form: its values → e-ID: read everything → the summary.
-  const ev = node("flow.event", 40, 80);
-  const read = node("nfc.eid.report", 460, 120, { format: "html", send: true, photo: true, all: true, timeout: 60 });
-  const ret = node("flow.return", 760, 200);
-  const g = { nodes: [ev, read, ret] as FlowNode[], edges: [edge(read, "summary", ret, "value")] as FlowEdge[] };
-  let y = 0;
-  for (const f of ["can", "mrz", "documentNumber", "dateOfBirth", "dateOfExpiry"]) {
-    const get = node("data.get", 240, (y += 80), { path: f });
-    g.nodes.push(get);
-    g.edges.push(edge(ev, "values", get, "object"), edge(get, "value", read, f));
-  }
-  return parseFlow({ format: "m5flow", version: 1, lang: "js", name: "Read an e-ID / e-passport", summary: "Every data group of your ID card or passport, with the photo", nodes: [form], edges: [], functions: { form: g, error: errorGraph() } });
+  // execute: read straight away — the caller's DEVICE asks the holder for the CAN / MRZ
+  // (it never reaches the server, where a run's inputs are kept).
+  const read = node("nfc.eid.report", 120, 120, { format: "html", send: true, photo: true, all: true, timeout: 90 });
+  const ret = node("flow.return", 480, 160);
+  return parseFlow({ format: "m5flow", version: 1, lang: "js", name: "Read an e-ID / e-passport", summary: "Every data group of your ID card or passport, with the photo",
+    nodes: [read, ret], edges: [edge(read, "summary", ret, "value")], functions: { error: errorGraph() } });
 }
 
 export function nfcPackages() {

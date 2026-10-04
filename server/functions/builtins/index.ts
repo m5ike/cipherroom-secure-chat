@@ -89,8 +89,8 @@ const TELEPHONY: BuiltinDef[] = [
 const NFC_V = "1.0.0";
 const NFC_LIMITS = { wallMs: 180_000, stepMs: 60_000 };
 const nfcModel = (keyword: string, name: string, summary: string, endpoints?: BuiltinEndpoint[]): BuiltinModel => ({ keyword, name, summary, inputs: [], visibility: "caller", limits: NFC_LIMITS, off: true, ...(endpoints ? { endpoints } : {}) });
-/* 6.6: the NFC.EMV / NFC.e-ID tools as commands — their flows have an error function (and /eid a form). */
-const EID_FORM: InputSpec[] = [{ name: "can", type: "string", pattern: "^[0-9]{6}$" }, { name: "mrz", type: "text" }, { name: "documentNumber", type: "string" }, { name: "dateOfBirth", type: "string", pattern: "^[0-9]{6}$" }, { name: "dateOfExpiry", type: "string", pattern: "^[0-9]{6}$" }];
+/* 6.6: the NFC.EMV / NFC.e-ID tools as commands — their flows have an error function.
+   /eid takes no key: the caller's device asks for the CAN / MRZ and keeps it. */
 const NFC: BuiltinDef[] = [
   { name: "nfc-scan", kind: "demo", version: NFC_V, description: "Scan a tapped card and show its public identity and NDEF (m5.nfc.scan).",
     model: nfcModel("nfc-scan", "Scan a card", "Read a tapped card's identity and NDEF") },
@@ -103,7 +103,7 @@ const NFC: BuiltinDef[] = [
   { name: "nfc-emv-history", kind: "demo", version: NFC_V, description: "The transactions a payment card keeps in its log, as a table (m5.nfc.emv.history). Read-only.",
     model: nfcModel("emv-history", "Card transaction history", "The transactions a payment card keeps in its log", [{ type: "error" }]) },
   { name: "nfc-eid", kind: "demo", version: NFC_V, description: "Read your ID card or passport with its CAN or MRZ (PACE / BAC): every data group, the photo, the security check — formatted in the chat (m5.nfc.eid.report). Read-only.",
-    model: nfcModel("eid", "Read an e-ID / e-passport", "Every data group of your ID card or passport, with the photo", [{ type: "form", inputs: EID_FORM }, { type: "error" }]) },
+    model: nfcModel("eid", "Read an e-ID / e-passport", "Every data group of your ID card or passport, with the photo", [{ type: "error" }]) },
 ];
 
 export const BUILTINS_ALL: readonly BuiltinDef[] = [...BUILTINS, ...TELEPHONY, ...NFC];

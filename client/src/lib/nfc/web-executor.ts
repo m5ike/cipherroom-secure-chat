@@ -186,8 +186,10 @@ export function createWebExecutor(deps: WebExecutorDeps) {
           return { status: "ok", card, message: `MRTD ${r.present ? "present" : "absent"} (${r.sw}). Public presence only — no BAC/PACE, no data.` };
         }
         case "emv-read": {
-          // Read-only: PPSE → SELECT AID → GPO → READ RECORD, then parse the holder data.
-          const d = await readEmv(t, { maxApps: typeof command.args?.maxApps === "number" ? command.args.maxApps : 4 });
+          // Read-only: PPSE → SELECT AID → GET DATA → the log → GPO → READ RECORD, then parse the holder data.
+          // 6.6: every option the model gave (history, deep read, how many applications).
+          const a = command.args ?? {};
+          const d = await readEmv(t, { maxApps: typeof a.maxApps === "number" ? a.maxApps : 8, ...(typeof a.history === "boolean" ? { history: a.history } : {}), ...(typeof a.deep === "boolean" ? { deep: a.deep } : {}) });
           return { status: "ok", card, emv: d, message: emvSummary(d) };
         }
         case "eid-read":
@@ -196,7 +198,7 @@ export function createWebExecutor(deps: WebExecutorDeps) {
           const a = command.args ?? {};
           const key = typeof a.documentNumber === "string" && typeof a.dateOfBirth === "string" && typeof a.dateOfExpiry === "string"
             ? { documentNumber: a.documentNumber, dateOfBirth: a.dateOfBirth, dateOfExpiry: a.dateOfExpiry } : undefined;
-          const d = await readMrtd(t, { mrz: typeof a.mrz === "string" ? a.mrz : undefined, key, can: typeof a.can === "string" ? a.can : undefined, readPhoto: a.readPhoto !== false });
+          const d = await readMrtd(t, { mrz: typeof a.mrz === "string" ? a.mrz : undefined, key, can: typeof a.can === "string" ? a.can : undefined, readPhoto: a.readPhoto !== false, all: a.all !== false });
           return { status: d.mrzInfo || d.access !== "none" ? "ok" : "auth-failed", card, mrtd: d, message: mrtdSummary(d) };
         }
 

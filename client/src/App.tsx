@@ -109,6 +109,7 @@ import { fetchCommandState, parseCommandLine, buildInputs, runCommandStream, ans
 // 6.3 nfc: an "nfc" interaction is run on this device's NFC bridge, not shown as a dialog.
 import { runNfcCommand } from "./lib/nfc/bridge";
 import type { NfcCommand } from "./lib/nfc/command";
+import { DOCUMENT_KEY_FIELDS, documentKeyValid, needsDocumentKey, withDocumentKey } from "./lib/nfc/document-key";
 import { shareableOutputs } from "./lib/fn-outputs";
 import { FnHostContext, type FnHost } from "./components/fn/FnOutputs";
 import { isInlineImage } from "./lib/validate";
@@ -3586,13 +3587,39 @@ function ChatApp() {
     if (i.kind === "nfc") {
       const runId = i.runId || runCmdRunIdRef.current || "";
       const token = runCmdTokenRef.current;
-      const command = (i.spec.command ?? { op: "scan" }) as NfcCommand;
-      void runNfcCommand(command)
-        .then((result) => answerInteraction(runId, i.id, result, token))
-        .catch((e) => answerInteraction(runId, i.id, { status: "error", message: e instanceof Error ? e.message : String(e) }, token));
+      void (async () => {
+        let command = (i.spec.command ?? { op: "scan" }) as NfcCommand;
+        // 6.6: an e-ID read without the key — the holder types it HERE; it is used for
+        // this read only and never goes to the server (run inputs are kept there).
+        if (needsDocumentKey(command)) {
+          const values = await askDocumentKey();
+          if (!values) { await answerInteraction(runId, i.id, { status: "timeout", message: "Cancelled" }, token); return; }
+          command = withDocumentKey(command, values);
+        }
+        const result = await runNfcCommand(command).catch((e) => ({ status: "error" as const, message: e instanceof Error ? e.message : String(e) }));
+        await answerInteraction(runId, i.id, result, token);
+      })();
       return;
     }
     setInteraction(i);
+  }
+
+  /** 6.6: asks for the document key in the interaction dialog, locally (nothing is sent). */
+  const localAskRef = useRef<{ id: string; resolve: (v: Record<string, unknown> | null) => void } | null>(null);
+  function askDocumentKey(invalid = false): Promise<Record<string, unknown> | null> {
+    return new Promise((resolve) => {
+      const id = `local_${Date.now().toString(36)}`;
+      localAskRef.current = { id, resolve: (v) => { if (v && !documentKeyValid(v)) { void askDocumentKey(true).then(resolve); return; } resolve(v); } };
+      setInteraction({
+        runId: "", id, kind: "form",
+        spec: {
+          title: t(lang, "nfc.eid.formTitle"),
+          text: `${t(lang, "nfc.eid.askText")}${invalid ? `\n${t(lang, "nfc.eid.askInvalid")}` : ""}`,
+          submit: t(lang, "nfc.eid.askSubmit"),
+          fields: DOCUMENT_KEY_FIELDS.map((f) => ({ name: f.name, label: t(lang, f.labelKey), placeholder: f.placeholder })),
+        } as unknown as Interaction["spec"],
+      });
+    });
   }
 
   /** Runs a chat command and shows the result: a model posting to the room
@@ -3732,6 +3759,9 @@ function ChatApp() {
     const i = interaction;
     if (!i) return;
     setInteraction(null);
+    // 6.6: a local question (the document key) is answered here, never sent.
+    const local = localAskRef.current;
+    if (local && local.id === i.id) { localAskRef.current = null; local.resolve(value && typeof value === "object" ? value as Record<string, unknown> : null); return; }
     await answerInteraction(i.runId || runCmdRunIdRef.current || "", i.id, value, runCmdTokenRef.current);
   }
 

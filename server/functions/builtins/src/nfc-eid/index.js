@@ -7,39 +7,21 @@ const __get = (o, path) => String(path).split(".").filter(Boolean).reduce((a, k)
 const __clean = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ""));
 
 export async function execute(inputs = {}) {
-  // n1 · Form
-  const n_n1 = await m5.caller.send(m5.out.form({"name":"nfc-eid","title":"Read an e-ID / e-passport","text":"Your own document: the CAN opens an ID card (PACE), the MRZ a passport (BAC). Then hold it to your phone or reader.","submit":"Read","labels":"top","fields":[{"name":"can","type":"text","label":"CAN — the 6 digits printed on the card","pattern":"^[0-9]{6}$","placeholder":"123456","help":"On an EU ID card: the 6-digit number on the front. Passports: leave it empty and give the MRZ or the three fields below."},{"name":"mrz","type":"textarea","label":"or the MRZ (the 2–3 lines at the bottom of the data page)","rows":3},{"name":"documentNumber","type":"text","label":"or the document number","placeholder":"L898902C"},{"name":"dateOfBirth","type":"text","label":"Date of birth (YYMMDD)","pattern":"^[0-9]{6}$","placeholder":"690806"},{"name":"dateOfExpiry","type":"text","label":"Date of expiry (YYMMDD)","pattern":"^[0-9]{6}$","placeholder":"940623"}]}));
-  return null;
-}
-
-export async function form(inputs = {}) {
   let __result = null;
-  // n2 · Entry point data
-  const n_n2 = inputs;
-  // n6 · Get field
-  const n_n6 = __get(n_n2.values, "can");
-  // n9 · Get field
-  const n_n9 = __get(n_n2.values, "mrz");
-  // n12 · Get field
-  const n_n12 = __get(n_n2.values, "documentNumber");
-  // n15 · Get field
-  const n_n15 = __get(n_n2.values, "dateOfBirth");
-  // n18 · Get field
-  const n_n18 = __get(n_n2.values, "dateOfExpiry");
-  // n3 · e-ID: read everything
-  const n_n3 = await m5.nfc.eid.report(__clean({ can: __str(n_n6) || undefined, mrz: __str(n_n9) || undefined, documentNumber: __str(n_n12) || undefined, dateOfBirth: __str(n_n15) || undefined, dateOfExpiry: __str(n_n18) || undefined, format: "html", send: true, photo: true, all: true, reader: "", timeout: 60 }));
-  // n4 · Result
-  const n_n4 = (__result = n_n3?.summary);
+  // n1 · e-ID: read everything
+  const n_n1 = await m5.nfc.eid.report(__clean({ can: undefined, mrz: undefined, documentNumber: undefined, dateOfBirth: undefined, dateOfExpiry: undefined, format: "html", send: true, photo: true, all: true, reader: "", timeout: 90 }));
+  // n2 · Result
+  const n_n2 = (__result = n_n1?.summary);
   return __result;
 }
 
 export async function error(inputs = {}) {
-  // n21 · Entry point data
-  const n_n21 = inputs;
-  // n22 · Get field
-  const n_n22 = __get(n_n21.error, "message");
-  // n23 · Flash
-  const n_n23 = await m5.caller.flash(__str(n_n22), "error");
+  // n4 · Entry point data
+  const n_n4 = inputs;
+  // n5 · Get field
+  const n_n5 = __get(n_n4.error, "message");
+  // n6 · Flash
+  const n_n6 = await m5.caller.flash(__str(n_n5), "error");
   return null;
 }
 

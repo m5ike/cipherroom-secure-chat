@@ -1,8 +1,8 @@
 // The NFC command packages (6.3; 6.6 adds /emv, /emv-history and /eid, built
 // from the Builder's NFC.EMV / NFC.e-ID tools): each flow compiles to exactly
 // the file that runs, the models install switched off, and they work end to
-// end against a mocked device — /eid shows its form, its form entry point
-// reads the document with the CAN and shows the report.
+// end against a mocked device — /eid reads at once without a key (the
+// caller's device asks the holder for the CAN / MRZ and keeps it).
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync } from "node:fs";
@@ -16,7 +16,7 @@ const { functionsStore } = await import("../server/functions/store");
 const { execute, closeRunner, runEvents, answerRun } = await import("../server/functions/runner");
 const { saveModel } = await import("../server/functions/packages");
 const { installBuiltin, BUILTINS_ALL } = await import("../server/functions/builtins");
-const { endpointOf, eventInputs } = await import("../server/functions/endpoints");
+const { endpointOf } = await import("../server/functions/endpoints");
 const { parseFlow, compileFlow } = await import("../server/functions/flow");
 
 const owner = { kind: "console" as const, account: "", name: "boss", groups: [], room: null, client: "console", lang: "en", tz: "UTC", adminRole: "owner" as const };
@@ -52,7 +52,6 @@ describe("the NFC command packages", () => {
     }
     for (const k of ["emv", "emv-history", "eid"]) expect(functionsStore.models().find((m) => m.keyword === k)?.enabled, k).toBe(false);
     const eid = functionsStore.models().find((m) => m.keyword === "eid")!;
-    expect(endpointOf(eid, "form")).toBeTruthy();
     expect(endpointOf(eid, "error")).toBeTruthy();
   });
 
@@ -88,19 +87,17 @@ describe("the NFC command packages", () => {
     } finally { none.off(); }
   }, 60_000);
 
-  it("/eid shows its form; the form reads the document with the CAN", async () => {
+  it("/eid reads straight away and sends NO key — the device asks the holder for it", async () => {
     const model = enable("eid");
-    const shown = await execute(model, {}, owner as never, { executor: "console" });
-    expect(shown.outputs[0]).toMatchObject({ type: "form", name: "nfc-eid", fields: expect.arrayContaining([expect.objectContaining({ name: "can", pattern: "^[0-9]{6}$" })]) });
+    expect(endpointOf(model, "form")).toBeFalsy();
     const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 0xff, 0xd9]).toString("base64");
     const dev = withDevice(() => ({ status: "ok", mrtd: { present: true, access: "pace", pace: { supported: true, used: true, password: "can" }, mrzInfo: { documentCode: "ID", documentNumber: "AB1", surname: "NOVAK", givenNames: "JAN" }, images: [{ group: "DG2", kind: "face", mime: "image/jpeg", data: jpeg, name: "face.jpg" }] } }));
     try {
-      const ep = endpointOf(model, "form")!;
-      const values = { can: "123456" };
-      const done = await execute(model, eventInputs(ep, values, { name: "nfc-eid", values, event: { type: "submit" } }), owner as never, { executor: "console", endpoint: ep, skipValidation: true });
+      const done = await execute(model, {}, owner as never, { executor: "console" });
       expect(done.run.error).toBeNull();
-      expect(dev.seen[0]).toMatchObject({ op: "mrtd-read", args: { can: "123456", readPhoto: true, all: true } });
-      expect(dev.seen[0].args).not.toHaveProperty("mrz");
+      expect(dev.seen[0]).toMatchObject({ op: "mrtd-read", args: { readPhoto: true, all: true } });
+      for (const k of ["can", "mrz", "documentNumber", "dateOfBirth", "dateOfExpiry"]) expect(dev.seen[0].args).not.toHaveProperty(k);
+      expect(JSON.stringify(done.run.inputs)).not.toMatch(/can|mrz/i);
       const html = (done.outputs[0] as { html: string }).html;
       expect(html).toContain(`data:image/jpeg;base64,${jpeg}`);
       expect(html).toContain("PACE (CAN)");
