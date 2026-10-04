@@ -2302,7 +2302,7 @@
       ]),
       links,
       entry ? (entry.parsed === undefined || entry.parsed === null ? h("div", { class: "muted small" }, "Nothing was parsed from this event.") : jsonBlock("Parsed data", entry.parsed, "tel-log-parsed")) : null,
-      entry ? (entry.raw === undefined || entry.raw === null ? h("div", { class: "muted small", "data-testid": "tel-log-noraw" }, "The raw payload was not kept (Permissions › Event log › keep the raw payload).") : jsonBlock("Raw payload (secrets removed)", entry.raw, "tel-log-raw")) : null);
+      entry ? (entry.raw === undefined || entry.raw === null ? h("div", { class: "muted small", "data-testid": "tel-log-noraw" }, entry.kind === "webhook" ? "The raw payload was not kept (Permissions › Event log › keep the raw payload)." : "No raw payload: only a provider's webhook carries one.") : jsonBlock("Raw payload (secrets removed)", entry.raw, "tel-log-raw")) : null);
   }
 
   // For the page's tests (and a curious operator): the pure parts.
