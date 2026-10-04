@@ -18,7 +18,7 @@
 | Push | FCM (HTTP v1) datové zprávy šifrované pro zařízení (ECIES P-256) a podepsané serverem; bez FCM úsporné dotazování přes `JobScheduler` |
 | Vzhled | nativní renderer stromů `android.*` (obrazovky, šablony, animace, téma) — edituje se v adminu stejně jako webové layouty |
 | Aktualizace | balíčky `.m5ab` (podpis ECDSA, šifrování AES-256-GCM, klíč zabalený pro každé zařízení) + APK vydání přes `PackageInstaller` |
-| Integrace | call log (self-managed `ConnectionService` + `CallLog`), notifikace s odpovědí, sdílení do místnosti, konverzační zkratky |
+| Integrace | call log (`CallLog`; od 6.8 i self-managed `PhoneAccount` jen kvůli označení položek — hovory přes Telecom nejdou), notifikace s odpovědí, sdílení do místnosti, konverzační zkratky |
 
 ## 1. Klíče a formáty
 
@@ -389,3 +389,62 @@ Totéž dělá 6.8 pro místnosti (`telecom/Conversations.java`, čistá část
   nastavil konverzaci jako prioritní, nastaví ji znovu (nové id). Umře-li
   proces mezi odchodem do pozadí a časem zámku a alarm se zpozdí (Doze),
   zůstanou názvy do doručení alarmu nebo dalšího startu.
+
+## 12. 6.8: hovory v záznamu telefonu a Záznam v aplikaci
+
+Design: `server/android/design-68-calllog.ts` (obrazovka `log`, ikona v liště
+místností, položka hlavního menu, řádky v *Nastavení › Hovory*); akce
+`calllog.*` dělají z buildu build pro aplikaci 6.8 (`designMinAppCode`).
+
+* **Co hovor byl** (`chat/CallTrack.java`, čistá Java + `CallTrackTest`):
+  hovory místností nezvoní po síti — „ozval se“ = něčí `audio-status` přešel
+  na `live`. Z vlastního zvuku a ze zvuku ostatních vzniká jeden záznam na
+  hovor (ne na peer): **odchozí** (zapnul jsem zvuk, když nikdo jiný nebyl
+  v hovoru), **příchozí** (připojil jsem se k probíhajícímu), **zmeškaný**
+  (hovor skončil beze mě), **odmítnutý** (odmítl jsem zvonění a nepřipojil
+  se). Hovor končí, až v něm 20 s nikdo není — výpadek spojení je pořád týž
+  hovor. Délka = můj čas v hovoru. `Calls.track()` volá
+  `RoomSession.changed()`; `destroy()` zaznamená otevřený hovor dřív, než
+  se vlákno místnosti zastaví.
+* **Zvonění** (`telecom/CallRing.java`): hovor, který začne někdo jiný,
+  ukáže upozornění na kanálu hovorů s *Připojit se* / *Odmítnout*; po konci
+  beze mě zůstane tiché „Zmeškaný hovor“. Řídí se přepínačem „Hovory“,
+  tichými hodinami a úrovní soukromí z *Nastavení › Oznámení*; při zamčené
+  aplikaci jen jméno aplikace. *Připojit se* funguje jen z upozornění tohoto
+  běhu (token v intentu) a jen dokud v hovoru někdo je; místnost na obrazovce
+  nezvoní.
+* **Záznam hovorů telefonu** (`telecom/CallLogBridge.java`): po zapnutí
+  přepínače se aplikace zeptá na `WRITE_CALL_LOG` (odmítnutí přepínač vrátí
+  a řekne kde oprávnění povolit; odebrané oprávnění přepínač vypne). Položka
+  **nemá číslo** (`NUMBER` prázdné, `PRESENTATION_UNKNOWN`): do 6.7 se psalo
+  `m5cet:<místnost>` a aplikace Telefon by při „zavolat zpět“ předala
+  Telecomu text, z jehož písmen udělá číslice (`m5cet:team` → 652388326)
+  a vytočí je přes SIM. Staré řádky se při startu jednou opraví (bez čísla
+  a bez názvu místnosti). Název (`CACHED_NAME`) je výchozí jen jméno
+  aplikace — záznam čte každá aplikace s `READ_CALL_LOG`; volitelně
+  „aplikace · místnost“ nebo „lidi · místnost“ (`calls.logName`), při
+  zamčené aplikaci vždy jen jméno aplikace. Typ, čas, délka, `FEATURES_VIDEO`;
+  `NEW = 0` (o zmeškaném hovoru dává vědět aplikace sama).
+* **Self-managed účet** (`telecom/M5ConnectionService.java`, `MANAGE_OWN_CALLS`):
+  zaregistruje se, aby aplikace Telefon podle CDD 7.4.1.2 u položky ukázala
+  jméno aplikace; služba odmítne každé spojení — zvuk hovoru jde dál jen přes
+  WebRTC. **Zavolat zpět z aplikace Telefon nejde**: Android 10–16 cizímu
+  self-managed účtu vezme handle a vytočí číslo jako běžný hovor (proto
+  položka číslo nemá); call-back Androidu 17 (`ACTION_CALL_BACK`) platí jen
+  pro hovory přidané přes Telecom (`CallsManager.addCall`), a to tyto nejsou.
+  Zavolat znovu jde ze Záznamu v aplikaci (po potvrzení).
+* **Záznam v aplikaci** (`chat/ActivityLog.java`, `chat/CallHistory.java`,
+  `ui/parts/CallLogUi.java`): hovory z vlastní historie hovorů (trezor,
+  uživatelská vrstva, záznam `calls`, nejvýš 500 hovorů / 90 dní,
+  `calls.history` ji vypne), zprávy přímo z historie místností (nic se
+  nekopíruje). Zapečetěná, „podržet a číst“, mizející a skrytá zpráva ukáže
+  jen svůj druh — ani hledání do nich nevidí. Filtr vše / hovory / zprávy /
+  zmeškané, hledání bez ohledu na velikost písmen a diakritiku; klepnutí
+  otevře místnost (u zprávy na ni posune), tlačítko telefonu zavolá znovu
+  po potvrzení. Obrazovka je za zámkem aplikace jako ostatní.
+* **Wipe** (`security/Wiper.java` → `CallLogBridge.wipe`): smaže řádky
+  aplikace ze záznamu telefonu (podle účtu, staré `m5cet:` a podle řádků
+  zapamatovaných v historii), odregistruje účet a smaže historii hovorů.
+* Neověřeno na telefonu (jen testy JVM a TS). Co se ukáže v aplikaci Telefon,
+  se liší výrobce od výrobce: některá jméno z `CACHED_NAME` neukážou a napíšou
+  „Neznámé“ (s ikonou aplikace).

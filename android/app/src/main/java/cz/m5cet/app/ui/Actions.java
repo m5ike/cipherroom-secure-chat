@@ -165,6 +165,11 @@ public final class Actions {
                     cz.m5cet.app.ui.parts.ProfileUi.run(a, action, s);
                     break;
 
+                // ---- 6.8 the History screen and the phone's call log ----
+                case "calllog.open": case "calllog.refresh": case "calllog.item": case "calllog.call": case "calllog.clear": case "calllog.system":
+                    cz.m5cet.app.ui.parts.CallLogUi.run(a, action, s);
+                    break;
+
                 // ---- 6.2 bubbles (message details, attachments, hide/delete) ----
 
                 // ---- 6.2 look (templates, Tools dock, send button, microphone) ----

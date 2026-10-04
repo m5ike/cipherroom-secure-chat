@@ -604,6 +604,11 @@ public final class Parts {
         return people;
     }
 
+    /** 6.8 (the History screen): the room on screen scrolls to this message, when it is in its list. */
+    public boolean revealMessage(String id) {
+        return messages != null && messages.isAttachedToWindow() && messages.reveal(id);
+    }
+
     /** 6.2: the composer's text field gets the focus and the keyboard (a private message was chosen). */
     public void focusComposer() {
         android.widget.EditText field = composer == null ? null : findField(composer);

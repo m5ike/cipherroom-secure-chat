@@ -94,6 +94,7 @@ public final class M5 extends Application {
             push.init();
             Checkin.schedule(this);
             events.flush();
+            cz.m5cet.app.telecom.CallLogBridge.fixLegacy(this); // 6.8: old call log rows lose their dialable "number"
         });
         registerActivityLifecycleCallbacks(new Lifecycle());
         cz.m5cet.app.telecom.Conversations.get(this).start(); // 6.8: the rooms as Android conversations

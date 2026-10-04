@@ -132,6 +132,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
 
         // 6.2 people (a contact's M5cet row: message / call)
         cz.m5cet.app.contacts.ContactIntents.accept(this, i);
+        // 6.8: Join on a call's ring (telecom/CallRing)
+        cz.m5cet.app.telecom.CallRing.accept(this, i);
 
     }
 
@@ -139,11 +141,17 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
 
     /** What waits for a permission the user is being asked for (the microphone, the contacts…). */
     private final java.util.Map<String, Runnable> afterPermission = new java.util.HashMap<>();
+    /** 6.8: what runs when it is refused instead. */
+    private final java.util.Map<String, Runnable> afterRefusal = new java.util.HashMap<>();
 
     /** Runs then with the permission: at once when it is granted, else after the user allows it (not at all when refused). */
-    public void withPermission(String perm, Runnable then) {
+    public void withPermission(String perm, Runnable then) { withPermission(perm, then, null); }
+
+    /** 6.8: …and refused (may be null) when the user does not allow it. */
+    public void withPermission(String perm, Runnable then, Runnable refused) {
         if (has(perm)) { then.run(); return; }
         afterPermission.put(perm, then);
+        if (refused != null) afterRefusal.put(perm, refused); else afterRefusal.remove(perm);
         askPermissions(perm);
     }
 
@@ -152,7 +160,9 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         super.onRequestPermissionsResult(code, perms, results);
         for (int i = 0; i < perms.length && i < results.length; i++) {
             Runnable then = afterPermission.remove(perms[i]);
-            if (then != null && results[i] == PackageManager.PERMISSION_GRANTED) then.run();
+            Runnable refused = afterRefusal.remove(perms[i]);
+            if (results[i] == PackageManager.PERMISSION_GRANTED) { if (then != null) then.run(); }
+            else if (refused != null) refused.run();
         }
     }
 
@@ -488,6 +498,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             }
             case "settings.appearance": s.put("presets", cz.m5cet.app.design.Appearance.presets(app.lang(), app.design().appName())); break;
             case "settings.notify": s.put("notify", cz.m5cet.app.push.NotifyPrefs.get(app).scope()); break; // 6.7 notify
+            case "log": s.put("log", cz.m5cet.app.ui.parts.CallLogUi.scope(this)); break; // 6.8 history
+            case "settings.calls": cz.m5cet.app.ui.parts.CallLogUi.reconcile(app); s.put("settings", app.settings.scope()); break; // 6.8: the call log's switch shows what is real
             case "settings.security":
                 s.put("security", jo("biometricAvailable", !"off".equals(app.lock.biometricMode()) && Biometric.available(this), "biometric", app.vault.bioEnrolled(),
                     "pinLength", (double) app.lock.pinLength(), "maxAttempts", (double) app.lock.maxAttempts(), "wipe", app.config.lockPolicy().optBoolean("wipe", true), "screenshots", app.lock.screenshots()));
@@ -543,6 +555,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
                 break;
             case "voice.lang": voices = null; loadVoices(); break;
             case "calls.speaker": { cz.m5cet.app.chat.RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().route(); break; }
+            case "callLog": cz.m5cet.app.ui.parts.CallLogUi.settingChanged(this, key); break; // 6.8: asks for the permission
             default:
                 // appearance.* / look.*: ui/look/Look redraws the screen in place (6.2) — no restart.
                 break;

@@ -415,6 +415,41 @@ Platí na webu i v aplikaci pro Android.
   smažeš, její konverzace zmizí.
 - Bubliny (plovoucí okénka konverzací) aplikace nemá.
 
+### Hovory v záznamu telefonu a Záznam hovorů a zpráv (6.8)
+- **Záznam** — ikona hodin s šipkou v liště seznamu místností (nebo hlavní
+  menu › *Záznam*) ukáže hovory i zprávy ze všech uložených místností
+  v jednom seznamu, nejnovější nahoře, po dnech. Nahoře je filtr *Vše /
+  Hovory / Zprávy / Zmeškané* a hledání (místnost, člověk nebo text zprávy;
+  na velikosti písmen a diakritice nezáleží — potvrďte klávesou nebo lupou).
+  Klepnutí otevře místnost (u zprávy se na ni posune), tlačítko telefonu
+  u hovoru zavolá do místnosti znovu — **vždy až po potvrzení**, protože
+  hovor uslyší všichni, kdo jsou v místnosti připojení.
+- **Co Záznam ukáže** — zapečetěná, „podržet a číst“, mizející a skrytá
+  zpráva je v něm jen svým druhem („Zapečetěná zpráva“…), nikdy svým textem,
+  a hledání do ní nevidí. Zprávy bere Záznam přímo z historie místností,
+  nic dalšího neukládá. Hovory si aplikace pamatuje zvlášť: zašifrovaně jen
+  v tomto telefonu, nejvýš 500 hovorů z posledních 90 dní (*Nastavení ›
+  Hovory › Ukládat historii hovorů*; *Smazat historii hovorů* ji smaže).
+- **Druhy hovorů** — *odchozí* (hovor jste začali vy), *příchozí* (připojili
+  jste se k hovoru někoho jiného), *zmeškaný* (hovor v místnosti skončil bez
+  vás) a *odmítnutý*. Když hovor začne někdo jiný, telefon zazvoní
+  upozorněním s tlačítky **Připojit se** a **Odmítnout**; řídí se přepínačem
+  *Hovory*, tichými hodinami a úrovní soukromí v *Nastavení › Oznámení*
+  (při zamčené aplikaci jen „Hovor“, bez místnosti a jména). Místnost, kterou
+  máte otevřenou, nezvoní.
+- **Záznam hovorů telefonu** — *Nastavení › Hovory › Hovory do systémového
+  záznamu*: aplikace požádá o oprávnění k seznamu hovorů (bez něj přepínač
+  zůstane vypnutý) a hovory pak zapíše i do aplikace Telefon — s časem,
+  délkou a příznakem videa. Položka **nemá číslo**, takže ji aplikace
+  Telefon nevytočí; zavolat zpět jde ze Záznamu v M5cet. Záznam hovorů
+  telefonu si může přečíst každá aplikace s oprávněním k seznamu hovorů,
+  proto položka ve výchozím stavu ukáže **jen jméno aplikace**; v *Položka
+  v záznamu ukáže* můžete zvolit i místnost, nebo místnost a lidi. Dokud je
+  aplikace zamčená, zapíše se vždy jen jméno aplikace. Některé aplikace
+  Telefon jméno neukážou a napíšou „Neznámé“ (s ikonou M5cet).
+  *Odebrat hovory této aplikace ze záznamu telefonu* je zase smaže;
+  *Smazat všechna data* je smaže také.
+
 ## English
 
 ### First run
@@ -774,6 +809,40 @@ the web and in the Android app.
   "Conversation 2"… They never hold message content or the room's key. Leave
   or delete a room and its conversation goes.
 - The app has no bubbles (floating conversation windows).
+
+### Calls in the phone's call log, and the History of calls and messages (6.8)
+- **History** — the clock-with-an-arrow icon in the room list's bar (or the
+  main menu › *History*) shows the calls and the messages of every saved room
+  in one list, newest first, by day. At the top: the filter *All / Calls /
+  Messages / Missed* and a search (a room, a person or a message's text; case
+  and accents do not matter — confirm with the key or the magnifier). A tap
+  opens the room (a message: it scrolls to it); the phone button of a call
+  calls the room again — **always after a confirmation**, since everyone
+  connected in the room hears the call.
+- **What History shows** — a sealed, hold-to-read, vanishing or hidden
+  message appears only as its kind ("Sealed message"…), never its text, and
+  the search does not see into it. Messages come straight from the rooms'
+  histories; nothing more is stored. Calls are kept separately: encrypted, on
+  this phone only, at most 500 calls of the last 90 days (*Settings › Calls ›
+  Keep a call history*; *Clear the call history* deletes it).
+- **Kinds of calls** — *outgoing* (you started the call), *incoming* (you
+  joined someone else's), *missed* (the room's call ended without you) and
+  *declined*. When someone else starts a call, the phone rings with a
+  notification with **Join** and **Decline**; it follows the *Calls* switch,
+  quiet hours and the privacy level in *Settings › Notifications* (while the
+  app is locked only "Call", no room and no name). The room you have open
+  does not ring.
+- **The phone's call log** — *Settings › Calls › Calls in the system call
+  log*: the app asks for the call log permission (without it the switch stays
+  off) and then writes the calls into the Phone app too — with their time,
+  length and whether they had video. An entry **has no number**, so the Phone
+  app cannot dial it; call back from M5cet's History. Any app allowed to read
+  the call log can read it, so by default an entry shows **only the app's
+  name**; *An entry shows* can add the room, or the room and the people.
+  While the app is locked only the app's name is ever written. Some Phone
+  apps do not show the name and say "Unknown" (with M5cet's icon). *Remove
+  this app's calls from the phone's call log* deletes them again; *Erase all
+  data* does too.
 
 ## Deutsch
 
@@ -1158,3 +1227,42 @@ dort beginnt, zeigt also nichts. Im Web und in der Android-App.
   Schlüssel des Raums sind nie darin. Wer einen Raum verlässt oder löscht,
   entfernt auch seine Unterhaltung.
 - Blasen (schwebende Unterhaltungsfenster) hat die App nicht.
+
+### Anrufe in der Anrufliste des Telefons und der Verlauf von Anrufen und Nachrichten (6.8)
+- **Verlauf** — das Symbol Uhr mit Pfeil in der Leiste der Raumliste (oder
+  Hauptmenü › *Verlauf*) zeigt Anrufe und Nachrichten aller gespeicherten
+  Räume in einer Liste, die neuesten oben, nach Tagen. Oben: der Filter
+  *Alle / Anrufe / Nachrichten / Verpasst* und eine Suche (Raum, Person oder
+  Text einer Nachricht; Groß- und Kleinschreibung und Akzente spielen keine
+  Rolle — mit der Taste oder der Lupe bestätigen). Tippen öffnet den Raum
+  (bei einer Nachricht scrollt er zu ihr); die Telefon-Taste eines Anrufs ruft
+  im Raum erneut an — **immer erst nach einer Bestätigung**, denn alle, die im
+  Raum verbunden sind, hören den Anruf.
+- **Was der Verlauf zeigt** — eine versiegelte, „zum Lesen halten“-,
+  verschwindende oder ausgeblendete Nachricht erscheint nur als ihre Art
+  („Versiegelte Nachricht“…), nie mit ihrem Text, und die Suche sieht nicht
+  hinein. Nachrichten kommen direkt aus dem Verlauf der Räume; nichts wird
+  zusätzlich gespeichert. Anrufe merkt sich die App getrennt: verschlüsselt,
+  nur auf diesem Telefon, höchstens 500 Anrufe der letzten 90 Tage
+  (*Einstellungen › Anrufe › Anrufverlauf speichern*; *Anrufverlauf löschen*
+  löscht ihn).
+- **Arten von Anrufen** — *ausgehend* (Sie haben den Anruf begonnen),
+  *eingehend* (Sie sind dem Anruf eines anderen beigetreten), *verpasst* (der
+  Anruf im Raum endete ohne Sie) und *abgelehnt*. Beginnt jemand anderes einen
+  Anruf, klingelt das Telefon mit einer Benachrichtigung mit **Beitreten** und
+  **Ablehnen**; sie folgt dem Schalter *Anrufe*, den Ruhezeiten und der
+  Datenschutzstufe in *Einstellungen › Benachrichtigungen* (bei gesperrter App
+  nur „Anruf“, ohne Raum und Namen). Der Raum, den Sie offen haben, klingelt
+  nicht.
+- **Die Anrufliste des Telefons** — *Einstellungen › Anrufe › Anrufe im
+  Systemanrufprotokoll*: die App fragt nach der Berechtigung für die
+  Anrufliste (ohne sie bleibt der Schalter aus) und schreibt die Anrufe dann
+  auch in die Telefon-App — mit Zeit, Dauer und ob mit Video. Ein Eintrag
+  **hat keine Nummer**, die Telefon-App kann ihn also nicht wählen;
+  zurückrufen geht aus dem Verlauf in M5cet. Jede App mit Zugriff auf die
+  Anrufliste kann sie lesen, deshalb zeigt ein Eintrag standardmäßig **nur den
+  Namen der App**; unter *Ein Eintrag zeigt* lässt sich auch der Raum oder
+  Raum und Personen wählen. Solange die App gesperrt ist, wird immer nur der
+  Name der App geschrieben. Manche Telefon-Apps zeigen den Namen nicht und
+  schreiben „Unbekannt“ (mit dem Symbol von M5cet). *Anrufe dieser App aus der
+  Anrufliste entfernen* löscht sie wieder; *Alle Daten löschen* ebenfalls.
