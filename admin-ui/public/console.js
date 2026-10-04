@@ -166,9 +166,6 @@
       if (remember) sessionStorage.setItem(SESSION_KEY, JSON.stringify({ base: state.base, token: state.token }));
       else sessionStorage.removeItem(SESSION_KEY);
     } catch { /* storage blocked: memory only */ }
-    // The ported tools read these two fields.
-    $("#base").value = state.base;
-    $("#token").value = state.token;
     $("#login").hidden = true;
     $("#shell").hidden = false;
     state.overview = overview;
@@ -224,8 +221,6 @@
     state.token = "";
     try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ }
     stopLive();
-    $("#base").value = "";
-    $("#token").value = "";
     $("#shell").hidden = true;
     $("#login").hidden = false;
     $("#loginToken").value = "";
@@ -481,14 +476,19 @@
     alerts: ["Alerts", "What the server watches for when nobody is looking", loadAlerts],
     client: ["Client & addons", "Saved connections, GUI templates and the map preview for every user", loadClient],
     layout: ["Layout builder", "Styles and text templates for every client", null],
-    telephony: ["Telephony & SIP", "Voice and SMS providers, webhooks, trunks", null],
+    telephony: ["Telephony & SIP", "Providers, permissions, routing, applications, route codes, trunks, tests and the event log", null],
     plugins: ["AI & speech", "Connectors and their live log", null],
   };
 
-  function route(name) {
-    if (!ROUTES[name]) name = "overview";
+  function route(path) {
+    // 6.9: a page may have places of its own: #/telephony/log/<id> is the
+    // "telephony" route, and the page reads the rest from the address.
+    let [name, ...rest] = String(path || "").split("/");
+    if (!ROUTES[name]) { name = "overview"; rest = []; }
+    const sub = rest.join("/");
     state.route = name;
-    if (location.hash !== `#/${name}`) history.replaceState(null, "", `#/${name}`);
+    const hash = `#/${name}${sub ? `/${sub}` : ""}`;
+    if (location.hash !== hash) history.replaceState(null, "", hash);
     for (const section of $$("[data-panel]")) section.hidden = section.dataset.panel !== name;
     for (const item of $$(".nav__item")) item.setAttribute("aria-current", item.dataset.route === name ? "page" : "false");
     const [title, crumb, loader] = ROUTES[name];
@@ -1783,7 +1783,7 @@
     base: () => state.base,
     addRoute(name, entry) {
       ROUTES[name] = entry;
-      if (location.hash === `#/${name}` && state.token) route(name);
+      if ((location.hash === `#/${name}` || location.hash.startsWith(`#/${name}/`)) && state.token) route(location.hash.replace(/^#\/?/, ""));
     },
   };
 })();

@@ -276,15 +276,6 @@ pre.code, .code {
 .check__dot.is-warn { background: var(--warn); }
 .check__dot.is-err { background: var(--err); }
 
-/* Legacy tool panels keep their own small helpers */
-.legacy h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 16px 0 8px; }
-.legacy label { display: block; font-size: 12px; margin-top: 8px; color: var(--muted); }
-.legacy input, .legacy select, .legacy textarea { width: 100%; background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 8px 10px; }
-.legacy button { background: var(--accent); color: #fff; border: 0; border-radius: var(--radius-sm); padding: 7px 12px; cursor: pointer; margin: 4px 4px 0 0; }
-.legacy button.secondary { background: var(--surface-3); color: var(--text); }
-@media (max-width: 600px) { .legacy table { display: block; overflow-x: auto; } }
-.legacy pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px; overflow: auto; max-height: 320px; font: 12px/1.5 var(--mono); }
-
 @media (max-width: 860px) {
   .shell { grid-template-columns: 1fr; }
   .sidebar { position: static; height: auto; }
@@ -304,10 +295,6 @@ pre.code, .code {
 .t tr.is-clickable:hover td { background: var(--surface-2); }
 .t tr.is-clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .drawer__body h3 { margin: 6px 0 0; font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
-.legacy input[type="checkbox"], .legacy input[type="color"], .legacy input[type="file"] { width: auto; }
-.legacy .row { margin-top: 6px; }
-.legacy .row > input, .legacy .row > select { width: auto; flex: 1 1 160px; }
-.legacy .card__title { margin-bottom: 4px; }
 
 .brand--login { padding: 0; }
 

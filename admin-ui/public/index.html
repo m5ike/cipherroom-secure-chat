@@ -6,6 +6,7 @@
   <meta name="referrer" content="no-referrer" />
   <title>M5cet · Operator console</title>
   <link rel="stylesheet" href="console.css" />
+  <link rel="stylesheet" href="telephony-console.css" />
 </head>
 <body>
   <!-- ============================== sign-in ============================== -->
@@ -319,74 +320,8 @@
             </div>
           </div>
         </section>
-        <section data-panel="telephony" class="stack legacy" hidden>
-      <div class="card" id="telSdkRoot"></div>
-      <div class="card"><div class="card__head"><div class="card__title">Telephony &amp; SIP console</div></div>
-
-      <div class="row"><button id="btnTel">Refresh telephony</button></div>
-      <p style="font-size:12px;margin:6px 0;">Voice + SMS via Twilio / Telnyx / Vonage. Keys come from server env (ENABLE_TELEPHONY=1). The audio/media path needs an external SIP↔WebRTC gateway — this console manages providers, webhooks, trunk config + DID routing.</p>
-      <div id="telList"></div>
-
-      <h2 style="margin-top:14px;">Default providers</h2>
-      <p style="font-size:12px;margin:6px 0;">Which provider handles SMS and which handles voice. Order: request → this choice (persisted) → SMS_PROVIDER / VOICE_PROVIDER in .env → first configured.</p>
-      <div class="row">
-        <label style="margin:0;">SMS</label>
-        <select id="defSms"><option value="">(env / auto)</option><option value="twilio">twilio</option><option value="telnyx">telnyx</option><option value="vonage">vonage</option></select>
-        <label style="margin:0;">Voice</label>
-        <select id="defVoice"><option value="">(env / auto)</option><option value="twilio">twilio</option><option value="telnyx">telnyx</option><option value="vonage">vonage</option></select>
-        <button id="btnTelDefaults">Save defaults</button>
-      </div>
-      <pre id="telDefaultsOut"></pre>
-
-      <h2 style="margin-top:14px;">Webhooks (/wh/{provider}/{type})</h2>
-      <p style="font-size:12px;margin:6px 0;">Served by the main app. Set PUBLIC_BASE_URL so the URLs are absolute, then "Install" pushes them into the provider. Signatures are verified when TWILIO_AUTH_TOKEN / TELNYX_PUBLIC_KEY / VONAGE_SIGNATURE_SECRET are set.</p>
-      <div id="whList"></div>
-      <pre id="whOut"></pre>
-
-      <h2 style="margin-top:14px;">Inbound / status events</h2>
-      <div class="row"><button class="secondary" id="btnTelEvents">Refresh events</button><button class="secondary" id="btnTelEventsClear">Clear</button></div>
-      <pre id="telEvents" style="max-height:240px;"></pre>
-
-      <h2 style="margin-top:14px;">Send test SMS / place test call</h2>
-      <div class="row">
-        <select id="telKind"><option value="sms">SMS</option><option value="call">Call</option></select>
-        <input id="telTo" placeholder="+420777123456 (E.164)" style="flex:1;" />
-      </div>
-      <label>Text (SMS)</label>
-      <input id="telText" placeholder="Test from M5cet admin" />
-      <div class="row" style="margin-top:8px;"><button id="btnTelTest">Run test</button></div>
-      <pre id="telOut"></pre>
-
-      <h2 style="margin-top:14px;">SIP trunks</h2>
-      <div class="row">
-        <input id="sipId" placeholder="trunk id (a-z0-9_-)" />
-        <input id="sipLabel" placeholder="label" />
-      </div>
-      <div class="row">
-        <input id="sipHost" placeholder="sip host" />
-        <input id="sipPort" placeholder="5060" style="max-width:90px;" />
-      </div>
-      <div class="row">
-        <input id="sipUser" placeholder="username" />
-        <input id="sipPass" type="password" placeholder="password (stored, never returned)" />
-      </div>
-      <div class="row">
-        <input id="sipDids" placeholder="DIDs comma-separated e.g. +420123,+420456" style="flex:1;" />
-      </div>
-      <div class="row">
-        <input id="sipCidName" placeholder="CallerID name" />
-        <input id="sipCidNum" placeholder="CallerID number" />
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <button id="btnSipSave">Save trunk</button>
-        <button class="secondary" id="btnSipDelete">Delete trunk (by id)</button>
-      </div>
-      <div class="row" style="margin-top:8px;">
-        <input id="sipDid" placeholder="inbound DID to route" />
-        <button class="secondary" id="btnSipRoute">Route DID</button>
-      </div>
-      <pre id="sipOut"></pre>
-    </div></section>
+        <!-- 6.9: Telephony & SIP — providers, permissions, routing rules, applications (TSA), route codes, SIP trunks, tests, calls, the event log (telephony-console.js) -->
+        <section data-panel="telephony" class="stack" hidden><div id="telRoot" class="stack"><div class="card empty">Loading…</div></div></section>
         <!-- 4.14: AI & speech — providers, models, playground, speech, calls, limits (ai-console.js) -->
         <section data-panel="plugins" class="stack" hidden><div id="aiRoot" class="stack"><div class="card empty">Loading…</div></div></section>
         <section data-panel="functions" class="stack" hidden><div id="fnRoot" class="stack"><div class="card empty">Loading…</div></div></section>
@@ -588,14 +523,10 @@
     </div>
   </div>
 
-  <!-- shared by the ported tools -->
-  <input type="hidden" id="base" /><input type="hidden" id="token" />
   <div class="toasts" id="toasts"></div>
   <script src="console-icons.js"></script>
   <script src="console.js"></script>
   <script src="panel-layout.js"></script>
-  <script src="legacy-tools.js"></script>
-  <script src="telephony-sdk.js"></script>
   <script src="modules.js"></script>
   <script src="builder-kit.js"></script>
   <script src="menu-builder.js"></script>
@@ -609,5 +540,6 @@
   <script src="android-expr.js"></script>
   <script src="android-console.js"></script>
   <script src="notify-console.js"></script>
+  <script src="telephony-console.js"></script>
 </body>
 </html>
