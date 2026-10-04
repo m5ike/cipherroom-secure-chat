@@ -21,8 +21,7 @@ export function isHashedAsset(path: string): boolean {
   return /^\/assets\/[^/]+[.-][A-Za-z0-9_-]{8,}\.[a-z0-9]+$/.test(path);
 }
 
-export function serveStatic(app: Express) {
-  const distPath = path.resolve(__dirname, "public");
+export function serveStatic(app: Express, distPath = path.resolve(__dirname, "public")) {
   if (!fs.existsSync(distPath)) {
     throw new Error(
       `Could not find the build directory: ${distPath}, make sure to build the client first`,
@@ -43,7 +42,10 @@ export function serveStatic(app: Express) {
       res.setHeader("Content-Encoding", enc);
       res.setHeader("Vary", "Accept-Encoding");
       res.setHeader("Cache-Control", isHashedAsset(`/assets${req.path}`) ? IMMUTABLE : NO_STORE);
-      return res.sendFile(file + suffix);
+      // Relative to a root (6.7, audit S6): `send` judges dotfiles only on
+      // the requested part, so an install under a dot-directory (~/.m5cet,
+      // .claude/worktrees) works while /assets/.x is still refused.
+      return res.sendFile(req.path.replace(/^\/+/, "") + suffix, { root: path.join(distPath, "assets") });
     }
     next();
   });
@@ -70,6 +72,6 @@ export function serveStatic(app: Express) {
 
   // fall through to index.html if the file doesn't exist
   app.use("/{*path}", (_req, res) => {
-    res.sendFile(path.resolve(distPath, "index.html"));
+    res.sendFile("index.html", { root: distPath });
   });
 }

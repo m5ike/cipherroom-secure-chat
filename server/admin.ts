@@ -277,7 +277,8 @@ if (appDist) {
   app.get("/layout-preview.html", (_req, res) => {
     res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'self'; base-uri 'none'; form-action 'none'");
     res.setHeader("X-Frame-Options", "SAMEORIGIN");
-    res.sendFile(path.join(appDist, "layout-preview.html"));
+    // Relative to a root: an install under a dot-directory still serves (6.7, S6).
+    res.sendFile("layout-preview.html", { root: appDist });
   });
   app.use("/assets", express.static(path.join(appDist, "assets"), { maxAge: 0, etag: true, fallthrough: false }));
 }
@@ -295,7 +296,7 @@ if (uiDir) {
     });
   }
   app.use("/", express.static(uiDir, { maxAge: 0, etag: false }));
-  app.get("/", (_req, res) => res.sendFile(path.join(uiDir, "index.html")));
+  app.get("/", (_req, res) => res.sendFile("index.html", { root: uiDir }));
 } else {
   app.get("/", (_req, res) => {
     res.type("text/plain").send([
