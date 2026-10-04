@@ -201,11 +201,13 @@ public final class Forms {
             Io.bg(() -> {
                 try {
                     JSONObject info = Server.info(base);
-                    String kid = info.getJSONObject("server").getString("kid");
-                    String builtIn = BuildConfig.SERVER_KEY_PIN;
-                    if ((!builtIn.isEmpty() && !builtIn.equals(kid)) || (!pinKid.isEmpty() && !pinKid.equals(kid))) throw new SecurityException("the server's key " + kid + " is not the expected one");
+                    // 6.7 (audit V6): the pins (build, QR code) bind the server's public key itself —
+                    // its hash — not the kid string the server sends beside it.
+                    JSONObject key = info.getJSONObject("server");
+                    cz.m5cet.app.security.ServerPin.check(key.optString("publicKey"), key.optString("kid"), BuildConfig.SERVER_KEY_PIN, pinKid);
                     JSONObject answer = app.server.enroll(base, c, n, Build.MODEL, Build.MANUFACTURER, app.push.token(), app.lang());
-                    if (!kid.equals(answer.getJSONObject("server").getString("kid"))) throw new SecurityException("the server changed its key during enrolment");
+                    JSONObject answered = answer.getJSONObject("server");
+                    cz.m5cet.app.security.ServerPin.same(key.optString("publicKey"), answered.optString("publicKey"), answered.optString("kid"));
                     app.config.enrolled(base, answer);
                     Log.i("enroll", "enrolled as " + answer.getString("deviceId"));
                     app.push.init();

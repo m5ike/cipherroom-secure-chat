@@ -75,12 +75,14 @@ public final class Config {
     public synchronized void saveUsersPanel(JSONObject u) { put("usersPanel", u); save(); }
 
     public synchronized void enrolled(String server, JSONObject answer) throws JSONException {
+        JSONObject s = answer.getJSONObject("server");
+        // 6.7 (audit V6): never trust a key whose kid is not its own (SecurityException stops enrolment).
+        cz.m5cet.app.security.ServerPin.check(s.optString("publicKey"), s.optString("kid"));
         put("server", server);
         put("deviceId", answer.getString("deviceId"));
-        JSONObject s = answer.getJSONObject("server");
         put("serverKey", s.getString("publicKey"));
         put("serverKid", s.getString("kid"));
-        put("serverFingerprint", s.optString("fingerprint"));
+        put("serverFingerprint", Ec.fingerprint(s.getString("publicKey"))); // computed here, not taken from the server
         applyServerAnswer(answer);
         save();
     }
