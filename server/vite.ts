@@ -5,10 +5,13 @@ import viteConfig from "../vite.config";
 import fs from "node:fs";
 import path from "node:path";
 import { nanoid } from "nanoid";
+import { claimUpgradePath } from "./upgrade-guard";
 
 const viteLogger = createLogger();
 
 export async function setupVite(server: Server, app: Express) {
+  // 6.7 (S3): upgrades to paths nobody claims are closed; HMR is one of ours.
+  claimUpgradePath(server, "/vite-hmr");
   const serverOptions = {
     middlewareMode: true,
     hmr: { server, path: "/vite-hmr" },
