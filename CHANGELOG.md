@@ -5,6 +5,124 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.9.0] – 2026-10-04
+
+**Telephony & SIP jako ústředna.** Nová stránka konzole; oprávnění; pravidla
+směrování příchozích i odchozích hovorů (aplikace poskytovatele nebo SIP
+trunk s vlastním caller ID; cíl TSA nebo stav busy / congestion / hangup /
+rejected); **Telephony & SIP Applications (TSA)** — call flow kreslené ve
+vizuálním editoru (27 nástrojů) a spouštěné serverem na živém hovoru;
+tabulka route kódů a SDK `m5.telephony.inroute.*`; zvuk hovoru obousměrně
+do celé místnosti nebo členovi; úplný log událostí včetně webhooků (detail
+s rozparsovanými daty); testy poskytovatelů, webhooků, směrování, hovorů,
+SMS, hlasu do místnosti a testovací příchozí SIP adresa. Přehled:
+`docs/telephony.md` › 0.
+
+### Přidáno
+- **Stránka Telephony & SIP** (`admin-ui/public/telephony-console.js`):
+  Overview, Providers, Permissions, Outbound / Inbound routing, Applications,
+  Route codes, SIP trunks, Tests, Calls & sessions, Log; odkazy
+  `#/telephony/<záložka>`; nahrazuje starou stránku (`legacy-tools.js`,
+  `telephony-sdk.js` — smazány; token už se nekopíruje do skrytého pole).
+- **Oprávnění** (`server/telephony/control/`): země, blokovaná čísla
+  (výchozí prémiová a satelitní), hodinové rozpočty hovorů a SMS na
+  volajícího, souběžné hovory, nejdelší hovor; příchozí limity (souběh,
+  hovory z jednoho čísla za hodinu → busy); limity route kódů; hosté nástroje
+  HTTP v TSA; uchování logu a nahrávek; výchozí cíle. Nová práva modulu:
+  `inroute`, `routing`, `tsa`, `log`.
+- **Pravidla směrování**: vzory čísel (přesně, prefix*, `*`, SIP URI,
+  vylučující `-…`), časová okna v časové zóně, skupiny a zdroje volajících;
+  služba *aplikace* (API klíč a secret poskytovatele z prostředí) nebo
+  *SIP trunk* s caller ID (číslo, jméno, skryté); cíl TSA / stav / „pass“;
+  zkušební dotaz „co by se stalo s tímto hovorem“ s důvody.
+- **TSA** (`server/telephony/tsa/`): paleta (`catalog.ts`) — Start, Hang up /
+  state, Dial / transfer, Pause, Send DTMF, Text to speech (`{IN1}`…`{IN100}`),
+  Play audio (URL / soubor / stream), Record, Speech to text, Route audio
+  (on_success / on_code_error / on_failed), Read DTMF, Condition (široký
+  blok, vstupy IN$x nahoře, on_true / on_false, vzorec), Switch, For, While,
+  Break, Set variable, Formula, Text, Opening hours, Send SMS, Message to a
+  room, HTTP request, Run function, Number info, Add route code, Log;
+  bezpečný jazyk vzorců (bez `eval`), validace, šablony (IVR menu, route
+  kód, hlasová schránka, otevírací doba), běh na hovoru krok po kroku
+  (relace v `telephony.db`, publikace během hovoru ho nezmění), simulátor
+  bez poskytovatele a bez poplatků, nahrané zvukové soubory.
+- **Editor TSA** (`admin-ui/public/tsa-editor.js`): paleta, plátno (posun,
+  zoom, minimapa), inspektor parametrů, živá kontrola serverem, zpět / znovu,
+  klávesové zkratky, export, simulátor s klávesnicí, řečí (text nebo
+  mikrofon) a zvýrazněním běžícího uzlu.
+- **Route kódy** (`m5.telephony.inroute.add / del / list`, JS i Python, tři
+  nástroje ve vizuálním tvůrci Funkcí, lekce v tutoriálu): 4–6 číslic,
+  typ `room` / `user`, TTL (výchozí 600 s), počet použití; náhodné kódy bez
+  snadno uhodnutelných, v logu maskované, limity proti hádání.
+- **Zvuk hovoru do místnosti / členovi** (`server/telephony/route-audio.ts`,
+  `mixer.ts`): místnost = konference (každý slyší volajícího i ostatní,
+  volající všechny smíchané, až 16 členů); karta na webu *Připojit zvuk* /
+  *Teď ne*, ztlumení, odchod, ukončení pro všechny, úroveň; když se nikdo
+  nepřipojí, on_failed nebo textový režim.
+- **Poskytovatelé** (Twilio, Telnyx, Vonage — podle jejich dokumentace, odkazy
+  v `docs/telephony-providers.md`): nové akce (řečové gather, záznam
+  s koncovou klávesou / tichem / přepisem, dial na číslo / SIP / přes trunk
+  s caller ID, reject busy / rejected, DTMF), odchozí hovor přes SIP trunk,
+  příchozí hovory přes pravidla (aplikace i SIP), callback TSA
+  `/wh/tel/<token>/tsa`; co poskytovatel neumí, nahradí nejbližším a zapíše.
+- **Log událostí** (`control/log.ts`): každý webhook (ověřený či ne, HTTP,
+  rozparsovaná událost, syrová data bez tajemství), rozhodnutí směrování,
+  kroky TSA, hovory, SMS, testy, změny v konzoli; filtry, stránkování,
+  uchování; detail po kliknutí.
+- **Testy**: poskytovatel (klíče, dosažitelnost API, čísla, webhooky),
+  podepsaný syntetický webhook doručený vlastnímu serveru, směrování
+  s ukázkou toho, co dostane poskytovatel, zkušební hovor a SMS (placené),
+  hlas do místnosti (kód + číslo), **testovací příchozí SIP adresa**
+  (Twilio SIP Domain, Telnyx SIP subdoména aplikace, Vonage Programmable
+  SIP; heslo se ukáže jednou a neukládá se).
+- `GET /admin/telephony/overview`: poskytovatelé a jejich služby, počty,
+  varování (chybí / není https `PUBLIC_BASE_URL`, nepodepsané webhooky,
+  žádné příchozí pravidlo, pravidlo na chybějící / nepublikovanou TSA).
+
+### Změněno
+- **Příchozí hovor, který nesedí na žádné pravidlo, dostane výchozí cíl —
+  `busy`** (dřív stará logika webhooků). Čísla audio mostu beze změny.
+- Odchozí hovory a SMS (funkce, `POST /api/telephony/call|sms`, konzole)
+  procházejí oprávněními a pravidly; pravidlo může zvolit poskytovatele,
+  trunk, caller ID nebo TSA po přijetí.
+- Datový soubor `telephony.json` zachová sekce, kterým zapisovatel
+  nerozumí (dřív by uložení trunku smazalo jiné sekce).
+- Strážce konzole bere práva z tabulky API (`control/api-contract.ts`).
+
+### Testy
+- Nové: `telephony-control-rules`, `telephony-control-console`,
+  `telephony-inroute`, `telephony-control-outbound`, `tsa-formula`,
+  `tsa-validate`, `tsa-runtime`, `telephony-providers-69`, `telephony-log`,
+  `telephony-inbound-69`, `telephony-tests-69`, `telephony-route-audio`,
+  `phone-route-ui`, `telephony-console`, `tsa-editor`, `telephony-overview`.
+  `npx vitest run`: 235 souborů, 2802 testů (4 přeskočené); E2E 72 / 72.
+  Stránka i editor ověřené v prohlížeči proti skutečnému serveru (simulátor:
+  špatný kód → on_code_error → nový pokus).
+
+### Známá omezení
+- **Nic z 6.9 neprošlo skutečným hovorem ani účtem poskytovatele** — jen
+  testy s podvrženými API a simulátor. Neověřené chování poskytovatelů je
+  vyjmenované v `docs/telephony-providers.md` › 9 (Twilio
+  `speechTimeout="auto"` s nápovědami pro češtinu; Vonage pokračování NCCO
+  po dial a ukončení bez poplatku; Telnyx souběh přepisu a gather, kódy
+  jazyků, transfer; zobrazení jména volajícího a skrytého čísla u operátorů;
+  přihlášení k trunku; účtování odmítnutých hovorů). Telnyx webhook test
+  nejde podepsat (soukromý klíč má Telnyx) — test ověří, že nepodepsaný
+  odmítne.
+- Vonage NCCO hovor odmítnout neumí (ukončí ho), DTMF posílá REST voláním;
+  Twilio jméno volajícího nepřenese a skryté číslo jen do SIP.
+- TTS: rychlost a výška zatím nic nedělají (hlasy AI jen hlasitost);
+  „klávesa přeruší“ jen u TTS hlasem poskytovatele těsně před Read DTMF.
+- `{secret:JMÉNO}` čte proměnnou `TSA_SECRET_JMÉNO` (úložiště tajemství
+  Funkcí zatím není). Nástroj Function po timeoutu přestane čekat, běh
+  modelu nezruší.
+- Směrování zvuku: jen jedna instance serveru (stejně jako audio most);
+  aplikace pro Android zvuk nepřijme (ukáže „☎“, zvuk se bere na webu);
+  zavěšení hlášené poskytovatelem později než 1,5 s může TSA nechat
+  pokračovat na mrtvém hovoru (zapíše se).
+- Špatné kódy počítá runtime TSA ve vlastní tabulce; exportované čítače
+  vrstvy pravidel zatím nevyužívá.
+
 ## [6.8.0] – 2026-10-04
 
 **Hovory v záznamu telefonu a Záznam hovorů a zpráv v aplikaci, místnosti

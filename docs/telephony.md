@@ -8,6 +8,31 @@ příchozí SMS, události hovoru) na hlavní aplikaci pod `/wh/{provider}/{typ}
 Vše se zapíná a nastavuje v `.env` (klíče nikdy nejsou v kódu ani se nevrací
 klientovi). Default je **vypnuto**.
 
+## 0. Telephony & SIP 6.9 — kde co najdete
+
+6.9 z modulu udělala ústřednu: nová stránka konzole, oprávnění, pravidla
+směrování příchozích i odchozích hovorů (aplikace poskytovatele nebo SIP
+trunk s vlastním caller ID; cíl TSA nebo stav busy / congestion / hangup /
+rejected), **Telephony & SIP Applications (TSA)** — call flow kreslené ve
+vizuálním editoru a spouštěné serverem na živém hovoru —, tabulka route
+kódů (`m5.telephony.inroute.*`), směrování zvuku hovoru do místnosti nebo
+členovi, úplný log událostí včetně webhooků a testy (poskytovatel, webhook,
+směrování, hovor, SMS, hlas do místnosti, testovací příchozí SIP adresa).
+
+| Téma | Dokument |
+|---|---|
+| Stránka konzole, záložka po záložce | [`telephony-console.md`](telephony-console.md) |
+| Oprávnění, pravidla, vzory čísel, časová okna, caller ID, inroute + SDK | [`telephony-routing.md`](telephony-routing.md) |
+| TSA: nástroje, vzorce, šablony, běh, simulátor | [`telephony-tsa.md`](telephony-tsa.md) |
+| Editor TSA a jeho simulátor | [`telephony-tsa-editor.md`](telephony-tsa-editor.md) |
+| Poskytovatelé (Twilio, Telnyx, Vonage): příchozí hovory, webhooky, mapování akcí, caller ID, DTMF, řeč, záznam, testovací SIP adresa, log | [`telephony-providers.md`](telephony-providers.md) |
+| Zvuk hovoru do místnosti / členovi (route audio), mixování, textový režim | [`telephony-media.md`](telephony-media.md) |
+
+Smlouvy mezi částmi: `server/telephony/tsa/types.ts`, `tsa/catalog.ts`
+(paleta nástrojů), `control/types.ts`, `control/api-contract.ts` (API
+konzole), `control/hooks.ts` (švy mezi pravidly, inroute, runtime TSA,
+médii a logem).
+
 ## 1. Zapnutí a volba poskytovatele
 
 ```env

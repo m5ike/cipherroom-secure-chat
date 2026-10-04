@@ -175,6 +175,15 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
   *Textem* — řeč volajícího přijde jako zprávy „☎ …“ a co napíšete, se mu
   přečte. **Hovor jde telefonní sítí a není šifrovaný koncově.** V aplikaci
   pro Android zatím jen textem.
+- **Hovor do místnosti (6.9)** — volající, který na telefonní lince zadá kód
+  místnosti (vytvoří ho funkce nebo správce, platí obvykle 10 minut), se
+  ozve v místnosti: karta nabídne *Připojit zvuk* nebo *Teď ne*. Kdo se
+  připojí, slyší volajícího i ostatní připojené a volající slyší všechny
+  dohromady; v kartě je ztlumení, *Odejít* a *Ukončit pro všechny*. Kód pro
+  jednoho člena zazvoní jen jemu. Když se nikdo nepřipojí, hovor jde dál
+  podle aplikace správce (nebo textem — řeč volajícího přijde jako zprávy
+  a odpovědi se mu přečtou). Číslo volajícího vidí jen místnost, pro kterou
+  je kód. Aplikace pro Android ukáže jen upozornění „☎“ — zvuk se bere na webu.
 
 ### Příkazy (/)
 Napiš **/** na začátek zprávy — ukáže se seznam příkazů, které smíš použít
@@ -563,6 +572,16 @@ Same as the Czech section above.
   *As text* — the caller's speech arrives as "☎ …" messages and what you
   write is read to them. **The call goes over the phone network and is not
   end-to-end encrypted.** In the Android app, text only for now.
+- **A call into the room (6.9)** — a caller who types the room's code on the
+  phone line (a function or the operator creates it; it usually lasts 10
+  minutes) comes into the room: a card offers *Join audio* or *Not now*.
+  Whoever joins hears the caller and the others who joined, and the caller
+  hears everyone mixed; the card has mute, *Leave* and *End for everyone*. A
+  code for one member rings only them. When nobody joins, the call goes on as
+  the operator's application says (or as text — the caller's speech arrives
+  as messages and replies are read to them). Only the room the code is for
+  sees the caller's number. The Android app shows just a "☎" notice — take
+  the audio on the web.
 
 ### Commands (/)
 Type **/** at the start of a message to see the commands you may use (`/help`
@@ -960,6 +979,17 @@ Siehe Czech-Abschnitt oben.
   „☎ …“-Nachrichten, und was du schreibst, wird ihm vorgelesen. **Der Anruf
   läuft über das Telefonnetz und ist nicht Ende-zu-Ende verschlüsselt.** In
   der Android-App vorerst nur als Text.
+- **Ein Anruf in den Raum (6.9)** — wer auf der Telefonleitung den Code des
+  Raums eingibt (eine Funktion oder der Betreiber erstellt ihn; meist gilt er
+  10 Minuten), kommt in den Raum: eine Karte bietet *Ton beitreten* oder
+  *Jetzt nicht*. Wer beitritt, hört den Anrufer und die anderen, und der
+  Anrufer hört alle gemischt; die Karte hat Stummschalten, *Verlassen* und
+  *Für alle beenden*. Ein Code für ein Mitglied klingelt nur bei ihm. Tritt
+  niemand bei, geht der Anruf weiter, wie es die Anwendung des Betreibers
+  sagt (oder als Text — die Sprache des Anrufers kommt als Nachrichten,
+  Antworten werden vorgelesen). Die Nummer des Anrufers sieht nur der Raum,
+  für den der Code gilt. Die Android-App zeigt nur einen „☎“-Hinweis — den
+  Ton nimmst du im Web an.
 
 ### Befehle (/)
 Tippe **/** am Anfang einer Nachricht — die Befehle, die du nutzen darfst,

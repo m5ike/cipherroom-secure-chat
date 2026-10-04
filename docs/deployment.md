@@ -336,6 +336,40 @@ cest).
 `<dir>/.m5cet/backups/`) a drží posledních `BACKUP_KEEP` (5) záloh;
 `update.sh --rollback` se k poslední vrátí.
 
+## Přechod na 6.9
+
+Telephony & SIP je v 6.9 přestavěné (stránka konzole, pravidla, TSA, route
+kódy, log, testy — přehled v [`telephony.md`](telephony.md) › 0). Co si
+operátor po aktualizaci všimne:
+
+- **Příchozí hovor bez pravidla dostane „busy“.** Do 6.9 příchozí hovor na
+  číslo, které nepůjčil audio most, prošel starou logikou webhooků; teď ho
+  rozhodují příchozí pravidla a bez shody platí výchozí cíl
+  (*Telephony › Permissions › Defaults*, výchozí `busy`). Po aktualizaci
+  založte příchozí pravidla (nebo změňte výchozí cíl), jinak volající uslyší
+  obsazeno. Čísla půjčená audio mostem (`m5.telephony.did`) fungují dál.
+- **Odchozí hovory a SMS prochází oprávněními a pravidly** (blokovaná
+  prémiová čísla, země, hodinové rozpočty, souběžné hovory, nejdelší hovor).
+  Výchozí blokuje mj. `+1900*`, `+4290*`, `+42097*`, satelitní `+881*`–`+883*`.
+- **Nová práva modulu** (Modules & groups › Telephony & SIP): `inroute`
+  (funkce: `m5.telephony.inroute.*`) a pro konzoli `routing`, `tsa`, `log`
+  vedle `settings` a `test`. Skupiny bez `*` je potřebují přidat, jinak
+  uvidí pravidla a aplikace jen ke čtení a detail logu vůbec.
+- **`PUBLIC_BASE_URL` musí být https** a proxy musí pouštět `/wh/`
+  (i nové `/wh/tsa/…` — zvuk TTS a nahrané soubory pro poskytovatele)
+  a WebSockety `/media/tel/…` — referenční nginx i instalátor to dělají.
+- **Nová data:** `telephony-tsa.json` vedle `telephony.json` (TSA; přesune
+  ho `TSA_DATA_FILE`), v `telephony.db` tabulky `tel_log`, `inroute`,
+  `inroute_failures`, `tsa_sessions`, `tsa_graphs`, `tsa_audio`,
+  `tsa_marks`; v `telephony.json` sekce `permissions`, `rules`, `testSip`
+  (zálohujte jako dřív).
+
+| Proměnná | Výchozí | Význam |
+|---|---|---|
+| `TSA_DATA_FILE` | `telephony-tsa.json` vedle `telephony.json` | kde jsou TSA |
+| `TSA_SECRET_<JMÉNO>` | — | hodnota pro `{secret:JMÉNO}` v hlavičkách nástroje HTTP v TSA |
+| `TELEPHONY_ROUTE_LANGUAGE` | `cs` | jazyk přepisu a upozornění při směrování zvuku hovoru do místnosti (textový režim) |
+
 ## Přechod na 6.7
 
 Nové proměnné prostředí (všechny volitelné; instalátor je zná, takže je
