@@ -55,6 +55,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     private String screen = "";
     private final ArrayDeque<String> stack = new ArrayDeque<>();
     private final Map<String, Object> form = new HashMap<>();
+    /** 6.7 (audit S14): the first entry of a new PIN — kept here, never in $form, which the design sees. */
+    private String setupPin;
     private boolean animate = true;
     private long splashSince;
     private String splashStatus = "";
@@ -237,7 +239,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
 
     private void setupLock() {
         try { lockState.put("mode", "pin").put("setup", true).put("step", "enter").put("error", "").put("wait", 0).put("attempts", 0).put("left", app.lock.maxAttempts()).put("biometricAvailable", false).put("wide", lockWide()); } catch (JSONException ignored) { }
-        form.remove("pin1");
+        setupPin = null;
         stack.clear();
         showScreen("lock", true);
     }
@@ -279,20 +281,20 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         if (lockState.optBoolean("setup")) {
             if (pin.length() < app.lock.pinLength()) return;
             if ("enter".equals(lockState.optString("step"))) {
-                form.put("pin1", pin);
+                setupPin = pin;
                 try { lockState.put("step", "confirm").put("error", ""); } catch (JSONException ignored) { }
                 refresh();
                 return;
             }
-            if (!pin.equals(form.get("pin1"))) {
-                form.remove("pin1");
+            if (!pin.equals(setupPin)) {
+                setupPin = null;
                 try { lockState.put("step", "enter").put("error", app.t("lock.pinMismatch")); } catch (JSONException ignored) { }
                 refresh();
                 return;
             }
             try {
                 app.lock.setUp(pin);
-                form.remove("pin1");
+                setupPin = null;
                 if (!"off".equals(app.lock.biometricMode()) && Biometric.available(this)) enrollBiometric();
                 else enterApp();
             } catch (Exception e) {
@@ -434,7 +436,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     public Expr.Scope scopeFor(String id) {
         Map<String, Object> s = new HashMap<>();
         s.put("app", appScope());
-        s.put("form", new JSONObject(form));
+        // 6.7 (audit S14): the lock and enrolment screens do not see $form (nothing typed elsewhere leaks there).
+        s.put("form", id.equals("lock") || id.equals("enroll") ? new JSONObject() : new JSONObject(form));
         s.put("settings", app.settings.scope());
         s.put("define", app.define.all()); // 6.3 define: $define.<name> reads m5mobile.define
         s.put("account", app.account.scope());
