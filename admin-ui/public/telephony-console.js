@@ -370,7 +370,7 @@
     const box = h("div", { class: "tel-problems", role: "alert" });
     if (!problems || !problems.length) { box.hidden = true; return box; }
     box.append(h("strong", {}, problems.length === 1 ? "One thing to fix" : `${problems.length} things to fix`),
-      h("ul", {}, ...problems.map((p) => h("li", {}, typeof p === "string" ? p : `${p.rule ? `${p.rule}: ` : ""}${p.message || p.text || JSON.stringify(p)}`))));
+      h("ul", {}, ...problems.map((p) => h("li", {}, typeof p === "string" ? p : `${p.rule ? `${p.rule}: ` : p.path ? `${p.path}: ` : ""}${p.message || p.text || JSON.stringify(p)}`))));
     return box;
   }
 
