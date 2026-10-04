@@ -66,7 +66,20 @@ export const ACCOUNT_LIMITS = {
   tokenMaxAgeMs: 7 * 24 * 60 * 60 * 1000,
   maxSessionsPerAccount: 20,
   maxPasskeys: 10,
+  /** 6.7 (S8): an account never used since its registration may be removed
+   *  after this long — but only when the store is full. */
+  unusedAccountGraceMs: 7 * 24 * 60 * 60 * 1000,
 } as const;
+
+/**
+ * 6.7 (audit S8): how many accounts the store holds — ACCOUNTS_MAX, default
+ * ACCOUNT_LIMITS.maxAccounts (5000). The cap was fixed, and registrations
+ * that were never used again filled it for good.
+ */
+export function accountCap(): number {
+  const n = Number(process.env.ACCOUNTS_MAX?.trim());
+  return Number.isInteger(n) && n > 0 ? n : ACCOUNT_LIMITS.maxAccounts;
+}
 
 export type AuditEntry = { at: number; kind: string; meta?: Record<string, string | number | boolean> };
 
@@ -485,7 +498,12 @@ export class AccountStore {
   ): { ok: true; account: AccountRecord } | { ok: false; reason: string; taken?: { email: boolean; phone: boolean } } {
     this.load();
     if (this.byCredential.has(credential.credentialId)) return { ok: false, reason: "credential already registered" };
-    if (this.accounts.size >= ACCOUNT_LIMITS.maxAccounts) return { ok: false, reason: "account store full" };
+    // 6.7 (S8): a full store first makes room by removing accounts nobody
+    // has used since they registered (oldest first) — never one with data,
+    // a second sign-in, another passkey, a recovery code or push.
+    // The scan reads files: at most once per 10 minutes.
+    if (this.accounts.size >= accountCap() && now - this.lastPruneAt > 10 * 60 * 1000) { this.lastPruneAt = now; this.pruneUnused(now); }
+    if (this.accounts.size >= accountCap()) return { ok: false, reason: "account store full" };
     const named = typeof input === "object";
     if (named && (!ID.test(input.username) || this.usernameTaken(input.username))) return { ok: false, reason: "username taken" };
     // Checked again here: another registration may have taken it since /register/start.
@@ -988,6 +1006,13 @@ export class AccountStore {
   deleteAccount(accountId: string): boolean {
     const acc = this.get(accountId);
     if (!acc) return false;
+    this.forgetAccount(acc);
+    this.persist();
+    return true;
+  }
+
+  private forgetAccount(acc: AccountRecord): void {
+    const accountId = acc.id;
     this.accounts.delete(accountId);
     this.byCredential.delete(acc.credential.credentialId);
     for (const extra of acc.credentials ?? []) this.byCredential.delete(extra.credentialId);
@@ -997,8 +1022,43 @@ export class AccountStore {
     vaultBackend?.erase(accountId);
     this.remove(this.vaultPath(accountId));
     this.remove(this.mailboxPath(accountId));
-    this.persist();
-    return true;
+  }
+
+  private lastPruneAt = 0;
+
+  /** Registered and never used since (6.7, S8): one sign-in (the
+   *  registration), nothing stored, no further passkey, recovery code, push,
+   *  away room, identity key or live session, older than the grace period. */
+  isUnusedAccount(acc: AccountRecord, now = Date.now()): boolean {
+    const v = acc.vault;
+    return now - acc.createdAt > ACCOUNT_LIMITS.unusedAccountGraceMs
+      && acc.loginCount <= 1
+      && !v.profileBytes && !v.chatBytes && !v.messages && !v.connectionsBytes
+      && !(acc.credentials?.length) && !acc.recovery && !acc.identity
+      && acc.push.length === 0 && acc.away.length === 0
+      && this.sessionCount(acc.id, now) === 0
+      && this.mailbox(acc.id).length === 0
+      && !this.getVault(acc.id).registration;
+  }
+
+  /** Removes up to `max` unused accounts, oldest first; returns their ids. */
+  pruneUnused(now = Date.now(), max = 100): string[] {
+    this.load();
+    const candidates = [...this.accounts.values()]
+      .filter((a) => now - a.createdAt > ACCOUNT_LIMITS.unusedAccountGraceMs && a.loginCount <= 1)
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const removed: string[] = [];
+    for (const acc of candidates) {
+      if (removed.length >= max) break;
+      if (!this.isUnusedAccount(acc, now)) continue;
+      this.forgetAccount(acc);
+      removed.push(acc.id);
+    }
+    if (removed.length) {
+      this.persist();
+      console.warn(`[accounts] the store was full: removed ${removed.length} account(s) never used since registration`);
+    }
+    return removed;
   }
 
   /* ----------------------------------------------------------- retention */
