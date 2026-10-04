@@ -9,6 +9,7 @@ import { render, cleanup, fireEvent } from "@testing-library/react";
 import { createRef } from "react";
 import { MessageBubble } from "../client/src/components/MessageBubble";
 import { RecipientsWidget } from "../client/src/components/RecipientsWidget";
+import { StartScreen } from "../client/src/components/StartScreen";
 import { renderLayout, type LayoutEnv } from "../client/src/components/LayoutView";
 import { DEFAULT_LAYOUTS } from "../client/src/lib/layouts";
 import { t } from "../client/src/lib/i18n";
@@ -87,8 +88,10 @@ describe("app bar, chat window and composer layouts", () => {
     ))}</>);
     expect(canonOf(container)).toMatchSnapshot();
   });
+  // 6.7: the empty state is the start screen, its own layout drawn in the "start" part — the same DOM as before.
   it("empty chat window", () => {
-    const { container } = render(<>{renderLayout(DEFAULT_LAYOUTS.chat, env({ notice: "", room: "", myIdShort: "0123456789", connected: false, copied: true, transfers: [], empty: true, emptyTitle: "Title", emptyBody: "Body", hiddenMessages: 0, newestFirst: false, showEarlierText: "", messages: [] }))}</>);
+    const start = () => <StartScreen lang="en" title="Title" body="Body" status="idle" connected={false} room="" signedIn={false} username="" serverMode={false} profiles={[]} onOpenRoom={noop} onConnectProfile={noop} onSignIn={noop} />;
+    const { container } = render(<>{renderLayout(DEFAULT_LAYOUTS.chat, env({ notice: "", room: "", myIdShort: "0123456789", connected: false, copied: true, transfers: [], empty: true, emptyTitle: "Title", emptyBody: "Body", hiddenMessages: 0, newestFirst: false, showEarlierText: "", messages: [] }, { slots: { start } }))}</>);
     expect(canonOf(container)).toMatchSnapshot();
   });
   it("composer", () => {

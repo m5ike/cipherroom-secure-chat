@@ -5,11 +5,12 @@
 
 import type { ReactNode } from "react";
 import { emptyState, type ConnectionProfile, type ConnectionsState } from "./lib/connections";
-import type { Lang } from "./lib/i18n";
+import { t, type Lang } from "./lib/i18n";
 import type { RoomDialogProps } from "./components/RoomDialog";
 import type { AccountStatus, AccountSummary } from "./lib/account";
 import type { ConnectionsPolicy } from "./lib/client-config";
 import type { ConnectionsPanelProps } from "./components/ConnectionsPanel";
+import type { StartScreenProps } from "./components/StartScreen";
 
 export const noop = () => undefined;
 
@@ -105,6 +106,27 @@ export function roomProps(variant: string, lang: Lang, share: ReactNode = null):
     onCreate: noop,
     onSignIn: noop,
     share,
+  };
+}
+
+/** 6.7: the start screen in its situations — just started, in a room before the first message, signed in with saved connections. */
+export function startProps(variant: string, lang: Lang): StartScreenProps {
+  const connected = variant === "connected";
+  const signedIn = variant === "signedin";
+  return {
+    lang,
+    title: t(lang, "chat.empty.title"),
+    body: t(lang, "chat.empty.body"),
+    status: connected ? "joined" : "idle",
+    connected,
+    room: connected ? "tym-brno" : "",
+    signedIn,
+    username: signedIn ? "bystry-sokol-7k3q" : "",
+    serverMode: signedIn,
+    profiles: signedIn ? sampleConnections(3).profiles.map((p) => ({ id: p.id, label: p.label })) : [],
+    onOpenRoom: noop,
+    onConnectProfile: noop,
+    onSignIn: noop,
   };
 }
 

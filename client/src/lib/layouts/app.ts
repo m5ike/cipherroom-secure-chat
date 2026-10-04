@@ -1,6 +1,6 @@
 // The app bar, the chat window and the composer as layout trees, drawn by
 // App.tsx with its data, actions and live parts (the menu, the signed-in
-// badge, file cards, messages, the recorder, the send options).
+// badge, file cards, messages, the start screen, the recorder, the send options).
 
 import { treeBuilder, type LNode } from "../layout-tree";
 
@@ -99,18 +99,8 @@ export function chatTree(): LNode {
         n("panel", { id: "transfers", name: "File transfers", if: "$transfers", attrs: { class: "mx-auto mb-4 grid w-full max-w-4xl grid-cols-1 gap-2 md:grid-cols-2" } }, [
           n("slot", { id: "transfer", name: "File card", slot: "transfer", each: "$transfers", as: "tr", key: "$tr.id", arg: "$tr" }),
         ]),
-        n("panel", { id: "empty", name: "Empty chat", if: "$empty", attrs: { class: "flex h-full min-h-[60dvh] items-center justify-center" } }, [
-          n("panel", { id: "empty-card", attrs: { class: "max-w-md rounded-3xl border border-border bg-card/90 p-6 text-center shadow-sm" } }, [
-            n("panel", { id: "empty-icon", attrs: { class: "mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-primary/10 text-primary" } }, [icon("lock", "h-6 w-6", {}, { id: "empty-lock" })]),
-            n("heading", { id: "empty-title", tag: "h3", attrs: { class: "text-lg font-semibold" }, text: "{$emptyTitle}" }),
-            n("paragraph", { id: "empty-body", attrs: { class: "mt-2 text-sm text-muted-foreground" }, text: "{$emptyBody}" }),
-            n("button", {
-              id: "empty-join", name: "Connect",
-              attrs: { type: "button", class: "mt-4 inline-flex min-h-10 items-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-primary-foreground", "data-testid": "button-open-join" },
-              on: { click: { action: "openRoom" } },
-            }, [icon("radio", "h-4 w-4", {}, { id: "empty-join-icon" }), text("{_'join.connect'}", { id: "empty-join-text" })]),
-          ]),
-        ]),
+        // 6.7: no message yet — the start screen, its own layout (layouts/start.ts).
+        n("slot", { id: "start", name: "Start screen (its own layout)", if: "$empty", slot: "start" }),
         n("panel", { id: "conversation", name: "Messages", if: "!$empty", attrs: { class: "chat-column mx-auto w-full space-y-3" } }, [
           earlier("earlier-top", "$hiddenMessages > 0 && !$newestFirst"),
           n("slot", { id: "message", name: "Message", slot: "message", each: "$messages", as: "m", key: "$m.id", arg: "$m" }),

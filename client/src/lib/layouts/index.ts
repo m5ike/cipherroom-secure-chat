@@ -19,6 +19,7 @@ import { inviteTree, shareConnectionTree, shareResultTree, shareTree } from "./s
 import { phoneTree } from "./phone";
 import { connectionDetailTree, connectionEditTree, connectionSettingsTree, connectionsTree } from "./connections";
 import { aiTree } from "./ai";
+import { startTree } from "./start";
 export const LAYOUT_IDS = [
   "header", "chat", "message.in", "message.out", "message.sys", "composer", "widget", "widget.fab",
   // 6.0: the handle of the docked, auto-hidden widget
@@ -37,6 +38,8 @@ export const LAYOUT_IDS = [
   "panel.phone",
   "panel.connections", "part.connectionEdit", "part.connectionDetail", "part.connectionSettings",
   "panel.ai",
+  // 6.7: the start screen (no message yet), drawn in the chat window
+  "start",
 ] as const;
 export type LayoutId = (typeof LAYOUT_IDS)[number];
 
@@ -89,6 +92,7 @@ export const LAYOUT_LABELS: Readonly<Record<LayoutId, string>> = {
   "part.connectionDetail": "My connections \u2014 statistics and log",
   "part.connectionSettings": "My connections \u2014 settings",
   "panel.ai": "AI assistant",
+  start: "Start screen (Connect, no message yet)",
 };
 
 /** 4.13: how the builder groups the layouts. */
@@ -107,6 +111,7 @@ export const LAYOUT_GROUP: Readonly<Record<LayoutId, LayoutGroup>> = {
   "panel.phone": "panels",
   "panel.connections": "panels", "part.connectionEdit": "panels", "part.connectionDetail": "panels", "part.connectionSettings": "panels",
   "panel.ai": "panels",
+  start: "app",
 };
 
 /** The old Layout builder's component styles each layout carries on (CSS variables --c-<id>-…). */
@@ -159,6 +164,7 @@ export const LAYOUT_STYLE_COMPONENT: Readonly<Record<LayoutId, string>> = {
   "part.connectionDetail": "",
   "part.connectionSettings": "",
   "panel.ai": "",
+  start: "chat",
 };
 
 /** How each of the app's own layouts is built. */
@@ -211,6 +217,7 @@ const BUILDERS: Record<LayoutId, () => LNode> = {
   "part.connectionDetail": connectionDetailTree,
   "part.connectionSettings": connectionSettingsTree,
   "panel.ai": aiTree,
+  start: startTree,
 };
 
 /**
