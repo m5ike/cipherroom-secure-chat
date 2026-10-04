@@ -174,6 +174,9 @@ public final class Actions {
                     break;
                 case "voiceFx.reset": cz.m5cet.app.voice.MicFx.resetCustom(app); a.refresh(); break;
 
+                // ---- 6.8 send (the options of "Send another way": applied when the message is sent) ----
+                case "send.option": a.parts.sendOption(s); break;
+
                 default: Log.w("action", "unknown action " + action);
             }
         } catch (RuntimeException e) {

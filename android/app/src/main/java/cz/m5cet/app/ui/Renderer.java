@@ -772,6 +772,10 @@ public final class Renderer {
                             @Override public void onTextChanged(CharSequence s, int a, int b, int c) { }
                             @Override public void afterTextChanged(Editable s) { r.host.form().put(bind, s.toString()); }
                         });
+                    } else if (bind != null) {
+                        // 6.8: a value set elsewhere (a button that makes up a code) shows in the field; what is typed is there already.
+                        Object v = r.host.form().get(bind);
+                        if (v != null && !String.valueOf(v).equals(e.getText().toString())) { e.setText(String.valueOf(v)); e.setSelection(e.getText().length()); }
                     }
                     e.setBackground(Ui.shape(r.color("@surfaceVariant", Color.LTGRAY), Math.min(Look.radius(r.ctx, "field"), r.dp(22)), 0, 0));
                     if (!style.has("padding")) e.setPadding(r.dp(14), r.dp(10), r.dp(14), r.dp(10));

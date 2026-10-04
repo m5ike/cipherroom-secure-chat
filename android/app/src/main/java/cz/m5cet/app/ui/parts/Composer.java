@@ -34,6 +34,7 @@ import cz.m5cet.app.chat.ChatMessage;
 import cz.m5cet.app.chat.Outgoing;
 import cz.m5cet.app.chat.Payloads;
 import cz.m5cet.app.chat.RoomSession;
+import cz.m5cet.app.chat.SendPlan;
 import cz.m5cet.app.core.Io;
 import cz.m5cet.app.core.Log;
 import cz.m5cet.app.design.Appearance;
@@ -69,6 +70,10 @@ import cz.m5cet.app.voice.Voice;
  * 6.7: dictation and "speak and send" live in ComposerVoice (dictation stops
  * for real; leaving the room stops it and drops a recording; the voice
  * changer is in the recording path — voice/MicFx).
+ * 6.8: "send.options" holds options, not actions (chat/SendPlan): as voice,
+ * speak it and send text, the code, vanishing, tap — they stay on until
+ * turned off (as on the web), show as chips and on Send's icon, and only
+ * Send (the button, Enter, message.send, a dictation that sends) acts on them.
  */
 final class Composer extends LinearLayout implements Renderer.Slot {
     static final int PICK = 7301, PICK_FILE = 7303, CAPTURE = 7304;
@@ -256,9 +261,14 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         List<String> to = recipientNames();
         boolean only = !to.isEmpty();
         int surface = Ui.color(c, "@surface", Color.WHITE);
-        if (only) send.set("send-horizontal", Ui.color(c, "@onSurface", Color.BLACK), surface, "user", Ui.color(c, "@primary", Color.BLUE), Ui.color(c, "@onPrimary", Color.WHITE), surface, true);
-        else send.set("send-horizontal", Ui.color(c, "@primary", Color.BLUE), Ui.color(c, "@onPrimary", Color.WHITE), "users", Ui.color(c, "@onPrimary", Color.WHITE), Ui.color(c, "@primary", Color.BLUE), surface, true);
+        // 6.8: Send says when it speaks the text (a speaker) or dictates with an empty field (speech).
+        SendPlan plan = SendPlan.of(a.form());
+        String icon = plan.asVoice ? "volume-2" : plan.voiceText ? "speech" : "send-horizontal";
+        if (only) send.set(icon, Ui.color(c, "@onSurface", Color.BLACK), surface, "user", Ui.color(c, "@primary", Color.BLUE), Ui.color(c, "@onPrimary", Color.WHITE), surface, true);
+        else send.set(icon, Ui.color(c, "@primary", Color.BLUE), Ui.color(c, "@onPrimary", Color.WHITE), "users", Ui.color(c, "@onPrimary", Color.WHITE), Ui.color(c, "@primary", Color.BLUE), surface, true);
         String label = only ? app().t("look.send.only") + " " + String.join(", ", to) : app().t("look.send.everyone");
+        if (plan.asVoice) label += " · " + app().t("send.btn.asVoice");
+        else if (plan.voiceText) label += " · " + app().t("send.btn.voiceText");
         send.setContentDescription(label + " · " + app().t("look.send.hold"));
         send.setTooltipText(label);
     }
@@ -364,14 +374,20 @@ final class Composer extends LinearLayout implements Renderer.Slot {
 
     /* ------------------------------------------------------ kinds */
 
-    /** The kinds of the next message: $form.msgTap, msgVanish (s), msgSeal ("" = new code), msgTo (peer ids) — shown as chips. */
+    /**
+     * The options of the next message (chat/SendPlan): $form.msgAsVoice,
+     * msgVoiceText (6.8), msgTap, msgVanish (s), msgSeal ("" = new code),
+     * msgTo (peer ids) — shown as chips; ✕ turns one off.
+     */
     void refreshKinds() {
         kinds.removeAllViews();
         Map<String, Object> f = a.form();
-        if (Boolean.TRUE.equals(f.get("msgTap"))) kinds.addView(kindChip("👁 " + app().t("msgkind.tap"), () -> f.remove("msgTap")));
-        Object v = f.get("msgVanish");
-        if (v != null && Expr.num(v) > 0) kinds.addView(kindChip("⏳ " + (int) Expr.num(v) + " s", () -> f.remove("msgVanish")));
-        if (f.get("msgSeal") != null) kinds.addView(kindChip("🔒 " + app().t("msgkind.sealed") + (String.valueOf(f.get("msgSeal")).isEmpty() ? "" : " · " + f.get("msgSeal")), () -> f.remove("msgSeal")));
+        SendPlan plan = SendPlan.of(f);
+        if (plan.asVoice) kinds.addView(kindChip("🔊 " + app().t("send.opt.asVoice"), () -> f.remove(SendPlan.AS_VOICE)));
+        if (plan.voiceText) kinds.addView(kindChip("🗣 " + app().t("send.opt.voiceText"), () -> f.remove(SendPlan.VOICE_TEXT)));
+        if (plan.tap) kinds.addView(kindChip("👁 " + app().t("msgkind.tap"), () -> f.remove(SendPlan.TAP)));
+        if (plan.vanishSeconds > 0) kinds.addView(kindChip("⏳ " + plan.vanishSeconds + " s", () -> f.remove(SendPlan.VANISH)));
+        if (plan.sealed()) kinds.addView(kindChip("🔒 " + app().t("msgkind.sealed") + (plan.sealCode.isEmpty() ? "" : " · " + plan.sealCode), () -> f.remove(SendPlan.SEAL)));
         List<String> to = recipientNames();
         if (!to.isEmpty()) kinds.addView(kindChip("✉ " + String.join(", ", to), () -> f.remove("msgTo")));
         if (app().settings.bool("location.inHeader")) kinds.addView(kindChip("📍 " + app().t("location.inHeader"), () -> { app().settings.set("location.inHeader", false); }));
@@ -413,12 +429,11 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         Outgoing o = new Outgoing();
         o.text = text;
         o.replyTo = replyTo;
-        Map<String, Object> f = a.form();
-        o.tap = Boolean.TRUE.equals(f.get("msgTap"));
-        Object v = f.get("msgVanish");
-        if (v != null) o.vanishSeconds = (int) Expr.num(v);
-        Object seal = f.get("msgSeal");
-        if (seal != null) o.sealCode = String.valueOf(seal);
+        SendPlan plan = SendPlan.of(a.form());
+        o.tap = plan.tap;
+        o.vanishSeconds = plan.vanishSeconds;
+        // Only text is sealed (RoomSession): a file or a voice message goes without the code.
+        o.sealCode = plan.sealCode;
         RoomSession r = app().rooms.activeSession();
         for (String id : recipientIds()) { String n = r == null ? null : r.peerName(id); if (n != null) { o.recipients.add(id); o.recipientNames.add(n); } }
         o.ttlMinutes = (int) app().settings.num("messages.ttlMinutes");
@@ -436,34 +451,55 @@ final class Composer extends LinearLayout implements Renderer.Slot {
 
     /* -------------------------------------------------------- send */
 
+    /** Send (the button, Enter, message.send). */
     void send() {
         // 6.7: while dictating, Send finishes the words first (then it goes).
         if (voice.interceptSend()) return;
         sendNow();
     }
 
-    void sendNow() {
+    /**
+     * The field now, the way the options say (6.8, chat/SendPlan): as text
+     * with its kinds and recipients; spoken and sent as a voice message (the
+     * kinds and recipients go along, the code cannot); with an empty field
+     * dictated first. A typed command runs instead (never spoken). False: the
+     * field stays as it is (nothing to send, offline, or an earlier one is
+     * still being spoken).
+     */
+    boolean sendNow() {
         String text = input.getText().toString().trim();
         RoomSession r = app().rooms.activeSession();
-        if (text.isEmpty() || r == null) return;
+        if (r == null) return false;
+        SendPlan.Step step = SendPlan.of(a.form()).step(!text.isEmpty(), voice.busy());
+        if (step == SendPlan.Step.NONE || step == SendPlan.Step.WAIT) return false;
         hideHint(false);
-        if (parts.runCommand(r, text)) { clearAfterSend(); return; }
-        r.send(outgoing(text));
-        clearAfterSend();
+        if ((step == SendPlan.Step.TEXT || step == SendPlan.Step.SPEAK) && parts.runCommand(r, text)) { clearAfterSend(); return true; }
+        switch (step) {
+            case SPEAK: case DICTATE_SPEAK: voice.asVoice(); return true;
+            case DICTATE_TEXT: voice.asText(); return true;
+            default:
+                r.send(outgoing(text));
+                clearAfterSend();
+                return true;
+        }
     }
 
-    void clearAfterSend() {
-        input.setText("");
+    /**
+     * After a send: the field, the reply. 6.8: the options stay on (as on the
+     * web) — the chips and Send's icon show them until they are turned off.
+     */
+    void clearAfterSend() { clearAfterSend(null); }
+
+    /** sent: the text that went (6.8: a voice made of it comes back later) — only it leaves the field, what came meanwhile stays; null: all of it. */
+    void clearAfterSend(String sent) {
+        String keep = SendPlan.leftover(input.getText().toString(), sent);
+        if (!keep.equals(input.getText().toString())) setText(keep);
         setReply(null);
-        Map<String, Object> f = a.form();
-        f.remove("msgSeal");
-        f.remove("msgTap");
-        f.remove("msgVanish");
         refreshKinds();
         warmLocation();
     }
 
-    /** send.options › "as voice": the text (or, empty, what is dictated now) spoken and sent as a voice message (6.7: ComposerVoice). */
+    /** The "attach" sheet's "as voice" (compose › asVoice): the text (or, empty, what is dictated now) spoken and sent as a voice message at once (6.7: ComposerVoice). */
     void sendAsVoice() { voice.asVoice(); }
 
     /* ---------------------------------------------------- recording */
@@ -549,6 +585,8 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         String m = clip.mime == null ? "" : clip.mime;
         String ext = m.contains("mp4") || m.contains("aac") ? "m4a" : m.contains("wav") ? "wav" : m.contains("ogg") ? "ogg" : m.contains("webm") ? "webm" : "mp3";
         sendBytes(r, clip.bytes, "hlas-" + System.currentTimeMillis() + "." + ext, m.isEmpty() ? "audio/mpeg" : m, false, "");
+        // 6.8: the code is on, but only text can be sealed — said once it went, so it is not taken for sealed.
+        if (SendPlan.of(a.form()).sealed()) a.flash("", app().t("send.code.noVoice"), "info");
     }
 
     /* ------------------------------------------------ pictures, files */
@@ -628,6 +666,8 @@ final class Composer extends LinearLayout implements Renderer.Slot {
     /** caption: the text that goes along (6.7: "" for a voice message made of the text). */
     private void sendBytes(RoomSession r, byte[] b, String name, String mime, boolean image, String caption) {
         String safe = Payloads.safeMime(mime);
+        // 6.8: without a caption the field stays (a voice made of its text: the flow takes that text out itself).
+        String sent = caption.isEmpty() ? "" : null;
         if (b.length <= INLINE_MAX) {
             Outgoing o = outgoing(caption);
             o.fileName = name;
@@ -636,14 +676,14 @@ final class Composer extends LinearLayout implements Renderer.Slot {
             o.fileImage = image && Payloads.inlineImage(safe);
             o.dataUrl = "data:" + safe + ";base64," + android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP);
             r.send(o);
-            clearAfterSend();
+            clearAfterSend(sent);
             return;
         }
         Io.bg(() -> {
             try {
                 String id = "out-" + System.nanoTime();
                 try (FileVault.Writer w = new FileVault.Writer(app(), id)) { w.write(b, 0, b.length); }
-                Io.main(() -> { r.sendFile(id, name, mime, b.length, outgoing("")); clearAfterSend(); });
+                Io.main(() -> { r.sendFile(id, name, mime, b.length, outgoing("")); clearAfterSend(sent); });
             } catch (Exception e) {
                 Io.main(() -> a.flash("", e.getMessage(), "error"));
             }

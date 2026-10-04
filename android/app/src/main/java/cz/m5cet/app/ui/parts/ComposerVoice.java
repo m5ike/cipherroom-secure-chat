@@ -25,6 +25,9 @@ import cz.m5cet.app.voice.Voice;
  *  - "Speak it, send text": dictation, then the text goes as a message;
  *    without the phone's recogniser and with the server's speech chosen, it
  *    is recorded and transcribed by the server instead.
+ * 6.8: both are also options of Send (chat/SendPlan) — Composer.sendNow
+ * starts them; a voice made of the text takes only that text out of the
+ * field (dictation that sends at once may have put more there meanwhile).
  */
 final class ComposerVoice implements SpeakSend.Io<Voice.Clip> {
     private final Composer c;
@@ -34,6 +37,8 @@ final class ComposerVoice implements SpeakSend.Io<Voice.Clip> {
     private boolean forFlow;
     private boolean sendWhenEnded;
     private String base = "";
+    /** The text the flow sent last (or is speaking): what leaves the field when it went. */
+    private String last;
     private final Runnable sync = this::sync;
 
     ComposerVoice(Composer c, MainActivity a) {
@@ -62,6 +67,9 @@ final class ComposerVoice implements SpeakSend.Io<Voice.Clip> {
     }
 
     boolean dictating() { return mine && voice().dictating(); }
+
+    /** 6.8: "as voice" / "speak it, send text" is dictating or speaking (Send waits for it). */
+    boolean busy() { return flow.busy(); }
 
     /* ---------------------------------------------------------- the icon */
 
@@ -119,13 +127,15 @@ final class ComposerVoice implements SpeakSend.Io<Voice.Clip> {
 
     @Override public String fieldText() { return c.field().getText().toString(); }
 
-    @Override public void clearField() { c.clearAfterSend(); }
+    @Override public void clearField() { c.clearAfterSend(last); last = null; }
 
     @Override public void speak(String text, SpeakSend.Done<Voice.Clip> done) {
+        last = text;
         voice().textToVoiceMessage(text, done::done);
     }
 
     @Override public void sendText(String text) {
+        last = text;
         RoomSession r = app().rooms.activeSession();
         if (r != null) r.send(c.outgoing(text));
     }
@@ -162,7 +172,8 @@ final class ComposerVoice implements SpeakSend.Io<Voice.Clip> {
                 field.setSelection(field.getText().length());
                 if (!done) return;
                 base = field.getText().toString() + " ";
-                if (!forFlow && app().settings.bool("voice.dictateSend")) { c.sendNow(); base = ""; }
+                // 6.8: sent the way Send's options say; still in the field while an earlier one is spoken.
+                if (!forFlow && app().settings.bool("voice.dictateSend") && c.sendNow()) base = "";
             }
             @Override public void onEnded() {
                 mine = false;
