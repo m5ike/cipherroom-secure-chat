@@ -135,6 +135,27 @@ const MIGRATIONS: Array<[table: string, column: string, definition: string]> = [
 /** How long a run that read a card (m5.nfc) is kept: FUNCTIONS_NFC_RUN_HOURS, default 24. */
 export const nfcRunKeepMs = () => Math.max(1, Number(process.env.FUNCTIONS_NFC_RUN_HOURS) || 24) * 3_600_000;
 
+/* ------------------------------------------------ key–value limits (6.7) */
+
+/** 6.7 (audit N16): m5.session / m5.cache had no limit on a value's size or
+ *  the number of keys — one model could fill the disk. Per scope (a session,
+ *  a cache scope): */
+export const KV_LIMITS = { valueBytes: 1024 * 1024, keyChars: 512, keysPerScope: 10_000, bytesPerScope: 64 * 1024 * 1024 } as const;
+
+export class KvLimitError extends Error {
+  readonly code = "kv-limit";
+  constructor(message: string) { super(message); this.name = "KvLimitError"; }
+}
+
+/** Refuses a write that would break KV_LIMITS; `scope` is what the caller sees. */
+function checkKv(key: string, json: string, scope: { exists: boolean; oldBytes: number; keys: number; bytes: number }): void {
+  if (key.length > KV_LIMITS.keyChars) throw new KvLimitError(`a key is at most ${KV_LIMITS.keyChars} characters`);
+  const size = Buffer.byteLength(json);
+  if (size > KV_LIMITS.valueBytes) throw new KvLimitError(`a stored value is at most ${KV_LIMITS.valueBytes} bytes as JSON (this one is ${size})`);
+  if (!scope.exists && scope.keys >= KV_LIMITS.keysPerScope) throw new KvLimitError(`a session or cache scope holds at most ${KV_LIMITS.keysPerScope} keys`);
+  if (scope.bytes - scope.oldBytes + size > KV_LIMITS.bytesPerScope) throw new KvLimitError(`a session or cache scope holds at most ${KV_LIMITS.bytesPerScope} bytes`);
+}
+
 /* ---------------------------------------------------------- the store */
 
 class FunctionsStore {
@@ -320,8 +341,13 @@ class FunctionsStore {
   }
   sessionSet(sessionId: string, key: string, value: unknown, ttlMs: number | null): void {
     if (!this.d) return this.mem.sessionSet(sessionId, key, value, ttlMs);
-    const expires = ttlMs ? Date.now() + ttlMs : null;
-    this.d.prepare("INSERT OR REPLACE INTO session_kv (session_id, key, value, expires_at) VALUES (?, ?, ?, ?)").run(sessionId, key, JSON.stringify(value ?? null), expires);
+    const now = Date.now();
+    const expires = ttlMs ? now + ttlMs : null;
+    const json = JSON.stringify(value ?? null);
+    const old = this.d.prepare("SELECT length(CAST(value AS BLOB)) AS n FROM session_kv WHERE session_id = ? AND key = ?").get(sessionId, key) as { n: number } | undefined;
+    const all = this.d.prepare("SELECT count(*) AS c, COALESCE(sum(length(CAST(value AS BLOB))), 0) AS b FROM session_kv WHERE session_id = ? AND (expires_at IS NULL OR expires_at > ?)").get(sessionId, now) as { c: number; b: number };
+    checkKv(key, json, { exists: Boolean(old), oldBytes: old?.n ?? 0, keys: all.c, bytes: all.b });
+    this.d.prepare("INSERT OR REPLACE INTO session_kv (session_id, key, value, expires_at) VALUES (?, ?, ?, ?)").run(sessionId, key, json, expires);
   }
   sessionDelete(sessionId: string, key: string): void {
     if (!this.d) return this.mem.sessionDelete(sessionId, key);
@@ -342,8 +368,13 @@ class FunctionsStore {
   }
   cacheSet(scope: string, key: string, value: unknown, ttlMs: number | null): void {
     if (!this.d) return this.mem.cacheSet(scope, key, value, ttlMs);
-    const expires = ttlMs ? Date.now() + ttlMs : null;
-    this.d.prepare("INSERT OR REPLACE INTO cache_kv (scope, key, value, expires_at, lock_token) VALUES (?, ?, ?, ?, NULL)").run(scope, key, JSON.stringify(value ?? null), expires);
+    const now = Date.now();
+    const expires = ttlMs ? now + ttlMs : null;
+    const json = JSON.stringify(value ?? null);
+    const old = this.d.prepare("SELECT length(CAST(value AS BLOB)) AS n FROM cache_kv WHERE scope = ? AND key = ?").get(scope, key) as { n: number } | undefined;
+    const all = this.d.prepare("SELECT count(*) AS c, COALESCE(sum(length(CAST(value AS BLOB))), 0) AS b FROM cache_kv WHERE scope = ? AND (expires_at IS NULL OR expires_at > ?)").get(scope, now) as { c: number; b: number };
+    checkKv(key, json, { exists: Boolean(old), oldBytes: old?.n ?? 0, keys: all.c, bytes: all.b });
+    this.d.prepare("INSERT OR REPLACE INTO cache_kv (scope, key, value, expires_at, lock_token) VALUES (?, ?, ?, ?, NULL)").run(scope, key, json, expires);
   }
   cacheIncr(scope: string, key: string, by: number, ttlMs: number | null): number {
     const cur = this.cacheGet(scope, key);
@@ -552,12 +583,24 @@ class MemoryStore {
     const id = newId("ses"); this.sess.set(id, { id, modelId, scopeKey, expires: null }); return id;
   }
   sessionGet(sessionId: string, key: string, now: number): unknown { const r = this.skv.get(`${sessionId}\0${key}`); return r && (r.expires === null || r.expires > now) ? r.value : null; }
-  sessionSet(sessionId: string, key: string, value: unknown, ttlMs: number | null): void { this.skv.set(`${sessionId}\0${key}`, { value: value ?? null, expires: ttlMs ? Date.now() + ttlMs : null }); }
+  sessionSet(sessionId: string, key: string, value: unknown, ttlMs: number | null): void { this.memCheck(this.skv, sessionId, key, value); this.skv.set(`${sessionId}\0${key}`, { value: value ?? null, expires: ttlMs ? Date.now() + ttlMs : null }); }
+  /** KV_LIMITS for the in-memory store too. */
+  private memCheck(map: Map<string, { value: unknown; expires: number | null }>, scope: string, key: string, value: unknown): void {
+    const now = Date.now();
+    let keys = 0; let bytes = 0; let oldBytes = 0; let exists = false;
+    for (const [k, v] of map) {
+      if (!k.startsWith(`${scope}\0`) || (v.expires !== null && v.expires <= now)) continue;
+      const n = Buffer.byteLength(JSON.stringify(v.value ?? null));
+      keys++; bytes += n;
+      if (k === `${scope}\0${key}`) { exists = true; oldBytes = n; }
+    }
+    checkKv(key, JSON.stringify(value ?? null), { exists, oldBytes, keys, bytes });
+  }
   sessionDelete(sessionId: string, key: string): void { this.skv.delete(`${sessionId}\0${key}`); }
   sessionKeys(sessionId: string, now: number): string[] { const out: string[] = []; for (const [k, v] of this.skv) { const [sid, key] = k.split("\0"); if (sid === sessionId && (v.expires === null || v.expires > now)) out.push(key); } return out; }
 
   cacheGet(scope: string, key: string, now: number): unknown { const r = this.ckv.get(`${scope}\0${key}`); return r && (r.expires === null || r.expires > now) ? r.value : null; }
-  cacheSet(scope: string, key: string, value: unknown, ttlMs: number | null): void { this.ckv.set(`${scope}\0${key}`, { value: value ?? null, expires: ttlMs ? Date.now() + ttlMs : null }); }
+  cacheSet(scope: string, key: string, value: unknown, ttlMs: number | null): void { this.memCheck(this.ckv, scope, key, value); this.ckv.set(`${scope}\0${key}`, { value: value ?? null, expires: ttlMs ? Date.now() + ttlMs : null }); }
   cacheDelete(scope: string, key: string): void { this.ckv.delete(`${scope}\0${key}`); }
 
   private sch = new Map<string, Schedule>();
