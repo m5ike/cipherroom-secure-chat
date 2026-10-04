@@ -15,10 +15,34 @@ public final class Argon2 {
     private static final int QWORDS = 128; // 1024-byte block
 
     /**
+     * 6.7 (audit S13): one derivation at a time. Each holds its whole memory
+     * (64 MiB for a room); rooms connecting together (up to 8, by policy 16)
+     * used to derive at once and run out of memory. Fair, so none starves.
+     */
+    private static final java.util.concurrent.locks.ReentrantLock ONE_AT_A_TIME = new java.util.concurrent.locks.ReentrantLock(true);
+    private static final java.util.concurrent.atomic.AtomicInteger ACTIVE = new java.util.concurrent.atomic.AtomicInteger();
+    private static volatile int peak;
+
+    /** The most derivations that ever ran at the same time (1 — for the tests). */
+    static int peakConcurrency() { return peak; }
+
+    /**
      * @param memoryKiB m (KiB), passes t, lanes p — secret and data may be empty.
      */
     public static byte[] argon2id(byte[] password, byte[] salt, int passes, int memoryKiB, int lanes, int length, byte[] secret, byte[] data) {
         if (lanes < 1 || passes < 1 || length < 4) throw new IllegalArgumentException("bad Argon2 parameters");
+        ONE_AT_A_TIME.lock();
+        try {
+            int now = ACTIVE.incrementAndGet();
+            if (now > peak) peak = now;
+            return compute(password, salt, passes, memoryKiB, lanes, length, secret, data);
+        } finally {
+            ACTIVE.decrementAndGet();
+            ONE_AT_A_TIME.unlock();
+        }
+    }
+
+    private static byte[] compute(byte[] password, byte[] salt, int passes, int memoryKiB, int lanes, int length, byte[] secret, byte[] data) {
         int mPrime = Math.max(memoryKiB, 8 * lanes) / (SYNC_POINTS * lanes) * (SYNC_POINTS * lanes);
         int laneLength = mPrime / lanes;
         int segmentLength = laneLength / SYNC_POINTS;
