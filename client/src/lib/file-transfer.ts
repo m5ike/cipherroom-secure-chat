@@ -209,6 +209,23 @@ import { isReservedSender, safeFileName, safeMime } from "./validate";
 /** RoomKeys (crypto v2) or a bare AES key (v1). */
 export type TransferKey = CryptoKey | RoomKeys;
 
+/**
+ * 6.8: the direct channels a large file goes over — every open one, or only
+ * the chosen peers' (`targets`). `relay` says whether the server's relay may
+ * carry it: only for the whole room (the relay reaches everyone in it), and
+ * only when no direct channel is open. Before 6.8 a large file for chosen
+ * people went to the whole room.
+ */
+export function largeFileRoute<C extends { readyState: string }>(
+  peers: Iterable<[string, { channel?: C | null }]>,
+  targets?: ReadonlySet<string>,
+): { channels: C[]; relay: boolean; refused: boolean } {
+  const channels: C[] = [];
+  for (const [id, p] of peers) if ((!targets || targets.has(id)) && p.channel && p.channel.readyState === "open") channels.push(p.channel);
+  if (targets && channels.length === 0) return { channels, relay: false, refused: true };
+  return { channels, relay: channels.length === 0, refused: false };
+}
+
 export function isRoomKeys(key: TransferKey): key is RoomKeys {
   // Version 2 (3.0) and 3 (3.1) room keys both carry the per-file HKDF key.
   const version = (key as RoomKeys).version;

@@ -81,6 +81,7 @@ import {
   binaryFrame,
   frameFromBinary,
   wireFrame,
+  largeFileRoute,
   type FileTransferEnvelope,
   type IncomingCallbacks,
 } from "./lib/file-transfer";
@@ -4153,8 +4154,11 @@ function ChatApp() {
         // Too big to embed in a chat envelope: same encrypted channel, sent in
         // 32 KiB chunks. Text typed alongside goes out as its own message.
         const text = caption;
+        // 6.8: only to the chosen people when someone was chosen (before, a
+        // large file went to the whole room whatever the selection).
+        if (rec.targets && rec.targets.size === 0) { setNotice(t(lang, "files.chosenAway")); return false; }
         if (text) await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames });
-        await sendLargeFileToAll(file);
+        await sendLargeFileToAll(file, rec.targets);
         return true;
       }
       const attachment = await fileToAttachment(file);
@@ -4573,7 +4577,8 @@ function ChatApp() {
     await leaveAudio();
   }
 
-  async function sendLargeFileToAll(file: File) {
+  /** A file in chunks — to everyone in the room, or (6.8) only to `targets` (peer ids), then only over their direct channels. */
+  async function sendLargeFileToAll(file: File, targets?: Set<string>) {
     const key = keyRef.current;
     identityRef.current ??= await loadIdentity().catch(() => null);
     if (!key) {
@@ -4589,14 +4594,17 @@ function ChatApp() {
       return;
     }
 
-    const channels = Array.from(peersRef.current.values())
-      .map((p) => p.channel)
-      .filter((c): c is RTCDataChannel => Boolean(c) && c!.readyState === "open");
-
     // Files go peer-to-peer. When no direct channel came up (a strict NAT
     // without TURN) but somebody is in the room, the server relays the
-    // encrypted chunks instead (proxy transport; it cannot read them).
-    const relayed = channels.length === 0;
+    // encrypted chunks instead (proxy transport; it cannot read them). The
+    // relay reaches the whole room, so a file for chosen people never takes it.
+    const route = largeFileRoute<RTCDataChannel>(peersRef.current.entries(), targets);
+    if (route.refused) {
+      setNotice(t(lang, "files.chosenNoChannel"));
+      return;
+    }
+    const channels = route.channels;
+    const relayed = route.relay;
     if (relayed && (peersRef.current.size === 0 || socketRef.current?.readyState !== WebSocket.OPEN)) {
       setNotice(t(lang, "files.noPeer"));
       return;
