@@ -41,6 +41,7 @@ import { registerAiRoutes } from "./ai/routes";
 import { registerFunctionsRoutes } from "./functions/routes";
 import { registerTelEngineRoutes } from "./telephony/tel-routes";
 import { attachBridgeMedia, setBridgeNotifier } from "./telephony/bridge";
+import { registerTsaMediaRoutes } from "./telephony/tsa/media";
 import { accountStore, accountsDir } from "./accounts/store";
 import { storage } from "./storage/service";
 import { registerStorageRoutes } from "./storage/routes";
@@ -310,6 +311,8 @@ export async function registerRoutes(
   // numbers (the audio bridge), and the console's view of them.
   registerTelEngineRoutes(app);
   setBridgeNotifier((hash, member, payload) => signaling.sendToMembers(hash, payload, member));
+  // 6.9: TSAs — the audio providers fetch (/wh/tsa/…), the runtime, and room messages through the hub.
+  registerTsaMediaRoutes(app, { notice: (hash, n, target) => signaling.notice(hash, n, target) });
   // Admin-edited layout / templates for every client (GET /api/layout).
   registerLayoutRoutes(app);
   registerClientConfigRoutes(app);
