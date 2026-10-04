@@ -7,6 +7,11 @@
 // never checked), never runs GENERATE AC for a real transaction, and writes
 // nothing. The person is reading their own card — the same bytes a payment
 // terminal sees.
+//
+// 6.10: every stage is an exported step (selectPpse, selectPse, selectAid,
+// appGetData, appReadLog, appGpo, appReadAfl, appReadFiles, finishApp) and
+// readEmv() is built from them; the APDU template runner (template-runner.ts)
+// drives the same steps one by one.
 
 import type { CardTransport } from "../transport";
 import { apdu, asciiOf as asciiRaw, concat, decodeTlv, findAllTlv, findTlv, formatTlv, hex, isOk, ISO, transmitSmart, type Response, type Tlv } from "./apdu";
@@ -14,17 +19,18 @@ import { CANDIDATE_AIDS, COUNTRY_NUM, CURRENCY_NUM, emvTagInfo, schemeForAid, ty
 import type { EmvApp, EmvData, EmvLogEntry, EmvReadArgs, EmvRecord, EmvTag } from "../command";
 
 const PPSE = new TextEncoder().encode("2PAY.SYS.DDF01");
+const PSE = new TextEncoder().encode("1PAY.SYS.DDF01");
 void asciiRaw;
 
 /** 0x5F24 → "5F24", 0x50 → "50". */
-function tagHex(tag: number): string {
+export function tagHex(tag: number): string {
   let h = tag.toString(16).toUpperCase();
   if (h.length % 2) h = `0${h}`;
   return h;
 }
 
 /** Every primitive (leaf) element in a TLV tree, newest wins on a repeated tag. */
-function collectLeaves(nodes: Tlv[], into: Map<string, Uint8Array>): void {
+export function collectLeaves(nodes: Tlv[], into: Map<string, Uint8Array>): void {
   for (const n of nodes) {
     if (n.constructed && n.children) collectLeaves(n.children, into);
     else into.set(tagHex(n.tag), n.value);
@@ -76,9 +82,17 @@ function fillDol(dol: Uint8Array): Uint8Array {
 
 /* ------------------------------------------------------------- AFL records */
 
-type AflEntry = { sfi: number; first: number; last: number };
+export type AflEntry = { sfi: number; first: number; last: number };
 
-function parseAfl(afl: Uint8Array): AflEntry[] {
+/** A [from, to] range inside [min, max] (the whole span when none is given). */
+function clampRange(r: [number, number] | undefined, min: number, max: number): [number, number] {
+  if (!Array.isArray(r) || r.length < 2) return [min, max];
+  const a = Math.max(min, Math.min(max, Math.trunc(Number(r[0]) || min)));
+  const b = Math.max(min, Math.min(max, Math.trunc(Number(r[1]) || max)));
+  return a <= b ? [a, b] : [b, a];
+}
+
+export function parseAfl(afl: Uint8Array): AflEntry[] {
   const out: AflEntry[] = [];
   for (let i = 0; i + 3 < afl.length; i += 4) out.push({ sfi: afl[i] >> 3, first: afl[i + 1], last: afl[i + 2] });
   return out;
@@ -87,7 +101,7 @@ function parseAfl(afl: Uint8Array): AflEntry[] {
 type Sender = (cmd: Uint8Array) => Promise<Response>;
 
 /** Reads records, parses their BER-TLV into `into`, and keeps each one raw. */
-async function readRecords(send: Sender, entries: AflEntry[], into: Map<string, Uint8Array>, records: EmvRecord[]): Promise<void> {
+export async function readRecords(send: Sender, entries: AflEntry[], into: Map<string, Uint8Array>, records: EmvRecord[]): Promise<void> {
   for (const e of entries) {
     for (let rec = e.first; rec <= e.last && rec > 0; rec++) {
       if (records.some((r) => r.sfi === e.sfi && r.record === rec)) continue;
@@ -105,10 +119,12 @@ async function readRecords(send: Sender, entries: AflEntry[], into: Map<string, 
  * AFL lists — a file that answers no record 1 is skipped at once. READ RECORD
  * only; the transaction log's file is read as the log, not as TLV.
  */
-async function scanFiles(send: Sender, into: Map<string, Uint8Array>, records: EmvRecord[], skipSfi: number | undefined, budget: { left: number }): Promise<void> {
-  for (let sfi = 1; sfi <= 30 && budget.left > 0; sfi++) {
+async function scanFiles(send: Sender, into: Map<string, Uint8Array>, records: EmvRecord[], skipSfi: number | undefined, budget: { left: number }, range: { sfi?: [number, number]; records?: [number, number] } = {}): Promise<void> {
+  const [sfiFrom, sfiTo] = clampRange(range.sfi, 1, 30);
+  const [recFrom, recTo] = clampRange(range.records, 1, 16);
+  for (let sfi = sfiFrom; sfi <= sfiTo && budget.left > 0; sfi++) {
     if (sfi === skipSfi) continue;
-    for (let rec = 1; rec <= 16 && budget.left > 0; rec++) {
+    for (let rec = recFrom; rec <= recTo && budget.left > 0; rec++) {
       if (records.some((r) => r.sfi === sfi && r.record === rec)) continue;
       budget.left--;
       let r: Response;
@@ -123,9 +139,10 @@ async function scanFiles(send: Sender, into: Map<string, Uint8Array>, records: E
 /* ------------------------------------------------------------- GET DATA */
 
 /** Data objects a terminal may ask for with GET DATA: counters, the log, balances. */
-const GET_DATA_TAGS = ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F50", "9F51", "9F5D", "9F6D", "9F6E", "9F79", "DF60", "DF61", "DF62"];
+export const GET_DATA_TAGS = ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F50", "9F51", "9F5D", "9F6D", "9F6E", "9F79", "DF60", "DF61", "DF62"];
 
-async function getData(send: Sender, tag: string): Promise<Uint8Array | null> {
+/** GET DATA (80 CA) of one tag → its value, or null when the card does not have it. */
+export async function getData(send: Sender, tag: string): Promise<Uint8Array | null> {
   const t = parseInt(tag, 16);
   let r: Response;
   try { r = await send(apdu(0x80, 0xca, (t >> 8) & 0xff, t & 0xff, undefined, 0)); } catch { return null; }
@@ -142,7 +159,7 @@ async function getData(send: Sender, tag: string): Promise<Uint8Array | null> {
 /* ------------------------------------------------------------- the log */
 
 /** A DOL (tag-length list) → its entries. */
-function parseDol(dol: Uint8Array): Array<{ tag: string; len: number }> {
+export function parseDol(dol: Uint8Array): Array<{ tag: string; len: number }> {
   const out: Array<{ tag: string; len: number }> = [];
   let i = 0;
   while (i < dol.length) {
@@ -201,7 +218,8 @@ export function parseLogRecord(rec: Uint8Array, dol: Array<{ tag: string; len: n
   return e;
 }
 
-async function readLog(send: Sender, sfi: number, count: number, dol: Array<{ tag: string; len: number }>, records: EmvRecord[]): Promise<EmvLogEntry[]> {
+/** READ RECORD of each log entry (up to `count`, at most 50), decoded by the log format. */
+export async function readLog(send: Sender, sfi: number, count: number, dol: Array<{ tag: string; len: number }>, records: EmvRecord[]): Promise<EmvLogEntry[]> {
   const out: EmvLogEntry[] = [];
   for (let rec = 1; rec <= Math.min(count || 30, 50); rec++) {
     let r: Response;
@@ -252,9 +270,12 @@ function num(v: Uint8Array | undefined): number | undefined {
   return parseInt(hex(v) || "0", 16);
 }
 
-type AppExtras = { aip?: Uint8Array; afl?: Uint8Array; log?: EmvLogEntry[]; logFormat?: Uint8Array; logSfi?: number; getData: Map<string, Uint8Array>; records: EmvRecord[] };
+/** An element's value as people read it (by its EMV format: text, digits, a date, a country…). */
+export { formatValue as formatEmvValue };
 
-function buildApp(aid: string, tags: Map<string, Uint8Array>, label: string | undefined, x: AppExtras): EmvApp {
+export type AppExtras = { aip?: Uint8Array; afl?: Uint8Array; log?: EmvLogEntry[]; logFormat?: Uint8Array; logSfi?: number; getData: Map<string, Uint8Array>; records: EmvRecord[] };
+
+export function buildApp(aid: string, tags: Map<string, Uint8Array>, label: string | undefined, x: AppExtras): EmvApp {
   // GET DATA answers fill in what the records did not carry.
   for (const [tag, value] of x.getData) if (!tags.has(tag)) tags.set(tag, value);
   const list: EmvTag[] = [];
@@ -302,10 +323,17 @@ function buildApp(aid: string, tags: Map<string, Uint8Array>, label: string | un
   return app;
 }
 
-/* ------------------------------------------------------------------ public */
+/* ------------------------------------------------------------------ steps */
+// 6.10: readEmv() below is built from these steps, and the APDU template runner
+// (template-runner.ts) drives the same ones one at a time — a template's
+// select-ppse / select-pse / select-aid / get-data / read-log / gpo / read-afl /
+// read-files are these functions, so both read a card the same way.
 
-/** Candidate AIDs from the PPSE directory, by priority (tag 87) where present. */
-function aidsFromPpse(nodes: Tlv[]): string[] {
+/** Sends one command (61xx / 6Cxx already followed up) and gives the answer. */
+export type EmvSender = Sender;
+
+/** Candidate AIDs from a directory (the PPSE's FCI, a PSE record), by priority (tag 87) where present. */
+export function aidsFromDirectory(nodes: Tlv[]): string[] {
   const apps = findAllTlv(nodes, 0x61);
   const found = apps.map((a) => {
     const aid = findTlv(a.children ?? [], 0x4f);
@@ -316,92 +344,197 @@ function aidsFromPpse(nodes: Tlv[]): string[] {
   return [...new Set(found.map((f) => f.aid))];
 }
 
-async function selectAid(send: Sender, aidHex: string): Promise<{ ok: boolean; fci: Tlv[]; label?: string; pdol?: Uint8Array }> {
-  const aid = Uint8Array.from((aidHex.match(/../g) ?? []).map((b) => parseInt(b, 16)));
+/** A payment directory as read: the AIDs it lists and its TLV as a readable tree. */
+export type EmvDirectory = { ok: boolean; sw: number; aids: string[]; tree?: string; sfi?: number };
+
+/** SELECT 2PAY.SYS.DDF01 — the contactless directory; its FCI lists the applications. */
+export async function selectPpse(send: Sender): Promise<EmvDirectory> {
   let r: Response;
-  try { r = await send(ISO.selectByAid(aid)); } catch { return { ok: false, fci: [] }; }
-  if (!isOk(r.sw)) return { ok: false, fci: [] };
-  const fci = decodeTlv(r.data, { recurse: true });
-  const label = findTlv(fci, 0x50)?.value ?? findTlv(fci, 0x9f12)?.value;
-  const pdol = findTlv(fci, 0x9f38)?.value;
-  return { ok: true, fci, label: label ? asciiOf(label) : undefined, pdol };
+  try { r = await send(ISO.selectByAid(PPSE)); } catch { return { ok: false, sw: 0x6f00, aids: [] }; }
+  if (!isOk(r.sw)) return { ok: false, sw: r.sw, aids: [] };
+  try {
+    const nodes = decodeTlv(r.data, { recurse: true });
+    return { ok: true, sw: r.sw, aids: aidsFromDirectory(nodes), tree: formatTlv(nodes) };
+  } catch { return { ok: true, sw: r.sw, aids: [] }; }
 }
 
-async function gpo(send: Sender, pdol?: Uint8Array): Promise<{ aip?: Uint8Array; afl?: Uint8Array; extra: Tlv[] }> {
+/**
+ * SELECT 1PAY.SYS.DDF01 — the contact directory (a USB / contact reader): its
+ * FCI names the directory's short file (tag 88), whose records (70 → 61 → 4F)
+ * list the applications — READ RECORD 1, 2 … until the card says "not found".
+ */
+export async function selectPse(send: Sender): Promise<EmvDirectory> {
+  let r: Response;
+  try { r = await send(ISO.selectByAid(PSE)); } catch { return { ok: false, sw: 0x6f00, aids: [] }; }
+  if (!isOk(r.sw)) return { ok: false, sw: r.sw, aids: [] };
+  let fci: Tlv[] = [];
+  try { fci = decodeTlv(r.data, { recurse: true }); } catch { /* no FCI */ }
+  const sfiTag = findTlv(fci, 0x88)?.value;
+  const sfi = sfiTag && sfiTag.length ? (sfiTag[sfiTag.length - 1] & 0x1f) || 1 : 1;
+  const trees = fci.length ? [formatTlv(fci)] : [];
+  // A directory may also list applications in its FCI (BF0C), as the PPSE does.
+  const nodes: Tlv[] = [...fci];
+  for (let rec = 1; rec <= 16; rec++) {
+    let rr: Response;
+    try { rr = await send(ISO.readRecord(rec, sfi)); } catch { break; }
+    if (!isOk(rr.sw) || rr.data.length === 0) break;
+    try { const n = decodeTlv(rr.data, { recurse: true }); nodes.push(...n); trees.push(formatTlv(n)); } catch { /* not TLV */ }
+  }
+  return { ok: true, sw: r.sw, aids: aidsFromDirectory(nodes), sfi, ...(trees.length ? { tree: trees.join("\n") } : {}) };
+}
+
+/** SELECT an application by AID: its FCI (label, PDOL, the log entry). */
+export async function selectAid(send: Sender, aidHex: string): Promise<{ ok: boolean; sw: number; fci: Tlv[]; label?: string; pdol?: Uint8Array }> {
+  const aid = Uint8Array.from((aidHex.match(/../g) ?? []).map((b) => parseInt(b, 16)));
+  let r: Response;
+  try { r = await send(ISO.selectByAid(aid)); } catch { return { ok: false, sw: 0x6f00, fci: [] }; }
+  if (!isOk(r.sw)) return { ok: false, sw: r.sw, fci: [] };
+  let fci: Tlv[] = [];
+  try { fci = decodeTlv(r.data, { recurse: true }); } catch { /* an FCI that is not TLV */ }
+  const label = findTlv(fci, 0x50)?.value ?? findTlv(fci, 0x9f12)?.value;
+  const pdol = findTlv(fci, 0x9f38)?.value;
+  return { ok: true, sw: r.sw, fci, label: label ? asciiOf(label) : undefined, pdol };
+}
+
+/** The well-known payment AIDs the card selects (for a card without a directory), at most `max`. */
+export async function probeAids(send: Sender, max = 8, candidates: string[] = CANDIDATE_AIDS.map((c) => c.aid)): Promise<string[]> {
+  const out: string[] = [];
+  for (const aid of candidates) {
+    const sel = await selectAid(send, aid);
+    if (sel.ok) out.push(aid);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+async function gpo(send: Sender, pdol?: Uint8Array): Promise<{ sw: number; aip?: Uint8Array; afl?: Uint8Array; extra: Tlv[] }> {
   const data = pdol && pdol.length ? fillDol(pdol) : new Uint8Array(0);
   // Command data is a tag 83 holding the filled PDOL (empty when the card has none).
   const field = concat(Uint8Array.from([0x83, data.length]), data);
   let r: Response;
-  try { r = await send(apdu(0x80, 0xa8, 0x00, 0x00, field, 0)); } catch { return { extra: [] }; }
-  if (!isOk(r.sw)) return { extra: [] };
-  const nodes = decodeTlv(r.data, { recurse: true });
+  try { r = await send(apdu(0x80, 0xa8, 0x00, 0x00, field, 0)); } catch { return { sw: 0x6f00, extra: [] }; }
+  if (!isOk(r.sw)) return { sw: r.sw, extra: [] };
+  let nodes: Tlv[] = [];
+  try { nodes = decodeTlv(r.data, { recurse: true }); } catch { return { sw: r.sw, extra: [] }; }
   const fmt1 = findTlv(nodes, 0x80); // AIP(2) || AFL(rest)
-  if (fmt1) return { aip: fmt1.value.slice(0, 2), afl: fmt1.value.slice(2), extra: nodes };
+  if (fmt1) return { sw: r.sw, aip: fmt1.value.slice(0, 2), afl: fmt1.value.slice(2), extra: nodes };
   const resp = findTlv(nodes, 0x77);
-  if (resp) return { aip: findTlv(resp.children ?? [], 0x82)?.value, afl: findTlv(resp.children ?? [], 0x94)?.value, extra: resp.children ?? [] };
-  return { extra: nodes };
+  if (resp) return { sw: r.sw, aip: findTlv(resp.children ?? [], 0x82)?.value, afl: findTlv(resp.children ?? [], 0x94)?.value, extra: resp.children ?? [] };
+  return { sw: r.sw, extra: nodes };
 }
+
+/** One application while it is read: what its FCI, GET DATA, the log, GPO and the records gave so far. */
+export type EmvAppState = {
+  aid: string;
+  label?: string;
+  pdol?: Uint8Array;
+  tags: Map<string, Uint8Array>;
+  records: EmvRecord[];
+  x: AppExtras;
+  /** GET DATA tags already asked (a later step does not ask again). */
+  asked: Set<string>;
+};
+
+/** Starts an application's read from its SELECT answer. */
+export function startApp(aid: string, sel: { fci: Tlv[]; label?: string; pdol?: Uint8Array }): EmvAppState {
+  const tags = new Map<string, Uint8Array>();
+  collectLeaves(sel.fci, tags);
+  const records: EmvRecord[] = [];
+  return { aid: aid.toUpperCase(), label: sel.label, pdol: sel.pdol, tags, records, x: { getData: new Map(), records }, asked: new Set() };
+}
+
+/** GET DATA (80 CA) of each tag — counters, the log entry and format, balances. A tag the card does not have is no error. */
+export async function appGetData(send: Sender, app: EmvAppState, tags: string[] = GET_DATA_TAGS): Promise<void> {
+  for (const raw of tags) {
+    const tag = raw.toUpperCase();
+    app.asked.add(tag);
+    const v = await getData(send, tag);
+    if (v) app.x.getData.set(tag, v);
+  }
+}
+
+/**
+ * The transaction log: its entry (9F4D: SFI, count) and format (9F4F) — from
+ * the FCI or GET DATA; with `ask` the ones not asked yet are fetched first —
+ * then READ RECORD of each entry, decoded by the format. No log is no error.
+ */
+export async function appReadLog(send: Sender, app: EmvAppState, opts: { ask?: boolean } = {}): Promise<void> {
+  if (opts.ask) for (const tag of ["9F4D", "9F4F"]) if (!app.tags.has(tag) && !app.x.getData.has(tag) && !app.asked.has(tag)) await appGetData(send, app, [tag]);
+  const logEntry = app.tags.get("9F4D") ?? app.x.getData.get("9F4D");
+  if (!logEntry || logEntry.length < 2) return;
+  const fmt = app.x.getData.get("9F4F") ?? app.tags.get("9F4F");
+  app.x.logSfi = logEntry[0];
+  if (fmt) app.x.logFormat = fmt;
+  app.x.log = await readLog(send, logEntry[0], logEntry[1], fmt ? parseDol(fmt) : [], app.records);
+}
+
+/** GET PROCESSING OPTIONS with the PDOL filled with a terminal's neutral defaults → AIP + AFL (no transaction is made). */
+export async function appGpo(send: Sender, app: EmvAppState): Promise<{ ok: boolean; sw: number }> {
+  const options = await gpo(send, app.pdol);
+  collectLeaves(options.extra, app.tags);
+  app.x.aip = options.aip; app.x.afl = options.afl;
+  return { ok: isOk(options.sw), sw: options.sw };
+}
+
+/** READ RECORD of every record the AFL lists. */
+export async function appReadAfl(send: Sender, app: EmvAppState): Promise<void> {
+  if (app.x.afl && app.x.afl.length) await readRecords(send, parseAfl(app.x.afl), app.tags, app.records);
+}
+
+/** READ RECORD over a range of short files beyond the AFL (a deep read; default SFI 1–30, records 1–16); the log's file is left to the log. */
+export async function appReadFiles(send: Sender, app: EmvAppState, range: { sfi?: [number, number]; records?: [number, number] } = {}, budget: { left: number } = { left: 240 }): Promise<void> {
+  await scanFiles(send, app.tags, app.records, app.x.logSfi, budget, range);
+}
+
+/** The application as read: its records in order, every element parsed and labelled. */
+export function finishApp(app: EmvAppState): EmvApp {
+  app.records.sort((a, b) => a.sfi - b.sfi || a.record - b.record);
+  return buildApp(app.aid, new Map(app.tags), app.label, { ...app.x, getData: new Map(app.x.getData) });
+}
+
+/* ------------------------------------------------------------------ public */
 
 /**
  * Reads an EMV card's applications and everything they show a terminal:
  * the records, the counters, and the transaction log. `maxApps` caps how many
  * applications are opened (default 8); `history` reads the log (default on);
- * `deep` reads every short file, not only the AFL's (default on).
+ * `deep` reads every short file, not only the AFL's (default on); `aid`
+ * (6.10) is read first — the application an older template favours.
  */
 export async function readEmv(t: CardTransport, opts: EmvReadArgs = {}): Promise<EmvData> {
   let apdus = 0;
   const send: Sender = (cmd) => { apdus++; return transmitSmart((a) => t.transmit(a), cmd); };
   const maxApps = Math.max(1, Math.min(16, opts.maxApps ?? 8));
   const deep = opts.deep !== false;
-  let ppseTree = "";
-  let aids: string[] = [];
-  try {
-    const r = await send(ISO.selectByAid(PPSE));
-    if (isOk(r.sw)) { const nodes = decodeTlv(r.data, { recurse: true }); ppseTree = formatTlv(nodes); aids = aidsFromPpse(nodes); }
-  } catch { /* no PPSE — fall back to the candidate list */ }
-  if (aids.length === 0) {
-    // No directory: try the well-known AIDs and keep the ones the card selects.
-    for (const c of CANDIDATE_AIDS) {
-      const sel = await selectAid(send, c.aid);
-      if (sel.ok) aids.push(c.aid);
-      if (aids.length >= maxApps) break;
-    }
-  }
+  const prefer = typeof opts.aid === "string" && /^[0-9A-Fa-f]{10,32}$/.test(opts.aid) ? opts.aid.toUpperCase() : undefined;
+  const dir = await selectPpse(send);
+  let aids = dir.aids;
+  // No directory: try the well-known AIDs and keep the ones the card selects.
+  if (aids.length === 0) aids = await probeAids(send, maxApps, prefer ? [prefer, ...CANDIDATE_AIDS.map((c) => c.aid).filter((a) => a !== prefer)] : undefined);
+  else if (prefer) aids = [prefer, ...aids.filter((a) => a !== prefer)];
 
   const apps: EmvApp[] = [];
   const budget = { left: 240 };
   for (const aidHex of aids.slice(0, maxApps)) {
     const sel = await selectAid(send, aidHex);
     if (!sel.ok) continue;
-    const tags = new Map<string, Uint8Array>();
-    const records: EmvRecord[] = [];
-    const x: AppExtras = { getData: new Map(), records };
-    collectLeaves(sel.fci, tags);
+    const app = startApp(aidHex, sel);
     // Before the transaction starts: the counters, and the log the card keeps.
-    for (const tag of GET_DATA_TAGS) { const v = await getData(send, tag); if (v) x.getData.set(tag, v); }
-    const logEntry = tags.get("9F4D") ?? x.getData.get("9F4D");
-    if (opts.history !== false && logEntry && logEntry.length >= 2) {
-      const fmt = x.getData.get("9F4F") ?? tags.get("9F4F");
-      x.logSfi = logEntry[0];
-      if (fmt) x.logFormat = fmt;
-      x.log = await readLog(send, logEntry[0], logEntry[1], fmt ? parseDol(fmt) : [], records);
-    }
-    const options = await gpo(send, sel.pdol);
-    collectLeaves(options.extra, tags);
-    x.aip = options.aip; x.afl = options.afl;
-    if (options.afl && options.afl.length) await readRecords(send, parseAfl(options.afl), tags, records);
+    await appGetData(send, app);
+    if (opts.history !== false) await appReadLog(send, app);
+    await appGpo(send, app);
+    if (app.x.afl && app.x.afl.length) await appReadAfl(send, app);
     else if (!deep) {
       // No AFL: a light scan of the first files for the holder records.
       const scan: AflEntry[] = [];
       for (let sfi = 1; sfi <= 4; sfi++) scan.push({ sfi, first: 1, last: 8 });
-      await readRecords(send, scan, tags, records);
+      await readRecords(send, scan, app.tags, app.records);
     }
-    if (deep) await scanFiles(send, tags, records, x.logSfi, budget);
-    records.sort((a, b) => a.sfi - b.sfi || a.record - b.record);
-    apps.push(buildApp(aidHex, tags, sel.label, x));
+    if (deep) await appReadFiles(send, app, {}, budget);
+    apps.push(finishApp(app));
   }
 
-  return { scheme: apps[0]?.scheme ?? (aids[0] ? schemeForAid(aids[0]) : undefined), aids, apps, tree: ppseTree || undefined, deep, apdus };
+  return { scheme: apps[0]?.scheme ?? (aids[0] ? schemeForAid(aids[0]) : undefined), aids, apps, tree: dir.tree || undefined, deep, apdus };
 }
 
 /** A one-line summary for a log / flash. */

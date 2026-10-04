@@ -388,6 +388,12 @@ export type MrtdOptions = {
   readPhoto?: boolean;
   /** Read every group the document lists, not only DG1 / DG2 — default true. */
   all?: boolean;
+  /**
+   * 6.10: told what the read does next ("EF.CardAccess", "PACE", "BAC", "EF.COM",
+   * "EF.SOD", "DG1"…) — the template runner labels each APDU of its transcript
+   * with it (under secure messaging the command bytes alone say nothing).
+   */
+  onPhase?: (phase: string) => void;
 };
 
 /**
@@ -402,9 +408,11 @@ export async function readMrtd(t: CardTransport, opts: MrtdOptions): Promise<Mrt
   const found: Found = { images: [] };
   const protocols: string[] = [];
   const plainSend: Sender = async (cmd) => { const r = await plain(t, cmd); return { data: r.data, sw: r.sw }; };
+  const phase = (p: string) => { try { opts.onPhase?.(p); } catch { /* a listener's problem is not the read's */ } };
 
   // EF.CardAccess sits in the master file, readable without a key: it says whether the chip runs PACE.
   let paceInfos: PaceInfo[] = [];
+  phase("EF.CardAccess");
   try {
     const ca = await readFile(plainSend, EF.cardAccess, 2048);
     if ("bytes" in ca) {
@@ -427,6 +435,7 @@ export async function readMrtd(t: CardTransport, opts: MrtdOptions): Promise<Mrt
   let ch: SmChannel | null = null;
   const failures: string[] = [];
   if (pace) {
+    phase(`PACE (${can ? "CAN" : "MRZ"})`);
     try {
       ch = await establishPace(t, pace, can ? { kind: "can", can } : { kind: "mrz", key: key! });
       const sel = await ch.send(apdu(0x00, 0xa4, 0x04, 0x0c, MRTD_AID));
@@ -438,6 +447,7 @@ export async function readMrtd(t: CardTransport, opts: MrtdOptions): Promise<Mrt
     failures.push(`PACE: ${paceInfos.map((p) => `${p.name}${p.parameterId !== undefined ? ` (${PACE_PARAMETERS[p.parameterId] ?? p.parameterId})` : ""}`).join(", ")} — not a variant this reader runs`);
   }
   if (!ch && key) {
+    phase("BAC (MRZ)");
     try {
       try { await plain(t, ISO.selectByAid(MRTD_AID)); } catch { /* some chips select on first read */ }
       ch = await doBac(t, key);
@@ -452,6 +462,7 @@ export async function readMrtd(t: CardTransport, opts: MrtdOptions): Promise<Mrt
 
   // EF.COM — which groups are there.
   let groups: number[] = [];
+  phase("EF.COM");
   const com = await readFile(send, EF.com, 1024).catch(() => ({ sw: 0x6f00 }) as FileRead);
   if ("bytes" in com) {
     const c = parseCom(com.bytes);
@@ -467,6 +478,7 @@ export async function readMrtd(t: CardTransport, opts: MrtdOptions): Promise<Mrt
   // EF.SOD — the hashes every group is checked against, and the signer.
   let sod: ReturnType<typeof parseSod> | null = null;
   if (opts.all !== false) {
+    phase("EF.SOD");
     const s = await readFile(send, EF.sod, 32_768).catch(() => ({ sw: 0x6f00 }) as FileRead);
     if ("bytes" in s) {
       try { sod = parseSod(s.bytes); } catch { sod = null; }
@@ -483,6 +495,7 @@ export async function readMrtd(t: CardTransport, opts: MrtdOptions): Promise<Mrt
     if (opts.all === false && n > 2) continue;
     if (opts.readPhoto === false && IMAGE_GROUPS.has(n)) { files.push({ name, fid, status: "absent", message: "not read (images off)" }); continue; }
     let r: FileRead;
+    phase(name);
     try { r = await readFile(send, dgFid(n), CAP[n] ?? 32_768); }
     catch (e) { files.push({ name, fid, status: "error", message: e instanceof Error ? e.message : String(e) }); continue; }
     if (!("bytes" in r)) { files.push({ name, fid, status: statusOf(r.sw) }); continue; }

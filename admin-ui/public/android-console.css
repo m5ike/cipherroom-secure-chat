@@ -235,6 +235,9 @@
 .and-def-size { font-variant-numeric: tabular-nums; }
 .and-def-size.is-over { color: var(--err); font-weight: 600; }
 .and-def-size--total { padding-top: 6px; }
+.and-def-tplcheck:empty { display: none; }
+.and-def-tplcheck { padding: 6px 8px; border-radius: 6px; background: var(--ok-soft); overflow-wrap: anywhere; }
+.and-def-tplcheck.is-err { background: rgba(255, 90, 90, 0.12); color: var(--err); }
 .and-def-help { padding-top: 4px; }
 .and-tbadge { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; height: 18px; padding: 0 5px; border-radius: 5px; font: 700 10px/1 var(--mono); letter-spacing: .02em; flex: none; box-sizing: border-box; }
 .and-tbadge--string  { background: rgba(79, 124, 255, .16);  color: #6f97ff; }

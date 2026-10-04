@@ -1,0 +1,762 @@
+[
+  {
+    "label": "Payment card (EMV) — every application",
+    "card": "emv",
+    "note": "PPSE → each application: SELECT, counters, history, GPO, records, other files.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "for-each-aid",
+        "max": 8,
+        "steps": [
+          {
+            "op": "select-aid"
+          },
+          {
+            "op": "get-data",
+            "tags": [
+              "9F36",
+              "9F13",
+              "9F17",
+              "9F4D",
+              "9F4F",
+              "9F6E"
+            ],
+            "label": "Counters and log format (GET DATA)"
+          },
+          {
+            "op": "read-log",
+            "label": "Transaction history"
+          },
+          {
+            "op": "gpo",
+            "label": "GET PROCESSING OPTIONS (no transaction)"
+          },
+          {
+            "op": "read-afl",
+            "label": "Records the AFL lists"
+          },
+          {
+            "op": "read-files",
+            "sfi": [
+              1,
+              10
+            ],
+            "records": [
+              1,
+              16
+            ],
+            "label": "Other short files (deep)"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Payment card (EMV, contact / PSE) — every application",
+    "card": "emv",
+    "note": "For a USB / contact reader: PSE → each application, as above.",
+    "steps": [
+      {
+        "op": "select-pse",
+        "optional": true
+      },
+      {
+        "op": "for-each-aid",
+        "max": 8,
+        "steps": [
+          {
+            "op": "select-aid"
+          },
+          {
+            "op": "get-data",
+            "tags": [
+              "9F36",
+              "9F13",
+              "9F17",
+              "9F4D",
+              "9F4F",
+              "9F6E"
+            ],
+            "label": "Counters and log format (GET DATA)"
+          },
+          {
+            "op": "read-log",
+            "label": "Transaction history"
+          },
+          {
+            "op": "gpo",
+            "label": "GET PROCESSING OPTIONS (no transaction)"
+          },
+          {
+            "op": "read-afl",
+            "label": "Records the AFL lists"
+          },
+          {
+            "op": "read-files",
+            "sfi": [
+              1,
+              10
+            ],
+            "records": [
+              1,
+              16
+            ],
+            "label": "Other short files (deep)"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "label": "Visa (credit / debit)",
+    "card": "emv",
+    "aid": "A0000000031010",
+    "note": "Visa: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A0000000031010"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "Visa Electron",
+    "card": "emv",
+    "aid": "A0000000032010",
+    "note": "Visa Electron: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A0000000032010"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "V PAY",
+    "card": "emv",
+    "aid": "A0000000032020",
+    "note": "V PAY: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A0000000032020"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "Mastercard (credit / debit)",
+    "card": "emv",
+    "aid": "A0000000041010",
+    "note": "Mastercard: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A0000000041010"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "Maestro",
+    "card": "emv",
+    "aid": "A0000000043060",
+    "note": "Maestro: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A0000000043060"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "American Express",
+    "card": "emv",
+    "aid": "A00000002501",
+    "note": "Amex: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A00000002501"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "JCB",
+    "card": "emv",
+    "aid": "A0000000651010",
+    "note": "JCB: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A0000000651010"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "Discover / Diners",
+    "card": "emv",
+    "aid": "A0000001523010",
+    "note": "Discover: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A0000001523010"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "UnionPay (debit)",
+    "card": "emv",
+    "aid": "A000000333010101",
+    "note": "UnionPay debit: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A000000333010101"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "UnionPay (credit)",
+    "card": "emv",
+    "aid": "A000000333010102",
+    "note": "UnionPay credit: SELECT, counters, history, GPO, records.",
+    "steps": [
+      {
+        "op": "select-ppse",
+        "optional": true
+      },
+      {
+        "op": "select-aid",
+        "aid": "A000000333010102"
+      },
+      {
+        "op": "get-data",
+        "tags": [
+          "9F36",
+          "9F13",
+          "9F17",
+          "9F4D",
+          "9F4F",
+          "9F6E"
+        ],
+        "label": "Counters and log format (GET DATA)"
+      },
+      {
+        "op": "read-log",
+        "label": "Transaction history"
+      },
+      {
+        "op": "gpo",
+        "label": "GET PROCESSING OPTIONS (no transaction)"
+      },
+      {
+        "op": "read-afl",
+        "label": "Records the AFL lists"
+      },
+      {
+        "op": "read-files",
+        "sfi": [
+          1,
+          10
+        ],
+        "records": [
+          1,
+          16
+        ],
+        "label": "Other short files (deep)"
+      }
+    ]
+  },
+  {
+    "label": "e-ID / e-passport (PACE or BAC) — everything",
+    "card": "emrtd",
+    "note": "EF.CardAccess → PACE with the CAN (or the MRZ), else BAC → EF.COM, EF.SOD, DG1 (MRZ), DG2 (face), DG7, DG11–DG15 … (the key is asked on the device).",
+    "steps": [
+      {
+        "op": "eid-read",
+        "args": {
+          "readPhoto": true,
+          "all": true
+        }
+      }
+    ]
+  },
+  {
+    "label": "e-ID / e-passport — MRZ data only (fast)",
+    "card": "emrtd",
+    "note": "Opens the document and reads EF.COM, EF.SOD and DG1 (the MRZ data) — no photo.",
+    "steps": [
+      {
+        "op": "eid-read",
+        "args": {
+          "readPhoto": false,
+          "all": false
+        }
+      }
+    ]
+  },
+  {
+    "label": "MIFARE DESFire — version, applications, free memory",
+    "card": "desfire",
+    "note": "Native DESFire commands wrapped in ISO 7816 (no keys): GetVersion (3 frames), GetApplicationIDs, GetFreeMemory, GetKeySettings of the PICC.",
+    "steps": [
+      {
+        "apdu": "9060000000",
+        "label": "GetVersion — hardware",
+        "expect": [
+          "91AF"
+        ]
+      },
+      {
+        "apdu": "90AF000000",
+        "label": "GetVersion — software",
+        "expect": [
+          "91AF"
+        ]
+      },
+      {
+        "apdu": "90AF000000",
+        "label": "GetVersion — UID, batch, production date",
+        "expect": [
+          "9100"
+        ]
+      },
+      {
+        "apdu": "906A000000",
+        "label": "GetApplicationIDs",
+        "expect": [
+          "9100",
+          "91AF"
+        ],
+        "optional": true
+      },
+      {
+        "apdu": "906E000000",
+        "label": "GetFreeMemory",
+        "expect": [
+          "9100"
+        ],
+        "optional": true
+      },
+      {
+        "apdu": "9045000000",
+        "label": "GetKeySettings (PICC)",
+        "expect": [
+          "9100"
+        ],
+        "optional": true
+      }
+    ]
+  },
+  {
+    "label": "Smart card (ISO 7816-4) — master file, EF.DIR, EF.ATR",
+    "card": "iso7816",
+    "note": "Any ISO-DEP card: SELECT MF, the application directory EF.DIR (its records) and EF.ATR — what a generic card publishes.",
+    "steps": [
+      {
+        "apdu": "00A4000C023F00",
+        "label": "SELECT MF (3F00)",
+        "optional": true
+      },
+      {
+        "apdu": "00A4020C022F00",
+        "label": "SELECT EF.DIR (2F00)",
+        "optional": true
+      },
+      {
+        "apdu": "00B2010400",
+        "label": "READ RECORD 1 of EF.DIR",
+        "optional": true
+      },
+      {
+        "apdu": "00B2020400",
+        "label": "READ RECORD 2 of EF.DIR",
+        "optional": true
+      },
+      {
+        "apdu": "00B2030400",
+        "label": "READ RECORD 3 of EF.DIR",
+        "optional": true
+      },
+      {
+        "apdu": "00B2040400",
+        "label": "READ RECORD 4 of EF.DIR",
+        "optional": true
+      },
+      {
+        "apdu": "00A4020C022F01",
+        "label": "SELECT EF.ATR (2F01)",
+        "optional": true
+      },
+      {
+        "apdu": "00B0000000",
+        "label": "READ BINARY EF.ATR",
+        "optional": true
+      }
+    ]
+  }
+]

@@ -16,7 +16,7 @@ import java.util.List;
 public final class ChatMessage {
     public String id;
     public String roomKey;
-    /** "text" or "sys". */
+    /** "text" or "sys"; 6.10: "note" — a note to myself, only in this device's history, never sent (RoomSession.addNote). */
     public String kind = "text";
     public String senderId = "";
     public String senderName = "";

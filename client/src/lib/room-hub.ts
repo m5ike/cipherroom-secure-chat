@@ -47,6 +47,8 @@ export type HubRoomView = {
   lastActivity: number;
   last: { sender: string; text: string; at: number } | null;
   profileId?: string;
+  /** 6.10: the people connected there now (peer id + name) — whom an NFC output can be forwarded to. */
+  members?: Array<{ id: string; name: string }>;
 };
 
 export type HubDeps = {
@@ -111,8 +113,9 @@ export class BackgroundRoom {
 
   view(): HubRoomView {
     let users = this.status === "joined" ? 1 : 0;
-    for (const p of this.peers.values()) if (p.channel?.readyState === "open" || p.send) users++;
-    return { key: this.target.key, label: this.target.label, room: this.target.room, status: this.status, users, unread: this.unread, lastActivity: this.lastActivity, last: this.last, profileId: this.target.profileId };
+    const members: Array<{ id: string; name: string }> = [];
+    for (const p of this.peers.values()) if (p.channel?.readyState === "open" || p.send) { users++; members.push({ id: p.id, name: p.name }); }
+    return { key: this.target.key, label: this.target.label, room: this.target.room, status: this.status, users, unread: this.unread, lastActivity: this.lastActivity, last: this.last, profileId: this.target.profileId, members };
   }
 
   private changed() { this.emit({ type: "change" }); }

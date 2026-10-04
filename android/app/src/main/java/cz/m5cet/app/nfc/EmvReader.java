@@ -31,6 +31,7 @@ public final class EmvReader {
     private EmvReader() {}
 
     private static final byte[] PPSE = "2PAY.SYS.DDF01".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] PSE = "1PAY.SYS.DDF01".getBytes(StandardCharsets.US_ASCII);
     private static final String BULLET = "•";
 
     /** EMV read options (args of the emv-read op — command.ts EmvReadArgs). */
@@ -41,6 +42,8 @@ public final class EmvReader {
         public boolean history = true;
         /** Read every file the card has, not only the AFL's records (default true). */
         public boolean deep = true;
+        /** 6.10: the preferred application (an older op template's {@code aid}): read first, whether the directory lists it or not. */
+        public String aid;
 
         public Options() {}
         public Options(int maxApps) { this.maxApps = maxApps; }
@@ -55,12 +58,14 @@ public final class EmvReader {
             if (h instanceof Boolean) o.history = (Boolean) h;
             Object d = args.opt("deep");
             if (d instanceof Boolean) o.deep = (Boolean) d;
+            Object aid = args.opt("aid");
+            if (aid instanceof String && ((String) aid).matches("[0-9A-Fa-f]{10,32}")) o.aid = ((String) aid).toUpperCase(java.util.Locale.ROOT);
             return o;
         }
     }
 
-    /** Counts every command the read sends (EmvData.apdus). */
-    private static final class Sender {
+    /** Counts every command the read sends (EmvData.apdus). 6.10: the template runner's steps send through one too. */
+    static final class Sender {
         final Apdu.Transceiver t;
         int apdus;
         Sender(Apdu.Transceiver t) { this.t = t; }
@@ -117,16 +122,16 @@ public final class EmvReader {
 
     /* ------------------------------------------------------------- AFL records */
 
-    private static final class Afl { final int sfi, first, last; Afl(int s, int f, int l) { sfi = s; first = f; last = l; } }
+    static final class Afl { final int sfi, first, last; Afl(int s, int f, int l) { sfi = s; first = f; last = l; } }
 
-    private static List<Afl> parseAfl(byte[] afl) {
+    static List<Afl> parseAfl(byte[] afl) {
         List<Afl> out = new ArrayList<>();
         for (int i = 0; i + 3 < afl.length; i += 4) out.add(new Afl((afl[i] & 0xff) >> 3, afl[i + 1] & 0xff, afl[i + 2] & 0xff));
         return out;
     }
 
     /** One record as read (command.ts EmvRecord). */
-    private static final class Rec {
+    static final class Rec {
         final int sfi, record; final String hex; final boolean log;
         Rec(int sfi, int record, byte[] data, boolean log) { this.sfi = sfi; this.record = record; this.hex = Apdu.hex(data).toUpperCase(); this.log = log; }
     }
@@ -157,12 +162,14 @@ public final class EmvReader {
     /**
      * A deep read (6.6): every short file 1–30, record by record, beyond what the
      * AFL lists — a file that answers no record 1 is skipped at once. READ RECORD
-     * only; the transaction log's file is read as the log, not as TLV.
+     * only; the transaction log's file is read as the log, not as TLV. 6.10: over
+     * the short files {@code sfiFrom}–{@code sfiTo} and the records
+     * {@code recFrom}–{@code recTo} (a template's read-files).
      */
-    private static void scanFiles(Sender s, Map<String, byte[]> into, List<Rec> records, Integer skipSfi, int[] budget) {
-        for (int sfi = 1; sfi <= 30 && budget[0] > 0; sfi++) {
+    static void scanFiles(Sender s, Map<String, byte[]> into, List<Rec> records, Integer skipSfi, int[] budget, int sfiFrom, int sfiTo, int recFrom, int recTo) {
+        for (int sfi = Math.max(1, sfiFrom); sfi <= Math.min(30, sfiTo) && budget[0] > 0; sfi++) {
             if (skipSfi != null && sfi == skipSfi) continue;
-            for (int rec = 1; rec <= 16 && budget[0] > 0; rec++) {
+            for (int rec = Math.max(1, recFrom); rec <= Math.min(254, recTo) && budget[0] > 0; rec++) {
                 if (has(records, sfi, rec)) continue;
                 budget[0]--;
                 Apdu.Response r;
@@ -177,9 +184,9 @@ public final class EmvReader {
     /* ------------------------------------------------------------- GET DATA */
 
     /** Data objects a terminal may ask for with GET DATA: counters, the log, balances. */
-    private static final String[] GET_DATA_TAGS = {"9F36", "9F13", "9F17", "9F4D", "9F4F", "9F50", "9F51", "9F5D", "9F6D", "9F6E", "9F79", "DF60", "DF61", "DF62"};
+    static final String[] GET_DATA_TAGS = {"9F36", "9F13", "9F17", "9F4D", "9F4F", "9F50", "9F51", "9F5D", "9F6D", "9F6E", "9F79", "DF60", "DF61", "DF62"};
 
-    private static byte[] getData(Sender s, String tag) {
+    static byte[] getData(Sender s, String tag) {
         int t = Integer.parseInt(tag, 16);
         Apdu.Response r;
         try { r = s.send(Apdu.apdu(0x80, 0xca, (t >> 8) & 0xff, t & 0xff, null, 0x00)); } catch (IOException e) { return null; }
@@ -276,7 +283,7 @@ public final class EmvReader {
         return e;
     }
 
-    private static List<Map<String, String>> readLog(Sender s, int sfi, int count, List<DolEntry> dol, List<Rec> records) {
+    static List<Map<String, String>> readLog(Sender s, int sfi, int count, List<DolEntry> dol, List<Rec> records) {
         List<Map<String, String>> out = new ArrayList<>();
         int last = Math.min(count > 0 ? count : 30, 50);
         for (int rec = 1; rec <= last; rec++) {
@@ -348,7 +355,7 @@ public final class EmvReader {
     }
 
     /** What one application gave besides its records' tags (emv.ts AppExtras). */
-    private static final class Extras {
+    static final class Extras {
         byte[] aip, afl, logFormat;
         Integer logSfi;
         List<Map<String, String>> log;
@@ -356,7 +363,7 @@ public final class EmvReader {
         final List<Rec> records = new ArrayList<>();
     }
 
-    private static JSONObject buildApp(String aid, Map<String, byte[]> tags, String label, Extras x) throws JSONException {
+    static JSONObject buildApp(String aid, Map<String, byte[]> tags, String label, Extras x) throws JSONException {
         // GET DATA answers fill in what the records did not carry.
         for (Map.Entry<String, byte[]> g : x.getData.entrySet()) tags.putIfAbsent(g.getKey(), g.getValue());
         JSONObject app = new JSONObject();
@@ -428,7 +435,7 @@ public final class EmvReader {
     /* ------------------------------------------------------------------ public */
 
     /** Candidate AIDs from the PPSE directory, by priority (tag 87) where present. */
-    private static List<String> aidsFromPpse(List<Apdu.Tlv> nodes) {
+    static List<String> aidsFromPpse(List<Apdu.Tlv> nodes) {
         List<Apdu.Tlv> apps = Apdu.findAllTlv(nodes, 0x61);
         List<String[]> found = new ArrayList<>(); // {aid, prio}
         for (Apdu.Tlv a : apps) {
@@ -442,9 +449,10 @@ public final class EmvReader {
         return out;
     }
 
-    private static final class Fci { boolean ok; List<Apdu.Tlv> fci = new ArrayList<>(); String label; byte[] pdol; }
+    static final class Fci { boolean ok; List<Apdu.Tlv> fci = new ArrayList<>(); String label; byte[] pdol; }
 
-    private static Fci selectAid(Sender s, String aidHex) {
+    /** SELECT an application by its AID; keeps its FCI (the label, the PDOL). */
+    static Fci selectAid(Sender s, String aidHex) {
         Fci out = new Fci();
         byte[] aid = Apdu.unhex(aidHex);
         Apdu.Response r;
@@ -460,9 +468,10 @@ public final class EmvReader {
         return out;
     }
 
-    private static final class Gpo { byte[] aip, afl; List<Apdu.Tlv> extra = new ArrayList<>(); }
+    static final class Gpo { boolean ok; byte[] aip, afl; List<Apdu.Tlv> extra = new ArrayList<>(); }
 
-    private static Gpo gpo(Sender s, byte[] pdol) {
+    /** GET PROCESSING OPTIONS with the PDOL filled with a terminal's neutral defaults (no transaction is made) → AIP + AFL. */
+    static Gpo gpo(Sender s, byte[] pdol) {
         Gpo out = new Gpo();
         byte[] data = pdol != null && pdol.length > 0 ? fillDol(pdol) : new byte[0];
         // Command data is a tag 83 holding the filled PDOL (empty when the card has none).
@@ -470,6 +479,7 @@ public final class EmvReader {
         Apdu.Response r;
         try { r = s.send(Apdu.apdu(0x80, 0xa8, 0x00, 0x00, field, 0x00)); } catch (IOException e) { return out; }
         if (!Apdu.isOk(r.sw)) return out;
+        out.ok = true;
         List<Apdu.Tlv> nodes = Apdu.decodeTlv(r.data, true);
         Apdu.Tlv fmt1 = Apdu.findTlv(nodes, 0x80);
         if (fmt1 != null) { out.aip = Apdu.slice(fmt1.value, 0, 2); out.afl = Apdu.slice(fmt1.value, 2); out.extra = nodes; return out; }
@@ -506,14 +516,18 @@ public final class EmvReader {
         String ppseTree = "";
         List<String> aids = new ArrayList<>();
         try {
-            Apdu.Response r = s.send(Apdu.selectByAid(PPSE));
-            if (Apdu.isOk(r.sw)) { List<Apdu.Tlv> nodes = Apdu.decodeTlv(r.data, true); ppseTree = Apdu.formatTlv(nodes, 0); aids = aidsFromPpse(nodes); }
+            Directory dir = selectPpse(s);
+            if (dir.ok) { ppseTree = dir.tree; aids = dir.aids; }
         } catch (IOException | RuntimeException e) { /* no PPSE — fall back to the candidate list */ }
+        // 6.10: the preferred application goes first (an older op template's aid).
+        if (opts.aid != null && !aids.isEmpty()) { aids.remove(opts.aid); aids.add(0, opts.aid); }
         if (aids.isEmpty()) {
             // No directory: try the well-known AIDs and keep the ones the card selects.
+            if (opts.aid != null && selectAid(s, opts.aid).ok) aids.add(opts.aid);
             for (EmvTags.Candidate c : EmvTags.CANDIDATE_AIDS) {
-                if (selectAid(s, c.aid).ok) aids.add(c.aid);
                 if (aids.size() >= maxApps) break;
+                if (aids.contains(c.aid)) continue;
+                if (selectAid(s, c.aid).ok) aids.add(c.aid);
             }
         }
 
@@ -523,42 +537,166 @@ public final class EmvReader {
             String aidHex = aids.get(i);
             Fci sel = selectAid(s, aidHex);
             if (!sel.ok) continue;
-            Map<String, byte[]> tags = new LinkedHashMap<>();
-            Extras x = new Extras();
-            collectLeaves(sel.fci, tags);
+            AppRead app = new AppRead(aidHex, sel);
             // Before the transaction starts: the counters, and the log the card keeps.
-            for (String tag : GET_DATA_TAGS) { byte[] v = getData(s, tag); if (v != null) x.getData.put(tag, v); }
-            byte[] logEntry = tags.containsKey("9F4D") ? tags.get("9F4D") : x.getData.get("9F4D");
-            if (opts.history && logEntry != null && logEntry.length >= 2) {
-                byte[] fmt = x.getData.containsKey("9F4F") ? x.getData.get("9F4F") : tags.get("9F4F");
-                x.logSfi = logEntry[0] & 0xff;
-                if (fmt != null) x.logFormat = fmt;
-                x.log = readLog(s, logEntry[0] & 0xff, logEntry[1] & 0xff, fmt != null ? parseDol(fmt) : new ArrayList<>(), x.records);
+            app.getData(s, GET_DATA_TAGS);
+            if (opts.history) app.history(s, false);
+            app.gpo(s);
+            app.readAfl(s, !deep);
+            if (deep) app.scan(s, budget, 1, 30, 1, 16);
+            apps.put(app.build());
+        }
+        return emvData(aids, apps, ppseTree, deep, s.apdus);
+    }
+
+    /* ------------------------------------------------- the steps (6.10) */
+
+    /** A payment directory — PPSE (contactless) or PSE (contact) — the AIDs it lists by priority, and its tree. */
+    static final class Directory { boolean ok; List<String> aids = new ArrayList<>(); String tree = ""; }
+
+    /** SELECT 2PAY.SYS.DDF01: the contactless directory and the applications it lists. */
+    static Directory selectPpse(Sender s) throws IOException {
+        Directory d = new Directory();
+        Apdu.Response r = s.send(Apdu.selectByAid(PPSE));
+        if (!Apdu.isOk(r.sw)) return d;
+        d.ok = true;
+        List<Apdu.Tlv> nodes = Apdu.decodeTlv(r.data, true);
+        d.tree = Apdu.formatTlv(nodes, 0);
+        d.aids = aidsFromPpse(nodes);
+        return d;
+    }
+
+    /**
+     * SELECT 1PAY.SYS.DDF01: the contact directory — its FCI names a short file
+     * (tag 88) whose records list the applications (61 → 4F), read until the
+     * card has no more.
+     */
+    static Directory selectPse(Sender s) throws IOException {
+        Directory d = new Directory();
+        Apdu.Response r = s.send(Apdu.selectByAid(PSE));
+        if (!Apdu.isOk(r.sw)) return d;
+        d.ok = true;
+        List<Apdu.Tlv> fci = Apdu.decodeTlv(r.data, true);
+        StringBuilder tree = new StringBuilder(Apdu.formatTlv(fci, 0));
+        Apdu.Tlv sfiTag = Apdu.findTlv(fci, 0x88);
+        int sfi = sfiTag != null && sfiTag.value.length > 0 ? (sfiTag.value[0] & 0x1f) : 1;
+        List<Apdu.Tlv> entries = new ArrayList<>();
+        for (int rec = 1; rec <= 16 && sfi > 0; rec++) {
+            Apdu.Response rr;
+            try { rr = s.send(Apdu.readRecord(rec, sfi)); } catch (IOException e) { break; }
+            if (!Apdu.isOk(rr.sw) || rr.data.length == 0) break;
+            List<Apdu.Tlv> nodes = Apdu.decodeTlv(rr.data, true);
+            entries.addAll(nodes);
+            if (tree.length() > 0) tree.append('\n');
+            tree.append(Apdu.formatTlv(nodes, 0));
+        }
+        d.tree = tree.toString();
+        d.aids = aidsFromPpse(entries);
+        return d;
+    }
+
+    /**
+     * One application as it is read, step by step — what {@link #readEmv} does
+     * for each AID, and what a 6.10 template's select-aid, get-data, read-log,
+     * gpo, read-afl and read-files steps do one at a time. {@link #build} gives
+     * the application of the contract (command.ts EmvApp).
+     */
+    static final class AppRead {
+        final String aid;
+        final String label;
+        final byte[] pdol;
+        final Map<String, byte[]> tags = new LinkedHashMap<>();
+        final Extras x = new Extras();
+
+        /** {@code sel} null: steps that ran with no application selected. */
+        AppRead(String aid, Fci sel) {
+            this.aid = aid;
+            this.label = sel == null ? null : sel.label;
+            this.pdol = sel == null ? null : sel.pdol;
+            if (sel != null) collectLeaves(sel.fci, tags);
+        }
+
+        /** GET DATA for each tag; missing tags are not errors. Returns how many answered. */
+        int getData(Sender s, String[] list) {
+            int n = 0;
+            for (String tag : list) {
+                String k = tag.toUpperCase(java.util.Locale.ROOT);
+                byte[] v = EmvReader.getData(s, k);
+                if (v != null) { x.getData.put(k, v); n++; }
             }
-            Gpo options = gpo(s, sel.pdol);
-            collectLeaves(options.extra, tags);
-            x.aip = options.aip; x.afl = options.afl;
-            if (options.afl != null && options.afl.length > 0) readRecords(s, parseAfl(options.afl), tags, x.records);
-            else if (!deep) {
-                // No AFL: a light scan of the first files for the holder records.
+            return n;
+        }
+
+        /** The log entry (9F4D: SFI, number of records) from the FCI or GET DATA. */
+        byte[] logEntry() { return tags.containsKey("9F4D") ? tags.get("9F4D") : x.getData.get("9F4D"); }
+
+        /**
+         * The transaction log: 9F4D (SFI, count) and 9F4F (the format) → READ
+         * RECORD of each entry, decoded by the format. {@code ask}: GET DATA them
+         * when nothing so far carried them. The entries read, or -1 when the card
+         * keeps no log.
+         */
+        int history(Sender s, boolean ask) {
+            byte[] entry = logEntry();
+            if (entry == null && ask) { byte[] v = EmvReader.getData(s, "9F4D"); if (v != null) { x.getData.put("9F4D", v); entry = v; } }
+            if (entry == null || entry.length < 2) return -1;
+            byte[] fmt = x.getData.containsKey("9F4F") ? x.getData.get("9F4F") : tags.get("9F4F");
+            if (fmt == null && ask) { byte[] v = EmvReader.getData(s, "9F4F"); if (v != null) { x.getData.put("9F4F", v); fmt = v; } }
+            x.logSfi = entry[0] & 0xff;
+            if (fmt != null) x.logFormat = fmt;
+            x.log = readLog(s, entry[0] & 0xff, entry[1] & 0xff, fmt != null ? parseDol(fmt) : new ArrayList<>(), x.records);
+            return x.log.size();
+        }
+
+        /** GET PROCESSING OPTIONS (no transaction) → the AIP and the AFL, and what else the answer carries. */
+        boolean gpo(Sender s) {
+            Gpo g = EmvReader.gpo(s, pdol);
+            collectLeaves(g.extra, tags);
+            x.aip = g.aip; x.afl = g.afl;
+            return g.ok;
+        }
+
+        boolean hasAfl() { return x.afl != null && x.afl.length > 0; }
+
+        /** READ RECORD of every record the AFL lists; with no AFL, {@code light} scans the first files for the holder records. Returns the records read. */
+        int readAfl(Sender s, boolean light) {
+            int before = x.records.size();
+            if (hasAfl()) readRecords(s, parseAfl(x.afl), tags, x.records);
+            else if (light) {
                 List<Afl> scan = new ArrayList<>();
                 for (int sfi = 1; sfi <= 4; sfi++) scan.add(new Afl(sfi, 1, 8));
                 readRecords(s, scan, tags, x.records);
             }
-            if (deep) scanFiles(s, tags, x.records, x.logSfi, budget);
-            Collections.sort(x.records, (a, b) -> a.sfi != b.sfi ? Integer.compare(a.sfi, b.sfi) : Integer.compare(a.record, b.record));
-            apps.put(buildApp(aidHex, tags, sel.label, x));
+            return x.records.size() - before;
         }
 
+        /** The deep scan over short files and records beyond the AFL (the log's own file is skipped once it was read as the log). Returns the records read. */
+        int scan(Sender s, int[] budget, int sfiFrom, int sfiTo, int recFrom, int recTo) {
+            int before = x.records.size();
+            scanFiles(s, tags, x.records, x.logSfi, budget, sfiFrom, sfiTo, recFrom, recTo);
+            return x.records.size() - before;
+        }
+
+        /** Whether any step gave this application something. */
+        boolean empty() { return tags.isEmpty() && x.getData.isEmpty() && x.records.isEmpty() && x.aip == null && x.log == null; }
+
+        JSONObject build() throws JSONException {
+            Collections.sort(x.records, (a, b) -> a.sfi != b.sfi ? Integer.compare(a.sfi, b.sfi) : Integer.compare(a.record, b.record));
+            return buildApp(aid, new LinkedHashMap<>(tags), label, x);
+        }
+    }
+
+    /** The {@code emv} object of the contract (command.ts EmvData) from what a read gathered. */
+    static JSONObject emvData(List<String> aids, JSONArray apps, String tree, boolean deep, int apdus) throws JSONException {
         JSONObject emv = new JSONObject();
         String app0Scheme = apps.length() > 0 ? apps.optJSONObject(0).optString("scheme", null) : null;
         String scheme = app0Scheme != null ? app0Scheme : (!aids.isEmpty() ? EmvTags.schemeForAid(aids.get(0)) : null);
         if (scheme != null) emv.put("scheme", scheme);
         emv.put("aids", new JSONArray(aids));
         emv.put("apps", apps);
-        if (!ppseTree.isEmpty()) emv.put("tree", ppseTree);
+        if (tree != null && !tree.isEmpty()) emv.put("tree", tree);
         emv.put("deep", deep);
-        emv.put("apdus", s.apdus);
+        emv.put("apdus", apdus);
         return emv;
     }
 

@@ -73,6 +73,13 @@ export type ChatMessage = {
   /** 6.2: deleted from this view — what is left is a tombstone without any
    *  content, kept so the message does not come back from a store or relay. */
   deletedAt?: number;
+  /** 6.10: "note" — a note to myself, put into this room's history by this app
+   *  (the NFC workbench's "To myself"; Android has the same kind): mine, shown
+   *  only here and NEVER sent — no payload, no envelope, no recipient. Kept
+   *  (and stored) with the room's history like any other message. A peer
+   *  cannot make one: a received payload whose kind is not "text" is dropped
+   *  (validate.ts), and a message is built from a payload field by field. */
+  kind?: "note";
 };
 
 /** verified: signed, key as pinned (or first seen) · changed: signed, but
