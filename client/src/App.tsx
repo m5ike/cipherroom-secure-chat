@@ -1344,7 +1344,7 @@ function ChatApp() {
     };
     const fail = (err: unknown) => {
       const e = err instanceof AccountError ? err : new AccountError("server", (err as Error)?.message ?? String(err));
-      setSignin((cur) => ({ kind, steps: cur?.steps ?? steps, error: { code: e.code, message: e.message } }));
+      setSignin((cur) => ({ kind, steps: cur?.steps ?? steps, error: { code: e.code, message: e.message, ...(e.retryAfterSec ? { retryAfterSec: e.retryAfterSec } : {}) } }));
       setAccMsg("");
     };
     const done = (text: string) => setSignin((cur) => ({ kind, steps: cur?.steps ?? steps, error: null, done: text }));

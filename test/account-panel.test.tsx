@@ -193,6 +193,16 @@ describe("account access (the Connection window, 4.0)", () => {
     expect(props.onRegister).toHaveBeenCalled();
   });
 
+  it("a refused request (429) says it is not the passkey and when to try again", () => {
+    render_({ progress: { kind: "signin", steps: [{ id: "passkey", state: "fail" }], error: { code: "rate-limited", message: "Too many requests, please try again later.", retryAfterSec: 540 } } });
+    const err = screen.getByTestId("signin-error");
+    expect(err.getAttribute("data-code")).toBe("rate-limited");
+    expect(err.textContent).toContain("nepřijímá další požadavky");
+    expect(err.textContent).toContain("za 9 min");
+    expect(err.textContent).toContain("API_RATE_LIMIT");
+    expect(screen.queryByTestId("signin-error-register")).toBeNull();
+  });
+
   it("says plainly when the key does not open the account's data", () => {
     render_({ progress: { kind: "signin", steps: [{ id: "passkey", state: "ok" }, { id: "key", state: "fail" }], error: { code: "wrong-key", message: "wrong key" } } });
     expect(screen.getByTestId("signin-error").textContent).toContain("neodemyká data účtu");

@@ -158,8 +158,11 @@ async function api<T>(path: string, init: RequestInit = {}, token?: string): Pro
   let json: Record<string, unknown> = {};
   try { json = text ? JSON.parse(text) as Record<string, unknown> : {}; } catch { /* not JSON: an HTML error page */ }
   if (!res.ok) {
+    // A refused request (429) says when the window opens again (RateLimit-Reset / Retry-After, seconds).
+    const retry = Number(res.headers.get("ratelimit-reset") ?? res.headers.get("retry-after") ?? NaN);
     throw Object.assign(new Error(typeof json.message === "string" ? json.message : `Server error ${res.status}.`), {
       status: res.status, code: typeof json.code === "string" ? json.code : "",
+      ...(Number.isFinite(retry) && retry >= 0 ? { retryAfter: Math.ceil(retry) } : {}),
       ...(json.errors && typeof json.errors === "object" ? { fields: json.errors as Record<string, string> } : {}),
     });
   }
@@ -178,11 +181,12 @@ export type AccountErrorCode =
   | "no-prf"            // the authenticator cannot produce a key
   | "cancelled"         // the user closed the passkey prompt
   | "unavailable"       // accounts are not offered / network
+  | "rate-limited"      // 6.8: the server refused (429): too many requests from this address
   | "taken"             // 6.4: the form's e-mail or phone registered meanwhile (fields)
   | "server";
 
 export class AccountError extends Error {
-  constructor(readonly code: AccountErrorCode, message: string, readonly fields?: Record<string, string>) {
+  constructor(readonly code: AccountErrorCode, message: string, readonly fields?: Record<string, string>, readonly retryAfterSec?: number) {
     super(message);
     this.name = "AccountError";
   }
@@ -195,13 +199,14 @@ export type StepReporter = (step: SignInStep, state: StepState, detail?: string)
 
 function asAccountError(err: unknown, fallback: AccountErrorCode = "server"): AccountError {
   if (err instanceof AccountError) return err;
-  const e = err as { name?: string; code?: string; status?: number; message?: string; fields?: Record<string, string> };
+  const e = err as { name?: string; code?: string; status?: number; message?: string; fields?: Record<string, string>; retryAfter?: number };
   if (e?.name === "NotAllowedError" || e?.name === "AbortError") return new AccountError("cancelled", e.message || "cancelled");
   if (e?.code === "taken" || (e?.fields && e?.status === 409)) return new AccountError("taken", e.message ?? "taken", e.fields);
   if (e?.name === "PasskeyNoPrfError" || /PRF/i.test(e?.message ?? "")) return new AccountError("no-prf", e.message ?? "no PRF");
   const known: AccountErrorCode[] = ["unknown-passkey", "rejected", "wrong-key"];
   if (e?.code && (known as string[]).includes(e.code)) return new AccountError(e.code as AccountErrorCode, e.message ?? e.code);
   if (e?.status === 404) return new AccountError("unknown-passkey", e.message ?? "unknown passkey");
+  if (e?.status === 429) return new AccountError("rate-limited", e.message ?? "too many requests", undefined, (e as { retryAfter?: number }).retryAfter);
   if (e?.status === undefined && e?.name === "TypeError") return new AccountError("unavailable", e.message ?? "network");
   return new AccountError(fallback, e?.message ?? String(err));
 }

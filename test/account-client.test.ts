@@ -143,6 +143,15 @@ describe("registration and sign-in", () => {
     expect(isSignedIn()).toBe(false);
   });
 
+  it("a refused request (429) is 'rate-limited' with when to try again, not a passkey problem", async () => {
+    overrides["/api/account/signin/options"] = () => new Response(JSON.stringify({ ok: false, message: "Too many requests, please try again later." }), { status: 429, headers: { "content-type": "application/json", "RateLimit-Reset": "540" } });
+    const err = await signInWithPasskey().catch((e) => e);
+    expect(err).toBeInstanceOf(AccountError);
+    expect((err as AccountError).code).toBe("rate-limited");
+    expect((err as AccountError).retryAfterSec).toBe(540);
+    expect(isSignedIn()).toBe(false);
+  });
+
   it("a wrong global key ends the half-open session and is reported", async () => {
     overrides["/api/account/unlock"] = () => reply({ ok: false, code: "wrong-key", message: "wrong key" }, 403);
     const err = await signInWithPasskey().catch((e) => e);

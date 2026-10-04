@@ -295,6 +295,29 @@ zálohovat ho; jinak si server vygeneruje `storage.key` v adresáři úložišt�
   prahy `ALERT_<PRAVIDLO>` nebo v konzoli.
 - Konzole `/console/` ukazuje živý provoz, audit a zdraví (včetně clusteru).
 
+### Limit veřejného API (od 6.8 nastavitelný)
+
+Obecný limit na `/api` počítá požadavky **z jedné adresy klienta** (jak ji
+pozná `TRUST_PROXY`) v klouzavém okně; po překročení vrací `429`
+s `{"message":"Too many requests, please try again later."}` a hlavičkami
+`RateLimit-*` (kolik zbývá, za kolik sekund se okno obnoví).
+
+| Proměnná | Výchozí | Rozsah | Význam |
+|---|---|---|---|
+| `API_RATE_LIMIT` | 100 | 10–100000 | požadavků na adresu za okno |
+| `API_RATE_WINDOW_MIN` | 15 | 1–1440 | délka okna v minutách |
+
+Nastavení: `update.sh --set API_RATE_LIMIT=600` (nebo řádek v `.env`)
+a restart; server hodnotu vypíše při startu (`API limit 600 / 15 min per
+address`), neplatnou ohlásí a použije výchozí. Do obecného limitu se
+**nepočítají** cesty s vlastním limitem: dlaždice mapy (`/api/map/tile/…`,
+300 za minutu), přihlášení a registrace passkey a obnova účtu (30 za 10 min),
+trezor, úložiště, konzole, aplikace pro Android a profily. Do 6.8 se
+dlaždice počítaly: stránka s několika mapami limit vyčerpala a další
+přihlášení passkey skončilo `429`. Co limit vyčerpalo, ukáže konzole:
+*Audit* (událost `http.rate-limited` s cestou) a *Provoz* (požadavky podle
+cest).
+
 ## Backup
 
 - Od 3.1 zálohuje server sám: s `BACKUP_DIR` každých

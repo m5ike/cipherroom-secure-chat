@@ -15,7 +15,7 @@ import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
 import { keyFingerprint } from "../lib/identity";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
-import { t, type Lang } from "../lib/i18n";
+import { t, tf, type Lang } from "../lib/i18n";
 import type { AccountSummary, AccountStatus, StepState } from "../lib/account";
 import type { ChatRetention } from "../lib/chat-history";
 
@@ -128,7 +128,7 @@ function recoveryText(account: AccountSummary, lang: Lang): string {
 export type SignInProgress = {
   kind: "signin" | "register";
   steps: Array<{ id: string; state: StepState; detail?: string }>;
-  error?: { code: string; message: string } | null;
+  error?: { code: string; message: string; retryAfterSec?: number } | null;
   /** Shown when it finished well. */
   done?: string;
 };
@@ -186,7 +186,8 @@ export function AccountAccess({
       error: err ? {
         code: err.code,
         title: errTitle,
-        hint: t(lang, `id.err.${err.code}.hint`) !== `id.err.${err.code}.hint` ? t(lang, `id.err.${err.code}.hint`) : "",
+        hint: err.code === "rate-limited" && err.retryAfterSec ? tf(lang, "id.err.rate-limited.in", { min: Math.max(1, Math.ceil(err.retryAfterSec / 60)) })
+          : t(lang, `id.err.${err.code}.hint`) !== `id.err.${err.code}.hint` ? t(lang, `id.err.${err.code}.hint`) : "",
         detail: err.message && err.code !== "cancelled" ? err.message : "",
         logged: err.code !== "cancelled",
       } : null,
