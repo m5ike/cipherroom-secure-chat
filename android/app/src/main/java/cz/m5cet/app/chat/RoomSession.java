@@ -885,6 +885,59 @@ public final class RoomSession {
         });
     }
 
+    /**
+     * 6.5: a command call shows at once as the sender's own bubble — pulsing,
+     * with a loading indicator under the query (App.tsx runChatCommand). The
+     * call state lives in fnLocal (query / pending / status), so the renderer
+     * draws it and settleFnCall* replace the loading in place. Returns the
+     * message so the caller can settle it.
+     */
+    public ChatMessage startFnCall(String keyword, String name, String query) {
+        ChatMessage m = new ChatMessage();
+        m.id = "fncall-" + Crypto.hex(Crypto.random(10));
+        m.roomKey = key;
+        m.senderId = myId == null ? "" : myId;
+        m.senderName = userName;
+        m.text = query == null ? "" : query;
+        m.createdAt = System.currentTimeMillis();
+        m.mine = true;
+        m.verified = true;
+        m.status = "displayed";
+        m.mark("displayed", "", m.createdAt);
+        try {
+            org.json.JSONObject fn = new org.json.JSONObject();
+            fn.put("keyword", keyword).put("name", name).put("query", m.text).put("pending", true);
+            m.fnLocal = fn;
+        } catch (org.json.JSONException ignored) { }
+        post(() -> { add(m, false); changed(); });
+        return m;
+    }
+
+    /** The loading becomes the caller-only answer, inside the same bubble (the query stays). */
+    public void fnCallResult(ChatMessage m, String text, org.json.JSONObject fnLocal) {
+        if (m == null) return;
+        post(() -> {
+            m.text = text == null ? "" : text;
+            m.fnLocal = fnLocal;
+            rooms.messageChanged(this, m);
+        });
+    }
+
+    /** The loading becomes a short status chip (a room answer that went out, or an error / status). */
+    public void fnCallStatus(ChatMessage m, String kind, String label) {
+        if (m == null) return;
+        post(() -> {
+            try {
+                org.json.JSONObject fn = m.fnLocal != null ? m.fnLocal : new org.json.JSONObject();
+                fn.put("pending", false);
+                fn.remove("outputs");
+                fn.put("status", new org.json.JSONObject().put("kind", kind).put("label", label == null ? "" : label));
+                m.fnLocal = fn;
+            } catch (org.json.JSONException ignored) { }
+            rooms.messageChanged(this, m);
+        });
+    }
+
     /** A caller-only command result (App.tsx showFnResult): a message here only, from the model, never sent. */
     public void addLocalFn(String keyword, String name, String text, org.json.JSONObject fn) {
         post(() -> {

@@ -128,23 +128,31 @@ final class Fn {
         }
         JSONObject inputs = Commands.buildInputs(cmd, p.argText);
         final String keyword = cmd.keyword, name = cmd.name, visibility = cmd.visibility;
+        // 6.5: the call shows at once as the sender's own bubble — pulsing, with
+        // a loading indicator under the query, replaced in place when it answers.
+        final String query = "/" + keyword + (p.argText == null || p.argText.trim().isEmpty() ? "" : " " + p.argText.trim());
+        final cz.m5cet.app.chat.ChatMessage call = r != null ? r.startFnCall(keyword, name, query) : null;
         if (running != null) running.cancel();
         running = c.run(bearer(), keyword, cmd.model, inputs, origin(), new Run.Listener() {
             @Override public void interaction(Run.Interaction i) { Io.main(() -> ask(i)); }
             @Override public void error(String code, String message) {
-                Io.main(() -> a.flash("", app.t("functions.failed") + (message == null || message.isEmpty() ? "" : ": " + message), "error"));
+                Io.main(() -> {
+                    if (call != null) r.fnCallStatus(call, "error", message == null || message.isEmpty() ? app.t("functions.failed") : message);
+                    else a.flash("", app.t("functions.failed") + (message == null || message.isEmpty() ? "" : ": " + message), "error");
+                });
             }
-            @Override public void done(Run.Done d) { Io.main(() -> deliver(r, d, keyword, name, visibility)); }
+            @Override public void done(Run.Done d) { Io.main(() -> deliver(r, d, keyword, name, visibility, call)); }
         }, exec);
         return true;
     }
 
-    /** showFnResult(): a room model sends its output end-to-end; a caller-only one shows it here. */
-    private void deliver(RoomSession r, Run.Done d, String keyword, String name, String visibility) {
+    /** showFnResult(): a room model sends its output end-to-end; a caller-only one shows it here. The call's own bubble (6.5) takes the answer or a status. */
+    private void deliver(RoomSession r, Run.Done d, String keyword, String name, String visibility, cz.m5cet.app.chat.ChatMessage call) {
         M5 app = app();
         if (d.failedUnanswered()) {
             String msg = d.error == null ? "" : d.error.optString("message");
-            a.flash("", app.t("functions.failed") + (msg.isEmpty() ? "" : ": " + msg), "error");
+            if (call != null) r.fnCallStatus(call, "error", msg.isEmpty() ? app.t("functions.failed") : msg);
+            else a.flash("", app.t("functions.failed") + (msg.isEmpty() ? "" : ": " + msg), "error");
             return;
         }
         Run.Message m = d.message(keyword, name, visibility);
@@ -160,10 +168,24 @@ final class Fn {
             java.util.List<String> to = recipients();
             if (active == r && to != null) for (String id : to) { String n = r.peerName(id); if (n != null) { o.recipients.add(id); o.recipientNames.add(n); } }
             r.send(o);
+            // The answer went to the room as its own message; the call bubble shows it was sent.
+            if (call != null) r.fnCallStatus(call, "ok", app.t("functions.sentToRoom"));
         } else {
             if (m.room) a.flash("", app.t("functions.localOnly"), "info");
-            if (r != null) r.addLocalFn(keyword, m.name, body, m.local);
+            if (call != null) r.fnCallResult(call, body, callLocal(m, query(call)));
+            else if (r != null) r.addLocalFn(keyword, m.name, body, m.local);
         }
+    }
+
+    /** The result kept in the call bubble: the model's local outputs, with the query so the bubble still shows it. */
+    private static JSONObject callLocal(Run.Message m, String query) {
+        JSONObject out = m.local != null ? m.local : new JSONObject();
+        try { if (query != null) out.put("query", query); out.put("pending", false); } catch (org.json.JSONException ignored) { }
+        return out;
+    }
+
+    private static String query(cz.m5cet.app.chat.ChatMessage call) {
+        return call != null && call.fnLocal != null ? call.fnLocal.optString("query", null) : null;
     }
 
     /** The composer's current recipient selection (a private command), or null for everyone. */
@@ -212,7 +234,7 @@ final class Fn {
                 }
                 @Override public void done(Run.Done d) {
                     Io.main(() -> {
-                        deliver(r, d, meta.optString("keyword"), meta.optString("name"), d.visibility == null ? "caller" : d.visibility);
+                        deliver(r, d, meta.optString("keyword"), meta.optString("name"), d.visibility == null ? "caller" : d.visibility, null);
                         done.accept(!d.failedUnanswered());
                     });
                 }
@@ -226,7 +248,7 @@ final class Fn {
         @Override public void report(JSONObject meta, JSONObject ev) {
             RoomSession r = app().rooms.activeSession();
             commands().report(bearer(), meta, ev, origin(), exec, d -> {
-                if (d != null) Io.main(() -> deliver(r, d, meta.optString("keyword"), meta.optString("name"), d.visibility == null ? "caller" : d.visibility));
+                if (d != null) Io.main(() -> deliver(r, d, meta.optString("keyword"), meta.optString("name"), d.visibility == null ? "caller" : d.visibility, null));
             });
         }
 

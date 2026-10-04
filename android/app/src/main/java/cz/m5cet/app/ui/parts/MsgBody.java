@@ -102,6 +102,7 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
 
     private void build(ChatMessage m) {
         removeAllViews();
+        stopPulse(); // 6.5: a previous call's pulse, if any
         boolean plain = "minimal".equals(cz.m5cet.app.design.Appearance.bubbles());
         int fg = Ui.color(getContext(), plain ? "@onSurface" : m.mine ? "@onBubbleOut" : "@onBubbleIn", Color.BLACK);
         int accent = m.mine ? fg : Ui.color(getContext(), "@primary", Color.BLUE);
@@ -114,7 +115,11 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
         if (!hidden) {
             MapPolicy map = MapBubble.policyFor(app(), m);
             boolean positionMap = map != null && cz.m5cet.app.ui.bubble.Kinds.isPositionMessage(m);
-            if (m.fnDraw() != null && m.fnDraw().optJSONArray("outputs") != null && m.fnDraw().optJSONArray("outputs").length() > 0) parts.fnOutputs(this, m, fg);
+            org.json.JSONObject fd = m.fnDraw();
+            boolean fnCall = fd != null && (fd.has("query") || fd.optBoolean("pending") || fd.optJSONObject("status") != null);
+            boolean fnOut = fd != null && fd.optJSONArray("outputs") != null && fd.optJSONArray("outputs").length() > 0;
+            if (fnCall) fnCall(m, fd, fg, accent);                          // 6.5: query + loading / result / status
+            else if (fnOut) parts.fnOutputs(this, m, fg);
             else if (positionMap) addView(MapBubble.build(a, parts, m, map, fg, maxW(), () -> rebuild(m)));
             else if (!m.visibleText().isEmpty()) addView(text(m.visibleText(), fg, accent));
             if (m.fileName != null) attachment(m, fg, accent);
@@ -169,6 +174,103 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
         t.setPadding(0, dp(2), 0, dp(2));
         return t;
     }
+
+    /* ----------------------------------------------- 6.5 a command call */
+
+    /** The call's own bubble: the query, then the loading indicator / result / status. */
+    private void fnCall(ChatMessage m, org.json.JSONObject fd, int fg, int accent) {
+        String query = fd.optString("query", "");
+        if (!query.isEmpty()) addView(text(query, fg, accent));
+        boolean pending = fd.optBoolean("pending", false) && System.currentTimeMillis() - m.createdAt < 300_000;
+        org.json.JSONObject status = fd.optJSONObject("status");
+        if (pending) {
+            LinearLayout col = new LinearLayout(getContext());
+            col.setOrientation(LinearLayout.VERTICAL);
+            col.setGravity(Gravity.CENTER_HORIZONTAL);
+            col.setPadding(0, dp(6), 0, dp(2));
+            col.addView(new DotsView(getContext(), fg));
+            TextView lbl = new TextView(getContext());
+            lbl.setText(app().t("functions.running").replace("{name}", fd.optString("name", "")));
+            lbl.setTextColor(Ui.alpha(fg, 0.7f));
+            lbl.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f);
+            lbl.setPadding(0, dp(3), 0, 0);
+            col.addView(lbl);
+            addView(col);
+            startPulse();
+        } else if (status != null) {
+            addView(statusChip(status, fg, accent));
+        } else {
+            parts.fnOutputs(this, m, fg); // settled with the caller-only result
+        }
+    }
+
+    private View statusChip(org.json.JSONObject status, int fg, int accent) {
+        String kind = status.optString("kind", "info");
+        int col = "error".equals(kind) ? Ui.color(getContext(), "@destructive", 0xFFCC3333) : "ok".equals(kind) ? accent : Ui.alpha(fg, 0.7f);
+        LinearLayout row = new LinearLayout(getContext());
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(0, dp(3), 0, dp(1));
+        TextView t = new TextView(getContext());
+        t.setText(("error".equals(kind) ? "⚠ " : "ok".equals(kind) ? "✓ " : "• ") + status.optString("label", ""));
+        t.setTextColor(col);
+        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f);
+        row.addView(t);
+        return row;
+    }
+
+    /** Three dots that bounce in turn — a self-contained loading indicator. */
+    private static final class DotsView extends View {
+        private final android.graphics.Paint paint = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        private final android.animation.ValueAnimator anim;
+        private float phase;
+        DotsView(android.content.Context c, int color) {
+            super(c);
+            paint.setColor(color);
+            anim = android.animation.ValueAnimator.ofFloat(0f, (float) (Math.PI * 2));
+            anim.setDuration(1000);
+            anim.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+            anim.setInterpolator(new android.view.animation.LinearInterpolator());
+            anim.addUpdateListener(a -> { phase = (float) a.getAnimatedValue(); invalidate(); });
+        }
+        @Override protected void onMeasure(int wSpec, int hSpec) {
+            float d = getResources().getDisplayMetrics().density;
+            setMeasuredDimension(Math.round(28 * d), Math.round(14 * d));
+        }
+        @Override protected void onAttachedToWindow() { super.onAttachedToWindow(); anim.start(); }
+        @Override protected void onDetachedFromWindow() { anim.cancel(); super.onDetachedFromWindow(); }
+        @Override protected void onDraw(android.graphics.Canvas canvas) {
+            float d = getResources().getDisplayMetrics().density;
+            float r = 3f * d, gap = 8f * d, cy = getHeight() / 2f, amp = 3.2f * d, mid = getWidth() / 2f;
+            for (int i = 0; i < 3; i++) {
+                float off = Math.max(0f, (float) Math.sin(phase - i * 0.6f));
+                paint.setAlpha(Math.round((0.45f + 0.55f * off) * 255));
+                canvas.drawCircle(mid + (i - 1) * gap, cy - off * amp, r, paint);
+            }
+        }
+    }
+
+    /* The whole bubble pulses while a call runs (ancestor with the bubble background). */
+    private android.animation.ObjectAnimator pulse;
+    private void startPulse() {
+        stopPulse();
+        View target = this;
+        View v = this;
+        for (int i = 0; i < 4 && v.getParent() instanceof View; i++) { v = (View) v.getParent(); if (v.getBackground() != null) { target = v; break; } }
+        pulse = android.animation.ObjectAnimator.ofFloat(target, "alpha", 1f, 0.82f);
+        pulse.setDuration(1600);
+        pulse.setRepeatCount(android.animation.ObjectAnimator.INFINITE);
+        pulse.setRepeatMode(android.animation.ObjectAnimator.REVERSE);
+        pulse.start();
+    }
+    private void stopPulse() {
+        if (pulse == null) return;
+        Object t = pulse.getTarget();
+        pulse.cancel();
+        if (t instanceof View) ((View) t).setAlpha(1f);
+        pulse = null;
+    }
+    @Override protected void onDetachedFromWindow() { stopPulse(); super.onDetachedFromWindow(); }
 
     /* ------------------------------------------------------- kinds */
 
