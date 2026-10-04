@@ -87,6 +87,8 @@ public final class Settings {
 
         // 6.7 voice: the voice changer (voiceFx.*)
         cz.m5cet.app.voice.MicFx.defaults(DEFAULTS);
+        // 6.8 conversations: the rooms as Android conversations (telecom/ConversationPlan)
+        cz.m5cet.app.telecom.ConversationPlan.defaults(DEFAULTS);
     }
 
     private final Vault vault;

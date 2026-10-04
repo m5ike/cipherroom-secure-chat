@@ -9,15 +9,13 @@ import android.app.Person;
 import android.app.RemoteInput;
 import android.content.Context;
 import android.content.Intent;
+import android.content.LocusId;
 import android.content.pm.PackageManager;
-import android.content.pm.ShortcutInfo;
-import android.content.pm.ShortcutManager;
 import android.graphics.drawable.Icon;
 import android.net.Uri;
 
 import org.json.JSONObject;
 
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -32,8 +30,8 @@ import cz.m5cet.app.ui.MainActivity;
 /**
  * Android's notification system for the framework: channels (messages,
  * notices, calls, updates, connection), messages as conversations with a
- * direct reply and a long-lived shortcut per room (so they rank as
- * conversations and can bubble), the server's flash and push messages, and
+ * direct reply, tied to the room's conversation shortcut (6.8:
+ * telecom/Conversations — no bubbles), the server's flash and push messages, and
  * update offers. A flash shows inside the app when it is on screen.
  */
 public final class Notify {
@@ -117,26 +115,6 @@ public final class Notify {
         nm().notify(4711, n);
     }
 
-    private String shortcutId(String roomKey) { return "room-" + Integer.toHexString(roomKey.hashCode()); }
-
-    /** A conversation shortcut per room (conversations section, bubbles, share targets). */
-    public void roomShortcut(String roomKey, String name) {
-        ShortcutManager sm = app.getSystemService(ShortcutManager.class);
-        if (sm == null) return;
-        Intent i = new Intent(app, MainActivity.class).setAction(Intent.ACTION_VIEW).putExtra("room", roomKey);
-        ShortcutInfo s = new ShortcutInfo.Builder(app, shortcutId(roomKey))
-            .setShortLabel(name).setLongLived(true).setIntent(i)
-            .setIcon(Icon.createWithResource(app, R.mipmap.ic_launcher))
-            .setCategories(Collections.singleton("cz.m5cet.app.category.ROOM"))
-            .setPerson(new Person.Builder().setName(name).build())
-            .build();
-        try {
-            // 6.7 (audit V5): pushDynamicShortcut is API 30; Android 10 adds it the older way.
-            if (android.os.Build.VERSION.SDK_INT >= 30) sm.pushDynamicShortcut(s);
-            else sm.addDynamicShortcuts(Collections.singletonList(s));
-        } catch (RuntimeException ignored) { }
-    }
-
     private Notification.Action replyAction(String roomKey) {
         RemoteInput reply = new RemoteInput.Builder(KEY_REPLY).setLabel(app.t("notify.reply")).build();
         Intent ri = new Intent(app, ReplyReceiver.class).putExtra("room", roomKey);
@@ -179,8 +157,11 @@ public final class Notify {
             .setContentIntent(open(roomKey, roomKey.hashCode())).setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
             .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(appName, neutral));
-        // The conversation shortcut carries the room's name: only where the room may show.
-        if (level >= 2) { roomShortcut(roomKey, roomName); b.setShortcutId(shortcutId(roomKey)); }
+        // 6.8: unless switched off, the notification of an unlocked app is its room's conversation
+        // (the Conversations section, priority, the widget); the shortcut names the room only where
+        // the room may show (ConversationPlan.names), else it is neutral. Locked: none (S11).
+        String conversation = locked ? null : Conversations.get(app).forNotification(roomKey);
+        if (conversation != null) b.setShortcutId(conversation).setLocusId(new LocusId(conversation));
         if (!locked && (tpl == null || tpl.optBoolean("actions", true))) b.addAction(replyAction(roomKey));
         Integer color = accent(tpl == null ? null : tpl.optString("accent"));
         if (color != null) b.setColor(color);

@@ -330,3 +330,62 @@ složené v `design-67.ts`) a vlastní i18n.
   `MicFx.java`, `FxGate.java`, `ui/parts/ComposerVoice.java`): diktování,
   které se zastaví, poslat jako hlas, nadiktovat a poslat text, měnič hlasu
   i pro hovory — viz [`speech.md`](speech.md#dictation-that-stops-speak-and-send-the-voice-changer-67).
+
+## 11. 6.8: místnosti jako konverzace Androidu
+
+Android nemá systémový „deník zpráv“, do kterého by směla psát cizí
+aplikace; Signal i WhatsApp proto dělají z rozhovorů **konverzace**:
+dlouhodobé zástupce (long-lived shortcut) s osobou (`Person`) a `LocusId`.
+Totéž dělá 6.8 pro místnosti (`telecom/Conversations.java`, čistá část
+`telecom/ConversationPlan.java`, design `server/android/design-68-conversations.ts`).
+
+* **Které**: každá připojená (vybraná) místnost, nejčerstvější první
+  (`setRank`); dynamických nejvýš 8, méně když systém dovolí méně
+  (`getMaxShortcutCountPerActivity`). Ikona je monogram jako na webu
+  (`contacts/Avatars`), kategorie `cz.m5cet.app.category.ROOM`. Ostatní
+  místnosti dostanou zástupce, až k nim přijde oznámení (`pushDynamicShortcut`
+  od API 30, na Androidu 10 `addDynamicShortcuts`, dokud je místo).
+* **Kde se ukážou**: sekce *Konverzace* v oznámeních (prioritní konverzace,
+  widget Konverzace), horní řada nabídky *Sdílet* (`res/xml/shortcuts.xml`:
+  share-target `text/plain` → `MainActivity`; sdílený text se vloží do pole
+  zprávy té místnosti, neodešle se) a podržení ikony aplikace. Obrázky
+  sdílet nejde — obrázek se v aplikaci posílá hned, rozepsanou přílohu
+  composer nemá.
+* **Oznámení**: zpráva místnosti nese `setShortcutId` + `setLocusId`, je-li
+  funkce zapnutá a aplikace **není zamčená** (audit S11 platí dál: zamčená
+  aplikace dává jen neutrální oznámení bez zástupce). Oznámení ze serveru
+  (`templated`, `BigTextStyle`) konverzací nejsou.
+* **Aktualizace**: připojení, odchod, smazání, přejmenování (nový název = nová
+  místnost), nová zpráva, zámek, nastavení. Změna toho, co systém ukazuje
+  (které místnosti, názvy ↔ neutrální), jde hned (po 1,5 s); jen nové pořadí
+  nejvýš jednou za 5 minut a jen v popředí — na pozadí systém volání
+  `ShortcutManager` omezuje. Odchod/smazání: zástupce zmizí i z cache
+  (`removeLongLivedShortcuts`, API 30); připnutý se přejmenuje a vypne.
+* **Soukromí**: id zástupce je `conv-` + HMAC-SHA256 (klíč instalace v systémové
+  vrstvě trezoru) názvu místnosti — nic o názvu neprozradí (6.7 mělo
+  `room-` + `String.hashCode()`; ty se při první publikaci odstraní). Intent
+  zástupce nese jen id. Název místnosti zástupce nese jen když je aplikace
+  odemčená, přepínač *Ukazovat názvy místností* je zapnutý a oznámení smí
+  místnost jmenovat (úroveň ≥ „místnost“ — SystemUI ukazuje konverzační
+  oznámení pod názvem zástupce); jinak „Konverzace 1, 2…“ s číslem místo
+  monogramu, číslované podle id (nemění se s aktivitou). Zámek přichází
+  i časem na pozadí bez události, proto po odchodu do pozadí běží kontrola
+  v čase automatického zámku — časovač a alarm (`Conversations$Alarm`), protože
+  zmražený nebo ukončený proces časovač nestihne; nový proces startuje
+  zamčený a názvy zneutralizuje sám. Když je volání omezené, zmizí aspoň
+  dynamické zástupce (spouštěč, Sdílet).
+* **Nastavení** (*Nastavení › Oznámení › Konverzace v Androidu*):
+  `conversations.on` (výchozí zapnuto — 6.7 zástupce dělalo také; vypnutí vše
+  odebere) a `conversations.names` (výchozí zapnuto). Menu místnosti má
+  *Konverzace v telefonu* — akce designu `conversations.settings` (`room`:
+  nastavení té konverzace, API 30 `EXTRA_CONVERSATION_ID`; prázdný argument:
+  nastavení oznámení aplikace); design, který ji použije, potřebuje aplikaci
+  6.8.
+* **Bubliny ne**: bublina potřebuje vlastní vložitelnou aktivitu
+  (`allowEmbedded`, `resizeableActivity`, `documentLaunchMode`) — aplikace má
+  jednu `singleTask` aktivitu, která nese zámek, design i všechny obrazovky.
+* **Omezení**: na telefonu nevyzkoušeno (jen testy JVM a build). Oznámení
+  zobrazená před zamčením si název ponechají (jako v 6.7). Kdo si v 6.7
+  nastavil konverzaci jako prioritní, nastaví ji znovu (nové id). Umře-li
+  proces mezi odchodem do pozadí a časem zámku a alarm se zpozdí (Doze),
+  zůstanou názvy do doručení alarmu nebo dalšího startu.

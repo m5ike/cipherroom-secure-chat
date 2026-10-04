@@ -96,6 +96,7 @@ public final class M5 extends Application {
             events.flush();
         });
         registerActivityLifecycleCallbacks(new Lifecycle());
+        cz.m5cet.app.telecom.Conversations.get(this).start(); // 6.8: the rooms as Android conversations
         Log.i("app", "M5cet " + BuildConfig.VERSION_NAME + " (" + BuildConfig.VERSION_CODE + ") started");
     }
 

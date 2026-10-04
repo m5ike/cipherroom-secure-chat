@@ -394,6 +394,27 @@ Platí na webu i v aplikaci pro Android.
   místnost — stará historie zůstane v telefonu; připojená se připojí znovu).
   Stejné akce nabízí TalkBack.
 
+### Aplikace pro Android: místnosti jako konverzace (6.8)
+- **Co to je**: připojené místnosti se v telefonu chovají jako konverzace
+  (jako u Signalu nebo WhatsAppu) — jsou v sekci *Konverzace* v oznámeních,
+  v horní řadě nabídky *Sdílet* a po podržení ikony aplikace.
+- **Sdílení do místnosti**: sdílíš-li text z jiné aplikace a zvolíš místnost
+  v horní řadě, aplikace ji otevře a text vloží do pole zprávy — **sám se
+  neodešle**. Obrázky takto sdílet nejde.
+- **Prioritní konverzace a widget**: podržením oznámení místnosti ji označíš
+  jako prioritní; widget *Konverzace* ji dá na plochu. Menu místnosti ›
+  *Konverzace v telefonu* otevře nastavení téhle konverzace (Android 11+).
+- **Nastavení › Oznámení › Konverzace v Androidu**: *Místnosti jako
+  konverzace Androidu* (vypnutím se všechny odeberou) a *Ukazovat názvy
+  místností*.
+- **Soukromí**: název místnosti systém vidí jen když je aplikace odemčená
+  a oznámení smí místnost jmenovat (*Soukromí* na téže obrazovce). Jinak —
+  a jakmile se aplikace zamkne, i samo po době automatického zámku — se
+  konverzace jmenují neutrálně „Konverzace 1“, „Konverzace 2“… Obsah zpráv
+  ani klíč místnosti v nich nikdy není. Odejdeš-li z místnosti nebo ji
+  smažeš, její konverzace zmizí.
+- Bubliny (plovoucí okénka konverzací) aplikace nemá.
+
 ## English
 
 ### First run
@@ -732,6 +753,27 @@ the web and in the Android app.
   and **Edit** (name, room and key; a new room name means a new room — the old
   history stays on the phone; a connected room reconnects). TalkBack offers
   the same actions.
+
+### Android app: rooms as conversations (6.8)
+- **What it is**: joined rooms behave like conversations on the phone (as in
+  Signal or WhatsApp) — in the *Conversations* section of notifications, in
+  the top row of the *Share* sheet and when you hold the app's icon.
+- **Sharing into a room**: share text from another app and pick a room in the
+  top row — the app opens it with the text in the message field; **it is not
+  sent by itself**. Pictures cannot be shared this way.
+- **Priority conversations and the widget**: hold a room's notification to
+  mark it as priority; the *Conversation* widget puts it on the home screen.
+  The room's menu › *Conversation on the phone* opens that conversation's
+  settings (Android 11+).
+- **Settings › Notifications › Android conversations**: *Rooms as Android
+  conversations* (switching it off removes them all) and *Show room names*.
+- **Privacy**: the system sees a room's name only while the app is unlocked
+  and notifications may name the room (*Privacy* on the same screen).
+  Otherwise — and as soon as the app locks, also by itself after the
+  auto-lock time — conversations have neutral names, "Conversation 1",
+  "Conversation 2"… They never hold message content or the room's key. Leave
+  or delete a room and its conversation goes.
+- The app has no bubbles (floating conversation windows).
 
 ## Deutsch
 
@@ -1092,3 +1134,27 @@ dort beginnt, zeigt also nichts. Im Web und in der Android-App.
   **Bearbeiten** (Name, Raum und Schlüssel; ein neuer Raumname bedeutet einen
   neuen Raum — der alte Verlauf bleibt auf dem Telefon; ein verbundener Raum
   verbindet sich neu). TalkBack bietet dieselben Aktionen.
+
+### Android-App: Räume als Unterhaltungen (6.8)
+- **Was das ist**: verbundene Räume verhalten sich auf dem Telefon wie
+  Unterhaltungen (wie bei Signal oder WhatsApp) — im Bereich
+  *Unterhaltungen* der Benachrichtigungen, in der oberen Reihe des
+  *Teilen*-Menüs und beim Halten des App-Symbols.
+- **In einen Raum teilen**: Text aus einer anderen App teilen und oben einen
+  Raum wählen — die App öffnet ihn mit dem Text im Nachrichtenfeld; **er wird
+  nicht von selbst gesendet**. Bilder lassen sich so nicht teilen.
+- **Priorisierte Unterhaltungen und das Widget**: eine Benachrichtigung des
+  Raums halten, um ihn zu priorisieren; das Widget *Unterhaltung* legt ihn
+  auf den Startbildschirm. Raummenü › *Unterhaltung im Telefon* öffnet die
+  Einstellungen dieser Unterhaltung (Android 11+).
+- **Einstellungen › Benachrichtigungen › Android-Unterhaltungen**: *Räume als
+  Android-Unterhaltungen* (Ausschalten entfernt alle) und *Raumnamen
+  anzeigen*.
+- **Privatsphäre**: das System sieht einen Raumnamen nur, solange die App
+  entsperrt ist und Benachrichtigungen den Raum nennen dürfen (*Privatsphäre*
+  auf demselben Bildschirm). Sonst — und sobald die App sperrt, auch von
+  selbst nach der Zeit der automatischen Sperre — heißen Unterhaltungen
+  neutral „Unterhaltung 1“, „Unterhaltung 2“… Nachrichteninhalte oder der
+  Schlüssel des Raums sind nie darin. Wer einen Raum verlässt oder löscht,
+  entfernt auch seine Unterhaltung.
+- Blasen (schwebende Unterhaltungsfenster) hat die App nicht.

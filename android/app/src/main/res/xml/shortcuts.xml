@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 6.8 conversations: direct share. The rooms' conversation shortcuts (telecom/Conversations,
+     category cz.m5cet.app.category.ROOM = ConversationPlan.CATEGORY) show in the share sheet's
+     top row; text shared into one opens that room with the text in its message field (not sent).
+     Pictures are not a share target: a picture is sent at once, there is no draft attachment. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <share-target android:targetClass="cz.m5cet.app.ui.MainActivity">
+        <data android:mimeType="text/plain" />
+        <category android:name="cz.m5cet.app.category.ROOM" />
+    </share-target>
+</shortcuts>

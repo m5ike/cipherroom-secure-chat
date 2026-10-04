@@ -153,6 +153,8 @@ public final class Rooms {
     }
 
     public RoomSession session(String key) { return sessions.get(key); }
+    /** 6.8: whether the saved rooms are read (after an unlock; not after a full lock or a wipe). */
+    public synchronized boolean loaded() { return loaded; }
     public String active() { return active; }
     public RoomSession activeSession() { return active.isEmpty() ? null : sessions.get(active); }
 

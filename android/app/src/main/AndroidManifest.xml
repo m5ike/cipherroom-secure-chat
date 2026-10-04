@@ -86,12 +86,15 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="m5cet" android:host="enroll" />
             </intent-filter>
-            <!-- Text shared from another app goes to the room on screen. -->
+            <!-- Text shared from another app goes to the room on screen (6.8: or, shared straight into a
+                 room's conversation — res/xml/shortcuts.xml — to that room), into its message field. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
+            <!-- 6.8 conversations: the rooms' conversation shortcuts as direct share targets (telecom/Conversations). -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
             <!-- 6.2 people: "Zpráva přes M5cet" / "Volat přes M5cet" tapped on a linked contact in the
                  Contacts app (contacts.ContactIntents; the MIME types of res/xml/contacts.xml). -->
             <intent-filter>
@@ -170,6 +173,8 @@
 
         <receiver android:name=".update.InstallReceiver" android:exported="false" />
         <receiver android:name=".telecom.ReplyReceiver" android:exported="false" />
+        <!-- 6.8 conversations: the lock check of a frozen or ended process (shortcut names go neutral). -->
+        <receiver android:name=".telecom.Conversations$Alarm" android:exported="false" />
 
         <!-- One APK for any server: Firebase starts with the server's settings, not a google-services.json. -->
         <meta-data android:name="firebase_messaging_auto_init_enabled" android:value="false" />
