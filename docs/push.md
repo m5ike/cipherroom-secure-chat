@@ -99,13 +99,15 @@ and with *The server keeps my messages and wakes me* on, the app joins its
 rooms "away-capable" (`notify.away`) so the server keeps its messages while it
 is closed and wakes it with a sealed `notify` message, which the app draws
 with its own room name — only at the `room` level or above and never while
-the app is locked (then no reply either; the sender's name still shows at the
-`sender` level). The quiet hours (from–to, across midnight when from > to, in
+the app is locked: then the notification is neutral (the app's name and "New
+message" — no sender, room or reply, whatever the level). The quiet hours (from–to, across midnight when from > to, in
 the user's time zone) hold back everything except `test` — calls too.
 
-Known rough edges: the Android string `notify.noFcm` says a wake-up "waits for
-the next check-in", but nothing is queued (see 4. above); the console's hint
-says `UNREGISTERED` tokens are "forgotten", while only the token is cleared.
+Without Firebase on the server (the Android screen says so, `notify.noFcm`)
+nothing wakes a closed app: a notification goes only through another channel
+(e-mail) and nothing is kept for later (see 4. above). An FCM token reported
+`UNREGISTERED` is cleared; the device stays registered until the app sends a
+new token.
 
 ## Web push basics (since 2.x)
 

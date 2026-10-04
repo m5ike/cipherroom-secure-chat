@@ -874,6 +874,8 @@
       const r = await guarded(() => api("/api/admin/android/design"));
       if (!r) return;
       design = r.design;
+      // 6.7: the saved design fails the current checks (e.g. a data-built image address): the default is in use.
+      if (r.problem) toast(`The saved design is not in use (the default is): ${r.problem}. Fix it and save it again.`, "err");
       designSaved = snap();
       resetHistory();
     }

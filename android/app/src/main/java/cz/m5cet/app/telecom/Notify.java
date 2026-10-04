@@ -199,19 +199,22 @@ public final class Notify {
         NotifyPrefs prefs = NotifyPrefs.get(app);
         String kind = p.optString("kind", "message");
         if (!local && !prefs.allows(kind, System.currentTimeMillis())) return; // the phone's own switches may be newer
-        String privacy = NotifyTemplate.min(p.optString("privacy", "neutral"), "room");
+        // Audit S11: while the app is locked, neutral — not even the sender's name.
+        boolean locked = app.lock.isLocked();
+        String privacy = locked ? "neutral" : NotifyTemplate.min(p.optString("privacy", "neutral"), "room");
         Map<String, String> vars = new HashMap<>();
         JSONObject given = p.optJSONObject("vars");
         if (given != null) for (java.util.Iterator<String> it = given.keys(); it.hasNext(); ) { String k = it.next(); if (!k.equals("preview")) vars.put(k, given.optString(k)); }
         if (!vars.containsKey("app") || vars.get("app").isEmpty()) vars.put("app", app.design().appName());
         RoomSession room = p.optString("room").isEmpty() || app.rooms == null ? null : app.rooms.byServerId(p.optString("room"));
-        boolean locked = app.lock.isLocked();
         if (room != null && !locked && NotifyTemplate.rank(privacy) >= 2) vars.put("room", room.label);
         JSONObject tpl = p.optJSONObject("tpl");
+        // The server's own title / body (no template) may name the sender: not while locked.
         String[] tb = tpl != null
             ? NotifyTemplate.notification(tpl.optString("title"), tpl.optString("body"), vars, privacy)
+            : locked ? new String[]{ app.design().appName(), app.t("notify.message") }
             : new String[]{ NotifyTemplate.clean(p.optString("title", app.design().appName()), NotifyTemplate.TITLE_MAX), NotifyTemplate.clean(p.optString("body"), NotifyTemplate.BODY_MAX) };
-        if (tb[1].isEmpty()) tb[1] = NotifyTemplate.clean(p.optString("body"), NotifyTemplate.BODY_MAX);
+        if (tb[1].isEmpty()) tb[1] = locked ? app.t("notify.message") : NotifyTemplate.clean(p.optString("body"), NotifyTemplate.BODY_MAX);
         String channel = kind.equals("call") ? CH_CALLS : !p.optBoolean("sound", true) ? CH_QUIET : kind.equals("message") || kind.equals("mention") ? CH_MESSAGES : CH_NOTICES;
         String tag = p.optString("tag", "m5-" + kind);
         int id = room != null ? room.key.hashCode() : ("m5n:" + tag).hashCode();

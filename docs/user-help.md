@@ -332,9 +332,9 @@ Platí na webu i v aplikaci pro Android.
   z potvrzovacího e-mailu (platí 48 h); adresa se zadává na webu.
 - **Android**: přepínač *Server drží mé zprávy a probudí mě* — zprávy čekají
   na serveru zašifrované a upozornění přijde zapečetěné jen pro tento telefon;
-  aplikace sama doplní název místnosti. Je-li aplikace zamčená, nedoplní ho
-  a upozornění nemá odpověď (jméno odesílatele ukáže, dovolí-li to tvoje
-  úroveň); na zamčené obrazovce telefonu je vždy jen „Nová zpráva“.
+  aplikace sama doplní název místnosti. Je-li aplikace zamčená, upozornění
+  je neutrální — jen „Nová zpráva“, bez odesílatele, místnosti a odpovědi;
+  na zamčené obrazovce telefonu je vždy jen „Nová zpráva“.
 - **Bez přihlášení** platí volba jen pro upozornění, která ukazuje otevřená
   stránka.
 - **Zmínka**: napíšeš-li ve zprávě `@jméno` člověka, který je pryč, dostane
@@ -660,9 +660,8 @@ the web and in the Android app.
 - **Android**: the switch *The server keeps my messages and wakes me* —
   messages wait on the server encrypted and the notification comes sealed for
   this phone only; the app fills in the room's name itself. While the app is
-  locked it does not, and the notification has no reply (it shows the
-  sender's name if your level allows); the phone's lock screen always shows
-  only "New message".
+  locked the notification is neutral — just "New message", without sender,
+  room or reply; the phone's lock screen always shows only "New message".
 - **Not signed in**, the choice applies only to the notifications the open
   page shows.
 - **Mentions**: write `@name` of someone who is away and they get a "mention"
@@ -1001,10 +1000,9 @@ dort beginnt, zeigt also nichts. Im Web und in der Android-App.
 - **Android**: der Schalter *Der Server hält meine Nachrichten und weckt
   mich* — Nachrichten warten verschlüsselt auf dem Server, die
   Benachrichtigung kommt nur für dieses Telefon versiegelt; den Raumnamen
-  setzt die App selbst ein. Ist die App gesperrt, tut sie das nicht und die
-  Benachrichtigung hat keine Antwort (den Absender zeigt sie, wenn deine Stufe
-  es erlaubt); der Sperrbildschirm des Telefons zeigt immer nur „Neue
-  Nachricht“.
+  setzt die App selbst ein. Ist die App gesperrt, ist die Benachrichtigung
+  neutral — nur „Neue Nachricht“, ohne Absender, Raum und Antwort; der
+  Sperrbildschirm des Telefons zeigt immer nur „Neue Nachricht“.
 - **Ohne Anmeldung** gilt die Wahl nur für die Benachrichtigungen, die die
   offene Seite zeigt.
 - **Erwähnung**: schreibst du `@Name` einer abwesenden Person, bekommt sie

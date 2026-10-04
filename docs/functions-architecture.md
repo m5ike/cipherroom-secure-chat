@@ -820,8 +820,8 @@ workery, addony), `--disallow-code-generation-from-strings`, v prostředí jen
 `PATH` (`server/functions/sandbox/pool.ts`); konstruktory `Function` /
 `AsyncFunction` jsou odstavené z prototypů a most `_m5host` nemá prototyp
 (`harden.ts`). Bubblewrap / nsjail ani jiný uživatel dál nejsou, síť zavírají
-jen stuby v `harden.ts` a přepínač `--permission` má Node podle changelogu až
-od 22.13 / 23.5 (ověřeno na Node 24). Nespuštěné části: samostatný démon `m5cet-runner` s frontou
+jen stuby v `harden.ts`; na Node starším než 22.13 / 23.5 se permission model
+zapíná přepínačem `--experimental-permission` (ověřeno na Node 24). Nespuštěné části: samostatný démon `m5cet-runner` s frontou
 (běhy zatím běží v procesu služby, těžká práce je v sandbox procesu; fronta
 nad SQLite/Redis přijde se škálováním), `trace`/přehrání běhu, tutoriál,
 `m5.http`/`dns`/`codes` a plné `crypto` (etapa 4), běh v prohlížeči

@@ -54,11 +54,11 @@ vyžadovaly by přepis `server/routes.ts`.
 
 - 1 vCPU, 512 MB RAM, 1 GB disk pro hlavní službu.
 - Node.js ≥ 22, doporučeno 24 LTS (pokud běžíte bez Dockeru). Node 20 je EOL.
-  **6.7:** sandbox Funkcí startuje Node s `--permission`; tento přepínač
-  (bez `experimental`) má Node podle svého changelogu až od 22.13 / 23.5 —
-  na starším 22.x se sandbox nespustí („the sandbox process exited before it
-  was ready“). Ověřeno jen na Node 24 (CI, Docker); `engines` v
-  `package.json` i instalátor zatím hlídají jen hlavní verzi 22.
+  **6.7:** sandbox Funkcí startuje Node s permission modelem — na Node
+  22.13+ / 23.5+ přepínačem `--permission`, na starším 22.x / 23.x
+  `--experimental-permission` (`permissionFlag`,
+  `server/functions/sandbox/pool.ts`). Ověřeno na Node 24 (CI, Docker);
+  starší 22.x jen jednotkovým testem volby přepínače.
 - Public IPv4 nebo CDN front. WebRTC potřebuje secure context (HTTPS / WSS).
 - Pokud máte symetrický NAT / carrier-grade NAT na klientech, doplňte vlastní
   TURN server (např. `coturn`) a propagujte ho přes `iceServers` v App.tsx.
@@ -315,8 +315,9 @@ zálohovat ho; jinak si server vygeneruje `storage.key` v adresáři úložišt�
 
 ## Přechod na 6.7
 
-Nové proměnné prostředí (všechny volitelné; instalátor je nezná — `update.sh
---set` je odmítne, ale řádky přidané do `.env` ručně zachová):
+Nové proměnné prostředí (všechny volitelné; instalátor je zná, takže je
+nastaví `update.sh --set PROMĚNNÁ=hodnota`, a řádky přidané do `.env` ručně
+zachová):
 
 | Proměnná | Výchozí | Význam |
 |---|---|---|
@@ -341,13 +342,13 @@ Co si operátor po nasazení všimne:
   z hostitele v `ANDROID_DESIGN_IMAGE_HOSTS` (výchozí žádný), `url.open`
   jen pevná https adresa. Uložení takového designu vrátí `400` se seznamem
   problémů. **Uložený `design.json`, který tato pravidla poruší, server při
-  čtení tiše nahradí výchozím designem** — po aktualizaci design v konzoli
-  zkontrolujte a uložte znovu.
+  čtení nepoužije** — použije výchozí design, zapíše do logu varování
+  (`[android] the saved design is not used …`) a konzole to ohlásí, když
+  design otevřete. Opravte ho a uložte znovu.
 - **Výchozí design 6.7 obaluje řádky místností prvkem `swipe`**, který
-  aplikace starší než 6.7 nezná (prázdné řádky). Server ani konzole to
-  nehlídají a tlačítko *Build now* posílá `minAppCode` vždy 60000 — build
-  pro starší aplikace nedělejte, nebo zvyšte `minAppCode` přes
-  `POST /api/admin/android/builds` (`minAppCode: 60700`).
+  aplikace starší než 6.7 nezná (prázdné řádky). Build, jehož design používá
+  prvek nebo akci 6.7, proto dostane `minAppCode` 60700 sám; starší aplikace
+  si nechá build, který má, dokud se neaktualizuje.
 - **Vonage:** se `VONAGE_SIGNATURE_SECRET` dostane SMS bez `sig` nebo se
   starým `timestamp` `403`, JWT musí mít `iat` nejvýš 10 min starý
   a `payload_hash` u každého těla (viz [`telephony.md`](telephony.md)).

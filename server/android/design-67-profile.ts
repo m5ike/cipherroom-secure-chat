@@ -26,7 +26,8 @@ type Opts = Omit<ANode, "id" | "el" | "children">;
 const n = (id: string, el: string, o: Opts = {}, children?: ANode[]): ANode => ({ id, el, ...o, ...(children ? { children } : {}) });
 const click = (action: string, arg?: string) => ({ click: arg === undefined ? { action } : { action, arg } });
 
-const AUD_OPTIONS = "me:{_'pf.aud.me'}|room:{_'pf.aud.room'}|public:{_'pf.aud.public'}";
+// The switch is narrow: "room members" goes by its short name there, in full in the legend.
+const AUD_OPTIONS = "me:{_'pf.aud.me'}|room:{_'pf.aud.room.short'}|public:{_'pf.aud.public'}";
 
 /* =============================================================== screens */
 
@@ -208,7 +209,7 @@ const STRINGS: DesignArea["strings"] = {
   cs: {
     "pf.title": "Veřejný profil",
     "pf.intro": "Fotka, pozadí, veřejná přezdívka, pár slov o vás a další údaje. U každé položky zvolíte, kdo ji uvidí.",
-    "pf.aud.me": "Jen já", "pf.aud.room": "Místnosti", "pf.aud.public": "Veřejné",
+    "pf.aud.me": "Jen já", "pf.aud.room": "Členové místností", "pf.aud.room.short": "Členové", "pf.aud.public": "Veřejné",
     "pf.aud.me.hint": "zůstane zapečetěné ve vašem trezoru, jen pro vaše zařízení",
     "pf.aud.room.hint": "pošle se šifrovaně (end-to-end) lidem v místnostech, do kterých vstoupíte; server to nepřečte",
     "pf.aud.public.hint": "uloží se na serveru a přečte si to každý, kdo zná vaše uživatelské jméno",
@@ -233,7 +234,7 @@ const STRINGS: DesignArea["strings"] = {
   en: {
     "pf.title": "Public profile",
     "pf.intro": "A photo, a background, a public nickname, a few words about you and more. For each item you choose who sees it.",
-    "pf.aud.me": "Only me", "pf.aud.room": "Rooms", "pf.aud.public": "Public",
+    "pf.aud.me": "Only me", "pf.aud.room": "Room members", "pf.aud.room.short": "Members", "pf.aud.public": "Public",
     "pf.aud.me.hint": "stays sealed in your vault, for your own devices",
     "pf.aud.room.hint": "sent end-to-end encrypted to the people in the rooms you join; the server cannot read it",
     "pf.aud.public.hint": "stored on the server; anyone who knows your username can read it",
@@ -258,7 +259,7 @@ const STRINGS: DesignArea["strings"] = {
   de: {
     "pf.title": "Öffentliches Profil",
     "pf.intro": "Ein Foto, ein Hintergrund, ein öffentlicher Spitzname, ein paar Worte über Sie und mehr. Für jeden Eintrag wählen Sie, wer ihn sieht.",
-    "pf.aud.me": "Nur ich", "pf.aud.room": "Räume", "pf.aud.public": "Öffentlich",
+    "pf.aud.me": "Nur ich", "pf.aud.room": "Raummitglieder", "pf.aud.room.short": "Mitglieder", "pf.aud.public": "Öffentlich",
     "pf.aud.me.hint": "bleibt versiegelt in Ihrem Tresor, nur für Ihre eigenen Geräte",
     "pf.aud.room.hint": "wird Ende-zu-Ende-verschlüsselt an die Personen in den Räumen gesendet, die Sie betreten; der Server kann es nicht lesen",
     "pf.aud.public.hint": "wird auf dem Server gespeichert; jeder, der Ihren Benutzernamen kennt, kann es lesen",

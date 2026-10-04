@@ -866,11 +866,22 @@ export function designRev(d: AndroidDesign): string {
 const designFile = () => join(androidDir(), "design.json");
 let cachedDesign: AndroidDesign | null = null;
 
+/** 6.7: why the saved design was not used (it no longer passes the checks — e.g. the F-01 URL rules), or null. */
+let designProblem: string | null = null;
+export const savedDesignProblem = (): string | null => (androidDesign(), designProblem);
+
 export function androidDesign(): AndroidDesign {
   if (cachedDesign) return cachedDesign;
+  let text: string | null = null;
+  try { text = readFileSync(designFile(), "utf8"); } catch { /* none saved: the default */ }
   try {
-    cachedDesign = sanitizeDesign(JSON.parse(readFileSync(designFile(), "utf8")));
-  } catch {
+    cachedDesign = text === null ? { ...structuredClone(DEFAULT_DESIGN), rev: designRev(DEFAULT_DESIGN) } : sanitizeDesign(JSON.parse(text));
+    designProblem = null;
+  } catch (err) {
+    // A saved design the checks now refuse is not used — said loudly, not silently: the
+    // operator re-saves it in the console after fixing what the message names.
+    designProblem = (err as Error).message || "the saved design does not pass the checks";
+    console.warn(`[android] the saved design is not used, the default is: ${designProblem}`);
     cachedDesign = { ...structuredClone(DEFAULT_DESIGN), rev: designRev(DEFAULT_DESIGN) };
   }
   return cachedDesign;

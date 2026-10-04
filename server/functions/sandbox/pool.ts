@@ -109,13 +109,19 @@ type Child = {
  * JavaScript (Python can, through a JsProxy) cannot compile its way to
  * import(). WebAssembly compilation is not affected by that flag.
  */
+/** Node's permission-model flag: `--permission` from Node 22.13 / 23.5, `--experimental-permission` before (20.0–22.12) — the engines field allows any 22.x. */
+export function permissionFlag(version: string = process.versions.node): string {
+  const [major, minor] = version.split(".").map((x) => Number(x) || 0);
+  return major > 23 || (major === 23 && minor >= 5) || (major === 22 && minor >= 13) ? "--permission" : "--experimental-permission";
+}
+
 export function sandboxArgs(lang: Lang, paths: SandboxPaths, memoryMb: number): string[] {
   // A generous ceiling for the V8 heap around the interpreter; the real
   // per-run limit is enforced by the interpreter and by the watchdog below.
   const heapCap = Math.max(256, Math.round(memoryMb * 1.5) + 128);
   const reads = [paths.script, lang === "py" ? paths.pyodide : paths.quickjs];
   return [
-    "--permission",
+    permissionFlag(),
     ...reads.map((p) => `--allow-fs-read=${p}`),
     "--disallow-code-generation-from-strings",
     `--max-old-space-size=${heapCap}`,

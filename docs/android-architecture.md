@@ -312,8 +312,9 @@ složené v `design-67.ts`) a vlastní i18n.
   `left` = id menu, `rightColor`, `leftColor`) a akce `room.delete`,
   `room.clone`, `room.edit` s obrazovkou `room.edit`. Výchozí design obaluje
   `rooms.item` prvkem `swipe`; aplikace starší než 6.7 neznámý prvek kreslí
-  jako prázdný — build s ním pro ně nepublikujte (`minAppCode` z konzole je
-  vždy 60000).
+  jako prázdný, proto build, jehož design používá prvek nebo akci 6.7,
+  dostane `minAppCode` 60700 sám (`designMinAppCode`,
+  `server/android/bundle.ts`) a starší aplikace si nechá build, který má.
 * **Profil** (`profile/*`, `ui/parts/ProfileUi.java`): editor v *Nastavení ›
   Uživatel › Veřejný profil*, rámce profilu v místnosti párovým klíčem
   (`ProfileRoom.java`), obrázky zmenšené a bez metadat (`ProfileImages.java`).

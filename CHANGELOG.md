@@ -227,6 +227,27 @@ důvěry, statické klíče bez obnovy po kompromitaci) trvají.
   odmítnutí Promise už neshodí proces (N7).
 - WebNFC `scanOnce` po timeoutu nevisí (N30); odkaz z karty NFC jen `https:`
   (N29).
+- **Nálezy kontroly dokumentace proti kódu:**
+  - build, jehož design používá prvek nebo akci 6.7 (výchozí design: řádky
+    místností v `swipe`), dostane `minAppCode` 60700 sám
+    (`designMinAppCode`) — aplikace starší než 6.7 si nechá build, který má,
+    místo prázdných řádků (dřív konzole posílala vždy 60000);
+  - sandbox Funkcí na Node 22.0–22.12 / 23.0–23.4 startuje s
+    `--experimental-permission` (`--permission` tam ještě není), jinak se
+    nespustil;
+  - instalátor zná nové proměnné 6.7 (`ACCOUNTS_MAX`,
+    `STORAGE_SESSION_BUDGET_MB`, `PRESENCE_MAX_AWAY_DAYS`,
+    `FUNCTIONS_NFC_RUN_HOURS`, `VONAGE_ALLOW_UNSIGNED_SMS`,
+    `ANDROID_DESIGN_IMAGE_HOSTS`, `NOTIFY_DIR`) — `update.sh --set` je
+    odmítal;
+  - upozornění ze serveru při zamčené aplikaci pro Android je neutrální
+    (název aplikace, „Nová zpráva“) i na úrovni „odesílatel“ a i bez šablony;
+  - uložený design Androidu, který server nemůže použít, už nenahradí tiše:
+    varování v logu a v konzoli při otevření designu;
+  - texty: `notify.noFcm` (bez Firebase nic neprobudí zavřenou aplikaci
+    a nic se neodkládá), nápověda konzole o mrtvých adresách (token
+    `UNREGISTERED` se jen vymaže), na Androidu „Členové místností“ jako na
+    webu.
 
 ### Bezpečnost
 - **Server** (`docs/audit-6.7.md` › 8): sandbox Funkcí běží s permission
@@ -289,10 +310,11 @@ důvěry, statické klíče bez obnovy po kompromitaci) trvají.
   `unauth-state-bounds`, `admin-limits`, `away-relay-bound`,
   `storage-session-budget`, `accounts-cap`, `static-dotdir`,
   `nginx-reference`, `telephony-webhooks-failclosed`, `backup-timer`,
-  `dev-secrets-deny`, `android-design-urls`, `android-policy-signed`;
-  rozšířené `chat-history`, `sender-keys`, `fn-outputs`,
-  `functions-endpoints`, `android-server`, `cluster-hub`, `away-relay-*`,
-  E2E konzole. `npx vitest run`: 212 souborů, 2421 testů (4 přeskočené).
+  `dev-secrets-deny`, `android-design-urls`, `android-policy-signed`,
+  `android-min-app-code`; rozšířené `chat-history`, `sender-keys`,
+  `fn-outputs`, `functions-endpoints`, `android-server`, `cluster-hub`,
+  `away-relay-*`, E2E konzole. `npx vitest run`: 213 souborů, 2433 testů
+  (4 přeskočené).
 - Android (JVM): `RoomPresenceTest`, `LastSeenTest`, `GeoLinksTest`,
   `HoldGestureTest`, `NotifyTemplateTest`, `DictationMachineTest`,
   `SpeakSendTest`, `VoiceFxTest`, `FxGateTest`, `ProfileCardTest`,
@@ -315,13 +337,7 @@ důvěry, statické klíče bez obnovy po kompromitaci) trvají.
   nevíme.
 - Upozornění druhu **Hovory** a **Výsledky příkazů** jsou v nastavení a
   šablonách, ale žádný klient ani server je zatím neposílá (`relay.call`
-  nikdo nenastavuje). Upozornění ze serveru při zamčené aplikaci pro Android
-  ukáže jméno odesílatele, dovolí-li to úroveň (ne místnost, obsah ani
-  odpověď).
-- **Aplikace pro Android starší než 6.7 a výchozí design 6.7**: prvek `swipe`
-  nezná a řádky místností nakreslí prázdné; konzole posílá `minAppCode`
-  vždy 60000 a nic na to neupozorní. Uložený design, který porušuje nová
-  pravidla adres (F-01), server tiše nahradí výchozím.
+  nikdo nenastavuje).
 - Na Androidu zpráva s polohou dál kreslí mapu přímo v bublině (web ukazuje
   čip). Síla klíče se měří jen na webu v okně Místnost (ne u uložených
   připojení ani na Androidu) a slabý klíč pustí druhé *Připojit*.
@@ -330,8 +346,8 @@ důvěry, statické klíče bez obnovy po kompromitaci) trvají.
   člen); přihlášený člen se serverovým uchováním zpráv zůstává po *Odpojit*
   jako nepřítomný a `PRESENCE_MAX_AWAY_DAYS` ani odpojení místnosti se na
   takový záznam nevztahují.
-- Sandbox Funkcí potřebuje Node s přepínačem `--permission` (podle changelogu
-  Node od 22.13 / 23.5), `engines` hlídá jen `>=22`; bubblewrap / izolace
+- Sandbox Funkcí je ověřený na Node 24; na 22.0–22.12 jen volba přepínače
+  (`--experimental-permission`) jednotkovým testem. Bubblewrap / izolace
   procesu dál chybí. `npm audit` (s vývojovými závislostmi) hlásí 5 vysokých
   v řetězu tailwind 3 → braces.
 - **Návrhové mezery z bezpečnostní analýzy trvají**: statické klíče zařízení

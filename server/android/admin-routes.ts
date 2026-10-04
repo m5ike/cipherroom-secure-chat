@@ -27,7 +27,7 @@ import { consoleGuard } from "../access";
 import { buildInfo } from "../build-info";
 import type { Needs } from "../access";
 import { androidConfig, parseServiceAccount, publicConfig, sanitizeFcmClient, sanitizePolicy, saveAndroidConfig, sealServiceAccount } from "./config";
-import { androidCatalog, androidDesign, DEFAULT_DESIGN, DesignError, saveAndroidDesign } from "./design";
+import { androidCatalog, androidDesign, savedDesignProblem, DEFAULT_DESIGN, DesignError, saveAndroidDesign } from "./design";
 import { buildContent, createBuild, deployFile, designOfContent, MIN_APP_CODE, versionCodeOf } from "./bundle";
 import { COMMAND_KINDS, sendCommand } from "./commands";
 import { fcmReady } from "./fcm";
@@ -270,7 +270,8 @@ export function registerAndroidAdminRoutes(app: Express): void {
 
   r.get("/catalog", (_req, res) => { res.json({ ok: true, catalog: androidCatalog() }); });
 
-  r.get("/design", (_req, res) => { res.json({ ok: true, design: androidDesign() }); });
+  // 6.7: `problem` — the saved design is not in use (it fails the checks); the console says so.
+  r.get("/design", (_req, res) => { const design = androidDesign(); const problem = savedDesignProblem(); res.json({ ok: true, design, ...(problem ? { problem } : {}) }); });
 
   r.put("/design", (req, res) => {
     try {

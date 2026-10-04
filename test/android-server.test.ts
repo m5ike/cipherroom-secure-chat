@@ -303,7 +303,11 @@ describe("a device's life through the API", () => {
     expect(created.status).toBe(200);
     const id = created.json.build.id;
     expect((await admin("POST", `/builds/${id}/publish`, { notify: false })).json.build.status).toBe("published");
-    const check = await (await signed("POST", "/api/android/checkin", { appCode: 60000, state: { battery: 80 } })).json() as Record<string, any>;
+    // The default design uses 6.7 elements (the rooms' swipe rows): an older app keeps what it has.
+    expect(created.json.build.minAppCode).toBe(60700);
+    const old = await (await signed("POST", "/api/android/checkin", { appCode: 60000, state: { battery: 80 } })).json() as Record<string, any>;
+    expect(old.bundle?.id).not.toBe(id);
+    const check = await (await signed("POST", "/api/android/checkin", { appCode: 60700, state: { battery: 80 } })).json() as Record<string, any>;
     expect(check.bundle.id).toBe(id);
     const file = Buffer.from(await (await signed("GET", `/api/android/bundles/${id}`)).arrayBuffer());
     const opened = crypto.openBundleFile(file, { id: dev.id, privateKey: dev.enc.privateKey }, serverKey);

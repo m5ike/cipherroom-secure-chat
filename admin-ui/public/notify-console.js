@@ -161,7 +161,7 @@
     });
     return h("div", { class: "card" },
       h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Channels"),
-        h("div", { class: "card__hint" }, "Tried in this order until one takes the notification (a user's own order wins, within what is on here). A failure — an HTTP error, a dead token, a timeout — moves on to the next; dead endpoints (404/410, UNREGISTERED, a wiped device, a refused address) are forgotten.")),
+        h("div", { class: "card__hint" }, "Tried in this order until one takes the notification (a user's own order wins, within what is on here). A failure — an HTTP error, a dead token, a timeout — moves on to the next; dead endpoints are dropped: a web push subscription answering 404/410 is removed, a refused e-mail address is cleared, an FCM token reported UNREGISTERED is cleared (the device stays registered until the app sends a new token), and a wiped or retired device is skipped.")),
       list,
       h("p", { class: "muted small" }, "Nothing the server sends carries a message's content: the server cannot read it. Android notifications are sealed for the one device (FCM sees ciphertext); web push is encrypted for the browser (RFC 8291); e-mail is plain — only what the user's privacy level allows."));
   }

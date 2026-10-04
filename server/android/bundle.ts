@@ -18,6 +18,7 @@ import {
   type BundleHeader, type ContainerEntry,
 } from "./crypto";
 import { androidDesign, designRev, sanitizeDesign, type AndroidDesign } from "./design";
+import { ACTIONS_67, ELEMENTS_67 } from "./design-67";
 import { androidStore, newId, type Build, type Device } from "./store";
 
 /** versionCode of an app version: 6.0.0 → 60000 (major·10000 + minor·100 + patch). */
@@ -93,13 +94,30 @@ const mimeOf = (path: string) => (/\.png$/i.test(path) ? "image/png" : /\.webp$/
 
 const cekAad = (id: string) => `android:build:${id}`;
 
+/** 6.7: the app code each design version's own elements and actions need (an older app draws an unknown element as nothing). */
+const NEEDS_67 = 60700;
+
+/**
+ * The oldest app a design runs on: one that uses a 6.7 element (the room rows'
+ * `swipe`) or action needs the 6.7 app — so an older phone keeps the build it
+ * has instead of getting rows it cannot draw.
+ */
+export function designMinAppCode(design: AndroidDesign): number {
+  const json = JSON.stringify(design);
+  const els = new Set(ELEMENTS_67.map((e) => e.el));
+  const acts = new Set(ACTIONS_67.map((a) => a.action));
+  for (const m of json.matchAll(/"el":"([^"]+)"/g)) if (els.has(m[1])) return NEEDS_67;
+  for (const m of json.matchAll(/"action":"([^"]+)"/g)) if (acts.has(m[1])) return NEEDS_67;
+  return MIN_APP_CODE;
+}
+
 export function createBuild(opts: { notes?: string; channel?: string; by: string; minAppCode?: number; appVersion: string; design?: AndroidDesign }): Build {
   const design = opts.design ?? androidDesign();
   const number = Math.max(0, ...androidStore.builds.list({ limit: 1 }).map((b) => b.number)) + 1;
   const id = newId("bld");
   const channel = ["stable", "beta", "dev"].includes(opts.channel ?? "") ? opts.channel! : "stable";
   const created = Date.now();
-  const minAppCode = Math.max(MIN_APP_CODE, Math.round(opts.minAppCode ?? MIN_APP_CODE));
+  const minAppCode = Math.max(MIN_APP_CODE, designMinAppCode(design), Math.round(opts.minAppCode ?? MIN_APP_CODE));
   const version = `${opts.appVersion}-b${number}`;
   const notes = (opts.notes ?? "").slice(0, 2000);
   const { plaintext, manifest } = compileDesign(design, { id, number, version, channel, created, minAppCode, notes });
