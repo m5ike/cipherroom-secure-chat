@@ -6,6 +6,8 @@ import { describe, it, expect, beforeAll } from "vitest";
 import { deriveRoomKeys, openMessage, sealMessage, type RoomKeys } from "../client/src/lib/envelope";
 import { loadIdentity, _resetIdentityForTests, type Identity } from "../client/src/lib/identity";
 import { envelopeKind, MAX_SKIP, SenderKeyStore } from "../client/src/lib/sender-keys";
+import { context } from "../client/src/lib/envelope";
+import { toBase64 } from "../client/src/lib/crypto";
 
 let keys: RoomKeys;
 let alice: Identity;
@@ -89,6 +91,30 @@ describe("sender keys", () => {
     const env = await a.sealLive(keys, "m1", { id: "m1" });
     await expect(b.openLive(keys, env, "p-evil")).rejects.toThrow(/no sender key/);
     await expect(b.openLive(keys, { ...env, n: MAX_SKIP + 5 }, "p-a")).rejects.toThrow(/too far/);
+  });
+
+  // 6.7 (audit S18): a key id travels in the open envelope. Carol, a member, hands
+  // Bob a chain of her own under the id of Alice's current chain — before 6.7 it
+  // replaced Alice's (one map keyed by the id) and Bob could not open Alice's
+  // messages until she rotated (500 messages / an hour).
+  it("a chain handed over under another member's key id does not replace that member's", async () => {
+    const a = new SenderKeyStore();
+    const b = new SenderKeyStore();
+    const c = new SenderKeyStore();
+    await connect(a, alice, "p-a", b, bob, "p-b");
+    await connect(c, carol, "p-c", b, bob, "p-b");
+    const first = await a.sealLive(keys, "m1", { id: "m1", text: "one" }, alice);
+    expect((await b.openLive<{ text: string }>(keys, first, "p-a")).payload.text).toBe("one");
+    // Carol seals her own wire, with Alice's key id, for Bob over her pair key.
+    const wire = { keyId: first.sk!, chain: toBase64(crypto.getRandomValues(new Uint8Array(32))), index: 0 };
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: context("sender-key", keys.room, "p-c", "p-b") }, c.pairOf("p-b")!.key, new TextEncoder().encode(JSON.stringify(wire))));
+    expect(await b.acceptSenderKey(keys, { iv: toBase64(iv), ct: toBase64(ct) }, "p-c", "p-b")).toBe(true);
+    // Alice's next message still opens for Bob…
+    const second = await a.sealLive(keys, "m2", { id: "m2", text: "two" }, alice);
+    expect((await b.openLive<{ text: string }>(keys, second, "p-a")).payload.text).toBe("two");
+    // …and Carol's chain is only hers: Alice's envelope, claimed as Carol's, does not open.
+    await expect(b.openLive(keys, second, "p-c")).rejects.toThrow();
   });
 });
 

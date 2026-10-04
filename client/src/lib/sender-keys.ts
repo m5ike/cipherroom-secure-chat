@@ -152,8 +152,15 @@ const pairInfo = (a: string, b: string) => utf8(`m5cet/pair/1|${[a, b].sort().jo
 /** Media keys are directional: sender's device key first. */
 const mediaInfo = (from: string, to: string) => utf8(`m5cet/media/1|${from}|${to}`);
 
+/** 6.7 (audit S18): a peer's chain is found by WHO sent it and its id. Key ids
+ *  travel in the open envelope, so with the id alone a member could hand us a
+ *  chain under another member's id and replace theirs — we would no longer
+ *  open that member's messages until they rotated. */
+const chainKey = (owner: string, keyId: string) => `${owner}\u0000${keyId}`;
+
 export class SenderKeyStore {
   private own: OwnSenderKey | null = null;
+  /** Peers' chains by chainKey(owner, keyId). */
   private chains = new Map<string, PeerChain>();
   private pairs = new Map<string, Pair>();
   /** Peers that already have our current chain. */
@@ -230,11 +237,13 @@ export class SenderKeyStore {
       const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(message.iv), additionalData: context("sender-key", keys.room, from, to) }, pair.key, fromBase64(message.ct));
       const wire = JSON.parse(decoder.decode(plain)) as SenderKeyWire;
       if (typeof wire.keyId !== "string" || typeof wire.chain !== "string" || !Number.isInteger(wire.index)) return false;
-      this.chains.get(wire.keyId)?.wipe();
-      this.chains.set(wire.keyId, new PeerChain(wire.keyId, from, wire));
+      const id = chainKey(from, wire.keyId);
+      this.chains.get(id)?.wipe();
+      this.chains.delete(id); // re-inserted last: the newest of this peer
+      this.chains.set(id, new PeerChain(wire.keyId, from, wire));
       // Old chains of the same peer go after a grace period (in-flight messages).
       const olderOfPeer = [...this.chains.values()].filter((c) => c.owner === from && c.keyId !== wire.keyId);
-      for (const old of olderOfPeer.slice(0, -1)) { old.wipe(); this.chains.delete(old.keyId); }
+      for (const old of olderOfPeer.slice(0, -1)) { old.wipe(); this.chains.delete(chainKey(old.owner, old.keyId)); }
       return true;
     } catch {
       return false;
@@ -278,7 +287,7 @@ export class SenderKeyStore {
   }
 
   async openLive<T>(keys: RoomKeys, envelope: Envelope, from: string): Promise<{ payload: T; signer: Signer | null }> {
-    const chain = envelope.sk ? this.chains.get(envelope.sk) : undefined;
+    const chain = envelope.sk ? this.chains.get(chainKey(from, envelope.sk)) : undefined;
     if (!chain || chain.owner !== from || typeof envelope.n !== "number" || typeof envelope.id !== "string") throw new Error("no sender key for this message");
     const key = await chain.keyFor(envelope.n);
     if (!key) throw new Error("message key already used or too far ahead");
