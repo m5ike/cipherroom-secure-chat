@@ -259,7 +259,7 @@
 
   // Shaped answers.
   const rulesOf = async () => { const r = await need("rules"); return r.data ? { inbound: listOf(r.data.inbound), outbound: listOf(r.data.outbound) } : null; };
-  const tsaOf = async () => { const r = await need("tsa"); return r.data ? listOf(r.data, "tsa", "items", "apps", "list") : null; };
+  const tsaOf = async () => { const r = await need("tsa"); return r.data ? listOf(r.data, "tsas", "tsa", "items", "apps", "list") : null; };
   const trunksOf = async () => { const r = await need("trunks"); if (r.data) return listOf(r.data, "trunks"); const s = await need("snap"); return s.data ? listOf(s.data.sip) : null; };
   const inrouteOf = async () => { const r = await need("inroute"); return r.data ? listOf(r.data, "entries", "codes", "inroute", "items") : null; };
 
@@ -1539,7 +1539,7 @@
     const [r, rules] = await Promise.all([need("tsa"), rulesOf()]);
     if (stale(gen)) return null;
     if (r.error) return failed(r.error, () => { forget("tsa"); renderTab(); }, "The applications");
-    const list = listOf(r.data, "tsa", "items", "apps", "list");
+    const list = listOf(r.data, "tsas", "tsa", "items", "apps", "list");
     const ruleById = new Map([...((rules && rules.inbound) || []).map((x) => [x.id, { ...x, dir: "inbound" }]), ...((rules && rules.outbound) || []).map((x) => [x.id, { ...x, dir: "outbound" }])]);
     const refresh = () => { forget("tsa", "overview"); renderTab(); };
     const act = async (btn, fn, ok) => busy(btn, async () => {
