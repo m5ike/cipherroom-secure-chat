@@ -5355,6 +5355,7 @@ function ChatApp() {
             onManage={() => setManageFromRoom("list")}
             onCreate={() => setManageFromRoom("new")}
             onSignIn={() => setActivePanel("connection")}
+            onWeakKey={(text) => setNotice(text)}
             multi={moduleOn("rooms") ? {
               on: true,
               selected: multiSel,

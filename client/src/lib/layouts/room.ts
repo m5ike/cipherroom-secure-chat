@@ -157,6 +157,8 @@ export function roomTree(): LNode {
         icon("eye", "h-4 w-4", { "aria-hidden": "true" }, { id: "key-show", if: "!$showKey" }),
       ]),
     ]), true),
+    // 6.7 (F-04): how hard the key is to guess, a generated one, and why a weak one was held back
+    n("slot", { id: "key-strength", name: "Key strength", slot: "keyStrength", if: "!$locked" }),
   ]);
 
   return n("panel", { id: "rd", name: "Room window", attrs: { class: "rd", "data-tab": "{$tab}" } }, [
@@ -228,6 +230,7 @@ export const ROOM_CONTRACTS: Record<"room.tabs" | "room", LayoutContract> = {
       { path: "$fields", type: "object", description: "What is typed in: .name, .room, .passphrase." },
       { path: "$showKey", type: "yes/no", description: "The key is shown." },
       { path: "$connectLabel", type: "text", description: "Connect / Connect to … / Reconnect." },
+      { path: "$keyLevel", type: "text", description: "6.7: the typed key's strength — empty, weak, fair or strong." },
     ],
     actions: [
       { name: "submit", description: "Connect (or reconnect).", event: "submit" },
@@ -245,6 +248,7 @@ export const ROOM_CONTRACTS: Record<"room.tabs" | "room", LayoutContract> = {
     slots: [
       { name: "needSignIn", description: "“Sign in first” (Server-enhanced, signed out)." },
       { name: "share", description: "Share this room (always below)." },
+      { name: "keyStrength", description: "6.7: the typed key's strength, a generated key, and why a weak key for an unknown room was held back." },
     ],
     refs: [],
   },

@@ -61,6 +61,16 @@
   align-items: center; justify-content: center; border-radius: 0.6rem; color: hsl(var(--muted-foreground));
 }
 .rd-eye:hover { background: hsl(var(--accent)); color: hsl(var(--foreground)); }
+/* 6.7 (F-04): the key's strength */
+.rd-strength { display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; font-size: 0.78rem; }
+.rd-strength__bar { width: 100%; height: 0.3rem; border-radius: 999px; background: hsl(var(--muted)); overflow: hidden; }
+.rd-strength__bar > span { display: block; height: 100%; border-radius: inherit; background: hsl(var(--destructive)); transition: width 150ms ease-out; }
+.rd-strength[data-level="fair"] .rd-strength__bar > span { background: hsl(38 92% 48%); }
+.rd-strength[data-level="strong"] .rd-strength__bar > span { background: hsl(142 60% 38%); }
+.rd-strength__label { font-weight: 600; color: hsl(var(--muted-foreground)); }
+.rd-strength__hints { margin: 0; padding-left: 1.1rem; color: hsl(var(--muted-foreground)); line-height: 1.4; }
+.rd-strength__held { padding: 0.45rem 0.6rem; border-radius: 0.6rem; border-left: 3px solid hsl(var(--destructive)); background: hsl(var(--destructive) / 0.08); line-height: 1.4; }
+.rd-strength__gen { font-size: 0.78rem; }
 
 /* ----------------------------------------------- saved connections */
 .rd-saved { display: flex; flex-direction: column; gap: 0.55rem; }
