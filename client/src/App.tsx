@@ -1746,16 +1746,46 @@ function ChatApp() {
   const setCall = (session: string, patch: Partial<PhoneCall> | ((c: PhoneCall) => Partial<PhoneCall>)) =>
     setPhoneCalls((cur) => cur.map((c) => (c.session === session ? { ...c, ...(typeof patch === "function" ? patch(c) : patch) } : c)));
 
+  /** A "phone-bridge" frame — from the room on screen, or (6.9) from a room kept in the background. */
+  function onPhoneFrame(f: Record<string, unknown>, socketUrl: string) {
+    const session = String(f.session ?? "");
+    setPhoneCalls((cur) => {
+      const prev = cur.find((c) => c.session === session);
+      const next = callFromFrame(f, prev);
+      if (!next) return cur;
+      // The media socket goes to the server whose signaling offered the call.
+      if (!prev && socketUrl) next.socketUrl = socketUrl;
+      return prev ? cur.map((c) => (c.session === next.session ? next : c)) : [...cur, next].slice(-3);
+    });
+    if (f.event === "incoming") {
+      // 6.9: a call a TSA routed into the room (by a route code) is the room's, not "for you".
+      const key = f.route === "room" ? "phone.incomingRoom" : "phone.incoming";
+      const text = tf(lang, key, { from: String(f.from || t(lang, "phone.unknown")) });
+      flashRef.current.push({ text, detail: String(f.label || f.number || ""), kind: "info" });
+      if (notificationsEnabledRef.current && typeof Notification !== "undefined" && Notification.permission === "granted") {
+        try { new Notification(text, { body: String(f.label || f.number || ""), tag: `m5cet-phone-${session}` }); } catch { /* not allowed here */ }
+      }
+    }
+    if (f.event === "ended") { phoneClientsRef.current.get(session)?.close(); phoneClientsRef.current.delete(session); }
+  }
+  const onPhoneFrameRef = useRef(onPhoneFrame);
+  onPhoneFrameRef.current = onPhoneFrame;
+  // 6.9: a room kept in the background is offered a phone call too (a call routed into it).
+  useEffect(() => hub.onPhone((e) => onPhoneFrameRef.current(e.frame, e.socketUrl)), [hub]);
+
   function phoneClient(session: string): PhoneBridgeClient | null {
     const existing = phoneClientsRef.current.get(session);
     if (existing) return existing;
     const call = phoneCalls.find((c) => c.session === session);
-    const socketUrl = socketRef.current?.url;
+    const socketUrl = call?.socketUrl || socketRef.current?.url;
     if (!call || !socketUrl) return null;
     const client = new PhoneBridgeClient(bridgeUrl(socketUrl, call.token), {
       onTranscript: (text) => setCall(session, (c) => ({ transcripts: [...c.transcripts, { text, at: Date.now(), mine: false }].slice(-50) })),
-      onEnded: (reason) => { setCall(session, { state: "ended", reason }); phoneClientsRef.current.delete(session); },
+      onEnded: (reason) => { setCall(session, { state: "ended", reason, level: 0 }); phoneClientsRef.current.delete(session); },
       onError: (message) => setNotice(message),
+      // 6.9: a routed call — how many are in its audio, the level meter.
+      onMembers: (members) => setCall(session, { members }),
+      onLevel: (level) => setCall(session, { level }),
     });
     phoneClientsRef.current.set(session, client);
     return client;
@@ -1764,12 +1794,15 @@ function ChatApp() {
   async function takePhoneCall(session: string, how: "audio" | "text") {
     const client = phoneClient(session);
     if (!client) return;
+    const call = phoneCalls.find((c) => c.session === session);
     setCall(session, { state: "connecting" });
     try {
       if (how === "audio") await client.takeAudio(); else await client.takeText();
       setCall(session, { state: how });
     } catch (err) {
       setNotice(tf(lang, "phone.failed", { reason: (err as Error).message }));
+      // 6.9: a room's routed call has no private text fallback — the card offers Join again.
+      if (call?.route === "room") { client.close(); phoneClientsRef.current.delete(session); setCall(session, { state: call.state === "text" ? "text" : "ringing" }); return; }
       // Audio refused (no microphone): text still works.
       if (how === "audio") { try { await client.takeText(); setCall(session, { state: "text" }); } catch { setCall(session, { state: "ringing" }); } }
       else setCall(session, { state: "ringing" });
@@ -3178,20 +3211,7 @@ function ChatApp() {
 
       // 6.0: a phone call offered to this member, or its end.
       if (frame.type === "phone-bridge") {
-        const f = frame as unknown as Record<string, unknown>;
-        setPhoneCalls((cur) => {
-          const prev = cur.find((c) => c.session === frame.session);
-          const next = callFromFrame(f, prev);
-          if (!next) return cur;
-          return prev ? cur.map((c) => (c.session === next.session ? next : c)) : [...cur, next].slice(-3);
-        });
-        if (frame.event === "incoming") {
-          flashRef.current.push({ text: tf(lang, "phone.incoming", { from: String(f.from || t(lang, "phone.unknown")) }), detail: String(f.label || f.number || ""), kind: "info" });
-          if (notificationsEnabledRef.current && typeof Notification !== "undefined" && Notification.permission === "granted") {
-            try { new Notification(tf(lang, "phone.incoming", { from: String(f.from || t(lang, "phone.unknown")) }), { body: String(f.label || f.number || ""), tag: `m5cet-phone-${frame.session}` }); } catch { /* not allowed here */ }
-          }
-        }
-        if (frame.event === "ended") { phoneClientsRef.current.get(frame.session)?.close(); phoneClientsRef.current.delete(frame.session); }
+        onPhoneFrame(frame as unknown as Record<string, unknown>, socketRef.current?.url ?? "");
         return;
       }
 
@@ -5072,6 +5092,9 @@ function ChatApp() {
         onMute={(s) => { const cl = phoneClientsRef.current.get(s); if (cl) { cl.muted = !cl.muted; setCall(s, { muted: cl.muted }); } }}
         onHangup={(s) => { phoneClientsRef.current.get(s)?.hangup(); phoneClientsRef.current.delete(s); setCall(s, { state: "ended", reason: "" }); }}
         onDismiss={(s) => setPhoneCalls((cur) => cur.filter((c) => c.session !== s))}
+        onJoin={(s) => void takePhoneCall(s, "audio")}
+        onIgnore={(s) => setCall(s, { state: "ignored" })}
+        onLeave={(s) => { phoneClientsRef.current.get(s)?.leave(); phoneClientsRef.current.delete(s); setCall(s, { state: "ignored", level: 0, muted: false }); }}
       />
 
       {/* 6.0: the rooms kept connected at once (layout "room.bar") */}

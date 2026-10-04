@@ -41,6 +41,8 @@ import { registerAiRoutes } from "./ai/routes";
 import { registerFunctionsRoutes } from "./functions/routes";
 import { registerTelEngineRoutes } from "./telephony/tel-routes";
 import { attachBridgeMedia, setBridgeNotifier } from "./telephony/bridge";
+// 6.9: route_audio — a call's audio into a room / to a member (registers telHooks.routeAudio).
+import { setRouteHub } from "./telephony/route-audio";
 import { accountStore, accountsDir } from "./accounts/store";
 import { storage } from "./storage/service";
 import { registerStorageRoutes } from "./storage/routes";
@@ -310,6 +312,11 @@ export async function registerRoutes(
   // numbers (the audio bridge), and the console's view of them.
   registerTelEngineRoutes(app);
   setBridgeNotifier((hash, member, payload) => signaling.sendToMembers(hash, payload, member));
+  setRouteHub({
+    members: (room) => signaling.roomMembers(room),
+    send: (room, peerId, payload) => signaling.sendToPeer(room, peerId, payload),
+    accountMembers: (accountId) => signaling.accountMembers(accountId),
+  });
   // Admin-edited layout / templates for every client (GET /api/layout).
   registerLayoutRoutes(app);
   registerClientConfigRoutes(app);

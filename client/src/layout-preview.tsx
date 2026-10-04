@@ -335,15 +335,17 @@ function View({ req }: { req: Request }) {
       </LayoutProvider>
     );
   } else if (req.layout === "phone.bridge") {
-    // 6.0: a call from a lent number.
-    const state = (["ringing", "text", "audio", "ended"].includes(v) ? v : "ringing") as PhoneCall["state"];
+    // 6.0: a call from a lent number; 6.9: a call a TSA routed into the room.
+    const routed = v.startsWith("room");
+    const state = (routed ? ({ room: "ringing", "room-audio": "audio", "room-ignored": "ignored" } as Record<string, string>)[v] ?? "ringing" : ["ringing", "text", "audio", "ended"].includes(v) ? v : "ringing") as PhoneCall["state"];
     const call: PhoneCall = {
-      session: "tb_sample", token: "", number: "+420 222 111 000", from: "+420 603 123 456", label: "Podpora", mode: "auto", state, muted: false, startedAt: Date.now(), reason: state === "ended" ? "the caller hung up" : "",
+      session: "tb_sample", token: "", number: "+420 222 111 000", from: "+420 603 123 456", label: routed ? "Recepce" : "Podpora", mode: routed ? "audio" : "auto", state, muted: false, startedAt: Date.now(), reason: state === "ended" ? "the caller hung up" : "",
       transcripts: state === "text" || state === "ended" ? [{ text: "Dobrý den, volám kvůli objednávce 1234.", at: 1, mine: false }, { text: "Hned se na to podívám.", at: 2, mine: true }] : [],
+      route: routed ? "room" : "", members: routed ? (state === "audio" ? 3 : 2) : 0, level: state === "audio" ? 3 : 0,
     };
     content = (
       <LayoutProvider config={cfg} ctx={NO_CTX}>
-        <div className="chat-surface min-h-[100dvh] p-4"><PhoneBridgePanel key={v} lang={lang} calls={[call]} onTakeAudio={() => undefined} onTakeText={() => undefined} onReply={() => undefined} onMute={() => undefined} onHangup={() => undefined} onDismiss={() => undefined} /></div>
+        <div className="chat-surface min-h-[100dvh] p-4"><PhoneBridgePanel key={v} lang={lang} calls={[call]} onTakeAudio={() => undefined} onTakeText={() => undefined} onReply={() => undefined} onMute={() => undefined} onHangup={() => undefined} onDismiss={() => undefined} onJoin={() => undefined} onIgnore={() => undefined} onLeave={() => undefined} /></div>
       </LayoutProvider>
     );
   } else if (req.layout === "start") {

@@ -293,4 +293,12 @@
 .pb-btn--go { background: hsl(142 70% 38%); border-color: transparent; color: white; }
 .pb-btn--go:hover { background: hsl(142 70% 33%); }
 .pb-btn--stop { color: hsl(0 80% 60%); border-color: hsl(0 80% 60% / .5); }
+/* 6.9: a call routed by a route code — how many are in, the level meter, the slim notice when not joined */
+.pb-members { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: hsl(var(--muted-foreground)); white-space: nowrap; }
+.pb-meter { display: flex; align-items: flex-end; gap: 3px; height: 16px; }
+.pb-meter__bar { width: 6px; border-radius: 2px; background: hsl(var(--muted)); transition: background .12s; }
+.pb-meter__bar:nth-child(1) { height: 30%; } .pb-meter__bar:nth-child(2) { height: 45%; } .pb-meter__bar:nth-child(3) { height: 60%; } .pb-meter__bar:nth-child(4) { height: 80%; } .pb-meter__bar:nth-child(5) { height: 100%; }
+.pb-meter__bar.is-on { background: hsl(142 70% 45%); }
+.pb-card--ignored { padding: 8px 12px; gap: 6px; opacity: .92; }
+.pb-card--ignored .pb-head__icon { animation: none; }
 @media (prefers-reduced-motion: reduce) { .pb-card, .pb-card--ringing .pb-head__icon { animation: none; } }

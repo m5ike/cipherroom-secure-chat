@@ -1022,6 +1022,33 @@ export class SignalingHub {
     return sent;
   }
 
+  /**
+   * 6.9 (route_audio): the members of a room open on this instance, by the
+   * room's id as members joined it — the blind id ("r3.…") of a v3 room, so
+   * the caller of this never needs, nor gets, the room's name. Members on
+   * other instances and held (away) members are not listed: they cannot take
+   * a call's audio here.
+   */
+  roomMembers(room: string): Array<{ peerId: string; name: string; accountId?: string }> {
+    return this.members(room).filter((p) => !p.closed).map((p) => ({ peerId: p.id, name: p.name, ...(p.accountId ? { accountId: p.accountId } : {}) }));
+  }
+
+  /** 6.9: a frame of the server's own to one member of a room (by peer id). */
+  sendToPeer(room: string, peerId: string, payload: Record<string, unknown>): boolean {
+    const peer = this.rooms.get(room)?.get(peerId);
+    return peer ? this.send(peer.socket, payload, peer) : false;
+  }
+
+  /** 6.9: where a signed-in account is connected on this instance (every room it is in). */
+  accountMembers(accountId: string): Array<{ room: string; peerId: string; name: string }> {
+    const want = accountId.toLowerCase();
+    const out: Array<{ room: string; peerId: string; name: string }> = [];
+    for (const [room, members] of this.rooms) {
+      for (const p of members.values()) if (!p.closed && p.accountId && p.accountId.toLowerCase() === want) out.push({ room, peerId: p.id, name: p.name });
+    }
+    return out;
+  }
+
   /** Disconnects everyone in a room (or the members that match). Returns how many. */
   disconnectRoom(hash: string, reason: string, target?: MemberTarget): number {
     const room = this.roomOfHash(hash);
