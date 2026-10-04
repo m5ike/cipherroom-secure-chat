@@ -207,6 +207,18 @@ public final class People {
         a.refresh();
     }
 
+    /**
+     * 6.10 (G-20): the username of the person whose detail is open now, or
+     * null — profile.public looks up only them (the design's argument is
+     * computed: "{$form.person.username}"), never a name a design built from data.
+     */
+    public String shownUsername() {
+        if (shown == null || !"users.person".equals(parts.sheetScreen())) return null;
+        JSONObject p = person(app().rooms.activeSession(), shown);
+        String u = p == null ? "" : p.optString("username", "");
+        return u.isEmpty() ? null : u;
+    }
+
     /* ----------------------------------------------------------- actions */
 
     /** The design's people.* actions. */

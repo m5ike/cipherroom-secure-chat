@@ -120,20 +120,27 @@ public final class Settings {
         if (dflt == null) return v;
         if (v == null || v == JSONObject.NULL) return dflt;
         if (dflt instanceof Boolean) return v instanceof Boolean ? v : dflt;
-        if (dflt instanceof Double) return v instanceof Number ? ((Number) v).doubleValue() : dflt;
-        return v instanceof String ? v : dflt;
+        // 6.10 (G-20): a value stored before the rules (a design's text in notify.quietFrom…) reads as the default.
+        if (dflt instanceof Double) return v instanceof Number && SettingSchema.valid(key, ((Number) v).doubleValue()) ? ((Number) v).doubleValue() : dflt;
+        return v instanceof String && SettingSchema.valid(key, v) ? v : dflt;
     }
 
     public boolean bool(String key) { return Boolean.TRUE.equals(get(key)); }
     public double num(String key) { Object v = get(key); return v instanceof Number ? ((Number) v).doubleValue() : 0; }
     public String str(String key) { Object v = get(key); return v == null ? "" : String.valueOf(v); }
 
-    /** Sets a value; a string is converted to the key's type ("true", "1.2"). Unknown keys are refused. */
+    /**
+     * Sets a value; a string is converted to the key's type ("true", "1.2").
+     * Unknown keys are refused, and so is a value outside the key's rule
+     * (6.10, G-20: core/SettingSchema). Neither the key of an unknown setting
+     * nor a refused value is logged: a design may have built them from data,
+     * and the log reaches the console (the "status" command).
+     */
     public boolean set(String key, Object value) {
         Object dflt = DEFAULTS.get(key);
-        if (dflt == null) { Log.w("settings", "unknown setting " + key); return false; }
+        if (dflt == null) { Log.w("settings", "an unknown setting was refused"); return false; }
         Object v = coerce(dflt, value);
-        if (v == null) return false;
+        if (v == null || !SettingSchema.valid(key, v)) { Log.w("settings", "a value outside the rule of " + key + " was refused"); return false; }
         synchronized (this) {
             put(data(), key, v);
             vault.putJson(Vault.Tier.SYS, "settings", data());
@@ -144,7 +151,8 @@ public final class Settings {
 
     public boolean toggle(String key) { return DEFAULTS.get(key) instanceof Boolean && set(key, !bool(key)); }
 
-    static Object coerce(Object dflt, Object value) {
+    /** A value as the key's type (the default's): "true" → true, "1.2" → 1.2; null when it is not one. */
+    public static Object coerce(Object dflt, Object value) {
         if (dflt instanceof Boolean) {
             if (value instanceof Boolean) return value;
             String s = String.valueOf(value).trim();

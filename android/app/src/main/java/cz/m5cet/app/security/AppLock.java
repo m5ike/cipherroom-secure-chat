@@ -46,7 +46,9 @@ public final class AppLock {
     /**
      * 6.7 (audit S11): also locked once the app has been in the background
      * longer than the auto-lock allows — not only after it comes back to the
-     * foreground — so notifications (Rooms → Notify) go neutral in time.
+     * foreground — so new notifications (Rooms → Notify) are neutral in time.
+     * There is no event at that moment: those posted before become neutral by
+     * Conversations' lock timer and alarm (M5.whenLocked → Notify.neutralizeAll, 6.10 G-22).
      */
     public boolean isLocked() { return uiLocked || !app.vault.unlocked() || autolockDue(backgroundSince, System.currentTimeMillis(), autolockSeconds()); }
 

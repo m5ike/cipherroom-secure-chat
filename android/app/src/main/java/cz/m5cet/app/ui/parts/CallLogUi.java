@@ -79,7 +79,7 @@ public final class CallLogUi {
         if (!listening) {
             listening = true;
             // Locked or wiped: what was gathered does not stay in memory.
-            app.addListener(what -> { if ("locked".equals(what) || "wiped".equals(what)) Io.main(() -> { all = new ArrayList<>(); generation++; loading = false; fresh = false; }); });
+            app.addListener(what -> { if ("locked".equals(what) || "wiped".equals(what)) forget(); });
         }
         loading = true;
         int g = ++generation;
@@ -96,6 +96,15 @@ public final class CallLogUi {
                 if ("log".equals(a.screen())) a.refresh();
             });
         });
+    }
+
+    /**
+     * Locked or wiped: what was gathered (calls, every room's messages) does
+     * not stay in memory — 6.10 (G-24): also when the auto-lock time passes in
+     * the background (M5.whenLocked), not only at a lock with an event. Any thread.
+     */
+    public static void forget() {
+        Io.main(() -> { all = new ArrayList<>(); generation++; loading = false; fresh = false; });
     }
 
     /** $log: the entries of the filter and search, newest first (at most SHOWN), each with its day. */
@@ -201,10 +210,11 @@ public final class CallLogUi {
         ActivityLog.Item it = find(id);
         if (it == null) return;
         if (!it.saved || a.app().rooms.savedRoom(it.roomKey) == null) { a.flash("", t(a, "log.gone"), "warn"); return; }
-        new AlertDialog.Builder(a).setMessage(t(a, "log.callAsk").replace("{room}", it.room))
+        // 6.10 (G-24): the History's dialogs take the app's FLAG_SECURE (a dialog is a window of its own).
+        SecureDialog.show(a, new AlertDialog.Builder(a).setMessage(t(a, "log.callAsk").replace("{room}", it.room))
             .setPositiveButton(t(a, "log.call.audio"), (d, w) -> dial(a, it.roomKey, false))
             .setNeutralButton(t(a, "log.call.video"), (d, w) -> dial(a, it.roomKey, true))
-            .setNegativeButton(t(a, "nav.close"), null).show();
+            .setNegativeButton(t(a, "nav.close"), null));
     }
 
     private static void dial(MainActivity a, String roomKey, boolean video) {
@@ -216,12 +226,12 @@ public final class CallLogUi {
     /** Deletes the app's call history (asked first). */
     static void clear(MainActivity a) {
         M5 app = a.app();
-        new AlertDialog.Builder(a).setMessage(t(a, "log.clearAsk"))
+        SecureDialog.show(a, new AlertDialog.Builder(a).setMessage(t(a, "log.clearAsk"))
             .setPositiveButton(t(a, "log.clear"), (d, w) -> Io.bg(() -> {
                 CallHistory.clear(app);
                 Io.main(() -> { a.flash("", t(a, "log.cleared"), "success"); load(a); });
             }))
-            .setNegativeButton(t(a, "nav.close"), null).show();
+            .setNegativeButton(t(a, "nav.close"), null));
     }
 
     /** Removes the app's calls from the phone's call log (asked first; needs the permission). */
@@ -231,9 +241,9 @@ public final class CallLogUi {
             int n = CallLogBridge.eraseSystem(app, CallHistory.load(app));
             Io.main(() -> a.flash("", n < 0 ? t(a, "calllog.eraseNeedsPerm") : t(a, "calllog.erased").replace("{n}", String.valueOf(n)), n < 0 ? "warn" : "success"));
         });
-        new AlertDialog.Builder(a).setMessage(t(a, "calllog.eraseAsk"))
+        SecureDialog.show(a, new AlertDialog.Builder(a).setMessage(t(a, "calllog.eraseAsk"))
             .setPositiveButton(t(a, "calllog.erase"), (d, w) -> a.withPermission(Manifest.permission.WRITE_CALL_LOG, erase, () -> a.flash("", t(a, "calllog.eraseNeedsPerm"), "warn")))
-            .setNegativeButton(t(a, "nav.close"), null).show();
+            .setNegativeButton(t(a, "nav.close"), null));
     }
 
     /* ---------------------------------------------------------- settings */

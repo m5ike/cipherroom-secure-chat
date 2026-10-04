@@ -15,7 +15,9 @@ import android.telecom.PhoneAccountHandle;
 import android.telecom.TelecomManager;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import cz.m5cet.app.M5;
 import cz.m5cet.app.R;
@@ -169,15 +171,53 @@ public final class CallLogBridge {
     public static void fixLegacy(M5 app) {
         if (legacyFixed || !granted(app)) return;
         legacyFixed = true;
+        String appName = app.design().appName();
         try {
             ContentValues v = new ContentValues();
             v.put(CallLog.Calls.NUMBER, "");
             v.put(CallLog.Calls.NUMBER_PRESENTATION, CallLog.Calls.PRESENTATION_UNKNOWN);
-            v.put(CallLog.Calls.CACHED_NAME, app.design().appName());
+            v.put(CallLog.Calls.CACHED_NAME, appName);
+            put(v, clearedCache());
             int n = app.getContentResolver().update(CallLog.Calls.CONTENT_URI, v, LEGACY, null);
             if (n > 0) Log.i("calllog", n + " old entries no longer carry a number");
         } catch (RuntimeException e) {
             Log.w("calllog", "old entries: " + e.getMessage());
+        }
+        // 6.10 (G-24): what a phone app looked up for the old "m5cet:<room>" numbers stays in the cached columns —
+        // the formatted number, the keypad digits of the room's name, a matched contact. Rows fixed by 6.8 and the
+        // app's own rows lose it (their name — the chosen entry name — stays).
+        try {
+            ContentValues c = new ContentValues();
+            put(c, clearedCache());
+            int n = app.getContentResolver().update(CallLog.Calls.CONTENT_URI, c, OURS, new String[]{ component(app).flattenToString(), appName });
+            if (n > 0) Log.i("calllog", n + " entries lost what a phone app had looked up for them");
+        } catch (RuntimeException e) {
+            Log.w("calllog", "cached columns: " + e.getMessage());
+        }
+    }
+
+    /** 6.10 (G-24): the app's rows — its calling account's, and the old ones 6.8 fixed (no number, the app's name); args: the component, the app's name. */
+    static final String OURS = CallLog.Calls.PHONE_ACCOUNT_COMPONENT_NAME + " = ? OR " + LEGACY
+        + " OR (" + CallLog.Calls.NUMBER + " = '' AND " + CallLog.Calls.CACHED_NAME + " = ?)";
+
+    /**
+     * 6.10 (G-24): the columns a phone app fills in from its own lookup of a
+     * number — emptied (the photo id is 0: the provider keeps it NOT NULL).
+     */
+    static Map<String, Object> clearedCache() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        for (String c : new String[]{ CallLog.Calls.CACHED_FORMATTED_NUMBER, CallLog.Calls.CACHED_NORMALIZED_NUMBER, CallLog.Calls.CACHED_MATCHED_NUMBER,
+            CallLog.Calls.CACHED_LOOKUP_URI, CallLog.Calls.CACHED_NUMBER_TYPE, CallLog.Calls.CACHED_NUMBER_LABEL, CallLog.Calls.CACHED_PHOTO_URI,
+            CallLog.Calls.GEOCODED_LOCATION }) m.put(c, null);
+        m.put(CallLog.Calls.CACHED_PHOTO_ID, 0L);
+        return m;
+    }
+
+    private static void put(ContentValues v, Map<String, Object> columns) {
+        for (Map.Entry<String, Object> e : columns.entrySet()) {
+            if (e.getValue() == null) v.putNull(e.getKey());
+            else if (e.getValue() instanceof Long) v.put(e.getKey(), (Long) e.getValue());
+            else v.put(e.getKey(), String.valueOf(e.getValue()));
         }
     }
 

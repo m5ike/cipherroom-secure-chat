@@ -61,7 +61,7 @@ public final class Sheets {
             @Override public Design design() { return base.design(); }
             @Override public boolean dark() { return base.dark(); }
             @Override public Expr.Translate tr() { return base.tr(); }
-            @Override public void action(String action, Object arg, Expr.Scope scope, View source) { close.run(); base.action(action, arg, scope, source); }
+            @Override public void action(String action, String raw, Object arg, Expr.Scope scope, View source) { close.run(); base.action(action, raw, arg, scope, source); }
             @Override public View slot(String name, Renderer.Bound bound) { return base.slot(name, bound); }
             @Override public Map<String, Object> form() { return base.form(); }
             @Override public Object setting(String key) { return base.setting(key); }

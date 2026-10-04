@@ -28,9 +28,12 @@ import cz.m5cet.app.ui.MainActivity;
  * class). Whether and how much it shows follows the user's notification
  * settings like a message: the "Calls" switch, quiet hours, the privacy level
  * (NotifyPrefs) — the person from "sender" on, the room from "room" on; while
- * the app is locked only the app's name and "Call", and the phone's lock
- * screen always gets that neutral version. The room on screen does not ring
- * (its people show who is in the call).
+ * the app is locked only the app's name and "Call". A ring or a missed call
+ * posted before the app locked becomes that neutral version when it locks
+ * (Notify.neutralizeAll, 6.10 G-22). The phone's lock screen shows the
+ * neutral public version only where the user hides sensitive content there;
+ * with "show all content" it shows the notification as it is at that moment.
+ * The room on screen does not ring (its people show who is in the call).
  *
  * Join opens the room and joins the call once the app is unlocked — only from
  * this run's own notification (a token another app cannot know), and only
@@ -59,12 +62,12 @@ public final class CallRing {
         return NotifyTemplate.rank(NotifyPrefs.get(app).localPrivacy("call", false));
     }
 
+    /** The tap: the room (with this process's tag, 6.10 G-23 — Notify.openRoom). */
     private static PendingIntent open(M5 app, String roomKey, int code) {
-        Intent i = new Intent(app, MainActivity.class).setAction(Intent.ACTION_VIEW).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK).putExtra("room", roomKey);
-        return PendingIntent.getActivity(app, code, i, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        return PendingIntent.getActivity(app, code, Notify.openRoom(app, roomKey), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
-    /** What the phone's lock screen shows of a call notification: the app's name and "Call". */
+    /** What the phone's lock screen shows of a call notification where it hides sensitive content: the app's name and "Call". */
     private static Notification neutral(M5 app, String channel, String text) {
         return new Notification.Builder(app, channel).setSmallIcon(R.drawable.ic_stat_m5).setContentTitle(app.design().appName()).setContentText(text).build();
     }
@@ -89,6 +92,7 @@ public final class CallRing {
             .addAction(new Notification.Action.Builder(Icon.createWithResource(app, R.drawable.ic_stat_m5), app.t("ring.decline"), declinePi).build())
             .addAction(new Notification.Action.Builder(Icon.createWithResource(app, R.drawable.ic_stat_m5), app.t("ring.join"), joinPi).build());
         if (level >= 1) b.setSubText(kind);
+        b.addExtras(Notify.neutralMark("ring.call", app.lock.isLocked()));
         NotificationManager nm = app.getSystemService(NotificationManager.class);
         if (nm != null) nm.notify(id, b.build());
     }
@@ -112,6 +116,7 @@ public final class CallRing {
             .setContentIntent(open(app, roomKey, id + 2))
             .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(app, Notify.CH_QUIET, app.t("ring.missed")));
         if (level >= 1 && video) b.setSubText(app.t("ring.video"));
+        b.addExtras(Notify.neutralMark("ring.missed", app.lock.isLocked()));
         NotificationManager nm = app.getSystemService(NotificationManager.class);
         if (nm != null) nm.notify(id, b.build());
     }

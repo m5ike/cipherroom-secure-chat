@@ -178,6 +178,13 @@
         <receiver android:name=".telecom.ReplyReceiver" android:exported="false" />
         <!-- 6.8 conversations: the lock check of a frozen or ended process (shortcut names go neutral). -->
         <receiver android:name=".telecom.Conversations$Alarm" android:exported="false" />
+        <!-- 6.10 (G-24): after the phone restarts, shortcut names the last run left go neutral (the alarm does not
+             outlive a restart). Only the system sends BOOT_COMPLETED; the receiver does nothing when they were neutral. -->
+        <receiver android:name=".telecom.Conversations$Boot" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
         <!-- 6.8: Decline on a call's ring (telecom/CallRing). -->
         <receiver android:name=".telecom.CallRing$Receiver" android:exported="false" />
         <!-- 6.8: the service of the calling account the call log entries name; it refuses every

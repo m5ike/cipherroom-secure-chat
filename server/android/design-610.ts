@@ -6,8 +6,9 @@ import type { ElementDef, ANode, MenuItem, ScreenDef } from "./design";
 import type { DesignArea } from "./design-67";
 import { AREA as CHAT } from "./design-610-chat";
 import { AREA as NFC } from "./design-610-nfc";
+import { AREA as SECURITY } from "./design-610-security";
 
-const AREAS: DesignArea[] = [CHAT, NFC];
+const AREAS: DesignArea[] = [CHAT, NFC, SECURITY];
 
 export const ELEMENTS_610: ElementDef[] = AREAS.flatMap((a) => a.elements ?? []);
 export const ACTIONS_610: Array<{ action: string; arg: string; help: string }> = AREAS.flatMap((a) => a.actions ?? []);
