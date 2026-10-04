@@ -236,6 +236,8 @@ public final class Renderer {
                     break;
                 }
                 case "slot": view = r.host.slot(s("name"), this); break;
+                // 6.7: a row that slides sideways to its menus' actions (ui/look/SwipeRow); the children are the row.
+                case "swipe": { cz.m5cet.app.ui.look.SwipeRow sw = new cz.m5cet.app.ui.look.SwipeRow(c); view = sw; box = sw.content(); break; }
                 default: view = new View(c);
             }
             if (view == null) view = new View(c);
@@ -479,10 +481,11 @@ public final class Renderer {
             Expr.Scope sc = scope == null ? n -> null : scope;
             List<String[]> opts = options(sc);
             if (opts.isEmpty()) return;
-            android.widget.PopupMenu pm = new android.widget.PopupMenu(r.ctx, anchor);
-            for (int i = 0; i < opts.size(); i++) pm.getMenu().add(0, i, i, opts.get(i)[1]);
-            pm.setOnMenuItemClickListener(mi -> { commit(opts.get(mi.getItemId())[0], anchor); return true; });
-            pm.show();
+            // 6.7 (ui/look/Menus): the choices in the design's colours, the current one checked.
+            String current = Expr.toText(boundValue());
+            List<cz.m5cet.app.ui.look.Menus.Item> items = new ArrayList<>();
+            for (String[] o : opts) items.add(new cz.m5cet.app.ui.look.Menus.Item("", o[1], false, o[0].equals(current), () -> commit(o[0], anchor)));
+            cz.m5cet.app.ui.look.Menus.show(anchor, items);
         }
 
         private double num(String key, double d) {
@@ -665,6 +668,8 @@ public final class Renderer {
                         dr.setBounds(0, 0, px, px);
                         t.setCompoundDrawablesRelative(dr, null, null, null);
                         t.setCompoundDrawablePadding(r.dp(el.equals("badge") ? 3 : 8));
+                        // 6.7: in a wide button the icon stays beside its label (ui/look/Buttons).
+                        if (el.equals("button")) cz.m5cet.app.ui.look.Buttons.hug(t);
                     } else {
                         t.setCompoundDrawablesRelative(null, null, null, null);
                     }
@@ -842,6 +847,7 @@ public final class Renderer {
                     if (view instanceof Slot) ((Slot) view).bindSlot(sc);
                     break;
                 }
+                case "swipe": ((cz.m5cet.app.ui.look.SwipeRow) view).bind(node.optJSONObject("props"), sc, tr, r.host.design(), r::color, (a, arg, v) -> r.host.action(a, arg, sc, v)); break;
                 default: break;
             }
             if (!animated) {

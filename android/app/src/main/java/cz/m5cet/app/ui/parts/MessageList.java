@@ -11,7 +11,6 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
-import android.widget.PopupMenu;
 import android.widget.TextView;
 
 import androidx.recyclerview.widget.LinearLayoutManager;
@@ -398,32 +397,21 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
 
     void menu(View anchor, ChatMessage m) {
         if ("sys".equals(m.kind) || m.vanished) return;
-        PopupMenu pm = new PopupMenu(getContext(), anchor);
+        // 6.7 (ui/look/Menus): in the design's colours, each item with its icon.
         cz.m5cet.app.M5 app = a.app();
-        pm.getMenu().add(0, 1, 1, app.t("notify.reply"));
-        if (!m.visibleText().isEmpty() && (m.sealed == null || m.sealPlain != null)) pm.getMenu().add(0, 2, 2, app.t("msg.copy"));
-        pm.getMenu().add(0, 3, 3, app.t("msg.forward"));
-        if (Kinds.position(m) != null) pm.getMenu().add(0, 4, 4, app.t("msg.map"));
-        if (m.sourceAudio != null) pm.getMenu().add(0, 5, 5, app.t("msg.source"));
-        if (m.fileName != null && (m.fileDataUrl != null || m.filePath != null)) { pm.getMenu().add(0, 6, 6, app.t("file.open")); pm.getMenu().add(0, 7, 7, app.t("file.save")); pm.getMenu().add(0, 10, 7, app.t("file.share")); }
-        if (!m.visibleText().isEmpty() && m.sealed == null) pm.getMenu().add(0, 8, 8, app.t("msg.speak"));
-        pm.getMenu().add(0, 9, 9, app.t("msg.info"));
-        pm.setOnMenuItemClickListener(mi -> {
-            switch (mi.getItemId()) {
-                case 1: parts.replyTo(m.id); break;
-                case 2: parts.copyMessage(m.id); break;
-                case 3: parts.forward(m); break;
-                case 4: parts.openMap(m); break;
-                case 5: parts.playSource(m); break;
-                case 6: parts.openFile(m); break;
-                case 7: parts.saveFile(m); break;
-                case 10: parts.shareFile(m); break;
-                case 8: app.voice.say(m.visibleText()); break;
-                case 9: parts.messageInfo(m); break;
-                default: break;
-            }
-            return true;
-        });
-        pm.show();
+        List<cz.m5cet.app.ui.look.Menus.Item> items = new ArrayList<>();
+        items.add(new cz.m5cet.app.ui.look.Menus.Item("reply", app.t("notify.reply"), () -> parts.replyTo(m.id)));
+        if (!m.visibleText().isEmpty() && (m.sealed == null || m.sealPlain != null)) items.add(new cz.m5cet.app.ui.look.Menus.Item("copy", app.t("msg.copy"), () -> parts.copyMessage(m.id)));
+        items.add(new cz.m5cet.app.ui.look.Menus.Item("forward", app.t("msg.forward"), () -> parts.forward(m)));
+        if (Kinds.position(m) != null) items.add(new cz.m5cet.app.ui.look.Menus.Item("map", app.t("msg.map"), () -> parts.openMap(m)));
+        if (m.sourceAudio != null) items.add(new cz.m5cet.app.ui.look.Menus.Item("audio-lines", app.t("msg.source"), () -> parts.playSource(m)));
+        if (m.fileName != null && (m.fileDataUrl != null || m.filePath != null)) {
+            items.add(new cz.m5cet.app.ui.look.Menus.Item("folder-open", app.t("file.open"), () -> parts.openFile(m)));
+            items.add(new cz.m5cet.app.ui.look.Menus.Item("download", app.t("file.save"), () -> parts.saveFile(m)));
+            items.add(new cz.m5cet.app.ui.look.Menus.Item("share-2", app.t("file.share"), () -> parts.shareFile(m)));
+        }
+        if (!m.visibleText().isEmpty() && m.sealed == null) items.add(new cz.m5cet.app.ui.look.Menus.Item("volume-2", app.t("msg.speak"), () -> app.voice.say(m.visibleText())));
+        items.add(new cz.m5cet.app.ui.look.Menus.Item("info", app.t("msg.info"), () -> parts.messageInfo(m)));
+        cz.m5cet.app.ui.look.Menus.show(anchor, items);
     }
 }

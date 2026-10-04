@@ -265,6 +265,88 @@ public final class Rooms {
         emit();
     }
 
+    /* ------------------------------------------- 6.7: clone and edit */
+
+    /** A saved room by its key (a copy of what is stored), or null. */
+    public synchronized Saved savedRoom(String key) {
+        Saved s = key == null ? null : saved.get(key);
+        try { return s == null ? null : Saved.of(s.json()); } catch (JSONException e) { return null; }
+    }
+
+    /**
+     * A copy of a saved room under the next free name ("Team" → "Team 2",
+     * "Team 2" → "Team 3"): the same passphrase and nickname, not selected,
+     * not connected. Its key, or null for an unknown room.
+     */
+    public String copy(String key) {
+        String k;
+        synchronized (this) {
+            Saved s = saved.get(key);
+            if (s == null) return null;
+            Saved c = new Saved();
+            c.label = cloneName(s.label == null || s.label.isEmpty() ? s.room : s.label, saved.keySet());
+            c.room = RoomKeys.normalizeRoom(c.label);
+            c.key = c.room;
+            c.passphrase = s.passphrase;
+            c.userName = s.userName;
+            c.selected = false;
+            c.lastActive = System.currentTimeMillis();
+            saved.put(c.key, c);
+            persist();
+            k = c.key;
+        }
+        emit();
+        return k;
+    }
+
+    /** The name of a copy: the label with the next number no saved room has (a room's name is its key). */
+    public static String cloneName(String label, java.util.Set<String> keys) {
+        String base = label == null ? "" : label.trim();
+        int next = 2;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^(.*\\S)\\s+(\\d{1,4})$").matcher(base);
+        if (m.matches()) { base = m.group(1); next = Integer.parseInt(m.group(2)) + 1; }
+        if (base.isEmpty()) base = "room";
+        // A room's key keeps 48 characters: room for the number.
+        if (base.length() > 40) base = base.substring(0, 40).trim();
+        for (int i = next; i < next + 10000; i++) {
+            String name = base + " " + i;
+            if (!keys.contains(RoomKeys.normalizeRoom(name))) return name;
+        }
+        return base + " " + Long.toString(System.currentTimeMillis() % 100000);
+    }
+
+    /**
+     * A saved room changed (its Edit): name, passphrase, nickname. A new name
+     * is a new room — it takes the old one's place in the list (the old
+     * one's history stays on the phone, as when it is joined again). A
+     * connected room reconnects with what changed. The key it has now.
+     */
+    public String update(String oldKey, String roomName, String passphrase, String userName) {
+        String room = RoomKeys.normalizeRoom(roomName);
+        String label = roomName.trim().isEmpty() ? room : roomName.trim();
+        Saved old;
+        synchronized (this) { old = saved.get(oldKey); }
+        if (old == null) return null;
+        boolean changed = !room.equals(oldKey) || !label.equals(old.label) || !passphrase.equals(old.passphrase) || !userName.equals(old.userName);
+        boolean connected = sessions.containsKey(oldKey), wasActive = oldKey.equals(active);
+        if (changed && connected) leave(oldKey);
+        synchronized (this) {
+            if (!room.equals(oldKey)) saved.remove(oldKey);
+            Saved s = saved.get(room);
+            if (s == null) { s = new Saved(); s.key = room; saved.put(room, s); }
+            s.room = room;
+            s.label = label;
+            s.passphrase = passphrase;
+            s.userName = userName;
+            s.selected = old.selected || connected;
+            s.lastActive = Math.max(old.lastActive, s.lastActive);
+            persist();
+        }
+        if (changed && connected) { connect(room); if (wasActive) switchTo(room); }
+        emit();
+        return room;
+    }
+
     public void disconnectAll() {
         for (String k : new ArrayList<>(sessions.keySet())) {
             RoomSession r = sessions.remove(k);

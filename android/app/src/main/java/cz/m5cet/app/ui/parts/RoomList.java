@@ -21,11 +21,14 @@ import cz.m5cet.app.ui.Expr;
 import cz.m5cet.app.ui.MainActivity;
 import cz.m5cet.app.ui.Renderer;
 import cz.m5cet.app.ui.Ui;
+import cz.m5cet.app.ui.look.SwipeRow;
 
 /**
  * The saved rooms, several of which can be connected at once: each row is
  * the design's "rooms.item" tree (checkbox to select, users badge, unread
- * badge), bound — not rebuilt — on every change.
+ * badge), bound — not rebuilt — on every change. 6.7: a row slides
+ * sideways to its actions (ui/look/SwipeRow) — the design's own "swipe"
+ * element, or the rooms' default one around an older design's row.
  */
 final class RoomList extends FrameLayout implements Renderer.Slot {
     private final MainActivity a;
@@ -61,20 +64,30 @@ final class RoomList extends FrameLayout implements Renderer.Slot {
 
     private final class Holder extends RecyclerView.ViewHolder {
         final Renderer.Bound bound;
-        Holder(Renderer.Bound b) { super(b.root()); bound = b; }
+        /** 6.7: the swipe RoomList adds itself when the design's rooms.item has none (a design saved before 6.7). */
+        final SwipeRow swipe;
+        Holder(Renderer.Bound b, SwipeRow swipe) { super(swipe != null ? swipe : b.root()); bound = b; this.swipe = swipe; }
     }
 
     private final class Adapter extends RecyclerView.Adapter<Holder> {
         @Override public Holder onCreateViewHolder(ViewGroup parent, int type) {
             JSONObject tree = a.app().design().screen("rooms.item");
             Renderer.Bound b = a.renderer().build(tree);
-            b.root().setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-            return new Holder(b);
+            // 6.7: a room's row slides — right: Delete, left: Clone, Edit (the menus room-swipe-right / -left).
+            SwipeRow swipe = null;
+            if (tree != null && !"swipe".equals(tree.optString("el"))) {
+                swipe = new SwipeRow(a);
+                swipe.content().addView(b.root(), new ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            }
+            View root = swipe != null ? swipe : b.root();
+            root.setLayoutParams(new RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+            return new Holder(b, swipe);
         }
         @Override public void onBindViewHolder(Holder h, int i) {
             Map<String, Object> s = new HashMap<>();
             s.put("room", rooms.optJSONObject(i));
             h.bound.bind(s::get);
+            if (h.swipe != null) h.swipe.bind(SwipeRow.roomDefaults(), s::get, a.tr(), a.app().design(), (v, d) -> Ui.color(a, v, d), (act, arg, v) -> a.action(act, arg, s::get, v));
         }
         @Override public int getItemCount() { return rooms.length(); }
     }

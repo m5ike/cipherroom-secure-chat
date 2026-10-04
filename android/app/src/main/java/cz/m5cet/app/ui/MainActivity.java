@@ -16,7 +16,6 @@ import android.view.ViewGroup;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
-import android.widget.PopupMenu;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -676,24 +675,19 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     public void showMenu(String menuId, View anchor) {
         JSONArray items = app.design().menus.get(menuId);
         if (items == null || anchor == null) return;
-        PopupMenu pm = new PopupMenu(this, anchor);
         Expr.Scope sc = scopeFor(screen);
+        // 6.7 (ui/look/Menus): the menu in the design's colours, every item with its icon.
+        java.util.List<cz.m5cet.app.ui.look.Menus.Item> list = new java.util.ArrayList<>();
         for (int i = 0; i < items.length(); i++) {
             JSONObject it = items.optJSONObject(i);
             if (it == null) continue;
             String cond = it.optString("if", "");
             if (!cond.isEmpty() && !Expr.truthy(Expr.eval(cond, sc, tr()))) continue;
-            android.view.MenuItem mi = pm.getMenu().add(0, i, i, Expr.render(it.optString("label"), sc, tr()));
-            mi.setIcon(Icons.drawable(this, it.optString("icon"), Ui.dp(this, 20), Ui.color(this, "@onSurface")));
+            String act = it.optString("action"), a = it.optString("arg", null);
+            list.add(new cz.m5cet.app.ui.look.Menus.Item(it.optString("icon"), Expr.render(it.optString("label"), sc, tr()), cz.m5cet.app.ui.look.Menus.dangerous(act), false,
+                () -> action(act, a == null ? null : Expr.value(a, sc, tr()), sc, anchor)));
         }
-        pm.setForceShowIcon(true);
-        pm.setOnMenuItemClickListener(mi -> {
-            JSONObject it = items.optJSONObject(mi.getItemId());
-            String a = it.optString("arg", null);
-            action(it.optString("action"), a == null ? null : Expr.value(a, sc, tr()), sc, anchor);
-            return true;
-        });
-        pm.show();
+        cz.m5cet.app.ui.look.Menus.show(anchor, list);
     }
 
     public void askPermissions(String... perms) { requestPermissions(perms, 2); }

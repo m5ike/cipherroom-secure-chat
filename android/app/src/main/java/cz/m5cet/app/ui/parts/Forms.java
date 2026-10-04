@@ -58,6 +58,18 @@ public final class Forms {
         return b;
     }
 
+    /** 6.7: the button with its icon before the label (in the label's colour). */
+    static TextView button(MainActivity a, String text, String icon) {
+        TextView b = button(a, text);
+        int px = Ui.dp(a, 20);
+        android.graphics.drawable.Drawable d = Icons.drawable(a, icon, px, Ui.color(a, "@onPrimary", Color.WHITE));
+        d.setBounds(0, 0, px, px);
+        b.setCompoundDrawablesRelative(d, null, null, null);
+        b.setCompoundDrawablePadding(Ui.dp(a, 10));
+        cz.m5cet.app.ui.look.Buttons.hug(b);
+        return b;
+    }
+
     static LinearLayout.LayoutParams gap(MainActivity a) {
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         lp.setMargins(0, Ui.dp(a, 10), 0, 0);
@@ -252,17 +264,21 @@ public final class Forms {
             super(a);
             setOrientation(VERTICAL);
             M5 app = a.app();
-            EditText name = field(a, app.t("join.name"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS, app.config.userName());
-            EditText room = field(a, app.t("join.room"), InputType.TYPE_CLASS_TEXT, "");
-            EditText pass = field(a, app.t("join.passphrase"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD, "");
-            TextView go = button(a, app.t("join.submit"));
+            // 6.7: a saved room's Edit (RoomEdit) fills the form with it, and Save changes it.
+            Object editKey = a.form().remove(RoomEdit.EDIT);
+            cz.m5cet.app.chat.Rooms.Saved edit = editKey == null ? null : app.rooms.savedRoom(String.valueOf(editKey));
+            EditText name = field(a, app.t("join.name"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_WORDS, edit != null && !edit.userName.isEmpty() ? edit.userName : app.config.userName());
+            EditText room = field(a, app.t("join.room"), InputType.TYPE_CLASS_TEXT, edit == null ? "" : edit.label);
+            EditText pass = field(a, app.t("join.passphrase"), InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD, edit == null ? "" : edit.passphrase);
+            TextView go = edit == null ? button(a, app.t("join.submit"), "log-in") : button(a, app.t("room.edit.save"), "save");
             addView(name, gap(a));
             addView(room, gap(a));
             addView(pass, gap(a));
             LayoutParams bl = gap(a);
             bl.topMargin = Ui.dp(a, 18);
             addView(go, bl);
-            go.setOnClickListener(v -> a.finishJoin(room.getText().toString(), pass.getText().toString(), name.getText().toString()));
+            if (edit != null) go.setOnClickListener(v -> RoomEdit.save(a, edit.key, room.getText().toString(), pass.getText().toString(), name.getText().toString()));
+            else go.setOnClickListener(v -> a.finishJoin(room.getText().toString(), pass.getText().toString(), name.getText().toString()));
             pass.setOnEditorActionListener((v, id, ev) -> { go.performClick(); return true; });
         }
 

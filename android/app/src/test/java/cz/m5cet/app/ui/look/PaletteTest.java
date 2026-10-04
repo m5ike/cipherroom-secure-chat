@@ -13,8 +13,9 @@ import java.util.List;
 
 /** The templates' colour variants: enough of them, and readable in both tones. */
 public class PaletteTest {
-    /** client/src/lib/theme-catalog.ts THEME_IDS, and the design's own look. */
-    static final String[] TEMPLATES = {"design", "motorsport", "glass", "terminal", "midnight", "paper", "contrast", "ios", "windows", "aurora", "nord", "sakura", "ocean", "graphite"};
+    /** client/src/lib/theme-catalog.ts THEME_IDS, the design's own look, and 6.7's own templates (design-67-look.ts THEMES_67_LOOK). */
+    static final String[] TEMPLATES = {"design", "motorsport", "glass", "terminal", "midnight", "paper", "contrast", "ios", "windows", "aurora", "nord", "sakura", "ocean", "graphite",
+        "forest", "sunset", "lavender", "mocha", "arctic", "ink"};
 
     @Test public void hslConvertsLikeCss() {
         assertEquals(0xFFFF0000, Palette.hsl(0, 1, 0.5));

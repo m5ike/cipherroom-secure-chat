@@ -5,6 +5,7 @@
 import { MENU_ICONS } from "../../client/src/lib/menu-icons-data";
 import { DEFAULT_DESIGN, designRev, sanitizeDesign } from "./design";
 import { androidThemes } from "./themes";
+import { THEMES_67_LOOK } from "./design-67-look";
 
 export function androidAssets(): Record<string, string> {
   const design = sanitizeDesign(DEFAULT_DESIGN);
@@ -17,7 +18,8 @@ export function androidAssets(): Record<string, string> {
   return {
     "default-design.json": `${JSON.stringify(design)}\n`,
     "icons.json": `${JSON.stringify(icons)}\n`,
-    // 6.1: the web's templates, mapped onto the design's colour tokens (Settings › Appearance).
-    "themes.json": `${JSON.stringify(androidThemes())}\n`,
+    // 6.1: the web's templates, mapped onto the design's colour tokens (Settings › Appearance);
+    // 6.7: then the app's own (design-67-look.ts), each with a light and a dark palette.
+    "themes.json": `${JSON.stringify([...androidThemes(), ...THEMES_67_LOOK])}\n`,
   };
 }
