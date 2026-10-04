@@ -55,6 +55,7 @@ const MESSAGE_VARS: ContractVar[] = [
   { path: "$codeError", type: "yes/no", description: "A wrong code was tried." },
   { path: "$sealedWith", type: "text", description: "sender-key, pair or room." },
   { path: "$queued", type: "yes/no", description: "Still on its way (outgoing)." },
+  { path: "$fnRunning", type: "yes/no", description: "A chat command is running — the bubble pulses (6.5)." },
   { path: "$delivery", type: "text", description: "queued, stored, delivered, read or sent (outgoing)." },
   { path: "$collapsed", type: "yes/no", description: "A system notice folded to its first line." },
   { path: "$bubbleStyle", type: "object", description: "The colours the user picked for this sender (use as “CSS from data”)." },

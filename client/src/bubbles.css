@@ -105,3 +105,36 @@
 .msg-manage__help { font-size: 0.7rem; opacity: 0.7; }
 .msg-manage__delete { color: hsl(var(--destructive)); border-color: hsl(var(--destructive) / 0.4); }
 .msg-manage__confirm { display: flex; flex-direction: column; gap: 0.5rem; padding: 0.6rem; border-radius: 0.6rem; font-size: 0.78rem; border: 1px solid hsl(var(--destructive) / 0.45); background: hsl(var(--destructive) / 0.07); }
+
+/* ---------- 6.5 — a chat command's own bubble: pulse while it runs ---------- */
+.msg-bubble--fn-running { animation: fn-bubble-pulse 1.6s ease-in-out infinite; }
+@keyframes fn-bubble-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 hsl(var(--primary) / 0); }
+  50% { box-shadow: 0 0 0 3px hsl(var(--primary) / 0.28); }
+}
+
+.fn-call { display: flex; flex-direction: column; gap: 0.4rem; }
+.fn-call__query { opacity: 0.92; }
+
+/* The loading indicator under the query: three bouncing dots + the model's name, centred. */
+.fn-loading { display: flex; flex-direction: column; align-items: center; gap: 0.35rem; padding: 0.4rem 0 0.15rem; }
+.fn-loading__dots { display: inline-flex; gap: 0.3rem; }
+.fn-loading__dots i { width: 0.45rem; height: 0.45rem; border-radius: 50%; background: currentColor; opacity: 0.55; animation: fn-dot 1s ease-in-out infinite; }
+.fn-loading__dots i:nth-child(2) { animation-delay: 0.16s; }
+.fn-loading__dots i:nth-child(3) { animation-delay: 0.32s; }
+.fn-loading__label { font-size: 0.75rem; opacity: 0.7; }
+@keyframes fn-dot { 0%, 80%, 100% { transform: translateY(0); opacity: 0.45; } 40% { transform: translateY(-0.28rem); opacity: 1; } }
+
+/* The outcome chip when there is no inline result (a room answer sent, or an error / status). */
+.fn-status { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; padding: 0.2rem 0.1rem; }
+.fn-status__icon { font-weight: 700; }
+.fn-status__code { font-family: ui-monospace, monospace; opacity: 0.7; }
+.fn-status--ok { color: hsl(var(--primary)); }
+.fn-status--error { color: hsl(var(--destructive)); }
+.fn-status--info { color: hsl(var(--muted-foreground)); }
+.msg-bubble--mine .fn-status--ok, .msg-bubble--mine .fn-status--info { color: inherit; opacity: 0.92; }
+
+@media (prefers-reduced-motion: reduce) {
+  .msg-bubble--fn-running { animation: none; box-shadow: 0 0 0 2px hsl(var(--primary) / 0.28); }
+  .fn-loading__dots i { animation: none; opacity: 0.6; }
+}

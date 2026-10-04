@@ -64,7 +64,19 @@ export type FnMeta = {
   outputs?: FnOutput[];
   /** The model's error entry point wrote it (its own render errors are not reported again). */
   origin?: "error";
+  /**
+   * 6.5: the call shows at once as the sender's own bubble. `query` is the
+   * command line the person sent; while `pending` the bubble pulses and a
+   * loading indicator sits under it, then the result (`outputs`) or a short
+   * `status` (a room answer that went out, or an error/status code) replaces it.
+   */
+  query?: string;
+  pending?: boolean;
+  status?: FnStatus;
 };
+
+/** The outcome shown under a call's own bubble when there is no inline result. */
+export type FnStatus = { kind: "ok" | "error" | "info"; label: string; code?: string };
 
 export function hasAnyFlag(flags: MsgFlags | undefined): boolean {
   return Boolean(flags && (flags.tap || flags.vanishSeconds || flags.sealed));

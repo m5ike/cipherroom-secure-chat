@@ -26,6 +26,7 @@ import { DEFAULT_LAYOUTS } from "../lib/layouts";
 import { renderLayout, type LayoutEnv } from "./LayoutView";
 import { Markdown } from "./Markdown";
 import { FnOutputs } from "./fn/FnOutputs";
+import { FnLoading, FnStatusChip } from "./fn/FnLoading";
 import { osmLink } from "../lib/maps";
 import type { MapPreviewPolicy } from "../lib/client-config";
 import { mapView } from "../lib/map-preview";
@@ -296,6 +297,7 @@ export function MessageBubble(props: MessageBubbleProps) {
     private: isPrivate,
     to: isPrivate ? props.to!.join(", ") : "",
     queued: props.deliveryState === "queued",
+    fnRunning: Boolean(flags?.fn?.pending),
     vanishing: Boolean(flags?.vanishSeconds),
     vanished: Boolean(props.vanished),
     vanishedAtText: props.vanished && props.vanishedAt ? ` · ${new Date(props.vanishedAt).toLocaleString(lang)}` : "",
@@ -346,7 +348,27 @@ export function MessageBubble(props: MessageBubbleProps) {
     // A command's output ("/keyword") is rendered as Markdown; ordinary text
     // is linkified. Sealed bodies stay linkified until they are opened.
     // 5.3: with its outputs, every one is shown, played or run (buttons, forms, media…).
-    formats: { links: (s) => (flags?.fn && !sealed ? (flags.fn.outputs?.length ? <FnOutputs outputs={flags.fn.outputs} meta={flags.fn} createdAt={props.createdAt} /> : <Markdown text={s} className="md-fn" />) : props.renderText(s)) },
+    formats: { links: (s) => {
+      if (!flags?.fn || sealed) return props.renderText(s);
+      const fn = flags.fn;
+      const result = fn.outputs?.length
+        ? <FnOutputs outputs={fn.outputs} meta={fn} createdAt={props.createdAt} />
+        : <Markdown text={s} className="md-fn" />;
+      // 6.5: a call's own bubble shows the query, then the loading / result / status.
+      if (fn.query !== undefined || fn.pending || fn.status) {
+        return (
+          <div className="fn-call">
+            {fn.query ? <div className="fn-call__query">{props.renderText(fn.query)}</div> : null}
+            {fn.pending
+              ? <FnLoading label={tf(lang, "functions.running", { name: fn.name })} />
+              : fn.status
+                ? <FnStatusChip status={fn.status} />
+                : result}
+          </div>
+        );
+      }
+      return result;
+    } },
     refs: { root: rootRef as never },
     blocks: props.blocks,
     slots: { badge: () => props.badge },

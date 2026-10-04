@@ -63,3 +63,42 @@ describe("the bubble renders a command output as Markdown", () => {
     expect(bubble.querySelector('[data-testid="plain"]')).not.toBeNull();
   });
 });
+
+describe("6.5 — the call's own bubble (pending → result / status)", () => {
+  const renderCall = (flags: { fn: Record<string, unknown> }, text = "/pocasi Praha") => render(
+    <MessageBubble
+      id="call-1" senderId="me" senderName="Me" mine isSystem={false} secure
+      createdAt={Date.now()} timeLabel="" text={text} flags={flags as never}
+      onVanish={() => undefined} lang="cs"
+      renderText={(s) => <span data-testid="plain">{s}</span>}
+      formatSize={(n) => `${n} B`}
+    />,
+  );
+
+  it("while pending: shows the query, the loading indicator, and the bubble pulses", () => {
+    const r = renderCall({ fn: { keyword: "pocasi", name: "Počasí", query: "/pocasi Praha", pending: true } });
+    const bubble = r.getByTestId("message-call-1");
+    expect(r.getByTestId("fn-loading")).not.toBeNull();
+    expect(bubble.querySelector(".fn-call__query")?.textContent).toContain("/pocasi Praha");
+    expect(bubble.querySelector(".msg-bubble--fn-running")).not.toBeNull();
+    expect(r.queryByTestId("fn-status")).toBeNull();
+  });
+
+  it("on a caller answer: the loading is replaced by the result, the query stays, no more pulse", () => {
+    const r = renderCall({ fn: { keyword: "pocasi", name: "Počasí", query: "/pocasi Praha", pending: false, outputs: [{ type: "markdown", text: "**Praha**: 21°C" }] } }, "**Praha**: 21°C");
+    const bubble = r.getByTestId("message-call-1");
+    expect(r.queryByTestId("fn-loading")).toBeNull();
+    expect(bubble.querySelector(".fn-call__query")?.textContent).toContain("/pocasi Praha");
+    expect(bubble.querySelector("strong")?.textContent).toBe("Praha");
+    expect(bubble.querySelector(".msg-bubble--fn-running")).toBeNull();
+  });
+
+  it("on a room answer or error: the loading is replaced by a status chip", () => {
+    const sent = renderCall({ fn: { keyword: "pocasi", name: "Počasí", query: "/pocasi Praha", pending: false, status: { kind: "ok", label: "Odesláno do místnosti" } } });
+    expect(sent.getByTestId("fn-status").textContent).toContain("Odesláno do místnosti");
+    cleanup();
+    const err = renderCall({ fn: { keyword: "x", name: "X", query: "/x", pending: false, status: { kind: "error", label: "selhalo" } } });
+    expect(err.getByTestId("fn-status").className).toContain("fn-status--error");
+    expect(err.queryByTestId("fn-loading")).toBeNull();
+  });
+});

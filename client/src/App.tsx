@@ -27,7 +27,7 @@ import { useStyleOverrides } from "./lib/style-editor";
 import { buildLabel, watchForNewVersion } from "./lib/build-info";
 import { IntegrityCheck, type IntegrityHandle } from "./components/IntegrityCheck";
 import { styleKeyFor, bubbleStyleFrom, sanitizePerUserStyle, isEmptyStyle, type PerUserStyle } from "./lib/message-styles";
-import { sealText, generateSealCode, type FnMeta, type MsgFlags } from "./lib/message-kinds";
+import { sealText, generateSealCode, type FnMeta, type FnStatus, type MsgFlags } from "./lib/message-kinds";
 import { MessageBubble } from "./components/MessageBubble";
 import { UserBadge } from "./components/UserBadge";
 import { SendOptions, DEFAULT_SEND_STATE, type SendState } from "./components/SendOptions";
@@ -515,6 +515,8 @@ function ChatApp() {
   const fnReportRef = useRef<(meta: FnMeta, ev: Extract<FnEventBody, { type: "error" | "log" }>) => Promise<void>>(async () => undefined);
   const runCmdTokenRef = useRef<string | null>(null);
   const runCmdRunIdRef = useRef<string | null>(null);
+  /** 6.5: the id of the call's own pending bubble, updated in place when the model answers. */
+  const runCmdMsgIdRef = useRef<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [peers, setPeers] = useState<PeerView[]>([]);
   const [copied, setCopied] = useState(false);
@@ -3598,6 +3600,7 @@ function ChatApp() {
    *  caller-only model shows it just to the person who ran it. */
   async function runChatCommand(command: Command, argText: string) {
     const inputs = buildInputs(command, argText);
+    const queryText = `/${command.keyword}${argText.trim() ? ` ${argText.trim()}` : ""}`;
     setMessageInput("");
     setReplyingTo(null);
     setCmdOpen(false);
@@ -3607,19 +3610,36 @@ function ChatApp() {
     const ctrl = new AbortController();
     runCmdAbortRef.current = ctrl;
     runCmdTokenRef.current = token;
+    // 6.5: the call shows at once as the sender's own bubble — pulsing, with a
+    // loading indicator under it — and the model's answer replaces the loading.
+    const msgId = `fncall_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    runCmdMsgIdRef.current = msgId;
+    setMessages((cur) => [...cur, {
+      id: msgId, senderId: myIdRef.current || "me", senderName: nameRef.current || "me",
+      text: queryText, createdAt: Date.now(), mine: true, secure: true,
+      flags: { fn: { keyword: command.keyword, name: command.name, query: queryText, pending: true } },
+      audit: [{ state: "displayed" as const, at: Date.now() }],
+    }]);
     await runCommandStream(
       { keyword: command.keyword, inputs, room: room || null, client: prefs.deviceId || null, lang, token, signal: ctrl.signal },
       {
         onStart: (id) => { runCmdRunIdRef.current = id; },
         onInteraction: handleFnInteraction, // 6.3 nfc: routes "nfc" to the device bridge
-        onError: (e) => { setInteraction(null); systemMessage(tf(lang, "functions.failed", { name: command.name, message: e.message }), { kind: "error", chatOnly: true }); },
+        onError: (e) => { setInteraction(null); failFnCall(msgId, e.message); },
         onDone: (r) => {
           setInteraction(null);
-          if (r.error && !r.handled) { systemMessage(tf(lang, "functions.failed", { name: command.name, message: r.error.message }), { kind: "error", chatOnly: true }); return; }
-          showFnResult({ ...r, visibility: r.visibility ?? command.visibility }, fn, r.handled ? { origin: "error" } : {});
+          if (r.error && !r.handled) { failFnCall(msgId, r.error.message); return; }
+          showFnResult({ ...r, visibility: r.visibility ?? command.visibility }, fn, { ...(r.handled ? { origin: "error" } : {}), into: msgId, query: queryText });
         },
       },
     );
+  }
+
+  /** Replaces a call bubble's loading with an error status (the call stays visible). */
+  function failFnCall(msgId: string, message: string) {
+    setMessages((cur) => cur.map((m) => (m.id === msgId && m.flags?.fn
+      ? { ...m, flags: { ...m.flags, fn: { ...m.flags.fn, pending: false, status: { kind: "error" as const, label: message } } } }
+      : m)));
   }
 
   /**
@@ -3628,7 +3648,7 @@ function ChatApp() {
    * room sends it end-to-end encrypted (large media stay with the caller); a
    * caller-only model shows it just here — as does a room model with nobody to send to.
    */
-  function showFnResult(r: RunDone, fallback: { keyword: string; name: string }, opts: { origin?: "error" } = {}) {
+  function showFnResult(r: RunDone, fallback: { keyword: string; name: string }, opts: { origin?: "error"; into?: string; query?: string } = {}) {
     const outputs = r.outputs ?? [];
     const keyword = r.keyword || fallback.keyword;
     const meta: FnMeta = {
@@ -3640,16 +3660,34 @@ function ChatApp() {
     const text = outputsToMarkdown(outputs) || (outputs.length ? `/${keyword}` : tf(lang, "functions.empty", { name: meta.name }));
     const roomRec = r.visibility === "room" ? resolveRecipients() : null;
     if (roomRec) {
+      // 6.5: the answer goes to the room as its own message; the caller's own
+      // call bubble shows it was sent (its loading becomes a short status).
+      if (opts.into) settleFnCall(opts.into, { kind: "ok", label: t(lang, "functions.sentToRoom") }, opts.query);
       void sendChatPayload(text, { targets: roomRec.targets, toNames: roomRec.toNames, away: roomRec.away, forwardedFrom: `/${keyword}`, fn: { ...meta, outputs: shareableOutputs(outputs) }, fnLocal: { ...meta, outputs } });
       return;
     }
     if (r.visibility === "room") setNotice(tf(lang, "functions.localOnly", { name: meta.name }));
+    // 6.5: a caller-only answer replaces the loading inside the call's own bubble.
+    if (opts.into) {
+      const q = opts.query;
+      setMessages((cur) => cur.map((m) => (m.id === opts.into && m.flags?.fn
+        ? { ...m, text, flags: { ...m.flags, fn: { ...meta, outputs, ...(q ? { query: q } : {}), pending: false } } }
+        : m)));
+      return;
+    }
     setMessages((cur) => [...cur, {
       id: `fn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
       senderId: `function:${keyword}`, senderName: meta.name,
       text, createdAt: Date.now(), mine: false, secure: true,
       flags: { fn: { ...meta, outputs } }, audit: [{ state: "displayed", at: Date.now() }],
     }]);
+  }
+
+  /** 6.5: ends a call bubble's loading with a short status (no inline result). */
+  function settleFnCall(msgId: string, status: FnStatus, query?: string) {
+    setMessages((cur) => cur.map((m) => (m.id === msgId && m.flags?.fn
+      ? { ...m, flags: { ...m.flags, fn: { ...m.flags.fn, ...(query ? { query } : {}), pending: false, status } } }
+      : m)));
   }
 
   /** 5.3: a click, a form or a reply for a model's message — its entry point answers in that message's processing session. */
