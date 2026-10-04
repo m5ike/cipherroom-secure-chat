@@ -229,13 +229,26 @@ Když je správce zapne a máš přístup k modulu NFC, tyto příkazy přečtou
   zahodí), na Androidu *Odeslat* počká na poslední slova a pak zprávu pošle
   a diktování skončí i s aplikací v pozadí.
 - **Poslat text jako hlas** — text z pole přečte hlas a odejde jako šifrovaná
-  hlasová zpráva, stejně jako nahraná (bez textu). Web: šipka u *Odeslat*
-  nebo dlouhý stisk *Odeslat* › *Poslat jako hlas* (jde jen s textem v poli;
-  také v panelu *Řeč*); jen hlas serveru (hlasy prohlížeče nahrát nejdou) —
-  server text uvidí; když převod textu na řeč nezapnul správce, aplikace to
-  řekne. Android: dlouhý stisk *Odeslat* (nebo mikrofonu) otevře volby
-  odeslání; je-li pole prázdné, přečte to, co teď nadiktuješ; hlas telefonu,
-  nebo hlas serveru, když je v *Nastavení › Hlas* zvoleno *Na serveru*.
+  hlasová zpráva, stejně jako nahraná (bez textu). Web (6.8): v nabídce *Typ
+  zprávy* (šipka u *Odeslat* nebo dlouhý stisk *Odeslat*) je zaškrtávací
+  volba *Poslat jako hlas*. Když je zaškrtnutá, *Odeslat* (i Enter) pošle
+  místo textu hlasovou zprávu; tlačítko *Odeslat* pak ukazuje reproduktor,
+  číslo u šipky volbu započítá a pod polem stojí *Jako hlasová zpráva*.
+  Zůstane zapnutá i pro další zprávy jako ostatní typy zprávy — vypneš ji
+  odškrtnutím nebo *Vyčistit* (po znovunačtení stránky je vypnutá). Klikací
+  a mizející volba platí i pro hlasovou zprávu, vybraní příjemci také
+  a odpověď zůstane odpovědí. S *Individuálně šifrovanou* zprávou to nejde
+  (hlasová zpráva by kódem zašifrovaná nebyla): aplikace nic neodešle —
+  ani text bez kódu — a řekne proč. Text delší než 2000 znaků odmítne,
+  místo aby ho usekla; hlasovou zprávu, ze které by byl velký soubor (ten
+  jde všem v místnosti), odmítne pro vybrané příjemce a pro klikací či
+  mizející zprávu. Příkazy (`/…`) a odpovědi funkcím zůstávají textem.
+  Jednorázové tlačítko *Poslat jako hlas* má dál panel *Řeč*. Jen hlas
+  serveru (hlasy prohlížeče nahrát nejdou) — server text uvidí; když převod
+  textu na řeč nezapnul správce, aplikace to řekne. Android: dlouhý stisk
+  *Odeslat* (nebo mikrofonu) otevře volby odeslání; je-li pole prázdné,
+  přečte to, co teď nadiktuješ; hlas telefonu, nebo hlas serveru, když je
+  v *Nastavení › Hlas* zvoleno *Na serveru*.
 - **Nadiktovat a poslat text** (jen Android, ve volbách odeslání) — mluvíš,
   text se píše do pole; ■ nebo *Odeslat* ho pošle jako obyčejnou zprávu.
 - **Měnič hlasu** — modul, který zapíná správce (konzole › *Modules &
@@ -552,10 +565,24 @@ read a card **at your device** — read-only, your own card or document:
   sends, and the app going to the background ends it as well.
 - **Send the text as voice** — the field's text is read by a voice and goes as
   an encrypted voice message, just like a recorded one (without the text).
-  Web: the arrow by *Send* or a long press on *Send* › *Send as voice* (only
-  with text in the field; also in the *Speech* panel); the server's voice only
-  (the browser's voices cannot be recorded) — the server sees the text;
-  without the operator's text to speech the app says so. Android: a long press
+  Web (6.8): the *Message type* menu (the arrow by *Send*, or a long press on
+  *Send*) has a checkbox *Send as voice*. While it is ticked, *Send* (and
+  Enter) sends a voice message instead of the text; the *Send* button then
+  shows a speaker, the number by the arrow counts the option and the line
+  under the field says *As a voice message*. It stays on for the next
+  messages like the other message types — untick it or press *Clear* (after
+  a page reload it is off). Tap-to-reveal and disappearing apply to the voice
+  message too, so do the chosen recipients, and a reply stays a reply. It
+  does not work with an *Individually encrypted* message (the voice message
+  would not be encrypted with the code): the app sends nothing — not the text
+  without the code either — and says why. A text longer than 2000 characters
+  is refused rather than cut short; a voice message that would be a big file
+  (which goes to everyone in the room) is refused for chosen recipients and
+  for a tap-to-reveal or disappearing message. Commands (`/…`) and replies to
+  functions stay text. The *Speech* panel keeps its one-off *Send as voice*
+  button. The server's voice only (the browser's voices cannot be recorded)
+  — the server sees the text; without the operator's text to speech the app
+  says so. Android: a long press
   on *Send* (or the microphone) opens the send options; with an empty field it
   reads what you dictate now; the phone's voice, or the server's when
   *Settings › Voice* says *On the server*.
@@ -883,11 +910,26 @@ dein eigenes Dokument:
   App im Hintergrund beendet es ebenfalls.
 - **Text als Sprache senden** — der Text im Feld wird von einer Stimme gelesen
   und geht als verschlüsselte Sprachnachricht, genau wie eine aufgenommene
-  (ohne den Text). Web: der Pfeil bei *Senden* oder langes Drücken auf
-  *Senden* › *Als Sprache senden* (nur mit Text im Feld; auch im Panel
-  *Sprache*); nur die Stimme des Servers (die Stimmen des Browsers lassen sich
-  nicht aufnehmen) — der Server sieht den Text; ohne Sprachausgabe des
-  Betreibers sagt die App es. Android: langes Drücken auf *Senden* (oder das
+  (ohne den Text). Web (6.8): das Menü *Nachrichtentyp* (der Pfeil bei
+  *Senden* oder langes Drücken auf *Senden*) hat ein Kästchen *Als Sprache
+  senden*. Solange es angehakt ist, schickt *Senden* (und Enter) statt des
+  Texts eine Sprachnachricht; der Knopf *Senden* zeigt dann einen
+  Lautsprecher, die Zahl am Pfeil zählt die Option mit und unter dem Feld
+  steht *Als Sprachnachricht*. Es bleibt wie die anderen Nachrichtentypen für
+  die nächsten Nachrichten an — Haken entfernen oder *Leeren* (nach dem
+  Neuladen der Seite ist es aus). Zum Aufdecken halten und verschwindend
+  gelten auch für die Sprachnachricht, ebenso die gewählten Empfänger, und
+  eine Antwort bleibt eine Antwort. Mit einer *Individuell verschlüsselten*
+  Nachricht geht es nicht (die Sprachnachricht wäre nicht mit dem Code
+  verschlüsselt): die App sendet nichts — auch nicht den Text ohne Code — und
+  sagt warum. Text über 2000 Zeichen wird abgelehnt statt abgeschnitten; eine
+  Sprachnachricht, die eine große Datei wäre (die geht an alle im Raum), wird
+  für gewählte Empfänger und für Halten- oder verschwindende Nachrichten
+  abgelehnt. Befehle (`/…`) und Antworten an Funktionen bleiben Text. Das
+  Panel *Sprache* behält seinen einmaligen Knopf *Als Sprache senden*. Nur die
+  Stimme des Servers (die Stimmen des Browsers lassen sich nicht aufnehmen) —
+  der Server sieht den Text; ohne Sprachausgabe des Betreibers sagt die App
+  es. Android: langes Drücken auf *Senden* (oder das
   Mikrofon) öffnet die Sendeoptionen; bei leerem Feld wird gelesen, was du
   jetzt diktierst; die Stimme des Telefons, oder die des Servers, wenn in
   *Einstellungen › Sprache* *Auf dem Server* gewählt ist.

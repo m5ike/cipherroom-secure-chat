@@ -61,6 +61,13 @@ const cs: Dict = {
   "speakSend.err.empty": "Nejdřív napište nebo nadiktujte text.",
   "speakSend.err.no-tts": "Hlasovou zprávu z textu tu udělat nejde: na serveru není zapnutý převod textu na řeč (hlasy prohlížeče nahrát nejdou). Pošlete text, nebo zprávu namluvte.",
   "speakSend.err.tts-failed": "Převod textu na řeč selhal: {msg}",
+  // 6.8: "Send as voice" is a checkbox of the send options
+  "speakSend.optHint": "Místo textu odejde hlasová zpráva — přečte ji hlas serveru (server text uvidí). Zůstane zapnuté i pro další zprávy. Klikací a mizející platí i pro hlas, individuální šifrování ne.",
+  "speakSend.offHint": "Text pošlete, když vypnete Poslat jako hlas (šipka u Odeslat).",
+  "speakSend.err.sealed": "Individuálně šifrovanou zprávu nejde poslat jako hlas — hlasová zpráva by kódem zašifrovaná nebyla. Vypněte jednu z těch dvou voleb.",
+  "speakSend.err.too-long": "Na hlasovou zprávu je text moc dlouhý (nejvýš {max} znaků). Zkraťte ho, nebo vypněte Poslat jako hlas.",
+  "speakSend.err.too-big": "Z tak dlouhého textu je hlasová zpráva moc velká pro vybrané příjemce nebo pro klikací či mizející zprávu (velké soubory jdou všem v místnosti). Zkraťte text.",
+  "speakSend.on": "Jako hlasová zpráva",
 };
 
 const en: Dict = {
@@ -118,6 +125,12 @@ const en: Dict = {
   "speakSend.err.empty": "Write or dictate the text first.",
   "speakSend.err.no-tts": "A voice message cannot be made from text here: the server has no text to speech turned on (the browser's voices cannot be recorded). Send the text, or record the message.",
   "speakSend.err.tts-failed": "Text to speech failed: {msg}",
+  "speakSend.optHint": "A voice message goes instead of the text — the server's voice reads it (the server sees the text). Stays on for the next messages. Tap-to-reveal and disappearing apply too; individual encryption does not.",
+  "speakSend.offHint": "To send the text, turn off Send as voice (the arrow by Send).",
+  "speakSend.err.sealed": "An individually encrypted message cannot be sent as voice — the voice message would not be encrypted with the code. Turn off one of the two options.",
+  "speakSend.err.too-long": "The text is too long for a voice message (at most {max} characters). Shorten it, or turn off Send as voice.",
+  "speakSend.err.too-big": "A voice message from this long a text is too big for chosen recipients or for a tap-to-reveal or disappearing message (big files go to everyone in the room). Shorten the text.",
+  "speakSend.on": "As a voice message",
 };
 
 const de: Dict = {
@@ -175,6 +188,12 @@ const de: Dict = {
   "speakSend.err.empty": "Schreiben oder diktieren Sie zuerst den Text.",
   "speakSend.err.no-tts": "Aus Text lässt sich hier keine Sprachnachricht machen: auf dem Server ist keine Sprachausgabe eingeschaltet (die Stimmen des Browsers lassen sich nicht aufnehmen). Senden Sie den Text oder sprechen Sie die Nachricht ein.",
   "speakSend.err.tts-failed": "Die Sprachausgabe ist fehlgeschlagen: {msg}",
+  "speakSend.optHint": "Statt des Texts geht eine Sprachnachricht — die Stimme des Servers liest ihn (der Server sieht den Text). Bleibt für die nächsten Nachrichten an. Zum Aufdecken halten und verschwindend gelten auch, individuelle Verschlüsselung nicht.",
+  "speakSend.offHint": "Um den Text zu senden, schalten Sie Als Sprache senden aus (der Pfeil bei Senden).",
+  "speakSend.err.sealed": "Eine individuell verschlüsselte Nachricht lässt sich nicht als Sprache senden — die Sprachnachricht wäre nicht mit dem Code verschlüsselt. Schalten Sie eine der beiden Optionen aus.",
+  "speakSend.err.too-long": "Der Text ist für eine Sprachnachricht zu lang (höchstens {max} Zeichen). Kürzen Sie ihn oder schalten Sie Als Sprache senden aus.",
+  "speakSend.err.too-big": "Aus so langem Text wird die Sprachnachricht zu groß für ausgewählte Empfänger oder für eine Halten- oder verschwindende Nachricht (große Dateien gehen an alle im Raum). Kürzen Sie den Text.",
+  "speakSend.on": "Als Sprachnachricht",
 };
 
 export const VOICE_I18N = { cs, en, de };

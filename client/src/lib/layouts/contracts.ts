@@ -174,9 +174,11 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
       { path: "$messageInput", type: "text", description: "What is typed (bind it as the field's value)." },
       { path: "$everyone", type: "yes/no", description: "Sending to everyone in the room." },
       { path: "$recipientNames", type: "text", description: "Who receives it, when not everyone." },
+      { path: "$sendAsVoice", type: "yes/no", description: "6.8: “Send as voice” is ticked in the send options — Send sends the text as a voice message instead." },
+      { path: "$voiceBusy", type: "yes/no", description: "6.8: the text is being turned into a voice message right now." },
     ],
     actions: [
-      { name: "submit", description: "Send (the form's submit).", event: "submit" },
+      { name: "submit", description: "Send (the form's submit; 6.8: as a voice message while $sendAsVoice).", event: "submit" },
       { name: "input", description: "The field changed (keeps $messageInput).", event: "change" },
       { name: "keydown", description: "A key in the field (Enter sends).", event: "keydown" },
       { name: "toggleEmoji", description: "Emoji row on / off." },
@@ -189,7 +191,7 @@ export const LAYOUT_CONTRACTS: Readonly<Record<LayoutId, LayoutContract>> = {
     ],
     slots: [
       { name: "recorder", description: "The voice message recorder." },
-      { name: "sendOptions", description: "The send button with its options (tap, vanish, seal)." },
+      { name: "sendOptions", description: "The send button with its options (tap, vanish, seal; 6.8: send as voice)." },
     ],
     refs: [
       { name: "fileInput", description: "The hidden file input (pickFile clicks it)." },

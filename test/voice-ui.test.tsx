@@ -59,12 +59,17 @@ describe("speak and send", () => {
     expect(voiceFileName("audio/x-unknown", 5)).toBe("hlas-5.mp3");
   });
 
-  it("the send options offer it (and only when the app gives it)", () => {
-    const onSendAsVoice = vi.fn();
-    const r = render(<SendOptions value={DEFAULT_SEND_STATE} onChange={() => undefined} onSend={() => undefined} canSend lang="en" onSendAsVoice={onSendAsVoice} />);
+  it("the send options offer it as a checkbox (and only when the app gives it) — 6.8", () => {
+    const onChange = vi.fn();
+    const onSend = vi.fn();
+    const r = render(<SendOptions value={DEFAULT_SEND_STATE} onChange={onChange} onSend={onSend} canSend lang="en" voiceOption />);
     fireEvent.click(r.getByTestId("button-send-options"));
-    fireEvent.click(r.getByTestId("opt-send-voice"));
-    expect(onSendAsVoice).toHaveBeenCalledTimes(1);
+    const box = r.getByTestId("opt-send-voice") as HTMLInputElement;
+    expect(box.type).toBe("checkbox");
+    expect(box.checked).toBe(false);
+    fireEvent.click(box);
+    expect(onChange).toHaveBeenCalledWith({ ...DEFAULT_SEND_STATE, asVoice: true });
+    expect(onSend).not.toHaveBeenCalled(); // ticking it sends nothing by itself
     cleanup();
     const plain = render(<SendOptions value={DEFAULT_SEND_STATE} onChange={() => undefined} onSend={() => undefined} canSend lang="en" />);
     fireEvent.click(plain.getByTestId("button-send-options"));

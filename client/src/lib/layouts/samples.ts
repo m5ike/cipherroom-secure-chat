@@ -39,6 +39,7 @@ export const PREVIEW_VARIANTS: Readonly<Record<LayoutId, ReadonlyArray<{ id: str
     { id: "emoji", label: "Emoji open" },
     { id: "private", label: "To chosen people" },
     { id: "alone", label: "Nobody connected" },
+    { id: "voice", label: "Sending as voice" },
   ],
   widget: [
     { id: "people", label: "People" },

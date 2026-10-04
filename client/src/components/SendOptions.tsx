@@ -2,6 +2,13 @@
 // sealed) are toggled from a popover that opens either by tapping the small
 // chevron or by long-pressing the send button. Any combination — none, one,
 // two or all three — is allowed.
+//
+// 6.8: "Send as voice" is a checkbox of the same popover (asVoice): while it
+// is ticked, Send sends the text as a voice message (the server's text to
+// speech) instead of the text — the send button shows a speaker and says so.
+// Like the kinds it stays on for the next messages until it is unticked or
+// cleared. Tap and vanish apply to the voice message; sealed does not (the
+// app refuses that combination — speak-send.ts › composerSendRoute).
 
 import { useEffect, useRef, useState } from "react";
 import { Send, ChevronUp, Timer, EyeOff, ScrollText, Dice5, Volume2 } from "lucide-react";
@@ -13,24 +20,28 @@ export type SendState = {
   vanishSeconds: number; // 0 = off
   sealed: boolean;
   sealCode: string; // "" → a random code is generated at send time
+  /** 6.8: Send sends the text as a voice message instead (off by default). */
+  asVoice: boolean;
 };
 
-export const DEFAULT_SEND_STATE: SendState = { tap: false, vanishSeconds: 0, sealed: false, sealCode: "" };
+export const DEFAULT_SEND_STATE: SendState = { tap: false, vanishSeconds: 0, sealed: false, sealCode: "", asVoice: false };
 
 export function activeCount(s: SendState): number {
-  return (s.tap ? 1 : 0) + (s.vanishSeconds > 0 ? 1 : 0) + (s.sealed ? 1 : 0);
+  return (s.tap ? 1 : 0) + (s.vanishSeconds > 0 ? 1 : 0) + (s.sealed ? 1 : 0) + (s.asVoice ? 1 : 0);
 }
 
 export function SendOptions({
-  value, onChange, onSend, canSend, lang, onSendAsVoice, voiceBusy = false,
+  value, onChange, onSend, canSend, lang, voiceOption = false, voiceBusy = false,
 }: {
   value: SendState;
   onChange: (next: SendState) => void;
+  /** Send — the text, or (6.8, asVoice ticked) the voice message: the app decides. */
   onSend: () => void;
   canSend: boolean;
   lang: Lang;
-  /** 6.7: the text spoken by the server's voice and sent as a voice message. */
-  onSendAsVoice?: () => void;
+  /** 6.8: offer "Send as voice" (the text spoken by the server's voice, sent as a voice message). */
+  voiceOption?: boolean;
+  /** The text is being turned into a voice message right now. */
   voiceBusy?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -57,6 +68,8 @@ export function SendOptions({
   }
 
   const count = activeCount(value);
+  const voice = voiceOption && value.asVoice;
+  const sendLabel = voice ? t(lang, voiceBusy ? "speakSend.busy" : "speakSend.button") : t(lang, "common.send");
 
   return (
     <div className="composer-send-group">
@@ -77,16 +90,18 @@ export function SendOptions({
         data-testid="button-send"
         className="composer-send"
         type="button"
-        disabled={!canSend}
-        aria-label={t(lang, "common.send")}
-        title={t(lang, "common.send")}
+        disabled={!canSend || (voice && voiceBusy)}
+        aria-label={sendLabel}
+        title={sendLabel}
+        aria-busy={voice && voiceBusy ? true : undefined}
+        data-voice={voice ? "on" : undefined}
         onPointerDown={startLong}
         onPointerUp={endLong}
         onPointerLeave={endLong}
         onPointerCancel={endLong}
         onClick={onSendClick}
       >
-        <Send className="h-4 w-4" aria-hidden="true" />
+        {voice ? <Volume2 className="h-4 w-4" aria-hidden="true" /> : <Send className="h-4 w-4" aria-hidden="true" />}
       </button>
 
       {open ? (
@@ -138,18 +153,17 @@ export function SendOptions({
               </div>
             ) : null}
 
-            {onSendAsVoice ? (
-              <button
-                type="button"
-                className="send-pop__row"
-                style={{ width: "100%", textAlign: "start", background: "none", border: 0, font: "inherit", color: "inherit", cursor: "pointer" }}
-                disabled={!canSend || voiceBusy}
-                onClick={() => { setOpen(false); onSendAsVoice(); }}
-                data-testid="opt-send-voice"
-              >
-                <Volume2 className="h-4 w-4" />
-                <span><strong>{t(lang, voiceBusy ? "speakSend.busy" : "speakSend.button")}</strong><em>{t(lang, "speakSend.hint")}</em></span>
-              </button>
+            {voiceOption ? (
+              <>
+                <label className="send-pop__row">
+                  <input type="checkbox" checked={value.asVoice} onChange={(e) => onChange({ ...value, asVoice: e.target.checked })} data-testid="opt-send-voice" />
+                  <Volume2 className="h-4 w-4" />
+                  <span><strong>{t(lang, "speakSend.button")}</strong><em>{t(lang, "speakSend.optHint")}</em></span>
+                </label>
+                {value.asVoice && value.sealed ? (
+                  <p className="send-pop__warn" role="alert" data-testid="opt-send-voice-sealed">{t(lang, "speakSend.err.sealed")}</p>
+                ) : null}
+              </>
             ) : null}
 
             <div className="send-pop__foot">

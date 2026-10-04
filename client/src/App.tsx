@@ -38,7 +38,7 @@ import { ComposerVoice } from "./components/ComposerVoice";
 import { VoiceChangerPanel } from "./components/VoiceChangerPanel";
 import { isProcessed, openMic, processStream, setVoiceFxAllowed, voiceFxActive } from "./lib/mic";
 import { onVoiceFxChange } from "./lib/voice-fx-settings";
-import { textToVoiceFile } from "./lib/speak-send";
+import { textToVoiceFile, sendFromComposer, voiceTooBigFor, SPEAK_SEND_MAX } from "./lib/speak-send";
 import { fetchServerSpeechStatus, serverTtsBlob } from "./lib/speech";
 import type { UserInfo } from "./components/UserInfoModal";
 import type { MessageInfo } from "./components/MessageInfoModal";
@@ -3659,9 +3659,18 @@ function ChatApp() {
       await fnEvent(target, { type: "response", text, message: { text: replyingTo.text } });
       return;
     }
-    const rec = resolveRecipients();
-    if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
-    await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: replyingTo ?? undefined });
+    // 6.8: "Send as voice" ticked in the send options — the text goes as a voice
+    // message instead (sealed or too long: neither, with the reason). Commands
+    // and replies to a function's message above stay text: they are input for it.
+    await sendFromComposer(text, sendOpts, {
+      text: async () => {
+        const rec = resolveRecipients();
+        if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
+        await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: replyingTo ?? undefined });
+      },
+      voice: () => sendTextAsVoice(text, true, replyingTo ?? undefined),
+      refuse: (error) => setNotice(tf(lang, `speakSend.err.${error}`, { max: SPEAK_SEND_MAX })),
+    });
   }
 
   /** 5.2: what typing a trigger character offers — "/" commands (at the start),
@@ -4132,8 +4141,9 @@ function ChatApp() {
   /**
    * Send a chosen or recorded file to the current recipients. 6.7: `caption` —
    * the text that goes along ("" for a voice message made from that text); true when it went.
+   * 6.8: `replyTo` — the message it answers (a voice message sent from the composer).
    */
-  async function sendPickedFile(file: File, caption = messageInput.trim()): Promise<boolean> {
+  async function sendPickedFile(file: File, caption = messageInput.trim(), replyTo?: { id: string; senderName: string; text: string }): Promise<boolean> {
     const rec = resolveRecipients();
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return false; }
     // Sealing a binary body is not supported yet; tap/vanish still apply.
@@ -4148,7 +4158,7 @@ function ChatApp() {
         return true;
       }
       const attachment = await fileToAttachment(file);
-      await sendChatPayload(caption, { attachment, send: attachOpts, targets: rec.targets, toNames: rec.toNames });
+      await sendChatPayload(caption, { attachment, send: attachOpts, targets: rec.targets, toNames: rec.toNames, replyTo });
       return true;
     } catch (err) {
       setNotice((err as Error).message);
@@ -4156,14 +4166,29 @@ function ChatApp() {
     }
   }
 
-  /** 6.7: speak and send — the text by the server's voice, sent as an E2EE voice message (no caption). */
-  async function sendTextAsVoice(text: string, fromComposer: boolean): Promise<boolean> {
+  /**
+   * 6.7: speak and send — the text by the server's voice, sent as an E2EE voice message (no caption).
+   * 6.8: also the composer's Send while "Send as voice" is ticked (`fromComposer`, with the reply it quotes).
+   */
+  async function sendTextAsVoice(text: string, fromComposer: boolean, replyTo?: { id: string; senderName: string; text: string }): Promise<boolean> {
     if (voiceBusy) return false;
+    // Nobody to send it to: say so before the server is asked to speak the text.
+    if (!resolveRecipients()) { setNotice(t(lang, "recipients.noneNotice")); return false; }
     setVoiceBusy(true);
     try {
       const made = await textToVoiceFile(text, { status: fetchServerSpeechStatus, tts: serverTtsBlob });
-      if (!made.ok) { setNotice(made.error === "tts-failed" ? tf(lang, "speakSend.err.tts-failed", { msg: made.message ?? "" }) : t(lang, `speakSend.err.${made.error}`)); return false; }
-      const sent = await sendPickedFile(made.file, "");
+      if (!made.ok) {
+        const why = made.error === "tts-failed" ? tf(lang, "speakSend.err.tts-failed", { msg: made.message ?? "" }) : t(lang, `speakSend.err.${made.error}`);
+        // From the composer the way out is the option itself: say where it is.
+        setNotice(fromComposer && made.error === "no-tts" ? `${why} ${t(lang, "speakSend.offHint")}` : why);
+        return false;
+      }
+      // A big voice message would go as a file transfer — to everyone, without tap / vanish.
+      if (voiceTooBigFor(made.file.size, INLINE_ATTACHMENT_LIMIT, { toChosen: !widget.autoRoom, tap: sendOpts.tap, vanish: sendOpts.vanishSeconds > 0 })) {
+        setNotice(t(lang, "speakSend.err.too-big"));
+        return false;
+      }
+      const sent = await sendPickedFile(made.file, "", replyTo);
       if (sent && fromComposer) setMessageInput("");
       return sent;
     } finally {
@@ -5150,6 +5175,9 @@ function ChatApp() {
               messageInput,
               everyone: widget.autoRoom,
               recipientNames: Array.from(recipients, (id) => peersRef.current.get(id)?.name || id.slice(-4)).join(", "),
+              // 6.8: Send sends the text as a voice message (the send options' checkbox)
+              sendAsVoice: sendOpts.asVoice,
+              voiceBusy,
             },
             actions: {
               submit: (e) => void sendMessage(e as FormEvent),
@@ -5184,7 +5212,7 @@ function ChatApp() {
                   onSend={() => void sendMessage()}
                   canSend={canSend}
                   lang={lang}
-                  onSendAsVoice={() => void sendTextAsVoice(messageInput, true)}
+                  voiceOption
                   voiceBusy={voiceBusy}
                 />
               ),
