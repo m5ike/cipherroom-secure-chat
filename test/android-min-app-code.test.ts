@@ -1,8 +1,9 @@
 // @vitest-environment node
 // 6.7 — two version gates found by the docs cross-check:
 //  * a build whose design uses a 6.7 element or action (the rooms' `swipe`
-//    rows, the profile's actions …) needs the 6.7 app: an older app draws an
-//    unknown element as nothing, so it keeps the build it has instead;
+//    rows, the profile's actions …) needs the 6.7 app, a 6.8 one the 6.8 app:
+//    an older app draws an unknown element as nothing, so it keeps the build
+//    it has instead;
 //  * the Functions sandbox's permission flag is `--permission` only from
 //    Node 22.13 / 23.5 — older 22.x still need `--experimental-permission`.
 
@@ -10,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import { DEFAULT_DESIGN, type AndroidDesign, type ANode } from "../server/android/design";
 import { designMinAppCode, MIN_APP_CODE } from "../server/android/bundle";
 import { ACTIONS_67, ELEMENTS_67 } from "../server/android/design-67";
+import { ACTIONS_68, ELEMENTS_68 } from "../server/android/design-68";
 import { permissionFlag } from "../server/functions/sandbox/pool";
 
 const withRoot = (root: ANode): AndroidDesign => ({ ...DEFAULT_DESIGN, screens: { rooms: root }, menus: {} });
@@ -30,8 +32,13 @@ describe("designMinAppCode", () => {
     expect(designMinAppCode(withRoot({ ...plain, on: { click: { action } } }))).toBe(60700);
   });
 
-  it("the default design (which uses the 6.7 rows) needs the 6.7 app", () => {
-    expect(designMinAppCode(DEFAULT_DESIGN)).toBe(60700);
+  it("a 6.8 element or action needs the 6.8 app", () => {
+    if (ELEMENTS_68.length) expect(designMinAppCode(withRoot({ ...plain, children: [{ id: "x", el: ELEMENTS_68[0].el }] }))).toBe(60800);
+    if (ACTIONS_68.length) expect(designMinAppCode(withRoot({ ...plain, on: { click: { action: ACTIONS_68[0].action } } }))).toBe(60800);
+  });
+
+  it("the default design (which uses the 6.7 rows) needs at least the 6.7 app", () => {
+    expect(designMinAppCode(DEFAULT_DESIGN)).toBeGreaterThanOrEqual(60700);
   });
 });
 

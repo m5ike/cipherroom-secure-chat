@@ -38,6 +38,7 @@ import { createServer } from "node:http";
 import { applyTrustProxy } from "./trust-proxy";
 import { ensureMainGroups } from "./access";
 import { accessLog } from "./access-log";
+import { apiLimitConfig, hasOwnBucket } from "./api-limit";
 
 const app = express();
 const httpServer = createServer(app);
@@ -46,15 +47,19 @@ const httpServer = createServer(app);
 // without this every visitor shares nginx's 127.0.0.1 rate-limit bucket.
 const trustProxy = applyTrustProxy(app);
 
-// Rate limiting: 100 requests per 15 minutes per IP for the public API.
-// This is intentionally lenient so it does not throttle legitimate signaling.
+// Rate limiting of the public API, per client address: API_RATE_LIMIT
+// requests (default 100) per API_RATE_WINDOW_MIN minutes (default 15) — lenient,
+// so it does not throttle legitimate signaling. Routes with a bucket of their
+// own (the vault, storage, map tiles, the passkey ceremonies, …) are not
+// counted here too (api-limit.ts).
+const apiLimit = apiLimitConfig();
+for (const p of apiLimit.problems) console.error(`[api-limit] ${p}`);
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 100,
+  windowMs: apiLimit.windowMs,
+  limit: apiLimit.limit,
   standardHeaders: true,
   legacyHeaders: false,
-  // The vault and the storage API have their own, larger buckets (below).
-  skip: (req) => req.originalUrl.startsWith("/api/account/vault") || req.originalUrl.startsWith("/api/storage") || req.originalUrl.startsWith("/api/admin") || req.originalUrl.startsWith("/api/android") || req.originalUrl.startsWith("/api/profile"),
+  skip: (req) => hasOwnBucket(req.method, req.originalUrl),
   message: { ok: false, message: "Too many requests, please try again later." },
 });
 
@@ -258,7 +263,7 @@ export function log(message: string, source = "express") {
       host,
     },
     () => {
-      log(`serving on ${host}:${port} (trust proxy: ${JSON.stringify(trustProxy)})`);
+      log(`serving on ${host}:${port} (trust proxy: ${JSON.stringify(trustProxy)}; API limit ${apiLimit.limit} / ${apiLimit.windowMin} min per address)`);
       audit.add({ category: "system", level: "notice", event: "server.start", detail: { port, host, node: process.version } });
       // 5.2: the tool modules' main groups (mod-functions, mod-ai, …) exist from the start.
       try { ensureMainGroups("server"); } catch { /* the console creates them on first use */ }
