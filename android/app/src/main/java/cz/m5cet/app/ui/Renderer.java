@@ -722,7 +722,10 @@ public final class Renderer {
                     break;
                 }
                 case "image": {
-                    String src = Expr.toText(propValue("src", sc));
+                    // 6.7 (F-01): a computed src may name only a local source; a remote one only as a literal.
+                    JSONObject ps = node.optJSONObject("props");
+                    Object rawSrc = ps == null ? null : ps.opt("src");
+                    String src = DesignUrls.image(rawSrc instanceof String ? (String) rawSrc : null, Expr.toText(propValue("src", sc)));
                     RatioImageView iv = (RatioImageView) view;
                     Object ratio = propValue("ratio", sc);
                     iv.ratio = ratio instanceof Number ? ((Number) ratio).floatValue() : parseF(ratio, 0);
