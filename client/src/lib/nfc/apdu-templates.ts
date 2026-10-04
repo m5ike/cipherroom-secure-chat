@@ -23,8 +23,12 @@
 // builder ("Load standard templates") and the Functions bridge (m5.nfc).
 
 export type TemplateStep =
-  /** A fixed command (hex). `expect`: status words that count as success ("9000" default; "61xx" / "6Cxx" are followed up automatically). */
-  | { apdu: string; label?: string; optional?: boolean; expect?: string[] }
+  /**
+   * A fixed command (hex). `expect`: status words that count as success ("9000" default; "61xx" / "6Cxx"
+   * are followed up automatically). `more` (6.10): the command that fetches the next frame while the card
+   * answers "more frames" (DESFire 91AF) — sent only then, at most 32 times; the frames are joined.
+   */
+  | { apdu: string; label?: string; optional?: boolean; expect?: string[]; more?: string }
   /** SELECT 2PAY.SYS.DDF01 (contactless directory) → the AIDs it lists. */
   | { op: "select-ppse"; label?: string; optional?: boolean }
   /** SELECT 1PAY.SYS.DDF01 (contact directory) → its SFI, whose records list the AIDs. */
@@ -95,16 +99,16 @@ export type TemplateExchange = {
 
 /* ------------------------------------------------------------- the set */
 
-const EMV_COUNTERS = ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F6E"];
+const EMV_COUNTERS = ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F50", "9F51", "9F5D", "9F6D", "9F6E", "9F79", "DF60", "DF61", "DF62"];
 
 /** One payment application, completely: select it, its counters and log before the transaction starts, then the records a terminal reads. */
 const EMV_APP = (aid?: string): TemplateStep[] => [
   { op: "select-aid", ...(aid ? { aid } : {}) },
-  { op: "get-data", tags: EMV_COUNTERS, label: "Counters and log format (GET DATA)" },
+  { op: "get-data", tags: EMV_COUNTERS, label: "Counters, balances and log format (GET DATA)" },
   { op: "read-log", label: "Transaction history" },
   { op: "gpo", label: "GET PROCESSING OPTIONS (no transaction)" },
   { op: "read-afl", label: "Records the AFL lists" },
-  { op: "read-files", sfi: [1, 10], records: [1, 16], label: "Other short files (deep)" },
+  { op: "read-files", sfi: [1, 30], records: [1, 16], label: "Other short files (deep, SFI 1–30)" },
 ];
 
 /** A scheme's card: the directory when the card has one (optional — some cards only answer the AID), then the application. */
@@ -151,14 +155,14 @@ export const STANDARD_APDU_TEMPLATES: ApduTemplate[] = [
       { apdu: "9060000000", label: "GetVersion — hardware", expect: ["91AF"] },
       { apdu: "90AF000000", label: "GetVersion — software", expect: ["91AF"] },
       { apdu: "90AF000000", label: "GetVersion — UID, batch, production date", expect: ["9100"] },
-      { apdu: "906A000000", label: "GetApplicationIDs", expect: ["9100", "91AF"], optional: true },
+      { apdu: "906A000000", more: "90AF000000", label: "GetApplicationIDs (every frame)", expect: ["9100"], optional: true },
       { apdu: "906E000000", label: "GetFreeMemory", expect: ["9100"], optional: true },
       { apdu: "9045000000", label: "GetKeySettings (PICC)", expect: ["9100"], optional: true },
     ],
   },
   {
     label: "Smart card (ISO 7816-4) — master file, EF.DIR, EF.ATR", card: "iso7816",
-    note: "Any ISO-DEP card: SELECT MF, the application directory EF.DIR (its records) and EF.ATR — what a generic card publishes.",
+    note: "Any ISO-DEP card: SELECT MF, the application directory EF.DIR (records 1–8) and EF.ATR — what a generic card publishes.",
     steps: [
       { apdu: "00A4000C023F00", label: "SELECT MF (3F00)", optional: true },
       { apdu: "00A4020C022F00", label: "SELECT EF.DIR (2F00)", optional: true },
@@ -166,6 +170,10 @@ export const STANDARD_APDU_TEMPLATES: ApduTemplate[] = [
       { apdu: "00B2020400", label: "READ RECORD 2 of EF.DIR", optional: true },
       { apdu: "00B2030400", label: "READ RECORD 3 of EF.DIR", optional: true },
       { apdu: "00B2040400", label: "READ RECORD 4 of EF.DIR", optional: true },
+      { apdu: "00B2050400", label: "READ RECORD 5 of EF.DIR", optional: true },
+      { apdu: "00B2060400", label: "READ RECORD 6 of EF.DIR", optional: true },
+      { apdu: "00B2070400", label: "READ RECORD 7 of EF.DIR", optional: true },
+      { apdu: "00B2080400", label: "READ RECORD 8 of EF.DIR", optional: true },
       { apdu: "00A4020C022F01", label: "SELECT EF.ATR (2F01)", optional: true },
       { apdu: "00B0000000", label: "READ BINARY EF.ATR", optional: true },
     ],
@@ -290,6 +298,11 @@ export function templateProblems(t: unknown): string[] {
         // G-18: a template only reads.
         const refused = commandProblem(h);
         if (refused) out.push(refused);
+        if (s.more !== undefined) {
+          const m = String(s.more).replace(/\s/g, "");
+          if (!/^[0-9A-Fa-f]{8,522}$/.test(m) || m.length % 2) out.push(`bad follow-up command ${String(s.more).slice(0, 20)}`);
+          else { const r2 = commandProblem(m); if (r2) out.push(r2); }
+        }
         continue;
       }
       if (s.op === "select-aid" && s.aid !== undefined && !/^[0-9A-Fa-f]{10,32}$/.test(s.aid)) out.push(`bad AID ${s.aid}`);

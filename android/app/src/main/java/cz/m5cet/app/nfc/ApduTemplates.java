@@ -68,6 +68,8 @@ public final class ApduTemplates {
         public final int max;
         /** eid-read / emv-read: the op's args (never null). */
         public final JSONObject args;
+        /** 6.10: a fixed command's follow-up while the card answers "more frames" (DESFire 91AF), hex; null for none. */
+        public String more;
 
         Step(String op, String apdu, String label, boolean optional, List<String> expect, String aid, List<String> tags,
              int[] sfi, int[] records, List<Step> steps, List<String> aids, int max, JSONObject args) {
@@ -271,6 +273,11 @@ public final class ApduTemplates {
                     String why = commandProblem(h);
                     if (why != null) out.add(why);
                 }
+                if (s.has("more") && s.opt("more") != JSONObject.NULL) {
+                    String m = jsString(s.opt("more")), mh = m.replaceAll("\\s", "");
+                    if (!COMMAND.matcher(mh).matches() || mh.length() % 2 != 0) out.add("bad follow-up command " + (m.length() > 20 ? m.substring(0, 20) : m));
+                    else { String why2 = commandProblem(mh); if (why2 != null) out.add(why2); }
+                }
                 continue;
             }
             String op = s.opt("op") instanceof String ? s.optString("op") : "";
@@ -336,8 +343,10 @@ public final class ApduTemplates {
             String label = s.opt("label") instanceof String && !s.optString("label").trim().isEmpty() ? s.optString("label").trim() : null;
             boolean optional = Boolean.TRUE.equals(s.opt("optional"));
             if (s.has("apdu")) {
-                out.add(new Step("", clean(jsString(s.opt("apdu"))), label, optional, strings(s.optJSONArray("expect"), true), null, Collections.<String>emptyList(),
-                    null, null, Collections.<Step>emptyList(), Collections.<String>emptyList(), 0, new JSONObject()));
+                Step c = new Step("", clean(jsString(s.opt("apdu"))), label, optional, strings(s.optJSONArray("expect"), true), null, Collections.<String>emptyList(),
+                    null, null, Collections.<Step>emptyList(), Collections.<String>emptyList(), 0, new JSONObject());
+                if (s.has("more") && s.opt("more") != JSONObject.NULL) c.more = clean(jsString(s.opt("more")));
+                out.add(c);
                 continue;
             }
             String op = s.opt("op") instanceof String ? s.optString("op") : "?";

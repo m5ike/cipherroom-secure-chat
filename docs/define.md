@@ -96,11 +96,11 @@ on what the card answered before:
     "steps": [
       { "op": "select-ppse", "optional": true },          // the directory, if the card has one
       { "op": "select-aid", "aid": "A0000000041010" },     // the application (its PDOL, its log entry)
-      { "op": "get-data", "tags": ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F6E"] },
+      { "op": "get-data", "tags": ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F50", "9F51", "9F5D", "9F6D", "9F6E", "9F79", "DF60", "DF61", "DF62"] },
       { "op": "read-log" },                                // the transaction history
       { "op": "gpo" },                                     // GET PROCESSING OPTIONS, PDOL filled, no transaction
       { "op": "read-afl" },                                // the records the AFL lists
-      { "op": "read-files", "sfi": [1, 10], "records": [1, 16] }
+      { "op": "read-files", "sfi": [1, 30], "records": [1, 16] }
     ] },
   { "label": "MIFARE DESFire — version", "card": "desfire",
     "steps": [

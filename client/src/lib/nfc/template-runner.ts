@@ -39,7 +39,7 @@
 
 import type { CardTransport } from "./transport";
 import { NfcError } from "./errors";
-import { asciiOf, describeSw, hex, isOk, splitResponse, swHex, transmitSmart, unhex, type Response } from "./cards/apdu";
+import { asciiOf, concat, describeSw, hex, isOk, splitResponse, swHex, transmitSmart, unhex, type Response } from "./cards/apdu";
 import {
   appGetData, appGpo, appReadAfl, appReadFiles, appReadLog, finishApp, probeAids, readEmv, selectAid, selectPpse, selectPse, startApp,
   type EmvAppState, type EmvSender,
@@ -352,12 +352,24 @@ export async function runTemplate(t: CardTransport, template: ApduTemplate | Rec
       // G-18: a fixed command only reads (never the e-ID channel's commands either).
       const refused = readOnlyRefusal(cmd);
       if (refused) return fail(refused);
-      const r: Response = await transmitSmart(record, cmd);
+      let r: Response = await transmitSmart(record, cmd);
+      // 6.10: an answer in frames (DESFire 91AF) — `more` fetches the next one while the card says so; the frames are joined.
+      let data = r.data;
+      if (s.more) {
+        let next: Uint8Array;
+        try { next = unhex(String(s.more)); } catch { return fail("not a hex follow-up command"); }
+        const refusedMore = readOnlyRefusal(next);
+        if (refusedMore) return fail(refusedMore);
+        for (let n = 0; n < 32 && swHex(r.sw) === "91AF"; n++) {
+          r = await transmitSmart(record, next);
+          data = concat(data, r.data);
+        }
+      }
       const sw = swHex(r.sw);
       const expect = Array.isArray(s.expect) && s.expect.length ? s.expect : ["9000"];
       const good = swMatches(sw, expect);
       mark(seq, good ? "ok" : s.optional ? "warn" : "error");
-      items.push({ step: seq, label: lbl, command: hex(cmd), response: hex(r.data), sw, status: good ? "ok" : s.optional ? "warn" : "error" });
+      items.push({ step: seq, label: lbl, command: hex(cmd), response: hex(data), sw, status: good ? "ok" : s.optional ? "warn" : "error" });
       if (good) return true;
       return fail(`${swWords(r.sw)} (expected ${expect.join(" / ")})`, s.optional);
     }

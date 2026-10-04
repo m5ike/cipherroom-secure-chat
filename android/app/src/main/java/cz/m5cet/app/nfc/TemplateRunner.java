@@ -437,6 +437,16 @@ public final class TemplateRunner {
             resp = Apdu.splitResponse(rec.transmit(Apdu.u8(cmd[0] & 0xf0, 0xc0, 0x00, 0x00, resp.sw2)));
             data.write(resp.data, 0, resp.data.length);
         }
+        // 6.10: an answer in frames (DESFire 91AF) — `more` fetches the next one while the card says so; the frames are joined.
+        if (s.more != null && !s.more.isEmpty()) {
+            String whyMore = s.more.matches("([0-9A-F]{2}){4,261}") ? ApduTemplates.commandProblem(s.more) : "bad follow-up command";
+            if (whyMore != null) { r.status = "error"; r.note("nfc.tpl.n.refused", whyMore); return; } // G-18: never sent
+            byte[] next = Apdu.unhex(s.more);
+            for (int n = 0; n < 32 && resp.sw == 0x91af; n++) {
+                resp = Apdu.splitResponse(rec.transmit(next));
+                data.write(resp.data, 0, resp.data.length);
+            }
+        }
         r.data = Apdu.hex(data.toByteArray());
         r.sw = StatusWords.hex(resp.sw);
         r.status = expected(s.expect, resp.sw) ? "ok" : s.optional ? "warn" : "error";

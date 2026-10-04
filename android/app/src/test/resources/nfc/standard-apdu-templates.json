@@ -23,9 +23,17 @@
               "9F17",
               "9F4D",
               "9F4F",
-              "9F6E"
+              "9F50",
+              "9F51",
+              "9F5D",
+              "9F6D",
+              "9F6E",
+              "9F79",
+              "DF60",
+              "DF61",
+              "DF62"
             ],
-            "label": "Counters and log format (GET DATA)"
+            "label": "Counters, balances and log format (GET DATA)"
           },
           {
             "op": "read-log",
@@ -43,13 +51,13 @@
             "op": "read-files",
             "sfi": [
               1,
-              10
+              30
             ],
             "records": [
               1,
               16
             ],
-            "label": "Other short files (deep)"
+            "label": "Other short files (deep, SFI 1–30)"
           }
         ]
       }
@@ -79,9 +87,17 @@
               "9F17",
               "9F4D",
               "9F4F",
-              "9F6E"
+              "9F50",
+              "9F51",
+              "9F5D",
+              "9F6D",
+              "9F6E",
+              "9F79",
+              "DF60",
+              "DF61",
+              "DF62"
             ],
-            "label": "Counters and log format (GET DATA)"
+            "label": "Counters, balances and log format (GET DATA)"
           },
           {
             "op": "read-log",
@@ -99,13 +115,13 @@
             "op": "read-files",
             "sfi": [
               1,
-              10
+              30
             ],
             "records": [
               1,
               16
             ],
-            "label": "Other short files (deep)"
+            "label": "Other short files (deep, SFI 1–30)"
           }
         ]
       }
@@ -133,9 +149,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -153,13 +177,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -185,9 +209,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -205,13 +237,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -237,9 +269,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -257,13 +297,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -289,9 +329,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -309,13 +357,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -341,9 +389,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -361,13 +417,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -393,9 +449,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -413,13 +477,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -445,9 +509,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -465,13 +537,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -497,9 +569,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -517,13 +597,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -549,9 +629,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -569,13 +657,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -601,9 +689,17 @@
           "9F17",
           "9F4D",
           "9F4F",
-          "9F6E"
+          "9F50",
+          "9F51",
+          "9F5D",
+          "9F6D",
+          "9F6E",
+          "9F79",
+          "DF60",
+          "DF61",
+          "DF62"
         ],
-        "label": "Counters and log format (GET DATA)"
+        "label": "Counters, balances and log format (GET DATA)"
       },
       {
         "op": "read-log",
@@ -621,13 +717,13 @@
         "op": "read-files",
         "sfi": [
           1,
-          10
+          30
         ],
         "records": [
           1,
           16
         ],
-        "label": "Other short files (deep)"
+        "label": "Other short files (deep, SFI 1–30)"
       }
     ]
   },
@@ -687,10 +783,10 @@
       },
       {
         "apdu": "906A000000",
-        "label": "GetApplicationIDs",
+        "more": "90AF000000",
+        "label": "GetApplicationIDs (every frame)",
         "expect": [
-          "9100",
-          "91AF"
+          "9100"
         ],
         "optional": true
       },
@@ -715,7 +811,7 @@
   {
     "label": "Smart card (ISO 7816-4) — master file, EF.DIR, EF.ATR",
     "card": "iso7816",
-    "note": "Any ISO-DEP card: SELECT MF, the application directory EF.DIR (its records) and EF.ATR — what a generic card publishes.",
+    "note": "Any ISO-DEP card: SELECT MF, the application directory EF.DIR (records 1–8) and EF.ATR — what a generic card publishes.",
     "steps": [
       {
         "apdu": "00A4000C023F00",
@@ -745,6 +841,26 @@
       {
         "apdu": "00B2040400",
         "label": "READ RECORD 4 of EF.DIR",
+        "optional": true
+      },
+      {
+        "apdu": "00B2050400",
+        "label": "READ RECORD 5 of EF.DIR",
+        "optional": true
+      },
+      {
+        "apdu": "00B2060400",
+        "label": "READ RECORD 6 of EF.DIR",
+        "optional": true
+      },
+      {
+        "apdu": "00B2070400",
+        "label": "READ RECORD 7 of EF.DIR",
+        "optional": true
+      },
+      {
+        "apdu": "00B2080400",
+        "label": "READ RECORD 8 of EF.DIR",
         "optional": true
       },
       {

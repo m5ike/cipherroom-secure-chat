@@ -324,11 +324,11 @@ same functions, `cards/emv.ts`).
     { "op": "select-ppse", "optional": true },
     { "op": "for-each-aid", "max": 8, "steps": [
       { "op": "select-aid" },
-      { "op": "get-data", "tags": ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F6E"], "label": "Counters and log format (GET DATA)" },
+      { "op": "get-data", "tags": ["9F36", "9F13", "9F17", "9F4D", "9F4F", "9F50", "9F51", "9F5D", "9F6D", "9F6E", "9F79", "DF60", "DF61", "DF62"], "label": "Counters, balances and log format (GET DATA)" },
       { "op": "read-log", "label": "Transaction history" },
       { "op": "gpo", "label": "GET PROCESSING OPTIONS (no transaction)" },
       { "op": "read-afl", "label": "Records the AFL lists" },
-      { "op": "read-files", "sfi": [1, 10], "records": [1, 16], "label": "Other short files (deep)" } ] } ] }
+      { "op": "read-files", "sfi": [1, 30], "records": [1, 16], "label": "Other short files (deep, SFI 1–30)" } ] } ] }
 ```
 
 A template: `label`, `steps`, optional `card` (`emv` · `emrtd` · `desfire` ·
@@ -336,7 +336,7 @@ A template: `label`, `steps`, optional `card` (`emv` · `emrtd` · `desfire` ·
 
 | Step | What it does |
 |---|---|
-| `{ apdu, label?, optional?, expect? }` | A fixed command (hex). `expect`: the status words that count as success (`9000` by default; `xx` = any byte). 61xx → GET RESPONSE and 6Cxx → sent again with the right Le are followed automatically, and every APDU of that dance is recorded. |
+| `{ apdu, label?, optional?, expect?, more? }` | A fixed command (hex). `expect`: the status words that count as success (`9000` by default; `xx` = any byte). 61xx → GET RESPONSE and 6Cxx → sent again with the right Le are followed automatically, and every APDU of that dance is recorded. `more` (6.10): the command that fetches the next frame while the card answers "more frames" (DESFire `91AF`) — sent only then, at most 32 times, the frames joined (GetApplicationIDs of a card with many applications). |
 | `select-ppse` | SELECT 2PAY.SYS.DDF01 (contactless directory) → the AIDs it lists, by priority. |
 | `select-pse` | SELECT 1PAY.SYS.DDF01 (contact directory) → its short file (tag 88), whose records list the AIDs. |
 | `select-aid` | SELECT `aid` — or, inside `for-each-aid`, the current one. Keeps the FCI (PDOL, label, log entry). |

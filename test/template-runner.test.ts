@@ -153,9 +153,35 @@ describe("the standard set", () => {
     // READ BINARY: 6C0A → the same command with Le 0A.
     const j = run.exchanges.findIndex((e) => e.sw === "6C0A");
     expect(run.exchanges[j + 1].command).toBe("00B000000A");
-    // Records 3 and 4 do not exist: warnings, not problems.
-    expect(run.exchanges.filter((e) => e.sw === "6A83").map((e) => e.status)).toEqual(["warn", "warn"]);
-    expect(run.data.generic.items.map((x) => x.status)).toEqual(["ok", "ok", "ok", "ok", "warn", "warn", "ok", "ok"]);
+    // Records 3 to 8 do not exist: warnings, not problems.
+    expect(run.exchanges.filter((e) => e.sw === "6A83").map((e) => e.status)).toEqual(["warn", "warn", "warn", "warn", "warn", "warn"]);
+    expect(run.data.generic.items.map((x) => x.status)).toEqual(["ok", "ok", "ok", "ok", "warn", "warn", "warn", "warn", "warn", "warn", "ok", "ok"]);
+  });
+
+  it("a command answered in frames (DESFire 91AF) follows `more` only while the card says so, joining the frames", async () => {
+    // 20 applications: 19 in the first frame (57 bytes) + "91AF", the last one with "9100".
+    const ids = Array.from({ length: 20 }, (_, i) => [0x01, 0x00, i + 1]);
+    const seen: string[] = [];
+    const t = { transmit: async (cmd: Uint8Array) => {
+      const h = Array.from(cmd, (b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+      seen.push(h);
+      if (h === "906A000000") return u8(...ids.slice(0, 19).flat(), 0x91, 0xaf);
+      if (h === "90AF000000") return u8(...ids.slice(19).flat(), 0x91, 0x00);
+      return u8(0x91, 0x1c);
+    } } as unknown as CardTransport;
+    const tpl: ApduTemplate = { label: "apps", card: "desfire", steps: [{ apdu: "906A000000", more: "90AF000000", label: "GetApplicationIDs", expect: ["9100"] }] };
+    expect(templateProblems(tpl)).toEqual([]);
+    const run = await runTemplate(t, tpl);
+    expect(run.ok, run.problems.join("; ")).toBe(true);
+    expect(seen).toEqual(["906A000000", "90AF000000"]);
+    expect(run.data.generic.desfire?.applications).toHaveLength(20);
+    // One frame only: no follow-up is sent.
+    seen.length = 0;
+    const one = { transmit: async (cmd: Uint8Array) => { seen.push(cmd[1].toString(16)); return u8(0x01, 0x00, 0x01, 0x91, 0x00); } } as unknown as CardTransport;
+    expect((await runTemplate(one, tpl)).ok).toBe(true);
+    expect(seen).toEqual(["6a"]);
+    // A follow-up that is not a read is refused before anything is sent.
+    expect(templateProblems({ ...tpl, steps: [{ apdu: "906A000000", more: "90C4000000" }] }).join()).toMatch(/not a read command/);
   });
 
   it("an optional step the card refuses is a warning; the run goes on", async () => {

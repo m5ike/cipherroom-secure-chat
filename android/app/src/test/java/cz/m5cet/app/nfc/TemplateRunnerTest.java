@@ -300,17 +300,41 @@ public class TemplateRunnerTest {
         TemplateRunner.StepResult rec1Step = r.steps.get(r.exchanges.get(rec1).step - 1);
         assertEquals(Apdu.hex(SimCards.DIR1), rec1Step.data);
         assertEquals("9000", rec1Step.sw);
-        // Records 3 and 4 are not there: optional, so warnings.
-        assertEquals("warn", r.steps.get(4).status);
-        assertEquals("warn", r.steps.get(5).status);
-        assertEquals("6A83", r.steps.get(4).sw);
-        assertEquals(Apdu.hex(SimCards.ATR), r.steps.get(7).data);
+        // Records 3 to 8 are not there: optional, so warnings.
+        for (int i = 4; i <= 9; i++) { assertEquals("warn", r.steps.get(i).status); assertEquals("6A83", r.steps.get(i).sw); }
+        assertEquals(Apdu.hex(SimCards.ATR), r.steps.get(11).data);
         assertEquals("warn", r.status());
     }
 
     /* ------------------------------------------------------------ steps, expect, optional */
 
     private static ApduTemplates.Template one(JSONObject t) { return ApduTemplates.parse(t, 0); }
+
+    /** 6.10: a command answered in frames (DESFire 91AF) follows `more` only while the card says so; the frames are joined. */
+    @Test
+    public void moreFollowsTheFramesOnlyWhileTheCardSaysSo() throws Exception {
+        JSONObject tpl = new JSONObject().put("label", "apps").put("card", "desfire").put("steps", new JSONArray()
+            .put(new JSONObject().put("apdu", "906A000000").put("more", "90AF000000").put("label", "GetApplicationIDs").put("expect", new JSONArray().put("9100"))));
+        assertTrue(one(tpl).problems.isEmpty());
+        List<String> seen = new ArrayList<>();
+        Apdu.Transceiver card = cmd -> {
+            String h = Apdu.hex(cmd);
+            seen.add(h);
+            ByteArrayOutputStream o = new ByteArrayOutputStream();
+            int from = h.equals("906A000000") ? 0 : 19, to = h.equals("906A000000") ? 19 : 20;
+            for (int i = from; i < to; i++) { o.write(0x01); o.write(0x00); o.write(i + 1); }
+            o.write(0x91); o.write(h.equals("906A000000") ? 0xAF : 0x00);
+            return o.toByteArray();
+        };
+        TemplateRunner.Result r = new TemplateRunner(one(tpl)).run(card);
+        assertEquals(java.util.Arrays.asList("906A000000", "90AF000000"), seen);
+        assertEquals("ok", r.steps.get(0).status);
+        assertEquals("9100", r.steps.get(0).sw);
+        assertEquals(20 * 3 * 2, r.steps.get(0).data.length());
+        // A follow-up that is not a read is refused before anything is sent.
+        JSONObject bad = new JSONObject().put("label", "x").put("steps", new JSONArray().put(new JSONObject().put("apdu", "906A000000").put("more", "90C4000000")));
+        assertFalse(one(bad).problems.isEmpty());
+    }
 
     @Test
     public void aFixedCommandSucceedsByWhatItExpects() throws Exception {
