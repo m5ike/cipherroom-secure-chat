@@ -532,7 +532,35 @@ public final class CardOps {
         } finally { close(iso); }
     }
 
+    /**
+     * EMV full read (6.5): PPSE → SELECT AID → GPO → READ RECORD, then the records
+     * parsed into the holder data a terminal reads (the web EmvReader, ported).
+     * Read-only — no PIN, no cryptogram, no transaction. Returns the {@code emv}
+     * JSONObject of the NfcResult contract.
+     */
+    public static JSONObject emvRead(Tag tag, int maxApps) throws IOException, JSONException {
+        IsoDep iso = IsoDep.get(tag);
+        if (iso == null) throw new IOException("not-iso-dep");
+        iso.connect();
+        try { iso.setTimeout(5000); return EmvReader.readEmv(iso::transceive, maxApps); }
+        finally { close(iso); }
+    }
+
     /* -------------------------------------------------------------- e-ID */
+
+    /**
+     * e-ID / MRTD full read (6.5): opens the chip with the holder's own MRZ (or
+     * its three fields) over BAC — the document's own access control — and reads
+     * DG1 (the MRZ) and DG2 (the face) over secure messaging (the web MrtdReader,
+     * ported). Read-only. Returns the {@code mrtd} JSONObject of the contract.
+     */
+    public static JSONObject eidRead(Tag tag, MrtdReader.Options opts) throws IOException, JSONException {
+        IsoDep iso = IsoDep.get(tag);
+        if (iso == null) throw new IOException("not-iso-dep");
+        iso.connect();
+        try { iso.setTimeout(5000); return MrtdReader.readMrtd(iso::transceive, opts); }
+        finally { close(iso); }
+    }
 
     /** e-ID / MRTD PUBLIC info: whether an eMRTD app answers. Reading data groups needs the CAN/MRZ (BAC/PACE). */
     public static JSONObject eidPublic(Tag tag) throws IOException, JSONException {
