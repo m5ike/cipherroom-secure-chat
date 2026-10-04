@@ -58,13 +58,27 @@ export type CallAction =
   | { play: { url: string; loop?: number } }
   | { pause: { seconds: number } }
   /** Collects digits. `action` is the absolute URL the digits are POSTed to. With
-   *  finishOnKey "#" and no fixed length the caller types any number of digits and "#". */
-  | { gather: { action: string; prompt?: string; voice?: string; language?: string; digits?: number; finishOnKey?: string; timeout?: number } }
+   *  finishOnKey "#" and no fixed length the caller types any number of digits and "#".
+   *  6.9: `input` ["speech"] (or both) uses the provider's own speech recognition — the
+   *  result arrives at `action` as speech text (Twilio SpeechResult, Vonage speech.results,
+   *  Telnyx transcription); `speechTimeout` = seconds of silence that end the utterance. */
+  | { gather: { action: string; prompt?: string; voice?: string; language?: string; digits?: number; finishOnKey?: string; timeout?: number; input?: Array<"dtmf" | "speech">; speechTimeout?: number; hints?: string[] } }
   /** Bidirectional audio over a WebSocket (wss://…); `params` travel in the start message. */
   | { stream: { url: string; params?: Record<string, string>; codec?: "PCMU" | "L16"; rate?: 8000 | 16000 } }
-  | { record: { action: string; maxSeconds?: number; beep?: boolean } }
+  /** 6.9: finishOnKey ("#", "*", "any", "" = none), silenceSeconds (0 = off), trim, transcribe (the provider's). */
+  | { record: { action: string; maxSeconds?: number; beep?: boolean; finishOnKey?: string; silenceSeconds?: number; trim?: boolean; transcribe?: boolean; language?: string } }
   | { redirect: { url: string } }
-  | { hangup: Record<string, never> };
+  | { hangup: Record<string, never> }
+  /** 6.9: dial-pad tones into the call ("w" = 0.5 s pause). */
+  | { sendDigits: { digits: string; mode?: "rfc2833" | "inband" | "sip-info"; toneMs?: number } }
+  /**
+   * 6.9: connect the caller to a number or a SIP URI (a transfer / bridge). `action` is the
+   * absolute URL the dial's outcome is POSTed to (answered + duration, busy, no-answer, failed);
+   * `trunk` dials over the operator's SIP trunk (credentials from sip.ts, never logged).
+   */
+  | { dial: { to: string; kind: "number" | "sip"; action: string; callerId?: string; callerName?: string; presentation?: "allowed" | "restricted"; timeout?: number; record?: boolean; trunk?: { id: string; host: string; username?: string; password?: string; transport?: "udp" | "tcp" | "tls" } } }
+  /** 6.9: refuse an unanswered inbound call with a state (an answered one is hung up). */
+  | { reject: { reason: "busy" | "congestion" | "rejected" } };
 
 export type RenderedLogic = { contentType: string; body: string };
 
