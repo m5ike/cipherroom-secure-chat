@@ -485,6 +485,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             }
             case "settings.user": s.put("keys", keysScope()); s.put("connection", connectionScope()); break;
             case "settings.profile": s.put("profile", cz.m5cet.app.ui.parts.ProfileUi.scope(this)); break; // 6.7
+            case "settings": s.put("myProfile", cz.m5cet.app.ui.parts.ProfileUi.summary(this)); break; // 6.10: the profile card on top
             case "settings.voice": case "voice": case "dictate.options":
                 loadVoices();
                 s.put("voices", voices);

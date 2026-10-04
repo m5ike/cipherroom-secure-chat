@@ -252,11 +252,14 @@ public final class Parts {
      * Forward (App.tsx:3565): same text and attachment, "forwarded from", no
      * kinds; a sealed one only when opened. 6.2: to a room, then to everyone
      * there or one person (privately) — a file from the vault goes to the
-     * whole room (a transfer has no private form).
+     * whole room (a transfer has no private form). 6.10: the same in the
+     * design's sheet (message.forward) — also from a left swipe on a bubble.
      */
     void forward(ChatMessage m) {
         java.util.List<RoomSession> rooms = app().rooms.connectedSessions();
         if (rooms.isEmpty()) { a.flash("", app().t("room.offline"), "warn"); return; }
+        // 6.10: the forward sheet of the design (message.forward); a bundle from before it keeps the dialogs.
+        if (app().design().screen("message.forward") != null) { forwardSheet(m, rooms); return; }
         String[] names = new String[rooms.size()];
         for (int i = 0; i < rooms.size(); i++) names[i] = rooms.get(i).label;
         secureDialog(new android.app.AlertDialog.Builder(a).setTitle(app().t("msg.forward")).setItems(names, (d, w) -> {
@@ -283,6 +286,101 @@ public final class Parts {
         if (m.filePath != null && m.fileDataUrl == null) to.sendFile(m.filePath, m.fileName, m.fileMime, m.fileSize, o);
         else to.send(o);
         a.flash("", "✓ " + (peerName != null ? peerName + " · " : "") + to.label, "success");
+    }
+
+    /* ------------------------------------------ 6.10 the forward sheet */
+
+    /** The message being forwarded from the sheet, and the room chosen for it ("" = still choosing). */
+    private ChatMessage forwarding;
+    private String forwardRoom = "";
+
+    /**
+     * Forward in the design's look (message.forward, $form.forward): what
+     * goes, the connected rooms, then everyone there or one person — the
+     * same rules as the dialogs (a file from the vault goes to the whole
+     * room). One connected room: straight to whom.
+     */
+    private void forwardSheet(ChatMessage m, java.util.List<RoomSession> rooms) {
+        forwarding = m;
+        forwardRoom = rooms.size() == 1 ? rooms.get(0).key : "";
+        a.form().put("forward", forwardScope());
+        showSheet("message.forward");
+    }
+
+    /** msg.forwardRoom: into this room next (whom); "" back to the rooms. */
+    public void forwardRoom(String key) {
+        if (forwarding == null) return;
+        RoomSession to = key == null || key.isEmpty() ? null : app().rooms.session(key);
+        forwardRoom = to != null && to.connected() ? to.key : "";
+        a.form().put("forward", forwardScope());
+        refreshSheet();
+    }
+
+    /** msg.forwardTo: send it — to one person of the chosen room privately, or (no id) to everyone there. */
+    public void forwardTo(String peerId) {
+        ChatMessage m = forwarding;
+        RoomSession to = forwardRoom.isEmpty() ? null : app().rooms.session(forwardRoom);
+        if (m == null || to == null || !to.connected()) { closeOverlay(); a.flash("", app().t("room.offline"), "warn"); return; }
+        String id = peerId == null || peerId.isEmpty() || vaultFile(m) ? null : peerId;
+        String name = id == null ? null : to.peerName(id);
+        if (id != null && name == null) { a.form().put("forward", forwardScope()); refreshSheet(); return; } // they left meanwhile: the list without them
+        forwarding = null;
+        forwardRoom = "";
+        closeOverlay();
+        forwardTo(m, to, id, name);
+    }
+
+    private static boolean vaultFile(ChatMessage m) { return m.filePath != null && m.fileDataUrl == null; }
+
+    /** $form.forward: the step, what goes (sender, two lines, its icon), the rooms or the people. */
+    private JSONObject forwardScope() {
+        M5 app = app();
+        ChatMessage m = forwarding;
+        JSONObject o = new JSONObject();
+        if (m == null) return o;
+        java.util.List<RoomSession> rooms = app.rooms.connectedSessions();
+        RoomSession to = forwardRoom.isEmpty() ? null : app.rooms.session(forwardRoom);
+        String kind = cz.m5cet.app.ui.bubble.ReplyQuote.kind(m, null);
+        String text = cz.m5cet.app.ui.bubble.ReplyQuote.line(m.visibleText());
+        if (text.isEmpty() && m.fileName != null) text = cz.m5cet.app.ui.bubble.ReplyQuote.line(m.fileName);
+        try {
+            o.put("step", to == null ? "room" : "who").put("canBack", to != null && rooms.size() > 1)
+                .put("sender", m.mine ? app.t("quote.you") : m.senderName).put("text", text).put("icon", cz.m5cet.app.ui.bubble.ReplyQuote.icon(kind));
+            org.json.JSONArray list = new org.json.JSONArray();
+            for (RoomSession r : rooms) list.put(new JSONObject().put("key", r.key).put("name", r.label).put("users", (double) r.userCount()).put("here", r.key.equals(app.rooms.active())));
+            o.put("rooms", list);
+            org.json.JSONArray people = new org.json.JSONArray();
+            boolean whole = vaultFile(m);
+            if (to != null && !whole) {
+                org.json.JSONArray peers = to.peersScope();
+                for (int i = 0; i < peers.length(); i++) people.put(new JSONObject().put("id", peers.optJSONObject(i).optString("id")).put("name", peers.optJSONObject(i).optString("name")));
+            }
+            o.put("room", to == null ? "" : to.label).put("people", people).put("hasPeople", people.length() > 0).put("wholeRoom", whole);
+        } catch (org.json.JSONException ignored) { }
+        return o;
+    }
+
+    /* ---------------------------------------- 6.10 the quote, the sender */
+
+    /** msg.quote: the list goes to the message a reply quotes and flashes it — or says why it cannot. */
+    public void quote(String originalId) {
+        MessageList.Jump j = messages != null && messages.isAttachedToWindow() ? messages.jumpTo(originalId) : MessageList.Jump.MISSING;
+        if (j == MessageList.Jump.HIDDEN) a.flash("", app().t("quote.hidden"), "info");
+        else if (j == MessageList.Jump.MISSING) a.flash("", app().t("quote.notLoaded"), "info");
+    }
+
+    /** msg.sender: what the message's sender shares with the room (message.sender), else their detail. */
+    public void showSender(String messageId) {
+        ChatMessage m = find(messageId);
+        RoomSession r = m == null ? null : app().rooms.session(m.roomKey);
+        if (m == null || r == null || "sys".equals(m.kind)) return;
+        if (app().design().screen("message.sender") == null) {
+            // A bundle from before 6.10: the person's detail (it has their room profile), when they are here.
+            if (r.peerName(m.senderId) != null) people().run("people.open", m.senderId);
+            return;
+        }
+        a.form().put("sender", ProfileUi.sender(app(), r, m));
+        showSheet("message.sender");
     }
 
     /** A dialog of the app keeps screenshots out like the app does (its own window). */

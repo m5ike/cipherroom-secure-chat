@@ -36,7 +36,7 @@ describe("android send options (design-68-send)", () => {
     expect(ACTIONS_68.map((a) => a.action)).toContain("send.option");
     const withSheet: AndroidDesign = { ...DEFAULT_DESIGN, screens: { "send.options": sheet }, menus: {} };
     expect(designMinAppCode(withSheet)).toBe(60800);
-    expect(designMinAppCode(DEFAULT_DESIGN)).toBe(60800);
+    expect(designMinAppCode(DEFAULT_DESIGN)).toBeGreaterThanOrEqual(60800); // 6.10 parts in the default need the 6.10 app
   });
 
   it("every row is an option of the message, switched by send.option — nothing is sent from the sheet", () => {
