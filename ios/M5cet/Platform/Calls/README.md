@@ -175,7 +175,8 @@ při enrollu), ECIES s klíčem zařízení (info `"push"`), tedy stejně jako �
 4. Zavěsím a nikdo nepřijal → stejný payload se `state:"end"`, `id:"<callId>:e"`, rámec `callEnd:true, callId,
    video?` jen příjemcům zvonění, kteří jsou pořád away.
 
-**Příjemce** — port `CallWake.Inbox` (Android) / `CallWakeInbox` (web), jeden záznam na hovor:
+**Příjemce** — port `CallWake.Inbox` (Android) / `CallWakeInbox` (web; čistá logika patří do M5Proto vedle `CallTrack`,
+testy = Android `CallWakeTest`), jeden záznam na hovor:
 
 * **Položka z fronty** (`onRelayDeliver`, před `Payloads.validate`): `kind:"call"` zkontrolovat jako zprávu (odesílatel
   = předávající peer, ne my ani vyhrazené id; `call` `[A-Za-z0-9_:.-]{1,90}`; `state` ring|end; `at`/`createdAt`
