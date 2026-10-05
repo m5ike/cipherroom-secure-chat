@@ -58,6 +58,32 @@ final class RendererControlsLayoutTests: XCTestCase {
         XCTAssertEqual(s.convert(s.bounds, to: window).maxX, size.width - 12, accuracy: 0.5)
     }
 
+    /// "Photo" at caption size measures 33.33 pt: placed centred at a fractional x it lost its last third of a point to
+    /// the pixel grid and truncated to "Pho…" (the attach sheet). A wrapping box measures whole points, as Android
+    /// measures ceil(width) pixels.
+    func testAWrappedTextIsMeasuredInWholePoints() throws {
+        let host = RendererTestSupport.host()
+        for word in ["Photo", "Camera", "Position", "Ilmoitukset"] {
+            let tree: DesignValue = ["el": "column", "style": ["align": "center"], "children": [
+                ["el": "text", "text": .string(word), "props": ["variant": "caption", "align": "center"], "style": ["lines": 2]],
+            ]]
+            let node = try XCTUnwrap(try ScreenResolver(host.renderContext()).resolve(DesignNode(value: tree), scope: .empty))
+            let size = RendererTestSupport.idealSize(NodeView(node: node).environment(host))
+            XCTAssertGreaterThan(size.width, 10, word)
+            XCTAssertEqual(size.width, size.width.rounded(.up), word)
+        }
+    }
+
+    /// Settings › Notifications' Apple Watch switch only on a device that pairs with a watch ($app.watch — an iPad does not).
+    func testTheWatchSwitchShowsOnlyWhereAWatchPairs() throws {
+        let host = RendererTestSupport.host()
+        XCTAssertEqual(host.scope(for: "settings.notify")["app"]["watch"], .bool(DesignHost.pairsWithWatch))
+        let node = try XCTUnwrap(host.resolve("settings.notify", scope: host.scope(for: "settings.notify"), context: host.renderContext()))
+        let ids = node.all().map(\.id)
+        XCTAssertEqual(ids.contains { $0.hasSuffix("/watch-switch") }, DesignHost.pairsWithWatch, "\(ids.filter { $0.contains("watch") })")
+        XCTAssertEqual(ids.contains { $0.hasSuffix("/watch-hint") }, DesignHost.pairsWithWatch)
+    }
+
     func testEverySettingsScreensSwitchesAreUnclippedOnAPhoneAndAnIPad() {
         let state = SampleScreenState()
         let screens = DesignAssets.builtIn.document.screens.keys.filter { $0.hasPrefix("settings") }.sorted()

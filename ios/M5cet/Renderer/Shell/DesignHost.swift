@@ -10,6 +10,7 @@ import Observation
 import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
+import WatchConnectivity
 import os
 
 /// A menu on screen (ui/look/Menus.Item): its icon, label, danger, check and what it does.
@@ -284,7 +285,15 @@ final class DesignHost: ActionHost {
 
     var screenContext: ScreenContext { ScreenContext(wide: wide, regularWidth: regularWidth, lang: services.lang) }
 
-    var appScope: DesignValue { ScreenScope.app(design: design, version: AppInfo.version, code: Int(AppInfo.build) ?? 0) }
+    var appScope: DesignValue {
+        var a = ScreenScope.app(design: design, version: AppInfo.version, code: Int(AppInfo.build) ?? 0).objectValue ?? [:]
+        // iOS: this device pairs with an Apple Watch (an iPad does not) — the iOS design shows its watch switch only then.
+        a["watch"] = .bool(Self.pairsWithWatch)
+        return .object(a)
+    }
+
+    /// WCSession.isSupported(): an iPhone (with or without a paired watch); false on an iPad.
+    static let pairsWithWatch = WCSession.isSupported()
 
     /// The scope of a screen: $app $form $settings $define $account and the screen's own variables.
     func scope(for screen: String) -> Scope {

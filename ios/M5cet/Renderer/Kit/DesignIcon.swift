@@ -3,6 +3,7 @@
 // Lucide geometry of m5/icons.json stroked natively — 24 × 24 view box, 2 pt round
 // strokes, `fill` shapes filled — tinted with one colour.
 
+import LocalAuthentication
 import M5Design
 import SwiftUI
 import UIKit
@@ -14,10 +15,26 @@ enum DesignIconCatalog {
     /// The SF Symbol for a Lucide name when this system draws it.
     static func symbol(_ name: String) -> String? {
         if let cached = symbolCache[name] { return cached }
-        let s = Icons.sfSymbol(name).flatMap { UIImage(systemName: $0) != nil ? $0 : nil }
+        var s = Icons.sfSymbol(name)
+        // The design's biometrics glyph (Android's fingerprint — "touchid") is the device's own: Face ID on an
+        // iPhone without Touch ID, Optic ID on a Vision device.
+        if s == "touchid" { s = biometricSymbol }
+        s = s.flatMap { UIImage(systemName: $0) != nil ? $0 : nil }
         symbolCache[name] = s
         return s
     }
+
+    /// faceid / touchid / opticid — what LocalAuthentication says this device has (touchid without biometry).
+    static let biometricSymbol: String = {
+        let c = LAContext()
+        var error: NSError?
+        _ = c.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error)
+        switch c.biometryType {
+        case .faceID: return "faceid"
+        case .opticID: return "opticid"
+        default: return "touchid"
+        }
+    }()
 
     static func shapes(_ name: String) -> [IconShape] { DesignAssets.icons.shapes(name) }
 }

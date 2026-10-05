@@ -53,8 +53,15 @@ private struct Measurer {
         return s
     }
 
-    /// WRAP_CONTENT, unbounded.
-    mutating func ideal(_ i: Int) -> CGSize { size(i, nil, nil) }
+    /// WRAP_CONTENT, unbounded — the width up to a whole point (Android: a TextView measures ceil(width) pixels).
+    /// A text of exactly its ideal width placed at a fractional position lost its last fraction of a point to the
+    /// pixel grid and truncated ("Pho…" in the attach sheet).
+    mutating func ideal(_ i: Int) -> CGSize {
+        var s = size(i, nil, nil)
+        s.width = (s.width - 0.001).rounded(.up)
+        if s.width < 0 { s.width = 0 }
+        return s
+    }
 
     /// The height at a width.
     mutating func height(_ i: Int, at w: CGFloat) -> CGFloat { size(i, w, nil).height }
