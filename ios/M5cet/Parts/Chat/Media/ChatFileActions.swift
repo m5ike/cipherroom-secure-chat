@@ -86,7 +86,7 @@ enum ChatFileActions {
     // MARK: delegates that clean up after themselves
 
     @MainActor
-    private final class PreviewSource: NSObject, @preconcurrency QLPreviewControllerDataSource, @preconcurrency QLPreviewControllerDelegate {
+    private final class PreviewSource: NSObject, QLPreviewControllerDataSource, @preconcurrency QLPreviewControllerDelegate {
         let url: URL
         var retainSelf: PreviewSource?
         init(url: URL) { self.url = url }
@@ -99,7 +99,7 @@ enum ChatFileActions {
     }
 
     @MainActor
-    private final class ExportDone: NSObject, @preconcurrency UIDocumentPickerDelegate {
+    private final class ExportDone: NSObject, UIDocumentPickerDelegate {
         let url: URL
         let done: @MainActor (Bool) -> Void
         var retainSelf: ExportDone?

@@ -28,6 +28,7 @@ struct ComposerPart: View {
     let ctx: SlotContext
     @Environment(\.designTextScale) private var textScale
     @Environment(\.scenePhase) private var phase
+    @Environment(\.displayScale) private var displayScale
     @State private var voice: ComposerVoice?
     @State private var caret = 0
     @State private var caretToken = 0
@@ -48,7 +49,7 @@ struct ComposerPart: View {
         let c = ctx.context
         let _ = composer.revision
         VStack(spacing: 0) {
-            Rectangle().fill(c.swiftColor("@border", .gray).opacity(0.8)).frame(height: max(1 / UIScreen.main.scale, 0.7))
+            Rectangle().fill(c.swiftColor("@border", .gray).opacity(0.8)).frame(height: max(1 / displayScale, 0.7))
                 // The one-time hint floats just above the composer, at Send's end.
                 .overlay(alignment: .bottomTrailing) { if hint { hintBubble.padding(.bottom, 6).fixedSize() } }
             let suggestions = composer.suggestions(caret: caret)
@@ -453,7 +454,7 @@ struct CameraPicker: UIViewControllerRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     @MainActor
-    final class Coordinator: NSObject, @preconcurrency UIImagePickerControllerDelegate, @preconcurrency UINavigationControllerDelegate {
+    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let parent: CameraPicker
         init(_ p: CameraPicker) { parent = p }
 

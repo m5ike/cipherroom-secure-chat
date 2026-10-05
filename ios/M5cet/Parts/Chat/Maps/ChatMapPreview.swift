@@ -202,9 +202,9 @@ actor MapTiles {
         if let running = fetching[key] { return running }
         let url = server + "/api/map/tile/\(t.z)/\(t.x)/\(t.y)"
         let task = Task<Data, Error> {
-            defer { Task { await self.done(key) } }
+            defer { self.done(key) }
             let b = try await ChatHttp.get(url, max: 600 * 1024)
-            await self.keep(key, b)
+            self.keep(key, b)
             return b
         }
         fetching[key] = task

@@ -40,8 +40,8 @@ struct MessageTextView: View {
     // MARK: spans
 
     /// (^|[\s(])([@#])([\p{L}\p{N}_][\p{L}\p{N}_.-]{0,39})
-    nonisolated(unsafe) private static let mention = try! NSRegularExpression(pattern: "(^|[\\s(])([@#])([\\p{L}\\p{N}_][\\p{L}\\p{N}_.-]{0,39})")
-    nonisolated(unsafe) private static let links = try! NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue | NSTextCheckingResult.CheckingType.phoneNumber.rawValue)
+    private static let mention = try! NSRegularExpression(pattern: "(^|[\\s(])([@#])([\\p{L}\\p{N}_][\\p{L}\\p{N}_.-]{0,39})")
+    private static let links = try! NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue | NSTextCheckingResult.CheckingType.phoneNumber.rawValue)
 
     /// The text with its spans: mentions and tags bold in the accent (a tag a link of its own), links in the accent.
     static func attributed(_ s: String, accent: Color) -> AttributedString {
