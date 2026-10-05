@@ -39,6 +39,18 @@ describe("NfcWorkbench (6.3)", () => {
     expect(screen.getByText(/not in a room/i)).toBeTruthy();
   });
 
+  it("6.12 (F-12): the connect-tag tab writes v2 — an invitation by default, or offline with a code; no PIN field", () => {
+    render(<NfcWorkbench lang="en" session={{ room: "r", passphrase: "p", name: "n" }} {...base} />);
+    fireEvent.click(screen.getByRole("tab", { name: "Connect tag" }));
+    expect((screen.getByTestId("conn-mode-invite") as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/room key stays sealed on the server/i)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("conn-mode-offline"));
+    expect(screen.getByText(/20-character code that is not on the tag/i)).toBeTruthy();
+    expect(screen.queryByText(/4–16 digits/)).toBeNull();
+    const secret = screen.getByTestId("conn-secret") as HTMLInputElement;
+    expect(secret.inputMode).not.toBe("numeric");
+  });
+
   it("shows the Mifare key dictionary", () => {
     render(<NfcWorkbench lang="en" session={{ room: "r", passphrase: "p", name: "n" }} {...base} />);
     fireEvent.click(screen.getByRole("tab", { name: "Mifare" }));

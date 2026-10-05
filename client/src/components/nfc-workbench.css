@@ -557,3 +557,6 @@
 .nfcwb__report { margin-top: 0.75rem; border-top: 1px solid hsl(var(--border)); padding-top: 0.5rem; }
 .nfcwb__report > summary { cursor: pointer; font-weight: 600; margin-bottom: 0.4rem; }
 .nfcwb__report-export, .nfcwb__report-files { flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.45rem; }
+
+/* 6.12 (F-12): an offline tag's code, shown once to the writer */
+.nfcwb__code { display: inline-block; margin-top: 0.25rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.95rem; letter-spacing: 0.06em; user-select: all; }

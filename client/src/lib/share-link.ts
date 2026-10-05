@@ -149,16 +149,23 @@ export function randomGuestName(): string {
 
 type Fetcher = typeof fetch;
 
+/**
+ * `env.fixed`: the id, link key and code chosen by the caller — 6.12's NFC
+ * invitation tag derives the link key and the code from the secret on the tag
+ * (lib/nfc/tag-v2.ts › inviteKeys). `env.base`: the server's origin when it is
+ * not this page's (the Android app; same-origin on the web).
+ */
 export async function createShare(
   input: { room: string; passphrase: string; name?: string; server?: string }, options: ShareOptions,
-  env: { origin?: string; fetcher?: Fetcher } = {},
+  env: { origin?: string; fetcher?: Fetcher; base?: string; fixed?: { id: string; linkKey: Bytes; code: string } } = {},
 ): Promise<CreatedShare> {
   const fetcher = env.fetcher ?? fetch;
-  const id = toBase64Url(randomBytes(16));
-  const linkKey = randomBytes(32);
+  const id = env.fixed?.id ?? toBase64Url(randomBytes(16));
+  const linkKey = env.fixed?.linkKey ?? randomBytes(32);
   const serverKey = randomBytes(32);
   const revokeToken = toBase64Url(randomBytes(32));
-  const code = generateCode();
+  const code = env.fixed?.code ?? generateCode();
+  if (!/^[A-Za-z0-9_-]{22}$/.test(id) || linkKey.byteLength !== 32 || !normalizeCode(code)) throw new Error("bad invite parts");
   const server = input.server ? normalizeServerUrl(input.server) : "";
   if (server === null) throw new Error("bad server address");
   const payload: SharePayload = {
@@ -166,7 +173,7 @@ export async function createShare(
     ...(server ? { server } : {}),
   };
   const sealed = await sealPayload(code, id, linkKey, serverKey, payload);
-  const res = await fetcher("/api/share/create", {
+  const res = await fetcher(`${(env.base ?? "").replace(/\/+$/, "")}/api/share/create`, {
     method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
     body: JSON.stringify({
       id, proof: await deriveProof(code, id), revokeToken, serverKey: toBase64Url(serverKey),
@@ -182,13 +189,13 @@ export async function createShare(
   };
 }
 
-export async function redeemShare(parts: ShareLinkParts, codeInput: string, env: { fetcher?: Fetcher } = {}): Promise<RedeemOutcome> {
+export async function redeemShare(parts: ShareLinkParts, codeInput: string, env: { fetcher?: Fetcher; base?: string } = {}): Promise<RedeemOutcome> {
   const code = normalizeCode(codeInput);
   if (!code) return { ok: false, reason: "wrong-code" };
   const fetcher = env.fetcher ?? fetch;
   let res: Response;
   try {
-    res = await fetcher("/api/share/redeem", {
+    res = await fetcher(`${(env.base ?? "").replace(/\/+$/, "")}/api/share/redeem`, {
       method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
       body: JSON.stringify({ id: parts.id, proof: await deriveProof(code, parts.id) }),
     });
@@ -206,9 +213,9 @@ export async function redeemShare(parts: ShareLinkParts, codeInput: string, env:
   } catch { return { ok: false, reason: "corrupt" }; }
 }
 
-export async function revokeShare(id: string, revokeToken: string, env: { fetcher?: Fetcher } = {}): Promise<boolean> {
+export async function revokeShare(id: string, revokeToken: string, env: { fetcher?: Fetcher; base?: string } = {}): Promise<boolean> {
   try {
-    const res = await (env.fetcher ?? fetch)("/api/share/revoke", {
+    const res = await (env.fetcher ?? fetch)(`${(env.base ?? "").replace(/\/+$/, "")}/api/share/revoke`, {
       method: "POST", headers: { "Content-Type": "application/json" }, cache: "no-store",
       body: JSON.stringify({ id, revokeToken }),
     });

@@ -12,7 +12,7 @@ import {
   decodeAccessBits, encodeAccessBits, DEFAULT_KEYS,
 } from "../client/src/lib/nfc/cards/mifare-classic";
 import { detectCard } from "../client/src/lib/nfc/cards/detect";
-import { buildConnectionRecords, decodeConnectionRecords, hasConnectionRecord, CONN_MIME } from "../client/src/lib/nfc/cards/connection-card";
+import { buildOfflineConnectionRecords, decodeConnectionRecords, hasConnectionRecord, CONN_MIME } from "../client/src/lib/nfc/cards/connection-card";
 import { buildCommand, FrameParser, ACK } from "../client/src/lib/nfc/transports/pn532";
 import { listTransports, createTransport } from "../client/src/lib/nfc/index";
 import type { CardIdentity } from "../client/src/lib/nfc/transport";
@@ -188,19 +188,20 @@ describe("card detection", () => {
 });
 
 describe("connection tag (připojka) roundtrip", () => {
-  it("encrypts a session and decrypts it back with the PIN", async () => {
-    const records = await buildConnectionRecords({ room: "brno-secure", passphrase: "tajný klíč 🔐", name: "Michal" }, "123456", { appVersion: "2.7.0", fallbackUrl: "https://m5.cet" });
+  // 6.12 (F-12): written as v2 only — test/nfc-tag-v2.test.ts has the format; here the card layer.
+  it("seals a session for an offline tag and opens it back with the code (no PIN)", async () => {
+    const { records, code } = await buildOfflineConnectionRecords({ room: "brno-secure", passphrase: "tajný klíč 🔐", name: "Michal" }, { appVersion: "2.7.0", fallbackUrl: "https://m5.cet", kdf: { memoryKiB: 64, passes: 1 } });
     expect(hasConnectionRecord(records)).toBe(true);
     expect(records.length).toBe(2); // MIME + fallback URI
-    const back = await decodeConnectionRecords(records, "123456");
+    const back = await decodeConnectionRecords(records, code);
     expect(back).toMatchObject({ room: "brno-secure", passphrase: "tajný klíč 🔐", name: "Michal", app: "2.7.0" });
   });
-  it("fails to decrypt with the wrong PIN", async () => {
-    const records = await buildConnectionRecords({ room: "r", passphrase: "p" }, "0000", {});
-    await expect(decodeConnectionRecords(records, "9999")).rejects.toThrow();
+  it("fails to open with a wrong code", async () => {
+    const { records } = await buildOfflineConnectionRecords({ room: "r", passphrase: "p" }, { kdf: { memoryKiB: 64, passes: 1 } });
+    await expect(decodeConnectionRecords(records, "0000000000000000000A")).rejects.toThrow();
   });
-  it("rejects an invalid PIN at build time", async () => {
-    await expect(buildConnectionRecords({ room: "r", passphrase: "p" }, "12")).rejects.toThrow();
+  it("refuses a code that is not 20 base32 symbols at build time — a PIN is never accepted", async () => {
+    await expect(buildOfflineConnectionRecords({ room: "r", passphrase: "p" }, { code: "123456" })).rejects.toThrow();
   });
 });
 

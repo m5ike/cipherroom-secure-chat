@@ -20,11 +20,26 @@ export type SandboxBridge = {
   lang: string;
 };
 
+/**
+ * Where the sandbox page lives. 6.12 (F-08): browser code from ANOTHER member's
+ * message runs in the strict variant (`?origin=peer`): the server answers it
+ * with a CSP of `connect-src 'none'` and images / media only from `data:` and
+ * `blob:` — the code cannot send what it sees, or the viewer's address and
+ * time, to any server; it reaches the model only through the app's bridge.
+ * The viewer's own code and a model's answer to the viewer keep the page as
+ * it was. (A server without the variant ignores the query: the old page.)
+ */
+export const SANDBOX_URL = "/fn-sandbox.html";
+export const STRICT_SANDBOX_URL = "/fn-sandbox.html?origin=peer";
+export function sandboxUrl(strict: boolean): string {
+  return strict ? STRICT_SANDBOX_URL : SANDBOX_URL;
+}
+
 /** Messages a sandbox may send in its lifetime (a loop that floods the app is cut off). */
 const BUDGET = 200;
 const LEVELS = new Set(["info", "success", "warning", "error"]);
 
-export function FnSandbox({ o, title, bridge }: { o: JsOutput; title: string; bridge: SandboxBridge }) {
+export function FnSandbox({ o, title, bridge, strict = false }: { o: JsOutput; title: string; bridge: SandboxBridge; strict?: boolean }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState<number>(o.hidden ? 0 : o.height ?? 48);
   const started = useRef(false);
@@ -67,7 +82,8 @@ export function FnSandbox({ o, title, bridge }: { o: JsOutput; title: string; br
       <iframe
         ref={frame}
         className="fn-js__frame"
-        src="/fn-sandbox.html"
+        src={sandboxUrl(strict)}
+        data-strict={strict ? "true" : undefined}
         sandbox="allow-scripts"
         allow="autoplay"
         title={o.title || title}

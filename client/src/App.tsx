@@ -73,7 +73,7 @@ import {
   persistFingerprint,
   compareFingerprint,
   formatFingerprint,
-  sha256Hex,
+  roomKeyFingerprint,
   type Fingerprint,
 } from "./lib/fingerprint";
 import {
@@ -97,7 +97,8 @@ import {
 import { createPinStore, keyFingerprint, keyId, loadIdentity, type Identity } from "./lib/identity";
 import { envelopeKind, SenderKeyStore, type Hello } from "./lib/sender-keys";
 import { MediaE2ee } from "./lib/media-e2ee";
-import { validatePayload, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
+import { validatePayload, verifyQuote, verifyForward, forwardIndex, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
+import { nameWarningsFor, normalizeFrameNames, noticeSender, type NameWarning } from "./lib/names";
 import { newId } from "./lib/id";
 import { APP_BUILD, APP_VERSION } from "./lib/build-info";
 import type { SignInProgress } from "./components/AccountPanel";
@@ -109,7 +110,8 @@ import { layoutBlocks, layoutTree, renderTemplate, type LayoutConfig, type Layou
 import { renderLayout } from "./components/LayoutView";
 import { LayoutProvider } from "./components/LayoutProvider";
 import type { LNode } from "./lib/layout-tree";
-import { freshRtcConfig, turnConfigPromise } from "./lib/rtc";
+import { freshRtcConfig, setHideIp, turnAvailable, turnConfigPromise } from "./lib/rtc";
+import { ReleaseBanner } from "./components/ReleaseIntegrity";
 import { M5Logo } from "./components/M5Logo";
 
 import { createSessionCache, SESSION_IDLE_LIMIT_MS, type DesiredState } from "./lib/session-cache";
@@ -417,6 +419,10 @@ type MessageRowProps = {
   /** 6.2: the operator's map preview (client config › map). */
   mapPolicy: MapPreviewPolicy;
   act: { current: RowActions };
+  /** 6.12 (F-22): the message `replyTo` names, as this app has it (null: not here); whether a forward checks out; a name warning. */
+  quoted?: ChatMessage | null;
+  forwardVerified?: boolean;
+  nameWarning?: NameWarning | null;
 };
 
 /** The layout config's reusable templates, one object per config (so the
@@ -430,7 +436,7 @@ function layoutBlocksOf(cfg: LayoutConfig): Record<string, LNode> {
 
 /** One message in the conversation. Memoized: typing in the composer, a
  *  peer's status or a new message elsewhere leave it alone. */
-const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutCtx, lang, timezone, room, avatar, peerAvatar, delivery, mapPolicy, act }: MessageRowProps) {
+const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutCtx, lang, timezone, room, avatar, peerAvatar, delivery, mapPolicy, act, quoted, forwardVerified, nameWarning }: MessageRowProps) {
   const isSystem = message.senderId === "system";
   const styleKey = styleKeyFor(message.senderName, message.senderId);
   const vars = {
@@ -487,9 +493,11 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutC
       vanishedAt={message.vanishedAt}
       onVanish={(id) => act.current.vanished(id)}
       to={message.to}
-      replyTo={message.replyTo}
+      replyTo={verifyQuote(message.replyTo, quoted)}
       // 6.11: a room answer's "/keyword" is in its head already (the model's identity).
       forwardedFrom={model && message.forwardedFrom === `/${model.identity.keyword}` ? undefined : message.forwardedFrom}
+      forwardVerified={message.mine ? undefined : forwardVerified}
+      nameWarning={message.mine || isSystem ? null : nameWarning}
       loc={message.loc}
       mapPolicy={mapPolicy}
       hidden={Boolean(message.hidden)}
@@ -904,6 +912,14 @@ function ChatApp() {
 
   // Away members count as reachable: the server takes the message for them.
   const canSend = status === "joined" && (openPeerCount > 0 || awayPeers.length > 0) && messageInput.trim().length > 0;
+
+  // 6.12 (F-15): "Hide my IP address" — relay-only peer connections where the server offers TURN (rtc.ts).
+  useEffect(() => { setHideIp(prefs.hideIp); }, [prefs.hideIp]);
+
+  // 6.12 (F-22): quotes and forwards checked against the messages really here; names that look like another member's.
+  const quoteIndex = useMemo(() => new Map(messages.map((m) => [m.id, m] as const)), [messages]);
+  const fwdIndex = useMemo(() => forwardIndex(messages), [messages]);
+  const nameWarnings = useMemo(() => nameWarningsFor([{ id: myId, name }, ...peers.filter((p) => p.status !== "closed").map((p) => ({ id: p.id, name: p.name })), ...awayPeers.map((a) => ({ id: `away:${a.accountId}`, name: a.name }))]), [myId, name, peers, awayPeers]);
 
   function setPrefs(next: Partial<Preferences>) {
     setPrefsState((current) => {
@@ -2731,11 +2747,9 @@ function ChatApp() {
               lastSeenAt: new Date().toISOString(),
             },
           }));
-          if (cmp.status === "mismatch") {
-            systemMessage(
-              `Bezpečnostní varování: DTLS fingerprint pro ${peerId.slice(-6)} se změnil — možný MITM. Ověřte s protistranou mimo-band.`,
-            );
-          }
+          // 6.12 (F-25): no "possible MITM" here any more — the browser makes a new DTLS certificate
+          // for every connection, so another fingerprint than last time is normal. The device is
+          // identified by its signing key (Trust panel: labelled by it; the safety number).
         }).catch(() => {
           // Stats API may throw on closed connections — ignore.
         });
@@ -2987,11 +3001,10 @@ function ChatApp() {
     setPeers([]);
     setAwayPeers([]);
     presence.reset();
-    // Compute the deterministic room-key fingerprint (DPA anchor). We
-    // hash a constant-length string derived from the room id so the
-    // fingerprint is independent of the password length but only changes
-    // when the room id changes.
-    void sha256Hex(`m5cet:room:${nextRoom}`).then((digest) => setRoomFingerprint(digest));
+    // 6.12 (F-25): the room fingerprint comes from the room KEY (HKDF), not from its name —
+    // members with the same key see the same one; another key, another fingerprint.
+    setRoomFingerprint(null);
+    void roomKeyFingerprint(keyRef.current).then((digest) => setRoomFingerprint(digest)).catch(() => undefined);
     // Clear old peer fingerprints — each room has its own set.
     setPeerFingerprints({});
     setStatus("connecting");
@@ -3073,6 +3086,7 @@ function ChatApp() {
       }
       let frame: SignalFrame;
       try { frame = JSON.parse(String(event.data)) as SignalFrame; } catch { return; }
+      normalizeFrameNames(frame); // 6.12 (F-22): names from the server fit to show
       presence.onFrame(frame); // 6.7: foreground, last seen, held members
 
       if (frame.type === "pong") {
@@ -3251,7 +3265,8 @@ function ChatApp() {
       // 6.0: a notice from the operator — plain text from the server, not in the room's
       // encryption, and said so. A wall or a private message stays in the conversation.
       if (frame.type === "server-notice") {
-        const from = frame.from && frame.from !== "operator" ? frame.from : t(lang, "notice.operator");
+        // 6.12 (F-22): always "operator" — a function writing notices must not sign them with a member's name.
+        const from = noticeSender(frame.from, t(lang, "notice.operator"));
         const kind: FlashMessage["kind"] = frame.level === "error" || frame.level === "warning" || frame.level === "success" ? frame.level : "info";
         const text = String(frame.text ?? "").slice(0, 2000);
         if (!text) return;
@@ -5234,7 +5249,8 @@ function ChatApp() {
     // Whatever this browser left on the server — a session database or a
     // signed-in user's own — goes with it.
     await forgetServerData().catch(() => undefined);
-    await wipeEverything({ deviceId: prefs.deviceId });
+    // 6.12 (F-26): the account token is revoked on the server (sign-out) before this browser forgets it.
+    await wipeEverything({ deviceId: prefs.deviceId, revoke: accountRef.current ? () => signOutAccount() : undefined });
     // Leaving on purpose: the lock's history entry goes first, so nothing of
     // the chat is left to go back to.
     await releaseNavigationGuard();
@@ -5277,6 +5293,7 @@ function ChatApp() {
         </SimpleModal>
       ) : null}
 
+      <ReleaseBanner lang={lang} onDetails={() => setActivePanel("trust")} />
       <IntegrityCheck
         lang={lang}
         handle={integrityRef}
@@ -5429,6 +5446,9 @@ function ChatApp() {
                 delivery={deliveryStateOf(message)}
                 mapPolicy={clientConfig.map}
                 act={rowActionsRef}
+                quoted={message.replyTo ? quoteIndex.get(message.replyTo.id) ?? null : undefined}
+                forwardVerified={verifyForward(message.forwardedFrom, message.text, fwdIndex)}
+                nameWarning={nameWarnings(message.senderId, message.senderName)}
               />
             );
           },
@@ -5537,7 +5557,8 @@ function ChatApp() {
       ) : null}
       <EncryptionPanel open={activePanel === "encryption"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} />
       <RoomSecurityPanel open={activePanel === "roomSecurity"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} room={room} />
-      <TrustPanel open={activePanel === "trust"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} peerFingerprints={peerFingerprints} roomFingerprint={roomFingerprint} />
+      <TrustPanel open={activePanel === "trust"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} peerFingerprints={peerFingerprints} roomFingerprint={roomFingerprint}
+        describePeer={(id) => { const pk = senderKeysRef.current.pairOf(id)?.peerPublicKey; return { name: peersRef.current.get(id)?.name ?? peerNamesRef.current.get(id) ?? id.slice(-6), deviceKey: pk, verified: pk ? safetyVerified[pk] === true : false }; }} />
       <PrivacyPanel
         open={activePanel === "privacy"}
         onClose={() => setActivePanel(null)}
@@ -5546,6 +5567,7 @@ function ChatApp() {
         lang={lang}
         onLocalPurge={clearLocalData}
         onServerPurge={purgeServer}
+        turnAvailable={turnAvailable()}
       />
       <NotificationsPanel
         open={activePanel === "notifications"}

@@ -9,6 +9,11 @@ import { claimUpgradePath } from "./upgrade-guard";
 
 const viteLogger = createLogger();
 
+/**
+ * Vite in middleware mode on the app's own HTTP server: it listens where that
+ * server listens — 127.0.0.1 in development unless HOST is set (server/index.ts,
+ * 6.12 F-27) — and serves only what vite.config.ts's server.fs allows.
+ */
 export async function setupVite(server: Server, app: Express) {
   // 6.7 (S3): upgrades to paths nobody claims are closed; HMR is one of ours.
   claimUpgradePath(server, "/vite-hmr");

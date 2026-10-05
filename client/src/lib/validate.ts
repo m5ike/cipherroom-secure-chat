@@ -13,6 +13,7 @@ import { clampVanishSeconds, type MsgFlags } from "./message-kinds";
 import type { AttachmentMeta } from "./chat-types";
 import { parseProfileFrame, type ProfileFrame } from "./profile/room";
 import { SYSTEM_MESSENGER_ID, cleanModelIcon } from "./system-messenger";
+import { normalizeDisplayName } from "./names";
 
 export const PAYLOAD_LIMITS = {
   idChars: 96,
@@ -190,7 +191,8 @@ export function validatePayload(value: unknown, opts: PayloadOpts = {}): ChatPay
   if (opts.myId && senderId === opts.myId) return null;
   if (opts.transportSender && senderId !== opts.transportSender) return null;
   const createdAt = typeof p.createdAt === "number" && Number.isFinite(p.createdAt) ? Math.min(p.createdAt, now + PAYLOAD_LIMITS.futureSkewMs) : now;
-  const senderName = clean(p.senderName, PAYLOAD_LIMITS.nameChars, `peer-${senderId.slice(-4)}`);
+  // 6.12 (F-22): bidi controls, zero-width and other format characters out, NFKC, one space, a cap (names.ts).
+  const senderName = normalizeDisplayName(p.senderName, PAYLOAD_LIMITS.nameChars) || `peer-${senderId.slice(-4)}`;
 
   if (p.kind === "audio-status") {
     const status = p.status;
@@ -218,13 +220,73 @@ export function validatePayload(value: unknown, opts: PayloadOpts = {}): ChatPay
   if (typeof p.ttlMinutes === "number" && p.ttlMinutes > 0) out.ttlMinutes = Math.min(p.ttlMinutes, PAYLOAD_LIMITS.maxTtlMinutes);
   const flags = validateFlags(p.flags);
   if (flags) out.flags = flags;
-  if (Array.isArray(p.to)) out.to = p.to.filter((n): n is string => typeof n === "string").slice(0, PAYLOAD_LIMITS.recipients).map((n) => clean(n, PAYLOAD_LIMITS.nameChars));
+  if (Array.isArray(p.to)) out.to = p.to.filter((n): n is string => typeof n === "string").slice(0, PAYLOAD_LIMITS.recipients).map((n) => normalizeDisplayName(n, PAYLOAD_LIMITS.nameChars));
   const reply = p.replyTo as Record<string, unknown> | undefined;
   if (reply && typeof reply === "object" && str(reply.id, PAYLOAD_LIMITS.idChars)) {
-    out.replyTo = { id: reply.id as string, senderName: clean(reply.senderName, PAYLOAD_LIMITS.nameChars), text: clean(reply.text, PAYLOAD_LIMITS.replyChars) };
+    // What the sender CLAIMS the quoted message said: shown only after verifyQuote() found the real one.
+    out.replyTo = { id: reply.id as string, senderName: normalizeDisplayName(reply.senderName, PAYLOAD_LIMITS.nameChars), text: clean(reply.text, PAYLOAD_LIMITS.replyChars) };
   }
-  if (typeof p.forwardedFrom === "string") out.forwardedFrom = clean(p.forwardedFrom, PAYLOAD_LIMITS.nameChars);
+  if (typeof p.forwardedFrom === "string") {
+    const from = normalizeDisplayName(p.forwardedFrom, PAYLOAD_LIMITS.nameChars);
+    if (from) out.forwardedFrom = from;
+  }
   const loc = validateLoc(p.loc);
   if (loc) out.loc = loc;
   return out;
+}
+
+/* ------------------------------------------------- quotes and forwards (6.12, F-22) */
+
+/** A stored message as far as a quote of it needs it. */
+export type QuotableMessage = {
+  id: string;
+  senderName: string;
+  text: string;
+  mine?: boolean;
+  flags?: { sealed?: unknown };
+  attachment?: { name: string };
+};
+
+/**
+ * A quote ("reply to …") as the bubble shows it. The sender of the reply only
+ * CLAIMS what the quoted message said — any member can write any `replyTo`.
+ * So the quote is taken from the message this app really has under that id:
+ * its sender and its text. `missing`: no such message here (older than the
+ * history, never received, or made up) — the bubble says so and never shows
+ * the claimed text as if it were the original.
+ */
+export type QuoteView = { id: string; senderName: string; text: string; missing: boolean; sealed?: boolean };
+
+export function verifyQuote(claimed: { id: string; senderName: string; text: string } | undefined, stored: QuotableMessage | null | undefined): QuoteView | undefined {
+  if (!claimed) return undefined;
+  if (!stored || stored.id !== claimed.id) return { id: claimed.id, senderName: "", text: "", missing: true };
+  // Someone else's sealed message: the stored text is ciphertext.
+  if (stored.flags?.sealed && !stored.mine) return { id: stored.id, senderName: stored.senderName, text: "🔒", missing: false, sealed: true };
+  const body = stored.text.trim() || (stored.attachment ? `📎 ${stored.attachment.name}` : "");
+  const text = body.length > PAYLOAD_LIMITS.replyChars ? `${body.slice(0, PAYLOAD_LIMITS.replyChars - 1)}…` : body;
+  return { id: stored.id, senderName: stored.senderName, text, missing: false };
+}
+
+/** Labels a forward may carry that name no member: a model's answer ("/keyword") or an NFC card. */
+const FORWARD_SOURCES = /^(\/[A-Za-z0-9_-]{1,40}|NFC)$/;
+
+const forwardKey = (senderName: string, text: string) => `${normalizeDisplayName(senderName)}\u0000${text.trim()}`;
+
+/** What the conversation holds, for checking forwards: "<sender>␀<text>" of every message that is not itself a forward. */
+export function forwardIndex(messages: ReadonlyArray<{ senderName: string; text: string; forwardedFrom?: string }>): Set<string> {
+  const out = new Set<string>();
+  for (const m of messages) if (m.text && !m.forwardedFrom) out.add(forwardKey(m.senderName, m.text));
+  return out;
+}
+
+/**
+ * Is "forwarded from X" true as far as this app can tell? True when it holds a
+ * message of its own from X with the same text; undefined for a label that
+ * names no member (a model, NFC); otherwise false — the bubble shows it as the
+ * forwarder's unverified claim.
+ */
+export function verifyForward(forwardedFrom: string | undefined, text: string, index: ReadonlySet<string>): boolean | undefined {
+  if (!forwardedFrom) return undefined;
+  if (FORWARD_SOURCES.test(forwardedFrom)) return undefined;
+  return index.has(forwardKey(forwardedFrom, text));
 }

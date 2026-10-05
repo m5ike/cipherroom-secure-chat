@@ -255,8 +255,11 @@ export function log(message: string, source = "express") {
   // It is the only port that is not firewalled.
   const port = parseInt(process.env.PORT || "5000", 10);
   // HOST lets a native (non-container) install bind to loopback only when a
-  // reverse proxy sits in front. Default stays 0.0.0.0 (containers, PaaS).
-  const host = process.env.HOST?.trim() || "0.0.0.0";
+  // reverse proxy sits in front. Default stays 0.0.0.0 in production
+  // (containers, PaaS). 6.12 (F-27): the development server (Vite serves the
+  // repository's sources through it) listens on 127.0.0.1 unless HOST says
+  // otherwise — not to the whole network a laptop happens to be on.
+  const host = process.env.HOST?.trim() || (process.env.NODE_ENV === "production" ? "0.0.0.0" : "127.0.0.1");
   // No `reusePort`: it throws ENOTSUP on macOS, and sharing the port between
   // processes would split a room's peers across separate in-memory states.
   httpServer.listen(

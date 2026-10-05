@@ -188,3 +188,7 @@ select.fn-ask__input { min-height: 2.3rem; }
   .fn-loading__dots i { animation: none; opacity: 0.6; }
   .fn-loading__bar i { transition: none; }
 }
+
+/* 6.12 (F-22): beside a sender whose name looks like another member's, or mixes alphabets. */
+.msg-name-warn { display: inline-flex; align-items: center; gap: 0.2rem; margin-inline-start: 0.35rem; padding: 0 0.4rem; border-radius: 999px; font-size: 0.66rem; font-weight: 600; line-height: 1.5; color: hsl(32 95% 30%); background: hsl(40 100% 90%); border: 1px solid hsl(38 90% 60% / 0.6); max-width: 18rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dark .msg-name-warn, [data-tone="dark"] .msg-name-warn { color: hsl(40 100% 80%); background: hsl(32 60% 20%); }

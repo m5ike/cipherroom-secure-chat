@@ -118,6 +118,11 @@ textarea.fn-input { resize: vertical; }
 .fn-peer-code__title { color: hsl(var(--muted-foreground)); }
 .fn-peer-code__note { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
 .fn-peer-code--hidden { font-size: 0.75rem; color: hsl(var(--muted-foreground)); border-style: dotted; }
+/* 6.12 (F-08): before another member's model message sends an event in the viewer's name */
+.fn-peer-consent { display: flex; flex-direction: column; gap: 0.3rem; margin-bottom: 0.4rem; padding: 0.5rem 0.7rem; border-radius: 0.6rem; border: 1px solid hsl(38 90% 55% / 0.6); background: hsl(40 100% 92% / 0.7); font-size: 0.85rem; }
+[data-tone="dark"] .fn-peer-consent { background: hsl(32 60% 18% / 0.7); }
+.fn-peer-consent__note { font-size: 0.75rem; color: hsl(var(--muted-foreground)); }
+.fn-peer-consent__actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 
 @media (max-width: 520px) {
   .fn-form__grid { grid-template-columns: 1fr !important; }

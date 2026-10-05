@@ -1,0 +1,26 @@
+/* 6.12 (F-02): the signed-release state — a red bar that stays, and the security panel's card. */
+.release-banner {
+  position: sticky; top: 0; z-index: 60; display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.8rem;
+  padding: 0.5rem 0.9rem; background: hsl(0 72% 42%); color: #fff; font-size: 0.82rem; line-height: 1.35;
+  box-shadow: 0 1px 0 hsl(0 72% 30%);
+}
+.release-banner__title { font-weight: 700; }
+.release-banner__text { flex: 1 1 18rem; }
+.release-banner__btn {
+  border: 1px solid hsl(0 0% 100% / 0.7); border-radius: 0.5rem; padding: 0.15rem 0.6rem; background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.release-banner__btn:hover { background: hsl(0 0% 100% / 0.15); }
+
+.release-card { margin-bottom: 1.25rem; padding: 0.75rem 0.9rem; border-radius: 0.9rem; border: 1px solid hsl(var(--border)); background: hsl(var(--background)); font-size: 0.85rem; }
+.release-card[data-tone="ok"] { border-color: hsl(142 60% 38% / 0.5); }
+.release-card[data-tone="warn"] { border-color: hsl(38 92% 48% / 0.6); }
+.release-card[data-tone="bad"] { border-color: hsl(var(--destructive) / 0.7); background: hsl(var(--destructive) / 0.06); }
+.release-card__title { margin: 0 0 0.3rem; font-size: 0.85rem; font-weight: 600; }
+.release-card__text { margin: 0 0 0.3rem; }
+.release-card[data-tone="bad"] .release-card__text { color: hsl(var(--destructive)); font-weight: 600; }
+.release-card__list { margin: 0 0 0.3rem; padding-left: 1.1rem; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; word-break: break-all; }
+.release-card__note { margin: 0 0 0.5rem; font-size: 0.72rem; color: hsl(var(--muted-foreground)); }
+.release-card__actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.release-card__btn { border: 1px solid hsl(var(--border)); border-radius: 0.6rem; padding: 0.25rem 0.7rem; background: hsl(var(--background)); color: inherit; font: inherit; font-size: 0.78rem; cursor: pointer; }
+.release-card__btn:hover:not(:disabled) { background: hsl(var(--accent)); }
+.release-card__btn--danger { border-color: hsl(var(--destructive) / 0.6); color: hsl(var(--destructive)); }

@@ -9,7 +9,7 @@
 // and handed to the model's error entry point, which may answer with outputs
 // of its own (those are not reported again, so nothing loops).
 
-import { Component, createContext, useContext, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
+import { Component, createContext, useContext, useEffect, useId, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import type { FlashLevel, FnOutput } from "../../lib/fn-outputs";
 import type { FnMeta } from "../../lib/message-kinds";
 import type { FnEventBody } from "../../lib/functions";
@@ -52,6 +52,24 @@ export const FN_FRESH_MS = 30_000;
 export type FnPeer = { name: string };
 /** Events a peer's browser code may send to the model in the viewer's name, per start. */
 export const PEER_JS_EVENTS = 20;
+
+/**
+ * 6.12 (F-08): a button or a form in a model's message that ANOTHER member
+ * sent reaches the model with THIS viewer's token — the model sees the click
+ * as the viewer's. So the first such event of a message asks, naming the
+ * model and the member; the answer holds for that message (and its browser
+ * code, once started). Remembered per message for this page's lifetime.
+ */
+const peerConsents = new Set<string>();
+type PeerConsent = {
+  /** Resolves true when the event may go (asked now, or answered before for this message). */
+  ask: () => Promise<boolean>;
+  /** The viewer started this message's browser code: that counts as the answer. */
+  grant: () => void;
+};
+const PeerConsentContext = createContext<PeerConsent | null>(null);
+/** Test seam. */
+export function _resetPeerConsentsForTests(): void { peerConsents.clear(); }
 
 /** Is the viewer using the page right now (a click or key press moments ago, here or in the sandbox frame)? */
 function viewerActive(): boolean {
@@ -139,11 +157,14 @@ function FnFile({ o, lang }: { o: Extract<FnOutput, { type: "file" }>; lang: Lan
 
 function FnButton({ o, meta, host }: { o: Extract<FnOutput, { type: "button" }>; meta?: FnMeta; host: FnHost }) {
   const [state, setState] = useState<"idle" | "confirm" | "busy" | "done">("idle");
+  const consent = useContext(PeerConsentContext);
   const reachable = Boolean(meta?.chain) && (!meta?.events || meta.events.includes("button"));
   const classes = ["fn-btn", ...(o.css ?? "").split(" ").filter(Boolean).map((c) => `fn-btn--${c}`), state === "confirm" ? "fn-btn--confirm" : ""].filter(Boolean).join(" ");
   const click = async () => {
     if (!reachable || !meta || state === "busy" || state === "done") return;
     if (o.confirm && state !== "confirm") { setState("confirm"); return; }
+    // 6.12 (F-08): another member's message — the viewer says first that it may go in their name.
+    if (consent && !(await consent.ask())) { setState("idle"); return; }
     setState("busy");
     const ok = await host.event(meta, { type: "button", name: o.name, data: o.data });
     setState(ok && o.once ? "done" : "idle");
@@ -186,13 +207,15 @@ function FnFlash({ o, fresh, host }: { o: Extract<FnOutput, { type: "flash" }>; 
 function FnPeerJs({ o, peer, meta, host, onError }: { o: Extract<FnOutput, { type: "js" }>; peer: FnPeer; meta?: FnMeta; host: FnHost; onError: (e: Error) => void }) {
   const [started, setStarted] = useState(false);
   const budget = useRef(PEER_JS_EVENTS);
+  const consent = useContext(PeerConsentContext);
   if (o.hidden) return <div className="fn-peer-code fn-peer-code--hidden" role="note" data-testid="fn-peer-hidden">{tf(host.lang, "fnui.peerHidden", { name: peer.name })}</div>;
   if (!started) {
     return (
       <div className="fn-peer-code" role="group" data-testid="fn-peer-code">
         <div className="fn-peer-code__text">{tf(host.lang, "fnui.peerAsk", { name: peer.name })}{o.title ? <span className="fn-peer-code__title"> · {o.title}</span> : null}</div>
         <div className="fn-peer-code__note">{t(host.lang, "fnui.peerNote")}</div>
-        <button type="button" className="fn-btn fn-btn--small" data-testid="fn-peer-run" onClick={() => setStarted(true)}>{t(host.lang, "fnui.peerRun")}</button>
+        {meta?.chain ? <div className="fn-peer-code__note" data-testid="fn-peer-model-note">{tf(host.lang, "fnui.peerModelNote", { model: modelLabel(meta), name: peer.name })}</div> : null}
+        <button type="button" className="fn-btn fn-btn--small" data-testid="fn-peer-run" onClick={() => { consent?.grant(); setStarted(true); }}>{t(host.lang, "fnui.peerRun")}</button>
       </div>
     );
   }
@@ -201,7 +224,7 @@ function FnPeerJs({ o, peer, meta, host, onError }: { o: Extract<FnOutput, { typ
   return (
     <div className="fn-peer-code__run">
       <div className="fn-js__title" data-testid="fn-peer-started">{tf(host.lang, "fnui.peerCode", { name: peer.name })}</div>
-      <FnSandbox o={o} title={tf(host.lang, "fnui.peerCode", { name: peer.name })} bridge={{
+      <FnSandbox strict o={o} title={tf(host.lang, "fnui.peerCode", { name: peer.name })} bridge={{
         flash: (text, level) => host.flash(`${peer.name}: ${text}`, level),
         send: (name, data) => { if (spend()) void host.event(meta!, { type: "button", name, data, source: "js" }); },
         submit: (name, values) => { if (spend()) void host.event(meta!, { type: "form", name, values, source: "js" }); },
@@ -236,14 +259,7 @@ function renderOne(o: FnOutput, ctx: { meta?: FnMeta; host: FnHost; fresh: boole
     case "flash": return <FnFlash o={o} fresh={fresh} host={host} />;
     case "window": return <FnWindow o={o} fresh={fresh} host={host} onError={onError} />;
     case "button": return <FnButton o={o} meta={meta} host={host} />;
-    case "form": {
-      const reachable = Boolean(meta?.chain) && (!meta?.events || meta.events.includes("form"));
-      return (
-        <div className="fn-form-wrap" title={!reachable ? tf(host.lang, "fnui.noEvent", { what: t(host.lang, "fnui.what.form") }) : undefined}>
-          <FnForm spec={o} lang={host.lang} disabled={!reachable} onSubmit={(values) => (meta ? host.event(meta, { type: "form", name: o.name, values }) : Promise.resolve(false))} />
-        </div>
-      );
-    }
+    case "form": return <FnFormItem o={o} meta={meta} host={host} />;
     case "html": return <FnHtml o={o} />;
     case "js": {
       // 6.7: someone else's browser code runs only when the viewer says so.
@@ -264,6 +280,54 @@ function renderOne(o: FnOutput, ctx: { meta?: FnMeta; host: FnHost; fresh: boole
   return null;
 }
 
+/** "/keyword · name" of the model a message came from. */
+function modelLabel(meta: FnMeta): string {
+  return meta.name && meta.name !== meta.keyword ? `${meta.name} (/${meta.keyword})` : `/${meta.keyword}`;
+}
+
+function FnFormItem({ o, meta, host }: { o: Extract<FnOutput, { type: "form" }>; meta?: FnMeta; host: FnHost }) {
+  const consent = useContext(PeerConsentContext);
+  const reachable = Boolean(meta?.chain) && (!meta?.events || meta.events.includes("form"));
+  const submit = async (values: Record<string, unknown>): Promise<boolean> => {
+    if (!meta) return false;
+    // 6.12 (F-08): another member's message — the viewer says first that it may go in their name.
+    if (consent && !(await consent.ask())) return false;
+    return host.event(meta, { type: "form", name: o.name, values });
+  };
+  return (
+    <div className="fn-form-wrap" title={!reachable ? tf(host.lang, "fnui.noEvent", { what: t(host.lang, "fnui.what.form") }) : undefined}>
+      <FnForm spec={o} lang={host.lang} disabled={!reachable} onSubmit={(values) => submit(values as Record<string, unknown>)} />
+    </div>
+  );
+}
+
+/** 6.12 (F-08): the question before the first event of another member's model message goes in the viewer's name. */
+function usePeerConsent(meta: FnMeta | undefined, from: FnPeer | undefined): { consent: PeerConsent | null; question: { answer: (yes: boolean) => void } | null } {
+  const key = from && meta?.chain ? `${meta.chain}:${meta.call ?? ""}:${from.name}` : "";
+  const [question, setQuestion] = useState<{ answer: (yes: boolean) => void } | null>(null);
+  const pending = useRef<Array<(yes: boolean) => void>>([]);
+  const consent = useMemo<PeerConsent | null>(() => (key ? {
+    ask: () => {
+      if (peerConsents.has(key)) return Promise.resolve(true);
+      return new Promise<boolean>((resolve) => {
+        pending.current.push(resolve);
+        setQuestion({
+          answer: (yes) => {
+            if (yes) peerConsents.add(key);
+            const waiting = pending.current.splice(0);
+            setQuestion(null);
+            for (const r of waiting) r(yes);
+          },
+        });
+      });
+    },
+    grant: () => { peerConsents.add(key); },
+  } : null), [key]);
+  // Gone before an answer: whoever waits hears "no".
+  useEffect(() => () => { for (const r of pending.current.splice(0)) r(false); }, []);
+  return { consent, question };
+}
+
 /** A function's outputs: every one shown, played or run — each on its own.
  *  `from`: they came in another member's message (6.7 — see FnPeer). */
 export function FnOutputs({ outputs, meta, createdAt, fresh: freshProp, fromError = meta?.origin === "error", from }: { outputs: readonly FnOutput[]; meta?: FnMeta; createdAt?: number; fresh?: boolean; fromError?: boolean; from?: FnPeer }) {
@@ -272,6 +336,8 @@ export function FnOutputs({ outputs, meta, createdAt, fresh: freshProp, fromErro
   // A peer's message is never "fresh": its notices, panels and sounds wait for the viewer.
   const [fresh] = useState(() => !from && (freshProp ?? (createdAt !== undefined && Date.now() - createdAt < FN_FRESH_MS)));
   const items = useMemo(() => groupOutputs(outputs), [outputs]);
+  const { consent, question } = usePeerConsent(meta, from);
+  const questionId = useId();
   const reported = useRef(new Set<number>());
   const report = (index: number, err: Error) => {
     if (reported.current.has(index)) return;
@@ -282,7 +348,18 @@ export function FnOutputs({ outputs, meta, createdAt, fresh: freshProp, fromErro
     catch (e) { console.warn("[m5cet] could not report a function output error", e); }
   };
   return (
+    <PeerConsentContext.Provider value={consent}>
     <div className="fn-outputs">
+      {question && meta && from ? (
+        <div className="fn-peer-consent" role="alertdialog" aria-labelledby={questionId} data-testid="fn-peer-consent">
+          <div id={questionId} className="fn-peer-consent__text">{tf(host.lang, "fnui.peerConsent", { model: modelLabel(meta), name: from.name })}</div>
+          <div className="fn-peer-consent__note">{t(host.lang, "fnui.peerConsentNote")}</div>
+          <div className="fn-peer-consent__actions">
+            <button type="button" className="fn-btn fn-btn--small" data-testid="fn-peer-consent-yes" onClick={() => question.answer(true)}>{t(host.lang, "fnui.peerConsentYes")}</button>
+            <button type="button" className="fn-btn fn-btn--small fn-btn--link" data-testid="fn-peer-consent-no" onClick={() => question.answer(false)}>{t(host.lang, "common.cancel")}</button>
+          </div>
+        </div>
+      ) : null}
       {items.map((it) => {
         if (it.kind === "buttons") return (
           <div key={`b${it.items[0].index}`} className="fn-buttons" role="group">
@@ -297,6 +374,7 @@ export function FnOutputs({ outputs, meta, createdAt, fresh: freshProp, fromErro
         );
       })}
     </div>
+    </PeerConsentContext.Provider>
   );
 }
 

@@ -148,6 +148,23 @@ export function persistFingerprint(peerId: string, digest: string): Record<strin
   return trimmed;
 }
 
+/** The HKDF label of the room fingerprint (6.12). */
+export const ROOM_FINGERPRINT_LABEL = "m5cet/room-fingerprint/1";
+
+/**
+ * 6.12 (F-25): the room's fingerprint, derived from the room KEY with HKDF
+ * (RoomKeys.derive) — 128 bits, lowercase hex. Before 6.12 it was a hash of
+ * the room's NAME: two rooms of the same name with different keys showed the
+ * same "room-key fingerprint". Now members who see the same value hold the
+ * same key. (Guessing the key from it costs one Argon2id per guess, like the
+ * blind room id the server already sees.)
+ */
+export async function roomKeyFingerprint(keys: { derive(info: string, bits?: number): Promise<Uint8Array> } | null | undefined): Promise<string | null> {
+  if (!keys) return null;
+  const bits = await keys.derive(ROOM_FINGERPRINT_LABEL, 128);
+  return Array.from(bits, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 /** How many peers' DTLS fingerprints this browser keeps (6.7). */
 export const FINGERPRINTS_KEPT = 100;
 

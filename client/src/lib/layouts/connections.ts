@@ -47,6 +47,8 @@ export function connectionsTree(): LNode {
       ]),
       n("area", { id: "cx-default-badge", if: "$p.isDefault", attrs: { class: "cx-badge", "data-testid": "cx-default-badge" } }, [icon("star", "h-3 w-3", {}, { id: "cx-default-icon" }), text("{_'cx.default'}", { id: "cx-default-text" })]),
       n("area", { id: "cx-active-badge", if: "$p.isActive", attrs: { class: "cx-badge cx-badge--ok" } }, [icon("check", "h-3 w-3", {}, { id: "cx-active-icon" }), text("{_'cx.active'}", { id: "cx-active-text" })]),
+      // 6.12 (F-04): its key is weak — Connect asks first, editing offers a strong one
+      n("area", { id: "cx-weak-badge", if: "$p.weakKey", attrs: { class: "cx-badge cx-badge--weak", "data-testid": "cx-weak-badge", title: "{_'key.weak.tag'}" } }, [icon("shield-alert", "h-3 w-3", {}, { id: "cx-weak-icon" }), text("{_'key.weak.short'}", { id: "cx-weak-text" })]),
     ]),
     n("panel", { id: "cx-item-meta", attrs: { class: "cx-item__meta" }, text: "{$p.meta}" }),
     n("panel", { id: "cx-item-actions", attrs: { class: "cx-item__actions" } }, [
@@ -133,6 +135,8 @@ export function connectionEditTree(): LNode {
         ]),
         n("button", { id: "cx-f-generate", attrs: { type: "button", class: "cx-btn", "data-testid": "cx-f-generate" }, on: { click: { action: "generate" } } }, [icon("refresh-cw", "h-4 w-4", {}, { id: "cx-f-generate-icon" }), text("{_'cx.form.generate'}", { id: "cx-f-generate-text" })]),
       ]), true, "panel"),
+      // 6.12 (F-04): the key's strength, and the question before a weak key is saved
+      n("slot", { id: "cx-f-strength", name: "Key strength", slot: "keyStrength", attrs: { class: "cx-field cx-field--wide" } }),
       n("label", { id: "cx-f-server-field", attrs: { class: "cx-field cx-field--wide" } }, [
         n("area", { id: "cx-f-server-label", text: "{_'cx.form.server'}" }),
         select("cx-f-server", "$serverValue", "server", [
@@ -242,7 +246,7 @@ export const CONNECTION_CONTRACTS: Record<ConnId, LayoutContract> = {
       { path: "$gate", type: "text", description: "Why it cannot be used: account (sign in), server (Server-enhanced is off), disabled — or empty." },
       { path: "$view", type: "text", description: "list, edit, detail or settings." }, { path: "$countText", type: "text", description: "“2 of 10”." },
       { path: "$full", type: "yes/no", description: "No more can be saved." }, { path: "$canSaveCurrent", type: "yes/no", description: "The room this tab is in can be saved." },
-      { path: "$items", type: "list", description: "Saved connections: .id, .label, .room, .user, .host, .color, .isActive, .isDefault, .meta." },
+      { path: "$items", type: "list", description: "Saved connections: .id, .label, .room, .user, .host, .color, .isActive, .isDefault, .meta; 6.12: .weakKey (its key is weak)." },
       { path: "$canShare", type: "yes/no", description: "Invitations are on." }, { path: "$sharing", type: "yes/no", description: "A connection is being shared." },
     ],
     actions: [
@@ -274,7 +278,7 @@ export const CONNECTION_CONTRACTS: Record<ConnId, LayoutContract> = {
       { name: "keepalive", description: "Strategy chosen.", event: "change" }, { name: "check", description: "A switch.", arg: "its name", event: "change" },
       { name: "save", description: "Save.", event: "submit" }, { name: "saveConnect", description: "Save and connect." }, { name: "cancel", description: "Back to the list." },
     ],
-    slots: [], refs: [],
+    slots: [{ name: "keyStrength", description: "6.12: the key's strength, a generated key, and the question before a weak key is saved." }], refs: [],
   },
   "part.connectionDetail": {
     description: "A saved connection's statistics and log.",
