@@ -24,7 +24,7 @@
 import { deriveRoomKeys, isSealedSignal, openMessage, openSignal, sealSignal, type Envelope, type RoomKeys } from "./envelope";
 import { SenderKeyStore, envelopeKind } from "./sender-keys";
 import { loadIdentity, type Identity } from "./identity";
-import { buildHubProof, hubSeed, type RatchetInner, type ReplayGuard } from "./p4";
+import { buildHubProof, hubSeed, REPLAY, type RatchetInner, type ReplayGuard } from "./p4";
 import { isP4RoomEnvelope, P4Room, type HelloLocal } from "./p4-session";
 import { TrustBook } from "./p4-trust";
 import { deviceReplay } from "./p4-store";
@@ -416,15 +416,21 @@ export class BackgroundRoom {
     if (!p || this.seen.has(p.id)) return;
     this.seen.add(p.id);
     if (this.seen.size > 20_000) this.seen.delete(this.seen.values().next().value!);
-    // 6.12 (§ 11): the device's persistent replay window.
+    // 6.12 (§ 11): the device's persistent replay window. A message dated far
+    // ahead (the sender's clock is off) is kept, with the time it arrived.
     const replay = this.deps.replay ?? null;
-    if (replay && (await replay.check(keys.roomId, p.id, (opened.payload as { createdAt?: unknown }).createdAt).catch(() => "ok")) !== "ok") return;
+    const receivedAt = Date.now();
+    const rawCreatedAt = (opened.payload as { createdAt?: unknown }).createdAt;
+    const verdict = replay ? await replay.check(keys.roomId, p.id, rawCreatedAt, { now: receivedAt }).catch(() => "ok" as const) : "ok";
+    if (verdict !== "ok" && verdict !== "clamped") return;
+    const ahead = verdict === "clamped" || (typeof rawCreatedAt === "number" && rawCreatedAt > receivedAt + REPLAY.futureMs);
+    const createdAt = ahead ? receivedAt : p.createdAt;
     if (p.kind === "audio-status" || p.kind === "receipt") return;
     if (p.senderName) link.name = p.senderName;
     // § 12.1: a key seen here is not verified (the room on screen pins and compares).
     const valid = opened.signer ? opened.signer.valid && opened.signer.account?.valid !== false : false;
     const message: ChatMessage = {
-      id: p.id, senderId: p.senderId, senderName: p.senderName, text: p.text, createdAt: p.createdAt, mine: false, secure: true,
+      id: p.id, senderId: p.senderId, senderName: p.senderName, text: p.text, createdAt, mine: false, secure: true,
       attachment: p.attachment, flags: p.flags, to: p.to, replyTo: p.replyTo, forwardedFrom: p.forwardedFrom,
       cryptoVersion: version, sealedWith,
       identity: opened.signer ? { state: valid ? "new" : "invalid", protocol: version, ...(opened.signer.account ? { account: true } : {}) } : { state: "unsigned", protocol: version },
@@ -433,7 +439,7 @@ export class BackgroundRoom {
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
     this.unread++;
     this.lastActivity = Date.now();
-    this.last = { sender: p.senderName, text: p.flags?.sealed ? "🔒" : p.text || (p.attachment ? `📎 ${p.attachment.name}` : ""), at: p.createdAt };
+    this.last = { sender: p.senderName, text: p.flags?.sealed ? "🔒" : p.text || (p.attachment ? `📎 ${p.attachment.name}` : ""), at: createdAt };
     this.emit({ type: "message", key: this.target.key, label: this.target.label, message });
     this.changed();
   }

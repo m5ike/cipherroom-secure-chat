@@ -394,8 +394,14 @@ are padded; chunks are not (their size is fixed except the last).
 Accepted message ids are remembered **persistently** per room as
 `b64url(H(join(LABEL.replay, roomId, id))[0:16])` (the first 16 bytes of the digest), at most
 `REPLAY.maxIdsPerRoom`, for `REPLAY.windowMs` (31 days). A payload whose `createdAt` is older
-than the window or more than `REPLAY.futureMs` (5 min) ahead is rejected (history restored from
-the user's own encrypted store is exempt). The store is encrypted like the rest of the device's
+than the window is rejected. One more than `REPLAY.futureMs` (5 min) ahead is **accepted, with
+`createdAt` clamped to the time it was received** (the sender's clock is off: the app says so
+once per member, with roughly by how much); its id is remembered with that clamped time, so a
+far-future date can neither keep an id past the window nor outlive the others when the per-room
+cap prunes the oldest. (A copy of such a message could be accepted again once its id has left
+the window — where a frame can be replayed at all: the ratchets refuse a used key, so only a
+relayed mailbox item within its bundle's key retention.) History restored from the user's own
+encrypted store is exempt from both checks. The store is encrypted like the rest of the device's
 data.
 
 ## 12. Identity, pins and verification

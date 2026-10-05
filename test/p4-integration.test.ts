@@ -17,7 +17,7 @@ import { createPinStore, keyFingerprint, keyId, type Identity } from "../client/
 import { fromBase64, toBase64 } from "../client/src/lib/crypto";
 import {
   b64, consistencyProof, ed25519FromSeed, entryLeafHash, inclusionProof, isMailboxItem, isMailboxSet, ktUser, Mailbox, newFileKey, signSth,
-  treeHash, verifyHubProof, buildHubProof, hubSeed, ReplayGuard, REPLAY,
+  treeHash, verifyHubProof, buildHubProof, hubSeed, ReplayGuard, REPLAY, MemoryReplayStore,
   type Hash, type KtEntry, type KtLookup, type MailboxItem, type MailboxSet, type RatchetInner, type SignedTreeHead,
 } from "../client/src/lib/p4";
 import { isP4RoomEnvelope, P4Room, type PeerInfo } from "../client/src/lib/p4-session";
@@ -447,7 +447,7 @@ describe("6.12 web client — hub join proof (§ 13)", () => {
 });
 
 describe("6.12 web client — replay window (§ 11)", () => {
-  it("remembers accepted ids across a reload (encrypted store), refuses too old and too far ahead", async () => {
+  it("remembers accepted ids across a reload (encrypted store), refuses too old ones, accepts one dated far ahead (clamped)", async () => {
     const backend = memoryBackend();
     const store = new VaultReplayStore(new LocalVault(backend), 0);
     const guard = new ReplayGuard(store);
@@ -455,12 +455,14 @@ describe("6.12 web client — replay window (§ 11)", () => {
     expect(await guard.check(keys.roomId, "m-1", now)).toBe("ok");
     expect(await guard.check(keys.roomId, "m-1", now)).toBe("replay");
     expect(await guard.check(keys.roomId, "m-old", now - REPLAY.windowMs - 1000)).toBe("too-old");
-    expect(await guard.check(keys.roomId, "m-future", now + REPLAY.futureMs + 60_000)).toBe("future");
+    // A sender whose clock is ahead is not cut off: accepted, its time clamped; a repeat is still a replay.
+    expect(await guard.check(keys.roomId, "m-future", now + REPLAY.futureMs + 60_000)).toBe("clamped");
     await store.flush();
     // A reload: a new store on the same device storage.
     const again = new ReplayGuard(new VaultReplayStore(new LocalVault(backend), 0));
     expect(await again.check(keys.roomId, "m-1", now)).toBe("replay");
     expect(await again.check(keys.roomId, "m-2", now)).toBe("ok");
+    expect(await again.check(keys.roomId, "m-future", now + REPLAY.futureMs + 60_000)).toBe("replay");
     // History restored from the user's own store is exempt.
     expect(await again.check(keys.roomId, "m-1", 1, { restored: true })).toBe("ok");
   });
@@ -617,6 +619,7 @@ describe("6.12 web client — background rooms (room-hub.ts)", () => {
       makePeer: () => { throw new Error("no WebRTC here"); },
       derive: async () => keys,
       identity: async () => me,
+      replay: new ReplayGuard(new MemoryReplayStore()),
     };
     const room = new BackgroundRoom({ key: roomKeyOf("team"), room: "team", label: "Team", name: "Me", passphrase: "x" }, deps, () => undefined);
     await room.start();
@@ -647,6 +650,14 @@ describe("6.12 web client — background rooms (room-hub.ts)", () => {
       ["do pozadí", "p4-sk", 4, "new"],
       ["soukromě", "p4-pair", 4, "new"],
     ]);
+    // § 11: a member whose clock is a day ahead is not cut off — the message is kept, dated when it arrived.
+    const ahead = { ...msg("bg-3", "hodiny napřed", "p-b"), createdAt: Date.now() + 24 * 60 * 60 * 1000 };
+    const sealed3 = await b.room.sealRoom("bg-3", ahead, ["p-me"]);
+    net.send("p-b", "p-me", JSON.stringify(sealed3!.envelope));
+    await net.drain();
+    const kept = room.messages.find((m) => m.id === "bg-3")!;
+    expect(kept.text).toBe("hodiny napřed");
+    expect(Math.abs(kept.createdAt - Date.now())).toBeLessThan(5000);
     room.stop();
   });
 });

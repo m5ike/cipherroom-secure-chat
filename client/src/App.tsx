@@ -1822,13 +1822,31 @@ function ChatApp() {
   }
 
   /** A message id seen for the first time, fresh (§ 11): live, relayed and queued messages alike. */
-  async function freshMessage(id: string, createdAt: unknown): Promise<boolean> {
+  /**
+   * § 11: null to drop it (a replay, older than the window, malformed), else
+   * the time to keep as its createdAt — the time it arrived when the sender
+   * dated it more than 5 minutes ahead (their clock is off: accepted, the
+   * time clamped, said once per member with roughly by how much).
+   */
+  async function freshMessage(id: string, createdAt: unknown, sender: { id: string; name: string }): Promise<number | null> {
     const roomId = keyRef.current?.roomId;
-    if (!roomId || !replayRef.current.accept(id)) return false;
-    const verdict = await replayGuard().check(roomId, id, createdAt).catch(() => "ok" as const);
-    // A sender whose clock is far off has every message refused: say so once.
-    if (verdict === "future" || verdict === "too-old") warnOnce(`replay-clock:${verdict}`, t(lang, `p4.replay.${verdict}`), "warning");
-    return verdict === "ok";
+    if (!roomId || !replayRef.current.accept(id)) return null;
+    const receivedAt = Date.now();
+    const verdict = await replayGuard().check(roomId, id, createdAt, { now: receivedAt }).catch(() => "ok" as const);
+    if (verdict === "too-old") warnOnce("replay-too-old", t(lang, "p4.replay.too-old"), "warning");
+    if (verdict === "clamped") {
+      warnOnce(`clock-ahead:${sender.id}`, tf(lang, "p4.clock.ahead", { name: sender.name, skew: roughly(Number(createdAt) - receivedAt) }), "warning");
+      return receivedAt;
+    }
+    return verdict === "ok" && typeof createdAt === "number" ? createdAt : null;
+  }
+
+  /** "about 7 min", "about 3 h", "about 2 days" — how far off a clock is. */
+  function roughly(ms: number): string {
+    const minutes = Math.max(1, Math.round(ms / 60_000));
+    if (minutes < 90) return tf(lang, "p4.skew.min", { n: minutes });
+    const hours = Math.round(minutes / 60);
+    return hours < 48 ? tf(lang, "p4.skew.h", { n: hours }) : tf(lang, "p4.skew.d", { n: Math.round(hours / 24) });
   }
 
   /** A status the server reports for a message we sent to an away member. */
@@ -2205,9 +2223,13 @@ function ChatApp() {
       handled.push(item.id);
       // The payload must name the peer the server says relayed it, and
       // never us; anything malformed is dropped.
-      const plaintext = validatePayload(opened.payload, { transportSender: item.from.peerId, myId: myIdRef.current });
-      if (!plaintext || plaintext.kind === "audio-status" || plaintext.kind === "receipt") continue;
-      if (messagesRef.current.some((m) => m.id === plaintext.id) || !(await freshMessage(plaintext.id, (opened.payload as { createdAt?: unknown }).createdAt))) continue;
+      const checked = validatePayload(opened.payload, { transportSender: item.from.peerId, myId: myIdRef.current });
+      if (!checked || checked.kind === "audio-status" || checked.kind === "receipt") continue;
+      if (messagesRef.current.some((m) => m.id === checked.id)) continue;
+      // § 11: fresh — and dated by the time it arrived when the sender's clock is far ahead.
+      const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: item.from.peerId, name: checked.senderName });
+      if (when === null) continue;
+      const plaintext = when === checked.createdAt ? checked : { ...checked, createdAt: when };
       relaySendersRef.current.set(plaintext.id, { peerId: item.from.peerId, accountId: accountRefOf(item.from) });
       incoming.push(chatMessageFrom(plaintext, {
         cryptoVersion: opened.version,
@@ -2878,12 +2900,16 @@ function ChatApp() {
     if (opened.signer?.valid && opened.signer.account?.valid) peerAccountKeysRef.current.set(peerId, opened.signer.account.publicKey);
     // Checked, bounded, and bound to this channel's peer: a payload
     // naming another sender (or us) is not shown.
-    const plaintext = validatePayload(opened.payload, { transportSender: peerId, myId: myIdRef.current, receipts: true, profiles: true });
-    if (!plaintext) {
+    const checked = validatePayload(opened.payload, { transportSender: peerId, myId: myIdRef.current, receipts: true, profiles: true });
+    if (!checked) {
       warnOnce(`dropped:${peerId}`, t(lang, "proto.dropped").replace("{name}", peerName));
       return;
     }
-    if (!(await freshMessage(plaintext.id, (opened.payload as { createdAt?: unknown }).createdAt))) return; // a replay, or too old / ahead
+    // § 11: a replay or one older than the window is dropped; one dated far ahead
+    // (the sender's clock is off) is kept with the time it arrived.
+    const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: peerId, name: checked.senderName || peerName });
+    if (when === null) return;
+    const plaintext = when === checked.createdAt ? checked : { ...checked, createdAt: when };
     const forUsAlone = sealedWith === "pair" || sealedWith === "p4-pair";
 
     if (plaintext.kind === "audio-status") {

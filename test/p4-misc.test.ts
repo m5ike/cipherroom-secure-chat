@@ -73,7 +73,7 @@ describe("p4 files (§ 8)", () => {
 describe("p4 replay window (§ 11)", () => {
   const now = 1_800_000_000_000;
 
-  it("stores a hashed id and refuses replays, old and future messages", async () => {
+  it("stores a hashed id and refuses replays and old messages; a future one is accepted, clamped", async () => {
     const key = await replayKey(ROOM, "msg-1");
     expect(key).toMatch(/^[A-Za-z0-9_-]{22}$/);
     expect(key).not.toBe(await replayKey("r3.other", "msg-1"));
@@ -86,13 +86,31 @@ describe("p4 replay window (§ 11)", () => {
     expect(await new ReplayGuard(store).check(ROOM, "msg-1", now, { now: now + 1000 })).toBe("replay");
     expect(await guard.check(ROOM, "old", now - REPLAY.windowMs - 1, { now })).toBe("too-old");
     expect(await guard.check(ROOM, "edge", now - REPLAY.windowMs, { now })).toBe("ok");
-    expect(await guard.check(ROOM, "ahead", now + REPLAY.futureMs + 1, { now })).toBe("future");
+    // § 11 (6.12): a sender whose clock is ahead — accepted with the receive time, remembered with it.
+    expect(await guard.check(ROOM, "ahead", now + REPLAY.futureMs + 1, { now })).toBe("clamped");
+    expect(await guard.check(ROOM, "ahead", now + REPLAY.futureMs + 1, { now: now + 1 })).toBe("replay");
     expect(await guard.check(ROOM, "soon", now + REPLAY.futureMs, { now })).toBe("ok");
     expect(await guard.check(ROOM, "bad", "yesterday", { now })).toBe("malformed");
     expect(await guard.check(ROOM, "a|b", now, { now })).toBe("malformed");
     // Restored history: exempt, but remembered.
     expect(await guard.check(ROOM, "restored", now - 10 * REPLAY.windowMs, { now, restored: true })).toBe("ok");
     expect(await guard.check(ROOM, "restored", now - 10 * REPLAY.windowMs, { now, restored: true })).toBe("ok");
+  });
+
+  it("remembers a far-future message with the receive time: it leaves the window like any other, and is not the last to be capped", async () => {
+    const store = new MemoryReplayStore();
+    const guard = new ReplayGuard(store, { pruneEvery: 1 });
+    expect(await guard.check(ROOM, "far", now + 400 * 24 * 60 * 60 * 1000, { now })).toBe("clamped");
+    expect(await guard.check(ROOM, "normal", now + 1000, { now: now + 1000 })).toBe("ok");
+    // The cap prunes the oldest: the clamped id is the older one, not one kept "in the future".
+    await store.prune(ROOM, 0, 1);
+    expect(await store.has(ROOM, await replayKey(ROOM, "normal"))).toBe(true);
+    expect(await store.has(ROOM, await replayKey(ROOM, "far"))).toBe(false);
+    // And past the window it is gone (not kept for its date).
+    const later = new ReplayGuard(store, { pruneEvery: 1 });
+    expect(await later.check(ROOM, "far2", now + 400 * 24 * 60 * 60 * 1000, { now })).toBe("clamped");
+    await later.check(ROOM, "tick", now + REPLAY.windowMs + 1, { now: now + REPLAY.windowMs + 1 });
+    expect(await store.has(ROOM, await replayKey(ROOM, "far2"))).toBe(false);
   });
 
   it("forgets ids past the window and the oldest beyond the cap", async () => {
