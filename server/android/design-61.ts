@@ -349,7 +349,7 @@ export const SCREENS_TREES_61: Record<string, ANode> = {
       n("bio-switch", "switch", { props: { checked: "$security.biometric" }, on: click("biometric.toggle") }),
     ]),
     actRow("pin", "key-round", "{_'settings.changePin'}", "pin.change"),
-    toggleRow("shuffle", "shuffle", "{_'set.security.shuffle'}", "security.shufflePin", "{_'set.security.shuffleHint'}"),
+    toggleRow("shuffle", "shuffle", "{_'set.security.shuffle'}", "security.shufflePin", "set.security.shuffleHint"),
     actRow("lock", "lock", "{_'menu.lock'}", "lock.now"),
     infoRow("policy", "{_'set.security.policy'}", "PIN {$security.pinLength} · {$security.maxAttempts}× → {=$security.wipe ? _('set.security.wipe') : _('set.security.lockout')}"),
     infoRow("shots", "{_'set.security.screenshots'}", "{=$security.screenshots ? _('set.security.allowed') : _('set.security.blocked')}"),

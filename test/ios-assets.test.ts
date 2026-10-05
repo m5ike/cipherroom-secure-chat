@@ -11,7 +11,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { iosAssets } from "../server/ios/assets";
-import { IOS_CHANGED_SCREENS, IOS_DEFAULT_DESIGN, IOS_FIXED_TEXTS, IOS_PASSKEY_KEYS, IOS_REMOVED_NODES, IOS_STRINGS, IOS_WATCH_IF, IOS_WATCH_SETTING, IOS_WORDING, sanitizeIosDesign } from "../server/ios/design";
+import { IOS_CHANGED_SCREENS, IOS_DEFAULT_DESIGN, IOS_PASSKEY_KEYS, IOS_REMOVED_NODES, IOS_STRINGS, IOS_WATCH_IF, IOS_WATCH_SETTING, IOS_WORDING, sanitizeIosDesign } from "../server/ios/design";
 import { DEFAULT_DESIGN, LANGS, LIMITS, sanitizeDesign, type ANode } from "../server/android/design";
 import { androidAssets } from "../server/android/assets";
 import { mainDictionary } from "../client/src/lib/i18n";
@@ -96,17 +96,9 @@ describe("the iOS-only items", () => {
     }
   });
 
-  it("has no doubly wrapped text (Android's shuffle hint showed \"{_'}\"); only those texts differ", () => {
+  it("has no doubly wrapped text in either design (6.14: Android's shuffle hint showed \"{_'}\")", () => {
     expect(JSON.stringify(ios.screens)).not.toContain("{_'{_'");
-    for (const [screen, texts] of Object.entries(IOS_FIXED_TEXTS)) {
-      const list = walk(ios.screens[screen]);
-      for (const [id, text] of Object.entries(texts)) {
-        expect(list.find((n) => n.id === id)?.text, `${screen} ${id}`).toBe(text);
-        expect(walk(android.screens[screen]).find((n) => n.id === id)?.text, `${screen} ${id}`).not.toBe(text);
-      }
-      const strip = (t: ANode): ANode => ({ ...t, text: texts[t.id] ? "" : t.text, children: t.children?.map(strip) });
-      expect(strip(ios.screens[screen])).toEqual(strip(android.screens[screen]));
-    }
+    expect(JSON.stringify(android.screens)).not.toContain("{_'{_'");
   });
 
   it("the update notice names a size only when there is one (an iOS release has none)", () => {

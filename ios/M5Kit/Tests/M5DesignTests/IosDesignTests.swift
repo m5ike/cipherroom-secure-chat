@@ -39,8 +39,8 @@ import Testing
         "nfc.hold", "nfc.work.tapScan", "nfc.model.hold", "nfc.tpl.none", "look.mic.blocked",
     ]
     /// The screens that are not Android's as they are (server/ios/design.ts IOS_CHANGED_SCREENS): the watch switch,
-    /// no call log rows, the shuffle hint not doubly wrapped, the update notice without "· 0 B".
-    static let changedScreens: Set<String> = ["settings.notify", "settings.calls", "settings.security", "update"]
+    /// no call log rows, the update notice without "· 0 B".
+    static let changedScreens: Set<String> = ["settings.notify", "settings.calls", "update"]
 
     static func context(settings: SettingsModel = SettingsModel(), dark: Bool = false, lang: String = "en") -> RenderContext {
         RenderContext(design: ios, dark: dark, translator: Translator(design: ios, lang: lang), settings: settings,

@@ -556,15 +556,6 @@ IOS_WORDING["nfc.tpl.none"] = Object.fromEntries(LANGS.map((l) => [l, DEFAULT_DE
 export const IOS_REMOVED_NODES: Record<string, string[]> = { "settings.calls": ["calllog-perm", "calllog-erase"] };
 
 /**
- * A slip of Android's design the iOS design does not copy (Android's own stays as it is): Settings › Security's
- * shuffle hint is "{_'{_'set.security.shuffleHint'}'}" — server/android/design-61.ts passes an already wrapped
- * key to toggleRow, whose hintText wraps it again — and the screen showed "{_'}". screen → node id → text.
- */
-export const IOS_FIXED_TEXTS: Record<string, Record<string, string>> = {
-  "settings.security": { "shuffle-hint": "{_'set.security.shuffleHint'}" },
-};
-
-/**
  * The update notice: an iOS release is a version record with an App Store / TestFlight link and no download
  * size (ios/M5cet/Platform/Push/UpdateNotice.swift: size 0), and "Version 6.15.0 · 0 B" said nothing true —
  * the size shows only when there is one (a design bundle's).
@@ -580,7 +571,7 @@ function updateWithoutSize(screens: Record<string, ANode>): void {
 }
 
 /** The screens of the iOS design that are not Android's as they are (the rest are). */
-export const IOS_CHANGED_SCREENS = ["settings.notify", ...Object.keys(IOS_REMOVED_NODES), ...Object.keys(IOS_FIXED_TEXTS), "update"];
+export const IOS_CHANGED_SCREENS = ["settings.notify", ...Object.keys(IOS_REMOVED_NODES), "update"];
 
 const findNode =(node: ANode, id: string): ANode | null => {
   if (node.id === id) return node;
@@ -634,7 +625,7 @@ function addWatchSwitch(screens: Record<string, ANode>): void {
   parent.children = kids;
 }
 
-/** IOS_REMOVED_NODES out of their screens, IOS_FIXED_TEXTS into them. */
+/** IOS_REMOVED_NODES out of their screens. */
 function removeNodes(screens: Record<string, ANode>): void {
   for (const [screen, ids] of Object.entries(IOS_REMOVED_NODES)) {
     const root = screens[screen];
@@ -642,14 +633,6 @@ function removeNodes(screens: Record<string, ANode>): void {
     for (const id of ids) {
       const parent = parentOf(root, id);
       if (parent?.children) parent.children = parent.children.filter((c) => c.id !== id);
-    }
-  }
-  for (const [screen, texts] of Object.entries(IOS_FIXED_TEXTS)) {
-    const root = screens[screen];
-    if (!root) continue;
-    for (const [id, text] of Object.entries(texts)) {
-      const node = findNode(root, id);
-      if (node) node.text = text;
     }
   }
 }
