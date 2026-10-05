@@ -60,7 +60,7 @@ struct NfcConnRead: Sendable {
     /// The tag's body — kept to open it again with a code (Android Nfc.lastBody); never shown.
     let body: String?
     /// What it opened to (format, need, error, room).
-    let read: M5NFC.ConnTag.Read
+    let read: NfcConnTag.Read
 }
 
 /// A workbench operation's input (Android NfcWorkbench: what is asked before the tap).

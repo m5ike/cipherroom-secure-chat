@@ -10,6 +10,7 @@
 // the command reaches the card, with the AID in words — never a made-up answer.
 
 import Foundation
+import M5Core
 import M5NFC
 
 struct ApduFrame: Sendable, Hashable {
@@ -84,7 +85,7 @@ enum CoreNFCRules {
     /// the session's allowed AIDs (Info.plist), or a prefix / extension of one (partial selection).
     static func selectRefusal(_ frame: ApduFrame, allowed: [String]) -> String? {
         guard frame.selectsByName, !allowed.isEmpty else { return nil }
-        let aid = M5NFC.Hex.encode(frame.data)
+        let aid = Hex.upper(frame.data)
         let listed = allowed.map { $0.uppercased() }
         if listed.contains(where: { $0 == aid || $0.hasPrefix(aid) || aid.hasPrefix($0) }) { return nil }
         return "Core NFC lets the app select only the applications listed in its Info.plist — \(aid) is not one of them."

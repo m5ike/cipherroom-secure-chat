@@ -8,6 +8,7 @@
 // through the app's transport exactly as they would on a card.
 
 import Foundation
+import M5Core
 import M5NFC
 @testable import M5cet
 
@@ -61,7 +62,7 @@ final class FakeTag: NfcTagHandle, @unchecked Sendable {
 
     func sendAPDU(_ apdu: ApduFrame, completion: @escaping NfcCompletion<ApduReply>) {
         let bytes = apdu.bytes
-        lock.withLock { _apdus.append(M5NFC.Hex.encode(bytes)) }
+        lock.withLock { _apdus.append(Hex.upper(bytes)) }
         complete(completion) {
             guard let chip else { throw NSError(domain: "NFCError", code: 102) }
             let r = try chip.answer(bytes)
@@ -70,7 +71,7 @@ final class FakeTag: NfcTagHandle, @unchecked Sendable {
     }
 
     func sendMiFare(_ frame: [UInt8], completion: @escaping NfcCompletion<[UInt8]>) {
-        lock.withLock { _mifare.append(M5NFC.Hex.encode(frame)) }
+        lock.withLock { _mifare.append(Hex.upper(frame)) }
         complete(completion) {
             guard let mifare else { throw NSError(domain: "NFCError", code: 102) }
             return try mifare(frame)
@@ -225,7 +226,7 @@ struct KeyTexts: NfcTextProvider {
 @MainActor
 func makeNfcService(_ rig: NfcRig, readingAvailable: Bool = true, hce: FakeHce = FakeHce(), http: (any ShareInviteHTTP)? = nil,
                  aids: [String] = IOSAids.infoPlist) -> NfcService {
-    NfcService(configuration: .init(allowedAids: aids), readingAvailable: readingAvailable, factory: rig.factory, hce: hce, kdf: M5TagKdf(), http: http,
+    NfcService(configuration: .init(allowedAids: aids), readingAvailable: readingAvailable, factory: rig.factory, hce: hce, kdf: Argon2TagKdf(), http: http,
                timing: .init(restartDelay: .milliseconds(20), releaseGrace: .milliseconds(50)))
 }
 
@@ -238,9 +239,9 @@ func makeNfcSession(_ rig: NfcRig, texts: NfcSheetTexts = NfcSheetTexts(KeyTexts
 
 /* ================================================================ byte helpers (M5NFC tests' Support.swift) */
 
-func hx(_ h: String) -> [UInt8] { M5NFC.Hex.decode(h) }
-func hexs(_ u: [UInt8]) -> String { M5NFC.Hex.encode(u) }
-func latin(_ s: String) -> [UInt8] { M5NFC.Bytes.latin1(s) }
+func hx(_ h: String) -> [UInt8] { Hex.decodeLenient(h) }
+func hexs(_ u: [UInt8]) -> String { Hex.upper(u) }
+func latin(_ s: String) -> [UInt8] { [UInt8].latin1(s) }
 func bytes8(_ v: Int...) -> [UInt8] { v.map { UInt8(truncatingIfNeeded: $0) } }
 func filled(_ n: Int, _ v: Int) -> [UInt8] { [UInt8](repeating: UInt8(v), count: n) }
 func ok9000(_ resp: [UInt8]) -> [UInt8] { resp + [0x90, 0x00] }

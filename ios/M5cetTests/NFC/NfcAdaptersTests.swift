@@ -44,7 +44,7 @@ final class NfcAdaptersTests: XCTestCase {
         let v = try offline()
         let kdf = v.optObject("kdf")!
         // TagV2: the password is the canonical code, the salt the tag's "s" as written (base64url text).
-        let key = try M5TagKdf().argon2id(password: Array(v.optString("canonicalCode").utf8), salt: Array(v.optObject("tag")!.optString("s").utf8),
+        let key = try Argon2TagKdf().argon2id(password: Array(v.optString("canonicalCode").utf8), salt: Array(v.optObject("tag")!.optString("s").utf8),
                                           passes: kdf.optInt("passes"), memoryKiB: kdf.optInt("memoryKiB"), parallelism: 1, length: 32)
         XCTAssertEqual(hexs(key).lowercased(), v.optString("argon2idKeyHex"))
     }
@@ -98,7 +98,7 @@ final class NfcAdaptersTests: XCTestCase {
     func testAnInvitationTagMadeAndRedeemed() async throws {
         let server = FakeShareServer()
         let s = NfcService(configuration: .init(allowedAids: IOSAids.infoPlist), readingAvailable: true, factory: NfcRig().factory, hce: FakeHce(),
-                           kdf: M5TagKdf(), http: M5ShareInviteHTTP(transport: server))
+                           kdf: Argon2TagKdf(), http: M5ShareInviteHTTP(transport: server))
         let card: NfcJSONObject = ["room": "brno-secure", "passphrase": "Kq7xVm-2PnRt4-Wz9cLd-8HsJ3e", "name": "Alice"]
         let prepared = try await s.prepareConnTag(card, kind: "inv", origin: "https://chat.example.org", appVersion: "6.14.0")
         XCTAssertNil(prepared.code)

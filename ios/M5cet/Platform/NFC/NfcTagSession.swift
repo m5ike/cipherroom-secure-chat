@@ -16,6 +16,7 @@
 
 import Dispatch
 import Foundation
+import M5Core
 import M5NFC
 import Synchronization
 
@@ -233,7 +234,7 @@ actor NfcTagSession {
         let memory = NfcCatalog.techInfo(tech).memory
         var selected: String? = nil
         if case .iso7816(let aid, _, _, _) = kind { selected = aid.uppercased() }
-        let id = CardIdentity(uid: M5NFC.Hex.encode(t.identifier), tech: tech, ats: kind.historicalBytes.map { M5NFC.Hex.encode($0) },
+        let id = CardIdentity(uid: Hex.upper(t.identifier), tech: tech, ats: kind.historicalBytes.map { Hex.upper($0) },
                               memory: memory.isEmpty ? nil : memory, selectedAid: selected)
         let caps = kind.capabilities.intersection(deviceCapabilities)
         finishWaiting(.success(CoreNFCTransport(session: self, generation: gen, kind: kind, identity: id, capabilities: caps)))

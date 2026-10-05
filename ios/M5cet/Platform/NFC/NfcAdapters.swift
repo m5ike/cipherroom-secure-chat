@@ -1,24 +1,16 @@
 // What M5NFC asks the app to wire for the connection tags (M5NFC README "What the
-// app wires"): Argon2id for offline tags (`TagKdf` → M5Crypto's Argon2, the
-// vendored PHC reference code; Android chat/Argon2) and the two POSTs of an
-// invitation tag (`ShareInviteHTTP` → M5Net's HTTP transport over URLSession;
-// Android Server.send with a 64 KiB answer cap).
+// app wires"): Argon2id for offline tags is M5NFC's `Argon2TagKdf` (M5Crypto's
+// vendored PHC reference code; Android chat/Argon2) — NfcService passes it in —
+// and the two POSTs of an invitation tag (`ShareInviteHTTP`) go through M5Net's
+// HTTP transport over URLSession (Android Server.send with a 64 KiB answer cap).
 
 import Foundation
-import M5Crypto
 import M5Net
 import M5NFC
 
-/// Argon2id (v 0x13) for M5NFC's offline connection tags — one derivation at a time (M5Crypto serializes them).
-struct M5TagKdf: M5NFC.TagKdf {
-    func argon2id(password: [UInt8], salt: [UInt8], passes: Int, memoryKiB: Int, parallelism: Int, length: Int) throws -> [UInt8] {
-        try Argon2.argon2id(password: password, salt: salt, passes: passes, memoryKiB: memoryKiB, lanes: parallelism, length: length)
-    }
-}
-
 /// The invitation tag's POSTs (/api/share/create, /api/share/redeem) through M5Net: ephemeral URLSession,
 /// no redirects, no cookies, the answer capped at 64 KiB, the app's User-Agent.
-struct M5ShareInviteHTTP: M5NFC.ShareInviteHTTP {
+struct M5ShareInviteHTTP: ShareInviteHTTP {
     let transport: any HTTPTransport
     let userAgent: String
     /// Seconds per request.

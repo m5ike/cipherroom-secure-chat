@@ -12,6 +12,7 @@
 // (MIFARE Classic, raw frames, payment AIDs) is never in them.
 
 import Foundation
+import M5Core
 import M5NFC
 
 final class CoreNFCTransport: CardTransport, Sendable {
@@ -130,7 +131,7 @@ final class CoreNFCTransport: CardTransport, Sendable {
         guard capabilities.contains(.iso15693) else { throw NfcError.unsupported("not an ISO 15693 tag") }
         var blocks = [NfcJSON]()
         for b in 0..<maxBlocks {
-            do { blocks.append(.string(M5NFC.Hex.encode(try await session.readBlock(b, generation)))) }
+            do { blocks.append(.string(Hex.upper(try await session.readBlock(b, generation)))) }
             catch let e as NfcError where e.code == .cardGone || e.code == .cancelled { throw e }
             catch { break }
         }
@@ -147,9 +148,9 @@ final class CoreNFCTransport: CardTransport, Sendable {
     /// FeliCa: IDm, the current system code, PMm and the card's systems (CardOps.felicaSystems).
     func felicaSystems() async throws -> NfcJSONObject {
         guard capabilities.contains(.felica), case .feliCa(let idm, let code) = kind else { throw NfcError.unsupported("not a FeliCa card") }
-        var out: NfcJSONObject = ["idm": .string(M5NFC.Hex.encode(idm)), "systemCode": .string(M5NFC.Hex.encode(code))]
-        if let pmm = try? await session.felicaPmm(code, generation) { out["pmm"] = .string(M5NFC.Hex.encode(pmm)) }
-        if let systems = try? await session.felicaSystemCodes(generation) { out["systems"] = NfcJSON(systems.map { M5NFC.Hex.encode($0) }) }
+        var out: NfcJSONObject = ["idm": .string(Hex.upper(idm)), "systemCode": .string(Hex.upper(code))]
+        if let pmm = try? await session.felicaPmm(code, generation) { out["pmm"] = .string(Hex.upper(pmm)) }
+        if let systems = try? await session.felicaSystemCodes(generation) { out["systems"] = NfcJSON(systems.map { Hex.upper($0) }) }
         out["note"] = .string(NfcTexts.t("nfc.note.felicaPublic", "Public systems only; a service's blocks (Read Without Encryption) need the service code."))
         return out
     }

@@ -26,7 +26,7 @@ simulovaným čipům (viz níže).
 | `CardOps.emvRead` | `NfcService.readEmv` — na iPhonu **odmítnuto** důvodem M5NFC (Core NFC nepustí platební AID) |
 | `TemplateRunner` nad `IsoDep` (NfcWorkbench `app-template`) | `NfcService.runTemplate(…)` / `readCard(template:)` (kroky na listu) |
 | `Nfc` (Připojka: čtení, PIN/kód, zápis v2, emulace) | `readConnTag`, `openConnBody`, `prepareConnTag`, `writeConnTag`, `emulateConnection` |
-| `ConnTag` + `ShareInvite` (HTTP) + `TagV2` (Argon2id) | M5NFC `ConnTag` / `ShareInvite` / `TagV2` s adaptéry `M5ShareInviteHTTP` (M5Net) a `M5TagKdf` (M5Crypto Argon2) |
+| `ConnTag` + `ShareInvite` (HTTP) + `TagV2` (Argon2id) | M5NFC `NfcConnTag` / `NfcShareInvite` / `NfcTagV2` (krypto M5Crypto) s `Argon2TagKdf` (M5NFC nad Argon2 z M5Crypto) a adaptérem `M5ShareInviteHTTP` (M5Net) |
 | `NfcModelSheet.start` + `ModelNfcDevice.snapshot` | `NfcService.modelPlan` / `modelDevice` / `modelRead` |
 | `CardService` (HCE, AID `D2760000850101`) | `NfcCardEmulation` + `HceRunner` (Core NFC `CardSession`) s M5NFC `Type4TagEmulator` — **jen s entitlementem HCE** |
 | `MifareClassic`, `NfcA` raw (Gen1a UID), `Readers`/`UsbReader`/`BleReader` | není (Core NFC nemá MIFARE Classic ani raw rámce; externí čtečky zatím ne) — důvod z `NfcPlatform.limit` |
@@ -108,8 +108,8 @@ func writeM5Card(_ container: [UInt8], texts:) async throws -> Int
 
 // Připojka (connection tag)
 func readConnTag(secret: String = "", trustedOrigin: String?, redeem: Bool = true, texts:) async throws -> NfcConnRead
-func openConnBody(_ body: String?, secret: String, trustedOrigin: String?, redeem: Bool = true) async -> M5NFC.ConnTag.Read
-func prepareConnTag(_ card: NfcJSONObject, kind: String /* "inv" | "off" */, origin: String, appVersion: String) async throws -> M5NFC.ConnTag.Prepared
+func openConnBody(_ body: String?, secret: String, trustedOrigin: String?, redeem: Bool = true) async -> NfcConnTag.Read
+func prepareConnTag(_ card: NfcJSONObject, kind: String /* "inv" | "off" */, origin: String, appVersion: String) async throws -> NfcConnTag.Prepared
 func writeConnTag(_ body: String, texts:) async throws -> Int
 
 // karty ISO 7816

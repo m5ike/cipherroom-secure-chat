@@ -15,6 +15,7 @@
 // reader-mode owner wins). `cancel()` or cancelling the calling task ends it.
 
 import Foundation
+import M5Core
 import M5NFC
 import Observation
 
@@ -49,7 +50,7 @@ final class NfcService {
 
     private convenience init() {
         self.init(configuration: .fromBundle(), readingAvailable: CoreNFCSessionDriver.readingAvailable,
-                  factory: CoreNFCSessionDriver.factory, hce: CoreNFCHceProbe(), kdf: M5TagKdf(), http: M5ShareInviteHTTP())
+                  factory: CoreNFCSessionDriver.factory, hce: CoreNFCHceProbe(), kdf: Argon2TagKdf(), http: M5ShareInviteHTTP())
     }
 
     /// Any radio (tests: a fake driver factory and HCE probe).
@@ -94,8 +95,8 @@ final class NfcService {
 
     /* ------------------------------------------------------------ the session */
 
-    nonisolated static let ndefAids = [M5NFC.Hex.encode(Ndef.t4tAid), "D2760000850100"]
-    nonisolated static let eidAids = [M5NFC.Hex.encode(MrtdReader.aid)]
+    nonisolated static let ndefAids = [Hex.upper(Ndef.t4tAid), "D2760000850100"]
+    nonisolated static let eidAids = [Hex.upper(MrtdReader.aid)]
     nonisolated static let noReader = "This device has no NFC reader (iPad and Apple Watch have none)."
     nonisolated static let lockNeedsYes = "Making a tag read-only is permanent — it needs the explicit confirmation."
 
@@ -201,19 +202,19 @@ final class NfcService {
     }
 
     /// Opens a body read before, with the code / PIN typed now (Android Nfc.openLast) — no tag needed.
-    func openConnBody(_ body: String?, secret: String, trustedOrigin: String?, redeem: Bool = true) async -> M5NFC.ConnTag.Read {
-        await M5NFC.ConnTag.open(body, secret: secret, trustedOrigin: trustedOrigin, redeem: redeem, kdf: kdf, http: http)
+    func openConnBody(_ body: String?, secret: String, trustedOrigin: String?, redeem: Bool = true) async -> NfcConnTag.Read {
+        await NfcConnTag.open(body, secret: secret, trustedOrigin: trustedOrigin, redeem: redeem, kdf: kdf, http: http)
     }
 
     /// A format-2 body for the room `card` ({room, passphrase, name}): "inv" (an invitation on `origin`) or "off"
     /// (offline, with the code to show once) — Android ConnTag.prepare. Format 1 is never written.
-    func prepareConnTag(_ card: NfcJSONObject, kind: String, origin: String, appVersion: String) async throws -> M5NFC.ConnTag.Prepared {
-        try await M5NFC.ConnTag.prepare(card, kind: kind, origin: origin, appVersion: appVersion, kdf: kdf, http: http)
+    func prepareConnTag(_ card: NfcJSONObject, kind: String, origin: String, appVersion: String) async throws -> NfcConnTag.Prepared {
+        try await NfcConnTag.prepare(card, kind: kind, origin: origin, appVersion: appVersion, kdf: kdf, http: http)
     }
 
     /// Writes a prepared format-2 body onto a tag (Android Nfc.write / NfcWorkbench.writeConnection).
     func writeConnTag(_ body: String, texts: NfcSheetTexts = NfcSheetTexts()) async throws -> Int {
-        guard body.hasPrefix(M5NFC.TagV2.prefix) else { throw NfcError(.invalidArgument, "no tag prepared") }
+        guard body.hasPrefix(NfcTagV2.prefix) else { throw NfcError(.invalidArgument, "no tag prepared") }
         return try await writeTag([ConnectionCard.record(body)], texts: texts)
     }
 
@@ -363,7 +364,7 @@ final class NfcService {
                 out = try await CardOps.desfireApps(t)
             case "raw-apdu", "select-aid":
                 guard case .apdu(let apdu) = input else { throw NfcError(.invalidArgument, "no APDU") }
-                out = ["apdu": .string(M5NFC.Hex.encode(try await t.transmit(apdu)))]
+                out = ["apdu": .string(Hex.upper(try await t.transmit(apdu)))]
             case "emv-public":
                 out = try await CardOps.emvPublic(t)
             case "eid-public":
@@ -379,7 +380,7 @@ final class NfcService {
             default: // m5-read, conn-read: the records; the screens open them (M5Card / ConnTag) after the tap
                 let r = try await Self.read(t)
                 var o = r.json
-                if let c = r.m5Container { o["m5"] = .string(M5NFC.Hex.encode(c)) }
+                if let c = r.m5Container { o["m5"] = .string(Hex.upper(c)) }
                 if let b = r.connectionBody { o["connBody"] = .string(b) }
                 return NfcOpResult(card: r.identity, output: o)
             }
@@ -398,7 +399,7 @@ final class NfcService {
     /// Answers as the connection tag (Android Nfc.emulate / CardService.serveConnection) until a reader read it,
     /// `stopEmulation()`, or iOS ends it. Without HCE on this iPhone: M5NFC's limit reason.
     func emulateConnection(_ body: String, texts: NfcSheetTexts = NfcSheetTexts()) async throws -> HceEnd {
-        guard body.hasPrefix(M5NFC.TagV2.prefix) else { throw NfcError(.invalidArgument, "no tag prepared") }
+        guard body.hasPrefix(NfcTagV2.prefix) else { throw NfcError(.invalidArgument, "no tag prepared") }
         return try await emulation.serve(try Type4TagEmulator.connection(body), texts: texts)
     }
 
