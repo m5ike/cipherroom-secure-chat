@@ -27,6 +27,8 @@ import { rateLimit } from "express-rate-limit";
 import { addressGroup } from "./address-group";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
+import { LOCALE_INFO, type Locale } from "../client/src/lib/locales";
+import { requestLocale } from "./notify/lang";
 
 export const SHARE_LIMITS = {
   maxLinks: 2000,
@@ -210,26 +212,86 @@ export function registerShareRoutes(app: Express, store: ShareStore = shareStore
 // The client wipes what script can reach, then navigates here. Clear-Site-Data
 // finishes the job for what script cannot: HttpOnly cookies, the HTTP cache,
 // and any storage or service worker left behind. No script on this page.
-const GOODBYE_HTML = `<!doctype html>
-<html lang="cs"><head><meta charset="utf-8">
+// 6.13: in the visitor's language (Accept-Language; English when none of the
+// nine), with its <html lang> and Content-Language; every text is UTF-8.
+
+type GoodbyeTexts = { title: string; gone: string; history: string };
+
+export const GOODBYE_TEXTS: Record<Locale, GoodbyeTexts> = {
+  en: {
+    title: "Session cleared",
+    gone: "Keys, settings, cache, cookies and the service worker of this site are gone. You can close this tab.",
+    history: "A website cannot erase browser history. There is no way back to the chat from here; remove the visit in your browser settings (Ctrl/Cmd + Shift + Delete), and use a private window next time.",
+  },
+  cs: {
+    title: "Relace byla smazána",
+    gone: "Klíče, nastavení, mezipaměť, cookies i service worker této stránky jsou pryč. Tuto kartu můžete zavřít.",
+    history: "Historii prohlížeče web smazat nemůže. Zpět do chatu odsud nevede; záznam o návštěvě odstraníte v nastavení prohlížeče (Ctrl/Cmd + Shift + Delete), příště použijte anonymní okno.",
+  },
+  de: {
+    title: "Sitzung gelöscht",
+    gone: "Schlüssel, Einstellungen, Cache, Cookies und der Service Worker dieser Seite sind entfernt. Sie können diesen Tab schließen.",
+    history: "Eine Website kann den Browserverlauf nicht löschen. Von hier führt kein Weg zurück zum Chat; entfernen Sie den Besuch in den Browsereinstellungen (Strg/Cmd + Umschalt + Entf) und verwenden Sie nächstes Mal ein privates Fenster.",
+  },
+  es: {
+    title: "Sesión borrada",
+    gone: "Las claves, los ajustes, la caché, las cookies y el service worker de este sitio se han eliminado. Puedes cerrar esta pestaña.",
+    history: "Un sitio web no puede borrar el historial del navegador. Desde aquí no se vuelve al chat; elimina la visita en los ajustes del navegador (Ctrl/Cmd + Mayús + Supr) y usa una ventana privada la próxima vez.",
+  },
+  it: {
+    title: "Sessione cancellata",
+    gone: "Chiavi, impostazioni, cache, cookie e service worker di questo sito sono stati eliminati. Puoi chiudere questa scheda.",
+    history: "Un sito web non può cancellare la cronologia del browser. Da qui non si torna alla chat; elimina la visita nelle impostazioni del browser (Ctrl/Cmd + Maiusc + Canc) e la prossima volta usa una finestra privata.",
+  },
+  fr: {
+    title: "Session effacée",
+    gone: "Les clés, les paramètres, le cache, les cookies et le service worker de ce site ont été supprimés. Vous pouvez fermer cet onglet.",
+    history: "Un site web ne peut pas effacer l’historique du navigateur. Il n’y a pas de retour au chat depuis ici ; supprimez la visite dans les paramètres du navigateur (Ctrl/Cmd + Maj + Suppr) et utilisez une fenêtre privée la prochaine fois.",
+  },
+  sk: {
+    title: "Relácia bola vymazaná",
+    gone: "Kľúče, nastavenia, vyrovnávacia pamäť, cookies aj service worker tejto stránky sú preč. Túto kartu môžete zavrieť.",
+    history: "Históriu prehliadača web vymazať nemôže. Späť do chatu odtiaľto cesta nevedie; záznam o návšteve odstránite v nastaveniach prehliadača (Ctrl/Cmd + Shift + Delete), nabudúce použite súkromné okno.",
+  },
+  sl: {
+    title: "Seja je izbrisana",
+    gone: "Ključi, nastavitve, predpomnilnik, piškotki in service worker tega spletnega mesta so izbrisani. Ta zavihek lahko zaprete.",
+    history: "Spletno mesto ne more izbrisati zgodovine brskalnika. Od tod ni poti nazaj v klepet; obisk odstranite v nastavitvah brskalnika (Ctrl/Cmd + Shift + Delete), naslednjič pa uporabite zasebno okno.",
+  },
+  fi: {
+    title: "Istunto tyhjennetty",
+    gone: "Tämän sivuston avaimet, asetukset, välimuisti, evästeet ja service worker on poistettu. Tämän välilehden voi sulkea.",
+    history: "Verkkosivusto ei voi poistaa selaimen historiaa. Täältä ei pääse takaisin keskusteluun; poista käynti selaimen asetuksista (Ctrl/Cmd + Vaihto + Delete) ja käytä ensi kerralla yksityistä ikkunaa.",
+  },
+};
+
+const escapeHtml = (s: string): string => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+
+/** The page in one language (exported for tests). */
+export function goodbyeHtml(lang: Locale): string {
+  const t = GOODBYE_TEXTS[lang] ?? GOODBYE_TEXTS.en;
+  return `<!doctype html>
+<html lang="${LOCALE_INFO[lang].tag}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex,nofollow,noarchive">
 <meta name="referrer" content="no-referrer">
-<title>M5cet</title>
+<title>M5cet · ${escapeHtml(t.title)}</title>
 <style>html{color-scheme:dark light}body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0b0d12;color:#e7e9ee;font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif}
 main{max-width:34rem;padding:2rem}h1{font-size:1.25rem;margin:0 0 .75rem}p{margin:.5rem 0;color:#aab0bd}small{color:#7d8494}</style></head>
 <body><main>
-<h1>Relace byla smazána · Session cleared</h1>
-<p>Klíče, nastavení, mezipaměť, cookies i service worker této stránky jsou pryč. Tuto kartu můžete zavřít.</p>
-<p>Keys, settings, cache, cookies and the service worker of this site are gone. You can close this tab.</p>
-<p><small>Historii prohlížeče web smazat nemůže. Zpět do chatu odsud nevede; záznam o návštěvě odstraníte v nastavení prohlížeče (Ctrl/Cmd + Shift + Delete), příště použijte anonymní okno.<br>
-A website cannot erase browser history. Remove the visit in your browser settings, or use a private window next time.</small></p>
+<h1>${escapeHtml(t.title)}</h1>
+<p>${escapeHtml(t.gone)}</p>
+<p><small>${escapeHtml(t.history)}</small></p>
 </main></body></html>`;
+}
 
 export function registerGoodbyeRoute(app: Express): void {
-  app.get("/goodbye", (_req: Request, res: Response) => {
+  app.get("/goodbye", (req: Request, res: Response) => {
+    const lang = requestLocale(req);
     res.setHeader("Clear-Site-Data", '"cache", "cookies", "storage", "executionContexts"');
     res.setHeader("X-Robots-Tag", "noindex, nofollow, noarchive");
-    res.type("html").send(GOODBYE_HTML);
+    res.setHeader("Content-Language", LOCALE_INFO[lang].tag);
+    res.setHeader("Vary", "Accept-Language");
+    res.type("html").send(goodbyeHtml(lang));
   });
 }

@@ -336,7 +336,7 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
 
   app.get("/api/admin/live", (req: Request, res: Response) => {
     res.status(200);
-    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("Connection", "keep-alive");
     res.setHeader("X-Accel-Buffering", "no"); // nginx: do not buffer the stream

@@ -245,7 +245,7 @@ app.get("/admin/plugins/logs", (req, res) => {
 
 // Live plugin log via Server-Sent Events.
 app.get("/admin/logs/stream", (req, res) => {
-  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
   res.setHeader("Cache-Control", "no-store");
   res.setHeader("Connection", "keep-alive");
   (res as unknown as { flushHeaders?: () => void }).flushHeaders?.();

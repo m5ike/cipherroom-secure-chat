@@ -40,6 +40,7 @@ import { stt, tts, type Caller as AiCaller } from "../ai/service";
 import { claimUpgradePath } from "../upgrade-guard";
 import { currentRoomHash, hashRoom } from "../monitor/traffic";
 import { Framer, Segmenter, StreamResampler, mulawDecode, mulawEncode, pcm16FromLE, pcm16ToLE, resample, wavDecode, wavEncode } from "./audio";
+import { phoneLanguage, speech } from "./speech-texts";
 
 const env = (name: string): string => (process.env[name]?.trim() || "");
 
@@ -51,13 +52,9 @@ export const CLIENT_RATE = 16_000;
 
 /* ------------------------------------------------------------- texts */
 
-const TEXT: Record<string, Record<string, string>> = {
-  cs: { prompt: "Dobrý den. Zadejte pětimístný přístupový kód a stiskněte mřížku.", wrong: "Nesprávný kód. Zkuste to znovu.", bye: "Kód nebyl zadán správně. Na shledanou.", connecting: "Spojuji.", gone: "Toto číslo teď nikoho nespojí. Na shledanou.", ended: "Hovor skončil." },
-  en: { prompt: "Hello. Please enter your five-digit access code followed by the pound key.", wrong: "That code is not right. Please try again.", bye: "The code was not entered correctly. Goodbye.", connecting: "Connecting.", gone: "This number is not connecting anyone right now. Goodbye.", ended: "The call has ended." },
-  de: { prompt: "Guten Tag. Bitte geben Sie den fünfstelligen Zugangscode ein und drücken Sie die Raute-Taste.", wrong: "Der Code ist nicht richtig. Bitte versuchen Sie es noch einmal.", bye: "Der Code wurde nicht richtig eingegeben. Auf Wiederhören.", connecting: "Ich verbinde.", gone: "Diese Nummer verbindet gerade niemanden. Auf Wiederhören.", ended: "Das Gespräch ist beendet." },
-};
-const say = (lang: string, key: string) => (TEXT[lang.slice(0, 2)] ?? TEXT.en)[key] ?? TEXT.en[key];
-const voiceLang = (lang: string) => ({ cs: "cs-CZ", en: "en-US", de: "de-DE" } as Record<string, string>)[lang.slice(0, 2)] ?? lang;
+// 6.13: in the nine languages (speech-texts.ts); the provider's tag of each (sk → sk-SK).
+const say = (lang: string, key: "prompt" | "wrong" | "bye" | "connecting" | "gone" | "ended") => speech(key, lang);
+const voiceLang = (lang: string) => phoneLanguage(lang);
 
 /* ------------------------------------------------------------- the pool */
 
@@ -353,7 +350,7 @@ class MediaBridge {
     if (this.b.channel) return;
     this.b.channel = "text";
     telStore.bridges.put(this.b);
-    tellMember(this.b, `☎ ${telStore.calls.get(this.b.callId)?.from ?? ""} — ${this.b.language.startsWith("cs") ? "hovor se přepisuje do textu; odpovězte zprávou" : "the call is transcribed; answer in writing"}`);
+    tellMember(this.b, `☎ ${telStore.calls.get(this.b.callId)?.from ?? ""} — ${speech("bridgeText", this.b.language)}`);
   }
 
   attachClient(ws: WebSocket): void {

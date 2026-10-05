@@ -20,17 +20,24 @@
 //               an opaque room id), so the device fills it in
 //   content   + a preview of the message — only where the device itself
 //               decrypted it; the server never has it and never sends it
+//
+// 6.13: the templates speak the nine languages of the contract (locales.ts);
+// a text a template lacks comes from the language's chain (Slovak → Czech →
+// English), so a template saved with three languages still works.
+
+import { isLocale, localeChain, type Locale } from "./locales";
 
 export type NotifyKind = "message" | "mention" | "call" | "function" | "summon" | "test";
 export type NotifyChannel = "android" | "webpush" | "email";
 export type NotifyPrivacy = "neutral" | "sender" | "room" | "content";
-export type NotifyLang = "cs" | "en" | "de";
+/** 6.13: the nine languages of the contract (locales.ts). */
+export type NotifyLang = Locale;
 export type NotifyGroup = "room" | "kind" | "none";
 
 export const NOTIFY_KINDS: readonly NotifyKind[] = ["message", "mention", "call", "function", "summon", "test"];
 export const NOTIFY_CHANNELS: readonly NotifyChannel[] = ["android", "webpush", "email"];
 export const NOTIFY_PRIVACY: readonly NotifyPrivacy[] = ["neutral", "sender", "room", "content"];
-export const NOTIFY_LANGS: readonly NotifyLang[] = ["cs", "en", "de"];
+export const NOTIFY_LANGS: readonly NotifyLang[] = ["cs", "en", "de", "es", "it", "fr", "sk", "sl", "fi"];
 export const NOTIFY_VARS = ["app", "sender", "room", "count", "time", "preview", "channel"] as const;
 export type NotifyVar = (typeof NOTIFY_VARS)[number];
 export type NotifyVars = Partial<Record<NotifyVar, string | number>>;
@@ -183,45 +190,71 @@ export type NotifyTemplate = {
   throttle: number;
 };
 
-const T = (cs: string, en: string, de: string): Record<NotifyLang, string> => ({ cs, en, de });
+/** 6.13: cs, en, de, then es, it, fr, sk, sl, fi. */
+const T = (cs: string, en: string, de: string, es: string, it: string, fr: string, sk: string, sl: string, fi: string): Record<NotifyLang, string> => ({ cs, en, de, es, it, fr, sk, sl, fi });
+const SAME = (v: string): Record<NotifyLang, string> => T(v, v, v, v, v, v, v, v, v);
+const ROOM_TITLE = SAME("{app}[ · {room}]");
 
 export const DEFAULT_TEMPLATES: Record<NotifyKind, NotifyTemplate> = {
   message: {
-    on: true, title: T("{app}[ · {room}]", "{app}[ · {room}]", "{app}[ · {room}]"),
-    body: T("[{sender}: ]{preview|Nová zpráva}[ ({count})]", "[{sender}: ]{preview|New message}[ ({count})]", "[{sender}: ]{preview|Neue Nachricht}[ ({count})]"),
+    on: true, title: ROOM_TITLE,
+    body: T("[{sender}: ]{preview|Nová zpráva}[ ({count})]", "[{sender}: ]{preview|New message}[ ({count})]", "[{sender}: ]{preview|Neue Nachricht}[ ({count})]",
+      "[{sender}: ]{preview|Mensaje nuevo}[ ({count})]", "[{sender}: ]{preview|Nuovo messaggio}[ ({count})]", "[{sender} : ]{preview|Nouveau message}[ ({count})]",
+      "[{sender}: ]{preview|Nová správa}[ ({count})]", "[{sender}: ]{preview|Novo sporočilo}[ ({count})]", "[{sender}: ]{preview|Uusi viesti}[ ({count})]"),
     privacy: "neutral", maxPrivacy: "content", icon: "message-square", accent: "", group: "room", sound: true, vibrate: true, sticky: false, actions: true, throttle: 30,
   },
   mention: {
-    on: true, title: T("{app}[ · {room}]", "{app}[ · {room}]", "{app}[ · {room}]"),
-    body: T("[{sender}: ]{preview|Někdo vás zmínil}", "[{sender}: ]{preview|You were mentioned}", "[{sender}: ]{preview|Sie wurden erwähnt}"),
+    on: true, title: ROOM_TITLE,
+    body: T("[{sender}: ]{preview|Někdo vás zmínil}", "[{sender}: ]{preview|You were mentioned}", "[{sender}: ]{preview|Sie wurden erwähnt}",
+      "[{sender}: ]{preview|Te han mencionado}", "[{sender}: ]{preview|Ti hanno menzionato}", "[{sender} : ]{preview|Quelqu’un vous a mentionné}",
+      "[{sender}: ]{preview|Niekto vás spomenul}", "[{sender}: ]{preview|Nekdo vas je omenil}", "[{sender}: ]{preview|Sinut mainittiin}"),
     privacy: "sender", maxPrivacy: "content", icon: "at-sign", accent: "", group: "room", sound: true, vibrate: true, sticky: false, actions: true, throttle: 10,
   },
   call: {
-    on: true, title: T("{app}[ · {room}]", "{app}[ · {room}]", "{app}[ · {room}]"),
-    body: T("{sender|Někdo} vám volá", "{sender|Someone} is calling you", "{sender|Jemand} ruft Sie an"),
+    on: true, title: ROOM_TITLE,
+    body: T("{sender|Někdo} vám volá", "{sender|Someone} is calling you", "{sender|Jemand} ruft Sie an",
+      "{sender|Alguien} te está llamando", "{sender|Qualcuno} ti sta chiamando", "{sender|Quelqu’un} vous appelle",
+      "{sender|Niekto} vám volá", "{sender|Nekdo} vas kliče", "{sender|Joku} soittaa"),
     privacy: "sender", maxPrivacy: "room", icon: "phone", accent: "", group: "kind", sound: true, vibrate: true, sticky: true, actions: false, throttle: 5,
   },
   function: {
-    on: true, title: T("{app}", "{app}", "{app}"),
-    body: T("Příkaz doběhl[ v {room}]", "A command finished[ in {room}]", "Ein Befehl ist fertig[ in {room}]"),
+    on: true, title: SAME("{app}"),
+    body: T("Příkaz doběhl[ v {room}]", "A command finished[ in {room}]", "Ein Befehl ist fertig[ in {room}]",
+      "Un comando ha terminado[ en {room}]", "Un comando è terminato[ in {room}]", "Une commande est terminée[ dans {room}]",
+      "Príkaz dobehol[ v {room}]", "Ukaz je končan[ v {room}]", "Komento valmistui[ huoneessa {room}]"),
     privacy: "neutral", maxPrivacy: "room", icon: "terminal", accent: "", group: "kind", sound: false, vibrate: false, sticky: false, actions: false, throttle: 30,
   },
   summon: {
-    on: true, title: T("{app}", "{app}", "{app}"),
-    body: T("Operátor vás volá zpět[ do {room}]", "The operator asks you back[ to {room}]", "Der Betreiber bittet Sie zurück[ in {room}]"),
+    on: true, title: SAME("{app}"),
+    body: T("Operátor vás volá zpět[ do {room}]", "The operator asks you back[ to {room}]", "Der Betreiber bittet Sie zurück[ in {room}]",
+      "El operador te pide que vuelvas[ a {room}]", "L’operatore ti chiede di tornare[ in {room}]", "L’opérateur vous demande de revenir[ dans {room}]",
+      "Prevádzkovateľ vás volá späť[ do {room}]", "Upravljavec vas prosi, da se vrnete[ v {room}]", "Ylläpitäjä pyytää palaamaan[ huoneeseen {room}]"),
     privacy: "neutral", maxPrivacy: "room", icon: "bell-ring", accent: "", group: "kind", sound: true, vibrate: true, sticky: false, actions: false, throttle: 30,
   },
   test: {
-    on: true, title: T("{app} · test", "{app} · test", "{app} · Test"),
-    body: T("Upozornění fungují[ — {channel}]", "Notifications work[ — {channel}]", "Benachrichtigungen funktionieren[ — {channel}]"),
+    on: true, title: T("{app} · test", "{app} · test", "{app} · Test", "{app} · prueba", "{app} · test", "{app} · test", "{app} · test", "{app} · preizkus", "{app} · testi"),
+    body: T("Upozornění fungují[ — {channel}]", "Notifications work[ — {channel}]", "Benachrichtigungen funktionieren[ — {channel}]",
+      "Las notificaciones funcionan[ — {channel}]", "Le notifiche funzionano[ — {channel}]", "Les notifications fonctionnent[ — {channel}]",
+      "Upozornenia fungujú[ — {channel}]", "Obvestila delujejo[ — {channel}]", "Ilmoitukset toimivat[ — {channel}]"),
     privacy: "neutral", maxPrivacy: "content", icon: "bell", accent: "", group: "kind", sound: true, vibrate: true, sticky: false, actions: false, throttle: 0,
   },
 };
 
+/**
+ * 6.13: a template's text in a language — along its chain (Slovak → Czech →
+ * English); an empty text counts as missing. A template saved before 6.13 has
+ * three languages, an operator may fill in only some.
+ */
+export function templateText(texts: Partial<Record<string, string>>, lang: string): string {
+  for (const l of localeChain(isLocale(lang) ? lang : "en")) { const v = texts[l]; if (typeof v === "string" && v) return v; }
+  return "";
+}
+
 /** Title and body of one notification. */
 export function renderNotification(tpl: Pick<NotifyTemplate, "title" | "body">, lang: NotifyLang, vars: NotifyVars, privacy: NotifyPrivacy): { title: string; body: string } {
   const v = visibleVars(vars, privacy);
-  const pick = (m: Record<NotifyLang, string>) => m[lang] || m.en || "";
+  // 6.13: along the language's chain (Slovak → Czech → English) — a template saved before 6.13 has three languages.
+  const pick = (m: Partial<Record<NotifyLang, string>>) => templateText(m, lang);
   const title = renderTemplate(pick(tpl.title), v, TITLE_MAX) || v.app || "M5cet";
   return { title, body: renderTemplate(pick(tpl.body), v, BODY_MAX) };
 }

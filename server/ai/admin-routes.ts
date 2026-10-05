@@ -467,7 +467,7 @@ export function registerAiAdminRoutes(app: Express): void {
   // New calls as they happen — from this service and the app's (read from the journal).
   app.get("/admin/ai/stream", async (req, res) => {
     await journal.ready();
-    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders?.();

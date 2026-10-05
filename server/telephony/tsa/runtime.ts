@@ -47,6 +47,7 @@ import { tsaStore } from "./store";
 import { renderTemplate, spellDigits } from "./template";
 import { TSA_LIMITS, type Tsa, type TsaEvent, type TsaGraph, type TsaNode, type TsaSession, type TsaTraceEntry } from "./types";
 import { dataSource, flowTarget, hostAllowed, indexGraph, parseDays, type GraphIndex } from "./validate";
+import { speech } from "../speech-texts";
 
 /** Actions in one answer to the provider before the turn is split with a redirect. */
 const MAX_TURN_ACTIONS = 40;
@@ -161,14 +162,8 @@ function pushCall(ctx: Ctx, a: CallAction): boolean {
   return true;
 }
 
-const APOLOGY: Record<string, string> = {
-  cs: "Omlouváme se, nastala chyba. Na shledanou.",
-  sk: "Ospravedlňujeme sa, nastala chyba. Dovidenia.",
-  de: "Entschuldigung, ein Fehler ist aufgetreten. Auf Wiederhören.",
-  pl: "Przepraszamy, wystąpił błąd. Do widzenia.",
-  en: "We are sorry, something went wrong. Goodbye.",
-};
-const apology = (lang: string) => APOLOGY[lang.slice(0, 2)] ?? APOLOGY.en;
+// 6.13: in the nine languages and Polish (speech-texts.ts).
+const apology = (lang: string) => speech("apology", lang);
 
 /** A finish key for the provider: "none" / "any" → "" for a gather (any key would end it at once). */
 const gatherKey = (k: unknown) => (k === "#" || k === "*" ? k : "");
@@ -620,13 +615,6 @@ async function transcribe(ctx: Ctx, url: string, language: string): Promise<stri
   return (await d.stt({ audio: rec.bytes, mime: rec.mime, language, console: ctx.sim, actor: `tsa:${ctx.s.tsaId}` })).slice(0, TSA_LIMITS.textLength);
 }
 
-const TOO_MANY_CODES: Record<string, string> = {
-  cs: "Příliš mnoho chybných kódů. Na shledanou.",
-  sk: "Príliš veľa chybných kódov. Dovidenia.",
-  de: "Zu viele falsche Codes. Auf Wiederhören.",
-  pl: "Zbyt wiele błędnych kodów. Do widzenia.",
-  en: "Too many wrong codes. Goodbye.",
-};
 
 /** The caller and the number called, for the route-code limits (6.10 G-05: the DID is the part a caller cannot fake). */
 const codeWho = (s: StoredSession) => ({ caller: s.call.from, did: s.call.did || s.call.to });
@@ -647,7 +635,7 @@ async function codeError(ctx: Ctx, node: TsaNode, why: string, counted = true, c
   }
   if (s.routeAttempts >= max) {
     log(ctx, "warn", `wrong route code (${why}); ${max} in this call — the call is ended`);
-    return { end: [{ say: { text: TOO_MANY_CODES[s.lang.slice(0, 2)] ?? TOO_MANY_CODES.en, language: s.lang } }, { hangup: {} }], how: `${why} — ${max} wrong route codes, hung up` };
+    return { end: [{ say: { text: speech("tooManyCodes", s.lang), language: s.lang } }, { hangup: {} }], how: `${why} — ${max} wrong route codes, hung up` };
   }
   log(ctx, "notice", `wrong route code (${why}); attempt ${s.routeAttempts} of ${max}`);
   return { go: "on_code_error", note: why };

@@ -83,7 +83,7 @@ export const TSA_CATALOG: TsaToolDef[] = [
     ],
     params: [
       { key: "answer", label: "Answer the call", kind: "bool", default: true, help: "Off: the next tools run before the call is answered (early media where the provider supports it)." },
-      { key: "language", label: "Default language", kind: "select", default: "cs-CZ", options: opt("cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL", "fr-FR", "es-ES", "it-IT"), help: "Text to speech, speech to text and number reading use it unless a tool says otherwise." },
+      { key: "language", label: "Default language", kind: "select", default: "cs-CZ", options: opt("cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL", "fr-FR", "es-ES", "it-IT", "sl-SI", "fi-FI"), help: "Text to speech, speech to text and number reading use it unless a tool says otherwise." },
       { key: "maxMinutes", label: "Longest call (minutes)", kind: "number", default: 60, min: 1, max: 240 },
     ],
   },
@@ -147,7 +147,7 @@ export const TSA_CATALOG: TsaToolDef[] = [
     dynamicInputs: DYN(1),
     params: [
       { key: "text", label: "Text to speak", kind: "textarea", required: true, placeholder: "Your code is {IN1}." },
-      { key: "language", label: "Language", kind: "select", default: "", options: [{ value: "", label: "(the Start's)" }, ...opt("cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL", "fr-FR", "es-ES", "it-IT")] },
+      { key: "language", label: "Language", kind: "select", default: "", options: [{ value: "", label: "(the Start's)" }, ...opt("cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL", "fr-FR", "es-ES", "it-IT", "sl-SI", "fi-FI")] },
       { key: "provider", label: "Speech provider", kind: "select", default: "telephony", options: [
         { value: "telephony", label: "the call's provider (built-in voices)" }, { value: "ai", label: "AI & speech (the console's TTS)" },
       ] },
@@ -186,7 +186,7 @@ export const TSA_CATALOG: TsaToolDef[] = [
       { key: "beep", label: "Beep before", kind: "bool", default: true },
       { key: "trim", label: "Trim silence", kind: "bool", default: true },
       { key: "transcribe", label: "Transcribe", kind: "bool", default: false },
-      { key: "language", label: "Transcription language", kind: "select", default: "", options: [{ value: "", label: "(the Start's)" }, ...opt("cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL")], when: { transcribe: true } },
+      { key: "language", label: "Transcription language", kind: "select", default: "", options: [{ value: "", label: "(the Start's)" }, ...opt("cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL", "fr-FR", "es-ES", "it-IT", "sl-SI", "fi-FI")], when: { transcribe: true } },
     ],
   },
   {
@@ -196,7 +196,7 @@ export const TSA_CATALOG: TsaToolDef[] = [
     flowOut: [NEXT, { port: "on_timeout", label: "on_timeout", help: "Nothing was said." }, FAILED],
     dataOut: [{ port: "text", label: "text" }, { port: "confidence", label: "confidence" }],
     params: [
-      { key: "language", label: "Language", kind: "select", default: "", options: [{ value: "", label: "(the Start's)" }, ...opt("cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL", "fr-FR", "es-ES", "it-IT")] },
+      { key: "language", label: "Language", kind: "select", default: "", options: [{ value: "", label: "(the Start's)" }, ...opt("cs-CZ", "sk-SK", "en-US", "en-GB", "de-DE", "pl-PL", "fr-FR", "es-ES", "it-IT", "sl-SI", "fi-FI")] },
       { key: "provider", label: "Recognition", kind: "select", default: "telephony", options: [
         { value: "telephony", label: "the call's provider" }, { value: "ai", label: "AI & speech (the console's STT)" },
       ] },

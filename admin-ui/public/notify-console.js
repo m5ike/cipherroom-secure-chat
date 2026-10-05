@@ -27,7 +27,8 @@
   const CHANNEL_LABEL = { android: "Android app (FCM, sealed for the device)", webpush: "Web push (browsers)", email: "E-mail (SMTP)" };
   const PRIVACY = ["neutral", "sender", "room", "content"];
   const PRIVACY_LABEL = { neutral: "Neutral — nothing about who or where", sender: "Sender's name", room: "Sender and room (the device names the room)", content: "Content preview (only where the device decrypts)" };
-  const LANGS = ["cs", "en", "de"];
+  // 6.13: the nine languages of the contract (client/src/lib/locales.ts — NOTIFY_LANGS); an empty text falls back along the chain (sk → cs → en).
+  const LANGS = ["cs", "en", "de", "es", "it", "fr", "sk", "sl", "fi"];
   const VARS = "{app} {sender} {room} {count} {time} {preview} {channel} · {name|fallback} · [optional part]";
 
   let data = null;
