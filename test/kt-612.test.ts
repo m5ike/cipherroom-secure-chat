@@ -20,6 +20,8 @@ import { MerkleTree, leafHashOf } from "../server/kt/tree";
 import { KtLog, KtUnavailableError, canonicalEntry, ed25519PublicKey, ktSignerFromSeed, parseEntry, sthMessage, KT_LIMITS } from "../server/kt/log";
 import { KtService, ktUser } from "../server/kt/service";
 import { registerKtRoutes } from "../server/kt/routes";
+import { AccountStore, usernameOf } from "../server/accounts/store";
+import type { StoredCredential } from "../server/accounts/webauthn";
 import { consistencyProof, inclusionProof, leafHash, treeHash, verifyConsistency, verifyInclusion, type Hash } from "../client/src/lib/p4/merkle";
 import type { KtConsistency, KtEntry, KtLookup, SignedTreeHead } from "../client/src/lib/p4/contract";
 
@@ -284,14 +286,22 @@ describe("GET /api/kt/*", () => {
   let server: Server;
   let base = "";
   let service: KtService;
+  let accounts: AccountStore;
+  /** A signed-in account (6.12 review S03: a lookup needs a session and answers its own u). */
+  let carol: { token: string; u: string };
 
   beforeAll(async () => { expect(await loadSqliteDriver()).not.toBeNull(); });
   beforeEach(async () => {
     dir = mkdtempSync(join(tmpdir(), "m5cet-kt-routes-"));
     db = openPlainDatabase(join(dir, "m5cet.db"), []);
     service = KtService.open(db, () => ktSignerFromSeed(Buffer.alloc(32, 5)));
+    accounts = new AccountStore(dir);
+    const credential: StoredCredential = { credentialId: `cred-kt-${randomBytes(6).toString("hex")}`, publicKeyJwk: { kty: "EC", crv: "P-256", x: "x", y: "y" }, alg: -7, signCount: 1 };
+    const r = accounts.create(credential, { username: `carol${randomBytes(4).toString("hex")}` });
+    if (!r.ok) throw new Error(r.reason);
+    carol = { token: accounts.issueToken(r.account.id), u: ktUser(usernameOf(r.account)) };
     const app = express();
-    registerKtRoutes(app, () => service);
+    registerKtRoutes(app, () => service, accounts);
     server = app.listen(0, "127.0.0.1");
     await new Promise((r) => server.once("listening", r));
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -302,13 +312,28 @@ describe("GET /api/kt/*", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  const get = async (path: string) => {
-    const res = await fetch(`${base}${path}`);
+  const get = async (path: string, token: string | null = carol.token) => {
+    const res = await fetch(`${base}${path}`, token ? { headers: { authorization: `Bearer ${token}` } } : {});
     return { status: res.status, body: await res.json() as Record<string, unknown>, cache: res.headers.get("cache-control") };
   };
 
+  it("lookups need a session and answer only the caller's own entries (review S03)", async () => {
+    const other = ktUser("someone-else");
+    service.append({ t: "acct", u: other, apk: Buffer.alloc(32, 2).toString("base64"), ts: 1 });
+    service.append({ t: "acct", u: carol.u, apk: Buffer.alloc(32, 3).toString("base64"), ts: 2 });
+    expect(await get(`/api/kt/lookup?u=${other}`, null)).toMatchObject({ status: 401, body: { code: "signed-out" } });
+    expect(await get(`/api/kt/lookup?u=${other}`, "not-a-token")).toMatchObject({ status: 401 });
+    expect(await get(`/api/kt/lookup?u=${other}`)).toMatchObject({ status: 403, body: { code: "not-yours" } });
+    const own = (await get("/api/kt/lookup")).body as unknown as KtLookup;
+    expect(own.entries.map((e) => e.entry.u)).toEqual([carol.u]);
+    expect(((await get(`/api/kt/lookup?u=${carol.u}`)).body as unknown as KtLookup).entries).toHaveLength(1);
+    // The head and the key stay public (clients pin and gossip them).
+    expect((await get("/api/kt/sth", null)).status).toBe(200);
+    expect((await get("/api/kt/key", null)).status).toBe(200);
+  });
+
   it("serves the key, the head, lookups and consistency proofs", async () => {
-    const u = ktUser("carol-00001");
+    const u = carol.u;
     service.append({ t: "acct", u, apk: Buffer.alloc(32, 1).toString("base64"), ts: 1 });
     const key = await get("/api/kt/key");
     expect(key.status).toBe(200);
@@ -334,7 +359,7 @@ describe("GET /api/kt/*", () => {
 
   it("checks its input", async () => {
     for (const path of [
-      "/api/kt/lookup", "/api/kt/lookup?u=short", "/api/kt/lookup?u=" + "A".repeat(44), "/api/kt/lookup?u=" + "%2B".repeat(43),
+      "/api/kt/lookup?u=", "/api/kt/lookup?u=short", "/api/kt/lookup?u=" + "A".repeat(44), "/api/kt/lookup?u=" + "%2B".repeat(43), "/api/kt/lookup?u=a&u=b",
       "/api/kt/consistency", "/api/kt/consistency?from=1", "/api/kt/consistency?from=2&to=1", "/api/kt/consistency?from=-1&to=1",
       "/api/kt/consistency?from=1.5&to=2", "/api/kt/consistency?from=01&to=2", "/api/kt/consistency?from=0&to=99999999999999999999",
       "/api/kt/consistency?from=0&to=5",
@@ -347,7 +372,7 @@ describe("GET /api/kt/*", () => {
 
   it("answers 503 when key transparency is off or closed", async () => {
     service = KtService.off("no storage");
-    for (const path of ["/api/kt/key", "/api/kt/sth", `/api/kt/lookup?u=${ktUser("x")}`, "/api/kt/consistency?from=0&to=0"]) {
+    for (const path of ["/api/kt/key", "/api/kt/sth", `/api/kt/lookup?u=${carol.u}`, "/api/kt/consistency?from=0&to=0"]) {
       expect(await get(path)).toMatchObject({ status: 503, body: { code: "kt-off" } });
     }
     db.close();

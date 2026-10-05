@@ -42,10 +42,16 @@
 //     Every member view (`joined.peers`, `peer-joined`, held and remote
 //     members) and `joined` itself carry `proven: boolean`; what the server
 //     sends a room by itself (route audio, the phone bridge's member by name
-//     or peer id) reaches only proven members once someone proved (reachable)
+//     or peer id, notices by name or peer id) reaches only proven members once
+//     the room proves — it has a registered verifier, also while every proven
+//     member is away (review S07, provenOnly) — and is checked again at every
+//     delivery (review S05, S08: sendToPeer, notice); a `room-proof` refusal
+//     says whether a join without proof would be admitted (`legacyAllowed`,
+//     review S14)
 //   - `key-bundles` / `kt-lookup` { ref }: a member's devices from the key
 //     directory and its key-transparency entries, by room-scoped reference,
-//     resolved like the relay's (unknown or foreign: an empty answer)
+//     resolved like the relay's (unknown or foreign: an empty answer; the
+//     same for a requester who did not prove in a room that proves, review S06)
 //   - relay frames may carry an envelope per recipient (`per`, relay.ts)
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -712,11 +718,12 @@ export class SignalingHub {
     return resolveRef(room, ref, candidates);
   }
 
-  /** A member's devices from the key directory; unknown or foreign references get an empty list (no oracle). */
+  /** A member's devices from the key directory; unknown or foreign references get an empty list (no oracle).
+   *  6.12 review S06: in a room that proves, a requester who did not prove gets the same empty answer. */
   private keyBundles(client: HubClient, ref: string): void {
     const room = client.room;
     if (!room) return this.error(client, "not-in-room", "join a room first");
-    const accountId = this.memberAccount(room, ref);
+    const accountId = this.mayAsk(room, client) ? this.memberAccount(room, ref) : null;
     let devices: DirectoryDevice[] = [];
     if (accountId && this.opts.directory) {
       try { devices = this.opts.directory.devices(accountId); } catch { devices = []; }
@@ -724,11 +731,12 @@ export class SignalingHub {
     this.send(client.socket, { type: "key-bundles", ref, devices }, client);
   }
 
-  /** A member's key-transparency entries with inclusion proofs (`lookup` null: KT is not running here). */
+  /** A member's key-transparency entries with inclusion proofs (`lookup` null: KT is not running here).
+   *  6.12 review S06: in a room that proves, a requester who did not prove gets the head and no entries. */
   private ktLookup(client: HubClient, ref: string): void {
     const room = client.room;
     if (!room) return this.error(client, "not-in-room", "join a room first");
-    const accountId = this.memberAccount(room, ref);
+    const accountId = this.mayAsk(room, client) ? this.memberAccount(room, ref) : null;
     const directory = this.opts.directory;
     const answer = (lookup: KtLookup | null) => { this.send(client.socket, { type: "kt-lookup", ref, lookup }, client); };
     if (!directory) return answer(null);
@@ -774,9 +782,12 @@ export class SignalingHub {
       });
       // A wrong proof counts toward closing an abusive socket.
       if (proof.reason === "bad-signature" || proof.reason === "mismatch") client.limiter.allow("other");
-      return this.error(client, proof.code, proof.message);
+      // 6.12 review S14: whether the same join WITHOUT a proof would be admitted (as a legacy, unproven
+      // member) — a client refused in a squatted room may then join without proof instead of giving up.
+      return this.error(client, proof.code, proof.message, { legacyAllowed: !this.proofs.settings.required });
     }
     if (proof.kind === "legacy" && proof.error) audit.add({ category: "system", level: "error", event: "join.room-proof-unchecked", roomHash: hash, detail: { error: proof.error.slice(0, 200) } });
+    if (proof.kind === "legacy" && proof.deferred) audit.add({ category: "security", level: "notice", event: "join.room-verifier-deferred", roomHash: hash, ip: truncateIp(client.ip), status: proof.deferred });
     if (proof.kind === "proven" && proof.registered) audit.add({ category: "security", event: "join.room-verifier-registered", roomHash: hash });
     client.proven = proof.kind === "proven";
 
@@ -1106,13 +1117,34 @@ export class SignalingHub {
     const room = this.roomOfHash(hash);
     if (!room) return 0;
     const payload = noticeFrame(n.kind, n.text, n.level, n.from);
+    // 6.12 review S05: a member named by display name or peer id must be reachable (proven, in a room
+    // that proves) — as for sendToMembers; a target by account is authenticated by its session.
+    const allowed = target && !target.accountId ? this.reachableIn(room) : null;
     let sent = 0;
-    for (const peer of this.matching(room, target)) if (this.send(peer.socket, payload, peer)) sent += 1;
+    for (const peer of this.matching(room, target)) {
+      if (allowed && !allowed.has(peer.id)) continue;
+      if (this.send(peer.socket, payload, peer)) sent += 1;
+    }
     // Members on other instances: everyone, or one by peer id.
     if (!target) this.cluster?.broadcast(room, payload);
-    else if (target.peerId && sent === 0 && this.cluster?.signal(room, target.peerId, payload)) sent += 1;
+    else if (target.peerId && sent === 0 && (!allowed || allowed.has(target.peerId)) && this.cluster?.signal(room, target.peerId, payload)) sent += 1;
     audit.add({ category: "admin", level: "notice", event: `room.notice.${n.kind}`, roomHash: hash, status: `${sent}`, detail: { from: (n.from ?? "operator").slice(0, 60), chars: n.text.length, ...(target ? { target: target.peerId ?? target.accountId ?? target.name ?? "" } : {}) } });
     return sent;
+  }
+
+  /**
+   * 6.12 (G-09; review S07): does the server reach only proven members of
+   * `room`? With HUB_REQUIRE_ROOM_PROOF=1 always; otherwise as soon as the room
+   * proves — it has a registered verifier (also while every proven member is
+   * away), or a member here, on another instance or held (away) has proven.
+   * A room where nobody ever proved (clients before 6.12) reaches everyone.
+   */
+  provenOnly(room: string): boolean {
+    if (this.proofs.settings.required) return true;
+    if (this.members(room).some((p) => p.proven)) return true;
+    if (this.cluster?.members(room).some((m) => m.proven === true)) return true;
+    if (this.held.list(room).some((h) => h.proven === true)) return true;
+    return this.proofs.hasVerifier(room);
   }
 
   /** 6.12 (G-09): the peer ids in `room` the server may reach by room, peer id or name (proof.ts › reachable). */
@@ -1121,7 +1153,24 @@ export class SignalingHub {
       ...this.members(room).map((p) => ({ id: p.id, proven: p.proven })),
       ...(this.cluster?.members(room) ?? []).map((m) => ({ id: m.peerId, proven: m.proven === true })),
     ];
-    return new Set(reachable(all, this.proofs.settings.required).map((m) => m.id));
+    return new Set(reachable(all, this.proofs.settings.required, this.provenOnly(room)).map((m) => m.id));
+  }
+
+  /**
+   * 6.12 (review S05, S08): may a frame of the server's own go to this member
+   * now? Checked when it is delivered, not only when a call or a notice was set
+   * up: the member must be proven in a room that proves — unless it is
+   * addressed by `accountId` and is signed in as that account (authenticated by
+   * its session, no proof needed).
+   */
+  private mayReach(room: string, peer: Pick<HubClient, "proven" | "accountId">, accountId?: string): boolean {
+    if (accountId && peer.accountId && peer.accountId.toLowerCase() === accountId.toLowerCase()) return true;
+    return peer.proven || !this.provenOnly(room);
+  }
+
+  /** 6.12 review S06: may this member read the key directory over the hub (proven, in a room that proves)? */
+  private mayAsk(room: string, client: HubClient): boolean {
+    return client.proven || !this.provenOnly(room);
   }
 
   /** A frame of the server's own for the members that match (6.0: the phone bridge's call for one member).
@@ -1147,14 +1196,37 @@ export class SignalingHub {
    * other instances and held (away) members are not listed: they cannot take
    * a call's audio here.
    */
-  roomMembers(room: string): Array<{ peerId: string; name: string; accountId?: string; proven: boolean }> {
-    return this.members(room).filter((p) => !p.closed).map((p) => ({ peerId: p.id, name: p.name, ...(p.accountId ? { accountId: p.accountId } : {}), proven: p.proven }));
+  roomMembers(room: string): Array<{ peerId: string; name: string; accountId?: string; proven: boolean; reachable: boolean }> {
+    // 6.12 review S07: `reachable` is the hub's verdict — the room proves when it has a verifier,
+    // also while its proven members are away (provenOnly), not only when one is connected here.
+    const only = this.provenOnly(room);
+    return this.members(room).filter((p) => !p.closed).map((p) => ({
+      peerId: p.id, name: p.name, ...(p.accountId ? { accountId: p.accountId } : {}), proven: p.proven, reachable: p.proven || !only,
+    }));
   }
 
-  /** 6.9: a frame of the server's own to one member of a room (by peer id). */
-  sendToPeer(room: string, peerId: string, payload: Record<string, unknown>): boolean {
+  /**
+   * 6.9: a frame of the server's own to one member of a room (by peer id).
+   * 6.12 (review S08): checked at every delivery — a peer id freed by a clean
+   * leave may be taken by someone else, so a member who is not reachable now
+   * (unproven, in a room that proves) gets nothing; `accountId`: the frame is
+   * for that signed-in account (a route to "@account"), whose session needs no proof.
+   */
+  sendToPeer(room: string, peerId: string, payload: Record<string, unknown>, accountId?: string): boolean {
     const peer = this.rooms.get(room)?.get(peerId);
-    return peer ? this.send(peer.socket, payload, peer) : false;
+    if (!peer || !this.mayReach(room, peer, accountId)) return false;
+    return this.send(peer.socket, payload, peer);
+  }
+
+  /**
+   * 6.12 (review S07, S08): may route audio keep a leg for this peer id? False
+   * only when the connection holding it now may not be reached (it did not
+   * prove in a room that proves, and is not the account the leg is for); a
+   * member who is momentarily gone keeps the leg (frames wait for the resume).
+   */
+  stillReachable(room: string, peerId: string, accountId?: string): boolean {
+    const peer = this.rooms.get(room)?.get(peerId);
+    return !peer || peer.closed || this.mayReach(room, peer, accountId);
   }
 
   /** 6.9: where a signed-in account is connected on this instance (every room it is in). */

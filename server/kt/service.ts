@@ -59,13 +59,33 @@ export class KtService {
     return this.need().append(entry);
   }
 
-  /** Logs `acct` unless the newest account key of `u` in the log already is `apk`. Returns the index, or null. */
+  /** Logs `acct` unless the newest account key of `u` in the log already is `apk`. Returns the index, or null.
+   *  6.12 review S10: the newest `acct` is looked up directly (it used to be searched among the newest 500
+   *  entries of `u` only — after 500 others, an unchanged key was logged again). */
   ensureAccount(u: string, apk: string, ts: number): number | null {
     if (this.mode0 === "off") return null;
     const log = this.need();
-    const last = log.entriesOf(u).filter((e) => e.t === "acct").at(-1);
-    if (last && last.apk === apk) return null;
+    if (log.latestAccount(u)?.apk === apk) return null;
     return log.append({ t: "acct", u, apk, ts });
+  }
+
+  /** Whether `acct` would be logged for this key (the log does not show `apk` as the account's newest key). Off: false. */
+  accountNeedsEntry(u: string, apk: string): boolean {
+    if (this.mode0 === "off") return false;
+    return this.need().latestAccount(u)?.apk !== apk;
+  }
+
+  /** The newest `dev` entry of a device and whether it was revoked after it; null: never logged (or off). */
+  loggedDevice(u: string, dpk: string): { apk: string; exp: number; revoked: boolean } | null {
+    if (this.mode0 === "off") return null;
+    const d = this.need().latestDevice(u, dpk);
+    return d ? { apk: d.entry.apk, exp: d.entry.exp, revoked: d.revoked } : null;
+  }
+
+  /** Entries of `u` logged since `since` (0 when off). */
+  countSince(u: string, since: number): number {
+    if (this.mode0 === "off") return 0;
+    return this.need().countSince(u, since);
   }
 
   status(): (KtStatus & { mode: KtMode }) | { mode: KtMode; reason: string | null } {
