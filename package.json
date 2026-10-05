@@ -1,6 +1,6 @@
 {
   "name": "cipherroom-secure-chat",
-  "version": "6.11.0",
+  "version": "6.12.0",
   "description": "M5cet — end-to-end encrypted WebRTC P2P workspace (chat, calls, files, speech, NFC, maps, push) with WebSocket signaling and no message persistence.",
   "license": "MIT",
   "type": "module",
@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@jitl/quickjs-ng-wasmfile-release-sync": "^0.32.0",
+    "@noble/post-quantum": "^0.7.1",
     "bwip-js": "^4.11.4",
     "express": "^5.2.1",
     "express-rate-limit": "^8.7.0",
