@@ -26,10 +26,16 @@
 #
 # It never changes the system: no service is restarted, nothing is installed,
 # no file is written outside a private temporary directory (removed at exit;
-# `--report FILE` writes only FILE). Values from .env are never printed — only
-# whether a variable is set and, for secrets, how long it is. Commands that
-# could execute code from the install tree (loading the SQLCipher module)
-# run as the service user when the check runs as root.
+# `--report FILE` writes only FILE). Secrets from .env are never printed —
+# only whether a variable is set and, for secrets, how long it is; URLs appear
+# without user:password, path and query (redis://***@host:6379); plain
+# settings (addresses, ports, paths, modes) are quoted where a result needs
+# them. Everything printed is stripped of terminal control sequences and is
+# valid UTF-8. .env values are data only: never evaluated, never part of a
+# shell string. When the check runs as root, nothing from the install tree is
+# executed as root: the SQLCipher probe, `npm ls` and `git status` run as the
+# service user (or the owner of the tree / of .git) via runuser / setpriv /
+# sudo, or are skipped when no such non-root user is known.
 #
 # Works with bash >= 3.2, coreutils / grep / awk / sed; uses ss, ip, sysctl
 # files, systemctl, nginx -T, openssl, nft / iptables / ufw / firewall-cmd,
@@ -97,7 +103,7 @@ $(L 'Run as root for the full picture; checks that need root say so.' 'Spusťte 
 EOF
 }
 
-usage_err() { printf 'check.sh: %s\n' "$1" >&2; printf '%s\n' "$(L 'See ./check.sh --help' 'Viz ./check.sh --help')" >&2; exit 2; }
+usage_err() { local m=""; clean_text m "$1"; printf 'check.sh: %s\n' "${m}" >&2; printf '%s\n' "$(L 'See ./check.sh --help' 'Viz ./check.sh --help')" >&2; exit 2; }
 
 parse_args() {
   local v=""
@@ -167,9 +173,66 @@ sec() {
 }
 sec_header() { printf '\n%s== %s (%s) ==%s\n' "${C_B}" "${CUR_TITLE}" "${CUR_SEC}" "${C_0}"; SEC_PRINTED=1; }
 
+# clean_text VAR STRING — STRING made safe for a terminal and for JSON, into
+# VAR: only valid UTF-8 remains; C0 controls (ESC, CR, LF …), DEL, C1 controls
+# (U+0080–U+009F), bidi / line-separator format characters and bytes that are
+# not UTF-8 become '?', a tab a space. Everything check.sh prints passes
+# through it (.env values, file names, nginx names and the health body can
+# carry escape sequences that would rewrite the operator's terminal). Pure
+# bash, no fork; LC_ALL=C makes ${s:i:1} one byte.
+clean_text() {
+  local _ct_s="$2" _ct_o="" _ct_p="" _ct_n=0 _ct_lo=128 _ct_hi=191 _ct_ok=1 _ct_b=0 _ct_b1=0 _ct_b2=0 _ct_b3=0
+  while [ -n "${_ct_s}" ]; do
+    _ct_p="${_ct_s%%[!\ -~]*}"                       # the longest printable-ASCII prefix
+    _ct_o="${_ct_o}${_ct_p}"; _ct_s="${_ct_s:${#_ct_p}}"
+    [ -n "${_ct_s}" ] || break
+    printf -v _ct_b '%d' "'${_ct_s:0:1}"; [ "${_ct_b}" -lt 0 ] && _ct_b=$((_ct_b + 256))   # bash 3.2: signed char
+    if [ "${_ct_b}" -lt 128 ]; then                  # C0 control or DEL
+      if [ "${_ct_b}" = 9 ]; then _ct_o="${_ct_o} "; else _ct_o="${_ct_o}?"; fi
+      _ct_s="${_ct_s:1}"; continue
+    fi
+    _ct_n=0; _ct_lo=128; _ct_hi=191
+    if [ "${_ct_b}" -ge 194 ] && [ "${_ct_b}" -le 223 ]; then _ct_n=1
+    elif [ "${_ct_b}" = 224 ]; then _ct_n=2; _ct_lo=160
+    elif [ "${_ct_b}" = 237 ]; then _ct_n=2; _ct_hi=159
+    elif [ "${_ct_b}" -ge 225 ] && [ "${_ct_b}" -le 239 ]; then _ct_n=2
+    elif [ "${_ct_b}" = 240 ]; then _ct_n=3; _ct_lo=144
+    elif [ "${_ct_b}" -ge 241 ] && [ "${_ct_b}" -le 243 ]; then _ct_n=3
+    elif [ "${_ct_b}" = 244 ]; then _ct_n=3; _ct_hi=143
+    fi
+    _ct_ok=1
+    if [ "${_ct_n}" = 0 ] || [ "${#_ct_s}" -le "${_ct_n}" ]; then _ct_ok=0
+    else
+      printf -v _ct_b1 '%d' "'${_ct_s:1:1}"; [ "${_ct_b1}" -lt 0 ] && _ct_b1=$((_ct_b1 + 256))
+      { [ "${_ct_b1}" -ge "${_ct_lo}" ] && [ "${_ct_b1}" -le "${_ct_hi}" ]; } || _ct_ok=0
+      _ct_b2=0; _ct_b3=0
+      if [ "${_ct_ok}" = 1 ] && [ "${_ct_n}" -ge 2 ]; then
+        printf -v _ct_b2 '%d' "'${_ct_s:2:1}"; [ "${_ct_b2}" -lt 0 ] && _ct_b2=$((_ct_b2 + 256))
+        { [ "${_ct_b2}" -ge 128 ] && [ "${_ct_b2}" -le 191 ]; } || _ct_ok=0
+      fi
+      if [ "${_ct_ok}" = 1 ] && [ "${_ct_n}" = 3 ]; then
+        printf -v _ct_b3 '%d' "'${_ct_s:3:1}"; [ "${_ct_b3}" -lt 0 ] && _ct_b3=$((_ct_b3 + 256))
+        { [ "${_ct_b3}" -ge 128 ] && [ "${_ct_b3}" -le 191 ]; } || _ct_ok=0
+      fi
+    fi
+    if [ "${_ct_ok}" = 0 ]; then _ct_o="${_ct_o}?"; _ct_s="${_ct_s:1}"; continue; fi
+    # C1 controls (C2 80–9F); U+061C, U+200E/F, U+2028/9, U+202A–E, U+2066–9 (bidi, line separators)
+    if { [ "${_ct_b}" = 194 ] && [ "${_ct_b1}" -le 159 ]; } || { [ "${_ct_b}" = 216 ] && [ "${_ct_b1}" = 156 ]; } \
+      || { [ "${_ct_b}" = 226 ] && [ "${_ct_b1}" = 128 ] && { [ "${_ct_b2}" = 142 ] || [ "${_ct_b2}" = 143 ] || { [ "${_ct_b2}" -ge 168 ] && [ "${_ct_b2}" -le 174 ]; }; }; } \
+      || { [ "${_ct_b}" = 226 ] && [ "${_ct_b1}" = 129 ] && [ "${_ct_b2}" -ge 166 ] && [ "${_ct_b2}" -le 169 ]; }; then
+      _ct_o="${_ct_o}?"
+    else
+      _ct_o="${_ct_o}${_ct_s:0:$((_ct_n + 1))}"
+    fi
+    _ct_s="${_ct_s:$((_ct_n + 1))}"
+  done
+  printf -v "$1" '%s' "${_ct_o}"
+}
+
 # res STATUS ID MESSAGE [HINT]
 res() {
-  local st="$1" id="$2" msg="$3" hint="${4:-}" col=""
+  local st="$1" id="$2" msg="" hint="" col=""
+  clean_text msg "$3"; clean_text hint "${4:-}"
   R_SEC[R_N]="${CUR_SEC}"; R_ID[R_N]="${id}"; R_ST[R_N]="${st}"; R_MSG[R_N]="${msg}"; R_HINT[R_N]="${hint}"
   R_N=$((R_N+1))
   case "${st}" in
@@ -191,23 +254,26 @@ fail() { res FAIL "$@"; }
 skip() { res SKIP "$@"; }
 need_root() { skip "$1" "$2 — $(L 'needs root' 'vyžaduje root')"; }
 
+# json_esc VAR STRING — a JSON string body into VAR: valid UTF-8 without
+# control characters (clean_text), then \ and " escaped.
 json_esc() {
-  local s="$1"
-  s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
-  s="${s//$'\n'/\\n}"; s="${s//$'\r'/\\r}"; s="${s//$'\t'/\\t}"
-  case "${s}" in *[$'\001'-$'\037']*) s="$(printf '%s' "${s}" | tr -d '\001-\037')" ;; esac
-  printf '%s' "${s}"
+  local _je_s=""
+  clean_text _je_s "$2"
+  _je_s="${_je_s//\\/\\\\}"; _je_s="${_je_s//\"/\\\"}"
+  printf -v "$1" '%s' "${_je_s}"
 }
 
 json_report() {
-  local i="" last=$((R_N-1)) rc="$1"
+  local i="" last=$((R_N-1)) rc="$1" jr="" jh="" jm="" jt=""
+  json_esc jr "${ROOT}"; json_esc jh "$(hostname 2>/dev/null || echo '?')"
   printf '{"tool":"m5cet-check","version":"%s","root":"%s","lang":"%s","host":"%s","time":"%s","exit":%s,\n' \
-    "${CHECK_VERSION}" "$(json_esc "${ROOT}")" "${LANG_SEL}" "$(json_esc "$(hostname 2>/dev/null || echo '?')")" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${rc}"
+    "${CHECK_VERSION}" "${jr}" "${LANG_SEL}" "${jh}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${rc}"
   printf '"summary":{"pass":%d,"warn":%d,"fail":%d,"skip":%d},\n"checks":[\n' "${N_PASS}" "${N_WARN}" "${N_FAIL}" "${N_SKIP}"
   i=0
   while [ "${i}" -lt "${R_N}" ]; do
+    json_esc jm "${R_MSG[i]}"; json_esc jt "${R_HINT[i]}"
     printf '{"section":"%s","id":"%s","status":"%s","message":"%s","hint":"%s"}' \
-      "${R_SEC[i]}" "${R_ID[i]}" "${R_ST[i]}" "$(json_esc "${R_MSG[i]}")" "$(json_esc "${R_HINT[i]}")"
+      "${R_SEC[i]}" "${R_ID[i]}" "${R_ST[i]}" "${jm}" "${jt}"
     if [ "${i}" -lt "${last}" ]; then printf ',\n'; else printf '\n'; fi
     i=$((i+1))
   done
@@ -264,6 +330,7 @@ STAT_GNU=0
 if stat -c %a / >/dev/null 2>&1; then STAT_GNU=1; fi
 f_mode()  { if [ "${STAT_GNU}" = "1" ]; then stat -c %a "$1" 2>/dev/null; else stat -f %Lp "$1" 2>/dev/null; fi; }
 f_owner() { if [ "${STAT_GNU}" = "1" ]; then stat -c %U "$1" 2>/dev/null; else stat -f %Su "$1" 2>/dev/null; fi; }
+f_uid()   { if [ "${STAT_GNU}" = "1" ]; then stat -c %u "$1" 2>/dev/null; else stat -f %u "$1" 2>/dev/null; fi; }
 f_group() { if [ "${STAT_GNU}" = "1" ]; then stat -c %G "$1" 2>/dev/null; else stat -f %Sg "$1" 2>/dev/null; fi; }
 f_mtime() { if [ "${STAT_GNU}" = "1" ]; then stat -c %Y "$1" 2>/dev/null; else stat -f %m "$1" 2>/dev/null; fi; }
 # Last three octal digits: u g o.
@@ -291,12 +358,78 @@ is_private_ip() {
   esac
   return 1
 }
+# url_parts URL — UP_SCHEME (as written, may be empty); UP_AT: 0 no userinfo,
+# 1 a userinfo (user:password@) before the host, 2 an '@' only after the
+# authority (a password with '/', '?' or '#' in it, or an '@' in the path /
+# query — the host cannot be told apart from the password); UP_HP host[:port]
+# (after the last '@'), UP_HOST (no brackets), UP_PORT (digits or empty),
+# UP_PATH (no query / fragment; empty when UP_AT is 2).
+UP_SCHEME=""; UP_AT=0; UP_HP=""; UP_HOST=""; UP_PORT=""; UP_PATH=""
+url_parts() {
+  local u="$1" rest="" auth="" p=""
+  UP_SCHEME=""; UP_AT=0; UP_HP=""; UP_HOST=""; UP_PORT=""; UP_PATH=""
+  case "${u}" in [A-Za-z]*://*) UP_SCHEME="${u%%://*}" ;; esac
+  case "${UP_SCHEME}" in *[!A-Za-z0-9+.-]*) UP_SCHEME="" ;; esac
+  if [ -n "${UP_SCHEME}" ]; then rest="${u#*://}"; else rest="${u}"; fi
+  auth="${rest%%[/?#]*}"
+  case "${auth}" in
+    *@*) UP_AT=1; UP_HP="${auth##*@}"; UP_PATH="${rest:${#auth}}" ;;
+    *) case "${rest}" in
+         *@*) UP_AT=2; UP_HP="${rest##*@}"; UP_HP="${UP_HP%%[/?#]*}" ;;
+         *) UP_HP="${auth}"; UP_PATH="${rest:${#auth}}" ;;
+       esac ;;
+  esac
+  UP_PATH="${UP_PATH%%[?#]*}"
+  case "${UP_HP}" in
+    \[*\]) UP_HOST="${UP_HP#\[}"; UP_HOST="${UP_HOST%\]}" ;;
+    \[*\]:*) UP_HOST="${UP_HP#\[}"; UP_HOST="${UP_HOST%%\]*}"; UP_PORT="${UP_HP##*\]:}" ;;
+    *:*) p="${UP_HP##*:}"; if is_uint "${p}"; then UP_HOST="${UP_HP%:*}"; UP_PORT="${p}"; else UP_HOST="${UP_HP}"; fi ;;
+    *) UP_HOST="${UP_HP}" ;;
+  esac
+}
 # url_host URL — host part (no userinfo, no port); url_port URL DEFAULT.
-url_host() { printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#[/?].*$##; s#^.*@##; s#^\[([^]]*)\].*$#\1#; s#:[0-9]+$##'; }
-url_port() { local p; p="$(printf '%s' "$1" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://##; s#[/?].*$##; s#^.*@##; s#^\[[^]]*\]##')"; case "${p}" in *:[0-9]*) printf '%s' "${p##*:}" ;; *) printf '%s' "$2" ;; esac; }
+url_host() { url_parts "$1"; printf '%s' "${UP_HOST}"; }
+url_port() { url_parts "$1"; if [ -n "${UP_PORT}" ]; then printf '%s' "${UP_PORT}"; else printf '%s' "$2"; fi; }
 url_scheme() { printf '%s' "$1" | sed -nE 's#^([a-zA-Z][a-zA-Z0-9+.-]*)://.*#\1#p' | tr '[:upper:]' '[:lower:]'; }
-# The same URL without user:password (REDIS_URL, DATABASE_URL can carry them).
-safe_url() { printf '%s' "$1" | sed -E 's#^([a-zA-Z][a-zA-Z0-9+.-]*://)[^@/]*@#\1***@#'; }
+
+# valid_host HOST — a DNS name or IPv4 address ([A-Za-z0-9.-], not starting
+# with '-' or '.') or an IPv6 literal without brackets (hex digits, ':', '.',
+# at least two ':'): nothing a shell or a tool could read as syntax or as an
+# option. valid_port PORT — 1–65535.
+valid_host() {
+  case "$1" in
+    ''|-*|.*) return 1 ;;
+    *[!A-Za-z0-9.:-]*) return 1 ;;
+    *:*:*) case "$1" in *[!0-9A-Fa-f:.]*) return 1 ;; esac ;;
+    *:*) return 1 ;;
+  esac
+  [ "${#1}" -le 253 ]
+}
+valid_port() { is_uint "$1" && [ "${#1}" -le 5 ] && [ "$1" -ge 1 ] && [ "$1" -le 65535 ]; }
+
+# safe_url URL [path] — the URL for messages, never with its userinfo
+# (REDIS_URL, DATABASE_URL, TURN … carry user:password), query or fragment:
+# scheme://***@host:port with a userinfo, scheme://*** when the host cannot be
+# told apart from the password or is not a plain host, scheme://host:port
+# otherwise (with "path" also the path: PUBLIC_BASE_URL).
+safe_url() {
+  local pre=""
+  url_parts "$1"
+  [ -n "${UP_SCHEME}" ] && pre="$(lc "${UP_SCHEME}")://"
+  if [ "${UP_AT}" = "2" ] || ! valid_host "${UP_HOST}" || { [ -n "${UP_PORT}" ] && ! valid_port "${UP_PORT}"; }; then
+    printf '%s***' "${pre}"; return 0
+  fi
+  if [ "${UP_AT}" = "1" ]; then printf '%s***@%s' "${pre}" "${UP_HP}"; return 0; fi
+  if [ "${2:-}" = "path" ]; then printf '%s%s%s' "${pre}" "${UP_HP}" "${UP_PATH}"; else printf '%s%s' "${pre}" "${UP_HP}"; fi
+}
+
+# tcp_probe SECONDS HOST PORT — 0 when a TCP connection opens. HOST and PORT
+# are validated and reach bash's /dev/tcp as positional parameters of a fixed
+# script — never as shell text (C01: .env values were run as root). 2: invalid.
+tcp_probe() {
+  valid_host "$2" && valid_port "$3" || return 2
+  to "$1" "${BASH:-bash}" -c 'exec 3<>"/dev/tcp/$1/$2"' tcp_probe "$2" "$3" 2>/dev/null
+}
 
 # kv_parse LINE — KV_K / KV_V from KEY=VALUE (installer syntax), 1 for anything else.
 KV_K=""; KV_V=""
@@ -355,30 +488,107 @@ running() {
   ps -A -o comm= 2>/dev/null | awk -v n="$1" '{ sub(/^.*\//, ""); if ($0 == n) f = 1 } END { exit !f }'
 }
 
+# valid_user NAME — a plain account name ([A-Za-z_][A-Za-z0-9._-]*, '$' only
+# last, ≤ 32): never an option, a pattern or shell syntax.
+valid_user() {
+  local n="${1%\$}"   # one trailing '$' (a machine account) is allowed
+  case "${n}" in ''|[!A-Za-z_]*|*[!A-Za-z0-9._-]*) return 1 ;; esac
+  [ "${#1}" -le 32 ]
+}
+# pw_entry NAME — the passwd line of exactly NAME (no regular expression).
 pw_entry() {
+  valid_user "$1" || return 0
   if [ -z "${SYSROOT}" ] && have getent; then getent passwd "$1" 2>/dev/null
-  else grep -E "^$1:" "$(sp /etc/passwd)" 2>/dev/null | head -n1; fi
+  else awk -F: -v u="$1" '$1 == u { print; exit }' "$(sp /etc/passwd)" 2>/dev/null; fi
 }
 user_groups() {
+  valid_user "$1" || return 0
   if [ -z "${SYSROOT}" ] && have id; then id -nG "$1" 2>/dev/null
   else awk -F: -v u="$1" '{ n = split($4, m, ","); for (i = 1; i <= n; i++) if (m[i] == u) printf "%s ", $1 }' "$(sp /etc/group)" 2>/dev/null; fi
 }
 
-# run_as SECONDS CMD… — with a time limit, as the service user when we are
-# root (so code from the install tree never runs as root), else as ourselves.
-# 126: cannot switch users.
-run_as() {
-  local s="$1"; shift
+# switch_tool — the first of runuser / setpriv / sudo on this host.
+switch_tool() { if have runuser; then printf 'runuser'; elif have setpriv; then printf 'setpriv'; elif have sudo; then printf 'sudo'; fi; }
+
+# as_user USER GROUP SECONDS CMD… — CMD (fixed argv, no shell) with a time
+# limit as USER; for root only. 126: no runuser / setpriv / sudo.
+as_user() {
+  local u="$1" g="$2" s="$3"; shift 3
   local -a pre
   pre=()
   if have timeout; then pre=(timeout "${s}"); elif have gtimeout; then pre=(gtimeout "${s}"); fi
-  if is_root && [ -n "${SVC_USER}" ] && [ "${SVC_USER}" != "root" ]; then
-    if have runuser; then runuser -u "${SVC_USER}" -- ${pre[@]+"${pre[@]}"} "$@"; return $?; fi
-    if have setpriv; then setpriv --reuid "${SVC_USER}" --regid "${SVC_USER}" --init-groups -- ${pre[@]+"${pre[@]}"} "$@"; return $?; fi
-    if have sudo; then sudo -n -u "${SVC_USER}" -- ${pre[@]+"${pre[@]}"} "$@"; return $?; fi
-    return 126
+  case "$(switch_tool)" in
+    runuser) runuser -u "${u}" -- ${pre[@]+"${pre[@]}"} "$@" ;;
+    setpriv) setpriv --reuid "${u}" --regid "${g}" --init-groups -- ${pre[@]+"${pre[@]}"} "$@" ;;
+    sudo) sudo -n -u "${u}" -- ${pre[@]+"${pre[@]}"} "$@" ;;
+    *) return 126 ;;
+  esac
+}
+
+# DROP_USER / DROP_GROUP — who runs code from the install tree when check.sh
+# runs as root: the service user, else the owner of the tree; never root or
+# another uid 0, never a name that is not a plain account name. Empty when no
+# such user is known — then those checks SKIP (C02).
+DROP_USER=""; DROP_GROUP=""
+# user_uid NAME — the uid NAME resolves to (passwd, else id -u), or nothing.
+user_uid() {
+  local u=""
+  valid_user "$1" || return 0
+  u="$(pw_entry "$1" | cut -d: -f3)"
+  [ -n "${u}" ] || u="$(id -u "$1" 2>/dev/null)"
+  is_uint "${u}" && printf '%s' "${u}"
+}
+# owner_name PATH — the owner of PATH as an account name that resolves back to
+# the file's uid (never stat's UNKNOWN / a bare number), or nothing.
+owner_name() {
+  local n="" fu=""
+  n="$(f_owner "$1")"; fu="$(f_uid "$1")"
+  [ -n "${fu}" ] && [ "$(user_uid "${n}")" = "${fu}" ] && printf '%s' "${n}"
+}
+pick_drop_user() {
+  local c="" pw="" uid="" gid="" owner=""
+  DROP_USER=""; DROP_GROUP=""
+  owner="$(owner_name "${ROOT}")"
+  for c in "${SVC_USER}" "${owner}"; do
+    valid_user "${c}" && [ "${c}" != "root" ] || continue
+    pw="$(pw_entry "${c}")"; uid=""; gid=""
+    if [ -n "${pw}" ]; then uid="$(printf '%s' "${pw}" | cut -d: -f3)"; gid="$(printf '%s' "${pw}" | cut -d: -f4)"; fi
+    if [ "${c}" = "${owner}" ] && [ -z "${uid}" ]; then uid="$(f_uid "${ROOT}")"; fi
+    [ "${uid}" = "0" ] && continue
+    DROP_USER="${c}"; DROP_GROUP="${gid:-${c}}"
+    return 0
+  done
+  return 0
+}
+
+# run_as SECONDS CMD… — with a time limit; when we are root as DROP_USER (code
+# from the install tree never runs as root), else as ourselves. 126: root
+# without a non-root user to switch to, or without runuser / setpriv / sudo —
+# CMD did not run.
+run_as() {
+  local s="$1"; shift
+  if is_root; then
+    [ -n "${DROP_USER}" ] || return 126
+    as_user "${DROP_USER}" "${DROP_GROUP}" "${s}" "$@"
+    return $?
   fi
-  ${pre[@]+"${pre[@]}"} "$@"
+  to "${s}" "$@"
+}
+
+# tree_code_ok ID WHAT — 0 when code from the install tree may run now: not
+# root, or root with a non-root user to run it as and a tool to switch;
+# otherwise a SKIP for ID saying why (it is never run as root).
+tree_code_ok() {
+  is_root || return 0
+  if [ -z "${DROP_USER}" ]; then
+    skip "$1" "$(L "$2: no non-root service user (SERVICE_USER, owner of the tree) — code from the tree is not run as root" "$2: chybí uživatel služby jiný než root (SERVICE_USER, vlastník stromu) — kód ze stromu jako root nespouštím")"
+    return 1
+  fi
+  if [ -z "$(switch_tool)" ]; then
+    skip "$1" "$(L "$2: cannot switch to ${DROP_USER} (no runuser / setpriv / sudo) — code from the tree is not run as root" "$2: nelze přepnout na ${DROP_USER} (chybí runuser / setpriv / sudo) — kód ze stromu jako root nespouštím")"
+    return 1
+  fi
+  return 0
 }
 
 ONLINE_STATE=""
@@ -455,20 +665,53 @@ INSTALLED=0; TREE=0; IS_LINUX=0; SVC_USER=""; MODE=""; MANAGER=""; SERVICE=""
 APP_PORT=""; ADMIN_PORT=""; BIND=""; DOMAIN=""; ENV_FILE=""; ENV_READABLE=0
 DATA_BASE=""; STORAGE_DIR=""; ADMIN_ON=0; PKG_VERSION=""
 
+# root_only PATH… — 0 when every PATH exists, is no symlink, belongs to root
+# and nobody else can write it.
+root_only() {
+  local p=""
+  for p in "$@"; do
+    [ -e "${p}" ] && [ ! -L "${p}" ] && [ "$(f_uid "${p}")" = "0" ] || return 1
+    case "$(group_bits "${p}")$(other_bits "${p}")" in *[2367]*) return 1 ;; esac
+  done
+  return 0
+}
+
+# The tree to check: --root, else the directory check.sh lives in (when it is
+# an install), else the installer's pointer, else /opt/m5cet. As root only the
+# system pointer /etc/m5cet/install-dir counts, and only when root owns it and
+# nobody else can write it — a user's ~/.config pointer (followed under
+# sudo -E) must not pick the tree root inspects (C09).
 pick_root() {
   local self="" dir="" cand="" ptr=""
+  local -a ptrs
   if [ -n "${ROOT}" ]; then ROOT="${ROOT%/}"; [ -n "${ROOT}" ] || ROOT="/"; return 0; fi
   self="${BASH_SOURCE[0]:-$0}"
   dir="$(cd "$(dirname "${self}")" 2>/dev/null && pwd)"
   if [ -n "${dir}" ] && [ -f "${dir}/.m5cet/install.conf" ]; then ROOT="${dir}"; return 0; fi
-  for ptr in /etc/m5cet/install-dir "${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/m5cet/install-dir"; do
-    if [ -r "${ptr}" ]; then
-      cand="$(head -n1 "${ptr}" 2>/dev/null)"
-      if [ -n "${cand}" ] && [ -f "${cand}/.m5cet/install.conf" ]; then ROOT="${cand%/}"; return 0; fi
-    fi
+  ptrs=(/etc/m5cet/install-dir)
+  is_root || ptrs+=("${XDG_CONFIG_HOME:-${HOME:-/nonexistent}/.config}/m5cet/install-dir")
+  for ptr in "${ptrs[@]}"; do
+    [ -r "${ptr}" ] || continue
+    if is_root && ! root_only "${ptr}" "$(dirname "${ptr}")"; then continue; fi
+    cand="$(head -n1 "${ptr}" 2>/dev/null)"
+    case "${cand}" in /*) ;; *) continue ;; esac
+    if [ -f "${cand}/.m5cet/install.conf" ]; then ROOT="${cand%/}"; return 0; fi
   done
   if [ -f /opt/m5cet/.m5cet/install.conf ]; then ROOT="/opt/m5cet"; return 0; fi
   ROOT="${dir:-/opt/m5cet}"
+}
+
+# env_path NAME — a path from .env as the app resolves it (relative to the
+# install root, its working directory): never a word that a tool would read
+# as an option.
+env_path() {
+  local v; v="$(ev "$1")"
+  case "${v}" in '') ;; /*) printf '%s' "${v}" ;; *) printf '%s/%s' "${ROOT}" "${v}" ;; esac
+}
+# conf_path NAME — the same for a path from install.conf.
+conf_path() {
+  local v; v="$(cf "$1")"
+  case "${v}" in '') ;; /*) printf '%s' "${v}" ;; *) printf '%s/%s' "${ROOT}" "${v}" ;; esac
 }
 
 init_context() {
@@ -485,7 +728,9 @@ init_context() {
   fi
   MODE="$(cf INSTALL_MODE)"
   MANAGER="$(cf SERVICE_MANAGER)"
-  SERVICE="$(cf SERVICE_NAME)"; [ -n "${SERVICE}" ] || SERVICE="m5cet"
+  SERVICE="$(cf SERVICE_NAME)"
+  # A unit / container name, never an option for systemctl or docker.
+  case "${SERVICE}" in ''|[!A-Za-z0-9_]*|*[!A-Za-z0-9_.@-]*) SERVICE="m5cet" ;; esac
   APP_PORT="$(cf APP_PORT)"; [ -n "${APP_PORT}" ] || APP_PORT="5000"
   ADMIN_PORT="$(cf ADMIN_PORT)"; [ -n "${ADMIN_PORT}" ] || ADMIN_PORT="5050"
   BIND="$(cf BIND_ADDRESS)"; [ -n "${BIND}" ] || BIND="127.0.0.1"
@@ -499,12 +744,13 @@ init_context() {
   if [ -z "${DOMAIN}" ] && [ -n "$(ev PUBLIC_BASE_URL)" ]; then DOMAIN="$(url_host "$(ev PUBLIC_BASE_URL)")"; fi
   case "${MANAGER}" in
     systemd) SVC_USER="$(cf SERVICE_USER)"; [ -n "${SVC_USER}" ] || SVC_USER="m5cet" ;;
-    process) SVC_USER="$(f_owner "${ROOT}")" ;;
+    process) SVC_USER="$(owner_name "${ROOT}")" ;;
   esac
-  if [ -n "$(ev DATA_DIR)" ]; then DATA_BASE="$(ev DATA_DIR)"
+  if is_root; then pick_drop_user; fi
+  if [ -n "$(ev DATA_DIR)" ]; then DATA_BASE="$(env_path DATA_DIR)"
   elif [ "${MANAGER}" = "systemd" ]; then DATA_BASE="/var/lib/${SERVICE}"
   elif [ "${MODE}" != "docker" ]; then DATA_BASE="${ROOT}/.m5cet"; fi
-  if [ -n "$(ev STORAGE_DIR)" ]; then STORAGE_DIR="$(ev STORAGE_DIR)"
+  if [ -n "$(ev STORAGE_DIR)" ]; then STORAGE_DIR="$(env_path STORAGE_DIR)"
   elif [ -n "${DATA_BASE}" ]; then STORAGE_DIR="${DATA_BASE}/storage"; fi
 }
 
@@ -526,7 +772,7 @@ probe_host() { if is_wildcard "${BIND}"; then printf '127.0.0.1'; else printf '%
 # Release manifest verification (bash only: nothing from the verified tree is
 # executed). Sets VM_* for the caller.
 VM_ERR=""; VM_NAME=""; VM_VERSION=""; VM_COMMIT=""; VM_COUNT=0
-VM_MISSING=""; VM_MODIFIED=""; VM_EXTRA=""; VM_EXTRA_EXEC=""; VM_WITH_DIST=0
+VM_MISSING=""; VM_MODIFIED=""; VM_UNREAD=""; VM_EXTRA=""; VM_EXTRA_EXEC=""; VM_WITH_DIST=0
 
 # json_str FILE KEY — the first "KEY": "value" in a JSON file (any layout).
 json_str() { grep -o "\"$2\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$1" 2>/dev/null | head -n1 | sed 's/.*:[[:space:]]*"\([^"]*\)"$/\1/'; }
@@ -578,29 +824,36 @@ find_tree() {
 # verify_manifest MANIFEST DIR MODE
 verify_manifest() {
   local m="$1" dir="$2" mode="$3" tool=""
-  VM_ERR=""; VM_MISSING=""; VM_MODIFIED=""; VM_EXTRA=""; VM_EXTRA_EXEC=""; VM_COUNT=0; VM_WITH_DIST=0
+  VM_ERR=""; VM_MISSING=""; VM_MODIFIED=""; VM_UNREAD=""; VM_EXTRA=""; VM_EXTRA_EXEC=""; VM_COUNT=0; VM_WITH_DIST=0
   VM_NAME="$(manifest_header "${m}" name)"; VM_VERSION="$(manifest_header "${m}" version)"; VM_COMMIT="$(manifest_header "${m}" commit)"
   if [ "$(manifest_header "${m}" format)" != "m5cet-release/1" ]; then VM_ERR="format"; return 1; fi
   if ! manifest_tsv "${m}" > "${TMPD}/vm.tsv" 2>/dev/null; then VM_ERR="layout"; return 1; fi
   VM_COUNT="$(awk 'END { print NR }' "${TMPD}/vm.tsv")"
+  # Every listed path stays inside the tree (C10): relative, no '.' / '..'
+  # component, no empty component, no leading '-' (an option for the hash tool).
+  if awk -F'\t' '{ p = $1; if (p == "" || p ~ /^[\/-]/ || p ~ /\/\// || p ~ /\/$/ || p ~ /(^|\/)\.\.?(\/|$)/) { bad = 1; exit } } END { exit !bad }' "${TMPD}/vm.tsv"; then
+    VM_ERR="path"; return 1
+  fi
   if grep -q '^dist/' "${TMPD}/vm.tsv"; then VM_WITH_DIST=1; fi
   tool="$(sha256_tool)"
   [ -n "${tool}" ] || { VM_ERR="nohash"; return 1; }
-  # Missing first, then hash what exists in one batch.
-  local p="" h=""
-  while IFS="$(printf '\t')" read -r p h; do
-    if [ -f "${dir}/${p}" ] && [ ! -L "${dir}/${p}" ]; then printf '%s\0' "${p}"
-    else VM_MISSING="${VM_MISSING}${p}"$'\n'; fi
-  done < "${TMPD}/vm.tsv" > "${TMPD}/vm.present"
+  # The files really in the tree (find never follows a symlink, so a path
+  # through a symlinked directory is not "in the tree"); listed ∩ tree is
+  # hashed in one batch, the rest of the list is missing.
+  find_tree "${dir}" "${mode}" | sort > "${TMPD}/vm.tree"
+  cut -f1 "${TMPD}/vm.tsv" | sort > "${TMPD}/vm.listed"
+  comm -12 "${TMPD}/vm.listed" "${TMPD}/vm.tree" | sed 's#^#./#' | tr '\n' '\0' > "${TMPD}/vm.present"
+  VM_MISSING="$(comm -23 "${TMPD}/vm.listed" "${TMPD}/vm.tree")"
   # shellcheck disable=SC2086  # the tool name is a word list on purpose
   ( cd "${dir}" && xargs -0 ${tool} < "${TMPD}/vm.present" 2>/dev/null ) > "${TMPD}/vm.sums"
   # Fixed columns, no FS switching between the files (BWK awk applies a
   # command-line FS change only from the second record of the next file).
   VM_MODIFIED="$(awk 'NR == FNR { i = index($0, "\t"); want[substr($0, 1, i - 1)] = substr($0, i + 1); next }
-    { h = substr($0, 1, 64); p = substr($0, 67); sub(/^\*/, "", p); got[p] = h }
+    { h = substr($0, 1, 64); p = substr($0, 67); sub(/^\*/, "", p); sub(/^\.\//, "", p); got[p] = h }
     END { for (p in want) if ((p in got) && got[p] != want[p]) print p }' "${TMPD}/vm.tsv" "${TMPD}/vm.sums" | sort)"
-  find_tree "${dir}" "${mode}" | sort > "${TMPD}/vm.tree"
-  cut -f1 "${TMPD}/vm.tsv" | sort > "${TMPD}/vm.listed"
+  # Present but not hashed (unreadable): not verified — never a silent match.
+  awk '{ p = substr($0, 67); sub(/^\*/, "", p); sub(/^\.\//, "", p); print p }' "${TMPD}/vm.sums" | sort > "${TMPD}/vm.hashed"
+  VM_UNREAD="$(comm -12 "${TMPD}/vm.listed" "${TMPD}/vm.tree" | comm -23 - "${TMPD}/vm.hashed")"
   VM_EXTRA="$(comm -23 "${TMPD}/vm.tree" "${TMPD}/vm.listed")"
   if [ -n "${VM_EXTRA}" ]; then
     local x=""
@@ -690,12 +943,54 @@ pkg_layout() {
   fi
 }
 
+# git on the install tree (C07). `git status` honours the repository's own
+# .git/config (core.fsmonitor, filter drivers run programs), so it never runs
+# as root on a .git that someone else can change, and safe.directory is never
+# overridden. As root git runs as the owner of .git (runuser / setpriv /
+# sudo); on a root-owned .git as root only when nobody else can write the tree
+# root, .git or .git/config. Always: no system / global config (clean HOME),
+# core.fsmonitor=false, core.hooksPath=/dev/null, no optional locks, no
+# repository discovery above the tree; status ignores submodules (their own
+# config is not read).
+# git_plan — 0 with GIT_RUNAS ("" = ourselves, "root", or a user); 1 with
+# GIT_WHY (writable | owner | noswitch) when git must not run.
+GIT_RUNAS=""; GIT_GROUP=""; GIT_WHY=""; GIT_OWNER=""
+git_plan() {
+  local g="${ROOT}/.git" uid=""
+  GIT_RUNAS=""; GIT_GROUP=""; GIT_WHY=""; GIT_OWNER=""
+  is_root || return 0
+  uid="$(f_uid "${g}")"
+  if [ "${uid}" = "0" ]; then
+    if [ -d "${g}" ] && root_only "${ROOT}" "${g}" && { [ ! -e "${g}/config" ] || root_only "${g}/config"; }; then GIT_RUNAS="root"; return 0; fi
+    GIT_WHY="writable"; return 1
+  fi
+  GIT_OWNER="$(owner_name "${g}")"
+  if [ -z "${GIT_OWNER}" ] || [ -z "${uid}" ]; then GIT_WHY="owner"; return 1; fi
+  if [ -z "$(switch_tool)" ]; then GIT_WHY="noswitch"; return 1; fi
+  GIT_RUNAS="${GIT_OWNER}"
+  GIT_GROUP="$(pw_entry "${GIT_OWNER}" | cut -d: -f4)"; [ -n "${GIT_GROUP}" ] || GIT_GROUP="${GIT_OWNER}"
+  return 0
+}
+# git_tree ARGS… — git ARGS on the tree as git_plan decided.
+git_tree() {
+  local -a cmd
+  cmd=(env -i "PATH=${PATH}" LC_ALL=C HOME=/nonexistent XDG_CONFIG_HOME=/nonexistent GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null
+    GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 "GIT_CEILING_DIRECTORIES=$(dirname "${ROOT}")"
+    git --no-optional-locks -c core.fsmonitor=false -c core.hooksPath=/dev/null -C "${ROOT}" "$@")
+  case "${GIT_RUNAS}" in
+    ""|root) to 30 "${cmd[@]}" ;;
+    *) as_user "${GIT_RUNAS}" "${GIT_GROUP}" 30 "${cmd[@]}" ;;
+  esac
+}
+
 pkg_integrity() {
   local m="${ROOT}/release.json" n=""
   if [ -f "${m}" ]; then
     if ! verify_manifest "${m}" "${ROOT}" release; then
       case "${VM_ERR}" in
         nohash) skip package.integrity "$(L 'no sha256sum / shasum / openssl to hash files' 'chybí sha256sum / shasum / openssl pro výpočet hashů')" ;;
+        path) fail package.integrity "$(L 'release.json lists a path outside the tree (absolute, .., or starting with -)' 'release.json uvádí cestu mimo strom (absolutní, .., nebo začínající -)')" \
+                "$(L 'do not trust this package; reinstall from a verified release' 'tomuto balíčku nevěřte; přeinstalujte z ověřeného vydání')" ;;
         *) fail package.integrity "$(L 'release.json cannot be read (unknown format or layout)' 'release.json nelze přečíst (neznámý formát nebo rozložení)')" \
              "$(L 'regenerate it with npm run release:manifest, or delete it' 'vytvořte ho znovu přes npm run release:manifest, nebo ho smažte')" ;;
       esac
@@ -711,11 +1006,12 @@ pkg_integrity() {
         "$(L 'delete the stale release.json(.sig) or install the package it belongs to' 'smažte zastaralý release.json(.sig), nebo nainstalujte balíček, ke kterému patří')"
       return 0
     fi
-    if [ -n "${VM_MISSING}" ] || [ -n "${VM_MODIFIED}" ] || [ -n "${VM_EXTRA_EXEC}" ]; then
+    if [ -n "${VM_MISSING}" ] || [ -n "${VM_MODIFIED}" ] || [ -n "${VM_EXTRA_EXEC}" ] || [ -n "${VM_UNREAD}" ]; then
       local parts=""
       [ -n "${VM_MODIFIED}" ] && parts="${parts}$(L 'modified' 'změněno') $(count_lines "${VM_MODIFIED}"): $(list_hint "${VM_MODIFIED}"); "
       [ -n "${VM_MISSING}" ] && parts="${parts}$(L 'missing' 'chybí') $(count_lines "${VM_MISSING}"): $(list_hint "${VM_MISSING}"); "
       [ -n "${VM_EXTRA_EXEC}" ] && parts="${parts}$(L 'extra executable' 'navíc spustitelné') $(count_lines "${VM_EXTRA_EXEC}"): $(list_hint "${VM_EXTRA_EXEC}"); "
+      [ -n "${VM_UNREAD}" ] && parts="${parts}$(L 'unreadable (not verified)' 'nečitelné (neověřeno)') $(count_lines "${VM_UNREAD}"): $(list_hint "${VM_UNREAD}"); "
       fail package.integrity "$(L "the tree does not match release.json (${VM_COUNT} files) — ${parts%; }" "strom neodpovídá release.json (${VM_COUNT} souborů) — ${parts%; }")" \
         "$(L 'find out who changed the files; restore the package (update.sh --repair, or reinstall from a verified release)' 'zjistěte, kdo soubory změnil; obnovte balíček (update.sh --repair, nebo reinstalace z ověřeného vydání)')"
     else
@@ -731,9 +1027,17 @@ pkg_integrity() {
   fi
   if [ -e "${ROOT}/.git" ] && have git; then
     local st="" mod="" untr="" untr_exec="" head="" x=""
-    st="$(GIT_OPTIONAL_LOCKS=0 git -c safe.directory="${ROOT}" -C "${ROOT}" status --porcelain=v1 --untracked-files=all 2>/dev/null)" || {
-      skip package.integrity "$(L 'git status failed in the install tree' 'git status v instalačním stromu selhal')"; return 0; }
-    head="$(git -c safe.directory="${ROOT}" -C "${ROOT}" rev-parse HEAD 2>/dev/null)"
+    if ! git_plan; then
+      case "${GIT_WHY}" in
+        writable) skip package.integrity "$(L "git: ${ROOT}/.git belongs to root but is not a plain directory, or others can change it (or the tree root, or .git/config) — git is not run as root" "git: ${ROOT}/.git patří rootovi, ale není to obyčejný adresář, nebo ho mohou měnit i jiní (nebo kořen stromu, .git/config) — git jako root nespouštím")" ;;
+        noswitch) skip package.integrity "$(L "git: cannot switch to the owner of .git (${GIT_OWNER}) — no runuser / setpriv / sudo; git is not run as root on a tree root does not own" "git: nelze přepnout na vlastníka .git (${GIT_OWNER}) — chybí runuser / setpriv / sudo; git jako root na cizím stromu nespouštím")" ;;
+        *) skip package.integrity "$(L "git: .git is owned by an unknown or invalid user — git is not run as root" "git: .git patří neznámému nebo neplatnému uživateli — git jako root nespouštím")" ;;
+      esac
+      return 0
+    fi
+    st="$(git_tree status --porcelain=v1 --untracked-files=all --ignore-submodules=all 2>/dev/null)" || {
+      skip package.integrity "$(L 'git status failed in the install tree (a repository of another user? git refuses it)' 'git status v instalačním stromu selhal (repozitář jiného uživatele? git ho odmítá)')"; return 0; }
+    head="$(git_tree rev-parse HEAD 2>/dev/null)"
     mod="$(printf '%s\n' "${st}" | awk 'substr($0, 1, 2) != "??" && NF { print substr($0, 4) }')"
     untr="$(printf '%s\n' "${st}" | awk 'substr($0, 1, 2) == "??" { print substr($0, 4) }')"
     untr_exec=""
@@ -752,7 +1056,7 @@ EOF_U
       [ -n "${mod}" ] && parts="${parts}$(L 'changed tracked files' 'změněné sledované soubory') $(count_lines "${mod}"): $(list_hint "${mod}"); "
       [ -n "${untr_exec}" ] && parts="${parts}$(L 'extra executable' 'navíc spustitelné') $(count_lines "${untr_exec}"): $(list_hint "${untr_exec}"); "
       local fix=""
-      fix="$(L "inspect: git -C ${ROOT} status / diff" "prohlédněte: git -C ${ROOT} status / diff")"
+      fix="$(L "inspect (as the owner of the tree, not root): git -C ${ROOT} status / diff" "prohlédněte (jako vlastník stromu, ne root): git -C ${ROOT} status / diff")"
       [ "${INSTALLED}" = "1" ] && fix="${fix}; $(L "discard: ${ROOT}/update.sh --repair" "zahodit: ${ROOT}/update.sh --repair")"
       fail package.integrity "$(L "git: the tree differs from commit ${head:0:12} — ${parts%; }" "git: strom se liší od commitu ${head:0:12} — ${parts%; }")" "${fix}"
     else
@@ -829,14 +1133,19 @@ pkg_web() {
     return 0
   fi
   if ! verify_manifest "${m}" "${pub}" web; then
-    fail package.web "$(L 'release-web.json cannot be read' 'release-web.json nelze přečíst')" "$(L 'rebuild (npm run build)' 'přestavte (npm run build)')"
+    case "${VM_ERR}" in
+      nohash) skip package.web "$(L 'no sha256sum / shasum / openssl to hash files' 'chybí sha256sum / shasum / openssl pro výpočet hashů')" ;;
+      path) fail package.web "$(L 'release-web.json lists a path outside dist/public (absolute, .., or starting with -)' 'release-web.json uvádí cestu mimo dist/public (absolutní, .., nebo začínající -)')" "$(L 'rebuild (update.sh --repair) and find the cause' 'přestavte (update.sh --repair) a zjistěte příčinu')" ;;
+      *) fail package.web "$(L 'release-web.json cannot be read' 'release-web.json nelze přečíst')" "$(L 'rebuild (npm run build)' 'přestavte (npm run build)')" ;;
+    esac
     return 0
   fi
-  if [ -n "${VM_MISSING}" ] || [ -n "${VM_MODIFIED}" ] || [ -n "${VM_EXTRA_EXEC}" ]; then
+  if [ -n "${VM_MISSING}" ] || [ -n "${VM_MODIFIED}" ] || [ -n "${VM_EXTRA_EXEC}" ] || [ -n "${VM_UNREAD}" ]; then
     local parts=""
     [ -n "${VM_MODIFIED}" ] && parts="${parts}$(L 'modified' 'změněno'): $(list_hint "${VM_MODIFIED}"); "
     [ -n "${VM_MISSING}" ] && parts="${parts}$(L 'missing' 'chybí'): $(list_hint "${VM_MISSING}"); "
     [ -n "${VM_EXTRA_EXEC}" ] && parts="${parts}$(L 'extra served code' 'navíc servírovaný kód'): $(list_hint "${VM_EXTRA_EXEC}"); "
+    [ -n "${VM_UNREAD}" ] && parts="${parts}$(L 'unreadable (not verified)' 'nečitelné (neověřeno)'): $(list_hint "${VM_UNREAD}"); "
     fail package.web "$(L "served web assets do not match release-web.json — ${parts%; }" "servírované assety webu neodpovídají release-web.json — ${parts%; }")" \
       "$(L 'the browser would run changed code; rebuild (update.sh --repair) and find the cause' 'prohlížeč by spustil změněný kód; přestavte (update.sh --repair) a zjistěte příčinu')"
   else
@@ -846,17 +1155,24 @@ pkg_web() {
     warn package.web_extra "$(L "extra files in dist/public: $(list_hint "${VM_EXTRA}")" "soubory navíc v dist/public: $(list_hint "${VM_EXTRA}")")" \
       "$(L 'they are served to everyone — remove them or rebuild' 'servírují se všem — odstraňte je nebo přestavte')"
   fi
-  if [ -f "${m}.sig" ]; then
-    pick_pubkey
-    if [ -n "${KEY_FILE}" ]; then
-      verify_sig "${m}" "${m}.sig" "${KEY_FILE}"
-      case "${SIG_STATE}" in
-        valid) pass package.web_signature "$(L 'release-web.json signature valid' 'podpis release-web.json platný')" ;;
-        invalid) fail package.web_signature "$(L 'release-web.json signature is INVALID' 'podpis release-web.json je NEPLATNÝ')" "$(L 'rebuild from a verified release' 'přestavte z ověřeného vydání')" ;;
-        *) skip package.web_signature "$(L 'cannot verify Ed25519 (OpenSSL >= 3 or node)' 'nelze ověřit Ed25519 (OpenSSL >= 3 nebo node)')" ;;
-      esac
-    fi
+  # The signature state is always reported (C12): an unsigned build is visible, not silent.
+  if [ ! -f "${m}.sig" ]; then
+    skip package.web_signature "$(L 'release-web.json is not signed (a build made on this host — package.web checks it against the build only)' 'release-web.json není podepsaný (build vytvořený na tomto stroji — package.web ho ověřuje jen proti buildu)')"
+    return 0
   fi
+  pick_pubkey
+  if [ -z "${KEY_FILE}" ]; then
+    warn package.web_signature "$(L 'release-web.json.sig exists but there is no release-signing.pub to check it' 'release-web.json.sig existuje, ale chybí release-signing.pub k ověření')" \
+      "$(L 'pass the developer key with --pubkey FILE' 'předejte klíč vývojáře přes --pubkey FILE')"
+    return 0
+  fi
+  verify_sig "${m}" "${m}.sig" "${KEY_FILE}"
+  case "${SIG_STATE}" in
+    valid) pass package.web_signature "$(L 'release-web.json signature valid' 'podpis release-web.json platný')" ;;
+    invalid) fail package.web_signature "$(L 'release-web.json signature is INVALID' 'podpis release-web.json je NEPLATNÝ')" "$(L 'rebuild from a verified release' 'přestavte z ověřeného vydání')" ;;
+    badkey) skip package.web_signature "$(L "${KEY_FILE} is not a raw Ed25519 public key (see package.signature)" "${KEY_FILE} není veřejný klíč Ed25519 (viz package.signature)")" ;;
+    *) skip package.web_signature "$(L 'cannot verify Ed25519 (OpenSSL >= 3 or node)' 'nelze ověřit Ed25519 (OpenSSL >= 3 nebo node)')" ;;
+  esac
 }
 
 pkg_build() {
@@ -895,12 +1211,14 @@ pkg_sqlcipher() {
     return 0
   fi
   if ! have node; then skip package.sqlcipher "$(L 'node missing' 'chybí node')"; return 0; fi
+  # Loading the module runs code from the tree: never as root (C02).
+  tree_code_ok package.sqlcipher "$(L 'SQLCipher probe' 'zkouška SQLCipher')" || return 0
   out="$(cd "${ROOT}" 2>/dev/null && run_as 20 node -e '
     const D = require(process.argv[1]); const db = new D(":memory:");
     const v = db.prepare("select sqlite3mc_version() v").get().v; db.close(); console.log(v);
   ' "${mod}" 2>&1)"
   rc=$?
-  if [ "${rc}" = "126" ] && is_root; then skip package.sqlcipher "$(L "cannot switch to ${SVC_USER} (runuser/setpriv) — not loading tree code as root" "nelze přepnout na ${SVC_USER} (runuser/setpriv) — kód stromu jako root nespouštím")"; return 0; fi
+  if [ "${rc}" = "126" ] && is_root; then skip package.sqlcipher "$(L "cannot switch to ${DROP_USER} — not loading tree code as root" "nelze přepnout na ${DROP_USER} — kód stromu jako root nespouštím")"; return 0; fi
   if [ "${rc}" = "0" ] && [ -n "${out}" ]; then
     SQLC_STATE="ok"
     pass package.sqlcipher "$(L "SQLCipher loads: $(first_line "${out}")" "SQLCipher se načte: $(first_line "${out}")")"
@@ -917,10 +1235,12 @@ pkg_npm() {
     else skip package.npm_ls "$(L 'no node_modules' 'chybí node_modules')"; fi
   elif ! have npm; then
     skip package.npm_ls "$(L 'npm missing' 'chybí npm')"
-  else
+  elif tree_code_ok package.npm_ls "npm ls"; then
+    # npm inside the tree reads its .npmrc and node_modules: as root it runs as DROP_USER (C08).
     local out="" rc=""
-    out="$(cd "${ROOT}" && to 120 npm ls --omit=dev --all --logs-max=0 2>&1 >/dev/null)"; rc=$?
-    if [ "${rc}" = "0" ]; then pass package.npm_ls "$(L 'npm ls --omit=dev: dependency tree consistent' 'npm ls --omit=dev: strom závislostí je v pořádku')"
+    out="$(cd "${ROOT}" && run_as 120 npm ls --omit=dev --all --logs-max=0 --no-update-notifier 2>&1 >/dev/null)"; rc=$?
+    if [ "${rc}" = "126" ] && is_root; then skip package.npm_ls "$(L "npm ls: cannot switch to ${DROP_USER} — npm is not run as root in the tree" "npm ls: nelze přepnout na ${DROP_USER} — npm jako root ve stromu nespouštím")"
+    elif [ "${rc}" = "0" ]; then pass package.npm_ls "$(L 'npm ls --omit=dev: dependency tree consistent' 'npm ls --omit=dev: strom závislostí je v pořádku')"
     else
       warn package.npm_ls "$(L "npm ls --omit=dev reports problems: $(printf '%s\n' "${out}" | grep -m2 -E 'missing|invalid|extraneous|ERR' | tr '\n' ' ' | cut -c1-200)" "npm ls --omit=dev hlásí problémy: $(printf '%s\n' "${out}" | grep -m2 -E 'missing|invalid|extraneous|ERR' | tr '\n' ' ' | cut -c1-200)")" \
         "$(L "${ROOT}/update.sh --repair (clean npm ci)" "${ROOT}/update.sh --repair (čisté npm ci)")"
@@ -930,8 +1250,17 @@ pkg_npm() {
     skip package.npm_audit "$(L 'needs npm and package-lock.json' 'potřebuje npm a package-lock.json')"; return 0
   fi
   if ! online; then skip package.npm_audit "$(L 'offline' 'offline')"; return 0; fi
-  local js="" crit="" high=""
-  js="$(cd "${ROOT}" && to 90 npm audit --omit=dev --json --logs-max=0 --cache "${TMPD}/npm-cache" 2>/dev/null)"
+  local js="" crit="" high="" f=""
+  # Not inside the tree (C08): a private copy of package.json + package-lock.json
+  # (data only), audited from the lockfile — the tree's .npmrc (a registry that
+  # would receive the lockfile, npm 6 onload-script) and node_modules are never read.
+  mkdir -p "${TMPD}/audit" || { skip package.npm_audit "$(L 'cannot prepare a temporary copy' 'nelze připravit dočasnou kopii')"; return 0; }
+  for f in package.json package-lock.json; do
+    if [ ! -f "${ROOT}/${f}" ] || [ -L "${ROOT}/${f}" ] || ! cat "${ROOT}/${f}" > "${TMPD}/audit/${f}" 2>/dev/null; then
+      skip package.npm_audit "$(L "${f} is not a readable regular file" "${f} není čitelný obyčejný soubor")"; return 0
+    fi
+  done
+  js="$(cd "${TMPD}/audit" && to 90 npm audit --omit=dev --json --package-lock-only --logs-max=0 --no-update-notifier --cache "${TMPD}/npm-cache" 2>/dev/null)"
   crit="$(printf '%s' "${js}" | tr -d '\n ' | sed -n 's/.*"vulnerabilities":{[^}]*"critical":\([0-9]*\).*/\1/p')"
   high="$(printf '%s' "${js}" | tr -d '\n ' | sed -n 's/.*"vulnerabilities":{[^}]*"high":\([0-9]*\).*/\1/p')"
   if ! is_uint "${crit}" || ! is_uint "${high}"; then
@@ -1082,16 +1411,17 @@ cfg_admin() {
 }
 
 cfg_urls() {
-  local u="" host="" sch="" rp="" origins="" o="" oh="" bad=""
+  local u="" du="" host="" sch="" rp="" o="" oh="" bad="" shown=""
+  local -a origins
   u="$(ev PUBLIC_BASE_URL)"
   if [ -n "${u}" ]; then
-    sch="$(url_scheme "${u}")"; host="$(url_host "${u}")"
+    sch="$(url_scheme "${u}")"; host="$(url_host "${u}")"; du="$(safe_url "${u}" path)"
     if [ -z "${host}" ]; then fail config.public_url "$(L "PUBLIC_BASE_URL is not a URL" "PUBLIC_BASE_URL není URL")" "$(L 'e.g. PUBLIC_BASE_URL=https://chat.example.com' 'např. PUBLIC_BASE_URL=https://chat.example.com')"
     elif [ "${sch}" != "https" ] && ! is_loopback "${host}"; then
-      fail config.public_url "$(L "PUBLIC_BASE_URL=${u} is not https — passkeys and provider signatures need the public https address" "PUBLIC_BASE_URL=${u} není https — passkeys a podpisy poskytovatelů potřebují veřejnou https adresu")" "PUBLIC_BASE_URL=https://${host}"
+      fail config.public_url "$(L "PUBLIC_BASE_URL=${du} is not https — passkeys and provider signatures need the public https address" "PUBLIC_BASE_URL=${du} není https — passkeys a podpisy poskytovatelů potřebují veřejnou https adresu")" "PUBLIC_BASE_URL=https://${host}"
     elif [ -n "$(cf DOMAIN)" ] && [ "${host}" != "$(cf DOMAIN)" ]; then
       warn config.public_url "$(L "PUBLIC_BASE_URL host ${host} differs from DOMAIN $(cf DOMAIN)" "hostitel PUBLIC_BASE_URL ${host} se liší od DOMAIN $(cf DOMAIN)")" "$(L 'use the address clients really open' 'použijte adresu, kterou klienti opravdu otevírají')"
-    else pass config.public_url "PUBLIC_BASE_URL=${u}"; fi
+    else pass config.public_url "PUBLIC_BASE_URL=${du}"; fi
   elif is_on "$(ev ENABLE_TELEPHONY)"; then
     fail config.public_url "$(L 'ENABLE_TELEPHONY=1 without PUBLIC_BASE_URL: Twilio signatures and callback URLs need it' 'ENABLE_TELEPHONY=1 bez PUBLIC_BASE_URL: podpisy Twilio a URL zpětných volání ho potřebují')" "PUBLIC_BASE_URL=https://${DOMAIN:-<domain>}"
   elif [ -n "${DOMAIN}" ]; then
@@ -1101,21 +1431,24 @@ cfg_urls() {
   fi
   # Passkeys: the RP ID must be the origin's host or a registrable suffix of it.
   rp="$(ev WEBAUTHN_RP_ID)"; [ -n "${rp}" ] || { [ -n "${u}" ] && rp="$(url_host "${u}")"; }
-  origins="$(ev WEBAUTHN_ORIGINS | tr ',' ' ')"
-  [ -n "${origins}" ] || { [ -n "${u}" ] && origins="${u}"; }
+  # Split on ',' and blanks into an array: no pathname expansion of .env data.
+  read -r -a origins <<EOF_O
+$(ev WEBAUTHN_ORIGINS | tr ',' ' ')
+EOF_O
+  [ "${#origins[@]}" -gt 0 ] || { [ -n "${u}" ] && origins=("${u}"); }
   if [ -z "${rp}" ]; then
     if [ "${INSTALLED}" = "1" ] && [ -n "${DOMAIN}" ]; then warn config.webauthn "$(L 'no WEBAUTHN_RP_ID / PUBLIC_BASE_URL: the passkey RP ID follows the Host header' 'chybí WEBAUTHN_RP_ID / PUBLIC_BASE_URL: RP ID passkeys se řídí hlavičkou Host')" "PUBLIC_BASE_URL=https://${DOMAIN}"
     else skip config.webauthn "$(L 'passkey settings not set' 'nastavení passkeys chybí')"; fi
     return 0
   fi
-  for o in ${origins}; do
-    oh="$(url_host "${o}")"
-    if [ "$(url_scheme "${o}")" != "https" ] && ! is_loopback "${oh}"; then bad="${bad} ${o}(http)"; continue; fi
-    case "${oh}" in "${rp}"|*".${rp}") ;; *) bad="${bad} ${o}" ;; esac
+  for o in ${origins[@]+"${origins[@]}"}; do
+    oh="$(url_host "${o}")"; du="$(safe_url "${o}" path)"; shown="${shown} ${du}"
+    if [ "$(url_scheme "${o}")" != "https" ] && ! is_loopback "${oh}"; then bad="${bad} ${du}(http)"; continue; fi
+    case "${oh}" in "${rp}"|*".${rp}") ;; *) bad="${bad} ${du}" ;; esac
   done
   if [ -n "${bad}" ]; then
     fail config.webauthn "$(L "passkey origins do not fit the RP ID ${rp}:${bad}" "originy passkeys neodpovídají RP ID ${rp}:${bad}")" "$(L 'WEBAUTHN_RP_ID must be the origin host or its parent domain; origins https://' 'WEBAUTHN_RP_ID musí být hostitel originu nebo jeho nadřazená doména; originy https://')"
-  else pass config.webauthn "$(L "passkeys: RP ID ${rp}" "passkeys: RP ID ${rp}")${origins:+, $(L 'origins' 'originy') ${origins}}"; fi
+  else pass config.webauthn "$(L "passkeys: RP ID ${rp}" "passkeys: RP ID ${rp}")${shown:+, $(L 'origins' 'originy')${shown}}"; fi
 }
 
 cfg_network() {
@@ -1197,11 +1530,20 @@ cfg_perms() {
       if [ "${m:2:1}" != "0" ]; then fail config.data_dir "$(L "data directory ${DATA_BASE} is open to everyone (mode ${m})" "datový adresář ${DATA_BASE} je otevřený všem (práva ${m})")" "chmod 700 ${DATA_BASE}"
       elif [ "${m:1:1}" != "0" ]; then warn config.data_dir "$(L "data directory ${DATA_BASE} mode ${m} (expected 700)" "datový adresář ${DATA_BASE} má práva ${m} (očekáváno 700)")" "chmod 700 ${DATA_BASE}"
       else pass config.data_dir "$(L "data directory ${DATA_BASE} (${m}, $(f_owner "${DATA_BASE}"))" "datový adresář ${DATA_BASE} (${m}, $(f_owner "${DATA_BASE}"))")"; fi
-      for f in $(find "${DATA_BASE}" -maxdepth 4 -type f -name '*.key' 2>/dev/null) $(ev STORAGE_KEY_FILE) $(ev FUNCTIONS_ADM_KEY_FILE) $(ev ANDROID_SIGNING_KEY_FILE); do
+      # NUL-separated (C05): a key file whose name has a space or a newline is
+      # checked too; the .env paths are quoted — never word-split or globbed.
+      local -a keys
+      keys=()
+      while IFS= read -r -d '' f; do keys+=("${f}"); done < <(find "${DATA_BASE}" -maxdepth 4 -type f -name '*.key' -print0 2>/dev/null)
+      for d in STORAGE_KEY_FILE FUNCTIONS_ADM_KEY_FILE ANDROID_SIGNING_KEY_FILE; do
+        [ -n "$(ev "${d}")" ] && keys+=("$(env_path "${d}")")
+      done
+      for f in ${keys[@]+"${keys[@]}"}; do
         [ -f "${f}" ] || continue
         m="$(mode3 "${f}")"
         [ "${m:1:2}" = "00" ] || bad="${bad} ${f}(${m})"
       done
+      d=""
       if [ -n "${bad}" ]; then fail config.keys "$(L "key files readable by group/others:${bad}" "soubory klíčů čitelné pro skupinu/ostatní:${bad}")" "chmod 600 <$(L 'file' 'soubor')>"
       else pass config.keys "$(L 'key files (storage.key, audit-signing.key, …) are private (600)' 'soubory klíčů (storage.key, audit-signing.key, …) jsou soukromé (600)')"; fi
     else need_root config.data_dir "$(L "data directory ${DATA_BASE}" "datový adresář ${DATA_BASE}")"; fi
@@ -1224,7 +1566,7 @@ cfg_perms() {
   else pass config.secret_files "$(L 'no secret file in the tree is readable by others' 'žádný soubor s tajemstvím ve stromu není čitelný pro ostatní')"; fi
   n="$(find "${ROOT}" -maxdepth 1 -type f \( -name '.env?*' -o -name '*.bak' \) ! -name '.env.example' 2>/dev/null)"
   if [ -n "${n}" ]; then warn config.stale_copies "$(L "copies of secrets next to .env: $(list_hint "${n}")" "kopie tajemství vedle .env: $(list_hint "${n}")")" "$(L 'delete them (backups are in BACKUP_ROOT, 0700)' 'smažte je (zálohy jsou v BACKUP_ROOT, 0700)')"; fi
-  d="$(cf BACKUP_ROOT)"; [ -n "${d}" ] || d="${ROOT}/.m5cet/backups"
+  d="$(conf_path BACKUP_ROOT)"; [ -n "${d}" ] || d="${ROOT}/.m5cet/backups"
   if [ -d "${d}" ]; then
     m="$(mode3 "${d}")"
     if [ "${m:1:2}" != "00" ]; then warn config.backup_perms "$(L "installer backups ${d} mode ${m} (they hold .env copies)" "zálohy instalátoru ${d} mají práva ${m} (obsahují kopie .env)")" "chmod 700 ${d}"
@@ -1322,6 +1664,42 @@ pid_alive() {
   return 0
 }
 
+# app_proc PID SCRIPT — 0 when PID is M5cet's own process for dist/SCRIPT as
+# the process manager starts it (`node dist/SCRIPT` in the tree): a node
+# binary, dist/SCRIPT among its arguments, run by the owner of the tree (or
+# root — reported), and — where /proc or lsof shows it — in the tree. A pid
+# file is written by whoever can write .m5cet/run; it must not make any
+# other process (its limits, its user) count as the service (C11).
+# APP_PROC_WHY: comm | args | user | cwd.
+APP_PROC_WHY=""
+app_proc() {
+  local pid="$1" script="$2" comm="" args="" a0="" uid="" want="" cwd="" real=""
+  APP_PROC_WHY=""
+  comm="$(ps -o comm= -p "${pid}" 2>/dev/null | head -n1)"; comm="${comm##*/}"
+  args="$(ps -o args= -p "${pid}" 2>/dev/null | head -n1)"
+  a0="${args%% *}"; a0="${a0##*/}"
+  # The binary (comm; Linux may show the main thread's name) or argv[0] is node.
+  case "${comm}:${a0}" in node:*|nodejs:*|node[0-9]*:*|*:node|*:nodejs|*:node[0-9]*) ;; *) APP_PROC_WHY="comm"; return 1 ;; esac
+  case " ${args} " in *" dist/${script} "*|*"/dist/${script} "*) ;; *) APP_PROC_WHY="args"; return 1 ;; esac
+  uid="$(ps -o uid= -p "${pid}" 2>/dev/null | tr -d ' ')"; want="$(f_uid "${ROOT}")"
+  if [ -n "${want}" ] && [ "${uid}" != "${want}" ] && [ "${uid}" != "0" ]; then APP_PROC_WHY="user"; return 1; fi
+  real="$(cd "${ROOT}" 2>/dev/null && pwd -P)"
+  if [ -z "${SYSROOT}" ] && [ -d "/proc/${pid}" ]; then cwd="$(readlink "/proc/${pid}/cwd" 2>/dev/null)"
+  elif have lsof; then cwd="$(lsof -a -p "${pid}" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n1)"; fi
+  if [ -n "${cwd}" ] && [ -n "${real}" ] && [ "${cwd}" != "${real}" ]; then
+    case " ${args} " in *" ${real}/dist/${script} "*|*" ${ROOT}/dist/${script} "*) ;; *) APP_PROC_WHY="cwd"; return 1 ;; esac
+  fi
+  return 0
+}
+app_proc_why() {
+  case "${APP_PROC_WHY}" in
+    comm) L 'not a node process' 'není to proces node' ;;
+    args) L "not running dist/$1" "nespouští dist/$1" ;;
+    user) L 'run by another user than the owner of the tree' 'běží pod jiným uživatelem než vlastník stromu' ;;
+    *) L 'running outside the install tree' 'běží mimo instalační strom' ;;
+  esac
+}
+
 MAIN_PID=""; SERVICE_UP=""
 rt_service() {
   if [ "${INSTALLED}" = "0" ]; then skip runtime.service "$(L 'not installed' 'neinstalováno')"; return 0; fi
@@ -1338,18 +1716,24 @@ rt_service() {
       if [ "${ADMIN_ON}" = "1" ]; then rt_systemd_unit "${SERVICE}-admin.service" admin; fi ;;
     process)
       local pf="${ROOT}/.m5cet/run/app.pid" pid="" u=""
-      pid=""; [ -f "${pf}" ] && pid="$(head -n1 "${pf}" 2>/dev/null)"
-      if pid_alive "${pid}"; then
+      pid=""; [ -f "${pf}" ] && pid="$(head -n1 "${pf}" 2>/dev/null)"; case "${pid}" in ""|0*|*[!0-9]*) pid="" ;; esac
+      if pid_alive "${pid}" && app_proc "${pid}" index.cjs; then
         MAIN_PID="${pid}"; SERVICE_UP=1; u="$(ps -o user= -p "${pid}" 2>/dev/null | tr -d ' ')"
-        if [ "${u}" = "root" ]; then warn runtime.service "$(L "the app (pid ${pid}) runs as root" "aplikace (pid ${pid}) běží jako root")" "$(L 'a user-scope install should run as its owner' 'uživatelská instalace má běžet pod svým vlastníkem')"
+        if [ "$(ps -o uid= -p "${pid}" 2>/dev/null | tr -d ' ')" = "0" ]; then warn runtime.service "$(L "the app (pid ${pid}) runs as root" "aplikace (pid ${pid}) běží jako root")" "$(L 'a user-scope install should run as its owner' 'uživatelská instalace má běžet pod svým vlastníkem')"
         else pass runtime.service "$(L "the app runs (pid ${pid}, ${u:-?})" "aplikace běží (pid ${pid}, ${u:-?})")"; fi
+      elif pid_alive "${pid}"; then
+        SERVICE_UP=0
+        fail runtime.service "$(L "the app is not running — the pid file names pid ${pid}: $(app_proc_why index.cjs) (a stale or forged .m5cet/run/app.pid)" "aplikace neběží — soubor pid ukazuje na pid ${pid}: $(app_proc_why index.cjs) (zastaralý nebo podvržený .m5cet/run/app.pid)")" \
+          "${ROOT}/install.sh --start; $(L 'logs' 'logy'): ${ROOT}/.m5cet/logs/app.log"
       else
         SERVICE_UP=0
         fail runtime.service "$(L 'the app is not running (process manager)' 'aplikace neběží (správce procesu)')" "${ROOT}/install.sh --start; $(L 'logs' 'logy'): ${ROOT}/.m5cet/logs/app.log"
       fi
       if [ "${ADMIN_ON}" = "1" ]; then
-        pf="${ROOT}/.m5cet/run/admin.pid"; pid=""; [ -f "${pf}" ] && pid="$(head -n1 "${pf}" 2>/dev/null)"
-        if pid_alive "${pid}"; then pass runtime.admin "$(L 'the admin API runs' 'admin API běží')"
+        pf="${ROOT}/.m5cet/run/admin.pid"; pid=""; [ -f "${pf}" ] && pid="$(head -n1 "${pf}" 2>/dev/null)"; case "${pid}" in ""|0*|*[!0-9]*) pid="" ;; esac
+        if pid_alive "${pid}" && app_proc "${pid}" admin.cjs; then pass runtime.admin "$(L 'the admin API runs' 'admin API běží')"
+        elif pid_alive "${pid}"; then
+          fail runtime.admin "$(L "the admin API is not running — the pid file names pid ${pid}: $(app_proc_why admin.cjs)" "admin API neběží — soubor pid ukazuje na pid ${pid}: $(app_proc_why admin.cjs)")" "${ROOT}/install.sh --restart"
         else fail runtime.admin "$(L 'the admin API is not running' 'admin API neběží')" "${ROOT}/install.sh --restart"; fi
       fi ;;
     compose) skip runtime.service "$(L 'docker compose — see the docker section' 'docker compose — viz sekce docker')" ;;
@@ -2146,25 +2530,52 @@ net_mtu() {
 }
 
 net_turn() {
-  local urls="" u="" h="" p="" bad="" ok=""
+  local u="" h="" p="" bad="" ok=""
   # A coturn on this host must run (whatever TURN_SERVER_URL says).
   if have systemctl && systemctl cat coturn.service >/dev/null 2>&1; then
     if systemctl is-active coturn >/dev/null 2>&1; then pass network.coturn "$(L 'coturn running' 'coturn běží')"
     else fail network.coturn "$(L 'coturn installed but not running' 'coturn je nainstalovaný, ale neběží')" "systemctl enable --now coturn"; fi
   fi
-  urls="$(ev TURN_SERVER_URL | tr ',' ' ')"
-  [ -n "${urls}" ] || { skip network.turn "$(L 'no TURN_SERVER_URL' 'chybí TURN_SERVER_URL')"; return 0; }
+  [ -n "$(ev TURN_SERVER_URL)" ] || { skip network.turn "$(L 'no TURN_SERVER_URL' 'chybí TURN_SERVER_URL')"; return 0; }
   if [ "${OFFLINE}" = "1" ]; then skip network.turn "$(L 'offline' 'offline')"; return 0; fi
-  for u in ${urls}; do
-    h="$(printf '%s' "${u}" | sed -E 's#^(turns?|stuns?):##; s#\?.*$##; s#^\[([^]]*)\].*#\1#; s#:[0-9]+$##')"
-    p="$(printf '%s' "${u}" | sed -E 's#\?.*$##' | sed -nE 's#.*:([0-9]+)$#\1#p')"
-    [ -n "${p}" ] || { case "${u}" in turns:*) p=5349 ;; *) p=3478 ;; esac; }
-    if have turnutils_stunclient && to 6 turnutils_stunclient -p "${p}" "${h}" >/dev/null 2>&1; then ok="${ok} ${h}:${p}(stun)"; continue; fi
-    if to 6 bash -c "exec 3<>/dev/tcp/${h}/${p}" 2>/dev/null; then ok="${ok} ${h}:${p}/tcp"
+  local -a list
+  read -r -a list <<EOF_T
+$(ev TURN_SERVER_URL | tr ',' ' ')
+EOF_T
+  local n=0
+  for u in ${list[@]+"${list[@]}"}; do
+    n=$((n + 1))
+    turn_target "${u}"; h="${TT_HOST}"; p="${TT_PORT}"
+    # Only a plain host and port go anywhere — and never into shell text (C01).
+    if ! valid_host "${h}" || ! valid_port "${p}"; then bad="${bad} #${n}($(L 'not turn:host[:port]' 'není turn:host[:port]'))"; continue; fi
+    if have turnutils_stunclient && to 6 turnutils_stunclient -p "${p}" -- "${h}" >/dev/null 2>&1; then ok="${ok} ${h}:${p}(stun)"; continue; fi
+    if tcp_probe 6 "${h}" "${p}"; then ok="${ok} ${h}:${p}/tcp"
     else bad="${bad} ${h}:${p}"; fi
   done
-  if [ -n "${bad}" ]; then warn network.turn "$(L "TURN not reachable over TCP:${bad} (UDP not tested)" "TURN nedosažitelný přes TCP:${bad} (UDP netestováno)")" "$(L 'is coturn running, the port open?' 'běží coturn, je port otevřený?')"
+  if [ -n "${bad}" ]; then warn network.turn "$(L "TURN not reachable over TCP:${bad} (UDP not tested)" "TURN nedosažitelný přes TCP:${bad} (UDP netestováno)")" "$(L 'is coturn running, the port open? TURN_SERVER_URL entries are turn:host[:port] / turns:host[:port]' 'běží coturn, je port otevřený? položky TURN_SERVER_URL mají tvar turn:host[:port] / turns:host[:port]')"
   else pass network.turn "$(L "TURN reachable:${ok}" "TURN dosažitelný:${ok}")"; fi
+}
+
+# turn_target URL — TT_HOST / TT_PORT of a turn: / turns: / stun: / stuns:
+# URL (host[:port][?transport=…], RFC 7065). A user:password@ some setups
+# put in front is dropped (from the last '@'), so it is never printed.
+TT_HOST=""; TT_PORT=""
+turn_target() {
+  local x="$1" sch=""
+  TT_HOST=""; TT_PORT=""
+  sch="$(lc "${x%%:*}")"
+  case "${sch}" in turn|turns|stun|stuns) x="${x#*:}" ;; *) sch="" ;; esac
+  x="${x#//}"
+  case "${x}" in *@*) x="${x##*@}" ;; esac
+  x="${x%%[?/#]*}"
+  case "${x}" in
+    \[*\]) TT_HOST="${x#\[}"; TT_HOST="${TT_HOST%\]}" ;;
+    \[*\]:*) TT_HOST="${x#\[}"; TT_HOST="${TT_HOST%%\]*}"; TT_PORT="${x##*\]:}" ;;
+    *:*:*) TT_HOST="${x}" ;;
+    *:*) TT_HOST="${x%:*}"; TT_PORT="${x##*:}" ;;
+    *) TT_HOST="${x}" ;;
+  esac
+  if [ -z "${TT_PORT}" ]; then case "${sch}" in turns|stuns) TT_PORT=5349 ;; *) TT_PORT=3478 ;; esac; fi
 }
 
 net_fds() {
@@ -2286,7 +2697,7 @@ sys_resources() {
 
 sys_disk() {
   local p="" d="" seen=" " line="" fs="" pct="" free="" mnt="" ipct="" reported=""
-  for p in "${ROOT}" "${DATA_BASE}" "$(cf BACKUP_ROOT)" "$(ev BACKUP_DIR)" /var/log /tmp; do
+  for p in "${ROOT}" "${DATA_BASE}" "$(conf_path BACKUP_ROOT)" "$(env_path BACKUP_DIR)" /var/log /tmp; do
     [ -n "${p}" ] || continue
     d="${p}"; while [ ! -d "${d}" ] && [ "${d}" != "/" ] && [ -n "${d}" ]; do d="$(dirname "${d}")"; done
     line="$(df -Pk "${d}" 2>/dev/null | tail -n1)"
@@ -2373,10 +2784,12 @@ sys_bwrap() {
       [ "${UNIT_RAF}" = "deny" ] && warn system.bwrap_netlink "$(L 'RestrictAddressFamilies forbids AF_NETLINK — bwrap --unshare-net cannot bring up loopback inside the service' 'RestrictAddressFamilies zakazuje AF_NETLINK — bwrap --unshare-net uvnitř služby nenahodí loopback')" "$(L 'add AF_NETLINK to RestrictAddressFamilies (drop-in)' 'přidejte AF_NETLINK do RestrictAddressFamilies (drop-in)')"
     fi
   fi
-  if is_root && [ -z "${SVC_USER}" ]; then pass system.bwrap "$(L "bwrap $(bwrap --version 2>/dev/null | awk '{ print $2 }') present (not test-run as root)" "bwrap $(bwrap --version 2>/dev/null | awk '{ print $2 }') je k dispozici (jako root se nezkouší)")"; return 0; fi
+  if is_root && [ -z "${DROP_USER}" ]; then pass system.bwrap "$(L "bwrap $(bwrap --version 2>/dev/null | awk '{ print $2 }') present (not test-run as root)" "bwrap $(bwrap --version 2>/dev/null | awk '{ print $2 }') je k dispozici (jako root se nezkouší)")"; return 0; fi
+  local who=""
+  if is_root; then who="${DROP_USER}"; else who="$(id -un 2>/dev/null)"; fi
   out="$(run_as 10 bwrap --unshare-user --unshare-pid --unshare-net --ro-bind / / --proc /proc --dev /dev true 2>&1)"
   case $? in
-    0) pass system.bwrap "$(L "bwrap $(bwrap --version 2>/dev/null | awk '{ print $2 }') isolates (test run as ${SVC_USER:-$(id -un)})" "bwrap $(bwrap --version 2>/dev/null | awk '{ print $2 }') izoluje (zkušební běh jako ${SVC_USER:-$(id -un)})")" ;;
+    0) pass system.bwrap "$(L "bwrap $(bwrap --version 2>/dev/null | awk '{ print $2 }') isolates (test run as ${who:-?})" "bwrap $(bwrap --version 2>/dev/null | awk '{ print $2 }') izoluje (zkušební běh jako ${who:-?})")" ;;
     126) skip system.bwrap "$(L 'cannot switch to the service user to test bwrap' 'nelze přepnout na uživatele služby pro test bwrap')" ;;
     *) res "${st}" system.bwrap "$(L "bwrap fails: $(first_line "${out}" | cut -c1-160)" "bwrap selhává: $(first_line "${out}" | cut -c1-160)")" "$(L 'user namespaces (kernel.userns), AppArmor profile, or setuid bwrap' 'uživatelské jmenné prostory (kernel.userns), profil AppArmor, nebo setuid bwrap')" ;;
   esac
@@ -2384,7 +2797,7 @@ sys_bwrap() {
 
 sys_speech() {
   local models="${DATA_BASE}/ai/speech-models" have_models=0 msg=""
-  [ -n "$(ev AI_DATA_DIR)" ] && models="$(ev AI_DATA_DIR)/speech-models"
+  [ -n "$(ev AI_DATA_DIR)" ] && models="$(env_path AI_DATA_DIR)/speech-models"
   [ -d "${models}" ] && [ -n "$(ls -A "${models}" 2>/dev/null)" ] && have_models=1
   if ! have bzip2; then warn system.speech "$(L 'bzip2 missing — offline speech models cannot be unpacked' 'chybí bzip2 — modely offline řeči nejde rozbalit')" "apt install bzip2"; return 0; fi
   if [ "${have_models}" = "1" ] && [ "${MODE}" != "docker" ] && [ ! -d "${ROOT}/dist/node_modules/sherpa-onnx-node" ]; then
@@ -2399,20 +2812,23 @@ sys_redis() {
   local u="" h="" p=""
   u="$(ev REDIS_URL)"; [ -n "${u}" ] || return 0
   h="$(url_host "${u}")"; p="$(url_port "${u}" 6379)"
-  if to 5 bash -c "exec 3<>/dev/tcp/${h}/${p}" 2>/dev/null; then pass system.redis "$(L "Redis $(safe_url "${u}") reachable" "Redis $(safe_url "${u}") je dosažitelný")"
+  # The host and port are validated and never become shell text (C01).
+  if ! valid_host "${h}" || ! valid_port "${p}"; then
+    fail system.redis "$(L "REDIS_URL ($(safe_url "${u}")) has no usable host:port — the cluster bus cannot connect" "REDIS_URL ($(safe_url "${u}")) nemá použitelné host:port — sběrnice clusteru se nepřipojí")" "$(L 'REDIS_URL=redis://[:password@]host:port (percent-encode / @ ? # in the password)' 'REDIS_URL=redis://[:heslo@]host:port (znaky / @ ? # v hesle zakódujte %xx)')"
+  elif tcp_probe 5 "${h}" "${p}"; then pass system.redis "$(L "Redis $(safe_url "${u}") reachable" "Redis $(safe_url "${u}") je dosažitelný")"
   else fail system.redis "$(L "Redis $(safe_url "${u}") not reachable — the cluster bus is down" "Redis $(safe_url "${u}") není dosažitelný — sběrnice clusteru neběží")" "$(L 'start Redis / fix REDIS_URL' 'spusťte Redis / opravte REDIS_URL')"; fi
 }
 
 sys_backups() {
   local d="" n="" newest="" bd="" hours=""
   [ "${INSTALLED}" = "1" ] || return 0
-  d="$(cf BACKUP_ROOT)"; [ -n "${d}" ] || d="${ROOT}/.m5cet/backups"
+  d="$(conf_path BACKUP_ROOT)"; [ -n "${d}" ] || d="${ROOT}/.m5cet/backups"
   if [ -d "${d}" ]; then
     n="$(ls -1d "${d}"/[0-9]*-* 2>/dev/null | wc -l | tr -d ' ')"
     newest="$(ls -1d "${d}"/[0-9]*-* 2>/dev/null | sort | tail -n1)"
     pass system.backups "$(L "installer backups: ${n} in ${d}${newest:+, newest $(basename "${newest}")} (configuration + dist, not data)" "zálohy instalátoru: ${n} v ${d}${newest:+, nejnovější $(basename "${newest}")} (konfigurace + dist, ne data)")"
   fi
-  bd="$(ev BACKUP_DIR)"
+  bd="$(env_path BACKUP_DIR)"
   if [ -z "${bd}" ]; then
     [ "${ENV_READABLE}" = "1" ] && warn system.app_backups "$(L 'BACKUP_DIR not set: the app does not back up its data (accounts, databases)' 'BACKUP_DIR není nastaven: aplikace nezálohuje svá data (účty, databáze)')" "BACKUP_DIR=/var/backups/m5cet-data; $(L 'storage.key / STORAGE_MASTER_KEY separately' 'storage.key / STORAGE_MASTER_KEY zvlášť')"
     return 0
@@ -2458,7 +2874,8 @@ sys_user() {
   case "${grps}" in *" sudo "*|*" wheel "*|*" admin "*|*" root "*) bad="${bad} sudo/wheel" ;; esac
   case "${grps}" in *" docker "*) bad="${bad} docker(=root)" ;; esac
   if is_root; then
-    sudoers="$(grep -hsE "^[[:space:]]*(${SVC_USER}|%${SVC_USER})[[:space:]]" "$(sp /etc/sudoers)" "$(sp /etc/sudoers.d)"/* 2>/dev/null | head -n1)"
+    # The name compared as a string, not used as a regular expression.
+    sudoers="$(grep -hs '' "$(sp /etc/sudoers)" "$(sp /etc/sudoers.d)"/* 2>/dev/null | awk -v u="${SVC_USER}" '$1 == u || $1 == "%" u { print; exit }')"
     [ -n "${sudoers}" ] && bad="${bad} sudoers"
   fi
   if [ -n "${bad}" ]; then fail system.service_user "$(L "service user ${SVC_USER} has privileges:${bad}" "uživatel služby ${SVC_USER} má oprávnění:${bad}")" "$(L "gpasswd -d ${SVC_USER} <group>; remove its sudoers line" "gpasswd -d ${SVC_USER} <skupina>; odeberte jeho řádek ze sudoers")"
@@ -2607,8 +3024,9 @@ main() {
   [ -d "${ROOT}" ] || usage_err "--root ${ROOT}: $(L 'not a directory' 'není adresář')"
   init_context
   if [ "${JSON}" = "0" ]; then
-    printf '%sM5cet check.sh %s%s — %s%s%s\n' "${C_B}" "${CHECK_VERSION}" "${C_0}" "${ROOT}" \
-      "$( [ "${INSTALLED}" = "1" ] && printf ' (%s/%s%s)' "${MODE:-?}" "${MANAGER:-?}" "${DOMAIN:+, ${DOMAIN}}" )" \
+    local head=""
+    clean_text head "${ROOT}$( [ "${INSTALLED}" = "1" ] && printf ' (%s/%s%s)' "${MODE:-?}" "${MANAGER:-?}" "${DOMAIN:+, ${DOMAIN}}" )"
+    printf '%sM5cet check.sh %s%s — %s%s\n' "${C_B}" "${CHECK_VERSION}" "${C_0}" "${head}" \
       "$(is_root || printf ' — %s' "$(L 'not root' 'bez roota')")"
   fi
   local s=""

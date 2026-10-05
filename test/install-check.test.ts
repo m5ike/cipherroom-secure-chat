@@ -8,7 +8,7 @@
 // exit codes, secrets never printed, the installer's update hook.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { execFileSync, spawnSync } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn, spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -100,6 +100,19 @@ class Sandbox {
     try { return JSON.parse(r.stdout) as Report; } catch { throw new Error(`not JSON (exit ${r.status}):\n${r.stdout}\n${r.stderr}`); }
   }
   cleanup(): void { rmSync(this.dir, { recursive: true, force: true }); }
+}
+
+/** A stand-in for the app as the process manager runs it: `node dist/SCRIPT` with the tree as cwd. */
+function startApp(sb: Sandbox, script: string): ChildProcess {
+  sb.put(`dist/${script}`, "setInterval(() => {}, 1000);\n");
+  const child = spawn(process.execPath, [`dist/${script}`], { cwd: sb.root, stdio: "ignore" });
+  const until = Date.now() + 5000;
+  while (Date.now() < until) {
+    const args = spawnSync("ps", ["-o", "args=", "-p", String(child.pid)], { encoding: "utf8" }).stdout ?? "";
+    if (args.includes(`dist/${script}`)) break;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  return child;
 }
 
 const st = (r: Report, id: string): string => r.checks.find((c) => c.id === id)?.status ?? "(none)";
@@ -550,19 +563,40 @@ describe("runtime", () => {
   it("process manager: a live pid passes, ports come from ss, a public admin port FAILs", () => {
     sysroot(sb);
     install(sb, { conf: { ENABLE_ADMIN: "1" }, env: { ENABLE_ADMIN: "1", ADMIN_API_TOKEN: SECRET_TOKEN } });
-    sb.put(".m5cet/run/app.pid", `${process.pid}\n`);
-    sb.put(".m5cet/run/admin.pid", `${process.pid}\n`);
-    sb.stub("ss", `cat <<'EOF'
+    // What the process manager starts: `node dist/index.cjs` / `node dist/admin.cjs` in the tree.
+    const app = startApp(sb, "index.cjs");
+    const admin = startApp(sb, "admin.cjs");
+    try {
+      sb.put(".m5cet/run/app.pid", `${app.pid}\n`);
+      sb.put(".m5cet/run/admin.pid", `${admin.pid}\n`);
+      sb.stub("ss", `cat <<'EOF'
 Netid State  Recv-Q Send-Q Local Address:Port Peer Address:Port Process
 tcp   LISTEN 0      511        127.0.0.1:5190      0.0.0.0:*
 tcp   LISTEN 0      511          0.0.0.0:5191      0.0.0.0:*
 EOF`);
+      const r = sb.json(["--only", "runtime"]);
+      expect(st(r, "runtime.service"), msg(r, "runtime.service")).toBe("PASS");
+      expect(st(r, "runtime.admin"), msg(r, "runtime.admin")).toBe("PASS");
+      expect(st(r, "runtime.ports")).toBe("PASS");
+      expect(st(r, "runtime.admin_port")).toBe("FAIL");
+      expect(st(r, "runtime.health")).toBe("SKIP"); // no curl
+    } finally {
+      app.kill("SIGKILL");
+      admin.kill("SIGKILL");
+    }
+  });
+
+  it("process manager: a pid file naming another process (stale or forged) is not the service (C11)", () => {
+    sysroot(sb);
+    install(sb);
+    sb.put(".m5cet/run/app.pid", `${process.pid}\n`); // a live node process, but not dist/index.cjs
     const r = sb.json(["--only", "runtime"]);
-    expect(st(r, "runtime.service")).toBe("PASS");
-    expect(st(r, "runtime.admin")).toBe("PASS");
-    expect(st(r, "runtime.ports")).toBe("PASS");
-    expect(st(r, "runtime.admin_port")).toBe("FAIL");
-    expect(st(r, "runtime.health")).toBe("SKIP"); // no curl
+    expect(st(r, "runtime.service")).toBe("FAIL");
+    expect(msg(r, "runtime.service")).toContain(`${process.pid}`);
+    expect(msg(r, "runtime.service")).toContain("dist/index.cjs");
+    expect(st(r, "runtime.ports")).toBe("SKIP");
+    sb.put(".m5cet/run/app.pid", "0\n"); // kill -0 0 would signal the process group
+    expect(st(sb.json(["--only", "runtime"]), "runtime.service")).toBe("FAIL");
   });
 
   it("process manager: not running → FAIL, probes skipped; no node → FAIL", () => {

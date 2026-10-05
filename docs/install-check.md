@@ -8,10 +8,19 @@ a bezpečnostní nastavení samotné aplikace.
 
 **Jen čte.** Nic nemění: nerestartuje službu, nic neinstaluje, nezapisuje mimo
 vlastní dočasný adresář (`$TMPDIR/m5check.*`, při skončení se smaže); jediný
-soubor, který může zapsat, je ten, který mu předáte přes `--report`. Hodnoty
-z `.env` nikdy nevypíše — jen zda je proměnná nastavená a u tajemství jejich
-délku (adresy jako `REDIS_URL` vypisuje bez jména a hesla:
-`redis://***@host:6379`).
+soubor, který může zapsat, je ten, který mu předáte přes `--report`.
+**Tajemství z `.env` nikdy nevypíše** — jen zda je proměnná nastavená a u
+tajemství jejich délku. Adresy (`REDIS_URL`, `DATABASE_URL`, `TURN_SERVER_URL`,
+`PUBLIC_BASE_URL` …) vypisuje vždy bez jména a hesla, bez dotazu (`?…`)
+a fragmentu: `redis://***@host:6379`; když heslo nejde od hostitele spolehlivě
+oddělit (`/`, `?`, `#` nebo `@` v hesle bez %-kódování), jen `redis://***`.
+Běžná nastavení (adresy, porty, cesty, režimy — `HOST`, `ADMIN_BIND`,
+`TRUST_PROXY`, `NODE_ENV`, `STORAGE_KEY_FILE`, `BACKUP_DIR` …) cituje tam, kde
+je výsledek potřebuje. Všechno, co vypíše (text i JSON), je zbavené řídicích
+znaků terminálu (ESC sekvence, CR/LF, C1, znaky bidi → `?`) a je to platné
+UTF-8 — hodnota z `.env`, jméno souboru ani odpověď služby nemohou přepsat
+obrazovku (FAIL vydávaný za PASS). Jak se kontrola chrání, když běží jako
+root, viz [Bezpečnost samotné kontroly](#bezpečnost-samotné-kontroly-běh-jako-root).
 
 ```bash
 sudo /opt/m5cet/check.sh                      # vše (root vidí víc: firewall, nginx -T, klíče, sudoers)
@@ -41,7 +50,7 @@ a zkontroluje se hostitel (jádro, firewall, síť, systém).
 
 | Volba | Význam |
 |---|---|
-| `--root DIR` | instalační adresář. Výchozí: adresář, kde leží `check.sh` (když v něm je `.m5cet/install.conf`), jinak ukazatel instalátoru (`/etc/m5cet/install-dir`, `~/.config/m5cet/install-dir`), jinak `/opt/m5cet`, jinak adresář skriptu |
+| `--root DIR` | instalační adresář. Výchozí: adresář, kde leží `check.sh` (když v něm je `.m5cet/install.conf`), jinak ukazatel instalátoru (`/etc/m5cet/install-dir`, `~/.config/m5cet/install-dir`), jinak `/opt/m5cet`, jinak adresář skriptu. **Jako root** platí jen `/etc/m5cet/install-dir`, a to jen když patří rootovi a nikdo jiný ho (ani `/etc/m5cet`) nemůže měnit; ukazatel v `~/.config` (pod `sudo -E` je `HOME` uživatele) se ignoruje — jiný strom zadejte `--root` |
 | `--only S,…` / `--skip S,…` | sekce: `package config runtime http firewall kernel network system docker security` |
 | `--json` | celý výsledek jako JSON na stdout (místo textu) |
 | `--report FILE` | navíc zapíše JSON do souboru (tak to dělá `update.sh`) |
@@ -105,7 +114,9 @@ Souhrn: 87 PASS, 6 WARN, 0 FAIL, 9 SKIP
 
 Každá kontrola má stálé `id` (`sekce.název`, viz tabulky níže), `status`,
 `message` a `hint` (oprava, u PASS / SKIP prázdná). Jeden objekt kontroly je
-vždy na jednom řádku — `update.sh` ho hledá `grep`em.
+vždy na jednom řádku — `update.sh` ho hledá `grep`em. Výstup je vždy platné
+UTF-8 a platný JSON i pro hodnoty, které platné UTF-8 nejsou (neplatné bajty
+a řídicí znaky jsou nahrazené `?`).
 
 ## Co se kontroluje
 
@@ -114,17 +125,18 @@ vždy na jednom řádku — `update.sh` ho hledá `grep`em.
 | id | Co | WARN / FAIL |
 |---|---|---|
 | `package.tree` | `package.json` je M5cet | FAIL: instalace bez zdrojáků |
-| `package.integrity` | **s `release.json`**: SHA-256 každého souboru, chybějící soubory, soubory navíc; **bez něj v git checkoutu**: `git status` (změněné sledované soubory, nesledované spustitelné) | FAIL: změněný / chybějící soubor, navíc spustitelný soubor nebo nativní knihovna (`.node`, `.so`), manifest jiné verze, než je `package.json` (zastaralý); WARN: bez manifestu i gitu |
+| `package.integrity` | **s `release.json`**: SHA-256 každého souboru, chybějící soubory, soubory navíc; **bez něj v git checkoutu**: `git status` (změněné sledované soubory, nesledované spustitelné; jak git běží, viz [níže](#bezpečnost-samotné-kontroly-běh-jako-root)) | FAIL: změněný / chybějící soubor, navíc spustitelný soubor nebo nativní knihovna (`.node`, `.so`), manifest jiné verze, než je `package.json` (zastaralý), cesta mimo strom (absolutní, `..`, začínající `-`), nečitelný soubor (neověřeno); soubor dostupný jen přes symlinkovaný adresář se počítá jako chybějící; WARN: bez manifestu i gitu; SKIP: git nejde bezpečně spustit (jako root na cizím `.git` bez `runuser` / `setpriv` / `sudo`, `.git` patřící rootovi, který mohou měnit i jiní) |
 | `package.extra` | soubory navíc, které nejsou spustitelné | WARN |
 | `package.commit` | git HEAD = commit, který nasadil instalátor | WARN |
 | `package.signature` | `release.json.sig` (Ed25519) — viz [Podpis](#podepsaná-vydání) | FAIL: neplatný podpis, změněný klíč vydání; WARN: nepodepsáno / jen git |
 | `package.web` | servírované soubory `dist/public` proti `dist/public/release-web.json` | FAIL: změněný / chybějící soubor, **navíc servírovaný kód** (`.html .js .mjs .wasm .svg .xml`); WARN: manifest chybí (build starší než 6.12) |
-| `package.web_extra`, `package.web_signature` | ostatní soubory navíc; podpis `release-web.json.sig`, je-li | WARN; FAIL |
+| `package.web_extra` | ostatní soubory navíc | WARN |
+| `package.web_signature` | podpis `release-web.json.sig` — stav se hlásí vždy | FAIL: neplatný podpis; WARN: podpis je, ale chybí klíč (`--pubkey`); SKIP: nepodepsáno (build na tomto stroji) |
 | `package.build` | `dist/index.cjs`, `sandbox.cjs`, `public/index.html`, `build.json` (`admin.cjs` s adminem) | FAIL: build chybí / je neúplný |
 | `package.pyodide` | `dist/node_modules/pyodide` | WARN: funkce v Pythonu nepoběží |
-| `package.sqlcipher` | modul `better-sqlite3-multiple-ciphers` se načte a otevře databázi (`sqlite3mc_version()`); jako root se spouští **pod uživatelem služby** (`runuser`/`setpriv`), kód z instalace nikdy neběží jako root | FAIL: modul chybí nebo se nenačte (nic se neukládá) |
-| `package.npm_ls` | `npm ls --omit=dev --all`, jen když `node_modules` zůstaly (`KEEP_NODE_MODULES=1`) | WARN |
-| `package.npm_audit` | `npm audit --omit=dev` podle `package-lock.json` (online; posílá seznam závislostí registru npm) | FAIL: kritická zranitelnost; WARN: vysoká |
+| `package.sqlcipher` | modul `better-sqlite3-multiple-ciphers` se načte a otevře databázi (`sqlite3mc_version()`). Načtení modulu spouští kód ze stromu, proto jako root běží **pod uživatelem služby** (`SERVICE_USER`), jinak pod vlastníkem stromu (`runuser` / `setpriv` / `sudo`) — **nikdy jako root** | FAIL: modul chybí nebo se nenačte (nic se neukládá); SKIP: jako root bez takového uživatele (`SERVICE_USER=root` na stromu roota) nebo bez nástroje k přepnutí |
+| `package.npm_ls` | `npm ls --omit=dev --all`, jen když `node_modules` zůstaly (`KEEP_NODE_MODULES=1`); jako root pod uživatelem služby / vlastníkem stromu jako u SQLCipher | WARN; SKIP jako u SQLCipher |
+| `package.npm_audit` | `npm audit --omit=dev --package-lock-only` nad **soukromou kopií** `package.json` + `package-lock.json` v dočasném adresáři — `.npmrc` stromu (registr, který by dostal seznam závislostí) ani `node_modules` se nečtou (online; posílá seznam závislostí registru npm) | FAIL: kritická zranitelnost; WARN: vysoká |
 | `package.versions` | `package.json` × `install.conf` × `dist/public/build.json` × běžící služba (`/api/health`) | WARN: build z jiných zdrojů, běží starší verze (restart), zdroje změněné mimo `update.sh` |
 
 ### `config` — konfigurace
@@ -150,8 +162,8 @@ vždy na jednom řádku — `update.sh` ho hledá `grep`em.
 | `config.push` | oba VAPID klíče, `VAPID_SUBJECT` není zástupná hodnota | FAIL / WARN |
 | `config.cluster` | `REDIS_URL` s `CLUSTER_SECRET` | WARN: zprávy clusteru nepodepsané |
 | `config.storage_key` | `STORAGE_MASTER_KEY` je 32 bajtů hex / base64 | FAIL |
-| `config.data_dir` | datový adresář (`DATA_DIR`, u systemd `/var/lib/m5cet`, jinak `<dir>/.m5cet`) má `0700` | FAIL: otevřený všem; WARN: skupina |
-| `config.keys` | `*.key` v datech (`storage.key`, `audit-signing.key`, …) a soubory z `STORAGE_KEY_FILE` / `FUNCTIONS_ADM_KEY_FILE` / `ANDROID_SIGNING_KEY_FILE` mají `0600` | FAIL |
+| `config.data_dir` | datový adresář (`DATA_DIR`, u systemd `/var/lib/m5cet`, jinak `<dir>/.m5cet`) má `0700`; relativní cesty z `.env` (`DATA_DIR`, `STORAGE_DIR`, `BACKUP_DIR`, `AI_DATA_DIR`, `*_KEY_FILE`) se berou od kořene instalace, jako je čte aplikace | FAIL: otevřený všem; WARN: skupina |
+| `config.keys` | `*.key` v datech (`storage.key`, `audit-signing.key`, …) a soubory z `STORAGE_KEY_FILE` / `FUNCTIONS_ADM_KEY_FILE` / `ANDROID_SIGNING_KEY_FILE` mají `0600` — i když jméno obsahuje mezeru nebo konec řádku (`find -print0`; cesty z `.env` se nedělí ani nerozvíjejí jako vzory) | FAIL |
 | `config.world_writable` | nic v instalaci není zapisovatelné pro všechny | FAIL |
 | `config.secret_files` | `.env*`, `*.key`, `*.pem`, keystore, Firebase admin JSON, `install.conf` nejsou čitelné pro ostatní | FAIL; jen WARN, když je instalační adresář pro ostatní uzavřený |
 | `config.stale_copies` | kopie tajemství vedle `.env` (`.env-bak`, `.env.old`, `*.bak`) | WARN |
@@ -163,7 +175,7 @@ vždy na jednom řádku — `update.sh` ho hledá `grep`em.
 |---|---|---|
 | `runtime.node` | Node služby (u systemd z `ExecStart`) ≥ 22, sudá řada (LTS) | FAIL < 22 / chybí; WARN lichá řada |
 | `runtime.permission` | `node --permission` (sandbox funkcí; na starším 22.x `--experimental-permission`) | FAIL |
-| `runtime.service`, `runtime.admin` | systemd: jednotka nahraná, aktivní, zapnutá (`*_enabled`); proces: PID žije; compose: viz `docker` | FAIL; WARN nestartuje po zapnutí |
+| `runtime.service`, `runtime.admin` | systemd: jednotka nahraná, aktivní, zapnutá (`*_enabled`); proces: PID z `.m5cet/run/app.pid` (`admin.pid`) žije **a je to proces aplikace** — `node` s `dist/index.cjs` (`dist/admin.cjs`) v argumentech, pod vlastníkem stromu (nebo rootem — WARN) a, kde to `/proc` / `lsof` ukáže, s pracovním adresářem ve stromu; compose: viz `docker` | FAIL (i zastaralý nebo podvržený soubor pid, který ukazuje na jiný proces — jeho limity ani uživatel se pak nepoužijí); WARN nestartuje po zapnutí / běží jako root |
 | `runtime.service_hardening` | `systemctl show`: `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `CapabilityBoundingSet` prázdné (nebo jen `cap_net_bind_service`), `RestrictAddressFamilies`, `LimitNOFILE ≥ 65536` | WARN: slabší než od instalátoru (i drop-iny) |
 | `runtime.service_user` | `User=` není root | FAIL |
 | `runtime.service_mdwe` | `MemoryDenyWriteExecute` **nesmí** být zapnuté (JIT V8) | FAIL |
@@ -249,7 +261,7 @@ hugepages (WARN `always` s lokálním Redisem), `entropy_avail`.
 | `network.outbound` | HTTPS na registry npm, GitHub, dlaždice OSM, s pushem FCM a Apple, se zapnutými poskytovateli Twilio / Telnyx / Vonage — jen spojení, bez přihlašovacích údajů | WARN |
 | `network.time` | `chronyc tracking` (odchylka) / `timedatectl` / timesyncd | FAIL ≥ 30 s (TOTP, podpisy webhooků, časy transparentnosti klíčů); WARN ≥ 1 s / nesynchronizováno |
 | `network.mtu` | MTU rozhraní výchozí trasy | FAIL < 1280; WARN < 1400 |
-| `network.turn`, `network.coturn` | TCP spojení na každou adresu `TURN_SERVER_URL` (STUN přes `turnutils_stunclient`, je-li), coturn na stroji běží | WARN / FAIL |
+| `network.turn`, `network.coturn` | TCP spojení na každou adresu `TURN_SERVER_URL` (STUN přes `turnutils_stunclient`, je-li), coturn na stroji běží. Položka musí mít tvar `turn:host[:port]` / `turns:host[:port]` (jméno, IPv4 nebo `[IPv6]`, port 1–65535); jiná se nikam nepošle ani nevypíše (jen její pořadí `#N`), `user:heslo@` před hostitelem se zahodí | WARN / FAIL |
 | `network.fds`, `network.service_fds` | popisovače souborů systému a služby (`/proc/<pid>/limits`) | WARN ≥ 80 % / limit služby < 65536 |
 | `network.ephemeral`, `network.listen_overflows` | sockety v TIME-WAIT vůči efemérním portům; přetečení fronty spojení od startu (`/proc/net/netstat`) | WARN |
 
@@ -263,9 +275,9 @@ hugepages (WARN `always` s lokálním Redisem), `entropy_avail`.
 | `system.disk`, `system.inodes` | místo pro instalaci, data, zálohy, `/var/log`, `/tmp` | FAIL < 1 GB nebo < 5 % a < 5 GB; WARN < 10 %; inody ≥ 90 % |
 | `system.noexec` | instalace není na oddílu `noexec` (nativní moduly v `dist/node_modules`) | FAIL |
 | `system.mac` | AppArmor / SELinux a nedávná zamítnutí pro `node` / `bwrap` | WARN |
-| `system.bwrap`, `system.bwrap_netlink` | bubblewrap pro izolaci běhů funkcí: je nainstalovaný; AppArmor ho na Ubuntu 24.04+ nepustí bez profilu s `userns`; jednotka služby nezakazuje jmenné prostory (`RestrictNamespaces`) ani `AF_NETLINK`; zkušební běh jako uživatel služby | FAIL s `FUNCTIONS_SANDBOX_ISOLATION=bwrap`, jinak WARN |
+| `system.bwrap`, `system.bwrap_netlink` | bubblewrap pro izolaci běhů funkcí: je nainstalovaný; AppArmor ho na Ubuntu 24.04+ nepustí bez profilu s `userns`; jednotka služby nezakazuje jmenné prostory (`RestrictNamespaces`) ani `AF_NETLINK`; zkušební běh jako uživatel služby (jako root bez uživatele jiného než root se nezkouší) | FAIL s `FUNCTIONS_SANDBOX_ISOLATION=bwrap`, jinak WARN |
 | `system.speech` | `bzip2` (rozbalení modelů řeči), engine `sherpa-onnx-node` v `dist` při stažených modelech, `ffmpeg` (jinak jen WAV) | WARN |
-| `system.redis` | `REDIS_URL` je dosažitelný | FAIL |
+| `system.redis` | `REDIS_URL` je dosažitelný (TCP na `host:port` z URL; vypisuje se bez hesla) | FAIL: nedosažitelný, nebo URL nemá použitelné `host:port` (znaky `/ ? # @` v hesle je třeba %-kódovat) |
 | `system.backups`, `system.app_backups` | zálohy instalátoru (konfigurace + `dist`); zálohy dat aplikace v `BACKUP_DIR` mladší než 2 × `BACKUP_INTERVAL_HOURS` | WARN bez `BACKUP_DIR` / staré; FAIL adresář chybí |
 | `system.updates`, `system.reboot` | automatické bezpečnostní aktualizace (unattended-upgrades / dnf-automatic); čeká se na restart | WARN |
 | `system.service_user` | uživatel služby bez přihlašovacího shellu, bez sudo/wheel, není v `docker` (= root), nemá řádek v sudoers | FAIL / WARN shell |
@@ -287,6 +299,57 @@ Jen informativní (`PASS`, chyby už hlásí ostatní sekce): důkaz pro vstup d
 místnosti (protokol 4), sandbox funkcí, podpisy webhooků telefonie,
 SQLCipher a umístění hlavního klíče úložiště, režim údajů TURN, podpis
 vydání, nastavení logů (`LOG_EVENTS`, `ACCESS_LOG`, `ACCESS_LOG_FULL_IP`).
+
+## Bezpečnost samotné kontroly (běh jako root)
+
+`check.sh` se spouští jako root (a `update.sh` ho jako root pouští po každé
+aktualizaci), ale strom, který kontroluje, může patřit někomu jinému:
+u uživatelské instalace celý uživateli, u systemd je `.env` čitelný
+a `dist/` zapisovatelný pro skupinu služby. Nic z toho proto nesmí
+rozhodovat o tom, co root spustí (oprava nálezů C01–C12 bezpečnostní
+revize 6.12, `docs/review-612.md`):
+
+* **Hodnoty z `.env` nejsou nikdy kód.** `.env` ani `install.conf` se
+  nenačítají `source` / `eval`. Hostitel a port z `TURN_SERVER_URL`
+  a `REDIS_URL` se ověří (DNS jméno, IPv4 nebo IPv6, port 1–65535) a do
+  `/dev/tcp` jdou jako poziční argumenty pevného skriptu
+  (`bash -c 'exec 3<>"/dev/tcp/$1/$2"' _ host port`), nikdy jako text
+  příkazu; `turnutils_stunclient` dostane hostitele za `--`. Neplatná
+  položka se nikam nepošle a nevypíše. `SERVICE_NAME` mimo
+  `[A-Za-z0-9_.@-]` se nahradí `m5cet` (nikdy volba pro `systemctl`).
+* **Kód ze stromu nikdy jako root.** Zkouška SQLCipher (`require()` modulu
+  z `dist/node_modules`) a `npm ls` běží pod uživatelem služby
+  (`SERVICE_USER`), jinak pod vlastníkem stromu — nikdy pod rootem ani jiným
+  uid 0, jméno musí být obyčejné jméno účtu. Přepíná se `runuser`,
+  `setpriv` nebo `sudo -n` s pevnými argumenty (bez shellu). Když takový
+  uživatel není (např. `SERVICE_USER=root` na stromu, který patří rootovi)
+  nebo chybí nástroj k přepnutí, kontrola je `SKIP` s důvodem — nikdy se
+  nespustí jako root.
+* **git** nikdy s `-c safe.directory=…` (to vypíná ochranu gitu před cizím
+  repozitářem, CVE-2022-24765). Jako root běží pod vlastníkem `.git`; `.git`
+  patřící rootovi jen tehdy, když kořen stromu, `.git` ani `.git/config` nemůže
+  měnit nikdo jiný (a `.git` je obyčejný adresář). Vždy s `env -i` (čisté
+  prostředí, `HOME=/nonexistent`), `GIT_CONFIG_NOSYSTEM=1`,
+  `GIT_CONFIG_GLOBAL=/dev/null`, `-c core.fsmonitor=false`,
+  `-c core.hooksPath=/dev/null`, `--no-optional-locks`,
+  `--ignore-submodules=all` a bez hledání repozitáře nad stromem
+  (`GIT_CEILING_DIRECTORIES`). Jinak `SKIP`.
+* **npm**: `npm ls` jako výše; `npm audit` běží nad soukromou kopií
+  `package.json` + `package-lock.json` v dočasném adresáři
+  (`--package-lock-only`) — `.npmrc` stromu (cizí registr, který by dostal
+  seznam závislostí; `onload-script` v npm 6) se vůbec nečte.
+* **Který strom**: jako root se ukazatel `~/.config/m5cet/install-dir`
+  ignoruje a `/etc/m5cet/install-dir` platí, jen když patří rootovi a nikdo
+  jiný ho nemůže měnit (viz `--root`).
+* **Manifest a soubor pid** nemohou rozšířit, co root čte: cesty
+  v `release.json` jen uvnitř stromu, bez symlinků (viz [Manifesty
+  vydání](#manifesty-vydání)); PID ze `.m5cet/run/app.pid` se bere jen
+  tehdy, když je to opravdu `node dist/index.cjs` vlastníka stromu.
+* **Výstup**: tajemství a hesla v URL se nevypisují, řídicí znaky
+  terminálu se nahrazují `?`, výstup je platné UTF-8 (viz úvod).
+
+Útočník s rootem na serveru ovšem může změnit i samotný `check.sh` — viz
+konec [Podepsaná vydání](#podepsaná-vydání).
 
 ## Manifesty vydání
 
@@ -323,14 +386,19 @@ vydání s hotovým `dist/` (tarball, image) použije `--with-dist`. Seznam
 výjimek je v `check.sh` (`M5_EXCL_*`) i v nástroji (`EXCLUDE_*`) a test
 hlídá, že jsou stejné. Cesty s uvozovkou, zpětným lomítkem nebo řídicím
 znakem nástroj odmítne (`check.sh` čte manifest bez parseru JSON: jeden
-soubor na řádek).
+soubor na řádek). `check.sh` navíc odmítne manifest s cestou absolutní,
+s komponentou `..` / `.` nebo prázdnou, či začínající `-` (FAIL — root by
+jinak počítal hash souborů mimo strom), a hashuje jen soubory, které ve
+stromu opravdu jsou: `find` bez následování symlinků, takže soubor dostupný
+jen přes symlinkovaný adresář je „chybí", ne „odpovídá".
 
 **Jak vydání vzniká:** v čistém checkoutu tagu `npm run release:manifest`
 → `npm run release:sign` → `release.json` + `release.json.sig` (a
 `release-signing.pub`) jdou do archivu vydání; instalace z něj
 (`install.sh --source-path <rozbalený archiv>`) je převezme. Instalace
 z gitu (`master`) manifest nemá — `check.sh` pak integritu ověřuje proti
-gitu (`git status`, bez zápisu do indexu: `GIT_OPTIONAL_LOCKS=0`).
+gitu (`git status`, bez zápisu do indexu: `--no-optional-locks`; jak git
+běží, viz [Bezpečnost samotné kontroly](#bezpečnost-samotné-kontroly-běh-jako-root)).
 
 ### Podepsaná vydání
 
@@ -374,6 +442,9 @@ vydání: `bash /cesta/k/overenemu/check.sh --root /opt/m5cet --pubkey …`.
 * UDP dosažitelnost TURN zvenku neověří (jen TCP spojení a lokální STUN).
 * Za NAT nemůže porovnat DNS s veřejnou adresou (bez dotazu na cizí službu).
 * Traefik / proxy v kontejneru jen detekuje.
+* Jako root bez `runuser` / `setpriv` / `sudo` (nebo bez uživatele jiného
+  než root) nezkusí SQLCipher, `npm ls` ani `git status` na cizím stromu —
+  jsou `SKIP`.
 * Hodnoty `FUNCTIONS_SANDBOX_ISOLATION` vyhodnocuje takto: `none`, `off`,
   `0`, `false`, `no` = vypnuto; `bwrap`, `required`, `require`, `on`, `1`,
   `true`, `yes` = vyžadováno (chybějící bubblewrap je FAIL); prázdné nebo
@@ -389,3 +460,10 @@ nestubuje, skryje `M5CHECK_ABSENT="cmd …"`, `M5CHECK_UID` předstírá uživat
 v `test/fixtures/install-check/` jsou skutečné (nginx 1.31: stránka
 z instalátoru po certbotu, `deploy/nginx/m5cet.conf`, stránka z hostingového
 panelu). `test/release-manifest.test.ts` testuje nástroj manifestů.
+`test/review-612-checksh.test.ts` jsou důkazy nálezů C01–C12 bezpečnostní
+revize 6.12 (spouštění hodnot z `.env`, kód a git / npm ze stromu jako root,
+hesla v URL, řídicí znaky, neplatné UTF-8, jména souborů s mezerou, ukazatel
+v `~/.config`, cesty mimo strom, podvržený soubor pid, nepodepsaný
+`release-web.json`): každý test tvrdí bezpečné chování; „root" předstírá
+`M5CHECK_UID=0` se stuby `runuser` a každý „útok" jen zakládá značkový
+soubor v dočasném adresáři.
