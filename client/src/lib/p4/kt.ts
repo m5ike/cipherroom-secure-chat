@@ -132,8 +132,36 @@ export function deviceStatus(entries: readonly VerifiedEntry[], apk: string, dpk
 
 /* --------------------------------------------------------------- state */
 
-export type KtAlert = { kind: "inconsistent" | "split-view" | "key-changed"; at: number; detail: string };
-export type KtOriginState = { key: string | null; sth: SignedTreeHead | null; alert: KtAlert | null };
+/**
+ * `unproven` (6.12 review P05): the server did not prove that two tree heads it
+ * signed are consistent — it refused the proof KT_PROOF_REFUSALS times, or gave
+ * no answer for KT_PROOF_DEADLINE_MS. A fork the server will not prove is
+ * reported like one that does not verify.
+ */
+export type KtAlert = { kind: "inconsistent" | "split-view" | "key-changed" | "unproven"; at: number; detail: string };
+
+/** A consistency proof the server owes us: two heads it signed, since when, how often it refused. */
+export type KtPendingProof = { small: SignedTreeHead; big: SignedTreeHead; since: number; refusals: number };
+
+export type KtOriginState = { key: string | null; sth: SignedTreeHead | null; alert: KtAlert | null; pending?: KtPendingProof[] };
+
+/** § 14.4: refusals (an HTTP answer that is no proof) of one consistency proof before the alert. */
+export const KT_PROOF_REFUSALS = 2;
+/** § 14.4: a proof that never came (network, `kt-busy`) is the alert after this long. */
+export const KT_PROOF_DEADLINE_MS = 24 * 60 * 60 * 1000;
+/** Proofs owed kept per server (the oldest are kept: they reach the deadline first). */
+const MAX_PENDING_PROOFS = 8;
+
+/**
+ * Was a consistency fetch's failure transient — no answer of the server's
+ * (a network error, a timeout, `503 kt-busy`)? Such a failure counts toward
+ * KT_PROOF_DEADLINE_MS only; anything else (an HTTP answer that is not a
+ * proof) is a refusal. A fetcher marks transient errors with `transient: true`.
+ */
+export function isTransientKtError(error: unknown): boolean {
+  if (error instanceof TypeError) return true; // fetch: the network failed
+  return Boolean(error) && typeof error === "object" && (error as { transient?: unknown }).transient === true;
+}
 
 /** Persistent per-origin state (the integrator stores it with the device's data). */
 export interface KtStore {
@@ -150,19 +178,24 @@ export class MemoryKtStore implements KtStore {
 export type KtUpdate =
   | { status: "ok"; sth: SignedTreeHead }
   | { status: "no-key" | "bad-signature" }
-  | { status: "inconsistent"; alert: KtAlert };
+  | { status: "inconsistent"; alert: KtAlert }
+  /** The server did not prove consistency (yet): the head is not kept; `alert` once refusals / the deadline ran out. */
+  | { status: "unproven"; alert: KtAlert | null };
 
 export type KtGossip =
   | { status: "ok" }
   | { status: "unknown" }   // no pinned key or no head kept yet for this server
   | { status: "ignored" }   // not signed by this server's key
   | { status: "need-consistency"; from: number; to: number }
-  | { status: "split-view"; alert: KtAlert };
+  | { status: "split-view"; alert: KtAlert }
+  | { status: "unproven"; alert: KtAlert | null };
 
 /** Fetches `GET /api/kt/consistency?from=&to=`. */
 export type ConsistencyFetcher = (from: number, to: number) => Promise<KtConsistency>;
 
 const empty = (): KtOriginState => ({ key: null, sth: null, alert: null });
+
+const sameHead = (a: SignedTreeHead, b: SignedTreeHead) => a.size === b.size && a.root === b.root;
 
 export class KtState {
   private readonly mutex = new Mutex();
@@ -178,6 +211,62 @@ export class KtState {
     // The first alert stays (persistent) until the user deals with it.
     await this.store.set(origin, { ...st, alert: st.alert ?? alert });
     return st.alert ?? alert;
+  }
+
+  /**
+   * 6.12 review P05: the server owes a consistency proof between two heads it
+   * signed. Kept persistently; a refusal counts, a transient failure only
+   * starts the clock. KT_PROOF_REFUSALS refusals, or KT_PROOF_DEADLINE_MS
+   * without a proof, raise the `unproven` alert. Returns the alert, if raised.
+   */
+  private async owe(origin: string, st: KtOriginState, small: SignedTreeHead, big: SignedTreeHead, error: unknown): Promise<KtAlert | null> {
+    const now = this.clock();
+    const pending = [...(st.pending ?? [])];
+    let at = pending.findIndex((p) => sameHead(p.small, small) && sameHead(p.big, big));
+    if (at < 0 && pending.length < MAX_PENDING_PROOFS) { pending.push({ small, big, since: now, refusals: 0 }); at = pending.length - 1; }
+    if (at < 0) {
+      // Full: the oldest are kept (they reach the deadline first); this one is checked against it.
+      const oldest = pending[0];
+      if (now - oldest.since >= KT_PROOF_DEADLINE_MS) return this.raise(origin, st, "unproven", unprovenDetail(oldest));
+      return null;
+    }
+    const p = { ...pending[at] };
+    if (!isTransientKtError(error)) p.refusals += 1;
+    pending[at] = p;
+    const next = { ...st, pending };
+    if (p.refusals >= KT_PROOF_REFUSALS || now - p.since >= KT_PROOF_DEADLINE_MS) return this.raise(origin, next, "unproven", unprovenDetail(p));
+    await this.store.set(origin, next);
+    return null;
+  }
+
+  /** A proof that was owed arrived (and verified): forget it. */
+  private async paid(origin: string, small: SignedTreeHead, big: SignedTreeHead): Promise<void> {
+    const st = await this.load(origin);
+    if (!st.pending?.some((p) => sameHead(p.small, small) && sameHead(p.big, big))) return;
+    await this.store.set(origin, { ...st, pending: st.pending.filter((p) => !(sameHead(p.small, small) && sameHead(p.big, big))) });
+  }
+
+  /** The consistency proofs the server still owes (§ 14.4, review P05). */
+  async pending(origin: string): Promise<KtPendingProof[]> { return (await this.load(origin)).pending ?? []; }
+
+  /**
+   * Asks again for every proof the server owes (each refresh): one that
+   * verifies settles it, one that does not is the `inconsistent` alert, a
+   * refusal counts, and the deadline applies. Returns the alert, if any.
+   */
+  retryPending(origin: string, fetchConsistency: ConsistencyFetcher): Promise<KtAlert | null> {
+    return this.mutex.run(async () => {
+      for (const p of await this.pending(origin)) {
+        const st = await this.load(origin);
+        if (!st.key) return null;
+        const proof = await consistent(p.small, p.big, fetchConsistency);
+        if (proof.verdict === "ok") { await this.paid(origin, p.small, p.big); continue; }
+        if (proof.verdict === "bad") return this.raise(origin, st, "inconsistent", `tree ${p.small.size} is not a prefix of tree ${p.big.size}`);
+        const alert = await this.owe(origin, st, p.small, p.big, proof.error);
+        if (alert) return alert;
+      }
+      return (await this.load(origin)).alert;
+    });
   }
 
   /** § 14.2: pins the server's KT key on first use. A different key later is an alert; the pin stays. */
@@ -218,10 +307,13 @@ export class KtState {
         return { status: "ok" as const, sth: head };
       }
       const [small, big] = head.size < kept.size ? [head, kept] : [kept, head];
-      if (!(await consistent(small, big, fetchConsistency))) {
+      const proof = await consistent(small, big, fetchConsistency);
+      if (proof.verdict === "unanswered") return { status: "unproven" as const, alert: await this.owe(origin, st, small, big, proof.error) };
+      if (proof.verdict === "bad") {
         return { status: "inconsistent" as const, alert: await this.raise(origin, st, "inconsistent", `tree ${small.size} is not a prefix of tree ${big.size}`) };
       }
-      if (head.size > kept.size) await this.store.set(origin, { ...st, sth: head });
+      await this.paid(origin, small, big);
+      if (head.size > kept.size) await this.store.set(origin, { ...(await this.load(origin)), sth: head });
       return { status: "ok" as const, sth: head };
     });
   }
@@ -241,7 +333,11 @@ export class KtState {
     });
   }
 
-  /** Finishes a `need-consistency` gossip with the server's proof; a newer consistent peer head becomes ours. */
+  /**
+   * Finishes a `need-consistency` gossip with the server's proof; a newer
+   * consistent peer head becomes ours. A refused / missing proof is owed
+   * (review P05): `unproven`, with the alert once refusals or the deadline ran out.
+   */
   resolveGossip(origin: string, peerSth: unknown, fetchConsistency: ConsistencyFetcher): Promise<KtGossip> {
     return this.mutex.run(async () => {
       const st = await this.load(origin);
@@ -254,10 +350,13 @@ export class KtState {
         return { status: "split-view" as const, alert: await this.raise(origin, st, "split-view", `a peer saw another root for tree size ${peer.size}`) };
       }
       const [small, big] = peer.size < kept.size ? [peer, kept] : [kept, peer];
-      if (!(await consistent(small, big, fetchConsistency))) {
+      const proof = await consistent(small, big, fetchConsistency);
+      if (proof.verdict === "unanswered") return { status: "unproven" as const, alert: await this.owe(origin, st, small, big, proof.error) };
+      if (proof.verdict === "bad") {
         return { status: "split-view" as const, alert: await this.raise(origin, st, "split-view", `a peer's tree ${peer.size} is not consistent with ours (${kept.size})`) };
       }
-      if (peer.size > kept.size) await this.store.set(origin, { ...st, sth: peer });
+      await this.paid(origin, small, big);
+      if (peer.size > kept.size) await this.store.set(origin, { ...(await this.load(origin)), sth: peer });
       return { status: "ok" as const };
     });
   }
@@ -266,6 +365,7 @@ export class KtState {
    * A lookup: its head goes through `update` first, then inclusion of every
    * entry. `u` undefined: the entries are not checked against a user (a lookup
    * the hub answered for a member's room-scoped reference names no username).
+   * A head the server does not prove consistent with ours is never used.
    */
   async lookup(origin: string, lookup: KtLookup, u: string | undefined, fetchConsistency: ConsistencyFetcher): Promise<{ ok: true; entries: VerifiedEntry[] } | { ok: false; why: string }> {
     const upd = await this.update(origin, lookup?.sth, fetchConsistency);
@@ -276,14 +376,26 @@ export class KtState {
   }
 }
 
-/** Is `small` a prefix of `big`? (Both already signature-checked; sizes differ.) */
-async function consistent(small: SignedTreeHead, big: SignedTreeHead, fetchConsistency: ConsistencyFetcher): Promise<boolean> {
-  if (small.size === 0) return true; // the empty tree is a prefix of every tree
-  const answer = await fetchConsistency(small.size, big.size);
+const unprovenDetail = (p: KtPendingProof) => `the server does not prove that its log of ${p.small.size} entries is a prefix of the one of ${p.big.size}`;
+
+/**
+ * Is `small` a prefix of `big`? (Both already signature-checked; sizes differ.)
+ * "unanswered": the fetch failed — no proof to judge (the caller tells a
+ * refusal from a transient failure); "bad": an answer that does not prove it
+ * (the alert, whatever its cause).
+ */
+async function consistent(small: SignedTreeHead, big: SignedTreeHead, fetchConsistency: ConsistencyFetcher): Promise<{ verdict: "ok" } | { verdict: "bad" } | { verdict: "unanswered"; error: unknown }> {
+  if (small.size === 0) return { verdict: "ok" }; // the empty tree is a prefix of every tree
+  let answer: KtConsistency;
   try {
-    if (!answer || answer.from !== small.size || answer.to !== big.size) return false;
-    return await verifyConsistency(small.size, big.size, unb64(small.root, 32), unb64(big.root, 32), decodeProof(answer.proof));
+    answer = await fetchConsistency(small.size, big.size);
+  } catch (error) {
+    return { verdict: "unanswered", error };
+  }
+  try {
+    if (!answer || answer.from !== small.size || answer.to !== big.size) return { verdict: "bad" };
+    return { verdict: (await verifyConsistency(small.size, big.size, unb64(small.root, 32), unb64(big.root, 32), decodeProof(answer.proof))) ? "ok" : "bad" };
   } catch {
-    return false;
+    return { verdict: "bad" };
   }
 }

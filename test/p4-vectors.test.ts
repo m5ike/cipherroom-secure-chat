@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  accDigest, b64, buildHello, buildHubProof, buildKemMessage, canonicalEntry, checkBundle, checkReleaseFiles, consistencyProof,
+  accDigest, accountDigest, capsDigest, userDigest, sthDigest, b64, buildHello, buildHubProof, buildKemMessage, canonicalEntry, checkBundle, checkReleaseFiles, consistencyProof,
   createBundle, ecdh, ecdsaSign, ecdsaVerify, ed25519FromSeed, ed25519Sign, entryLeafHash, establishSession, fileAad4, fileKey4,
   fileKeyBytes, frameIv, H, hex, helloRef, helloSig4Data, hkdf, hubJoinData, hubKeyPair, importP256Pkcs8, inclusionProof, joinText,
   kdfCk, kdfRk, kemDecaps, kemEncapsWith, kemKeygenFromSeed, kemKid, keyIv, ktUser, LABEL, leafHash, mbDigest, openFileBody4,
@@ -96,14 +96,26 @@ describe("p4 vectors: handshake and ratchet transcript", () => {
       expect(await verifyHello(hello, { roomId, from: p.peerId, to: q.peerId, check, now })).toMatchObject({ ok: true, mailbox: hello.mb });
       expect(await mbDigest(hello.mb)).toBe(p.mbDigest);
       expect(await accDigest(hello.acc)).toBe(p.accDigest);
+      // 6.12 review P02: caps, the user claim and the tree head are signed.
+      expect(await capsDigest(hello.caps)).toBe(p.capsDigest);
+      expect(await userDigest(hello.user)).toBe(p.userDigest);
+      expect(await sthDigest(hello.sth)).toBe(p.sthDigest);
+      expect(p.sig4Data.endsWith(`|${p.capsDigest}|${p.userDigest}|${p.sthDigest}`)).toBe(true);
       expect(await helloRef(hello)).toBe(p.helloRef);
       // Replaying the tape gives the same hello (but the randomized sig4).
       built[side] = await buildHello({
-        roomId, from: p.peerId, to: q.peerId, v3: { check, pk: p.pk, dh: p.dh, sig: hello.sig, caps: ["bin", "media"] },
+        roomId, from: p.peerId, to: q.peerId, v3: { check, pk: p.pk, dh: p.dh, sig: hello.sig, caps: hello.caps, ...(typeof hello.user === "string" ? { user: hello.user } : {}) },
         signer: await signerOf(p.devicePkcs8, p.pk), mb: hello.mb, acc: hello.acc, sth: hello.sth, rng: rng[side],
       });
       expect({ ...built[side].hello, sig4: "" }).toEqual({ ...hello, sig4: "" });
+      // A changed cap, user or tree head no longer verifies.
+      expect((await verifyHello({ ...hello, caps: hello.caps.filter((c) => c !== "media") }, { roomId, from: p.peerId, to: q.peerId, check, now })).ok).toBe(false);
+      expect((await verifyHello({ ...hello, user: "mallory" }, { roomId, from: p.peerId, to: q.peerId, check, now })).ok).toBe(false);
+      expect((await verifyHello({ ...hello, sth: hello.sth ? null : hs.A.hello.sth }, { roomId, from: p.peerId, to: q.peerId, check, now })).ok).toBe(false);
     }
+    // The capsDigest sorts and de-duplicates; the tree head A gossips is signed by the KT key of the kt section.
+    expect(await capsDigest(["p4", "media", "bin", "media"])).toBe(await capsDigest(["bin", "media", "p4"]));
+    expect(await verifySth(hs.A.hello.sth, V.kt.ktKey)).toBe(true);
     // A's mailbox bundle and B's account certificate.
     const mbHello = hs.A.hello.mb as MailboxBundle;
     const mbRebuilt = await createBundle(await signerOf(hs.A.devicePkcs8, hs.A.pk), now, new TapeRng(hs.A.mailboxBundleTape));
@@ -203,9 +215,19 @@ describe("p4 vectors: sender keys, mailbox, files, media", () => {
     const opened = await openMailboxItem(item, M.roomId, rKeys);
     expect(opened.payload).toEqual(M.payload);
     expect(opened.spk).toBe(M.sender.pk);
-    expect(text(utf8(joinText(LABEL.mailbox, M.roomId, item.id, item.spk, item.sb.id, item.to, item.e, b64(await H(unb64(item.kct))))))).toBe(M.aad);
-    const again = await sealMailboxItem({ roomId: M.roomId, id: M.payload.id, payload: M.payload, recipient: { pk: M.recipient.pk, bundle: M.recipient.bundle }, senderPk: M.sender.pk, now: M.now }, sKeys, new TapeRng(M.sealTape));
+    // 6.12 review P13: the AAD ends with saccDigest; the attestation is a v2 certificate by the account seed.
+    expect(await accountDigest(item.sacc)).toBe(M.saccDigest);
+    expect(item.sacc).toEqual(M.sacc);
+    expect(b64((await ed25519FromSeed(unb64(M.sender.accountSeed))).publicKey)).toBe(M.sacc.apk);
+    expect(await verifyAccount(M.sacc, M.sender.pk, M.now)).toMatchObject({ valid: true, v: 2 });
+    expect(opened.sacc).toEqual(M.sacc);
+    expect(text(utf8(joinText(LABEL.mailbox, M.roomId, item.id, item.spk, item.sb.id, item.to, item.e, b64(await H(unb64(item.kct))), M.saccDigest)))).toBe(M.aad);
+    const again = await sealMailboxItem({ roomId: M.roomId, id: M.payload.id, payload: M.payload, recipient: { pk: M.recipient.pk, bundle: M.recipient.bundle }, senderPk: M.sender.pk, sacc: M.sacc, now: M.now }, sKeys, new TapeRng(M.sealTape));
     expect(again).toEqual(item);
+    // A relay that strips or swaps the attestation breaks the item.
+    const { sacc: _stripped, ...withoutSacc } = item;
+    await expect(openMailboxItem(withoutSacc as MailboxItem, M.roomId, rKeys)).rejects.toMatchObject({ code: "aead" });
+    await expect(openMailboxItem({ ...item, sacc: { apk: M.sacc.apk, ac: M.sacc.ac } } as MailboxItem, M.roomId, rKeys)).rejects.toMatchObject({ code: "aead" });
   });
 
   it("file key, AADs and a meta body; media IVs and a sealed frame", async () => {

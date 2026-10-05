@@ -19,7 +19,8 @@
 //   * Failures are RETURNED, not thrown: `{ ok: false, error, reset }`.
 //     `reset` is true on the second failure in the session or for a KEM
 //     ciphertext that cannot be decapsulated (§ 5.5) — the caller then sends
-//     `p4-reset`, discards the session (`wipe()`) and sends a new hello.
+//     `p4-reset`, discards the session (`wipe()`) and sends a new hello. A
+//     failure is forgotten once RATCHET_FAILURE_DECAY frames opened after it.
 //   * One operation at a time (a mutex): encrypt and decrypt may be called
 //     from concurrent event handlers.
 //   * Skipped keys (§ 5.6): at most MAX_SKIP per chain and MAX_SKIPPED_TOTAL
@@ -27,7 +28,7 @@
 //
 // Sessions live per data channel, in memory only: there is no serialisation.
 
-import { KEM, LABEL, MAX_SKIP, MAX_SKIPPED_TOTAL, type RatchetFrame, type RatchetHeader, type RatchetInner } from "./contract";
+import { KEM, LABEL, MAX_SKIP, MAX_SKIPPED_TOTAL, RATCHET_FAILURE_DECAY, type RatchetFrame, type RatchetHeader, type RatchetInner } from "./contract";
 import { kemDecaps, kemEncaps, kemKeygen, kemKid } from "./kem";
 import { pad, unpad } from "./pad";
 import {
@@ -156,6 +157,8 @@ type Parsed = { h: RatchetHeader; ct: Bytes; kct: Bytes | null };
 
 export class Ratchet {
   private failures = 0;
+  /** Frames that opened since the last failure (the failure count decays, § 5.5). */
+  private openedSinceFailure = 0;
   private wiped = false;
   private readonly mutex = new Mutex();
   private readonly rng: Rng;
@@ -236,10 +239,15 @@ export class Ratchet {
     return this.mutex.run(async () => {
       if (this.wiped) return { ok: false as const, error: "state" as const, reset: true, message: "session wiped" };
       try {
-        return { ok: true as const, inner: await this.open(frame) };
+        const inner = await this.open(frame);
+        // § 5.5 (6.12 review P13): a failure is forgotten after RATCHET_FAILURE_DECAY frames that opened —
+        // two unrelated incidents over a long session do not force a reset.
+        if (this.failures > 0 && ++this.openedSinceFailure >= RATCHET_FAILURE_DECAY) { this.failures = 0; this.openedSinceFailure = 0; }
+        return { ok: true as const, inner };
       } catch (error) {
         const code: P4ErrorCode = error instanceof P4Error ? error.code : "malformed";
         this.failures += 1;
+        this.openedSinceFailure = 0;
         return { ok: false as const, error: code, reset: code === "kct" || this.failures >= 2, message: error instanceof Error ? error.message : String(error) };
       }
     });
