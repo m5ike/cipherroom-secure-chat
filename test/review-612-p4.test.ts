@@ -64,8 +64,9 @@ describe("REVIEW-612 P01 — messages for away members and the server's key dire
   // REVIEW-612 P01: the App's pinnedAccount (App.tsx:1746) reads the account key from TrustBook.devicesOfRef, which
   // drops devices whose remembered bundle has expired (p4-trust.ts:132) — 7 days after we last saw Bob, his pin is
   // gone and sealForAway (p4-away.ts:70-78) seals to ANY device the server lists, e.g. one certified by the server's
-  // own account key. Fails today: per["ref-bob"] is an item for the server's device, and the server opens it.
-  it.skip("a member whose account we pinned is not sealed to a device of another account once his bundle expired", async () => {
+  // own account key. Fixed: sealForAway never uses the directory without a pinned account (and the app's pin,
+  // TrustBook.accountOf, outlives the bundles — see review-612-fixes).
+  it("a member whose account we pinned is not sealed to a device of another account once his bundle expired", async () => {
     const now = Date.now();
     const seen = now - 8 * DAY;
     const bob = await certifiedDevice(0x0b, seen);
@@ -92,8 +93,9 @@ describe("REVIEW-612 P01 — messages for away members and the server's key dire
   // REVIEW-612 P01: devices remembered behind a reference (TrustBook.devicesOfRef) are sealed to with no account check
   // at all — the `pinned` filter of sealForAway applies to directory devices only (p4-away.ts:69). The reference a
   // device is remembered under comes from the server (relay `from`, App.tsx:2224-2225; hub peer refs, App.tsx:2839-2840),
-  // so the server can plant a device of its own behind Bob's reference with one relay item. Fails today: two items.
-  it.skip("a device planted behind a member's reference is not sealed to when it is not of the member's pinned account", async () => {
+  // so the server can plant a device of its own behind Bob's reference with one relay item. Fixed: remembered devices
+  // must carry the pinned account too; the app no longer remembers relayed senders behind a reference at all.
+  it("a device planted behind a member's reference is not sealed to when it is not of the member's pinned account", async () => {
     const now = Date.now();
     const bob = await certifiedDevice(0x0b, now);
     const planted = await certifiedDevice(0x5e, now);
@@ -119,7 +121,8 @@ describe("REVIEW-612 P01 — messages for away members and the server's key dire
   // REVIEW-612 P01 (design): a member we never met gets the message sealed to whatever the server lists — in 6.11 the
   // server held a room-key envelope it could not open; in 6.12 it can answer `key-bundles` with its own device and read
   // the message. Without a pinned account (or a KT-verified, user-confirmed one) the directory must not be trusted.
-  it.skip("a never-seen member's message is not sealed to an unverified directory device", async () => {
+  // Fixed: such a member gets the protocol-3 room envelope (§ 7.4).
+  it("a never-seen member's message is not sealed to an unverified directory device", async () => {
     const now = Date.now();
     const server = await certifiedDevice(0x5e, now);
     const alice = await identity();
@@ -293,8 +296,8 @@ describe("REVIEW-612 P08 — a verified account under any name", () => {
   // REVIEW-612 P08: evaluateIdentity (p4-trust.ts:186) shows "verified" whenever the ACCOUNT was verified once, for
   // whatever display name the message carries — the name is pinned to the account on first sight (TOFU) in the same
   // call. A contact the user verified joins another room as "Alice" and every message shows a green "verified Alice".
-  // Fails today: "verified".
-  it.skip("a verified account's first message under a new name in a new room is not shown as verified", async () => {
+  // Fixed: an account is verified together with the name it was verified under (TrustBook.accountVerifiedFor).
+  it("a verified account's first message under a new name in a new room is not shown as verified", async () => {
     const pins = createPinStore(null);
     const book = new TrustBook(null);
     const mallory = await identity();

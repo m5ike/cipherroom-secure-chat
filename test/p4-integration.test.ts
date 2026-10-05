@@ -405,11 +405,25 @@ describe("6.12 web client — away members (mailbox, § 7)", () => {
     expect(await checkDirectoryDevice(devices[0])).toMatchObject({ pk: devices[0].pk, apk });
     expect(await checkDirectoryDevice({ ...devices[0], cert: { ...devices[0].cert, exp: devices[0].cert.exp + 1 } })).toBeNull();
     expect(await checkDirectoryDevice({ ...devices[0], pk: devices[1].pk })).toBeNull();
-    const sealed = await sealForAway({
+    // 6.12 review P01: the directory counts only for a member whose account this client pinned.
+    const unpinned = await sealForAway({
       roomId: keys.roomId, id: "away-2", payload: msg("away-2", "pro všechna tvá zařízení", "p-alice"), refs: ["ref-dana"], mailbox: aliceMb, senderPk: aliceId.publicKey,
       known: () => [], directory: async () => devices.map(({ mb: _mb, ...d }) => d),
     });
+    expect(unpinned.withoutBundle).toEqual(["ref-dana"]);
+    expect(unpinned.sealing).toEqual([{ ref: "ref-dana", form: "room-key" }]);
+    const sealed = await sealForAway({
+      roomId: keys.roomId, id: "away-2", payload: msg("away-2", "pro všechna tvá zařízení", "p-alice"), refs: ["ref-dana"], mailbox: aliceMb, senderPk: aliceId.publicKey,
+      known: () => [], directory: async () => devices.map(({ mb: _mb, ...d }) => d), pinnedAccount: () => apk,
+    });
     expect(isMailboxSet(sealed.per["ref-dana"])).toBe(true);
+    expect(sealed.sealing).toEqual([{ ref: "ref-dana", form: "mailbox", devices: 2, account: apk }]);
+    // A revoked device is left out.
+    const revoked = await sealForAway({
+      roomId: keys.roomId, id: "away-2b", payload: msg("away-2b", "x", "p-alice"), refs: ["ref-dana"], mailbox: aliceMb, senderPk: aliceId.publicKey,
+      known: () => [], directory: async () => devices.map(({ mb: _mb, ...d }) => d), pinnedAccount: () => apk, isRevoked: (pk) => pk === devices[0].pk,
+    });
+    expect(isMailboxItem(revoked.per["ref-dana"])).toBe(true);
     for (const d of devices) expect((await d.mb.open<{ text: string }>(sealed.per["ref-dana"] as MailboxSet, keys.roomId))?.payload.text).toBe("pro všechna tvá zařízení");
     // A directory that answers with another account's devices than the one pinned for that member is not used.
     const pinned = await sealForAway({
@@ -529,8 +543,11 @@ describe("6.12 web client — identity states (§ 12)", () => {
       .toMatchObject({ state: "new", account: true, certV1: true });
     await markVerified(pins, book, "team", "Bob", { pk: dev.publicKey, apk });
     expect(book.accountVerified(apk)).toBe(true);
-    expect(await evaluateIdentity({ signer: signer(dev.publicKey, apk), certVersion: 2, protocol: 4, room: "another room", name: "Bobby" }, pins, book))
+    expect(await evaluateIdentity({ signer: signer(dev.publicKey, apk), certVersion: 2, protocol: 4, room: "another room", name: "Bob" }, pins, book))
       .toMatchObject({ state: "verified", account: true, checked: true });
+    // 6.12 review P08: under another name it is not "verified" — the name it was verified under is shown instead.
+    expect(await evaluateIdentity({ signer: signer(dev.publicKey, apk), certVersion: 2, protocol: 4, room: "third room", name: "Bobby" }, pins, book))
+      .toMatchObject({ state: "new", account: true, verifiedAs: "Bob" });
     book.markRevoked(dev.publicKey);
     expect(await evaluateIdentity({ signer: signer(dev.publicKey, apk), protocol: 4, room: "team", name: "Bob" }, pins, book)).toMatchObject({ state: "changed", revoked: true });
   });

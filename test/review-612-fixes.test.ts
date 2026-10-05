@@ -6,9 +6,11 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import {
-  b64, consistencyProof, createBundle, ed25519FromSeed, entryLeafHash, inclusionProof, ktUser, KT_PROOF_DEADLINE_MS, KtState, MemoryKtStore,
-  ReplayGuard, signSth, treeHash, type Hash, type KtEntry, type KtLookup, type SignedTreeHead,
+  b64, certifyDeviceV2, consistencyProof, createBundle, DEVICE_CERT_LIFETIME_MS, ed25519FromSeed, entryLeafHash, inclusionProof, isMailboxItem, ktUser,
+  KT_PROOF_DEADLINE_MS, KtState, Mailbox, MemoryBundleStore, MemoryKtStore, ReplayGuard, signSth, treeHash,
+  type DirectoryDevice, type Hash, type KtEntry, type KtLookup, type MailboxItem, type SignedTreeHead,
 } from "../client/src/lib/p4";
+import { sealForAway } from "../client/src/lib/p4-away";
 import { KtClient, KtHttpError } from "../client/src/lib/p4-kt";
 import { LocalKtStore, LocalVault, memoryBackend, VaultBundleStore, VaultReplayStore, VaultUnavailable, type KvBackend } from "../client/src/lib/p4-store";
 import { P4Room, type P4Events } from "../client/src/lib/p4-session";
@@ -362,5 +364,121 @@ describe("REVIEW-612 P11/P12 — the device vault", () => {
     const flaky: KvBackend = { persistent: true, get: async () => { throw new Error("quota"); }, put: async () => undefined, delete: async () => undefined, clear: async () => undefined };
     const guard = new ReplayGuard(new VaultReplayStore(new LocalVault(flaky), 0));
     await expect(guard.check(roomKeys.roomId, "m-x", Date.now())).rejects.toBeInstanceOf(VaultUnavailable);
+  });
+});
+
+/* ------------------------------------------------------------ P01: whom away messages are sealed to */
+
+const DAY = 24 * 60 * 60 * 1000;
+
+/** A device certified (v2) by an account, with its mailbox — as the hello's `acc` and the directory list it. */
+async function attested(accountSeed: number, now = Date.now()) {
+  const account = await ed25519FromSeed(new Uint8Array(32).fill(accountSeed));
+  const apk = b64(account.publicKey);
+  const dev = await device();
+  const mailbox = new Mailbox(new MemoryBundleStore(), dev);
+  const cert = await certifyDeviceV2(account.privateKey, dev.publicKey, now + DEVICE_CERT_LIFETIME_MS, now);
+  const bundle = (await mailbox.current(now)).bundle;
+  return { dev, apk, mailbox, acc: { apk, ac: cert.sig, cv: 2 as const, exp: cert.exp }, directory: { pk: dev.publicKey, apk, cert, bundle } as DirectoryDevice, bundle };
+}
+
+describe("REVIEW-612 P01 — away members: only devices this client authenticated", () => {
+  it("the account pin outlives the bundles: a week later Bob's NEW device (his account) is sealed to, the server's is not", async () => {
+    const now = Date.now();
+    const seen = now - 8 * DAY;
+    const bob = await attested(0x0b, seen);
+    const book = new TrustBook(null);
+    // A live session with Bob 8 days ago: a valid hello with his account.
+    book.rememberDevice(bob.dev.publicKey, { mb: bob.bundle, apk: bob.apk, acc: bob.acc, hello: true }, seen);
+    expect(book.pinAccount(roomKeys.roomId, "ref-bob", bob.apk, seen)).toBe("new");
+    expect(book.rememberRef(roomKeys.roomId, "ref-bob", bob.dev.publicKey, seen)).toBe(true);
+    // His bundle has expired; the pin has not.
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-bob", now)).toEqual([]);
+    expect(book.accountOf(roomKeys.roomId, "ref-bob")).toBe(bob.apk);
+    const bobNew = await attested(0x0b, now); // a new device of Bob's account (the directory)
+    const server = await attested(0x5e, now); // the server's own account
+    const alice = await device();
+    const sealed = await sealForAway({
+      roomId: roomKeys.roomId, id: "a1", payload: { id: "a1", text: "for Bob" }, refs: ["ref-bob"], mailbox: new Mailbox(new MemoryBundleStore(), alice), senderPk: alice.publicKey, now,
+      known: (ref) => book.sealableDevicesOfRef(roomKeys.roomId, ref, now),
+      directory: async () => [server.directory, bobNew.directory],
+      pinnedAccount: (ref) => book.accountOf(roomKeys.roomId, ref),
+    });
+    const item = sealed.per["ref-bob"] as MailboxItem;
+    expect(isMailboxItem(item)).toBe(true);
+    expect(await server.mailbox.open(item, roomKeys.roomId, now)).toBeNull();
+    expect((await bobNew.mailbox.open<{ text: string }>(item, roomKeys.roomId, now))?.payload.text).toBe("for Bob");
+    expect(sealed.sealing).toEqual([{ ref: "ref-bob", form: "mailbox", devices: 1, account: bob.apk }]);
+  });
+
+  it("a device the server puts behind a member's reference is refused; one seen only in a relayed item is never sealed to", async () => {
+    const now = Date.now();
+    const bob = await attested(0x0b, now);
+    const planted = await attested(0x5e, now);
+    const book = new TrustBook(null);
+    book.rememberDevice(bob.dev.publicKey, { mb: bob.bundle, apk: bob.apk, acc: bob.acc, hello: true }, now);
+    book.pinAccount(roomKeys.roomId, "ref-bob", bob.apk, now);
+    book.rememberRef(roomKeys.roomId, "ref-bob", bob.dev.publicKey, now);
+    // A device of another account, seen in a live hello under Bob's reference (the hub mislabels a peer): refused.
+    book.rememberDevice(planted.dev.publicKey, { mb: planted.bundle, apk: planted.apk, acc: planted.acc, hello: true }, now);
+    expect(book.rememberRef(roomKeys.roomId, "ref-bob", planted.dev.publicKey, now)).toBe(false);
+    expect(book.pinAccount(roomKeys.roomId, "ref-bob", planted.apk, now)).toBe("conflict");
+    expect(book.accountOf(roomKeys.roomId, "ref-bob")).toBe(bob.apk);
+    // A device without an account, learned from a relayed item only (no hello): not sealable even behind an unpinned reference.
+    const stranger = await device();
+    const strangerMb = new Mailbox(new MemoryBundleStore(), stranger);
+    book.rememberDevice(stranger.publicKey, { mb: (await strangerMb.current(now)).bundle }, now);
+    expect(book.rememberRef(roomKeys.roomId, "ref-carol", stranger.publicKey, now)).toBe(true);
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-carol", now)).toEqual([]);
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-bob", now).map((d) => d.pk)).toEqual([bob.dev.publicKey]);
+  });
+
+  it("a member without an account: its device seen in a hello is sealed to; that device cannot be moved to another reference", async () => {
+    const now = Date.now();
+    const dana = await device();
+    const danaMb = new Mailbox(new MemoryBundleStore(), dana);
+    const book = new TrustBook(null);
+    book.rememberDevice(dana.publicKey, { mb: (await danaMb.current(now)).bundle, hello: true }, now);
+    expect(book.rememberRef(roomKeys.roomId, "ref-dana", dana.publicKey, now)).toBe(true);
+    expect(book.rememberRef(roomKeys.roomId, "ref-eve", dana.publicKey, now)).toBe(false);
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-dana", now).map((d) => d.pk)).toEqual([dana.publicKey]);
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-eve", now)).toEqual([]);
+  });
+
+  it("a pinned member's device whose v2 certificate expired, or that key transparency revoked, is not sealed to", async () => {
+    const now = Date.now();
+    const bob = await attested(0x0b, now);
+    const book = new TrustBook(null);
+    book.rememberDevice(bob.dev.publicKey, { mb: bob.bundle, apk: bob.apk, acc: { ...bob.acc, exp: now - 1 }, hello: true }, now);
+    book.pinAccount(roomKeys.roomId, "ref-bob", bob.apk, now);
+    book.rememberRef(roomKeys.roomId, "ref-bob", bob.dev.publicKey, now);
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-bob", now)).toEqual([]);
+    book.rememberDevice(bob.dev.publicKey, { acc: bob.acc, apk: bob.apk, hello: true }, now);
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-bob", now)).toHaveLength(1);
+    book.markRevoked(bob.dev.publicKey, now);
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-bob", now)).toEqual([]);
+  });
+
+  it("accepting a changed key re-pins the member's account; old devices of the old account no longer count", async () => {
+    const now = Date.now();
+    const old = await attested(0x01, now);
+    const fresh = await attested(0x02, now);
+    const book = new TrustBook(null);
+    book.rememberDevice(old.dev.publicKey, { mb: old.bundle, apk: old.apk, acc: old.acc, hello: true }, now);
+    book.pinAccount(roomKeys.roomId, "ref-x", old.apk, now);
+    book.rememberRef(roomKeys.roomId, "ref-x", old.dev.publicKey, now);
+    book.repinAccount(roomKeys.roomId, "ref-x", fresh.apk, now);
+    expect(book.accountOf(roomKeys.roomId, "ref-x")).toBe(fresh.apk);
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-x", now)).toEqual([]);
+    book.rememberDevice(fresh.dev.publicKey, { mb: fresh.bundle, apk: fresh.apk, acc: fresh.acc, hello: true }, now);
+    expect(book.rememberRef(roomKeys.roomId, "ref-x", fresh.dev.publicKey, now)).toBe(true);
+    expect(book.sealableDevicesOfRef(roomKeys.roomId, "ref-x", now).map((d) => d.pk)).toEqual([fresh.dev.publicKey]);
+  });
+
+  it("account pins survive the book's trimming before plain device rows do", async () => {
+    const book = new TrustBook(null);
+    book.pinAccount(roomKeys.roomId, "ref-keep", b64(new Uint8Array(32).fill(3)), 1);
+    for (let i = 0; i < 520; i++) book.rememberRef(roomKeys.roomId, `ref-${i}`, `pk-${i}`, 10 + i);
+    expect(book.accountOf(roomKeys.roomId, "ref-keep")).toBe(b64(new Uint8Array(32).fill(3)));
   });
 });

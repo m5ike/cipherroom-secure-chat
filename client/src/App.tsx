@@ -1728,25 +1728,32 @@ function ChatApp() {
    * without any known bundle get the protocol-3 room envelope — `roomKeyFor`
    * names them (the info view says so).
    */
-  async function relayToAway(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets: AwayPeer[], text?: string): Promise<{ count: number; roomKeyFor: string[]; mailbox: boolean }> {
+  async function relayToAway(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets: AwayPeer[], text?: string): Promise<{ count: number; roomKeyFor: string[]; mailbox: boolean; mailboxFor: string[] }> {
     const socket = socketRef.current;
     const keys = keyRef.current;
-    const none = { count: 0, roomKeyFor: [], mailbox: false };
+    const none = { count: 0, roomKeyFor: [], mailbox: false, mailboxFor: [] };
     if (!socket || socket.readyState !== WebSocket.OPEN || targets.length === 0 || !keys) return none;
     const refs = targets.map((a) => a.accountId);
     let per: Record<string, unknown> = {};
     let without = refs;
+    let sealing: Awaited<ReturnType<typeof sealForAway>>["sealing"] = [];
     const identity = identityRef.current;
     const mailbox = await ensureMailbox();
     if (mailbox && identity && keys.version === 3) {
+      // 6.12 review P01 (§ 7.4): only devices this client authenticated — seen in a valid hello, and for a
+      // member whose account is pinned (kept past bundle expiry) only that account's; the server's
+      // directory only for a pinned account. Anyone else gets the room envelope the server cannot open.
+      const book = trustRef.current;
       const sealed = await sealForAway({
         roomId: keys.roomId, id: payload.id, payload, refs, mailbox, senderPk: identity.publicKey, sacc: helloAccountOf(identity.attestation),
-        known: (ref) => trustRef.current.devicesOfRef(keys.roomId, ref),
+        known: (ref) => book.sealableDevicesOfRef(keys.roomId, ref),
         directory: onHomeServer() ? (ref) => hubAsk<DirectoryDevice[]>("key-bundles", ref).then((d) => (Array.isArray(d) ? d : [])) : undefined,
-        pinnedAccount: (ref) => trustRef.current.devicesOfRef(keys.roomId, ref).find((d) => d.apk)?.apk ?? null,
-      }).catch(() => ({ per: {}, withoutBundle: refs, devices: 0 }));
+        pinnedAccount: (ref) => book.accountOf(keys.roomId, ref),
+        isRevoked: (pk) => book.isRevoked(pk),
+      }).catch(() => ({ per: {}, withoutBundle: refs, devices: 0, sealing: [] }));
       per = sealed.per;
       without = sealed.withoutBundle;
+      sealing = sealed.sealing;
     }
     const envelope = without.length > 0 ? await roomEnvelope() : null;
     const to = envelope ? refs : refs.filter((r) => per[r]);
@@ -1755,7 +1762,9 @@ function ChatApp() {
     const mention = mentionedAway(text, targets);
     socket.send(JSON.stringify({ type: "relay", messageId: payload.id, to, ...(envelope ? { envelope } : {}), ...(Object.keys(per).length ? { per } : {}), ...(mention.length ? { mention } : {}) }));
     const names = (list: string[]) => targets.filter((a) => list.includes(a.accountId)).map((a) => a.name);
-    return { count: to.length, roomKeyFor: envelope ? names(without) : [], mailbox: Object.keys(per).length > 0 };
+    // The info view names who got which form: mailboxes (how many devices, account-pinned or not), or the room key.
+    const mailboxFor = sealing.flatMap((s) => (s.form === "mailbox" ? [tf(lang, s.account ? "sec.sealedHow.mailboxAccount" : "sec.sealedHow.mailboxDevice", { name: names([s.ref])[0] ?? "?", n: s.devices })] : []));
+    return { count: to.length, roomKeyFor: envelope ? names(without) : [], mailbox: Object.keys(per).length > 0, mailboxFor };
   }
 
   /** 6.12: asks the hub about a member's reference (`key-bundles`, `kt-lookup`); null after 4 s. */
@@ -2239,9 +2248,9 @@ function ChatApp() {
         }
         if (!got) continue; // for another device of the account (or keys we no longer have)
         const account = await verifyAccount(got.sacc, got.spk);
-        trustRef.current.rememberDevice(got.spk, { mb: got.senderBundle, apk: account?.valid ? account.publicKey : null });
-        const ref = accountRefOf(item.from);
-        if (ref) trustRef.current.rememberRef(keys.roomId, ref, got.spk);
+        // Its bundle is remembered with its key — but NOT behind the reference the server says it came from,
+        // and not as a device seen in a hello: a relayed item never makes a device one we seal to (review P01).
+        trustRef.current.rememberDevice(got.spk, { mb: got.senderBundle, apk: account?.valid ? account.publicKey : null, acc: account?.valid ? got.sacc : null });
         opened = { payload: got.payload, version: 4, signer: signerOf(got.spk, account), certVersion: account?.v, sealedWith: "p4-mailbox" };
       } else {
         try {
@@ -2845,20 +2854,38 @@ function ChatApp() {
   }
 
   /** 6.12: a peer's hello was accepted — protocol 3 at once, protocol 4 once the session exists. */
+  /**
+   * § 7.4 (review P01): a live protocol-4 peer's room reference — the member's ACCOUNT is pinned behind it
+   * (kept past bundle expiry; another account already pinned is not replaced: that is a changed key), and the
+   * device is remembered behind it only when it belongs to the pinned account. Also when the reference
+   * arrives after the hello (the peer signed in meanwhile).
+   */
+  function rememberPeerRef(peerId: string) {
+    const keys = keyRef.current;
+    const info = p4Ref.current?.info(peerId);
+    const ref = peerRefsRef.current.get(peerId);
+    if (!keys || !ref || info?.protocol !== 4) return;
+    const book = trustRef.current;
+    if (info.account?.valid) book.pinAccount(keys.roomId, ref, info.account.publicKey);
+    book.rememberRef(keys.roomId, ref, info.pk);
+  }
+
   function onPeerReady(peerId: string, info: PeerInfo) {
     setP4Peers((cur) => ({ ...cur, [peerId]: info.protocol }));
-    const keys = keyRef.current;
+    // The username claim of the ACCEPTED hello (review P02: in a v4 hello it is signed; protocol 3 never was).
+    const user = cleanUsername(info.user);
+    if (user) peerUsersRef.current.set(peerId, user); else peerUsersRef.current.delete(peerId);
     if (info.protocol === 3) {
       warnOnce(`legacy:${info.pk}`, tf(lang, "p4.legacyPeer", { name: peersRef.current.get(peerId)?.name || `peer-${peerId.slice(-4)}` }), "info");
       // Both sides seal call frames with the protocol-3 pair's media keys.
       const pair = senderKeysRef.current.pairOf(peerId);
       if (pair && info.caps.includes("media")) mediaE2eeRef.current.setKeys(peerId, pair.mediaSend, pair.mediaRecv);
     } else {
-      // § 7.1 / 12.2: the device's bundle and account go with its pin; behind its room reference too (it may come back away).
+      // § 7.1 / 7.4 / 12.2: the device (seen in a valid hello: its device pin), its bundle and VALID account
+      // attestation; the member's account behind its room reference (rememberPeerRef).
       const apk = info.account?.valid ? info.account.publicKey : null;
-      trustRef.current.rememberDevice(info.pk, { mb: info.mb, apk });
-      const ref = peerRefsRef.current.get(peerId);
-      if (ref && keys) trustRef.current.rememberRef(keys.roomId, ref, info.pk);
+      trustRef.current.rememberDevice(info.pk, { mb: info.mb, apk, acc: apk ? info.acc : null, hello: true });
+      rememberPeerRef(peerId);
       if (apk) peerAccountKeysRef.current.set(peerId, apk);
       // § 14.4: their tree head against ours (split view), the account in the log.
       if (info.sth && onHomeServer()) void ktRef.current?.gossip(info.sth);
@@ -3079,8 +3106,7 @@ function ChatApp() {
       }
 
       if (raw.kind === "hello") {
-        const user = cleanUsername(raw.user);
-        if (user) peerUsersRef.current.set(peerId, user);
+        // 6.12 review P02: the username claim is taken from the ACCEPTED hello (onPeerReady) — in a v4 hello it is signed.
         if (excludedRef.current.has(String(raw.pk))) { try { channel.close(); } catch { /* ignore */ } return; }
         if (Array.isArray(raw.caps) && raw.caps.includes("bin")) binaryChannelsRef.current.add(channel);
         identityRef.current ??= await loadIdentity().catch(() => null);
@@ -3707,6 +3733,7 @@ function ChatApp() {
         // Someone signed in or out without leaving the room.
         const ref = accountRefOf(frame);
         if (ref) peerRefsRef.current.set(frame.peerId, ref); else peerRefsRef.current.delete(frame.peerId);
+        if (ref) rememberPeerRef(frame.peerId);
         setPeerView(frame.peerId, { name: frame.name });
         return;
       }
@@ -4138,6 +4165,7 @@ function ChatApp() {
     const relay = await relayToAway(payload, roomEnvelope, away, send?.sealed ? undefined : text);
     const relayed = relay.count;
     if (relay.mailbox) delivered.kinds.add("p4-mailbox");
+    if (relay.mailboxFor.length) audit.push({ state: "encrypted", at: Date.now(), meta: tf(lang, "sec.sealedHow.mailboxFor", { names: relay.mailboxFor.join(", ") }) });
     if (relay.roomKeyFor.length) {
       delivered.kinds.add("room");
       audit.push({ state: "encrypted", at: Date.now(), meta: tf(lang, "sec.sealedHow.roomFor", { names: relay.roomKeyFor.join(", ") }) });
@@ -4860,6 +4888,11 @@ function ChatApp() {
   function acceptChangedKey(m: ChatMessage) {
     const kid = m.identity?.kid;
     if (!kid || m.identity?.state !== "changed") return;
+    // § 7.4: accepting a changed key also re-pins the member's account behind its room reference (review P01).
+    const keys = keyRef.current;
+    const ref = peerRefsRef.current.get(m.senderId) ?? relaySendersRef.current.get(m.id)?.accountId;
+    const apk = peerAccountKeysRef.current.get(m.senderId);
+    if (keys && ref && apk && m.identity.account) void keyId(apk).then((k) => { if (k === kid) trustRef.current.repinAccount(keys.roomId, ref, apk); });
     void acceptChanged(pinsRef.current, roomRef.current, m.senderName, kid).then(() => {
       setMessages((cur) => cur.map((x) => (x.senderName === m.senderName && x.identity?.state === "changed" && x.identity.kid === kid && !x.identity.revoked ? { ...x, identity: { ...x.identity, state: "new" as const, accepted: true } } : x)));
     });
