@@ -1,0 +1,4123 @@
+{
+ "elements": [
+  {
+   "el": "column",
+   "label": "Column",
+   "group": "layout",
+   "container": true,
+   "text": false,
+   "props": [],
+   "help": "Children one under another."
+  },
+  {
+   "el": "row",
+   "label": "Row",
+   "group": "layout",
+   "container": true,
+   "text": false,
+   "props": [
+    {
+     "name": "wrap",
+     "kind": "bool",
+     "label": "Wrap to the next line"
+    }
+   ],
+   "help": "Children side by side."
+  },
+  {
+   "el": "stack",
+   "label": "Stack",
+   "group": "layout",
+   "container": true,
+   "text": false,
+   "props": [],
+   "help": "Children on top of each other (the last one on top)."
+  },
+  {
+   "el": "scroll",
+   "label": "Scroll",
+   "group": "layout",
+   "container": true,
+   "text": false,
+   "props": [
+    {
+     "name": "horizontal",
+     "kind": "bool",
+     "label": "Horizontal"
+    }
+   ],
+   "help": "Scrolls its one child."
+  },
+  {
+   "el": "card",
+   "label": "Card",
+   "group": "layout",
+   "container": true,
+   "text": false,
+   "props": [],
+   "help": "A raised surface with rounded corners."
+  },
+  {
+   "el": "text",
+   "label": "Text",
+   "group": "content",
+   "container": false,
+   "text": true,
+   "props": [
+    {
+     "name": "variant",
+     "kind": "select",
+     "label": "Style",
+     "options": [
+      "body",
+      "title",
+      "headline",
+      "display",
+      "caption",
+      "label",
+      "mono"
+     ]
+    },
+    {
+     "name": "align",
+     "kind": "select",
+     "label": "Alignment",
+     "options": [
+      "start",
+      "center",
+      "end"
+     ]
+    },
+    {
+     "name": "links",
+     "kind": "bool",
+     "label": "Clickable links"
+    }
+   ],
+   "help": "A text template: {$var}, {_'key'}, {=expression}."
+  },
+  {
+   "el": "icon",
+   "label": "Icon",
+   "group": "content",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "icon",
+     "kind": "icon",
+     "label": "Icon"
+    },
+    {
+     "name": "size",
+     "kind": "number",
+     "label": "Size (dp)"
+    },
+    {
+     "name": "color",
+     "kind": "color",
+     "label": "Colour"
+    }
+   ],
+   "help": "A lucide icon, drawn natively."
+  },
+  {
+   "el": "image",
+   "label": "Image",
+   "group": "content",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "src",
+     "kind": "image",
+     "label": "Image",
+     "help": "asset:<name> from the design's assets, or a fixed https URL on a host in ANDROID_DESIGN_IMAGE_HOSTS (never computed: 6.7, F-01)"
+    },
+    {
+     "name": "fit",
+     "kind": "select",
+     "label": "Fit",
+     "options": [
+      "cover",
+      "contain",
+      "center"
+     ]
+    },
+    {
+     "name": "ratio",
+     "kind": "number",
+     "label": "Width / height"
+    }
+   ],
+   "help": "A picture."
+  },
+  {
+   "el": "avatar",
+   "label": "Avatar",
+   "group": "content",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "name",
+     "kind": "text",
+     "label": "Name (initials, colour)"
+    },
+    {
+     "name": "size",
+     "kind": "number",
+     "label": "Size (dp)"
+    }
+   ],
+   "help": "A round badge with initials."
+  },
+  {
+   "el": "badge",
+   "label": "Badge",
+   "group": "content",
+   "container": false,
+   "text": true,
+   "props": [
+    {
+     "name": "icon",
+     "kind": "icon",
+     "label": "Icon"
+    },
+    {
+     "name": "color",
+     "kind": "color",
+     "label": "Colour"
+    }
+   ],
+   "help": "A small pill with a number or a word."
+  },
+  {
+   "el": "chip",
+   "label": "Chip",
+   "group": "content",
+   "container": false,
+   "text": true,
+   "props": [
+    {
+     "name": "icon",
+     "kind": "icon",
+     "label": "Icon"
+    },
+    {
+     "name": "selected",
+     "kind": "expr",
+     "label": "Selected"
+    }
+   ],
+   "help": "A compact choice."
+  },
+  {
+   "el": "divider",
+   "label": "Divider",
+   "group": "content",
+   "container": false,
+   "text": false,
+   "props": [],
+   "help": "A thin line."
+  },
+  {
+   "el": "spacer",
+   "label": "Spacer",
+   "group": "content",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "size",
+     "kind": "number",
+     "label": "Size (dp); empty = fill"
+    }
+   ],
+   "help": "Empty space."
+  },
+  {
+   "el": "progress",
+   "label": "Progress",
+   "group": "content",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "value",
+     "kind": "expr",
+     "label": "Value 0–1 (empty = spinning)"
+    }
+   ],
+   "help": "A progress bar."
+  },
+  {
+   "el": "button",
+   "label": "Button",
+   "group": "controls",
+   "container": false,
+   "text": true,
+   "props": [
+    {
+     "name": "icon",
+     "kind": "icon",
+     "label": "Icon"
+    },
+    {
+     "name": "variant",
+     "kind": "select",
+     "label": "Variant",
+     "options": [
+      "primary",
+      "tonal",
+      "secondary",
+      "text",
+      "danger"
+     ]
+    },
+    {
+     "name": "disabled",
+     "kind": "expr",
+     "label": "Disabled when"
+    }
+   ],
+   "help": "A button; its action is in Events."
+  },
+  {
+   "el": "iconButton",
+   "label": "Icon button",
+   "group": "controls",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "icon",
+     "kind": "icon",
+     "label": "Icon"
+    },
+    {
+     "name": "label",
+     "kind": "text",
+     "label": "Accessible label"
+    },
+    {
+     "name": "variant",
+     "kind": "select",
+     "label": "Variant",
+     "options": [
+      "primary",
+      "tonal",
+      "secondary",
+      "text",
+      "danger"
+     ]
+    },
+    {
+     "name": "badge",
+     "kind": "expr",
+     "label": "Badge number"
+    }
+   ],
+   "help": "A round button with an icon."
+  },
+  {
+   "el": "input",
+   "label": "Input",
+   "group": "controls",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "bind",
+     "kind": "text",
+     "label": "Value name",
+     "help": "Stored under $form.<name>"
+    },
+    {
+     "name": "hint",
+     "kind": "text",
+     "label": "Hint"
+    },
+    {
+     "name": "type",
+     "kind": "select",
+     "label": "Type",
+     "options": [
+      "text",
+      "password",
+      "number",
+      "email",
+      "phone",
+      "multiline",
+      "url"
+     ]
+    }
+   ],
+   "help": "A text field; Enter runs its submit action."
+  },
+  {
+   "el": "switch",
+   "label": "Switch",
+   "group": "controls",
+   "container": false,
+   "text": true,
+   "props": [
+    {
+     "name": "checked",
+     "kind": "expr",
+     "label": "On when"
+    },
+    {
+     "name": "setting",
+     "kind": "text",
+     "label": "Setting",
+     "help": "e.g. voice.autoplay — the switch changes it itself"
+    },
+    {
+     "name": "bind",
+     "kind": "text",
+     "label": "Or a form value"
+    }
+   ],
+   "help": "An on/off switch: bound to a setting it changes it itself, else its click action does."
+  },
+  {
+   "el": "checkbox",
+   "label": "Checkbox",
+   "group": "controls",
+   "container": false,
+   "text": true,
+   "props": [
+    {
+     "name": "checked",
+     "kind": "expr",
+     "label": "Checked when"
+    },
+    {
+     "name": "setting",
+     "kind": "text",
+     "label": "Setting",
+     "help": "e.g. voice.autoplay — the switch changes it itself"
+    },
+    {
+     "name": "bind",
+     "kind": "text",
+     "label": "Or a form value"
+    }
+   ],
+   "help": "A checkbox (e.g. selecting rooms)."
+  },
+  {
+   "el": "select",
+   "label": "Select",
+   "group": "controls",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "setting",
+     "kind": "text",
+     "label": "Setting",
+     "help": "e.g. voice.lang — read and changed by the element"
+    },
+    {
+     "name": "bind",
+     "kind": "text",
+     "label": "Or a form value"
+    },
+    {
+     "name": "options",
+     "kind": "text",
+     "label": "Options",
+     "help": "value:Label|value2:{_'key'} or =$list (values or {value, label})"
+    },
+    {
+     "name": "hint",
+     "kind": "text",
+     "label": "Hint"
+    }
+   ],
+   "help": "A drop-down choice; its change event follows the new value ($value)."
+  },
+  {
+   "el": "slider",
+   "label": "Slider",
+   "group": "controls",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "setting",
+     "kind": "text",
+     "label": "Setting"
+    },
+    {
+     "name": "bind",
+     "kind": "text",
+     "label": "Or a form value"
+    },
+    {
+     "name": "min",
+     "kind": "number",
+     "label": "Minimum"
+    },
+    {
+     "name": "max",
+     "kind": "number",
+     "label": "Maximum"
+    },
+    {
+     "name": "step",
+     "kind": "number",
+     "label": "Step"
+    }
+   ],
+   "help": "A number on a track (rate, pitch, size…)."
+  },
+  {
+   "el": "segmented",
+   "label": "Segmented",
+   "group": "controls",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "setting",
+     "kind": "text",
+     "label": "Setting"
+    },
+    {
+     "name": "bind",
+     "kind": "text",
+     "label": "Or a form value"
+    },
+    {
+     "name": "options",
+     "kind": "text",
+     "label": "Options",
+     "help": "value:Label|…"
+    }
+   ],
+   "help": "A few choices side by side (tone, density…)."
+  },
+  {
+   "el": "sheet",
+   "label": "Sheet / dock",
+   "group": "layout",
+   "container": true,
+   "text": false,
+   "props": [
+    {
+     "name": "present",
+     "kind": "select",
+     "label": "Shown as",
+     "options": [
+      "sheet",
+      "dock"
+     ],
+     "help": "sheet: from the bottom over the screen; dock: a small card floating above the composer, a tap outside closes it (an expression may choose)"
+    },
+    {
+     "name": "dismissOnAction",
+     "kind": "expr",
+     "label": "Close after an action",
+     "help": "true: it fades away as soon as one of its elements runs an action"
+    }
+   ],
+   "help": "The root of a sheet (sheet.open): shown from the bottom or as a floating dock; its children one under another."
+  },
+  {
+   "el": "swipe",
+   "label": "Swipe actions",
+   "group": "layout",
+   "container": true,
+   "text": false,
+   "props": [
+    {
+     "name": "right",
+     "kind": "text",
+     "label": "Dragged right: menu",
+     "help": "the id of a menu (Menus) whose items show at the row's left edge when it is dragged to the right — e.g. room-swipe-right (Delete); empty = that way off"
+    },
+    {
+     "name": "left",
+     "kind": "text",
+     "label": "Dragged left: menu",
+     "help": "the id of a menu whose items show at the row's right edge when it is dragged to the left — e.g. room-swipe-left (Clone, Edit); empty = that way off"
+    },
+    {
+     "name": "rightColor",
+     "kind": "color",
+     "label": "Dragged right: colour",
+     "help": "the actions' colour (default @danger)"
+    },
+    {
+     "name": "leftColor",
+     "kind": "color",
+     "label": "Dragged left: colour",
+     "help": "the actions' colour (default @primary)"
+    }
+   ],
+   "help": "Wraps a list row: dragged sideways it slides away from the actions of a menu (icon and label; a tap runs one, the row springs back otherwise). A menu item's argument sees the row's variables ($room…); its condition hides it. TalkBack offers the same actions on the row."
+  },
+  {
+   "el": "slot",
+   "label": "App part",
+   "group": "logic",
+   "container": false,
+   "text": false,
+   "props": [
+    {
+     "name": "name",
+     "kind": "slot",
+     "label": "Part"
+    }
+   ],
+   "help": "A native component of the app (message list, composer…)."
+  }
+ ],
+ "style": [
+  {
+   "name": "padding",
+   "label": "Padding",
+   "help": "dp: 12 or \"8 16\" or \"8 16 8 16\""
+  },
+  {
+   "name": "margin",
+   "label": "Margin",
+   "help": "dp, same forms as padding"
+  },
+  {
+   "name": "gap",
+   "label": "Gap",
+   "help": "dp between children"
+  },
+  {
+   "name": "width",
+   "label": "Width",
+   "help": "match, wrap or dp"
+  },
+  {
+   "name": "height",
+   "label": "Height",
+   "help": "match, wrap or dp"
+  },
+  {
+   "name": "maxWidth",
+   "label": "Max width",
+   "help": "dp"
+  },
+  {
+   "name": "weight",
+   "label": "Weight",
+   "help": "share of the free space in a row/column"
+  },
+  {
+   "name": "align",
+   "label": "Align children",
+   "help": "start, center, end, stretch"
+  },
+  {
+   "name": "justify",
+   "label": "Justify children",
+   "help": "start, center, end, between, around"
+  },
+  {
+   "name": "self",
+   "label": "Align self",
+   "help": "start, center, end, stretch"
+  },
+  {
+   "name": "bg",
+   "label": "Background",
+   "help": "@token or #rrggbb (#aarrggbb)"
+  },
+  {
+   "name": "fg",
+   "label": "Text colour",
+   "help": "@token or #rrggbb"
+  },
+  {
+   "name": "radius",
+   "label": "Corner radius",
+   "help": "dp"
+  },
+  {
+   "name": "border",
+   "label": "Border",
+   "help": "\"1 @border\" (width colour)"
+  },
+  {
+   "name": "elevation",
+   "label": "Elevation",
+   "help": "dp of shadow"
+  },
+  {
+   "name": "size",
+   "label": "Text size",
+   "help": "sp"
+  },
+  {
+   "name": "bold",
+   "label": "Bold",
+   "help": "true / false"
+  },
+  {
+   "name": "italic",
+   "label": "Italic",
+   "help": "true / false"
+  },
+  {
+   "name": "font",
+   "label": "Font",
+   "help": "sans, serif, mono"
+  },
+  {
+   "name": "lines",
+   "label": "Max lines",
+   "help": "number"
+  },
+  {
+   "name": "opacity",
+   "label": "Opacity",
+   "help": "0–1"
+  }
+ ],
+ "colors": [
+  "primary",
+  "onPrimary",
+  "background",
+  "surface",
+  "surfaceVariant",
+  "onSurface",
+  "muted",
+  "accent",
+  "border",
+  "danger",
+  "success",
+  "warning",
+  "bubbleIn",
+  "onBubbleIn",
+  "bubbleOut",
+  "onBubbleOut",
+  "scrim"
+ ],
+ "anims": [
+  "none",
+  "fade",
+  "slide-up",
+  "slide-down",
+  "slide-left",
+  "slide-right",
+  "scale",
+  "pop"
+ ],
+ "easings": [
+  "standard",
+  "decelerate",
+  "accelerate",
+  "linear",
+  "overshoot",
+  "bounce"
+ ],
+ "events": [
+  "click",
+  "longClick",
+  "submit",
+  "change"
+ ],
+ "actions": [
+  {
+   "action": "screen.open",
+   "arg": "screen id",
+   "help": "Open a screen (settings, about, rooms…)"
+  },
+  {
+   "action": "back",
+   "arg": "",
+   "help": "Back / close"
+  },
+  {
+   "action": "menu.open",
+   "arg": "menu id",
+   "help": "Show a menu of the design (main, room)"
+  },
+  {
+   "action": "room.join",
+   "arg": "",
+   "help": "The form to join a new room"
+  },
+  {
+   "action": "room.switch",
+   "arg": "room key",
+   "help": "Make a connected room the active one (or connect it)"
+  },
+  {
+   "action": "room.toggle",
+   "arg": "room key",
+   "help": "Select / unselect a room in the list"
+  },
+  {
+   "action": "rooms.connect",
+   "arg": "",
+   "help": "Connect every selected room"
+  },
+  {
+   "action": "room.leave",
+   "arg": "room key (empty = active)",
+   "help": "Disconnect a room"
+  },
+  {
+   "action": "room.forget",
+   "arg": "room key",
+   "help": "Remove a saved room"
+  },
+  {
+   "action": "message.send",
+   "arg": "",
+   "help": "Send the composer's text"
+  },
+  {
+   "action": "message.reply",
+   "arg": "message id",
+   "help": "Reply to a message"
+  },
+  {
+   "action": "message.copy",
+   "arg": "message id",
+   "help": "Copy a message"
+  },
+  {
+   "action": "users.toggle",
+   "arg": "",
+   "help": "Show / hide the user panel"
+  },
+  {
+   "action": "users.dock",
+   "arg": "none | left | right | bottom",
+   "help": "Dock the user panel to an edge"
+  },
+  {
+   "action": "users.autoHide",
+   "arg": "true | false (empty = toggle)",
+   "help": "Pin or auto-hide the docked panel"
+  },
+  {
+   "action": "call.audio",
+   "arg": "",
+   "help": "Start / join a voice call in the room"
+  },
+  {
+   "action": "call.video",
+   "arg": "",
+   "help": "Start / join a video call"
+  },
+  {
+   "action": "call.end",
+   "arg": "",
+   "help": "Hang up"
+  },
+  {
+   "action": "call.mute",
+   "arg": "",
+   "help": "Mute / unmute"
+  },
+  {
+   "action": "lock.now",
+   "arg": "",
+   "help": "Lock the app"
+  },
+  {
+   "action": "lock.biometric",
+   "arg": "",
+   "help": "Unlock with biometrics"
+  },
+  {
+   "action": "theme.toggle",
+   "arg": "",
+   "help": "Light / dark"
+  },
+  {
+   "action": "lang.set",
+   "arg": "en | cs | de | es | it | fr | sk | sl | fi | system",
+   "help": "Language (6.13: nine; system = as the phone)"
+  },
+  {
+   "action": "update.check",
+   "arg": "",
+   "help": "Look for a new bundle or release"
+  },
+  {
+   "action": "update.install",
+   "arg": "",
+   "help": "Install what was downloaded"
+  },
+  {
+   "action": "update.later",
+   "arg": "",
+   "help": "Remind later"
+  },
+  {
+   "action": "flash",
+   "arg": "text",
+   "help": "Show a flash message"
+  },
+  {
+   "action": "url.open",
+   "arg": "https URL",
+   "help": "Open a web page"
+  },
+  {
+   "action": "copy",
+   "arg": "text",
+   "help": "Copy to the clipboard"
+  },
+  {
+   "action": "share",
+   "arg": "text",
+   "help": "The system share sheet"
+  },
+  {
+   "action": "fn.run",
+   "arg": "/command args",
+   "help": "Run a Functions command in the active room"
+  },
+  {
+   "action": "lib.run",
+   "arg": "library name",
+   "help": "Run an action library of the design"
+  },
+  {
+   "action": "set",
+   "arg": "name=value",
+   "help": "Set a value in $form"
+  },
+  {
+   "action": "setting.set",
+   "arg": "key=value",
+   "help": "Change a setting (Settings: voice.rate=1.2, location.inHeader=true…)"
+  },
+  {
+   "action": "setting.toggle",
+   "arg": "key",
+   "help": "Switch a yes/no setting"
+  },
+  {
+   "action": "sheet.open",
+   "arg": "screen id",
+   "help": "Show a screen of the design as a sheet from the bottom (attach, tools…)"
+  },
+  {
+   "action": "sheet.close",
+   "arg": "",
+   "help": "Close the sheet"
+  },
+  {
+   "action": "compose",
+   "arg": "photo | camera | file | location | voice | voiceText | asVoice | dictate",
+   "help": "The composer: a picture, the camera, a file, the position, a voice message, speech sent as text, the text as speech, dictation"
+  },
+  {
+   "action": "message.kind",
+   "arg": "normal | tap | vanish[:seconds] | seal[:code]",
+   "help": "The kind of the next message (they combine)"
+  },
+  {
+   "action": "message.recipients",
+   "arg": "",
+   "help": "Choose who gets the next message (a private message)"
+  },
+  {
+   "action": "msg.map",
+   "arg": "message id",
+   "help": "Open the sender's position on a map"
+  },
+  {
+   "action": "msg.source",
+   "arg": "message id",
+   "help": "Play the recording a transcript came from"
+  },
+  {
+   "action": "msg.open",
+   "arg": "message id",
+   "help": "Open the message's file in another app"
+  },
+  {
+   "action": "voice.speak",
+   "arg": "text",
+   "help": "Read a text aloud (the voice settings)"
+  },
+  {
+   "action": "voice.stop",
+   "arg": "",
+   "help": "Stop reading"
+  },
+  {
+   "action": "voice.dictate",
+   "arg": "",
+   "help": "Start / stop dictation (the voice tool)"
+  },
+  {
+   "action": "ai.send",
+   "arg": "",
+   "help": "Send $form.aiInput to the AI assistant"
+  },
+  {
+   "action": "ai.stop",
+   "arg": "",
+   "help": "Stop the answer"
+  },
+  {
+   "action": "ai.clear",
+   "arg": "",
+   "help": "A new conversation"
+  },
+  {
+   "action": "nfc.read",
+   "arg": "",
+   "help": "Read a tag (a room's connection card with $form.nfcPin)"
+  },
+  {
+   "action": "nfc.write",
+   "arg": "",
+   "help": "Write the active room to a tag, sealed with $form.nfcPin"
+  },
+  {
+   "action": "nfc.emulate",
+   "arg": "",
+   "help": "Answer as a tag with the active room's card (another phone reads it)"
+  },
+  {
+   "action": "nfc.stop",
+   "arg": "",
+   "help": "Stop reading / writing / answering"
+  },
+  {
+   "action": "account.signin",
+   "arg": "",
+   "help": "Sign in with a passkey"
+  },
+  {
+   "action": "account.signup",
+   "arg": "",
+   "help": "Create an account with a new passkey"
+  },
+  {
+   "action": "account.signout",
+   "arg": "everywhere (empty = this device)",
+   "help": "Sign out"
+  },
+  {
+   "action": "pin.change",
+   "arg": "",
+   "help": "Change the PIN"
+  },
+  {
+   "action": "biometric.toggle",
+   "arg": "",
+   "help": "Unlock with biometrics on / off"
+  },
+  {
+   "action": "wipe.ask",
+   "arg": "",
+   "help": "Erase all data (asks first)"
+  },
+  {
+   "action": "system.settings",
+   "arg": "notifications | app | location",
+   "help": "The phone's settings for the app"
+  },
+  {
+   "action": "call.audioText",
+   "arg": "",
+   "help": "A call where my messages are spoken into it and what the others say is written"
+  },
+  {
+   "action": "call.camera",
+   "arg": "",
+   "help": "Camera on / off in a video call"
+  },
+  {
+   "action": "call.switchCamera",
+   "arg": "",
+   "help": "Front / back camera"
+  },
+  {
+   "action": "call.speaker",
+   "arg": "",
+   "help": "Speaker / earpiece"
+  },
+  {
+   "action": "appearance.reset",
+   "arg": "",
+   "help": "The design's look again (no own tone, accent or size)"
+  },
+  {
+   "action": "account.recovery",
+   "arg": "",
+   "help": "Create (or replace) the account's recovery code — shown once; on the web it opens the account without this phone"
+  },
+  {
+   "action": "account.addPasskey",
+   "arg": "",
+   "help": "Add a passkey with PRF to the signed-in account (its key is sealed for it)"
+  },
+  {
+   "action": "people.open",
+   "arg": "person id",
+   "help": "A person's detail (users.person as a sheet)"
+  },
+  {
+   "action": "people.select",
+   "arg": "person id",
+   "help": "Add / remove a person from who gets the next message"
+  },
+  {
+   "action": "people.all",
+   "arg": "",
+   "help": "Everyone connected gets the next message (each selected)"
+  },
+  {
+   "action": "people.none",
+   "arg": "",
+   "help": "Clear the selection (the next message goes to everyone)"
+  },
+  {
+   "action": "people.message",
+   "arg": "person id",
+   "help": "A private message to only this person (the composer gets the focus)"
+  },
+  {
+   "action": "people.call",
+   "arg": "person id",
+   "help": "A voice call (the room's call, as on the web)"
+  },
+  {
+   "action": "people.video",
+   "arg": "person id",
+   "help": "A video call (the room's call)"
+  },
+  {
+   "action": "people.verify",
+   "arg": "person id",
+   "help": "Compare the safety number and mark the person verified"
+  },
+  {
+   "action": "people.link",
+   "arg": "person id",
+   "help": "Link a signed-in person with a contact of the phone (the contact picker)"
+  },
+  {
+   "action": "people.unlink",
+   "arg": "person id",
+   "help": "Remove the link with the phone contact"
+  },
+  {
+   "action": "people.unlinkAll",
+   "arg": "",
+   "help": "Remove every link with the phone's contacts (asks first)"
+  },
+  {
+   "action": "msg.info",
+   "arg": "message id",
+   "help": "The message's details: when, who, size, kinds, every state with its time, receipts; hide and delete"
+  },
+  {
+   "action": "msg.mapPreview",
+   "arg": "message id",
+   "help": "A header position's map in a dialog (the full map when maps are off)"
+  },
+  {
+   "action": "msg.save",
+   "arg": "message id",
+   "help": "Save the message's file (the system's file picker)"
+  },
+  {
+   "action": "msg.share",
+   "arg": "message id",
+   "help": "Share the message's file with another app"
+  },
+  {
+   "action": "msg.forward",
+   "arg": "message id",
+   "help": "Forward the message to a room or a person"
+  },
+  {
+   "action": "msg.showHidden",
+   "arg": "",
+   "help": "Show / leave out the room's hidden messages"
+  },
+  {
+   "action": "look.set",
+   "arg": "key=value",
+   "help": "Change the look (appearance.* or look.*) in place — the screen is drawn again, the app does not restart"
+  },
+  {
+   "action": "look.reset",
+   "arg": "",
+   "help": "The design's own look again (template, colours, font, motion, buttons), in place"
+  },
+  {
+   "action": "nfc.workbench",
+   "arg": "",
+   "help": "Open the NFC workbench (reader choice, scan, per-type functions, the M5Cet card)"
+  },
+  {
+   "action": "nfc.builder",
+   "arg": "",
+   "help": "Open the M5Cet card builder (records, PIN/PassKey, one-time, write)"
+  },
+  {
+   "action": "nfc.reader",
+   "arg": "internal|usb|bluetooth",
+   "help": "Choose the NFC reader (the same names as the web)"
+  },
+  {
+   "action": "account.register",
+   "arg": "",
+   "help": "Open the registration form (name, country, mobile, e-mail → a new account with a passkey); signed out only"
+  },
+  {
+   "action": "notify.up",
+   "arg": "android | webpush | email",
+   "help": "A channel a place earlier in the order the server tries (Settings › Notifications)"
+  },
+  {
+   "action": "notify.down",
+   "arg": "android | webpush | email",
+   "help": "A channel a place later"
+  },
+  {
+   "action": "notify.use",
+   "arg": "android | webpush | email",
+   "help": "Use a channel (at the end of the order)"
+  },
+  {
+   "action": "notify.drop",
+   "arg": "android | webpush | email",
+   "help": "Leave a channel out"
+  },
+  {
+   "action": "notify.test",
+   "arg": "",
+   "help": "A test notification through the account's channels (signed out: the app shows one itself)"
+  },
+  {
+   "action": "notify.sync",
+   "arg": "",
+   "help": "Send the notification settings to the server now"
+  },
+  {
+   "action": "voiceFx.test",
+   "arg": "",
+   "help": "The voice changer's test: record 4 s through it and play them back (again: stop)"
+  },
+  {
+   "action": "voiceFx.reset",
+   "arg": "",
+   "help": "The voice changer's custom values back to the defaults"
+  },
+  {
+   "action": "room.delete",
+   "arg": "room key",
+   "help": "Asks first, then deletes a saved room from the list (and its history on this phone)"
+  },
+  {
+   "action": "room.clone",
+   "arg": "room key",
+   "help": "Saves a copy of a saved room under a new name (same passphrase and nickname; not connected)"
+  },
+  {
+   "action": "room.edit",
+   "arg": "room key",
+   "help": "The join form filled with a saved room (the room.edit sheet): its name, passphrase, nickname"
+  },
+  {
+   "action": "profile.open",
+   "arg": "",
+   "help": "Settings › Public profile: the editor, with the card as it is saved"
+  },
+  {
+   "action": "profile.pick",
+   "arg": "avatar | cover",
+   "help": "Pick the photo or the background (cropped, shrunk, re-encoded without metadata)"
+  },
+  {
+   "action": "profile.clear",
+   "arg": "avatar | cover",
+   "help": "Remove the photo or the background"
+  },
+  {
+   "action": "profile.field",
+   "arg": "field index | new",
+   "help": "Edit a field (kind, label, value, who sees it) or add one, in a dialog"
+  },
+  {
+   "action": "profile.sync",
+   "arg": "",
+   "help": "Take the form's values (nickname, about, audiences, preview) into the editor and draw it again"
+  },
+  {
+   "action": "profile.save",
+   "arg": "",
+   "help": "Save: the whole card sealed into the vault, the public part on the server (withdrawn when nothing is public)"
+  },
+  {
+   "action": "profile.public",
+   "arg": "username",
+   "help": "Look up the public profile of a person's username (their detail shows it)"
+  },
+  {
+   "action": "send.option",
+   "arg": "asVoice | voiceText | seal[:code] | newCode | vanish[:seconds] | tap | none",
+   "help": "An option of the messages sent from the composer on / off (\"Send another way\"): applied when one is sent, on until turned off — as voice and speak-it-send-text exclude each other; newCode makes up a code ($form.msgSeal), none turns all off"
+  },
+  {
+   "action": "calllog.open",
+   "arg": "",
+   "help": "The History screen (calls and messages of every room), loaded afresh"
+  },
+  {
+   "action": "calllog.refresh",
+   "arg": "",
+   "help": "Apply $form.logFilter (all | calls | messages | missed) and $form.logQuery to the History"
+  },
+  {
+   "action": "calllog.item",
+   "arg": "entry id",
+   "help": "Open an entry's room (a message: scrolled to it)"
+  },
+  {
+   "action": "calllog.call",
+   "arg": "entry id",
+   "help": "Call an entry's room again — after a confirmation, never at once"
+  },
+  {
+   "action": "calllog.clear",
+   "arg": "",
+   "help": "Delete the app's call history on this phone (asks first; messages stay)"
+  },
+  {
+   "action": "calllog.system",
+   "arg": "",
+   "help": "Remove every call this app wrote into the phone's call log (asks first)"
+  },
+  {
+   "action": "conversations.settings",
+   "arg": "room | (empty)",
+   "help": "The phone's settings of the room on screen as a conversation — priority, sound (Android 11+; else the messages channel); empty: the app's notification settings"
+  },
+  {
+   "action": "msg.quote",
+   "arg": "the original's message id",
+   "help": "A reply's quote card: scroll to the message it answers and flash it (or say it is not on this device / hidden)"
+  },
+  {
+   "action": "msg.sender",
+   "arg": "message id",
+   "help": "A sender's avatar: their profile as they share it with the room (message.sender), else their name and that they share nothing"
+  },
+  {
+   "action": "msg.forwardRoom",
+   "arg": "room key (empty = back to the rooms)",
+   "help": "The forward sheet: forward into this connected room — everyone there or one person next"
+  },
+  {
+   "action": "msg.forwardTo",
+   "arg": "person id (empty = everyone in the room)",
+   "help": "The forward sheet: send the forwarded message (privately to one person, or to the whole room)"
+  },
+  {
+   "action": "profile.audience",
+   "arg": "field index | nickname | about | avatar | cover",
+   "help": "Who sees an item of the profile: a menu with only me / room members / public"
+  },
+  {
+   "action": "kt.dismiss",
+   "arg": "",
+   "help": "Key transparency's alert (settings): the person saw it — an unknown device of their account was theirs; it comes back while another cause stays"
+  }
+ ],
+ "slots": [
+  {
+   "name": "splashLogo",
+   "label": "Animated logo",
+   "screens": [
+    "splash"
+   ]
+  },
+  {
+   "name": "logo",
+   "label": "Logo",
+   "screens": [
+    "lock",
+    "enroll",
+    "about",
+    "rooms"
+   ]
+  },
+  {
+   "name": "lockPad",
+   "label": "PIN pad",
+   "screens": [
+    "lock"
+   ]
+  },
+  {
+   "name": "enrollForm",
+   "label": "Server and code form",
+   "screens": [
+    "enroll"
+   ]
+  },
+  {
+   "name": "roomList",
+   "label": "Rooms (items: rooms.item)",
+   "screens": [
+    "rooms"
+   ]
+  },
+  {
+   "name": "roomTabs",
+   "label": "Connected rooms bar",
+   "screens": [
+    "room"
+   ]
+  },
+  {
+   "name": "messages",
+   "label": "Messages (message.in / .out / .sys)",
+   "screens": [
+    "room"
+   ]
+  },
+  {
+   "name": "composer",
+   "label": "Composer",
+   "screens": [
+    "room"
+   ]
+  },
+  {
+   "name": "userPanel",
+   "label": "User panel (users, users.handle)",
+   "screens": [
+    "room"
+   ]
+  },
+  {
+   "name": "userList",
+   "label": "Users (items: users.item)",
+   "screens": [
+    "users"
+   ]
+  },
+  {
+   "name": "callControls",
+   "label": "Call controls",
+   "screens": [
+    "call"
+   ]
+  },
+  {
+   "name": "callVideo",
+   "label": "Video tiles",
+   "screens": [
+    "call"
+   ]
+  },
+  {
+   "name": "settingsList",
+   "label": "Settings",
+   "screens": [
+    "settings"
+   ]
+  },
+  {
+   "name": "joinForm",
+   "label": "Join a room form",
+   "screens": [
+    "join"
+   ]
+  },
+  {
+   "name": "updateProgress",
+   "label": "Download progress",
+   "screens": [
+    "update"
+   ]
+  },
+  {
+   "name": "msgBody",
+   "label": "Message body (kinds, text, attachment, outputs)",
+   "screens": [
+    "message.in",
+    "message.out"
+   ]
+  },
+  {
+   "name": "aiChat",
+   "label": "AI conversation",
+   "screens": [
+    "ai"
+   ]
+  },
+  {
+   "name": "voicePad",
+   "label": "Dictation and speech",
+   "screens": [
+    "voice"
+   ]
+  },
+  {
+   "name": "nfcPanel",
+   "label": "NFC reader / writer",
+   "screens": [
+    "nfc"
+   ]
+  },
+  {
+   "name": "nfcWork",
+   "label": "NFC workbench",
+   "screens": [
+    "nfc"
+   ]
+  },
+  {
+   "name": "nfcBuilder",
+   "label": "M5Cet card builder",
+   "screens": [
+    "nfc.builder"
+   ]
+  },
+  {
+   "name": "msgHold",
+   "label": "Hold area beside a bubble (hold-to-read)",
+   "screens": [
+    "message.in",
+    "message.out"
+   ]
+  }
+ ],
+ "screens": [
+  {
+   "id": "splash",
+   "label": "Splash",
+   "group": "system",
+   "vars": [
+    "$app",
+    "$status",
+    "$busy"
+   ],
+   "sample": {
+    "app": {
+     "name": "M5cet",
+     "version": "6.0.0",
+     "code": 600,
+     "bundle": "6.0.0-b1"
+    },
+    "status": "Decrypting…",
+    "busy": true
+   },
+   "help": "While the app starts: unlock, decrypt, load the bundle."
+  },
+  {
+   "id": "lock",
+   "label": "Lock",
+   "group": "system",
+   "vars": [
+    "$app",
+    "$lock"
+   ],
+   "sample": {
+    "app": {
+     "name": "M5cet",
+     "version": "6.0.0",
+     "code": 600,
+     "bundle": "6.0.0-b1"
+    },
+    "lock": {
+     "mode": "pin",
+     "attempts": 1,
+     "left": 7,
+     "wait": 0,
+     "biometricAvailable": true,
+     "error": ""
+    }
+   },
+   "help": "Biometrics / PIN; attempts left, the wait after failures."
+  },
+  {
+   "id": "enroll",
+   "label": "Enrolment",
+   "group": "system",
+   "vars": [
+    "$app",
+    "$enroll"
+   ],
+   "sample": {
+    "app": {
+     "name": "M5cet",
+     "version": "6.0.0",
+     "code": 600,
+     "bundle": "6.0.0-b1"
+    },
+    "enroll": {
+     "server": "https://chat.example.com",
+     "error": ""
+    }
+   },
+   "help": "First start: the server and (when required) the code."
+  },
+  {
+   "id": "rooms",
+   "label": "Rooms",
+   "group": "app",
+   "vars": [
+    "$app",
+    "$rooms",
+    "$selectedCount",
+    "$connectedCount",
+    "$unreadTotal"
+   ],
+   "sample": {
+    "app": {
+     "name": "M5cet",
+     "version": "6.0.0",
+     "code": 600,
+     "bundle": "6.0.0-b1"
+    },
+    "rooms": [
+     {
+      "key": "team",
+      "name": "team",
+      "users": 4,
+      "unread": 0,
+      "active": true,
+      "connected": true,
+      "selected": true,
+      "status": "joined"
+     },
+     {
+      "key": "family",
+      "name": "family",
+      "users": 3,
+      "unread": 7,
+      "active": false,
+      "connected": true,
+      "selected": true,
+      "status": "joined"
+     },
+     {
+      "key": "project-x",
+      "name": "project-x",
+      "users": 0,
+      "unread": 0,
+      "active": false,
+      "connected": false,
+      "selected": false,
+      "status": "saved"
+     }
+    ],
+    "selectedCount": 2,
+    "connectedCount": 2,
+    "unreadTotal": 7
+   },
+   "help": "Saved rooms, select several and connect them at once."
+  },
+  {
+   "id": "rooms.item",
+   "label": "Rooms › item",
+   "group": "parts",
+   "vars": [
+    "$room"
+   ],
+   "sample": {
+    "room": {
+     "key": "family",
+     "name": "family",
+     "users": 3,
+     "unread": 7,
+     "active": false,
+     "connected": true,
+     "selected": true,
+     "status": "joined"
+    }
+   },
+   "help": "One room in the list: checkbox, users badge, unread badge."
+  },
+  {
+   "id": "join",
+   "label": "Join a room",
+   "group": "app",
+   "vars": [
+    "$form",
+    "$error"
+   ],
+   "sample": {
+    "form": {
+     "name": "",
+     "room": "",
+     "passphrase": ""
+    },
+    "error": ""
+   },
+   "help": "Name, room, passphrase."
+  },
+  {
+   "id": "room",
+   "label": "Room",
+   "group": "room",
+   "vars": [
+    "$room",
+    "$rooms",
+    "$me",
+    "$users",
+    "$call"
+   ],
+   "sample": {
+    "room": {
+     "key": "team",
+     "name": "team",
+     "users": 4,
+     "unread": 0,
+     "active": true,
+     "connected": true,
+     "selected": true,
+     "status": "joined"
+    },
+    "rooms": [
+     {
+      "key": "team",
+      "name": "team",
+      "users": 4,
+      "unread": 0,
+      "active": true,
+      "connected": true,
+      "selected": true,
+      "status": "joined"
+     },
+     {
+      "key": "family",
+      "name": "family",
+      "users": 3,
+      "unread": 7,
+      "active": false,
+      "connected": true,
+      "selected": true,
+      "status": "joined"
+     }
+    ],
+    "me": {
+     "name": "Mike"
+    },
+    "users": {
+     "open": true,
+     "dock": "right",
+     "autoHide": false,
+     "count": 4
+    },
+    "call": {
+     "active": false
+    }
+   },
+   "help": "The chat of the active room."
+  },
+  {
+   "id": "message.in",
+   "label": "Message › received",
+   "group": "parts",
+   "vars": [
+    "$msg"
+   ],
+   "sample": {
+    "msg": {
+     "id": "m1",
+     "text": "Ahoj, jak to jde?",
+     "sender": "Alice",
+     "time": 1760000000000,
+     "mine": false,
+     "verified": true,
+     "changed": false,
+     "replyTo": null,
+     "attachment": null
+    }
+   },
+   "help": "A message from someone else."
+  },
+  {
+   "id": "message.out",
+   "label": "Message › sent",
+   "group": "parts",
+   "vars": [
+    "$msg"
+   ],
+   "sample": {
+    "msg": {
+     "id": "m2",
+     "text": "Dobře, díky!",
+     "sender": "Mike",
+     "time": 1760000060000,
+     "mine": true,
+     "status": "sent",
+     "replyTo": {
+      "sender": "Alice",
+      "text": "Ahoj, jak to jde?"
+     },
+     "attachment": null
+    }
+   },
+   "help": "A message of mine."
+  },
+  {
+   "id": "message.sys",
+   "label": "Message › system",
+   "group": "parts",
+   "vars": [
+    "$msg"
+   ],
+   "sample": {
+    "msg": {
+     "id": "s1",
+     "text": "Alice joined",
+     "time": 1760000000000
+    }
+   },
+   "help": "A notice (joins, leaves, key changes)."
+  },
+  {
+   "id": "users",
+   "label": "User panel",
+   "group": "room",
+   "vars": [
+    "$users",
+    "$count",
+    "$dock",
+    "$autoHide"
+   ],
+   "sample": {
+    "users": [
+     {
+      "name": "Alice",
+      "verified": true,
+      "away": false,
+      "me": false
+     },
+     {
+      "name": "Mike",
+      "verified": true,
+      "away": false,
+      "me": true
+     }
+    ],
+    "count": 2,
+    "dock": "right",
+    "autoHide": false
+   },
+   "help": "The floating / docked list of people in the room."
+  },
+  {
+   "id": "users.item",
+   "label": "User panel › item",
+   "group": "parts",
+   "vars": [
+    "$user"
+   ],
+   "sample": {
+    "user": {
+     "name": "Alice",
+     "verified": true,
+     "away": false,
+     "me": false
+    }
+   },
+   "help": "One person."
+  },
+  {
+   "id": "users.handle",
+   "label": "User panel › handle",
+   "group": "parts",
+   "vars": [
+    "$count",
+    "$edge",
+    "$open"
+   ],
+   "sample": {
+    "count": 4,
+    "edge": "right",
+    "open": false
+   },
+   "help": "The small tab left on the edge while the panel hides."
+  },
+  {
+   "id": "settings",
+   "label": "Settings",
+   "group": "app",
+   "vars": [
+    "$app",
+    "$settings"
+   ],
+   "sample": {
+    "app": {
+     "name": "M5cet",
+     "version": "6.0.0",
+     "code": 600,
+     "bundle": "6.0.0-b1"
+    },
+    "settings": {}
+   },
+   "help": "Lock, notifications, theme, language, updates."
+  },
+  {
+   "id": "call",
+   "label": "Call",
+   "group": "room",
+   "vars": [
+    "$call",
+    "$room"
+   ],
+   "sample": {
+    "call": {
+     "active": true,
+     "mode": "audio",
+     "muted": false,
+     "peers": 2,
+     "duration": 83
+    },
+    "room": {
+     "key": "team",
+     "name": "team",
+     "users": 4,
+     "unread": 0,
+     "active": true,
+     "connected": true,
+     "selected": true,
+     "status": "joined"
+    }
+   },
+   "help": "An audio / video call in the room."
+  },
+  {
+   "id": "update",
+   "label": "Update",
+   "group": "system",
+   "vars": [
+    "$update"
+   ],
+   "sample": {
+    "update": {
+     "kind": "bundle",
+     "version": "6.0.0-b2",
+     "size": 182000,
+     "notes": "New look of the rooms.",
+     "progress": 0.4,
+     "state": "downloading"
+    }
+   },
+   "help": "A new bundle or release."
+  },
+  {
+   "id": "about",
+   "label": "About",
+   "group": "app",
+   "vars": [
+    "$app",
+    "$device",
+    "$server"
+   ],
+   "sample": {
+    "app": {
+     "name": "M5cet",
+     "version": "6.0.0",
+     "code": 600,
+     "bundle": "6.0.0-b1"
+    },
+    "device": {
+     "id": "and_…",
+     "model": "Pixel 9"
+    },
+    "server": {
+     "url": "https://chat.example.com",
+     "kid": "AbCdEf0123456789",
+     "fingerprint": "1A2B 3C4D …"
+    }
+   },
+   "help": "Versions, the device, the server's key."
+  },
+  {
+   "id": "flash",
+   "label": "Flash message",
+   "group": "parts",
+   "vars": [
+    "$flash"
+   ],
+   "sample": {
+    "flash": {
+     "text": "Saved.",
+     "level": "success",
+     "title": ""
+    }
+   },
+   "help": "A short notice at the top."
+  },
+  {
+   "id": "tools",
+   "label": "Tools (sheet)",
+   "group": "app",
+   "vars": [
+    "$tools",
+    "$settings"
+   ],
+   "sample": {
+    "tools": {
+     "ai": true,
+     "voice": true,
+     "nfc": true
+    },
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    }
+   },
+   "help": "The quick tools (the hammer): AI assistant, voice, NFC, appearance, position."
+  },
+  {
+   "id": "attach",
+   "label": "Attach (sheet)",
+   "group": "room",
+   "vars": [
+    "$composer",
+    "$settings"
+   ],
+   "sample": {
+    "composer": {
+     "hasText": true,
+     "tap": false,
+     "vanish": 0,
+     "sealed": false,
+     "private": false
+    },
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    }
+   },
+   "help": "The + of the composer: picture, camera, file, position, voice message; the message's kind and recipients."
+  },
+  {
+   "id": "send.options",
+   "label": "Send options (sheet)",
+   "group": "room",
+   "vars": [
+    "$composer",
+    "$settings"
+   ],
+   "sample": {
+    "composer": {
+     "hasText": true,
+     "asVoice": false,
+     "voiceText": false,
+     "sealed": true,
+     "sealCode": "",
+     "vanish": 60,
+     "tap": false,
+     "private": false,
+     "count": 2
+    },
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    }
+   },
+   "help": "A long press on Send: the options of the messages, applied when one is sent and on until turned off — as a voice message, speak it and send text, the individual code (its field and a made-up one), vanishing (how long), tap to reveal. $composer: hasText, asVoice, voiceText, sealed, sealCode, vanish (s), tap, private, count."
+  },
+  {
+   "id": "dictate.options",
+   "label": "Dictation options (sheet)",
+   "group": "room",
+   "vars": [
+    "$settings",
+    "$voices"
+   ],
+   "sample": {
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    },
+    "voices": [
+     {
+      "value": "",
+      "label": "Default"
+     },
+     {
+      "value": "cs-cz-x-jfs-local",
+      "label": "cs-CZ · jfs ★"
+     }
+    ]
+   },
+   "help": "A long press on the microphone: read back, send at once, language."
+  },
+  {
+   "id": "call.options",
+   "label": "Call options (sheet)",
+   "group": "room",
+   "vars": [
+    "$settings",
+    "$call"
+   ],
+   "sample": {
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    },
+    "call": {
+     "active": false
+    }
+   },
+   "help": "A long press on the call button: audio, video, audio ↔ text."
+  },
+  {
+   "id": "settings.user",
+   "label": "Settings › User",
+   "group": "app",
+   "vars": [
+    "$account",
+    "$keys",
+    "$connection"
+   ],
+   "sample": {
+    "account": {
+     "signedIn": true,
+     "username": "bystry-sokol-7k3q",
+     "credential": "Xy12AbCdEf34…",
+     "passkeys": 2,
+     "sessions": 3,
+     "groups": "user, staff",
+     "since": 1760000000000,
+     "lastLogin": 1760900000000,
+     "keyVerified": true
+    },
+    "keys": {
+     "device": "and_mun44x0d02651c81e33d",
+     "deviceKey": "ptM0vNPIIsAo4sr7",
+     "identity": "3C4D 5E6F 7A8B 9C0D",
+     "server": "A6D3 34BC D3C8 22C0"
+    },
+    "connection": {
+     "server": "https://chat.example.com",
+     "rooms": 2,
+     "status": "joined",
+     "push": "fcm",
+     "checkin": 1760900000000,
+     "protocol": 2,
+     "crypto": "v3",
+     "turn": 2
+    }
+   },
+   "help": "The account (passkey sign-in / out), the keys and the connection."
+  },
+  {
+   "id": "settings.messages",
+   "label": "Settings › Messages",
+   "group": "app",
+   "vars": [
+    "$settings"
+   ],
+   "sample": {
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    }
+   },
+   "help": "Receipts, Enter sends, vanishing time, expiry."
+  },
+  {
+   "id": "settings.voice",
+   "label": "Settings › Voice",
+   "group": "app",
+   "vars": [
+    "$settings",
+    "$voices"
+   ],
+   "sample": {
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    },
+    "voices": [
+     {
+      "value": "",
+      "label": "Default"
+     },
+     {
+      "value": "cs-cz-x-jfs-local",
+      "label": "cs-CZ · jfs ★"
+     }
+    ]
+   },
+   "help": "Engine, language, voice, rate, pitch, reading aloud, dictation."
+  },
+  {
+   "id": "settings.location",
+   "label": "Settings › Location",
+   "group": "app",
+   "vars": [
+    "$settings",
+    "$location"
+   ],
+   "sample": {
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    },
+    "location": {
+     "permitted": true,
+     "tracking": false,
+     "allowed": true
+    }
+   },
+   "help": "The position in messages, tracking."
+  },
+  {
+   "id": "settings.calls",
+   "label": "Settings › Calls",
+   "group": "app",
+   "vars": [
+    "$settings"
+   ],
+   "sample": {
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    }
+   },
+   "help": "Audio ↔ text calls, speaker, the call log."
+  },
+  {
+   "id": "settings.appearance",
+   "label": "Settings › Appearance",
+   "group": "app",
+   "vars": [
+    "$settings",
+    "$presets"
+   ],
+   "sample": {
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    },
+    "presets": [
+     {
+      "value": "design",
+      "label": "M5cet",
+      "family": "design",
+      "selected": true,
+      "tone": "both",
+      "bg": "#f5f6f8",
+      "surface": "#ffffff",
+      "fg": "#1c2330",
+      "primary": "#e11d48",
+      "onPrimary": "#ffffff",
+      "variants": [
+       {
+        "value": "",
+        "label": "Barva šablony",
+        "color": "#e11d48",
+        "on": "#ffffff",
+        "selected": true
+       },
+       {
+        "value": "red",
+        "label": "Červená",
+        "color": "#c41c2c",
+        "on": "#ffffff",
+        "selected": false
+       },
+       {
+        "value": "orange",
+        "label": "Oranžová",
+        "color": "#b24a09",
+        "on": "#ffffff",
+        "selected": false
+       },
+       {
+        "value": "green",
+        "label": "Zelená",
+        "color": "#1b7a48",
+        "on": "#ffffff",
+        "selected": false
+       },
+       {
+        "value": "blue",
+        "label": "Modrá",
+        "color": "#1560c9",
+        "on": "#ffffff",
+        "selected": false
+       },
+       {
+        "value": "violet",
+        "label": "Fialová",
+        "color": "#7045e0",
+        "on": "#ffffff",
+        "selected": false
+       },
+       {
+        "value": "teal",
+        "label": "Tyrkysová",
+        "color": "#127a70",
+        "on": "#ffffff",
+        "selected": false
+       },
+       {
+        "value": "pink",
+        "label": "Růžová",
+        "color": "#c0195b",
+        "on": "#ffffff",
+        "selected": false
+       }
+      ]
+     },
+     {
+      "value": "ios",
+      "label": "iOS 27",
+      "family": "system",
+      "selected": false,
+      "tone": "both",
+      "bg": "#f2f2f7",
+      "surface": "#ffffff",
+      "fg": "#000000",
+      "primary": "#007bff",
+      "onPrimary": "#ffffff",
+      "variants": []
+     },
+     {
+      "value": "midnight",
+      "label": "Midnight",
+      "family": "classic",
+      "selected": false,
+      "tone": "dark",
+      "bg": "#0b0d19",
+      "surface": "#111322",
+      "fg": "#e4e8f7",
+      "primary": "#8266f5",
+      "onPrimary": "#ffffff",
+      "variants": []
+     },
+     {
+      "value": "paper",
+      "label": "Paper",
+      "family": "classic",
+      "selected": false,
+      "tone": "light",
+      "bg": "#f8f6f1",
+      "surface": "#fdfdfb",
+      "fg": "#2c231b",
+      "primary": "#b84c1e",
+      "onPrimary": "#ffffff",
+      "variants": []
+     }
+    ]
+   },
+   "help": "Template and its colours, tone, font and size, animations, buttons, layout — with a live preview."
+  },
+  {
+   "id": "settings.security",
+   "label": "Settings › Security",
+   "group": "app",
+   "vars": [
+    "$security",
+    "$settings"
+   ],
+   "sample": {
+    "security": {
+     "biometricAvailable": true,
+     "biometric": true,
+     "pinLength": 6,
+     "maxAttempts": 8,
+     "wipe": true,
+     "screenshots": false
+    },
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    }
+   },
+   "help": "Lock, biometrics, PIN, the PIN pad's shuffle, erase."
+  },
+  {
+   "id": "ai",
+   "label": "AI assistant",
+   "group": "app",
+   "vars": [
+    "$ai"
+   ],
+   "sample": {
+    "ai": {
+     "state": "ready",
+     "model": "anthropic/claude-sonnet-5-5",
+     "busy": false
+    }
+   },
+   "help": "A conversation with the operator's AI (not end-to-end encrypted)."
+  },
+  {
+   "id": "voice",
+   "label": "Voice",
+   "group": "app",
+   "vars": [
+    "$voice",
+    "$settings",
+    "$voices"
+   ],
+   "sample": {
+    "voice": {
+     "dictating": false,
+     "listening": false,
+     "speaking": false,
+     "available": true
+    },
+    "settings": {
+     "messages": {
+      "vanishSeconds": 60,
+      "ttlMinutes": 0,
+      "receipts": true,
+      "readReceipts": true,
+      "enterSends": false
+     },
+     "location": {
+      "inHeader": false,
+      "track": false,
+      "interval": 60,
+      "precise": true
+     },
+     "voice": {
+      "engine": "device",
+      "lang": "",
+      "voice": "",
+      "rate": 1,
+      "pitch": 1,
+      "autoplay": false,
+      "dictateSpeak": false,
+      "dictateSend": false
+     },
+     "calls": {
+      "audioText": false,
+      "speaker": true
+     },
+     "callLog": false,
+     "appearance": {
+      "tone": "system",
+      "preset": "design",
+      "accent": "",
+      "fontScale": 1,
+      "density": "normal",
+      "bubbles": "rounded"
+     },
+     "nfc": {
+      "emulate": false
+     },
+     "security": {
+      "shufflePin": false
+     },
+     "look": {
+      "variant": "",
+      "font": "",
+      "motion": "normal",
+      "speed": 1,
+      "buttons": "filled",
+      "shape": "pill",
+      "press": "ripple",
+      "haptics": true,
+      "toolsDock": true,
+      "hintSendOptions": false,
+      "v": 1
+     }
+    },
+    "voices": [
+     {
+      "value": "",
+      "label": "Default"
+     },
+     {
+      "value": "cs-cz-x-jfs-local",
+      "label": "cs-CZ · jfs ★"
+     }
+    ]
+   },
+   "help": "Dictation to text, reading aloud, the voice settings at hand."
+  },
+  {
+   "id": "nfc",
+   "label": "NFC",
+   "group": "app",
+   "vars": [
+    "$nfc",
+    "$room"
+   ],
+   "sample": {
+    "nfc": {
+     "available": true,
+     "enabled": true,
+     "state": "idle",
+     "last": null,
+     "emulating": false
+    },
+    "room": {
+     "name": "team"
+    }
+   },
+   "help": "Read and write a room's connection card, answer as a tag."
+  },
+  {
+   "id": "users.person",
+   "label": "User panel › person",
+   "group": "parts",
+   "vars": [
+    "$form.person",
+    "$settings"
+   ],
+   "sample": {
+    "form": {
+     "person": {
+      "id": "peer-9f2c41d0a7b3",
+      "name": "Alice",
+      "me": false,
+      "channel": "open",
+      "username": "bystry-sokol-7k3q",
+      "signedIn": true,
+      "status": "online",
+      "statusIcon": "circle-check",
+      "statusColor": "@success",
+      "statusLabel": "Online",
+      "signal": 4,
+      "signalIcon": "signal",
+      "signalColor": "@success",
+      "rtt": 38,
+      "rttText": "38 ms",
+      "glyph": "A",
+      "avatarBg": "#38ae2929",
+      "avatarFg": "#ffb62020",
+      "photo": "",
+      "selectable": true,
+      "selected": false,
+      "linked": true,
+      "contact": "Alice Nováková",
+      "canLink": true,
+      "safetyVerified": false,
+      "verified": true,
+      "changed": false,
+      "away": false,
+      "peerShort": "peer-9f2c41d0a7b3",
+      "sinceText": "12 min 5 s",
+      "transport": "direct",
+      "transportLabel": "Direct (P2P)",
+      "candidates": "host → srflx · UDP",
+      "remote": "203.0.113.7:51234",
+      "codec": "opus",
+      "traffic": "84.2 kB / 91.6 kB",
+      "security": "AES-GCM 256 (E2EE) · DTLS 1.2",
+      "dtls": "sha-256 3A:5F:…",
+      "fingerprint": "8537 3E64 524D FF04 7F54 2310 0FA3 B932",
+      "hasSafety": true,
+      "safety": "13286 60170 84613 24995\n23962 36648 18264 48418\n04707 59157 69365 29038",
+      "room": "team",
+      "contactsOn": true,
+      "others": 2,
+      "app": ""
+     }
+    },
+    "settings": {
+     "people": {
+      "contacts": true
+     }
+    }
+   },
+   "help": "A person's detail (a sheet from the People widget): status, connection, keys and safety number; private message, calls, verification, the phone contact."
+  },
+  {
+   "id": "settings.people",
+   "label": "Settings › People",
+   "group": "app",
+   "vars": [
+    "$settings"
+   ],
+   "sample": {
+    "settings": {
+     "people": {
+      "contacts": true
+     }
+    }
+   },
+   "help": "Links between M5cet people and the phone's contacts."
+  },
+  {
+   "id": "nfc.builder",
+   "label": "NFC · M5Cet builder",
+   "group": "app",
+   "vars": [],
+   "sample": {},
+   "help": "Build an M5Cet card's records (message, Wi-Fi, contact, server room, keys…), choose a PIN or the account PassKey, one-time, and write the card to a tag."
+  },
+  {
+   "id": "settings.notify",
+   "label": "Settings › Notifications",
+   "group": "app",
+   "vars": [
+    "$settings",
+    "$notify",
+    "$account"
+   ],
+   "sample": {
+    "settings": {
+     "notify": {
+      "on": true,
+      "away": true,
+      "message": true,
+      "mention": true,
+      "call": true,
+      "function": false,
+      "summon": true,
+      "privacy": "sender",
+      "order": "android,webpush",
+      "quiet": true,
+      "quietFrom": "22:00",
+      "quietTo": "07:00"
+     }
+    },
+    "account": {
+     "signedIn": true,
+     "username": "bystry-sokol-7k3q"
+    },
+    "notify": {
+     "signedIn": true,
+     "linked": true,
+     "busy": false,
+     "status": "",
+     "push": true,
+     "serverOff": false,
+     "hours": [
+      {
+       "value": "00:00",
+       "label": "00:00"
+      },
+      {
+       "value": "00:30",
+       "label": "00:30"
+      },
+      {
+       "value": "01:00",
+       "label": "01:00"
+      },
+      {
+       "value": "01:30",
+       "label": "01:30"
+      },
+      {
+       "value": "02:00",
+       "label": "02:00"
+      },
+      {
+       "value": "02:30",
+       "label": "02:30"
+      },
+      {
+       "value": "03:00",
+       "label": "03:00"
+      },
+      {
+       "value": "03:30",
+       "label": "03:30"
+      },
+      {
+       "value": "04:00",
+       "label": "04:00"
+      },
+      {
+       "value": "04:30",
+       "label": "04:30"
+      },
+      {
+       "value": "05:00",
+       "label": "05:00"
+      },
+      {
+       "value": "05:30",
+       "label": "05:30"
+      },
+      {
+       "value": "06:00",
+       "label": "06:00"
+      },
+      {
+       "value": "06:30",
+       "label": "06:30"
+      },
+      {
+       "value": "07:00",
+       "label": "07:00"
+      },
+      {
+       "value": "07:30",
+       "label": "07:30"
+      },
+      {
+       "value": "08:00",
+       "label": "08:00"
+      },
+      {
+       "value": "08:30",
+       "label": "08:30"
+      },
+      {
+       "value": "09:00",
+       "label": "09:00"
+      },
+      {
+       "value": "09:30",
+       "label": "09:30"
+      },
+      {
+       "value": "10:00",
+       "label": "10:00"
+      },
+      {
+       "value": "10:30",
+       "label": "10:30"
+      },
+      {
+       "value": "11:00",
+       "label": "11:00"
+      },
+      {
+       "value": "11:30",
+       "label": "11:30"
+      },
+      {
+       "value": "12:00",
+       "label": "12:00"
+      },
+      {
+       "value": "12:30",
+       "label": "12:30"
+      },
+      {
+       "value": "13:00",
+       "label": "13:00"
+      },
+      {
+       "value": "13:30",
+       "label": "13:30"
+      },
+      {
+       "value": "14:00",
+       "label": "14:00"
+      },
+      {
+       "value": "14:30",
+       "label": "14:30"
+      },
+      {
+       "value": "15:00",
+       "label": "15:00"
+      },
+      {
+       "value": "15:30",
+       "label": "15:30"
+      },
+      {
+       "value": "16:00",
+       "label": "16:00"
+      },
+      {
+       "value": "16:30",
+       "label": "16:30"
+      },
+      {
+       "value": "17:00",
+       "label": "17:00"
+      },
+      {
+       "value": "17:30",
+       "label": "17:30"
+      },
+      {
+       "value": "18:00",
+       "label": "18:00"
+      },
+      {
+       "value": "18:30",
+       "label": "18:30"
+      },
+      {
+       "value": "19:00",
+       "label": "19:00"
+      },
+      {
+       "value": "19:30",
+       "label": "19:30"
+      },
+      {
+       "value": "20:00",
+       "label": "20:00"
+      },
+      {
+       "value": "20:30",
+       "label": "20:30"
+      },
+      {
+       "value": "21:00",
+       "label": "21:00"
+      },
+      {
+       "value": "21:30",
+       "label": "21:30"
+      },
+      {
+       "value": "22:00",
+       "label": "22:00"
+      },
+      {
+       "value": "22:30",
+       "label": "22:30"
+      },
+      {
+       "value": "23:00",
+       "label": "23:00"
+      },
+      {
+       "value": "23:30",
+       "label": "23:30"
+      }
+     ],
+     "channels": [
+      {
+       "id": "android",
+       "used": true,
+       "n": 1,
+       "first": true,
+       "last": false,
+       "label": "Android app"
+      },
+      {
+       "id": "webpush",
+       "used": true,
+       "n": 2,
+       "first": false,
+       "last": true,
+       "label": "Browser (web push)"
+      },
+      {
+       "id": "email",
+       "used": false,
+       "n": 0,
+       "first": true,
+       "last": true,
+       "label": "E-mail"
+      }
+     ]
+    }
+   },
+   "help": "Notifications: on / off, kinds, how much they show, quiet hours; signed in — the server covering for the phone, the channel order, a test."
+  },
+  {
+   "id": "settings.voiceFx",
+   "label": "Settings › Voice changer",
+   "group": "app",
+   "vars": [
+    "$settings",
+    "$voiceFx"
+   ],
+   "sample": {
+    "settings": {
+     "voiceFx": {
+      "on": true,
+      "preset": "custom",
+      "pitch": -5,
+      "formant": -3,
+      "robot": 0,
+      "echo": 0,
+      "echoMs": 250,
+      "whisper": 0,
+      "gain": 0
+     }
+    },
+    "voiceFx": {
+     "allowed": true,
+     "active": true,
+     "testing": "idle"
+    }
+   },
+   "help": "The voice changer (the operator's module): on / off for this phone, a preset or custom values, a test recording. $voiceFx: allowed (the module lets this user in), active (the voice is being changed now), testing (idle | recording | playing)."
+  },
+  {
+   "id": "room.edit",
+   "label": "Rooms › edit",
+   "group": "app",
+   "vars": [
+    "$form"
+   ],
+   "sample": {
+    "form": {}
+   },
+   "help": "A saved room changed (its row's swipe › Edit): the join form, filled — name, room, passphrase."
+  },
+  {
+   "id": "settings.profile",
+   "label": "Settings › Public profile",
+   "group": "app",
+   "vars": [
+    "$profile",
+    "$form",
+    "$account"
+   ],
+   "sample": {
+    "profile": {
+     "signedIn": true,
+     "ready": true,
+     "loading": false,
+     "error": "",
+     "busy": false,
+     "msg": "",
+     "dirty": true,
+     "canAdd": true,
+     "avatar": "",
+     "cover": "",
+     "hasAvatar": false,
+     "hasCover": false,
+     "initials": "A",
+     "fields": [
+      {
+       "index": 0,
+       "type": "phone",
+       "typeLabel": "Telefon",
+       "icon": "phone",
+       "label": "Mobil",
+       "value": "+420 777 123 456",
+       "audience": "me",
+       "audIcon": "lock",
+       "invalid": false
+      },
+      {
+       "index": 1,
+       "type": "url",
+       "typeLabel": "Web",
+       "icon": "globe",
+       "label": "Blog",
+       "value": "https://alice.example",
+       "audience": "public",
+       "audIcon": "globe",
+       "invalid": false
+      }
+     ],
+     "preview": {
+      "nickname": "Alice",
+      "about": "Lezu a piju kávu.",
+      "avatar": "",
+      "cover": "",
+      "fields": [
+       {
+        "icon": "globe",
+        "label": "Blog",
+        "value": "https://alice.example"
+       }
+      ],
+      "empty": false
+     }
+    },
+    "form": {
+     "pfNick": "Alice",
+     "pfAbout": "Lezu a piju kávu.",
+     "pfNickAud": "public",
+     "pfAboutAud": "room",
+     "pfAvatarAud": "room",
+     "pfCoverAud": "me",
+     "pfPreview": "room"
+    },
+    "account": {
+     "signedIn": true,
+     "username": "bystry-sokol-7k3q"
+    }
+   },
+   "help": "The user's profile card: photo, background, public nickname (pre-fills the name when joining a room), about and fields — each only me / room members / public — with a preview per audience; saved sealed into the vault, its public part on the server."
+  },
+  {
+   "id": "log",
+   "label": "History (calls and messages)",
+   "group": "app",
+   "vars": [
+    "$log",
+    "$form",
+    "$settings"
+   ],
+   "sample": {
+    "log": {
+     "loading": false,
+     "empty": false,
+     "count": 4,
+     "shown": 4,
+     "more": false,
+     "history": true,
+     "items": [
+      {
+       "id": "c:k3f9",
+       "type": "call",
+       "dir": "missed",
+       "icon": "phone-off",
+       "color": "@danger",
+       "room": "Tým",
+       "people": "Alice",
+       "time": 1760900000000,
+       "day": "Dnes",
+       "newDay": true,
+       "detail": "Zmeškaný · Alice",
+       "callable": true,
+       "video": false
+      },
+      {
+       "id": "m:1a2b:m-77",
+       "type": "msg",
+       "dir": "in",
+       "icon": "message-circle",
+       "color": "@muted",
+       "room": "Tým",
+       "people": "Alice",
+       "time": 1760899000000,
+       "day": "Dnes",
+       "newDay": false,
+       "detail": "Alice: Zavoláme se po obědě?",
+       "callable": false,
+       "video": false
+      },
+      {
+       "id": "c:k3f2",
+       "type": "call",
+       "dir": "out",
+       "icon": "video",
+       "color": "@primary",
+       "room": "Rodina",
+       "people": "Bob, Eva",
+       "time": 1760810000000,
+       "day": "Včera",
+       "newDay": true,
+       "detail": "Odchozí · video · 12:04 · Bob, Eva",
+       "callable": true,
+       "video": true
+      },
+      {
+       "id": "m:9c8d:m-12",
+       "type": "msg",
+       "dir": "in",
+       "icon": "message-square-lock",
+       "color": "@muted",
+       "room": "Rodina",
+       "people": "Eva",
+       "time": 1760800000000,
+       "day": "Včera",
+       "newDay": false,
+       "detail": "Eva: Zapečetěná zpráva",
+       "callable": false,
+       "video": false
+      }
+     ]
+    },
+    "form": {
+     "logFilter": "all",
+     "logQuery": ""
+    },
+    "settings": {
+     "callLog": false,
+     "calls": {
+      "history": true,
+      "logName": "app"
+     }
+    }
+   },
+   "help": "Calls and messages of every saved room, newest first: a filter (all / calls / messages / missed), a search, a tap opens the room, the phone button calls again after a confirmation. Sealed, hold-to-read, vanishing and hidden messages show only their kind."
+  },
+  {
+   "id": "message.sender",
+   "label": "Message › sender's profile",
+   "group": "parts",
+   "vars": [
+    "$form.sender"
+   ],
+   "sample": {
+    "form": {
+     "sender": {
+      "id": "peer-9f2c41d0a7b3",
+      "name": "Alice",
+      "title": "Alice Nováková",
+      "nickDiffers": true,
+      "me": false,
+      "function": false,
+      "present": true,
+      "canMessage": true,
+      "username": "bystry-sokol-7k3q",
+      "photo": "",
+      "has": true,
+      "profile": {
+       "nickname": "Alice Nováková",
+       "about": "Lezu a piju kávu.",
+       "avatar": "",
+       "cover": "",
+       "fields": [
+        {
+         "icon": "globe",
+         "label": "Blog",
+         "value": "https://alice.example",
+         "type": "url"
+        }
+       ]
+      }
+     }
+    }
+   },
+   "help": "A tap on a sender's avatar: what they share with the room's members (their room profile), else the name and that they share nothing; a private message, their details."
+  },
+  {
+   "id": "message.forward",
+   "label": "Message › forward",
+   "group": "parts",
+   "vars": [
+    "$form.forward"
+   ],
+   "sample": {
+    "form": {
+     "forward": {
+      "step": "who",
+      "canBack": true,
+      "sender": "Alice",
+      "text": "Ahoj, jak to jde?",
+      "icon": "",
+      "room": "team",
+      "wholeRoom": false,
+      "hasPeople": true,
+      "rooms": [
+       {
+        "key": "team",
+        "name": "team",
+        "users": 4,
+        "here": true
+       },
+       {
+        "key": "family",
+        "name": "family",
+        "users": 3,
+        "here": false
+       }
+      ],
+      "people": [
+       {
+        "id": "peer-1",
+        "name": "Bob"
+       },
+       {
+        "id": "peer-2",
+        "name": "Eva"
+       }
+      ]
+     }
+    }
+   },
+   "help": "Forward a message (a left swipe on its bubble, the long press, a file's footer): the message, the connected rooms, then everyone there or one person privately."
+  },
+  {
+   "id": "message.model",
+   "label": "Message › the model behind an answer",
+   "group": "parts",
+   "vars": [
+    "$form.model"
+   ],
+   "sample": {
+    "form": {
+     "model": {
+      "keyword": "hlr",
+      "name": "Číslo a síť",
+      "icon": "phone",
+      "glyph": "phone",
+      "emoji": false,
+      "color": "#7bb234",
+      "line": "/hlr · přes Alice",
+      "summary": "Ověří telefonní číslo: země, operátor, dosažitelnost.",
+      "visibility": "room",
+      "usage": "/hlr <number> [format]",
+      "hasInputs": true,
+      "known": true,
+      "local": false,
+      "write": "/hlr ",
+      "senderId": "peer-1",
+      "inputs": [
+       {
+        "name": "number",
+        "label": "Číslo",
+        "required": true,
+        "expect": "telefonní číslo v mezinárodním tvaru (+420…)",
+        "help": "Například +420 777 123 456"
+       },
+       {
+        "name": "format",
+        "label": "",
+        "required": false,
+        "expect": "jedna z: short, long",
+        "help": ""
+       }
+      ],
+      "guide": "/hlr +420777123456\n/hlr +420777123456 long"
+     }
+    }
+   },
+   "help": "A tap on a model answer's avatar: the model (icon, name, keyword, summary), its usage line, parameters and guide, who it came through; write the command."
+  }
+ ],
+ "langs": [
+  "cs",
+  "en",
+  "de",
+  "es",
+  "it",
+  "fr",
+  "sk",
+  "sl",
+  "fi"
+ ],
+ "limits": {
+  "nodes": 1500,
+  "depth": 30,
+  "text": 4000,
+  "assets": 2097152,
+  "asset": 524288,
+  "strings": 3000,
+  "libraries": 60,
+  "steps": 60,
+  "menuItems": 40
+ },
+ "icons": [
+  "a-large-small",
+  "activity",
+  "arrow-down",
+  "arrow-left",
+  "arrow-right",
+  "arrow-up",
+  "at-sign",
+  "audio-lines",
+  "badge-check",
+  "battery",
+  "bell",
+  "bell-off",
+  "bell-ring",
+  "bluetooth",
+  "book-open",
+  "bookmark",
+  "bot",
+  "box",
+  "briefcase",
+  "brush",
+  "calendar",
+  "calendar-days",
+  "camera",
+  "camera-off",
+  "chart-column",
+  "check",
+  "check-check",
+  "chevron-down",
+  "chevron-left",
+  "chevron-right",
+  "chevron-up",
+  "circle",
+  "circle-alert",
+  "circle-check",
+  "circle-dashed",
+  "circle-dot",
+  "circle-minus",
+  "circle-off",
+  "circle-plus",
+  "circle-question-mark",
+  "circle-user-round",
+  "circle-x",
+  "clipboard-copy",
+  "clock",
+  "clock-3",
+  "cloud",
+  "code",
+  "code-xml",
+  "columns-2",
+  "compass",
+  "contact-round",
+  "contrast",
+  "copy",
+  "corner-down-left",
+  "corner-up-left",
+  "cpu",
+  "credit-card",
+  "crosshair",
+  "crown",
+  "database",
+  "delete",
+  "dice-5",
+  "download",
+  "droplet",
+  "ear",
+  "ellipsis",
+  "ellipsis-vertical",
+  "eraser",
+  "external-link",
+  "eye",
+  "eye-off",
+  "face-slightly-smiling",
+  "face-slightly-smiling-plus",
+  "file",
+  "file-headphone",
+  "file-image",
+  "file-play",
+  "file-plus-corner",
+  "file-text",
+  "file-up",
+  "fingerprint-pattern",
+  "flag",
+  "flame",
+  "folder",
+  "folder-open",
+  "forward",
+  "gauge",
+  "gift",
+  "globe",
+  "graduation-cap",
+  "grip-horizontal",
+  "grip-vertical",
+  "hammer",
+  "hand",
+  "hash",
+  "headphones",
+  "heart",
+  "hourglass",
+  "house",
+  "image",
+  "info",
+  "key",
+  "key-round",
+  "keyboard",
+  "landmark",
+  "languages",
+  "laptop",
+  "layers",
+  "layout-dashboard",
+  "layout-grid",
+  "layout-template",
+  "life-buoy",
+  "lightbulb",
+  "link",
+  "link-2",
+  "list",
+  "list-checks",
+  "list-tree",
+  "list-x",
+  "loader",
+  "loader-circle",
+  "locate-fixed",
+  "lock",
+  "lock-keyhole-open",
+  "lock-open",
+  "log-in",
+  "log-out",
+  "mail",
+  "mail-open",
+  "map",
+  "map-pin",
+  "map-pinned",
+  "maximize-2",
+  "megaphone",
+  "menu",
+  "message-circle",
+  "message-circle-more",
+  "message-square",
+  "message-square-lock",
+  "messages-square",
+  "mic",
+  "mic-off",
+  "minimize-2",
+  "minus",
+  "monitor",
+  "monitor-smartphone",
+  "moon",
+  "mouse-pointer-click",
+  "move",
+  "music",
+  "navigation",
+  "newspaper",
+  "nfc",
+  "octagon-alert",
+  "package",
+  "paint-bucket",
+  "palette",
+  "panel-bottom",
+  "panel-left",
+  "panel-right",
+  "paperclip",
+  "pause",
+  "pen-line",
+  "pencil",
+  "pencil-line",
+  "pencil-ruler",
+  "phone",
+  "phone-off",
+  "phone-outgoing",
+  "pin",
+  "pin-off",
+  "pipette",
+  "play",
+  "plug",
+  "plug-zap",
+  "plus",
+  "power",
+  "printer",
+  "puzzle",
+  "qr-code",
+  "quote",
+  "radio",
+  "redo-2",
+  "refresh-ccw",
+  "refresh-cw",
+  "reply",
+  "reply-all",
+  "rocket",
+  "rotate-ccw",
+  "rotate-ccw-clock",
+  "route",
+  "rows-2",
+  "save",
+  "scale",
+  "scan-line",
+  "scroll-text",
+  "search",
+  "send",
+  "send-horizontal",
+  "server",
+  "settings",
+  "settings-2",
+  "share",
+  "share-2",
+  "shield",
+  "shield-alert",
+  "shield-check",
+  "shield-off",
+  "shield-question-mark",
+  "shield-user",
+  "shopping-cart",
+  "shuffle",
+  "signal",
+  "signal-high",
+  "signal-low",
+  "signal-medium",
+  "signal-zero",
+  "sliders-horizontal",
+  "smartphone",
+  "sparkle",
+  "sparkles",
+  "speaker",
+  "speech",
+  "square",
+  "square-arrow-down",
+  "square-dashed",
+  "square-pen",
+  "square-round-corner",
+  "square-terminal",
+  "star",
+  "sticker",
+  "store",
+  "sun",
+  "sun-moon",
+  "swatch-book",
+  "switch-camera",
+  "tag",
+  "terminal",
+  "text-cursor-input",
+  "thermometer",
+  "thumbs-up",
+  "ticket",
+  "timer",
+  "timer-reset",
+  "trash",
+  "triangle-alert",
+  "trophy",
+  "truck",
+  "type",
+  "umbrella",
+  "undo-2",
+  "unlink",
+  "upload",
+  "usb",
+  "user",
+  "user-check",
+  "user-cog",
+  "user-plus",
+  "user-round",
+  "user-x",
+  "users",
+  "users-round",
+  "vibrate",
+  "video",
+  "video-off",
+  "volume-1",
+  "volume-2",
+  "volume-x",
+  "wallet",
+  "wand-sparkles",
+  "webhook",
+  "wifi",
+  "wifi-off",
+  "wrench",
+  "x",
+  "zap",
+  "zap-off"
+ ],
+ "needs": [
+  {
+   "code": 61200,
+   "elements": [],
+   "actions": [
+    "kt.dismiss"
+   ]
+  },
+  {
+   "code": 61100,
+   "elements": [],
+   "actions": []
+  },
+  {
+   "code": 61000,
+   "elements": [],
+   "actions": [
+    "msg.quote",
+    "msg.sender",
+    "msg.forwardRoom",
+    "msg.forwardTo",
+    "profile.audience"
+   ]
+  },
+  {
+   "code": 60800,
+   "elements": [],
+   "actions": [
+    "send.option",
+    "calllog.open",
+    "calllog.refresh",
+    "calllog.item",
+    "calllog.call",
+    "calllog.clear",
+    "calllog.system",
+    "conversations.settings"
+   ]
+  },
+  {
+   "code": 60700,
+   "elements": [
+    "swipe"
+   ],
+   "actions": [
+    "notify.up",
+    "notify.down",
+    "notify.use",
+    "notify.drop",
+    "notify.test",
+    "notify.sync",
+    "voiceFx.test",
+    "voiceFx.reset",
+    "room.delete",
+    "room.clone",
+    "room.edit",
+    "profile.open",
+    "profile.pick",
+    "profile.clear",
+    "profile.field",
+    "profile.sync",
+    "profile.save",
+    "profile.public"
+   ]
+  }
+ ],
+ "minAppCode": 60000,
+ "localesAppCode": 61300
+}

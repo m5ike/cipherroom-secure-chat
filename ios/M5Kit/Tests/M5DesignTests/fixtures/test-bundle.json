@@ -1,0 +1,54 @@
+{
+ "note": "TEST KEYS ONLY (ios/M5Kit/Tests/M5DesignTests/fixtures/make-bundle.ts)",
+ "serverSpki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAESmO4YGT7dWqFABs5srqejJipmFfz47XKATBFZC0QKoeT/U5PpXXA2tS/Hh5on1C2APBl1Z2SO3xaVbPB8W4ZuA==",
+ "kid": "p3rF3QirXlT3csHt",
+ "deviceId": "ios_testdevice0001",
+ "deviceSpki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEmfS84dyV8YDunDQ6/5yw9y+4dE7BOOMHIG1jVPomhQkeTXMOyPNPuqRfkSu+ytTIif1rsX12KmQLePBLumXY+g==",
+ "deviceD": "Xn2ijN64Ji8z5VYj20aRkVbsQe37g36E0nMh22TgnBE",
+ "header": {
+  "id": "bld_ios_fixture_01",
+  "number": 7,
+  "version": "6.14.0-b7",
+  "channel": "beta",
+  "created": 1791217500000,
+  "minAppCode": 61400,
+  "segments": 2,
+  "seg": 4096,
+  "size": 5507
+ },
+ "files": [
+  "app.json",
+  "theme.json",
+  "animations.json",
+  "screens/splash.json",
+  "screens/lock.json",
+  "screens/rooms.json",
+  "screens/rooms.item.json",
+  "screens/room.json",
+  "screens/message.in.json",
+  "screens/message.out.json",
+  "screens/message.sys.json",
+  "screens/about.json",
+  "menus/main.json",
+  "strings/en.json",
+  "strings/cs.json",
+  "lib/lock-and-rooms.json",
+  "assets/logo.png"
+ ],
+ "screens": [
+  "splash",
+  "lock",
+  "rooms",
+  "rooms.item",
+  "room",
+  "message.in",
+  "message.out",
+  "message.sys",
+  "about"
+ ],
+ "languages": [
+  "en",
+  "cs"
+ ],
+ "designRev": "4b21e1812f35c8d7"
+}
