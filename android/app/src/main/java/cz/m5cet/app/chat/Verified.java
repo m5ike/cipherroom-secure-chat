@@ -31,6 +31,27 @@ final class Verified {
         catch (RuntimeException e) { return false; }
     }
 
+    /**
+     * Review P09: is "forwarded from X" (`fwd.forwardedFrom`) backed by an
+     * original in `messages` — the same text, from the device key pinned for
+     * X in this room (`pinnedKid`), or mine when X is my name (`myName`)? Not
+     * by a message whose identity changed (held), a forward itself, or the
+     * forwarder's own message under another name.
+     */
+    static boolean forward(ChatMessage fwd, java.util.List<ChatMessage> messages, String pinnedKid, String myName) {
+        if (fwd == null || fwd.forwardedFrom == null || fwd.forwardedFrom.trim().isEmpty() || messages == null) return false;
+        String text = fwd.visibleText();
+        if (text == null || text.isEmpty()) return false;
+        for (ChatMessage x : messages) {
+            if (x == fwd || x.forwardedFrom != null || x.changed || "sys".equals(x.kind) || !text.equals(x.visibleText())) continue;
+            if (x.mine && fwd.mine) continue; // the forwarder's own
+            if (!x.mine && !fwd.mine && x.senderId != null && x.senderId.equals(fwd.senderId)) continue;
+            if (x.mine) { if (sameName(fwd.forwardedFrom, myName)) return true; continue; }
+            if (pinnedKid != null && !pinnedKid.isEmpty() && pinnedKid.equals(x.senderKid) && sameName(x.senderName, fwd.forwardedFrom)) return true;
+        }
+        return false;
+    }
+
     /** As the pins are keyed: trimmed, case-insensitive. */
     static boolean sameName(String a, String b) {
         if (a == null || b == null) return false;

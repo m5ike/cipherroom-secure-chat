@@ -194,7 +194,8 @@ describe("android chat 6.10 — actions, version, texts", () => {
     }
     const only = (root: ANode): AndroidDesign => ({ ...DEFAULT_DESIGN, screens: { "message.in": root }, menus: {} });
     expect(designMinAppCode(only({ id: "row", el: "row", on: { click: { action: "msg.sender", arg: "x" } } }))).toBe(61000);
-    expect(designMinAppCode(DEFAULT_DESIGN)).toBe(61000);
+    // 6.12: the security review's kt.dismiss (design-612-p4.ts) makes the default design a 6.12 one.
+    expect(designMinAppCode(DEFAULT_DESIGN)).toBe(61200);
   });
 
   it("the app fills what the trees read", () => {

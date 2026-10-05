@@ -71,8 +71,10 @@ final class P4Room {
         Handshake.AccountCheck account;
         Mailbox.Bundle bundle;
         long lastReceivedReset, lastSentReset;
-        /** What waits for the session: inner messages to encrypt, or ready text (room envelopes). */
+        /** What waits for the session: inner messages to encrypt ("inner", our chain "sk" with its key id), or ready text (room envelopes). */
         final List<String[]> pending = new ArrayList<>();
+        /** The key id of our chain whose `sk` waits in `pending` (review P13: handed out only once it went). */
+        String queuedChain;
         /** File keys from `file` inner messages, by transfer id (the newest 64). */
         final LinkedHashMap<String, byte[]> fileKeys = new LinkedHashMap<>();
         long establishedAt;
@@ -144,11 +146,6 @@ final class P4Room {
      */
     boolean helloSent(String peerId) { PeerState ps = peers.get(peerId); return ps != null && ps.hs != null; }
 
-    /**
-     * The peer's hello, after its protocol-3 part was accepted (SenderKeys.acceptHello):
-     * "v4" (our KEM message went out), "legacy" (protocol 3) or "downgrade"
-     * (refused: this device key spoke protocol 4 before).
-     */
     /** Is this the very hello the current handshake (or session) already answered? Then nothing is to be done. */
     boolean repeatHello(String peerId, JSONObject raw) {
         PeerState ps = peers.get(peerId);
@@ -157,6 +154,17 @@ final class P4Room {
 
     static String tagOf(JSONObject raw) { return raw.optString("e") + "|" + raw.optString("n"); }
 
+    /** Does this hello say protocol 4 (v: 4)? Whether it verifies is another question. */
+    static boolean saysV4(JSONObject raw) { Object v = raw.opt("v"); return v instanceof Number && ((Number) v).intValue() == P4.VERSION; }
+
+    /**
+     * The peer's hello, after its protocol-3 part was accepted (SenderKeys.acceptHello):
+     * "v4" (our KEM message went out), "legacy" (protocol 3), "downgrade"
+     * (refused: this device key spoke protocol 4 before) or "pending" (we
+     * could not offer protocol 4 on this channel to a peer that speaks it —
+     * review P03: it is not spoken to in protocol 3 either; the room sends a
+     * new hello and asks again). `ref`: the hub's member reference of the peer.
+     */
     String onHello(String peerId, JSONObject raw, String ref, long now) {
         PeerState ps = state(peerId);
         ps.acceptedTag = tagOf(raw);
@@ -166,10 +174,12 @@ final class P4Room {
         ps.hello = raw;
         ps.downgrade = false;
         if (ps.hs == null) {
-            // We could not offer protocol 4 on this channel (our hello went as protocol 3): the peer is
-            // spoken to in protocol 3 — not a downgrade on its side.
+            // We could not offer protocol 4 on this channel (our hello went as protocol 3). An older peer is spoken
+            // to in protocol 3; one whose hello says v4, or whose device spoke protocol 4 before, waits instead
+            // (review P03) — never the room key or protocol 3 for it.
             ps.v4 = false;
-            return "legacy";
+            ps.acceptedTag = null;
+            return saysV4(raw) || store.p4Seen(pk) ? "pending" : "legacy";
         }
         Handshake.Verdict verdict;
         try { verdict = ps.hs.acceptHello(raw, now); } catch (P4Error e) { verdict = null; }
@@ -186,10 +196,11 @@ final class P4Room {
         ps.v4 = true;
         store.markP4(pk);
         ps.account = Handshake.verifyAccount(verdict.hello.opt("acc"), pk, now);
-        if (verdict.mailbox != null) {
-            ps.bundle = verdict.mailbox;
-            store.rememberBundle(pk, verdict.mailbox, ref);
-        }
+        if (verdict.mailbox != null) ps.bundle = verdict.mailbox;
+        // § 7.4 (review P01): the device pin — with its account attestation, filed under the member reference.
+        Object acc = verdict.hello.opt("acc");
+        store.rememberDevice(roomId, pk, verdict.mailbox, acc instanceof JSONObject ? (JSONObject) acc : null,
+            ps.account != null && ps.account.valid ? ps.account.publicKey : null, ref);
         if (ps.hs.kem != null) link.send(peerId, ps.hs.kem.toString());
         maybeEstablish(peerId, ps);
         return "v4";
@@ -226,6 +237,11 @@ final class P4Room {
         ps.pending.clear();
         for (String[] w : waiting) {
             if ("inner".equals(w[0])) sendInnerNow(peerId, ps, w[1]);
+            else if ("sk".equals(w[0])) {
+                // Review P13: the peer holds our chain only once its `sk` went.
+                if (sendInnerNow(peerId, ps, w[1])) senderKeys.handedOut(peerId, w[2]);
+                if (w[2].equals(ps.queuedChain)) ps.queuedChain = null;
+            }
             else link.send(peerId, w[1]);
         }
         link.established(peerId);
@@ -290,12 +306,20 @@ final class P4Room {
         link.rehello(peerId);
     }
 
+    /**
+     * § 5.5: our session with the peer broke. Review P13: only RECEIVED
+     * resets count toward closing the channel (onReset) — ours never close
+     * it. A second one of ours within RESET_GAP_MS goes without the p4-reset
+     * frame (the new hello alone restarts the peer's side), so the peer does
+     * not count it against us.
+     */
     private void reset(String peerId, PeerState ps, String why) {
         long now = System.currentTimeMillis();
-        if (now - ps.lastSentReset < RESET_GAP_MS) { link.flood(peerId); return; }
-        ps.lastSentReset = now;
-        try { link.send(peerId, new JSONObject().put("kind", "p4-reset").put("v", 4).put("why", why == null ? "error" : why).toString()); }
-        catch (JSONException ignored) { }
+        if (now - ps.lastSentReset >= RESET_GAP_MS) {
+            ps.lastSentReset = now;
+            try { link.send(peerId, new JSONObject().put("kind", "p4-reset").put("v", 4).put("why", why == null ? "error" : why).toString()); }
+            catch (JSONException ignored) { }
+        }
         endSession(ps);
         link.rehello(peerId);
     }
@@ -321,6 +345,13 @@ final class P4Room {
 
     String helloPk(String peerId) { PeerState ps = peers.get(peerId); return ps == null ? "" : ps.pk; }
 
+    /** The device of the peer's valid hello v4 here with its bundle, when that bundle is valid now (§ 8: a proxied file's key may be sealed to it); else null. */
+    P4Relay.Device helloDevice(String peerId, long now) {
+        PeerState ps = peers.get(peerId);
+        if (ps == null || !ps.v4 || ps.bundle == null || ps.bundle.exp <= now) return null;
+        return new P4Relay.Device(ps.pk, ps.account != null && ps.account.valid ? ps.account.publicKey : null, ps.bundle);
+    }
+
     /* ------------------------------------------------------------- sending */
 
     /** Encrypts and sends an inner message now, or keeps it for the session (in order). False: not a v4 peer. */
@@ -331,9 +362,11 @@ final class P4Room {
         return sendInnerNow(peerId, ps, innerJson);
     }
 
-    private boolean queue(PeerState ps, String kind, String text) {
+    private boolean queue(PeerState ps, String kind, String text) { return queue(ps, kind, text, null); }
+
+    private boolean queue(PeerState ps, String kind, String text, String keyId) {
         if (ps.pending.size() >= MAX_PENDING) return false;
-        ps.pending.add(new String[]{kind, text});
+        ps.pending.add(keyId == null ? new String[]{kind, text} : new String[]{kind, text, keyId});
         return true;
     }
 
@@ -364,11 +397,21 @@ final class P4Room {
      */
     int sendRoom(List<String> peerIds, String id, String payloadJson, long now) throws P4Error {
         senderKeys.prepare(now);
+        String keyId = senderKeys.currentKeyId();
         List<String> to = new ArrayList<>();
         for (String peerId : peerIds) {
             PeerState ps = peers.get(peerId);
             if (ps == null || !ps.v4) continue;
-            if (!senderKeys.hasOurChain(peerId) && !sendInner(peerId, senderKeys.chainFor(peerId).toString())) { senderKeys.notSent(peerId); continue; }
+            if (!senderKeys.hasOurChain(peerId) && !keyId.equals(ps.queuedChain)) {
+                // Review P13: the chain counts as handed out only once its `sk` went (now, or when the session is up).
+                String sk = senderKeys.chainFor(peerId).toString();
+                if (ps.session == null) {
+                    if (!queue(ps, "sk", sk, keyId)) continue;
+                    ps.queuedChain = keyId;
+                } else if (sendInnerNow(peerId, ps, sk)) {
+                    senderKeys.handedOut(peerId, keyId);
+                } else continue;
+            }
             to.add(peerId);
         }
         if (to.isEmpty()) return 0;

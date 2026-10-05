@@ -100,9 +100,9 @@ final class MsgDetails implements Rooms.Listener {
     private int dp(float v) { return Ui.dp(a, v); }
     private String t(String key) { return app().t(key); }
 
-    /** A word for a key when the design has one, else the raw value (a name, an unknown state). */
+    /** A word for a key when the design has one (6.12: or the app's English one), else the raw value (a name, an unknown state). */
     private String word(String prefix, String value) {
-        String k = prefix + value, s = t(k);
+        String k = prefix + value, s = cz.m5cet.app.chat.P4Texts.t(app(), k);
         return s.equals(k) ? value : s;
     }
 
@@ -216,7 +216,7 @@ final class MsgDetails implements Rooms.Listener {
             String label = word("msginfo.kind.", k);
             if (k.equals("vanish")) label += " · " + m.vanishSeconds + " s";
             else if (k.equals("private")) label += " · " + String.join(", ", m.to);
-            else if (k.equals("forwarded")) label += " · " + m.forwardedFrom;
+            else if (k.equals("forwarded")) label += " · " + m.forwardedFrom + (room.forwardVerified(m) ? " ✓" : ""); // 6.12 P09: by key
             else if (k.equals("reply") && m.replyToSender != null && !m.replyToSender.isEmpty()) label += " · " + m.replyToSender;
             else if (k.equals("fn") && m.fnDraw() != null && !m.fnDraw().optString("keyword").isEmpty()) label += " · /" + m.fnDraw().optString("keyword");
             TextView c = new TextView(a);
@@ -264,6 +264,8 @@ final class MsgDetails implements Rooms.Listener {
             case "hidden": return "eye-off";
             case "unhidden": return "eye";
             case "discarded": return "trash";
+            case "relay-p4": return "shield-check"; // 6.12 § 7.4: away members — sealed for their devices
+            case "relay-room": return "key-round"; // … or under the room key
             default: return "circle-dot";
         }
     }

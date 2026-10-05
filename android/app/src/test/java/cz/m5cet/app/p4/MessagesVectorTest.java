@@ -88,12 +88,18 @@ public class MessagesVectorTest {
         Mailbox.Opened opened = Mailbox.open(item, M.getString("roomId"), rKeys);
         Vectors.assertJson("payload", M.getJSONObject("payload"), opened.payload);
         assertEquals(M.getJSONObject("sender").getString("pk"), opened.spk);
-        assertNull(opened.sacc);
+        // 6.12 review P13: the sender's account attestation (a v2 sacc) is bound by the AAD's saccDigest.
+        Vectors.assertJson("sacc", M.getJSONObject("sacc"), opened.sacc);
+        assertEquals(M.getString("saccDigest"), Handshake.accDigest(item.opt("sacc")));
         assertEquals(M.getString("aad"), Vectors.text(Mailbox.aad(M.getString("roomId"), item.getString("id"), item.getString("spk"), item.getJSONObject("sb").getString("id"),
-            item.getString("to"), item.getString("e"), Prim.hB64(Prim.unb64(item.getString("kct"))))));
+            item.getString("to"), item.getString("e"), Prim.hB64(Prim.unb64(item.getString("kct"))), Handshake.accDigest(item.opt("sacc")))));
         JSONObject again = Mailbox.seal(M.getString("roomId"), M.getJSONObject("payload").getString("id"), M.getString("json"), M.getJSONObject("recipient").getString("pk"),
-            Mailbox.Bundle.parse(M.getJSONObject("recipient").getJSONObject("bundle")), M.getJSONObject("sender").getString("pk"), null, sKeys, now, new Rng.Tape(M.getJSONArray("sealTape")));
+            Mailbox.Bundle.parse(M.getJSONObject("recipient").getJSONObject("bundle")), M.getJSONObject("sender").getString("pk"), M.getJSONObject("sacc"), sKeys, now, new Rng.Tape(M.getJSONArray("sealTape")));
         Vectors.assertJson("resealed item", item, again);
+        // Without its sacc (stripped by the relay) the item does not open.
+        JSONObject stripped = new JSONObject(item.toString());
+        stripped.remove("sacc");
+        try { Mailbox.open(stripped, M.getString("roomId"), rKeys); throw new AssertionError("opened without its sacc"); } catch (P4Error e) { assertEquals("aead", e.code); }
         // Through a Mailbox (store of own bundles): an item, a set, another device's item, another room.
         Mailbox.MemoryStore store = new Mailbox.MemoryStore();
         store.put(rKeys);

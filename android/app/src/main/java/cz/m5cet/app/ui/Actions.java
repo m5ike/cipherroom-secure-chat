@@ -86,6 +86,7 @@ public final class Actions {
                     break;
                 }
                 case "call.mute": { RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().mute(!"muted".equals(r.calls().state())); break; }
+                case "kt.dismiss": app.rooms.dismissKtAlert(); a.refresh(); break; // 6.12 review P04: the key-transparency alert, seen
                 case "lock.now": app.lock.lockNow(false); break;
                 case "lock.biometric": a.parts.retryBiometric(); break;
                 case "theme.toggle": app.settings.set("appearance.tone", Ui.dark(a) ? "light" : "dark"); a.recreate(); break;

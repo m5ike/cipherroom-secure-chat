@@ -204,16 +204,29 @@ public final class Ratchet {
 
     /* -------------------------------------------------------- receiving */
 
+    /**
+     * Review P13: the failure count decays — after this many frames that
+     * opened since the last failure it starts again from 0, so two incidents
+     * far apart in one long session do not force a reset (§ 5.5 "a second
+     * failure" means a second one close to the first).
+     */
+    public static final int FAILURE_DECAY_FRAMES = 32;
+    private int sinceFailure = 0;
+
     /** § 5.4: opens one frame. Never throws; a failure says whether to reset (§ 5.5). */
     public synchronized Result decrypt(Object frame) {
         if (wiped) return new Result(false, null, "state", true, "session wiped");
         try {
-            return new Result(true, open(frame), null, false, null);
+            JSONObject inner = open(frame);
+            if (failures > 0 && ++sinceFailure >= FAILURE_DECAY_FRAMES) { failures = 0; sinceFailure = 0; }
+            return new Result(true, inner, null, false, null);
         } catch (P4Error e) {
             failures += 1;
+            sinceFailure = 0;
             return new Result(false, null, e.code, "kct".equals(e.code) || failures >= 2, e.getMessage());
         } catch (RuntimeException e) {
             failures += 1;
+            sinceFailure = 0;
             return new Result(false, null, "malformed", failures >= 2, String.valueOf(e.getMessage()));
         }
     }

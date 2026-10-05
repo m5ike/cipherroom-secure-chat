@@ -40,6 +40,10 @@ public class P4RoomTest {
         final List<String> established = new ArrayList<>();
         int rehellos = 0, floods = 0;
         boolean withBundle;
+        /** Our hello v4 cannot be made (a broken attestation: the hello's sig4 transcript refuses it). */
+        boolean badAccount;
+        /** The channel refuses what we send. */
+        boolean refuse;
 
         Side(String id, ChatIdentity identity) {
             this.id = id;
@@ -51,7 +55,9 @@ public class P4RoomTest {
                     try { return new Mailbox(store.mailbox(), P4Device.signer(identity), Rng.SYSTEM).current(System.currentTimeMillis()).bundle.json(); }
                     catch (P4Error e) { return null; }
                 }
-                @Override public JSONObject account() { return null; }
+                @Override public JSONObject account() {
+                    try { return self.badAccount ? new JSONObject().put("x", 1) : null; } catch (Exception e) { return null; }
+                }
                 @Override public JSONObject sth() { return null; }
             }, this, null);
         }
@@ -61,15 +67,19 @@ public class P4RoomTest {
                 .put("sig", identity.sign(Prim.utf8("m5cet/hello/1|room|" + id + "|" + to + "|" + CHECK + "|" + identity.dhPublicKey))).put("caps", new JSONArray().put("bin"));
         }
 
-        /** Our hello to `to` (v4, or v3 when `v3only`). */
+        /** Our hello to `to` (v4, or v3 when `v3only` — or when our hello v4 cannot be made, as RoomSession.sendHello does). */
         void hello(Side to, boolean v3only) throws Exception {
             JSONObject v3 = v3(to.id);
             JSONObject h = v3only ? v3 : room.hello(id, to.id, v3);
             if (v3only) room.hello(id, to.id, v3); // still a handshake on our side, never sent
-            wire.add(new Object[]{this, to, h.toString()});
+            wire.add(new Object[]{this, to, (h == null ? v3 : h).toString()});
         }
 
-        @Override public boolean send(String peerId, String text) { wire.add(new Object[]{this, side(peerId), text}); return true; }
+        @Override public boolean send(String peerId, String text) {
+            if (refuse) return false;
+            wire.add(new Object[]{this, side(peerId), text});
+            return true;
+        }
         @Override public void delivered(String peerId, JSONObject payload, Envelopes.Signer signer, boolean pairSealed) {
             assertTrue(signer.valid);
             assertEquals(side(peerId).identity.publicKey, signer.publicKey);
@@ -86,6 +96,10 @@ public class P4RoomTest {
     final ArrayDeque<Object[]> wire = new ArrayDeque<>();
     final List<Side> sides = new ArrayList<>();
     final List<String> verdicts = new ArrayList<>();
+    /** The newest hello on each "from>to" path. */
+    final java.util.Map<String, JSONObject> lastHello = new java.util.HashMap<>();
+    /** How many p4-reset frames were delivered. */
+    int resetFrames = 0;
 
     Side side(String id) { for (Side s : sides) if (s.id.equals(id)) return s; throw new AssertionError("no side " + id); }
 
@@ -98,10 +112,16 @@ public class P4RoomTest {
             Side from = (Side) w[0], to = (Side) w[1];
             JSONObject raw = new JSONObject((String) w[2]);
             switch (raw.optString("kind")) {
-                case "hello": verdicts.add(to.room.onHello(from.id, raw, "ref-" + from.id, System.currentTimeMillis())); break;
+                case "hello":
+                    lastHello.put(from.id + ">" + to.id, raw);
+                    // A new hello from a peer we have a session with (it re-helloed): ours first, as RoomSession.onHello does.
+                    P4Room.PeerState ps = to.room.peer(from.id);
+                    if (ps != null && ps.session != null && !to.room.helloSent(from.id)) to.hello(from, false);
+                    verdicts.add(to.room.onHello(from.id, raw, "ref-" + from.id, System.currentTimeMillis()));
+                    break;
                 case "p4-kem": to.room.onKem(from.id, raw); break;
                 case "p4": to.room.onFrame(from.id, raw); break;
-                case "p4-reset": to.room.onReset(from.id, raw); break;
+                case "p4-reset": resetFrames++; to.room.onReset(from.id, raw); break;
                 default:
                     if (P4Room.isRoomEnvelope(raw)) to.roomIn.add(to.room.openRoom(from.id, raw));
                     break;
@@ -129,7 +149,8 @@ public class P4RoomTest {
         assertTrue(b.room.ready("peer-a"));
         assertEquals(List.of("peer-b"), a.established);
         // B learned A's mailbox bundle from the hello (the relay can seal to it later).
-        assertEquals(1, b.store.bundlesOfRef("ref-peer-a", System.currentTimeMillis()).size());
+        assertEquals(1, b.store.devicesOfRef("ref-peer-a").size());
+        assertNotNull(b.store.devicesOfRef("ref-peer-a").get(0).bundle);
         assertTrue(b.store.p4Seen(a.identity.publicKey));
 
         // Room messages: our chain first (an `sk` inner), then the sender-key envelopes.
@@ -230,6 +251,133 @@ public class P4RoomTest {
         b.room.onReset("peer-a", new JSONObject().put("kind", "p4-reset").put("v", 4).put("why", "x"));
         b.room.onReset("peer-a", new JSONObject().put("kind", "p4-reset").put("v", 4).put("why", "x"));
         assertEquals(1, b.floods);
+    }
+
+    /** `n` private messages from `from` to `to` whose ciphertext was changed on the way (they do not open). */
+    List<Object[]> brokenFrames(Side from, Side to, int n) throws Exception {
+        List<Object[]> bad = new ArrayList<>();
+        for (int i = 0; i < n; i++) {
+            from.room.sendPrivate(to.id, msg("bad-" + System.nanoTime(), "x"));
+            Object[] w = wire.pollLast();
+            JSONObject f = new JSONObject((String) w[2]);
+            byte[] c = Prim.unb64(f.getString("c"));
+            c[0] ^= 1;
+            f.put("c", Prim.b64(c));
+            bad.add(new Object[]{w[0], w[1], f.toString()});
+        }
+        return bad;
+    }
+
+    /* ------------------------------------------------- 6.12 security review */
+
+    @Test
+    public void reviewP03_aProtocol4PeerIsNeverLegacyWhenOurHelloV4CannotBeMade() throws Exception {
+        ChatIdentity bId = ChatIdentity.generate();
+        Side a = add("peer-a", ChatIdentity.generate()), b = add("peer-b", bId);
+        connect(a, b);
+        assertTrue(a.store.p4Seen(bId.publicKey));
+        // A's next hello v4 cannot be made (its hello goes as protocol 3): B, whose device spoke protocol 4, is not
+        // spoken to in protocol 3 (nor under the room key) — it waits ("pending").
+        verdicts.clear();
+        a.badAccount = true;
+        a.hello(b, false);
+        b.hello(a, false);
+        pump();
+        assertEquals("pending", verdicts.get(1));
+        assertFalse(a.room.v4("peer-b"));
+        assertFalse(a.room.downgrade("peer-b"));
+        // A device never seen before whose hello says v4: the same.
+        Side c = add("peer-c", ChatIdentity.generate());
+        verdicts.clear();
+        a.hello(c, false);
+        c.hello(a, false);
+        pump();
+        assertEquals("pending", verdicts.get(1));
+        // An older device (a protocol-3 hello, never seen with protocol 4): protocol 3 as before.
+        Side d = add("peer-d", ChatIdentity.generate());
+        verdicts.clear();
+        a.hello(d, false);
+        d.hello(a, true);
+        pump();
+        assertEquals("legacy", verdicts.get(1));
+        // RoomSession then makes its hello again and answers the same hello of B: protocol 4 once it can.
+        a.badAccount = false;
+        a.hello(b, false);
+        assertEquals("v4", a.room.onHello("peer-b", lastHello.get("peer-b>peer-a"), "ref-peer-b", System.currentTimeMillis()));
+        assertTrue(a.room.v4("peer-b"));
+    }
+
+    @Test
+    public void reviewP13_ourChainCountsAsHandedOutOnlyOnceItWent() throws Exception {
+        Side a = add("peer-a", ChatIdentity.generate()), b = add("peer-b", ChatIdentity.generate());
+        a.hello(b, false);
+        b.hello(a, false);
+        Object[] helloToB = wire.poll();
+        Object[] helloToA = wire.poll();
+        wire.add(helloToA);
+        pump();
+        // B speaks v4, no session yet: the chain waits in the queue — not handed out, and not queued twice.
+        assertEquals(1, a.room.sendRoom(List.of("peer-b"), "q1", msg("q1", "one").toString(), System.currentTimeMillis()));
+        assertEquals(1, a.room.sendRoom(List.of("peer-b"), "q2", msg("q2", "two").toString(), System.currentTimeMillis()));
+        assertFalse(a.room.senderKeys.hasOurChain("peer-b"));
+        int sks = 0;
+        for (String[] w : a.room.peer("peer-b").pending) if ("sk".equals(w[0])) sks++;
+        assertEquals(1, sks);
+        wire.add(helloToB);
+        pump();
+        assertTrue(a.room.senderKeys.hasOurChain("peer-b"));
+        assertEquals(List.of("one", "two"), List.of(b.roomIn.get(0).getString("text"), b.roomIn.get(1).getString("text")));
+
+        // A channel that refuses the chain: the peer does not count as holding it (it gets it with the next message).
+        Side c = add("peer-c", ChatIdentity.generate());
+        connect(a, c);
+        a.refuse = true;
+        assertEquals(0, a.room.sendRoom(List.of("peer-c"), "q3", msg("q3", "lost").toString(), System.currentTimeMillis()));
+        assertFalse(a.room.senderKeys.hasOurChain("peer-c"));
+        a.refuse = false;
+        assertEquals(1, a.room.sendRoom(List.of("peer-c"), "q4", msg("q4", "arrives").toString(), System.currentTimeMillis()));
+        pump();
+        assertEquals("arrives", c.roomIn.get(c.roomIn.size() - 1).getString("text"));
+    }
+
+    @Test
+    public void reviewP13_ourOwnResetsNeverCloseTheChannel() throws Exception {
+        Side a = add("peer-a", ChatIdentity.generate()), b = add("peer-b", ChatIdentity.generate());
+        connect(a, b);
+        // Two incidents within 10 s, each two broken frames: B resets twice. Only received resets count toward
+        // closing (§ 5.5): B closes nothing, and its second reset goes as a new hello alone — A gets ONE p4-reset.
+        wire.addAll(brokenFrames(a, b, 2));
+        pump();
+        assertEquals(1, resetFrames);
+        assertTrue(b.room.ready("peer-a"));
+        wire.addAll(brokenFrames(a, b, 2));
+        pump();
+        assertEquals(2, b.rehellos);
+        assertEquals(0, a.floods + b.floods);
+        assertEquals(1, resetFrames);
+        assertTrue(a.room.ready("peer-b"));
+        assertTrue(b.room.ready("peer-a"));
+        a.room.sendPrivate("peer-b", msg("after", "still works"));
+        pump();
+        assertEquals("still works", b.privateIn.get(b.privateIn.size() - 1).getString("text"));
+    }
+
+    @Test
+    public void reviewP13_theFailureCountDecays() throws Exception {
+        Side a = add("peer-a", ChatIdentity.generate()), b = add("peer-b", ChatIdentity.generate());
+        connect(a, b);
+        // One broken frame, then enough good ones, then another broken one: two incidents far apart — no reset.
+        wire.addAll(brokenFrames(a, b, 1));
+        pump();
+        for (int i = 0; i < cz.m5cet.app.p4.Ratchet.FAILURE_DECAY_FRAMES; i++) a.room.sendPrivate("peer-b", msg("ok" + i, "fine"));
+        pump();
+        wire.addAll(brokenFrames(a, b, 1));
+        pump();
+        assertEquals(0, b.rehellos);
+        // Two close together still reset (§ 5.5).
+        wire.addAll(brokenFrames(a, b, 1));
+        pump();
+        assertEquals(1, b.rehellos);
     }
 
     @Test

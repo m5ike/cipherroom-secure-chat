@@ -101,18 +101,26 @@ public final class SenderKeys4 {
         sentTo.clear();
     }
 
-    /** The current chain as an `sk` inner message for `peerId` — from its current index, nothing before. */
+    /**
+     * The current chain as an `sk` inner message for `peerId` — from its
+     * current index, nothing before. Review P13: the peer counts as holding
+     * it only once the message actually went ({@link #handedOut}).
+     */
     public synchronized JSONObject chainFor(String peerId) throws P4Error {
         if (own == null) throw new P4Error("state", "no chain: call prepare() first");
-        sentTo.add(peerId);
         try {
             return new JSONObject().put("t", "sk").put("keyId", own.keyId).put("chain", Prim.b64(own.ck)).put("index", own.index).put("spk", own.sign.spki).put("cert", own.cert);
         } catch (JSONException e) { throw new IllegalStateException(e); }
     }
 
+    /** The `sk` message for chain `keyId` was sent to `peerId`: it holds our chain (unless the chain was replaced meanwhile). */
+    public synchronized void handedOut(String peerId, String keyId) {
+        if (own != null && own.keyId.equals(keyId)) sentTo.add(peerId);
+    }
+
     public synchronized boolean hasOurChain(String peerId) { return own != null && sentTo.contains(peerId); }
 
-    /** The chain handed out by chainFor did not reach the peer after all (its channel refused it). */
+    /** The chain did not reach the peer after all (its channel refused it). */
     public synchronized void notSent(String peerId) { sentTo.remove(peerId); }
 
     public synchronized String currentKeyId() { return own == null ? null : own.keyId; }

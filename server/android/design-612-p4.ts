@@ -1,6 +1,7 @@
 // 6.12 design area: protocol 4 in the app (docs/protocol-v4.md). No new
-// elements or actions — the texts the app says and what the existing trees
-// show of it:
+// elements; one action (kt.dismiss — the security review's key-transparency
+// alert dismissed in the settings) — the texts the app says and what the
+// existing trees show of it:
 //
 //   users.item       a member the server says did not prove it holds the room
 //                    key (§ 13: `proven: false`) gets a "shield-off" badge; an
@@ -63,10 +64,11 @@ const info = (id: string, label: string, value: string, cond?: string, color?: s
   n(`${id}-value`, "text", { text: value, style: { weight: 1, size: 13.5, ...(color ? { fg: color } : {}) } }),
 ]);
 
-/** A settings row with a warning (design-61.ts infoRow, in red). */
+/** A settings row with a warning (design-61.ts infoRow, in red) and, 6.12 review: its dismiss button (kt.dismiss). */
 const alertRow = (id: string, cond: string, value: string): ANode => n(id, "row", { if: cond, style: { padding: "8 20", gap: 12, align: "center" } }, [
   n(`${id}-icon`, "icon", { props: { icon: "shield-alert", size: 20, color: "@danger" } }),
   n(`${id}-value`, "text", { text: value, style: { weight: 1, size: 13, fg: "@danger" } }),
+  n(`${id}-dismiss`, "button", { text: "{_'p4.kt.dismiss'}", props: { icon: "check", variant: "text" }, on: { click: { action: "kt.dismiss" } } }),
 ]);
 
 const T = (cs: string, en: string, de: string) => ({ cs, en, de });
@@ -93,10 +95,53 @@ const STR: Record<string, { cs: string; en: string; de: string }> = {
     "{n} zurückgehaltene Nachrichten wurden nicht angezeigt (Identität geändert, nicht verifiziert)",
   ),
   "p4.roomProof": T(
-    "Server odmítl důkaz tohoto zařízení, že zná klíč místnosti: pro tuto místnost má zaregistrovaný jiný klíč (někdo ji mohl zabrat dřív). Ověřte s ostatními název místnosti a heslo.",
-    "The server refused this device's proof that it holds the room key: another key is registered for this room on the server (someone may have claimed it first). Check the room name and passphrase with the others.",
-    "Der Server hat den Nachweis dieses Geräts abgelehnt, dass es den Raumschlüssel kennt: Für diesen Raum ist ein anderer Schlüssel registriert (jemand könnte ihn zuerst beansprucht haben). Prüfen Sie Raumnamen und Passwort mit den anderen.",
+    "Server odmítl důkaz tohoto zařízení, že zná klíč místnosti: pro tuto místnost má zaregistrovaný jiný klíč (někdo ji mohl zabrat dřív). Ověřte s ostatními název místnosti a heslo; vlastník serveru může registraci místnosti zrušit.",
+    "The server refused this device's proof that it holds the room key: another key is registered for this room on the server (someone may have claimed it first). Check the room name and passphrase with the others; the server's owner can reset the room's registration.",
+    "Der Server hat den Nachweis dieses Geräts abgelehnt, dass es den Raumschlüssel kennt: Für diesen Raum ist ein anderer Schlüssel registriert (jemand könnte ihn zuerst beansprucht haben). Prüfen Sie Raumnamen und Passwort mit den anderen; der Betreiber des Servers kann die Registrierung des Raums zurücksetzen.",
   ),
+  // 6.12 security review (docs/review-612.md): S14, P08, P04, P05, P14, P01 (the app's side).
+  "p4.roomProofLegacy": T(
+    "Pro tuto místnost má server zaregistrovaný jiný klíč (mohl ji zabrat někdo, kdo znal jen její slepé ID), proto se toto zařízení připojilo bez důkazu, že zná klíč místnosti — ostatní ho uvidí jako neprokázané. Ověřte s ostatními název místnosti a heslo; vlastník serveru může registraci místnosti zrušit.",
+    "Another key is registered for this room on the server (someone who knew only its blind id may have claimed it first), so this device joined without proving it holds the room key — the others see it as unproven. Check the room name and passphrase with the others; the server's owner can reset the room's registration.",
+    "Für diesen Raum ist auf dem Server ein anderer Schlüssel registriert (jemand, der nur seine blinde ID kannte, könnte ihn zuerst beansprucht haben); dieses Gerät ist daher ohne Nachweis des Raumschlüssels beigetreten — die anderen sehen es als nicht nachgewiesen. Prüfen Sie Raumnamen und Passwort mit den anderen; der Betreiber des Servers kann die Registrierung des Raums zurücksetzen.",
+  ),
+  "p4.trust.otherName": T("ověřeno jako {name} — teď pod jiným jménem", "verified as {name} — now under another name", "verifiziert als {name} — jetzt unter einem anderen Namen"),
+  "p4.kt.checking": T("ověřuje se v logu transparentnosti klíčů", "being checked in the key-transparency log", "wird im Schlüsseltransparenz-Log geprüft"),
+  "p4.kt.unchecked": T("v logu transparentnosti klíčů zatím neověřeno", "not yet checked in the key-transparency log", "im Schlüsseltransparenz-Log noch nicht geprüft"),
+  "p4.file.proxyP4": T(
+    "{name} jde přes server — jeho klíč zapečetěný pro zařízení každého člena (protokol 4)",
+    "{name} goes through the server — its key sealed for each member's devices (protocol 4)",
+    "{name} geht über den Server — sein Schlüssel für die Geräte jedes Mitglieds versiegelt (Protokoll 4)",
+  ),
+  "p4.file.proxyRoomKey": T(
+    "{name} šel přes server klíčem místnosti: zařízení některého člena nešlo zabezpečit end-to-end",
+    "{name} went through the server under the room key: a member's device could not be reached end to end",
+    "{name} ging mit dem Raumschlüssel über den Server: das Gerät eines Mitglieds war nicht Ende-zu-Ende erreichbar",
+  ),
+  "p4.file.noKey": T(
+    "Soubor přes server přišel bez svého klíče — nejde otevřít (požádejte odesílatele, ať ho pošle znovu)",
+    "A file through the server came without its key — it cannot be opened (ask the sender to send it again)",
+    "Eine Datei über den Server kam ohne ihren Schlüssel — sie lässt sich nicht öffnen (bitten Sie den Absender, sie erneut zu senden)",
+  ),
+  "p4.kt.alert.unknown-device": T(
+    "K vašemu účtu přibylo zařízení, které tento telefon nezná (transparentnost klíčů). Pokud jste to nebyli vy, odhlaste se všude a dejte vědět provozovateli serveru.",
+    "A device this phone does not know was added to your account (key transparency). If it was not you, sign out everywhere and tell the server's operator.",
+    "Ihrem Konto wurde ein Gerät hinzugefügt, das dieses Telefon nicht kennt (Schlüsseltransparenz). Wenn Sie es nicht waren, melden Sie sich überall ab und informieren Sie den Betreiber des Servers.",
+  ),
+  "p4.kt.alert.account-key": T(
+    "U vašeho účtu byl zaregistrován jiný klíč účtu (transparentnost klíčů).",
+    "Another account key was registered for your account (key transparency).",
+    "Für Ihr Konto wurde ein anderer Kontoschlüssel registriert (Schlüsseltransparenz).",
+  ),
+  "p4.kt.alert.unproven": T(
+    "Server už den neprokázal, že jeho historie klíčů navazuje na tu, kterou toto zařízení vidělo (transparentnost klíčů).",
+    "For a day the server has not proved that its key history continues the one this device saw (key transparency).",
+    "Seit einem Tag hat der Server nicht nachgewiesen, dass seine Schlüsselgeschichte an die von diesem Gerät gesehene anschließt (Schlüsseltransparenz).",
+  ),
+  "p4.kt.dismiss": T("Zavřít", "Dismiss", "Schließen"),
+  "quote.held": T("Zadržená zpráva — identita odesílatele se změnila", "Held message — the sender's identity changed", "Zurückgehaltene Nachricht — die Identität des Absenders hat sich geändert"),
+  "msginfo.state.relay-p4": T("nepřítomným — zapečetěno pro jejich zařízení (protokol 4)", "away — sealed for their devices (protocol 4)", "abwesend — für ihre Geräte versiegelt (Protokoll 4)"),
+  "msginfo.state.relay-room": T("nepřítomným — klíčem místnosti (protokol 3)", "away — under the room key (protocol 3)", "abwesend — mit dem Raumschlüssel (Protokoll 3)"),
   "p4.roomProofRequired": T(
     "Tento server pustí jen členy, kteří prokážou, že znají klíč místnosti; tato místnost to prokázat neumí (je otevřená svým prostým názvem).",
     "This server admits only members who prove they hold the room key; this room cannot prove it (it is joined by its plain name).",
@@ -147,6 +192,9 @@ for (const [key, v] of Object.entries(STR)) { strings.cs[key] = v.cs; strings.en
 
 export const AREA: DesignArea = {
   strings,
+  actions: [
+    { action: "kt.dismiss", arg: "", help: "Key transparency's alert (settings): the person saw it — an unknown device of their account was theirs; it comes back while another cause stays" },
+  ],
   patch(screens) {
     // The People list: the room-key badge and the older protocol.
     const item = screens["users.item"];

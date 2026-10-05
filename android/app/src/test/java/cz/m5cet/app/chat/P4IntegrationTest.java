@@ -75,12 +75,12 @@ public class P4IntegrationTest {
         store.markP4(peer.publicKey);
         long now = System.currentTimeMillis();
         Mailbox.Keys b = Mailbox.createBundle(P4Device.signer(peer), now, Rng.SYSTEM);
-        store.rememberBundle(peer.publicKey, b.bundle, "ref-1");
+        store.rememberDevice("r3.room", peer.publicKey, b.bundle, null, null, "ref-1");
         // A new store over the same backend (the app restarted) remembers both.
         P4Store again = new P4Store(backend);
         assertTrue(again.p4Seen(peer.publicKey));
-        assertEquals(1, again.bundlesOfRef("ref-1", now).size());
-        assertEquals(0, again.bundlesOfRef("ref-1", b.bundle.exp).size());
+        assertEquals(1, again.devicesOfRef("ref-1").size());
+        assertEquals(b.bundle, again.devicesOfRef("ref-1").get(0).bundle);
         // The own mailbox's keys survive too (they live in the vault).
         Mailbox mine = new Mailbox(store.mailbox(), P4Device.signer(peer), Rng.SYSTEM);
         String id = mine.current(now).bundle.id;
@@ -123,9 +123,10 @@ public class P4IntegrationTest {
         P4Relay relay = new P4Relay();
         assertTrue(relay.shouldAsk("ref-bob", now));
         assertFalse(relay.shouldAsk("ref-bob", now));
-        relay.onKeyBundles(new JSONObject().put("type", "key-bundles").put("ref", "ref-bob").put("devices", devices), now, a -> true);
+        relay.onKeyBundles(new JSONObject().put("type", "key-bundles").put("ref", "ref-bob").put("devices", devices), now);
         assertTrue(relay.known("ref-bob", now));
-        List<P4Relay.Device> bobs = relay.devices("ref-bob", null, now);
+        // Bob's account is pinned for his reference (an earlier attested hello); this server runs no key transparency.
+        List<P4Relay.Device> bobs = relay.devices("ref-bob", apk, null, false, now);
         assertEquals(2, bobs.size());
         Map<String, List<P4Relay.Device>> all = new HashMap<>();
         all.put("ref-bob", bobs);
@@ -152,10 +153,11 @@ public class P4IntegrationTest {
         JSONObject noFallback = P4Relay.frame("msg-1", List.of("ref-bob", "ref-carol"), all, d -> box.seal(roomId, "msg-1", json, d.pk, d.bundle, null, now), () -> null, null);
         assertEquals(1, noFallback.getJSONArray("to").length());
         assertFalse(noFallback.has("envelope"));
-        // An account key the pins call "changed" is not sealed to.
+        // Another account pinned for the reference, or none (review P01): no directory device is sealed to.
         P4Relay pinned = new P4Relay();
-        pinned.onKeyBundles(new JSONObject().put("ref", "ref-bob").put("devices", devices), now, a -> false);
-        assertEquals(0, pinned.devices("ref-bob", null, now).size());
+        pinned.onKeyBundles(new JSONObject().put("ref", "ref-bob").put("devices", devices), now);
+        assertEquals(0, pinned.devices("ref-bob", Prim.b64(new byte[32]), null, false, now).size());
+        assertEquals(0, pinned.devices("ref-bob", "", null, false, now).size());
     }
 
     static JSONObject directoryDevice(String pk, String apk, byte[] seed, Mailbox.Bundle bundle, long now) throws Exception {

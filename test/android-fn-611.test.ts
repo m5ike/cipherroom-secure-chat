@@ -96,7 +96,8 @@ describe("android fn 6.11 — the trees", () => {
   it("no new element or action: the default design still runs on app 61000", () => {
     expect(AREA.elements ?? []).toEqual([]);
     expect(AREA.actions ?? []).toEqual([]);
-    expect(designMinAppCode(DEFAULT_DESIGN)).toBeLessThanOrEqual(61000);
+    // 6.12: only 6.12's kt.dismiss (the security review, design-612-p4.ts) needs a newer app than 6.10.
+    expect(designMinAppCode(DEFAULT_DESIGN)).toBeLessThanOrEqual(61200);
   });
 });
 
