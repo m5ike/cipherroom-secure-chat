@@ -65,7 +65,7 @@ const ShareSection = lazy(() => import("./components/SharePanel").then((m) => ({
 const InvitePrompt = lazy(() => import("./components/SharePanel").then((m) => ({ default: m.InvitePrompt })));
 const AiPanel = lazy(() => import("./components/AiPanel").then((m) => ({ default: m.AiPanel })));
 const ConnectionsPanel = lazy(() => import("./components/ConnectionsPanel").then((m) => ({ default: m.ConnectionsPanel })));
-import { detectLang, t, tf, tp, type Lang } from "./lib/i18n";
+import { detectLang, dictionary, t, tf, tp, type Lang } from "./lib/i18n";
 import { useLoadedLang } from "./lib/i18n-react";
 import { isLocale } from "./lib/locales";
 import type { ConnectionStatus } from "./lib/connection-keeper";
@@ -2478,6 +2478,19 @@ function ChatApp() {
     // intentionally no deps for first render only
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 6.13: the language switched at runtime — the status line shown now is in
+  // the old language; when it is one of the app's own texts, show it in the new one.
+  const noticeLangRef = useRef(lang);
+  useEffect(() => {
+    const previous = noticeLangRef.current;
+    noticeLangRef.current = lang;
+    if (previous === lang || !notice) return;
+    const table = dictionary(previous);
+    const key = Object.keys(table).find((k) => table[k] === notice);
+    if (key) setNotice(t(lang, key));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lang]);
 
   useEffect(() => {
     nameRef.current = name;
