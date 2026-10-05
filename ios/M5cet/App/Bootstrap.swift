@@ -21,6 +21,7 @@ enum Bootstrap {
         // Platform/Notifications — UNUserNotificationCenter delegate, categories, neutral texts.
         Notifier.install(into: model)
         // Platform/NFC, Voice, Location, Contacts, Files — on demand from the screens.
+        NfcParts.install(into: model)
         // Parts and the app's actions — model.design.slots.register(…), model.design.actions.register(…),
         // model.design.state = … (Renderer/README.md: the three contracts).
     }
