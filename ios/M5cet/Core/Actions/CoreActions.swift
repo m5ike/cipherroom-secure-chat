@@ -33,8 +33,7 @@ final class CoreActions {
     /// The action names the core registers (handled fully, or as the fallback of a part).
     static let handled: [String] = [
         "room.join", "room.switch", "room.toggle", "rooms.connect", "room.leave", "room.forget", "room.delete", "room.clone", "room.edit",
-        "message.send", "message.reply", "message.copy", "message.kind", "message.recipients", "compose", "send.option",
-        "msg.forward", "msg.forwardRoom", "msg.forwardTo", "msg.map", "msg.open", "msg.save", "msg.share",
+        "message.send", "message.reply", "message.copy", "message.kind", "compose", "send.option",
         "call.audio", "call.video", "call.audioText", "call.end", "call.mute", "call.camera", "call.switchCamera", "call.speaker",
         "lock.now", "lock.biometric", "pin.change", "biometric.toggle", "wipe.ask", "kt.dismiss",
         "account.signin", "account.signup", "account.signout", "account.recovery", "account.addPasskey", "account.register",
@@ -47,6 +46,7 @@ final class CoreActions {
     /// Actions a part owns; the core logs them until the part registers (Core/README.md § Akce).
     static let partOwned: [String] = [
         "msg.quote", "msg.showHidden", "msg.mapPreview", "msg.source", "msg.info", "msg.sender", "users.toggle", "users.dock", "users.autoHide",
+        "msg.forward", "msg.forwardRoom", "msg.forwardTo", "message.recipients", "msg.map", "msg.open", "msg.save", "msg.share",
         "people.open", "people.select", "people.all", "people.none", "people.message", "people.call", "people.video", "people.verify",
         "people.link", "people.unlink", "people.unlinkAll",
         "profile.open", "profile.pick", "profile.clear", "profile.field", "profile.sync", "profile.save", "profile.public", "profile.audience",
@@ -88,14 +88,8 @@ final class CoreActions {
         case "message.copy":
             if let m = rooms.activeController?.message(s) { host.copy(m.text); host.flash(title: "", text: "✓", level: .success) }
         case "message.kind": core.models.composer(for: host).messageKind(s)
-        case "message.recipients": host.closeOverlay(); pickRecipients(host)
         case "compose": core.models.composer(for: host).compose(s)
         case "send.option": core.models.composer(for: host).sendOption(s)
-        case "msg.forward": if let m = rooms.activeController?.message(s) { forward(m, host) }
-        case "msg.forwardRoom": forwardRoom(s, host)
-        case "msg.forwardTo": forwardTo(s, host)
-        case "msg.map": if let m = rooms.activeController?.message(s) { openMap(m) }
-        case "msg.open", "msg.save", "msg.share": if let m = rooms.activeController?.message(s) { shareFile(m, host) }
         // calls
         case "call.audio", "call.video", "call.audioText": startCall(video: action.name == "call.video", host)
         case "call.end":
@@ -149,7 +143,12 @@ final class CoreActions {
         let host = ctx.host
         let s = action.argText
         switch action.name {
-        case "msg.mapPreview": if let m = rooms.activeController?.message(s) { openMap(m) }
+        case "msg.mapPreview", "msg.map": if let m = rooms.activeController?.message(s) { openMap(m) }
+        case "msg.open", "msg.save", "msg.share": if let m = rooms.activeController?.message(s) { shareFile(m, host) }
+        case "message.recipients": host.closeOverlay(); pickRecipients(host)
+        case "msg.forward": if let m = rooms.activeController?.message(s) { forward(m, host) }
+        case "msg.forwardRoom": forwardRoom(s, host)
+        case "msg.forwardTo": forwardTo(s, host)
         case "msg.quote": rooms.activeController?.revealRequest = s
         case "people.message":
             core.models.composer(for: host).setRecipients([s])

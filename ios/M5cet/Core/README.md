@@ -92,7 +92,8 @@ Operace: `send()` (`message.send` — `SendPlan.step`, příkaz přes `FnEngine.
 * `FnEngine` (registruje agent tools jako `core.fn`): `commandChars`, `load()`, `forget()`, `suggest(…)`, `hint(…)`,
   `run(room:text:host:) -> Bool`, `modelCard(for:)`. Bez něj se nic nenavrhuje a „/příkaz“ odejde jako text.
 * `MessageFiles` (jádro nad `Platform/Files/FileVault`): `store(_:)`, `store(contentsOf:)`, `read(_:)`,
-  `temporaryCopy(_:name:)` + `discard(_:)` (share sheet, Quick Look).
+  `temporaryCopy(_:name:)` + `discard(_:)` (share sheet, Quick Look); mimo hlavní vlákno `load(_:) async`,
+  `readRange(_:offset:count:) async` (náhodný přístup pro přehrávač), `size(_:) async`.
 * `PositionSource` (jádro nad `Platform/Location`): `permitted`, `recent()`, `current() async` (`{lat, lon, acc, at}`).
 * `ScreenVariables`: `register(screen, name) { DesignValue }`, nebo `register(screen, name, window: { host in … })` pro hodnotu
   okna, ve kterém se obrazovka kreslí (`$profile` nad `$form` toho okna). Proměnné částí **přebíjejí** hodnoty jádra
@@ -112,14 +113,15 @@ Akce, jejichž stav drží pohled, si části registrují v `AppActionRouter` je
 |---|---|---|---|
 | people | sloučeno (`PeopleParts`) | `people.*` (11), `users.toggle/dock/autoHide`, `msg.info`, `msg.sender`, `profile.*` (8); `router.shownUsername` | `settings.profile`/`profile`, `settings`/`myProfile`, `room`+`call`/`users` |
 | nfc | sloučeno (`NfcParts`) | `nfc.read/write/emulate/stop` (`nfc.workbench`, `nfc.builder` kreslí renderer, `nfc.reader` runner) | `nfc`/`nfc` |
-| chat | čeká | `msg.quote`, `msg.showHidden`, `msg.mapPreview`, `msg.source` | — |
+| chat | sloučeno (`ChatParts`) | `msg.quote/showHidden/mapPreview/map/source/open/save/share`, `msg.forward/forwardRoom/forwardTo`, `message.recipients` | — |
 | tools | sloučeno (`ToolParts`) | `ai.send/stop/clear`, `voice.dictate`, `calllog.*` (6), `voiceFx.test/reset`; `core.fn` = `ToolsFnEngine` | `ai`/`ai`, `log`/`log`, `settings.voiceFx`/`voiceFx`, `voice`…/`voices` |
 
 ### Sloty
 
 Jádro registruje: `lockPad`, `enrollForm`, `joinForm`, `roomList`, `roomTabs`, `callControls`, `callVideo`; do doby,
 než je zaregistruje chat, zálohy `messages`, `msgBody`, `composer` (šablony designu `message.in/out/sys` nad
-`RoomModel.messages`, prosté pole nad `ComposerModel`) a prázdný `userPanel` (`FallbackChatSlots`, jen když slot nikdo nemá).
+`RoomModel.messages`, prosté pole nad `ComposerModel`) a prázdný `userPanel` (`FallbackChatSlots`, jen když slot nikdo nemá
+— v aplikaci je hned přebije chat a People).
 Části: `messages`, `msgBody`, `msgHold`, `composer` (chat), `userPanel`, `userList` (people), `voicePad`, `aiChat` (tools),
 `nfcPanel`, `nfcWork`, `nfcBuilder` (nfc).
 
@@ -136,19 +138,18 @@ Test `CoreStateTests.testEveryCatalogueActionHasAnOwner` hlídá, že žádná a
 | **renderer** (`DesignHost.perform`) — 9 | `screen.open`, `back`, `menu.open`, `sheet.open`, `sheet.close`, `flash`, `nfc.workbench`, `nfc.builder`, `update.later` | navigace, překryvy, flash; `update.later` zavře překryv |
 | **renderer** (`ActionRunner`) — 12 | `lib.run`, `set`, `setting.set`, `setting.toggle`, `look.set`, `look.reset`, `appearance.reset`, `theme.toggle`, `nfc.reader`, `url.open`, `copy`, `share` | `$form`, nastavení (vedlejší účinky → `onSettingChanged` jádra), vzhled, potvrzení adresy / vypočteného textu |
 | **jádro** — místnosti (9) | `room.join`, `room.switch`, `room.toggle`, `rooms.connect`, `room.leave`, `room.forget`, `room.delete`, `room.clone`, `room.edit` | formulář připojení, přepnutí / připojení, výběr, odpojení, zapomenutí (+ historie), kopie, úprava přes `$form.roomEdit` |
-| **jádro** — skladač (7) | `message.send`, `message.reply`, `message.copy`, `message.kind`, `message.recipients`, `compose`, `send.option` | `ComposerModel` okna (druhy, příjemci, příkazy, `ComposerRequest` pro foto / soubor / hlas) |
-| **jádro** — zprávy (7) | `msg.forward`, `msg.forwardRoom`, `msg.forwardTo`, `msg.map`, `msg.open`, `msg.save`, `msg.share` | přeposlání (list `message.forward`, nebo dialogy u staršího designu), mapa (Apple Maps, `Where`), soubor z trezoru do sdílení |
+| **jádro** — skladač (6) | `message.send`, `message.reply`, `message.copy`, `message.kind`, `compose`, `send.option` | `ComposerModel` okna (druhy, příjemci, příkazy, `ComposerRequest` pro foto / soubor / hlas) |
 | **jádro** — hovory (8) | `call.audio`, `call.video`, `call.audioText`, `call.end`, `call.mute`, `call.camera`, `call.switchCamera`, `call.speaker` | `CallSystem` (CallKit, oprávnění), obrazovka `call` |
 | **jádro** — zámek a bezpečnost (6) | `lock.now`, `lock.biometric`, `pin.change`, `biometric.toggle`, `wipe.ask`, `kt.dismiss` | `SecurityCenter` (PIN, Face ID / Touch ID, smazání po potvrzení), upozornění KT |
 | **jádro** — účet (6) | `account.signin`, `account.signup`, `account.signout`, `account.recovery`, `account.addPasskey`, `account.register` | passkeys s PRF (`SystemPasskeys`), obnovovací kód, registrace (formulář serveru) |
 | **jádro** — ostatní (8) | `update.check`, `update.install`, `fn.run`, `voice.speak`, `voice.stop`, `system.settings`, `conversations.settings`, `lang.set` | check-in, `PushUpdates` (odkaz na App Store / TestFlight nebo designový balíček), `/příkaz` do místnosti (jako Android `r.send`), předčítání, Nastavení systému, texty po změně jazyka |
 | **People** (zálohu má jádro) — 24 | `people.open/select/all/none/message/call/video/verify/link/unlink/unlinkAll`, `users.toggle/dock/autoHide`, `profile.open/pick/clear/field/sync/save/public/audience`, `msg.info`, `msg.sender` | záloha jádra: příjemci skladače, hovor, ověření bezpečnostního čísla; ostatní jen log |
 | **NFC** (zálohu má jádro) — 4 | `nfc.read`, `nfc.write`, `nfc.emulate`, `nfc.stop` | záloha: „NFC tu není“ / zastavení `NfcService` |
-| **chat** (čeká; záloha jádra) — 4 | `msg.quote`, `msg.showHidden`, `msg.mapPreview`, `msg.source` | záloha: skok na citovanou zprávu (`revealRequest`), mapa; `msg.showHidden`, `msg.source` jen log |
+| **chat** (zálohu má jádro) — 12 | `msg.quote`, `msg.showHidden`, `msg.mapPreview`, `msg.map`, `msg.source`, `msg.open`, `msg.save`, `msg.share`, `msg.forward`, `msg.forwardRoom`, `msg.forwardTo`, `message.recipients` | záloha jádra: citace (`revealRequest`), mapa (Apple Maps, `Where`), soubor do sdílení, přeposlání (list `message.forward` / dialogy), výběr příjemců; `msg.showHidden`, `msg.source` jen log |
 | **tools** (zálohu má jádro) — 12 | `ai.send/stop/clear`, `voice.dictate`, `voiceFx.test/reset`, `calllog.open/refresh/item/call/clear/system` | záloha: obrazovka `log`, smazání historie hovorů po potvrzení; ostatní log |
 | **Platform/Notifications** — 6 | `notify.up/down/use/drop/test/sync` | `DesignNotifyWiring` (jádro je neregistruje) |
 
-Součet: 21 renderer + 51 jádro + 24 People + 4 NFC + 4 chat + 12 tools + 6 Notifications = **122**. Na iOS není
+Součet: 21 renderer + 43 jádro + 24 People + 4 NFC + 12 chat + 12 tools + 6 Notifications = **122**. Na iOS není
 nic, co by nešlo vůbec — rozdíly proti Androidu: `update.install` instaluje aplikaci obchod (otevře se ověřený
 odkaz), `system.settings` otevře Nastavení aplikace (iOS nedovolí otevřít konkrétní obrazovku systému).
 
@@ -221,7 +222,12 @@ z překladače designu (`AppCore.installTexts`, znovu po `lang.set`); `$voice` z
 (`CoreVoiceEnvironment`) zná skupiny účtu. Odpověď modelu je od system-messenger (M5Proto `addModelAnswer`), postup
 `{p, text}` — `PreviewCore` dělá totéž.
 
-**Čeká**: chat (zálohy výše), zkouška na zařízení (passkeys
+**Švy pro Chat**: `ChatMessageAudit.sink` = `MessageAudit` (fronta `msg-audit` v trezoru, `DeviceService.messageAudit`,
+id místnosti na serveru doplní jádro), `RoomModel.serverId`, `MessageFiles.load` / `readRange` / `size` (async, mimo
+hlavní vlákno — přehrávač čte po kouscích), `VoiceService.shared` (nastavení, prostředí, server — `CoreInstall`;
+`install` — Tools).
+
+**Čeká**: zkouška na zařízení (passkeys
 s PRF, VoIP push, NFC na kartě), testy toků účtu proti serveru (WebAuthn bez skutečného autentizátoru nejde — jednotkové
 testy jdou přes `FakePasskeys`).
 
@@ -231,7 +237,7 @@ testy jdou přes `FakePasskeys`).
 * `Platform/Calls/CallCenter.swift`: `pushOwnsCall(roomKey:)` (jeden záznam na hovor s VoIP pushem).
 * `Renderer/Contracts/ScreenStateProvider.swift` + `Renderer/Shell/DesignHost.swift`: `variables(for:context:host:)`
   s výchozí implementací (proměnné okna).
-* `Parts/People`, `Parts/Tools` (+ jejich testy): `Millis.now` → `EpochMs.now` (přejmenované hodiny jádra — `Millis` je
+* `Parts/People`, `Parts/Tools`, `Parts/Chat` (+ jejich testy): `Millis.now` → `EpochMs.now` (přejmenované hodiny jádra — `Millis` je
   typ M5Net); `PeopleReach` bere `RoomModel.peopleSettling`.
 * M5Kit (s testy): M5Proto `RoomCore+Local` (místní zprávy), `CallWake`, relay s poli navíc; M5Net `HubRelay` (pole buzení).
 

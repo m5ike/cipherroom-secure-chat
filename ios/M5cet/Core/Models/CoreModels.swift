@@ -62,6 +62,23 @@ protocol MessageFiles: AnyObject {
     /// A decrypted temporary copy for the share sheet / Quick Look — `discard` it after use.
     func temporaryCopy(_ id: String, name: String) throws -> URL
     func discard(_ copy: URL)
+    /// The plaintext, read and decrypted off the main actor (a large video does not hold the screen up).
+    func load(_ id: String) async throws -> Data
+    /// A range of the plaintext, off the main actor (random access — a player's resource loader); fewer bytes at
+    /// the end of the file, none past it.
+    func readRange(_ id: String, offset: Int64, count: Int) async throws -> Data
+    /// The plaintext's size (nil: no such file).
+    func size(_ id: String) async -> Int64?
+}
+
+extension MessageFiles {
+    func load(_ id: String) async throws -> Data { try read(id) }
+    func readRange(_ id: String, offset: Int64, count: Int) async throws -> Data {
+        let d = try read(id)
+        let start = Int(max(0, min(Int64(d.count), offset)))
+        return d.subdata(in: start..<min(d.count, start + max(0, count)))
+    }
+    func size(_ id: String) async -> Int64? { (try? read(id)).map { Int64($0.count) } }
 }
 
 /// Screen variables a part owns (Android: Parts.aiScope, nfcScope, CallLogUi.scope, ProfileUi.scope / summary…):

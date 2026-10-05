@@ -21,6 +21,8 @@ protocol CoreFileStore: AnyObject, Sendable {
     func readRange(_ id: String, offset: Int64, count: Int) throws -> Bytes
     func delete(_ id: String)
     func has(_ id: String) -> Bool
+    /// The plaintext's size (nil: no such file).
+    func size(_ id: String) -> Int64?
 }
 
 /// The core's store as the parts' MessageFiles (main actor).
@@ -33,6 +35,25 @@ final class StoreMessageFiles: MessageFiles {
     func read(_ id: String) throws -> Data { try base.read(id) }
     func temporaryCopy(_ id: String, name: String) throws -> URL { try base.temporaryCopy(id, name: name) }
     func discard(_ copy: URL) { base.discard(copy) }
+
+    // Off the main actor: the store is Sendable (FileVault reads with its own handle per call).
+    func load(_ id: String) async throws -> Data {
+        let b = base
+        return try await Task.detached(priority: .userInitiated) { try b.read(id) }.value
+    }
+
+    func readRange(_ id: String, offset: Int64, count: Int) async throws -> Data {
+        let b = base
+        return try await Task.detached(priority: .userInitiated) { () throws -> Data in
+            guard let size = b.size(id), offset < size, count > 0 else { return Data() }
+            return Data(try b.readRange(id, offset: max(0, offset), count: Int(min(Int64(count), size - max(0, offset)))))
+        }.value
+    }
+
+    func size(_ id: String) async -> Int64? {
+        let b = base
+        return await Task.detached(priority: .userInitiated) { b.size(id) }.value
+    }
 }
 
 /// Platform/Files' FileVault as the core's store.
@@ -96,6 +117,12 @@ final class VaultFileStore: CoreFileStore, @unchecked Sendable {
 
     func delete(_ id: String) { vault.delete(id) }
     func has(_ id: String) -> Bool { vault.has(id) }
+
+    func size(_ id: String) -> Int64? {
+        guard vault.has(id), let r = try? vault.reader(id) else { return nil }
+        defer { r.close() }
+        return Int64(r.size)
+    }
 }
 
 /// Files in memory (tests).
@@ -130,4 +157,5 @@ final class MemoryFileStore: CoreFileStore, @unchecked Sendable {
     }
     func delete(_ id: String) { lock.withLock { files[id] = nil } }
     func has(_ id: String) -> Bool { lock.withLock { files[id] != nil } }
+    func size(_ id: String) -> Int64? { lock.withLock { files[id].map { Int64($0.count) } } }
 }

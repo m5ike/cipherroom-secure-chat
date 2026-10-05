@@ -67,6 +67,12 @@ final class CoreScreenshotTests: XCTestCase {
         actions.install(into: services.actions)
         CoreSlots.register(into: services.slots, core: mike.core, state: state, actions: actions)
         FallbackChatSlots.register(into: services.slots, core: mike.core)
+        // The parts as the app installs them after the core (their slots replace the core's fallbacks).
+        let previous = CoreModels.shared
+        defer { CoreModels.shared = previous }
+        mike.core.activate()
+        ChatParts.install(slots: services.slots, actions: services.actions)
+        PeopleParts.install(services: services)
         for dark in [false, true] {
             let host = DesignHost(services: services)
             host.reducedMotion = true

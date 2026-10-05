@@ -14,7 +14,7 @@ import M5Proto
 import os
 
 @MainActor
-final class MessageAudit {
+final class MessageAudit: MessageAuditSink {
     static let record = "msg-audit"
     static let max = 200
     /// The server takes device times up to a week back.
@@ -35,8 +35,14 @@ final class MessageAudit {
 
     /// One action; `until` = a hide's end (ms), 0 = until the next sign-in (and for unhide / delete). Kept at once, sent soon.
     func add(_ action: String, room: any RoomModel, message m: ChatMessage, until: Int64) {
-        var a = Self.entry(action, m, room: roomId(room.key), until: until, at: now())
-        a["roomKey"] = .string(room.key) // this device's, to find the room's id later; dropped before sending
+        record(Self.entry(action, m, room: "", until: until, at: now()), roomKey: room.key)
+    }
+
+    /// MessageAuditSink (the chat's ChatMessageAudit): one entry to keep and send; the room's id is filled in here.
+    func record(_ entry: JSONObject, roomKey: String) {
+        var a = entry
+        if a.optString("room").isEmpty { a["room"] = .string(roomId(roomKey)) }
+        a["roomKey"] = .string(roomKey) // this device's, to find the room's id later; dropped before sending
         var q = queue()
         q.append(.object(a))
         if q.count > Self.max { q.removeFirst(q.count - Self.max) }

@@ -41,6 +41,11 @@ enum CoreDebugLaunch {
             if !lock.isSetUp { try? await lock.setUp(pin: pin) } else if lock.isLocked { _ = await lock.unlock(pin: pin) }
             core.routeChanged()
         }
+        // Still locked (another PIN set up here): the automation stops — the lock screen stays.
+        if SecurityCenter.shared?.lock.isLocked ?? false {
+            log.error("still locked: the automation stops")
+            return
+        }
         try? await Task.sleep(for: .milliseconds(800))
         for spec in (arg("M5CoreSaved") ?? "").split(separator: ";") {
             let p = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)

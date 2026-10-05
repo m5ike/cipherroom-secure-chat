@@ -116,8 +116,11 @@ enum CoreInstall {
             audit.upload = { actions, account in _ = try await d.messageAudit(actions: actions, account: account) }
         }
         PeopleParts.defaultHides.audit = { action, room, m, until in audit.add(action, room: room, message: m, until: until) }
+        // Parts/Chat: its audit lines (bubbles, MsgDetails through BubbleHides) go to the same journal.
+        ChatMessageAudit.sink = audit
 
-        // Parts/NFC: the account root of an M5Cet card's internal records, the forward of a message in no room.
+        // Parts/NFC: the account root of an M5Cet card's internal records; the forward of a message in no room is the
+        // core's until the chat installs its forward sheet.
         NfcUiHooks.accountRoot = { [weak core] in core?.account.cardRoot() }
         NfcUiHooks.forward = { [weak actions] m, host in actions?.forward(m, host) }
 
