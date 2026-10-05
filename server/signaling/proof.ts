@@ -33,8 +33,10 @@
 // Trust on first use: whoever proves first for a room that has no verifier
 // registers it. Someone who knows only the blind id can therefore squat a room
 // that no 6.12 client has proven yet; real members are then refused until the
-// TTL ends. They were never admitted on a key they did not have — the squatter
-// gains no access a legacy join did not already give (docs/protocol-v4.md § 13).
+// TTL ends — or until an operator resets the room's verifier (`reset`,
+// POST /api/admin/security/room-proof/reset, owner role). They were never
+// admitted on a key they did not have — the squatter gains no access a legacy
+// join did not already give (docs/protocol-v4.md § 13).
 
 import { createHmac, createPublicKey, randomBytes, verify } from "node:crypto";
 import { LABEL } from "../../client/src/lib/p4/contract";
@@ -297,6 +299,20 @@ export class RoomProofs {
         ? { kind: "refused", code: "room-proof", reason: "store-error", message: "The server could not check the room proof; try again." }
         : { kind: "legacy", error };
     }
+  }
+
+  /**
+   * The operator's way out of a squatted room (6.12): forgets the room's
+   * verifier, so the next proven join — the real members, who hold the key —
+   * registers it again. Returns whether there was one. Needs the blind id
+   * (members see it in the room's info), never the passphrase.
+   */
+  reset(roomId: string): boolean {
+    if (!canProve(roomId)) return false;
+    const key = this.roomKey(roomId);
+    const had = Boolean(this.store.get(key));
+    if (had) this.store.remove(key);
+    return had;
   }
 
   /** Forgets verifiers past their TTL (at most once an hour). */

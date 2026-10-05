@@ -465,6 +465,10 @@ Server details (6.12):
   id can register a key of their own for a room that no 6.12 client has proven yet; the real members
   are then refused (`room-proof`) until the verifier expires. The squatter gets no more than a legacy
   join gave before 6.12.
+* **Reset.** A room whose verifier was registered first by someone who knew only the blind id
+  (trust on first use) refuses its real members until the TTL ends — or until the server's owner
+  forgets it: `POST /api/admin/security/room-proof/reset { roomId }` (owner role, audited with the
+  room hash only); the next proven join registers the real key.
 
 ## 14. Key transparency (F-13)
 
