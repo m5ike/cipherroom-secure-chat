@@ -72,7 +72,7 @@ final class CallScreenshotTests: XCTestCase {
                         CallLogRoomMessage(message: sealed, hidden: false)]
             }
         }
-        let store = CallHistoryStore(vault: FakeVault())
+        let store = AppCallHistory(vault: FakeVault())
         let now = CallTrack.millis()
         store.record(.init(kind: .missed, at: now - 300_000, seconds: 0, video: false, people: ["Alice"]), roomKey: "team", room: "Team")
         store.record(.init(kind: .incoming, at: now - 3_600_000, seconds: 724, video: true, people: ["Alice", "Bob"]), roomKey: "team", room: "Team")

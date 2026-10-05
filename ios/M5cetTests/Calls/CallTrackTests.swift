@@ -16,7 +16,7 @@ final class CallTrackTests: XCTestCase {
         s = t.update(now: 63_000, meOn: false, myVideo: false, live: ["Alice", "Bob"], peerVideo: false)
         XCTAssertEqual(s.records.count, 1)
         let r = s.records[0]
-        XCTAssertEqual(r.kind, .outgoing)
+        XCTAssertEqual(r.callKind, .outgoing)
         XCTAssertEqual(r.at, 1_000)
         XCTAssertEqual(r.seconds, 62)
         XCTAssertFalse(r.video)
@@ -31,7 +31,7 @@ final class CallTrackTests: XCTestCase {
         _ = t.update(now: 0, meOn: true, myVideo: false, live: nobody, peerVideo: false)
         let s = t.update(now: 30_000, meOn: false, myVideo: false, live: nobody, peerVideo: false)
         XCTAssertEqual(s.records.count, 1)
-        XCTAssertEqual(s.records[0].kind, .outgoing)
+        XCTAssertEqual(s.records[0].callKind, .outgoing)
         XCTAssertTrue(s.records[0].people.isEmpty)
         XCTAssertTrue(t.update(now: 30_000 + CallTrack.graceMs, meOn: false, myVideo: false, live: nobody, peerVideo: false).records.isEmpty,
                       "no missed call after it")
@@ -47,7 +47,7 @@ final class CallTrackTests: XCTestCase {
         s = t.update(now: 5_000, meOn: true, myVideo: false, live: ["Alice"], peerVideo: true)
         XCTAssertTrue(s.ringOver, "joining ends the ring")
         s = t.update(now: 65_000, meOn: false, myVideo: false, live: ["Alice"], peerVideo: true)
-        XCTAssertEqual(s.records[0].kind, .incoming)
+        XCTAssertEqual(s.records[0].callKind, .incoming)
         XCTAssertEqual(s.records[0].at, 5_000)
         XCTAssertEqual(s.records[0].seconds, 60)
         XCTAssertTrue(s.records[0].video, "the others' video makes it a video call")
@@ -69,7 +69,7 @@ final class CallTrackTests: XCTestCase {
         s = t.update(now: 10_000 + CallTrack.graceMs, meOn: false, myVideo: false, live: nobody, peerVideo: false)
         XCTAssertEqual(s.records.count, 1)
         let r = s.records[0]
-        XCTAssertEqual(r.kind, .missed)
+        XCTAssertEqual(r.callKind, .missed)
         XCTAssertEqual(r.at, 1_000, "when the call started")
         XCTAssertEqual(r.seconds, 0)
         XCTAssertEqual(r.people, ["Alice"])
@@ -96,7 +96,7 @@ final class CallTrackTests: XCTestCase {
         XCTAssertFalse(t.ringing)
         _ = t.update(now: 3_000, meOn: false, myVideo: false, live: nobody, peerVideo: false)
         var s = t.update(now: 3_000 + CallTrack.graceMs, meOn: false, myVideo: false, live: nobody, peerVideo: false)
-        XCTAssertEqual(s.records[0].kind, .declined)
+        XCTAssertEqual(s.records[0].callKind, .declined)
 
         var u = CallTrack()
         _ = u.update(now: 0, meOn: false, myVideo: false, live: ["Alice"], peerVideo: false)
@@ -105,7 +105,7 @@ final class CallTrackTests: XCTestCase {
                        "a declined call does not ring again")
         _ = u.update(now: 2_000, meOn: true, myVideo: false, live: ["Alice", "Bob"], peerVideo: false)
         s = u.update(now: 12_000, meOn: false, myVideo: false, live: nobody, peerVideo: false)
-        XCTAssertEqual(s.records[0].kind, .incoming)
+        XCTAssertEqual(s.records[0].callKind, .incoming)
         XCTAssertTrue(u.update(now: 12_000 + CallTrack.graceMs, meOn: false, myVideo: false, live: nobody, peerVideo: false).records.isEmpty)
     }
 
@@ -114,7 +114,7 @@ final class CallTrackTests: XCTestCase {
         XCTAssertFalse(t.decline().ringOver)
         _ = t.update(now: 0, meOn: true, myVideo: false, live: nobody, peerVideo: false)
         _ = t.decline() // I am in it
-        XCTAssertEqual(t.update(now: 5_000, meOn: false, myVideo: false, live: nobody, peerVideo: false).records[0].kind, .outgoing)
+        XCTAssertEqual(t.update(now: 5_000, meOn: false, myVideo: false, live: nobody, peerVideo: false).records[0].callKind, .outgoing)
     }
 
     func testFlushRecordsWhatIsOpen() {
@@ -122,13 +122,13 @@ final class CallTrackTests: XCTestCase {
         _ = t.update(now: 0, meOn: true, myVideo: false, live: ["Alice"], peerVideo: false)
         var s = t.flush(now: 30_000)
         XCTAssertEqual(s.records.count, 1)
-        XCTAssertEqual(s.records[0].kind, .incoming)
+        XCTAssertEqual(s.records[0].callKind, .incoming)
         XCTAssertEqual(s.records[0].seconds, 30)
 
         var u = CallTrack()
         _ = u.update(now: 0, meOn: false, myVideo: false, live: ["Alice"], peerVideo: false)
         s = u.flush(now: 5_000)
-        XCTAssertEqual(s.records[0].kind, .missed)
+        XCTAssertEqual(s.records[0].callKind, .missed)
         XCTAssertTrue(s.ringOver)
         XCTAssertTrue(u.flush(now: 6_000).records.isEmpty, "nothing twice")
     }
@@ -137,11 +137,11 @@ final class CallTrackTests: XCTestCase {
         var t = CallTrack()
         _ = t.update(now: 0, meOn: false, myVideo: false, live: ["Alice"], peerVideo: false)
         _ = t.update(now: 1_000, meOn: true, myVideo: false, live: ["Alice"], peerVideo: false)
-        XCTAssertEqual(t.update(now: 11_000, meOn: false, myVideo: false, live: ["Alice"], peerVideo: false).records[0].kind, .incoming)
+        XCTAssertEqual(t.update(now: 11_000, meOn: false, myVideo: false, live: ["Alice"], peerVideo: false).records[0].callKind, .incoming)
         XCTAssertFalse(t.update(now: 12_000, meOn: false, myVideo: false, live: ["Alice"], peerVideo: false).ring, "no ring once I was in it")
         _ = t.update(now: 20_000, meOn: true, myVideo: false, live: ["Alice"], peerVideo: false)
         let s = t.update(now: 50_000, meOn: false, myVideo: false, live: ["Alice"], peerVideo: false)
-        XCTAssertEqual(s.records[0].kind, .incoming)
+        XCTAssertEqual(s.records[0].callKind, .incoming)
         XCTAssertEqual(s.records[0].seconds, 30)
     }
 

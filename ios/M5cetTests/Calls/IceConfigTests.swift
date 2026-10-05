@@ -10,16 +10,16 @@ import XCTest
 final class IceConfigTests: XCTestCase {
     func testPendingAnswerIsNeverCached() {
         let now: Int64 = 1_800_000_000_000
-        XCTAssertEqual(IceConfig.cacheUntil(TurnAnswer(servers: [], pending: true, ttlSeconds: 0), now: now), 0)
-        XCTAssertEqual(IceConfig.cacheUntil(TurnAnswer(servers: [], pending: true, ttlSeconds: 3600), now: now), 0)
+        XCTAssertEqual(IceConfig.cacheUntil(IceTurnAnswer(servers: [], pending: true, ttlSeconds: 0), now: now), 0)
+        XCTAssertEqual(IceConfig.cacheUntil(IceTurnAnswer(servers: [], pending: true, ttlSeconds: 3600), now: now), 0)
         XCTAssertEqual(IceConfig.cacheUntil(nil, now: now), 0)
     }
 
     func testFullAnswerIsCachedForItsLifetime() {
         let now: Int64 = 1_800_000_000_000
-        XCTAssertEqual(IceConfig.cacheUntil(TurnAnswer(servers: [], ttlSeconds: 3600), now: now), now + (3600 - 60) * 1000)
-        XCTAssertEqual(IceConfig.cacheUntil(TurnAnswer(servers: [], ttlSeconds: 0), now: now), now + 10 * 60_000)
-        XCTAssertEqual(IceConfig.cacheUntil(TurnAnswer(servers: [], pending: false), now: now), now + 10 * 60_000)
+        XCTAssertEqual(IceConfig.cacheUntil(IceTurnAnswer(servers: [], ttlSeconds: 3600), now: now), now + (3600 - 60) * 1000)
+        XCTAssertEqual(IceConfig.cacheUntil(IceTurnAnswer(servers: [], ttlSeconds: 0), now: now), now + 10 * 60_000)
+        XCTAssertEqual(IceConfig.cacheUntil(IceTurnAnswer(servers: [], pending: false), now: now), now + 10 * 60_000)
     }
 
     func testParsesTheServersAnswer() throws {
