@@ -67,6 +67,7 @@ import { audit } from "./monitor/audit";
 import { system } from "./monitor/system";
 import { resolveTrustProxy } from "./trust-proxy";
 import { registerAccountRoutes } from "./accounts/routes";
+import { registerDesktopAuthRoutes } from "./desktop-auth";
 import { registerPublicProfileRoutes } from "./accounts/public-profile";
 import { registerAppLinks } from "./android/app-links";
 import { createNotifierService } from "./notify/service";
@@ -233,6 +234,8 @@ export async function registerRoutes(
   // it from the store's revoke event — see SignalingHub.onRevoke.)
   // 6.1: the Android app may use this domain's passkeys (Digital Asset Links).
   registerAppLinks(app);
+  // 6.13: M5cet Desktop signs in through the system browser (the result comes back encrypted to the app).
+  registerDesktopAuthRoutes(app);
   // 6.12: devices upload their mailbox bundles; key transparency is public.
   registerKeyRoutes(app, accountStore, () => p4.keys);
   registerKtRoutes(app, () => p4.kt, accountStore);

@@ -23,9 +23,11 @@
 // signed in; a failure signs the half-open session out again.
 
 import {
-  assertPasskey, confirmWithPasskey, createPasskey, deriveAccountKeys, deriveKeyProof, isLegacySlot, openRoot, openSlot, passkeySupported, sealRoot, sealSlot,
-  WRAP_INFO, type SealedRoot, type ServerCreationOptions, type ServerRequestOptions,
+  assertPasskey, confirmWithPasskey, createPasskey, deriveAccountKeys, deriveKeyProof, fromB64url, isLegacySlot, openRoot, openSlot, passkeySupported,
+  PrfUnsupportedError, sealRoot, sealSlot, WRAP_INFO, type SealedRoot, type ServerCreationOptions, type ServerRequestOptions,
 } from "./passkey";
+import { desktop } from "./desktop-bridge";
+import { HandoffError, signInThroughBrowser, type HandoffPayload } from "./desktop-auth";
 import { accountSigningKey, certifyDevice, ed25519Supported, loadIdentity, saveAttestation } from "./identity";
 import { certifyDeviceV2 } from "./p4/handshake";
 import { DEVICE_CERT_LIFETIME_MS } from "./p4/contract";
@@ -388,6 +390,9 @@ export async function registerAccount(
  * server's log why; the caller gets an AccountError.
  */
 export async function signInWithPasskey(report: StepReporter = () => undefined): Promise<AccountSummary> {
+  // 6.13: M5cet Desktop may run the passkey ceremony in the system browser (desktop-auth.ts).
+  const app = desktop();
+  if (app && await app.auth.mode().catch(() => "app") === "browser") return signInThroughDesktopBrowser(report);
   report("passkey", "run");
   let signed: Awaited<ReturnType<typeof assertPasskey>>;
   let result: { token: string; account: AccountSummary; wrapped?: SealedRoot | null };
@@ -399,20 +404,65 @@ export async function signInWithPasskey(report: StepReporter = () => undefined):
       body: JSON.stringify({ credential: signed.response }),
     });
   } catch (err) {
+    // 6.13: the desktop app's own authenticator gave no PRF (Electron's Touch ID, Windows Hello
+    // before the 2026 update) — the browser's passkeys can; the user decides.
+    if (app && err instanceof PrfUnsupportedError && await app.auth.offerBrowser().catch(() => false)) return signInThroughDesktopBrowser(report);
     const e = asAccountError(err);
     report("passkey", "fail", e.message);
     throw e;
   }
   report("passkey", "ok", result.account.username ?? result.account.id);
+  const wrapped = result.wrapped ?? null;
+  return finishSignIn(result.token, result.account, () => (wrapped ? openRoot(wrapped, signed.secret, WRAP_INFO.passkey) : signed.secret), report);
+}
 
+/**
+ * 6.13: the sign-in of M5cet Desktop through the system browser — the browser
+ * runs the passkey ceremony and hands the session token and the account root
+ * back encrypted to this app (desktop-auth.ts); the steps after the passkey
+ * are the same as above.
+ */
+async function signInThroughDesktopBrowser(report: StepReporter): Promise<AccountSummary> {
+  const app = desktop();
+  if (!app) throw new AccountError("unavailable", "not in M5cet Desktop");
+  report("passkey", "run");
+  const abort = new AbortController();
+  let payload: HandoffPayload;
+  let account: AccountSummary;
+  try {
+    payload = await signInThroughBrowser({
+      origin: location.origin,
+      open: (url, code) => { void app.auth.begin(url, code).then((how) => { if (how === "cancel") abort.abort(); }); },
+      wake: (id, poke) => app.auth.onCallback((got) => { if (got === id) poke(); }),
+      signal: abort.signal,
+    });
+    account = (await api<{ account: AccountSummary }>("/api/account/me", {}, payload.token)).account;
+    if (account.id !== payload.accountId) throw new AccountError("rejected", "the browser signed in to another account than its result names");
+  } catch (err) {
+    const e = err instanceof HandoffError
+      ? new AccountError(err.code === "cancelled" ? "cancelled" : err.code === "network" ? "unavailable" : "rejected", err.message)
+      : asAccountError(err);
+    report("passkey", "fail", e.message);
+    throw e;
+  } finally {
+    app.auth.end();
+  }
+  report("passkey", "ok", account.username ?? account.id);
+  const root = fromB64url(payload.root);
+  return finishSignIn(payload.token, account, async () => root, report);
+}
+
+/** The steps after the passkey: the global key (key proof), the database, the vault. */
+async function finishSignIn(token: string, account: AccountSummary, rootOf: () => Promise<Uint8Array> | Uint8Array, report: StepReporter): Promise<AccountSummary> {
+  const result = { token, account };
   // The global key: a passkey added later brings the root sealed for it;
   // the first one IS it. The server compares the proof derived from it.
   report("key", "run");
   let root: Uint8Array;
   let keys: { key: CryptoKey; databaseKey: string };
   try {
-    root = result.wrapped ? await openRoot(result.wrapped, signed.secret, WRAP_INFO.passkey) : signed.secret;
-    keys = result.wrapped ? await deriveAccountKeys(root) : { key: signed.key, databaseKey: signed.databaseKey };
+    root = await rootOf();
+    keys = await deriveAccountKeys(root);
     const unlocked = await api<{ account: AccountSummary }>("/api/account/unlock", {
       method: "POST",
       body: JSON.stringify({ keyProof: await deriveKeyProof(root) }),

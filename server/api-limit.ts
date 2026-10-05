@@ -13,6 +13,8 @@
 //   /api/kt/…                600 in 15 minutes (kt/routes.ts, 6.12) — clients
 //                            check the key-transparency log for every peer
 //   PUT /api/keys/bundle     60 in 15 minutes (keys/routes.ts, 6.12)
+//   /api/desktop-auth/…      30 starts, 600 polls in 10 minutes (desktop-auth.ts,
+//                            6.13) — M5cet Desktop polls while the browser signs in
 //
 // Before 6.8 a page that drew a few maps used up the 100 requests and the
 // next passkey sign-in got "Too many requests, please try again later."
@@ -46,7 +48,7 @@ export function apiLimitConfig(env: Record<string, string | undefined> = process
 }
 
 /** Prefixes whose routes have a bucket of their own (the path itself or below it). */
-const OWN_BUCKET_PREFIXES = ["/api/account/vault", "/api/storage", "/api/admin", "/api/android", "/api/profile", "/api/map/tile", "/api/kt"];
+const OWN_BUCKET_PREFIXES = ["/api/account/vault", "/api/storage", "/api/admin", "/api/android", "/api/profile", "/api/map/tile", "/api/kt", "/api/desktop-auth"];
 
 /** The passkey ceremonies (accounts/routes.ts ceremonyLimiter, registrationLimiter, recoveryLimiter). */
 const OWN_BUCKET_ROUTES = new Set([
