@@ -81,10 +81,10 @@ final class WatchSetting {
 final class AppWatchEnvironment: WatchEnvironment {
     private weak var model: AppModel?
     let setting: WatchSetting
-    /// The operator's maximum level for message notifications (the notify-policy template's `maxPrivacy`) —
-    /// Platform/Notifications sets it once it reads the policy; until then "content" (no limit), as Android
-    /// without a fetched policy.
-    var operatorMaxPrivacy: @MainActor () -> String = { "content" }
+    /// The privacy level — default: what Platform/Notifications draws a message the app decrypted itself at
+    /// (NotificationPrefs.localPrivacy("message"): the person's notify.privacy within the operator's maximum of
+    /// the notify-policy template); before the Notifier is installed, the design's notify.privacy with no maximum.
+    var privacy: @MainActor () -> String
     /// Whether the app is unlocked — default: SecurityCenter's lock (set up and not locked).
     var isUnlocked: @MainActor () -> Bool = {
         guard let lock = SecurityCenter.shared?.lock else { return false }
@@ -94,16 +94,18 @@ final class AppWatchEnvironment: WatchEnvironment {
     init(model: AppModel, defaults: UserDefaults = .standard) {
         self.model = model
         setting = WatchSetting(defaults: defaults, design: model.design)
+        let design = model.design
+        privacy = { [weak design] in
+            if let prefs = Notifier.shared?.prefs { return prefs.localPrivacy("message", locked: false) }
+            let chosen = design?.settings.str("notify.privacy") ?? "neutral"
+            return WatchPrivacy.levels[WatchPrivacy.local(chosen: chosen, operatorMax: "content")]
+        }
     }
 
     var mirrorEnabled: Bool { setting.on }
     func setMirrorEnabled(_ on: Bool) { setting.set(on) }
     var unlocked: Bool { isUnlocked() }
-
-    var privacyLevel: Int {
-        let chosen = model?.design.settings.str("notify.privacy") ?? "neutral"
-        return WatchPrivacy.local(chosen: chosen, operatorMax: operatorMaxPrivacy())
-    }
+    var privacyLevel: Int { WatchPrivacy.rank(privacy()) }
 
     var lang: String { model?.design.lang ?? "en" }
     var appName: String { model?.design.design.appName ?? "M5cet" }

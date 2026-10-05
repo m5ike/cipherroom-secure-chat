@@ -187,7 +187,7 @@ final class WatchBridgeTests: XCTestCase {
         XCTAssertFalse(env.mirrorEnabled)
     }
 
-    func testTheAppEnvironmentFailsClosed() {
+    func testTheAppEnvironmentFailsClosed() throws {
         let model = AppModel()
         let suite = "m5.watch.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
@@ -199,8 +199,13 @@ final class WatchBridgeTests: XCTestCase {
         XCTAssertTrue(defaults.bool(forKey: WatchSetting.defaultsKey))
         env.isUnlocked = { false }
         XCTAssertFalse(env.unlocked)
-        env.operatorMaxPrivacy = { "room" }
-        XCTAssertLessThanOrEqual(env.privacyLevel, WatchPrivacy.room)
+        // The level is the notifications' own (NotificationPrefs.localPrivacy of a message the app drew itself).
+        let prefs = try XCTUnwrap(Notifier.shared?.prefs, "the host app installed Platform/Notifications")
+        XCTAssertEqual(env.privacyLevel, WatchPrivacy.rank(prefs.localPrivacy("message", locked: false)))
+        env.privacy = { "sender" }
+        XCTAssertEqual(env.privacyLevel, WatchPrivacy.sender)
+        env.privacy = { "nonsense" }
+        XCTAssertEqual(env.privacyLevel, WatchPrivacy.neutral, "an unknown level is neutral")
         // The design's own words where it has them, English for the watch's new keys.
         XCTAssertEqual(WatchTexts.t("notify.reply", env), model.design.design.text("notify.reply", lang: model.design.lang))
         XCTAssertEqual(WatchTexts.t("watch.locked", env), env.text("watch.locked") ?? "Locked on iPhone")

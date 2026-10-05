@@ -10,18 +10,18 @@
 // suspension that forgets the key — LockParticipant), turning it off, a sign-out or another account, and the
 // wipe (a Wiper teardown) replace the watch's snapshot with an empty one ("locked" / "off") at once and start a
 // new generation: the old room ids and any reply still queued on the watch are refused from then on.
-// How much: the notification privacy level (Settings › Notifications), as the app's own notifications —
-// "neutral": rooms as "Conversation n", no senders, "New message"; "sender": + who; "room": + the room's name;
-// "content" (the default): + the text. Sealed, hold-to-read, vanishing, hidden and held messages, media and
-// positions never carry their content (WatchSnapshotBuilder).
+// How much: the notification privacy level (Settings › Notifications) exactly as Platform/Notifications draws
+// a message the app decrypted itself (NotificationPrefs.localPrivacy("message"): the person's choice within the
+// operator's maximum) — "neutral": rooms as "Conversation n", no senders, "New message"; "sender": + who;
+// "room": + the room's name; "content" (the default): + the text. Sealed, hold-to-read, vanishing, hidden and
+// held messages, media and positions never carry their content (WatchSnapshotBuilder).
 //
 // Wiring: one line in App/Bootstrap.swift (`WatchBridge.install(into:)`, after SecurityCenter). The bridge
 // follows CoreModels.shared, the design's settings and the lock by observation (a burst of changes makes one
 // snapshot after `debounce`), refreshes an unchanged snapshot every WatchWire.refreshMs (the watch hides content
 // past its `exp`), and answers requests on the channel they came by (WatchTransport).
 //
-// Not here (other areas): the design's switch for `watch.on` and its texts (the design / SettingsModel), the
-// operator's notify-policy maximum (Platform/Notifications sets AppWatchEnvironment.operatorMaxPrivacy),
+// Not here (other areas): the design's switch for `watch.on` and its texts (the design / SettingsModel),
 // Handoff to open the room on the iPhone (Info.plist NSUserActivityTypes + the app's onContinueUserActivity).
 
 import Foundation
@@ -370,7 +370,7 @@ final class WatchBridge: LockParticipant, WatchTransportHandler {
 
     // MARK: the lock and the wipe
 
-    func lockWillForget(receiving inbox: LockInbox?) {
+    func lockWillForget(receiving inbox: LockInboxFiles?) {
         // The key is still here, the screens are not: the watch hears "locked" now.
         if told?.state != .locked { publishNow(as: env.mirrorEnabled ? .locked : .off) }
     }
