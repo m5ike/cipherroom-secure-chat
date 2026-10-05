@@ -1,0 +1,52 @@
+{
+ "nfcfn.done": {
+  "en": "Done.",
+  "cs": "Hotovo.",
+  "de": "Fertig."
+ },
+ "nfcfn.noReader": {
+  "en": "This device has no NFC reader.",
+  "cs": "Toto zařízení nemá čtečku NFC.",
+  "de": "Dieses Gerät hat kein NFC-Lesegerät."
+ },
+ "nfcfn.status.auth-failed": {
+  "en": "Card authentication failed",
+  "cs": "Ověření karty selhalo",
+  "de": "Kartenauthentifizierung fehlgeschlagen"
+ },
+ "nfcfn.status.denied": {
+  "en": "NFC access denied",
+  "cs": "Přístup k NFC odepřen",
+  "de": "NFC-Zugriff verweigert"
+ },
+ "nfcfn.status.error": {
+  "en": "NFC error: {message}",
+  "cs": "Chyba NFC: {message}",
+  "de": "NFC-Fehler: {message}"
+ },
+ "nfcfn.status.no-card": {
+  "en": "No card",
+  "cs": "Žádná karta",
+  "de": "Keine Karte"
+ },
+ "nfcfn.status.ok": {
+  "en": "Done",
+  "cs": "Hotovo",
+  "de": "Fertig"
+ },
+ "nfcfn.status.timeout": {
+  "en": "No card was presented in time",
+  "cs": "Karta nebyla přiložena včas",
+  "de": "Es wurde nicht rechtzeitig eine Karte vorgehalten"
+ },
+ "nfcfn.status.unsupported": {
+  "en": "Not supported on this device",
+  "cs": "Nepodporováno na tomto zařízení",
+  "de": "Auf diesem Gerät nicht unterstützt"
+ },
+ "nfcfn.waiting": {
+  "en": "Hold a card to the device…",
+  "cs": "Přiložte kartu k zařízení…",
+  "de": "Halten Sie eine Karte an das Gerät…"
+ }
+}

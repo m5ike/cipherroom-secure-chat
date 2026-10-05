@@ -1,0 +1,247 @@
+{
+ "fnusage.col.about": {
+  "en": "About",
+  "cs": "Popis",
+  "de": "Beschreibung"
+ },
+ "fnusage.col.example": {
+  "en": "Example",
+  "cs": "Příklad",
+  "de": "Beispiel"
+ },
+ "fnusage.col.input": {
+  "en": "Parameter",
+  "cs": "Parametr",
+  "de": "Parameter"
+ },
+ "fnusage.col.required": {
+  "en": "Required",
+  "cs": "Povinný",
+  "de": "Pflicht"
+ },
+ "fnusage.col.type": {
+  "en": "Type",
+  "cs": "Typ",
+  "de": "Typ"
+ },
+ "fnusage.expect.boolean": {
+  "en": "yes / no (true / false)",
+  "cs": "ano / ne (true / false)",
+  "de": "ja / nein (true / false)"
+ },
+ "fnusage.expect.email": {
+  "en": "an e-mail address",
+  "cs": "e-mailovou adresu",
+  "de": "eine E-Mail-Adresse"
+ },
+ "fnusage.expect.integer": {
+  "en": "a whole number",
+  "cs": "celé číslo",
+  "de": "eine ganze Zahl"
+ },
+ "fnusage.expect.number": {
+  "en": "a number",
+  "cs": "číslo",
+  "de": "eine Zahl"
+ },
+ "fnusage.expect.pattern": {
+  "en": "text matching {pattern}",
+  "cs": "text ve tvaru {pattern}",
+  "de": "Text im Format {pattern}"
+ },
+ "fnusage.expect.phone": {
+  "en": "a phone number in international form (+420…)",
+  "cs": "telefonní číslo v mezinárodním tvaru (+420…)",
+  "de": "eine Telefonnummer im internationalen Format (+49…)"
+ },
+ "fnusage.expect.range": {
+  "en": "{what} from {min} to {max}",
+  "cs": "{what} od {min} do {max}",
+  "de": "{what} von {min} bis {max}"
+ },
+ "fnusage.expect.text": {
+  "en": "text",
+  "cs": "text",
+  "de": "Text"
+ },
+ "fnusage.expect.type": {
+  "en": "a value of type {type}",
+  "cs": "hodnotu typu {type}",
+  "de": "einen Wert vom Typ {type}"
+ },
+ "fnusage.expect.url": {
+  "en": "a web address",
+  "cs": "webovou adresu",
+  "de": "eine Webadresse"
+ },
+ "fnusage.expect.values": {
+  "en": "one of: {values}",
+  "cs": "jednu z hodnot: {values}",
+  "de": "einen der Werte: {values}"
+ },
+ "fnusage.expected": {
+  "en": "expected {what}",
+  "cs": "čekám {what}",
+  "de": "erwartet: {what}"
+ },
+ "fnusage.guide": {
+  "en": "The model's guide",
+  "cs": "Návod modelu",
+  "de": "Anleitung des Modells"
+ },
+ "fnusage.hint": {
+  "en": "Try for example: {example}",
+  "cs": "Zkuste například: {example}",
+  "de": "Versuchen Sie zum Beispiel: {example}"
+ },
+ "fnusage.inputs": {
+  "en": "Parameters",
+  "cs": "Parametry",
+  "de": "Parameter"
+ },
+ "fnusage.no": {
+  "en": "no",
+  "cs": "ne",
+  "de": "nein"
+ },
+ "fnusage.problem.missing": {
+  "en": "is missing",
+  "cs": "chybí",
+  "de": "fehlt"
+ },
+ "fnusage.problem.pattern": {
+  "en": "is not in the right form",
+  "cs": "nemá správný tvar",
+  "de": "hat nicht die richtige Form"
+ },
+ "fnusage.problem.range": {
+  "en": "is out of range",
+  "cs": "je mimo rozsah",
+  "de": "liegt außerhalb des Bereichs"
+ },
+ "fnusage.problem.type": {
+  "en": "has the wrong type",
+  "cs": "má špatný typ",
+  "de": "hat den falschen Typ"
+ },
+ "fnusage.problem.values": {
+  "en": "is not one of the allowed values",
+  "cs": "není mezi povolenými hodnotami",
+  "de": "ist keiner der erlaubten Werte"
+ },
+ "fnusage.problems": {
+  "en": "What is wrong",
+  "cs": "Co je špatně",
+  "de": "Was nicht stimmt"
+ },
+ "fnusage.server": {
+  "en": "/{keyword} refused the parameters: {message}",
+  "cs": "/{keyword} odmítl parametry: {message}",
+  "de": "/{keyword} hat die Parameter abgelehnt: {message}"
+ },
+ "fnusage.title": {
+  "en": "/{keyword} did not run — parameters are missing or wrong.",
+  "cs": "/{keyword} se nespustil — parametry chybí nebo nesedí.",
+  "de": "/{keyword} wurde nicht ausgeführt — Parameter fehlen oder passen nicht."
+ },
+ "fnusage.usage": {
+  "en": "Usage",
+  "cs": "Použití",
+  "de": "Verwendung"
+ },
+ "fnusage.yes": {
+  "en": "yes",
+  "cs": "ano",
+  "de": "ja"
+ },
+ "functions.answered": {
+  "en": "The model answered",
+  "cs": "Model odpověděl",
+  "de": "Das Modell hat geantwortet"
+ },
+ "functions.cancelled": {
+  "en": "Cancelled — you ran another command",
+  "cs": "Zrušeno — spustili jste další příkaz",
+  "de": "Abgebrochen — Sie haben einen weiteren Befehl gestartet"
+ },
+ "functions.fail.badAnswer": {
+  "en": "The server answered with something that is not the model's answer.",
+  "cs": "Server odpověděl něčím, co není odpověď modelu.",
+  "de": "Der Server hat etwas geantwortet, das keine Antwort des Modells ist."
+ },
+ "functions.fail.incomplete": {
+  "en": "The connection to the server ended before the model answered.",
+  "cs": "Spojení se serverem skončilo dřív, než model odpověděl.",
+  "de": "Die Verbindung zum Server endete, bevor das Modell antwortete."
+ },
+ "functions.fail.network": {
+  "en": "The server cannot be reached — check the connection.",
+  "cs": "Server není dostupný — zkontrolujte připojení.",
+  "de": "Der Server ist nicht erreichbar — prüfen Sie die Verbindung."
+ },
+ "functions.fail.rate": {
+  "en": "Too many runs in a row — wait a moment.",
+  "cs": "Příliš mnoho spuštění za sebou — chvíli počkejte.",
+  "de": "Zu viele Aufrufe hintereinander — warten Sie kurz."
+ },
+ "functions.fail.server": {
+  "en": "The server could not run the function ({message}).",
+  "cs": "Server funkci nespustil ({message}).",
+  "de": "Der Server konnte die Funktion nicht ausführen ({message})."
+ },
+ "functions.fail.timeout": {
+  "en": "The model did not answer within {s} s.",
+  "cs": "Model neodpověděl do {s} s.",
+  "de": "Das Modell hat nicht innerhalb von {s} s geantwortet."
+ },
+ "functions.fail.unauthorized": {
+  "en": "Your sign-in has expired — sign in again.",
+  "cs": "Přihlášení vypršelo — přihlaste se znovu.",
+  "de": "Ihre Anmeldung ist abgelaufen — melden Sie sich erneut an."
+ },
+ "functions.fail.unknown": {
+  "en": "The function failed.",
+  "cs": "Funkce selhala.",
+  "de": "Die Funktion ist fehlgeschlagen."
+ },
+ "functions.runFailed": {
+  "en": "Error while running the model's function /{keyword}",
+  "cs": "Chyba při provádění funkce modelu /{keyword}",
+  "de": "Fehler beim Ausführen der Modellfunktion /{keyword}"
+ },
+ "functions.shownHere": {
+  "en": "Shown only here — nobody in the room to send it to",
+  "cs": "Zobrazeno jen zde — v místnosti nikdo není",
+  "de": "Nur hier angezeigt — niemand im Raum, an den es gehen könnte"
+ },
+ "functions.status.bad-input": {
+  "en": "Wrong parameters — see the answer",
+  "cs": "Chybné parametry — viz odpověď",
+  "de": "Falsche Parameter — siehe die Antwort"
+ },
+ "functions.status.interrupted": {
+  "en": "Interrupted — the page was reloaded meanwhile",
+  "cs": "Přerušeno — stránka se mezitím znovu načetla",
+  "de": "Unterbrochen — die Seite wurde inzwischen neu geladen"
+ },
+ "sysmsg.title": {
+  "en": "The answer of the model {name} (/{keyword}) — sender system-messenger",
+  "cs": "Odpověď modelu {name} (/{keyword}) — odesílatel system-messenger",
+  "de": "Die Antwort des Modells {name} (/{keyword}) — Absender system-messenger"
+ },
+ "sysmsg.via": {
+  "en": "via {name}",
+  "cs": "přes {name}",
+  "de": "über {name}"
+ },
+ "sysmsg.viaTitle": {
+  "en": "{name} sent it to the room: the model answered them. They signed the message, not the server.",
+  "cs": "Do místnosti to poslal(a) {name}: model odpovídal jemu / jí. Zprávu podepsal on(a), ne server.",
+  "de": "{name} hat es in den Raum gesendet: Das Modell hat dieser Person geantwortet. Signiert hat sie die Nachricht, nicht der Server."
+ },
+ "sysmsg.you": {
+  "en": "you",
+  "cs": "vás",
+  "de": "Sie"
+ }
+}
