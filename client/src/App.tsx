@@ -104,9 +104,9 @@ import {
 } from "./lib/p4";
 import { isP4RoomEnvelope, P4Room, type PeerInfo, type PeerProtocol } from "./lib/p4-session";
 import { deviceReplay, LocalKtStore, PayloadSealer, VaultUnavailable, type SealedPayload, type VaultReplayStore } from "./lib/p4-store";
-import { acceptChanged, evaluateIdentity, markVerified, signerOf, TrustBook } from "./lib/p4-trust";
+import { acceptChanged, evaluateIdentity, ktSlotOf, markVerified, signerOf, TrustBook, type KtStanding } from "./lib/p4-trust";
 import { deviceMailbox, helloAccountOf, sealForAway, uploadBundle } from "./lib/p4-away";
-import { fetchKtJson, KtClient, type KtStatus } from "./lib/p4-kt";
+import { fetchKtJson, KtClient, type KtOwnCheck, type KtStatus, type KtVerdict } from "./lib/p4-kt";
 import type { SealedWith } from "./lib/chat-types";
 import { MediaE2ee } from "./lib/media-e2ee";
 import { validatePayload, verifyQuote, verifyForward, forwardIndex, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
@@ -814,6 +814,11 @@ function ChatApp() {
   const callIdRef = useRef(newId("call"));
   /** KT lookups already made this session (account key | device key). */
   const ktCheckedRef = useRef(new Set<string>());
+  /** 6.12 review P04: their answers (account key | device key → what the log says), and by the slot messages carry. */
+  const ktResultsRef = useRef(new Map<string, "ok" | "revoked" | "absent" | "unverified">());
+  const ktSlotResultsRef = useRef(new Map<string, "ok" | "revoked" | "absent" | "unverified">());
+  /** 6.12 review P04: the signed-in account's own entries in the key log — devices the user does not know. */
+  const [ktOwn, setKtOwn] = useState<KtOwnCheck | null>(null);
   /** The last bundle uploaded to the key directory this session. */
   const uploadedBundleRef = useRef("");
   // Call frames sealed with per-direction pair keys (lib/media-e2ee.ts).
@@ -945,7 +950,8 @@ function ChatApp() {
   // (lib/room-hub.ts); messages a room collected there come with it when it
   // is put on screen (carryRef, merged in doConnect).
   const hubRef = useRef<RoomHub | null>(null);
-  if (!hubRef.current) hubRef.current = createRoomHub(wsUrl, () => freshRtcConfig());
+  // 6.12 review P04/P06: background rooms evaluate senders with the same pins, and ask the key log's word on attested devices.
+  if (!hubRef.current) hubRef.current = createRoomHub(wsUrl, () => freshRtcConfig(), 8, { ktStanding: (apk, pk, server) => ktStandingOf(apk, pk, server) });
   const hub = hubRef.current;
   const hubRooms = useSyncExternalStore(hub.subscribe, hub.list, hub.list);
   const carryRef = useRef(new Map<string, ChatMessage[]>());
@@ -1824,14 +1830,43 @@ function ChatApp() {
 
   /** 6.12 (§ 14): this server's key log — its key pinned, its newest head checked on connect and every 10 minutes. */
   function startKeyTransparency() {
-    if (ktRef.current) { void ktRef.current.refresh(); return; }
+    if (ktRef.current) { void ktRef.current.refresh().then(() => checkOwnInLog()); return; }
     const kt = new KtClient(window.location.origin, new LocalKtStore(), fetchKtJson());
     kt.subscribe((s) => {
       setKtStatus(s);
       if (s.state === "alert" && s.alert) warnOnce(`kt:${s.alert.kind}:${s.alert.at}`, tf(lang, `p4.kt.alert.${s.alert.kind}`, { detail: s.alert.detail }), "error");
     });
     ktRef.current = kt;
-    kt.start();
+    // Review P04: after every refresh, this account's own entries too (self-monitoring).
+    kt.start(() => { void checkOwnInLog(); });
+  }
+
+  /**
+   * 6.12 review P04 (§ 14.4, self-monitoring): the signed-in account's own entries in the server's key
+   * log. A device certified for our account that is not this one and not acknowledged by the user is
+   * reported — a key the server adds for us cannot go unseen; so is another account key for us.
+   */
+  async function checkOwnInLog() {
+    const kt = ktRef.current;
+    const identity = identityRef.current;
+    const apk = identity?.attestation?.accountKey;
+    const acc = accountRef.current;
+    const username = acc?.username ?? acc?.id;
+    if (!kt || !identity || !apk || !username || !onHomeServer()) { setKtOwn(null); return; }
+    const book = trustRef.current;
+    const serverU = (acc as { ktUser?: unknown } | null)?.ktUser;
+    const own = await kt.checkOwn({ username, ...(typeof serverU === "string" ? { u: serverU } : {}) }, apk, (dpk) => dpk === identity.publicKey || book.ownKnown(apk, dpk)).catch(() => null);
+    setKtOwn(own);
+    if (own?.unknown.length) warnOnce(`kt-own:${own.unknown.map((d) => d.dpk.slice(-16)).join(",")}`, tf(lang, "p4.kt.own.unknown", { n: own.unknown.length }), "error");
+    if (own?.foreignAccount) warnOnce(`kt-own-acct:${own.foreignAccount}`, t(lang, "p4.kt.own.foreignAccount"), "error");
+  }
+
+  /** "This is my device": the user knows it — the self-monitoring stops reporting it. */
+  function acknowledgeOwnDevice(dpk: string) {
+    const apk = identityRef.current?.attestation?.accountKey;
+    if (!apk) return;
+    trustRef.current.acknowledgeOwn(apk, dpk);
+    setKtOwn((cur) => (cur ? { ...cur, unknown: cur.unknown.filter((d) => d.dpk !== dpk) } : cur));
   }
 
   /** 6.12 (§ 11): the persistent replay window of this device. */
@@ -1908,9 +1943,13 @@ function ChatApp() {
    *  first use). 6.12 (docs/protocol-v4.md § 12): a first-seen key is "new —
    *  not verified", never "verified" by itself; "changed" is held. */
   async function identityFor(signer: Signer | null, senderName: string, opts: { protocol: 3 | 4; certVersion?: 1 | 2 } = { protocol: 3 }): Promise<MessageIdentity> {
-    const identity = await evaluateIdentity({ signer, protocol: opts.protocol, certVersion: opts.certVersion, room: roomRef.current, name: senderName }, pinsRef.current, trustRef.current);
+    // 6.12 review P04: an attested device counts as its account's only once the server's key log confirmed it.
+    const kt = signer?.valid && signer.account?.valid ? ktStandingOf(signer.account.publicKey, signer.publicKey) : undefined;
+    const identity = await evaluateIdentity({ signer, protocol: opts.protocol, certVersion: opts.certVersion, room: roomRef.current, name: senderName, kt }, pinsRef.current, trustRef.current);
     if (identity.state === "invalid") warnOnce(`invalid:${identity.kid}`, t(lang, "sec.identity.invalidFlash").replace("{name}", senderName), "error");
     if (identity.state === "changed") warnOnce(`changed:${identity.kid}`, t(lang, identity.revoked ? "p4.kt.revoked" : "sec.identity.changedFlash").replace("{name}", senderName), "error");
+    // Review P08: an account the user verified under one name now writes under another.
+    if (identity.verifiedAs) warnOnce(`verified-as:${identity.kid}:${senderName}`, tf(lang, "sec.identity.verifiedAsFlash", { name: senderName, verified: identity.verifiedAs }), "warning");
     return identity;
   }
 
@@ -1988,7 +2027,9 @@ function ChatApp() {
   // 6.7: by the operator's template and the user's choice (kinds, privacy, quiet hours).
   useEffect(() => hub.onMessage((e) => {
     if (!notificationsEnabledRef.current) return;
-    const note = showLocalNotification({ kind: "message", room: e.label, sender: e.message.senderName, text: e.message.flags?.sealed ? "🔒" : e.message.text || "📎", tag: `m5cet-room-${e.key}` }, { lang: lang === "cs" || lang === "de" ? lang : "en" });
+    // 6.12 review P06/P14: a message held for a changed key never shows its text in a notification.
+    const heldText = e.message.identity?.state === "changed" ? tf(lang, "p4.held.title", { name: e.message.senderName }) : null;
+    const note = showLocalNotification({ kind: "message", room: e.label, sender: e.message.senderName, text: heldText ?? (e.message.flags?.sealed ? "🔒" : e.message.text || "📎"), tag: `m5cet-room-${e.key}` }, { lang: lang === "cs" || lang === "de" ? lang : "en" });
     if (note) note.onclick = () => { window.focus(); note.close(); void switchRoomRef.current(e.key); };
   }), [hub, lang]);
   // 6.7: local notifications follow the account's choice once signed in, this browser's otherwise.
@@ -2275,6 +2316,9 @@ function ChatApp() {
       if (when === null) continue;
       const plaintext = when === checked.createdAt ? checked : { ...checked, createdAt: when };
       relaySendersRef.current.set(plaintext.id, { peerId: item.from.peerId, accountId: accountRefOf(item.from) });
+      // Review P04: an attested sender of a relayed item is looked up in the key log too (its message follows the answer).
+      const relaySigner = opened.signer;
+      if (relaySigner?.valid && relaySigner.account?.valid) void checkDeviceInLog(accountRefOf(item.from), relaySigner.account.publicKey, relaySigner.publicKey, plaintext.senderName);
       incoming.push(chatMessageFrom(plaintext, {
         cryptoVersion: opened.version,
         sealedWith: opened.sealedWith,
@@ -2288,7 +2332,7 @@ function ChatApp() {
       }));
     }
     if (incoming.length > 0) {
-      setMessages((cur) => mergeMessages(cur, incoming));
+      setMessages((cur) => mergeMessages(cur, incoming.map(withKt)));
       systemMessage(t(lang, "away.received").replace("{n}", String(incoming.length)));
       void logAccountEvent("decrypt-ok", { messages: incoming.length });
     }
@@ -2925,18 +2969,65 @@ function ChatApp() {
 
   /** § 14.4: an account-attested peer, first seen this session — is its device in the server's key log, not revoked? */
   async function checkPeerInLog(peerId: string, info: PeerInfo) {
-    const kt = ktRef.current;
     const ref = peerRefsRef.current.get(peerId);
-    if (!kt || !onHomeServer() || !info.account?.valid || !ref) return;
-    const slot = `${info.account.publicKey}|${info.pk}`;
-    if (ktCheckedRef.current.has(slot)) return;
+    if (!info.account?.valid) return;
+    const name = peersRef.current.get(peerId)?.name || `peer-${peerId.slice(-4)}`;
+    const verdict = await checkDeviceInLog(ref, info.account.publicKey, info.pk, name, info.user);
+    // Review P04: a username claim the log does not bear out is not shown.
+    if (verdict?.userMismatch) peerUsersRef.current.delete(peerId);
+  }
+
+  /**
+   * 6.12 review P04 (§ 14.4): what the server's key log says about this attested device. "off": this
+   * server keeps no log (or we are on another server's room), nothing to check; otherwise the answer
+   * so far — "pending" until a lookup came back. Only "ok" / "off" let a device count as its account's.
+   */
+  function ktStandingOf(apk: string, pk: string, server?: string): KtStanding {
+    const kt = ktRef.current;
+    if (server || !kt || !onHomeServer() || kt.current().state === "off") return "off";
+    const got = ktResultsRef.current.get(`${apk}|${pk}`);
+    if (!got) return "pending";
+    if (got === "revoked") return "ok"; // a revoked device is "changed" through the trust book
+    return got;
+  }
+
+  /** § 14.4: one attested device in the key log (once per device and account); its messages follow the answer. */
+  async function checkDeviceInLog(ref: string | undefined, apk: string, pk: string, name: string, user?: string): Promise<KtVerdict | null> {
+    const kt = ktRef.current;
+    if (!kt || !onHomeServer() || !ref) return null;
+    const slot = `${apk}|${pk}`;
+    if (ktCheckedRef.current.has(slot)) return null;
     ktCheckedRef.current.add(slot);
     const lookup = await hubAsk<KtLookup>("kt-lookup", ref);
-    const verdict = await kt.checkDevice(lookup, info.account.publicKey, info.pk, info.user).catch(() => ({ status: "unverified" as const }));
+    const verdict = await kt.checkDevice(lookup, apk, pk, user).catch((): KtVerdict => ({ status: "unverified" }));
+    const status = verdict.status === "off" ? "ok" : verdict.status;
+    ktResultsRef.current.set(slot, status);
     if (verdict.status === "revoked") {
-      trustRef.current.markRevoked(info.pk);
-      warnOnce(`revoked:${info.pk}`, tf(lang, "p4.kt.revoked", { name: peersRef.current.get(peerId)?.name || `peer-${peerId.slice(-4)}` }), "error");
+      trustRef.current.markRevoked(pk);
+      warnOnce(`revoked:${pk}`, tf(lang, "p4.kt.revoked", { name }), "error");
+    } else if (status === "absent" || status === "unverified") {
+      warnOnce(`kt-${status}:${pk}`, tf(lang, `p4.kt.device.${status}`, { name }), "warning");
     }
+    // The messages already here from this device show the answer now (and those still on their way, withKt).
+    const ktSlot = await ktSlotOf(apk, pk);
+    ktSlotResultsRef.current.set(ktSlot, status);
+    setMessages((cur) => cur.map((m) => (m.identity?.kt && m.identity.ktSlot === ktSlot ? { ...m, identity: settleKt(m.identity, status) } : m)));
+    return verdict;
+  }
+
+  /** A message about to be shown whose identity waits for a key-log answer that came meanwhile. */
+  function withKt(m: ChatMessage): ChatMessage {
+    const slot = m.identity?.kt === "pending" ? m.identity.ktSlot : undefined;
+    const status = slot ? ktSlotResultsRef.current.get(slot) : undefined;
+    return status && m.identity ? { ...m, identity: settleKt(m.identity, status) } : m;
+  }
+
+  /** A message identity that waited for the key log (`kt`), with the log's answer. */
+  function settleKt(identity: MessageIdentity, status: "ok" | "revoked" | "absent" | "unverified"): MessageIdentity {
+    const { kt: _kt, ktState, ktSlot, ...rest } = identity;
+    if (status === "ok") return { ...rest, account: true, state: ktState ?? "new", ...(ktState === "verified" ? { checked: true } : {}) };
+    if (status === "revoked") return { ...rest, account: true, state: "changed", revoked: true };
+    return { ...rest, kt: status, ...(ktState ? { ktState } : {}), ...(ktSlot ? { ktSlot } : {}) };
   }
 
   /** § 9 (F-19): a fresh media key for our direction to this protocol-4 peer, sent over its ratchet, then used. */
@@ -3021,9 +3112,10 @@ function ChatApp() {
     if (messagesRef.current.some((m) => m.id === plaintext.id)) return;
 
     const identity = await identityFor(opened.signer, plaintext.senderName, { protocol: opened.version === 4 ? 4 : 3, certVersion: opened.certVersion });
+    const held = identity.state === "changed";
     setMessages((current) => [
       ...current,
-      chatMessageFrom(plaintext, {
+      withKt(chatMessageFrom(plaintext, {
         cipher,
         cryptoVersion: opened.version,
         sealedWith,
@@ -3033,7 +3125,7 @@ function ChatApp() {
           { state: "received", at: receivedAt, meta: peerId.slice(-6) },
           { state: "decrypted", at: Date.now() },
         ],
-      }),
+      })),
     ]);
     dispatchInternal("message", { senderId: plaintext.senderId });
     const roomSec = (roomRef.current && prefsRef.current.roomSecurity[roomRef.current]) || DEFAULT_ROOM_SECURITY;
@@ -3049,9 +3141,10 @@ function ChatApp() {
       "Notification" in window &&
       Notification.permission === "granted"
     ) {
-      // 6.7: by the template and the user's choice; the page decrypted it, so it may show the text.
+      // 6.7: by the template and the user's choice; the page decrypted it, so it may show the text —
+      // 6.12 review P14: not the text of a message held for a changed key.
       showLocalNotification(
-        { kind: "message", room: roomRef.current || undefined, sender: plaintext.senderName, text: plaintext.flags?.sealed ? "🔒" : plaintext.text || "📎", tag: "m5cet" },
+        { kind: "message", room: roomRef.current || undefined, sender: plaintext.senderName, text: held ? tf(lang, "p4.held.title", { name: plaintext.senderName }) : plaintext.flags?.sealed ? "🔒" : plaintext.text || "📎", tag: "m5cet" },
         { lang: lang === "cs" || lang === "de" ? lang : "en" },
       );
     }
@@ -3504,7 +3597,7 @@ function ChatApp() {
     const carried = carryRef.current.get(nextRoom);
     if (carried?.length) {
       carryRef.current.delete(nextRoom);
-      setMessages((cur) => mergeMessages(cur, carried));
+      setMessages((cur) => mergeMessages(cur, carried.map(withKt)));
     }
     setPeers([]);
     setAwayPeers([]);
@@ -4813,6 +4906,11 @@ function ChatApp() {
 
   /** 6.12 (§ 12.1): the sender's identity, worded honestly — "verified" only when the user compared. */
   function identityLine(id: MessageIdentity): { text: string; tone: "ok" | "warn" | "muted" } {
+    // 6.12 review P04: the key log has not confirmed the account (yet) — never "account" / "verified".
+    if (id.kt && id.state !== "changed" && id.state !== "invalid") {
+      const extra = [id.verifiedAs ? tf(lang, "sec.identity.verifiedAs", { name: id.verifiedAs }) : "", id.protocol === 3 ? t(lang, "sec.identity.legacy") : ""].filter(Boolean);
+      return { text: t(lang, `sec.identity.kt.${id.kt}`).replace("{fp}", id.fingerprint ?? "") + (extra.length ? ` · ${extra.join(" · ")}` : ""), tone: id.kt === "pending" && !id.verifiedAs ? "muted" : "warn" };
+    }
     const key = id.accepted && id.state !== "verified" ? "sec.identity.accepted"
       : id.state === "verified"
         // Stored before 6.12, "verified" without `checked` meant only "the same key as before".
@@ -4822,9 +4920,11 @@ function ChatApp() {
           : id.state === "changed"
             ? (id.revoked ? "sec.identity.revoked" : "sec.identity.changed")
             : `sec.identity.${id.state}`;
-    const extra = [id.certV1 ? t(lang, "sec.identity.certV1") : "", id.protocol === 3 ? t(lang, "sec.identity.legacy") : ""].filter(Boolean);
+    // Review P08: a verified account writing under another name than the one it was verified under — a warning.
+    const extra = [id.verifiedAs ? tf(lang, "sec.identity.verifiedAs", { name: id.verifiedAs }) : "", id.certV1 ? t(lang, "sec.identity.certV1") : "", id.protocol === 3 ? t(lang, "sec.identity.legacy") : ""].filter(Boolean);
     const text = t(lang, key).replace("{fp}", id.fingerprint ?? "") + (extra.length ? ` · ${extra.join(" · ")}` : "");
-    const tone = id.state === "verified" && id.checked ? "ok" as const
+    const tone = id.verifiedAs ? "warn" as const
+      : id.state === "verified" && id.checked ? "ok" as const
       : id.state === "unsigned" || id.state === "new" || (id.state === "verified" && !id.checked) || id.accepted ? "muted" as const
       : "warn" as const;
     return { text, tone };
@@ -4834,7 +4934,9 @@ function ChatApp() {
   function buildMessageInfo(m: ChatMessage): MessageInfo {
     const peer = m.mine ? undefined : peersRef.current.get(m.senderId);
     const net = m.mine ? undefined : peerNetRef.current.get(m.senderId);
-    const plain = m.flags?.sealed ? (m.mine ? m.sealPlain : undefined) : m.text;
+    // 6.12 review P14: a message held for a changed key shows its text nowhere until the key is accepted.
+    const held = !m.mine && m.identity?.state === "changed";
+    const plain = held ? undefined : m.flags?.sealed ? (m.mine ? m.sealPlain : undefined) : m.text;
     const identity = m.mine
       ? (identityRef.current ? { text: `${t(lang, "sec.myFingerprint")} · ${identityRef.current.fingerprint}`, tone: "ok" as const } : undefined)
       : m.identity ? identityLine(m.identity) : undefined;
@@ -4911,7 +5013,8 @@ function ChatApp() {
         safety: {
           mine: theirApk && myApk ? myApk : identityRef.current.publicKey,
           theirs: theirApk && myApk ? theirApk : theirPk,
-          verified: safetyVerified[theirPk] === true || Boolean(theirApk && trustRef.current.accountVerified(theirApk)),
+          // Review P08: an account counts as verified only under the name it was verified with.
+          verified: safetyVerified[theirPk] === true || Boolean(theirApk && trustRef.current.accountVerifiedFor(theirApk, handle?.name || "") === "yes"),
           // The pin to mark: their account when attested (protocol 3: the account that signed their messages).
           onVerified: () => { void markSafetyVerified(handle?.name || target, theirPk, theirApk ?? peerAccountKeysRef.current.get(target) ?? null); },
           onExclude: () => excludePeer(target),
@@ -6117,7 +6220,7 @@ function ChatApp() {
                 mapPolicy={clientConfig.map}
                 act={rowActionsRef}
                 quoted={message.replyTo ? quoteIndex.get(message.replyTo.id) ?? null : undefined}
-                forwardVerified={verifyForward(message.forwardedFrom, message.text, fwdIndex)}
+                forwardVerified={verifyForward(message.forwardedFrom, message.text, fwdIndex, { senderId: message.senderId, kid: message.identity?.kid })}
                 nameWarning={nameWarnings(message.senderId, message.senderName)}
               />
             );
@@ -6233,13 +6336,18 @@ function ChatApp() {
           const info = p4Ref.current?.info(id) ?? null;
           const pk = info?.pk ?? senderKeysRef.current.pairOf(id)?.peerPublicKey;
           const apk = (info?.account?.valid ? info.account.publicKey : undefined) ?? peerAccountKeysRef.current.get(id);
-          return { name: peersRef.current.get(id)?.name ?? peerNamesRef.current.get(id) ?? id.slice(-6), deviceKey: pk, verified: pk ? safetyVerified[pk] === true || Boolean(apk && trustRef.current.accountVerified(apk)) : false };
+          const name = peersRef.current.get(id)?.name ?? peerNamesRef.current.get(id) ?? id.slice(-6);
+          return { name, deviceKey: pk, verified: pk ? safetyVerified[pk] === true || Boolean(apk && trustRef.current.accountVerifiedFor(apk, name) === "yes") : false };
         }}
         // 6.12: key transparency (a persistent alert) and the protocol each member speaks.
         p4={{
           kt: ktStatus,
           onKtDismiss: () => { void ktRef.current?.dismiss(); },
           peers: peers.filter((p) => p.status === "open" || p4Peers[p.id] !== undefined).map((p) => ({ id: p.id, name: p.name, protocol: p4Peers[p.id] ?? "pending", proven: p.proven })),
+          // Review P04: devices the key log certifies for this account that the user does not know.
+          own: ktOwn ? { status: ktOwn.status, unknown: ktOwn.unknown, foreignAccount: Boolean(ktOwn.foreignAccount) } : null,
+          onOwnAck: acknowledgeOwnDevice,
+          onOwnSessions: () => { setActivePanel(null); setShowAccount(true); },
         }}
       />
       <PrivacyPanel

@@ -51,6 +51,7 @@ const cs: Dict = {
   "names.warn.duplicate": "Stejné jméno jako {like}, který tu byl dřív",
   "names.warn.mixed": "Jméno míchá abecedy (např. latinku a cyrilici)",
   "msg.quote.missing": "Citovaná zpráva tu není — citát nelze ověřit",
+  "msg.quote.held": "Citovaná zpráva je zadržená (odesílatel má jiný klíč) — zobrazí se, až klíč přijmete",
   "msg.fwd.unverified": "{name} (neověřeno)",
   // F-25 — trust panel
   "trust.title": "Důvěra, otisky a podpis kódu",
@@ -136,6 +137,7 @@ const en: Dict = {
   "names.warn.duplicate": "Same name as {like}, who was here first",
   "names.warn.mixed": "The name mixes alphabets (e.g. Latin and Cyrillic)",
   "msg.quote.missing": "The quoted message is not here — the quote cannot be checked",
+  "msg.quote.held": "The quoted message is held (its sender's key changed) — it shows once you accept the key",
   "msg.fwd.unverified": "{name} (not verified)",
   "trust.title": "Trust, fingerprints and code signature",
   "trust.device": "device",
@@ -218,6 +220,7 @@ const de: Dict = {
   "names.warn.duplicate": "Gleicher Name wie {like}, der zuerst da war",
   "names.warn.mixed": "Der Name mischt Alphabete (z. B. Latein und Kyrillisch)",
   "msg.quote.missing": "Die zitierte Nachricht ist nicht hier — das Zitat lässt sich nicht prüfen",
+  "msg.quote.held": "Die zitierte Nachricht ist zurückgehalten (der Schlüssel des Absenders hat sich geändert) — sie erscheint, sobald Sie den Schlüssel annehmen",
   "msg.fwd.unverified": "{name} (nicht geprüft)",
   "trust.title": "Vertrauen, Fingerprints und Code-Signatur",
   "trust.device": "Gerät",

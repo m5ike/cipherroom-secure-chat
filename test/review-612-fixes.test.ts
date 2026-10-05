@@ -15,9 +15,11 @@ import { createOutbox, perPeerSender } from "../client/src/lib/outbox";
 import { KtClient, KtHttpError } from "../client/src/lib/p4-kt";
 import { LocalKtStore, LocalVault, memoryBackend, VaultBundleStore, VaultReplayStore, VaultUnavailable, type KvBackend } from "../client/src/lib/p4-store";
 import { P4Room, type P4Events } from "../client/src/lib/p4-session";
-import { TrustBook } from "../client/src/lib/p4-trust";
-import { deriveRoomKeys, type RoomKeys } from "../client/src/lib/envelope";
-import { keyFingerprint, keyId, type Identity } from "../client/src/lib/identity";
+import { evaluateIdentity, ktSlotOf, markVerified, TrustBook } from "../client/src/lib/p4-trust";
+import { deriveRoomKeys, sealMessage, type RoomKeys, type Signer } from "../client/src/lib/envelope";
+import { createPinStore, keyFingerprint, keyId, type Identity } from "../client/src/lib/identity";
+import { forwardIndex, verifyForward, verifyQuote } from "../client/src/lib/validate";
+import { BackgroundRoom, roomKeyOf, type HubDeps } from "../client/src/lib/room-hub";
 import { fromBase64, toBase64 } from "../client/src/lib/crypto";
 
 const memoryStorage = (): Storage => {
@@ -574,5 +576,162 @@ describe("REVIEW-612 P03 — the room-key fallback", () => {
     outbox.add({ messageId: "m2", room: "r", envelope: "x", targets: ["p-b", "p-c"], toNames: [], createdAt: Date.now(), expiresAt: 0 });
     await outbox.flush();
     expect(outbox.list()[0].targets).toEqual(["p-c"]);
+  });
+});
+
+/* ------------------------------------------------------------ P04 / P08: identity states */
+
+describe("REVIEW-612 P04/P08 — identity states", () => {
+  const attestedSigner = (pk: string, apk: string): Signer => ({ publicKey: pk, valid: true, account: { publicKey: apk, valid: true } });
+
+  it("an attested device is the account's (and verified) only once the key log confirmed it", async () => {
+    const pins = createPinStore(null);
+    const book = new TrustBook(null);
+    const dev = await device();
+    const apk = b64(new Uint8Array(32).fill(5));
+    await markVerified(pins, book, "team", "Bob", { pk: dev.publicKey, apk });
+    for (const kt of ["pending", "absent", "unverified"] as const) {
+      const id = await evaluateIdentity({ signer: attestedSigner(dev.publicKey, apk), protocol: 4, room: "team", name: "Bob", kt }, pins, book);
+      expect(id).toMatchObject({ state: "new", account: false, kt, ktState: "verified" });
+      expect(id.checked).toBeUndefined();
+      expect(id.ktSlot).toBe(await ktSlotOf(apk, dev.publicKey));
+    }
+    for (const kt of ["ok", "off", undefined] as const) {
+      expect(await evaluateIdentity({ signer: attestedSigner(dev.publicKey, apk), protocol: 4, room: "team", name: "Bob", kt }, pins, book))
+        .toMatchObject({ state: "verified", account: true, checked: true });
+    }
+    // A device without an account is not affected (nothing to look up).
+    const plain = await device();
+    expect((await evaluateIdentity({ signer: { publicKey: plain.publicKey, valid: true }, protocol: 4, room: "team", name: "Carol", kt: "absent" }, pins, book)).kt).toBeUndefined();
+    // A changed key stays "changed" (held) whatever the log says.
+    const other = await device();
+    const changed = await evaluateIdentity({ signer: attestedSigner(other.publicKey, b64(new Uint8Array(32).fill(6))), protocol: 4, room: "team", name: "Bob", kt: "pending" }, pins, book);
+    expect(changed.state).toBe("changed");
+  });
+
+  it("a verified account under another name is 'new' with verifiedAs; the name it was verified under stays verified everywhere", async () => {
+    const pins = createPinStore(null);
+    const book = new TrustBook(null);
+    const dev = await device();
+    const apk = b64(new Uint8Array(32).fill(7));
+    await markVerified(pins, book, "team", "Alice", { pk: dev.publicKey, apk });
+    expect(book.accountVerifiedFor(apk, "alice")).toBe("yes"); // the same name, as names compare
+    expect(await evaluateIdentity({ signer: attestedSigner(dev.publicKey, apk), protocol: 4, room: "elsewhere", name: "Alice" }, pins, book)).toMatchObject({ state: "verified" });
+    expect(await evaluateIdentity({ signer: attestedSigner(dev.publicKey, apk), protocol: 4, room: "board", name: "Bob" }, pins, book)).toMatchObject({ state: "new", verifiedAs: "Alice" });
+  });
+});
+
+/* ------------------------------------------------------------ P09 / P14: forwards and quotes */
+
+describe("REVIEW-612 P09/P14 — forwards and quotes", () => {
+  it("a forward is verified only by an authenticated message of the named member, never the forwarder's own", () => {
+    const messages = [
+      { id: "1", senderId: "p-bob", senderName: "Bob", text: "real", identity: { state: "new", kid: "kid-bob" } },
+      { id: "2", senderId: "p-mal", senderName: "Bob", text: "fake", identity: { state: "changed", kid: "kid-mal" } },
+      { id: "3", senderId: "p-old", senderName: "Bob", text: "unsigned", identity: { state: "unsigned" } },
+      { id: "4", senderId: "p-mal", senderName: "Carol", text: "own post", identity: { state: "new", kid: "kid-mal" } },
+      { id: "5", senderId: "p-me", senderName: "Me", text: "mine", mine: true },
+    ];
+    const index = forwardIndex(messages);
+    expect(verifyForward("Bob", "real", index, { senderId: "p-eve", kid: "kid-eve" })).toBe(true);
+    expect(verifyForward("Bob", "fake", index, { senderId: "p-eve", kid: "kid-eve" })).toBe(false);
+    expect(verifyForward("Bob", "unsigned", index, { senderId: "p-eve" })).toBe(false);
+    // Mallory forwards her own post "from Carol": not a verification (same peer / same key).
+    expect(verifyForward("Carol", "own post", index, { senderId: "p-mal", kid: "kid-mal" })).toBe(false);
+    expect(verifyForward("Carol", "own post", index, { senderId: "p-mal-2", kid: "kid-mal" })).toBe(false);
+    expect(verifyForward("Me", "mine", index, { senderId: "p-eve", kid: "kid-eve" })).toBe(true);
+  });
+
+  it("a quote of a held or invalid message shows neither text nor sender; once accepted it shows", () => {
+    const held = { id: "m1", senderName: "Bob", text: "pay 100 to X", identity: { state: "changed" } };
+    expect(verifyQuote({ id: "m1", senderName: "Bob", text: "pay 100 to X" }, held)).toEqual({ id: "m1", senderName: "", text: "", missing: true, held: true });
+    expect(verifyQuote({ id: "m1", senderName: "Bob", text: "" }, { ...held, identity: { state: "invalid" } })).toMatchObject({ held: true, text: "" });
+    expect(verifyQuote({ id: "m1", senderName: "Bob", text: "" }, { ...held, identity: { state: "new" } })).toMatchObject({ text: "pay 100 to X", senderName: "Bob", missing: false });
+    // My own message is never "held".
+    expect(verifyQuote({ id: "m1", senderName: "Me", text: "" }, { ...held, mine: true })).toMatchObject({ missing: false });
+  });
+});
+
+/* ------------------------------------------------------------ P06 / P10: background rooms */
+
+describe("REVIEW-612 P06/P10 — background rooms", () => {
+  async function backgroundRoom(deps: Partial<HubDeps> = {}) {
+    const me = await device();
+    const sockets: Array<{ sent: string[]; onopen?: () => void; onmessage?: (e: { data: string }) => void }> = [];
+    const all: HubDeps = {
+      wsUrl: () => "ws://test/ws", rtcConfig: async () => ({}),
+      makeSocket: () => { const s = { sent: [] as string[], readyState: 1, send(t: string) { this.sent.push(t); }, close() {} }; sockets.push(s); return s as unknown as WebSocket; },
+      makePeer: () => { throw new Error("no WebRTC here"); },
+      derive: async () => roomKeys, identity: async () => me, pins: createPinStore(null), trust: new TrustBook(null), ...deps,
+    };
+    const bg = new BackgroundRoom({ key: roomKeyOf("team"), room: "team", label: "Team", name: "Me", passphrase: "x" }, all, () => undefined);
+    await bg.start();
+    sockets[0].onopen!();
+    sockets[0].onmessage!({ data: JSON.stringify({ type: "joined", peerId: "p-me", peers: [] }) });
+    await new Promise((r) => setTimeout(r, 10));
+    const net = new Net();
+    net.rooms.set("p-me", { handle: async (from: string, raw: Record<string, unknown>) => { await bg.handleChannelText(from, JSON.stringify(raw)); return true; } } as unknown as P4Room);
+    const peer = async (peerId: string, identity?: Identity) => {
+      const other = p4room(net, peerId, identity ?? await device());
+      await bg.handleChannelOpen(peerId, (t) => { net.send("p-me", peerId, t); });
+      await other.open("p-me");
+      await net.drain();
+      return other;
+    };
+    return { bg, net, peer };
+  }
+
+  it("a message held for a changed key shows nothing of itself in the room list", async () => {
+    const { bg, net, peer } = await backgroundRoom();
+    for (const [peerId, text] of [["p-bob", "real Bob"], ["p-mal", "pay 100 to X"]] as const) {
+      const other = await peer(peerId);
+      const sealed = await other.sealRoom(`m-${peerId}`, { id: `m-${peerId}`, text, createdAt: Date.now(), senderId: peerId, senderName: "Bob" }, ["p-me"]);
+      net.send(peerId, "p-me", JSON.stringify(sealed!.envelope));
+      await net.drain();
+    }
+    expect(bg.messages.map((m) => m.identity?.state)).toEqual(["new", "changed"]);
+    expect(bg.view().last?.text).toBe("⚠");
+    bg.stop();
+  });
+
+  it("the replay window failing: a sender-key message (live chain) is still taken, a room-key envelope is not", async () => {
+    const failing = new ReplayGuard({ has: async () => { throw new VaultUnavailable(); }, add: async () => undefined, prune: async () => undefined });
+    const { bg, net, peer } = await backgroundRoom({ replay: failing });
+    const other = await peer("p-bob");
+    const sealed = await other.sealRoom("live-1", { id: "live-1", text: "live", createdAt: Date.now(), senderId: "p-bob", senderName: "Bob" }, ["p-me"]);
+    net.send("p-bob", "p-me", JSON.stringify(sealed!.envelope));
+    await net.drain();
+    const roomKeyEnvelope = await sealMessage(roomKeys, "rk-1", { id: "rk-1", text: "room key", createdAt: Date.now(), senderId: "p-bob", senderName: "Bob" }, null);
+    net.send("p-bob", "p-me", JSON.stringify(roomKeyEnvelope));
+    await net.drain();
+    expect(bg.messages.map((m) => m.text)).toEqual(["live"]);
+    bg.stop();
+  });
+
+  it("an attested sender is 'pending' in the key log until the app's answer; the app's standing is used", async () => {
+    const account = await ed25519FromSeed(new Uint8Array(32).fill(0x21));
+    const apk = b64(account.publicKey);
+    const dev = await device();
+    const cert = await certifyDeviceV2(account.privateKey, dev.publicKey, Date.now() + DEVICE_CERT_LIFETIME_MS);
+    const withAcc = (net: Net, id: string) => {
+      const r = new P4Room({
+        keys: roomKeys, identity: dev, selfId: () => id, send: (peerId, text) => net.send(id, peerId, text),
+        helloExtra: () => ({ caps: [] }), local: () => ({ mb: null, acc: { apk, ac: cert.sig, cv: 2, exp: cert.exp }, sth: null }), book: new TrustBook(null),
+      });
+      net.rooms.set(id, r);
+      return r;
+    };
+    for (const standing of [undefined, "ok"] as const) {
+      const { bg, net } = await backgroundRoom(standing ? { ktStanding: () => standing } : {});
+      const other = withAcc(net, "p-acc");
+      await bg.handleChannelOpen("p-acc", (t) => { net.send("p-me", "p-acc", t); });
+      await other.open("p-me");
+      await net.drain();
+      const sealed = await other.sealRoom("a-1", { id: "a-1", text: "hi", createdAt: Date.now(), senderId: "p-acc", senderName: "Ann" }, ["p-me"]);
+      net.send("p-acc", "p-me", JSON.stringify(sealed!.envelope));
+      await net.drain();
+      expect(bg.messages[0].identity).toMatchObject(standing === "ok" ? { state: "new", account: true } : { state: "new", account: false, kt: "pending" });
+      bg.stop();
+    }
   });
 });

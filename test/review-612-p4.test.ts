@@ -258,8 +258,8 @@ describe("REVIEW-612 P06 — background rooms and changed keys", () => {
   // REVIEW-612 P06: BackgroundRoom.accept (room-hub.ts:434-436) gives every signed message the state "new" — no pin
   // check — and App.tsx:3429-3432 merges what it collected into the room on screen as it is. A second device that
   // uses a pinned member's name is not "changed", its messages are not held (App.tsx:468) and they reach
-  // notifications. Fails today: both messages are "new".
-  it.skip("a second key under the same name in a background room is 'changed', not 'new'", async () => {
+  // notifications. Fixed: background rooms evaluate every sender with the same pins (evaluateIdentity).
+  it("a second key under the same name in a background room is 'changed', not 'new'", async () => {
     const me = await identity();
     const sockets: Array<{ sent: string[]; onopen?: () => void; onmessage?: (e: { data: string }) => void }> = [];
     const deps: HubDeps = {
@@ -315,8 +315,8 @@ describe("REVIEW-612 P09 — 'forwarded from' checked against messages of anyone
   // REVIEW-612 P09: forwardIndex (validate.ts:276-280) keys on the CLAIMED senderName and text of every message —
   // including messages that are held as "changed" and messages of the forwarder itself under another name. Mallory
   // posts "pay 100 to X" as "Bob" (held, or in a room where Bob is not pinned) and then forwards it "from Bob":
-  // App.tsx:6017 shows the forward as verified. Fails today: true.
-  it.skip("a forward is not verified by a message whose sender identity is not the named member's", () => {
+  // App.tsx:6017 shows the forward as verified. Fixed: only authenticated senders are indexed, never the forwarder's own.
+  it("a forward is not verified by a message whose sender identity is not the named member's", () => {
     const messages = [
       { id: "m1", senderId: "p-mallory", senderName: "Bob", text: "pay 100 to X", identity: { state: "changed" as const } },
     ];
@@ -330,8 +330,8 @@ describe("REVIEW-612 P14 — a held message shown through a quote", () => {
   // REVIEW-612 P14: a message from a changed key is held behind a warning (App.tsx:468), but quoteIndex
   // (App.tsx:1006) holds every message and verifyQuote (validate.ts:260-270) shows the STORED text and sender of
   // the quoted message — so a reply to the held message (from the attacker's own, unheld identity) displays the
-  // held text as an authentic quote of "Bob". Fails today: the held text is shown.
-  it.skip("a quote of a held (changed-key) message does not show its text", () => {
+  // held text as an authentic quote of "Bob". Fixed: a held message quotes as "held" — no text, no sender.
+  it("a quote of a held (changed-key) message does not show its text", () => {
     const held = { id: "m1", senderName: "Bob", text: "pay 100 to X", identity: { state: "changed" as const } };
     const view = verifyQuote({ id: "m1", senderName: "Bob", text: "" }, held);
     expect(view?.text).not.toBe("pay 100 to X");

@@ -204,9 +204,10 @@ export class KtClient {
    * key that `known(dpk)` does not know is returned; a newer account key than
    * ours is `foreignAccount`.
    */
-  async checkOwn(username: string, apk: string, known: (dpk: string) => boolean, now = Date.now()): Promise<KtOwnCheck> {
+  async checkOwn(who: string | { username: string; u?: string }, apk: string, known: (dpk: string) => boolean, now = Date.now()): Promise<KtOwnCheck> {
     if (this.off) return { status: "off", unknown: [] };
-    const u = await ktUser(username);
+    // `u` as the server reports it for this account when it does (a server that keys `u`, review S03), else § 14.1.
+    const u = typeof who === "object" && who.u ? who.u : await ktUser(typeof who === "string" ? who : who.username);
     let lookup: KtLookup;
     try {
       lookup = (await this.get(`/api/kt/lookup?u=${encodeURIComponent(u)}`)) as KtLookup;

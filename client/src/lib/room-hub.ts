@@ -21,12 +21,12 @@
 // carries the proof of the room key (§ 13); accepted ids go to the device's
 // persistent replay window (§ 11); a first-seen key is "new", never "verified".
 
-import { deriveRoomKeys, isSealedSignal, openMessage, openSignal, sealSignal, type Envelope, type RoomKeys } from "./envelope";
+import { deriveRoomKeys, isSealedSignal, openMessage, openSignal, sealSignal, type Envelope, type RoomKeys, type Signer } from "./envelope";
 import { SenderKeyStore, envelopeKind } from "./sender-keys";
-import { loadIdentity, type Identity } from "./identity";
+import { createPinStore, loadIdentity, type Identity } from "./identity";
 import { buildHubProof, hubSeed, REPLAY, type RatchetInner, type ReplayGuard } from "./p4";
 import { isP4RoomEnvelope, P4Room, type HelloLocal } from "./p4-session";
-import { TrustBook } from "./p4-trust";
+import { evaluateIdentity, TrustBook, type KtStanding } from "./p4-trust";
 import { deviceReplay } from "./p4-store";
 import { deviceMailbox, helloAccountOf } from "./p4-away";
 import { validatePayload } from "./validate";
@@ -73,7 +73,19 @@ export type HubDeps = {
   p4Local?: (identity: Identity) => Promise<HelloLocal>;
   book?: { p4Seen(pk: string): boolean; markP4(pk: string): void };
   replay?: ReplayGuard | null;
+  /**
+   * 6.12 review P06: the name pins and the trust book the room on screen uses —
+   * a background room evaluates every sender against them (a changed key is
+   * held, never "new"). Defaults: this browser's pins; `book` when it is a
+   * TrustBook, else one in memory.
+   */
+  pins?: PinStore;
+  trust?: TrustBook;
+  /** 6.12 review P04: the key log's word on an attested device (default "pending": not checked here). */
+  ktStanding?: (apk: string, pk: string, server?: string) => KtStanding;
 };
+
+type PinStore = ReturnType<typeof createPinStore>;
 
 export type HubEvent = { type: "change" } | { type: "message"; key: string; label: string; message: ChatMessage }
   /** 6.9: a phone call offered to the members of a background room (a call routed into it), or its update / end. */
@@ -108,6 +120,8 @@ export class BackgroundRoom {
   /** 6.12: protocol 4 with this room's peers (made with the keys and our identity). */
   private p4: P4Room | null = null;
   private readonly book: { p4Seen(pk: string): boolean; markP4(pk: string): void };
+  private readonly trust: TrustBook;
+  private readonly pins: PinStore;
   private readonly seen = new Set<string>();
   private stopped = false;
   private attempts = 0;
@@ -122,7 +136,9 @@ export class BackgroundRoom {
   });
 
   constructor(readonly target: HubTarget, private readonly deps: HubDeps, private readonly emit: (event: HubEvent) => void) {
-    this.book = deps.book ?? new TrustBook(null);
+    this.trust = deps.trust ?? (deps.book instanceof TrustBook ? deps.book : new TrustBook(null));
+    this.book = deps.book ?? this.trust;
+    this.pins = deps.pins ?? createPinStore();
   }
 
   /** The protocol-4 session layer for these keys (text only: no "bin", no "media"). */
@@ -383,14 +399,16 @@ export class BackgroundRoom {
     }
     if (isP4RoomEnvelope(raw)) {
       if (!p4) return;
-      try { await this.accept(peerId, await p4.openRoom<unknown>(peerId, raw), 4, "p4-sk"); } catch { /* not ours to open */ }
+      let opened: { payload: unknown; signer: Signer };
+      try { opened = await p4.openRoom<unknown>(peerId, raw); } catch { return; /* not ours to open */ }
+      await this.accept(peerId, { ...opened, certVersion: p4.info(peerId)?.account?.v }, 4, "p4-sk");
       return;
     }
     const envelope = raw as unknown as Envelope;
     const sealedWith = envelopeKind(envelope);
     // A protocol-4 peer never seals with protocol-3 session keys.
     if (sealedWith !== "room" && p4?.protocolOf(peerId) === 4) return;
-    let opened: { payload: unknown; signer: { valid: boolean } | null; version?: number };
+    let opened: { payload: unknown; signer: Signer | null; version?: number; certVersion?: 1 | 2 };
     try {
       opened = sealedWith === "sender-key" ? await this.store.openLive<unknown>(keys, envelope, peerId)
         : sealedWith === "pair" ? await this.store.openPrivate<unknown>(keys, envelope, peerId, this.myId)
@@ -404,11 +422,11 @@ export class BackgroundRoom {
     if (inner.t !== "msg" || !this.p4) return;
     const m = inner as { id?: unknown; p?: unknown };
     if (typeof m.id !== "string" || !m.p || typeof m.p !== "object" || (m.p as { id?: unknown }).id !== m.id) return;
-    await this.accept(peerId, { payload: m.p, signer: this.p4.signer(peerId) }, 4, "p4-pair");
+    await this.accept(peerId, { payload: m.p, signer: this.p4.signer(peerId), certVersion: this.p4.info(peerId)?.account?.v }, 4, "p4-pair");
   }
 
-  /** An opened payload: checked, fresh, kept and counted. */
-  private async accept(peerId: string, opened: { payload: unknown; signer: { valid: boolean; account?: { valid: boolean } } | null }, version: 3 | 4, sealedWith: NonNullable<ChatMessage["sealedWith"]>): Promise<void> {
+  /** An opened payload: checked, fresh, its sender's key evaluated against the pins (review P06), kept and counted. */
+  private async accept(peerId: string, opened: { payload: unknown; signer: Signer | null; certVersion?: 1 | 2 }, version: 3 | 4, sealedWith: NonNullable<ChatMessage["sealedWith"]>): Promise<void> {
     const link = this.peers.get(peerId);
     const keys = this.keys;
     if (!link || !keys) return;
@@ -438,19 +456,24 @@ export class BackgroundRoom {
     const createdAt = ahead ? receivedAt : p.createdAt;
     if (p.kind === "audio-status" || p.kind === "receipt") return;
     if (p.senderName) link.name = p.senderName;
-    // § 12.1: a key seen here is not verified (the room on screen pins and compares).
-    const valid = opened.signer ? opened.signer.valid && opened.signer.account?.valid !== false : false;
+    // § 12.1 (review P06): the same pins as the room on screen — a second key under a pinned name is
+    // "changed" (held), never "new"; an attested device counts as the account's only once the key log said so.
+    const signer = opened.signer;
+    const attested = Boolean(signer?.valid && signer.account?.valid);
+    const kt = attested ? (this.deps.ktStanding?.(signer!.account!.publicKey, signer!.publicKey, this.target.server) ?? "pending") : undefined;
+    const identity = await evaluateIdentity({ signer, protocol: version, certVersion: opened.certVersion, room: this.target.room, name: p.senderName, kt }, this.pins, this.trust);
+    const held = identity.state === "changed";
     const message: ChatMessage = {
       id: p.id, senderId: p.senderId, senderName: p.senderName, text: p.text, createdAt, mine: false, secure: true,
       attachment: p.attachment, flags: p.flags, to: p.to, replyTo: p.replyTo, forwardedFrom: p.forwardedFrom,
-      cryptoVersion: version, sealedWith,
-      identity: opened.signer ? { state: valid ? "new" : "invalid", protocol: version, ...(opened.signer.account ? { account: true } : {}) } : { state: "unsigned", protocol: version },
+      cryptoVersion: version, sealedWith, identity,
     };
     this.messages.push(message);
     if (this.messages.length > MAX_MESSAGES) this.messages.splice(0, this.messages.length - MAX_MESSAGES);
     this.unread++;
     this.lastActivity = Date.now();
-    this.last = { sender: p.senderName, text: p.flags?.sealed ? "🔒" : p.text || (p.attachment ? `📎 ${p.attachment.name}` : ""), at: createdAt };
+    // A held message (changed key) shows nothing of itself in the room list either (review P14).
+    this.last = { sender: p.senderName, text: held ? "⚠" : p.flags?.sealed ? "🔒" : p.text || (p.attachment ? `📎 ${p.attachment.name}` : ""), at: createdAt };
     this.emit({ type: "message", key: this.target.key, label: this.target.label, message });
     this.changed();
   }
@@ -565,8 +588,10 @@ export class RoomHub {
 }
 
 /** The app's hub (browser): the same socket URL, ICE servers, KDF worker and identity as the room on screen. */
-export function createRoomHub(wsUrl: (server?: string) => string, rtcConfig: () => Promise<RTCConfiguration>, limit = 8): RoomHub {
+export function createRoomHub(wsUrl: (server?: string) => string, rtcConfig: () => Promise<RTCConfiguration>, limit = 8, extra: Pick<HubDeps, "ktStanding"> = {}): RoomHub {
+  const book = new TrustBook();
   return new RoomHub({
+    ...extra,
     wsUrl,
     rtcConfig,
     makeSocket: (url) => new WebSocket(url),
@@ -578,7 +603,8 @@ export function createRoomHub(wsUrl: (server?: string) => string, rtcConfig: () 
       const current = await deviceMailbox(identity).current().catch(() => null);
       return { mb: current?.bundle ?? null, acc: helloAccountOf(identity.attestation), sth: null };
     },
-    book: new TrustBook(),
+    // The same pins and trust book as the room on screen (both read this browser's storage each time).
+    book, trust: book, pins: createPinStore(),
     replay: deviceReplay().guard,
   }, limit);
 }
