@@ -275,10 +275,11 @@ import Foundation
     /// The list the app's Info.plist carries (ios/M5cet, merged from android_application) — when present, the same set.
     @Test func theAppsInfoPlistListsTheSameAids() throws {
         let plist = Repo.root.appendingPathComponent("ios/M5cet/Resources/Info.plist")
-        guard let data = try? Data(contentsOf: plist),
-              let p = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
-              let listed = p["com.apple.developer.nfc.readersession.iso7816.select-identifiers"] as? [String] else { return }
+        guard let data = try? Data(contentsOf: plist) else { return } // the app is not in this checkout
+        let p = try #require(try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any])
+        let listed = try #require(p["com.apple.developer.nfc.readersession.iso7816.select-identifiers"] as? [String])
         #expect(Set(listed.map { $0.uppercased() }) == Set(IOSAids.infoPlist))
+        #expect(listed.count == IOSAids.infoPlist.count)
     }
 }
 
