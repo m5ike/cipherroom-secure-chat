@@ -39,6 +39,7 @@ enum CoreInstall {
         let actions = CoreActions(core: core, state: state)
         actions.install(into: model.design.actions)
         CoreSlots.register(into: model.design.slots, core: core, state: state, actions: actions)
+        FallbackChatSlots.register(into: model.design.slots, core: core)
 
         // The app's life.
         model.onScenePhase { [weak core] phase in core?.scenePhase(phase) }
@@ -123,6 +124,11 @@ enum CoreInstall {
             if key.hasPrefix("voice") { VoiceService.shared.setSettings(CoreVoiceSettings(core: core)) }
         }
 
-        Task { await core.start() }
+        Task {
+            await core.start()
+            #if DEBUG
+            await CoreDebugLaunch.run(core)
+            #endif
+        }
     }
 }
