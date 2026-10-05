@@ -404,13 +404,16 @@ private func joinedSocket(_ t: MockHubTransport, _ c: HubConnection, peerId: Str
         let a = try #require(await rooms.open(HubRoom(key: "a", server: "https://h", roomId: "room-a", name: "Me")))
         let b = try #require(await rooms.open(HubRoom(key: "b", server: "https://h", roomId: "room-b", name: "Me")))
         #expect(await rooms.open(HubRoom(key: "c", server: "https://h", roomId: "room-c", name: "Me")) == nil)
-        let sa = try #require(await t.accept())
-        let sb = try #require(await t.accept())
-        for (s, peer) in [(sa, "pa"), (sb, "pb")] {
+        // The two rooms connect concurrently: which socket is which, their joins say.
+        var byRoom: [String: MockSocket] = [:]
+        for _ in 0..<2 {
+            let s = try #require(await t.accept())
             s.hello()
-            _ = await s.next("join")
-            s.joined(peerId: peer)
+            let join = try #require(await s.next("join"))
+            byRoom[join.str("room")] = s
+            s.joined(peerId: "p-" + join.str("room"))
         }
+        let sa = try #require(byRoom["room-a"]), sb = try #require(byRoom["room-b"])
         await eventually("both joined") { await rooms.joinedCount() == 2 }
         let authA = await sa.next("auth"), authB = await sb.next("auth")
         #expect(authA != nil && authB != nil)

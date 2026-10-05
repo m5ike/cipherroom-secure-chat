@@ -5,8 +5,12 @@
 //                       SignalingHub sends (captured from a real hub over real sockets:
 //                       hello, joined, peers, presence, relay, key directory, errors…)
 //   device-vectors.json the device API's signed strings and P1363 signatures
-//                       (server/android/crypto.ts), the signed policy, a release, a push
+//                       (server/mobile/crypto.ts), the signed policy, a release, a push
 //                       control message sealed for the interop device key
+//   ios-api.json        a device's session through the server's real /api/ios/* routes
+//                       (server/ios/routes.ts): info, enroll, check-in with a bundle offer,
+//                       a release record and a sealed command, the bundle file, the
+//                       signed release, ack and events — requests and answers
 //
 // Run from the repository root (node_modules of the checkout):
 //   npx tsx ios/M5Kit/Tests/M5NetTests/fixtures/generate-fixtures.ts
@@ -20,22 +24,28 @@ import { tmpdir } from "node:os";
 import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
-import { AccountStore } from "../../../../../server/accounts/store";
-import { MemoryQueue } from "../../../../../server/accounts/memqueue";
-import { SignalingHub } from "../../../../../server/signaling/hub";
-import { parseFrame, isFrameError } from "../../../../../server/signaling/frames";
-import { RoomProofs } from "../../../../../server/signaling/proof";
-import { hashRoom } from "../../../../../server/monitor/traffic";
 import type { StoredCredential } from "../../../../../server/accounts/webauthn";
-import {
-  eciesSeal, enrollSignedString, kidOf, fingerprintOf, newP256, pushSignedString, releaseSignedString, requestSignedString,
-  signP1363, signPolicy, spkiOf, verifyP1363,
-} from "../../../../../server/android/crypto";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = joinPath(here, "../../../../..");
-// The hub hashes room names with a storage key: a throwaway one, so nothing is written into the checkout.
+// The server's stores and keys go to a throwaway data directory (set before the server modules load),
+// and the hub hashes room names with a throwaway storage key — nothing is written into the checkout.
+const dataDir = mkdtempSync(joinPath(tmpdir(), "m5net-data-"));
+process.env.DATA_DIR = dataDir;
 process.env.STORAGE_MASTER_KEY ||= randomBytes(32).toString("hex");
+for (const k of ["APNS_KEY_FILE", "APNS_KEY_ID", "APNS_TEAM_ID", "APNS_TOPIC", "APNS_ENV"]) delete process.env[k];
+
+const { AccountStore } = await import("../../../../../server/accounts/store");
+const { MemoryQueue } = await import("../../../../../server/accounts/memqueue");
+const { SignalingHub } = await import("../../../../../server/signaling/hub");
+const { parseFrame, isFrameError } = await import("../../../../../server/signaling/frames");
+const { RoomProofs } = await import("../../../../../server/signaling/proof");
+const { hashRoom } = await import("../../../../../server/monitor/traffic");
+const {
+  eciesSeal, enrollSignedString, kidOf, fingerprintOf, newP256, pushSignedString, releaseSignedString, requestSignedString,
+  signP1363, signPolicy, spkiOf, verifyP1363,
+} = await import("../../../../../server/mobile/crypto");
+const { iosReleaseSignedString } = await import("../../../../../server/ios/releases");
 
 /* ---------------------------------------------------------- client frames */
 
@@ -326,6 +336,9 @@ function deviceVectors() {
   const release = { id: "rel_0001", versionCode: 61500, versionName: "6.15.0", packageName: "cz.m5cet.app", apkSha256: "00".repeat(32), certSha256: "11".repeat(32), size: 1234 };
   const releaseString = releaseSignedString(release);
   const releaseAnswer = { ok: true, release: { ...release, minSdk: 26, mandatory: false, notes: "", channel: "stable" }, signed: releaseString, signature: signP1363(serverKey.privateKey, releaseString), kid: kidOf(serverSpki) };
+  const iosRelease = { id: "irel_0001", version: "6.15.0", build: 61500, bundleId: "cz.m5cet.app", channel: "stable" as const, store: "appstore" as const, url: "https://apps.apple.com/app/m5cet/id1234567890", minBuild: 61450 };
+  const iosReleaseString = iosReleaseSignedString(iosRelease as never);
+  const iosReleaseAnswer = { ok: true, release: { ...iosRelease, notes: { en: "Faster", cs: "Rychlejší" }, rollout: 100, mandatory: true }, signed: iosReleaseString, signature: signP1363(serverKey.privateKey, iosReleaseString), kid: kidOf(serverSpki) };
 
   // A control message sealed for the interop device (eciesSeal) and signed by this server key.
   const content = { id: "msg_0001", kind: "lock", payload: { reason: "lost" }, exp: 0 };
@@ -341,15 +354,94 @@ function deviceVectors() {
     server: { publicKey: serverSpki, kid: kidOf(serverSpki), fingerprint: fingerprintOf(serverSpki) },
     deviceId: "ios_vector0001",
     policy, policyOlder, policyOtherDevice,
-    releaseAnswer,
+    releaseAnswer, iosReleaseAnswer,
     push, pushContent: content, pushExpired,
+  };
+}
+
+/* --------------------------------------------- a device through /api/ios/* */
+
+async function captureIos() {
+  const express = (await import("express")).default;
+  const { registerIosRoutes } = await import("../../../../../server/ios/routes");
+  const { registerIosAdminRoutes } = await import("../../../../../server/ios/admin-routes");
+  const app = express();
+  app.use(["/api/ios"], express.raw({ type: () => true, limit: "1mb" }));
+  app.use(express.json({ limit: "8mb" }));
+  app.use((_req, res, next) => { res.locals.adminName = "fixtures"; res.locals.adminRole = "owner"; next(); });
+  registerIosAdminRoutes(app);
+  registerIosRoutes(app);
+  const server = await new Promise<Server>((resolve) => { const s = app.listen(0, "127.0.0.1", () => resolve(s)); });
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+  const interop = JSON.parse(readFileSync(joinPath(root, "test/fixtures/android-interop.json"), "utf8")).android;
+  const key = createPrivateKey({ key: Buffer.from(interop.devicePkcs8, "base64"), format: "der", type: "pkcs8" });
+  const spki = interop.devicePublicKey as string;
+  let deviceId = "";
+  const json = async (res: Response) => ({ status: res.status, body: await res.json() as Record<string, any> });
+  const admin = async (method: string, path: string, body?: unknown) =>
+    json(await fetch(`${base}/api/admin/ios${path}`, { method, headers: body !== undefined ? { "content-type": "application/json" } : {}, body: body !== undefined ? JSON.stringify(body) : undefined }));
+  const signed = async (method: string, path: string, body?: unknown) => {
+    const raw = body === undefined ? Buffer.alloc(0) : Buffer.from(JSON.stringify(body));
+    const time = String(Date.now());
+    const nonce = randomBytes(16).toString("base64url");
+    const sig = signP1363(key, requestSignedString(method, path, time, nonce, raw));
+    return fetch(`${base}${path}`, { method, headers: { "x-m5-device": deviceId, "x-m5-time": time, "x-m5-nonce": nonce, "x-m5-signature": sig, "content-type": "application/json" }, body: method === "GET" ? undefined : raw });
+  };
+
+  const info = await json(await fetch(`${base}/api/ios/info`));
+  const time = Date.now();
+  const enrollRequest = {
+    code: "", name: "Test iPhone", model: "iPhone17,1", modelName: "iPhone 17 Pro", idiom: "phone", os: "iOS", osVersion: "26.0",
+    appVersion: "6.14.0", appCode: 61400, locale: "cs", signKey: spki, encKey: spki, apnsToken: "c0ffee".repeat(10) + "abcd", apnsEnv: "sandbox",
+    time, proof: signP1363(key, enrollSignedString(spki, spki, time)),
+  };
+  const enroll = await json(await fetch(`${base}/api/ios/enroll`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(enrollRequest) }));
+  if (enroll.status !== 200) throw new Error(`enroll: ${JSON.stringify(enroll.body)}`);
+  deviceId = enroll.body.deviceId;
+
+  // The operator: an iOS build, a release record, a command for this device.
+  await admin("PUT", "/config", { appStoreUrl: "https://apps.apple.com/app/m5cet/id1234567890" });
+  const build = (await admin("POST", "/builds", { notes: "fixtures", channel: "stable" })).body.build;
+  await admin("POST", `/builds/${build.id}/publish`, { notify: false });
+  const rel = (await admin("POST", "/releases", { version: "6.15.0", channel: "stable", notes: { en: "Faster", cs: "Rychlejší" }, rollout: 100 })).body.release;
+  await admin("POST", `/releases/${rel.id}/publish`, { notify: false });
+  const command = (await admin("POST", `/devices/${deviceId}/commands`, { kind: "lock", payload: { reason: "lost" } })).body.command;
+
+  const checkinRequest = {
+    appVersion: "6.14.0", appCode: Math.max(61400, build.minAppCode), os: "iOS", osVersion: "26.0", locale: "cs",
+    state: { battery: 80, charging: false, network: "wifi", locked: false, rooms: 1, bundle: null, push: "poll", lockMode: "pin", failedAttempts: 0, storage: 1024, permissions: [], policyAt: 0, biometry: "faceID" },
+  };
+  const checkin = await json(await signed("POST", "/api/ios/checkin", checkinRequest));
+  if (checkin.status !== 200) throw new Error(`checkin: ${JSON.stringify(checkin.body)}`);
+  const bundleRes = await signed("GET", `/api/ios/bundles/${build.id}`);
+  const bundleFile = Buffer.from(await bundleRes.arrayBuffer());
+  const release = await json(await signed("GET", `/api/ios/releases/${rel.id}`));
+  if (release.body.signed !== iosReleaseSignedString(rel)) throw new Error("release string");
+  const ack = await json(await signed("POST", "/api/ios/ack", { id: command.id, ok: true, result: { locked: true }, error: "" }));
+  const events = await json(await signed("POST", "/api/ios/events", { events: [{ id: "evfixture01", type: "unlock", at: Date.now(), detail: {} }] }));
+  const notify = await json(await signed("POST", "/api/ios/notify", { on: true, token: "not-a-session" }));
+  const forged = await json(await fetch(`${base}/api/ios/checkin`, { method: "POST", headers: { "x-m5-device": deviceId, "x-m5-time": String(Date.now()), "x-m5-nonce": randomBytes(16).toString("base64url"), "x-m5-signature": signP1363(newP256().privateKey, "x"), "content-type": "application/json" }, body: "{}" }));
+
+  server.close();
+  return {
+    devicePkcs8: interop.devicePkcs8, deviceId,
+    info: info.body, enrollRequest, enroll: enroll.body,
+    checkinRequest, checkin: checkin.body,
+    commandId: command.id, buildId: build.id, buildMinAppCode: build.minAppCode,
+    bundleFile: bundleFile.toString("base64"), bundleContentType: bundleRes.headers.get("content-type"),
+    release: release.body, ack: ack.body, events: events.body, notify: { status: notify.status, body: notify.body }, forged: { status: forged.status, body: forged.body },
   };
 }
 
 /* ------------------------------------------------------------------- main */
 
 const live = await captureHub();
-writeFileSync(joinPath(here, "hub-frames.json"), `${JSON.stringify({ generator: "ios/M5Kit/Tests/M5NetTests/fixtures/generate-fixtures.ts", client, invalid, live }, null, 1)}\n`);
-writeFileSync(joinPath(here, "device-vectors.json"), `${JSON.stringify({ generator: "ios/M5Kit/Tests/M5NetTests/fixtures/generate-fixtures.ts", ...deviceVectors() }, null, 1)}\n`);
-console.log(`hub-frames.json: ${client.length} client frames, ${invalid.length} refused, ${Object.keys(live.frames).length} live frames; device-vectors.json written`);
+const ios = await captureIos();
+const generator = "ios/M5Kit/Tests/M5NetTests/fixtures/generate-fixtures.ts";
+writeFileSync(joinPath(here, "hub-frames.json"), `${JSON.stringify({ generator, client, invalid, live }, null, 1)}\n`);
+writeFileSync(joinPath(here, "device-vectors.json"), `${JSON.stringify({ generator, ...deviceVectors() }, null, 1)}\n`);
+writeFileSync(joinPath(here, "ios-api.json"), `${JSON.stringify({ generator, ...ios }, null, 1)}\n`);
+rmSync(dataDir, { recursive: true, force: true });
+console.log(`hub-frames.json: ${client.length} client frames, ${invalid.length} refused, ${Object.keys(live.frames).length} live frames; device-vectors.json; ios-api.json (bundle ${ios.bundleFile.length} b64 chars)`);
 process.exit(0);

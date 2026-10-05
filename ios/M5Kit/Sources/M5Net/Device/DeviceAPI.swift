@@ -1,5 +1,5 @@
 // The server's device API (Android: net/Server, /api/android/*) — on iOS
-// /api/ios/* with the same semantics: every request after enrolment is
+// /api/ios/* (docs/ios-server.md § 3) with the same semantics: every request after enrolment is
 // signed with the device key ("m5android/1|METHOD|path?query|time|nonce|
 // b64(sha256(body))", P1363 — DeviceSigning), the policy is signed per device
 // (SignedDevicePolicy), control messages and bundles are sealed for the
@@ -18,27 +18,63 @@
 
 import Foundation
 
+public enum DevicePlatform: String, Sendable {
+    case ios, android
+}
+
 /// Where and how the device API is reached. The defaults are the iOS API with Android's signatures.
 public struct DeviceAPIConfig: Sendable {
     /// "/api/ios" (Android: "/api/android").
     public var prefix: String
-    /// The label of a signed request (server/android/crypto.ts requestSignedString).
+    /// Which app's fields the bodies carry (iOS: apnsToken / voipToken / apnsEnv, osVersion, idiom, modelName;
+    /// Android: fcmToken, sdk, manufacturer).
+    public var platform: DevicePlatform
+    /// The label of a signed request (server/mobile/crypto.ts requestSignedString — the same on both platforms).
     public var requestLabel: String
     /// The label of the enrolment proof (enrollSignedString).
     public var enrollLabel: String
-    /// The body field the push token travels in (enroll, check-in). Android: "fcmToken"; iOS: the APNs device token.
-    public var pushTokenField: String
 
-    public init(prefix: String = "/api/ios", requestLabel: String = DeviceSigning.requestLabel, enrollLabel: String = DeviceSigning.enrollLabel,
-                pushTokenField: String = "apnsToken") {
+    public init(prefix: String = "/api/ios", platform: DevicePlatform = .ios, requestLabel: String = DeviceSigning.requestLabel,
+                enrollLabel: String = DeviceSigning.enrollLabel) {
         self.prefix = prefix
+        self.platform = platform
         self.requestLabel = requestLabel
         self.enrollLabel = enrollLabel
-        self.pushTokenField = pushTokenField
     }
 
     public static let ios = DeviceAPIConfig()
-    public static let android = DeviceAPIConfig(prefix: "/api/android", pushTokenField: "fcmToken")
+    public static let android = DeviceAPIConfig(prefix: "/api/android", platform: .android)
+}
+
+/// The push tokens a device reports (enroll, check-in). nil: not reported (the server keeps what it has);
+/// "": the user turned notifications off (the server forgets the token).
+public struct PushTokens: Sendable, Equatable {
+    /// iOS: the APNs device token (hex); Android: the FCM token.
+    public var token: String?
+    /// iOS: the PushKit (VoIP) token, hex.
+    public var voip: String?
+    /// iOS: "production" or "sandbox" (the aps-environment entitlement).
+    public var apnsEnv: String?
+
+    public init(token: String? = nil, voip: String? = nil, apnsEnv: String? = nil) {
+        self.token = token
+        self.voip = voip
+        self.apnsEnv = apnsEnv
+    }
+
+    /// A device token as hex (what the server keeps).
+    public static func hex(_ deviceToken: Data) -> String { Bytes.hex(deviceToken) }
+
+    func add(to o: inout [String: NetJSON], platform: DevicePlatform) {
+        switch platform {
+        case .ios:
+            if let token { o["apnsToken"] = .string(token) }
+            if let voip { o["voipToken"] = .string(voip) }
+            if let apnsEnv { o["apnsEnv"] = .string(apnsEnv) }
+        case .android:
+            if let token { o["fcmToken"] = .string(token) }
+        }
+    }
 }
 
 /// The server's signing key as /info and /enroll present it.
@@ -56,29 +92,40 @@ public struct ServerKeyInfo: Sendable, Equatable {
 /// GET /info.
 public struct DeviceServerInfo: Sendable {
     public let name: String
+    /// "ios" (the Android API does not say).
+    public let platform: String
     public let version: String
     public let protocolVersion: Int64
     /// "open", "code" or "closed".
     public let enrollment: String
     public let server: ServerKeyInfo
     public let minAppCode: Int64
-    /// The push settings the server hands out (Android: `fcm`; iOS: `apns` or `push`), nil when none.
+    /// iOS: the oldest build the server still serves (below it the app asks for an update first).
+    public let minBuild: Int64
+    public let bundleId: String
+    /// iOS: { appStore, testFlight } links (null when not set).
+    public let store: NetJSON?
+    /// The push settings the server hands out (iOS `apns`: {topic, environment, voipTopic}; Android `fcm`), nil when none.
     public let push: NetJSON?
     public let raw: NetJSON
 
     public init(_ j: NetJSON) {
         name = j.str("name")
+        platform = j.str("platform")
         version = j.str("version")
         protocolVersion = j.int("protocol")
         enrollment = j.str("enrollment")
         server = ServerKeyInfo(j.obj("server"))
         minAppCode = j.int("minAppCode")
+        minBuild = j.int("minBuild")
+        bundleId = j.str("bundleId", j.str("packageName"))
+        store = j.obj("store")
         push = DeviceServerInfo.pushSettings(j)
         raw = j
     }
 
     static func pushSettings(_ j: NetJSON) -> NetJSON? {
-        for k in ["apns", "push", "fcm"] { if let v = j.obj(k) { return v } }
+        for k in ["apns", "fcm"] { if let v = j.obj(k) { return v } }
         return nil
     }
 }
@@ -86,26 +133,62 @@ public struct DeviceServerInfo: Sendable {
 /// What this device says about itself at enrolment and check-in.
 public struct DeviceDescription: Sendable {
     public var name: String
+    /// The hardware identifier ("iPhone17,1").
     public var model: String
-    public var manufacturer: String
-    /// "iOS 26.0", "iPadOS 26.0", "watchOS 26.0".
+    /// The marketing name ("iPhone 17 Pro").
+    public var modelName: String
+    /// "phone", "pad", "watch", "mac", "vision", "tv".
+    public var idiom: String
+    /// "iOS", "iPadOS", "watchOS".
     public var os: String
-    /// The OS major version (Android: the SDK level) — the server compares releases' minimum with it.
-    public var sdk: Int
+    /// "26.0".
+    public var osVersion: String
     public var appVersion: String
+    /// The build: major·10000 + minor·100 + patch (6.14.0 → 61400).
     public var appCode: Int
     public var locale: String
+    /// Android only: the SDK level and the manufacturer.
+    public var sdk: Int
+    public var manufacturer: String
 
-    public init(name: String, model: String, manufacturer: String = "Apple", os: String, sdk: Int,
-                appVersion: String = M5NetInfo.defaultVersion, appCode: Int = M5NetInfo.defaultCode, locale: String) {
+    public init(name: String, model: String, modelName: String = "", idiom: String = "phone", os: String = "iOS", osVersion: String,
+                appVersion: String = M5NetInfo.defaultVersion, appCode: Int = M5NetInfo.defaultCode, locale: String, sdk: Int = 0, manufacturer: String = "Apple") {
         self.name = name
         self.model = model
-        self.manufacturer = manufacturer
+        self.modelName = modelName
+        self.idiom = idiom
         self.os = os
-        self.sdk = sdk
+        self.osVersion = osVersion
         self.appVersion = appVersion
         self.appCode = appCode
         self.locale = locale
+        self.sdk = sdk
+        self.manufacturer = manufacturer
+    }
+
+    /// The fields a body carries for `platform` (enroll: all; check-in: the ones that can change).
+    func fields(_ platform: DevicePlatform, enroll: Bool) -> [String: NetJSON] {
+        var o: [String: NetJSON] = ["appVersion": .string(appVersion), "appCode": .int(Int64(appCode)), "locale": .string(locale)]
+        switch platform {
+        case .ios:
+            o["os"] = .string(os)
+            o["osVersion"] = .string(osVersion)
+            if enroll {
+                o["name"] = .string(name)
+                o["model"] = .string(model)
+                o["modelName"] = .string(modelName)
+                o["idiom"] = .string(idiom)
+            }
+        case .android:
+            o["sdk"] = .int(Int64(sdk))
+            if enroll {
+                o["name"] = .string(name)
+                o["model"] = .string(model)
+                o["manufacturer"] = .string(manufacturer)
+                o["os"] = .string("\(os) \(osVersion)")
+            }
+        }
+        return o
     }
 }
 
@@ -148,17 +231,18 @@ public struct DeviceAPIClient: Sendable {
     }
 
     /// POST /enroll: this device's keys and the proof that it holds the signing key.
-    public func enroll(base: String, code: String, device: DeviceDescription, pushToken: String?, signer: any RequestSigner, encKey: String) async throws -> NetJSON {
+    public func enroll(base: String, code: String, device: DeviceDescription, push: PushTokens, signer: any RequestSigner, encKey: String) async throws -> NetJSON {
         let signKey = try await signer.publicKeySPKI()
         let time = clock.now()
         let proof = try await signer.signP1363(Data(DeviceSigning.enrollString(label: config.enrollLabel, signKey: signKey, encKey: encKey, time: time).utf8))
-        let body: NetJSON = .object([
-            "code": .string(code), "name": .string(device.name), "model": .string(device.model), "manufacturer": .string(device.manufacturer),
-            "os": .string(device.os), "sdk": .int(Int64(device.sdk)), "appVersion": .string(device.appVersion), "appCode": .int(Int64(device.appCode)),
-            "locale": .string(device.locale), "signKey": .string(signKey), "encKey": .string(encKey),
-            config.pushTokenField: .string(pushToken ?? ""), "time": .int(time), "proof": .string(Bytes.b64(proof)),
-        ])
-        return try await http.json("POST", try HTTPClient.url(normalizeServer(base), config.prefix + "/enroll"), body: body, maxBytes: 1 << 20)
+        var o = device.fields(config.platform, enroll: true)
+        o["code"] = .string(code)
+        o["signKey"] = .string(signKey)
+        o["encKey"] = .string(encKey)
+        o["time"] = .int(time)
+        o["proof"] = .string(Bytes.b64(proof))
+        push.add(to: &o, platform: config.platform)
+        return try await http.json("POST", try HTTPClient.url(normalizeServer(base), config.prefix + "/enroll"), body: .object(o), maxBytes: 1 << 20)
     }
 
     /* ---------------------------------------------------------- signed */

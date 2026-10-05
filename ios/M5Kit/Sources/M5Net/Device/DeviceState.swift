@@ -22,7 +22,7 @@ public struct DeviceState: Sendable, Equatable {
     /// The signed policy's time: an older one is never applied (replay).
     public var policyAt: Millis
     public var pollSecondsRaw: Int
-    /// The server's push settings (Android `fcm`; iOS `apns`), nil when it has none.
+    /// The server's push settings (iOS `apns`: {topic, environment, voipTopic}; Android `fcm`), nil when it has none.
     public var push: NetJSON?
     /// Everything else of the record, kept as it was (UI choices the app stores next to it).
     public var extra: [String: NetJSON]
@@ -42,6 +42,8 @@ public struct DeviceState: Sendable, Equatable {
     }
 
     public var enrolled: Bool { !deviceId.isEmpty && !serverKey.isEmpty }
+    /// iOS: the oldest build the server serves (from the last enrolment / check-in), 0 = none.
+    public var minBuild: Int64 { extra["minBuild"]?.int64Value ?? 0 }
     /// At least 15 minutes (Android: max(900, pollSeconds)).
     public var pollSeconds: Int { max(900, pollSecondsRaw) }
     public var lockPolicy: NetJSON { policy.obj("lock") ?? .object([:]) }
@@ -99,6 +101,7 @@ public struct DeviceState: Sendable, Equatable {
         }
         if let p = answer["pollSeconds"], let n = p.int64Value { pollSecondsRaw = Int(n) } else if answer["pollSeconds"] != nil { pollSecondsRaw = 1800 }
         if let p = DeviceServerInfo.pushSettings(answer) { push = p } else if answer["fcm"] != nil || answer["apns"] != nil { push = nil }
+        if let m = answer["minBuild"]?.int64Value { extra["minBuild"] = .int(m) }
         return outcome
     }
 
@@ -118,13 +121,13 @@ public enum DeviceEnrollment {
     /// empty: trust on first use), /enroll, the same key in its answer, the signed policy. Returns the new state
     /// (the caller stores it). Throws NetError.security when a pin or the key does not hold, HTTPError when the
     /// server refuses (closed, bad-code, clock, device-…).
-    public static func enroll(base rawBase: String, code: String, device: DeviceDescription, pushToken: String?, pins: [String?],
+    public static func enroll(base rawBase: String, code: String, device: DeviceDescription, push: PushTokens, pins: [String?],
                               signer: any RequestSigner, encKey: String, client: DeviceAPIClient) async throws -> DeviceState {
         let base = normalizeServer(rawBase)
         let info = try await client.info(base: base)
         // 6.7 (audit V6): the pins bind the server's public key itself — its hash — not the kid string it sends.
         try ServerKeyPin.check(publicKey: info.server.publicKey, statedKid: info.server.kid, pins: pins)
-        let answer = try await client.enroll(base: base, code: code, device: device, pushToken: pushToken, signer: signer, encKey: encKey)
+        let answer = try await client.enroll(base: base, code: code, device: device, push: push, signer: signer, encKey: encKey)
         let answered = ServerKeyInfo(answer.obj("server"))
         try ServerKeyPin.same(checked: info.server.publicKey, answered: answered.publicKey, answeredKid: answered.kid)
         let deviceId = answer.str("deviceId")

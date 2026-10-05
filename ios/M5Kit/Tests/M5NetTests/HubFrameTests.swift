@@ -249,7 +249,7 @@ func swiftFrame(_ j: NetJSON) -> HubClientFrame? {
     }
 
     @Test func codableRoundTrip() throws {
-        let j: NetJSON = ["a": [1, "b", nil, true, 2.5], "o": ["k": "v"]]
+        let j: NetJSON = ["a": [1, "b", .null, true, 2.5], "o": ["k": "v"]]
         let data = try JSONEncoder().encode(j)
         #expect(try JSONDecoder().decode(NetJSON.self, from: data) == j)
     }

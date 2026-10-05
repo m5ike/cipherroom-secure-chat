@@ -241,7 +241,8 @@ final class StubHTTP: HTTPTransport, @unchecked Sendable {
         return try await handler(request)
     }
 
-    static func json(_ status: Int = 200, _ body: NetJSON) -> HTTPResponse { HTTPResponse(status: status, headers: ["Content-Type": "application/json"], body: body.data) }
+    static func json(_ status: Int, _ body: NetJSON) -> HTTPResponse { HTTPResponse(status: status, headers: ["Content-Type": "application/json"], body: body.data) }
+    static func json(_ body: NetJSON) -> HTTPResponse { json(200, body) }
 }
 
 extension HTTPRequest {

@@ -23,10 +23,10 @@ public enum NetJSON: Sendable, Hashable {
 
 /* ------------------------------------------------------------- literals */
 
-extension NetJSON: ExpressibleByNilLiteral, ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral,
+// (Not ExpressibleByNilLiteral: `json["x"] == nil` must mean "absent", never "is JSON null".)
+extension NetJSON: ExpressibleByBooleanLiteral, ExpressibleByIntegerLiteral,
                    ExpressibleByFloatLiteral, ExpressibleByStringLiteral, ExpressibleByArrayLiteral,
                    ExpressibleByDictionaryLiteral {
-    public init(nilLiteral: ()) { self = .null }
     public init(booleanLiteral value: Bool) { self = .bool(value) }
     public init(integerLiteral value: Int64) { self = .int(value) }
     public init(floatLiteral value: Double) { self = .double(value) }

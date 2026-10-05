@@ -18,7 +18,8 @@ public struct NotifyPrefs: Sendable, Equatable {
     public var kinds: [String: Bool]
     /// "" (the server's default) | neutral | sender | room | content.
     public var privacy: String
-    /// The channels in the order the server tries them (iOS: "ios", "webpush", "email").
+    /// The channels in the order the server tries them: "android" (the mobile apps — it wakes linked iOS devices
+    /// too, through APNs; the id stays for users' settings), "webpush", "email".
     public var order: [String]
     public var quiet: Bool
     public var quietFrom: String
