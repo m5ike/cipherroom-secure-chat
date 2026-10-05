@@ -293,7 +293,28 @@ final class RoomsController: RoomsModel {
 
     func roomChanged(_ r: RoomController) { changed() }
 
-    func changed() { revision &+= 1 }
+    func changed() {
+        revision &+= 1
+        scheduleFnLoad()
+    }
+
+    /// Parts.onRoomsChanged → Fn.load: the operator's triggers and the account's commands (the engine caches the
+    /// list; here at most once per 15 s, a second after the change).
+    @ObservationIgnored private var fnLoadTask: Task<Void, Never>?
+    @ObservationIgnored private var fnLoadedAt: Int64 = 0
+
+    private func scheduleFnLoad() {
+        guard fnLoadTask == nil, core?.models.fn != nil else { return }
+        fnLoadTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard let self else { return }
+            self.fnLoadTask = nil
+            let now = EpochMs.now
+            guard now - self.fnLoadedAt >= 15_000, let core = self.core, !core.security.isLocked else { return }
+            self.fnLoadedAt = now
+            core.models.fn?.load()
+        }
+    }
 
     /// Rooms.onMessage: the lock inbox while locked, unread and the notification off screen, reading aloud, the history.
     func onMessage(_ r: RoomController, _ m: ChatMessage, fresh: Bool) {

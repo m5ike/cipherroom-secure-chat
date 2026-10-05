@@ -6,8 +6,10 @@
 // MainActivity's wiring.
 
 import Foundation
+import M5Core
 import M5Design
 import M5Net
+import M5Proto
 import SwiftUI
 
 @MainActor
@@ -128,7 +130,7 @@ enum CoreInstall {
         let speech = CoreSpeechServer { await MainActor.run { (core.device.server, core.account.signedIn ? core.account.token : "") } }
         voice.server = speech
         voice.configFetcher = speech
-        voice.install(into: model)
+        // (VoiceService.install: Parts/Tools' wireVoice, which keeps what is set here.)
         core.voice = env
         core.speaker = { m in VoiceService.shared.speakIncoming(sender: m.senderName, text: m.text) }
         core.onForget.append { VoiceService.shared.forgetSecrets() }
@@ -145,6 +147,9 @@ enum CoreInstall {
             if key.hasPrefix("voice") { VoiceService.shared.setSettings(CoreVoiceSettings(core: core)) }
         }
 
+        // Parts/Tools' History: the rooms' histories in the vault (rooms that are not connected too).
+        ToolsCallLog.shared.messages = callRooms
+
         Task {
             await core.start()
             #if DEBUG
@@ -152,4 +157,30 @@ enum CoreInstall {
             #endif
         }
     }
+
+    /// After the parts (App/Bootstrap.swift): the seams the parts left for the core.
+    static func afterParts(into model: AppModel) {
+        guard let core = model.core else { return }
+        // Parts/Tools' commands engine: this device's id, the room's blind id (a run's origin), the usage in the vault.
+        if let engine = ToolParts.engine {
+            engine.deviceId = { [weak core] in core?.device.state?.deviceId ?? "" }
+            engine.roomId = { r in r.serverId.isEmpty ? nil : r.serverId }
+            engine.usageStore = CoreFnUsage(records: core.security.userRecords)
+        }
+    }
+}
+
+/// The commands' usage (Fn.usage): the vault's user tier, record "fn-usage" (nil while locked or empty).
+@MainActor
+final class CoreFnUsage: FnUsageStore {
+    static let record = "fn-usage"
+    private let records: any RecordVault
+    init(records: any RecordVault) { self.records = records }
+
+    func loadUsage() -> JSONObject? {
+        guard records.unlocked, let o = records.record(Self.record), !o.isEmpty else { return nil }
+        return o
+    }
+
+    func saveUsage(_ o: JSONObject) { records.put(Self.record, o) }
 }

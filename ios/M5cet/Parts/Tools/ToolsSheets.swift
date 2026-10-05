@@ -55,7 +55,7 @@ final class ToolsSheets: FnPresenting {
     private var previewing: Previewer?
 
     func file(name: String, mime: String, data: Data, open: Bool, host: DesignHost?) {
-        let safe = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "m5-\(Millis.now)" : Self.safeName(name)
+        let safe = name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "m5-\(EpochMs.now)" : Self.safeName(name)
         let url: URL
         do {
             let dir = FileManager.default.temporaryDirectory.appendingPathComponent("fn-files-" + UUID().uuidString, isDirectory: true)

@@ -93,7 +93,7 @@ struct FnCallView: View {
 
     var body: some View {
         let query = fd.optString("query")
-        let pending = fd["pending"] == .bool(true) && Millis.now - message.createdAt < FnMessageContent.staleMs
+        let pending = fd["pending"] == .bool(true) && EpochMs.now - message.createdAt < FnMessageContent.staleMs
         // One column as wide as the wider of the query and the loading; the loading centred in it (as Android's).
         Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
             if !query.isEmpty {

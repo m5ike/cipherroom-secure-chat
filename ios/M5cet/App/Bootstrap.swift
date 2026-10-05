@@ -24,11 +24,12 @@ enum Bootstrap {
         CoreInstall.install(into: model)
         // Parts/People — userPanel, userList, people.* / users.* / profile.* / msg.info / msg.sender, $profile, $myProfile.
         PeopleParts.install(into: model)
-        // Platform/NFC, Voice, Location, Contacts, Files — on demand from the screens.
+        // Parts/NFC — nfcPanel, nfcWork, nfcBuilder, nfc.read / write / emulate / stop, $nfc.
         NfcParts.install(into: model)
-        // Parts and the app's actions — model.design.slots.register(…), model.design.actions.register(…),
-        // model.design.state = … (Renderer/README.md: the three contracts).
         // Parts/Tools — commands engine (core.fn), aiChat, voicePad, History ($log, calllog.*), ai.*, voice.dictate, voiceFx.*.
         ToolParts.install(into: model)
+        // (A part: model.design.slots.register(…), model.design.actions.register(…), core.variables — Renderer/README.md.)
+        // Core — the seams the parts left for it (the commands engine's device, room and usage).
+        CoreInstall.afterParts(into: model)
     }
 }

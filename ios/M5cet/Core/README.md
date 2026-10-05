@@ -113,7 +113,7 @@ Akce, jejichž stav drží pohled, si části registrují v `AppActionRouter` je
 | people | sloučeno (`PeopleParts`) | `people.*` (11), `users.toggle/dock/autoHide`, `msg.info`, `msg.sender`, `profile.*` (8); `router.shownUsername` | `settings.profile`/`profile`, `settings`/`myProfile`, `room`+`call`/`users` |
 | nfc | sloučeno (`NfcParts`) | `nfc.read/write/emulate/stop` (`nfc.workbench`, `nfc.builder` kreslí renderer, `nfc.reader` runner) | `nfc`/`nfc` |
 | chat | čeká | `msg.quote`, `msg.showHidden`, `msg.mapPreview`, `msg.source` | — |
-| tools | čeká | `ai.send/stop/clear`, `voice.dictate`, `calllog.*` (6), `voiceFx.test/reset` | `ai`/`ai`, `log`/`log`, `settings.voiceFx`/`voiceFx` |
+| tools | sloučeno (`ToolParts`) | `ai.send/stop/clear`, `voice.dictate`, `calllog.*` (6), `voiceFx.test/reset`; `core.fn` = `ToolsFnEngine` | `ai`/`ai`, `log`/`log`, `settings.voiceFx`/`voiceFx`, `voice`…/`voices` |
 
 ### Sloty
 
@@ -145,7 +145,7 @@ Test `CoreStateTests.testEveryCatalogueActionHasAnOwner` hlídá, že žádná a
 | **People** (zálohu má jádro) — 24 | `people.open/select/all/none/message/call/video/verify/link/unlink/unlinkAll`, `users.toggle/dock/autoHide`, `profile.open/pick/clear/field/sync/save/public/audience`, `msg.info`, `msg.sender` | záloha jádra: příjemci skladače, hovor, ověření bezpečnostního čísla; ostatní jen log |
 | **NFC** (zálohu má jádro) — 4 | `nfc.read`, `nfc.write`, `nfc.emulate`, `nfc.stop` | záloha: „NFC tu není“ / zastavení `NfcService` |
 | **chat** (čeká; záloha jádra) — 4 | `msg.quote`, `msg.showHidden`, `msg.mapPreview`, `msg.source` | záloha: skok na citovanou zprávu (`revealRequest`), mapa; `msg.showHidden`, `msg.source` jen log |
-| **tools** (čeká; záloha jádra) — 12 | `ai.send/stop/clear`, `voice.dictate`, `voiceFx.test/reset`, `calllog.open/refresh/item/call/clear/system` | záloha: obrazovka `log`, smazání historie hovorů po potvrzení; ostatní log |
+| **tools** (zálohu má jádro) — 12 | `ai.send/stop/clear`, `voice.dictate`, `voiceFx.test/reset`, `calllog.open/refresh/item/call/clear/system` | záloha: obrazovka `log`, smazání historie hovorů po potvrzení; ostatní log |
 | **Platform/Notifications** — 6 | `notify.up/down/use/drop/test/sync` | `DesignNotifyWiring` (jádro je neregistruje) |
 
 Součet: 21 renderer + 51 jádro + 24 People + 4 NFC + 4 chat + 12 tools + 6 Notifications = **122**. Na iOS není
@@ -213,7 +213,15 @@ TURN, zdroj pro historii, buzení při hovoru), Notifications, Location, Contact
 `verifiedDevice`, `wipe`), Voice, NFC (`accountRoot`, `forward`, dostupnost), People (profily, `PeopleRoomExtras`,
 `peopleSettling`, audit skrytí, proměnné per okno), Watch (čte `CoreModels.shared` — nic dalšího).
 
-**Čeká**: chat a tools (zálohy výše), `FnEngine` (bez něj odejde „/příkaz“ jako text), zkouška na zařízení (passkeys
+**Švy pro Tools** (`CoreInstall.afterParts`, za částmi v `Bootstrap`): `engine.deviceId` (id zařízení ze zápisu),
+`engine.roomId` (`RoomModel.serverId` = slepé id místnosti `r3.…`), `engine.usageStore` (`CoreFnUsage`, záznam
+`fn-usage`); `ToolsCallLog.shared.messages` = `CoreCallRooms` (historie i nepřipojených místností z trezoru);
+`core.fn?.load()` po změně místností (nejvýš jednou za 15 s) a po změně účtu, `forget()` při zamčení; `Texts.setProvider`
+z překladače designu (`AppCore.installTexts`, znovu po `lang.set`); `$voice` z `core.tools.voice`; hlasové prostředí
+(`CoreVoiceEnvironment`) zná skupiny účtu. Odpověď modelu je od system-messenger (M5Proto `addModelAnswer`), postup
+`{p, text}` — `PreviewCore` dělá totéž.
+
+**Čeká**: chat (zálohy výše), zkouška na zařízení (passkeys
 s PRF, VoIP push, NFC na kartě), testy toků účtu proti serveru (WebAuthn bez skutečného autentizátoru nejde — jednotkové
 testy jdou přes `FakePasskeys`).
 
@@ -223,7 +231,8 @@ testy jdou přes `FakePasskeys`).
 * `Platform/Calls/CallCenter.swift`: `pushOwnsCall(roomKey:)` (jeden záznam na hovor s VoIP pushem).
 * `Renderer/Contracts/ScreenStateProvider.swift` + `Renderer/Shell/DesignHost.swift`: `variables(for:context:host:)`
   s výchozí implementací (proměnné okna).
-* `Parts/People`: `Millis.now` → `EpochMs.now` (přejmenované hodiny), `PeopleReach` bere `RoomModel.peopleSettling`.
+* `Parts/People`, `Parts/Tools` (+ jejich testy): `Millis.now` → `EpochMs.now` (přejmenované hodiny jádra — `Millis` je
+  typ M5Net); `PeopleReach` bere `RoomModel.peopleSettling`.
 * M5Kit (s testy): M5Proto `RoomCore+Local` (místní zprávy), `CallWake`, relay s poli navíc; M5Net `HubRelay` (pole buzení).
 
 ## Testy

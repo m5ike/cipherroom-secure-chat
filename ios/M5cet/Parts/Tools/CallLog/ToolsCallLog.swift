@@ -42,7 +42,7 @@ final class ToolsCallLog {
     /// The calls kept (Platform/Calls).
     @ObservationIgnored var history: () -> AppCallHistory = { CallSystem.shared.history }
     @ObservationIgnored var core: () -> CoreModels = { CoreModels.shared }
-    @ObservationIgnored var now: () -> Int64 = { Millis.now }
+    @ObservationIgnored var now: () -> Int64 = { EpochMs.now }
     @ObservationIgnored var timeZone: TimeZone = .current
     /// The confirmations (UIKit alerts in the app; the tests answer them).
     @ObservationIgnored var confirm: @MainActor (_ message: String, _ choices: [(String, Bool)], _ cancel: String, _ picked: @escaping (Int) -> Void) -> Void = ToolsCallLog.alert

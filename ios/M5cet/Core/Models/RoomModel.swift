@@ -152,6 +152,8 @@ protocol RoomModel: AnyObject, Observable {
     /// 6.2 (RoomSession.peopleSettling): still connecting, joined moments ago, or a peer's channel is not open (or
     /// has not said hello) yet — a contact's "message via M5cet" waits a little before it says "not online".
     var peopleSettling: Bool { get }
+    /// The room's blind id on the server (r3.…, never its name; "" before it connected) — a run's origin room.
+    var serverId: String { get }
 
     // MARK: messages
 
@@ -207,4 +209,5 @@ extension RoomModel {
 extension RoomModel {
     /// A room without the core's facts (previews): settling while it connects or a member's channel does.
     var peopleSettling: Bool { status == "connecting" || people.contains { $0.channel == "connecting" } }
+    var serverId: String { "" }
 }

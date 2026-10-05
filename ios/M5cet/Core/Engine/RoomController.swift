@@ -670,6 +670,8 @@ extension RoomController: PeopleRoomExtras {
     /// My profile card changed: this room's members who speak profiles learn the new version.
     func profileChanged() { rooms?.core?.profiles?.profileChanged(room: self) }
 
+    var serverId: String { keys?.roomId ?? "" }
+
     var peopleSettling: Bool {
         if !connected { return wanted && status != "mismatch" }
         if EpochMs.now - snap.facts.joinedAt < 8_000 { return true }

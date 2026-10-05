@@ -377,6 +377,9 @@ final class AccountService: AccountModel {
         revision &+= 1
         core?.rooms.onAccountChanged(token: signedIn ? token : nil)
         core?.uploadKeys()
+        // The account's commands (Fn.load) and the profile card of the account now.
+        core?.models.fn?.load()
+        _ = core?.profileStore.card
     }
 
     // MARK: - the profile card and the public profile (Account.loadCard / saveCard / profileApi)

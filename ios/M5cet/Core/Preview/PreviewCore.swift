@@ -269,22 +269,34 @@ final class PreviewRoom: RoomModel {
         return m
     }
 
+    // As the real core (M5Proto RoomCore+Local, Android RoomSession): the status drops the loading and the
+    // progress; the progress is {p, text}; a model's answer comes from system-messenger, replying to what asked.
     func fnCallStatus(_ id: String, kind: String, label: String, code: String) {
         touch(id) { m in
             m.fnLocal?["pending"] = false
+            m.fnLocal?["outputs"] = nil
+            m.fnLocal?["progress"] = nil
             m.fnLocal?["status"] = .object(JSONObject([("kind", .string(kind)), ("label", .string(label)), ("code", .string(code))]))
         }
     }
 
     func fnCallProgress(_ id: String, progress: Double, text: String) {
-        touch(id) { m in m.fnLocal?["progress"] = .double(progress); m.fnLocal?["progressText"] = .string(text) }
+        guard message(id)?.fnLocal?.bool("pending") == true else { return }
+        let p = progress.isFinite ? max(-1, min(1, progress)) : -1
+        let t = String(text.prefix(200))
+        touch(id) { m in m.fnLocal?["progress"] = .object(JSONObject([("p", .double(p)), ("text", .string(t))])) }
     }
 
     func addModelAnswer(identity: JSONObject, text: String, share: JSONObject?, local: JSONObject?, replyTo: ChatMessage?) -> ChatMessage? {
         var m = ChatMessage()
-        m.id = "msg-" + String(EpochMs.now, radix: 36)
-        m.roomKey = key; m.mine = true; m.senderName = myName; m.createdAt = EpochMs.now; m.status = "sent"; m.text = text
+        m.id = "fn-" + String(EpochMs.now, radix: 36)
+        m.roomKey = key
+        m.senderId = ModelIdentity.systemMessengerId
+        m.senderName = identity.string("name") ?? ModelIdentity.systemMessengerName
+        m.createdAt = max(EpochMs.now, (replyTo?.createdAt ?? -1) + 1)
+        m.status = "displayed"; m.text = text; m.verified = true
         m.model = identity; m.fn = share; m.fnLocal = local
+        if let r = replyTo { m.replyToId = r.id; m.replyToSender = r.senderName; m.replyToText = String(r.visibleText.prefix(200)) }
         messages.append(m)
         return m
     }
