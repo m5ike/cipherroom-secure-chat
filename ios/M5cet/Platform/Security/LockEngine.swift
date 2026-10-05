@@ -7,6 +7,7 @@
 
 import Foundation
 import LocalAuthentication
+import M5Core
 import os
 
 /// Where security events go (Android core/Events): "unlock", "unlock-failed", "lockout",
@@ -74,9 +75,9 @@ final class LockEngine: @unchecked Sendable {
 
     // MARK: the counter as the lock screen shows it (not checked — what decides is the sealed view)
 
-    func counterState() -> SecRecord { LockStore.fields(records.read() ?? [:]) }
+    func counterState() -> JSONObject { LockStore.fields(records.read() ?? JSONObject()) }
 
-    var attempts: Int { counterState().jInt("attempts") }
+    var attempts: Int { counterState().optInt("attempts") }
 
     var left: Int { max(0, policy.maxAttempts - attempts) }
 
@@ -160,7 +161,7 @@ final class LockEngine: @unchecked Sendable {
 
     private func succeeded() -> Outcome {
         let s = counterState()
-        let before = s.jInt("attempts") - (LockCounter.interrupted(s) ? 1 : 0) // not the attempt that just opened it
+        let before = s.optInt("attempts") - (LockCounter.interrupted(s) ? 1 : 0) // not the attempt that just opened it
         reset()
         return .ok(before: max(0, before))
     }
@@ -178,7 +179,7 @@ final class LockEngine: @unchecked Sendable {
         // A rollback leaves one attempt short of the maximum: this failure is the last one.
         var s = v.verdict == .rollback ? LockCounter.rolledBack(maxAttempts: p.maxAttempts) : v.state
         let o = LockCounter.settle(&s, now: clock.now(), maxAttempts: p.maxAttempts, wipe: p.wipe, backoff: p.backoff)
-        let attempts = s.jInt("attempts")
+        let attempts = s.optInt("attempts")
         if !store.save(s) { logger.warning("the failure could not be stored") }
         if o == .wrong {
             events.add("unlock-failed", ["attempts": attempts, "method": how, "left": max(0, p.maxAttempts - attempts)])

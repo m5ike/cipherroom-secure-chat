@@ -1,67 +1,68 @@
-// The device's own keys for the server (docs/android-architecture.md § 1.2):
+// The device's own keys for the server (docs/android-architecture.md § 1.2), in
+// the Keyring (Secure Enclave where there is one):
 //
-//   signing     ECDSA P-256 in the Secure Enclave — signs the requests to /api/ios
-//               (X-M5-Signature, P1363) and the enrolment proof
-//   encryption  ECDH P-256 in the Secure Enclave — opens what the server seals to
-//               the device (ECIES: push control messages, design bundle keys)
+//   signing     ECDSA P-256 — signs the requests to /api/ios (X-M5-Signature, P1363)
+//               and the enrolment proof: M5Net's `RequestSigner`, M5Crypto's `DeviceSigner`
+//   encryption  ECDH P-256 — opens what the server seals to the device (ECIES: push
+//               control messages, design bundle keys): M5Crypto's `KeyAgreer`
+//               (`Ecies.open(agreement, …)`)
 //
 // Android keeps the encryption key in software (sealed by the system tier); here
-// it is a Secure Enclave key too, usable after the first unlock (push wake-ups,
-// the notification extension). M5Net builds the signed strings and the ECIES
-// layers on these protocols.
+// it is a Secure Enclave key too, usable after the first unlock, in the keychain
+// group the notification extension shares (Keyring.sharedAliases). The signing
+// key stays in the app's own group.
 
 import CryptoKit
 import Foundation
+import M5Core
+import M5Crypto
+import M5Net
 
-/// Signs requests to the server with the device's key — implemented by Platform/Security, used by M5Net.
-protocol DeviceSigner: Sendable {
-    /// The public key as SPKI (base64) — enrolment's `signKey`.
-    func publicKeySPKI() throws -> String
-    /// ECDSA P-256 / SHA-256 over `data`, IEEE P1363 form (r ‖ s, 64 bytes) — WebCrypto's shape, what the server verifies.
-    func sign(_ data: Data) throws -> Data
-    /// Where the key lives ("secure-enclave" / "software").
-    var level: KeyLevel { get }
-}
-
-/// The device's encryption key: raw ECDH for ECIES from the server (Android Ecies.open's shared secret).
-protocol DeviceAgreement: Sendable {
-    /// The public key as SPKI (base64) — enrolment's `encKey`.
-    func publicKeySPKI() throws -> String
-    /// The raw 32-byte ECDH x-coordinate with a peer's (ephemeral) public key given as SPKI (base64).
-    func sharedSecret(withSPKI spki: String) throws -> Data
-    var level: KeyLevel { get }
-}
-
-struct KeyringSigner: DeviceSigner {
+/// The device's signing key — the one implementation of M5Net's `RequestSigner` and M5Crypto's
+/// `DeviceSigner` over the Keyring (`SecurityCenter.signer()`). The key is made on first use.
+struct KeyringSigner: RequestSigner, DeviceSigner {
     let keyring: Keyring
-    var alias = "sign"
+    let alias: String
+    /// The public key as SPKI DER, base64 (M5Crypto `DeviceSigner.publicKey`).
+    let publicKey: String
+
+    /// Makes the key when missing (after-first-unlock access: background check-ins sign too).
+    init(keyring: Keyring, alias: String = "sign") throws {
+        self.keyring = keyring
+        self.alias = alias
+        try keyring.ensureSigningKey(alias, access: .background)
+        publicKey = Bytes.b64(try keyring.signingPublicKey(alias).derRepresentation)
+    }
 
     var level: KeyLevel { keyring.level(of: alias) ?? keyring.level }
 
-    func publicKeySPKI() throws -> String {
-        try keyring.ensureSigningKey(alias, access: .background)
-        return EcP256.spki(try keyring.signingPublicKey(alias))
-    }
+    /// ECDSA P-256 / SHA-256, IEEE P1363 (r ‖ s, 64 bytes).
+    func sign(data: Data) throws -> Data { try keyring.sign(alias, data) }
 
-    func sign(_ data: Data) throws -> Data {
-        try keyring.ensureSigningKey(alias, access: .background)
-        return try keyring.sign(alias, data)
-    }
+    // M5Net RequestSigner
+    func publicKeySPKI() async throws -> String { publicKey }
+    func signP1363(_ data: Data) async throws -> Data { try sign(data: data) }
+
+    // M5Crypto DeviceSigner: P1363, base64
+    func sign(_ data: Bytes) throws -> String { Bytes.b64(try sign(data: Data(data))) }
 }
 
-struct KeyringAgreement: DeviceAgreement {
+/// The device's encryption key — M5Crypto's `KeyAgreer` over the Keyring (`SecurityCenter.agreement()`).
+struct KeyringAgreement: KeyAgreer {
     let keyring: Keyring
-    var alias = "enc"
+    let alias: String
+    /// The public key as SPKI DER, base64 (enrolment's `encKey`).
+    let spki: String
+
+    init(keyring: Keyring, alias: String = "enc") throws {
+        self.keyring = keyring
+        self.alias = alias
+        try keyring.ensureAgreementKey(alias, access: .background)
+        spki = Ec.spki(try keyring.agreementPublicKey(alias))
+    }
 
     var level: KeyLevel { keyring.level(of: alias) ?? keyring.level }
 
-    func publicKeySPKI() throws -> String {
-        try keyring.ensureAgreementKey(alias, access: .background)
-        return EcP256.spki(try keyring.agreementPublicKey(alias))
-    }
-
-    func sharedSecret(withSPKI spki: String) throws -> Data {
-        try keyring.ensureAgreementKey(alias, access: .background)
-        return try keyring.agree(alias, with: EcP256.publicKey(spki: spki))
-    }
+    /// ECDH with a peer: the 32-byte x-coordinate.
+    func agree(with peer: P256.KeyAgreement.PublicKey) throws -> Bytes { Array(try keyring.agree(alias, with: peer)) }
 }

@@ -62,8 +62,7 @@ public final class CallAudio {
             try {
                 if (!ok) { done.accept(null); return; }
                 Audio.Pcm pcm = Audio.readWav(wav);
-                short[] samples = toShorts(pcm.data);
-                synchronized (speech) { speech.add(samples); speechRate = pcm.rate; }
+                enqueue(toShorts(pcm.data), pcm.rate);
                 done.accept(keep(app, pcm.data, pcm.rate));
             } catch (Exception e) {
                 Log.w("call", "speech into the call: " + e.getMessage());
@@ -73,6 +72,11 @@ public final class CallAudio {
                 wav.delete();
             }
         }));
+    }
+
+    /** Speech (16-bit mono at rate) to say into the call, queued after what is being said. */
+    void enqueue(short[] samples, int rate) {
+        synchronized (speech) { speech.add(samples); speechRate = rate; }
     }
 
     /**
@@ -91,13 +95,16 @@ public final class CallAudio {
         synchronized (speech) {
             for (int i = 0; i < out.frames(channels); i++) {
                 short v = 0;
-                if (current == null || currentAt >= current.length) { current = speech.poll(); currentAt = 0; }
+                // 6.14: the current speech is over when its next sample would be past its end — the speech's
+                // own position decides (currentAt counts the device's frames: comparing it with the speech's
+                // length cut a 24 kHz voice at half on a 48 kHz call).
+                if (current != null && (long) currentAt * speechRate / Math.max(1, rate) >= current.length) current = null;
+                if (current == null) { current = speech.poll(); currentAt = 0; }
                 if (current != null) {
                     // Nearest-sample resampling from the speech's rate to the device's.
                     int idx = (int) ((long) currentAt * speechRate / Math.max(1, rate));
                     if (idx < current.length) v = current[idx];
                     currentAt += 1;
-                    if ((long) currentAt * speechRate / Math.max(1, rate) >= current.length) currentAt = current.length;
                 }
                 for (int c = 0; c < channels; c++) out.set(i * channels + c, v);
             }

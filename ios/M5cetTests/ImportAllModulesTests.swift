@@ -1,13 +1,10 @@
-// The six M5Kit modules imported together: the names they share resolve to one
-// declaration each, unqualified — no "ambiguous" errors (Bytes, Hex, TagV2,
-// ShareInvite, ConnTag, HubProof, CallTrack). That this file compiles is the
-// test; the asserts check each name is the one owner's.
-// ios/scripts/check-duplicate-types.sh and M5CoreTests' ModuleNamesTests keep
-// two modules from declaring the same public type again.
-//
-// Not `@testable import M5cet` here: the app's own internal types are not part
-// of this rule yet (Platform/Security declares an internal `Bytes`, `PinWrap`,
-// `LockBox`, … — `check-duplicate-types.sh --app` lists them).
+// The six M5Kit modules imported together with the app (`@testable import M5cet`):
+// the names they share resolve to one declaration each, unqualified — no
+// "ambiguous" errors (Bytes, Hex, TagV2, ShareInvite, ConnTag, HubProof, CallTrack,
+// PinWrap, LockBox, LockInbox, SignedPolicy, DeviceSigner). That this file compiles
+// is the test; the asserts check each name is the one owner's.
+// ios/scripts/check-duplicate-types.sh (--app for the apps' own types) and
+// M5CoreTests' ModuleNamesTests keep two owners from declaring the same type again.
 
 import Foundation
 import M5Core
@@ -17,6 +14,7 @@ import M5NFC
 import M5Net
 import M5Proto
 import XCTest
+@testable import M5cet
 
 final class ImportAllModulesTests: XCTestCase {
     func testTheModulesLinkTogether() {
@@ -69,6 +67,27 @@ final class ImportAllModulesTests: XCTestCase {
         XCTAssertEqual(frame.pub, proof.string("pub"))
         XCTAssertEqual(frame.sig, proof.string("sig"))
         XCTAssertTrue(HubProof.verify(pub: frame.pub, sig: frame.sig, roomId: "r3.room", nonce: nonce))
+    }
+
+    /// The app's security code is built on M5Kit's types, not beside them: `PinWrap`, `LockBox`, `SignedPolicy`,
+    /// `DeviceSigner` are M5Crypto's, `LockInbox` M5Proto's, `Bytes` M5Core's; the app's own are named for what
+    /// they add (`LockInboxFiles`, `KeyringSigner`, `SecretBytes`, `SecData`).
+    func testTheAppsSecurityTypesAreM5Kits() throws {
+        let b: Bytes = [1, 2]
+        XCTAssertEqual(SecretBytes(bytes: b).count, 2)
+        XCTAssertEqual(PinWrap.aad(2), M5Crypto.PinWrap.aad(2))
+        XCTAssertEqual(LockBox.kid(spki: "AAAA"), M5Crypto.LockBox.kid(spki: "AAAA"))
+        XCTAssertTrue(LockInbox.self == M5Proto.LockInbox.self)
+        XCTAssertNil(SignedPolicy.open(nil, serverKey: "k", deviceId: "d", lastAt: 0))
+        let keyring = Keyring(store: MemorySecureStore(), enclave: nil)
+        let signer: any M5Crypto.DeviceSigner = try KeyringSigner(keyring: keyring)
+        let request: any RequestSigner = try KeyringSigner(keyring: keyring)
+        XCTAssertFalse(signer.publicKey.isEmpty)
+        _ = request
+        let agreer: any KeyAgreer = try KeyringAgreement(keyring: keyring)
+        XCTAssertFalse(agreer.spki.isEmpty)
+        let files = LockInboxFiles(dir: FileManager.default.temporaryDirectory.appendingPathComponent("m5-import-\(UUID().uuidString)"))
+        XCTAssertFalse(files.isActive)
     }
 
     /// `CallTrack` is M5Proto's (the app's `CallTrack` is an alias of it).
