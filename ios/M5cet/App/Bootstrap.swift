@@ -26,10 +26,13 @@ enum Bootstrap {
         PeopleParts.install(into: model)
         // Parts/NFC — nfcPanel, nfcWork, nfcBuilder, nfc.read / write / emulate / stop, $nfc.
         NfcParts.install(into: model)
+        // Parts/Chat — messages, msgBody, msgHold, composer; msg.quote / showHidden / mapPreview / map / source / open / save /
+        // share, msg.forward*, message.recipients.
+        ChatParts.install(into: model)
         // Parts/Tools — commands engine (core.fn), aiChat, voicePad, History ($log, calllog.*), ai.*, voice.dictate, voiceFx.*.
         ToolParts.install(into: model)
         // (A part: model.design.slots.register(…), model.design.actions.register(…), core.variables — Renderer/README.md.)
-        // Core — the seams the parts left for it (the commands engine's device, room and usage).
+        // Core — the seams the parts left for it (the commands engine's device, room and usage; the chat's audit and files).
         CoreInstall.afterParts(into: model)
     }
 }
