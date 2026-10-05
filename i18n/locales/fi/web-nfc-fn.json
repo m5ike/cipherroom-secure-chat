@@ -1,0 +1,12 @@
+{
+ "nfcfn.done": "Valmis.",
+ "nfcfn.noReader": "Tässä laitteessa ei ole NFC-lukijaa.",
+ "nfcfn.status.auth-failed": "Kortin todennus epäonnistui",
+ "nfcfn.status.denied": "NFC-käyttö estetty",
+ "nfcfn.status.error": "NFC-virhe: {message}",
+ "nfcfn.status.no-card": "Ei korttia",
+ "nfcfn.status.ok": "Valmis",
+ "nfcfn.status.timeout": "Korttia ei esitetty ajoissa",
+ "nfcfn.status.unsupported": "Ei tuettu tällä laitteella",
+ "nfcfn.waiting": "Pidä korttia laitetta vasten…"
+}
