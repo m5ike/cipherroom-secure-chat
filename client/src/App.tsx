@@ -99,11 +99,11 @@ import { createPinStore, keyId, loadIdentity, type Identity } from "./lib/identi
 import { envelopeKind, SenderKeyStore } from "./lib/sender-keys";
 // 6.12: protocol 4 (docs/protocol-v4.md) — sessions, mailbox, hub proof, key transparency, replay, identity states.
 import {
-  buildHubProof, hubSeed, isMailboxItem, isMailboxSet, newFileKey, verifyAccount,
+  buildHubProof, hubSeed, isMailboxItem, isMailboxSet, newFileKey, REPLAY, verifyAccount,
   type DirectoryDevice, type KtLookup, type Mailbox, type RatchetInner, type ReplayGuard,
 } from "./lib/p4";
 import { isP4RoomEnvelope, P4Room, type PeerInfo, type PeerProtocol } from "./lib/p4-session";
-import { deviceReplay, LocalKtStore, PayloadSealer, type SealedPayload, type VaultReplayStore } from "./lib/p4-store";
+import { deviceReplay, LocalKtStore, PayloadSealer, VaultUnavailable, type SealedPayload, type VaultReplayStore } from "./lib/p4-store";
 import { acceptChanged, evaluateIdentity, markVerified, signerOf, TrustBook } from "./lib/p4-trust";
 import { deviceMailbox, helloAccountOf, sealForAway, uploadBundle } from "./lib/p4-away";
 import { fetchKtJson, KtClient, type KtStatus } from "./lib/p4-kt";
@@ -1844,11 +1844,26 @@ function ChatApp() {
    * dated it more than 5 minutes ahead (their clock is off: accepted, the
    * time clamped, said once per member with roughly by how much).
    */
-  async function freshMessage(id: string, createdAt: unknown, sender: { id: string; name: string }): Promise<number | null> {
+  async function freshMessage(id: string, createdAt: unknown, sender: { id: string; name: string }, opts: { live: boolean }): Promise<number | null | "unavailable"> {
     const roomId = keyRef.current?.roomId;
-    if (!roomId || !replayRef.current.accept(id)) return null;
+    if (!roomId || replayRef.current.has(id)) return null;
     const receivedAt = Date.now();
-    const verdict = await replayGuard().check(roomId, id, createdAt, { now: receivedAt }).catch(() => "ok" as const);
+    let verdict: Awaited<ReturnType<ReplayGuard["check"]>>;
+    try {
+      verdict = await replayGuard().check(roomId, id, createdAt, { now: receivedAt });
+    } catch (err) {
+      // 6.12 review P10: the persistent window cannot be read — fail CLOSED. A message on a live
+      // ratchet / sender-key chain cannot be replayed (a used key is refused): the in-memory guard
+      // suffices for it. A relayed or room-key one could be: it waits (the relay keeps it) until the
+      // store works again.
+      warnOnce("replay-store", t(lang, "p4.replay.storeDown"), "warning");
+      void sendServerLog("warn", "replay.store-unavailable", { error: (err as Error)?.name ?? "error" });
+      if (!opts.live) return "unavailable";
+      if (!replayRef.current.accept(id)) return null;
+      if (typeof createdAt !== "number" || createdAt < receivedAt - REPLAY.windowMs) return null;
+      return createdAt > receivedAt + REPLAY.futureMs ? receivedAt : createdAt;
+    }
+    if (!replayRef.current.accept(id)) return null;
     if (verdict === "too-old") warnOnce("replay-too-old", t(lang, "p4.replay.too-old"), "warning");
     if (verdict === "clamped") {
       warnOnce(`clock-ahead:${sender.id}`, tf(lang, "p4.clock.ahead", { name: sender.name, skew: roughly(Number(createdAt) - receivedAt) }), "warning");
@@ -2217,7 +2232,11 @@ function ChatApp() {
         // 6.12 (§ 7.3): sealed for one of this device's mailbox bundles.
         const mailbox = await ensureMailbox();
         let got: Awaited<ReturnType<Mailbox["open"]>> = null;
-        try { got = mailbox ? await mailbox.open(env, keys.roomId) : null; } catch { handled.push(item.id); continue; } // broken: drop it
+        try { got = mailbox ? await mailbox.open(env, keys.roomId) : null; } catch (err) {
+          // Review P12: the vault cannot be read now — keep it at the relay (not acknowledged); a broken item is dropped.
+          if (!(err instanceof VaultUnavailable)) handled.push(item.id);
+          continue;
+        }
         if (!got) continue; // for another device of the account (or keys we no longer have)
         const account = await verifyAccount(got.sacc, got.spk);
         trustRef.current.rememberDevice(got.spk, { mb: got.senderBundle, apk: account?.valid ? account.publicKey : null });
@@ -2243,7 +2262,9 @@ function ChatApp() {
       if (!checked || checked.kind === "audio-status" || checked.kind === "receipt") continue;
       if (messagesRef.current.some((m) => m.id === checked.id)) continue;
       // § 11: fresh — and dated by the time it arrived when the sender's clock is far ahead.
-      const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: item.from.peerId, name: checked.senderName });
+      const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: item.from.peerId, name: checked.senderName }, { live: false });
+      // Review P10: the replay window cannot be read now — not acknowledged, the relay keeps it for the next delivery.
+      if (when === "unavailable") { handled.splice(handled.indexOf(item.id), 1); continue; }
       if (when === null) continue;
       const plaintext = when === checked.createdAt ? checked : { ...checked, createdAt: when };
       relaySendersRef.current.set(plaintext.id, { peerId: item.from.peerId, accountId: accountRefOf(item.from) });
@@ -2923,8 +2944,10 @@ function ChatApp() {
     }
     // § 11: a replay or one older than the window is dropped; one dated far ahead
     // (the sender's clock is off) is kept with the time it arrived.
-    const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: peerId, name: checked.senderName || peerName });
-    if (when === null) return;
+    // Review P10: on a live chain (ratchet / sender key) a frame cannot be replayed; a room-key envelope could.
+    const live = sealedWith !== "room" && sealedWith !== "p4-mailbox";
+    const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: peerId, name: checked.senderName || peerName }, { live });
+    if (when === null || when === "unavailable") return;
     const plaintext = when === checked.createdAt ? checked : { ...checked, createdAt: when };
     const forUsAlone = sealedWith === "pair" || sealedWith === "p4-pair";
 

@@ -6,11 +6,11 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import {
-  b64, consistencyProof, ed25519FromSeed, entryLeafHash, inclusionProof, ktUser, KT_PROOF_DEADLINE_MS, KtState, MemoryKtStore,
-  signSth, treeHash, type Hash, type KtEntry, type KtLookup, type SignedTreeHead,
+  b64, consistencyProof, createBundle, ed25519FromSeed, entryLeafHash, inclusionProof, ktUser, KT_PROOF_DEADLINE_MS, KtState, MemoryKtStore,
+  ReplayGuard, signSth, treeHash, type Hash, type KtEntry, type KtLookup, type SignedTreeHead,
 } from "../client/src/lib/p4";
 import { KtClient, KtHttpError } from "../client/src/lib/p4-kt";
-import { LocalKtStore } from "../client/src/lib/p4-store";
+import { LocalKtStore, LocalVault, memoryBackend, VaultBundleStore, VaultReplayStore, VaultUnavailable, type KvBackend } from "../client/src/lib/p4-store";
 import { P4Room, type P4Events } from "../client/src/lib/p4-session";
 import { TrustBook } from "../client/src/lib/p4-trust";
 import { deriveRoomKeys, type RoomKeys } from "../client/src/lib/envelope";
@@ -268,5 +268,99 @@ describe("REVIEW-612 P13 — a chain counts as handed out only once its frame we
     expect(a.sk.hasOurChain("p-z")).toBe(false);
     a.sk.handedOut("p-z", inner.keyId);
     expect(a.sk.hasOurChain("p-z")).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------ the vault (P11, P12) */
+
+describe("REVIEW-612 P11/P12 — the device vault", () => {
+  it("a read that keeps failing is reported (VaultUnavailable), replaces nothing, and is tried afresh later", async () => {
+    const backend = memoryBackend();
+    await new LocalVault(backend).putJson("row", { v: 1 });
+    const wrap = await backend.get("wrap");
+    let failing = true;
+    const flaky: KvBackend = {
+      persistent: true,
+      get: async (id) => { if (failing) throw new Error("IDB transaction aborted"); return backend.get(id); },
+      put: (id, v) => backend.put(id, v), delete: (id) => backend.delete(id), clear: () => backend.clear(),
+      add: (id, v) => backend.add!(id, v),
+    };
+    const vault = new LocalVault(flaky);
+    await expect(vault.getJson("row")).rejects.toBeInstanceOf(VaultUnavailable);
+    await expect(vault.putJson("other", { v: 2 })).rejects.toBeInstanceOf(VaultUnavailable);
+    expect(await backend.get("wrap")).toBe(wrap); // never replaced
+    failing = false;
+    expect(await vault.getJson("row")).toEqual({ v: 1 }); // the same instance recovers
+  });
+
+  it("a key that is really absent is created once, even by two tabs at the same moment", async () => {
+    const backend = memoryBackend();
+    const [a, b] = [new LocalVault(backend), new LocalVault(backend)];
+    await Promise.all([a.putJson("x", 1), b.putJson("y", 2)]);
+    expect(await new LocalVault(backend).getJson("x")).toBe(1);
+    expect(await new LocalVault(backend).getJson("y")).toBe(2);
+  });
+
+  it("bundles: one row each — a removal in one tab and a new bundle in another both hold; the 6.12 list row is migrated", async () => {
+    const backend = memoryBackend();
+    const dev = await device();
+    const k1 = await createBundle(dev);
+    const k2 = await createBundle(dev);
+    // A 6.12 single-list row, as the first 6.12 build wrote it.
+    const vault = new LocalVault(backend);
+    await vault.putRaw(`mailbox:dh:${k1.bundle.id}`, k1.dh);
+    await vault.putJson("mailbox", [{ bundle: k1.bundle, kemDk: toBase64(k1.kemDk), created: k1.created }]);
+    const tab1 = new VaultBundleStore(new LocalVault(backend));
+    const tab2 = new VaultBundleStore(new LocalVault(backend));
+    expect((await tab1.all()).map((k) => k.bundle.id)).toEqual([k1.bundle.id]);
+    expect(await backend.get("mailbox")).toBeUndefined();
+    await tab2.put(k2);
+    expect((await tab1.all()).map((k) => k.bundle.id).sort()).toEqual([k1.bundle.id, k2.bundle.id].sort()); // seen by the other tab
+    await tab1.remove(k1.bundle.id);
+    expect((await tab2.all()).map((k) => k.bundle.id)).toEqual([k2.bundle.id]);
+    // The keys still open what was sealed to them.
+    const reopened = (await new VaultBundleStore(new LocalVault(backend)).all())[0];
+    expect(toBase64(reopened.kemDk)).toBe(toBase64(k2.kemDk));
+  });
+
+  it("replay window: two tabs' writes merge; an id one tab accepted is a replay in the other after its flush", async () => {
+    const backend = memoryBackend();
+    // Writes only when flushed here (no timer in between).
+    const tab1 = new VaultReplayStore(new LocalVault(backend), 3_600_000);
+    const tab2 = new VaultReplayStore(new LocalVault(backend), 3_600_000);
+    const g1 = new ReplayGuard(tab1);
+    const g2 = new ReplayGuard(tab2);
+    const now = Date.now();
+    expect(await g1.check(roomKeys.roomId, "m-1", now)).toBe("ok");
+    expect(await g2.check(roomKeys.roomId, "m-2", now)).toBe("ok");
+    await tab2.flush();
+    await tab1.flush(); // merges: m-2 of the other tab is kept (and learned here)
+    const reload = new ReplayGuard(new VaultReplayStore(new LocalVault(backend), 0));
+    expect(await reload.check(roomKeys.roomId, "m-1", now)).toBe("replay");
+    expect(await reload.check(roomKeys.roomId, "m-2", now)).toBe("replay");
+    expect(await g1.check(roomKeys.roomId, "m-2", now)).toBe("replay");
+    tab1.close();
+    tab2.close();
+  });
+
+  it("replay window shared between tabs (BroadcastChannel): an id one tab accepts is a replay in the other at once", async () => {
+    const backend = memoryBackend();
+    const tab1 = new VaultReplayStore(new LocalVault(backend), 60_000, { share: true });
+    const tab2 = new VaultReplayStore(new LocalVault(backend), 60_000, { share: true });
+    const g1 = new ReplayGuard(tab1);
+    const g2 = new ReplayGuard(tab2);
+    const now = Date.now();
+    expect(await g2.check(roomKeys.roomId, "m-0", now)).toBe("ok"); // tab 2 has the room loaded
+    expect(await g1.check(roomKeys.roomId, "m-shared", now)).toBe("ok");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(await g2.check(roomKeys.roomId, "m-shared", now)).toBe("replay");
+    tab1.close();
+    tab2.close();
+  });
+
+  it("replay window: a store that cannot be read is not taken as empty (the check throws; the app fails closed)", async () => {
+    const flaky: KvBackend = { persistent: true, get: async () => { throw new Error("quota"); }, put: async () => undefined, delete: async () => undefined, clear: async () => undefined };
+    const guard = new ReplayGuard(new VaultReplayStore(new LocalVault(flaky), 0));
+    await expect(guard.check(roomKeys.roomId, "m-x", Date.now())).rejects.toBeInstanceOf(VaultUnavailable);
   });
 });

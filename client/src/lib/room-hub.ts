@@ -414,15 +414,26 @@ export class BackgroundRoom {
     if (!link || !keys) return;
     const p = validatePayload(opened.payload, { transportSender: peerId, myId: this.myId });
     if (!p || this.seen.has(p.id)) return;
-    this.seen.add(p.id);
-    if (this.seen.size > 20_000) this.seen.delete(this.seen.values().next().value!);
     // 6.12 (§ 11): the device's persistent replay window. A message dated far
     // ahead (the sender's clock is off) is kept, with the time it arrived.
     const replay = this.deps.replay ?? null;
     const receivedAt = Date.now();
     const rawCreatedAt = (opened.payload as { createdAt?: unknown }).createdAt;
-    const verdict = replay ? await replay.check(keys.roomId, p.id, rawCreatedAt, { now: receivedAt }).catch(() => "ok" as const) : "ok";
+    let verdict: Awaited<ReturnType<ReplayGuard["check"]>> = "ok";
+    if (replay) {
+      try {
+        verdict = await replay.check(keys.roomId, p.id, rawCreatedAt, { now: receivedAt });
+      } catch {
+        // Review P10: the window cannot be read — fail closed. A live chain (ratchet, sender key) cannot be
+        // replayed (the in-memory set still dedupes); a room-key envelope could: dropped.
+        if (sealedWith === "room" || sealedWith === "p4-mailbox") return;
+        verdict = typeof rawCreatedAt === "number" && rawCreatedAt >= receivedAt - REPLAY.windowMs ? "ok" : "too-old";
+      }
+    }
     if (verdict !== "ok" && verdict !== "clamped") return;
+    if (this.seen.has(p.id)) return;
+    this.seen.add(p.id);
+    if (this.seen.size > 20_000) this.seen.delete(this.seen.values().next().value!);
     const ahead = verdict === "clamped" || (typeof rawCreatedAt === "number" && rawCreatedAt > receivedAt + REPLAY.futureMs);
     const createdAt = ahead ? receivedAt : p.createdAt;
     if (p.kind === "audio-status" || p.kind === "receipt") return;

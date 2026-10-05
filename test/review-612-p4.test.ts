@@ -340,8 +340,9 @@ describe("REVIEW-612 P11/P12 — the device vault", () => {
   // REVIEW-612 P11: VaultBundleStore caches the row list per instance (p4-store.ts:167-185) and writes it whole —
   // two tabs (two instances on one IndexedDB) that each make a bundle keep only the last writer's list: the other
   // bundle's ML-KEM key is gone and every item sealed to that bundle (it was in hellos and the directory) is lost.
-  // VaultReplayStore (p4-store.ts:258-266) has the same last-writer-wins race for the replay window. Fails today.
-  it.skip("two tabs that each create a mailbox bundle both keep their keys", async () => {
+  // VaultReplayStore (p4-store.ts:258-266) has the same last-writer-wins race for the replay window.
+  // Fixed: one row per bundle; the replay window merges on write (test/review-612-fixes.test.ts).
+  it("two tabs that each create a mailbox bundle both keep their keys", async () => {
     const backend = memoryBackend();
     const dev = await identity();
     const tab1 = new VaultBundleStore(new LocalVault(backend));
@@ -359,8 +360,9 @@ describe("REVIEW-612 P11/P12 — the device vault", () => {
   // REVIEW-612 P12: LocalVault.wrapKey (p4-store.ts:96-99) treats a FAILED read of the wrapping key like a missing
   // one: it generates a new key and stores it over the old one. One transient IndexedDB error and every sealed row —
   // the mailbox bundles' ML-KEM keys, the replay windows — no longer opens (silently: getJson returns null; an
-  // empty replay window re-admits relayed replays). Fails today: null.
-  it.skip("a failed read of the wrapping key does not replace it", async () => {
+  // empty replay window re-admits relayed replays). Fixed: the read is retried, then VaultUnavailable; only an
+  // absent key is created, with `add`.
+  it("a failed read of the wrapping key does not replace it", async () => {
     const backend = memoryBackend();
     await new LocalVault(backend).putJson("replay:x", [["k", 1]]);
     let fail = true;
