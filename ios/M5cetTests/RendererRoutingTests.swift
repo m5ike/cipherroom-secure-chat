@@ -59,6 +59,23 @@ final class RendererRoutingTests: XCTestCase {
         XCTAssertTrue(host.router.stack.isEmpty)
     }
 
+    func testNoScreenStepsPastTheLock() {
+        let state = StubScreenState(AppRouteState(enrolled: true, lockSetUp: true, locked: true))
+        let host = RendererTestSupport.host(state: state)
+        host.route()
+        XCTAssertEqual(host.screen, "lock")
+        for id in ["rooms", "room", "settings"] {
+            host.showScreen(id)
+            XCTAssertEqual(host.screen, "lock", "\(id) while locked")
+        }
+        state.routeState = AppRouteState(enrolled: false, lockSetUp: false, locked: false)
+        host.showScreen("rooms")
+        XCTAssertEqual(host.screen, "enroll", "not enrolled: enrolment first")
+        state.routeState = AppRouteState(enrolled: true, lockSetUp: true, locked: false)
+        host.showScreen("settings")
+        XCTAssertEqual(host.screen, "settings", "unlocked: any screen")
+    }
+
     // MARK: the back stack (ScreenRouter)
 
     func testShowScreenPushesAsAndroidDoes() {

@@ -183,6 +183,16 @@ final class DesignHost: ActionHost {
             Self.log.warning("a screen the design does not have was asked for")
             return
         }
+        // 6.14: until the app is enrolled, has its PIN and is unlocked, only the splash, enrolment and lock screens
+        // show — a design's screen.open (or anything else) cannot step past the lock; route() decides instead.
+        if id != "splash", id != "enroll", id != "lock" {
+            let st = services.state.routeState
+            if !st.enrolled || !st.lockSetUp || st.locked {
+                Self.log.warning("a screen was asked for while the app is locked")
+                route()
+                return
+            }
+        }
         let animate = transition && !reducedMotion && !Look(settings: settings).still
         if animate, router.generation > 0, router.screen != id {
             withAnimation(screenAnimation) { router.show(id, transition: true) }
