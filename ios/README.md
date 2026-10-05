@@ -102,9 +102,13 @@ Rozšíření i hodinky mají stejnou verzi (App Store to vyžaduje); test `test
 
 ## Zdroje
 
-* **Výchozí design** — `default-design.json`, `icons.json`, `themes.json` se při každém sestavení kopírují build
-  fází „Copy design assets“ z `android/app/src/main/assets/m5/` do `M5cet.app/m5/` (jeden zdroj pravdy; test
-  `testDesignAssetsAreTheAndroidOnes` porovná bajty). Čtení: `Bundle.main.url(forResource: "default-design",
+* **Výchozí design** — `default-design.json`, `icons.json`, `themes.json` v `ios/Design/m5/` zapisuje ze serverového
+  kódu `npx tsx script/ios-assets.ts` (`server/ios/assets.ts` `iosAssets()`: výchozí design Androidu se vzhledem iOS
+  a položkami jen pro iOS — přepínač Apple Watch `watch.on` v Nastavení › Oznámení, texty hodinek `watch.*` a NFC
+  listu `nfc.ios.*` v devíti jazycích; ikony jako Android, šablona „iOS“ první). `test/ios-assets.test.ts` selže,
+  když jsou zastaralé. Build fáze „Copy design assets“ je při každém sestavení kopíruje do `M5cet.app/m5/` (ne do
+  `ios/M5cet/` — synchronizovaná složka by JSON zkopírovala naplocho do kořene balíčku; test
+  `testDesignAssetsAreTheIosOnes` porovná bajty). Čtení: `Bundle.main.url(forResource: "default-design",
   withExtension: "json", subdirectory: "m5")`.
 * **Ikony** — `node ios/scripts/make-icons.mjs` je vykreslí z adaptivní ikony Androidu
   (`res/drawable/ic_launcher_foreground.xml`, barvy z `res/values/colors.xml`): 1024 px pro iOS (světlá, tmavá,

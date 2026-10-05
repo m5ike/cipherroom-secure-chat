@@ -23,6 +23,12 @@ enum Fixtures {
     static let builtIn: Design = try! Design.fromJSON(Data(contentsOf: url(assets + "default-design.json")))
 
     static let templates: [LookTemplate] = (try? LookTemplate.list(Data(contentsOf: url(assets + "themes.json")))) ?? []
+
+    /// 6.14: what the iOS app ships (script/ios-assets.ts → ios/Design/m5/, the build phase "Copy design assets"):
+    /// Android's default design with the iOS look and the iOS-only items, the same icons, the iOS look first.
+    static let iosAssets = "ios/Design/m5/"
+    static let iosBuiltIn: Design = try! Design.fromJSON(Data(contentsOf: url(iosAssets + "default-design.json")))
+    static let iosTemplates: [LookTemplate] = (try? LookTemplate.list(Data(contentsOf: url(iosAssets + "themes.json")))) ?? []
 }
 
 extension DesignValue {

@@ -45,7 +45,9 @@ ios/
     Parts/                    nativní části (port A/ui/parts/*, bubble/*, look/*, media/*)
     Platform/                 Keychain, Secure Enclave, Vault, AppLock, LockBox, Wiper, biometrie, CallKit, PushKit,
                               APNs, CoreNFC transport, WebRTC, poloha, kontakty, řeč, soubory, sdílení, notifikace
-    Resources/                Assets, Info.plist, entitlements, výchozí design (`default-design.json` — stejný soubor jako Android)
+    Resources/                Assets, Info.plist, entitlements
+  Design/m5/                  výchozí design iOS (`default-design.json`, `icons.json`, `themes.json` — `npx tsx script/ios-assets.ts`
+                              ze `server/ios/`: design Androidu se vzhledem iOS a položkami jen pro iOS; build fáze „Copy design assets“)
   M5cetNotifications/         Notification Service Extension (dešifrování / neutrální text podle zámku)
   M5cetWatch/                 watchOS aplikace (SwiftUI)
   M5cetTests/                 testy aplikace (XCTest; spouští se na simulátoru)
@@ -90,9 +92,10 @@ watch: `-scheme M5cetWatch -sdk watchsimulator build` (na tomto Macu není watch
   vydání, push, politika zámku, Define, polohy, příkazy). **Sdílený zdroj:** `m5mobile.define` (Define),
   řetězce a šablony NFC; **vlastní pro iOS:** zařízení, push (APNs), vydání, design (výchozí = výchozí design
   Androidu s vzhledem iOS).
-* Design: iOS vykresluje **tentýž formát designu** (prvky, akce, výrazy, řetězce, knihovny) — výchozí
-  `default-design.json` je společný; `server/ios/*` může přidat vzhled iOS (téma) a omezit prvky, které iOS
-  nemá (§ 5), přes stejné gating (`minAppCode`).
+* Design: iOS vykresluje **tentýž formát designu** (prvky, akce, výrazy, řetězce, knihovny) — výchozí design
+  iOS je výchozí design Androidu se vzhledem iOS a s položkami jen pro iOS (`server/ios/design.ts`, do aplikace
+  `ios/Design/m5/default-design.json`); `server/ios/*` může omezit prvky, které iOS nemá (§ 5), přes stejné
+  gating (`minAppCode`).
 
 ## 5. Platformní rozdíly (náhrady a poctivá omezení)
 

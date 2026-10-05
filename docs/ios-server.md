@@ -135,7 +135,12 @@ kontrast 5,4 : 1 pro bílý text, šedé seskupené pozadí, bubliny jako iMessa
 varianty červené / zelené / oranžové), poloměr 12, přechody iOS, písmo `sans` = SF Pro v aplikaci.
 Šablona „iOS“ je první v seznamu vzhledů (`server/ios/assets.ts`: `iosThemes()` a `iosAssets()`
 vrací `default-design.json`, `icons.json` a `themes.json` pro aplikaci — pro skript sestavení, ne
-pro běžící server; katalog konzole nese šablonu iOS a šablony aplikace).
+pro běžící server; katalog konzole nese šablonu iOS a šablony aplikace). `npx tsx script/ios-assets.ts`
+je zapíše do `ios/Design/m5/` (odtud je build fáze „Copy design assets“ kopíruje do aplikace;
+`test/ios-assets.test.ts` hlídá, že nejsou zastaralé). **Jen v designu iOS** (nikdy v Androidu):
+přepínač Apple Watch v Nastavení › Oznámení (nastavení `watch.on`, výchozí vypnuto, soukromá oblast
+`watch.` — akce designu ho nezapne, jen klepnutí uživatele) a texty `watch.*` (hodinky) a `nfc.ios.*`
+(systémový list NFC) v devíti jazycích (`IOS_STRINGS`).
 
 Buildy jsou tytéž balíčky M5AB (id `ibld_…`), pro aplikace iOS od **61400** (nebo novější, když to
 vyžaduje prvek designu — stejný gating `minAppCode` jako na Androidu). Co iOS neumí (§ 5

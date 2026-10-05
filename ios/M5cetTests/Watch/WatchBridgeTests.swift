@@ -192,6 +192,9 @@ final class WatchBridgeTests: XCTestCase {
         let suite = "m5.watch.test.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
+        // 6.14: watch.on is the design's setting (SettingsModel) — saved in the app's settings store, so put back what was there.
+        let savedSettings = model.design.settings
+        defer { model.design.settings = savedSettings }
         let env = AppWatchEnvironment(model: model, defaults: defaults)
         XCTAssertFalse(env.mirrorEnabled, "off by default")
         env.setMirrorEnabled(true)

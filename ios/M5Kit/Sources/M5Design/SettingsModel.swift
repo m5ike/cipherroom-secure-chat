@@ -46,6 +46,10 @@ public struct SettingsModel: Sendable, Hashable {
               ("voiceFx.echo", 0), ("voiceFx.echoMs", 250), ("voiceFx.echoFeedback", 0.35), ("voiceFx.whisper", 0), ("voiceFx.gain", 0)]
         // 6.8 conversations (telecom/ConversationPlan.defaults)
         d += [("conversations.on", true), ("conversations.names", true)]
+        // 6.14 iOS only: the Apple Watch (Platform/Watch: recent messages on the watch while the app is
+        // unlocked) — off until the person switches it on (Settings › Notifications); a private area
+        // (SettingSchema), so a design's action never switches it on.
+        d.append(("watch.on", false))
         return d
     }()
 

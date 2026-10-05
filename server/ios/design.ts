@@ -9,12 +9,26 @@
 // What iOS cannot do of a valid design (docs/ios-architecture.md §5) is not
 // refused — the app hides or replaces it — but the console says so: the
 // warnings of /design/validate and /design/preview.
+//
+// iOS-only items live only here, never in Android's design: the Apple Watch
+// switch in Settings › Notifications (setting watch.on — M5Design's
+// SettingsModel / SettingSchema: off by default, a private area no design
+// action may change) and the texts only the iOS app says (IOS_STRINGS: the
+// watch app's, the system NFC sheet's). The iOS app ships this design
+// (script/ios-assets.ts → ios/Design/m5/, copied by the Xcode build phase
+// "Copy design assets"). The design's scope has no platform variable ($app is
+// name / version / code / bundle on both apps): a design is one platform's
+// document, so it simply contains what that app shows. A shared design that
+// ever needed iOS-only visibility would add "platform" to $app (M5Design
+// ScreenScope.app, Android MainActivity.appScope) and use
+// if: "$app.platform == 'ios'".
 
 import { join } from "node:path";
 import {
-  androidCatalog, DEFAULT_ANIMATIONS, DEFAULT_DESIGN, designRev, sanitizeDesign,
-  type AndroidDesign, type Animations, type Theme,
+  androidCatalog, DEFAULT_ANIMATIONS, DEFAULT_DESIGN, designRev, LANGS, sanitizeDesign,
+  type AndroidDesign, type ANode, type Animations, type Theme,
 } from "../android/design";
+import type { Locale } from "../../client/src/lib/locales";
 import { designMinAppCode } from "../mobile/bundle";
 import { createDesignStore } from "../mobile/design-store";
 import { mobileDir } from "../mobile/store";
@@ -56,12 +70,273 @@ export const IOS_ANIMATIONS: Animations = {
   splash: { style: "reveal", ms: 900, minMs: 500 },
 };
 
-export const IOS_DEFAULT_DESIGN: AndroidDesign = {
-  ...DEFAULT_DESIGN,
-  theme: IOS_THEME,
-  animations: IOS_ANIMATIONS,
-  rev: "default",
+/* ===================================================== iOS-only items */
+
+type Texts = Record<Locale, string>;
+const T = (en: string, cs: string, de: string, es: string, it: string, fr: string, sk: string, sl: string, fi: string): Texts => ({ en, cs, de, es, it, fr, sk, sl, fi });
+/** The same text in every language (product names, formats). */
+const SAME = (s: string): Texts => T(s, s, s, s, s, s, s, s, s);
+/** French: a no-break space (U+00A0) before : ; ! ? (i18n/GLOSSARY.md, as design-613.ts). */
+const NB = " ";
+
+/** The Apple Watch switch's setting (M5Design SettingsModel: false; SettingSchema: private area "watch."). */
+export const IOS_WATCH_SETTING = "watch.on";
+
+/**
+ * The texts only the iOS app says, in the nine languages (i18n/GLOSSARY.md).
+ * watch.*: the Apple Watch switch, and what the watch app shows — the phone
+ * sends them in the user's language (ios/M5cet/Platform/Watch/WatchWire.swift:
+ * WatchWire.english is the fallback). nfc.ios.*: the system NFC sheet
+ * (ios/M5cet/Platform/NFC/NfcSheetTexts.swift).
+ */
+export const IOS_STRINGS: Record<string, Texts> = {
+  /* ------------------------------------------- Settings › Notifications */
+  "watch.setting": SAME("Apple Watch"),
+  "watch.setting.hint": T(
+    "Shows recent messages on your Apple Watch while M5cet is unlocked on this iPhone.",
+    "Na hodinkách Apple Watch ukazuje poslední zprávy, dokud je aplikace M5cet na tomto iPhonu odemčená.",
+    "Zeigt die letzten Nachrichten auf Ihrer Apple Watch, solange M5cet auf diesem iPhone entsperrt ist.",
+    "Muestra los mensajes recientes en tu Apple Watch mientras la app M5cet esté desbloqueada en este iPhone.",
+    "Mostra i messaggi recenti sul tuo Apple Watch finché l’app M5cet è sbloccata su questo iPhone.",
+    "Affiche les messages récents sur votre Apple Watch tant que l’app M5cet est déverrouillée sur cet iPhone.",
+    "Na hodinkách Apple Watch zobrazuje posledné správy, kým je aplikácia M5cet na tomto iPhone odomknutá.",
+    "Prikazuje zadnja sporočila na uri Apple Watch, dokler je aplikacija M5cet v tem iPhonu odklenjena.",
+    "Näyttää viimeisimmät viestit Apple Watchissa, kun M5cet-sovelluksen lukitus on avattu tässä iPhonessa.",
+  ),
+
+  /* -------------------------------------------- the watch app's states */
+  "watch.locked": T("Locked on iPhone", "Zamčeno na iPhonu", "Auf dem iPhone gesperrt", "Bloqueado en el iPhone", "Bloccato sull’iPhone", "Verrouillé sur l’iPhone", "Zamknuté na iPhone", "Zaklenjeno v iPhonu", "Lukittu iPhonessa"),
+  "watch.locked.hint": T(
+    "Unlock M5cet on your iPhone to see your rooms here.",
+    "Odemkněte M5cet na iPhonu a uvidíte tu své místnosti.",
+    "Entsperren Sie M5cet auf Ihrem iPhone, um Ihre Räume hier zu sehen.",
+    "Desbloquea M5cet en tu iPhone para ver aquí tus salas.",
+    "Sblocca M5cet sul tuo iPhone per vedere qui le tue stanze.",
+    "Déverrouillez M5cet sur votre iPhone pour voir vos salles ici.",
+    "Odomknite M5cet na iPhone a uvidíte tu svoje miestnosti.",
+    "Odklenite M5cet v iPhonu, da tukaj vidite svoje sobe.",
+    "Avaa M5cet iPhonessa, niin näet huoneesi täällä.",
+  ),
+  "watch.off": T("Off on iPhone", "Vypnuto na iPhonu", "Auf dem iPhone ausgeschaltet", "Desactivado en el iPhone", "Disattivato sull’iPhone", "Désactivé sur l’iPhone", "Vypnuté na iPhone", "Izklopljeno v iPhonu", "Pois päältä iPhonessa"),
+  "watch.off.hint": T(
+    "Turn on Apple Watch in M5cet on your iPhone (Settings › Notifications).",
+    "Zapněte Apple Watch v aplikaci M5cet na iPhonu (Nastavení › Oznámení).",
+    "Schalten Sie Apple Watch in M5cet auf Ihrem iPhone ein (Einstellungen › Benachrichtigungen).",
+    "Activa Apple Watch en la app M5cet de tu iPhone (Ajustes › Notificaciones).",
+    "Attiva Apple Watch nell’app M5cet del tuo iPhone (Impostazioni › Notifiche).",
+    "Activez Apple Watch dans l’app M5cet de votre iPhone (Paramètres › Notifications).",
+    "Zapnite Apple Watch v aplikácii M5cet na iPhone (Nastavenia › Upozornenia).",
+    "Vklopite Apple Watch v aplikaciji M5cet v iPhonu (Nastavitve › Obvestila).",
+    "Ota Apple Watch käyttöön iPhonen M5cet-sovelluksessa (Asetukset › Ilmoitukset).",
+  ),
+  "watch.waiting": T("Open M5cet on your iPhone", "Otevřete M5cet na iPhonu", "Öffnen Sie M5cet auf dem iPhone", "Abre M5cet en tu iPhone", "Apri M5cet sul tuo iPhone", "Ouvrez M5cet sur votre iPhone", "Otvorte M5cet na iPhone", "Odprite M5cet v iPhonu", "Avaa M5cet iPhonessa"),
+  "watch.waiting.hint": T(
+    "Your rooms show here while M5cet is unlocked on your iPhone.",
+    "Vaše místnosti se tu ukazují, dokud je aplikace M5cet na iPhonu odemčená.",
+    "Ihre Räume erscheinen hier, solange M5cet auf Ihrem iPhone entsperrt ist.",
+    "Tus salas aparecen aquí mientras la app M5cet esté desbloqueada en tu iPhone.",
+    "Le tue stanze compaiono qui finché l’app M5cet è sbloccata sul tuo iPhone.",
+    "Vos salles s’affichent ici tant que l’app M5cet est déverrouillée sur votre iPhone.",
+    "Vaše miestnosti sa tu zobrazujú, kým je aplikácia M5cet na iPhone odomknutá.",
+    "Vaše sobe so prikazane tukaj, dokler je aplikacija M5cet v iPhonu odklenjena.",
+    "Huoneesi näkyvät täällä, kun M5cet-sovelluksen lukitus on avattu iPhonessa.",
+  ),
+  "watch.away": T("iPhone not connected", "iPhone není připojený", "iPhone nicht verbunden", "iPhone no conectado", "iPhone non connesso", "iPhone non connecté", "iPhone nie je pripojený", "iPhone ni povezan", "iPhone ei ole yhdistetty"),
+  "watch.away.hint": T(
+    "Messages show again when your iPhone is near and M5cet is unlocked.",
+    "Zprávy se znovu ukážou, až bude iPhone nablízku a aplikace M5cet odemčená.",
+    "Nachrichten erscheinen wieder, wenn Ihr iPhone in der Nähe und M5cet entsperrt ist.",
+    "Los mensajes volverán a aparecer cuando tu iPhone esté cerca y la app M5cet, desbloqueada.",
+    "I messaggi ricompariranno quando l’iPhone sarà vicino e l’app M5cet sbloccata.",
+    "Les messages réapparaîtront quand votre iPhone sera à proximité et l’app M5cet déverrouillée.",
+    "Správy sa znova zobrazia, keď bude iPhone nablízku a aplikácia M5cet odomknutá.",
+    "Sporočila se znova prikažejo, ko bo iPhone v bližini in aplikacija M5cet odklenjena.",
+    "Viestit näkyvät taas, kun iPhone on lähellä ja M5cetin lukitus on avattu.",
+  ),
+  "watch.unreachable": T(
+    "iPhone not reachable — replies wait", "iPhone není dostupný — odpovědi počkají", "iPhone nicht erreichbar — Antworten warten",
+    "iPhone no disponible: las respuestas esperan", "iPhone non raggiungibile — le risposte attendono", "iPhone injoignable — les réponses attendent",
+    "iPhone nie je dostupný — odpovede počkajú", "iPhone ni dosegljiv — odgovori čakajo", "iPhone ei ole tavoitettavissa – vastaukset odottavat",
+  ),
+  "watch.noRooms": T("No rooms on the iPhone yet.", "Na iPhonu zatím nejsou žádné místnosti.", "Noch keine Räume auf dem iPhone.", "Aún no hay salas en el iPhone.", "Ancora nessuna stanza sull’iPhone.", "Pas encore de salle sur l’iPhone.", "Na iPhone zatiaľ nie sú žiadne miestnosti.", "V iPhonu še ni sob.", "iPhonessa ei ole vielä huoneita."),
+  "watch.noMessages": T("No messages yet.", "Zatím žádné zprávy.", "Noch keine Nachrichten.", "Aún no hay mensajes.", "Ancora nessun messaggio.", "Pas encore de messages.", "Zatiaľ žiadne správy.", "Še ni sporočil.", "Ei vielä viestejä."),
+  "watch.notOpen": T(
+    "This room's messages are on the iPhone.", "Zprávy této místnosti jsou na iPhonu.", "Die Nachrichten dieses Raums sind auf dem iPhone.",
+    "Los mensajes de esta sala están en el iPhone.", "I messaggi di questa stanza sono sull’iPhone.", "Les messages de cette salle sont sur l’iPhone.",
+    "Správy tejto miestnosti sú na iPhone.", "Sporočila te sobe so v iPhonu.", "Tämän huoneen viestit ovat iPhonessa.",
+  ),
+  "watch.open": T("Open on iPhone", "Otevřít na iPhonu", "Auf dem iPhone öffnen", "Abrir en el iPhone", "Apri sull’iPhone", "Ouvrir sur l’iPhone", "Otvoriť na iPhone", "Odpri v iPhonu", "Avaa iPhonessa"),
+  "watch.opened": T(
+    "The room is ready in M5cet on your iPhone.", "Místnost je připravená v aplikaci M5cet na iPhonu.", "Der Raum ist in M5cet auf Ihrem iPhone bereit.",
+    "La sala está lista en la app M5cet de tu iPhone.", "La stanza è pronta nell’app M5cet del tuo iPhone.", "La salle est prête dans l’app M5cet de votre iPhone.",
+    "Miestnosť je pripravená v aplikácii M5cet na iPhone.", "Soba je pripravljena v aplikaciji M5cet v iPhonu.", "Huone on valmiina iPhonen M5cet-sovelluksessa.",
+  ),
+
+  /* --------------------------------------------- the watch app's reply */
+  "watch.write": T("Dictate or write…", "Nadiktujte nebo napište…", "Diktieren oder schreiben…", "Dicta o escribe…", "Detta o scrivi…", "Dictez ou écrivez…", "Nadiktujte alebo napíšte…", "Narekujte ali napišite …", "Sanele tai kirjoita…"),
+  "watch.quick": T("Quick replies", "Rychlé odpovědi", "Schnellantworten", "Respuestas rápidas", "Risposte rapide", "Réponses rapides", "Rýchle odpovede", "Hitri odgovori", "Pikavastaukset"),
+  "watch.reply.sending": T("Sending…", "Odesílám…", "Wird gesendet…", "Enviando…", "Invio…", "Envoi…", "Odosielam…", "Pošiljam …", "Lähetetään…"),
+  "watch.reply.queued": T("Waits for the iPhone", "Čeká na iPhone", "Wartet auf das iPhone", "Esperando al iPhone", "In attesa dell’iPhone", "En attente de l’iPhone", "Čaká na iPhone", "Čaka na iPhone", "Odottaa iPhonea"),
+  "watch.reply.sent": T("Sent", "Odesláno", "Gesendet", "Enviado", "Inviato", "Envoyé", "Odoslané", "Poslano", "Lähetetty"),
+  "watch.reply.failed": T("Not sent", "Neodesláno", "Nicht gesendet", "No enviado", "Non inviato", "Non envoyé", "Neodoslané", "Ni poslano", "Ei lähetetty"),
+  "watch.reply.locked": T(
+    "Not sent — M5cet is locked on the iPhone", "Neodesláno — aplikace M5cet je na iPhonu zamčená", "Nicht gesendet — M5cet ist auf dem iPhone gesperrt",
+    "No enviado: la app M5cet está bloqueada en el iPhone", "Non inviato — l’app M5cet è bloccata sull’iPhone", "Non envoyé — l’app M5cet est verrouillée sur l’iPhone",
+    "Neodoslané — aplikácia M5cet je na iPhone zamknutá", "Ni poslano — aplikacija M5cet je v iPhonu zaklenjena", "Ei lähetetty – M5cet on lukittu iPhonessa",
+  ),
+
+  /* ------------------------------- what a message is, where it is not shown */
+  "watch.kind.video": T("Video", "Video", "Video", "Vídeo", "Video", "Vidéo", "Video", "Videoposnetek", "Video"),
+  "watch.kind.held": T(
+    "Held — check the identity on the iPhone", "Zadržená zpráva — ověřte identitu na iPhonu", "Zurückgehaltene Nachricht — Identität auf dem iPhone prüfen",
+    "Mensaje retenido: comprueba la identidad en el iPhone", "Messaggio trattenuto — verifica l’identità sull’iPhone", "Message retenu — vérifiez l’identité sur l’iPhone",
+    "Zadržaná správa — overte identitu na iPhone", "Zadržano sporočilo — preverite identiteto v iPhonu", "Pidätetty viesti – tarkista identiteetti iPhonessa",
+  ),
+  "watch.kind.fn": T("Command", "Příkaz", "Befehl", "Comando", "Comando", "Commande", "Príkaz", "Ukaz", "Komento"),
+
+  /* ------------------------------ quick replies (natural, not literal) */
+  "watch.quick.1": T("OK", "OK", "OK", "OK", "OK", "OK", "OK", "V redu", "OK"),
+  "watch.quick.2": T("Yes", "Ano", "Ja", "Sí", "Sì", "Oui", "Áno", "Da", "Kyllä"),
+  "watch.quick.3": T("No", "Ne", "Nein", "No", "No", "Non", "Nie", "Ne", "Ei"),
+  "watch.quick.4": T("On my way", "Už jdu", "Bin unterwegs", "Voy de camino", "Sto arrivando", "J’arrive", "Už idem", "Na poti sem", "Olen tulossa"),
+  "watch.quick.5": T("I'll write later", "Napíšu později", "Ich schreibe später", "Te escribo luego", "Ti scrivo dopo", "Je réponds plus tard", "Napíšem neskôr", "Napišem kasneje", "Kirjoitan myöhemmin"),
+
+  /* --------------------------------------------- the system NFC sheet */
+  "nfc.ios.hold": T(
+    "Hold the card near the top of your iPhone", "Přiložte kartu k horní části iPhonu", "Karte an den oberen Teil des iPhone halten",
+    "Acerca la tarjeta a la parte superior del iPhone", "Avvicina la carta alla parte superiore dell’iPhone", "Approchez la carte du haut de votre iPhone",
+    "Priložte kartu k hornej časti iPhonu", "Prislonite kartico na zgornji del iPhona", "Pidä korttia iPhonen yläosaa vasten",
+  ),
+  "nfc.ios.holdWrite": T(
+    "Hold the card near the top of your iPhone to write it", "Pro zápis přiložte kartu k horní části iPhonu", "Zum Schreiben die Karte an den oberen Teil des iPhone halten",
+    "Para escribir, acerca la tarjeta a la parte superior del iPhone", "Per scrivere, avvicina la carta alla parte superiore dell’iPhone", "Pour écrire, approchez la carte du haut de votre iPhone",
+    "Na zápis priložte kartu k hornej časti iPhonu", "Za zapis prislonite kartico na zgornji del iPhona", "Pidä korttia iPhonen yläosaa vasten kirjoitusta varten",
+  ),
+  /** A template's step: "2/7 · READ RECORD (AFL)" — {0} the step, {1} of how many, {2} its label. */
+  "nfc.ios.step": SAME("{0}/{1} · {2}"),
+  "nfc.ios.multipleTags": T(
+    "More than one card — hold just one.", "Víc než jedna karta — přiložte jen jednu.", "Mehr als eine Karte — halten Sie nur eine an.",
+    "Hay más de una tarjeta: acerca solo una.", "Più di una carta — avvicinane solo una.", "Plus d’une carte — n’en approchez qu’une.",
+    "Viac ako jedna karta — priložte len jednu.", "Več kot ena kartica — prislonite samo eno.", "Useampi kuin yksi kortti – pidä vain yhtä.",
+  ),
+
+  /* ----------------------- the NFC screens (ios/M5cet/Parts/NFC) */
+  /** A dialog's plain OK (Android's dialogs say it in code). */
+  "nfc.ok": T("OK", "OK", "OK", "Aceptar", "OK", "OK", "OK", "V redu", "OK"),
+  // The permanent lock (ndef-lock) asks first: it cannot be undone.
+  "nfc.lock.title": T(
+    "Make the tag read-only?", "Nastavit tag jen pro čtení?", "Den Tag schreibgeschützt machen?",
+    "¿Dejar la etiqueta en solo lectura?", "Rendere il tag di sola lettura?", `Passer le tag en lecture seule${NB}?`,
+    "Nastaviť tag len na čítanie?", "Želite značko nastaviti samo za branje?", "Tehdäänkö tagista vain luettava?",
+  ),
+  "nfc.lock.text": T(
+    "The tag's content can never be changed again — not by this app, not by any other. This cannot be undone.",
+    "Obsah tagu už nikdy nepůjde změnit — touto ani žádnou jinou aplikací. Nelze to vrátit zpět.",
+    "Der Inhalt des Tags lässt sich danach nie mehr ändern — weder mit dieser noch mit einer anderen App. Das kann nicht rückgängig gemacht werden.",
+    "El contenido de la etiqueta ya no se podrá cambiar nunca, ni con esta app ni con ninguna otra. No se puede deshacer.",
+    "Il contenuto del tag non potrà più essere modificato, né con questa app né con altre. L’operazione non si può annullare.",
+    "Le contenu du tag ne pourra plus jamais être modifié — ni par cette app, ni par une autre. C’est irréversible.",
+    "Obsah tagu sa už nikdy nebude dať zmeniť — touto ani žiadnou inou aplikáciou. Nedá sa to vrátiť späť.",
+    "Vsebine značke ne bo mogoče nikoli več spremeniti — ne s to ne s katero koli drugo aplikacijo. Tega ni mogoče razveljaviti.",
+    "Tagin sisältöä ei voi enää koskaan muuttaa – ei tällä eikä millään muulla sovelluksella. Toimintoa ei voi perua.",
+  ),
+  "nfc.lock.confirm": T("Make read-only", "Nastavit jen pro čtení", "Schreibschutz setzen", "Dejar en solo lectura", "Rendi di sola lettura", "Passer en lecture seule", "Nastaviť len na čítanie", "Nastavi samo za branje", "Tee vain luettavaksi"),
+  // A card report's export — the web's words (client/src/lib/i18n-nfc.ts, i18n/locales/<lang>/web.json).
+  "nfc.report.full": T("Full report", "Celý výpis", "Vollständiger Bericht", "Informe completo", "Report completo", "Rapport complet", "Celý výpis", "Celoten izpis", "Täydellinen raportti"),
+  "nfc.report.export": T("Export", "Export", "Export", "Exportar", "Esporta", "Exporter", "Export", "Izvoz", "Vie"),
+  "nfc.report.files": T("Files to download", "Soubory ke stažení", "Dateien zum Herunterladen", "Archivos para descargar", "File da scaricare", "Fichiers à télécharger", "Súbory na stiahnutie", "Datoteke za prenos", "Ladattavat tiedostot"),
+  "nfc.report.html": T("HTML report", "HTML výpis", "HTML-Bericht", "Informe HTML", "Report HTML", "Rapport HTML", "HTML výpis", "Izpis HTML", "HTML-raportti"),
+  "nfc.report.saved": T("Saved: {name}", "Uloženo: {name}", "Gespeichert: {name}", "Guardado: {name}", "Salvato: {name}", `Enregistré${NB}: {name}`, "Uložené: {name}", "Shranjeno: {name}", "Tallennettu: {name}"),
+  /** An iPad (or an iPhone without a reader): "nfc.unavailable" stays the phone's words for Android. */
+  "nfc.unavailable.device": T(
+    "This device has no NFC reader.", "Toto zařízení nemá čtečku NFC.", "Dieses Gerät hat kein NFC-Lesegerät.",
+    "Este dispositivo no tiene lector NFC.", "Questo dispositivo non ha un lettore NFC.", "Cet appareil n’a pas de lecteur NFC.",
+    "Toto zariadenie nemá čítačku NFC.", "Ta naprava nima bralnika NFC.", "Tässä laitteessa ei ole NFC-lukijaa.",
+  ),
+
+  /* -------- People: a safety number's QR (ios/M5cet/Parts/People) — the web's words (client/src/lib/i18n-security.ts) */
+  "sec.safety.scan": T("Scan their code", "Naskenovat jeho kód", "Seinen Code scannen", "Escanear su código", "Scansiona il suo codice", "Scanner son code", "Naskenovať kód druhého", "Skeniraj kodo drugega", "Skannaa toisen koodi"),
+  "sec.safety.verified": T(
+    "Verified: this device belongs to the person you compared numbers with.",
+    "Ověřeno: toto zařízení patří tomu, s kým jste čísla porovnali.",
+    "Bestätigt: Dieses Gerät gehört der Person, mit der Sie die Nummer verglichen haben.",
+    "Verificado: este dispositivo pertenece a la persona con la que has comparado los números.",
+    "Verificato: questo dispositivo appartiene alla persona con cui hai confrontato i numeri.",
+    `Vérifié${NB}: cet appareil appartient à la personne avec qui vous avez comparé les numéros.`,
+    "Overené: toto zariadenie patrí tomu, s kým ste porovnali čísla.",
+    "Preverjeno: ta naprava pripada osebi, s katero ste primerjali številko.",
+    "Vahvistettu: tämä laite kuuluu henkilölle, jonka kanssa vertasit numeroita.",
+  ),
+  "sec.safety.mismatch": T(
+    "The numbers do NOT match — this is not the same device.",
+    "Čísla se NESHODUJÍ — nejde o stejné zařízení.",
+    "Die Nummern stimmen NICHT überein — es ist nicht dasselbe Gerät.",
+    "Los números NO coinciden: no es el mismo dispositivo.",
+    "I numeri NON corrispondono — non è lo stesso dispositivo.",
+    "Les numéros ne correspondent PAS — ce n’est pas le même appareil.",
+    "Čísla sa NEZHODUJÚ — nejde o rovnaké zariadenie.",
+    "Številki se NE ujemata — to ni ista naprava.",
+    "Numerot EIVÄT täsmää – tämä ei ole sama laite.",
+  ),
 };
+
+const findNode = (node: ANode, id: string): ANode | null => {
+  if (node.id === id) return node;
+  for (const c of node.children ?? []) { const f = findNode(c, id); if (f) return f; }
+  return null;
+};
+
+const parentOf = (node: ANode, id: string): ANode | null => {
+  for (const c of node.children ?? []) {
+    if (c.id === id) return node;
+    const f = parentOf(c, id);
+    if (f) return f;
+  }
+  return null;
+};
+
+/** The Apple Watch rows: a switch bound to watch.on in the shape of its neighbours (icon, label, switch), and its hint. */
+export function watchRows(): ANode[] {
+  return [
+    {
+      id: "watch", el: "row", style: { padding: "10 12 10 20", gap: 18, align: "center" }, children: [
+        // Lucide has no watch in the design's icon set (client/src/lib/menu-icons-data.ts): a watch face.
+        { id: "watch-icon", el: "icon", props: { icon: "clock-3", size: 22, color: "@muted" } },
+        { id: "watch-label", el: "text", text: "{_'watch.setting'}", style: { size: 16, weight: 1 } },
+        { id: "watch-switch", el: "switch", props: { setting: IOS_WATCH_SETTING } },
+      ],
+    },
+    { id: "watch-hint", el: "text", text: "{_'watch.setting.hint'}", props: { variant: "caption" }, style: { fg: "@muted", padding: "0 20 8 64" } },
+  ];
+}
+
+/**
+ * Settings › Notifications gets the Apple Watch switch after "Hide on the
+ * lock screen" (where else a message's content shows), before the quiet hours.
+ */
+function addWatchSwitch(screens: Record<string, ANode>): void {
+  const notify = screens["settings.notify"];
+  if (!notify || findNode(notify, "watch")) return;
+  const parent = parentOf(notify, "lockscreen-hint") ?? parentOf(notify, "s-quiet") ?? findNode(notify, "list") ?? notify;
+  const kids = parent.children ?? [];
+  const after = kids.findIndex((k) => k.id === "lockscreen-hint");
+  const before = kids.findIndex((k) => k.id === "s-quiet");
+  kids.splice(after >= 0 ? after + 1 : before >= 0 ? before : kids.length, 0, ...watchRows());
+  parent.children = kids;
+}
+
+/** Android's default design (deep copy — Android's own stays as it is) with the iOS look and the iOS-only items. */
+function iosDefaultDesign(): AndroidDesign {
+  const d = structuredClone(DEFAULT_DESIGN);
+  d.theme = IOS_THEME;
+  d.animations = IOS_ANIMATIONS;
+  addWatchSwitch(d.screens);
+  for (const lang of LANGS) for (const [key, texts] of Object.entries(IOS_STRINGS)) d.strings[lang][key] = texts[lang];
+  d.rev = "default";
+  return d;
+}
+
+export const IOS_DEFAULT_DESIGN: AndroidDesign = iosDefaultDesign();
 
 /** The look as a template of Settings › Appearance (first in the iOS app's list). */
 export const IOS_LOOK_THEME: AndroidTheme = {

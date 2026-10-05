@@ -6,7 +6,8 @@ Model designu, `Expr`, akce, `ActionGuard` a `ScreenResolver` jsou v `M5Kit/M5De
 `RenderNode` 1:1 a nic z designu nevymýšlí: každý text je z designu (řetězce, překladač); doslovné texty jen v DEBUG.
 
 * Výchozí design je v balíčku aplikace: `Bundle.main.url(forResource: "default-design", withExtension: "json", subdirectory: "m5")`
-  (také `icons.json`, `themes.json`) — kopíruje je build fáze „Copy design assets“ z `android/app/src/main/assets/m5/`
+  (také `icons.json`, `themes.json`) — kopíruje je build fáze „Copy design assets“ z `ios/Design/m5/` (design iOS:
+  výchozí design Androidu se vzhledem iOS a položkami jen pro iOS, zapisuje ho `npx tsx script/ios-assets.ts`)
   (`Kit/DesignAssets`).
 * `App/RootView.swift` ukazuje `Shell/DesignShell`; každé okno (iPad: více oken) má vlastní `DesignHost` (obrazovka,
   zásobník Zpět, `$form`, overlay) nad sdílenými `DesignServices` (`AppModel.design`: design, nastavení, jazyk, tři kontrakty).

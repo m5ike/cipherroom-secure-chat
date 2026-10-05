@@ -113,7 +113,12 @@ describe("the iOS design", () => {
   it("is Android's default design with the iOS look, and passes the same checks", () => {
     const clean = design.sanitizeIosDesign(design.IOS_DEFAULT_DESIGN);
     expect(Object.keys(clean.screens).sort()).toEqual([...androidDesign.SCREEN_IDS].sort());
-    expect(clean.screens).toEqual(androidDesign.sanitizeDesign(androidDesign.DEFAULT_DESIGN).screens);
+    // The screens are Android's, but Settings › Notifications has the Apple Watch switch (test/ios-assets.test.ts).
+    const { "settings.notify": iosNotify, ...iosScreens } = clean.screens;
+    const { "settings.notify": androidNotify, ...androidScreens } = androidDesign.sanitizeDesign(androidDesign.DEFAULT_DESIGN).screens;
+    expect(iosScreens).toEqual(androidScreens);
+    expect(JSON.stringify(iosNotify)).toContain('"setting":"watch.on"');
+    expect(JSON.stringify(androidNotify)).not.toContain("watch.on");
     expect(clean.theme.light.primary).toBe("#0064e0");
     expect(clean.theme.dark.background).toBe("#000000");
     expect(clean.animations.screen).toMatchObject({ type: "slide-left", ms: 350 });
