@@ -866,7 +866,7 @@ public final class RoomCore {
         events.added(m, fresh: fresh && !m.mine && m.kind != "sys")
     }
 
-    private func update(_ id: String, _ body: (inout ChatMessage) -> Void) -> ChatMessage? {
+    func update(_ id: String, _ body: (inout ChatMessage) -> Void) -> ChatMessage? {
         guard let i = messages.lastIndex(where: { $0.id == id }) else { return nil }
         body(&messages[i])
         events.changed(messages[i])

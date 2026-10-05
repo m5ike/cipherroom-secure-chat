@@ -268,7 +268,7 @@ final class ComposerModel {
             jpeg = scaled.jpegData(compressionQuality: CGFloat(q) / 100) ?? Data()
             if jpeg.count <= Self.inlineMax { break }
         }
-        sendBytes(jpeg, name: "photo-\(Millis.now).jpg", mime: "image/jpeg", image: true)
+        sendBytes(jpeg, name: "photo-\(EpochMs.now).jpg", mime: "image/jpeg", image: true)
     }
 
     /// Any file (the document picker's security-scoped URL): inline when small, else stored in the vault and transferred.
@@ -294,13 +294,13 @@ final class ComposerModel {
     /// A recorded voice message (hlas-<ms>.m4a, audio/mp4) — inline when small, else by transfer.
     func sendVoiceMessage(_ data: Data, mime: String = "audio/mp4") {
         let ext = mime.contains("mp4") || mime.contains("aac") ? "m4a" : mime.contains("wav") ? "wav" : mime.contains("ogg") ? "ogg" : mime.contains("webm") ? "webm" : "mp3"
-        sendBytes(data, name: "hlas-\(Millis.now).\(ext)", mime: mime.isEmpty ? "audio/mpeg" : mime, image: false)
+        sendBytes(data, name: "hlas-\(EpochMs.now).\(ext)", mime: mime.isEmpty ? "audio/mpeg" : mime, image: false)
     }
 
     /// A text spoken into a voice message (as voice): sent without the text; the field loses only `spoken`.
     func sendVoiceClip(_ data: Data, mime: String, spoken: String) {
         let ext = mime.contains("mp4") || mime.contains("aac") ? "m4a" : mime.contains("wav") ? "wav" : mime.contains("ogg") ? "ogg" : mime.contains("webm") ? "webm" : "mp3"
-        sendBytes(data, name: "hlas-\(Millis.now).\(ext)", mime: mime.isEmpty ? "audio/mpeg" : mime, image: false, caption: "")
+        sendBytes(data, name: "hlas-\(EpochMs.now).\(ext)", mime: mime.isEmpty ? "audio/mpeg" : mime, image: false, caption: "")
         clearAfterSend(sent: spoken)
         if plan.sealed { host?.flash(title: "", text: host?.translator.t("send.code.noVoice") ?? "", level: .info) }
     }
