@@ -6,6 +6,7 @@
 
 import Foundation
 @testable import M5NFC
+import M5Core
 
 class SimCard: ApduChannel {
     var seen = [String]()

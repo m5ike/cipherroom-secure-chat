@@ -10,6 +10,7 @@ import Testing
 import Foundation
 import CryptoKit
 @testable import M5NFC
+import M5Core
 
 enum PaceVectors {
     static let all: NfcJSONObject = try! Repo.json("test/fixtures/pace-vectors.json").objectValue!

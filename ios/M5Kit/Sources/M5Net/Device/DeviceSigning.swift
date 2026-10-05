@@ -10,6 +10,8 @@
 
 import CryptoKit
 import Foundation
+import M5Core
+import M5Crypto
 
 /* ------------------------------------------------------------ the signer */
 

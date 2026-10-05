@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import M5Net
+import M5Core
 
 /// The creation options as server/accounts/routes.ts registrationOptions writes them.
 private let creation: NetJSON = [

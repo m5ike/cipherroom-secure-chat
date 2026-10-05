@@ -7,6 +7,7 @@
 import Testing
 import Foundation
 @testable import M5NFC
+import M5Core
 
 func cmd(_ json: String) -> ModelNfc.Command { ModelNfc.parse(["command": try! NfcJSON.parse(json)]) }
 

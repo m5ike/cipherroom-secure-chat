@@ -9,6 +9,7 @@
 // about; the data still shown) — Account.nextSlotRev / noteSlotRev.
 
 import Foundation
+import M5Core
 
 /// One stored part: its ciphertext (base64) and when the server stored it.
 public struct VaultPart: Sendable, Equatable {

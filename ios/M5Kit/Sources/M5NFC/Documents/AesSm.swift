@@ -11,6 +11,7 @@
 // and each unwrap.
 
 import Foundation
+import M5Core
 
 public final class AesSm {
     public let ksenc: [UInt8], ksmac: [UInt8]

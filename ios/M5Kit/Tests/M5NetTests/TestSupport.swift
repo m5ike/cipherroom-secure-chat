@@ -9,6 +9,8 @@ import Foundation
 import Synchronization
 import Testing
 @testable import M5Net
+import M5Core
+import M5Crypto
 
 /* --------------------------------------------------------------- files */
 

@@ -4,6 +4,7 @@
 // Reading only: names, dates, OIDs, hashes. Nothing here verifies a signature.
 
 import Foundation
+import M5Core
 
 public enum Asn1 {
     public static let SEQ = 0x30, SET = 0x31, OID = 0x06, INT = 0x02, OCTETS = 0x04, BITS = 0x03
@@ -144,7 +145,7 @@ public enum Asn1 {
         if let f = k.first, f.tag == 0xa0 { k.removeFirst() } // [0] version
         let serial = at(k, 0), issuer = at(k, 2), validity = at(k, 3), subject = at(k, 4)
         let v = kids(validity)
-        if let serial { out["serial"] = .string(Hex.encode(serial.value)) }
+        if let serial { out["serial"] = .string(Hex.upper(serial.value)) }
         func putNonEmpty(_ key: String, _ s: String) { if !s.isEmpty { out[key] = .string(s) } }
         putNonEmpty("issuer", nameText(issuer))
         putNonEmpty("subject", nameText(subject))

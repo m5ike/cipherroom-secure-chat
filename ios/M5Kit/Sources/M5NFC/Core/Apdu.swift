@@ -3,6 +3,7 @@
 // and MRTD readers need. Pure functions, plus `transmitSmart` over an `ApduChannel`.
 
 import Foundation
+import M5Core
 
 public enum Apdu {
     /// A short-form case 1..4 APDU. `le` nil = no Le; 0 = "256 / as much as possible".
@@ -147,7 +148,7 @@ public enum BerTlv {
         var sb = ""
         let pad = String(repeating: "  ", count: depth)
         for n in list {
-            let tagHex = Hex.encode(n.tagBytes)
+            let tagHex = Hex.upper(n.tagBytes)
             if let kids = n.children, !kids.isEmpty {
                 sb += "\(pad)\(tagHex) (\(n.length))\n"
                 sb += format(kids, depth: depth + 1) + "\n"
