@@ -218,7 +218,7 @@ TURN, zdroj pro historii, buzení při hovoru), Notifications, Location, Contact
 `engine.roomId` (`RoomModel.serverId` = slepé id místnosti `r3.…`), `engine.usageStore` (`CoreFnUsage`, záznam
 `fn-usage`); `ToolsCallLog.shared.messages` = `CoreCallRooms` (historie i nepřipojených místností z trezoru);
 `core.fn?.load()` po změně místností (nejvýš jednou za 15 s) a po změně účtu, `forget()` při zamčení; `Texts.setProvider`
-z překladače designu (`AppCore.installTexts`, znovu po `lang.set`); `$voice` z `core.tools.voice`; hlasové prostředí
+z překladače designu (`AppCore.installTexts`, znovu po `lang.set` a po aktivaci balíčku designu — `DesignServices.onTextsChanged`, kterou poslouchají i Notifier a hodinky); `$voice` z `core.tools.voice`; hlasové prostředí
 (`CoreVoiceEnvironment`) zná skupiny účtu. Odpověď modelu je od system-messenger (M5Proto `addModelAnswer`), postup
 `{p, text}` — `PreviewCore` dělá totéž.
 

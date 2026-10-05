@@ -2,6 +2,7 @@
 //   -M5People "<action>:<argument>"   runs one People action once the room's panel shows
 //                                     ("people.open:peer-alice", "people.verify:peer-alice", "msg.info:m8", "msg.sender:m1")
 //   -M5UsersDock left|right|bottom|none, -M5UsersAutoHide YES   the panel's place in sample mode
+//   -M5UsersOpen NO                    the panel closed (the room's messages in full)
 // e.g. xcrun simctl launch <udid> cz.m5cet.app -M5Screen room -M5People msg.info:m8
 // Compiled out of Release.
 

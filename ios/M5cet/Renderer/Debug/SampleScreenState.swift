@@ -38,6 +38,25 @@ final class SampleScreenState: ScreenStateProvider {
         return v
     }
 
+    /// The app's sample mode (-M5Screen): the parts' own variables ($profile, $notify…) over the console's samples,
+    /// as the app's state adds them (the samples lack what the parts compute, e.g. Settings › Profile's "who sees
+    /// what"). Off in tests (the samples alone).
+    @ObservationIgnored var withParts = false
+
+    func variables(for screen: String, context: ScreenContext, host: DesignHost?) -> [String: DesignValue] {
+        var v = variables(for: screen, context: context)
+        guard withParts else { return v }
+        var registries = [CoreModels.shared.variables]
+        if let core = AppCore.current, core.models.variables !== CoreModels.shared.variables { registries.insert(core.models.variables, at: 0) }
+        for r in registries { for (k, x) in r.values(for: screen, host: host) { v[k] = x } }
+        // What the window's parts put in $form (a person's detail, a forward) over the sample's $form.
+        if let host, var f = v["form"]?.objectValue {
+            for (k, x) in host.form { f[k] = x }
+            v["form"] = .object(f)
+        }
+        return v
+    }
+
     var define: DesignValue { .object([:]) }
 
     /// A signed-in account (Settings › User's sample).

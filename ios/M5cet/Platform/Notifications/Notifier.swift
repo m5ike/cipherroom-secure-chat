@@ -131,6 +131,10 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, LockParticipan
     @discardableResult
     func requestAuthorization() async -> Bool {
         guard let system else { return false }
+        #if DEBUG
+        // Screenshots on a simulator nobody taps (-M5NoNotifyAsk YES): the system's question would cover the screen.
+        if UserDefaults.standard.bool(forKey: "M5NoNotifyAsk") { return false }
+        #endif
         let settings = await system.notificationSettings()
         if settings.authorizationStatus != .notDetermined { return settings.authorizationStatus == .authorized }
         return (try? await system.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
