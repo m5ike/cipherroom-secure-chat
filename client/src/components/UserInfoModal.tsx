@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { QrCodeView } from "./SharePanel";
 import { safetyNumber } from "../lib/identity";
 import { t, type Lang } from "../lib/i18n";
+import { formatBytes } from "../lib/format";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
 import type { PresenceFacts } from "../lib/presence";
@@ -91,10 +92,9 @@ function dur(ms: number | null, lang: Lang): string {
   return `${sec} ${t(lang, "userinfo.s")}`;
 }
 
-function bytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} kB`;
-  return `${(n / (1024 * 1024)).toFixed(2)} MB`;
+/** 6.13: a size in the language (lib/format.ts). */
+function bytes(n: number, lang: Lang): string {
+  return formatBytes(n, lang);
 }
 
 export function UserInfoView({ info, lang }: { info: UserInfo; lang: Lang }) {
@@ -119,7 +119,7 @@ export function UserInfoView({ info, lang }: { info: UserInfo; lang: Lang }) {
       ...seen,
       name: info.name, avatar: info.avatar, peerShort: info.peerId.slice(-16), username: info.username, duration: dur(info.connectedForMs, lang),
       ip: info.ip, candidateType: info.candidateType, transport: info.transport, appType: info.appType, usesServer: info.usesServer,
-      sent: bytes(info.sentBytes), recv: bytes(info.recvBytes), security: info.security, fingerprint: info.fingerprint,
+      sent: bytes(info.sentBytes, lang), recv: bytes(info.recvBytes, lang), security: info.security, fingerprint: info.fingerprint,
       hasSafety: Boolean(safety), number, digits, verified: Boolean(safety?.verified), result, scanning, canScan,
     },
     actions: {

@@ -18,7 +18,7 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type Ref } from "react";
 import { Bot, Calculator, ChartBar, CircleHelp, CloudSun, History, IdCard, List, Lock, MessageSquareText, Network, PhoneCall, PhoneForwarded, Receipt, SearchX, ToggleLeft, Users, X } from "lucide-react";
 import type { Command } from "../lib/functions";
-import { t, tf, type Lang } from "../lib/i18n";
+import { t, tf, tp, type Lang } from "../lib/i18n";
 import { MENU_ICONS } from "../lib/menu-icons-data";
 import { modelIdentity } from "../lib/system-messenger";
 import {
@@ -137,7 +137,7 @@ export function CommandSuggest({ lang, list, hint, active, position, onActive, o
     if (item.kind === "more") {
       return (
         <div key={item.id} {...common} className={`sug-row sug-row--more${on ? " is-active" : ""}`}>
-          {tf(lang, "suggest.more", { n: item.more ?? 0 })}
+          {tp(lang, "suggest.more", item.more ?? 0)}
         </div>
       );
     }

@@ -47,6 +47,7 @@ import { M5CardPanel } from "./M5CardPanel";
 import type { M5Record } from "../lib/nfc/m5card";
 import { runTemplate, type EidKey, type TemplateProgress, type TemplateRun } from "../lib/nfc/template-runner";
 import { TemplateMenu, TemplateRunView, type NfcChatBridge } from "./NfcTemplatePanel";
+import { formatDateTime } from "../lib/format";
 
 export type NfcWorkbenchProps = {
   lang: Lang;
@@ -875,7 +876,7 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
           ) : null}
           {writtenInvite ? (
             <div className="nfcwb__banner" role="status" data-testid="conn-invite">
-              {tf(lang, "nfc.conn.inviteWritten", { uses: writtenInvite.maxUses, expires: new Date(writtenInvite.expiresAt).toLocaleString(lang) })}
+              {tf(lang, "nfc.conn.inviteWritten", { uses: writtenInvite.maxUses, expires: formatDateTime(writtenInvite.expiresAt, lang) })}
               <button type="button" className="nfcwb__btn" onClick={doRevokeInvite} disabled={!!busy}>{t("nfc.conn.revoke")}</button>
             </div>
           ) : null}

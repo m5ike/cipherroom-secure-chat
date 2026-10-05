@@ -24,7 +24,7 @@ import { TEMPLATE_VIEWS, templateProblems, type ApduTemplate, type TemplateView 
 import type { TemplateProgress, TemplateRun } from "../lib/nfc/template-runner";
 import { readableHtml, runFileName, runMasks, templateView, viewMime } from "../lib/nfc/template-views";
 import { FnHtml } from "./fn/FnHtml";
-import { t as translate, tf, type Lang } from "../lib/i18n";
+import { t as translate, tf, tp, type Lang } from "../lib/i18n";
 
 /* ------------------------------------------------------------ the chat side */
 
@@ -88,7 +88,7 @@ export function TemplateMenu({ lang, templates, disabled, onPick, onClose }: { l
           <div className="nfcwb__tplgroup-title">{tr(`nfc.tpl.group.${g.group}`)}</div>
           {g.entries.map((e) => {
             const bad = e.problems.length > 0;
-            const meta = e.legacy === "apdu" ? tf(lang, "nfc.tpl.legacy.apdu", { n: e.commands ?? 1 }) : e.legacy === "op" ? tr("nfc.tpl.legacy.op") : tf(lang, "nfc.tpl.steps", { n: e.steps });
+            const meta = e.legacy === "apdu" ? tf(lang, "nfc.tpl.legacy.apdu", { n: e.commands ?? 1 }) : e.legacy === "op" ? tr("nfc.tpl.legacy.op") : tp(lang, "nfc.tpl.steps", e.steps);
             return (
               <button key={e.index} type="button" role="menuitem" className={`nfcwb__tplmenu-item${e.legacy ? " nfcwb__tplmenu-item--legacy" : ""}`} disabled={disabled || bad}
                 title={bad ? tf(lang, "nfc.tpl.problem", { problem: e.problems.join("; ") }) : e.note} onClick={() => onPick(e.template)}>

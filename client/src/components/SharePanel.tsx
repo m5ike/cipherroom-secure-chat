@@ -10,6 +10,7 @@ import { t, type Lang } from "../lib/i18n";
 import { estimatePassphrase } from "../lib/passphrase-strength";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
+import { formatDateTime } from "../lib/format";
 import {
   createShare, formatCode, normalizeCode, redeemShare, revokeShare, shareTargets,
   type CreatedShare, type ShareLinkParts, type SharePayload, type ShareTarget,
@@ -129,7 +130,7 @@ export function ShareResult({ lang, share, busy, onAnother, onRevoke }: {
       copied,
       showQr,
       targets: targets.map((target) => ({ id: target.id, icon: TARGET_ICONS[target.id], label: target.id === "copy" ? t(lang, "share.copyLink") : target.id === "native" ? t(lang, "share.more") : target.label })),
-      limits: t(lang, "share.limits").replace("{uses}", String(share.maxUses)).replace("{attempts}", String(share.maxAttempts)).replace("{expires}", new Date(share.expiresAt).toLocaleString(lang)),
+      limits: t(lang, "share.limits").replace("{uses}", String(share.maxUses)).replace("{attempts}", String(share.maxAttempts)).replace("{expires}", formatDateTime(share.expiresAt, lang)),
       busy,
     },
     actions: {

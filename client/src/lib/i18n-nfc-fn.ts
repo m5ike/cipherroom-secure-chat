@@ -9,6 +9,7 @@
 
 import type { Lang } from "./i18n";
 import type { NfcResultStatus } from "./nfc/command";
+import { isLocale, localeChain } from "./locales";
 
 type Dict = Record<string, string>;
 
@@ -51,12 +52,20 @@ const de: Dict = {
   "nfcfn.status.error": "NFC-Fehler: {message}",
 };
 
-export const NFC_FN_STRINGS: Record<Lang, Dict> = { cs, en, de };
+/** 6.13: nine languages — en / cs / de here, the rest from i18n/locales/<lang>/web-nfc-fn.json (lib/i18n-load.ts). */
+export const NFC_FN_STRINGS: Record<Lang, Dict> = { cs, en, de, es: {}, it: {}, fr: {}, sk: {}, sl: {}, fi: {} };
 
-/** t()/tf() for the NFC-in-Functions strings: fills {placeholders}, falls back to en, then the key. */
+/** A lazily loaded language's strings (lib/i18n-load.ts); the built-in ones keep theirs. */
+export function registerNfcFnStrings(lang: Lang, texts: Readonly<Dict>): void {
+  if (!isLocale(lang) || lang === "cs" || lang === "en" || lang === "de") return;
+  for (const [k, v] of Object.entries(texts ?? {})) if (typeof v === "string") NFC_FN_STRINGS[lang][k] = v.normalize("NFC");
+}
+
+/** t()/tf() for the NFC-in-Functions strings: fills {placeholders}, falls back along the language's chain (sk → cs → en), then the key. */
 export function nfcFnText(lang: Lang, key: string, vars: Record<string, string | number> = {}): string {
-  const raw = NFC_FN_STRINGS[lang]?.[key] ?? NFC_FN_STRINGS.en[key] ?? key;
-  return raw.replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
+  let raw: string | undefined;
+  for (const l of localeChain(isLocale(lang) ? lang : "en")) { raw = NFC_FN_STRINGS[l]?.[key]; if (raw !== undefined) break; }
+  return (raw ?? key).replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
 }
 
 /** A human line for an NfcResult status (for a flash or a log). */

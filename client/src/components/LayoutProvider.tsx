@@ -8,7 +8,7 @@ import { createContext, useContext, useMemo, type ReactNode } from "react";
 import { layoutBlocks, layoutTree, type LayoutConfig, type LayoutContext } from "../lib/layout-config";
 import { DEFAULT_LAYOUTS, type LayoutId } from "../lib/layouts";
 import type { LNode } from "../lib/layout-tree";
-import { t, type Lang } from "../lib/i18n";
+import { t, tp, type Lang } from "../lib/i18n";
 import type { LayoutEnv } from "./LayoutView";
 
 type Value = { config: LayoutConfig; ctx: LayoutContext; blocks: Record<string, LNode> };
@@ -27,8 +27,8 @@ export function useLayout(id: LayoutId): { tree: LNode; blocks: Record<string, L
 }
 
 /** The environment every layout of a component shares: the language, translations and templates. */
-export function useLayoutBase(id: LayoutId, lang: Lang): { tree: LNode; base: Pick<LayoutEnv, "lang" | "translate" | "blocks"> } {
+export function useLayoutBase(id: LayoutId, lang: Lang): { tree: LNode; base: Pick<LayoutEnv, "lang" | "translate" | "translatePlural" | "blocks"> } {
   const { tree, blocks } = useLayout(id);
-  const base = useMemo(() => ({ lang, translate: (key: string) => t(lang, key), blocks }), [lang, blocks]);
+  const base = useMemo(() => ({ lang, translate: (key: string) => t(lang, key), translatePlural: (key: string, n: number) => tp(lang, key, n), blocks }), [lang, blocks]);
   return { tree, base };
 }

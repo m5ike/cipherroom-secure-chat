@@ -130,7 +130,8 @@ export const USAGE_LIMIT = 150;
 const DAY = 86_400_000;
 
 export function usageKey(kind: UsageKind, key: string): string {
-  return `${kind}:${key.toLowerCase()}`;
+  // 6.13: one key for one name however its letters were composed (NFC: "č" typed as c + ˇ).
+  return `${kind}:${key.normalize("NFC").toLowerCase()}`;
 }
 
 export const valueUsageKey = (keyword: string, input: string, value: string) => usageKey("value", `${keyword}.${input}:${value}`);
@@ -512,13 +513,13 @@ export function usedIn(text: string, triggers: readonly SuggestTrigger[], comman
     const kw = /^([a-z0-9_-]{1,40})(?:\s|$)/i.exec(t.slice(first.length))?.[1]?.toLowerCase();
     if (kw && commands.some((c) => c.keyword.toLowerCase() === kw)) out.push(usageKey("command", kw));
   }
-  const names = new Set(uniquePeople(people).map((p) => p.name.toLowerCase()));
+  const names = new Set(uniquePeople(people).map((p) => p.name.normalize("NFC").toLowerCase()));
   for (const trig of triggers) {
     if (trig.action !== "mentions" && trig.action !== "tags") continue;
     const esc = trig.char.replace(/[.*+?^${}()|[\]\\/-]/g, "\\$&");
     for (const m of t.matchAll(new RegExp(`(?:^|\\s)${esc}([\\p{L}\\p{N}_][\\p{L}\\p{N}_.-]{0,39})`, "gu"))) {
       const word = m[1].replace(/[.-]+$/, "");
-      if (trig.action === "mentions" && names.has(word.toLowerCase())) out.push(usageKey("person", word));
+      if (trig.action === "mentions" && names.has(word.normalize("NFC").toLowerCase())) out.push(usageKey("person", word));
       if (trig.action === "tags") out.push(usageKey("tag", word));
     }
   }
@@ -561,7 +562,7 @@ const notice = (mode: SuggestList["mode"], kind: SuggestNotice["kind"], query: s
 function uniquePeople(people: readonly SuggestPerson[]): SuggestPerson[] {
   const by = new Map<string, SuggestPerson>();
   for (const p of people) {
-    const name = (p.name || "").trim().replace(/\s+/g, "_");
+    const name = (p.name || "").normalize("NFC").trim().replace(/\s+/g, "_");
     if (!name) continue;
     const had = by.get(name);
     if (!had || (had.away && !p.away)) by.set(name, { ...p, name });

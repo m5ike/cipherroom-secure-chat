@@ -31,6 +31,8 @@ export type LayoutEnv = {
   /** Reusable templates of the builder ("block" elements). */
   blocks?: Record<string, LNode>;
   translate?: (key: string) => string;
+  /** 6.13: "{$n|tp:'key'}" — a count with the language's plural form (lib/i18n.ts › tp). */
+  translatePlural?: (key: string, n: number) => string;
   lang?: string;
   /** Text formats a text element may ask for (props.format): "links" → linkify. */
   formats?: Record<string, (text: string) => ReactNode>;
@@ -512,7 +514,7 @@ function safe(nodes: SafeNode[], prefix: string): ReactNode[] {
 }
 
 function draw(tree: LNode, env: LayoutEnv): ReactNode {
-  const base = { translate: env.translate, lang: env.lang };
+  const base = { translate: env.translate, translatePlural: env.translatePlural, lang: env.lang };
   const run: Run = { env, debug: Boolean(env.debug ?? previewMode), opts: base, rawOpts: { ...base, raw: true }, errors: null, blockDepth: 0 };
   return compileNode(tree)(run, [env.data], tree.id);
 }

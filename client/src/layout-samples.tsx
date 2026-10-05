@@ -127,6 +127,7 @@ export function startProps(variant: string, lang: Lang): StartScreenProps {
     onOpenRoom: noop,
     onConnectProfile: noop,
     onSignIn: noop,
+    onLang: noop,
   };
 }
 

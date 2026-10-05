@@ -55,7 +55,7 @@ describe("the assistant", () => {
     release();
     await tick(40);
     expect(r.getByTestId("ai-answer").textContent).toBe("Ahoj, jak se máš?");
-    expect(r.container.querySelector(".ai-msg__stats")!.textContent).toBe("1.2 s · 7 tokenů");
+    expect(r.container.querySelector(".ai-msg__stats")!.textContent).toBe("1,2 s · 7 tokenů"); // 6.13: Czech decimal comma, Czech plural
     expect(r.container.querySelector(".ai-msg__reasoning-text")!.textContent).toBe("hmm");
     expect(calls[0]).toEqual({ model: "p/big", reasoning: "off", messages: [{ role: "user", content: "Ahoj" }] });
     // Shift+Enter is a new line, not a send.

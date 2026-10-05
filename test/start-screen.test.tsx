@@ -49,7 +49,9 @@ describe("the start screen's layout", () => {
     expect(LAYOUT_LABELS.start).toMatch(/Start screen/);
     const c = LAYOUT_CONTRACTS.start;
     expect(c.vars.map((v) => v.path)).toEqual(expect.arrayContaining(["$title", "$body", "$status", "$connected", "$room", "$signedIn", "$username", "$serverMode", "$profiles"]));
-    expect(c.actions.map((a) => a.name)).toEqual(["openRoom", "connectProfile", "signIn"]);
+    // 6.13: and the language picker ($lang, $langs, setLang).
+    expect(c.vars.map((v) => v.path)).toEqual(expect.arrayContaining(["$lang", "$langs"]));
+    expect(c.actions.map((a) => a.name)).toEqual(["openRoom", "connectProfile", "signIn", "setLang"]);
     expect(PREVIEW_VARIANTS.start.map((v) => v.id)).toEqual(["start", "connected", "signedin"]);
   });
 
@@ -62,9 +64,12 @@ describe("the start screen's layout", () => {
     expect(chat.some((n) => n.attrs?.["data-testid"] === "button-open-join")).toBe(false);
   });
 
-  it("is what the chat window showed before: the lock, the title, the text and Connect", () => {
+  it("is what the chat window showed before: the lock, the title, the text and Connect (6.13: + the language)", () => {
     const all = nodes(DEFAULT_LAYOUTS.start);
-    expect(all.filter((n) => n.el === "icon").map((n) => n.props?.icon)).toEqual(["lock", "radio"]);
+    expect(all.filter((n) => n.el === "icon").map((n) => n.props?.icon)).toEqual(["lock", "radio", "languages"]);
+    const picker = all.find((n) => n.el === "select")!;
+    expect(picker.attrs).toMatchObject({ "data-testid": "start-language" });
+    expect(picker.on).toEqual({ change: { action: "setLang" } });
     expect(all.find((n) => n.el === "heading")).toMatchObject({ tag: "h3", text: "{$title}" });
     expect(all.find((n) => n.el === "paragraph")).toMatchObject({ text: "{$body}" });
     const connect = all.find((n) => n.el === "button")!;

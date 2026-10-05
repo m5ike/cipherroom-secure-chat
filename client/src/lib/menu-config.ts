@@ -107,7 +107,7 @@ export const MENU_FNS: ReadonlyArray<{ id: string; label: string; param?: string
   { id: "toggleEditMode", label: "Edit Mode on / off" },
   { id: "toggleTone", label: "Light / dark" },
   { id: "setTheme", label: "Switch to a template", param: "template id (ios, windows, nord…)" },
-  { id: "setLang", label: "Switch the language", param: "cs, en or de" },
+  { id: "setLang", label: "Switch the language", param: "en, cs, de, es, it, fr, sk, sl or fi" },
   { id: "toggleNotifications", label: "Notifications on / off" },
   { id: "clearQuit", label: "Clear & Quit" },
 ];

@@ -11,7 +11,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { dictionary } from "../client/src/lib/i18n";
+import { extraDictionary, mainDictionary } from "../client/src/lib/i18n";
 import { SYSMSG_I18N } from "../client/src/lib/i18n-sysmsg";
 import { NFC_FN_STRINGS } from "../client/src/lib/i18n-nfc-fn";
 import { DEFAULT_STRINGS } from "../server/android/design";
@@ -29,7 +29,10 @@ const root = resolve(import.meta.dirname, "..");
 const dir = join(root, "i18n", "source");
 mkdirSync(dir, { recursive: true });
 const files: Record<string, Source> = {
-  "web.json": source(dictionary("en"), dictionary("cs"), dictionary("de")),
+  "web.json": source(mainDictionary("en"), mainDictionary("cs"), mainDictionary("de")),
+  // 6.13: texts added with the nine languages (client/src/lib/i18n-extra.ts), apart from web.json
+  // so the translations made from it stay complete; plural forms are "key#one" … "key#other".
+  "web-extra.json": source(extraDictionary("en"), extraDictionary("cs"), extraDictionary("de")),
   "web-sysmsg.json": source(SYSMSG_I18N.en as Table, SYSMSG_I18N.cs as Table, SYSMSG_I18N.de as Table),
   "web-nfc-fn.json": source(NFC_FN_STRINGS.en, NFC_FN_STRINGS.cs, NFC_FN_STRINGS.de),
   "android.json": source(DEFAULT_STRINGS.en, DEFAULT_STRINGS.cs, DEFAULT_STRINGS.de),

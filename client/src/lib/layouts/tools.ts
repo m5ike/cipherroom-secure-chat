@@ -31,8 +31,8 @@ export function peersTree(): LNode {
         ]),
         n("panel", { id: "peer-state", attrs: { class: "flex items-center gap-1" } }, [
           n("button", { id: "peer-profile", name: "Profile", attrs: { type: "button", class: "rounded-full p-1 text-muted-foreground hover:bg-accent", title: "{_'pf.open'}", "aria-label": "{_'pf.open'}", "data-testid": "peer-profile-{$p.id}" }, on: { click: { action: "info", arg: "$p.id" } } }, [icon("circle-user-round", "h-4 w-4", { "aria-hidden": "true" }, { id: "peer-profile-icon" })]),
-          icon("mic", "h-4 w-4 text-emerald-500", { "aria-label": "audio live" }, { id: "peer-live", if: "$p.audio === 'live'" }),
-          icon("mic-off", "h-4 w-4 text-amber-500", { "aria-label": "audio muted" }, { id: "peer-muted", if: "$p.audio === 'muted'" }),
+          icon("mic", "h-4 w-4 text-emerald-500", { "aria-label": "{_'audio.live'}" }, { id: "peer-live", if: "$p.audio === 'live'" }),
+          icon("mic-off", "h-4 w-4 text-amber-500", { "aria-label": "{_'audio.muted'}" }, { id: "peer-muted", if: "$p.audio === 'muted'" }),
           n("area", {
             id: "peer-status", attrs: { class: "rounded-full px-2 py-1 text-xs {if $p.status === 'open'}bg-emerald-500/15 text-emerald-700 dark:text-emerald-300{elseif $p.status === 'connecting'}bg-amber-500/15 text-amber-700 dark:text-amber-300{else}bg-muted text-muted-foreground{/if}" },
             text: "{$p.status}",
@@ -101,18 +101,18 @@ export function videoTree(): LNode {
 export function filesTree(): LNode {
   const { n } = treeBuilder("fp");
   return n("panel", { id: "files", name: "Files", attrs: { class: "space-y-3" } }, [
-    n("paragraph", { id: "files-intro", attrs: { class: "text-xs text-muted-foreground" }, text: "End-to-end encrypted P2P transfer (AES-GCM 256, 32 KiB chunks) with automatic server-relay fallback. Hard cap: 10 GiB. Configure your own limit in Settings." }),
+    n("paragraph", { id: "files-intro", attrs: { class: "text-xs text-muted-foreground" }, text: "{_'files.intro'}" }),
     n("panel", { id: "files-buttons", attrs: { class: "flex flex-wrap gap-2" } }, [
-      n("button", { id: "files-pick", name: "Choose file", attrs: { type: "button", disabled: "=!$connected", class: PRIMARY }, on: { click: { action: "pickFile" } }, text: "Choose file…" }),
+      n("button", { id: "files-pick", name: "Choose file", attrs: { type: "button", disabled: "=!$connected", class: PRIMARY }, on: { click: { action: "pickFile" } }, text: "{_'files.pick'}" }),
     ]),
     n("panel", { id: "files-active", name: "Transfers running", if: "($active|length) > 0", attrs: { class: "rounded-2xl border border-border bg-background p-3 text-xs" } }, [
-      n("panel", { id: "files-active-title", attrs: { class: "mb-1 font-semibold" }, text: "Probíhá {$active|length} přenos{if ($active|length) > 1}y{/if}:" }),
+      n("panel", { id: "files-active-title", attrs: { class: "mb-1 font-semibold" }, text: "{=($active|length)|tp:'files.active'}" }),
       n("list", { id: "files-active-list", attrs: { class: "space-y-1 font-mono" } }, [
         n("item", { id: "files-transfer", name: "A transfer", each: "$active", as: "tr", key: "$tr.id", text: "{$tr.line}" }),
       ]),
     ]),
-    n("panel", { id: "files-recent", if: "($recent|length) > 0", attrs: { class: "rounded-2xl border border-dashed border-border/60 p-3 text-[11px] text-muted-foreground" }, text: "{$recent|length} přenosů sledováno — podrobnosti v chatu." }),
-    n("paragraph", { id: "files-note", attrs: { class: "text-[11px] text-muted-foreground" }, text: "Files  10 GiB cannot transfer today. For very large volumes use the storage-provider plugin — see docs/files.md." }),
+    n("panel", { id: "files-recent", if: "($recent|length) > 0", attrs: { class: "rounded-2xl border border-dashed border-border/60 p-3 text-[11px] text-muted-foreground" }, text: "{=($recent|length)|tp:'files.tracked'}" }),
+    n("paragraph", { id: "files-note", attrs: { class: "text-[11px] text-muted-foreground" }, text: "{_'files.note'}" }),
   ]);
 }
 
@@ -180,7 +180,7 @@ export function speechTree(): LNode {
         }),
       ]),
     ]),
-    n("paragraph", { id: "speech-no-stt", if: "!$sttAvailable", attrs: { class: "text-[11px] text-muted-foreground" }, text: "Speech recognition is Chrome/Edge/Android only. Voice cloning of arbitrary samples is intentionally not implemented — see docs/speech.md." }),
+    n("paragraph", { id: "speech-no-stt", if: "!$sttAvailable", attrs: { class: "text-[11px] text-muted-foreground" }, text: "{_'speech.note'}" }),
   ]);
 }
 
@@ -202,13 +202,13 @@ export function connectionTree(): LNode {
       ]),
     ]),
     n("panel", { id: "conn-status", name: "State", if: "$status", attrs: { class: "rounded-xl border border-border bg-background p-2 text-xs font-mono" } }, [
-      n("panel", { id: "conn-state", text: "state: {$status.state}" }),
+      n("panel", { id: "conn-state", text: "{_'net.state'}: {$status.state}" }),
       n("panel", { id: "conn-rtt", text: "RTT: {$status.rttMs} ms" }),
-      n("panel", { id: "conn-strategy-now", text: "strategy: {$status.strategy}" }),
-      n("panel", { id: "conn-activity", text: "last activity: {$status.lastActivity}" }),
-      n("panel", { id: "conn-pong", text: "last pong: {$status.lastPong}" }),
+      n("panel", { id: "conn-strategy-now", text: "{_'net.strategy'}: {$status.strategy}" }),
+      n("panel", { id: "conn-activity", text: "{_'net.lastActivity'}: {$status.lastActivity}" }),
+      n("panel", { id: "conn-pong", text: "{_'net.lastPong'}: {$status.lastPong}" }),
     ]),
-    n("paragraph", { id: "conn-none", if: "!$status", attrs: { class: "text-xs text-muted-foreground" }, text: "Not connected." }),
+    n("paragraph", { id: "conn-none", if: "!$status", attrs: { class: "text-xs text-muted-foreground" }, text: "{_'net.notConnected'}" }),
     n("panel", { id: "conn-log-box" }, [
       n("heading", { id: "conn-log-title", attrs: { class: "mb-1 text-xs font-semibold" }, text: "{_'conn.log.title'}" }),
       n("paragraph", { id: "conn-log-empty", if: "($log|length) === 0", attrs: { class: "text-xs text-muted-foreground" }, text: "{_'conn.log.empty'}" }),

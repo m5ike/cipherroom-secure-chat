@@ -5,8 +5,9 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Check, ChevronDown, Search } from "lucide-react";
-import { FONT_CATEGORIES, FONT_SAMPLE, FONTS, ensureFonts, findFont, type FontCategory } from "@/lib/fonts";
-import { t, type Lang } from "@/lib/i18n";
+import { FONT_CATEGORIES, FONTS, ensureFonts, findFont, fontLabel, fontSample, needsLatinExt, type FontCategory } from "@/lib/fonts";
+import { fold } from "@/lib/suggest";
+import { langTag, t, type Lang } from "@/lib/i18n";
 
 type Props = {
   label: string;
@@ -31,11 +32,12 @@ export function FontPicker({ label, value, onChange, lang, allowGoogle, onConsen
 
   const current = value ? findFont(value) : undefined;
   const fonts = useMemo(() => {
-    const q = query.trim().toLowerCase();
+    // 6.13: the search ignores case and diacritics ("zaoblene" finds "Zaoblené") and sees the translated names.
+    const q = fold(query.trim()).text;
     return FONTS.filter((f) => offered.includes(f.category))
       .filter((f) => cat === "all" || f.category === cat)
-      .filter((f) => !q || f.label.toLowerCase().includes(q) || f.category.includes(q));
-  }, [query, cat, offered]);
+      .filter((f) => !q || fold(f.label).text.includes(q) || fold(fontLabel(f, (k) => t(lang, k))).text.includes(q) || f.category.includes(q));
+  }, [query, cat, offered, lang]);
 
   // A new filter starts at the top of the list.
   useEffect(() => { if (listRef.current) listRef.current.scrollTop = 0; }, [query, cat]);
@@ -71,7 +73,7 @@ export function FontPicker({ label, value, onChange, lang, allowGoogle, onConsen
         data-testid={testId ? `${testId}-toggle` : undefined}
       >
         <span className="ap-font__name" style={{ fontFamily: current?.stack || undefined }}>
-          {current ? current.label : emptyLabel ?? t(lang, "ap.font.theme")}
+          {current ? fontLabel(current, (k) => t(lang, k)) : emptyLabel ?? t(lang, "ap.font.theme")}
         </span>
         {current?.google ? <span className="ap-badge">Google</span> : null}
         <ChevronDown className={`ml-auto h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`} aria-hidden="true" />
@@ -126,14 +128,14 @@ export function FontPicker({ label, value, onChange, lang, allowGoogle, onConsen
                   data-testid={`font-opt-${f.id}`}
                 >
                   <span className="ap-font__item-main">
-                    <span className="ap-font__item-name" style={{ fontFamily: f.stack || undefined }}>{f.label}</span>
-                    <span className="ap-font__item-sample" style={{ fontFamily: f.stack || undefined }}>{FONT_SAMPLE}</span>
+                    <span className="ap-font__item-name" style={{ fontFamily: f.stack || undefined }}>{fontLabel(f, (k) => t(lang, k))}</span>
+                    <span className="ap-font__item-sample" style={{ fontFamily: f.stack || undefined }} lang={langTag(lang)}>{fontSample(lang)}</span>
                   </span>
                   <span className="ap-font__item-meta">
                     <span className="ap-font__cat">{t(lang, `ap.font.cat.${f.category}`)}</span>
-                    {!f.czech ? (
-                      <span className="ap-font__warn" title={t(lang, "ap.font.noCzech")}>
-                        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" /> CZ
+                    {!f.czech && needsLatinExt(lang) ? (
+                      <span className="ap-font__warn" title={t(lang, "ap.font.noLatinExt")}>
+                        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" /> {lang.toUpperCase()}
                       </span>
                     ) : null}
                     {selected ? <Check className="h-4 w-4 text-primary" aria-hidden="true" /> : null}

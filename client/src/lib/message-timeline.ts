@@ -12,6 +12,7 @@
 // PURE: no DOM, no React — the web and its tests use it alike.
 
 import type { ChatMessage, MessageAudit, MsgState } from "./chat-types";
+import { compareText, documentLang } from "./i18n-intl";
 
 export const MSG_STATES: readonly MsgState[] = [
   "created", "encrypted", "queued", "sent", "stored", "forwarded", "delivered", "read",
@@ -47,18 +48,20 @@ export function timelineOf(m: ChatMessage): MessageAudit[] {
 /** Who got my message and when: the away relay's and the peers' receipts, by recipient (the step's meta). */
 export type Receipt = { name: string; stored?: number; forwarded?: number; delivered?: number; read?: number };
 
-export function receiptsOf(m: ChatMessage): Receipt[] {
+/** 6.13: sorted by name in the language (Intl.Collator; the page's language when none is given). */
+export function receiptsOf(m: ChatMessage, lang: string = documentLang()): Receipt[] {
   if (!m.mine) return [];
   const by = new Map<string, Receipt>();
   for (const a of m.audit ?? []) {
     if (a.state !== "stored" && a.state !== "forwarded" && a.state !== "delivered" && a.state !== "read") continue;
-    const name = (a.meta ?? "").trim();
+    const name = (a.meta ?? "").trim().normalize("NFC");
     if (!name) continue;
     const r = by.get(name) ?? { name };
     if (r[a.state] === undefined || a.at < (r[a.state] as number)) r[a.state] = a.at;
     by.set(name, r);
   }
-  return [...by.values()].sort((a, b) => a.name.localeCompare(b.name));
+  const byName = compareText(lang);
+  return [...by.values()].sort((a, b) => byName(a.name, b.name));
 }
 
 /** A message's kinds, as the audit journal names them. */

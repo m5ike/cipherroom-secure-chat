@@ -25,7 +25,7 @@
 // room answer), as wide as its content wants (msg-bubble--fn-answer).
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { t, tf, type Lang } from "../lib/i18n";
+import { t, tf, tp, type Lang } from "../lib/i18n";
 import type { MsgState } from "../lib/chat-types";
 import { openSealed, type FnStatus, type MsgFlags } from "../lib/message-kinds";
 import { isModelSender } from "../lib/system-messenger";
@@ -43,6 +43,7 @@ import { osmLink } from "../lib/maps";
 import type { MapPreviewPolicy } from "../lib/client-config";
 import { mapView, placeOf } from "../lib/map-preview";
 import { LocationSheet } from "./LocationSheet";
+import { formatDateTime } from "../lib/format";
 import {
   MEDIA_ICON, attachmentBlob, dataUrlBytes, dataUrlToBlob, mediaKindOf, openAttachment, saveAttachment, shareAttachment, textPreview, type MediaKind,
 } from "../lib/attachment-media";
@@ -349,7 +350,7 @@ export function MessageBubble(props: MessageBubbleProps) {
     via: props.model?.via ? props.model.via.name : "",
     vanishing: Boolean(flags?.vanishSeconds),
     vanished: Boolean(props.vanished),
-    vanishedAtText: props.vanished && props.vanishedAt ? ` · ${new Date(props.vanishedAt).toLocaleString(lang)}` : "",
+    vanishedAtText: props.vanished && props.vanishedAt ? ` · ${formatDateTime(props.vanishedAt, lang)}` : "",
     collapsed: sysCollapsed,
     bubbleStyle: style,
     hasInfo: !isSystem && Boolean(props.onInfo),
@@ -405,6 +406,7 @@ export function MessageBubble(props: MessageBubbleProps) {
     data,
     lang,
     translate: (key) => t(lang, key),
+    translatePlural: (key, n) => tp(lang, key, n),
     // A command's output ("/keyword") is rendered as Markdown; ordinary text
     // is linkified. Sealed bodies stay linkified until they are opened.
     // 5.3: with its outputs, every one is shown, played or run (buttons, forms, media…).

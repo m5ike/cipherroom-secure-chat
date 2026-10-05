@@ -6,7 +6,8 @@
 // lives on the server (so it knows how to notify); a guest's in this browser.
 
 import { useEffect, useMemo, useState } from "react";
-import { t, tf, type Lang } from "../lib/i18n";
+import { t, tf, tp, type Lang } from "../lib/i18n";
+import { notifyLangOf } from "../lib/i18n-notify";
 import {
   NOTIFY_CHANNELS, NOTIFY_PRIVACY, privacyRank,
   type NotifyChannel, type NotifyKind, type NotifyLang, type NotifyPrivacy, type UserNotifyPrefs,
@@ -23,7 +24,8 @@ const BTN = "inline-flex min-h-9 items-center gap-2 rounded-xl border border-bor
 const INPUT = "min-h-9 rounded-lg border border-border bg-background px-2 text-sm";
 
 const zone = (): string => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } };
-const asLang = (lang: Lang): NotifyLang => (lang === "cs" || lang === "de" ? lang : "en");
+/** 6.13: the notification texts' language — the app's, or its nearest fallback they have (lib/i18n-notify.ts). */
+const asLang = (lang: Lang): NotifyLang => notifyLangOf(lang);
 
 /** What the layout builder's preview shows (it never touches the network). */
 const SAMPLE_ENDPOINTS: NotifyEndpoints = {
@@ -91,8 +93,8 @@ export function NotifySettings({ lang, signedIn, offline = false }: { lang: Lang
     const r = endpoints?.ready[id];
     if (r && !r.on) return t(lang, "notify.channel.off");
     if (r && !r.ready) return tf(lang, "notify.channel.unready", { reason: r.reason });
-    if (id === "android") return endpoints?.android.length ? tf(lang, "notify.channel.devices", { n: endpoints.android.length }) : t(lang, "notify.channel.none");
-    if (id === "webpush") return endpoints?.webpush ? tf(lang, "notify.channel.browsers", { n: endpoints.webpush }) : t(lang, "notify.channel.none");
+    if (id === "android") return endpoints?.android.length ? tp(lang, "notify.channel.devices", endpoints.android.length) : t(lang, "notify.channel.none");
+    if (id === "webpush") return endpoints?.webpush ? tp(lang, "notify.channel.browsers", endpoints.webpush) : t(lang, "notify.channel.none");
     const e = endpoints?.email;
     return e ? tf(lang, e.confirmed ? "notify.email.confirmed" : "notify.email.pending", { address: e.address }) : t(lang, "notify.channel.none");
   };

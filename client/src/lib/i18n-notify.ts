@@ -1,6 +1,9 @@
 // 6.7: the strings of one area (notify). cs / en / de; merged into i18n.ts.
 // The user's own notification settings (components/NotifySettings.tsx).
 
+import { isLang as isNotifyLang, type NotifyLang } from "./notify-template";
+import { isLocale, localeChain, type Locale } from "./locales";
+
 type Dict = Record<string, string>;
 
 const cs: Dict = {
@@ -178,3 +181,13 @@ const de: Dict = {
 };
 
 export const NOTIFY_I18N = { cs, en, de };
+
+/**
+ * 6.13: the language a notification is written in — the app's language when
+ * the notification texts (lib/notify-template.ts) have it, else the first of
+ * its fallbacks that they have (sk → cs), else English.
+ */
+export function notifyLangOf(lang: Locale): NotifyLang {
+  for (const l of localeChain(isLocale(lang) ? lang : "en")) if (isNotifyLang(l)) return l;
+  return "en";
+}

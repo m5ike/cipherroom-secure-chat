@@ -65,7 +65,10 @@ const ShareSection = lazy(() => import("./components/SharePanel").then((m) => ({
 const InvitePrompt = lazy(() => import("./components/SharePanel").then((m) => ({ default: m.InvitePrompt })));
 const AiPanel = lazy(() => import("./components/AiPanel").then((m) => ({ default: m.AiPanel })));
 const ConnectionsPanel = lazy(() => import("./components/ConnectionsPanel").then((m) => ({ default: m.ConnectionsPanel })));
-import { detectLang, t, tf, type Lang } from "./lib/i18n";
+import { detectLang, t, tf, tp, type Lang } from "./lib/i18n";
+import { notifyLangOf } from "./lib/i18n-notify";
+import { useLoadedLang } from "./lib/i18n-react";
+import { isLocale } from "./lib/locales";
 import type { ConnectionStatus } from "./lib/connection-keeper";
 import { dispatchCommand, isAdminCommand } from "./lib/admin-commands";
 import {
@@ -117,6 +120,7 @@ import type { SignInProgress } from "./components/AccountPanel";
 import { TransferCard } from "./components/TransferCard";
 import { MainMenu } from "./components/MainMenu";
 import { formatTime, formatFullDate, formatBytes } from "./lib/format";
+import { numberFormat } from "./lib/i18n-intl";
 import { fetchLayoutConfig, applyLayoutStyles, loadCachedLayout } from "./lib/layout-client";
 import { layoutBlocks, layoutTree, renderTemplate, type LayoutConfig, type LayoutContext } from "./lib/layout-config";
 import { renderLayout } from "./components/LayoutView";
@@ -355,19 +359,17 @@ async function fileToAttachment(file: File): Promise<AttachmentMeta> {
   };
 }
 
-function UnsupportedBanner({ reasons }: { reasons: string[] }) {
+function UnsupportedBanner({ lang, missing }: { lang: Lang; missing: string[] }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-background p-6 text-foreground">
       <div className="max-w-lg rounded-3xl border border-border bg-card p-6 shadow-sm">
-        <h1 className="text-xl font-semibold">M5cet — browser unsupported</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          This app needs modern browser crypto and WebRTC. Use a recent Edge, Chrome, Firefox, or Safari.
-        </p>
+        <h1 className="text-xl font-semibold">{t(lang, "caps.title")}</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{t(lang, "caps.body")}</p>
         <ul className="mt-4 space-y-1 text-sm">
-          {reasons.map((reason) => (
-            <li key={reason} className="flex gap-2">
+          {missing.map((code) => (
+            <li key={code} className="flex gap-2">
               <span aria-hidden="true">•</span>
-              <span>{reason}</span>
+              <span>{t(lang, `caps.${code}`)}</span>
             </li>
           ))}
         </ul>
@@ -580,7 +582,8 @@ function ChatApp() {
   }, []);
 
   const [prefs, setPrefsState] = useState<Preferences>(initialPrefs);
-  const lang = prefs.lang;
+  // 6.13: switches once a lazily loaded language has arrived (lib/i18n-react.ts); <html lang> follows.
+  const lang = useLoadedLang(prefs.lang);
 
   const [name, setName] = useState(
     () => initialPrefs.name || `peer-${Math.floor(1000 + Math.random() * 9000)}`,
@@ -1118,6 +1121,7 @@ function ChatApp() {
   const layoutEnvBase = useMemo(() => ({
     lang,
     translate: (key: string) => t(lang, key),
+    translatePlural: (key: string, n: number) => tp(lang, key, n),
     blocks: layoutBlocksOf(layout),
     formats: { links: (text: string) => linkify(text) },
   }), [lang, layout]);
@@ -1196,7 +1200,7 @@ function ChatApp() {
       case "toggleEditMode": if (moduleOn("editMode")) setPrefs({ editMode: !prefs.editMode }); break;
       case "toggleTone": if (moduleOn("appearance")) setPrefs({ theme: effectiveTheme, themeSet: true, themeTone: shownTone() === "dark" ? "light" : "dark" }); break;
       case "setTheme": if (moduleOn("appearance") && action.param && isThemeId(action.param)) setPrefs({ theme: action.param, themeSet: true }); break;
-      case "setLang": if (action.param === "cs" || action.param === "en" || action.param === "de") setPrefs({ lang: action.param }); break;
+      case "setLang": if (isLocale(action.param)) setPrefs({ lang: action.param }); break;
       case "toggleNotifications":
         if (!moduleOn("notifications")) break;
         if (prefs.notificationsEnabled) disableNotifications(); else void enableNotifications();
@@ -1295,9 +1299,7 @@ function ChatApp() {
       width: prefs.chatWidth,
     });
   }, [prefs.chatBgColor, prefs.chatBgImage, prefs.chatBgSaturation, prefs.chatBgOpacity, prefs.chatPattern, prefs.chatWidth]);
-  useEffect(() => {
-    document.documentElement.setAttribute("lang", prefs.lang);
-  }, [prefs.lang]);
+  // 6.13: <html lang> (the BCP 47 tag of the language shown) is set by useLoadedLang.
 
   // Persist widget layout, debounced so a drag does not thrash localStorage.
   function updateWidget(patch: Partial<WidgetState>) {
@@ -1439,7 +1441,7 @@ function ChatApp() {
       void logAccountEvent("decrypt-ok", { messages: restored.length, profile: Boolean(profile) });
       void logAccountEvent("data-loaded", { messages: restored.length });
       if (restored.length) void logAccountEvent("chat-restored", { messages: restored.length });
-      if (announce) systemMessage(t(lang, "acc.loaded").replace("{n}", String(restored.length)));
+      if (announce) systemMessage(tp(lang, "acc.loaded", restored.length));
       return restored.length;
     } catch (err) {
       void logAccountEvent("decrypt-failed");
@@ -1542,7 +1544,7 @@ function ChatApp() {
       } else {
         messages = await applyVault(true);
       }
-      report("settings", "ok", kind === "register" ? undefined : tf(lang, "acc.loaded", { n: messages }));
+      report("settings", "ok", kind === "register" ? undefined : tp(lang, "acc.loaded", messages));
     } catch (err) {
       report("settings", "fail", (err as Error).message);
     }
@@ -1776,7 +1778,7 @@ function ChatApp() {
     socket.send(JSON.stringify({ type: "relay", messageId: payload.id, to, ...(envelope ? { envelope } : {}), ...(Object.keys(per).length ? { per } : {}), ...(mention.length ? { mention } : {}) }));
     const names = (list: string[]) => targets.filter((a) => list.includes(a.accountId)).map((a) => a.name);
     // The info view names who got which form: mailboxes (how many devices, account-pinned or not), or the room key.
-    const mailboxFor = sealing.flatMap((s) => (s.form === "mailbox" ? [tf(lang, s.account ? "sec.sealedHow.mailboxAccount" : "sec.sealedHow.mailboxDevice", { name: names([s.ref])[0] ?? "?", n: s.devices })] : []));
+    const mailboxFor = sealing.flatMap((s) => (s.form === "mailbox" ? [tp(lang, s.account ? "sec.sealedHow.mailboxAccount" : "sec.sealedHow.mailboxDevice", s.devices, { name: names([s.ref])[0] ?? "?" })] : []));
     return { count: to.length, roomKeyFor: envelope ? names(without) : [], mailbox: Object.keys(per).length > 0, mailboxFor };
   }
 
@@ -1930,10 +1932,14 @@ function ChatApp() {
 
   /** "about 7 min", "about 3 h", "about 2 days" — how far off a clock is. */
   function roughly(ms: number): string {
+    // 6.13: Intl spells the unit out with the language's plural ("7 minut", "3 Stunden", "2 päivää").
     const minutes = Math.max(1, Math.round(ms / 60_000));
-    if (minutes < 90) return tf(lang, "p4.skew.min", { n: minutes });
+    if (minutes < 90) return spelled(minutes, "minute", "p4.skew.min");
     const hours = Math.round(minutes / 60);
-    return hours < 48 ? tf(lang, "p4.skew.h", { n: hours }) : tf(lang, "p4.skew.d", { n: Math.round(hours / 24) });
+    return hours < 48 ? spelled(hours, "hour", "p4.skew.h") : spelled(Math.round(hours / 24), "day", "p4.skew.d");
+  }
+  function spelled(n: number, unit: "minute" | "hour" | "day", key: string): string {
+    try { return numberFormat(lang, { style: "unit", unit, unitDisplay: "long" }).format(n); } catch { return tf(lang, key, { n }); }
   }
 
   /** A status the server reports for a message we sent to an away member. */
@@ -2043,7 +2049,7 @@ function ChatApp() {
     if (!notificationsEnabledRef.current) return;
     // 6.12 review P06/P14: a message held for a changed key never shows its text in a notification.
     const heldText = e.message.identity?.state === "changed" ? tf(lang, "p4.held.title", { name: e.message.senderName }) : null;
-    const note = showLocalNotification({ kind: "message", room: e.label, sender: e.message.senderName, text: heldText ?? (e.message.flags?.sealed ? "🔒" : e.message.text || "📎"), tag: `m5cet-room-${e.key}` }, { lang: lang === "cs" || lang === "de" ? lang : "en" });
+    const note = showLocalNotification({ kind: "message", room: e.label, sender: e.message.senderName, text: heldText ?? (e.message.flags?.sealed ? "🔒" : e.message.text || "📎"), tag: `m5cet-room-${e.key}` }, { lang: notifyLangOf(lang) });
     if (note) note.onclick = () => { window.focus(); note.close(); void switchRoomRef.current(e.key); };
   }), [hub, lang]);
   // 6.7: local notifications follow the account's choice once signed in, this browser's otherwise.
@@ -2347,7 +2353,7 @@ function ChatApp() {
     }
     if (incoming.length > 0) {
       setMessages((cur) => mergeMessages(cur, incoming.map(withKt)));
-      systemMessage(t(lang, "away.received").replace("{n}", String(incoming.length)));
+      systemMessage(tp(lang, "away.received", incoming.length));
       void logAccountEvent("decrypt-ok", { messages: incoming.length });
     }
     const socket = socketRef.current;
@@ -2801,14 +2807,14 @@ function ChatApp() {
       onMeta: (meta, transport) => {
         startTransferTracking(meta.transferId, meta.name, meta.size, "in");
         systemMessage(
-          `Přijímám soubor ${meta.name} (${formatBytes(meta.size)}) od ${meta.senderName} přes ${transport === "p2p" ? "P2P" : "server proxy"}.`,
+          tf(lang, "file.receiving", { name: meta.name, size: formatBytes(meta.size, lang), sender: meta.senderName, route: t(lang, transport === "p2p" ? "file.route.p2p" : "file.route.proxy") }),
         );
       },
       onNeed: (transferId, seqs, _transport, round) => {
         void sendServerLog("warn", "transfer.chunks-missing", { transferId, missing: seqs.length, round });
         // Do not throw away a file that is all but delivered.
         if (!askAgain(transferId, seqs)) return;
-        systemMessage(tf(lang, "app.chunksMissing", { n: seqs.length, round }));
+        systemMessage(tp(lang, "app.chunksMissing", seqs.length, { round }));
       },
       onProgress: (id, recv, total, stats) => {
         updateTransfer(id, { stats: { ...stats, received: recv, size: total } });
@@ -3211,7 +3217,7 @@ function ChatApp() {
       // 6.12 review P14: not the text of a message held for a changed key.
       showLocalNotification(
         { kind: "message", room: roomRef.current || undefined, sender: plaintext.senderName, text: held ? tf(lang, "p4.held.title", { name: plaintext.senderName }) : plaintext.flags?.sealed ? "🔒" : plaintext.text || "📎", tag: "m5cet" },
-        { lang: lang === "cs" || lang === "de" ? lang : "en" },
+        { lang: notifyLangOf(lang) },
       );
     }
   }
@@ -3245,7 +3251,7 @@ function ChatApp() {
       if (!current || current === channel) p4Ref.current?.channelClosed(peerId);
     };
     // Someone came online: whatever was waiting for them can go now.
-    channel.addEventListener("open", () => { void flushOutboxRef.current("kanál otevřen"); });
+    channel.addEventListener("open", () => { void flushOutboxRef.current(t(prefsRef.current.lang, "app.outbox.channelOpen")); });
     channel.onerror = () => {
       setPeerView(peerId, { status: "closed" });
       systemMessage(tf(lang, "app.connectionDropped", { name: peerName() }));
@@ -3311,7 +3317,7 @@ function ChatApp() {
         const seqs = Array.isArray(raw.seqs) ? raw.seqs.filter((n): n is number => Number.isInteger(n)).slice(0, 5_000) : [];
         const repeat = resendableRef.current.get(transferId);
         if (repeat && seqs.length) {
-          systemMessage(tf(lang, "app.resendingChunks", { n: seqs.length }));
+          systemMessage(tp(lang, "app.resendingChunks", seqs.length));
           void repeat(seqs).catch(() => undefined);
         }
         return;
@@ -3648,7 +3654,7 @@ function ChatApp() {
       const restored = endHides(await historyRef.current.load(nextRoom), Date.now(), !accountRef.current);
       if (restored.length > 0) {
         setMessages((cur) => mergeMessages(cur, restored));
-        systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
+        systemMessage(tp(lang, "data.restored", restored.length));
       }
     } else if (retentionRef.current === "server" && !accountRef.current && storageSessionId()) {
       // The server kept this session's conversation (no passkey yet).
@@ -3658,7 +3664,7 @@ function ChatApp() {
       const restored = sanitizeRestored(opened.filter((m) => m !== null), nextPeerId, { signIn: true });
       if (restored.length > 0) {
         setMessages((cur) => mergeMessages(cur, restored));
-        systemMessage(t(lang, "data.restored").replace("{n}", String(restored.length)));
+        systemMessage(tp(lang, "data.restored", restored.length));
       }
     }
     // 6.0: what this room collected while it ran in the background.
@@ -4068,7 +4074,7 @@ function ChatApp() {
       if (frame.type === "proxy-need") {
         const repeat = resendableRef.current.get(frame.transferId);
         if (repeat) {
-          systemMessage(tf(lang, "app.resendingChunks", { n: frame.seqs.length }));
+          systemMessage(tp(lang, "app.resendingChunks", frame.seqs.length));
           void repeat(frame.seqs).catch(() => undefined);
         }
         return;
@@ -4414,7 +4420,7 @@ function ChatApp() {
       }) !== null;
     audit.push(queued
       ? { state: "queued", at: Date.now(), meta: opts.toNames?.join(", ") }
-      : { state: "sent", at: Date.now(), meta: tf(lang, sent + relayed === 1 ? "app.recipients.one" : "app.recipients.many", { n: sent + relayed }) });
+      : { state: "sent", at: Date.now(), meta: tp(lang, "app.recipients", sent + relayed) });
     if (heldFor) {
       audit.push({ state: "queued", at: Date.now(), meta: tf(lang, "p4.held.waiting", { names: delivered.held.map(peerName).join(", ") }) });
       systemMessage(tf(lang, "p4.held.waiting", { names: delivered.held.map(peerName).join(", ") }));
@@ -5052,7 +5058,7 @@ function ChatApp() {
       kinds: messageKinds(m).map((k) => t(lang, `msgkind.k.${k}`)),
       size: messageSize(m),
       expiresAt: m.expiresAt || undefined,
-      receipts: receiptsOf(m),
+      receipts: receiptsOf(m, lang),
       hiddenUntil: m.hidden && isHidden(m, Date.now()) ? m.hidden.until : undefined,
       attachment: m.attachment && m.attachment.dataUrl ? { name: m.attachment.name, mime: m.attachment.mime, size: m.attachment.size, url: m.attachment.dataUrl } : undefined,
     };
@@ -5416,7 +5422,7 @@ function ChatApp() {
       return;
     }
 
-    const result = await subscribeToPush(pushVapidKey, prefs.deviceId);
+    const result = await subscribeToPush(pushVapidKey, prefs.deviceId, lang);
     if (result.ok) {
       setPrefs({ notificationsEnabled: true });
       // 6.7: signed in already — the account gets this browser now, not at the next sign-in.
@@ -5456,7 +5462,7 @@ function ChatApp() {
       });
       if (response.ok) {
         const json = await response.json().catch(() => ({}));
-        return { ok: true, message: typeof json.message === "string" ? json.message : "Server data purged for this device." };
+        return { ok: true, message: typeof json.message === "string" ? json.message : t(lang, "privacy.serverPurged") };
       }
       return { ok: false, message: `Server returned ${response.status}.` };
     } catch (err) {
@@ -5553,7 +5559,7 @@ function ChatApp() {
         : m)));
     }
     if (result.delivered > 0) {
-      systemMessage(tf(lang, "app.outboxSent", { n: result.delivered }));
+      systemMessage(tp(lang, "app.outboxSent", result.delivered));
     }
   }, [lang]);
 
@@ -5704,7 +5710,7 @@ function ChatApp() {
     // (Number.MAX_SAFE_INTEGER, see preferences.ts); Settings offers lower
     // caps such as 100 MB. Chunks are held in RAM until the transfer ends.
     if (file.size > prefs.maxAttachmentBytes && prefs.maxAttachmentBytes < Number.MAX_SAFE_INTEGER - 1) {
-      setNotice(tf(lang, "app.fileTooLarge", { limit: formatBytes(prefs.maxAttachmentBytes) }));
+      setNotice(tf(lang, "app.fileTooLarge", { limit: formatBytes(prefs.maxAttachmentBytes, lang) }));
       return;
     }
 
@@ -5849,8 +5855,8 @@ function ChatApp() {
         // sendFile; cheer the user with which transport was picked.
         systemMessage(
           transport === "p2p"
-            ? tf(lang, "app.file.sendingP2p", { name: file.name, size: formatBytes(file.size) })
-            : tf(lang, "app.file.sendingProxy", { name: file.name, size: formatBytes(file.size) }),
+            ? tf(lang, "app.file.sendingP2p", { name: file.name, size: formatBytes(file.size, lang) })
+            : tf(lang, "app.file.sendingProxy", { name: file.name, size: formatBytes(file.size, lang) }),
         );
         if (transport === "proxy") {
           setNotice(t(lang, "app.file.proxyNotice"));
@@ -5916,8 +5922,8 @@ function ChatApp() {
       cx("file-sent", file.name, { bytes: file.size });
       systemMessage(
         result.transport === "p2p"
-          ? tf(lang, "app.file.sentP2p", { name: file.name, size: formatBytes(file.size) })
-          : tf(lang, "app.file.sentProxy", { name: file.name, size: formatBytes(file.size) }),
+          ? tf(lang, "app.file.sentP2p", { name: file.name, size: formatBytes(file.size, lang) })
+          : tf(lang, "app.file.sentProxy", { name: file.name, size: formatBytes(file.size, lang) }),
       );
     } else {
       updateTransfer(result.transferId || placeholderId, {
@@ -5941,7 +5947,7 @@ function ChatApp() {
 
   async function shareCurrentLocation() {
     const caps = detectGeolocation();
-    if (!caps.available) { setNotice(caps.reason || "Geolocation unavailable."); return; }
+    if (!caps.available) { setNotice(t(lang, "loc.unavailable")); return; }
     // 6.10 (G-12): a location goes to the chosen people like a message (6.9: always the whole room).
     const rec = resolveRecipients();
     if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
@@ -6181,7 +6187,7 @@ function ChatApp() {
   }
 
   if (!capabilities.supported) {
-    return <UnsupportedBanner reasons={capabilities.unsupportedReasons} />;
+    return <UnsupportedBanner lang={lang} missing={capabilities.missing} />;
   }
 
   return (
@@ -6352,6 +6358,7 @@ function ChatApp() {
                 finalStatus={x.status}
                 errorMessage={x.errorMessage}
                 onRemove={dropTransfer}
+                lang={lang}
               />
             );
           },
@@ -6393,6 +6400,7 @@ function ChatApp() {
               onOpenRoom={() => setActivePanel("join")}
               onConnectProfile={(id) => void connectProfile(id)}
               onSignIn={() => setActivePanel("connection")}
+              onLang={(next) => setPrefs({ lang: next })}
             />
           ),
           composer: () => renderLayout(layoutTree(layout, "composer", layoutCtx), {
@@ -6523,11 +6531,11 @@ function ChatApp() {
         pushAvailable={pushAvailable}
         onTestPush={async () => {
           setPushBusy(true);
-          const r = await sendTestPush();
+          const r = await sendTestPush(lang);
           setPushBusy(false);
           return r;
         }}
-        onTestLocal={async () => showLocalTestNotification()}
+        onTestLocal={async () => showLocalTestNotification(lang)}
         signedIn={Boolean(account)}
         onOpenConnection={() => setActivePanel("connection")}
       />
@@ -6576,13 +6584,14 @@ function ChatApp() {
 
       {/* Files modal — chunked encrypted DataChannel transfer */}
       {activePanel === "files" ? (
-        <SimpleModal title="Encrypted file transfer" onClose={() => setActivePanel(null)}>
+        <SimpleModal title={t(lang, "files.title")} onClose={() => setActivePanel(null)}>
           <FilesPanel
             connected={status === "joined" && openPeerCount > 0}
             enabled={prefs.mode === "server"}
             maxBytes={prefs.maxAttachmentBytes}
             onPickFile={() => largeFileInputRef.current?.click()}
             transfers={transfers}
+            lang={lang}
           />
           <input ref={largeFileInputRef} type="file" className="hidden" onChange={handleLargeFileChange} data-testid="input-large-file" />
         </SimpleModal>
@@ -6590,7 +6599,7 @@ function ChatApp() {
 
       {/* Location modal */}
       {activePanel === "location" ? (
-        <SimpleModal title="Location" onClose={() => setActivePanel(null)}>
+        <SimpleModal title={t(lang, "menu.location")} onClose={() => setActivePanel(null)}>
           <LocationPanel
             connected={status === "joined" && openPeerCount > 0}
             onShareOnce={() => void shareCurrentLocation()}
@@ -6624,7 +6633,7 @@ function ChatApp() {
 
       {/* Speech modal */}
       {activePanel === "speech" ? (
-        <SimpleModal title="Speech (TTS / STT / revoice)" onClose={() => setActivePanel(null)}>
+        <SimpleModal title={t(lang, "speech.title")} onClose={() => setActivePanel(null)}>
           <SpeechPanel
             recognitionRef={recognitionRef}
             onSendText={(text) => {

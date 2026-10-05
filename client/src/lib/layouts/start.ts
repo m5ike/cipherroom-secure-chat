@@ -19,6 +19,17 @@ export function startTree(): LNode {
         attrs: { type: "button", class: "mt-4 inline-flex min-h-10 items-center gap-2 rounded-2xl bg-primary px-4 text-sm font-semibold text-primary-foreground", "data-testid": "button-open-join" },
         on: { click: { action: "openRoom" } },
       }, [icon("radio", "h-4 w-4", {}, { id: "start-connect-icon" }), text("{_'join.connect'}", { id: "start-connect-text" })]),
+      // 6.13: the language, right where a first visit starts (the browser's language is picked already).
+      n("label", { id: "start-language", name: "Language", if: "($langs|length) > 1", attrs: { class: "mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground" } }, [
+        icon("languages", "h-3.5 w-3.5", { "aria-hidden": "true" }, { id: "start-language-icon" }),
+        n("select", {
+          id: "start-language-select", name: "Language (choice)",
+          attrs: { value: "=$lang", class: "min-h-8 rounded-lg border border-border bg-background px-2 text-xs text-foreground", "aria-label": "{_'common.language'}", "data-testid": "start-language" },
+          on: { change: { action: "setLang" } },
+        }, [
+          n("option", { id: "start-language-option", attrs: { value: "{$l.code}", lang: "{$l.tag}" }, text: "{$l.label}", each: "$langs", as: "l", key: "$l.code" }),
+        ]),
+      ]),
     ]),
   ]);
 }
@@ -35,11 +46,14 @@ export const START_CONTRACT: LayoutContract = {
     { path: "$username", type: "text", description: "The account's username." },
     { path: "$serverMode", type: "yes/no", description: "Server-enhanced picked (no: Light · P2P)." },
     { path: "$profiles", type: "list", description: "Saved connections to connect from here (signed in, Server-enhanced, My connections on): .id, .label." },
+    { path: "$lang", type: "text", description: "6.13: the interface language (en, cs, de, es, it, fr, sk, sl, fi)." },
+    { path: "$langs", type: "list", description: "6.13: the languages to pick from: .code, .label (its own name: Čeština, Suomi…), .tag (cs-CZ…)." },
   ],
   actions: [
     { name: "openRoom", description: "Open the Room window (the Connect button)." },
     { name: "connectProfile", description: "Connect a saved connection.", arg: "its id ($p.id)" },
     { name: "signIn", description: "Open the Connection window (sign in with a passkey)." },
+    { name: "setLang", description: "6.13: switch the interface language (a select's change).", event: "change" },
   ],
   slots: [],
   refs: [],
