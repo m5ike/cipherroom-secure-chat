@@ -47,6 +47,8 @@ export function roomTree(): LNode {
       n("area", { id: "item-label", name: "Label", attrs: { class: "rd-item__label" } }, [
         n("area", { id: "item-name", attrs: { class: "truncate" }, text: "{$p.label}" }),
         icon("star", "rd-item__star", { "aria-label": "{_'cx.default'}" }, { id: "item-default", if: "$p.isDefault" }),
+        // 6.12 (F-04): its key is weak — Connect asks first
+        icon("shield-alert", "rd-item__weak", { "aria-label": "{_'key.weak.tag'}", title: "{_'key.weak.tag'}", "data-testid": "room-item-weak" }, { id: "item-weak", if: "$p.weakKey" }),
       ]),
       n("area", { id: "item-sub", name: "Room · name · server", attrs: { class: "rd-item__sub" }, text: "{$p.room} · {$p.user} · {$p.host}" }),
     ]),
@@ -223,7 +225,7 @@ export const ROOM_CONTRACTS: Record<"room.tabs" | "room", LayoutContract> = {
       { path: "$listed", type: "yes/no", description: "The saved connections are loaded (the vault is open)." },
       { path: "$needsSignIn", type: "yes/no", description: "Server-enhanced while signed out: nothing to connect." },
       { path: "$manual", type: "yes/no", description: "The room is typed in (Light, or “another room”)." },
-      { path: "$items", type: "list", description: "The saved connections: .id, .label, .room, .user, .host, .mode, .color, .isDefault, .checked, .disabled, .live; 6.0: .multi (checked to connect together), .background (connected in the background), .users, .unread." },
+      { path: "$items", type: "list", description: "The saved connections: .id, .label, .room, .user, .host, .mode, .color, .isDefault, .checked, .disabled, .live; 6.0: .multi (checked to connect together), .background (connected in the background), .users, .unread; 6.12: .weakKey (its key is weak — Connect asks first)." },
       { path: "$multiOn", type: "yes/no", description: "6.0: several rooms at once is available (module)." },
       { path: "$multiCount", type: "number", description: "6.0: connections checked to connect together." },
       { path: "$selected", type: "text", description: "The chosen connection's id, or manual." },

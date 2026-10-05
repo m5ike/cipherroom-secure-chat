@@ -10,15 +10,20 @@
 //
 // A small warm pool per language hides the interpreter's start-up (Pyodide is
 // about a second): a spare process is kept ready and handed the next run.
+//
+// 6.12: on Linux the processes run inside bubblewrap (isolation.ts, F-03),
+// and at most FUNCTIONS_SANDBOX_MAX runs have a process at once — the rest
+// wait in a bounded queue (SlotGate, F-28).
 
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readdirSync, realpathSync, statSync, mkdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
+import { availableParallelism, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { checkFromSandbox, MAX_FRAME, type FromSandbox, type Lang, type Output, type Rejected, type RunError, type RunSpec, type ToSandbox } from "./protocol";
+import { bwrapArgs, extraBinds, isolationState, nodeBinary, readyWithin, resolveIsolation, type IsolationState } from "./isolation";
 
 const here = typeof __filename === "string" ? __filename : fileURLToPath(import.meta.url);
 const req = createRequire(here);
@@ -129,9 +134,36 @@ export function sandboxArgs(lang: Lang, paths: SandboxPaths, memoryMb: number): 
   ];
 }
 
+/** What a sandbox process of `lang` reads: its script and its interpreter. */
+export function sandboxReads(lang: Lang, paths: SandboxPaths): string[] {
+  return [paths.script, lang === "py" ? paths.pyodide : paths.quickjs];
+}
+
+/**
+ * 6.12 (F-03): the program and arguments a sandbox process is started with —
+ * Node under the permission model, inside bubblewrap when the isolation
+ * resolved to it. bwrap gets an empty environment (it passes it on).
+ */
+export function sandboxCommand(lang: Lang, paths: SandboxPaths, memoryMb: number, isolation: Pick<IsolationState, "mode" | "bwrap"> | null): { cmd: string; args: string[]; env: Record<string, string> } {
+  const nodeArgs = sandboxArgs(lang, paths, memoryMb);
+  if (isolation?.mode === "bwrap" && isolation.bwrap) {
+    return { cmd: isolation.bwrap, args: bwrapArgs({ node: nodeBinary(), nodeArgs, reads: sandboxReads(lang, paths), extraBinds: extraBinds() }), env: {} };
+  }
+  return { cmd: process.execPath, args: nodeArgs, env: { PATH: process.env.PATH ?? "" } };
+}
+
+/** Decides (once) whether sandboxes run in bubblewrap: a real JavaScript sandbox must come up inside it. */
+export function sandboxIsolation(paths?: SandboxPaths): Promise<IsolationState> {
+  return resolveIsolation(async (bwrap) => {
+    const p = paths ?? await sandboxPaths();
+    const { cmd, args } = sandboxCommand("js", p, 128, { mode: "bwrap", bwrap });
+    await readyWithin(cmd, args);
+  });
+}
+
 function startChild(lang: Lang, paths: SandboxPaths, memoryMb: number): Child {
-  const args = sandboxArgs(lang, paths, memoryMb);
-  const proc = spawn(process.execPath, args, { stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH ?? "" } });
+  const { cmd, args, env } = sandboxCommand(lang, paths, memoryMb, isolationState());
+  const proc = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"], env });
   const child: Child = { proc, lang, engine: "", buffer: "", onMessage: null, busy: false, killed: false, ready: Promise.resolve() };
   proc.stderr?.setEncoding("utf8");
   proc.stderr?.on("data", (d: string) => { if (process.env.FUNCTIONS_DEBUG) process.stderr.write(`[sandbox ${lang}] ${d}`); });
@@ -163,10 +195,94 @@ function send(child: Child, msg: ToSandbox): void {
 
 /* ----------------------------------------------------------------- pool */
 
-export type PoolOptions = { warmPerLang?: number };
+export type PoolOptions = { warmPerLang?: number; maxConcurrent?: number; queue?: number; queueWaitMs?: number };
 
 /** 6.11: how long a cancelled run may take to stop on its own before its process is killed. */
 const CANCEL_GRACE_MS = 2000;
+
+const envInt = (name: string, min: number, max: number): number | undefined => {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n >= min && n <= max ? n : undefined;
+};
+
+/** 6.12 (F-28): how many sandboxes run at once, how many runs may wait, and how long. */
+export function sandboxLimits(): { max: number; queue: number; waitMs: number } {
+  // FUNCTIONS_SANDBOX_MAX — default twice the CPUs, at least 4.
+  const max = envInt("FUNCTIONS_SANDBOX_MAX", 1, 1024) ?? Math.max(4, availableParallelism() * 2);
+  return {
+    max,
+    // FUNCTIONS_SANDBOX_QUEUE — default 4 × max; 0 = nobody waits.
+    queue: envInt("FUNCTIONS_SANDBOX_QUEUE", 0, 100_000) ?? max * 4,
+    // FUNCTIONS_SANDBOX_QUEUE_MS — default 30 s.
+    waitMs: envInt("FUNCTIONS_SANDBOX_QUEUE_MS", 100, 3_600_000) ?? 30_000,
+  };
+}
+
+export class GateRefusal extends Error {
+  constructor(readonly type: "Busy" | "Cancelled", message: string) { super(message); this.name = "GateRefusal"; }
+}
+
+type Waiter = { id: string; grant: (release: () => void) => void; fail: (e: GateRefusal) => void; timer: ReturnType<typeof setTimeout> | null };
+
+/**
+ * 6.12 (F-28): at most `max` holders at once; up to `queue` more wait, in
+ * order, each at most `waitMs`. acquire() resolves to the release function
+ * (calling it twice is harmless) or rejects with a GateRefusal.
+ */
+export class SlotGate {
+  private running = 0;
+  private waiting: Waiter[] = [];
+
+  constructor(readonly max: number, readonly queue: number, readonly waitMs: number) {}
+
+  private releaser(): () => void {
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      const next = this.waiting.shift();
+      if (next) { if (next.timer) clearTimeout(next.timer); next.grant(this.releaser()); }
+      else this.running = Math.max(0, this.running - 1);
+    };
+  }
+
+  acquire(id: string): Promise<() => void> {
+    if (this.running < this.max) { this.running += 1; return Promise.resolve(this.releaser()); }
+    if (this.waiting.length >= this.queue) {
+      return Promise.reject(new GateRefusal("Busy", `the server is busy: ${this.max} functions are running and ${this.waiting.length} are waiting — try again in a moment`));
+    }
+    return new Promise((resolve, reject) => {
+      const entry: Waiter = { id, grant: resolve, fail: reject, timer: null };
+      entry.timer = setTimeout(() => {
+        const i = this.waiting.indexOf(entry);
+        if (i >= 0) this.waiting.splice(i, 1);
+        reject(new GateRefusal("Busy", `the server is busy: no sandbox became free within ${Math.round(this.waitMs / 1000)} s`));
+      }, this.waitMs);
+      entry.timer.unref?.();
+      this.waiting.push(entry);
+    });
+  }
+
+  /** A waiting run was cancelled: it leaves the queue. */
+  abandon(id: string, why: string): boolean {
+    const i = this.waiting.findIndex((w) => w.id === id);
+    if (i < 0) return false;
+    const [w] = this.waiting.splice(i, 1);
+    if (w.timer) clearTimeout(w.timer);
+    w.fail(new GateRefusal("Cancelled", why));
+    return true;
+  }
+
+  stats(): { running: number; waiting: number; max: number; queue: number; waitMs: number } {
+    return { running: this.running, waiting: this.waiting.length, max: this.max, queue: this.queue, waitMs: this.waitMs };
+  }
+}
+
+let lastGate: SlotGate | null = null;
+/** The newest pool's gate (the console's overview). */
+export function sandboxGateStats(): ReturnType<SlotGate["stats"]> | null { return lastGate?.stats() ?? null; }
 
 export class SandboxPool {
   private warm: Record<Lang, Child[]> = { js: [], py: [] };
@@ -174,6 +290,8 @@ export class SandboxPool {
   private closed = false;
   /** 6.11: the runs in progress (by run id) and how to stop each. */
   private active = new Map<string, (why: string) => void>();
+  /** 6.12 (F-28): how many runs have a sandbox at once. */
+  readonly gate: SlotGate;
 
   /**
    * 6.11: stops a run (its caller went away): the sandbox is told to cancel —
@@ -190,10 +308,15 @@ export class SandboxPool {
 
   constructor(opts: PoolOptions = {}) {
     this.warmTarget = Math.max(0, opts.warmPerLang ?? 1);
+    const limits = sandboxLimits();
+    this.gate = new SlotGate(opts.maxConcurrent ?? limits.max, opts.queue ?? limits.queue, opts.queueWaitMs ?? limits.waitMs);
+    lastGate = this.gate;
   }
 
   private async take(lang: Lang, memoryMb: number): Promise<Child> {
     const paths = await sandboxPaths();
+    const isolation = await sandboxIsolation(paths);
+    if (isolation.mode === "refused") throw new SandboxUnavailable(`no sandbox can start: FUNCTIONS_SANDBOX_ISOLATION=bwrap, but ${isolation.reason}`);
     let child: Child | undefined;
     while ((child = this.warm[lang].shift())) {
       if (!child.killed && child.proc.exitCode === null) break;
@@ -219,12 +342,26 @@ export class SandboxPool {
 
   /** Runs one spec to completion; enforces wall time and memory by killing. */
   async run(spec: RunSpec, handlers: RunHandlers): Promise<RunResult> {
-    // A cancel that comes while the process is being taken is kept for the start.
+    // A cancel that comes while the process is being taken is kept for the start;
+    // one that comes while the run waits for a slot takes it out of the queue.
     const early = { why: null as string | null };
-    this.active.set(spec.id, (why) => { early.why = why; });
+    this.active.set(spec.id, (why) => { early.why = why; this.gate.abandon(spec.id, why); });
+    let release: () => void;
+    try { release = await this.gate.acquire(spec.id); }
+    catch (err) {
+      this.active.delete(spec.id);
+      if (err instanceof GateRefusal) return { ok: false, error: { type: err.type, message: err.message }, ms: 0, memMb: 0, engine: "" };
+      throw err;
+    }
+    if (early.why !== null) { release(); this.active.delete(spec.id); return { ok: false, error: { type: "Cancelled", message: early.why }, ms: 0, memMb: 0, engine: "" }; }
     let child: Child;
     try { child = await this.take(spec.lang, spec.limits.memoryMb); }
-    catch (err) { this.active.delete(spec.id); throw err; }
+    catch (err) {
+      release();
+      this.active.delete(spec.id);
+      if (err instanceof SandboxUnavailable) return { ok: false, error: { type: "SandboxUnavailable", message: err.message }, ms: 0, memMb: 0, engine: "" };
+      throw err;
+    }
     const engine = child.engine;
     const started = Date.now();
     const grace = 2000;
@@ -244,7 +381,7 @@ export class SandboxPool {
           finally { if (--pauseDepth === 0) pausedTotal += Date.now() - pausedSince; }
         },
       };
-      const finish = (r: RunResult) => { if (settled) return; settled = true; clearInterval(watch); clearTimeout(hardStop); if (cancelTimer) clearTimeout(cancelTimer); if (this.active.get(spec.id) === cancel) this.active.delete(spec.id); child.onMessage = null; this.retire(child); resolve(r); };
+      const finish = (r: RunResult) => { if (settled) return; settled = true; release(); clearInterval(watch); clearTimeout(hardStop); if (cancelTimer) clearTimeout(cancelTimer); if (this.active.get(spec.id) === cancel) this.active.delete(spec.id); child.onMessage = null; this.retire(child); resolve(r); };
       // 6.11: cancelled — the sandbox stops its waiting calls and its interpreter; a process that does not, is killed.
       let cancelTimer: ReturnType<typeof setTimeout> | null = null;
       const cancel = (why: string) => {
@@ -320,14 +457,28 @@ function kill(child: Child): void {
   try { child.proc.kill("SIGKILL"); } catch { /* already gone */ }
 }
 
-/** Resident memory of a process, in bytes; 0 when it cannot be read. */
-function readRss(pid: number | undefined): number {
-  if (!pid) return 0;
+/**
+ * Resident memory of a process and its descendants, in bytes; 0 when it
+ * cannot be read. Linux: /proc/<pid>/statm, in pages — summed over the
+ * children too, because under bubblewrap (6.12) the process the runner
+ * started is bwrap and the interpreter is its grandchild. Elsewhere the
+ * check is skipped (the interpreter's own memory limit still applies).
+ */
+export function readRss(pid: number | undefined, read: (path: string) => string = readText, depth = 0): number {
+  if (!pid || depth > 4) return 0;
+  let total = 0;
   try {
-    // Linux: /proc/<pid>/statm, in pages. Elsewhere the check is skipped
-    // (the interpreter's own memory limit still applies).
-    const statm = req("node:fs").readFileSync(`/proc/${pid}/statm`, "utf8") as string;
-    const pages = Number(statm.split(" ")[1] || 0);
-    return pages * 4096;
+    total += Number(read(`/proc/${pid}/statm`).split(" ")[1] || 0) * 4096;
   } catch { return 0; }
+  let children: string[] = [];
+  try { children = read(`/proc/${pid}/task/${pid}/children`).trim().split(" ").filter(Boolean); } catch { /* none, or no such file */ }
+  for (const c of children) total += readRss(Number(c), read, depth + 1);
+  return total;
 }
+
+function readText(path: string): string {
+  return req("node:fs").readFileSync(path, "utf8") as string;
+}
+
+/** bwrap was required (FUNCTIONS_SANDBOX_ISOLATION=bwrap) but cannot run sandboxes. */
+class SandboxUnavailable extends Error {}

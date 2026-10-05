@@ -85,6 +85,8 @@ import { registerAndroidAdminRoutes } from "./android/admin-routes";
 import { registerAndroidRoutes } from "./android/routes";
 import { buildInfo } from "./build-info";
 import { turnAnswer } from "./turn";
+import { mayGetTurn, pendingTurnAnswer, turnLimiter } from "./turn-gate";
+import { securityPosture } from "./security-posture";
 import { clusterBus } from "./cluster/bus";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { safeDeviceId } from "./util";
@@ -266,7 +268,8 @@ export async function registerRoutes(
     accounts: accountStore,
     storage,
     queue: offlineQueue,
-    health: () => ({ signaling: signaling.stats(), queuePersistent: offlineQueue().persistent, protocol: PROTOCOL_VERSION }),
+    // 6.12: security settings of this process (at-rest encryption, sandbox isolation, …) — security-posture.ts.
+    health: () => ({ signaling: signaling.stats(), queuePersistent: offlineQueue().persistent, protocol: PROTOCOL_VERSION, security: securityPosture() }),
     cluster: () => signaling.stats().cluster,
     deliverCommands: (deviceId) => signaling.deliverCommands(deviceId),
     roomNotice: (hash, notice, target) => signaling.notice(hash, notice, target),
@@ -384,10 +387,12 @@ export async function registerRoutes(
   });
 
   // ICE servers (server/turn.ts): short-lived TURN credentials with
-  // TURN_SECRET, the old shared ones otherwise.
-  app.get("/api/turn", (_req, res) => {
+  // TURN_SECRET, the old shared ones otherwise. 6.12 (F-28): TURN only for an
+  // address with a live hub connection, and a per-address limit (turn-gate.ts).
+  app.get("/api/turn", turnLimiter(), (req, res) => {
     const answer = turnAnswer();
     if (!answer.ok) return res.status(answer.status).json({ ok: false, message: answer.message });
+    if (answer.configured && !mayGetTurn(req.ip)) return res.json(pendingTurnAnswer(answer));
     res.json(answer);
   });
   if (turnAnswer().ok && (turnAnswer() as { mode?: string }).mode === "static") {

@@ -51,7 +51,7 @@ platí pro všechny a žádné pravidlo je nepřebije.
 | `tsa.httpHosts` | `[]` (nástroj HTTP vypnutý) | `api.example.com`, `*.example.com` | kam smí nástroj HTTP v TSA |
 | `tsa.functions` | ano | | smí TSA spouštět modely |
 | `tsa.recordingDays` | 30 | 1–3650 | jak dlouho držet nahrávky |
-| `log.days`, `log.keepRaw` | 30, ano | 1–3650 | retence logu, zda držet surová data webhooků |
+| `log.days`, `log.keepRaw` | 14, ne (6.12; dřív 30, ano — výslovně uložené hodnoty zůstávají) | 1–3650 | retence logu, zda držet surová data webhooků; DTMF, route kódy a rozpoznaná řeč se v logu od 6.12 maskují vždy |
 | `defaults.inbound` | `busy` | TSA nebo stav | když žádné příchozí pravidlo nesedí |
 | `defaults.outbound` | `pass` | `pass`, TSA nebo stav | když žádné odchozí pravidlo nesedí |
 

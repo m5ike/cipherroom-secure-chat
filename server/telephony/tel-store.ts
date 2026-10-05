@@ -4,12 +4,13 @@
 // it). The main service (where the providers' webhooks land) and the admin
 // service (the console's test runs, which may wait for a call) both open it:
 // SQLite in WAL mode is the channel between them. Without the SQLite driver
-// the records live in memory (one process, until a restart).
+// the records live in memory (one process, until a restart). 6.12 (G-07): the
+// file is SQLCipher, keyed from the storage master key (storage/service-db.ts).
 
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { loadSqliteDriver, type SqliteDatabase } from "../storage/db";
+import type { SqliteDatabase } from "../storage/db";
+import { openServiceDatabase, serviceDbStates } from "../storage/service-db";
 import { DocTable } from "../storage/doc-table";
 import type { CallAction, CallStatus, ProviderId } from "./providers/types";
 import type { Caller } from "../functions/types";
@@ -210,16 +211,12 @@ class TelStore {
   ready(): Promise<void> {
     if (this.db) return Promise.resolve();
     this.opening ??= (async () => {
-      const Driver = await loadSqliteDriver();
-      if (!Driver) { this.reason = "the SQLite driver is not installed — telephony records are kept in memory only"; return; }
       const file = telDbPath();
       try {
-        mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-        if (!existsSync(file)) closeSync(openSync(file, "a", 0o600));
-        try { chmodSync(file, 0o600); } catch { /* not ours */ }
-        const db = new Driver(file, { timeout: 5000 });
-        db.pragma("journal_mode = WAL");
-        db.pragma("busy_timeout = 5000");
+        // 6.12 (G-07): SQLCipher under a subkey of the storage master key; a
+        // plain telephony.db from before is converted on the first start.
+        const db = await openServiceDatabase(file, "telephony");
+        if (!db) { this.reason = "the SQLite driver is not installed — telephony records are kept in memory only"; return; }
         for (const t of [this.calls, this.messages, this.bridges, this.log, this.events]) db.exec(t.schema());
         this.db = db;
         this.reason = "";
@@ -236,8 +233,9 @@ class TelStore {
    */
   handle(): SqliteDatabase | null { return this.db; }
 
-  status(): { persistent: boolean; file: string; reason: string } {
-    return { persistent: Boolean(this.db), file: telDbPath(), reason: this.reason };
+  status(): { persistent: boolean; file: string; reason: string; encrypted: boolean; warning: string } {
+    const at = serviceDbStates().find((x) => x.label === "telephony");
+    return { persistent: Boolean(this.db), file: telDbPath(), reason: this.reason, encrypted: Boolean(this.db && at?.encrypted), warning: at?.warning ?? "" };
   }
 
   callByToken(token: string): TelCall | null { return this.calls.list({ device: token, limit: 1 })[0] ?? null; }

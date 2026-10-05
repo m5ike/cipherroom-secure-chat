@@ -17,12 +17,12 @@
 // value copied onto another row does not open. Session ids never appear in
 // the clear: they are stored as HMAC references (keys.ts sessionRef).
 
-import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes, sign as edSign, verify as edVerify, type KeyObject } from "node:crypto";
+import { createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, sign as edSign, timingSafeEqual, verify as edVerify, type KeyObject } from "node:crypto";
 import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { databaseBytes, ensurePrivateDir, openPlainDatabase, StorageUnavailableError, type SqliteDatabase, type SqliteStatement } from "./db";
 import { GLOBAL_MIGRATIONS } from "./schema";
-import { openValue, sealValue, sessionRef, storageDir, toSessionRef, unwrapKey, wrapKey, type KeyMode } from "./keys";
+import { derivedKey, openValue, sealValue, sessionRef, storageDir, toSessionRef, unwrapKey, wrapKey, type KeyMode } from "./keys";
 import type { AuditEntry } from "../monitor/audit";
 
 export type OwnerKind = "account" | "session";
@@ -155,9 +155,28 @@ export type AuditVerification = {
   checkpoints: number;
   signedCheckpoints: number;
   lastCheckpoint: { at: number; lastId: number } | null;
+  /** The key checkpoints are signed with now (6.12: derived from the master key). */
   publicKey: string;
-  problems: Array<{ id: number; kind: "row-altered" | "link-broken" | "rows-missing" | "checkpoint-signature" | "checkpoint-mismatch" }>;
+  /** 6.12 (F-23): what the verification trusts besides that key (audit-signing.pin), or null when nothing is pinned. */
+  pinned: { file: string; at: number; earlierKeys: number; chainFrom: number } | null;
+  problems: Array<{ id: number; kind: "row-altered" | "link-broken" | "rows-missing" | "row-unchained" | "checkpoint-signature" | "checkpoint-mismatch" | "pin-invalid" | "key-not-pinned" }>;
 };
+
+/** 6.12 (F-23): audit-signing.pin — see GlobalStore.ensurePin. */
+type AuditPin = { v: 1; keys: Array<{ publicKey: string; upTo: number | null }>; chainFrom: number; pinnedAt: number; mac: string };
+
+/** PKCS#8 DER header of an Ed25519 private key; the 32-byte seed follows. */
+const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
+
+const safeEqualHex = (a: string, b: string) => /^[0-9a-f]+$/.test(a) && a.length === b.length && timingSafeEqual(Buffer.from(a, "hex"), Buffer.from(b, "hex"));
+
+/** A checkpoint row whose signature holds under the key the row itself names (only for pinning at the upgrade). */
+function selfSigned(c: Record<string, unknown>): boolean {
+  try {
+    const key = createPublicKey({ key: Buffer.from(String(c.public_key), "base64"), format: "der", type: "spki" });
+    return edVerify(null, Buffer.from(checkpointMessage(Number(c.last_id), String(c.head_hash), Number(c.at))), key, Buffer.from(String(c.signature), "base64"));
+  } catch { return false; }
+}
 
 type ChainedRow = {
   at: number; category: string; level: string; event: string; actor: string | null; target: string | null;
@@ -190,6 +209,8 @@ export class GlobalStore {
     this.statements.clear();
     this.db = openPlainDatabase(join(this.dir, "m5cet.db"), GLOBAL_MIGRATIONS);
     this.rehashLegacySessionIds();
+    // 6.12 (F-23): the first start after the upgrade pins the audit journal's checkpoint keys.
+    try { this.ensurePin(); } catch (err) { console.warn(`[storage] audit pin: ${(err as Error).message}`); }
     return this.db;
   }
 
@@ -633,6 +654,8 @@ export class GlobalStore {
   private head: { id: number; hash: string } | null = null;
   private sinceCheckpoint = 0;
   private signingKey: { privateKey: KeyObject; publicKey: string } | null = null;
+  private pin: AuditPin | null = null;
+  private pinProblem: "pin-invalid" | "key-not-pinned" | null = null;
 
   /** The hash of the newest chained row ("" before the first). */
   private chainHead(): string {
@@ -643,23 +666,96 @@ export class GlobalStore {
     return this.head.hash;
   }
 
-  /** The Ed25519 key that signs checkpoints: audit-signing.key next to the
-   *  database (0600), created on first use. */
+  /**
+   * 6.12 (F-23): the Ed25519 key that signs checkpoints is derived from the
+   * storage master key (keys.ts derivedKey("audit-signing")) — not a file next
+   * to the database, and not taken from the checkpoint rows: whoever can
+   * rewrite m5cet.db (or the storage directory, when the master key comes from
+   * STORAGE_MASTER_KEY) cannot re-sign a forged journal. Before 6.12 it was
+   * audit-signing.key (see ensurePin for the upgrade).
+   */
   private auditSigner(): { privateKey: KeyObject; publicKey: string } {
     if (this.signingKey) return this.signingKey;
-    const file = join(this.dir, "audit-signing.key");
-    let privateKey: KeyObject;
-    try {
-      privateKey = createPrivateKey(readFileSync(file, "utf8"));
-    } catch {
-      const pair = generateKeyPairSync("ed25519");
-      privateKey = pair.privateKey;
-      mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-      writeFileSync(file, privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600, flag: "wx" });
-    }
+    const seed = derivedKey("audit-signing");
+    const privateKey = createPrivateKey({ key: Buffer.concat([ED25519_PKCS8_PREFIX, seed]), format: "der", type: "pkcs8" });
     const publicKey = createPublicKey(privateKey).export({ type: "spki", format: "der" }).toString("base64");
     this.signingKey = { privateKey, publicKey };
     return this.signingKey;
+  }
+
+  private pinFile(): string { return join(this.dir, "audit-signing.pin"); }
+
+  private pinMac(body: Omit<AuditPin, "mac">): string {
+    return createHmac("sha256", derivedKey("audit-pin")).update(JSON.stringify([body.v, body.keys.map((k) => [k.publicKey, k.upTo]), body.chainFrom, body.pinnedAt])).digest("hex");
+  }
+
+  /**
+   * 6.12 (F-23): what verifyAudit trusts besides the derived key, in
+   * audit-signing.pin next to the database, MACed with a subkey of the master
+   * key (a file anyone could edit would pin nothing):
+   *
+   *   keys       the checkpoint keys of before 6.12 — the old
+   *              audit-signing.key's public key and any other key whose
+   *              checkpoints verified at the upgrade — each only for
+   *              checkpoints up to the row it had signed (upTo);
+   *   chainFrom  the first row id that must be chained: a row from there on
+   *              without a hash is a failure, not "before the chain".
+   *
+   * Written once, on the first start after the upgrade (logged); the old
+   * private key file is then removed, so it cannot sign anything new.
+   * Delete the pin file to re-pin (trust on first use again).
+   */
+  private ensurePin(): void {
+    if (this.pin || this.pinProblem === "pin-invalid") return;
+    const file = this.pinFile();
+    let raw: string | null = null;
+    try { raw = readFileSync(file, "utf8"); } catch { raw = null; }
+    if (raw !== null) {
+      try {
+        const parsed = JSON.parse(raw) as AuditPin;
+        const ok = parsed && parsed.v === 1 && Array.isArray(parsed.keys) && Number.isInteger(parsed.chainFrom)
+          && typeof parsed.mac === "string" && safeEqualHex(parsed.mac, this.pinMac(parsed));
+        if (ok) { this.pin = parsed; this.pinProblem = null; return; }
+      } catch { /* unreadable */ }
+      this.pinProblem = "pin-invalid";
+      console.warn(`[storage] ${file} does not verify against the storage master key: the audit journal's old checkpoint keys are NOT trusted (restore the file, or delete it to pin again)`);
+      return;
+    }
+    // First start with 6.12: pin what the journal has been signed with.
+    const keys: AuditPin["keys"] = [];
+    const legacyFile = join(this.dir, "audit-signing.key");
+    let legacyPub: string | null = null;
+    try { legacyPub = createPublicKey(createPrivateKey(readFileSync(legacyFile, "utf8"))).export({ type: "spki", format: "der" }).toString("base64"); } catch { legacyPub = null; }
+    const rows = this.sql("SELECT last_id, head_hash, at, signature, public_key FROM audit_checkpoints ORDER BY last_id ASC").all() as Array<Record<string, unknown>>;
+    const upTo = new Map<string, number>();
+    for (const c of rows) {
+      const key = String(c.public_key);
+      if (!selfSigned(c)) continue;
+      upTo.set(key, Math.max(upTo.get(key) ?? 0, Number(c.last_id)));
+    }
+    const lastCheckpoint = rows.length ? Number(rows[rows.length - 1].last_id) : 0;
+    if (legacyPub) upTo.set(legacyPub, Math.max(upTo.get(legacyPub) ?? 0, lastCheckpoint));
+    for (const [publicKey, n] of upTo) if (publicKey !== this.auditSigner().publicKey) keys.push({ publicKey, upTo: n });
+    const first = this.sql("SELECT min(id) AS id FROM audit WHERE hash IS NOT NULL").get() as { id: number | null } | undefined;
+    const max = this.sql("SELECT max(id) AS id FROM audit").get() as { id: number | null } | undefined;
+    const chainFrom = first?.id ? Number(first.id) : Number(max?.id ?? 0) + 1;
+    const body = { v: 1 as const, keys, chainFrom, pinnedAt: Date.now() };
+    const pin: AuditPin = { ...body, mac: this.pinMac(body) };
+    try {
+      mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+      writeFileSync(file, JSON.stringify(pin, null, 1), { mode: 0o600, flag: "wx" });
+    } catch (err) {
+      this.pinProblem = "key-not-pinned";
+      console.warn(`[storage] could not write ${file} (${(err as Error).message}): the audit journal's checkpoint keys are not pinned`);
+      return;
+    }
+    this.pin = pin;
+    this.pinProblem = null;
+    console.log(`[storage] audit journal: checkpoints are signed with a key derived from the master key from now on; pinned ${keys.length} earlier key(s) and chained rows from #${chainFrom} in ${file}`);
+    if (legacyPub) {
+      try { rmSync(legacyFile, { force: true }); console.log(`[storage] removed ${legacyFile}: the pre-6.12 key signs nothing any more (its public key stays pinned)`); }
+      catch { /* not ours to remove */ }
+    }
   }
 
   /** Signs the current head of the chain. Called every N rows, before
@@ -667,6 +763,7 @@ export class GlobalStore {
   auditCheckpoint(reason: string, at = Date.now()): { lastId: number; headHash: string } | null {
     this.chainHead();
     if (!this.head || this.head.id === 0) return null;
+    this.ensurePin();
     const signer = this.auditSigner();
     const message = checkpointMessage(this.head.id, this.head.hash, at);
     const signature = edSign(null, Buffer.from(message), signer.privateKey).toString("base64");
@@ -679,23 +776,35 @@ export class GlobalStore {
   /**
    * Walks the chain and the checkpoints. A row whose hash does not match
    * its contents, a broken link to the row before, a missing row inside the
-   * chain or a checkpoint whose signature or head does not hold — each is
-   * reported with the first id where it happens.
+   * chain (or at its end, behind a checkpoint), a row without a hash where
+   * the chain runs (6.12), or a checkpoint whose signature does not hold
+   * under a pinned key — each is reported with the first id where it
+   * happens. The key a checkpoint row names is not trusted (6.12, F-23).
    */
   verifyAudit(): AuditVerification {
+    this.ensurePin();
+    const signer = this.auditSigner();
+    const chainFrom = this.pin?.chainFrom ?? Number.POSITIVE_INFINITY;
     const rows = this.sql("SELECT * FROM audit ORDER BY id ASC").iterate() as Iterable<Record<string, unknown>>;
     const checkpoints = this.sql("SELECT * FROM audit_checkpoints ORDER BY last_id ASC").all() as Array<Record<string, unknown>>;
     const byLast = new Map(checkpoints.map((c) => [Number(c.last_id), c]));
     const problems: AuditVerification["problems"] = [];
+    if (this.pinProblem) problems.push({ id: 0, kind: this.pinProblem });
     let checked = 0;
     let unchained = 0;
     let prevHash: string | null = null;
     let prevId = 0;
     let first = true;
+    let lastChained = 0;
     const hashes = new Map<number, string>();
     for (const r of rows) {
       const id = Number(r.id);
-      if (r.hash === null || r.hash === undefined) { unchained += 1; continue; }
+      if (r.hash === null || r.hash === undefined) {
+        // Before the chain (3.0) is history; inside it, a row stripped of its hash.
+        if (id >= chainFrom || !first) problems.push({ id, kind: "row-unchained" });
+        else unchained += 1;
+        continue;
+      }
       const row = {
         at: Number(r.at), category: String(r.category), level: String(r.level), event: String(r.event),
         actor: r.actor as string | null, target: r.target as string | null, accountId: r.account_id as string | null,
@@ -718,22 +827,30 @@ export class GlobalStore {
       hashes.set(id, String(r.hash));
       prevHash = String(r.hash);
       prevId = id;
+      lastChained = id;
       checked += 1;
     }
+    const trusted = (lastId: number) => [
+      signer.publicKey,
+      ...(this.pin?.keys ?? []).filter((k) => k.upTo === null || lastId <= k.upTo).map((k) => k.publicKey),
+    ];
     let signed = 0;
     for (const c of checkpoints) {
-      const ok = (() => {
-        try {
-          const key = createPublicKey({ key: Buffer.from(String(c.public_key), "base64"), format: "der", type: "spki" });
-          return edVerify(null, Buffer.from(checkpointMessage(Number(c.last_id), String(c.head_hash), Number(c.at))), key, Buffer.from(String(c.signature), "base64"));
-        } catch { return false; }
-      })();
-      if (!ok) problems.push({ id: Number(c.last_id), kind: "checkpoint-signature" });
-      const rowHash = hashes.get(Number(c.last_id));
-      if (rowHash !== undefined && rowHash !== c.head_hash) problems.push({ id: Number(c.last_id), kind: "checkpoint-mismatch" });
+      const lastId = Number(c.last_id);
+      const message = Buffer.from(checkpointMessage(lastId, String(c.head_hash), Number(c.at)));
+      const signature = Buffer.from(String(c.signature), "base64");
+      const ok = trusted(lastId).some((pub) => {
+        try { return edVerify(null, message, createPublicKey({ key: Buffer.from(pub, "base64"), format: "der", type: "spki" }), signature); }
+        catch { return false; }
+      });
+      if (!ok) problems.push({ id: lastId, kind: "checkpoint-signature" });
+      const rowHash = hashes.get(lastId);
+      if (rowHash !== undefined && rowHash !== c.head_hash) problems.push({ id: lastId, kind: "checkpoint-mismatch" });
       if (ok) signed += 1;
     }
     const last = checkpoints.at(-1);
+    // Rows cut off the end: a checkpoint vouches for a row newer than the newest one left.
+    if (last && lastChained > 0 && Number(last.last_id) > lastChained) problems.push({ id: Number(last.last_id), kind: "rows-missing" });
     return {
       ok: problems.length === 0,
       checked,
@@ -741,7 +858,8 @@ export class GlobalStore {
       checkpoints: checkpoints.length,
       signedCheckpoints: signed,
       lastCheckpoint: last ? { at: Number(last.at), lastId: Number(last.last_id) } : null,
-      publicKey: this.auditSigner().publicKey,
+      publicKey: signer.publicKey,
+      pinned: this.pin ? { file: this.pinFile(), at: this.pin.pinnedAt, earlierKeys: this.pin.keys.length, chainFrom: this.pin.chainFrom } : null,
       problems: problems.slice(0, 50),
     };
   }

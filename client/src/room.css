@@ -71,6 +71,15 @@
 .rd-strength__hints { margin: 0; padding-left: 1.1rem; color: hsl(var(--muted-foreground)); line-height: 1.4; }
 .rd-strength__held { padding: 0.45rem 0.6rem; border-radius: 0.6rem; border-left: 3px solid hsl(var(--destructive)); background: hsl(var(--destructive) / 0.08); line-height: 1.4; }
 .rd-strength__gen { font-size: 0.78rem; }
+/* 6.12 (F-04): a new room's primary path, and the box that asks before a weak key is used. */
+.rd-strength__new { color: hsl(var(--muted-foreground)); line-height: 1.4; }
+.share-weak { margin-bottom: 0.6rem; font-size: 0.8rem; }
+.rd-strength__held-title { display: block; margin-bottom: 0.2rem; }
+.rd-strength__held-text { margin: 0 0 0.45rem; }
+.rd-strength__held-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.rd-strength__held-actions .rd-btn.rd-btn { min-height: 2.2rem; font-size: 0.78rem; }
+.rd-btn.rd-btn--danger-soft { border-color: hsl(var(--destructive) / 0.5); color: hsl(var(--destructive)); background: hsl(var(--destructive) / 0.06); }
+.rd-btn.rd-btn--danger-soft:hover:not(:disabled) { background: hsl(var(--destructive) / 0.14); }
 
 /* ----------------------------------------------- saved connections */
 .rd-saved { display: flex; flex-direction: column; gap: 0.55rem; }
@@ -122,6 +131,7 @@
 .rd-item__text { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 0.1rem; }
 .rd-item__label { display: flex; min-width: 0; align-items: center; gap: 0.35rem; font-size: 0.92rem; font-weight: 700; }
 .rd-item__star { width: 0.85rem; height: 0.85rem; flex: none; color: hsl(45 96% 48%); fill: currentColor; }
+.rd-item__weak { width: 0.9rem; height: 0.9rem; flex: none; color: hsl(var(--destructive)); }
 .rd-item__sub {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-family: var(--font-mono); font-size: 0.73rem; color: hsl(var(--muted-foreground));

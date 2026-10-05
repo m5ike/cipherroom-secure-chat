@@ -155,6 +155,8 @@ export type Preferences = {
   notificationsEnabled: boolean;
   // Privacy
   analyticsConsent: boolean;
+  /** 6.12 (F-15): peer connections only through the server's TURN relay — members do not see this device's IP address. */
+  hideIp: boolean;
   // TTL — user defaults
   ttlDefaultMinutes: number; // 0 = off
   // TTL room-level overrides keyed by room id
@@ -245,6 +247,7 @@ const DEFAULTS: Preferences = {
   timezone: typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : "UTC",
   notificationsEnabled: false,
   analyticsConsent: false,
+  hideIp: false,
   ttlDefaultMinutes: 0,
   roomTtl: {},
   roomSecurity: {},
@@ -423,6 +426,7 @@ function sanitize(parsed: Partial<Preferences>, base: Preferences): Partial<Pref
     timezone: typeof parsed.timezone === "string" ? parsed.timezone.slice(0, 64) : base.timezone,
     notificationsEnabled: parsed.notificationsEnabled === true,
     analyticsConsent: parsed.analyticsConsent === true,
+    hideIp: parsed.hideIp === true,
     ttlDefaultMinutes: typeof parsed.ttlDefaultMinutes === "number" ? Math.max(0, Math.min(parsed.ttlDefaultMinutes, 60 * 24 * 30)) : base.ttlDefaultMinutes,
     roomTtl: typeof parsed.roomTtl === "object" && parsed.roomTtl ? parsed.roomTtl as Preferences["roomTtl"] : base.roomTtl,
     roomSecurity: typeof parsed.roomSecurity === "object" && parsed.roomSecurity ? parsed.roomSecurity as Preferences["roomSecurity"] : base.roomSecurity,

@@ -143,12 +143,30 @@ export function generateRoomKey(): string {
 }
 
 /**
- * May a room typed in by hand be joined with this key? A weak key is refused
- * for a room this browser does not know (not a saved connection) until the
- * user confirms — with a second Connect — that they are joining a room that
- * already uses it (the app cannot know before it asks the server, and asking
- * is exactly what gives the server the blind id to guess against).
+ * May this key be used now? A weak key waits for the user's explicit "yes"
+ * (`confirmed`) — EVERY time it is about to be used (6.12, F-04): a Connect in
+ * the Room window, a Save or Connect of a saved connection. 6.7 held it back
+ * once per room and let a saved connection's key through unmeasured; both
+ * were how weak keys stayed in use. The app cannot know before it asks the
+ * server whether the room already exists (asking is exactly what gives the
+ * server the blind id to guess against), so the user says it — and is never
+ * blocked from joining a room that already uses the key.
+ * `known` (a saved connection holds this key) no longer lets it pass; it is
+ * kept for callers of the 6.7 signature.
  */
-export function weakKeyBlocks(estimate: KeyEstimate, opts: { known: boolean; confirmed: boolean }): boolean {
-  return estimate.level === "weak" && !opts.known && !opts.confirmed;
+export function weakKeyBlocks(estimate: KeyEstimate, opts: { known?: boolean; confirmed: boolean }): boolean {
+  return estimate.level === "weak" && !opts.confirmed;
+}
+
+/**
+ * The question before a saved connection's weak key is used (6.12): the
+ * browser's own dialog. No dialog at all (an embedded view) counts as "no".
+ */
+export function askWeakSaved(text: string): boolean {
+  return typeof window !== "undefined" && typeof window.confirm === "function" ? window.confirm(text) : false;
+}
+
+/** A saved connection's (or any stored) key, measured with its room and user name as context. */
+export function estimateStoredKey(p: { passphrase: string; room?: string; userName?: string }): KeyEstimate {
+  return estimatePassphrase(p.passphrase, { room: p.room, name: p.userName });
 }

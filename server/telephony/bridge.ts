@@ -25,7 +25,7 @@
 // Vonage application's answer URL (/wh/vonage/answer) or the Telnyx
 // connection's webhook (/wh/telnyx/events); the bridge hooks into those.
 
-import { createHash, randomInt } from "node:crypto";
+import { randomInt } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
@@ -38,6 +38,7 @@ import { numberInfo } from "./numbers";
 import { publicBaseUrl } from "./connectors";
 import { stt, tts, type Caller as AiCaller } from "../ai/service";
 import { claimUpgradePath } from "../upgrade-guard";
+import { currentRoomHash, hashRoom } from "../monitor/traffic";
 import { Framer, Segmenter, StreamResampler, mulawDecode, mulawEncode, pcm16FromLE, pcm16ToLE, resample, wavDecode, wavEncode } from "./audio";
 
 const env = (name: string): string => (process.env[name]?.trim() || "");
@@ -105,11 +106,12 @@ function memberOf(v: unknown): BridgeSession["member"] {
 
 function roomHashOf(v: unknown): string {
   const s = str(v);
-  if (/^[0-9a-f]{16}$/.test(s)) return s;
+  // 6.12 (F-04): a hash from before 6.12 → today's (keyed) hash of that room, when the hub knows it.
+  if (/^[0-9a-f]{16}$/.test(s)) return currentRoomHash(s);
   if (s && typeof v === "object" && (v as { id?: unknown }).id) return roomHashOf((v as { id: unknown }).id);
   if (!s) throw new TelError("bad-argument", "room: the room (its id, or its 16-character hash)");
   // A room id / name: hashed the way the server knows rooms (monitor/traffic.ts).
-  return createHash("sha256").update(`m5cet:room:${s}`).digest("hex").slice(0, 16);
+  return hashRoom(s)!;
 }
 
 /** A 5-digit code no other live session on this number has. */
@@ -300,12 +302,12 @@ let notifier: BridgeNotifier | null = null;
 export function setBridgeNotifier(fn: BridgeNotifier | null): void { notifier = fn; }
 
 function notify(b: BridgeSession, frame: BridgeFrame): number {
-  return notifier?.(b.roomHash, b.member, { type: "phone-bridge", session: b.id, number: b.number, label: b.label, ...frame }) ?? 0;
+  return notifier?.(currentRoomHash(b.roomHash), b.member, { type: "phone-bridge", session: b.id, number: b.number, label: b.label, ...frame }) ?? 0;
 }
 
 /** A private text for the member (what the caller said) — as an operator notice every client shows. */
 function tellMember(b: BridgeSession, text: string): void {
-  notifier?.(b.roomHash, b.member, { type: "server-notice", id: telId("pn"), kind: "message", text, level: "info", from: `☎ ${b.label || b.number}`, at: Date.now() });
+  notifier?.(currentRoomHash(b.roomHash), b.member, { type: "server-notice", id: telId("pn"), kind: "message", text, level: "info", from: `☎ ${b.label || b.number}`, at: Date.now() });
 }
 
 /* ------------------------------------------------------------ media */

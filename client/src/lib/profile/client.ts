@@ -9,7 +9,7 @@
 // here — App.tsx hands the "room" view to each member, end-to-end encrypted.
 
 import { accountToken, vaultKey } from "../account";
-import { openProfile, sealProfile } from "../passkey";
+import { openSlot, sealProfile } from "../passkey";
 import { emptyCard, isEmptyView, normalizeCard, normalizeShared, viewFor, type ProfileCard, type SharedProfile } from "./model";
 
 let card: ProfileCard | null = null;
@@ -47,7 +47,8 @@ export async function loadCard(): Promise<ProfileCard | null> {
   const key = vaultKey();
   if (!key || !accountToken()) { set(null); return null; }
   const raw = await call<{ card?: { ct: string } | null }>("/api/account/vault?only=card");
-  const opened = raw.card?.ct ? normalizeCard(await openProfile<unknown>(raw.card.ct, key)) : emptyCard();
+  // 6.12 (F-26): a card in vault-slot format 2 opens too (the web writes 1 below until Android reads 2).
+  const opened = raw.card?.ct ? normalizeCard((await openSlot<unknown>(raw.card.ct, key, "card")).value) : emptyCard();
   set(opened);
   return opened;
 }
@@ -86,6 +87,8 @@ export async function saveCard(input: ProfileCard, now = Date.now()): Promise<Sa
   } catch (err) {
     publicError = (err as Error).message;
   }
+  // Still vault-slot format 1 (no AAD): the Android app of 6.11 opens the card too
+  // (Account.loadCard). Switch to sealSlot(next, key, "card") once Android reads format 2.
   const sealed = await sealProfile(next, key);
   await call("/api/account/vault", { method: "PUT", body: JSON.stringify({ card: sealed }) });
   set(next);

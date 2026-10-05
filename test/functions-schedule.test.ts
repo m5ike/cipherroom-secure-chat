@@ -17,6 +17,7 @@ const { registerFunctionsRoutes } = await import("../server/functions/routes");
 const { execute, triggerDurableWebhook, closeRunner } = await import("../server/functions/runner");
 const { runSchedulerPass } = await import("../server/functions/scheduler");
 const { saveModel } = await import("../server/functions/packages");
+const { derivedKey, keyToSqlcipher } = await import("../server/storage/keys");
 
 let server: Server;
 let base = "";
@@ -68,6 +69,9 @@ function readOneWebhookToken(): string {
   const db = require("better-sqlite3-multiple-ciphers");
   const path = process.env.FUNCTIONS_DATA_DIR + "/functions.db";
   const d = new db(path, { readonly: true });
+  // 6.12 (F-18): functions.db is SQLCipher under a subkey of the storage master key.
+  d.pragma("cipher = 'sqlcipher'");
+  d.pragma(`key = "${keyToSqlcipher(derivedKey("service-db:functions"))}"`);
   const row = d.prepare("SELECT token FROM webhooks LIMIT 1").get() as { token: string } | undefined;
   d.close();
   return row?.token ?? "";

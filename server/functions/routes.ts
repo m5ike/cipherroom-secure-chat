@@ -36,6 +36,7 @@ import { checkAccess, userSubject, type Check, type Needs } from "../access";
 import { modelVisible, runNeeds } from "./visibility";
 import { seedBuiltins } from "./builtins";
 import { registerSandboxPage } from "./sandbox-page";
+import { sandboxIsolation } from "./sandbox/pool";
 import { mayContinue } from "./chain-access";
 
 /** Auto mode: how long a webhook waits for the run before answering 202. */
@@ -193,6 +194,8 @@ export function registerFunctionsRoutes(app: Express): void {
   // Open the store at boot so the first request does not race it (an unopened
   // store answers from its empty in-memory fallback).
   void functionsStore.ready();
+  // 6.12 (F-03): how sandboxes are isolated (bubblewrap self-test), decided at boot for the overview.
+  if (!process.env.VITEST) void sandboxIsolation().catch(() => undefined);
   // 5.2: /help and the demo commands, installed once (not in tests).
   if (!process.env.VITEST || process.env.FUNCTIONS_BUILTINS === "1") void seedBuiltins("system").catch((err) => console.warn(`[functions] built-in packages: ${(err as Error).message}`));
   // The cron scheduler runs only here (the main service), so a schedule fires once.

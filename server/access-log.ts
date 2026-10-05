@@ -3,12 +3,28 @@
 // file a day under $DATA_DIR/access (JSON lines, 0600); the console reads it
 // back with filters. Writes are buffered (flushed every second or at 200
 // lines) so a check costs a push onto an array; files older than
-// ACCESS_LOG_DAYS (default 30) are removed.
+// ACCESS_LOG_DAYS (default 14 since 6.12; 30 before) are removed.
 //
 //   { at, module, subject, kind, decision, reason, right?, path?, ip?, via }
+//
+// 6.12 (F-15): `ip` is the network, not the address — IPv4 /24
+// ("203.0.113.0/24"), IPv6 /48 — in the file and in this process's recent
+// list. ACCESS_LOG_FULL_IP=1 keeps full addresses (an operator who needs them
+// for abuse handling, and says so in their privacy notice).
 
 import { appendFile, mkdir, readdir, readFile, stat, unlink } from "node:fs/promises";
 import { resolve, join } from "node:path";
+import { truncateIp } from "./monitor/traffic";
+
+/** Days of access log kept (ACCESS_LOG_DAYS; default 14). */
+export const accessLogDays = (): number => Math.max(1, Number(process.env.ACCESS_LOG_DAYS) || 14);
+
+/** The address as the log keeps it: its /24 or /48 network, unless ACCESS_LOG_FULL_IP=1. */
+export function loggedIp(ip: string | undefined): string | undefined {
+  if (!ip) return ip;
+  if (process.env.ACCESS_LOG_FULL_IP === "1") return ip;
+  return truncateIp(ip) || undefined;
+}
 
 export type AccessEntry = {
   at: number;
@@ -40,7 +56,9 @@ class AccessLog {
   private flushing: Promise<void> | null = null;
   private lastCleanup = 0;
 
-  record(e: AccessEntry): void {
+  record(entry: AccessEntry): void {
+    const e: AccessEntry = entry.ip ? { ...entry, ip: loggedIp(entry.ip) } : entry;
+    if (!e.ip) delete e.ip;
     this.recent.push(e);
     if (this.recent.length > RECENT_MAX) this.recent.splice(0, this.recent.length - RECENT_MAX);
     if (process.env.ACCESS_LOG === "0") return;
@@ -69,7 +87,7 @@ class AccessLog {
   }
 
   private async cleanup(): Promise<void> {
-    const keep = Math.max(1, Number(process.env.ACCESS_LOG_DAYS) || 30);
+    const keep = accessLogDays();
     const cutoff = day(Date.now() - keep * 86400_000);
     const dir = accessLogDir();
     for (const f of await readdir(dir).catch(() => [] as string[])) {
@@ -112,6 +130,8 @@ class AccessLog {
         if (q.kind && e.kind !== q.kind) continue;
         if (q.subject && !e.subject.toLowerCase().includes(q.subject.toLowerCase())) continue;
         if (needle && !`${e.subject} ${e.right ?? ""} ${e.path ?? ""} ${e.reason}`.toLowerCase().includes(needle)) continue;
+        // Lines written before 6.12 carry full addresses: shown as networks too.
+        if (e.ip) e.ip = loggedIp(e.ip);
         out.push(e);
       }
     }

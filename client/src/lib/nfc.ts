@@ -1,10 +1,13 @@
 // Web NFC module — Android Chrome only.
 //
-// Reads/writes encrypted client/room settings on NFC tags. The user
-// supplies a 4–16 digit PIN. We derive an AES-GCM key with PBKDF2
-// (200k iterations, SHA-256) and encrypt the JSON payload. The tag
-// holds: salt (16 B) | iv (12 B) | ciphertext as a base64 NDEF text
-// record.
+// The connection tag ("Připojka"). 6.12 (F-12): tags are written in format v2
+// only (lib/nfc/tag-v2.ts, docs/protocol-v4.md § 16) — an invitation
+// reference with a 130-bit secret, or the room under Argon2id of a 100-bit
+// code that is not on the tag. What is below is the v1 format, kept to READ
+// old tags: a 4–16 digit PIN, PBKDF2 (200k iterations, SHA-256), AES-GCM; the
+// tag holds salt (16 B) | iv (12 B) | ciphertext, base64, after
+// "m5cet:nfc:v1:". Anyone who reads such a tag once can try every PIN offline
+// in minutes — the app says so and offers to rewrite the tag as v2.
 //
 // Reader plug-in interface: third parties can register a hardware
 // reader (RFID, EMV via PC/SC, etc.) by implementing CardReaderModule
@@ -27,6 +30,7 @@ export function detectNfc(): NfcCaps {
   return { available: true };
 }
 
+/** A v1 tag's PIN (reading old tags only). */
 export function isValidPin(pin: string): boolean {
   return /^[0-9]{4,16}$/.test(pin);
 }
@@ -44,6 +48,11 @@ async function deriveKey(pin: string, salt: Bytes): Promise<CryptoKey> {
 
 export type NfcPayload = Record<string, unknown>;
 
+/**
+ * @deprecated v1 — a PIN tag can be guessed offline by anyone who reads it
+ * (F-12). The app no longer writes it (connection-card.ts writes v2); kept for
+ * tests and vectors of the reader.
+ */
 export async function encryptForTag(pin: string, payload: NfcPayload): Promise<string> {
   if (!isValidPin(pin)) throw new Error("PIN musí být 4–16 číslic.");
   const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -112,7 +121,8 @@ export async function scanOnce(timeoutMs = 30_000): Promise<ReadResult> {
           const view = new Uint8Array(r.data as ArrayBuffer);
           const langLen = view[0] & 0x3f;
           const text = new TextDecoder().decode(view.slice(1 + langLen));
-          if (text.startsWith("m5cet:nfc:v1:")) return finish({ ok: true, blob: text });
+          // 6.12: a v2 body in a text record is accepted as well (the MIME record is what v2 writes).
+          if (text.startsWith("m5cet:nfc:v1:") || text.startsWith("m5cet:nfc:v2:")) return finish({ ok: true, blob: text });
         }
       }
       finish({ ok: false, reason: "Tag nemá M5cet payload." });

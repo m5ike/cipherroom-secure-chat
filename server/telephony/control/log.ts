@@ -9,7 +9,10 @@
 // method / path / status / time, the NORMALIZED event(s) and — when
 // permissions.log.keepRaw — the provider's payload as received, with every
 // secret removed first (auth headers, signatures, tokens, passwords, API
-// keys and secrets, JWTs, a call's webhook capability in its URL).
+// keys and secrets, JWTs, a call's webhook capability in its URL). 6.12
+// (G-07): what the caller typed (DTMF, route codes) and said (speech results)
+// is masked too (maskCallerInput); keepRaw is off by default and the log is
+// kept 14 days (DEFAULT_PERMISSIONS in types.ts).
 //
 // Registers telHooks.log when loaded, and mirrors the older per-call log
 // (tel-store record(): calls placed, SMS sent, the audio bridge) into it.
@@ -66,6 +69,39 @@ export function redact(value: unknown, depth = 0): unknown {
   return String(value);
 }
 
+/* ------------------------------------------------- what the caller typed / said */
+
+// 6.12 (G-07): DTMF (a PIN, a card number, a route code — the key to a room's
+// audio) and recognised speech are what the caller entered, not diagnostics.
+// The log keeps their shape — how many keys, how long the utterance — not the
+// content, in the parsed events and in the raw payload alike.
+const DTMF_KEY = /^(digits?|dtmf|dtmf_?digits?)$/i;
+const SPEECH_KEY = /^(speech|speech_?result|unstable_?speech_?result|stable_?speech_?result|transcript|transcription|transcription_?text|heard)$/i;
+/** A route code under a generic name: only 4–6 digits are masked ("code": "busy" stays). */
+const CODE_KEY = /^(code|route_?code|inroute_?code)$/i;
+
+const maskDigits = (s: string): string => (s.length > 1 ? "•".repeat(s.length - 1) + s.slice(-1) : "•");
+const maskSpeech = (s: string): string => (s ? `[speech: ${s.length} chars]` : s);
+
+/** A copy with DTMF digits, route codes and recognised speech masked (see above). */
+export function maskCallerInput(value: unknown, mode: "none" | "dtmf" | "speech" = "none", depth = 0): unknown {
+  if (value === null || value === undefined || depth > 10) return value ?? null;
+  if (typeof value === "string") return mode === "dtmf" ? maskDigits(value) : mode === "speech" ? maskSpeech(value) : value;
+  if (typeof value === "number" && mode === "dtmf") return maskDigits(String(value));
+  if (Array.isArray(value)) return value.map((v) => maskCallerInput(v, mode, depth + 1));
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const next = mode !== "none" ? mode : DTMF_KEY.test(k) ? "dtmf" : SPEECH_KEY.test(k) ? "speech" : "none";
+      if (next === "none" && CODE_KEY.test(k) && typeof v === "string" && /^\d{4,6}$/.test(v)) { out[k] = maskDigits(v); continue; }
+      // Inside a masked value strings (and DTMF numbers) are hidden; confidence, timed_out and the like stay.
+      out[k] = maskCallerInput(v, next, depth + 1);
+    }
+    return out;
+  }
+  return value;
+}
+
 const MAX_JSON = 64_000;
 /** Bounded for storage: a huge payload keeps a preview. */
 function capped(v: unknown): unknown {
@@ -104,8 +140,9 @@ export function writeLog(e: Partial<TelLogEntry> & Pick<TelLogEntry, "kind" | "s
     rule: String(e.rule ?? "").slice(0, 120),
     verified: e.verified ?? null,
     http: e.http ? { method: e.http.method, path: redactString(e.http.path).slice(0, 300), status: e.http.status, ms: Math.max(0, Math.round(e.http.ms)) } : null,
-    parsed: capped(redact(e.parsed ?? null)),
-    raw: keepRaw ? capped(redact(e.raw ?? null)) : null,
+    // 6.12 (G-07): keys and speech the caller entered are masked in both.
+    parsed: capped(maskCallerInput(redact(e.parsed ?? null))),
+    raw: keepRaw ? capped(maskCallerInput(redact(e.raw ?? null))) : null,
   };
   pending = pending
     .then(() => telStore.ready())

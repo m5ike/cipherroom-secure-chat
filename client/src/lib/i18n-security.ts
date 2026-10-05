@@ -49,7 +49,7 @@ const cs: Dict = {
   "file.unverified": "Soubor {name} přišel od staršího klienta — bez ověření otisku.",
   // 6.7 (audit V2): another member's function outputs — browser code waits for the viewer
   "fnui.peerAsk": "Spustit kód v prohlížeči od {name}?",
-  "fnui.peerNote": "Poslal ho člen místnosti, ne aplikace. Poběží izolovaně, ale smí na internet a odpovídat modelu tvým jménem, když s ním pracuješ.",
+  "fnui.peerNote": "Poslal ho člen místnosti, ne aplikace. Poběží izolovaně a bez přístupu na internet.",
   "fnui.peerRun": "Spustit",
   "fnui.peerCode": "Kód v prohlížeči od {name} (izolovaně)",
   "fnui.peerHidden": "Skrytý kód v prohlížeči od {name} se nespustil.",
@@ -66,7 +66,7 @@ const cs: Dict = {
   "key.hint.context": "Obsahuje název místnosti nebo tvoje jméno — ty útočník zná.",
   "key.hint.classes": "Jen malá písmena — přidej délku nebo další slova.",
   "key.generate": "Vygenerovat silný klíč",
-  "key.weak.held": "Tento klíč je pro novou místnost příliš slabý: kdo má data serveru, může ho uhodnout offline. Zvol silnější (nebo ho vygeneruj). Připojuješ-li se do místnosti, která už tento klíč používá, stiskni Připojit znovu.",
+  "key.weak.held": "Slabý klíč místnosti — nic se neodeslalo. Potvrď, že se připojuješ do místnosti, která ho už používá, nebo vygeneruj silný klíč.",
   // 6.7 (audit N29): a card's link that is not https
   "nfc.urlRefused": "Odkaz z karty se neotevřel — otevírají se jen adresy https://.",
 };
@@ -117,7 +117,7 @@ const en: Dict = {
   "file.unverified": "File {name} came from an older client — its digest was not verified.",
   // 6.7 (audit V2): another member's function outputs — browser code waits for the viewer
   "fnui.peerAsk": "Run browser code from {name}?",
-  "fnui.peerNote": "A room member sent it, not the app. It runs sandboxed, but it may reach the internet and answer the model in your name while you use it.",
+  "fnui.peerNote": "A room member sent it, not the app. It runs sandboxed, without access to the internet.",
   "fnui.peerRun": "Run",
   "fnui.peerCode": "Browser code from {name} (sandboxed)",
   "fnui.peerHidden": "Hidden browser code from {name} was not run.",
@@ -134,7 +134,7 @@ const en: Dict = {
   "key.hint.context": "It contains the room's name or your name — an attacker knows those.",
   "key.hint.classes": "Lowercase letters only — make it longer or add words.",
   "key.generate": "Generate a strong key",
-  "key.weak.held": "This key is too weak for a new room: whoever holds the server's data could guess it offline. Choose a stronger one (or generate it). If you are joining a room that already uses this key, press Connect again.",
+  "key.weak.held": "Weak room key — nothing was sent. Confirm that you are joining a room that already uses it, or generate a strong key.",
   // 6.7 (audit N29): a card's link that is not https
   "nfc.urlRefused": "The card's link was not opened — only https:// addresses open.",
 };
@@ -185,7 +185,7 @@ const de: Dict = {
   "file.unverified": "Datei {name} kam von einem älteren Client — ohne Prüfung der Prüfsumme.",
   // 6.7 (audit V2): another member's function outputs — browser code waits for the viewer
   "fnui.peerAsk": "Browser-Code von {name} ausführen?",
-  "fnui.peerNote": "Ein Raummitglied hat ihn geschickt, nicht die App. Er läuft isoliert, darf aber ins Internet und dem Modell in deinem Namen antworten, während du ihn benutzt.",
+  "fnui.peerNote": "Ein Raummitglied hat ihn geschickt, nicht die App. Er läuft isoliert, ohne Zugang zum Internet.",
   "fnui.peerRun": "Ausführen",
   "fnui.peerCode": "Browser-Code von {name} (isoliert)",
   "fnui.peerHidden": "Versteckter Browser-Code von {name} wurde nicht ausgeführt.",
@@ -202,7 +202,7 @@ const de: Dict = {
   "key.hint.context": "Er enthält den Raumnamen oder deinen Namen — die kennt ein Angreifer.",
   "key.hint.classes": "Nur Kleinbuchstaben — mach ihn länger oder nimm mehr Wörter.",
   "key.generate": "Starken Schlüssel erzeugen",
-  "key.weak.held": "Dieser Schlüssel ist für einen neuen Raum zu schwach: Wer die Daten des Servers hat, kann ihn offline erraten. Wähle einen stärkeren (oder erzeuge ihn). Wenn du einem Raum beitrittst, der diesen Schlüssel schon nutzt, drücke noch einmal Verbinden.",
+  "key.weak.held": "Schwacher Raumschlüssel — nichts wurde gesendet. Bestätige, dass du einem Raum beitrittst, der ihn schon nutzt, oder erzeuge einen starken Schlüssel.",
   // 6.7 (audit N29): a card's link that is not https
   "nfc.urlRefused": "Der Link der Karte wurde nicht geöffnet — nur https://-Adressen werden geöffnet.",
 };

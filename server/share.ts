@@ -29,6 +29,8 @@ import type { Express, Request, Response } from "express";
 
 export const SHARE_LIMITS = {
   maxLinks: 2000,
+  /** 6.12 (F-28): live invitations one address may hold (SHARE_MAX_PER_IP overrides) — so one client cannot fill maxLinks for everyone. */
+  maxPerOwner: 50,
   maxUses: 50,
   minTtlSec: 5 * 60,
   maxTtlSec: 7 * 24 * 60 * 60,
@@ -46,6 +48,8 @@ const KEY_LEN = 43;
 const IV_LEN = 16;
 
 type ShareRecord = {
+  /** 6.12: who created it (a hash of the address, in memory only) — for the per-address cap. */
+  owner: string;
   proofHash: Buffer;
   revokeHash: Buffer;
   serverKey: string;
@@ -69,6 +73,12 @@ export type RedeemResult =
 
 const sha256 = (value: string) => createHash("sha256").update(value).digest();
 
+/** 6.12 (F-28): live invitations per address — SHARE_MAX_PER_IP, default SHARE_LIMITS.maxPerOwner (50). */
+export function sharePerOwner(): number {
+  const n = Math.floor(Number(process.env.SHARE_MAX_PER_IP));
+  return Number.isFinite(n) && n >= 1 && n <= SHARE_LIMITS.maxLinks ? n : SHARE_LIMITS.maxPerOwner;
+}
+
 export class ShareStore {
   private readonly records = new Map<string, ShareRecord>();
   constructor(private readonly now: () => number = Date.now) {}
@@ -80,7 +90,15 @@ export class ShareStore {
     for (const [id, rec] of this.records) if (rec.expiresAt <= t) this.records.delete(id);
   }
 
-  create(input: CreateInput): { ok: true; expiresAt: number; maxUses: number } | { ok: false; status: 400 | 409 | 503; reason: string } {
+  /** Live invitations created from one address (its owner key). */
+  ownedBy(owner: string): number {
+    let n = 0;
+    for (const rec of this.records.values()) if (rec.owner === owner) n += 1;
+    return n;
+  }
+
+  /** `owner`: who creates it (the route passes the client address); "" = not counted. */
+  create(input: CreateInput, owner = ""): { ok: true; expiresAt: number; maxUses: number } | { ok: false; status: 400 | 409 | 429 | 503; reason: string } {
     this.gc();
     if (!isB64Url(input.id, ID_LEN)) return { ok: false, status: 400, reason: "bad-id" };
     if (!isB64Url(input.proof, KEY_LEN)) return { ok: false, status: 400, reason: "bad-proof" };
@@ -97,11 +115,14 @@ export class ShareStore {
     if (!Number.isInteger(ttlSec) || ttlSec < SHARE_LIMITS.minTtlSec || ttlSec > SHARE_LIMITS.maxTtlSec) return { ok: false, status: 400, reason: "bad-ttl" };
 
     if (this.records.has(input.id)) return { ok: false, status: 409, reason: "exists" };
+    const ownerKey = owner ? sha256(`m5cet:share-owner:${owner}`).toString("base64url") : "";
+    if (ownerKey && this.ownedBy(ownerKey) >= sharePerOwner()) return { ok: false, status: 429, reason: "too-many-for-address" };
     if (this.records.size >= SHARE_LIMITS.maxLinks) return { ok: false, status: 503, reason: "full" };
 
     const createdAt = this.now();
     const expiresAt = createdAt + ttlSec * 1000;
     this.records.set(input.id, {
+      owner: ownerKey,
       proofHash: sha256(input.proof),
       revokeHash: sha256(input.revokeToken),
       serverKey: input.serverKey,
@@ -158,7 +179,8 @@ export function registerShareRoutes(app: Express, store: ShareStore = shareStore
   const redeemLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 40, standardHeaders: true, legacyHeaders: false, message: { ok: false, reason: "rate-limited" } });
 
   app.post("/api/share/create", createLimiter, (req: Request, res: Response) => {
-    const result = store.create((req.body ?? {}) as CreateInput);
+    // 6.12 (F-28): at most sharePerOwner() live invitations per address, besides the global maxLinks.
+    const result = store.create((req.body ?? {}) as CreateInput, String(req.ip ?? "").replace(/^::ffff:/, "") || "unknown");
     if (!result.ok) return res.status(result.status).json({ ok: false, reason: result.reason });
     return res.status(201).json({ ok: true, expiresAt: result.expiresAt, maxUses: result.maxUses, maxAttempts: SHARE_LIMITS.maxAttempts });
   });

@@ -22,6 +22,13 @@
 //     IndexedDB key material in its own format.
 // Before this cache existed the room key was never stored at all; keeping it,
 // even encrypted and only per tab, is a deliberate convenience trade-off.
+//
+// 6.12 (F-26): the idle clock is authenticated. `touchedAt` next to the
+// ciphertext only feeds idleMs() now; what decides "idle for an hour" is a
+// second small AES-GCM record (`ts`, sealed with the same key, AAD bound to the
+// record id) that the app re-seals on activity — editing storage cannot keep a
+// session alive past its hour any more. A record of 6.11 (v 1, no `ts`) is
+// still read once with its plain clock and rewritten as v 2.
 
 import { toBase64, fromBase64 } from "./crypto";
 
@@ -48,7 +55,7 @@ const STORE = "keys";
 // `off` is the only field outside the ciphertext that affects behaviour, and
 // it can only LOWER the desired state to "disconnected". Forging it cannot
 // make the app connect; it exists so that Disconnect takes effect at once.
-type StoredRecord = { v: 1; id: string; iv: string; ct: string; touchedAt: number; off?: boolean };
+type StoredRecord = { v: 1 | 2; id: string; iv: string; ct: string; touchedAt: number; off?: boolean; ts?: { iv: string; ct: string } };
 
 /** Where the wrapping key lives. IndexedDB in browsers; injectable for tests. */
 export interface KeyVault {
@@ -126,6 +133,22 @@ export type SessionCache = {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const aad = (id: string) => encoder.encode(`m5cet:session:v1:${id}`);
+const tsAad = (id: string) => encoder.encode(`m5cet:session:v2:touched:${id}`);
+/** The authenticated idle clock is re-sealed at most this often (it is the hour that counts). */
+const TS_RESEAL_MS = 30_000;
+
+async function sealTime(key: CryptoKey, id: string, at: number): Promise<{ iv: string; ct: string }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: tsAad(id) }, key, encoder.encode(String(at))));
+  return { iv: toBase64(iv), ct: toBase64(ct) };
+}
+
+async function openTime(key: CryptoKey, id: string, ts: { iv: string; ct: string }): Promise<number> {
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromBase64(ts.iv), additionalData: tsAad(id) }, key, fromBase64(ts.ct));
+  const at = Number(decoder.decode(plain));
+  if (!Number.isFinite(at) || at <= 0) throw new Error("bad time");
+  return at;
+}
 
 function randomId(): string {
   return toBase64(crypto.getRandomValues(new Uint8Array(16))).replace(/[+/=]/g, "");
@@ -138,13 +161,16 @@ export function createSessionCache(opts: { vault?: KeyVault; storage?: Storage; 
   let vault: KeyVault;
   try { vault = opts.vault ?? (typeof indexedDB !== "undefined" ? createIndexedDbVault() : createMemoryVault()); } catch { vault = createMemoryVault(); }
   let lastVaultTouch = 0;
+  let lastSealedTouch = 0;
+  let pendingTouch: Promise<void> | null = null;
 
   const read = (): StoredRecord | null => {
     try {
       const raw = storage?.getItem(STORAGE_KEY);
       if (!raw) return null;
       const rec = JSON.parse(raw) as Partial<StoredRecord>;
-      if (rec.v !== 1 || typeof rec.id !== "string" || typeof rec.iv !== "string" || typeof rec.ct !== "string" || typeof rec.touchedAt !== "number") return null;
+      if ((rec.v !== 1 && rec.v !== 2) || typeof rec.id !== "string" || typeof rec.iv !== "string" || typeof rec.ct !== "string" || typeof rec.touchedAt !== "number") return null;
+      if (rec.v === 2 && (!rec.ts || typeof rec.ts.iv !== "string" || typeof rec.ts.ct !== "string")) return null;
       return rec as StoredRecord;
     } catch { return null; }
   };
@@ -175,7 +201,9 @@ export function createSessionCache(opts: { vault?: KeyVault; storage?: Storage; 
       const ct = new Uint8Array(await crypto.subtle.encrypt(
         { name: "AES-GCM", iv, additionalData: aad(id) }, key, encoder.encode(JSON.stringify(data)),
       ));
-      const rec: StoredRecord = { v: 1, id, iv: toBase64(iv), ct: toBase64(ct), touchedAt: now() };
+      const at = now();
+      const rec: StoredRecord = { v: 2, id, iv: toBase64(iv), ct: toBase64(ct), touchedAt: at, ts: await sealTime(key, id, at) };
+      lastSealedTouch = at;
       // …so a pin found here was set by a Disconnect that arrived while we
       // were encrypting. The later click wins over this older snapshot.
       if (data.desired === "disconnected" || read()?.off === true) rec.off = true;
@@ -186,12 +214,17 @@ export function createSessionCache(opts: { vault?: KeyVault; storage?: Storage; 
       // Keys whose tab is long gone (closed without Clear & Quit) are useless
       // without their ciphertext; sweep them so they do not pile up.
       await vault.purgeOlderThan(now() - SESSION_IDLE_LIMIT_MS).catch(() => undefined);
+      // Activity a moment ago may still be sealing its time.
+      if (pendingTouch) await pendingTouch.catch(() => undefined);
       const rec = read();
       if (!rec) return null;
       if (now() - rec.touchedAt > SESSION_IDLE_LIMIT_MS) { await clear(); return null; }
       try {
         const key = await vault.get(rec.id);
         if (!key) throw new Error("no key");
+        // 6.12: the authenticated clock decides (a v1 record of 6.11 has only the plain one, once).
+        const touched = rec.v === 2 && rec.ts ? await openTime(key, rec.id, rec.ts) : rec.touchedAt;
+        if (now() - touched > SESSION_IDLE_LIMIT_MS) throw new Error("idle");
         const plain = await crypto.subtle.decrypt(
           { name: "AES-GCM", iv: fromBase64(rec.iv), additionalData: aad(rec.id) }, key, fromBase64(rec.ct),
         );
@@ -226,6 +259,21 @@ export function createSessionCache(opts: { vault?: KeyVault; storage?: Storage; 
       try { storage.setItem(STORAGE_KEY, JSON.stringify(rec)); } catch { /* ignore */ }
       // The vault copy only feeds the orphan sweep; once a minute is plenty.
       if (t - lastVaultTouch > 60_000) { lastVaultTouch = t; void vault.touch(rec.id, t).catch(() => undefined); }
+      // 6.12 (F-26): the authenticated clock, re-sealed now and then (async; load() waits for it).
+      if (t - lastSealedTouch >= TS_RESEAL_MS && !pendingTouch) {
+        lastSealedTouch = t;
+        const id = rec.id;
+        pendingTouch = (async () => {
+          const key = await vault.get(id);
+          if (!key) return;
+          const ts = await sealTime(key, id, t);
+          const cur = read();
+          if (!cur || cur.id !== id) return;
+          cur.ts = ts;
+          cur.v = 2;
+          try { storage!.setItem(STORAGE_KEY, JSON.stringify(cur)); } catch { /* ignore */ }
+        })().catch(() => undefined).finally(() => { pendingTouch = null; });
+      }
     },
 
     idleMs() {

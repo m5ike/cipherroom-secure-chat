@@ -30,7 +30,7 @@
 // then hang up (or, not answered yet, a refusal) — and a line in the log.
 
 import { randomBytes } from "node:crypto";
-import { hashRoom } from "../../monitor/traffic";
+import { currentRoomHash, hashRoom } from "../../monitor/traffic";
 import { publicBaseUrl } from "../connectors";
 import { telHooks, telLog, telPermissions, type TsaCallRef, type TsaTurn } from "../control/hooks";
 import { INROUTE_CODE, INROUTE_SHORT_TTL, inrouteMinDigits, type InrouteEntry } from "../control/types";
@@ -775,7 +775,7 @@ async function roomMessage(ctx: Ctx, node: TsaNode): Promise<Outcome> {
     if (!member && entry.type === "user") member = entry.user;
   } else room = tpl(ctx, node, "room").trim();
   if (!room) return { go: "on_failed", note: "no room", level: "warn" };
-  const hash = /^[0-9a-f]{16}$/.test(room) ? room : hashRoom(room)!;
+  const hash = /^[0-9a-f]{16}$/.test(room) ? currentRoomHash(room) : hashRoom(room)!;
   const target = member ? (member.startsWith("p-") ? { peerId: member } : { name: member.replace(/^@/, "") }) : undefined;
   if (ctx.sim) return { go: "next", note: `would post into the room${member ? ` (to ${member})` : ""} (simulated): ${text.slice(0, 120)}` };
   if (!d.notice) { log(ctx, "warn", "a room message can only be posted by the main service"); return { go: "on_failed", note: "rooms are not reachable from this process", level: "warn" }; }
