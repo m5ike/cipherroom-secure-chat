@@ -82,6 +82,68 @@ final class AccountKeys {
         finally { Crypto.wipe(plain); }
     }
 
+    /* ------------------------------------------- vault slots v2 (6.12, F-26) */
+    //
+    // The vault's parts were sealed without associated data: the server could
+    // hand back one slot's ciphertext as another's, or an older version.
+    // Format 2 (web: passkey.ts sealSlot / openSlot) binds each to its slot and
+    // its revision, still one base64 string:
+    //
+    //   b64( "M5V2" ‖ rev (8 bytes, unsigned big-endian) ‖ iv (12) ‖ AES-GCM(JSON) )
+    //   AAD = UTF-8 "m5cet:vault-slot:v2|" + slot + "|" + rev (decimal)
+    //
+    // A v1 part (b64(iv ‖ ct), no AAD) still opens (legacy).
+
+    private static final byte[] SLOT_MAGIC = {0x4d, 0x35, 0x56, 0x32}; // "M5V2"
+    private static final int SLOT_HEAD = 4 + 8;
+
+    static byte[] slotAad(String slot, long rev) { return Crypto.utf8("m5cet:vault-slot:v2|" + slot + "|" + rev); }
+
+    /** A vault part in format 2 (rev: the writer's clock, newer is larger). */
+    static String sealSlot(JSONObject value, byte[] key, String slot, long rev) { return sealSlot(value, key, slot, rev, Crypto.random(12)); }
+
+    static String sealSlot(JSONObject value, byte[] key, String slot, long rev, byte[] iv) {
+        long r = Math.max(0, Math.min(9_007_199_254_740_991L, rev));
+        byte[] ct = Crypto.gcmSeal(key, iv, Crypto.utf8(value.toString()), slotAad(slot, r));
+        java.nio.ByteBuffer b = java.nio.ByteBuffer.allocate(SLOT_HEAD + 12 + ct.length);
+        b.put(SLOT_MAGIC).putLong(r).put(iv).put(ct);
+        return Crypto.b64(b.array());
+    }
+
+    /** An opened vault part: its value, its revision (0 for a v1 part) and whether it is still v1. */
+    static final class Slot {
+        final JSONObject value;
+        final long rev;
+        final boolean legacy;
+        Slot(JSONObject value, long rev, boolean legacy) { this.value = value; this.rev = rev; this.legacy = legacy; }
+    }
+
+    /**
+     * Opens a vault part of either format. A v2 part opens only as the slot it
+     * was sealed for. (A v1 IV that happens to start with "M5V2" — 1 in 2³² —
+     * fails the v2 check and is then opened as v1, as the web does.)
+     */
+    static Slot openSlot(String ciphertext, byte[] key, String slot) throws GeneralSecurityException {
+        byte[] all;
+        try { all = Crypto.unb64(ciphertext); } catch (IllegalArgumentException e) { throw new GeneralSecurityException("the vault is malformed"); }
+        boolean v2 = all.length >= SLOT_HEAD + 12 + 16;
+        for (int i = 0; v2 && i < 4; i++) if (all[i] != SLOT_MAGIC[i]) v2 = false;
+        if (v2) {
+            long rev = java.nio.ByteBuffer.wrap(all, 4, 8).getLong();
+            if (rev >= 0 && rev <= 9_007_199_254_740_991L) {
+                try {
+                    byte[] plain = Crypto.gcmOpen(key, java.util.Arrays.copyOfRange(all, SLOT_HEAD, SLOT_HEAD + 12), java.util.Arrays.copyOfRange(all, SLOT_HEAD + 12, all.length), slotAad(slot, rev));
+                    try { return new Slot(new JSONObject(Crypto.str(plain)), rev, false); }
+                    catch (JSONException e) { throw new GeneralSecurityException("the vault's part is not a JSON object"); }
+                    finally { Crypto.wipe(plain); }
+                } catch (GeneralSecurityException e) {
+                    try { return new Slot(openProfile(ciphertext, key), 0, true); } catch (GeneralSecurityException ignored) { throw e; }
+                }
+            }
+        }
+        return new Slot(openProfile(ciphertext, key), 0, true);
+    }
+
     /** Does the server's answer carry a root sealed for this passkey? */
     static boolean sealed(JSONObject wrapped) {
         return wrapped != null && !wrapped.optString("iv").isEmpty() && !wrapped.optString("ct").isEmpty();

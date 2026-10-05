@@ -111,6 +111,36 @@ public final class Account {
     /** Forget what was read before the vault opened (after unlock). */
     public synchronized void reload() { state = null; }
 
+    /* --------------------------------------------- vault slot revisions (6.12) */
+
+    /** The newest revision seen of each vault slot, per account (a server handing back an older copy is noticed). */
+    private static final String SLOT_REVS = "account.slots";
+
+    private String accountKey() { JSONObject a = summary(); return a.optString("id", a.optString("username", "")); }
+
+    /** A revision newer than any this phone has seen of the slot (other devices' clocks may run ahead). */
+    synchronized long nextSlotRev(String slot) {
+        JSONObject mine = app.vault.unlocked() ? app.vault.json(Vault.Tier.USER, SLOT_REVS).optJSONObject(accountKey()) : null;
+        long seen = mine == null ? 0 : mine.optLong(slot, 0);
+        return Math.max(System.currentTimeMillis(), seen + 1);
+    }
+
+    /** Notes a revision opened or written; false (and a warning) when it is older than one seen before — a rollback. */
+    synchronized boolean noteSlotRev(String slot, long rev) {
+        if (!app.vault.unlocked() || accountKey().isEmpty()) return true;
+        JSONObject all = app.vault.json(Vault.Tier.USER, SLOT_REVS);
+        JSONObject mine = all.optJSONObject(accountKey());
+        long seen = mine == null ? 0 : mine.optLong(slot, 0);
+        if (rev < seen) { Log.w("account", "the server returned an older version of the vault's \"" + slot + "\" (" + rev + " < " + seen + ")"); return false; }
+        if (rev == 0) return true;
+        try {
+            if (mine == null) all.put(accountKey(), mine = new JSONObject());
+            mine.put(slot, rev);
+            app.vault.putJson(Vault.Tier.USER, SLOT_REVS, all);
+        } catch (JSONException ignored) { }
+        return true;
+    }
+
     public boolean signedIn() { return !state().optString("token").isEmpty(); }
     public String token() { return state().optString("token"); }
     public String username() { JSONObject a = state().optJSONObject("account"); return a == null ? "" : a.optString("username", a.optString("id")); }
@@ -421,8 +451,8 @@ public final class Account {
             try {
                 if (root == null || !signedIn()) throw new IOException(t("passkey.noRoot"));
                 key = AccountKeys.profileKey(root);
-                // A lost answer may simply be asked again: the same part is stored again.
-                Sent sent = send("PUT", "/api/account/vault", new JSONObject().put("registration", AccountKeys.sealProfile(record, key)), true);
+                // A lost answer may simply be asked again: the same part is stored again. 6.12: format 2 (slot + revision in the AAD).
+                Sent sent = send("PUT", "/api/account/vault", new JSONObject().put("registration", AccountKeys.sealSlot(record, key, "registration", nextSlotRev("registration"))), true);
                 if (sent.answer == null) throw sent.error;
                 JSONObject s = state();
                 if (sent.answer.optJSONObject("account") != null) { s.put("account", sent.answer.optJSONObject("account")); save(s); }
@@ -451,21 +481,26 @@ public final class Account {
             JSONObject card = call("GET", "/api/account/vault?only=card", null, true).optJSONObject("card");
             if (card == null || card.optString("ct").isEmpty()) return null;
             key = AccountKeys.profileKey(root);
-            return AccountKeys.openProfile(card.optString("ct"), key);
+            // 6.12 (F-26): either format; a v2 part opens only as the "card" slot, and its revision is remembered.
+            AccountKeys.Slot slot = AccountKeys.openSlot(card.optString("ct"), key, "card");
+            noteSlotRev("card", slot.rev);
+            return slot.value;
         } finally {
             Crypto.wipe(root);
             Crypto.wipe(key);
         }
     }
 
-    /** Seals the whole card (every audience) with the vault key into the vault's "card" part. Blocking. */
+    /** Seals the whole card (every audience) with the vault key into the vault's "card" part (6.12: format 2). Blocking. */
     public void saveCard(JSONObject card) throws IOException {
         byte[] root = root(), key = null;
         try {
             if (root == null || !signedIn()) throw new IOException(t("passkey.noRoot"));
             key = AccountKeys.profileKey(root);
-            Sent sent = send("PUT", "/api/account/vault", new JSONObject().put("card", AccountKeys.sealProfile(card, key)), true);
+            long rev = nextSlotRev("card");
+            Sent sent = send("PUT", "/api/account/vault", new JSONObject().put("card", AccountKeys.sealSlot(card, key, "card", rev)), true);
             if (sent.answer == null) throw sent.error;
+            noteSlotRev("card", rev);
         } catch (JSONException e) {
             throw new IOException(e.getMessage());
         } finally {
