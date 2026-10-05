@@ -11,6 +11,7 @@ enum Bootstrap {
         // Platform/Security — Keychain, Secure Enclave, Vault, AppLock (lock on model.onScenePhase).
         // Platform/Push — model.push = …; BGTaskScheduler "cz.m5cet.app.checkin" (Info.plist).
         // Platform/Calls — model.voip = … (CallKit + PushKit; reports every VoIP push).
+        CallSystem.shared.install(into: model)
         // Platform/Notifications — UNUserNotificationCenter delegate, categories, neutral texts.
         // Platform/NFC, Voice, Location, Contacts, Files — on demand from the screens.
     }
