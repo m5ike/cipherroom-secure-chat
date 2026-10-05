@@ -121,7 +121,7 @@ final class RtcWire: RoomWire {
     func sendBinary(_ data: Data, to peerId: String) -> Bool { rtc.send(.binary(data), to: peerId) }
     func isOpen(_ peerId: String) -> Bool { rtc.isOpen(peerId) }
     var openPeerIds: [String] { rtc.openPeerIds }
-    func waitForBuffer(of peerId: String) async { await rtc.waitForBuffer(of: peerId) }
+    func waitForBuffer(of peerId: String) async { _ = await rtc.waitForBuffer(of: peerId) }
     func peerAudioStatus(_ status: String, from peerId: String) { rtc.peerAudioStatus(status, from: peerId) }
 
     var peerStates: [WirePeer] {

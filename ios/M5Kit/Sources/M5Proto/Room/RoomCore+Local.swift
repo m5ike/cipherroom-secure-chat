@@ -136,9 +136,9 @@ public extension RoomCore {
     /// A file of mine from the vault (FileVault id): its bubble at once, progress 0, "sending" — the app's
     /// transfer moves it on (`touch`). The position of the composer goes along.
     @discardableResult
-    func composeFile(vaultId: String, name: String, mime: String, size: Int64, loc: JSONObject?) -> ChatMessage {
+    func composeFile(vaultId: String, name: String, mime: String, size: Int64, loc: JSONObject?, id: String? = nil) -> ChatMessage {
         var m = ChatMessage()
-        m.id = "file-" + Crypto.hex(Crypto.random(12))
+        m.id = id.flatMap { $0.hasPrefix("file-") && $0.utf16.count <= Payloads.idMax && message($0) == nil ? $0 : nil } ?? "file-" + Crypto.hex(Crypto.random(12))
         m.roomKey = key
         m.createdAt = now
         m.senderId = myId
@@ -186,5 +186,5 @@ public extension RoomSession {
     func touch(_ id: String, _ change: @Sendable (inout ChatMessage) -> Void) -> ChatMessage? { core.touch(id, change) }
 
     /// A local message (fn calls, model answers, notes, transcripts, files) — the body runs on the room's actor.
-    func local<T: Sendable>(_ body: (RoomCore) -> T) -> T { body(core) }
+    func local<T: Sendable>(_ body: @Sendable (RoomCore) -> T) -> T { body(core) }
 }

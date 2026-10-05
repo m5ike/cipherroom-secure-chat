@@ -61,7 +61,7 @@ final class AccountService: AccountModel {
     private(set) var revision = 0
     /// A ceremony is running (the buttons wait).
     private(set) var busy = false
-    static let log = Logger(subsystem: "cz.m5cet.app", category: "account")
+    nonisolated static let log = Logger(subsystem: "cz.m5cet.app", category: "account")
 
     init(security: any CoreSecurity, passkeys: any PasskeyAuthorizing) {
         self.security = security

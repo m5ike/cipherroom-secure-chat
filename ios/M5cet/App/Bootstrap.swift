@@ -16,8 +16,9 @@ enum Bootstrap {
         CallSystem.shared.install(into: model)
         // Platform/Notifications — UNUserNotificationCenter delegate, categories, neutral texts.
         Notifier.install(into: model)
-        // Platform/NFC, Voice, Location, Contacts, Files — on demand from the screens.
-        // Parts and the app's actions — model.design.slots.register(…), model.design.actions.register(…),
-        // model.design.state = … (Renderer/README.md: the three contracts).
+        // Core — the rooms, the account, the device; the screens' state, the app's actions, the core's slots; and the
+        // seams of Calls, Notifications, Location, Contacts, Voice (Core/README.md). Before the parts: theirs win.
+        CoreInstall.install(into: model)
+        // Parts — model.design.slots.register(…), model.design.actions.register(…) (one line per parts area).
     }
 }

@@ -10,6 +10,7 @@
 import CryptoKit
 import Foundation
 import M5Core
+import M5Design
 import M5Crypto
 import M5Net
 import M5Proto

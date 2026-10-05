@@ -16,7 +16,7 @@ protocol CoreFileStore: AnyObject, Sendable {
     func temporaryCopy(_ id: String, name: String) throws -> URL
     func discard(_ copy: URL)
     /// Writes a received file under `id` from the chunks `body` hands to its sink (decrypted, checked); aborted on a throw.
-    func receive(id: String, _ body: (_ sink: (Bytes) throws -> Void) throws -> Void) throws
+    func receive(id: String, _ body: (_ sink: @escaping (Bytes) throws -> Void) throws -> Void) throws
     /// A range of a stored file's plaintext (a transfer's chunk).
     func readRange(_ id: String, offset: Int64, count: Int) throws -> Bytes
     func delete(_ id: String)
@@ -77,7 +77,7 @@ final class VaultFileStore: CoreFileStore, @unchecked Sendable {
     func temporaryCopy(_ id: String, name: String) throws -> URL { try vault.decryptedCopy(id, name: name) }
     func discard(_ copy: URL) { FileVault.discard(copy) }
 
-    func receive(id: String, _ body: ((Bytes) throws -> Void) throws -> Void) throws {
+    func receive(id: String, _ body: (@escaping (Bytes) throws -> Void) throws -> Void) throws {
         let w = try vault.writer(id)
         do {
             try body { try w.write(Data($0)) }
@@ -118,7 +118,7 @@ final class MemoryFileStore: CoreFileStore, @unchecked Sendable {
         return url
     }
     func discard(_ copy: URL) { try? FileManager.default.removeItem(at: copy.deletingLastPathComponent()) }
-    func receive(id: String, _ body: ((Bytes) throws -> Void) throws -> Void) throws {
+    func receive(id: String, _ body: (@escaping (Bytes) throws -> Void) throws -> Void) throws {
         var out = Data()
         try body { out.append(contentsOf: $0) }
         lock.withLock { files[id] = out }

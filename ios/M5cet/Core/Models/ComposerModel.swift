@@ -314,8 +314,8 @@ final class ComposerModel {
             guard let self else { return }
             guard let l = await source.current() else { host.flash(title: "", text: host.translator.t("location.none"), level: .warn); return }
             let lat = l.double("lat") ?? 0, lon = l.double("lon") ?? 0, acc = l.double("acc") ?? 0
-            var o = self.outgoing(String(format: "📍 %.5f, %.5f (±%d m) %@", locale: Locale(identifier: "en_US_POSIX"), lat, lon, Int(acc.rounded()),
-                                         PositionText.mapUrlWeb(lat: lat, lon: lon)))
+            // Android's exact text (Java %.5f and Math.round: half-up — Where.shareText).
+            var o = self.outgoing("📍 \(JavaFormat.fixed(lat, 5)), \(JavaFormat.fixed(lon, 5)) (±\(JavaFormat.round(Float(acc))) m) " + Where.mapUrlWeb(lat, lon))
             o.loc = l
             r.send(o)
             self.clearAfterSend()

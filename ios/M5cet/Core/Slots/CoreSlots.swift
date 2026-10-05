@@ -89,8 +89,8 @@ private struct EnrollFormPart: View {
     @State private var applied: Double = -1
     @FocusState private var codeFocused: Bool
 
-    private var form: [String: DesignValue] { ctx.host.form }
-    private var pinKid: String { (form["kid"]?.stringValue ?? "").trimmingCharacters(in: .whitespaces) }
+    private var link: (server: String, code: String, kid: String, seq: Int)? { core.device.prefill }
+    private var pinKid: String { (link?.kid ?? "").trimmingCharacters(in: .whitespaces) }
 
     var body: some View {
         VStack(spacing: 10) {
@@ -112,7 +112,7 @@ private struct EnrollFormPart: View {
 
     /// "Server key from the QR code: …", and a warning once the address is another server.
     private var pinLine: some View {
-        let linkServer = form["enrollLinkServer"]?.stringValue ?? ""
+        let linkServer = link?.server ?? ""
         let same = linkServer.isEmpty || EnrollLink.sameHost(server, linkServer)
         let c = same ? ctx.color("@muted") : ctx.color("@danger")
         return HStack(alignment: .top, spacing: 8) {
@@ -126,18 +126,18 @@ private struct EnrollFormPart: View {
 
     /// A newer link (its prefill number) replaces the server and the code; otherwise what was typed stays.
     private func prefill(force: Bool) {
-        let seq = form["enrollPrefill"]?.numberValue ?? 0
+        let seq = Double(link?.seq ?? 0)
         if force && applied < 0 {
-            server = form["server"]?.stringValue ?? CoreConfig.defaultServer
-            code = form["code"]?.stringValue ?? ""
+            server = core.device.suggestedServer
+            code = link?.code ?? ""
             applied = seq
             if seq > 0 && code.isEmpty { codeFocused = true }
             return
         }
-        guard seq > applied else { return }
+        guard seq > applied, let l = link else { return }
         applied = seq
-        server = form["server"]?.stringValue ?? server
-        code = form["code"]?.stringValue ?? ""
+        server = l.server
+        code = l.code
         if code.isEmpty { codeFocused = true }
     }
 
@@ -150,7 +150,6 @@ private struct EnrollFormPart: View {
             do {
                 try await core.device.enroll(server: base, code: code.trimmingCharacters(in: .whitespaces), name: name.trimmingCharacters(in: .whitespaces), pinKid: pinKid)
                 state.enrollError = ""
-                ctx.host.form["enrollError"] = nil
                 await core.start()
                 ctx.host.route()
             } catch {

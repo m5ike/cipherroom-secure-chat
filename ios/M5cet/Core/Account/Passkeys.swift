@@ -85,7 +85,7 @@ final class SystemPasskeys: NSObject, PasskeyAuthorizing, ASAuthorizationControl
     }
 
     nonisolated func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
-        nonisolated(unsafe) let a = authorization
+        let a = authorization
         MainActor.assumeIsolated { finish(.success(a)) }
     }
 
@@ -105,7 +105,8 @@ final class SystemPasskeys: NSObject, PasskeyAuthorizing, ASAuthorizationControl
         MainActor.assumeIsolated {
             let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
             let scene = scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
-            return scene?.keyWindow ?? scene?.windows.first ?? ASPresentationAnchor()
+            if let w = scene?.keyWindow ?? scene?.windows.first { return w }
+            return UIWindow(windowScene: scene ?? scenes[0])
         }
     }
 

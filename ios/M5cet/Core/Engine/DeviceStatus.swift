@@ -27,6 +27,70 @@ protocol DeviceEnrolling: AnyObject {
     func enroll(server: String, code: String, name: String, pinKid: String) async throws
     /// A check-in (policy, define); false when the server could not be reached.
     @discardableResult func checkIn(reason: String) async -> Bool
+    /// A link's values for the enrolment form (server, code, kid, its number — a newer one replaces what was typed).
+    var prefill: (server: String, code: String, kid: String, seq: Int)? { get }
+    /// What the last enrolment link did, in words (once; nil when nothing to say).
+    func takeLinkNotice(t: (String) -> String) -> (text: String, level: FlashLevel)?
+    /// The server the form shows first.
+    var suggestedServer: String { get }
+}
+
+/// Platform/Push's DeviceService behind the core (the device's state, enrolment, check-ins, links) plus $define,
+/// which the core keeps (GET /api/define, the system tier's "define" record — Android core/Define).
+@MainActor
+final class PushDeviceAdapter: DeviceEnrolling {
+    let device: DeviceService
+    private let security: any CoreSecurity
+    private(set) var define: DesignValue = .object([:])
+    private static let log = Logger(subsystem: "cz.m5cet.app", category: "device")
+
+    init(device: DeviceService, security: any CoreSecurity) {
+        self.device = device
+        self.security = security
+        if let doc = security.systemRecords.record("define"), let v = doc.object("values") { define = v.designValue }
+        device.onCheckin.append { [weak self] in Task { await self?.refreshDefine() } }
+        device.onEnrolled.append { [weak self] in Task { await self?.refreshDefine() } }
+    }
+
+    var enrolled: Bool { device.isEnrolled }
+    var server: String { device.state?.server ?? "" }
+    var state: DeviceState? { device.state }
+    var suggestedServer: String { device.suggestedServer }
+    var prefill: (server: String, code: String, kid: String, seq: Int)? { device.prefill.map { ($0.server, $0.code, $0.kid, $0.seq) } }
+
+    func enroll(server: String, code: String, name: String, pinKid: String) async throws {
+        if !(await device.enroll(server: server, code: code, name: name)) {
+            throw AccountFailure(code: "enroll", message: device.enrollError ?? "")
+        }
+    }
+
+    @discardableResult
+    func checkIn(reason: String) async -> Bool { await device.checkin(reason) }
+
+    func takeLinkNotice(t: (String) -> String) -> (text: String, level: FlashLevel)? {
+        guard let n = device.enrollNotice else { return nil }
+        device.enrollNotice = nil
+        switch n {
+        case .invalid: return (t("enroll.qrInvalid"), .error)
+        case .applied(let noCode): return (t("enroll.qrApplied") + (noCode ? " " + t("enroll.qrNoCode") : ""), .info)
+        case .already(let s): return (t("enroll.qrAlready").replacingOccurrences(of: "{server}", with: s), .warn)
+        case .otherServer(let current, let link): return (t("enroll.qrOther").replacingOccurrences(of: "{server}", with: current).replacingOccurrences(of: "{other}", with: link), .warn)
+        case .locked: return (t("enroll.qrLocked"), .warn)
+        }
+    }
+
+    /// GET /api/define?scope=ios → { ok, values, updatedAt }; the cached copy stays on any failure.
+    func refreshDefine() async {
+        guard let base = device.state?.server, !base.isEmpty, let url = URL(string: base + "/api/define?scope=ios") else { return }
+        do {
+            let (data, _) = try await URLSession.shared.data(from: url)
+            guard let o = JSON.parseObject(String(decoding: data, as: UTF8.self)), o.bool("ok") == true, let v = o.object("values") else { return }
+            define = v.designValue
+            security.systemRecords.put("define", JSONObject([("values", .object(v)), ("updatedAt", .int(o.optInt64("updatedAt")))]))
+        } catch {
+            Self.log.debug("define: not now")
+        }
+    }
 }
 
 @MainActor
@@ -46,6 +110,9 @@ final class CoreDeviceService: DeviceEnrolling {
 
     var enrolled: Bool { state?.enrolled ?? false }
     var server: String { state?.server ?? "" }
+    var prefill: (server: String, code: String, kid: String, seq: Int)?
+    var suggestedServer: String { prefill?.server ?? CoreConfig.defaultServer }
+    func takeLinkNotice(t: (String) -> String) -> (text: String, level: FlashLevel)? { nil }
 
     /// The stored state (system tier, readable while locked).
     func load() async {

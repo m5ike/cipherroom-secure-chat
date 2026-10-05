@@ -21,11 +21,11 @@ final class RoomFiles {
     private var incoming: [String: Incoming] = [:]
     private var outgoing: [String: Outgoing] = [:]
     private var proxyKeys = ProxyKeys()
-    private static let log = Logger(subsystem: "cz.m5cet.app", category: "files")
+    nonisolated private static let log = Logger(subsystem: "cz.m5cet.app", category: "files")
 
     init(room: RoomController) { self.room = room }
 
-    private final class Incoming {
+    private final class Incoming: @unchecked Sendable {
         let transfer: FileTransfer.Incoming
         let from: String?
         let slots: FileSlots
@@ -114,9 +114,9 @@ final class RoomFiles {
                 guard let k = from.isEmpty ? nil : self.proxyKeys.take(from: from, transferId: id) else {
                     guard let w = self.proxyKeys.park(from: from, transferId: id, meta: f) else { Self.log.warning("a proxied protocol-4 file without its sender refused"); return }
                     let token = w.token
-                    Task { @MainActor [weak self] in
+                    Task { @MainActor in
                         try? await Task.sleep(for: .milliseconds(ProxyKeys.waitMs))
-                        guard let self, self.proxyKeys.expire(id, token: token) else { return }
+                        guard self.proxyKeys.expire(id, token: token) else { return }
                         Self.log.warning("a proxied protocol-4 file came without its key — not opened")
                         self.room.systemNotice("⚠ " + P4Texts.t("p4.file.noKey"))
                     }
@@ -152,7 +152,7 @@ final class RoomFiles {
             i.lastUi = Date()
             let p = i.transfer.progress
             let id = i.transfer.id
-            room.session.map { s in Task { _ = await s.touch(id) { $0.fileProgress = p } } }
+            if let s = room.session { Task { _ = await s.touch(id) { $0.fileProgress = p } } }
         }
     }
 
@@ -173,7 +173,7 @@ final class RoomFiles {
     /// (6.12 F-16: still encrypted under its transfer key, which goes into the lock inbox).
     private func finish(_ i: Incoming, _ f: JSONObject) {
         guard let rooms = room.rooms, let store = rooms.fileStore else { return }
-        let t = i.transfer
+        nonisolated(unsafe) let t = i.transfer
         let inbox = rooms.core?.security.lockInbox
         let roomKey = room.key
         let slots = i.slots
@@ -208,25 +208,27 @@ final class RoomFiles {
     private func done(_ i: Incoming) {
         let verified = i.transfer.signer != nil
         let fromPeer = i.from
-        let trustOk = fromPeer.map { id in room.snap.peers.first { $0.id == id }?.trust == Trust.verified } ?? false
+        // § 12.1: "verified" only for a sender the person verified (a proxied protocol-4 file: the device that sealed its key).
+        let signerKid = (i.transfer.signer).flatMap { $0.isEmpty ? nil : Ec.kid($0) } ?? ""
+        let trustOk = fromPeer.map { id in room.snap.peers.first { $0.id == id }?.trust == Trust.verified }
+            ?? (!i.transfer.p4 || (room.rooms?.verifiedDevice(signerKid) ?? false))
         let id = i.transfer.id
-        room.session.map { s in
-            Task {
-                _ = await s.touch(id) { m in
-                    m.filePath = id
-                    m.fileProgress = -1
-                    m.fileVerified = verified
-                    m.verified = verified && trustOk
-                }
-                self.room.saveSoon()
+        guard let s = room.session else { return }
+        Task {
+            _ = await s.touch(id) { m in
+                m.filePath = id
+                m.fileProgress = -1
+                m.fileVerified = verified
+                m.verified = verified && trustOk
             }
+            self.room.saveSoon()
         }
     }
 
     private func failed(_ i: Incoming, _ why: String) {
         let id = i.transfer.id
         let name = i.message.fileName ?? ""
-        room.session.map { s in Task { _ = await s.touch(id) { $0.fileProgress = -2 } } }
+        if let s = room.session { Task { _ = await s.touch(id) { $0.fileProgress = -2 } } }
         room.systemNotice("⚠ " + name + ": " + why)
     }
 
@@ -248,7 +250,7 @@ final class RoomFiles {
                 let transport = proxy ? "proxy" : "p2p"
                 let meta = FileTransfer.meta(id: id, name: String(name.prefix(200)), mime: mime, size: size, senderId: self.room.myId, senderName: self.room.myName,
                                              createdAt: EpochMs.now)
-                let identity = await session.withCore { $0.identity }
+                let identity = await session.local { $0.identity }
                 for lane in out.lanes {
                     let frame = try FileTransfer.bodyFrame(kind: "file-meta", id: id, body: meta, lane: lane.lane, transport: transport, identity: identity)
                     self.broadcast(lane.peers, frame, proxyType: "proxy-meta")

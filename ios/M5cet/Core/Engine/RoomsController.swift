@@ -28,7 +28,7 @@ final class RoomsController: RoomsModel {
     /// The server's origin ("https://chat.example.com").
     @ObservationIgnored private(set) var server: String
     /// Device keys the person verified (People › verify; contacts/Store.verified) — what makes a relayed message "verified".
-    @ObservationIgnored var verifiedDevices: Set<String> = []
+    @ObservationIgnored var verifiedDevice: @Sendable (String) -> Bool = { _ in false }
     @ObservationIgnored var ktFetcher: Kt.ConsistencyFetcher?
     /// The unlock is merging the lock inbox: histories wait for restoreAll.
     @ObservationIgnored private(set) var draining = false
@@ -44,7 +44,7 @@ final class RoomsController: RoomsModel {
     /// Bumped on every change of a room (its badge, status, the list order) — the rooms screen follows it.
     private(set) var revision = 0
 
-    static let log = Logger(subsystem: "cz.m5cet.app", category: "rooms")
+    nonisolated static let log = Logger(subsystem: "cz.m5cet.app", category: "rooms")
 
     init(server: String, records: any RecordVault, hub: HubRooms, wires: any RoomWireFactory, account: (any P4AccountProvider)?) {
         self.server = server
@@ -407,11 +407,13 @@ final class RoomsController: RoomsModel {
         var bad = Set<String>()
         for f in p.files where !(core?.storeKeptFile(f) ?? false) { bad.insert(f.optString("id")) }
         let now = EpochMs.now
-        for (room, items) in p.rooms where saved(room) != nil {
+        // Saved rooms are read again at the unlock (load) before the merge; a room no longer saved is skipped.
+        let savedKeys = Set(SavedRooms.load(records).rooms.map(\.key))
+        for (room, items) in p.rooms.entries where savedKeys.contains(room) {
             History.merge(records, room, items: items, now: now, lostFiles: bad)
         }
-        pins.mergePins(Dictionary(uniqueKeysWithValues: p.pins.map { ($0.key, $0.value) }))
-        for (room, r) in p.resumes where r.count == 2 { Resume.save(records, room, peerId: r[0], secret: r[1], now: now) }
+        pins.mergePins(Dictionary(uniqueKeysWithValues: p.pins.entries.map { ($0.key, $0.value) }))
+        for (room, r) in p.resumes.entries where r.count == 2 { Resume.save(records, room, peerId: r[0], secret: r[1], now: now) }
         core?.mergeLockedCalls(p.calls)
     }
 

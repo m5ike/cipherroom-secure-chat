@@ -67,7 +67,7 @@ final class RoomController: RoomModel {
     @ObservationIgnored private var pendingNames: [String: String] = [:]
     @ObservationIgnored lazy var files = RoomFiles(room: self)
     @ObservationIgnored private var foreground = true
-    static let log = Logger(subsystem: "cz.m5cet.app", category: "room")
+    nonisolated static let log = Logger(subsystem: "cz.m5cet.app", category: "room")
 
     init(saved: SavedRoom, userName: String, rooms: RoomsController) {
         key = saved.key
@@ -120,7 +120,7 @@ final class RoomController: RoomModel {
         let pins = rooms.pins
         let device = rooms.p4
         let session = RoomSession(key: key, room: room, label: label, userName: myName, keys: derived, identity: identity, transport: bridge, events: bridge,
-                                  device: device, pins: pins, verifiedDevice: { pk in rooms.verifiedDevices.contains(pk) },
+                                  device: device, pins: pins, verifiedDevice: rooms.verifiedDevice,
                                   settings: rooms.roomSettings(foreground: foreground), ktFetch: rooms.ktFetcher)
         self.session = session
         // The inputs, in order, one at a time.
@@ -340,7 +340,7 @@ final class RoomController: RoomModel {
     func refreshNow() async {
         refreshQueued = false
         guard let s = session else { return }
-        let snap = await s.withCore { RoomSnap.of($0) }
+        let snap = await s.local { RoomSnap.of($0) }
         apply(snap)
     }
 

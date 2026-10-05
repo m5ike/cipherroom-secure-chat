@@ -20,7 +20,7 @@ import os
 final class CoreActions {
     unowned let core: AppCore
     let state: AppScreenState
-    static let log = Logger(subsystem: "cz.m5cet.app", category: "actions")
+    nonisolated static let log = Logger(subsystem: "cz.m5cet.app", category: "actions")
 
     init(core: AppCore, state: AppScreenState) {
         self.core = core
@@ -40,9 +40,11 @@ final class CoreActions {
         "lock.now", "lock.biometric", "pin.change", "biometric.toggle", "wipe.ask", "kt.dismiss",
         "account.signin", "account.signup", "account.signout", "account.recovery", "account.addPasskey", "account.register",
         "update.check", "update.install", "fn.run", "voice.speak", "voice.stop", "system.settings", "conversations.settings", "lang.set",
-        "notify.up", "notify.down", "notify.use", "notify.drop", "notify.test", "notify.sync",
         "nfc.read", "nfc.write", "nfc.emulate", "nfc.stop",
     ]
+
+    /// Actions another Platform area registers itself (Platform/Notifications: the channel order of Settings › Notifications).
+    static let platformOwned: [String] = ["notify.up", "notify.down", "notify.use", "notify.drop", "notify.test", "notify.sync"]
 
     /// Actions a part owns; the core logs them until the part registers (Core/README.md § Akce).
     static let partOwned: [String] = [
@@ -146,8 +148,6 @@ final class CoreActions {
         case "voice.stop": core.voice?.stopSpeaking()
         case "system.settings", "conversations.settings": openSystemSettings(s)
         case "lang.set": core.installTexts(); host.refresh()
-        case "notify.up", "notify.down", "notify.use", "notify.drop", "notify.test", "notify.sync":
-            if let n = core.notifyPrefs { n.run(action.name, s, host) } else { Self.log.notice("\(action.name, privacy: .public): no notification settings service yet") }
         case "nfc.read", "nfc.write", "nfc.emulate", "nfc.stop":
             if let h = core.nfcPanel { h(String(action.name.dropFirst(4)), host) } else { nfcFallback(action.name, host) }
         default:
@@ -491,31 +491,14 @@ final class CoreActions {
     /// m5cet:// links (MainActivity.handleIntent → Forms.enrollLink; a room link while the app runs).
     func link(_ link: DeepLink, _ host: DesignHost) -> Bool {
         switch link {
-        case .enroll(let url):
+        case .enroll:
+            // The device service read the link first (AppModel.onLink: DeviceService.takeEnrollLink — the form's
+            // prefill, or why not); here its notice. Not taken: the host brings the enrolment screen forward.
             let starting = host.screen.isEmpty || host.screen == "splash"
-            guard let l = EnrollLink.parse(url.absoluteString) else {
-                notice(host, starting, t("enroll.qrInvalid"), .error)
-                return true
-            }
-            let server = l.server, code = l.code, kid = l.kid
-            if core.device.enrolled {
-                let now = core.device.server
-                let text = core.security.isLocked ? t("enroll.qrLocked")
-                    : EnrollLink.sameServer(now, server) ? t("enroll.qrAlready").replacingOccurrences(of: "{server}", with: now)
-                    : t("enroll.qrOther").replacingOccurrences(of: "{server}", with: now).replacingOccurrences(of: "{other}", with: server)
-                notice(host, starting, text, .warn)
-                return true
-            }
-            host.form["server"] = .string(server)
-            host.form["code"] = .string(code)
-            host.form["kid"] = .string(kid)
-            host.form["enrollLinkServer"] = .string(server)
-            host.form["enrollPrefill"] = .number((host.form["enrollPrefill"]?.numberValue ?? 0) + 1)
+            if let n = core.device.takeLinkNotice(t: t) { notice(host, starting, n.text, n.level) }
             state.enrollError = ""
-            if starting { return true }
-            if host.screen == "enroll" { host.refresh() } else { host.showScreen("enroll") }
-            host.flash(title: "", text: t("enroll.qrApplied") + (code.isEmpty ? " " + t("enroll.qrNoCode") : ""), level: .info)
-            return true
+            if !core.device.enrolled && host.screen == "enroll" { host.refresh() }
+            return false
         default:
             return false
         }

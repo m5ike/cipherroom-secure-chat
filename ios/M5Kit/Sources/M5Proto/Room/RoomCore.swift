@@ -891,7 +891,7 @@ public final class RoomCore {
     /// before `finishSend`; `sealedText`/`sealedMeta` carry its result.
     public func compose(_ o: Outgoing) -> ChatMessage {
         var m = ChatMessage()
-        m.id = "msg-" + Crypto.hex(Crypto.random(12))
+        m.id = o.id.flatMap { $0.hasPrefix("msg-") && $0.utf16.count <= Payloads.idMax && message($0) == nil ? $0 : nil } ?? "msg-" + Crypto.hex(Crypto.random(12))
         m.roomKey = key
         m.text = o.text
         m.createdAt = now

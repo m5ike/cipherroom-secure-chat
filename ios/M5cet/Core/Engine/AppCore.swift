@@ -9,6 +9,7 @@
 
 import Foundation
 import M5Core
+import M5Crypto
 import M5Design
 import M5Net
 import M5Proto
@@ -101,13 +102,19 @@ final class AppCore {
     @ObservationIgnored var iceCount = 0
     /// The device key's id (what the server calls its kid).
     @ObservationIgnored private(set) var deviceKid = "—"
+    /// The seams handed to other areas (they keep weak references).
+    @ObservationIgnored var callLogSource: AnyObject?
+    @ObservationIgnored var notificationRooms: AnyObject?
+    @ObservationIgnored var reachHost: AnyObject?
+    @ObservationIgnored var voiceEnvironment: AnyObject?
+    @ObservationIgnored var locationControl: AnyObject?
     /// The app is in the foreground.
     private(set) var inForeground = true
     /// Bumped when the route's inputs change (enrolled, lock).
     private(set) var routeRevision = 0
     @ObservationIgnored private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
     @ObservationIgnored private var pauseTask: Task<Void, Never>?
-    static let log = Logger(subsystem: "cz.m5cet.app", category: "core")
+    nonisolated static let log = Logger(subsystem: "cz.m5cet.app", category: "core")
 
     init(security: any CoreSecurity, device: any DeviceEnrolling, services: DesignServices, hub: HubRooms = HubRooms(),
          wires: any RoomWireFactory, fileStore: any CoreFileStore, passkeys: any PasskeyAuthorizing) {
