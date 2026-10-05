@@ -12,7 +12,7 @@
 import type { Express, Request, Response } from "express";
 import { rateLimit } from "express-rate-limit";
 import { tsaDb } from "./db";
-import { setTsaNotifier, type TsaDeps } from "./deps";
+import { setTsaNotifier, tsaDeps, type TsaDeps } from "./deps";
 import { readAudioFile } from "./files";
 import "./runtime";
 
@@ -26,7 +26,8 @@ export function registerTsaMediaRoutes(app: Express, opts: { notice?: TsaDeps["n
     if (!/^[A-Za-z0-9_-]{20,40}$/.test(token)) return res.status(404).end();
     await tsaDb.ready();
     const row = tsaDb.audio.get(token);
-    if (!row || row.expiresAt <= Date.now()) return res.status(404).end();
+    // The same clock the runtime stamped the token with (tsaDeps().now — a test sets its own).
+    if (!row || row.expiresAt <= tsaDeps().now()) return res.status(404).end();
     const bytes = Buffer.from(row.data, "base64");
     res.setHeader("Cache-Control", "private, max-age=600");
     res.setHeader("X-Content-Type-Options", "nosniff");
