@@ -82,6 +82,16 @@ public final class Profiles {
         changed();
     }
 
+    /**
+     * 6.12 (F-16): the app locked — the opened card, the public lookups and what
+     * the other members shared leave the memory (the card opens again after
+     * the unlock, the rooms share again when they reconnect).
+     */
+    public void forget() {
+        synchronized (this) { card = null; loadedFor = ""; error = ""; lookups.clear(); }
+        cache.clear();
+    }
+
     public synchronized boolean loading() { return loading; }
     public synchronized String error() { return error; }
 

@@ -153,6 +153,8 @@ public final class Parts {
             .setPositiveButton("OK", (d, w) -> {
                 String a1 = p1.getText().toString(), a2 = p2.getText().toString();
                 if (a1.length() < app.lock.pinLength() || !a1.equals(a2)) { a.flash("", app.t("lock.pinMismatch"), "error"); return; }
+                // 6.12: the unlock PIN may not be the duress PIN (it would erase the app).
+                if (cz.m5cet.app.security.Duress.isDuressPin(app, a1)) { a.flash("", app.t("set.security.duress.same"), "error"); return; }
                 cz.m5cet.app.security.AppLock.Result r = app.lock.confirmPin(p0.getText().toString());
                 if (r == cz.m5cet.app.security.AppLock.Result.WIPED) { a.flash("", app.t("lock.wiped"), "error"); cz.m5cet.app.core.Io.mainLater(app::restart, 2500); return; }
                 if (r != cz.m5cet.app.security.AppLock.Result.OK) { a.flash("", app.t("lock.wrongPin"), "error"); return; }
@@ -160,6 +162,81 @@ public final class Parts {
                 catch (Exception e) { a.flash("", e.getMessage(), "error"); }
             })
             .setNegativeButton(app.t("nav.close"), null));
+    }
+
+    /**
+     * 6.12 (F-16): the duress PIN's switch (Settings › Security). On: the
+     * current PIN (counted like an unlock, as for a PIN change) and the duress
+     * PIN twice — another than the unlock PIN; anything else (closing it, a
+     * mismatch) turns the switch off again. Off: the verifier goes.
+     */
+    public void duressChanged() {
+        M5 app = app();
+        if (!app.settings.bool(cz.m5cet.app.security.Duress.SETTING)) {
+            cz.m5cet.app.security.Duress.clear(app);
+            a.refresh();
+            return;
+        }
+        android.widget.EditText p0 = new android.widget.EditText(a), p1 = new android.widget.EditText(a), p2 = new android.widget.EditText(a);
+        for (android.widget.EditText e : new android.widget.EditText[]{p0, p1, p2}) e.setInputType(android.text.InputType.TYPE_CLASS_NUMBER | android.text.InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+        p0.setHint(app.t("lock.enterPin"));
+        p1.setHint(app.t("set.security.duress.new"));
+        p2.setHint(app.t("lock.confirmPin"));
+        android.widget.TextView about = new android.widget.TextView(a);
+        about.setText(app.t("set.security.duress.about"));
+        about.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 13);
+        android.widget.LinearLayout l = new android.widget.LinearLayout(a);
+        l.setOrientation(android.widget.LinearLayout.VERTICAL);
+        l.setPadding(Ui.dp(a, 20), Ui.dp(a, 8), Ui.dp(a, 20), 0);
+        l.addView(about);
+        l.addView(p0);
+        l.addView(p1);
+        l.addView(p2);
+        boolean[] done = {false};
+        Runnable off = () -> { if (!done[0]) { done[0] = true; app.settings.set(cz.m5cet.app.security.Duress.SETTING, false); a.refresh(); } };
+        SecureDialog.show(a, new android.app.AlertDialog.Builder(a).setTitle(app.t("set.security.duress")).setView(l)
+            .setPositiveButton("OK", (d, w) -> {
+                String d1 = p1.getText().toString(), d2 = p2.getText().toString();
+                if (!d1.equals(d2)) { a.flash("", app.t("lock.pinMismatch"), "error"); off.run(); return; }
+                cz.m5cet.app.security.AppLock.Result r = app.lock.confirmPin(p0.getText().toString());
+                if (r == cz.m5cet.app.security.AppLock.Result.WIPED) { done[0] = true; a.flash("", app.t("lock.wiped"), "error"); cz.m5cet.app.core.Io.mainLater(app::restart, 2500); return; }
+                if (r != cz.m5cet.app.security.AppLock.Result.OK) { a.flash("", app.t("lock.wrongPin"), "error"); off.run(); return; }
+                String why = cz.m5cet.app.security.Duress.refusal(d1, app.lock.pinLength(), app.vault.opensWith(d1));
+                if (why != null) {
+                    a.flash("", "same".equals(why) ? app.t("set.security.duress.same") : app.t("set.security.duress.length").replace("{n}", String.valueOf(app.lock.pinLength())), "error");
+                    off.run();
+                    return;
+                }
+                try {
+                    cz.m5cet.app.security.Duress.set(app, d1);
+                    done[0] = true;
+                    app.settings.set(cz.m5cet.app.security.Duress.SETTING, true);
+                    a.flash("", app.t("set.security.duress") + " ✓", "success");
+                    a.refresh();
+                } catch (Exception e) {
+                    a.flash("", e.getMessage(), "error");
+                    off.run();
+                }
+            })
+            .setNegativeButton(app.t("nav.close"), (d, w) -> off.run())
+            .setOnDismissListener(d -> off.run()));
+    }
+
+    /**
+     * 6.12 (F-16): the app locked — the parts' copies of the open app go: the
+     * decoded pictures, held messages, the message list and the composer
+     * (with what was typed), the assistant's conversation, the commands'
+     * usage. They are made again after the unlock.
+     */
+    public void forget() {
+        imageCache.evictAll();
+        holding.clear();
+        if (aiChat != null) aiChat.clear();
+        aiChat = null;
+        messages = null;
+        composer = null;
+        fn.forget();
+        ProfileUi.forget();
     }
 
     /** Erase everything — asked first. */

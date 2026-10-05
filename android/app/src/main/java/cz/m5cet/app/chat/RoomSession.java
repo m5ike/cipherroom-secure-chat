@@ -520,11 +520,11 @@ public final class RoomSession {
         if (text.isEmpty()) return;
         if (text.length() > 2000) text = text.substring(0, 2000);
         String kind = f.optString("kind", "wall");
-        String from = f.optString("from", "operator");
         if ("flash".equals(kind) || "wake".equals(kind)) { notice = text; changed(); return; }
         ChatMessage m = ChatMessage.system(key, text);
         m.id = "notice-" + f.optString("id", Long.toString(System.nanoTime(), 36));
-        m.senderName = ("message".equals(kind) ? "✉ " : f.optBoolean("pinned") ? "📌 " : "📣 ") + from;
+        // 6.12 (F-22): always the operator — the frame's "from" could name anyone (core/Names.operator).
+        m.senderName = ("message".equals(kind) ? "✉ " : f.optBoolean("pinned") ? "📌 " : "📣 ") + app.t("notice.operator");
         m.createdAt = f.optLong("at", System.currentTimeMillis());
         synchronized (messages) { for (ChatMessage x : messages) if (m.id.equals(x.id)) return; }
         add(m, false);

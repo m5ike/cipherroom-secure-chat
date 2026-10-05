@@ -121,7 +121,10 @@ final class MsgDetails implements Rooms.Listener {
         header();
         DateFormat full = DateFormat.getDateTimeInstance(DateFormat.LONG, DateFormat.MEDIUM);
         row(t("msginfo.when"), full.format(new Date(m.createdAt)));
-        row(t("msginfo.sender"), m.mine ? t("users.me") + " (" + m.senderName + ")" : m.senderName);
+        // 6.12 (F-22): the name as shown everywhere; an operator's notice names the operator, not its frame's "from".
+        String sender = m.id != null && m.id.startsWith(cz.m5cet.app.core.Names.NOTICE_ID) && "sys".equals(m.kind)
+            ? cz.m5cet.app.core.Names.operator(m.senderName, t("notice.operator")) : cz.m5cet.app.core.Names.normalize(m.senderName);
+        row(t("msginfo.sender"), m.mine ? t("users.me") + " (" + sender + ")" : sender);
         row(t("msginfo.recipients"), !m.to.isEmpty() ? String.join(", ", m.to) : t("msginfo.everyone") + " · " + room.label);
         row(t("msginfo.size"), size());
         row(t("msginfo.verified"), m.verified ? "✓" : m.changed ? "⚠ " + t("msginfo.changed") : "—");

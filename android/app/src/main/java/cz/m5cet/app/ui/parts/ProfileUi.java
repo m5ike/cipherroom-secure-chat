@@ -61,6 +61,13 @@ public final class ProfileUi {
 
     private static final String[] AUDIENCES = { "me", "room", "public" };
 
+    /** 6.12 (F-16): the app locked — the editor's working copy and the last saved card leave the memory. */
+    static void forget() {
+        draft = null;
+        saved = "";
+        msg = "";
+    }
+
     /** profile.* actions (Actions.run). */
     public static void run(MainActivity a, String action, String arg) {
         M5 app = a.app();

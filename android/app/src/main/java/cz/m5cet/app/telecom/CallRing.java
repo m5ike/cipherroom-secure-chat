@@ -78,7 +78,8 @@ public final class CallRing {
         int level = level(app), id = id(roomKey);
         String kind = app.t(video ? "ring.video" : "ring.call");
         String title = level >= 2 ? room : app.design().appName();
-        String text = level >= 1 && who != null && !who.isEmpty() ? app.t("ring.who").replace("{name}", who) : kind;
+        // 6.12 (F-22): the caller's name as the app shows names (no bidi or invisible characters).
+        String text = level >= 1 && who != null && !who.isEmpty() ? app.t("ring.who").replace("{name}", cz.m5cet.app.core.Names.normalize(who)) : kind;
         Intent decline = new Intent(app, Receiver.class).setAction(ACTION_DECLINE).putExtra("room", roomKey);
         PendingIntent declinePi = PendingIntent.getBroadcast(app, id, decline, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Intent join = new Intent(app, MainActivity.class).setAction(ACTION_JOIN).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -108,7 +109,7 @@ public final class CallRing {
         if (!allowed(app) || !NotifyPrefs.get(app).allows("call", System.currentTimeMillis()) || app.rooms.onScreen(roomKey)) return;
         int level = level(app), id = id(roomKey);
         String title = level >= 2 ? room : app.design().appName();
-        String text = level >= 1 && who != null && !who.isEmpty() ? app.t("ring.missedWho").replace("{name}", who) : app.t("ring.missed");
+        String text = level >= 1 && who != null && !who.isEmpty() ? app.t("ring.missedWho").replace("{name}", cz.m5cet.app.core.Names.normalize(who)) : app.t("ring.missed");
         Notification.Builder b = new Notification.Builder(app, Notify.CH_QUIET)
             .setSmallIcon(R.drawable.ic_stat_m5).setContentTitle(title).setContentText(text)
             .setCategory(Build.VERSION.SDK_INT >= 31 ? Notification.CATEGORY_MISSED_CALL : Notification.CATEGORY_CALL)

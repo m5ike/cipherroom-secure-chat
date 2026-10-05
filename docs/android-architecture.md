@@ -163,9 +163,65 @@ Změny 6.7 (audit S10–S14, N18, F-16):
 * Obrazovky `lock` a `enroll` dostávají prázdné `$form`; nový PIN je
   v soukromém poli, ne v `$form`.
 
-Zbývá (F-16): pepř PINu `m5.pep` bez vazby na ověření uživatele či
-hardwarový limit pokusů, čítač pokusů v souboru trezoru (obnova starší
-kopie ho vrátí), „zamknout“ nezahodí datový klíč, žádný nouzový PIN.
+Změny 6.12 (F-16, `docs/security-analysis.md` kap. 13):
+
+* **Zámek zahodí datový klíč.** „Zamknout“ (menu, akce designu `lock.now`,
+  příkaz serveru `lock`) i automatický zámek — při návratu z pozadí i když
+  jeho čas uplyne na pozadí (časovač a alarm `Conversations`, od 6.12 budí
+  telefon `setAndAllowWhileIdle`) — odpojí místnosti (historie se uloží ještě
+  s klíčem), DEK uživatelské vrstvy vynuluje (`Vault.lock`) a zahodí, co se
+  s ním otevřelo: relaci účtu v paměti, propojení lidí, profilovou kartu
+  a profily od členů, seznam Historie, souhlasy s řečí serveru
+  (`M5.forgetSecrets`), na obrazovce `$form`, obrázky, seznam zpráv, composer
+  a konverzaci s asistentem (`MainActivity.forgetUi`, `Parts.forget`).
+  Odemčení klíč znovu odvodí a vybrané místnosti připojí. **Během hovoru**
+  se obrazovka zamkne hned, klíč zůstane do konce hovoru (kontrola po 15 s);
+  příkaz serveru zamkne i hovor. Zamčená aplikace tedy **nepřijímá zprávy
+  živě** — přihlášenému účtu je drží server a probudí telefon přes FCM
+  (oznámení neutrální, bez obsahu); bez účtu je server nedrží, takže zprávy
+  poslané mezitím zamčená aplikace neuvidí (jako dřív, když ji Android uspal
+  nebo ukončil). Klíče místností v `RoomSession` (chat) se s odpojením zahodí
+  jen jako reference (nulování patří k protokolu 4).
+* **Klíč PINu ve zkontrolovaném hardwaru.** Nový Keystore klíč `m5.pin`
+  (HMAC-SHA256, StrongBox, jinak TEE; jeho umístění se ověří přes
+  `KeyInfo`) — KEK = HMAC(`m5.pin`, `"m5/pin/2|"` ‖ PBKDF2(PIN)), obal
+  `user.pin` verze 2 (`PinWrap`, AAD `m5/user.pin/2`, pole `hw`). Instalace
+  z 6.11 (verze 1 s `m5.pep`) se převede **při příštím úspěšném odemčení
+  PINem** (stejná sůl, stejný DEK, žádné druhé PBKDF2); `m5.pep` se smaže až
+  po zápisu verze 2. Telefon bez bezpečného hardwaru pro klíč nechá verzi 1
+  (`hw: "software"`) a *Nastavení › Zabezpečení › Klíč PINu* to ukáže
+  (StrongBox / bezpečný hardware / starší způsob / jen software). Pozn.:
+  `m5.pep` byl i dřív Keystore klíč, jen bez kontroly, kde leží.
+* **Čítač pokusů svázaný s Keystore** (`LockStore`): záznam čítače nese
+  generaci a HMAC klíčem `m5.ctr.<generace>`; každý zápis vytvoří klíč další
+  generace, zapíše záznam trvale (fsync souboru i adresáře) a teprve pak smaže
+  starší klíč. Starší kopie souborů trezoru (nebo smazaný záznam) míří na
+  smazaný klíč → **rollback = všechny pokusy vyčerpané** → wipe, nebo hodinová
+  blokace podle politiky. Záznam z 6.11 se převezme se svými pokusy a zapečetí
+  při dalším zápisu (nejdřív se označí `mig`, takže přerušení mezi kroky není
+  rollback); Keystore, který teď neodpoví, nic nerozhoduje (pokus se
+  nezapočítá → PIN se neověří). Proti kódu běžícímu jako aplikace to nechrání.
+* **Nouzový PIN** (*Nastavení › Zabezpečení*, `security.duress`, výchozí
+  vypnuto): nastaví se současným PINem, musí mít délku PINu z politiky a lišit
+  se od PINu pro odemčení (a naopak nový PIN nesmí být nouzový). Na obrazovce
+  zámku — i během prodlevy — aplikaci smaže stejnou cestou jako vyčerpané
+  pokusy (`Wiper`, důvod `duress`) a spustí ji prázdnou bez hlášky „data
+  smazána“; server se o smazání dozví. Uložen je jen ověřovač: HMAC(Keystore
+  `m5.duress`, PBKDF2(PIN)) se stejnou cenou jako PIN (s nouzovým PINem trvá
+  každý pokus zhruba dvojnásob).
+* **Oznámení zpráv a zamčená obrazovka telefonu (G-22):** `VISIBILITY_SECRET`
+  (na zamčené obrazovce nic, ani „Nová zpráva“), když uživatel zapne
+  *Nastavení › Oznámení › Skrýt na zamčené obrazovce* (`notify.lockScreenHide`,
+  výchozí vypnuto), a vždy, dokud je zamčená aplikace (i oznámení přepsaná
+  při zámku `neutralizeAll`); jinak jako dřív `VISIBILITY_PRIVATE` s neutrální
+  veřejnou verzí. Vyzvánění a zmeškaný hovor zůstávají `PRIVATE`
+  (`telecom/LockScreen`).
+
+Zbývá (F-16): limit pokusů vynucený bezpečným hardwarem pro vlastní PIN
+aplikace Android nenabízí (s rootem / kódem jako aplikace lze PIN dál hádat
+přes Keystore); obnova celé databáze Keystore spolu se soubory čítač vrátí;
+mezi uplynutím autozámku a doručením alarmu zmrazenému procesu zůstává klíč
+v paměti.
 
 ## 4. Framework: obrazovky, šablony, animace
 

@@ -34,7 +34,13 @@ public final class Wiper {
 
     private static File pending(Context ctx) { return new File(ctx.getNoBackupFilesDir(), "pending-wipe.json"); }
 
-    public static void wipe(M5 app, String reason, boolean remote, int attempts) {
+    public static void wipe(M5 app, String reason, boolean remote, int attempts) { wipe(app, reason, remote, attempts, false); }
+
+    /**
+     * quiet (6.12, the duress PIN): the next start shows the empty app without
+     * the "data erased" notice (pendingQuiet) — the server still hears of it.
+     */
+    public static void wipe(M5 app, String reason, boolean remote, int attempts, boolean quiet) {
         Log.w("wipe", "wiping all local data: " + reason);
         try {
             if (app.config.enrolled()) {
@@ -45,6 +51,7 @@ public final class Wiper {
                 String path = new URL(base).getPath() + "/api/android/events";
                 JSONObject headers = Server.signHeaders(app.config.deviceId(), "POST", path, body, System.currentTimeMillis());
                 JSONObject request = new JSONObject().put("url", base + "/api/android/events").put("headers", headers).put("body", Crypto.b64(body));
+                if (quiet) request.put("quiet", true);
                 Vault.writeAtomic(pending(app), Crypto.utf8(request.toString()));
             }
         } catch (Exception e) {
@@ -68,8 +75,7 @@ public final class Wiper {
         if (data != null) {
             deleteTree(new File(data, "shared_prefs"), keep);
             deleteTree(new File(data, "databases"), keep);
-        }
-        File ext = app.getExternalFilesDir(null);
+        }        File ext = app.getExternalFilesDir(null);
         if (ext != null) deleteTree(ext, keep);
         if (remote) endAfterReport(app);
         else sendPending(app); // a local wipe: the screen says so, then app.restart() ends the process
@@ -148,6 +154,14 @@ public final class Wiper {
     }
 
     public static boolean hasPending(Context ctx) { return pending(ctx).exists(); }
+
+    /** 6.12: the pending report is of a quiet wipe (the duress PIN): no "data erased" notice. */
+    public static boolean pendingQuiet(Context ctx) {
+        File f = pending(ctx);
+        if (!f.exists()) return false;
+        try { return new JSONObject(Crypto.str(Vault.read(f))).optBoolean("quiet"); }
+        catch (Exception e) { return false; }
+    }
 
     /** Delivers the last event of a wiped device (retried on every start). */
     public static void sendPending(Context ctx) {

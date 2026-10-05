@@ -146,10 +146,12 @@ public final class Voice {
      * leaves the phone) or — voice.engine = server — the operator's speech
      * module (the server sees the text). Errors: "tts-none" (no voice on the
      * phone), "tts-server-off" (the server has none for this user),
-     * "tts-failed: …".
+     * "tts-failed: …"; 6.12 (G-14): "declined" — the first time in a room
+     * the person is asked, the provider named (ServerVoiceConsent), and a no
+     * sends nothing.
      */
-    public void textToVoiceMessage(String text, Result<Clip> done) {
-        if ("server".equals(app.settings.str("voice.engine"))) serverVoiceMessage(text, done);
+    public void textToVoiceMessage(String text, String room, ServerVoiceConsent.Ask ask, Result<Clip> done) {
+        if ("server".equals(app.settings.str("voice.engine"))) serverVoiceMessage(text, room, ask, done);
         else deviceVoiceMessage(text, done);
     }
 
@@ -172,24 +174,29 @@ public final class Voice {
         });
     }
 
-    private void serverVoiceMessage(String text, Result<Clip> done) {
+    private void serverVoiceMessage(String text, String room, ServerVoiceConsent.Ask ask, Result<Clip> done) {
         String base = app.config.server();
         if (base.isEmpty()) { done.done(null, "tts-server-off"); return; }
         SpeechApi api = new SpeechApi(base);
         String bearer = app.account.bearer();
         api.status(bearer, Io::bg, status -> {
             if (!status.tts || status.voices.isEmpty()) { Io.main(() -> done.done(null, "tts-server-off")); return; }
-            api.tts(bearer, text, status.voices.get(0).id, null, Io::bg, new Api.Callback<SpeechApi.Audio>() {
-                @Override public void ok(SpeechApi.Audio audio) {
-                    try {
-                        Clip c = SpeakSend.isWav(audio.bytes) ? wavClip(app, audio.bytes) : new Clip(audio.bytes, audio.mime, 0, null, 0);
-                        Io.main(() -> done.done(c, null));
-                    } catch (Exception e) {
-                        Io.main(() -> done.done(null, "tts-failed: " + e.getMessage()));
+            SpeechApi.Connector voice = status.voices.get(0);
+            // 6.12 (G-14): before the text leaves — who reads it, asked once per room.
+            Io.main(() -> ServerVoiceConsent.check(room, ServerVoiceConsent.Use.SPEAK, voice.label, ask, yes -> {
+                if (!yes) { done.done(null, "declined"); return; }
+                api.tts(bearer, text, voice.id, null, Io::bg, new Api.Callback<SpeechApi.Audio>() {
+                    @Override public void ok(SpeechApi.Audio audio) {
+                        try {
+                            Clip c = SpeakSend.isWav(audio.bytes) ? wavClip(app, audio.bytes) : new Clip(audio.bytes, audio.mime, 0, null, 0);
+                            Io.main(() -> done.done(c, null));
+                        } catch (Exception e) {
+                            Io.main(() -> done.done(null, "tts-failed: " + e.getMessage()));
+                        }
                     }
-                }
-                @Override public void fail(Api.Failure f) { Io.main(() -> done.done(null, "tts-failed: " + f.getMessage())); }
-            });
+                    @Override public void fail(Api.Failure f) { Io.main(() -> done.done(null, "tts-failed: " + f.getMessage())); }
+                });
+            }));
         });
     }
 
@@ -222,18 +229,30 @@ public final class Voice {
         }));
     }
 
-    /** 6.7: recorded PCM → text by the operator's speech module (voice.engine = server). */
-    public void serverVoiceToText(byte[] pcm, int rate, Result<String> done) {
+    /**
+     * 6.7: recorded PCM → text by the operator's speech module (voice.engine = server).
+     * 6.12 (G-14): the recording leaves only after the person agreed in this
+     * room (ServerVoiceConsent, the transcriber named); "declined" otherwise.
+     */
+    public void serverVoiceToText(byte[] pcm, int rate, String room, ServerVoiceConsent.Ask ask, Result<String> done) {
         String base = app.config.server();
         if (base.isEmpty()) { done.done(null, "stt-server-off"); return; }
-        Io.bg(() -> {
-            byte[] wav;
-            try { wav = Audio.wavBytes(rate == Audio.RATE ? pcm : Audio.resample(pcm, rate, Audio.RATE), Audio.RATE); }
-            catch (RuntimeException e) { Io.main(() -> done.done(null, "stt-failed")); return; }
-            new SpeechApi(base).stt(app.account.bearer(), wav, null, Io::bg, new Api.Callback<String>() {
-                @Override public void ok(String text) { Io.main(() -> done.done(text, null)); }
-                @Override public void fail(Api.Failure f) { Io.main(() -> done.done(null, "stt-failed: " + f.getMessage())); }
-            });
+        SpeechApi api = new SpeechApi(base);
+        String bearer = app.account.bearer();
+        api.status(bearer, Io::bg, status -> {
+            String provider = status.transcribers.isEmpty() ? base : status.transcribers.get(0).label;
+            Io.main(() -> ServerVoiceConsent.check(room, ServerVoiceConsent.Use.TRANSCRIBE, provider, ask, yes -> {
+                if (!yes) { done.done(null, "declined"); return; }
+                Io.bg(() -> {
+                    byte[] wav;
+                    try { wav = Audio.wavBytes(rate == Audio.RATE ? pcm : Audio.resample(pcm, rate, Audio.RATE), Audio.RATE); }
+                    catch (RuntimeException e) { Io.main(() -> done.done(null, "stt-failed")); return; }
+                    api.stt(bearer, wav, null, Io::bg, new Api.Callback<String>() {
+                        @Override public void ok(String text) { Io.main(() -> done.done(text, null)); }
+                        @Override public void fail(Api.Failure f) { Io.main(() -> done.done(null, "stt-failed: " + f.getMessage())); }
+                    });
+                });
+            }));
         });
     }
 

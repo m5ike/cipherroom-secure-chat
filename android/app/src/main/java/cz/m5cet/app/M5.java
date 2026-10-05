@@ -166,6 +166,35 @@ public final class M5 extends Application {
     public void whenLocked() {
         if (notify != null) notify.neutralizeAll();
         cz.m5cet.app.ui.parts.CallLogUi.forget();
+        // 6.12 (F-16): the auto-lock's time passed with the data key still in memory — it goes now, on the
+        // main thread; a background caller (the timer, the alarm's receiver) waits for it, so the process is
+        // not frozen again before it happened.
+        if (lock != null && vault != null && vault.unlocked()) {
+            java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+            Io.main(() -> { try { lock.autolocked(); } finally { done.countDown(); } });
+            try { done.await(5, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+    }
+
+    /**
+     * 6.12 (security analysis F-16): what a lock takes out of the memory — the
+     * rooms close (their histories are saved first, still with the key), the
+     * vault's data key is zeroed, and what was opened with it goes: the
+     * account's session record, the people's links, the profile card and the
+     * profiles the rooms shared, the History's list, the speech consents. The
+     * screen drops its own (MainActivity on "locked"). The next unlock derives
+     * the key again and connects the selected rooms. Main thread
+     * (AppLock.lockNow / autolocked / onForeground).
+     */
+    public void forgetSecrets() {
+        try { rooms.disconnectAll(); } catch (RuntimeException e) { Log.w("lock", "the rooms did not close cleanly: " + e.getClass().getSimpleName()); }
+        vault.lock();
+        account.reload();
+        cz.m5cet.app.contacts.Store.forget();
+        cz.m5cet.app.profile.Profiles.of(this).forget();
+        cz.m5cet.app.ui.parts.CallLogUi.forget();
+        cz.m5cet.app.voice.ServerVoiceConsent.reset();
+        Log.i("lock", "locked: the data key left the memory");
     }
 
     public void onWiped() { emit("wiped"); }

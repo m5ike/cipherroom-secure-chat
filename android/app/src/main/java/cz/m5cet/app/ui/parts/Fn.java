@@ -85,6 +85,9 @@ final class Fn {
     private Usage usage;
     private static final String USAGE_RECORD = "fn-usage";
 
+    /** 6.12 (F-16): the app locked — the usage read from the vault goes (read again after the unlock). */
+    void forget() { usage = null; }
+
     Fn(MainActivity a) {
         this.a = a;
         // The app is resolved lazily: Parts (and this) are built as a field of the

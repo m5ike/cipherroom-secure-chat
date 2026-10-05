@@ -95,11 +95,41 @@ public final class People {
         List<JSONObject> list = new ArrayList<>();
         for (int i = 0; i < base.length(); i++) {
             JSONObject u = base.optJSONObject(i);
-            if (u != null) list.add(ProfileUi.decorate(app(), r, enrich(u, sel))); // 6.7: a shared profile photo
+            if (u == null) continue;
+            // 6.12 (F-22): the name as the app shows names (no bidi or invisible characters, NFKC, ≤ 48).
+            try { u.put("name", cz.m5cet.app.core.Names.normalize(u.optString("name"))); } catch (JSONException ignored) { }
+            list.add(ProfileUi.decorate(app(), r, enrich(u, sel))); // 6.7: a shared profile photo
         }
         list.sort(Comparator.comparingInt((JSONObject u) -> u.optBoolean("me") ? -1 : Presence.rank(u.optString("status"))));
+        flagLookalikes(list);
         for (JSONObject u : list) out.put(u);
         return out;
+    }
+
+    /** What tells two members apart for the look-alike check: their device key, else their account, else the connection. */
+    static String identity(JSONObject u) {
+        String key = u.optString("publicKey");
+        if (!key.isEmpty()) return "k:" + key;
+        String user = u.optString("username");
+        if (u.optBoolean("signedIn") && !user.isEmpty()) return "a:" + user.toLowerCase(java.util.Locale.ROOT);
+        return "i:" + u.optString("id");
+    }
+
+    /**
+     * 6.12 (F-22): a member whose name mixes scripts or looks like another
+     * member's (core/Names) shows "⚠ " before it; "nameFlag" says so to the design.
+     */
+    static void flagLookalikes(List<JSONObject> list) {
+        List<String[]> people = new ArrayList<>();
+        for (JSONObject u : list) people.add(new String[]{identity(u), u.optString("name")});
+        boolean[] flags = cz.m5cet.app.core.Names.flags(people);
+        for (int i = 0; i < list.size(); i++) {
+            JSONObject u = list.get(i);
+            try {
+                u.put("nameFlag", flags[i]);
+                if (flags[i]) u.put("name", cz.m5cet.app.core.Names.shown(u.optString("name"), true));
+            } catch (JSONException ignored) { }
+        }
     }
 
     /** What the widget draws of one person (the room's facts + status, signal, avatar, selection, link). */

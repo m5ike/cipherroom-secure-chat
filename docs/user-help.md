@@ -140,6 +140,17 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
   správce) aplikace **smaže všechna svá data** — místnosti, zprávy i klíče.
   Počet zbývajících pokusů je vidět na obrazovce zámku. Změna PINu chce
   současný PIN.
+- **Zámek od 6.12** — zamčená aplikace nedrží v paměti klíč k datům:
+  místnosti se při zámku odpojí a po odemčení samy připojí (během hovoru se
+  zamkne jen obrazovka, odpojí se po jeho konci). Zprávy pro přihlášený účet
+  mezitím drží server a dá vědět oznámením; bez účtu zamčená aplikace zprávy
+  poslané mezitím nedostane. *Nastavení › Zabezpečení › Klíč PINu* ukazuje,
+  kde je klíč PINu (bezpečnostní čip StrongBox, bezpečný hardware, nebo jen
+  software).
+- **Nouzový PIN (6.12)** — *Nastavení › Zabezpečení › Nouzový PIN*. Zapnete
+  ho současným PINem a zvolíte jiný PIN stejné délky. Kdo ho zadá na obrazovce
+  zámku, aplikaci tím **smaže** (místnosti, zprávy, klíče) a uvidí ji prázdnou
+  jako po instalaci, bez hlášky o smazání. Správce serveru se o smazání dozví.
 - **Víc místností naráz** — v seznamu místností zaškrtněte ty, které chcete
   mít připojené, a klepněte na *Připojit vybrané*. U každé je počet lidí a
   nepřečtených zpráv. Nad chatem je lišta připojených místností; přejetím
@@ -156,8 +167,20 @@ loguje jen kind/peerId/room/peerCount — nikdy plaintext zprávy.
 - **Notifikace** — na zprávu jde odpovědět přímo z notifikace (na Androidu 12
   a novějším až po odemčení telefonu); když je aplikace zamčená — od 6.7 i na
   pozadí po uplynutí automatického zamčení —, notifikace zprávy ukáže jen
-  „Nová zpráva“, bez odesílatele, místnosti a odpovědi, a na zamčené obrazovce
-  telefonu je vždy jen tato neutrální verze.
+  „Nová zpráva“, bez odesílatele, místnosti a odpovědi. Od 6.12 se oznámení
+  zprávy zamčené aplikace na zamčené obrazovce telefonu neukáže vůbec; volba
+  *Nastavení › Oznámení › Skrýt na zamčené obrazovce* to zapne i pro
+  odemčenou aplikaci (jinak telefon s nastavením „zobrazit vše“ ukáže na
+  zamčené obrazovce i text zprávy, jako jiné messengery).
+- **Jména (6.12)** — jména lidí se ukazují bez skrytých a obracecích znaků;
+  jméno, které vypadá jako jméno někoho jiného v místnosti (nebo jako vaše),
+  nebo míchá latinku s azbukou či řečtinou, má před sebou **⚠**. Oznámení
+  serveru jsou vždy podepsaná jako *Operátor*.
+- **Hlas přes server (6.12)** — když je v *Nastavení › Hlas* zvolený server,
+  první hlasová zpráva z textu (nebo přepis nahrávky serverem) v místnosti se
+  zeptá, protože text čte poskytovatel řeči serveru (jeho jméno je
+  v dotazu); „Neposílat“ nic neodešle. Čip „Jako hlasová zpráva“ pak říká
+  „text čte server“.
 - **Aktualizace** — nový vzhled nebo novou verzi aplikace nabídne karta
   aktualizace. Když se nový vzhled nepovede, aplikace se sama vrátí
   k předchozímu.

@@ -31,6 +31,9 @@ public final class Store {
         return verified;
     }
 
+    /** 6.12 (F-16): the app locked — the copies kept in memory go (read again after the unlock). */
+    public static synchronized void forget() { links = null; verified = null; }
+
     private static synchronized void write(M5 app, String name, JSONObject value) {
         if (!app.vault.unlocked()) return;
         app.vault.putJson(Vault.Tier.USER, name, value);

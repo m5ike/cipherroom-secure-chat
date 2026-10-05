@@ -1,0 +1,418 @@
+{
+  "version": 1,
+  "about": "6.12 (security analysis F-22): display names. The Android app (core/Names.java, NamesTest) and the web (client/src/lib/names.ts) must give these answers.",
+  "rules": {
+    "normalize": "strip every \\p{Cc} and \\p{Cf} character (line break, CR and tab become a space first), NFKC, strip \\p{Cc}/\\p{Cf} again, every run of white space (incl. no-break and ideographic spaces) -> one space, trim, at most 48 code points (never a split surrogate pair), trim again",
+    "skeleton": "normalize, NFD, drop \\p{Mn}, map the look-alikes (table), lower case (locale-independent), map the look-alikes again",
+    "lookalikes": {
+      "Cyrillic capitals": "\u0410\u0412\u0415\u041a\u041c\u041d\u041e\u0420\u0421\u0422\u0425\u0423\u0405\u0406\u0408\u051a\u051c\u04ae -> ABEKMHOPCTXYSIJQWY",
+      "Cyrillic small": "\u0430\u0435\u043e\u0440\u0441\u0443\u0445\u0455\u0456\u0458\u051b\u051d\u04bb\u04af\u04cf\u043a -> aeopcyxsijqwhylk",
+      "Greek capitals": "\u0391\u0392\u0395\u0396\u0397\u0399\u039a\u039c\u039d\u039f\u03a1\u03a4\u03a5\u03a7 -> ABEZHIKMNOPTYX",
+      "Greek small": "\u03bf\u03bd\u03b1\u03b9\u03ba\u03c1\u03c5\u03c7\u03b3 -> ovaikpuxy",
+      "Latin": "\u0131 0 1 -> i o l"
+    },
+    "mixedScript": "a word (split at the single spaces of the normalized name) with letters of two or three of Latin, Cyrillic, Greek",
+    "confusable": "two names whose normalized forms differ but whose skeletons are equal",
+    "flags": "among people shown together ({identity, name}): a mixed-script name, or a skeleton that another identity has too",
+    "shown": "a flagged name is shown as \"\u26a0 \" + its normalized form"
+  },
+  "names": [
+    {
+      "input": "Alice",
+      "normalized": "Alice",
+      "skeleton": "alice",
+      "mixedScript": false,
+      "note": "plain"
+    },
+    {
+      "input": "  Alice   Smith  ",
+      "normalized": "Alice Smith",
+      "skeleton": "alice smith",
+      "mixedScript": false,
+      "note": "white space collapsed and trimmed"
+    },
+    {
+      "input": "Alice\u202enimda",
+      "normalized": "Alicenimda",
+      "skeleton": "alicenimda",
+      "mixedScript": false,
+      "note": "RLO (bidi override) stripped"
+    },
+    {
+      "input": "Al\u200bice",
+      "normalized": "Alice",
+      "skeleton": "alice",
+      "mixedScript": false,
+      "note": "zero-width space stripped"
+    },
+    {
+      "input": "\u2066Bob\u2069",
+      "normalized": "Bob",
+      "skeleton": "bob",
+      "mixedScript": false,
+      "note": "bidi isolates stripped"
+    },
+    {
+      "input": "Ali\u00adce",
+      "normalized": "Alice",
+      "skeleton": "alice",
+      "mixedScript": false,
+      "note": "soft hyphen (Cf) stripped"
+    },
+    {
+      "input": "\ufeffAlice",
+      "normalized": "Alice",
+      "skeleton": "alice",
+      "mixedScript": false,
+      "note": "BOM stripped"
+    },
+    {
+      "input": "Al\u200dice\u200c",
+      "normalized": "Alice",
+      "skeleton": "alice",
+      "mixedScript": false,
+      "note": "ZWJ / ZWNJ stripped"
+    },
+    {
+      "input": "\uff21\uff4c\uff49\uff43\uff45",
+      "normalized": "Alice",
+      "skeleton": "alice",
+      "mixedScript": false,
+      "note": "fullwidth \u2192 NFKC"
+    },
+    {
+      "input": "\ufb01ona",
+      "normalized": "fiona",
+      "skeleton": "fiona",
+      "mixedScript": false,
+      "note": "ligature \u2192 NFKC"
+    },
+    {
+      "input": "\u216b",
+      "normalized": "XII",
+      "skeleton": "xii",
+      "mixedScript": false,
+      "note": "roman numeral \u2192 NFKC"
+    },
+    {
+      "input": "Alice\u00a0Smith",
+      "normalized": "Alice Smith",
+      "skeleton": "alice smith",
+      "mixedScript": false,
+      "note": "no-break space \u2192 one space"
+    },
+    {
+      "input": "Alice\u3000Smith",
+      "normalized": "Alice Smith",
+      "skeleton": "alice smith",
+      "mixedScript": false,
+      "note": "ideographic space \u2192 one space"
+    },
+    {
+      "input": "x\nY\tz",
+      "normalized": "x Y z",
+      "skeleton": "x y z",
+      "mixedScript": false,
+      "note": "line break and tab \u2192 space"
+    },
+    {
+      "input": "\u0410lice",
+      "normalized": "\u0410lice",
+      "skeleton": "alice",
+      "mixedScript": true,
+      "note": "Cyrillic capital A"
+    },
+    {
+      "input": "\u0391lice",
+      "normalized": "\u0391lice",
+      "skeleton": "alice",
+      "mixedScript": true,
+      "note": "Greek capital Alpha"
+    },
+    {
+      "input": "B\u043eb",
+      "normalized": "B\u043eb",
+      "skeleton": "bob",
+      "mixedScript": true,
+      "note": "Cyrillic small o"
+    },
+    {
+      "input": "P\u0430ypal",
+      "normalized": "P\u0430ypal",
+      "skeleton": "paypal",
+      "mixedScript": true,
+      "note": "Cyrillic small a"
+    },
+    {
+      "input": "\u03b1lex",
+      "normalized": "\u03b1lex",
+      "skeleton": "alex",
+      "mixedScript": true,
+      "note": "Greek small alpha"
+    },
+    {
+      "input": "\u0418\u0432\u0430\u043d",
+      "normalized": "\u0418\u0432\u0430\u043d",
+      "skeleton": "\u0438\u0432a\u043d",
+      "mixedScript": false,
+      "note": "all Cyrillic: only its look-alikes map"
+    },
+    {
+      "input": "\u0418\u0432\u0430\u043d Smith",
+      "normalized": "\u0418\u0432\u0430\u043d Smith",
+      "skeleton": "\u0438\u0432a\u043d smith",
+      "mixedScript": false,
+      "note": "scripts mixed only across words"
+    },
+    {
+      "input": "\u0391\u0392\u0393",
+      "normalized": "\u0391\u0392\u0393",
+      "skeleton": "aby",
+      "mixedScript": false,
+      "note": "Greek capitals: A, B; gamma \u2192 y after lower case"
+    },
+    {
+      "input": "Jos\u00e9",
+      "normalized": "Jos\u00e9",
+      "skeleton": "jose",
+      "mixedScript": false,
+      "note": "accent dropped in the skeleton"
+    },
+    {
+      "input": "Jose\u0301",
+      "normalized": "Jos\u00e9",
+      "skeleton": "jose",
+      "mixedScript": false,
+      "note": "combining accent composed by NFKC"
+    },
+    {
+      "input": "M\u00efke",
+      "normalized": "M\u00efke",
+      "skeleton": "mike",
+      "mixedScript": false,
+      "note": "diaeresis dropped"
+    },
+    {
+      "input": "\u0130lker",
+      "normalized": "\u0130lker",
+      "skeleton": "ilker",
+      "mixedScript": false,
+      "note": "dotted capital I"
+    },
+    {
+      "input": "\u0131lker",
+      "normalized": "\u0131lker",
+      "skeleton": "ilker",
+      "mixedScript": false,
+      "note": "dotless i \u2192 i"
+    },
+    {
+      "input": "B0b",
+      "normalized": "B0b",
+      "skeleton": "bob",
+      "mixedScript": false,
+      "note": "zero \u2192 o"
+    },
+    {
+      "input": "Al1ce",
+      "normalized": "Al1ce",
+      "skeleton": "allce",
+      "mixedScript": false,
+      "note": "one \u2192 l"
+    },
+    {
+      "input": "\u01c4ana",
+      "normalized": "D\u017dana",
+      "skeleton": "dzana",
+      "mixedScript": false,
+      "note": "D\u017d digraph \u2192 NFKC, caron dropped"
+    },
+    {
+      "input": "Bob \ud83d\ude42",
+      "normalized": "Bob \ud83d\ude42",
+      "skeleton": "bob \ud83d\ude42",
+      "mixedScript": false,
+      "note": "emoji kept"
+    },
+    {
+      "input": "",
+      "normalized": "",
+      "skeleton": "",
+      "mixedScript": false,
+      "note": "empty"
+    },
+    {
+      "input": "\u200b\u200e\u202a",
+      "normalized": "",
+      "skeleton": "",
+      "mixedScript": false,
+      "note": "only invisible characters"
+    },
+    {
+      "input": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "normalized": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "skeleton": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mixedScript": false,
+      "note": "at most 48 code points"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ud83d\ude42b",
+      "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ud83d\ude42",
+      "skeleton": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\ud83d\ude42",
+      "mixedScript": false,
+      "note": "the cap counts code points (an emoji is one)"
+    },
+    {
+      "input": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b",
+      "normalized": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "skeleton": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "mixedScript": false,
+      "note": "cut at 48, then trimmed"
+    }
+  ],
+  "pairs": [
+    {
+      "a": "Alice",
+      "b": "\u0410lice",
+      "confusable": true
+    },
+    {
+      "a": "Alice",
+      "b": "alice",
+      "confusable": true
+    },
+    {
+      "a": "Alice",
+      "b": "Alice",
+      "confusable": false
+    },
+    {
+      "a": "Bob",
+      "b": "B0b",
+      "confusable": true
+    },
+    {
+      "a": "Jos\u00e9",
+      "b": "Jose",
+      "confusable": true
+    },
+    {
+      "a": "Alice",
+      "b": "Alicia",
+      "confusable": false
+    },
+    {
+      "a": "\uff21\uff4c\uff49\uff43\uff45",
+      "b": "Alice",
+      "confusable": false
+    },
+    {
+      "a": "Al\u200bice",
+      "b": "Alice",
+      "confusable": false
+    },
+    {
+      "a": "Paypal",
+      "b": "P\u0430ypal",
+      "confusable": true
+    }
+  ],
+  "flags": [
+    {
+      "people": [
+        [
+          "k1",
+          "Alice"
+        ],
+        [
+          "k2",
+          "\u0410lice"
+        ]
+      ],
+      "flagged": [
+        true,
+        true
+      ]
+    },
+    {
+      "people": [
+        [
+          "k1",
+          "Alice"
+        ],
+        [
+          "k1",
+          "Alice"
+        ]
+      ],
+      "flagged": [
+        false,
+        false
+      ]
+    },
+    {
+      "people": [
+        [
+          "k1",
+          "Alice"
+        ],
+        [
+          "k2",
+          "Alice"
+        ]
+      ],
+      "flagged": [
+        true,
+        true
+      ]
+    },
+    {
+      "people": [
+        [
+          "k1",
+          "Alice"
+        ],
+        [
+          "k2",
+          "Bob"
+        ]
+      ],
+      "flagged": [
+        false,
+        false
+      ]
+    },
+    {
+      "people": [
+        [
+          "k1",
+          "P\u0430ypal"
+        ]
+      ],
+      "flagged": [
+        true
+      ]
+    },
+    {
+      "people": [
+        [
+          "k1",
+          "Alice"
+        ],
+        [
+          "k2",
+          "al\u200bice"
+        ],
+        [
+          "k3",
+          "Bob"
+        ]
+      ],
+      "flagged": [
+        true,
+        true,
+        false
+      ]
+    }
+  ]
+}

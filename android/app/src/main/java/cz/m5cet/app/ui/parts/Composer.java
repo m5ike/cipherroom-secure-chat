@@ -362,7 +362,7 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         replyTo = m;
         if (m == null) { reply.setVisibility(GONE); return; }
         String q = m.sealed != null ? "🔒" : m.visibleText();
-        reply.setText("↪ " + m.senderName + ": " + (q.length() > 80 ? q.substring(0, 79) + "…" : q) + "   ✕");
+        reply.setText("↪ " + cz.m5cet.app.core.Names.normalize(m.senderName) + ": " + (q.length() > 80 ? q.substring(0, 79) + "…" : q) + "   ✕");
         reply.setVisibility(VISIBLE);
         input.requestFocus();
     }
@@ -389,7 +389,8 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         kinds.removeAllViews();
         Map<String, Object> f = a.form();
         SendPlan plan = SendPlan.of(f);
-        if (plan.asVoice) kinds.addView(kindChip("🔊 " + app().t("send.opt.asVoice"), () -> f.remove(SendPlan.AS_VOICE)));
+        // 6.12 (G-14): with the server's speech (voice.engine = server) the chip says that the server reads the text.
+        if (plan.asVoice) kinds.addView(kindChip("🔊 " + app().t("send.opt.asVoice") + (serverSpeech() ? " · " + app().t("send.opt.asVoiceServer") : ""), () -> f.remove(SendPlan.AS_VOICE)));
         if (plan.voiceText) kinds.addView(kindChip("🗣 " + app().t("send.opt.voiceText"), () -> f.remove(SendPlan.VOICE_TEXT)));
         if (plan.tap) kinds.addView(kindChip("👁 " + app().t("msgkind.tap"), () -> f.remove(SendPlan.TAP)));
         if (plan.vanishSeconds > 0) kinds.addView(kindChip("⏳ " + plan.vanishSeconds + " s", () -> f.remove(SendPlan.VANISH)));
@@ -400,6 +401,9 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         kindsScroll.setVisibility(kinds.getChildCount() == 0 ? GONE : VISIBLE);
         updateSend();
     }
+
+    /** 6.12 (G-14): voice messages and dictation go through the server's speech provider. */
+    private boolean serverSpeech() { return "server".equals(app().settings.str("voice.engine")); }
 
     private TextView kindChip(String label, Runnable clear) {
         TextView t = new TextView(getContext());
@@ -561,11 +565,13 @@ final class Composer extends LinearLayout implements Renderer.Slot {
         if (recMode.equals("text")) {
             a.flash("", app().t("voice.recognizing"), "info");
             Voice.Result<String> heard = (text, err) -> {
+                // 6.12 (G-14): the person did not let the server's provider hear it — nothing went.
+                if ("declined".equals(err)) { a.flash("", app().t("speakSend.declined"), "info"); return; }
                 if (text == null || text.trim().isEmpty()) { a.flash("", app().t(text == null ? "voice.failed" : "voice.nothingHeard"), "warn"); return; }
                 r.send(outgoing(text.trim()));
                 clearAfterSend();
             };
-            if ("server".equals(app().settings.str("voice.engine"))) app().voice.serverVoiceToText(pcm, Audio.RATE, heard);
+            if ("server".equals(app().settings.str("voice.engine"))) app().voice.serverVoiceToText(pcm, Audio.RATE, r.key, ComposerVoice.asker(a), heard);
             else app().voice.voiceToText(pcm, Audio.RATE, heard);
             return;
         }

@@ -196,11 +196,13 @@ public final class Conversations implements Rooms.Listener, M5.Listener, Setting
         if (am == null) return;
         try {
             if (ms < 0) am.cancel(alarmIntent());
-            else am.set(AlarmManager.ELAPSED_REALTIME, SystemClock.elapsedRealtime() + ms, alarmIntent());
+            // 6.12 (F-16): it wakes the phone (once, allowed in Doze): the auto-lock forgets the data key on time,
+            // not when the phone wakes next.
+            else am.setAndAllowWhileIdle(AlarmManager.ELAPSED_REALTIME_WAKEUP, SystemClock.elapsedRealtime() + ms, alarmIntent());
         } catch (RuntimeException e) { Log.w(TAG, "alarm: " + e.getMessage()); }
     }
 
-    /** The lock check of a frozen or ended process (an inexact alarm, no wake-up). */
+    /** The lock check of a frozen or ended process (an inexact alarm; 6.12: it wakes the phone once). */
     public static final class Alarm extends BroadcastReceiver {
         @Override public void onReceive(Context c, Intent i) {
             M5 app = M5.get();
