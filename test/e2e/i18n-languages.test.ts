@@ -9,7 +9,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { chromium, type Browser } from "playwright";
 
-const PORT = 5931;
+const PORT = 5951; // unique among the E2E files (they run in parallel)
 const BASE = `http://127.0.0.1:${PORT}`;
 let server: ChildProcessWithoutNullStreams | null = null;
 let browser: Browser | null = null;
