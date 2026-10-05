@@ -527,9 +527,12 @@ Server details (6.12):
 ## 15. Release manifests (F-02, installation check)
 
 `release.json` — `ReleaseManifest`: `files` sorted by `path` (ordinal string order, no duplicates),
-`sha256` lowercase hex, paths relative to the release root with `/`. Covers the built web assets,
-the server sources, `package.json`, `package-lock.json`, the installer and the scripts; never
-`node_modules`, `.env*`, data or keys.
+`sha256` lowercase hex, paths relative to the release root with `/`. Covers what the installer
+deploys — the server sources, `package.json`, `package-lock.json`, the installer and the scripts;
+never `node_modules`, `.env*`, data or keys. The built web assets (`dist/`) are left out by default,
+because the host builds them and the build is not reproducible byte for byte:
+`dist/public/release-web.json` covers what is served, and `npm run release:manifest -- --with-dist`
+includes `dist/` for prebuilt packages.
 `release.json.sig` — b64 Ed25519 over the exact bytes of `release.json`, by the developer's
 release key (never on the server); `release-signing.pub` — the raw public key, b64. The web build
 also writes `dist/public/release-web.json` (only the served assets) and its `.sig` when signed.

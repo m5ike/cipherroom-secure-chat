@@ -200,8 +200,11 @@ PrivateDevices=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
-RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
-RestrictNamespaces=true
+# 6.12: AF_NETLINK and the namespaces below are what bubblewrap needs to
+# isolate each Functions sandbox (FUNCTIONS_SANDBOX_ISOLATION=auto|bwrap):
+# it brings up loopback in a new network namespace over netlink.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=user mnt pid net ipc uts cgroup
 LockPersonality=true
 ${caps}
 
@@ -546,7 +549,9 @@ server {
     access_log /var/log/nginx/${SERVICE_NAME}.access.log;
     error_log  /var/log/nginx/${SERVICE_NAME}.error.log;
 
-    client_max_body_size 2m;
+    # 6.12: the app takes up to 12 MB (speech upload 10 MiB, vault 8 MB, storage);
+    # 2m answered 413 to those. Larger file transfers have their own location.
+    client_max_body_size 12m;
     add_header X-Robots-Tag "noindex, nofollow" always;
 
     location /ws {
