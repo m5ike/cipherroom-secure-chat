@@ -179,6 +179,21 @@ final class LocationServiceTests: XCTestCase {
         XCTAssertNil(svc.recent())
     }
 
+    func testTheCoresPositionSource() async {
+        let (svc, p, _, _, _) = make()
+        let source = LocationPositionSource(service: svc)
+        XCTAssertFalse(source.permitted)
+        XCTAssertNil(source.recent())
+        let none = await source.current() // the person tapped "share position": asked, nothing yet
+        XCTAssertNil(none)
+        XCTAssertEqual(["ask when in use"], p.log)
+        p.grant(.whenInUse)
+        p.next = fix(t0)
+        let f = await source.current()
+        XCTAssertEqual(Where.json(fix(t0)), f)
+        XCTAssertEqual(f, source.recent())
+    }
+
     func testCLLocationAsAndroidsLocation() {
         let l = CLLocation(coordinate: CLLocationCoordinate2D(latitude: 50.1, longitude: 14.4), altitude: 250, horizontalAccuracy: 12,
                            verticalAccuracy: 3, course: 90, speed: 1.5, timestamp: Date(timeIntervalSince1970: 1_760_000_000.5))

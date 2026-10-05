@@ -31,6 +31,7 @@ let loc = LocationService.shared
 loc.settings = <LocationSettings>          // bool/number klíčů location.*, policy (JSON podepsané politiky)
 loc.reporter = DeviceAPILocationReporter(credentials: { <DeviceCredentials?> })
 loc.install(into: model)                   // fáze scény: na pozadí body čekají, po návratu se pošlou
+CoreModels.shared.position = LocationPositionSource()   // jádro (Core/Models: PositionSource) — hlavička a „sdílet polohu“
 loc.settingChanged("location.track")       // po změně nastavení (location.inHeader / track / interval / precise)
 loc.headerLocation()                       // JSONObject pro ChatMessage.loc (location.inHeader), nil = žádná čerstvá
 await loc.sharePosition()                  // (text, loc) zprávy s polohou; nil → „location.none“

@@ -82,7 +82,7 @@ await voice.textToVoiceMessage(text, room:, ask:); await voice.voiceToText(pcm);
 try voice.player.play(id:data:mime:)      // bublina; VoiceClipCodec.decode/playable pro cizí formáty
 voice.fxTest.toggle(); voice.voiceFxScope(); voice.recomputeFx()
 // hovory
-CallVoiceBridge.shared.vault = <VoiceSourceVault>
+CallVoiceBridge.shared.vault = FileVaultVoiceSources(files: <FileVault>)   // Platform/Files
 CallVoiceBridge.shared.start(peers: RoomRtcVoicePeers(room: rtc)) { peerId, text, sourceId in /* room.addTranscript */ }
 await CallVoiceBridge.shared.say(text)    // moje zpráva do hovoru → id zdroje
 CallVoiceBridge.shared.stop()

@@ -18,6 +18,7 @@
 //    (iOS 18) — asked only on the person's action.
 
 import Contacts
+import ContactsUI
 import Foundation
 import Intents
 import M5Core
@@ -75,6 +76,13 @@ final class ContactsService {
 
     /// The linked contact's photo (the thumbnail) for a username; nil without one (Android AddressBook.photo).
     func photo(of username: String) -> Data? { contact(of: username)?.thumbnail }
+
+    /// The linked contact with the keys CNContactViewController needs — the UI shows the card with it
+    /// (`CNContactViewController(for:)`); nil without access to it or when it is gone.
+    func contactForDisplay(of username: String) -> CNContact? {
+        guard contacts.access.canRead, let id = identifier(of: username) else { return nil }
+        return try? CNContactStore().unifiedContact(withIdentifier: id, keysToFetch: [CNContactViewController.descriptorForRequiredKeys()])
+    }
 
     /// Links a person (an account username: Match.canLink) with the contact the person picked. Returns the
     /// contact's name; nil when the username cannot be linked (a guest) or the feature is off.

@@ -38,7 +38,7 @@ a jméno; kartu kontaktu (`CNContactViewController(for:)`) ukazuje UI s `identif
 
 ```swift
 let people = ContactsService.shared            // init(store:contacts:donations:…) v testech
-people.store.setVault(<PeopleVault>)            // Platform/Security: uživatelská vrstva, záznamy people.links / people.verified
+people.store.setVault(SecurityPeopleVault(vault: <Vault>))   // Platform/Security: uživatelská vrstva, people.links / people.verified
 people.store.verified(kid)                      // → M5Proto RoomSession(verifiedDevice: { people.store.verified($0) })
 people.store.forget()                           // zámek aplikace (F-16)
 people.reach.host = <ContactReachHost>          // ready (odemčeno, obrazovky), contactsEnabled, activeRoom, connectedRooms(), text, notice, reach(…)
