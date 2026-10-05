@@ -37,6 +37,8 @@ export type HeldMember = {
   since: number;
   /** Learned from another instance (cluster). */
   remote?: boolean;
+  /** 6.12: their join proved the room key (proof.ts). */
+  proven?: boolean;
 };
 
 /** PRESENCE_MAX_AWAY_DAYS in ms (default 7 days); 0 = held members are never removed for time. */

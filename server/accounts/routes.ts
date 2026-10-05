@@ -126,7 +126,26 @@ export function clientInfo(req: Request): Record<string, string> {
   return { ip: truncated, client: `${browser}/${os}` };
 }
 
-type AuthedRequest = Request & { account?: AccountRecord; token?: string };
+export type AuthedRequest = Request & { account?: AccountRecord; token?: string };
+
+/** The account behind the request's Bearer token (req.account, req.token), else 401 — for every
+ *  account route (6.12: also the key directory, server/keys/routes.ts). `allowLocked`: also a
+ *  session whose sign-in is not finished yet. */
+export function accountAuth(store: AccountStore, allowLocked: boolean) {
+  return (req: AuthedRequest, res: Response, next: NextFunction) => {
+    const header = req.header("authorization") || "";
+    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    const account = store.resolveToken(token, Date.now(), { allowLocked });
+    if (!account) {
+      res.setHeader("WWW-Authenticate", 'Bearer realm="m5cet-account"');
+      const locked = token && store.isLocked(token);
+      return res.status(401).json({ ok: false, code: locked ? "locked" : "signed-out", message: locked ? "The account key has not been verified yet." : "Sign in with your passkey first." });
+    }
+    req.account = account;
+    req.token = token;
+    next();
+  };
+}
 
 const CLIENT_EVENTS = new Set([
   "decrypt-ok", "decrypt-failed", "data-loaded", "data-cleared", "chat-restored",
@@ -175,19 +194,7 @@ export function registerAccountRoutes(app: Express, store: AccountStore = defaul
     message: { ok: false, message: "Too many sign-in attempts; wait a few minutes." },
   });
 
-  const authenticate = (allowLocked: boolean) => (req: AuthedRequest, res: Response, next: NextFunction) => {
-    const header = req.header("authorization") || "";
-    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
-    const account = store.resolveToken(token, Date.now(), { allowLocked });
-    if (!account) {
-      res.setHeader("WWW-Authenticate", 'Bearer realm="m5cet-account"');
-      const locked = token && store.isLocked(token);
-      return res.status(401).json({ ok: false, code: locked ? "locked" : "signed-out", message: locked ? "The account key has not been verified yet." : "Sign in with your passkey first." });
-    }
-    req.account = account;
-    req.token = token;
-    next();
-  };
+  const authenticate = (allowLocked: boolean) => accountAuth(store, allowLocked);
   const requireAccount = authenticate(false);
   /** Also a session that has not finished its sign-in (key not verified yet). */
   const requireSession = authenticate(true);

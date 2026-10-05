@@ -10,7 +10,7 @@
 
 export type LimitClass =
   | "signaling" | "relay" | "receipt" | "presence" | "storage"
-  | "proxy" | "heartbeat" | "command" | "other";
+  | "proxy" | "heartbeat" | "command" | "directory" | "other";
 
 type Bucket = { tokens: number; updatedAt: number };
 
@@ -24,6 +24,7 @@ export const LIMITS: Record<LimitClass, { capacity: number; refillPerSec: number
   proxy:     { capacity: 400, refillPerSec: 60 },
   heartbeat: { capacity: 6,   refillPerSec: 0.5 },
   command:   { capacity: 20,  refillPerSec: 0.5 },
+  directory: { capacity: 60,  refillPerSec: 2 },    // 6.12: key-bundles / kt-lookup (a sender asks for each away member)
   other:     { capacity: 30,  refillPerSec: 1 },
 };
 
@@ -49,6 +50,8 @@ export function limitClassOf(type: string): LimitClass {
       return "heartbeat";
     case "command-poll": case "command-ack":
       return "command";
+    case "key-bundles": case "kt-lookup":
+      return "directory";
     default:
       return type.startsWith("proxy-") ? "proxy" : "other";
   }

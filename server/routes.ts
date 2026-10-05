@@ -14,6 +14,8 @@
 //                                  (retention-routes.ts; a timer also sweeps)
 //   - /api/account/*               passkey accounts: sign-in, encrypted vault,
 //                                  audit (accounts/routes.ts)
+//   - PUT  /api/keys/bundle        6.12: the key directory (keys/routes.ts)
+//   - GET  /api/kt/*               6.12: key transparency (kt/routes.ts)
 //
 // Signed-in users (join with their account token and away: true) stay in a
 // room as AWAY when their socket goes; others relay room-key ciphertext to
@@ -86,6 +88,9 @@ import { turnAnswer } from "./turn";
 import { clusterBus } from "./cluster/bus";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { safeDeviceId } from "./util";
+import { protocol4Services } from "./keys/bootstrap";
+import { registerKeyRoutes } from "./keys/routes";
+import { registerKtRoutes } from "./kt/routes";
 
 // The offline queue for signed-in members who are away: a table in the
 // server's SQLite database when storage runs, memory otherwise (lost on a
@@ -196,6 +201,10 @@ export async function registerRoutes(
   // order with a fallback, by the operator's templates; never someone present.
   const notify = createNotifierService(accountStore, (accountId, room) => hub?.relay.present(accountId, room) ?? false);
 
+  // 6.12 (protocol 4): the hub's room verifiers (join proofs), the key
+  // directory and key transparency — in the global database when storage runs.
+  const p4 = protocol4Services(storage, accountStore);
+
   // The signaling hub (signaling/hub.ts): /ws, protocol v2, the away relay.
   hub = new SignalingHub({
     accounts: accountStore,
@@ -207,6 +216,8 @@ export async function registerRoutes(
     allowedOrigins: (process.env.ALLOWED_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean),
     // REDIS_URL: rooms span every instance behind the load balancer.
     cluster: clusterBus(),
+    roomProofs: p4.proofs,
+    directory: p4.hubDirectory,
   });
   if (hub.cluster) {
     audit.add({ category: "system", level: "notice", event: "cluster.joined", detail: { instance: hub.cluster.instanceId, bus: hub.cluster.bus.kind, signed: hub.cluster.bus.status().signed } });
@@ -220,6 +231,9 @@ export async function registerRoutes(
   // it from the store's revoke event — see SignalingHub.onRevoke.)
   // 6.1: the Android app may use this domain's passkeys (Digital Asset Links).
   registerAppLinks(app);
+  // 6.12: devices upload their mailbox bundles; key transparency is public.
+  registerKeyRoutes(app, accountStore, () => p4.keys);
+  registerKtRoutes(app, () => p4.kt);
   registerAccountRoutes(app, accountStore, {
     groupsFor: accountGroups,
     onSignOut: (accountId) => {
@@ -259,6 +273,13 @@ export async function registerRoutes(
     roomDisconnect: (hash, reason, target) => signaling.disconnectRoom(hash, reason, target),
     roomWake: (hash, accountId) => signaling.wakeRoom(hash, accountId),
     backups,
+    // 6.12: key transparency, the key directory and the hub's room proofs (read-only).
+    protocol4: () => {
+      let provenMembers = 0;
+      let members = 0;
+      for (const room of signaling.snapshot()) for (const peer of room.peers) { members += 1; if (peer.proven) provenMembers += 1; }
+      return { kt: p4.kt.status(), directory: p4.keys.status(), proofs: { ...p4.proofs.status(), members, provenMembers } };
+    },
   };
   registerAdminApi(app, adminProviders);
   // The addons the operator switches on (saved connections, GUI templates).

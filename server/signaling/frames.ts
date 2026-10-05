@@ -19,9 +19,17 @@ export type SessionDescription = { type: "offer" | "answer" | "pranswer" | "roll
 /** SDP / ICE sealed with the room's signal key (crypto v2): opaque here. */
 export type SealedSignal = { sealed: { v: 2; iv: string; ciphertext: string } };
 export type Envelope = Record<string, string | number>;
+/** 6.12 (protocol 4, § 7): a message sealed for one device's mailbox (`mb`), or for
+ *  every known device of one account (`mb-set`). JSON the server stores and hands
+ *  over as it is — rebuilt here from validated fields only. */
+export type P4Envelope = { v: 4; kind: "mb" | "mb-set"; [field: string]: unknown };
+/** What a relay frame carries for a recipient: a protocol-3 room envelope or a protocol-4 one. */
+export type RelayEnvelope = Envelope | P4Envelope;
+/** 6.12 (§ 13): proof that the joiner holds the room key. */
+export type JoinProof = { pub: string; sig: string };
 
 export type ClientFrame =
-  | { type: "join"; protocol: number; room: string; name: string; peerId?: string; resume?: string; auth?: string; away: boolean; features?: string[]; foreground?: boolean }
+  | { type: "join"; protocol: number; room: string; name: string; peerId?: string; resume?: string; auth?: string; away: boolean; features?: string[]; foreground?: boolean; proof?: JoinProof }
   | { type: "auth"; token: string | null; away: boolean }
   | { type: "leave"; away: boolean }
   | { type: "signal"; target: string; payload: SessionDescription | IceCandidate | SealedSignal }
@@ -30,7 +38,8 @@ export type ClientFrame =
   // the app is open in the foreground or not (presence, last seen).
   | { type: "presence"; away: boolean; foreground?: boolean }
   // 6.7: mention — the recipients (of `to`) the message mentions; call — it rings them. Hints for the notification's kind only.
-  | { type: "relay"; messageId: string; to: string[]; envelope: Envelope; expiresAt?: number; mention?: string[]; call?: boolean }
+  // 6.12: `per` — an envelope of its own for some recipients (by reference); the others get `envelope`.
+  | { type: "relay"; messageId: string; to: string[]; envelope?: RelayEnvelope; per?: Record<string, RelayEnvelope>; expiresAt?: number; mention?: string[]; call?: boolean }
   | { type: "relay-ack"; ids: string[] }
   | { type: "receipt"; messageIds: string[]; state: "read" | "delivered"; to?: { peerId?: string; accountId?: string } }
   | { type: "command-poll"; deviceId: string }
@@ -40,7 +49,10 @@ export type ClientFrame =
   | { type: "proxy-chunk"; transferId: string; seq: number; iv: string; ciphertext: string; v?: number }
   | { type: "proxy-end"; transferId: string; v?: number; iv?: string; ciphertext?: string }
   | { type: "proxy-cancel"; transferId: string }
-  | { type: "proxy-need"; transferId: string; seqs: number[] };
+  | { type: "proxy-need"; transferId: string; seqs: number[] }
+  // 6.12 (§ 7.5, § 14.3): the key directory and key transparency of a member, by its room-scoped reference.
+  | { type: "key-bundles"; ref: string }
+  | { type: "kt-lookup"; ref: string };
 
 export type FrameError = { code: "invalid-frame" | "unknown-type" | "too-large"; message: string };
 
@@ -127,6 +139,85 @@ function parseEnvelope(v: unknown): Envelope | null {
   return out;
 }
 
+/* ------------------------------------------------- protocol 4 (6.12) */
+
+/** Largest protocol-4 envelope (its JSON); the queue's own cap per item is 130 000 bytes. */
+export const P4_ENVELOPE_MAX_CHARS = 128_000;
+/** Devices one `mb-set` may address. */
+export const MB_SET_MAX_ITEMS = 16;
+
+const B64_STD = /^[A-Za-z0-9+/]*={0,2}$/;
+const B64_URL = /^[A-Za-z0-9_-]*$/;
+const std = (v: unknown, max: number): string | null => (typeof v === "string" && v.length > 0 && v.length <= max && B64_STD.test(v) ? v : null);
+const url = (v: unknown, max: number): string | null => (typeof v === "string" && v.length > 0 && v.length <= max && B64_URL.test(v) ? v : null);
+const time = (v: unknown): number | null => (typeof v === "number" && Number.isSafeInteger(v) && v >= 0 ? v : null);
+
+/** A signed mailbox bundle (contract.ts MailboxBundle), fields only. */
+function parseBundle(v: unknown): Record<string, unknown> | null {
+  if (!isObj(v)) return null;
+  const id = url(v.id, 16);
+  const dh = std(v.dh, 200);
+  const kem = std(v.kem, 1_600);
+  const exp = time(v.exp);
+  const sig = std(v.sig, 100);
+  return id && dh && kem && exp !== null && sig ? { id, dh, kem, exp, sig } : null;
+}
+
+/** One message for one device's mailbox (contract.ts MailboxItem), fields only. */
+function parseMailboxItem(v: unknown): Record<string, unknown> | null {
+  if (!isObj(v) || v.v !== 4 || v.kind !== "mb") return null;
+  const mid = id(v.id);
+  const to = url(v.to, 16);
+  const sb = parseBundle(v.sb);
+  const spk = std(v.spk, 200);
+  const e = std(v.e, 200);
+  const kct = std(v.kct, 1_600);
+  const c = std(v.c, P4_ENVELOPE_MAX_CHARS);
+  if (!mid || !to || !sb || !spk || !e || !kct || !c) return null;
+  const out: Record<string, unknown> = { v: 4, kind: "mb", id: mid, to, sb, spk };
+  if (v.sacc !== undefined) {
+    if (!isObj(v.sacc)) return null;
+    const apk = std(v.sacc.apk, 64);
+    const ac = std(v.sacc.ac, 128);
+    if (!apk || !ac) return null;
+    const sacc: Record<string, unknown> = { apk, ac };
+    if (v.sacc.cv !== undefined) { if (v.sacc.cv !== 2) return null; sacc.cv = 2; }
+    if (v.sacc.exp !== undefined) { const exp = time(v.sacc.exp); if (exp === null) return null; sacc.exp = exp; }
+    out.sacc = sacc;
+  }
+  out.e = e;
+  out.kct = kct;
+  out.c = c;
+  return out;
+}
+
+/** A protocol-4 envelope (`mb` or `mb-set`), rebuilt from its validated fields; null when it is not one. */
+export function parseP4Envelope(v: unknown): P4Envelope | null {
+  if (!isObj(v) || v.v !== 4) return null;
+  let out: Record<string, unknown> | null = null;
+  if (v.kind === "mb") {
+    out = parseMailboxItem(v);
+  } else if (v.kind === "mb-set") {
+    const mid = id(v.id);
+    if (!mid || !Array.isArray(v.items) || v.items.length === 0 || v.items.length > MB_SET_MAX_ITEMS) return null;
+    const items: Array<Record<string, unknown>> = [];
+    for (const item of v.items) {
+      const parsed = parseMailboxItem(item);
+      if (!parsed) return null;
+      items.push(parsed);
+    }
+    out = { v: 4, kind: "mb-set", id: mid, items };
+  }
+  if (!out || JSON.stringify(out).length > P4_ENVELOPE_MAX_CHARS) return null;
+  return out as P4Envelope;
+}
+
+/** A relayed envelope: protocol 3 (flat, iv + ciphertext) or protocol 4 (`mb` / `mb-set`). */
+function parseRelayEnvelope(v: unknown): RelayEnvelope | null {
+  if (isObj(v) && v.v === 4) return parseP4Envelope(v);
+  return parseEnvelope(v);
+}
+
 /** The crypto version a client put on a frame (absent = 1). */
 function version(v: unknown): { v?: number } {
   return v === 2 ? { v: 2 } : {};
@@ -174,6 +265,14 @@ export function parseFrame(raw: string | Buffer): ClientFrame | FrameError {
       }
       // 6.7: joined with the app in the background (absent: the foreground).
       if (typeof f.foreground === "boolean") frame.foreground = f.foreground;
+      // 6.12: the hub join proof (proof.ts) — the shapes here, the signature there.
+      if (f.proof !== undefined && f.proof !== null) {
+        const p = f.proof;
+        const pub = isObj(p) ? std(p.pub, 64) : null;
+        const sig = isObj(p) ? std(p.sig, 128) : null;
+        if (!pub || !sig) return fail("join.proof is { pub, sig } in base64");
+        frame.proof = { pub, sig };
+      }
       return frame;
     }
     case "auth": {
@@ -195,9 +294,24 @@ export function parseFrame(raw: string | Buffer): ClientFrame | FrameError {
     case "relay": {
       const messageId = id(f.messageId);
       const to = ids(f.to, 50);
-      const envelope = parseEnvelope(f.envelope);
-      if (!messageId || !to || to.length === 0 || !envelope) return fail("relay needs messageId, to[] and an envelope");
-      const frame: ClientFrame = { type: "relay", messageId, to: [...new Set(to)], envelope };
+      const envelope = f.envelope === undefined ? undefined : parseRelayEnvelope(f.envelope);
+      if (!messageId || !to || to.length === 0 || envelope === null) return fail("relay needs messageId, to[] and an envelope");
+      const recipients = [...new Set(to)];
+      // 6.12: an envelope per recipient reference (keys outside `to` are dropped).
+      let per: Record<string, RelayEnvelope> | undefined;
+      if (f.per !== undefined) {
+        if (!isObj(f.per) || Object.keys(f.per).length > 50) return fail("relay.per maps recipient references to envelopes");
+        // No prototype: a reference is only ever an own key ("__proto__" included).
+        per = Object.create(null) as Record<string, RelayEnvelope>;
+        for (const [ref, value] of Object.entries(f.per)) {
+          if (!id(ref)) return fail("relay.per maps recipient references to envelopes");
+          const parsed = parseRelayEnvelope(value);
+          if (!parsed) return fail(`relay.per has a bad envelope`);
+          if (recipients.includes(ref)) per[ref] = parsed;
+        }
+      }
+      if (!envelope && !recipients.every((ref) => per?.[ref])) return fail("relay needs an envelope for every recipient (envelope, or per[ref])");
+      const frame: ClientFrame = { type: "relay", messageId, to: recipients, ...(envelope ? { envelope } : {}), ...(per && Object.keys(per).length ? { per } : {}) };
       if (typeof f.expiresAt === "number" && Number.isFinite(f.expiresAt)) frame.expiresAt = f.expiresAt;
       const mention = f.mention === undefined ? null : ids(f.mention, 50);
       if (mention && mention.length) frame.mention = mention.filter((m) => frame.to.includes(m));
@@ -272,6 +386,12 @@ export function parseFrame(raw: string | Buffer): ClientFrame | FrameError {
         : [];
       if (!transferId || seqs.length === 0) return fail("proxy-need needs a transferId and seqs[]");
       return { type: "proxy-need", transferId, seqs };
+    }
+    case "key-bundles":
+    case "kt-lookup": {
+      const ref = id(f.ref);
+      if (!ref) return fail(`${f.type} needs a member reference (ref)`);
+      return { type: f.type, ref };
     }
     default:
       return { code: "unknown-type", message: `unknown frame type ${String(f.type).slice(0, 40)}` };

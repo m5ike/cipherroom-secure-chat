@@ -104,6 +104,8 @@ export type AdminProviders = {
   roomWake?: (hash: string, accountId?: string) => Promise<number>;
   /** The cluster bus and the other instances (signaling/cluster.ts). */
   cluster?: () => { kind: string; connected?: boolean; published?: number; received?: number; dropped?: number; instances: Array<{ id: string; lastSeen: number; members: number }> };
+  /** 6.12: key transparency (size, root, state), the key directory and the hub's room proofs — counts only. */
+  protocol4?: () => Record<string, unknown>;
 };
 
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -686,6 +688,15 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
     }
     res.setHeader("Content-Disposition", `attachment; filename="m5cet-audit-${stamp}.json"`);
     res.json({ exportedAt: Date.now(), entries });
+  });
+
+  // 6.12 (protocol 4), read-only: the key-transparency log (state, size, root,
+  // the newest signed head), the key directory (devices, accounts) and the
+  // hub's room proofs (rooms with a verifier, members proven now). Counts and
+  // public values only — no account, room id or key of anybody.
+  app.get("/api/admin/security/p4", (_req, res) => {
+    if (!deps.protocol4) return res.json({ ok: true, available: false });
+    res.json({ ok: true, available: true, ...deps.protocol4() });
   });
 
   // Tamper evidence (3.1): recompute the hash chain of the persisted

@@ -279,6 +279,18 @@ item per known device of each away recipient (an account may have several device
 that account is `{ v:4, kind:"mb-set", id, items:[MailboxItem…] }`), and falls back to the
 protocol-3 room envelope (`sealMessage`) only for recipients without any known bundle.
 
+Server details (6.12):
+
+* `{ type:"relay", messageId, to:[ref…], envelope?, per?: { [ref]: envelope }, expiresAt?, mention?, call? }`.
+  `envelope` may be left out when every reference in `to` has its own `per[ref]`; otherwise it is
+  required. Keys of `per` that are not in `to` are ignored; at most 50 keys.
+* Either envelope may be protocol 3 (flat: string / number fields with `iv` and `ciphertext`) or
+  protocol 4 (`mb` / `mb-set`). A protocol-4 envelope is rebuilt from its validated fields only
+  (unknown fields dropped): base64 sizes as in `contract.ts`, an `mb-set` has 1–16 items, its JSON
+  at most 128 000 characters. The queue's limit of 130 000 bytes applies per stored item: an
+  oversized `per[ref]` is answered `relay-status … rejected, reason "too large"` for that
+  recipient only. Receipts and the relay ledger are unchanged. The whole frame stays ≤ 256 KiB.
+
 ### 7.5 Key directory (signed-in accounts)
 
 * `PUT /api/keys/bundle` (account token) — `{ pk, cert:{v:2,exp,sig}, bundle }`: the device's
@@ -289,6 +301,29 @@ protocol-3 room envelope (`sealMessage`) only for recipients without any known b
   `{ type:"key-bundles", ref, devices: DirectoryDevice[] }` for the account behind that
   room-scoped reference (the same references the relay uses, `server/signaling/refs.ts`). Unknown
   or foreign references get an empty list (no oracle). Rate-limited like other hub frames.
+
+Server details (6.12):
+
+* The PUT body may carry `apk` (raw Ed25519, base64): needed only while the server does not know
+  the account key yet (it learns it from `PUT /api/account/identity`, which logs `acct`); a
+  different `apk` than the known one is refused (`409 apk-mismatch`). Answer:
+  `{ ok:true, device: DirectoryDevice, kt: { acct: index|null, dev: index|null } }`. Refusals:
+  `400` `bad-request`, `bad-pk`, `bad-apk`, `bad-cert`, `cert-expired`, `cert-too-long`
+  (`exp > now + 90 days + 5 min`), `bad-bundle` (sizes: `id` 8 B, `dh` P-256 SPKI, `kem` 1184 B,
+  `sig` 64 B), `bundle-expired`, `bundle-too-long` (`exp > now + 7 days + 5 min`),
+  `bad-bundle-signature`, `bad-cert-signature`; `409` `no-account-key`, `stale-bundle` (the
+  directory has a bundle of that device with a later `exp`), `too-many-devices`
+  (`KEYS_MAX_DEVICES`, default 10, counting devices with a valid certificate); `503` `kt-failed`,
+  `kt-busy`, `directory-full`. All base64 must be canonical.
+* `acct` is logged when the log does not yet show the account's current key (also for keys the
+  server learned before 6.12); `dev` when the device is new or its certificate changed — before the
+  directory keeps the row.
+* `devices` lists only devices whose certificate and bundle have not expired and whose certificate
+  is by the account key the server knows now.
+* A device leaves the directory, with a `rev` entry while its certificate is still valid, when the
+  session it uploaded with ends (sign-out on that device, "end this session" from another),
+  when the account signs out everywhere, is deleted or an operator ends all its sessions, and when
+  the account key changes (devices of the old key). An expired certificate leaves without `rev`.
 
 ## 8. Files
 
@@ -374,6 +409,31 @@ A device is revoked by a `rev` entry in key transparency (§ 14); a revoked devi
 * Clients show unproven members with a badge; server-side features that reach members by room
   (telephony route audio, calls offered to a room, `user` targets) address only proven members.
 
+Server details (6.12):
+
+* The nonce is per socket, not per join: a client may join several times on one socket with
+  proofs over the same nonce. A proof made for another socket's nonce does not verify.
+* `pub` is the raw 32-byte key, `sig` 64 bytes, both canonical base64; a malformed proof is an
+  `invalid-frame`. `joined` carries `proven` for the joiner itself; `joined.peers`, `peer-joined`,
+  held members (`joined.held`, the held `peer-left`) and members on other instances carry
+  `proven: boolean`.
+* Refusals: `error` `room-proof` (another `pub`, a bad signature, or — after 10 failed proofs from
+  one address in 10 minutes — any proof from it, unchecked), `room-proof-required`. Both are
+  audited (security) with the room's hash, never its id.
+* Only blind ids (`r3.…`) can prove. A room joined by its plain name (protocol 2 / v2 keys) is
+  always legacy: a proof sent for it is ignored, and `HUB_REQUIRE_ROOM_PROOF=1` does not refuse it.
+* Verifiers are kept under an HMAC of the room id (a subkey of the storage master key) in the global
+  database — shared by the instances of a cluster — or, without server-side storage, in memory per
+  instance (lost on a restart; the next proven join registers again).
+* Who is "proven only": with `HUB_REQUIRE_ROOM_PROOF=1` proven members only; otherwise proven
+  members only as soon as one member of the room has proven, and everyone in a room where nobody
+  proves (only older clients), as before 6.12. A `@account` target is authenticated by its session
+  and needs no proof; a member named by display name or by peer id does.
+* Trust on first use: the first proven join registers the verifier. Someone who knows only the blind
+  id can register a key of their own for a room that no 6.12 client has proven yet; the real members
+  are then refused (`room-proof`) until the verifier expires. The squatter gets no more than a legacy
+  join gave before 6.12.
+
 ## 14. Key transparency (F-13)
 
 ### 14.1 Log
@@ -402,6 +462,23 @@ from the server pin / QR).
   room-scoped reference, the hub frame `{ type:"kt-lookup", ref }` answers
   `{ type:"kt-lookup", ref, lookup: KtLookup }` (as § 7.5).
 * `GET /api/kt/consistency?from=<size>&to=<size>` → `{ from, to, proof:[b64…] }`.
+
+Server details (6.12):
+
+* `GET /api/kt/key` is the raw 32-byte Ed25519 key. The key is derived from the storage master key
+  (HKDF, never stored or logged on its own); replacing the master key makes the stored tree heads
+  unverifiable and the log fails closed.
+* A tree head is signed again when the log grew, or at the same size when the last one is an hour
+  old (a fresh `ts`). Before signing a larger head the server checks, with `merkle.ts`, that the new
+  tree is consistent with the last head it signed.
+* `lookup` returns at most the newest 500 entries of `u` (indexes ascending); `u` must be 43
+  characters of base64url. `consistency` needs `0 ≤ from ≤ to ≤` the log's current size (`400`
+  otherwise). `u` hashes the username exactly as the server stores it.
+* `503` with `code`: `kt-off` (no server-side storage), `kt-failed` (the log is corrupt — a gap, an
+  altered or non-canonical leaf, leaves under a signed head changed, a head not verifying with the
+  KT key — closed until the operator restores it; never rebuilt), `kt-busy`. The leaf table
+  refuses UPDATE and DELETE (triggers). The hub's `kt-lookup` answers `lookup: null` when key
+  transparency is not running, and `{ sth, entries: [] }` for an unknown or foreign reference.
 
 ### 14.4 Client checks
 

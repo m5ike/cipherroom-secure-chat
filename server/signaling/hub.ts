@@ -33,6 +33,20 @@
 //
 // Forwarded frames are rebuilt from validated fields; nothing a client
 // sends is spread into what another client receives.
+//
+// 6.12 (protocol 4):
+//   - hello carries a `nonce`; a join may carry `proof: { pub, sig }` — the
+//     joiner's proof that it holds the room key (proof.ts, G-09). A bad or
+//     foreign proof is refused (`room-proof`); a join without one is admitted
+//     as before unless HUB_REQUIRE_ROOM_PROOF=1 (`room-proof-required`).
+//     Every member view (`joined.peers`, `peer-joined`, held and remote
+//     members) and `joined` itself carry `proven: boolean`; what the server
+//     sends a room by itself (route audio, the phone bridge's member by name
+//     or peer id) reaches only proven members once someone proved (reachable)
+//   - `key-bundles` / `kt-lookup` { ref }: a member's devices from the key
+//     directory and its key-transparency entries, by room-scoped reference,
+//     resolved like the relay's (unknown or foreign: an empty answer)
+//   - relay frames may carry an envelope per recipient (`per`, relay.ts)
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, Server } from "node:http";
@@ -55,7 +69,9 @@ import type { ClusterBus } from "../cluster/bus";
 import { ClusterRooms, type HeldView, type MemberView } from "./cluster";
 import { isFrameError, KNOWN_FEATURES, MAX_FRAME_BYTES, parseFrame, PROTOCOL_VERSION, type ClientFrame } from "./frames";
 import { ConnectionGate, limitClassOf, LIMITS, PROXY_BYTES, SocketLimiter } from "./limits";
-import { accountRef } from "./refs";
+import { accountRef, resolveRef } from "./refs";
+import { newHubNonce, reachable, RoomProofs } from "./proof";
+import type { DirectoryDevice, KtLookup } from "../../client/src/lib/p4/contract";
 import { AwayRelay, type RelayPeer, type WakeFn } from "./relay";
 import { HeldBook, maxAwayMs, type HeldMember } from "./presence";
 import { seenAt } from "../../client/src/lib/presence";
@@ -79,6 +95,17 @@ export type HubClient = RelayPeer & {
   lastSeen: number;
   /** 6.7: the server ended this connection (kick, the operator): not held. */
   removed?: boolean;
+  /** 6.12: this socket's join-proof nonce (hello), and whether its join proved the room key. */
+  nonce: string;
+  proven: boolean;
+};
+
+/** 6.12: what the hub answers `key-bundles` / `kt-lookup` with (server/keys/service.ts). */
+export type HubDirectory = {
+  /** The account's devices in the key directory (valid certificate and bundle). */
+  devices(accountId: string): DirectoryDevice[];
+  /** The account's key-transparency entries; null account: the head and no entries; null: KT is not running. */
+  lookup(accountId: string | null): Promise<KtLookup | null>;
 };
 
 export type HubOptions = {
@@ -99,6 +126,10 @@ export type HubOptions = {
   gate?: ConnectionGate;
   /** 6.7: how long a held member stays listed (default PRESENCE_MAX_AWAY_DAYS; 0 = for ever). */
   maxAwayMs?: number;
+  /** 6.12: hub join proofs (proof.ts). Default: verifiers in memory, settings from the environment. */
+  roomProofs?: RoomProofs;
+  /** 6.12: the key directory and key transparency behind `key-bundles` / `kt-lookup`. */
+  directory?: HubDirectory;
 };
 
 /** Beyond this, a slow receiver gets no more file chunks (it asks again later). */
@@ -181,11 +212,14 @@ export class SignalingHub {
   private readonly path: string;
   /** Members on other instances, and the routes to them; null when alone. */
   readonly cluster: ClusterRooms | null;
+  /** 6.12: room verifiers and the join-proof check (proof.ts). */
+  readonly proofs: RoomProofs;
 
   constructor(private readonly opts: HubOptions) {
     this.path = opts.path ?? "/ws";
     this.gate = opts.gate ?? ConnectionGate.fromEnv();
     this.maxAwayMs = opts.maxAwayMs ?? maxAwayMs();
+    this.proofs = opts.roomProofs ?? RoomProofs.inMemory();
     this.wss = new WebSocketServer({ noServer: true, maxPayload: MAX_FRAME_BYTES, perMessageDeflate: false });
     this.relay = new AwayRelay(
       opts.accounts,
@@ -268,6 +302,7 @@ export class SignalingHub {
       ...(peer.resumeHash ? { resumeHash: peer.resumeHash } : {}),
       ...(peer.binary ? { binary: true } : {}),
       foreground: peer.foreground, lastSeen: peer.lastSeen,
+      ...(peer.proven ? { proven: true } : {}),
     };
   }
 
@@ -277,6 +312,7 @@ export class SignalingHub {
     return {
       peerId: m.peerId, name: m.name, joinedAt: m.joinedAt, ...(m.accountId ? this.refFields(room, m.accountId) : {}),
       foreground, lastSeen: seenAt({ connected: true, foreground, lastSeen: m.lastSeen ?? 0 }, Date.now()),
+      proven: m.proven === true,
     };
   }
 
@@ -284,7 +320,7 @@ export class SignalingHub {
 
   /** A held member as the room sees it (`joined.held`, and the held `peer-left`). */
   private heldView(room: string, h: HeldMember) {
-    return { peerId: h.peerId, name: h.name, joinedAt: h.joinedAt, lastSeen: h.lastSeen, since: h.since, ...(h.accountId ? this.refFields(room, h.accountId) : {}) };
+    return { peerId: h.peerId, name: h.name, joinedAt: h.joinedAt, lastSeen: h.lastSeen, since: h.since, ...(h.accountId ? this.refFields(room, h.accountId) : {}), proven: h.proven === true };
   }
 
   /** The member's connection went, they did not leave: listed as away until they come back. */
@@ -297,6 +333,7 @@ export class SignalingHub {
     return {
       name: h.name, joinedAt: h.joinedAt, lastSeen: h.lastSeen, since: h.since,
       ...(h.accountId ? { accountId: h.accountId } : {}), ...(h.resumeHash ? { resumeHash: h.resumeHash } : {}), ...(h.tokenHash ? { tokenHash: h.tokenHash } : {}),
+      ...(h.proven ? { proven: true } : {}),
     };
   }
 
@@ -474,6 +511,8 @@ export class SignalingHub {
       closed: false,
       foreground: true,
       lastSeen: Date.now(),
+      nonce: newHubNonce(),
+      proven: false,
     };
     this.clients.set(client.connId, client);
     this.socketIndex.set(socket, client);
@@ -495,6 +534,8 @@ export class SignalingHub {
       limits: { maxFrameBytes: MAX_FRAME_BYTES, proxy: { bytesPerSec: PROXY_BYTES.refillPerSec, burstBytes: PROXY_BYTES.capacity, framesPerSec: LIMITS.proxy.refillPerSec, burstFrames: LIMITS.proxy.capacity } },
       features: [...KNOWN_FEATURES],
       cache: "no-store",
+      // 6.12: what a join proof signs (proof.ts).
+      nonce: client.nonce,
     }, client);
   }
 
@@ -519,6 +560,8 @@ export class SignalingHub {
   /** Pings every socket; one that did not answer the last ping is gone. Held members past their time go. */
   private beat(): void {
     this.sweepHeld();
+    // 6.12: room verifiers nobody proved for HUB_ROOM_PROOF_TTL_DAYS (at most once an hour).
+    this.proofs.sweep();
     for (const client of this.clients.values()) {
       if (!client.alive) {
         audit.add({ category: "network", level: "debug", event: "ws.heartbeat-timeout", peerId: client.id, ip: truncateIp(client.ip) });
@@ -651,7 +694,45 @@ export class SignalingHub {
       case "proxy-cancel":
       case "proxy-need":
         return this.proxyFrame(client, frame);
+      case "key-bundles":
+        return this.keyBundles(client, frame.ref);
+      case "kt-lookup":
+        return this.ktLookup(client, frame.ref);
     }
+  }
+
+  /* ------------------------------------------- key directory (6.12, § 7.5) */
+
+  /** The account a room-scoped reference stands for in the client's room: present, away, held or on
+   *  another instance — the relay's resolution (refs.ts), never an account outside the room. */
+  private memberAccount(room: string, ref: string): string | null {
+    const candidates = this.relay.candidates(room);
+    for (const m of this.cluster?.members(room) ?? []) if (m.accountId) candidates.add(m.accountId);
+    for (const h of this.held.list(room)) if (h.accountId) candidates.add(h.accountId);
+    return resolveRef(room, ref, candidates);
+  }
+
+  /** A member's devices from the key directory; unknown or foreign references get an empty list (no oracle). */
+  private keyBundles(client: HubClient, ref: string): void {
+    const room = client.room;
+    if (!room) return this.error(client, "not-in-room", "join a room first");
+    const accountId = this.memberAccount(room, ref);
+    let devices: DirectoryDevice[] = [];
+    if (accountId && this.opts.directory) {
+      try { devices = this.opts.directory.devices(accountId); } catch { devices = []; }
+    }
+    this.send(client.socket, { type: "key-bundles", ref, devices }, client);
+  }
+
+  /** A member's key-transparency entries with inclusion proofs (`lookup` null: KT is not running here). */
+  private ktLookup(client: HubClient, ref: string): void {
+    const room = client.room;
+    if (!room) return this.error(client, "not-in-room", "join a room first");
+    const accountId = this.memberAccount(room, ref);
+    const directory = this.opts.directory;
+    const answer = (lookup: KtLookup | null) => { this.send(client.socket, { type: "kt-lookup", ref, lookup }, client); };
+    if (!directory) return answer(null);
+    directory.lookup(accountId).then(answer, () => answer(null));
   }
 
   /* ----------------------------------------------------------------- rooms */
@@ -681,6 +762,24 @@ export class SignalingHub {
         return this.error(client, "room-full", `This room takes at most ${record.maxMembers} people.`, { max: record.maxMembers });
       }
     }
+    // 6.12 (§ 13, G-09): does the joiner hold the room key? A bad or foreign
+    // proof is refused; no proof is a client before 6.12 (legacy) unless
+    // proofs are required (HUB_REQUIRE_ROOM_PROOF).
+    const proof = this.proofs.check(room, client.nonce, frame.proof, client.ip);
+    if (proof.kind === "refused") {
+      audit.add({
+        category: "security", level: proof.reason === "required" ? "notice" : "warn",
+        event: proof.code === "room-proof-required" ? "join.room-proof-required" : "join.room-proof-refused",
+        peerId: client.id, roomHash: hash, ip: truncateIp(client.ip), status: proof.reason,
+      });
+      // A wrong proof counts toward closing an abusive socket.
+      if (proof.reason === "bad-signature" || proof.reason === "mismatch") client.limiter.allow("other");
+      return this.error(client, proof.code, proof.message);
+    }
+    if (proof.kind === "legacy" && proof.error) audit.add({ category: "system", level: "error", event: "join.room-proof-unchecked", roomHash: hash, detail: { error: proof.error.slice(0, 200) } });
+    if (proof.kind === "proven" && proof.registered) audit.add({ category: "security", event: "join.room-verifier-registered", roomHash: hash });
+    client.proven = proof.kind === "proven";
+
     let members = this.rooms.get(room);
     if (!members) { members = new Map(); this.rooms.set(room, members); }
 
@@ -745,6 +844,7 @@ export class SignalingHub {
       ...(peer.accountId ? this.refFields(room, peer.accountId) : {}),
       foreground: peer.foreground,
       lastSeen: seenAt({ connected: true, foreground: peer.foreground, lastSeen: peer.lastSeen }, now),
+      proven: peer.proven,
     });
     const existing = [...members.values()].map(view);
     for (const m of this.cluster?.members(room) ?? []) if (m.peerId !== client.id) existing.push(this.publicView(room, m));
@@ -757,6 +857,8 @@ export class SignalingHub {
       peerId: client.id,
       room,
       resume,
+      // 6.12: whether this join proved the room key (proof.ts).
+      proven: client.proven,
       peers: existing,
       // Signed-in members who are away: messages to them go through the relay.
       away: this.relay.awayList(room, client.accountId).map((a) => ({ ...a, accountId: a.account })),
@@ -775,7 +877,7 @@ export class SignalingHub {
     if (record?.wall) this.send(client.socket, noticeFrame("wall", record.wall.text, record.wall.level, "operator", true), client);
 
     eventStore.record({ kind: "peer-joined", room, peerId: client.id, meta: { peerCount: members.size } });
-    audit.add({ category: "communication", event: "room.join", peerId: client.id, accountId: client.accountId, roomHash: hashRoom(room), ip: truncateIp(client.ip), detail: { members: members.size, protocol: client.protocol } });
+    audit.add({ category: "communication", event: "room.join", peerId: client.id, accountId: client.accountId, roomHash: hashRoom(room), ip: truncateIp(client.ip), detail: { members: members.size, protocol: client.protocol, proven: client.proven } });
   }
 
   /** `account` and its deprecated alias `accountId` carry the same room-scoped reference. */
@@ -834,6 +936,7 @@ export class SignalingHub {
         peerId: client.id, name: client.name, joinedAt: client.joinedAt, lastSeen: client.lastSeen, since: Date.now(),
         ...(client.accountId ? { accountId: client.accountId } : {}), ...(client.tokenHash ? { tokenHash: client.tokenHash } : {}),
         ...(client.resumeHash ? { resumeHash: client.resumeHash } : {}),
+        ...(client.proven ? { proven: true } : {}),
       };
       // Pushed out by the limits (the oldest held members): gone for good.
       for (const old of this.held.hold(room, member)) this.broadcastAll(old.room, { type: "peer-left", peerId: old.member.peerId });
@@ -1012,13 +1115,28 @@ export class SignalingHub {
     return sent;
   }
 
-  /** A frame of the server's own for the members that match (6.0: the phone bridge's call for one member). */
+  /** 6.12 (G-09): the peer ids in `room` the server may reach by room, peer id or name (proof.ts › reachable). */
+  private reachableIn(room: string): Set<string> {
+    const all = [
+      ...this.members(room).map((p) => ({ id: p.id, proven: p.proven })),
+      ...(this.cluster?.members(room) ?? []).map((m) => ({ id: m.peerId, proven: m.proven === true })),
+    ];
+    return new Set(reachable(all, this.proofs.settings.required).map((m) => m.id));
+  }
+
+  /** A frame of the server's own for the members that match (6.0: the phone bridge's call for one member).
+   *  6.12 (G-09): a member named by peer id or display name must be reachable (proven, once anyone in
+   *  the room proved); a target by account is authenticated by its session and needs no proof. */
   sendToMembers(hash: string, payload: Record<string, unknown>, target: MemberTarget): number {
     const room = this.roomOfHash(hash);
     if (!room) return 0;
+    const allowed = target.accountId ? null : this.reachableIn(room);
     let sent = 0;
-    for (const peer of this.matching(room, target)) if (this.send(peer.socket, payload, peer)) sent += 1;
-    if (sent === 0 && target.peerId && this.cluster?.signal(room, target.peerId, payload)) sent += 1;
+    for (const peer of this.matching(room, target)) {
+      if (allowed && !allowed.has(peer.id)) continue;
+      if (this.send(peer.socket, payload, peer)) sent += 1;
+    }
+    if (sent === 0 && target.peerId && (!allowed || allowed.has(target.peerId)) && this.cluster?.signal(room, target.peerId, payload)) sent += 1;
     return sent;
   }
 
@@ -1029,8 +1147,8 @@ export class SignalingHub {
    * other instances and held (away) members are not listed: they cannot take
    * a call's audio here.
    */
-  roomMembers(room: string): Array<{ peerId: string; name: string; accountId?: string }> {
-    return this.members(room).filter((p) => !p.closed).map((p) => ({ peerId: p.id, name: p.name, ...(p.accountId ? { accountId: p.accountId } : {}) }));
+  roomMembers(room: string): Array<{ peerId: string; name: string; accountId?: string; proven: boolean }> {
+    return this.members(room).filter((p) => !p.closed).map((p) => ({ peerId: p.id, name: p.name, ...(p.accountId ? { accountId: p.accountId } : {}), proven: p.proven }));
   }
 
   /** 6.9: a frame of the server's own to one member of a room (by peer id). */
@@ -1102,7 +1220,7 @@ export class SignalingHub {
       peers: [...(this.rooms.get(room)?.values() ?? [])].map((p) => ({
         peerId: p.id, name: p.name, joinedAt: p.joinedAt, connId: p.connId, protocol: p.protocol,
         ...(p.accountId ? { accountId: p.accountId } : {}), away: Boolean(p.suspended),
-        foreground: p.foreground, lastSeen: p.foreground ? Date.now() : p.lastSeen,
+        foreground: p.foreground, lastSeen: p.foreground ? Date.now() : p.lastSeen, proven: p.proven,
       })),
       away: this.relay.awayAccounts(room),
       // 6.7: connection gone, not left.
@@ -1115,6 +1233,7 @@ export class SignalingHub {
     for (const m of this.rooms.values()) members += m.size;
     return {
       connections: this.clients.size, rooms: this.rooms.size, members, held: this.held.total(), gate: this.gate.stats(), relay: this.relay.stats(), proxy: this.proxy.stats(),
+      proofs: this.proofs.status(),
       cluster: this.cluster ? { ...this.cluster.bus.status(), instances: this.cluster.instances() } : { kind: "local" as const, instances: [] },
     };
   }

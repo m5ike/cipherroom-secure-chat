@@ -41,8 +41,10 @@ export type MailState = "queued" | "delivering" | "dead";
 
 export type MailFrom = { peerId: string; accountId?: string; name: string };
 
-/** Room-key ciphertext and its public header fields, exactly as relayed. */
-export type QueueEnvelope = Record<string, string | number>;
+/** Room-key ciphertext and its public header fields, exactly as relayed — a
+ *  protocol-3 envelope (flat strings and numbers) or, 6.12, a protocol-4
+ *  mailbox envelope (`mb` / `mb-set`, nested JSON: signaling/frames.ts). */
+export type QueueEnvelope = Record<string, unknown>;
 
 export type QueueItem = {
   id: string;
