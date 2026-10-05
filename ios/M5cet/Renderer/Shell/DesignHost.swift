@@ -64,6 +64,11 @@ final class DesignHost: ActionHost {
     @ObservationIgnored var reducedMotion = false
     /// DEBUG launch argument -M5Dark (a tone for screenshots, not saved).
     var toneOverride: Bool?
+    #if DEBUG
+    /// DEBUG sample mode (-M5Screen): the screen asked for stays — route() (the core's after its start, a lock
+    /// change) does not replace it. Release has no sample mode.
+    @ObservationIgnored var sampleMode = false
+    #endif
 
     // The overlay.
     private(set) var sheet: SheetState?
@@ -229,6 +234,9 @@ final class DesignHost: ActionHost {
 
     /// MainActivity.route: wiped, not enrolled, no PIN yet, locked — or the app (after the splash's minimum time).
     func route() {
+        #if DEBUG
+        if sampleMode { return }
+        #endif
         routeTask?.cancel()
         let minMs = design.anim("splash").values["minMs"]?.numberValue ?? 700
         let wait = minMs / 1000 - Date().timeIntervalSince(splashSince)
@@ -434,13 +442,19 @@ final class DesignHost: ActionHost {
 /// The system's share sheet for a text (Android's ACTION_SEND chooser), from the active window.
 @MainActor
 enum SharePresenter {
-    static func present(_ items: [Any]) {
+    /// `done`: the activity the person chose (nil: none) and whether it completed.
+    static func present(_ items: [Any], done: (@MainActor (UIActivity.ActivityType?, Bool) -> Void)? = nil) {
         guard let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first(where: { $0.activationState == .foregroundActive })
                 ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first,
               let window = scene.keyWindow ?? scene.windows.first,
               var top = window.rootViewController else { return }
         while let next = top.presentedViewController { top = next }
         let vc = UIActivityViewController(activityItems: items, applicationActivities: nil)
+        if let done {
+            vc.completionWithItemsHandler = { type, completed, _, _ in
+                MainActor.assumeIsolated { done(type, completed) }
+            }
+        }
         if let pop = vc.popoverPresentationController {
             pop.sourceView = window
             pop.sourceRect = CGRect(x: window.bounds.midX, y: window.bounds.midY, width: 1, height: 1)

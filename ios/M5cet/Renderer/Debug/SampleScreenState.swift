@@ -26,6 +26,15 @@ final class SampleScreenState: ScreenStateProvider {
         // The app's own $app (its version) and the live $settings (every key, the user's look).
         v["app"] = nil
         v["settings"] = nil
+        // The console's sample names the channels in Android's words; the app names them in its design's.
+        if screen == "settings.notify", var n = v["notify"]?.objectValue, let channels = n["channels"]?.arrayValue {
+            n["channels"] = .array(channels.map { c in
+                var o = c.objectValue ?? [:]
+                if let id = o["id"]?.stringValue, let label = DesignAssets.builtIn.text("notify.channel." + id, lang: context.lang) { o["label"] = .string(label) }
+                return .object(o)
+            })
+            v["notify"] = .object(n)
+        }
         return v
     }
 
