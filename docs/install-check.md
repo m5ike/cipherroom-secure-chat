@@ -163,7 +163,7 @@ a řídicí znaky jsou nahrazené `?`).
 | `config.cluster` | `REDIS_URL` s `CLUSTER_SECRET` | WARN: zprávy clusteru nepodepsané |
 | `config.storage_key` | `STORAGE_MASTER_KEY` je 32 bajtů hex / base64 | FAIL |
 | `config.data_dir` | datový adresář (`DATA_DIR`, u systemd `/var/lib/m5cet`, jinak `<dir>/.m5cet`) má `0700`; relativní cesty z `.env` (`DATA_DIR`, `STORAGE_DIR`, `BACKUP_DIR`, `AI_DATA_DIR`, `*_KEY_FILE`) se berou od kořene instalace, jako je čte aplikace | FAIL: otevřený všem; WARN: skupina |
-| `config.keys` | `*.key` v datech (`storage.key`, `audit-signing.key`, …) a soubory z `STORAGE_KEY_FILE` / `FUNCTIONS_ADM_KEY_FILE` / `ANDROID_SIGNING_KEY_FILE` mají `0600` — i když jméno obsahuje mezeru nebo konec řádku (`find -print0`; cesty z `.env` se nedělí ani nerozvíjejí jako vzory) | FAIL |
+| `config.keys` | `*.key` v datech (`storage.key`, `audit-signing.key`, …) a soubory z `STORAGE_KEY_FILE` / `FUNCTIONS_ADM_KEY_FILE` / `ANDROID_SIGNING_KEY_FILE` / `APNS_KEY_FILE` (6.14) mají `0600` — i když jméno obsahuje mezeru nebo konec řádku (`find -print0`; cesty z `.env` se nedělí ani nerozvíjejí jako vzory) | FAIL |
 | `config.world_writable` | nic v instalaci není zapisovatelné pro všechny | FAIL |
 | `config.secret_files` | `.env*`, `*.key`, `*.pem`, keystore, Firebase admin JSON, `install.conf` nejsou čitelné pro ostatní | FAIL; jen WARN, když je instalační adresář pro ostatní uzavřený |
 | `config.stale_copies` | kopie tajemství vedle `.env` (`.env-bak`, `.env.old`, `*.bak`) | WARN |
@@ -208,6 +208,7 @@ regulární výrazy v pořadí) včetně dědění direktiv (`add_header` a
 | `http.body_size` | `client_max_body_size` vůči limitům aplikace: `/api/storage` 12 MB, `/api/account/vault` 8 MB, `/api/speech/stt` 10 MB, `/hooks/` 5 MB | WARN (nginx odpoví 413) |
 | `http.webhooks` | s telefonií `/wh/` vede na aplikaci | FAIL |
 | `http.assetlinks` | `/.well-known/assetlinks.json` vede na aplikaci (passkeys na Androidu; typicky ho blokuje `location ~ /\.`) | WARN |
+| `http.aasa` | 6.14, jen s `APNS_TEAM_ID`: `/.well-known/apple-app-site-association` vede na aplikaci (passkeys na iOS; Apple ho stahuje bez přesměrování) | WARN |
 | `http.headers` | nginx nepřidává hlavičky, které posílá helmet (HSTS, CSP, `X-Content-Type-Options`, `Referrer-Policy`, …) do location s proxy | WARN (dvě hodnoty) |
 | `http.server_tokens` | `server_tokens off` | WARN |
 | `http.gzip` | `gzip_types` bez už komprimovaných typů (obrázky, zip, video, woff2) | WARN |

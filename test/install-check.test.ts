@@ -638,11 +638,11 @@ EOF`);
   const site = (domain: string, env: Record<string, string> = {}) => install(sb, { conf: { SCOPE: "system", SERVICE_MANAGER: "systemd", APP_PORT: "5000", DOMAIN: domain, ENABLE_NGINX: "auto", NGINX_SITE_PATH: "/etc/nginx/sites-available/m5cet.conf" }, env });
 
   it("the installer's site after certbot: TLS, redirect, WebSocket, SSE pass; the 2m body limit WARNs", () => {
-    site("chat.example.com", { ENABLE_TELEPHONY: "1" });
+    site("chat.example.com", { ENABLE_TELEPHONY: "1", APNS_TEAM_ID: "ABCDE12345" });
     nginx("nginx-T-installer-certbot.txt");
     const r = sb.json(["--only", "http"], { uid: 0 });
     expect(ids(r, "FAIL")).toEqual([]);
-    for (const id of ["http.nginx", "http.server", "http.tls_protocols", "http.tls_ciphers", "http.redirect", "http.websocket", "http.media_tel", "http.sse", "http.webhooks", "http.assetlinks", "http.headers", "http.forwarded", "http.ws_limits"]) {
+    for (const id of ["http.nginx", "http.server", "http.tls_protocols", "http.tls_ciphers", "http.redirect", "http.websocket", "http.media_tel", "http.sse", "http.webhooks", "http.assetlinks", "http.aasa", "http.headers", "http.forwarded", "http.ws_limits"]) {
       expect(st(r, id), `${id}: ${msg(r, id)}`).toBe("PASS");
     }
     expect(st(r, "http.body_size")).toBe("WARN");
@@ -665,15 +665,16 @@ EOF`);
     }
     expect(st(r, "http.admin_paths")).toBe("WARN");
     expect(msg(r, "http.websocket")).toContain("= /ws");
+    expect(st(r, "http.aasa"), "no APNS_TEAM_ID: nothing to serve, nothing checked").toBe("(none)");
   });
 
   it("a hosting-panel site: no WebSocket upgrade, dot-paths denied, doubled headers, weak TLS…", () => {
-    site("chat.example.com");
+    site("chat.example.com", { APNS_TEAM_ID: "ABCDE12345" });
     nginx("nginx-T-panel.txt");
     const r = sb.json(["--only", "http"], { uid: 0 });
     expect(st(r, "http.websocket")).toBe("FAIL");
     expect(r.exit).toBe(1);
-    for (const id of ["http.tls_protocols", "http.tls_ciphers", "http.redirect", "http.sse", "http.body_size", "http.assetlinks", "http.headers", "http.gzip", "http.forwarded", "http.ws_limits", "http.server_tokens"]) {
+    for (const id of ["http.tls_protocols", "http.tls_ciphers", "http.redirect", "http.sse", "http.body_size", "http.assetlinks", "http.aasa", "http.headers", "http.gzip", "http.forwarded", "http.ws_limits", "http.server_tokens"]) {
       expect(st(r, id), `${id}: ${msg(r, id)}`).toBe("WARN");
     }
     expect(msg(r, "http.assetlinks")).toContain("~ /\\.");
