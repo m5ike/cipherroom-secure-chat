@@ -21,7 +21,9 @@
 // (IOS_REMOVED_NODES). The iOS app ships this design
 // (script/ios-assets.ts → ios/Design/m5/, copied by the Xcode build phase
 // "Copy design assets"). The design's scope has no platform variable ($app is
-// name / version / code / bundle on both apps): a design is one platform's
+// name / version / code / bundle on both apps; the iOS app adds "watch" —
+// whether the device pairs with an Apple Watch, false on an iPad — for the
+// watch switch): a design is one platform's
 // document, so it simply contains what that app shows. A shared design that
 // ever needed iOS-only visibility would add "platform" to $app (M5Design
 // ScreenScope.app, Android MainActivity.appScope) and use
@@ -256,6 +258,55 @@ export const IOS_STRINGS: Record<string, Texts> = {
     "This device has no NFC reader.", "Toto zařízení nemá čtečku NFC.", "Dieses Gerät hat kein NFC-Lesegerät.",
     "Este dispositivo no tiene lector NFC.", "Questo dispositivo non ha un lettore NFC.", "Cet appareil n’a pas de lecteur NFC.",
     "Toto zariadenie nemá čítačku NFC.", "Ta naprava nima bralnika NFC.", "Tässä laitteessa ei ole NFC-lukijaa.",
+  ),
+
+  /* ---- why Core NFC cannot do an op (M5NFC NfcPlatform.limit / noReader — the workbench's buttons, the builder) */
+  "nfc.ios.limit.noReader": T(
+    "This device has no NFC reader (iPad and Apple Watch have none).", "Toto zařízení nemá čtečku NFC (iPad ani Apple Watch ji nemají).",
+    "Dieses Gerät hat kein NFC-Lesegerät (iPad und Apple Watch haben keines).", "Este dispositivo no tiene lector NFC (el iPad y el Apple Watch no tienen).",
+    "Questo dispositivo non ha un lettore NFC (iPad e Apple Watch non ne hanno).", "Cet appareil n’a pas de lecteur NFC (l’iPad et l’Apple Watch n’en ont pas).",
+    "Toto zariadenie nemá čítačku NFC (iPad ani Apple Watch ju nemajú).", "Ta naprava nima bralnika NFC (iPad in Apple Watch ga nimata).",
+    "Tässä laitteessa ei ole NFC-lukijaa (iPadissa ja Apple Watchissa ei ole).",
+  ),
+  "nfc.ios.limit.classic": T(
+    "MIFARE Classic is not available on iPhone (Core NFC has no MIFARE Classic).", "MIFARE Classic na iPhonu není k dispozici (Core NFC MIFARE Classic neumí).",
+    "MIFARE Classic ist auf dem iPhone nicht verfügbar (Core NFC unterstützt kein MIFARE Classic).", "MIFARE Classic no está disponible en el iPhone (Core NFC no admite MIFARE Classic).",
+    "MIFARE Classic non è disponibile su iPhone (Core NFC non supporta MIFARE Classic).", "MIFARE Classic n’est pas disponible sur iPhone (Core NFC ne prend pas en charge MIFARE Classic).",
+    "MIFARE Classic na iPhone nie je k dispozícii (Core NFC MIFARE Classic nepodporuje).", "MIFARE Classic v iPhonu ni na voljo (Core NFC ne podpira MIFARE Classic).",
+    "MIFARE Classic ei ole käytettävissä iPhonessa (Core NFC ei tue MIFARE Classicia).",
+  ),
+  "nfc.ios.limit.raw": T(
+    "Raw ISO 14443-3 frames are not available on iPhone (Core NFC sends APDUs and MIFARE commands only).",
+    "Surové rámce ISO 14443-3 na iPhonu nejsou k dispozici (Core NFC posílá jen APDU a příkazy MIFARE).",
+    "Rohe ISO-14443-3-Frames sind auf dem iPhone nicht verfügbar (Core NFC sendet nur APDUs und MIFARE-Befehle).",
+    "Las tramas ISO 14443-3 sin procesar no están disponibles en el iPhone (Core NFC solo envía APDU y comandos MIFARE).",
+    "I frame ISO 14443-3 grezzi non sono disponibili su iPhone (Core NFC invia solo APDU e comandi MIFARE).",
+    "Les trames ISO 14443-3 brutes ne sont pas disponibles sur iPhone (Core NFC n’envoie que des APDU et des commandes MIFARE).",
+    "Surové rámce ISO 14443-3 na iPhone nie sú k dispozícii (Core NFC posiela len APDU a príkazy MIFARE).",
+    "Surovi okvirji ISO 14443-3 v iPhonu niso na voljo (Core NFC pošilja samo APDU-je in ukaze MIFARE).",
+    "Raakoja ISO 14443-3 -kehyksiä ei voi käyttää iPhonessa (Core NFC lähettää vain APDU- ja MIFARE-komentoja).",
+  ),
+  "nfc.ios.limit.hce": T(
+    "Card emulation needs the HCE entitlement (Core NFC CardSession) — not available on this device.",
+    "Emulace karty potřebuje oprávnění HCE (Core NFC CardSession) — na tomto zařízení není k dispozici.",
+    "Kartenemulation braucht die HCE-Berechtigung (Core NFC CardSession) — auf diesem Gerät nicht verfügbar.",
+    "La emulación de tarjeta necesita el permiso HCE (Core NFC CardSession): no está disponible en este dispositivo.",
+    "L’emulazione della carta richiede l’autorizzazione HCE (Core NFC CardSession) — non disponibile su questo dispositivo.",
+    "L’émulation de carte nécessite l’autorisation HCE (Core NFC CardSession) — non disponible sur cet appareil.",
+    "Emulácia karty potrebuje oprávnenie HCE (Core NFC CardSession) — na tomto zariadení nie je k dispozícii.",
+    "Emulacija kartice potrebuje pravico HCE (Core NFC CardSession) — v tej napravi ni na voljo.",
+    "Kortin emulointi vaatii HCE-oikeuden (Core NFC CardSession) – ei käytettävissä tällä laitteella.",
+  ),
+  "nfc.ios.limit.payment": T(
+    "Core NFC does not allow payment applications (EMV AIDs) — use an external reader.", "Core NFC nedovolí platební aplikace (EMV AID) — použijte externí čtečku.",
+    "Core NFC erlaubt keine Zahlungsanwendungen (EMV-AIDs) — verwenden Sie ein externes Lesegerät.", "Core NFC no permite aplicaciones de pago (AID de EMV): usa un lector externo.",
+    "Core NFC non consente le applicazioni di pagamento (AID EMV) — usa un lettore esterno.", "Core NFC n’autorise pas les applications de paiement (AID EMV) — utilisez un lecteur externe.",
+    "Core NFC nepovolí platobné aplikácie (EMV AID) — použite externú čítačku.", "Core NFC ne dovoli plačilnih aplikacij (EMV AID) — uporabite zunanji bralnik.",
+    "Core NFC ei salli maksusovelluksia (EMV AID) – käytä ulkoista lukijaa.",
+  ),
+  "nfc.ios.limit.other": T(
+    "This reader cannot do it.", "Tahle čtečka to neumí.", "Dieses Lesegerät kann das nicht.", "Este lector no puede hacerlo.", "Questo lettore non può farlo.",
+    "Ce lecteur ne sait pas le faire.", "Táto čítačka to nevie.", "Ta bralnik tega ne zmore.", "Tämä lukija ei pysty siihen.",
   ),
 
   /* -------- People: a safety number's QR (ios/M5cet/Parts/People) — the web's words (client/src/lib/i18n-security.ts) */
@@ -504,6 +555,15 @@ IOS_WORDING["nfc.tpl.none"] = Object.fromEntries(LANGS.map((l) => [l, DEFAULT_DE
 /** Elements of Android's screens iOS cannot do: Settings › Calls' call log permission and erasing the system call log. */
 export const IOS_REMOVED_NODES: Record<string, string[]> = { "settings.calls": ["calllog-perm", "calllog-erase"] };
 
+/**
+ * A slip of Android's design the iOS design does not copy (Android's own stays as it is): Settings › Security's
+ * shuffle hint is "{_'{_'set.security.shuffleHint'}'}" — server/android/design-61.ts passes an already wrapped
+ * key to toggleRow, whose hintText wraps it again — and the screen showed "{_'}". screen → node id → text.
+ */
+export const IOS_FIXED_TEXTS: Record<string, Record<string, string>> = {
+  "settings.security": { "shuffle-hint": "{_'set.security.shuffleHint'}" },
+};
+
 const findNode =(node: ANode, id: string): ANode | null => {
   if (node.id === id) return node;
   for (const c of node.children ?? []) { const f = findNode(c, id); if (f) return f; }
@@ -519,18 +579,25 @@ const parentOf = (node: ANode, id: string): ANode | null => {
   return null;
 };
 
+/**
+ * Not on a device that cannot pair with an Apple Watch: the iOS app's $app.watch is false on an iPad
+ * (WCSession.isSupported — ios/M5cet/Renderer/Shell/DesignHost.swift appScope); where $app has no "watch"
+ * (the console's preview) the rows show.
+ */
+export const IOS_WATCH_IF = "$app.watch != false";
+
 /** The Apple Watch rows: a switch bound to watch.on in the shape of its neighbours (icon, label, switch), and its hint. */
 export function watchRows(): ANode[] {
   return [
     {
-      id: "watch", el: "row", style: { padding: "10 12 10 20", gap: 18, align: "center" }, children: [
+      id: "watch", el: "row", if: IOS_WATCH_IF, style: { padding: "10 12 10 20", gap: 18, align: "center" }, children: [
         // Lucide has no watch in the design's icon set (client/src/lib/menu-icons-data.ts): a watch face.
         { id: "watch-icon", el: "icon", props: { icon: "clock-3", size: 22, color: "@muted" } },
         { id: "watch-label", el: "text", text: "{_'watch.setting'}", style: { size: 16, weight: 1 } },
         { id: "watch-switch", el: "switch", props: { setting: IOS_WATCH_SETTING } },
       ],
     },
-    { id: "watch-hint", el: "text", text: "{_'watch.setting.hint'}", props: { variant: "caption" }, style: { fg: "@muted", padding: "0 20 8 64" } },
+    { id: "watch-hint", el: "text", text: "{_'watch.setting.hint'}", if: IOS_WATCH_IF, props: { variant: "caption" }, style: { fg: "@muted", padding: "0 20 8 64" } },
   ];
 }
 
@@ -549,7 +616,7 @@ function addWatchSwitch(screens: Record<string, ANode>): void {
   parent.children = kids;
 }
 
-/** IOS_REMOVED_NODES out of their screens. */
+/** IOS_REMOVED_NODES out of their screens, IOS_FIXED_TEXTS into them. */
 function removeNodes(screens: Record<string, ANode>): void {
   for (const [screen, ids] of Object.entries(IOS_REMOVED_NODES)) {
     const root = screens[screen];
@@ -557,6 +624,14 @@ function removeNodes(screens: Record<string, ANode>): void {
     for (const id of ids) {
       const parent = parentOf(root, id);
       if (parent?.children) parent.children = parent.children.filter((c) => c.id !== id);
+    }
+  }
+  for (const [screen, texts] of Object.entries(IOS_FIXED_TEXTS)) {
+    const root = screens[screen];
+    if (!root) continue;
+    for (const [id, text] of Object.entries(texts)) {
+      const node = findNode(root, id);
+      if (node) node.text = text;
     }
   }
 }

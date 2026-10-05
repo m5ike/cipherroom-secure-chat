@@ -11,7 +11,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { iosAssets } from "../server/ios/assets";
-import { IOS_DEFAULT_DESIGN, IOS_PASSKEY_KEYS, IOS_REMOVED_NODES, IOS_STRINGS, IOS_WATCH_SETTING, IOS_WORDING, sanitizeIosDesign } from "../server/ios/design";
+import { IOS_DEFAULT_DESIGN, IOS_FIXED_TEXTS, IOS_PASSKEY_KEYS, IOS_REMOVED_NODES, IOS_STRINGS, IOS_WATCH_IF, IOS_WATCH_SETTING, IOS_WORDING, sanitizeIosDesign } from "../server/ios/design";
 import { DEFAULT_DESIGN, LANGS, LIMITS, sanitizeDesign, type ANode } from "../server/android/design";
 import { androidAssets } from "../server/android/assets";
 import { mainDictionary } from "../client/src/lib/i18n";
@@ -76,8 +76,12 @@ describe("the iOS-only items", () => {
     expect(row.style).toEqual(lockscreen.style);
     expect(ids.indexOf("watch")).toBeGreaterThan(ids.indexOf("lockscreen-hint"));
     expect(ids.indexOf("watch")).toBeLessThan(ids.indexOf("s-quiet"));
-    // never a condition: the watch is not the notifications' switch
-    expect(row.if).toBeUndefined();
+    // only the device's condition (an iPad pairs with no watch) — the watch is not the notifications' switch
+    expect(row.if).toBe(IOS_WATCH_IF);
+    expect(list.find((n) => n.id === "watch-hint")!.if).toBe(IOS_WATCH_IF);
+    expect(IOS_WATCH_IF).toBe("$app.watch != false");
+    // the app says it (DesignHost.appScope)
+    expect(read("ios", "M5cet", "Renderer", "Shell", "DesignHost.swift")).toContain(`a["watch"] = .bool(Self.pairsWithWatch)`);
   });
 
   it("Settings › Calls has no call log permission or erase rows (iOS has neither); the rest is Android's", () => {
@@ -92,9 +96,22 @@ describe("the iOS-only items", () => {
     }
   });
 
+  it("has no doubly wrapped text (Android's shuffle hint showed \"{_'}\"); only those texts differ", () => {
+    expect(JSON.stringify(ios.screens)).not.toContain("{_'{_'");
+    for (const [screen, texts] of Object.entries(IOS_FIXED_TEXTS)) {
+      const list = walk(ios.screens[screen]);
+      for (const [id, text] of Object.entries(texts)) {
+        expect(list.find((n) => n.id === id)?.text, `${screen} ${id}`).toBe(text);
+        expect(walk(android.screens[screen]).find((n) => n.id === id)?.text, `${screen} ${id}`).not.toBe(text);
+      }
+      const strip = (t: ANode): ANode => ({ ...t, text: texts[t.id] ? "" : t.text, children: t.children?.map(strip) });
+      expect(strip(ios.screens[screen])).toEqual(strip(android.screens[screen]));
+    }
+  });
+
   it("every other screen, menu and library is Android's; Android's design has none of it", () => {
     for (const id of Object.keys(android.screens)) {
-      if (id !== "settings.notify" && !IOS_REMOVED_NODES[id]) expect(ios.screens[id], id).toEqual(android.screens[id]);
+      if (id !== "settings.notify" && !IOS_REMOVED_NODES[id] && !IOS_FIXED_TEXTS[id]) expect(ios.screens[id], id).toEqual(android.screens[id]);
     }
     expect(ios.menus).toEqual(android.menus);
     expect(ios.libraries).toEqual(android.libraries);
@@ -152,6 +169,11 @@ describe("the iOS-only items", () => {
     const nfcKeys = [...nfc.matchAll(/"(nfc\.ios\.[A-Za-z]+)"/g)].map((m) => m[1]);
     expect(new Set(nfcKeys)).toEqual(new Set(["nfc.ios.hold", "nfc.ios.holdWrite", "nfc.ios.step", "nfc.ios.multipleTags"]));
     for (const k of nfcKeys) expect(IOS_STRINGS[k], k).toBeDefined();
+    // Why Core NFC cannot do an op (M5NFC NfcPlatform.limit): the design's words, English as the fallback says.
+    const tech = read("ios", "M5Kit", "Sources", "M5NFC", "Tags", "TagTech.swift");
+    const limits = [...tech.matchAll(/NfcTexts\.t\("(nfc\.ios\.limit\.[A-Za-z]+)", "((?:[^"\\]|\\.)*)"\)/g)];
+    expect(limits.map((m) => m[1]).sort()).toEqual(["nfc.ios.limit.classic", "nfc.ios.limit.hce", "nfc.ios.limit.noReader", "nfc.ios.limit.other", "nfc.ios.limit.payment", "nfc.ios.limit.raw"]);
+    for (const [, k, en] of limits) expect(IOS_STRINGS[k]?.en, k).toBe(en);
     // the design's English is the app's fallback where the app has one (the watch's settings texts are the design's own)
     for (const k of watchKeys.filter((k) => !["watch.off.hint"].includes(k))) {
       const m = new RegExp(`"${k.replace(/\./g, "\\.")}": "((?:[^"\\\\]|\\\\.)*)"`).exec(english);
