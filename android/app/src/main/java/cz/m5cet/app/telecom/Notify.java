@@ -157,6 +157,8 @@ public final class Notify {
      * phone's lock screen shows the neutral public version only where the user
      * hides sensitive content there; with "show all content" (the system's
      * default) it shows the notification itself — as it is at that moment.
+     * 6.12 (G-22): nothing at all (VISIBILITY_SECRET) when the person chose
+     * "Hide on the lock screen", or while the app is locked (LockScreen).
      */
     public void message(String roomKey, String roomName, String sender, String text, boolean hideContent) {
         if (!allowed()) return;
@@ -168,13 +170,16 @@ public final class Notify {
         String appName = app.design().appName(), neutral = app.t("notify.message");
         Person me = new Person.Builder().setName(app.config.userName().isEmpty() ? "me" : app.config.userName()).build();
         Notification.MessagingStyle style = new Notification.MessagingStyle(me).setConversationTitle(level >= 2 ? roomName : appName).setGroupConversation(true);
-        style.addMessage(level >= 3 ? text : neutral, System.currentTimeMillis(), new Person.Builder().setName(level >= 1 ? sender : appName).build());
+        // 6.12 (F-22): the sender's name as the app shows it everywhere (no bidi or invisible characters, NFKC, at most 48).
+        style.addMessage(level >= 3 ? text : neutral, System.currentTimeMillis(), new Person.Builder().setName(level >= 1 ? cz.m5cet.app.core.Names.normalize(sender) : appName).build());
         boolean sound = tpl == null || tpl.optBoolean("sound", true);
+        // 6.12 (G-22): off the lock screen entirely when the person hides it there, or while the app is locked (LockScreen).
+        boolean secret = LockScreen.secret("message", locked, app.settings.bool(LockScreen.SETTING));
         Notification.Builder b = new Notification.Builder(app, sound ? CH_MESSAGES : CH_QUIET)
             .setSmallIcon(R.drawable.ic_stat_m5).setStyle(style)
             .setContentIntent(open(roomKey, roomKey.hashCode())).setAutoCancel(true)
             .setCategory(Notification.CATEGORY_MESSAGE)
-            .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(appName, neutral));
+            .setVisibility(secret ? Notification.VISIBILITY_SECRET : Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(appName, neutral));
         // 6.8: unless switched off, the notification of an unlocked app is its room's conversation
         // (the Conversations section, priority, the widget); the shortcut names the room only where
         // the room may show (ConversationPlan.names), else it is neutral. Locked: none (S11).
@@ -218,12 +223,14 @@ public final class Notify {
         String channel = kind.equals("call") ? CH_CALLS : !p.optBoolean("sound", true) ? CH_QUIET : kind.equals("message") || kind.equals("mention") ? CH_MESSAGES : CH_NOTICES;
         String tag = p.optString("tag", "m5-" + kind);
         int id = room != null ? room.key.hashCode() : ("m5n:" + tag).hashCode();
+        // 6.12 (G-22): a message-like template off the lock screen when hidden there or while the app is locked; a call's stays.
+        boolean secret = LockScreen.secret(kind, locked, app.settings.bool(LockScreen.SETTING));
         Notification.Builder b = new Notification.Builder(app, channel)
             .setSmallIcon(R.drawable.ic_stat_m5).setContentTitle(tb[0]).setContentText(tb[1])
             .setStyle(new Notification.BigTextStyle().bigText(tb[1])).setAutoCancel(true)
             .setContentIntent(open(room == null ? null : room.key, id))
             .setCategory(kind.equals("call") ? Notification.CATEGORY_CALL : Notification.CATEGORY_MESSAGE)
-            .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(app.design().appName(), app.t("notify.message")));
+            .setVisibility(secret ? Notification.VISIBILITY_SECRET : Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(app.design().appName(), app.t("notify.message")));
         if (p.optLong("at") > 0) b.setWhen(p.optLong("at")).setShowWhen(true);
         if (!"none".equals(p.optString("group")) && !tag.isEmpty()) b.setGroup(tag);
         Integer color = accent(p.optString("accent"));
@@ -271,6 +278,7 @@ public final class Notify {
         StatusBarNotification[] active;
         try { active = nm.getActiveNotifications(); } catch (RuntimeException e) { Log.w("notify", "the notifications could not be read: " + e.getClass().getSimpleName()); return; }
         String appName = app.design().appName();
+        boolean hides = app.settings.bool(LockScreen.SETTING);
         int n = 0;
         for (StatusBarNotification sbn : active) {
             Notification old = sbn.getNotification();
@@ -287,7 +295,8 @@ public final class Notify {
                 .setCategory(old.category).setWhen(old.when).setShowWhen(true).setOnlyAlertOnce(true)
                 .setAutoCancel((old.flags & Notification.FLAG_AUTO_CANCEL) != 0)
                 .setContentIntent(old.contentIntent).setDeleteIntent(old.deleteIntent)
-                .setVisibility(Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(appName, text))
+                // 6.12 (G-22): the app is locked now — a message's notification leaves the lock screen (a ring's stays).
+                .setVisibility(LockScreen.secret(key, true, hides) ? Notification.VISIBILITY_SECRET : Notification.VISIBILITY_PRIVATE).setPublicVersion(neutral(appName, text))
                 .addExtras(neutralMark(key, true));
             if (old.getGroup() != null) b.setGroup(old.getGroup());
             if (left > 0) b.setTimeoutAfter(left);

@@ -78,6 +78,8 @@ public final class Settings {
         cz.m5cet.app.push.NotifyPrefs.defaults(DEFAULTS);
         // Security (the SYS tier is readable while the app is locked, so the PIN pad can read these)
         DEFAULTS.put("security.shufflePin", false);      // the PIN keys are not in order and reshuffle after every tap
+        DEFAULTS.put("security.duress", false);          // 6.12: a duress PIN erases the app (security/Duress; set with the current PIN)
+        DEFAULTS.put("security.lockDisconnect", false);  // 6.12: a lock disconnects the rooms too (off: they keep receiving into the lock inbox, chat/LockedRooms)
         // 6.2 fixes (lock, enrolment, passkeys)
 
         // 6.2 people (People widget, contacts)

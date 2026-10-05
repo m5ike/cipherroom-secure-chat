@@ -136,6 +136,8 @@ public final class SpeakSend {
         if (error == null) return "voice.failed";
         if (error.startsWith("tts-none")) return "speakSend.noVoice";
         if (error.startsWith("tts-server-off")) return "speakSend.serverOff";
+        // 6.12 (G-14): the person did not let the server's speech provider read it — nothing was sent.
+        if (error.equals("declined")) return "speakSend.declined";
         return "speakSend.failed";
     }
 

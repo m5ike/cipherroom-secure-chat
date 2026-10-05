@@ -220,40 +220,69 @@ final class Files {
             if (in.signer != null && (body.signer == null || !body.signer.valid || !in.signer.equals(body.signer.publicKey))) throw new GeneralSecurityException("the end is not signed by the sender");
             JSONObject end = Envelopes.parse(body.body);
             if (end.optInt("totalChunks") != in.total || end.optLong("size") != in.size) throw new GeneralSecurityException("size");
-            MessageDigest root = MessageDigest.getInstance("SHA-256");
-            w = new FileVault.Writer(room.app, in.id);
-            long bytes = 0;
-            byte[] iv = new byte[12];
-            for (int seq = 0; seq < in.total; seq++) {
-                byte[] ct = new byte[in.lengths[seq]];
-                in.slots.seek((long) seq * in.slot());
-                in.slots.readFully(iv);
-                in.slots.readFully(ct);
-                byte[] plain = Crypto.gcmOpen(in.key, iv, ct, Envelopes.fileChunkContext(in.id, seq, in.total));
-                if (plain.length > in.chunkSize) throw new GeneralSecurityException("chunk too large");
-                root.update(MessageDigest.getInstance("SHA-256").digest(plain));
-                w.write(plain, 0, plain.length);
-                bytes += plain.length;
+            String rootB64 = end.optString("root");
+            // 6.12 (F-16): the app is locked — the vault cannot take the file now. Checked in full, it stays
+            // encrypted under its transfer key, which goes to the lock inbox; the unlock stores it (LockedRooms).
+            if (LockedRooms.active()) {
+                decryptSlots(in.slots, in.key, in.id, in.total, in.chunkSize, in.lengths, in.size, rootB64, null);
+                if (LockedRooms.keepFile(room.app, room.key, in.id, in.key, in.tmp, in.slots, in.chunkSize, in.total, in.size, in.lengths, rootB64)) {
+                    in.close();
+                    done(in);
+                    return;
+                }
+                // The inbox closed meanwhile (the app was unlocked): stored the usual way.
             }
-            if (bytes != in.size) throw new GeneralSecurityException("size");
-            if (!Crypto.b64(root.digest()).equals(end.optString("root"))) throw new GeneralSecurityException("the file does not match its hash");
+            w = new FileVault.Writer(room.app, in.id);
+            decryptSlots(in.slots, in.key, in.id, in.total, in.chunkSize, in.lengths, in.size, rootB64, w);
             w.close();
             w = null;
             in.close();
-            room.post(() -> {
-                ChatMessage m = in.message;
-                m.filePath = in.id;
-                m.fileProgress = -1;
-                m.fileVerified = in.signer != null;
-                m.verified = m.fileVerified;
-                room.fileDone(m);
-            });
+            done(in);
         } catch (Exception e) {
             if (w != null) w.abort();
             in.close();
             Log.w("files", "file " + in.id + " failed: " + e.getMessage());
             room.post(() -> failed(in, e.getMessage()));
         }
+    }
+
+    private void done(In in) {
+        room.post(() -> {
+            ChatMessage m = in.message;
+            m.filePath = in.id;
+            m.fileProgress = -1;
+            m.fileVerified = in.signer != null;
+            m.verified = m.fileVerified;
+            room.fileDone(m);
+        });
+    }
+
+    /**
+     * The chunks of a received file (its slots file: iv 12 ‖ ct per slot of
+     * 12 + chunkSize + 16 bytes) decrypted in order and checked against the
+     * end's root; into the vault (w), or only checked (w null). 6.12: also the
+     * unlock's way to store a file kept in the lock inbox (LockedRooms).
+     */
+    static void decryptSlots(RandomAccessFile slots, byte[] key, String id, int total, int chunkSize, int[] lengths, long size, String rootB64, FileVault.Writer w)
+        throws IOException, GeneralSecurityException {
+        MessageDigest root = MessageDigest.getInstance("SHA-256");
+        long bytes = 0;
+        byte[] iv = new byte[12];
+        int slot = 12 + chunkSize + 16;
+        for (int seq = 0; seq < total; seq++) {
+            if (lengths[seq] < 16 || lengths[seq] > chunkSize + 16) throw new GeneralSecurityException("chunk size");
+            byte[] ct = new byte[lengths[seq]];
+            slots.seek((long) seq * slot);
+            slots.readFully(iv);
+            slots.readFully(ct);
+            byte[] plain = Crypto.gcmOpen(key, iv, ct, Envelopes.fileChunkContext(id, seq, total));
+            if (plain.length > chunkSize) throw new GeneralSecurityException("chunk too large");
+            root.update(MessageDigest.getInstance("SHA-256").digest(plain));
+            if (w != null) w.write(plain, 0, plain.length);
+            bytes += plain.length;
+        }
+        if (bytes != size) throw new GeneralSecurityException("size");
+        if (!Crypto.b64(root.digest()).equals(rootB64)) throw new GeneralSecurityException("the file does not match its hash");
     }
 
     private void failed(In in, String why) {
