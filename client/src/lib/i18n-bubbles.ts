@@ -2,6 +2,9 @@
 // forward), the detail window's new facts (size, kinds, receipts, the new
 // states) and hiding / deleting a message in one's own view. The Android app
 // uses the same words (server/android/design-62-bubbles.ts).
+// 6.11: with a model's answers from system-messenger (i18n-sysmsg.ts).
+import { SYSMSG_I18N } from "./i18n-sysmsg";
+
 type Dict = Record<string, string>;
 
 const cs: Dict = {
@@ -178,4 +181,8 @@ const de: Dict = {
   "msgkind.k.transcript": "Transkript",
 };
 
-export const BUBBLES_I18N = { cs, en, de } as const;
+export const BUBBLES_I18N = {
+  cs: { ...cs, ...SYSMSG_I18N.cs },
+  en: { ...en, ...SYSMSG_I18N.en },
+  de: { ...de, ...SYSMSG_I18N.de },
+} as const;

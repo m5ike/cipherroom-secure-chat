@@ -19,11 +19,18 @@
 // 6.7: the map is no longer in the bubble — a pin (a position message: its
 // place chip) opens it in a window with navigation and ride apps
 // (LocationSheet); beside a hold-to-read bubble the row holds it open too.
+//
+// 6.11: a model's answer is an incoming bubble from "system-messenger" shown
+// as the model (`model`: its icon and name in the head, "via <member>" for a
+// room answer), as wide as its content wants (msg-bubble--fn-answer).
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { t, tf, type Lang } from "../lib/i18n";
 import type { MsgState } from "../lib/chat-types";
-import { openSealed, type MsgFlags } from "../lib/message-kinds";
+import { openSealed, type FnStatus, type MsgFlags } from "../lib/message-kinds";
+import { isModelSender } from "../lib/system-messenger";
+import type { ModelAnswerView } from "../lib/fn-answer";
+import { ModelBadge } from "./fn/ModelBadge";
 import type { LNode } from "../lib/layout-tree";
 import type { MessageKind } from "../lib/layouts/message";
 import { DEFAULT_LAYOUTS } from "../lib/layouts";
@@ -97,7 +104,16 @@ export type MessageBubbleProps = {
   blocks?: Record<string, LNode>;
   /** The head of my own / a system message: avatar, header text, logo. */
   head?: { showAvatar?: boolean; avatar?: string; headerText?: string; showLogo?: boolean };
+  /** 6.11: a model's answer — drawn as an incoming message under the model's identity (fn-answer.ts › modelAnswerView). */
+  model?: ModelAnswerView | null;
+  /** 6.11: a click on "via <member>" of a room answer (their details). */
+  onVia?: () => void;
 };
+
+/** 6.11: a status said by its code (an empty label: functions.status.<code>, in the viewer's language — then the code is not repeated). */
+function statusText(lang: Lang, s: FnStatus): FnStatus {
+  return s.label || !s.code ? s : { kind: s.kind, label: t(lang, `functions.status.${s.code}`) };
+}
 
 /** 6.7: how long the area beside a hold-to-read bubble is held before it reveals. */
 const HOLD_SIDE_MS = 180;
@@ -312,6 +328,13 @@ export function MessageBubble(props: MessageBubbleProps) {
     to: isPrivate ? props.to!.join(", ") : "",
     queued: props.deliveryState === "queued",
     fnRunning: Boolean(flags?.fn?.pending),
+    // 6.11: a model's answer (system-messenger, or an older call bubble holding its result) — a bubble as wide as its content.
+    fnAnswer: Boolean(props.model) || Boolean(flags?.fn && !flags.fn.pending && !flags.fn.status && flags.fn.outputs?.length),
+    fnFailed: flags?.fn?.status?.kind === "error",
+    modelAnswer: Boolean(props.model),
+    modelKeyword: props.model?.identity.keyword ?? "",
+    modelName: props.model?.identity.name ?? "",
+    via: props.model?.via ? props.model.via.name : "",
     vanishing: Boolean(flags?.vanishSeconds),
     vanished: Boolean(props.vanished),
     vanishedAtText: props.vanished && props.vanishedAt ? ` · ${new Date(props.vanishedAt).toLocaleString(lang)}` : "",
@@ -375,7 +398,8 @@ export function MessageBubble(props: MessageBubbleProps) {
       const fn = flags.fn;
       // 6.7 (V2): outputs only this browser produced (my own run, a caller-only answer)
       // act by themselves; in another member's message they wait for the viewer.
-      const ownOutputs = mine || props.senderId.startsWith("function:");
+      // 6.11: system-messenger's (and the older "function:<keyword>") answers are this browser's own too.
+      const ownOutputs = mine || isModelSender(props.senderId);
       const result = fn.outputs?.length
         ? <FnOutputs outputs={fn.outputs} meta={fn} createdAt={props.createdAt} from={ownOutputs ? undefined : { name: props.senderName }} />
         : <Markdown text={s} className="md-fn" />;
@@ -385,18 +409,20 @@ export function MessageBubble(props: MessageBubbleProps) {
           <div className="fn-call">
             {fn.query ? <div className="fn-call__query">{props.renderText(fn.query)}</div> : null}
             {fn.pending
-              ? <FnLoading label={tf(lang, "functions.running", { name: fn.name })} />
+              ? <FnLoading label={tf(lang, "functions.running", { name: fn.name })} progress={fn.progress} />
               : fn.status
-                ? <FnStatusChip status={fn.status} />
+                ? <FnStatusChip status={statusText(lang, fn.status)} />
                 : result}
           </div>
         );
       }
-      return result;
+      // 6.11: a model's answer (system-messenger).
+      return props.model ? <div className="fn-answer" data-testid="fn-answer">{result}</div> : result;
     } },
     refs: { root: rootRef as never },
     blocks: props.blocks,
-    slots: { badge: () => props.badge },
+    // 6.11: a model's answer names the model (its icon and name), and who sent it to the room.
+    slots: { badge: () => props.badge ?? (props.model ? <ModelBadge identity={props.model.identity} via={props.model.via} lang={lang} onVia={props.onVia} /> : null) },
     actions: {
       info: () => props.onInfo?.(id),
       quoteJump: () => { if (props.replyTo) props.onReplyJump?.(props.replyTo.id); },
@@ -421,7 +447,7 @@ export function MessageBubble(props: MessageBubbleProps) {
       closeShare: () => setShareMenu(null),
     },
   };
-  const bubble = renderLayout(props.tree ?? DEFAULT_MESSAGE_TREES[isSystem ? "sys" : mine ? "out" : "in"], env);
+  const bubble = renderLayout(props.tree ?? DEFAULT_MESSAGE_TREES[isSystem ? "sys" : mine && !props.model ? "out" : "in"], env);
   if (!placeOpen || !place) return bubble;
   return (
     <>

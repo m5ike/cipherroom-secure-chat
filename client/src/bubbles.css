@@ -134,7 +134,57 @@
 .fn-status--info { color: hsl(var(--muted-foreground)); }
 .msg-bubble--mine .fn-status--ok, .msg-bubble--mine .fn-status--info { color: inherit; opacity: 0.92; }
 
+/* ---------- 6.11 — the run's progress, a failed call, a model's answer ---------- */
+.fn-status__icon { width: 1rem; height: 1rem; flex: none; }
+/* On my own (coloured) bubble the error stays readable: a light chip. */
+.msg-bubble--mine .fn-status--error { background: hsl(0 0% 100% / 0.94); color: hsl(var(--destructive)); border-radius: 0.55rem; padding: 0.2rem 0.55rem; }
+.msg-bubble--fn-failed { box-shadow: 0 0 0 2px hsl(var(--destructive) / 0.5), var(--shadow-sm); }
+
+.fn-loading__progress { display: flex; flex-direction: column; align-items: center; gap: 0.25rem; max-width: 100%; }
+.fn-loading__bar { display: block; width: 8rem; max-width: 100%; height: 0.2rem; border-radius: 999px; background: currentColor; opacity: 0.25; overflow: hidden; position: relative; }
+.fn-loading__bar i { position: absolute; inset: 0 auto 0 0; background: currentColor; border-radius: inherit; transition: width 0.3s ease; }
+.fn-loading__text { font-size: 0.72rem; opacity: 0.8; text-align: center; overflow-wrap: anywhere; }
+
+/* A model's answer (system-messenger): as wide as its content wants — tables,
+   code, cards — up to the chat's width less a margin; never cramped. What is
+   wider still scrolls inside (tables, code), the page never does. */
+.msg-bubble.msg-bubble--fn-answer {
+  width: fit-content;
+  max-width: var(--c-fn-answer-maxw, min(92%, 760px));
+  min-width: min(var(--c-fn-answer-minw, 17rem), 100%);
+  margin-block: 0.35rem;
+}
+:root[data-form="tablet"] .msg-bubble.msg-bubble--fn-answer { max-width: var(--c-fn-answer-maxw, min(94%, 760px)); }
+:root[data-form="phone"] .msg-bubble.msg-bubble--fn-answer { max-width: calc(100% - 0.25rem); min-width: min(13rem, 100%); }
+.msg-bubble--fn-answer .msg-bubble__text { white-space: normal; min-width: 0; }
+.msg-bubble--fn-answer .fn-answer, .msg-bubble--fn-answer .fn-outputs { min-width: 0; max-width: 100%; }
+.msg-bubble--fn-answer .md-fn table { display: block; max-width: 100%; overflow-x: auto; }
+/* A cell breaks between words; a table wider than the bubble scrolls (fn-table-wrap) instead of splitting words letter by letter. */
+.msg-bubble--fn-answer .fn-table th, .msg-bubble--fn-answer .fn-table td { overflow-wrap: break-word; }
+.msg-bubble--fn-answer .fn-table th { white-space: nowrap; }
+.msg-bubble--fn-answer .md-fn pre, .msg-bubble--fn-answer .fn-code { max-width: 100%; overflow-x: auto; }
+.msg-bubble--fn-answer .fn-form { max-width: 100%; }
+.msg-bubble--fn-answer .msg-quote { margin-bottom: 0.55rem; }
+
+/* Its head: the model's icon in a circle of its colour, its name, "via <member>" for a room answer. */
+.model-badge { display: inline-flex; align-items: center; gap: 0.35rem; min-width: 0; max-width: 100%; font-weight: 600; font-size: 0.72rem; flex-wrap: wrap; }
+.model-avatar { display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 9999px; color: #fff; line-height: 1; }
+.model-avatar__icon { width: 62%; height: 62%; }
+.model-badge__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 14rem; }
+.model-badge__kw { font-family: ui-monospace, monospace; font-weight: 500; opacity: 0.6; }
+.model-badge__via { font-weight: 500; font-style: italic; opacity: 0.75; padding: 0 0.3rem; border-radius: 999px; background: transparent; border: 0; color: inherit; font-size: inherit; }
+button.model-badge__via { cursor: pointer; }
+button.model-badge__via:hover { background: hsl(var(--accent) / 0.6); opacity: 1; }
+
+/* The question a running command asks (6.11: typed fields). */
+.fn-ask__field--check { flex-direction: row; align-items: center; gap: 0.45rem; color: hsl(var(--foreground)); }
+.fn-ask__check { width: 1.05rem; height: 1.05rem; accent-color: hsl(var(--primary)); }
+.fn-ask__help { font-size: 0.72rem; opacity: 0.8; }
+textarea.fn-ask__input { resize: vertical; min-height: 4.5rem; font: inherit; }
+select.fn-ask__input { min-height: 2.3rem; }
+
 @media (prefers-reduced-motion: reduce) {
   .msg-bubble--fn-running { animation: none; box-shadow: 0 0 0 2px hsl(var(--primary) / 0.28); }
   .fn-loading__dots i { animation: none; opacity: 0.6; }
+  .fn-loading__bar i { transition: none; }
 }

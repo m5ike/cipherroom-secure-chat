@@ -509,6 +509,89 @@ ho v uzamčeném WebView (`fn/FnHtmlView.java`): vypnutý JavaScript, zablokovan
 síť, žádné soubory, Content-Security-Policy, která pustí jen obrázky `data:`
 a vlastní styl; odkaz (http(s), mailto) otevře aplikace ven.
 
+### 9.2 Odpověď od system-messenger, časový limit a karta použití (6.11, hotovo, web)
+
+**Kdo odpovídá.** Odpověď modelu je **samostatná příchozí zpráva** od
+interního odesílatele `system-messenger` (`client/src/lib/system-messenger.ts`,
+`SYSTEM_MESSENGER_ID`), ukázaná jako model: přezdívka = **název modelu**,
+avatar = **ikona modelu** (název ikony lucide nebo emoji, `Command.icon`;
+bez ní výchozí podle klíčového slova, jinak `bot`) v kruhu barvy odvozené
+z klíčového slova (`modelIdentity`). Zpráva je **odpovědí** (citací) na
+zprávu s příkazem — klepnutí na citaci posune chat k příkazu. Příkaz sám
+zůstává vlastní bublinou volajícího: dotaz a krátký stav — běží (tečky
+a text průběhu z `m5.run.progress`), *Model odpověděl*, *Odesláno do
+místnosti*, *Zrušeno*, nebo chyba s ikonou a důvodem. Výstupy (formuláře,
+tlačítka) v odpovědi fungují jako dřív; odpovědi na klik, formulář nebo
+odpověď textem jsou opět zprávy od system-messenger s citací toho, na co
+odpovídají.
+
+- **Jen volajícímu** (`visibility: caller`): zpráva s `senderId:
+  "system-messenger"`, `mine: false`, `flags.fn` = `{ keyword, name, icon,
+  chain, call, events, outputs }`, `replyTo` = bublina příkazu. Ukládá se do
+  historie místnosti i do trezoru jako každá zpráva; starší odpovědi
+  (`senderId: "function:<klíč>"`, 5.3–6.10) se kreslí stejně.
+- **Do místnosti** (`visibility: room`): odpověď dál posílá **klient
+  volajícího** jako svou zprávu, šifrovanou end-to-end a podepsanou jím
+  (`sendChatPayload`); `flags.fn` nese identitu modelu (`keyword`, `name`,
+  `icon` — jen pro zobrazení). Každý člen ji kreslí jako model **s řádkem
+  „přes <jméno>“** (klepnutí ukáže podrobnosti člena) — kdo zprávu skutečně
+  poslal, je vždy vidět. Citace v místnosti nese jen `/klíč` (argumenty
+  příkazu místnost nikdy neviděla), kopie volajícího celý řádek příkazu.
+  Nemá-li odpověď komu jít, zůstane jen u volajícího.
+- **Nikdo se za systém nevydá**: `validate.ts` odmítne zprávu člena, jejíž
+  `senderId` je `system-messenger` (i `system-messenger:*`), `function:*`,
+  `system`, `self`, `server` nebo `admin`; ikonu z cizí zprávy pustí jen
+  jako název lucide nebo krátké emoji (`cleanModelIcon`).
+- **Šířka**: bublina odpovědi (`msg-bubble--fn-answer`, proměnná layoutu
+  `$fnAnswer`) je široká podle obsahu — až do `min(92 %, 760 px)` šířky chatu
+  (telefon: celá šířka bez okraje), nejméně ~17 rem, s okrajem; tabulky
+  a kód se posouvají uvnitř. Proměnné `--c-fn-answer-maxw` /
+  `--c-fn-answer-minw` mění meze. Další proměnné layoutu bubliny:
+  `$fnFailed`, `$modelAnswer`, `$modelKeyword`, `$modelName`, `$via`.
+
+**Časový limit a konec běhu.** Běh, ze kterého 30 s (`FN_RUN_TIMEOUT_MS`)
+nepřijde žádná událost (start, průběh, otázka, výstup, log, hotovo, chyba —
+**ne** ping `: ping` po 15 s), skončí: proud se přeruší, z bubliny zmizí
+načítání, objeví se chyba s ikonou a důvodem a flash zpráva **„Chyba při
+provádění funkce modelu /klíč“** s důvodem. Otevřená otázka (`m5.prompt`,
+`m5.form`, přiložení karty NFC) hodiny zastaví do odpovědi; každá událost je
+natáhne znovu. Každý konec proudu bublinu uzavře **právě jednou**
+(`client/src/lib/fn-run.ts` › `guardRun`, `functions.ts` › `streamFunction`):
+
+| Konec | Bublina příkazu | Flash |
+|---|---|---|
+| `done` | *Model odpověděl* / *Odesláno do místnosti* + zpráva od system-messenger | — |
+| `done` s chybou funkce | chyba (zpráva funkce, kód = typ chyby) | ano |
+| událost `error` | chyba (zpráva serveru, kód) | ano |
+| ticho 30 s | *Model neodpověděl do 30 s.* `timeout` | ano |
+| proud skončil bez odpovědi (restart, proxy) | *Spojení … skončilo dřív…* `incomplete` | ano |
+| síť / HTTP 429 / 401 / 5xx / jiná odpověď než proud | `network` / `rate` / `unauthorized` / `server` / `bad-answer` | ano |
+| nový příkaz | *Zrušeno — spustili jste další příkaz* | — |
+| načtení stránky během běhu | *Přerušeno* (`interrupted`, při obnově historie) | — |
+
+Pozor: model, který počítá déle než 30 s bez jediné události, klient ukončí —
+dlouhé funkce mají hlásit průběh (`m5.run.progress`) aspoň každých ~20 s.
+
+**Kontrola parametrů před spuštěním.** Před voláním serveru klient zkontroluje
+argumenty (`checkCommandInputs`: chybějící povinný parametr bez výchozí
+hodnoty, typ, rozsah `min`/`max`, `pattern`, povolené `values`, telefonní
+číslo E.164). Najde-li problém, **na server nic nejde**: bublina příkazu
+ukáže *Chybné parametry*, a system-messenger odpoví **kartou použití**
+(`client/src/lib/fn-answer.ts` › `usageCardOutputs`, obyčejné výstupy): co je
+špatně u kterého parametru, řádek použití (`/hlr <number> [format]`), tabulka
+parametrů (popisek, typ, povinný, nápověda a co bere, příklad), vlastní návod
+modelu (`Command.usage`), a příklad volání (`/hlr +420603123456`). Prázdné
+volání modelu, jehož parametry jsou všechny nepovinné, jde na server (model
+odpoví svým formulářem — tak funguje `/mail` bez domény). Stejnou kartu
+ukáže i odmítnutí serverem (`bad-input`; s jeho seznamem problémů / parametrů,
+pokud ho chyba nese).
+
+**Dotazy za běhu** (`m5.form`) respektují typy polí: číslo, e-mail, telefon,
+webová adresa, datum / čas, heslo, výběr z `values` / `options`, zaškrtávátko
+pro `boolean`, víceřádkový text pro `textarea`; povinné pole prohlížeč
+nepustí prázdné. Číslo se vrací jako číslo, zaškrtávátko jako `true` /
+`false` (jako formuláře ve zprávě).
+
 ## 10. AI a řeč: vrstva poskytovatelů
 
 ### 10.1 Rozhraní

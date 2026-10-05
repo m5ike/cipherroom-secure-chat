@@ -228,6 +228,30 @@ které nastavil správce (výchozí: **/** příkazy a modely na začátku zprá
   ji doplní; Ctrl+Mezerník ukáže všechny. Nápověda řekne, co ještě chybí
   a kdy už příkaz další hodnoty nečeká. Esc nebo × ji skryje.
 
+### Odpovědi příkazů od system-messenger (6.11)
+- Tvůj příkaz zůstane jako tvoje zpráva: pod ním běží tečky (a co model právě
+  dělá), potom krátký stav — **✓ Model odpověděl**, *Odesláno do místnosti*,
+  *Zrušeno*, nebo chyba.
+- **Odpověď modelu** přijde jako samostatná **příchozí zpráva** od
+  *system-messenger*: jako jméno má **název modelu**, jako obrázek jeho
+  **ikonu** v barevném kroužku, a **cituje tvůj příkaz** (klepnutím na citaci
+  na příkaz skočíš). Bublina odpovědi je široká podle obsahu, tabulky
+  a dlouhý text se posouvají uvnitř. Tlačítka a formuláře v ní fungují.
+- Posílá-li model odpověď **do místnosti**, odešle ji tvoje aplikace (šifrovaně,
+  podepsanou tebou); ostatní ji vidí jako odpověď modelu s řádkem
+  **„přes <tvé jméno>“** — nikdo se za systém vydávat nemůže. Místnost uvidí
+  jen název příkazu, ne tvoje parametry.
+- **Když se něco pokazí**: neodpoví-li model do **30 sekund** (a neptá se tě
+  na nic), spojení se přeruší nebo server odmítne, tečky zmizí, u příkazu se
+  objeví **červená ikona s důvodem** (např. *Model neodpověděl do 30 s.*)
+  a nahoře problikne **„Chyba při provádění funkce modelu /…“**. Spustíš-li
+  mezitím další příkaz, předchozí se označí *Zrušeno*.
+- **Chybné nebo chybějící parametry** se na server vůbec nepošlou:
+  system-messenger odpoví kartou — co je špatně, jak se příkaz píše
+  (`/hlr <number> [format]`), tabulka parametrů s příklady, návod modelu
+  a příklad, který můžeš zkopírovat. Příkaz bez parametrů, které jsou všechny
+  nepovinné (např. `/mail`), se spustí a model se tě zeptá formulářem.
+
 ### Platební karta a doklad přes NFC — /emv, /emv-history, /eid (6.6)
 Když je správce zapne a máš přístup k modulu NFC, tyto příkazy přečtou kartu
 **u tebe** — jen ke čtení, tvou vlastní kartu nebo doklad:
@@ -700,6 +724,31 @@ the start of a word).
   name (`type=MX`). Start typing a value and the matching ones are offered:
   Enter / Tab completes it, Ctrl+Space lists them all. The hint says what is
   still missing and when the command takes no more values. Esc or × hides it.
+
+### Command answers from system-messenger (6.11)
+- Your command stays as your own message: dots run under it (with what the
+  model is doing), then a short status — **✓ The model answered**, *Sent to
+  the room*, *Cancelled*, or an error.
+- **The model's answer** arrives as a separate **incoming message** from
+  *system-messenger*: its name is the **model's name**, its picture the
+  model's **icon** in a coloured circle, and it **quotes your command** (tap
+  the quote to jump to it). The answer's bubble is as wide as its content;
+  tables and long text scroll inside. Its buttons and forms work.
+- When a model answers **to the room**, your app sends the answer (encrypted,
+  signed by you); the others see it as the model's answer with
+  **"via <your name>"** — nobody can pass a message off as the system's. The
+  room sees only the command's name, not your parameters.
+- **When something goes wrong**: if the model does not answer within
+  **30 seconds** (and is not asking you anything), the connection drops or the
+  server refuses, the dots go, your command gets a **red icon with the
+  reason** (e.g. *The model did not answer within 30 s.*) and **"Error while
+  running the model's function /…"** flashes at the top. Run another command
+  meanwhile and the earlier one is marked *Cancelled*.
+- **Wrong or missing parameters** never go to the server: system-messenger
+  answers with a card — what is wrong, how the command is written
+  (`/hlr <number> [format]`), a table of the parameters with examples, the
+  model's guide and an example to copy. A command whose parameters are all
+  optional (e.g. `/mail`) runs without them and the model asks you with a form.
 
 ### Payment card and ID over NFC — /emv, /emv-history, /eid (6.6)
 When the operator switches them on and you have the NFC module, these commands
@@ -1183,6 +1232,35 @@ und **#** Tags am Anfang eines Wortes).
   einen Wert beginnst, werden passende angeboten: Enter / Tab vervollständigt,
   Strg+Leertaste zeigt alle. Die Hilfe sagt, was noch fehlt und wann der
   Befehl keine weiteren Werte erwartet. Esc oder × blendet sie aus.
+
+### Antworten auf Befehle von system-messenger (6.11)
+- Dein Befehl bleibt deine eigene Nachricht: darunter laufen Punkte (und was
+  das Modell gerade tut), dann ein kurzer Status — **✓ Das Modell hat
+  geantwortet**, *An den Raum gesendet*, *Abgebrochen* oder ein Fehler.
+- **Die Antwort des Modells** kommt als eigene **eingehende Nachricht** von
+  *system-messenger*: als Name der **Name des Modells**, als Bild sein
+  **Symbol** in einem farbigen Kreis, und sie **zitiert deinen Befehl** (ein
+  Tipp aufs Zitat springt dorthin). Die Blase ist so breit wie ihr Inhalt;
+  Tabellen und langer Text scrollen darin. Schaltflächen und Formulare darin
+  funktionieren.
+- Antwortet ein Modell **in den Raum**, sendet deine App die Antwort
+  (verschlüsselt, von dir signiert); die anderen sehen sie als Antwort des
+  Modells mit **„über <dein Name>“** — niemand kann eine Nachricht als die des
+  Systems ausgeben. Der Raum sieht nur den Namen des Befehls, nicht deine
+  Parameter.
+- **Wenn etwas schiefgeht**: Antwortet das Modell nicht innerhalb von
+  **30 Sekunden** (und fragt dich nichts), bricht die Verbindung ab oder lehnt
+  der Server ab, verschwinden die Punkte, dein Befehl bekommt ein **rotes
+  Symbol mit dem Grund** (z. B. *Das Modell hat nicht innerhalb von 30 s
+  geantwortet.*) und oben erscheint **„Fehler beim Ausführen der
+  Modellfunktion /…“**. Startest du inzwischen einen weiteren Befehl, wird der
+  frühere als *Abgebrochen* markiert.
+- **Falsche oder fehlende Parameter** gehen gar nicht an den Server:
+  system-messenger antwortet mit einer Karte — was nicht stimmt, wie der Befehl
+  geschrieben wird (`/hlr <number> [format]`), eine Tabelle der Parameter mit
+  Beispielen, die Anleitung des Modells und ein Beispiel zum Kopieren. Ein
+  Befehl, dessen Parameter alle optional sind (z. B. `/mail`), läuft ohne sie,
+  und das Modell fragt dich mit einem Formular.
 
 ### Zahlungskarte und Ausweis per NFC — /emv, /emv-history, /eid (6.6)
 Wenn der Betreiber sie einschaltet und du das NFC-Modul hast, lesen diese

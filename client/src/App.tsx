@@ -126,6 +126,12 @@ import { shareableOutputs } from "./lib/fn-outputs";
 import { historyRoomsToRead, serverRoomId } from "./lib/room-privacy";
 import { isSitePath } from "./lib/site-path";
 import { FnHostContext, type FnHost } from "./components/fn/FnOutputs";
+// 6.11: a model's answers from system-messenger, a guarded run (timeout, settles once), the usage card, typed questions.
+import { SYSTEM_MESSENGER_ID, checkCommandInputs, cleanModelIcon, isModelSender, modelIdentity } from "./lib/system-messenger";
+import { callFailure, callOutcome, guardRun, runFailure, type CallOutcome, type RunEnd, type RunGuard } from "./lib/fn-run";
+import { modelAnswerView, usageCardOutputs } from "./lib/fn-answer";
+import { ModelBadge } from "./components/fn/ModelBadge";
+import { FnAskDialog } from "./components/fn/FnAskDialog";
 import { isInlineImage } from "./lib/validate";
 import { DEFAULT_PROXY_LIMITS, extractPeerAddress, normalizeRoom, proxyPacer, type ProxyLimits } from "./lib/app-helpers";
 import { SignedInBadge } from "./components/SignedInBadge";
@@ -434,9 +440,14 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutC
     room,
     appName: "M5cet",
   };
+  // 6.11: a model's answer is an incoming message from system-messenger, shown
+  // as the model (its icon and name) — a room answer with who sent it ("via …").
+  const model = isSystem ? null : modelAnswerView(message);
   // Others get the user badge (a live part of the layout); my own and system
   // messages draw their head from the layout with these values.
-  const badge = isSystem || message.mine ? null : (
+  const badge = model ? (
+    <ModelBadge identity={model.identity} via={model.via} lang={lang} onVia={() => act.current.showUser(message.senderId)} />
+  ) : isSystem || message.mine ? null : (
     <UserBadge
       name={message.senderName}
       senderId={message.senderId}
@@ -454,7 +465,8 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutC
         showLogo: layout.flags.showSystemLogo,
         headerText: renderTemplate(layout.templates.systemHeader, { ...vars, appName: message.senderName, date: layout.flags.systemFullDate ? vars.date : vars.time }, layout.partials),
       }
-    : message.mine ? { showAvatar: layout.flags.showAvatars, avatar } : undefined;
+    : message.mine && !model ? { showAvatar: layout.flags.showAvatars, avatar } : undefined;
+  const incoming = !message.mine || Boolean(model);
   return (
     <MessageBubble
       id={message.id}
@@ -465,7 +477,7 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutC
       isSystem={isSystem}
       secure={message.secure && layout.flags.showLockIcon}
       createdAt={message.createdAt}
-      timeLabel={isSystem || !layout.flags.showTime ? "" : renderTemplate(message.mine ? layout.templates.outgoingMeta : layout.templates.incomingMeta, vars, layout.partials)}
+      timeLabel={isSystem || !layout.flags.showTime ? "" : renderTemplate(incoming ? layout.templates.incomingMeta : layout.templates.outgoingMeta, vars, layout.partials)}
       text={message.text}
       attachment={message.attachment}
       flags={message.flags}
@@ -476,17 +488,19 @@ const MessageRow = memo(function MessageRow({ message, perStyle, layout, layoutC
       onVanish={(id) => act.current.vanished(id)}
       to={message.to}
       replyTo={message.replyTo}
-      forwardedFrom={message.forwardedFrom}
+      // 6.11: a room answer's "/keyword" is in its head already (the model's identity).
+      forwardedFrom={model && message.forwardedFrom === `/${model.identity.keyword}` ? undefined : message.forwardedFrom}
       loc={message.loc}
       mapPolicy={mapPolicy}
       hidden={Boolean(message.hidden)}
       onRevealed={(id) => act.current.revealed(id)}
       onOpened={(id) => act.current.opened(id)}
       onNotice={(text) => act.current.notice(text)}
-      bubbleStyle={bubbleStyleFrom(perStyle)}
+      bubbleStyle={model ? undefined : bubbleStyleFrom(perStyle)}
       badge={badge}
       head={head}
-      tree={layoutTree(layout, isSystem ? "message.sys" : message.mine ? "message.out" : "message.in", layoutCtx)}
+      model={model}
+      tree={layoutTree(layout, isSystem ? "message.sys" : incoming ? "message.in" : "message.out", layoutCtx)}
       blocks={layoutBlocksOf(layout)}
       lang={lang}
       renderText={linkify}
@@ -534,7 +548,9 @@ function ChatApp() {
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   // A running command's live question (m5.prompt / m5.form) and its run token.
   const [interaction, setInteraction] = useState<Interaction | null>(null);
-  const runCmdAbortRef = useRef<AbortController | null>(null);
+  // 6.11: the command's run (guarded: a clock, ends once — a newer command cancels it), and which run each open question belongs to.
+  const runGuardRef = useRef<RunGuard | null>(null);
+  const askGuardsRef = useRef(new Map<string, RunGuard>());
   // 5.3: what a function's outputs (buttons, forms, browser code) reach — the latest handlers, through refs.
   const fnEventRef = useRef<(meta: FnMeta, ev: Exclude<FnEventBody, { type: "error" | "log" }>) => Promise<boolean>>(async () => false);
   const fnReportRef = useRef<(meta: FnMeta, ev: Extract<FnEventBody, { type: "error" | "log" }>) => Promise<void>>(async () => undefined);
@@ -3535,6 +3551,10 @@ function ChatApp() {
       fnLocal?: FnMeta;
       /** 6.10: sent from elsewhere (the NFC workbench) — the composer's draft and its reply stay. */
       keepComposer?: boolean;
+      /** 6.11: the message's id, when the caller needs it up front (a model's answer quotes it). */
+      id?: string;
+      /** 6.11: the sender's own copy quotes this instead (a room answer: the whole call here, only "/keyword" for the room). */
+      replyToLocal?: { id: string; senderName: string; text: string };
     } = {},
   ): Promise<boolean> {
     // 6.10: true when it went (sent, relayed or queued) — the NFC forward says so.
@@ -3565,7 +3585,7 @@ function ChatApp() {
     const flagsOut = flags.tap || flags.vanishSeconds || flags.sealed || flags.fn ? flags : undefined;
 
     const payload = {
-      id: newId("msg"),
+      id: opts.id ?? newId("msg"),
       text: wireText,
       createdAt,
       senderId: myIdRef.current,
@@ -3631,7 +3651,7 @@ function ChatApp() {
           audit,
           cipher: delivered.cipher,
           sealedWith: delivered.kinds.has("pair") ? "pair" : delivered.kinds.has("sender-key") ? "sender-key" : "room",
-          replyTo: opts.replyTo,
+          replyTo: opts.replyToLocal ?? opts.replyTo,
           forwardedFrom: opts.forwardedFrom,
         },
       ]);
@@ -3695,17 +3715,19 @@ function ChatApp() {
       // 6.10 (G-14): the reply is the function's input — the server reads it (and the quote); a seal would only pretend.
       if (sendOpts.sealed) { setNotice(t(lang, "app.fnReply.sealed")); return; }
       const quote = { id: replyingTo.id, senderName: replyingTo.senderName, text: replyingTo.text };
-      if (replied.senderId.startsWith("function:")) {
+      // 6.11: the model's answer to this reply quotes it.
+      const replyId = newId(isModelSender(replied.senderId) ? "fnreply" : "msg");
+      if (isModelSender(replied.senderId)) {
         // The model's message was only here (caller-only): so is the reply.
-        setMessages((cur) => [...cur, { id: newId("fnreply"), senderId: myIdRef.current || "me", senderName: nameRef.current || "me", text, createdAt: Date.now(), mine: true, secure: true, replyTo: quote, audit: [{ state: "displayed" as const, at: Date.now() }] }]);
+        setMessages((cur) => [...cur, { id: replyId, senderId: myIdRef.current || "me", senderName: nameRef.current || "me", text, createdAt: Date.now(), mine: true, secure: true, replyTo: quote, audit: [{ state: "displayed" as const, at: Date.now() }] }]);
         setMessageInput("");
         setReplyingTo(null);
       } else {
         const rec = resolveRecipients();
         if (!rec) { setNotice(t(lang, "recipients.noneNotice")); return; }
-        await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: quote });
+        await sendChatPayload(text, { send: sendOpts, targets: rec.targets, toNames: rec.toNames, away: rec.away, replyTo: quote, id: replyId });
       }
-      await fnEvent(target, { type: "response", text, message: { text: replyingTo.text } });
+      await fnEvent(target, { type: "response", text, message: { text: replyingTo.text } }, { id: replyId, senderName: nameRef.current || "me", text: text.slice(0, 200) });
       return;
     }
     // 6.8: "Send as voice" ticked in the send options — the text goes as a voice
@@ -3752,8 +3774,9 @@ function ChatApp() {
   /** 6.3 nfc: a running model asked to drive this device's NFC hardware. An
    *  "nfc" interaction is not a dialog — run the command on the caller's NFC
    *  bridge (bridge.ts; the web workbench or the Android service registers the
-   *  executor) and answer with the NfcResult; other interactions open the dialog. */
-  function handleFnInteraction(i: Interaction) {
+   *  executor) and answer with the NfcResult; other interactions open the dialog.
+   *  6.11: the run's clock (`guard`) stands still while the question is open. */
+  function handleFnInteraction(i: Interaction, guard?: RunGuard) {
     if (i.kind === "nfc") {
       const runId = i.runId || runCmdRunIdRef.current || "";
       const token = runCmdTokenRef.current;
@@ -3777,9 +3800,10 @@ function ChatApp() {
           return;
         }
         await answerInteraction(runId, i.id, result, token);
-      })();
+      })().catch(() => undefined).finally(() => guard?.resume());
       return;
     }
+    if (guard) askGuardsRef.current.set(i.id, guard);
     setInteraction(i);
   }
 
@@ -3813,52 +3837,102 @@ function ChatApp() {
     });
   }
 
-  /** Runs a chat command and shows the result: a model posting to the room
-   *  sends its output as an ordinary end-to-end-encrypted message; a
-   *  caller-only model shows it just to the person who ran it. */
+  /** 6.11: what a model's answer replies to (a quote: the call, a reply, the message whose button / form it was). */
+  type FnQuote = { id: string; senderName: string; text: string };
+  /** 6.11: the model as its answers show it (the icon cleaned: a lucide name or an emoji). */
+  const fnIdentity = (keyword: string, name: string, icon?: string) => modelIdentity({ keyword, name, icon: cleanModelIcon(icon ?? commands.find((c) => c.keyword === keyword)?.icon) });
+
+  /**
+   * Runs a chat command (6.5; 6.11). The call shows at once as the sender's own
+   * bubble: the query, a pulse and a loading (with what the run says of its
+   * progress), then a short status — answered, sent to the room, cancelled, or
+   * an error with its reason. The model's answer is a SEPARATE incoming message
+   * from system-messenger under the model's identity (its name, its icon), a
+   * reply to the call: shown just here for a caller-only model, sent to the
+   * room end-to-end encrypted for a room model. Inputs that cannot go to the
+   * server as typed never do — system-messenger answers what is wrong and how
+   * to call the model. A run without a sign of life for 30 s fails
+   * (fn-run.ts); a newer command cancels the older one.
+   */
   async function runChatCommand(command: Command, argText: string) {
     const inputs = buildInputs(command, argText);
     const queryText = `/${command.keyword}${argText.trim() ? ` ${argText.trim()}` : ""}`;
     setMessageInput("");
     setReplyingTo(null);
     setCmdOpen(false);
-    const fn = { keyword: command.keyword, name: command.name };
-    fnRunRef.current = `${command.name} (/${command.keyword})`;
-    const token = accountToken() ?? null;
-    runCmdAbortRef.current?.abort();
-    const ctrl = new AbortController();
-    runCmdAbortRef.current = ctrl;
-    runCmdTokenRef.current = token;
-    // 6.5: the call shows at once as the sender's own bubble — pulsing, with a
-    // loading indicator under it — and the model's answer replaces the loading.
+    const identity = fnIdentity(command.keyword, command.name, command.icon);
+    const fn = { keyword: command.keyword, name: command.name, icon: identity.icon };
     const msgId = `fncall_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
-    runCmdMsgIdRef.current = msgId;
+    const quote: FnQuote = { id: msgId, senderName: nameRef.current || "me", text: queryText };
+    // 6.11: inputs that are missing or wrong (and not left to the model's own form) stop here.
+    const problems = checkCommandInputs(command, inputs);
+    // 6.5: the call shows at once as the sender's own bubble — pulsing, with a loading under it.
     setMessages((cur) => [...cur, {
       id: msgId, senderId: myIdRef.current || "me", senderName: nameRef.current || "me",
       text: queryText, createdAt: Date.now(), mine: true, secure: true,
-      flags: { fn: { keyword: command.keyword, name: command.name, query: queryText, pending: true } },
+      flags: { fn: { ...fn, query: queryText, ...(problems.length ? { status: { kind: "error" as const, label: "", code: "bad-input" } } : { pending: true }) } },
       audit: [{ state: "displayed" as const, at: Date.now() }],
     }]);
-    await runCommandStream(
-      { keyword: command.keyword, inputs, room: serverRoomId(keyRef.current), client: prefs.deviceId || null, lang, token, signal: ctrl.signal },
-      {
-        onStart: (id) => { runCmdRunIdRef.current = id; },
-        onInteraction: handleFnInteraction, // 6.3 nfc: routes "nfc" to the device bridge
-        onError: (e) => { setInteraction(null); failFnCall(msgId, e.message); },
-        onDone: (r) => {
-          setInteraction(null);
-          if (r.error && !r.handled) { failFnCall(msgId, r.error.message); return; }
-          showFnResult({ ...r, visibility: r.visibility ?? command.visibility }, fn, { ...(r.handled ? { origin: "error" } : {}), into: msgId, query: queryText });
-        },
+    if (problems.length) {
+      // Nothing goes to the server: system-messenger answers with what is wrong and how to call the model.
+      addModelAnswer({ ...fn, outputs: usageCardOutputs(lang, command, { problems }) }, quote);
+      return;
+    }
+    fnRunRef.current = `${command.name} (/${command.keyword})`;
+    const token = accountToken() ?? null;
+    // A newer command ends the older run: its call says "cancelled".
+    runGuardRef.current?.cancel();
+    runCmdTokenRef.current = token;
+    runCmdMsgIdRef.current = msgId;
+    const guard: RunGuard = guardRun({
+      onStart: (id) => { runCmdRunIdRef.current = id; },
+      onInteraction: (i) => handleFnInteraction(i, guard), // 6.3 nfc: routes "nfc" to the device bridge
+      onProgress: (p, text) => patchFnCall(msgId, { progress: { p, text: text.slice(0, 200) } }),
+      onEnd: (end) => {
+        if (runGuardRef.current === guard) runGuardRef.current = null;
+        closeAsks(guard);
+        if (end.kind === "done") {
+          const r = end.result;
+          if (r.error && !r.handled) { failFnCall(msgId, command.keyword, r.error.message || t(lang, "functions.fail.unknown"), r.error.type); return; }
+          showFnResult({ ...r, visibility: r.visibility ?? command.visibility }, fn, { ...(r.handled ? { origin: "error" as const } : {}), call: { id: msgId, query: queryText } });
+          return;
+        }
+        if (end.kind === "cancelled") { settleFnCall(msgId, callOutcome(lang, command.keyword, end).status); return; }
+        fnRunFailed(end, fn, { callId: msgId, quote });
       },
-    );
+    });
+    runGuardRef.current = guard;
+    await guard.run((h, signal) => runCommandStream({ keyword: command.keyword, inputs, room: serverRoomId(keyRef.current), client: prefs.deviceId || null, lang, token, signal }, h));
   }
 
-  /** Replaces a call bubble's loading with an error status (the call stays visible). */
-  function failFnCall(msgId: string, message: string) {
-    setMessages((cur) => cur.map((m) => (m.id === msgId && m.flags?.fn
-      ? { ...m, flags: { ...m.flags, fn: { ...m.flags.fn, pending: false, status: { kind: "error" as const, label: message } } } }
-      : m)));
+  /** 6.11: a run that failed (no sign of life, the connection lost, refused…): the call's error chip
+   *  (no more loading), a flash naming the model and why — and for inputs the server refused, system-messenger's card. */
+  function fnRunFailed(end: Exclude<RunEnd, { kind: "done" | "cancelled" }>, fn: { keyword: string; name: string; icon?: string }, at: { callId?: string; quote?: FnQuote }) {
+    if (end.kind === "failed" && end.error.code === "bad-input") {
+      const command = commands.find((c) => c.keyword === fn.keyword) ?? { keyword: fn.keyword, name: fn.name, inputs: [] };
+      addModelAnswer({ ...fn, outputs: usageCardOutputs(lang, command, { server: end.error }) }, at.quote);
+    }
+    showCallOutcome(at.callId, callOutcome(lang, fn.keyword, end));
+  }
+
+  /** Replaces a call bubble's loading with an error status (the call stays visible); 6.11: and says so in a flash. */
+  function failFnCall(msgId: string | undefined, keyword: string, reason: string, code?: string) {
+    showCallOutcome(msgId, callFailure(lang, keyword, reason, code));
+  }
+
+  /** 6.11: a call's end without an answer — its bubble's chip, and the flash (when there is one). */
+  function showCallOutcome(msgId: string | undefined, out: CallOutcome) {
+    if (msgId) settleFnCall(msgId, out.status);
+    if (!out.flash) return;
+    if (prefsRef.current.flash.enabled) flashRef.current.push({ text: out.flash.text, detail: out.flash.detail, kind: "error" });
+    else setNotice(`${out.flash.text}: ${out.flash.detail}`);
+  }
+
+  /** 6.11: a run that ended takes its open question with it. */
+  function closeAsks(guard: RunGuard) {
+    const ids = [...askGuardsRef.current].filter(([, g]) => g === guard).map(([id]) => id);
+    for (const id of ids) askGuardsRef.current.delete(id);
+    if (ids.length) setInteraction((cur) => (cur && ids.includes(cur.id) ? null : cur));
   }
 
   /**
@@ -3866,74 +3940,111 @@ function ChatApp() {
    * sound, browser code…), their Markdown as the text. A model posting to the
    * room sends it end-to-end encrypted (large media stay with the caller); a
    * caller-only model shows it just here — as does a room model with nobody to send to.
+   * 6.11: either way an incoming message from system-messenger under the
+   * model's identity, a reply to `call` (the command's bubble, which gets a
+   * short status) or to `quote`; the room's copy quotes only the "/keyword"
+   * of the call (the room never saw its arguments) and names who sent it.
    */
-  function showFnResult(r: RunDone, fallback: { keyword: string; name: string }, opts: { origin?: "error"; into?: string; query?: string } = {}) {
+  function showFnResult(r: RunDone, fallback: { keyword: string; name: string; icon?: string }, opts: { origin?: "error"; call?: { id: string; query: string }; quote?: FnQuote } = {}) {
     const outputs = r.outputs ?? [];
     const keyword = r.keyword || fallback.keyword;
+    const name = r.name || fallback.name;
     const meta: FnMeta = {
-      keyword, name: r.name || fallback.name,
+      keyword, name, icon: fnIdentity(keyword, name, fallback.icon).icon,
       ...(r.model ? { model: r.model } : {}), ...(r.chain ? { chain: r.chain } : {}), ...(typeof r.call === "number" ? { call: r.call } : {}),
       ...(r.events?.length ? { events: r.events } : {}), ...(opts.origin ? { origin: opts.origin } : {}),
     };
     // The Markdown is the message's text (older apps, search, forwarding); only browser code or a panel has none — then the command's name.
     const text = outputsToMarkdown(outputs) || (outputs.length ? `/${keyword}` : tf(lang, "functions.empty", { name: meta.name }));
+    const quote: FnQuote | undefined = opts.call ? { id: opts.call.id, senderName: nameRef.current || "me", text: opts.call.query } : opts.quote;
     const roomRec = r.visibility === "room" ? resolveRecipients() : null;
     if (roomRec) {
       // 6.5: the answer goes to the room as its own message; the caller's own
       // call bubble shows it was sent (its loading becomes a short status).
-      if (opts.into) settleFnCall(opts.into, { kind: "ok", label: t(lang, "functions.sentToRoom") }, opts.query);
-      void sendChatPayload(text, { targets: roomRec.targets, toNames: roomRec.toNames, away: roomRec.away, forwardedFrom: `/${keyword}`, fn: { ...meta, outputs: shareableOutputs(outputs) }, fnLocal: { ...meta, outputs } });
+      if (opts.call) settleFnCall(opts.call.id, { kind: "ok", label: t(lang, "functions.sentToRoom") });
+      const wireQuote = quote && opts.call ? { ...quote, text: `/${keyword}` } : quote;
+      void sendChatPayload(text, {
+        targets: roomRec.targets, toNames: roomRec.toNames, away: roomRec.away, forwardedFrom: `/${keyword}`,
+        fn: { ...meta, outputs: shareableOutputs(outputs) }, fnLocal: { ...meta, outputs },
+        ...(wireQuote ? { replyTo: wireQuote, replyToLocal: quote } : {}), keepComposer: true,
+      }).catch(() => false).then((sent) => {
+        if (sent) return;
+        // Nobody could take it: the answer stays here.
+        if (opts.call) settleFnCall(opts.call.id, { kind: "info", label: t(lang, "functions.shownHere") });
+        addModelAnswer({ ...meta, outputs }, quote, text);
+      });
       return;
     }
     if (r.visibility === "room") setNotice(tf(lang, "functions.localOnly", { name: meta.name }));
-    // 6.5: a caller-only answer replaces the loading inside the call's own bubble.
-    if (opts.into) {
-      const q = opts.query;
-      setMessages((cur) => cur.map((m) => (m.id === opts.into && m.flags?.fn
-        ? { ...m, text, flags: { ...m.flags, fn: { ...meta, outputs, ...(q ? { query: q } : {}), pending: false } } }
-        : m)));
-      return;
-    }
+    if (opts.call) settleFnCall(opts.call.id, { kind: "ok", label: t(lang, "functions.answered") });
+    addModelAnswer({ ...meta, outputs }, quote, text);
+  }
+
+  /** 6.11: a model's answer shown here — an incoming message from system-messenger, the model's name as its nickname, a reply to `quote`. */
+  function addModelAnswer(meta: FnMeta, quote?: FnQuote, text?: string) {
+    const at = Date.now();
+    const body = text ?? (outputsToMarkdown(meta.outputs ?? []) || `/${meta.keyword}`);
     setMessages((cur) => [...cur, {
-      id: `fn_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-      senderId: `function:${keyword}`, senderName: meta.name,
-      text, createdAt: Date.now(), mine: false, secure: true,
-      flags: { fn: { ...meta, outputs } }, audit: [{ state: "displayed", at: Date.now() }],
+      id: newId("fn"), senderId: SYSTEM_MESSENGER_ID, senderName: meta.name,
+      text: body, createdAt: at, mine: false, secure: true,
+      flags: { fn: meta }, ...(quote ? { replyTo: quote } : {}), audit: [{ state: "displayed" as const, at }],
     }]);
   }
 
-  /** 6.5: ends a call bubble's loading with a short status (no inline result). */
-  function settleFnCall(msgId: string, status: FnStatus, query?: string) {
-    setMessages((cur) => cur.map((m) => (m.id === msgId && m.flags?.fn
-      ? { ...m, flags: { ...m.flags, fn: { ...m.flags.fn, ...(query ? { query } : {}), pending: false, status } } }
-      : m)));
+  /** 6.11: changes a call bubble's fn flag (its progress; settled: no more loading or progress). */
+  function patchFnCall(msgId: string, patch: Partial<FnMeta>) {
+    setMessages((cur) => cur.map((m) => {
+      if (m.id !== msgId || !m.flags?.fn) return m;
+      const { progress: _progress, ...settled } = m.flags.fn;
+      return { ...m, flags: { ...m.flags, fn: { ...(patch.pending === false ? settled : m.flags.fn), ...patch } } };
+    }));
   }
 
-  /** 5.3: a click, a form or a reply for a model's message — its entry point answers in that message's processing session. */
-  async function fnEvent(meta: FnMeta, ev: Exclude<FnEventBody, { type: "error" | "log" }>): Promise<boolean> {
+  /** 6.5: ends a call bubble's loading with a short status (no inline result). */
+  function settleFnCall(msgId: string, status: FnStatus) {
+    patchFnCall(msgId, { pending: false, status });
+  }
+
+  /** 6.11: the model's message a click / form / report came from (what its answer quotes). */
+  function fnSourceQuote(meta: FnMeta): FnQuote | undefined {
+    const m = [...messagesRef.current].reverse().find((x) => x.flags?.fn && x.flags.fn.chain === meta.chain && x.flags.fn.call === meta.call && x.flags.fn.query === undefined);
+    if (!m) return undefined;
+    // The quote is plain text: the message's Markdown without its marks.
+    return { id: m.id, senderName: modelAnswerView(m) ? m.flags!.fn!.name : m.senderName, text: (m.text || "").replace(/[*_`#>|[\]]+/g, "").replace(/\s+/g, " ").trim().slice(0, 200) };
+  }
+
+  /** 5.3: a click, a form or a reply for a model's message — its entry point answers in that message's processing session.
+   *  6.11: guarded like a command (the clock, ends once); the answer quotes `quote` (the reply) or the message it came from. */
+  async function fnEvent(meta: FnMeta, ev: Exclude<FnEventBody, { type: "error" | "log" }>, quote?: FnQuote): Promise<boolean> {
     if (!meta.chain) return false;
     fnRunRef.current = `${meta.name} (/${meta.keyword})`;
     const token = accountToken() ?? null;
+    const source = quote ?? fnSourceQuote(meta);
+    const fn = { keyword: meta.keyword, name: meta.name, icon: meta.icon };
     let ok = false;
-    await sendFnEventStream(
-      { model: meta.model, keyword: meta.keyword, chain: meta.chain, call: meta.call, room: serverRoomId(keyRef.current), client: prefs.deviceId || null, lang, token },
-      ev,
-      {
-        onStart: (id) => { runCmdRunIdRef.current = id; runCmdTokenRef.current = token; },
-        onInteraction: handleFnInteraction, // 6.3 nfc: routes "nfc" to the device bridge
-        onError: (e) => {
-          setInteraction(null);
-          if (e.code === "expired") systemMessage(tf(lang, "fnui.expired", { keyword: meta.keyword }), { kind: "warning" });
-          else systemMessage(tf(lang, "fnui.eventFailed", { keyword: meta.keyword, message: e.message }), { kind: "error", chatOnly: true });
-        },
-        onDone: (r) => {
-          setInteraction(null);
-          if (r.error && !r.handled) { systemMessage(tf(lang, "fnui.eventFailed", { keyword: meta.keyword, message: r.error.message }), { kind: "error", chatOnly: true }); return; }
+    const guard: RunGuard = guardRun({
+      onStart: (id) => { runCmdRunIdRef.current = id; runCmdTokenRef.current = token; },
+      onInteraction: (i) => handleFnInteraction(i, guard), // 6.3 nfc: routes "nfc" to the device bridge
+      onEnd: (end) => {
+        closeAsks(guard);
+        if (end.kind === "done") {
+          const r = end.result;
+          if (r.error && !r.handled) {
+            failFnCall(undefined, meta.keyword, r.error.message || t(lang, "functions.fail.unknown"));
+            systemMessage(tf(lang, "fnui.eventFailed", { keyword: meta.keyword, message: r.error.message }), { kind: "error", chatOnly: true });
+            return;
+          }
           ok = true;
-          showFnResult({ ...r, visibility: r.visibility ?? "caller" }, meta, r.handled ? { origin: "error" } : {});
-        },
+          showFnResult({ ...r, visibility: r.visibility ?? "caller" }, fn, { ...(r.handled ? { origin: "error" as const } : {}), ...(source ? { quote: source } : {}) });
+          return;
+        }
+        if (end.kind === "cancelled") return;
+        if (end.kind === "failed" && end.error.code === "expired") { systemMessage(tf(lang, "fnui.expired", { keyword: meta.keyword }), { kind: "warning" }); return; }
+        fnRunFailed(end, fn, { quote: source });
+        systemMessage(tf(lang, "fnui.eventFailed", { keyword: meta.keyword, message: runFailure(lang, end).reason }), { kind: "error", chatOnly: true });
       },
-    );
+    });
+    await guard.run((h, signal) => sendFnEventStream({ model: meta.model, keyword: meta.keyword, chain: meta.chain!, call: meta.call, room: serverRoomId(keyRef.current), client: prefs.deviceId || null, lang, token, signal }, ev, h));
     return ok;
   }
 
@@ -3944,7 +4055,10 @@ function ChatApp() {
   async function fnReport(meta: FnMeta, ev: Extract<FnEventBody, { type: "error" | "log" }>): Promise<void> {
     if (!meta.chain) return;
     const r = await sendFnReport({ model: meta.model, keyword: meta.keyword, chain: meta.chain, call: meta.call, room: serverRoomId(keyRef.current), client: prefs.deviceId || null, lang, token: accountToken() ?? null }, ev);
-    if (r && ev.type === "error" && !ev.fromError) showFnResult({ ...r, visibility: r.visibility ?? "caller" }, meta, { origin: "error" });
+    if (r && ev.type === "error" && !ev.fromError) {
+      const source = fnSourceQuote(meta);
+      showFnResult({ ...r, visibility: r.visibility ?? "caller" }, meta, { origin: "error", ...(source ? { quote: source } : {}) });
+    }
   }
 
   /** Sends the caller's answer to a running command's question. */
@@ -3955,6 +4069,10 @@ function ChatApp() {
     // 6.6: a local question (the document key) is answered here, never sent.
     const local = localAskRef.current;
     if (local && local.id === i.id) { localAskRef.current = null; local.resolve(value ?? null); return; }
+    // 6.11: answered (or dismissed) — the run's clock runs again.
+    const guard = askGuardsRef.current.get(i.id);
+    askGuardsRef.current.delete(i.id);
+    guard?.resume();
     await answerInteraction(i.runId || runCmdRunIdRef.current || "", i.id, value, runCmdTokenRef.current);
   }
 
@@ -5405,36 +5523,8 @@ function ChatApp() {
         </div>
       ) : null}
 
-      {/* 4.15: a running command's live question (m5.prompt / m5.form). */}
-      {interaction ? (
-        <div className="cmd-menu fn-ask" role="dialog" aria-label={interaction.spec.text || interaction.kind} data-testid="fn-interaction">
-          {interaction.spec.title ? <div className="fn-ask__title">{interaction.spec.title}</div> : null}
-          {interaction.spec.text ? <div className="fn-ask__text">{interaction.spec.text}</div> : null}
-          {interaction.kind === "prompt" && interaction.spec.choices?.length ? (
-            <div className="fn-ask__choices">
-              {interaction.spec.choices.map((c) => (
-                <button key={c} type="button" className="fn-ask__choice" onClick={() => void answerCurrentInteraction(c)}>{c}</button>
-              ))}
-            </div>
-          ) : interaction.kind === "prompt" ? (
-            <form className="fn-ask__row" onSubmit={(e) => { e.preventDefault(); const el = document.getElementById("fnprompt") as HTMLInputElement | null; void answerCurrentInteraction(el?.value ?? ""); }}>
-              <input id="fnprompt" className="fn-ask__input" autoFocus placeholder={interaction.spec.placeholder || ""} />
-              <button type="submit" className="fn-ask__choice">{t(lang, "functions.send")}</button>
-            </form>
-          ) : (
-            <form className="fn-ask__form" onSubmit={(e) => { e.preventDefault(); const v: Record<string, unknown> = {}; for (const f of interaction.spec.fields || []) { const el = document.getElementById(`fnfield_${f.name}`) as HTMLInputElement | null; if (el) v[f.name] = el.value; } void answerCurrentInteraction(v); }}>
-              {(interaction.spec.fields || []).map((f) => (
-                <label key={f.name} className="fn-ask__field">
-                  <span>{f.label || f.name}{f.required ? " *" : ""}</span>
-                  <input id={`fnfield_${f.name}`} className="fn-ask__input" placeholder={f.placeholder || ""} />
-                </label>
-              ))}
-              <button type="submit" className="fn-ask__choice">{interaction.spec.submit || t(lang, "functions.send")}</button>
-            </form>
-          )}
-          <button type="button" className="fn-ask__cancel" onClick={() => void answerCurrentInteraction(null)}>{t(lang, "functions.cancel")}</button>
-        </div>
-      ) : null}
+      {/* 4.15: a running command's live question (m5.prompt / m5.form); 6.11: its fields keep their types. */}
+      {interaction ? <FnAskDialog interaction={interaction} lang={lang} onAnswer={(v) => void answerCurrentInteraction(v)} /> : null}
 
       {/* Modal panels */}
       <ProfilePanel open={activePanel === "profile"} onClose={() => setActivePanel(null)} prefs={prefs} setPrefs={setPrefs} lang={lang} onOpenConnection={() => setActivePanel("connection")} />

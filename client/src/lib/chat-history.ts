@@ -107,6 +107,11 @@ export function sanitizeRestored(value: unknown, myPeerId?: string, opts: { sign
         if (checked) out.attachment = checked; else delete out.attachment;
       }
       if (out.flags?.fn?.outputs) out.flags = { ...out.flags, fn: { ...out.flags.fn, outputs: sanitizeFnOutputs(out.flags.fn.outputs, HISTORY_LIMITS.maxBytes) } };
+      // 6.11: a call still running when it was stored will not answer this page: it says it was interrupted (no endless loading).
+      if (out.flags?.fn?.pending) {
+        const { progress: _progress, ...fn } = out.flags.fn;
+        out.flags = { ...out.flags, fn: { ...fn, pending: false, status: { kind: "error", label: "", code: "interrupted" } } };
+      }
       const h = m.hidden as unknown as { at?: unknown; until?: unknown } | undefined;
       if (h !== undefined && !(h && typeof h === "object" && typeof h.at === "number" && typeof h.until === "number" && h.until >= 0)) delete out.hidden;
       if (out.deletedAt !== undefined && typeof out.deletedAt !== "number") delete out.deletedAt;
