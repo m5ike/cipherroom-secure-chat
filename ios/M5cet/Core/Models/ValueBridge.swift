@@ -61,6 +61,6 @@ extension Dictionary where Key == String, Value == JSON {
 }
 
 /// Milliseconds since 1970 — the protocol's clock (System.currentTimeMillis).
-enum Millis {
+enum EpochMs {
     static var now: Int64 { Int64((Date().timeIntervalSince1970 * 1000).rounded()) }
 }

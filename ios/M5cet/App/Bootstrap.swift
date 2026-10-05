@@ -18,8 +18,21 @@ enum Bootstrap {
         WatchBridge.install(into: model)
         // Platform/Notifications — UNUserNotificationCenter delegate, categories, neutral texts.
         Notifier.install(into: model)
-        // Platform/NFC, Voice, Location, Contacts, Files — on demand from the screens.
-        // Parts and the app's actions — model.design.slots.register(…), model.design.actions.register(…),
-        // model.design.state = … (Renderer/README.md: the three contracts).
+        // Core — the rooms, the account, the device; the screens' state, the app's actions, the core's slots; and the
+        // seams of Calls, Notifications, Location, Contacts, Voice, Watch (Core/README.md). Before the parts: a part's
+        // registration replaces the core's fallback for the same action or slot (the later one wins).
+        CoreInstall.install(into: model)
+        // Parts/People — userPanel, userList, people.* / users.* / profile.* / msg.info / msg.sender, $profile, $myProfile.
+        PeopleParts.install(into: model)
+        // Parts/NFC — nfcPanel, nfcWork, nfcBuilder, nfc.read / write / emulate / stop, $nfc.
+        NfcParts.install(into: model)
+        // Parts/Chat — messages, msgBody, msgHold, composer; msg.quote / showHidden / mapPreview / map / source / open / save /
+        // share, msg.forward*, message.recipients.
+        ChatParts.install(into: model)
+        // Parts/Tools — commands engine (core.fn), aiChat, voicePad, History ($log, calllog.*), ai.*, voice.dictate, voiceFx.*.
+        ToolParts.install(into: model)
+        // (A part: model.design.slots.register(…), model.design.actions.register(…), core.variables — Renderer/README.md.)
+        // Core — the seams the parts left for it (the commands engine's device, room and usage; the chat's audit and files).
+        CoreInstall.afterParts(into: model)
     }
 }

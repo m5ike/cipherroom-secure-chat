@@ -18,7 +18,10 @@ struct M5cetApp: App {
                 // m5cet://enroll?… — the console's QR code (Android: MainActivity.handleIntent).
                 .onOpenURL { delegate.model.open($0) }
                 // A call-back from the Phone app's Recents (Platform/Calls: asks before dialling).
-                .onContinueUserActivity("INStartCallIntent") { CallSystem.shared.continueUserActivity($0) }
+                // Contacts first (a linked person's call / message), then a call-back from the Phone app's Recents.
+                .onContinueUserActivity("INStartCallIntent") { a in
+                    if !ContactsService.shared.continueUserActivity(a) { _ = CallSystem.shared.continueUserActivity(a) }
+                }
         }
         .onChange(of: scenePhase) { _, phase in
             delegate.model.scenePhaseChanged(phase)

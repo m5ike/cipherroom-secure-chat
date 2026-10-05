@@ -404,6 +404,13 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         JSONObject tree = d.screen(id);
         // 6.10 (G-20): not the id — a design's screen.open may have computed it from data, and the log reaches the console.
         if (tree == null) { Log.w("ui", "a screen the design does not have was asked for"); return; }
+        // 6.14: while the app is locked (PIN set up) only the splash, enrolment and lock screens show — a design's
+        // screen.open cannot step past the lock; route() decides instead.
+        if (!id.equals("splash") && !id.equals("enroll") && !id.equals("lock") && app.lock.isSetUp() && app.lock.isLocked()) {
+            Log.w("ui", "a screen was asked for while the app is locked");
+            route();
+            return;
+        }
         if (!screen.isEmpty() && !screen.equals(id) && !id.equals("lock") && !id.equals("enroll") && !screen.equals("splash") && !screen.equals("lock")) stack.push(screen);
         String from = screen;
         screen = id;
