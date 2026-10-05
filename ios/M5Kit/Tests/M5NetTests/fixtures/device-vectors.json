@@ -1,0 +1,130 @@
+{
+ "generator": "ios/M5Kit/Tests/M5NetTests/fixtures/generate-fixtures.ts",
+ "devicePkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg1uDZW/c2hksec5XA2CfvQkj7Eherb5g7I3cauVggYm+hRANCAARuzjiYXA0ah0mWZynnIWRQEdpDtKzSV3Y49rNJ2WgGiq9DpZc4bwNxpJsxJRcGh6OzWZehoR+TUFq2tyfUYPs5",
+ "devicePublicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==",
+ "deviceKid": "tMnA4_jX1xBPH_ov",
+ "deviceFingerprint": "B4C9 C0E3 F8D7 D710 4F1F FA2F D9A7 0CAE",
+ "requests": [
+  {
+   "method": "POST",
+   "path": "/api/ios/checkin",
+   "time": "1800000000000",
+   "nonce": "AAECAwQFBgcICQoLDA0ODw",
+   "body": "{\"appVersion\":\"6.14.0\",\"appCode\":61400,\"locale\":\"cs\"}",
+   "bodyB64": "eyJhcHBWZXJzaW9uIjoiNi4xNC4wIiwiYXBwQ29kZSI6NjE0MDAsImxvY2FsZSI6ImNzIn0=",
+   "string": "m5android/1|POST|/api/ios/checkin|1800000000000|AAECAwQFBgcICQoLDA0ODw|+GCeG2KYflbOsNt9Wz0DcvvxPh0vHEpeiomOhMwYd7o=",
+   "signature": "JgWAN0LtpMgMAVJYklLoLBLev0v9Efr+PHhr6OouOKK9nxvZiQPDAG5kC7+Bo3UGj6+olPwn1bRNz+aRsEdZZg=="
+  },
+  {
+   "method": "GET",
+   "path": "/api/ios/bundles/bld_0001",
+   "time": "1800000000001",
+   "nonce": "EBESExQVFhcYGRobHB0eHw",
+   "body": "",
+   "bodyB64": "",
+   "string": "m5android/1|GET|/api/ios/bundles/bld_0001|1800000000001|EBESExQVFhcYGRobHB0eHw|47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=",
+   "signature": "nQXvKFN8Nl2J0bNcUE5/LQbGsOoHzHMR8WBkXB6UA90WytGQ8nVBhnlbh48um+OX0vIOH7901zP+svKtdJtJLQ=="
+  },
+  {
+   "method": "post",
+   "path": "/m5/api/ios/events?x=1",
+   "time": "1800000000002",
+   "nonce": "ICEiIyQlJicoKSorLC0uLw",
+   "body": "{\"events\":[{\"id\":\"ev0000001\",\"type\":\"log\",\"at\":1,\"detail\":{\"text\":\"Žluťoučký kůň\"}}]}",
+   "bodyB64": "eyJldmVudHMiOlt7ImlkIjoiZXYwMDAwMDAxIiwidHlwZSI6ImxvZyIsImF0IjoxLCJkZXRhaWwiOnsidGV4dCI6IsW9bHXFpW91xI1rw70ga8WvxYgifX1dfQ==",
+   "string": "m5android/1|POST|/m5/api/ios/events?x=1|1800000000002|ICEiIyQlJicoKSorLC0uLw|iE6AtBnOpdevkS2C0nRl28s9JrPtzOSaVS8Wuo44yNM=",
+   "signature": "d214HUJ90bA206IW3WPGhFKx3uASrQdjv4yRNiL2d//JceARJBbkYBv14Aw8FS4IOgCmVLvCODZ8mTmrF0VsEA=="
+  }
+ ],
+ "enroll": {
+  "signKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==",
+  "encKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==",
+  "time": 1800000000000,
+  "string": "m5android/enroll/1|MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==|MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEbs44mFwNGodJlmcp5yFkUBHaQ7Ss0ld2OPazSdloBoqvQ6WXOG8DcaSbMSUXBoejs1mXoaEfk1Batrcn1GD7OQ==|1800000000000",
+  "proof": "n4S0be8vopmEsI90Ni40/ovdkv3EThR4Uyo1qOS7Esm5EErUtHRBB0tpAsiGFmwuI7RsOXYRXOnGGmL2v+q/xQ=="
+ },
+ "server": {
+  "publicKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE/bVy/wF2uIziMoSCr9d8nrmxb0V9QV2U/wu/u/iwcoBOCAiGeKLtPN/WjcuxCoRo03I/BQo02Pe8I5xsMoYA1Q==",
+  "kid": "rF9jcd4HRFWqk7q6",
+  "fingerprint": "AC5F 6371 DE07 4455 AA93 BABA FEBE B864"
+ },
+ "deviceId": "ios_vector0001",
+ "policy": {
+  "at": 1800000000000,
+  "policy": "{\"lock\":{\"pinLength\":6,\"maxAttempts\":8,\"wipe\":true,\"screenshots\":false,\"autolockSeconds\":60},\"logs\":\"errors\",\"rooms\":{\"max\":5},\"location\":{\"track\":false}}",
+  "sig": "Rdu+AkG0bnQxELinoW9StNJFpIQwNz4q7yv8XZOOLfQHdSQrCl8B5czU4lrYS/wTZdHbAJGpT/YL60K6bB2XBA=="
+ },
+ "policyOlder": {
+  "at": 1799999999000,
+  "policy": "{\"lock\":{\"pinLength\":6,\"maxAttempts\":8,\"wipe\":true,\"screenshots\":false,\"autolockSeconds\":60},\"logs\":\"off\",\"rooms\":{\"max\":5},\"location\":{\"track\":false}}",
+  "sig": "vmynPR7L9bUAvIhATXM4lVrNgW5V5PaRCiEjJb7RDWy6wBzuzTz8sJKepDPG0mDLACefuclvXv/iesKkGHU59Q=="
+ },
+ "policyOtherDevice": {
+  "at": 1800000000000,
+  "policy": "{\"lock\":{\"pinLength\":6,\"maxAttempts\":8,\"wipe\":true,\"screenshots\":false,\"autolockSeconds\":60},\"logs\":\"errors\",\"rooms\":{\"max\":5},\"location\":{\"track\":false}}",
+  "sig": "o6/VZEJJZKSq4MLkKMMhsxK2Qr/qNIIHBuO6W+ZyBescfbTEFKyUT88tmQ0q8Zw/cuXskcXR8bj9OaJ5hLrxuw=="
+ },
+ "releaseAnswer": {
+  "ok": true,
+  "release": {
+   "id": "rel_0001",
+   "versionCode": 61500,
+   "versionName": "6.15.0",
+   "packageName": "cz.m5cet.app",
+   "apkSha256": "0000000000000000000000000000000000000000000000000000000000000000",
+   "certSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+   "size": 1234,
+   "minSdk": 26,
+   "mandatory": false,
+   "notes": "",
+   "channel": "stable"
+  },
+  "signed": "m5release/1|rel_0001|61500|6.15.0|cz.m5cet.app|0000000000000000000000000000000000000000000000000000000000000000|1111111111111111111111111111111111111111111111111111111111111111|1234",
+  "signature": "khWq5lSMgT9IHPXEJtrJNJx26dRqf4nFSpg5dOu0KMvvkn8T2o9ZjMOpwisX5CQu1dhFYJfH51rUHoPOYSO4BA==",
+  "kid": "rF9jcd4HRFWqk7q6"
+ },
+ "iosReleaseAnswer": {
+  "ok": true,
+  "release": {
+   "id": "irel_0001",
+   "version": "6.15.0",
+   "build": 61500,
+   "bundleId": "cz.m5cet.app",
+   "channel": "stable",
+   "store": "appstore",
+   "url": "https://apps.apple.com/app/m5cet/id1234567890",
+   "minBuild": 61450,
+   "notes": {
+    "en": "Faster",
+    "cs": "Rychlejší"
+   },
+   "rollout": 100,
+   "mandatory": true
+  },
+  "signed": "m5iosrelease/1|irel_0001|6.15.0|61500|cz.m5cet.app|stable|appstore|https://apps.apple.com/app/m5cet/id1234567890|61450",
+  "signature": "mnlb3/pZ15+hGsrY+7hiF5s9KChUKjz+Ci8UIgw9ZlpAu+0d9aBCSJf7sz78UzFy0MMI1zDlR72SV4Zng5TnJA==",
+  "kid": "rF9jcd4HRFWqk7q6"
+ },
+ "push": {
+  "i": "msg_0001",
+  "e": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEkvQKBw3G492N6dekKvbuOSdcNPjk8chw9l07xN6dfktYtruy9Tw9riF/7BnHHXFedD/OOmz/TU+UTPa9HE55uA==",
+  "iv": "T8bd6QQgU1/fag+n",
+  "ct": "TW3neJdX7iWEc94dhseCdya2T00xWiv/3q5quI6p1MqZ4RPhw6gZTHG2tRdmUdmoK6HhWTggVZBMwI3XtT77QnhB4bIJdFWEADpX0Beyawgso+Y=",
+  "s": "zYLt85QocBxsC9I4jBOTaNGcFeo/Lb1nRYzbnaMFZaCzWyMDAm9tClvlD0s9pM+OaKcR4r+x4rK0bPSFVS3eRw=="
+ },
+ "pushContent": {
+  "id": "msg_0001",
+  "kind": "lock",
+  "payload": {
+   "reason": "lost"
+  },
+  "exp": 0
+ },
+ "pushExpired": {
+  "i": "msg_0002",
+  "e": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE+CrB27ZxYoutQvES0Rdi+kKdDNv2CW2JwM7oSbW8c4w1jOiZgYjMj1KKoT5so09owiUzkaqkoVx8LMVIQdWNfw==",
+  "iv": "OVeWI3OJ0V4aOh7l",
+  "ct": "9+AvSYO76PDgDvSR46aCFAiPQwEHjWPOy7a0OtSuUoS+Ir4GY/LYIk9MQTSX+j/rFKf+ihJV1IhEwdzcavm0ZickF6ANUrs=",
+  "s": "jkZSXDpEb8IVY291y2kvh6kX9G1O5ABYEELy5eVEo2IMe9oeyogimz541nNFu3edHfTKrCs0x2+R+w4XgeUhvA=="
+ }
+}
