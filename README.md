@@ -1,9 +1,9 @@
 # M5cet — bezpečný workspace v prohlížeči
 
-> Verze: **6.10.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
+> Verze: **6.11.0** · Node.js **≥ 22** (doporučeno 24 LTS) · React 19 · Vite 8 · TypeScript 7 · Express 5
 > Stabilní větev: `master` · historie změn: [`CHANGELOG.md`](CHANGELOG.md)
-> **Dokumentace 6.10.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
-> [`docs/site/m5cet-dokumentace-6.10.0.pdf`](docs/site/m5cet-dokumentace-6.10.0.pdf) — PDF se generuje `npm run docs:pdf`.
+> **Dokumentace 6.11.0 (HTML + PDF, s vyhledáváním a diagramy):** [`docs/site/index.html`](docs/site/index.html) ·
+> [`docs/site/m5cet-dokumentace-6.11.0.pdf`](docs/site/m5cet-dokumentace-6.11.0.pdf) — PDF se generuje `npm run docs:pdf`.
 
 M5cet (rebrand CipherRoom) je end-to-end šifrovaný workspace, který běží
 **zcela v prohlížeči**. Dva nebo více účastníků si v ad-hoc místnosti
@@ -768,6 +768,9 @@ je v [dokumentaci › Návrhy a roadmapa](docs/site/index.html#navrhy).
   jen v paměti procesu (retenční sweep je maže průběžně, restart úplně).
 - `App.tsx` (~4 000 řádků) pokrývají hlavně e2e testy.
 - Historii prohlížeče web smazat neumí; pozvánky nepřežijí restart serveru.
+- **6.11:** odpovědi od system-messenger, našeptávač a hodiny běhu neběžely
+  na telefonu; `/hlr` s číslem neprošel skutečným poskytovatelem — viz
+  [`docs/deployment.md`](docs/deployment.md) › Přechod na 6.11.
 - **6.10:** šablony NFC, gesta a profil neběžely se skutečnou kartou ani na
   telefonu; po aktualizaci zkontrolujte webhooky bez podpisu, pravidlo pro
   telefonní panel a země TSA — viz [`docs/deployment.md`](docs/deployment.md)
@@ -890,7 +893,8 @@ v [`CHANGELOG.md`](CHANGELOG.md).
 
 | Verze        | Stav                  |
 |--------------|-----------------------|
-| 6.10.0       | aktuální — **šablony APDU jako úplná čtení typů karet** (EMV všech schémat, e-ID / e-pas, DESFire, ISO 7816) na webu i v Androidu, všechny kroky po sobě, pohledy surový vstup / výstup · surový · JSON · čitelný, sdílet / přeposlat / sobě, jen ke čtení, maskovaná čísla karet; **Android**: táhni bublinu doprava = odpovědět (citace nahoře, klepnutí na originál), doleva = přeposlat, avatar nahoře a klepnutím profil, *Můj profil* na očích; **bezpečnostní revize 6.10** (kap. 12) se dvěma koly oprav — padělané webhooky, obejití práv, anonymní hovory, toll fraud v TSA, hádání route kódů, výběr příjemců na všech cestách, design na Androidu bez úniku dat |
+| 6.11.0       | aktuální — **odpovědi modelů od system-messenger** (příchozí zpráva s názvem a ikonou modelu, cituje příkaz, v místnosti „přes <jméno>“, široká bublina), **běh příkazu vždy skončí** (30 s bez známky života = chyba s ikonou a flash, limit DNS 4 s, rozpočet `/mail`, ohlášené čekání, odchod volajícího běh zruší, právě jeden konec streamu), **kontrola parametrů** před odesláním s kartou definice a návodu, ikona a návod modelu v konzoli, `/hlr <číslo>` hned s výsledkem, **nový našeptávač** (volné hledání, naposledy použité, sekce, podrobnost, nápověda parametrů) na webu i v Androidu |
+| 6.10.0       | **šablony APDU jako úplná čtení typů karet** (EMV všech schémat, e-ID / e-pas, DESFire, ISO 7816) na webu i v Androidu, všechny kroky po sobě, pohledy surový vstup / výstup · surový · JSON · čitelný, sdílet / přeposlat / sobě, jen ke čtení, maskovaná čísla karet; **Android**: táhni bublinu doprava = odpovědět (citace nahoře, klepnutí na originál), doleva = přeposlat, avatar nahoře a klepnutím profil, *Můj profil* na očích; **bezpečnostní revize 6.10** (kap. 12) se dvěma koly oprav — padělané webhooky, obejití práv, anonymní hovory, toll fraud v TSA, hádání route kódů, výběr příjemců na všech cestách, design na Androidu bez úniku dat |
 | 6.9.0        | **Telephony & SIP jako ústředna**: nová stránka konzole, oprávnění, pravidla směrování příchozích i odchozích hovorů (aplikace poskytovatele nebo SIP trunk s caller ID; cíl TSA nebo stav busy / congestion / hangup / rejected), **TSA** — call flow ve vizuálním editoru (27 nástrojů: DTMF, TTS, STT, záznam, přehrání, podmínka s IN$x, smyčky, route audio…) spouštěné na živém hovoru se simulátorem, route kódy `m5.telephony.inroute.*`, zvuk hovoru do místnosti nebo členovi, log událostí včetně webhooků, testy a testovací příchozí SIP adresa |
 | 6.8.0        | **hovory v záznamu telefonu** (příchozí / odchozí / zmeškané / odmítnuté, zvonění, oprávnění, neutrální jména) a **Záznam** hovorů a zpráv v aplikaci pro Android; **místnosti jako konverzace Androidu** (zkratky, sdílení, oznámení-konverzace, neutrální názvy při zámku); **volby odeslání jako volby příští zprávy** — web: *Poslat jako hlas* je zaškrtávací, Android: *Odeslat jinak* se zeleným zaškrtnutím a polem pro individuální kód; **limit API** nastaví operátor (`API_RATE_LIMIT`, `API_RATE_WINDOW_MIN`), dlaždice mapy a přihlášení passkey se do něj nepočítají; oprava: velký soubor pro vybrané lidi šel celé místnosti |
 | 6.7.0        | **přítomnost**: členové zůstávají v místnosti, dokud neodejdou nebo je server neodstraní (`PRESENCE_MAX_AWAY_DAYS`), na pozadí jsou pryč, „naposledy online“ se zelenou / žlutou / oranžovou tečkou (web i Android); **poloha** za ikonou s oknem *Navigovat* / *Odvoz* / *Kopírovat* a oblast pro podržení vedle bubliny „podržet a číst“; **upozornění** v pořadí kanálů se zálohou (FCM zapečetěné → web push → e-mail přes SMTP operátora), šablony a náhled v konzoli, úrovně soukromí, volba uživatele a tiché hodiny, oprava pročišťování mrtvých odběrů a buzení Androidu; **hlas**: diktování, které se zastaví, poslat jako hlas, měnič hlasu (modul, výchozí vypnutý); **veřejný profil** (fotka, pozadí, přezdívka, o mně, údaje — jen já / členové místností / veřejné); úvodní obrazovka jako rozvržení `start`; Android: šest šablon, nabídky s ikonami, přejetí po řádku místnosti; **bezpečnost**: analýza a audit 6.7, opravy serveru (sandbox Funkcí, WS brána, SSRF, telefonie, limity), webu (výstupy funkcí od členů, historie, sender keys, soubory, název místnosti, síla klíče) a Androidu (design nevynese zprávy, pin klíče serveru, PIN, notifikace při zámku, wipe, Android 10–12, podepsaná politika) |

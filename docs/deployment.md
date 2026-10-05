@@ -336,6 +336,49 @@ cest).
 `<dir>/.m5cet/backups/`) a drží posledních `BACKUP_KEEP` (5) záloh;
 `update.sh --rollback` se k poslední vrátí.
 
+## Přechod na 6.11
+
+Nové proměnné prostředí (všechny volitelné; instalátor je zná — `update.sh --set
+PROMĚNNÁ=hodnota`):
+
+| Proměnná | Výchozí | Význam |
+|---|---|---|
+| `FUNCTIONS_DNS_TIMEOUT_MS` | 4000 (250–15 000) | nejdelší čekání jednoho `m5.dns.resolve`; pak chyba `timeout` (volání může chtít vlastní `timeoutMs`) |
+| `FUNCTIONS_DNS_SERVERS` | systémové | jmenné servery pro funkce, čárkami („1.1.1.1, 8.8.8.8:53“, nejvýš 4) |
+| `FUNCTIONS_SSE_PING_MS` | 15 000 | udržovací `: ping` streamu běhu |
+| `FUNCTIONS_WAIT_NOTICE_MS` | 10 000 | po jak dlouhém čekání na hostitele (DNS, HTTP, AI…) běh ohlásí `progress` „Waiting for …“ |
+| `FUNCTIONS_WAIT_EVERY_MS` | 10 000 | nejdelší ticho mezi dvěma takovými ohlášeními |
+
+Co si operátor po nasazení všimne:
+
+- **Aplikace vzdá příkaz po 30 s bez známky života** (web i Android 6.11): žádný výstup,
+  průběh, otázka ani ohlášené čekání — pingy se nepočítají, otevřený formulář nebo NFC hodiny
+  zastaví. Aplikace pak stream zavře a **server běh zruší** (stav `cancelled`). Model, který
+  počítá déle bez výstupu, musí hlásit průběh (`m5.run.progress`); čekání na hostitele hlásí
+  server sám (tabulka výše).
+- **Odchod volajícího běh zruší** — stream i obyčejná JSON odpověď `POST /api/functions/run`:
+  kdo zavře spojení před odpovědí, běh ukončí (otevřené dotazy, HTTP a AI požadavky, sandbox).
+  Integrace, které spustily běh a nečekaly na odpověď, ať na ni počkají (nebo použijí webhook).
+- **Chybné parametry:** `400 bad-input` nese navíc `problems[]`, `command` (definice modelu)
+  a `usageLine`; `message` zůstává. Se streamem je to jediná událost `error` bez `start`.
+  Server ověří všechny vstupy, ne jen první chybný.
+- **DNS z funkcí má limit 4 s na dotaz.** Za pomalým resolverem (VPN, filtrující DNS) nastavte
+  `FUNCTIONS_DNS_SERVERS` nebo zvyšte `FUNCTIONS_DNS_TIMEOUT_MS`. `/mail` odpoví vždy do 20 s;
+  co DNS nestihlo, označí „⏱ no answer in time“.
+- **Modely mají ikonu a návod** (*Functions › Models* › *Icon*, *Usage*; sloupce `icon`
+  a `usage` přidá migrace při startu). Vestavěné balíčky se aktualizují na 1.4.0 a ikony
+  a návody dostanou jednou i starší instalace.
+- **Vypnuté vestavěné modely** (telefonie, NFC) dostávaly v 6.10 a starších při každé
+  aktualizaci druhý model se stejným klíčovým slovem; 6.11 už ne, ale existující kopie
+  nesmaže — v *Functions › Models* zkontrolujte, jestli tam vypnuté modely nejsou dvakrát.
+- **`/hlr +420…` spustí placený dotaz HLR hned** (tel-hlr 1.1.0; dřív vždy nejdřív formulář);
+  `/hlr` samo dál ukáže formulář. Balíček se dál instaluje vypnutý.
+- **Odpovědi modelů** chodí od `system-messenger` s názvem a ikonou modelu. `system-messenger`,
+  `system-messenger:*` a `function:*` peer jako odesílatele použít nesmí — zpráva s takovým
+  odesílatelem se zahodí.
+- **Aplikace pro Android:** build výchozího designu potřebuje aplikaci 6.11 (`minAppCode`
+  61100); starší telefony si nechají build, který mají.
+
 ## Přechod na 6.10
 
 Bezpečnostní revize 6.10 ([`security-analysis.md`](security-analysis.md) › 12, nálezy G-05,

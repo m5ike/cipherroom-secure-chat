@@ -5,6 +5,119 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.11.0] – 2026-10-05
+
+**Odpovědi modelů od „system-messenger“, běh příkazu, který vždy skončí,
+kontrola parametrů a nový našeptávač — na webu i v aplikaci pro Android.**
+Odpověď příkazu („/“) teď přichází jako příchozí zpráva s názvem a ikonou
+modelu, citující příkaz. `/mail` bez parametru zůstal viset na „Running
+e-mail analysis…": DNS dotaz bez odpovědi držel běh bez limitu (za VPN
+dlouho) a klient na konec streamu nečekal s časovým limitem — teď má každý
+dotaz DNS limit, `/mail` rozpočet, server ohlásí dlouhé čekání a aplikace
+vzdá běh po 30 s bez známky života.
+
+### Přidáno
+- **Odpověď modelu jako příchozí zpráva** od interního odesílatele
+  **system-messenger** (`client/src/lib/system-messenger.ts`, Android
+  `fn/ModelIdentity`): jméno = název modelu, avatar = ikona modelu (lucide
+  nebo jedno emoji) v kroužku barvy podle klíčového slova, **cituje příkaz**
+  (klepnutí skočí na příkaz). Odpověď do místnosti odesílá dál aplikace
+  volajícího (šifrovaně, podepsaná jím) — ostatní ji vidí jako odpověď modelu
+  s řádkem **„přes <jméno>“** a citací jen `/klíčové-slovo` (bez parametrů).
+  `system-messenger`, `system-messenger:*` a `function:*` peer jako
+  odesílatele použít nesmí (web `validate.ts`, Android `ModelIdentity`).
+- **Bublina odpovědi** podle obsahu, široká (web `min(92 %, 760 px)`),
+  tabulky a kód se posouvají uvnitř; proměnné rozvržení `$fnAnswer`,
+  `$fnFailed`, `$modelAnswer`, `$modelKeyword`, `$modelName`, `$via`.
+- **Kontrola parametrů před odesláním** (`checkCommandInputs`, Android
+  `fn/CommandCheck`): chybějící povinný parametr, špatný typ, rozsah, hodnota
+  nebo formát se na server nepošle — system-messenger odpoví kartou: co je
+  špatně, podpis (`/hlr <number> [format]`), tabulka parametrů s příklady,
+  návod modelu a příklad ke zkopírování. Prázdné volání modelu, jehož vstupy
+  jsou všechny volitelné (`/mail`, `/hlr`), projde a model se zeptá formulářem.
+- **Ikona a návod modelu** (`icon`, `usage` — nejvýš 500 znaků): pole *Icon*
+  (výběr ikon lucide a emoji, živý náhled odesílatele) a *Usage* v konzoli
+  *Functions › Models*; `GET /api/functions/commands` vrací `icon`, `usage`
+  a u vstupů `pattern`, `min`, `max`; `/help <příkaz>` vypíše návod.
+  Vestavěné balíčky 1.4.0 mají ikony a návody (dostanou je jednou i starší
+  instalace).
+- **Našeptávač** (web `lib/suggest.ts` + `CommandSuggest.tsx`, Android
+  `fn/Suggestions`, `fn/Fuzzy`, `fn/Usage`, `ui/parts/ComposerSuggest`):
+  volné hledání v klíči, názvu a popisu bez ohledu na diakritiku se
+  zvýrazněnou shodou; často a nedávno použité nahoře (paměť jen v tomto
+  prohlížeči / telefonu, pro každý účet zvlášť); sekce *Naposledy použité*,
+  *Příkazy*, *Lidé*, *Štítky*, *Hodnoty* s řádkem „+ n dalších"; řádek
+  příkazu s ikonou, názvem, popisem, podpisem a štítkem **Místnost** /
+  **Jen já**; podrobnost vybraného příkazu; klávesy ↑ ↓, PageUp / PageDown,
+  Home / End, Enter / Tab, Esc, **Ctrl+Mezerník**; ARIA combobox.
+  **Nápověda parametrů** nad polem: podpis se zvýrazněným parametrem, typ,
+  povinnost, příklad, hodnoty jako tlačítka, co ještě chybí (Android
+  `fn/ArgHint`).
+- **`/hlr` s číslem** (tel-hlr 1.1.0): `/hlr +420603123456` hned spustí dotaz
+  a ukáže výsledek, `/hlr` samo ukáže formulář, neplatné číslo chybu
+  a formulář předvyplněný tím, co volající napsal.
+- **Ohlášené čekání:** běh čekající na hostitele (DNS, HTTP, AI, telefonie…)
+  aspoň 10 s pošle událost `progress` („Waiting for DNS answers (3 of 17)…",
+  pole `waiting`), nejvýš každých 10 s (`FUNCTIONS_WAIT_NOTICE_MS`,
+  `FUNCTIONS_WAIT_EVERY_MS`).
+- Android: pole formuláře modelu podle typu (klávesnice čísla, e-mailu,
+  telefonu, přepínač ano / ne, víc řádků pro text).
+
+### Opraveno
+- **Zaseklý příkaz** (`/mail` bez parametru na loaderu): aplikace (web
+  `lib/fn-run.ts`, Android `fn/RunWatch`) vzdá běh, od kterého **30 s**
+  nepřišla žádná událost (pingy se nepočítají, otevřený formulář nebo NFC
+  hodiny zastaví, průběh je vynuluje): tečky zmizí, u příkazu je **červená
+  ikona s důvodem** a problikne „Chyba při provádění funkce modelu /…".
+  Každý konec streamu (chyba sítě, odmítnutí, přerušení, neúplná odpověď) se
+  vyřídí **právě jednou**; novější příkaz předchozí označí *Zrušeno*.
+- **DNS z funkcí má časový limit:** každý `m5.dns.resolve` nejvýš 4 s
+  (`FUNCTIONS_DNS_TIMEOUT_MS`, 250 ms – 15 s, volání může chtít vlastní
+  `timeoutMs`) a pak chyba `timeout`; `FUNCTIONS_DNS_SERVERS` určí jmenné
+  servery funkcí. Limit `m5.http` nově pokrývá i překlad jména.
+- **`/mail` skončí vždy** (rozpočet 20 s): co DNS nestihlo, je v odpovědi
+  „⏱ no answer in time" místo chybějícího záznamu.
+- **Odchod volajícího běh zruší** (odpojení se pozná na odpovědi, ne na
+  požadavku): otevřené dotazy skončí, HTTP a AI se přeruší, sandbox dostane
+  `cancel`, běh má stav `cancelled`.
+- **Streamovaný běh končí právě jednou** událostí `done` nebo `error`
+  (dřív mohla selhání při skládání odpovědi poslat druhý konec).
+- **Chybné parametry:** server ověří všechny vstupy a odpoví `400
+  bad-input` s `problems[]`, `command` (definice modelu) a `usageLine`; se
+  streamem jedinou událostí `error`. Tělo, které není JSON nebo je příliš
+  velké, dostane pod `/api/functions` kód `bad-json` / `too-large`.
+- Vestavěný model nainstalovaný vypnutý (telefonie, NFC) dostal při každé
+  aktualizaci druhý model místo převedení na novou verzi.
+
+### Změněno
+- Build výchozího designu potřebuje aplikaci 6.11 (`minAppCode` 61100 —
+  odpovědi od system-messenger, hodiny běhu, karta chybného volání,
+  našeptávač); starší telefony si nechají build, který mají.
+- Nové proměnné prostředí (všechny volitelné, i v instalátoru):
+  `FUNCTIONS_DNS_TIMEOUT_MS`, `FUNCTIONS_DNS_SERVERS`,
+  `FUNCTIONS_SSE_PING_MS`, `FUNCTIONS_WAIT_NOTICE_MS`,
+  `FUNCTIONS_WAIT_EVERY_MS` — `docs/deployment.md` › Přechod na 6.11.
+- Databáze modelů má sloupce `icon` a `usage` (migrace při startu, prázdné).
+
+### Testy
+- `npx vitest run`: 254 souborů, 3072 testů (4 přeskočené); E2E 72 / 72;
+  Android 630 testů JVM (`ModelIdentityTest`, `CommandCheckTest`,
+  `RunWatchTest`, `FuzzyTest`, `ArgHintTest`, `ModelFaceTest`,
+  `ModelAnswersTest` — sdílené vektory s webem), `lintDebug` 0 chyb.
+- E2E odhalilo, že naslouchání našeptávače ve fázi capture vracelo React
+  textové pole zpět (psaní do pole se ztrácelo) — opraveno ještě před
+  vydáním. Test `notify-server` padal náhodou: náhodný base64 šifrový text
+  mohl obsahovat „Bob".
+
+### Známá omezení
+- **Nic z 6.11 neběželo na telefonu** (odpovědi od system-messenger,
+  našeptávač, hodiny běhu) a `/hlr` s číslem neprošel skutečným
+  poskytovatelem (placený dotaz).
+- Odpověď do místnosti je dál zpráva člena (s „přes <jméno>"), ne serveru;
+  paměť našeptávače nepřechází mezi zařízeními.
+- 30 s je limit pro známku života, ne pro celý běh — model, který hlásí
+  průběh, může běžet déle (do limitů serveru).
+
 ## [6.10.0] – 2026-10-05
 
 **Šablony APDU jako úplná čtení typů karet (web i Android), gesta v chatu
