@@ -48,5 +48,7 @@ export function mountAdminRequestGuards(app: Express): void {
   // builder saves a whole menu, HTML blocks included. Only an administrator's
   // body is read at all (the routes check the role again).
   app.use("/api/admin/android/design", requireAdminToken(), express.json({ limit: "8mb" }));
+  // 6.14: the iOS design is the same size.
+  app.use("/api/admin/ios/design", requireAdminToken(), express.json({ limit: "8mb" }));
   app.use("/api/admin/menu-config", requireAdminToken(), express.json({ limit: "1mb" }));
 }
