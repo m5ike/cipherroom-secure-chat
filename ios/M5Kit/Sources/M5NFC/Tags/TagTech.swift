@@ -91,7 +91,9 @@ public enum TagTech {
 public enum NfcPlatform {
     /// The capabilities an op needs on a technology.
     public static func required(op: String, tech: String) -> NfcCapabilities {
-        if tech.hasPrefix("mifare-classic") && (op.hasPrefix("classic-") || op == "write-uid") { return op == "write-uid" ? [.mifareClassic, .rawFrames] : [.mifareClassic] }
+        // A MIFARE Classic tag is only reachable by a reader that speaks MIFARE Classic (Core NFC never hands one
+        // to the app, not even for its UID or NDEF) — every op of the technology needs it.
+        if tech.hasPrefix("mifare-classic") { return op == "write-uid" ? [.mifareClassic, .rawFrames] : [.mifareClassic] }
         switch op {
         case "scan", "read-uid", "read-public": return []
         case "ndef-read", "m5-read", "conn-read": return [.ndefRead]

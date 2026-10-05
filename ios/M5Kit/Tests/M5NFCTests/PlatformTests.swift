@@ -167,6 +167,9 @@ import Foundation
         for missing in [NfcCapabilities.mifareClassic, .rawFrames, .emulation, .paymentAids] { #expect(!iphone.contains(missing)) }
         #expect(NfcPlatform.limit(op: "classic-read", tech: NfcCatalog.mifareClassic1k, capabilities: iphone)?.contains("MIFARE Classic") == true)
         #expect(NfcPlatform.limit(op: "write-uid", tech: NfcCatalog.mifareClassic1k, capabilities: iphone) != nil)
+        for op in ["scan", "read-uid", "ndef-read", "ndef-write", "m5-read"] {
+            #expect(NfcPlatform.limit(op: op, tech: NfcCatalog.mifareClassic1k, capabilities: iphone)?.contains("MIFARE Classic") == true, "\(op)")
+        }
         #expect(NfcPlatform.limit(op: "m5-emulate", tech: NfcCatalog.m5cetCard, capabilities: iphone)?.contains("HCE") == true)
         #expect(NfcPlatform.limit(op: "m5-emulate", tech: NfcCatalog.m5cetCard, capabilities: iphone.union(.emulation)) == nil)
         #expect(NfcPlatform.limit(op: "emv-read", tech: NfcCatalog.emv, capabilities: iphone)?.contains("payment") == true)
@@ -175,7 +178,7 @@ import Foundation
         #expect(NfcPlatform.limit(op: "scan", tech: NfcCatalog.ndef, capabilities: .none) == nil)
         #expect(NfcPlatform.limit(op: "ndef-read", tech: NfcCatalog.ndef, capabilities: .none)?.contains("no NFC") == true)
         let classicOps = NfcPlatform.ops(for: NfcCatalog.mifareClassic1k, capabilities: iphone).map(\.id)
-        #expect(classicOps.contains("ndef-read") && !classicOps.contains("classic-read") && !classicOps.contains("write-uid"))
+        #expect(classicOps.isEmpty, "Core NFC never hands a MIFARE Classic tag to the app")
         #expect(NfcPlatform.ops(for: NfcCatalog.mifareClassic1k, capabilities: .android).count == NfcCatalog.ops(for: NfcCatalog.mifareClassic1k).count)
         let techs = NfcPlatform.technologies(capabilities: iphone)
         #expect(!techs.contains(NfcCatalog.mifareClassic1k) && !techs.contains(NfcCatalog.emv) && techs.contains(NfcCatalog.eid) && techs.contains(NfcCatalog.mifareDesfire))
