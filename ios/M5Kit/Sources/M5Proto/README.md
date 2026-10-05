@@ -69,7 +69,7 @@ hellos, the protocol-4 handshake, a message, its receipt, a reply, a private mes
 | `History`, `Resume`, `RecordVault`, `MemoryRecordVault` | `chat/History`, `Resume` | each room's log (record `hist-<hash>`), the resume secret |
 | `LockedRooms`, `LockInbox` | `chat/LockedRooms` | while locked: what arrives is sealed to the lock key (`M5Crypto.LockBox`) and merged at the unlock |
 | `PeerFacts`, `RoomPresence` | `chat/PeerFacts`, `RoomPresence` | usernames, accounts, away members, foreground / last seen |
-| `CallTrack`, `CallHistory`, `CallHistoryStore`, `ActivityLog` | `chat/CallTrack`, `CallHistory`, `ActivityLog` | call state steps, the call log, the activity log |
+| `CallTrack` (+ `Kind`, `millis`), `CallHistory`, `CallHistoryStore`, `ActivityLog` | `chat/CallTrack`, `CallHistory`, `ActivityLog` | call state steps, the call log (Android's JSON byte for byte, read as tolerantly as org.json), the activity log — the only implementation: the app's `AppCallHistory` (Platform/Calls) is a main-actor adapter over `CallHistoryStore` |
 | `SavedRoom`, `SavedRooms` | `chat/Rooms` (storage, Clone) | the user-tier record `rooms`; `cloneName`, `copy`, the NFC card of a room |
 
 The app implements `RecordVault` (`record`, `recordStrict` — nil for a damaged record, `put`, `delete`,

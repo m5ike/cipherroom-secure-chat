@@ -81,8 +81,11 @@ public enum B64 {
     public static func decodeTrimmed(_ s: String) -> Bytes? { decode(s.trimmingCharacters(in: .whitespacesAndNewlines)) }
 }
 
+/// Hex text ↔ bytes. `encode` writes lower case (the protocol's, Crypto.hex); `upper`
+/// writes upper case as Android's `Apdu.hex` (APDUs, card dumps — M5NFC).
 public enum Hex {
     private static let digits = Array("0123456789abcdef".utf8)
+    private static let upperDigits = Array("0123456789ABCDEF".utf8)
 
     /// Lower-case hex.
     public static func encode(_ data: Bytes) -> String {
@@ -92,27 +95,65 @@ public enum Hex {
         return String(decoding: out, as: UTF8.self)
     }
 
+    /// Upper-case hex, two digits per byte ("00A4…") — `Apdu.hex`.
+    public static func upper<S: Sequence>(_ bytes: S) -> String where S.Element == UInt8 {
+        var out = [UInt8]()
+        out.reserveCapacity(bytes.underestimatedCount * 2)
+        for b in bytes { out.append(upperDigits[Int(b >> 4)]); out.append(upperDigits[Int(b & 15)]) }
+        return String(decoding: out, as: UTF8.self)
+    }
+
     /// Hex (either case) to bytes; nil for an odd length or another character.
     public static func decode(_ s: String) -> Bytes? {
         let c = Array(s.utf8)
         if c.count % 2 != 0 { return nil }
         var out = Bytes()
         out.reserveCapacity(c.count / 2)
-        func v(_ x: UInt8) -> UInt8? {
-            switch x {
-            case 48...57: return x - 48
-            case 97...102: return x - 87
-            case 65...70: return x - 55
-            default: return nil
-            }
-        }
         var i = 0
         while i < c.count {
-            guard let hi = v(c[i]), let lo = v(c[i + 1]) else { return nil }
+            guard let hi = nibble(c[i]), let lo = nibble(c[i + 1]) else { return nil }
             out.append(hi << 4 | lo)
             i += 2
         }
         return out
+    }
+
+    /// Lenient decode (`Apdu.unhex`): "0x" prefixes and anything that is not a hex
+    /// digit are dropped, then the digits are read in pairs (an odd last digit is ignored).
+    public static func decodeLenient(_ text: String) -> Bytes {
+        var nibbles = [UInt8]()
+        nibbles.reserveCapacity(text.utf8.count)
+        let u = Array(text.utf8)
+        var i = 0
+        while i < u.count {
+            let c = u[i]
+            // "0x" / "0X" — dropped wherever it appears, as replaceAll("(?i)0x", "").
+            if c == 0x30, i + 1 < u.count, u[i + 1] == 0x78 || u[i + 1] == 0x58 { i += 2; continue }
+            if let v = nibble(c) { nibbles.append(v) }
+            i += 1
+        }
+        var out = Bytes()
+        out.reserveCapacity(nibbles.count / 2)
+        var j = 0
+        while j + 1 < nibbles.count { out.append(nibbles[j] << 4 | nibbles[j + 1]); j += 2 }
+        return out
+    }
+
+    /// Whether `text` is whole bytes of upper-case hex (`([0-9A-F]{2})+`).
+    public static func isUpperHexBytes(_ text: String) -> Bool {
+        let u = text.utf8
+        guard !u.isEmpty, u.count % 2 == 0 else { return false }
+        return u.allSatisfy { ($0 >= 0x30 && $0 <= 0x39) || ($0 >= 0x41 && $0 <= 0x46) }
+    }
+
+    /// One hex digit's value (either case); nil for anything else.
+    public static func nibble(_ c: UInt8) -> UInt8? {
+        switch c {
+        case 0x30...0x39: return c - 0x30
+        case 0x41...0x46: return c - 0x41 + 10
+        case 0x61...0x66: return c - 0x61 + 10
+        default: return nil
+        }
     }
 }
 
@@ -153,6 +194,109 @@ public enum ByteOps {
     /// Big-endian bytes of an unsigned integer.
     public static func be64(_ v: UInt64) -> Bytes { (0..<8).map { UInt8(truncatingIfNeeded: v >> (56 - 8 * UInt64($0))) } }
     public static func be32(_ v: UInt32) -> Bytes { (0..<4).map { UInt8(truncatingIfNeeded: v >> (24 - 8 * UInt32($0))) } }
+}
+
+/* ------------------------------------------------------- Bytes.… helpers */
+
+// `Bytes.u8(…)`, `Bytes.slice(…)`, `Bytes.b64(data)` … — the byte helpers M5NFC
+// (Android's Apdu.concat / slice / u8, Latin-1 and ASCII text) and M5Net (the
+// wire's `Data`: base64 as the server's Buffer reads it, hex, constant-time
+// equality) call through the `Bytes` alias. One home for every module, so a
+// file that imports several of them sees one meaning. SHA-256 and random
+// bytes for `Data` are M5Crypto's (`Bytes.sha256`, `Bytes.random`).
+public extension Array where Element == UInt8 {
+    /// Bytes from small integers, each masked to 8 bits (`Apdu.u8`).
+    static func u8(_ values: Int...) -> Bytes { values.map { UInt8(truncatingIfNeeded: $0) } }
+
+    /// a ‖ b ‖ … (`Apdu.concat`; the same as `ByteOps.concat`).
+    static func concat(_ parts: Bytes...) -> Bytes { ByteOps.concat(parts) }
+    static func concat(_ parts: [Bytes]) -> Bytes { ByteOps.concat(parts) }
+
+    /// `a[from..<to]`, clamped to the array (never traps), as `Apdu.slice`.
+    static func slice(_ a: Bytes, _ from: Int, _ to: Int? = nil) -> Bytes {
+        let lo = Swift.max(0, from)
+        var hi = Swift.min(a.count, to ?? a.count)
+        if hi < lo { hi = lo }
+        if lo >= a.count { return [] }
+        return Array(a[lo..<hi])
+    }
+
+    /// ASCII / Latin-1 bytes of a string (each scalar's low byte, as Java's US_ASCII / ISO_8859_1 for 0–255).
+    static func latin1(_ s: String) -> Bytes { s.unicodeScalars.map { UInt8(truncatingIfNeeded: $0.value) } }
+
+    /// The bytes as ISO 8859-1 text (every byte one character).
+    static func latin1String(_ b: Bytes) -> String {
+        var s = String.UnicodeScalarView()
+        for x in b { s.append(Unicode.Scalar(x)) }
+        return String(s)
+    }
+
+    /// ASCII text of the bytes (Java `new String(b, US_ASCII)`: a byte above 0x7F becomes U+FFFD).
+    static func asciiString(_ b: Bytes) -> String {
+        var s = String.UnicodeScalarView()
+        for x in b { s.append(x < 0x80 ? Unicode.Scalar(x) : "\u{FFFD}") }
+        return String(s)
+    }
+
+    /// The UTF-8 bytes of a string.
+    static func utf8(_ s: String) -> Bytes { UTF8Text.bytes(s) }
+
+    /// Constant-time comparison of two byte strings (MessageDigest.isEqual; `ByteOps.ctEqual`).
+    static func constantTimeEqual(_ a: Bytes, _ b: Bytes) -> Bool { ByteOps.ctEqual(a, b) }
+
+    /// `n` bytes of `value`.
+    static func filled(_ n: Int, _ value: UInt8) -> Bytes { Bytes(repeating: value, count: Swift.max(0, n)) }
+
+    /* ------------------------------------------------- Data (the wire) */
+
+    /// Standard base64 with padding (Buffer.toString("base64")).
+    static func b64(_ data: Data) -> String { data.base64EncodedString() }
+
+    /// base64url without padding (Buffer.toString("base64url")).
+    static func b64url(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    /// Standard base64 (padding optional, spaces around it ignored); nil when it is not base64.
+    static func unb64(_ s: String) -> Data? {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        guard t.range(of: "^[A-Za-z0-9+/]*={0,2}$", options: .regularExpression) != nil else { return nil }
+        var padded = t
+        while padded.count % 4 != 0 { padded += "=" }
+        return Data(base64Encoded: padded)
+    }
+
+    /// base64url (padding tolerated); nil when it is not base64url.
+    static func unb64url(_ s: String) -> Data? {
+        let t = s.replacingOccurrences(of: "=", with: "")
+        guard t.range(of: "^[A-Za-z0-9_-]*$", options: .regularExpression) != nil, t.count % 4 != 1 else { return nil }
+        var std = t.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
+        while std.count % 4 != 0 { std += "=" }
+        return Data(base64Encoded: std)
+    }
+
+    /// Either alphabet (what Buffer.from(x, "base64") accepts in practice).
+    static func unb64any(_ s: String) -> Data? { unb64(s) ?? unb64url(s) }
+
+    /// Lower-case hex (`Hex.encode`).
+    static func hex(_ data: Data) -> String { Hex.encode(Array(data)) }
+
+    /// Hex (either case) to bytes; nil for an odd length or another character (`Hex.decode`).
+    static func unhex(_ s: String) -> Data? { Hex.decode(s).map { Data($0) } }
+
+    /// Constant-time equality (`ByteOps.ctEqual`).
+    static func same(_ a: Data, _ b: Data) -> Bool { ByteOps.ctEqual(Array(a), Array(b)) }
+    static func same(_ a: String, _ b: String) -> Bool { ByteOps.ctEqual(Array(a.utf8), Array(b.utf8)) }
+
+    /// Big-endian u32 at `at` (nil when out of range).
+    static func be32(_ d: Data, _ at: Int) -> UInt32? {
+        guard at >= 0, at + 4 <= d.count else { return nil }
+        let s = d.startIndex + at
+        return UInt32(d[s]) << 24 | UInt32(d[s + 1]) << 16 | UInt32(d[s + 2]) << 8 | UInt32(d[s + 3])
+    }
 }
 
 public enum Ordinal {

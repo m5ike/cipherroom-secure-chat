@@ -3,8 +3,10 @@
 // code and body, the share invitation sealed by the web; format 1 against test/fixtures/android-interop.json;
 // the M5Cet card (M5CardTest.java + the interop fixture), byte for byte.
 //
-// Argon2id is M5Crypto's: the offline tags' keys come from the vectors' `argon2idKeyHex` (VectorKdf); a real
-// Argon2id run is integration-tested once the app wires `TagKdf` to M5Crypto.
+// The format and its crypto are M5Crypto's `TagV2` / `ShareInvite` / `ConnTag` (one implementation, its own
+// vector tests in M5CryptoTests); these run the same vectors through M5NFC's face of it (`NfcTagV2`,
+// `NfcShareInvite`, `NfcConnTag`) with its seams. The offline tags' keys come from the vectors'
+// `argon2idKeyHex` (VectorKdf); `Argon2TagKdf` (M5Crypto's Argon2id) runs on the cheap vector.
 
 import Testing
 import Foundation
@@ -68,61 +70,72 @@ final class FakeShareServer: ShareInviteHTTP, @unchecked Sendable {
         #expect(cases.count == 2)
         for c in cases {
             let m = c.optObject("kdf")!.optInt("memoryKiB"), passes = c.optObject("kdf")!.optInt("passes")
-            #expect(TagV2.normalize(c.optString("code"), TagV2.offlineCodeSymbols) == c.optString("canonicalCode"))
-            #expect(TagV2.format(c.optString("canonicalCode")) == c.optString("code"))
+            #expect(NfcTagV2.normalize(c.optString("code"), NfcTagV2.offlineCodeSymbols) == c.optString("canonicalCode"))
+            #expect(NfcTagV2.format(c.optString("canonicalCode")) == c.optString("code"))
             let tag = c.optObject("tag")!
-            #expect(H(try TagV2.offlineKey(code: c.optString("canonicalCode"), m: m, i: passes, s: tag.optString("s"), kdf: TagVectors.kdf)) == JSText.upperASCII(c.optString("argon2idKeyHex")))
-            #expect(String(decoding: TagV2.offlineAad(m, passes, tag.optString("s")), as: UTF8.self) == c.optString("aad"))
+            #expect(H(try NfcTagV2.offlineKey(code: c.optString("canonicalCode"), m: m, i: passes, s: tag.optString("s"), kdf: TagVectors.kdf)) == JSText.upperASCII(c.optString("argon2idKeyHex")))
+            #expect(String(decoding: NfcTagV2.offlineAad(m, passes, tag.optString("s")), as: UTF8.self) == c.optString("aad"))
             let plain = try NfcJSON.parse(c.optString("plaintext")).objectValue!
-            let sealed = try TagV2.sealOffline(TagV2.Room(room: plain.optString("room"), passphrase: plain.optString("passphrase"), name: plain.optString("name")),
+            let sealed = try NfcTagV2.sealOffline(NfcTagV2.Room(room: plain.optString("room"), passphrase: plain.optString("passphrase"), name: plain.optString("name")),
                                                code: c.optString("code"), m: m, i: passes, kdf: TagVectors.kdf, salt: b(c.optString("saltHex")), iv: b(c.optString("ivHex")))
-            #expect(TagV2.serialize(sealed) == c.optString("body"))
-            let parsed = try TagV2.parse(c.optString("body"))
-            #expect(TagV2.serialize(parsed) == c.optString("body"))
-            let room = try TagV2.openOffline(parsed, code: c.optString("code").lowercased().replacingOccurrences(of: "-", with: " "), kdf: TagVectors.kdf)
+            #expect(NfcTagV2.serialize(sealed) == c.optString("body"))
+            let parsed = try NfcTagV2.parse(c.optString("body"))
+            #expect(NfcTagV2.serialize(parsed) == c.optString("body"))
+            let room = try NfcTagV2.openOffline(parsed, code: c.optString("code").lowercased().replacingOccurrences(of: "-", with: " "), kdf: TagVectors.kdf)
             #expect(room.room == "brno-secure")
             #expect(room.passphrase == plain.optString("passphrase"))
             #expect(room.name == "Alice")
             // A wrong code, or a changed parameter (it is in the AAD), fails.
-            let e = #expect(throws: TagV2.TagError.self) { try TagV2.openOffline(parsed, code: "7K3QD-M9X2V-PH4TW-8RZ6P", kdf: TagVectors.kdf) }
+            let e = #expect(throws: NfcTagV2.TagError.self) { try NfcTagV2.openOffline(parsed, code: "7K3QD-M9X2V-PH4TW-8RZ6P", kdf: TagVectors.kdf) }
             #expect(e?.code == "auth-failed")
             if m == 64 {
                 let other = c.optString("body").replacingOccurrences(of: "\"i\":1", with: "\"i\":2")
-                let e2 = #expect(throws: TagV2.TagError.self) { try TagV2.openOffline(try TagV2.parse(other), code: c.optString("code"), kdf: TagVectors.kdf) }
+                let e2 = #expect(throws: NfcTagV2.TagError.self) { try NfcTagV2.openOffline(try NfcTagV2.parse(other), code: c.optString("code"), kdf: TagVectors.kdf) }
                 #expect(e2?.code == "auth-failed")
             }
         }
     }
 
+    /// `Argon2TagKdf` is M5Crypto's Argon2id: the 64 KiB vector's key, and the tag opens with it.
+    @Test func theArgon2KdfIsM5Cryptos() async throws {
+        let c = try #require(TagVectors.v.objects("offline").first { $0.optObject("kdf")?.optInt("memoryKiB") == 64 })
+        let kd = c.optObject("kdf")!, tag = c.optObject("tag")!
+        let key = try NfcTagV2.offlineKey(code: c.optString("canonicalCode"), m: kd.optInt("memoryKiB"), i: kd.optInt("passes"), s: tag.optString("s"), kdf: Argon2TagKdf())
+        #expect(H(key) == JSText.upperASCII(c.optString("argon2idKeyHex")))
+        let r = await NfcConnTag.open(c.optString("body"), secret: c.optString("code"), trustedOrigin: "", kdf: Argon2TagKdf(), http: nil)
+        #expect(r.format == "v2-off" && r.room?.room == "brno-secure")
+        #expect(r.json.optString("format") == "v2-off" && r.json.optObject("room")?.optString("room") == "brno-secure")
+    }
+
     @Test func invitationKeysAndBody() throws {
         let v = TagVectors.v.optObject("invite")!
-        let keys = try TagV2.inviteKeys(id: v.optString("id"), k: v.optString("k"))
+        let keys = try NfcTagV2.inviteKeys(id: v.optString("id"), k: v.optString("k"))
         #expect(H(keys.linkKey) == JSText.upperASCII(v.optString("linkKeyHex")))
         #expect(keys.code == v.optString("code"))
-        let tag = try TagV2.parse(v.optString("body"))
+        let tag = try NfcTagV2.parse(v.optString("body"))
         #expect(tag.invite)
         #expect(tag.o == v.optString("origin"))
-        #expect(TagV2.serialize(tag) == v.optString("body"))
+        #expect(NfcTagV2.serialize(tag) == v.optString("body"))
     }
 
     @Test func codesAndOrigins() throws {
-        #expect(TagV2.normalize("o123-4567-89ab-cdef-ghjk-mnpq-rs", 26) == "0123456789ABCDEFGHJKMNPQRS")
-        #expect(TagV2.normalize("iIlL", 4) == "1111")
-        #expect(TagV2.normalize("UUUU", 4) == nil)
-        #expect(TagV2.normalize("ABC", 4) == nil)
-        #expect(TagV2.newCode().count == 20)
-        #expect(TagV2.normalize(TagV2.newCode(), 20) != nil)
-        #expect(TagV2.safeOrigin("https://chat.example.org/") == "https://chat.example.org")
-        #expect(TagV2.safeOrigin("https://chat.example.org:8443") == "https://chat.example.org:8443")
-        #expect(TagV2.safeOrigin("https://chat.example.org:443") == "https://chat.example.org")
-        #expect(TagV2.safeOrigin("http://localhost:5173") == "http://localhost:5173")
-        #expect(TagV2.safeOrigin("http://[::1]:8080") == "http://[::1]:8080")
-        #expect(TagV2.safeOrigin("http://chat.example.org") == nil)
-        #expect(TagV2.safeOrigin("https://user:pw@chat.example.org") == nil)
-        #expect(TagV2.safeOrigin("ftp://x") == nil)
-        let inv = try TagV2.newInvite(origin: "https://chat.example.org/")
+        #expect(NfcTagV2.normalize("o123-4567-89ab-cdef-ghjk-mnpq-rs", 26) == "0123456789ABCDEFGHJKMNPQRS")
+        #expect(NfcTagV2.normalize("iIlL", 4) == "1111")
+        #expect(NfcTagV2.normalize("UUUU", 4) == nil)
+        #expect(NfcTagV2.normalize("ABC", 4) == nil)
+        #expect(NfcTagV2.newCode().count == 20)
+        #expect(NfcTagV2.normalize(NfcTagV2.newCode(), 20) != nil)
+        #expect(NfcTagV2.safeOrigin("https://chat.example.org/") == "https://chat.example.org")
+        #expect(NfcTagV2.safeOrigin("https://chat.example.org:8443") == "https://chat.example.org:8443")
+        #expect(NfcTagV2.safeOrigin("https://chat.example.org:443") == "https://chat.example.org")
+        #expect(NfcTagV2.safeOrigin("http://localhost:5173") == "http://localhost:5173")
+        #expect(NfcTagV2.safeOrigin("http://[::1]:8080") == "http://[::1]:8080")
+        #expect(NfcTagV2.safeOrigin("http://chat.example.org") == nil)
+        #expect(NfcTagV2.safeOrigin("https://user:pw@chat.example.org") == nil)
+        #expect(NfcTagV2.safeOrigin("ftp://x") == nil)
+        let inv = try NfcTagV2.newInvite(origin: "https://chat.example.org/")
         #expect(inv.k?.count == 26)
-        #expect(try TagV2.parse(TagV2.serialize(inv)).k == inv.k)
+        #expect(try NfcTagV2.parse(NfcTagV2.serialize(inv)).k == inv.k)
     }
 
     @Test func malformedTagsAreRefused() {
@@ -135,7 +148,7 @@ final class FakeShareServer: ShareInviteHTTP, @unchecked Sendable {
             "m5cet:nfc:v2:not json",
         ]
         for body in bad {
-            let e = #expect(throws: TagV2.TagError.self) { try TagV2.parse(body) }
+            let e = #expect(throws: NfcTagV2.TagError.self) { try NfcTagV2.parse(body) }
             #expect(e?.code == "card-error", "\(body)")
         }
     }
@@ -143,10 +156,10 @@ final class FakeShareServer: ShareInviteHTTP, @unchecked Sendable {
     /// The share invitation an invitation tag rides on: sealed by the web (lib/share-link.ts), opened here; the proof the server checks.
     @Test func shareInvitationSealedByTheWeb() throws {
         let id = "QEFCQ0RFRkdISUpLTE1OTw", k = "0123456789ABCDEFGHJKMNPQRS"
-        let keys = try TagV2.inviteKeys(id: id, k: k)
+        let keys = try NfcTagV2.inviteKeys(id: id, k: k)
         #expect(keys.code == "752592939447")
-        #expect(try ShareInvite.proof(code: keys.code, id: id) == "-CygMqG2SOyIRHk4g4XR2HWNgzHOjNePieK-7EJxSpU")
-        let room = try ShareInvite.open(code: keys.code, id: id, linkKey: keys.linkKey, serverKey: try TagV2.fromB64url("AwoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dw"),
+        #expect(try NfcShareInvite.proof(code: keys.code, id: id) == "-CygMqG2SOyIRHk4g4XR2HWNgzHOjNePieK-7EJxSpU")
+        let room = try NfcShareInvite.open(code: keys.code, id: id, linkKey: keys.linkKey, serverKey: try NfcTagV2.fromB64url("AwoRGB8mLTQ7QklQV15lbHN6gYiPlp2kq7K5wMfO1dw"),
                                         iv: "fPLXx5czTcWqq7V6",
                                         ciphertext: "rPVoM_mA633NCAnepDQ1fG6wd_fVRD_N2CgySRhI4W79D6wKQSfdrhrZewZ3RFeB3flN4mZYCEaDkhDkClE5hYxCV5Ez9Evc8u2Bc_mmqtgiaM1l2xdYaXKvHPjVWpWOKtAP1amA4YRqYJQOOLE-cLRCW98uFcVKE2HctqwCneA")
         #expect(room.room == "brno-secure")
@@ -154,66 +167,66 @@ final class FakeShareServer: ShareInviteHTTP, @unchecked Sendable {
         // And back: what this app seals opens with the same keys.
         var serverKey = [UInt8](repeating: 0, count: 32)
         serverKey[3] = 9
-        let sealed = try ShareInvite.seal(code: keys.code, id: id, linkKey: keys.linkKey, serverKey: serverKey, payload: ["v": 1, "room": "r", "passphrase": "p", "name": "n", "createdAt": 1])
-        #expect(try ShareInvite.open(code: keys.code, id: id, linkKey: keys.linkKey, serverKey: serverKey, iv: sealed.iv, ciphertext: sealed.ciphertext).room == "r")
-        #expect(throws: NfcError.self) { try ShareInvite.open(code: "000000000000", id: id, linkKey: keys.linkKey, serverKey: serverKey, iv: sealed.iv, ciphertext: sealed.ciphertext) }
+        let sealed = try NfcShareInvite.seal(code: keys.code, id: id, linkKey: keys.linkKey, serverKey: serverKey, payload: ["v": 1, "room": "r", "passphrase": "p", "name": "n", "createdAt": 1])
+        #expect(try NfcShareInvite.open(code: keys.code, id: id, linkKey: keys.linkKey, serverKey: serverKey, iv: sealed.iv, ciphertext: sealed.ciphertext).room == "r")
+        #expect(throws: NfcError.self) { try NfcShareInvite.open(code: "000000000000", id: id, linkKey: keys.linkKey, serverKey: serverKey, iv: sealed.iv, ciphertext: sealed.ciphertext) }
     }
 
     @Test func readingFormatsAndTheWeakOldTag() async throws {
         let c = TagVectors.v.objects("offline")[0]
-        var r = await ConnTag.open(c.optString("body"), secret: "", trustedOrigin: "https://chat.example.org", kdf: TagVectors.kdf, http: nil)
+        var r = await NfcConnTag.open(c.optString("body"), secret: "", trustedOrigin: "https://chat.example.org", kdf: TagVectors.kdf, http: nil)
         #expect(r.format == "v2-off" && r.need == "code")
-        r = await ConnTag.open(c.optString("body"), secret: c.optString("code"), trustedOrigin: "https://chat.example.org", kdf: TagVectors.kdf, http: nil)
+        r = await NfcConnTag.open(c.optString("body"), secret: c.optString("code"), trustedOrigin: "https://chat.example.org", kdf: TagVectors.kdf, http: nil)
         #expect(r.room?.room == "brno-secure")
         #expect(!r.weak)
-        r = await ConnTag.open(c.optString("body"), secret: "7K3QD-M9X2V-PH4TW-8RZ6P", trustedOrigin: "", kdf: TagVectors.kdf, http: nil)
+        r = await NfcConnTag.open(c.optString("body"), secret: "7K3QD-M9X2V-PH4TW-8RZ6P", trustedOrigin: "", kdf: TagVectors.kdf, http: nil)
         #expect(r.error == "wrong-code")
         // An invitation of another server is not redeemed here.
         let inviteBody = TagVectors.v.optObject("invite")!.optString("body")
-        r = await ConnTag.open(inviteBody, secret: "", trustedOrigin: "https://other.example", kdf: TagVectors.kdf, http: nil)
+        r = await NfcConnTag.open(inviteBody, secret: "", trustedOrigin: "https://other.example", kdf: TagVectors.kdf, http: nil)
         #expect(r.error == "other-server")
         #expect(r.origin == "https://chat.example.org")
-        r = await ConnTag.open(inviteBody, secret: "", trustedOrigin: "https://chat.example.org", redeem: false, kdf: TagVectors.kdf, http: nil)
+        r = await NfcConnTag.open(inviteBody, secret: "", trustedOrigin: "https://chat.example.org", redeem: false, kdf: TagVectors.kdf, http: nil)
         #expect(r.need == "redeem")
         // Format 1 still opens with its PIN — marked weak.
         let v1 = try ConnectionCard.sealV1(["v": 1, "room": "old-room", "passphrase": "old-pass"], pin: "4321")
-        r = await ConnTag.open(v1, secret: "", trustedOrigin: "", kdf: TagVectors.kdf, http: nil)
+        r = await NfcConnTag.open(v1, secret: "", trustedOrigin: "", kdf: TagVectors.kdf, http: nil)
         #expect(r.format == "v1" && r.weak && r.need == "pin")
-        r = await ConnTag.open(v1, secret: "4321", trustedOrigin: "", kdf: TagVectors.kdf, http: nil)
+        r = await NfcConnTag.open(v1, secret: "4321", trustedOrigin: "", kdf: TagVectors.kdf, http: nil)
         #expect(r.room?.room == "old-room" && r.weak)
-        #expect(await ConnTag.open(v1, secret: "1234", trustedOrigin: "", kdf: TagVectors.kdf, http: nil).error == "wrong-pin")
-        #expect(await ConnTag.open("hello", secret: "", trustedOrigin: "", kdf: TagVectors.kdf, http: nil).format == "")
+        #expect(await NfcConnTag.open(v1, secret: "1234", trustedOrigin: "", kdf: TagVectors.kdf, http: nil).error == "wrong-pin")
+        #expect(await NfcConnTag.open("hello", secret: "", trustedOrigin: "", kdf: TagVectors.kdf, http: nil).format == "")
     }
 
     /// An invitation end to end: prepared (created on the server), read back and redeemed; a second server's tag is not.
     @Test func anInvitationIsCreatedAndRedeemedOnTheServer() async throws {
         let server = FakeShareServer()
-        let p = try await ConnTag.prepare(["room": "team", "passphrase": "pass", "name": "Alice"], kind: "inv", origin: "https://chat.example.org/", appVersion: "6.14.0", kdf: TagVectors.kdf, http: server)
+        let p = try await NfcConnTag.prepare(["room": "team", "passphrase": "pass", "name": "Alice"], kind: "inv", origin: "https://chat.example.org/", appVersion: "6.14.0", kdf: TagVectors.kdf, http: server)
         #expect(p.code == nil && p.expiresAt == 1_900_000_000_000)
-        #expect(p.body.hasPrefix(TagV2.prefix + "{\"v\":2,\"t\":\"inv\",\"o\":\"https://chat.example.org\""))
-        let r = await ConnTag.open(p.body, secret: "", trustedOrigin: "https://chat.example.org", kdf: TagVectors.kdf, http: server)
+        #expect(p.body.hasPrefix(NfcTagV2.prefix + "{\"v\":2,\"t\":\"inv\",\"o\":\"https://chat.example.org\""))
+        let r = await NfcConnTag.open(p.body, secret: "", trustedOrigin: "https://chat.example.org", kdf: TagVectors.kdf, http: server)
         #expect(r.format == "v2-inv")
         #expect(r.room?.room == "team" && r.room?.passphrase == "pass")
         #expect(r.room?.name == "guest") // a reader keeps its own name: the writer's nickname is not handed out
         #expect(server.posts == ["https://chat.example.org/api/share/create", "https://chat.example.org/api/share/redeem"])
         // An unknown invite: the server's reason.
-        let unknown = TagV2.serialize(try TagV2.newInvite(origin: "https://chat.example.org"))
-        #expect(await ConnTag.open(unknown, secret: "", trustedOrigin: "https://chat.example.org", kdf: TagVectors.kdf, http: server).error == "not-found")
+        let unknown = NfcTagV2.serialize(try NfcTagV2.newInvite(origin: "https://chat.example.org"))
+        #expect(await NfcConnTag.open(unknown, secret: "", trustedOrigin: "https://chat.example.org", kdf: TagVectors.kdf, http: server).error == "not-found")
     }
 
     @Test func anOfflineTagIsPreparedWithTheRoomKdfsCostAndOpensWithItsCode() async throws {
-        let p = try await ConnTag.prepare(["room": "team", "passphrase": "pass"], kind: "off", origin: "", appVersion: "6.14.0", kdf: TagVectors.kdf, http: nil)
+        let p = try await NfcConnTag.prepare(["room": "team", "passphrase": "pass"], kind: "off", origin: "", appVersion: "6.14.0", kdf: TagVectors.kdf, http: nil)
         let code = try #require(p.code)
         #expect(code.count == 23) // 20 symbols in groups of five
-        let tag = try TagV2.parse(p.body)
-        #expect(tag.m == TagV2.writeMemoryKiB && tag.i == TagV2.writePasses)
-        let r = await ConnTag.open(p.body, secret: code, trustedOrigin: "", kdf: TagVectors.kdf, http: nil)
+        let tag = try NfcTagV2.parse(p.body)
+        #expect(tag.m == NfcTagV2.writeMemoryKiB && tag.i == NfcTagV2.writePasses)
+        let r = await NfcConnTag.open(p.body, secret: code, trustedOrigin: "", kdf: TagVectors.kdf, http: nil)
         #expect(r.room?.room == "team" && r.room?.app == "6.14.0")
     }
 
     @Test func jsonQuotingIsJavaScripts() {
-        #expect(TagV2.quote("a/b") == "\"a/b\"")
-        #expect(TagV2.quote("\"\\\n\u{01}ž😀") == "\"\\\"\\\\\\n\\u0001ž😀\"")
+        #expect(NfcTagV2.quote("a/b") == "\"a/b\"")
+        #expect(NfcTagV2.quote("\"\\\n\u{01}ž😀") == "\"\\\"\\\\\\n\\u0001ž😀\"")
     }
 
     /// Format 1 written by the web (test/fixtures/android-interop.json "nfc") opens here with its PIN.

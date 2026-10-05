@@ -17,6 +17,7 @@
 // (entitlement format "PACE"); the protocol itself runs here, over the transport's APDUs.
 
 import Foundation
+import M5Core
 
 /// Why PACE did not open the document (PaceProtocol.PaceException).
 public struct PaceError: Error, Sendable, CustomStringConvertible, LocalizedError {

@@ -3,6 +3,7 @@
 
 import Foundation
 @testable import M5NFC
+import M5Core
 
 enum Repo {
     /// The repository root: Tests/M5NFCTests/Support.swift → ../../../../
@@ -14,8 +15,8 @@ enum Repo {
     static func text(_ path: String) throws -> String { String(decoding: try data(path), as: UTF8.self) }
 }
 
-func b(_ h: String) -> [UInt8] { Hex.decode(h) }
-func H(_ u: [UInt8]) -> String { Hex.encode(u) }
+func b(_ h: String) -> [UInt8] { Hex.decodeLenient(h) }
+func H(_ u: [UInt8]) -> String { Hex.upper(u) }
 func ascii(_ s: String) -> [UInt8] { Bytes.latin1(s) }
 func u8(_ v: Int...) -> [UInt8] { v.map { UInt8(truncatingIfNeeded: $0) } }
 func fill(_ n: Int, _ v: Int) -> [UInt8] { [UInt8](repeating: UInt8(v), count: n) }

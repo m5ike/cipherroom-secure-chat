@@ -7,6 +7,7 @@
 // (`NfcCapabilities.desfire`) — no AID is needed. Nothing here authenticates or writes.
 
 import Foundation
+import M5Core
 
 public enum Desfire {
     /// The native read commands (G-18 allows exactly these: ApduTemplates.readOnlyCommands["desfire"]).
@@ -57,8 +58,8 @@ public enum Desfire {
             var o: NfcJSONObject = ["vendor": .string(vendorName), "product": .string(product), "hardware": .string("\(major).\(minor)"),
                                     "storage": .string(storageText), "protocol": .string(String(format: "%02X", protocolType))]
             if let a = swMajor, let b = swMinor { o["software"] = .string("\(a).\(b)") }
-            if let u = uid { o["uid"] = .string(Hex.encode(u)) }
-            if let b = batch { o["batch"] = .string(Hex.encode(b)) }
+            if let u = uid { o["uid"] = .string(Hex.upper(u)) }
+            if let b = batch { o["batch"] = .string(Hex.upper(b)) }
             if let w = week, let y = year, w > 0 || y > 2000 { o["produced"] = .string("\(y)-W\(w)") }
             return o
         }
@@ -115,7 +116,7 @@ public enum Desfire {
     public static func readInfo(_ t: any ApduChannel) async throws -> NfcJSONObject {
         var out = NfcJSONObject()
         let v = try await command(t, getVersion)
-        if v.sw == 0x9100, let version = Version(v.data) { out["version"] = .object(version.json); out["versionHex"] = .string(Hex.encode(v.data)) }
+        if v.sw == 0x9100, let version = Version(v.data) { out["version"] = .object(version.json); out["versionHex"] = .string(Hex.upper(v.data)) }
         let a = try await command(t, getApplicationIds)
         out["applications"] = NfcJSON(a.sw >> 8 == 0x91 ? applicationIds(a.data) : [])
         let f = try await command(t, getFreeMemory)

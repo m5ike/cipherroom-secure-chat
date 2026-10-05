@@ -14,6 +14,7 @@
 // "X" throughout. Hex keeps its length, so JSON stays valid. Pure. Never weaken.
 
 import Foundation
+import M5Core
 
 public enum PanMask {
     /// The elements that carry the card number or track data.
@@ -38,7 +39,7 @@ public enum PanMask {
     }
 
     /// "54…" → "3534…": text as ASCII, in hex.
-    public static func asciiHex(_ s: String) -> String { Hex.encode(Bytes.latin1(s)) }
+    public static func asciiHex(_ s: String) -> String { Hex.upper(Bytes.latin1(s)) }
 
     static func maskedAsciiHex(_ pan: String) -> String { asciiHex(String(pan.prefix(6))) + xs((pan.count - 10) * 2) + asciiHex(String(pan.suffix(4))) }
 
@@ -117,10 +118,10 @@ public enum PanMask {
     public static func panOfElement(_ tag: String, _ v: [UInt8]) -> String? {
         switch JSText.upperASCII(tag) {
         case "5A":
-            let h = Hex.encode(v).replacingRegex("F+$", with: "")
+            let h = Hex.upper(v).replacingRegex("F+$", with: "")
             return h.fullMatch("\\d{12,19}") ? h : nil
         case "57", "9F6B":
-            let h = Hex.encode(v)
+            let h = Hex.upper(v)
             guard let d = h.firstIndex(of: "D"), d > h.startIndex else { return nil }
             let p = String(h[..<d])
             return p.fullMatch("\\d{12,19}") ? p : nil
@@ -134,7 +135,7 @@ public enum PanMask {
     public static func pansInHex(_ dataHex: String?) -> [String] {
         let h = JSText.upperASCII(dataHex ?? "")
         guard Hex.isUpperHexBytes(h) else { return [] }
-        let b = Hex.decode(h)
+        let b = Hex.decodeLenient(h)
         var out = [String]()
         for n in tlvNodes(b) {
             if let p = panOfElement(BerTlv.tagHex(n.tag), Array(b[n.start..<(n.start + n.length)])), !out.contains(p) { out.append(p) }
@@ -146,7 +147,7 @@ public enum PanMask {
     public static func answerMasks(_ dataHex: String?) -> Bool {
         let h = JSText.upperASCII(dataHex ?? "")
         guard Hex.isUpperHexBytes(h) else { return false }
-        return tlvNodes(Hex.decode(h)).contains { sensitive.contains(BerTlv.tagHex($0.tag)) }
+        return tlvNodes(Hex.decodeLenient(h)).contains { sensitive.contains(BerTlv.tagHex($0.tag)) }
     }
 
     /// Every card number an EMV read holds: each application's PAN, and any in its elements or records.
@@ -161,7 +162,7 @@ public enum PanMask {
                     let tag = t.optString("tag")
                     guard sensitive.contains(tag) else { continue }
                     let hx = JSText.upperASCII(t.optString("hex"))
-                    guard Hex.isUpperHexBytes(hx), let p = panOfElement(tag, Hex.decode(hx)) else { continue }
+                    guard Hex.isUpperHexBytes(hx), let p = panOfElement(tag, Hex.decodeLenient(hx)) else { continue }
                     add(p)
                 }
             }
@@ -180,7 +181,7 @@ public enum PanMask {
             let d = h.distance(from: h.startIndex, to: dIdx)
             return maskDigits(String(h.prefix(d))) + "D" + xs(h.count - d - 1)
         case "56":
-            guard Hex.isUpperHexBytes(h), let m = Bytes.latin1String(Hex.decode(h)).firstMatch(track1), let pan = m[2] ?? nil, pan.count >= 10 else { return xs(h.count) }
+            guard Hex.isUpperHexBytes(h), let m = Bytes.latin1String(Hex.decodeLenient(h)).firstMatch(track1), let pan = m[2] ?? nil, pan.count >= 10 else { return xs(h.count) }
             let head = asciiHex(m[1] ?? "") + maskedAsciiHex(pan)
             return head + xs(h.count - head.count)
         default: return xs(h.count)
@@ -203,7 +204,7 @@ public enum PanMask {
         let h = JSText.upperASCII(dataHex)
         var s = h
         if Hex.isUpperHexBytes(h) {
-            let b = Hex.decode(h)
+            let b = Hex.decodeLenient(h)
             if isTlv(b) {
                 let original = Array(h)
                 var out = original

@@ -11,6 +11,7 @@
 // Without it the catalogue's emulate ops are hidden (`NfcPlatform`).
 
 import Foundation
+import M5Core
 
 public struct Type4TagEmulator: Sendable {
     static let ok: [UInt8] = [0x90, 0x00], notFound: [UInt8] = [0x6a, 0x82], wrongIns: [UInt8] = [0x6d, 0x00], badP: [UInt8] = [0x6b, 0x00]

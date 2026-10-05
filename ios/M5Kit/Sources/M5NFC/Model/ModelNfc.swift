@@ -17,6 +17,7 @@
 // `masked`), "send everything" or "don't send" (`declined`) answers (consent.ts).
 
 import Foundation
+import M5Core
 
 public enum ModelNfc {
     public static let defaultTimeout = 20, maxTimeout = 120
@@ -338,7 +339,7 @@ public enum ModelNfc {
         let r = try await Apdu.transmitSmart(t, Apdu.selectByAid(EmvReader.ppse))
         if !Apdu.isOk(r.sw) { return result("ok", cardOut, "No PPSE (\(StatusWords.hex(r.sw)))") }
         let tree = BerTlv.decode(r.data)
-        let aids = BerTlv.findAll(tree, 0x4f).map { Hex.encode($0.value) }
+        let aids = BerTlv.findAll(tree, 0x4f).map { Hex.upper($0.value) }
         if !aids.isEmpty { retech(&cardOut, NfcCatalog.emv) }
         let name = BerTlv.find(tree, 0x50).map { JSText.trim(Bytes.asciiString($0.value)) } ?? ""
         return result("ok", cardOut, "EMV: " + (name.isEmpty ? "" : name + " ") + "AIDs " + aids.joined(separator: ", "))
@@ -433,9 +434,9 @@ public enum ModelNfc {
                 return sp
             }
             return ["kind": "unknown", "type": .string(String(r.tnf))]
-        case Tnf.mime.rawValue: return ["kind": "mime", "type": .string(t), "data": .string(Hex.encode(r.payload))]
+        case Tnf.mime.rawValue: return ["kind": "mime", "type": .string(t), "data": .string(Hex.upper(r.payload))]
         case Tnf.absoluteUri.rawValue: return ["kind": "uri", "data": .string(t)]
-        case Tnf.external.rawValue: return ["kind": "external", "type": .string(t), "data": .string(Hex.encode(r.payload))]
+        case Tnf.external.rawValue: return ["kind": "external", "type": .string(t), "data": .string(Hex.upper(r.payload))]
         default: return ["kind": "unknown", "type": .string(String(r.tnf))]
         }
     }
@@ -512,7 +513,7 @@ public enum ModelNfc {
         }
         if !r.optString("data").isEmpty {
             let d = b64(r.optString("data"))
-            if !PanMask.pansInHex(Hex.encode(d)).isEmpty { full.append(ConsentLine("nfc.consent.dataPan", [("n", String(d.count))])) }
+            if !PanMask.pansInHex(Hex.upper(d)).isEmpty { full.append(ConsentLine("nfc.consent.dataPan", [("n", String(d.count))])) }
             else { masked.append(ConsentLine("nfc.consent.data", [("n", String(d.count))])) }
         }
         return Consent(masked: masked, full: full)
@@ -554,7 +555,7 @@ public enum ModelNfc {
             }
             out["transcript"] = .array(tr)
         }
-        if !r.optString("data").isEmpty && !PanMask.pansInHex(Hex.encode(b64(r.optString("data")))).isEmpty { out.remove("data") }
+        if !r.optString("data").isEmpty && !PanMask.pansInHex(Hex.upper(b64(r.optString("data")))).isEmpty { out.remove("data") }
         if r.has("message") {
             var msg = PanMask.maskPans(r.optString("message"), pans)
             let doc = r.optObject("mrtd")?.optObject("mrzInfo")?.optString("documentNumber") ?? ""

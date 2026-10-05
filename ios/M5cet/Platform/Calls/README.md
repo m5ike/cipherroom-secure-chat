@@ -11,7 +11,7 @@ UI je v `M5cet/Parts/Calls`, testy v `M5cetTests/Calls`.
 | `rtc/Rtc` (továrna, ICE z `/api/turn`, `pending`) | `RtcEngine` + `IceConfig` / `IceConfigCache` |
 | `chat/Peer` (spojení, kanál „m5cet“, perfect negotiation) | `RtcPeer` (+ `RtcPeerObserver`, `RtcSerialQueue`) |
 | `chat/Calls` + WebRTC části `RoomSession` | `RoomRtc` (jedna na místnost) |
-| `chat/CallTrack`, `chat/CallHistory`, `chat/ActivityLog` | `CallTrack`, `CallHistory` (`CallHistoryStore`), `CallLogItems` |
+| `chat/CallTrack`, `chat/CallHistory`, `chat/ActivityLog` | `CallTrack`, `CallHistory`, `CallHistoryStore` — **z M5Proto** (jediná implementace; `CallTrack` je tu jen alias téhož typu pro soubory bez `import M5Proto`) — + `AppCallHistory` (adaptér na hlavním aktoru), `CallLogItems` |
 | `contacts/RtcStats` | `RtcStats` (`RtcStatsSummary.parse`) |
 | `telecom/CallRing` (zvonění upozorněním) | **CallKit**: `CallCenter` (tok) + `CallKitBridge` (`CXProvider`, `CXCallController`) |
 | `telecom/CallLogBridge` (systémový záznam hovorů) | `includesCallsInRecents` = nastavení `callLog`, jméno položky `CallNaming` |
@@ -31,7 +31,7 @@ UI je v `M5cet/Parts/Calls`, testy v `M5cetTests/Calls`.
  onPeerText / files.onBinary            ◀───  RoomRtcLink.received(frame)        datový kanál "m5cet"
  sendHello, flushOutbox                 ◀───  RoomRtcLink.channelOpened
  audio-status (zapečetěné jako zpráva)  ◀──▶  RoomRtcLink.broadcastAudioStatus / RoomRtc.peerAudioStatus
-                                              RoomRtc ── CallTrack ──▶ CallHistoryStore (trezor "calls")
+                                              RoomRtc ── CallTrack ──▶ AppCallHistory (trezor "calls")
                                                   │ zvoní / ring over / změna
                                                   ▼
  tlačítka (CallSystem.startCall…)       ───▶  CallCenter ◀──▶ CallKitProvider / CallKitController ◀──▶ CallKit
@@ -74,7 +74,7 @@ UI je v `M5cet/Parts/Calls`, testy v `M5cetTests/Calls`.
   oznámení (0 aplikace, 1 člověk, 2 člověk · místnost). Zamčená aplikace = vždy jen jméno aplikace. **Handle nikdy
   není místnost**: `m5cet-` + 16 hex HMAC-SHA256(sůl instalace, klíč místnosti); zavolání z Nedávných se mapuje zpět
   jen na uloženou místnost a **před vytočením se aplikace zeptá** (jako Záznam na Androidu).
-* **Historie** (`CallHistoryStore`): stejný JSON jako Android (`{"c":[{id,key,room,kind,at,sec,video,people,sys?}]}`)
+* **Historie** (`AppCallHistory` nad `CallHistoryStore` z M5Proto): stejný JSON jako Android, bajt po bajtu (pořadí klíčů Androidu; čte se tolerantně jako org.json) (`{"c":[{id,key,room,kind,at,sec,video,people,sys?}]}`)
   v uživatelské vrstvě trezoru, záznam `calls`, max. 500 / 90 dní; zamčený trezor → v paměti, sloučí se po odemčení;
   `calls.history` vypnuto → nic; wipe → nic už se neukládá. Řádky v Nedávných aplikace smazat nemůže (iOS to nedovolí).
 * **Vlákna**: delegáti WebRTC běží na jeho signálním vlákně; `RtcPeerObserver` z každého callbacku udělá hodnotu
@@ -120,7 +120,7 @@ Další rozhraní (`CallContracts.swift`, `IceConfig.swift`, `CallHistory.swift`
 
 | rozhraní | kdo | co |
 |---|---|---|
-| `TurnFetching` | síť (M5Net) | `GET /api/turn` → tělo JSON; `CallSystem.shared.turnSource = …` |
+| `TurnFetching` | síť (M5Net) | `GET /api/turn` → tělo JSON (`IceTurnAnswer`; M5Net má vlastní `TurnAnswer` / `IceServerCache` — sjednotit je úkol do budoucna); `CallSystem.shared.turnSource = …` |
 | `CallRoomDirectory` | seznam místností / navigace | `connect(roomKey:)` (VoIP push, přijetí), `isOnScreen`, `open`, `label(ofRoom:)`, `savedRoomKeys()`; `CallSystem.shared.directory = …` |
 | `CallEnvironment` | nastavení + design + zámek | `CallSettings` (`calls.speaker`, `callLog`, `calls.logName`, `calls.history`, `hideIp`), `CallPrivacy` (zámek, úroveň soukromí hovorů 0–2, smí zvonit, jméno aplikace), texty designu; `CallSystem.shared.setEnvironment(…)`, po změně `settingsChanged()` |
 | `CallHistoryVault` | Platform/Security | trezor, uživatelská vrstva, záznam `calls`: `isUnlocked`, `readCalls`, `writeCalls`, `deleteCalls`; `CallSystem.shared.history.vault = …` |
@@ -162,9 +162,9 @@ neviděla — jinak ho zaznamená `CallTrack`, jeden záznam na hovor).
   zavoláním z Nedávných). iPad (regular width): až 4 sloupce, větší náhled, ovládání v liště, užší seznam Záznamu.
   Texty jsou z designu (`CallEnvironment.text`), s angličtinou výchozího designu jako zálohou (`CallTexts`).
 
-## Testy (`M5cetTests/Calls`, 78)
+## Testy (`M5cetTests/Calls`, 79)
 
-`CallTrackTests` (11, = Android), `CallHistoryTests` (6), `CallLogItemsTests` (9, = Android ActivityLogTest),
+`CallTrackTests` (11, = Android), `CallHistoryTests` (7), `CallLogItemsTests` (9, = Android ActivityLogTest),
 `CallNamingTests` (5, = Android CallLogBridgeTest + soukromí + handle), `IceConfigTests` (8: `pending` se necachuje,
 životnost, hub, souběžné dotazy, relay jen s TURN, konfigurace = Android), `RtcWireTests` (4: signály webu a Androidu,
 rámce), `RtcStatsTests` (6, = Android), `CallCenterTests` (22: zvonění → přijetí / odmítnutí / zmeškaný / zavěšení

@@ -59,7 +59,7 @@ final class RoomRtc {
 
     @ObservationIgnored weak var link: (any RoomRtcLink)?
     @ObservationIgnored weak var events: (any RoomCallEvents)?
-    @ObservationIgnored var history: CallHistoryStore?
+    @ObservationIgnored var history: AppCallHistory?
     @ObservationIgnored let engine: RtcEngine
     @ObservationIgnored var now: () -> Int64 = { CallTrack.millis() }
 
