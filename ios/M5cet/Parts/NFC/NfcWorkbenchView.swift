@@ -107,11 +107,11 @@ struct NfcWorkbenchView: View {
             NfcPromptSheet(prompt: prompt, model: model, palette: p)
                 .presentationDetents(prompt == .templates ? [.large] : [.medium, .large])
         }
-        .alert(Text(verbatim: lockOp?.label ?? ""), isPresented: lockShown) {
-            Button(role: .destructive) { model.confirmLock() } label: { Text(verbatim: lockOp?.label ?? "") }
+        .alert(Text(verbatim: lockText("nfc.lock.title", lockOp?.label)), isPresented: lockShown) {
+            Button(role: .destructive) { model.confirmLock() } label: { Text(verbatim: lockText("nfc.lock.confirm", lockOp?.label)) }
             Button(role: .cancel) { model.cancelPrompt() } label: { Text(verbatim: w("nav.close")) }
         } message: {
-            Text(verbatim: lockOp?.help ?? "")
+            Text(verbatim: lockText("nfc.lock.text", lockOp?.help))
         }
     }
 
@@ -228,6 +228,9 @@ struct NfcWorkbenchView: View {
     }
 
     private var lockOp: NfcCatalog.Op? { NfcCatalog.findOp(NfcCatalog.ndef, "ndef-lock") }
+
+    /// The permanent lock's question in the design's words (the iOS design's nfc.lock.*), else the catalog's English.
+    private func lockText(_ key: String, _ catalog: String?) -> String { model.words.has(key) ? model.words(key) : catalog ?? "" }
 }
 
 /// A template run's output (Android showRun / drawView): the template and how it went, Share · Forward · Keep for

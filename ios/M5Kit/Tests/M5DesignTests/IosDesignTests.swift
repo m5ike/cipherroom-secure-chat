@@ -21,7 +21,12 @@ import Testing
         "watch.reply.sent", "watch.reply.failed", "watch.reply.locked", "watch.kind.video", "watch.kind.held",
         "watch.kind.fn", "watch.quick.1", "watch.quick.2", "watch.quick.3", "watch.quick.4", "watch.quick.5",
     ]
-    static let nfcKeys = ["nfc.ios.hold", "nfc.ios.holdWrite", "nfc.ios.step", "nfc.ios.multipleTags"]
+    static let nfcKeys = ["nfc.ios.hold", "nfc.ios.holdWrite", "nfc.ios.step", "nfc.ios.multipleTags",
+                          // the NFC screens (Parts/NFC): a dialog's OK, the permanent lock, a report's export, an iPad
+                          "nfc.ok", "nfc.lock.title", "nfc.lock.text", "nfc.lock.confirm", "nfc.report.full", "nfc.report.export",
+                          "nfc.report.files", "nfc.report.html", "nfc.report.saved", "nfc.unavailable.device"]
+    /// A safety number's QR (Parts/People: PeopleTexts) — the web's words.
+    static let peopleKeys = ["sec.safety.scan", "sec.safety.verified", "sec.safety.mismatch"]
 
     static func context(settings: SettingsModel = SettingsModel(), dark: Bool = false, lang: String = "en") -> RenderContext {
         RenderContext(design: ios, dark: dark, translator: Translator(design: ios, lang: lang), settings: settings,
@@ -96,7 +101,7 @@ import Testing
         for lang in DesignLocales.codes {
             let i = ios.strings[lang] ?? [:], a = android.strings[lang] ?? [:]
             for (k, v) in a { #expect(i[k] == v, "\(lang) \(k)") }
-            #expect(Set(i.keys).subtracting(a.keys) == Set(Self.watchKeys + Self.nfcKeys), "\(lang)")
+            #expect(Set(i.keys).subtracting(a.keys) == Set(Self.watchKeys + Self.nfcKeys + Self.peopleKeys), "\(lang)")
         }
         // Android's design never carries the iOS-only items
         let androidJson = android.value.jsonText()
@@ -133,7 +138,7 @@ import Testing
         }
         for lang in DesignLocales.codes {
             let table = Self.ios.document.strings[lang] ?? [:]
-            for key in Self.watchKeys + Self.nfcKeys {
+            for key in Self.watchKeys + Self.nfcKeys + Self.peopleKeys {
                 let text = table[key] ?? ""
                 #expect(!text.trimmingCharacters(in: .whitespaces).isEmpty, "\(lang) \(key)")
                 #expect(tokens(text) == tokens(en[key] ?? ""), "\(lang) \(key)")

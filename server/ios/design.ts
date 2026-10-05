@@ -76,6 +76,8 @@ type Texts = Record<Locale, string>;
 const T = (en: string, cs: string, de: string, es: string, it: string, fr: string, sk: string, sl: string, fi: string): Texts => ({ en, cs, de, es, it, fr, sk, sl, fi });
 /** The same text in every language (product names, formats). */
 const SAME = (s: string): Texts => T(s, s, s, s, s, s, s, s, s);
+/** French: a no-break space (U+00A0) before : ; ! ? (i18n/GLOSSARY.md, as design-613.ts). */
+const NB = " ";
 
 /** The Apple Watch switch's setting (M5Design SettingsModel: false; SettingSchema: private area "watch."). */
 export const IOS_WATCH_SETTING = "watch.on";
@@ -216,6 +218,65 @@ export const IOS_STRINGS: Record<string, Texts> = {
     "More than one card — hold just one.", "Víc než jedna karta — přiložte jen jednu.", "Mehr als eine Karte — halten Sie nur eine an.",
     "Hay más de una tarjeta: acerca solo una.", "Più di una carta — avvicinane solo una.", "Plus d’une carte — n’en approchez qu’une.",
     "Viac ako jedna karta — priložte len jednu.", "Več kot ena kartica — prislonite samo eno.", "Useampi kuin yksi kortti – pidä vain yhtä.",
+  ),
+
+  /* ----------------------- the NFC screens (ios/M5cet/Parts/NFC) */
+  /** A dialog's plain OK (Android's dialogs say it in code). */
+  "nfc.ok": T("OK", "OK", "OK", "Aceptar", "OK", "OK", "OK", "V redu", "OK"),
+  // The permanent lock (ndef-lock) asks first: it cannot be undone.
+  "nfc.lock.title": T(
+    "Make the tag read-only?", "Nastavit tag jen pro čtení?", "Den Tag schreibgeschützt machen?",
+    "¿Dejar la etiqueta en solo lectura?", "Rendere il tag di sola lettura?", `Passer le tag en lecture seule${NB}?`,
+    "Nastaviť tag len na čítanie?", "Želite značko nastaviti samo za branje?", "Tehdäänkö tagista vain luettava?",
+  ),
+  "nfc.lock.text": T(
+    "The tag's content can never be changed again — not by this app, not by any other. This cannot be undone.",
+    "Obsah tagu už nikdy nepůjde změnit — touto ani žádnou jinou aplikací. Nelze to vrátit zpět.",
+    "Der Inhalt des Tags lässt sich danach nie mehr ändern — weder mit dieser noch mit einer anderen App. Das kann nicht rückgängig gemacht werden.",
+    "El contenido de la etiqueta ya no se podrá cambiar nunca, ni con esta app ni con ninguna otra. No se puede deshacer.",
+    "Il contenuto del tag non potrà più essere modificato, né con questa app né con altre. L’operazione non si può annullare.",
+    "Le contenu du tag ne pourra plus jamais être modifié — ni par cette app, ni par une autre. C’est irréversible.",
+    "Obsah tagu sa už nikdy nebude dať zmeniť — touto ani žiadnou inou aplikáciou. Nedá sa to vrátiť späť.",
+    "Vsebine značke ne bo mogoče nikoli več spremeniti — ne s to ne s katero koli drugo aplikacijo. Tega ni mogoče razveljaviti.",
+    "Tagin sisältöä ei voi enää koskaan muuttaa – ei tällä eikä millään muulla sovelluksella. Toimintoa ei voi perua.",
+  ),
+  "nfc.lock.confirm": T("Make read-only", "Nastavit jen pro čtení", "Schreibschutz setzen", "Dejar en solo lectura", "Rendi di sola lettura", "Passer en lecture seule", "Nastaviť len na čítanie", "Nastavi samo za branje", "Tee vain luettavaksi"),
+  // A card report's export — the web's words (client/src/lib/i18n-nfc.ts, i18n/locales/<lang>/web.json).
+  "nfc.report.full": T("Full report", "Celý výpis", "Vollständiger Bericht", "Informe completo", "Report completo", "Rapport complet", "Celý výpis", "Celoten izpis", "Täydellinen raportti"),
+  "nfc.report.export": T("Export", "Export", "Export", "Exportar", "Esporta", "Exporter", "Export", "Izvoz", "Vie"),
+  "nfc.report.files": T("Files to download", "Soubory ke stažení", "Dateien zum Herunterladen", "Archivos para descargar", "File da scaricare", "Fichiers à télécharger", "Súbory na stiahnutie", "Datoteke za prenos", "Ladattavat tiedostot"),
+  "nfc.report.html": T("HTML report", "HTML výpis", "HTML-Bericht", "Informe HTML", "Report HTML", "Rapport HTML", "HTML výpis", "Izpis HTML", "HTML-raportti"),
+  "nfc.report.saved": T("Saved: {name}", "Uloženo: {name}", "Gespeichert: {name}", "Guardado: {name}", "Salvato: {name}", `Enregistré${NB}: {name}`, "Uložené: {name}", "Shranjeno: {name}", "Tallennettu: {name}"),
+  /** An iPad (or an iPhone without a reader): "nfc.unavailable" stays the phone's words for Android. */
+  "nfc.unavailable.device": T(
+    "This device has no NFC reader.", "Toto zařízení nemá čtečku NFC.", "Dieses Gerät hat kein NFC-Lesegerät.",
+    "Este dispositivo no tiene lector NFC.", "Questo dispositivo non ha un lettore NFC.", "Cet appareil n’a pas de lecteur NFC.",
+    "Toto zariadenie nemá čítačku NFC.", "Ta naprava nima bralnika NFC.", "Tässä laitteessa ei ole NFC-lukijaa.",
+  ),
+
+  /* -------- People: a safety number's QR (ios/M5cet/Parts/People) — the web's words (client/src/lib/i18n-security.ts) */
+  "sec.safety.scan": T("Scan their code", "Naskenovat jeho kód", "Seinen Code scannen", "Escanear su código", "Scansiona il suo codice", "Scanner son code", "Naskenovať kód druhého", "Skeniraj kodo drugega", "Skannaa toisen koodi"),
+  "sec.safety.verified": T(
+    "Verified: this device belongs to the person you compared numbers with.",
+    "Ověřeno: toto zařízení patří tomu, s kým jste čísla porovnali.",
+    "Bestätigt: Dieses Gerät gehört der Person, mit der Sie die Nummer verglichen haben.",
+    "Verificado: este dispositivo pertenece a la persona con la que has comparado los números.",
+    "Verificato: questo dispositivo appartiene alla persona con cui hai confrontato i numeri.",
+    `Vérifié${NB}: cet appareil appartient à la personne avec qui vous avez comparé les numéros.`,
+    "Overené: toto zariadenie patrí tomu, s kým ste porovnali čísla.",
+    "Preverjeno: ta naprava pripada osebi, s katero ste primerjali številko.",
+    "Vahvistettu: tämä laite kuuluu henkilölle, jonka kanssa vertasit numeroita.",
+  ),
+  "sec.safety.mismatch": T(
+    "The numbers do NOT match — this is not the same device.",
+    "Čísla se NESHODUJÍ — nejde o stejné zařízení.",
+    "Die Nummern stimmen NICHT überein — es ist nicht dasselbe Gerät.",
+    "Los números NO coinciden: no es el mismo dispositivo.",
+    "I numeri NON corrispondono — non è lo stesso dispositivo.",
+    "Les numéros ne correspondent PAS — ce n’est pas le même appareil.",
+    "Čísla sa NEZHODUJÚ — nejde o rovnaké zariadenie.",
+    "Številki se NE ujemata — to ni ista naprava.",
+    "Numerot EIVÄT täsmää – tämä ei ole sama laite.",
   ),
 };
 

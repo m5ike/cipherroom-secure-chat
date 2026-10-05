@@ -14,6 +14,7 @@ import { iosAssets } from "../server/ios/assets";
 import { IOS_DEFAULT_DESIGN, IOS_STRINGS, IOS_WATCH_SETTING, sanitizeIosDesign } from "../server/ios/design";
 import { DEFAULT_DESIGN, LANGS, LIMITS, sanitizeDesign, type ANode } from "../server/android/design";
 import { androidAssets } from "../server/android/assets";
+import { mainDictionary } from "../client/src/lib/i18n";
 
 const root = join(__dirname, "..");
 const read = (...p: string[]) => readFileSync(join(root, ...p), "utf8");
@@ -118,6 +119,19 @@ describe("the iOS-only items", () => {
       const m = new RegExp(`"${k.replace(/\./g, "\\.")}": "((?:[^"\\\\]|\\\\.)*)"`).exec(english);
       expect(IOS_STRINGS[k].en, k).toBe(m![1].replace(/\\"/g, '"'));
     }
+  });
+
+  it("the People and NFC report texts are the web's words; nfc.unavailable stays Android's", () => {
+    const reused = ["sec.safety.scan", "sec.safety.verified", "sec.safety.mismatch", "nfc.report.full", "nfc.report.export", "nfc.report.files", "nfc.report.html", "nfc.report.saved"];
+    for (const l of LANGS) {
+      const web: Record<string, string> = l === "en" || l === "cs" || l === "de" ? mainDictionary(l) : JSON.parse(read("i18n", "locales", l, "web.json"));
+      for (const key of reused) expect(IOS_STRINGS[key][l], `${l} ${key}`).toBe(web[key]);
+    }
+    // PeopleTexts' own table (the web's words for a design without them): every key is in the iOS design now
+    const people = read("ios", "M5cet", "Parts", "People", "Logic", "PeopleTexts.swift");
+    for (const k of new Set([...people.matchAll(/"(sec\.safety\.[A-Za-z]+)"/g)].map((m) => m[1]))) expect(IOS_STRINGS[k], k).toBeDefined();
+    for (const l of LANGS) expect(ios.strings[l]["nfc.unavailable"], l).toBe(android.strings[l]["nfc.unavailable"]);
+    expect(IOS_STRINGS["nfc.unavailable.device"].en).toBe("This device has no NFC reader.");
   });
 
   it("the setting exists in the app, off by default, out of a design action's reach (M5Design)", () => {
