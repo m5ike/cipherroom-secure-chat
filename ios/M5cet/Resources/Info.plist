@@ -101,16 +101,20 @@
 		<string>remote-notification</string>
 		<string>voip</string>
 		<string>audio</string>
+		<string>fetch</string>
+		<string>location</string>
 		<string>processing</string>
 	</array>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
 	<array>
 		<string>cz.m5cet.app.checkin</string>
 	</array>
-	<!-- A call-back from the Phone app's Recents (CallKit; Platform/Calls asks before dialling). -->
+	<!-- A call-back from the Phone app's Recents (CallKit; Platform/Calls asks before dialling) and
+	     communication notifications / donated conversations (Platform/Notifications). -->
 	<key>NSUserActivityTypes</key>
 	<array>
 		<string>INStartCallIntent</string>
+		<string>INSendMessageIntent</string>
 	</array>
 
 	<!-- Navigation and ride apps a position can open (Android: <queries>, location/GeoLinks). -->
@@ -141,11 +145,11 @@
 	<key>NSMicrophoneUsageDescription</key>
 	<string>M5cet uses the microphone for calls, voice messages and dictation.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>M5cet turns your speech into text when you dictate a message or give a voice command.</string>
+	<string>M5cet turns speech into text on this device when you dictate a message, give a voice command or use voice-to-text in a call (which also transcribes the other participants).</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>M5cet uses your location only when you share it in a message or show it on a map.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>When you turn on location sharing for a room, M5cet keeps sending your position to that room, also while the app is in the background. You can turn it off at any time.</string>
+	<string>When you turn on location tracking in Settings, M5cet sends this device's position to your M5cet server, also while the app is in the background. You can turn it off at any time.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>M5cet links the people you talk to with the contacts you choose.</string>
 	<key>NSBluetoothAlwaysUsageDescription</key>

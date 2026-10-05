@@ -3,16 +3,19 @@
 // wipe and the screen privacy. Installed at launch (App/Bootstrap.swift →
 // SecurityCenter.install), reached as SecurityCenter.shared by the other parts:
 //
-//   signer / agreement     the device's Secure Enclave keys for M5Net (DeviceSigner, DeviceAgreement)
+//   signer() / agreement() the device's Secure Enclave keys: M5Net's RequestSigner and M5Crypto's
+//                          DeviceSigner (KeyringSigner), M5Crypto's KeyAgreer (KeyringAgreement)
 //   vault                  the SYS / USER tiers (VaultTier) for every store of the app
-//   secrets                small secrets in the Keychain (SecureStore)
+//   secrets                small secrets in the app-only keychain group (SecureStore)
+//   sharedSecrets          the keychain group the notification extension shares — only what it must read
 //   lock                   AppLockState: isLocked, lockNow(remote:) — the server's lock command
-//   inbox                  the lock inbox (LockInbox) the rooms write to while locked
+//   inbox                  the lock inbox's files (LockInboxFiles over M5Proto's LockInbox)
 //   policies               the signed policy (PolicyStore.apply — M5Net hands it each server answer)
 //   wipe(…)                the server's wipe command, the attempts' wipe, the duress PIN
 //   add(_: LockParticipant), inboxConsumer, inCall — how the rooms, calls and caches take part
 
 import Foundation
+import M5Core
 import os
 import SwiftUI
 import UIKit
@@ -22,9 +25,9 @@ import UserNotifications
 @MainActor
 protocol LockParticipant: AnyObject {
     /// The lock is about to zero the data key (it is still there). `inbox`: keep the connections and send
-    /// what would be stored into it (Rooms.lockReceiving); nil: close them (security.lockDisconnect, or
-    /// no inbox could start — Rooms.disconnectAll).
-    func lockWillForget(receiving inbox: LockInbox?)
+    /// what would be stored into it (`inbox.seal(LockedRooms.message(…))`, Rooms.lockReceiving); nil: close
+    /// them (security.lockDisconnect, or no inbox could start — Rooms.disconnectAll).
+    func lockWillForget(receiving inbox: LockInboxFiles?)
     /// The data key is gone: drop everything that was opened with it.
     func lockDidForget()
     /// The data key is back (the lock inbox merges right after, through `LockInboxConsumer`).
@@ -32,7 +35,7 @@ protocol LockParticipant: AnyObject {
 }
 
 extension LockParticipant {
-    func lockWillForget(receiving inbox: LockInbox?) {}
+    func lockWillForget(receiving inbox: LockInboxFiles?) {}
     func lockDidForget() {}
     func lockDidUnlock() {}
 }
@@ -43,8 +46,6 @@ final class SecurityCenter {
     static private(set) var shared: SecurityCenter?
 
     let paths: SecurityPaths
-    /// Small secrets in the Keychain (the unsigned simulator: a development file store).
-    let secrets: any SecureStore
     let keyring: Keyring
     let vault: Vault
     let policies: PolicyStore
@@ -52,17 +53,22 @@ final class SecurityCenter {
     let duress: DuressPin
     let events: any SecurityEvents
     let lock: AppLock
-    let inbox: LockInbox
+    let inbox: LockInboxFiles
     let wiper: Wiper
     let privacy: ScreenPrivacy
     lazy var presenter = LockPresenter(center: self)
     /// Puts lock windows up (off in tests).
     var showsWindows = false
 
-    /// The device's request-signing key (M5Net).
-    var signer: any DeviceSigner { KeyringSigner(keyring: keyring) }
-    /// The device's encryption key (M5Net: ECIES from the server).
-    var agreement: any DeviceAgreement { KeyringAgreement(keyring: keyring) }
+    /// Small secrets of the app only (the app-only keychain group; the unsigned simulator: a development file store).
+    var secrets: any SecureStore { keyring.store }
+    /// The keychain group the notification extension shares: only what it must read (README).
+    var sharedSecrets: any SecureStore { keyring.shared }
+
+    /// The device's request-signing key — M5Net `RequestSigner`, M5Crypto `DeviceSigner` (made on first use).
+    func signer() throws -> KeyringSigner { try KeyringSigner(keyring: keyring) }
+    /// The device's encryption key — M5Crypto `KeyAgreer` for `Ecies.open` (made on first use).
+    func agreement() throws -> KeyringAgreement { try KeyringAgreement(keyring: keyring) }
 
     /// The rooms' side of the lock inbox's drain (set by the rooms).
     var inboxConsumer: (any LockInboxConsumer)?
@@ -80,11 +86,11 @@ final class SecurityCenter {
     private let logger = Logger(subsystem: "cz.m5cet.app", category: "lock")
     private let clock: any LockClock
 
-    init(paths: SecurityPaths, store: any SecureStore, keyring: Keyring, clock: any LockClock, biometrics: any BiometricAuthenticator,
+    /// `keyring` carries the two stores (app-only and shared); the attempt counter is in the app-only one.
+    init(paths: SecurityPaths, keyring: Keyring, clock: any LockClock, biometrics: any BiometricAuthenticator,
          background: (any BackgroundTime)?, events: any SecurityEvents, iterations: Int = Vault.pinIterations,
          extraDirs: [URL] = [], defaultsDomains: [String] = []) {
         self.paths = paths
-        self.secrets = store
         self.keyring = keyring
         self.clock = clock
         self.events = events
@@ -93,11 +99,11 @@ final class SecurityCenter {
         self.policies = policies
         settings = VaultSecuritySettings(vault: vault)
         duress = DuressPin(vault: vault, settings: settings)
-        let engine = LockEngine(vault: vault, anchor: KeyringLockAnchor(keyring: keyring), records: SecureStoreLockRecords(store: store),
+        let engine = LockEngine(vault: vault, anchor: KeyringLockAnchor(keyring: keyring), records: SecureStoreLockRecords(store: keyring.store),
                                 duress: duress, clock: clock, events: events, policy: { policies.lock })
         lock = AppLock(engine: engine, biometrics: biometrics, background: background)
-        inbox = LockInbox(dir: paths.lockbox)
-        wiper = Wiper(paths: paths, vault: vault, keyring: keyring, stores: [store], inbox: inbox, clock: clock,
+        inbox = LockInboxFiles(dir: paths.lockbox)
+        wiper = Wiper(paths: paths, vault: vault, keyring: keyring, stores: [keyring.store, keyring.shared], inbox: inbox, clock: clock,
                       extraDirs: extraDirs, defaultsDomains: defaultsDomains)
         privacy = ScreenPrivacy()
         lock.hooks = AppLock.Hooks(
@@ -112,18 +118,33 @@ final class SecurityCenter {
 
     // MARK: the app's instance
 
+    /// The keychain services of the two stores (each in its own access group).
+    nonisolated static let appService = "cz.m5cet.app.security"
+    nonisolated static let sharedService = "cz.m5cet.shared.security"
+
+    /// The app-only and the shared store: Keychain groups `<prefix>cz.m5cet.app` / `<prefix>cz.m5cet.shared`;
+    /// in an unsigned simulator build (no keychain entitlement) the development file stores, the shared one
+    /// on the App Group side.
+    nonisolated static func systemStores(_ paths: SecurityPaths) -> (app: any SecureStore, shared: any SecureStore) {
+        if let prefix = KeychainSecureStore.groupPrefix() {
+            return (KeychainSecureStore(service: appService, accessGroup: prefix + KeychainSecureStore.appGroupSuffix),
+                    KeychainSecureStore(service: sharedService, accessGroup: prefix + KeychainSecureStore.sharedGroupSuffix))
+        }
+        #if targetEnvironment(simulator)
+        return (FileSecureStore(dir: paths.devKeychain), FileSecureStore(dir: paths.devSharedKeychain))
+        #else
+        // A device build always has the entitlement; without it every Keychain call fails (and says so).
+        return (KeychainSecureStore(service: appService, accessGroup: nil), KeychainSecureStore(service: sharedService, accessGroup: nil))
+        #endif
+    }
+
     /// This device's locations, Keychain and Secure Enclave.
     static func system() -> SecurityCenter {
         let paths = SecurityPaths.system()
-        let service = "cz.m5cet.app.security"
-        #if targetEnvironment(simulator)
-        let store: any SecureStore = KeychainSecureStore.usable() ? KeychainSecureStore(service: service) : FileSecureStore(dir: paths.devKeychain)
-        #else
-        let store: any SecureStore = KeychainSecureStore(service: service)
-        #endif
+        let stores = systemStores(paths)
         let fm = FileManager.default
         let group = Bundle.main.object(forInfoDictionaryKey: "M5AppGroup") as? String
-        return SecurityCenter(paths: paths, store: store, keyring: .system(store: store), clock: SystemLockClock(),
+        return SecurityCenter(paths: paths, keyring: .system(store: stores.app, shared: stores.shared), clock: SystemLockClock(),
                               biometrics: SystemBiometrics(), background: SystemBackgroundTime(), events: LoggedSecurityEvents(),
                               extraDirs: [fm.urls(for: .cachesDirectory, in: .userDomainMask)[0], fm.temporaryDirectory],
                               defaultsDomains: [Bundle.main.bundleIdentifier, group].compactMap { $0 })
@@ -186,7 +207,7 @@ final class SecurityCenter {
     /// there); with security.lockDisconnect they close. Then the data key is zeroed and the
     /// participants drop what they opened with it.
     func forgetSecrets() {
-        var open: LockInbox?
+        var open: LockInboxFiles?
         if !settings.bool(SecuritySetting.lockDisconnect), let dek = try? vault.userKey(), inbox.begin(dek: dek) { open = inbox }
         let current = participants.compactMap(\.participant)
         for p in current { p.lockWillForget(receiving: open) }
@@ -270,10 +291,11 @@ final class SecurityCenter {
     func writeMirror() {
         let since = lock.backgroundSince
         let p = policies.lock
-        let o: SecRecord = ["v": 1, "locked": lock.isSetUp && lock.isLocked, "bg": since?.wallMs ?? 0, "bgMono": since?.monoMs ?? 0,
-                            "boot": since?.boot ?? clock.now().boot, "autolock": p.autolockSeconds, "screenshots": p.screenshots]
+        let o = JSONObject([("v", .int(1)), ("locked", .bool(lock.isSetUp && lock.isLocked)), ("bg", .int(since?.wallMs ?? 0)),
+                            ("bgMono", .int(since?.monoMs ?? 0)), ("boot", .string(since?.boot ?? clock.now().boot)),
+                            ("autolock", .int(p.autolockSeconds)), ("screenshots", .bool(p.screenshots))])
         try? ProtectedFiles.ensureDirectory(paths.shared, protection: .completeUntilFirstUserAuthentication)
-        try? SecJSON.data(o).write(to: paths.lockState, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        try? SecData.json(o).write(to: paths.lockState, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
     }
 
     // MARK: previews
@@ -281,8 +303,8 @@ final class SecurityCenter {
     /// A throwaway instance (SwiftUI previews): memory Keychain, software keys, a temporary directory.
     static func preview() -> SecurityCenter {
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("m5-preview-\(UUID().uuidString)", isDirectory: true)
-        let store = MemorySecureStore()
-        return SecurityCenter(paths: .under(base), store: store, keyring: Keyring(store: store, enclave: nil), clock: SystemLockClock(),
-                              biometrics: SystemBiometrics(), background: nil, events: LoggedSecurityEvents(), iterations: 1000)
+        return SecurityCenter(paths: .under(base), keyring: Keyring(store: MemorySecureStore(), shared: MemorySecureStore(), enclave: nil),
+                              clock: SystemLockClock(), biometrics: SystemBiometrics(), background: nil, events: LoggedSecurityEvents(),
+                              iterations: 1000)
     }
 }
