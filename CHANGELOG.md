@@ -5,6 +5,163 @@ Všechny významné změny tohoto projektu jsou dokumentovány v tomto souboru.
 Formát vychází z [Keep a Changelog](https://keepachangelog.com/cs/1.1.0/) a
 projekt používá [Semantic Versioning](https://semver.org/lang/cs/).
 
+## [6.12.0] – 2026-10-05
+
+**Bezpečnostní vydání: protokol 4 (post-kvantový, s obnovou po kompromitaci),
+zprávy pro nepřítomné šifrované pro příjemce, průhlednost klíčů, důkaz
+členství na hubu, šifrovaná data služeb, izolovaný sandbox — a skript
+`check.sh`, který prověří instalační balíček i hostitele.** Vydání vychází
+z otevřených nálezů `docs/security-analysis.md` (kap. 7, 11, 12). Před
+vydáním prošlo nezávislou revizí (`docs/review-612.md`: 4 vysoké, 11 středních,
+21 nízkých a 3 informativní nálezy, žádný kritický) a všechny její nálezy jsou
+opravené (jeden částečně, záměrně — S03). Nic se neodebírá: klient 6.12 mluví
+se staršími klienty protokolem 3 a všechny funkce, moduly a pluginy běží dál.
+Hodnocení a srovnání se Signalem a Threemou: `docs/security-analysis.md` › 13.
+
+### Přidáno — protokol 4 (`docs/protocol-v4.md`; web `client/src/lib/p4/*`, Android `cz.m5cet.app.p4`)
+- **Hybridní post-kvantové ustavení klíče:** hello v4 nese efemérní ECDH P-256
+  a ML-KEM-768 (FIPS 203), obě strany si klíč KEM zapouzdří; kořen sezení
+  z ECDH + dvou sdílených tajemství KEM přes přepis podepsaný klíči zařízení
+  (podpis pokrývá i `caps`, uživatele a hlavu logu klíčů).
+- **Double Ratchet s post-kvantovým ratchetem** mezi každou dvojicí zařízení
+  (dopředná utajenost i obnova po kompromitaci; nový klíč ML-KEM v hlavičce
+  při každém kroku DH), přeskočené klíče omezené, stav se mění až po úspěšném
+  AEAD, reset sezení s limitem.
+- **Sender keys v4** pro zprávy místnosti: řetěz s vlastním podpisovým klíčem
+  (padělání ani „spálení“ indexů držitelem řetězu), certifikát řetězu vázaný
+  na vlastníka (cizí řetěz nikdo nevydá za svůj), rotace po 100 zprávách /
+  15 minutách, při odchodu člena a novém sezení. Zprávy už **nejsou podepsané
+  dlouhodobým klíčem** (popiratelnost obsahu, F-30).
+- **Zprávy pro nepřítomné šifrované pro každé zařízení příjemce** (F-09):
+  schránky (ECDH + ML-KEM, platnost 7 dní, soukromé klíče smazané po 31 dnech),
+  adresář klíčů účtů (`PUT /api/keys/bundle`, hub `key-bundles`), relay
+  s obálkou pro každého příjemce (`per`). Pečetí se jen zařízením ověřeným
+  v hello nebo certifikovaným připnutým klíčem účtu; jinak (nikdy neověřený
+  účet) obálka klíčem místnosti jako v 6.11. Fronta odeslání (light mode)
+  pečetí až při odeslání.
+- **Klíč souboru pro každý přenos** (i přes proxy serveru) a **klíč médií pro
+  každý hovor** a směr (F-19); nezapečetěné rámce se po nastavení klíče zahodí.
+- **Padding** všech zpráv protokolu 4 do velikostních tříd; **trvalé okno
+  proti přehrání** (31 dní; zpráva s časem víc než 5 min v budoucnu se přijme
+  s časem příjmu a upozorněním na hodiny odesílatele, F-21).
+- **Průhlednost klíčů (key transparency, F-13):** append-only Merkleův log
+  (RFC 9162) účtových klíčů, certifikátů zařízení a odvolání se
+  podepsanými hlavami; klienti připnou klíč logu, ověřují konzistenci,
+  sdílejí hlavy v hello (rozdělený pohled = poplach), „účet“ / „ověřeno“ až po
+  důkazu zahrnutí a sledují vlastní zařízení (neznámé zařízení = poplach).
+- **Stavy identity:** nový klíč (neověřený), ověřený (jen po porovnání
+  bezpečnostního čísla / QR), účet, změněný (zprávy zadržené do potvrzení),
+  starší protokol; piny podle klíče účtu napříč místnostmi; certifikáty
+  zařízení v2 s platností 90 dní a odvoláním.
+- **Důkaz členství na hubu (G-09):** join podepsaný klíčem odvozeným z klíče
+  místnosti; server pozná, kdo klíč zná; zvuk z telefonu, hovory místnosti,
+  cíle podle jména a adresář klíčů dostanou jen prokázaní členové. Zabranou
+  místnost obnoví vlastník (`POST /api/admin/security/room-proof/reset`);
+  `HUB_REQUIRE_ROOM_PROOF=1` pustí jen prokázané.
+- **Ochrana proti downgrade:** zařízení jednou viděné s protokolem 4 se už
+  protokolem 3 nepřijme; obálky v1 / v2 (klienti starší než 3.1) se
+  neotevírají (F-20).
+- **NFC tag Připojka v2 (F-12):** jen pozvánka s náhodným tajemstvím, nebo
+  offline tag s Argon2id pod 20znakovým náhodným kódem; starý tag s PINem jde
+  přečíst s varováním a přepsat.
+
+### Přidáno — instalace a provoz
+- **`check.sh`** v kořeni instalace (`sudo /opt/m5cet/check.sh`): jen čte;
+  kontroluje balíček (manifest `release.json`, podpis Ed25519, webové soubory,
+  SQLCipher, `npm audit`), konfiguraci (`.env` bez vypisování tajemství,
+  práva souborů), službu (systemd hardening, porty, health), HTTP server
+  a TLS (nginx: protokoly, HSTS, WebSockety, SSE, limity těl, certifikát),
+  firewall, jádro (sysctl, jmenné prostory pro bubblewrap), síť (DNS, čas,
+  MTU, TURN), systém (místo, paměť, AppArmor/SELinux, aktualizace, zálohy)
+  a Docker; výstup PASS / WARN / FAIL / SKIP s radou, `--json`, kódy 0/1/2.
+  `update.sh` ho spustí po aktualizaci (porušená integrita balíčku ji zastaví).
+  Skript nikdy nespouští hodnoty z `.env` ani kód instalace jako root
+  (`docs/install-check.md`).
+- **Manifesty vydání** (`npm run release:manifest | release:web-manifest |
+  release:keygen | release:sign | release:verify`); web ukáže, zda načtený
+  kód odpovídá podepsanému manifestu, a hlásí změnu (F-02 — detekce).
+- **CI:** `npm audit` produkčních závislostí, CodeQL (JS/TS, Android Java),
+  akce a obrazy připnuté podle digestu.
+- Konzole: stav protokolu 4 (`/api/admin/security/p4`), bezpečnostní stav
+  v Přehledu (šifrování databází, izolace sandboxu), přepnutí auditního klíče.
+
+### Opraveno (bezpečnost — server)
+- **F-18, G-07:** `functions.db` a `telephony.db` šifrované SQLCipherem
+  (klíč z master klíče, převod při prvním startu); log telefonie maskuje
+  DTMF, route kódy a přepisy, výchozí `keepRaw` vypnuté, retence 14 dní.
+- **F-03:** sandbox funkcí v bubblewrap (jmenné prostory, žádná síť,
+  `--cap-drop ALL`), Pyodide bez `_module` / `js`, fronta sandboxů (F-28).
+- **F-04, F-15:** klíčovaný `hashRoom`; access log ukládá jen sítě (/24, /48),
+  14 dní.
+- **F-23:** auditní deník s připnutým klíčem a pokrytím kontrolními body
+  (smazaný pin nebo kontrolní body = chyba, ne tiché přepnutí).
+- **F-24:** passkey jen z přesného originu (`WEBAUTHN_ORIGINS`, jinak
+  `PUBLIC_BASE_URL`).
+- **F-28:** TURN jen klientům připojeným do místnosti; limity pozvánek
+  a proxy na adresu (IPv6 po /64).
+- **F-29:** integrita offline modelů řeči (hash při instalaci, kontrola při
+  každém načtení).
+- **F-08:** kód z výstupu funkce od jiného člena běží v přísném sandboxu bez
+  sítě.
+- Revize 6.12, server (S01–S15): mj. „jen prokázaní“ podle ověřovacího klíče
+  místnosti, ne podle toho, kdo je online; limity důkazů na místnost a /64;
+  vyhledání v logu klíčů jen s přihlášením a jen vlastní; omezený růst logu;
+  bezpečný převod databází mezi procesy.
+
+### Opraveno (bezpečnost — web a Android)
+- **Web:** náhodný silný klíč místnosti jako výchozí a slabý klíč vždy
+  s potvrzením (F-04); normalizovaná jména s varováním před podobnými
+  (F-22); citace a přeposlání ověřené proti skutečné zprávě; oznámení
+  operátora vždy „Operátor“; poctivé texty o Argon2id a otisk místnosti
+  z klíče (F-25); sloty trezoru s AAD a detekcí návratu, „Smazat vše“ odvolá
+  token (F-26); dev server jen na localhost (F-27); volba „Skrýt moji IP“
+  (jen relay přes TURN, F-15).
+- **Android:** zámek zahodí datový klíč a zprávy dál přijímá do zapečetěné
+  schránky zámku (volitelně úplné odpojení); klíč PINu ve StrongBoxu / TEE,
+  čítač pokusů odolný vrácení zálohy, volitelný nouzový PIN (F-16); normalizace
+  jmen (F-22); potvrzení sdílení / kopírování počítaného textu (G-20);
+  souhlas s hlasem přes server (G-14); skrytí oznámení na zamčené obrazovce
+  (G-22).
+- Revize 6.12, protokol a web (P01–P14), `check.sh` (C01–C12): viz
+  `docs/review-612.md`.
+- Sestavení serveru zahrnuje `libphonenumber-js` a `uqr` (instalace bez
+  `node_modules` a obraz Dockeru dřív padaly při startu); referenční nginx
+  nastavuje gzip v bloku serveru (na Debianu `nginx -t` selhal); stránka
+  instalátoru povolí těla do 12 MB (dřív 413 u řeči, trezoru a úložiště);
+  jednotka systemd dovolí bubblewrapu jmenné prostory.
+
+### Změněno
+- Build výchozího designu Androidu potřebuje aplikaci 6.12 (`minAppCode`
+  61200); starší telefony si nechají build, který mají.
+- Chování po aktualizaci a nové proměnné prostředí: `docs/deployment.md` ›
+  Přechod na 6.12, `docs/build-and-deploy.md`.
+- Nové závislosti: `@noble/post-quantum` (web), Bouncy Castle `bcprov-jdk18on`
+  1.86 (Android, jen lightweight API, release APK +~214 KB).
+
+### Testy
+- `npx vitest run`: 301 souborů, 3644 testů (6 přeskočených); E2E 74 / 74 (dva skutečné
+  prohlížeče spolu mluví protokolem 4); Android 749 testů JVM, `lintDebug` 0 chyb,
+  `assembleRelease` (R8 drží Bouncy Castle).
+- Testovací vektory protokolu 4 (`test/vectors/p4.json`) a NFC tagu v2 sedí web ↔ Android bajt po
+  bajtu (Android přehrává náhodnost webu); paritní test jmen.
+- Důkazní testy revize (`test/review-612-*`) procházejí — přeskočený zůstává jen S03 (záměrně).
+
+### Známá omezení
+- **Nic z 6.12 neběželo na skutečném telefonu ani mezi webem a Androidem
+  přes skutečné WebRTC** — interoperabilitu dokládají sdílené testovací
+  vektory (každá sekce bajt po bajtu), ne živý provoz. Neověřeno také proti
+  skutečnému poskytovateli telefonie, na Linuxu se skutečným bubblewrapem
+  v systemd a s fyzickým NFC tagem.
+- **Žádný nezávislý audit ani formální důkaz** protokolu 4 (F-29); revize
+  6.12 i analýza jsou revize kódu s pomocí AI.
+- Web dál doručuje server (F-02): kontrola manifestu chrání vracející se
+  návštěvníky s připnutým klíčem, ne první návštěvu ani server, který vymění
+  celou stránku. Kořenem důvěry místnosti zůstává sdílený klíč (F-04).
+- Metadata: server zná členství, účty a časy; skupiny mají obnovu po
+  kompromitaci po rotaci řetězu, ne po každé zprávě.
+- Účet, který klient nikdy neověřil, dostane zprávu pro nepřítomné pod klíčem
+  místnosti (jako v 6.11).
+
 ## [6.11.0] – 2026-10-05
 
 **Odpovědi modelů od „system-messenger“, běh příkazu, který vždy skončí,

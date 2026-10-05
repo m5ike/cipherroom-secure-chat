@@ -4,6 +4,7 @@
 > **Aktualizace:** kap. 11 — stav po opravách 6.7 (`28f10ad0`); **kap. 12 — stav 6.10** (rozpracovaná
 > verze 6.10.0, výchozí commit `addff2a9`, opravy této revize `16695a1b`, `327c9efc`, `76bdbc03`),
 > analýza ke dni 2026-10-05. Kde kap. 12 mění dřívější tvrzení, je u něj odkaz *„→ kap. 12"*.
+> **Kap. 13 — stav 6.12** (protokol 4, hardening, nezávislá revize 6.12 a její opravy).
 > **Metoda:** revize zdrojového kódu (server `server/`, webový klient `client/src`, konzole
 > `admin-ui/public`, aplikace pro Android `android/`). Každé tvrzení o M5cet je doloženo odkazem
 > `soubor:řádek` na stav uvedeného commitu. Dokumentace projektu (`docs/security-model.md`,
@@ -28,6 +29,7 @@
 10. [Nesoulad dokumentace s kódem](#10-nesoulad-dokumentace-s-kódem)
 11. [Stav po opravách 6.7](#11-stav-po-opravách-67) (doplněno po vydání, commit `28f10ad0`)
 12. [Stav 6.10: nové části a srovnání](#12-stav-610-nové-části-a-srovnání) (6.8, 6.9 telefonie, 6.10; srovnání i s iMessage a Telegramem)
+13. [Stav 6.12: protokol 4 a srovnání](#13-stav-612-protokol-4-a-srovnání) (protokol 4, hardening, revize 6.12, hodnocení ≈ 6,5 / 10)
 
 ---
 
@@ -1492,3 +1494,165 @@ má dva režimy, proto ho tabulka uvádí jednou.
   Telegramu, rozsah metadat u Applu a serverové AI funkce WhatsAppu a Applu jsou **neověřené**.
 
 *Kapitola 12 vznikla stejně jako zbytek analýzy — revizí kódu s pomocí AI (Claude). Nenahrazuje nezávislý audit.*
+
+---
+
+## 13. Stav 6.12: protokol 4 a srovnání
+
+> **Stav kódu:** 6.12.0 na větvi `android_application`. Hlavní sloučení: knihovna protokolu 4
+> `6cf94c99`, server (důkaz na hubu, adresář klíčů, průhlednost klíčů) `36dd574a`, hardening
+> serveru `a74130b1`, webové opravy `ff58d0d0`, Android zámek `9b675afe`, `check.sh` `7caf4c1f`,
+> protokol 4 na webu `de2874d3`, v Androidu `1a6bb938`; revize 6.12 (`docs/review-612.md`)
+> a její opravy `bd77a5b9` (`check.sh`), `b062430e` (server), `95c7044d` (web), `d42dd3d6`
+> (Android). Specifikace: [`protocol-v4.md`](protocol-v4.md). **Metoda:** jako v kap. 1–12 revize
+> kódu, tentokrát doplněná nezávislou adversariální revizí s důkazními testy (`test/review-612-*`);
+> kapitola odkazuje na soubory, sloučení a testy, ne na čísla řádků (kód se během vydání
+> několikrát měnil). **Ověřeno spuštěním:** `npx vitest run` 301 souborů / 3644 testů
+> (6 přeskočených), E2E 74 / 74 (dva skutečné prohlížeče spolu mluví protokolem 4), Android
+> 749 testů JVM, `lintDebug` 0 chyb, `assembleRelease`. **Neověřeno:** § 13.7.
+
+### 13.0 Shrnutí pro uživatele
+
+1. **Protokol 4 odstranil hlavní návrhové mezery protokolu 3** (F-06, F-09, F-13, F-19, F-20,
+   F-21, F-30, G-09): každá dvojice zařízení má Double Ratchet s hybridním post-kvantovým
+   ustavením klíče (ECDH P-256 + ML-KEM-768) a post-kvantovým ratchetem, zprávy pro nepřítomné
+   jsou šifrované pro jednotlivá zařízení příjemce, klíče účtů a zařízení jsou v ověřitelném
+   logu, hub pozná, kdo klíč místnosti skutečně zná.
+2. **Server je tvrdší:** šifrované databáze služeb, sandbox funkcí v bubblewrap, auditní deník
+   s připnutým klíčem, přesné originy passkeys, limity na adresu, zkrácené IP; `check.sh` prověří
+   instalaci i hostitele.
+3. **Nezávislá revize 6.12** našla 4 vysoké a 11 středních nálezů (nejzávažnější: zprávy pro
+   nepřítomné šly šifrovat na zařízení, která vybral server; `check.sh` spouštěl hodnoty z `.env`
+   jako root) — **všechny opravené** (S03 částečně, záměrně).
+4. **Verdikt: ≈ 6,5 / 10 vůči Signalu (z ≈ 4,5).** Vlastnostmi protokolu se M5cet Signalu na papíře
+   přiblížil (dopředná utajenost, obnova po kompromitaci, post-kvantová ochrana, průhlednost klíčů,
+   popiratelnost obsahu) a v některých předčí Threemu. **Celkovou bezpečností je ale nepředčí:**
+   chybí nezávislý audit a formální analýza, kód je nový a neověřený provozem a na zařízeních, web
+   dál doručuje server a metadata zná server. Podrobně § 13.5.
+
+### 13.1 Co protokol 4 mění (nálezy F / G)
+
+| ID | Stav 6.12 | Jak | Kde / test |
+|---|---|---|---|
+| F-06 | **opraveno** | hello v4: efemérní ECDH P-256 + ML-KEM-768 (obě strany zapouzdří), kořen z přepisu podepsaného klíči zařízení; Double Ratchet s novým klíčem ML-KEM v hlavičce každého kroku DH (FS, PCS, PQ pro dvojice); sender keys v4 s podpisovým klíčem řetězu a rotací 100 zpráv / 15 min (PCS ve skupině po rotaci) | `client/src/lib/p4/{handshake,ratchet,sender-keys4}.ts`, `A/p4/*`; `test/p4-ratchet.test.ts`, vektory `test/vectors/p4.json` (Android bajt po bajtu) |
+| F-09 | **opraveno** (pro ověřené příjemce) | schránky (ECDH + ML-KEM) pro každé zařízení, relay s obálkou pro příjemce (`per`), adresář klíčů; pečetí se jen zařízením ověřeným v hello nebo certifikovaným připnutým klíčem účtu (§ 7.4, revize P01); nikdy neověřený účet → obálka klíčem místnosti jako v 6.11; outbox pečetí při odeslání | `p4/mailbox.ts`, `p4-away.ts`, `server/signaling/relay.ts`, `server/keys/*`; `test/review-612-p4.test.ts` › P01 |
+| F-13 | **opraveno** (s výhradou) | stavy nový / ověřený / účet / změněný / starší protokol; piny podle klíče účtu napříč místnostmi; certifikáty zařízení v2 s platností a odvoláním; průhlednost klíčů (RFC 9162, podepsané hlavy, konzistence, gossip v hello, zahrnutí před „účet“, sledování vlastních zařízení) | `p4-trust.ts`, `p4-kt.ts`, `p4/kt.ts`, `server/kt/*`; `test/kt-612.test.ts`, `review-612-p4` › P04, P05. **Výhrada:** log vede tentýž server, bez nezávislých svědků a bez VRF; první kontakt je dál TOFU |
+| F-19 | **opraveno** | náhodný klíč médií na hovor a směr, IV = epocha ‖ čítač; po nastavení klíče se nezapečetěné rámce zahodí | `p4/media4.ts`, media worker |
+| F-20 | **opraveno** | obálky v1 / v2 se neotevírají; zařízení viděné s protokolem 4 se protokolem 3 nepřijme (downgrade) | `p4-session.ts`, `RoomSession`; `review-612-p4` › P03 |
+| F-21 | **opraveno** | trvalé okno viděných id (31 dní), budoucí čas se přijme s časem příjmu, při chybě úložiště „fail closed“ | `p4/replay.ts`, `p4-store.ts` |
+| F-30 | **částečně → lépe** | obsah zpráv už není podepsaný dlouhodobým klíčem (autentizace sezením, certifikát řetězu podepisuje efemérní klíč řetězu); podepsané zůstávají hello (účast v sezení, ne obsah) | `docs/protocol-v4.md` § 6, § 17 |
+| G-09 | **opraveno** (s výhradou) | důkaz Ed25519 klíčem odvozeným z klíče místnosti; serverové funkce (zvuk z telefonu, hovory místnosti, cíle podle jména, adresář) jen prokázaným, jakmile má místnost ověřovací klíč; zabranou místnost obnoví vlastník | `server/signaling/proof.ts`; `test/hub-proof-612.test.ts`, `review-612-server-hub`. **Výhrada:** první registrace je TOFU; starší klienti bez důkazu projdou, pokud není `HUB_REQUIRE_ROOM_PROOF=1` |
+| F-12 | **opraveno** | tag v2: pozvánka s náhodným tajemstvím, nebo offline Argon2id pod 20znakovým kódem; v1 jen ke čtení | `client/src/lib/nfc/tag-v2.ts`, `A/nfc/TagV2.java`; vektory `test/vectors/nfc-tag-v2.json` |
+
+### 13.2 Ostatní nálezy F / G
+
+| ID | Stav 6.12 | Jak / co zbývá |
+|---|---|---|
+| F-02 | **částečně** (detekce) | manifest vydání s podpisem Ed25519 a kontrola načteného kódu proti připnutému klíči (vracející se návštěvník pozná změnu); první návštěvu ani server, který vymění celou stránku, nechrání — web dál doručuje server |
+| F-03 | **opraveno** (na Linuxu s bubblewrap) | jmenné prostory, žádná síť, `--cap-drop ALL`, Pyodide bez `_module`/`js`, fronta sandboxů; bez bubblewrapu jen permission model Node (Přehled varuje) |
+| F-04 | **částečně** | výchozí náhodný klíč, slabý klíč vždy s potvrzením, klíčovaný `hashRoom`, důkaz na hubu; kořenem důvěry místnosti zůstává sdílený klíč a slepé ID je pro toho, kdo ho zná, offline orákulum |
+| F-08 | **opraveno** | cizí kód v přísném sandboxu bez sítě, tlačítka modelu od jiného člena s potvrzením |
+| F-15 | **částečně** | padding, zkrácené IP v access logu, „Skrýt moji IP“, vlastní STUN/TURN přednostně, neprokázaní členové bez serverových funkcí; server dál zná členství, účty a časy, žádný sealed sender |
+| F-16 | **opraveno** (bez zařízení neověřeno) | zámek zahodí datový klíč (zprávy do zapečetěné schránky zámku), klíč PINu ve StrongBox / TEE, čítač odolný vrácení zálohy, nouzový PIN; hardwarový limit pokusů Android aplikaci nedává |
+| F-18, G-07 | **opraveno** (část) | `functions.db`, `telephony.db` šifrované; log telefonie maskovaný, bez syrových dat; **zbývá:** `ai/journal`, úložiště Androidu v konzoli a `m5cet.db` (ten s pečetěnými hodnotami) nešifrované, log webhooků výchozí „full“ |
+| F-22 | **opraveno** | normalizace jmen a podobných jmen (web i Android, sdílené vektory), citace a přeposlání ověřené klíčem, oznámení operátora pevně |
+| F-23 | **opraveno** | připnutý klíč kontrolních bodů, pokrytí každých 510 řádků, smazaný pin = chyba; **zbývá:** ukotvení mimo server |
+| F-24, F-25, F-26, F-27 | **opraveno** | přesné originy passkeys; poctivé texty a otisk místnosti z klíče; sloty trezoru s AAD a detekcí návratu, „Smazat vše“ odvolá token; dev server na localhost |
+| F-28 | **opraveno** | TURN jen připojeným do místnosti, limity na adresu (IPv6 po /64) |
+| F-29 | **částečně** | `npm audit` a CodeQL v CI, připnuté akce a obrazy, integrita modelů řeči, manifesty vydání; **žádný nezávislý audit, formální analýza ani reprodukovatelný build** |
+| G-14, G-20, G-22 (Android) | **opraveno** | souhlas s hlasem přes server; potvrzení počítaného textu u sdílení / kopírování; skrytí oznámení na zamčené obrazovce |
+
+### 13.3 Revize 6.12
+
+Nezávislá adversariální revize (`docs/review-612.md`) prověřila stav `de2874d3`: knihovnu
+protokolu 4, jeho integraci na webu, serverové části 6.12 a `check.sh`; každý nález doložila
+testem, který tvrdí bezpečné chování. Výsledek: 4 vysoké (P01, C01, C02, C07), 11 středních,
+4 nízké–střední, 17 nízkých, 3 informativní; žádný kritický. Všechny jsou opravené a jejich testy
+procházejí; S03 (veřejný hash uživatele v logu klíčů) je částečně — vyhledávání chce přihlášení
+a vrací jen vlastní záznamy, hash zůstává veřejný podle § 14.1. Opravy dvou nálezů změnily formát
+(`sig4` pokrývá `caps` / `user` / `sth`, AAD schránky pokrývá atestaci odesílatele); Android je
+převzal a ověřil proti novým vektorům. Revize Androidu samotného neproběhla (port je ověřen
+vektory a testy JVM, opravy nálezů revize jsou v něm provedené stejně jako na webu).
+
+### 13.4 Hodnocení po oblastech (6.12)
+
+Stupnice jako v kap. 1 (10 = dnešní Signal v dané oblasti).
+
+| Oblast | 6.10 | **6.12** | Proč |
+|---|---:|---:|---|
+| Šifrování živých zpráv (P2P) | 7 | **8** | hybridní PQ ustavení, Double Ratchet s PQ ratchetem, popiratelnost obsahu; nová implementace bez formální analýzy, web ↔ Android neběželo živě |
+| Zprávy přes server, soubory, offline doručení | 4 | **7** | schránky pro zařízení (PQ), FS omezená na 31 dní klíčů schránek, klíč souboru na přenos i přes proxy; nikdy neověřený účet dostane obálku klíčem místnosti |
+| Správa klíčů a odvozování | 6 | **7** | výchozí náhodný klíč místnosti, klíčovaný hash; sdílený klíč zůstává kořenem |
+| Identita a ověřování | 3 | **6** | stavy identity, piny podle účtu, certifikáty s platností a odvoláním, průhlednost klíčů s gossipem a sledováním vlastních zařízení; log vede tentýž server, bez svědků |
+| Dopředná utajenost, PCS, post-kvantová ochrana | 3 | **8** | dvojice FS + PCS + PQ; skupiny PCS po rotaci řetězu (jako sender keys u Signalu); schránky FS omezená |
+| Ochrana metadat | 3 | **4** | padding, zkrácené IP, skrytí IP; server zná členství, účty, časy |
+| Webový klient | 6 | **6** | silnější protokol, přísný sandbox, trezor s AAD; kód dál doručuje server (F-02 jen detekce) |
+| Aplikace pro Android | 6 | **7** | zámek bez datového klíče se schránkou zámku, PIN ve StrongBox / TEE, čítač, nouzový PIN; nic neověřeno na zařízení |
+| Server a provoz | 5 | **7** | šifrované databáze služeb, bubblewrap, auditní pin, `check.sh`, limity; velká plocha útoku (Functions, telefonie, AI) trvá |
+| Ověřitelnost (audity, formální důkazy, reprodukovatelné buildy) | 1 | **2** | sdílené testovací vektory, CI audit a CodeQL, připnuté závislosti, manifesty vydání; žádný audit ani formální model |
+| **Celkově** | **≈ 4,5** | **≈ 6,5** | návrhové mezery protokolu jsou uzavřené; drží ho dole ověřitelnost, doručování webu a metadata |
+
+### 13.5 Srovnání se Signalem a Threemou (stav k 10/2026)
+
+Údaje o Signalu a Threemě z § 6.3 a § 12.8 ([1]–[15]); co se od data zdrojů mohlo změnit, je
+„neověřeno“.
+
+| Vlastnost | **M5cet 6.12** | Signal | Threema |
+|---|---|---|---|
+| Ustavení klíče | ECDH P-256 + ML-KEM-768 (hybrid), živě mezi zařízeními; pro nepřítomné schránky ECDH + ML-KEM | PQXDH (X25519 + ML-KEM) asynchronně přes předklíče [2] | Ibex (X25519) [11]; PQ plán [12] (neověřeno, zda nasazeno) |
+| Ratchet | Double Ratchet + PQ (ML-KEM v hlavičce každého kroku DH) | Triple Ratchet / SPQR (ML-KEM) [3] | Ibex: FS; PCS neuvedeno |
+| Skupiny | sender keys v4, rotace 100 zpráv / 15 min, podpisový klíč řetězu | sender keys, PCS jen rotací | skupiny přes párové kanály |
+| Popiratelnost | obsah ano (hello podepsané) | ano | neuvedeno (neověřeno) |
+| Průhlednost klíčů | ano, log vede provozovatel instance, gossip mezi klienty, bez svědků | key transparency [7] | ne (ověření QR) |
+| Telefonní číslo | ne | volitelné [6] | ne |
+| Provozovatel | vlastní server (důvěra v provozovatele pro doručení webu) | centrální | centrální; OnPrem [14] |
+| Metadata | server zná členství, účty, časy; padding; skrytí IP | sealed sender, private groups [4][5] | minimum [13] |
+| Doručení kódu | web doručuje server (detekce změny), Android APK | podepsané aplikace, reprodukovatelný Android [8] | podepsané aplikace |
+| Audity / formální analýza | **žádné** (revize s AI) | formální analýzy PQXDH, SPQR [3][9] | audity, formální důkaz Ibex [11][15] |
+
+**Rozbor.**
+
+* **Kde je M5cet na úrovni nebo napřed:** vlastnosti protokolu na papíře odpovídají Signalu
+  (FS, PCS, PQ v ustavení i ratchetu, průhlednost klíčů, popiratelnost obsahu). Proti Threemě má
+  navíc post-kvantovou ochranu, obnovu po kompromitaci a průhlednost klíčů (podle dostupných
+  zdrojů; neověřeno, zda Threema PQ mezitím nasadila). Bez telefonního čísla a jen na vlastním
+  serveru — žádný centrální provozovatel.
+* **Kde zůstává pozadu, a proto je celkově nepředčí:**
+  * **Ověřitelnost.** Signal i Threema mají formální analýzy a nezávislé audity; protokol 4 je
+    nový, napsaný a revidovaný s pomocí AI a nikdo nezávislý ho neověřil. Chyby v protokolu se
+    nejčastěji najdou právě tak.
+  * **Doručení kódu.** Zlý provozovatel webu může podvrhnout klientský kód (F-02); u Signalu
+    a Threemy musí podvrhnout podepsanou aplikaci v obchodě.
+  * **Metadata.** Server zná členství, účty a časy; Signal skrývá odesílatele i členství ve skupinách.
+  * **Kořen důvěry místnosti** je sdílený klíč (F-04); Signal a Threema mají identitu uživatele
+    a správu členství.
+  * **Zralost.** Nic z 6.12 neběželo na skutečném telefonu ani mezi webem a Androidem živě.
+* **Aby M5cet Signal a Threemu skutečně předčil**, by bylo potřeba: nezávislý kryptografický audit
+  a formální model (ProVerif / Tamarin) hello v4 a ratchetu, reprodukovatelné a podepsané buildy
+  webu i APK s ověřením mimo server, svědci logu klíčů (nezávislí na provozovateli), doručování
+  ve stylu sealed sender a skupiny se spravovaným členstvím (MLS) místo sdíleného klíče.
+
+### 13.6 Doporučení
+
+1. **Provoz hned:** po aktualizaci `check.sh`; zálohovat master klíč; nainstalovat bubblewrap;
+   zvážit `HUB_REQUIRE_ROOM_PROOF=1`, až budou všichni klienti 6.12; podepisovat vydání
+   (`release:keygen` mimo server).
+2. **Ověření na zařízeních:** web ↔ Android protokolem 4 přes skutečné WebRTC (handshake, ratchet,
+   reset, soubory, relay), zámek Androidu se schránkou zámku, StrongBox, nouzový PIN, NFC tag v2.
+3. **Střednědobě:** nezávislý audit protokolu 4 a formální model; svědci logu klíčů; šifrovat
+   zbývající úložiště (`ai/journal`, úložiště Androidu v konzoli); reprodukovatelný build.
+4. **Dlouhodobě:** MLS pro skupiny, sealed sender, ověřitelné doručení webového kódu.
+
+### 13.7 Co nebylo ověřeno
+
+* **Android ↔ web přes skutečné WebRTC** — interoperabilitu dokládají sdílené vektory (každá
+  sekce bajt po bajtu) a testy JVM, ne živý provoz; Bouncy Castle v release buildu na ART.
+* **Linux se skutečným bubblewrapem pod systemd** (testováno argumenty a v Dockeru s bubblewrap 0.8,
+  ne v produkční jednotce), převod databází mezi dvěma skutečnými procesy služby, `check.sh` jako
+  skutečný root na Linuxu (simulováno).
+* **Telefon (Fold6):** zámek se schránkou zámku, StrongBox, čítač, nouzový PIN, `VISIBILITY_SECRET`,
+  NFC tag v2 na fyzickém tagu, Argon2id 64 MiB na telefonu.
+* Skutečný poskytovatel telefonie, CodeQL v GitHub CI.
+
+*Kapitola 13 vznikla stejně jako zbytek analýzy — revizí kódu s pomocí AI (Claude), doplněnou
+adversariální revizí s pomocí AI. Nenahrazuje nezávislý audit.*

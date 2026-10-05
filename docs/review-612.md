@@ -73,6 +73,21 @@ No Critical finding. P01 is the most important protocol finding: it voids F-09 a
 Server findings S01–S15 were found by a parallel reviewer and every PoC was re-run un-skipped
 for this report (16/16 fail on `de2874d3` as stated).
 
+## Status after the fixes (6.12.0)
+
+Every finding was fixed before the release except **S03**, which is partly fixed by decision; the
+PoC tests were un-skipped as their findings were fixed and pass (only the S03 PoC stays skipped:
+it asserts a keyed `u`). Fix merges on `android_application`:
+
+| Findings | Fixed in | How (short) |
+|---|---|---|
+| P01–P14, S14 (client) | `95c7044d` (web), `d42dd3d6` (Android) | spec § 7.4 trust rule for away sealing (pinned devices; directory devices only with a v2 certificate by a pinned account key; account pins outlive bundles); `sig4` covers `caps` / `user` / `sth`, mailbox AAD covers `sacc` (spec § 2, § 7.2, vectors regenerated, Android byte for byte); no room-key fallback for protocol-4 devices or private messages; KT inclusion before "account"/"verified", self-monitoring of own devices, refused consistency proofs alerted; background rooms hold changed keys; proxied files carry a sealed file key (§ 8); held messages hidden in quotes, previews, notifications; "verified" only under the verified name; forwards checked by key; replay fails closed; multi-tab safe vault, the wrapping key is never replaced; reset counter decays; squatted rooms rejoin unproven when `legacyAllowed` |
+| S01–S15 | `b062430e` | proven-only features decided by the room's verifier and re-checked at delivery; limiters per room + /64, bounded; verifier registrations rate-limited; `/api/kt/lookup` needs a session and is own-only (S03 partly — `u` stays a public hash); KT growth capped; TURN only after a room join; IPv6 /64 grouping everywhere; audit pin and checkpoint coverage without silent re-pinning; speech-model integrity without silent re-recording (one-time upgrade record); safe service-DB migration lock; bwrap `--cap-drop ALL` |
+| C01–C12 | `bd77a5b9` | no shell strings from `.env`, no install-tree code or git/npm as root (drop to the service user or SKIP), credentials redacted, output sanitized, safe file listing, root-owned install-dir pointer only, manifest paths and pid files validated |
+
+Not verified by tests: Android ↔ web over real WebRTC, a real Linux host with bubblewrap under
+systemd, real devices (see `docs/security-analysis.md` § 13.7).
+
 ## Details — protocol-4 client
 
 ### P01 (High) — away members: the server picks the devices a message is sealed to

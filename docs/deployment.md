@@ -336,6 +336,92 @@ cest).
 `<dir>/.m5cet/backups/`) a drží posledních `BACKUP_KEEP` (5) záloh;
 `update.sh --rollback` se k poslední vrátí.
 
+## Přechod na 6.12
+
+6.12 je bezpečnostní vydání (protokol 4, opravy nálezů F / G a revize 6.12 —
+[`security-analysis.md`](security-analysis.md) › 13, [`review-612.md`](review-612.md)).
+Nové proměnné prostředí jsou všechny volitelné; tabulka s výchozími hodnotami je
+v [`build-and-deploy.md`](build-and-deploy.md) (instalátor je zná, `update.sh --set …`).
+Po aktualizaci spusťte **`sudo <INSTALL_DIR>/check.sh`** ([`install-check.md`](install-check.md)) —
+`update.sh` sám spustí jeho rychlou část (balíček, konfigurace, služba).
+
+**Před aktualizací**
+
+- **Zálohujte master klíč úložiště** (`STORAGE_MASTER_KEY` / `storage.key`): od 6.12 jsou
+  jím šifrované i `functions.db` a `telephony.db` (převod proběhne při prvním startu; bez klíče
+  zůstanou nešifrované a Přehled › Zdraví to hlásí). Bez klíče se po převodu neotevřou, CLI
+  `sqlite3` je nepřečte. Oba procesy (hlavní a ADMIN) potřebují stejný klíč.
+- **Zastavte staré procesy 6.11** a nové spusťte spolu (převod databází hlídá zámek; formát
+  zámku se změnil). `SERVICE_DB_PLAIN_BACKUP=1` ponechá nešifrovanou kopii `*.plain-backup`.
+- Instalátor přepíše jednotku systemd (bubblewrap potřebuje jmenné prostory a `AF_NETLINK`)
+  a stránku nginx (těla do 12 MB). Vlastní konfiguraci nginx podle `deploy/nginx/m5cet.conf`
+  upravte: `gzip` patří do bloku `server` (na Debianu / Ubuntu jinak `nginx -t` selže).
+
+**Klienti a protokol**
+
+- Klienti 6.12 spolu mluví **protokolem 4**, se staršími klienty protokolem 3 (označení
+  „starší protokol“). Zařízení jednou viděné s protokolem 4 se už protokolem 3 nepřijme
+  (ochrana proti downgrade). Obálky v1 / v2 (klienti starší než 3.1) se neotevírají.
+- **Zprávy pro nepřítomné** šifruje klient 6.12 pro každé ověřené zařízení příjemce. Přihlášená
+  zařízení nahrávají své klíče do adresáře (`PUT /api/keys/bundle`, nejvýš `KEYS_MAX_DEVICES`
+  na účet). Účet, který odesílatel nikdy neověřil, dostane obálku klíčem místnosti jako v 6.11.
+- **Průhlednost klíčů:** server vede podepsaný log klíčů účtů a zařízení (klíč logu je odvozený
+  z master klíče — výměna master klíče ho uzavře, klienti pak hlásí poplach). `GET /api/kt/lookup`
+  chce přihlášení a vrací jen vlastní záznamy; `KT_ACCOUNT_ENTRIES_PER_DAY` (40) omezuje zápisy.
+- **Důkaz členství na hubu:** klient 6.12 při vstupu dokládá znalost klíče místnosti. V místnosti,
+  která má ověřovací klíč, dostanou neprokázaní členové (starší klienti) **zvuk z telefonu,
+  hovory místnosti, oznámení podle jména či peer id ani adresář klíčů** — i když jsou prokázaní
+  členové pryč; probíhající hovor neprokázanému členovi skončí. `HUB_REQUIRE_ROOM_PROOF=1` pustí do
+  místností se slepým ID jen prokázané (starší klienti dostanou `room-proof-required`). Místnost,
+  kterou si někdo „zabral“ dřív (zná jen slepé ID), vlastník obnoví:
+  `POST /api/admin/security/room-proof/reset { roomId }`; do té doby se členové připojí
+  neprokázaní. Jedna adresa zaregistruje nejvýš `HUB_ROOM_REGISTRATIONS_PER_HOUR` (20) místností za hodinu.
+- Zpráva s časem víc než 5 minut v budoucnu se přijme s časem příjmu a klient upozorní na
+  hodiny odesílatele.
+
+**Server**
+
+- **Auditní deník:** `audit-signing.key` zmizí, vznikne `audit-signing.pin`. Upgrade nic
+  nevyžaduje; smazaný pin hlásí `pin-missing`, víc než 510 řádků bez kontrolního bodu
+  `checkpoint-missing`. Znovu připnout smí jen vlastník (konzole, `POST /api/admin/audit/repin`).
+- **Hash místnosti** v logu a monitoringu je klíčovaný master klíčem: záznamy registru
+  místností se převedou při dalším vstupu do místnosti; uzly TSA a skripty `m5adm`, které si
+  uložily starý hash, upravte. Instance clusteru potřebují stejný master klíč.
+- **Passkeys** jen z přesného originu (`WEBAUTHN_ORIGINS`, jinak `PUBLIC_BASE_URL`);
+  subdomény jen s `WEBAUTHN_ALLOW_SUBDOMAINS=1`. Aplikace pro Android beze změny.
+- **TURN** jen klientovi, jehož WebSocket je připojený do místnosti (`TURN_REQUIRE_HUB=0`
+  v clusteru bez sticky routingu); ostatní dostanou jen STUN s `pending: true`.
+- **Access log** ukládá jen sítě (IPv4 /24, IPv6 /48; `ACCESS_LOG_FULL_IP=1` celé adresy),
+  retence 14 dní (`ACCESS_LOG_DAYS`).
+- **Telefonie:** log maskuje DTMF, route kódy a přepisy; nové nastavení má `keepRaw` vypnuté
+  a retenci 14 dní (uložené hodnoty zůstávají).
+- **Funkce:** na Linuxu s bubblewrapem běží sandboxy izolovaně (`FUNCTIONS_SANDBOX_ISOLATION`,
+  `apt install bubblewrap`; v Dockeru nebo na Ubuntu s omezenými jmennými prostory autotest
+  selže a Přehled varuje); pod zátěží může běh skončit `Busy` (`FUNCTIONS_SANDBOX_MAX`,
+  `…_QUEUE`, `…_QUEUE_MS`). Kód z výstupu funkce od jiného člena běží v přísném sandboxu bez sítě.
+- **Modely řeči** nainstalované verzí 6.11 se při prvním startu jednou zaznamenají a fungují
+  dál; později změněný nebo nezaznamenaný soubor se odmítne, dokud ho vlastník neschválí
+  (*Trust installed files*) nebo nepřipne (`SPEECH_MODEL_PINS`).
+- **Limity na adresu** (IPv6 po /64): pozvánky `SHARE_MAX_PER_IP` (50, `429
+  too-many-for-address`), proxy přenosy `FILE_PROXY_MAX_PER_IP` (16).
+
+**Aplikace pro Android 6.12**
+
+- Build výchozího designu potřebuje aplikaci 6.12 (`minAppCode` 61200); starší telefony si
+  nechají build, který mají.
+- Zámek aplikace zahodí datový klíč; zprávy dál chodí do zapečetěné schránky zámku a po
+  odemčení se zařadí (*Nastavení › Zabezpečení › Při zamčení odpojit místnosti* = přísnější režim,
+  bez účtu se pak zprávy za zámku ztratí). Klíč PINu se při dalším odemčení přesune do StrongBoxu /
+  TEE; volitelný nouzový PIN.
+
+**Web**
+
+- Nová místnost má jako výchozí náhodný silný klíč; slabý klíč chce potvrzení pokaždé.
+- NFC tag Připojka se zapisuje jen ve formátu 2; starý tag s PINem jde přečíst a přepsat.
+- **Podepsaná vydání (volitelné):** `npm run release:keygen` (soukromý klíč mimo server),
+  `release:sign`; veřejný klíč `release-signing.pub`. Bez podpisu web i `check.sh` ověřují jen
+  hashe a hlásí „nepodepsáno“.
+
 ## Přechod na 6.11
 
 Nové proměnné prostředí (všechny volitelné; instalátor je zná — `update.sh --set
