@@ -299,9 +299,36 @@ files:    index.js · dns.js · http.js · README.md · tests/*.js
 
 1. Po napsání `/` na začátku zprávy psaní ukáže **našeptávač** modelů, které
    uživatel smí spustit (klíč, název, popis, štítek server / prohlížeč).
+   **6.11** (`client/src/lib/suggest.ts` — čistá logika, port pro Android
+   `fn/Suggestions.java`; kresba `components/CommandSuggest.tsx`): volné
+   hledání v klíči, názvu a slovech popisu bez ohledu na velikost písmen
+   a diakritiku (přesná shoda > začátek > začátek slova > kdekoli > písmena
+   po řadě; váhy klíč 1, název 0,85, popis 0,6), zvýrazněná shoda, pořadí
+   posunuté tím, co uživatel vybírá / posílá často a nedávno (malá paměť
+   v `localStorage` pro každý účet, nejvýš +10 bodů — slabší shodu nad
+   lepší nepovýší), sekce (Naposledy použité, Příkazy, Lidé, Štítky, Hodnoty)
+   s limitem a řádkem „+ n dalších“. Řádek modelu: ikona a barva
+   z `modelIdentity()`, klíč, název, popis, signatura (povinné / volitelné),
+   štítek viditelnosti (**Místnost** = odpověď vidí všichni, **Jen já**);
+   vybraný model má vedle podrobnost (použití, parametry, `usage` modelu).
+   Klávesy ↑ ↓, PageUp / PageDown, Home / End, Enter / Tab doplní, Esc
+   zavře, Ctrl+Mezerník otevře (bez znaku: příkazy, lidé a štítky pro slovo
+   u kurzoru). Pole zůstává textbox s `aria-autocomplete`, `aria-controls`
+   a `aria-activedescendant` na listbox. Znaky spouštějící akce jsou stále
+   ty z konzole (Modules & groups › Message input — activation characters).
 2. Po výběru klíče ukáže **nápovědu parametrů** (jako signatura funkce:
    `/spustmodel1 domena [port=443] [hloubka=rychla|plna]`), zvýrazní právě
    psaný parametr a nabízí hodnoty (`enum`, lidé v místnosti, přílohy).
+   **6.11**: `argumentHint()` čte řádek stejně jako server (`buildInputs`):
+   holé hodnoty plní poziční vstupy po řadě (`user`, `file`, `secret` jen
+   jménem), `jméno=hodnota` kdekoli, poslední textový vstup bere zbytek,
+   „hodnota v uvozovkách“ je jedna. Pruh nad polem ukáže podpis se
+   zvýrazněným vstupem, jeho typ, povinnost, nápovědu, příklad (vlastní,
+   výchozí, první hodnota nebo podle typu) a hodnoty jako tlačítka (`values`,
+   `true / false`, lidé pro `user`); rozepsaná hodnota otevře seznam
+   odpovídajících (Enter / Tab doplní, prázdná hodnota Enter neblokuje —
+   Ctrl+Mezerník ukáže všechny). Řekne, co povinného chybí a kdy je napsáno
+   víc, než příkaz bere.
 3. **Parsování**: pozičně i pojmenovaně (`port=8443`, `--plna` pro boolean /
    enum), uvozovky pro mezery, `\` escape; `/spustmodel1 ?` ukáže nápovědu
    modelu (popis, příklady). Ověří se **v klientu i na serveru** stejným

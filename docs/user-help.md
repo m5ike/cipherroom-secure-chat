@@ -195,6 +195,39 @@ k aplikaci ani k tvým klíčům nemá přístup. Odpověď může být i **form
 výpis** (nadpisy, tabulky, obrázky) — aplikace z něj ukáže jen text, tabulky,
 obrázky a odkazy, nikdy skript.
 
+### Našeptávač: příkazy, lidé, štítky a parametry (6.11)
+Nad polem zprávy se při psaní ukáže **našeptávač**. Co nabízí, určují znaky,
+které nastavil správce (výchozí: **/** příkazy a modely na začátku zprávy,
+**@** lidé v místnosti a **#** štítky na začátku slova).
+- **Stačí kus slova.** Hledá v klíčovém slově, názvu modelu i ve slovech
+  popisu, bez ohledu na velká písmena a diakritiku (`/pocasi` najde „Počasí“,
+  `/look` najde „DNS lookup“, `/emh` najde `/emv-history`). Nalezená písmena
+  jsou zvýrazněná. Nejvýš je shoda na začátku klíčového slova, pak na začátku
+  slova, pak kdekoli.
+- **Co používáš, je nahoře.** Příkazy, lidé, štítky a hodnoty, které často
+  nebo nedávno vybíráš či posíláš, se řadí výš. Samotné `/` ukáže nahoře
+  sekci *Naposledy použité*. Pamatuje si to jen tento prohlížeč, pro každý
+  účet zvlášť.
+- **Řádek příkazu** ukáže ikonu modelu, klíčové slovo, název, krátký popis,
+  parametry (povinné plně, volitelné čárkovaně) a kdo odpověď uvidí:
+  **Místnost** (všichni v místnosti) nebo **Jen já**. Vedle seznamu (na
+  telefonu pod ním) je podrobnost vybraného příkazu: použití, parametry
+  s nápovědou a hodnotami a návod modelu. U lidí je avatar a značka „pryč“,
+  u štítků „#“.
+- Každá sekce ukáže jen několik řádků. Řádek **+ n dalších** ukáže ostatní.
+- **Klávesy:** ↑ ↓ vybírají, PageUp / PageDown po stránkách, Home / End
+  skočí na začátek a konec. **Enter** nebo **Tab** doplní vybraný řádek
+  (zprávu ještě neodešle), **Esc** seznam zavře. **Ctrl+Mezerník** ho otevře
+  i bez znaku: na prázdném poli nabídne příkazy, lidi i štítky, na slově to,
+  co mu odpovídá. Myší nebo prstem stačí na řádek klepnout.
+- **Nápověda parametrů.** Po výběru příkazu (`/dns `) se nad polem ukáže jeho
+  podpis, třeba `/dns <domain> [type]`, se zvýrazněným parametrem, který
+  právě píšeš. U něj je typ, jestli je povinný, nápověda a příklad. Hodnoty,
+  které parametr bere, jsou tlačítka. Parametry píšeš za sebou nebo jménem
+  (`type=MX`). Když začneš psát hodnotu, nabídne odpovídající a Enter / Tab
+  ji doplní; Ctrl+Mezerník ukáže všechny. Nápověda řekne, co ještě chybí
+  a kdy už příkaz další hodnoty nečeká. Esc nebo × ji skryje.
+
 ### Platební karta a doklad přes NFC — /emv, /emv-history, /eid (6.6)
 Když je správce zapne a máš přístup k modulu NFC, tyto příkazy přečtou kartu
 **u tebe** — jen ke čtení, tvou vlastní kartu nebo doklad:
@@ -634,6 +667,39 @@ notice or a small widget — that runs in an isolated frame with no access to
 the app or your keys. An answer can also be a **formatted report** (headings,
 tables, pictures) — the app shows only its text, tables, pictures and links,
 never a script.
+
+### The suggester: commands, people, tags and arguments (6.11)
+While you type, a **suggester** opens above the message field. What it offers
+depends on the characters your operator set (by default: **/** commands and
+models at the start of a message, **@** people in the room and **#** tags at
+the start of a word).
+- **Part of a word is enough.** It searches the keyword, the model's name and
+  the words of its summary, ignoring case and accents (`/pocasi` finds
+  "Počasí", `/look` finds "DNS lookup", `/emh` finds `/emv-history`). The
+  matched letters are highlighted. A match at the start of the keyword ranks
+  highest, then the start of a word, then anywhere.
+- **What you use comes first.** Commands, people, tags and values you pick or
+  send often or lately rank higher. A bare `/` shows a *Recently used* section
+  on top. Only this browser remembers it, separately for each account.
+- **A command's row** shows the model's icon, the keyword, its name, a short
+  summary, its arguments (required ones solid, optional ones dashed) and who
+  sees the answer: **Room** (everyone in the room) or **Only me**. Beside the
+  list (below it on a phone) is the selected command's detail: its usage, its
+  arguments with their help and values, and the model's own guide. People
+  have their avatar and an "away" badge, tags a "#".
+- Each section shows a few rows. A **+ n more** row shows the rest.
+- **Keys:** ↑ ↓ select, PageUp / PageDown page, Home / End jump to the first
+  and the last. **Enter** or **Tab** completes the selected row (it does not
+  send yet), **Esc** closes the list. **Ctrl+Space** opens it without a
+  trigger: on an empty field it offers commands, people and tags, on a word
+  whatever fits it. With a mouse or a finger, tap the row.
+- **The argument hint.** Once a command is chosen (`/dns `), its signature
+  shows above the field, e.g. `/dns <domain> [type]`, with the argument you
+  are typing highlighted, its type, whether it is required, its help and an
+  example. The values it takes are buttons. Type the arguments in order or by
+  name (`type=MX`). Start typing a value and the matching ones are offered:
+  Enter / Tab completes it, Ctrl+Space lists them all. The hint says what is
+  still missing and when the command takes no more values. Esc or × hides it.
 
 ### Payment card and ID over NFC — /emv, /emv-history, /eid (6.6)
 When the operator switches them on and you have the NFC module, these commands
@@ -1078,6 +1144,45 @@ seine Nachricht, um ihm zu schreiben. Ein kleines Widget läuft in einem
 isolierten Rahmen ohne Zugriff auf die App oder deine Schlüssel. Eine Antwort
 kann auch ein **formatierter Bericht** sein (Überschriften, Tabellen, Bilder) —
 die App zeigt davon nur Text, Tabellen, Bilder und Links, nie ein Skript.
+
+### Die Vorschläge: Befehle, Personen, Tags und Parameter (6.11)
+Beim Tippen öffnen sich über dem Nachrichtenfeld **Vorschläge**. Was sie
+anbieten, bestimmen die Zeichen, die der Betreiber festgelegt hat (Standard:
+**/** Befehle und Modelle am Anfang einer Nachricht, **@** Personen im Raum
+und **#** Tags am Anfang eines Wortes).
+- **Ein Teil eines Wortes genügt.** Gesucht wird im Schlüsselwort, im Namen
+  des Modells und in den Wörtern seiner Beschreibung, ohne Rücksicht auf
+  Groß- und Kleinschreibung und Akzente (`/pocasi` findet „Počasí“, `/look`
+  findet „DNS lookup“, `/emh` findet `/emv-history`). Die gefundenen
+  Buchstaben sind hervorgehoben. Ganz oben steht ein Treffer am Anfang des
+  Schlüsselworts, dann am Anfang eines Wortes, dann irgendwo.
+- **Was du nutzt, steht oben.** Befehle, Personen, Tags und Werte, die du oft
+  oder zuletzt wählst oder sendest, rücken nach oben. Ein einzelnes `/` zeigt
+  oben den Abschnitt *Zuletzt verwendet*. Nur dieser Browser merkt sich das,
+  für jedes Konto getrennt.
+- **Die Zeile eines Befehls** zeigt das Symbol des Modells, das
+  Schlüsselwort, den Namen, eine kurze Beschreibung, die Parameter
+  (erforderliche ausgefüllt, optionale gestrichelt) und wer die Antwort
+  sieht: **Raum** (alle im Raum) oder **Nur ich**. Neben der Liste (auf dem
+  Telefon darunter) steht das Detail des gewählten Befehls: Verwendung,
+  Parameter mit Hilfe und Werten und die Anleitung des Modells. Personen
+  haben ihren Avatar und ein „abwesend“, Tags ein „#“.
+- Jeder Abschnitt zeigt nur einige Zeilen. Die Zeile **+ n weitere** zeigt
+  den Rest.
+- **Tasten:** ↑ ↓ wählen, Bild↑ / Bild↓ seitenweise, Pos1 / Ende springen
+  zum Anfang und zum Ende. **Enter** oder **Tab** vervollständigt die
+  gewählte Zeile (gesendet wird noch nicht), **Esc** schließt die Liste.
+  **Strg+Leertaste** öffnet sie auch ohne Zeichen: im leeren Feld mit
+  Befehlen, Personen und Tags, auf einem Wort mit dem, was dazu passt. Mit
+  Maus oder Finger genügt ein Tipp auf die Zeile.
+- **Die Parameterhilfe.** Ist ein Befehl gewählt (`/dns `), steht über dem
+  Feld seine Signatur, etwa `/dns <domain> [type]`, mit dem Parameter, den du
+  gerade tippst, hervorgehoben; dazu sein Typ, ob er erforderlich ist, seine
+  Hilfe und ein Beispiel. Die Werte, die er annimmt, sind Schaltflächen.
+  Parameter tippst du der Reihe nach oder mit Namen (`type=MX`). Sobald du
+  einen Wert beginnst, werden passende angeboten: Enter / Tab vervollständigt,
+  Strg+Leertaste zeigt alle. Die Hilfe sagt, was noch fehlt und wann der
+  Befehl keine weiteren Werte erwartet. Esc oder × blendet sie aus.
 
 ### Zahlungskarte und Ausweis per NFC — /emv, /emv-history, /eid (6.6)
 Wenn der Betreiber sie einschaltet und du das NFC-Modul hast, lesen diese

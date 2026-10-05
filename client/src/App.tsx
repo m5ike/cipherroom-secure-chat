@@ -35,6 +35,7 @@ import { SendOptions, DEFAULT_SEND_STATE, type SendState } from "./components/Se
 import { RecipientsWidget, type WidgetPeer } from "./components/RecipientsWidget";
 // 6.7 voice: dictation + recorder in the composer, the voice changer, speak and send.
 import { ComposerVoice } from "./components/ComposerVoice";
+import { useComposerSuggest } from "./components/CommandSuggest";
 import { VoiceChangerPanel } from "./components/VoiceChangerPanel";
 import { isProcessed, openMic, processStream, setVoiceFxAllowed, voiceFxActive } from "./lib/mic";
 import { onVoiceFxChange } from "./lib/voice-fx-settings";
@@ -529,8 +530,6 @@ function ChatApp() {
   // 5.2: whether the Functions module is on for this user (null: not asked yet).
   const [commandsEnabled, setCommandsEnabled] = useState<boolean | null>(null);
   const commandsAtRef = useRef(0);
-  const [cmdIndex, setCmdIndex] = useState(0);
-  const [cmdOpen, setCmdOpen] = useState(true);
   // 5.2: a "#tag" the conversation is filtered by (clicked in a message).
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   // A running command's live question (m5.prompt / m5.form) and its run token.
@@ -3723,50 +3722,32 @@ function ChatApp() {
     });
   }
 
-  /** 5.2: what typing a trigger character offers — "/" commands (at the start),
-   *  "@" the people in the room, "#" tags (at the start of a word). */
-  type Suggestion = { key: string; label: string; detail?: string; extra?: string; disabled?: boolean; pick: () => void };
-  function composerSuggestions(input: string): { title: string; items: Suggestion[] } | null {
-    if (!cmdOpen || !input) return null;
-    const first = [...input][0] ?? "";
-    if (commandChars.includes(first)) {
-      const m = /^([a-z0-9_-]*)$/i.exec(input.slice(first.length));
-      if (m) {
-        if (commandsEnabled === false) return { title: t(lang, "functions.commands"), items: [{ key: "off", label: t(lang, "functions.off"), disabled: true, pick: () => undefined }] };
-        const q = m[1].toLowerCase();
-        const list = commands.filter((c) => c.keyword.startsWith(q)).slice(0, 8);
-        if (!list.length) return q || commandsEnabled === null ? null : { title: t(lang, "functions.commands"), items: [{ key: "none", label: t(lang, "functions.none"), disabled: true, pick: () => undefined }] };
-        return { title: t(lang, "functions.commands"), items: list.map((c) => ({ key: c.keyword, label: `${first}${c.keyword}`, detail: c.summary || c.name, extra: c.inputs.map((a) => (a.required ? a.name : `[${a.name}]`)).join(" "), pick: () => selectCommand(c, first) })) };
-      }
-    }
-    const w = /(^|\s)(\S)([\p{L}\p{N}_.-]*)$/u.exec(input);
-    if (!w) return null;
-    const trig = composerTriggers.find((x) => x.char === w[2] && x.action !== "functions");
-    if (!trig) return null;
-    const q = w[3].toLowerCase();
-    const replaceWith = (token: string) => () => {
-      setMessageInput(`${input.slice(0, input.length - w[2].length - w[3].length)}${w[2]}${token} `);
-      setCmdIndex(0);
-      setTimeout(() => document.getElementById("message")?.focus(), 0);
-    };
-    if (trig.action === "mentions") {
-      const names = [...new Set([...peers.map((p) => p.name), ...awayPeers.map((a) => a.name)].filter(Boolean).map((n) => n.replace(/\s+/g, "_")))];
-      const items = names.filter((n) => n.toLowerCase().startsWith(q)).slice(0, 8).map((n) => ({ key: n, label: `${trig.char}${n}`, pick: replaceWith(n) }));
-      return items.length ? { title: t(lang, "composer.mentions"), items } : null;
-    }
+  /** 5.2 / 6.11: what typing a trigger character offers — "/" commands and models (at the start),
+   *  "@" the people in the room, "#" tags (at the start of a word), a command argument's values —
+   *  ranked, in sections, with the argument hint (lib/suggest.ts, components/CommandSuggest.tsx). */
+  const suggestPeople = useMemo(() => [
+    ...peers.map((p) => ({ name: p.name, avatar: peerProfiles[p.id]?.avatar })),
+    ...awayPeers.map((a) => ({ name: a.name, away: true })),
+  ], [peers, awayPeers, peerProfiles]);
+  const suggestTags = useMemo(() => {
     const seen = new Set<string>(clientConfig.composer?.tags ?? []);
     for (const msg of messages.slice(-300)) for (const tag of tagsIn(msg.text || "")) seen.add(tag);
-    const items = [...seen].filter((tag) => tag.startsWith(q) && tag !== q).slice(0, 8).map((tag) => ({ key: tag, label: `${trig.char}${tag}`, pick: replaceWith(tag) }));
-    return items.length ? { title: t(lang, "composer.tags"), items } : null;
-  }
-
-  /** Picks a suggested command: fills the composer with "/keyword " ready for arguments. */
-  function selectCommand(command: Command, char = "/") {
-    setMessageInput(`${char}${command.keyword} `);
-    setCmdOpen(false);
-    setCmdIndex(0);
-    setTimeout(() => document.getElementById("message")?.focus(), 0);
-  }
+    return [...seen];
+  }, [messages, clientConfig.composer?.tags]);
+  const composerSuggest = useComposerSuggest({
+    lang,
+    text: messageInput,
+    setText: setMessageInput,
+    inputId: "message",
+    triggers: composerTriggers,
+    commands,
+    commandsEnabled,
+    people: suggestPeople,
+    tags: suggestTags,
+    user: account?.username ?? account?.id ?? "local",
+  });
+  /** A command that runs closes the list (runChatCommand). */
+  const setCmdOpen = (open: boolean) => { if (!open) composerSuggest.dismiss(); };
 
   /** 6.3 nfc: a running model asked to drive this device's NFC hardware. An
    *  "nfc" interaction is not a dialog — run the command on the caller's NFC
@@ -4519,16 +4500,11 @@ function ChatApp() {
   }
 
   function handleMessageKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    // While the command suggester is open, the arrows and Enter/Tab drive it.
-    const menu = composerSuggestions(messageInput)?.items.filter((i) => !i.disabled) ?? [];
-    if (menu.length) {
-      if (event.key === "ArrowDown") { event.preventDefault(); setCmdIndex((i) => (i + 1) % menu.length); return; }
-      if (event.key === "ArrowUp") { event.preventDefault(); setCmdIndex((i) => (i - 1 + menu.length) % menu.length); return; }
-      if (event.key === "Enter" || event.key === "Tab") { event.preventDefault(); menu[Math.min(cmdIndex, menu.length - 1)].pick(); return; }
-      if (event.key === "Escape") { event.preventDefault(); setCmdOpen(false); return; }
-    }
+    // 6.11: while the suggester is open, ↑ ↓ PageUp PageDown Home End, Enter / Tab and Esc drive it; Ctrl+Space opens it.
+    if (composerSuggest.onKeyDown(event)) return;
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
+      composerSuggest.noteSent(messageInput);
       void sendMessage();
     }
   }
@@ -5384,7 +5360,7 @@ function ChatApp() {
               toggleEmoji: () => setEmojiOpen((current) => !current),
               pickFile: () => fileInputRef.current?.click(),
               pickImage: () => imageInputRef.current?.click(),
-              input: (e) => { setMessageInput((e as ChangeEvent<HTMLTextAreaElement>).target.value); setCmdOpen(true); setCmdIndex(0); },
+              input: (e) => { setMessageInput((e as ChangeEvent<HTMLTextAreaElement>).target.value); composerSuggest.onInput(); },
               keydown: (e) => handleMessageKeyDown(e as KeyboardEvent<HTMLTextAreaElement>),
               attachment: (e) => void handleAttachmentChange(e as ChangeEvent<HTMLInputElement>),
             },
@@ -5418,33 +5394,8 @@ function ChatApp() {
         },
       })}
 
-      {/* 4.15 / 5.2: what the trigger characters offer ("/" commands, "@" people, "#" tags), floating above the composer. */}
-      {(() => {
-        const sug = composerSuggestions(messageInput);
-        if (!sug || !sug.items.length) return null;
-        const live = sug.items.filter((i) => !i.disabled);
-        const active = live.length ? live[Math.min(cmdIndex, live.length - 1)] : null;
-        return (
-          <div className="cmd-menu" role="listbox" aria-label={sug.title} data-testid="cmd-menu">
-            {sug.items.map((c) => (
-              <button
-                key={c.key}
-                type="button"
-                role="option"
-                aria-selected={c === active}
-                aria-disabled={c.disabled || undefined}
-                disabled={c.disabled}
-                className={`cmd-item${c === active ? " cmd-item--on" : ""}${c.disabled ? " cmd-item--off" : ""}`}
-                onMouseDown={(e) => { e.preventDefault(); if (!c.disabled) c.pick(); }}
-              >
-                <span className="cmd-item__kw">{c.label}</span>
-                {c.detail ? <span className="cmd-item__sum">{c.detail}</span> : null}
-                {c.extra ? <span className="cmd-item__args">{c.extra}</span> : null}
-              </button>
-            ))}
-          </div>
-        );
-      })()}
+      {/* 4.15 / 5.2 / 6.11: what the trigger characters offer ("/" commands, "@" people, "#" tags, argument values) and the argument hint, above the composer. */}
+      {composerSuggest.view}
 
       {/* 5.2: the conversation filtered by a #tag. */}
       {tagFilter ? (
