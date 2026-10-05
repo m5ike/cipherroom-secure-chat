@@ -124,11 +124,37 @@ describe("offline speech model integrity", () => {
     expect(I.readManifest(ROOT)[ID].source).toBe("pinned");
   });
 
-  it("a model installed before 6.12 is recorded at its first load", async () => {
+  // 6.12 review S02: files without recorded hashes are no longer recorded at their first load (a deleted manifest
+  // looked exactly like a model installed before 6.12) — the operator trusts them, or pins them.
+  it("a model with no recorded hashes (installed before 6.12, or its manifest lost) is refused until the operator trusts it", async () => {
     rmSync(I.manifestPath(ROOT));
     expect(existsSync(join(ROOT, ID))).toBe(true);
+    await expect(L.verifyModel(ID)).rejects.toMatchObject({ code: "integrity", message: expect.stringMatching(/no recorded hashes/) });
+    expect(existsSync(I.manifestPath(ROOT))).toBe(false);
+    // While models are installed and the manifest is gone, no download is trusted on first use either.
+    expect(() => I.checkArchive(ROOT, "whisper-small", "c".repeat(64))).toThrow(/missing although models are installed/);
+    // The console's "Trust installed files" (owner).
+    expect(await L.trustModel(ID)).toEqual({ files: 4 });
+    expect(I.readManifest(ROOT)[ID]).toMatchObject({ source: "operator", archive: "" });
+    expect(await L.verifyModel(ID)).toBe("verified");
+  });
+
+  it("an operator pin of the files (SPEECH_MODEL_PINS id=files:<digest>) vouches for them at every load", async () => {
+    const files = await I.hashTree(join(ROOT, ID));
+    const digest = I.treeDigest(files);
+    rmSync(I.manifestPath(ROOT));
+    process.env.SPEECH_MODEL_PINS = `${ID}=files:${digest}`;
+    expect(I.pinnedFilesDigest(ID)).toBe(digest);
+    expect(I.pinnedArchiveHash(ID)).toBeNull();
     expect(await L.verifyModel(ID)).toBe("recorded");
-    expect(I.readManifest(ROOT)[ID]).toMatchObject({ source: "first-load", archive: "" });
+    expect(I.readManifest(ROOT)[ID]).toMatchObject({ source: "pinned-files" });
+    expect(await L.verifyModel(ID)).toBe("verified");
+    // A changed file fails the pin even though the manifest could be rewritten to match.
+    const onnx = join(ROOT, ID, "cs_CZ-test.onnx");
+    const good = readFileSync(onnx);
+    appendFileSync(onnx, "-PATCHED");
+    await expect(L.verifyModel(ID)).rejects.toMatchObject({ code: "integrity", message: expect.stringMatching(/operator pin/) });
+    writeFileSync(onnx, good);
     expect(await L.verifyModel(ID)).toBe("verified");
   });
 });

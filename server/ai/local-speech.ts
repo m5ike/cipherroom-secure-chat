@@ -20,7 +20,7 @@ import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, re
 import { once } from "node:events";
 import { join } from "node:path";
 import { aiDataDir } from "./config";
-import { checkArchive, forgetFiles, readManifest, recordInstall, verifyInstalled } from "./speech-integrity";
+import { checkArchive, forgetFiles, readManifest, recordInstall, trustInstalled, verifyInstalled } from "./speech-integrity";
 import { createHash } from "node:crypto";
 
 export type LocalModelDef = {
@@ -323,6 +323,28 @@ export async function verifyModel(id: string): Promise<"verified" | "recorded"> 
   try {
     return await verifyInstalled(modelsRoot(), id, def.url);
   } catch (err) {
+    throw new LocalSpeechError("integrity", (err as Error).message);
+  }
+}
+
+/**
+ * 6.12 review S02: the operator trusts the files installed for `id` as they
+ * are now (the console's "Trust installed files", owner role) — a model
+ * installed before 6.12, or after its manifest was lost. Loaded engines of
+ * the model are dropped so the next use verifies again.
+ */
+export async function trustModel(id: string, opts: { replaceInvalid?: boolean } = {}): Promise<{ files: number }> {
+  const def = LOCAL_MODEL.get(id);
+  if (!def) throw new LocalSpeechError("no-model", `There is no built-in model ${id}.`);
+  if (!modelFiles(id)) throw new LocalSpeechError("not-installed", `The model ${id} is not installed.`);
+  const running = jobs.get(id);
+  if (running && (running.state === "downloading" || running.state === "extracting")) throw new LocalSpeechError("busy", "The model is being downloaded.");
+  try {
+    const rec = await trustInstalled(modelsRoot(), id, def.url, opts);
+    for (const k of [...ttsEngines.keys(), ...sttEngines.keys()]) if (k === id || k.startsWith(`${id}|`)) { ttsEngines.delete(k); sttEngines.delete(k); }
+    return { files: Object.keys(rec.files).length };
+  } catch (err) {
+    if (err instanceof LocalSpeechError) throw err;
     throw new LocalSpeechError("integrity", (err as Error).message);
   }
 }

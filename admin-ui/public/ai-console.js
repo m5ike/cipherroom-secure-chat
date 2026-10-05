@@ -612,6 +612,8 @@
           const pct = j.total ? Math.min(100, (j.received / j.total) * 100) : 0;
           state = h("div", { class: "ai-dl" }, h("div", { class: "bar__track" }, h("div", { class: "bar__fill", style: `width:${pct.toFixed(1)}%` })), h("span", { class: "muted small" }, j.state === "extracting" ? "unpacking…" : `${pct.toFixed(0)} % of ${mb(j.total)}`));
         } else if (j && j.state === "failed") state = h("span", { title: j.error || "" }, badge("failed", "err"), h("span", { class: "muted small" }, ` ${j.error || ""}`));
+        // 6.12 review S02: installed files with no recorded hashes are not loaded until the owner trusts them.
+        else if (m.installed && !m.integrity) state = h("span", { title: "No recorded hashes (installed before 6.12, or the manifest was lost): not loaded until you trust these files." }, badge("not verified", "err"), h("span", { class: "muted small" }, ` ${mb(m.bytes)}`));
         else if (m.installed) state = h("span", {}, badge("installed", "ok"), h("span", { class: "muted small" }, ` ${mb(m.bytes)}`));
         else state = h("span", { class: "muted small" }, "—");
         const actions = h("div", { class: "row" });
@@ -622,6 +624,10 @@
           btn.disabled = false;
         } }, "▶ Try"));
         if (can("owner")) {
+          if (m.installed && (!m.integrity || st.manifestError)) actions.append(h("button", { type: "button", class: "btn btn--sm", onclick: async () => {
+            if (!confirm(`Trust the files installed for ${m.label} as they are now? Only if you know nobody changed them — otherwise remove and download the model again.`)) return;
+            try { const r = await api(`/admin/ai/local/${encodeURIComponent(m.id)}/trust`, { method: "POST", body: { confirm: "trust", replaceInvalid: Boolean(st.manifestError) } }); toast(`Trusted ${r.files} files`, "ok"); void draw(); } catch (err) { toast(err.message, "err"); }
+          } }, "Trust installed files"));
           if (m.installed) actions.append(h("button", { type: "button", class: "btn btn--sm btn--danger", onclick: async () => {
             if (!confirm(`Remove ${m.label} (${mb(m.bytes)})?`)) return;
             try { await api(`/admin/ai/local/${encodeURIComponent(m.id)}`, { method: "DELETE" }); toast("Removed", "ok"); await load(); } catch (err) { toast(err.message, "err"); }

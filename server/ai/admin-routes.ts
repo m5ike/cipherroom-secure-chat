@@ -25,7 +25,7 @@ import {
   aiConfig, aiConfigPath, keyState, newProviderId, providerBaseUrl, refOf, saveAiConfig, sanitizeBaseUrl, sanitizeGroups, sanitizeLimits, sanitizeModel, sealKey,
   type AiConfig, type ModelConfig, type ProviderConfig,
 } from "./config";
-import { install as installLocal, LOCAL_MODEL, status as localStatus, uninstall as uninstallLocal, voicesOf, type LocalModelDef } from "./local-speech";
+import { install as installLocal, LOCAL_MODEL, status as localStatus, trustModel as trustLocal, uninstall as uninstallLocal, voicesOf, type LocalModelDef } from "./local-speech";
 import { kindOf } from "./providers/openai";
 import type { ProviderType } from "./types";
 import { journal, type CallRecord } from "./journal";
@@ -392,6 +392,19 @@ export function registerAiAdminRoutes(app: Express): void {
       pluginLog.record({ level: "info", kind: "admin", message: `speech model ${id} downloading (${actor})` });
       res.json({ ok: true, job });
     } catch (err) { res.status(400).json({ ok: false, message: (err as Error).message }); }
+  });
+  // 6.12 review S02: installed files the manifest does not vouch for (a model installed before 6.12, or a
+  // manifest that was lost) are not loaded until the owner trusts them as they are now — explicit, logged.
+  app.post("/admin/ai/local/:id/trust", owner, (req, res) => {
+    const id = String(req.params.id);
+    if (!LOCAL_MODEL.has(id)) return res.status(404).json({ ok: false, message: "No such model." });
+    if ((req.body as { confirm?: unknown } | undefined)?.confirm !== "trust") return res.status(400).json({ ok: false, code: "confirm", message: 'Trusting records the installed files as they are now: send { "confirm": "trust" }.' });
+    const actor = actorOf(res);
+    const replaceInvalid = (req.body as { replaceInvalid?: unknown }).replaceInvalid === true;
+    void trustLocal(id, { replaceInvalid }).then((r) => {
+      pluginLog.record({ level: "warn", kind: "admin", message: `speech model ${id}: the installed files (${r.files}) were trusted as they are now by ${actor}` });
+      res.json({ ok: true, ...r });
+    }, (err: Error) => res.status(400).json({ ok: false, message: err.message }));
   });
   app.delete("/admin/ai/local/:id", owner, (req, res) => {
     const id = String(req.params.id);
