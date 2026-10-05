@@ -270,6 +270,16 @@ describe("6.12 web client — protocol 3 fallback and the downgrade rule", () =>
     // Nothing goes to them as protocol 4.
     expect(await a.room.sealRoom("m", msg("m", "x", "p-a"), ["p-old"])).toBeNull();
     expect(a.book.p4Seen(old.identity.publicKey)).toBe(false);
+    // Protocol-4 frames from a protocol-3 peer change nothing (no reset, no new hello).
+    const before = net.log.length;
+    await a.room.handle("p-old", { kind: "p4-reset", v: 4, why: "x" });
+    await a.room.handle("p-old", { kind: "p4-kem", v: 4, ct: "AAAA", r: "AAAA" });
+    expect(net.log.length).toBe(before);
+    expect(a.room.protocolOf("p-old")).toBe(3);
+    const env2 = await old.room.v3.sealLive(keys, "o2", msg("o2", "pořád funguje", "p-old"), old.identity);
+    net.send("p-old", "p-a", JSON.stringify(env2));
+    await net.drain();
+    expect(a.roomMessages.map((m) => m.payload.text)).toEqual(["starý klient", "pořád funguje"]);
   });
 
   it("refuses a device key once seen with protocol 4 that now says only protocol 3 (downgrade)", async () => {

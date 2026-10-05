@@ -215,7 +215,12 @@ export class P4Room {
       case "hello": await this.onHello(peerId, raw); return true;
       case "p4-kem": await this.onKem(peerId, raw); return true;
       case "p4": await this.onFrame(peerId, raw); return true;
-      case "p4-reset": await this.reset(peerId, typeof raw.why === "string" ? raw.why.slice(0, 80) : "reset", false); return true;
+      case "p4-reset": {
+        // Only a session (or a handshake) of protocol 4 can be reset: an older peer's "reset" changes nothing.
+        const proto = this.protocolOf(peerId);
+        if (proto !== 3 && proto !== "refused") await this.reset(peerId, typeof raw.why === "string" ? raw.why.slice(0, 80) : "reset", false);
+        return true;
+      }
       case "sender-key": {
         // Protocol 3 only: a protocol-4 peer never hands out a protocol-3 chain.
         if (this.protocolOf(peerId) === 3) await this.v3.acceptSenderKey(this.o.keys, raw as { iv: string; ct: string }, peerId, this.o.selfId());
@@ -283,6 +288,8 @@ export class P4Room {
 
   private async onKem(peerId: string, raw: Record<string, unknown>): Promise<void> {
     const st = this.state(peerId);
+    // A peer that speaks protocol 3 (or was refused) has no handshake of ours to answer.
+    if (st.protocol === 3 || st.protocol === "refused") return;
     const hs = await st.hs;
     if (!hs || st.session) return;
     let result: "ok" | "ignored";
