@@ -143,6 +143,74 @@ export async function openProfile<T>(ciphertext: string, key: CryptoKey): Promis
   return JSON.parse(dec.decode(plain)) as T;
 }
 
+/* ------------------------------------------------- vault slots v2 (6.12, F-26) */
+//
+// The vault's parts ("slots") were sealed without associated data: the server,
+// which stores them, could hand back one slot's ciphertext as another's (the
+// connections where the profile is expected…) or an older version of a slot.
+// Format 2 binds each to its slot and its revision. It is still one base64
+// string (the server accepts only base64 in a slot, and older servers too):
+//
+//   b64( "M5V2" ‖ rev (8 bytes, unsigned big-endian) ‖ iv (12) ‖ AES-GCM(JSON) )
+//   AAD  = UTF-8 "m5cet:vault-slot:v2|" + slot + "|" + rev (decimal, no leading zeros)
+//   rev  = the writer's clock in ms — newer is larger
+//
+// A v1 slot (b64(iv ‖ ct), no AAD — what 6.11 and older wrote) still opens;
+// account.ts rewrites it as v2 on the next sign-in (openSlot says `legacy`),
+// so no slot is ever lost. A client that remembers the newest revision it saw
+// of a slot notices a server handing back an older one, or a v1 copy after
+// v2 (account.ts). (A v1 IV that happens to start with "M5V2" — 1 in 2³² —
+// fails the v2 check and is then opened as v1.)
+
+export type VaultSlot = "profile" | "chat" | "connections" | "registration" | "card";
+const SLOT_MAGIC = [0x4d, 0x35, 0x56, 0x32]; // "M5V2"
+const SLOT_HEAD = SLOT_MAGIC.length + 8;
+const slotAad = (slot: VaultSlot, rev: number) => new Uint8Array(enc.encode(`m5cet:vault-slot:v2|${slot}|${rev}`));
+
+/** Seals a vault slot in format 2 (AAD: slot name and revision). */
+export async function sealSlot<T>(value: T, key: CryptoKey, slot: VaultSlot, rev = Date.now()): Promise<string> {
+  const r = Math.max(0, Math.min(Number.MAX_SAFE_INTEGER, Math.floor(rev)));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv, additionalData: slotAad(slot, r) }, key, new Uint8Array(enc.encode(JSON.stringify(value)))));
+  const out = new Uint8Array(SLOT_HEAD + iv.length + ct.length);
+  out.set(SLOT_MAGIC, 0);
+  new DataView(out.buffer).setBigUint64(SLOT_MAGIC.length, BigInt(r));
+  out.set(iv, SLOT_HEAD);
+  out.set(ct, SLOT_HEAD + iv.length);
+  return toBase64(out);
+}
+
+function v2Parts(bytes: Uint8Array): { rev: number; iv: Uint8Array<ArrayBuffer>; ct: Uint8Array<ArrayBuffer> } | null {
+  if (bytes.length < SLOT_HEAD + 12 + 16 || SLOT_MAGIC.some((b, i) => bytes[i] !== b)) return null;
+  const rev = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getBigUint64(SLOT_MAGIC.length);
+  if (rev > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return { rev: Number(rev), iv: new Uint8Array(bytes.slice(SLOT_HEAD, SLOT_HEAD + 12)), ct: new Uint8Array(bytes.slice(SLOT_HEAD + 12)) };
+}
+
+/** Is this stored slot (by its look) still format 1 (no AAD)? */
+export function isLegacySlot(ciphertext: string): boolean {
+  try { return v2Parts(fromBase64(ciphertext)) === null; } catch { return true; }
+}
+
+/**
+ * Opens a vault slot of either format. A v2 slot opens only as the slot it was
+ * sealed for (another slot's ciphertext fails); `rev` is its revision (0 for
+ * a v1 slot, `legacy` true — rewrite it).
+ */
+export async function openSlot<T>(ciphertext: string, key: CryptoKey, slot: VaultSlot): Promise<{ value: T; rev: number; legacy: boolean }> {
+  const parts = v2Parts(fromBase64(ciphertext));
+  if (parts) {
+    try {
+      const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: parts.iv, additionalData: slotAad(slot, parts.rev) }, key, parts.ct);
+      return { value: JSON.parse(dec.decode(plain)) as T, rev: parts.rev, legacy: false };
+    } catch (err) {
+      // 1 in 2^32: a v1 slot whose IV begins with the magic. Anything else stays an error.
+      try { return { value: await openProfile<T>(ciphertext, key), rev: 0, legacy: true }; } catch { throw err; }
+    }
+  }
+  return { value: await openProfile<T>(ciphertext, key), rev: 0, legacy: true };
+}
+
 /* --------------------------------------------------------- server options */
 
 /** What POST /api/account/register/options answers (base64url challenge). */

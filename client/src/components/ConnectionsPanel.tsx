@@ -16,7 +16,8 @@ import {
   type EditResult, type Keepalive, type ProfileInput,
 } from "../lib/connections";
 import type { ChatRetention } from "../lib/chat-history";
-import { generateRoomKey } from "../lib/passphrase-strength";
+import { askWeakSaved, estimateStoredKey, generateRoomKey, weakKeyBlocks } from "../lib/passphrase-strength";
+import { KeyStrength } from "./KeyStrength";
 import { SimpleModal } from "./SimpleModal";
 import { NeedSignIn } from "./NeedSignIn";
 import { ShareConnection } from "./SharePanel";
@@ -86,6 +87,7 @@ export function ConnectionsPanel(props: ConnectionsPanelProps) {
       host: p.server ? new URL(p.server).host : t(lang, "cx.thisServer"),
       isActive: activeId === p.id && connected, isDefault: state.settings.defaultId === p.id,
       meta: `${tf(lang, "cx.usage", { n: s.connects, time: formatDuration(s.totalMs) })} · ${p.lastUsedAt ? tf(lang, "cx.lastUsed", { when: formatFullDate(p.lastUsedAt, lang, props.timezone) }) : t(lang, "cx.never")}`,
+      weakKey: estimateStoredKey(p).level === "weak",
     };
   }) : [];
   const toList = () => setView({ kind: "list" });
@@ -100,7 +102,13 @@ export function ConnectionsPanel(props: ConnectionsPanelProps) {
       tab: (_e, tab) => setView({ kind: tab === "settings" ? "settings" : "list" }),
       add: () => setView({ kind: "edit" }),
       saveCurrent: () => { if (current) setView({ kind: "edit", draft: { label: current.room, room: current.room, passphrase: current.passphrase, userName: current.userName } }); },
-      connect: (_e, id) => props.onConnect(String(id)),
+      connect: (_e, id) => {
+        // 6.12 (F-04): a weak key is used only after an explicit "yes" — every time.
+        const p = state.profiles.find((x) => x.id === id);
+        if (p && weakKeyBlocks(estimateStoredKey(p), { confirmed: false })
+          && !askWeakSaved(`${tf(lang, "key.weak.savedConfirm", { name: p.label })}\n\n${t(lang, "key.weak.risk")}`)) return;
+        props.onConnect(String(id));
+      },
       disconnect: () => props.onDisconnect(),
       edit: (_e, id) => setView({ kind: "edit", id: String(id) }),
       details: (_e, id) => setView({ kind: "detail", id: String(id) }),
@@ -138,13 +146,18 @@ function EditView(props: ConnectionsPanelProps & { id?: string; draft?: ProfileI
   }));
   const [showKey, setShowKey] = useState(false);
   const [error, setError] = useState("");
+  // 6.12 (F-04): the key's strength; a weak one is saved only after an explicit "yes" (this Save, or Save and connect).
+  const estimate = useMemo(() => estimateStoredKey({ passphrase: form.passphrase ?? "", room: form.room, userName: form.userName }), [form.passphrase, form.room, form.userName]);
+  const [asking, setAsking] = useState<null | { connect: boolean }>(null);
   const listed = policy.servers.some((s) => s.url === form.server);
   const [custom, setCustom] = useState(Boolean(form.server) && !listed);
   const set = (patch: Partial<ProfileInput>) => { setForm((f) => ({ ...f, ...patch })); setError(""); };
   const foreign = Boolean(form.server);
   const { tree, base } = useLayoutBase("part.connectionEdit", lang);
 
-  const submit = (connect: boolean) => {
+  const submit = (connect: boolean, confirmed = false) => {
+    if (weakKeyBlocks(estimate, { confirmed })) { setAsking({ connect }); return; }
+    setAsking(null);
     const result = props.onSave({ ...form, ...(props.id ? { id: props.id } : {}), away: foreign ? false : form.away });
     if (!result.ok) { setError(t(lang, `cx.err.${result.error}`)); return; }
     if (connect) props.onConnect(result.profile.id);
@@ -171,10 +184,10 @@ function EditView(props: ConnectionsPanelProps & { id?: string; draft?: ProfileI
       error,
     },
     actions: {
-      field: (e, name) => set({ [String(name)]: value(e) }),
+      field: (e, name) => { set({ [String(name)]: value(e) }); if (name === "passphrase" || name === "room") setAsking(null); },
       color: (_e, c) => set({ color: String(c ?? "") }),
       toggleKey: () => setShowKey((v) => !v),
-      generate: () => { set({ passphrase: randomKey() }); setShowKey(true); },
+      generate: () => { set({ passphrase: randomKey() }); setShowKey(true); setAsking(null); },
       server: (e) => { const v = value(e); if (v === "__custom") { setCustom(true); } else { setCustom(false); set({ server: v }); } },
       serverBlur: () => { const n = normalizeServerUrl(form.server ?? ""); if (n) set({ server: n }); },
       mode: (e) => set({ mode: value(e) as "light" | "server" }),
@@ -185,6 +198,16 @@ function EditView(props: ConnectionsPanelProps & { id?: string; draft?: ProfileI
       save: (e) => { (e as FormEvent).preventDefault(); submit(false); },
       saveConnect: () => submit(true),
       cancel: () => props.onDone(),
+    },
+    slots: {
+      keyStrength: () => (
+        <KeyStrength
+          lang={lang}
+          estimate={estimate}
+          confirm={asking ? { kind: "save", onConfirm: () => submit(asking.connect, true), onCancel: () => setAsking(null) } : null}
+          onGenerate={() => { set({ passphrase: randomKey() }); setShowKey(true); setAsking(null); }}
+        />
+      ),
     },
   });
 }

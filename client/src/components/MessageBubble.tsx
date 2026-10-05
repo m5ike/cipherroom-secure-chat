@@ -30,6 +30,7 @@ import type { MsgState } from "../lib/chat-types";
 import { openSealed, type FnStatus, type MsgFlags } from "../lib/message-kinds";
 import { isModelSender } from "../lib/system-messenger";
 import type { ModelAnswerView } from "../lib/fn-answer";
+import type { NameWarning } from "../lib/names";
 import { ModelBadge } from "./fn/ModelBadge";
 import type { LNode } from "../lib/layout-tree";
 import type { MessageKind } from "../lib/layouts/message";
@@ -69,8 +70,13 @@ export type MessageBubbleProps = {
   vanishedAt?: number;
   onVanish: (id: string) => void;
   to?: string[]; // present → private message, only to these names
-  replyTo?: { id: string; senderName: string; text: string };
+  /** 6.12 (F-22): `missing` — the quoted message is not here (validate.ts › verifyQuote); its claimed text is not shown. */
+  replyTo?: { id: string; senderName: string; text: string; missing?: boolean };
   forwardedFrom?: string;
+  /** 6.12 (F-22): false — this app has no message from `forwardedFrom` with this text: shown as the forwarder's claim. */
+  forwardVerified?: boolean;
+  /** 6.12 (F-22): the sender's name looks like another member's, or mixes alphabets (names.ts › nameWarning). */
+  nameWarning?: NameWarning | null;
   /** 6.1: the sender's position when writing (a map pin). */
   loc?: { lat: number; lon: number; acc?: number };
   /** 6.2: the operator's map preview (client config › map); without it, the pin link. */
@@ -109,6 +115,12 @@ export type MessageBubbleProps = {
   /** 6.11: a click on "via <member>" of a room answer (their details). */
   onVia?: () => void;
 };
+
+/** 6.12 (F-22): beside the sender's name — it looks like a name already here, or mixes alphabets. */
+function NameWarningChip({ warning, lang }: { warning: NameWarning; lang: Lang }) {
+  const text = warning.kind === "mixed" ? t(lang, "names.warn.mixed") : tf(lang, `names.warn.${warning.kind}`, { like: warning.like });
+  return <span className="msg-name-warn" role="note" data-testid="msg-name-warning" data-kind={warning.kind} title={text}>⚠ {text}</span>;
+}
 
 /** 6.11: a status said by its code (an empty label: functions.status.<code>, in the viewer's language — then the code is not repeated). */
 function statusText(lang: Lang, s: FnStatus): FnStatus {
@@ -349,9 +361,11 @@ export function MessageBubble(props: MessageBubbleProps) {
     sealedOpen,
     revealed,
     delivery: mine ? props.deliveryState : undefined,
-    forwardedFrom: props.forwardedFrom ?? "",
+    forwardedFrom: props.forwardedFrom ? (props.forwardVerified === false ? tf(lang, "msg.fwd.unverified", { name: props.forwardedFrom }) : props.forwardedFrom) : "",
     loc: props.loc ? { lat: props.loc.lat, lon: props.loc.lon, acc: props.loc.acc ?? null, url: osmLink({ lat: props.loc.lat, lng: props.loc.lon, ts: 0 }, 17) } : null,
-    replyTo: props.replyTo ?? null,
+    // 6.12 (F-22): a quote whose message is not here says so — the sender's claimed text is not shown.
+    replyTo: props.replyTo ? (props.replyTo.missing ? { id: props.replyTo.id, senderName: "", text: t(lang, "msg.quote.missing"), missing: true } : props.replyTo) : null,
+    nameWarning: props.nameWarning?.kind ?? "",
     bodyText,
     attachment: att
       ? {
@@ -422,7 +436,12 @@ export function MessageBubble(props: MessageBubbleProps) {
     refs: { root: rootRef as never },
     blocks: props.blocks,
     // 6.11: a model's answer names the model (its icon and name), and who sent it to the room.
-    slots: { badge: () => props.badge ?? (props.model ? <ModelBadge identity={props.model.identity} via={props.model.via} lang={lang} onVia={props.onVia} /> : null) },
+    slots: { badge: () => {
+      const head = props.badge ?? (props.model ? <ModelBadge identity={props.model.identity} via={props.model.via} lang={lang} onVia={props.onVia} /> : null);
+      // 6.12 (F-22): a name that looks like another member's is flagged right next to it.
+      if (!props.nameWarning || mine || isSystem) return head;
+      return <>{head}<NameWarningChip warning={props.nameWarning} lang={lang} /></>;
+    } },
     actions: {
       info: () => props.onInfo?.(id),
       quoteJump: () => { if (props.replyTo) props.onReplyJump?.(props.replyTo.id); },

@@ -7,6 +7,7 @@
 
 import { useEffect, useMemo, useState, type ChangeEvent, type FormEvent } from "react";
 import { t, type Lang } from "../lib/i18n";
+import { estimatePassphrase } from "../lib/passphrase-strength";
 import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
 import {
@@ -45,6 +46,32 @@ export function QrCodeView({ value, size = 208 }: { value: string; size?: number
       <path d={path} fill="#000" />
     </svg>
   );
+}
+
+/**
+ * 6.12 (F-04): an invite (and its QR code) hands the room key on. A weak key
+ * is shared only after an explicit "yes" — every time — with the risk said:
+ * whoever holds the server's data can guess it offline. A new room should get
+ * a generated key (the Room window's primary button) before anyone is invited.
+ */
+function useWeakShare(lang: Lang, room: string, passphrase: string) {
+  const weak = useMemo(() => passphrase.length > 0 && estimatePassphrase(passphrase, { room }).level === "weak", [passphrase, room]);
+  const [asking, setAsking] = useState(false);
+  /** Runs `create` at once for a key that is not weak; for a weak one, asks first. */
+  const guard = (create: () => void) => { if (!weak) { create(); return; } setAsking(true); };
+  const notice = (create: () => void) => (weak ? (
+    <div className="rd-strength__held share-weak" role={asking ? "alertdialog" : "note"} data-testid="share-weak">
+      <strong className="rd-strength__held-title">{t(lang, "share.weak.title")}</strong>
+      <p className="rd-strength__held-text">{t(lang, "share.weak.text")}</p>
+      {asking ? (
+        <div className="rd-strength__held-actions">
+          <button type="button" className="rd-btn rd-btn--danger-soft" data-testid="share-weak-confirm" onClick={() => { setAsking(false); create(); }}>{t(lang, "share.weak.confirm")}</button>
+          <button type="button" className="rd-btn rd-btn--soft" data-testid="share-weak-cancel" onClick={() => setAsking(false)}>{t(lang, "common.cancel")}</button>
+        </div>
+      ) : null}
+    </div>
+  ) : null);
+  return { weak, guard, notice };
 }
 
 const USES = [1, 2, 3, 5, 10, 25] as const;
@@ -131,18 +158,25 @@ export function ShareSection(props: {
   const [ttlSec, setTtlSec] = useState(24 * 3600);
   const { busy, error, share, create, revoke } = useShare(lang, () => ({ room, passphrase, server }));
   const options = { maxUses, ttlSec };
+  const weakShare = useWeakShare(lang, room, passphrase);
+  const make = () => void create(options);
 
   const { tree, base } = useLayoutBase("panel.share", lang);
-  return renderLayout(tree, {
-    ...base,
-    data: { created: Boolean(share), ready, busy, error, uses: USES, maxUses, ttls: TTLS.map((sec) => ({ sec, label: ttlLabel(sec) })), ttlSec },
-    actions: {
-      maxUses: (e) => setMaxUses(Number((e as ChangeEvent<HTMLSelectElement>).target.value)),
-      ttl: (e) => setTtlSec(Number((e as ChangeEvent<HTMLSelectElement>).target.value)),
-      create: () => void create(options),
-    },
-    slots: { result: () => (share ? <ShareResult lang={lang} share={share} busy={busy} onAnother={() => void create(options)} onRevoke={() => void revoke()} /> : null) },
-  });
+  return (
+    <>
+      {ready ? weakShare.notice(make) : null}
+      {renderLayout(tree, {
+        ...base,
+        data: { created: Boolean(share), ready, busy, error, uses: USES, maxUses, ttls: TTLS.map((sec) => ({ sec, label: ttlLabel(sec) })), ttlSec, weakKey: weakShare.weak },
+        actions: {
+          maxUses: (e) => setMaxUses(Number((e as ChangeEvent<HTMLSelectElement>).target.value)),
+          ttl: (e) => setTtlSec(Number((e as ChangeEvent<HTMLSelectElement>).target.value)),
+          create: () => weakShare.guard(make),
+        },
+        slots: { result: () => (share ? <ShareResult lang={lang} share={share} busy={busy} onAnother={() => weakShare.guard(make)} onRevoke={() => void revoke()} /> : null) },
+      })}
+    </>
+  );
 }
 
 /**
@@ -166,23 +200,31 @@ export function ShareConnection(props: {
   }));
   const options = { maxUses, ttlSec };
   const host = connection.server ? new URL(connection.server).host : "";
+  const weakShare = useWeakShare(lang, connection.room, connection.passphrase);
+  const make = () => void create(options);
 
   const { tree, base } = useLayoutBase("panel.shareConnection", lang);
-  return renderLayout(tree, {
-    ...base,
-    data: {
-      label: connection.label, color: connection.color, room: connection.room, host, created: Boolean(share), busy, error,
-      uses: USES.map((v) => ({ value: v, label: `${v}×` })), maxUses, ttls: TTLS.map((v) => ({ value: v, label: ttlLabel(v) })), ttlSec, guest,
-    },
-    actions: {
-      maxUses: (_e, v) => setMaxUses(Number(v)),
-      ttl: (_e, v) => setTtlSec(Number(v)),
-      guest: (e) => setGuest((e as ChangeEvent<HTMLInputElement>).target.value.replace(/[^\p{L}\p{N} ._-]/gu, "")),
-      create: () => void create(options),
-      done: () => props.onDone(),
-    },
-    slots: { result: () => (share ? <ShareResult lang={lang} share={share} busy={busy} onAnother={() => void create(options)} onRevoke={() => void revoke()} /> : null) },
-  });
+  return (
+    <>
+      {weakShare.notice(make)}
+      {renderLayout(tree, {
+        ...base,
+        data: {
+          label: connection.label, color: connection.color, room: connection.room, host, created: Boolean(share), busy, error,
+          uses: USES.map((v) => ({ value: v, label: `${v}×` })), maxUses, ttls: TTLS.map((v) => ({ value: v, label: ttlLabel(v) })), ttlSec, guest,
+          weakKey: weakShare.weak,
+        },
+        actions: {
+          maxUses: (_e, v) => setMaxUses(Number(v)),
+          ttl: (_e, v) => setTtlSec(Number(v)),
+          guest: (e) => setGuest((e as ChangeEvent<HTMLInputElement>).target.value.replace(/[^\p{L}\p{N} ._-]/gu, "")),
+          create: () => weakShare.guard(make),
+          done: () => props.onDone(),
+        },
+        slots: { result: () => (share ? <ShareResult lang={lang} share={share} busy={busy} onAnother={() => weakShare.guard(make)} onRevoke={() => void revoke()} /> : null) },
+      })}
+    </>
+  );
 }
 
 /** Shown when the app was opened from an invite link. */

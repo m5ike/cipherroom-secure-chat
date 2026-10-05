@@ -4,6 +4,9 @@
 // the rest as a safety net.
 //
 // What is cleared:
+//   - 6.12 (F-26): a signed-in account's token — revoked on the server
+//     (POST /api/account/signout) FIRST, while this browser still has it; a
+//     token copied out of this browser earlier stops working too
 //   - the encrypted session cache and its key
 //   - localStorage, sessionStorage, every IndexedDB database of this origin
 //   - Cache Storage, service worker registrations, the push subscription
@@ -15,7 +18,7 @@
 // secrets in the #fragment and scrub it on arrival, and leaving goes through
 // location.replace(), so Back does not lead into the chat again.
 
-export type WipeStep = "server" | "push" | "serviceWorker" | "caches" | "indexedDB" | "storage" | "cookies";
+export type WipeStep = "account" | "server" | "push" | "serviceWorker" | "caches" | "indexedDB" | "storage" | "cookies";
 export type WipeReport = Record<WipeStep, "ok" | "skipped" | "failed">;
 
 const KNOWN_DATABASES = ["m5cet-session"];
@@ -39,9 +42,15 @@ function expireCookies(): void {
 }
 
 /** Never throws: a step that fails must not stop the ones after it. */
-export async function wipeEverything(opts: { deviceId?: string; fetcher?: typeof fetch } = {}): Promise<WipeReport> {
-  const report: WipeReport = { server: "skipped", push: "skipped", serviceWorker: "skipped", caches: "skipped", indexedDB: "skipped", storage: "skipped", cookies: "skipped" };
+export async function wipeEverything(opts: { deviceId?: string; fetcher?: typeof fetch; revoke?: () => Promise<void> } = {}): Promise<WipeReport> {
+  const report: WipeReport = { account: "skipped", server: "skipped", push: "skipped", serviceWorker: "skipped", caches: "skipped", indexedDB: "skipped", storage: "skipped", cookies: "skipped" };
   const fetcher = opts.fetcher ?? (typeof fetch !== "undefined" ? fetch : undefined);
+
+  // 6.12 (F-26): the account's sign-out (token revoked on the server) before anything here is gone.
+  await attempt(report, "account", async () => {
+    if (!opts.revoke) return false;
+    await opts.revoke();
+  });
 
   // Server first, while we still know who we are.
   await attempt(report, "server", async () => {

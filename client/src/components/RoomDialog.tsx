@@ -24,7 +24,7 @@ import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
 import { KeyStrength } from "./KeyStrength";
 import { normalizeRoomName } from "../lib/connections";
-import { estimatePassphrase, generateRoomKey, weakKeyBlocks } from "../lib/passphrase-strength";
+import { askWeakSaved, estimatePassphrase, estimateStoredKey, generateRoomKey, weakKeyBlocks } from "../lib/passphrase-strength";
 import "../room.css";
 
 export type RoomTab = "light" | "server";
@@ -87,7 +87,8 @@ export type RoomDialogProps = {
   onSignIn: () => void;
   /** Share this room — the always-visible part below the buttons. */
   share: ReactNode;
-  /** 6.7 (F-04): a Connect held back for a weak key — the app shows why (the dialog's own layout may not). */
+  /** 6.7 (F-04): a Connect held back for a weak key — the app shows why (the dialog's own layout may not).
+   *  6.12: called every time — a weak key is used only after the user's explicit "yes" in the dialog. */
   onWeakKey?: (text: string) => void;
   /** 6.0: several rooms at once — which connections are checked, which run
    *  in the background, their people and unread counts. */
@@ -141,24 +142,41 @@ export function RoomDialog(props: RoomDialogProps) {
   const needsSignIn = tab === "server" && !saved.signedIn;
   const manual = tab === "light" || (!needsSignIn && (!listed || selected === "manual"));
 
-  // 6.7 (F-04): the typed key's strength. A weak one for a room this browser does not know
-  // (no saved connection with it) is held back once: a second Connect confirms that the room
-  // already exists with this key — asking the server first would hand it the blind id to guess against.
+  // 6.7 (F-04): the typed key's strength. 6.12: a weak key — typed, or a saved connection's —
+  // is used only after an explicit "yes", EVERY time (not once per room or session): the box
+  // under the key explains the offline-guessing risk and offers a strong key; joining a room that
+  // already uses the key stays possible. Asking the server first would hand it the blind id to guess against.
   const { name: typedName, room: typedRoom, passphrase: typedKey } = props.fields;
   const estimate = useMemo(() => estimatePassphrase(typedKey, { room: typedRoom, name: typedName }), [typedKey, typedRoom, typedName]);
   const keySig = `${normalizeRoomName(typedRoom)}\u0000${typedKey}`;
-  const knownKey = profiles.some((p) => !p.server && p.room === normalizeRoomName(typedRoom) && p.passphrase === typedKey);
-  const [heldKey, setHeldKey] = useState<string | null>(null);
+  // The typed key a Connect is waiting on (a changed key or room closes the question).
+  const [askingFor, setAskingFor] = useState<string | null>(null);
+  const asking = askingFor === keySig && estimate.level === "weak";
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
     if (joined) { props.onReconnect(); return; }
-    if (!selectedProfile && manual && weakKeyBlocks(estimate, { known: knownKey, confirmed: heldKey === keySig })) {
-      setHeldKey(keySig);
+    if (selectedProfile) {
+      // A saved connection with a weak key: asked every time too (it may have been saved before 6.12 measured it).
+      if (weakKeyBlocks(estimateStoredKey(selectedProfile), { confirmed: false })
+        && !askWeakSaved(`${tf(lang, "key.weak.savedConfirm", { name: selectedProfile.label })}\n\n${t(lang, "key.weak.risk")}`)) {
+        props.onWeakKey?.(t(lang, "key.weak.held"));
+        return;
+      }
+      props.onConnect({ kind: "profile", id: selectedProfile.id });
+      return;
+    }
+    if (manual && weakKeyBlocks(estimate, { confirmed: false })) {
+      setAskingFor(keySig);
       props.onWeakKey?.(t(lang, "key.weak.held"));
       return;
     }
-    props.onConnect(selectedProfile ? { kind: "profile", id: selectedProfile.id } : { kind: "manual" });
+    props.onConnect({ kind: "manual" });
+  };
+  /** "Join anyway": this Connect only — the next one asks again. */
+  const confirmWeak = () => {
+    setAskingFor(null);
+    props.onConnect({ kind: "manual" });
   };
 
   const connectLabel = joined
@@ -179,6 +197,7 @@ export function RoomDialog(props: RoomDialogProps) {
       // A room kept in the background can still be picked: connecting brings it on screen.
       disabled: locked && !checked && !background, live: locked && checked && saved.activeId === p.id,
       multi: Boolean(multi?.selected.has(p.id)), background, users: counts?.users ?? 0, unread: counts?.unread ?? 0,
+      weakKey: estimateStoredKey(p).level === "weak",
     };
   });
   const multiCount = multi ? items.filter((i) => i.multi && !i.live && !i.background).length : 0;
@@ -216,7 +235,12 @@ export function RoomDialog(props: RoomDialogProps) {
       needSignIn: () => <NeedSignIn lang={lang} onOpen={locked ? undefined : props.onSignIn} text={t(lang, "room.signin.text")} testId="room-need" />,
       share: () => props.share,
       keyStrength: () => (manual && !locked
-        ? <KeyStrength lang={lang} estimate={estimate} held={heldKey === keySig && estimate.level === "weak"} onGenerate={() => { props.onField({ passphrase: generateRoomKey() }); setShowKey(true); }} />
+        ? <KeyStrength
+            lang={lang}
+            estimate={estimate}
+            confirm={asking ? { kind: "connect", onConfirm: confirmWeak, onCancel: () => setAskingFor(null) } : null}
+            onGenerate={() => { props.onField({ passphrase: generateRoomKey() }); setShowKey(true); setAskingFor(null); }}
+          />
         : null),
     },
   });

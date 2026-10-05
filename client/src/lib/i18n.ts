@@ -14,6 +14,7 @@ import { VOICE_I18N } from "./i18n-voice";
 import { PROFILE_I18N } from "./i18n-profile";
 import { START_I18N } from "./i18n-start";
 import { SUGGEST_I18N } from "./i18n-suggest";
+import { HARDENING_I18N } from "./i18n-hardening";
 // Simple i18n. Strings live in this file; no extra deps. Add keys as needed.
 
 export type Lang = "cs" | "en" | "de";
@@ -174,8 +175,8 @@ const cs: Dict = {
   "encryption.dtls.body": "Audio jde přes DTLS-SRTP definované WebRTC stackem prohlížeče. Server hlas neslyší.",
   "encryption.aes.label": "AES-GCM payload (256 bit)",
   "encryption.aes.body": "Texty a přílohy v DataChannelu jsou navíc šifrované AES-GCM odvozeným z klíče místnosti.",
-  "encryption.kdf.label": "PBKDF2 odvození klíče",
-  "encryption.kdf.body": "PBKDF2 SHA-256, 250 000 iterací, salt = CipherRoom:v1:<room>. Klíč nikdy neopustí prohlížeč.",
+  "encryption.kdf.label": "Odvození klíče místnosti (Argon2id)",
+  "encryption.kdf.body": "Argon2id (v1.3): 64 MiB paměti, 3 průchody, paralelismus 1, sůl = m5cet:room:v3:<místnost>; z výsledku HKDF-SHA-256 odvodí klíče zpráv, signalizace a souborů i slepé ID místnosti. Klíč ani heslo nikdy neopustí prohlížeč — kdo ale má data serveru, může slabé heslo zkoušet offline (jeden pokus = jeden Argon2id), proto vygeneruj silný klíč.",
   "encryption.disclaimer": "Žádný 100% nárok. Skutečná bezpečnost závisí na endpointech, integritě prohlížeče a sdílení klíče mimo tento kanál.",
   "themes.motorsport": "Motorsport Dark",
   "themes.glass": "Glass Light",
@@ -648,8 +649,8 @@ const en: Dict = {
   "encryption.dtls.body": "Audio rides DTLS-SRTP defined by the browser's WebRTC stack. The server cannot hear voice.",
   "encryption.aes.label": "AES-GCM payload (256 bit)",
   "encryption.aes.body": "Texts and attachments on the DataChannel are additionally AES-GCM encrypted from the room key.",
-  "encryption.kdf.label": "PBKDF2 key derivation",
-  "encryption.kdf.body": "PBKDF2 SHA-256, 250,000 iterations, salt = CipherRoom:v1:<room>. The key never leaves the browser.",
+  "encryption.kdf.label": "Room key derivation (Argon2id)",
+  "encryption.kdf.body": "Argon2id (v1.3): 64 MiB of memory, 3 passes, parallelism 1, salt = m5cet:room:v3:<room>; HKDF-SHA-256 then derives the message, signaling and file keys and the blind room id from it. Neither the key nor the passphrase ever leaves the browser — but whoever holds the server's data can try a weak passphrase offline (one guess = one Argon2id), so generate a strong key.",
   "encryption.disclaimer": "No 100% claim. Real security depends on endpoints, browser integrity, and out-of-band key sharing.",
   "themes.motorsport": "Motorsport Dark",
   "themes.glass": "Glass Light",
@@ -1122,8 +1123,8 @@ const de: Dict = {
   "encryption.dtls.body": "Audio nutzt DTLS-SRTP des Browser-WebRTC-Stacks. Der Server hört nicht mit.",
   "encryption.aes.label": "AES-GCM Payload (256 Bit)",
   "encryption.aes.body": "Texte und Anhänge im DataChannel sind zusätzlich AES-GCM-verschlüsselt aus dem Raum-Schlüssel.",
-  "encryption.kdf.label": "PBKDF2 Schlüsselableitung",
-  "encryption.kdf.body": "PBKDF2 SHA-256, 250 000 Iterationen, Salt = CipherRoom:v1:<room>. Schlüssel verlässt nie den Browser.",
+  "encryption.kdf.label": "Ableitung des Raumschlüssels (Argon2id)",
+  "encryption.kdf.body": "Argon2id (v1.3): 64 MiB Speicher, 3 Durchläufe, Parallelität 1, Salt = m5cet:room:v3:<Raum>; daraus leitet HKDF-SHA-256 die Schlüssel für Nachrichten, Signalisierung und Dateien sowie die blinde Raum-ID ab. Weder Schlüssel noch Passwort verlassen den Browser — wer aber die Daten des Servers hat, kann ein schwaches Passwort offline durchprobieren (ein Versuch = ein Argon2id), also erzeuge einen starken Schlüssel.",
   "encryption.disclaimer": "Kein 100%-Versprechen. Sicherheit hängt von Endpoints, Browser-Integrität und Out-of-Band-Schlüsselübergabe ab.",
   "themes.motorsport": "Motorsport Dark",
   "themes.glass": "Glass Light",
@@ -1445,9 +1446,9 @@ const de: Dict = {
 };
 
 const dicts: Record<Lang, Dict> = {
-  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs, ...APP_I18N.cs, ...CONNECTIONS_I18N.cs, ...IDENTITY_I18N.cs, ...BUBBLES_I18N.cs, ...NFC_I18N.cs, ...REGISTRATION_I18N.cs, ...PRESENCE_I18N.cs, ...LOCATION_I18N.cs, ...NOTIFY_I18N.cs, ...VOICE_I18N.cs, ...PROFILE_I18N.cs, ...START_I18N.cs, ...SUGGEST_I18N.cs },
-  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en, ...APP_I18N.en, ...CONNECTIONS_I18N.en, ...IDENTITY_I18N.en, ...BUBBLES_I18N.en, ...NFC_I18N.en, ...REGISTRATION_I18N.en, ...PRESENCE_I18N.en, ...LOCATION_I18N.en, ...NOTIFY_I18N.en, ...VOICE_I18N.en, ...PROFILE_I18N.en, ...START_I18N.en, ...SUGGEST_I18N.en },
-  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de, ...APP_I18N.de, ...CONNECTIONS_I18N.de, ...IDENTITY_I18N.de, ...BUBBLES_I18N.de, ...NFC_I18N.de, ...REGISTRATION_I18N.de, ...PRESENCE_I18N.de, ...LOCATION_I18N.de, ...NOTIFY_I18N.de, ...VOICE_I18N.de, ...PROFILE_I18N.de, ...START_I18N.de, ...SUGGEST_I18N.de },
+  cs: { ...cs, ...APPEARANCE_I18N.cs, ...ACCOUNT_I18N.cs, ...SECURITY_I18N.cs, ...APP_I18N.cs, ...CONNECTIONS_I18N.cs, ...IDENTITY_I18N.cs, ...BUBBLES_I18N.cs, ...NFC_I18N.cs, ...REGISTRATION_I18N.cs, ...PRESENCE_I18N.cs, ...LOCATION_I18N.cs, ...NOTIFY_I18N.cs, ...VOICE_I18N.cs, ...PROFILE_I18N.cs, ...START_I18N.cs, ...SUGGEST_I18N.cs, ...HARDENING_I18N.cs },
+  en: { ...en, ...APPEARANCE_I18N.en, ...ACCOUNT_I18N.en, ...SECURITY_I18N.en, ...APP_I18N.en, ...CONNECTIONS_I18N.en, ...IDENTITY_I18N.en, ...BUBBLES_I18N.en, ...NFC_I18N.en, ...REGISTRATION_I18N.en, ...PRESENCE_I18N.en, ...LOCATION_I18N.en, ...NOTIFY_I18N.en, ...VOICE_I18N.en, ...PROFILE_I18N.en, ...START_I18N.en, ...SUGGEST_I18N.en, ...HARDENING_I18N.en },
+  de: { ...de, ...APPEARANCE_I18N.de, ...ACCOUNT_I18N.de, ...SECURITY_I18N.de, ...APP_I18N.de, ...CONNECTIONS_I18N.de, ...IDENTITY_I18N.de, ...BUBBLES_I18N.de, ...NFC_I18N.de, ...REGISTRATION_I18N.de, ...PRESENCE_I18N.de, ...LOCATION_I18N.de, ...NOTIFY_I18N.de, ...VOICE_I18N.de, ...PROFILE_I18N.de, ...START_I18N.de, ...SUGGEST_I18N.de, ...HARDENING_I18N.de },
 };
 
 export function detectLang(stored: string | undefined): Lang {

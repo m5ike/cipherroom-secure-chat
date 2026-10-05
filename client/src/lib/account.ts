@@ -23,7 +23,7 @@
 // signed in; a failure signs the half-open session out again.
 
 import {
-  assertPasskey, confirmWithPasskey, createPasskey, deriveAccountKeys, deriveKeyProof, openProfile, openRoot, passkeySupported, sealProfile, sealRoot,
+  assertPasskey, confirmWithPasskey, createPasskey, deriveAccountKeys, deriveKeyProof, isLegacySlot, openRoot, openSlot, passkeySupported, sealRoot, sealSlot,
   WRAP_INFO, type SealedRoot, type ServerCreationOptions, type ServerRequestOptions,
 } from "./passkey";
 import { accountSigningKey, certifyDevice, ed25519Supported, loadIdentity, saveAttestation } from "./identity";
@@ -77,6 +77,95 @@ export type AccountStatus = {
 };
 
 export type ChatVaultPayload = { messages: unknown[]; rooms: string[]; savedAt: number };
+
+/* ------------------------------------------ vault slot revisions (6.12, F-26) */
+// Every v2 slot carries its revision inside the AEAD (passkey.ts › sealSlot).
+// This browser remembers the newest revision it has seen of each slot of each
+// account; the server handing back an OLDER one (a rollback) is noticed —
+// warned about, the data still shown (a slot is never lost over it).
+
+const REV_KEY = "m5cet:vault-rev:v1";
+type SlotName = "profile" | "chat" | "connections" | "registration";
+const rollbackListeners = new Set<(slot: SlotName, seen: number, got: number) => void>();
+
+/** Told when the server hands back an older revision of a slot than this browser has seen. */
+export function onVaultRollback(fn: (slot: SlotName, seen: number, got: number) => void): () => void {
+  rollbackListeners.add(fn);
+  return () => rollbackListeners.delete(fn);
+}
+
+function revisions(): Record<string, Record<string, number>> {
+  try { return JSON.parse(localStorage.getItem(REV_KEY) ?? "{}") as Record<string, Record<string, number>>; } catch { return {}; }
+}
+
+/** Notes a revision seen (opened or written); false when it is older than one seen before. */
+export function noteSlotRevision(accountId: string, slot: SlotName, rev: number): boolean {
+  const all = revisions();
+  const mine = all[accountId] ?? {};
+  const seen = Number(mine[slot]) || 0;
+  // rev 0: a v1 slot — fine until this browser has seen a v2 one; after that it is an old copy.
+  if (rev < seen) {
+    console.warn(`[m5cet] the server returned an older version of the vault's "${slot}" (${rev} < ${seen})`);
+    for (const fn of rollbackListeners) fn(slot, seen, rev);
+    return false;
+  }
+  if (!rev) return true;
+  mine[slot] = rev;
+  all[accountId] = mine;
+  try { localStorage.setItem(REV_KEY, JSON.stringify(all)); } catch { /* storage denied: no memory, no check */ }
+  return true;
+}
+
+/** A revision newer than any this browser has seen of the slot (clocks of other devices may run ahead). */
+function nextRevision(accountId: string, slot: SlotName): number {
+  const seen = Number(revisions()[accountId]?.[slot]) || 0;
+  return Math.max(Date.now(), seen + 1);
+}
+
+async function openVaultSlot<T>(accountId: string, ct: string, key: CryptoKey, slot: SlotName): Promise<{ value: T; legacy: boolean }> {
+  const opened = await openSlot<T>(ct, key, slot);
+  noteSlotRevision(accountId, slot, opened.rev);
+  return { value: opened.value, legacy: opened.legacy };
+}
+
+async function sealVaultSlot(accountId: string, value: unknown, key: CryptoKey, slot: SlotName): Promise<string> {
+  const rev = nextRevision(accountId, slot);
+  const ct = await sealSlot(value, key, slot, rev);
+  noteSlotRevision(accountId, slot, rev);
+  return ct;
+}
+
+const chatCounts = (chat: ChatVaultPayload) => ({ messages: chat.messages.length, messageBytes: JSON.stringify(chat.messages).length, rooms: chat.rooms.length });
+const connectionsCount = (value: unknown) => {
+  const profiles = (value as { profiles?: unknown } | null)?.profiles;
+  return Array.isArray(profiles) ? profiles.length : 0;
+};
+
+/**
+ * 6.12 (F-26): the vault's v1 slots (no AAD) rewritten as v2, at sign-in.
+ * Each slot is opened first and only then rewritten; one that does not open is
+ * left as it is. The "card" slot stays v1 for now — the Android app of 6.11
+ * reads it (profile/client.ts).
+ */
+type RawVault = { profile?: { ct: string } | null; chat?: { ct: string } | null; connections?: { ct: string } | null; registration?: { ct: string } | null };
+export async function migrateVaultSlots(token: string, accountId: string, key: CryptoKey, known?: RawVault): Promise<SlotName[]> {
+  const raw = known ?? await api<RawVault>("/api/account/vault", {}, token);
+  const body: Record<string, unknown> = {};
+  const moved: SlotName[] = [];
+  for (const slot of ["profile", "chat", "connections", "registration"] as const) {
+    const ct = raw[slot]?.ct;
+    if (!ct || !ct.length || !isLegacySlot(ct)) continue;
+    let value: unknown;
+    try { value = (await openSlot<unknown>(ct, key, slot)).value; } catch { continue; }
+    const sealed = await sealVaultSlot(accountId, value, key, slot);
+    if (slot === "chat") body.chat = { ct: sealed, ...chatCounts(value as ChatVaultPayload) };
+    else if (slot === "connections") body.connections = { ct: sealed, count: connectionsCount(value) };
+    else body[slot] = sealed;
+    moved.push(slot);
+  }
+  if (moved.length) await api("/api/account/vault", { method: "PUT", body: JSON.stringify(body) }, token);
+  return moved;
+}
 
 const TOKEN_KEY = "m5cet:account:v1";
 const DB_NAME = "m5cet-account";
@@ -358,10 +447,12 @@ export async function signInWithPasskey(report: StepReporter = () => undefined):
 
   // The vault: whatever is stored must decrypt with this key.
   report("vault", "run");
+  let vault: RawVault | undefined;
   try {
-    const raw = await api<{ profile: { ct: string } | null; connections?: { ct: string } | null }>("/api/account/vault", {}, result.token);
-    if (raw.profile?.ct) await openProfile(raw.profile.ct, keys.key);
-    if (raw.connections?.ct) await openProfile(raw.connections.ct, keys.key);
+    const raw = await api<RawVault>("/api/account/vault", {}, result.token);
+    vault = raw;
+    if (raw.profile?.ct) await openVaultSlot(result.account.id, raw.profile.ct, keys.key, "profile");
+    if (raw.connections?.ct) await openVaultSlot(result.account.id, raw.connections.ct, keys.key, "connections");
   } catch (err) {
     const e = new AccountError("vault", (err as Error).message);
     report("vault", "fail", e.message);
@@ -370,6 +461,8 @@ export async function signInWithPasskey(report: StepReporter = () => undefined):
     throw e;
   }
   report("vault", "ok");
+  // 6.12 (F-26): slots still in format 1 are rewritten as format 2 (best effort: the next sign-in tries again).
+  await migrateVaultSlots(result.token, result.account.id, keys.key, vault).catch((err) => console.warn("[m5cet] vault slots stay in format 1 for now:", err));
   return result.account;
 }
 
@@ -548,9 +641,10 @@ export async function loadVault<P, C = unknown>(): Promise<{ profile: P | null; 
   if (!session) throw new Error("Not signed in.");
   const raw = await api<{ profile: { ct: string } | null; chat: { ct: string } | null; connections?: { ct: string } | null }>("/api/account/vault", {}, session.token);
   const out: { profile: P | null; chat: ChatVaultPayload | null; connections: C | null } = { profile: null, chat: null, connections: null };
-  if (raw.profile?.ct) out.profile = await openProfile<P>(raw.profile.ct, session.key);
-  if (raw.chat?.ct) out.chat = await openProfile<ChatVaultPayload>(raw.chat.ct, session.key);
-  if (raw.connections?.ct) out.connections = await openProfile<C>(raw.connections.ct, session.key);
+  const id = session.accountId;
+  if (raw.profile?.ct) out.profile = (await openVaultSlot<P>(id, raw.profile.ct, session.key, "profile")).value;
+  if (raw.chat?.ct) out.chat = (await openVaultSlot<ChatVaultPayload>(id, raw.chat.ct, session.key, "chat")).value;
+  if (raw.connections?.ct) out.connections = (await openVaultSlot<C>(id, raw.connections.ct, session.key, "connections")).value;
   return out;
 }
 
@@ -561,7 +655,7 @@ export async function loadVault<P, C = unknown>(): Promise<{ profile: P | null; 
  */
 export async function saveRegistration(profile: RegistrationProfile): Promise<AccountSummary | null> {
   if (!session) return null;
-  const registration = await sealProfile({ v: 1, ...profile }, session.key);
+  const registration = await sealVaultSlot(session.accountId, { v: 1, ...profile }, session.key, "registration");
   const r = await api<{ account: AccountSummary }>("/api/account/vault", { method: "PUT", body: JSON.stringify({ registration }) }, session.token);
   session.account = r.account;
   return r.account;
@@ -570,26 +664,27 @@ export async function saveRegistration(profile: RegistrationProfile): Promise<Ac
 export async function loadRegistration(): Promise<RegistrationProfile | null> {
   if (!session) return null;
   const raw = await api<{ registration?: { ct: string } | null }>("/api/account/vault", {}, session.token);
-  return raw.registration?.ct ? openProfile<RegistrationProfile>(raw.registration.ct, session.key) : null;
+  return raw.registration?.ct ? (await openVaultSlot<RegistrationProfile>(session.accountId, raw.registration.ct, session.key, "registration")).value : null;
 }
 
 /** Only the saved connections (connections.ts), opened with the vault key. */
 export async function loadConnectionsVault<C>(): Promise<C | null> {
   if (!session) return null;
   const raw = await api<{ connections?: { ct: string } | null }>("/api/account/vault", {}, session.token);
-  return raw.connections?.ct ? await openProfile<C>(raw.connections.ct, session.key) : null;
+  return raw.connections?.ct ? (await openVaultSlot<C>(session.accountId, raw.connections.ct, session.key, "connections")).value : null;
 }
 
 /** Seals and uploads what changed. Returns the refreshed account summary. */
 export async function saveVault(patch: { profile?: unknown; chat?: ChatVaultPayload; connections?: { value: unknown; count: number } }): Promise<AccountSummary | null> {
   if (!session) return null;
   const body: Record<string, unknown> = {};
-  if (patch.profile !== undefined) body.profile = await sealProfile(patch.profile, session.key);
+  const id = session.accountId;
+  if (patch.profile !== undefined) body.profile = await sealVaultSlot(id, patch.profile, session.key, "profile");
   // The room keys inside are sealed here: the server stores ciphertext and
   // a count, nothing it could connect with.
-  if (patch.connections !== undefined) body.connections = { ct: await sealProfile(patch.connections.value, session.key), count: patch.connections.count };
+  if (patch.connections !== undefined) body.connections = { ct: await sealVaultSlot(id, patch.connections.value, session.key, "connections"), count: patch.connections.count };
   if (patch.chat !== undefined) {
-    const ct = await sealProfile(patch.chat, session.key);
+    const ct = await sealVaultSlot(id, patch.chat, session.key, "chat");
     body.chat = {
       ct,
       messages: patch.chat.messages.length,

@@ -423,3 +423,118 @@ release key (never on the server); `release-signing.pub` — the raw public key,
 also writes `dist/public/release-web.json` (only the served assets) and its `.sig` when signed.
 Unsigned manifests still detect corruption and local modification; signed ones also detect a
 package that did not come from the developer.
+
+## 16. NFC connection tag v2 (F-12)
+
+A connection tag ("Připojka") lets a phone join a room by tapping a tag. Format 1 (6.1–6.11)
+sealed the room name and key under a 4–16 digit PIN with PBKDF2 (200 000) — whoever read the tag
+once could try every PIN offline. **Format 2 never uses a PIN.** Writers write only format 2;
+readers still open format 1 (§ 16.5). Web: `client/src/lib/nfc/tag-v2.ts`,
+`client/src/lib/nfc/cards/connection-card.ts`; vectors: `test/vectors/nfc-tag-v2.json`
+(`script/nfc-tag-vectors.ts`); tests: `test/nfc-tag-v2.test.ts`.
+
+### 16.1 Record and body
+
+* One NDEF message. Record 0: TNF 2 (MIME), type `application/vnd.m5cet.conn` (as format 1),
+  payload = the **body**. Optional record 1: a URI record (a human fallback page, written only
+  when the user gives one; it carries nothing secret). Readers look for the first record of that
+  MIME type; for compatibility they also accept a well-known text record whose text is a body.
+* body = ASCII `m5cet:nfc:v2:` followed by one JSON object (UTF-8, no BOM). Writers emit the
+  keys in the order shown below without spaces; readers accept any key order and ignore unknown
+  keys. A body starting with `m5cet:nfc:v1:` is format 1 (§ 16.5); anything else is not a
+  connection tag.
+* Two types, by `t`: `"inv"` (invitation, § 16.3 — recommended) and `"off"` (offline, § 16.4).
+
+### 16.2 Codes and secrets (Crockford base32)
+
+* Alphabet `0123456789ABCDEFGHJKMNPQRSTVWXYZ` (32 symbols, 5 bits each).
+* A symbol is drawn uniformly: one random byte `b`, symbol = alphabet[`b & 31`].
+* **Canonical form** of typed or read input: upper-case; remove spaces, `-`, `.`, `_`; map `O` → `0`,
+  `I` → `1`, `L` → `1`; then every symbol must be in the alphabet (`U` and anything else → reject)
+  and the length must be exact. Writers show codes in groups of five joined with `-`.
+* Invitation secret `k`: **26 symbols (130 bits)**, written to the tag in canonical form.
+* Offline code: **20 symbols (100 bits)**, shown to the writer once, **never written to the tag**.
+* In every derivation below the secret / code enters as the ASCII bytes of its canonical form.
+
+### 16.3 Invitation tag (`t: "inv"`)
+
+```
+{"v":2,"t":"inv","o":"<origin>","id":"<invite id>","k":"<secret>"}
+```
+
+* `o` — the HTTP origin of the server holding the invite: `https://host[:port]` (readers accept
+  `http:` only for `localhost`, `127.0.0.1`, `[::1]`); no path, no user info.
+* `id` — the invite id: 16 random bytes, base64url without padding (22 characters).
+* `k` — the secret, 26 symbols (§ 16.2).
+* Derivations (HKDF-SHA256, `salt` = ASCII(`id`), `ikm` = ASCII(`k`)):
+  * `linkKey = HKDF(salt, ikm, "m5cet/nfc-tag/2/link", 32)` — the share link key;
+  * `codeBytes = HKDF(salt, ikm, "m5cet/nfc-tag/2/code", 8)`; `code` = the unsigned big-endian
+    64-bit integer of `codeBytes` modulo 10¹², in decimal, left-padded with `0` to 12 digits — the
+    share code.
+* The invite itself is an ordinary share (`server/share.ts`, `client/src/lib/share-link.ts`)
+  created with this `id`, `linkKey` and `code`:
+  * `proof = b64url(PBKDF2-SHA256(code, "m5cet:share:v1:proof:" + id, 200 000, 32 B))`;
+  * `wrapKey = HKDF-SHA256(salt = UTF-8(id), ikm = linkKey ‖ serverKey ‖ PBKDF2-SHA256(code,
+    "m5cet:share:v1:enc:" + id, 200 000, 32 B), info = "m5cet:share:v1:wrap", 32 B)`, where
+    `serverKey` is 32 random bytes the writer sends to the server;
+  * the payload `{"v":1,"room","passphrase","name","createdAt","server"?}` (UTF-8 JSON) is sealed
+    with AES-256-GCM under `wrapKey`, a random 12-byte IV, AAD = UTF-8(`id`);
+  * `POST <o>/api/share/create` `{id, proof, revokeToken, serverKey, iv, ciphertext, maxUses,
+    ttlSec}` (b64url; `ttlSec` ≤ 7 days) → `201 {ok, expiresAt, maxUses, maxAttempts}`.
+    Writers default to 10 uses and 7 days, keep `revokeToken` to end the invite early
+    (`POST <o>/api/share/revoke {id, revokeToken}`).
+* Reading: derive `linkKey` and `code`, `POST <o>/api/share/redeem {id, proof}` →
+  `{ok:true, serverKey, iv, ciphertext, usesLeft}` (or `{ok:false, reason: "wrong-code" |
+  "burned" | "not-found", attemptsLeft?}`), recompute `wrapKey`, open the payload, join
+  `room` with `passphrase` (the payload's `name` is a suggestion only; readers keep their own
+  name). The web client redeems only invitations of its own origin (another `o` → "open M5cet
+  there"); the Android app may redeem any `o` it is configured to trust.
+* Security: the tag holds no key; the server holds only ciphertext it cannot open (it never sees
+  `k`); the tag stops working when the invite runs out (uses, at most 7 days) or is revoked.
+  Anyone who reads the tag can join while the invite lives — like an invitation link.
+
+### 16.4 Offline tag (`t: "off"`)
+
+```
+{"v":2,"t":"off","kdf":"argon2id","m":65536,"i":3,"p":1,"s":"<salt>","n":"<iv>","c":"<ciphertext>"}
+```
+
+* `s` — 16 random bytes, base64url without padding (22 characters).
+* `n` — the AES-GCM IV, 12 random bytes, base64url (16 characters).
+* `m`, `i`, `p` — Argon2id memory (KiB), passes, parallelism. **Writers use the room KDF's
+  parameters** (`client/src/lib/kdf.ts` › `ARGON2_PARAMS`): `m = 65536` (64 MiB), `i = 3`,
+  `p = 1`. Readers accept `8 ≤ m ≤ 262144`, `1 ≤ i ≤ 10`, `p = 1` and refuse anything else
+  (a tag cannot make a reader allocate gigabytes); `kdf` must be `"argon2id"`.
+* Key: `K = Argon2id(version 0x13, password = ASCII(code), salt = ASCII(s)` — the 22 base64url
+  characters as written, not the decoded bytes — `, t = i, m = m, p = 1, output 32 bytes)`.
+  (hash-wasm `argon2id({ password, salt, iterations, memorySize, parallelism: 1, hashLength: 32 })`;
+  Bouncy Castle `Argon2BytesGenerator` with `Argon2Parameters.ARGON2_id`, `ARGON2_VERSION_13`.)
+* AAD = ASCII `m5cet/nfc-tag/2|off|argon2id|<m>|<i>|<p>|<s>` (decimal integers, `s` as written).
+* Plaintext = UTF-8 JSON `{"room":…,"passphrase":…,"name"?:…,"app"?:…}` (`name`: a suggested
+  name, only when the writer adds one; `app`: the writer's version). Readers require non-empty
+  `room` and `passphrase` strings and ignore other keys.
+* `c` = base64url(AES-256-GCM(K, IV = decoded `n`, AAD, plaintext) ‖ 16-byte tag).
+* A wrong code, a changed parameter (it is in the AAD) or a changed tag fails the GCM check.
+* Security: 100 bits of code under 64 MiB Argon2id — offline guessing is out of reach; the code
+  must reach the reader by another way (said, written down). Writers show it once and store it
+  nowhere.
+
+### 16.5 Format 1 (read only)
+
+`m5cet:nfc:v1:` + base64(salt 16 ‖ IV 12 ‖ AES-256-GCM(JSON `{v:1, room, passphrase, name?,
+app?}`)), key = PBKDF2-SHA256(PIN, salt, 200 000, 32 B), no AAD, PIN = 4–16 digits. Readers
+still open it with its PIN, **mark it weak** ("anyone who has read this tag can guess its PIN
+offline") and offer to rewrite the tag as format 2 (invitation or offline) before or instead of
+joining. Writers never produce it.
+
+### 16.6 Test vectors
+
+`test/vectors/nfc-tag-v2.json`:
+
+* `offline[]` — the room `{"room":"brno-secure","passphrase":"Kq7xVm-2PnRt4-Wz9cLd-8HsJ3e",
+  "name":"Alice"}` sealed under the code `7K3QD-M9X2V-PH4TW-8RZ6N` with salt bytes `10 11 … 1f`
+  and IV bytes `a0 a1 … ab`, once with `m = 64, i = 1` (fast) and once with the writer's
+  `m = 65536, i = 3`; each entry gives the canonical code, the Argon2id output (`argon2idKeyHex`),
+  the AAD, the plaintext, the parsed tag and the exact body.
+* `invite` — `id` = base64url of bytes `40 41 … 4f`, `k` = `0123456789ABCDEFGHJKMNPQRS`: the
+  derived `linkKeyHex` and `code`, and the exact body for origin `https://chat.example.org`.

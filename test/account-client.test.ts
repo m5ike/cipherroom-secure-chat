@@ -4,7 +4,7 @@
 // assert what actually leaves the tab.
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { _deriveKeyForTest, openProfile } from "../client/src/lib/passkey";
+import { _deriveKeyForTest, isLegacySlot, openSlot } from "../client/src/lib/passkey";
 
 const passkeyKey = vi.hoisted(() => ({ current: null as CryptoKey | null }));
 /** The second key a passkey derives: it opens the database on the server. */
@@ -220,7 +220,11 @@ describe("the vault", () => {
     expect(put.body).toMatchObject({ chat: { messages: 1, rooms: 1 } });
     expect(put.auth).toBe("Bearer session-token-abcdefghijkl");
     // The server's copy is readable only with the passkey key.
-    expect(await openProfile(String((put.body!.chat as { ct: string }).ct), passkeyKey.current!)).toMatchObject({ rooms: ["alpha"] });
+    // 6.12 (F-26): vault slot format 2 — bound to the slot ("chat") and its revision.
+    expect(isLegacySlot(String((put.body!.chat as { ct: string }).ct))).toBe(false);
+    expect(String((put.body!.chat as { ct: string }).ct)).toMatch(/^[A-Za-z0-9+/=]+$/); // what the server accepts
+    expect((await openSlot(String((put.body!.chat as { ct: string }).ct), passkeyKey.current!, "chat")).value).toMatchObject({ rooms: ["alpha"] });
+    await expect(openSlot(String((put.body!.chat as { ct: string }).ct), passkeyKey.current!, "profile")).rejects.toBeTruthy();
 
     const back = await loadVault<{ name: string }>();
     expect(back.profile?.name).toBe("Alice");

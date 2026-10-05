@@ -176,6 +176,25 @@ export function privacyTree(): LNode {
         ]),
       ]),
     ]),
+    // 6.12 (F-15): peer connections only through the server's TURN relay
+    n("panel", {id:"mb-5-ip",name:"Hide my IP address from other members",tag:"section",attrs:{class:"mb-5 space-y-3"}}, [
+      n("panel", {id:"flex-ip",tag:"div",attrs:{class:"flex items-start gap-3"}}, [
+        n("panel", {id:"mt-0-5-ip",tag:"div",attrs:{class:"mt-0.5 text-primary"}}, [
+          n("icon", {id:"icon-eye-off",props:{icon:"eye-off"},attrs:{class:"h-4 w-4"}}),
+        ]),
+        n("panel", {id:"panel-ip",tag:"div"}, [
+          n("heading", {id:"text-sm-ip",tag:"h3",attrs:{class:"text-sm font-semibold tracking-tight"},text:"{_'privacy.hideIp'}"}),
+        ]),
+      ]),
+      n("panel", {id:"space-y-2-ip",tag:"div",attrs:{class:"space-y-2"}}, [
+        n("label", {id:"flex-hide-ip",name:"Hide my IP address (field)",tag:"label",attrs:{class:"flex items-center justify-between rounded-xl border border-border bg-background px-3 py-2 text-sm"}}, [
+          n("area", {id:"area-hide-ip",tag:"span",text:"{_'privacy.hideIp.label'}"}),
+          n("input", {id:"check-hide-ip",tag:"input",attrs:{type:"checkbox","data-testid":"check-hide-ip",checked:"=$prefs.hideIp"},on:{change:{action:"setCheck",arg:"'hideIp'"}}}),
+        ]),
+        n("paragraph", {id:"text-hide-ip",tag:"p",attrs:{class:"text-xs text-muted-foreground"},text:"{_'privacy.hideIp.body'}"}),
+        n("paragraph", {id:"text-hide-ip-none",tag:"p",if:"!$turnAvailable",attrs:{class:"text-xs text-amber-700 dark:text-amber-300","data-testid":"text-hide-ip-none"},text:"{_'privacy.hideIp.noTurn'}"}),
+      ]),
+    ]),
     n("panel", {id:"mb-5-2",name:"Purge local preferences, keys and logs in this browser",tag:"section",attrs:{class:"mb-5 space-y-3"}}, [
       n("panel", {id:"flex-3",tag:"div",attrs:{class:"flex items-start gap-3"}}, [
         n("panel", {id:"mt-0-5-2",tag:"div",attrs:{class:"mt-0.5 text-primary"}}, [
@@ -242,7 +261,7 @@ export function encryptionTree(): LNode {
         n("paragraph", {id:"text-sm-4",tag:"p",attrs:{class:"text-sm text-muted-foreground"},text:"{_'encryption.aes.body'}"}),
       ]),
     ]),
-    n("panel", {id:"mb-5-3",name:"PBKDF2 key derivation",tag:"section",attrs:{class:"mb-5 space-y-3"}}, [
+    n("panel", {id:"mb-5-3",name:"Room key derivation (Argon2id)",tag:"section",attrs:{class:"mb-5 space-y-3"}}, [
       n("panel", {id:"flex-3",tag:"div",attrs:{class:"flex items-start gap-3"}}, [
         n("panel", {id:"mt-0-5-3",tag:"div",attrs:{class:"mt-0.5 text-primary"}}, [
           n("icon", {id:"icon-key-round",props:{icon:"key-round"},attrs:{class:"h-4 w-4"}}),
@@ -409,29 +428,28 @@ export function trustTree(): LNode {
       n("panel", { id: `${id}-body`, attrs: { class: "space-y-2" } }, body),
     ]);
   return n("group", { id: "trust" }, [
-    section("trust-tofu", "shield-check", "DTLS fingerprint TOFU",
-      cs("Každý peer připojení má jedinečný SHA-256 otisk. Při prvním spojení se uloží. Při změně otisku dostanete varování — ověřte s protistranou přes Signal, telefon nebo osobně.",
-        "Each peer connection has a unique SHA-256 fingerprint. The first observed fingerprint is stored. If it later changes you get a warning — verify out of band."), [
+    // 6.12 (F-25): labelled by the member's device key, not by the random peer id; the DTLS
+    // certificate is new for every connection, so it is not a long-term identity.
+    section("trust-tofu", "shield-check", "{_'trust.dtls.title'}", "{_'trust.dtls.body'}", [
         n("paragraph", { id: "trust-empty", if: "($entries|length) === 0", attrs: { class: "text-sm text-muted-foreground", "data-testid": "trust-empty" }, text: cs("Zatím žádné otisky — připojte se k místnosti.", "No fingerprints yet — join a room.") }),
         n("list", { id: "trust-list", if: "($entries|length) > 0", attrs: { class: "space-y-3", "data-testid": "trust-list" } }, [
           n("item", { id: "trust-entry", name: "A peer", each: "$entries", as: "e", key: "$e.peerId", attrs: { class: "rounded-xl border border-border bg-background p-3 font-mono text-xs" } }, [
             n("panel", { id: "trust-entry-head", attrs: { class: "flex items-center justify-between" } }, [
-              n("area", { id: "trust-peer", attrs: { class: "truncate font-semibold" }, text: "{$e.short}" }),
-              n("area", { id: "trust-stored", attrs: { class: "text-muted-foreground" }, text: `${cs("uloženo", "stored")}: {$e.stored}` }),
+              n("area", { id: "trust-peer", attrs: { class: "truncate font-semibold", "data-testid": "trust-peer" }, text: "{$e.label}" }),
+              n("area", { id: "trust-stored", attrs: { class: "text-muted-foreground" }, text: `${cs("od", "since")}: {$e.stored}` }),
             ]),
             n("panel", { id: "trust-fingerprint", attrs: { class: "mt-1 break-all text-[11px] leading-relaxed text-foreground", "data-testid": "trust-fingerprint" }, text: "{$e.formatted}" }),
             n("panel", { id: "trust-indicator", attrs: { class: "mt-1 text-[10px] text-muted-foreground" }, text: `${cs("SHA-256 indikátor: ", "SHA-256 indicator: ")}{$e.head}…{$e.tail}` }),
           ]),
         ]),
       ]),
-    section("trust-dpa", "key-round", cs("Detekce přítomnosti (DPA)", "Presence detection (DPA)"),
-      cs("Room-key otisk slouží jako anti-spam. Identifikátor místnosti je deterministický z `roomId + passphrase`; změna hesla změní room-key.",
-        "Room-key fingerprint acts as a DPA anchor. The room id is deterministic from roomId + passphrase; rotating the passphrase rotates the room key."), [
+    // 6.12 (F-25): from the room KEY (HKDF via RoomKeys.derive), no longer from the room's name.
+    section("trust-dpa", "key-round", "{_'trust.room.title'}", "{_'trust.room.body'}", [
         n("group", { id: "trust-room", if: "$roomFingerprint" }, [
-          n("paragraph", { id: "trust-room-caption", attrs: { class: "text-xs text-muted-foreground" }, text: cs("Room-key otisk (deterministický, ne fingerprint RTC)", "Room-key fingerprint (deterministic, non-RTC)") }),
+          n("paragraph", { id: "trust-room-caption", attrs: { class: "text-xs text-muted-foreground" }, text: "{_'trust.room.caption'}" }),
           n("panel", { id: "room-fingerprint", attrs: { "data-testid": "room-fingerprint", class: "break-all rounded-xl border border-border bg-background p-3 font-mono text-xs" }, text: "{$roomFingerprint}" }),
         ]),
-        n("paragraph", { id: "trust-room-none", if: "!$roomFingerprint", attrs: { class: "text-xs text-muted-foreground" }, text: cs("Připojte se k místnosti pro výpočet room-key otisku.", "Join a room to compute the room-key fingerprint.") }),
+        n("paragraph", { id: "trust-room-none", if: "!$roomFingerprint", attrs: { class: "text-xs text-muted-foreground" }, text: "{_'trust.room.none'}" }),
       ]),
   ]);
 }
@@ -458,8 +476,8 @@ export const SETTINGS_CONTRACTS: Record<SettingsId, LayoutContract> = {
     slots: [], refs: [],
   },
   "panel.privacy": {
-    description: "Privacy: consent to analytics, and deleting data here and on the server.",
-    vars: [PREFS, { path: "$serverStatus", type: "text", description: "What the server said to the deletion." }],
+    description: "Privacy: consent to analytics, hiding the IP address from members (6.12), and deleting data here and on the server.",
+    vars: [PREFS, { path: "$serverStatus", type: "text", description: "What the server said to the deletion." }, { path: "$turnAvailable", type: "yes/no", description: "6.12: the server offers a TURN relay (hiding the IP address works only then)." }],
     actions: [SET_CHECK, { name: "localPurge", description: "Delete this device's data." }, { name: "serverPurge", description: "Delete the data on the server." }],
     slots: [], refs: [],
   },
@@ -489,7 +507,7 @@ export const SETTINGS_CONTRACTS: Record<SettingsId, LayoutContract> = {
   },
   "panel.trust": {
     description: "Trust: the peers' DTLS fingerprints (trust on first use) and the room key's fingerprint.",
-    vars: [{ path: "$lang", type: "text", description: "The language." }, { path: "$entries", type: "list", description: "Fingerprints: .peerId, .short, .stored, .formatted, .head, .tail." }, { path: "$roomFingerprint", type: "text", description: "The room key's fingerprint (formatted)." }],
+    vars: [{ path: "$lang", type: "text", description: "The language." }, { path: "$entries", type: "list", description: "This session's connections: .peerId, .short, .stored, .formatted, .head, .tail; 6.12: .name, .device (the device key's fingerprint, empty before its hello), .verified (safety number compared), .label (name · device · verified)." }, { path: "$roomFingerprint", type: "text", description: "The room key's fingerprint (formatted; 6.12: derived from the key with HKDF)." }],
     actions: [],
     slots: [], refs: [],
   },

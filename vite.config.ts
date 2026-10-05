@@ -57,6 +57,9 @@ function buildInfo(): Plugin {
           __APP_BUILT_AT__: JSON.stringify(builtAt),
           __APP_LIBS__: JSON.stringify(clientLibs),
           __APP_PROTOCOL__: String(PROTOCOL),
+          // 6.12 (F-02): a release key fixed in the build (raw Ed25519 public key, b64) —
+          // the pin the client checks release-web.json.sig with, instead of trust on first use.
+          __M5_RELEASE_KEY__: JSON.stringify(/^[A-Za-z0-9+/]{43}=$/.test(process.env.M5_RELEASE_KEY?.trim() ?? "") ? process.env.M5_RELEASE_KEY!.trim() : ""),
         },
       };
     },
@@ -135,6 +138,8 @@ export default defineConfig({
     },
   },
   server: {
+    // 6.12 (F-27): a dev server (vite on its own) listens on loopback only; HOST opens it up on purpose.
+    host: process.env.HOST?.trim() || "127.0.0.1",
     fs: {
       strict: true,
       allow: Array.from(new Set([repoRoot, repoRootReal])),

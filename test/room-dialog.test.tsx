@@ -9,13 +9,15 @@ import { RoomDialog, RoomTabs, type RoomDialogProps } from "../client/src/compon
 import { SimpleModal } from "../client/src/components/SimpleModal";
 import { emptyState, saveProfile, type ConnectionsState } from "../client/src/lib/connections";
 import { DEFAULT_CLIENT_CONFIG } from "../client/src/lib/client-config";
+import { generateRoomKey } from "../client/src/lib/passphrase-strength";
 
 const policy = DEFAULT_CLIENT_CONFIG.connections;
 
 function stateWith(...rooms: string[]): ConnectionsState {
   let s = emptyState();
   rooms.forEach((room, i) => {
-    const r = saveProfile(s, { label: room.toUpperCase(), room, passphrase: `key-${room}`, userName: "Alice" }, policy, 1_000 + i);
+    // 6.12 (F-04): strong keys — a weak one would ask before connecting (passphrase-strength.test.tsx).
+    const r = saveProfile(s, { label: room.toUpperCase(), room, passphrase: generateRoomKey(), userName: "Alice" }, policy, 1_000 + i);
     if (!r.ok) throw new Error(r.error);
     s = r.state;
   });

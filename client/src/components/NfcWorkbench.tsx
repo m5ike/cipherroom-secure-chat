@@ -22,7 +22,12 @@ import { detectCard, type Candidate } from "../lib/nfc/cards/detect";
 import { NFC_CATALOG, NFC_READERS, opsFor, techInfo, type NfcTech, type NfcOp, type ReaderKind } from "../lib/nfc/catalog";
 import { hex, unhex } from "../lib/nfc/cards/apdu";
 import { describeRecord, textRecord, uriRecord, type NdefRecord } from "../lib/nfc/cards/ndef";
-import { buildConnectionRecords, decodeConnectionRecords, hasConnectionRecord } from "../lib/nfc/cards/connection-card";
+import {
+  buildInviteConnectionRecords, buildOfflineConnectionRecords, hasConnectionRecord, inspectConnectionRecords, openConnectionTag,
+  type ConnectionPayload, type ConnectionTagInfo,
+} from "../lib/nfc/cards/connection-card";
+import { formatTagCode } from "../lib/nfc/tag-v2";
+import { revokeShare } from "../lib/share-link";
 import {
   readNdefAuto, writeType4Ndef, writeType2Ndef, ultralightGetVersion, desfireGetVersion,
   selectPpse, selectMrtd, runApduScript,
@@ -266,22 +271,69 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
   }), [runTask, ndefRecords, writeNdefTo, addLog, onSystem, t]);
 
   /* --------------------------- connect tag --------------------------- */
+  // 6.12 (F-12): tags are written as v2 — an invitation (the key stays on the
+  // server, the tag expires) or offline under a 20-symbol code shown once.
+  // A v1 PIN tag is still read, called weak, and offered a rewrite.
 
   const [pin, setPin] = useState("");
   const [fallbackUrl, setFallbackUrl] = useState("");
+  const [connMode, setConnMode] = useState<"invite" | "offline">("invite");
+  const [connUses, setConnUses] = useState(10);
+  const [connTtl, setConnTtl] = useState(7 * 24 * 3600);
+  const [writtenCode, setWrittenCode] = useState<string | null>(null);
+  const [writtenInvite, setWrittenInvite] = useState<{ id: string; revokeToken: string; expiresAt: number; maxUses: number } | null>(null);
+  const [pendingTag, setPendingTag] = useState<ConnectionTagInfo | null>(null);
+  const [openedLegacy, setOpenedLegacy] = useState<ConnectionPayload | null>(null);
 
-  const doWriteConn = useCallback(() => runTask("conn-write", async () => {
+  const connText = useCallback((err: unknown): string => {
+    if (NfcError.is(err, "auth-failed")) return t("nfc.conn.wrongCode");
+    if (NfcError.is(err) && err.message.includes("another server")) return tf(lang, "nfc.conn.otherServer", { host: (() => { try { return new URL(err.detail ?? "").host; } catch { return err.detail ?? ""; } })() });
+    if (NfcError.is(err) && err.message.startsWith("the invitation cannot be used")) return tf(lang, "nfc.conn.inviteDead", { reason: err.detail ?? "" });
+    return errText(lang, err);
+  }, [lang, t]);
+
+  const doWriteConn = useCallback((override?: { room: string; passphrase: string; name?: string }) => runTask("conn-write", async () => {
     const tr = transportRef.current;
     if (!tr) { onSystem(`NFC: ${t("nfc.connectFirst")}`); return; }
-    if (!session) { onSystem(`NFC: ${t("nfc.conn.noSession")}`); return; }
-    const records = await buildConnectionRecords(
-      { room: session.room, passphrase: session.passphrase, name: session.name },
-      pin, { appVersion, fallbackUrl: fallbackUrl || undefined },
-    );
-    await writeNdefTo(tr, records);
+    const room = override ?? (session ? { room: session.room, passphrase: session.passphrase } : null);
+    if (!room) { onSystem(`NFC: ${t("nfc.conn.noSession")}`); return; }
+    setWrittenCode(null); setWrittenInvite(null);
+    if (connMode === "invite") {
+      const built = await buildInviteConnectionRecords(room, { origin: location.origin, maxUses: connUses, ttlSec: connTtl, fallbackUrl: fallbackUrl || undefined });
+      await writeNdefTo(tr, built.records);
+      setWrittenInvite({ id: built.invite.id, revokeToken: built.invite.revokeToken, expiresAt: built.invite.expiresAt, maxUses: built.invite.maxUses });
+    } else {
+      const built = await buildOfflineConnectionRecords(room, { appVersion, fallbackUrl: fallbackUrl || undefined });
+      await writeNdefTo(tr, built.records);
+      setWrittenCode(built.code);
+    }
+    setOpenedLegacy(null);
     addLog("info", t("nfc.conn.wrote"));
     onSystem(`NFC: ${t("nfc.conn.wrote")}`);
-  }), [runTask, session, pin, appVersion, fallbackUrl, writeNdefTo, addLog, onSystem, t]);
+  }), [runTask, session, connMode, connUses, connTtl, appVersion, fallbackUrl, writeNdefTo, addLog, onSystem, t]);
+
+  /** Opens a tag that was read: an invitation at once, a coded / v1 tag with what is typed. */
+  const openTag = useCallback(async (info: ConnectionTagInfo, secret: string) => {
+    if (info.kind !== "invite" && !secret.trim()) {
+      setPendingTag(info);
+      const need = info.kind === "legacy" ? t("nfc.conn.needPin") : t("nfc.conn.needCode");
+      addLog("info", need);
+      return;
+    }
+    let payload: ConnectionPayload;
+    try { payload = await openConnectionTag(info, { code: secret, pin: secret }); }
+    catch (err) { const msg = connText(err); addLog("err", msg); onSystem(`NFC: ${msg}`); return; }
+    setPendingTag(null);
+    if (payload.weak) {
+      // v1: open, but say that the tag is weak and offer to rewrite it before joining.
+      setOpenedLegacy(payload);
+      addLog("err", t("nfc.conn.weak"));
+      return;
+    }
+    addLog("info", `${t("nfc.conn.joined")} room=${payload.room}`);
+    onSystem(`NFC: ${t("nfc.conn.joined")}`);
+    onConnect({ room: payload.room, passphrase: payload.passphrase, name: payload.name });
+  }, [addLog, connText, onConnect, onSystem, t]);
 
   const doReadConn = useCallback(() => runTask("conn-read", async (signal) => {
     const tr = transportRef.current;
@@ -289,12 +341,19 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
     const id = await tr.waitForCard({ timeoutMs: 30_000, signal });
     setIdentity(id);
     const res = await readNdefAuto(tr, id);
-    if (!hasConnectionRecord(res.records)) { onSystem(`NFC: ${t("nfc.conn.none")}`); addLog("err", t("nfc.conn.none")); return; }
-    const payload = await decodeConnectionRecords(res.records, pin);
-    addLog("info", `${t("nfc.conn.joined")} room=${payload.room}`);
-    onSystem(`NFC: ${t("nfc.conn.joined")}`);
-    onConnect({ room: payload.room, passphrase: payload.passphrase, name: payload.name });
-  }), [runTask, pin, onConnect, addLog, onSystem, t]);
+    setOpenedLegacy(null);
+    let info: ConnectionTagInfo | null = null;
+    try { info = hasConnectionRecord(res.records) ? inspectConnectionRecords(res.records) : null; } catch (err) { addLog("err", connText(err)); return; }
+    if (!info) { onSystem(`NFC: ${t("nfc.conn.none")}`); addLog("err", t("nfc.conn.none")); return; }
+    await openTag(info, info.kind === "invite" ? "" : pin);
+  }), [runTask, pin, openTag, connText, addLog, onSystem, t]);
+
+  const doRevokeInvite = useCallback(() => runTask("conn-revoke", async () => {
+    if (!writtenInvite) return;
+    const ok = await revokeShare(writtenInvite.id, writtenInvite.revokeToken);
+    addLog(ok ? "info" : "err", t(ok ? "nfc.conn.revoked" : "nfc.conn.revokeFailed"));
+    if (ok) setWrittenInvite(null);
+  }), [runTask, writtenInvite, addLog, t]);
 
   /* ------------------------------ probes ----------------------------- */
 
@@ -787,16 +846,55 @@ export function NfcWorkbench(props: NfcWorkbenchProps): React.JSX.Element {
         <div className="nfcwb__section">
           <div className="nfcwb__section-title"><span><CreditCard width={14} height={14} style={{ verticalAlign: "-2px", marginRight: 4 }} />{t("nfc.conn")}</span></div>
           {!session ? <div className="nfcwb__banner nfcwb__banner--warn">{t("nfc.conn.noSession")}</div> : null}
-          <label className="nfcwb__label">{t("nfc.conn.pin")}
-            <input className="nfcwb__input" inputMode="numeric" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 16))} />
-          </label>
+          {/* 6.12 (F-12): write — an invitation (recommended) or an offline tag with a code shown once */}
+          <div className="nfcwb__row" role="radiogroup" aria-label={t("nfc.conn.mode")}>
+            <label className="nfcwb__inline"><input type="radio" name="conn-mode" data-testid="conn-mode-invite" checked={connMode === "invite"} onChange={() => setConnMode("invite")} /> {t("nfc.conn.mode.invite")}</label>
+            <label className="nfcwb__inline"><input type="radio" name="conn-mode" data-testid="conn-mode-offline" checked={connMode === "offline"} onChange={() => setConnMode("offline")} /> {t("nfc.conn.mode.offline")}</label>
+          </div>
+          <div className="nfcwb__hint">{t(connMode === "invite" ? "nfc.conn.mode.invite.hint" : "nfc.conn.mode.offline.hint")}</div>
+          {connMode === "invite" ? (
+            <div className="nfcwb__row">
+              <label className="nfcwb__label">{t("nfc.conn.uses")}
+                <select className="nfcwb__input" value={connUses} onChange={(e) => setConnUses(Number(e.target.value))}>{[1, 3, 10, 25, 50].map((n) => <option key={n} value={n}>{n}×</option>)}</select>
+              </label>
+              <label className="nfcwb__label">{t("nfc.conn.ttl")}
+                <select className="nfcwb__input" value={connTtl} onChange={(e) => setConnTtl(Number(e.target.value))}>{[3600, 24 * 3600, 7 * 24 * 3600].map((s) => <option key={s} value={s}>{s < 24 * 3600 ? "1 h" : s < 7 * 24 * 3600 ? "24 h" : "7 d"}</option>)}</select>
+              </label>
+            </div>
+          ) : null}
           <label className="nfcwb__label">{t("nfc.conn.fallbackUrl")}
             <input className="nfcwb__input" value={fallbackUrl} onChange={(e) => setFallbackUrl(e.target.value)} placeholder="https://…" />
           </label>
           <div className="nfcwb__row">
-            <button type="button" className="nfcwb__btn nfcwb__btn--primary" onClick={doWriteConn} disabled={!connected || !!busy || !session || pin.length < 4}>{busy === "conn-write" ? busyIcon : <KeyRound width={14} height={14} />} {t("nfc.conn.write")}</button>
-            <button type="button" className="nfcwb__btn" onClick={doReadConn} disabled={!connected || !!busy || pin.length < 4}>{busy === "conn-read" ? busyIcon : <ScanLine width={14} height={14} />} {t("nfc.conn.read")}</button>
+            <button type="button" className="nfcwb__btn nfcwb__btn--primary" data-testid="conn-write" onClick={() => doWriteConn()} disabled={!connected || !!busy || !session}>{busy === "conn-write" ? busyIcon : <KeyRound width={14} height={14} />} {t("nfc.conn.write")}</button>
           </div>
+          {writtenCode ? (
+            <div className="nfcwb__banner nfcwb__banner--warn" role="alert" data-testid="conn-code">
+              {t("nfc.conn.codeShown")} <strong className="nfcwb__code">{formatTagCode(writtenCode)}</strong>
+            </div>
+          ) : null}
+          {writtenInvite ? (
+            <div className="nfcwb__banner" role="status" data-testid="conn-invite">
+              {tf(lang, "nfc.conn.inviteWritten", { uses: writtenInvite.maxUses, expires: new Date(writtenInvite.expiresAt).toLocaleString(lang) })}
+              <button type="button" className="nfcwb__btn" onClick={doRevokeInvite} disabled={!!busy}>{t("nfc.conn.revoke")}</button>
+            </div>
+          ) : null}
+          {/* read — an invitation opens at once; an offline tag needs its code, an old v1 tag its PIN */}
+          <label className="nfcwb__label">{t("nfc.conn.pin")}
+            <input className="nfcwb__input" data-testid="conn-secret" autoComplete="off" spellCheck={false} value={pin} onChange={(e) => setPin(e.target.value.slice(0, 40))} />
+          </label>
+          <div className="nfcwb__row">
+            <button type="button" className="nfcwb__btn" data-testid="conn-read" onClick={doReadConn} disabled={!connected || !!busy}>{busy === "conn-read" ? busyIcon : <ScanLine width={14} height={14} />} {t("nfc.conn.read")}</button>
+            {pendingTag ? <button type="button" className="nfcwb__btn nfcwb__btn--primary" data-testid="conn-open" onClick={() => void openTag(pendingTag, pin)} disabled={!!busy || !pin.trim()}>{t("nfc.conn.open")}</button> : null}
+          </div>
+          {pendingTag ? <div className="nfcwb__hint" data-testid="conn-pending">{t(pendingTag.kind === "legacy" ? "nfc.conn.needPin" : "nfc.conn.needCode")}</div> : null}
+          {pendingTag?.kind === "legacy" || openedLegacy ? <div className="nfcwb__banner nfcwb__banner--warn" role="alert" data-testid="conn-weak">{t("nfc.conn.weak")}</div> : null}
+          {openedLegacy ? (
+            <div className="nfcwb__row">
+              <button type="button" className="nfcwb__btn nfcwb__btn--primary" data-testid="conn-rewrite" onClick={() => doWriteConn({ room: openedLegacy.room, passphrase: openedLegacy.passphrase })} disabled={!connected || !!busy}>{t("nfc.conn.rewrite")}</button>
+              <button type="button" className="nfcwb__btn" data-testid="conn-join" onClick={() => { const p = openedLegacy; setOpenedLegacy(null); onConnect({ room: p.room, passphrase: p.passphrase, name: p.name }); }}>{t("nfc.conn.join")}</button>
+            </div>
+          ) : null}
         </div>
       ) : null}
 

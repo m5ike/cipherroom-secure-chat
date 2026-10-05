@@ -12,7 +12,9 @@ import { renderLayout } from "./LayoutView";
 import { useLayoutBase } from "./LayoutProvider";
 import { langLabel, SUPPORTED_LANGS, t, type Lang } from "@/lib/i18n";
 import { DEFAULT_ROOM_SECURITY, type Preferences, type RoomSecurity } from "@/lib/preferences";
-import { Fingerprint, formatFingerprint, loadFingerprints } from "@/lib/fingerprint";
+import { Fingerprint, formatFingerprint } from "@/lib/fingerprint";
+import { keyFingerprint } from "@/lib/identity";
+import { ReleaseStatusCard } from "./ReleaseIntegrity";
 import { currentAccount, saveVault } from "@/lib/account";
 import { ProfileEditor } from "./ProfileEditor";
 
@@ -110,6 +112,8 @@ export function SettingsPanel({ open, onClose, prefs, setPrefs, lang, onOpenAppe
 type PrivacyExtras = {
   onLocalPurge: () => void;
   onServerPurge: () => Promise<{ ok: boolean; message?: string }>;
+  /** 6.12 (F-15): the server offers TURN — "hide my IP address" can work (lib/rtc.ts › turnAvailable). */
+  turnAvailable?: boolean;
 };
 
 export function PrivacyPanel({
@@ -120,6 +124,7 @@ export function PrivacyPanel({
   lang,
   onLocalPurge,
   onServerPurge,
+  turnAvailable = false,
 }: PanelBaseProps & PrivacyExtras) {
   const [serverStatus, setServerStatus] = useState<string>("");
   const { tree, base } = useLayoutBase("panel.privacy", lang);
@@ -127,7 +132,7 @@ export function PrivacyPanel({
     <Modal open={open} onClose={onClose} title={t(lang, "privacy.title")}>
       {renderLayout(tree, {
         ...base,
-        data: { prefs, serverStatus },
+        data: { prefs, serverStatus, turnAvailable },
         actions: {
           ...prefActions(setPrefs),
           localPurge: () => onLocalPurge(),
@@ -250,22 +255,56 @@ export function RoomSecurityPanel({
 // -----------------------------------------------------------------------
 // Trust panel — shows DTLS fingerprints per peer (TOFU) plus room DPA.
 // -----------------------------------------------------------------------
+/** 6.12 (F-25): who a connection belongs to — the member's name and the device key that signed their hello (if any yet). */
+export type TrustPeer = { name: string; deviceKey?: string; verified: boolean };
+
 type TrustPanelProps = PanelBaseProps & {
   peerFingerprints: Record<string, Fingerprint>;
   roomFingerprint?: string | null;
+  /** 6.12 (F-25): the device behind a connection (peer id) — its fingerprints are labelled by that, not by the random peer id. */
+  describePeer?: (peerId: string) => TrustPeer | null;
 };
 
-export function TrustPanel({ open, onClose, peerFingerprints, roomFingerprint, lang }: TrustPanelProps) {
-  const stored = loadFingerprints();
-  const entries = Object.entries({ ...stored, ...peerFingerprints });
+/** The short fingerprints of device keys (async: SHA-256), remembered per key. */
+function useDeviceIds(keys: string[]): Record<string, string> {
+  const [ids, setIds] = useState<Record<string, string>>({});
+  const wanted = keys.filter((k) => !(k in ids)).join("|");
+  useEffect(() => {
+    if (!wanted) return;
+    let alive = true;
+    void Promise.all(wanted.split("|").map(async (k) => [k, await keyFingerprint(k).catch(() => "?")] as const)).then((pairs) => {
+      if (alive) setIds((cur) => ({ ...cur, ...Object.fromEntries(pairs) }));
+    });
+    return () => { alive = false; };
+  }, [wanted]);
+  return ids;
+}
+
+export function TrustPanel({ open, onClose, peerFingerprints, roomFingerprint, lang, describePeer }: TrustPanelProps) {
+  // 6.12 (F-25): only this session's connections. The browser makes a new DTLS certificate for
+  // every connection, and peer ids are random per session: a list of past peer ids said nothing.
+  const entries = Object.entries(peerFingerprints).map(([peerId, fp]) => ({ peerId, fp, who: describePeer?.(peerId) ?? null }));
+  const deviceIds = useDeviceIds(entries.map((e) => e.who?.deviceKey).filter((k): k is string => Boolean(k)));
   const { tree, base } = useLayoutBase("panel.trust", lang);
   return (
-    <Modal open={open} onClose={onClose} title={lang === "cs" ? "Důvěra & DTLS otisky" : lang === "de" ? "Vertrauen & DTLS-Fingerprints" : "Trust & DTLS fingerprints"}>
+    <Modal open={open} onClose={onClose} title={t(lang, "trust.title")}>
+      <ReleaseStatusCard lang={lang} />
       {renderLayout(tree, {
         ...base,
         data: {
           lang,
-          entries: entries.map(([peerId, fp]) => ({ peerId, short: peerId.slice(-12), stored: fp.firstSeenAt.slice(0, 10), formatted: formatFingerprint(fp.digest), head: fp.digest.slice(0, 8), tail: fp.digest.slice(-4) })),
+          entries: entries.map(({ peerId, fp, who }) => {
+            const device = who?.deviceKey ? deviceIds[who.deviceKey] ?? "…" : "";
+            return {
+              peerId, short: peerId.slice(-12), stored: fp.firstSeenAt.slice(0, 10), formatted: formatFingerprint(fp.digest), head: fp.digest.slice(0, 8), tail: fp.digest.slice(-4),
+              name: who?.name || peerId.slice(-6),
+              device,
+              verified: Boolean(who?.verified),
+              label: device
+                ? `${who?.name || peerId.slice(-6)} · ${t(lang, "trust.device")} ${device}${who?.verified ? ` · ${t(lang, "trust.verified")}` : ` · ${t(lang, "trust.unverified")}`}`
+                : `${who?.name || peerId.slice(-6)} · ${t(lang, "trust.noDevice")}`,
+            };
+          }),
           roomFingerprint: roomFingerprint ? formatFingerprint(roomFingerprint) : "",
         },
       })}
