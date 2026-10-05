@@ -706,7 +706,7 @@ public final class EmvReader {
         JSONArray aids = d.optJSONArray("aids");
         if (apps == null || apps.length() == 0) {
             int n = aids == null ? 0 : aids.length();
-            return n > 0 ? "EMV: " + n + " application(s), no records read" : "No EMV application found";
+            return n > 0 ? cz.m5cet.app.core.Texts.n("nfc.emv.sum.noRecords", n, "EMV: {n} application(s), no records read") : cz.m5cet.app.core.Texts.t("nfc.emv.sum.none", "No EMV application found");
         }
         JSONObject a = apps.optJSONObject(0);
         int history = 0;
@@ -720,8 +720,8 @@ public final class EmvReader {
         if (!head.isEmpty()) bits.add(head);
         if (!a.optString("panMasked", "").isEmpty()) bits.add(a.optString("panMasked"));
         if (!a.optString("expiry", "").isEmpty()) bits.add(a.optString("expiry"));
-        if (history > 0) bits.add(history + " transaction" + (history > 1 ? "s" : ""));
-        if (bits.isEmpty()) return "EMV: " + apps.length() + " application(s)";
+        if (history > 0) bits.add(cz.m5cet.app.core.Texts.n("nfc.emv.sum.transactions", history, history > 1 ? "{n} transactions" : "{n} transaction"));
+        if (bits.isEmpty()) return cz.m5cet.app.core.Texts.n("nfc.emv.sum.apps", apps.length(), "EMV: {n} application(s)");
         return String.join(" · ", bits);
     }
 }

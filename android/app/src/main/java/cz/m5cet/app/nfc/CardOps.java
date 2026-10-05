@@ -527,7 +527,7 @@ public final class CardOps {
                 }
             }
             out.put("applications", apps);
-            out.put("note", "Public data only: application labels/AIDs. No PIN, no signing, no transaction.");
+            out.put("note", cz.m5cet.app.core.Texts.t("nfc.note.emvPublic", "Public data only: application labels/AIDs. No PIN, no signing, no transaction."));
             return out;
         } finally { close(iso); }
     }
@@ -613,7 +613,7 @@ public final class CardOps {
             byte[] r = iso.transceive(sel);
             out.put("document", ok(r) ? "ICAO eMRTD (ePassport / eID)" : "unknown");
             out.put("selected", ok(r));
-            out.put("note", "Public info only. The data groups are protected by BAC/PACE — type the CAN or the MRZ to unlock them. No cloning, no signing.");
+            out.put("note", cz.m5cet.app.core.Texts.t("nfc.note.eidPublic", "Public info only. The data groups are protected by BAC/PACE — type the CAN or the MRZ to unlock them. No cloning, no signing."));
             return out;
         } finally { close(iso); }
     }
@@ -662,7 +662,7 @@ public final class CardOps {
             out.put("idm", TagTech.hex(tag.getId()));
             if (f.getSystemCode() != null) out.put("systemCode", TagTech.hex(f.getSystemCode()));
             if (f.getManufacturer() != null) out.put("pmm", TagTech.hex(f.getManufacturer()));
-            out.put("note", "Public systems only; a service's blocks (Read Without Encryption) need the service code.");
+            out.put("note", cz.m5cet.app.core.Texts.t("nfc.note.felicaPublic", "Public systems only; a service's blocks (Read Without Encryption) need the service code."));
             return out;
         } finally { close(f); }
     }

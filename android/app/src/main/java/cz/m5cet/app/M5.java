@@ -135,12 +135,34 @@ public final class M5 extends Application {
 
     public String t(String key) { return design().t(key, lang()); }
 
+    /** 6.13: a text shown with a count — its plural form ("key#few" …, else "key"), "{n}" filled in. */
+    public String tn(String key, long n) { return design().tn(key, n, lang()); }
+
+    /**
+     * The app's language: the one chosen in Settings, else the first of the
+     * phone's languages (Settings › System › Languages, in order) the app
+     * speaks, else English. 6.13: nine languages; Slovak is Slovak (its texts
+     * missing in a design come from Czech, then English — Locales.chain).
+     */
     public String lang() {
         String l = config.lang();
-        if (!l.isEmpty()) return l;
-        String sys = java.util.Locale.getDefault().getLanguage();
-        return sys.equals("cs") || sys.equals("sk") ? "cs" : sys.equals("de") ? "de" : "en";
+        if (cz.m5cet.app.core.Locales.isLocale(l)) return l;
+        return systemLang();
     }
+
+    /** The phone's languages, as the contract's pickLocale reads them. */
+    public static String systemLang() {
+        java.util.List<String> tags = new java.util.ArrayList<>();
+        try {
+            android.os.LocaleList list = android.os.LocaleList.getDefault();
+            for (int i = 0; list != null && i < list.size(); i++) tags.add(list.get(i).toLanguageTag());
+        } catch (RuntimeException ignored) { /* the default locale below */ }
+        if (tags.isEmpty()) tags.add(java.util.Locale.getDefault().toLanguageTag());
+        return cz.m5cet.app.core.Locales.pick(tags, "en");
+    }
+
+    /** 6.13: the app language's locale (dates, numbers, plural rules). */
+    public java.util.Locale locale() { return cz.m5cet.app.core.Locales.locale(lang()); }
 
     /** The signed-in account's username ("" without an account). */
     public String accountName() { return account == null ? "" : account.username(); }

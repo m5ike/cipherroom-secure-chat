@@ -87,4 +87,11 @@ public final class P4Texts {
         if (s == null || s.equals(key)) { String en = EN.get(key); return en == null ? key : en; }
         return s;
     }
+
+    /** 6.13: a text with a count — its plural form in the app's language ("key#few" …), "{n}" filled in. */
+    public static String tn(M5 app, String key, long n) {
+        String s = app == null ? key : app.tn(key, n);
+        if (s == null || s.equals(key)) { String en = EN.get(key); return (en == null ? key : en).replace("{n}", Long.toString(n)); }
+        return s;
+    }
 }

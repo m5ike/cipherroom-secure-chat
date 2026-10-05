@@ -95,7 +95,7 @@ public final class Appearance {
                     JSONObject th = t.optJSONObject(i);
                     if (!family.equals(th.optString("family", "classic"))) continue;
                     JSONObject label = th.optJSONObject("label");
-                    out.put(entry(app, th.optString("id"), label == null ? th.optString("id") : label.optString(lang, label.optString("en")), family, th, current, variant, userDark));
+                    out.put(entry(app, th.optString("id"), label == null ? th.optString("id") : cz.m5cet.app.core.Locales.text(label, lang, th.optString("id")), family, th, current, variant, userDark));
                 }
             }
             // Templates of a family this app does not know yet (an older themes.json) at the end.
@@ -104,7 +104,7 @@ public final class Appearance {
                 String f = th.optString("family", "classic");
                 if (f.equals("system") || f.equals("studio") || f.equals("classic")) continue;
                 JSONObject label = th.optJSONObject("label");
-                out.put(entry(app, th.optString("id"), label == null ? th.optString("id") : label.optString(lang, label.optString("en")), f, th, current, variant, userDark));
+                out.put(entry(app, th.optString("id"), label == null ? th.optString("id") : cz.m5cet.app.core.Locales.text(label, lang, th.optString("id")), f, th, current, variant, userDark));
             }
         } catch (org.json.JSONException ignored) { }
         return out;

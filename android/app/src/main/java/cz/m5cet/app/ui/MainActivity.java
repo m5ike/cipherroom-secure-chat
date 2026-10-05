@@ -565,7 +565,13 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
 
     @Override public Design design() { return app.design(); }
     @Override public boolean dark() { return Ui.dark(this); }
-    @Override public Expr.Translate tr() { return app::t; }
+    /** 6.13: the design's texts, and the language its date filters write in. */
+    private final Expr.Translate translate = new Expr.Translate() {
+        @Override public String t(String key) { return app.t(key); }
+        @Override public String lang() { return app.lang(); }
+    };
+
+    @Override public Expr.Translate tr() { return translate; }
     @Override public Map<String, Object> form() { return form; }
     @Override public Object setting(String key) { return app.settings.get(key); }
     @Override public void setSetting(String key, Object value) { if (app.settings.set(key, value)) { settingChanged(key); refresh(); } }

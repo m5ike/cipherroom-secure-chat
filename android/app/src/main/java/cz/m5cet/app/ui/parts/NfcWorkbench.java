@@ -1324,7 +1324,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         String sym = "error".equals(r.status()) ? "✗ " : "warn".equals(r.status()) ? "⚠ " : "✓ ";
         if (r.cancelled) return sym + t("nfc.tpl.cancelled");
         if (r.error != null) return sym + t("nfc.tpl.failed").replace("{0}", r.error);
-        return sym + t("nfc.tpl.done").replace("{0}", String.valueOf(r.exchanges.size())).replace("{1}", String.format(java.util.Locale.ROOT, "%.1f", r.ms / 1000.0));
+        return sym + t("nfc.tpl.done").replace("{0}", String.valueOf(r.exchanges.size())).replace("{1}", cz.m5cet.app.core.Formats.decimal(app().lang(), r.ms / 1000.0, 1)); // 6.13: 1,5 s in cs
     }
 
     /**
