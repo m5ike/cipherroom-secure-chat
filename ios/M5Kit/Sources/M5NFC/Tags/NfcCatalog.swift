@@ -1,0 +1,146 @@
+// The NFC catalogue (6.3): which card technologies the tool knows and which
+// operations each one supports — A/nfc/NfcCatalog.java, op for op the ids of
+// client/src/lib/nfc/catalog.ts, so the workbench, the M5Cet builder and a
+// Functions model's `m5.nfc` see the same set on web, Android and iOS.
+// STANDARD operations only: a card's public identity and NDEF, and sectors or
+// files with keys the USER has. No unknown-key recovery; EMV and e-ID are
+// the holder's data only. What iOS cannot do is filtered by `NfcPlatform`.
+
+import Foundation
+
+public enum NfcCatalog {
+    // The technology names — identical to catalog.ts NfcTech.
+    public static let m5cetCard = "m5cet-card", connectionTag = "connection-tag", ndef = "ndef"
+    public static let mifareClassic1k = "mifare-classic-1k", mifareClassic4k = "mifare-classic-4k", mifareClassicMini = "mifare-classic-mini"
+    public static let mifareUltralight = "mifare-ultralight", ntag21x = "ntag21x", mifareDesfire = "mifare-desfire"
+    public static let isoDep = "iso-dep", iso14443a = "iso14443a", iso14443b = "iso14443b", iso15693 = "iso15693", felica = "felica"
+    public static let emv = "emv", eid = "eid", unknown = "unknown"
+
+    /// What one operation does and where it applies.
+    public struct Op: Sendable, Hashable {
+        public let id: String
+        public let label: String
+        /// read = only reads the card; write = changes it; emulate = the phone acts as the card.
+        public let kind: String
+        /// A key, PIN or account is needed (nil when nothing extra is).
+        public let needs: String?
+        public let help: String
+    }
+
+    /// Everything about one technology.
+    public struct TechInfo: Sendable, Hashable {
+        public let tech: String
+        public let label: String
+        public let standard: String
+        /// Bytes of user memory, or "" when it does not apply.
+        public let memory: String
+        public let ops: [Op]
+    }
+
+    static func op(_ id: String, _ label: String, _ kind: String, _ needs: String?, _ help: String) -> Op { Op(id: id, label: label, kind: kind, needs: needs, help: help) }
+
+    static let common: [Op] = [
+        op("scan", "Scan", "read", nil, "Read the UID, the card type and any public record — kept in a scan loop."),
+        op("read-uid", "Read UID", "read", nil, "The card's UID / serial as the reader sees it."),
+        op("read-public", "Read public data", "read", nil, "The freely readable data: NDEF, the ATS/ATR, version."),
+        op("raw-apdu", "Send APDU", "read", "key", "Send a raw ISO 7816 APDU and show the response (advanced)."),
+    ]
+    static let ndefOps: [Op] = [
+        op("ndef-read", "Read NDEF", "read", nil, "The NDEF records (text, URI, MIME, external)."),
+        op("ndef-write", "Write NDEF", "write", nil, "Write NDEF records (text, URI, MIME…)."),
+        op("ndef-lock", "Make read-only", "write", nil, "Lock the tag so its NDEF can no longer be changed (permanent)."),
+    ]
+    static let classicOps: [Op] = [
+        op("classic-read", "Read sectors", "read", "keys-dictionary", "Read the blocks whose key A/B you know (or from the key list)."),
+        op("classic-write", "Write block", "write", "key", "Write a block with its key."),
+        op("classic-dump", "Dump", "read", "keys-dictionary", "Read every sector reachable with the known keys, as a .mfd/.json."),
+        op("classic-restore", "Restore dump", "write", "keys-dictionary", "Write a dump back to a card with matching keys."),
+    ]
+    static let uidWrite = op("write-uid", "Change UID", "write", "key", "Set the UID and block 0 — only on a UID-changeable (\"magic\") card you own.")
+
+    static func t(_ tech: String, _ label: String, _ standard: String, _ memory: String, _ extra: [Op]) -> TechInfo {
+        TechInfo(tech: tech, label: label, standard: standard, memory: memory, ops: common + extra)
+    }
+
+    public static let catalog: [TechInfo] = [
+        t(m5cetCard, "M5Cet card", "M5Cet encrypted container over NDEF", "tag-dependent", ndefOps + [
+            op("m5-read", "Open records", "read", "pin", "List the card's records and open each with its PIN or your account."),
+            op("m5-write", "Write records", "write", "pin", "Build the card's records (the M5Cet builder) and write them."),
+            op("m5-erase", "Erase a record", "write", nil, "Remove one record (a one-time record erases itself after it is shown)."),
+            op("m5-emulate", "Be the card", "emulate", nil, "The phone answers as a Type 4 tag holding this card (HCE)."),
+        ]),
+        t(connectionTag, "M5cet connection tag", "NDEF · application/vnd.m5cet.conn", "~250 B", ndefOps + [
+            op("conn-read", "Open connection", "read", "pin", "Open the room + passphrase with the PIN and offer to join."),
+            op("conn-write", "Write connection", "write", "pin", "Write the active room onto the tag."),
+            op("conn-emulate", "Be the tag", "emulate", nil, "The phone answers as the connection tag (HCE)."),
+        ]),
+        t(ndef, "NDEF tag", "NFC Forum Type 1–5", "tag-dependent", ndefOps),
+        t(mifareClassic1k, "MIFARE Classic 1K", "ISO 14443-3A · NXP", "1024 B (16 sectors)", ndefOps + classicOps + [uidWrite]),
+        t(mifareClassic4k, "MIFARE Classic 4K", "ISO 14443-3A · NXP", "4096 B (40 sectors)", ndefOps + classicOps + [uidWrite]),
+        t(mifareClassicMini, "MIFARE Classic Mini", "ISO 14443-3A · NXP", "320 B (5 sectors)", ndefOps + classicOps + [uidWrite]),
+        t(mifareUltralight, "MIFARE Ultralight", "ISO 14443-3A · NXP", "64–192 B", ndefOps + [
+            op("ul-read", "Read pages", "read", nil, "Read the 4-byte pages (READ / FAST_READ)."),
+            op("ul-write", "Write page", "write", nil, "Write a 4-byte page (WRITE)."),
+            op("ul-password", "Set password", "write", "key", "Set the AUTH0 / PWD / PACK protection (Ultralight C / EV1)."),
+        ]),
+        t(ntag21x, "NTAG 213 / 215 / 216", "ISO 14443-3A · NXP NTAG", "144 / 504 / 888 B", ndefOps + [
+            op("ntag-read", "Read pages", "read", nil, "Read the pages (READ / FAST_READ)."),
+            op("ntag-write", "Write page", "write", nil, "Write a page (WRITE)."),
+            op("ntag-password", "Set password", "write", "key", "Set PWD / PACK and AUTH0 password protection."),
+            op("ntag-counter", "Read counter", "read", nil, "The NFC read counter and the signature (ECC), where enabled."),
+        ]),
+        t(mifareDesfire, "MIFARE DESFire EV1/2/3", "ISO 14443-4 · NXP", "2–8 KB (applications & files)", ndefOps + [
+            op("desfire-apps", "List applications", "read", nil, "Enumerate the applications (AIDs) and the master info."),
+            op("desfire-files", "List files", "read", "key", "The files of an application and their settings."),
+            op("desfire-read", "Read file", "read", "key", "Read a data / record file after authenticating (AES/2K3DES)."),
+            op("desfire-write", "Write file", "write", "key", "Write a file after authenticating with its key."),
+        ]),
+        t(isoDep, "ISO-DEP (ISO 14443-4)", "ISO 14443-4 / ISO 7816", "", [
+            op("select-aid", "Select application", "read", nil, "SELECT an AID and talk to it with APDUs."),
+            op("app-template", "Application template", "read", nil, "Send a saved APDU application template (apduTemplates in Android › Define)."),
+        ]),
+        t(iso14443a, "ISO/IEC 14443 Type A", "ISO 14443-3A", "", []),
+        t(iso14443b, "ISO/IEC 14443 Type B", "ISO 14443-3B", "", []),
+        t(iso15693, "ISO/IEC 15693 (vicinity)", "ISO 15693 / NFC Type 5", "tag-dependent", [
+            op("v-read", "Read blocks", "read", nil, "Read the memory blocks (Get System Info, Read Multiple)."),
+            op("v-write", "Write block", "write", "key", "Write a block (and lock it)."),
+        ]),
+        t(felica, "FeliCa", "JIS X 6319-4 · Sony", "service/block", [
+            op("felica-systems", "Read systems", "read", nil, "The system codes, IDm/PMm and the public services."),
+            op("felica-read", "Read service", "read", "key", "Read a service's blocks (Read Without Encryption for public ones)."),
+        ]),
+        t(emv, "EMV payment card", "ISO 14443-4 · EMV", "", [
+            op("emv-public", "Read public data", "read", nil, "Only the freely readable data (PPSE, the card's application labels, and where allowed the masked PAN and expiry). No PIN, no signing, no transaction."),
+            op("emv-read", "Read card data", "read", nil, "Read every application on the card (PPSE → SELECT AID → GET DATA → the transaction log → GPO → READ RECORD) and every file it has, and parse what a terminal reads: AIDs, labels, PAN, expiry, name, the counters (ATC, last online ATC, PIN tries left) and the transaction history (date, time, amount, currency, merchant). Read-only — no PIN, no cryptogram, no transaction."),
+            op("app-template", "Application template", "read", nil, "Send a saved APDU application template (apduTemplates in Android › Define)."),
+        ]),
+        t(eid, "Electronic ID / MRTD", "ISO 14443-4 · ICAO 9303 / eIDAS", "", [
+            op("eid-public", "Read public info", "read", nil, "The document type and the data the holder unlocks with the CAN/MRZ they type. No cloning, no signing."),
+            op("eid-read", "Read document (PACE / BAC)", "read", "key", "Open the chip with the holder's own CAN (PACE) or MRZ (passport no. + date of birth + expiry; PACE or BAC) — the document's own access control: EF.CardAccess is read and PACE used when the chip offers a variant this reader runs (generic mapping on the standard curves, AES or 3DES), else BAC — and read every data group over secure messaging: EF.COM, EF.SOD, DG1 (the MRZ), DG2 (the faces), DG5/DG7 (portrait, signature), DG11/DG12 (personal and document details), DG13 (optional details), DG14 (security protocols), DG15 (the Active Authentication key), DG16 (persons to notify). DG3/DG4 (fingerprints, iris) need EAC and are left alone. Every group read is checked against its hash in EF.SOD (passive authentication). The holder's own document, read-only."),
+        ]),
+        TechInfo(tech: unknown, label: "Unknown card", standard: "—", memory: "", ops: []),
+    ]
+
+    static let byTech: [String: TechInfo] = Dictionary(uniqueKeysWithValues: catalog.map { ($0.tech, $0) })
+
+    public static func techInfo(_ tech: String) -> TechInfo { byTech[tech] ?? byTech[unknown]! }
+    public static func ops(for tech: String) -> [Op] { techInfo(tech).ops }
+    public static func supportsOp(_ tech: String, _ opId: String) -> Bool { techInfo(tech).ops.contains { $0.id == opId } }
+    public static func findOp(_ tech: String, _ opId: String) -> Op? { techInfo(tech).ops.first { $0.id == opId } }
+
+    /* ------------------------------------------------------------ readers */
+
+    public static let readerInternal = "internal", readerUsb = "usb", readerBluetooth = "bluetooth", readerSerial = "serial"
+
+    public struct ReaderInfo: Sendable, Hashable { public let kind: String, label: String, help: String }
+
+    /// The same NFC_READERS names as the web (catalog.ts).
+    public static let readers: [ReaderInfo] = [
+        ReaderInfo(kind: readerInternal, label: "This device", help: "The phone or tablet's own NFC (Android: internal antenna; iPhone: Core NFC; web: WebNFC in Android Chrome)."),
+        ReaderInfo(kind: readerUsb, label: "USB reader", help: "A PC/SC (CCID) reader over USB — e.g. ACR122U, ACR1252 (web: WebUSB; Android: USB host)."),
+        ReaderInfo(kind: readerBluetooth, label: "Bluetooth reader", help: "A BLE reader based on the PN532 or a vendor bridge (web: Web Bluetooth)."),
+        ReaderInfo(kind: readerSerial, label: "Serial reader", help: "A PN532 on a USB-serial adapter (web: Web Serial)."),
+    ]
+
+    public static func readerInfo(_ kind: String) -> ReaderInfo { readers.first { $0.kind == kind } ?? readers[0] }
+}
