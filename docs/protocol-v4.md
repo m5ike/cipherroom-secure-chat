@@ -50,8 +50,16 @@ message kind, file, call, function and plug-in keeps working over protocol 4.
 * When both hellos are v4 with a valid `sig4`, the pair runs protocol 4. Otherwise protocol 3
   (`sender-keys.ts`), and the UI marks the peer “older protocol (no PCS / PQ)”.
 * **No downgrade.** A device key (`pk`) once seen with a valid v4 hello is remembered
-  (persistently, per device key). A later hello from the same `pk` without valid v4 fields is
-  refused with a visible warning (“protocol downgrade”).
+  (persistently, per device key) — as soon as that hello is accepted, not only once the session is
+  up. A later hello from the same `pk` without valid v4 fields is refused with a visible warning
+  (“protocol downgrade”).
+* **Never the room key to a protocol-4 device** (6.12 review P03). While a peer's protocol-4
+  session is not up — its valid hello v4 is in hand, its device key (or its member's account) is
+  known to speak protocol 4 — nothing for it is sealed with the room key: a client waits a moment
+  (2.5 s) and then keeps the message (light mode: in its outbox, per peer) until the session is
+  ready, and says so. A private message is never sealed with the room key. Only a peer that is
+  genuinely unknown (no hello at all after the wait) or speaks protocol 3 may get a room message
+  under the room key, and the sender's info view names it.
 * **Envelope versions 1 and 2 are no longer opened** (F-20): they come only from clients older
   than 3.1. Protocol-3 envelopes (`v: 3`) still are.
 * The KEM, ratchet and reset messages travel only on the peer's data channel (reliable,
@@ -203,8 +211,13 @@ State is changed only when the AEAD check passes (work on a copy, commit on succ
 
 Any failure to open a `p4` frame (AEAD, a bad `kct`, a header out of range) drops the frame; a
 second failure within the session — or a `kct` that cannot be decapsulated — makes the side send
-`{ kind:"p4-reset", v:4, why }`, discard the session and send a new hello. A received reset does
-the same (at most one reset per 10 s per peer, else the channel is closed).
+`{ kind:"p4-reset", v:4, why }`, discard the session and send a new hello. A failure is forgotten
+once `RATCHET_FAILURE_DECAY` (16) frames opened after it (6.12 review P13: two unrelated incidents
+in a long session do not force a reset). A received reset does the same (at most one RECEIVED
+reset per 10 s per peer, else the channel is closed; resets this side sends are not counted — two
+resets that cross on the wire must not close the channel). A reset received while this side has no
+session (it is already starting over, e.g. its own reset crossed the peer's) does not start another
+handshake: the fresh hello already sent answers it.
 
 ### 5.6 Skipped keys
 
@@ -236,7 +249,9 @@ handed to each peer only as a pair-ratchet `sk` message, with
 cert = ECDSA(spk.private, join(LABEL.skCert, roomId, keyId, ownerPk))     ownerPk = the owner's hello pk
 ```
 
-made once per chain: the chain's own signing key names the device that owns it.
+made once per chain: the chain's own signing key names the device that owns it. A peer counts as
+holding the chain only once the pair frame carrying its `sk` was handed to the channel (6.12 review
+P13): if the send fails, the next room message hands the chain out again.
 
 ```
 (mk, CK) = KDF_CK(CK)
@@ -361,7 +376,9 @@ Server details (6.12):
 * **Hub frame** `{ type:"key-bundles", ref }` from a client joined to a room → the hub answers
   `{ type:"key-bundles", ref, devices: DirectoryDevice[] }` for the account behind that
   room-scoped reference (the same references the relay uses, `server/signaling/refs.ts`). Unknown
-  or foreign references get an empty list (no oracle). Rate-limited like other hub frames.
+  or foreign references get an empty list (no oracle). Rate-limited like other hub frames. In a
+  room that proves (§ 13: it has a verifier), a requester who did not prove gets the same empty
+  list (review S06).
 
 Server details (6.12):
 
@@ -374,11 +391,17 @@ Server details (6.12):
   `sig` 64 B), `bundle-expired`, `bundle-too-long` (`exp > now + 7 days + 5 min`),
   `bad-bundle-signature`, `bad-cert-signature`; `409` `no-account-key`, `stale-bundle` (the
   directory has a bundle of that device with a later `exp`), `too-many-devices`
-  (`KEYS_MAX_DEVICES`, default 10, counting devices with a valid certificate); `503` `kt-failed`,
-  `kt-busy`, `directory-full`. All base64 must be canonical.
-* `acct` is logged when the log does not yet show the account's current key (also for keys the
-  server learned before 6.12); `dev` when the device is new or its certificate changed — before the
-  directory keeps the row.
+  (`KEYS_MAX_DEVICES`, default 10, counting devices with a valid certificate); `429` `kt-quota`
+  (the account added `KT_ACCOUNT_ENTRIES_PER_DAY`, default 40, KT entries in the last 24 h and this
+  upload would add more); `503` `kt-failed`, `kt-busy`, `directory-full`. All base64 must be
+  canonical.
+* `acct` is logged when the log does not yet show the account's current key as its newest `acct`
+  entry (looked up directly — also for keys the server learned before 6.12); `dev` when the LOG does
+  not show the device yet, shows it revoked (`rev`) since its newest `dev`, under another account
+  key, or with a certificate expiring at least 24 h earlier than the uploaded one — before the
+  directory keeps the row. Re-uploading a certificate with an earlier or barely later `exp` adds no
+  leaf (review S10: the log used to grow by one leaf per upload); the directory row then carries
+  the uploaded certificate, the log the `exp` it logged (the same key pair).
 * `devices` lists only devices whose certificate and bundle have not expired and whose certificate
   is by the account key the server knows now.
 * A device leaves the directory, with a `rev` entry while its certificate is still valid, when the
@@ -398,9 +421,21 @@ AAD end   = join(LABEL.fileEnd, transferId)
 ```
 
 `FK` travels end to end: on a data channel as a pair `file` inner message sent before
-`file-meta`; for a relayed or proxied file inside the (pair, sender-key or mailbox) message that
-announces it (field `fk` of the attachment). The room key no longer protects files between
-protocol-4 clients. Chunk and meta formats are otherwise those of protocol 3.
+`file-meta`. The room key no longer protects files between protocol-4 clients. Chunk and meta
+formats are otherwise those of protocol 3 (the frames carry `v: 4`).
+
+**Proxied files** (6.12 review P07). The server relays a file's frames (`proxy-meta`, `-chunk`,
+`-end`) when no data channel came up — so there is no pair session to carry `FK`. The sender then
+seals `FK` as a mailbox item (§ 7.2, payload `{ id: transferId, t: "fk", fk: b64(FK) }`, an
+`mb-set` for several devices) to the devices of EVERY member present that it may seal to under the
+rules of § 7.4 (seen in a valid hello, or certified by the member's pinned account), and sends it
+to that member before the meta as a hub `signal` whose (room-key-sealed, routing-only) payload is
+`{ p4: "fk", transferId, item }` — the server, or anyone with the room key, sees only the item,
+which only the recipient device opens. A receiver keeps the `FK` for (signal source, transferId),
+waits up to 5 s for it after a `v: 4` proxied meta (the proxied frames are handled in order behind
+it) and uses it once. When some member present has no device the sender may seal to, the transfer
+uses the protocol-3 room-derived file key (`v: 2`), and the sender is told that the file went under
+the room key. (The server's frame parser keeps `v` 2 and 4.)
 
 ## 9. Media (call frames)
 
@@ -476,6 +511,13 @@ A device is revoked by a `rev` entry in key transparency (§ 14); a revoked devi
   carry `proven: boolean`.
 * Clients show unproven members with a badge; server-side features that reach members by room
   (telephony route audio, calls offered to a room, `user` targets) address only proven members.
+* A client whose proven join is refused (`room-proof`) does not give up (6.12 review S14: the room
+  may have been squatted while its passphrase is right): when the refusal says `legacyAllowed: true`
+  it says so, joins once more on the same socket WITHOUT a proof (legacy — the others see it
+  unproven; once per socket) and tells the user that the server's owner can reset the verifier;
+  without `legacyAllowed` (proofs required) it gives up as before. While its own join is unproven
+  it does not ask the hub's `kt-lookup` (the answer would be empty, § 14.3): members stay "not yet
+  checked in the key log".
 
 Server details (6.12):
 
@@ -485,22 +527,45 @@ Server details (6.12):
   `invalid-frame`. `joined` carries `proven` for the joiner itself; `joined.peers`, `peer-joined`,
   held members (`joined.held`, the held `peer-left`) and members on other instances carry
   `proven: boolean`.
-* Refusals: `error` `room-proof` (another `pub`, a bad signature, or — after 10 failed proofs from
-  one address in 10 minutes — any proof from it, unchecked), `room-proof-required`. Both are
-  audited (security) with the room's hash, never its id.
+* Refusals: `error` `room-proof` (another `pub`, a bad signature, or a rate limit — see below),
+  `room-proof-required`. Both are audited (security) with the room's hash, never its id. Since the
+  6.12 review (S14) both carry `legacyAllowed: boolean` — whether the same join WITHOUT a proof
+  would be admitted (as an unproven, legacy member): `true` unless `HUB_REQUIRE_ROOM_PROOF=1`. A
+  client refused in a squatted room may then join without proof instead of giving up.
+* Failed proofs are limited (review S04): 10 bad signatures from one address in 10 minutes block
+  proofs from it for every room; 10 failed proofs (bad signatures and valid proofs by another key —
+  what every real member of a squatted room sends) for one room from one address block that room
+  for that address only. An IPv6 address counts by its /64; the maps are bounded (the least
+  recently failed address goes first). Checked before the signature.
+* Registering a NEW verifier is limited per address (review S15): `HUB_ROOM_REGISTRATIONS_PER_HOUR`
+  (default 20) per address (IPv6 /64). A good proof over the limit — or one the in-memory store has
+  no room for — registers nothing and the join is admitted unproven (audited
+  `join.room-verifier-deferred`); with `HUB_REQUIRE_ROOM_PROOF=1` it is refused (`room-proof`).
+  The in-memory store (no server-side storage) never evicts a verifier proven within the TTL: when
+  full, only expired verifiers make room, else the registration is refused.
 * Only blind ids (`r3.…`) can prove. A room joined by its plain name (protocol 2 / v2 keys) is
   always legacy: a proof sent for it is ignored, and `HUB_REQUIRE_ROOM_PROOF=1` does not refuse it.
 * Verifiers are kept under an HMAC of the room id (a subkey of the storage master key) in the global
   database — shared by the instances of a cluster — or, without server-side storage, in memory per
   instance (lost on a restart; the next proven join registers again).
 * Who is "proven only": with `HUB_REQUIRE_ROOM_PROOF=1` proven members only; otherwise proven
-  members only as soon as one member of the room has proven, and everyone in a room where nobody
-  proves (only older clients), as before 6.12. A `@account` target is authenticated by its session
-  and needs no proof; a member named by display name or by peer id does.
+  members only as soon as the room proves — it has a registered verifier (review S07: also while
+  every proven member is away — held, backgrounded — not only while one is connected), or a member
+  here, on another instance or held has proven — and everyone in a room where nobody ever proved
+  (only older clients), as before 6.12. A `@account` target is authenticated by its session and
+  needs no proof; a member named by display name or by peer id does. This covers route audio, calls
+  offered to a room, `user` targets, the phone bridge's member, console / function notices by name
+  or peer id (review S05) and the key directory over the hub (S06). Frames the server sends a member
+  by peer id (route audio's offer with the media token, status, transcripts, notices) are checked
+  again when they are delivered, not only when the call was set up (review S08): a peer id freed by
+  a clean leave and taken by someone who did not prove gets nothing, and route audio ends a leg
+  whose peer id such a connection now holds.
 * Trust on first use: the first proven join registers the verifier. Someone who knows only the blind
   id can register a key of their own for a room that no 6.12 client has proven yet; the real members
   are then refused (`room-proof`) until the verifier expires. The squatter gets no more than a legacy
-  join gave before 6.12.
+  join gave before 6.12. (Review S14: the refusal says `legacyAllowed`, so the real members can still
+  join without proof — as unproven members, whom the server's own features then do not reach while
+  the squatter's verifier stands; the reset below ends it.)
 * **Reset.** A room whose verifier was registered first by someone who knew only the blind id
   (trust on first use) refuses its real members until the TTL ends — or until the server's owner
   forgets it: `POST /api/admin/security/room-proof/reset { roomId }` (owner role, audited with the
@@ -517,7 +582,12 @@ the entry's canonical JSON: keys in the order of `KtEntry` in `contract.ts`, no 
 * `dev`  — a device certified: `{t,u,apk,dpk,exp,ts}`
 * `rev`  — a device revoked: `{t,u,apk,dpk,ts}`
 
-`u = b64url(H(LABEL.ktUser + username))` — the log names no user in clear text.
+`u = b64url(H(LABEL.ktUser + username))` — the log names no user in clear text. `u` is a PUBLIC,
+unkeyed hash (clients compute and check it): it keeps names out of the log's text, it does not hide
+a name from someone who can guess it — generated usernames (4.0–6.4.0 and the passkey-only
+registration: ~2^29.6 values) invert offline in minutes. Hence lookups need authentication
+(§ 14.3, review S03): a member's entries come over the hub to members of its room, a user's own
+over HTTP with its session.
 
 ### 14.2 Signed tree head
 
@@ -529,10 +599,12 @@ from the server pin / QR).
 ### 14.3 API
 
 * `GET /api/kt/sth` → `SignedTreeHead`
-* `GET /api/kt/lookup?u=<u>` → `KtLookup { sth, entries:[{entry, index, proof:[b64…]}] }` — every
-  entry of that user, each with its inclusion proof in `sth`. For a member known only by a
-  room-scoped reference, the hub frame `{ type:"kt-lookup", ref }` answers
-  `{ type:"kt-lookup", ref, lookup: KtLookup }` (as § 7.5).
+* `GET /api/kt/lookup[?u=<u>]` (Bearer: an account session) → `KtLookup { sth, entries:[{entry,
+  index, proof:[b64…]}] }` — every entry of the CALLER's own `u` (omitted: the caller's), each with
+  its inclusion proof in `sth`; another `u` → `403 not-yours`, no session → `401` (review S03; the
+  lookup was public before). For a member known only by a room-scoped reference, the hub frame
+  `{ type:"kt-lookup", ref }` answers `{ type:"kt-lookup", ref, lookup: KtLookup }` (as § 7.5) —
+  in a room that proves, only to a requester who proved (S06). `key` and `sth` stay public.
 * `GET /api/kt/consistency?from=<size>&to=<size>` → `{ from, to, proof:[b64…] }`.
 
 Server details (6.12):
@@ -563,6 +635,28 @@ Server details (6.12):
   or a failed consistency check between the two sizes → the same alert (split view).
 * A head not signed by the pinned key is ignored. Between two heads the server signed, a
   consistency answer that does not verify is the alert, whatever its cause.
+* **A proof the server does not give is owed** (6.12 review P05). When the consistency request
+  between two heads the server signed fails, the pair is kept persistently (at most 8, the oldest
+  kept) and asked for again at every refresh. An HTTP answer that is no proof (`400`, `404`,
+  `500`, …) is a refusal; a network failure, `429`, `502`, `503` (`kt-busy`) or `504` is not.
+  `KT_PROOF_REFUSALS` (2) refusals, or `KT_PROOF_DEADLINE_MS` (24 h) without a proof, raise the alert
+  “the server does not prove its key log” (`unproven`). A head that is owed a proof is not kept, and
+  a lookup under it is never used (“unverified”).
+* **KT gates the identity states** (6.12 review P04). While the server keeps a log, an attested
+  peer is shown `account` / `verified` only after its lookup verified with the account's current
+  `acct` and the device's `dev` entry (no later `rev`). Until then it is “account not yet checked in
+  the key log”; a device or account missing from the log is “account not in the key log”, a lookup
+  that does not verify “the key log could not confirm this account” — never `account`/`verified`. A
+  claimed username the log does not bear out (`u` differs) is not shown.
+* **Self-monitoring** (6.12 review P04). A signed-in client looks up its OWN `u`
+  (`GET /api/kt/lookup?u=…` with its account session, § 14.3; the entries must carry that `u`) at
+  every refresh — a failed or refused lookup is "could not be verified", never "nothing found".
+  Every device certified for its account key
+  (`dev`, not expired, not revoked) that the user does not know — not this device, not one the user
+  acknowledged as theirs — is reported (“a device you do not know was certified for your account”),
+  with “this is my device” to acknowledge it and the account's session list to end it; a newer
+  `acct` entry with another key than the client's is reported too. A server that adds a key for a
+  user must put it in the log (§ 14.1) — where the user's own devices see it.
 
 ## 15. Release manifests (F-02, installation check)
 
@@ -693,3 +787,25 @@ joining. Writers never produce it.
   the AAD, the plaintext, the parsed tag and the exact body.
 * `invite` — `id` = base64url of bytes `40 41 … 4f`, `k` = `0123456789ABCDEFGHJKMNPQRS`: the
   derived `linkKeyHex` and `code`, and the exact body for origin `https://chat.example.org`.
+
+## 17. Security notes (6.12 review)
+
+What protocol 4 does NOT promise, so nobody reads more into it (docs/review-612.md P13):
+
+* **Key-transparency lookups prove presence, not absence.** The server chooses which entries of
+  `u` it returns and may answer under an older (consistent) head: "no later `rev`" and "the latest
+  `acct`" hold only for the entries shown. A verifiable map (a prefix tree or a VRF-keyed index)
+  would be the real fix; until then self-monitoring (§ 14.4) is what catches a key the server adds.
+* **Mailbox items allow key-compromise impersonation (KCI).** `ss2` is static–static (the
+  sender's bundle key with the recipient's), which makes items deniable — and it means whoever
+  holds a recipient bundle's PRIVATE key can make items "from" any sender to that recipient. A
+  stolen device can therefore be shown forged queued messages for up to the bundle's lifetime plus
+  `MAILBOX_KEEP_MS`. Live traffic (pair ratchet, sender keys) is not affected. Since 6.12 review
+  P13 the sender's `sacc` is bound by the AAD (§ 7.2): a relay can no longer strip or swap it.
+* **Message ids are global per room.** The replay window (§ 11) and the app's de-duplication key
+  on the room and the id: a member who sees an id first could send a different message under the
+  same id to a third member, whose copy of the original is then dropped as a replay. Keying on
+  (sender, id) is the planned fix; message ids are random (≥ 96 bits) so this needs a member.
+* **The hub's room-scoped reference only routes.** A device is sealed to because of its device
+  pin or its pinned account's certificate (§ 7.4), never because the server put it behind a
+  reference.

@@ -18,6 +18,7 @@
 
 import type { WebSocket } from "ws";
 import { traffic } from "./monitor/traffic";
+import { addressGroup } from "./address-group";
 
 const MAX_BYTES = 10 * 1024 * 1024 * 1024; // 10 GiB hard cap
 const TRANSFER_TTL_MS = 10 * 60 * 1000; // 10 minutes
@@ -39,7 +40,7 @@ export type FileProxyOptions = {
 type ProxyTransferState = {
   id: string;
   senderPeerId: string;
-  /** 6.12: the sender's address ("" when unknown) — for the per-address cap. */
+  /** 6.12: the sender's address group (address-group.ts; "" when unknown) — for the per-address cap. */
   address: string;
   recipientPeerId?: string; // populated when the recipient joins the relay
   meta: { iv: string; ciphertext: string; size: number }; // size opaque; we trust sender cipher length after meta decrypt in client
@@ -91,7 +92,8 @@ export class FileProxy {
     if (plaintextSizeHint > MAX_BYTES) {
       return { ok: false, reason: "too-large" };
     }
-    const address = this.addressOf(senderClientId) ?? "";
+    // 6.12 (review S09): counted by the address's group (an IPv6 /64), not the full address.
+    const address = addressGroup(this.addressOf(senderClientId));
     if (address && this.activeFrom(address) >= fileProxyPerAddress()) {
       return { ok: false, reason: "per-address-cap" };
     }

@@ -24,6 +24,7 @@
 // invalidates all outstanding invites. That is deliberate ("persistence: none").
 
 import { rateLimit } from "express-rate-limit";
+import { addressGroup } from "./address-group";
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 
@@ -97,7 +98,7 @@ export class ShareStore {
     return n;
   }
 
-  /** `owner`: who creates it (the route passes the client address); "" = not counted. */
+  /** `owner`: who creates it (the route passes the client address, counted by its group — an IPv6 /64); "" = not counted. */
   create(input: CreateInput, owner = ""): { ok: true; expiresAt: number; maxUses: number } | { ok: false; status: 400 | 409 | 429 | 503; reason: string } {
     this.gc();
     if (!isB64Url(input.id, ID_LEN)) return { ok: false, status: 400, reason: "bad-id" };
@@ -115,7 +116,9 @@ export class ShareStore {
     if (!Number.isInteger(ttlSec) || ttlSec < SHARE_LIMITS.minTtlSec || ttlSec > SHARE_LIMITS.maxTtlSec) return { ok: false, status: 400, reason: "bad-ttl" };
 
     if (this.records.has(input.id)) return { ok: false, status: 409, reason: "exists" };
-    const ownerKey = owner ? sha256(`m5cet:share-owner:${owner}`).toString("base64url") : "";
+    // 6.12 (review S09): an IPv6 client counts by its /64 (address-group.ts).
+    const group = addressGroup(owner);
+    const ownerKey = group ? sha256(`m5cet:share-owner:${group}`).toString("base64url") : "";
     if (ownerKey && this.ownedBy(ownerKey) >= sharePerOwner()) return { ok: false, status: 429, reason: "too-many-for-address" };
     if (this.records.size >= SHARE_LIMITS.maxLinks) return { ok: false, status: 503, reason: "full" };
 

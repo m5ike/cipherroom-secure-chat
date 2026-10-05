@@ -220,7 +220,8 @@ function parseRelayEnvelope(v: unknown): RelayEnvelope | null {
 
 /** The crypto version a client put on a frame (absent = 1). */
 function version(v: unknown): { v?: number } {
-  return v === 2 ? { v: 2 } : {};
+  // 2: room-derived file key (protocol 3); 4: the transfer's own FK (protocol 4, § 8 — 6.12 review P07).
+  return v === 2 || v === 4 ? { v } : {};
 }
 
 function ids(v: unknown, max: number): string[] | null {

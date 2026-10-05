@@ -37,9 +37,9 @@ describe("F-29 against someone who can write the models directory", () => {
     await expect(I.verifyInstalled(ROOT, ID, "https://example.invalid/v1.tar.bz2")).rejects.toThrow(/does not match/);
   });
 
-  // REVIEW-612 S02: delete manifest.json (same directory as the model files) → readManifest() returns {} → verifyInstalled()
+  // REVIEW-612 S02 (fixed): delete manifest.json (same directory as the model files) → readManifest() returns {} → verifyInstalled()
   // records the swapped files as "first-load" and the engine parses them. The MAC only stops EDITS of the manifest.
-  it.skip("a swapped model file is still refused after the attacker deletes manifest.json", async () => {
+  it("a swapped model file is still refused after the attacker deletes manifest.json", async () => {
     installModel("GENUINE-GRAPH");
     await I.recordInstall(ROOT, ID, "https://example.invalid/v1.tar.bz2", "a".repeat(64), 10, "first-download");
     writeFileSync(join(ROOT, ID, "voice.onnx"), "MALICIOUS-GRAPH");
@@ -47,8 +47,8 @@ describe("F-29 against someone who can write the models directory", () => {
     await expect(I.verifyInstalled(ROOT, ID, "https://example.invalid/v1.tar.bz2")).rejects.toThrow();
   });
 
-  // REVIEW-612 S02 (download side): the "same as the first download" rule also lives only in that file.
-  it.skip("a re-download with another archive hash is refused after manifest.json was deleted", async () => {
+  // REVIEW-612 S02 (download side, fixed): the "same as the first download" rule also lives only in that file.
+  it("a re-download with another archive hash is refused after manifest.json was deleted", async () => {
     installModel("GENUINE-GRAPH");
     await I.recordInstall(ROOT, ID, "https://example.invalid/v1.tar.bz2", "a".repeat(64), 10, "first-download");
     rmSync(I.manifestPath(ROOT));

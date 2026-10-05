@@ -26,6 +26,7 @@ import {
   DatabaseOpenError, PayloadTooLargeError, QuotaExceededError, ReservedKeyError, SessionLimitError, StorageUnavailableError,
 } from "./db";
 import { MasterKeyError, sessionRef } from "./keys";
+import { addressGroup } from "../address-group";
 
 export type Caller =
   | { kind: "account"; accountId: string }
@@ -89,14 +90,10 @@ export function resolveCaller(ctx: ApiContext, input: { token?: string | null; s
  * /64, so counting single addresses there would count nothing).
  */
 export function clientKeyFor(address: string | null | undefined): string {
-  const bare = String(address ?? "").trim().replace(/^::ffff:/i, "").replace(/%.*$/, "");
-  if (!bare) return "ip:unknown";
-  if (!bare.includes(":")) return `ip:${bare.slice(0, 45)}`;
-  const [head, tail] = bare.toLowerCase().split("::", 2);
-  const left = head ? head.split(":") : [];
-  const right = tail === undefined ? [] : tail ? tail.split(":") : [];
-  const groups = tail === undefined ? left : [...left, ...Array(Math.max(0, 8 - left.length - right.length)).fill("0"), ...right];
-  return `ip6:${groups.slice(0, 4).map((g) => g.replace(/^0+(?=.)/, "") || "0").join(":")}::/64`;
+  // 6.12 (review S09): the same grouping as every other per-address cap (address-group.ts).
+  const group = addressGroup(address);
+  if (!group) return "ip:unknown";
+  return group.endsWith("::/64") ? `ip6:${group}` : `ip:${group.slice(0, 45)}`;
 }
 
 /** The caller's database, or the reason there is none to work with. */

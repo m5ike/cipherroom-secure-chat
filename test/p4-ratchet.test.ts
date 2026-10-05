@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   b64, buildHello, buildKemMessage, establishSession, hB64, kemKeygen, LABEL, MAX_SKIP, openKemMessage, Ratchet, roleOf,
   systemRng, unb64, verifyHello, type RatchetFrame, type RatchetInner, createBundle, MAILBOX_LIFETIME_MS, ecdsaVerify, helloSig4Data, PairHandshake,
+  capsDigest, userDigest, sthDigest, ed25519FromSeed, signSth, RATCHET_FAILURE_DECAY,
 } from "../client/src/lib/p4";
 import { CHECK, clone, pair, ROOM, testDevice } from "./p4-support";
 
@@ -139,9 +140,39 @@ describe("p4 handshake", () => {
     const d = await testDevice();
     const { hello } = await buildHello({ roomId: ROOM, from: "p1", to: "p2", v3: { check: CHECK, pk: d.pk, dh: d.dh, sig: "c2ln" }, signer: d.signer, mb: null, acc: null, sth: null });
     const kHash = await hB64(unb64(hello.k));
-    const data = new TextEncoder().encode([LABEL.hello, ROOM, "p1", "p2", CHECK, d.pk, d.dh, hello.e, kHash, hello.n, "-", "-"].join("|"));
+    // 6.12 review P02: capsDigest (only "p4" here), userDigest and sthDigest ("-": none) close the transcript.
+    expect(hello.caps).toEqual(["p4"]);
+    const capsHash = await hB64(new TextEncoder().encode("p4"));
+    const data = new TextEncoder().encode([LABEL.hello, ROOM, "p1", "p2", CHECK, d.pk, d.dh, hello.e, kHash, hello.n, "-", "-", capsHash, "-", "-"].join("|"));
     expect(Buffer.from(await helloSig4Data(ROOM, "p1", "p2", hello)).equals(Buffer.from(data))).toBe(true);
     expect(await ecdsaVerify(d.pk, new Uint8Array(data), hello.sig4)).toBe(true);
+  });
+
+  it("signs caps (sorted, without duplicates), the user claim and the tree head (review P02)", async () => {
+    const d = await testDevice();
+    const kt = await ed25519FromSeed(new Uint8Array(32).fill(0x17));
+    const sth = await signSth(kt.privateKey, 4, new Uint8Array(32).fill(2), 9);
+    const { hello } = await buildHello({ roomId: ROOM, from: "p1", to: "p2", v3: { check: CHECK, pk: d.pk, dh: d.dh, sig: "c2ln", caps: ["media", "bin", "media"], user: "Žofie" }, signer: d.signer, mb: null, acc: null, sth });
+    const ctx = { roomId: ROOM, from: "p1", to: "p2", check: CHECK };
+    expect((await verifyHello(hello, ctx)).ok).toBe(true);
+    const enc = new TextEncoder();
+    expect(await capsDigest(hello.caps)).toBe(await hB64(enc.encode("bin|media|p4")));
+    expect(await userDigest(hello.user)).toBe(await hB64(enc.encode("Žofie")));
+    expect(await sthDigest(sth)).toBe(await hB64(enc.encode([4, sth.root, 9, sth.sig].join("|"))));
+    // Every one of them is bound: removing, adding or changing any fails sig4.
+    for (const tampered of [
+      { ...hello, caps: ["bin", "p4"] },
+      { ...hello, caps: [...hello.caps, "x"] },
+      { ...hello, user: "Zofie" },
+      { ...hello, user: undefined },
+      { ...hello, sth: null },
+      { ...hello, sth: { ...sth, ts: 10 } },
+    ]) expect(await verifyHello(tampered, ctx)).toMatchObject({ ok: false, why: "bad-sig4" });
+    // Reordering or repeating caps keeps the digest (it sorts and de-duplicates).
+    expect((await verifyHello({ ...hello, caps: ["p4", "media", "bin", "bin"] }, ctx)).ok).toBe(true);
+    // A cap with "|" or a non-string user is malformed.
+    expect(await verifyHello({ ...hello, caps: ["a|b"] }, ctx)).toMatchObject({ ok: false, why: "malformed" });
+    expect(await verifyHello({ ...hello, user: { name: "x" } }, ctx)).toMatchObject({ ok: false, why: "malformed" });
   });
 });
 
@@ -288,6 +319,19 @@ describe("p4 pair ratchet", () => {
     expect(await s3.a.decrypt({ ...f3, h: { ...f3.h, kct: b64(new Uint8Array(100)) } })).toMatchObject({ ok: false, error: "kct", reset: true });
     // State intact even so: the genuine frame opens.
     expect(await open(s3.a, f3)).toEqual(text("b", 0));
+  });
+
+  it("forgets a failure after RATCHET_FAILURE_DECAY frames opened (review P13)", async () => {
+    const { a, b } = await oriented();
+    const bad = async () => a.decrypt({ ...(await b.encrypt(text("b", 999))), c: b64(new Uint8Array(40)) });
+    expect(await bad()).toMatchObject({ ok: false, reset: false });
+    for (let i = 0; i < RATCHET_FAILURE_DECAY - 1; i++) expect(await open(a, await b.encrypt(text("b", i)))).toEqual(text("b", i));
+    expect(a.info().failures).toBe(1);
+    expect(await open(a, await b.encrypt(text("b", 100)))).toEqual(text("b", 100));
+    expect(a.info().failures).toBe(0);
+    // Long after the first incident, a second one alone does not reset; two in a row still do.
+    expect(await bad()).toMatchObject({ ok: false, reset: false });
+    expect(await bad()).toMatchObject({ ok: false, reset: true });
   });
 
   it("refuses a replayed frame", async () => {

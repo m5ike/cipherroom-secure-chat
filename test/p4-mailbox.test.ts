@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   b64, checkBundle, createBundle, Mailbox, mailboxSet, MAILBOX_KEEP_MS, MAILBOX_LIFETIME_MS, MAILBOX_RENEW_BEFORE_MS, MemoryBundleStore,
-  sealMailboxItem, systemRng, unb64, type MailboxItem,
+  sealMailboxItem, systemRng, unb64, accountDigest, type MailboxItem,
 } from "../client/src/lib/p4";
 import { ROOM, testDevice } from "./p4-support";
 
@@ -114,6 +114,25 @@ describe("p4 mailbox", () => {
     expect((await laptop.mailbox.open(set, ROOM, T0))?.payload).toEqual(payload("m9"));
     expect(() => mailboxSet("other", items)).toThrow();
     await expect(phone.mailbox.open({ ...set, id: "x" }, ROOM, T0)).rejects.toMatchObject({ code: "malformed" });
+  });
+
+  it("binds the sender's account attestation: a relay can neither strip nor swap it (review P13)", async () => {
+    const s = await member();
+    const r = await member();
+    const rb = await r.mailbox.current(T0);
+    const sacc = { apk: b64(new Uint8Array(32).fill(7)), ac: b64(new Uint8Array(64).fill(8)), cv: 2 as const, exp: T0 + 1000 };
+    const item = await s.mailbox.seal({ roomId: ROOM, id: "m5", payload: payload("m5"), recipient: { pk: r.device.pk, bundle: rb.bundle }, senderPk: s.device.pk, sacc, now: T0 });
+    expect((await r.mailbox.open(item, ROOM, T0))?.sacc).toEqual(sacc);
+    const { sacc: _gone, ...stripped } = item;
+    await expect(r.mailbox.open(stripped as MailboxItem, ROOM, T0)).rejects.toMatchObject({ code: "aead" });
+    await expect(r.mailbox.open({ ...item, sacc: { ...sacc, apk: b64(new Uint8Array(32).fill(9)) } }, ROOM, T0)).rejects.toMatchObject({ code: "aead" });
+    // Nor can one be added to an item sealed without it.
+    const plain = await s.mailbox.seal({ roomId: ROOM, id: "m6", payload: payload("m6"), recipient: { pk: r.device.pk, bundle: rb.bundle }, senderPk: s.device.pk, now: T0 });
+    await expect(r.mailbox.open({ ...plain, sacc }, ROOM, T0)).rejects.toMatchObject({ code: "aead" });
+    expect(await accountDigest(undefined)).toBe("-");
+    // A malformed attestation is refused before anything is sealed or opened.
+    await expect(s.mailbox.seal({ roomId: ROOM, id: "m7", payload: payload("m7"), recipient: { pk: r.device.pk, bundle: rb.bundle }, senderPk: s.device.pk, sacc: { apk: "a|b", ac: "x" } as never, now: T0 })).rejects.toMatchObject({ code: "malformed" });
+    await expect(r.mailbox.open({ ...item, sacc: { apk: 1 } } as never, ROOM, T0)).rejects.toMatchObject({ code: "malformed" });
   });
 
   it("makes bundles that expire after MAILBOX_LIFETIME_MS and verify with the device key", async () => {

@@ -20,9 +20,9 @@
 
 import { DEVICE_CERT_LIFETIME_MS, KEM, LABEL, P4_CAP, type HelloAccount, type HelloV4Fields, type KemMessage, type MailboxBundle, type SignedTreeHead } from "./contract";
 import { kemDecaps, kemEncaps, kemKeygen, type KemKeyPair } from "./kem";
-import { checkBundle, isBundleShape } from "./mailbox";
+import { accountDigest, checkBundle, isAccShape, isBundleShape } from "./mailbox";
 import {
-  b64, concat, ecdh, ecdsaVerify, ed25519Verify, hB64, H, hkdf, importEcdhPublic, isSafeCount, join, P4Error, unb64, wipe,
+  b64, concat, ecdh, ecdsaVerify, ed25519Verify, fromUtf8, hB64, H, hkdf, importEcdhPublic, isSafeCount, join, P4Error, unb64, utf8, wipe,
   type Bytes, type DeviceSigner, type P256Pair,
 } from "./primitives";
 import { Ratchet, type RatchetRole } from "./ratchet";
@@ -41,7 +41,7 @@ export type HelloV4 = {
 } & HelloV4Fields;
 
 /** The protocol-3 part of a hello, as `SenderKeyStore.hello()` made it (plus the app's `caps` / `user`). */
-export type HelloV3Part = { check: string; pk: string; dh: string; sig: string; caps?: string[]; user?: unknown };
+export type HelloV3Part = { check: string; pk: string; dh: string; sig: string; caps?: string[]; user?: string };
 
 /** The private halves of one hello; memory only, wiped once the session exists or the channel closes. */
 export type HelloSecrets = { e: P256Pair; k: KemKeyPair };
@@ -54,15 +54,50 @@ export async function mbDigest(mb: MailboxBundle | null): Promise<string> {
   return hB64(join(mb.id, mb.dh, await hB64(unb64(mb.kem)), mb.exp, mb.sig));
 }
 
-/** § 2 accDigest: b64(H(join(acc.apk, acc.ac, acc.cv ?? 1, acc.exp ?? 0))), or "-". */
-export async function accDigest(acc: HelloAccount | null): Promise<string> {
-  if (!acc) return "-";
-  return hB64(join(acc.apk, acc.ac, acc.cv ?? 1, acc.exp ?? 0));
+/** § 2 accDigest: b64(H(join(acc.apk, acc.ac, acc.cv ?? 1, acc.exp ?? 0))), or "-". (§ 7.2 saccDigest is the same.) */
+export const accDigest: (acc: HelloAccount | null | undefined) => Promise<string> = accountDigest;
+
+/** A capability string: printable ASCII without "|" (§ 2). */
+const CAP_RE = /^[\x20-\x7b\x7d\x7e]+$/;
+export const isCap = (c: unknown): c is string => typeof c === "string" && CAP_RE.test(c);
+
+/**
+ * § 2 capsDigest: b64(H(join(…caps sorted by ordinal order, duplicates
+ * removed))) — never "-": no caps hash the empty join. A capability that is
+ * not printable ASCII without "|" is malformed.
+ */
+export async function capsDigest(caps: readonly unknown[] | undefined): Promise<string> {
+  const list = [...(caps ?? [])];
+  if (list.some((c) => !isCap(c))) throw new P4Error("malformed", "a capability is not printable ASCII without |");
+  const sorted = [...new Set(list as string[])].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+  return hB64(join(...sorted));
 }
 
-/** § 2: the bytes `sig4` signs. `from` is the hello's sender, `to` its recipient. */
-export async function helloSig4Data(roomId: string, from: string, to: string, h: Pick<HelloV4, "check" | "pk" | "dh" | "e" | "k" | "n" | "mb" | "acc">): Promise<Bytes> {
-  return join(LABEL.hello, roomId, from, to, h.check, h.pk, h.dh, h.e, await hB64(unb64(h.k)), h.n, await mbDigest(h.mb), await accDigest(h.acc));
+/** § 2 userDigest: b64(H(UTF-8(user))) for a non-empty username claim, else "-". */
+export async function userDigest(user: unknown): Promise<string> {
+  if (user === undefined || user === null || user === "") return "-";
+  if (typeof user !== "string") throw new P4Error("malformed", "the user claim is not a string");
+  const bytes = utf8(user);
+  if (fromUtf8(bytes) !== user) throw new P4Error("malformed", "the user claim is not well-formed text");
+  return hB64(bytes);
+}
+
+/** § 2 sthDigest: b64(H(join(sth.size, sth.root, sth.ts, sth.sig))), or "-". */
+export async function sthDigest(sth: SignedTreeHead | null | undefined): Promise<string> {
+  if (!sth) return "-";
+  return hB64(join(sth.size, sth.root, sth.ts, sth.sig));
+}
+
+/**
+ * § 2: the bytes `sig4` signs. `from` is the hello's sender, `to` its
+ * recipient. 6.12 review P02: `caps`, `user` and `sth` are signed as well, so
+ * nobody on the path can strip "media" or the tree head.
+ */
+export async function helloSig4Data(roomId: string, from: string, to: string, h: Pick<HelloV4, "check" | "pk" | "dh" | "e" | "k" | "n" | "mb" | "acc" | "caps" | "user" | "sth">): Promise<Bytes> {
+  return join(
+    LABEL.hello, roomId, from, to, h.check, h.pk, h.dh, h.e, await hB64(unb64(h.k)), h.n, await mbDigest(h.mb), await accDigest(h.acc),
+    await capsDigest(h.caps), await userDigest(h.user), await sthDigest(h.sth),
+  );
 }
 
 /** § 3: r = b64(H(join(e, b64(H(k)), n))) — names the hello a KEM message answers. */
@@ -95,11 +130,12 @@ export async function buildHello(o: BuildHelloOptions): Promise<{ hello: HelloV4
   const n = b64(rng.bytes(16, "hello.n"));
   const caps = [...(o.v3.caps ?? [])];
   if (!caps.includes(P4_CAP)) caps.push(P4_CAP);
-  const base = { check: o.v3.check, pk: o.v3.pk, dh: o.v3.dh, e: e.spki, k: b64(k.ek), n, mb: o.mb, acc: o.acc };
+  const user = o.v3.user ? o.v3.user : undefined;
+  const base = { check: o.v3.check, pk: o.v3.pk, dh: o.v3.dh, e: e.spki, k: b64(k.ek), n, mb: o.mb, acc: o.acc, caps, user, sth: o.sth };
   const sig4 = await o.signer.sign(await helloSig4Data(o.roomId, o.from, o.to, base));
   const hello: HelloV4 = {
     kind: "hello", v: 4, check: o.v3.check, pk: o.v3.pk, dh: o.v3.dh, sig: o.v3.sig, caps,
-    ...(o.v3.user !== undefined ? { user: o.v3.user } : {}),
+    ...(user !== undefined ? { user } : {}),
     e: e.spki, k: base.k, n, mb: o.mb, acc: o.acc, sth: o.sth, sig4,
   };
   return { hello, secrets: { e, k } };
@@ -118,13 +154,6 @@ export type HelloVerdict =
 
 const isStr = (v: unknown): v is string => typeof v === "string";
 
-function isAccShape(a: unknown): a is HelloAccount {
-  const acc = a as Partial<HelloAccount> | null;
-  if (!acc || typeof acc !== "object" || !isStr(acc.apk) || !isStr(acc.ac)) return false;
-  if (acc.cv === undefined) return acc.exp === undefined;
-  return acc.cv === 2 && isSafeCount(acc.exp);
-}
-
 function isSthShape(s: unknown): s is SignedTreeHead {
   const sth = s as Partial<SignedTreeHead> | null;
   return Boolean(sth) && typeof sth === "object" && isSafeCount(sth!.size) && isStr(sth!.root) && isSafeCount(sth!.ts) && isStr(sth!.sig);
@@ -141,7 +170,8 @@ export async function verifyHello(raw: unknown, ctx: { roomId: string; from: str
   if (h.check !== ctx.check) return { ok: false, why: "key-mismatch" };
   if (h.v !== 4) return { ok: false, why: "not-v4" };
   try {
-    if (!isStr(h.pk) || !isStr(h.dh) || !isStr(h.sig) || !isStr(h.sig4) || !Array.isArray(h.caps)) throw new P4Error("malformed");
+    if (!isStr(h.pk) || !isStr(h.dh) || !isStr(h.sig) || !isStr(h.sig4) || !Array.isArray(h.caps) || !h.caps.every(isCap)) throw new P4Error("malformed");
+    if (h.user !== undefined && h.user !== null && typeof h.user !== "string") throw new P4Error("malformed");
     await importEcdhPublic(h.e);
     unb64(h.k, KEM.ek);
     unb64(h.n, 16);

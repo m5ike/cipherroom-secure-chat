@@ -271,14 +271,24 @@ type TrustPanelProps = PanelBaseProps & {
 export type P4TrustInfo = {
   kt: { state: "off" | "ok" | "alert" | "unknown"; size?: number; alert?: { kind: string; at: number; detail: string } | null };
   onKtDismiss: () => void;
-  peers: Array<{ id: string; name: string; protocol: "pending" | 3 | 4 | "refused"; proven?: boolean }>;
+  /** "p4-pending": protocol 4, the session is being set up (6.12 review P03: nothing goes to it under the room key). */
+  peers: Array<{ id: string; name: string; protocol: "pending" | "p4-pending" | 3 | 4 | "refused"; proven?: boolean }>;
+  /** 6.12 review P04: this account's own entries in the key log — devices certified for it that the user does not know. */
+  own?: { status: "ok" | "unverified" | "off"; unknown: Array<{ dpk: string; ts: number; exp: number }>; foreignAccount: boolean } | null;
+  /** "This is my device" (by its key). */
+  onOwnAck?: (dpk: string) => void;
+  /** Opens the account's sessions (to end one). */
+  onOwnSessions?: () => void;
 };
+
+/** A short, stable label for a device key (its last characters; the full key is in the title). */
+const shortKey = (k: string) => `…${k.replace(/=+$/, "").slice(-12)}`;
 
 /** 6.12: key transparency — a persistent red alert on a rewritten history or a split view — and each member's protocol. */
 export function P4TrustSection({ info, lang }: { info: P4TrustInfo; lang: Lang }) {
   const kt = info.kt;
   const alert = kt.state === "alert" && kt.alert ? kt.alert : null;
-  const label = (p: P4TrustInfo["peers"][number]) => t(lang, p.protocol === 4 ? "p4.peers.p4" : p.protocol === 3 ? "p4.peers.p3" : p.protocol === "refused" ? "p4.peers.refused" : "p4.peers.pending");
+  const label = (p: P4TrustInfo["peers"][number]) => t(lang, p.protocol === 4 ? "p4.peers.p4" : p.protocol === 3 ? "p4.peers.p3" : p.protocol === "refused" ? "p4.peers.refused" : p.protocol === "p4-pending" ? "p4.peers.p4pending" : "p4.peers.pending");
   return (
     <section className="mb-4 space-y-3" data-testid="p4-trust">
       <div>
@@ -294,6 +304,27 @@ export function P4TrustSection({ info, lang }: { info: P4TrustInfo; lang: Lang }
             {kt.state === "ok" ? t(lang, "p4.kt.ok").replace("{size}", String(kt.size ?? 0)) : kt.state === "off" ? t(lang, "p4.kt.off") : t(lang, "p4.kt.unknown")}
           </p>
         )}
+        {info.own && (info.own.unknown.length > 0 || info.own.foreignAccount) ? (
+          <div role="alert" data-testid="kt-own" className="mt-2 rounded-xl border border-destructive bg-destructive/10 p-3 text-sm text-destructive">
+            {info.own.unknown.length > 0 && <p className="font-semibold">{t(lang, "p4.kt.own.title")}</p>}
+            {info.own.unknown.length > 0 && <p className="mt-1 text-xs text-muted-foreground">{t(lang, "p4.kt.own.text")}</p>}
+            <ul className="mt-2 space-y-1">
+              {info.own.unknown.map((d) => (
+                <li key={d.dpk} className="flex flex-wrap items-center gap-2 text-xs" data-testid={`kt-own-${d.dpk.slice(-8)}`}>
+                  <code title={d.dpk}>{shortKey(d.dpk)}</code>
+                  <span className="text-muted-foreground">{t(lang, "p4.kt.own.since").replace("{date}", new Date(d.ts).toLocaleString(lang))}</span>
+                  <button type="button" className="acc-btn acc-btn--small" onClick={() => info.onOwnAck?.(d.dpk)}>{t(lang, "p4.kt.own.mine")}</button>
+                </li>
+              ))}
+            </ul>
+            {info.own.foreignAccount && <p className="mt-2 font-semibold">{t(lang, "p4.kt.own.foreignAccount")}</p>}
+            {info.onOwnSessions && <button type="button" className="acc-btn acc-btn--small mt-2" onClick={info.onOwnSessions}>{t(lang, "p4.kt.own.sessions")}</button>}
+          </div>
+        ) : info.own?.status === "ok" ? (
+          <p className="mt-1 text-xs text-muted-foreground" data-testid="kt-own-ok">{t(lang, "p4.kt.own.ok")}</p>
+        ) : info.own?.status === "unverified" ? (
+          <p className="mt-1 text-xs text-destructive" data-testid="kt-own-unverified">{t(lang, "p4.kt.own.unverified")}</p>
+        ) : null}
       </div>
       <div>
         <h3 className="text-sm font-semibold">{t(lang, "p4.peers.title")}</h3>

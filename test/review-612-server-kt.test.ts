@@ -71,6 +71,11 @@ describe("u = SHA-256(LABEL.ktUser ‖ username) (§ 14.1: 'the log names no use
   // (form registrations since 6.4.1 have 95 bits and are not affected). Anyone who sees a u — every member of a room via the hub's kt-lookup (also an unproven, blind-id-only joiner), or
   // anyone holding a KT entry — inverts it offline; anyone with a username guess confirms the account and reads its device
   // timeline over the PUBLIC GET /api/kt/lookup?u=. This test inverts the tail in ~1 s; the full space is ~900× that.
+  // REVIEW-612 S03 (partly fixed, by decision — this PoC stays skipped): u remains the public, unkeyed hash of § 14.1 (clients
+  // and the Android port compute and verify it; keying it is a protocol change). What changed: GET /api/kt/lookup needs an
+  // account session and answers only the caller's OWN u (403 not-yours otherwise — test/kt-612.test.ts), and the hub's
+  // kt-lookup answers only proven members in a room that proves (S06, test/review-612-server-hub.test.ts). The offline
+  // inversion of a u a member received stays possible and is documented (docs/protocol-v4.md § 14.1).
   it.skip("the username behind a KT user id cannot be recovered by enumerating the generated-username space", async () => {
     const username = generateUsername(() => false);
     const acc = newAccount(username);
@@ -98,12 +103,12 @@ describe("u = SHA-256(LABEL.ktUser ‖ username) (§ 14.1: 'the log names no use
 /* ------------------------------------------------------------------ S10 */
 
 describe("growth of the (never pruned) log from one account", () => {
-  // REVIEW-612 S10a: every upload of the SAME device with a different cert.exp (the owner signs as many as it likes; exp may
+  // REVIEW-612 S10a (fixed): every upload of the SAME device with a different cert.exp (the owner signs as many as it likes; exp may
   // even go backwards) appends a `dev` leaf. Only the 60/15 min per-address HTTP limit applies — no per-account / per-device
   // bound — so any signed-in user grows the global log (disk + the in-memory Merkle tree) for ever.
-  // REVIEW-612 S10b: ensureAccount() looks for the account's `acct` among the NEWEST 500 entries only (entriesOf limit):
+  // REVIEW-612 S10b (fixed): ensureAccount() looks for the account's `acct` among the NEWEST 500 entries only (entriesOf limit):
   // once 500 other entries follow it, the next upload appends ANOTHER `acct` leaf for the unchanged key (once per 500).
-  it.skip("re-certifying one device 520 times neither appends 520 `dev` leaves nor repeats the unchanged `acct`", async () => {
+  it("re-certifying one device 520 times neither appends 520 `dev` leaves nor repeats the unchanged `acct`", async () => {
     const acc = newAccount(`grow${randomBytes(4).toString("hex")}`);
     const dev = newDevice();
     const base = Date.now() + DEVICE_CERT_LIFETIME_MS - 3_600_000;

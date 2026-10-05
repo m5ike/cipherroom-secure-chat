@@ -245,7 +245,12 @@ export type QuotableMessage = {
   mine?: boolean;
   flags?: { sealed?: unknown };
   attachment?: { name: string };
+  /** Its sender's identity state: a message held for a changed key (or with an invalid signature) is never quoted. */
+  identity?: { state?: string };
 };
+
+/** 6.12 review P14: a message whose sender's key changed (held until accepted) or does not verify — not shown indirectly either. */
+const isHeld = (m: { mine?: boolean; identity?: { state?: string } }) => !m.mine && (m.identity?.state === "changed" || m.identity?.state === "invalid");
 
 /**
  * A quote ("reply to …") as the bubble shows it. The sender of the reply only
@@ -255,11 +260,13 @@ export type QuotableMessage = {
  * history, never received, or made up) — the bubble says so and never shows
  * the claimed text as if it were the original.
  */
-export type QuoteView = { id: string; senderName: string; text: string; missing: boolean; sealed?: boolean };
+export type QuoteView = { id: string; senderName: string; text: string; missing: boolean; sealed?: boolean; held?: boolean };
 
 export function verifyQuote(claimed: { id: string; senderName: string; text: string } | undefined, stored: QuotableMessage | null | undefined): QuoteView | undefined {
   if (!claimed) return undefined;
   if (!stored || stored.id !== claimed.id) return { id: claimed.id, senderName: "", text: "", missing: true };
+  // 6.12 review P14: a held message (changed key) is not shown through a quote — neither its text nor its sender.
+  if (isHeld(stored)) return { id: claimed.id, senderName: "", text: "", missing: true, held: true };
   // Someone else's sealed message: the stored text is ciphertext.
   if (stored.flags?.sealed && !stored.mine) return { id: stored.id, senderName: stored.senderName, text: "🔒", missing: false, sealed: true };
   const body = stored.text.trim() || (stored.attachment ? `📎 ${stored.attachment.name}` : "");
@@ -272,21 +279,46 @@ const FORWARD_SOURCES = /^(\/[A-Za-z0-9_-]{1,40}|NFC)$/;
 
 const forwardKey = (senderName: string, text: string) => `${normalizeDisplayName(senderName)}\u0000${text.trim()}`;
 
-/** What the conversation holds, for checking forwards: "<sender>␀<text>" of every message that is not itself a forward. */
-export function forwardIndex(messages: ReadonlyArray<{ senderName: string; text: string; forwardedFrom?: string }>): Set<string> {
-  const out = new Set<string>();
-  for (const m of messages) if (m.text && !m.forwardedFrom) out.add(forwardKey(m.senderName, m.text));
+/** Who wrote a message the forward index holds: the channel's peer id and the key id its identity was pinned under. */
+export type ForwardSource = { senderId?: string; kid?: string };
+/** "<sender>␀<text>" → the authenticated senders of messages with that name and text. */
+export type ForwardIndex = ReadonlyMap<string, readonly ForwardSource[]>;
+
+type Indexable = { senderName: string; text: string; forwardedFrom?: string; senderId?: string; mine?: boolean; identity?: { state?: string; kid?: string } };
+
+/**
+ * What the conversation holds, for checking forwards (6.12 review P09): every
+ * message that is not itself a forward and whose sender is AUTHENTICATED as
+ * the name it carries — its key is the one pinned for that name ("new" /
+ * "verified"), or it is mine; never one held for a changed key, one that does
+ * not verify, or an unsigned one (the name there is only a claim).
+ */
+export function forwardIndex(messages: ReadonlyArray<Indexable>): ForwardIndex {
+  const out = new Map<string, ForwardSource[]>();
+  for (const m of messages) {
+    if (!m.text || m.forwardedFrom) continue;
+    const state = m.identity?.state;
+    if (!m.mine && (state === "changed" || state === "invalid" || state === "unsigned")) continue;
+    const key = forwardKey(m.senderName, m.text);
+    const list = out.get(key) ?? [];
+    list.push({ ...(m.senderId ? { senderId: m.senderId } : {}), ...(m.identity?.kid ? { kid: m.identity.kid } : {}) });
+    out.set(key, list);
+  }
   return out;
 }
 
 /**
  * Is "forwarded from X" true as far as this app can tell? True when it holds a
- * message of its own from X with the same text; undefined for a label that
- * names no member (a model, NFC); otherwise false — the bubble shows it as the
- * forwarder's unverified claim.
+ * message from X — X authenticated by its pinned key — with the same text,
+ * written by someone else than the forwarder (review P09: a member's own post
+ * under the name "X" does not vouch for its forward "from X"); undefined for a
+ * label that names no member (a model, NFC); otherwise false — the bubble
+ * shows it as the forwarder's unverified claim.
  */
-export function verifyForward(forwardedFrom: string | undefined, text: string, index: ReadonlySet<string>): boolean | undefined {
+export function verifyForward(forwardedFrom: string | undefined, text: string, index: ForwardIndex, forwarder?: ForwardSource): boolean | undefined {
   if (!forwardedFrom) return undefined;
   if (FORWARD_SOURCES.test(forwardedFrom)) return undefined;
-  return index.has(forwardKey(forwardedFrom, text));
+  const sources = index.get(forwardKey(forwardedFrom, text)) ?? [];
+  return sources.some((s) => !forwarder
+    || ((!s.senderId || s.senderId !== forwarder.senderId) && (!s.kid || s.kid !== forwarder.kid)));
 }

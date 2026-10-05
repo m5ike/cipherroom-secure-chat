@@ -14,7 +14,13 @@
 // proved for HUB_ROOM_PROOF_TTL_DAYS (default 365) is forgotten — the next
 // proven join registers anew. A proof with another `pub` or a bad signature is
 // refused (`room-proof`) and audited (security, room hash only); failed proofs
-// are limited per client address.
+// are limited per client address (6.12 review S04: bad signatures per address
+// and per room + address, a valid proof by another key — what every real
+// member of a squatted room sends — per room + address only; an IPv6 client
+// counts by its /64; the maps are bounded). Registering a NEW verifier is
+// limited per address too (review S15: HUB_ROOM_REGISTRATIONS_PER_HOUR,
+// default 20) — a proof over the limit is admitted unproven and registers
+// nothing (refused when proofs are required).
 //
 // Joins WITHOUT a proof (clients before 6.12) are admitted as before and shown
 // as `proven: false`, unless HUB_REQUIRE_ROOM_PROOF=1 — then a blind room
@@ -28,7 +34,16 @@
 // Instances of a cluster share that database (one DATA_DIR), so a room has one
 // verifier everywhere. Without server-side storage the verifiers are in memory:
 // per instance, and forgotten on a restart (the first proven join after it
-// registers again) — a documented limit.
+// registers again) — a documented limit. The in-memory store never evicts a
+// verifier proven within the TTL to make room (review S15): when it is full,
+// only expired verifiers go, and otherwise a new registration is refused.
+//
+// "Proven only" (review S07): a room counts as proving as soon as it HAS a
+// registered verifier — not only while a proven member happens to be
+// connected. Server features that reach members by room, name or peer id
+// (route audio, calls offered to a room, `user` targets, notices, the key
+// directory over the hub) then serve proven members only, also while every
+// proven member is away (hasVerifier, cached).
 //
 // Trust on first use: whoever proves first for a room that has no verifier
 // registers it. Someone who knows only the blind id can therefore squat a room
@@ -40,6 +55,7 @@
 
 import { createHmac, createPublicKey, randomBytes, verify } from "node:crypto";
 import { LABEL } from "../../client/src/lib/p4/contract";
+import { addressGroup } from "../address-group";
 import { migrate, type SqliteDatabase, type SqliteStatement } from "../storage/db";
 import type { Migration } from "../storage/schema";
 import { hashRoom } from "../monitor/traffic";
@@ -48,8 +64,13 @@ export const HUB_NONCE_BYTES = 24;
 const DAY_MS = 24 * 60 * 60 * 1000;
 /** A verifier's "last proven" is written at most this often. */
 const TOUCH_EVERY_MS = 60 * 60 * 1000;
-/** Failed proofs per client address in FAIL_WINDOW_MS before proofs from it are refused unchecked. */
-export const PROOF_FAILURES = { max: 10, windowMs: 10 * 60 * 1000 } as const;
+/** Failed proofs per client address (and per room + address) in windowMs before proofs from it are refused
+ *  unchecked; at most maxAddresses addresses are remembered (the least recently failed go first). */
+export const PROOF_FAILURES = { max: 10, windowMs: 10 * 60 * 1000, maxAddresses: 10_000 } as const;
+/** 6.12 review S15: new verifiers one address may register per hour (HUB_ROOM_REGISTRATIONS_PER_HOUR). */
+export const PROOF_REGISTRATIONS = { perHour: 20, windowMs: 60 * 60 * 1000 } as const;
+/** How long hasVerifier() trusts what it found (a registration or reset here updates it at once). */
+const VERIFIER_CACHE = { yesMs: 60_000, noMs: 5_000, max: 20_000 } as const;
 
 /** A v3 room's blind id: the only kind of room that can prove (a plain name cannot). */
 const BLIND_ROOM_ID = /^r3\.[A-Za-z0-9_-]{16,128}$/;
@@ -73,25 +94,34 @@ export const ROOM_PROOF_MIGRATIONS: Migration[] = [
 
 /* ------------------------------------------------------------- settings */
 
-export type ProofSettings = { required: boolean; ttlMs: number };
+export type ProofSettings = {
+  required: boolean;
+  ttlMs: number;
+  /** 6.12 review S15: new verifiers per address and hour (default PROOF_REGISTRATIONS.perHour). */
+  registrationsPerHour?: number;
+};
 
-/** HUB_REQUIRE_ROOM_PROOF (1/true/yes) and HUB_ROOM_PROOF_TTL_DAYS (default 365, 1 – 3650). */
+/** HUB_REQUIRE_ROOM_PROOF (1/true/yes), HUB_ROOM_PROOF_TTL_DAYS (default 365, 1 – 3650) and
+ *  HUB_ROOM_REGISTRATIONS_PER_HOUR (default 20, 1 – 100 000). */
 export function proofSettings(env: NodeJS.ProcessEnv = process.env): ProofSettings {
   const required = /^(1|true|yes|on)$/i.test(env.HUB_REQUIRE_ROOM_PROOF?.trim() ?? "");
   const days = Number(env.HUB_ROOM_PROOF_TTL_DAYS?.trim() || "");
   const ttlDays = Number.isFinite(days) && days >= 1 && days <= 3650 ? days : 365;
-  return { required, ttlMs: Math.round(ttlDays * DAY_MS) };
+  const perHour = Number(env.HUB_ROOM_REGISTRATIONS_PER_HOUR?.trim() || "");
+  const registrationsPerHour = Number.isInteger(perHour) && perHour >= 1 && perHour <= 100_000 ? perHour : PROOF_REGISTRATIONS.perHour;
+  return { required, ttlMs: Math.round(ttlDays * DAY_MS), registrationsPerHour };
 }
 
 /**
  * Members the server may reach by room (G-09): telephony route audio, calls
  * offered to a room, a member named by display name. With proofs required:
- * proven members only. Otherwise: proven members only as soon as one member of
- * the room has proven; in a room where nobody proves (older clients) everyone,
- * as before 6.12.
+ * proven members only. Otherwise: proven members only as soon as the room
+ * proves — `roomProven`: it has a registered verifier (6.12 review S07: also
+ * while every proven member is away), or one of `members` has proven; in a
+ * room where nobody ever proved (older clients) everyone, as before 6.12.
  */
-export function reachable<T extends { proven?: boolean }>(members: readonly T[], required = proofSettings().required): T[] {
-  if (required || members.some((m) => m.proven === true)) return members.filter((m) => m.proven === true);
+export function reachable<T extends { proven?: boolean }>(members: readonly T[], required = proofSettings().required, roomProven = false): T[] {
+  if (required || roomProven || members.some((m) => m.proven === true)) return members.filter((m) => m.proven === true);
   return [...members];
 }
 
@@ -134,8 +164,9 @@ export type Verifier = { pub: string; createdAt: number; lastProvenAt: number };
 export interface VerifierStore {
   readonly persistent: boolean;
   get(roomKey: string): Verifier | null;
-  /** Registers `pub` unless the room has a verifier; returns the one kept (first writer wins). */
-  register(roomKey: string, roomHash: string, pub: string, now: number): Verifier;
+  /** Registers `pub` unless the room has a verifier; returns the one kept (first writer wins), or null when
+   *  the store is full (6.12 review S15: only verifiers last proven before `expiredBefore` may make room). */
+  register(roomKey: string, roomHash: string, pub: string, now: number, expiredBefore?: number): Verifier | null;
   touch(roomKey: string, now: number): void;
   remove(roomKey: string): void;
   /** Forgets verifiers last proven before `cutoff`; returns how many. */
@@ -146,18 +177,19 @@ export interface VerifierStore {
 export class MemoryVerifiers implements VerifierStore {
   readonly persistent = false;
   private readonly map = new Map<string, Verifier>();
+  private lastFullSweep = Number.NEGATIVE_INFINITY;
   constructor(private readonly max = 100_000) {}
 
   get(roomKey: string): Verifier | null { return this.map.get(roomKey) ?? null; }
-  register(roomKey: string, _roomHash: string, pub: string, now: number): Verifier {
+  register(roomKey: string, _roomHash: string, pub: string, now: number, expiredBefore = Number.NEGATIVE_INFINITY): Verifier | null {
     const known = this.map.get(roomKey);
     if (known) return known;
     if (this.map.size >= this.max) {
-      // The least recently proven goes first.
-      let oldest: string | null = null;
-      let at = Infinity;
-      for (const [k, v] of this.map) if (v.lastProvenAt < at) { at = v.lastProvenAt; oldest = k; }
-      if (oldest) this.map.delete(oldest);
+      // 6.12 review S15: a verifier proven within the TTL is never evicted to make room (a flood of
+      // made-up rooms pushed real rooms out, which could then be squatted). Expired ones go — swept at
+      // most once a minute while full — and otherwise the registration is refused.
+      if (now - this.lastFullSweep >= 60_000) { this.lastFullSweep = now; this.sweep(expiredBefore); }
+      if (this.map.size >= this.max) return null;
     }
     const v = { pub, createdAt: now, lastProvenAt: now };
     this.map.set(roomKey, v);
@@ -194,6 +226,7 @@ export class SqliteVerifiers implements VerifierStore {
     const r = this.sql("SELECT pub, created_at, last_proven_at FROM hub_room_verifiers WHERE room_key = ?").get(roomKey) as { pub: string; created_at: number; last_proven_at: number } | undefined;
     return r ? { pub: String(r.pub), createdAt: Number(r.created_at), lastProvenAt: Number(r.last_proven_at) } : null;
   }
+  /** Bounded by the TTL sweep and the per-address registration limit (RoomProofs); never full. */
   register(roomKey: string, roomHash: string, pub: string, now: number): Verifier {
     this.sql("INSERT OR IGNORE INTO hub_room_verifiers (room_key, room_hash, pub, created_at, last_proven_at) VALUES (?, ?, ?, ?, ?)").run(roomKey, roomHash, pub, now, now);
     return this.get(roomKey) ?? { pub, createdAt: now, lastProvenAt: now };
@@ -216,13 +249,56 @@ export class SqliteVerifiers implements VerifierStore {
 
 export type ProofOutcome =
   | { kind: "proven"; registered: boolean }
-  | { kind: "legacy"; error?: string }
-  | { kind: "refused"; code: "room-proof" | "room-proof-required"; reason: "mismatch" | "bad-signature" | "rate-limited" | "required" | "store-error"; message: string };
+  /** `deferred`: a good proof for a room without a verifier that registered nothing (review S15: the
+   *  address's registration limit, or a full in-memory store) — admitted unproven, as a legacy join. */
+  | { kind: "legacy"; error?: string; deferred?: "registration-limit" | "verifiers-full" }
+  | {
+    kind: "refused"; code: "room-proof" | "room-proof-required";
+    reason: "mismatch" | "bad-signature" | "rate-limited" | "required" | "store-error" | "registration-limit" | "verifiers-full";
+    message: string;
+  };
 
 const SWEEP_EVERY_MS = 60 * 60 * 1000;
 
+/**
+ * Event times per key within a window (6.12 review S04): at most `maxKeys`
+ * keys — the least recently touched goes first, in O(1) — and at most `keep`
+ * times per key. Replaces an unbounded map that scanned itself on every
+ * failure once it held 10 000 addresses.
+ */
+export class RecentEvents {
+  private readonly map = new Map<string, number[]>();
+  constructor(private readonly maxKeys: number, private readonly windowMs: number, private readonly keep: number) {}
+
+  get size(): number { return this.map.size; }
+
+  /** Events of `key` in the window ending at `now`. */
+  count(key: string, now: number): number {
+    const list = this.map.get(key);
+    if (!list) return 0;
+    const recent = list.filter((t) => now - t < this.windowMs);
+    if (recent.length) this.map.set(key, recent); else this.map.delete(key);
+    return recent.length;
+  }
+
+  add(key: string, now: number): void {
+    const list = (this.map.get(key) ?? []).filter((t) => now - t < this.windowMs);
+    list.push(now);
+    this.map.delete(key);
+    this.map.set(key, list.slice(-this.keep));
+    while (this.map.size > this.maxKeys) this.map.delete(this.map.keys().next().value as string);
+  }
+}
+
 export class RoomProofs {
-  private readonly failures = new Map<string, number[]>();
+  /** Bad signatures per address group (an IPv6 /64): enough of them block proofs from it for every room. */
+  private readonly failures = new RecentEvents(PROOF_FAILURES.maxAddresses, PROOF_FAILURES.windowMs, PROOF_FAILURES.max);
+  /** Failed proofs (bad signatures and another key's valid ones) per room + address group: block that room only. */
+  private readonly roomFailures = new RecentEvents(PROOF_FAILURES.maxAddresses, PROOF_FAILURES.windowMs, PROOF_FAILURES.max);
+  /** New verifiers per address group (review S15). */
+  private readonly registrations = new RecentEvents(PROOF_FAILURES.maxAddresses, PROOF_REGISTRATIONS.windowMs, 100_000);
+  /** hasVerifier()'s answers by room key, for a short while. */
+  private readonly known = new Map<string, { has: boolean; until: number }>();
   private lastSweep = 0;
 
   constructor(
@@ -244,22 +320,40 @@ export class RoomProofs {
     return createHmac("sha256", this.roomKeySecret).update(`m5cet/hub-room|${roomId}`, "utf8").digest("base64url");
   }
 
-  private blocked(ip: string, now: number): boolean {
-    const recent = (this.failures.get(ip) ?? []).filter((t) => now - t < PROOF_FAILURES.windowMs);
-    if (recent.length) this.failures.set(ip, recent); else this.failures.delete(ip);
-    return recent.length >= PROOF_FAILURES.max;
+  private registrationLimit(): number {
+    const n = this.settings.registrationsPerHour;
+    return typeof n === "number" && Number.isInteger(n) && n >= 1 ? n : PROOF_REGISTRATIONS.perHour;
   }
 
-  private failed(ip: string, now: number): void {
-    const list = this.failures.get(ip) ?? [];
-    list.push(now);
-    this.failures.set(ip, list.slice(-PROOF_FAILURES.max));
-    if (this.failures.size > 10_000) {
-      for (const [k, times] of this.failures) if (!times.some((t) => now - t < PROOF_FAILURES.windowMs)) this.failures.delete(k);
-    }
+  /** What hasVerifier() answers for a while (bounded: the oldest answer goes first). */
+  private remember(key: string, has: boolean, now: number): void {
+    this.known.delete(key);
+    this.known.set(key, { has, until: now + (has ? VERIFIER_CACHE.yesMs : VERIFIER_CACHE.noMs) });
+    while (this.known.size > VERIFIER_CACHE.max) this.known.delete(this.known.keys().next().value as string);
   }
 
-  /** Decides a join: proven, admitted as legacy, or refused. */
+  /**
+   * 6.12 review S07: does this room have a registered verifier (someone proved
+   * for it within the TTL)? Then the server reaches only proven members by
+   * room, name or peer id — also while every proven member is away. Cached (a
+   * minute when yes, seconds when no); a store error keeps the last answer.
+   */
+  hasVerifier(roomId: string): boolean {
+    if (!canProve(roomId)) return false;
+    const key = this.roomKey(roomId);
+    const now = this.now();
+    const cached = this.known.get(key);
+    if (cached && cached.until > now) return cached.has;
+    let has = cached?.has ?? false;
+    try {
+      const v = this.store.get(key);
+      has = Boolean(v && now - v.lastProvenAt <= this.settings.ttlMs);
+    } catch { /* keep the last known answer */ }
+    this.remember(key, has, now);
+    return has;
+  }
+
+  /** Decides a join: proven, admitted as legacy, or refused. `ip`: the client's address (counted by its group). */
   check(roomId: string, nonce: string, proof: { pub: string; sig: string } | undefined, ip: string): ProofOutcome {
     if (!canProve(roomId)) return { kind: "legacy" };
     if (!proof) {
@@ -268,14 +362,19 @@ export class RoomProofs {
         : { kind: "legacy" };
     }
     const now = this.now();
-    if (this.blocked(ip, now)) {
+    const address = addressGroup(ip) || "unknown";
+    const key = this.roomKey(roomId);
+    const roomAddress = `${key}|${address}`;
+    // Checked before the signature (no Ed25519 work for a blocked address). Bad signatures block the
+    // address for every room; failures in one room (a squatted room's real members) block that room only.
+    if (this.failures.count(address, now) >= PROOF_FAILURES.max || this.roomFailures.count(roomAddress, now) >= PROOF_FAILURES.max) {
       return { kind: "refused", code: "room-proof", reason: "rate-limited", message: "Too many failed room proofs from this address; wait a few minutes." };
     }
     if (!verifyHubProof(proof, roomId, nonce)) {
-      this.failed(ip, now);
+      this.failures.add(address, now);
+      this.roomFailures.add(roomAddress, now);
       return { kind: "refused", code: "room-proof", reason: "bad-signature", message: "The room proof does not verify." };
     }
-    const key = this.roomKey(roomId);
     try {
       let v = this.store.get(key);
       if (v && now - v.lastProvenAt > this.settings.ttlMs) {
@@ -284,11 +383,25 @@ export class RoomProofs {
       }
       let registered = false;
       if (!v) {
-        v = this.store.register(key, hashRoom(roomId) ?? "", proof.pub, now);
+        // 6.12 review S15: a registration costs a slot of the address's hourly budget, and a full
+        // in-memory store refuses it rather than evict a room proven within the TTL.
+        const limited = this.registrations.count(address, now) >= this.registrationLimit();
+        const kept = limited ? null : this.store.register(key, hashRoom(roomId) ?? "", proof.pub, now, now - this.settings.ttlMs);
+        if (!kept) {
+          const why = limited ? "registration-limit" as const : "verifiers-full" as const;
+          this.remember(key, false, now);
+          return this.settings.required
+            ? { kind: "refused", code: "room-proof", reason: why, message: limited ? "Too many new rooms from this address; try again later." : "The server cannot take more rooms that prove their key right now; try again later." }
+            : { kind: "legacy", deferred: why };
+        }
+        v = kept;
         registered = v.pub === proof.pub && v.createdAt === now;
+        if (registered) this.registrations.add(address, now);
       }
+      this.remember(key, true, now);
       if (v.pub !== proof.pub) {
-        this.failed(ip, now);
+        // A valid proof by another key: counted for this room only (review S04).
+        this.roomFailures.add(roomAddress, now);
         return { kind: "refused", code: "room-proof", reason: "mismatch", message: "The room proof is for another key than this room's." };
       }
       if (!registered && now - v.lastProvenAt > TOUCH_EVERY_MS) this.store.touch(key, now);
@@ -312,6 +425,7 @@ export class RoomProofs {
     const key = this.roomKey(roomId);
     const had = Boolean(this.store.get(key));
     if (had) this.store.remove(key);
+    this.known.delete(key);
     return had;
   }
 

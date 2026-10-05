@@ -19,7 +19,8 @@ import {
   b64, b64url, bundleSignedData, buildKemMessage, canonicalEntry, certifyDeviceV2, consistencyProof, createBundle, ecdh,
   ed25519FromSeed, ed25519Sign, entryLeafHash, establishSession, fileAad4, fileKeyBytes, fileKey4, frameIv, H, hex, hkdf,
   helloRef, helloSig4Data, hubKeyPair, hubJoinData, buildHubProof, inclusionProof, importP256Pkcs8, join, joinText, kdfCk, kdfRk,
-  kemEncapsWith, kemKeygenFromSeed, kemKid, keyIv, ktUser, LABEL, mbDigest, accDigest, openKemMessage, pad, paddedLength, pairAad,
+  kemEncapsWith, kemKeygenFromSeed, kemKid, keyIv, ktUser, LABEL, mbDigest, accDigest, capsDigest, userDigest, sthDigest, accountDigest,
+  openKemMessage, pad, paddedLength, pairAad,
   RecordingRng, replayKey, rootSchedule, sealFileBody4, sealMailboxItem, SenderKeys4, senderKeyAad, skCertData, signSth, sthData, treeHash,
   unb64, unpad, buildHello, utf8, type DeviceSigner, type KtEntry, type RatchetFrame, type RatchetInner, type Hash, type Ratchet,
   sha256Hex,
@@ -153,12 +154,16 @@ async function handshakeAndRatchet(roomId: string, roomName: string, check: stri
   const cert = await certifyDeviceV2(account.privateKey, B.dev.pk, now + 30 * 24 * 3600 * 1000, now);
   const acc = { apk: b64(account.publicKey), ac: cert.sig, cv: 2 as const, exp: cert.exp };
 
-  const hello = async (self: Party, peer: Party, extra: { mb: typeof mb.bundle | null; acc: typeof acc | null }) => {
+  // 6.12 review P02: sig4 also covers caps (sorted, without duplicates), the user claim and the tree head.
+  // A gossips a tree head and claims a (non-ASCII) username; B lists its caps out of order with a duplicate.
+  const ktKeys = await ed25519FromSeed(bytes(32, (i) => 0x40 + i));
+  const sth = await signSth(ktKeys.privateKey, 5, bytes(32, (i) => i * 7 + 3), 1_800_000_100_000);
+  const hello = async (self: Party, peer: Party, extra: { mb: typeof mb.bundle | null; acc: typeof acc | null; caps: string[]; user?: string; sth: typeof sth | null }) => {
     const sig = await self.dev.signer.sign(v3Context(roomName, self.peerId, peer.peerId, check, self.dev.dh));
-    return buildHello({ roomId, from: self.peerId, to: peer.peerId, v3: { check, pk: self.dev.pk, dh: self.dev.dh, sig, caps: ["bin", "media"] }, signer: self.dev.signer, mb: extra.mb, acc: extra.acc, sth: null, rng: self.rng });
+    return buildHello({ roomId, from: self.peerId, to: peer.peerId, v3: { check, pk: self.dev.pk, dh: self.dev.dh, sig, caps: extra.caps, ...(extra.user ? { user: extra.user } : {}) }, signer: self.dev.signer, mb: extra.mb, acc: extra.acc, sth: extra.sth, rng: self.rng });
   };
-  const hA = await hello(A, B, { mb: mb.bundle, acc: null });
-  const hB = await hello(B, A, { mb: null, acc });
+  const hA = await hello(A, B, { mb: mb.bundle, acc: null, caps: ["bin", "media"], user: "Žofie", sth });
+  const hB = await hello(B, A, { mb: null, acc, caps: ["media", "bin", "x-profile", "media"], sth: null });
   const kemAtoB = await buildKemMessage(hB.hello, A.rng); // A encapsulates to B's k
   const kemBtoA = await buildKemMessage(hA.hello, B.rng);
   const atA = (await openKemMessage(kemBtoA.message, hA))!;
@@ -174,9 +179,9 @@ async function handshakeAndRatchet(roomId: string, roomName: string, check: stri
 
   const handshake = {
     roomId, roomName, check, now,
-    about: "Role A is the party whose pk|peerId is smaller. Each party's tape starts with its hello draws (hello.e, hello.k, hello.n), then hello.kem-m (its KEM message), then the ratchet's init draws, then the ratchet steps of the script. sig (protocol 3, over roomName) and sig4 are ECDSA: verify only.",
-    A: { peerId: A.peerId, devicePkcs8: A.dev.pkcs8, pk: A.dev.pk, dh: A.dev.dh, hello: hA.hello, sig4Data: text(await helloSig4Data(roomId, A.peerId, B.peerId, hA.hello)), mbDigest: await mbDigest(hA.hello.mb), accDigest: await accDigest(hA.hello.acc), helloRef: await helloRef(hA.hello), mailboxBundleTape: bundleRng.tape, mailboxBundleSignedData: text(await bundleSignedData(mb.bundle)) },
-    B: { peerId: B.peerId, devicePkcs8: B.dev.pkcs8, pk: B.dev.pk, dh: B.dev.dh, hello: hB.hello, sig4Data: text(await helloSig4Data(roomId, B.peerId, A.peerId, hB.hello)), mbDigest: await mbDigest(hB.hello.mb), accDigest: await accDigest(hB.hello.acc), helloRef: await helloRef(hB.hello), accountSeed: b64(accountSeed), certSignedData: joinText(LABEL.deviceCert, B.dev.pk, cert.exp) },
+    about: "Role A is the party whose pk|peerId is smaller. Each party's tape starts with its hello draws (hello.e, hello.k, hello.n), then hello.kem-m (its KEM message), then the ratchet's init draws, then the ratchet steps of the script. sig (protocol 3, over roomName) and sig4 are ECDSA: verify only. sig4Data ends with capsDigest (caps sorted ordinally, duplicates removed), userDigest (SHA-256 of the UTF-8 user claim, or \"-\") and sthDigest (or \"-\"); `sth` is signed by the key of kt.ktSeed.",
+    A: { peerId: A.peerId, devicePkcs8: A.dev.pkcs8, pk: A.dev.pk, dh: A.dev.dh, hello: hA.hello, sig4Data: text(await helloSig4Data(roomId, A.peerId, B.peerId, hA.hello)), mbDigest: await mbDigest(hA.hello.mb), accDigest: await accDigest(hA.hello.acc), capsDigest: await capsDigest(hA.hello.caps), userDigest: await userDigest(hA.hello.user), sthDigest: await sthDigest(hA.hello.sth), helloRef: await helloRef(hA.hello), mailboxBundleTape: bundleRng.tape, mailboxBundleSignedData: text(await bundleSignedData(mb.bundle)) },
+    B: { peerId: B.peerId, devicePkcs8: B.dev.pkcs8, pk: B.dev.pk, dh: B.dev.dh, hello: hB.hello, sig4Data: text(await helloSig4Data(roomId, B.peerId, A.peerId, hB.hello)), mbDigest: await mbDigest(hB.hello.mb), accDigest: await accDigest(hB.hello.acc), capsDigest: await capsDigest(hB.hello.caps), userDigest: await userDigest(hB.hello.user), sthDigest: await sthDigest(hB.hello.sth), helloRef: await helloRef(hB.hello), accountSeed: b64(accountSeed), certSignedData: joinText(LABEL.deviceCert, B.dev.pk, cert.exp) },
     kemAtoB: { message: kemAtoB.message, ss: ssA },
     kemBtoA: { message: kemBtoA.message, ss: ssB },
     dh0: b64(dh0), TH: b64(sa.th), RK0: b64(root.rk0), CK_B0: b64(root.ckB0), SID: b64(sa.sid),
@@ -256,16 +261,22 @@ async function mailbox(roomId: string) {
   const rb = await createBundle(recipient.signer, now, rTape);
   const sealRng = new RecordingRng();
   const payload = { id: "mb-1", kind: "text", text: "for when you are back", createdAt: now };
-  const item = await sealMailboxItem({ roomId, id: payload.id, payload, recipient: { pk: recipient.pk, bundle: rb.bundle }, senderPk: sender.pk, now }, sb, sealRng);
+  // 6.12 review P13: the sender's account attestation (here v2) is bound by the AAD's saccDigest.
+  const accountSeed = bytes(32, (i) => 0x90 + i);
+  const account = await ed25519FromSeed(accountSeed);
+  const cert = await certifyDeviceV2(account.privateKey, sender.pk, now + 30 * 24 * 3600 * 1000, now);
+  const sacc = { apk: b64(account.publicKey), ac: cert.sig, cv: 2 as const, exp: cert.exp };
+  const item = await sealMailboxItem({ roomId, id: payload.id, payload, recipient: { pk: recipient.pk, bundle: rb.bundle }, senderPk: sender.pk, sacc, now }, sb, sealRng);
   const eph = sealRng.tape[0] as { spki: string };
   return {
     roomId, now,
-    about: "Bundle tapes: mailbox.id, mailbox.dh (PKCS#8), mailbox.kem-seed. Seal tape: mailbox.eph (PKCS#8), mailbox.kem-m. Open `item` with the recipient's bundle keys; re-sealing with the sender's bundle keys and the seal tape gives `item` exactly.",
-    sender: { devicePkcs8: sender.pkcs8, pk: sender.pk, bundle: sb.bundle, bundleTape: sTape.tape },
+    about: "Bundle tapes: mailbox.id, mailbox.dh (PKCS#8), mailbox.kem-seed. Seal tape: mailbox.eph (PKCS#8), mailbox.kem-m. Open `item` with the recipient's bundle keys; re-sealing with the sender's bundle keys, `sacc` and the seal tape gives `item` exactly. The AAD ends with saccDigest (as the hello's accDigest; \"-\" without sacc). The Ed25519 `sacc.ac` is deterministic (account seed accountSeed).",
+    sender: { devicePkcs8: sender.pkcs8, pk: sender.pk, bundle: sb.bundle, bundleTape: sTape.tape, accountSeed: b64(accountSeed) },
     recipient: { devicePkcs8: recipient.pkcs8, pk: recipient.pk, bundle: rb.bundle, bundleTape: rTape.tape },
     sealTape: sealRng.tape,
     payload, json: JSON.stringify(payload),
-    aad: text(join(LABEL.mailbox, roomId, payload.id, sender.pk, sb.bundle.id, rb.bundle.id, eph.spki, b64(await H(unb64(item.kct))))),
+    sacc, saccDigest: await accountDigest(sacc),
+    aad: text(join(LABEL.mailbox, roomId, payload.id, sender.pk, sb.bundle.id, rb.bundle.id, eph.spki, b64(await H(unb64(item.kct))), await accountDigest(sacc))),
     item,
   };
 }

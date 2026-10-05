@@ -2,12 +2,14 @@
 //
 // Protocol 3 handed the relay one envelope under the ROOM key for every away
 // member. Now each away member's devices get the message sealed to their own
-// mailbox bundles — known from their hellos (remembered with the pin) or from
-// the server's key directory (the hub's `key-bundles`, signed-in accounts) —
-// as `per[ref]` of the relay frame: one `mb` item, or an `mb-set` for an
-// account with several devices. Only a member without ANY known bundle still
-// gets the protocol-3 room envelope (an older app, or one never seen), and the
-// sender's info view says so.
+// mailbox bundles as `per[ref]` of the relay frame: one `mb` item, or an
+// `mb-set` for an account with several devices — but only devices this client
+// AUTHENTICATED (6.12 review P01, § 7.4): seen in a valid hello (the device
+// pin), and for a member whose account is pinned only that account's devices
+// — then also those the server's key directory lists with a v2 certificate by
+// that account. A member never authenticated gets the protocol-3 room
+// envelope (the server cannot open it; a key the server picked it could), and
+// the sender's info view names who got which form.
 //
 // This device's own bundles: created and renewed by Mailbox.maintain, their
 // private keys kept encrypted (p4-store.ts), published in every hello and —
@@ -46,33 +48,60 @@ export type SealForAway = {
   /** This device's key (it signed our bundle). */
   senderPk: string;
   sacc?: HelloAccount | null;
-  /** Devices seen behind a reference (TrustBook.devicesOfRef). */
+  /**
+   * Devices this client authenticated behind a reference — seen in a valid
+   * hello (TrustBook.sealableDevicesOfRef). Rule 1 of § 7.4.
+   */
   known: (ref: string) => AwayDevice[];
-  /** The key directory over the hub (`key-bundles`); absent when not available. */
+  /** The key directory over the hub (`key-bundles`); absent when not available. Used only for a pinned account. */
   directory?: (ref: string) => Promise<DirectoryDevice[]>;
-  /** The account key we pinned for that reference's member, if any: directory devices must be its. */
+  /**
+   * The account key this client pinned for that reference's member (from an
+   * attested hello, kept past bundle expiry), if any. Every device sealed to
+   * must be certified by it; without one the directory is not used at all.
+   */
   pinnedAccount?: (ref: string) => string | null;
+  /** Device keys key transparency revoked (never sealed to). */
+  isRevoked?: (pk: string) => boolean;
   now?: number;
 };
 
+/** Per away member: how its copy went (the sender's info view, § 7.4). */
+export type AwaySealing = { ref: string; form: "mailbox"; devices: number; account: string | null } | { ref: string; form: "room-key" };
+
 /**
- * § 7.4: `per[ref]` for every away member with at least one bundle we can seal
- * to, and the references left without one (they get the room envelope).
+ * § 7.4 (6.12 review P01): `per[ref]` for every away member with at least one
+ * device this client may seal to, and the references left without one (they
+ * get the protocol-3 room envelope — which the server, not knowing the room
+ * key, cannot open). A bundle is NEVER trusted because the server delivered it:
+ *
+ *   1. a device from `known` (seen in a valid hello) — when the member's
+ *      account is pinned, only one of THAT account;
+ *   2. a directory device only for a member whose account is pinned, with a
+ *      valid v2 certificate by that account key, not revoked.
+ *
+ * A member we never authenticated (no pinned account, no device seen) gets
+ * the room envelope, as in 6.11.
  */
-export async function sealForAway(o: SealForAway): Promise<{ per: Record<string, MailboxItem | MailboxSet>; withoutBundle: string[]; devices: number }> {
+export async function sealForAway(o: SealForAway): Promise<{ per: Record<string, MailboxItem | MailboxSet>; withoutBundle: string[]; devices: number; sealing: AwaySealing[] }> {
   const now = o.now ?? Date.now();
   const per: Record<string, MailboxItem | MailboxSet> = {};
   const withoutBundle: string[] = [];
+  const sealing: AwaySealing[] = [];
   let devices = 0;
   for (const ref of o.refs) {
+    const pinned = o.pinnedAccount?.(ref) ?? null;
     const byPk = new Map<string, AwayDevice>();
-    for (const d of o.known(ref)) if (d.mb.exp > now) byPk.set(d.pk, d);
-    if (o.directory) {
-      const pinned = o.pinnedAccount?.(ref) ?? null;
+    for (const d of o.known(ref)) {
+      if (d.mb.exp <= now || o.isRevoked?.(d.pk)) continue;
+      if (pinned && d.apk !== pinned) continue; // a device of another (or no) account behind a pinned member's reference
+      byPk.set(d.pk, d);
+    }
+    if (o.directory && pinned) {
       const listed = await o.directory(ref).catch(() => [] as DirectoryDevice[]);
       for (const raw of listed.slice(0, 32)) {
         const d = await checkDirectoryDevice(raw, now);
-        if (!d || (pinned && d.apk !== pinned)) continue;
+        if (!d || d.apk !== pinned || o.isRevoked?.(d.pk)) continue;
         const cur = byPk.get(d.pk);
         if (!cur || d.mb.exp > cur.mb.exp) byPk.set(d.pk, d);
       }
@@ -83,11 +112,12 @@ export async function sealForAway(o: SealForAway): Promise<{ per: Record<string,
         items.push(await o.mailbox.seal({ roomId: o.roomId, id: o.id, payload: o.payload, recipient: { pk: d.pk, bundle: d.mb }, senderPk: o.senderPk, ...(o.sacc ? { sacc: o.sacc } : {}), now }));
       } catch { /* a bundle that does not hold: not sealed to */ }
     }
-    if (items.length === 0) { withoutBundle.push(ref); continue; }
+    if (items.length === 0) { withoutBundle.push(ref); sealing.push({ ref, form: "room-key" }); continue; }
     devices += items.length;
     per[ref] = items.length === 1 ? items[0] : mailboxSet(o.id, items);
+    sealing.push({ ref, form: "mailbox", devices: items.length, account: pinned });
   }
-  return { per, withoutBundle, devices };
+  return { per, withoutBundle, devices, sealing };
 }
 
 /* ------------------------------------------------- own account, own keys */

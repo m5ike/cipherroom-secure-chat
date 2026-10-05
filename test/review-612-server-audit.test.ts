@@ -49,10 +49,10 @@ function rechain(fromId: number, s = store): void {
 }
 
 describe("F-23 against a forger who writes the storage directory", () => {
-  // REVIEW-612 S01a: a missing audit-signing.pin is re-created by trust on first use at the next open — pinning EVERY key
+  // REVIEW-612 S01a (fixed): a missing audit-signing.pin is re-created by trust on first use at the next open — pinning EVERY key
   // that self-signs a checkpoint row. The forger rewrites rows, re-signs the head with their own key, deletes the pin file
   // (same directory, same permissions as m5cet.db) and restarts: verifyAudit() says ok.
-  it.skip("a rewritten journal re-signed with the forger's key does not verify after the forger deletes the pin file", () => {
+  it("a rewritten journal re-signed with the forger's key does not verify after the forger deletes the pin file", () => {
     store.open();
     for (let i = 0; i < 10; i++) add(i);
     store.auditCheckpoint("test");
@@ -78,9 +78,9 @@ describe("F-23 against a forger who writes the storage directory", () => {
     expect(v.ok).toBe(false);
   });
 
-  // REVIEW-612 S01b: no pin deletion needed at all — verifyAudit() never requires a checkpoint to exist. Rewrite, rechain,
+  // REVIEW-612 S01b (fixed): no pin deletion needed at all — verifyAudit() never requires a checkpoint to exist. Rewrite, rechain,
   // DELETE every checkpoint: ok: true (signedCheckpoints 0), although the store signs one every 500 rows and before pruning.
-  it.skip("a rewritten journal whose checkpoints were deleted does not verify", () => {
+  it("a rewritten journal whose checkpoints were deleted does not verify", () => {
     store.open();
     for (let i = 0; i < 520; i++) add(i); // the store signs a checkpoint by itself at 500 rows
     expect(store.verifyAudit()).toMatchObject({ ok: true, signedCheckpoints: 1 });

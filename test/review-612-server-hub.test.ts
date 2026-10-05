@@ -96,9 +96,9 @@ function account(store: AccountStore, name: string) {
 /* ------------------------------------------------------------------ S05 */
 
 describe("server notices by display name in a proven room (G-09 'proven only')", () => {
-  // REVIEW-612 S05: hub.notice() (console room notice, a function's m5room.user_msg / user_flash) targets by display name or
+  // REVIEW-612 S05 (fixed): hub.notice() (console room notice, a function's m5room.user_msg / user_flash) targets by display name or
   // peer id WITHOUT reachable(): an unproven impostor who named themselves like a proven member gets the private notice.
-  it.skip("a notice to 'Alice' reaches only the proven Alice, not an unproven impostor of the same name", async () => {
+  it("a notice to 'Alice' reaches only the proven Alice, not an unproven impostor of the same name", async () => {
     const h = await startHub();
     const room = blindRoom();
     const key = roomKey();
@@ -131,11 +131,11 @@ describe("server notices by display name in a proven room (G-09 'proven only')",
 /* ------------------------------------------------------------------ S07 */
 
 describe("'proven only' follows who is connected right now, not whether the room has a verifier", () => {
-  // REVIEW-612 S07: reachable() switches to "proven only" only while a proven member is CONNECTED on the hub. When every proven
+  // REVIEW-612 S07 (fixed): reachable() switches to "proven only" only while a proven member is CONNECTED on the hub. When every proven
   // member is away (socket gone → held; a phone in the background), the room counts as "nobody proves" and route audio for the
   // room (and a member by name) goes to whoever is connected — an unproven joiner who knows only the blind id gets the call
   // alone (the caller's number on the card, the audio, the transcripts). The room's verifier is still registered all along.
-  it.skip("a room with a registered verifier routes the call to nobody unproven, also while its proven members are away", async () => {
+  it("a room with a registered verifier routes the call to nobody unproven, also while its proven members are away", async () => {
     const h = await startHub();
     const room = blindRoom();
     const key = roomKey();
@@ -162,11 +162,11 @@ describe("'proven only' follows who is connected right now, not whether the room
 /* ------------------------------------------------------------------ S08 */
 
 describe("route audio legs address a peer id, checked only when the leg is created", () => {
-  // REVIEW-612 S08: route-audio.ts filters members with reachable() once (routeTargets), then every later frame of the call —
+  // REVIEW-612 S08 (fixed): route-audio.ts filters members with reachable() once (routeTargets), then every later frame of the call —
   // "incoming" with the leg's media token when the provider connects (offer, :424), "status", "transcript" (the caller's speech
   // as text), tell() notices — goes through hub.sendToPeer(room, peerId) with no proof check. A peer id freed by a clean leave
   // is free for anybody: an unproven joiner who asks for it gets it and receives those frames.
-  it.skip("sendToPeer() does not deliver to an unproven member who took a proven member's freed peer id", async () => {
+  it("sendToPeer() does not deliver to an unproven member who took a proven member's freed peer id", async () => {
     const h = await startHub();
     const room = blindRoom();
     const key = roomKey();
@@ -195,10 +195,10 @@ describe("route audio legs address a peer id, checked only when the leg is creat
 /* ------------------------------------------------------------------ S06 */
 
 describe("key directory over the hub for members who never proved (G-09)", () => {
-  // REVIEW-612 S06: key-bundles / kt-lookup are answered to any socket in the room, also an unproven joiner who knows only the
+  // REVIEW-612 S06 (fixed): key-bundles / kt-lookup are answered to any socket in the room, also an unproven joiner who knows only the
   // blind id, in a room where members prove. It learns every signed-in member's account key (apk — stable across rooms) and,
   // through kt-lookup, u = SHA-256(label ‖ username) (see review-612-server-kt S03).
-  it.skip("an unproven joiner in a proven room gets no devices of a signed-in member", async () => {
+  it("an unproven joiner in a proven room gets no devices of a signed-in member", async () => {
     const h = await startHub({ devices: () => [FAKE_DEVICE], lookup: async () => null });
     const room = blindRoom();
     const key = roomKey();
@@ -220,10 +220,10 @@ describe("key directory over the hub for members who never proved (G-09)", () =>
 /* ------------------------------------------------------------------ S04 */
 
 describe("the failed-proof limit (PROOF_FAILURES)", () => {
-  // REVIEW-612 S04a: a 'mismatch' (a VALID signature by another key — what every real member of a squatted room sends) counts
+  // REVIEW-612 S04a (fixed): a 'mismatch' (a VALID signature by another key — what every real member of a squatted room sends) counts
   // as a failure of the address, and a blocked address is refused for EVERY room, unchecked. A squatted room therefore locks
   // its real members out of all their other rooms too (with HUB_REQUIRE_ROOM_PROOF=1: out of the server) after 10 reconnects.
-  it.skip("10 mismatches in a squatted room do not stop the same address from proving another room", () => {
+  it("10 mismatches in a squatted room do not stop the same address from proving another room", () => {
     let now = 1_700_000_000_000;
     const proofs = RoomProofs.inMemory({ required: false, ttlMs: 365 * 86_400_000 }, () => now);
     const squatted = blindRoom();
@@ -242,10 +242,10 @@ describe("the failed-proof limit (PROOF_FAILURES)", () => {
     expect(proofs.check(other, "n-o2", realOther.prove(other, "n-o2"), "203.0.113.5")).toMatchObject({ kind: "proven" });
   });
 
-  // REVIEW-612 S04b: failures are keyed by the full address. From one IPv6 /64 (what any host gets) every address has its own
+  // REVIEW-612 S04b (fixed): failures are keyed by the full address. From one IPv6 /64 (what any host gets) every address has its own
   // budget, so the limit never engages; and the map grows without bound while entries are fresh (it only drops stale ones
   // above 10 000, by scanning the whole map on every further failure — quadratic).
-  it.skip("addresses of one IPv6 /64 share the budget", () => {
+  it("addresses of one IPv6 /64 share the budget", () => {
     const proofs = RoomProofs.inMemory({ required: false, ttlMs: 365 * 86_400_000 }, () => 1_700_000_000_000);
     const room = blindRoom();
     const bad = { pub: Buffer.alloc(32, 1).toString("base64"), sig: Buffer.alloc(64, 2).toString("base64") };
@@ -255,11 +255,11 @@ describe("the failed-proof limit (PROOF_FAILURES)", () => {
     expect(proofs.check(room, "n", bad, "2001:db8:1:2::ffff")).toMatchObject({ kind: "refused", reason: "rate-limited" });
   });
 
-  // REVIEW-612 S15: registering a verifier costs nothing — any socket may join 10 rooms/s ("signaling" bucket), each a fresh
+  // REVIEW-612 S15 (fixed): registering a verifier costs nothing — any socket may join 10 rooms/s ("signaling" bucket), each a fresh
   // r3.<random> id with a proof by a key of its own. SQLite: one persistent row per room for 365 days, no cap. Memory (no
   // storage): the 100 000 cap evicts the least recently proven verifier (an O(n) scan per registration) — a real room whose
   // members have not joined lately is pushed out, and whoever knows its blind id registers a key of their own for it.
-  it.skip("a flood of throw-away rooms cannot evict a real room's verifier (and let it be re-registered)", () => {
+  it("a flood of throw-away rooms cannot evict a real room's verifier (and let it be re-registered)", () => {
     let now = 1_700_000_000_000;
     const proofs = new RoomProofs(new MemoryVerifiers(1_000), randomBytes(32), { required: false, ttlMs: 365 * 86_400_000 }, () => now);
     const target = blindRoom();
@@ -272,7 +272,7 @@ describe("the failed-proof limit (PROOF_FAILURES)", () => {
     expect(proofs.check(target, "n1", squatter.prove(target, "n1"), "198.51.100.66")).toMatchObject({ kind: "refused", reason: "mismatch" });
   });
 
-  it.skip("the failure map stays bounded under many fresh addresses", () => {
+  it("the failure map stays bounded under many fresh addresses", () => {
     const proofs = RoomProofs.inMemory({ required: false, ttlMs: 365 * 86_400_000 }, () => 1_700_000_000_000);
     const room = blindRoom();
     const bad = { pub: Buffer.alloc(32, 1).toString("base64"), sig: Buffer.alloc(64, 2).toString("base64") };

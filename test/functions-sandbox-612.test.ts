@@ -50,6 +50,8 @@ describe("bubblewrap command line", () => {
     const at = args.indexOf("--");
     const flags = args.slice(0, at);
     for (const f of ["--unshare-all", "--die-with-parent", "--new-session"]) expect(flags).toContain(f);
+    // 6.12 review S13: no capabilities inside (a root server would otherwise keep them).
+    expect(flags.join(" ")).toContain("--cap-drop ALL");
     expect(flags).not.toContain("--share-net");
     // A private /tmp, a minimal /dev, the namespace's own /proc.
     expect(flags.join(" ")).toContain("--tmpfs /tmp");

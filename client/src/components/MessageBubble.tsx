@@ -71,7 +71,7 @@ export type MessageBubbleProps = {
   onVanish: (id: string) => void;
   to?: string[]; // present → private message, only to these names
   /** 6.12 (F-22): `missing` — the quoted message is not here (validate.ts › verifyQuote); its claimed text is not shown. */
-  replyTo?: { id: string; senderName: string; text: string; missing?: boolean };
+  replyTo?: { id: string; senderName: string; text: string; missing?: boolean; held?: boolean };
   forwardedFrom?: string;
   /** 6.12 (F-22): false — this app has no message from `forwardedFrom` with this text: shown as the forwarder's claim. */
   forwardVerified?: boolean;
@@ -364,7 +364,8 @@ export function MessageBubble(props: MessageBubbleProps) {
     forwardedFrom: props.forwardedFrom ? (props.forwardVerified === false ? tf(lang, "msg.fwd.unverified", { name: props.forwardedFrom }) : props.forwardedFrom) : "",
     loc: props.loc ? { lat: props.loc.lat, lon: props.loc.lon, acc: props.loc.acc ?? null, url: osmLink({ lat: props.loc.lat, lng: props.loc.lon, ts: 0 }, 17) } : null,
     // 6.12 (F-22): a quote whose message is not here says so — the sender's claimed text is not shown.
-    replyTo: props.replyTo ? (props.replyTo.missing ? { id: props.replyTo.id, senderName: "", text: t(lang, "msg.quote.missing"), missing: true } : props.replyTo) : null,
+    // 6.12 review P14: a quote of a message held for a changed key shows neither its text nor its sender.
+    replyTo: props.replyTo ? (props.replyTo.missing ? { id: props.replyTo.id, senderName: "", text: t(lang, props.replyTo.held ? "msg.quote.held" : "msg.quote.missing"), missing: true } : props.replyTo) : null,
     nameWarning: props.nameWarning?.kind ?? "",
     bodyText,
     attachment: att

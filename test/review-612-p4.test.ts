@@ -64,8 +64,9 @@ describe("REVIEW-612 P01 — messages for away members and the server's key dire
   // REVIEW-612 P01: the App's pinnedAccount (App.tsx:1746) reads the account key from TrustBook.devicesOfRef, which
   // drops devices whose remembered bundle has expired (p4-trust.ts:132) — 7 days after we last saw Bob, his pin is
   // gone and sealForAway (p4-away.ts:70-78) seals to ANY device the server lists, e.g. one certified by the server's
-  // own account key. Fails today: per["ref-bob"] is an item for the server's device, and the server opens it.
-  it.skip("a member whose account we pinned is not sealed to a device of another account once his bundle expired", async () => {
+  // own account key. Fixed: sealForAway never uses the directory without a pinned account (and the app's pin,
+  // TrustBook.accountOf, outlives the bundles — see review-612-fixes).
+  it("a member whose account we pinned is not sealed to a device of another account once his bundle expired", async () => {
     const now = Date.now();
     const seen = now - 8 * DAY;
     const bob = await certifiedDevice(0x0b, seen);
@@ -92,8 +93,9 @@ describe("REVIEW-612 P01 — messages for away members and the server's key dire
   // REVIEW-612 P01: devices remembered behind a reference (TrustBook.devicesOfRef) are sealed to with no account check
   // at all — the `pinned` filter of sealForAway applies to directory devices only (p4-away.ts:69). The reference a
   // device is remembered under comes from the server (relay `from`, App.tsx:2224-2225; hub peer refs, App.tsx:2839-2840),
-  // so the server can plant a device of its own behind Bob's reference with one relay item. Fails today: two items.
-  it.skip("a device planted behind a member's reference is not sealed to when it is not of the member's pinned account", async () => {
+  // so the server can plant a device of its own behind Bob's reference with one relay item. Fixed: remembered devices
+  // must carry the pinned account too; the app no longer remembers relayed senders behind a reference at all.
+  it("a device planted behind a member's reference is not sealed to when it is not of the member's pinned account", async () => {
     const now = Date.now();
     const bob = await certifiedDevice(0x0b, now);
     const planted = await certifiedDevice(0x5e, now);
@@ -119,7 +121,8 @@ describe("REVIEW-612 P01 — messages for away members and the server's key dire
   // REVIEW-612 P01 (design): a member we never met gets the message sealed to whatever the server lists — in 6.11 the
   // server held a room-key envelope it could not open; in 6.12 it can answer `key-bundles` with its own device and read
   // the message. Without a pinned account (or a KT-verified, user-confirmed one) the directory must not be trusted.
-  it.skip("a never-seen member's message is not sealed to an unverified directory device", async () => {
+  // Fixed: such a member gets the protocol-3 room envelope (§ 7.4).
+  it("a never-seen member's message is not sealed to an unverified directory device", async () => {
     const now = Date.now();
     const server = await certifiedDevice(0x5e, now);
     const alice = await identity();
@@ -152,8 +155,8 @@ describe("REVIEW-612 P02 — hello v4 fields outside sig4", () => {
   // or `user`. Whoever can rewrite the data channel (the server swapping DTLS fingerprints in signaling it can
   // open with the room key, i.e. server + an ex-member) strips "media" (App.tsx:2872: no protocol-4 media key is
   // sent, frames go unsealed — the call is protected by the attacker's DTLS-SRTP only) and `sth` (KT gossip off).
-  // Fails today: the tampered hello verifies.
-  it.skip("a hello whose caps or tree head were changed in transit does not verify", async () => {
+  // Fixed: sig4 covers capsDigest, userDigest and sthDigest (spec § 2).
+  it("a hello whose caps or tree head were changed in transit does not verify", async () => {
     const { ha, hb } = await hellos();
     const stripped = { ...hb.hello, caps: hb.hello.caps.filter((c) => c !== "media") };
     expect((await ha.acceptHello(stripped)).verdict.ok).toBe(false);
@@ -198,8 +201,9 @@ describe("REVIEW-612 P03 — the room-key fallback for a peer that is still 'pen
   // REVIEW-612 P03: App.tsx deliverToPeers waits 2.5 s for a "pending" peer (line 2575) and then seals for it with
   // the ROOM key (lines 2608-2612) — also a private message, and also for a device key once seen with protocol 4:
   // the downgrade marker is consulted only for a protocol-3 hello (p4-session.ts:274). Withholding the peer's
-  // p4-kem (or its hello) keeps it pending, so everything it gets is under the room key. Fails today: "pending".
-  it.skip("a device once seen with protocol 4 whose handshake does not complete is never left 'pending' (room-key eligible)", async () => {
+  // p4-kem (or its hello) keeps it pending, so everything it gets is under the room key. Fixed: "p4-pending" once
+  // its valid hello v4 is accepted (the marker is set then, too); mayUseRoomKey is false; the app holds it.
+  it("a device once seen with protocol 4 whose handshake does not complete is never left 'pending' (room-key eligible)", async () => {
     const aId = await identity();
     const bId = await identity();
     const book = new TrustBook(null);
@@ -226,8 +230,8 @@ describe("REVIEW-612 P05 — key-transparency alerts the server can suppress", (
   // REVIEW-612 P05: KtState.resolveGossip/update call fetchConsistency OUTSIDE their try (kt.ts:280-287); a server
   // that answers the consistency request with an error makes them throw, KtClient.gossip/refresh swallow it
   // (p4-kt.ts:82, :113) — no alert, ever. A forked server simply refuses to prove consistency between two heads
-  // it signed. Fails today: gossip() says "ignored" and the status stays "ok".
-  it.skip("a server that will not prove consistency between two heads it signed raises the alert", async () => {
+  // it signed. Fixed: the proof is owed (KtState.owe); refused twice it is the "unproven" alert.
+  it("a server that will not prove consistency between two heads it signed raises the alert", async () => {
     const { privateKey, publicKey } = await ed25519FromSeed(new Uint8Array(32).fill(0x17));
     const leaves: Hash[] = [];
     for (let i = 0; i < 3; i++) leaves.push(await entryLeafHash({ t: "acct", u: await ktUser(`u${i}`), apk: b64(new Uint8Array(32).fill(i)), ts: i } as KtEntry));
@@ -254,8 +258,8 @@ describe("REVIEW-612 P06 — background rooms and changed keys", () => {
   // REVIEW-612 P06: BackgroundRoom.accept (room-hub.ts:434-436) gives every signed message the state "new" — no pin
   // check — and App.tsx:3429-3432 merges what it collected into the room on screen as it is. A second device that
   // uses a pinned member's name is not "changed", its messages are not held (App.tsx:468) and they reach
-  // notifications. Fails today: both messages are "new".
-  it.skip("a second key under the same name in a background room is 'changed', not 'new'", async () => {
+  // notifications. Fixed: background rooms evaluate every sender with the same pins (evaluateIdentity).
+  it("a second key under the same name in a background room is 'changed', not 'new'", async () => {
     const me = await identity();
     const sockets: Array<{ sent: string[]; onopen?: () => void; onmessage?: (e: { data: string }) => void }> = [];
     const deps: HubDeps = {
@@ -293,8 +297,8 @@ describe("REVIEW-612 P08 — a verified account under any name", () => {
   // REVIEW-612 P08: evaluateIdentity (p4-trust.ts:186) shows "verified" whenever the ACCOUNT was verified once, for
   // whatever display name the message carries — the name is pinned to the account on first sight (TOFU) in the same
   // call. A contact the user verified joins another room as "Alice" and every message shows a green "verified Alice".
-  // Fails today: "verified".
-  it.skip("a verified account's first message under a new name in a new room is not shown as verified", async () => {
+  // Fixed: an account is verified together with the name it was verified under (TrustBook.accountVerifiedFor).
+  it("a verified account's first message under a new name in a new room is not shown as verified", async () => {
     const pins = createPinStore(null);
     const book = new TrustBook(null);
     const mallory = await identity();
@@ -311,8 +315,8 @@ describe("REVIEW-612 P09 — 'forwarded from' checked against messages of anyone
   // REVIEW-612 P09: forwardIndex (validate.ts:276-280) keys on the CLAIMED senderName and text of every message —
   // including messages that are held as "changed" and messages of the forwarder itself under another name. Mallory
   // posts "pay 100 to X" as "Bob" (held, or in a room where Bob is not pinned) and then forwards it "from Bob":
-  // App.tsx:6017 shows the forward as verified. Fails today: true.
-  it.skip("a forward is not verified by a message whose sender identity is not the named member's", () => {
+  // App.tsx:6017 shows the forward as verified. Fixed: only authenticated senders are indexed, never the forwarder's own.
+  it("a forward is not verified by a message whose sender identity is not the named member's", () => {
     const messages = [
       { id: "m1", senderId: "p-mallory", senderName: "Bob", text: "pay 100 to X", identity: { state: "changed" as const } },
     ];
@@ -326,8 +330,8 @@ describe("REVIEW-612 P14 — a held message shown through a quote", () => {
   // REVIEW-612 P14: a message from a changed key is held behind a warning (App.tsx:468), but quoteIndex
   // (App.tsx:1006) holds every message and verifyQuote (validate.ts:260-270) shows the STORED text and sender of
   // the quoted message — so a reply to the held message (from the attacker's own, unheld identity) displays the
-  // held text as an authentic quote of "Bob". Fails today: the held text is shown.
-  it.skip("a quote of a held (changed-key) message does not show its text", () => {
+  // held text as an authentic quote of "Bob". Fixed: a held message quotes as "held" — no text, no sender.
+  it("a quote of a held (changed-key) message does not show its text", () => {
     const held = { id: "m1", senderName: "Bob", text: "pay 100 to X", identity: { state: "changed" as const } };
     const view = verifyQuote({ id: "m1", senderName: "Bob", text: "" }, held);
     expect(view?.text).not.toBe("pay 100 to X");
@@ -340,8 +344,9 @@ describe("REVIEW-612 P11/P12 — the device vault", () => {
   // REVIEW-612 P11: VaultBundleStore caches the row list per instance (p4-store.ts:167-185) and writes it whole —
   // two tabs (two instances on one IndexedDB) that each make a bundle keep only the last writer's list: the other
   // bundle's ML-KEM key is gone and every item sealed to that bundle (it was in hellos and the directory) is lost.
-  // VaultReplayStore (p4-store.ts:258-266) has the same last-writer-wins race for the replay window. Fails today.
-  it.skip("two tabs that each create a mailbox bundle both keep their keys", async () => {
+  // VaultReplayStore (p4-store.ts:258-266) has the same last-writer-wins race for the replay window.
+  // Fixed: one row per bundle; the replay window merges on write (test/review-612-fixes.test.ts).
+  it("two tabs that each create a mailbox bundle both keep their keys", async () => {
     const backend = memoryBackend();
     const dev = await identity();
     const tab1 = new VaultBundleStore(new LocalVault(backend));
@@ -359,8 +364,9 @@ describe("REVIEW-612 P11/P12 — the device vault", () => {
   // REVIEW-612 P12: LocalVault.wrapKey (p4-store.ts:96-99) treats a FAILED read of the wrapping key like a missing
   // one: it generates a new key and stores it over the old one. One transient IndexedDB error and every sealed row —
   // the mailbox bundles' ML-KEM keys, the replay windows — no longer opens (silently: getJson returns null; an
-  // empty replay window re-admits relayed replays). Fails today: null.
-  it.skip("a failed read of the wrapping key does not replace it", async () => {
+  // empty replay window re-admits relayed replays). Fixed: the read is retried, then VaultUnavailable; only an
+  // absent key is created, with `add`.
+  it("a failed read of the wrapping key does not replace it", async () => {
     const backend = memoryBackend();
     await new LocalVault(backend).putJson("replay:x", [["k", 1]]);
     let fail = true;

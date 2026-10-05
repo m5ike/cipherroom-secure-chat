@@ -91,11 +91,33 @@ export async function createBundle(signer: DeviceSigner, now = Date.now(), rng: 
   return { bundle: { ...unsigned, sig }, dh: dh.privateKey, kemDk: kem.dk, created: now };
 }
 
+/* ------------------------------------------------- account attestation */
+
+/** The shape of an account attestation (a hello's `acc`, an item's `sacc`): v1 `{apk, ac}` or v2 `{apk, ac, cv: 2, exp}`. */
+export function isAccShape(a: unknown): a is HelloAccount {
+  const acc = a as Partial<HelloAccount> | null;
+  if (!acc || typeof acc !== "object" || typeof acc.apk !== "string" || typeof acc.ac !== "string") return false;
+  if (acc.cv === undefined) return acc.exp === undefined;
+  return acc.cv === 2 && isSafeCount(acc.exp);
+}
+
+/**
+ * § 2 accDigest / § 7.2 saccDigest: b64(H(join(apk, ac, cv ?? 1, exp ?? 0))),
+ * or "-" without an attestation.
+ */
+export async function accountDigest(acc: HelloAccount | null | undefined): Promise<string> {
+  if (!acc) return "-";
+  return hB64(join(acc.apk, acc.ac, acc.cv ?? 1, acc.exp ?? 0));
+}
+
 /* ------------------------------------------------------------ sealing */
 
-/** § 7.2 AAD. */
-export function mailboxAad(roomId: string, id: string, senderPk: string, senderBundleId: string, recipientBundleId: string, eph: string, kctHash: string): Bytes {
-  return join(LABEL.mailbox, roomId, id, senderPk, senderBundleId, recipientBundleId, eph, kctHash);
+/**
+ * § 7.2 AAD. `saccDigest` (6.12 review P13): the sender's account attestation
+ * is bound to the item — a relay can neither strip nor swap it.
+ */
+export function mailboxAad(roomId: string, id: string, senderPk: string, senderBundleId: string, recipientBundleId: string, eph: string, kctHash: string, saccDigest: string): Bytes {
+  return join(LABEL.mailbox, roomId, id, senderPk, senderBundleId, recipientBundleId, eph, kctHash, saccDigest);
 }
 
 async function itemKey(aad: Uint8Array, ss1: Uint8Array, ss2: Uint8Array, ss3: Uint8Array): Promise<{ key: Bytes; iv: Bytes }> {
@@ -131,12 +153,14 @@ export async function sealMailboxItem(i: SealInput, sender: BundleKeys, rng: Rng
   if (!hasId(i.payload, i.id)) throw new P4Error("id-mismatch", "payload.id must be the message id");
   const problem = await checkBundle(i.recipient.bundle, i.recipient.pk, i.now ?? Date.now());
   if (problem) throw new P4Error(problem === "expired" ? "expired" : "signature", `recipient bundle: ${problem}`);
+  if (i.sacc && !isAccShape(i.sacc)) throw new P4Error("malformed", "sender account attestation");
+  const saccD = await accountDigest(i.sacc);
   const Rb = i.recipient.bundle;
   const eph = await rng.p256("ecdh", "mailbox.eph");
   const ss1 = await ecdh(eph.privateKey, Rb.dh);
   const ss2 = await ecdh(sender.dh, Rb.dh);
   const { ct: kct, ss: ss3 } = kemEncaps(unb64(Rb.kem, KEM.ek), rng, "mailbox.kem-m");
-  const aad = mailboxAad(i.roomId, i.id, i.senderPk, sender.bundle.id, Rb.id, eph.spki, await hB64(kct));
+  const aad = mailboxAad(i.roomId, i.id, i.senderPk, sender.bundle.id, Rb.id, eph.spki, await hB64(kct), saccD);
   const { key, iv } = await itemKey(aad, ss1, ss2, ss3);
   const plain = pad(utf8(JSON.stringify(i.payload)));
   let c: Bytes;
@@ -162,7 +186,7 @@ function isItemShape(value: unknown): value is MailboxItem {
   const m = value as Partial<MailboxItem> | null;
   return Boolean(m) && typeof m === "object" && m!.v === 4 && m!.kind === "mb" && typeof m!.id === "string" && typeof m!.to === "string"
     && typeof m!.spk === "string" && typeof m!.e === "string" && typeof m!.kct === "string" && typeof m!.c === "string" && isBundleShape(m!.sb)
-    && (m!.sacc === undefined || (typeof m!.sacc === "object" && m!.sacc !== null));
+    && (m!.sacc === undefined || isAccShape(m!.sacc));
 }
 
 /** § 7.3 with the recipient bundle's private keys. Throws on a broken item. */
@@ -175,7 +199,8 @@ export async function openMailboxItem<T>(item: MailboxItem, roomId: string, mine
   const ss1 = await ecdh(mine.dh, item.e);
   const ss2 = await ecdh(mine.dh, item.sb.dh);
   const ss3 = kemDecaps(kct, mine.kemDk);
-  const aad = mailboxAad(roomId, item.id, item.spk, item.sb.id, item.to, item.e, await hB64(kct));
+  let aad: Bytes;
+  try { aad = mailboxAad(roomId, item.id, item.spk, item.sb.id, item.to, item.e, await hB64(kct), await accountDigest(item.sacc)); } catch (error) { wipe(ss1, ss2, ss3); throw error; }
   const { key, iv } = await itemKey(aad, ss1, ss2, ss3);
   let plain: Bytes;
   try { plain = await aesGcmOpen(key, iv, aad, c); } finally { wipe(ss1, ss2, ss3, key, iv); }

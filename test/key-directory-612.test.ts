@@ -28,8 +28,8 @@ import { registerRoutes } from "../server/routes";
 import { accountRef } from "../server/signaling/refs";
 import { storage } from "../server/storage/service";
 import { accountStore, usernameOf } from "../server/accounts/store";
-import { ktUser } from "../server/kt/service";
-import { canonicalEntry, sthMessage } from "../server/kt/log";
+import { KtService, ktUser } from "../server/kt/service";
+import { canonicalEntry, ktSignerFromMasterKey, sthMessage } from "../server/kt/log";
 import { ed25519PublicKey } from "../server/kt/log";
 import { verify as edVerify } from "node:crypto";
 import { leafHash, verifyInclusion } from "../client/src/lib/p4/merkle";
@@ -124,7 +124,10 @@ async function verifiedEntries(lookup: KtLookup): Promise<KtEntry[]> {
   return lookup.entries.map((e) => e.entry);
 }
 const kinds = (entries: KtEntry[]) => entries.map((e) => e.t);
-const lookupOf = (acc: Account) => getJson<KtLookup>(`/api/kt/lookup?u=${acc.u}`);
+// 6.12 review S03: a lookup needs the account's own session.
+const lookupOf = async (acc: Account, token = acc.token) => (await (await fetch(`${base}/api/kt/lookup?u=${acc.u}`, { headers: { authorization: `Bearer ${token}` } })).json()) as KtLookup;
+/** The log as the server holds it (an account that is gone has no session to look itself up with). */
+const lookupDirect = (acc: Account) => KtService.open(storage.global.handleForQueue(), ktSignerFromMasterKey).lookup(acc.u);
 
 async function join(room: string, name: string, auth?: string) {
   const c = await WsClient.connect(base);
@@ -175,7 +178,9 @@ describe("PUT /api/keys/bundle", () => {
     const acc = newAccount();
     await setIdentity(acc);
     const device = newDevice();
-    const first = await upload(acc, device);
+    // A certificate with a third of its lifetime left — when a client renews it (account.ts).
+    const firstExp = Date.now() + DEVICE_CERT_LIFETIME_MS / 3;
+    const first = await upload(acc, device, { cert: certify(acc, device.pk, firstExp) });
     expect(first.body.kt?.dev).toEqual(expect.any(Number));
 
     // The same certificate, a newer bundle: nothing new in the log.
@@ -188,6 +193,13 @@ describe("PUT /api/keys/bundle", () => {
     const older = await put({ pk: device.pk, cert, bundle: bundleOf(device, { exp: Date.now() + 3_600_000 }) }, acc.token);
     expect(older.status).toBe(409);
     expect(await older.json()).toMatchObject({ code: "stale-bundle" });
+
+    // 6.12 review S10: a certificate re-signed with an earlier, or a barely later, expiry adds no leaf.
+    for (const exp of [firstExp - 60_000, firstExp + 60_000]) {
+      const same = await put({ pk: device.pk, cert: certify(acc, device.pk, exp), bundle: bundleOf(device) }, acc.token);
+      expect(same.status).toBe(200);
+      expect((await same.json()).kt).toEqual({ acct: null, dev: null });
+    }
 
     // A renewed certificate: `dev` again.
     const renewed = await put({ pk: device.pk, cert: certify(acc, device.pk, Date.now() + DEVICE_CERT_LIFETIME_MS - 1_000), bundle: bundleOf(device) }, acc.token);
@@ -299,7 +311,7 @@ describe("devices leave the directory with a `rev` entry", () => {
 
     const signout = await fetch(`${base}/api/account/signout`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${acc.token}` }, body: "{}" });
     expect(signout.status).toBe(200);
-    const entries = await verifiedEntries(await lookupOf(acc));
+    const entries = await verifiedEntries(await lookupOf(acc, laptopToken));
     expect(kinds(entries)).toEqual(["acct", "dev", "dev", "rev"]);
     expect(entries.at(-1)).toMatchObject({ t: "rev", dpk: phone.pk, apk: acc.apk });
 
@@ -331,7 +343,7 @@ describe("devices leave the directory with a `rev` entry", () => {
     expect((await upload(acc, newDevice())).status).toBe(200);
     const del = await fetch(`${base}/api/account`, { method: "DELETE", headers: { authorization: `Bearer ${acc.token}` } });
     expect(del.status).toBe(200);
-    expect(kinds(await verifiedEntries(await lookupOf(acc)))).toEqual(["acct", "dev", "dev", "rev", "rev"]);
+    expect(kinds(await verifiedEntries(await lookupDirect(acc)))).toEqual(["acct", "dev", "dev", "rev", "rev"]);
   });
 });
 

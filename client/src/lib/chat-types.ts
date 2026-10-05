@@ -102,4 +102,10 @@ export type MessageIdentity = {
   state: "new" | "verified" | "changed" | "invalid" | "unsigned";
   kid?: string; fingerprint?: string; account?: boolean; checked?: boolean;
   firstSeen?: boolean; protocol?: 3 | 4; certV1?: boolean; revoked?: boolean; accepted?: boolean;
+  /** 6.12 review P04: the server's key log has not confirmed the sender's account — "pending" (not checked yet),
+   *  "absent" (not in the log), "unverified" (the lookup did not verify). Then `account` is false and the state
+   *  is never "verified"; `ktState` is the state it gets once confirmed, `ktSlot` names the check. */
+  kt?: "pending" | "absent" | "unverified"; ktState?: "verified" | "new"; ktSlot?: string;
+  /** 6.12 review P08: the account was verified under this other name — it now writes under another one. */
+  verifiedAs?: string;
 };

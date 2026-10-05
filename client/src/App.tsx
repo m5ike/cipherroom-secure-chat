@@ -89,7 +89,7 @@ import {
   type IncomingCallbacks,
 } from "./lib/file-transfer";
 import { detectGeolocation, getCurrentPosition, watchPosition, osmLink, type LocationWatcher } from "./lib/maps";
-import { toBase64 } from "./lib/crypto";
+import { fromBase64, toBase64 } from "./lib/crypto";
 // Crypto v2: per-purpose keys, bound contexts, signed bodies (envelope.ts).
 import {
   createReplayGuard, deriveRoomKeys, isSealedSignal, OldEnvelopeError, openMessage, openSignal, sealMessage, sealSignal,
@@ -99,14 +99,14 @@ import { createPinStore, keyId, loadIdentity, type Identity } from "./lib/identi
 import { envelopeKind, SenderKeyStore } from "./lib/sender-keys";
 // 6.12: protocol 4 (docs/protocol-v4.md) — sessions, mailbox, hub proof, key transparency, replay, identity states.
 import {
-  buildHubProof, hubSeed, isMailboxItem, isMailboxSet, newFileKey, verifyAccount,
+  buildHubProof, hubSeed, isMailboxItem, isMailboxSet, newFileKey, REPLAY, verifyAccount,
   type DirectoryDevice, type KtLookup, type Mailbox, type RatchetInner, type ReplayGuard,
 } from "./lib/p4";
 import { isP4RoomEnvelope, P4Room, type PeerInfo, type PeerProtocol } from "./lib/p4-session";
-import { deviceReplay, LocalKtStore, PayloadSealer, type SealedPayload, type VaultReplayStore } from "./lib/p4-store";
-import { acceptChanged, evaluateIdentity, markVerified, signerOf, TrustBook } from "./lib/p4-trust";
+import { deviceReplay, LocalKtStore, PayloadSealer, VaultUnavailable, type SealedPayload, type VaultReplayStore } from "./lib/p4-store";
+import { acceptChanged, evaluateIdentity, ktSlotOf, markVerified, signerOf, TrustBook, type KtStanding } from "./lib/p4-trust";
 import { deviceMailbox, helloAccountOf, sealForAway, uploadBundle } from "./lib/p4-away";
-import { fetchKtJson, KtClient, type KtStatus } from "./lib/p4-kt";
+import { fetchKtJson, KtClient, type KtOwnCheck, type KtStatus, type KtVerdict } from "./lib/p4-kt";
 import type { SealedWith } from "./lib/chat-types";
 import { MediaE2ee } from "./lib/media-e2ee";
 import { validatePayload, verifyQuote, verifyForward, forwardIndex, type AudioStatusPayload, type ChatPayload } from "./lib/validate";
@@ -189,7 +189,7 @@ import type { MapPreviewPolicy } from "./lib/client-config";
 import { startBackgroundTick, watchLifecycle, type ResumeEvent, type SuspendEvent } from "./lib/lifecycle";
 import { appInForeground, useRoomPresence } from "./lib/use-room-presence";
 import { createFlashQueue, kindForText, type FlashMessage } from "./lib/flash";
-import { createOutbox, queueTargets } from "./lib/outbox";
+import { createOutbox, perPeerSender, queueTargets } from "./lib/outbox";
 import { FlashMessages } from "./components/FlashMessages";
 import {
   attachStorageSocket, forgetServerData, putMessages as putServerMessages,
@@ -263,7 +263,7 @@ type SignalFrame =
   // 6.0: a phone call for this member (m5.telephony's audio bridge).
   | { type: "phone-bridge"; event: string; session: string; [k: string]: unknown }
   | { type: "admin-command"; command: { id: string; kind: string; createdAt: number; payload?: Record<string, unknown> } }
-  | { type: "error"; message: string; code?: string }
+  | { type: "error"; message: string; code?: string; legacyAllowed?: boolean }
   // Server-relayed file transfer (only when direct P2P cannot be established)
   | { type: "proxy-meta"; transferId: string; iv: string; ciphertext: string; transport: "proxy"; v?: number; from?: string }
   | { type: "proxy-chunk"; transferId: string; seq: number; iv: string; ciphertext: string; transport: "proxy"; v?: number; from?: string }
@@ -796,7 +796,11 @@ function ChatApp() {
   const [ktStatus, setKtStatus] = useState<KtStatus>({ state: "unknown" });
   const payloadSealerRef = useRef(new PayloadSealer());
   /** Protocol-4 file keys peers handed us (§ 8): `${peerId}\0${transferId}` → FK. */
-  const fileKeysRef = useRef(new Map<string, { fk: string; at: number }>());
+  const fileKeysRef = useRef(new Map<string, { fk: string; at: number; signer?: Signer }>());
+  /** 6.12 review P07: proxied metas waiting for their FK (sender ␀ transferId → wake-ups). */
+  const fileKeyWaitersRef = useRef(new Map<string, Array<() => void>>());
+  /** Proxied file frames are handled one after another (a meta may wait for its FK; its chunks wait behind it). */
+  const proxyInboxRef = useRef<Promise<void>>(Promise.resolve());
   /** Answers of the hub's `key-bundles` / `kt-lookup` by reference (§ 7.5, § 14.3). */
   const hubAsksRef = useRef(new Map<string, Array<(answer: unknown) => void>>());
   const bundleCacheRef = useRef(new Map<string, { at: number; devices: DirectoryDevice[] }>());
@@ -805,15 +809,25 @@ function ChatApp() {
   /** Per peer: the protocol it speaks (the trust panel, the bubbles). */
   const [p4Peers, setP4Peers] = useState<Record<string, PeerProtocol>>({});
   /** 6.12 (§ 13): our join proved the room key (null: the server did not say — before 6.12). */
-  const [hubProven, setHubProven] = useState<boolean | null>(null);
+  const [hubProven, setHubProvenState] = useState<boolean | null>(null);
+  /** The same, for code outside rendering (the key-log lookups). */
+  const hubProvenRef = useRef<boolean | null>(null);
+  const setHubProven = (v: boolean | null) => { hubProvenRef.current = v; setHubProvenState(v); };
   /** The server's join nonce per socket, and whether that socket sent its join. */
   const joinOfRef = useRef(new WeakMap<WebSocket, (nonce: string | null) => Promise<void>>());
   const joinSentRef = useRef(new WeakSet<WebSocket>());
+  /** 6.12 review S14: sockets whose proven join was refused and that joined again without a proof. */
+  const proofRetriedRef = useRef(new WeakSet<WebSocket>());
   const hubSeedRef = useRef(new WeakMap<RoomKeys, Promise<Uint8Array>>());
   /** The id of the call our media keys belong to (§ 9). */
   const callIdRef = useRef(newId("call"));
   /** KT lookups already made this session (account key | device key). */
   const ktCheckedRef = useRef(new Set<string>());
+  /** 6.12 review P04: their answers (account key | device key → what the log says), and by the slot messages carry. */
+  const ktResultsRef = useRef(new Map<string, "ok" | "revoked" | "absent" | "unverified">());
+  const ktSlotResultsRef = useRef(new Map<string, "ok" | "revoked" | "absent" | "unverified">());
+  /** 6.12 review P04: the signed-in account's own entries in the key log — devices the user does not know. */
+  const [ktOwn, setKtOwn] = useState<KtOwnCheck | null>(null);
   /** The last bundle uploaded to the key directory this session. */
   const uploadedBundleRef = useRef("");
   // Call frames sealed with per-direction pair keys (lib/media-e2ee.ts).
@@ -862,12 +876,10 @@ function ChatApp() {
    *  (p4-store.ts › PayloadSealer) — sealed for each recipient when it goes,
    *  with the best they speak (protocol 4, else 3), never kept as room-key
    *  ciphertext for peers that will speak protocol 4. */
-  const outboxRef = useRef(createOutbox<SealedPayload>(async (entry) => {
-    const targets = entry.targets.length > 0 ? new Set(entry.targets) : undefined;
-    return deliverQueuedRef.current(entry.messageId, entry.envelope, targets);
-  }));
-  /** Set once deliverToPeers exists (it is declared further down). */
-  const deliverQueuedRef = useRef<(id: string, sealed: SealedPayload, targets?: Set<string>) => Promise<number>>(async () => 0);
+  // 6.12 review P03: per peer — whoever was ready got it; a peer whose secure session is not up yet still waits for it.
+  const outboxRef = useRef(createOutbox<SealedPayload>(perPeerSender((entry, targets, only) => deliverQueuedRef.current(entry.messageId, entry.envelope, targets, only))));
+  /** Set once deliverToPeers exists (it is declared further down). Returns the peers it went to, and those it waits for. */
+  const deliverQueuedRef = useRef<(id: string, sealed: SealedPayload, targets?: Set<string>, only?: boolean) => Promise<{ to: string[]; held: string[] }>>(async () => ({ to: [], held: [] }));
   /** Same for the flush, which a freshly opened channel wants to trigger. */
   const flushOutboxRef = useRef<(reason: string) => Promise<void>>(async () => undefined);
   const [queuedIds, setQueuedIds] = useState<Set<string>>(new Set());
@@ -947,7 +959,8 @@ function ChatApp() {
   // (lib/room-hub.ts); messages a room collected there come with it when it
   // is put on screen (carryRef, merged in doConnect).
   const hubRef = useRef<RoomHub | null>(null);
-  if (!hubRef.current) hubRef.current = createRoomHub(wsUrl, () => freshRtcConfig());
+  // 6.12 review P04/P06: background rooms evaluate senders with the same pins, and ask the key log's word on attested devices.
+  if (!hubRef.current) hubRef.current = createRoomHub(wsUrl, () => freshRtcConfig(), 8, { ktStanding: (apk, pk, server) => ktStandingOf(apk, pk, server) });
   const hub = hubRef.current;
   const hubRooms = useSyncExternalStore(hub.subscribe, hub.list, hub.list);
   const carryRef = useRef(new Map<string, ChatMessage[]>());
@@ -1728,25 +1741,32 @@ function ChatApp() {
    * without any known bundle get the protocol-3 room envelope — `roomKeyFor`
    * names them (the info view says so).
    */
-  async function relayToAway(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets: AwayPeer[], text?: string): Promise<{ count: number; roomKeyFor: string[]; mailbox: boolean }> {
+  async function relayToAway(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets: AwayPeer[], text?: string): Promise<{ count: number; roomKeyFor: string[]; mailbox: boolean; mailboxFor: string[] }> {
     const socket = socketRef.current;
     const keys = keyRef.current;
-    const none = { count: 0, roomKeyFor: [], mailbox: false };
+    const none = { count: 0, roomKeyFor: [], mailbox: false, mailboxFor: [] };
     if (!socket || socket.readyState !== WebSocket.OPEN || targets.length === 0 || !keys) return none;
     const refs = targets.map((a) => a.accountId);
     let per: Record<string, unknown> = {};
     let without = refs;
+    let sealing: Awaited<ReturnType<typeof sealForAway>>["sealing"] = [];
     const identity = identityRef.current;
     const mailbox = await ensureMailbox();
     if (mailbox && identity && keys.version === 3) {
+      // 6.12 review P01 (§ 7.4): only devices this client authenticated — seen in a valid hello, and for a
+      // member whose account is pinned (kept past bundle expiry) only that account's; the server's
+      // directory only for a pinned account. Anyone else gets the room envelope the server cannot open.
+      const book = trustRef.current;
       const sealed = await sealForAway({
         roomId: keys.roomId, id: payload.id, payload, refs, mailbox, senderPk: identity.publicKey, sacc: helloAccountOf(identity.attestation),
-        known: (ref) => trustRef.current.devicesOfRef(keys.roomId, ref),
+        known: (ref) => book.sealableDevicesOfRef(keys.roomId, ref),
         directory: onHomeServer() ? (ref) => hubAsk<DirectoryDevice[]>("key-bundles", ref).then((d) => (Array.isArray(d) ? d : [])) : undefined,
-        pinnedAccount: (ref) => trustRef.current.devicesOfRef(keys.roomId, ref).find((d) => d.apk)?.apk ?? null,
-      }).catch(() => ({ per: {}, withoutBundle: refs, devices: 0 }));
+        pinnedAccount: (ref) => book.accountOf(keys.roomId, ref),
+        isRevoked: (pk) => book.isRevoked(pk),
+      }).catch(() => ({ per: {}, withoutBundle: refs, devices: 0, sealing: [] }));
       per = sealed.per;
       without = sealed.withoutBundle;
+      sealing = sealed.sealing;
     }
     const envelope = without.length > 0 ? await roomEnvelope() : null;
     const to = envelope ? refs : refs.filter((r) => per[r]);
@@ -1755,7 +1775,9 @@ function ChatApp() {
     const mention = mentionedAway(text, targets);
     socket.send(JSON.stringify({ type: "relay", messageId: payload.id, to, ...(envelope ? { envelope } : {}), ...(Object.keys(per).length ? { per } : {}), ...(mention.length ? { mention } : {}) }));
     const names = (list: string[]) => targets.filter((a) => list.includes(a.accountId)).map((a) => a.name);
-    return { count: to.length, roomKeyFor: envelope ? names(without) : [], mailbox: Object.keys(per).length > 0 };
+    // The info view names who got which form: mailboxes (how many devices, account-pinned or not), or the room key.
+    const mailboxFor = sealing.flatMap((s) => (s.form === "mailbox" ? [tf(lang, s.account ? "sec.sealedHow.mailboxAccount" : "sec.sealedHow.mailboxDevice", { name: names([s.ref])[0] ?? "?", n: s.devices })] : []));
+    return { count: to.length, roomKeyFor: envelope ? names(without) : [], mailbox: Object.keys(per).length > 0, mailboxFor };
   }
 
   /** 6.12: asks the hub about a member's reference (`key-bundles`, `kt-lookup`); null after 4 s. */
@@ -1812,19 +1834,53 @@ function ChatApp() {
     if (!current || uploadedBundleRef.current === slot) return;
     const result = await uploadBundle(token, identity.publicKey, att, current.bundle);
     if (result.ok || result.code === "stale-bundle") uploadedBundleRef.current = slot;
-    else void sendServerLog("warn", "keys.upload-failed", { code: result.code });
+    else {
+      // 429 kt-quota: the account's key-log entries for the day are used up — not again in this session.
+      if (result.code === "kt-quota" || result.code === "429") uploadedBundleRef.current = slot;
+      void sendServerLog("warn", "keys.upload-failed", { code: result.code });
+    }
   }
 
   /** 6.12 (§ 14): this server's key log — its key pinned, its newest head checked on connect and every 10 minutes. */
   function startKeyTransparency() {
-    if (ktRef.current) { void ktRef.current.refresh(); return; }
+    if (ktRef.current) { void ktRef.current.refresh().then(() => checkOwnInLog()); return; }
     const kt = new KtClient(window.location.origin, new LocalKtStore(), fetchKtJson());
     kt.subscribe((s) => {
       setKtStatus(s);
       if (s.state === "alert" && s.alert) warnOnce(`kt:${s.alert.kind}:${s.alert.at}`, tf(lang, `p4.kt.alert.${s.alert.kind}`, { detail: s.alert.detail }), "error");
     });
     ktRef.current = kt;
-    kt.start();
+    // Review P04: after every refresh, this account's own entries too (self-monitoring).
+    kt.start(() => { void checkOwnInLog(); });
+  }
+
+  /**
+   * 6.12 review P04 (§ 14.4, self-monitoring): the signed-in account's own entries in the server's key
+   * log. A device certified for our account that is not this one and not acknowledged by the user is
+   * reported — a key the server adds for us cannot go unseen; so is another account key for us.
+   */
+  async function checkOwnInLog() {
+    const kt = ktRef.current;
+    const identity = identityRef.current;
+    const apk = identity?.attestation?.accountKey;
+    const acc = accountRef.current;
+    const username = acc?.username ?? acc?.id;
+    const token = accountToken();
+    if (!kt || !identity || !apk || !username || !token || !onHomeServer()) { setKtOwn(null); return; }
+    const book = trustRef.current;
+    // § 14.3: the own-entries lookup needs the account session (the server answers only the caller's own `u`).
+    const own = await kt.checkOwn({ username, token }, apk, (dpk) => dpk === identity.publicKey || book.ownKnown(apk, dpk)).catch(() => null);
+    setKtOwn(own);
+    if (own?.unknown.length) warnOnce(`kt-own:${own.unknown.map((d) => d.dpk.slice(-16)).join(",")}`, tf(lang, "p4.kt.own.unknown", { n: own.unknown.length }), "error");
+    if (own?.foreignAccount) warnOnce(`kt-own-acct:${own.foreignAccount}`, t(lang, "p4.kt.own.foreignAccount"), "error");
+  }
+
+  /** "This is my device": the user knows it — the self-monitoring stops reporting it. */
+  function acknowledgeOwnDevice(dpk: string) {
+    const apk = identityRef.current?.attestation?.accountKey;
+    if (!apk) return;
+    trustRef.current.acknowledgeOwn(apk, dpk);
+    setKtOwn((cur) => (cur ? { ...cur, unknown: cur.unknown.filter((d) => d.dpk !== dpk) } : cur));
   }
 
   /** 6.12 (§ 11): the persistent replay window of this device. */
@@ -1844,11 +1900,26 @@ function ChatApp() {
    * dated it more than 5 minutes ahead (their clock is off: accepted, the
    * time clamped, said once per member with roughly by how much).
    */
-  async function freshMessage(id: string, createdAt: unknown, sender: { id: string; name: string }): Promise<number | null> {
+  async function freshMessage(id: string, createdAt: unknown, sender: { id: string; name: string }, opts: { live: boolean }): Promise<number | null | "unavailable"> {
     const roomId = keyRef.current?.roomId;
-    if (!roomId || !replayRef.current.accept(id)) return null;
+    if (!roomId || replayRef.current.has(id)) return null;
     const receivedAt = Date.now();
-    const verdict = await replayGuard().check(roomId, id, createdAt, { now: receivedAt }).catch(() => "ok" as const);
+    let verdict: Awaited<ReturnType<ReplayGuard["check"]>>;
+    try {
+      verdict = await replayGuard().check(roomId, id, createdAt, { now: receivedAt });
+    } catch (err) {
+      // 6.12 review P10: the persistent window cannot be read — fail CLOSED. A message on a live
+      // ratchet / sender-key chain cannot be replayed (a used key is refused): the in-memory guard
+      // suffices for it. A relayed or room-key one could be: it waits (the relay keeps it) until the
+      // store works again.
+      warnOnce("replay-store", t(lang, "p4.replay.storeDown"), "warning");
+      void sendServerLog("warn", "replay.store-unavailable", { error: (err as Error)?.name ?? "error" });
+      if (!opts.live) return "unavailable";
+      if (!replayRef.current.accept(id)) return null;
+      if (typeof createdAt !== "number" || createdAt < receivedAt - REPLAY.windowMs) return null;
+      return createdAt > receivedAt + REPLAY.futureMs ? receivedAt : createdAt;
+    }
+    if (!replayRef.current.accept(id)) return null;
     if (verdict === "too-old") warnOnce("replay-too-old", t(lang, "p4.replay.too-old"), "warning");
     if (verdict === "clamped") {
       warnOnce(`clock-ahead:${sender.id}`, tf(lang, "p4.clock.ahead", { name: sender.name, skew: roughly(Number(createdAt) - receivedAt) }), "warning");
@@ -1886,9 +1957,13 @@ function ChatApp() {
    *  first use). 6.12 (docs/protocol-v4.md § 12): a first-seen key is "new —
    *  not verified", never "verified" by itself; "changed" is held. */
   async function identityFor(signer: Signer | null, senderName: string, opts: { protocol: 3 | 4; certVersion?: 1 | 2 } = { protocol: 3 }): Promise<MessageIdentity> {
-    const identity = await evaluateIdentity({ signer, protocol: opts.protocol, certVersion: opts.certVersion, room: roomRef.current, name: senderName }, pinsRef.current, trustRef.current);
+    // 6.12 review P04: an attested device counts as its account's only once the server's key log confirmed it.
+    const kt = signer?.valid && signer.account?.valid ? ktStandingOf(signer.account.publicKey, signer.publicKey) : undefined;
+    const identity = await evaluateIdentity({ signer, protocol: opts.protocol, certVersion: opts.certVersion, room: roomRef.current, name: senderName, kt }, pinsRef.current, trustRef.current);
     if (identity.state === "invalid") warnOnce(`invalid:${identity.kid}`, t(lang, "sec.identity.invalidFlash").replace("{name}", senderName), "error");
     if (identity.state === "changed") warnOnce(`changed:${identity.kid}`, t(lang, identity.revoked ? "p4.kt.revoked" : "sec.identity.changedFlash").replace("{name}", senderName), "error");
+    // Review P08: an account the user verified under one name now writes under another.
+    if (identity.verifiedAs) warnOnce(`verified-as:${identity.kid}:${senderName}`, tf(lang, "sec.identity.verifiedAsFlash", { name: senderName, verified: identity.verifiedAs }), "warning");
     return identity;
   }
 
@@ -1966,7 +2041,9 @@ function ChatApp() {
   // 6.7: by the operator's template and the user's choice (kinds, privacy, quiet hours).
   useEffect(() => hub.onMessage((e) => {
     if (!notificationsEnabledRef.current) return;
-    const note = showLocalNotification({ kind: "message", room: e.label, sender: e.message.senderName, text: e.message.flags?.sealed ? "🔒" : e.message.text || "📎", tag: `m5cet-room-${e.key}` }, { lang: lang === "cs" || lang === "de" ? lang : "en" });
+    // 6.12 review P06/P14: a message held for a changed key never shows its text in a notification.
+    const heldText = e.message.identity?.state === "changed" ? tf(lang, "p4.held.title", { name: e.message.senderName }) : null;
+    const note = showLocalNotification({ kind: "message", room: e.label, sender: e.message.senderName, text: heldText ?? (e.message.flags?.sealed ? "🔒" : e.message.text || "📎"), tag: `m5cet-room-${e.key}` }, { lang: lang === "cs" || lang === "de" ? lang : "en" });
     if (note) note.onclick = () => { window.focus(); note.close(); void switchRoomRef.current(e.key); };
   }), [hub, lang]);
   // 6.7: local notifications follow the account's choice once signed in, this browser's otherwise.
@@ -2217,12 +2294,16 @@ function ChatApp() {
         // 6.12 (§ 7.3): sealed for one of this device's mailbox bundles.
         const mailbox = await ensureMailbox();
         let got: Awaited<ReturnType<Mailbox["open"]>> = null;
-        try { got = mailbox ? await mailbox.open(env, keys.roomId) : null; } catch { handled.push(item.id); continue; } // broken: drop it
+        try { got = mailbox ? await mailbox.open(env, keys.roomId) : null; } catch (err) {
+          // Review P12: the vault cannot be read now — keep it at the relay (not acknowledged); a broken item is dropped.
+          if (!(err instanceof VaultUnavailable)) handled.push(item.id);
+          continue;
+        }
         if (!got) continue; // for another device of the account (or keys we no longer have)
         const account = await verifyAccount(got.sacc, got.spk);
-        trustRef.current.rememberDevice(got.spk, { mb: got.senderBundle, apk: account?.valid ? account.publicKey : null });
-        const ref = accountRefOf(item.from);
-        if (ref) trustRef.current.rememberRef(keys.roomId, ref, got.spk);
+        // Its bundle is remembered with its key — but NOT behind the reference the server says it came from,
+        // and not as a device seen in a hello: a relayed item never makes a device one we seal to (review P01).
+        trustRef.current.rememberDevice(got.spk, { mb: got.senderBundle, apk: account?.valid ? account.publicKey : null, acc: account?.valid ? got.sacc : null });
         opened = { payload: got.payload, version: 4, signer: signerOf(got.spk, account), certVersion: account?.v, sealedWith: "p4-mailbox" };
       } else {
         try {
@@ -2243,10 +2324,15 @@ function ChatApp() {
       if (!checked || checked.kind === "audio-status" || checked.kind === "receipt") continue;
       if (messagesRef.current.some((m) => m.id === checked.id)) continue;
       // § 11: fresh — and dated by the time it arrived when the sender's clock is far ahead.
-      const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: item.from.peerId, name: checked.senderName });
+      const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: item.from.peerId, name: checked.senderName }, { live: false });
+      // Review P10: the replay window cannot be read now — not acknowledged, the relay keeps it for the next delivery.
+      if (when === "unavailable") { handled.splice(handled.indexOf(item.id), 1); continue; }
       if (when === null) continue;
       const plaintext = when === checked.createdAt ? checked : { ...checked, createdAt: when };
       relaySendersRef.current.set(plaintext.id, { peerId: item.from.peerId, accountId: accountRefOf(item.from) });
+      // Review P04: an attested sender of a relayed item is looked up in the key log too (its message follows the answer).
+      const relaySigner = opened.signer;
+      if (relaySigner?.valid && relaySigner.account?.valid) void checkDeviceInLog(accountRefOf(item.from), relaySigner.account.publicKey, relaySigner.publicKey, plaintext.senderName);
       incoming.push(chatMessageFrom(plaintext, {
         cryptoVersion: opened.version,
         sealedWith: opened.sealedWith,
@@ -2260,7 +2346,7 @@ function ChatApp() {
       }));
     }
     if (incoming.length > 0) {
-      setMessages((cur) => mergeMessages(cur, incoming));
+      setMessages((cur) => mergeMessages(cur, incoming.map(withKt)));
       systemMessage(t(lang, "away.received").replace("{n}", String(incoming.length)));
       void logAccountEvent("decrypt-ok", { messages: incoming.length });
     }
@@ -2558,7 +2644,7 @@ function ChatApp() {
    * pair key for a private one, the room key for a peer without a pair yet.
    * Returns how many took it and the ciphertext to show in the info view.
    */
-  async function deliverToPeers(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets?: Set<string>): Promise<{ sent: number; cipher: string; kinds: Set<SealedWith> }> {
+  async function deliverToPeers(payload: { id: string }, roomEnvelope: () => Promise<DataChannelEnvelope | null>, targets?: Set<string>, opts: { only?: Set<string> } = {}): Promise<{ sent: number; to: string[]; cipher: string; kinds: Set<SealedWith>; held: string[]; roomKeyTo: string[] }> {
     const keys = keyRef.current;
     const store = senderKeysRef.current;
     const me = myIdRef.current;
@@ -2567,12 +2653,17 @@ function ChatApp() {
     const privateSend = Boolean(targets);
     let live: DataChannelEnvelope | null = null;
     let sent = 0;
+    const to: string[] = [];
     let cipher = "";
     const kinds = new Set<SealedWith>();
-    const open = [...peersRef.current.values()].filter((peer) => (!targets || targets.has(peer.id)) && peer.channel?.readyState === "open");
-    // 6.12: a channel that has just opened is still saying hello — wait a moment
-    // for the protocol it speaks rather than fall back to the room key.
-    if (p4) await Promise.all(open.map((peer) => (p4.protocolOf(peer.id) === "pending" ? p4.settled(peer.id, 2500) : null)));
+    /** 6.12 review P03: peers this could not go to safely yet — it waits for them in the outbox. */
+    const held: string[] = [];
+    /** Peers that got the room key (genuinely unknown: no hello yet; or protocol 3 without a pair) — the info view says so. */
+    const roomKeyTo: string[] = [];
+    const open = [...peersRef.current.values()].filter((peer) => (!targets || targets.has(peer.id)) && (!opts.only || opts.only.has(peer.id)) && peer.channel?.readyState === "open");
+    // 6.12: a channel that has just opened is still saying hello — wait a moment (bounded) for the
+    // protocol it speaks, and for a protocol-4 peer for its session, rather than fall back to the room key.
+    if (p4) await Promise.all(open.map((peer) => (p4.negotiating(peer.id) ? p4.settled(peer.id, 2500, { session: true }) : null)));
     // Protocol 4 (§ 6): one sender-key message for every protocol-4 peer; each got our chain first.
     const room4 = !privateSend && p4 ? await p4.sealRoom(payload.id, payload, open.map((peer) => peer.id)).catch(() => null) : null;
     for (const peer of open) {
@@ -2589,7 +2680,7 @@ function ChatApp() {
         } else if (room4?.to.includes(peer.id)) {
           text = JSON.stringify(room4.envelope); kind = "p4-sk"; c = room4.envelope.c;
         }
-        if (!text) continue; // never the room key to a protocol-4 peer
+        if (!text) { held.push(peer.id); continue; } // never the room key to a protocol-4 peer: it waits
       } else if (keys && proto === 3 && store.hasPair(peer.id)) {
         if (privateSend) {
           const envelope = await store.sealPrivate(keys, payload.id, payload, me, peer.id, identity);
@@ -2606,30 +2697,51 @@ function ChatApp() {
         }
       }
       if (!text) {
-        // No session of either protocol (yet): the room key, as before.
+        // 6.12 review P03: no session of either protocol (yet). The room key only for a room message to a
+        // peer that is genuinely unknown (no hello) or speaks protocol 3 — never to a device that spoke
+        // protocol 4 (its hello in hand, its key marked, its member's account pinned), never a private message.
+        if (privateSend || !p4?.mayUseRoomKey(peer.id) || memberSpokeP4(peer.id)) { held.push(peer.id); continue; }
         const envelope = await roomEnvelope();
         if (!envelope) continue;
         text = JSON.stringify(envelope); kind = "room"; c = envelope.ciphertext;
+        roomKeyTo.push(peer.id);
       }
       try {
         channel.send(text);
         sent += 1;
+        to.push(peer.id);
         kinds.add(kind);
         if (!cipher || kind !== "room") cipher = c;
         const st = peerStatsRef.current.get(peer.id);
         if (st) st.sent += text.length;
-      } catch { /* the next channel */ }
+      } catch { held.push(peer.id); /* the channel is closing: it waits */ }
     }
-    return { sent, cipher, kinds };
+    return { sent, to, cipher, kinds, held, roomKeyTo };
+  }
+
+  /** Review P03: has the member behind this peer ever spoken protocol 4 here (a device behind its reference, its account pinned)? */
+  function memberSpokeP4(peerId: string): boolean {
+    const keys = keyRef.current;
+    const ref = peerRefsRef.current.get(peerId);
+    if (!keys || !ref) return false;
+    const book = trustRef.current;
+    return Boolean(book.accountOf(keys.roomId, ref)) || book.devicesOfRef(keys.roomId, ref, 0).some((d) => book.p4Seen(d.pk));
   }
 
   /** 6.12: the outbox's flush — a waiting payload, opened from its page-only seal, sealed now for whoever can take it. */
-  deliverQueuedRef.current = async (id, sealed, targets) => {
+  deliverQueuedRef.current = async (id, sealed, targets, only) => {
     let payload: { id: string };
-    try { payload = await payloadSealerRef.current.open<{ id: string }>(id, sealed); } catch { return 0; }
+    try { payload = await payloadSealerRef.current.open<{ id: string }>(id, sealed); } catch { return { to: [], held: [] }; }
     let room: DataChannelEnvelope | null | undefined;
-    const delivered = await deliverToPeers(payload, async () => (room === undefined ? (room = await sealForRoom(payload)) : room), targets);
-    return delivered.sent;
+    // `only`: a room message held for these peers (review P03) — sealed as a room message, not a private one.
+    const delivered = only && targets
+      ? await deliverToPeers(payload, async () => (room === undefined ? (room = await sealForRoom(payload)) : room), undefined, { only: targets })
+      : await deliverToPeers(payload, async () => (room === undefined ? (room = await sealForRoom(payload)) : room), targets);
+    if (delivered.to.length) {
+      const how = bestSealing(delivered.kinds);
+      setMessages((cur) => cur.map((m) => (m.id === id && m.mine ? { ...m, sealedHow: [...new Set([...(m.sealedHow ?? []), ...delivered.kinds])], ...(m.sealedWith ? {} : how ? { sealedWith: how } : {}) } : m)));
+    }
+    return { to: delivered.to, held: delivered.held };
   };
 
   async function broadcastAudioStatus(next: AudioStatus) {
@@ -2824,20 +2936,40 @@ function ChatApp() {
   }
 
   /** 6.12: a peer's hello was accepted — protocol 3 at once, protocol 4 once the session exists. */
+  /**
+   * § 7.4 (review P01): a live protocol-4 peer's room reference — the member's ACCOUNT is pinned behind it
+   * (kept past bundle expiry; another account already pinned is not replaced: that is a changed key), and the
+   * device is remembered behind it only when it belongs to the pinned account. Also when the reference
+   * arrives after the hello (the peer signed in meanwhile).
+   */
+  function rememberPeerRef(peerId: string) {
+    const keys = keyRef.current;
+    const info = p4Ref.current?.info(peerId);
+    const ref = peerRefsRef.current.get(peerId);
+    if (!keys || !ref || info?.protocol !== 4) return;
+    const book = trustRef.current;
+    if (info.account?.valid) book.pinAccount(keys.roomId, ref, info.account.publicKey);
+    book.rememberRef(keys.roomId, ref, info.pk);
+  }
+
   function onPeerReady(peerId: string, info: PeerInfo) {
     setP4Peers((cur) => ({ ...cur, [peerId]: info.protocol }));
-    const keys = keyRef.current;
+    // The username claim and caps of the ACCEPTED hello (review P02: in a v4 hello they are signed; protocol 3 never was).
+    const user = cleanUsername(info.user);
+    if (user) peerUsersRef.current.set(peerId, user); else peerUsersRef.current.delete(peerId);
+    const channel = peersRef.current.get(peerId)?.channel;
+    if (channel && info.caps.includes("bin")) binaryChannelsRef.current.add(channel);
     if (info.protocol === 3) {
       warnOnce(`legacy:${info.pk}`, tf(lang, "p4.legacyPeer", { name: peersRef.current.get(peerId)?.name || `peer-${peerId.slice(-4)}` }), "info");
       // Both sides seal call frames with the protocol-3 pair's media keys.
       const pair = senderKeysRef.current.pairOf(peerId);
       if (pair && info.caps.includes("media")) mediaE2eeRef.current.setKeys(peerId, pair.mediaSend, pair.mediaRecv);
     } else {
-      // § 7.1 / 12.2: the device's bundle and account go with its pin; behind its room reference too (it may come back away).
+      // § 7.1 / 7.4 / 12.2: the device (seen in a valid hello: its device pin), its bundle and VALID account
+      // attestation; the member's account behind its room reference (rememberPeerRef).
       const apk = info.account?.valid ? info.account.publicKey : null;
-      trustRef.current.rememberDevice(info.pk, { mb: info.mb, apk });
-      const ref = peerRefsRef.current.get(peerId);
-      if (ref && keys) trustRef.current.rememberRef(keys.roomId, ref, info.pk);
+      trustRef.current.rememberDevice(info.pk, { mb: info.mb, apk, acc: apk ? info.acc : null, hello: true });
+      rememberPeerRef(peerId);
       if (apk) peerAccountKeysRef.current.set(peerId, apk);
       // § 14.4: their tree head against ours (split view), the account in the log.
       if (info.sth && onHomeServer()) void ktRef.current?.gossip(info.sth);
@@ -2847,22 +2979,81 @@ function ChatApp() {
     }
     // 6.7: a session exists now — they learn my profile's version.
     void profileExchange().hello(peerId, info.caps);
+    // Review P03: what waited for this peer's secure session goes now.
+    if (outboxRef.current.size() > 0) void flushOutboxRef.current(t(lang, "p4.held.sessionReady"));
   }
 
   /** § 14.4: an account-attested peer, first seen this session — is its device in the server's key log, not revoked? */
   async function checkPeerInLog(peerId: string, info: PeerInfo) {
-    const kt = ktRef.current;
     const ref = peerRefsRef.current.get(peerId);
-    if (!kt || !onHomeServer() || !info.account?.valid || !ref) return;
-    const slot = `${info.account.publicKey}|${info.pk}`;
-    if (ktCheckedRef.current.has(slot)) return;
+    if (!info.account?.valid) return;
+    const name = peersRef.current.get(peerId)?.name || `peer-${peerId.slice(-4)}`;
+    const verdict = await checkDeviceInLog(ref, info.account.publicKey, info.pk, name, info.user);
+    // Review P04: a username claim the log does not bear out is not shown.
+    if (verdict?.userMismatch) peerUsersRef.current.delete(peerId);
+  }
+
+  /**
+   * 6.12 review P04 (§ 14.4): what the server's key log says about this attested device. "off": this
+   * server keeps no log (or we are on another server's room), nothing to check; otherwise the answer
+   * so far — "pending" until a lookup came back. Only "ok" / "off" let a device count as its account's.
+   */
+  function ktStandingOf(apk: string, pk: string, server?: string): KtStanding {
+    const kt = ktRef.current;
+    if (server || !kt || !onHomeServer() || kt.current().state === "off") return "off";
+    const got = ktResultsRef.current.get(`${apk}|${pk}`);
+    if (!got) return "pending";
+    if (got === "revoked") return "ok"; // a revoked device is "changed" through the trust book
+    return got;
+  }
+
+  /** § 14.4: one attested device in the key log (once per device and account); its messages follow the answer. */
+  async function checkDeviceInLog(ref: string | undefined, apk: string, pk: string, name: string, user?: string): Promise<KtVerdict | null> {
+    const kt = ktRef.current;
+    if (!kt || !onHomeServer() || !ref) return null;
+    // Our own join did not prove the room key: in a room that proves the hub answers a lookup with nothing
+    // (§ 14.3, review S06) — that is no answer about the member, so do not ask (it stays "not yet checked").
+    if (hubProvenRef.current === false) return null;
+    const slot = `${apk}|${pk}`;
+    if (ktCheckedRef.current.has(slot)) return null;
     ktCheckedRef.current.add(slot);
-    const lookup = await hubAsk<KtLookup>("kt-lookup", ref);
-    const verdict = await kt.checkDevice(lookup, info.account.publicKey, info.pk, info.user).catch(() => "unverified" as const);
-    if (verdict === "revoked") {
-      trustRef.current.markRevoked(info.pk);
-      warnOnce(`revoked:${info.pk}`, tf(lang, "p4.kt.revoked", { name: peersRef.current.get(peerId)?.name || `peer-${peerId.slice(-4)}` }), "error");
+    // The log's key and head first (a peer can be ready before the first refresh is done).
+    if (kt.current().state === "unknown") await kt.refresh().catch(() => undefined);
+    if (kt.current().state === "off") {
+      const ktSlot = await ktSlotOf(apk, pk);
+      setMessages((cur) => cur.map((m) => (m.identity?.kt === "pending" && m.identity.ktSlot === ktSlot ? { ...m, identity: settleKt(m.identity, "ok") } : m)));
+      return null;
     }
+    const lookup = await hubAsk<KtLookup>("kt-lookup", ref);
+    const verdict = await kt.checkDevice(lookup, apk, pk, user).catch((): KtVerdict => ({ status: "unverified" }));
+    const status = verdict.status === "off" ? "ok" : verdict.status;
+    ktResultsRef.current.set(slot, status);
+    if (verdict.status === "revoked") {
+      trustRef.current.markRevoked(pk);
+      warnOnce(`revoked:${pk}`, tf(lang, "p4.kt.revoked", { name }), "error");
+    } else if (status === "absent" || status === "unverified") {
+      warnOnce(`kt-${status}:${pk}`, tf(lang, `p4.kt.device.${status}`, { name }), "warning");
+    }
+    // The messages already here from this device show the answer now (and those still on their way, withKt).
+    const ktSlot = await ktSlotOf(apk, pk);
+    ktSlotResultsRef.current.set(ktSlot, status);
+    setMessages((cur) => cur.map((m) => (m.identity?.kt && m.identity.ktSlot === ktSlot ? { ...m, identity: settleKt(m.identity, status) } : m)));
+    return verdict;
+  }
+
+  /** A message about to be shown whose identity waits for a key-log answer that came meanwhile. */
+  function withKt(m: ChatMessage): ChatMessage {
+    const slot = m.identity?.kt === "pending" ? m.identity.ktSlot : undefined;
+    const status = slot ? ktSlotResultsRef.current.get(slot) : undefined;
+    return status && m.identity ? { ...m, identity: settleKt(m.identity, status) } : m;
+  }
+
+  /** A message identity that waited for the key log (`kt`), with the log's answer. */
+  function settleKt(identity: MessageIdentity, status: "ok" | "revoked" | "absent" | "unverified"): MessageIdentity {
+    const { kt: _kt, ktState, ktSlot, ...rest } = identity;
+    if (status === "ok") return { ...rest, account: true, state: ktState ?? "new", ...(ktState === "verified" ? { checked: true } : {}) };
+    if (status === "revoked") return { ...rest, account: true, state: "changed", revoked: true };
+    return { ...rest, kt: status, ...(ktState ? { ktState } : {}), ...(ktSlot ? { ktSlot } : {}) };
   }
 
   /** § 9 (F-19): a fresh media key for our direction to this protocol-4 peer, sent over its ratchet, then used. */
@@ -2890,9 +3081,7 @@ function ChatApp() {
     if (inner.t === "file") {
       const f = inner as { transferId?: unknown; key?: unknown };
       if (typeof f.transferId !== "string" || typeof f.key !== "string" || f.transferId.length > 96) return;
-      const keys = fileKeysRef.current;
-      keys.set(`${peerId}\u0000${f.transferId}`, { fk: f.key, at: Date.now() });
-      while (keys.size > 64) keys.delete(keys.keys().next().value!);
+      rememberFileKey(peerId, f.transferId, f.key);
     }
   }
 
@@ -2903,8 +3092,50 @@ function ChatApp() {
     const got = fileKeysRef.current.get(slot);
     if (!got) return null;
     fileKeysRef.current.delete(slot);
-    return { fk: got.fk, signer: p4Ref.current?.signer(from) ?? null };
+    return { fk: got.fk, signer: got.signer ?? p4Ref.current?.signer(from) ?? null };
   };
+
+  /** Keeps a transfer's FK (bounded) and wakes whoever waits for it (a proxied meta, review P07). */
+  function rememberFileKey(from: string, transferId: string, fk: string, signer?: Signer | null) {
+    const keys = fileKeysRef.current;
+    const slot = `${from}\u0000${transferId}`;
+    keys.set(slot, { fk, at: Date.now(), ...(signer ? { signer } : {}) });
+    while (keys.size > 64) keys.delete(keys.keys().next().value!);
+    const waiting = fileKeyWaitersRef.current.get(slot);
+    fileKeyWaitersRef.current.delete(slot);
+    for (const wake of waiting ?? []) wake();
+  }
+
+  /** § 8 (review P07): the FK of a proxied transfer may arrive just after its meta — wait for it, bounded. */
+  function waitForFileKey(from: string, transferId: string, ms: number): Promise<void> {
+    const slot = `${from}\u0000${transferId}`;
+    if (fileKeysRef.current.has(slot)) return Promise.resolve();
+    return new Promise((resolve) => {
+      const list = fileKeyWaitersRef.current.get(slot) ?? [];
+      list.push(resolve);
+      fileKeyWaitersRef.current.set(slot, list);
+      window.setTimeout(resolve, ms);
+    });
+  }
+
+  /**
+   * § 8 (review P07): the FK of a file the server relays (proxy transport — no data channel, so no
+   * ratchet): it came in a sealed signal from `source`, as a mailbox item sealed to one of THIS
+   * device's bundles (end to end: the room-key layer around it only routes it). Opened, it is kept
+   * for that sender and transfer, used once.
+   */
+  async function acceptProxyFileKey(source: string, sig: { transferId?: unknown; item?: unknown }) {
+    const keys = keyRef.current;
+    if (!keys || typeof sig.transferId !== "string" || sig.transferId.length > 96) return;
+    const env = sig.item as Record<string, unknown>;
+    if (!(isMailboxItem(env) || isMailboxSet(env))) return;
+    const mailbox = await ensureMailbox();
+    const got = mailbox ? await mailbox.open<{ id?: unknown; t?: unknown; fk?: unknown }>(env, keys.roomId).catch(() => null) : null;
+    if (!got || got.payload.id !== sig.transferId || got.payload.t !== "fk" || typeof got.payload.fk !== "string") return;
+    try { if (fromBase64(got.payload.fk).length !== 32) return; } catch { return; }
+    const account = await verifyAccount(got.sacc, got.spk);
+    rememberFileKey(source, sig.transferId, got.payload.fk, signerOf(got.spk, account));
+  }
 
   /**
    * An opened payload from a peer's channel, whatever sealed it: checked,
@@ -2923,8 +3154,10 @@ function ChatApp() {
     }
     // § 11: a replay or one older than the window is dropped; one dated far ahead
     // (the sender's clock is off) is kept with the time it arrived.
-    const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: peerId, name: checked.senderName || peerName });
-    if (when === null) return;
+    // Review P10: on a live chain (ratchet / sender key) a frame cannot be replayed; a room-key envelope could.
+    const live = sealedWith !== "room" && sealedWith !== "p4-mailbox";
+    const when = await freshMessage(checked.id, (opened.payload as { createdAt?: unknown }).createdAt, { id: peerId, name: checked.senderName || peerName }, { live });
+    if (when === null || when === "unavailable") return;
     const plaintext = when === checked.createdAt ? checked : { ...checked, createdAt: when };
     const forUsAlone = sealedWith === "pair" || sealedWith === "p4-pair";
 
@@ -2945,9 +3178,10 @@ function ChatApp() {
     if (messagesRef.current.some((m) => m.id === plaintext.id)) return;
 
     const identity = await identityFor(opened.signer, plaintext.senderName, { protocol: opened.version === 4 ? 4 : 3, certVersion: opened.certVersion });
+    const held = identity.state === "changed";
     setMessages((current) => [
       ...current,
-      chatMessageFrom(plaintext, {
+      withKt(chatMessageFrom(plaintext, {
         cipher,
         cryptoVersion: opened.version,
         sealedWith,
@@ -2957,7 +3191,7 @@ function ChatApp() {
           { state: "received", at: receivedAt, meta: peerId.slice(-6) },
           { state: "decrypted", at: Date.now() },
         ],
-      }),
+      })),
     ]);
     dispatchInternal("message", { senderId: plaintext.senderId });
     const roomSec = (roomRef.current && prefsRef.current.roomSecurity[roomRef.current]) || DEFAULT_ROOM_SECURITY;
@@ -2973,9 +3207,10 @@ function ChatApp() {
       "Notification" in window &&
       Notification.permission === "granted"
     ) {
-      // 6.7: by the template and the user's choice; the page decrypted it, so it may show the text.
+      // 6.7: by the template and the user's choice; the page decrypted it, so it may show the text —
+      // 6.12 review P14: not the text of a message held for a changed key.
       showLocalNotification(
-        { kind: "message", room: roomRef.current || undefined, sender: plaintext.senderName, text: plaintext.flags?.sealed ? "🔒" : plaintext.text || "📎", tag: "m5cet" },
+        { kind: "message", room: roomRef.current || undefined, sender: plaintext.senderName, text: held ? tf(lang, "p4.held.title", { name: plaintext.senderName }) : plaintext.flags?.sealed ? "🔒" : plaintext.text || "📎", tag: "m5cet" },
         { lang: lang === "cs" || lang === "de" ? lang : "en" },
       );
     }
@@ -3056,10 +3291,8 @@ function ChatApp() {
       }
 
       if (raw.kind === "hello") {
-        const user = cleanUsername(raw.user);
-        if (user) peerUsersRef.current.set(peerId, user);
+        // 6.12 review P02: the username claim is taken from the ACCEPTED hello (onPeerReady) — in a v4 hello it is signed.
         if (excludedRef.current.has(String(raw.pk))) { try { channel.close(); } catch { /* ignore */ } return; }
-        if (Array.isArray(raw.caps) && raw.caps.includes("bin")) binaryChannelsRef.current.add(channel);
         identityRef.current ??= await loadIdentity().catch(() => null);
         // Protocol 4 or 3, the downgrade rule, our chain: p4-session.ts (events → onPeerReady).
         await p4Room()?.handle(peerId, raw);
@@ -3262,6 +3495,9 @@ function ChatApp() {
       warnOnce(`mismatch:${source}`, t(lang, "sec.keyMismatch").replace("{name}", peersRef.current.get(source)?.name || `peer-${source.slice(-4)}`), "error");
       return;
     }
+    // 6.12 review P07 (§ 8): the FK of a file the server relays, sealed to this device's mailbox.
+    const fkSignal = desc as { p4?: unknown; transferId?: unknown; item?: unknown };
+    if (fkSignal.p4 === "fk") { await acceptProxyFileKey(source, fkSignal); return; }
 
     let handle = peersRef.current.get(source);
     if (!handle) {
@@ -3429,7 +3665,7 @@ function ChatApp() {
     const carried = carryRef.current.get(nextRoom);
     if (carried?.length) {
       carryRef.current.delete(nextRoom);
-      setMessages((cur) => mergeMessages(cur, carried));
+      setMessages((cur) => mergeMessages(cur, carried.map(withKt)));
     }
     setPeers([]);
     setAwayPeers([]);
@@ -3531,12 +3767,14 @@ function ChatApp() {
         const chunk = frameFromBinary(event.data);
         const keys = keyRef.current;
         if (!chunk || chunk.kind !== "proxy-chunk" || !keys) return;
-        await handleIncomingFrame(keys, incomingFilesRef.current, chunk, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
+        // Behind its meta (which may be waiting for the FK, review P07).
+        proxyInboxRef.current = proxyInboxRef.current.then(() => handleIncomingFrame(keys, incomingFilesRef.current, chunk, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
           const sock = socketRef.current;
           if (sock?.readyState !== WebSocket.OPEN) return false;
           sock.send(JSON.stringify({ type: "proxy-need", transferId, seqs }));
           return true;
-        }));
+        }))).catch(() => undefined);
+        await proxyInboxRef.current;
         return;
       }
       let frame: SignalFrame;
@@ -3684,6 +3922,7 @@ function ChatApp() {
         // Someone signed in or out without leaving the room.
         const ref = accountRefOf(frame);
         if (ref) peerRefsRef.current.set(frame.peerId, ref); else peerRefsRef.current.delete(frame.peerId);
+        if (ref) rememberPeerRef(frame.peerId);
         setPeerView(frame.peerId, { name: frame.name });
         return;
       }
@@ -3805,7 +4044,18 @@ function ChatApp() {
           userDisconnect();
           return;
         }
-        // 6.12 (§ 13): the join's proof of the room key was refused, or one is required — retrying would not help.
+        // 6.12 (§ 13): the join's proof of the room key was refused. Review S14: not a dead end — someone may
+        // have registered this room with another key (squatting) while our passphrase is right. Explain, and
+        // join once more WITHOUT a proof (legacy: the others see us "unproven") — when the server says such a
+        // join would be admitted (`legacyAllowed`); otherwise (proofs required) there is nothing more to try.
+        if ((frame.code === "room-proof" || frame.code === "room-proof-required") && frame.legacyAllowed === true && !proofRetriedRef.current.has(socket)) {
+          proofRetriedRef.current.add(socket);
+          systemMessage(t(lang, "p4.roomProofRetry"), { kind: "warning" });
+          setHubProven(false);
+          joinSentRef.current.delete(socket);
+          await joinOfRef.current.get(socket)?.(null);
+          return;
+        }
         if (frame.code === "room-proof" || frame.code === "room-proof-required") {
           systemMessage(t(lang, frame.code === "room-proof" ? "p4.roomProof" : "p4.roomProofRequired"), { kind: "error" });
           userDisconnect();
@@ -3851,12 +4101,20 @@ function ChatApp() {
           ...("iv" in frame && frame.iv ? { iv: frame.iv } : {}),
           ...("ciphertext" in frame && frame.ciphertext ? { ciphertext: frame.ciphertext } : {}),
         } as FileTransferEnvelope;
-        await handleIncomingFrame(keys, incomingFilesRef.current, ftx, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
-          const sock = socketRef.current;
-          if (sock?.readyState !== WebSocket.OPEN) return false;
-          sock.send(JSON.stringify({ type: "proxy-need", transferId, seqs }));
-          return true;
-        }), typeof frame.from === "string" && frame.from ? frame.from : undefined); // 6.7 (S19): the sender the server relayed it from
+        const from = typeof frame.from === "string" && frame.from ? frame.from : undefined; // 6.7 (S19): the sender the server relayed it from
+        // 6.12 review P07: one after another — a protocol-4 meta may wait (bounded) for the FK its sender
+        // sealed to this device (a signal), and the chunks wait behind it.
+        const run = async () => {
+          if (frame.type === "proxy-meta" && "v" in frame && frame.v === 4 && from) await waitForFileKey(from, frame.transferId, 5000);
+          await handleIncomingFrame(keys, incomingFilesRef.current, ftx, prefs.maxAttachmentBytes, fileCallbacks((transferId, seqs) => {
+            const sock = socketRef.current;
+            if (sock?.readyState !== WebSocket.OPEN) return false;
+            sock.send(JSON.stringify({ type: "proxy-need", transferId, seqs }));
+            return true;
+          }), from, fileKeyLookup);
+        };
+        proxyInboxRef.current = proxyInboxRef.current.then(run).catch(() => undefined);
+        await proxyInboxRef.current;
         return;
       }
     };
@@ -4115,6 +4373,7 @@ function ChatApp() {
     const relay = await relayToAway(payload, roomEnvelope, away, send?.sealed ? undefined : text);
     const relayed = relay.count;
     if (relay.mailbox) delivered.kinds.add("p4-mailbox");
+    if (relay.mailboxFor.length) audit.push({ state: "encrypted", at: Date.now(), meta: tf(lang, "sec.sealedHow.mailboxFor", { names: relay.mailboxFor.join(", ") }) });
     if (relay.roomKeyFor.length) {
       delivered.kinds.add("room");
       audit.push({ state: "encrypted", at: Date.now(), meta: tf(lang, "sec.sealedHow.roomFor", { names: relay.roomKeyFor.join(", ") }) });
@@ -4126,6 +4385,12 @@ function ChatApp() {
     // 6.12: what waits is the payload under a key of this page only; it is
     // sealed for each peer when it goes (deliverQueuedRef).
     const queueFor = queueTargets(opts.targets);
+    const peerName = (id: string) => peersRef.current.get(id)?.name || `peer-${id.slice(-4)}`;
+    // 6.12 review P03: a peer whose secure session is not up yet (a protocol-4 device, or any peer of a private
+    // message) gets it when the session is ready — never under the room key meanwhile.
+    if (delivered.roomKeyTo.length) {
+      audit.push({ state: "encrypted", at: Date.now(), meta: tf(lang, "sec.sealedHow.roomFallback", { names: delivered.roomKeyTo.map(peerName).join(", ") }) });
+    }
     const queued = sent === 0 && relayed === 0 && queueFor !== null
       && outboxRef.current.add({
         messageId: payload.id,
@@ -4136,9 +4401,24 @@ function ChatApp() {
         createdAt: createdAt,
         expiresAt: computeExpiry(ttlMinutes, createdAt) ?? 0,
       }) !== null;
+    const heldFor = !queued && (sent > 0 || relayed > 0) && delivered.held.length > 0
+      && outboxRef.current.add({
+        messageId: payload.id,
+        room: roomRef.current ?? "",
+        envelope: await payloadSealerRef.current.seal(payload.id, payload),
+        targets: delivered.held,
+        ...(opts.targets ? {} : { only: true }),
+        toNames: delivered.held.map(peerName),
+        createdAt: createdAt,
+        expiresAt: computeExpiry(ttlMinutes, createdAt) ?? 0,
+      }) !== null;
     audit.push(queued
       ? { state: "queued", at: Date.now(), meta: opts.toNames?.join(", ") }
       : { state: "sent", at: Date.now(), meta: tf(lang, sent + relayed === 1 ? "app.recipients.one" : "app.recipients.many", { n: sent + relayed }) });
+    if (heldFor) {
+      audit.push({ state: "queued", at: Date.now(), meta: tf(lang, "p4.held.waiting", { names: delivered.held.map(peerName).join(", ") }) });
+      systemMessage(tf(lang, "p4.held.waiting", { names: delivered.held.map(peerName).join(", ") }));
+    }
     if (queued) setQueuedIds((cur) => new Set(cur).add(payload.id));
 
     if (sent > 0 || relayed > 0 || queued) {
@@ -4715,6 +4995,11 @@ function ChatApp() {
 
   /** 6.12 (§ 12.1): the sender's identity, worded honestly — "verified" only when the user compared. */
   function identityLine(id: MessageIdentity): { text: string; tone: "ok" | "warn" | "muted" } {
+    // 6.12 review P04: the key log has not confirmed the account (yet) — never "account" / "verified".
+    if (id.kt && id.state !== "changed" && id.state !== "invalid") {
+      const extra = [id.verifiedAs ? tf(lang, "sec.identity.verifiedAs", { name: id.verifiedAs }) : "", id.protocol === 3 ? t(lang, "sec.identity.legacy") : ""].filter(Boolean);
+      return { text: t(lang, `sec.identity.kt.${id.kt}`).replace("{fp}", id.fingerprint ?? "") + (extra.length ? ` · ${extra.join(" · ")}` : ""), tone: id.kt === "pending" && !id.verifiedAs ? "muted" : "warn" };
+    }
     const key = id.accepted && id.state !== "verified" ? "sec.identity.accepted"
       : id.state === "verified"
         // Stored before 6.12, "verified" without `checked` meant only "the same key as before".
@@ -4724,9 +5009,11 @@ function ChatApp() {
           : id.state === "changed"
             ? (id.revoked ? "sec.identity.revoked" : "sec.identity.changed")
             : `sec.identity.${id.state}`;
-    const extra = [id.certV1 ? t(lang, "sec.identity.certV1") : "", id.protocol === 3 ? t(lang, "sec.identity.legacy") : ""].filter(Boolean);
+    // Review P08: a verified account writing under another name than the one it was verified under — a warning.
+    const extra = [id.verifiedAs ? tf(lang, "sec.identity.verifiedAs", { name: id.verifiedAs }) : "", id.certV1 ? t(lang, "sec.identity.certV1") : "", id.protocol === 3 ? t(lang, "sec.identity.legacy") : ""].filter(Boolean);
     const text = t(lang, key).replace("{fp}", id.fingerprint ?? "") + (extra.length ? ` · ${extra.join(" · ")}` : "");
-    const tone = id.state === "verified" && id.checked ? "ok" as const
+    const tone = id.verifiedAs ? "warn" as const
+      : id.state === "verified" && id.checked ? "ok" as const
       : id.state === "unsigned" || id.state === "new" || (id.state === "verified" && !id.checked) || id.accepted ? "muted" as const
       : "warn" as const;
     return { text, tone };
@@ -4736,7 +5023,9 @@ function ChatApp() {
   function buildMessageInfo(m: ChatMessage): MessageInfo {
     const peer = m.mine ? undefined : peersRef.current.get(m.senderId);
     const net = m.mine ? undefined : peerNetRef.current.get(m.senderId);
-    const plain = m.flags?.sealed ? (m.mine ? m.sealPlain : undefined) : m.text;
+    // 6.12 review P14: a message held for a changed key shows its text nowhere until the key is accepted.
+    const held = !m.mine && m.identity?.state === "changed";
+    const plain = held ? undefined : m.flags?.sealed ? (m.mine ? m.sealPlain : undefined) : m.text;
     const identity = m.mine
       ? (identityRef.current ? { text: `${t(lang, "sec.myFingerprint")} · ${identityRef.current.fingerprint}`, tone: "ok" as const } : undefined)
       : m.identity ? identityLine(m.identity) : undefined;
@@ -4813,7 +5102,8 @@ function ChatApp() {
         safety: {
           mine: theirApk && myApk ? myApk : identityRef.current.publicKey,
           theirs: theirApk && myApk ? theirApk : theirPk,
-          verified: safetyVerified[theirPk] === true || Boolean(theirApk && trustRef.current.accountVerified(theirApk)),
+          // Review P08: an account counts as verified only under the name it was verified with.
+          verified: safetyVerified[theirPk] === true || Boolean(theirApk && trustRef.current.accountVerifiedFor(theirApk, handle?.name || "") === "yes"),
           // The pin to mark: their account when attested (protocol 3: the account that signed their messages).
           onVerified: () => { void markSafetyVerified(handle?.name || target, theirPk, theirApk ?? peerAccountKeysRef.current.get(target) ?? null); },
           onExclude: () => excludePeer(target),
@@ -4837,6 +5127,11 @@ function ChatApp() {
   function acceptChangedKey(m: ChatMessage) {
     const kid = m.identity?.kid;
     if (!kid || m.identity?.state !== "changed") return;
+    // § 7.4: accepting a changed key also re-pins the member's account behind its room reference (review P01).
+    const keys = keyRef.current;
+    const ref = peerRefsRef.current.get(m.senderId) ?? relaySendersRef.current.get(m.id)?.accountId;
+    const apk = peerAccountKeysRef.current.get(m.senderId);
+    if (keys && ref && apk && m.identity.account) void keyId(apk).then((k) => { if (k === kid) trustRef.current.repinAccount(keys.roomId, ref, apk); });
     void acceptChanged(pinsRef.current, roomRef.current, m.senderName, kid).then(() => {
       setMessages((cur) => cur.map((x) => (x.senderName === m.senderName && x.identity?.state === "changed" && x.identity.kid === kid && !x.identity.revoked ? { ...x, identity: { ...x.identity, state: "new" as const, accepted: true } } : x)));
     });
@@ -5431,10 +5726,23 @@ function ChatApp() {
 
     // 6.12 (§ 8): protocol-4 peers get the file under a random key of its own
     // (FK), sent to each over its pair ratchet BEFORE the meta (the channel is
-    // ordered); older peers — and the server's relay, which only carries a
-    // file when no direct channel (so no session) exists — the protocol-3 key
-    // derived from the room key, in a transfer of their own.
-    if (relayed) { await sendFileTo(file, key, channels, true, null); return; }
+    // ordered); older peers the protocol-3 key derived from the room key, in a
+    // transfer of their own. The server's relay (no direct channel, so no
+    // ratchet): review P07 — the FK sealed to every member's AUTHENTICATED
+    // devices (mailbox items, § 7.4 rules) and handed over in sealed signals;
+    // only when some member has none, the room-derived key — and the user is told.
+    if (relayed) {
+      const p4fk = await proxyFileKey();
+      if (p4fk) {
+        systemMessage(tf(lang, "app.file.proxyP4", { name: file.name }));
+        await sendFileTo(file, key, channels, true, p4fk);
+        p4fk.fk.fill(0);
+      } else {
+        systemMessage(tf(lang, "app.file.proxyRoomKey", { name: file.name }), { kind: "warning" });
+        await sendFileTo(file, key, channels, true, null);
+      }
+      return;
+    }
     const p4 = p4Ref.current;
     const p4Channels: RTCDataChannel[] = [];
     const p4Ids: string[] = [];
@@ -5453,6 +5761,56 @@ function ChatApp() {
       fk.fill(0);
     }
     if (legacyChannels.length) await sendFileTo(file, key, legacyChannels, false, null);
+  }
+
+  /**
+   * § 8 (6.12 review P07): a relayed (proxy) file between protocol-4 clients — a fresh FK, sealed to the
+   * authenticated devices of EVERY member in the room (seen in a valid hello, or certified by their pinned
+   * account; the § 7.4 rules) as a mailbox item, each sent to that member in a sealed signal before the
+   * meta. Null when the room key has to do: no session-less way to reach some member end to end (a member
+   * whose devices this client never authenticated, an older room, no mailbox).
+   */
+  async function proxyFileKey(): Promise<{ transferId: string; fk: Uint8Array } | null> {
+    const keys = keyRef.current;
+    const identity = identityRef.current;
+    const socket = socketRef.current;
+    if (!keys || keys.version !== 3 || !identity || socket?.readyState !== WebSocket.OPEN) return null;
+    const mailbox = await ensureMailbox();
+    const recipients = [...peersRef.current.keys()].filter((id) => id !== myIdRef.current);
+    if (!mailbox || recipients.length === 0) return null;
+    const book = trustRef.current;
+    const p4 = p4Ref.current;
+    const now = Date.now();
+    const transferId = `xfer-${crypto.randomUUID()}`;
+    const fk = crypto.getRandomValues(new Uint8Array(32));
+    // Keyed by peer id: its member's authenticated devices, plus the device of a valid hello this page saw.
+    const sealed = await sealForAway({
+      roomId: keys.roomId, id: transferId, payload: { id: transferId, t: "fk", fk: toBase64(fk) }, refs: recipients, mailbox,
+      senderPk: identity.publicKey, sacc: helloAccountOf(identity.attestation), now,
+      known: (peerId) => {
+        const ref = peerRefsRef.current.get(peerId);
+        const out = ref ? book.sealableDevicesOfRef(keys.roomId, ref, now) : [];
+        const info = p4?.info(peerId);
+        if (info?.protocol === 4 && info.mb && !out.some((d) => d.pk === info.pk)) out.push({ pk: info.pk, mb: info.mb, ...(info.account?.valid ? { apk: info.account.publicKey } : {}) });
+        return out;
+      },
+      directory: onHomeServer() ? (peerId) => {
+        const ref = peerRefsRef.current.get(peerId);
+        return ref ? hubAsk<DirectoryDevice[]>("key-bundles", ref).then((d) => (Array.isArray(d) ? d : [])) : Promise.resolve([]);
+      } : undefined,
+      pinnedAccount: (peerId) => {
+        const ref = peerRefsRef.current.get(peerId);
+        return ref ? book.accountOf(keys.roomId, ref) : null;
+      },
+      isRevoked: (pk) => book.isRevoked(pk),
+    }).catch(() => null);
+    if (!sealed || sealed.withoutBundle.length > 0) { fk.fill(0); return null; }
+    for (const peerId of recipients) {
+      const signal = await sealSignal(keys, myIdRef.current, peerId, { p4: "fk", transferId, item: sealed.per[peerId] });
+      if (socketRef.current !== socket || socket.readyState !== WebSocket.OPEN) { fk.fill(0); return null; }
+      socket.send(JSON.stringify({ type: "signal", target: peerId, payload: signal }));
+    }
+    return { transferId, fk };
   }
 
   /** One transfer of a file to these channels (or the server's relay) — 6.12 under a protocol-4 FK when `p4` is given. */
@@ -6014,7 +6372,7 @@ function ChatApp() {
                 mapPolicy={clientConfig.map}
                 act={rowActionsRef}
                 quoted={message.replyTo ? quoteIndex.get(message.replyTo.id) ?? null : undefined}
-                forwardVerified={verifyForward(message.forwardedFrom, message.text, fwdIndex)}
+                forwardVerified={verifyForward(message.forwardedFrom, message.text, fwdIndex, { senderId: message.senderId, kid: message.identity?.kid })}
                 nameWarning={nameWarnings(message.senderId, message.senderName)}
               />
             );
@@ -6130,13 +6488,18 @@ function ChatApp() {
           const info = p4Ref.current?.info(id) ?? null;
           const pk = info?.pk ?? senderKeysRef.current.pairOf(id)?.peerPublicKey;
           const apk = (info?.account?.valid ? info.account.publicKey : undefined) ?? peerAccountKeysRef.current.get(id);
-          return { name: peersRef.current.get(id)?.name ?? peerNamesRef.current.get(id) ?? id.slice(-6), deviceKey: pk, verified: pk ? safetyVerified[pk] === true || Boolean(apk && trustRef.current.accountVerified(apk)) : false };
+          const name = peersRef.current.get(id)?.name ?? peerNamesRef.current.get(id) ?? id.slice(-6);
+          return { name, deviceKey: pk, verified: pk ? safetyVerified[pk] === true || Boolean(apk && trustRef.current.accountVerifiedFor(apk, name) === "yes") : false };
         }}
         // 6.12: key transparency (a persistent alert) and the protocol each member speaks.
         p4={{
           kt: ktStatus,
           onKtDismiss: () => { void ktRef.current?.dismiss(); },
           peers: peers.filter((p) => p.status === "open" || p4Peers[p.id] !== undefined).map((p) => ({ id: p.id, name: p.name, protocol: p4Peers[p.id] ?? "pending", proven: p.proven })),
+          // Review P04: devices the key log certifies for this account that the user does not know.
+          own: ktOwn ? { status: ktOwn.status, unknown: ktOwn.unknown, foreignAccount: Boolean(ktOwn.foreignAccount) } : null,
+          onOwnAck: acknowledgeOwnDevice,
+          onOwnSessions: () => { setActivePanel(null); setShowAccount(true); },
         }}
       />
       <PrivacyPanel
