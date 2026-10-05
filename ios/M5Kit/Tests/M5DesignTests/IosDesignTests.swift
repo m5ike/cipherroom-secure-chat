@@ -27,6 +27,20 @@ import Testing
                           "nfc.report.files", "nfc.report.html", "nfc.report.saved", "nfc.unavailable.device"]
     /// A safety number's QR (Parts/People: PeopleTexts) — the web's words.
     static let peopleKeys = ["sec.safety.scan", "sec.safety.verified", "sec.safety.mismatch"]
+    /// Why Core NFC cannot do an op (M5NFC NfcPlatform.limit), the PIN key in the Secure Enclave (Settings › Security).
+    static let otherKeys = ["nfc.ios.limit.noReader", "nfc.ios.limit.classic", "nfc.ios.limit.raw", "nfc.ios.limit.hce",
+                            "nfc.ios.limit.payment", "nfc.ios.limit.other", "set.security.pinKey.secure-enclave"]
+    /// Android's texts in the words of what iOS does (server/ios/design.ts IOS_WORDING).
+    static let reworded: Set<String> = [
+        "conversations.section", "conversations.on", "conversations.hint", "conversations.names.hint",
+        "notify.lockScreenHide", "notify.lockScreenHide.hint", "notify.channel.android", "notify.noFcm", "set.security.blocked",
+        "passkey.unsupported", "passkey.rpText", "passkey.addNoPrf", "passkey.boundText", "passkey.noPrf", "passkey.orphan",
+        "passkey.unknownHint", "set.user.boundHint", "settings.callLog", "calllog.hint", "calllog.name.hint",
+        "nfc.hold", "nfc.work.tapScan", "nfc.model.hold", "nfc.tpl.none", "look.mic.blocked",
+    ]
+    /// The screens that are not Android's as they are (server/ios/design.ts IOS_CHANGED_SCREENS): the watch switch,
+    /// no call log rows, the shuffle hint not doubly wrapped, the update notice without "· 0 B".
+    static let changedScreens: Set<String> = ["settings.notify", "settings.calls", "settings.security", "update"]
 
     static func context(settings: SettingsModel = SettingsModel(), dark: Bool = false, lang: String = "en") -> RenderContext {
         RenderContext(design: ios, dark: dark, translator: Translator(design: ios, lang: lang), settings: settings,
@@ -94,14 +108,15 @@ import Testing
     @Test func itIsAndroidsDesignPlusTheIosItems() {
         let ios = Self.ios.document, android = Fixtures.builtIn.document
         #expect(Set(ios.screens.keys) == Set(android.screens.keys))
-        for (id, tree) in android.screens where id != "settings.notify" { #expect(ios.screens[id] == tree, "\(id)") }
-        #expect(ios.screens["settings.notify"] != android.screens["settings.notify"])
+        for (id, tree) in android.screens where !Self.changedScreens.contains(id) { #expect(ios.screens[id] == tree, "\(id)") }
+        for id in Self.changedScreens { #expect(ios.screens[id] != android.screens[id], "\(id)") }
         #expect(ios.menus == android.menus)
         #expect(ios.libraries == android.libraries)
         for lang in DesignLocales.codes {
             let i = ios.strings[lang] ?? [:], a = android.strings[lang] ?? [:]
-            for (k, v) in a { #expect(i[k] == v, "\(lang) \(k)") }
-            #expect(Set(i.keys).subtracting(a.keys) == Set(Self.watchKeys + Self.nfcKeys + Self.peopleKeys), "\(lang)")
+            for (k, v) in a where !Self.reworded.contains(k) { #expect(i[k] == v, "\(lang) \(k)") }
+            for k in Self.reworded { #expect(i[k] != nil && a[k] != nil && i[k] != a[k], "\(lang) \(k)") }
+            #expect(Set(i.keys).subtracting(a.keys) == Set(Self.watchKeys + Self.nfcKeys + Self.peopleKeys + Self.otherKeys), "\(lang)")
         }
         // Android's design never carries the iOS-only items
         let androidJson = android.value.jsonText()
@@ -138,7 +153,7 @@ import Testing
         }
         for lang in DesignLocales.codes {
             let table = Self.ios.document.strings[lang] ?? [:]
-            for key in Self.watchKeys + Self.nfcKeys + Self.peopleKeys {
+            for key in Self.watchKeys + Self.nfcKeys + Self.peopleKeys + Self.otherKeys {
                 let text = table[key] ?? ""
                 #expect(!text.trimmingCharacters(in: .whitespaces).isEmpty, "\(lang) \(key)")
                 #expect(tokens(text) == tokens(en[key] ?? ""), "\(lang) \(key)")
