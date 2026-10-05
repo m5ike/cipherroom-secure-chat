@@ -18,8 +18,8 @@ public enum SettingSchema {
         "callLog", "voice.engine", "voice.autoplay", "voice.dictateSend", "nfc.emulate", "nfc.keyDictionary",
         "messages.receipts", "messages.readReceipts", "people.contacts",
     ]
-    /// …and every key under these.
-    static let privateAreas = ["calls.", "conversations.", "notify.", "location.", "security."]
+    /// …and every key under these (6.14 iOS: "watch." — what the Apple Watch shows of the messages).
+    static let privateAreas = ["calls.", "conversations.", "notify.", "location.", "security.", "watch."]
 
     enum TextRule: Sendable {
         case oneOf(Set<String>)

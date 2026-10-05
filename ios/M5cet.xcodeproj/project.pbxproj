@@ -401,9 +401,9 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/../android/app/src/main/assets/m5/default-design.json",
-				"$(SRCROOT)/../android/app/src/main/assets/m5/icons.json",
-				"$(SRCROOT)/../android/app/src/main/assets/m5/themes.json",
+				"$(SRCROOT)/Design/m5/default-design.json",
+				"$(SRCROOT)/Design/m5/icons.json",
+				"$(SRCROOT)/Design/m5/themes.json",
 			);
 			name = "Copy design assets";
 			outputFileListPaths = (
@@ -415,7 +415,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# The built-in design and its assets exactly as the Android app ships them\n# (android/app/src/main/assets/m5) — one source of truth, copied at every build.\nset -eu\nsrc=\"${SRCROOT}/../android/app/src/main/assets/m5\"\ndst=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/m5\"\nmkdir -p \"$dst\"\nfor f in default-design.json icons.json themes.json; do\n  cp \"$src/$f\" \"$dst/$f\"\ndone\n";
+			shellScript = "# The built-in iOS design and its assets (ios/Design/m5, written from the server's\n# code by script/ios-assets.ts: Android's default design with the iOS look and\n# the iOS-only items) — copied at every build into M5cet.app/m5/.\nset -eu\nsrc=\"${SRCROOT}/Design/m5\"\ndst=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/m5\"\nmkdir -p \"$dst\"\nfor f in default-design.json icons.json themes.json; do\n  cp \"$src/$f\" \"$dst/$f\"\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

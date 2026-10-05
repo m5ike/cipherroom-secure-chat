@@ -1,6 +1,6 @@
 // The app shell's tests (XCTest, hosted by M5cet.app on the simulator): the bundle is
 // what the contract says (docs/ios-architecture.md) — version from package.json, the
-// design assets byte for byte as Android ships them, links, NFC, usage texts in the
+// design assets byte for byte as ios/Design/m5 has them, links, NFC, usage texts in the
 // nine languages, the embedded extension, watch app and WebRTC.
 
 import XCTest
@@ -29,16 +29,20 @@ final class AppShellTests: XCTestCase {
         XCTAssertEqual(AppInfo.build, String(parts[0] * 10000 + parts[1] * 100 + parts[2]))
     }
 
-    // MARK: design assets (one source of truth: android/app/src/main/assets/m5)
+    // MARK: design assets (one source of truth: ios/Design/m5, written by script/ios-assets.ts from the server's code)
 
-    func testDesignAssetsAreTheAndroidOnes() throws {
+    func testDesignAssetsAreTheIosOnes() throws {
         for name in ["default-design", "icons", "themes"] {
             let bundled = try XCTUnwrap(Bundle.main.url(forResource: name, withExtension: "json", subdirectory: "m5"), "\(name).json not bundled")
-            let source = Self.repo.appendingPathComponent("android/app/src/main/assets/m5/\(name).json")
-            XCTAssertEqual(try Data(contentsOf: bundled), try Data(contentsOf: source), "\(name).json differs from Android's")
+            let source = Self.repo.appendingPathComponent("ios/Design/m5/\(name).json")
+            XCTAssertEqual(try Data(contentsOf: bundled), try Data(contentsOf: source), "\(name).json differs from ios/Design/m5")
         }
-        let design = try Data(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "default-design", withExtension: "json", subdirectory: "m5")))
-        XCTAssertNotNil(try JSONSerialization.jsonObject(with: design) as? [String: Any])
+        // The iOS design (Android's with the iOS look and the iOS-only items), not Android's file.
+        let data = try Data(contentsOf: XCTUnwrap(Bundle.main.url(forResource: "default-design", withExtension: "json", subdirectory: "m5")))
+        let design = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(((design["theme"] as? [String: Any])?["light"] as? [String: Any])?["primary"] as? String, "#0064e0")
+        XCTAssertTrue(String(decoding: data, as: UTF8.self).contains("\"setting\":\"watch.on\""), "the Apple Watch switch")
+        XCTAssertNotEqual(data, try Data(contentsOf: Self.repo.appendingPathComponent("android/app/src/main/assets/m5/default-design.json")))
     }
 
     // MARK: links

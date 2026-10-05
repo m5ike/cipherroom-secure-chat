@@ -1,6 +1,8 @@
 // The design files the app bundle carries (the "Copy design assets" build phase copies
-// them from android/app/src/main/assets/m5/): the built-in design, the Lucide icons and
-// the look's templates — read once (Android: Design.builtIn, Icons.load, Appearance).
+// them from ios/Design/m5/, which script/ios-assets.ts writes from server/ios/: Android's
+// default design with the iOS look and the iOS-only items): the built-in design, the
+// Lucide icons and the look's templates — read once (Android: Design.builtIn, Icons.load,
+// Appearance).
 
 import Foundation
 import M5Design
