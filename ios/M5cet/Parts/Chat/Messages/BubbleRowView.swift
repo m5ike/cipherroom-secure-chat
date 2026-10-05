@@ -60,7 +60,6 @@ struct BubbleRowView: View {
             .offset(x: offset)
             .background { under }
             .opacity(dimmed ? 0.55 : 1)
-            .contentShape(.contextMenuPreview, Rectangle())
             .simultaneousGesture(drag, including: message.kind == "sys" ? .subviews : .all)
             .simultaneousGesture(LongPressGesture(minimumDuration: 0.5, maximumDistance: 10).onEnded { _ in longPress() }, including: .all)
             .gesture(SecondaryClick { onMenu(anchor) })
@@ -194,7 +193,7 @@ private struct RowA11y: ViewModifier {
     let actions: [BubbleRowAction]
 
     func body(content: Content) -> some View {
-        actions.reduce(AnyView(content.accessibilityElement(children: .contain))) { view, a in
+        actions.reduce(AnyView(content.accessibilityElement(children: .combine))) { view, a in
             AnyView(view.accessibilityAction(named: Text(verbatim: a.label)) { a.run() })
         }
     }
@@ -207,6 +206,7 @@ struct SecondaryClick: UIGestureRecognizerRepresentable {
     func makeUIGestureRecognizer(context: Context) -> UITapGestureRecognizer {
         let g = UITapGestureRecognizer()
         g.buttonMaskRequired = .secondary
+        g.cancelsTouchesInView = false
         g.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
         return g
     }

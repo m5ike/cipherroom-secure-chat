@@ -63,7 +63,6 @@ struct ComposerPart: View {
             if recording { recBar() } else { row(composer) }
         }
         .background(c.swiftColor("@surface", .white))
-        .frame(idealHeight: 60)
         .onAppear { start(composer) }
         .onDisappear { leave() }
         .onChange(of: composer.request) { _, r in take(r, composer) }
@@ -382,6 +381,8 @@ struct ComposerPart: View {
     // MARK: life
 
     private func start(_ composer: ComposerModel) {
+        // A text waiting for the composer in $form ("composer": a shared text) goes into the field once.
+        if let pending = ctx.host.form.removeValue(forKey: "composer") { composer.text = Expr.toText(pending) }
         if voice == nil {
             let v = ComposerVoice(composer: composer, host: ctx.host)
             v.withMic = { then in withMic(then) }

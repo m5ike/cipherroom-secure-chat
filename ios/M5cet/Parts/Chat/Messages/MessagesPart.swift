@@ -34,6 +34,7 @@ struct MessagesPart: View {
     @State private var roomSeen = ""
     @State private var touchStart = Date.distantPast
     @State private var markTask: Task<Void, Never>?
+    @State private var position = ScrollPosition(idType: String.self)
 
     var body: some View {
         let host = ctx.host
@@ -48,7 +49,7 @@ struct MessagesPart: View {
         let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { _, b in b })
         let roster = ChatRoster(room: room, userName: core.userName)
         ZStack {
-            ScrollViewReader { proxy in
+            Group {
                 ScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
                         ForEach(Array(list.items.enumerated()), id: \.element.id) { i, m in
@@ -61,23 +62,34 @@ struct MessagesPart: View {
                     .padding(.vertical, 6)
                     .scrollTargetLayout()
                 }
+                .scrollPosition($position)
                 .defaultScrollAnchor(.bottom)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .scrollDismissesKeyboard(.interactively)
                 .onScrollTargetVisibilityChange(idType: String.self, threshold: 0.2) { ids in
                     win.visible = Set(ids)
                     scheduleMarkShown()
                 }
-                .onScrollGeometryChange(for: Bool.self) { g in
-                    g.contentOffset.y + g.containerSize.height >= g.contentSize.height - 48
-                } action: { _, bottom in win.atBottom = bottom }
+                .onScrollGeometryChange(for: ListGeometry.self) { g in
+                    let visible = g.containerSize.height - g.contentInsets.top - g.contentInsets.bottom
+                    return ListGeometry(visible: visible, gap: g.contentSize.height + g.contentInsets.bottom - (g.contentOffset.y + g.containerSize.height))
+                } action: { old, new in
+                    // stackFromEnd: a list at its end stays at its end when it gets smaller or larger (the keyboard).
+                    if abs(old.visible - new.visible) > 1, old.gap < 48 {
+                        toEnd()
+                        win.atBottom = true
+                        return
+                    }
+                    win.atBottom = new.gap < 48
+                }
                 .simultaneousGesture(roomFling(win))
-                .onChange(of: room?.freshId) { _, fresh in arrived(fresh, room: room, win: win, proxy: proxy) }
+                .onChange(of: room?.freshId) { _, fresh in arrived(fresh, room: room, win: win) }
                 .onChange(of: win.scrollTarget) { _, target in
                     guard let target else { return }
                     win.scrollTarget = nil
                     let still = Look(settings: host.settings, reducedMotion: host.reducedMotion).still
-                    if still { proxy.scrollTo(target, anchor: UnitPoint(x: 0.5, y: 0.2)) } else {
-                        withAnimation(.easeInOut(duration: 0.3)) { proxy.scrollTo(target, anchor: UnitPoint(x: 0.5, y: 0.2)) }
+                    if still { position.scrollTo(id: target, anchor: UnitPoint(x: 0.5, y: 0.2)) } else {
+                        withAnimation(.easeInOut(duration: 0.3)) { position.scrollTo(id: target, anchor: UnitPoint(x: 0.5, y: 0.2)) }
                     }
                     if let f = win.flashId { win.flashId = nil; flashTokens[f, default: 0] += 1 }
                 }
@@ -90,10 +102,10 @@ struct MessagesPart: View {
                     #if DEBUG
                     ChatSamples.start(host)
                     #endif
-                    load(room, win: win, proxy: proxy)
+                    load(room, win: win)
                 }
-                .onChange(of: room?.key) { _, _ in load(room, win: win, proxy: proxy) }
-                .onChange(of: room?.restores) { _, _ in load(room, win: win, proxy: proxy) }
+                .onChange(of: room?.key) { _, _ in load(room, win: win) }
+                .onChange(of: room?.restores) { _, _ in load(room, win: win) }
             }
             .onChange(of: list.hidden) { _, h in
                 win.hiddenIds = h
@@ -146,21 +158,25 @@ struct MessagesPart: View {
 
     // MARK: the list moves
 
-    private func load(_ room: (any RoomModel)?, win: ChatWindowState, proxy: ScrollViewProxy) {
+    private func load(_ room: (any RoomModel)?, win: ChatWindowState) {
         let key = room?.key ?? ""
         if key != roomSeen { win.peek = false; win.tag = ""; roomSeen = key; win.roomKey = key }
         restoresSeen = room?.restores ?? -1
-        if let last = room?.messages.last?.id { proxy.scrollTo(last, anchor: .bottom) }
+        toEnd()
         scheduleMarkShown()
     }
 
+    /// The list at its end (the newest message at the bottom) — exact also for rows not drawn yet.
+    private func toEnd(animated: Bool = false) {
+        if animated { withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) } } else { position.scrollTo(edge: .bottom) }
+    }
+
     /// MessageList.add: a new message — its enter animation; the list follows when it was at its end or it is mine.
-    private func arrived(_ fresh: String?, room: (any RoomModel)?, win: ChatWindowState, proxy: ScrollViewProxy) {
+    private func arrived(_ fresh: String?, room: (any RoomModel)?, win: ChatWindowState) {
         guard let fresh, let m = room?.message(fresh) else { return }
         animateId = fresh
         if win.atBottom || m.mine {
-            let still = Look(settings: ctx.host.settings, reducedMotion: ctx.host.reducedMotion).still
-            if still { proxy.scrollTo(fresh, anchor: .bottom) } else { withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(fresh, anchor: .bottom) } }
+            toEnd(animated: !Look(settings: ctx.host.settings, reducedMotion: ctx.host.reducedMotion).still)
         }
         Task { try? await Task.sleep(for: .milliseconds(800)); if animateId == fresh { animateId = nil } }
         scheduleMarkShown()
@@ -307,6 +323,12 @@ struct MessagesPart: View {
     }
 }
 
+/// The list's visible height and how far its end is below the visible part.
+private struct ListGeometry: Equatable {
+    let visible: CGFloat
+    let gap: CGFloat
+}
+
 /// One row: its $msg built when it is drawn (LazyVStack draws only what is near the screen).
 private struct MessageRowContainer: View {
     let message: ChatMessage
@@ -325,11 +347,54 @@ private struct MessageRowContainer: View {
         let m = message
         let scope = ChatMessageScope.scope(m, previous: previous, room: room, byId: byId, roster: roster, tr: ctx.t,
                                            has: { ChatIcons.has($0) }, settings: host.settings, now: Millis.now)
-        BubbleRowView(message: m, screen: ChatMessageScope.screen(m), scope: scope, animate: animate, dimmed: dimmed, flashToken: flashToken,
-                      canReply: ChatActions.canReply(m), canForward: ChatActions.canForward(m), actions: ChatActions.a11y(m, host: host),
-                      onReply: { ChatActions.reply(m, host: host) }, onForward: { ChatActions.forward(m, host: host) },
-                      onMenu: { anchor in ChatActions.menu(m, host: host, anchor: anchor) },
-                      onBubbleDrag: { on in if on { onBubbleTouch() } })
+        let screen = ChatMessageScope.screen(m)
+        VStack(spacing: 0) {
+            BubbleRowView(message: m, screen: screen, scope: scope, animate: animate, dimmed: dimmed, flashToken: flashToken,
+                          canReply: ChatActions.canReply(m), canForward: ChatActions.canForward(m), actions: ChatActions.a11y(m, host: host),
+                          onReply: { ChatActions.reply(m, host: host) }, onForward: { ChatActions.forward(m, host: host) },
+                          onMenu: { anchor in ChatActions.menu(m, host: host, anchor: anchor) },
+                          onBubbleDrag: { on in if on { onBubbleTouch() } })
+            // A design from before 6.1 has no msgBody slot: the picture then goes under the bubble as before.
+            if m.fileImage, m.fileDataUrl != nil, !Self.usesSlot(host.design, screen, "msgBody") {
+                LegacyPicture(message: m, out: screen == "message.out", host: host)
+            }
+        }
+    }
+
+    /// Whether a template places this slot (MessageList.usesSlot).
+    static func usesSlot(_ design: Design, _ screen: String, _ slot: String) -> Bool {
+        func walk(_ n: DesignNode) -> Bool {
+            if n.el == "slot", n.props?["name"]?.stringValue == slot { return true }
+            return (n.children ?? []).contains(where: walk)
+        }
+        return design.screen(screen).map(walk) ?? false
+    }
+}
+
+/// The picture under a bubble of a pre-6.1 design: at most 240 wide and 280 tall, at the bubble's side.
+private struct LegacyPicture: View {
+    let message: ChatMessage
+    let out: Bool
+    let host: DesignHost
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image = image ?? ChatState.shared.image(message.id) {
+                let s = min(1, min(240 / max(1, image.size.width), 280 / max(1, image.size.height)))
+                Button { ChatActions.viewImage(message, host: host) } label: {
+                    Image(uiImage: image).resizable().frame(width: image.size.width * s, height: image.size.height * s)
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: out ? .trailing : .leading)
+        .padding(.leading, out ? 0 : 50).padding(.trailing, 14).padding(.bottom, 4)
+        .task(id: message.id) {
+            if ChatState.shared.image(message.id) != nil { return }
+            if let img = await ChatVaultMedia.image(message, maxPx: 1280) { ChatState.shared.putImage(img, message.id); image = img }
+        }
     }
 }
 

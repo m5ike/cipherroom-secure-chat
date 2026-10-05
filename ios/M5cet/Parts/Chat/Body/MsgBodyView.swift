@@ -34,7 +34,7 @@ struct MsgBodyView: View {
                 // The chip's hold is tracked here, not on the chip: the chip goes while the message shows.
                 .simultaneousGesture(DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.space)).updating($chipPress) { v, s, _ in
                     if chipFrame.contains(v.startLocation) { s = true }
-                })
+                }, including: m.tap ? .all : .subviews)
                 .background(GeometryReader { g in
                     Color.clear.preference(key: BubbleFramesKey.self, value: BubbleFrames(body: g.frame(in: .named(BubbleRowView.space))))
                 })
