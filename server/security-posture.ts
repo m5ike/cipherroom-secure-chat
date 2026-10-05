@@ -33,7 +33,7 @@ export function securityPosture(): { checks: PostureCheck[] } {
     ? { id: "room-hash", tone: "ok", title: "Room hashes", detail: "keyed (HMAC with a master-key subkey)" }
     : { id: "room-hash", tone: "warn", title: "Room hashes", detail: "NOT keyed — the storage master key is unavailable; logs carry guessable room hashes" });
   checks.push(turnGateEnabled()
-    ? { id: "turn-gate", tone: "ok", title: "TURN credentials", detail: "only for addresses with a live hub connection" }
+    ? { id: "turn-gate", tone: "ok", title: "TURN credentials", detail: "only for addresses with a hub connection that joined a room" }
     : { id: "turn-gate", tone: "warn", title: "TURN credentials", detail: "for anyone who asks (TURN_REQUIRE_HUB=0)" });
   if (process.env.WEBAUTHN_ALLOW_SUBDOMAINS === "1") checks.push({ id: "webauthn-subdomains", tone: "warn", title: "Passkey origins", detail: "every subdomain of the rpId is accepted (WEBAUTHN_ALLOW_SUBDOMAINS=1)" });
   if (process.env.ACCESS_LOG_FULL_IP === "1") checks.push({ id: "access-log-ip", tone: "warn", title: "Access log", detail: "keeps full IP addresses (ACCESS_LOG_FULL_IP=1)" });
