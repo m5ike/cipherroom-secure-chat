@@ -189,8 +189,9 @@ final class ToolPanels {
             waiting.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(Ui.color(a, "@primary", Color.BLUE)));
             box.addView(waiting);
             pin = new EditText(a);
-            pin.setHint(a.app().t("nfc.pin"));
-            pin.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_VARIATION_PASSWORD);
+            // 6.12: an offline tag's code (format 2) or an old tag's PIN (format 1) — writing needs neither.
+            pin.setHint(ConnTagUi.t(a, "nfc.v2.codeHint"));
+            pin.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS | InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS);
             pin.setTextColor(fg);
             pin.setBackground(Ui.shape(Ui.color(a, "@surfaceVariant", Color.LTGRAY), Ui.dp(a, 12), 0, 0));
             pin.setPadding(Ui.dp(a, 14), Ui.dp(a, 10), Ui.dp(a, 14), Ui.dp(a, 10));
@@ -224,20 +225,27 @@ final class ToolPanels {
 
         JSONObject scope() { return nfc.state(); }
 
-        /** read | write | emulate | stop — write / emulate take the active room. */
+        /**
+         * read | write | emulate | stop — write / emulate take the active room.
+         * 6.12 (§ 16): only format 2 is written — an invitation or an offline tag,
+         * prepared first (ConnTagUi); reading opens format 2, and format 1 with its PIN.
+         */
         void action(String what) {
             M5 app = a.app();
             String p = pin.getText().toString().trim();
             if (what.equals("stop")) { nfc.stop(); return; }
             if (!Nfc.available(a)) { a.flash("", app.t("nfc.unavailable"), "warn"); return; }
             if (!nfc.enabled()) { a.flash("", app.t("nfc.disabled"), "warn"); a.systemSettings("app"); return; }
-            if ((what.equals("write") || what.equals("emulate")) && !Nfc.validPin(p)) { a.flash("", app.t("nfc.pin"), "warn"); pin.requestFocus(); return; }
             if (what.equals("read")) { nfc.read(p); return; }
             RoomSession r = app.rooms.activeSession();
             JSONObject card = r == null ? null : app.rooms.cardOf(r.key);
             if (card == null) { a.flash("", app.t("rooms.empty"), "warn"); return; }
-            try { card.put("app", cz.m5cet.app.BuildConfig.VERSION_NAME); } catch (org.json.JSONException ignored) { }
-            if (what.equals("write")) nfc.write(p, card); else nfc.emulate(p, card);
+            writeOrEmulate(what, card);
+        }
+
+        /** A format-2 tag for this room card, written or served (the old tag's room, rewritten, too). */
+        private void writeOrEmulate(String what, JSONObject card) {
+            ConnTagUi.prepare(a, card, body -> { if (what.equals("emulate")) nfc.emulate(body); else nfc.write(body); });
         }
 
         void refresh() {
@@ -245,11 +253,14 @@ final class ToolPanels {
             JSONObject s = nfc.state();
             String st = s.optString("state");
             boolean busy = st.equals("read") || st.equals("write");
-            waiting.setVisibility(busy || st.equals("emulate") ? VISIBLE : GONE);
+            waiting.setVisibility(busy || st.equals("emulate") || st.equals("opening") ? VISIBLE : GONE);
             String msg = s.optString("message");
+            JSONObject lastConn = s.optJSONObject("last") == null ? null : s.optJSONObject("last").optJSONObject("conn");
+            String connErr = lastConn == null ? "" : ConnTagUi.error(a, ConnTagUi.parse(lastConn));
             status.setText(!s.optBoolean("available") ? app.t("nfc.unavailable") : !s.optBoolean("enabled") ? app.t("nfc.disabled")
-                : st.equals("emulate") ? app.t("nfc.emulating") : busy ? app.t("nfc.hold")
-                : msg.equals("written") ? "✓ " + app.t("nfc.written") : msg.equals("wrong-pin") ? app.t("nfc.wrongPin") : msg.equals("too-small") ? app.t("nfc.tooSmall") : msg.isEmpty() ? app.t("tools.nfc") : "⚠ " + msg);
+                : st.equals("emulate") ? app.t("nfc.emulating") : busy ? app.t("nfc.hold") : st.equals("opening") ? ConnTagUi.t(a, "nfc.v2.opening")
+                : msg.equals("written") ? "✓ " + app.t("nfc.written") : msg.equals("too-small") ? app.t("nfc.tooSmall")
+                : !connErr.isEmpty() ? "⚠ " + connErr : msg.isEmpty() ? app.t("tools.nfc") : "⚠ " + msg);
             result.removeAllViews();
             JSONObject last = s.optJSONObject("last");
             if (last == null) return;
@@ -268,19 +279,9 @@ final class ToolPanels {
                 t.setPadding(0, Ui.dp(a, 4), 0, 0);
                 result.addView(t);
             }
-            JSONObject room = last.optJSONObject("room");
-            if (room != null) {
-                LinearLayout card = new LinearLayout(a);
-                card.setOrientation(LinearLayout.VERTICAL);
-                card.setPadding(Ui.dp(a, 14), Ui.dp(a, 12), Ui.dp(a, 14), Ui.dp(a, 12));
-                card.setBackground(Ui.shape(Ui.color(a, "@surface", Color.WHITE), Ui.dp(a, 16), Ui.dp(a, 1), Ui.color(a, "@border", Color.LTGRAY)));
-                card.addView(label(a, app.t("nfc.card"), 12, muted, false));
-                card.addView(label(a, room.optString("room"), 18, fg, true));
-                TextView join = button(a, app.t("nfc.join"), "log-in", true);
-                join.setOnClickListener(v -> a.finishJoin(room.optString("room"), room.optString("passphrase"), room.optString("name", "")));
-                LayoutParams jl = new LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                jl.topMargin = Ui.dp(a, 8);
-                card.addView(join, jl);
+            // 6.12: the connection tag — the room to join, or what is missing (the code / an old PIN), or why not.
+            if (lastConn != null && !lastConn.optString("format").isEmpty()) {
+                LinearLayout card = ConnTagUi.result(a, lastConn, () -> nfc.openLast(pin.getText().toString().trim()), room -> writeOrEmulate("write", room));
                 LayoutParams cl = new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
                 cl.topMargin = Ui.dp(a, 12);
                 result.addView(card, cl);

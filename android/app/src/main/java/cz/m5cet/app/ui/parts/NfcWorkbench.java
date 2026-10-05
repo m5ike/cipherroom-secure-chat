@@ -38,6 +38,7 @@ import cz.m5cet.app.nfc.Apdu;
 import cz.m5cet.app.nfc.ApduTemplates;
 import cz.m5cet.app.nfc.CardOps;
 import cz.m5cet.app.nfc.CardService;
+import cz.m5cet.app.nfc.ConnTag;
 import cz.m5cet.app.nfc.InternalReader;
 import cz.m5cet.app.nfc.M5Card;
 import cz.m5cet.app.nfc.MrtdReader;
@@ -322,7 +323,15 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             case "write-uid": if (armedArg != null) { CardOps.writeUid(tag, armedArg, keys()); out.put("done", app().t("nfc.done.uid")); } else out.put("note", app().t("nfc.uid.need")); break;
             case "app-template": runTemplateOnTag(tag, card); return;
             case "m5-read": openM5Records(container); return;
-            case "conn-read": openConnection(conn); return;
+            case "conn-read": {
+                // Asked for: an invitation is redeemed now (after the tag's content was read).
+                String blob = conn == null ? null : conn.optString("blob", null);
+                if (blob != null && "redeem".equals(conn.optJSONObject("conn") == null ? "" : conn.optJSONObject("conn").optString("need"))) {
+                    conn = new JSONObject().put("blob", blob).put("conn", ConnTag.open(blob, pinText(), app().config.server(), true).json());
+                }
+                openConnection(conn);
+                return;
+            }
             case "conn-write": writeConnection(tag); out.put("done", app().t("nfc.done.written")); break;
             default: out.put("note", app().t("nfc.op.unsupported")); break;
         }
@@ -333,54 +342,54 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
     /* ---------------------------------------------------------- connection */
 
     private JSONObject connectionOnTag(Tag tag) {
+        String blob = null;
         try {
             Ndef ndef = Ndef.get(tag);
             if (ndef == null) return null;
             ndef.connect();
             try {
-                NdefMessage msg = ndef.getNdefMessage();
-                if (msg == null) return null;
-                for (NdefRecord r : msg.getRecords()) {
-                    String type = new String(r.getType(), StandardCharsets.US_ASCII);
-                    if (Nfc.MIME.equals(type)) {
-                        String blob = new String(r.getPayload(), StandardCharsets.UTF_8);
-                        JSONObject o = new JSONObject().put("blob", blob);
-                        String p = pinText();
-                        if (Nfc.validPin(p)) { JSONObject opened = Nfc.open(blob, p); if (opened != null) o.put("room", opened); }
-                        return o;
-                    }
-                }
+                blob = Nfc.connectionBody(ndef.getNdefMessage());
             } finally { try { ndef.close(); } catch (Exception ignored) { } }
         } catch (Exception ignored) { }
-        return null;
+        if (blob == null) return null;
+        // 6.12 (§ 16): format 2 (an offline tag with its code) or format 1 with its PIN — the field holds the code
+        // or the PIN. An invitation is redeemed only when asked (Open): every redemption uses one of its uses.
+        ConnTag.Read r = ConnTag.open(blob, pinText(), app().config.server(), false);
+        try {
+            JSONObject o = new JSONObject().put("blob", blob).put("conn", r.json());
+            if (r.room != null) o.put("room", r.json().optJSONObject("room"));
+            return o;
+        } catch (org.json.JSONException e) { return null; }
     }
 
     private void openConnection(JSONObject conn) {
         Io.main(() -> {
             if (conn == null) { refreshStatus(app().t("nfc.conn.none")); return; }
-            JSONObject room = conn.optJSONObject("room");
-            if (room == null) { refreshStatus(app().t("nfc.wrongPin")); return; }
             showCard(null, null);
-            LinearLayout card = cardBox();
-            card.addView(ToolPanels.label(a, app().t("nfc.card"), 12, Ui.color(a, "@muted", Color.GRAY), false));
-            card.addView(ToolPanels.label(a, room.optString("room"), 18, Ui.color(a, "@onSurface", Color.BLACK), true));
-            TextView join = ToolPanels.button(a, app().t("nfc.join"), "log-in", true);
-            join.setOnClickListener(v -> a.finishJoin(room.optString("room"), room.optString("passphrase"), room.optString("name", "")));
-            LinearLayout.LayoutParams jl = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            jl.topMargin = Ui.dp(a, 8);
-            card.addView(join, jl);
+            String blob = conn.optString("blob");
+            LinearLayout card = ConnTagUi.result(a, conn.optJSONObject("conn"),
+                () -> Io.bg(() -> {
+                    ConnTag.Read again = ConnTag.open(blob, pinText(), app().config.server(), true);
+                    try { openConnection(new JSONObject().put("blob", blob).put("conn", again.json())); } catch (org.json.JSONException ignored) { }
+                }),
+                room -> ConnTagUi.prepare(a, room, body -> arm("conn-write", -1, body.getBytes(StandardCharsets.UTF_8))));
             result.addView(card);
         });
     }
 
+    /** 6.12: writes the format-2 body prepared when the op was armed (ConnTagUi.prepare) — never a PIN tag. */
     private void writeConnection(Tag tag) throws Exception {
-        String p = pinText();
-        if (!Nfc.validPin(p)) throw new Exception(app().t("nfc.pin"));
+        byte[] body = armedArg;
+        if (body == null) throw new Exception(app().t("rooms.empty"));
+        CardOps.ndefWriteAny(tag, Nfc.message(new String(body, StandardCharsets.UTF_8)), keys());
+    }
+
+    /** "Write connection": an invitation or an offline tag for the active room, prepared, then the tap. */
+    private void prepareConnection(String op) {
         RoomSession r = app().rooms.activeSession();
         JSONObject card = r == null ? null : app().rooms.cardOf(r.key);
-        if (card == null) throw new Exception(app().t("rooms.empty"));
-        try { card.put("app", cz.m5cet.app.BuildConfig.VERSION_NAME); } catch (Exception ignored) { }
-        CardOps.ndefWriteAny(tag, Nfc.message(Nfc.seal(card, p)), keys());
+        if (card == null) { a.flash("", app().t("rooms.empty"), "warn"); return; }
+        ConnTagUi.prepare(a, card, body -> arm(op, -1, body.getBytes(StandardCharsets.UTF_8)));
     }
 
     /* --------------------------------------------------------- M5Cet card */
@@ -549,16 +558,17 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
         refreshStatus(app().t("nfc.emulating"));
     }
 
+    /** 6.12 (§ 16): the phone answers as a format-2 connection tag (an invitation or an offline tag, prepared first). */
     void emulateConnection() {
-        try {
-            String p = pinText();
-            RoomSession r = app().rooms.activeSession();
-            JSONObject card = r == null ? null : app().rooms.cardOf(r.key);
-            if (card == null || !Nfc.validPin(p)) { a.flash("", app().t("nfc.pin"), "warn"); return; }
-            card.put("app", cz.m5cet.app.BuildConfig.VERSION_NAME);
-            CardService.serveConnection(Nfc.message(Nfc.seal(card, p)));
-            refreshStatus(app().t("nfc.emulating"));
-        } catch (Exception e) { a.flash("", e.getMessage(), "warn"); }
+        RoomSession r = app().rooms.activeSession();
+        JSONObject card = r == null ? null : app().rooms.cardOf(r.key);
+        if (card == null) { a.flash("", app().t("rooms.empty"), "warn"); return; }
+        ConnTagUi.prepare(a, card, body -> {
+            try {
+                CardService.serveConnection(Nfc.message(body));
+                refreshStatus(app().t("nfc.emulating"));
+            } catch (Exception e) { a.flash("", e.getMessage(), "warn"); }
+        });
     }
 
     /* ------------------------------------------------------------- display */
@@ -1131,6 +1141,7 @@ final class NfcWorkbench extends ScrollView implements Renderer.Slot {
             case "ul-write": case "ntag-write": askBlockHex(8, (blk, data) -> arm(op.id, blk, data)); return;
             case "v-write": askBlockHex(8, (blk, data) -> arm(op.id, blk, data)); return;
             case "write-uid": askHex(app().t("nfc.uid.prompt"), hex -> arm(op.id, -1, CardOps.unhex(hex))); return;
+            case "conn-write": prepareConnection(op.id); return; // 6.12: format 2, prepared before the tap
             default: arm(op.id); return;
         }
     }

@@ -36,6 +36,33 @@ public final class P4Texts {
         EN.put("p4.kt.missing", "not in the key-transparency log");
         EN.put("p4.kt.unverifiable", "the key-transparency log could not be checked");
         EN.put("p4.legacyShort", "older protocol");
+        // 6.12 NFC connection tag v2 (protocol 4 § 16)
+        EN.put("nfc.v2.kind.title", "How should the tag work?");
+        EN.put("nfc.v2.kind.inv", "Invitation (recommended) — the room key stays on the server; the tag ends after 10 uses or 7 days");
+        EN.put("nfc.v2.kind.off", "Offline — the room on the tag, opened with a code you give separately");
+        EN.put("nfc.v2.preparing", "Preparing the tag…");
+        EN.put("nfc.v2.code.title", "The tag's code");
+        EN.put("nfc.v2.code.text", "Give this code to whoever may join — say it or write it down. It is not on the tag, nothing keeps it, and it is shown only now.");
+        EN.put("nfc.v2.code.done", "I have it — write the tag");
+        EN.put("nfc.v2.codeHint", "Code (new tags) or PIN (old tags)");
+        EN.put("nfc.v2.invite", "Invitation tag");
+        EN.put("nfc.v2.offline", "Offline tag");
+        EN.put("nfc.v2.old", "Old connection tag (PIN)");
+        EN.put("nfc.v2.weak", "Weak: anyone who has read this tag can guess its PIN offline. Rewrite it as a new tag.");
+        EN.put("nfc.v2.rewrite", "Rewrite as a new tag");
+        EN.put("nfc.v2.needCode", "Type the code you were given for this tag, then Open.");
+        EN.put("nfc.v2.needPin", "Old tag: type its PIN, then Open.");
+        EN.put("nfc.v2.needRedeem", "An invitation: Open asks the server (it uses one of the invitation's uses).");
+        EN.put("nfc.v2.open", "Open");
+        EN.put("nfc.v2.opening", "Opening the tag…");
+        EN.put("nfc.v2.err.wrong-code", "Wrong code, or the tag was changed.");
+        EN.put("nfc.v2.err.bad-code", "The code has 20 characters (letters and digits).");
+        EN.put("nfc.v2.err.other-server", "This invitation is for another server ({origin}) — open M5cet there.");
+        EN.put("nfc.v2.err.burned", "The invitation has been used up or ended.");
+        EN.put("nfc.v2.err.not-found", "The invitation no longer exists (it expired or was ended).");
+        EN.put("nfc.v2.err.network", "The server could not be reached.");
+        EN.put("nfc.v2.err.bad-tag", "The tag is damaged or not a connection tag.");
+        EN.put("nfc.v2.err.corrupt", "The invitation cannot be opened.");
         EN.put("p4.proven", "proved the room key");
     }
 
