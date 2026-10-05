@@ -31,11 +31,16 @@
 //
 // 6.12 (G-09): a room's audio and a member named by display name reach only
 // members who proved they hold the room key when they joined (the hub's join
-// proof, signaling/proof.ts › reachable): in a room where at least one member
-// proved, the unproven ones are not offered the call; in a room where nobody
-// proves (only clients before 6.12) everyone is, as before — unless
-// HUB_REQUIRE_ROOM_PROOF=1, then proven members only. "@account" is
-// authenticated by the member's session and needs no proof.
+// proof, signaling/proof.ts › reachable): in a room that proves — it has a
+// registered verifier (review S07: also while every proven member is away),
+// or a member proved — the unproven ones are not offered the call; in a room
+// where nobody ever proved (only clients before 6.12) everyone is, as before
+// — unless HUB_REQUIRE_ROOM_PROOF=1, then proven members only. "@account" is
+// authenticated by the member's session and needs no proof. Every later
+// frame of the call (the offer with the leg's media token, status,
+// transcripts, notices) is checked again by the hub when it is sent, and a
+// leg whose peer id is now held by a connection that may not be reached ends
+// (review S08).
 //
 // Privacy: the room is found on the signaling hub by its blind id (r3.…) —
 // the only id a v3 room has there; its name never reaches the server. Only
@@ -89,17 +94,24 @@ const language = () => env("TELEPHONY_ROUTE_LANGUAGE") || "cs";
 
 /* ------------------------------------------------------------ the hub */
 
-/** 6.12 `proven`: the member's join proved the room key (signaling/proof.ts); absent = not proven. */
-export type RouteMember = { peerId: string; name: string; accountId?: string; proven?: boolean };
+/** 6.12 `proven`: the member's join proved the room key (signaling/proof.ts); absent = not proven.
+ *  `reachable` (review S07): the hub's verdict whether the server may reach the member by room or name —
+ *  proven, in a room that has a verifier also while its proven members are away; absent = decided here
+ *  from `proven` alone (proof.ts › reachable). */
+export type RouteMember = { peerId: string; name: string; accountId?: string; proven?: boolean; reachable?: boolean };
 
 /** What routing needs from the signaling hub (main service: routes.ts sets it). */
 export type RouteHub = {
   /** The members of a room open here, by the room's id on the hub (the blind id). */
   members(room: string): RouteMember[];
-  /** A frame of the server's own to one member. */
-  send(room: string, peerId: string, payload: Record<string, unknown>): boolean;
+  /** A frame of the server's own to one member. 6.12 (review S08): the hub checks at every delivery that the
+   *  member may still be reached; `accountId`: the leg is for that signed-in account ("@account"), no proof needed. */
+  send(room: string, peerId: string, payload: Record<string, unknown>, accountId?: string): boolean;
   /** Where an account is connected here (room ids as the hub keys them). */
   accountMembers(accountId: string): Array<{ room: string; peerId: string; name: string }>;
+  /** 6.12 (review S07, S08): may a leg for this peer id be kept (polled for every leg of a live call)? False only
+   *  when the connection holding the peer id now may not be reached. Absent: yes. */
+  reachable?(room: string, peerId: string, accountId?: string): boolean;
 };
 let hub: RouteHub | null = null;
 export function setRouteHub(h: RouteHub | null): void { hub = h; }
@@ -108,17 +120,19 @@ export function setRouteHub(h: RouteHub | null): void { hub = h; }
 export const BLIND_ROOM_ID = /^r3\.[A-Za-z0-9_-]{16,128}$/;
 export const isBlindRoomId = (v: unknown): v is string => typeof v === "string" && BLIND_ROOM_ID.test(v);
 
-/** Who gets the call: a member's connection, and whether it is in the room the code names. */
-export type RouteTarget = { room: string; peerId: string; name: string; inRoom: boolean };
+/** Who gets the call: a member's connection, and whether it is in the room the code names.
+ *  `accountId`: a route to "@account" — the leg is for that account's session (no proof needed). */
+export type RouteTarget = { room: string; peerId: string; name: string; inRoom: boolean; accountId?: string };
 
 /** Who an entry routes to right now. `problem` = it cannot be routed at all; no targets = nobody connected. */
 export function routeTargets(entry: Pick<InrouteEntry, "type" | "room" | "user">, h: RouteHub | null): { targets: RouteTarget[]; problem: string } {
   if (!isBlindRoomId(entry.room)) return { targets: [], problem: "the code's room is not a blind room id (r3.…)" };
   if (!h) return { targets: [], problem: "the chat's signaling hub is not in this process" };
   const members = h.members(entry.room);
-  // 6.12 (G-09): by room or by display name, only members the server may reach (proven ones once anyone proved).
-  const proven = reachable(members);
-  const here = (list: RouteMember[]): RouteTarget[] => list.map((m) => ({ room: entry.room, peerId: m.peerId, name: m.name, inRoom: true }));
+  // 6.12 (G-09): by room or by display name, only members the server may reach — proven ones once the
+  // room proves; review S07: the hub's verdict counts a room with a verifier whose proven members are away.
+  const proven = members.some((m) => typeof m.reachable === "boolean") ? members.filter((m) => m.reachable === true) : reachable(members);
+  const here = (list: RouteMember[], accountId?: string): RouteTarget[] => list.map((m) => ({ room: entry.room, peerId: m.peerId, name: m.name, inRoom: true, ...(accountId ? { accountId } : {}) }));
   if (entry.type === "room") return { targets: here(proven), problem: "" };
   if (entry.type !== "user") return { targets: [], problem: `unknown route type "${String(entry.type)}"` };
   const user = String(entry.user ?? "").trim();
@@ -127,9 +141,9 @@ export function routeTargets(entry: Pick<InrouteEntry, "type" | "room" | "user">
     const account = user.slice(1).toLowerCase();
     if (!account) return { targets: [], problem: "the code names no account" };
     const inRoom = members.filter((m) => m.accountId?.toLowerCase() === account);
-    if (inRoom.length) return { targets: here(inRoom), problem: "" };
+    if (inRoom.length) return { targets: here(inRoom, account), problem: "" };
     // Elsewhere: only rooms with a blind id (a v2 room's id would be its name).
-    return { targets: h.accountMembers(account).filter((m) => isBlindRoomId(m.room)).map((m) => ({ ...m, inRoom: m.room === entry.room })), problem: "" };
+    return { targets: h.accountMembers(account).filter((m) => isBlindRoomId(m.room)).map((m) => ({ ...m, inRoom: m.room === entry.room, accountId: account })), problem: "" };
   }
   const name = user.toLowerCase();
   return { targets: here(proven.filter((m) => m.name.toLowerCase() === name)), problem: "" };
@@ -280,9 +294,29 @@ class RoutedCall {
   }
 
   private frame(leg: Leg, event: string, extra: Record<string, unknown> = {}): boolean {
+    // 6.12 (review S08): the hub checks at every frame that this member may still be reached.
     return hub?.send(leg.target.room, leg.target.peerId, {
       type: "phone-bridge", event, session: this.id, number: this.call.did || this.call.to, label: this.entry.label, route: this.entry.type, ...extra,
-    }) ?? false;
+    }, leg.target.accountId) ?? false;
+  }
+
+  /**
+   * 6.12 (review S07, S08): a leg whose member may no longer be reached (its
+   * peer id taken by someone who did not prove, or the room started to prove)
+   * ends — out of the audio, its socket closed and its token forgotten.
+   */
+  private dropUnreachable(): void {
+    if (!hub?.reachable) return;
+    for (const leg of [...this.legs.values()]) {
+      if (hub.reachable(leg.target.room, leg.target.peerId, leg.target.accountId)) continue;
+      this.leave(leg, "no longer reachable");
+      try { leg.ws?.send(JSON.stringify({ type: "ended", reason: "no longer reachable" })); leg.ws?.close(4003, "not reachable"); } catch { /* gone */ }
+      leg.ws = null;
+      this.legs.delete(leg.token);
+      this.byPeer.delete(`${leg.target.room}|${leg.target.peerId}`);
+      byClientToken.delete(leg.token);
+      this.log("call", "a member's connection is no longer reachable (room proof): its leg ended", "notice");
+    }
   }
 
   /** The "incoming" card for one member (their own media token; the caller's number only in the room the code names). */
@@ -507,7 +541,8 @@ class RoutedCall {
       if (seen.has(key)) continue;
       seen.add(key);
       const from = `☎ ${(t.inRoom && this.call.from) || this.entry.label || this.call.did || "phone"}`.slice(0, 60);
-      hub.send(t.room, t.peerId, { type: "server-notice", id: telId("pn"), kind: "message", text: text.slice(0, 2000), level: "info", from, at: Date.now() });
+      // 6.12 (review S08): the hub checks the member may still be reached.
+      hub.send(t.room, t.peerId, { type: "server-notice", id: telId("pn"), kind: "message", text: text.slice(0, 2000), level: "info", from, at: Date.now() }, t.accountId);
     }
   }
 
@@ -559,6 +594,8 @@ class RoutedCall {
     // The caller hung up (the provider's status reached the call's record).
     const tc = this.call.id.startsWith("sim:") ? null : telStore.calls.get(this.call.id);
     if (tc && FINAL_CALL_STATUSES.includes(tc.status)) { void this.finish("hangup", `the call ended (${tc.status})`); return; }
+    // 6.12 (review S07, S08): legs whose member may no longer be reached end.
+    this.dropUnreachable();
     if (!this.provider) return;
     // Members who connected since: offered the call too.
     const { targets } = routeTargets(this.entry, hub);

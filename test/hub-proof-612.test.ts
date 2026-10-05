@@ -316,13 +316,20 @@ describe("RoomProofs", () => {
     expect(new RoomProofs(broken, randomBytes(32), { required: true, ttlMs: 1 }).check(room, p.nonce, p.proof, "ip")).toMatchObject({ kind: "refused", reason: "store-error" });
   });
 
-  it("memory verifiers are bounded (the least recently proven goes)", () => {
+  it("memory verifiers are bounded: a full store refuses a new room rather than evict one proven within the TTL (review S15)", () => {
     const store = new MemoryVerifiers(2);
-    store.register("a", "", "A", 1);
-    store.register("b", "", "B", 2);
-    store.register("c", "", "C", 3);
+    expect(store.register("a", "", "A", 1, 0)).toMatchObject({ pub: "A" });
+    expect(store.register("b", "", "B", 2, 0)).toMatchObject({ pub: "B" });
+    // Both proven within the TTL (nothing last proven before 0): the newcomer is refused, nobody is evicted.
+    expect(store.register("c", "", "C", 3, 0)).toBeNull();
     expect(store.count()).toBe(2);
+    expect(store.get("a")).toMatchObject({ pub: "A" });
+    // A known room is still answered when full.
+    expect(store.register("a", "", "X", 4, 0)).toMatchObject({ pub: "A" });
+    // Expired verifiers (last proven before the cutoff) make room — swept at most once a minute while full.
+    expect(store.register("c", "", "C", 60_010, 2)).toMatchObject({ pub: "C" });
     expect(store.get("a")).toBeNull();
+    expect(store.get("b")).toMatchObject({ pub: "B" });
   });
 
   describe("in SQLite", () => {

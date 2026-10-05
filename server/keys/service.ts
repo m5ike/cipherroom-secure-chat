@@ -37,6 +37,16 @@ export type PutBundleResult =
 
 const refuse = (status: number, code: string, message: string): CheckFailure => ({ ok: false, status, code, message });
 
+/** 6.12 review S10: a re-certified device is logged again only when its certificate runs at least this much longer. */
+export const KT_DEV_RENEW_STEP_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** 6.12 review S10: KT entries one account may add in 24 hours by uploading keys (KT_ACCOUNT_ENTRIES_PER_DAY, default 40, 5 – 10 000). */
+export function ktEntriesPerDay(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.KT_ACCOUNT_ENTRIES_PER_DAY?.trim() || "");
+  return Number.isInteger(n) && n >= 5 && n <= 10_000 ? n : 40;
+}
+
 export class KeyServices {
   private readonly now: () => number;
 
@@ -99,9 +109,19 @@ export class KeyServices {
     let acct: number | null = null;
     let dev: number | null = null;
     try {
+      // 6.12 review S10: decided by what the LOG shows, not the directory row — a `dev` entry when the
+      // device was never logged (or was revoked since), its account key changed, or its certificate runs
+      // at least a day longer than the logged one (an earlier or barely later `exp` adds nothing: the log
+      // grew by one leaf per re-upload before). And a daily cap per account.
+      const logged = kt.loggedDevice(u, req.pk);
+      const needDev = kt.mode === "on" && (!logged || logged.revoked || logged.apk !== apk || req.cert.exp >= logged.exp + KT_DEV_RENEW_STEP_MS);
+      const needAcct = kt.accountNeedsEntry(u, apk);
+      if ((needDev || needAcct) && kt.countSince(u, now - DAY_MS) + Number(needDev) + Number(needAcct) > ktEntriesPerDay()) {
+        audit.add({ category: "security", level: "notice", event: "kt.account-quota", accountId: account.id, status: "refused" });
+        return refuse(429, "kt-quota", "This account has added too many keys today; try again tomorrow.");
+      }
       acct = kt.ensureAccount(u, apk, now);
-      const certChanged = !existing || existing.apk !== apk || existing.certExp !== req.cert.exp || existing.certSig !== req.cert.sig;
-      if (certChanged) dev = kt.append({ t: "dev", u, apk, dpk: req.pk, exp: req.cert.exp, ts: now });
+      if (needDev) dev = kt.append({ t: "dev", u, apk, dpk: req.pk, exp: req.cert.exp, ts: now });
     } catch (err) {
       if (err instanceof KtUnavailableError) {
         audit.add({ category: "security", level: "error", event: "kt.append-failed", accountId: account.id, status: err.code });

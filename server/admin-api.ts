@@ -731,6 +731,23 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
     res.json({ ok: true, checkpoint });
   });
 
+  // 6.12 review S01: a lost audit-signing.pin is no longer re-created by itself (a forger could
+  // delete it). Re-pinning vouches for the journal AS IT IS NOW — an explicit act of the owner (never
+  // a function), confirmed, audited. `trustRowKeys`: also the keys pre-6.12 checkpoints name.
+  app.post("/api/admin/audit/repin", (req: AdminRequest, res) => {
+    if (req.admin?.role !== "owner" || req.admin?.via === "function") return res.status(403).json({ ok: false, message: "Re-pinning the audit journal needs the owner role." });
+    if (!deps.storage.isAvailable) return res.status(503).json({ ok: false, message: "storage is not running" });
+    const body = (req.body ?? {}) as { confirm?: unknown; trustRowKeys?: unknown };
+    if (body.confirm !== "repin") return res.status(400).json({ ok: false, code: "confirm", message: 'Re-pinning trusts the journal as it is now: send { "confirm": "repin" }.' });
+    const before = deps.storage.global.verifyAudit();
+    const result = deps.storage.global.repinAudit({ trustRowKeys: body.trustRowKeys === true });
+    audit.add({
+      category: "security", level: "warn", event: "admin.audit.repin", actor: adminActor(req), status: `${result.keys} key(s)`,
+      detail: { problemsBefore: before.problems.slice(0, 10).map((p) => `${p.kind}@${p.id}`), coverFrom: result.coverFrom, trustRowKeys: body.trustRowKeys === true },
+    });
+    res.json({ ok: true, ...result });
+  });
+
   // 6.0: a line of the operator's own (a function's m5adm.audit.add, a note from the console).
   app.post("/api/admin/audit/entries", (req: AdminRequest, res) => {
     const b = (req.body ?? {}) as Record<string, unknown>;

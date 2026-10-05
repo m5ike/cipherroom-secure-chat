@@ -1,6 +1,6 @@
 // @vitest-environment node
 // 6.12 (F-28): /api/turn gives TURN credentials only to an address that holds
-// a live hub connection; anyone else gets STUN alone, marked pending with an
+// a live hub connection that joined a room (review S11); anyone else gets STUN alone, marked pending with an
 // expiry of "now" (the web client asks again before its next call). Plus a
 // per-address limit. TURN_REQUIRE_HUB=0 restores the old behaviour.
 
@@ -52,7 +52,7 @@ const turn = async () => { const r = await fetch(`${base}/api/turn`); return { s
 const hasTurn = (a: TurnAnswer) => a.iceServers.some((s) => s.username && s.credential);
 
 describe("the TURN gate", () => {
-  it("STUN only (pending, expiring now) without a hub connection; TURN once the address holds one", async () => {
+  it("STUN only (pending, expiring now) without a hub connection; TURN once the address holds one that joined a room", async () => {
     const before = await turn();
     expect(before.status).toBe(200);
     expect(before.body).toMatchObject({ ok: true, configured: true, pending: true, ttlSeconds: 0 });
@@ -61,15 +61,42 @@ describe("the TURN gate", () => {
     expect(before.body.expiresAt).toBeLessThanOrEqual(Date.now());
 
     const ws = new WebSocket(`${base.replace(/^http/, "ws")}/ws`);
+    const frames: Array<Record<string, unknown>> = [];
+    ws.on("message", (d) => { try { frames.push(JSON.parse(String(d))); } catch { /* binary */ } });
     await new Promise((resolve, reject) => { ws.once("open", resolve); ws.once("error", reject); });
     try {
+      // 6.12 review S11: an open socket alone (no join, no proof) is not enough.
+      const bare = await turn();
+      expect(bare.body.pending).toBe(true);
+      expect(hasTurn(bare.body)).toBe(false);
+
+      ws.send(JSON.stringify({ type: "join", protocol: 2, room: "turn-gate-room", name: "Tester" }));
+      for (let i = 0; i < 100 && !frames.some((f) => f.type === "joined"); i++) await new Promise((r) => setTimeout(r, 20));
+      expect(frames.some((f) => f.type === "joined")).toBe(true);
       const after = await turn();
       expect(after.body.pending).toBeUndefined();
       expect(after.body.mode).toBe("ephemeral");
       expect(hasTurn(after.body)).toBe(true);
+
+      // Left the room: back to STUN.
+      ws.send(JSON.stringify({ type: "leave", away: false }));
+      await new Promise((r) => setTimeout(r, 60));
+      expect((await turn()).body.pending).toBe(true);
     } finally {
       ws.close();
     }
+  });
+
+  it("an IPv6 client matches by its /64 (its request and its socket may use two privacy addresses)", () => {
+    const conn = traffic.openConnection({ ip: "2001:db8:42:7::1" });
+    try {
+      expect(traffic.hasJoinedConnectionFrom("2001:db8:42:7::99")).toBe(false); // not joined yet
+      traffic.updateConnection(conn.id, { room: "r3.AAAAAAAAAAAAAAAAAAAAAAAA" });
+      expect(traffic.hasJoinedConnectionFrom("2001:db8:42:7::99")).toBe(true);
+      expect(traffic.hasJoinedConnectionFrom("2001:db8:42:8::1")).toBe(false);
+      expect(traffic.hasJoinedConnectionFrom("198.51.100.1")).toBe(false);
+    } finally { traffic.closeConnection(conn.id); }
+    expect(traffic.hasJoinedConnectionFrom("2001:db8:42:7::99")).toBe(false);
   });
 
   it("TURN_REQUIRE_HUB=0 answers as before", () => {

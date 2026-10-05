@@ -235,7 +235,7 @@ export async function registerRoutes(
   registerAppLinks(app);
   // 6.12: devices upload their mailbox bundles; key transparency is public.
   registerKeyRoutes(app, accountStore, () => p4.keys);
-  registerKtRoutes(app, () => p4.kt);
+  registerKtRoutes(app, () => p4.kt, accountStore);
   registerAccountRoutes(app, accountStore, {
     groupsFor: accountGroups,
     onSignOut: (accountId) => {
@@ -340,8 +340,10 @@ export async function registerRoutes(
   setBridgeNotifier((hash, member, payload) => signaling.sendToMembers(hash, payload, member));
   setRouteHub({
     members: (room) => signaling.roomMembers(room),
-    send: (room, peerId, payload) => signaling.sendToPeer(room, peerId, payload),
+    // 6.12 (review S07, S08): reachability is checked by the hub at every frame, and polled for every leg.
+    send: (room, peerId, payload, accountId) => signaling.sendToPeer(room, peerId, payload, accountId),
     accountMembers: (accountId) => signaling.accountMembers(accountId),
+    reachable: (room, peerId, accountId) => signaling.stillReachable(room, peerId, accountId),
   });
   // 6.9: TSAs — the audio providers fetch (/wh/tsa/…), the runtime, and room messages through the hub.
   registerTsaMediaRoutes(app, { notice: (hash, n, target) => signaling.notice(hash, n, target) });
@@ -389,7 +391,7 @@ export async function registerRoutes(
 
   // ICE servers (server/turn.ts): short-lived TURN credentials with
   // TURN_SECRET, the old shared ones otherwise. 6.12 (F-28): TURN only for an
-  // address with a live hub connection, and a per-address limit (turn-gate.ts).
+  // address with a live hub connection that joined a room, and a per-address limit (turn-gate.ts).
   app.get("/api/turn", turnLimiter(), (req, res) => {
     const answer = turnAnswer();
     if (!answer.ok) return res.status(answer.status).json({ ok: false, message: answer.message });

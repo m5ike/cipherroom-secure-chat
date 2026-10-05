@@ -1,8 +1,9 @@
 // The sandbox's second wall (6.12, F-03): on Linux, every sandbox process
 // runs inside bubblewrap (bwrap) — its own user, PID, IPC, UTS, cgroup and
 // network namespaces (`--unshare-all`: no network at all; host calls already
-// go through the parent over stdin/stdout), a root file system that holds
-// nothing but read-only binds of
+// go through the parent over stdin/stdout), no capabilities (`--cap-drop
+// ALL`, 6.12 review S13 — also when the server runs as root), a root file
+// system that holds nothing but read-only binds of
 //
 //   - the Node binary and the system's shared-library directories it needs,
 //   - the sandbox script (dist/sandbox.cjs),
@@ -86,6 +87,9 @@ export function bwrapArgs(opts: { node: string; nodeArgs: string[]; reads: strin
   const fs = opts.fs ?? realFs;
   const args = [
     "--unshare-all",
+    // 6.12 review S13: no capabilities inside, also when the server runs as root (bubblewrap
+    // otherwise keeps a root caller's capabilities in the sandbox); --unshare-all includes the user namespace.
+    "--cap-drop", "ALL",
     "--die-with-parent",
     "--new-session",
     "--hostname", "m5-sandbox",
@@ -152,12 +156,19 @@ export function resolveIsolation(selfTest: (bwrap: string) => Promise<void>, pla
     if (platform !== "linux") return done({ mode: failMode, bwrap: null, reason: `bubblewrap needs Linux (this is ${platform}); sandboxes run under the Node permission model only` });
     const bwrap = findBwrap();
     if (!bwrap) return done({ mode: failMode, bwrap: null, reason: "bubblewrap (bwrap) is not installed — install it (apt install bubblewrap) to isolate function sandboxes" });
-    try {
-      await selfTest(bwrap);
-      return done({ mode: "bwrap", bwrap, reason: "" });
-    } catch (err) {
-      return done({ mode: failMode, bwrap, reason: `bubblewrap is installed but its self-test failed: ${(err as Error).message.slice(0, 300)}` });
+    // 6.12 review S13: one failed self-test (a slow start, a busy host) is tried once more before the
+    // process settles on the permission model for its lifetime.
+    let failure: Error | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await selfTest(bwrap);
+        return done({ mode: "bwrap", bwrap, reason: "" });
+      } catch (err) {
+        failure = err as Error;
+        if (attempt === 0) await new Promise((r) => setTimeout(r, 250));
+      }
     }
+    return done({ mode: failMode, bwrap, reason: `bubblewrap is installed but its self-test failed: ${(failure?.message ?? "").slice(0, 300)} (tried twice)` });
   })();
   return probing;
 }
