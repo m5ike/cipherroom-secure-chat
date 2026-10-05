@@ -43,6 +43,8 @@ export const LABEL = {
 export const MAX_SKIP = 1_000;
 /** Skipped message keys kept per pair session in total. */
 export const MAX_SKIPPED_TOTAL = 2_000;
+/** § 5.5: a pair-frame failure is forgotten after this many frames that opened (two failures in a row reset). */
+export const RATCHET_FAILURE_DECAY = 16;
 /** A sender-key chain is replaced after this many messages or this long. */
 export const SENDER_KEY_ROTATE = { messages: 100, ms: 15 * 60 * 1000 } as const;
 /** A mailbox bundle lives this long; its private keys are kept MAILBOX_KEEP_MS past expiry, then wiped. */

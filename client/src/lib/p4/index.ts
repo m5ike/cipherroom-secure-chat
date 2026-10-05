@@ -32,8 +32,9 @@ export { type MediaInner, MEDIA_FRAME_LIMIT, frameIv, ivEpoch, newMediaKey, impo
 export { type FileInner, newFileKey, fileKeyBytes, fileKey4, fileAad4, sealFileBody4, openFileBody4, sealChunk4, openChunk4 } from "./files4";
 export { hubSeed, hubKeyPair, hubJoinData, buildHubProof, verifyHubProof } from "./hub-proof";
 export {
-  type VerifiedEntry, type KtAlert, type KtOriginState, type KtStore, type KtUpdate, type KtGossip, type ConsistencyFetcher,
+  type VerifiedEntry, type KtAlert, type KtOriginState, type KtStore, type KtUpdate, type KtGossip, type ConsistencyFetcher, type KtPendingProof,
   canonicalEntry, ktUser, entryLeafHash, sthData, isSth, signSth, verifySth, verifyLookup, deviceStatus, MemoryKtStore, KtState,
+  KT_PROOF_REFUSALS, KT_PROOF_DEADLINE_MS, isTransientKtError,
 } from "./kt";
 export { type ReplayStore, type ReplayVerdict, replayKey, MemoryReplayStore, ReplayGuard } from "./replay";
 export { RELEASE_FORMAT, isReleasePath, parseReleaseManifest, verifyReleaseSignature, sha256Hex, checkReleaseFiles } from "./release";

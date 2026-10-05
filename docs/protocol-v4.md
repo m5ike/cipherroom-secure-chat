@@ -203,8 +203,13 @@ State is changed only when the AEAD check passes (work on a copy, commit on succ
 
 Any failure to open a `p4` frame (AEAD, a bad `kct`, a header out of range) drops the frame; a
 second failure within the session — or a `kct` that cannot be decapsulated — makes the side send
-`{ kind:"p4-reset", v:4, why }`, discard the session and send a new hello. A received reset does
-the same (at most one reset per 10 s per peer, else the channel is closed).
+`{ kind:"p4-reset", v:4, why }`, discard the session and send a new hello. A failure is forgotten
+once `RATCHET_FAILURE_DECAY` (16) frames opened after it (6.12 review P13: two unrelated incidents
+in a long session do not force a reset). A received reset does the same (at most one RECEIVED
+reset per 10 s per peer, else the channel is closed; resets this side sends are not counted — two
+resets that cross on the wire must not close the channel). A reset received while this side has no
+session (it is already starting over, e.g. its own reset crossed the peer's) does not start another
+handshake: the fresh hello already sent answers it.
 
 ### 5.6 Skipped keys
 
@@ -236,7 +241,9 @@ handed to each peer only as a pair-ratchet `sk` message, with
 cert = ECDSA(spk.private, join(LABEL.skCert, roomId, keyId, ownerPk))     ownerPk = the owner's hello pk
 ```
 
-made once per chain: the chain's own signing key names the device that owns it.
+made once per chain: the chain's own signing key names the device that owns it. A peer counts as
+holding the chain only once the pair frame carrying its `sk` was handed to the channel (6.12 review
+P13): if the send fails, the next room message hands the chain out again.
 
 ```
 (mk, CK) = KDF_CK(CK)
@@ -563,6 +570,26 @@ Server details (6.12):
   or a failed consistency check between the two sizes → the same alert (split view).
 * A head not signed by the pinned key is ignored. Between two heads the server signed, a
   consistency answer that does not verify is the alert, whatever its cause.
+* **A proof the server does not give is owed** (6.12 review P05). When the consistency request
+  between two heads the server signed fails, the pair is kept persistently (at most 8, the oldest
+  kept) and asked for again at every refresh. An HTTP answer that is no proof (`400`, `404`,
+  `500`, …) is a refusal; a network failure, `429`, `502`, `503` (`kt-busy`) or `504` is not.
+  `KT_PROOF_REFUSALS` (2) refusals, or `KT_PROOF_DEADLINE_MS` (24 h) without a proof, raise the alert
+  “the server does not prove its key log” (`unproven`). A head that is owed a proof is not kept, and
+  a lookup under it is never used (“unverified”).
+* **KT gates the identity states** (6.12 review P04). While the server keeps a log, an attested
+  peer is shown `account` / `verified` only after its lookup verified with the account's current
+  `acct` and the device's `dev` entry (no later `rev`). Until then it is “account not yet checked in
+  the key log”; a device or account missing from the log is “account not in the key log”, a lookup
+  that does not verify “the key log could not confirm this account” — never `account`/`verified`. A
+  claimed username the log does not bear out (`u` differs) is not shown.
+* **Self-monitoring** (6.12 review P04). A signed-in client looks up its OWN `u`
+  (`GET /api/kt/lookup?u=…`) at every refresh. Every device certified for its account key
+  (`dev`, not expired, not revoked) that the user does not know — not this device, not one the user
+  acknowledged as theirs — is reported (“a device you do not know was certified for your account”),
+  with “this is my device” to acknowledge it and the account's session list to end it; a newer
+  `acct` entry with another key than the client's is reported too. A server that adds a key for a
+  user must put it in the log (§ 14.1) — where the user's own devices see it.
 
 ## 15. Release manifests (F-02, installation check)
 
@@ -693,3 +720,25 @@ joining. Writers never produce it.
   the AAD, the plaintext, the parsed tag and the exact body.
 * `invite` — `id` = base64url of bytes `40 41 … 4f`, `k` = `0123456789ABCDEFGHJKMNPQRS`: the
   derived `linkKeyHex` and `code`, and the exact body for origin `https://chat.example.org`.
+
+## 17. Security notes (6.12 review)
+
+What protocol 4 does NOT promise, so nobody reads more into it (docs/review-612.md P13):
+
+* **Key-transparency lookups prove presence, not absence.** The server chooses which entries of
+  `u` it returns and may answer under an older (consistent) head: "no later `rev`" and "the latest
+  `acct`" hold only for the entries shown. A verifiable map (a prefix tree or a VRF-keyed index)
+  would be the real fix; until then self-monitoring (§ 14.4) is what catches a key the server adds.
+* **Mailbox items allow key-compromise impersonation (KCI).** `ss2` is static–static (the
+  sender's bundle key with the recipient's), which makes items deniable — and it means whoever
+  holds a recipient bundle's PRIVATE key can make items "from" any sender to that recipient. A
+  stolen device can therefore be shown forged queued messages for up to the bundle's lifetime plus
+  `MAILBOX_KEEP_MS`. Live traffic (pair ratchet, sender keys) is not affected. Since 6.12 review
+  P13 the sender's `sacc` is bound by the AAD (§ 7.2): a relay can no longer strip or swap it.
+* **Message ids are global per room.** The replay window (§ 11) and the app's de-duplication key
+  on the room and the id: a member who sees an id first could send a different message under the
+  same id to a third member, whose copy of the original is then dropped as a replay. Keying on
+  (sender, id) is the planned fix; message ids are random (≥ 96 bits) so this needs a member.
+* **The hub's room-scoped reference only routes.** A device is sealed to because of its device
+  pin or its pinned account's certificate (§ 7.4), never because the server put it behind a
+  reference.

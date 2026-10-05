@@ -106,7 +106,10 @@ type PeerState = {
   session: PairSession | null;
   protocol: PeerProtocol;
   info: PeerInfo | null;
+  /** Received resets within RESET_WINDOW_MS (§ 5.5). */
   resets: number[];
+  /** Resets came too fast and the app closes the channel: ignore its frames until a new channel opens. */
+  closed?: boolean;
   waiters: Array<() => void>;
   mediaEpoch: number;
 };
@@ -178,6 +181,7 @@ export class P4Room {
    */
   open(peerId: string): Promise<void> {
     const st = this.state(peerId);
+    st.closed = false;
     if (st.hs && !st.session && st.protocol === "pending") return st.hs.then(() => undefined);
     this.wipe(st);
     st.protocol = "pending";
@@ -211,6 +215,8 @@ export class P4Room {
    * everything else (envelopes, file frames…), which the app handles.
    */
   async handle(peerId: string, raw: Record<string, unknown>): Promise<boolean> {
+    // A channel this layer gave up on (resets too fast): nothing more on it until a new channel opens.
+    if (this.peers.get(peerId)?.closed && (raw.kind === "hello" || raw.kind === "p4-kem" || raw.kind === "p4" || raw.kind === "p4-reset" || raw.kind === "sender-key")) return true;
     switch (raw.kind) {
       case "hello": await this.onHello(peerId, raw); return true;
       case "p4-kem": await this.onKem(peerId, raw); return true;
@@ -334,20 +340,31 @@ export class P4Room {
     await this.o.events?.inner?.(peerId, inner, typeof raw.c === "string" ? raw.c : "");
   }
 
-  /** § 5.5: discard the session and send a new hello; `sent`: we tell the peer. Too many: close. */
+  /**
+   * § 5.5: discard the session and send a new hello; `sent`: we tell the peer.
+   * Only RECEIVED resets count toward the limit (one per RESET_WINDOW_MS, a
+   * second one closes the channel): two resets that cross on the wire — ours
+   * and the peer's for the same incident — must not close it.
+   */
   async reset(peerId: string, why: string, sent: boolean): Promise<void> {
     const st = this.state(peerId);
     const now = this.now();
-    st.resets = st.resets.filter((t) => now - t < RESET_WINDOW_MS);
-    if (st.resets.length >= 1) {
-      this.wipe(st);
-      this.settle(st, "refused");
-      this.o.events?.close?.(peerId);
-      return;
+    if (!sent) {
+      st.resets = st.resets.filter((t) => now - t < RESET_WINDOW_MS);
+      if (st.resets.length >= 1) {
+        this.wipe(st);
+        st.closed = true;
+        this.settle(st, "refused");
+        this.o.events?.close?.(peerId);
+        return;
+      }
+      st.resets.push(now);
     }
-    st.resets.push(now);
     if (sent) this.o.send(peerId, JSON.stringify({ kind: "p4-reset", v: 4, why }));
     this.o.events?.reset?.(peerId, why, sent);
+    // A received reset while we are already starting over (no session — e.g. our own reset crossed
+    // the peer's): the fresh hello we sent answers it; another one would only chase the peer's.
+    if (!sent && !st.session && st.hs) return;
     this.wipe(st);
     st.protocol = "pending";
     st.hs = this.startHello(peerId);
@@ -363,8 +380,10 @@ export class P4Room {
       if (!st?.session) return;
       await this.sk.prepare(this.now());
       if (this.sk.hasOurChain(peerId)) return;
-      const frame = await st.session.ratchet.encrypt(this.sk.chainFor(peerId));
-      this.o.send(peerId, JSON.stringify(frame));
+      const inner = this.sk.chainFor(peerId);
+      const frame = await st.session.ratchet.encrypt(inner);
+      // Marked as held only once it went (review P13); else the next room message hands it out again.
+      if (this.o.send(peerId, JSON.stringify(frame))) this.sk.handedOut(peerId, inner.keyId);
     });
   }
 
@@ -382,8 +401,10 @@ export class P4Room {
       for (const peerId of targets) {
         const session = this.peers.get(peerId)!.session!;
         if (!this.sk.hasOurChain(peerId)) {
-          const frame = await session.ratchet.encrypt(this.sk.chainFor(peerId));
+          const inner = this.sk.chainFor(peerId);
+          const frame = await session.ratchet.encrypt(inner);
           if (!this.o.send(peerId, JSON.stringify(frame))) continue;
+          this.sk.handedOut(peerId, inner.keyId);
         }
         to.push(peerId);
       }

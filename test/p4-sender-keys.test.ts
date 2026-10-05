@@ -182,7 +182,7 @@ describe("p4 sender keys", () => {
     expect(alice.due(t0)).toBe(true);
     expect(await alice.prepare(t0)).toBe(true);
     const first = alice.currentKeyId;
-    alice.chainFor("bob");
+    alice.handedOut("bob", alice.chainFor("bob").keyId);
     for (let i = 0; i < SENDER_KEY_ROTATE.messages - 1; i++) await alice.seal(`m${i}`, msg(`m${i}`));
     expect(await alice.prepare(t0)).toBe(false);
     await alice.seal("last", msg("last"));
@@ -192,7 +192,7 @@ describe("p4 sender keys", () => {
     expect(await alice.prepare(t0 + SENDER_KEY_ROTATE.ms - 1)).toBe(false);
     expect(await alice.prepare(t0 + SENDER_KEY_ROTATE.ms)).toBe(true);
     // Re-hello: only when that peer held the chain.
-    alice.chainFor("bob");
+    alice.handedOut("bob", alice.chainFor("bob").keyId);
     const k = alice.currentKeyId;
     alice.rehello("carol");
     expect(alice.currentKeyId).toBe(k);
@@ -220,6 +220,20 @@ describe("p4 sender keys", () => {
     expect(await bob.open("alice", sent[2])).toEqual(msg("r2"));
     bob.peerLeft("alice");
     await expect(bob.open("alice", sent[2])).rejects.toMatchObject({ code: "no-chain" });
+  });
+
+  it("counts a chain as held only once its frame went, and only the current chain (review P13)", async () => {
+    const alice = (await member()).keys;
+    await alice.prepare();
+    const inner = alice.chainFor("bob");
+    expect(alice.hasOurChain("bob")).toBe(false); // made, not yet sent
+    alice.handedOut("bob", inner.keyId);
+    expect(alice.hasOurChain("bob")).toBe(true);
+    // A frame of a chain replaced meanwhile does not count for the new one.
+    alice.rotate();
+    await alice.prepare();
+    alice.handedOut("carol", inner.keyId);
+    expect(alice.hasOurChain("carol")).toBe(false);
   });
 
   it("hands out the chain from its current index only", async () => {

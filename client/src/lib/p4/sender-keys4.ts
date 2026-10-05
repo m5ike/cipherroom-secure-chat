@@ -107,12 +107,22 @@ export class SenderKeys4 {
     this.sentTo.clear();
   }
 
-  /** The current chain as an `sk` inner message for `peerId` — from its current index, nothing before. */
-  chainFor(peerId: string): SkInner {
+  /**
+   * The current chain as an `sk` inner message for `peerId` — from its current
+   * index, nothing before. It does NOT count as handed out yet: call
+   * `handedOut(peerId, inner.keyId)` once the frame carrying it was sent
+   * (6.12 review P13 — a failed send must not leave the peer without our
+   * chain until the next rotation).
+   */
+  chainFor(_peerId: string): SkInner {
     const own = this.own;
     if (!own) throw new P4Error("state", "no chain: call prepare() first");
-    this.sentTo.add(peerId);
     return { t: "sk", keyId: own.keyId, chain: b64(own.ck), index: own.index, spk: own.sign.spki, cert: own.cert };
+  }
+
+  /** The frame with our chain `keyId` reached `peerId`'s channel: it holds the chain (unless it was replaced meanwhile). */
+  handedOut(peerId: string, keyId: string): void {
+    if (this.own?.keyId === keyId) this.sentTo.add(peerId);
   }
 
   hasOurChain(peerId: string): boolean {

@@ -2858,8 +2858,8 @@ function ChatApp() {
     if (ktCheckedRef.current.has(slot)) return;
     ktCheckedRef.current.add(slot);
     const lookup = await hubAsk<KtLookup>("kt-lookup", ref);
-    const verdict = await kt.checkDevice(lookup, info.account.publicKey, info.pk, info.user).catch(() => "unverified" as const);
-    if (verdict === "revoked") {
+    const verdict = await kt.checkDevice(lookup, info.account.publicKey, info.pk, info.user).catch(() => ({ status: "unverified" as const }));
+    if (verdict.status === "revoked") {
       trustRef.current.markRevoked(info.pk);
       warnOnce(`revoked:${info.pk}`, tf(lang, "p4.kt.revoked", { name: peersRef.current.get(peerId)?.name || `peer-${peerId.slice(-4)}` }), "error");
     }

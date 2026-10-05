@@ -298,7 +298,7 @@ export class LocalKtStore implements KtStore {
 
   async get(origin: string): Promise<KtOriginState | null> {
     const s = this.read()[origin];
-    return s ? { key: s.key ?? null, sth: s.sth ?? null, alert: s.alert ?? null } : null;
+    return s ? { key: s.key ?? null, sth: s.sth ?? null, alert: s.alert ?? null, ...(Array.isArray(s.pending) ? { pending: s.pending } : {}) } : null;
   }
 
   async set(origin: string, state: KtOriginState): Promise<void> {

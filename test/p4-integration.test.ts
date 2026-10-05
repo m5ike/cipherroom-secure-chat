@@ -228,10 +228,29 @@ describe("6.12 web client — two protocol-4 peers", () => {
     net.send("p-a", "p-b", JSON.stringify(await a.room.sealPrivate("p-b", "ok", msg("ok", "znovu", "p-a"))));
     await net.drain();
     expect(b.inners.map((x) => (x.inner as { id?: string }).id)).toEqual(["ok"]);
-    // A second reset within 10 s closes the channel instead.
+    // Resets this side SENDS are not counted (two that cross on the wire must not close the channel)…
     await b.room.reset("p-a", "test", true);
-    expect(b.events).toContain("close:p-a");
-    expect(b.room.protocolOf("p-a")).toBe("refused");
+    expect(b.events).not.toContain("close:p-a");
+    await net.drain();
+    // …a second RECEIVED reset within 10 s closes it: `a` already got one from `b`, and now another.
+    expect(a.events).toContain("close:p-b");
+    expect(a.room.protocolOf("p-b")).toBe("refused");
+  });
+
+  it("two resets that cross on the wire do not close the channel", async () => {
+    const net = new Net();
+    const a = await client(net, "p-a");
+    const b = await client(net, "p-b");
+    await connect(net, a, b);
+    // Both sides give up on the session at the same moment: each sends a reset, each receives the other's.
+    await Promise.all([a.room.reset("p-b", "crossed", true), b.room.reset("p-a", "crossed", true)]);
+    await net.drain();
+    expect(a.events).toContain("reset:p-b:got");
+    expect(b.events).toContain("reset:p-a:got");
+    expect(a.events).not.toContain("close:p-b");
+    expect(b.events).not.toContain("close:p-a");
+    expect(a.room.protocolOf("p-b")).toBe(4);
+    expect(b.room.protocolOf("p-a")).toBe(4);
   });
 
   it("a chain re-announced by another member is refused (its cert names the real owner)", async () => {
@@ -573,10 +592,12 @@ describe("6.12 web client — key transparency (§ 14)", () => {
     expect((await kt.refresh()).state).toBe("ok");
     expect(kt.newest()?.size).toBe(2);
     // The account's device is in the log; a revocation would say so.
-    expect(await kt.checkDevice(await server.lookup(u), apk, dpk, "alice")).toBe("ok");
-    expect(await kt.checkDevice(await server.lookup(u), apk, (await identity()).publicKey, "alice")).toBe("absent");
+    expect(await kt.checkDevice(await server.lookup(u), apk, dpk, "alice")).toEqual({ status: "ok" });
+    expect(await kt.checkDevice(await server.lookup(u), apk, (await identity()).publicKey, "alice")).toEqual({ status: "absent" });
+    // A username the log does not have for this account: the entries still count, the claim is flagged (review P04).
+    expect(await kt.checkDevice(await server.lookup(u), apk, dpk, "mallory")).toEqual({ status: "ok", userMismatch: true });
     await server.append({ t: "rev", u, apk, dpk, ts: 3 });
-    expect(await kt.checkDevice(await server.lookup(u), apk, dpk, "alice")).toBe("revoked");
+    expect(await kt.checkDevice(await server.lookup(u), apk, dpk, "alice")).toEqual({ status: "revoked" });
     // Gossip: a peer's (consistent) newer head is fine.
     expect(await kt.gossip(await server.sth())).toBe("ok");
     // A head of the same size with another root (a fork): the alert, kept across a reload.
@@ -600,7 +621,7 @@ describe("6.12 web client — key transparency (§ 14)", () => {
     expect((await kt.refresh()).state).toBe("off");
     expect(kt.newest()).toBeNull();
     expect(await kt.gossip({ size: 1, root: "x", ts: 1, sig: "y" })).toBe("ignored");
-    expect(await kt.checkDevice(null, "a", "b")).toBe("unverified");
+    expect(await kt.checkDevice(null, "a", "b")).toEqual({ status: "off" });
   });
 });
 

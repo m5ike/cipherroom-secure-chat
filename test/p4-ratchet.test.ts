@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   b64, buildHello, buildKemMessage, establishSession, hB64, kemKeygen, LABEL, MAX_SKIP, openKemMessage, Ratchet, roleOf,
   systemRng, unb64, verifyHello, type RatchetFrame, type RatchetInner, createBundle, MAILBOX_LIFETIME_MS, ecdsaVerify, helloSig4Data, PairHandshake,
-  capsDigest, userDigest, sthDigest, ed25519FromSeed, signSth,
+  capsDigest, userDigest, sthDigest, ed25519FromSeed, signSth, RATCHET_FAILURE_DECAY,
 } from "../client/src/lib/p4";
 import { CHECK, clone, pair, ROOM, testDevice } from "./p4-support";
 
@@ -319,6 +319,19 @@ describe("p4 pair ratchet", () => {
     expect(await s3.a.decrypt({ ...f3, h: { ...f3.h, kct: b64(new Uint8Array(100)) } })).toMatchObject({ ok: false, error: "kct", reset: true });
     // State intact even so: the genuine frame opens.
     expect(await open(s3.a, f3)).toEqual(text("b", 0));
+  });
+
+  it("forgets a failure after RATCHET_FAILURE_DECAY frames opened (review P13)", async () => {
+    const { a, b } = await oriented();
+    const bad = async () => a.decrypt({ ...(await b.encrypt(text("b", 999))), c: b64(new Uint8Array(40)) });
+    expect(await bad()).toMatchObject({ ok: false, reset: false });
+    for (let i = 0; i < RATCHET_FAILURE_DECAY - 1; i++) expect(await open(a, await b.encrypt(text("b", i)))).toEqual(text("b", i));
+    expect(a.info().failures).toBe(1);
+    expect(await open(a, await b.encrypt(text("b", 100)))).toEqual(text("b", 100));
+    expect(a.info().failures).toBe(0);
+    // Long after the first incident, a second one alone does not reset; two in a row still do.
+    expect(await bad()).toMatchObject({ ok: false, reset: false });
+    expect(await bad()).toMatchObject({ ok: false, reset: true });
   });
 
   it("refuses a replayed frame", async () => {

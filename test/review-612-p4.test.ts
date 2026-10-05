@@ -226,8 +226,8 @@ describe("REVIEW-612 P05 — key-transparency alerts the server can suppress", (
   // REVIEW-612 P05: KtState.resolveGossip/update call fetchConsistency OUTSIDE their try (kt.ts:280-287); a server
   // that answers the consistency request with an error makes them throw, KtClient.gossip/refresh swallow it
   // (p4-kt.ts:82, :113) — no alert, ever. A forked server simply refuses to prove consistency between two heads
-  // it signed. Fails today: gossip() says "ignored" and the status stays "ok".
-  it.skip("a server that will not prove consistency between two heads it signed raises the alert", async () => {
+  // it signed. Fixed: the proof is owed (KtState.owe); refused twice it is the "unproven" alert.
+  it("a server that will not prove consistency between two heads it signed raises the alert", async () => {
     const { privateKey, publicKey } = await ed25519FromSeed(new Uint8Array(32).fill(0x17));
     const leaves: Hash[] = [];
     for (let i = 0; i < 3; i++) leaves.push(await entryLeafHash({ t: "acct", u: await ktUser(`u${i}`), apk: b64(new Uint8Array(32).fill(i)), ts: i } as KtEntry));
