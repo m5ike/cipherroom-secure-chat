@@ -14,6 +14,18 @@
 // not the device key: messages are authentic to the members, yet carry no
 // signature a third party could tie to the device (F-30).
 //
+// Every member holds every chain, so one could re-announce another member's
+// chain as its own and relay that member's validly signed messages under its
+// own name. Each chain therefore carries `cert`: the chain's OWN signing key
+// signs (roomId, keyId, owner's device key) once, when the chain is made. A
+// receiver checks it with the chain's `spk` against the hello `pk` of the pair
+// session that delivered the chain, and refuses the chain without a valid one.
+// Only the holder of the spk's private half can name an owner, so a chain
+// re-announced by anyone else fails — whatever order the chains arrive in.
+// (A device signature over the spk would not do: anyone can sign any spk.)
+// The device key signs nothing here, so nothing a third party could check
+// ties a message to the device: anyone can make an spk that names a device.
+//
 // Chains are found by (sending peer, keyId) — a member cannot plant a chain
 // under another member's id (6.7 audit S18). Each peer keeps its newest
 // chain and ONE older (messages in flight across a rotation).
@@ -29,15 +41,18 @@ import { systemRng, type Rng } from "./rng";
 import type { Signer } from "../envelope";
 
 /** The `sk` inner message of the pair ratchet (§ 5.7). */
-export type SkInner = { t: "sk"; keyId: string; chain: string; index: number; spk: string };
+export type SkInner = { t: "sk"; keyId: string; chain: string; index: number; spk: string; cert: string };
 
-type OwnChain = { keyId: string; ck: Bytes; index: number; createdAt: number; sign: P256Pair };
-type PeerChain = { owner: string; keyId: string; ck: Bytes; index: number; spk: string; skipped: Map<number, Bytes> };
+type OwnChain = { keyId: string; ck: Bytes; index: number; createdAt: number; sign: P256Pair; cert: string };
+type PeerChain = { owner: string; ownerPk: string; keyId: string; ck: Bytes; index: number; spk: string; skipped: Map<number, Bytes> };
 
 const chainSlot = (owner: string, keyId: string) => `${owner}\u0000${keyId}`;
 
 /** § 6 AAD = join(LABEL.senderKey, roomId, id, keyId, n). */
 export const senderKeyAad = (roomId: string, id: string, keyId: string, n: number): Bytes => join(LABEL.senderKey, roomId, id, keyId, n);
+
+/** § 6: what a chain's `cert` signs (with the chain's spk) — join(LABEL.skCert, roomId, keyId, ownerPk). */
+export const skCertData = (roomId: string, keyId: string, ownerPk: string): Bytes => join(LABEL.skCert, roomId, keyId, ownerPk);
 
 const hasId = (payload: unknown, id: string) => Boolean(payload) && typeof payload === "object" && (payload as { id?: unknown }).id === id;
 
@@ -54,7 +69,8 @@ export class SenderKeys4 {
   private readonly mutex = new Mutex();
   private readonly rng: Rng;
 
-  constructor(private readonly roomId: string, opts: { rng?: Rng } = {}) {
+  /** `owner`: this device (its hello `pk`; the protocol-3 Identity fits) — every chain names it in its `cert`. */
+  constructor(private readonly roomId: string, private readonly owner: { publicKey: string }, opts: { rng?: Rng } = {}) {
     this.rng = opts.rng ?? systemRng;
   }
 
@@ -68,7 +84,7 @@ export class SenderKeys4 {
   /**
    * Starts a new chain when there is none or it is due; true when it did (then
    * nobody holds it yet). Call before handing the chain out and before sealing.
-   * Draws: "sk.keyId", "sk.chain", "sk.spk".
+   * Draws: "sk.keyId", "sk.chain", "sk.spk"; the new spk signs the chain's `cert`.
    */
   prepare(now = Date.now()): Promise<boolean> {
     return this.mutex.run(async () => {
@@ -76,8 +92,9 @@ export class SenderKeys4 {
       const keyId = b64url(this.rng.bytes(12, "sk.keyId"));
       const ck = this.rng.bytes(32, "sk.chain");
       const sign = await this.rng.p256("ecdsa", "sk.spk");
+      const cert = await ecdsaSign(sign.privateKey, skCertData(this.roomId, keyId, this.owner.publicKey));
       if (this.own) wipe(this.own.ck);
-      this.own = { keyId, ck, index: 0, createdAt: now, sign };
+      this.own = { keyId, ck, index: 0, createdAt: now, sign, cert };
       this.sentTo.clear();
       return true;
     });
@@ -95,7 +112,7 @@ export class SenderKeys4 {
     const own = this.own;
     if (!own) throw new P4Error("state", "no chain: call prepare() first");
     this.sentTo.add(peerId);
-    return { t: "sk", keyId: own.keyId, chain: b64(own.ck), index: own.index, spk: own.sign.spki };
+    return { t: "sk", keyId: own.keyId, chain: b64(own.ck), index: own.index, spk: own.sign.spki, cert: own.cert };
   }
 
   hasOurChain(peerId: string): boolean {
@@ -127,22 +144,29 @@ export class SenderKeys4 {
 
   /* ------------------------------------------------------ peer chains */
 
-  /** A peer's chain from its `sk` inner message (already authenticated by the pair ratchet). */
-  acceptChain(peerId: string, raw: unknown): Promise<boolean> {
+  /**
+   * A peer's chain from its `sk` inner message, delivered by the pair session
+   * with `peerId` whose hello carried device key `peerPk`. Refused (false)
+   * unless `cert` is the chain spk's signature over (roomId, keyId, peerPk).
+   */
+  acceptChain(peerId: string, peerPk: string, raw: unknown): Promise<boolean> {
     return this.mutex.run(async () => {
       const m = raw as Partial<SkInner> | null;
-      if (!m || typeof m !== "object" || m.t !== "sk" || typeof m.keyId !== "string" || !isSafeCount(m.index) || typeof m.spk !== "string") return false;
+      if (!m || typeof m !== "object" || m.t !== "sk" || typeof m.keyId !== "string" || !isSafeCount(m.index) || typeof m.spk !== "string" || typeof m.cert !== "string") return false;
       let ck: Bytes;
       try { unb64url(m.keyId, 12); ck = unb64(m.chain, 32); } catch { return false; }
       if (!(await isP256Spki(m.spk))) return false;
-      // Every member holds every chain: one could re-announce another member's chain under its own
-      // name and relay that member's (validly signed) messages as its own. A chain id or signing key
-      // already held for another peer is therefore refused (§ 6).
-      for (const c of this.chains.values()) if (c.owner !== peerId && (c.keyId === m.keyId || c.spk === m.spk)) return false;
+      let certified = false;
+      try { certified = typeof peerPk === "string" && await ecdsaVerify(m.spk, skCertData(this.roomId, m.keyId, peerPk), m.cert); } catch { certified = false; }
+      if (!certified) { wipe(ck); return false; }
+      // Defence in depth: a signing key already held for another owner device is refused too (the cert
+      // makes that impossible; the same device under a new peer id is fine). Not the key id: anyone may
+      // pick any key id for a chain of its own, and chains are kept per (peer, keyId) anyway.
+      for (const c of this.chains.values()) if (c.spk === m.spk && c.ownerPk !== peerPk) { wipe(ck); return false; }
       const slot = chainSlot(peerId, m.keyId);
       const prev = this.chains.get(slot);
       if (prev) this.forget(prev);
-      this.chains.set(slot, { owner: peerId, keyId: m.keyId, ck, index: m.index, spk: m.spk, skipped: new Map() }); // last = newest
+      this.chains.set(slot, { owner: peerId, ownerPk: peerPk, keyId: m.keyId, ck, index: m.index, spk: m.spk, skipped: new Map() }); // last = newest
       const older = [...this.chains.values()].filter((c) => c.owner === peerId && c.keyId !== m.keyId);
       for (const old of older.slice(0, -1)) this.forget(old); // grace for ONE older chain
       return true;

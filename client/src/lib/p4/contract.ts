@@ -34,6 +34,7 @@ export const LABEL = {
   ktUser: "m5cet/kt/user|",
   ktSth: "m5cet/kt/sth/4",
   replay: "m5cet/p4/seen",
+  skCert: "m5cet/sk-cert/4",
 } as const;
 
 /* -------------------------------------------------------------- limits */
@@ -105,7 +106,8 @@ export type ResetMessage = { kind: "p4-reset"; v: 4; why: string };
 
 /** Inner messages carried by the pair ratchet (spec § 5.4). */
 export type RatchetInner =
-  | { t: "sk"; keyId: string; chain: string; index: number; spk: string }
+  /** `cert`: ECDSA by the chain's own `spk` (raw r||s, b64) over join(LABEL.skCert, roomId, keyId, owner's device pk) — § 6. */
+  | { t: "sk"; keyId: string; chain: string; index: number; spk: string; cert: string }
   | { t: "msg"; id: string; p: unknown }
   | { t: "media"; call: string; epoch: number; key: string }
   | { t: "file"; transferId: string; key: string }

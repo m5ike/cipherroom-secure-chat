@@ -12,7 +12,7 @@ import {
   fileKeyBytes, frameIv, H, hex, helloRef, helloSig4Data, hkdf, hubJoinData, hubKeyPair, importP256Pkcs8, inclusionProof, joinText,
   kdfCk, kdfRk, kemDecaps, kemEncapsWith, kemKeygenFromSeed, kemKid, keyIv, ktUser, LABEL, leafHash, mbDigest, openFileBody4,
   openKemMessage, openMailboxItem, pad, pairAad, parseReleaseManifest, RecordingRng, replayKey, rootSchedule, sealFileBody4,
-  sealMailboxItem, SenderKeys4, senderKeyAad, sha256Hex, signSth, sthData, TapeRng, treeHash, unb64, unpad, utf8, verifyAccount,
+  sealMailboxItem, SenderKeys4, senderKeyAad, skCertData, sha256Hex, signSth, sthData, TapeRng, treeHash, unb64, unpad, utf8, verifyAccount,
   verifyConsistency, verifyHello, verifyHubProof, verifyInclusion, verifyReleaseSignature, verifySth,
   type DeviceSigner, type HelloV4, type KtEntry, type MailboxBundle, type MailboxItem, type Ratchet, type RatchetFrame,
   type RatchetInner, type TapeEntry, type Hash, type SkInner, type SenderKeyEnvelope, type KemMessage,
@@ -163,20 +163,30 @@ describe("p4 vectors: handshake and ratchet transcript", () => {
 });
 
 describe("p4 vectors: sender keys, mailbox, files, media", () => {
-  it("sender-key chain and messages", async () => {
+  it("sender-key chain (with its cert) and messages", async () => {
     const S = V.senderKey;
-    const alice = new SenderKeys4(S.roomId, { rng: new TapeRng(S.tape) });
+    expect([S.owner, S.ownerPk, S.ownerDevicePkcs8]).toEqual([V.handshake.A.peerId, V.handshake.A.pk, V.handshake.A.devicePkcs8]);
+    const alice = new SenderKeys4(S.roomId, { publicKey: S.ownerPk }, { rng: new TapeRng(S.tape) });
     await alice.prepare(1_800_000_000_000);
-    expect(alice.chainFor("peer-b")).toEqual(S.chain);
+    const chain = alice.chainFor(V.handshake.B.peerId);
+    expect({ ...chain, cert: "" }).toEqual({ ...S.chain, cert: "" }); // the cert is ECDSA: randomized
+    expect(text(skCertData(S.roomId, S.chain.keyId, S.ownerPk))).toBe(S.certSignedData);
+    expect(await ecdsaVerify(S.chain.spk, utf8(S.certSignedData), S.chain.cert)).toBe(true);
+    expect(await ecdsaVerify(S.chain.spk, utf8(S.certSignedData), chain.cert)).toBe(true);
     for (const m of S.messages) {
       expect(JSON.stringify(m.payload)).toBe(m.json);
       const env = await alice.seal(m.payload.id, m.payload);
       expect({ ...env, s: "" }).toEqual({ ...m.envelope, s: "" });
       expect(text(senderKeyAad(S.roomId, m.payload.id, env.sk, env.n))).toBe(m.aad);
     }
-    const bob = new SenderKeys4(S.roomId);
-    expect(await bob.acceptChain(S.owner, S.chain as SkInner)).toBe(true);
+    const bob = new SenderKeys4(S.roomId, { publicKey: V.handshake.B.pk });
+    expect(await bob.acceptChain(S.owner, V.handshake.B.pk, S.chain as SkInner)).toBe(false); // names A's device, not B's
+    expect(await bob.acceptChain(S.owner, S.ownerPk, S.chain as SkInner)).toBe(true);
     for (const i of [3, 0, 2, 1]) expect(await bob.open(S.owner, S.messages[i].envelope as SenderKeyEnvelope)).toEqual(S.messages[i].payload);
+    // The chain A hands to B in the ratchet script is this one.
+    const sent = V.ratchet.script.find((s: { op: string; inner: { t: string } }) => s.op === "send" && s.inner.t === "sk");
+    expect(sent.by).toBe("A");
+    expect(sent.inner).toEqual(S.chain);
   });
 
   it("mailbox item: opens with the recipient's bundle keys and re-seals identically", async () => {

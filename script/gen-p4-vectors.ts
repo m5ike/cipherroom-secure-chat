@@ -20,7 +20,7 @@ import {
   ed25519FromSeed, ed25519Sign, entryLeafHash, establishSession, fileAad4, fileKeyBytes, fileKey4, frameIv, H, hex, hkdf,
   helloRef, helloSig4Data, hubKeyPair, hubJoinData, buildHubProof, inclusionProof, importP256Pkcs8, join, joinText, kdfCk, kdfRk,
   kemEncapsWith, kemKeygenFromSeed, kemKid, keyIv, ktUser, LABEL, mbDigest, accDigest, openKemMessage, pad, paddedLength, pairAad,
-  RecordingRng, replayKey, rootSchedule, sealFileBody4, sealMailboxItem, SenderKeys4, senderKeyAad, signSth, sthData, treeHash,
+  RecordingRng, replayKey, rootSchedule, sealFileBody4, sealMailboxItem, SenderKeys4, senderKeyAad, skCertData, signSth, sthData, treeHash,
   unb64, unpad, buildHello, utf8, type DeviceSigner, type KtEntry, type RatchetFrame, type RatchetInner, type Hash, type Ratchet,
   sha256Hex,
 } from "../client/src/lib/p4";
@@ -110,23 +110,31 @@ async function mlkem() {
   return out;
 }
 
-async function senderKeys(roomId: string) {
+/** Party A's sender-key chain (owner = A's device) and a few room messages. */
+async function senderKeys(roomId: string, owner: { peerId: string; pk: string; pkcs8: string }, to: string) {
   const rng = new RecordingRng();
-  const alice = new SenderKeys4(roomId, { rng });
+  const alice = new SenderKeys4(roomId, { publicKey: owner.pk }, { rng });
   await alice.prepare(1_800_000_000_000);
-  const chain = alice.chainFor("peer-b");
+  const chain = alice.chainFor(to);
   const messages = [];
   for (let i = 0; i < 4; i++) {
     const payload = { id: `sk-msg-${i}`, kind: "text", text: i === 2 ? "Příliš žluťoučký kůň 🐎" : `room message ${i}`, createdAt: 1_800_000_000_000 + i };
     const envelope = await alice.seal(payload.id, payload);
     messages.push({ payload, json: JSON.stringify(payload), aad: text(senderKeyAad(roomId, payload.id, envelope.sk, envelope.n)), envelope });
   }
-  return { section: { roomId, owner: "peer-a", tape: rng.tape, chain, messages }, chain };
+  return {
+    section: {
+      roomId, owner: owner.peerId, ownerPk: owner.pk, ownerDevicePkcs8: owner.pkcs8,
+      about: "Tape: sk.keyId, sk.chain, sk.spk (PKCS#8). `cert` is ECDSA by the chain's spk over certSignedData (randomized: verify only). A receiver accepts `chain` from the pair session of `owner` (hello pk = ownerPk) and opens the messages in any order.",
+      tape: rng.tape, chain, certSignedData: text(skCertData(roomId, chain.keyId, owner.pk)), messages,
+    },
+    chain,
+  };
 }
 
 type Party = { name: "A" | "B"; peerId: string; dev: Awaited<ReturnType<typeof device>>; rng: RecordingRng };
 
-async function handshakeAndRatchet(roomId: string, roomName: string, check: string, skInner: RatchetInner) {
+async function handshakeAndRatchet(roomId: string, roomName: string, check: string) {
   const now = 1_800_000_000_000;
   const d1 = { peerId: "peer-a", dev: await device() };
   const d2 = { peerId: "peer-b", dev: await device() };
@@ -134,6 +142,8 @@ async function handshakeAndRatchet(roomId: string, roomName: string, check: stri
   const [pa, pb] = `${d1.dev.pk}|${d1.peerId}` < `${d2.dev.pk}|${d2.peerId}` ? [d1, d2] : [d2, d1];
   const A: Party = { name: "A", ...pa, rng: new RecordingRng() };
   const B: Party = { name: "B", ...pb, rng: new RecordingRng() };
+  // A's own sender-key chain: A hands it to B in the script below.
+  const { section: senderKey, chain: skInner } = await senderKeys(roomId, { peerId: A.peerId, pk: A.dev.pk, pkcs8: A.dev.pkcs8 }, B.peerId);
 
   // A carries a mailbox bundle, B an account attestation (v2 certificate): both digests get exercised.
   const bundleRng = new RecordingRng();
@@ -226,6 +236,7 @@ async function handshakeAndRatchet(roomId: string, roomName: string, check: stri
   if (frames.length < 12 || steps("A") < 3 || steps("B") < 3) throw new Error("script too short");
 
   return {
+    senderKey,
     handshake: { ...handshake, A: { ...handshake.A, tape: A.rng.tape }, B: { ...handshake.B, tape: B.rng.tape } },
     ratchet: {
       about: "Replay: build both sessions from the handshake (each party's tape drives its draws), then run the script in order. A send must produce exactly `wire` (encrypt the UTF-8 of `json`); a recv must open frame #`frame` to `inner`. Frames with h.kct are DH steps that encapsulated to the peer's announced KEM key.",
@@ -339,8 +350,7 @@ async function release() {
 async function main() {
   const roomId = "r3.Vm9jdG9yUm9vbUlkRm9yUDQ";
   const check = "5a17c0de5a17c0de";
-  const { section: senderKey, chain } = await senderKeys(roomId);
-  const { handshake, ratchet } = await handshakeAndRatchet(roomId, "team-alpha", check, chain);
+  const { handshake, ratchet, senderKey } = await handshakeAndRatchet(roomId, "team-alpha", check);
   const { files, media } = await filesAndMedia();
   const out = {
     format: "m5cet-p4-vectors/1",

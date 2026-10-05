@@ -208,7 +208,7 @@ first, keyed by `(dh, n)`. A header asking to skip more is a failure (§ 5.5).
 
 | `t` | Fields | Use |
 |---|---|---|
-| `sk` | `keyId, chain (b64 32 B), index, spk (SPKI b64)` | the sender's current sender-key chain (§ 6) |
+| `sk` | `keyId, chain (b64 32 B), index, spk (SPKI b64), cert (b64 64 B)` | the sender's current sender-key chain (§ 6) |
 | `msg` | `id, p` | a private message (to chosen recipients); `p` is the chat payload, `p.id === id` |
 | `media` | `call, epoch, key (b64 32 B)` | the sender's media key for one call direction (§ 9) |
 | `file` | `transferId, key (b64 32 B)` | the key of one file transfer (§ 8) |
@@ -221,7 +221,13 @@ Own chain: `keyId` = b64url of 12 random bytes, `CK` = 32 random bytes, `index`,
 **per-chain ECDSA P-256 signing key pair** `spk`. A chain is replaced after
 `SENDER_KEY_ROTATE` (100 messages or 15 minutes), when a member leaves or is excluded, and when
 this device starts a new pair session with a peer that had the old chain (re-hello). Chains are
-handed to each peer only as a pair-ratchet `sk` message.
+handed to each peer only as a pair-ratchet `sk` message, with
+
+```
+cert = ECDSA(spk.private, join(LABEL.skCert, roomId, keyId, ownerPk))     ownerPk = the owner's hello pk
+```
+
+made once per chain: the chain's own signing key names the device that owns it.
 
 ```
 (mk, CK) = KDF_CK(CK)
@@ -236,14 +242,20 @@ The receiver finds the chain by **(the sending peer, keyId)**, verifies `s` with
 **before** advancing the chain (a member who holds the chain cannot forge or burn indices), then
 derives the key (skipping up to `MAX_SKIP`), decrypts, unpads and checks `payload.id === id`.
 Every member holds every chain, so a member could re-announce another member's chain (`keyId`,
-`CK`, `spk`) as its own and relay that member's validly signed messages under its own name: a
-receiver therefore refuses an `sk` whose `keyId` or `spk` it already holds for another peer.
+`CK`, `spk`) as its own and relay that member's validly signed messages under its own name. A
+receiver therefore accepts an `sk` only when `cert` verifies with its `spk` over
+`join(LABEL.skCert, roomId, keyId, pk)`, `pk` being the hello `pk` of the pair session that
+delivered it; a missing or bad `cert` refuses the chain. Only the holder of `spk.private` can name
+an owner, so a re-announced chain fails whatever order chains arrive in. (A signature by the device
+key over `spk` would not do: anyone can sign any `spk`.) As defence in depth, an `sk` whose `spk` is
+already held for another owner device is refused too.
 
 **Authenticity without non-repudiation (F-30).** Room and private messages are no longer signed
 with the long-term device key. The device key signs only the hello (ephemeral keys); the session
 is authenticated, the sender-key chain and its `spk` arrive over it, so the receiver attributes
 the message to the peer's device (and to the account in the hello's `acc`) — but holds no
-signature a third party could check. `Signer` for a protocol-4 message:
+signature a third party could check (`cert` is made by the ephemeral `spk`: anyone can make an
+`spk` that names a device). `Signer` for a protocol-4 message:
 `{ publicKey: <hello pk>, valid: true, account?: { publicKey: acc.apk, valid: <cert check> } }`.
 
 ## 7. Messages for absent members (mailbox)

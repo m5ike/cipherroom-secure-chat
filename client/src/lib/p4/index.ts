@@ -22,7 +22,7 @@ export {
   type RatchetInit, type RatchetInfo, type RatchetResult, type RatchetFailure, type RatchetOpened, type RatchetRole,
   Ratchet, kdfRk, kdfCk, pairAad, headerParts, parseInner,
 } from "./ratchet";
-export { type SkInner, SenderKeys4, senderKeyAad, p4Signer } from "./sender-keys4";
+export { type SkInner, SenderKeys4, senderKeyAad, skCertData, p4Signer } from "./sender-keys4";
 export {
   type BundleKeys, type BundleStore, type SealInput, type OpenedMailboxItem,
   MemoryBundleStore, Mailbox, createBundle, bundleSignedData, checkBundle, isBundleShape, mailboxAad,
