@@ -38,6 +38,13 @@ import cz.m5cet.app.ui.MainActivity;
  * Join opens the room and joins the call once the app is unlocked — only from
  * this run's own notification (a token another app cannot know), and only
  * while someone is still in the call; Decline makes it a declined call.
+ *
+ * 6.14 (call wake): a call started while I was away comes as a push (FCM
+ * "notify" with `call` — pushed()) and rings the same way, with the same
+ * notification; Join then waits (up to the ring's 60 s) for the room to
+ * connect and show the call. Like a call the room shows, it is a heads-up
+ * on the calls channel (category call), not a full-screen intent or a
+ * ConnectionService call (M5ConnectionService refuses every connection).
  */
 public final class CallRing {
     private CallRing() {}
@@ -98,6 +105,25 @@ public final class CallRing {
         if (nm != null) nm.notify(id, b.build());
     }
 
+    /**
+     * 6.14 (call wake): a "notify" of kind call that carries the call
+     * (server/notify) — someone started a call in a room I am away from. A
+     * room this app has open rings here like a call the room shows (ring():
+     * the calls channel, Join and Decline, the same notification), its end
+     * turns it into a missed call, and the room's own call tracking takes over
+     * once the room shows the call (Calls, CallWake — one record per call).
+     * False when it is not one, or the room is not open here: the template
+     * notification then, as before.
+     */
+    public static boolean pushed(M5 app, org.json.JSONObject payload) {
+        cz.m5cet.app.chat.CallWake.Pushed p = cz.m5cet.app.chat.CallWake.pushed(payload, System.currentTimeMillis());
+        if (p == null || app.rooms == null) return false;
+        RoomSession r = app.rooms.byServerId(p.room);
+        if (r == null) return false;
+        r.calls().onPushedWake(p);
+        return true;
+    }
+
     /** The ring is over (joined, declined, the call ended). */
     public static void over(M5 app, String roomKey) {
         NotificationManager nm = app.getSystemService(NotificationManager.class);
@@ -150,10 +176,12 @@ public final class CallRing {
         if (System.currentTimeMillis() - pendingAt > 3 * 60_000L) { pendingJoin = null; return; }
         String screen = a.screen();
         if (app.lock.isLocked() || screen.isEmpty() || screen.equals("splash") || screen.equals("lock") || screen.equals("enroll")) { Io.mainLater(() -> tick(a, g), 500); return; }
-        pendingJoin = null;
         RoomSession r = app.rooms.session(room);
-        if (r == null) return;
+        if (r == null) { pendingJoin = null; return; }
         if (!room.equals(app.rooms.active()) || !screen.equals("room")) a.goRoom(room);
+        // 6.14 (call wake): a ring from a push — the room may still be connecting: wait for its call to show.
+        if (!r.calls().othersInCall() && r.calls().wakeWaiting() && System.currentTimeMillis() - pendingAt < RING_MS) { Io.mainLater(() -> tick(a, g), 500); return; }
+        pendingJoin = null;
         if (!r.calls().othersInCall() || !"off".equals(r.calls().state())) return;
         a.withPermission(Manifest.permission.RECORD_AUDIO, () -> Actions.run(a, "call.audio", null, n -> null, null, 0));
     }
@@ -167,7 +195,7 @@ public final class CallRing {
             String room = intent.getStringExtra("room");
             if (app == null || room == null) return;
             RoomSession r = app.rooms.session(room);
-            if (r != null) r.calls().decline();
+            if (r != null) { r.calls().decline(); r.calls().declinePushed(); } // 6.14: a pushed ring too (its call may not show yet)
             over(app, room);
         }
     }

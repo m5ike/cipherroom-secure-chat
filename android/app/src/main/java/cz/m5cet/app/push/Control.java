@@ -82,8 +82,9 @@ public final class Control {
                     break;
                 }
                 // 6.7: a notification by the operator's template (server/notify), drawn with what only the app knows.
+                // 6.14: a call wake of a room this app has rings like a call the room shows (CallRing.pushed).
                 case "notify": {
-                    app.notify.templated(payload, false);
+                    if (!cz.m5cet.app.telecom.CallRing.pushed(app, payload)) app.notify.templated(payload, false);
                     ack(id, true, new JSONObject().put("shown", true), null);
                     break;
                 }
