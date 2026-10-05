@@ -112,6 +112,9 @@ public final class SenderKeys4 {
 
     public synchronized boolean hasOurChain(String peerId) { return own != null && sentTo.contains(peerId); }
 
+    /** The chain handed out by chainFor did not reach the peer after all (its channel refused it). */
+    public synchronized void notSent(String peerId) { sentTo.remove(peerId); }
+
     public synchronized String currentKeyId() { return own == null ? null : own.keyId; }
 
     /** § 6: seals a room message (its JSON text, whose `id` must be `id`) with our current chain. */

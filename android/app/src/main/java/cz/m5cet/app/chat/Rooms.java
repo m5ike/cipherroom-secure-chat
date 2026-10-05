@@ -131,6 +131,35 @@ public final class Rooms {
         return app.vault.json(Vault.Tier.USER, "pins").optString(room + "\u0000" + name.trim().toLowerCase(java.util.Locale.ROOT), "");
     }
 
+    /** 6.12: what pin() would say, without pinning anything. */
+    synchronized String pinVerdict(String room, String name, String kid) {
+        String old = pinned(room, name);
+        return old.isEmpty() ? "new" : old.equals(kid) ? "match" : "changed";
+    }
+
+    /** 6.12: the person accepted another key for this name (People › verify): the pin follows. */
+    synchronized void repin(String room, String name, String kid) {
+        if (name == null || kid == null || kid.isEmpty()) return;
+        JSONObject pins = app.vault.json(Vault.Tier.USER, "pins");
+        try { pins.put(room + "\u0000" + name.trim().toLowerCase(java.util.Locale.ROOT), kid); } catch (JSONException ignored) { }
+        app.vault.putJson(Vault.Tier.USER, "pins", pins);
+    }
+
+    private P4Device p4;
+
+    /** 6.12: protocol 4 for this device (mailbox, account attestation, key transparency) — one for every room. */
+    synchronized P4Device p4() {
+        if (p4 == null) p4 = new P4Device(app, new P4Store(P4Store.vault(app)));
+        return p4;
+    }
+
+    /** 6.12 (§ 14.4): the persistent key-transparency alert for the server, in words ("" when none). */
+    public String ktAlert() {
+        if (!app.vault.unlocked()) return "";
+        String kind = p4().ktAlert();
+        return kind.isEmpty() ? "" : P4Texts.t(app, "p4.kt.alert." + kind);
+    }
+
     /** Trust on first use: room + name → key id. "new", "match" or "changed". */
     synchronized String pin(String room, String name, String kid) {
         JSONObject pins = app.vault.json(Vault.Tier.USER, "pins");
@@ -360,7 +389,7 @@ public final class Rooms {
             RoomSession r = sessions.remove(k);
             if (r != null) { History.save(app, k, r.messagesCopy()); r.destroy(); }
         }
-        synchronized (this) { loaded = false; saved.clear(); identity = null; }
+        synchronized (this) { loaded = false; saved.clear(); identity = null; p4 = null; }
         active = "";
         emit();
     }
@@ -394,6 +423,9 @@ public final class Rooms {
     /** 6.1: signed in or out — every room tells its signaling socket (relay for away members). */
     public void onAccountChanged() {
         for (RoomSession r : sessions.values()) r.sendAuth();
+        // 6.12: signed in — this device's certificate v2 and mailbox bundle go to the key directory (§ 7.5).
+        ChatIdentity id = identityOrNull();
+        if (id != null && app.account != null && app.account.signedIn()) p4().upload(id);
         emit();
         cz.m5cet.app.push.NotifyPrefs.get(app).onAccountChanged(); // 6.7: the settings and this device's link follow
     }

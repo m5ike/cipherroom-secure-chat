@@ -81,7 +81,23 @@ public final class Replay {
                 if (at > now + P4.REPLAY_FUTURE_MS) return "future";
                 if (store.has(roomId, key)) return "replay";
             }
-            store.add(roomId, key, safe ? ((Number) createdAt).longValue() : now);
+            return remember(roomId, key, safe ? ((Number) createdAt).longValue() : now, now);
+        }
+
+        /**
+         * Protocol 3 (an older peer, no freshness rule of its own): only "replay"
+         * for an id seen before, else remembered ("ok") — its createdAt is not
+         * held against it (§ 11 is protocol 4's).
+         */
+        public synchronized String checkId(String roomId, String id, long now) {
+            String key;
+            try { key = key(roomId, id); } catch (P4Error e) { return "malformed"; }
+            if (store.has(roomId, key)) return "replay";
+            return remember(roomId, key, now, now);
+        }
+
+        private String remember(String roomId, String key, long at, long now) {
+            store.add(roomId, key, at);
             int count = added.getOrDefault(roomId, 0) + 1;
             added.put(roomId, count);
             if (count == 1 || count % pruneEvery == 0) store.prune(roomId, now - P4.REPLAY_WINDOW_MS, P4.REPLAY_MAX_IDS_PER_ROOM);

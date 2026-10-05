@@ -43,6 +43,18 @@ final class PeerFacts {
     private final Map<String, String> users = new ConcurrentHashMap<>();
     /** When this device joined the room (last "joined"). */
     volatile long joinedAt = 0;
+    /** 6.12 (§ 13): peer id → did its join prove the room key to the server (absent: a server before 6.12 says nothing). */
+    private final Map<String, Boolean> proven = new ConcurrentHashMap<>();
+
+    /** 6.12: the server's word on whether this peer proved the room key; null when the server does not say. */
+    Boolean proven(String peerId) { return proven.get(peerId); }
+
+    private void noteProven(JSONObject p) {
+        String id = p.optString("peerId");
+        if (id.isEmpty()) return;
+        Object v = p.opt("proven");
+        if (v instanceof Boolean) proven.put(id, (Boolean) v); else proven.remove(id);
+    }
 
     Facts get(String peerId) { return peers.get(peerId); }
 
@@ -73,10 +85,12 @@ final class PeerFacts {
                     joinedAt = System.currentTimeMillis();
                     accounts.clear();
                     away.clear();
+                    proven.clear();
                     JSONArray list = f.optJSONArray("peers");
                     if (list != null) for (int i = 0; i < list.length(); i++) {
                         JSONObject p = list.optJSONObject(i);
                         if (p != null && !ref(p).isEmpty()) accounts.put(p.optString("peerId"), ref(p));
+                        if (p != null) noteProven(p);
                     }
                     JSONArray gone = f.optJSONArray("away");
                     if (gone != null) for (int i = 0; i < gone.length(); i++) {
@@ -88,6 +102,7 @@ final class PeerFacts {
                 case "peer-joined": case "peer-updated": {
                     String id = f.optString("peerId"), r = ref(f);
                     if (id.isEmpty()) break;
+                    if ("peer-joined".equals(f.optString("type"))) noteProven(f);
                     if (r.isEmpty()) accounts.remove(id); else accounts.put(id, r);
                     Facts x = peers.get(id);
                     if (!r.isEmpty() && x != null && !x.username.isEmpty()) users.put(r, x.username);
@@ -103,6 +118,7 @@ final class PeerFacts {
                     String id = f.optString("peerId");
                     peers.remove(id);
                     accounts.remove(id);
+                    proven.remove(id);
                     break;
                 }
                 default: break;

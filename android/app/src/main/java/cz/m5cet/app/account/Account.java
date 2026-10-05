@@ -499,6 +499,28 @@ public final class Account {
      */
     public byte[] cardRoot() { return hasRoot() ? root() : null; }
 
+    /**
+     * 6.12: the account's Ed25519 signing key as its 32-byte seed — the same on
+     * every device of the account (web: identity.ts accountSigningKey):
+     * HKDF(root, salt "m5cet:account:v1", info "m5cet:account-sign:v1", 32).
+     * It certifies this device's key (certificate v2, protocol 4 § 12.3). Null
+     * while signed out or without the root; the caller wipes it.
+     */
+    public byte[] accountSeed() {
+        byte[] root = hasRoot() ? root() : null;
+        if (root == null) return null;
+        try { return accountSeedOf(root); } finally { Crypto.wipe(root); }
+    }
+
+    public static byte[] accountSeedOf(byte[] root) {
+        return Crypto.hkdf(root, Crypto.utf8("m5cet:account:v1"), Crypto.utf8("m5cet:account-sign:v1"), 32);
+    }
+
+    /** 6.12: PUT /api/keys/bundle (protocol 4 § 7.5) — this device's mailbox bundle and certificate in the key directory. Blocking. */
+    public JSONObject putKeyBundle(JSONObject body) throws IOException {
+        return call("PUT", "/api/keys/bundle", body, true);
+    }
+
     /** A sign-in or a confirmation this recent stands for the person: no second prompt. */
     private static final long FRESH_MS = 5 * 60_000;
 

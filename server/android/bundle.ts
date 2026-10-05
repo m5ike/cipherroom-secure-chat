@@ -22,6 +22,7 @@ import { ACTIONS_67, ELEMENTS_67 } from "./design-67";
 import { ACTIONS_68, ELEMENTS_68 } from "./design-68";
 import { ACTIONS_610, ELEMENTS_610 } from "./design-610";
 import { ACTIONS_611, ELEMENTS_611 } from "./design-611";
+import { ACTIONS_612, ELEMENTS_612 } from "./design-612";
 import { androidStore, newId, type Build, type Device } from "./store";
 
 /** versionCode of an app version: 6.0.0 → 60000 (major·10000 + minor·100 + patch). */
@@ -99,6 +100,7 @@ const cekAad = (id: string) => `android:build:${id}`;
 
 /** The app code each design version's own elements and actions need (an older app draws an unknown element as nothing), newest first. */
 const NEEDS: Array<{ code: number; elements: Set<string>; actions: Set<string> }> = [
+  { code: 61200, elements: new Set(ELEMENTS_612.map((e) => e.el)), actions: new Set(ACTIONS_612.map((a) => a.action)) },
   { code: 61100, elements: new Set(ELEMENTS_611.map((e) => e.el)), actions: new Set(ACTIONS_611.map((a) => a.action)) },
   { code: 61000, elements: new Set(ELEMENTS_610.map((e) => e.el)), actions: new Set(ACTIONS_610.map((a) => a.action)) },
   { code: 60800, elements: new Set(ELEMENTS_68.map((e) => e.el)), actions: new Set(ACTIONS_68.map((a) => a.action)) },
