@@ -12,11 +12,13 @@
 // new unlock PIN may not be it.
 
 import Foundation
+import M5Core
+import M5Crypto
 
 enum DuressVerifier {
     typealias Mac = (Data) throws -> Data
 
-    static func input(_ stretched: Data) -> Data { Bytes.utf8("m5/duress/1|") + stretched }
+    static func input(_ stretched: Bytes) -> Data { SecData.utf8("m5/duress/1|") + Data(stretched) }
 
     /// Why a new duress PIN is refused: nil (fine), "length" (not exactly the policy's length of digits), "same" (the unlock PIN).
     static func refusal(_ pin: String?, length: Int, isUnlockPin: Bool) -> String? {
@@ -25,21 +27,21 @@ enum DuressVerifier {
     }
 
     /// The record {salt, iter, tag} for this PIN.
-    static func make(pin: String, salt: Data, iterations: Int, mac: Mac) throws -> SecRecord {
-        var stretched = PinWrap.stretch(pin, salt: salt, iterations: iterations)
-        defer { Bytes.wipe(&stretched) }
+    static func make(pin: String, salt: Data, iterations: Int, mac: Mac) throws -> JSONObject {
+        var stretched = PinWrap.stretch(pin: pin, salt: Array(salt), iterations: iterations)
+        defer { ByteOps.wipe(&stretched) }
         let tag = try mac(input(stretched))
-        return ["salt": Bytes.b64(salt), "iter": iterations, "tag": Bytes.b64(tag)]
+        return JSONObject([("salt", .string(Bytes.b64(salt))), ("iter", .int(iterations)), ("tag", .string(Bytes.b64(tag)))])
     }
 
     /// Whether the PIN is the one of this verifier (constant time; false on anything odd).
-    static func matches(_ v: SecRecord?, pin: String?, mac: Mac) -> Bool {
-        guard let v, let pin, v.jHas("tag"), v.jHas("salt") else { return false }
-        let iterations = v.jInt("iter", 0)
-        guard (1000...10_000_000).contains(iterations), let salt = Bytes.unb64(v.jString("salt")),
-              let want = Bytes.unb64(v.jString("tag")) else { return false }
-        var stretched = PinWrap.stretch(pin, salt: salt, iterations: iterations)
-        defer { Bytes.wipe(&stretched) }
+    static func matches(_ v: JSONObject?, pin: String?, mac: Mac) -> Bool {
+        guard let v, let pin, v.isPresent("tag"), v.isPresent("salt") else { return false }
+        let iterations = v.optInt("iter", 0)
+        guard (1000...10_000_000).contains(iterations), let salt = Bytes.unb64(v.optString("salt")),
+              let want = Bytes.unb64(v.optString("tag")) else { return false }
+        var stretched = PinWrap.stretch(pin: pin, salt: Array(salt), iterations: iterations)
+        defer { ByteOps.wipe(&stretched) }
         guard let tag = try? mac(input(stretched)) else { return false }
         return Bytes.same(tag, want)
     }
@@ -70,12 +72,12 @@ final class VaultSecuritySettings: SecuritySettings, @unchecked Sendable {
 
     init(vault: Vault) { self.vault = vault }
 
-    func bool(_ key: String) -> Bool { mutex.withLock { vault.json(.sys, Self.record).jBool(key) } }
+    func bool(_ key: String) -> Bool { mutex.withLock { vault.json(.sys, Self.record).bool(key) ?? false } }
 
     func set(_ key: String, _ value: Bool) {
         mutex.withLock {
             var o = vault.json(.sys, Self.record)
-            o[key] = value
+            o[key] = .bool(value)
             try? vault.putJson(.sys, Self.record, o)
         }
     }
@@ -95,10 +97,10 @@ final class DuressPin: @unchecked Sendable {
 
     private var mac: DuressVerifier.Mac { { [keyring = vault.keyring] in try keyring.prf("duress", $0) } }
 
-    private var verifier: SecRecord { vault.json(.sys, Self.record) }
+    private var verifier: JSONObject { vault.json(.sys, Self.record) }
 
     /// Switched on and set.
-    var active: Bool { settings.bool(SecuritySetting.duress) && verifier.jHas("tag") }
+    var active: Bool { settings.bool(SecuritySetting.duress) && verifier.isPresent("tag") }
 
     /// Sets (or replaces) the duress PIN; the caller checked it with refusal().
     func set(_ pin: String) throws {
@@ -112,18 +114,18 @@ final class DuressPin: @unchecked Sendable {
     func check(_ pin: String) -> Bool {
         guard settings.bool(SecuritySetting.duress) else { return false }
         let v = verifier
-        return v.jHas("tag") && DuressVerifier.matches(v, pin: pin, mac: mac)
+        return v.isPresent("tag") && DuressVerifier.matches(v, pin: pin, mac: mac)
     }
 
     /// Whether a PIN may not become the unlock PIN (it is the duress PIN).
     func isDuressPin(_ pin: String) -> Bool {
         let v = verifier
-        return v.jHas("tag") && DuressVerifier.matches(v, pin: pin, mac: mac)
+        return v.isPresent("tag") && DuressVerifier.matches(v, pin: pin, mac: mac)
     }
 
     /// The switch shows what is real: on without a verifier goes off.
     func reconcile() {
-        if settings.bool(SecuritySetting.duress) && !verifier.jHas("tag") { settings.set(SecuritySetting.duress, false) }
+        if settings.bool(SecuritySetting.duress) && !verifier.isPresent("tag") { settings.set(SecuritySetting.duress, false) }
     }
 
     /// Off: the verifier and its key go.

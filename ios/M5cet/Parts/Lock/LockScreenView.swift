@@ -12,6 +12,8 @@
 //
 // Texts come from the design (LockTexts), colours from its theme (LockLook).
 
+import M5Core
+import M5Crypto
 import SwiftUI
 import UIKit
 
@@ -92,7 +94,7 @@ final class LockPadModel {
 
     private func submit() async {
         var entered = take()
-        defer { Bytes.wipe(&entered) }
+        defer { SecData.wipe(&entered) }
         switch step {
         case .enter:
             let pin = String(decoding: entered, as: UTF8.self)
@@ -137,8 +139,8 @@ final class LockPadModel {
 /// Digits being typed: zeroed when taken and when the pad goes away.
 final class PinBuffer: @unchecked Sendable {
     var bytes: [UInt8] = []
-    func wipe() { Bytes.wipe(&bytes) }
-    deinit { Bytes.wipe(&bytes) }
+    func wipe() { SecData.wipe(&bytes) }
+    deinit { SecData.wipe(&bytes) }
 }
 
 /// The system's CSPRNG for the shuffle.

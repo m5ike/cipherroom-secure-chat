@@ -11,6 +11,7 @@
 // "file" (development only, nothing secret should be in such a build).
 
 import Foundation
+import M5Core
 import Security
 
 /// When an item can be read (Keychain accessibility, always ThisDeviceOnly).
@@ -44,34 +45,64 @@ protocol SecureStore: AnyObject, Sendable {
 }
 
 extension SecureStore {
-    func string(_ name: String) throws -> String? { try read(name).flatMap { Bytes.str($0) } }
-    func write(_ name: String, string: String, access: SecureStoreAccess) throws { try write(name, Bytes.utf8(string), access: access) }
+    func string(_ name: String) throws -> String? { try read(name).flatMap { SecData.str($0) } }
+    func write(_ name: String, string: String, access: SecureStoreAccess) throws { try write(name, SecData.utf8(string), access: access) }
 }
 
-/// The Keychain: one service (namespace), the account is the item's name. Items go to the
-/// app's default access group — the first of `keychain-access-groups`, shared with the
-/// notification extension (Resources/M5cet.entitlements).
+/// The Keychain: one service (namespace) in one access group; the account is the item's name.
+///
+/// Two groups (Resources/M5cet.entitlements, M5cetNotifications/M5cetNotifications.entitlements):
+///
+///   `<TEAMID>.cz.m5cet.app`     the app only (first in the app's list = its default group)
+///   `<TEAMID>.cz.m5cet.shared`  the app and the notification extension — only what the extension
+///                               must use: the SYS key and the device's encryption key (README)
+///
+/// The team prefix is found at run time (`groupPrefix()`); an ad-hoc signed simulator build has none.
 final class KeychainSecureStore: SecureStore, @unchecked Sendable {
     let service: String
+    /// The access group (nil: the app's default group — only for the probe).
+    let accessGroup: String?
     var kind: String { "keychain" }
 
-    init(service: String) { self.service = service }
+    /// The app-only group's and the shared group's names without the team prefix.
+    static let appGroupSuffix = "cz.m5cet.app"
+    static let sharedGroupSuffix = "cz.m5cet.shared"
+
+    init(service: String, accessGroup: String?) {
+        self.service = service
+        self.accessGroup = accessGroup
+    }
 
     /// Whether this process may use the Keychain at all (false in an unsigned build: errSecMissingEntitlement).
-    static func usable() -> Bool {
-        let probe = KeychainSecureStore(service: "cz.m5cet.app.probe")
+    static func usable() -> Bool { groupPrefix() != nil }
+
+    /// The team prefix of the keychain groups ("ABCDE12345." — "" in an ad-hoc signed build): an item added
+    /// to the default group (the first of `keychain-access-groups`, `<prefix>cz.m5cet.app`) says which group
+    /// that is. nil when the Keychain cannot be used (an unsigned build: errSecMissingEntitlement).
+    static func groupPrefix() -> String? {
+        let probe = KeychainSecureStore(service: "cz.m5cet.app.probe", accessGroup: nil)
         do {
             try probe.write("probe", Data([1]), access: .background)
-            probe.delete("probe")
-            return true
+            defer { probe.delete("probe") }
+            var q = probe.base("probe")
+            q[kSecReturnAttributes as String] = true
+            q[kSecMatchLimit as String] = kSecMatchLimitOne
+            var out: CFTypeRef?
+            guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
+                  let group = (out as? [String: Any])?[kSecAttrAccessGroup as String] as? String else { return nil }
+            if group.hasSuffix(appGroupSuffix) { return String(group.dropLast(appGroupSuffix.count)) }
+            // Another default group: its team prefix (10 characters and a dot), if it has one.
+            if let dot = group.firstIndex(of: "."), group.distance(from: group.startIndex, to: dot) == 10 { return String(group[...dot]) }
+            return ""
         } catch {
-            return false
+            return nil
         }
     }
 
-    private func base(_ name: String? = nil) -> [String: Any] {
+    fileprivate func base(_ name: String? = nil) -> [String: Any] {
         var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
                                 kSecUseDataProtectionKeychain as String: true]
+        if let accessGroup { q[kSecAttrAccessGroup as String] = accessGroup }
         if let name { q[kSecAttrAccount as String] = name }
         return q
     }
@@ -123,7 +154,7 @@ final class FileSecureStore: SecureStore, @unchecked Sendable {
 
     init(dir: URL) { self.dir = dir }
 
-    private func url(_ name: String) -> URL { dir.appendingPathComponent(Bytes.hex(Bytes.utf8(name)) + ".item") }
+    private func url(_ name: String) -> URL { dir.appendingPathComponent(Bytes.hex(SecData.utf8(name)) + ".item") }
 
     func read(_ name: String) throws -> Data? {
         try lock.withLock {
@@ -147,7 +178,7 @@ final class FileSecureStore: SecureStore, @unchecked Sendable {
     func names() throws -> [String] {
         lock.withLock {
             let files = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-            return files.filter { $0.hasSuffix(".item") }.compactMap { Bytes.unhex(String($0.dropLast(5))).flatMap { Bytes.str($0) } }
+            return files.filter { $0.hasSuffix(".item") }.compactMap { Bytes.unhex(String($0.dropLast(5))).flatMap { SecData.str($0) } }
         }
     }
 

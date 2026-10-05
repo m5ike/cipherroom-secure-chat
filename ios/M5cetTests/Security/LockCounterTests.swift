@@ -3,6 +3,7 @@
 // wait grows from the third failure — and moving the wall clock or rebooting never
 // shortens a wait (Android's known weakness M4).
 
+import M5Core
 import XCTest
 @testable import M5cet
 
@@ -14,16 +15,16 @@ final class LockCounterTests: XCTestCase {
     }
 
     /// The record as the Keychain keeps it — a JSON round trip.
-    private func stored(_ s: SecRecord) -> SecRecord { SecJSON.parse(SecJSON.data(s))! }
+    private func stored(_ s: JSONObject) -> JSONObject { JSON.parseObject(s.stringify())! }
 
     func testAnAttemptCountsBeforeTheCheck() {
         var s = LockCounter.fresh()
         XCTAssertEqual(LockCounter.begin(&s, now: t), 1)
         var afterKill = stored(s)
-        XCTAssertEqual(afterKill.jInt("attempts"), 1)
+        XCTAssertEqual(afterKill.optInt("attempts"), 1)
         XCTAssertTrue(LockCounter.interrupted(afterKill))
         XCTAssertEqual(LockCounter.settle(&afterKill, now: at(5), maxAttempts: 8, wipe: true, backoff: true), .wrong)
-        XCTAssertEqual(afterKill.jInt("attempts"), 1, "counted once, not twice")
+        XCTAssertEqual(afterKill.optInt("attempts"), 1, "counted once, not twice")
         XCTAssertFalse(LockCounter.interrupted(afterKill))
     }
 
@@ -38,27 +39,27 @@ final class LockCounterTests: XCTestCase {
         }
         s = stored(s)
         XCTAssertTrue(LockCounter.interrupted(s))
-        XCTAssertEqual(s.jInt("attempts"), 8)
+        XCTAssertEqual(s.optInt("attempts"), 8)
         XCTAssertEqual(LockCounter.settle(&s, now: at(100), maxAttempts: 8, wipe: true, backoff: false), .wipe)
     }
 
     func testAWrongLastAttemptWipesOrLocksOut() {
-        var s: SecRecord = ["attempts": 7]
+        var s = JSONObject([("attempts", .int(7))])
         LockCounter.begin(&s, now: t)
         var w = stored(s)
         XCTAssertEqual(LockCounter.settle(&w, now: t, maxAttempts: 8, wipe: true, backoff: true), .wipe)
         var l = stored(s)
         XCTAssertEqual(LockCounter.settle(&l, now: t, maxAttempts: 8, wipe: false, backoff: true), .lockedOut)
-        XCTAssertEqual(l.jInt64("until"), t.wallMs + LockCounter.lockoutMs)
+        XCTAssertEqual(l.optInt64("until"), t.wallMs + LockCounter.lockoutMs)
         XCTAssertEqual(LockCounter.waitLeftMs(l, now: t), LockCounter.lockoutMs)
     }
 
     func testARejectedBiometricCountsOnce() {
         var s = LockCounter.fresh()
         XCTAssertEqual(LockCounter.settle(&s, now: t, maxAttempts: 8, wipe: true, backoff: true), .wrong)
-        XCTAssertEqual(s.jInt("attempts"), 1)
+        XCTAssertEqual(s.optInt("attempts"), 1)
         XCTAssertEqual(LockCounter.settle(&s, now: t, maxAttempts: 8, wipe: true, backoff: true), .wrong)
-        XCTAssertEqual(s.jInt("attempts"), 2)
+        XCTAssertEqual(s.optInt("attempts"), 2)
     }
 
     func testTheWaitGrowsFromTheThirdFailure() {
@@ -67,15 +68,15 @@ final class LockCounterTests: XCTestCase {
             LockCounter.begin(&s, now: t)
             _ = LockCounter.settle(&s, now: t, maxAttempts: 20, wipe: true, backoff: true)
         }
-        XCTAssertEqual(s.jInt64("until"), 0)
+        XCTAssertEqual(s.optInt64("until"), 0)
         LockCounter.begin(&s, now: t)
         _ = LockCounter.settle(&s, now: t, maxAttempts: 20, wipe: true, backoff: true)
-        XCTAssertEqual(s.jInt64("until"), t.wallMs + 30_000)
+        XCTAssertEqual(s.optInt64("until"), t.wallMs + 30_000)
         XCTAssertEqual(LockCounter.waitMs(4), 60_000)
         XCTAssertEqual(LockCounter.waitMs(19), 3_600_000)
-        var noBackoff: SecRecord = ["attempts": 5]
+        var noBackoff = JSONObject([("attempts", .int(5))])
         _ = LockCounter.settle(&noBackoff, now: t, maxAttempts: 20, wipe: true, backoff: false)
-        XCTAssertFalse(noBackoff.jHas("until"))
+        XCTAssertFalse(noBackoff.isPresent("until"))
     }
 
     func testAutolockAppliesInTheBackground() {
@@ -88,7 +89,7 @@ final class LockCounterTests: XCTestCase {
     // MARK: iOS: the monotonic wait (M4)
 
     func testMovingTheWallClockDoesNotSkipTheWait() {
-        var s: SecRecord = ["attempts": 2]
+        var s = JSONObject([("attempts", .int(2))])
         LockCounter.begin(&s, now: t)
         _ = LockCounter.settle(&s, now: t, maxAttempts: 8, wipe: true, backoff: true)
         XCTAssertEqual(LockCounter.waitLeftMs(stored(s), now: t), 30_000)
@@ -103,7 +104,7 @@ final class LockCounterTests: XCTestCase {
     }
 
     func testARebootNeverShortensTheWait() {
-        var s: SecRecord = ["attempts": 7]
+        var s = JSONObject([("attempts", .int(7))])
         LockCounter.begin(&s, now: t)
         _ = LockCounter.settle(&s, now: t, maxAttempts: 8, wipe: false, backoff: true) // an hour's lock-out
         // Rebooted 10 s ago with the wall clock moved a day ahead: only the 10 s since the boot count.
@@ -121,11 +122,11 @@ final class LockCounterTests: XCTestCase {
     }
 
     func testTheNextAttemptClearsAnOverWait() {
-        var s: SecRecord = ["attempts": 3]
+        var s = JSONObject([("attempts", .int(3))])
         LockCounter.startWait(&s, ms: 30_000, now: t)
         LockCounter.begin(&s, now: at(31))
-        XCTAssertEqual(s.jInt64("until"), 0)
-        XCTAssertFalse(s.jHas("wait"))
+        XCTAssertEqual(s.optInt64("until"), 0)
+        XCTAssertFalse(s.isPresent("wait"))
         XCTAssertEqual(LockCounter.waitLeftMs(s, now: LockTime(wallMs: 0, monoMs: 1, boot: "Z")), 0, "a later reboot restarts nothing")
     }
 
@@ -133,10 +134,10 @@ final class LockCounterTests: XCTestCase {
         for max in [3, 8, 20] {
             var s = LockCounter.rolledBack(maxAttempts: max)
             XCTAssertEqual(LockCounter.settle(&s, now: t, maxAttempts: max, wipe: true, backoff: true), .wipe)
-            XCTAssertEqual(s.jInt("attempts"), max)
+            XCTAssertEqual(s.optInt("attempts"), max)
             var l = LockCounter.rolledBack(maxAttempts: max)
             XCTAssertEqual(LockCounter.settle(&l, now: t, maxAttempts: max, wipe: false, backoff: true), .lockedOut)
-            XCTAssertEqual(l.jInt64("until"), t.wallMs + LockCounter.lockoutMs)
+            XCTAssertEqual(l.optInt64("until"), t.wallMs + LockCounter.lockoutMs)
         }
     }
 }

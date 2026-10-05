@@ -3,22 +3,24 @@
 //
 //   sys      key agreement, after first unlock  → wraps the SYS tier's data key (Vault)
 //   bio      key agreement, biometryCurrentSet  → wraps the USER tier's data key (Vault)
-//   pin      key agreement, when unlocked       → the PIN key: PRF over the stretched PIN (PinWrap v 2)
+//   pin      key agreement, when unlocked       → the PIN key: PRF over the stretched PIN (M5Crypto PinWrap v 2)
 //   duress   key agreement, when unlocked       → the duress PIN's verifier (DuressPin)
 //   ctr.N    key agreement, when unlocked       → seals the attempt counter, one generation at a time (LockStore)
-//   sign     signing, after first unlock        → signs requests to the server (DeviceSigner)
-//   enc      key agreement, after first unlock  → the device's encryption key (DeviceAgreement: ECIES from the server)
+//   sign     signing, after first unlock        → signs requests to the server (KeyringSigner: RequestSigner / DeviceSigner)
+//   enc      key agreement, after first unlock  → the device's encryption key (KeyringAgreement: KeyAgreer, ECIES from the server)
 //
 // Every key is a Secure Enclave P-256 key (CryptoKit's SecureEnclave.P256 —
 // SecKeyCreateRandomKey with kSecAttrTokenIDSecureEnclave underneath). Its
 // `dataRepresentation` is the key encrypted by the Secure Enclave, usable only
 // by this device's Secure Enclave; that blob is kept as a Keychain item
-// (SecureStore, ThisDeviceOnly). Deleting the item deletes the key.
+// (SecureStore, ThisDeviceOnly). Deleting the item deletes the key. `sys` and
+// `enc` are in the keychain group the notification extension shares
+// (`<TEAMID>.cz.m5cet.shared`), every other key only in the app's own group.
 //
 // The Secure Enclave can sign and agree (ECDH) but has no HMAC, which Android's
 // PIN key, duress key and counter keys are. The PRF that replaces them:
 //
-//   prf(alias, x) = HMAC-SHA256(key: ECDH(d_alias, H(x)), x)      H = EcP256.hashToCurve
+//   prf(alias, x) = HMAC-SHA256(key: ECDH(d_alias, H(x)), x)      H = EnclavePRF.hashToCurve
 //
 // d_alias never leaves the Secure Enclave and H(x) is a point nobody knows the
 // discrete logarithm of, so ECDH(d, H(x)) — and the PRF — cannot be computed
@@ -32,7 +34,28 @@
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import M5Core
+import M5Crypto
 import Security
+
+/// The Secure Enclave as a PRF (README "PIN key").
+enum EnclavePRF {
+    /// A P-256 point whose discrete logarithm nobody knows, from the input: try-and-increment
+    /// over x = SHA-256("m5/ios/h2c/1|" ‖ u32 counter ‖ input), decompressed by CryptoKit
+    /// (an x not on the curve is refused and the next counter tried; ~2 tries on average).
+    static func hashToCurve(_ input: Data) -> P256.KeyAgreement.PublicKey {
+        let label = Crypto.utf8("m5/ios/h2c/1|")
+        var counter: UInt32 = 0
+        while true {
+            let x = Crypto.sha256(label, ByteOps.be32(counter), Array(input))
+            if let point = try? P256.KeyAgreement.PublicKey(compressedRepresentation: [0x02] + x) { return point }
+            counter += 1
+        }
+    }
+
+    /// HMAC-SHA256(key: the ECDH result, input) — what the Keyring's `prf` returns for an agreement.
+    static func mac(shared: Data, _ input: Data) -> Data { Data(Crypto.hmac256(Array(shared), Array(input))) }
+}
 
 enum KeyLevel: String, Sendable {
     case secureEnclave = "secure-enclave"
@@ -130,7 +153,12 @@ struct SoftwareKeyMaker: KeyMaker {
     }
 
     func agree(_ blob: Data, with peer: P256.KeyAgreement.PublicKey, context: LAContext?) throws -> Data {
-        do { return try EcP256.ecdh(P256.KeyAgreement.PrivateKey(rawRepresentation: blob), peer) } catch { throw SecurityError.damaged("software agreement") }
+        do {
+            let key = try P256.KeyAgreement.PrivateKey(rawRepresentation: blob)
+            return try key.sharedSecretFromKeyAgreement(with: peer).withUnsafeBytes { Data($0) }
+        } catch {
+            throw SecurityError.damaged("software agreement")
+        }
     }
 
     func newSigningKey(_ access: KeyAccess) throws -> Data { P256.Signing.PrivateKey().rawRepresentation }
@@ -145,10 +173,13 @@ struct SoftwareKeyMaker: KeyMaker {
     }
 }
 
-/// The named keys (Android Keystore's aliases) in a SecureStore, made by the Secure Enclave
+/// The named keys (Android Keystore's aliases) in SecureStores, made by the Secure Enclave
 /// where there is one. Thread-safe.
 final class Keyring: @unchecked Sendable {
-    let store: SecureStore
+    /// The app's own keys (the app-only keychain group).
+    let store: any SecureStore
+    /// The keys the notification extension must use too (`sharedAliases`, the shared keychain group).
+    let shared: any SecureStore
     private let enclave: (any KeyMaker)?
     private let software: any KeyMaker
     /// Biometric keys in software where the Secure Enclave cannot make them (the simulator only).
@@ -157,23 +188,28 @@ final class Keyring: @unchecked Sendable {
 
     static let prefix = "key."
     static let counterPrefix = "ctr."
+    /// In the shared keychain group: the SYS tier's key (the extension reads the SYS tier) and the
+    /// device's encryption key (ECIES-sealed push payloads). Everything else is app-only.
+    static let sharedAliases: Set<String> = ["sys", "enc"]
 
-    /// The keys made from now on: in the Secure Enclave when `enclave` is given.
-    init(store: SecureStore, enclave: (any KeyMaker)?, software: any KeyMaker = SoftwareKeyMaker(), softwareBiometry: Bool = false) {
+    /// The keys made from now on: in the Secure Enclave when `enclave` is given. `shared` nil: one store for all.
+    init(store: any SecureStore, shared: (any SecureStore)? = nil, enclave: (any KeyMaker)?, software: any KeyMaker = SoftwareKeyMaker(),
+         softwareBiometry: Bool = false) {
         self.store = store
+        self.shared = shared ?? store
         self.enclave = enclave
         self.software = software
         self.softwareBiometry = softwareBiometry
     }
 
     /// This device: the Secure Enclave when available; software biometric keys only in the simulator.
-    static func system(store: SecureStore) -> Keyring {
+    static func system(store: any SecureStore, shared: any SecureStore) -> Keyring {
         #if targetEnvironment(simulator)
         let simulator = true
         #else
         let simulator = false
         #endif
-        return Keyring(store: store, enclave: EnclaveKeyMaker.available ? EnclaveKeyMaker() : nil, softwareBiometry: simulator)
+        return Keyring(store: store, shared: shared, enclave: EnclaveKeyMaker.available ? EnclaveKeyMaker() : nil, softwareBiometry: simulator)
     }
 
     /// Where new keys are made.
@@ -185,9 +221,12 @@ final class Keyring: @unchecked Sendable {
 
     private func item(_ alias: String) -> String { Self.prefix + alias }
 
+    /// The store an alias lives in.
+    func storeFor(_ alias: String) -> any SecureStore { Self.sharedAliases.contains(alias) ? shared : store }
+
     private func load(_ alias: String) throws -> (any KeyMaker, Data)? {
-        guard let raw = try store.read(item(alias)), raw.count > 1 else { return nil }
-        let blob = Bytes.fresh(raw.dropFirst())
+        guard let raw = try storeFor(alias).read(item(alias)), raw.count > 1 else { return nil }
+        let blob = SecData.fresh(raw.dropFirst())
         switch Tag(rawValue: raw[raw.startIndex]) {
         case .enclave:
             guard let enclave else { throw SecurityError.unavailable("secure enclave") }
@@ -199,7 +238,7 @@ final class Keyring: @unchecked Sendable {
 
     private func save(_ alias: String, maker: any KeyMaker, blob: Data, access: KeyAccess) throws {
         let tag: Tag = maker.level == .secureEnclave ? .enclave : .software
-        try store.write(item(alias), Data([tag.rawValue]) + blob, access: access == .background ? .background : .foreground)
+        try storeFor(alias).write(item(alias), Data([tag.rawValue]) + blob, access: access == .background ? .background : .foreground)
     }
 
     /// The level of an existing key (nil: none).
@@ -207,9 +246,9 @@ final class Keyring: @unchecked Sendable {
         (try? load(alias))?.0.level
     }
 
-    func has(_ alias: String) -> Bool { (try? store.read(item(alias))) != nil }
+    func has(_ alias: String) -> Bool { ((try? storeFor(alias).read(item(alias))) ?? nil) != nil }
 
-    func delete(_ alias: String) { store.delete(item(alias)) }
+    func delete(_ alias: String) { storeFor(alias).delete(item(alias)) }
 
     // MARK: key agreement and the PRF
 
@@ -236,7 +275,7 @@ final class Keyring: @unchecked Sendable {
     /// A new key replacing any old one (the biometric key at enrolment).
     @discardableResult
     func replaceAgreementKey(_ alias: String, access: KeyAccess) throws -> KeyLevel {
-        lock.withLock { store.delete(item(alias)) }
+        lock.withLock { storeFor(alias).delete(item(alias)) }
         return try ensureAgreementKey(alias, access: access)
     }
 
@@ -258,9 +297,9 @@ final class Keyring: @unchecked Sendable {
 
     /// prf(alias, x) = HMAC-SHA256(ECDH(d_alias, hashToCurve(x)), x) — the hardware HMAC of Android's Keystore.hmacBy.
     func prf(_ alias: String, _ input: Data) throws -> Data {
-        var shared = try agree(alias, with: EcP256.hashToCurve(input))
-        defer { Bytes.wipe(&shared) }
-        return SecCrypto.hmac(key: shared, input)
+        var secret = try agree(alias, with: EnclavePRF.hashToCurve(input))
+        defer { SecData.wipe(&secret) }
+        return EnclavePRF.mac(shared: secret, input)
     }
 
     // MARK: signing
@@ -300,10 +339,12 @@ final class Keyring: @unchecked Sendable {
 
     // MARK: the wipe
 
-    /// Every key of this keyring (Android Keystore.deleteAll).
+    /// Every key of this keyring, in both groups (Android Keystore.deleteAll).
     func deleteAll() {
         lock.withLock {
-            for name in (try? store.names()) ?? [] where name.hasPrefix(Self.prefix) { store.delete(name) }
+            for s in [store, shared] {
+                for name in (try? s.names()) ?? [] where name.hasPrefix(Self.prefix) { s.delete(name) }
+            }
         }
     }
 }

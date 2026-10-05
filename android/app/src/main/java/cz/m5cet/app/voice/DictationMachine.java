@@ -22,6 +22,11 @@ import java.util.Set;
  * that is over (a late result, an error after our own cancel) are ignored,
  * so nothing ever restarts a stopped dictation.
  *
+ * 6.14: an error that ends the dictation ("unsupported", a fatal code,
+ * "ended") is reported BEFORE the machine goes idle — Dictation drops its
+ * listener on IDLE, so an error said after it never reached the composer
+ * ("not-allowed", "audio-capture", "language-not-supported" were not shown).
+ *
  * Single-threaded: every call on one thread (the main thread in the app).
  */
 public final class DictationMachine {
@@ -155,8 +160,8 @@ public final class DictationMachine {
             return true;
         } catch (RuntimeException e) {
             session = null;
-            finish();
             listener.onError("unsupported");
+            finish();
             return false;
         }
     }
@@ -167,8 +172,8 @@ public final class DictationMachine {
         lastError = code == null ? "" : code;
         if (FATAL.contains(code) && state != State.STOPPING) {
             abortSession();
-            finish();
             listener.onError(code);
+            finish();
             return;
         }
         if (!"no-speech".equals(code) && !"aborted".equals(code) && !"busy".equals(code) && !"client".equals(code)) listener.onError(code);
@@ -179,7 +184,7 @@ public final class DictationMachine {
         if (state == State.STOPPING || state == State.IDLE || state == State.PAUSED) { if (state != State.PAUSED) finish(); return; }
         // It ended by itself (a pause, the network): dictation goes on.
         idleRestarts++;
-        if (idleRestarts > maxIdleRestarts) { finish(); listener.onError("ended"); return; }
+        if (idleRestarts > maxIdleRestarts) { listener.onError("ended"); finish(); return; }
         set(State.RESTARTING);
         long wait = "busy".equals(lastError) || "client".equals(lastError) || "network".equals(lastError) ? busyRestartMs : restartMs;
         lastError = "";
