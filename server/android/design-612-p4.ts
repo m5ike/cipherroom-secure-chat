@@ -107,6 +107,22 @@ const STR: Record<string, { cs: string; en: string; de: string }> = {
   ),
   "p4.trust.otherName": T("ověřeno jako {name} — teď pod jiným jménem", "verified as {name} — now under another name", "verifiziert als {name} — jetzt unter einem anderen Namen"),
   "p4.kt.checking": T("ověřuje se v logu transparentnosti klíčů", "being checked in the key-transparency log", "wird im Schlüsseltransparenz-Log geprüft"),
+  "p4.kt.unchecked": T("v logu transparentnosti klíčů zatím neověřeno", "not yet checked in the key-transparency log", "im Schlüsseltransparenz-Log noch nicht geprüft"),
+  "p4.file.proxyP4": T(
+    "{name} jde přes server — jeho klíč zapečetěný pro zařízení každého člena (protokol 4)",
+    "{name} goes through the server — its key sealed for each member's devices (protocol 4)",
+    "{name} geht über den Server — sein Schlüssel für die Geräte jedes Mitglieds versiegelt (Protokoll 4)",
+  ),
+  "p4.file.proxyRoomKey": T(
+    "{name} šel přes server klíčem místnosti: zařízení některého člena nešlo zabezpečit end-to-end",
+    "{name} went through the server under the room key: a member's device could not be reached end to end",
+    "{name} ging mit dem Raumschlüssel über den Server: das Gerät eines Mitglieds war nicht Ende-zu-Ende erreichbar",
+  ),
+  "p4.file.noKey": T(
+    "Soubor přes server přišel bez svého klíče — nejde otevřít (požádejte odesílatele, ať ho pošle znovu)",
+    "A file through the server came without its key — it cannot be opened (ask the sender to send it again)",
+    "Eine Datei über den Server kam ohne ihren Schlüssel — sie lässt sich nicht öffnen (bitten Sie den Absender, sie erneut zu senden)",
+  ),
   "p4.kt.alert.unknown-device": T(
     "K vašemu účtu přibylo zařízení, které tento telefon nezná (transparentnost klíčů). Pokud jste to nebyli vy, odhlaste se všude a dejte vědět provozovateli serveru.",
     "A device this phone does not know was added to your account (key transparency). If it was not you, sign out everywhere and tell the server's operator.",

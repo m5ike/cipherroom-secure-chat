@@ -81,6 +81,8 @@ public final class RoomSession {
     private boolean joinSent = false;
     private ScheduledFuture<?> joinFallback;
     private volatile boolean proven = false;
+    /** The server said our join did NOT prove the room key (a 6.12 server; false when it does not say). */
+    private volatile boolean unproven = false;
     /**
      * 6.12 review S14: the server refused our proof (another key is registered
      * for the room — squatted) and let us in without one; joins go without a
@@ -232,17 +234,15 @@ public final class RoomSession {
     }
 
     /**
-     * Review S14: what to do with an `error` frame of code `code`: "legacy"
-     * (join again without the proof — `room-proof` when the server allows
-     * legacy joins: `legacyAllowed` true, or not said by an older server;
-     * once per socket), "refuse" (disconnect: proofs are required, or the
+     * Review S14 (§ 13): what to do with an `error` frame of code `code`:
+     * "legacy" (join again on this socket without the proof — only when the
+     * refusal says `legacyAllowed: true`; once per socket), "refuse"
+     * (disconnect: proofs are required, the server does not say, or the
      * legacy join was refused too) or "" (not about the proof).
      */
     static String proofRefusal(String code, Object legacyAllowed, boolean retried) {
-        if ("room-proof-required".equals(code)) return "refuse";
-        if (!"room-proof".equals(code)) return "";
-        if (retried || Boolean.FALSE.equals(legacyAllowed)) return "refuse";
-        return "legacy";
+        if (!"room-proof".equals(code) && !"room-proof-required".equals(code)) return "";
+        return !retried && Boolean.TRUE.equals(legacyAllowed) ? "legacy" : "refuse";
     }
 
     /** § 13: {pub, sig} = Ed25519 from hubSeed = RoomKeys.derive("m5cet/hub-auth/4", 32) over join(…, roomId, nonce); null without a nonce or for a plain-name room. */
@@ -421,6 +421,7 @@ public final class RoomSession {
                 status = "joined";
                 notice = "";
                 proven = f.optBoolean("proven", false);
+                unproven = f.opt("proven") instanceof Boolean && !proven;
                 cz.m5cet.app.rtc.Rtc.hubConnected(); // 6.12: TURN credentials only now (the server saw our hub socket)
                 JSONArray list = f.optJSONArray("peers");
                 system(app.t("rooms.connected") + " · " + label);
@@ -554,8 +555,125 @@ public final class RoomSession {
     }
 
     private void onSignal(String source, JSONObject payload) {
+        // § 8 (review P07): a proxied file's key — no WebRTC step, so not behind the queue (its meta may be waiting for it).
+        JSONObject fk = fkSignal(source, payload);
+        if (fk != null) { acceptProxyFileKey(source, fk); return; }
         signalQueue.add(() -> applySignal(source, payload));
         drainSignals();
+    }
+
+    /** The opened signal when it carries a proxied file's key ({p4:"fk", transferId, item}); null for any other. */
+    private JSONObject fkSignal(String source, JSONObject payload) {
+        JSONObject sealed = payload == null ? null : payload.optJSONObject("sealed");
+        if (sealed == null || keys == null) return null;
+        try {
+            JSONObject d = Envelopes.openSignal(keys, source, myId, sealed);
+            return "fk".equals(d.optString("p4")) ? d : null;
+        } catch (GeneralSecurityException e) {
+            return null; // applySignal says so
+        }
+    }
+
+    /**
+     * § 8 (review P07): the FK of a file the server relays from `source` — a
+     * mailbox item sealed to a bundle of THIS device (the room-key layer around
+     * it only routes it). Kept for that sender and transfer, used once.
+     */
+    private void acceptProxyFileKey(String source, JSONObject sig) {
+        String tx = sig.optString("transferId");
+        JSONObject item = sig.optJSONObject("item");
+        if (tx.isEmpty() || tx.length() > 96 || item == null || !P4Relay.isP4(item) || identity == null || keys == null) return;
+        Mailbox.Opened o;
+        try { o = rooms.p4().mailbox(identity).open(item, keys.roomId, System.currentTimeMillis()); }
+        catch (P4Error e) { Log.w("room", "a proxied file's key did not open: " + e.code); return; }
+        // Sealed by the device this member's hello showed here, when we have seen one.
+        Peer p = peers.get(source);
+        byte[] fk = ProxyKeys.fkOf(o, tx, p == null ? null : p.publicKey);
+        if (fk == null) { Log.w("room", "a proxied file's key refused (another transfer, or another device than the member's)"); return; }
+        files.proxyKey(source, tx, fk, o.spk);
+    }
+
+    /**
+     * § 8 (review P07): a proxied file's `fk`, sealed as a mailbox item to the
+     * devices of EVERY member present that § 7.4 allows (the pinned devices of
+     * its reference, the device of its valid hello here, the directory's
+     * devices of its pinned account) and sent to each in a sealed hub signal —
+     * before the meta. False when some member has no such device (then the
+     * room-derived key has to do). Blocking (a background thread): waits up to
+     * 3 s for the key directory.
+     */
+    boolean proxyFileKey(String transferId, byte[] fk) throws InterruptedException {
+        List<String> recipients = new ArrayList<>(), refs = new ArrayList<>();
+        boolean[] ok = {false};
+        onRoomThread(() -> {
+            if (p4 == null || keys == null || identity == null || !keys.roomId.startsWith("r3.")) return;
+            long now = System.currentTimeMillis();
+            P4Device dev = rooms.p4();
+            boolean ktOn = dev.ktOn();
+            for (String id : new ArrayList<>(peers.keySet())) {
+                if (id.equals(myId)) continue;
+                recipients.add(id);
+                String ref = people.account(id);
+                if (ref.isEmpty() || refs.contains(ref)) continue;
+                refs.add(ref);
+                if (relay.shouldAsk(ref, now)) sendServer(P4Relay.askFrame(ref));
+                if (ktOn && !unproven && !dev.store.refAccount(ref).isEmpty() && relay.shouldAskKt(ref, now)) sendServer(P4Relay.ktFrame(ref));
+            }
+            ok[0] = !recipients.isEmpty();
+        });
+        if (!ok[0]) return false;
+        for (long waited = 0; waited < 3_000; waited += 100) {
+            boolean[] ready = {false};
+            onRoomThread(() -> ready[0] = relayReady(refs, System.currentTimeMillis()));
+            if (ready[0]) break;
+            Thread.sleep(100);
+        }
+        boolean[] sealed = {false};
+        onRoomThread(() -> sealed[0] = sealProxyFileKey(transferId, fk, recipients));
+        return sealed[0];
+    }
+
+    /** Runs `r` on the room's thread and waits for it (≤ 10 s). */
+    private void onRoomThread(Runnable r) throws InterruptedException {
+        java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+        post(() -> { try { r.run(); } finally { done.countDown(); } });
+        if (!done.await(10, TimeUnit.SECONDS)) throw new InterruptedException("the room did not answer");
+    }
+
+    /** On the room's thread: the FK sealed per recipient and sent — or nothing at all (false) when a recipient has no device. */
+    private boolean sealProxyFileKey(String transferId, byte[] fk, List<String> recipients) {
+        if (p4 == null || keys == null || identity == null) return false;
+        long now = System.currentTimeMillis();
+        P4Device dev = rooms.p4();
+        boolean ktOn = dev.ktOn();
+        Mailbox box = dev.mailbox(identity);
+        JSONObject sacc = dev.account(identity);
+        Map<String, JSONObject> items = new LinkedHashMap<>();
+        try {
+            String payload = new JSONObject().put("id", transferId).put("t", "fk").put("fk", cz.m5cet.app.p4.Prim.b64(fk)).toString();
+            for (String peerId : recipients) {
+                String ref = people.account(peerId);
+                List<P4Relay.Device> devices = ref.isEmpty() ? new ArrayList<>() : relay.devices(ref, dev.store.refAccount(ref), dev.store.devicesOfRef(ref), ktOn, now);
+                P4Relay.Device live = p4.helloDevice(peerId, now);
+                boolean listed = false;
+                for (P4Relay.Device d : devices) if (live != null && d.pk.equals(live.pk)) listed = true;
+                if (live != null && !listed) devices.add(live);
+                List<JSONObject> sealedItems = new ArrayList<>();
+                for (P4Relay.Device d : devices) {
+                    try { sealedItems.add(box.seal(keys.roomId, transferId, payload, d.pk, d.bundle, sacc, now)); }
+                    catch (P4Error e) { /* this device is left out */ }
+                }
+                if (sealedItems.isEmpty()) { Log.i("room", "a member without a device to seal a file key to: the room-derived key"); return false; }
+                items.put(peerId, sealedItems.size() == 1 ? sealedItems.get(0) : Mailbox.set(transferId, sealedItems));
+            }
+            for (Map.Entry<String, JSONObject> e : items.entrySet()) {
+                sendSignal(e.getKey(), new JSONObject().put("p4", "fk").put("transferId", transferId).put("item", e.getValue()));
+            }
+            return true;
+        } catch (JSONException | P4Error e) {
+            Log.w("room", "a proxied file's key: " + e.getMessage());
+            return false;
+        }
     }
 
     private void applySignal(String source, JSONObject payload) {
@@ -932,26 +1050,22 @@ public final class RoomSession {
 
     /**
      * § 14.4 (review P04): an attested peer's account and device against key
-     * transparency — by the hub's kt-lookup of its room reference, or by the
-     * username its (signed) hello names. Without either it stays unconfirmed.
+     * transparency — only by the hub's kt-lookup of its room reference (§ 14.3:
+     * the HTTP lookup answers the caller's own entries only). Without a
+     * reference, or while our own join is unproven (the hub answers an
+     * unproven member's lookup with nothing — review S06), it stays "not yet
+     * checked" (never "account" / "verified" by its account).
      */
     private void ktLookup(Peer p) {
         Handshake.AccountCheck acc = p4 == null || !p.attested ? null : p4.account(p.id);
         P4Device dev = rooms.p4();
         if (acc == null || !acc.valid || !dev.ktOn()) return;
         String ref = people.account(p.id);
-        if (!ref.isEmpty()) {
-            try { sendServer(new JSONObject().put("type", "kt-lookup").put("ref", ref)); } catch (JSONException ignored) { }
+        if (ref.isEmpty() || unproven) {
+            if (!"accepted".equals(p.kt)) { p.kt = "unchecked"; p.ktKey = p.publicKey; updateTrust(p); }
             return;
         }
-        PeerFacts.Facts facts = people.get(p.id);
-        String user = facts == null ? "" : facts.username;
-        String pk = p.publicKey, apk = acc.publicKey;
-        if (user.isEmpty()) { applyKt(p, pk, apk, null, ""); return; }
-        Io.bg(() -> {
-            Kt.Checked c = dev.lookupUser(user);
-            post(() -> applyKt(p, pk, apk, c, user));
-        });
+        try { sendServer(new JSONObject().put("type", "kt-lookup").put("ref", ref)); } catch (JSONException ignored) { }
     }
 
     /**
@@ -1333,7 +1447,7 @@ public final class RoomSession {
             if (relay.shouldAsk(ref, now)) { sendServer(P4Relay.askFrame(ref)); waiting = true; }
             else if (!relay.known(ref, now)) waiting = true;
             // Review P01: a directory device of the member's pinned account needs key transparency's word too.
-            if (ktOn && !dev.store.refAccount(ref).isEmpty()) {
+            if (ktOn && !unproven && !dev.store.refAccount(ref).isEmpty()) { // (unproven: the hub would answer with nothing)
                 if (relay.shouldAskKt(ref, now)) { sendServer(P4Relay.ktFrame(ref)); waiting = true; }
                 else if (!relay.ktKnown(ref, now)) waiting = true;
             }
@@ -1356,7 +1470,7 @@ public final class RoomSession {
         boolean ktOn = dev.ktOn();
         for (String r : refs) {
             if (!relay.known(r, now)) return false;
-            if (ktOn && !dev.store.refAccount(r).isEmpty() && !relay.ktKnown(r, now)) return false;
+            if (ktOn && !unproven && !dev.store.refAccount(r).isEmpty() && !relay.ktKnown(r, now)) return false;
         }
         return true;
     }

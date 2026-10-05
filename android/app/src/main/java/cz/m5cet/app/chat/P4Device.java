@@ -36,6 +36,8 @@ final class P4Device {
     final Kt.State kt;
     private volatile long ktRefreshedAt = 0;
     private volatile boolean ktBusy = false, uploadBusy = false;
+    /** The upload the server refused with 429 kt-quota (not tried again in this session). */
+    private volatile String quotaMark = "";
 
     P4Device(M5 app, P4Store store) {
         this.app = app;
@@ -135,11 +137,17 @@ final class P4Device {
                 if (acc == null || mb == null) return;
                 String mark = mb.optString("id") + "|" + acc.optLong("exp") + "|" + app.account.username();
                 JSONObject cert = store.cert();
-                if (mark.equals(cert.optString("uploaded"))) return;
+                if (mark.equals(cert.optString("uploaded")) || mark.equals(quotaMark)) return;
                 JSONObject body = new JSONObject().put("pk", id.publicKey)
                     .put("cert", new JSONObject().put("v", 2).put("exp", acc.getLong("exp")).put("sig", acc.getString("ac")))
                     .put("bundle", mb).put("apk", acc.getString("apk"));
-                app.account.putKeyBundle(body);
+                try {
+                    app.account.putKeyBundle(body);
+                } catch (Server.HttpError e) {
+                    // 6.12 review S10: 429 kt-quota — the account's key-log entries for the day are used up; not again this session.
+                    if (e.status == 429 || "kt-quota".equals(e.code)) quotaMark = mark;
+                    throw e;
+                }
                 cert.put("uploaded", mark);
                 store.putCert(cert);
                 Log.i("p4", "the key directory has this device's bundle");
@@ -174,8 +182,12 @@ final class P4Device {
         };
     }
 
-    static JSONObject get(String base, String path) throws Exception {
-        byte[] b = Server.send(base + path, "GET", null, null, null, 2 << 20);
+    static JSONObject get(String base, String path) throws Exception { return get(base, path, null); }
+
+    /** `bearer`: the account session (the own-entries lookup needs one, § 14.3); null: none. */
+    static JSONObject get(String base, String path, String bearer) throws Exception {
+        JSONObject headers = bearer == null || bearer.isEmpty() ? null : new JSONObject().put("Authorization", "Bearer " + bearer);
+        byte[] b = Server.send(base + path, "GET", null, headers, null, 2 << 20);
         return new JSONObject(new String(b, StandardCharsets.UTF_8));
     }
 
@@ -227,21 +239,17 @@ final class P4Device {
     void selfCheck(String base, ChatIdentity id) throws Exception {
         String apk = myAccountKey(id);
         if (apk.isEmpty() || app.account == null) return;
+        // § 14.3 (6.12 review): the lookup answers only the caller's own entries, and needs the account session.
+        String token = app.account.token();
+        if (token.isEmpty()) return;
         String username = app.account.username();
         String u = Kt.user(username);
-        Kt.Checked c = kt.lookup(base, get(base, "/api/kt/lookup?u=" + userParam(username)), u, fetcher());
+        Kt.Checked c = kt.lookup(base, get(base, "/api/kt/lookup?u=" + userParam(username), token), u, fetcher());
         if (!c.ok) { Log.w("p4", "own key-transparency entries: " + c.why); return; }
         Own verdict = ownCheck(store.own(), u, c.entries, apk, id.publicKey, System.currentTimeMillis());
         store.putOwn(verdict.state);
         if (verdict.accountChanged) kt.raiseAlert(base, "account-key", "another account key was logged for this account");
         else if (verdict.unknown > 0) kt.raiseAlert(base, "unknown-device", verdict.unknown + " device(s) added to this account");
-    }
-
-    /** § 14.3: a user's entries by username (GET /api/kt/lookup?u=…), checked — for a peer the hub names no reference for. Blocking. */
-    Kt.Checked lookupUser(String username) {
-        String base = origin();
-        try { return kt.lookup(base, get(base, "/api/kt/lookup?u=" + userParam(username)), Kt.user(username), fetcher()); }
-        catch (Exception e) { Log.w("p4", "key-transparency lookup: " + e.getMessage()); return null; }
     }
 
     /** What {@link #ownCheck} found: the monitor's next state, unknown devices, another account key. */

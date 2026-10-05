@@ -382,15 +382,69 @@ public class Review612Test {
         assertEquals("pay 100 to X", Rooms.notifyText(held));
     }
 
+    /* ---------------------------------------------------------------- P07 */
+
+    @Test
+    public void p07_aProxiedFilesKeyOpensFromItsSealedItemAndTheMetaWaitsForIt() throws Exception {
+        long now = System.currentTimeMillis();
+        // The sender (a 6.12 web peer) seals FK as a mailbox item to this device: payload {id: transferId, t: "fk", fk}.
+        Certified sender = new Certified(0x0c, now), me = new Certified(0x0d, now);
+        String tx = "xfer-1f0c8a2e-1111-4222-8333-944455556666";
+        byte[] fk = new byte[32];
+        fk[0] = 42;
+        String payload = new JSONObject().put("id", tx).put("t", "fk").put("fk", Prim.b64(fk)).toString();
+        JSONObject item = Mailbox.seal(ROOM, tx, payload, me.dev.publicKey, me.keys.bundle, sender.dev.publicKey, sender.acc, sender.keys, now, Rng.SYSTEM);
+        Mailbox.MemoryStore mine = new Mailbox.MemoryStore();
+        mine.put(me.keys);
+        Mailbox.Opened o = new Mailbox(mine, P4Device.signer(me.dev), Rng.SYSTEM).open(item, ROOM, now);
+        assertEquals(Prim.b64(fk), Prim.b64(ProxyKeys.fkOf(o, tx, sender.dev.publicKey)));
+        assertEquals(Prim.b64(fk), Prim.b64(ProxyKeys.fkOf(o, tx, null))); // no hello of the sender seen here
+        assertEquals(null, ProxyKeys.fkOf(o, "xfer-other", null)); // another transfer
+        assertEquals(null, ProxyKeys.fkOf(o, tx, me.dev.publicKey)); // sealed by another device than the member's
+        // With it, the transfer's frames open under the protocol-4 file key (§ 8).
+        byte[] key = cz.m5cet.app.p4.Files4.fileKey(fk, tx);
+        JSONObject meta = cz.m5cet.app.p4.Files4.sealBody(key, cz.m5cet.app.p4.Files4.metaAad(tx), "{\"transferId\":\"" + tx + "\"}", Rng.SYSTEM);
+        assertTrue(cz.m5cet.app.p4.Files4.openBody(key, cz.m5cet.app.p4.Files4.metaAad(tx), meta.getString("iv"), meta.getString("ciphertext")).contains(tx));
+
+        // The meta came first: it waits, the later frames queue behind it; the key from the sender releases them in order.
+        ProxyKeys keys = new ProxyKeys();
+        JSONObject metaFrame = new JSONObject().put("kind", "proxy-meta").put("transferId", tx).put("v", 4).put("from", "p-sender");
+        assertNotNull(keys.park("p-sender", tx, metaFrame));
+        assertEquals(null, keys.park("p-sender", tx, metaFrame)); // one at a time
+        assertEquals(null, keys.park("", "xfer-2", metaFrame)); // no sender: refused
+        JSONObject chunk = new JSONObject().put("kind", "proxy-chunk").put("transferId", tx).put("seq", 0);
+        byte[] binary = new byte[]{0x4D, 0x11};
+        assertTrue(keys.queue(tx, chunk));
+        assertTrue(keys.queue(tx, binary));
+        assertFalse(keys.queue("xfer-other", chunk));
+        assertEquals(null, keys.put("p-mallory", tx, new byte[32], "x")); // another sender's key does not release it
+        List<Object> frames = keys.put("p-sender", tx, fk.clone(), sender.dev.publicKey);
+        assertEquals(3, frames.size());
+        assertEquals(metaFrame, frames.get(0));
+        assertEquals(chunk, frames.get(1));
+        assertEquals(binary, frames.get(2));
+        assertFalse(keys.isWaiting(tx));
+        ProxyKeys.Key k = keys.take("p-sender", tx);
+        assertEquals(sender.dev.publicKey, k.spk);
+        assertEquals(null, keys.take("p-sender", tx)); // used once
+        // No key in time: dropped.
+        ProxyKeys.Waiting w = keys.park("p-sender", "xfer-late", metaFrame);
+        assertTrue(keys.expire("xfer-late", w));
+        assertFalse(keys.expire("xfer-late", w));
+        assertFalse(keys.queue("xfer-late", chunk));
+    }
+
     /* ---------------------------------------------------------------- S14 */
 
     @Test
     public void s14_aSquattedRoomIsJoinedWithoutTheProofUnlessProofsAreRequired() {
+        // § 13: only when the refusal says legacyAllowed: true (either code), once per socket.
         assertEquals("legacy", RoomSession.proofRefusal("room-proof", Boolean.TRUE, false));
-        assertEquals("legacy", RoomSession.proofRefusal("room-proof", null, false)); // a server that does not say
+        assertEquals("legacy", RoomSession.proofRefusal("room-proof-required", Boolean.TRUE, false));
+        assertEquals("refuse", RoomSession.proofRefusal("room-proof", null, false)); // a server that does not say
         assertEquals("refuse", RoomSession.proofRefusal("room-proof", Boolean.FALSE, false));
-        assertEquals("refuse", RoomSession.proofRefusal("room-proof", Boolean.TRUE, true)); // once per socket
-        assertEquals("refuse", RoomSession.proofRefusal("room-proof-required", Boolean.TRUE, false));
+        assertEquals("refuse", RoomSession.proofRefusal("room-proof", Boolean.TRUE, true));
+        assertEquals("refuse", RoomSession.proofRefusal("room-proof-required", Boolean.FALSE, false));
         assertEquals("", RoomSession.proofRefusal("room-full", null, false));
     }
 }

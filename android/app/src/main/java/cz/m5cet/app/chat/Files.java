@@ -44,7 +44,15 @@ import cz.m5cet.app.security.FileVault;
  * meta; the key is HKDF(salt = transferId, FK, "m5cet/p4/file"), the AADs
  * are protocol 4's, meta and end bodies padded (not signed — the session
  * authenticates them). Older peers get the same file the protocol-3 way: one
- * transfer, two lanes. A file through the server (no channel) stays protocol 3.
+ * transfer, two lanes.
+ *
+ * 6.12 review P07 (§ 8, proxied files): through the server (no channel, so no
+ * ratchet) the FK goes as a mailbox item sealed to every present member's
+ * authenticated devices, in a sealed hub signal before the meta
+ * ({p4:"fk", transferId, item}); the frames carry v 4. A receiver keeps the FK
+ * for (sender, transfer), waits up to 5 s for it after a v 4 proxied meta (the
+ * transfer's later frames wait behind it) and uses it once. When some member
+ * has no device to seal to, the room-derived key (v 2) — and the sender is told.
  *
  * The receiver keeps the (still encrypted) frames in a temporary file and
  * only at the end decrypts, verifies and stores the file in the vault
@@ -96,11 +104,38 @@ final class Files {
         }
     }
 
+    /* ------------------------------------------ proxied FKs (§ 8, review P07) */
+
+    /** The keys of proxied transfers sealed to this device, and the metas that wait for theirs. */
+    private final ProxyKeys proxyKeys = new ProxyKeys();
+
+    /** The FK of a proxied transfer from `from` (opened from its sealed signal; `spk` sealed it). The meta that waits for it goes now. */
+    void proxyKey(String from, String transferId, byte[] fk, String spk) {
+        if (from == null || from.isEmpty() || !ID.matcher(transferId).matches() || fk == null || fk.length != 32) return;
+        List<Object> frames = proxyKeys.put(from, transferId, fk, spk);
+        if (frames == null) return;
+        for (Object frame : frames) {
+            if (frame instanceof JSONObject) onJson(null, (JSONObject) frame, true);
+            else onBinary(null, (byte[]) frame);
+        }
+    }
+
+    /** No FK came in time: the transfer is dropped (its frames with it). */
+    private void fkTimeout(String transferId, ProxyKeys.Waiting w) {
+        if (!proxyKeys.expire(transferId, w)) return;
+        Log.w("files", "a proxied protocol-4 file came without its key — not opened");
+        room.systemNotice("⚠ " + room.tr("p4.file.noKey"));
+    }
+
     /** A JSON file frame from a channel (p2p) or from the server (proxy). */
     void onJson(Peer p, JSONObject f, boolean proxy) {
-        String kind = f.optString("kind");
+        String kind = f.optString("kind", f.optString("type"));
+        // The server relays proxied frames as proxy-meta / -chunk / -end / -cancel / -need.
+        if (proxy && kind.startsWith("proxy-")) kind = "file-" + kind.substring("proxy-".length());
         String id = f.optString("transferId");
         if (!ID.matcher(id).matches()) return;
+        // Behind its meta, which waits for the FK (review P07).
+        if (proxy && !"file-need".equals(kind) && proxyKeys.queue(id, f)) return;
         switch (kind) {
             case "file-meta": onMeta(p, id, f, proxy); break;
             case "file-chunk": {
@@ -134,6 +169,7 @@ final class Files {
         if (l < 1 || l > 96 || b.length < 20 + l + 16) return;
         String id = new String(b, 4, l, StandardCharsets.UTF_8);
         if (!ID.matcher(id).matches()) return;
+        if (p == null && proxyKeys.queue(id, b)) return; // behind its meta, which waits for the FK (review P07)
         In in = incoming.get(id);
         if (in == null) return;
         long seq = ByteBuffer.wrap(b, 4 + l, 4).getInt() & 0xffffffffL;
@@ -148,12 +184,28 @@ final class Files {
         if (v != 2 && v != 4) return; // v1 (3.0 and older) is not received here
         // 6.12 (§ 8): a protocol-4 transfer (v 4) opens only with the FK the sender's session handed us over the
         // ratchet before the meta — never the room key; over a protocol-4 peer's channel a v2 file is not taken.
-        byte[] fk = v != 4 || p == null || proxy || room.p4 == null ? null : room.p4.fileKey(p.id, id);
+        // Review P07: a proxied one with the FK its sender sealed to this device (a hub signal) — waited for up to 5 s.
+        String from = proxy ? f.optString("from") : p == null ? "" : p.id;
+        byte[] fk = null;
+        String proxySigner = null;
+        if (v == 4 && proxy) {
+            ProxyKeys.Key k = from.isEmpty() ? null : proxyKeys.take(from, id);
+            if (k == null) {
+                ProxyKeys.Waiting w = proxyKeys.park(from, id, f);
+                if (w == null) { Log.w("files", "a proxied protocol-4 file without its sender refused"); return; }
+                w.timer = cz.m5cet.app.core.Io.TIMER.schedule(() -> room.post(() -> fkTimeout(id, w)), ProxyKeys.WAIT_MS, TimeUnit.MILLISECONDS);
+                return;
+            }
+            fk = k.fk;
+            proxySigner = k.spk;
+        } else if (v == 4) {
+            fk = p == null || room.p4 == null ? null : room.p4.fileKey(p.id, id);
+        }
         if (v == 4 && fk == null) { Log.w("files", "a protocol-4 file without its key refused"); return; }
         if (v == 2 && p != null && !proxy && room.isV4(p)) { Log.w("files", "a protocol-3 file from a protocol-4 peer refused"); return; }
         In in;
         try {
-            in = fk != null ? new In(id, p, "p2p", Files4.fileKey(fk, id), true) : new In(id, p, proxy ? "proxy" : "p2p", room.keys.fileKey(id), false);
+            in = fk != null ? new In(id, p, proxy ? "proxy" : "p2p", Files4.fileKey(fk, id), true) : new In(id, p, proxy ? "proxy" : "p2p", room.keys.fileKey(id), false);
         } catch (P4Error e) {
             return;
         } finally {
@@ -163,7 +215,8 @@ final class Files {
             JSONObject m;
             if (in.p4) {
                 m = Envelopes.parse(Files4.openBody(in.key, Files4.metaAad(id), f.optString("iv"), f.optString("ciphertext")));
-                in.signer = room.p4.helloPk(p.id); // the session authenticated it
+                // The session authenticated it — or, proxied, the device that sealed the FK to us (review P07).
+                in.signer = proxy ? proxySigner : room.p4.helloPk(p.id);
             } else {
                 Envelopes.Body body = Envelopes.openFileBodyFull(in.key, Envelopes.fileMetaContext(id), f.optString("iv"), f.optString("ciphertext"));
                 if (body.signer != null && !body.signer.valid) throw new GeneralSecurityException("bad signature");
@@ -290,7 +343,9 @@ final class Files {
             m.filePath = in.id;
             m.fileProgress = -1;
             m.fileVerified = in.signer != null;
-            m.verified = m.fileVerified && (in.from == null || Trust.VERIFIED.equals(in.from.trust)); // 6.12 § 12.1
+            // 6.12 § 12.1: "verified" only for a sender the person verified (a proxied protocol-4 file: the device that sealed its key).
+            m.verified = m.fileVerified && (in.from != null ? Trust.VERIFIED.equals(in.from.trust)
+                : !in.p4 || cz.m5cet.app.contacts.Store.verified(room.app, kidOf(in.signer)));
             room.fileDone(m);
         });
     }
@@ -372,7 +427,7 @@ final class Files {
                 List<Peer> peers = openPeers();
                 boolean proxy = peers.isEmpty();
                 if (proxy && !room.canProxy()) throw new IOException("nobody to send it to");
-                planLanes(out, peers);
+                if (proxy) planProxy(out, name); else planLanes(out, peers);
                 String transport = proxy ? "proxy" : "p2p";
                 JSONObject meta = new JSONObject().put("transferId", id).put("name", name.length() > 200 ? name.substring(0, 200) : name).put("mime", mime)
                     .put("size", size).put("totalChunks", out.total).put("chunkSize", CHUNK).put("senderId", room.myId()).put("senderName", room.userName)
@@ -449,6 +504,27 @@ final class Files {
         }
     }
 
+    /**
+     * Review P07 (§ 8): through the server — under a fresh FK sealed to every
+     * present member's authenticated devices (sent in signals before the meta);
+     * the room-derived key only when some member has no such device, and the
+     * person is told.
+     */
+    private void planProxy(Out out, String name) throws InterruptedException, P4Error {
+        byte[] fk = Crypto.random(32);
+        try {
+            if (room.proxyFileKey(out.id, fk)) {
+                out.lanes.add(new Lane(true, new ArrayList<>(), Files4.fileKey(fk, out.id)));
+                room.systemNotice("🔐 " + room.tr("p4.file.proxyP4").replace("{name}", name));
+            } else {
+                out.lanes.add(new Lane(false, new ArrayList<>(), room.keys.fileKey(out.id)));
+                room.systemNotice("⚠ " + room.tr("p4.file.proxyRoomKey").replace("{name}", name));
+            }
+        } finally {
+            Crypto.wipe(fk);
+        }
+    }
+
     private List<Peer> openPeers() {
         List<Peer> out = new ArrayList<>();
         synchronized (room.peers) { for (Peer p : room.peers.values()) if (p.open()) out.add(p); }
@@ -466,7 +542,7 @@ final class Files {
         byte[] ct = Crypto.gcmSeal(lane.key, iv, plain, lane.p4 ? Files4.chunkAad(id, seq, out.total) : Envelopes.fileChunkContext(id, seq, out.total));
         if (lane.peers.isEmpty()) {
             room.sendServer(new JSONObject().put("type", "proxy-chunk").put("kind", "file-chunk").put("transferId", id).put("seq", seq)
-                .put("transport", "proxy").put("v", 2).put("iv", Crypto.b64(iv)).put("ciphertext", Crypto.b64(ct)));
+                .put("transport", "proxy").put("v", lane.p4 ? 4 : 2).put("iv", Crypto.b64(iv)).put("ciphertext", Crypto.b64(ct)));
             Thread.sleep(Math.max(1, ct.length / 1600)); // ~1.6 MB/s: under the server's proxy budget
             return;
         }
@@ -525,9 +601,15 @@ final class Files {
         });
     }
 
+    /** A device key's id ("" when it is not one). */
+    private static String kidOf(String pk) {
+        try { return pk == null || pk.isEmpty() ? "" : cz.m5cet.app.security.Ec.kid(pk); } catch (RuntimeException e) { return ""; }
+    }
+
     void clear() {
         for (In in : incoming.values()) in.close();
         incoming.clear();
+        for (Object timer : proxyKeys.clear()) ((java.util.concurrent.ScheduledFuture<?>) timer).cancel(false);
         for (Out out : outgoing.values()) for (Lane l : out.lanes) Crypto.wipe(l.key);
         outgoing.clear();
     }

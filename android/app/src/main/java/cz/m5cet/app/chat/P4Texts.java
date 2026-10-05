@@ -24,6 +24,10 @@ public final class P4Texts {
         EN.put("p4.roomProofLegacy", "Another key is registered for this room on the server (someone who knew only its blind id may have claimed it first), so this device joined without proving it holds the room key — the others see it as unproven. Check the room name and passphrase with the others; the server's owner can reset the room's registration.");
         EN.put("p4.trust.otherName", "verified as {name} — now under another name");
         EN.put("p4.kt.checking", "being checked in the key-transparency log");
+        EN.put("p4.kt.unchecked", "not yet checked in the key-transparency log");
+        EN.put("p4.file.proxyP4", "{name} goes through the server — its key sealed for each member's devices (protocol 4)");
+        EN.put("p4.file.proxyRoomKey", "{name} went through the server under the room key: a member's device could not be reached end to end");
+        EN.put("p4.file.noKey", "A file through the server came without its key — it cannot be opened (ask the sender to send it again)");
         EN.put("p4.kt.alert.unknown-device", "A device this phone does not know was added to your account (key transparency). If it was not you, sign out everywhere and tell the server's operator.");
         EN.put("p4.kt.alert.account-key", "Another account key was registered for your account (key transparency).");
         EN.put("p4.kt.alert.unproven", "For a day the server has not proved that its key history continues the one this device saw (key transparency).");

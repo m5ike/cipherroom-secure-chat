@@ -345,6 +345,13 @@ final class P4Room {
 
     String helloPk(String peerId) { PeerState ps = peers.get(peerId); return ps == null ? "" : ps.pk; }
 
+    /** The device of the peer's valid hello v4 here with its bundle, when that bundle is valid now (§ 8: a proxied file's key may be sealed to it); else null. */
+    P4Relay.Device helloDevice(String peerId, long now) {
+        PeerState ps = peers.get(peerId);
+        if (ps == null || !ps.v4 || ps.bundle == null || ps.bundle.exp <= now) return null;
+        return new P4Relay.Device(ps.pk, ps.account != null && ps.account.valid ? ps.account.publicKey : null, ps.bundle);
+    }
+
     /* ------------------------------------------------------------- sending */
 
     /** Encrypts and sends an inner message now, or keeps it for the session (in order). False: not a v4 peer. */
