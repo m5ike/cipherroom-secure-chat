@@ -15,10 +15,9 @@
 //
 // Without the SQLite driver everything lives in memory (one process).
 
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { dirname } from "node:path";
 import { createHash } from "node:crypto";
-import { loadSqliteDriver, type SqliteDatabase } from "../../storage/db";
+import type { SqliteDatabase } from "../../storage/db";
+import { openServiceDatabase } from "../../storage/service-db";
 import { DocTable } from "../../storage/doc-table";
 import { telDbPath } from "../tel-store";
 import type { CallAction } from "../providers/types";
@@ -79,16 +78,11 @@ class TsaDb {
   ready(): Promise<void> {
     if (this.db) return Promise.resolve();
     this.opening ??= (async () => {
-      const Driver = await loadSqliteDriver();
-      if (!Driver) { this.reason = "the SQLite driver is not installed — TSA sessions are kept in memory only"; return; }
       const file = telDbPath();
       try {
-        mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-        if (!existsSync(file)) closeSync(openSync(file, "a", 0o600));
-        try { chmodSync(file, 0o600); } catch { /* not ours */ }
-        const db = new Driver(file, { timeout: 5000 });
-        db.pragma("journal_mode = WAL");
-        db.pragma("busy_timeout = 5000");
+        // 6.12 (G-07): the same encrypted telephony.db as tel-store (storage/service-db.ts).
+        const db = await openServiceDatabase(file, "telephony");
+        if (!db) { this.reason = "the SQLite driver is not installed — TSA sessions are kept in memory only"; return; }
         for (const t of [this.sessions, this.graphs, this.audio, this.marks]) db.exec(t.schema());
         this.db = db;
         this.reason = "";

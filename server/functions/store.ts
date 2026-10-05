@@ -1,16 +1,17 @@
 // The Functions store (4.15): packages and their versions, models, runs and
 // their logs, sessions with a key–value store, and a shared cache — in
 // $DATA_DIR/functions/functions.db (SQLite, WAL; the app and the runner both
-// use it). FUNCTIONS_DB_FILE moves it.
+// use it). FUNCTIONS_DB_FILE moves it. 6.12 (F-18): the file is SQLCipher,
+// keyed from the storage master key (storage/service-db.ts).
 //
 // Without the SQLite driver (an install that could not build it) the store
 // lives in memory: everything works within one run of the process but does
 // not survive a restart, and the console says so.
 
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
-import { loadSqliteDriver, type SqliteDatabase } from "../storage/db";
+import type { SqliteDatabase } from "../storage/db";
+import { openServiceDatabase, serviceDbStates } from "../storage/service-db";
 import type {
   Caller, Chain, DurableWebhook, FileMap, Model, Package, PackageVersion, Run, RunLog, RunStatus, Schedule, WebhookCall,
 } from "./types";
@@ -173,16 +174,12 @@ class FunctionsStore {
   ready(): Promise<void> {
     if (this.db) return Promise.resolve();
     this.opening ??= (async () => {
-      const Driver = await loadSqliteDriver();
-      if (!Driver) { this.reason = "the SQLite driver is not installed — functions are kept in memory only"; return; }
       const file = functionsDbPath();
       try {
-        mkdirSync(dirname(file), { recursive: true, mode: 0o700 });
-        if (!existsSync(file)) closeSync(openSync(file, "a", 0o600));
-        try { chmodSync(file, 0o600); } catch { /* not ours */ }
-        const db = new Driver(file, { timeout: 5000 });
-        db.pragma("journal_mode = WAL");
-        db.pragma("busy_timeout = 5000");
+        // 6.12 (F-18): SQLCipher under a subkey of the storage master key; a
+        // plain functions.db from before is converted on the first start.
+        const db = await openServiceDatabase(file, "functions");
+        if (!db) { this.reason = "the SQLite driver is not installed — functions are kept in memory only"; return; }
         db.pragma("foreign_keys = ON");
         db.exec(SCHEMA);
         for (const [table, column, definition] of MIGRATIONS) {
@@ -198,8 +195,9 @@ class FunctionsStore {
     return this.opening;
   }
 
-  status(): { persistent: boolean; file: string; reason: string } {
-    return { persistent: Boolean(this.db), file: functionsDbPath(), reason: this.reason };
+  status(): { persistent: boolean; file: string; reason: string; encrypted: boolean; warning: string } {
+    const at = serviceDbStates().find((x) => x.label === "functions");
+    return { persistent: Boolean(this.db), file: functionsDbPath(), reason: this.reason, encrypted: Boolean(this.db && at?.encrypted), warning: at?.warning ?? "" };
   }
 
   private get d(): SqliteDatabase | null { return this.db; }

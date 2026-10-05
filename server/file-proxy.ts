@@ -17,15 +17,30 @@
 //     can fall back to P2P or surface an error.
 
 import type { WebSocket } from "ws";
+import { traffic } from "./monitor/traffic";
 
 const MAX_BYTES = 10 * 1024 * 1024 * 1024; // 10 GiB hard cap
 const TRANSFER_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const MAX_PARALLEL_PER_PEER = 4;
 const MAX_PARALLEL_TOTAL = 64;
+/** 6.12 (F-28): transfers one address may have running (FILE_PROXY_MAX_PER_IP), so a few connections from one place cannot take all 64. */
+const MAX_PARALLEL_PER_ADDRESS = 16;
+
+export function fileProxyPerAddress(): number {
+  const n = Math.floor(Number(process.env.FILE_PROXY_MAX_PER_IP));
+  return Number.isFinite(n) && n >= 1 && n <= MAX_PARALLEL_TOTAL ? n : MAX_PARALLEL_PER_ADDRESS;
+}
+
+export type FileProxyOptions = {
+  /** The address behind a sender's connection key (default: the hub's live connections, monitor/traffic.ts). */
+  addressOf?: (senderClientId: string) => string | null;
+};
 
 type ProxyTransferState = {
   id: string;
   senderPeerId: string;
+  /** 6.12: the sender's address ("" when unknown) — for the per-address cap. */
+  address: string;
   recipientPeerId?: string; // populated when the recipient joins the relay
   meta: { iv: string; ciphertext: string; size: number }; // size opaque; we trust sender cipher length after meta decrypt in client
   plaintextSize: number; // extracted from decrypted meta on sender side, just for capping
@@ -41,6 +56,18 @@ export class FileProxy {
   private byTransfer = new Map<string, ProxyTransferState>();
   private byPeer = new Map<string, Set<string>>(); // senderPeerId → transfers
   private totalActive = 0;
+  private readonly addressOf: (senderClientId: string) => string | null;
+
+  constructor(opts: FileProxyOptions = {}) {
+    this.addressOf = opts.addressOf ?? ((id) => traffic.addressOf(id));
+  }
+
+  /** Transfers in progress from one address. */
+  private activeFrom(address: string): number {
+    let n = 0;
+    for (const s of this.byTransfer.values()) if (s.address === address) n += 1;
+    return n;
+  }
 
   begin(
     senderClientId: string,
@@ -64,10 +91,15 @@ export class FileProxy {
     if (plaintextSizeHint > MAX_BYTES) {
       return { ok: false, reason: "too-large" };
     }
+    const address = this.addressOf(senderClientId) ?? "";
+    if (address && this.activeFrom(address) >= fileProxyPerAddress()) {
+      return { ok: false, reason: "per-address-cap" };
+    }
     const now = Date.now();
     const state: ProxyTransferState = {
       id: transferId,
       senderPeerId: senderClientId,
+      address,
       meta: { iv: String(frame.iv).slice(0, 256), ciphertext: String(frame.ciphertext).slice(0, 256), size: plaintextSizeHint },
       plaintextSize: plaintextSizeHint,
       createdAt: now,
@@ -153,6 +185,7 @@ export class FileProxy {
       totalActive: this.totalActive,
       totalByPeer: Object.fromEntries(Array.from(this.byPeer.entries()).map(([k, v]) => [k, v.size])),
       maxParallel: MAX_PARALLEL_TOTAL,
+      maxPerAddress: fileProxyPerAddress(),
       capBytes: MAX_BYTES,
       ttlMs: TRANSFER_TTL_MS,
     };

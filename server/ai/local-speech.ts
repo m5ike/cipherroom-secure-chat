@@ -20,6 +20,8 @@ import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, re
 import { once } from "node:events";
 import { join } from "node:path";
 import { aiDataDir } from "./config";
+import { checkArchive, forgetFiles, readManifest, recordInstall, verifyInstalled } from "./speech-integrity";
+import { createHash } from "node:crypto";
 
 export type LocalModelDef = {
   id: string;
@@ -33,6 +35,8 @@ export type LocalModelDef = {
   url: string;
   license: string;
   note?: string;
+  /** 6.12 (F-29): the release archive's SHA-256, when it is known (SPEECH_MODEL_PINS adds or overrides). */
+  sha256?: string;
 };
 
 const RELEASES = "https://github.com/k2-fsa/sherpa-onnx/releases/download";
@@ -175,14 +179,19 @@ export function install(id: string, onDone?: (def: LocalModelDef) => void): Job 
     job.total = Number(res.headers.get("content-length")) || job.total;
     const out = createWriteStream(archive, { mode: 0o600 });
     const reader = res.body.getReader();
+    // 6.12 (F-29): the archive is hashed as it arrives and checked against a pin or its first download.
+    const sha = createHash("sha256");
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
       job.received += value.length;
+      sha.update(value);
       if (!out.write(value)) await once(out, "drain");
     }
     out.end();
     await once(out, "finish");
+    const archiveSha = sha.digest("hex");
+    const trust = checkArchive(root, id, archiveSha, def.sha256);
     job.state = "extracting";
     rmSync(staging, { recursive: true, force: true });
     mkdirSync(staging, { recursive: true });
@@ -192,6 +201,8 @@ export function install(id: string, onDone?: (def: LocalModelDef) => void): Job 
     renameSync(staging, dir);
     rmSync(archive, { force: true });
     if (!modelFiles(id)) throw new Error("the archive did not have the expected files");
+    // Every unpacked file's hash, checked again at each load.
+    await recordInstall(root, id, def.url, archiveSha, job.received, trust === "pinned" ? "pinned" : "first-download");
     job.state = "done";
     onDone?.(def);
   })().catch((err: Error) => {
@@ -235,6 +246,8 @@ export function uninstall(id: string): void {
   const running = jobs.get(id);
   if (running && (running.state === "downloading" || running.state === "extracting")) throw new LocalSpeechError("busy", "The model is being downloaded.");
   rmSync(modelDir(id), { recursive: true, force: true });
+  // 6.12: the files go from the manifest; the archive's hash stays (a new download must match it).
+  forgetFiles(modelsRoot(), id);
   jobs.delete(id);
   for (const k of [...ttsEngines.keys(), ...sttEngines.keys()]) if (k === id || k.startsWith(`${id}|`)) { ttsEngines.delete(k); sttEngines.delete(k); }
 }
@@ -242,15 +255,20 @@ export function uninstall(id: string): void {
 /** What the console shows: every model, installed or not, with its download. */
 export async function status() {
   const s = await loadEngine();
+  const manifest = (() => { try { return { models: readManifest(modelsRoot()), error: "" }; } catch (err) { return { models: {} as ReturnType<typeof readManifest>, error: (err as Error).message }; } })();
   return {
     engine: Boolean(s),
     engineError: s ? "" : engineError,
     ffmpeg: await hasProgram("ffmpeg"),
     dir: modelsRoot(),
+    // 6.12 (F-29): how each model's files are vouched for (speech-integrity.ts).
+    manifestError: manifest.error,
     models: LOCAL_MODELS.map((m) => {
       const files = modelFiles(m.id);
       const job = jobs.get(m.id);
-      return { ...m, installed: Boolean(files), bytes: files ? dirSize(join(modelsRoot(), m.id)) : 0, voices: files ? voicesOf(m.id) : [], job: job && job.state !== "done" ? job : null };
+      const rec = manifest.models[m.id];
+      return { ...m, installed: Boolean(files), bytes: files ? dirSize(join(modelsRoot(), m.id)) : 0, voices: files ? voicesOf(m.id) : [], job: job && job.state !== "done" ? job : null,
+        integrity: rec ? { source: rec.source, archive: rec.archive, files: Object.keys(rec.files).length, at: rec.at } : null };
     }),
   };
 }
@@ -294,11 +312,27 @@ function serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
 
 const threads = () => Math.max(1, Math.min(4, Number(process.env.SPEECH_THREADS) || 2));
 
+/**
+ * 6.12 (F-29): before the engine parses a model, its files must be the ones
+ * recorded when it was installed (speech-integrity.ts) — a mismatch is
+ * refused as LocalSpeechError("integrity").
+ */
+export async function verifyModel(id: string): Promise<"verified" | "recorded"> {
+  const def = LOCAL_MODEL.get(id);
+  if (!def) throw new LocalSpeechError("no-model", `There is no built-in model ${id}.`);
+  try {
+    return await verifyInstalled(modelsRoot(), id, def.url);
+  } catch (err) {
+    throw new LocalSpeechError("integrity", (err as Error).message);
+  }
+}
+
 function ttsEngine(id: string): Promise<TtsEngine> {
   return remember(ttsEngines, id, async () => {
     const s = await need();
     const f = modelFiles(id);
     if (!f) throw new LocalSpeechError("not-installed", `The voice ${id} is not downloaded yet (AI & speech → Offline speech).`);
+    await verifyModel(id);
     return s.OfflineTts.createAsync({ model: { vits: { model: f.model, tokens: f.tokens, dataDir: f.dataDir }, numThreads: threads(), provider: "cpu", debug: false }, maxNumSentences: 2 });
   });
 }
@@ -308,6 +342,7 @@ function sttEngine(id: string, language: string): Promise<SttEngine> {
     const s = await need();
     const f = modelFiles(id);
     if (!f) throw new LocalSpeechError("not-installed", `The model ${id} is not downloaded yet (AI & speech → Offline speech).`);
+    await verifyModel(id);
     return s.OfflineRecognizer.createAsync({ featConfig: { sampleRate: 16000, featureDim: 80 }, modelConfig: { whisper: { encoder: f.encoder, decoder: f.decoder, language, task: "transcribe" }, tokens: f.tokens, numThreads: threads(), provider: "cpu", debug: 0 } });
   });
 }

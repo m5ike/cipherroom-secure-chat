@@ -197,7 +197,8 @@ export const DEFAULT_PERMISSIONS: TelPermissions = {
   inbound: { maxConcurrentCalls: 10, perCallerPerHour: 20 },
   inroute: { maxTtlSec: 86_400, maxActivePerOwner: 50, maxAttemptsPerCall: 3, maxFailuresPerCallerPerHour: 10, maxFailuresPerDidPerHour: 30, maxFailuresPerMinute: 10, maxFailuresPerHour: 100 },
   tsa: { httpHosts: [], functions: true, recordingDays: 30 },
-  log: { days: 30, keepRaw: true },
+  // 6.12 (G-07): 14 days (was 30), no raw payloads unless the operator turns them on (an explicit true in the settings stays).
+  log: { days: 14, keepRaw: false },
   defaults: { inbound: { kind: "state", state: "busy" }, outbound: { kind: "pass" } },
 };
 

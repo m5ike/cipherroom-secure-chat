@@ -51,8 +51,10 @@
 // Challenges are random, single-use and expire after 2 minutes; the one a
 // response answers is read from its clientDataJSON and must have been issued
 // for that ceremony. rpId: WEBAUTHN_RP_ID, else the PUBLIC_BASE_URL host,
-// else the request host. Origins: WEBAUTHN_ORIGINS (exact list) or any https
-// origin on the rpId (+ http://localhost for development).
+// else the request host. Origins: WEBAUTHN_ORIGINS (exact list), else exactly
+// the origin of PUBLIC_BASE_URL (6.12, F-24), else https://<rpId> — any
+// subdomain only with WEBAUTHN_ALLOW_SUBDOMAINS=1 (the rule before 6.12)
+// (+ http(s)://localhost:* when the rpId is localhost, for development).
 
 import { isAllowedPushEndpoint } from "../push";
 import { tokenHash } from "./store";
@@ -98,13 +100,19 @@ class Challenges {
 }
 
 export function rpPolicyFor(req: Request): RpPolicy {
-  const origins = env("WEBAUTHN_ORIGINS").split(",").map((s) => s.trim()).filter(Boolean);
+  let origins = env("WEBAUTHN_ORIGINS").split(",").map((s) => s.trim()).filter(Boolean);
   let rpId = env("WEBAUTHN_RP_ID");
-  if (!rpId && env("PUBLIC_BASE_URL")) {
-    try { rpId = new URL(env("PUBLIC_BASE_URL")).hostname; } catch { rpId = ""; }
+  let base = "";
+  if (env("PUBLIC_BASE_URL")) {
+    try { const u = new URL(env("PUBLIC_BASE_URL")); base = u.origin; if (!rpId) rpId = u.hostname; } catch { base = ""; }
   }
   if (!rpId) rpId = req.hostname;
-  return { rpId, origins, appOrigins: androidAppOrigins() };
+  // 6.12 (F-24): without WEBAUTHN_ORIGINS only the exact origin of
+  // PUBLIC_BASE_URL (else https://<rpId>) — no longer every subdomain of the
+  // rpId. WEBAUTHN_ALLOW_SUBDOMAINS=1 brings the old rule back.
+  const subdomains = env("WEBAUTHN_ALLOW_SUBDOMAINS") === "1";
+  if (!origins.length && !subdomains && base && base !== "null") origins = [base];
+  return { rpId, origins, appOrigins: androidAppOrigins(), ...(subdomains ? { subdomains: true } : {}) };
 }
 
 export function challengeOf(clientDataJSON: unknown): string {

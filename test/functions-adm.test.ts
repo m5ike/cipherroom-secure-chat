@@ -29,6 +29,7 @@ const { mintAdmToken, verifyAdmToken, areaOfPath } = await import("../server/fun
 const { ADM_OPERATIONS, filterRegex, roomFilters } = await import("../server/functions/host-adm");
 const { ADM_SPEC } = await import("../server/functions/sdk-spec");
 const { roomRegistry } = await import("../server/room-registry");
+const { hashRoom } = await import("../server/monitor/traffic");
 
 const ALPHA = "aaaaaaaaaaaaaaaa";
 const BETA = "bbbbbbbbbbbbbbbb";
@@ -158,7 +159,9 @@ describe("m5adm in JavaScript", () => {
       return { created, bad, group, rooms: stats.rooms, members: stats.members, guests: stats.guests, event: note.event, actor: note.actor, users: users.map((u) => u.username), groups: users[0].groups };
     }`);
     expect(r.run.error).toBeNull();
-    const hash = createHash("sha256").update("m5cet:room:alpha").digest("hex").slice(0, 16);
+    // 6.12 (F-04): keyed with the server secret, as the hub and the console know rooms.
+    const hash = hashRoom("alpha")!;
+    expect(hash).not.toBe(createHash("sha256").update("m5cet:room:alpha").digest("hex").slice(0, 16));
     expect(valueOf(r)).toMatchObject({ created: hash, bad: -1, group: "staff", rooms: 2, members: 3, guests: 1, event: "fn.cleanup.done", users: ["eva"] });
     expect((valueOf(r) as { groups: string[] }).groups).toContain("staff");
     expect(String((valueOf(r) as { actor: string }).actor)).toMatch(/^fn:console\/boss@/);

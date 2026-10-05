@@ -70,9 +70,37 @@ proměnné ze skutečného prostředí mají přednost. `.env` je v `.dockerigno
 | `FUNCTIONS_SSE_PING_MS`    | 6.11: udržovací `: ping` streamu běhu (15000).       |
 | `FUNCTIONS_WAIT_NOTICE_MS` | 6.11: po kolika ms čekání na hostitele běh ohlásí `progress` „Waiting for …“ (10000). |
 | `FUNCTIONS_WAIT_EVERY_MS`  | 6.11: nejdelší ticho, než přijde další ohlášení (10000). |
+| `FUNCTIONS_SANDBOX_ISOLATION` | 6.12: izolace sandboxů funkcí — `auto` (výchozí: bubblewrap, když je nainstalovaný a projde autotestem, jinak jen permission model Node s varováním v přehledu konzole), `bwrap` (povinně; bez něj se žádná funkce nespustí), `none` (jen permission model). |
+| `FUNCTIONS_SANDBOX_BWRAP`  | 6.12: cesta k `bwrap` (jinak `PATH`, `/usr/bin`, `/usr/local/bin`, `/bin`). |
+| `FUNCTIONS_SANDBOX_BWRAP_BINDS` | 6.12: další cesty jen pro čtení uvnitř bwrap, oddělené čárkou (Node nebo knihovny mimo `/lib*`, `/usr/lib*`, např. `/nix/store`). |
+| `FUNCTIONS_SANDBOX_MAX`    | 6.12: kolik sandboxů běží najednou (výchozí 2 × počet CPU, aspoň 4). |
+| `FUNCTIONS_SANDBOX_QUEUE`  | 6.12: kolik běhů smí čekat na volný sandbox (výchozí 4 × `FUNCTIONS_SANDBOX_MAX`; `0` = nikdo nečeká); další dostanou chybu `Busy`. |
+| `FUNCTIONS_SANDBOX_QUEUE_MS` | 6.12: jak dlouho běh na sandbox čeká (30000), pak `Busy`. |
+| `SERVICE_DB_PLAIN_BACKUP`  | 6.12: `1` = při převodu nešifrované `functions.db` / `telephony.db` na SQLCipher ponechat kopii `*.plain-backup` (jinak se nešifrovaný soubor po ověření kopie přepíše nulami a smaže). Kopii po ověření upgradu smažte. |
+| `ACCESS_LOG_FULL_IP`       | 6.12: `1` = access log ukládá celé IP adresy; jinak jen síť (IPv4 /24, IPv6 /48). |
+| `ACCESS_LOG_DAYS`          | Retence access logu ve dnech — od 6.12 výchozí **14** (dřív 30). |
+| `WEBAUTHN_ALLOW_SUBDOMAINS`| 6.12: `1` = passkey přijme každou https subdoménu rpId (chování před 6.12). Jinak bez `WEBAUTHN_ORIGINS` jen přesný origin `PUBLIC_BASE_URL` (bez něj `https://<rpId>`); originy aplikace pro Android beze změny. |
+| `TURN_REQUIRE_HUB`         | 6.12: `0` = `/api/turn` vydá TURN přihlašovací údaje komukoli (chování před 6.12). Výchozí `1`: jen adrese, která má živé spojení s hubem (WebSocket); ostatní dostanou jen STUN s `pending: true`. Nastavte `0` v clusteru, kde HTTP a WebSocket jednoho klienta mohou skončit na různých instancích. |
+| `TURN_RATE_LIMIT`          | 6.12: požadavků na `/api/turn` z jedné adresy za 10 minut (60). |
+| `SHARE_MAX_PER_IP`         | 6.12: živých pozvánek z jedné adresy (50; celkově dál 2000). |
+| `FILE_PROXY_MAX_PER_IP`    | 6.12: souběžných přenosů přes serverovou proxy z jedné adresy (16; celkově dál 64). |
+| `SPEECH_MODEL_PINS`        | 6.12: připnuté SHA-256 archivů offline řečových modelů, `id=sha256,id=sha256` (např. `whisper-small=<hex>`). Bez pinu platí hash z prvního stažení (`speech-models/manifest.json`, s HMAC master klíčem); soubory se ověřují při každém načtení. |
 | `VONAGE_ALLOW_UNSIGNED_SMS`| 6.7: `1` = přijmout Vonage SMS bez podpisu.          |
 | `ANDROID_DESIGN_IMAGE_HOSTS`| 6.7: povolení hostitelé obrázků v designu Androidu (výchozí žádný). |
 | `NOTIFY_DIR`               | 6.7: nastavení upozornění (`$DATA_DIR/notify`).      |
+
+**6.12 — data služeb v klidu a izolace.** `functions.db` a `telephony.db` jsou od 6.12
+SQLCipher databáze; klíč se odvozuje z master klíče úložiště (`STORAGE_MASTER_KEY` /
+`storage.key`, pro každou databázi jiný HKDF štítek), takže hlavní i administrátorská
+služba musí mít tentýž master klíč. Nešifrovaný soubor z 6.11 se při prvním startu
+převede (zámek `*.migrate-lock`, ověření `integrity_check` a počtů řádků) — obě služby
+restartujte zároveň. Bez master klíče zůstane databáze nešifrovaná a přehled konzole
+(Overview › Health) to hlásí. Tamtéž je vidět, zda sandboxy funkcí běží v bubblewrap
+(`apt install bubblewrap`; v Dockeru a na Ubuntu s omezenými user namespaces autotest
+selže a server použije jen permission model). Hashe místností v logu jsou HMAC klíčem
+odvozeným z master klíče; auditní deník podepisuje kontrolní body klíčem odvozeným
+z master klíče a starší klíč připne do `audit-signing.pin` (soubor `audit-signing.key`
+se při prvním startu 6.12 odstraní).
 
 Úplný seznam proměnných je v [dokumentaci › Nasazení](site/index.html#promenne),
 změny 6.7 v [`deployment.md`](deployment.md#přechod-na-67). `.dockerignore`

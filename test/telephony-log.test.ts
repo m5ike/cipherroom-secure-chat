@@ -65,6 +65,41 @@ describe("redaction", () => {
     expect(stored?.http).toEqual({ method: "POST", path: "/wh/tel/012345…/tsa", status: 200, ms: 3 });
   });
 
+  it("6.12 (G-07): what the caller typed or said is masked in parsed and raw — DTMF, route codes, speech", async () => {
+    perms.log.keepRaw = true;
+    const e = writeLog({
+      kind: "webhook", summary: "gather",
+      parsed: { events: [{ kind: "gather", digits: "482916", speech: "my card number is four one one one" }], event: { kind: "dtmf", digits: "7" }, code: "482916", status: "busy", inroute: { code: "1234", type: "room" } },
+      raw: {
+        body: { Digits: "482916", SpeechResult: "my pin is one two three four", Confidence: "0.91", CallSid: "CA1" },
+        vonage: { dtmf: { digits: "5555", timed_out: false }, speech: { results: [{ text: "hello there", confidence: "0.8" }] } },
+        telnyx: { data: { payload: { digit: "9", digits: "123456", transcription_data: { transcript: "secret words", confidence: 0.7 } } } },
+        error: { code: "no-answer" },
+      },
+    });
+    await logFlushed();
+    const stored = await getLogEntry(e.id);
+    const text = JSON.stringify(stored);
+    for (const secret of ["482916", "four one one one", "one two three four", "5555", "hello there", "123456", "secret words", "1234\""]) expect(text).not.toContain(secret);
+    const parsed = stored!.parsed as Record<string, any>;
+    expect(parsed.events[0].digits).toBe("•••••6");
+    expect(parsed.events[0].speech).toBe("[speech: 34 chars]");
+    expect(parsed.event.digits).toBe("•");
+    expect(parsed.code).toBe("•••••6");
+    expect(parsed.inroute.code).toBe("•••4");
+    expect(parsed.status).toBe("busy");
+    const raw = stored!.raw as Record<string, any>;
+    expect(raw.body).toMatchObject({ Digits: "•••••6", Confidence: "0.91", CallSid: "CA1" });
+    expect(raw.vonage.dtmf).toEqual({ digits: "•••5", timed_out: false });
+    expect(raw.vonage.speech.results[0].text).toBe("[speech: 11 chars]");
+    expect(raw.telnyx.data.payload.transcription_data.confidence).toBe(0.7);
+    expect(raw.error.code).toBe("no-answer");
+  });
+
+  it("6.12: raw payloads are off and the log is kept 14 days by default", () => {
+    expect(DEFAULT_PERMISSIONS.log).toEqual({ days: 14, keepRaw: false });
+  });
+
   it("keepRaw: false keeps the parsed data and drops the raw payload", async () => {
     perms.log.keepRaw = false;
     const e = writeLog({ kind: "webhook", summary: "x", parsed: { a: 1 }, raw: { b: 2 } });
@@ -143,6 +178,7 @@ describe("the webhook log on a live app", () => {
   });
 
   it("logs a signed Twilio status webhook: verified, method / path / status / ms, the parsed event, the raw payload without the signature", async () => {
+    perms.log.keepRaw = true; // 6.12: off by default
     const params = { CallSid: "CA77", CallStatus: "completed", CallDuration: "12", From: "+420777123456", To: "+15005550006", Direction: "outbound-api", CallbackSource: "call-progress-events", CallToken: "tw-auth-token-123" };
     const sig = twilioSignature("https://chat.test/wh/twilio/voice_status", params, "tw-auth-token-123");
     const r = await fetch(`${base}/wh/twilio/voice_status`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "x-twilio-signature": sig }, body: new URLSearchParams(params) });

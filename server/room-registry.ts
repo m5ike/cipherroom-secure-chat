@@ -14,6 +14,7 @@
 
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { onRoomHashMigration } from "./monitor/traffic";
 
 export type RoomBlock = { reason: string; until: number | null; by: string; at: number };
 export type RoomWall = { text: string; level: "info" | "success" | "warning" | "error"; by: string; at: number };
@@ -126,6 +127,26 @@ export class RoomRegistry {
     const b = this.get(id)?.blocked;
     return b && (b.until === null || b.until > now) ? b : null;
   }
+
+  /**
+   * 6.12 (F-04): a record kept under a room's pre-6.12 (unkeyed) hash moves to
+   * its keyed hash — the first time this process hashes that room (a join, the
+   * console's room list), before the hub reads the block or the limit. Nothing
+   * moves when the room already has a record under the new hash. True when it moved.
+   */
+  adoptLegacy(legacy: string, keyed: string): boolean {
+    if (!ROOM_HASH_RE.test(legacy) || !ROOM_HASH_RE.test(keyed) || legacy === keyed) return false;
+    const current = this.load();
+    const old = current.get(legacy);
+    if (!old || current.has(keyed)) return false;
+    const records = new Map(current);
+    records.delete(legacy);
+    records.set(keyed, { ...old, id: keyed });
+    this.save(records);
+    console.log(`[rooms] the registry record of room ${keyed} moved from its pre-6.12 hash`);
+    return true;
+  }
 }
 
 export const roomRegistry = new RoomRegistry();
+onRoomHashMigration((legacy, keyed) => { try { roomRegistry.adoptLegacy(legacy, keyed); } catch { /* an unwritable registry keeps the old record */ } });

@@ -833,6 +833,8 @@
     }
     const auditStats = o.audit || {};
     checks.push([auditStats.communicationEnabled ? "warn" : "ok", "Communication audit", auditStats.communicationEnabled ? "ON — who reaches whom is being recorded" : "off (privacy default)"]);
+    // 6.12: at-rest encryption of the service databases, sandbox isolation, keyed room hashes, the TURN gate…
+    for (const c of ((health.security && health.security.checks) || [])) checks.push([c.tone, c.title, c.detail]);
     const container = $("#healthChecks");
     clear(container);
     for (const [tone, title, detail] of checks) {
@@ -1278,6 +1280,8 @@
           ["Checkpoints", `${num(r.signedCheckpoints)} of ${num(r.checkpoints)} signatures valid`],
           ["Last checkpoint", r.lastCheckpoint ? `row ${r.lastCheckpoint.lastId} · ${dateTime(r.lastCheckpoint.at)}` : "—"],
           ["Signing key (Ed25519)", h("span", { class: "mono small" }, r.publicKey)],
+          // 6.12 (F-23): the key is derived from the master key; earlier keys are pinned outside the database.
+          ["Pinned", r.pinned ? `${dateTime(r.pinned.at)} · ${num(r.pinned.earlierKeys)} earlier key(s) · chain from row ${num(r.pinned.chainFrom)}` : h("span", { class: "err" }, "not pinned")],
         ]));
         if (r.problems.length) body.append(json(r.problems));
       });

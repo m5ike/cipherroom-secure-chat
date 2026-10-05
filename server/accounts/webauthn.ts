@@ -29,9 +29,14 @@ export type StoredCredential = {
 
 export type RpPolicy = {
   rpId: string;
-  /** Exact allowed origins; when empty, any https origin on rpId (or a
-   *  subdomain) is accepted, plus http://localhost for development. */
+  /** Exact allowed origins. When empty: https on exactly the rpId host
+   *  (6.12, F-24 — before, any subdomain of it), plus http(s)://localhost:*
+   *  when the rpId itself is localhost (development). */
   origins?: string[];
+  /** 6.12: also every https subdomain of rpId (the behaviour before 6.12;
+   *  WEBAUTHN_ALLOW_SUBDOMAINS=1). A subdomain someone else controls could
+   *  then run ceremonies for this server's passkeys — with PRF, unlock them. */
+  subdomains?: boolean;
   /**
    * 6.1: native apps that may use the passkeys of rpId — exact
    * "android:apk-key-hash:<base64url SHA-256 of the signing certificate>"
@@ -73,13 +78,17 @@ function isLocalhost(hostname: string): boolean {
 
 export function isAllowedOrigin(origin: string, policy: RpPolicy): boolean {
   if (origin.startsWith("android:apk-key-hash:")) return (policy.appOrigins ?? []).includes(origin) || (policy.origins ?? []).includes(origin);
-  if (policy.origins && policy.origins.length > 0) return policy.origins.includes(origin);
+  if (policy.origins?.includes(origin)) return true;
   let url: URL;
   try { url = new URL(origin); } catch { return false; }
+  if (url.origin !== origin) return false; // a path, credentials or a trailing slash: not an origin
   const host = url.hostname;
-  const onRp = host === policy.rpId || host.endsWith(`.${policy.rpId}`);
+  // Development: the rpId is localhost, any local port (Vite, the server).
+  if (isLocalhost(policy.rpId) && isLocalhost(host) && (url.protocol === "http:" || url.protocol === "https:")) return host === policy.rpId || policy.rpId === "localhost";
+  if (policy.origins && policy.origins.length > 0) return false;
+  const onRp = host === policy.rpId || (policy.subdomains === true && host.endsWith(`.${policy.rpId}`));
   if (!onRp) return false;
-  return url.protocol === "https:" || (url.protocol === "http:" && isLocalhost(host));
+  return url.protocol === "https:";
 }
 
 type ClientData = { type: string; challenge: string; origin: string; crossOrigin?: boolean };

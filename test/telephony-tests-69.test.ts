@@ -411,7 +411,8 @@ describe("the log API", () => {
     expect(list.json.entries).toHaveLength(1);
     expect(list.json.entries[0]).not.toHaveProperty("parsed");
     const id = list.json.entries[0].id as string;
-    expect((await call("GET", `/admin/telephony/log/${id}`)).json.entry).toMatchObject({ parsed: { a: 1 }, raw: { b: 2 } });
+    // 6.12 (G-07): raw payloads are not kept by default.
+    expect((await call("GET", `/admin/telephony/log/${id}`)).json.entry).toMatchObject({ parsed: { a: 1 }, raw: null });
     principal = null;
     expect((await call("GET", `/admin/telephony/log/${id}`)).status).toBe(403);
     principal = { name: "boss", role: "owner" };
