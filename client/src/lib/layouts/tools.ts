@@ -21,6 +21,8 @@ export function peersTree(): LNode {
             // 6.7: online (green), away (yellow), far away (orange).
             n("area", { id: "peer-presence", name: "Status dot", if: "$p.presence", attrs: { class: "presence-dot presence-dot--{$p.presence}", role: "img", title: "{$p.presenceLabel} · {$p.seenText}", "aria-label": "{$p.presenceLabel}", "data-testid": "presence-{$p.id}" } }),
             n("area", { id: "peer-name-text", tag: "span", attrs: { class: "truncate" }, text: "{$p.name}" }),
+            // 6.12: an older peer — protocol 3 (no PCS / PQ).
+            n("area", { id: "peer-legacy", tag: "span", if: "$p.legacy", attrs: { class: "rounded-full bg-amber-500/15 px-2 text-[10px] text-amber-700 dark:text-amber-300", title: "{_'sec.identity.legacy'}", "data-testid": "peer-legacy-{$p.id}" }, text: "{_'p4.legacy.badge'}" }),
             // 6.12: did not prove to the server that they hold the room key (an older app).
             n("area", { id: "peer-unproven", tag: "span", if: "$p.unproven", attrs: { class: "rounded-full bg-amber-500/15 px-2 text-[10px] text-amber-700 dark:text-amber-300", title: "{_'p4.unproven.title'}", "data-testid": "peer-unproven-{$p.id}" }, text: "{_'p4.unproven'}" }),
           ]),

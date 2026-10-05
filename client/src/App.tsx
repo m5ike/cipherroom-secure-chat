@@ -4761,7 +4761,8 @@ function ChatApp() {
       ip: net?.ip, candidateType: net?.candidateType, transport,
       appType: "M5cet Web", usesServer: prefs.mode === "server",
       sentBytes: st?.sent ?? 0, recvBytes: st?.recv ?? 0,
-      security: fp ? "DTLS-SRTP + AES-GCM 256" : "AES-GCM 256 (E2EE)",
+      // 6.12: the protocol of our session with them (technical, like the rest of this line).
+      security: `${fp ? "DTLS-SRTP + AES-GCM 256" : "AES-GCM 256 (E2EE)"}${p4Info?.protocol === 4 ? " · protocol 4 (P-256 + ML-KEM-768, double ratchet)" : p4Info?.protocol === 3 ? " · protocol 3" : ""}`,
       fingerprint: fp ? formatFingerprint(fp) : undefined,
       // 6.7: what they share with the room, and the account key that signed their messages.
       avatar: peerProfiles[target]?.avatar,
@@ -6119,7 +6120,7 @@ function ChatApp() {
       {/* Peers modal */}
       {activePanel === "peers" ? (
         <SimpleModal title={t(lang, "menu.peers")} onClose={() => setActivePanel(null)}>
-          <PeerList peers={peers} lang={lang} presence={presence} onInfo={(id) => setUserInfoFor(id)} />
+          <PeerList peers={peers} protocols={p4Peers} lang={lang} presence={presence} onInfo={(id) => setUserInfoFor(id)} />
         </SimpleModal>
       ) : null}
 
@@ -6388,7 +6389,7 @@ function ChatApp() {
       {status === "joined" ? (
         <RecipientsWidget
           peers={[
-            ...peers.filter((p) => !presence.isHeld(p.id)).map((p): WidgetPeer => ({ id: p.id, name: p.name, status: p.status, rttMs: p.status === "open" ? connStatus?.rttMs : undefined, presence: presence.factsOf(p.id), avatar: peerProfiles[p.id]?.avatar, unproven: p.proven === false })),
+            ...peers.filter((p) => !presence.isHeld(p.id)).map((p): WidgetPeer => ({ id: p.id, name: p.name, status: p.status, rttMs: p.status === "open" ? connStatus?.rttMs : undefined, presence: presence.factsOf(p.id), avatar: peerProfiles[p.id]?.avatar, unproven: p.proven === false, legacy: p4Peers[p.id] === 3 })),
             // Signed-in members the server answers for: still addressable.
             ...awayPeers.map((a): WidgetPeer => ({ id: awayKey(a.accountId), name: a.name, status: "away", since: a.since, presence: presence.factsOf(awayKey(a.accountId)) })),
             // 6.7: their connection went, they did not leave: listed as away until they are back.

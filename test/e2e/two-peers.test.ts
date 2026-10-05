@@ -144,6 +144,20 @@ describe("two peers in one room", () => {
     expect(await bob.page.getByTestId("status-connection").getAttribute("data-proven")).toBe("true");
     expect(await alice.page.locator('[data-testid^="unproven-"]').count()).toBe(0);
     expect(await bob.page.locator('[data-testid^="unproven-"]').count()).toBe(0);
+    // The Trust panel lists Bob as protocol 4, and this server's key-transparency log as
+    // checked: its key pinned, its signed tree head verified (§ 14).
+    const dial = alice.page.getByTestId("btn-menu-speeddial");
+    const inDial = await dial.isVisible().catch(() => false);
+    if (inDial) await dial.click();
+    await alice.page.getByTestId(inDial ? "speeddial-btn-trust" : "btn-trust").click();
+    await alice.page.getByTestId("p4-trust").waitFor({ state: "visible", timeout: 10_000 });
+    expect(await alice.page.locator('[data-testid^="p4-peer-"]').first().getAttribute("data-protocol")).toBe("4");
+    try {
+      await expect.poll(async () => alice.page.getByTestId("kt-state").getAttribute("data-state"), { timeout: 10_000 }).toBe("ok");
+      expect(await alice.page.getByTestId("kt-alert").count()).toBe(0);
+    } finally {
+      await alice.page.keyboard.press("Escape");
+    }
   }, 30_000);
 
   it("6.12: a private message goes in the pair ratchet", async () => {

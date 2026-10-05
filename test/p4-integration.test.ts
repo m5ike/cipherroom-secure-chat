@@ -23,7 +23,8 @@ import {
 import { isP4RoomEnvelope, P4Room, type PeerInfo } from "../client/src/lib/p4-session";
 import { LocalVault, LocalKtStore, memoryBackend, PayloadSealer, VaultBundleStore, VaultReplayStore } from "../client/src/lib/p4-store";
 import { acceptChanged, evaluateIdentity, markVerified, signerOf, TrustBook } from "../client/src/lib/p4-trust";
-import { checkDirectoryDevice, helloAccountOf, sealForAway } from "../client/src/lib/p4-away";
+import { checkDirectoryDevice, helloAccountOf, sealForAway, uploadBundle } from "../client/src/lib/p4-away";
+import { parseBundleRequest, verifyBundleSignature, verifyDeviceCert as serverVerifyDeviceCert } from "../server/keys/verify";
 import { KtClient } from "../client/src/lib/p4-kt";
 import { handleIncomingFrame, newIncomingRegistry, sendFile, type FileTransferEnvelope } from "../client/src/lib/file-transfer";
 import { verifyHubProof as serverVerifyHubProof } from "../server/signaling/proof";
@@ -387,6 +388,33 @@ describe("6.12 web client — away members (mailbox, § 7)", () => {
       known: () => [], directory: async () => devices.map(({ mb: _mb, ...d }) => d), pinnedAccount: () => b64(new Uint8Array(32).fill(9)),
     });
     expect(pinned.withoutBundle).toEqual(["ref-dana"]);
+  });
+
+  it("the device's bundle and v2 certificate as PUT /api/keys/bundle sends them pass the server's checks", async () => {
+    const dev = await identity();
+    const account = await ed25519FromSeed(new Uint8Array(32).fill(11));
+    const apk = b64(account.publicKey);
+    const { certifyDeviceV2, DEVICE_CERT_LIFETIME_MS } = await import("../client/src/lib/p4");
+    const cert = await certifyDeviceV2(account.privateKey, dev.publicKey, Date.now() + DEVICE_CERT_LIFETIME_MS);
+    const bundle = (await new Mailbox(new VaultBundleStore(new LocalVault(memoryBackend())), dev).current()).bundle;
+    let sent: { url: string; init: RequestInit } | null = null;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string, init: RequestInit) => { sent = { url, init }; return new Response(JSON.stringify({ ok: true }), { status: 200 }); }) as typeof fetch;
+    try {
+      expect(await uploadBundle("tok", dev.publicKey, { accountKey: apk, cert: "v1", v2: { exp: cert.exp, sig: cert.sig } }, bundle)).toEqual({ ok: true });
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+    expect(sent!.url).toBe("/api/keys/bundle");
+    expect(sent!.init.method).toBe("PUT");
+    expect((sent!.init.headers as Record<string, string>).Authorization).toBe("Bearer tok");
+    const body = JSON.parse(String(sent!.init.body));
+    const parsed = parseBundleRequest(body);
+    expect(parsed.ok).toBe(true);
+    expect(serverVerifyDeviceCert(apk, dev.publicKey, cert.exp, cert.sig)).toBe(true);
+    expect(verifyBundleSignature(dev.publicKey, bundle)).toBe(true);
+    // Without a v2 certificate nothing is sent.
+    expect(await uploadBundle("tok", dev.publicKey, { accountKey: apk, cert: "v1" }, bundle)).toEqual({ ok: false, code: "no-cert-v2" });
   });
 
   it("our hello's account: v2 while the certificate is valid, else v1 (without expiry)", () => {
