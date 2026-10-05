@@ -41,7 +41,19 @@ import type { NotifyStore } from "./store";
 import type { Channel } from "./channels";
 import { escapeHtml } from "./channels";
 import type { Notifier } from "./dispatch";
-import { sendSmtp, type SmtpResult } from "./smtp";
+import { sendSmtp, type SmtpMessage, type SmtpResult } from "./smtp";
+import { acceptedLocale, notifyText, requestLocale } from "./lang";
+import { LOCALE_INFO, type Locale } from "../../client/src/lib/locales";
+
+/** 6.13: the mail that confirms an address, in the user's language (UTF-8 text and HTML; the subject an RFC 2047 word). */
+export function confirmationMail(from: string, to: string, link: string, appName: string, lang: Locale): SmtpMessage {
+  const intro = notifyText("mailIntro", lang, appName), ignore = notifyText("mailIgnore", lang, appName);
+  return {
+    from, to, subject: notifyText("mailSubject", lang, appName),
+    text: `${intro}\n\n${link}\n\n${ignore}\n`,
+    html: `<!doctype html><html lang="${LOCALE_INFO[lang].tag}"><head><meta charset="utf-8"></head><body><p>${escapeHtml(intro)}</p><p><a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p><p>${escapeHtml(ignore)}</p></body></html>`,
+  };
+}
 
 export type NotifyRouteDeps = {
   accounts: AccountStore;
@@ -118,6 +130,8 @@ export function registerNotifyRoutes(app: Express, deps: NotifyRouteDeps): void 
     }
     req.account = account;
     req.token = token;
+    // 6.13: until the user picks a language, notifications speak the one their requests ask for.
+    store.noteLanguage(account.id, acceptedLocale(req.header("accept-language")));
     next();
   };
   const testLimiter = rateLimit({ windowMs: 60_000, limit: 6, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many tests; wait a minute." } });
@@ -136,10 +150,14 @@ export function registerNotifyRoutes(app: Express, deps: NotifyRouteDeps): void 
       accounts.addAudit(id, "notify-email-confirmed");
       audit.add({ category: "account", event: "notify.email.confirmed", accountId: id });
     }
-    const title = id ? "E-mail confirmed" : "This link does not work";
-    const text = id ? "Notifications may now come to this address. You can close this page." : "The link is old, was used already, or is not complete.";
+    // 6.13: in the visitor's language (Accept-Language), the account's chosen one when the link worked.
+    const lang = id && store.hasPrefs(id) ? store.prefs(id).lang : requestLocale(req);
+    const title = notifyText(id ? "confirmedTitle" : "brokenTitle", lang);
+    const text = notifyText(id ? "confirmedText" : "brokenText", lang);
     res.status(id ? 200 : 400).type("html").setHeader("Cache-Control", "no-store");
-    res.send(`<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(text)}</p></body>`);
+    res.setHeader("Content-Language", LOCALE_INFO[lang].tag);
+    res.setHeader("Vary", "Accept-Language");
+    res.send(`<!doctype html><html lang="${LOCALE_INFO[lang].tag}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title></head><body style="font-family:system-ui,sans-serif;max-width:32rem;margin:15vh auto;padding:0 1rem"><h1>${escapeHtml(title)}</h1><p>${escapeHtml(text)}</p></body></html>`);
   });
 
   /* --------------------------------------------------------------- the user */
@@ -176,11 +194,8 @@ export function registerNotifyRoutes(app: Express, deps: NotifyRouteDeps): void 
     const address = store.email(id)!.address;
     const r: SmtpResult = await sendMail(
       { host: cfg.email.host, port: cfg.email.port, secure: cfg.email.secure, user: cfg.email.user, pass: openSmtpPassword(cfg.email.pass) ?? "" },
-      {
-        from: cfg.email.from, to: address, subject: `${cfg.appName}: confirm notifications by e-mail`,
-        text: `Open this link to receive ${cfg.appName} notifications at this address:\n\n${link}\n\nIf you did not ask for it, ignore this mail; nothing will be sent.\n`,
-        html: `<p>Open this link to receive ${escapeHtml(cfg.appName)} notifications at this address:</p><p><a href="${escapeHtml(link)}">${escapeHtml(link)}</a></p><p>If you did not ask for it, ignore this mail; nothing will be sent.</p>`,
-      },
+      // 6.13: in the user's language — their choice, else what their request asked for.
+      confirmationMail(cfg.email.from, address, link, cfg.appName, store.prefs(id).lang),
       cfg.limits.timeoutMs,
     );
     accounts.addAudit(id, "notify-email", { sent: r.ok });

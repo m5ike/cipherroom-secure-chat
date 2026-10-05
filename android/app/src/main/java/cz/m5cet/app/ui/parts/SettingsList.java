@@ -61,9 +61,24 @@ final class SettingsList extends ScrollView implements Renderer.Slot {
         });
         section(app.t("settings.theme"));
         toggle("moon", app.t("settings.theme"), Ui.dark(a), on -> { app.config.setTone(on ? "dark" : "light"); a.recreate(); });
-        row("languages", app.t("settings.language") + " · " + app.lang().toUpperCase(), () -> {
-            String[] langs = {"cs", "en", "de"};
-            new AlertDialog.Builder(a).setItems(new String[]{"Čeština", "English", "Deutsch"}, (d, i) -> { app.config.setLang(langs[i]); a.recreate(); }).show();
+        // 6.13: the nine languages by their own names, and "as the phone" (the first of the phone's languages the app speaks).
+        String chosen = app.config.lang();
+        String shown = cz.m5cet.app.core.Locales.isLocale(chosen) ? cz.m5cet.app.core.Locales.info(chosen).nativeName : app.t("settings.languageSystem") + " (" + cz.m5cet.app.core.Locales.info(app.lang()).nativeName + ")";
+        row("languages", app.t("settings.language") + " · " + shown, () -> {
+            java.util.List<String> codes = cz.m5cet.app.core.Locales.CODES;
+            String[] values = new String[codes.size() + 1];
+            String[] labels = new String[codes.size() + 1];
+            values[0] = "";
+            labels[0] = app.t("settings.languageSystem") + " — " + cz.m5cet.app.core.Locales.info(M5.systemLang()).nativeName;
+            for (int i = 0; i < codes.size(); i++) { values[i + 1] = codes.get(i); labels[i + 1] = cz.m5cet.app.core.Locales.info(codes.get(i)).nativeName; }
+            int checked = 0;
+            for (int i = 1; i < values.length; i++) if (values[i].equals(chosen)) checked = i;
+            new AlertDialog.Builder(a).setTitle(app.t("settings.language")).setSingleChoiceItems(labels, checked, (d, i) -> {
+                d.dismiss();
+                app.config.setLang(values[i]);
+                app.notify.channels(); // the channels' names in the new language
+                a.recreate();
+            }).show();
         });
         section(app.t("settings.updates"));
         row("refresh-cw", app.t("menu.update"), () -> Actions_run("update.check"));
@@ -78,7 +93,7 @@ final class SettingsList extends ScrollView implements Renderer.Slot {
 
     private void section(String title) {
         TextView t = new TextView(a);
-        t.setText(title.toUpperCase());
+        t.setText(title.toUpperCase(a.app().locale())); // 6.13: the app language's rules, not the phone's
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
         t.setTypeface(Ui.typeface(a.app().design(), true, false));
         t.setTextColor(Ui.color(a, "@primary", Color.RED));

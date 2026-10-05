@@ -64,7 +64,7 @@ public final class AudioBar extends LinearLayout {
         time.setText("0:00");
         addView(time);
         icon(false);
-        setContentDescription("audio");
+        setContentDescription(cz.m5cet.app.core.Texts.t("media.a11y.audio", "audio"));
     }
 
     public void set(Source s, long durationMs) {
@@ -77,7 +77,7 @@ public final class AudioBar extends LinearLayout {
 
     private void icon(boolean pause) {
         button.setImageDrawable(Icons.drawable(getContext(), pause ? "square" : "play", Ui.dp(getContext(), 18), fg));
-        button.setContentDescription(pause ? "pause" : "play");
+        button.setContentDescription(pause ? cz.m5cet.app.core.Texts.t("media.a11y.pause", "pause") : cz.m5cet.app.core.Texts.t("media.a11y.play", "play"));
     }
 
     public void toggle() {

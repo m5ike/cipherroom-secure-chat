@@ -203,7 +203,7 @@ public final class Parts {
                 if (r != cz.m5cet.app.security.AppLock.Result.OK) { a.flash("", app.t("lock.wrongPin"), "error"); off.run(); return; }
                 String why = cz.m5cet.app.security.Duress.refusal(d1, app.lock.pinLength(), app.vault.opensWith(d1));
                 if (why != null) {
-                    a.flash("", "same".equals(why) ? app.t("set.security.duress.same") : app.t("set.security.duress.length").replace("{n}", String.valueOf(app.lock.pinLength())), "error");
+                    a.flash("", "same".equals(why) ? app.t("set.security.duress.same") : app.tn("set.security.duress.length", app.lock.pinLength()), "error");
                     off.run();
                     return;
                 }

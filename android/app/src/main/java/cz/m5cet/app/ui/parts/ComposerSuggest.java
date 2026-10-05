@@ -110,7 +110,7 @@ final class ComposerSuggest {
 
     private View header(String section) {
         TextView t = new TextView(a);
-        t.setText(app().t("fnm.sec." + section).toUpperCase(java.util.Locale.getDefault()));
+        t.setText(app().t("fnm.sec." + section).toUpperCase(app().locale()));
         t.setTextColor(color("@muted", Color.GRAY));
         t.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         t.setLetterSpacing(0.06f);

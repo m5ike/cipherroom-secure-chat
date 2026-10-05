@@ -258,8 +258,8 @@ public final class NotifyPrefs implements Settings.Listener {
             String lang = app.lang();
             p.put("kind", "test").put("privacy", "neutral").put("tag", "m5-test")
                 .put("vars", new JSONObject().put("app", app.design().appName()))
-                .put("tpl", new JSONObject().put("title", t == null ? "{app} · test" : t.getJSONObject("title").optString(lang, "{app} · test"))
-                    .put("body", t == null ? app.t("notify.test.local") : t.getJSONObject("body").optString(lang, "")))
+                .put("tpl", new JSONObject().put("title", t == null ? "{app} · test" : cz.m5cet.app.core.Locales.text(t.getJSONObject("title"), lang, "{app} · test"))
+                    .put("body", t == null ? app.t("notify.test.local") : cz.m5cet.app.core.Locales.text(t.getJSONObject("body"), lang, "")))
                 .put("title", app.design().appName()).put("body", app.t("notify.test.local")).put("sound", true).put("vibrate", true);
         } catch (JSONException ignored) { }
         return p;

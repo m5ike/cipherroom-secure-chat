@@ -186,7 +186,8 @@ const grid = (id: string, tiles: ANode[]): ANode => n(id, "row", { style: { gap:
 
 const TTL_OPTIONS = "0:{_'set.never'}|60:1 h|1440:24 h|10080:7 d";
 const VANISH_OPTIONS = "4:4 s|15:15 s|60:1 min|300:5 min|1800:30 min|3600:1 h|7200:2 h";
-const LANG_OPTIONS = ":{_'set.appLanguage'}|cs:Čeština|en:English|de:Deutsch|sk:Slovenčina|pl:Polski|fr:Français|es:Español|it:Italiano";
+// 6.13: with Slovenian and Finnish — the app's nine languages, and Polish.
+const LANG_OPTIONS = ":{_'set.appLanguage'}|cs:Čeština|en:English|de:Deutsch|sk:Slovenčina|pl:Polski|fr:Français|es:Español|it:Italiano|sl:Slovenščina|fi:Suomi";
 
 export const SCREENS_TREES_61: Record<string, ANode> = {
   tools: sheet("{_'tools.title'}", [

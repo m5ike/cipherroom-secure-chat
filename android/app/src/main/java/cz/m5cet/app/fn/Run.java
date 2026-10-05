@@ -283,7 +283,7 @@ public final class Run {
             }
 
             @Override public void end() {
-                if (!over) { over = true; l.error("incomplete", "The answer stopped before it was complete."); }
+                if (!over) { over = true; l.error("incomplete", cz.m5cet.app.core.Texts.t("fnm.err.incomplete", "The answer stopped before it was complete.")); }
             }
 
             @Override public void fail(Api.Failure f) {

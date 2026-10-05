@@ -14,12 +14,13 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DEFAULT_USER_PREFS, sanitizeUserPrefs, type UserNotifyPrefs } from "../../client/src/lib/notify-template";
+import { DEFAULT_USER_PREFS, isLang, sanitizeUserPrefs, type NotifyLang, type UserNotifyPrefs } from "../../client/src/lib/notify-template";
 import { notifyDir } from "./config";
 
 export type DeviceLink = { deviceId: string; tokenHash: string; at: number };
 export type EmailState = { address: string; confirmed: boolean; tokenHash: string; sentAt: number; confirmedAt: number };
-export type AccountNotify = { prefs: UserNotifyPrefs; devices: DeviceLink[]; email: EmailState | null; updatedAt: number };
+/** `lang`: 6.13 — the language the account's own requests asked for (Accept-Language), used until the user chooses one in their settings. */
+export type AccountNotify = { prefs: UserNotifyPrefs; devices: DeviceLink[]; email: EmailState | null; updatedAt: number; lang?: NotifyLang };
 
 export const NOTIFY_STORE_LIMITS = { devicesPerAccount: 5, accounts: 20_000, confirmHours: 48 } as const;
 
@@ -51,6 +52,7 @@ export class NotifyStore {
           devices: Array.isArray(rec.devices) ? rec.devices.filter((d) => d && typeof d.deviceId === "string").slice(0, NOTIFY_STORE_LIMITS.devicesPerAccount) : [],
           email: rec.email && typeof rec.email.address === "string" ? rec.email as EmailState : null,
           updatedAt: typeof rec.updatedAt === "number" ? rec.updatedAt : 0,
+          ...(isLang(rec.lang) ? { lang: rec.lang } : {}),
         });
       }
     } catch { /* first run, or unreadable: start empty */ }
@@ -80,9 +82,23 @@ export class NotifyStore {
     return rec ?? null;
   }
 
-  /** The user's choice (the defaults when they never chose). */
+  /** The user's choice (the defaults when they never chose — 6.13: in the language their requests asked for). */
   prefs(accountId: string): UserNotifyPrefs {
-    return structuredClone(this.record(accountId, false)?.prefs ?? DEFAULT_USER_PREFS);
+    const rec = this.record(accountId, false);
+    const prefs = structuredClone(rec?.prefs ?? DEFAULT_USER_PREFS);
+    if (rec && !rec.updatedAt && rec.lang) prefs.lang = rec.lang;
+    return prefs;
+  }
+
+  /** 6.13: the language an account's request asked for (Accept-Language) — kept until the user chooses one. */
+  noteLanguage(accountId: string, lang: NotifyLang | null): void {
+    if (!lang) return;
+    const known = this.record(accountId, false);
+    if (known && (known.updatedAt || known.lang === lang)) return;
+    const rec = known ?? this.record(accountId, true);
+    if (!rec) return;
+    rec.lang = lang;
+    this.persist();
   }
 
   hasPrefs(accountId: string): boolean {

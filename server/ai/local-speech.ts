@@ -59,6 +59,10 @@ export const LOCAL_MODELS: readonly LocalModelDef[] = [
   piper("fr_FR-siwis-medium", "French — Siwis (female)", "fr"),
   piper("es_ES-davefx-medium", "Spanish — Davefx (male)", "es"),
   piper("it_IT-paola-medium", "Italian — Paola (female)", "it"),
+  // 6.13: the app's other two languages (archives checked at the upstream release, ~21 MB each; no pinned SHA-256 — like the rest,
+  // the first download is recorded and later ones compared, SPEECH_MODEL_PINS can pin it).
+  piper("sl_SI-artur-medium", "Slovenian — Artur (male)", "sl"),
+  piper("fi_FI-harri-medium", "Finnish — Harri (male)", "fi"),
   piper("uk_UA-ukrainian_tts-medium", "Ukrainian — 3 voices", "uk", 23),
 ];
 

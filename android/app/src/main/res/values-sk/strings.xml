@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 6.13: the one text Android itself shows (Settings › NFC › card emulation, apduservice.xml); everything else the app says comes from the design's strings (nine languages). -->
+<resources>
+    <string name="nfc_card_service">M5cet — pripájacia karta miestnosti</string>
+</resources>

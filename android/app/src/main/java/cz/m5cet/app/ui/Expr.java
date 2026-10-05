@@ -21,7 +21,11 @@ import java.util.Map;
 public final class Expr {
     private Expr() {}
 
-    public interface Translate { String t(String key); }
+    public interface Translate {
+        String t(String key);
+        /** 6.13: the app language dates are written in by the date filters (null: the fixed "5. 10. 2026 14:05" form). */
+        default String lang() { return null; }
+    }
 
     public interface Scope { Object get(String name); }
 
@@ -380,7 +384,7 @@ public final class Expr {
         for (Part p : parseTemplate(src)) {
             if (p.lit != null) { out.append(p.lit); continue; }
             Object v = p.expr.eval(scope, tr);
-            for (String[] f : p.filters) v = filter(v, f[0], f[1]);
+            for (String[] f : p.filters) v = filter(v, f[0], f[1], tr == null ? null : tr.lang());
             out.append(toText(v));
         }
         return out.toString();
@@ -428,7 +432,18 @@ public final class Expr {
 
     private static String pad2(int n) { return n < 10 ? "0" + n : String.valueOf(n); }
 
-    static Object filter(Object v, String name, String arg) {
+    static Object filter(Object v, String name, String arg) { return filter(v, name, arg, null); }
+
+    /** {@code lang}: 6.13 — the app's language; date, time and datetime are then written as it writes them (Formats). */
+    static Object filter(Object v, String name, String arg, String lang) {
+        if (lang != null && (name.equals("date") || name.equals("time") || name.equals("datetime"))) {
+            Object x = norm(v);
+            if (!(x instanceof Number)) return "";
+            long at = ((Number) x).longValue();
+            return name.equals("date") ? cz.m5cet.app.core.Formats.date(lang, at)
+                : name.equals("time") ? cz.m5cet.app.core.Formats.time(lang, at)
+                : cz.m5cet.app.core.Formats.date(lang, at) + " " + cz.m5cet.app.core.Formats.time(lang, at);
+        }
         switch (name) {
             case "upper": return toText(v).toUpperCase(Locale.ROOT);
             case "lower": return toText(v).toLowerCase(Locale.ROOT);

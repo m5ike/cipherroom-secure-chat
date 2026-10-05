@@ -168,7 +168,7 @@ public final class Notify {
         int level = locked ? 0 : NotifyTemplate.rank(prefs.localPrivacy("message", hideContent));
         JSONObject tpl = prefs.template("message");
         String appName = app.design().appName(), neutral = app.t("notify.message");
-        Person me = new Person.Builder().setName(app.config.userName().isEmpty() ? "me" : app.config.userName()).build();
+        Person me = new Person.Builder().setName(app.config.userName().isEmpty() ? app.t("users.me") : app.config.userName()).build();
         Notification.MessagingStyle style = new Notification.MessagingStyle(me).setConversationTitle(level >= 2 ? roomName : appName).setGroupConversation(true);
         // 6.12 (F-22): the sender's name as the app shows it everywhere (no bidi or invisible characters, NFKC, at most 48).
         style.addMessage(level >= 3 ? text : neutral, System.currentTimeMillis(), new Person.Builder().setName(level >= 1 ? cz.m5cet.app.core.Names.normalize(sender) : appName).build());

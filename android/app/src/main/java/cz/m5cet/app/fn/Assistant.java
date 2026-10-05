@@ -184,12 +184,12 @@ public final class Assistant {
                     case "citations": if (d.opt("citations") instanceof JSONArray) { setCitations(answer, d.optJSONArray("citations")); l.changed(answer); } break;
                     case "done": done(answer, d, l); break;
                     case "error": Assistant.this.fail(answer, d.opt("code") == null || d.opt("code") == JSONObject.NULL ? "error" : Js.str(d.opt("code")),
-                        d.opt("message") == null || d.opt("message") == JSONObject.NULL ? "The AI call failed." : Js.str(d.opt("message")), l); break;
+                        d.opt("message") == null || d.opt("message") == JSONObject.NULL ? cz.m5cet.app.core.Texts.t("fnm.err.aiFailed", "The AI call failed.") : Js.str(d.opt("message")), l); break;
                     default: break;
                 }
             }
 
-            @Override public void end() { if (answer.pending) Assistant.this.fail(answer, "incomplete", "The answer stopped before it was complete.", l); }
+            @Override public void end() { if (answer.pending) Assistant.this.fail(answer, "incomplete", cz.m5cet.app.core.Texts.t("fnm.err.incomplete", "The answer stopped before it was complete."), l); }
 
             @Override public void fail(Api.Failure f) {
                 if (answer.pending) Assistant.this.fail(answer, !f.code.isEmpty() ? f.code : f.status > 0 ? "http-" + f.status : "network", f.getMessage(), l);

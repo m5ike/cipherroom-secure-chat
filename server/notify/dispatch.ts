@@ -23,7 +23,7 @@ import type { AccountStore } from "../accounts/store";
 import { audit } from "../monitor/audit";
 import { hashRoom } from "../monitor/traffic";
 import {
-  effectivePrivacy, inQuietHours, renderNotification, timeIn, visibleVars,
+  effectivePrivacy, inQuietHours, renderNotification, templateText, timeIn, visibleVars,
   type NotifyChannel, type NotifyKind, type NotifyPrivacy, type UserNotifyPrefs,
 } from "../../client/src/lib/notify-template";
 import type { NotifyConfig } from "./config";
@@ -135,7 +135,7 @@ export class Notifier {
       kind: req.kind,
       title,
       body,
-      tpl: { title: tpl.title[lang] || tpl.title.en, body: tpl.body[lang] || tpl.body.en },
+      tpl: { title: templateText(tpl.title, lang), body: templateText(tpl.body, lang) },
       vars: shown,
       privacy,
       ...(showsRoom && req.room ? { room: req.room } : {}),

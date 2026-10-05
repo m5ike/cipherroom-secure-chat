@@ -426,7 +426,7 @@ final class Files {
             try (FileVault.Reader r = new FileVault.Reader(room.app, vaultId)) {
                 List<Peer> peers = openPeers();
                 boolean proxy = peers.isEmpty();
-                if (proxy && !room.canProxy()) throw new IOException("nobody to send it to");
+                if (proxy && !room.canProxy()) throw new IOException(cz.m5cet.app.core.Texts.t("file.err.nobody", "nobody to send it to"));
                 if (proxy) planProxy(out, name); else planLanes(out, peers);
                 String transport = proxy ? "proxy" : "p2p";
                 JSONObject meta = new JSONObject().put("transferId", id).put("name", name.length() > 200 ? name.substring(0, 200) : name).put("mime", mime)
@@ -495,10 +495,10 @@ final class Files {
                     }
                 } finally { done.countDown(); }
             });
-            if (!done.await(10, TimeUnit.SECONDS)) throw new InterruptedException("the room did not answer");
+            if (!done.await(10, TimeUnit.SECONDS)) throw new InterruptedException(cz.m5cet.app.core.Texts.t("file.err.noAnswer", "the room did not answer"));
             if (!v4.isEmpty()) out.lanes.add(new Lane(true, v4, Files4.fileKey(fk, out.id)));
             if (!v3.isEmpty() || peers.isEmpty()) out.lanes.add(new Lane(false, v3, room.keys.fileKey(out.id)));
-            if (out.lanes.isEmpty()) throw new IOException("the connections are still being secured — try again in a moment");
+            if (out.lanes.isEmpty()) throw new IOException(cz.m5cet.app.core.Texts.t("file.err.securing", "the connections are still being secured — try again in a moment"));
         } finally {
             Crypto.wipe(fk);
         }

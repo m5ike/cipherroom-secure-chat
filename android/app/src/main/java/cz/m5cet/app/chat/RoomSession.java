@@ -356,7 +356,7 @@ public final class RoomSession {
         status = "offline";
         Log.i("room", logName() + " signaling closed " + code + " " + reason);
         changed();
-        if (code == 4001 || code == 4003) { wanted = false; notice = code == 4001 ? "replaced" : "closed by the server"; return; }
+        if (code == 4001 || code == 4003) { wanted = false; notice = code == 4001 ? cz.m5cet.app.core.Texts.t("room.replaced", "replaced") : cz.m5cet.app.core.Texts.t("room.closedByServer", "closed by the server"); return; }
         if (wanted) scheduleRetry();
     }
 
@@ -453,7 +453,7 @@ public final class RoomSession {
             // 6.7 held: the connection went, they did not leave — still listed, as away (RoomPresence).
             case "peer-left": dropPeer(f.optString("peerId"), true, f.optBoolean("held")); break;
             case "signal": onSignal(f.optString("source"), f.optJSONObject("payload")); break;
-            case "rate-limited": notice = "rate limited: " + f.optString("frame"); changed(); break;
+            case "rate-limited": notice = cz.m5cet.app.core.Texts.f("room.rateLimited", "rate limited: {0}", f.optString("frame")); changed(); break;
             // 6.1: files the server relays (nobody had an open channel to the sender).
             case "proxy-meta": case "proxy-chunk": case "proxy-end": case "proxy-cancel": {
                 Peer from = peers.get(f.optString("from"));
@@ -530,7 +530,7 @@ public final class RoomSession {
         // Messages held behind a changed identity wait while the member is only away (6.7 held), and go when it left.
         List<ChatMessage> wasHeld = held ? null : this.held.remove(peerId);
         if (wasHeld != null) for (ChatMessage m : wasHeld) heldIds.remove(m.id);
-        if (wasHeld != null && p != null) system("⚠ " + p.name + ": " + tr("p4.heldDropped").replace("{n}", Integer.toString(wasHeld.size())));
+        if (wasHeld != null && p != null) system("⚠ " + p.name + ": " + P4Texts.tn(app, "p4.heldDropped", wasHeld.size())); // 6.13: its plural form
         if (profiles != null) profiles.forget(peerId);
         if (p != null) {
             p.close();
@@ -637,7 +637,7 @@ public final class RoomSession {
     private void onRoomThread(Runnable r) throws InterruptedException {
         java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
         post(() -> { try { r.run(); } finally { done.countDown(); } });
-        if (!done.await(10, TimeUnit.SECONDS)) throw new InterruptedException("the room did not answer");
+        if (!done.await(10, TimeUnit.SECONDS)) throw new InterruptedException(cz.m5cet.app.core.Texts.t("file.err.noAnswer", "the room did not answer"));
     }
 
     /** On the room's thread: the FK sealed per recipient and sent — or nothing at all (false) when a recipient has no device. */
