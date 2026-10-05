@@ -95,6 +95,44 @@ final class CoreChatTests: XCTestCase {
         await eventually("acknowledged") { hub.relayQueue("acc-bob") == 0 }
     }
 
+    /// 6.14 call wake: a call I start rings the away member through the relay (frame call:true, callId), hanging up
+    /// unanswered ends it (callEnd:true); back, the member's room turns the ring + end into one missed call.
+    func testACallIStartWakesTheAwayMemberAndAnUnansweredOneIsAMissedCall() async throws {
+        let hub = FakeHub(), net = LoopbackNet()
+        let (alice, bob, key) = await joinBoth(hub, net)
+        let aliceRoom = try XCTUnwrap(alice.room(key)), bobRoom = try XCTUnwrap(bob.room(key))
+        var steps: [(String, String, CallWake.Step)] = []
+        bob.rooms.onCallWakeStep = { k, label, s in steps.append((k, label, s)) }
+        bob.rooms.onAccountChanged(token: "bob")
+        await eventually("Alice knows Bob's account") { aliceRoom.people.contains { $0.name == "Bob" && $0.signedIn } }
+        net.disconnect(bobRoom.myId)
+        await bob.rooms.pauseAll()
+        await eventually("Bob is away for Alice") { aliceRoom.people.contains { $0.channel == "away" || $0.channel == "held" } }
+        // Alice's audio goes live (RoomRtc's broadcast): nobody else in the call, Bob away — one ring.
+        aliceRoom.broadcastAudio("live")
+        await eventually("the ring is relayed") { hub.seenFrames.contains { $0.string("type") == "relay" && $0["call"] == .bool(true) } }
+        let ring = try XCTUnwrap(hub.seenFrames.first { $0.string("type") == "relay" && $0["call"] == .bool(true) })
+        let callId = try XCTUnwrap(ring.string("callId"))
+        XCTAssertEqual(ring.string("messageId"), callId + ":r")
+        XCTAssertEqual(ring.array("to"), [.string("acc-bob")])
+        // Unmuting is not a new call; hanging up unanswered ends the ring.
+        aliceRoom.broadcastAudio("muted")
+        aliceRoom.broadcastAudio("live")
+        aliceRoom.broadcastAudio("off")
+        await eventually("the end is relayed") { hub.seenFrames.contains { $0.string("type") == "relay" && $0["callEnd"] == .bool(true) } }
+        XCTAssertEqual(hub.seenFrames.filter { $0.string("type") == "relay" && $0["call"] == .bool(true) }.count, 1)
+        XCTAssertEqual(hub.seenFrames.first { $0["callEnd"] == .bool(true) }?.string("callId"), callId)
+        // Bob back: both items come from the relay — one missed call from Alice, never a message.
+        await bob.rooms.hub.resumeAll()
+        await eventually("one missed call", timeout: 30) { !steps.isEmpty }
+        await eventually("acknowledged") { hub.relayQueue("acc-bob") == 0 }
+        XCTAssertEqual(steps.count, 1)
+        XCTAssertEqual(steps.first?.0, key)
+        XCTAssertEqual(steps.first?.2.records.map(\.kind), [CallTrack.missed])
+        XCTAssertEqual(steps.first?.2.missed?.people, ["Alice"])
+        XCTAssertFalse(bobRoom.messages.contains { $0.id.hasPrefix(callId) })
+    }
+
     func testTheLockKeepsReceivingIntoTheInboxAndTheUnlockMerges() async throws {
         let hub = FakeHub(), net = LoopbackNet()
         let (alice, bob, key) = await joinBoth(hub, net)

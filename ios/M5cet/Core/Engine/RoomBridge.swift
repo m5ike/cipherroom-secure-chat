@@ -78,7 +78,13 @@ final class RoomBridge: RoomTransport, RoomEvents, @unchecked Sendable {
     }
 
     func signal(from peerId: String, _ description: JSONObject) { main { $0.wireReceive(description, from: peerId) } }
-    func peerAudio(_ peerId: String, _ state: String) { main { $0.wire?.peerAudioStatus(state, from: peerId) } }
+    func peerAudio(_ peerId: String, _ state: String) {
+        main { c in
+            c.wire?.peerAudioStatus(state, from: peerId)
+            c.peerAudioChanged(state)
+        }
+    }
+    func callWake(_ item: CallWake.Item) { main { $0.onRelayedWake(item) } }
     func fileFrame(_ peerId: String?, _ frame: JSONObject, proxy: Bool) { main { $0.files.onFrame(peerId, frame, proxy: proxy) } }
     func proxyFileKey(from: String, transferId: String, fk: Bytes, spk: String) { main { $0.files.proxyKey(from: from, transferId: transferId, fk: fk, spk: spk) } }
     func profileFrame(_ peerId: String, _ frame: JSONObject) { main { $0.profileFrame(peerId, frame) } }

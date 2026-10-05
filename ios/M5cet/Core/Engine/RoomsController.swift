@@ -29,6 +29,11 @@ final class RoomsController: RoomsModel {
     @ObservationIgnored private(set) var server: String
     /// Device keys the person verified (People › verify; contacts/Store.verified) — what makes a relayed message "verified".
     @ObservationIgnored var verifiedDevice: @Sendable (String) -> Bool = { _ in false }
+    /// 6.14 (call wake): whether a VoIP push owns a room's call now (CallCenter: ringing, or its record pending) —
+    /// the room's relayed items of it then add nothing (one record per call).
+    @ObservationIgnored var pushOwnsCall: (String) -> Bool = { _ in false }
+    /// 6.14 (call wake): a room's relayed ring that came to nothing — the call log's records, the missed-call notice.
+    @ObservationIgnored var onCallWakeStep: ((_ roomKey: String, _ label: String, _ step: CallWake.Step) -> Void)?
     @ObservationIgnored var ktFetcher: Kt.ConsistencyFetcher?
     /// The unlock is merging the lock inbox: histories wait for restoreAll.
     @ObservationIgnored private(set) var draining = false

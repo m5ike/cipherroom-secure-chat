@@ -101,6 +101,12 @@ public actor RoomSession {
 
     public func broadcastAudio(_ state: String) { core.broadcastAudio(state) }
 
+    /// 6.14 (call wake): my call started — the away members get a ring when nobody else is in it (RoomCore.ringAway).
+    public func ringAway(video: Bool, othersInCall: Int) { core.ringAway(video: video, othersInCall: othersInCall); scheduleTimers() }
+
+    /// 6.14 (call wake): I hung up — an unanswered ring ends for those still away (RoomCore.endRing).
+    public func endRing() { core.endRing(); scheduleTimers() }
+
     public func flushOutbox() async { core.flushOutbox("asked"); await afterInput() }
 
     public func markRead(_ ids: [String]) { core.markRead(ids); scheduleTimers() }

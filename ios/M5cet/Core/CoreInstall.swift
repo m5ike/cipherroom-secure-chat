@@ -54,6 +54,14 @@ enum CoreInstall {
         calls.turnSource = CoreTurn { await MainActor.run { core.device.server } }
         security.inCall = { CallSystem.shared.activeCallRoom != nil }
         core.callLogSource = callRooms
+        // 6.14 call wake: a room's relayed rings end in CallCenter's call log and missed-call notice; a call a VoIP
+        // push rang is CallCenter's own (one record per call).
+        core.rooms.pushOwnsCall = { key in CallSystem.shared.center.pushOwnsCall(roomKey: key) }
+        core.rooms.onCallWakeStep = { key, label, s in
+            let center = CallSystem.shared.center
+            for r in s.records { center.history?.record(r, roomKey: key, room: label) }
+            if let m = s.missed { center.onMissed?(key, m.people.first ?? "", m.video, m.at) }
+        }
 
         // Platform/Notifications.
         if let n = Notifier.shared {

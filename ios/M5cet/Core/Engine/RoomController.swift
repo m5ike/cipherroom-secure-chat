@@ -63,6 +63,10 @@ final class RoomController: RoomModel {
     @ObservationIgnored private var socketOpen = false
     /// The hub's hello features (6.14 "call-wake").
     @ObservationIgnored private(set) var hubFeatures: Set<String> = []
+    /// 6.14 (call wake): my audio as I last announced it; the relayed rings waiting for the room to show the call.
+    @ObservationIgnored private var myAudio = "off"
+    @ObservationIgnored private var wakeInbox = CallWake.Inbox()
+    @ObservationIgnored private var wakeTimer: Task<Void, Never>?
     /// Peers' names announced before their first signal (Rooms.pendingNames).
     @ObservationIgnored private var pendingNames: [String: String] = [:]
     @ObservationIgnored lazy var files = RoomFiles(room: self)
@@ -283,11 +287,57 @@ final class RoomController: RoomModel {
 
     func wireBinary(_ data: Data, from peerId: String) { files.onBinary(peerId, Array(data)) }
 
-    /// audio-status to everyone (sealed like a message).
+    /// audio-status to everyone (sealed like a message). 6.14 (call wake): my call starting rings the away members
+    /// when nobody else is in it, hanging up unanswered ends that ring (Android Calls.startAudio / stop →
+    /// RoomSession.ringAway / endRing).
     func broadcastAudio(_ state: String) {
         guard let s = session else { return }
-        Task { await s.broadcastAudio(state) }
+        let was = myAudio
+        myAudio = state
+        let starts = state == "live" && was == "off", stops = state == "off" && was != "off"
+        let others = othersInCallCount
+        let video = wire?.callWantsVideo ?? false
+        Task {
+            await s.broadcastAudio(state)
+            if starts { await s.ringAway(video: video, othersInCall: others) }
+            if stops { await s.endRing() }
+        }
         scheduleRefresh()
+    }
+
+    // MARK: - 6.14 call wake: relayed rings until the room shows the call, or they are missed (Calls.wakeInbox)
+
+    /// How many others' audio is on here now (Calls.othersInCallCount).
+    private var othersInCallCount: Int { wire?.peerStates.filter { $0.audio != "off" && $0.status != "closed" }.count ?? 0 }
+
+    /// A relayed call item (RoomCore's relay-deliver): never rings by itself — the room does, or it is a missed call.
+    func onRelayedWake(_ item: CallWake.Item) {
+        // A VoIP push rang this call already: CallCenter has it (its ring, its record) — one record per call.
+        if rooms?.pushOwnsCall(key) == true { return }
+        applyWake(wakeInbox.relayed(item, now: EpochMs.now, roomInCall: othersInCallCount > 0))
+    }
+
+    /// A peer's audio-status: the room shows a call — the waiting rings are that call (its CallTrack records it).
+    func peerAudioChanged(_ state: String) {
+        guard state == "live" || state == "muted", wakeInbox.waiting else { return }
+        _ = wakeInbox.roomInCall()
+        applyWake(CallWake.Step())
+    }
+
+    private func applyWake(_ s: CallWake.Step) {
+        if !s.records.isEmpty || s.missed != nil { rooms?.onCallWakeStep?(key, label, s) }
+        wakeTimer?.cancel()
+        wakeTimer = nil
+        let next = wakeInbox.nextDue
+        guard next > 0 else { return }
+        let wait = max(100, next - EpochMs.now + 50)
+        wakeTimer = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(wait))
+            guard !Task.isCancelled, let self else { return }
+            // A call that showed meanwhile is the room's; the rest is due now.
+            if self.othersInCallCount > 0 { _ = self.wakeInbox.roomInCall() }
+            self.applyWake(self.wakeInbox.due(now: EpochMs.now))
+        }
     }
 
     // MARK: - what the core says

@@ -25,7 +25,7 @@ func swiftFrame(_ j: NetJSON) -> HubClientFrame? {
     case "relay":
         return .relay(HubRelay(messageId: j.str("messageId"), to: j.arr("to")?.compactMap(\.stringValue) ?? [], envelope: j.obj("envelope"),
                                per: j.obj("per")?.objectValue, expiresAt: j["expiresAt"]?.int64Value, mention: j.arr("mention")?.compactMap(\.stringValue),
-                               call: j.bool("call")))
+                               call: j.bool("call"), callEnd: j.bool("callEnd"), callId: j["callId"]?.stringValue, video: j.bool("video")))
     case "relay-ack": return .relayAck(ids: j.arr("ids")?.compactMap(\.stringValue) ?? [])
     case "receipt": return .receipt(messageIds: j.arr("messageIds")?.compactMap(\.stringValue) ?? [], state: HubReceiptState(rawValue: j.str("state")) ?? .read)
     case "command-poll": return .commandPoll(deviceId: j.str("deviceId"))
@@ -73,6 +73,23 @@ func swiftFrame(_ j: NetJSON) -> HubClientFrame? {
         #expect(throws: HubFrameInvalid.self) { try HubClientFrame.relay(HubRelay(messageId: "m-1", to: ["a", "b"], per: ["a": p3])).validate() }
         // 51 recipients is one too many.
         #expect(throws: HubFrameInvalid.self) { try HubClientFrame.relay(HubRelay(messageId: "m", to: (0...50).map { "r\($0)" }, envelope: p3)).validate() }
+    }
+
+    /// 6.14 call wake (frames.ts): a ring carries call, callId, video; its end callEnd and the callId; never both.
+    @Test func theCallWakeFieldsOfARelay() throws {
+        let p3: NetJSON = ["iv": "aXY=", "ciphertext": "Y3Q="]
+        let ring = HubClientFrame.relay(HubRelay(messageId: "cw-1:r", to: ["a"], envelope: p3, call: true, callId: "cw-1", video: true))
+        try ring.validate()
+        #expect(ring.json == ["type": "relay", "messageId": "cw-1:r", "to": ["a"], "envelope": p3, "call": true, "callId": "cw-1", "video": true])
+        let end = HubClientFrame.relay(HubRelay(messageId: "cw-1:e", to: ["a"], envelope: p3, callEnd: true, callId: "cw-1"))
+        try end.validate()
+        #expect(end.json == ["type": "relay", "messageId": "cw-1:e", "to": ["a"], "envelope": p3, "callEnd": true, "callId": "cw-1"])
+        // A message never carries them.
+        #expect(HubClientFrame.relay(HubRelay(messageId: "m", to: ["a"], envelope: p3, callId: "cw-1", video: true)).json
+                == ["type": "relay", "messageId": "m", "to": ["a"], "envelope": p3])
+        #expect(throws: HubFrameInvalid.self) { try HubClientFrame.relay(HubRelay(messageId: "m", to: ["a"], envelope: p3, call: true, callEnd: true, callId: "c")).validate() }
+        #expect(throws: HubFrameInvalid.self) { try HubClientFrame.relay(HubRelay(messageId: "m", to: ["a"], envelope: p3, callEnd: true)).validate() }
+        #expect(throws: HubFrameInvalid.self) { try HubClientFrame.relay(HubRelay(messageId: "m", to: ["a"], envelope: p3, call: true, callId: "with space")).validate() }
     }
 
     @Test func limitClassesAreTheHubs() {

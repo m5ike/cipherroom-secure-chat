@@ -28,7 +28,9 @@ enum HubFrameBridge {
                 per = d
             }
             let relay = HubRelay(messageId: f.optString("messageId"), to: strings(f.array("to")), envelope: f["envelope"].map(net), per: per,
-                                 expiresAt: f.int64("expiresAt"), mention: f.array("mention").map(strings), call: f.bool("call") ?? false)
+                                 expiresAt: f.int64("expiresAt"), mention: f.array("mention").map(strings), call: f.bool("call") ?? false,
+                                 // 6.14 call wake (CallWake.relayFields).
+                                 callEnd: f.bool("callEnd") ?? false, callId: f.string("callId"), video: f.bool("video") ?? false)
             return .relay(relay)
         case "relay-ack": return .relayAck(ids: strings(f.array("ids")))
         case "receipt":
