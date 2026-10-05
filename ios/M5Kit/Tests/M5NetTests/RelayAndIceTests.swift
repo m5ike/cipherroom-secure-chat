@@ -6,6 +6,7 @@
 import Foundation
 import Testing
 @testable import M5Net
+import M5Core
 
 private func pk() -> String { Bytes.b64(SoftwareRequestSigner().key.publicKey.derRepresentation) }
 

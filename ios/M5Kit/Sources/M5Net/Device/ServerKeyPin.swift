@@ -14,6 +14,8 @@
 // policy, control messages, bundles — must be signed by it).
 
 import Foundation
+import M5Core
+import M5Crypto
 
 public enum ServerKeyPin {
     /// Checks the key a server presents; returns its kid. Empty pins are skipped (no build pin, no QR code).

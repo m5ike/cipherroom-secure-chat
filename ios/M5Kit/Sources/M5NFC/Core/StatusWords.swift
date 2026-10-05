@@ -4,6 +4,7 @@
 // "← … (meaning)" lines read the same on the web, Android and iOS. Pure.
 
 import Foundation
+import M5Core
 
 public enum StatusWords {
     static let table: [Int: String] = [
@@ -30,7 +31,7 @@ public enum StatusWords {
 
     /// A status word in hex ("6A82") → its value, -1 when it is not one.
     public static func parse(_ hex: String?) -> Int {
-        guard let h = hex, h.utf8.count == 4, let b = Hex.decodeStrict(h) else { return -1 }
+        guard let h = hex, h.utf8.count == 4, let b = Hex.decode(h) else { return -1 }
         return Int(b[0]) << 8 | Int(b[1])
     }
 

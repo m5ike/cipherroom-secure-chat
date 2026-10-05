@@ -5,6 +5,7 @@
 import Testing
 import Foundation
 @testable import M5NFC
+import M5Core
 
 @Suite struct BacDesTests {
     static let key = MrzKey("L898902C", "690806", "940623")
@@ -104,9 +105,9 @@ import Foundation
 
 @Suite struct CoreTests {
     @Test func hexAndJsonRoundTrip() throws {
-        #expect(Hex.encode([0x00, 0xa4, 0xff]) == "00A4FF")
-        #expect(Hex.decode("0x00 a4:FF z") == [0x00, 0xa4, 0xff])
-        #expect(Hex.decodeStrict("0g") == nil)
+        #expect(Hex.upper([0x00, 0xa4, 0xff]) == "00A4FF")
+        #expect(Hex.decodeLenient("0x00 a4:FF z") == [0x00, 0xa4, 0xff])
+        #expect(Hex.decode("0g") == nil)
         let j = try NfcJSON.parse("{\"b\":1,\"a\":[true,null,\"x\\u00e9\\ud83d\\ude00\"],\"c\":{\"d\":1.5}}")
         #expect(j.compact == "{\"b\":1,\"a\":[true,null,\"xé😀\"],\"c\":{\"d\":1.5}}")
         #expect(j.objectValue?.keys == ["b", "a", "c"])

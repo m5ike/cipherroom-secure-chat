@@ -13,6 +13,7 @@
 // The result is the `mrtd` object of the NfcResult contract (command.ts MrtdData).
 
 import Foundation
+import M5Core
 
 public enum MrtdReader {
     public static let aid: [UInt8] = [0xa0, 0x00, 0x00, 0x02, 0x47, 0x10, 0x01]
@@ -281,7 +282,7 @@ public enum MrtdReader {
 
     /// A date that may be BCD (YYYYMMDD in 4 bytes) or ASCII digits.
     static func dateField(_ v: [UInt8]) -> String {
-        let s = v.count == 4 || v.count == 7 ? Hex.encode(v) : JSText.trim(Asn1.text(v))
+        let s = v.count == 4 || v.count == 7 ? Hex.upper(v) : JSText.trim(Asn1.text(v))
         let sub = Bac.sub
         if s.fullMatch("\\d{14}") { return "\(sub(s, 0, 4))-\(sub(s, 4, 6))-\(sub(s, 6, 8)) \(sub(s, 8, 10)):\(sub(s, 10, 12)):\(sub(s, 12, 14))" }
         if s.fullMatch("\\d{8}") { return "\(sub(s, 0, 4))-\(sub(s, 4, 6))-\(sub(s, 6, 8))" }
@@ -381,7 +382,7 @@ public enum MrtdReader {
         let t = BerTlv.decode(dg, recurse: false)
         let body = t.first?.value ?? dg
         let printable = body.filter { $0 >= 0x20 && $0 < 0x7f }.count
-        let s = Double(printable) > Double(body.count) * 0.85 ? JSText.trim(Asn1.text(body)) : Hex.encode(body)
+        let s = Double(printable) > Double(body.count) * 0.85 ? JSText.trim(Asn1.text(body)) : Hex.upper(body)
         return JSText.length(s) > 4000 ? JSText.prefix(s, 4000) : s
     }
 

@@ -8,6 +8,8 @@ import CryptoKit
 import Foundation
 import Testing
 @testable import M5Net
+import M5Core
+import M5Crypto
 
 private let blindRoom = "r3.Vm9jdG9yUm9vbUlkRm9yUDQ"
 
@@ -47,19 +49,38 @@ private func joinedSocket(_ t: MockHubTransport, _ c: HubConnection, peerId: Str
         #expect(join.arr("features") == ["bin"])
         #expect(join.str("peerId").hasPrefix("peer-"))
         // The proof: the vector's key, a signature over exactly the vector's signed data.
-        #expect(try HubProof.message(roomId: v.str("roomId"), nonce: v.str("nonce")) == Data(v.str("signedData").utf8))
+        #expect(try HubProofFrames.message(roomId: v.str("roomId"), nonce: v.str("nonce")) == Data(v.str("signedData").utf8))
         let proof = try #require(join.obj("proof"))
         #expect(proof.str("pub") == v.str("pub"))
         let key = try Curve25519.Signing.PublicKey(rawRepresentation: Bytes.unb64(proof.str("pub"))!)
         #expect(key.isValidSignature(Bytes.unb64(proof.str("sig"))!, for: Data(v.str("signedData").utf8)))
         // …and the vector's own signature verifies over the same bytes (Ed25519 by the web reference).
-        #expect(key.isValidSignature(Bytes.unb64(v.str("sig"))!, for: try HubProof.message(roomId: v.str("roomId"), nonce: v.str("nonce"))))
+        #expect(key.isValidSignature(Bytes.unb64(v.str("sig"))!, for: try HubProofFrames.message(roomId: v.str("roomId"), nonce: v.str("nonce"))))
         s.joined(peerId: join.str("peerId"), proven: true)
         await eventually("joined") { await c.status == .joined }
         #expect(await c.proven == true)
         let statuses = await log.statuses
         #expect(statuses.starts(with: [.connecting, .joining, .joined]))
         await c.shutdown()
+    }
+
+    /// The proof's bytes and keys are M5Crypto's: the seed signer gives the vector's own (deterministic) signature,
+    /// the same as `HubProof.build`, and the hub's side verifies it.
+    @Test func theSeedSignerMakesTheVectorsProofThroughM5Crypto() async throws {
+        let v = try #require(try Fixtures.p4().arr("hubProof")?.first)
+        let seed = Array(try #require(Bytes.unb64(v.str("seed"))))
+        let proof = try #require(await HubProofFrames.build(signer: HubSeedSigner(seed: seed), roomId: v.str("roomId"), nonce: v.str("nonce")))
+        #expect(proof.pub == v.str("pub"))
+        #expect(proof.sig == v.str("sig"))
+        let crypto = try HubProof.build(seed: seed, roomId: v.str("roomId"), nonce: v.str("nonce"))
+        #expect(crypto.string("pub") == proof.pub && crypto.string("sig") == proof.sig)
+        #expect(HubProof.verify(pub: proof.pub, sig: proof.sig, roomId: v.str("roomId"), nonce: v.str("nonce")))
+        #expect(HubProofFrames.joinLabel == "m5cet/hub-join/4")
+        // A nonce that is not 24 bytes of canonical base64url, or a part with "|": NetError, and no proof.
+        #expect(throws: NetError.self) { try HubProofFrames.message(roomId: v.str("roomId"), nonce: "c2hvcnQ") }
+        #expect(throws: NetError.self) { try HubProofFrames.message(roomId: v.str("roomId"), nonce: v.str("nonce") + "=") }
+        #expect(throws: NetError.self) { try HubProofFrames.message(roomId: "r3.a|b", nonce: v.str("nonce")) }
+        #expect(await HubProofFrames.build(signer: HubSeedSigner(seed: seed), roomId: "r3.a|b", nonce: v.str("nonce")) == nil)
     }
 
     @Test func aServerWithoutHelloGetsTheJoinWithoutProof() async throws {

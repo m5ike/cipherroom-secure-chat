@@ -9,7 +9,9 @@
 //         a 100-bit code (20 symbols) that is NOT on the tag
 //
 // body = "m5cet:nfc:v2:" + JSON (keys in § 16's order), in the record
-// application/vnd.m5cet.conn. The CoreNFC transport is the app's.
+// application/vnd.m5cet.conn. The CoreNFC transport is the app's; M5NFC's
+// `NfcTagV2` / `NfcShareInvite` / `NfcConnTag` wrap these with its seams
+// (`TagKdf`, `ShareInviteHTTP`) — the crypto is only here.
 
 import Foundation
 import M5Core
@@ -26,14 +28,25 @@ public enum TagV2 {
     public static let minMemoryKiB = 8, maxMemoryKiB = 256 * 1024, minPasses = 1, maxPasses = 10
 
     /// A tag's content that is not readable (card-error, auth-failed, invalid-argument).
-    public struct TagError: Error, Sendable, Equatable {
+    public struct TagError: Error, Sendable, Equatable, CustomStringConvertible, LocalizedError {
         public let code: String
         public let message: String
         public init(_ code: String, _ message: String) { self.code = code; self.message = message }
+        public var description: String { message }
+        public var errorDescription: String? { message }
+    }
+
+    /// Argon2id (v 0x13) for the offline tags: (password, salt, passes, memoryKiB, lanes, length) → key.
+    /// `argon2id` (CArgon2) unless another is handed in (M5NFC's `TagKdf`; tests with precomputed keys).
+    public typealias KeyDerivation = @Sendable (_ password: Bytes, _ salt: Bytes, _ passes: Int, _ memoryKiB: Int, _ lanes: Int, _ length: Int) throws -> Bytes
+
+    /// This module's Argon2id.
+    public static let argon2id: KeyDerivation = { password, salt, passes, memoryKiB, lanes, length in
+        try Argon2.argon2id(password: password, salt: salt, passes: passes, memoryKiB: memoryKiB, lanes: lanes, length: length)
     }
 
     /// A parsed v2 tag: inv (o, id, k) or off (m, i, s, n, c).
-    public struct Tag: Sendable, Equatable {
+    public struct Tag: Sendable, Hashable {
         public let t: String
         public let o: String?, id: String?, k: String?
         public let m: Int, i: Int
@@ -42,7 +55,7 @@ public enum TagV2 {
     }
 
     /// What a tag opens to: the room to join; `name` a suggested name only.
-    public struct Room: Sendable, Equatable {
+    public struct Room: Sendable, Hashable {
         public let room: String, passphrase: String, name: String, app: String
         public init(room: String, passphrase: String, name: String = "", app: String = "") { self.room = room; self.passphrase = passphrase; self.name = name; self.app = app }
     }
@@ -52,7 +65,8 @@ public enum TagV2 {
     private static func isB64urlChar(_ u: UInt8) -> Bool { (65...90).contains(u) || (97...122).contains(u) || (48...57).contains(u) || u == 45 || u == 95 }
     private static func matches(_ s: String, _ min: Int, _ max: Int) -> Bool { s.utf8.count >= min && s.utf8.count <= max && s.utf8.allSatisfy(isB64urlChar) }
 
-    static func fromB64url(_ s: String?) throws -> Bytes {
+    /// base64url (the tag's alphabet only, padding optional); `card-error` otherwise.
+    public static func fromB64url(_ s: String?) throws -> Bytes {
         guard let s, s.utf8.allSatisfy(isB64urlChar), let b = B64.decodeURL(s) else { throw TagError("card-error", "not base64url") }
         return b
     }
@@ -169,12 +183,13 @@ public enum TagV2 {
     public static func offlineAad(m: Int, i: Int, s: String) -> Bytes { Crypto.utf8(label + "|off|argon2id|\(m)|\(i)|1|" + s) }
 
     /// § 16.4: K = Argon2id(v 0x13, password = ASCII(code), salt = ASCII(s as written), t = i, m = m, p = 1, 32 bytes).
-    public static func offlineKey(code: String, m: Int, i: Int, s: String) throws -> Bytes {
-        try Argon2.argon2id(password: Crypto.utf8(code), salt: Crypto.utf8(s), passes: i, memoryKiB: m, lanes: 1, length: 32)
+    public static func offlineKey(code: String, m: Int, i: Int, s: String, kdf: KeyDerivation = argon2id) throws -> Bytes {
+        try kdf(Crypto.utf8(code), Crypto.utf8(s), i, m, 1, 32)
     }
 
     /// The room sealed for an offline tag under `code` (20 base32 symbols); salt and IV given for tests, else random.
-    public static func sealOffline(_ room: Room, code: String, m: Int = writeMemoryKiB, i: Int = writePasses, salt: Bytes? = nil, iv: Bytes? = nil) throws -> Tag {
+    public static func sealOffline(_ room: Room, code: String, m: Int = writeMemoryKiB, i: Int = writePasses, salt: Bytes? = nil, iv: Bytes? = nil,
+                                   kdf: KeyDerivation = argon2id) throws -> Tag {
         if room.room.isEmpty || room.passphrase.isEmpty { throw TagError("invalid-argument", "a connection tag needs a room and a key") }
         guard let canonical = normalize(code, offlineCodeSymbols) else { throw TagError("invalid-argument", "the code is not 20 base32 symbols") }
         let saltBytes = salt ?? Crypto.random(16), ivBytes = iv ?? Crypto.random(12)
@@ -183,16 +198,18 @@ public enum TagV2 {
         if !room.name.isEmpty { plain += ",\"name\":" + quote(room.name) }
         if !room.app.isEmpty { plain += ",\"app\":" + quote(room.app) }
         plain += "}"
-        let key = try offlineKey(code: canonical, m: m, i: i, s: s)
+        var key = try offlineKey(code: canonical, m: m, i: i, s: s, kdf: kdf)
+        defer { Crypto.wipe(&key) }
         let ct = try Crypto.gcmSeal(key, ivBytes, Crypto.utf8(plain), offlineAad(m: m, i: i, s: s))
         return Tag(t: "off", o: nil, id: nil, k: nil, m: m, i: i, s: s, n: Crypto.b64url(ivBytes), c: Crypto.b64url(ct))
     }
 
     /// Opens an offline tag with the code the writer was shown; a wrong code or a changed tag fails ("auth-failed").
-    public static func openOffline(_ tag: Tag, code codeInput: String) throws -> Room {
+    public static func openOffline(_ tag: Tag, code codeInput: String, kdf: KeyDerivation = argon2id) throws -> Room {
         guard let code = normalize(codeInput, offlineCodeSymbols) else { throw TagError("invalid-argument", "the code is 20 base32 symbols") }
-        let key: Bytes
-        do { key = try offlineKey(code: code, m: tag.m, i: tag.i, s: tag.s ?? "") } catch { throw TagError("auth-failed", "wrong code, or the tag was changed") }
+        var key: Bytes
+        do { key = try offlineKey(code: code, m: tag.m, i: tag.i, s: tag.s ?? "", kdf: kdf) } catch { throw TagError("auth-failed", "wrong code, or the tag was changed") }
+        defer { Crypto.wipe(&key) }
         let plain: Bytes
         do { plain = try Crypto.gcmOpen(key, try fromB64url(tag.n), try fromB64url(tag.c), offlineAad(m: tag.m, i: tag.i, s: tag.s ?? "")) }
         catch { throw TagError("auth-failed", "wrong code, or the tag was changed") }
@@ -233,20 +250,24 @@ public enum ShareInvite {
     public static func proof(code: String, id: String) -> String { Crypto.b64url(pbkdf2(code, "m5cet:share:v1:proof:" + id)) }
 
     static func wrapKey(code: String, id: String, linkKey: Bytes, serverKey: Bytes) -> Bytes {
-        let codeKey = pbkdf2(code, "m5cet:share:v1:enc:" + id)
-        return Crypto.hkdf(linkKey + serverKey + codeKey, Crypto.utf8(id), Crypto.utf8("m5cet:share:v1:wrap"), 32)
+        var codeKey = pbkdf2(code, "m5cet:share:v1:enc:" + id)
+        var ikm = linkKey + serverKey + codeKey
+        defer { Crypto.wipe(&codeKey); Crypto.wipe(&ikm) }
+        return Crypto.hkdf(ikm, Crypto.utf8(id), Crypto.utf8("m5cet:share:v1:wrap"), 32)
     }
 
     /// The sealed payload (iv, ciphertext), both base64url.
     public static func seal(code: String, id: String, linkKey: Bytes, serverKey: Bytes, payload: JSONObject, iv: Bytes? = nil) throws -> (iv: String, ciphertext: String) {
-        let key = wrapKey(code: code, id: id, linkKey: linkKey, serverKey: serverKey)
+        var key = wrapKey(code: code, id: id, linkKey: linkKey, serverKey: serverKey)
+        defer { Crypto.wipe(&key) }
         let nonce = iv ?? Crypto.random(12)
         return (Crypto.b64url(nonce), Crypto.b64url(try Crypto.gcmSeal(key, nonce, Crypto.utf8(payload.stringify()), Crypto.utf8(id))))
     }
 
     /// Opens what the server answered; the payload must be {v:1, room, passphrase, name} and for this server.
     public static func open(code: String, id: String, linkKey: Bytes, serverKey: Bytes, iv: String, ciphertext: String) throws -> TagV2.Room {
-        let key = wrapKey(code: code, id: id, linkKey: linkKey, serverKey: serverKey)
+        var key = wrapKey(code: code, id: id, linkKey: linkKey, serverKey: serverKey)
+        defer { Crypto.wipe(&key) }
         let plain: Bytes
         do { plain = try Crypto.gcmOpen(key, try fromB64url(iv), try fromB64url(ciphertext), Crypto.utf8(id)) } catch { throw CryptoError("bad payload") }
         guard let o = JSON.parseObject(Crypto.str(plain)), Envelopes.optInt(o, "v", 0) == 1, let room = o.string("room"),
@@ -336,7 +357,10 @@ public enum ConnTag {
     /// Redeems an invitation on its server (M5Net), or throws ShareInvite.RedeemError / CryptoError.
     public typealias Redeemer = @Sendable (TagV2.Tag) async throws -> TagV2.Room
 
-    public static func open(_ body: String?, secret: String?, trustedOrigin: String?, redeem: Redeemer?) async -> Read {
+    /// Opens a tag body. `secret`: what the reader typed — the offline code or a format-1 PIN (may be empty);
+    /// `trustedOrigin`: the app's server (an invitation is redeemed only there); `redeem` nil leaves an
+    /// invitation unredeemed (need = "redeem"); `kdf`: the offline tags' Argon2id.
+    public static func open(_ body: String?, secret: String?, trustedOrigin: String?, redeem: Redeemer?, kdf: TagV2.KeyDerivation = TagV2.argon2id) async -> Read {
         var r = Read()
         let s = (secret ?? "").javaTrimmed
         guard let body else { return r }
@@ -356,7 +380,7 @@ public enum ConnTag {
             }
             r.format = "v2-off"
             if TagV2.normalize(s, TagV2.offlineCodeSymbols) == nil { r.need = "code"; if !s.isEmpty { r.error = "bad-code" }; return r }
-            do { r.room = try TagV2.openOffline(tag, code: s) }
+            do { r.room = try TagV2.openOffline(tag, code: s, kdf: kdf) }
             catch let e as TagV2.TagError { r.error = e.code == "auth-failed" ? "wrong-code" : "bad-tag" }
             catch { r.error = "bad-tag" }
             return r

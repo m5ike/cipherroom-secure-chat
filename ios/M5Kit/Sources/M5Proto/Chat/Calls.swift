@@ -146,6 +146,25 @@ public struct CallTrack: Sendable {
     }
 }
 
+public extension CallTrack {
+    /// The kinds as a type (the records' and the history's "kind" strings: out, in, missed, declined).
+    enum Kind: String, Sendable, CaseIterable {
+        case outgoing = "out", incoming = "in", missed, declined
+    }
+
+    /// Milliseconds since 1970 (the unit of every time here), rounded to the nearest.
+    static func millis(_ date: Date = Date()) -> Int64 { Int64((date.timeIntervalSince1970 * 1000).rounded()) }
+}
+
+public extension CallTrack.Record {
+    init(kind: CallTrack.Kind, at: Int64, seconds: Int64, video: Bool, people: [String]) {
+        self.init(kind: kind.rawValue, at: at, seconds: seconds, video: video, people: people)
+    }
+
+    /// `kind` as a type (an unknown kind reads as missed, as the history reads it).
+    var callKind: CallTrack.Kind { CallTrack.Kind(rawValue: kind) ?? .missed }
+}
+
 public enum CallHistory {
     public static let keep = 500
     public static let keepMs: Int64 = 90 * 24 * 3600 * 1000
@@ -181,19 +200,58 @@ public enum CallHistory {
             return o
         }
 
+        /// Reads an entry as tolerantly as org.json's opt* (the record is Android's too): a number or a
+        /// boolean where text belongs is its text, a numeric string where a number belongs its value,
+        /// "true" in any case a boolean; an unknown kind is a missed call, anything else empty.
         public static func from(_ o: JSONObject) -> Entry {
             var e = Entry()
-            e.id = o.optString("id")
-            e.roomKey = o.optString("key")
-            e.room = o.optString("room")
-            let k = o.optString("kind")
+            e.id = OrgJSON.string(o["id"])
+            e.roomKey = OrgJSON.string(o["key"])
+            e.room = OrgJSON.string(o["room"])
+            let k = OrgJSON.string(o["kind"])
             e.kind = [CallTrack.incoming, CallTrack.out, CallTrack.declined].contains(k) ? k : CallTrack.missed
-            e.at = o.optInt64("at")
-            e.seconds = max(0, o.optInt64("sec"))
-            e.video = o.bool("video") ?? false
-            for p in (o.array("people") ?? []).prefix(CallTrack.peopleMax) { if let n = p.stringValue, !n.isEmpty { e.people.append(n) } }
-            e.sysUri = o.optString("sys")
+            e.at = OrgJSON.long(o["at"])
+            e.seconds = max(0, OrgJSON.long(o["sec"]))
+            e.video = OrgJSON.bool(o["video"])
+            for p in (o.array("people") ?? []).prefix(CallTrack.peopleMax) { let n = OrgJSON.string(p); if !n.isEmpty { e.people.append(n) } }
+            e.sysUri = OrgJSON.string(o["sys"])
             return e
+        }
+
+        /// `kind` as a type.
+        public var callKind: CallTrack.Kind { CallTrack.Kind(rawValue: kind) ?? .missed }
+    }
+
+    /// org.json's lenient reading of one value (optString / optLong / optBoolean); JSON null and
+    /// arrays / objects read as nothing.
+    enum OrgJSON {
+        static func string(_ v: JSON?) -> String {
+            switch v {
+            case .string(let s)?: return s
+            case .number(let n)?: return n.description
+            case .bool(let b)?: return b ? "true" : "false"
+            default: return ""
+            }
+        }
+
+        static func long(_ v: JSON?) -> Int64 {
+            switch v {
+            case .number(let n)?: return n.int64 ?? Int64(exactly: n.double.rounded(.towardZero)) ?? 0
+            case .string(let s)?:
+                let t = s.trimmingCharacters(in: .whitespaces)
+                if let i = Int64(t) { return i }
+                if let d = Double(t), d.isFinite, let i = Int64(exactly: d.rounded(.towardZero)) { return i }
+                return 0
+            default: return 0
+            }
+        }
+
+        static func bool(_ v: JSON?) -> Bool {
+            switch v {
+            case .bool(let b)?: return b
+            case .string(let s)?: return s.lowercased() == "true"
+            default: return false
+            }
         }
     }
 
@@ -211,6 +269,8 @@ public enum CallHistory {
     public static func newId() -> String { Crypto.b64url(Crypto.random(9)) }
 }
 
+extension CallHistory.Entry: Identifiable {}
+
 /// The call history in the vault (android CallHistory's storage): calls ended while locked wait in memory
 /// (or go to the lock inbox — the app decides with `onLocked`).
 public final class CallHistoryStore: Sendable {
@@ -219,6 +279,9 @@ public final class CallHistoryStore: Sendable {
     private let pending = Mutex<[CallHistory.Entry]>([])
 
     public init(vault: any RecordVault, clock: any Clock = SystemClock()) { self.vault = vault; self.clock = clock }
+
+    /// The calls that ended while the vault was closed, waiting for it to open (oldest first).
+    public var waiting: [CallHistory.Entry] { pending.withLock { $0 } }
 
     /// Every call kept, oldest first (empty while the vault is closed).
     public func load() -> [CallHistory.Entry] {

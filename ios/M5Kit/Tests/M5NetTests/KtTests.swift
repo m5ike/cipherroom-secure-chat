@@ -8,6 +8,7 @@ import CryptoKit
 import Foundation
 import Testing
 @testable import M5Net
+import M5Core
 
 private let origin = "https://chat.example.com"
 

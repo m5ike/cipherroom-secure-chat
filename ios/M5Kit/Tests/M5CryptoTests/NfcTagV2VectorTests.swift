@@ -40,6 +40,29 @@ import Testing
         }
     }
 
+    /// The Argon2id can be handed in (M5NFC's `TagKdf`): with the vector's key the 64 MiB tag opens without
+    /// running it, and a KDF that fails reads as a wrong code. Codes are upper-cased as Java's
+    /// `toUpperCase(Locale.ROOT)` and only Java's `\s` is dropped (Android TagV2.normalize).
+    @Test func aHandedInKdfAndJavasUpperCase() async throws {
+        let c = try #require(NfcTagV2VectorTests.vectors.a("offline").first { $0.o("kdf").i("memoryKiB") == 65536 })
+        let key = try #require(Hex.decode(c.s("argon2idKeyHex")))
+        let canonical = c.s("canonicalCode"), salt = c.o("tag").s("s")
+        let kdf: TagV2.KeyDerivation = { password, s, passes, m, lanes, length in
+            guard password == Array(canonical.utf8), s == Array(salt.utf8), passes == 3, m == 65536, lanes == 1, length == 32 else { return Bytes(repeating: 7, count: length) }
+            return key
+        }
+        let tag = try TagV2.parse(c.s("body"))
+        #expect(try TagV2.openOffline(tag, code: c.s("code"), kdf: kdf).room == "brno-secure")
+        #expect(throws: TagV2.TagError("auth-failed", "wrong code, or the tag was changed")) { try TagV2.openOffline(tag, code: "7K3QD-M9X2V-PH4TW-8RZ6P", kdf: kdf) }
+        let failing: TagV2.KeyDerivation = { _, _, _, _, _, _ in throw CryptoError("no memory") }
+        #expect(throws: TagV2.TagError("auth-failed", "wrong code, or the tag was changed")) { try TagV2.openOffline(tag, code: c.s("code"), kdf: failing) }
+        #expect(await ConnTag.open(c.s("body"), secret: c.s("code"), trustedOrigin: "", redeem: nil, kdf: kdf).room?.room == "brno-secure")
+        #expect(TagV2.normalize("ıııı", 4) == "1111")
+        #expect(TagV2.normalize("ab\u{0B}cd", 4) == "ABCD")
+        #expect(TagV2.normalize("ab\u{00A0}cd", 4) == nil)
+        #expect(TagV2.TagError("card-error", "x").localizedDescription == "x")
+    }
+
     @Test func invitationKeysAndBody() throws {
         let v = NfcTagV2VectorTests.vectors.o("invite")
         let keys = try TagV2.inviteKeys(id: v.s("id"), k: v.s("k"))

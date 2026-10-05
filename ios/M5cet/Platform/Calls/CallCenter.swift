@@ -130,7 +130,7 @@ final class CallCenter: RoomCallEvents {
     @ObservationIgnored var rooms: (String) -> RoomRtc? = { _ in nil }
     /// The audio session (nil in tests).
     @ObservationIgnored var audio: CallAudioSession?
-    @ObservationIgnored var history: CallHistoryStore?
+    @ObservationIgnored var history: AppCallHistory?
     /// This install's salt of the opaque handles.
     @ObservationIgnored var handleSalt = Data(repeating: 0, count: 32)
     @ObservationIgnored var timing = Timing()
@@ -210,7 +210,7 @@ final class CallCenter: RoomCallEvents {
     }
 
     func roomCall(_ room: RoomRtc, recorded: [CallTrack.Record]) {
-        for r in recorded where r.kind == .missed {
+        for r in recorded where r.callKind == .missed {
             onMissed?(room.roomKey, r.people.first ?? "", r.video, r.at)
         }
     }
@@ -456,7 +456,7 @@ final class CallCenter: RoomCallEvents {
             try? await Task.sleep(for: wait)
             guard let self, let r = self.pushRecords.removeValue(forKey: key) else { return }
             self.history?.record(r, roomKey: key, room: self.directory?.label(ofRoom: key) ?? "")
-            if r.kind == .missed { self.onMissed?(key, r.people.first ?? "", r.video, r.at) }
+            if r.callKind == .missed { self.onMissed?(key, r.people.first ?? "", r.video, r.at) }
         }
     }
 
