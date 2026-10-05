@@ -24,6 +24,8 @@
  "audio.muted": "Mikrofoni mykistetty",
  "away.received#one": "Toimitettiin {n} viesti, joka saapui poissaolosi aikana.",
  "away.received#other": "Toimitettiin {n} viestiä, jotka saapuivat poissaolosi aikana.",
+ "call.wake.missed": "📞 Vastaamaton puhelu: {name} ({time})",
+ "call.wake.missedVideo": "📹 Vastaamaton videopuhelu: {name} ({time})",
  "caps.body": "Sovellus tarvitsee selaimen nykyaikaisen salauksen ja WebRTC:n. Käytä Edgen, Chromen, Firefoxin tai Safarin uutta versiota.",
  "caps.ie": "Internet Exploreria ei tueta. Käytä Edgeä, Chromea, Firefoxia tai Safaria.",
  "caps.title": "M5cet – selainta ei tueta",
