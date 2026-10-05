@@ -393,7 +393,7 @@ export function registerAiAdminRoutes(app: Express): void {
       res.json({ ok: true, job });
     } catch (err) { res.status(400).json({ ok: false, message: (err as Error).message }); }
   });
-  // 6.12 review S02: installed files the manifest does not vouch for (a model installed before 6.12, or a
+  // 6.12 review S02: installed files the manifest does not vouch for after the first start (models of 6.11 are recorded then; a
   // manifest that was lost) are not loaded until the owner trusts them as they are now — explicit, logged.
   app.post("/admin/ai/local/:id/trust", owner, (req, res) => {
     const id = String(req.params.id);

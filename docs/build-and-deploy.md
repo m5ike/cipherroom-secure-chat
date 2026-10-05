@@ -84,7 +84,7 @@ proměnné ze skutečného prostředí mají přednost. `.env` je v `.dockerigno
 | `TURN_RATE_LIMIT`          | 6.12: požadavků na `/api/turn` z jedné adresy za 10 minut (60). |
 | `SHARE_MAX_PER_IP`         | 6.12: živých pozvánek z jedné adresy (50; celkově dál 2000). IPv6 adresa se počítá podle své /64. |
 | `FILE_PROXY_MAX_PER_IP`    | 6.12: souběžných přenosů přes serverovou proxy z jedné adresy (16; celkově dál 64). IPv6 adresa se počítá podle své /64. |
-| `SPEECH_MODEL_PINS`        | 6.12: připnuté SHA-256 archivů offline řečových modelů, `id=sha256,id=sha256` (např. `whisper-small=<hex>`), nebo připnuté **nainstalované soubory** `id=files:<sha256>` (digest všech souborů modelu; server ho vypíše do logu, když model odmítne). Bez pinu platí hash z prvního stažení (`speech-models/manifest.json`, s HMAC master klíčem); soubory se ověřují při každém načtení. Model, jehož soubory manifest nezná (instalace před 6.12, nebo smazaný manifest), se nenačte, dokud ho vlastník neschválí v konzoli (AI a řeč › Offline řeč › „Trust installed files“) nebo nepřipne `files:`; stahování se při chybějícím manifestu a nainstalovaných modelech bez pinu odmítne. |
+| `SPEECH_MODEL_PINS`        | 6.12: připnuté SHA-256 archivů offline řečových modelů, `id=sha256,id=sha256` (např. `whisper-small=<hex>`), nebo připnuté **nainstalované soubory** `id=files:<sha256>` (digest všech souborů modelu; server ho vypíše do logu, když model odmítne). Bez pinu platí hash z prvního stažení (`speech-models/manifest.json`, s HMAC master klíčem); soubory se ověřují při každém načtení. Modely nainstalované verzí 6.11 se při **prvním startu 6.12** jednou zaznamenají tak, jak jsou (důvěra při prvním použití, zapsáno do auditu jako `speech.integrity-initialised`) a fungují dál bez zásahu; značka `speech-integrity-*.marker` v adresáři úložiště (mimo složku modelů) pak tento krok vypne. Model, jehož soubory manifest později nezná (smazaný manifest), se nenačte, dokud ho vlastník neschválí v konzoli (AI a řeč › Offline řeč › „Trust installed files“) nebo nepřipne `files:`; stahování se při chybějícím manifestu a nainstalovaných modelech bez pinu odmítne. |
 | `HUB_ROOM_REGISTRATIONS_PER_HOUR` | 6.12: kolik nových ověřovacích klíčů místností smí jedna adresa (IPv6 /64) zaregistrovat za hodinu (20; 1–100 000). Důkaz nad limit projde jako neprokázaný člen a nic neregistruje (s `HUB_REQUIRE_ROOM_PROOF=1` je odmítnut). |
 | `KT_ACCOUNT_ENTRIES_PER_DAY` | 6.12: kolik záznamů smí jeden účet přidat do transparentnosti klíčů za 24 h nahráváním klíčů (40; 5–10 000); další `PUT /api/keys/bundle`, který by něco zapsal, dostane `429 kt-quota`. |
 | `VONAGE_ALLOW_UNSIGNED_SMS`| 6.7: `1` = přijmout Vonage SMS bez podpisu.          |
@@ -109,11 +109,13 @@ Ubuntu s omezenými user namespaces autotest selže — zkouší se dvakrát —
 jen permission model). Hashe místností v logu jsou HMAC klíčem odvozeným z master klíče;
 auditní deník podepisuje kontrolní body klíčem odvozeným z master klíče a starší klíč
 připne do `audit-signing.pin` (soubor `audit-signing.key` se při prvním startu 6.12
-odstraní). Smazaný `audit-signing.pin` se už sám znovu nevytvoří: ověření deníku hlásí
-`pin-missing`, dokud soubor neobnovíte ze zálohy nebo vlastník deník znovu nepřipne
-(konzole › Audit › Verify › „Re-pin the journal“, `POST /api/admin/audit/repin`).
-Ověření také vyžaduje platný kontrolní bod nejvýše 510 řádků za koncem deníku
-(`checkpoint-missing`).
+odstraní). Upgrade z 6.11 nevyžaduje žádný zásah: první start 6.12 vezme deník tak, jak je
+(důvěra při prvním použití, v logu) — včetně kontrolních bodů dřívějších klíčů 6.11 a řádků
+za posledním z nich. Smazaný `audit-signing.pin` se poté už sám znovu nevytvoří: ověření
+deníku hlásí `pin-missing`, dokud soubor neobnovíte ze zálohy nebo vlastník deník znovu
+nepřipne (konzole › Audit › Verify › „Re-pin the journal“, `POST /api/admin/audit/repin`).
+Od 6.12 musí mít každý úsek 510 řádků deníku platný kontrolní bod (`checkpoint-missing` —
+smazané kontrolní body nezakryje ani pozdější podpis konce deníku).
 
 Úplný seznam proměnných je v [dokumentaci › Nasazení](site/index.html#promenne),
 změny 6.7 v [`deployment.md`](deployment.md#přechod-na-67). `.dockerignore`

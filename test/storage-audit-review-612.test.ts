@@ -133,6 +133,65 @@ describe("checkpoint coverage", () => {
   });
 });
 
+/** Rows as 6.11 chained them (no 6.12 cadence, no derived-key checkpoints). */
+function rows611(n: number): void {
+  const last = db().prepare("SELECT hash FROM audit WHERE hash IS NOT NULL ORDER BY id DESC LIMIT 1").get() as { hash?: string } | undefined;
+  let prev = String(last?.hash ?? "");
+  for (let i = 0; i < n; i++) {
+    const at = 1_600_000_000_000 + i;
+    const canonical = JSON.stringify([prev, at, "security", "info", "old.611", "peer-old", null, null, null, null, null, null, null, null, null]);
+    const hash = createHash("sha256").update(canonical).digest("hex");
+    db().prepare("INSERT INTO audit (at, category, level, event, actor, prev_hash, hash) VALUES (?, 'security', 'info', 'old.611', 'peer-old', ?, ?)").run(at, prev, hash);
+    prev = hash;
+  }
+}
+function legacyCheckpoint(key: ReturnType<typeof generateKeyPairSync>): void {
+  const head = db().prepare("SELECT id, hash FROM audit ORDER BY id DESC LIMIT 1").get() as { id: number; hash: string };
+  db().prepare("INSERT INTO audit_checkpoints (at, last_id, head_hash, reason, signature, public_key) VALUES (?, ?, ?, 'interval', ?, ?)")
+    .run(head.id, head.id, head.hash, sign(null, Buffer.from(message(head.id, head.hash, head.id)), key.privateKey).toString("base64"), key.publicKey.export({ type: "spki", format: "der" }).toString("base64"));
+}
+
+describe("the upgrade from 6.11 needs no clicks", () => {
+  it("a 6.11 journal — a regenerated key, many rows after its last checkpoint — verifies after the first 6.12 start and stays so", () => {
+    store.open();
+    const older = generateKeyPairSync("ed25519");
+    const current = generateKeyPairSync("ed25519");
+    rows611(200); legacyCheckpoint(older);   // signed by a key file 6.11 later lost and regenerated
+    rows611(200); legacyCheckpoint(current);
+    rows611(700);                            // 6.11 restarted often: its counter started again each time
+    rmSync(pinFile());
+    writeFileSync(join(dir, "audit-signing.key"), current.privateKey.export({ type: "pkcs8", format: "pem" }), { mode: 0o600 });
+    reopen();
+    expect(store.verifyAudit()).toMatchObject({ ok: true, checked: 1100, signedCheckpoints: 2, pinned: { earlierKeys: 2, coverFrom: 1101 } });
+    expect(existsSync(join(dir, "audit-signing.key"))).toBe(false);
+    for (let i = 0; i < 600; i++) add(i);
+    expect(store.verifyAudit()).toMatchObject({ ok: true, checked: 1700 });
+    reopen();
+    expect(store.verifyAudit().ok).toBe(true);
+  });
+
+  it("a 6.11 journal that was never signed (no key file, no checkpoint) is taken as it is", () => {
+    store.open();
+    rows611(800);
+    rmSync(pinFile());
+    reopen();
+    expect(store.verifyAudit()).toMatchObject({ ok: true, checked: 800, pinned: { earlierKeys: 0, coverFrom: 801 } });
+  });
+
+  it("checkpoints deleted and the head signed again later leave a gap (no laundering by the next checkpoint)", () => {
+    store.open();
+    for (let i = 0; i < 600; i++) add(i);
+    expect(store.verifyAudit().ok).toBe(true);
+    db().prepare("UPDATE audit SET actor = 'innocent' WHERE id = 4").run();
+    rechain(4);
+    db().prepare("DELETE FROM audit_checkpoints").run();
+    reopen();                        // the cadence restarts from the database: the next row signs the forged head
+    add(600);
+    expect(store.verifyAudit().lastCheckpoint).toMatchObject({ lastId: 601 });
+    expect(store.verifyAudit().problems).toEqual([{ id: 1, kind: "checkpoint-missing" }]);
+  });
+});
+
 describe("the operator's explicit re-pin", () => {
   it("vouches for the journal as it is now and signs its head", () => {
     store.open();

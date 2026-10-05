@@ -124,9 +124,11 @@ describe("offline speech model integrity", () => {
     expect(I.readManifest(ROOT)[ID].source).toBe("pinned");
   });
 
-  // 6.12 review S02: files without recorded hashes are no longer recorded at their first load (a deleted manifest
-  // looked exactly like a model installed before 6.12) — the operator trusts them, or pins them.
-  it("a model with no recorded hashes (installed before 6.12, or its manifest lost) is refused until the operator trusts it", async () => {
+  // 6.12 review S02: after the first start (the marker is set — models installed before 6.12 were recorded then,
+  // test/speech-upgrade-612.test.ts), files without recorded hashes are no longer recorded at their next load (a
+  // deleted manifest looked exactly like a model installed before 6.12) — the operator trusts them, or pins them.
+  it("a model whose manifest was lost is refused until the operator trusts it", async () => {
+    expect(I.integrityInitialised(ROOT)).toBe(true);
     rmSync(I.manifestPath(ROOT));
     expect(existsSync(join(ROOT, ID))).toBe(true);
     await expect(L.verifyModel(ID)).rejects.toMatchObject({ code: "integrity", message: expect.stringMatching(/no recorded hashes/) });

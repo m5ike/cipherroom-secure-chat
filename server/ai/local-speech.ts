@@ -20,7 +20,8 @@ import { createWriteStream, existsSync, mkdirSync, readdirSync, readFileSync, re
 import { once } from "node:events";
 import { join } from "node:path";
 import { aiDataDir } from "./config";
-import { checkArchive, forgetFiles, readManifest, recordInstall, trustInstalled, verifyInstalled } from "./speech-integrity";
+import { checkArchive, forgetFiles, initialiseIntegrity, readManifest, recordInstall, trustInstalled, verifyInstalled } from "./speech-integrity";
+import { audit } from "../monitor/audit";
 import { createHash } from "node:crypto";
 
 export type LocalModelDef = {
@@ -191,6 +192,8 @@ export function install(id: string, onDone?: (def: LocalModelDef) => void): Job 
     out.end();
     await once(out, "finish");
     const archiveSha = sha.digest("hex");
+    // 6.12 review S02: what an earlier version installed is recorded first (once), then the archive is checked.
+    await ensureIntegrity();
     const trust = checkArchive(root, id, archiveSha, def.sha256);
     job.state = "extracting";
     rmSync(staging, { recursive: true, force: true });
@@ -255,6 +258,8 @@ export function uninstall(id: string): void {
 /** What the console shows: every model, installed or not, with its download. */
 export async function status() {
   const s = await loadEngine();
+  // 6.12 review S02: the first start's one-time recording of what is installed, before it is shown.
+  await ensureIntegrity().catch(() => undefined);
   const manifest = (() => { try { return { models: readManifest(modelsRoot()), error: "" }; } catch (err) { return { models: {} as ReturnType<typeof readManifest>, error: (err as Error).message }; } })();
   return {
     engine: Boolean(s),
@@ -321,16 +326,44 @@ export async function verifyModel(id: string): Promise<"verified" | "recorded"> 
   const def = LOCAL_MODEL.get(id);
   if (!def) throw new LocalSpeechError("no-model", `There is no built-in model ${id}.`);
   try {
-    return await verifyInstalled(modelsRoot(), id, def.url);
+    const first = await ensureIntegrity();
+    const result = await verifyInstalled(modelsRoot(), id, def.url);
+    return first.includes(id) ? "recorded" : result;
   } catch (err) {
     throw new LocalSpeechError("integrity", (err as Error).message);
   }
 }
 
+let integrityReady = false;
+let integrityRun: Promise<string[]> | null = null;
+
+/**
+ * 6.12 review S02: the one-time migration of the models folder (speech-
+ * integrity.ts › initialiseIntegrity) — on the first start with 6.12 the
+ * models installed before are recorded as they are (trust on first use,
+ * logged and audited), so they keep working with no operator action; after
+ * that, files the manifest does not vouch for are refused. Returns the
+ * models this call recorded.
+ */
+export async function ensureIntegrity(): Promise<string[]> {
+  if (integrityReady) return [];
+  integrityRun ??= (async () => {
+    const r = await initialiseIntegrity(modelsRoot(), LOCAL_MODELS.map((m) => ({ id: m.id, url: m.url })));
+    integrityReady = true;
+    const recorded = r?.recorded ?? [];
+    if (recorded.length) {
+      console.warn(`[speech] first start with 6.12: recorded the installed model(s) ${recorded.join(", ")} as they are (trust on first use, once) — later changes to their files are refused`);
+      audit.add({ category: "security", level: "notice", event: "speech.integrity-initialised", status: `${recorded.length} model(s)`, detail: { models: recorded, trust: "first-use" } });
+    }
+    return recorded;
+  })().finally(() => { integrityRun = null; });
+  return integrityRun;
+}
+
 /**
  * 6.12 review S02: the operator trusts the files installed for `id` as they
  * are now (the console's "Trust installed files", owner role) — a model
- * installed before 6.12, or after its manifest was lost. Loaded engines of
+ * the manifest does not know (e.g. after it was lost). Loaded engines of
  * the model are dropped so the next use verifies again.
  */
 export async function trustModel(id: string, opts: { replaceInvalid?: boolean } = {}): Promise<{ files: number }> {

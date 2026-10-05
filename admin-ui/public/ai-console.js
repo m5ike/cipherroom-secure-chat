@@ -613,7 +613,7 @@
           state = h("div", { class: "ai-dl" }, h("div", { class: "bar__track" }, h("div", { class: "bar__fill", style: `width:${pct.toFixed(1)}%` })), h("span", { class: "muted small" }, j.state === "extracting" ? "unpacking…" : `${pct.toFixed(0)} % of ${mb(j.total)}`));
         } else if (j && j.state === "failed") state = h("span", { title: j.error || "" }, badge("failed", "err"), h("span", { class: "muted small" }, ` ${j.error || ""}`));
         // 6.12 review S02: installed files with no recorded hashes are not loaded until the owner trusts them.
-        else if (m.installed && !m.integrity) state = h("span", { title: "No recorded hashes (installed before 6.12, or the manifest was lost): not loaded until you trust these files." }, badge("not verified", "err"), h("span", { class: "muted small" }, ` ${mb(m.bytes)}`));
+        else if (m.installed && !m.integrity) state = h("span", { title: "No recorded hashes (the manifest was lost, or the files were added after the first start with 6.12): not loaded until you trust these files." }, badge("not verified", "err"), h("span", { class: "muted small" }, ` ${mb(m.bytes)}`));
         else if (m.installed) state = h("span", {}, badge("installed", "ok"), h("span", { class: "muted small" }, ` ${mb(m.bytes)}`));
         else state = h("span", { class: "muted small" }, "—");
         const actions = h("div", { class: "row" });
