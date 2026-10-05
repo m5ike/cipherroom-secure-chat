@@ -76,6 +76,8 @@ final class P4Room {
         /** File keys from `file` inner messages, by transfer id (the newest 64). */
         final LinkedHashMap<String, byte[]> fileKeys = new LinkedHashMap<>();
         long establishedAt;
+        /** The peer hello answered (its e|n): the same hello again is a repeat, not a restart. */
+        String acceptedTag;
     }
 
     static final int MAX_PENDING = 200;
@@ -147,8 +149,17 @@ final class P4Room {
      * "v4" (our KEM message went out), "legacy" (protocol 3) or "downgrade"
      * (refused: this device key spoke protocol 4 before).
      */
+    /** Is this the very hello the current handshake (or session) already answered? Then nothing is to be done. */
+    boolean repeatHello(String peerId, JSONObject raw) {
+        PeerState ps = peers.get(peerId);
+        return ps != null && ps.acceptedTag != null && (ps.session != null || ps.hs != null) && ps.acceptedTag.equals(tagOf(raw));
+    }
+
+    static String tagOf(JSONObject raw) { return raw.optString("e") + "|" + raw.optString("n"); }
+
     String onHello(String peerId, JSONObject raw, String ref, long now) {
         PeerState ps = state(peerId);
+        ps.acceptedTag = tagOf(raw);
         String pk = raw.optString("pk");
         if (!pk.equals(ps.pk)) { ps.account = null; ps.bundle = null; }
         ps.pk = pk;
@@ -290,6 +301,7 @@ final class P4Room {
     }
 
     private void endSession(PeerState ps) {
+        ps.acceptedTag = null;
         if (ps.session != null) ps.session.wipe();
         if (ps.hs != null) ps.hs.wipe();
         ps.session = null;
@@ -378,8 +390,7 @@ final class P4Room {
     /** The file key the peer sent for a transfer, or null (then it is not a protocol-4 transfer). */
     byte[] fileKey(String peerId, String transferId) {
         PeerState ps = peers.get(peerId);
-        byte[] k = ps == null ? null : ps.fileKeys.get(transferId);
-        return k == null ? null : k.clone();
+        return ps == null ? null : ps.fileKeys.remove(transferId); // used once: the caller wipes it
     }
 
     /* ------------------------------------------------------------ receiving */

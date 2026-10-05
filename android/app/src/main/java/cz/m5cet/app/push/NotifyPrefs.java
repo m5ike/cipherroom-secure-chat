@@ -49,6 +49,7 @@ public final class NotifyPrefs implements Settings.Listener {
         d.put("notify.quiet", false);                     // quiet hours
         d.put("notify.quietFrom", "22:00");
         d.put("notify.quietTo", "07:00");
+        d.put("notify.lockScreenHide", false);            // 6.12 (G-22): message notifications not on the phone's lock screen at all (VISIBILITY_SECRET)
     }
 
     public static NotifyPrefs get(M5 app) {
@@ -180,6 +181,8 @@ public final class NotifyPrefs implements Settings.Listener {
     /** Sends the settings (signed in) and links or unlinks this device. Background thread. */
     public synchronized void sync() {
         fetchPolicy();
+        // 6.12 (F-16): a locked app has no account session in memory — that is not a sign-out (the link stays).
+        if (!app.vault.unlocked()) return;
         if (!app.account.signedIn()) { link(false); return; }
         try {
             Server.send(app.config.server() + "/api/account/notify", "PUT", Crypto.utf8(asServerPrefs().toString()), bearer(), null, 256 * 1024);

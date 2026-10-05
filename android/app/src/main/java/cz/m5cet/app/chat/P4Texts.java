@@ -36,6 +36,7 @@ public final class P4Texts {
         EN.put("p4.kt.missing", "not in the key-transparency log");
         EN.put("p4.kt.unverifiable", "the key-transparency log could not be checked");
         EN.put("p4.legacyShort", "older protocol");
+        EN.put("p4.clockAhead", "their device's clock runs about {min} min ahead — its messages show the time they arrived");
         // 6.12 NFC connection tag v2 (protocol 4 § 16)
         EN.put("nfc.v2.kind.title", "How should the tag work?");
         EN.put("nfc.v2.kind.inv", "Invitation (recommended) — the room key stays on the server; the tag ends after 10 uses or 7 days");

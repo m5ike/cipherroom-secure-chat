@@ -123,8 +123,22 @@ public final class CallHistory {
     /** Keeps a call (unless Settings › Calls says not to). */
     public static synchronized void add(M5 app, Entry e) {
         if (!app.settings.bool("calls.history")) return;
-        if (!app.vault.unlocked()) { if (pending.size() < KEEP) pending.add(e); return; }
+        if (!app.vault.unlocked()) {
+            // 6.12 (F-16): locked — into the lock inbox (on the disk, sealed); without it kept in memory as before.
+            try { if (LockedRooms.active() && LockedRooms.call(e.toJson())) return; } catch (JSONException ignored) { }
+            if (pending.size() < KEEP) pending.add(e);
+            return;
+        }
         List<Entry> all = load(app);
+        all.add(e);
+        save(app, bound(all, System.currentTimeMillis()));
+    }
+
+    /** 6.12: a call from the lock inbox — once, even when the inbox is merged a second time (after a crash). */
+    static synchronized void addOnce(M5 app, Entry e) {
+        if (!app.vault.unlocked() || e.id.isEmpty()) return;
+        List<Entry> all = load(app);
+        for (Entry x : all) if (x.id.equals(e.id)) return;
         all.add(e);
         save(app, bound(all, System.currentTimeMillis()));
     }
@@ -133,7 +147,7 @@ public final class CallHistory {
     public static synchronized void setSysUri(M5 app, String id, String uri) {
         if (uri == null || uri.isEmpty()) return;
         for (Entry p : pending) if (p.id.equals(id)) { p.sysUri = uri; return; }
-        if (!app.vault.unlocked()) return;
+        if (!app.vault.unlocked()) { if (LockedRooms.active()) LockedRooms.callUri(id, uri); return; }
         List<Entry> all = load(app);
         for (Entry e : all) if (e.id.equals(id)) { e.sysUri = uri; save(app, all); return; }
     }

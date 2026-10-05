@@ -131,10 +131,46 @@ describe("two peers in one room", () => {
     await expect.poll(async () => bob.page.locator('[data-testid^="message-"]').allInnerTexts(), { timeout: 20_000 })
       .toEqual(expect.arrayContaining([expect.stringContaining(text)]));
     // 3.1: a live room message goes with Alice's sender key (forward
-    // secret), not with the room key.
+    // secret), not with the room key. 6.12: two 6.12 peers speak protocol 4 —
+    // her chain went to Bob over their pair ratchet (hello v4 + ML-KEM).
     const received = bob.page.locator('[data-testid^="message-"]', { hasText: "žluťoučký" }).first();
-    expect(await received.getAttribute("data-sealed")).toBe("sender-key");
-    expect(await alice.page.locator('[data-testid^="message-"]', { hasText: "žluťoučký" }).first().getAttribute("data-sealed")).toBe("sender-key");
+    expect(await received.getAttribute("data-sealed")).toBe("p4-sk");
+    expect(await alice.page.locator('[data-testid^="message-"]', { hasText: "žluťoučký" }).first().getAttribute("data-sealed")).toBe("p4-sk");
+  }, 60_000);
+
+  it("6.12: both joins proved the room key to the server; nobody is shown as unproven", async () => {
+    // The hub's join proof (Ed25519 over the socket's nonce, a key derived from the room secret).
+    expect(await alice.page.getByTestId("status-connection").getAttribute("data-proven")).toBe("true");
+    expect(await bob.page.getByTestId("status-connection").getAttribute("data-proven")).toBe("true");
+    expect(await alice.page.locator('[data-testid^="unproven-"]').count()).toBe(0);
+    expect(await bob.page.locator('[data-testid^="unproven-"]').count()).toBe(0);
+    // The Trust panel lists Bob as protocol 4, and this server's key-transparency log as
+    // checked: its key pinned, its signed tree head verified (§ 14).
+    const dial = alice.page.getByTestId("btn-menu-speeddial");
+    const inDial = await dial.isVisible().catch(() => false);
+    if (inDial) await dial.click();
+    await alice.page.getByTestId(inDial ? "speeddial-btn-trust" : "btn-trust").click();
+    await alice.page.getByTestId("p4-trust").waitFor({ state: "visible", timeout: 10_000 });
+    expect(await alice.page.locator('[data-testid^="p4-peer-"]').first().getAttribute("data-protocol")).toBe("4");
+    try {
+      await expect.poll(async () => alice.page.getByTestId("kt-state").getAttribute("data-state"), { timeout: 10_000 }).toBe("ok");
+      expect(await alice.page.getByTestId("kt-alert").count()).toBe(0);
+    } finally {
+      await alice.page.keyboard.press("Escape");
+    }
+  }, 30_000);
+
+  it("6.12: a private message goes in the pair ratchet", async () => {
+    // Bob turns "everyone" off in the recipients widget, picks Alice alone, then writes.
+    await bob.page.getByTestId("recip-auto").click();
+    await bob.page.locator('[data-testid^="recip-check-"]').first().click();
+    await bob.page.getByTestId("input-message").fill("jen pro Alici");
+    await bob.page.getByTestId("button-send").click();
+    const got = alice.page.locator('[data-testid^="message-"]', { hasText: "jen pro Alici" }).first();
+    await got.waitFor({ timeout: 20_000 });
+    expect(await got.getAttribute("data-sealed")).toBe("p4-pair");
+    // Back to everyone for the rest of the run.
+    await bob.page.getByTestId("recip-auto").click();
   }, 60_000);
 
   it("only ever links safe schemes in a received message", async () => {

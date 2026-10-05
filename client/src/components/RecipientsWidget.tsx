@@ -24,7 +24,9 @@ import "../presence.css";
 /** "away": signed in, not connected right now — the server holds messages
  *  for them (server/accounts/relay.ts), so they stay selectable.
  *  6.7 `presence`: foreground / last seen — the status dot and "last seen …". */
-export type WidgetPeer = { id: string; name: string; status: "connecting" | "open" | "closed" | "away"; rttMs?: number; avatar?: string; since?: number; presence?: PresenceFacts };
+/** 6.12: `unproven` — the server says they did not prove they hold the room key (docs/protocol-v4.md § 13);
+ *  `legacy` — they speak the older protocol 3 (no PCS / PQ, § 1). */
+export type WidgetPeer = { id: string; name: string; status: "connecting" | "open" | "closed" | "away"; rttMs?: number; avatar?: string; since?: number; presence?: PresenceFacts; unproven?: boolean; legacy?: boolean };
 
 /** The latency meter's data: four bars, how many lit, and a tone. */
 function latency(rttMs: number | undefined, open: boolean) {
@@ -451,7 +453,7 @@ export function RecipientsWidget({
     const checked = reachable && (state.autoRoom || selected.has(p.id));
     // 6.7: online / away / far away and "last seen …" ("" without presence facts).
     const seen = p.presence ? presenceView(p.presence, now, lang) : { presence: "", presenceLabel: "", seenText: "" };
-    return { id: p.id, name: p.name, avatar: p.avatar ?? "", status: p.status, away, online, reachable, checked, disabled: !reachable || state.autoRoom, ...latency(p.rttMs, online), ...seen };
+    return { id: p.id, name: p.name, avatar: p.avatar ?? "", status: p.status, away, online, reachable, checked, disabled: !reachable || state.autoRoom, unproven: p.unproven === true, legacy: p.legacy === true, ...latency(p.rttMs, online), ...seen };
   });
   const configRows = [
     { key: "width", label: t(lang, "recipients.cfg.width"), min: 180, max: 420, step: 10, value: state.width, display: `${state.width}px` },

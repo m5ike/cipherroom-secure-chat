@@ -20,6 +20,10 @@ export function widgetTree(): LNode {
     n("area", { id: "peer-name", attrs: { class: "recip-name" } }, [
       text("{$p.name}", { id: "peer-name-text" }),
       n("area", { id: "peer-away", if: "$p.away", attrs: { class: "recip-away-tag" } }, [icon("moon", "h-3 w-3", {}, { id: "peer-away-icon" }), text("{_'away.badge'}", { id: "peer-away-text" })]),
+      // 6.12: an older peer — protocol 3, no post-compromise security, no post-quantum protection.
+      n("area", { id: "peer-legacy", if: "$p.legacy", attrs: { class: "recip-away-tag", title: "{_'sec.identity.legacy'}", "data-testid": "legacy-{$p.id}" }, text: "{_'p4.legacy.badge'}" }),
+      // 6.12: the server says they did not prove they hold the room key (an older app).
+      n("area", { id: "peer-unproven", if: "$p.unproven", attrs: { class: "recip-away-tag", title: "{_'p4.unproven.title'}", "data-testid": "unproven-{$p.id}" } }, [icon("shield-off", "h-3 w-3", {}, { id: "peer-unproven-icon" }), text("{_'p4.unproven'}", { id: "peer-unproven-text" })]),
       text(" · {_'recipients.offline'}", { id: "peer-offline", if: "!$p.away && !$p.online && !$p.seenText" }),
       n("area", { id: "peer-seen", name: "Last seen", tag: "span", if: "$p.seenText && $p.presence !== 'online'", attrs: { class: "recip-seen" }, text: " · {$p.seenText}" }),
     ]),

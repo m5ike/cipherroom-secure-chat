@@ -158,8 +158,8 @@ export type IncomingFileState = {
   transport: FileTransport;
   /** How many times we already asked the sender to repeat lost chunks. */
   resendRounds?: number;
-  /** Crypto version of the transfer and the key its frames use. */
-  version: 1 | 2;
+  /** Crypto version of the transfer and the key its frames use (4: protocol 4, a random key per transfer). */
+  version: 1 | 2 | 4;
   key: CryptoKey;
   /** v2: SHA-256 of each chunk, to check the sender's signed root. */
   digests?: Array<Bytes | null>;
@@ -172,7 +172,14 @@ export type IncomingFileState = {
 };
 
 /** What the receiver learns about a finished file besides its bytes. */
-export type FileProof = { version: 1 | 2; verified: boolean; signer: Signer | null };
+export type FileProof = { version: 1 | 2 | 4; verified: boolean; signer: Signer | null };
+
+/**
+ * 6.12 (docs/protocol-v4.md § 8): the key of a protocol-4 transfer — the FK
+ * its sender handed this peer end to end (a pair-ratchet `file` message), and
+ * who that session is. Null when the peer gave us none for this transfer.
+ */
+export type FileKeyLookup = (transferId: string, from?: string) => { fk: string | Uint8Array; signer: Signer | null } | null;
 
 /** How often a receiver may ask for missing chunks before giving up. */
 export const MAX_RESEND_ROUNDS = 3;
@@ -203,6 +210,7 @@ import {
   type ChunkField, type RoomKeys, type Signer,
 } from "./envelope";
 import { decodeChunk, encodeChunk, FRAME_P2P_CHUNK, FRAME_PROXY_CHUNK } from "./binary-frames";
+import { fileAad4, fileKey4, openChunk4, openFileBody4, sealChunk4, sealFileBody4 } from "./p4/files4";
 import type { Identity } from "./identity";
 import { isReservedSender, safeFileName, safeMime } from "./validate";
 
@@ -344,6 +352,9 @@ export type SendOptions = {
    *  go, so the sender stays inside the server's rate limits (Pacer). */
   paceProxy?: (bytes: number) => Promise<void>;
   forceTransport?: FileTransport;
+  /** 6.12 protocol 4 (§ 8): this transfer's id and random FK — the caller sent the FK to each
+   *  peer first (a pair `file` message); every frame is sealed under fileKey4(FK). */
+  p4?: { transferId: string; fk: Uint8Array };
   onProgress?: (sent: number, total: number, stats: TransferStats) => void;
   isCancelled?: () => boolean;
   onTransport?: (transport: FileTransport) => void;
@@ -361,7 +372,7 @@ export type TransferResult = {
 };
 
 export async function sendFile(opts: SendOptions): Promise<TransferResult> {
-  const transferId = `xfer-${crypto.randomUUID()}`;
+  const transferId = opts.p4?.transferId ?? `xfer-${crypto.randomUUID()}`;
   const chunkSize = opts.chunkSize || DEFAULT_CHUNK_SIZE;
   const total = opts.file.size;
   const totalChunks = Math.max(1, Math.ceil(total / chunkSize));
@@ -437,16 +448,24 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
   }
 
   // v2: a key of its own for this file, each frame bound to its place.
-  const v2 = isRoomKeys(opts.key);
-  const key = v2 ? await fileKey(opts.key as RoomKeys, transferId) : (opts.key as CryptoKey);
-  const versionField = v2 ? { v: 2 } : {};
+  // 6.12 (v4): the key from the transfer's random FK, never from the room key.
+  const p4 = opts.p4 ?? null;
+  const v2 = !p4 && isRoomKeys(opts.key);
+  const key = p4 ? await fileKey4(p4.fk, transferId) : v2 ? await fileKey(opts.key as RoomKeys, transferId) : (opts.key as CryptoKey);
+  const versionField = p4 ? { v: 4 } : v2 ? { v: 2 } : {};
   const digests: Array<Bytes | null> = new Array(totalChunks).fill(null);
   const encryptChunk = async (seq: number, slice: Bytes): Promise<{ iv: ChunkField; ciphertext: ChunkField }> => {
+    if (p4) {
+      digests[seq] = await chunkDigest(slice);
+      return sealChunk4(key, fileAad4.chunk(transferId, seq, totalChunks), slice);
+    }
     if (!v2) return encryptBytes(key, slice);
     digests[seq] = await chunkDigest(slice);
     return sealChunkBytes(key, fileContext.chunk(transferId, seq, totalChunks), slice);
   };
-  const metaEnc = v2 ? await sealFileBody(key, fileContext.meta(transferId), meta, opts.identity) : await encryptJSON(key, meta);
+  const metaEnc = p4
+    ? await sealFileBody4(key, fileAad4.meta(transferId), JSON.stringify(meta))
+    : v2 ? await sealFileBody(key, fileContext.meta(transferId), meta, opts.identity) : await encryptJSON(key, meta);
 
   if (transport === "p2p") {
     const metaFrame: FileTransferEnvelope = { kind: "file-meta", transferId, transport: "p2p", ...versionField, ...metaEnc };
@@ -502,12 +521,15 @@ export async function sendFile(opts: SendOptions): Promise<TransferResult> {
 
   // v2: the digest of every chunk's digest, signed — the receiver checks the
   // whole file against it before handing it over.
-  const endBody = v2
-    ? await sealFileBody(key, fileContext.end(transferId), { root: await digestList(digests as Bytes[]), totalChunks, size: total }, opts.identity)
-    : null;
+  const endBody = p4
+    ? await sealFileBody4(key, fileAad4.end(transferId), JSON.stringify({ root: await digestList(digests as Bytes[]), totalChunks, size: total }))
+    : v2
+      ? await sealFileBody(key, fileContext.end(transferId), { root: await digestList(digests as Bytes[]), totalChunks, size: total }, opts.identity)
+      : null;
+  const endVersion = p4 ? 4 : 2;
   const endFrame: FileTransferEnvelope = transport === "p2p"
-    ? { kind: "file-end", transferId, transport: "p2p", ...(endBody ? { v: 2, ...endBody } : {}) }
-    : { kind: "proxy-end", transferId, transport: "proxy", ...(endBody ? { v: 2, ...endBody } : {}) };
+    ? { kind: "file-end", transferId, transport: "p2p", ...(endBody ? { v: endVersion, ...endBody } : {}) }
+    : { kind: "proxy-end", transferId, transport: "proxy", ...(endBody ? { v: endVersion, ...endBody } : {}) };
   if (transport === "p2p") broadcastP2P(opts.channels, endFrame);
   else opts.sendProxy?.(endFrame);
 
@@ -723,6 +745,8 @@ export function handleIncomingFrame(
    *  transport binds the sender itself (relayed binary chunks: the server
    *  checks they come from the transfer's sender). */
   from?: string,
+  /** 6.12: the FK of a protocol-4 transfer (§ 8), as its sender's pair session delivered it. */
+  fileKeys?: FileKeyLookup,
 ): Promise<void> {
   let queues = frameQueues.get(registry);
   if (!queues) { queues = new Map(); frameQueues.set(registry, queues); }
@@ -730,7 +754,7 @@ export function handleIncomingFrame(
   const previous = queues.get(transferId) ?? Promise.resolve();
   const current = previous
     .catch(() => undefined)
-    .then(() => processIncomingFrame(key, registry, frame, hardLimitBytes, cb, from));
+    .then(() => processIncomingFrame(key, registry, frame, hardLimitBytes, cb, from, fileKeys));
   queues.set(transferId, current);
   // Drop the queue once this transfer goes quiet, so the map cannot grow.
   void current.catch(() => undefined).then(() => {
@@ -777,6 +801,7 @@ async function processIncomingFrame(
   hardLimitBytes: number,
   cb: IncomingCallbacks,
   from?: string,
+  fileKeys?: FileKeyLookup,
 ): Promise<void> {
   const transport: FileTransport = frame.transport === "proxy" ? "proxy" : "p2p";
   // proxy-* and file-* frames share one lifecycle.
@@ -801,11 +826,19 @@ async function processIncomingFrame(
       return;
     }
     try {
+      const v4 = f.v === 4;
       const v2 = f.v === 2 && isRoomKeys(key);
       let fk: CryptoKey;
       let raw: unknown;
       let signer: Signer | null = null;
-      if (v2) {
+      if (v4) {
+        // 6.12 (§ 8): only with the FK this peer's session handed us — never the room key.
+        const given = fileKeys?.(transferId, from) ?? null;
+        if (!given) { cb.onError?.(transferId, "No key for this file (protocol 4): it was not sent to this device."); return; }
+        fk = await fileKey4(given.fk, transferId);
+        raw = JSON.parse(await openFileBody4(fk, fileAad4.meta(transferId), f.iv, f.ciphertext));
+        signer = given.signer;
+      } else if (v2) {
         fk = await fileKey(key as RoomKeys, transferId);
         const opened = await openFileBody<unknown>(fk, fileContext.meta(transferId), f.iv, f.ciphertext);
         raw = opened.value;
@@ -843,9 +876,9 @@ async function processIncomingFrame(
         received: 0,
         cancelled: false,
         transport,
-        version: v2 ? 2 : 1,
+        version: v4 ? 4 : v2 ? 2 : 1,
         key: fk,
-        ...(v2 ? { digests: new Array<Bytes | null>(meta.totalChunks).fill(null), signer } : {}),
+        ...(v2 || v4 ? { digests: new Array<Bytes | null>(meta.totalChunks).fill(null), signer } : {}),
         ...(from !== undefined ? { from } : {}),
         lastFrameAt: Date.now(),
       });
@@ -869,9 +902,12 @@ async function processIncomingFrame(
     const seq = f.seq;
     if (!Number.isInteger(seq) || seq < 0 || seq >= state.chunks.length || state.chunks[seq] !== null) return;
     try {
-      const bytes = state.version === 2
-        ? await openChunk(state.key, fileContext.chunk(transferId, seq, state.meta.totalChunks), f.iv, f.ciphertext)
-        : await decryptBytes(state.key, f.iv, f.ciphertext);
+      const raw = (v: ChunkField) => (typeof v === "string" ? fromBase64(v) : v);
+      const bytes = state.version === 4
+        ? await openChunk4(state.key, fileAad4.chunk(transferId, seq, state.meta.totalChunks), raw(f.iv), raw(f.ciphertext))
+        : state.version === 2
+          ? await openChunk(state.key, fileContext.chunk(transferId, seq, state.meta.totalChunks), f.iv, f.ciphertext)
+          : await decryptBytes(state.key, f.iv, f.ciphertext);
       if (bytes.byteLength > state.meta.chunkSize) throw new Error(`Chunk ${seq} is larger than the announced chunk size.`);
       state.chunks[seq] = bytes;
       if (state.digests) state.digests[seq] = await chunkDigest(bytes);
@@ -903,7 +939,18 @@ async function processIncomingFrame(
     };
     if (state.received !== state.meta.size) return fail(`Received ${state.received} bytes, the sender announced ${state.meta.size}.`);
     let proof: FileProof = { version: state.version, verified: false, signer: state.signer ?? null };
-    if (state.version === 2) {
+    if (state.version === 4) {
+      if (typeof f.iv !== "string" || typeof f.ciphertext !== "string" || f.v !== 4) return fail("The end of the file carries no digest.");
+      try {
+        const value = JSON.parse(await openFileBody4(state.key, fileAad4.end(transferId), f.iv, f.ciphertext)) as { root?: unknown; totalChunks?: unknown; size?: unknown };
+        if (value.totalChunks !== state.meta.totalChunks || value.size !== state.meta.size) return fail("The file's end does not match its meta.");
+        if (value.root !== await digestList(state.digests as Bytes[])) return fail("The file does not match the sender's digest.");
+        // The FK came over the sender's authenticated session: the digest under it is theirs.
+        proof = { version: 4, verified: true, signer: state.signer ?? null };
+      } catch {
+        return fail("The file's digest could not be decrypted.");
+      }
+    } else if (state.version === 2) {
       if (typeof f.iv !== "string" || typeof f.ciphertext !== "string") return fail("The end of the file carries no digest.");
       try {
         const { value, signer } = await openFileBody<{ root?: unknown; totalChunks?: unknown; size?: unknown }>(state.key, fileContext.end(transferId), f.iv, f.ciphertext);

@@ -207,12 +207,21 @@ export async function sealMessage(keys: RoomKeys, id: string, payload: unknown, 
   return { v: keys.version, id, ...(await encrypt(keys.message, utf8(plain), ctx)) };
 }
 
-export async function openMessage<T>(keys: RoomKeys, envelope: Envelope): Promise<Opened<T>> {
-  if (envelope.v === 2 && keys.version === 3) {
-    // Queued before the upgrade: the PBKDF2 keys of the same passphrase.
-    const previous = await keys.previous()!;
-    return openMessage<T>(previous, envelope);
+/**
+ * 6.12 (F-20, docs/protocol-v4.md § 1): envelopes only clients before 3.1 make
+ * — version 1 (one key, no associated data) and version 2 in a room of version
+ * 3 keys — are no longer opened. The app says "a message from a very old
+ * client — not opened".
+ */
+export class OldEnvelopeError extends Error {
+  constructor(readonly version: 1 | 2) {
+    super(`envelope version ${version} from a very old client — not opened`);
+    this.name = "OldEnvelopeError";
   }
+}
+
+export async function openMessage<T>(keys: RoomKeys, envelope: Envelope): Promise<Opened<T>> {
+  if (envelope.v === 2 && keys.version === 3) throw new OldEnvelopeError(2);
   if (envelope.v === 2 || envelope.v === 3) {
     if (envelope.v !== keys.version) throw new Error("envelope from another key version");
     if (typeof envelope.id !== "string" || !envelope.id) throw new Error("envelope without id");
@@ -223,8 +232,7 @@ export async function openMessage<T>(keys: RoomKeys, envelope: Envelope): Promis
     if ((payload as { id?: unknown })?.id !== envelope.id) throw new Error("envelope id mismatch");
     return { payload, version: envelope.v, signer };
   }
-  const plain = await decrypt(await keys.legacy(), envelope.iv, envelope.ciphertext);
-  return { payload: JSON.parse(plain) as T, version: 1, signer: null };
+  throw new OldEnvelopeError(1);
 }
 
 /* ----------------------------------------------------------------- signals */

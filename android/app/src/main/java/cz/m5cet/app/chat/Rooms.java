@@ -81,6 +81,8 @@ public final class Rooms {
     /* ------------------------------------------------------------ storage */
 
     public synchronized void load() {
+        lockedPins = null; // 6.12: unlocked — the pins are the vault's again (those seen while locked merge in: LockedRooms)
+        if (p4 != null) p4.store.flush(); // 6.12: what protocol 4 kept in memory while locked, into the vault
         if (loaded) return;
         JSONArray list = app.vault.json(Vault.Tier.USER, "rooms").optJSONArray("list");
         saved.clear();
@@ -125,10 +127,20 @@ public final class Rooms {
         return identity;
     }
 
+    static String pinSlot(String room, String name) { return room + "\u0000" + name.trim().toLowerCase(java.util.Locale.ROOT); }
+
+    /**
+     * 6.12 (F-16): while locked in the receiving mode, the pins of the open rooms
+     * (read at the lock — the connections need them to tell a known key from a
+     * changed one); a new one is kept here and goes to the lock inbox. null: unlocked.
+     */
+    private Map<String, String> lockedPins;
+
     /** 6.7 (S15): the key id pinned for this name in this room ("" when none), without pinning anything. */
     synchronized String pinned(String room, String name) {
         if (name == null) return "";
-        return app.vault.json(Vault.Tier.USER, "pins").optString(room + "\u0000" + name.trim().toLowerCase(java.util.Locale.ROOT), "");
+        if (lockedPins != null) { String k = lockedPins.get(pinSlot(room, name)); return k == null ? "" : k; }
+        return app.vault.json(Vault.Tier.USER, "pins").optString(pinSlot(room, name), "");
     }
 
     /** 6.12: what pin() would say, without pinning anything. */
@@ -140,8 +152,9 @@ public final class Rooms {
     /** 6.12: the person accepted another key for this name (People › verify): the pin follows. */
     synchronized void repin(String room, String name, String kid) {
         if (name == null || kid == null || kid.isEmpty()) return;
+        if (lockedPins != null) { lockedPins.put(pinSlot(room, name), kid); return; } // (People needs the unlock: not while locked)
         JSONObject pins = app.vault.json(Vault.Tier.USER, "pins");
-        try { pins.put(room + "\u0000" + name.trim().toLowerCase(java.util.Locale.ROOT), kid); } catch (JSONException ignored) { }
+        try { pins.put(pinSlot(room, name), kid); } catch (JSONException ignored) { }
         app.vault.putJson(Vault.Tier.USER, "pins", pins);
     }
 
@@ -162,8 +175,13 @@ public final class Rooms {
 
     /** Trust on first use: room + name → key id. "new", "match" or "changed". */
     synchronized String pin(String room, String name, String kid) {
+        String slot = pinSlot(room, name);
+        if (lockedPins != null) {
+            String old = lockedPins.get(slot);
+            if (old == null || old.isEmpty()) { lockedPins.put(slot, kid); LockedRooms.pin(slot, kid); return "new"; }
+            return old.equals(kid) ? "match" : "changed";
+        }
         JSONObject pins = app.vault.json(Vault.Tier.USER, "pins");
-        String slot = room + "\u0000" + name.trim().toLowerCase(java.util.Locale.ROOT);
         String old = pins.optString(slot, "");
         if (old.isEmpty()) {
             try { pins.put(slot, kid); } catch (JSONException ignored) { }
@@ -171,6 +189,18 @@ public final class Rooms {
             return "new";
         }
         return old.equals(kid) ? "match" : "changed";
+    }
+
+    /** 6.12: pins first seen while locked, into the vault — a slot pinned meanwhile keeps its key (first use wins). */
+    synchronized void mergePins(Map<String, String> fresh) {
+        if (fresh.isEmpty() || !app.vault.unlocked()) return;
+        JSONObject pins = app.vault.json(Vault.Tier.USER, "pins");
+        boolean changed = false;
+        for (Map.Entry<String, String> e : fresh.entrySet()) {
+            if (!pins.optString(e.getKey(), "").isEmpty()) continue;
+            try { pins.put(e.getKey(), e.getValue()); changed = true; } catch (JSONException ignored) { }
+        }
+        if (changed) app.vault.putJson(Vault.Tier.USER, "pins", pins);
     }
 
     /* ------------------------------------------------------------- rooms */
@@ -264,7 +294,8 @@ public final class Rooms {
             r = new RoomSession(app, this, key, s.room, s.label, s.passphrase, s.userName.isEmpty() ? app.config.userName() : s.userName);
             sessions.put(key, r);
             RoomSession session = r;
-            Io.bg(() -> session.restore(History.load(app, key)));
+            // 6.12 (F-16): while the unlock merges the lock inbox, the history waits for it (restoreAll after it).
+            Io.bg(() -> { if (!LockedRooms.draining()) session.restore(History.load(app, key)); });
         }
         synchronized (this) { s.selected = true; persist(); }
         r.connect();
@@ -285,7 +316,7 @@ public final class Rooms {
     public void leave(String key) {
         String k = key == null || key.isEmpty() ? active : key;
         RoomSession r = sessions.remove(k);
-        if (r != null) { History.save(app, k, r.messagesCopy()); r.destroy(); }
+        if (r != null) { History.saveSession(app, r); r.destroy(); }
         synchronized (this) { Saved s = saved.get(k); if (s != null) s.selected = false; persist(); }
         if (k.equals(active)) {
             // Smart switching: the most recently active of the others.
@@ -387,11 +418,60 @@ public final class Rooms {
     public void disconnectAll() {
         for (String k : new ArrayList<>(sessions.keySet())) {
             RoomSession r = sessions.remove(k);
-            if (r != null) { History.save(app, k, r.messagesCopy()); r.destroy(); }
+            if (r != null) { History.saveSession(app, r); r.destroy(); }
         }
-        synchronized (this) { loaded = false; saved.clear(); identity = null; p4 = null; }
+        synchronized (this) { loaded = false; saved.clear(); identity = null; lockedPins = null; p4 = null; }
         active = "";
         emit();
+    }
+
+    /**
+     * 6.12 (F-16), the default lock ("receive while locked"): the open rooms stay
+     * connected with their own keys; the data key will go (the caller zeroes
+     * it next). Before that: the lock inbox opens (LockedRooms.begin — its
+     * private key sealed by the data key), the open rooms' pins are kept for
+     * their connections, each room's history is saved and leaves the memory,
+     * and so do the saved rooms (names, passphrases) — the sessions keep their
+     * own. Main thread, the data key still there.
+     */
+    public void lockReceiving() {
+        Map<String, String> pins = new java.util.HashMap<>();
+        java.util.Set<String> open = new java.util.HashSet<>();
+        for (RoomSession r : sessions.values()) open.add(r.room + "\u0000");
+        JSONObject all = app.vault.json(Vault.Tier.USER, "pins");
+        for (java.util.Iterator<String> it = all.keys(); it.hasNext(); ) {
+            String slot = it.next();
+            int cut = slot.indexOf('\u0000');
+            if (cut > 0 && open.contains(slot.substring(0, cut + 1))) pins.put(slot, all.optString(slot));
+        }
+        boolean inbox = LockedRooms.begin(app);
+        if (!inbox) Log.w("rooms", "locked without the inbox: what arrives is kept in memory until the unlock");
+        // 6.12: protocol 4 keeps working while locked from what it read now (the downgrade marks, pins, mailbox keys,
+        // key transparency); what changes meanwhile is written at the unlock (P4Store.flush).
+        if (!sessions.isEmpty()) p4().store.warm();
+        synchronized (this) { lockedPins = pins; loaded = false; saved.clear(); }
+        for (RoomSession r : sessions.values()) { History.saveSession(app, r); r.dropHistory(); }
+        emit();
+    }
+
+    /** 6.12 (F-16): back from a lock — each open room's history into its list again (after the lock inbox's merge). */
+    void restoreAll() {
+        for (RoomSession r : sessions.values()) {
+            if (r.historyReady()) continue;
+            Io.bg(() -> r.restore(History.load(app, r.key)));
+        }
+        emit();
+    }
+
+    /** 6.12: messages whose file, kept while locked, could not be stored (LockedRooms). */
+    void filesLost(java.util.Set<String> ids) {
+        for (RoomSession r : sessions.values()) for (ChatMessage m : r.messagesCopy())
+            if (m.filePath != null && ids.contains(m.filePath) && !m.mine) { m.filePath = null; m.fileProgress = -2; messageChanged(r, m); }
+    }
+
+    /** 6.12: a receipt / relay state for a message not in memory — while locked it goes to the lock inbox. */
+    void lockedState(RoomSession r, String id, String who, String name, String state) {
+        if (LockedRooms.active()) LockedRooms.state(r.key, id, who, name, state);
     }
 
     public void send(String key, String text, ChatMessage replyTo) {
@@ -415,7 +495,7 @@ public final class Rooms {
     /** The app went to the background: rooms stay connected (6.7: and listed — as away after a while). */
     public void onBackground() {
         visible = false;
-        for (RoomSession r : sessions.values()) { History.save(app, r.key, r.messagesCopy()); r.setForeground(false); }
+        for (RoomSession r : sessions.values()) { History.saveSession(app, r); r.setForeground(false); }
     }
 
     void roomChanged(RoomSession r) { emit(); }
@@ -441,6 +521,8 @@ public final class Rooms {
     public boolean onScreen(String key) { return visible && key != null && key.equals(active) && app.inForeground() && !app.lock.isLocked(); }
 
     void onMessage(RoomSession r, ChatMessage m, boolean fresh) {
+        // 6.12 (F-16): locked — what the history would keep goes to the lock inbox too (the vault's key is gone).
+        if (!"sys".equals(m.kind) && LockedRooms.active()) LockedRooms.message(r.key, m);
         boolean onScreen = onScreen(r.key);
         if (fresh && !onScreen) {
             r.unread++;
@@ -462,6 +544,9 @@ public final class Rooms {
     }
 
     void messageChanged(RoomSession r, ChatMessage m) {
+        // 6.12 (F-16): locked — the newer state too (a file stored, an outbox message sent), not each step of a transfer.
+        boolean transferring = m.fileProgress >= 0 && m.fileProgress < 1;
+        if (!"sys".equals(m.kind) && !transferring && LockedRooms.active()) LockedRooms.message(r.key, m);
         if (m.mine || m.filePath != null) History.saveSoon(app, r.key, r);
         for (Listener l : listeners) Io.main(() -> l.onRoomMessageChanged(r.key, m));
     }

@@ -130,9 +130,12 @@ ručně, se při přepisu zachovají.**
 │   ├── install.conf          volby + stav (verze, commit, časy, cesty)   0600
 │   ├── docker-compose.yml    jen režim docker; generovaný, bez tajemství
 │   ├── backups/<čas>-<akce>/ zálohy (pokud není BACKUP_ROOT jinde)       0700
+│   ├── release-signing.pub   klíč vydání připnutý při instalaci (6.12, jen ze stromu s klíčem)
 │   └── run/, logs/           jen správce „process"
 ├── .env                      prostředí aplikace vč. tajemství            0600 (0640 root:m5cet u systemd)
-├── dist/                     sestavená aplikace
+├── dist/                     sestavená aplikace (+ dist/public/release-web.json)
+├── check.sh                  kontrola instalace a hostitele (docs/install-check.md)
+├── release.json(.sig)        manifest vydání, jen u instalace z archivu vydání
 └── install.sh, update.sh, uninstall.sh, installer/, …  (zdrojáky)
 ```
 
@@ -176,6 +179,7 @@ HTTPS.
 /opt/m5cet/update.sh --repair                 # oprava rozbité instalace
 /opt/m5cet/update.sh --rollback               # návrat k poslední záloze
 /opt/m5cet/update.sh --show                   # uložená konfigurace (tajemství skrytá)
+/opt/m5cet/update.sh --no-check               # bez check.sh po aktualizaci
 ```
 
 Každý běh nejdřív **zálohuje** `install.conf`, `.env`, compose, web Nginx,
@@ -212,6 +216,24 @@ instalaci z nich spustíte přes `install.sh --config …`. Certifikát nemaže
 Kontroly funkčnosti: `GET /api/health`, `/api/modules`, `/`, WebSocket
 handshake `/ws`, s admin API `/admin/health` a `401` bez tokenu, s push
 `enabled: true`.
+
+### Kontrola instalace a hostitele — `check.sh` (od 6.12)
+
+```bash
+sudo /opt/m5cet/check.sh                   # balíček, konfigurace, běh, nginx + TLS, firewall, jádro, síť, systém, docker
+/opt/m5cet/check.sh --only http,firewall --quiet
+/opt/m5cet/check.sh --json > report.json   # 0 = bez FAIL, 1 = FAIL, 2 = chybné použití
+```
+
+Jen čte (nic nemění, tajemství z `.env` nevypisuje). Ověří integritu balíčku
+proti `release.json` (a jeho podpis Ed25519) nebo proti gitu, servírované
+assety proti `dist/public/release-web.json`, práva `.env` a klíčů, hardening
+jednotky systemd, `nginx -T` (WebSocket, SSE, TLS, limity těl, hlavičky,
+`assetlinks.json`), certifikát, firewall, sysctl, čas, DNS, bubblewrap, zálohy
+a další. Instalátor ji na konci nabídne; **`update.sh` po každé aktualizaci
+pustí `check.sh --quiet --only package,config,runtime`** a zastaví se jen
+tehdy, když selže integrita balíčku (`--no-check` kontrolu vynechá).
+Podrobně: [`docs/install-check.md`](docs/install-check.md).
 
 ## Přechod ze starého instalátoru (< 3.0)
 

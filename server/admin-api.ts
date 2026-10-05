@@ -65,7 +65,7 @@ import { b64urlToBuffer, SUPPORTED_ALGS, verifyAssertion, verifyRegistration, ty
 import { buildInfo } from "./build-info";
 import { audit, type AuditCategory, type AuditLevel } from "./monitor/audit";
 import { system } from "./monitor/system";
-import { currentRoomHash, traffic, type TrafficClass } from "./monitor/traffic";
+import { currentRoomHash, hashRoom, traffic, type TrafficClass } from "./monitor/traffic";
 import { usernameOf, type AccountStore } from "./accounts/store";
 import type { OfflineQueue } from "./accounts/mailqueue";
 import type { StorageService } from "./storage/service";
@@ -106,6 +106,8 @@ export type AdminProviders = {
   cluster?: () => { kind: string; connected?: boolean; published?: number; received?: number; dropped?: number; instances: Array<{ id: string; lastSeen: number; members: number }> };
   /** 6.12: key transparency (size, root, state), the key directory and the hub's room proofs — counts only. */
   protocol4?: () => Record<string, unknown>;
+  /** 6.12: forgets a room's hub verifier (a squatted room); true when there was one. */
+  resetRoomProof?: (roomId: string) => boolean;
 };
 
 const str = (v: unknown) => (typeof v === "string" ? v : undefined);
@@ -698,6 +700,19 @@ export function registerAdminApi(app: Express, deps: AdminProviders): void {
   app.get("/api/admin/security/p4", (_req, res) => {
     if (!deps.protocol4) return res.json({ ok: true, available: false });
     res.json({ ok: true, available: true, ...deps.protocol4() });
+  });
+
+  // 6.12: a room whose verifier someone registered first (trust on first use,
+  // § 13) refuses its real members — the owner forgets it by the blind id and
+  // the next proven join registers again. Audited with the room hash only.
+  app.post("/api/admin/security/room-proof/reset", (req: AdminRequest, res) => {
+    if (req.admin?.role !== "owner") return res.status(403).json({ ok: false, message: "Resetting a room proof needs the owner role." });
+    if (!deps.resetRoomProof) return res.status(503).json({ ok: false, message: "room proofs are not running" });
+    const roomId = typeof req.body?.roomId === "string" ? req.body.roomId.trim() : "";
+    if (!/^r3\.[A-Za-z0-9_-]{16,128}$/.test(roomId)) return res.status(400).json({ ok: false, code: "bad-room-id", message: "roomId: the room's blind id (r3.…)" });
+    const removed = deps.resetRoomProof(roomId);
+    audit.add({ category: "security", level: "warn", event: "admin.room-proof.reset", actor: adminActor(req), roomHash: hashRoom(roomId), status: removed ? "removed" : "none" });
+    res.json({ ok: true, removed });
   });
 
   // Tamper evidence (3.1): recompute the hash chain of the persisted

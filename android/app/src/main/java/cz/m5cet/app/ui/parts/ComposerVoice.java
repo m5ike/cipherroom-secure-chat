@@ -7,6 +7,7 @@ import cz.m5cet.app.M5;
 import cz.m5cet.app.chat.RoomSession;
 import cz.m5cet.app.ui.MainActivity;
 import cz.m5cet.app.voice.Dictation;
+import cz.m5cet.app.voice.ServerVoiceConsent;
 import cz.m5cet.app.voice.SpeakSend;
 import cz.m5cet.app.voice.Voice;
 
@@ -131,7 +132,28 @@ final class ComposerVoice implements SpeakSend.Io<Voice.Clip> {
 
     @Override public void speak(String text, SpeakSend.Done<Voice.Clip> done) {
         last = text;
-        voice().textToVoiceMessage(text, done::done);
+        RoomSession r = app().rooms.activeSession();
+        voice().textToVoiceMessage(text, r == null ? "" : r.key, asker(a), done::done);
+    }
+
+    /**
+     * 6.12 (G-14): the question before the server's speech provider gets the
+     * text (or a recording) — the provider named; closing it is a no.
+     */
+    static ServerVoiceConsent.Ask asker(MainActivity a) {
+        return (use, provider, answer) -> {
+            M5 app = a.app();
+            if (a.isFinishing() || a.isDestroyed()) { answer.accept(false); return; }
+            boolean[] answered = {false};
+            java.util.function.Consumer<Boolean> once = yes -> { if (!answered[0]) { answered[0] = true; answer.accept(yes); } };
+            String text = app.t(use == ServerVoiceConsent.Use.SPEAK ? "voice.consent.speak" : "voice.consent.transcribe").replace("{provider}", provider);
+            SecureDialog.show(a, new android.app.AlertDialog.Builder(a)
+                .setTitle(app.t("voice.consent.title"))
+                .setMessage(text)
+                .setPositiveButton(app.t("voice.consent.yes"), (x, w) -> once.accept(true))
+                .setNegativeButton(app.t("voice.consent.no"), (x, w) -> once.accept(false))
+                .setOnDismissListener(x -> once.accept(false)));
+        };
     }
 
     @Override public void sendText(String text) {

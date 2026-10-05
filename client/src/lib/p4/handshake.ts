@@ -306,6 +306,8 @@ export type PairHandshakeOptions = {
 export class PairHandshake {
   private peer: HelloV4 | null = null;
   private sent: { ct: Bytes; ss: Bytes } | null = null;
+  /** The KEM message that answered `peer` (a repeat of the same hello gets it again). */
+  private sentMessage: KemMessage | null = null;
   private received: { ct: Bytes; ss: Bytes } | null = null;
   private done = false;
 
@@ -316,16 +318,27 @@ export class PairHandshake {
     return new PairHandshake(o, hello, secrets);
   }
 
-  /** Checks the peer's hello; when it is a valid v4 hello, returns the KEM message to send. */
+  /**
+   * Checks the peer's hello; when it is a valid v4 hello, returns the KEM
+   * message to send. Idempotent: the SAME hello again (its `e`, `k`, `n`)
+   * gets the same KEM message back — a second encapsulation would leave the
+   * two sides with different secrets if the peer used the first. Another
+   * hello of the peer replaces the one answered (a new KEM message).
+   */
   async acceptHello(raw: unknown, now = Date.now()): Promise<{ verdict: HelloVerdict; kem: KemMessage | null }> {
     if (this.done) throw new P4Error("state", "handshake finished");
     const verdict = await verifyHello(raw, { roomId: this.o.roomId, from: this.o.peerPeerId, to: this.o.selfPeerId, check: this.o.check, now });
     if (!verdict.ok) return { verdict, kem: null };
+    const h = verdict.hello;
+    if (this.peer && this.sent && this.sentMessage && h.e === this.peer.e && h.k === this.peer.k && h.n === this.peer.n) {
+      return { verdict, kem: { ...this.sentMessage } };
+    }
     if (this.sent) wipe(this.sent.ss);
-    this.peer = verdict.hello;
-    const built = await buildKemMessage(verdict.hello, this.o.rng);
+    this.peer = h;
+    const built = await buildKemMessage(h, this.o.rng);
     this.sent = { ct: built.ct, ss: built.ss };
-    return { verdict, kem: built.message };
+    this.sentMessage = built.message;
+    return { verdict, kem: { ...built.message } };
   }
 
   /** The peer's KEM message: "ignored" when it answers another hello of ours. */

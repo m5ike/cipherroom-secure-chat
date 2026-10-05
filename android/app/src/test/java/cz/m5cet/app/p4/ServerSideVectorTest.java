@@ -186,7 +186,10 @@ public class ServerSideVectorTest {
         assertEquals("replay", g.check("r3.a", "m1", now, now, false));
         assertEquals("ok", g.check("r3.b", "m1", now, now, false));
         assertEquals("too-old", g.check("r3.a", "m2", now - P4.REPLAY_WINDOW_MS - 1, now, false));
-        assertEquals("future", g.check("r3.a", "m3", now + P4.REPLAY_FUTURE_MS + 1, now, false));
+        // § 11 (6.12): a sender whose clock runs ahead is accepted, its time clamped — and its id remembered with now.
+        assertEquals("clamped", g.check("r3.a", "m3", now + P4.REPLAY_FUTURE_MS + 1, now, false));
+        assertEquals("replay", g.check("r3.a", "m3", now + P4.REPLAY_FUTURE_MS + 1, now, false));
+        assertEquals("ok", g.check("r3.a", "m3b", now + P4.REPLAY_FUTURE_MS, now, false));
         assertEquals("malformed", g.check("r3.a", "m|4", now, now, false));
         assertEquals("malformed", g.check("r3.a", "m5", "soon", now, false));
         assertEquals("ok", g.check("r3.a", "m1", now - P4.REPLAY_WINDOW_MS * 2, now, true)); // restored history: remembered only

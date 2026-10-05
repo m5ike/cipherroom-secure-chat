@@ -104,11 +104,13 @@ public final class Account {
     }
 
     private synchronized void save(JSONObject s) {
+        // 6.12 (F-16): the app locked meanwhile (a late answer) — nothing of the session stays in memory.
+        if (!app.vault.unlocked()) { state = null; return; }
         state = s;
-        if (app.vault.unlocked()) app.vault.putJson(Vault.Tier.USER, RECORD, s);
+        app.vault.putJson(Vault.Tier.USER, RECORD, s);
     }
 
-    /** Forget what was read before the vault opened (after unlock). */
+    /** Forget what was read before the vault opened (after unlock); 6.12: and at a lock (M5.forgetSecrets). */
     public synchronized void reload() { state = null; }
 
     /* --------------------------------------------- vault slot revisions (6.12) */

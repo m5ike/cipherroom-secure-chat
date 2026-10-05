@@ -272,6 +272,21 @@ describe("RoomProofs", () => {
     expect(proofs.status().rooms).toBe(0);
   });
 
+  it("reset(): the operator forgets a squatted room's verifier; the real key registers again", () => {
+    const proofs = RoomProofs.inMemory({ required: false, ttlMs: 365 * 86_400_000 });
+    const room = blindRoom();
+    const squatter = roomKey();
+    const real = roomKey();
+    const ps = sign(squatter, room);
+    expect(proofs.check(room, ps.nonce, ps.proof, "9.9.9.9")).toEqual({ kind: "proven", registered: true });
+    const pr = sign(real, room);
+    expect(proofs.check(room, pr.nonce, pr.proof, "1.1.1.1")).toMatchObject({ kind: "refused", reason: "mismatch" });
+    expect(proofs.reset(room)).toBe(true);
+    expect(proofs.reset(room)).toBe(false);
+    expect(proofs.reset("plain-room-name")).toBe(false);
+    expect(proofs.check(room, pr.nonce, pr.proof, "1.1.1.1")).toEqual({ kind: "proven", registered: true });
+  });
+
   it("refuses proofs unchecked from an address with too many failures, until the window passes", () => {
     let now = 5_000_000;
     const proofs = RoomProofs.inMemory({ required: false, ttlMs: 86_400_000 }, () => now);

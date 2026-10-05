@@ -27,6 +27,8 @@ import {
   WRAP_INFO, type SealedRoot, type ServerCreationOptions, type ServerRequestOptions,
 } from "./passkey";
 import { accountSigningKey, certifyDevice, ed25519Supported, loadIdentity, saveAttestation } from "./identity";
+import { certifyDeviceV2 } from "./p4/handshake";
+import { DEVICE_CERT_LIFETIME_MS } from "./p4/contract";
 import { generateRecoveryCode, recoveryMaterial } from "./recovery";
 import type { RegistrationProfile } from "./registration/form";
 import {
@@ -474,7 +476,15 @@ async function attestDevice(root: Uint8Array): Promise<void> {
     if (!(await ed25519Supported())) return;
     const account = await accountSigningKey(root);
     const device = await loadIdentity();
-    await saveAttestation(await certifyDevice(account.privateKey, account.publicKey, device.publicKey));
+    const v1 = await certifyDevice(account.privateKey, account.publicKey, device.publicKey);
+    // 6.12 (docs/protocol-v4.md § 12.3): a certificate with an expiry, renewed
+    // here when less than a third of its lifetime is left.
+    const now = Date.now();
+    const kept = device.attestation?.accountKey === account.publicKey ? device.attestation.v2 : undefined;
+    const v2 = kept && kept.exp - now > DEVICE_CERT_LIFETIME_MS / 3
+      ? kept
+      : await certifyDeviceV2(account.privateKey, device.publicKey, now + DEVICE_CERT_LIFETIME_MS, now).then((c) => ({ exp: c.exp, sig: c.sig })).catch(() => undefined);
+    await saveAttestation({ ...v1, ...(v2 ? { v2 } : {}) });
     if (session) await api("/api/account/identity", { method: "PUT", body: JSON.stringify({ publicKey: account.publicKey }) }, session.token).catch(() => undefined);
   } catch { /* signing as a device still works */ }
 }

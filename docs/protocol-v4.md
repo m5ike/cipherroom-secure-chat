@@ -394,8 +394,14 @@ are padded; chunks are not (their size is fixed except the last).
 Accepted message ids are remembered **persistently** per room as
 `b64url(H(join(LABEL.replay, roomId, id))[0:16])` (the first 16 bytes of the digest), at most
 `REPLAY.maxIdsPerRoom`, for `REPLAY.windowMs` (31 days). A payload whose `createdAt` is older
-than the window or more than `REPLAY.futureMs` (5 min) ahead is rejected (history restored from
-the user's own encrypted store is exempt). The store is encrypted like the rest of the device's
+than the window is rejected. One more than `REPLAY.futureMs` (5 min) ahead is **accepted, with
+`createdAt` clamped to the time it was received** (the sender's clock is off: the app says so
+once per member, with roughly by how much); its id is remembered with that clamped time, so a
+far-future date can neither keep an id past the window nor outlive the others when the per-room
+cap prunes the oldest. (A copy of such a message could be accepted again once its id has left
+the window — where a frame can be replayed at all: the ratchets refuse a used key, so only a
+relayed mailbox item within its bundle's key retention.) History restored from the user's own
+encrypted store is exempt from both checks. The store is encrypted like the rest of the device's
 data.
 
 ## 12. Identity, pins and verification
@@ -465,6 +471,10 @@ Server details (6.12):
   id can register a key of their own for a room that no 6.12 client has proven yet; the real members
   are then refused (`room-proof`) until the verifier expires. The squatter gets no more than a legacy
   join gave before 6.12.
+* **Reset.** A room whose verifier was registered first by someone who knew only the blind id
+  (trust on first use) refuses its real members until the TTL ends — or until the server's owner
+  forgets it: `POST /api/admin/security/room-proof/reset { roomId }` (owner role, audited with the
+  room hash only); the next proven join registers the real key.
 
 ## 14. Key transparency (F-13)
 
@@ -527,9 +537,12 @@ Server details (6.12):
 ## 15. Release manifests (F-02, installation check)
 
 `release.json` — `ReleaseManifest`: `files` sorted by `path` (ordinal string order, no duplicates),
-`sha256` lowercase hex, paths relative to the release root with `/`. Covers the built web assets,
-the server sources, `package.json`, `package-lock.json`, the installer and the scripts; never
-`node_modules`, `.env*`, data or keys.
+`sha256` lowercase hex, paths relative to the release root with `/`. Covers what the installer
+deploys — the server sources, `package.json`, `package-lock.json`, the installer and the scripts;
+never `node_modules`, `.env*`, data or keys. The built web assets (`dist/`) are left out by default,
+because the host builds them and the build is not reproducible byte for byte:
+`dist/public/release-web.json` covers what is served, and `npm run release:manifest -- --with-dist`
+includes `dist/` for prebuilt packages.
 `release.json.sig` — b64 Ed25519 over the exact bytes of `release.json`, by the developer's
 release key (never on the server); `release-signing.pub` — the raw public key, b64. The web build
 also writes `dist/public/release-web.json` (only the served assets) and its `.sig` when signed.

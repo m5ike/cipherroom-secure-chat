@@ -88,10 +88,6 @@ final class Files {
 
         int slot() { return 12 + chunkSize + 16; }
 
-        byte[] chunkAad(int seq) throws GeneralSecurityException {
-            return p4 ? Files4.chunkAad(id, seq, total) : Envelopes.fileChunkContext(id, seq, total);
-        }
-
         void close() {
             try { if (slots != null) slots.close(); } catch (IOException ignored) { }
             if (tmp != null) //noinspection ResultOfMethodCallIgnored
@@ -148,11 +144,13 @@ final class Files {
 
     private void onMeta(Peer p, String id, JSONObject f, boolean proxy) {
         if (incoming.containsKey(id) || outgoing.containsKey(id)) return;
-        if (f.optInt("v", 1) != 2) return; // v1 (3.0 and older) is not received here
-        // 6.12: a protocol-4 peer sends its file key over the ratchet first; without one, a file over
-        // its channel is not taken (the room key no longer protects files between protocol-4 clients).
-        byte[] fk = p == null || proxy || room.p4 == null ? null : room.p4.fileKey(p.id, id);
-        if (fk == null && p != null && !proxy && room.isV4(p)) { Log.w("files", "a file without its protocol-4 key refused"); return; }
+        int v = f.optInt("v", 1);
+        if (v != 2 && v != 4) return; // v1 (3.0 and older) is not received here
+        // 6.12 (§ 8): a protocol-4 transfer (v 4) opens only with the FK the sender's session handed us over the
+        // ratchet before the meta — never the room key; over a protocol-4 peer's channel a v2 file is not taken.
+        byte[] fk = v != 4 || p == null || proxy || room.p4 == null ? null : room.p4.fileKey(p.id, id);
+        if (v == 4 && fk == null) { Log.w("files", "a protocol-4 file without its key refused"); return; }
+        if (v == 2 && p != null && !proxy && room.isV4(p)) { Log.w("files", "a protocol-3 file from a protocol-4 peer refused"); return; }
         In in;
         try {
             in = fk != null ? new In(id, p, "p2p", Files4.fileKey(fk, id), true) : new In(id, p, proxy ? "proxy" : "p2p", room.keys.fileKey(id), false);
@@ -260,40 +258,70 @@ final class Files {
                 end = Envelopes.parse(body.body);
             }
             if (end.optInt("totalChunks") != in.total || end.optLong("size") != in.size) throw new GeneralSecurityException("size");
-            MessageDigest root = MessageDigest.getInstance("SHA-256");
-            w = new FileVault.Writer(room.app, in.id);
-            long bytes = 0;
-            byte[] iv = new byte[12];
-            for (int seq = 0; seq < in.total; seq++) {
-                byte[] ct = new byte[in.lengths[seq]];
-                in.slots.seek((long) seq * in.slot());
-                in.slots.readFully(iv);
-                in.slots.readFully(ct);
-                byte[] plain = Crypto.gcmOpen(in.key, iv, ct, in.chunkAad(seq));
-                if (plain.length > in.chunkSize) throw new GeneralSecurityException("chunk too large");
-                root.update(MessageDigest.getInstance("SHA-256").digest(plain));
-                w.write(plain, 0, plain.length);
-                bytes += plain.length;
+            String rootB64 = end.optString("root");
+            // 6.12 (F-16): the app is locked — the vault cannot take the file now. Checked in full, it stays
+            // encrypted under its transfer key, which goes to the lock inbox; the unlock stores it (LockedRooms).
+            if (LockedRooms.active()) {
+                decryptSlots(in.slots, in.key, in.id, in.total, in.chunkSize, in.lengths, in.size, rootB64, null, in.p4);
+                if (LockedRooms.keepFile(room.app, room.key, in.id, in.key, in.tmp, in.slots, in.chunkSize, in.total, in.size, in.lengths, rootB64, in.p4)) {
+                    in.close();
+                    done(in);
+                    return;
+                }
+                // The inbox closed meanwhile (the app was unlocked): stored the usual way.
             }
-            if (bytes != in.size) throw new GeneralSecurityException("size");
-            if (!Crypto.b64(root.digest()).equals(end.optString("root"))) throw new GeneralSecurityException("the file does not match its hash");
+            w = new FileVault.Writer(room.app, in.id);
+            decryptSlots(in.slots, in.key, in.id, in.total, in.chunkSize, in.lengths, in.size, rootB64, w, in.p4);
             w.close();
             w = null;
             in.close();
-            room.post(() -> {
-                ChatMessage m = in.message;
-                m.filePath = in.id;
-                m.fileProgress = -1;
-                m.fileVerified = in.signer != null;
-                m.verified = m.fileVerified && (in.from == null || Trust.VERIFIED.equals(in.from.trust)); // 6.12 § 12.1
-                room.fileDone(m);
-            });
+            done(in);
         } catch (Exception e) {
             if (w != null) w.abort();
             in.close();
             Log.w("files", "file " + in.id + " failed: " + e.getMessage());
             room.post(() -> failed(in, e.getMessage()));
         }
+    }
+
+    private void done(In in) {
+        room.post(() -> {
+            ChatMessage m = in.message;
+            m.filePath = in.id;
+            m.fileProgress = -1;
+            m.fileVerified = in.signer != null;
+            m.verified = m.fileVerified && (in.from == null || Trust.VERIFIED.equals(in.from.trust)); // 6.12 § 12.1
+            room.fileDone(m);
+        });
+    }
+
+    /**
+     * The chunks of a received file (its slots file: iv 12 ‖ ct per slot of
+     * 12 + chunkSize + 16 bytes) decrypted in order and checked against the
+     * end's root; into the vault (w), or only checked (w null). 6.12: also the
+     * unlock's way to store a file kept in the lock inbox (LockedRooms); `p4`:
+     * a protocol-4 transfer (its chunks' AAD is protocol 4's, § 8).
+     */
+    static void decryptSlots(RandomAccessFile slots, byte[] key, String id, int total, int chunkSize, int[] lengths, long size, String rootB64, FileVault.Writer w, boolean p4)
+        throws IOException, GeneralSecurityException {
+        MessageDigest root = MessageDigest.getInstance("SHA-256");
+        long bytes = 0;
+        byte[] iv = new byte[12];
+        int slot = 12 + chunkSize + 16;
+        for (int seq = 0; seq < total; seq++) {
+            if (lengths[seq] < 16 || lengths[seq] > chunkSize + 16) throw new GeneralSecurityException("chunk size");
+            byte[] ct = new byte[lengths[seq]];
+            slots.seek((long) seq * slot);
+            slots.readFully(iv);
+            slots.readFully(ct);
+            byte[] plain = Crypto.gcmOpen(key, iv, ct, p4 ? Files4.chunkAad(id, seq, total) : Envelopes.fileChunkContext(id, seq, total));
+            if (plain.length > chunkSize) throw new GeneralSecurityException("chunk too large");
+            root.update(MessageDigest.getInstance("SHA-256").digest(plain));
+            if (w != null) w.write(plain, 0, plain.length);
+            bytes += plain.length;
+        }
+        if (bytes != size) throw new GeneralSecurityException("size");
+        if (!Crypto.b64(root.digest()).equals(rootB64)) throw new GeneralSecurityException("the file does not match its hash");
     }
 
     private void failed(In in, String why) {
@@ -352,7 +380,7 @@ final class Files {
                 for (Lane lane : out.lanes) {
                     JSONObject sealedMeta = lane.p4 ? Files4.sealBody(lane.key, Files4.metaAad(id), meta.toString(), Rng.SYSTEM)
                         : Envelopes.sealFileBody(lane.key, Envelopes.fileMetaContext(id), meta, room.identity);
-                    JSONObject metaFrame = new JSONObject().put("kind", "file-meta").put("transferId", id).put("transport", transport).put("v", 2)
+                    JSONObject metaFrame = new JSONObject().put("kind", "file-meta").put("transferId", id).put("transport", transport).put("v", lane.p4 ? 4 : 2)
                         .put("iv", sealedMeta.getString("iv")).put("ciphertext", sealedMeta.getString("ciphertext"));
                     broadcast(lane.peers, metaFrame, "proxy-meta");
                 }
@@ -376,7 +404,7 @@ final class Files {
                 for (Lane lane : out.lanes) {
                     JSONObject sealedEnd = lane.p4 ? Files4.sealBody(lane.key, Files4.endAad(id), end.toString(), Rng.SYSTEM)
                         : Envelopes.sealFileBody(lane.key, Envelopes.fileEndContext(id), end, room.identity);
-                    JSONObject endFrame = new JSONObject().put("kind", "file-end").put("transferId", id).put("transport", transport).put("v", 2)
+                    JSONObject endFrame = new JSONObject().put("kind", "file-end").put("transferId", id).put("transport", transport).put("v", lane.p4 ? 4 : 2)
                         .put("iv", sealedEnd.getString("iv")).put("ciphertext", sealedEnd.getString("ciphertext"));
                     lane.endFrame = endFrame.toString();
                     broadcast(lane.peers, endFrame, "proxy-end");
@@ -449,20 +477,23 @@ final class Files {
             while (p.open() && p.buffered() > 1_048_576 && waited < 10_000) { Thread.sleep(20); waited += 20; }
             if (!p.open()) continue;
             if (p.bin) {
-                if (binary == null) binary = binaryFrame(id, seq, iv, ct, (byte) 0x01);
+                if (binary == null) binary = binaryFrame(id, seq, iv, ct, (byte) 0x01, lane.p4 ? 4 : 2);
                 p.sendBinary(binary);
             } else {
-                if (json == null) json = new JSONObject().put("kind", "file-chunk").put("transferId", id).put("seq", seq).put("transport", transport).put("v", 2)
+                if (json == null) json = new JSONObject().put("kind", "file-chunk").put("transferId", id).put("seq", seq).put("transport", transport).put("v", lane.p4 ? 4 : 2)
                     .put("iv", Crypto.b64(iv)).put("ciphertext", Crypto.b64(ct)).toString();
                 p.send(json);
             }
         }
     }
 
-    static byte[] binaryFrame(String id, int seq, byte[] iv, byte[] ct, byte type) {
+    static byte[] binaryFrame(String id, int seq, byte[] iv, byte[] ct, byte type) { return binaryFrame(id, seq, iv, ct, type, 2); }
+
+    /** 6.12: `version` 4 for a protocol-4 transfer (the web's binary-frames.ts carries the frame's v). */
+    static byte[] binaryFrame(String id, int seq, byte[] iv, byte[] ct, byte type, int version) {
         byte[] idb = id.getBytes(StandardCharsets.UTF_8);
         ByteBuffer b = ByteBuffer.allocate(4 + idb.length + 4 + 12 + ct.length);
-        b.put((byte) 0x4D).put(type).put((byte) 2).put((byte) idb.length).put(idb).putInt(seq).put(iv).put(ct);
+        b.put((byte) 0x4D).put(type).put((byte) version).put((byte) idb.length).put(idb).putInt(seq).put(iv).put(ct);
         return b.array();
     }
 

@@ -4,10 +4,11 @@
 
 import type { ElementDef, ANode, MenuItem, ScreenDef } from "./design";
 import type { DesignArea } from "./design-67";
+import { AREA as SECURITY } from "./design-612-security";
 import { AREA as P4 } from "./design-612-p4";
 import { AREA as NFC } from "./design-612-nfc";
 
-const AREAS: DesignArea[] = [P4, NFC];
+const AREAS: DesignArea[] = [SECURITY, P4, NFC];
 
 export const ELEMENTS_612: ElementDef[] = AREAS.flatMap((a) => a.elements ?? []);
 export const ACTIONS_612: Array<{ action: string; arg: string; help: string }> = AREAS.flatMap((a) => a.actions ?? []);

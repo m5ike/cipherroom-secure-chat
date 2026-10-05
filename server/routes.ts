@@ -283,6 +283,7 @@ export async function registerRoutes(
       for (const room of signaling.snapshot()) for (const peer of room.peers) { members += 1; if (peer.proven) provenMembers += 1; }
       return { kt: p4.kt.status(), directory: p4.keys.status(), proofs: { ...p4.proofs.status(), members, provenMembers } };
     },
+    resetRoomProof: (roomId) => p4.proofs.reset(roomId),
   };
   registerAdminApi(app, adminProviders);
   // The addons the operator switches on (saved connections, GUI templates).

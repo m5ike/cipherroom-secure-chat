@@ -330,11 +330,21 @@ public final class Handshake {
             return new Pair(roomId, check, selfPeerId, peerPeerId, buildHello(roomId, selfPeerId, peerPeerId, v3, signer, mb, acc, sth, r), r);
         }
 
-        /** Checks the peer's hello; when it is a valid v4 hello, the KEM message to send is `kem`. */
+        /**
+         * Checks the peer's hello; when it is a valid v4 hello, the KEM message
+         * to send is `kem`. Idempotent (handshake.ts, 6.12): the SAME hello again
+         * (its e, k, n) gets the same KEM message — a second encapsulation would
+         * leave the sides with different secrets if the peer used the first.
+         */
         public synchronized Verdict acceptHello(Object raw, long now) throws P4Error {
             if (done) throw new P4Error("state", "handshake finished");
             Verdict verdict = verifyHello(raw, roomId, peerPeerId, selfPeerId, check, now);
             if (!verdict.ok) return verdict;
+            JSONObject h = verdict.hello;
+            if (peer != null && sent != null && kem != null && h.optString("e").equals(peer.optString("e"))
+                && h.optString("k").equals(peer.optString("k")) && h.optString("n").equals(peer.optString("n"))) {
+                return verdict;
+            }
             if (sent != null) Prim.wipe(sent[1]);
             peer = verdict.hello;
             KemSent built = buildKemMessage(peer, rng);

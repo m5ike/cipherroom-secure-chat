@@ -25,7 +25,12 @@
     "check:menu:verbose": "bash -x scripts/pre-commit-check.sh",
     "android:assets": "tsx script/android-assets.ts",
     "android:build": "node script/android-build.mjs",
-    "android:release": "node script/android-build.mjs --release"
+    "android:release": "node script/android-build.mjs --release",
+    "release:manifest": "tsx script/release-manifest.ts manifest",
+    "release:web-manifest": "tsx script/release-manifest.ts web-manifest",
+    "release:keygen": "tsx script/release-manifest.ts keygen",
+    "release:sign": "tsx script/release-manifest.ts sign",
+    "release:verify": "tsx script/release-manifest.ts verify"
   },
   "dependencies": {
     "@jitl/quickjs-ng-wasmfile-release-sync": "^0.32.0",

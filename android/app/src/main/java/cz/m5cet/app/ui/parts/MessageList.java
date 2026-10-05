@@ -301,7 +301,7 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
         if (m.replyToId != null && !m.replyToId.isEmpty()) out.add(new BubbleRow.A11y(app.t("quote.go"), () -> parts.quote(m.replyToId)));
         cz.m5cet.app.fn.ModelIdentity model = ModelFace.of(m);
         if (model != null) out.add(new BubbleRow.A11y(app.t("fnm.about") + ": " + model.name, () -> parts.showSender(m.id)));
-        else if (!m.mine && !"sys".equals(m.kind)) out.add(new BubbleRow.A11y(app.t("sender.profile") + ": " + m.senderName, () -> parts.showSender(m.id)));
+        else if (!m.mine && !"sys".equals(m.kind)) out.add(new BubbleRow.A11y(app.t("sender.profile") + ": " + cz.m5cet.app.core.Names.normalize(m.senderName), () -> parts.showSender(m.id)));
         return out;
     }
 
@@ -342,6 +342,7 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
         RoomSession r = a.app().rooms.activeSession();
         String was = roomKey;
         roomKey = r == null ? "" : r.key;
+        restoresSeen = r == null ? -1 : r.restores();
         if (!roomKey.equals(was)) peek = false;
         all.clear();
         byId.clear();
@@ -422,9 +423,12 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
         if (ad != null && isAttachedToWindow()) ad.notifyDataSetChanged();
     }
 
+    /** 6.12: the room's history as last read (RoomSession.restores — it comes again after an unlock). */
+    private int restoresSeen = -1;
+
     void refreshHeaderState() {
         RoomSession r = a.app().rooms.activeSession();
-        if (r == null || !r.key.equals(roomKey)) { load(); return; }
+        if (r == null || !r.key.equals(roomKey) || r.restores() != restoresSeen) { load(); return; }
         empty.setText(a.app().t("room.empty"));
         empty.setTextColor(Ui.color(getContext(), "@muted", Color.GRAY));
         empty.setVisibility(items.isEmpty() ? VISIBLE : GONE);
@@ -590,6 +594,16 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
             try {
                 boolean position = Kinds.isPositionMessage(m);
                 ms.put("position", position).put("mapPreview", position && MapBubble.policyFor(a.app(), m) != null).put("hidden", hidden);
+                // 6.12 (F-22): names as the app shows them; a sender that looks like someone else gets "⚠ ";
+                // an operator's notice says it is the operator's, whatever its frame named.
+                boolean flag = senderFlagged(m);
+                ms.put("sender", cz.m5cet.app.core.Names.shown(m.senderName, flag)).put("senderFlag", flag)
+                    .put("forwarded", cz.m5cet.app.core.Names.normalize(m.forwardedFrom == null ? "" : m.forwardedFrom));
+                if (quote != null) quote.put("sender", cz.m5cet.app.core.Names.normalize(quote.optString("sender")));
+                if ("sys".equals(m.kind) && m.id != null && m.id.startsWith(cz.m5cet.app.core.Names.NOTICE_ID)) {
+                    String who = cz.m5cet.app.core.Names.operator(m.senderName, a.app().t("notice.operator"));
+                    ms.put("sender", who).put("text", who + ": " + ms.optString("text"));
+                }
                 // 6.10: the quote card, a run of one person's messages, the photo they share with the room.
                 if (quote != null) ms.put("replyTo", quote);
                 ms.put("cont", i > 0 && Runs.continues(items.get(i - 1), m)).put("photo", m.mine ? "" : senderPhoto(m));
@@ -624,6 +638,33 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
         @Override public int getItemCount() { return items.size(); }
     }
 
+    /** 6.12 (F-22): the room's members as the look-alike check sees them ({id, identity, name}), and my name — read at most every 2 s. */
+    private List<String[]> roster = new ArrayList<>();
+    private String rosterRoom = "", myName = "";
+    private long rosterAt;
+
+    private boolean senderFlagged(ChatMessage m) {
+        if (m.mine || "sys".equals(m.kind) || m.senderName == null || m.senderName.isEmpty()) return false;
+        long now = System.currentTimeMillis();
+        if (!rosterRoom.equals(m.roomKey) || now - rosterAt > 2000) {
+            List<String[]> next = new ArrayList<>();
+            String me = a.app().config.userName();
+            RoomSession r = a.app().rooms.session(m.roomKey);
+            org.json.JSONArray people = r == null ? new org.json.JSONArray() : r.peopleScope();
+            for (int i = 0; i < people.length(); i++) {
+                JSONObject u = people.optJSONObject(i);
+                if (u == null) continue;
+                next.add(new String[]{u.optString("id"), People.identity(u), u.optString("name")});
+                if (u.optBoolean("me")) me = u.optString("name", me);
+            }
+            roster = next;
+            myName = me;
+            rosterRoom = m.roomKey == null ? "" : m.roomKey;
+            rosterAt = now;
+        }
+        return cz.m5cet.app.core.Names.senderFlag(roster, myName, m.senderId, m.senderName);
+    }
+
     /** 6.10: the photo the sender shares with this room ("" without one: the design draws the monogram). */
     private String senderPhoto(ChatMessage m) {
         if (m.senderId == null || m.senderId.isEmpty() || "sys".equals(m.kind)) return "";
@@ -637,7 +678,7 @@ final class MessageList extends FrameLayout implements Renderer.Slot, Hides.List
         cz.m5cet.app.M5 app = a.app();
         View face = row.content.findViewWithTag("face");
         cz.m5cet.app.fn.ModelIdentity model = ModelFace.of(m);
-        if (face != null) face.setContentDescription(model != null ? app.t("fnm.about") + ": " + model.name : app.t("sender.profile") + ": " + m.senderName);
+        if (face != null) face.setContentDescription(model != null ? app.t("fnm.about") + ": " + model.name : app.t("sender.profile") + ": " + cz.m5cet.app.core.Names.normalize(m.senderName));
         View q = row.content.findViewWithTag("quote");
         if (q != null && quote != null) q.setContentDescription(app.t("quote.replyTo") + " " + quote.optString("sender") + ": " + quote.optString("text") + ". " + app.t("quote.go"));
     }

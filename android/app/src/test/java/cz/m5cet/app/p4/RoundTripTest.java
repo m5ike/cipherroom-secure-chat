@@ -49,6 +49,30 @@ public class RoundTripTest {
         return new JSONObject().put("t", "msg").put("id", id).put("p", new JSONObject().put("id", id).put("kind", "text").put("text", text).put("createdAt", 1)).toString();
     }
 
+    /** handshake.ts (6.12): the same peer hello again gets the same KEM message — a second encapsulation would split the secrets. */
+    @Test
+    public void acceptHelloIsIdempotentForTheSameHello() throws Exception {
+        Dev a = new Dev("peer-a"), b = new Dev("peer-b");
+        Handshake.Pair ha = Handshake.Pair.start(ROOM, CHECK, a.peerId, b.peerId, a.v3(), a.signer(), null, null, null, null);
+        Handshake.Pair hb = Handshake.Pair.start(ROOM, CHECK, b.peerId, a.peerId, b.v3(), b.signer(), null, null, null, null);
+        assertTrue(ha.acceptHello(hb.hello, System.currentTimeMillis()).ok);
+        String first = ha.kem.toString();
+        assertTrue(ha.acceptHello(new JSONObject(hb.hello.toString()), System.currentTimeMillis()).ok);
+        assertEquals(first, ha.kem.toString());
+        assertTrue(hb.acceptHello(ha.hello, System.currentTimeMillis()).ok);
+        assertTrue(ha.acceptKem(hb.kem));
+        assertTrue(hb.acceptKem(new JSONObject(first)));
+        assertEquals(Prim.b64(ha.establish().th), Prim.b64(hb.establish().th));
+        // Another hello of the peer is a new KEM message.
+        Handshake.Pair hc = Handshake.Pair.start(ROOM, CHECK, b.peerId, a.peerId, b.v3(), b.signer(), null, null, null, null);
+        Handshake.Pair hd = Handshake.Pair.start(ROOM, CHECK, a.peerId, b.peerId, a.v3(), a.signer(), null, null, null, null);
+        assertTrue(hd.acceptHello(hc.hello, System.currentTimeMillis()).ok);
+        String one = hd.kem.toString();
+        Handshake.Pair he = Handshake.Pair.start(ROOM, CHECK, b.peerId, a.peerId, b.v3(), b.signer(), null, null, null, null);
+        assertTrue(hd.acceptHello(he.hello, System.currentTimeMillis()).ok);
+        assertFalse(one.equals(hd.kem.toString()));
+    }
+
     @Test
     public void conversationInBothDirectionsOutOfOrder() throws Exception {
         Dev a = new Dev("peer-a"), b = new Dev("peer-b");

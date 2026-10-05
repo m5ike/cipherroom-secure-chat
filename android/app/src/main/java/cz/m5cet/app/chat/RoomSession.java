@@ -265,10 +265,19 @@ public final class RoomSession {
         if (replay == null) return true;
         long now = System.currentTimeMillis();
         String verdict = p4Message ? replay.check(keys.roomId, m.id, createdAt, now, false) : replay.checkId(keys.roomId, m.id, now);
-        if (!"ok".equals(verdict)) { Log.w("room", "message refused: " + verdict); return false; }
+        if ("clamped".equals(verdict)) {
+            // § 11 (6.12): dated more than 5 minutes ahead — the sender's clock is off. Accepted, with the time it came.
+            long ahead = createdAt instanceof Number ? ((Number) createdAt).longValue() - now : 0;
+            m.createdAt = now;
+            String who = m.senderId == null ? "" : m.senderId;
+            if (clockNoted.add(who)) system("⏱ " + m.senderName + ": " + tr("p4.clockAhead").replace("{min}", Long.toString(Math.max(5, ahead / 60_000))));
+        } else if (!"ok".equals(verdict)) { Log.w("room", "message refused: " + verdict); return false; }
         saveReplaySoon();
         return true;
     }
+
+    /** Senders whose clock was said to be off (once each). */
+    private final java.util.Set<String> clockNoted = new java.util.HashSet<>();
 
     private void saveReplaySoon() {
         if (replaySave != null || replayStore == null) return;
@@ -586,6 +595,7 @@ public final class RoomSession {
      * back; the downgrade rule), the pins (§ 12) and what the hello says.
      */
     private void onHello(Peer p, JSONObject raw) {
+        if (p4 != null && p4.repeatHello(p.id, raw)) return; // the same hello again: already answered
         if (p4 != null && !p4.helloSent(p.id)) sendHello(p); // ours first: the KEM message answers the hello we sent
         String refused = senderKeys.acceptHello(keys, identity, raw, p.id, myId);
         if ("key-mismatch".equals(refused)) { notice = app.t("room.keyMismatch"); status = "mismatch"; changed(); return; }
@@ -864,11 +874,11 @@ public final class RoomSession {
         if (text.isEmpty()) return;
         if (text.length() > 2000) text = text.substring(0, 2000);
         String kind = f.optString("kind", "wall");
-        String from = f.optString("from", "operator");
         if ("flash".equals(kind) || "wake".equals(kind)) { notice = text; changed(); return; }
         ChatMessage m = ChatMessage.system(key, text);
         m.id = "notice-" + f.optString("id", Long.toString(System.nanoTime(), 36));
-        m.senderName = ("message".equals(kind) ? "✉ " : f.optBoolean("pinned") ? "📌 " : "📣 ") + from;
+        // 6.12 (F-22): always the operator — the frame's "from" could name anyone (core/Names.operator).
+        m.senderName = ("message".equals(kind) ? "✉ " : f.optBoolean("pinned") ? "📌 " : "📣 ") + app.t("notice.operator");
         m.createdAt = f.optLong("at", System.currentTimeMillis());
         synchronized (messages) { for (ChatMessage x : messages) if (m.id.equals(x.id)) return; }
         add(m, false);
@@ -1236,7 +1246,9 @@ public final class RoomSession {
     private void raiseMine(String messageId, String state, String who) {
         ChatMessage hit = null;
         synchronized (messages) { for (int i = messages.size() - 1; i >= 0; i--) if (messages.get(i).id.equals(messageId)) { hit = messages.get(i); break; } }
-        if (hit == null || !hit.mine) return;
+        // 6.12 (F-16): locked, the history is not in memory — the state goes to the lock inbox for the unlock.
+        if (hit == null) { rooms.lockedState(this, messageId, who.isEmpty() ? "relay" : who, who.isEmpty() ? "relay" : who, state); return; }
+        if (!hit.mine) return;
         try { if (ChatMessage.rank(state) > ChatMessage.rank(hit.receipts.optString(who, ""))) hit.receipts.put(who.isEmpty() ? "relay" : who, state); } catch (JSONException ignored) { }
         hit.raise(state, who.isEmpty() ? "relay" : who);
         rooms.messageChanged(this, hit); // a new step of the timeline even when the status stays
@@ -1324,6 +1336,7 @@ public final class RoomSession {
             for (int i = messages.size() - 1, n = 0; i >= 0 && n < 2000; i--, n++) {
                 ChatMessage m = messages.get(i);
                 if (!m.mine || !ids.contains(m.id)) continue;
+                ids.remove(m.id);
                 String before = m.receipts.optString(p.id, "");
                 if (ChatMessage.rank(r.state) > ChatMessage.rank(before)) try { m.receipts.put(p.id, r.state); } catch (JSONException ignored) { }
                 m.raise(r.state, p.name);
@@ -1331,6 +1344,8 @@ public final class RoomSession {
             }
         }
         for (ChatMessage m : changedOnes) rooms.messageChanged(this, m);
+        // 6.12 (F-16): locked, the history is not in memory — receipts for older messages go to the lock inbox.
+        for (String id : ids) rooms.lockedState(this, id, p.id, p.name, r.state);
     }
 
     /** The UI showed these messages (room on screen, app unlocked): "read" to their senders. */
@@ -1686,11 +1701,42 @@ public final class RoomSession {
 
     void restore(List<ChatMessage> history) {
         post(() -> {
-            synchronized (messages) { messages.addAll(0, history); }
+            // 6.12 (F-16): locked again meanwhile — the history stays out of the memory.
+            if (!app.vault.unlocked()) return;
+            // 6.12 (F-16): what is in the list already (it arrived while locked, or before this restore) stays the live
+            // object; the history adds the rest before it.
+            synchronized (messages) {
+                java.util.Set<String> live = new java.util.HashSet<>();
+                for (ChatMessage x : messages) live.add(x.id);
+                List<ChatMessage> older = new ArrayList<>();
+                for (ChatMessage m : history) if (!live.contains(m.id)) older.add(m);
+                messages.addAll(0, older);
+            }
             for (ChatMessage m : history) seen.add(m.id);
-            if (!history.isEmpty()) lastActivity = history.get(history.size() - 1).createdAt;
+            if (!history.isEmpty()) lastActivity = Math.max(lastActivity, history.get(history.size() - 1).createdAt);
+            historyReady = true;
+            restores++;
             changed();
         });
+    }
+
+    /** 6.12 (F-16): the room's history is in its list (restored) — only then may the list be written over it (History.saveSession). */
+    private volatile boolean historyReady;
+    private volatile int restores;
+
+    boolean historyReady() { return historyReady; }
+
+    /** 6.12: how many times the history came into the list (the message list reads it again when this changes). */
+    public int restores() { return restores; }
+
+    /**
+     * 6.12 (F-16): the app locked with the room staying connected — the history
+     * leaves the memory (it was saved); what arrives now is sealed into the lock
+     * inbox (LockedRooms) and kept in the list until the unlock restores the rest.
+     */
+    void dropHistory() {
+        historyReady = false;
+        post(() -> { historyReady = false; synchronized (messages) { messages.clear(); } changed(); });
     }
 
     /* ---------------------------------------------------- 6.2 people */

@@ -7,6 +7,7 @@ import { dirname, join } from "node:path";
 import { brotliCompressSync, gzipSync, constants as zlib } from "node:zlib";
 import { sandboxBuildOptions } from "../server/functions/sandbox/bundle";
 import { buildAdminVendor } from "../server/admin-vendor";
+import { writeWebManifest } from "./release-manifest";
 
 // Server deps to bundle to reduce openat(2) syscalls, which helps cold start
 // times. Keep this list in sync with package.json dependencies actually used
@@ -22,6 +23,12 @@ const allowlist = [
   "openpgp",
   "sshpk",
   "bwip-js",
+  // 6.12: used by the server (registration's phone check since 6.4, the
+  // Android console's QR codes) but never bundled — `node dist/index.cjs`
+  // without node_modules (native install, Docker runtime) stopped on
+  // MODULE_NOT_FOUND. check.sh's first real run found it (runtime.health).
+  "libphonenumber-js",
+  "uqr",
 ];
 
 async function buildServer() {
@@ -108,6 +115,10 @@ async function buildAll() {
   await Promise.all([viteBuild(), buildServer(), buildSandbox(), buildAdminVendor()]);
   await copyRuntimeDeps();
   await precompress("dist/public/assets");
+  // 6.12 (F-02): the served files with their SHA-256 — last, once nothing in
+  // dist/public changes any more (check.sh verifies it; release:sign signs it).
+  const web = writeWebManifest("dist/public");
+  console.log(`release manifest of the web assets: ${web}`);
 }
 
 /**

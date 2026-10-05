@@ -189,6 +189,10 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         super.onResume();
         applySecureFlag();
         if (!screen.equals("splash") && !screen.equals("lock") && !screen.equals("enroll") && app.lock.isLocked() && app.lock.isSetUp()) route();
+        if (promptOnReturn) {
+            promptOnReturn = false;
+            if (screen.equals("lock") && !lockState.optBoolean("setup") && app.lock.biometricAvailable()) Io.mainLater(this::promptBiometric, 250);
+        }
         app.rooms.setVisible(screen.equals("room"));
     }
 
@@ -213,7 +217,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         long minSplash = app.design().anim("splash").optLong("minMs", 700);
         long wait = minSplash - (System.currentTimeMillis() - splashSince);
         if (screen.equals("splash") && wait > 0) { Io.mainLater(this::route, wait); return; }
-        if (Wiper.hasPending(this) && !app.config.enrolled()) { flash("", app.t("lock.wiped"), "error"); }
+        if (Wiper.hasPending(this) && !app.config.enrolled() && !Wiper.pendingQuiet(this)) { flash("", app.t("lock.wiped"), "error"); }
         if (!app.config.enrolled()) { stack.clear(); showScreen("enroll", true); return; }
         if (!app.lock.isSetUp()) { setupLock(); return; }
         if (app.lock.isLocked()) { showLock(); return; }
@@ -222,6 +226,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
 
     private void enterApp() {
         if (!app.rooms.connectedSessions().isEmpty() || !app.rooms.saved().isEmpty()) { /* loaded */ }
+        cz.m5cet.app.security.Duress.reconcile(app); // 6.12: a duress switch left on without its PIN goes off
         app.rooms.load();
         stack.clear();
         requestNotifications();
@@ -281,8 +286,15 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
         stack.clear();
         showScreen("lock", true);
         if (app.lock.waitSeconds() > 0) Io.mainLater(this::tickWait, 1000);
-        else if (bio && !"off".equals(app.lock.biometricMode())) Io.mainLater(this::promptBiometric, 250);
+        else if (bio && !"off".equals(app.lock.biometricMode())) {
+            // 6.12: locked while in the background (the auto-lock's time, the server's lock) — the prompt waits for the return.
+            if (app.inForeground()) Io.mainLater(this::promptBiometric, 250);
+            else promptOnReturn = true;
+        }
     }
+
+    /** 6.12: the lock screen came up in the background; the biometric prompt opens when the app is back. */
+    private boolean promptOnReturn;
 
     /** 6.2: $lock.wide — the window is wider than tall (landscape, a split screen side by side). */
     private boolean lockWide() {
@@ -340,6 +352,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             // 6.2: the account's session is checked (and unlocked with the kept root) once the vault is open
             case OK: try { lockState.put("error", ""); } catch (JSONException ignored) { } app.account.restore(); enterApp(); break;
             case WIPED: flash("", app.t("lock.wiped"), "error"); Io.mainLater(app::restart, 2500); break;
+            // 6.12 (F-16): the duress PIN — erased; the app starts again empty, without a word about it.
+            case DURESS: app.restart(); break;
             default:
                 try { lockState.put("error", r == AppLock.Result.WAIT ? "" : app.t("lock.wrongPin")); } catch (JSONException ignored) { }
                 showLock();
@@ -511,11 +525,15 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             case "settings.notify": s.put("notify", cz.m5cet.app.push.NotifyPrefs.get(app).scope()); break; // 6.7 notify
             case "log": s.put("log", cz.m5cet.app.ui.parts.CallLogUi.scope(this)); break; // 6.8 history
             case "settings.calls": cz.m5cet.app.ui.parts.CallLogUi.reconcile(app); s.put("settings", app.settings.scope()); break; // 6.8: the call log's switch shows what is real
-            case "settings.security":
+            case "settings.security": {
+                // 6.12 (F-16): what protects the PIN (pinKey: strongbox | tee | legacy | software) and the duress PIN.
+                String pinKey = app.lock.pinKeyLevel();
                 s.put("security", jo("biometricAvailable", !"off".equals(app.lock.biometricMode()) && Biometric.available(this), "biometric", app.vault.bioEnrolled(),
                     "pinLength", (double) app.lock.pinLength(), "maxAttempts", (double) app.lock.maxAttempts(), "wipe", app.config.lockPolicy().optBoolean("wipe", true), "screenshots", app.lock.screenshots(),
+                    "pinKey", pinKey, "pinKeyLabel", pinKey.isEmpty() ? "—" : app.t("set.security.pinKey." + pinKey), "duress", cz.m5cet.app.security.Duress.active(app),
                     "ktAlert", ktAlert()));
                 break;
+            }
             case "attach": case "send.options": s.put("composer", parts.composerScope()); break; // 6.8: + asVoice, voiceText, sealCode, count
             case "tools": s.put("tools", jo("ai", true, "voice", true, "nfc", cz.m5cet.app.nfc.Nfc.available(this))); break;
             case "call.options": { cz.m5cet.app.chat.RoomSession r = app.rooms.activeSession(); s.put("call", jo("active", r != null && !"off".equals(r.calls().state()))); break; }
@@ -568,6 +586,7 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             case "voice.lang": voices = null; loadVoices(); break;
             case "calls.speaker": { cz.m5cet.app.chat.RoomSession r = app.rooms.activeSession(); if (r != null) r.calls().route(); break; }
             case "callLog": cz.m5cet.app.ui.parts.CallLogUi.settingChanged(this, key); break; // 6.8: asks for the permission
+            case cz.m5cet.app.security.Duress.SETTING: parts.duressChanged(); break; // 6.12: on → the duress PIN is set now (or it goes off again)
             default:
                 // appearance.* / look.*: ui/look/Look redraws the screen in place (6.2) — no restart.
                 break;
@@ -658,7 +677,8 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
     @Override
     public void onAppState(String what) {
         switch (what) {
-            case "locked": if (!screen.equals("lock")) showLock(); break;
+            // 6.12 (F-16): with the data key the screen's own copies go — typed values, pictures, message lists.
+            case "locked": forgetUi(); if (!screen.equals("lock")) showLock(); break;
             case "wiped": flash("", app.t("lock.wiped"), "error"); Io.mainLater(app::restart, 2500); break;
             case "design": {
                 String now = screen;
@@ -671,6 +691,17 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
             case "device-blocked": case "device-wiped": case "device-retired": flash("", what, "error"); break;
             default: refresh();
         }
+    }
+
+    /**
+     * 6.12 (F-16): the app locked — what this screen holds of the open app
+     * leaves the memory: $form (a message being written, a search, a choice),
+     * the parts' pictures, lists and the assistant's conversation. The lock
+     * screen's own state stays.
+     */
+    private void forgetUi() {
+        form.clear();
+        parts.forget();
     }
 
     @Override public void onRoomsChanged() { if (screen.equals("rooms") || screen.equals("room") || screen.equals("call")) refresh(); parts.onRoomsChanged(); }
@@ -695,7 +726,13 @@ public final class MainActivity extends Activity implements Renderer.Host, Rende
 
     public void copy(String text) {
         ClipboardManager cm = getSystemService(ClipboardManager.class);
-        if (cm != null) cm.setPrimaryClip(ClipData.newPlainText("M5cet", text));
+        if (cm == null) return;
+        ClipData clip = ClipData.newPlainText("M5cet", text);
+        // 6.12: marked sensitive — Android 13+ does not show it in the clipboard preview (keyboards honour it too).
+        android.os.PersistableBundle extras = new android.os.PersistableBundle();
+        extras.putBoolean("android.content.extra.IS_SENSITIVE", true);
+        clip.getDescription().setExtras(extras);
+        cm.setPrimaryClip(clip);
     }
 
     public void share(String text) {

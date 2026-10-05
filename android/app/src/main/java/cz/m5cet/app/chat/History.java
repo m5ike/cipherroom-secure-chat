@@ -5,6 +5,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -29,14 +30,14 @@ public final class History {
 
     private static String record(String key) { return "hist-" + Rooms.hashKey(key); }
 
-    static List<ChatMessage> load(M5 app, String key) {
+    static synchronized List<ChatMessage> load(M5 app, String key) {
         List<ChatMessage> out = new ArrayList<>();
         JSONArray arr = app.vault.json(Vault.Tier.USER, record(key)).optJSONArray("m");
         if (arr != null) for (int i = 0; i < arr.length(); i++) { JSONObject o = arr.optJSONObject(i); if (o != null) out.add(ChatMessage.fromJson(o)); }
         return out;
     }
 
-    static void save(M5 app, String key, List<ChatMessage> messages) {
+    static synchronized void save(M5 app, String key, List<ChatMessage> messages) {
         if (!app.vault.unlocked()) return;
         JSONArray arr = new JSONArray();
         int from = Math.max(0, messages.size() - KEEP);
@@ -45,8 +46,32 @@ public final class History {
         catch (JSONException e) { Log.e("history", "cannot save", e); }
     }
 
+    /**
+     * 6.12 (F-16): a room's messages saved — its list when the history is in it;
+     * otherwise (not restored yet, or dropped at a lock: LockedRooms) merged
+     * into the history by id, never written over it.
+     */
+    static synchronized void saveSession(M5 app, RoomSession r) {
+        if (!app.vault.unlocked()) return;
+        List<ChatMessage> live = r.messagesCopy();
+        if (r.historyReady()) { save(app, r.key, live); return; }
+        if (live.isEmpty()) return;
+        LinkedHashMap<String, ChatMessage> byId = new LinkedHashMap<>();
+        for (ChatMessage m : load(app, r.key)) byId.put(m.id, m);
+        for (ChatMessage m : live) byId.put(m.id, m);
+        save(app, r.key, new ArrayList<>(byId.values()));
+    }
+
+    /** 6.12 (F-16): the lock inbox's items for a room merged into its history (LockedRooms.merge). */
+    static synchronized void merge(M5 app, String key, List<JSONObject> items, long now, java.util.Set<String> lostFiles) {
+        if (!app.vault.unlocked()) return;
+        List<ChatMessage> merged = LockedRooms.merge(load(app, key), key, items, now);
+        LockedRooms.markLostFiles(merged, lostFiles);
+        save(app, key, merged);
+    }
+
     static void saveSoon(M5 app, String key, RoomSession r) {
-        ScheduledFuture<?> old = pending.put(key, Io.later(() -> { pending.remove(key); save(app, key, r.messagesCopy()); }, 2000));
+        ScheduledFuture<?> old = pending.put(key, Io.later(() -> { pending.remove(key); saveSession(app, r); }, 2000));
         if (old != null) old.cancel(false);
     }
 

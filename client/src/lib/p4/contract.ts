@@ -51,7 +51,7 @@ export const MAILBOX_RENEW_BEFORE_MS = 24 * 60 * 60 * 1000;
 export const MAILBOX_KEEP_MS = 31 * 24 * 60 * 60 * 1000;
 /** Device certificates (v2) are valid this long; a device renews at sign-in when less than a third is left. */
 export const DEVICE_CERT_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000;
-/** Replay window: message ids remembered per room, and how old / how far ahead a message may be. */
+/** Replay window: message ids remembered per room, how old a message may be, and how far ahead it may be dated before its time is clamped to the receive time (§ 11). */
 export const REPLAY = { windowMs: 31 * 24 * 60 * 60 * 1000, futureMs: 5 * 60 * 1000, maxIdsPerRoom: 50_000 } as const;
 /** Padding buckets (bytes, padded length INCLUDING the 0x80 marker); above the last, multiples of it. */
 export const PAD_BUCKETS = [256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;

@@ -571,6 +571,12 @@ Co si operátor po nasazení všimne:
 
 ## Hardening checklist
 
+Většinu bodů (a mnohé další — nginx, TLS, firewall, sysctl, systemd, práva
+souborů, zálohy) ověří `sudo /opt/m5cet/check.sh`, viz
+[`install-check.md`](install-check.md); po každém `update.sh` běží jeho část
+pro balíček, konfiguraci a běh.
+
+- [ ] `check.sh` bez FAIL; WARN opravené nebo vědomě přijaté.
 - [ ] HTTPS / WSS s validním certifikátem.
 - [ ] HSTS header.
 - [ ] Silný `ADMIN_API_TOKEN` (≥32 B base64).

@@ -61,7 +61,14 @@ final class P4Device {
     /** The current bundle for the hello's `mb` (renewed when due), or null. */
     JSONObject bundle(ChatIdentity id) {
         try {
-            Mailbox.Keys k = mailbox(id).current(System.currentTimeMillis());
+            long now = System.currentTimeMillis();
+            if (!app.vault.unlocked()) {
+                // Locked (the rooms keep receiving): no new bundle now — its private keys could not be stored safely.
+                Mailbox.Keys best = null;
+                for (Mailbox.Keys k : store.mailbox().all()) if (k.bundle.exp > now && (best == null || k.bundle.exp > best.bundle.exp)) best = k;
+                return best == null ? null : best.bundle.json();
+            }
+            Mailbox.Keys k = mailbox(id).current(now);
             return k == null ? null : k.bundle.json();
         } catch (P4Error | RuntimeException e) {
             Log.w("p4", "no mailbox bundle: " + e.getMessage());

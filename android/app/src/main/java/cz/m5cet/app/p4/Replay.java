@@ -66,9 +66,11 @@ public final class Replay {
         public Guard(Store store, int pruneEvery) { this.store = store; this.pruneEvery = pruneEvery <= 0 ? 256 : pruneEvery; }
 
         /**
-         * "ok" (accepted and remembered), "replay", "too-old", "future" or
-         * "malformed". `restored`: from the user's own history — no freshness or
-         * replay check, only remembered.
+         * "ok" (accepted and remembered), "clamped" (accepted and remembered with
+         * the time `now`: it was dated more than REPLAY_FUTURE_MS ahead — the
+         * caller takes the receive time as its time; § 11 as amended in 6.12),
+         * "replay", "too-old" or "malformed". `restored`: from the user's own
+         * history — no freshness or replay check, only remembered.
          */
         public synchronized String check(String roomId, String id, Object createdAt, long now, boolean restored) {
             String key;
@@ -78,10 +80,13 @@ public final class Replay {
                 if (!safe) return "malformed";
                 long at = ((Number) createdAt).longValue();
                 if (at < now - P4.REPLAY_WINDOW_MS) return "too-old";
-                if (at > now + P4.REPLAY_FUTURE_MS) return "future";
                 if (store.has(roomId, key)) return "replay";
             }
-            return remember(roomId, key, safe ? ((Number) createdAt).longValue() : now, now);
+            // A far-future date is remembered with the receive time: it may neither keep the id past the window nor
+            // make it the last one the room's cap would prune.
+            boolean ahead = safe && ((Number) createdAt).longValue() > now + P4.REPLAY_FUTURE_MS;
+            String verdict = remember(roomId, key, safe && !ahead ? ((Number) createdAt).longValue() : now, now);
+            return ahead && !restored ? "clamped" : verdict;
         }
 
         /**

@@ -102,6 +102,11 @@ const STR: Record<string, { cs: string; en: string; de: string }> = {
     "This server admits only members who prove they hold the room key; this room cannot prove it (it is joined by its plain name).",
     "Dieser Server lässt nur Mitglieder ein, die den Raumschlüssel nachweisen; dieser Raum kann das nicht (er wird über seinen einfachen Namen betreten).",
   ),
+  "p4.clockAhead": T(
+    "hodiny jeho zařízení jdou asi o {min} min napřed — jeho zprávy ukazují čas, kdy přišly",
+    "their device's clock runs about {min} min ahead — its messages show the time they arrived",
+    "die Uhr des Geräts geht etwa {min} Min. vor — seine Nachrichten zeigen die Zeit ihres Eintreffens",
+  ),
   "p4.trust.new": T("nový klíč — neověřeno", "new key — not verified", "neuer Schlüssel — nicht verifiziert"),
   "p4.trust.verified": T("ověřeno", "verified", "verifiziert"),
   "p4.trust.account": T("klíč účtu — neověřeno", "account key — not verified", "Kontoschlüssel — nicht verifiziert"),

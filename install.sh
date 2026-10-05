@@ -74,6 +74,8 @@ fi
 . "${M5_SCRIPT_DIR}/installer/lib/deploy.sh"
 # shellcheck source=installer/lib/health.sh
 . "${M5_SCRIPT_DIR}/installer/lib/health.sh"
+# shellcheck source=installer/lib/check-hook.sh
+. "${M5_SCRIPT_DIR}/installer/lib/check-hook.sh"
 
 trap 'on_error "${LINENO}"' ERR
 _cleanup() {
@@ -349,6 +351,7 @@ ${C_GRN}$(L 'M5cet is installed.' 'M5cet je nainstalován.')${C_RST}
 
 $(L 'Manage' 'Správa'):
   ${INSTALL_DIR}/install.sh --status | --logs | --restart | --doctor
+  ${INSTALL_DIR}/check.sh                       $(L '# full installation + host check (read-only)' '# úplná kontrola instalace a hostitele (jen čtení)')
   ${INSTALL_DIR}/update.sh                      $(L '# new sources + rebuild' '# nové zdrojáky + rebuild')
   ${INSTALL_DIR}/update.sh --set KEY=VALUE      $(L '# change a parameter' '# změna parametru')
   ${INSTALL_DIR}/update.sh --repair             $(L '# fix a broken install' '# oprava rozbité instalace')
@@ -410,6 +413,7 @@ install_cmd() {
   [ "${DRY_RUN}" = "1" ] || chmod 0700 "$(state_dir)"
 
   fetch_sources
+  install_check_tool
   ensure_admin_token
 
   # Persist early: a failed build can then be repaired or uninstalled cleanly.
@@ -431,6 +435,7 @@ install_cmd() {
     run_health_checks 40 || warn "$(L "Some checks failed — see: ${INSTALL_DIR}/install.sh --logs" "Některé kontroly selhaly — viz: ${INSTALL_DIR}/install.sh --logs")"
   fi
   print_summary
+  offer_install_check
 }
 
 # Commands that act on an existing install.

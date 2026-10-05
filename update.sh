@@ -16,12 +16,15 @@
 #                                       compose / nginx files, clean rebuild
 #   ./update.sh --config-only --set …   apply settings without fetching sources
 #   ./update.sh --rollback              return to the most recent backup
+#
+# After an update check.sh checks the package, the configuration and the
+# runtime (--no-check skips it); a failed package-integrity check stops it.
 # =============================================================================
 set -Eeuo pipefail
 
 M5_SCRIPT_NAME="update.sh"
 M5_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for _lib in core ui system config deploy health; do
+for _lib in core ui system config deploy health check-hook; do
   # shellcheck disable=SC1090
   . "${M5_SCRIPT_DIR}/installer/lib/${_lib}.sh"
 done
@@ -32,6 +35,7 @@ DIR_ARG=""
 NO_FETCH="0"
 NO_ROLLBACK="0"
 SKIP_TESTS="0"
+NO_CHECK="0"
 BUILD_ANDROID="0"
 SET_KEYS=""          # names changed on the command line (values live in SET_<n>)
 SET_COUNT=0
@@ -56,6 +60,7 @@ $(L 'Options' 'Volby'):
   --branch NAME        $(L 'switch the tracked branch' 'přepne sledovanou větev')
   --config-only        $(L 'do not fetch sources, only apply settings' 'nestahuje zdrojáky, jen použije nastavení')
   --no-rollback        $(L 'keep the new version even if checks fail' 'ponechá novou verzi i při neúspěšné kontrole')
+  --no-check           $(L 'skip check.sh (package, config, runtime) after the update' 'po aktualizaci nespouštět check.sh (balíček, konfigurace, běh)')
   --dir PATH           $(L 'installation to act on (default: auto-detect)' 'instalace, se kterou pracovat (výchozí: autodetekce)')
   --ui auto|text|dialog   --lang cs|en
   -n, --non-interactive   -y, --yes   --dry-run   --verbose   --skip-tests
@@ -87,6 +92,7 @@ parse_args() {
       --branch)       _need_val "$@"; queue_set "BRANCH=$2"; shift ;;
       --config-only)  NO_FETCH="1" ;;
       --no-rollback)  NO_ROLLBACK="1" ;;
+      --no-check)     NO_CHECK="1" ;;
       --dir)          _need_val "$@"; DIR_ARG="$(abs_path "$2")"; shift ;;
       --ui)           _need_val "$@"; UI="$2"; shift ;;
       --lang)         _need_val "$@"; M5_LANG="$2"; shift ;;
@@ -231,6 +237,7 @@ update_cmd() {
   else
     fetch_sources
   fi
+  install_check_tool
 
   ensure_admin_token
   # Settings-only change on an unchanged deployment: no need to rebuild.
@@ -264,6 +271,14 @@ update_cmd() {
     fi
     run_health_checks 20 || true
     die "$(L "Update failed and was rolled back. Backup: ${LAST_BACKUP}" "Aktualizace selhala a byla vrácena. Záloha: ${LAST_BACKUP}")"
+  fi
+
+  # 6.12: check.sh — WARN / FAIL lines and the summary. Only a failed package
+  # integrity (files that do not match the release manifest or the checkout,
+  # a bad signature, changed web assets) stops here; the rest is reported.
+  if [ "${NO_CHECK}" != "1" ] && [ "${DRY_RUN}" != "1" ] && ! post_update_check; then
+    die "$(L "The package integrity check FAILED (see above): the files on disk do not match the release. The new version is running — find out what changed them before trusting it; back to the previous state: ${INSTALL_DIR}/update.sh --rollback" \
+            "Kontrola integrity balíčku SELHALA (viz výše): soubory na disku neodpovídají vydání. Nová verze běží — než jí začnete věřit, zjistěte, co je změnilo; návrat k předchozímu stavu: ${INSTALL_DIR}/update.sh --rollback")"
   fi
 
   printf '\n%s%s%s  v%s (%s)\n' "${C_GRN}" "$(L 'M5cet is up to date.' 'M5cet je aktuální.')" "${C_RST}" "${INSTALLED_VERSION:-?}" "${INSTALLED_COMMIT:0:12}"

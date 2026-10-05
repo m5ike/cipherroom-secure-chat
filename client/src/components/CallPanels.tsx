@@ -12,14 +12,14 @@ import type { RoomPresence } from "../lib/use-room-presence";
 import "../presence.css";
 
 /** 6.7 `presence`: each person's status dot and "last seen …", and the members whose connection went (held, listed as away); 6.7 profile: `info` opens a person's details and profile. */
-export function PeerList({ peers, lang, presence, onInfo }: { peers: PeerView[]; lang: Lang; presence?: RoomPresence; onInfo?: (peerId: string) => void }) {
+export function PeerList({ peers, lang, presence, onInfo, protocols }: { peers: PeerView[]; lang: Lang; presence?: RoomPresence; onInfo?: (peerId: string) => void; protocols?: Record<string, unknown> }) {
   const { tree, base } = useLayoutBase("part.peers", lang);
   const now = usePresenceClock();
   const seen = (id: string) => (presence ? presenceView(presence.factsOf(id), now, lang) : { presence: "", presenceLabel: "", seenText: "" });
   // A held member's own entry (the server's) stands for them, not a closed peer left behind.
   const list = [
-    ...peers.filter((p) => !presence?.isHeld(p.id)).map((p) => ({ id: p.id, name: p.name, short: p.id.slice(-12), status: p.status as string, audio: p.audio as string, ...seen(p.id) })),
-    ...(presence?.held([], []) ?? []).map((h) => ({ id: h.peerId, name: h.name, short: h.peerId.slice(-12), status: "away", audio: "off", ...seen(h.peerId) })),
+    ...peers.filter((p) => !presence?.isHeld(p.id)).map((p) => ({ id: p.id, name: p.name, short: p.id.slice(-12), status: p.status as string, audio: p.audio as string, unproven: p.proven === false, legacy: protocols?.[p.id] === 3, ...seen(p.id) })),
+    ...(presence?.held([], []) ?? []).map((h) => ({ id: h.peerId, name: h.name, short: h.peerId.slice(-12), status: "away", audio: "off", unproven: false, legacy: false, ...seen(h.peerId) })),
   ];
   return renderLayout(tree, {
     ...base,

@@ -150,7 +150,9 @@ public final class M5 extends Application {
     public void emit(String what) { Io.main(() -> { for (Listener l : listeners) l.onAppState(what); }); }
 
     public void onUnlocked() {
-        rooms.load();
+        // 6.12 (F-16): the saved rooms (rooms.load), and what arrived while locked (the lock inbox, also one a crash
+        // left) into the histories before the rooms' lists get them.
+        cz.m5cet.app.chat.LockedRooms.unlocked(this, rooms);
         emit("unlocked");
     }
 
@@ -166,6 +168,46 @@ public final class M5 extends Application {
     public void whenLocked() {
         if (notify != null) notify.neutralizeAll();
         cz.m5cet.app.ui.parts.CallLogUi.forget();
+        // 6.12 (F-16): the auto-lock's time passed with the data key still in memory — it goes now, on the
+        // main thread; a background caller (the timer, the alarm's receiver) waits for it, so the process is
+        // not frozen again before it happened.
+        if (lock != null && vault != null && vault.unlocked()) {
+            java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(1);
+            Io.main(() -> { try { lock.autolocked(); } finally { done.countDown(); } });
+            try { done.await(5, java.util.concurrent.TimeUnit.SECONDS); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        }
+    }
+
+    /** 6.12 (F-16): Settings › Security — a lock disconnects the rooms too (off: they keep receiving into the lock inbox). */
+    public static final String LOCK_DISCONNECT = "security.lockDisconnect";
+
+    /**
+     * 6.12 (security analysis F-16): what a lock takes out of the memory — the
+     * vault's data key is zeroed, and what was opened with it goes: each
+     * room's history (saved first, still with the key), the saved rooms, the
+     * account's session record, the people's links, the profile card and the
+     * profiles the rooms shared, the History's list, the speech consents. The
+     * screen drops its own (MainActivity on "locked").
+     *
+     * By default the open rooms stay connected with their own keys and keep
+     * receiving: what would be stored goes into the lock inbox
+     * (chat/LockedRooms), merged at the unlock (onUnlocked). With
+     * security.lockDisconnect the rooms close as well (their keys go) and
+     * nothing arrives until the unlock. Main thread (AppLock.lockNow /
+     * autolocked / onForeground).
+     */
+    public void forgetSecrets() {
+        try {
+            if (settings.bool(LOCK_DISCONNECT)) rooms.disconnectAll();
+            else rooms.lockReceiving();
+        } catch (RuntimeException e) { Log.w("lock", "the rooms did not lock cleanly: " + e.getClass().getSimpleName()); }
+        vault.lock();
+        account.reload();
+        cz.m5cet.app.contacts.Store.forget();
+        cz.m5cet.app.profile.Profiles.of(this).forget();
+        cz.m5cet.app.ui.parts.CallLogUi.forget();
+        cz.m5cet.app.voice.ServerVoiceConsent.reset();
+        Log.i("lock", "locked: the data key left the memory");
     }
 
     public void onWiped() { emit("wiped"); }

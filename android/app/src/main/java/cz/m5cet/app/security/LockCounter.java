@@ -13,6 +13,10 @@ import org.json.JSONObject;
  * before deriving. Killing the app during the derivation therefore cannot
  * forget the attempt: the pending mark survives, and the next attempt
  * settles it as a failure first (with its wait, lock-out or wipe).
+ *
+ * 6.12 (F-16): the record is sealed by a Keystore key that changes with every
+ * write (LockStore) — an older copy is a rollback and counts as every attempt
+ * used (rolledBack).
  */
 final class LockCounter {
     private LockCounter() {}
@@ -57,6 +61,16 @@ final class LockCounter {
 
     static JSONObject fresh() {
         try { return new JSONObject().put("attempts", 0).put("until", 0); }
+        catch (JSONException e) { throw new IllegalStateException(e); }
+    }
+
+    /**
+     * 6.12 (F-16, LockStore): the counter after a rollback was found — one
+     * short of the maximum, so the failure it is settled as is the last one
+     * (the policy's wipe, or the lock-out).
+     */
+    static JSONObject rolledBack(int maxAttempts) {
+        try { return new JSONObject().put("attempts", Math.max(0, maxAttempts - 1)).put("until", 0); }
         catch (JSONException e) { throw new IllegalStateException(e); }
     }
 }

@@ -114,5 +114,9 @@ doctor() {
     fi
   fi
   printf '\n%s: %d OK, %d FAIL, %d SKIP\n' "$(L 'Doctor' 'Diagnostika')" "${TESTS_PASSED}" "${TESTS_FAILED}" "${TESTS_SKIPPED}"
+  # 6.12: the thorough one — proxy, TLS, firewall, kernel, network, system.
+  if [ -n "${dir}" ] && [ -f "${dir}/check.sh" ]; then
+    info "$(L 'Full installation and host check (read-only):' 'Úplná kontrola instalace a hostitele (jen čtení):') ${dir}/check.sh"
+  fi
   [ "${TESTS_FAILED}" -eq 0 ]
 }

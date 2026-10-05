@@ -29,7 +29,9 @@ final class Resume {
     }
 
     static void save(M5 app, String key, String peerId, String secret) {
-        if (!app.vault.unlocked() || peerId.isEmpty() || secret.isEmpty()) return;
+        if (peerId.isEmpty() || secret.isEmpty()) return;
+        // 6.12 (F-16): locked (a reconnect while locked) — kept for the unlock in the lock inbox.
+        if (!app.vault.unlocked()) { if (LockedRooms.active()) LockedRooms.resume(key, peerId, secret); return; }
         JSONObject all = app.vault.json(Vault.Tier.USER, RECORD);
         try {
             JSONObject old = all.optJSONObject(key);

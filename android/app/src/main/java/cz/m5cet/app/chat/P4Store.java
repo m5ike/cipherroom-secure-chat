@@ -38,42 +38,79 @@ import cz.m5cet.app.security.Vault;
  */
 public final class P4Store {
     public interface Backend {
+        /** The record, or null while it cannot be read (the vault is locked). */
         JSONObject get(String name);
-        void put(String name, JSONObject value);
+        /** False while it cannot be written (the vault is locked). */
+        boolean put(String name, JSONObject value);
     }
 
-    /** The vault's user tier (only while it is open; locked: nothing is read or written). */
+    /** The vault's user tier — only while it is open (6.12: a lock forgets the data key; the rooms keep receiving). */
     static Backend vault(M5 app) {
         return new Backend() {
-            @Override public JSONObject get(String name) { return app.vault.unlocked() ? app.vault.json(Vault.Tier.USER, name) : new JSONObject(); }
-            @Override public void put(String name, JSONObject value) { if (app.vault.unlocked()) app.vault.putJson(Vault.Tier.USER, name, value); }
+            @Override public JSONObject get(String name) { return app.vault.unlocked() ? app.vault.json(Vault.Tier.USER, name) : null; }
+            @Override public boolean put(String name, JSONObject value) {
+                if (!app.vault.unlocked()) return false;
+                app.vault.putJson(Vault.Tier.USER, name, value);
+                return true;
+            }
         };
     }
 
     public static final class MemoryBackend implements Backend {
         private final Map<String, String> rows = new HashMap<>();
+        boolean locked;
         @Override public synchronized JSONObject get(String name) {
+            if (locked) return null;
             String v = rows.get(name);
             try { return v == null ? new JSONObject() : new JSONObject(v); } catch (JSONException e) { return new JSONObject(); }
         }
-        @Override public synchronized void put(String name, JSONObject value) { rows.put(name, value.toString()); }
+        @Override public synchronized boolean put(String name, JSONObject value) {
+            if (locked) return false;
+            rows.put(name, value.toString());
+            return true;
+        }
     }
+
+    /** Every record but the replay windows (those are per room, read when a room starts). */
+    static final String[] RECORDS = {"p4.seen", "p4.bundles", "p4.mailbox", "p4.accounts", "p4.kt", "p4.cert"};
 
     private final Backend backend;
     private final Map<String, JSONObject> cache = new HashMap<>();
+    /** Records read while locked: empty stand-ins, never written over the stored ones (read again after the unlock). */
+    private final java.util.Set<String> standIns = new java.util.HashSet<>();
+    /** Records changed while they could not be written; and replay windows waiting the same way. */
+    private final java.util.Set<String> dirty = new java.util.HashSet<>();
+    private final Map<String, JSONObject> pendingReplay = new HashMap<>();
 
     public P4Store(Backend backend) { this.backend = backend; }
 
     private JSONObject read(String name) {
         JSONObject o = cache.get(name);
-        if (o == null) { o = backend.get(name); cache.put(name, o); }
+        if (o != null) return o;
+        o = backend.get(name);
+        if (o == null) { o = new JSONObject(); standIns.add(name); }
+        cache.put(name, o);
         return o;
     }
 
-    private void write(String name) { backend.put(name, read(name)); }
+    private void write(String name) {
+        if (standIns.contains(name)) return; // never an empty stand-in over what the vault holds
+        if (!backend.put(name, read(name))) dirty.add(name);
+    }
 
-    /** Forgets what is cached (the vault was locked or wiped). */
-    public synchronized void reset() { cache.clear(); }
+    /** Reads every record now (before a lock takes the data key): protocol 4 then works from memory while locked. */
+    public synchronized void warm() { for (String r : RECORDS) read(r); }
+
+    /** After the unlock: what changed while locked into the vault; stand-ins forgotten (read again). */
+    public synchronized void flush() {
+        for (String name : standIns) cache.remove(name);
+        standIns.clear();
+        for (String name : new java.util.ArrayList<>(dirty)) if (cache.containsKey(name) && backend.put(name, cache.get(name))) dirty.remove(name);
+        for (String name : new java.util.ArrayList<>(pendingReplay.keySet())) if (backend.put(name, pendingReplay.get(name))) pendingReplay.remove(name);
+    }
+
+    /** Forgets what is cached (the vault was wiped). */
+    public synchronized void reset() { cache.clear(); standIns.clear(); dirty.clear(); pendingReplay.clear(); }
 
     static String kid(String pk) {
         try { return Ec.kid(pk); } catch (RuntimeException e) { return ""; }
@@ -264,8 +301,10 @@ public final class P4Store {
 
     /** The replay window of one room, kept as {replay key: createdAt}; saved by {@link #saveReplay}. */
     public synchronized Replay.MemoryStore replay(String roomId) {
-        Store store = new Store(roomId);
+        Store store = new Store();
         JSONObject saved = backend.get(replayName(roomId));
+        // Read while locked: a window of its own, never saved over the stored one.
+        if (saved == null) { store.standIn = true; saved = new JSONObject(); }
         LinkedHashMap<String, Long> rows = new LinkedHashMap<>();
         JSONObject ids = saved.optJSONObject("ids");
         if (ids != null) for (Iterator<String> it = ids.keys(); it.hasNext(); ) { String key = it.next(); rows.put(key, ids.optLong(key)); }
@@ -273,16 +312,19 @@ public final class P4Store {
         return store;
     }
 
-    public void saveReplay(String roomId, Replay.MemoryStore store) {
-        if (!(store instanceof Store)) return;
-        JSONObject ids = ((Store) store).snapshot(roomId);
-        try { backend.put(replayName(roomId), new JSONObject().put("ids", ids)); } catch (JSONException ignored) { }
+    /** Saves a room's window (while locked: kept, written at the unlock). */
+    public synchronized void saveReplay(String roomId, Replay.MemoryStore store) {
+        if (!(store instanceof Store) || ((Store) store).standIn) return;
+        JSONObject value;
+        try { value = new JSONObject().put("ids", ((Store) store).snapshot(roomId)); } catch (JSONException e) { return; }
+        String name = replayName(roomId);
+        if (backend.put(name, value)) pendingReplay.remove(name); else pendingReplay.put(name, value);
     }
 
     static String replayName(String roomId) { return "p4.replay." + Rooms.hashKey(roomId == null ? "" : roomId); }
 
     static final class Store extends Replay.MemoryStore {
-        Store(String roomId) { }
+        boolean standIn;
         synchronized void load(String roomId, LinkedHashMap<String, Long> rows) { rooms.put(roomId, rows); }
         synchronized JSONObject snapshot(String roomId) {
             JSONObject out = new JSONObject();
