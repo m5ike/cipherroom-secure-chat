@@ -32,6 +32,7 @@ enum ChatSamples {
         guard !done, DebugLaunch.screen != nil, let room = CoreModels.shared.rooms.active as? PreviewRoom else { return }
         done = true
         augment(room)
+        emptySlots(host) // at once: a slot drawn already is not drawn again for a new factory
         Task { await prepare(host, room: room) }
         let composer = CoreModels.shared.composer(for: host)
         if let id = arg("M5ChatReply") { composer.setReply(id) }
@@ -53,16 +54,20 @@ enum ChatSamples {
     /// The sample room's extra messages, the map's stand-in tiles and policy, other parts' slots drawn empty.
     static func prepare(_ host: DesignHost, room: PreviewRoom) async {
         if room.message("s1") == nil { augment(room) }
-        // Slots of other parts not registered yet draw nothing in the chat's pictures.
-        for name in ["userPanel", "roomTabs"] where !host.services.slots.has(name) {
-            host.services.slots.register(name) { _ in AnyView(Color.clear.frame(idealWidth: 0, idealHeight: 0)) }
-        }
-        host.refresh()
+        emptySlots(host)
         // The stand-in tiles first, then the policy: no preview asks the (non-existent) sample server.
         let server = CoreModels.shared.server
         await MapTiles.shared.seedForTesting(server: server)
         ChatMapPolicies.setForTesting(ChatMapPolicy.parse(JSONObject([("map", .object(JSONObject()))])), server: server)
         ChatState.shared.mapPolicyChanged()
+    }
+
+    /// Slots of other parts not registered yet draw nothing in the chat's pictures (not the DEBUG outline).
+    static func emptySlots(_ host: DesignHost) {
+        for name in ["userPanel", "roomTabs"] where !host.services.slots.has(name) {
+            host.services.slots.register(name) { _ in AnyView(Color.clear.frame(idealWidth: 0, idealHeight: 0)) }
+        }
+        host.refresh()
     }
 
     /// A picture, a voice message, a text file, a model's answer, a notice and a hidden one in the sample room.

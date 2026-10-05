@@ -1,18 +1,14 @@
 // ui/bubble/Kinds (6.2): what a message is, in the words the web and the audit
 // journal share (server/message-audit.ts KINDS) — text, file, image, audio,
 // video, location, tap, vanish, sealed, fn, private, forwarded, reply,
-// transcript — and where a position message points. Pure.
+// transcript — and where a position message points (the pattern itself is
+// Platform/Location's Where: one implementation in the app). Pure.
 
 import Foundation
 import M5Core
 import M5Proto
 
 enum BubbleKinds {
-    /// The web's and this app's position message: "📍 50.08804, 14.42076 (±12 m) https://…" ("📍 live …" while sharing).
-    /// Java's \s and \d (ASCII) — spelled out, ICU's would take more.
-    nonisolated(unsafe) private static let position = try! NSRegularExpression(
-        pattern: "^[ \\t\\n\\x{0B}\\f\\r]*📍[ \\t\\n\\x{0B}\\f\\r]*(?:live[ \\t\\n\\x{0B}\\f\\r]+)?(-?[0-9]{1,2}(?:\\.[0-9]+)?),[ \\t\\n\\x{0B}\\f\\r]*(-?[0-9]{1,3}(?:\\.[0-9]+)?)(?:[ \\t\\n\\x{0B}\\f\\r]*\\(±[ \\t\\n\\x{0B}\\f\\r]*([0-9]+)[ \\t\\n\\x{0B}\\f\\r]*m\\))?")
-
     static func of(_ m: ChatMessage) -> [String] {
         var k = [String]()
         let mime = (m.fileMime ?? "").lowercased()
@@ -32,37 +28,15 @@ enum BubbleKinds {
         return k
     }
 
-    /// A message whose point is the position (Tools › send position), not one that only carries it in the header.
-    static func isPositionMessage(_ m: ChatMessage) -> Bool {
-        m.sealed == nil && match(m.text) != nil
-    }
+    /// A message whose point is the position (Tools › send position), not one that only carries it in the header:
+    /// "📍 50.08804, 14.42076 (±12 m) https://…" ("📍 live …" while sharing).
+    static func isPositionMessage(_ m: ChatMessage) -> Bool { Where.isPositionMessage(text: m.text, sealed: m.sealed != nil) }
 
     /// Where the message points: {lat, lon, acc, at} from loc, else from a position message's text; nil when nowhere.
-    static func position(_ m: ChatMessage) -> JSONObject? {
-        if let loc = m.loc, let la = loc["lat"]?.numberValue, let lo = loc["lon"]?.numberValue {
-            if abs(la.double) <= 90 && abs(lo.double) <= 180 { return loc }
-        }
-        if m.sealed != nil { return nil }
-        guard let g = match(m.text), let a = g[0], let b = g[1], let lat = Double(a), let lon = Double(b) else { return nil }
-        if abs(lat) > 90 || abs(lon) > 180 { return nil }
-        var o = JSONObject([("lat", .double(lat)), ("lon", .double(lon))])
-        if let acc = g[2], let a = Int64(acc) { o["acc"] = .int(a) }
-        return o
-    }
+    static func position(_ m: ChatMessage) -> JSONObject? { Where.position(loc: m.loc, text: m.text, sealed: m.sealed != nil) }
 
     /// Only the header's position (location.inHeader): the small corner pin, not a map in the bubble.
     static func headerPosition(_ m: ChatMessage) -> Bool { m.loc != nil && !isPositionMessage(m) }
-
-    /// lat, lon, acc (or nil) of a position message's text.
-    private static func match(_ text: String) -> [String?]? {
-        let ns = text as NSString
-        guard let r = position.firstMatch(in: text, range: NSRange(location: 0, length: ns.length)) else { return nil }
-        func group(_ i: Int) -> String? {
-            let g = r.range(at: i)
-            return g.location == NSNotFound ? nil : ns.substring(with: g)
-        }
-        return [group(1), group(2), group(3)]
-    }
 }
 
 extension JSONObject {

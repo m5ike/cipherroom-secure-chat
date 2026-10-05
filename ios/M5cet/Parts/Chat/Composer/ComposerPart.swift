@@ -381,6 +381,7 @@ struct ComposerPart: View {
     // MARK: life
 
     private func start(_ composer: ComposerModel) {
+        (ChatVoiceHub.service as? VoiceServiceChatVoice)?.refresh()
         // A text waiting for the composer in $form ("composer": a shared text) goes into the field once.
         if let pending = ctx.host.form.removeValue(forKey: "composer") { composer.text = Expr.toText(pending) }
         if voice == nil {

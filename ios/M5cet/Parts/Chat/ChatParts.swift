@@ -21,7 +21,15 @@ enum ChatParts {
     static let actions = ["msg.quote", "msg.showHidden", "msg.mapPreview", "msg.map", "msg.source", "msg.open", "msg.save", "msg.share",
                           "msg.forward", "msg.forwardRoom", "msg.forwardTo", "message.recipients"]
 
-    static func install(into model: AppModel) { install(slots: model.design.slots, actions: model.design.actions) }
+    static func install(into model: AppModel) {
+        install(slots: model.design.slots, actions: model.design.actions)
+        // The composer's voice: Platform/Voice's VoiceService, asking in the design's words.
+        let services = model.design
+        ChatVoiceHub.service = VoiceServiceChatVoice(texts: { [weak services] key in
+            guard let services else { return key }
+            return Translator(design: services.design, lang: services.lang).t(key)
+        })
+    }
 
     static func install(slots: SlotRegistry, actions: AppActionRouter) {
         slots.register("messages") { ctx in AnyView(MessagesPart(ctx: ctx)) }
@@ -58,6 +66,7 @@ enum ChatParts {
     /// 6.12 (F-16): the core may call this too (Android Parts.forget).
     static func forget() {
         ChatState.shared.forgetAll()
+        VoiceService.shared.player.stop()
         Task { await MapTiles.shared.clear() }
     }
 }

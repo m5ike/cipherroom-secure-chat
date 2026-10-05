@@ -143,7 +143,7 @@ enum ChatActions {
     /// msg.map: the point in Apple Maps — after the confirmation every address of the app gets (the whole of it shown).
     static func openMap(_ m: ChatMessage, host: DesignHost) {
         guard let pos = BubbleKinds.position(m) else { return }
-        let url = PlaceLinks.appleMaps(pos.chatDouble("lat"), pos.chatDouble("lon"), label: m.mine ? "" : m.senderName)
+        let url = Where.appleMapsPinWeb(pos.chatDouble("lat"), pos.chatDouble("lon"), m.mine ? "" : m.senderName)
         if let u = URL(string: url) { ChatLinks.confirm(u, host: host) }
     }
 
@@ -182,7 +182,7 @@ private struct SourcePlayer: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(verbatim: title).font(.title3.bold()).foregroundStyle(fg)
-            ChatAudioBar(source: ChatMediaSource { (try ChatVaultMedia.data(vaultId: vaultId), "audio/mp4", "source.m4a") }, fg: fg, accent: accent, t: t, autoplay: true)
+            ChatAudioBar(id: vaultId + "-src", source: ChatMediaSource { (try ChatVaultMedia.data(vaultId: vaultId), "audio/mp4", "source.m4a") }, fg: fg, accent: accent, t: t, autoplay: true)
             HStack { Spacer(); Button(close) { dismiss() }.tint(accent) }
         }
         .padding(20)

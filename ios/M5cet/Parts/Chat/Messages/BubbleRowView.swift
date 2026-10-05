@@ -63,7 +63,16 @@ struct BubbleRowView: View {
             .simultaneousGesture(drag, including: message.kind == "sys" ? .subviews : .all)
             .simultaneousGesture(LongPressGesture(minimumDuration: 0.5, maximumDistance: 10).onEnded { _ in longPress() }, including: .all)
             .gesture(SecondaryClick { onMenu(anchor) })
-            .designMenuAnchor(anchor)
+            // The menu points at the bubble's content (on a wide iPad row, not the middle of the row).
+            .overlay(alignment: .topLeading) {
+                let f = frames.body ?? .zero
+                Color.clear
+                    .frame(width: max(1, f.width), height: max(1, f.height))
+                    .offset(x: f.minX + offset, y: f.minY)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .designMenuAnchor(anchor)
+            }
             .onChange(of: touching) { _, on in if !on { lifted(cancelled: true) } }
             .onChange(of: flashToken) { _, _ in startFlash() }
             .onAppear { if flashToken > 0 && flash == 0 { startFlash() } }

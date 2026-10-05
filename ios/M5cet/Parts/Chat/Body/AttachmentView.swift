@@ -23,7 +23,7 @@ struct AttachmentView: View {
             if ready {
                 switch type {
                 case .image: PicturePreview(message: m, host: ctx.host)
-                case .audio: ChatAudioBar(source: .message(m), fg: fg, accent: accent, t: ctx.t).padding(.top, 4)
+                case .audio: ChatAudioBar(id: m.id, source: .message(m), fg: fg, accent: accent, t: ctx.t).padding(.top, 4)
                 case .video: ChatVideoBox(message: m, maxWidth: MsgBodyView.maxW, t: ctx.t).padding(.top, 4)
                 case .pdf: PdfPreview(message: m, fg: fg, t: ctx.t, host: ctx.host)
                 case .text: TextHeadPreview(message: m, fg: fg, host: ctx.host)

@@ -243,22 +243,19 @@ final class ChatPartsTests: XCTestCase {
 
     // MARK: places, links, media
 
-    func testThePlaceSheetsLinksAreTheWebsTable() {
-        let nav = PlaceLinks.choices(PlaceLinks.nav, lat: 50.0875, lon: 14.4213, label: "Jana") { _ in false }
-        XCTAssertEqual(nav.map(\.id), ["apple", "google", "waze", "mapy", "osm"]) // Apple Maps is always here; the rest on the web
-        XCTAssertEqual(nav[0].url, "maps://?daddr=50.087500,14.421300&dirflg=d")
-        XCTAssertEqual(nav[1].url, "https://www.google.com/maps/dir/?api=1&destination=50.087500,14.421300")
-        XCTAssertEqual(nav[3].url, "https://mapy.com/fnc/v1/route?end=14.421300,50.087500&routeType=car_fast&navigate=true") // lon first
-        let withApps = PlaceLinks.choices(PlaceLinks.nav, lat: 50.0875, lon: 14.4213, label: "") { $0 == "waze://" }
-        XCTAssertEqual(withApps.prefix(2).map(\.id), ["apple", "waze"])
-        XCTAssertFalse(withApps[1].web)
-        let ride = PlaceLinks.choices(PlaceLinks.ride, lat: 50.0875, lon: 14.4213, label: "Jana Nováková") { _ in false }
-        XCTAssertEqual(ride.map(\.id), ["uber", "bolt", "liftago", "freenow"])
-        XCTAssertEqual(ride[0].url, "https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=50.087500&dropoff[longitude]=14.421300&dropoff[nickname]=Jana%20Nov%C3%A1kov%C3%A1")
-        XCTAssertFalse(ride[1].prefill)
-        XCTAssertEqual(PlaceLinks.destinationText(50.0875, 14.4213), "50.087500, 14.421300")
-        XCTAssertTrue(PlaceLinks.choices(PlaceLinks.nav, lat: 95, lon: 0, label: "") { _ in true }.isEmpty)
-        XCTAssertEqual(PlaceLinks.appleMaps(50.0875, 14.4213, label: "Jana"), "https://maps.apple.com/?ll=50.087500,14.421300&q=Jana")
+    func testThePlaceSheetUsesTheAppsOneTable() throws {
+        // The sheet's pickers are Platform/Location's GeoLinks (Android's and the web's table): Apple Maps first, then the web.
+        let nav = GeoLinks.iosChoices(GeoLinks.nav, 50.0875, 14.4213, "Jana") { _ in false }
+        XCTAssertEqual(nav.first?.id, "apple")
+        XCTAssertTrue(nav.dropFirst().allSatisfy(\.web))
+        XCTAssertTrue(GeoLinks.iosChoices(GeoLinks.ride, 50.0875, 14.4213, "") { _ in false }.contains { !$0.prefill }) // Bolt & co.: pasted
+        XCTAssertEqual(GeoLinks.destinationText(50.0875, 14.4213), "50.087500, 14.421300")
+        // "Open map": Apple Maps with the sender's name, never the address of anything else.
+        XCTAssertEqual(Where.appleMapsPinWeb(50.0875, 14.4213, "Jana"), "https://maps.apple.com/?ll=50.087500,14.421300&q=Jana")
+        XCTAssertTrue(ChatLinks.visible(Where.appleMapsPinWeb(50.0875, 14.4213, "Jana Nováková")))
+        // The kinds of a message agree with Where (one pattern).
+        let m = try XCTUnwrap(room.message("m4"))
+        XCTAssertEqual(BubbleKinds.isPositionMessage(m), Where.isPositionMessage(text: m.text, sealed: false))
     }
 
     func testTheTextsSpans() {
@@ -335,14 +332,59 @@ final class ChatPartsTests: XCTestCase {
         XCTAssertEqual(ComposerVoice.errorKey("tts-failed: boom"), "speakSend.failed")
         XCTAssertEqual(ComposerVoice.detail("tts-failed: boom"), "boom")
         XCTAssertEqual(ComposerVoice.detail("x"), "")
-        // Without Platform/Voice: no dictation, so "as voice" with an empty field says so and sends nothing.
+    }
+
+    func testSpeakAndSendFlows() async throws {
+        let fake = FakeVoice()
+        let saved = ChatVoiceHub.service
+        ChatVoiceHub.service = fake
+        defer { ChatVoiceHub.service = saved }
         let composer = core.composer(for: host)
-        composer.text = ""
         let v = ComposerVoice(composer: composer, host: host)
-        let before = room.messages.count
+        v.withMic = { then in then() }
+        // No dictation on this phone: "as voice" with an empty field says so and sends nothing.
+        fake.canDictate = false
+        composer.text = ""
+        var before = room.messages.count
         v.asVoice()
         XCTAssertEqual(v.state, .idle)
         XCTAssertEqual(room.messages.count, before)
+        // "Send the text as voice": the field spoken into a voice message, sent without the text; the field empties.
+        composer.text = "Ahoj všichni"
+        v.asVoice()
+        XCTAssertEqual(v.state, .speaking)
+        XCTAssertTrue(composer.voiceBusy) // Send waits meanwhile
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(v.state, .idle)
+        XCTAssertFalse(composer.voiceBusy)
+        XCTAssertEqual(fake.spoken, ["Ahoj všichni"])
+        var sent = try XCTUnwrap(room.messages.last)
+        XCTAssertEqual(sent.fileMime, "audio/mp4")
+        XCTAssertTrue(sent.fileName?.hasPrefix("hlas-") ?? false)
+        XCTAssertEqual(sent.text, "")
+        XCTAssertEqual(composer.text, "")
+        // "Speak it, send text": dictation into the field, the stop square, then the text goes as a message.
+        fake.canDictate = true
+        before = room.messages.count
+        v.asText()
+        XCTAssertEqual(v.state, .dictating)
+        try await Task.sleep(for: .milliseconds(50))
+        fake.say("Jsem na cestě", final: true)
+        XCTAssertEqual(composer.text, "Jsem na cestě")
+        v.toggleDictation() // the square: finish the words
+        fake.end()
+        XCTAssertEqual(v.state, .idle)
+        XCTAssertEqual(room.messages.count, before + 1)
+        sent = try XCTUnwrap(room.messages.last)
+        XCTAssertEqual(sent.text, "Jsem na cestě")
+        XCTAssertEqual(composer.text, "")
+        // A voice that failed leaves the text in the field.
+        fake.ttsError = "tts-none"
+        composer.text = "Zkouška"
+        v.asVoice()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(v.state, .idle)
+        XCTAssertEqual(composer.text, "Zkouška")
     }
 
     func testTheLockForgetsWhatThePartsHold() {
@@ -384,6 +426,49 @@ final class ChatPartsTests: XCTestCase {
         return ChatMessageScope.scope(m, previous: previous, room: room, byId: byId, roster: ChatRoster(room: room, userName: "Mike"),
                                       tr: { self.t($0) }, has: { ChatIcons.has($0) }, settings: host.settings, now: Millis.now)
     }
+}
+
+/// The composer's voice without a microphone: dictation and speech the test drives.
+@MainActor
+private final class FakeVoice: ChatVoiceService {
+    var canDictate = true
+    var ttsError: String?
+    var spoken: [String] = []
+    private var onText: ((String, Bool) -> Void)?
+    private var onEnded: ((String) -> Void)?
+
+    func microphone() async -> ChatMicAccess { .granted }
+    func startRecording() -> Bool { true }
+    var recordingElapsedMs: Int64 { 0 }
+    var recordingLevel: Double { 0 }
+    func stopRecording(keep: Bool) async -> ChatVoiceClip? { nil }
+    var dictationAvailable: Bool { canDictate }
+    var dictating: Bool { onEnded != nil }
+    var listening: Bool { onEnded != nil }
+
+    func dictate(onText: @escaping @MainActor (String, Bool) -> Void, onEnded: @escaping @MainActor (String) -> Void) {
+        self.onText = onText
+        self.onEnded = onEnded
+    }
+
+    func stopDictation() {}
+    func say(_ text: String, final: Bool) { onText?(text, final) }
+
+    func end() {
+        let e = onEnded
+        onText = nil
+        onEnded = nil
+        e?("")
+    }
+
+    func textToVoiceMessage(_ text: String, roomKey: String) async -> (clip: ChatVoiceClip?, error: String?) {
+        spoken.append(text)
+        if let ttsError { return (nil, ttsError) }
+        return (ChatVoiceClip(data: Data(repeating: 1, count: 64), mime: "audio/mp4", durationMs: 900), nil)
+    }
+
+    func voiceToText(_ clip: ChatVoiceClip, roomKey: String) async -> (text: String?, error: String?) { ("text", nil) }
+    func say(_ text: String) {}
 }
 
 @MainActor

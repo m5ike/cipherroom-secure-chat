@@ -4,90 +4,15 @@
 // Navigate offers the navigation apps on this iPhone (the known ones with their own
 // links — Apple Maps always), then the web; Ride the ride-hailing apps (Uber with
 // the destination; Bolt, Liftago, FREENOW open and get it from the clipboard), then
-// the web. The links are GeoLinks' table (client/src/lib/geo-links.ts); nothing is
-// opened until a line is tapped. "Open map" is Apple Maps after the renderer's
-// confirmation (the whole address shown).
+// the web. The links are Platform/Location's GeoLinks (one table with Android and
+// client/src/lib/geo-links.ts); nothing is opened until a line is tapped. "Open map"
+// is Apple Maps (Where.appleMapsPinWeb) after the confirmation every link gets.
 
 import M5Core
 import M5Design
 import M5Proto
 import SwiftUI
 import UIKit
-
-/// GeoLinks on iOS: the same table, with the iOS apps' own links (the schemes are in Info.plist's LSApplicationQueriesSchemes).
-enum PlaceLinks {
-    static let nav = "nav", ride = "ride"
-
-    struct Choice: Equatable {
-        let id: String
-        let name: String
-        let url: String
-        /// In the browser (the app is not here).
-        let web: Bool
-        /// The destination goes along; false: the app only opens (the destination is copied for pasting).
-        let prefill: Bool
-    }
-
-    private struct App: Sendable {
-        let id: String, kind: String, name: String
-        let prefill: Bool
-        /// The app's own link (nil: no app on iOS), the scheme that tells it is installed (nil: always there).
-        let app: (@Sendable (Double, Double, String) -> String)?
-        let scheme: String?
-        let web: (@Sendable (Double, Double, String) -> String)?
-    }
-
-    /// Degrees with six decimals, always a dot (the web's toFixed(6)).
-    static func deg(_ v: Double) -> String { String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), v) }
-    private static func ll(_ la: Double, _ lo: Double) -> String { deg(la) + "," + deg(lo) }
-    /// encodeURIComponent.
-    static func enc(_ s: String) -> String {
-        s.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.!~*'()")) ?? ""
-    }
-    private static func has(_ l: String, _ prefix: String) -> String { l.isEmpty ? "" : prefix + enc(l) }
-
-    private static let apps: [App] = [
-        App(id: "google", kind: nav, name: "Google Maps", prefill: true, app: { la, lo, _ in "comgooglemaps://?daddr=\(ll(la, lo))&directionsmode=driving" }, scheme: "comgooglemaps://",
-            web: { la, lo, _ in "https://www.google.com/maps/dir/?api=1&destination=\(ll(la, lo))" }),
-        App(id: "apple", kind: nav, name: "Apple Maps", prefill: true, app: { la, lo, _ in "maps://?daddr=\(ll(la, lo))&dirflg=d" }, scheme: nil,
-            web: { la, lo, _ in "https://maps.apple.com/?daddr=\(ll(la, lo))&dirflg=d" }),
-        App(id: "waze", kind: nav, name: "Waze", prefill: true, app: { la, lo, _ in "waze://?ll=\(ll(la, lo))&navigate=yes" }, scheme: "waze://",
-            web: { la, lo, _ in "https://waze.com/ul?ll=\(ll(la, lo))&navigate=yes" }),
-        App(id: "mapy", kind: nav, name: "Mapy.com", prefill: true, app: nil, scheme: nil,
-            web: { la, lo, _ in "https://mapy.com/fnc/v1/route?end=\(deg(lo)),\(deg(la))&routeType=car_fast&navigate=true" }),
-        App(id: "osmand", kind: nav, name: "OsmAnd", prefill: true, app: { la, lo, l in "osmandmaps://navigate?lat=\(deg(la))&lon=\(deg(lo))&z=16" + has(l, "&title=") }, scheme: "osmandmaps://", web: nil),
-        App(id: "sygic", kind: nav, name: "Sygic", prefill: true, app: { la, lo, _ in "com.sygic.aura://coordinate|\(deg(lo))|\(deg(la))|drive" }, scheme: "com.sygic.aura://", web: nil),
-        App(id: "osm", kind: nav, name: "OpenStreetMap", prefill: true, app: nil, scheme: nil, web: { la, lo, _ in "https://www.openstreetmap.org/directions?to=\(ll(la, lo))" }),
-        App(id: "uber", kind: ride, name: "Uber", prefill: true,
-            app: { la, lo, l in "uber://?action=setPickup&pickup=my_location&dropoff[latitude]=\(deg(la))&dropoff[longitude]=\(deg(lo))" + has(l, "&dropoff[nickname]=") }, scheme: "uber://",
-            web: { la, lo, l in "https://m.uber.com/ul/?action=setPickup&pickup=my_location&dropoff[latitude]=\(deg(la))&dropoff[longitude]=\(deg(lo))" + has(l, "&dropoff[nickname]=") }),
-        App(id: "bolt", kind: ride, name: "Bolt", prefill: false, app: nil, scheme: nil, web: { _, _, _ in "https://bolt.eu/" }),
-        App(id: "liftago", kind: ride, name: "Liftago", prefill: false, app: nil, scheme: nil, web: { _, _, _ in "https://www.liftago.cz/" }),
-        App(id: "freenow", kind: ride, name: "FREENOW", prefill: false, app: nil, scheme: nil, web: { _, _, _ in "https://www.free-now.com/" }),
-    ]
-
-    /// The picker's lines for one kind: the table's apps that are here (their own links), then the web links of the others.
-    static func choices(_ kind: String, lat: Double, lon: Double, label: String, installed: (String) -> Bool) -> [Choice] {
-        guard abs(lat) <= 90 && abs(lon) <= 180 else { return [] }
-        var out = [Choice](), web = [Choice]()
-        for a in apps where a.kind == kind {
-            if let link = a.app, a.scheme.map(installed) ?? true {
-                out.append(Choice(id: a.id, name: a.name, url: link(lat, lon, label), web: false, prefill: a.prefill))
-            } else if let w = a.web {
-                web.append(Choice(id: a.id, name: a.name, url: w(lat, lon, label), web: true, prefill: a.prefill))
-            }
-        }
-        return out + web
-    }
-
-    /// What goes to the clipboard for an app that cannot take the destination: "50.087500, 14.421300".
-    static func destinationText(_ lat: Double, _ lon: Double) -> String { deg(lat) + ", " + deg(lon) }
-
-    /// "Open map": the point in Apple Maps (with the sender's name as its label).
-    static func appleMaps(_ lat: Double, _ lon: Double, label: String) -> String {
-        "https://maps.apple.com/?ll=\(ll(lat, lon))" + (label.isEmpty ? "" : "&q=" + enc(label))
-    }
-}
 
 @MainActor
 enum PlaceSheet {
@@ -125,7 +50,7 @@ private struct PlaceSheetView: View {
         let label = message.mine ? "" : message.senderName
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 0) {
-                Text(verbatim: picking.map { t.t($0 == PlaceLinks.nav ? "loc.navigateWith" : "loc.rideWith") } ?? title)
+                Text(verbatim: picking.map { t.t($0 == GeoLinks.nav ? "loc.navigateWith" : "loc.rideWith") } ?? title)
                     .font(.system(size: 20 * scale, weight: .bold))
                     .foregroundStyle(fg)
                     .padding(.bottom, 12)
@@ -142,10 +67,10 @@ private struct PlaceSheetView: View {
                             .font(.system(size: 14 * scale)).foregroundStyle(fg.opacity(0.8)).textSelection(.enabled).padding(.top, 4)
                     }
                     HStack(spacing: 6) {
-                        action("navigation", t.t("loc.navigate"), fg: fg, accent: accent) { picking = PlaceLinks.nav }
-                        action("hand", t.t("loc.ride"), fg: fg, accent: accent) { picking = PlaceLinks.ride }
+                        action("navigation", t.t("loc.navigate"), fg: fg, accent: accent) { picking = GeoLinks.nav }
+                        action("hand", t.t("loc.ride"), fg: fg, accent: accent) { picking = GeoLinks.ride }
                         action("copy", t.t("loc.copy"), fg: fg, accent: accent) {
-                            host.copy(PlaceLinks.destinationText(lat, lon))
+                            host.copy(GeoLinks.destinationText(lat, lon))
                             host.flash(title: "", text: "✓ " + t.t("loc.copy"), level: .success)
                         }
                     }
@@ -187,8 +112,8 @@ private struct PlaceSheetView: View {
     /// The picker: the apps here first (their icon), then the web; each line says what happens.
     private func picker(_ kind: String, lat: Double, lon: Double, label: String, fg: Color) -> some View {
         let t = host.translator
-        let list = PlaceLinks.choices(kind, lat: lat, lon: lon, label: label) { scheme in
-            URL(string: scheme).map { UIApplication.shared.canOpenURL($0) } ?? false
+        let list = GeoLinks.iosChoices(kind, lat, lon, label) { scheme in
+            URL(string: scheme + "://").map { UIApplication.shared.canOpenURL($0) } ?? false
         }
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(list, id: \.id) { choice in
@@ -217,15 +142,18 @@ private struct PlaceSheetView: View {
     }
 
     /// Opens a choice: in its app (its link), or in the browser; an app that cannot take the destination gets it pasted.
-    private func open(_ c: PlaceLinks.Choice, lat: Double, lon: Double) {
+    private func open(_ c: GeoLinks.Choice, lat: Double, lon: Double) {
         if !c.prefill {
-            host.copy(PlaceLinks.destinationText(lat, lon))
+            host.copy(GeoLinks.destinationText(lat, lon))
             host.flash(title: "", text: host.translator.t("loc.copied"), level: .info)
         }
-        guard let url = URL(string: c.url) else { return }
-        UIApplication.shared.open(url) { ok in
-            if !ok { Task { @MainActor in host.flash(title: "", text: host.translator.t("file.noApp"), level: .warn) } }
+        // In its app (its link, else just the app), or in the browser; an app that refuses it: its web link.
+        let tries = [c.uri ?? c.pkg.map { $0 + "://" }, c.fallback].compactMap { $0 }.compactMap(URL.init(string:))
+        func attempt(_ i: Int) {
+            guard i < tries.count else { host.flash(title: "", text: host.translator.t("file.noApp"), level: .warn); return }
+            UIApplication.shared.open(tries[i]) { ok in if !ok { Task { @MainActor in attempt(i + 1) } } }
         }
+        attempt(0)
         close(nil)
     }
 }

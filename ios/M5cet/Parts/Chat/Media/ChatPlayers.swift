@@ -142,8 +142,11 @@ final class ChatPlayer {
     }
 }
 
-/// AudioBar: a play / pause circle, the position, the time.
+/// AudioBar: a play / pause circle, the position, the time — on Platform/Voice's VoicePlayer (one clip at a
+/// time; AAC / MP4, MP3, WAV and the web's WebM / Ogg Opus voice messages), the bytes opened only when played.
 struct ChatAudioBar: View {
+    /// The clip's id for the player (the message's, or "<id>-src" for a transcript's recording).
+    let id: String
     let source: ChatMediaSource
     var durationMs: Int64 = 0
     let fg: Color
@@ -151,47 +154,76 @@ struct ChatAudioBar: View {
     let t: (String) -> String
     /// Starts playing as soon as it is shown (the transcript's recording).
     var autoplay = false
-    @State private var player = ChatPlayer(video: false)
     @State private var dragging: Double?
+    @State private var failed = false
+    @State private var token = ChatMediaToken()
 
     var body: some View {
-        HStack(spacing: 0) {
-            Button { player.toggle() } label: {
-                DesignIcon(name: player.playing ? "square" : "play", size: 18, color: fg)
-                    .frame(width: 36, height: 36)
-                    .background(Circle().fill(accent.opacity(0.18)))
-                    .contentShape(Circle())
+        let player = VoiceService.shared.player
+        let mine = player.current == id
+        let playing = mine && player.playing
+        TimelineView(.periodic(from: .now, by: 0.2)) { _ in
+            HStack(spacing: 0) {
+                Button { toggle() } label: {
+                    DesignIcon(name: playing ? "square" : "play", size: 18, color: fg)
+                        .frame(width: 36, height: 36)
+                        .background(Circle().fill(accent.opacity(0.18)))
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .hoverEffect(.highlight)
+                .accessibilityLabel(Text(verbatim: t(playing ? "media.a11y.pause" : "media.a11y.play")))
+                SeekBar(value: dragging ?? (mine ? player.progress : 0), fg: fg, accent: accent) { v, done in
+                    guard VoiceService.shared.player.current == id else { return }
+                    dragging = done ? nil : v
+                    if done { VoiceService.shared.player.seek(v) }
+                }
+                .padding(.horizontal, 10)
+                .accessibilityHidden(true)
+                Text(verbatim: timeText(mine: mine, playing: playing))
+                    .font(.system(size: 11.5).monospacedDigit())
+                    .foregroundStyle(fg.opacity(0.8))
             }
-            .buttonStyle(.plain)
-            .hoverEffect(.highlight)
-            .accessibilityLabel(Text(verbatim: t(player.playing ? "media.a11y.pause" : "media.a11y.play")))
-            SeekBar(value: dragging ?? player.position, fg: fg, accent: accent) { v, done in
-                guard player.prepared else { return }
-                dragging = done ? nil : v
-                if done { player.seek(v) }
-            }
-            .padding(.horizontal, 10)
-            .accessibilityHidden(true)
-            Text(verbatim: timeText)
-                .font(.system(size: 11.5).monospacedDigit())
-                .foregroundStyle(fg.opacity(0.8))
         }
         .frame(minWidth: 200)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(verbatim: t("media.a11y.audio")))
-        .onAppear {
-            player.set(source, durationMs: durationMs)
-            if autoplay { player.toggle() }
+        .onAppear { if autoplay { toggle() } }
+        .onDisappear {
+            if VoiceService.shared.player.current == id { VoiceService.shared.player.stop() }
+            ChatMedia.released(token)
         }
-        .onDisappear { player.release() }
     }
 
-    private var timeText: String {
-        if player.failed { return "⚠" }
-        if player.playing { return chatMediaTime(player.positionMs) }
-        return player.durationMs > 0 ? chatMediaTime(player.durationMs) : "▶"
+    private func toggle() {
+        let player = VoiceService.shared.player
+        if player.current == id {
+            player.toggle()
+            if player.playing { ChatMedia.willPlay(token) { VoiceService.shared.player.pause() } }
+            return
+        }
+        do {
+            let (data, mime, _) = try source.open()
+            ChatMedia.willPlay(token) { if VoiceService.shared.player.current == id { VoiceService.shared.player.pause() } }
+            try player.play(id: id, data: data, mime: mime)
+            failed = false
+        } catch {
+            failed = true
+        }
+    }
+
+    /// AudioBar: "▶" before it is opened (its length unknown), the position while playing, the length otherwise.
+    private func timeText(mine: Bool, playing: Bool) -> String {
+        if failed { return "⚠" }
+        let player = VoiceService.shared.player
+        if mine && playing { return chatMediaTime(Int64(player.position * 1000)) }
+        if mine && player.duration > 0 { return chatMediaTime(Int64(player.duration * 1000)) }
+        return durationMs > 0 ? chatMediaTime(durationMs) : "▶"
     }
 }
+
+/// Who plays now (ChatMedia's one-at-a-time between the audio bars and the videos).
+final class ChatMediaToken {}
 
 /// AudioBar's SeekBar: a thin track, the played part and the thumb in the accent colour; dragging seeks.
 private struct SeekBar: View {
