@@ -24,17 +24,22 @@ public enum Envelopes {
         public let valid: Bool
         public let accountKey: String?
         public let accountValid: Bool
+        public init(publicKey: String, valid: Bool, accountKey: String?, accountValid: Bool) {
+            self.publicKey = publicKey; self.valid = valid; self.accountKey = accountKey; self.accountValid = accountValid
+        }
     }
 
     public struct Body: Sendable {
         public let body: String
         public let signer: Signer?
+        public init(body: String, signer: Signer?) { self.body = body; self.signer = signer }
     }
 
     public struct Opened: Sendable {
         public let payload: JSONObject
         public let version: Int
         public let signer: Signer?
+        public init(payload: JSONObject, version: Int, signer: Signer?) { self.payload = payload; self.version = version; self.signer = signer }
     }
 
     /* ------------------------------------------------------------ bodies */

@@ -134,6 +134,11 @@ public struct JSONObject: Sendable, Hashable, Sequence {
     public func optString(_ key: String, _ fallback: String = "") -> String { values[key]?.stringValue ?? fallback }
     public func int64(_ key: String) -> Int64? { values[key]?.int64Value }
     public func optInt64(_ key: String, _ fallback: Int64 = 0) -> Int64 { values[key]?.numberValue.map { Int64(exactly: $0.double.rounded(.towardZero)) ?? fallback } ?? fallback }
+    /// org.json's optInt(key, fallback): a number (truncated toward zero), else the fallback.
+    public func optInt(_ key: String, _ fallback: Int = 0) -> Int {
+        guard let d = values[key]?.numberValue?.double else { return fallback }
+        return Int(exactly: d.rounded(.towardZero)) ?? fallback
+    }
     public func int(_ key: String) -> Int? { values[key]?.int64Value.flatMap { Int(exactly: $0) } }
     public func double(_ key: String) -> Double? { values[key]?.numberValue?.double }
     public func bool(_ key: String) -> Bool? { values[key]?.boolValue }

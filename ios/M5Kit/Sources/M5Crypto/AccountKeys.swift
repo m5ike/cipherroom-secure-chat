@@ -22,6 +22,13 @@ public enum AccountKeys {
     private static let proofInfo = Crypto.utf8("m5cet:key-proof:v1")
     private static let profileInfo = Crypto.utf8("m5cet:profile:v1")
 
+    /// The account's Ed25519 signing seed from its root (identity.ts accountSigningKey; android Account.accountSeedOf):
+    /// HKDF(root, salt "m5cet:account:v1", info "m5cet:account-sign:v1", 32).
+    public static func accountSeed(root: Bytes) -> Bytes { Crypto.hkdf(root, Crypto.utf8("m5cet:account:v1"), Crypto.utf8("m5cet:account-sign:v1"), 32) }
+
+    /// The account key (raw Ed25519 public key, b64) of a root.
+    public static func accountKey(root: Bytes) throws -> String { Prim.b64(try Prim.ed25519Public(accountSeed(root: root))) }
+
     /// The key proof (base64url, 43 characters) the server checks at sign-in.
     public static func keyProof(_ root: Bytes) -> String { Crypto.b64url(Crypto.hkdf(root, prfSalt, proofInfo, 32)) }
 
