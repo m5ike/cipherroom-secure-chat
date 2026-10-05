@@ -12,6 +12,10 @@
 	<key>aps-environment</key>
 	<string>development</string>
 
+	<!-- Communication notifications (INSendMessageIntent: the sender's name and picture when the privacy level allows). -->
+	<key>com.apple.developer.usernotifications.communication</key>
+	<true/>
+
 	<!-- Core NFC: tag sessions (ISO 7816, MIFARE, FeliCa, ISO 15693) and NDEF sessions. -->
 	<key>com.apple.developer.nfc.readersession.formats</key>
 	<array>

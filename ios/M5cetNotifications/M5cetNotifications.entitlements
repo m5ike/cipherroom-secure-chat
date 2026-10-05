@@ -6,6 +6,10 @@
      biometric, duress, counter and signing keys) is not the extension's. -->
 <plist version="1.0">
 <dict>
+	<!-- Communication notifications (INSendMessageIntent: the sender's name and picture when the privacy level allows). -->
+	<key>com.apple.developer.usernotifications.communication</key>
+	<true/>
+
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>$(M5_APP_GROUP)</string>

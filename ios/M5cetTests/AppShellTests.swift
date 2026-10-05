@@ -90,7 +90,7 @@ final class AppShellTests: XCTestCase {
 
     func testBackgroundModes() {
         let modes = Set(info["UIBackgroundModes"] as? [String] ?? [])
-        XCTAssertEqual(modes, ["remote-notification", "voip", "audio", "processing"])
+        XCTAssertEqual(modes, ["remote-notification", "voip", "audio", "fetch", "location", "processing"])
         XCTAssertEqual(info["BGTaskSchedulerPermittedIdentifiers"] as? [String], ["cz.m5cet.app.checkin"])
     }
 

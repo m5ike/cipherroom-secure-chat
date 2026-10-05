@@ -576,7 +576,7 @@ final class LegacyDictationSession: DictationSession {
         Self.configure(request)
         guard recognizer.supportsOnDeviceRecognition, request.requiresOnDeviceRecognition else { return false }
         // SFSpeechAudioBufferRecognitionRequest.append may be called from any thread (the audio thread here).
-        let request = UncheckedBox(self.request)
+        let request = VoiceUncheckedBox(self.request)
         let mic = MicrophoneTap(target: AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false)!)
         self.mic = mic
         let level = self.level
@@ -678,7 +678,7 @@ final class LegacyDictationSession: DictationSession {
 }
 
 /// A value handed to another thread whose type does not say it may be (the API documents it may).
-final class UncheckedBox<T>: @unchecked Sendable {
+final class VoiceUncheckedBox<T>: @unchecked Sendable {
     let value: T
     init(_ value: T) { self.value = value }
 }
