@@ -16,6 +16,13 @@
 //              passkeys on Android (the assetlinks.json self-check, 6.4)
 //   Events     what devices reported (failed unlocks, wipes, updates, crashes)
 //
+// 6.14: the same page serves the iOS app (ios-console.js registers it through
+// window.M5MobileConsole): one platform at a time — P — with its own API
+// base, root, tabs, device frames and the views that differ (overview, push,
+// releases, the security extras); the design builder, Define (the same
+// m5mobile.define set), devices, builds, codes and events are this code.
+// Android's page is unchanged.
+//
 // Same rules as console.js: DOM nodes and textContent, never innerHTML.
 
 (() => {
@@ -26,7 +33,14 @@
   if (!C || !Kit || !X) return;
   const { h, clear, api, toast, can } = C;
 
-  const root = () => document.getElementById("androidRoot");
+  /** The Android app — this file's own platform. */
+  const ANDROID = { id: "android", label: "Android", route: "android", rootId: "androidRoot", api: "/api/admin/android", module: "android" };
+  /** The platform the page shows now (6.14). */
+  let P = ANDROID;
+  /** A text of the page in the platform's words (Android's when the platform has none). */
+  const T = (key, text) => (P.texts && P.texts[key]) || text;
+
+  const root = () => document.getElementById(P.rootId);
   let tab = "overview";
   let overview = null;
   let catalog = null;
@@ -46,7 +60,7 @@
 
   const may = (right) => {
     if (!can("operator")) return false;
-    const acc = C.moduleAccess ? C.moduleAccess("android") : null;
+    const acc = C.moduleAccess ? C.moduleAccess(P.module) : null;
     if (!acc) return true;
     if (!acc.allowed) return false;
     if (!acc.rights) return true;
@@ -60,6 +74,11 @@
   const badge = (text, tone) => h("span", { class: `badge${tone ? ` badge--${tone}` : ""}` }, text);
   const statusTone = (s) => ({ active: "ok", published: "ok", ready: "info", draft: "info", blocked: "warn", withdrawn: "warn", retired: "", wiped: "err", done: "ok", failed: "err", queued: "info", sent: "info", delivered: "accent", expired: "" }[s] ?? "");
   const levelTone = (l) => ({ error: "err", warn: "warn", notice: "info", info: "" }[l] ?? "");
+  // 6.14: what a device row says of the device — each platform's own fields.
+  const modelOf = (d) => (P.modelOf ? P.modelOf(d) : `${d.manufacturer} ${d.model}`);
+  const systemOf = (d) => (P.systemOf ? P.systemOf(d) : [d.os, `SDK ${d.sdk}`]);
+  const pushBadge = (d) => (P.pushBadge ? P.pushBadge(d) : badge(d.push === "fcm" ? "FCM" : "poll", d.push === "fcm" ? "ok" : ""));
+  const pushLine = (d) => (P.pushLine ? P.pushLine(d) : `${d.push === "fcm" ? "FCM" : "polling"}`);
 
   async function guarded(fn, okText) {
     try { const r = await fn(); if (okText) toast(okText, "ok"); return r; }
@@ -68,33 +87,55 @@
 
   /* =============================================================== load */
 
-  async function load() {
+  /**
+   * 6.14: another platform's page: what this one had (its tab, its design being
+   * edited and its undo steps, Define's working set…) is kept for when it comes
+   * back, and the other's is taken up.
+   */
+  function switchTo(platform) {
+    if (P === platform) return;
+    P.kept = { tab, overview, catalog, design, designSaved, screenId, selected, designTab, defineSet, defineSavedJson, defineSel, defineError, previewDark, previewLang, hist: { ...hist }, view: { ...view } };
+    P = platform;
+    const k = P.kept || {};
+    tab = k.tab || "overview"; overview = k.overview || null; catalog = k.catalog || null; design = k.design || null; designSaved = k.designSaved || null;
+    screenId = k.screenId || "room"; selected = k.selected || ""; designTab = k.designTab || "screens";
+    defineSet = k.defineSet || null; defineSavedJson = k.defineSavedJson || ""; defineSel = k.defineSel || 0; defineError = k.defineError || "";
+    previewDark = Boolean(k.previewDark); previewLang = k.previewLang || "cs";
+    Object.assign(hist, k.hist || { undo: [], redo: [], last: null, key: null });
+    Object.assign(view, k.view || { device: deviceList()[0].id, landscape: false, zoom: 0, overview: false });
+    builder = null;
+  }
+
+  async function load(platform = P) {
+    switchTo(platform);
     const el = root();
     if (!el) return;
     ensureStyles();
     try {
-      overview = await api("/api/admin/android");
-      if (!catalog) catalog = (await api("/api/admin/android/catalog")).catalog;
+      overview = await api(`${P.api}`);
+      if (!catalog) catalog = (await api(`${P.api}/catalog`)).catalog;
     } catch (err) {
-      clear(el).append(h("div", { class: "card empty" }, `Android is not available: ${err.message}`));
+      clear(el).append(h("div", { class: "card empty" }, `${P.label} is not available: ${err.message}`));
       return;
     }
     render();
   }
+
+  const TABS = [["overview", "Overview"], ["devices", "Devices"], ["push", "Push"], ["design", "Design"], ["define", "Define"], ["builds", "Builds"], ["releases", "Releases"], ["security", "Security"], ["events", "Events"]];
 
   function render() {
     const el = root();
     if (!el) return;
     clear(el);
     const bar = h("div", { class: "seg ai-tabs", role: "tablist" });
-    for (const [id, label] of [["overview", "Overview"], ["devices", "Devices"], ["push", "Push"], ["design", "Design"], ["define", "Define"], ["builds", "Builds"], ["releases", "Releases"], ["security", "Security"], ["events", "Events"]]) {
-      bar.append(h("button", { type: "button", role: "tab", "aria-pressed": tab === id ? "true" : "false", "data-read": "1", onclick: () => { tab = id; render(); } }, label));
+    for (const [id, label] of P.tabs || TABS) {
+      bar.append(h("button", { type: "button", role: "tab", "aria-pressed": tab === id ? "true" : "false", "data-read": "1", "data-tab": id, onclick: () => { tab = id; render(); } }, label));
     }
     el.append(bar);
     const body = h("div", { class: "stack" });
     el.append(body);
-    const views = { overview: overviewView, devices: devicesView, push: pushView, design: designView, define: defineView, builds: buildsView, releases: releasesView, security: securityView, events: eventsView };
-    void (views[tab] || overviewView)(body);
+    const views = { overview: overviewView, devices: devicesView, push: pushView, design: designView, define: defineView, builds: buildsView, releases: releasesView, security: securityView, events: eventsView, ...(P.views || {}) };
+    void (views[tab] || views.overview)(body);
     C.applyRoleGates();
   }
 
@@ -137,7 +178,7 @@
     const qr = h("div", { class: "and-qr" });
     const link = h("div", { class: "mono small muted" });
     const show = async () => {
-      const res = await C.raw(`/api/admin/android/codes/qr?server=${encodeURIComponent(server.value.trim())}`);
+      const res = await C.raw(`${P.api}/codes/qr?server=${encodeURIComponent(server.value.trim())}`);
       if (!res.ok) { toast("Enter the chat's address (https://…).", "err"); return; }
       const svg = await res.text();
       clear(qr).append(svgNode(svg));
@@ -168,7 +209,7 @@
     const status = h("select", { class: "input input--sm", "data-read": "1" }, ...["", "active", "blocked", "retired", "wiped"].map((s) => h("option", { value: s }, s || "all")));
     const table = h("div", { class: "table-wrap" });
     const draw = async () => {
-      const r = await guarded(() => api(`/api/admin/android/devices?q=${encodeURIComponent(q.value)}&status=${status.value}`));
+      const r = await guarded(() => api(`${P.api}/devices?q=${encodeURIComponent(q.value)}&status=${status.value}`));
       if (!r) return;
       clear(table);
       if (!r.devices.length) { table.append(h("div", { class: "empty" }, "No device has enrolled yet.")); return; }
@@ -176,13 +217,13 @@
       for (const d of r.devices) {
         const st = d.state || {};
         tb.append(h("tr", { style: "cursor:pointer", onclick: () => openDevice(d.id) },
-          h("td", {}, h("strong", {}, d.name), h("div", { class: "muted small" }, `${d.manufacturer} ${d.model}`)),
+          h("td", {}, h("strong", {}, d.name), h("div", { class: "muted small" }, modelOf(d))),
           h("td", {}, badge(d.status, statusTone(d.status))),
           h("td", {}, `${d.appVersion}`, h("div", { class: "muted small" }, st.bundle ? `${st.bundle.version} · ${st.bundle.state}` : "built-in")),
-          h("td", {}, d.os, h("div", { class: "muted small" }, `SDK ${d.sdk}`)),
+          h("td", {}, systemOf(d)[0], h("div", { class: "muted small" }, systemOf(d)[1])),
           h("td", {}, ago(d.lastSeen), h("div", { class: "muted small" }, d.lastIp)),
           h("td", {}, st.battery >= 0 ? `${st.battery} %${st.charging ? " ⚡" : ""}` : "—", h("div", { class: "muted small" }, st.network || "")),
-          h("td", {}, badge(d.push === "fcm" ? "FCM" : "poll", d.push === "fcm" ? "ok" : ""), st.locked ? badge("locked", "") : null),
+          h("td", {}, pushBadge(d), st.locked ? badge("locked", "") : null),
           h("td", {}, String(st.rooms ?? 0))));
       }
       table.append(h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, ...["Device", "Status", "App / bundle", "System", "Seen", "Battery", "Push", "Rooms"].map((x) => h("th", {}, x)))), tb));
@@ -226,7 +267,7 @@
   }
 
   async function openDevice(id) {
-    const r = await guarded(() => api(`/api/admin/android/devices/${id}`));
+    const r = await guarded(() => api(`${P.api}/devices/${id}`));
     if (!r) return;
     const d = r.device;
     const backdrop = h("div", { class: "drawer-backdrop", onclick: () => close() });
@@ -239,20 +280,20 @@
       h("dl", { class: "kv" },
         h("dt", {}, "Id"), h("dd", { class: "mono" }, d.id), h("dt", {}, "Key id"), h("dd", { class: "mono" }, d.kid),
         h("dt", {}, "Status"), h("dd", {}, badge(d.status, statusTone(d.status))),
-        h("dt", {}, "Model"), h("dd", {}, `${d.manufacturer} ${d.model} · ${d.os} (SDK ${d.sdk})`),
+        h("dt", {}, "Model"), h("dd", {}, P.deviceLine ? P.deviceLine(d) : `${d.manufacturer} ${d.model} · ${d.os} (SDK ${d.sdk})`),
         h("dt", {}, "App"), h("dd", {}, `${d.appVersion} (${d.appCode})`),
         h("dt", {}, "Bundle"), h("dd", {}, st.bundle ? `${st.bundle.version} · ${st.bundle.state}` : "built-in"),
         h("dt", {}, "Enrolled"), h("dd", {}, `${when(d.enrolledAt)} · ${d.enrolledWith}`),
         h("dt", {}, "Last seen"), h("dd", {}, `${when(d.lastSeen)} · ${d.lastIp}`),
         h("dt", {}, "Battery / network"), h("dd", {}, `${st.battery >= 0 ? `${st.battery} %` : "—"}${st.charging ? " charging" : ""} · ${st.network || "—"}`),
         h("dt", {}, "Lock"), h("dd", {}, `${st.lockMode || "—"} · ${st.locked ? "locked" : "open"} · failed attempts ${st.failedAttempts ?? 0}`),
-        h("dt", {}, "Push"), h("dd", {}, `${d.push === "fcm" ? "FCM" : "polling"}`),
+        h("dt", {}, "Push"), h("dd", {}, pushLine(d)),
         h("dt", {}, "Storage"), h("dd", {}, size(st.storage)),
         h("dt", {}, "Permissions"), h("dd", {}, (st.permissions || []).join(", ") || "—")),
       h("h3", {}, "Control message"),
       may("push") && d.status === "active" ? commandForm(async (kind, payload) => {
-        const res = await guarded(() => api(`/api/admin/android/devices/${d.id}/commands`, { method: "POST", body: { kind, payload } }));
-        if (res) toast(`${kind}: ${res.via === "fcm" ? "sent over FCM" : "waits for the next check-in"}${res.error ? ` (${res.error})` : ""}`, res.error ? "err" : "ok");
+        const res = await guarded(() => api(`${P.api}/devices/${d.id}/commands`, { method: "POST", body: { kind, payload } }));
+        if (res) toast(`${kind}: ${res.via === "poll" ? "waits for the next check-in" : `sent over ${T("push", "FCM")}`}${res.error ? ` (${res.error})` : ""}`, res.error ? "err" : "ok");
         setTimeout(() => { close(); openDevice(id); }, 1200);
       }, may("wipe")) : h("div", { class: "muted small" }, d.status === "active" ? "Your access does not include control messages." : `The device is ${d.status}.`),
       may("devices") ? trackCard(d) : null,
@@ -265,11 +306,11 @@
         h("label", { class: "field" }, h("span", { class: "label" }, "Name"), name),
         h("label", { class: "field" }, h("span", { class: "label" }, "Notes"), notes),
         h("div", { class: "row" },
-          h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`/api/admin/android/devices/${d.id}`, { method: "PATCH", body: { name: name.value, notes: notes.value } }), "Saved.")) load(); } }, "Save"),
-          d.status === "active" ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`/api/admin/android/devices/${d.id}`, { method: "PATCH", body: { status: "blocked" } }), "Blocked.")) { close(); load(); } } }, "Block") : null,
-          d.status === "blocked" || d.status === "retired" ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`/api/admin/android/devices/${d.id}`, { method: "PATCH", body: { status: "active" } }), "Active again.")) { close(); load(); } } }, "Unblock") : null,
-          d.status !== "retired" && d.status !== "wiped" ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`/api/admin/android/devices/${d.id}`, { method: "PATCH", body: { status: "retired" } }), "Retired.")) { close(); load(); } } }, "Retire") : null,
-          h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm(`Delete ${d.name} from the server? It would have to enrol again.`)) return; if (await guarded(() => api(`/api/admin/android/devices/${d.id}`, { method: "DELETE" }), "Deleted.")) { close(); load(); } } }, "Delete"))) : null);
+          h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`${P.api}/devices/${d.id}`, { method: "PATCH", body: { name: name.value, notes: notes.value } }), "Saved.")) load(); } }, "Save"),
+          d.status === "active" ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`${P.api}/devices/${d.id}`, { method: "PATCH", body: { status: "blocked" } }), "Blocked.")) { close(); load(); } } }, "Block") : null,
+          d.status === "blocked" || d.status === "retired" ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`${P.api}/devices/${d.id}`, { method: "PATCH", body: { status: "active" } }), "Active again.")) { close(); load(); } } }, "Unblock") : null,
+          d.status !== "retired" && d.status !== "wiped" ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`${P.api}/devices/${d.id}`, { method: "PATCH", body: { status: "retired" } }), "Retired.")) { close(); load(); } } }, "Retire") : null,
+          h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm(`Delete ${d.name} from the server? It would have to enrol again.`)) return; if (await guarded(() => api(`${P.api}/devices/${d.id}`, { method: "DELETE" }), "Deleted.")) { close(); load(); } } }, "Delete"))) : null);
     const drawer = h("aside", { class: "drawer", role: "dialog", "aria-label": d.name },
       h("div", { class: "drawer__head" }, h("div", { class: "drawer__title" }, d.name), h("span", { class: "spacer" }), h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: () => close() }, "Close")), bodyEl);
     document.body.append(backdrop, drawer);
@@ -284,7 +325,7 @@
   function trackCard(d) {
     const box = h("div", { class: "stack" }, h("h3", {}, "Location track"), h("div", { class: "muted small" }, "Not loaded — reading a track is audited."));
     const show = async () => {
-      const r = await guarded(() => api(`/api/admin/android/devices/${d.id}/locations?limit=1000`));
+      const r = await guarded(() => api(`${P.api}/devices/${d.id}/locations?limit=1000`));
       if (!r) return;
       const pts = r.points || [];
       clear(box).append(h("h3", {}, "Location track"));
@@ -323,7 +364,7 @@
           h("td", {}, p.speed == null ? "—" : `${(p.speed * 3.6).toFixed(1)} km/h`), h("td", {}, h("a", { href: osm(p), target: "_blank", rel: "noopener noreferrer" }, "map"))))))));
       box.append(h("div", { class: "row" }, h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => {
         if (!confirm(`Delete the whole track of ${d.name}?`)) return;
-        if (await guarded(() => api(`/api/admin/android/devices/${d.id}/locations`, { method: "DELETE" }), "Deleted.")) show();
+        if (await guarded(() => api(`${P.api}/devices/${d.id}/locations`, { method: "DELETE" }), "Deleted.")) show();
       } }, "Delete the track")));
     };
     box.append(h("button", { class: "btn btn--sm", type: "button", onclick: show }, "Show the track"));
@@ -358,7 +399,7 @@
     body.append(h("div", { class: "card" },
       h("div", { class: "card__head" }, h("div", { class: "card__title" }, "A control message to every active device"), h("div", { class: "card__hint" }, "Encrypted for each device and signed by the server. Over FCM when it is set up (flash, push, lock at high priority, the rest at normal — Doze delivers it with other work), otherwise at the next check-in.")),
       may("push") ? commandForm(async (kind, payload) => {
-        const r = await guarded(() => api("/api/admin/android/commands", { method: "POST", body: { kind, payload } }));
+        const r = await guarded(() => api(`${P.api}/commands`, { method: "POST", body: { kind, payload } }));
         if (r) toast(`${r.results.length} devices: ${r.results.filter((x) => x.via === "fcm").length} over FCM, the rest at check-in.`, "ok");
       }, false) : h("div", { class: "muted small" }, "Your access does not include control messages.")));
 
@@ -383,7 +424,7 @@
     });
     const sa = h("textarea", { class: "input mono", rows: "4", placeholder: cfg.fcm.hasServiceAccount ? `A service account is stored (${cfg.fcm.serviceAccountEmail}). Paste a new one to replace it.` : "Paste the service account key (JSON) — Firebase › Project settings › Service accounts › Generate new private key" });
     const test = h("select", { class: "input input--sm" });
-    const devs = await guarded(() => api("/api/admin/android/devices?status=active"));
+    const devs = await guarded(() => api(`${P.api}/devices?status=active`));
     for (const d of devs?.devices || []) test.append(h("option", { value: d.id }, `${d.name} (${d.push})`));
     body.append(h("div", { class: "card" },
       h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Firebase Cloud Messaging"), h("div", { class: "card__hint" }, `Status: ${overview.fcm.ready ? "ready" : overview.fcm.reason}. The APK carries no Firebase file: devices get these app settings from the server. The service account is sealed with the storage master key and never shown again.`)),
@@ -395,14 +436,14 @@
         may("settings") ? h("button", { class: "btn btn--primary btn--sm", type: "button", onclick: async () => {
           const fcm = { enabled: enabled.checked, client: f.appId.value.trim() ? { apiKey: f.apiKey.value.trim(), appId: f.appId.value.trim(), senderId: f.senderId.value.trim(), projectId: f.projectId.value.trim() } : null };
           if (sa.value.trim()) fcm.serviceAccount = sa.value.trim();
-          const r = await guarded(() => api("/api/admin/android/config", { method: "PUT", body: { fcm } }), "FCM settings saved.");
-          if (r) { overview = await api("/api/admin/android"); render(); }
+          const r = await guarded(() => api(`${P.api}/config`, { method: "PUT", body: { fcm } }), "FCM settings saved.");
+          if (r) { overview = await api(`${P.api}`); render(); }
         } }, "Save") : null,
-        cfg.fcm.hasServiceAccount && may("settings") ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (await guarded(() => api("/api/admin/android/config", { method: "PUT", body: { fcm: { serviceAccount: "" } } }), "Service account removed.")) { overview = await api("/api/admin/android"); render(); } } }, "Remove the service account") : null,
+        cfg.fcm.hasServiceAccount && may("settings") ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (await guarded(() => api(`${P.api}/config`, { method: "PUT", body: { fcm: { serviceAccount: "" } } }), "Service account removed.")) { overview = await api(`${P.api}`); render(); } } }, "Remove the service account") : null,
         h("span", { class: "spacer" }), test,
         h("button", { class: "btn btn--sm", type: "button", onclick: async () => {
           if (!test.value) return;
-          const r = await guarded(() => api(`/api/admin/android/devices/${test.value}/commands`, { method: "POST", body: { kind: "ping" } }));
+          const r = await guarded(() => api(`${P.api}/devices/${test.value}/commands`, { method: "POST", body: { kind: "ping" } }));
           if (r) toast(r.via === "fcm" ? "Ping sent over FCM — watch the device's commands." : `Not over FCM: ${r.error || "the device has no FCM token yet"}.`, r.via === "fcm" ? "ok" : "err");
         } }, "Test ping"))));
   }
@@ -410,17 +451,17 @@
   /* ============================================================= builds */
 
   async function buildsView(body) {
-    const r = await guarded(() => api("/api/admin/android/builds"));
+    const r = await guarded(() => api(`${P.api}/builds`));
     if (!r) return;
     const notes = h("input", { class: "input input--sm", placeholder: "What changed" });
     const channel = h("select", { class: "input input--sm" }, ...["stable", "beta", "dev"].map((c) => h("option", { value: c }, c)));
     body.append(h("div", { class: "card" },
-      h("div", { class: "card__head" }, h("div", { class: "card__title" }, "New build"), h("div", { class: "card__hint" }, "Freezes the current design (Design tab): compiled, compressed, encrypted with AES-256-GCM, signed. Published builds reach devices at their next check-in (and at once with FCM); a device installs one only after checking the signature, and falls back to the last good one when it fails.")),
+      h("div", { class: "card__head" }, h("div", { class: "card__title" }, "New build"), h("div", { class: "card__hint" }, `Freezes the current design (Design tab): compiled, compressed, encrypted with AES-256-GCM, signed. Published builds reach devices at their next check-in (and at once with ${T("push", "FCM")}); a device installs one only after checking the signature, and falls back to the last good one when it fails.`)),
       may("builds") ? h("div", { class: "row" }, notes, channel, h("button", { class: "btn btn--primary btn--sm", type: "button", onclick: async () => {
-        const res = await guarded(() => api("/api/admin/android/builds", { method: "POST", body: { notes: notes.value, channel: channel.value } }), "Built.");
+        const res = await guarded(() => api(`${P.api}/builds`, { method: "POST", body: { notes: notes.value, channel: channel.value } }), "Built.");
         if (res) render();
       } }, "Build now")) : h("div", { class: "muted small" }, "Your access does not include builds.")));
-    const devices = (await guarded(() => api("/api/admin/android/devices?status=active")))?.devices || [];
+    const devices = (await guarded(() => api(`${P.api}/devices?status=active`)))?.devices || [];
     const table = h("tbody");
     for (const b of r.builds) {
       const pick = h("select", { class: "input input--sm" }, h("option", { value: "all" }, `all active (${devices.length})`), ...devices.map((d) => h("option", { value: d.id }, d.name)));
@@ -431,12 +472,12 @@
         h("td", {}, size(b.fileSize), h("div", { class: "muted small" }, `${b.summary.screens.length} screens · ${b.summary.languages.join("/")}`)),
         h("td", { class: "small" }, b.notes || "—"),
         h("td", {}, h("div", { class: "row" },
-          b.status !== "published" && may("publish") ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: async () => { const x = await guarded(() => api(`/api/admin/android/builds/${b.id}/publish`, { method: "POST", body: { notify: true } })); if (x) { toast(`Published; ${x.notified} devices told.`, "ok"); render(); } } }, "Publish") : null,
-          b.status === "published" && may("publish") ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`/api/admin/android/builds/${b.id}/withdraw`, { method: "POST", body: {} }), "Withdrawn.")) render(); } }, "Withdraw") : null,
+          b.status !== "published" && may("publish") ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: async () => { const x = await guarded(() => api(`${P.api}/builds/${b.id}/publish`, { method: "POST", body: { notify: true } })); if (x) { toast(`Published; ${x.notified} devices told.`, "ok"); render(); } } }, "Publish") : null,
+          b.status === "published" && may("publish") ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`${P.api}/builds/${b.id}/withdraw`, { method: "POST", body: {} }), "Withdrawn.")) render(); } }, "Withdraw") : null,
           h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: () => inspectBuild(b) }, "Inspect"),
-          may("builds") ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (!confirm("Replace the current design with this build's?")) return; const x = await guarded(() => api(`/api/admin/android/builds/${b.id}/restore`, { method: "POST", body: {} }), "Design restored."); if (x) { design = null; } } }, "Restore design") : null,
-          h("span", { class: "row" }, pick, h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: () => download(`/api/admin/android/builds/${b.id}/deploy?devices=${encodeURIComponent(pick.value)}`, `m5cet-${b.version}.m5ab`) }, "Deploy file")),
-          may("builds") ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm(`Delete build #${b.number}?`)) return; if (await guarded(() => api(`/api/admin/android/builds/${b.id}`, { method: "DELETE" }), "Deleted.")) render(); } }, "Delete") : null))));
+          may("builds") ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (!confirm("Replace the current design with this build's?")) return; const x = await guarded(() => api(`${P.api}/builds/${b.id}/restore`, { method: "POST", body: {} }), "Design restored."); if (x) { design = null; } } }, "Restore design") : null,
+          h("span", { class: "row" }, pick, h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: () => download(`${P.api}/builds/${b.id}/deploy?devices=${encodeURIComponent(pick.value)}`, `m5cet-${b.version}.m5ab`) }, "Deploy file")),
+          may("builds") ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm(`Delete build #${b.number}?`)) return; if (await guarded(() => api(`${P.api}/builds/${b.id}`, { method: "DELETE" }), "Deleted.")) render(); } }, "Delete") : null))));
     }
     body.append(h("div", { class: "card" }, h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Builds")),
       r.builds.length ? h("div", { class: "table-wrap" }, h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, ...["Build", "Status", "Created", "Size", "Notes", ""].map((x) => h("th", {}, x)))), table)) : h("div", { class: "empty" }, "No build yet — the devices use the built-in design.")));
@@ -453,7 +494,7 @@
   }
 
   async function inspectBuild(b) {
-    const r = await guarded(() => api(`/api/admin/android/builds/${b.id}/content`));
+    const r = await guarded(() => api(`${P.api}/builds/${b.id}/content`));
     if (!r) return;
     const files = Object.entries(r.manifest.files).map(([path, f]) => h("tr", {}, h("td", { class: "mono small" }, path), h("td", {}, size(f.size)), h("td", { class: "mono small" }, f.sha256.slice(0, 16) + "…")));
     Kit.openDialog({ title: `Build #${b.number} · ${b.version}`, subtitle: "decrypted on the server to look inside", wide: true, body: h("div", { class: "stack" },
@@ -464,7 +505,7 @@
   /* =========================================================== releases */
 
   async function releasesView(body) {
-    const r = await guarded(() => api("/api/admin/android/releases"));
+    const r = await guarded(() => api(`${P.api}/releases`));
     if (!r) return;
     const file = h("input", { type: "file", accept: ".apk,application/vnd.android.package-archive" });
     const channel = h("select", { class: "input input--sm" }, ...["stable", "beta", "dev"].map((c) => h("option", { value: c }, c)));
@@ -478,7 +519,7 @@
           const f = file.files && file.files[0];
           if (!f) { toast("Choose the APK first.", "err"); return; }
           progress.textContent = `Uploading ${size(f.size)}…`;
-          const res = await C.raw(`/api/admin/android/releases/upload?channel=${channel.value}&notes=${encodeURIComponent(notes.value)}&mandatory=${mandatory.checked ? 1 : 0}`, { method: "POST", headers: { "Content-Type": "application/vnd.android.package-archive" }, body: f });
+          const res = await C.raw(`${P.api}/releases/upload?channel=${channel.value}&notes=${encodeURIComponent(notes.value)}&mandatory=${mandatory.checked ? 1 : 0}`, { method: "POST", headers: { "Content-Type": "application/vnd.android.package-archive" }, body: f });
           const j = await res.json().catch(() => ({}));
           progress.textContent = "";
           if (!res.ok) { toast(j.message || `HTTP ${res.status}`, "err"); return; }
@@ -496,10 +537,10 @@
         h("td", {}, when(x.createdAt), h("div", { class: "muted small" }, x.createdBy)),
         h("td", { class: "small" }, x.notes || "—"),
         h("td", {}, h("div", { class: "row" },
-          x.status !== "published" && may("publish") ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: async () => { const y = await guarded(() => api(`/api/admin/android/releases/${x.id}/publish`, { method: "POST", body: { notify: true } })); if (y) { toast(`Published; ${y.notified} devices told.`, "ok"); render(); } } }, "Publish") : null,
-          x.status === "published" && may("publish") ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`/api/admin/android/releases/${x.id}/withdraw`, { method: "POST", body: {} }), "Withdrawn.")) render(); } }, "Withdraw") : null,
-          h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: () => download(`/api/admin/android/releases/${x.id}/apk`, `m5cet-${x.versionName}.apk`) }, "APK"),
-          may("releases") ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm(`Delete ${x.versionName}?`)) return; if (await guarded(() => api(`/api/admin/android/releases/${x.id}`, { method: "DELETE" }), "Deleted.")) render(); } }, "Delete") : null))));
+          x.status !== "published" && may("publish") ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: async () => { const y = await guarded(() => api(`${P.api}/releases/${x.id}/publish`, { method: "POST", body: { notify: true } })); if (y) { toast(`Published; ${y.notified} devices told.`, "ok"); render(); } } }, "Publish") : null,
+          x.status === "published" && may("publish") ? h("button", { class: "btn btn--sm", type: "button", onclick: async () => { if (await guarded(() => api(`${P.api}/releases/${x.id}/withdraw`, { method: "POST", body: {} }), "Withdrawn.")) render(); } }, "Withdraw") : null,
+          h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: () => download(`${P.api}/releases/${x.id}/apk`, `m5cet-${x.versionName}.apk`) }, "APK"),
+          may("releases") ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm(`Delete ${x.versionName}?`)) return; if (await guarded(() => api(`${P.api}/releases/${x.id}`, { method: "DELETE" }), "Deleted.")) render(); } }, "Delete") : null))));
     }
     body.append(h("div", { class: "card" }, h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Releases")),
       r.releases.length ? h("div", { class: "table-wrap" }, h("table", { class: "tbl" }, h("thead", {}, h("tr", {}, ...["Version", "Status", "Size", "Certificate / APK", "Uploaded", "Notes", ""].map((t) => h("th", {}, t)))), tb)) : h("div", { class: "empty" }, "No release uploaded yet.")));
@@ -517,28 +558,29 @@
     const f = (label, control, hint) => h("label", { class: "field" }, h("span", { class: "label" }, label), control, hint ? h("span", { class: "muted small" }, hint) : null);
     const enrollment = h("select", { class: "input input--sm" }, ...["open", "code", "closed"].map((o) => h("option", { value: o }, o)));
     enrollment.value = cfg.enrollment;
-    const pkg = h("input", { class: "input input--sm mono", value: cfg.packageName });
+    // 6.14: the platform's own settings next to the policy (Android: the package; iOS: bundle id, minimum build, store links).
+    const extra = P.securityExtra ? P.securityExtra(cfg, f) : androidSecurityExtra(cfg, f);
     body.append(h("div", { class: "grid grid--2" },
       h("div", { class: "card stack" },
-        h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Opening the app"), h("div", { class: "card__hint" }, "Every failed unlock (a wrong PIN or a rejected finger) counts. After the last allowed one the device erases all its data and reports it (or locks for an hour when erasing is off).")),
+        h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Opening the app"), h("div", { class: "card__hint" }, T("unlockHint", "Every failed unlock (a wrong PIN or a rejected finger) counts. After the last allowed one the device erases all its data and reports it (or locks for an hour when erasing is off)."))),
         f("Biometrics", sel(p.lock, "biometric", ["optional", "required", "off"]), "required: biometrics to open, the PIN stays the fallback"),
         f("PIN length", num(p.lock, "pinLength", 4, 12)),
         f("Failed attempts allowed", num(p.lock, "maxAttempts", 3, 20)),
         h("label", { class: "row" }, chk(p.lock, "wipe"), "Erase all data after the last attempt"),
         h("label", { class: "row" }, chk(p.lock, "backoff"), "A growing wait from the third failure (30 s, 1 min, 2 min … 1 h)"),
         f("Lock again after (s in the background)", num(p.lock, "autolockSeconds", 0, 86400)),
-        h("label", { class: "row" }, chk(p.lock, "screenshots"), "Allow screenshots and the recents preview")),
+        h("label", { class: "row" }, chk(p.lock, "screenshots"), T("screenshots", "Allow screenshots and the recents preview"))),
       h("div", { class: "card stack" },
         h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Updates, polling, rooms")),
         f("Channel", sel(p.update, "channel", ["stable", "beta", "dev"])),
         f("Check every (hours)", num(p.update, "checkHours", 1, 168)),
         h("label", { class: "row" }, chk(p.update, "autoDownload"), "Download bundles by themselves"),
         h("label", { class: "row" }, chk(p.update, "wifiOnly"), "Only on Wi-Fi (unmetered)"),
-        f("Check-in without FCM (minutes, at least 15)", num(p, "pollMinutes", 15, 1440)),
+        f(T("poll", "Check-in without FCM (minutes, at least 15)"), num(p, "pollMinutes", 15, 1440)),
         f("Rooms connected at once", num(p.rooms, "max", 1, 16)),
         f("Logs to the server", sel(p, "logs", ["errors", "all", "off"]), "only when a status request asks for them"),
         f("Enrolment", enrollment, "open: anyone with the address · code: an enrolment code · closed: nobody new"),
-        f("Package name", pkg, "every release must be this application id")),
+        ...extra.fields),
       // 6.1: position tracking — the phone's user switches it on, this allows it.
       h("div", { class: "card stack" },
         h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Location"), h("div", { class: "card__hint" }, "A phone sends its position only when its user switched tracking on (Settings › Location) and this allows it. Positions are personal data: reading a track needs the devices right and is audited.")),
@@ -546,20 +588,26 @@
         f("Keep positions (days)", num(p.location, "days", 1, 3650)),
         f("At most one position every (s)", num(p.location, "minSeconds", 5, 3600)))));
     if (may("settings")) body.append(h("div", { class: "row" }, h("button", { class: "btn btn--primary", type: "button", onclick: async () => {
-      const r = await guarded(() => api("/api/admin/android/config", { method: "PUT", body: { policy: p, enrollment: enrollment.value, packageName: pkg.value.trim() } }), "Policy saved — devices get it at their next check-in.");
-      if (r) overview = await api("/api/admin/android");
+      const r = await guarded(() => api(`${P.api}/config`, { method: "PUT", body: { policy: p, enrollment: enrollment.value, ...extra.body() } }), "Policy saved — devices get it at their next check-in.");
+      if (r) overview = await api(`${P.api}`);
     } }, "Save the policy"), h("button", { class: "btn", type: "button", onclick: async () => {
-      if (may("push")) { const r = await guarded(() => api("/api/admin/android/commands", { method: "POST", body: { kind: "config" } })); if (r) toast(`${r.results.length} devices asked to fetch it now.`, "ok"); }
+      if (may("push")) { const r = await guarded(() => api(`${P.api}/commands`, { method: "POST", body: { kind: "config" } })); if (r) toast(`${r.results.length} devices asked to fetch it now.`, "ok"); }
     } }, "Tell the devices now")));
     // 6.4: the passkey check starts now (it fetches the public URL and asks
     // Google, so it is the slow one) and lands below the enrolment codes.
-    const passkeys = passkeysCard();
+    const passkeys = (P.passkeysCard || passkeysCard)();
     await codesCard(body);
     body.append(passkeys);
   }
 
+  /** Android's own settings on the Security tab: the package every release must have. */
+  function androidSecurityExtra(cfg, f) {
+    const pkg = h("input", { class: "input input--sm mono", value: cfg.packageName });
+    return { fields: [f("Package name", pkg, "every release must be this application id")], body: () => ({ packageName: pkg.value.trim() }) };
+  }
+
   async function codesCard(body) {
-    const r = await guarded(() => api("/api/admin/android/codes"));
+    const r = await guarded(() => api(`${P.api}/codes`));
     if (!r) return;
     const label = h("input", { class: "input input--sm", placeholder: "For whom" });
     const uses = h("input", { class: "input input--sm", type: "number", min: "1", value: "1", style: "width:80px" });
@@ -567,13 +615,13 @@
     const shown = h("div", { class: "stack" });
     const tb = h("tbody", {}, ...r.codes.map((c) => h("tr", {},
       h("td", {}, c.label || "—"), h("td", {}, `${c.used} used · ${c.usesLeft} left`), h("td", {}, when(c.expiresAt)), h("td", {}, c.createdBy),
-      h("td", {}, may("settings") ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (await guarded(() => api(`/api/admin/android/codes/${c.id}`, { method: "DELETE" }), "Removed.")) render(); } }, "Remove") : null))));
+      h("td", {}, may("settings") ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (await guarded(() => api(`${P.api}/codes/${c.id}`, { method: "DELETE" }), "Removed.")) render(); } }, "Remove") : null))));
     body.append(h("div", { class: "card stack" },
       h("div", { class: "card__head" }, h("div", { class: "card__title" }, "Enrolment codes"), h("div", { class: "card__hint" }, "With enrolment set to code, a device needs one. The code is shown once — with a QR code the phone's camera opens directly in the app.")),
       may("settings") ? h("div", { class: "row" }, label, h("span", { class: "muted small" }, "uses"), uses, h("span", { class: "muted small" }, "days"), days, h("button", { class: "btn btn--primary btn--sm", type: "button", onclick: async () => {
-        const res = await guarded(() => api("/api/admin/android/codes", { method: "POST", body: { label: label.value, uses: Number(uses.value), days: Number(days.value) } }));
+        const res = await guarded(() => api(`${P.api}/codes`, { method: "POST", body: { label: label.value, uses: Number(uses.value), days: Number(days.value) } }));
         if (!res) return;
-        const q = await C.raw(`/api/admin/android/codes/qr?server=${encodeURIComponent(chatUrl())}&code=${encodeURIComponent(res.code)}`);
+        const q = await C.raw(`${P.api}/codes/qr?server=${encodeURIComponent(chatUrl())}&code=${encodeURIComponent(res.code)}`);
         clear(shown).append(h("div", { class: "card" }, h("div", { class: "row" }, h("strong", { class: "mono", style: "font-size:20px" }, res.code), h("span", { class: "muted small" }, "shown only now")), q.ok ? svgNode(await q.text()) : null, h("div", { class: "mono small muted" }, q.headers.get("X-M5-Link") || "")));
       } }, "New code")) : null,
       shown,
@@ -655,7 +703,7 @@
     async function check() {
       if (busy) return;
       setBusy(true);
-      try { draw(await api("/api/admin/android/passkeys")); }
+      try { draw(await api(`${P.api}/passkeys`)); }
       catch (err) { shown = false; clear(body).append(h("div", { class: "err small" }, `The check failed: ${err.message}`)); }
       finally { setBusy(false); }
     }
@@ -668,11 +716,11 @@
     }
     const trust = (sha) => {
       if (!confirm(`Trust this signing certificate for passkeys?\n\n${fpFull(sha)}\n\nAny app signed with this certificate will be able to use this server's passkeys. Trust only your own development builds.`)) return;
-      void change(() => api("/api/admin/android/passkeys/trust", { method: "POST", body: { sha256: sha } }), "Trusted. Google picks it up within minutes — Re-check then.");
+      void change(() => api(`${P.api}/passkeys/trust`, { method: "POST", body: { sha256: sha } }), "Trusted. Google picks it up within minutes — Re-check then.");
     };
     const untrust = (sha) => {
       if (!confirm(`Stop trusting this certificate for passkeys?\n\n${fpFull(sha)}\n\nApps signed with it lose this server's passkeys once Google refreshes.`)) return;
-      void change(() => api(`/api/admin/android/passkeys/trust/${encodeURIComponent(sha)}`, { method: "DELETE" }), "No longer trusted.");
+      void change(() => api(`${P.api}/passkeys/trust/${encodeURIComponent(sha)}`, { method: "DELETE" }), "No longer trusted.");
     };
 
     function draw(r) {
@@ -792,7 +840,7 @@
     const type = h("select", { class: "input input--sm", "data-read": "1" }, h("option", { value: "" }, "all types"), ...["unlock-failed", "lockout", "wipe", "remote-wipe", "integrity", "key-invalidated", "unlock", "bundle-installed", "bundle-failed", "bundle-rollback", "update-available", "update-installed", "update-failed", "crash"].map((t) => h("option", { value: t }, t)));
     const level = h("select", { class: "input input--sm", "data-read": "1" }, ...["", "error", "warn", "notice", "info"].map((l) => h("option", { value: l }, l || "all levels")));
     const box = h("div");
-    const draw = async () => { const r = await guarded(() => api(`/api/admin/android/events?type=${type.value}&level=${level.value}&limit=500`)); if (r) clear(box).append(eventsTable(r.events, true)); };
+    const draw = async () => { const r = await guarded(() => api(`${P.api}/events?type=${type.value}&level=${level.value}&limit=500`)); if (r) clear(box).append(eventsTable(r.events, true)); };
     type.addEventListener("change", draw);
     level.addEventListener("change", draw);
     body.append(h("div", { class: "card stack" }, h("div", { class: "row" }, type, level, h("span", { class: "spacer" }), h("button", { class: "btn btn--sm", type: "button", "data-read": "1", onclick: draw }, "Refresh")), box));
@@ -871,7 +919,7 @@
 
   async function designView(body) {
     if (!design) {
-      const r = await guarded(() => api("/api/admin/android/design"));
+      const r = await guarded(() => api(`${P.api}/design`));
       if (!r) return;
       design = r.design;
       // 6.7: the saved design fails the current checks (e.g. a data-built image address): the default is in use.
@@ -901,9 +949,11 @@
     const top = h("div", { class: "row" },
       ...["screens", "theme", "animations", "texts", "menus", "libraries", "assets"].map((id) => h("button", { class: `btn btn--sm${designTab === id ? " btn--primary" : ""}`, type: "button", "data-read": "1", "aria-pressed": designTab === id ? "true" : "false", onclick: () => { designTab = id; render(); } }, id[0].toUpperCase() + id.slice(1))),
       h("span", { class: "spacer" }), status, undoBtn, redoBtn,
+      // 6.14: the platform's own checks of the design being edited (iOS: what it cannot do, the build it would make).
+      ...(P.designTools ? P.designTools(() => design) : []),
       edit ? h("button", { class: "btn btn--sm btn--primary", type: "button", onclick: async () => {
         try {
-          const r = await api("/api/admin/android/design", { method: "PUT", body: { design } });
+          const r = await api(`${P.api}/design`, { method: "PUT", body: { design } });
           design = r.design;
           designSaved = snap();
           hist.last = designSaved;
@@ -913,7 +963,7 @@
         } catch (err) { toast(err.message, "err"); }
       } }, "Save") : null,
       edit ? h("button", { class: "btn btn--sm", type: "button", onclick: () => { design = JSON.parse(designSaved.s); design.assets = { ...designSaved.a }; changed(null); render(); } }, "Revert") : null,
-      edit ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm("Replace the design with the built-in default?")) return; const r = await guarded(() => api("/api/admin/android/design/reset", { method: "POST", body: {} }), "Reset to the default."); if (r) { design = r.design; designSaved = snap(); changed(null); render(); } } }, "Reset") : null);
+      edit ? h("button", { class: "btn btn--sm btn--danger", type: "button", onclick: async () => { if (!confirm("Replace the design with the built-in default?")) return; const r = await guarded(() => api(`${P.api}/design/reset`, { method: "POST", body: {} }), "Reset to the default."); if (r) { design = r.design; designSaved = snap(); changed(null); render(); } } }, "Reset") : null);
     body.append(top);
     designStatus();
     const views = { screens: screensEditor, theme: themeEditor, animations: animationsEditor, texts: textsEditor, menus: menusEditor, libraries: librariesEditor, assets: assetsEditor };
@@ -1645,6 +1695,8 @@
     { id: "fold", label: "Foldable open 673 × 841", w: 673, h: 841 },
     { id: "tablet", label: "Tablet 800 × 1280", w: 800, h: 1280 },
   ];
+  /** 6.14: the frames of the platform shown (iOS: iPhones and iPads). */
+  const deviceList = () => P.devices || DEVICES;
   const view = { device: "compact", landscape: false, zoom: 0, overview: false };
   const collapsed = new Set(); // "screen/node" folded in the layers
   const inspOpen = { element: true, params: true, layout: true, style: false, anim: false, logic: false, events: true };
@@ -1678,7 +1730,7 @@
     grid.append(left, mid, right);
 
     // the phone: device bar, stage (phone + overlays + toolbar), note, sample data
-    const devSel = h("select", { class: "input input--sm", "aria-label": "Device", "data-read": "1" }, ...DEVICES.map((d) => h("option", { value: d.id }, d.label)));
+    const devSel = h("select", { class: "input input--sm", "aria-label": "Device", "data-read": "1" }, ...deviceList().map((d) => h("option", { value: d.id }, d.label)));
     const rotBtn = iconBtn("rotate-ccw", "Portrait / landscape", () => { view.landscape = !view.landscape; applyDevice(); }, { "data-read": "1", "aria-pressed": "false" });
     const zoomIn = h("input", { type: "range", min: "50", max: "150", step: "5", "aria-label": "Zoom", "data-read": "1" });
     const zoomOut = h("output", {});
@@ -1688,7 +1740,7 @@
     const playBtn = iconBtn("play", "Play the enter animations", () => play(null), { "data-read": "1" });
     const note = h("div", { class: "and-note", role: "status" });
     const screenEl = h("div", { class: "and-screen" });
-    const phone = h("div", { class: "and-phone" }, screenEl);
+    const phone = h("div", { class: `and-phone${P.frame ? ` and-phone--${P.frame}` : ""}` }, screenEl);
     const ov = h("div", { class: "and-ov" });
     const ovSel = h("div");
     const ovHov = h("div");
@@ -1763,7 +1815,7 @@
         over.append(card);
         todo.push(() => {
           const scr = h("div", { class: `and-screen${isPart(sc.id) ? " and-screen--part" : ""}` }, design.screens[sc.id] ? preview(design.screens[sc.id], phoneScope(sc.id), "column", fg, false) : h("div", { class: "and-ph" }, "not in this design"));
-          frame.append(h("div", { class: "and-phone", style: `transform:scale(${s});background:${colorOf("@background", "#f5f6f8")}` }, scr));
+          frame.append(h("div", { class: `and-phone${P.frame ? ` and-phone--${P.frame}` : ""}`, style: `transform:scale(${s});background:${colorOf("@background", "#f5f6f8")}` }, scr));
         });
       }
       const next = () => { if (!view.overview || !over.isConnected) return; todo.splice(0, 3).forEach((f) => f()); if (todo.length) requestAnimationFrame(next); };
@@ -1849,7 +1901,7 @@
     /* ----------------------------------------------------------- phone */
 
     function applyDevice() {
-      const d = DEVICES.find((x) => x.id === view.device) || DEVICES[0];
+      const d = deviceList().find((x) => x.id === view.device) || deviceList()[0];
       const [w, ht] = view.landscape ? [d.h, d.w] : [d.w, d.h];
       if (!view.zoom) view.zoom = fitZoom();
       const z = view.zoom / 100;
@@ -1860,6 +1912,8 @@
       phone.style.width = `${w}px`;
       phone.style.height = `${ht}px`;
       phone.style.transform = `scale(${z})`;
+      // 6.14: a frame of its kind (an iPad has no island and smaller corners).
+      if (d.kind) phone.dataset.kind = d.kind;
       stage.style.width = `${(w + 20) * z}px`;
       stage.style.height = `${(ht + 20) * z}px`;
       Object.assign(ov.style, { left: `${10 * z}px`, top: `${10 * z}px`, width: `${w * z}px`, height: `${ht * z}px`, borderRadius: `${24 * z}px` });
@@ -1867,7 +1921,7 @@
     }
     /** The zoom (50–150 %, in 5 % steps) at which the phone fits the column and the window. */
     function fitZoom() {
-      const d = DEVICES.find((x) => x.id === view.device) || DEVICES[0];
+      const d = deviceList().find((x) => x.id === view.device) || deviceList()[0];
       const [w, ht] = view.landscape ? [d.h, d.w] : [d.w, d.h];
       const aw = Math.max(200, (mid.clientWidth || 400) - 16);
       const ah = Math.max(300, window.innerHeight - Math.max(0, mid.getBoundingClientRect().top) - 120);
@@ -3375,7 +3429,9 @@
     body.append(h("div", { class: "card" },
       h("div", { class: "card__head" },
         h("div", { class: "card__title" }, "Typed definitions (m5mobile.define)"),
-        h("div", { class: "card__hint" }, "The operator's variables and constants, delivered to both apps and Functions."),
+        // 6.14: on the iOS page the very same set — said plainly, so nobody thinks there are two.
+        P.defineShared ? h("span", { class: "badge badge--accent", "data-testid": "define-shared" }, P.defineShared) : null,
+        h("div", { class: "card__hint" }, T("defineHint", "The operator's variables and constants, delivered to both apps and Functions.")),
         h("span", { class: "card__actions" }, templatesBtn, status, saveBtn, revertBtn))));
     body.append(h("div", { class: "and-def" }, nav, content));
     body.append(h("div", { class: "muted small and-def-help" }, "Each becomes m5mobile.define.<name> in Packages, Models, Functions and both apps. The server re-checks every definition against its max size when you save."));
@@ -3385,5 +3441,20 @@
     updateStatus();
   }
 
-  C.addRoute("android", ["Android", "Devices, builds, releases, design and security of the Android app", load]);
+  C.addRoute("android", ["Android", "Devices, builds, releases, design and security of the Android app", () => load(ANDROID)]);
+
+  // 6.14: another app on this page (ios-console.js): its platform — API base,
+  // root, tabs, device frames, the views that are its own — and the parts of
+  // this page those views are made of.
+  window.M5MobileConsole = {
+    register(platform) {
+      C.addRoute(platform.route, [platform.title, platform.crumb, () => load(platform)]);
+    },
+    kit: { kpi, badge, when, ago, size, statusTone, levelTone, guarded, may, commandForm, commandsTable, eventsTable, svgNode, download, copyText, codesCard, chatUrl, iconEl },
+    /** The overview of the platform shown (GET <api>/). */
+    overview: () => overview,
+    setOverview: (o) => { overview = o; },
+    render: () => render(),
+    reload: () => load(),
+  };
 })();
