@@ -20,8 +20,11 @@ message kind, file, call, function and plug-in keeps working over protocol 4.
 * `join(a, b, …)` — the UTF-8 bytes of the parts joined with `|`. Every part is ASCII
   (base64, base64url, decimal integers, the labels of `LABEL`, peer ids, the blind room id);
   a part is never allowed to contain `|`. Integers are written in decimal without leading zeros.
+  A part must be printable ASCII (0x20–0x7E) without `|`, an integer a non-negative safe integer;
+  an operation whose transcript would hold any other part fails (e.g. a message id with `|`).
 * `H(x)` — SHA-256. `HMAC(k, m)` — HMAC-SHA-256. `HKDF(salt, ikm, info, L)` — RFC 5869 with
-  SHA-256; `info` is the UTF-8 of the label.
+  SHA-256; `info` is the UTF-8 of the label. `H` of a field that travels in base64 (`k`, `kem`,
+  `kct`, `kek`, `ct`) hashes its decoded bytes, never the base64 text.
 * P-256 public keys: SPKI DER, base64. ECDH output: the 32-byte x-coordinate (WebCrypto
   `deriveBits(…, 256)`, Java `KeyAgreement("ECDH").generateSecret()`).
 * ECDSA: P-256 with SHA-256, signature in raw `r||s` form (64 bytes), base64.
@@ -34,6 +37,11 @@ message kind, file, call, function and plug-in keeps working over protocol 4.
 * `roomId` — the blind room id (`r3.…`, `RoomKeys.roomId`); protocol 4 never uses the readable
   room name in a transcript or associated data.
 * `pad(m)` / `unpad(m)` — § 10.
+* Order of random draws (it matters only for replaying the vectors' tapes): a hello draws `e`, the
+  `k` seed (64 B), `n`; a KEM message draws m (32 B); the initial ratchet draws (A) `DHs` then the
+  `myKem` seed, (B) the `myKem` seed; a sending ratchet step draws `DHs`, m (when it encapsulates),
+  the new `myKem` seed; a bundle draws `id`, `dh`, its KEM seed; a mailbox item draws `eph`, m; a
+  sender-key chain draws `keyId`, `CK`, `spk`.
 
 ## 1. Versions and negotiation
 
@@ -78,7 +86,8 @@ accDigest = acc ? b64(H(join(acc.apk, acc.ac, acc.cv ?? 1, acc.exp ?? 0)))     :
 
 The receiver checks `check` (else “key mismatch”), the protocol-3 `sig`, `sig4`, and — when `mb`
 is present — `mb.sig` with `pk` and `mb.exp > now`. A failed `sig4` with a valid `sig` is
-treated as a protocol-3 hello (and falls under the downgrade rule of § 1).
+treated as a protocol-3 hello (and falls under the downgrade rule of § 1). An `mb` that fails its
+checks is ignored (not remembered, never sealed to); the hello itself stands.
 
 ## 3. KEM message
 
@@ -144,6 +153,9 @@ c   = AES-GCM(key, iv, AAD, pad(UTF-8(JSON(inner))))
 → { kind:"p4", v:4, h, c: b64(c) }
 ```
 
+`Hs` is spliced into the AAD as its six parts (its `|` are separators, not part of a part): the
+AAD is the flat join of eleven parts `LABEL.pairAad, roomId, from, to, b64(TH), h.dh, …`.
+
 ### 5.3 The post-quantum ratchet (KEM in headers)
 
 * A **sending ratchet step** (in § 5.4, step 4) generates a new `DHs` and, when `peerKem` is
@@ -160,7 +172,8 @@ c   = AES-GCM(key, iv, AAD, pad(UTF-8(JSON(inner))))
 
 ### 5.4 Receiving
 
-1. If `(h.dh, h.n)` is a stored skipped key: use it, delete it, decrypt.
+1. If `(h.dh, h.n)` is a stored skipped key: use it, delete it, decrypt (nothing else changes;
+   a `kek` in such a frame is ignored).
 2. If `h.dh ≠ DHr` (a new chain from the peer):
    1. store skipped keys of the current receiving chain up to `h.pn` (§ 5.6);
    2. `kss_in = h.kct ? Decaps(myKem[h.kid].dk, h.kct) : ∅` — a `kct` with an unknown `kid` is an
@@ -195,7 +208,7 @@ first, keyed by `(dh, n)`. A header asking to skip more is a failure (§ 5.5).
 
 | `t` | Fields | Use |
 |---|---|---|
-| `sk` | `keyId, chain (b64 32 B), index, spk (SPKI b64)` | the sender's current sender-key chain (§ 6) |
+| `sk` | `keyId, chain (b64 32 B), index, spk (SPKI b64), cert (b64 64 B)` | the sender's current sender-key chain (§ 6) |
 | `msg` | `id, p` | a private message (to chosen recipients); `p` is the chat payload, `p.id === id` |
 | `media` | `call, epoch, key (b64 32 B)` | the sender's media key for one call direction (§ 9) |
 | `file` | `transferId, key (b64 32 B)` | the key of one file transfer (§ 8) |
@@ -208,7 +221,13 @@ Own chain: `keyId` = b64url of 12 random bytes, `CK` = 32 random bytes, `index`,
 **per-chain ECDSA P-256 signing key pair** `spk`. A chain is replaced after
 `SENDER_KEY_ROTATE` (100 messages or 15 minutes), when a member leaves or is excluded, and when
 this device starts a new pair session with a peer that had the old chain (re-hello). Chains are
-handed to each peer only as a pair-ratchet `sk` message.
+handed to each peer only as a pair-ratchet `sk` message, with
+
+```
+cert = ECDSA(spk.private, join(LABEL.skCert, roomId, keyId, ownerPk))     ownerPk = the owner's hello pk
+```
+
+made once per chain: the chain's own signing key names the device that owns it.
 
 ```
 (mk, CK) = KDF_CK(CK)
@@ -222,12 +241,21 @@ s    = ECDSA(spk.private, AAD || c)
 The receiver finds the chain by **(the sending peer, keyId)**, verifies `s` with the chain's `spk`
 **before** advancing the chain (a member who holds the chain cannot forge or burn indices), then
 derives the key (skipping up to `MAX_SKIP`), decrypts, unpads and checks `payload.id === id`.
+Every member holds every chain, so a member could re-announce another member's chain (`keyId`,
+`CK`, `spk`) as its own and relay that member's validly signed messages under its own name. A
+receiver therefore accepts an `sk` only when `cert` verifies with its `spk` over
+`join(LABEL.skCert, roomId, keyId, pk)`, `pk` being the hello `pk` of the pair session that
+delivered it; a missing or bad `cert` refuses the chain. Only the holder of `spk.private` can name
+an owner, so a re-announced chain fails whatever order chains arrive in. (A signature by the device
+key over `spk` would not do: anyone can sign any `spk`.) As defence in depth, an `sk` whose `spk` is
+already held for another owner device is refused too.
 
 **Authenticity without non-repudiation (F-30).** Room and private messages are no longer signed
 with the long-term device key. The device key signs only the hello (ephemeral keys); the session
 is authenticated, the sender-key chain and its `spk` arrive over it, so the receiver attributes
 the message to the peer's device (and to the account in the hello's `acc`) — but holds no
-signature a third party could check. `Signer` for a protocol-4 message:
+signature a third party could check (`cert` is made by the ephemeral `spk`: anyone can make an
+`spk` that names a device). `Signer` for a protocol-4 message:
 `{ publicKey: <hello pk>, valid: true, account?: { publicKey: acc.apk, valid: <cert check> } }`.
 
 ## 7. Messages for absent members (mailbox)
@@ -264,12 +292,15 @@ c         = AES-GCM(key, iv, AAD, pad(UTF-8(JSON(payload))))
 → { v:4, kind:"mb", id, to: Rb.id, sb: Sb, spk: S.pk, sacc?, e: b64(eph SPKI), kct: b64, c: b64 }
 ```
 
+The sender first checks `Rb.sig` with the recipient's device key and `Rb.exp > now`.
+
 ### 7.3 Opening
 
 The recipient finds its bundle by `to` (else: not for this device — ignore), verifies `sb.sig`
 with `spk`, checks `spk` against its pins (an unknown key is “new”, a different key for a pinned
 account or name is “changed”), computes `ss2 = ECDH(Rb.dh.private, sb.dh)`, decrypts, unpads,
-checks `payload.id === id`. `sacc` is checked like a hello's `acc`.
+checks `payload.id === id`. `sacc` is checked like a hello's `acc`. `sb.exp` is not checked (an
+item may wait at the relay); keys of a bundle past `exp + MAILBOX_KEEP_MS` no longer open anything.
 
 ### 7.4 Relay frame
 
@@ -360,11 +391,12 @@ are padded; chunks are not (their size is fixed except the last).
 
 ## 11. Replay and freshness
 
-Accepted message ids are remembered **persistently** per room: `H(join(LABEL.replay, roomId, id))`
-(b64url, first 16 bytes), at most `REPLAY.maxIdsPerRoom`, for `REPLAY.windowMs` (31 days). A
-payload whose `createdAt` is older than the window or more than `REPLAY.futureMs` (5 min) ahead is
-rejected (history restored from the user's own encrypted store is exempt). The store is encrypted
-like the rest of the device's data.
+Accepted message ids are remembered **persistently** per room as
+`b64url(H(join(LABEL.replay, roomId, id))[0:16])` (the first 16 bytes of the digest), at most
+`REPLAY.maxIdsPerRoom`, for `REPLAY.windowMs` (31 days). A payload whose `createdAt` is older
+than the window or more than `REPLAY.futureMs` (5 min) ahead is rejected (history restored from
+the user's own encrypted store is exempt). The store is encrypted like the rest of the device's
+data.
 
 ## 12. Identity, pins and verification
 
@@ -489,12 +521,15 @@ Server details (6.12):
   `acct` and the device's `dev` entry (and absence of a later `rev`).
 * **Gossip.** Hellos carry `sth`. For a peer's STH on the same server: same size and different root,
   or a failed consistency check between the two sizes → the same alert (split view).
+* A head not signed by the pinned key is ignored. Between two heads the server signed, a
+  consistency answer that does not verify is the alert, whatever its cause.
 
 ## 15. Release manifests (F-02, installation check)
 
-`release.json` — `ReleaseManifest`: `files` sorted by `path`, `sha256` lowercase hex, paths relative
-to the release root with `/`. Covers the built web assets, the server sources, `package.json`,
-`package-lock.json`, the installer and the scripts; never `node_modules`, `.env*`, data or keys.
+`release.json` — `ReleaseManifest`: `files` sorted by `path` (ordinal string order, no duplicates),
+`sha256` lowercase hex, paths relative to the release root with `/`. Covers the built web assets,
+the server sources, `package.json`, `package-lock.json`, the installer and the scripts; never
+`node_modules`, `.env*`, data or keys.
 `release.json.sig` — b64 Ed25519 over the exact bytes of `release.json`, by the developer's
 release key (never on the server); `release-signing.pub` — the raw public key, b64. The web build
 also writes `dist/public/release-web.json` (only the served assets) and its `.sig` when signed.
