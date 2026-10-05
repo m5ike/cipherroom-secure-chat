@@ -1535,7 +1535,7 @@ cfg_perms() {
       local -a keys
       keys=()
       while IFS= read -r -d '' f; do keys+=("${f}"); done < <(find "${DATA_BASE}" -maxdepth 4 -type f -name '*.key' -print0 2>/dev/null)
-      for d in STORAGE_KEY_FILE FUNCTIONS_ADM_KEY_FILE ANDROID_SIGNING_KEY_FILE; do
+      for d in STORAGE_KEY_FILE FUNCTIONS_ADM_KEY_FILE ANDROID_SIGNING_KEY_FILE APNS_KEY_FILE; do
         [ -n "$(ev "${d}")" ] && keys+=("$(env_path "${d}")")
       done
       for f in ${keys[@]+"${keys[@]}"}; do
@@ -2034,6 +2034,11 @@ http_nginx() {
   # Android passkeys: assetlinks must reach the app
   if loc_proxies "${srv}" /.well-known/assetlinks.json; then pass http.assetlinks "$(L '/.well-known/assetlinks.json reaches the app (Android passkeys)' '/.well-known/assetlinks.json se dostane k aplikaci (passkeys na Androidu)')"
   else warn http.assetlinks "$(L "/.well-known/assetlinks.json does not reach the app (location $(ngx_loc "${srv}" /.well-known/assetlinks.json proxy_pass)) — Android passkeys fail" "/.well-known/assetlinks.json se nedostane k aplikaci (location $(ngx_loc "${srv}" /.well-known/assetlinks.json proxy_pass)) — passkeys na Androidu selžou")" "location = /.well-known/assetlinks.json { proxy_pass http://127.0.0.1:${APP_PORT}; }"; fi
+  # iOS passkeys (6.14): with APNS_TEAM_ID the app answers apple-app-site-association; Apple fetches it without redirects
+  if [ -n "$(ev APNS_TEAM_ID)" ]; then
+    if loc_proxies "${srv}" /.well-known/apple-app-site-association; then pass http.aasa "$(L '/.well-known/apple-app-site-association reaches the app (iOS passkeys)' '/.well-known/apple-app-site-association se dostane k aplikaci (passkeys na iOS)')"
+    else warn http.aasa "$(L "/.well-known/apple-app-site-association does not reach the app (location $(ngx_loc "${srv}" /.well-known/apple-app-site-association proxy_pass)) — iOS passkeys fail" "/.well-known/apple-app-site-association se nedostane k aplikaci (location $(ngx_loc "${srv}" /.well-known/apple-app-site-association proxy_pass)) — passkeys na iOS selžou")" "location = /.well-known/apple-app-site-association { proxy_pass http://127.0.0.1:${APP_PORT}; }"; fi
+  fi
   # Security headers set twice (helmet in the app + add_header in nginx)
   local dup="" h="" hh="" hide=""
   for path in / /api/health /ws; do
