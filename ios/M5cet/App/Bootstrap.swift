@@ -14,11 +14,19 @@ enum Bootstrap {
         PushCenter.install(into: model)
         // Platform/Calls — model.voip = … (CallKit + PushKit; reports every VoIP push).
         CallSystem.shared.install(into: model)
+        // Platform/Watch — the Apple Watch companion (WatchConnectivity; only while unlocked and turned on).
+        WatchBridge.install(into: model)
         // Platform/Notifications — UNUserNotificationCenter delegate, categories, neutral texts.
         Notifier.install(into: model)
         // Core — the rooms, the account, the device; the screens' state, the app's actions, the core's slots; and the
-        // seams of Calls, Notifications, Location, Contacts, Voice (Core/README.md). Before the parts: theirs win.
+        // seams of Calls, Notifications, Location, Contacts, Voice, Watch (Core/README.md). Before the parts: a part's
+        // registration replaces the core's fallback for the same action or slot (the later one wins).
         CoreInstall.install(into: model)
-        // Parts — model.design.slots.register(…), model.design.actions.register(…) (one line per parts area).
+        // Parts/People — userPanel, userList, people.* / users.* / profile.* / msg.info / msg.sender, $profile, $myProfile.
+        PeopleParts.install(into: model)
+        // Platform/NFC, Voice, Location, Contacts, Files — on demand from the screens.
+        NfcParts.install(into: model)
+        // Parts and the app's actions — model.design.slots.register(…), model.design.actions.register(…),
+        // model.design.state = … (Renderer/README.md: the three contracts).
     }
 }

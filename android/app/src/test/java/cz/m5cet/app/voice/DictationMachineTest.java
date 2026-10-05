@@ -50,6 +50,8 @@ public class DictationMachineTest {
     static final class Rig {
         final List<FakeSession> sessions = new ArrayList<>();
         final List<String> texts = new ArrayList<>(), errors = new ArrayList<>(), states = new ArrayList<>();
+        /** States and errors in the order they came. */
+        final List<String> order = new ArrayList<>();
         final Clock clock = new Clock();
         boolean failStart;
         final DictationMachine m = new DictationMachine((lang, ev) -> {
@@ -59,10 +61,31 @@ public class DictationMachineTest {
             return s;
         }, clock, "cs-CZ", new DictationMachine.Listener() {
             @Override public void onText(String text, boolean fin) { texts.add((fin ? "F:" : "P:") + text); }
-            @Override public void onState(DictationMachine.State s) { states.add(s.name()); }
-            @Override public void onError(String code) { errors.add(code); }
+            @Override public void onState(DictationMachine.State s) { states.add(s.name()); order.add(s.name()); }
+            @Override public void onError(String code) { errors.add(code); order.add("E:" + code); }
         });
         FakeSession last() { return sessions.get(sessions.size() - 1); }
+    }
+
+    /**
+     * What Dictation.java does with the machine's events: the composer's
+     * listener is dropped when the machine goes IDLE (then onEnded), and an
+     * error goes only to a listener that is still there.
+     */
+    static final class Composer {
+        final List<String> log = new ArrayList<>();
+        Composer listener = this;
+        final DictationMachine m;
+        final List<FakeSession> sessions = new ArrayList<>();
+        Composer() {
+            m = new DictationMachine((lang, ev) -> { FakeSession s = new FakeSession(ev); sessions.add(s); return s; }, new Clock(), "cs-CZ", new DictationMachine.Listener() {
+                @Override public void onState(DictationMachine.State state) {
+                    Composer x = listener;
+                    if (state == DictationMachine.State.IDLE) { listener = null; if (x != null) x.log.add("ended"); }
+                }
+                @Override public void onError(String code) { Composer x = listener; if (x != null) x.log.add("E:" + code); }
+            });
+        }
     }
 
     @Test public void stopFinishesTheWordsThenIdle() {
@@ -187,6 +210,37 @@ public class DictationMachineTest {
         assertFalse(r.m.start());
         assertEquals(DictationMachine.State.IDLE, r.m.state());
         assertEquals(Arrays.asList("unsupported"), r.errors);
+    }
+
+    @Test public void theErrorThatEndsItIsSaidBeforeItIsIdle() {
+        // 6.14: the owner hears why before it hears that the dictation ended.
+        Rig r = new Rig();
+        r.m.start();
+        r.last().ev.error("audio-capture");
+        assertEquals(Arrays.asList("STARTING", "E:audio-capture", "IDLE"), r.order);
+        Rig fail = new Rig();
+        fail.failStart = true;
+        fail.m.start();
+        assertEquals(Arrays.asList("STARTING", "E:unsupported", "IDLE"), fail.order);
+        Rig tired = new Rig();
+        tired.m.maxIdleRestarts = 0;
+        tired.m.start();
+        tired.last().ev.end();
+        assertEquals(Arrays.asList("STARTING", "E:ended", "IDLE"), tired.order);
+    }
+
+    @Test public void aFatalErrorReachesTheComposerBeforeItsListenerIsDropped() {
+        // 6.14: Dictation drops the composer's listener on IDLE — "not-allowed" (no microphone
+        // permission), "language-not-supported" … were said after it and never shown.
+        for (String code : DictationMachine.FATAL) {
+            Composer c = new Composer();
+            c.m.start();
+            c.sessions.get(0).ev.ready();
+            c.sessions.get(0).ev.error(code);
+            c.sessions.get(0).ev.end(); // the recogniser's end after its error: ignored
+            assertEquals(code, Arrays.asList("E:" + code, "ended"), c.log);
+            assertEquals(DictationMachine.State.IDLE, c.m.state());
+        }
     }
 
     @Test public void abortDropsAtOnce() {
