@@ -4,6 +4,7 @@
 // App Group (the notification extension's) side; the directories are excluded from
 // backups. Both key paths: software and (where present) the Secure Enclave.
 
+import M5Core
 import XCTest
 @testable import M5cet
 
@@ -17,13 +18,13 @@ final class VaultTests: XCTestCase {
         for enclave in [false, true] where !enclave || EnclaveKeyMaker.available {
             let dir = TempDir(), store = MemorySecureStore()
             let v = try vault(dir, store, enclave: enclave)
-            try v.putJson(.sys, "config", ["server": "https://chat.example.com", "deviceId": "ios_1"])
-            XCTAssertEqual(v.json(.sys, "config").jString("deviceId"), "ios_1")
+            try v.putJson(.sys, "config", JSONObject([("server", "https://chat.example.com"), ("deviceId", "ios_1")]))
+            XCTAssertEqual(v.json(.sys, "config").optString("deviceId"), "ios_1")
             // A new process: the same files and Keychain, nothing in memory.
             let again = try vault(dir, store, enclave: enclave)
-            XCTAssertEqual(again.json(.sys, "config").jString("server"), "https://chat.example.com")
-            let wrap = try XCTUnwrap(SecJSON.parse(Data(contentsOf: v.paths.sysKey)))
-            XCTAssertEqual(wrap.jString("hw"), enclave ? "secure-enclave" : "software")
+            XCTAssertEqual(again.json(.sys, "config").optString("server"), "https://chat.example.com")
+            let wrap = try XCTUnwrap(SecData.json(Data(contentsOf: v.paths.sysKey)))
+            XCTAssertEqual(wrap.optString("hw"), enclave ? "secure-enclave" : "software")
             // Without the sys key in the Keychain the tier is noise.
             store.deleteAll()
             let lost = try vault(dir, store, enclave: enclave)
@@ -45,7 +46,7 @@ final class VaultTests: XCTestCase {
         try FileManager.default.removeItem(at: v.recordURL(.user, "b"))
         try FileManager.default.copyItem(at: v.recordURL(.user, "a"), to: v.recordURL(.user, "b"))
         XCTAssertThrowsError(try v.get(.user, "b"))
-        XCTAssertEqual(v.strictJson(.user, "b")?.jBool(LockStore.unreadable), true)
+        XCTAssertEqual(v.strictJson(.user, "b")?.bool(LockStore.unreadable), true)
         XCTAssertEqual(v.strictJson(.user, "missing")?.count, 0)
         XCTAssertThrowsError(try v.recordURL(.sys, "../escape"))
         XCTAssertThrowsError(try v.recordURL(.sys, ""))
@@ -116,9 +117,9 @@ final class VaultTests: XCTestCase {
         try v.unlockWithBiometrics(context: nil)
         XCTAssertEqual(try v.get(.user, "x"), Data("secret".utf8))
         // The wrap carries the AAD's purpose: as a PIN wrap it is nothing.
-        let wrap = try XCTUnwrap(SecJSON.parse(Data(contentsOf: v.paths.bioWrap)))
-        XCTAssertEqual(wrap.jInt("v"), 1)
-        XCTAssertFalse(wrap.jString("e").isEmpty)
+        let wrap = try XCTUnwrap(SecData.json(Data(contentsOf: v.paths.bioWrap)))
+        XCTAssertEqual(wrap.optInt("v"), 1)
+        XCTAssertFalse(wrap.optString("e").isEmpty)
         v.disableBiometrics()
         XCTAssertFalse(v.bioEnrolled)
         v.lock()

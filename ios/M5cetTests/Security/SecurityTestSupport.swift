@@ -6,6 +6,9 @@
 import CryptoKit
 import Foundation
 import LocalAuthentication
+import M5Core
+import M5Crypto
+import M5Proto
 import XCTest
 @testable import M5cet
 
@@ -110,8 +113,8 @@ final class ScriptedBackground: BackgroundTime {
 @MainActor
 final class RecordingParticipant: LockParticipant {
     var calls: [String] = []
-    var inbox: LockInbox?
-    func lockWillForget(receiving inbox: LockInbox?) {
+    var inbox: LockInboxFiles?
+    func lockWillForget(receiving inbox: LockInboxFiles?) {
         self.inbox = inbox
         calls.append(inbox == nil ? "willForget(disconnect)" : "willForget(receiving)")
     }
@@ -130,10 +133,10 @@ final class RecordingConsumer: LockInboxConsumer, @unchecked Sendable {
         var pins: [String]
     }
 
-    func apply(_ parsed: LockInboxParsed, inbox: LockInbox) {
+    func apply(_ parsed: LockedRooms.Parsed, inbox: LockInboxFiles) {
         var rooms: [String: [String]] = [:]
-        for r in parsed.rooms { rooms[r.room] = r.items.map { ($0["m"] as? [String: Any])?["id"] as? String ?? $0.jString("t") } }
-        lock.withLock { _parsed.append(LockInboxParsedCopy(rooms: rooms, pins: parsed.pins.map(\.slot))) }
+        for (room, items) in parsed.rooms.entries { rooms[room] = items.map { $0.object("m")?.optString("id") ?? $0.optString("t") } }
+        lock.withLock { _parsed.append(LockInboxParsedCopy(rooms: rooms, pins: parsed.pins.keys)) }
     }
 
     func restoreAll() { lock.withLock { _restored += 1 } }
@@ -144,12 +147,22 @@ final class RecordingConsumer: LockInboxConsumer, @unchecked Sendable {
 
 enum TestKeys {
     /// The Secure Enclave keyring where this simulator has one (Apple silicon), with software biometric keys.
-    static func enclave(_ store: SecureStore) throws -> Keyring {
+    static func enclave(_ store: SecureStore, shared: SecureStore? = nil) throws -> Keyring {
         guard EnclaveKeyMaker.available else { throw XCTSkip("no Secure Enclave on this runner") }
-        return Keyring(store: store, enclave: EnclaveKeyMaker(), softwareBiometry: true)
+        return Keyring(store: store, shared: shared, enclave: EnclaveKeyMaker(), softwareBiometry: true)
     }
 
-    static func software(_ store: SecureStore) -> Keyring { Keyring(store: store, enclave: nil) }
+    static func software(_ store: SecureStore, shared: SecureStore? = nil) -> Keyring { Keyring(store: store, shared: shared, enclave: nil) }
+}
+
+/// Lock inbox items as the rooms make them (M5Proto LockedRooms).
+enum TestItems {
+    static func message(room: String, id: String, text: String = "") -> JSONObject {
+        var m = ChatMessage()
+        m.id = id
+        m.text = text
+        return LockedRooms.message(roomKey: room, m)
+    }
 }
 
 /// A signed policy as the server makes it (server/android/crypto.ts signPolicy), with a test server key.
@@ -157,18 +170,19 @@ struct TestServer {
     let key = P256.Signing.PrivateKey()
     var spki: String { Bytes.b64(key.publicKey.derRepresentation) }
 
-    func signedPolicy(_ lock: SecRecord, deviceId: String, at: Int64) throws -> SecRecord {
-        let json = SecJSON.string(["lock": lock])
-        let sig = try key.signature(for: Bytes.utf8(SignedPolicy.signedString(deviceId: deviceId, at: at, policyJson: json)))
-        return ["at": at, "policy": json, "sig": Bytes.b64(sig.rawRepresentation)]
+    func signedPolicy(_ lock: JSON, deviceId: String, at: Int64) throws -> JSONObject {
+        let json = JSONObject([("lock", lock)]).stringify()
+        let sig = try key.signature(for: Data(SignedPolicy.signedString(deviceId: deviceId, at: at, policyJson: json).utf8))
+        return JSONObject([("at", .int(at)), ("policy", .string(json)), ("sig", .string(Bytes.b64(sig.rawRepresentation)))])
     }
 }
 
-/// A SecurityCenter of throwaway parts.
+/// A SecurityCenter of throwaway parts: two memory Keychains (the app-only and the shared group).
 @MainActor
 struct Fixture {
     let dir = TempDir()
     let store = MemorySecureStore()
+    let sharedStore = MemorySecureStore()
     let clock = FakeClock()
     let bio = ScriptedBiometrics()
     let background = ScriptedBackground()
@@ -179,8 +193,8 @@ struct Fixture {
     static let iterations = 1000
 
     init(enclave: Bool = false) throws {
-        let keyring = enclave ? try TestKeys.enclave(store) : TestKeys.software(store)
-        center = SecurityCenter(paths: .under(dir.url), store: store, keyring: keyring, clock: clock, biometrics: bio,
+        let keyring = enclave ? try TestKeys.enclave(store, shared: sharedStore) : TestKeys.software(store, shared: sharedStore)
+        center = SecurityCenter(paths: .under(dir.url), keyring: keyring, clock: clock, biometrics: bio,
                                 background: background, events: events, iterations: Self.iterations,
                                 extraDirs: [dir.url.appendingPathComponent("caches", isDirectory: true)])
     }
@@ -188,12 +202,14 @@ struct Fixture {
     var lock: AppLock { center.lock }
     var vault: Vault { center.vault }
 
-    /// Applies a lock policy as the server would sign it.
-    func policy(_ lock: SecRecord, at: Int64 = 1) throws {
-        let ok = center.policies.apply(answer: ["policySigned": try server.signedPolicy(lock, deviceId: Self.deviceId, at: at)],
-                                       serverKey: server.spki, deviceId: Self.deviceId)
-        XCTAssertTrue(ok, "the test policy applies")
+    /// Applies a lock policy as the server would sign it (a JSON literal: ["maxAttempts": 3, …]).
+    func policy(_ lock: JSON, at: Int64 = 1) throws {
+        let answer = JSONObject([("policySigned", .object(try server.signedPolicy(lock, deviceId: Self.deviceId, at: at)))])
+        XCTAssertTrue(center.policies.apply(answer: answer, serverKey: server.spki, deviceId: Self.deviceId), "the test policy applies")
     }
 
     func eventTypes() -> [String] { events.events.map(\.type) }
+
+    /// Every Keychain item of both groups.
+    func keychainNames() throws -> [String] { try store.names() + sharedStore.names() }
 }

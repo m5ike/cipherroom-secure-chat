@@ -5,29 +5,34 @@ Port zabezpečení zařízení z Androidu (`A/` = `android/app/src/main/java/cz/
 `docs/android-architecture.md` § 3. UI zámku je v `Parts/Lock/`, úložiště souborů v `Platform/Files/`, testy
 v `M5cetTests/Security/`. Zapojení při startu: `App/Bootstrap.swift` → `SecurityCenter.install(into:)`.
 
-Nic z toho nečeká na `M5Kit`: kryptografie, kterou platforma potřebuje sama (AES-GCM, HKDF, PBKDF2, P-256, ECIES
-schránky), je v `SecCrypto.swift` nad CryptoKit + CommonCrypto. Formáty, které přecházejí mezi zařízeními
-(položky zámkové schránky, podepsaná politika, hlášení o smazání, FileVault, značka `PayloadSeal`), jsou bajt po
-bajtu jako Android — testy to ověřují vektory z node:crypto a ze serveru.
+**Jedna implementace na pojem.** Formáty a kryptografie, které jsou v `M5Kit`, se berou odtud (jejich testy
+a vektory jsou tam): `M5Crypto` — `PinWrap`, `LockBox`, `SignedPolicy`, `IntentSeal`, `Ecies`, `Ec`, `Crypto`,
+`DeviceSigner` / `KeyAgreer`; `M5Proto` — `LockInbox` (otevřená generace), `LockedRooms` (položky, `parse`,
+`merge`), `FileVaultFormat`; `M5Net` — `RequestSigner`, `ServerKeyPin`, `SignedDevicePolicy` / `DeviceState`;
+`M5Core` — `Bytes` (= `[UInt8]`) a jeho pomocníci, `JSON` / `JSONObject`. Tady je jen to, co je platformní:
+Secure Enclave a Keychain, soubory a Data Protection, zámek, okna. Typy aplikace se jmenují podle toho, co
+přidávají (`LockInboxFiles`, `KeyringSigner`, `SecretBytes`, `SecData`), žádný se nejmenuje jako veřejný typ
+M5Kit — `ios/scripts/check-duplicate-types.sh --app` to hlídá a `M5cetTests/ImportAllModulesTests` importuje
+aplikaci se všemi šesti moduly. Formáty, které přecházejí mezi zařízeními (obal PINu, zámková schránka,
+podepsaná politika, hlášení o smazání, FileVault, značka v `userInfo`), jsou bajt po bajtu jako Android.
 
 ## Soubory
 
 | Android | iOS | Co |
 |---|---|---|
-| `Keystore` | `Keyring.swift`, `SecureStore.swift` | klíče Secure Enclave, PRF místo HMAC, Keychain |
-| `Vault` | `Vault.swift`, `Files/ProtectedFiles.swift` | vrstvy SYS / USER, záznamy, cesty a Data Protection |
-| `PinWrap` | `PinWrap.swift` | obal datového klíče PINem (v 2) |
+| `Keystore` | `Keyring.swift` (+ `EnclavePRF`), `SecureStore.swift` | klíče Secure Enclave, PRF místo HMAC, Keychain (dvě skupiny) |
+| `Vault`, `PinWrap` | `Vault.swift` (obal PINu = `M5Crypto.PinWrap` s KEK z `EnclavePRF`), `Files/ProtectedFiles.swift` | vrstvy SYS / USER, záznamy, cesty a Data Protection |
 | `LockCounter`, `LockStore` | `LockCounter.swift`, `LockStore.swift` | pravidla čítače, monotonní čekání, pečeť proti návratu |
 | `AppLock` | `LockEngine.swift` (rozhodování), `AppLock.swift` (stav, auto-zámek) | |
 | `Duress` | `DuressPin.swift` | nouzový PIN, nastavení `security.*` |
-| `LockBox`, `chat/LockedRooms` | `LockBox.swift`, `LockInbox.swift` | zámková schránka |
+| `chat/LockedRooms` (soubory) | `LockInboxFiles.swift` nad `M5Proto.LockInbox` / `LockedRooms` a `M5Crypto.LockBox` | zámková schránka na disku |
 | `Biometric` | `Biometrics.swift` | LocalAuthentication |
 | `Wiper` | `Wiper.swift` | smazání, hlášení `pending-wipe.json` |
-| `SignedPolicy`, `Config.applyServerAnswer` | `LockPolicy.swift` | podepsaná politika, `LockPolicy` |
-| `ServerPin` | `ServerPin.swift` | pin klíče serveru při registraci |
-| `IntentSeal` | `PayloadSeal.swift` | značka pro `userInfo` notifikací / odkazy |
-| `Ec`, `Crypto`, `Ecies` (část) | `SecCrypto.swift`, `SecretBytes.swift`, `SecJSON.swift` | primitiva, nulovatelné klíče |
-| `FileVault` | `Files/FileVault.swift` | soubory v klidu (segmenty 64 KiB) |
+| `Config.applyServerAnswer` (politika zámku) | `LockPolicy.swift` (`LockPolicy`, `PolicyStore`; ověření `M5Crypto.SignedPolicy`) | podepsaná politika pro zámek |
+| `IntentSeal` (extra v intentu) | `IntentSealUserInfo.swift` nad `M5Crypto.IntentSeal` | značka v `userInfo` notifikací / v odkazu |
+| `Keystore.signKey`, šifrovací klíč | `DeviceKeys.swift` (`KeyringSigner`, `KeyringAgreement`) | `RequestSigner` + `DeviceSigner`, `KeyAgreer` |
+| — | `SecCrypto.swift`, `SecretBytes.swift` | AES-GCM s nulovatelným klíčem (bajty jako `Crypto.gcmSeal`), `SecretBytes`, `SecData` |
+| `FileVault` | `Files/FileVault.swift` nad `M5Proto.FileVaultFormat` | soubory v klidu (segmenty 64 KiB) |
 | `MainActivity` FLAG_SECURE | `ScreenPrivacy.swift`, `Parts/Lock/LockPresenter.swift` | kryt v přepínači, štít při nahrávání |
 | `ui/parts/LockPad` | `Parts/Lock/LockScreenView.swift`, `LockTexts.swift` | obrazovka zámku |
 | `M5` (část) | `SecurityCenter.swift` | složení, `forgetSecrets`, wipe, zrcadlo pro rozšíření |
@@ -36,28 +41,46 @@ bajtu jako Android — testy to ověřují vektory z node:crypto a ze serveru.
 
 Všechny klíče jsou **P-256 klíče Secure Enclave** (CryptoKit `SecureEnclave.P256` — pod ním
 `SecKeyCreateRandomKey` s `kSecAttrTokenIDSecureEnclave`). Jejich `dataRepresentation` je klíč zašifrovaný
-Secure Enclave, použitelný jen v tomto zařízení; ukládá se jako položka Keychainu (`SecureStore`, služba
-`cz.m5cet.app.security`, účet `key.<alias>`, první bajt = úroveň 1 SE / 2 software). Smazání položky = smazání
-klíče. CryptoKit místo trvalých SecKey položek proto, že úložiště klíče je pak naše (`SecureStore`) a cesta Secure
-Enclave jde testovat i v nepodepsaném simulátoru (simulátor na Apple Silicon Secure Enclave má, Keychain bez
-entitlementu ne).
+Secure Enclave, použitelný jen v tomto zařízení; ukládá se jako položka Keychainu (`SecureStore`, účet
+`key.<alias>`, první bajt = úroveň 1 SE / 2 software). Smazání položky = smazání klíče. CryptoKit místo trvalých
+SecKey položek proto, že úložiště klíče je pak naše (`SecureStore`) a cesta Secure Enclave jde testovat i
+v nepodepsaném simulátoru (simulátor na Apple Silicon Secure Enclave má, Keychain bez entitlementu ne).
 
-| alias | druh | přístup (`SecAccessControl`) | Android | k čemu |
-|---|---|---|---|---|
-| `sys` | dohoda | `AfterFirstUnlockThisDeviceOnly` + `privateKeyUsage` | `m5.sys` | obal DEK_sys (čte i push / rozšíření) |
-| `bio` | dohoda | `WhenPasscodeSetThisDeviceOnly` + `privateKeyUsage` + `biometryCurrentSet` | `m5.bio` | obal DEK_user, každé použití = biometrie |
-| `pin` | dohoda | `WhenUnlockedThisDeviceOnly` + `privateKeyUsage` | `m5.pin` | PRF klíče PINu |
-| `duress` | dohoda | `WhenUnlockedThisDeviceOnly` | `m5.duress` | PRF ověřovače nouzového PINu |
-| `ctr.N` | dohoda | `WhenUnlockedThisDeviceOnly` | `m5.ctr.N` | pečeť čítače pokusů, jedna generace |
-| `sign` | podpis | `AfterFirstUnlockThisDeviceOnly` | `m5.sign` | podpis požadavků (`DeviceSigner`, P1363) |
-| `enc` | dohoda | `AfterFirstUnlockThisDeviceOnly` | software v `Config` | šifrovací klíč zařízení (`DeviceAgreement`, ECIES) |
+| alias | druh | přístup (`SecAccessControl`) | skupina | Android | k čemu |
+|---|---|---|---|---|---|
+| `sys` | dohoda | `AfterFirstUnlockThisDeviceOnly` + `privateKeyUsage` | **sdílená** | `m5.sys` | obal DEK_sys (čte i push / rozšíření) |
+| `enc` | dohoda | `AfterFirstUnlockThisDeviceOnly` | **sdílená** | software v `Config` | šifrovací klíč zařízení (`KeyAgreer`, `Ecies.open`) |
+| `bio` | dohoda | `WhenPasscodeSetThisDeviceOnly` + `privateKeyUsage` + `biometryCurrentSet` | aplikace | `m5.bio` | obal DEK_user, každé použití = biometrie |
+| `pin` | dohoda | `WhenUnlockedThisDeviceOnly` + `privateKeyUsage` | aplikace | `m5.pin` | PRF klíče PINu |
+| `duress` | dohoda | `WhenUnlockedThisDeviceOnly` | aplikace | `m5.duress` | PRF ověřovače nouzového PINu |
+| `ctr.N` | dohoda | `WhenUnlockedThisDeviceOnly` | aplikace | `m5.ctr.N` | pečeť čítače pokusů, jedna generace |
+| `sign` | podpis | `AfterFirstUnlockThisDeviceOnly` | aplikace | `m5.sign` | podpis požadavků (`RequestSigner` / `DeviceSigner`, P1363) |
+
+### Skupiny Keychainu (aplikace × rozšíření notifikací)
+
+| skupina (`keychain-access-groups`) | kdo | služba (`kSecAttrService`) | co v ní je |
+|---|---|---|---|
+| `<TEAMID>.cz.m5cet.app` — první v aplikaci = její výchozí | jen aplikace | `cz.m5cet.app.security` | `key.pin`, `key.bio`, `key.duress`, `key.ctr.N`, `key.sign`, záznam čítače `lock`, `SecurityCenter.secrets` |
+| `<TEAMID>.cz.m5cet.shared` | aplikace **a** `M5cetNotifications` | `cz.m5cet.shared.security` | `key.sys` (obal DEK_sys → SYS vrstva v App Group), `key.enc` (šifrovací klíč zařízení → ECIES push), `SecurityCenter.sharedSecrets` |
+
+Rozšíření tedy vidí jen to, co potřebuje k otevření SYS vrstvy a zapečetěného obsahu push zpráv; PIN, biometrie,
+nouzový PIN, čítač ani podpisový klíč ne (kdyby rozšíření muselo podepisovat požadavky, `sign` se přesune do
+`Keyring.sharedAliases`). **Pro rozšíření**: položka `key.sys` / `key.enc` = 1 bajt úrovně (1 Secure Enclave,
+2 software) + blob (`SecureEnclave.P256.KeyAgreement.PrivateKey(dataRepresentation:)`, resp. surový skalár);
+dotaz `kSecClassGenericPassword`, `kSecAttrService = "cz.m5cet.shared.security"`, `kSecAttrAccount = "key.sys"`,
+`kSecAttrAccessGroup = "<TEAMID>.cz.m5cet.shared"`, `kSecUseDataProtectionKeychain = true`. Formát `sys.key`
+(App Group `Library/Application Support/m5/sys.key`) je v oddílu Trezor, záznamy `sys/<jméno>.bin`
+(AAD `SYS|<jméno>`), zrcadlo zámku `lock-state.json`. Prefix týmu zjistí aplikace za běhu
+(`KeychainSecureStore.groupPrefix()`: položka přidaná do výchozí skupiny řekne její jméno); v ad-hoc podepsaném
+simulátoru je prefix prázdný (`cz.m5cet.app`, `cz.m5cet.shared`) — testy skupin běží tam.
 
 **Bez Secure Enclave** (zařízení bez SE / test) jsou tytéž klíče softwarové P-256 v Keychainu, úroveň
 `"software"` — ukazuje se to (`Vault.pinKeyLevel`, pole `hw`), jako Android „jen software“. **Biometrický klíč
 v simulátoru**: Secure Enclave simulátoru klíč s biometrií neudělá (`LAError -1020`), proto jen
 `#if targetEnvironment(simulator)` vznikne softwarový klíč hlídaný jen výzvou; na zařízení se nikdy nepoužije.
 **Nepodepsaný build** (CI: `CODE_SIGNING_ALLOWED=NO`) nemá entitlement Keychainu (`errSecMissingEntitlement`):
-v simulátoru pak místo Keychainu `FileSecureStore` (soubory v `m5-shared/dev-keychain`), na zařízení nikdy.
+v simulátoru pak místo Keychainu `FileSecureStore` — aplikační skupina v `m5/dev-keychain` (kontejner
+aplikace), sdílená v `m5-shared/dev-keychain` (strana App Group) — na zařízení nikdy.
 
 ### Klíč PINu: PRF ze Secure Enclave místo HMAC
 
@@ -87,7 +110,7 @@ Tentýž PRF nahrazuje HMAC u nouzového PINu (`"m5/duress/1|" ‖ PBKDF2(PIN)`)
 |---|---|---|---|
 | SYS | App Group `Library/Application Support/m5/sys.key` | `completeUntilFirstUserAuthentication` | `{v:1, hw, e, iv, ct}` — DEK_sys k SE klíči `sys`: e = efemérní P-256, K = HKDF-SHA256(ECDH(sys, e), "m5/ios/sys.key/1", e), AES-256-GCM, AAD `m5/sys.key` |
 | SYS | App Group `…/m5/sys/<jméno>.bin` | `completeUntilFirstUserAuthentication` | záznamy: iv ‖ AES-GCM(DEK_sys), AAD `SYS|<jméno>` |
-| USER | aplikace `Application Support/m5/user.pin` | `complete` | PinWrap v 2 `{v:2, salt, iter, iv, ct, hw}`, AAD `m5/user.pin/2` |
+| USER | aplikace `Application Support/m5/user.pin` | `complete` | `M5Crypto.PinWrap` v 2 `{v:2, salt, iter, iv, ct, hw}`, AAD `m5/user.pin/2`, KEK = `EnclavePRF` |
 | USER | aplikace `…/m5/user.bio` | `complete` | `{v:1, hw, e, iv, ct}` k SE klíči `bio`, salt HKDF `m5/ios/user.bio/1`, AAD `m5/user.bio` |
 | USER | aplikace `…/m5/user/<jméno>.bin` | `complete` | záznamy, AAD `USER|<jméno>` (jako Android) |
 | — | aplikace `…/m5/lockbox/` | `completeUnlessOpen` | zámková schránka (níže) |
@@ -107,9 +130,10 @@ DEK je v `SecretBytes` (vlastní buffer, `memset_s` při `wipe` a `deinit`); čt
 
 ## Zámek aplikace
 
-* **Politika** (`LockPolicy`, jen podepsaná: `PolicyStore.apply(answer:serverKey:deviceId:)` — M5Net mu dá každou
-  odpověď serveru): `biometric` required/optional/off, `pinLength` 4–12 (6), `maxAttempts` 3–20 (8), `wipe` (ano),
-  `backoff` (ano), `screenshots` (ne), `autolockSeconds` 0–86 400 (60). Nepodepsaná, cizí nebo starší se ignoruje.
+* **Politika** (`LockPolicy`, jen podepsaná — ověření `M5Crypto.SignedPolicy`: `PolicyStore.apply(answer:…)` /
+  `apply(answerText:…)` s každou odpovědí serveru, nebo `adopt(policy:at:)` s politikou, kterou už ověřil
+  `M5Net.DeviceState`): `biometric` required/optional/off, `pinLength` 4–12 (6), `maxAttempts` 3–20 (8), `wipe`
+  (ano), `backoff` (ano), `screenshots` (ne), `autolockSeconds` 0–86 400 (60). Nepodepsaná, cizí nebo starší se ignoruje.
 * **Pokusy** (`LockEngine` = Android `AppLock`): nouzový PIN se zkouší první (i během čekání); pokus se započítá
   a uloží **před** PBKDF2 (zabití aplikace ho nezruší, `pending` se příště vyrovná jako chyba); od 3. chyby čekání
   30 s × 2ⁿ (max 1 h); po posledním pokusu wipe podle politiky, jinak hodinová blokace; zrušená výzva biometrie se
@@ -143,10 +167,12 @@ DEK je v `SecretBytes` (vlastní buffer, `memset_s` při `wipe` a `deinit`); čt
   zamkne hned a klíč zůstane do konce hovoru (`inCall`, kontrola po 15 s); příkaz serveru (`lockNow(remote: true)`)
   bere klíč i během hovoru; zámek během slučování schránky počká.
 
-## Zámková schránka (LockInbox, LockBox)
+## Zámková schránka (LockInboxFiles nad M5Proto.LockInbox a M5Crypto.LockBox)
 
-Formát **bajt po bajtu jako Android** (`LockBoxTests.testAnAndroidGenerationOpensHere` otevírá generaci vyrobenou
-algoritmem `LockBox.java` v node:crypto): při zámku nový pár P-256, `kid = base64url(SHA-256(SPKI))[0..16]`;
+Kryptografie a formát položek jsou `M5Crypto.LockBox`, otevřená generace `M5Proto.LockInbox`, položky, `parse` a
+`merge` `M5Proto.LockedRooms`; `LockInboxFiles` je jejich místo na disku. Formát **bajt po bajtu jako Android**
+(`LockInboxFilesTests.testAnAndroidGenerationOpensFromTheDisk` otevře z disku generaci vyrobenou algoritmem
+`LockBox.java` v node:crypto): při zámku nový pár P-256, `kid = base64url(SHA-256(SPKI))[0..16]`;
 soukromý klíč (PKCS#8) zapečetěný DEK (`iv ‖ AES-GCM`, AAD `m5/lockbox/1|key|<kid>`) se zapíše do
 `lockbox/<kid>.key` **dřív, než se DEK vynuluje**; v paměti zůstane jen veřejný klíč. Položka = nový efemérní klíč,
 ECDH, HKDF-SHA256 (salt `m5/lockbox/1`, info `<kid>|<seq>|<SPKI eph>`), AES-256-GCM s AAD
@@ -155,12 +181,12 @@ se přeskočí). Druhy položek jako Android: `msg`, `state`, `pin`, `resume`, `
 přesune do `lockbox/files/<id>.part`, klíč přenosu je v položce). Log je otevřený po celou generaci
 (`completeUnlessOpen`: zapisovatelný i při zamčeném telefonu, po zavření nečitelný do odemčení).
 
-Odemčení: `LockInbox.unlocked(dek:consumer:)` schránku uzavře, generace (starší zámek první) otevře na pozadí
-vlastní kopií DEK, každou předá `LockInboxConsumer.apply(_:inbox:)` seskupenou jako Android `Parsed` (piny „první
-vítězí“, resume „poslední vítězí“) a smaže; pak `restoreAll()`. Pád během zámku schránku nechá na disku (bez PINu
-nečitelnou) a příští odemčení ji sloučí; generaci cizího klíče smaže. Pravidla chatu (validace zprávy, pořadí
-potvrzení, sloty souborů) patří místnostem — `LockInbox.merge` (podle id, známé id na svém místě) je dostane jako
-uzávěry.
+Místnosti zapisují `inbox.seal(LockedRooms.message(roomKey:…))` (a `.state`, `.pin`, `.resume`, `.call`,
+`.callUri`; soubor `keepFile`). Odemčení: `beginUnlock` hned schránku uzavře a označí slučování (zámek hned poté
+počká), `finishUnlock` generace (starší zámek první) otevře na pozadí vlastní kopií DEK, každou předá
+`LockInboxConsumer.apply(_: LockedRooms.Parsed, inbox:)` (piny „první vítězí“, resume „poslední vítězí“) a smaže;
+pak `restoreAll()`. Pád během zámku schránku nechá na disku (bez PINu nečitelnou, useknutý řádek se přeskočí)
+a příští odemčení ji sloučí; generaci cizího klíče smaže. Sloučení s historií je `LockedRooms.merge`.
 
 ## Ochrana obrazovky (náhrada FLAG_SECURE)
 
@@ -186,17 +212,17 @@ vynuluje a aplikace na pozadí skončí (`exit(0)`; iOS nedovolí odstranit se z
 
 | protokol / typ | kdo ho použije |
 |---|---|
-| `DeviceSigner` (`SecurityCenter.shared.signer`) | M5Net — `X-M5-Signature` a důkaz při registraci (SPKI + P1363) |
-| `DeviceAgreement` (`.agreement`) | M5Net / Push — ECIES ze serveru (surové ECDH) |
-| `SecureStore` (`.secrets`) | kdokoli s malým tajemstvím (relace účtu…) |
+| `KeyringSigner` (`SecurityCenter.shared.signer()`) — `M5Net.RequestSigner` a `M5Crypto.DeviceSigner` | M5Net — `X-M5-Signature` a důkaz při registraci (SPKI + P1363) |
+| `KeyringAgreement` (`.agreement()`) — `M5Crypto.KeyAgreer` | M5Net / Push — `Ecies.open(agreement, …)` ze serveru |
+| `SecureStore` (`.secrets`, jen aplikace; `.sharedSecrets`, i rozšíření) | kdokoli s malým tajemstvím (relace účtu…) |
 | `Vault` + `VaultTier` (`.vault`) | všechna úložiště (SYS: server, politika, události; USER: místnosti, zprávy, identity) |
-| `FileVault` | Files, přenosy, média |
+| `FileVault` (nad `M5Proto.FileVaultFormat`) | Files, přenosy, média |
 | `AppLockState` (`.lock`) | Push (příkaz `lock`), Notifications (neutrální text: `isLocked`), Renderer (`lock.now`) |
 | `LockParticipant` (`.add`) | místnosti, účet, profily, kontakty, Záznam — co zámek zapomíná |
-| `LockInbox` + `LockInboxConsumer` (`.inbox`, `.inboxConsumer`) | místnosti — příjem po zamčení a sloučení |
-| `PolicyStore.apply` (`.policies`) | M5Net — `policySigned` z registrace / check-inu |
-| `ServerPin.check` / `same` | M5Net — registrace |
-| `PayloadSeal` | Notifications / Push — `room` v `userInfo` a akce odpovědi |
+| `LockInboxFiles` + `LockInboxConsumer` (`.inbox`, `.inboxConsumer`), položky `M5Proto.LockedRooms` | místnosti — příjem po zamčení a sloučení |
+| `PolicyStore.apply` / `adopt` (`.policies`) | M5Net — `policySigned` z registrace / check-inu (nebo politika z `DeviceState`) |
+| `M5Net.ServerKeyPin` | registrace (pin klíče serveru — jediná implementace) |
+| `IntentSealUserInfo` (nad `M5Crypto.IntentSeal`) | Notifications / Push — `room` v `userInfo` a akce odpovědi |
 | `SecurityCenter.wipe(reason:remote:attempts:)` | Push (příkaz `wipe`) |
 | `WipeReportSigner`, `WipeTransport` (`.wiper.signer/.transport`) | M5Net |
 | `inCall` | Calls |
@@ -211,26 +237,28 @@ vynuluje a aplikace na pozadí skončí (`exit(0)`; iOS nedovolí odstranit se z
 * **Monotonní čekání** a pravidlo restartu (Android: nástěnné hodiny, slabina M4).
 * **Auto-zámek při uspání** místo alarmu (iOS nebudí v čase).
 * Šifrovací klíč zařízení je v Secure Enclave (Android: software v SYS vrstvě).
+* Rozšíření notifikací (Android: jeden proces) dostane jen sdílenou skupinu Keychainu (`sys`, `enc`) a stranu
+  App Group (SYS vrstva, zrcadlo zámku).
 * Biometrický obal bez výzvy při zápisu; neplatnost podle `domainState`.
 * Screenshoty iOS zakázat nejde: kryt v přepínači, štít při nahrávání, hlášení snímku.
 * Vzdálený wipe aplikaci z přepínače neodstraní; na pozadí skončí.
 
 ## Testy (`M5cetTests/Security`, simulátor)
 
-104 testů: primitiva (RFC 7914 / 5869 / node), klíče (obě cesty: Secure Enclave simulátoru i software), PinWrap
-(Android `PinWrapTest`), trezor, čítač a pečeť (Android `LockCounterTest`, `LockStoreTest` případ po případu
-včetně přerušení mezi kroky), monotonní čekání a restart, AppLock end-to-end (pokusy, čekání, wipe, blokace,
-rollback, nouzový PIN, biometrie, auto-zámek, uspání, hovor, schránka, přísný režim, zrcadlo), schránka (formát
-Androidu z node), wipe (úplnost), politika (podpis serveru z Android testu), ServerPin, PayloadSeal (vektor
-node), FileVault, PIN pad a okna na scéně. Test Keychainu se v nepodepsaném buildu přeskočí; s ad-hoc podpisem
-(`CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual`) běží i on.
+84 testů (formáty a kryptografie M5Kit testuje M5Kit): AES-GCM s nulovatelným klíčem = bajty `Crypto.gcmSeal`,
+`SecretBytes`, PRF (`EnclavePRF`), klíče (obě cesty: Secure Enclave simulátoru i software; `RequestSigner` /
+`DeviceSigner` / `KeyAgreer` + `Ecies`; co je ve sdílené skupině), obal PINu (formát `M5Crypto.PinWrap` s KEK
+z enclave; jiné zařízení neotevře), trezor, čítač a pečeť (Android `LockCounterTest`, `LockStoreTest` případ po
+případu včetně přerušení mezi kroky), monotonní čekání a restart, AppLock end-to-end (pokusy, čekání, wipe,
+blokace, rollback, nouzový PIN, biometrie, auto-zámek, uspání, hovor, schránka, přísný režim, zrcadlo), schránka
+na disku (generace Androidu z node), wipe (úplnost, obě skupiny), politika (podpis serveru z Android testu přes
+`PolicyStore`), nouzový ověřovač, `IntentSealUserInfo`, FileVault (nad `FileVaultFormat`), PIN pad a okna na
+scéně. Test skupin Keychainu se v nepodepsaném buildu přeskočí; s ad-hoc podpisem
+(`CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual CODE_SIGNING_REQUIRED=NO`) běží i on (prefix prázdný).
 
 ## Neověřeno (potřebuje zařízení)
 
-Biometrický klíč v Secure Enclave s `biometryCurrentSet` a jeho zneplatnění, použití SE klíčů z rozšíření
-notifikací (sdílená skupina Keychainu), `F_FULLFSYNC` a `completeUnlessOpen` při zamčeném telefonu, délka úlohy na
-pozadí a uspání, `sceneCaptureState` při skutečném nahrávání / AirPlay, doba PBKDF2 210 000 + SE na starším iPhonu.
-Položky Keychainu jdou do výchozí skupiny aplikace, která je zároveň skupinou rozšíření (první v
-`keychain-access-groups`) — rozšíření tedy technicky vidí i bloby klíčů `pin`/`bio` (bez PINu / biometrie
-nepoužitelné). Kdyby měly být jen aplikace, patří do entitlementů další, jen aplikační skupina na první místo
-(změna projektu → koordinátor).
+Biometrický klíč v Secure Enclave s `biometryCurrentSet` a jeho zneplatnění, použití SE klíčů `sys` / `enc`
+z rozšíření notifikací (sdílená skupina `cz.m5cet.shared` s týmovým prefixem a profilem), `F_FULLFSYNC`
+a `completeUnlessOpen` při zamčeném telefonu, délka úlohy na pozadí a uspání, `sceneCaptureState` při skutečném
+nahrávání / AirPlay, doba PBKDF2 210 000 + SE na starším iPhonu.
