@@ -699,7 +699,8 @@
     line-height: 1.5rem;
     field-sizing: content;
   }
-  /* 4.15: the "/keyword" command suggester floating above the composer. */
+  /* 4.15: a card floating above the composer — a running command's question (.fn-ask).
+     6.11: the suggester itself is components/command-suggest.css. */
   .cmd-menu {
     position: fixed;
     left: 50%;
@@ -718,27 +719,6 @@
     max-height: 15rem;
     overflow-y: auto;
   }
-  .cmd-item {
-    display: flex;
-    align-items: baseline;
-    gap: 0.5rem;
-    width: 100%;
-    text-align: left;
-    padding: 0.45rem 0.6rem;
-    border: 0;
-    border-radius: 0.6rem;
-    background: transparent;
-    color: hsl(var(--foreground));
-    cursor: pointer;
-  }
-  .cmd-item:hover, .cmd-item--on { background: hsl(var(--accent)); }
-  .cmd-item__kw { font-weight: 600; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: hsl(var(--primary)); white-space: nowrap; }
-  .cmd-item__sum { flex: 1 1 auto; color: hsl(var(--muted-foreground)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.85rem; }
-  .cmd-item__args { color: hsl(var(--muted-foreground)); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.72rem; opacity: 0.7; white-space: nowrap; }
-  /* 5.2: a hint instead of suggestions (the module is off, nothing matches). */
-  .cmd-item--off { cursor: default; opacity: 0.75; }
-  .cmd-item--off .cmd-item__kw { color: hsl(var(--muted-foreground)); font-family: inherit; font-weight: 500; white-space: normal; }
-  .cmd-item--off:hover { background: transparent; }
   /* 5.2: @mentions and #tags in messages; a tag filters the conversation. */
   .mention { font-weight: 600; color: hsl(var(--primary)); }
   .hashtag { display: inline; padding: 0 0.1em; border: 0; background: none; font: inherit; font-weight: 600; color: hsl(var(--primary)); cursor: pointer; text-decoration: underline dotted; text-underline-offset: 2px; }
