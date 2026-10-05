@@ -36,10 +36,12 @@ protocol ToolsVoice: AnyObject, Observable, Sendable {
     var fxActive: Bool { get }
     /// The test: "idle" | "recording" | "playing" (FxTest.state).
     var fxTesting: String { get }
+    /// $voiceFx of settings.voiceFx: {allowed, active, testing} (the gate asked again when the screen shows).
+    var fxScope: DesignValue { get }
     /// Start (four seconds recorded through the voice-message path, then played back) or stop the test.
     func fxToggleTest()
-    /// voiceFx.reset: the custom effect back to its defaults.
-    func fxResetCustom()
+    /// voiceFx.reset: the custom effect's settings and their defaults (the caller writes them).
+    func fxResetCustom() -> [(String, DesignValue)]
 }
 
 extension ToolsVoice {
@@ -69,5 +71,5 @@ final class UnavailableToolsVoice: ToolsVoice {
     var fxActive: Bool { false }
     var fxTesting: String { "idle" }
     func fxToggleTest() {}
-    func fxResetCustom() {}
+    func fxResetCustom() -> [(String, DesignValue)] { [] }
 }

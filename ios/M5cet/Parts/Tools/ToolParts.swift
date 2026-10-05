@@ -11,8 +11,11 @@
 //            core.tools.voice ($voice) follows the voice service.
 // Chat:      the bubble draws FnMessageContent(message:) for a command's call and a model's answer;
 //            FnModelFace.scope gives $msg.model.
-// Seams:     ToolParts.voice (Platform/Voice's VoiceService), engine.deviceId / roomId / usageStore (core),
-//            engine.nfcAsk (the NFC part), ToolsCallLog.shared.messages (the rooms' histories).
+// Voice:     ToolParts.voice = VoiceServiceToolsVoice(VoiceService.shared); what of the service's integration
+//            is unset gets this part's: VoiceSpeechServer (FnSpeech, /api/speech/*), ClientConfigFetching
+//            (the voice changer's gate), the design's settings, the server / account / words.
+// Seams:     engine.deviceId / roomId / usageStore (core), engine.nfcAsk (the NFC part),
+//            ToolsCallLog.shared.messages (the rooms' histories in the vault).
 //
 // The core the parts use can be replaced (the real one at launch, PreviewCore in DEBUG previews):
 // attach() is idempotent and runs again when a part is drawn, an action runs or the app is entered.
@@ -60,6 +63,28 @@ enum ToolParts {
     static func install(into model: AppModel) {
         install(design: model.design)
         model.onScenePhase { phase in if phase == .active { attach() } }
+        wireVoice(model)
+    }
+
+    /// The real voice (Platform/Voice): what of its integration is still unset — the speech module and the
+    /// voice changer's gate over this part's HTTP, the design's settings, the server and account — then the pad,
+    /// dictation and $voice follow it.
+    static func wireVoice(_ model: AppModel) {
+        let vs = VoiceService.shared
+        let transport = engine?.transport ?? FnURLSessionTransport()
+        if vs.server == nil {
+            vs.server = ToolsSpeechServer(transport: transport, server: { CoreModels.shared.server }, bearer: { await ToolParts.bearer() })
+        }
+        if vs.configFetcher == nil { vs.configFetcher = ToolsClientConfigFetcher(transport: transport) }
+        if vs.environment == nil { vs.environment = ToolsVoiceEnvironment(model.design) }
+        if vs.settings is DefaultVoiceSettings { vs.setSettings(DesignVoiceSettings(model.design)) }
+        vs.install(into: model)
+        let bridge = VoiceServiceToolsVoice(vs)
+        voice = bridge
+        model.design.actions.onSettingChanged { key, _ in
+            if key == "voice.lang" { bridge.refreshAvailability() }
+            if key.hasPrefix("voiceFx.") { vs.recomputeFx() }
+        }
     }
 
     /// The slots, the actions and the engine (the tests pass their own services and engine).
@@ -106,7 +131,16 @@ enum ToolParts {
             if pad.shown { pad.toggle(voice) }
         }
         actions.register(["voiceFx.test", "voiceFx.reset"]) { a, ctx in
-            if a.name == "voiceFx.test" { voice.fxToggleTest() } else { voice.fxResetCustom() }
+            if a.name == "voiceFx.test" {
+                voice.fxToggleTest()
+            } else {
+                // MicFx.resetCustom: the custom values back to their defaults, in the app's settings.
+                var s = ctx.host.settings
+                var changed: [String] = []
+                for (k, v) in voice.fxResetCustom() where s.set(k, v) { changed.append(k) }
+                ctx.host.settings = s
+                for k in changed { ctx.host.settingChanged(k) }
+            }
             ctx.host.refresh()
         }
         actions.register(ToolsCallLog.actions) { a, ctx in

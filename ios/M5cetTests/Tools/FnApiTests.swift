@@ -11,7 +11,7 @@ import XCTest
 @testable import M5cet
 
 /// The server in this process: routes by path prefix, answers in pieces, records requests.
-final class StubServerProtocol: URLProtocol, @unchecked Sendable {
+final class ToolsStubServerProtocol: URLProtocol, @unchecked Sendable {
     struct Answer: Sendable {
         var status = 200
         var headers: [String: String] = ["Content-Type": "application/json"]
@@ -100,31 +100,31 @@ final class FnApiTests: XCTestCase {
     private let base = "https://stub.test/"
 
     override func setUp() async throws {
-        StubServerProtocol.reset()
+        ToolsStubServerProtocol.reset()
         let c = URLSessionConfiguration.ephemeral
-        c.protocolClasses = [StubServerProtocol.self]
+        c.protocolClasses = [ToolsStubServerProtocol.self]
         transport = FnURLSessionTransport(configuration: c)
-        StubServerProtocol.routes["/api/functions/run"] = { _, _ in
-            StubServerProtocol.events([": ping\n\nevent: start\ndata: {\"runId\":\"run_1\"}\n\n",
+        ToolsStubServerProtocol.routes["/api/functions/run"] = { _, _ in
+            ToolsStubServerProtocol.events([": ping\n\nevent: start\ndata: {\"runId\":\"run_1\"}\n\n",
                                        "event: progress\ndata: {\"p\":1,\"text\":\"ž\"}\n\nevent: done\ndata: {\"runId\":\"run_1\",\"status\":\"done\",\"outputs\":[{\"type\":\"text\",\"text\":\"hi\"}],\"visibility\":\"caller\"}\n\n"])
         }
-        StubServerProtocol.routes["/api/functions/event"] = { _, _ in StubServerProtocol.events(["event: start\ndata: {\"runId\":\"run_2\"}\n\n"], forever: true) }
-        StubServerProtocol.routes["/api/functions/commands"] = { _, _ in
-            StubServerProtocol.json("{\"ok\":true,\"enabled\":true,\"commands\":[{\"keyword\":\"dns\",\"name\":\"DNS\",\"summary\":\"\",\"inputs\":[{\"name\":\"name\",\"type\":\"hostname\",\"required\":true}],\"events\":[\"button\"],\"model\":\"m1\"}]}")
+        ToolsStubServerProtocol.routes["/api/functions/event"] = { _, _ in ToolsStubServerProtocol.events(["event: start\ndata: {\"runId\":\"run_2\"}\n\n"], forever: true) }
+        ToolsStubServerProtocol.routes["/api/functions/commands"] = { _, _ in
+            ToolsStubServerProtocol.json("{\"ok\":true,\"enabled\":true,\"commands\":[{\"keyword\":\"dns\",\"name\":\"DNS\",\"summary\":\"\",\"inputs\":[{\"name\":\"name\",\"type\":\"hostname\",\"required\":true}],\"events\":[\"button\"],\"model\":\"m1\"}]}")
         }
-        StubServerProtocol.routes["/api/functions/runs/"] = { _, _ in StubServerProtocol.json("{\"ok\":true}") }
-        StubServerProtocol.routes["/api/ai/status"] = { _, _ in
-            StubServerProtocol.json("{\"ok\":true,\"enabled\":true,\"state\":\"ready\",\"default\":\"p/b\",\"models\":[{\"ref\":\"p/a\",\"label\":\"A\",\"reasoning\":true},{\"ref\":\"p/b\",\"label\":\"B\"}],\"limits\":{\"maxInputChars\":100}}")
+        ToolsStubServerProtocol.routes["/api/functions/runs/"] = { _, _ in ToolsStubServerProtocol.json("{\"ok\":true}") }
+        ToolsStubServerProtocol.routes["/api/ai/status"] = { _, _ in
+            ToolsStubServerProtocol.json("{\"ok\":true,\"enabled\":true,\"state\":\"ready\",\"default\":\"p/b\",\"models\":[{\"ref\":\"p/a\",\"label\":\"A\",\"reasoning\":true},{\"ref\":\"p/b\",\"label\":\"B\"}],\"limits\":{\"maxInputChars\":100}}")
         }
-        StubServerProtocol.routes["/api/ai/chat"] = { _, body in
+        ToolsStubServerProtocol.routes["/api/ai/chat"] = { _, body in
             let o = (try? JSON.parse(String(decoding: body, as: UTF8.self)))?.objectValue
-            if (o?.array("messages")?.count ?? 0) >= 3 { return StubServerProtocol.json("{\"ok\":false,\"code\":\"rate\",\"message\":\"slow down\"}", status: 429) }
-            return StubServerProtocol.events(["event: delta\ndata: {\"text\":\"Ahoj\"}\n\nevent: reasoning\ndata: {\"text\":\"hm\"}\n\nevent: delta\ndata: {\"text\":\" světe\"}\n\n",
+            if (o?.array("messages")?.count ?? 0) >= 3 { return ToolsStubServerProtocol.json("{\"ok\":false,\"code\":\"rate\",\"message\":\"slow down\"}", status: 429) }
+            return ToolsStubServerProtocol.events(["event: delta\ndata: {\"text\":\"Ahoj\"}\n\nevent: reasoning\ndata: {\"text\":\"hm\"}\n\nevent: delta\ndata: {\"text\":\" světe\"}\n\n",
                                               "event: done\ndata: {\"text\":\"Ahoj světe\",\"ms\":1200,\"usage\":{\"input\":3,\"output\":7}}\n\n"])
         }
-        StubServerProtocol.routes["/api/speech/tts"] = { _, _ in StubServerProtocol.json("{\"ok\":true,\"audioBase64\":\"" + Data([1, 2, 3]).base64EncodedString() + "\",\"mime\":\"audio/wav\"}") }
-        StubServerProtocol.routes["/api/speech/stt"] = { _, body in StubServerProtocol.json("{\"ok\":true,\"text\":\"slyším \(body.count)\"}") }
-        StubServerProtocol.routes["/moved"] = { _, _ in StubServerProtocol.Answer(status: 302, headers: ["Location": "https://elsewhere.test/steal"]) }
+        ToolsStubServerProtocol.routes["/api/speech/tts"] = { _, _ in ToolsStubServerProtocol.json("{\"ok\":true,\"audioBase64\":\"" + Data([1, 2, 3]).base64EncodedString() + "\",\"mime\":\"audio/wav\"}") }
+        ToolsStubServerProtocol.routes["/api/speech/stt"] = { _, body in ToolsStubServerProtocol.json("{\"ok\":true,\"text\":\"slyším \(body.count)\"}") }
+        ToolsStubServerProtocol.routes["/moved"] = { _, _ in ToolsStubServerProtocol.Answer(status: 302, headers: ["Location": "https://elsewhere.test/steal"]) }
     }
 
     private func api(_ b: String? = nil) -> FnApi { FnApi(base: b ?? base, transport: transport, userAgent: "M5cet-iOS/test") }
@@ -143,9 +143,9 @@ final class FnApiTests: XCTestCase {
     }
 
     private func seen(_ key: String) -> (auth: String, type: String, query: String, body: JSONObject?) {
-        StubServerProtocol.lock.lock()
-        defer { StubServerProtocol.lock.unlock() }
-        guard let s = StubServerProtocol.seen[key] else { return ("", "", "", nil) }
+        ToolsStubServerProtocol.lock.lock()
+        defer { ToolsStubServerProtocol.lock.unlock() }
+        guard let s = ToolsStubServerProtocol.seen[key] else { return ("", "", "", nil) }
         return (s.auth, s.type, s.query, (try? JSON.parse(String(decoding: s.body, as: UTF8.self)))?.objectValue)
     }
 
@@ -154,7 +154,7 @@ final class FnApiTests: XCTestCase {
         let c = FnCommandsClient(api: api())
         _ = c.run(bearer: "Bearer tok", keyword: "dns", model: nil, inputs: JSONObject([("name", "a.cz")]),
                   origin: FnRun.Origin(room: nil, client: "dev1", lang: "cs", tz: "Europe/Prague"), handlers: handlers(box))
-        waitUntil { box.events.count >= 3 }
+        toolsWait { box.events.count >= 3 }
         XCTAssertEqual(box.events, ["start run_1", "progress 1 ž", "done 1 caller"])
         let req = seen("/api/functions/run")
         XCTAssertEqual(req.auth, "Bearer tok")
@@ -175,10 +175,10 @@ final class FnApiTests: XCTestCase {
         let meta = JSONObject([("keyword", "demo"), ("model", "m1"), ("chain", "chn_1"), ("call", 2)])
         let call = FnCommandsClient(api: api()).event(bearer: "", meta: meta, ev: Commands.button("go", nil), origin: FnRun.Origin(room: "room1", client: "", lang: "en", tz: nil),
                                                        handlers: handlers(box))
-        waitUntil { box.events == ["start run_2"] }
+        toolsWait { box.events == ["start run_2"] }
         call.cancel()
-        waitUntil { StubServerProtocol.stopped > 0 }
-        settle(0.3)
+        toolsWait { ToolsStubServerProtocol.stopped > 0 }
+        toolsSettle(0.3)
         XCTAssertEqual(box.events, ["start run_2"]) // nothing more after the cancel
         let req = seen("/api/functions/event")
         XCTAssertEqual(req.auth, "-")
@@ -189,11 +189,11 @@ final class FnApiTests: XCTestCase {
     func testFailuresCarryTheServersWords() {
         let box = Box()
         _ = FnCommandsClient(api: api(base + "nothing-here")).run(bearer: "", keyword: "x", model: nil, inputs: nil, origin: FnRun.Origin(lang: "en"), handlers: handlers(box))
-        waitUntil { !box.events.isEmpty }
+        toolsWait { !box.events.isEmpty }
         XCTAssertEqual(box.events, ["error error HTTP 404"])
         let dead = Box()
-        _ = FnCommandsClient(api: FnApi(base: base, transport: DeadTransport())).run(bearer: "", keyword: "x", model: nil, inputs: nil, origin: FnRun.Origin(lang: "en"), handlers: handlers(dead))
-        waitUntil { !dead.events.isEmpty }
+        _ = FnCommandsClient(api: FnApi(base: base, transport: ToolsDeadTransport())).run(bearer: "", keyword: "x", model: nil, inputs: nil, origin: FnRun.Origin(lang: "en"), handlers: handlers(dead))
+        toolsWait { !dead.events.isEmpty }
         XCTAssertTrue(dead.events[0].hasPrefix("error network "), dead.events[0])
     }
 
@@ -206,9 +206,9 @@ final class FnApiTests: XCTestCase {
     }
 
     func testTheCommandListIsKeptTenSecondsPerAccount() async {
-        let clock = TestClock()
+        let clock = ToolsTestClock()
         var calls = 0
-        let counting = FakeTransport()
+        let counting = ToolsFakeTransport()
         counting.route("/api/functions/commands") { _ in
             .json("{\"ok\":true,\"enabled\":true,\"commands\":[{\"keyword\":\"dns\",\"name\":\"DNS\",\"inputs\":[],\"events\":[\"button\"],\"model\":\"m1\"}]}")
         }
@@ -231,11 +231,11 @@ final class FnApiTests: XCTestCase {
         XCTAssertEqual(counting.seen("/api/functions/commands").count, 4)
         XCTAssertEqual(counting.seen("/api/functions/commands").last?.authorization, "Bearer b")
         // A failure is "off", as on the web.
-        let off = await FnCommandsClient(api: FnApi(base: base, transport: DeadTransport())).refresh(bearer: "")
+        let off = await FnCommandsClient(api: FnApi(base: base, transport: ToolsDeadTransport())).refresh(bearer: "")
         XCTAssertEqual(off.enabled, false)
 
         FnCommandsClient(api: api()).answer(bearer: "Bearer a", runId: "run 1", interactionId: "int_1", value: .object(JSONObject([("a", "b")])))
-        await waitAsync { StubServerProtocol.seen["/api/functions/runs/"] != nil }
+        await toolsWaitAsync { ToolsStubServerProtocol.seen["/api/functions/runs/"] != nil }
         XCTAssertEqual(seen("/api/functions/runs/").body.map { JSON.object($0).canonical() }, "{\"interactionId\":\"int_1\",\"value\":{\"a\":\"b\"}}")
     }
 
@@ -256,7 +256,7 @@ final class FnApiTests: XCTestCase {
         var finished: [AiAssistant.Turn] = []
         ai.onFinished = { finished.append($0) }
         XCTAssertTrue(ai.send(bearer: "Bearer t", question: " Ahoj? "))
-        await waitAsync { finished.count == 1 }
+        await toolsWaitAsync { finished.count == 1 }
         XCTAssertEqual(finished.first?.text, "Ahoj světe")
         XCTAssertEqual(finished.first?.reasoning, "hm")
         XCTAssertEqual(finished.first?.outputTokens, 7)
@@ -264,14 +264,14 @@ final class FnApiTests: XCTestCase {
                        JSON.object((try? JSON.parse("{\"model\":\"p/a\",\"reasoning\":\"high\",\"messages\":[{\"role\":\"user\",\"content\":\"Ahoj?\"}],\"stream\":true}"))!.objectValue!).canonical())
         // The second question carries the first with its answer; a refusal is the server's code.
         XCTAssertTrue(ai.send(bearer: "Bearer t", question: "A dál?"))
-        await waitAsync { finished.count == 2 }
+        await toolsWaitAsync { finished.count == 2 }
         XCTAssertEqual(finished.dropFirst().first?.errorCode, "rate")
         XCTAssertEqual(finished.dropFirst().first?.errorMessage, "slow down")
         XCTAssertEqual(seen("/api/ai/chat").body?.array("messages")?.count, 3)
         XCTAssertEqual(seen("/api/ai/chat").body?.array("messages")?[1].objectValue?.optString("content"), "Ahoj světe")
         // A failed answer and its question are left out of the next one.
         XCTAssertTrue(ai.send(bearer: "Bearer t", question: "Třetí"))
-        await waitAsync { finished.count == 3 }
+        await toolsWaitAsync { finished.count == 3 }
         XCTAssertEqual(seen("/api/ai/chat").body?.array("messages")?.count, 3)
         XCTAssertEqual(seen("/api/ai/chat").body?.array("messages")?[2].objectValue?.optString("content"), "Třetí")
         XCTAssertFalse(ai.send(bearer: "Bearer t", question: "   "))
@@ -291,7 +291,7 @@ final class FnApiTests: XCTestCase {
         XCTAssertEqual(req.type, "audio/wav")
         XCTAssertEqual(req.query, "connector=p%2Fw%20x")
         // The server's own status answer: speech off.
-        let fake = FakeTransport()
+        let fake = ToolsFakeTransport()
         fake.route("/api/speech/status", ToolsFixtures.answer("speechStatus"))
         let st = await FnSpeech(api: FnApi(base: base, transport: fake)).status(bearer: "")
         XCTAssertEqual(st, FnSpeech.none)

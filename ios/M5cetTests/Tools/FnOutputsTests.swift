@@ -148,7 +148,7 @@ final class FnOutputsTests: XCTestCase {
                             ["type": "image", "mime": "image/png", "data": .string(png), "alt": "dot"], ["type": "file", "name": "a.txt", "mime": "text/plain", "data": "eA=="],
                             ["type": "flash", "text": "done", "level": "success"], ["type": "js", "code": "x"], ["type": "window", "id": "ai"],
                             ["type": "form", "name": "f", "fields": [["name": "e", "type": "email"]]], ["type": "audio", "mime": "audio/wav", "data": "UklGRg=="]]
-        let engine = ToolsFnEngine(transport: FakeTransport())
+        let engine = ToolsFnEngine(transport: ToolsFakeTransport())
         for dark in [false, true] {
             let host = toolsHost()
             host.toneOverride = dark
@@ -159,7 +159,7 @@ final class FnOutputsTests: XCTestCase {
                 .frame(width: 360)
             let (vc, window) = RendererTestSupport.show(ScrollView { view }, size: CGSize(width: 390, height: 1600), dark: dark)
             defer { window.isHidden = true }
-            settle(0.5)
+            toolsSettle(0.5)
             let image = RendererTestSupport.draw(vc.view)
             XCTAssertGreaterThan(image.size.height, 0)
         }

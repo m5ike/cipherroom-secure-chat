@@ -28,7 +28,7 @@ final class ToolsScreenshotTests: XCTestCase {
         call("c2", .incoming, 3 * 3_600_000, room: "family", people: ["Eva"], seconds: 312)
         call("c3", .outgoing, 26 * 3_600_000, room: "family", video: true, people: ["Bob", "Eva"], seconds: 724)
         call("c4", .declined, 50 * 3_600_000, room: "team", people: ["Bob"])
-        let team = RecordingRoom("team")
+        let team = ToolsRecordingRoom("team")
         func msg(_ id: String, _ text: String, _ from: String, _ ago: Int64, _ edit: (inout ChatMessage) -> Void = { _ in }) -> ChatMessage {
             var m = ChatMessage()
             m.id = id; m.text = text; m.senderName = from; m.createdAt = now - ago
@@ -39,9 +39,9 @@ final class ToolsScreenshotTests: XCTestCase {
                          msg("m2", "tajné", "Eva", 2 * 3_600_000) { $0.sealed = JSONObject([("v", 1)]) },
                          msg("m3", "Posílám plán", "Bob", 27 * 3_600_000) { $0.fileName = "plan.pdf" },
                          msg("m4", "Jen pro tebe", "Mike", 28 * 3_600_000) { $0.mine = true; $0.to = ["Alice"] }]
-        let rooms = FakeRooms(team)
+        let rooms = ToolsFakeRooms(team)
         rooms.savedKeys = ["team", "family"]
-        let core = CoreModels(rooms: rooms, account: FakeAccount())
+        let core = CoreModels(rooms: rooms, account: ToolsFakeAccount())
         let log = ToolsCallLog()
         log.history = { history }
         log.core = { core }

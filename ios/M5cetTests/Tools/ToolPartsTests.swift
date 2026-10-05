@@ -27,7 +27,7 @@ final class ToolPartsTests: XCTestCase {
         services = RendererTestSupport.services(state: StubScreenState(AppRouteState(enrolled: true, lockSetUp: true, locked: false)))
         engine = ToolsFnEngine(transport: ToolsFixtures.server())
         engine.timerEnabled = false
-        core = toolsCore(RecordingRoom("team"))
+        core = toolsCore(ToolsRecordingRoom("team"))
         CoreModels.shared = core
         ToolParts.install(design: services, engine: engine)
         ToolParts.ai.input = ""
@@ -78,12 +78,12 @@ final class ToolPartsTests: XCTestCase {
     }
 
     func testTheVoiceFollowsTheService() {
-        let v = FakeVoice()
+        let v = ToolsFakeVoice()
         ToolParts.voice = v
         XCTAssertEqual(core.tools.voice["available"], .bool(true))
         XCTAssertEqual(core.variables.values(for: "settings.voiceFx")["voiceFx"]?["testing"], "idle")
         v.speaking = true
-        waitUntil { self.core.tools.voice["speaking"] == .bool(true) }
+        toolsWait { self.core.tools.voice["speaking"] == .bool(true) }
         // voiceFx.test / voiceFx.reset reach the service.
         let h = host()
         _ = services.actions.dispatch(.voiceFxTest, context: ActionContext(host: h, source: nil))
@@ -92,7 +92,7 @@ final class ToolPartsTests: XCTestCase {
         XCTAssertEqual(v.resets, 1)
         // $voices: asked once.
         _ = core.variables.values(for: "voice")
-        waitUntil { (self.core.variables.values(for: "voice")["voices"]?.arrayValue?.count ?? 0) == 2 }
+        toolsWait { (self.core.variables.values(for: "voice")["voices"]?.arrayValue?.count ?? 0) == 2 }
     }
 
     // MARK: AI chat
@@ -118,12 +118,12 @@ final class ToolPartsTests: XCTestCase {
         let h = host()
         let ai = ToolParts.ai
         ai.loadIfNeeded()
-        waitUntil { ToolParts.assistant.status != nil }
+        toolsWait { ToolParts.assistant.status != nil }
         XCTAssertEqual(ai.scope["state"], "ready")
         XCTAssertEqual(ToolParts.assistant.model, "local-ai/m1")
         ai.input = "Ahoj?"
         XCTAssertTrue(services.actions.dispatch(.aiSend, context: ActionContext(host: h, source: nil)))
-        waitUntil { ToolParts.assistant.lastAnswer != nil }
+        toolsWait { ToolParts.assistant.lastAnswer != nil }
         XCTAssertEqual(ToolParts.assistant.lastAnswer?.text, "Ahoj! **Jak** mohu pomoci?")
         XCTAssertEqual(ToolParts.assistant.lastAnswer?.model, "m1")
         XCTAssertEqual(ai.input, "")
@@ -133,29 +133,29 @@ final class ToolPartsTests: XCTestCase {
     }
 
     func testStoppingAnAnswerKeepsWhatCame() {
-        let transport = FakeTransport()
+        let transport = ToolsFakeTransport()
         transport.route("/api/ai/status", ToolsFixtures.answer("aiStatus"))
         transport.route("/api/ai/chat", .sse("event: delta\ndata: {\"text\":\"Půl\"}\n\n", stall: true))
         let a = AiAssistant(api: FnApi(base: "https://chat.example.com", transport: transport))
         Task { _ = await a.loadStatus(bearer: "") }
-        waitUntil { a.status != nil }
+        toolsWait { a.status != nil }
         XCTAssertTrue(a.send(bearer: "", question: "x"))
-        waitUntil { a.turns.last?.text == "Půl" }
+        toolsWait { a.turns.last?.text == "Půl" }
         XCTAssertTrue(a.busy)
         a.stop()
         XCTAssertFalse(a.busy)
         XCTAssertEqual(a.turns.last?.stopped, true)
         XCTAssertEqual(a.turns.last?.pending, false)
         XCTAssertEqual(a.turns.last?.text, "Půl")
-        waitUntil { transport.open == 0 }
+        toolsWait { transport.open == 0 }
     }
 
     func testAnAssistantThatIsOffSendsNothing() {
-        let transport = FakeTransport()
+        let transport = ToolsFakeTransport()
         transport.route("/api/ai/status", ToolsFixtures.answer("aiStatusOff"))
         let a = AiAssistant(api: FnApi(base: "https://chat.example.com", transport: transport))
         Task { _ = await a.loadStatus(bearer: "") }
-        waitUntil { a.status != nil }
+        toolsWait { a.status != nil }
         XCTAssertEqual(a.status?.state, "off")
         XCTAssertFalse(a.send(bearer: "", question: "x"))
         XCTAssertTrue(transport.seen("/api/ai/chat").isEmpty)
@@ -164,12 +164,12 @@ final class ToolPartsTests: XCTestCase {
     // MARK: voice pad
 
     func testTheVoicePadDictatesIntoItsTranscript() {
-        let v = FakeVoice()
+        let v = ToolsFakeVoice()
         ToolParts.voice = v
         let pad = VoicePadModel()
         pad.transcript = "Ahoj"
         pad.toggle(v)
-        waitUntil { v.sink != nil }
+        toolsWait { v.sink != nil }
         XCTAssertEqual(VoicePadModel.stateText(v) { "[" + $0 + "]" }, "🎙 [voice.listening]")
         v.sink?("jak", false)
         XCTAssertEqual(pad.transcript, "Ahoj jak")
@@ -187,17 +187,17 @@ final class ToolPartsTests: XCTestCase {
     }
 
     func testVoiceDictateReachesOnlyAPadOnScreen() {
-        let v = FakeVoice()
+        let v = ToolsFakeVoice()
         ToolParts.voice = v
         let h = host()
         ToolParts.pad.shown = false
         _ = services.actions.dispatch(.voiceDictate, context: ActionContext(host: h, source: nil))
-        settle()
+        toolsSettle()
         XCTAssertFalse(v.dictating)
         ToolParts.pad.shown = true
         defer { ToolParts.pad.shown = false }
         _ = services.actions.dispatch(.voiceDictate, context: ActionContext(host: h, source: nil))
-        waitUntil { v.dictating }
+        toolsWait { v.dictating }
     }
 
     func testIntoAMessage() {
@@ -215,13 +215,13 @@ final class ToolPartsTests: XCTestCase {
     // MARK: drawing
 
     func testTheSlotsDraw() {
-        let v = FakeVoice()
+        let v = ToolsFakeVoice()
         ToolParts.voice = v
         for (screen, size) in [("ai", CGSize(width: 390, height: 844)), ("voice", CGSize(width: 390, height: 844))] {
             let h = host()
             h.showScreen(screen, transition: false)
             let (vc, window) = RendererTestSupport.show(DesignShell(host: h), size: size)
-            settle(0.4)
+            toolsSettle(0.4)
             XCTAssertGreaterThan(RendererTestSupport.draw(vc.view).size.width, 0)
             window.isHidden = true
         }

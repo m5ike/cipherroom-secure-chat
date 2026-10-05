@@ -26,7 +26,7 @@ final class ToolsCallLogTests: XCTestCase {
     private let now: Int64 = 1_760_000_000_000 // 2025-10-09 08:53 UTC
     private var log: ToolsCallLog!
     private var history: AppCallHistory!
-    private var rooms: FakeRooms!
+    private var rooms: ToolsFakeRooms!
     private var host: DesignHost!
     private var asked: [(String, [(String, Bool)], String, (Int) -> Void)] = []
 
@@ -41,7 +41,7 @@ final class ToolsCallLogTests: XCTestCase {
         history.add(call("c1", CallTrack.Kind.missed.rawValue, now - 60_000, people: ["Alice"]))
         history.add(call("c2", CallTrack.Kind.outgoing.rawValue, now - 86_400_000 - 5_000, video: true, people: ["Bob", "Eva"], seconds: 724))
         history.add(call("c3", CallTrack.Kind.outgoing.rawValue, now - 3 * 86_400_000, seconds: 0, room: "gone"))
-        let room = RecordingRoom("team")
+        let room = ToolsRecordingRoom("team")
         var m1 = ChatMessage()
         m1.id = "m-1"; m1.text = "Zavoláme se po obědě?"; m1.senderName = "Alice"; m1.createdAt = now - 30_000
         var m2 = ChatMessage()
@@ -51,8 +51,8 @@ final class ToolsCallLogTests: XCTestCase {
         var m4 = ChatMessage()
         m4.id = "m-4"; m4.text = "moje"; m4.mine = true; m4.to = ["Alice"]; m4.createdAt = now - 5_000
         room.messages = [m1, m2, m3, m4]
-        rooms = FakeRooms(room)
-        let core = CoreModels(rooms: rooms, account: FakeAccount())
+        rooms = ToolsFakeRooms(room)
+        let core = CoreModels(rooms: rooms, account: ToolsFakeAccount())
         log = ToolsCallLog()
         log.history = { [history] in history! }
         log.core = { core }
@@ -127,7 +127,7 @@ final class ToolsCallLogTests: XCTestCase {
         log.run("calllog.item", msgId, host: host)
         XCTAssertEqual(rooms.switched, ["team"])
         XCTAssertEqual(host.screen, "room")
-        waitUntil { self.rooms.rooms["team"]?.revealRequest == "m-1" }
+        toolsWait { self.rooms.rooms["team"]?.revealRequest == "m-1" }
         // A room no longer saved: said so.
         log.run("calllog.item", "c:c3", host: host)
         XCTAssertEqual(host.flashes.last?.text, "This room is no longer saved in the app.")

@@ -15,7 +15,7 @@ import XCTest
 // MARK: - transport
 
 /// One recorded request.
-struct SeenRequest: Sendable {
+struct ToolsSeenRequest: Sendable {
     let method: String
     let path: String
     let query: String
@@ -27,7 +27,7 @@ struct SeenRequest: Sendable {
 }
 
 /// How a route answers.
-struct FakeAnswer: Sendable {
+struct ToolsFakeAnswer: Sendable {
     var status = 200
     var contentType = "application/json"
     /// The body in the pieces it is sent in.
@@ -37,44 +37,44 @@ struct FakeAnswer: Sendable {
     /// A pause before each piece (ms).
     var gapMs = 0
 
-    static func json(_ text: String, status: Int = 200) -> FakeAnswer { FakeAnswer(status: status, contentType: "application/json; charset=utf-8", chunks: [Data(text.utf8)]) }
+    static func json(_ text: String, status: Int = 200) -> ToolsFakeAnswer { ToolsFakeAnswer(status: status, contentType: "application/json; charset=utf-8", chunks: [Data(text.utf8)]) }
 
-    static func sse(_ text: String, pieces: Int = 1, stall: Bool = false) -> FakeAnswer {
+    static func sse(_ text: String, pieces: Int = 1, stall: Bool = false) -> ToolsFakeAnswer {
         let bytes = Array(text.utf8)
         let size = max(1, (bytes.count + pieces - 1) / max(1, pieces))
         var chunks = [Data]()
         var i = 0
         while i < bytes.count { chunks.append(Data(bytes[i..<min(bytes.count, i + size)])); i += size }
-        return FakeAnswer(status: 200, contentType: "text/event-stream; charset=utf-8", chunks: chunks, stall: stall)
+        return ToolsFakeAnswer(status: 200, contentType: "text/event-stream; charset=utf-8", chunks: chunks, stall: stall)
     }
 }
 
 /// Answers by path (the longest matching prefix), records every request; nothing leaves the process.
-final class FakeTransport: FnTransport, @unchecked Sendable {
+final class ToolsFakeTransport: FnTransport, @unchecked Sendable {
     private let lock = NSLock()
-    private var routes: [(String, @Sendable (SeenRequest) -> FakeAnswer)] = []
-    private var seenList: [SeenRequest] = []
+    private var routes: [(String, @Sendable (ToolsSeenRequest) -> ToolsFakeAnswer)] = []
+    private var seenList: [ToolsSeenRequest] = []
     private var openStreams = 0
     private var cancelledStreams = 0
 
     /// A route (a later one for the same prefix replaces it).
-    func route(_ prefix: String, _ answer: @escaping @Sendable (SeenRequest) -> FakeAnswer) {
+    func route(_ prefix: String, _ answer: @escaping @Sendable (ToolsSeenRequest) -> ToolsFakeAnswer) {
         lock.withLock {
             routes.removeAll { $0.0 == prefix }
             routes.append((prefix, answer))
         }
     }
 
-    func route(_ prefix: String, _ answer: FakeAnswer) { route(prefix) { _ in answer } }
+    func route(_ prefix: String, _ answer: ToolsFakeAnswer) { route(prefix) { _ in answer } }
 
-    var seen: [SeenRequest] { lock.lock(); defer { lock.unlock() }; return seenList }
-    func seen(_ path: String) -> [SeenRequest] { seen.filter { $0.path.hasPrefix(path) } }
+    var seen: [ToolsSeenRequest] { lock.lock(); defer { lock.unlock() }; return seenList }
+    func seen(_ path: String) -> [ToolsSeenRequest] { seen.filter { $0.path.hasPrefix(path) } }
     var open: Int { lock.lock(); defer { lock.unlock() }; return openStreams }
     var cancelled: Int { lock.lock(); defer { lock.unlock() }; return cancelledStreams }
 
     func open(_ request: FnRequest) async throws -> FnOpened {
         let comps = URLComponents(url: request.url, resolvingAgainstBaseURL: false)
-        let s = SeenRequest(method: request.method, path: comps?.path ?? "", query: comps?.percentEncodedQuery ?? "", headers: request.headers, body: request.body)
+        let s = ToolsSeenRequest(method: request.method, path: comps?.path ?? "", query: comps?.percentEncodedQuery ?? "", headers: request.headers, body: request.body)
         let handler = lock.withLock {
             seenList.append(s)
             return routes.filter { s.path.hasPrefix($0.0) }.max { $0.0.count < $1.0.count }?.1
@@ -110,7 +110,7 @@ final class FakeTransport: FnTransport, @unchecked Sendable {
 }
 
 /// A transport whose every call fails to connect.
-struct DeadTransport: FnTransport {
+struct ToolsDeadTransport: FnTransport {
     func open(_ request: FnRequest) async throws -> FnOpened { throw FnFailure.network("Could not connect to the server.") }
 }
 
@@ -133,20 +133,20 @@ enum ToolsFixtures {
     static func request(_ name: String) -> JSONObject? { captured(name).object("request") }
 
     /// The captured answer as the fake transport gives it.
-    static func answer(_ name: String, pieces: Int = 3, stall: Bool = false) -> FakeAnswer {
+    static func answer(_ name: String, pieces: Int = 3, stall: Bool = false) -> ToolsFakeAnswer {
         let c = captured(name)
         let ct = c.optString("contentType")
         if ct.contains("event-stream") {
-            var a = FakeAnswer.sse(c.optString("body"), pieces: pieces, stall: stall)
+            var a = ToolsFakeAnswer.sse(c.optString("body"), pieces: pieces, stall: stall)
             a.status = c.optInt("status")
             return a
         }
-        return FakeAnswer.json(c.optString("body"), status: c.optInt("status"))
+        return ToolsFakeAnswer.json(c.optString("body"), status: c.optInt("status"))
     }
 
     /// A transport that answers every route the app uses like the server did.
-    static func server() -> FakeTransport {
-        let t = FakeTransport()
+    static func server() -> ToolsFakeTransport {
+        let t = ToolsFakeTransport()
         t.route("/api/client-config", answer("clientConfig"))
         t.route("/api/functions/commands", answer("commands"))
         t.route("/api/functions/run") { req in
@@ -171,7 +171,7 @@ enum ToolsFixtures {
 /// A connected room that records what the engine asks of it.
 @MainActor
 @Observable
-final class RecordingRoom: RoomModel {
+final class ToolsRecordingRoom: RoomModel {
     let key: String
     var room: String { key }
     var label: String { key }
@@ -292,13 +292,13 @@ final class RecordingRoom: RoomModel {
 /// The rooms: one active room (or none).
 @MainActor
 @Observable
-final class FakeRooms: RoomsModel {
-    var rooms: [String: RecordingRoom] = [:]
+final class ToolsFakeRooms: RoomsModel {
+    var rooms: [String: ToolsRecordingRoom] = [:]
     var savedKeys: [String] = []
     var activeKey = ""
     var switched: [String] = []
 
-    init(_ active: RecordingRoom? = nil) {
+    init(_ active: ToolsRecordingRoom? = nil) {
         if let active { rooms[active.key] = active; activeKey = active.key; savedKeys = [active.key] }
     }
 
@@ -332,7 +332,7 @@ final class FakeRooms: RoomsModel {
 
 @MainActor
 @Observable
-final class FakeAccount: AccountModel {
+final class ToolsFakeAccount: AccountModel {
     var token: String
     init(_ token: String = "Bearer tok") { self.token = token }
     var signedIn: Bool { !token.isEmpty }
@@ -343,15 +343,15 @@ final class FakeAccount: AccountModel {
 
 /// A core over the fakes.
 @MainActor
-func toolsCore(_ room: RecordingRoom? = RecordingRoom(), server: String = "https://chat.example.com", token: String = "Bearer tok") -> CoreModels {
-    let c = CoreModels(rooms: FakeRooms(room), account: FakeAccount(token))
+func toolsCore(_ room: ToolsRecordingRoom? = ToolsRecordingRoom(), server: String = "https://chat.example.com", token: String = "Bearer tok") -> CoreModels {
+    let c = CoreModels(rooms: ToolsFakeRooms(room), account: ToolsFakeAccount(token))
     c.server = server
     return c
 }
 
 /// Questions the engine asks, answered by the test.
 @MainActor
-final class FakePresenter: FnPresenting {
+final class ToolsFakePresenter: FnPresenting {
     var asked: [(FnRun.Interaction, String, (JSON?) -> Void)] = []
     var files: [(String, String, Data, Bool)] = []
     var dismissed = 0
@@ -373,7 +373,7 @@ final class FakePresenter: FnPresenting {
 /// A voice that dictates what the test says.
 @MainActor
 @Observable
-final class FakeVoice: ToolsVoice {
+final class ToolsFakeVoice: ToolsVoice {
     var available = true
     var dictating = false
     var listening = false
@@ -396,14 +396,14 @@ final class FakeVoice: ToolsVoice {
     func stopSpeaking() { speaking = false }
     func voices() async -> [DesignValue] { [["value": "", "label": "Default"], ["value": "cs-CZ", "label": "Čeština"]] }
     func fxToggleTest() { fxTesting = fxTesting == "idle" ? "recording" : "idle" }
-    func fxResetCustom() { resets += 1 }
+    func fxResetCustom() -> [(String, DesignValue)] { resets += 1; return [("voiceFx.pitch", -5)] }
 }
 
 // MARK: - waiting
 
 /// Turns the main run loop until `condition` holds (or fails after `timeout` seconds).
 @MainActor
-func waitUntil(_ timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) {
+func toolsWait(_ timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) {
     let end = Date().addingTimeInterval(timeout)
     while !condition() {
         if Date() > end { XCTFail("timed out waiting", file: file, line: line); return }
@@ -413,7 +413,7 @@ func waitUntil(_ timeout: TimeInterval = 5, file: StaticString = #filePath, line
 
 /// The same from an async test (the main actor is let go between the checks — a nested run loop would not run its jobs).
 @MainActor
-func waitAsync(_ timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async {
+func toolsWaitAsync(_ timeout: TimeInterval = 5, file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async {
     let end = Date().addingTimeInterval(timeout)
     while !condition() {
         if Date() > end { XCTFail("timed out waiting", file: file, line: line); return }
@@ -423,7 +423,7 @@ func waitAsync(_ timeout: TimeInterval = 5, file: StaticString = #filePath, line
 
 /// Lets queued main-actor work run.
 @MainActor
-func settle(_ seconds: TimeInterval = 0.1) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
+func toolsSettle(_ seconds: TimeInterval = 0.1) { RunLoop.main.run(until: Date().addingTimeInterval(seconds)) }
 
 /// A window host over the built-in design (English), its own settings.
 @MainActor
@@ -434,7 +434,7 @@ func toolsHost() -> DesignHost {
 }
 
 /// A manual clock (ms).
-final class TestClock: @unchecked Sendable {
+final class ToolsTestClock: @unchecked Sendable {
     private let lock = NSLock()
     private var t: Int64
     init(_ start: Int64 = 1_800_000_000_000) { t = start }

@@ -16,7 +16,7 @@ import XCTest
 @testable import M5cet
 
 /// Counts the requests a page makes for m5probe:// addresses.
-final class ProbeSchemeHandler: NSObject, WKURLSchemeHandler, @unchecked Sendable {
+final class ToolsProbeSchemeHandler: NSObject, WKURLSchemeHandler, @unchecked Sendable {
     private let lock = NSLock()
     private var urls: [String] = []
     var requested: [String] { lock.lock(); defer { lock.unlock() }; return urls }
@@ -34,7 +34,7 @@ final class ProbeSchemeHandler: NSObject, WKURLSchemeHandler, @unchecked Sendabl
 
 /// Waits for a page to finish.
 @MainActor
-final class LoadWaiter: NSObject, WKNavigationDelegate {
+final class ToolsLoadWaiter: NSObject, WKNavigationDelegate {
     var finished = false
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { finished = true }
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: any Error) { finished = true }
@@ -42,7 +42,7 @@ final class LoadWaiter: NSObject, WKNavigationDelegate {
 }
 
 /// A navigation as WebKit would describe a tap on a link.
-final class FakeNavigationAction: WKNavigationAction {
+final class ToolsFakeNavigationAction: WKNavigationAction {
     private let req: URLRequest
     private let type: WKNavigationType
     init(_ url: String, _ type: WKNavigationType) {
@@ -115,13 +115,13 @@ final class FnHtmlSecurityTests: XCTestCase {
         var list: WKContentRuleList?
         var done = false
         FnHtmlRules.get { list = $0; done = true }
-        waitUntil(10) { done }
+        toolsWait(10) { done }
         return try XCTUnwrap(list, "the rule list did not compile")
     }
 
     /// Loads raw HTML (no CSP — to test the rule list and the script switch on their own) and returns what it requested.
     private func load(_ html: String, appConfiguration: Bool) throws -> (requested: [String], title: String) {
-        let probe = ProbeSchemeHandler()
+        let probe = ToolsProbeSchemeHandler()
         let config: WKWebViewConfiguration = appConfiguration ? FnHtmlWeb.configuration(rules: try compiledRules()) : {
             let c = WKWebViewConfiguration()
             c.websiteDataStore = .nonPersistent()
@@ -129,15 +129,15 @@ final class FnHtmlSecurityTests: XCTestCase {
         }()
         config.setURLSchemeHandler(probe, forURLScheme: "m5probe")
         let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 480), configuration: config)
-        let waiter = LoadWaiter()
+        let waiter = ToolsLoadWaiter()
         web.navigationDelegate = waiter
         let window = UIWindow(frame: web.frame)
         window.addSubview(web)
         window.isHidden = false
         defer { window.isHidden = true }
         web.loadHTMLString(html, baseURL: nil) // as the app loads its pages (about:blank)
-        waitUntil(15) { waiter.finished }
-        settle(1.0)
+        toolsWait(15) { waiter.finished }
+        toolsSettle(1.0)
         return (probe.requested, web.title ?? "")
     }
 
@@ -169,20 +169,20 @@ final class FnHtmlSecurityTests: XCTestCase {
         let view = FnHtmlWebView(page: "", zoom: 1, height: .constant(48), openLink: { opened.append($0) }, gone: { _ in })
         let c = FnHtmlWebView.Coordinator(view)
         let web = WKWebView()
-        let start = await c.webView(web, decidePolicyFor: FakeNavigationAction("about:blank", .other))
+        let start = await c.webView(web, decidePolicyFor: ToolsFakeNavigationAction("about:blank", .other))
         XCTAssertEqual(start, .allow)
-        let tap = await c.webView(web, decidePolicyFor: FakeNavigationAction("https://example.org/ok", .linkActivated))
+        let tap = await c.webView(web, decidePolicyFor: ToolsFakeNavigationAction("https://example.org/ok", .linkActivated))
         XCTAssertEqual(tap, .cancel)
-        let mail = await c.webView(web, decidePolicyFor: FakeNavigationAction("mailto:a@b.cz", .linkActivated))
+        let mail = await c.webView(web, decidePolicyFor: ToolsFakeNavigationAction("mailto:a@b.cz", .linkActivated))
         XCTAssertEqual(mail, .cancel)
-        let js = await c.webView(web, decidePolicyFor: FakeNavigationAction("javascript:alert(1)", .linkActivated))
+        let js = await c.webView(web, decidePolicyFor: ToolsFakeNavigationAction("javascript:alert(1)", .linkActivated))
         XCTAssertEqual(js, .cancel)
-        let auto = await c.webView(web, decidePolicyFor: FakeNavigationAction("https://evil.example/redirect", .other))
+        let auto = await c.webView(web, decidePolicyFor: ToolsFakeNavigationAction("https://evil.example/redirect", .other))
         XCTAssertEqual(auto, .cancel) // not a tap: never opened
-        let form = await c.webView(web, decidePolicyFor: FakeNavigationAction("https://evil.example/post", .formSubmitted))
+        let form = await c.webView(web, decidePolicyFor: ToolsFakeNavigationAction("https://evil.example/post", .formSubmitted))
         XCTAssertEqual(form, .cancel)
         XCTAssertEqual(opened, ["https://example.org/ok", "mailto:a@b.cz"])
-        XCTAssertNil(c.webView(web, createWebViewWith: WKWebViewConfiguration(), for: FakeNavigationAction("https://x.example", .other), windowFeatures: WKWindowFeatures()))
+        XCTAssertNil(c.webView(web, createWebViewWith: WKWebViewConfiguration(), for: ToolsFakeNavigationAction("https://x.example", .other), windowFeatures: WKWindowFeatures()))
     }
 
     func testALinkIsOpenedOnlyAfterTheConfirmationAndOnlyHttps() {
