@@ -26,6 +26,8 @@ struct RootView: View {
 
     private func start() {
         let h = DesignHost(services: model.design)
+        // The system's tone from the first frame (the shell keeps it in step afterwards).
+        h.systemDark = UITraitCollection.current.userInterfaceStyle == .dark
         host = h
         // Links (m5cet://) while the window is open; one that came before it waits in pendingLink.
         model.onLink { [weak h] link in h?.handleLink(link) ?? false }
