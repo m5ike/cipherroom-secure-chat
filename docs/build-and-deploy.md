@@ -80,15 +80,17 @@ proměnné ze skutečného prostředí mají přednost. `.env` je v `.dockerigno
 | `ACCESS_LOG_FULL_IP`       | 6.12: `1` = access log ukládá celé IP adresy; jinak jen síť (IPv4 /24, IPv6 /48). |
 | `ACCESS_LOG_DAYS`          | Retence access logu ve dnech — od 6.12 výchozí **14** (dřív 30). |
 | `WEBAUTHN_ALLOW_SUBDOMAINS`| 6.12: `1` = passkey přijme každou https subdoménu rpId (chování před 6.12). Jinak bez `WEBAUTHN_ORIGINS` jen přesný origin `PUBLIC_BASE_URL` (bez něj `https://<rpId>`); originy aplikace pro Android beze změny. |
-| `TURN_REQUIRE_HUB`         | 6.12: `0` = `/api/turn` vydá TURN přihlašovací údaje komukoli (chování před 6.12). Výchozí `1`: jen adrese, která má živé spojení s hubem (WebSocket); ostatní dostanou jen STUN s `pending: true`. Nastavte `0` v clusteru, kde HTTP a WebSocket jednoho klienta mohou skončit na různých instancích. |
+| `TURN_REQUIRE_HUB`         | 6.12: `0` = `/api/turn` vydá TURN přihlašovací údaje komukoli (chování před 6.12). Výchozí `1`: jen adrese, která má spojení s hubem (WebSocket) **připojené do místnosti** (samotný otevřený `/ws` nestačí); IPv6 se porovnává podle /64. Ostatní dostanou jen STUN s `pending: true`. Nastavte `0` v clusteru, kde HTTP a WebSocket jednoho klienta mohou skončit na různých instancích. |
 | `TURN_RATE_LIMIT`          | 6.12: požadavků na `/api/turn` z jedné adresy za 10 minut (60). |
-| `SHARE_MAX_PER_IP`         | 6.12: živých pozvánek z jedné adresy (50; celkově dál 2000). |
-| `FILE_PROXY_MAX_PER_IP`    | 6.12: souběžných přenosů přes serverovou proxy z jedné adresy (16; celkově dál 64). |
-| `SPEECH_MODEL_PINS`        | 6.12: připnuté SHA-256 archivů offline řečových modelů, `id=sha256,id=sha256` (např. `whisper-small=<hex>`). Bez pinu platí hash z prvního stažení (`speech-models/manifest.json`, s HMAC master klíčem); soubory se ověřují při každém načtení. |
+| `SHARE_MAX_PER_IP`         | 6.12: živých pozvánek z jedné adresy (50; celkově dál 2000). IPv6 adresa se počítá podle své /64. |
+| `FILE_PROXY_MAX_PER_IP`    | 6.12: souběžných přenosů přes serverovou proxy z jedné adresy (16; celkově dál 64). IPv6 adresa se počítá podle své /64. |
+| `SPEECH_MODEL_PINS`        | 6.12: připnuté SHA-256 archivů offline řečových modelů, `id=sha256,id=sha256` (např. `whisper-small=<hex>`), nebo připnuté **nainstalované soubory** `id=files:<sha256>` (digest všech souborů modelu; server ho vypíše do logu, když model odmítne). Bez pinu platí hash z prvního stažení (`speech-models/manifest.json`, s HMAC master klíčem); soubory se ověřují při každém načtení. Model, jehož soubory manifest nezná (instalace před 6.12, nebo smazaný manifest), se nenačte, dokud ho vlastník neschválí v konzoli (AI a řeč › Offline řeč › „Trust installed files“) nebo nepřipne `files:`; stahování se při chybějícím manifestu a nainstalovaných modelech bez pinu odmítne. |
+| `HUB_ROOM_REGISTRATIONS_PER_HOUR` | 6.12: kolik nových ověřovacích klíčů místností smí jedna adresa (IPv6 /64) zaregistrovat za hodinu (20; 1–100 000). Důkaz nad limit projde jako neprokázaný člen a nic neregistruje (s `HUB_REQUIRE_ROOM_PROOF=1` je odmítnut). |
+| `KT_ACCOUNT_ENTRIES_PER_DAY` | 6.12: kolik záznamů smí jeden účet přidat do transparentnosti klíčů za 24 h nahráváním klíčů (40; 5–10 000); další `PUT /api/keys/bundle`, který by něco zapsal, dostane `429 kt-quota`. |
 | `VONAGE_ALLOW_UNSIGNED_SMS`| 6.7: `1` = přijmout Vonage SMS bez podpisu.          |
 | `ANDROID_DESIGN_IMAGE_HOSTS`| 6.7: povolení hostitelé obrázků v designu Androidu (výchozí žádný). |
 | `NOTIFY_DIR`               | 6.7: nastavení upozornění (`$DATA_DIR/notify`).      |
-| `HUB_REQUIRE_ROOM_PROOF`   | 6.12: `1` = místnost se slepým ID (`r3.…`) přijme jen člena, který doloží znalost klíče místnosti (důkaz při `join`, G-09); klienti před 6.12 dostanou `room-proof-required`. Místnosti s čitelným jménem (protokol 2) důkaz podat nemohou a zůstávají „starší“. Bez `1` (výchozí): join bez důkazu projde a člen je označen `proven: false`; zvuk telefonu do místnosti, hovor nabídnutý místnosti a cíl podle jména dostanou jen prokázaní členové, jakmile v místnosti nějaký je (jinak všichni jako dřív). |
+| `HUB_REQUIRE_ROOM_PROOF`   | 6.12: `1` = místnost se slepým ID (`r3.…`) přijme jen člena, který doloží znalost klíče místnosti (důkaz při `join`, G-09); klienti před 6.12 dostanou `room-proof-required`. Místnosti s čitelným jménem (protokol 2) důkaz podat nemohou a zůstávají „starší“. Bez `1` (výchozí): join bez důkazu projde a člen je označen `proven: false`; zvuk telefonu do místnosti, hovor nabídnutý místnosti, cíl podle jména či peer id, oznámení konzole podle jména a adresář klíčů přes hub dostanou jen prokázaní členové, jakmile má místnost ověřovací klíč (i když jsou všichni prokázaní členové pryč; jinak všichni jako dřív). Chyba `room-proof` nese `legacyAllowed` (zda by prošel join bez důkazu). |
 | `HUB_ROOM_PROOF_TTL_DAYS`  | 6.12: dny, po kterých server zapomene ověřovací klíč místnosti, kterou nikdo s důkazem nenavštívil (365; 1–3650). Ověřovače jsou v globální SQLite (sdílené instancemi clusteru), bez úložiště jen v paměti instance. |
 | `KEYS_MAX_DEVICES`         | 6.12: nejvýše zařízení jednoho účtu v adresáři klíčů (`PUT /api/keys/bundle`; 10; 1–50). Odhlášení zařízení ho z adresáře odebere (záznam `rev` v transparentnosti klíčů). |
 
@@ -96,14 +98,22 @@ proměnné ze skutečného prostředí mají přednost. `.env` je v `.dockerigno
 SQLCipher databáze; klíč se odvozuje z master klíče úložiště (`STORAGE_MASTER_KEY` /
 `storage.key`, pro každou databázi jiný HKDF štítek), takže hlavní i administrátorská
 služba musí mít tentýž master klíč. Nešifrovaný soubor z 6.11 se při prvním startu
-převede (zámek `*.migrate-lock`, ověření `integrity_check` a počtů řádků) — obě služby
-restartujte zároveň. Bez master klíče zůstane databáze nešifrovaná a přehled konzole
+převede (zámek `*.migrate-lock` s pid, hostitelem a tokenem procesu — zastaralý zámek
+po restartu kontejneru se převezme hned; po dobu kopie drží převádějící proces zápisový
+zámek databáze; nešifrované WAL/journal soubory se před smazáním přepíší nulami; ověření
+`integrity_check` a počtů řádků) — obě služby restartujte zároveň a staré procesy 6.11
+předtím zastavte. Bez master klíče zůstane databáze nešifrovaná a přehled konzole
 (Overview › Health) to hlásí. Tamtéž je vidět, zda sandboxy funkcí běží v bubblewrap
-(`apt install bubblewrap`; v Dockeru a na Ubuntu s omezenými user namespaces autotest
-selže a server použije jen permission model). Hashe místností v logu jsou HMAC klíčem
-odvozeným z master klíče; auditní deník podepisuje kontrolní body klíčem odvozeným
-z master klíče a starší klíč připne do `audit-signing.pin` (soubor `audit-signing.key`
-se při prvním startu 6.12 odstraní).
+(`apt install bubblewrap`, verze ≥ 0.3 — sandbox běží s `--cap-drop ALL`; v Dockeru a na
+Ubuntu s omezenými user namespaces autotest selže — zkouší se dvakrát — a server použije
+jen permission model). Hashe místností v logu jsou HMAC klíčem odvozeným z master klíče;
+auditní deník podepisuje kontrolní body klíčem odvozeným z master klíče a starší klíč
+připne do `audit-signing.pin` (soubor `audit-signing.key` se při prvním startu 6.12
+odstraní). Smazaný `audit-signing.pin` se už sám znovu nevytvoří: ověření deníku hlásí
+`pin-missing`, dokud soubor neobnovíte ze zálohy nebo vlastník deník znovu nepřipne
+(konzole › Audit › Verify › „Re-pin the journal“, `POST /api/admin/audit/repin`).
+Ověření také vyžaduje platný kontrolní bod nejvýše 510 řádků za koncem deníku
+(`checkpoint-missing`).
 
 Úplný seznam proměnných je v [dokumentaci › Nasazení](site/index.html#promenne),
 změny 6.7 v [`deployment.md`](deployment.md#přechod-na-67). `.dockerignore`
