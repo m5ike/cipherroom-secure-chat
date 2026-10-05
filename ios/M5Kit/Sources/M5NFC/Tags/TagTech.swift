@@ -112,17 +112,21 @@ public enum NfcPlatform {
         }
     }
 
-    /// Why an op is not offered with these capabilities (nil when it is) — for the UI to say, not to fake.
+    /// Why an op is not offered with these capabilities (nil when it is) — for the UI to say, not to fake. In the
+    /// app's language (the iOS design's nfc.ios.limit.* — NfcTexts), English without the app's texts.
     public static func limit(op: String, tech: String, capabilities caps: NfcCapabilities) -> String? {
         let missing = required(op: op, tech: tech).subtracting(caps)
         if missing.isEmpty { return nil }
-        if caps.isEmpty { return "This device has no NFC reader (iPad and Apple Watch have none)." }
-        if missing.contains(.mifareClassic) { return "MIFARE Classic is not available on iPhone (Core NFC has no MIFARE Classic)." }
-        if missing.contains(.rawFrames) { return "Raw ISO 14443-3 frames are not available on iPhone (Core NFC sends APDUs and MIFARE commands only)." }
-        if missing.contains(.emulation) { return "Card emulation needs the HCE entitlement (Core NFC CardSession) — not available on this device." }
-        if missing.contains(.paymentAids) { return "Core NFC does not allow payment applications (EMV AIDs) — use an external reader." }
-        return "This reader cannot do it."
+        if caps.isEmpty { return noReader }
+        if missing.contains(.mifareClassic) { return NfcTexts.t("nfc.ios.limit.classic", "MIFARE Classic is not available on iPhone (Core NFC has no MIFARE Classic).") }
+        if missing.contains(.rawFrames) { return NfcTexts.t("nfc.ios.limit.raw", "Raw ISO 14443-3 frames are not available on iPhone (Core NFC sends APDUs and MIFARE commands only).") }
+        if missing.contains(.emulation) { return NfcTexts.t("nfc.ios.limit.hce", "Card emulation needs the HCE entitlement (Core NFC CardSession) — not available on this device.") }
+        if missing.contains(.paymentAids) { return NfcTexts.t("nfc.ios.limit.payment", "Core NFC does not allow payment applications (EMV AIDs) — use an external reader.") }
+        return NfcTexts.t("nfc.ios.limit.other", "This reader cannot do it.")
     }
+
+    /// No NFC controller at all (iPad, Apple Watch, the simulator), in the app's language.
+    public static var noReader: String { NfcTexts.t("nfc.ios.limit.noReader", "This device has no NFC reader (iPad and Apple Watch have none).") }
 
     /// The ops of a technology this device can run.
     public static func ops(for tech: String, capabilities caps: NfcCapabilities) -> [NfcCatalog.Op] {

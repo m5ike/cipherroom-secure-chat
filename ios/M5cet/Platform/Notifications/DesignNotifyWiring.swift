@@ -58,6 +58,8 @@ extension Notifier {
             prefs.run(action.name, arg)
         }
         services.actions.onSettingChanged { [weak self] key, _ in self?.settingChanged(key) }
+        // Another design (a bundle) or language: the actions' titles, the hidden-preview texts, the extension's mirror.
+        services.onTextsChanged { [weak self] in self?.textsChanged() }
         prefs.writeMirror()
         registerCategories()
     }

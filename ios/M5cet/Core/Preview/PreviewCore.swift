@@ -162,7 +162,8 @@ final class PreviewRoom: RoomModel {
     var revealRequest: String?
     let myId = "peer-me"
     let myName = "Mike"
-    let myPublicKey = "BPreviewMyKey"
+    /// Valid base64 (the safety number decodes it), "BKey…" for the watch tests that look for leaks.
+    let myPublicKey = PreviewRoom.sampleKey("me")
     var people: [PersonItem] = []
     var peers: [PeerRef] = []
     var userCount: Int { people.filter { $0.channel == "open" }.count }
@@ -191,7 +192,7 @@ final class PreviewRoom: RoomModel {
     func profile(of peerId: String) -> JSONObject? { peerId == "peer-alice" ? JSONObject([("nickname", "Alice"), ("about", "Lezu a piju kávu.")]) : nil }
     func accountKey(of peerId: String) -> String { "" }
     func safetyKeys(_ peerId: String) -> SafetyKeys { SafetyKeys(mine: myPublicKey, theirs: people.first { $0.id == peerId }?.publicKey ?? "") }
-    func safetyNumber(_ peerId: String) -> String { "13286 60170 84613 24995\n23962 36648 18264 48418\n04707 59157 69365 29038" }
+    func safetyNumber(_ peerId: String) -> String { let k = safetyKeys(peerId); return Safety.number(k.mine, k.theirs) }
     func canPrivate(_ peerId: String) -> Bool { peers.contains { $0.id == peerId } }
 
     @discardableResult
@@ -305,11 +306,18 @@ final class PreviewRoom: RoomModel {
 
     // MARK: samples
 
+    /// A sample public key: "BKey" + the letters and digits of `id`, padded to valid base64.
+    nonisolated static func sampleKey(_ id: String) -> String {
+        var k = "BKey" + id.filter { $0.isASCII && ($0.isLetter || $0.isNumber) }
+        while k.count % 4 != 0 { k += "A" }
+        return k
+    }
+
     static func samplePeople() -> [PersonItem] {
         func p(_ id: String, _ name: String, me: Bool = false, channel: String = "open", user: String = "", trust: String = "new", proto: String = "p4") -> PersonItem {
             PersonItem(scope: JSONObject([("id", .string(id)), ("name", .string(name)), ("me", .bool(me)), ("channel", .string(channel)), ("username", .string(user)),
                                           ("signedIn", .bool(!user.isEmpty)), ("since", .int(PreviewCore.t0)), ("audio", "off"), ("signed", .bool(channel == "open")),
-                                          ("changed", false), ("publicKey", .string(channel == "open" ? "BKey" + id : "")), ("trust", .string(trust)),
+                                          ("changed", false), ("publicKey", .string(channel == "open" ? PreviewRoom.sampleKey(id) : "")), ("trust", .string(trust)),
                                           ("trustLabel", .string(trust == "verified" ? "Ověřeno" : "Nový")), ("protocol", .string(proto)),
                                           ("legacy", .bool(proto == "legacy")), ("held", 0), ("kt", ""), ("connected", .bool(channel == "open")),
                                           ("foreground", .bool(channel == "open")), ("lastSeen", .int(PreviewCore.t0)), ("rtt", .double(channel == "open" ? 38 : -1))]))

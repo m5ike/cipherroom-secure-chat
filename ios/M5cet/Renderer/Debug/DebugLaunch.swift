@@ -37,8 +37,11 @@ enum DebugLaunch {
         }
         guard let id = screen else { return false }
         let state = (host.services.state as? SampleScreenState) ?? SampleScreenState()
+        state.withParts = true
         host.services.state = state
         SampleSlots.register(into: host.services.slots, state: state)
+        // The core's start (AppCore.routeChanged) routes every window: this one keeps the screen asked for.
+        host.sampleMode = true
         host.showScreen(id, transition: false)
         if let s = sheet { host.showSheet(s) }
         if let f = flash { host.showFlash(title: "", text: f, level: .success) }

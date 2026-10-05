@@ -3,7 +3,8 @@
 //
 //   -M5CoreServer http://127.0.0.1:5871     enrol with this server (open enrolment) when not enrolled
 //   -M5CorePin 123456                       set the PIN up, or unlock with it
-//   -M5CoreJoin "Room|passphrase|Name"       join the room and show it (or -M5CoreScreen rooms to stay on the list)
+//   -M5CoreJoin "Room|passphrase|Name"       join the room and show it
+//   -M5CoreScreen <screen>                   then show this screen of the design instead (rooms, settings.notify…)
 //   -M5CoreSaved "Room2|pass|Name;Room3|…"   more saved rooms (not connected)
 //   -M5CoreBot "Alice|hello;how are you"     a second person in this process: joins the same room on the same
 //                                            server (its own memory stores, real WebRTC to the app) and says these
@@ -51,11 +52,14 @@ enum CoreDebugLaunch {
             let p = spec.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
             if p.count >= 3 { core.rooms.add(p[0], passphrase: p[1], userName: p[2]); core.rooms.toggleSelected(RoomKeys.normalizeRoom(p[0])) }
         }
-        guard let join = arg("M5CoreJoin") else { return }
+        guard let join = arg("M5CoreJoin") else {
+            if let s = arg("M5CoreScreen") { core.hosts.first?.showScreen(s) }
+            return
+        }
         let p = join.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
         guard p.count >= 3 else { return }
         let key = core.rooms.join(room: p[0], passphrase: p[1], userName: p[2])
-        if let h = core.hosts.first, arg("M5CoreScreen") != "rooms" { h.showScreen("room") }
+        if let h = core.hosts.first { h.showScreen(arg("M5CoreScreen") ?? "room") }
         if let b = arg("M5CoreBot") { await startBot(b, room: p[0], passphrase: p[1], server: core.device.server, key: key, core: core) }
     }
 

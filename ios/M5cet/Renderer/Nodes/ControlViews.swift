@@ -115,12 +115,25 @@ struct DesignToggleView: View {
                     .toggleStyle(.switch)
                     .tint(content.tint.color)
                     .labelsHidden(content.text.isEmpty)
+                    .padding(.trailing, SwitchMetrics.overhang)
             } else {
                 Toggle(isOn: isOn) { label }
                     .toggleStyle(DesignCheckboxStyle(tint: content.tint, border: node.foreground.withAlpha(0.6).color, hasLabel: !content.text.isEmpty))
             }
         }
     }
+}
+
+/// The system switch's real width. iOS 26's UISwitch lays itself out at its sizeThatFits (63 × 28) while SwiftUI's
+/// Toggle measures it at its intrinsic size (61 × 28) and pins it to the leading edge, so 2 pt hung past the
+/// element's frame and the row (Android's clipToPadding) cut the end of every settings switch off. The difference
+/// goes after the switch: the element is as wide as what it draws (Android measures a Switch at its whole size).
+@MainActor
+enum SwitchMetrics {
+    static let overhang: CGFloat = {
+        let s = UISwitch()
+        return max(0, ceil(s.sizeThatFits(.zero).width - s.intrinsicContentSize.width))
+    }()
 }
 
 private extension View {

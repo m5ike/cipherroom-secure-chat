@@ -113,10 +113,14 @@ describe("the iOS design", () => {
   it("is Android's default design with the iOS look, and passes the same checks", () => {
     const clean = design.sanitizeIosDesign(design.IOS_DEFAULT_DESIGN);
     expect(Object.keys(clean.screens).sort()).toEqual([...androidDesign.SCREEN_IDS].sort());
-    // The screens are Android's, but Settings › Notifications has the Apple Watch switch (test/ios-assets.test.ts).
-    const { "settings.notify": iosNotify, ...iosScreens } = clean.screens;
-    const { "settings.notify": androidNotify, ...androidScreens } = androidDesign.sanitizeDesign(androidDesign.DEFAULT_DESIGN).screens;
-    expect(iosScreens).toEqual(androidScreens);
+    // The screens are Android's, but Settings › Notifications has the Apple Watch switch, Settings › Calls lacks
+    // what iOS cannot do, Settings › Security's shuffle hint is not doubly wrapped and the update notice names no
+    // size an iOS release does not have (design.IOS_CHANGED_SCREENS, test/ios-assets.test.ts).
+    const android = androidDesign.sanitizeDesign(androidDesign.DEFAULT_DESIGN).screens;
+    const iosNotify = clean.screens["settings.notify"], androidNotify = android["settings.notify"];
+    const same = (screens: Record<string, unknown>) => Object.fromEntries(Object.entries(screens).filter(([id]) => !design.IOS_CHANGED_SCREENS.includes(id)));
+    expect(design.IOS_CHANGED_SCREENS).toEqual(["settings.notify", "settings.calls", "settings.security", "update"]);
+    expect(same(clean.screens)).toEqual(same(android));
     expect(JSON.stringify(iosNotify)).toContain('"setting":"watch.on"');
     expect(JSON.stringify(androidNotify)).not.toContain("watch.on");
     expect(clean.theme.light.primary).toBe("#0064e0");

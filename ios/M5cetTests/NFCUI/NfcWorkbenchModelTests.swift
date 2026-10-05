@@ -62,7 +62,7 @@ final class NfcWorkbenchModelTests: XCTestCase {
         let m = NfcUiTest.workbench(fake, recorder: rec)
         XCTAssertFalse(m.available)
         XCTAssertEqual(m.unavailableReason, NfcService.noReader)
-        XCTAssertEqual(m.status, w("nfc.unavailable"))
+        XCTAssertEqual(m.status, w("nfc.unavailable.device"), "the iOS design's words for a device without a reader")
         for tech in TagTech.selectable {
             m.tech = tech
             for b in m.opButtons() { XCTAssertEqual(b.reason, NfcService.noReader, "\(tech) \(b.id)") }
@@ -70,7 +70,7 @@ final class NfcWorkbenchModelTests: XCTestCase {
         // Even if something taps: the reason, no sheet.
         m.tap("ndef-read")
         m.scan()
-        XCTAssertEqual(rec.flashes.map(\.0), [NfcService.noReader, w("nfc.unavailable")])
+        XCTAssertEqual(rec.flashes.map(\.0), [NfcService.noReader, w("nfc.unavailable.device")])
         XCTAssertTrue(fake.calls.isEmpty)
         XCTAssertNotNil(m.reason("m5-read", tech: NfcCatalog.m5cetCard))
     }

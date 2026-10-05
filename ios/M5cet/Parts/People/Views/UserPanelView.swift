@@ -36,17 +36,20 @@ struct UserPanelView: View {
     var body: some View {
         let host = ctx.host
         let _ = (host.revision, people.revision, clock)
-        if state.open {
-            GeometryReader { geo in
-                panelLayer(geo.size, host: host)
+        Group {
+            if state.open {
+                GeometryReader { geo in
+                    panelLayer(geo.size, host: host)
+                }
+                .task(id: state.open) { await tick() }
+            } else {
+                Color.clear.frame(width: 0, height: 0).accessibilityHidden(true)
             }
-            .task(id: state.open) { await tick() }
-            #if DEBUG
-            .task { PeopleDebug.runOnce(host) }
-            #endif
-        } else {
-            Color.clear.frame(width: 0, height: 0).accessibilityHidden(true)
         }
+        #if DEBUG
+        // Open or not (-M5UsersOpen NO): the dialogs of -M5People.
+        .task { PeopleDebug.runOnce(host) }
+        #endif
     }
 
     // MARK: the scope

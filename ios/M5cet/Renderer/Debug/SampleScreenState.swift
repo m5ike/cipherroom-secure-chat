@@ -26,6 +26,34 @@ final class SampleScreenState: ScreenStateProvider {
         // The app's own $app (its version) and the live $settings (every key, the user's look).
         v["app"] = nil
         v["settings"] = nil
+        // The console's sample names the channels in Android's words; the app names them in its design's.
+        if screen == "settings.notify", var n = v["notify"]?.objectValue, let channels = n["channels"]?.arrayValue {
+            n["channels"] = .array(channels.map { c in
+                var o = c.objectValue ?? [:]
+                if let id = o["id"]?.stringValue, let label = DesignAssets.builtIn.text("notify.channel." + id, lang: context.lang) { o["label"] = .string(label) }
+                return .object(o)
+            })
+            v["notify"] = .object(n)
+        }
+        return v
+    }
+
+    /// The app's sample mode (-M5Screen): the parts' own variables ($profile, $notify…) over the console's samples,
+    /// as the app's state adds them (the samples lack what the parts compute, e.g. Settings › Profile's "who sees
+    /// what"). Off in tests (the samples alone).
+    @ObservationIgnored var withParts = false
+
+    func variables(for screen: String, context: ScreenContext, host: DesignHost?) -> [String: DesignValue] {
+        var v = variables(for: screen, context: context)
+        guard withParts else { return v }
+        var registries = [CoreModels.shared.variables]
+        if let core = AppCore.current, core.models.variables !== CoreModels.shared.variables { registries.insert(core.models.variables, at: 0) }
+        for r in registries { for (k, x) in r.values(for: screen, host: host) { v[k] = x } }
+        // What the window's parts put in $form (a person's detail, a forward) over the sample's $form.
+        if let host, var f = v["form"]?.objectValue {
+            for (k, x) in host.form { f[k] = x }
+            v["form"] = .object(f)
+        }
         return v
     }
 

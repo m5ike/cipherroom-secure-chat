@@ -161,18 +161,22 @@ akce swipe řádku, nadpisy).
 
 ## DEBUG: ukázkový režim a snímky
 
-Argumenty spuštění (jen DEBUG, v Release nejsou): `-M5Screen <id>` (obrazovka s ukázkovými daty, bez splash a route;
-seznam místností a zprávy se kreslí šablonami designu, dokud nejsou části), `-M5Dark YES|NO`, `-M5Sheet <id>`,
-`-M5Flash <text>`, `-M5Menu <menu>@<id uzlu>`, `-M5Landscape YES` (iPhone; iPad s multitaskingem žádost ignoruje).
+Argumenty spuštění (jen DEBUG, v Release nejsou): `-M5Screen <id>` (obrazovka s ukázkovými daty, bez splash a route —
+okno si obrazovku drží, i když jádro po startu přesměruje ostatní okna; proměnné částí jako `$profile`, `$notify` a
+`$form` okna jdou přes ukázková data), `-M5Dark YES|NO`, `-M5Sheet <id>`, `-M5Flash <text>`, `-M5Menu <menu>@<id uzlu>`,
+`-M5Landscape YES` (iPhone; iPad s multitaskingem žádost ignoruje), `-M5NoNotifyAsk YES` (bez systémové otázky na
+oznámení — na simulátoru, kde nikdo neťukne), `-M5UsersOpen NO` (panel Lidí zavřený). Další: `-M5Chat…`, `-M5People`,
+`-M5Tools`, `-M5NfcDemo` (části) a skutečná aplikace proti serveru `-M5CoreServer/Pin/Join/Screen/Bot/Say` (Core/Debug).
 
 ```sh
 xcrun simctl launch <udid> cz.m5cet.app -M5Screen rooms -M5Dark YES
 xcrun simctl io <udid> screenshot rooms.png
 ```
 
-Snímky: `ios/docs/screenshots/renderer/`. iPad na šířku: `simctl` neumí otočit simulátor bez okna a `XCUIDevice`
-potřebuje cíl UI testů, proto je kreslí test `RendererScreenshotTests` (stejný `DesignShell` v okně 1376 × 1032 pt,
-regular šířka): `TEST_RUNNER_M5_SHOTS_DIR=<dir> xcodebuild … test -only-testing:M5cetTests/RendererScreenshotTests`.
+Snímky: `ios/docs/screenshots/final/` (README tam). iPad na šířku: `simctl` neumí otočit simulátor bez okna a
+`XCUIDevice` potřebuje cíl UI testů, proto je kreslí testy `QAScreenshotTests` (služby aplikace se všemi částmi,
+ukázkové jádro, okno 1376 × 1032 pt, regular šířka, listy a dialogy) a `RendererScreenshotTests`:
+`TEST_RUNNER_M5_SHOTS_DIR=<dir> xcodebuild … test -only-testing:M5cetTests/QAScreenshotTests`.
 
 ## Testy
 

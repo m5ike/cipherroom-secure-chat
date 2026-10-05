@@ -70,7 +70,7 @@ enum NfcReportExport {
     static func label(_ format: String, words: NfcWords) -> String {
         switch format {
         case "json": return words("nfc.out.json")
-        case "html": return words.or("nfc.report.html", "nfc.out.readable") + " · HTML"
+        case "html": return words.has("nfc.report.html") ? words("nfc.report.html") : words("nfc.out.readable") + " · HTML"
         case "csv": return "CSV"
         default: return "TXT"
         }

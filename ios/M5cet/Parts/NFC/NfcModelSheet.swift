@@ -314,7 +314,7 @@ enum NfcModelSheetPresenter {
                 flash(words(denied ? "nfc.model.denied" : "nfc.model.unsupported"), denied ? .warn : .info)
             } else if cmd.op != "enum" {
                 // No reader here (iPad) — or this iPhone does not run it for a model (EMV: payment AIDs).
-                flash(words(s.readingAvailable ? "nfc.model.unsupported" : "nfc.unavailable"), .warn)
+                flash((s.readingAvailable ? words("nfc.model.unsupported") : words.or("nfc.unavailable.device", "nfc.unavailable")), .warn)
             }
             return nil
         case .askDocumentKey(let c):

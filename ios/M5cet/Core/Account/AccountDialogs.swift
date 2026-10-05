@@ -24,8 +24,10 @@ enum AccountDialogs {
         case "cancelled": host.flash(title: "", text: t("passkey.cancelled"), level: .info)
         case "rp-unverified":
             let appId = (Bundle.main.object(forInfoDictionaryKey: "AppIdentifierPrefix") as? String ?? "TEAMID.") + (Bundle.main.bundleIdentifier ?? "cz.m5cet.app")
+            // The iOS design's words (what the server must publish), then the line itself and the system's reason.
+            let why = t("passkey.rpText").replacingOccurrences(of: "{host}", with: server)
             await CoreDialogs.notice(title: t("passkey.rpTitle"),
-                                     message: "https://\(server)/.well-known/apple-app-site-association\n{\"webcredentials\":{\"apps\":[\"\(appId)\"]}}\n\n" + r.message)
+                                     message: why + "\n\n{\"webcredentials\":{\"apps\":[\"\(appId)\"]}}" + (r.message.isEmpty ? "" : "\n\n" + r.message))
         case "unknown-passkey":
             let name = r.username.isEmpty ? "M5cet" : "M5cet · " + r.username
             await offerAccount(core, host, t("passkey.unknownTitle"),

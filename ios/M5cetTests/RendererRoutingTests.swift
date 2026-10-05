@@ -24,6 +24,19 @@ final class RendererRoutingTests: XCTestCase {
         XCTAssertEqual(routed(AppRouteState(enrolled: true, lockSetUp: true, locked: false, hasActiveRoom: true)).screen, "room")
     }
 
+    /// DEBUG -M5Screen: the core's routeChanged() after its start (every window routes) keeps the screen asked for.
+    func testSampleModeKeepsTheScreenAskedForWhenTheCoreRoutes() {
+        let host = RendererTestSupport.host(state: StubScreenState(AppRouteState(enrolled: true, lockSetUp: true, locked: false)))
+        host.sampleMode = true
+        host.showScreen("settings.notify", transition: false)
+        host.route()
+        XCTAssertEqual(host.screen, "settings.notify")
+        // Without it the same route goes to the rooms (Release behaviour).
+        host.sampleMode = false
+        host.route()
+        XCTAssertEqual(host.screen, "rooms")
+    }
+
     func testEnteringTheAppTellsTheObserversAndClearsTheStack() {
         let router = AppActionRouter()
         var entered = 0

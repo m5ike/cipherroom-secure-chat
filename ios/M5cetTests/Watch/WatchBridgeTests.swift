@@ -189,17 +189,18 @@ final class WatchBridgeTests: XCTestCase {
 
     func testTheAppEnvironmentFailsClosed() throws {
         let model = AppModel()
-        let suite = "m5.watch.test.\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suite)!
-        defer { defaults.removePersistentDomain(forName: suite) }
         // 6.14: watch.on is the design's setting (SettingsModel) — saved in the app's settings store, so put back what was there.
         let savedSettings = model.design.settings
         defer { model.design.settings = savedSettings }
-        let env = AppWatchEnvironment(model: model, defaults: defaults)
+        var off = model.design.settings
+        off.set(WatchSetting.key, .bool(false))
+        model.design.settings = off
+        let env = AppWatchEnvironment(model: model)
         XCTAssertFalse(env.mirrorEnabled, "off by default")
         env.setMirrorEnabled(true)
         XCTAssertTrue(env.mirrorEnabled)
-        XCTAssertTrue(defaults.bool(forKey: WatchSetting.defaultsKey))
+        XCTAssertTrue(model.design.settings.bool(WatchSetting.key), "the design's setting is the one place")
+        XCTAssertFalse(WatchSetting(design: nil).on, "no design's settings: off")
         env.isUnlocked = { false }
         XCTAssertFalse(env.unlocked)
         // The level is the notifications' own (NotificationPrefs.localPrivacy of a message the app drew itself).

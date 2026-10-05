@@ -82,13 +82,13 @@ final class UserPanelState {
     }
 
     #if DEBUG
-    /// Sample mode (-M5Screen): the panel open, docked as asked (-M5UsersDock), nothing saved.
+    /// Sample mode (-M5Screen): the panel open (closed with -M5UsersOpen NO), docked as asked (-M5UsersDock), nothing saved.
     static func sample(dock: String?, autoHide: Bool) -> UserPanelState {
         let suite = "cz.m5cet.sample.people"
         let d = UserDefaults(suiteName: suite) ?? .standard
         d.removePersistentDomain(forName: suite)
         let s = UserPanelState(defaults: d)
-        s.open = true
+        s.open = UserDefaults.standard.object(forKey: "M5UsersOpen") == nil ? true : UserDefaults.standard.bool(forKey: "M5UsersOpen")
         s.revealed = true
         s.dock = ["left", "right", "bottom", "none"].contains(dock ?? "") ? dock! : "right"
         s.autoHide = autoHide && s.dock != "none"

@@ -105,9 +105,15 @@ final class AppCore {
     @ObservationIgnored var settingObservers: [@MainActor (String, DesignHost) -> Void] = []
     /// A room a notification or a link opened before the app was unlocked (MainActivity.pendingRoom).
     @ObservationIgnored var pendingRoom: String?
-    /// "apns" | "poll" (Settings › User › Connection).
-    @ObservationIgnored var pushMode = "poll"
-    @ObservationIgnored private(set) var lastCheckin: Int64 = 0
+    /// "apns" | "poll" (Settings › User › Connection, $notify.push): Platform/Push's DeviceService answers
+    /// (CoreInstall) — "apns" once the server has APNs and this device a push token.
+    @ObservationIgnored var pushModeSource: @MainActor () -> String = { "poll" }
+    var pushMode: String { pushModeSource() }
+    /// The last good check-in (Settings › User › Connection): the core's own, or Platform/Push's (its background and
+    /// scheduled check-ins are not the core's — CoreInstall), whichever is later.
+    @ObservationIgnored private var ownLastCheckin: Int64 = 0
+    @ObservationIgnored var lastCheckinSource: (@MainActor () -> Int64)?
+    var lastCheckin: Int64 { max(ownLastCheckin, lastCheckinSource?() ?? 0) }
     @ObservationIgnored var iceCount = 0
     /// The device key's id (what the server calls its kid).
     @ObservationIgnored private(set) var deviceKid = "—"
@@ -146,6 +152,8 @@ final class AppCore {
         messageAudit.account = { [weak self] in self?.account.signedIn == true ? self?.account.username ?? "" : "" }
         messageAudit.roomId = { [weak self] key in self?.rooms.controller(key)?.keys?.roomId ?? "" }
         installTexts()
+        // A design bundle that became active (DesignBundleStore → setDesign) or another language: the new words.
+        services.onTextsChanged { [weak self] in self?.installTexts() }
     }
 
     /// Becomes the app's core (CoreModels.shared, the Texts provider).
@@ -220,7 +228,7 @@ final class AppCore {
 
     /// A check-in (the policy, $define); the time of the last good one for Settings › User.
     func checkIn(_ reason: String) async {
-        if await device.checkIn(reason: reason) { lastCheckin = EpochMs.now }
+        if await device.checkIn(reason: reason) { ownLastCheckin = EpochMs.now }
     }
 
     private func policyChanged(_ st: DeviceState) {

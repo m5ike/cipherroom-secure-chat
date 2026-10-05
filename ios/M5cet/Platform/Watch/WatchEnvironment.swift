@@ -40,39 +40,26 @@ enum WatchPrivacy {
     }
 }
 
-/// The on/off switch. The design's settings know no key for it yet (SettingsModel refuses unknown keys), so it
-/// lives in the app's UserDefaults (`m5.watch.on`, off by default — the wipe erases it); once SettingsModel has
-/// `watch.on`, the design's switch is the one place (Settings › Notifications) and this reads it there.
+/// The on/off switch: the design's setting `watch.on` — the Apple Watch switch of the iOS design's
+/// Settings › Notifications (server/ios/design.ts). M5Design's SettingsModel has it off by default and
+/// SettingSchema keeps it in the private area "watch." (no design action may change it, only the person's tap);
+/// the app's settings store holds it, so the wipe erases it with the rest.
 @MainActor
 final class WatchSetting {
-    /// The design's settings key (to add to SettingsModel.defaults, false, and to SettingSchema.privateAreas "watch.").
+    /// The design's settings key.
     static let key = "watch.on"
-    /// Until then: a UserDefaults flag. In a debug run `-m5.watch.on YES` turns it on (the argument domain).
-    static let defaultsKey = "m5.watch.on"
 
-    private let defaults: UserDefaults
     private weak var design: DesignServices?
 
-    init(defaults: UserDefaults = .standard, design: DesignServices?) {
-        self.defaults = defaults
-        self.design = design
-    }
+    init(design: DesignServices?) { self.design = design }
 
-    /// The design's settings have the key.
-    static var inDesign: Bool { SettingsModel.defaults[key] != nil }
-
-    var on: Bool {
-        if Self.inDesign, let design { return design.settings.bool(Self.key) }
-        return defaults.bool(forKey: Self.defaultsKey)
-    }
+    /// Off without the design's settings (fails closed).
+    var on: Bool { design?.settings.bool(Self.key) ?? false }
 
     func set(_ on: Bool) {
-        if Self.inDesign, let design {
-            var s = design.settings
-            s.set(Self.key, .bool(on))
-            design.settings = s
-        }
-        defaults.set(on, forKey: Self.defaultsKey)
+        guard let design else { return }
+        var s = design.settings
+        if s.set(Self.key, .bool(on)) { design.settings = s }
     }
 }
 
@@ -91,9 +78,9 @@ final class AppWatchEnvironment: WatchEnvironment {
         return lock.isSetUp && !lock.isLocked
     }
 
-    init(model: AppModel, defaults: UserDefaults = .standard) {
+    init(model: AppModel) {
         self.model = model
-        setting = WatchSetting(defaults: defaults, design: model.design)
+        setting = WatchSetting(design: model.design)
         let design = model.design
         privacy = { [weak design] in
             if let prefs = Notifier.shared?.prefs { return prefs.localPrivacy("message", locked: false) }
@@ -116,15 +103,15 @@ final class AppWatchEnvironment: WatchEnvironment {
     }
 }
 
-/// The texts the phone sends: the design's in the user's language, else the English of WatchWire.english
-/// (the `watch.*` keys are not in the design yet). `conversations.neutral` names a room below the "room" level.
+/// The texts the phone sends: the design's in the user's language (the iOS design has every `watch.*` key in nine
+/// languages — server/ios/design.ts IOS_STRINGS), else the English of WatchWire.english (a design without them).
+/// `conversations.neutral` names a room below the "room" level.
 @MainActor
 enum WatchTexts {
-    /// Phone-only texts (not sent): the neutral room name and the setting's own words for the design's switch.
+    /// Phone-only texts (not sent): the neutral room name. (The switch's own words, watch.setting, are the design's —
+    /// its Settings › Notifications draws them.)
     static let phone: [String: String] = [
         "conversations.neutral": "Conversation {n}",
-        "watch.setting": "Apple Watch",
-        "watch.setting.hint": "Your rooms and their latest messages on Apple Watch while M5cet is unlocked on this iPhone, as much as the notification privacy shows. Nothing stays on the watch once the app locks.",
     ]
 
     static func t(_ key: String, _ env: any WatchEnvironment) -> String {
