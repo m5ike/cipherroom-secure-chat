@@ -20,6 +20,7 @@
 // time the device was off).
 
 import Foundation
+import M5Core
 
 /// A moment on both clocks.
 struct LockTime: Sendable, Equatable {
@@ -59,26 +60,26 @@ enum LockCounter {
 
     /// The attempt about to be checked counts now; returns the new count.
     @discardableResult
-    static func begin(_ s: inout SecRecord, now: LockTime) -> Int {
-        let attempts = s.jInt("attempts") + 1
-        s["attempts"] = attempts
-        s["last"] = now.wallMs
-        s["pending"] = now.wallMs
+    static func begin(_ s: inout JSONObject, now: LockTime) -> Int {
+        let attempts = s.optInt("attempts") + 1
+        s["attempts"] = .int(attempts)
+        s["last"] = .int(now.wallMs)
+        s["pending"] = .int(now.wallMs)
         clearWait(&s) // only begun once the wait is over
         return attempts
     }
 
     /// An attempt was begun and never finished (the app died while checking it).
-    static func interrupted(_ s: SecRecord) -> Bool { s.jHas("pending") }
+    static func interrupted(_ s: JSONObject) -> Bool { s.isPresent("pending") }
 
     /// A wrong answer, or one that never came: decides on the wait, the lock-out or the wipe.
     /// An attempt begin() counted is not counted twice; any other failure is counted here.
-    static func settle(_ s: inout SecRecord, now: LockTime, maxAttempts: Int, wipe: Bool, backoff: Bool) -> Outcome {
-        var attempts = s.jInt("attempts")
-        if !s.jHas("pending") { attempts += 1 }
-        s.removeValue(forKey: "pending")
-        s["attempts"] = attempts
-        s["last"] = now.wallMs
+    static func settle(_ s: inout JSONObject, now: LockTime, maxAttempts: Int, wipe: Bool, backoff: Bool) -> Outcome {
+        var attempts = s.optInt("attempts")
+        if !s.isPresent("pending") { attempts += 1 }
+        s["pending"] = nil
+        s["attempts"] = .int(attempts)
+        s["last"] = .int(now.wallMs)
         if attempts >= maxAttempts {
             if wipe { return .wipe }
             startWait(&s, ms: lockoutMs, now: now)
@@ -93,51 +94,53 @@ enum LockCounter {
         min(3600, Int64(30) << Int64(min(10, max(0, attempts - 3)))) * 1000
     }
 
-    static func startWait(_ s: inout SecRecord, ms: Int64, now: LockTime) {
-        s["until"] = now.wallMs + ms
-        s["untilMono"] = now.monoMs + ms
-        s["boot"] = now.boot
-        s["wait"] = ms
+    static func startWait(_ s: inout JSONObject, ms: Int64, now: LockTime) {
+        s["until"] = .int(now.wallMs + ms)
+        s["untilMono"] = .int(now.monoMs + ms)
+        s["boot"] = .string(now.boot)
+        s["wait"] = .int(ms)
     }
 
     /// Milliseconds until the next attempt is allowed (0: now). The monotonic clock of the wait's
     /// boot session decides — the wall clock never does.
-    static func waitLeftMs(_ s: SecRecord, now: LockTime) -> Int64 {
-        let until = s.jInt64("until"), wait = s.jInt64("wait")
+    static func waitLeftMs(_ s: JSONObject, now: LockTime) -> Int64 {
+        let until = s.optInt64("until"), wait = s.optInt64("wait")
         guard until > 0 || wait > 0 else { return 0 }
         // A record without the monotonic anchor (none is written so): the wall clock, as Android.
         guard wait > 0 else { return max(0, until - now.wallMs) }
-        let boot = s.jString("boot")
-        if !boot.isEmpty, boot == now.boot, s.jHas("untilMono") {
-            return max(0, min(wait, s.jInt64("untilMono") - now.monoMs))
+        let boot = s.optString("boot")
+        if !boot.isEmpty, boot == now.boot, s.isPresent("untilMono") {
+            return max(0, min(wait, s.optInt64("untilMono") - now.monoMs))
         }
         // Started in another boot session: only the time since this boot surely passed.
         return max(0, wait - now.monoMs)
     }
 
     /// A wait anchored in another boot session, to be anchored in this one (AppLock stores it).
-    static func needsReanchor(_ s: SecRecord, now: LockTime) -> Bool {
-        s.jInt64("wait") > 0 && s.jString("boot") != now.boot && waitLeftMs(s, now: now) > 0
+    static func needsReanchor(_ s: JSONObject, now: LockTime) -> Bool {
+        s.optInt64("wait") > 0 && s.optString("boot") != now.boot && waitLeftMs(s, now: now) > 0
     }
 
     /// What is left of a wait from another boot session, anchored on this one's clock.
-    static func reanchor(_ s: inout SecRecord, now: LockTime) {
+    static func reanchor(_ s: inout JSONObject, now: LockTime) {
         startWait(&s, ms: waitLeftMs(s, now: now), now: now)
     }
 
     /// An over wait leaves the record (begin(): the next attempt is allowed, so it is over).
-    static func clearWait(_ s: inout SecRecord) {
-        s["until"] = 0
-        for k in ["untilMono", "boot", "wait"] { s.removeValue(forKey: k) }
+    static func clearWait(_ s: inout JSONObject) {
+        s["until"] = .int(0)
+        for k in ["untilMono", "boot", "wait"] { s[k] = nil }
     }
 
-    static func waitSeconds(_ s: SecRecord, now: LockTime) -> Int64 {
+    static func waitSeconds(_ s: JSONObject, now: LockTime) -> Int64 {
         let left = waitLeftMs(s, now: now)
         return left > 0 ? (left + 999) / 1000 : 0
     }
 
-    static func fresh() -> SecRecord { ["attempts": 0, "until": 0] }
+    static func fresh() -> JSONObject { JSONObject([("attempts", .int(0)), ("until", .int(0))]) }
 
     /// The counter after a rollback: one short of the maximum, so the failure it is settled as is the last one.
-    static func rolledBack(maxAttempts: Int) -> SecRecord { ["attempts": max(0, maxAttempts - 1), "until": 0] }
+    static func rolledBack(maxAttempts: Int) -> JSONObject {
+        JSONObject([("attempts", .int(max(0, maxAttempts - 1))), ("until", .int(0))])
+    }
 }

@@ -3,6 +3,7 @@
 // holds no secret, until it is delivered (Android pending-wipe.json). Quiet for the
 // duress PIN; delivered or dropped by the server's answer.
 
+import M5Core
 import XCTest
 @testable import M5cet
 
@@ -37,8 +38,8 @@ final class WiperTests: XCTestCase {
         try f.vault.put(.user, "rooms", Data("[]".utf8))
         try f.vault.put(.sys, "config", Data("{}".utf8))
         try f.lock.enrollBiometrics()
-        _ = try KeyringSigner(keyring: f.center.keyring).publicKeySPKI()
-        _ = try KeyringAgreement(keyring: f.center.keyring).publicKeySPKI()
+        _ = try f.center.signer()
+        _ = try f.center.agreement()
         try FileVault(vault: f.vault).write("file:1", Data(repeating: 1, count: 70_000))
         try f.center.secrets.write("account.session", Data("token".utf8), access: .foreground)
         let caches = f.dir.url.appendingPathComponent("caches", isDirectory: true)
@@ -52,18 +53,18 @@ final class WiperTests: XCTestCase {
 
         let left = f.dir.files().filter { $0 != "group/m5/lock-state.json" }
         XCTAssertEqual(left, ["app/pending-wipe.json"])
-        XCTAssertEqual(try f.store.names(), [], "Keychain items and Secure Enclave key blobs")
+        XCTAssertEqual(try f.keychainNames(), [], "Keychain items and Secure Enclave key blobs")
         XCTAssertFalse(f.vault.unlocked)
         XCTAssertFalse(f.lock.isSetUp)
         XCTAssertFalse(f.center.inbox.isActive)
         XCTAssertTrue(FileManager.default.fileExists(atPath: caches.path), "the caches folder stays, empty")
         // The report: Android's body, signed by M5Net's signer, no secret in it.
         let pending = try XCTUnwrap(f.center.wiper.pending)
-        let body = try XCTUnwrap(SecJSON.parse(XCTUnwrap(Bytes.unb64(pending.body))))
-        let event = try XCTUnwrap((body["events"] as? [SecRecord])?.first)
-        XCTAssertEqual(event.jString("type"), "wipe")
-        XCTAssertEqual(event.jObject("detail")?.jString("reason"), "attempts")
-        XCTAssertEqual(event.jObject("detail")?.jInt("attempts"), 8)
+        let body = try XCTUnwrap(SecData.json(XCTUnwrap(Bytes.unb64(pending.body))))
+        let event = try XCTUnwrap(body.array("events")?.first?.objectValue)
+        XCTAssertEqual(event.optString("type"), "wipe")
+        XCTAssertEqual(event.object("detail")?.optString("reason"), "attempts")
+        XCTAssertEqual(event.object("detail")?.optInt("attempts"), 8)
         XCTAssertNil(pending.quiet)
         XCTAssertFalse(f.center.wiper.pendingQuiet)
     }
@@ -96,11 +97,11 @@ final class WiperTests: XCTestCase {
         f.center.wiper.signer = StubSigner(enrolled: false)
         f.center.wiper.wipe(reason: "remote", remote: true, attempts: 0)
         XCTAssertFalse(f.center.wiper.hasPending)
-        let body = SecJSON.parse(Wiper.eventBody(reason: "remote", remote: true, attempts: 0, at: 5))
-        let event = (body?["events"] as? [SecRecord])?.first
-        XCTAssertEqual(event?.jString("type"), "remote-wipe")
-        XCTAssertEqual(event?.jInt64("at"), 5)
-        XCTAssertEqual(event?.jString("id").count, 16)
+        let body = SecData.json(Wiper.eventBody(reason: "remote", remote: true, attempts: 0, at: 5))
+        let event = body?.array("events")?.first?.objectValue
+        XCTAssertEqual(event?.optString("type"), "remote-wipe")
+        XCTAssertEqual(event?.optInt64("at"), 5)
+        XCTAssertEqual(event?.optString("id").count, 16)
     }
 
     func testTeardownsRun() throws {

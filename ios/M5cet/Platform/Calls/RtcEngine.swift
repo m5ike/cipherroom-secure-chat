@@ -32,8 +32,11 @@ final class RtcEngine {
         if let factoryStorage { return factoryStorage }
         RTCInitializeSSL()
         CallAudioSession.shared.prepare()
+        // The call's audio device (Platform/Voice): VoiceProcessingIO with echo cancellation, plus the
+        // voice changer and voice ↔ text taps — Android's JavaAudioDeviceModule callbacks (MicFx, CallAudio).
         let f = RTCPeerConnectionFactory(encoderFactory: RTCDefaultVideoEncoderFactory(),
-                                         decoderFactory: RTCDefaultVideoDecoderFactory())
+                                         decoderFactory: RTCDefaultVideoDecoderFactory(),
+                                         audioDevice: CallVoiceAudioDevice.shared)
         factoryStorage = f
         CallLog.info("WebRTC ready")
         return f

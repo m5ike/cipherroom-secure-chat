@@ -1,15 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The notification extension shares the app's App Group and keychain group (ios/Config/Base.xcconfig). -->
+<!-- The notification extension shares the app's App Group (ios/Config/Base.xcconfig) and only the shared
+     keychain group: the SYS tier's key and the device's encryption key (service cz.m5cet.shared.security,
+     ios/M5cet/Platform/Security/README.md "Keychain groups"). The app's own group (cz.m5cet.app: PIN,
+     biometric, duress, counter and signing keys) is not the extension's. -->
 <plist version="1.0">
 <dict>
+	<!-- Communication notifications (INSendMessageIntent: the sender's name and picture when the privacy level allows). -->
+	<key>com.apple.developer.usernotifications.communication</key>
+	<true/>
+
 	<key>com.apple.security.application-groups</key>
 	<array>
 		<string>$(M5_APP_GROUP)</string>
 	</array>
 	<key>keychain-access-groups</key>
 	<array>
-		<string>$(AppIdentifierPrefix)cz.m5cet.app</string>
+		<string>$(AppIdentifierPrefix)cz.m5cet.shared</string>
 	</array>
 </dict>
 </plist>
