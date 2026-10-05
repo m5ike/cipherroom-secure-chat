@@ -237,6 +237,7 @@ public final class RoomSession {
                 Resume.save(app, key, myId, resumeSecret);
                 status = "joined";
                 notice = "";
+                cz.m5cet.app.rtc.Rtc.hubConnected(); // 6.12: TURN credentials only now (the server saw our hub socket)
                 JSONArray list = f.optJSONArray("peers");
                 system(app.t("rooms.connected") + " · " + label);
                 if (list != null) for (int i = 0; i < list.length(); i++) {
