@@ -11,7 +11,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { iosAssets } from "../server/ios/assets";
-import { IOS_DEFAULT_DESIGN, IOS_FIXED_TEXTS, IOS_PASSKEY_KEYS, IOS_REMOVED_NODES, IOS_STRINGS, IOS_WATCH_IF, IOS_WATCH_SETTING, IOS_WORDING, sanitizeIosDesign } from "../server/ios/design";
+import { IOS_CHANGED_SCREENS, IOS_DEFAULT_DESIGN, IOS_FIXED_TEXTS, IOS_PASSKEY_KEYS, IOS_REMOVED_NODES, IOS_STRINGS, IOS_WATCH_IF, IOS_WATCH_SETTING, IOS_WORDING, sanitizeIosDesign } from "../server/ios/design";
 import { DEFAULT_DESIGN, LANGS, LIMITS, sanitizeDesign, type ANode } from "../server/android/design";
 import { androidAssets } from "../server/android/assets";
 import { mainDictionary } from "../client/src/lib/i18n";
@@ -109,9 +109,22 @@ describe("the iOS-only items", () => {
     }
   });
 
+  it("the update notice names a size only when there is one (an iOS release has none)", () => {
+    const list = walk(ios.screens["update"]);
+    const v = list.find((n) => n.id === "version")!, only = list.find((n) => n.id === "version-only")!;
+    expect(v.text).toBe(walk(android.screens["update"]).find((n) => n.id === "version")!.text);
+    expect(v.text).toContain("|size");
+    expect(v.if).toBe("$update.size > 0");
+    expect(only.text).toBe("{_'update.version'} {$update.version}");
+    expect(only.if).toBe("!($update.size > 0)");
+    expect(list.map((n) => n.id).indexOf("version-only")).toBe(list.map((n) => n.id).indexOf("version") + 1);
+    const strip = (t: ANode): ANode[] => walk(t).filter((n) => n.id !== "version-only").map((n) => ({ ...n, if: n.id === "version" ? undefined : n.if, children: undefined }));
+    expect(strip(ios.screens["update"])).toEqual(strip(android.screens["update"]));
+  });
+
   it("every other screen, menu and library is Android's; Android's design has none of it", () => {
     for (const id of Object.keys(android.screens)) {
-      if (id !== "settings.notify" && !IOS_REMOVED_NODES[id] && !IOS_FIXED_TEXTS[id]) expect(ios.screens[id], id).toEqual(android.screens[id]);
+      if (!IOS_CHANGED_SCREENS.includes(id)) expect(ios.screens[id], id).toEqual(android.screens[id]);
     }
     expect(ios.menus).toEqual(android.menus);
     expect(ios.libraries).toEqual(android.libraries);

@@ -564,6 +564,24 @@ export const IOS_FIXED_TEXTS: Record<string, Record<string, string>> = {
   "settings.security": { "shuffle-hint": "{_'set.security.shuffleHint'}" },
 };
 
+/**
+ * The update notice: an iOS release is a version record with an App Store / TestFlight link and no download
+ * size (ios/M5cet/Platform/Push/UpdateNotice.swift: size 0), and "Version 6.15.0 · 0 B" said nothing true —
+ * the size shows only when there is one (a design bundle's).
+ */
+function updateWithoutSize(screens: Record<string, ANode>): void {
+  const root = screens["update"];
+  const version = root && findNode(root, "version");
+  const parent = root && parentOf(root, "version");
+  if (!version || !parent?.children || findNode(root, "version-only")) return;
+  version.if = "$update.size > 0";
+  const at = parent.children.indexOf(version);
+  parent.children.splice(at + 1, 0, { ...structuredClone(version), id: "version-only", text: "{_'update.version'} {$update.version}", if: "!($update.size > 0)" });
+}
+
+/** The screens of the iOS design that are not Android's as they are (the rest are). */
+export const IOS_CHANGED_SCREENS = ["settings.notify", ...Object.keys(IOS_REMOVED_NODES), ...Object.keys(IOS_FIXED_TEXTS), "update"];
+
 const findNode =(node: ANode, id: string): ANode | null => {
   if (node.id === id) return node;
   for (const c of node.children ?? []) { const f = findNode(c, id); if (f) return f; }
@@ -643,6 +661,7 @@ function iosDefaultDesign(): AndroidDesign {
   d.animations = IOS_ANIMATIONS;
   addWatchSwitch(d.screens);
   removeNodes(d.screens);
+  updateWithoutSize(d.screens);
   for (const lang of LANGS) {
     for (const [key, texts] of Object.entries(IOS_STRINGS)) d.strings[lang][key] = texts[lang];
     for (const [key, texts] of Object.entries(IOS_WORDING)) d.strings[lang][key] = texts[lang];
