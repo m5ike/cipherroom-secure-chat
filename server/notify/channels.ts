@@ -24,6 +24,7 @@ import type { NotifyConfig } from "./config";
 import { openSmtpPassword } from "./config";
 import type { NotifyStore } from "./store";
 import { sendSmtp, type SmtpMessage, type SmtpResult, type SmtpSettings } from "./smtp";
+import { LOCALE_INFO, isLocale } from "../../client/src/lib/locales";
 
 /** One notification as every channel gets it. */
 export type NotifyPayload = {
@@ -199,7 +200,9 @@ export function emailOf(payload: NotifyPayload, from: string, to: string, base: 
   const link = base ? `${base}${payload.url.startsWith("/") ? payload.url : "/"}` : "";
   const accent = /^#[0-9a-f]{6}$/i.test(payload.accent) ? payload.accent : "#2563eb";
   const text = `${payload.body}\n${link ? `\n${link}\n` : ""}`;
-  const html = `<!doctype html><html><body style="font-family:system-ui,sans-serif;margin:0;padding:24px;background:#f6f7f9">`
+  // 6.13: the language and the charset said in the document too (the MIME part says utf-8 as well).
+  const tag = LOCALE_INFO[isLocale(payload.lang) ? payload.lang : "en"].tag;
+  const html = `<!doctype html><html lang="${tag}"><head><meta charset="utf-8"></head><body style="font-family:system-ui,sans-serif;margin:0;padding:24px;background:#f6f7f9">`
     + `<div style="max-width:480px;margin:auto;background:#fff;border-radius:12px;padding:20px;border-top:4px solid ${accent}">`
     + `<h1 style="font-size:18px;margin:0 0 8px">${escapeHtml(payload.title)}</h1>`
     + `<p style="font-size:15px;margin:0 0 16px">${escapeHtml(payload.body)}</p>`

@@ -76,10 +76,10 @@ public final class M5Card {
     public static KeyProvider keys(String pin, byte[] root) {
         return (mode, salt) -> {
             if (MODE_INTERNAL.equals(mode)) {
-                if (root == null) throw new GeneralSecurityException("This record needs your account (sign in on this device).");
+                if (root == null) throw new GeneralSecurityException(cz.m5cet.app.core.Texts.t("nfc.m5.needsAccount", "This record needs your account (sign in on this device)."));
                 return accountKey(root, salt);
             }
-            if (pin == null) throw new GeneralSecurityException("This record needs a PIN.");
+            if (pin == null) throw new GeneralSecurityException(cz.m5cet.app.core.Texts.t("nfc.m5.needsPin", "This record needs a PIN."));
             return pinKey(pin, salt);
         };
     }
@@ -150,14 +150,14 @@ public final class M5Card {
             plain = Crypto.gcmOpen(key, sealed.iv, sealed.ct, aad(type, sealed.id));
         } catch (GeneralSecurityException e) {
             throw new GeneralSecurityException(MODE_INTERNAL.equals(sealed.mode)
-                ? "This card was not written by this account." : "Wrong PIN, or the record is damaged.");
+                ? cz.m5cet.app.core.Texts.t("nfc.m5.otherAccount", "This card was not written by this account.") : cz.m5cet.app.core.Texts.t("nfc.m5.wrongPin", "Wrong PIN, or the record is damaged."));
         }
         Record r = new Record();
         r.id = sealed.id; r.type = sealed.type; r.mode = sealed.mode; r.oneTime = sealed.oneTime;
         try {
             r.data = new JSONObject(new String(plain, StandardCharsets.UTF_8));
         } catch (JSONException e) {
-            throw new GeneralSecurityException("The record is damaged.");
+            throw new GeneralSecurityException(cz.m5cet.app.core.Texts.t("nfc.m5.damaged", "The record is damaged."));
         }
         return r;
     }
@@ -192,7 +192,7 @@ public final class M5Card {
 
     public static List<Sealed> decodeContainer(byte[] bytes) {
         Cursor r = new Cursor(bytes);
-        if (r.u8() != 'M' || r.u8() != '5' || r.u8() != 'C' || r.u8() != 'D') throw new IllegalArgumentException("Not an M5Cet card.");
+        if (r.u8() != 'M' || r.u8() != '5' || r.u8() != 'C' || r.u8() != 'D') throw new IllegalArgumentException(cz.m5cet.app.core.Texts.t("nfc.m5.notCard", "Not an M5Cet card."));
         int ver = r.u8();
         if (ver != VERSION) throw new IllegalArgumentException("M5Cet card version " + ver + " is not supported.");
         r.u8(); // flags

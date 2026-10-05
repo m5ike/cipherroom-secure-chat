@@ -116,7 +116,7 @@ public final class CallLogUi {
         JSONArray items = new JSONArray();
         long now = System.currentTimeMillis();
         TimeZone tz = TimeZone.getDefault();
-        DateFormat dates = DateFormat.getDateInstance(DateFormat.MEDIUM, Locale.forLanguageTag(app.lang()));
+        DateFormat dates = DateFormat.getDateInstance(DateFormat.MEDIUM, app.locale()); // 6.13: the language's tag (cs-CZ …), not the bare code
         int lastDay = -1;
         for (int i = 0; i < list.size() && i < SHOWN; i++) {
             ActivityLog.Item it = list.get(i);
@@ -239,7 +239,7 @@ public final class CallLogUi {
         M5 app = a.app();
         Runnable erase = () -> Io.bg(() -> {
             int n = CallLogBridge.eraseSystem(app, CallHistory.load(app));
-            Io.main(() -> a.flash("", n < 0 ? t(a, "calllog.eraseNeedsPerm") : t(a, "calllog.erased").replace("{n}", String.valueOf(n)), n < 0 ? "warn" : "success"));
+            Io.main(() -> a.flash("", n < 0 ? t(a, "calllog.eraseNeedsPerm") : a.app().tn("calllog.erased", n), n < 0 ? "warn" : "success"));
         });
         SecureDialog.show(a, new AlertDialog.Builder(a).setMessage(t(a, "calllog.eraseAsk"))
             .setPositiveButton(t(a, "calllog.erase"), (d, w) -> a.withPermission(Manifest.permission.WRITE_CALL_LOG, erase, () -> a.flash("", t(a, "calllog.eraseNeedsPerm"), "warn")))

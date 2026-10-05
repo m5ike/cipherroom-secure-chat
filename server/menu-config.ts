@@ -29,7 +29,7 @@ import {
 import { MENU_ICONS } from "../client/src/lib/menu-icons-data";
 import { MODULE_CATALOG } from "../client/src/lib/modules";
 import { consoleGuard } from "./access";
-import { t, type Lang } from "../client/src/lib/i18n";
+import { SUPPORTED_LANGS, t, type Lang } from "../client/src/lib/i18n";
 import { audit } from "./monitor/audit";
 import { adminName } from "./admin-auth";
 
@@ -161,7 +161,8 @@ export function registerAdminMenuConfigRoutes(app: Express): void {
   // The preview only renders; it changes nothing.
   app.post("/api/admin/menu-config/render", (req: Request, res: Response) => {
     const body = (req.body ?? {}) as { config?: unknown; lang?: unknown };
-    const lang: Lang = body.lang === "en" || body.lang === "de" ? body.lang : "cs";
+    // 6.13: any language the web client speaks (SUPPORTED_LANGS — the contract's nine as the web adds them).
+    const lang: Lang = typeof body.lang === "string" && (SUPPORTED_LANGS as readonly string[]).includes(body.lang) ? body.lang as Lang : "cs";
     const config = sanitizeMenuConfig(body.config ?? menuConfigStore.get());
     res.json({ ok: true, config, ...renderPreview(config, lang) });
   });

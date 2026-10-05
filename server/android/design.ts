@@ -23,6 +23,9 @@ import { ACTIONS_68, ELEMENTS_68, MENUS_68, SCREENS_68, SCREENS_TREES_68, SLOTS_
 import { ACTIONS_610, ELEMENTS_610, MENUS_610, SCREENS_610, SCREENS_TREES_610, SLOTS_610, STRINGS_610, patch610, patchMenus610 } from "./design-610";
 import { ACTIONS_611, ELEMENTS_611, MENUS_611, SCREENS_611, SCREENS_TREES_611, SLOTS_611, STRINGS_611, patch611, patchMenus611 } from "./design-611";
 import { ACTIONS_612, ELEMENTS_612, MENUS_612, SCREENS_612, SCREENS_TREES_612, SLOTS_612, STRINGS_612, patch612, patchMenus612 } from "./design-612";
+import { STRINGS_613 } from "./design-613";
+import { ANDROID_TRANSLATIONS, TRANSLATED_LANGS } from "./design-locales";
+import { LOCALE_INFO, type Locale } from "../../client/src/lib/locales";
 import { androidDir } from "./store";
 
 /* ================================================================ catalog */
@@ -119,7 +122,7 @@ export const ACTIONS: Array<{ action: string; arg: string; help: string }> = [
   { action: "lock.now", arg: "", help: "Lock the app" },
   { action: "lock.biometric", arg: "", help: "Unlock with biometrics" },
   { action: "theme.toggle", arg: "", help: "Light / dark" },
-  { action: "lang.set", arg: "cs | en | de", help: "Language" },
+  { action: "lang.set", arg: "en | cs | de | es | it | fr | sk | sl | fi | system", help: "Language (6.13: nine; system = as the phone)" },
   { action: "update.check", arg: "", help: "Look for a new bundle or release" },
   { action: "update.install", arg: "", help: "Install what was downloaded" },
   { action: "update.later", arg: "", help: "Remind later" },
@@ -464,8 +467,21 @@ export const DEFAULT_ANIMATIONS: Animations = {
 
 /* ================================================================ strings */
 
-export const LANGS = ["cs", "en", "de"] as const;
+/**
+ * 6.13: the nine languages of the contract (client/src/lib/locales.ts). cs, en
+ * and de are this file's (and design-6*.ts's) TypeScript; es, it, fr, sk, sl
+ * and fi come from the translators' tables (design-locales.ts), then
+ * design-613.ts adds what is new in 6.13 in all nine. A language may lack a
+ * text — the app looks it up along the language's chain (Slovak → Czech →
+ * English; core/Locales.java), in the bundle's table, then the built-in one.
+ */
+export const LANGS = ["cs", "en", "de", "es", "it", "fr", "sk", "sl", "fi"] as const satisfies readonly Locale[];
 export type Lang = typeof LANGS[number];
+/** The languages the design's TypeScript is written in. */
+const BASE_LANGS = ["cs", "en", "de"] as const;
+
+/** A string key: letters, digits, . _ - — and (6.13) a plural form's "#one", "#few" … */
+export const STRING_KEY_RE = /^[a-zA-Z0-9_.-]{1,80}(#(zero|one|two|few|many|other))?$/;
 
 export const DEFAULT_STRINGS: Record<Lang, Record<string, string>> = {
   cs: {
@@ -522,16 +538,23 @@ export const DEFAULT_STRINGS: Record<Lang, Record<string, string>> = {
     "notify.message": "Neue Nachricht", "notify.messages": "neue Nachrichten", "notify.reply": "Antworten", "notify.markRead": "Gelesen",
     "push.channel": "Nachrichten und Hinweise", "push.flash": "Hinweise",
   },
+  es: {}, it: {}, fr: {}, sk: {}, sl: {}, fi: {},
 };
-for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_61[lang]);
-for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_62[lang]);
-for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_63[lang]);
-for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_64[lang]);
-for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_67[lang]);
-for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_68[lang]);
-for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_610[lang]);
-for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_611[lang]);
-for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_612[lang]);
+for (const lang of BASE_LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_61[lang]);
+for (const lang of BASE_LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_62[lang]);
+for (const lang of BASE_LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_63[lang]);
+for (const lang of BASE_LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_64[lang]);
+for (const lang of BASE_LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_67[lang]);
+for (const lang of BASE_LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_68[lang]);
+for (const lang of BASE_LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_610[lang]);
+for (const lang of BASE_LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_611[lang]);
+for (const lang of BASE_LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_612[lang]);
+// 6.13: the translators' tables — only keys the design has (in the source's order), a key they lack stays missing (chain).
+for (const lang of TRANSLATED_LANGS) {
+  const table = ANDROID_TRANSLATIONS[lang] ?? {};
+  for (const key of Object.keys(DEFAULT_STRINGS.en)) if (typeof table[key] === "string") DEFAULT_STRINGS[lang][key] = table[key];
+}
+for (const lang of LANGS) Object.assign(DEFAULT_STRINGS[lang], STRINGS_613[lang]);
 
 /* ================================================================== menus */
 
@@ -857,7 +880,7 @@ export function sanitizeDesign(raw: unknown): AndroidDesign {
       let n = 0;
       for (const [k, v] of Object.entries(src as Record<string, unknown>)) {
         if (++n > LIMITS.strings) break;
-        if (/^[a-zA-Z0-9_.-]{1,80}$/.test(k) && typeof v === "string") strings[lang][k] = v.slice(0, 1000);
+        if (STRING_KEY_RE.test(k) && typeof v === "string") strings[lang][k] = v.slice(0, 1000);
       }
     }
   }
@@ -951,7 +974,7 @@ export function forgetAndroidDesign(): void { cachedDesign = null; }
 export function androidCatalog() {
   return {
     elements: ELEMENTS, style: STYLE_PROPS, colors: COLOR_TOKENS, anims: ANIM_TYPES, easings: EASINGS, events: EVENTS,
-    actions: ACTIONS, slots: SLOTS, screens: SCREENS, langs: LANGS, icons: MENU_ICONS, limits: LIMITS,
+    actions: ACTIONS, slots: SLOTS, screens: SCREENS, langs: LANGS, locales: LOCALE_INFO, icons: MENU_ICONS, limits: LIMITS,
     defaults: DEFAULT_DESIGN,
   };
 }

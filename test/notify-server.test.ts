@@ -104,7 +104,7 @@ describe("templates", () => {
   });
 
   it("a user's choice is cleaned: unknown kinds, channels and times are dropped", () => {
-    const p = tpl.sanitizeUserPrefs({ on: false, kinds: { message: false, bogus: true, call: "yes" }, privacy: "everything", order: ["webpush", "sms", "webpush", "android"], quiet: { on: true, from: "25:00", to: "06:30", tz: "Europe/Prague; rm" }, lang: "fr" });
+    const p = tpl.sanitizeUserPrefs({ on: false, kinds: { message: false, bogus: true, call: "yes" }, privacy: "everything", order: ["webpush", "sms", "webpush", "android"], quiet: { on: true, from: "25:00", to: "06:30", tz: "Europe/Prague; rm" }, lang: "pl" });
     expect(p).toEqual({ on: false, kinds: { message: false }, privacy: "", order: ["webpush", "android"], quiet: { on: true, from: "22:00", to: "06:30", tz: "" }, lang: "en" });
   });
 });

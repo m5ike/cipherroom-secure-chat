@@ -19,12 +19,43 @@ export type SmtpResult = { ok: true; code: number } | { ok: false; code?: number
 
 const oneLine = (s: string) => s.replace(/[\r\n]+/g, " ").trim();
 
-/** RFC 2047: an encoded word when the text is not plain ASCII. */
+/** An encoded word's payload at most: 39 bytes → 52 base64 characters — a 64-character word, within RFC 2047's 75 and, after "Subject: ", RFC 5322's 78 a line. */
+const WORD_BYTES = 39;
+
+/**
+ * RFC 2047: encoded words when the text is not plain ASCII (6.13: "Příliš
+ * žluťoučký kůň", "Ärger ñ ç œ"). A long text becomes several words of at most
+ * 75 characters, never splitting a character's UTF-8 bytes, folded onto
+ * continuation lines ("\r\n "); a decoder drops the whitespace between them.
+ */
 export function encodeHeader(value: string): string {
   const v = oneLine(value);
   // eslint-disable-next-line no-control-regex
   if (/^[\x20-\x7e]*$/.test(v)) return v;
-  return `=?UTF-8?B?${Buffer.from(v, "utf8").toString("base64")}?=`;
+  const words: string[] = [];
+  let chunk = "";
+  let bytes = 0;
+  for (const ch of v) {
+    const n = Buffer.byteLength(ch, "utf8");
+    if (bytes + n > WORD_BYTES && chunk) { words.push(chunk); chunk = ""; bytes = 0; }
+    chunk += ch;
+    bytes += n;
+  }
+  if (chunk) words.push(chunk);
+  return words.map((w) => `=?UTF-8?B?${Buffer.from(w, "utf8").toString("base64")}?=`).join("\r\n ");
+}
+
+/** RFC 2047's decoder (B and Q), for tests and the console: encoded words → text. */
+export function decodeHeader(value: string): string {
+  return value
+    .replace(/\r\n[ \t]+/g, " ")
+    .replace(/(=\?[^?]+\?[BbQq]\?[^?]*\?=)\s+(?==\?)/g, "$1")
+    .replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, (_whole, charset: string, enc: string, text: string) => {
+      const bytes = enc.toUpperCase() === "B"
+        ? Buffer.from(text, "base64")
+        : Buffer.from(text.replace(/_/g, " ").replace(/=([0-9A-Fa-f]{2})/g, (_m, h: string) => String.fromCharCode(parseInt(h, 16))), "latin1");
+      return new TextDecoder(charset.toLowerCase() === "utf-8" ? "utf-8" : charset).decode(bytes);
+    });
 }
 
 /** "Name <a@b>" or "a@b" → the bare address. */
@@ -33,11 +64,18 @@ export function addressOf(v: string): string {
   return oneLine(m ? m[1] : v);
 }
 
+/** A display name: encoded words when not ASCII, a quoted string when it has RFC 5322 specials. */
+function displayName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  if (!/^[\x20-\x7e]*$/.test(name)) return encodeHeader(name);
+  return /[()<>@,;:\\".[\]]/.test(name) ? `"${name.replace(/(["\\])/g, "\\$1")}"` : name;
+}
+
 function mailbox(v: string): string {
   const m = /^(.*)<([^<>]+)>\s*$/.exec(oneLine(v));
   if (!m) return oneLine(v);
   const name = m[1].trim().replace(/^"|"$/g, "");
-  return name ? `${encodeHeader(name)} <${m[2].trim()}>` : `<${m[2].trim()}>`;
+  return name ? `${displayName(name)} <${m[2].trim()}>` : `<${m[2].trim()}>`;
 }
 
 const b64lines = (s: string) => (Buffer.from(s, "utf8").toString("base64").match(/.{1,76}/g) ?? []).join("\r\n");

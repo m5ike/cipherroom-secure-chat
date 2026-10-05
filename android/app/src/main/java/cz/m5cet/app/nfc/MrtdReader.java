@@ -590,7 +590,7 @@ public final class MrtdReader {
         String can = opts.can != null && opts.can.trim().matches("\\d{6}") ? opts.can.trim() : null;
         if (key == null && can == null) {
             if (!protocols.isEmpty()) out.put("security", new JSONObject().put("protocols", new JSONArray(protocols)));
-            return out.put("files", files).put("message", "Give the MRZ (document number, date of birth, expiry) or the CAN printed on the document to open the chip.");
+            return out.put("files", files).put("message", cz.m5cet.app.core.Texts.t("nfc.eid.needKey", "Give the MRZ (document number, date of birth, expiry) or the CAN printed on the document to open the chip."));
         }
 
         // Open the document: PACE when the chip offers a variant this reader runs, else BAC.
@@ -620,9 +620,9 @@ public final class MrtdReader {
             } catch (Exception e) { failures.add("BAC: " + msg(e)); }
         }
         if (ch == null) {
-            String hint = key == null && can != null && pace == null ? " — this document needs the MRZ (BAC)" : "";
+            String hint = key == null && can != null && pace == null ? " — " + cz.m5cet.app.core.Texts.t("nfc.eid.needsMrz", "this document needs the MRZ (BAC)") : "";
             if (!protocols.isEmpty()) out.put("security", new JSONObject().put("protocols", new JSONArray(protocols)));
-            return out.put("files", files).put("message", (failures.isEmpty() ? "the document could not be opened" : String.join("; ", failures)) + hint);
+            return out.put("files", files).put("message", (failures.isEmpty() ? cz.m5cet.app.core.Texts.t("nfc.eid.notOpened", "the document could not be opened") : String.join("; ", failures)) + hint);
         }
         final SmChannel channel = ch;
         Sender send = channel::send;
@@ -663,9 +663,9 @@ public final class MrtdReader {
         for (int n : sorted) {
             String name = "DG" + n;
             int fid = dgFid(n);
-            if (EAC_GROUPS.contains(n)) { files.put(fileInfo(name, fid, "protected").put("message", "Extended Access Control (a government terminal certificate)")); continue; }
+            if (EAC_GROUPS.contains(n)) { files.put(fileInfo(name, fid, "protected").put("message", cz.m5cet.app.core.Texts.t("nfc.eid.eac", "Extended Access Control (a government terminal certificate)"))); continue; }
             if (!opts.all && n > 2) continue;
-            if (!opts.readPhoto && IMAGE_GROUPS.contains(n)) { files.put(fileInfo(name, fid, "absent").put("message", "not read (images off)")); continue; }
+            if (!opts.readPhoto && IMAGE_GROUPS.contains(n)) { files.put(fileInfo(name, fid, "absent").put("message", cz.m5cet.app.core.Texts.t("nfc.eid.imagesOff", "not read (images off)"))); continue; }
             FileRead r;
             try { r = readFile(send, fid, CAP.containsKey(n) ? CAP.get(n) : 32_768); }
             catch (Exception e) { files.put(fileInfo(name, fid, "error").put("message", msg(e))); continue; }
@@ -712,7 +712,7 @@ public final class MrtdReader {
                     default: rawFiles.put(rawFile(name + ".bin", r.bytes));
                 }
             } catch (Exception e) {
-                info.put("message", "could not parse: " + msg(e));
+                info.put("message", cz.m5cet.app.core.Texts.f("nfc.eid.parseFailed", "could not parse: {0}", msg(e)));
                 rawFiles.put(rawFile(name + ".bin", r.bytes));
             }
         }
@@ -743,7 +743,7 @@ public final class MrtdReader {
     /** A one-line summary for a log / flash (mrtd.ts mrtdSummary). */
     public static String summary(JSONObject d) {
         JSONObject m = d.optJSONObject("mrzInfo");
-        if (m == null) return !d.optString("message", "").isEmpty() ? d.optString("message") : (d.optBoolean("present") ? "MRTD present" : "no MRTD");
+        if (m == null) return !d.optString("message", "").isEmpty() ? d.optString("message") : (d.optBoolean("present") ? cz.m5cet.app.core.Texts.t("nfc.eid.sum.present", "MRTD present") : cz.m5cet.app.core.Texts.t("nfc.eid.sum.none", "no MRTD"));
         List<String> bits = new ArrayList<>();
         String name = (m.optString("givenNames", "") + " " + m.optString("surname", "")).trim();
         if (!name.isEmpty()) bits.add(name);
@@ -753,7 +753,7 @@ public final class MrtdReader {
         if (!access.isEmpty() && !access.equals("none")) bits.add(access.toUpperCase(java.util.Locale.ROOT));
         JSONArray images = d.optJSONArray("images");
         int imgs = images != null ? images.length() : (!d.optString("photo", "").isEmpty() ? 1 : 0);
-        if (imgs > 0) bits.add(imgs + " image" + (imgs > 1 ? "s" : ""));
+        if (imgs > 0) bits.add(cz.m5cet.app.core.Texts.n("nfc.eid.sum.images", imgs, imgs > 1 ? "{n} images" : "{n} image"));
         return String.join(" · ", bits);
     }
 }

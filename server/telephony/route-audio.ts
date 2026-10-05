@@ -64,6 +64,7 @@ import { MIX_FRAME, MIX_RATE, Mixer } from "./mixer";
 import { hashRoom } from "../monitor/traffic";
 import { stt, tts, type Caller as AiCaller } from "../ai/service";
 import { reachable } from "../signaling/proof";
+import { speech } from "./speech-texts";
 
 /** Limits of a routed call (tests shorten them). */
 export const routeLimits = {
@@ -90,6 +91,7 @@ export const routeMaxSec = (): number => 60 * Math.max(1, Math.min(240, Math.rou
 /** A level (RMS, 0 … 1) above this is somebody speaking (-40 dBFS). */
 const VOICE_LEVEL = 0.01;
 const env = (name: string): string => process.env[name]?.trim() || "";
+/** The language of a routed call's speech to text and notices (TELEPHONY_ROUTE_LANGUAGE: cs, sk-SK, fi …; 6.13: any of the nine). */
 const language = () => env("TELEPHONY_ROUTE_LANGUAGE") || "cs";
 
 /* ------------------------------------------------------------ the hub */
@@ -525,8 +527,8 @@ class RoutedCall {
     this.mixer.remove("tone");
     this.lastVoiceAt = Date.now();
     this.log("call", `${why}: text mode (speech ↔ chat messages)`, "notice");
-    const cs = language().startsWith("cs");
-    this.tell(`☎ ${cs ? "telefonní hovor se přepisuje do textu; odpovězte zprávou na kartě hovoru" : "the phone call is transcribed; answer in writing on the call's card"}`);
+    // 6.13: in TELEPHONY_ROUTE_LANGUAGE's language (nine, speech-texts.ts).
+    this.tell(`☎ ${speech("routeText", language())}`);
     this.roster();
   }
 

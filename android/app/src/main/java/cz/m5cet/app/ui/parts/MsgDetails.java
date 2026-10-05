@@ -119,7 +119,7 @@ final class MsgDetails implements Rooms.Listener {
     private void fill() {
         content.removeAllViews();
         header();
-        DateFormat full = DateFormat.getDateTimeInstance(DateFormat.LONG, DateFormat.MEDIUM);
+        DateFormat full = DateFormat.getDateTimeInstance(DateFormat.LONG, DateFormat.MEDIUM, app().locale()); // 6.13: in the app's language
         row(t("msginfo.when"), full.format(new Date(m.createdAt)));
         // 6.12 (F-22): the name as shown everywhere; an operator's notice names the operator, not its frame's "from".
         String sender = m.id != null && m.id.startsWith(cz.m5cet.app.core.Names.NOTICE_ID) && "sys".equals(m.kind)
@@ -242,7 +242,7 @@ final class MsgDetails implements Rooms.Listener {
         c1.setTimeInMillis(at);
         c2.setTimeInMillis(m.createdAt);
         boolean sameDay = c1.get(Calendar.YEAR) == c2.get(Calendar.YEAR) && c1.get(Calendar.DAY_OF_YEAR) == c2.get(Calendar.DAY_OF_YEAR);
-        return (sameDay ? DateFormat.getTimeInstance(DateFormat.MEDIUM) : DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)).format(new Date(at));
+        return (sameDay ? DateFormat.getTimeInstance(DateFormat.MEDIUM, app().locale()) : DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM, app().locale())).format(new Date(at));
     }
 
     private static String icon(String state) {

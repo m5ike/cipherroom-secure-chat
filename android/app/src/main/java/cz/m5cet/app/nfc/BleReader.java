@@ -29,7 +29,7 @@ public final class BleReader implements Reader {
 
     /** The single message the workbench shows: a full BLE reader profile is not wired yet. */
     public String connectHint() {
-        return "Connect your Bluetooth NFC reader in the system Bluetooth settings, then pair it with its own app. "
-            + "A vendor BLE bridge can be added here as an ApduChannel.";
+        return cz.m5cet.app.core.Texts.t("nfc.reader.bleHint", "Connect your Bluetooth NFC reader in the system Bluetooth settings, then pair it with its own app. "
+            + "A vendor BLE bridge can be added here as an ApduChannel.");
     }
 }

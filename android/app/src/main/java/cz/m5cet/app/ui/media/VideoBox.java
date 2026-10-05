@@ -66,7 +66,7 @@ public final class VideoBox extends FrameLayout implements TextureView.SurfaceTe
         addView(time, tl);
         time.setVisibility(GONE);
         setOnClickListener(v -> toggle());
-        setContentDescription("video");
+        setContentDescription(cz.m5cet.app.core.Texts.t("media.a11y.video", "video"));
     }
 
     public void set(AudioBar.Source s) {

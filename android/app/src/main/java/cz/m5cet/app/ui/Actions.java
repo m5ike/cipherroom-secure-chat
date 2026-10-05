@@ -90,7 +90,12 @@ public final class Actions {
                 case "lock.now": app.lock.lockNow(false); break;
                 case "lock.biometric": a.parts.retryBiometric(); break;
                 case "theme.toggle": app.settings.set("appearance.tone", Ui.dark(a) ? "light" : "dark"); a.recreate(); break;
-                case "lang.set": if (s.equals("cs") || s.equals("en") || s.equals("de")) { app.config.setLang(s); a.recreate(); } break;
+                // 6.13: any of the nine languages (Locales), or "" / "system" for the phone's.
+                case "lang.set": {
+                    String l = s.equals("system") ? "" : s;
+                    if (l.isEmpty() || cz.m5cet.app.core.Locales.isLocale(l)) { app.config.setLang(l); app.notify.channels(); a.recreate(); }
+                    break;
+                }
                 case "update.check": Io.bg(() -> { boolean ok = app.checkin.run("manual"); Io.main(() -> a.flash("", ok ? app.t("update.none") : app.t("room.offline"), ok ? "info" : "warn")); }); break;
                 case "update.install": a.parts.installUpdate(); break;
                 case "update.later": a.parts.closeOverlay(); break;

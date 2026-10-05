@@ -330,7 +330,7 @@ export function registerFunctionsAdminRoutes(app: Express): void {
   r.get("/runs/:id/live", (req, res) => {
     const entry = liveRuns.get(String(req.params.id));
     if (!entry) return res.status(404).json({ ok: false, message: "No live run with that id (it ended a while ago?)." });
-    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Accel-Buffering", "no");
     (res as unknown as { flushHeaders?: () => void }).flushHeaders?.();
@@ -602,7 +602,7 @@ export function registerFunctionsAdminRoutes(app: Express): void {
     res.json({ ok: true, run, logs: functionsStore.logs(req.params.id) });
   });
   r.get("/runs/:id/stream", (req, res) => {
-    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Content-Type", "text/event-stream; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
     res.setHeader("X-Accel-Buffering", "no");
     (res as unknown as { flushHeaders?: () => void }).flushHeaders?.();

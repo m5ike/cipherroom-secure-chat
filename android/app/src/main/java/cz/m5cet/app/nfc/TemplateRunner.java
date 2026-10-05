@@ -185,7 +185,7 @@ public final class TemplateRunner {
 
         @Override public byte[] transmit(byte[] apdu) throws IOException {
             if (cancel.get()) throw new Halt("cancelled");
-            if (failure != null) throw new Halt("the card stopped answering");
+            if (failure != null) throw new Halt(cz.m5cet.app.core.Texts.t("nfc.tpl.cardGone", "the card stopped answering"));
             // G-18: only reads reach the card — whatever step sends it.
             String why = refusal(apdu, current == null ? "" : current.op);
             if (why != null) { refused = why; throw new IOException(why); }
@@ -311,13 +311,13 @@ public final class TemplateRunner {
                 case "select-pse": l = "SELECT PSE (1PAY.SYS.DDF01)"; break;
                 case "select-aid": l = "SELECT " + (s.aid != null ? s.aid : aid != null ? aid : "AID"); break;
                 case "get-data": l = "GET DATA " + String.join(" ", s.tags); break;
-                case "read-log": l = "Transaction history"; break;
+                case "read-log": l = cz.m5cet.app.core.Texts.t("nfc.tpl.step.readLog", "Transaction history"); break;
                 case "gpo": l = "GET PROCESSING OPTIONS"; break;
                 case "read-afl": l = "READ RECORD (AFL)"; break;
                 case "read-files": l = "READ RECORD SFI " + rangeText(s.sfi, 1, 30) + ", records " + rangeText(s.records, 1, 16); break;
-                case "for-each-aid": l = "Each application"; break;
-                case "eid-read": l = "e-ID / e-passport read"; break;
-                case "emv-read": l = "EMV read"; break;
+                case "for-each-aid": l = cz.m5cet.app.core.Texts.t("nfc.tpl.step.eachApp", "Each application"); break;
+                case "eid-read": l = cz.m5cet.app.core.Texts.t("nfc.tpl.step.eidRead", "e-ID / e-passport read"); break;
+                case "emv-read": l = cz.m5cet.app.core.Texts.t("nfc.tpl.step.emvRead", "EMV read"); break;
                 default: l = s.op; break;
             }
         }

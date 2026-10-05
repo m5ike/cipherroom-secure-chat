@@ -94,6 +94,8 @@ public final class Bundles {
                 try {
                     Design d = open(candidate);
                     activeId = candidate;
+                    // 6.13: what a bundle from an older server lacks (languages, the app's newer texts) comes from the built-in design.
+                    try { d.withFallback(Design.builtIn(app)); } catch (RuntimeException e) { Log.e("bundle", "the built-in design cannot back the bundle's texts", e); }
                     return d;
                 } catch (Exception e) {
                     Log.e("bundle", "bundle " + candidate + " cannot be used", e);

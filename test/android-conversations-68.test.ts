@@ -62,7 +62,7 @@ describe("6.8 rooms as Android conversations — the design", () => {
     expect(DEFAULT_STRINGS.de["conversations.names"]).toBe("Raumnamen anzeigen");
     // the three languages differ (nothing left untranslated)
     for (const k of ["conversations.on", "conversations.hint", "conversations.names.hint"]) {
-      expect(new Set(LANGS.map((l) => DEFAULT_STRINGS[l][k])).size, k).toBe(3);
+      expect(new Set((["cs", "en", "de"] as const).map((l) => DEFAULT_STRINGS[l][k])).size, k).toBe(3);
     }
   });
 });

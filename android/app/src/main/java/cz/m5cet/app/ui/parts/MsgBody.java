@@ -154,7 +154,7 @@ final class MsgBody extends LinearLayout implements Renderer.Slot {
 
     private String hiddenNote(ChatMessage m) {
         if (m.hiddenUntil == ChatMessage.UNTIL_SIGNIN) return app().t("msg.hiddenSignin");
-        return app().t("msg.hiddenUntil") + " " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(new java.util.Date(m.hiddenUntil));
+        return app().t("msg.hiddenUntil") + " " + cz.m5cet.app.core.Formats.time(app().lang(), m.hiddenUntil);
     }
 
     /* -------------------------------------------------------------- text */

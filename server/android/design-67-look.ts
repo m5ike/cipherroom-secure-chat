@@ -37,7 +37,7 @@ const P = (name: string, kind: PropDef["kind"], label: string, extra: Partial<Pr
 export const THEMES_67_LOOK: AndroidTheme[] = [
   {
     id: "forest", family: "studio", tones: ["light", "dark"], radius: 18,
-    label: { cs: "Les", en: "Forest", de: "Wald" },
+    label: { cs: "Les", en: "Forest", de: "Wald", es: "Bosque", it: "Foresta", fr: "Forêt", sk: "Les", sl: "Gozd", fi: "Metsä" },
     light: {
       background: "#f2f5f0", surface: "#ffffff", surfaceVariant: "#e5ece2", onSurface: "#15231a", muted: "#4f6154", border: "#d3ddcf",
       primary: "#2d6a43", onPrimary: "#ffffff", accent: "#2d6a43", danger: "#b42318", success: "#1f6b34", warning: "#8f5000",
@@ -51,7 +51,7 @@ export const THEMES_67_LOOK: AndroidTheme[] = [
   },
   {
     id: "sunset", family: "studio", tones: ["light", "dark"], radius: 20,
-    label: { cs: "Západ slunce", en: "Sunset", de: "Sonnenuntergang" },
+    label: { cs: "Západ slunce", en: "Sunset", de: "Sonnenuntergang", es: "Atardecer", it: "Tramonto", fr: "Coucher de soleil", sk: "Západ slnka", sl: "Sončni zahod", fi: "Auringonlasku" },
     light: {
       background: "#fff6ef", surface: "#ffffff", surfaceVariant: "#fbe9dd", onSurface: "#2a1a2e", muted: "#6a5464", border: "#f0dccd",
       primary: "#b83d0a", onPrimary: "#ffffff", accent: "#6d28d9", danger: "#be123c", success: "#15703a", warning: "#9a4a00",
@@ -65,7 +65,7 @@ export const THEMES_67_LOOK: AndroidTheme[] = [
   },
   {
     id: "lavender", family: "studio", tones: ["light", "dark"], radius: 22,
-    label: { cs: "Levandule", en: "Lavender", de: "Lavendel" },
+    label: { cs: "Levandule", en: "Lavender", de: "Lavendel", es: "Lavanda", it: "Lavanda", fr: "Lavande", sk: "Levanduľa", sl: "Sivka", fi: "Laventeli" },
     light: {
       background: "#f7f5fc", surface: "#ffffff", surfaceVariant: "#ece8f7", onSurface: "#211b34", muted: "#5d5673", border: "#dfd9ef",
       primary: "#6346bd", onPrimary: "#ffffff", accent: "#6346bd", danger: "#b9204a", success: "#1b6f46", warning: "#8f4f00",
@@ -79,7 +79,7 @@ export const THEMES_67_LOOK: AndroidTheme[] = [
   },
   {
     id: "mocha", family: "studio", tones: ["light", "dark"], radius: 14, font: "serif",
-    label: { cs: "Moka", en: "Mocha", de: "Mokka" },
+    label: { cs: "Moka", en: "Mocha", de: "Mokka", es: "Moca", it: "Moka", fr: "Moka", sk: "Moka", sl: "Moka", fi: "Mokka" },
     light: {
       background: "#f6f1eb", surface: "#fffdfa", surfaceVariant: "#eee4d9", onSurface: "#2a1e16", muted: "#685a50", border: "#e2d5c7",
       primary: "#77472a", onPrimary: "#ffffff", accent: "#77472a", danger: "#ad2a1f", success: "#2f6d2c", warning: "#8a5000",
@@ -93,7 +93,7 @@ export const THEMES_67_LOOK: AndroidTheme[] = [
   },
   {
     id: "arctic", family: "studio", tones: ["light", "dark"], radius: 16,
-    label: { cs: "Arktida", en: "Arctic", de: "Arktis" },
+    label: { cs: "Arktida", en: "Arctic", de: "Arktis", es: "Ártico", it: "Artico", fr: "Arctique", sk: "Arktída", sl: "Arktika", fi: "Arktinen" },
     light: {
       background: "#f1f6fa", surface: "#ffffff", surfaceVariant: "#e2edf5", onSurface: "#0e2132", muted: "#4f6475", border: "#d2e1ec",
       primary: "#0a609f", onPrimary: "#ffffff", accent: "#0a609f", danger: "#bd2129", success: "#0f6e43", warning: "#8a5000",
@@ -107,7 +107,7 @@ export const THEMES_67_LOOK: AndroidTheme[] = [
   },
   {
     id: "ink", family: "studio", tones: ["light", "dark"], radius: 8,
-    label: { cs: "Inkoust", en: "Ink", de: "Tinte" },
+    label: { cs: "Inkoust", en: "Ink", de: "Tinte", es: "Tinta", it: "Inchiostro", fr: "Encre", sk: "Atrament", sl: "Črnilo", fi: "Muste" },
     light: {
       background: "#f4f4f4", surface: "#ffffff", surfaceVariant: "#eaeaea", onSurface: "#111111", muted: "#575757", border: "#d9d9d9",
       primary: "#1a1a1a", onPrimary: "#ffffff", accent: "#1a1a1a", danger: "#b42318", success: "#1a6636", warning: "#7f4c00",

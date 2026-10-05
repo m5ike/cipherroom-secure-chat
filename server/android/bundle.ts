@@ -108,11 +108,37 @@ const NEEDS: Array<{ code: number; elements: Set<string>; actions: Set<string> }
 ];
 
 /**
+ * 6.13: the app that knows the nine languages (core/Locales.java). The texts
+ * themselves need no newer app — an older one reads its three languages (cs,
+ * en, de) from the same tables and never picks another; a bundle's extra
+ * tables and "key#few" forms are ignored there. What it cannot do is switch to
+ * a language it does not know: a design whose `lang.set` (a menu item, an
+ * element's event, a library step) names es, it, fr, sk, sl, fi or "system"
+ * needs the 6.13 app — an older one would silently do nothing.
+ */
+export const LOCALES_APP_CODE = 61300;
+const OLD_APP_LANGS = new Set(["cs", "en", "de"]);
+
+export function needsLocalesApp(design: AndroidDesign): boolean {
+  let needs = false;
+  const visit = (v: unknown, depth: number): void => {
+    if (needs || depth > 64 || !v || typeof v !== "object") return;
+    if (Array.isArray(v)) { for (const x of v) visit(x, depth + 1); return; }
+    const o = v as Record<string, unknown>;
+    if ((o.action === "lang.set" || o.do === "lang.set") && typeof o.arg === "string" && !OLD_APP_LANGS.has(o.arg.trim())) { needs = true; return; }
+    for (const x of Object.values(o)) visit(x, depth + 1);
+  };
+  visit({ screens: design.screens, menus: design.menus, libraries: design.libraries }, 0);
+  return needs;
+}
+
+/**
  * The oldest app a design runs on: one that uses a 6.7 element (the room rows'
  * `swipe`) or action needs the 6.7 app, a 6.8 one the 6.8 app — so an older
  * phone keeps the build it has instead of getting parts it cannot draw.
  */
 export function designMinAppCode(design: AndroidDesign): number {
+  if (needsLocalesApp(design)) return LOCALES_APP_CODE;
   const json = JSON.stringify(design);
   const els = [...json.matchAll(/"el":"([^"]+)"/g)].map((m) => m[1]);
   const acts = [...json.matchAll(/"action":"([^"]+)"/g)].map((m) => m[1]);
