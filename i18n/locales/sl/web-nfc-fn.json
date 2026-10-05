@@ -1,0 +1,12 @@
+{
+ "nfcfn.done": "Končano.",
+ "nfcfn.noReader": "Ta naprava nima bralnika NFC.",
+ "nfcfn.status.auth-failed": "Overitev kartice ni uspela",
+ "nfcfn.status.denied": "Dostop do NFC zavrnjen",
+ "nfcfn.status.error": "Napaka NFC: {message}",
+ "nfcfn.status.no-card": "Ni kartice",
+ "nfcfn.status.ok": "Končano",
+ "nfcfn.status.timeout": "Kartica ni bila prislonjena pravočasno",
+ "nfcfn.status.unsupported": "Ta naprava tega ne podpira",
+ "nfcfn.waiting": "Prislonite kartico k napravi …"
+}
