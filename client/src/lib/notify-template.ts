@@ -241,6 +241,17 @@ export const DEFAULT_TEMPLATES: Record<NotifyKind, NotifyTemplate> = {
 };
 
 /**
+ * 6.14 (call wake): the body of a call's end — the caller hung up before
+ * anyone answered, so the ring becomes a quiet "missed call" in its place
+ * (the call template's title, its variables and privacy).
+ */
+export const CALL_MISSED_BODY: Record<NotifyLang, string> = T(
+  "[{sender}: ]Zmeškaný hovor", "[{sender}: ]Missed call", "[{sender}: ]Verpasster Anruf",
+  "[{sender}: ]Llamada perdida", "[{sender}: ]Chiamata persa", "[{sender} : ]Appel manqué",
+  "[{sender}: ]Zmeškaný hovor", "[{sender}: ]Zgrešen klic", "[{sender}: ]Vastaamaton puhelu",
+);
+
+/**
  * 6.13: a template's text in a language — along its chain (Slovak → Czech →
  * English); an empty text counts as missing. A template saved before 6.13 has
  * three languages, an operator may fill in only some.

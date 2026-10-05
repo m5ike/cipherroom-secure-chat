@@ -11,8 +11,10 @@ export const PROTOCOL_VERSION = 2;
 export const MAX_FRAME_BYTES = 256 * 1024;
 
 /** What a client may announce in join.features, and the server in hello:
- *  "bin" — file chunks as binary messages (binary.ts). */
-export const KNOWN_FEATURES = new Set(["bin"]);
+ *  "bin" — file chunks as binary messages (binary.ts); 6.14 "call-wake" — a
+ *  relay frame may carry a call (call / callEnd, callId, video — relay.ts):
+ *  clients send call wakes only to a server whose hello says so. */
+export const KNOWN_FEATURES = new Set(["bin", "call-wake"]);
 
 export type IceCandidate = { candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null; usernameFragment?: string | null };
 export type SessionDescription = { type: "offer" | "answer" | "pranswer" | "rollback"; sdp: string };
@@ -39,7 +41,9 @@ export type ClientFrame =
   | { type: "presence"; away: boolean; foreground?: boolean }
   // 6.7: mention — the recipients (of `to`) the message mentions; call — it rings them. Hints for the notification's kind only.
   // 6.12: `per` — an envelope of its own for some recipients (by reference); the others get `envelope`.
-  | { type: "relay"; messageId: string; to: string[]; envelope?: RelayEnvelope; per?: Record<string, RelayEnvelope>; expiresAt?: number; mention?: string[]; call?: boolean }
+  // 6.14 (call wake): `callId` names the call a ring (`call`) or its end (`callEnd`: it ended before anyone
+  // answered — the ring stops) belongs to; `video` — a video call. Only with `call` or `callEnd`.
+  | { type: "relay"; messageId: string; to: string[]; envelope?: RelayEnvelope; per?: Record<string, RelayEnvelope>; expiresAt?: number; mention?: string[]; call?: boolean; callEnd?: boolean; callId?: string; video?: boolean }
   | { type: "relay-ack"; ids: string[] }
   | { type: "receipt"; messageIds: string[]; state: "read" | "delivered"; to?: { peerId?: string; accountId?: string } }
   | { type: "command-poll"; deviceId: string }
@@ -317,6 +321,20 @@ export function parseFrame(raw: string | Buffer): ClientFrame | FrameError {
       const mention = f.mention === undefined ? null : ids(f.mention, 50);
       if (mention && mention.length) frame.mention = mention.filter((m) => frame.to.includes(m));
       if (f.call === true) frame.call = true;
+      // 6.14: a call wake — the ring or its end, the call's id, video.
+      if (f.callEnd === true) {
+        if (frame.call) return fail("relay.call and relay.callEnd exclude each other");
+        frame.callEnd = true;
+      }
+      if (frame.call || frame.callEnd) {
+        if (f.callId !== undefined) {
+          const callId = id(f.callId);
+          if (!callId) return fail("relay.callId is an id ([A-Za-z0-9_:.-], at most 96)");
+          frame.callId = callId;
+        }
+        if (frame.callEnd && !frame.callId) return fail("relay.callEnd needs the callId of its ring");
+        if (f.video === true) frame.video = true;
+      }
       return frame;
     }
     case "relay-ack": {

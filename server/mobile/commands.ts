@@ -16,6 +16,8 @@ export const COMMAND_KINDS: readonly CommandKind[] = ["ping", "status", "flash",
 
 // 6.7: "notify" is not in COMMAND_KINDS — the notifier (server/notify) sends it, the console does not.
 export const TTL_S: Record<CommandKind, number> = { ping: 600, status: 3600, flash: 3600, push: 86_400, update: 86_400, lock: 7 * 86_400, wipe: 30 * 86_400, config: 7 * 86_400, notify: 3600 };
+/** 6.14 (call wake): a call's ring (and its end) lives 60 s on every channel — FCM ttl, apns-expiration, the sealed `exp`, web push TTL. */
+export const CALL_TTL_S = 60;
 /** What a person should see now or what must not wait: high priority (FCM HIGH, APNs 10). */
 export const HIGH: ReadonlySet<CommandKind> = new Set(["flash", "push", "lock", "wipe", "notify"]);
 /** A newer one replaces an undelivered older one (FCM collapse_key, APNs apns-collapse-id). */
@@ -39,10 +41,18 @@ export function sanitizePayload(kind: CommandKind, raw: unknown): Record<string,
 }
 
 export function commandWire(device: Pick<BaseDevice, "id" | "encKey">, command: Command): CommandWire {
-  const content = { id: command.id, kind: command.kind, at: command.createdAt, exp: command.expiresAt, payload: command.payload };
+  return sealedWire(device, { id: command.id, kind: command.kind, at: command.createdAt, exp: command.expiresAt, payload: command.payload });
+}
+
+/**
+ * The wire form of any content {id, kind, at, exp, payload} for one device:
+ * ECIES-sealed for it, signed by the server over `m5push/1|device|id|e|iv|ct`.
+ * 6.14: iOS VoIP pushes carry a call ({kind: "call" | "call-end"}) this way.
+ */
+export function sealedWire(device: Pick<BaseDevice, "id" | "encKey">, content: { id: string; kind: string; at: number; exp: number; payload: Record<string, unknown> }): CommandWire {
   const sealed = eciesSeal(device.encKey, device.id, "push", Buffer.from(JSON.stringify(content), "utf8"));
-  const s = signP1363(mobileSigningKey().privateKey, pushSignedString(device.id, command.id, sealed));
-  return { m5: "1", i: command.id, ...sealed, s };
+  const s = signP1363(mobileSigningKey().privateKey, pushSignedString(device.id, content.id, sealed));
+  return { m5: "1", i: content.id, ...sealed, s };
 }
 
 /** A new queued command (an undelivered older status/update/config of the device expires first). */
