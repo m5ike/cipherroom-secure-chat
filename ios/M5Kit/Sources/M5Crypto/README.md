@@ -71,7 +71,7 @@ public protocol KeyAgreer: Sendable { var spki: String { get }; func agree(with:
 | `SenderKeys4` | `SenderKeys4` | room sender keys with chain certificates |
 | `Mailbox`, `MailboxStore`, `MemoryMailboxStore` | `Mailbox` | signed bundles, sealed items and sets (sacc digest), rotation |
 | `Files4`, `Media4` | `Files4`, `Media4` | per-transfer file keys and AADs; media frame encryption |
-| `HubProof` | `HubProof` | the room proof the hub checks (§ 13) |
+| `HubProof` | `HubProof` | the room proof the hub checks (§ 13) — M5Net's `HubProofFrames` / `HubSeedSigner` put it in the join frame |
 | `Merkle`, `Kt`, `KtState` (actor), `KtStore` | `Merkle`, `Kt`, `KtState` | RFC 9162 proofs, tree heads, lookups, per-origin pinning, pending proofs, gossip, alerts |
 | `ReplayGuard`, `ReplayStore`, `Replay` | `Replay` | the replay window |
 | `Release` | `Release` | release manifest signatures |
@@ -88,7 +88,7 @@ public protocol KeyAgreer: Sendable { var spki: String { get }; func agree(with:
 | `SignedPolicy`, `IntentSeal` | `security/SignedPolicy`, `IntentSeal` | the server-signed device policy; intent tags |
 | `LockBox`, `PinWrap` | `security/LockBox`, `PinWrap` | the lock inbox's ECIES records; the PIN-wrapped data key |
 | `AccountKeys`, `RecoveryCode` | `account/AccountKeys`, `RecoveryCode` | account seed / key (`m5cet:account:v1`), root wrapping, profile key, vault slots v2, passkey PRF helpers, recovery codes |
-| `TagV2`, `ShareInvite`, `ConnTagV1`, `ConnTag` | `nfc/TagV2`, `ShareInvite`, `ConnTag` | NFC tag v2 (offline Argon2 seal, invites), the v1 connection card |
+| `TagV2`, `ShareInvite`, `ConnTagV1`, `ConnTag` | `nfc/TagV2`, `ShareInvite`, `ConnTag` | NFC tag v2 (offline Argon2 seal, invites), the v1 connection card — the only implementation; the Argon2id can be handed in (`TagV2.KeyDerivation`, default `TagV2.argon2id`); M5NFC's `NfcTagV2` / `NfcShareInvite` / `NfcConnTag` wrap these with its `TagKdf` / `ShareInviteHTTP` seams |
 
 ## Deviations
 
@@ -102,7 +102,10 @@ None in the bytes: every vector section passes. Differences in behaviour:
 
 ## M5Core (used throughout)
 
-- `Bytes` (= `[UInt8]`), `B64`, `Hex`, `UTF8Text`, `ByteOps`, `Ordinal` (Java's string order), `String.javaTrimmed`.
+- `Bytes` (= `[UInt8]`), `B64`, `Hex` (`encode` lower case, `upper`, `decode` strict, `decodeLenient` = Apdu.unhex), `UTF8Text`,
+  `ByteOps`, `Ordinal` (Java's string order), `String.javaTrimmed`; the `Bytes.…` helpers every module calls
+  (`u8`, `concat`, `slice`, `latin1`, `asciiString`, `constantTimeEqual`, and for `Data`: `b64`, `b64url`, `unb64`,
+  `unb64url`, `unb64any`, `hex`, `unhex`, `same`, `be32`). This module adds `Bytes.sha256(Data)` and `Bytes.random(n)` (→ `Data`).
 - `JSON` / `JSONObject` / `JSONNumber` — ordered keys, JavaScript number formatting (`JSON.stringify` output),
   `JSON.parse`, `JSON.canonical`; `JSONObject` accessors `string`, `optString`, `int`, `optInt`, `int64`,
   `optInt64`, `double`, `bool`, `object`, `array`, `has`, `with`, `without`.

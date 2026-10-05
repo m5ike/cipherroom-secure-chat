@@ -24,6 +24,8 @@
  "audio.muted": "Micro coupé",
  "away.received#one": "{n} message arrivé pendant votre absence a été remis.",
  "away.received#other": "{n} messages arrivés pendant votre absence ont été remis.",
+ "call.wake.missed": "📞 Appel manqué de {name} ({time})",
+ "call.wake.missedVideo": "📹 Appel vidéo manqué de {name} ({time})",
  "caps.body": "Cette app a besoin de la cryptographie moderne du navigateur et de WebRTC. Utilisez une version récente d’Edge, de Chrome, de Firefox ou de Safari.",
  "caps.ie": "Internet Explorer n’est pas pris en charge. Utilisez Edge, Chrome, Firefox ou Safari.",
  "caps.title": "M5cet — navigateur non pris en charge",

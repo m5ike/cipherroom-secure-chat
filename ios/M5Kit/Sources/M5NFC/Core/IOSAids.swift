@@ -13,6 +13,7 @@
 // NFC and the UI says so (`NfcPlatform.limit`).
 
 import Foundation
+import M5Core
 
 public enum IOSAids {
     public struct Entry: Sendable, Hashable {
@@ -60,7 +61,7 @@ public enum IOSAids {
     /// The AIDs the readers in M5NFC select themselves: the e-ID, the Type 4 tag, the payment directories,
     /// the EMV candidate AIDs and the standard templates' scheme AIDs.
     public static var selectedByCode: [String] {
-        var out = [Hex.encode(MrtdReader.aid), Hex.encode(Ndef.t4tAid), Hex.encode(EmvReader.ppse), Hex.encode(EmvReader.pse)]
+        var out = [Hex.upper(MrtdReader.aid), Hex.upper(Ndef.t4tAid), Hex.upper(EmvReader.ppse), Hex.upper(EmvReader.pse)]
         for c in EmvTags.candidateAids where !out.contains(c.aid) { out.append(c.aid) }
         for a in ["A0000000032020"] where !out.contains(a) { out.append(a) } // V PAY (standard template)
         return out

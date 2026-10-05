@@ -167,10 +167,10 @@
 	     when a card is found: the directories and the e-ID first. -->
 	<key>com.apple.developer.nfc.readersession.iso7816.select-identifiers</key>
 	<array>
-		<string>325041592E5359532E4444463031</string><!-- PPSE 2PAY.SYS.DDF01 (contactless EMV directory) -->
 		<string>A0000002471001</string><!-- ICAO eMRTD LDS1 (e-passports, e-ID cards: BAC / PACE) -->
 		<string>D2760000850101</string><!-- NFC Forum Type 4 NDEF application (connection cards, tags) -->
 		<string>D2760000850100</string><!-- NFC Forum Type 4 NDEF application, mapping 1.0 -->
+		<string>325041592E5359532E4444463031</string><!-- PPSE 2PAY.SYS.DDF01 (contactless EMV directory) -->
 		<string>315041592E5359532E4444463031</string><!-- PSE 1PAY.SYS.DDF01 (contact EMV directory) -->
 		<string>A0000000031010</string><!-- Visa credit / debit -->
 		<string>A0000000032010</string><!-- Visa Electron -->

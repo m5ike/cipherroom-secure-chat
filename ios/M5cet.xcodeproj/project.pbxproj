@@ -77,6 +77,7 @@
 		5C3E00000000000000000211 /* Exceptions for "M5cet" folder in "M5cet" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
+				Core/README.md,
 				Parts/README.md,
 				Platform/Calls/README.md,
 				Platform/Contacts/README.md,

@@ -1,6 +1,6 @@
 // 6.8: the History screen's list ("log") — the calls and the messages of every
 // room in one list, newest first. Calls come from the call history
-// (CallHistoryStore), messages from the rooms' own histories as they are
+// (AppCallHistory, M5Proto), messages from the rooms' own histories as they are
 // (CallLogMessageSource — the room session) — nothing is copied or stored again.
 //
 // What a message may show here: its text, a file's name or a command — but a
@@ -11,6 +11,7 @@
 // Port of android/app/src/main/java/cz/m5cet/app/chat/ActivityLog.java.
 
 import Foundation
+import M5Proto
 
 enum CallLogItems {
     static let call = "call", msg = "msg"
@@ -72,11 +73,11 @@ enum CallLogItems {
 
     // MARK: items
 
-    static func call(_ e: CallHistoryEntry, saved: Bool) -> Item {
+    static func call(_ e: CallHistory.Entry, saved: Bool) -> Item {
         var it = Item()
         it.id = "c:" + e.id
         it.type = call
-        it.dir = e.kind.rawValue
+        it.dir = e.kind
         it.what = e.video ? "video" : "audio"
         it.roomKey = e.roomKey
         it.room = e.room
@@ -212,7 +213,7 @@ enum CallLogItems {
 
     /// Everything the log lists: every call kept and the messages of every saved room, newest first.
     @MainActor
-    static func collect(history: CallHistoryStore, messages source: (any CallLogMessageSource)?) -> [Item] {
+    static func collect(history: AppCallHistory, messages source: (any CallLogMessageSource)?) -> [Item] {
         var saved = Set<String>()
         var msgs: [Item] = []
         for room in source?.savedRooms() ?? [] {

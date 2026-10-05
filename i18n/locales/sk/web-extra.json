@@ -31,6 +31,8 @@
  "away.received#few": "Doručené {n} správy, ktoré prišli počas vašej neprítomnosti.",
  "away.received#one": "Doručená {n} správa, ktorá prišla počas vašej neprítomnosti.",
  "away.received#other": "Doručených {n} správ, ktoré prišli počas vašej neprítomnosti.",
+ "call.wake.missed": "📞 Zmeškaný hovor od {name} ({time})",
+ "call.wake.missedVideo": "📹 Zmeškaný videohovor od {name} ({time})",
  "caps.body": "Aplikácia potrebuje modernú kryptografiu prehliadača a WebRTC. Použite aktuálny Edge, Chrome, Firefox alebo Safari.",
  "caps.ie": "Internet Explorer nie je podporovaný. Použite Edge, Chrome, Firefox alebo Safari.",
  "caps.title": "M5cet — nepodporovaný prehliadač",

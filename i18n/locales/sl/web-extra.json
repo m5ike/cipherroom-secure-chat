@@ -38,6 +38,8 @@
  "away.received#one": "Dostavljeno je {n} sporočilo, ki je prispelo med vašo odsotnostjo.",
  "away.received#other": "Dostavljenih je {n} sporočil, ki so prispela med vašo odsotnostjo.",
  "away.received#two": "Dostavljeni sta {n} sporočili, ki sta prispeli med vašo odsotnostjo.",
+ "call.wake.missed": "📞 Zgrešen klic od {name} ({time})",
+ "call.wake.missedVideo": "📹 Zgrešen videoklic od {name} ({time})",
  "caps.body": "Aplikacija potrebuje sodobno kriptografijo brskalnika in WebRTC. Uporabite novejši Edge, Chrome, Firefox ali Safari.",
  "caps.ie": "Internet Explorer ni podprt. Uporabite Edge, Chrome, Firefox ali Safari.",
  "caps.title": "M5cet — nepodprt brskalnik",

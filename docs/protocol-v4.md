@@ -366,6 +366,11 @@ Server details (6.12):
   at most 128 000 characters. The queue's limit of 130 000 bytes applies per stored item: an
   oversized `per[ref]` is answered `relay-status … rejected, reason "too large"` for that
   recipient only. Receipts and the relay ledger are unchanged. The whole frame stays ≤ 256 KiB.
+* 6.14 (call wake): the frame may also carry `call: true` or `callEnd: true` with `callId` and
+  `video` — a call's ring and its end for away members, sealed exactly like a message (`per` /
+  `envelope` as above) with the inner payload `{ kind:"call", id, createdAt, senderId,
+  senderName, call, state:"ring"|"end", video, at }`; only to a server whose hello lists
+  `"call-wake"`. Wire format, limits and push payloads: `docs/api.md` › Buzení při hovoru (6.14).
 
 ### 7.5 Key directory (signed-in accounts)
 

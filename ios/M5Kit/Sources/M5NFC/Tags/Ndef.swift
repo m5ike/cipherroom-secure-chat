@@ -6,6 +6,7 @@
 // identifier, payload) and back. Pure.
 
 import Foundation
+import M5Core
 
 /// The type name format of a record (3 bits).
 public enum Tnf: UInt8, Sendable {
@@ -310,12 +311,12 @@ public enum Ndef {
 /// their capacity, MAD1 / MAD2 and their CRC. **iOS cannot talk to MIFARE Classic** (no
 /// CoreNFC support) — kept for parity, dumps and an external reader.
 public enum MifareClassicLayout {
-    public static let madKeyA = Hex.decode("A0A1A2A3A4A5")
-    public static let ndefKeyA = Hex.decode("D3F7D3F7D3F7")
-    public static let factoryKey = Hex.decode("FFFFFFFFFFFF")
-    public static let madTrailerV1 = Hex.decode("A0A1A2A3A4A5787788C1FFFFFFFFFFFF")
-    public static let madTrailerV2 = Hex.decode("A0A1A2A3A4A5787788C2FFFFFFFFFFFF")
-    public static let ndefTrailer = Hex.decode("D3F7D3F7D3F77F078840FFFFFFFFFFFF")
+    public static let madKeyA = Hex.decodeLenient("A0A1A2A3A4A5")
+    public static let ndefKeyA = Hex.decodeLenient("D3F7D3F7D3F7")
+    public static let factoryKey = Hex.decodeLenient("FFFFFFFFFFFF")
+    public static let madTrailerV1 = Hex.decodeLenient("A0A1A2A3A4A5787788C1FFFFFFFFFFFF")
+    public static let madTrailerV2 = Hex.decodeLenient("A0A1A2A3A4A5787788C2FFFFFFFFFFFF")
+    public static let ndefTrailer = Hex.decodeLenient("D3F7D3F7D3F77F078840FFFFFFFFFFFF")
     static let ndefAid: [UInt8] = [0x03, 0xe1]
 
     /// Blocks in a sector: 4 for the first 32 sectors, 16 for the large 4K sectors.
@@ -364,7 +365,7 @@ public enum MifareClassicLayout {
         var keys: [[UInt8]] = [factoryKey]
         for line in (text ?? "").split(whereSeparator: { " \t\n\r,;".contains($0) }) {
             let h = String(line).trimmingCharacters(in: .whitespaces).replacingOccurrences(of: ":", with: "")
-            if h.utf8.count == 12, let k = Hex.decodeStrict(h), !keys.contains(k) { keys.append(k) }
+            if h.utf8.count == 12, let k = Hex.decode(h), !keys.contains(k) { keys.append(k) }
         }
         return keys
     }

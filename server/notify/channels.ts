@@ -18,6 +18,7 @@ import type { AccountStore } from "../accounts/store";
 import { sendWebPush, isWebPushReady, type WebPushOptions, type WebPushResult } from "../push";
 import { androidStore, newId, type Command, type Device } from "../android/store";
 import { commandWire, TTL_S } from "../android/commands";
+import { CALL_TTL_S } from "../mobile/commands";
 import { fcmReady, fcmSend, type FcmOptions, type FcmResult } from "../android/fcm";
 import { iosStore, type IosDevice } from "../ios/store";
 import { sendIosNotify } from "../ios/commands";
@@ -55,7 +56,17 @@ export type NotifyPayload = {
   url: string;
   lang: NotifyLang;
   at: number;
+  /**
+   * 6.14 (call wake, kind "call"): the call — the caller's id for it, video,
+   * when it rang, `end` (it ended before anyone answered: the ring becomes a
+   * missed call), and `room` (only for the app channel: sealed for the one
+   * device, which maps it to its saved room).
+   */
+  call?: { id: string; video: boolean; at: number; end?: true; room?: string };
 };
+
+/** 6.14: the first Android app that knows a call's end (6.14.0); an older one would sound a "missed call" on its calls channel. */
+export const CALL_END_MIN_ANDROID = 61_400;
 
 export type Attempt = { channel: NotifyChannel; target: string; ok: boolean; status?: number; error?: string; gone?: boolean; ms: number };
 
@@ -157,12 +168,15 @@ export function androidChannel(deps: AndroidDeps): Channel {
           continue;
         }
         if (!device.fcmToken) { out.push({ channel: "android", target, ok: false, error: "the device has no FCM token (it checks in instead)", ms: elapsed(t0) }); continue; }
+        if (payload.call?.end && (device.appCode ?? 0) < CALL_END_MIN_ANDROID) { out.push({ channel: "android", target, ok: false, error: "the app predates call wakes (6.14): no call end", ms: elapsed(t0) }); continue; }
         const now = Date.now();
+        // 6.14: a call's ring (and its end) lives 60 s — an older one must not ring.
+        const ttl = payload.kind === "call" ? CALL_TTL_S : TTL_S.notify;
         const command: Command = {
           id: newId("cmd"), deviceId: device.id, kind: "notify", payload, status: "queued",
-          createdAt: now, createdBy: "notifier", expiresAt: now + TTL_S.notify * 1000, sentAt: null, via: "", doneAt: null, result: null, error: "",
+          createdAt: now, createdBy: "notifier", expiresAt: now + ttl * 1000, sentAt: null, via: "", doneAt: null, result: null, error: "",
         };
-        const r = await deps.send(device.fcmToken, deps.wire(device, command), { priority: "high", ttlSeconds: TTL_S.notify, collapseKey: `m5-notify-${payload.tag}`.slice(0, 64) });
+        const r = await deps.send(device.fcmToken, deps.wire(device, command), { priority: "high", ttlSeconds: ttl, collapseKey: `m5-notify-${payload.tag}`.slice(0, 64) });
         if (r.ok) {
           deps.putCommand({ ...command, status: "sent", sentAt: Date.now(), via: "fcm" });
           out.push({ channel: "android", target, ok: true, ms: elapsed(t0) });
@@ -202,7 +216,7 @@ export function webPushChannel(deps: WebPushDeps): Channel {
       for (const target of targets) {
         const t0 = Date.now();
         const r = await deps.send(target, { ...payload, requireInteraction: payload.sticky }, {
-          TTL: payload.kind === "call" ? 60 : 3600,
+          TTL: payload.kind === "call" ? CALL_TTL_S : 3600,
           urgency: payload.kind === "call" || payload.kind === "mention" ? "high" : "normal",
           topic: topicOf(payload.tag),
           timeout: config.limits.timeoutMs,

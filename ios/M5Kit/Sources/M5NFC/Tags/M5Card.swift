@@ -15,6 +15,7 @@
 // card without it (`removeRecord` + write).
 
 import Foundation
+import M5Core
 
 public enum M5Card {
     public static let magic = "M5CD"

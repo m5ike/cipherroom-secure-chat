@@ -7,6 +7,8 @@
 // (KtClient) and the checks of an account's own entries (KtService).
 
 import Foundation
+import M5Core
+import M5Crypto
 
 /// The crypto of key transparency (M5Crypto: Kt.verifySth, Kt.verifyLookup, Merkle.verifyConsistency).
 public protocol KtVerifier: Sendable {

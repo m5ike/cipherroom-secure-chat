@@ -8,7 +8,7 @@
 //   join      at the hello (or 4 s after opening, without a proof, from a server
 //             that sends none): the room id, the name, the peer id and resume
 //             secret of the previous connection, features ["bin"], foreground,
-//             and the proof that this client holds the room key (HubProof)
+//             and the proof that this client holds the room key (HubProofFrames; the bytes M5Crypto HubProof)
 //   joined    the peer id and resume secret are kept (HubResumeStore); the
 //             account's session is bound (`auth`), the presence sent
 //   keepalive a ping every 25 s; nothing heard for 75 s — the connection is dead
@@ -23,6 +23,8 @@
 // raw JSON; the room logic (M5Proto) reads peers, signals, relay items there.
 
 import Foundation
+import M5Core
+import M5Crypto
 
 /// What room a connection is for.
 public struct HubRoom: Sendable, Equatable {
@@ -434,7 +436,7 @@ public actor HubConnection {
         // 6.0: the operator closed the room, or it is full — not a network problem to retry.
         if e.code == "room-blocked" { await stop(.roomBlocked(e.message), leave: true); return }
         if e.code == "room-full" { await stop(.roomFull(e.message), leave: true); return }
-        switch HubProof.refusal(code: e.code, legacyAllowed: e.legacyAllowed, retried: legacyRetried) {
+        switch HubProofFrames.refusal(code: e.code, legacyAllowed: e.legacyAllowed, retried: legacyRetried) {
         case .legacy:
             legacyRetried = true
             proofSkipUntil = clock.now() + timing.proofRetryMs
@@ -455,7 +457,7 @@ public actor HubConnection {
         joinFallbackTask?.cancel()
         joinFallbackTask = nil
         let gen = generation
-        let proof = clock.now() < proofSkipUntil ? nil : await HubProof.build(signer: proofSigner, roomId: room.roomId, nonce: hubNonce)
+        let proof = clock.now() < proofSkipUntil ? nil : await HubProofFrames.build(signer: proofSigner, roomId: room.roomId, nonce: hubNonce)
         guard gen == generation, socket != nil else { return }
         if peerId.isEmpty { peerId = "peer-" + Bytes.hex(Bytes.random(12)) }
         let join = HubJoin(room: room.roomId, name: room.name, peerId: peerId, resume: resumeSecret.isEmpty ? nil : resumeSecret, away: false,

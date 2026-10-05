@@ -6,6 +6,7 @@
 // own document.
 
 import Foundation
+import M5Core
 
 public struct BigUInt: Sendable, Hashable, Comparable, CustomStringConvertible {
     /// Little-endian 64-bit limbs, no zero limb at the top (zero = []).
@@ -39,7 +40,7 @@ public struct BigUInt: Sendable, Hashable, Comparable, CustomStringConvertible {
         var digits = Array(hex.utf8)
         if digits.isEmpty { return nil }
         if digits.count % 2 == 1 { digits.insert(0x30, at: 0) }
-        guard let b = Hex.decodeStrict(String(decoding: digits, as: UTF8.self)) else { return nil }
+        guard let b = Hex.decode(String(decoding: digits, as: UTF8.self)) else { return nil }
         self.init(bytes: b)
     }
 
@@ -74,7 +75,7 @@ public struct BigUInt: Sendable, Hashable, Comparable, CustomStringConvertible {
 
     public var hex: String {
         if isZero { return "0" }
-        var s = Hex.encode(bytes)
+        var s = Hex.upper(bytes)
         while s.hasPrefix("0") && s.count > 1 { s.removeFirst() }
         return s
     }

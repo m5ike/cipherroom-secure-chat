@@ -12,13 +12,29 @@
 // signature): when the server says a join without proof is admitted
 // (`legacyAllowed`), join once more without it on the same socket and skip
 // proofs for an hour; otherwise stop (review S14).
+//
+// The proof's bytes and keys are M5Crypto's (`HubProof`: joinData, pub, build,
+// verify); this file is the network's part — the signer seam, the join frame's
+// proof and what to do when the hub refuses it (`HubProofFrames`).
 
 import Foundation
+import M5Core
+import M5Crypto
 
 /// The room's hub key (M5Crypto: Ed25519 from the room's hubSeed). One per room; the seed never leaves it.
 public protocol HubProofSigner: Sendable {
     /// The raw Ed25519 public key (32 bytes) and the signature (64 bytes) over `message`.
     func signHubJoin(_ message: Data) async throws -> (publicKey: Data, signature: Data)
+}
+
+/// A signer over the room's hub seed (`RoomKeys.hubSeed()`, 32 bytes): M5Crypto's Ed25519 (RFC 8032).
+public struct HubSeedSigner: HubProofSigner {
+    private let seed: Bytes
+    public init(seed: Bytes) { self.seed = seed }
+
+    public func signHubJoin(_ message: Data) async throws -> (publicKey: Data, signature: Data) {
+        (Data(try Prim.ed25519Public(seed)), Data(try Prim.ed25519Sign(seed, Array(message))))
+    }
 }
 
 public enum HubProofRefusal: Sendable, Equatable {
@@ -30,22 +46,18 @@ public enum HubProofRefusal: Sendable, Equatable {
     case none
 }
 
-public enum HubProof {
-    public static let joinLabel = "m5cet/hub-join/4"
+/// The join frame's proof (M5Crypto's `HubProof` makes the bytes) and the answers to a refused one.
+public enum HubProofFrames {
+    public static let joinLabel = P4.lHubJoin
 
     /// Can this room prove (a blind v3 id)?
     public static func canProve(roomId: String) -> Bool { roomId.hasPrefix("r3.") }
 
     /// The bytes a join proof signs: join("m5cet/hub-join/4", roomId, nonce) — the nonce must be 24 bytes of
-    /// canonical base64url, every part printable ASCII without "|" (Prim.join).
+    /// canonical base64url, every part printable ASCII without "|" (`HubProof.joinData`, Prim.join).
     public static func message(roomId: String, nonce: String) throws -> Data {
-        guard let raw = Bytes.unb64url(nonce), raw.count == 24, Bytes.b64url(raw) == nonce else { throw NetError.invalid("the hub's nonce is not 24 bytes of base64url") }
-        for part in [joinLabel, roomId, nonce] {
-            guard part.unicodeScalars.allSatisfy({ $0.value >= 0x20 && $0.value <= 0x7E && $0 != "|" }) else {
-                throw NetError.invalid("a join proof part is not ASCII without |")
-            }
-        }
-        return Data("\(joinLabel)|\(roomId)|\(nonce)".utf8)
+        guard (try? Prim.unb64url(nonce, length: 24)) != nil else { throw NetError.invalid("the hub's nonce is not 24 bytes of base64url") }
+        do { return Data(try HubProof.joinData(roomId, nonce)) } catch { throw NetError.invalid("a join proof part is not ASCII without |") }
     }
 
     /// The `proof` of a join frame; nil without a nonce, for a room that cannot prove, or when signing fails.

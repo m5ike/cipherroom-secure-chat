@@ -27,6 +27,10 @@ import cz.m5cet.app.telecom.CallRing;
  * 6.8: what a call was for me (incoming, outgoing, missed, declined —
  * CallTrack) goes into the app's call history and, when on, the phone's call
  * log (CallLogBridge); a call someone else starts rings (CallRing).
+ * 6.14 (call wake, CallWake): a call I start rings the members who are away
+ * (one sealed relay item; its end when nobody answered), and a call pushed
+ * or relayed to me while I was away rings / becomes a missed call here until
+ * the room shows it.
  */
 public final class Calls {
     private final RoomSession room;
@@ -68,7 +72,10 @@ public final class Calls {
         if (l != null) l.onVideo(room);
     }
 
-    public void startAudio() {
+    public void startAudio() { startAudio(false); }
+
+    /** `videoCall`: the camera follows (startVideo) — the away members' ring says video (6.14). */
+    private void startAudio(boolean videoCall) {
         room.post(() -> {
             if (audio != null) return;
             audioSource = Rtc.factory().createAudioSource(new MediaConstraints());
@@ -77,6 +84,8 @@ public final class Calls {
             state = "live";
             startedAt = System.currentTimeMillis();
             room.broadcastAudio("live");
+            // 6.14 (call wake): a call I start rings the members who are away.
+            room.ringAway(videoCall);
             route();
             room.changed();
             Log.i("call", "audio on in " + room.logName());
@@ -84,7 +93,7 @@ public final class Calls {
     }
 
     public void startVideo() {
-        startAudio();
+        startAudio(true);
         room.post(() -> {
             if (video != null) return;
             Camera2Enumerator cams = new Camera2Enumerator(room.app);
@@ -134,6 +143,8 @@ public final class Calls {
             if (was) {
                 long seconds = (System.currentTimeMillis() - startedAt) / 1000;
                 room.broadcastAudio("off");
+                // 6.14 (call wake): nobody answered my ring — it stops for those still away.
+                room.endRing();
                 Log.i("call", "call ended in " + room.logName() + " after " + seconds + " s");
             }
             videoOn = false;
@@ -226,6 +237,8 @@ public final class Calls {
 
     /** A peer's audio-status: "off" ends its video tile. */
     void onPeerAudio(Peer p, String status) {
+        // 6.14 (call wake): someone's audio is on — my ring was answered.
+        if ("live".equals(status) || "muted".equals(status)) wakeSender.answered();
         if ("off".equals(status) && p.remoteVideo != null) {
             p.remoteVideo = null;
             VideoListener l = videoListener;
@@ -255,7 +268,15 @@ public final class Calls {
 
     /** The room changed (RoomSession.changed): what the call is now for me. */
     void track() {
-        apply(track.update(System.currentTimeMillis(), !"off".equals(state), videoOn, live(), peerVideo()));
+        java.util.List<String> others = live();
+        CallTrack.Step s = track.update(System.currentTimeMillis(), !"off".equals(state), videoOn, others, peerVideo());
+        // 6.14 (call wake): the room shows a call — a pushed or relayed ring of it is the room's now (CallTrack
+        // records it: one record per call). Declined from the push: no second ring, a declined call.
+        if (!others.isEmpty() && wakeInbox.waiting() && wakeInbox.roomInCall() && s.ring) {
+            s.ring = false;
+            track.decline();
+        }
+        apply(s);
     }
 
     /** I declined the ring (CallRing's Decline). */
@@ -277,5 +298,50 @@ public final class Calls {
             if (old != null) old.cancel(false);
             recheck = Io.later(() -> room.post(this::track), Math.max(100, s.recheckAt - System.currentTimeMillis() + 50));
         }
+    }
+
+    /* ------------------------------------------------ 6.14: call wake */
+
+    /** My ring to the away members (RoomSession.ringAway / endRing). */
+    final CallWake.Sender wakeSender = new CallWake.Sender();
+    /** Pushed and relayed rings of this room until the room shows the call, or they are missed. */
+    final CallWake.Inbox wakeInbox = new CallWake.Inbox();
+    private java.util.concurrent.ScheduledFuture<?> wakeTimer;
+
+    /** How many others are in a call here now (RoomSession.ringAway: none — the call is mine, it rings). */
+    int othersInCallCount() { return live().size(); }
+
+    /** A pushed call of this room (telecom/CallRing.pushed). Any thread. */
+    public void onPushedWake(CallWake.Pushed p) {
+        room.post(() -> applyWake(wakeInbox.push(p, System.currentTimeMillis(), othersInCall())));
+    }
+
+    /** A relayed call item (RoomSession.onRelayDeliver, on the room's thread). */
+    void onRelayedWake(CallWake.Item item) {
+        applyWake(wakeInbox.relayed(item, System.currentTimeMillis(), othersInCall()));
+    }
+
+    /** I declined a pushed ring (CallRing's Decline). Any thread. */
+    public void declinePushed() { wakeInbox.decline(); }
+
+    /** A pushed ring still waits for the room to show its call (CallRing's Join waits for it). */
+    public boolean wakeWaiting() { return wakeInbox.waiting(); }
+
+    private void applyWake(CallWake.Step s) {
+        for (CallTrack.Record r : s.records) CallLogBridge.logged(room.app, room.key, room.label, r);
+        if (s.ring || s.over || s.missed != null) Io.bg(() -> {
+            if (s.over) CallRing.over(room.app, room.key);
+            if (s.ring) CallRing.ring(room.app, room.key, room.label, s.who, s.video);
+            if (s.missed != null) CallRing.missed(room.app, room.key, room.label, s.missed.people.isEmpty() ? "" : s.missed.people.get(0), s.missed.video, s.missed.at);
+        });
+        java.util.concurrent.ScheduledFuture<?> old = wakeTimer;
+        if (old != null) old.cancel(false);
+        wakeTimer = null;
+        long next = wakeInbox.nextDue();
+        if (next > 0) wakeTimer = Io.later(() -> room.post(() -> {
+            // A call that showed meanwhile is the room's (track() saw it); the rest is due now.
+            if (othersInCall()) wakeInbox.roomInCall();
+            applyWake(wakeInbox.due(System.currentTimeMillis()));
+        }), Math.max(100, next - System.currentTimeMillis() + 50));
     }
 }

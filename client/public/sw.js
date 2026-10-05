@@ -144,9 +144,19 @@ function notificationOf(p) {
       ...(p.vibrate === false || p.sound === false ? {} : { vibrate: [120, 60, 120] }),
       requireInteraction: p.sticky === true,
       timestamp: typeof p.at === "number" ? p.at : Date.now(),
-      data: { url: safeUrl(p.url), kind: String(p.kind || ""), room: p.room ? String(p.room).slice(0, 80) : "" },
+      data: { url: safeUrl(p.url), kind: String(p.kind || ""), room: p.room ? String(p.room).slice(0, 80) : "", call: callOf(p), callEnd: Boolean(callOf(p) && p.call.end === true) },
     },
   };
+}
+
+/**
+ * 6.14 (call wake): a call's ring and its end share the call's tag
+ * ("m5-call-<id>"), so the end — a quiet "missed call", not sticky — takes the
+ * ring's place; the call's id rides in the notification's data.
+ */
+function callOf(p) {
+  const c = p && p.call && typeof p.call === "object" ? p.call : null;
+  return c && typeof c.id === "string" ? String(c.id).slice(0, 96) : "";
 }
 
 self.addEventListener("push", (event) => {
@@ -174,6 +184,16 @@ self.addEventListener("push", (event) => {
     }
   } catch (_err) {
     // ignore — fall back to defaults
+  }
+  const call = shown.options.data && shown.options.data.callEnd ? shown.options.data.call : "";
+  if (call) {
+    // 6.14: a call's end — the ring goes (also where a browser keeps a replaced notification), the missed call stays.
+    const open = typeof self.registration.getNotifications === "function" ? Promise.resolve().then(() => self.registration.getNotifications()) : Promise.resolve([]);
+    event.waitUntil(open
+      .then((list) => { for (const n of list || []) if (n.data && n.data.call === call) n.close(); })
+      .catch(() => undefined)
+      .then(() => self.registration.showNotification(shown.title, shown.options)));
+    return;
   }
   event.waitUntil(self.registration.showNotification(shown.title, shown.options));
 });

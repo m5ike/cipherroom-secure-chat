@@ -83,6 +83,8 @@ public final class RoomSession {
     private volatile boolean proven = false;
     /** The server said our join did NOT prove the room key (a 6.12 server; false when it does not say). */
     private volatile boolean unproven = false;
+    /** 6.14: the server wakes away members for calls (its hello lists "call-wake" — CallWake). */
+    private volatile boolean serverCallWake = false;
     /**
      * 6.12 review S14: the server refused our proof (another key is registered
      * for the room — squatted) and let us in without one; joins go without a
@@ -409,6 +411,11 @@ public final class RoomSession {
                 // 6.12 (§ 13): the server's nonce for the join proof; the join goes out now.
                 Object nonce = f.opt("nonce");
                 hubNonce = nonce instanceof String ? (String) nonce : "";
+                // 6.14: whether this server wakes away members for calls (call wake).
+                JSONArray features = f.optJSONArray("features");
+                boolean wakes = false;
+                if (features != null) for (int i = 0; i < features.length(); i++) if (CallWake.FEATURE.equals(features.optString(i))) wakes = true;
+                serverCallWake = wakes;
                 if (!joinSent) sendJoin(ws);
                 break;
             }
@@ -1428,16 +1435,17 @@ public final class RoomSession {
      * which form (null: none).
      */
     private void relayToAway(JSONObject payload, List<String> mentionNames, ChatMessage message) {
+        relayToAway(payload, mentionNames, message, null, null);
+    }
+
+    /**
+     * 6.14: `extra` — fields the frame carries besides (a call wake's: call /
+     * callEnd, callId, video); `only` — just these away members (null: all).
+     */
+    private void relayToAway(JSONObject payload, List<String> mentionNames, ChatMessage message, JSONObject extra, java.util.Collection<String> only) {
         if (keys == null || !connected()) return;
-        java.util.Set<String> here = new java.util.HashSet<>();
-        for (Peer p : new ArrayList<>(peers.values())) if (p.open()) { String a = people.account(p.id); if (!a.isEmpty()) here.add(a); }
-        List<String> refs = new ArrayList<>(), mention = new ArrayList<>();
-        for (PeerFacts.Away a : people.away()) {
-            if (here.contains(a.account) || refs.contains(a.account)) continue;
-            refs.add(a.account);
-            if (mentionNames != null) for (String n : mentionNames) if (Verified.sameName(n, a.name)) mention.add(a.account);
-            if (refs.size() >= 50) break;
-        }
+        List<String> mention = new ArrayList<>();
+        List<String> refs = awayRefs(mentionNames, mention, only);
         if (refs.isEmpty()) return;
         String id = payload.optString("id");
         long now = System.currentTimeMillis();
@@ -1452,8 +1460,8 @@ public final class RoomSession {
                 else if (!relay.ktKnown(ref, now)) waiting = true;
             }
         }
-        if (!waiting) { sendRelay(id, payload, refs, mention, message); return; }
-        relayWaiting.put(id, new Object[]{payload, refs, mention, message});
+        if (!waiting) { sendRelay(id, payload, refs, mention, message, extra); return; }
+        relayWaiting.put(id, new Object[]{payload, refs, mention, message, extra});
         while (relayWaiting.size() > 100) relayWaiting.remove(relayWaiting.keySet().iterator().next());
         Io.TIMER.schedule(() -> post(() -> {
             Object[] w = relayWaiting.remove(id);
@@ -1461,8 +1469,46 @@ public final class RoomSession {
         }), 3, TimeUnit.SECONDS);
     }
 
+    /** The away members a relayed message goes to: not on an open channel here, at most 50; `mention` gets the mentioned ones. */
+    private List<String> awayRefs(List<String> mentionNames, List<String> mention, java.util.Collection<String> only) {
+        java.util.Set<String> here = new java.util.HashSet<>();
+        for (Peer p : new ArrayList<>(peers.values())) if (p.open()) { String a = people.account(p.id); if (!a.isEmpty()) here.add(a); }
+        List<String> refs = new ArrayList<>();
+        for (PeerFacts.Away a : people.away()) {
+            if (only != null && !only.contains(a.account)) continue;
+            if (here.contains(a.account) || refs.contains(a.account)) continue;
+            refs.add(a.account);
+            if (mentionNames != null) for (String n : mentionNames) if (Verified.sameName(n, a.name)) mention.add(a.account);
+            if (refs.size() >= 50) break;
+        }
+        return refs;
+    }
+
+    /* ------------------------------------------------ 6.14: call wake */
+
+    /** My call just started (Calls.startAudio): when nobody else is in it, the away members get one call item (CallWake). Room thread. */
+    void ringAway(boolean video) {
+        if (keys == null || myId.isEmpty() || !connected()) return;
+        CallWake.Ring ring = calls.wakeSender.start(serverCallWake, calls.othersInCallCount(), awayRefs(null, new ArrayList<>(), null), video, System.currentTimeMillis(), CallWake::newCallId);
+        if (ring != null) sendCallWake(ring, CallWake.RING);
+    }
+
+    /** I hung up (Calls.stop): when nobody answered my ring, it stops for those still away. Room thread. */
+    void endRing() {
+        List<String> away = new ArrayList<>();
+        for (PeerFacts.Away a : people.away()) away.add(a.account);
+        CallWake.Ring end = calls.wakeSender.stop(away);
+        if (end != null && keys != null && !myId.isEmpty()) sendCallWake(end, CallWake.END);
+    }
+
+    private void sendCallWake(CallWake.Ring ring, String state) {
+        JSONObject payload = CallWake.payload(ring.callId, state, ring.video, ring.at, myId, userName, System.currentTimeMillis());
+        relayToAway(payload, null, null, CallWake.relayFields(ring.callId, state, ring.video), ring.refs);
+        Log.i("call", "call wake (" + state + ") to " + ring.refs.size() + " away in " + logName());
+    }
+
     @SuppressWarnings("unchecked")
-    private void sendRelayParked(String id, Object[] w) { sendRelay(id, (JSONObject) w[0], (List<String>) w[1], (List<String>) w[2], (ChatMessage) w[3]); }
+    private void sendRelayParked(String id, Object[] w) { sendRelay(id, (JSONObject) w[0], (List<String>) w[1], (List<String>) w[2], (ChatMessage) w[3], (JSONObject) w[4]); }
 
     /** Every reference of a waiting message has its directory answer (and its lookup, where one is needed)? */
     private boolean relayReady(List<String> refs, long now) {
@@ -1491,7 +1537,7 @@ public final class RoomSession {
         if (!ref.isEmpty()) sendWaitingRelays();
     }
 
-    private void sendRelay(String id, JSONObject payload, List<String> refs, List<String> mention, ChatMessage message) {
+    private void sendRelay(String id, JSONObject payload, List<String> refs, List<String> mention, ChatMessage message, JSONObject extra) {
         if (keys == null) return;
         long now = System.currentTimeMillis();
         P4Device dev = rooms.p4();
@@ -1507,6 +1553,8 @@ public final class RoomSession {
                 d -> box.seal(keys.roomId, id, json, d.pk, d.bundle, sacc, now),
                 () -> Envelopes.sealMessage(keys, id, payload, identity), mention, sealed);
             if (frame == null) return;
+            // 6.14: a call wake's fields (call / callEnd, callId, video — CallWake.relayFields).
+            if (extra != null) for (java.util.Iterator<String> it = extra.keys(); it.hasNext(); ) { String k = it.next(); frame.put(k, extra.get(k)); }
             sendServer(frame);
             if (message != null) markRelayed(message, frame.optJSONArray("to"), sealed);
         } catch (JSONException e) {
@@ -1570,6 +1618,17 @@ public final class RoomSession {
                 catch (GeneralSecurityException e) { continue; } // not acknowledged: another key may open it later
             }
             ack.put(itemId);
+            // 6.14 (call wake): a call item — a missed call, unless the room shows that call (CallWake).
+            CallWake.Item wake = CallWake.parse(opened.payload, from.optString("peerId"), myId, now);
+            if (wake != null) {
+                ChatMessage probe = new ChatMessage();
+                probe.id = wake.id;
+                probe.senderId = wake.senderId;
+                probe.senderName = wake.senderName;
+                probe.createdAt = wake.createdAt;
+                if (seen.add(wake.id) && freshMessage(probe, opened.payload.opt("createdAt"), opened.version == P4.VERSION, false)) calls.onRelayedWake(wake);
+                continue;
+            }
             ChatMessage m = Payloads.validate(opened.payload, from.optString("peerId"), myId);
             if (m == null || !seen.add(m.id) || "audio-status".equals(m.kind)) continue;
             if (!freshMessage(m, opened.payload.opt("createdAt"), opened.version == P4.VERSION, false)) continue;

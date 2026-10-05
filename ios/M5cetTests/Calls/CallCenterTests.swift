@@ -16,7 +16,7 @@ final class CallRig {
     let directory = FakeDirectory()
     let env = FakeEnvironment()
     let vault = FakeVault()
-    let history: CallHistoryStore
+    let history: AppCallHistory
     let engine = testEngine()
     let center: CallCenter
     var clock: Int64 = 1_760_000_000_000
@@ -25,7 +25,7 @@ final class CallRig {
     var missed: [(String, String)] = []
 
     init() {
-        history = CallHistoryStore(vault: vault)
+        history = AppCallHistory(vault: vault)
         center = CallCenter(provider: provider, controller: controller, environment: env)
         controller.center = center
         center.directory = directory
@@ -103,7 +103,7 @@ final class CallCenterTests: XCTestCase {
         XCTAssertFalse(room.inCall)
         XCTAssertNil(rig.center.calls[uuid])
         let kept = rig.history.load()
-        XCTAssertEqual(kept.map(\.kind), [.incoming])
+        XCTAssertEqual(kept.map(\.callKind), [.incoming])
         XCTAssertEqual(kept.first?.seconds, 42)
         XCTAssertEqual(kept.first?.people, ["Alice"])
         XCTAssertTrue(rig.provider.ended.isEmpty, "CallKit ended it itself: nothing to report")
@@ -117,7 +117,7 @@ final class CallCenterTests: XCTestCase {
         XCTAssertFalse(rig.room().inCall)
         rig.member("Alice", .off)
         rig.afterGrace()
-        XCTAssertEqual(rig.history.load().map(\.kind), [.declined])
+        XCTAssertEqual(rig.history.load().map(\.callKind), [.declined])
         XCTAssertTrue(rig.missed.isEmpty)
     }
 
@@ -130,7 +130,7 @@ final class CallCenterTests: XCTestCase {
         XCTAssertNil(rig.center.calls[uuid])
         rig.member("Alice", .off)
         rig.afterGrace()
-        XCTAssertEqual(rig.history.load().map(\.kind), [.missed])
+        XCTAssertEqual(rig.history.load().map(\.callKind), [.missed])
         XCTAssertEqual(rig.missed.first?.1, "Alice")
         XCTAssertEqual(rig.provider.incoming.count, 1, "no second ring of the same call")
     }
@@ -221,7 +221,7 @@ final class CallCenterTests: XCTestCase {
         XCTAssertEqual(rig.controller.requests.last, .end(uuid))
         XCTAssertFalse(room.inCall)
         XCTAssertNil(rig.center.calls[uuid])
-        XCTAssertEqual(rig.history.load().map(\.kind), [.outgoing])
+        XCTAssertEqual(rig.history.load().map(\.callKind), [.outgoing])
         XCTAssertEqual(rig.history.load().first?.people, ["Bob"])
     }
 
@@ -345,7 +345,7 @@ final class CallCenterTests: XCTestCase {
         XCTAssertTrue(over, "the room never showed the call")
         let recorded = await eventually(3) { !rig.history.load().isEmpty }
         XCTAssertTrue(recorded)
-        XCTAssertEqual(rig.history.load().map(\.kind), [.missed], "recorded by the call center (CallTrack never saw it)")
+        XCTAssertEqual(rig.history.load().map(\.callKind), [.missed], "recorded by the call center (CallTrack never saw it)")
         XCTAssertEqual(rig.missed.count, 1)
     }
 
@@ -364,7 +364,7 @@ final class CallCenterTests: XCTestCase {
         rig.member("Alice", .off)
         rig.afterGrace()
         try? await Task.sleep(for: .milliseconds(600)) // past the call center's own record time
-        XCTAssertEqual(rig.history.load().map(\.kind), [.declined], "one record, CallTrack's")
+        XCTAssertEqual(rig.history.load().map(\.callKind), [.declined], "one record, CallTrack's")
     }
 
     func testPushesForACallCallKitHasOrThatEndedOrExpired() async throws {
@@ -455,7 +455,7 @@ final class CallCenterTests: XCTestCase {
         let controller = FakeController()
         let env = FakeEnvironment()
         let system = CallSystem(engine: testEngine(), provider: provider, controller: controller, environment: env,
-                                history: CallHistoryStore(vault: FakeVault()))
+                                history: AppCallHistory(vault: FakeVault()))
         controller.center = system.center
         let directory = FakeDirectory()
         directory.labels = ["team": "Team", "other": "Other"]
