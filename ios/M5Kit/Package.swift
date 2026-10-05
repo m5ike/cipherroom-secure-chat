@@ -14,10 +14,10 @@ let package = Package(
         .library(name: "M5Kit", targets: ["M5Core", "M5Crypto", "M5Proto", "M5Net", "M5Design", "M5NFC"]),
     ],
     targets: [
-        .target(name: "CArgon2", path: "Sources/CArgon2"),
+        .target(name: "CArgon2", path: "Sources/CArgon2", cSettings: [.unsafeFlags(["-O3"])]),  // Argon2id at -O0 (Debug) is ~8× slower
         .target(name: "M5Core", path: "Sources/M5Core"),
-        .target(name: "M5Crypto", dependencies: ["CArgon2", "M5Core"], path: "Sources/M5Crypto"),
-        .target(name: "M5Proto", dependencies: ["M5Core", "M5Crypto"], path: "Sources/M5Proto"),
+        .target(name: "M5Crypto", dependencies: ["CArgon2", "M5Core"], path: "Sources/M5Crypto", exclude: ["README.md"]),
+        .target(name: "M5Proto", dependencies: ["M5Core", "M5Crypto"], path: "Sources/M5Proto", exclude: ["README.md"]),
         .target(name: "M5Net", dependencies: ["M5Core", "M5Crypto", "M5Proto"], path: "Sources/M5Net", exclude: ["README.md"]),
         .target(name: "M5Design", dependencies: ["M5Core"], path: "Sources/M5Design", exclude: ["README.md", "ELEMENTS.md"]),
         .target(name: "M5NFC", dependencies: ["M5Core", "M5Crypto"], path: "Sources/M5NFC", exclude: ["README.md"]),

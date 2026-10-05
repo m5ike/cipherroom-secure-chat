@@ -17,6 +17,8 @@ struct M5cetApp: App {
                 .environment(delegate.model)
                 // m5cet://enroll?… — the console's QR code (Android: MainActivity.handleIntent).
                 .onOpenURL { delegate.model.open($0) }
+                // A call-back from the Phone app's Recents (Platform/Calls: asks before dialling).
+                .onContinueUserActivity("INStartCallIntent") { CallSystem.shared.continueUserActivity($0) }
         }
         .onChange(of: scenePhase) { _, phase in
             delegate.model.scenePhaseChanged(phase)

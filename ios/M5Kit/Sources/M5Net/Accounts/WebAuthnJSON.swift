@@ -16,6 +16,8 @@
 // root (or opens it — M5Crypto: AccountKeys).
 
 import Foundation
+import M5Core
+import M5Crypto
 
 public enum Passkey {
     /// The PRF salt (AccountKeys.PRF_SALT): the passkey's PRF output for it is the account root.

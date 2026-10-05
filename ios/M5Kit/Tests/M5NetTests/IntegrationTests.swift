@@ -9,6 +9,7 @@ import Network
 import Synchronization
 import Testing
 @testable import M5Net
+import M5Core
 
 /* ------------------------------------------- a local WebSocket server */
 

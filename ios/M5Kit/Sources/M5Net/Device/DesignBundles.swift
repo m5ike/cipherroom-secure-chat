@@ -17,6 +17,8 @@
 
 import CryptoKit
 import Foundation
+import M5Core
+import M5Crypto
 
 /// A bundle the check-in offers.
 public struct BundleOffer: Sendable, Equatable {

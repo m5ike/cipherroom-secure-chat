@@ -6,6 +6,7 @@
 // byte for byte to the ICAO worked example (BacDesTests).
 
 import Foundation
+import M5Core
 
 /// The three MRZ fields the document key is made of.
 public struct MrzKey: Sendable, Hashable {

@@ -15,6 +15,7 @@
 // fetch of a proof.
 
 import Foundation
+import M5Core
 
 public actor KtMonitor {
     public static let maxPending = 8
