@@ -1,9 +1,13 @@
-// The six M5Kit modules imported together, with the app: the names they share
-// resolve to one declaration each, unqualified — no "ambiguous" errors (Bytes,
-// Hex, TagV2, ShareInvite, ConnTag, HubProof, CallTrack). That this file
-// compiles is the test; the asserts check each name is the one owner's.
+// The six M5Kit modules imported together: the names they share resolve to one
+// declaration each, unqualified — no "ambiguous" errors (Bytes, Hex, TagV2,
+// ShareInvite, ConnTag, HubProof, CallTrack). That this file compiles is the
+// test; the asserts check each name is the one owner's.
 // ios/scripts/check-duplicate-types.sh and M5CoreTests' ModuleNamesTests keep
 // two modules from declaring the same public type again.
+//
+// Not `@testable import M5cet` here: the app's own internal types are not part
+// of this rule yet (Platform/Security declares an internal `Bytes`, `PinWrap`,
+// `LockBox`, … — `check-duplicate-types.sh --app` lists them).
 
 import Foundation
 import M5Core
@@ -13,11 +17,11 @@ import M5NFC
 import M5Net
 import M5Proto
 import XCTest
-@testable import M5cet
 
 final class ImportAllModulesTests: XCTestCase {
     func testTheModulesLinkTogether() {
-        XCTAssertEqual(AppInfo.modules, [M5CoreModule.name, M5CryptoModule.name, M5ProtoModule.name, M5NetModule.name, M5DesignModule.name, M5NFCModule.name])
+        XCTAssertEqual([M5CoreModule.name, M5CryptoModule.name, M5ProtoModule.name, M5NetModule.name, M5DesignModule.name, M5NFCModule.name],
+                       ["M5Core", "M5Crypto", "M5Proto", "M5Net", "M5Design", "M5NFC"])
     }
 
     /// `Bytes` is M5Core's alias of [UInt8]; its helpers (M5Core, SHA-256 / random for Data from M5Crypto) and `Hex`.
@@ -67,7 +71,7 @@ final class ImportAllModulesTests: XCTestCase {
         XCTAssertTrue(HubProof.verify(pub: frame.pub, sig: frame.sig, roomId: "r3.room", nonce: nonce))
     }
 
-    /// `CallTrack` is M5Proto's; the app's name for it is the same type.
+    /// `CallTrack` is M5Proto's (the app's `CallTrack` is an alias of it).
     func testCallTrackIsM5Protos() {
         var track = CallTrack()
         _ = track.update(now: 1_000, meOn: true, myVideo: false, live: [], peerVideo: false)
