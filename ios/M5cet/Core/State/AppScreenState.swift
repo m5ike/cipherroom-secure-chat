@@ -61,12 +61,12 @@ final class AppScreenState: ScreenStateProvider {
     /// The core's values of a screen, and over them what the parts registered (core.variables: $users, $profile,
     /// $ai, $nfc…) — a part's value wins (People owns $users of "room" and "call").
     func variables(for screen: String, context: ScreenContext, host: DesignHost?) -> [String: DesignValue] {
-        var s = own(screen)
+        var s = own(screen, host)
         for (k, v) in core.models.variables.values(for: screen, host: host) { s[k] = v }
         return s
     }
 
-    private func own(_ screen: String) -> [String: DesignValue] {
+    private func own(_ screen: String, _ host: DesignHost?) -> [String: DesignValue] {
         var s: [String: DesignValue] = [:]
         switch screen {
         case "splash":
@@ -116,7 +116,8 @@ final class AppScreenState: ScreenStateProvider {
         case "nfc":
             s["room"] = roomScope(core.rooms.activeController)
         case "update":
-            s["update"] = ["kind": "bundle", "version": "", "size": 0, "notes": "", "progress": 1, "state": "none"]
+            s["update"] = core.updates?.scope(host, lang: core.services.lang)
+                ?? ["kind": "bundle", "version": "", "size": 0, "notes": "", "progress": 1, "state": "none"]
         case "about":
             let st = core.device.state
             s["device"] = ["id": .string(st?.deviceId ?? ""), "model": .string(CoreDeviceService.description(name: "").model)]

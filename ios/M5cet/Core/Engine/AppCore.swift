@@ -63,7 +63,10 @@ protocol CoreVoice: AnyObject {
 /// What update.install does (Platform/Push: a design bundle staged, an App Store release).
 @MainActor
 protocol CoreUpdates: AnyObject {
+    /// update.install (Parts.installUpdate).
     func install(_ host: DesignHost)
+    /// $update of the "update" screen (Parts.updateScope) as this window shows it ($form.updateKind).
+    func scope(_ host: DesignHost?, lang: String) -> DesignValue
 }
 
 /// Settings › Notifications' channel order (Android push/NotifyPrefs.run: notify.up / down / use / drop / test / sync).
@@ -98,8 +101,6 @@ final class AppCore {
     @ObservationIgnored var voice: (any CoreVoice)?
     @ObservationIgnored var updates: (any CoreUpdates)?
     @ObservationIgnored var notifyPrefs: (any CoreNotifyPrefs)?
-    /// The NFC panel's nfc.read / write / emulate / stop (the NFC UI installs it).
-    @ObservationIgnored var nfcPanel: (@MainActor (String, DesignHost) -> Void)?
     /// Settings whose side effects other parts own (location.*, voice.lang, callLog…).
     @ObservationIgnored var settingObservers: [@MainActor (String, DesignHost) -> Void] = []
     /// A room a notification or a link opened before the app was unlocked (MainActivity.pendingRoom).

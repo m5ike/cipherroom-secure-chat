@@ -39,7 +39,6 @@ final class CoreActions {
         "lock.now", "lock.biometric", "pin.change", "biometric.toggle", "wipe.ask", "kt.dismiss",
         "account.signin", "account.signup", "account.signout", "account.recovery", "account.addPasskey", "account.register",
         "update.check", "update.install", "fn.run", "voice.speak", "voice.stop", "system.settings", "conversations.settings", "lang.set",
-        "nfc.read", "nfc.write", "nfc.emulate", "nfc.stop",
     ]
 
     /// Actions another Platform area registers itself (Platform/Notifications: the channel order of Settings › Notifications).
@@ -53,6 +52,7 @@ final class CoreActions {
         "profile.open", "profile.pick", "profile.clear", "profile.field", "profile.sync", "profile.save", "profile.public", "profile.audience",
         "ai.send", "ai.stop", "ai.clear", "voice.dictate", "voiceFx.test", "voiceFx.reset",
         "calllog.open", "calllog.refresh", "calllog.item", "calllog.call", "calllog.clear", "calllog.system",
+        "nfc.read", "nfc.write", "nfc.emulate", "nfc.stop",
     ]
 
     func install(into router: AppActionRouter) {
@@ -132,15 +132,13 @@ final class CoreActions {
                 let ok = await core.device.checkIn(reason: "manual")
                 host.flash(title: "", text: ok ? t("update.none") : t("room.offline"), level: ok ? .info : .warn)
             }
-        case "update.install": host.closeOverlay(); core.updates?.install(host)
+        case "update.install": if let u = core.updates { u.install(host) } else { host.closeOverlay() }
         // small things
         case "fn.run": if s.hasPrefix("/"), let r = rooms.activeController { r.sendText(s) }
         case "voice.speak": if !s.isEmpty { core.voice?.speak(s) }
         case "voice.stop": core.voice?.stopSpeaking()
         case "system.settings", "conversations.settings": openSystemSettings(s)
         case "lang.set": core.installTexts(); host.refresh()
-        case "nfc.read", "nfc.write", "nfc.emulate", "nfc.stop":
-            if let h = core.nfcPanel { h(String(action.name.dropFirst(4)), host) } else { nfcFallback(action.name, host) }
         default:
             Self.log.notice("unhandled core action \(action.name, privacy: .public)")
         }
@@ -161,6 +159,7 @@ final class CoreActions {
             var ids = c.recipientIds
             if let i = ids.firstIndex(of: s) { ids.remove(at: i) } else { ids.append(s) }
             c.setRecipients(ids)
+        case "nfc.read", "nfc.write", "nfc.emulate", "nfc.stop": nfcFallback(action.name, host)
         case "people.all": core.models.composer(for: host).setRecipients(rooms.activeController?.peers.map(\.id) ?? [])
         case "people.none": core.models.composer(for: host).setRecipients([])
         case "people.call", "people.video": startCall(video: action.name == "people.video", host)

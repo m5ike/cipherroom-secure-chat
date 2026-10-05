@@ -262,3 +262,28 @@ final class CoreSpeechServer: VoiceSpeechServer, ClientConfigFetching {
         return o
     }
 }
+
+// MARK: - Updates (Platform/Push: UpdateNotice, DesignBundleStore)
+
+/// Android Parts.updateScope / installUpdate: an app release (iOS: its verified App Store / TestFlight link — the
+/// store installs it) or a design bundle (the staged one becomes the trial now).
+@MainActor
+final class PushUpdates: CoreUpdates {
+    let device: DeviceService
+    init(device: DeviceService) { self.device = device }
+
+    func scope(_ host: DesignHost?, lang: String) -> DesignValue {
+        let kind = host?.form["updateKind"]?.stringValue ?? (device.update.available ? "release" : "bundle")
+        if kind == "release", device.update.available { return DesignValue(any: device.update.scope(lang: lang)) }
+        return DesignValue(any: device.bundles.scope)
+    }
+
+    func install(_ host: DesignHost) {
+        if device.update.available, host.form["updateKind"]?.stringValue == "release" {
+            if let url = device.update.storeURL { UIApplication.shared.open(url) }
+            return
+        }
+        host.closeOverlay()
+        device.bundles.installNow()
+    }
+}

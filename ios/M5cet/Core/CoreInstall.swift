@@ -103,6 +103,9 @@ enum CoreInstall {
         core.onForget.append { store.forget() }
         center.wiper.addTeardown("contacts") { ContactsService.shared.wipe() }
 
+        // Platform/Push: app releases and design bundles (update.install, $update).
+        if let d = PushCenter.shared?.device { core.updates = PushUpdates(device: d) }
+
         // Parts/People: the account's profile card, the audit of hides and deletes (one unlock id with the chat's
         // bubbles: PeopleParts.defaultHides).
         PeopleParts.profiles = core.profileStore
