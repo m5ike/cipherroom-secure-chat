@@ -33,6 +33,7 @@ DATA_RETENTION_DAYS AUDIT_RETENTION_DAYS PUSH_RETENTION_DAYS EVENT_RETENTION_DAY
 SETTINGS_RETENTION_DAYS RETENTION_SWEEP_MINUTES \
 ACCOUNTS_MAX STORAGE_SESSION_BUDGET_MB PRESENCE_MAX_AWAY_DAYS FUNCTIONS_NFC_RUN_HOURS \
 VONAGE_ALLOW_UNSIGNED_SMS ANDROID_DESIGN_IMAGE_HOSTS NOTIFY_DIR \
+APNS_KEY_FILE APNS_KEY_ID APNS_TEAM_ID APNS_TOPIC APNS_ENV IOS_DATA_DIR IOS_EVENT_DAYS \
 API_RATE_LIMIT API_RATE_WINDOW_MIN TSA_DATA_FILE TELEPHONY_ROUTE_LANGUAGE \
 FUNCTIONS_DNS_TIMEOUT_MS FUNCTIONS_DNS_SERVERS FUNCTIONS_SSE_PING_MS FUNCTIONS_WAIT_NOTICE_MS FUNCTIONS_WAIT_EVERY_MS \
 HUB_REQUIRE_ROOM_PROOF HUB_ROOM_PROOF_TTL_DAYS HUB_ROOM_REGISTRATIONS_PER_HOUR KEYS_MAX_DEVICES KT_ACCOUNT_ENTRIES_PER_DAY \
@@ -111,6 +112,13 @@ conf_validate() {
     SOURCE_PATH|BACKUP_ROOT)
                      [ -z "${v}" ] || case "${v}" in /*) ;; *) echo "must be an absolute path"; return 1 ;; esac ;;
     ADMIN_API_TOKEN) [ -z "${v}" ] || [ "${#v}" -ge 24 ] || { echo "must be at least 24 characters"; return 1; } ;;
+    # 6.14: APNs for the iOS app (docs/ios-server.md).
+    APNS_ENV)        case "${v}" in ''|production|sandbox) ;; *) echo "must be production or sandbox"; return 1 ;; esac ;;
+    APNS_KEY_ID|APNS_TEAM_ID)
+                     [ -z "${v}" ] || printf '%s' "${v}" | grep -Eq '^[A-Z0-9]{10}$' || { echo "must be the 10-character id from Apple"; return 1; } ;;
+    APNS_KEY_FILE|IOS_DATA_DIR)
+                     [ -z "${v}" ] || case "${v}" in /*) ;; *) echo "must be an absolute path"; return 1 ;; esac ;;
+    IOS_EVENT_DAYS)  [ -z "${v}" ] || _is_uint "${v}" || { echo "must be a non-negative integer"; return 1; } ;;
   esac
   return 0
 }

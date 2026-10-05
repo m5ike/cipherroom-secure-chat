@@ -1,0 +1,860 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		5C3E00000000000000000501 /* M5Kit in Frameworks */ = {isa = PBXBuildFile; productRef = 5C3E00000000000000000711 /* M5Kit */; };
+		5C3E00000000000000000502 /* WebRTC in Frameworks */ = {isa = PBXBuildFile; productRef = 5C3E00000000000000000712 /* WebRTC */; };
+		5C3E00000000000000000503 /* M5cetNotifications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = 5C3E00000000000000000102 /* M5cetNotifications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5C3E00000000000000000504 /* M5cetWatch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 5C3E00000000000000000103 /* M5cetWatch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		5C3E00000000000000000505 /* M5Kit in Frameworks */ = {isa = PBXBuildFile; productRef = 5C3E00000000000000000713 /* M5Kit */; };
+		5C3E00000000000000000506 /* M5Kit in Frameworks */ = {isa = PBXBuildFile; productRef = 5C3E00000000000000000714 /* M5Kit */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5C3E00000000000000000601 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5C3E00000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5C3E00000000000000000302;
+			remoteInfo = M5cetNotifications;
+		};
+		5C3E00000000000000000602 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5C3E00000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5C3E00000000000000000303;
+			remoteInfo = M5cetWatch;
+		};
+		5C3E00000000000000000603 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 5C3E00000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 5C3E00000000000000000301;
+			remoteInfo = M5cet;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		5C3E00000000000000000405 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				5C3E00000000000000000503 /* M5cetNotifications.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000406 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				5C3E00000000000000000504 /* M5cetWatch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		5C3E00000000000000000005 /* Base.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Base.xcconfig; sourceTree = "<group>"; };
+		5C3E00000000000000000006 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Version.xcconfig; sourceTree = "<group>"; };
+		5C3E00000000000000000101 /* M5cet.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = M5cet.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5C3E00000000000000000102 /* M5cetNotifications.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = M5cetNotifications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		5C3E00000000000000000103 /* M5cetWatch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = M5cetWatch.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		5C3E00000000000000000104 /* M5cetTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = M5cetTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		5C3E00000000000000000211 /* Exceptions for "M5cet" folder in "M5cet" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Parts/README.md,
+				Platform/Calls/README.md,
+				Platform/Contacts/README.md,
+				Platform/Files/README.md,
+				Platform/Location/README.md,
+				Platform/NFC/README.md,
+				Platform/Notifications/README.md,
+				Platform/Push/README.md,
+				Platform/Security/README.md,
+				Platform/Voice/README.md,
+				Renderer/README.md,
+				Resources/Info.plist,
+				Resources/M5cet.entitlements,
+			);
+			target = 5C3E00000000000000000301 /* M5cet */;
+		};
+		5C3E00000000000000000212 /* Exceptions for "M5cetNotifications" folder in "M5cetNotifications" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+				M5cetNotifications.entitlements,
+			);
+			target = 5C3E00000000000000000302 /* M5cetNotifications */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		5C3E00000000000000000201 /* M5cet */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5C3E00000000000000000211 /* Exceptions for "M5cet" folder in "M5cet" target */,
+			);
+			path = M5cet;
+			sourceTree = "<group>";
+		};
+		5C3E00000000000000000202 /* M5cetNotifications */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				5C3E00000000000000000212 /* Exceptions for "M5cetNotifications" folder in "M5cetNotifications" target */,
+			);
+			path = M5cetNotifications;
+			sourceTree = "<group>";
+		};
+		5C3E00000000000000000203 /* M5cetWatch */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = M5cetWatch;
+			sourceTree = "<group>";
+		};
+		5C3E00000000000000000204 /* M5cetTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = M5cetTests;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		5C3E00000000000000000402 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5C3E00000000000000000501 /* M5Kit in Frameworks */,
+				5C3E00000000000000000502 /* WebRTC in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000412 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5C3E00000000000000000505 /* M5Kit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000422 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5C3E00000000000000000506 /* M5Kit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000432 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		5C3E00000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				5C3E00000000000000000201 /* M5cet */,
+				5C3E00000000000000000202 /* M5cetNotifications */,
+				5C3E00000000000000000203 /* M5cetWatch */,
+				5C3E00000000000000000204 /* M5cetTests */,
+				5C3E00000000000000000004 /* Config */,
+				5C3E00000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		5C3E00000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5C3E00000000000000000101 /* M5cet.app */,
+				5C3E00000000000000000102 /* M5cetNotifications.appex */,
+				5C3E00000000000000000103 /* M5cetWatch.app */,
+				5C3E00000000000000000104 /* M5cetTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		5C3E00000000000000000004 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				5C3E00000000000000000005 /* Base.xcconfig */,
+				5C3E00000000000000000006 /* Version.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		5C3E00000000000000000301 /* M5cet */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5C3E00000000000000000311 /* Build configuration list for PBXNativeTarget "M5cet" */;
+			buildPhases = (
+				5C3E00000000000000000401 /* Sources */,
+				5C3E00000000000000000402 /* Frameworks */,
+				5C3E00000000000000000403 /* Resources */,
+				5C3E00000000000000000404 /* Copy design assets */,
+				5C3E00000000000000000405 /* Embed Foundation Extensions */,
+				5C3E00000000000000000406 /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5C3E00000000000000000611 /* PBXTargetDependency */,
+				5C3E00000000000000000612 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5C3E00000000000000000201 /* M5cet */,
+			);
+			name = M5cet;
+			packageProductDependencies = (
+				5C3E00000000000000000711 /* M5Kit */,
+				5C3E00000000000000000712 /* WebRTC */,
+			);
+			productName = M5cet;
+			productReference = 5C3E00000000000000000101 /* M5cet.app */;
+			productType = "com.apple.product-type.application";
+		};
+		5C3E00000000000000000302 /* M5cetNotifications */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5C3E00000000000000000321 /* Build configuration list for PBXNativeTarget "M5cetNotifications" */;
+			buildPhases = (
+				5C3E00000000000000000411 /* Sources */,
+				5C3E00000000000000000412 /* Frameworks */,
+				5C3E00000000000000000413 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5C3E00000000000000000202 /* M5cetNotifications */,
+			);
+			name = M5cetNotifications;
+			packageProductDependencies = (
+				5C3E00000000000000000713 /* M5Kit */,
+			);
+			productName = M5cetNotifications;
+			productReference = 5C3E00000000000000000102 /* M5cetNotifications.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+		5C3E00000000000000000303 /* M5cetWatch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5C3E00000000000000000331 /* Build configuration list for PBXNativeTarget "M5cetWatch" */;
+			buildPhases = (
+				5C3E00000000000000000421 /* Sources */,
+				5C3E00000000000000000422 /* Frameworks */,
+				5C3E00000000000000000423 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				5C3E00000000000000000203 /* M5cetWatch */,
+			);
+			name = M5cetWatch;
+			packageProductDependencies = (
+				5C3E00000000000000000714 /* M5Kit */,
+			);
+			productName = M5cetWatch;
+			productReference = 5C3E00000000000000000103 /* M5cetWatch.app */;
+			productType = "com.apple.product-type.application";
+		};
+		5C3E00000000000000000304 /* M5cetTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 5C3E00000000000000000341 /* Build configuration list for PBXNativeTarget "M5cetTests" */;
+			buildPhases = (
+				5C3E00000000000000000431 /* Sources */,
+				5C3E00000000000000000432 /* Frameworks */,
+				5C3E00000000000000000433 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				5C3E00000000000000000613 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				5C3E00000000000000000204 /* M5cetTests */,
+			);
+			name = M5cetTests;
+			packageProductDependencies = (
+			);
+			productName = M5cetTests;
+			productReference = 5C3E00000000000000000104 /* M5cetTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		5C3E00000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2700;
+				LastUpgradeCheck = 2700;
+				TargetAttributes = {
+					5C3E00000000000000000301 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					5C3E00000000000000000302 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					5C3E00000000000000000303 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					5C3E00000000000000000304 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = 5C3E00000000000000000301;
+					};
+				};
+			};
+			buildConfigurationList = 5C3E00000000000000000010 /* Build configuration list for PBXProject "M5cet" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+				cs,
+				de,
+				es,
+				it,
+				fr,
+				sk,
+				sl,
+				fi,
+			);
+			mainGroup = 5C3E00000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				5C3E00000000000000000701 /* XCLocalSwiftPackageReference "M5Kit" */,
+				5C3E00000000000000000702 /* XCRemoteSwiftPackageReference "WebRTC" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5C3E00000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				5C3E00000000000000000301 /* M5cet */,
+				5C3E00000000000000000302 /* M5cetNotifications */,
+				5C3E00000000000000000303 /* M5cetWatch */,
+				5C3E00000000000000000304 /* M5cetTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		5C3E00000000000000000403 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000413 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000423 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000433 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		5C3E00000000000000000404 /* Copy design assets */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../android/app/src/main/assets/m5/default-design.json",
+				"$(SRCROOT)/../android/app/src/main/assets/m5/icons.json",
+				"$(SRCROOT)/../android/app/src/main/assets/m5/themes.json",
+			);
+			name = "Copy design assets";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/m5/default-design.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/m5/icons.json",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/m5/themes.json",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# The built-in design and its assets exactly as the Android app ships them\n# (android/app/src/main/assets/m5) — one source of truth, copied at every build.\nset -eu\nsrc=\"${SRCROOT}/../android/app/src/main/assets/m5\"\ndst=\"${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/m5\"\nmkdir -p \"$dst\"\nfor f in default-design.json icons.json themes.json; do\n  cp \"$src/$f\" \"$dst/$f\"\ndone\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		5C3E00000000000000000401 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000411 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000421 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		5C3E00000000000000000431 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		5C3E00000000000000000611 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5C3E00000000000000000302 /* M5cetNotifications */;
+			targetProxy = 5C3E00000000000000000601 /* PBXContainerItemProxy */;
+		};
+		5C3E00000000000000000612 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5C3E00000000000000000303 /* M5cetWatch */;
+			targetProxy = 5C3E00000000000000000602 /* PBXContainerItemProxy */;
+		};
+		5C3E00000000000000000613 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 5C3E00000000000000000301 /* M5cet */;
+			targetProxy = 5C3E00000000000000000603 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		5C3E00000000000000000011 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5C3E00000000000000000005 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Debug;
+		};
+		5C3E00000000000000000012 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 5C3E00000000000000000005 /* Base.xcconfig */;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 26.0;
+			};
+			name = Release;
+		};
+		5C3E00000000000000000312 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = M5cet/Resources/M5cet.entitlements;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = M5cet/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cz.m5cet.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5C3E00000000000000000313 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = M5cet/Resources/M5cet.entitlements;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = M5cet/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cz.m5cet.app;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		5C3E00000000000000000322 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = M5cetNotifications/M5cetNotifications.entitlements;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = M5cetNotifications/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cz.m5cet.app.notifications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		5C3E00000000000000000323 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CODE_SIGN_ENTITLEMENTS = M5cetNotifications/M5cetNotifications.entitlements;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = M5cetNotifications/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cz.m5cet.app.notifications;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		5C3E00000000000000000332 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = M5cet;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = cz.m5cet.app;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cz.m5cet.app.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Debug;
+		};
+		5C3E00000000000000000333 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = M5cet;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = cz.m5cet.app;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = NO;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cz.m5cet.app.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				TARGETED_DEVICE_FAMILY = 4;
+			};
+			name = Release;
+		};
+		5C3E00000000000000000342 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = cz.m5cet.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/M5cet.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/M5cet";
+			};
+			name = Debug;
+		};
+		5C3E00000000000000000343 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = cz.m5cet.app.tests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/M5cet.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/M5cet";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		5C3E00000000000000000010 /* Build configuration list for PBXProject "M5cet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C3E00000000000000000011 /* Debug */,
+				5C3E00000000000000000012 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5C3E00000000000000000311 /* Build configuration list for PBXNativeTarget "M5cet" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C3E00000000000000000312 /* Debug */,
+				5C3E00000000000000000313 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5C3E00000000000000000321 /* Build configuration list for PBXNativeTarget "M5cetNotifications" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C3E00000000000000000322 /* Debug */,
+				5C3E00000000000000000323 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5C3E00000000000000000331 /* Build configuration list for PBXNativeTarget "M5cetWatch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C3E00000000000000000332 /* Debug */,
+				5C3E00000000000000000333 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		5C3E00000000000000000341 /* Build configuration list for PBXNativeTarget "M5cetTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				5C3E00000000000000000342 /* Debug */,
+				5C3E00000000000000000343 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		5C3E00000000000000000701 /* XCLocalSwiftPackageReference "M5Kit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = M5Kit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		5C3E00000000000000000702 /* XCRemoteSwiftPackageReference "WebRTC" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/stasel/WebRTC";
+			requirement = {
+				kind = exactVersion;
+				version = 150.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		5C3E00000000000000000711 /* M5Kit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5C3E00000000000000000701 /* XCLocalSwiftPackageReference "M5Kit" */;
+			productName = M5Kit;
+		};
+		5C3E00000000000000000712 /* WebRTC */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5C3E00000000000000000702 /* XCRemoteSwiftPackageReference "WebRTC" */;
+			productName = WebRTC;
+		};
+		5C3E00000000000000000713 /* M5Kit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5C3E00000000000000000701 /* XCLocalSwiftPackageReference "M5Kit" */;
+			productName = M5Kit;
+		};
+		5C3E00000000000000000714 /* M5Kit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 5C3E00000000000000000701 /* XCLocalSwiftPackageReference "M5Kit" */;
+			productName = M5Kit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 5C3E00000000000000000001 /* Project object */;
+}

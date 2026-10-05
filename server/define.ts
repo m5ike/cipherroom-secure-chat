@@ -1,7 +1,7 @@
 // m5mobile.define (6.3) — the operator's typed definitions, stored once and
 // served to every runtime.
 //
-//   GET  /api/define?scope=web|android   the materialized values a client reads
+//   GET  /api/define?scope=web|android|ios   the materialized values a client reads (ios = android: the mobile apps)
 //   GET  /api/admin/define               the full definition set (the console)
 //   PUT  /api/admin/define               operator saves it
 //
@@ -74,7 +74,10 @@ export const defineStore = new DefineStore();
 
 export function registerDefineRoutes(app: Express): void {
   app.get("/api/define", (req: Request, res: Response) => {
-    const scope = req.query.scope === "android" || req.query.scope === "web" ? (req.query.scope as "android" | "web") : "both";
+    // 6.14: the iOS app reads the mobile apps' values — a definition scoped "android" is for both apps
+    // (the console's iOS › Define edits the same set, shared with Android).
+    const asked = req.query.scope === "ios" ? "android" : req.query.scope;
+    const scope = asked === "android" || asked === "web" ? (asked as "android" | "web") : "both";
     res.setHeader("Cache-Control", "no-store");
     res.json({ ok: true, values: defineStore.values(scope), updatedAt: defineStore.get().updatedAt });
   });

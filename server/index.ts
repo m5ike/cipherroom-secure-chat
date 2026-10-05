@@ -120,6 +120,12 @@ app.use(
   rateLimit({ windowMs: 15 * 60 * 1000, limit: 1_500, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many requests from this network." } }),
   express.raw({ type: () => true, limit: "1mb" }),
 );
+// 6.14: the iOS devices — the same signed raw bodies, a bucket of their own.
+app.use(
+  "/api/ios",
+  rateLimit({ windowMs: 15 * 60 * 1000, limit: 1_500, standardHeaders: true, legacyHeaders: false, message: { ok: false, message: "Too many requests from this network." } }),
+  express.raw({ type: () => true, limit: "1mb" }),
+);
 // 6.7: public profiles — lookups by username, and an owner's PUT with two
 // small images (public-profile.ts limits each route further).
 app.use(

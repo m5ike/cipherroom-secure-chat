@@ -1,0 +1,666 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NFCReaderUsageDescription" : {
+      "comment" : "Privacy - NFC Scan Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet čte NFC štítky a karty, které přiložíte k iPhonu — připojovací karty, platební karty a e-ID — jen když čtení sami spustíte."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet liest NFC-Tags und Karten, die Sie an das iPhone halten — Verbindungskarten, Zahlungskarten und e-IDs —, nur wenn Sie das Lesen starten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet reads the NFC tags and cards you hold to the iPhone — connection cards, payment cards and e-IDs — only when you start a reading."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet lee las etiquetas y tarjetas NFC que acercas al iPhone (tarjetas de conexión, tarjetas de pago y e-ID) solo cuando inicias una lectura."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet lukee iPhoneen tuodut NFC-tunnisteet ja -kortit – yhteyskortit, maksukortit ja e-ID:t – vain, kun lukeminen aloitetaan."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet lit les tags et cartes NFC que vous approchez de l’iPhone (cartes de connexion, cartes de paiement et e-ID) uniquement lorsque vous lancez une lecture."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet legge i tag e le carte NFC che avvicini all’iPhone (carte di connessione, carte di pagamento ed e-ID) solo quando avvii una lettura."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet číta NFC štítky a karty, ktoré priložíte k iPhonu — pripájacie karty, platobné karty a e-ID — iba keď čítanie sami spustíte."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet bere oznake in kartice NFC, ki jih približate iPhonu – kartice za povezavo, plačilne kartice in e-ID – samo, ko sami začnete branje."
+          }
+        }
+      }
+    },
+    "NSBluetoothAlwaysUsageDescription" : {
+      "comment" : "Privacy - Bluetooth Always Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet se připojuje ke čtečkám NFC přes Bluetooth, které vyberete, a čte jimi karty."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet verbindet sich mit den Bluetooth-NFC-Lesegeräten, die Sie auswählen, um damit Karten zu lesen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet connects to the Bluetooth NFC readers you choose, to read cards with them."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet se conecta a los lectores NFC Bluetooth que elijas para leer tarjetas con ellos."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet yhdistää valittuihin Bluetooth-NFC-lukijoihin korttien lukemista varten."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet se connecte aux lecteurs NFC Bluetooth que vous choisissez pour lire des cartes."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet si collega ai lettori NFC Bluetooth che scegli per leggere le carte."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet sa pripája k čítačkám NFC cez Bluetooth, ktoré vyberiete, a číta nimi karty."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet se poveže z bralniki NFC prek Bluetootha, ki jih izberete, in z njimi bere kartice."
+          }
+        }
+      }
+    },
+    "NSCameraUsageDescription" : {
+      "comment" : "Privacy - Camera Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet používá fotoaparát pro videohovory a pro fotky a videa, které posíláte do místnosti."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet verwendet die Kamera für Videoanrufe und für Fotos und Videos, die Sie in einen Raum senden."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uses the camera for video calls and for photos and videos you send to a room."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet usa la cámara para videollamadas y para las fotos y vídeos que envías a una sala."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet käyttää kameraa videopuheluihin sekä huoneeseen lähetettäviin kuviin ja videoihin."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet utilise l’appareil photo pour les appels vidéo et pour les photos et vidéos que vous envoyez dans une salle."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet usa la fotocamera per le videochiamate e per le foto e i video che invii in una stanza."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet používa fotoaparát na videohovory a na fotky a videá, ktoré posielate do miestnosti."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uporablja kamero za videoklice ter za fotografije in videoposnetke, ki jih pošljete v sobo."
+          }
+        }
+      }
+    },
+    "NSContactsUsageDescription" : {
+      "comment" : "Privacy - Contacts Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet propojí lidi, se kterými komunikujete, s kontakty, které vyberete."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet verknüpft Ihre Gesprächspartner mit den Kontakten, die Sie auswählen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet links the people you talk to with the contacts you choose."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet vincula a las personas con las que hablas con los contactos que elijas."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet yhdistää keskustelukumppanit valittuihin yhteystietoihin."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet relie les personnes avec qui vous échangez aux contacts que vous choisissez."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet collega le persone con cui parli ai contatti che scegli."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet prepojí ľudí, s ktorými komunikujete, s kontaktmi, ktoré vyberiete."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet poveže osebe, s katerimi se pogovarjate, s stiki, ki jih izberete."
+          }
+        }
+      }
+    },
+    "NSFaceIDUsageDescription" : {
+      "comment" : "Privacy - Face ID Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet používá Face ID k odemknutí aplikace a klíčů, které uchovává v tomto zařízení."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet verwendet Face ID, um die App und die auf diesem Gerät gespeicherten Schlüssel zu entsperren."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uses Face ID to unlock the app and the keys it keeps on this device."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet usa Face ID para desbloquear la app y las claves que guarda en este dispositivo."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet käyttää Face ID:tä sovelluksen ja tähän laitteeseen tallennettujen avainten avaamiseen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet utilise Face ID pour déverrouiller l’app et les clés qu’elle conserve sur cet appareil."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet usa Face ID per sbloccare l’app e le chiavi che conserva su questo dispositivo."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet používa Face ID na odomknutie aplikácie a kľúčov, ktoré uchováva v tomto zariadení."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uporablja Face ID za odklepanje aplikacije in ključev, ki jih hrani v tej napravi."
+          }
+        }
+      }
+    },
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Privacy - Local Network Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet se pro hovory a přenosy souborů připojuje přímo k dalším zařízením ve vaší síti a k serveru M5cet ve vaší síti."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet verbindet sich für Anrufe und Dateiübertragungen direkt mit anderen Geräten in Ihrem Netzwerk und mit einem M5cet-Server in Ihrem Netzwerk."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet connects directly to other devices on your network for calls and file transfers, and to an M5cet server on your network."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet se conecta directamente a otros dispositivos de tu red para llamadas y transferencias de archivos, y a un servidor M5cet de tu red."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet muodostaa puheluja ja tiedostonsiirtoja varten suoran yhteyden lähiverkon muihin laitteisiin sekä lähiverkon M5cet-palvelimeen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet se connecte directement aux autres appareils de votre réseau pour les appels et les transferts de fichiers, ainsi qu’à un serveur M5cet de votre réseau."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet si collega direttamente ad altri dispositivi della tua rete per chiamate e trasferimenti di file, e a un server M5cet della tua rete."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet sa na hovory a prenosy súborov pripája priamo k ďalším zariadeniam vo vašej sieti a k serveru M5cet vo vašej sieti."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet se za klice in prenose datotek neposredno poveže z drugimi napravami v vašem omrežju in s strežnikom M5cet v vašem omrežju."
+          }
+        }
+      }
+    },
+    "NSLocationAlwaysAndWhenInUseUsageDescription" : {
+      "comment" : "Privacy - Location Always and When In Use Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Když pro místnost zapnete sdílení polohy, M5cet do ní posílá vaši polohu i tehdy, když je aplikace na pozadí. Sdílení můžete kdykoli vypnout."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wenn Sie die Standortfreigabe für einen Raum einschalten, sendet M5cet Ihren Standort weiter an diesen Raum, auch wenn die App im Hintergrund läuft. Sie können sie jederzeit ausschalten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "When you turn on location sharing for a room, M5cet keeps sending your position to that room, also while the app is in the background. You can turn it off at any time."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si activas la ubicación compartida en una sala, M5cet sigue enviando tu posición a esa sala, también con la app en segundo plano. Puedes desactivarla en cualquier momento."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kun sijainnin jakaminen on päällä huoneessa, M5cet lähettää sijainnin huoneeseen myös sovelluksen ollessa taustalla. Jakamisen voi lopettaa milloin tahansa."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Si vous activez le partage de position pour une salle, M5cet continue d’envoyer votre position à cette salle, même lorsque l’app est en arrière-plan. Vous pouvez le désactiver à tout moment."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Se attivi la condivisione della posizione per una stanza, M5cet continua a inviare la tua posizione a quella stanza, anche con l’app in background. Puoi disattivarla in qualsiasi momento."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Keď pre miestnosť zapnete zdieľanie polohy, M5cet do nej posiela vašu polohu aj vtedy, keď je aplikácia na pozadí. Zdieľanie môžete kedykoľvek vypnúť."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ko za sobo vklopite deljenje lokacije, M5cet vanjo pošilja vaš položaj tudi, ko je aplikacija v ozadju. Deljenje lahko kadar koli izklopite."
+          }
+        }
+      }
+    },
+    "NSLocationWhenInUseUsageDescription" : {
+      "comment" : "Privacy - Location When In Use Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet používá vaši polohu jen tehdy, když ji sdílíte ve zprávě nebo zobrazíte na mapě."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet verwendet Ihren Standort nur, wenn Sie ihn in einer Nachricht teilen oder auf einer Karte anzeigen."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uses your location only when you share it in a message or show it on a map."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet usa tu ubicación solo cuando la compartes en un mensaje o la muestras en un mapa."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet käyttää sijaintia vain, kun se jaetaan viestissä tai näytetään kartalla."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet utilise votre position uniquement lorsque vous la partagez dans un message ou l’affichez sur une carte."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet usa la tua posizione solo quando la condividi in un messaggio o la mostri su una mappa."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet používa vašu polohu iba vtedy, keď ju zdieľate v správe alebo zobrazíte na mape."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uporablja vašo lokacijo samo, ko jo delite v sporočilu ali prikažete na zemljevidu."
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Privacy - Microphone Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet používá mikrofon pro hovory, hlasové zprávy a diktování."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet verwendet das Mikrofon für Anrufe, Sprachnachrichten und Diktat."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uses the microphone for calls, voice messages and dictation."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet usa el micrófono para llamadas, mensajes de voz y dictado."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet käyttää mikrofonia puheluihin, ääniviesteihin ja sanelemiseen."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet utilise le micro pour les appels, les messages vocaux et la dictée."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet usa il microfono per chiamate, messaggi vocali e dettatura."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet používa mikrofón na hovory, hlasové správy a diktovanie."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uporablja mikrofon za klice, glasovna sporočila in narekovanje."
+          }
+        }
+      }
+    },
+    "NSPhotoLibraryAddUsageDescription" : {
+      "comment" : "Privacy - Photo Library Additions Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uloží fotky a videa z vašich místností do knihovny, když o to požádáte."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet speichert Fotos und Videos aus Ihren Räumen in Ihrer Mediathek, wenn Sie das möchten."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet saves photos and videos from your rooms to your library when you ask it to."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet guarda en tu fototeca las fotos y vídeos de tus salas cuando se lo pides."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet tallentaa huoneiden kuvat ja videot kirjastoon pyydettäessä."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet enregistre les photos et vidéos de vos salles dans votre photothèque lorsque vous le demandez."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet salva nella tua libreria le foto e i video delle tue stanze quando lo chiedi."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet uloží fotky a videá z vašich miestností do knižnice, keď o to požiadate."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet shrani fotografije in videoposnetke iz vaših sob v knjižnico, ko to zahtevate."
+          }
+        }
+      }
+    },
+    "NSSpeechRecognitionUsageDescription" : {
+      "comment" : "Privacy - Speech Recognition Usage Description",
+      "extractionState" : "manual",
+      "localizations" : {
+        "cs" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet převádí vaši řeč na text, když diktujete zprávu nebo zadáváte hlasový příkaz."
+          }
+        },
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet wandelt Ihre Sprache in Text um, wenn Sie eine Nachricht diktieren oder einen Sprachbefehl geben."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet turns your speech into text when you dictate a message or give a voice command."
+          }
+        },
+        "es" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet convierte tu voz en texto cuando dictas un mensaje o das un comando de voz."
+          }
+        },
+        "fi" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet muuttaa puheen tekstiksi viestejä sanellessa ja äänikomentoja annettaessa."
+          }
+        },
+        "fr" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet transforme votre voix en texte lorsque vous dictez un message ou donnez une commande vocale."
+          }
+        },
+        "it" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet trasforma la tua voce in testo quando detti un messaggio o dai un comando vocale."
+          }
+        },
+        "sk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet prevádza vašu reč na text, keď diktujete správu alebo zadávate hlasový príkaz."
+          }
+        },
+        "sl" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "M5cet pretvori vaš govor v besedilo, ko narekujete sporočilo ali izgovorite glasovni ukaz."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}
