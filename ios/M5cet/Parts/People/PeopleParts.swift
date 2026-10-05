@@ -8,8 +8,13 @@
 //   variables  settings.profile → $profile, settings → $myProfile, room / call → $users (the panel's state)
 //   the lock   the vault copies, the open detail, the photos, the profile draft go (6.12 F-16); a new unlock
 //
+//   contacts   ContactsService (Platform/Contacts): its store gets the vault's user tier, People links through it,
+//              PeopleReach is its ContactReachHost (the window side of "message / call via M5cet")
+//
 // The services other code owns come in through the seams (Model/PeopleSeams.swift): `profiles` (the
-// account's profile card), `contacts` (the address book), `hides` (MsgDetails' hide / delete + audit).
+// account's profile card — the core installs it), `contacts` (the address book), `hides` (MsgDetails'
+// hide / delete; the chat part shares its current unlock and the core sets the audit), PeopleRoomExtras
+// (a room's statistics, forwards verified by key, the profile's new version).
 
 import Foundation
 import M5Core
