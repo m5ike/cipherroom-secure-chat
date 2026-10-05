@@ -97,6 +97,8 @@ enum ToolParts {
         #endif
         let engine = made
         self.engine = engine
+        // A model's "nfc" question: the NFC part's sheet (Parts/NFC).
+        if engine.nfcAsk == nil { engine.nfcAsk = { i, name, host, reply in FnNfcBridge.ask(i, modelName: name, host: host, reply: reply) } }
         attached = nil
         let slots = design.slots
         let actions = design.actions
