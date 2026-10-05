@@ -16,9 +16,15 @@
 #   6. e2e — Playwright: UI smoke, two peers (messages, files P2P and through
 #      the relay), an encrypted call, passkey accounts with away relay and
 #      recovery, the operator console with roles
-#   7. ci-aggregate — gate, exits 1 if any of the above 6 failed
+#   7. supply-chain — npm audit of the production dependencies, the
+#      release manifest round trip (release:manifest → release:verify)
+#   8. ci-aggregate — gate, exits 1 if any of the above failed
 #
 # Cache: GitHub-managed npm cache keyed on package-lock.json.
+# Supply chain (6.12, F-29): every third-party action is pinned to a full
+# commit SHA (the tag it was resolved from is the trailing comment), the e2e
+# container image to a digest; `npm ci` keeps npm's audit report on. CodeQL
+# runs in codeql.yml.
 # =============================================================================
 
 name: CI
@@ -34,6 +40,10 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only token for every job: nothing here writes to the repository.
+permissions:
+  contents: read
+
 jobs:
   # ---------------------------------------------------------------------------
   # Job 1 — TypeScript typecheck
@@ -43,16 +53,16 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-fund
 
       - name: tsc --noEmit
         run: npx tsc --noEmit -p tsconfig.json
@@ -65,16 +75,16 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-fund
 
       - name: scripts/pre-commit-check.sh
         run: bash scripts/pre-commit-check.sh
@@ -90,16 +100,16 @@ jobs:
     # otherwise two-minute job.
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-fund
 
       # The cluster bus test (test/cluster-redis.test.ts) runs two instances
       # through a real Redis server it starts on a port of its own; without
@@ -118,7 +128,7 @@ jobs:
 
       - name: Upload test artefacts on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: vitest-failures
           path: |
@@ -135,16 +145,16 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.x'
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-fund
 
       - name: npm run build
         run: npm run build
@@ -154,6 +164,7 @@ jobs:
           ls -la dist/ | head -20
           test -f dist/index.cjs && echo "OK: dist/index.cjs present"
           test -d dist/public && echo "OK: dist/public/ present"
+          npm run release:verify -- --root dist/public --manifest dist/public/release-web.json
 
   # ---------------------------------------------------------------------------
   # Job 5 — Installer: lint + a real install -> update -> uninstall cycle
@@ -163,10 +174,10 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '24.x'
           cache: 'npm'
@@ -179,7 +190,7 @@ jobs:
           echo "M5_DIR=$RUNNER_TEMP/m5cet" >> "$GITHUB_ENV"
 
       - name: shellcheck
-        run: shellcheck -x -S warning install.sh update.sh uninstall.sh installer/lib/*.sh scripts/pre-commit-check.sh
+        run: shellcheck -x -S warning install.sh update.sh uninstall.sh check.sh installer/lib/*.sh scripts/pre-commit-check.sh
 
       - name: Dry run (docker mode)
         run: ./install.sh --dry-run -n --lang en --user-scope --mode docker --dir "$M5_DIR" --skip-deps
@@ -196,6 +207,24 @@ jobs:
             echo "secrets leaked into install.conf"; exit 1
           fi
           grep -q '^ADMIN_API_TOKEN=' "$M5_DIR/.env"
+
+      # 6.12: the installation check against the real install — never a
+      # usage error, valid JSON, and the served assets match release-web.json.
+      - name: check.sh (package, config, runtime)
+        run: |
+          set +e
+          "$M5_DIR/check.sh" --offline --lang en --only package,config,runtime --json > "$RUNNER_TEMP/check.json"
+          rc=$?
+          set -e
+          "$M5_DIR/check.sh" --offline --lang en --quiet --no-color --only package,config,runtime || true
+          test "$rc" -ne 2
+          node -e '
+            const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            const web = r.checks.find((c) => c.id === "package.web");
+            if (!web || web.status !== "PASS") { console.error("package.web:", web); process.exit(1); }
+            const svc = r.checks.find((c) => c.id === "runtime.health");
+            if (!svc || svc.status !== "PASS") { console.error("runtime.health:", svc); process.exit(1); }
+          ' "$RUNNER_TEMP/check.json"
 
       - name: Update (change a parameter, reuse the build)
         run: |
@@ -217,10 +246,11 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 25
     container:
-      image: mcr.microsoft.com/playwright:v1.63.0-noble
+      # v1.63.0-noble, pinned by digest (resolved from mcr.microsoft.com 2026-10-05).
+      image: mcr.microsoft.com/playwright:v1.63.0-noble@sha256:eff16c30e6f3f4af0a03fa4b706120d5e9b0891c344a27d64559aff5900a4a27
       options: --ipc=host
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # SQLCipher (better-sqlite3-multiple-ciphers) is a native module. The
       # Playwright image has no compiler, so when no prebuilt binary matches
@@ -231,7 +261,7 @@ jobs:
         run: apt-get update && apt-get install -y --no-install-recommends build-essential python3
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        run: npm ci --no-fund
 
       - name: Build
         run: npm run build
@@ -240,12 +270,40 @@ jobs:
         run: npx vitest run --config vitest.e2e.config.ts --reporter=verbose
 
   # ---------------------------------------------------------------------------
-  # Job 7 — Aggregate gate
+  # Job 7 — Supply chain: audit of the production dependencies, and the
+  # release manifest round trip (docs/install-check.md)
+  # ---------------------------------------------------------------------------
+  supply-chain:
+    name: supply chain
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --no-fund
+
+      - name: npm audit (production dependencies, high and above)
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Release manifest round trip
+        run: |
+          npm run release:manifest -- --out "$RUNNER_TEMP/release.json"
+          npm run release:verify -- --manifest "$RUNNER_TEMP/release.json"
+
+  # ---------------------------------------------------------------------------
+  # Job 8 — Aggregate gate
   # ---------------------------------------------------------------------------
   ci-aggregate:
     name: CI aggregate
     runs-on: ubuntu-22.04
-    needs: [typecheck, lint-custom, unit-test, build-smoke, installer, e2e]
+    needs: [typecheck, lint-custom, unit-test, build-smoke, installer, e2e, supply-chain]
     if: always()
     steps:
       - name: Check all jobs passed
@@ -255,7 +313,8 @@ jobs:
              [ "${{ needs.unit-test.result }}" != "success" ] || \
              [ "${{ needs.build-smoke.result }}" != "success" ] || \
              [ "${{ needs.installer.result }}" != "success" ] || \
-             [ "${{ needs.e2e.result }}" != "success" ]; then
+             [ "${{ needs.e2e.result }}" != "success" ] || \
+             [ "${{ needs.supply-chain.result }}" != "success" ]; then
             echo "One or more CI jobs failed"
             echo "  typecheck:    ${{ needs.typecheck.result }}"
             echo "  lint-custom:  ${{ needs.lint-custom.result }}"
@@ -263,6 +322,7 @@ jobs:
             echo "  build-smoke:  ${{ needs.build-smoke.result }}"
             echo "  installer:    ${{ needs.installer.result }}"
             echo "  e2e:          ${{ needs.e2e.result }}"
+            echo "  supply-chain: ${{ needs.supply-chain.result }}"
             exit 1
           fi
-          echo "All 6 CI jobs passed — PR ready for review"
+          echo "All 7 CI jobs passed — PR ready for review"
