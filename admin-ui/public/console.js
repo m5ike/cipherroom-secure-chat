@@ -1284,6 +1284,14 @@
           ["Pinned", r.pinned ? `${dateTime(r.pinned.at)} · ${num(r.pinned.earlierKeys)} earlier key(s) · chain from row ${num(r.pinned.chainFrom)}` : h("span", { class: "err" }, "not pinned")],
         ]));
         if (r.problems.length) body.append(json(r.problems));
+        // 6.12 review S01: a lost pin is never re-created by itself; the owner re-pins the journal as it is now.
+        if (!r.intact) {
+          body.append(h("p", { class: "muted small" }, "Re-pinning trusts the journal as it is NOW (after a lost audit-signing.pin, or checkpoints that are gone). Restore the pin file from a backup instead if you can. Owner role; audited."),
+            h("button", { type: "button", class: "btn btn--sm", onclick: async () => {
+              if (!confirm("Re-pin the audit journal as it is now? Rows changed before this moment can no longer be detected.")) return;
+              try { const p = await api("/api/admin/audit/repin", { method: "POST", body: { confirm: "repin" } }); toast(`Re-pinned: coverage from row ${num(p.coverFrom)}.`, "ok"); } catch (e) { toast(e.message, "err"); }
+            } }, "Re-pin the journal"));
+        }
       });
     } catch (e) { toast(e.message, "err"); }
   });

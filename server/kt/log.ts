@@ -336,6 +336,32 @@ export class KtLog {
     return rows.reverse().map((r) => JSON.parse(String(r.entry)) as KtEntry);
   }
 
+  /** 6.12 review S10: the newest `acct` entry of `u`, however many entries came after it (null: none). */
+  latestAccount(u: string): Extract<KtEntry, { t: "acct" }> | null {
+    this.ready();
+    const row = this.sql("SELECT entry FROM kt_leaves WHERE u = ? AND kind = 'acct' ORDER BY idx DESC LIMIT 1").get(u) as { entry: string } | undefined;
+    return row ? JSON.parse(String(row.entry)) as Extract<KtEntry, { t: "acct" }> : null;
+  }
+
+  /** 6.12 review S10: the newest `dev` entry of device `dpk` of `u`, and whether a `rev` of it came after (null: never logged). */
+  latestDevice(u: string, dpk: string): { entry: Extract<KtEntry, { t: "dev" }>; revoked: boolean } | null {
+    this.ready();
+    let revoked = false;
+    for (const row of this.sql("SELECT kind, entry FROM kt_leaves WHERE u = ? AND kind IN ('dev', 'rev') ORDER BY idx DESC").iterate(u) as Iterable<{ kind: string; entry: string }>) {
+      const e = JSON.parse(String(row.entry)) as KtEntry;
+      if (e.t === "acct" || e.dpk !== dpk) continue;
+      if (e.t === "rev") { revoked = true; continue; }
+      return { entry: e, revoked };
+    }
+    return null;
+  }
+
+  /** 6.12 review S10: entries of `u` logged at or after `since` (their `ts`). */
+  countSince(u: string, since: number): number {
+    this.ready();
+    return Number((this.sql("SELECT count(*) AS n FROM kt_leaves WHERE u = ? AND ts >= ?").get(u, since) as { n: number }).n);
+  }
+
   /** Proof that the tree of `from` leaves is a prefix of the tree of `to` (both at most the current size). */
   consistency(from: number, to: number): KtConsistency {
     this.ready();

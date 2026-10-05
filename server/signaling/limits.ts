@@ -6,7 +6,10 @@
 // A socket that keeps hitting its limits is closed.
 //
 // Connections themselves are limited per client address (opened per
-// minute and open at once) in the upgrade handshake — see hub.ts.
+// minute and open at once) in the upgrade handshake — see hub.ts. 6.12
+// (review S09): an IPv6 client counts by its /64 (address-group.ts).
+
+import { addressGroup } from "../address-group";
 
 export type LimitClass =
   | "signaling" | "relay" | "receipt" | "presence" | "storage"
@@ -112,7 +115,8 @@ export class SocketLimiter {
 
 /**
  * Connections per client address: how many were opened in the last
- * minute, and how many are open now. Kept small and bounded.
+ * minute, and how many are open now. Kept small and bounded. 6.12: an
+ * address counts by its group (IPv4 as it is, IPv6 by its /64).
  */
 export class ConnectionGate {
   private opened = new Map<string, number[]>();
@@ -141,7 +145,8 @@ export class ConnectionGate {
   ) {}
 
   /** Returns a reason when the connection must be refused. */
-  admit(client: string): string | null {
+  admit(address: string): string | null {
+    const client = addressGroup(address) || address;
     const at = this.now();
     if (this.total >= this.limits.concurrentTotal) return "server-full";
     if ((this.open.get(client) ?? 0) >= this.limits.concurrentPerClient) return "too-many-connections";
@@ -161,7 +166,8 @@ export class ConnectionGate {
     return null;
   }
 
-  release(client: string): void {
+  release(address: string): void {
+    const client = addressGroup(address) || address;
     const n = (this.open.get(client) ?? 0) - 1;
     if (n <= 0) this.open.delete(client); else this.open.set(client, n);
     this.total = Math.max(0, this.total - 1);

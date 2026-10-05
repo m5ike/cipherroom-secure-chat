@@ -18,7 +18,7 @@
 // the clear: they are stored as HMAC references (keys.ts sessionRef).
 
 import { createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, sign as edSign, timingSafeEqual, verify as edVerify, type KeyObject } from "node:crypto";
-import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { databaseBytes, ensurePrivateDir, openPlainDatabase, StorageUnavailableError, type SqliteDatabase, type SqliteStatement } from "./db";
 import { GLOBAL_MIGRATIONS } from "./schema";
@@ -146,6 +146,9 @@ const optText = (value: unknown, max: number): string | null => (typeof value ==
 
 /** How often (in rows) the head of the audit chain is signed. */
 const AUDIT_CHECKPOINT_EVERY = 500;
+/** 6.12 review S01: chained rows a valid checkpoint may lag behind the head (the cadence plus slack) before
+ *  verification fails with "checkpoint-missing" — deleting the checkpoints no longer leaves a clean journal. */
+export const AUDIT_UNSIGNED_TAIL_MAX = AUDIT_CHECKPOINT_EVERY + 10;
 
 export type AuditVerification = {
   ok: boolean;
@@ -157,13 +160,18 @@ export type AuditVerification = {
   lastCheckpoint: { at: number; lastId: number } | null;
   /** The key checkpoints are signed with now (6.12: derived from the master key). */
   publicKey: string;
-  /** 6.12 (F-23): what the verification trusts besides that key (audit-signing.pin), or null when nothing is pinned. */
-  pinned: { file: string; at: number; earlierKeys: number; chainFrom: number } | null;
-  problems: Array<{ id: number; kind: "row-altered" | "link-broken" | "rows-missing" | "row-unchained" | "checkpoint-signature" | "checkpoint-mismatch" | "pin-invalid" | "key-not-pinned" }>;
+  /** 6.12 (F-23): what the verification trusts besides that key (audit-signing.pin), or null when nothing is pinned.
+   *  `coverFrom` (review S01): from this row on, at most AUDIT_UNSIGNED_TAIL_MAX chained rows may follow the newest valid checkpoint. */
+  pinned: { file: string; at: number; earlierKeys: number; chainFrom: number; coverFrom: number } | null;
+  problems: Array<{
+    id: number;
+    kind: "row-altered" | "link-broken" | "rows-missing" | "row-unchained" | "checkpoint-signature" | "checkpoint-mismatch" | "checkpoint-missing"
+      | "pin-invalid" | "pin-missing" | "key-not-pinned";
+  }>;
 };
 
-/** 6.12 (F-23): audit-signing.pin — see GlobalStore.ensurePin. */
-type AuditPin = { v: 1; keys: Array<{ publicKey: string; upTo: number | null }>; chainFrom: number; pinnedAt: number; mac: string };
+/** 6.12 (F-23): audit-signing.pin — see GlobalStore.ensurePin. v2 (review S01) adds coverFrom to the MACed body. */
+type AuditPin = { v: 1 | 2; keys: Array<{ publicKey: string; upTo: number | null }>; chainFrom: number; pinnedAt: number; coverFrom?: number; mac: string };
 
 /** PKCS#8 DER header of an Ed25519 private key; the 32-byte seed follows. */
 const ED25519_PKCS8_PREFIX = Buffer.from("302e020100300506032b657004220420", "hex");
@@ -222,6 +230,11 @@ export class GlobalStore {
     this.statements.clear();
     try { this.db?.close(); } catch { /* already gone */ }
     this.db = null;
+    // What was read from the database and the pin file is read again on the next open.
+    this.head = null;
+    this.checkpointedId = null;
+    this.pin = null;
+    this.pinProblem = null;
   }
 
   private handle(): SqliteDatabase {
@@ -645,17 +658,27 @@ export class GlobalStore {
       row.peerId, row.roomHash, row.ip, row.bytes, row.status, row.detail, prev, hash,
     ).lastInsertRowid);
     this.head = { id, hash };
-    this.sinceCheckpoint += 1;
-    if (this.sinceCheckpoint >= AUDIT_CHECKPOINT_EVERY) this.auditCheckpoint("interval");
+    // 6.12 review S01: the cadence counts from the newest checkpoint in the database, not from this
+    // process's start — a restart no longer lets up to twice the interval go unsigned.
+    if (id - this.lastCheckpointId() >= AUDIT_CHECKPOINT_EVERY) this.auditCheckpoint("interval");
   }
 
   /* --------------------------------------------------- audit hash chain */
 
   private head: { id: number; hash: string } | null = null;
-  private sinceCheckpoint = 0;
+  /** The newest checkpoint's row (null until read from the database). */
+  private checkpointedId: number | null = null;
   private signingKey: { privateKey: KeyObject; publicKey: string } | null = null;
   private pin: AuditPin | null = null;
-  private pinProblem: "pin-invalid" | "key-not-pinned" | null = null;
+  private pinProblem: "pin-invalid" | "pin-missing" | "key-not-pinned" | null = null;
+
+  private lastCheckpointId(): number {
+    if (this.checkpointedId === null) {
+      const row = this.sql("SELECT max(last_id) AS id FROM audit_checkpoints").get() as { id: number | null } | undefined;
+      this.checkpointedId = Number(row?.id ?? 0);
+    }
+    return this.checkpointedId;
+  }
 
   /** The hash of the newest chained row ("" before the first). */
   private chainHead(): string {
@@ -686,7 +709,45 @@ export class GlobalStore {
   private pinFile(): string { return join(this.dir, "audit-signing.pin"); }
 
   private pinMac(body: Omit<AuditPin, "mac">): string {
-    return createHmac("sha256", derivedKey("audit-pin")).update(JSON.stringify([body.v, body.keys.map((k) => [k.publicKey, k.upTo]), body.chainFrom, body.pinnedAt])).digest("hex");
+    const fields: unknown[] = [body.v, body.keys.map((k) => [k.publicKey, k.upTo]), body.chainFrom, body.pinnedAt];
+    if (body.v === 2) fields.push(body.coverFrom ?? null);
+    return createHmac("sha256", derivedKey("audit-pin")).update(JSON.stringify(fields)).digest("hex");
+  }
+
+  /** A checkpoint row signed by the key derived from the master key (proof that this store was pinned). */
+  private signedByDerivedKey(c: Record<string, unknown>): boolean {
+    try {
+      const key = createPublicKey({ key: Buffer.from(this.auditSigner().publicKey, "base64"), format: "der", type: "spki" });
+      return edVerify(null, Buffer.from(checkpointMessage(Number(c.last_id), String(c.head_hash), Number(c.at))), key, Buffer.from(String(c.signature), "base64"));
+    } catch { return false; }
+  }
+
+  private legacyKeyFile(): string { return join(this.dir, "audit-signing.key"); }
+
+  /** The pre-6.12 audit-signing.key's public key, if the file is there. */
+  private legacyPublicKey(): string | null {
+    try { return createPublicKey(createPrivateKey(readFileSync(this.legacyKeyFile(), "utf8"))).export({ type: "spki", format: "der" }).toString("base64"); } catch { return null; }
+  }
+
+  private chainBounds(): { chainFrom: number; head: number } {
+    const first = this.sql("SELECT min(id) AS id FROM audit WHERE hash IS NOT NULL").get() as { id: number | null } | undefined;
+    const max = this.sql("SELECT max(id) AS id FROM audit").get() as { id: number | null } | undefined;
+    const head = Number(max?.id ?? 0);
+    return { chainFrom: first?.id ? Number(first.id) : head + 1, head };
+  }
+
+  private writePin(body: Omit<AuditPin, "mac">, replace: boolean): AuditPin {
+    const pin: AuditPin = { ...body, mac: this.pinMac(body) };
+    const file = this.pinFile();
+    mkdirSync(this.dir, { recursive: true, mode: 0o700 });
+    if (!replace) {
+      writeFileSync(file, JSON.stringify(pin, null, 1), { mode: 0o600, flag: "wx" });
+    } else {
+      const tmp = `${file}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify(pin, null, 1), { mode: 0o600 });
+      renameSync(tmp, file);
+    }
+    return pin;
   }
 
   /**
@@ -695,55 +756,82 @@ export class GlobalStore {
    * key (a file anyone could edit would pin nothing):
    *
    *   keys       the checkpoint keys of before 6.12 — the old
-   *              audit-signing.key's public key and any other key whose
-   *              checkpoints verified at the upgrade — each only for
-   *              checkpoints up to the row it had signed (upTo);
+   *              audit-signing.key's public key — each only for checkpoints
+   *              up to the row it had signed (upTo);
    *   chainFrom  the first row id that must be chained: a row from there on
-   *              without a hash is a failure, not "before the chain".
+   *              without a hash is a failure, not "before the chain";
+   *   coverFrom  (v2) from this row on, the newest valid checkpoint may lag
+   *              the head by at most AUDIT_UNSIGNED_TAIL_MAX rows.
    *
-   * Written once, on the first start after the upgrade (logged); the old
-   * private key file is then removed, so it cannot sign anything new.
-   * Delete the pin file to re-pin (trust on first use again).
+   * Written on the first start after the upgrade (logged); the old private
+   * key file is then removed, so it cannot sign anything new.
+   *
+   * 6.12 review S01 — deleting the file no longer re-pins:
+   *   - once the store has signed a checkpoint with the derived key (every
+   *     store does from its first 500 rows, or a manual/prune checkpoint), a
+   *     missing pin is a verification failure ("pin-missing"), never
+   *     re-created from what the database or the directory holds;
+   *   - the first start with 6.12 (no pin, nothing signed with the derived
+   *     key) is the one-time migration: the journal is trusted as it is
+   *     (logged) — with the 6.11 key file there, its key and the keys whose
+   *     checkpoints sign themselves are pinned; without it, keys a checkpoint
+   *     row names are never pinned (a forger signs rows with a key of their
+   *     own), and such unverifiable checkpoints make the whole chain count;
+   *   - from coverFrom on, every AUDIT_UNSIGNED_TAIL_MAX chained rows need a
+   *     valid checkpoint (verifyAudit, "checkpoint-missing"): checkpoints
+   *     deleted and the head signed again later leave a gap;
+   *   - re-pinning the journal as it is now is an explicit operator action
+   *     (repinAudit: POST /api/admin/audit/repin, owner role, audited).
+   * What stays possible: removing the pin AND every checkpoint makes the
+   * journal look never pinned — it is then trusted as it is again (logged).
    */
   private ensurePin(): void {
-    if (this.pin || this.pinProblem === "pin-invalid") return;
+    if (this.pin || this.pinProblem === "pin-invalid" || this.pinProblem === "pin-missing") return;
     const file = this.pinFile();
     let raw: string | null = null;
     try { raw = readFileSync(file, "utf8"); } catch { raw = null; }
     if (raw !== null) {
       try {
         const parsed = JSON.parse(raw) as AuditPin;
-        const ok = parsed && parsed.v === 1 && Array.isArray(parsed.keys) && Number.isInteger(parsed.chainFrom)
+        const ok = parsed && (parsed.v === 1 || (parsed.v === 2 && Number.isInteger(parsed.coverFrom))) && Array.isArray(parsed.keys) && Number.isInteger(parsed.chainFrom)
           && typeof parsed.mac === "string" && safeEqualHex(parsed.mac, this.pinMac(parsed));
         if (ok) { this.pin = parsed; this.pinProblem = null; return; }
       } catch { /* unreadable */ }
       this.pinProblem = "pin-invalid";
-      console.warn(`[storage] ${file} does not verify against the storage master key: the audit journal's old checkpoint keys are NOT trusted (restore the file, or delete it to pin again)`);
+      console.warn(`[storage] ${file} does not verify against the storage master key: the audit journal's old checkpoint keys are NOT trusted (restore the file, or re-pin the journal from the console: Audit → Verify → Re-pin)`);
       return;
     }
-    // First start with 6.12: pin what the journal has been signed with.
-    const keys: AuditPin["keys"] = [];
-    const legacyFile = join(this.dir, "audit-signing.key");
-    let legacyPub: string | null = null;
-    try { legacyPub = createPublicKey(createPrivateKey(readFileSync(legacyFile, "utf8"))).export({ type: "spki", format: "der" }).toString("base64"); } catch { legacyPub = null; }
+    // A store that already signed with the derived key was pinned: the file was removed behind its back.
     const rows = this.sql("SELECT last_id, head_hash, at, signature, public_key FROM audit_checkpoints ORDER BY last_id ASC").all() as Array<Record<string, unknown>>;
-    const upTo = new Map<string, number>();
-    for (const c of rows) {
-      const key = String(c.public_key);
-      if (!selfSigned(c)) continue;
-      upTo.set(key, Math.max(upTo.get(key) ?? 0, Number(c.last_id)));
+    if (rows.some((c) => this.signedByDerivedKey(c))) {
+      this.pinProblem = "pin-missing";
+      console.warn(`[storage] ${file} is missing although this journal was pinned (it holds checkpoints signed with the derived key): the audit journal does NOT verify until the file is restored or the operator re-pins it (console: Audit → Verify → Re-pin)`);
+      return;
     }
-    const lastCheckpoint = rows.length ? Number(rows[rows.length - 1].last_id) : 0;
-    if (legacyPub) upTo.set(legacyPub, Math.max(upTo.get(legacyPub) ?? 0, lastCheckpoint));
-    for (const [publicKey, n] of upTo) if (publicKey !== this.auditSigner().publicKey) keys.push({ publicKey, upTo: n });
-    const first = this.sql("SELECT min(id) AS id FROM audit WHERE hash IS NOT NULL").get() as { id: number | null } | undefined;
-    const max = this.sql("SELECT max(id) AS id FROM audit").get() as { id: number | null } | undefined;
-    const chainFrom = first?.id ? Number(first.id) : Number(max?.id ?? 0) + 1;
-    const body = { v: 1 as const, keys, chainFrom, pinnedAt: Date.now() };
-    const pin: AuditPin = { ...body, mac: this.pinMac(body) };
+    // The first start with 6.12 (the one-time migration — trust on first use, logged): the journal is
+    // taken as it is. With the 6.11 key file there (the upgrade), its key and any other key whose
+    // checkpoints sign themselves (a key file 6.11 regenerated) are pinned, each for the checkpoints up to
+    // the newest it signed; without the key file, keys rows name are never pinned (a forger's).
+    const legacyPub = this.legacyPublicKey();
+    const derived = this.auditSigner().publicKey;
+    const upTo = new Map<string, number>();
+    if (legacyPub) {
+      for (const c of rows) {
+        const key = String(c.public_key);
+        if (key === derived || !selfSigned(c)) continue;
+        upTo.set(key, Math.max(upTo.get(key) ?? 0, Number(c.last_id)));
+      }
+      if (legacyPub !== derived && !upTo.has(legacyPub)) upTo.set(legacyPub, 0);
+    }
+    const keys: AuditPin["keys"] = [...upTo].map(([publicKey, n]) => ({ publicKey, upTo: n }));
+    const { chainFrom, head } = this.chainBounds();
+    // Coverage starts after the rows that exist now — what 6.11 wrote (with its own, restartable cadence)
+    // is not held to the 6.12 cadence. Only checkpoints that cannot be verified without the old key file
+    // (it was removed behind the journal's back) make the whole chain count.
+    const coverFrom = legacyPub || rows.length === 0 ? head + 1 : chainFrom;
+    let pin: AuditPin;
     try {
-      mkdirSync(this.dir, { recursive: true, mode: 0o700 });
-      writeFileSync(file, JSON.stringify(pin, null, 1), { mode: 0o600, flag: "wx" });
+      pin = this.writePin({ v: 2, keys, chainFrom, pinnedAt: Date.now(), coverFrom }, false);
     } catch (err) {
       this.pinProblem = "key-not-pinned";
       console.warn(`[storage] could not write ${file} (${(err as Error).message}): the audit journal's checkpoint keys are not pinned`);
@@ -752,10 +840,52 @@ export class GlobalStore {
     this.pin = pin;
     this.pinProblem = null;
     console.log(`[storage] audit journal: checkpoints are signed with a key derived from the master key from now on; pinned ${keys.length} earlier key(s) and chained rows from #${chainFrom} in ${file}`);
+    if (head > 0) console.warn(`[storage] audit journal: its first start with 6.12 trusted the ${head} row(s) already there as they are (trust on first use); from row #${coverFrom} on, a checkpoint is required every ${AUDIT_CHECKPOINT_EVERY} rows`);
     if (legacyPub) {
-      try { rmSync(legacyFile, { force: true }); console.log(`[storage] removed ${legacyFile}: the pre-6.12 key signs nothing any more (its public key stays pinned)`); }
+      try { rmSync(this.legacyKeyFile(), { force: true }); console.log(`[storage] removed ${this.legacyKeyFile()}: the pre-6.12 key signs nothing any more (its public key stays pinned)`); }
       catch { /* not ours to remove */ }
     }
+  }
+
+  /**
+   * 6.12 review S01: the operator's explicit re-pin (POST /api/admin/audit/repin,
+   * owner role, audited by the caller) — after a lost or damaged
+   * audit-signing.pin, or a journal whose checkpoints are gone. Vouches for the
+   * journal AS IT IS NOW: keeps the keys of a pin that still verifies, adds the
+   * pre-6.12 key file's key if it is there, and — only with `trustRowKeys` —
+   * every other key whose checkpoints sign themselves (pre-6.12 checkpoints of
+   * a key file that was lost); coverage restarts at the head, which is signed
+   * at once with the derived key. Returns what it pinned.
+   */
+  repinAudit(opts: { trustRowKeys?: boolean } = {}): { keys: number; chainFrom: number; coverFrom: number; checkpoint: number | null } {
+    this.handle();
+    let current: AuditPin | null = null;
+    try {
+      const parsed = JSON.parse(readFileSync(this.pinFile(), "utf8")) as AuditPin;
+      if (parsed && Array.isArray(parsed.keys) && typeof parsed.mac === "string" && safeEqualHex(parsed.mac, this.pinMac(parsed))) current = parsed;
+    } catch { current = null; }
+    const upTo = new Map<string, number | null>();
+    for (const k of current?.keys ?? []) upTo.set(k.publicKey, k.upTo);
+    const rows = this.sql("SELECT last_id, head_hash, at, signature, public_key FROM audit_checkpoints ORDER BY last_id ASC").all() as Array<Record<string, unknown>>;
+    const derived = this.auditSigner().publicKey;
+    const legacyPub = this.legacyPublicKey();
+    for (const c of rows) {
+      const key = String(c.public_key);
+      if (key === derived || !selfSigned(c)) continue;
+      if (key !== legacyPub && !opts.trustRowKeys && !upTo.has(key)) continue;
+      const known = upTo.get(key);
+      if (known !== null) upTo.set(key, Math.max(known ?? 0, Number(c.last_id)));
+    }
+    if (legacyPub && legacyPub !== derived && !upTo.has(legacyPub)) upTo.set(legacyPub, 0);
+    const keys = [...upTo].map(([publicKey, n]) => ({ publicKey, upTo: n }));
+    const { chainFrom, head } = this.chainBounds();
+    const pin = this.writePin({ v: 2, keys, chainFrom: current?.chainFrom ?? chainFrom, pinnedAt: Date.now(), coverFrom: head + 1 }, true);
+    this.pin = pin;
+    this.pinProblem = null;
+    if (legacyPub) { try { rmSync(this.legacyKeyFile(), { force: true }); } catch { /* not ours to remove */ } }
+    const checkpoint = this.auditCheckpoint("repin");
+    console.warn(`[storage] the audit journal was re-pinned by the operator: ${keys.length} earlier key(s), coverage from row #${head + 1}`);
+    return { keys: keys.length, chainFrom: pin.chainFrom, coverFrom: head + 1, checkpoint: checkpoint?.lastId ?? null };
   }
 
   /** Signs the current head of the chain. Called every N rows, before
@@ -769,7 +899,7 @@ export class GlobalStore {
     const signature = edSign(null, Buffer.from(message), signer.privateKey).toString("base64");
     this.sql("INSERT INTO audit_checkpoints (at, last_id, head_hash, reason, signature, public_key) VALUES (?, ?, ?, ?, ?, ?)")
       .run(at, this.head.id, this.head.hash, reason.slice(0, 40), signature, signer.publicKey);
-    this.sinceCheckpoint = 0;
+    this.checkpointedId = Math.max(this.checkpointedId ?? 0, this.head.id);
     return { lastId: this.head.id, headHash: this.head.hash };
   }
 
@@ -795,6 +925,7 @@ export class GlobalStore {
     let prevHash: string | null = null;
     let prevId = 0;
     let first = true;
+    let firstChained = 0;
     let lastChained = 0;
     const hashes = new Map<number, string>();
     for (const r of rows) {
@@ -820,6 +951,7 @@ export class GlobalStore {
         const anchor = byLast.get(id - 1);
         if (r.prev_hash && anchor && anchor.head_hash !== r.prev_hash) problems.push({ id, kind: "link-broken" });
         first = false;
+        firstChained = id;
       } else {
         if (id !== prevId + 1) problems.push({ id, kind: "rows-missing" });
         if (r.prev_hash !== prevHash) problems.push({ id, kind: "link-broken" });
@@ -835,6 +967,8 @@ export class GlobalStore {
       ...(this.pin?.keys ?? []).filter((k) => k.upTo === null || lastId <= k.upTo).map((k) => k.publicKey),
     ];
     let signed = 0;
+    /** Rows valid checkpoints vouch for (review S01). */
+    const anchors: number[] = [];
     for (const c of checkpoints) {
       const lastId = Number(c.last_id);
       const message = Buffer.from(checkpointMessage(lastId, String(c.head_hash), Number(c.at)));
@@ -847,10 +981,30 @@ export class GlobalStore {
       const rowHash = hashes.get(lastId);
       if (rowHash !== undefined && rowHash !== c.head_hash) problems.push({ id: lastId, kind: "checkpoint-mismatch" });
       if (ok) signed += 1;
+      if (ok && (rowHash === undefined || rowHash === c.head_hash) && lastId <= lastChained) anchors.push(lastId);
     }
     const last = checkpoints.at(-1);
     // Rows cut off the end: a checkpoint vouches for a row newer than the newest one left.
     if (last && lastChained > 0 && Number(last.last_id) > lastChained) problems.push({ id: Number(last.last_id), kind: "rows-missing" });
+    // 6.12 review S01: a checkpoint is signed every AUDIT_CHECKPOINT_EVERY rows (and every hour, before pruning),
+    // so from coverFrom on no run of more than AUDIT_UNSIGNED_TAIL_MAX chained rows goes without a valid one —
+    // checkpoints deleted (the head signed again later) leave such a run. A v1 pin (6.12 builds before the
+    // review) is held to the tail only.
+    if (this.pin && lastChained > 0) {
+      anchors.sort((a, b) => a - b);
+      const coverFrom = this.pin.v === 2 ? Number(this.pin.coverFrom) : Math.max(this.pin.chainFrom, (anchors.at(-1) ?? 0) + 1);
+      let from = Math.max(coverFrom - 1, firstChained - 1);
+      if (lastChained > from) {
+        let gap: number | null = null;
+        for (const a of anchors) {
+          if (a <= from) continue;
+          if (a - from > AUDIT_UNSIGNED_TAIL_MAX && gap === null) gap = from + 1;
+          from = a;
+        }
+        if (lastChained - from > AUDIT_UNSIGNED_TAIL_MAX && gap === null) gap = from + 1;
+        if (gap !== null) problems.push({ id: gap, kind: "checkpoint-missing" });
+      }
+    }
     return {
       ok: problems.length === 0,
       checked,
@@ -859,7 +1013,7 @@ export class GlobalStore {
       signedCheckpoints: signed,
       lastCheckpoint: last ? { at: Number(last.at), lastId: Number(last.last_id) } : null,
       publicKey: signer.publicKey,
-      pinned: this.pin ? { file: this.pinFile(), at: this.pin.pinnedAt, earlierKeys: this.pin.keys.length, chainFrom: this.pin.chainFrom } : null,
+      pinned: this.pin ? { file: this.pinFile(), at: this.pin.pinnedAt, earlierKeys: this.pin.keys.length, chainFrom: this.pin.chainFrom, coverFrom: this.pin.v === 2 ? Number(this.pin.coverFrom) : this.pin.chainFrom } : null,
       problems: problems.slice(0, 50),
     };
   }

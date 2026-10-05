@@ -22,6 +22,7 @@
 
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { derivedKey } from "../storage/keys";
+import { addressGroup } from "../address-group";
 
 export type TrafficChannel = "ws" | "http";
 export type TrafficDirection = "in" | "out";
@@ -331,6 +332,22 @@ export class TrafficMonitor {
     const want = normalizeIp(ip);
     if (!want) return false;
     for (const a of this.addresses.values()) if (a === want) return true;
+    return false;
+  }
+
+  /**
+   * 6.12 (review S11): whether a live WebSocket from this address's group
+   * (address-group.ts: IPv4 as it is, IPv6 by its /64 — a host's HTTP request
+   * and its WebSocket may leave from two privacy addresses of one /64) has
+   * JOINED a room. A bare socket (no join) does not count.
+   */
+  hasJoinedConnectionFrom(ip: string | null | undefined): boolean {
+    const want = addressGroup(ip);
+    if (!want) return false;
+    for (const [id, a] of this.addresses) {
+      if (addressGroup(a) !== want) continue;
+      if (this.connections.get(id)?.room) return true;
+    }
     return false;
   }
 

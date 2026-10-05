@@ -175,9 +175,9 @@ describe("who a route code reaches", () => {
 
   it("user: a member by name in the room, or \"@account\" — in the room first, else wherever it is connected (blind rooms only)", () => {
     expect(routeTargets(entry({ type: "user", user: "karel" }), hub).targets.map((x) => x.peerId)).toEqual(["p-karel"]);
-    expect(routeTargets(entry({ type: "user", user: "@EVA01" }), hub).targets).toEqual([{ room: ROOM, peerId: "p-eva", name: "Eva", inRoom: true }]);
+    expect(routeTargets(entry({ type: "user", user: "@EVA01" }), hub).targets).toEqual([{ room: ROOM, peerId: "p-eva", name: "Eva", inRoom: true, accountId: "eva01" }]);
     // Alice is not in the room: her connection in another (blind) room — never the room known by its name.
-    expect(routeTargets(entry({ type: "user", user: "@alice" }), hub).targets).toEqual([{ room: OTHER, peerId: "p-alice", name: "Alice", inRoom: false }]);
+    expect(routeTargets(entry({ type: "user", user: "@alice" }), hub).targets).toEqual([{ room: OTHER, peerId: "p-alice", name: "Alice", inRoom: false, accountId: "alice" }]);
     expect(routeTargets(entry({ type: "user", user: "Nobody" }), hub).targets).toEqual([]);
   });
 
@@ -249,7 +249,7 @@ describe("on the signaling hub", () => {
       await joinAs("plain-room-name", "Bob");
       const h = { members: (room: string) => sig.roomMembers(room), send: (room: string, peerId: string, p: Record<string, unknown>) => sig.sendToPeer(room, peerId, p), accountMembers: (a: string) => sig.accountMembers(a) };
       expect(routeTargets(entry(), h).targets.map((t) => t.name).sort()).toEqual(["Eva", "Karel"]);
-      expect(routeTargets(entry({ type: "user", user: `@${r.account.id.toUpperCase()}` }), h).targets).toEqual([{ room: OTHER, peerId: alice.peerId, name: "Alice", inRoom: false }]);
+      expect(routeTargets(entry({ type: "user", user: `@${r.account.id.toUpperCase()}` }), h).targets).toEqual([{ room: OTHER, peerId: alice.peerId, name: "Alice", inRoom: false, accountId: r.account.id.toLowerCase() }]);
       // A room joined by its name is never a route's.
       expect(routeTargets(entry({ room: "plain-room-name" }), h).problem).toContain("blind room id");
       // One member's socket, nobody else's.
@@ -525,4 +525,39 @@ describe("a call routed to one member", () => {
     expect(r).toMatchObject({ ok: true, detail: expect.stringContaining("1 connection") });
     await expect(open("/media/tel/client/AAAAAAAAAAAAAAAAAAAAAAAA")).rejects.toBeTruthy();
   });
+});
+
+describe("6.12 review S07/S08: a leg whose member may no longer be reached", () => {
+  it("ends — out of the audio, its socket closed, its token forgotten, not offered again; the others keep the call", async () => {
+    const { hub, sent } = fakeHub({ [ROOM]: [{ peerId: "p-eva", name: "Eva" }, { peerId: "p-karel", name: "Karel" }] });
+    const unreachable = new Set<string>();
+    setRouteHub({
+      ...hub,
+      // As the hub reports them: `reachable` is its verdict (proof), checked again for every leg.
+      members: (room: string) => hub.members(room).map((m) => ({ ...m, reachable: !unreachable.has(m.peerId) })),
+      reachable: (_room: string, peerId: string) => !unreachable.has(peerId),
+    });
+    const call = liveCall();
+    const r = await telHooks.routeAudio!(call, entry(), { mode: "fail", sessionId: "ts_s08" });
+    if (!r.ok) throw new Error(r.detail);
+    const provider = await open(streamPath(r.actions));
+    provider.ws.send(JSON.stringify({ event: "start", start: { streamSid: "MZ8" } }));
+    const eva = await until(() => incomingFor(sent, "p-eva"));
+    const karel = await until(() => incomingFor(sent, "p-karel"));
+    const a = await open(`/media/tel/client/${eva.token}`);
+    const b = await open(`/media/tel/client/${karel.token}`);
+    a.ws.send(JSON.stringify({ type: "audio" }));
+    b.ws.send(JSON.stringify({ type: "audio" }));
+    await until(() => liveRoutes()[0]?.members === 2);
+
+    // Karel's peer id is now held by a connection that may not be reached (it did not prove in a room that proves).
+    unreachable.add("p-karel");
+    await until(() => b.text.some((m) => m.type === "ended" && m.reason === "no longer reachable"));
+    await until(() => liveRoutes()[0]?.members === 1 && liveRoutes()[0]?.offered === 1);
+    await expect(open(`/media/tel/client/${karel.token}`)).rejects.toBeTruthy();
+    await sleep(300); // a few polls: not offered again
+    expect(sent.filter((s) => s.peerId === "p-karel" && s.payload.event === "incoming")).toHaveLength(1);
+    expect(liveRoutes()[0]).toMatchObject({ members: 1, offered: 1 });
+    for (const x of [provider, a, b]) x.ws.close();
+  }, 20_000);
 });

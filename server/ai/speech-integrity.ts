@@ -15,26 +15,51 @@
 //   3. every time a model is loaded, its files are hashed again and compared
 //      with the manifest — a changed, missing or added file is refused.
 //
-// Models installed before 6.12 have no entry: they are recorded at their
-// first load (logged as "first-load"). The manifest carries an HMAC under a
-// subkey of the storage master key (keys.ts derivedKey("speech-manifest")) so
-// that whoever can swap a model file cannot simply rewrite the manifest too;
-// without the master key it is kept without one (and says so).
+// The manifest carries an HMAC under a subkey of the storage master key
+// (keys.ts derivedKey("speech-manifest")) so that whoever can swap a model
+// file cannot simply rewrite the manifest too; without the master key it is
+// kept without one (and says so).
+//
+// 6.12 review S02 — that attacker could DELETE the manifest instead: a model
+// without an entry used to be recorded at its next load ("first-load"), and
+// the first-download rule lived only in that file. Now:
+//
+//   - the FIRST start with 6.12 records the models installed then, once
+//     (trust on first use — what 6.11 installed keeps working, logged and
+//     audited), and sets a marker: speech-integrity-<root>.marker in the
+//     storage directory (next to the other pins, MACed with a master-key
+//     subkey) — outside the models folder, so deleting files there cannot
+//     reset it. Every manifest write sets it too (initialiseIntegrity);
+//   - from then on, installed model files the manifest does not vouch for are
+//     an integrity failure — never recorded by themselves — and so is a
+//     download while the manifest is missing but models are installed
+//     (unless an operator pin covers it);
+//   - only an explicit operator action records installed files again: the
+//     console (AI & speech → Offline speech → "Trust installed files", owner
+//     role: trustInstalled), or an operator pin of the files,
+//     SPEECH_MODEL_PINS="<id>=files:<sha256>" (treeDigest of every installed
+//     file — the refusal names it; checked at every load).
+//
+// What stays possible: deleting the marker in the storage directory as well
+// as the manifest makes the next start a "first start" again.
 
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
-import { derivedKey } from "../storage/keys";
+import { join, relative, resolve, sep } from "node:path";
+import { derivedKey, storageDir } from "../storage/keys";
 
 export type ModelRecord = {
   url: string;
-  /** SHA-256 of the downloaded archive ("" for a model recorded at its first load). */
+  /** SHA-256 of the downloaded archive ("" for a model recorded from its installed files). */
   archive: string;
   archiveBytes: number;
   /** Every file of the unpacked model: relative path → SHA-256. */
   files: Record<string, string>;
   at: number;
-  source: "pinned" | "first-download" | "first-load";
+  /** "first-load": recorded once, at the first start with 6.12 (initialiseIntegrity — models installed before).
+   *  "operator": the operator trusted the installed files (console). "pinned-files": they matched
+   *  SPEECH_MODEL_PINS "<id>=files:<digest>". */
+  source: "pinned" | "first-download" | "first-load" | "operator" | "pinned-files";
 };
 
 type Manifest = { v: 1; models: Record<string, ModelRecord>; mac?: string };
@@ -80,6 +105,57 @@ export function writeManifest(root: string, models: Record<string, ModelRecord>)
   const tmp = `${manifestPath(root)}.${process.pid}.tmp`;
   writeFileSync(tmp, JSON.stringify(body, null, 1), { mode: 0o600 });
   renameSync(tmp, manifestPath(root));
+  writeMarker(root, "manifest");
+}
+
+/* ------------------------------------------------- the first-start marker */
+
+/** 6.12 review S02: where the "integrity is initialised" marker of a models folder lives — the storage directory, not the folder. */
+export function markerPath(root: string): string {
+  const tag = createHash("sha256").update(resolve(root)).digest("hex").slice(0, 16);
+  return join(storageDir(), `speech-integrity-${tag}.marker`);
+}
+
+/** Whether this models folder's integrity checking was initialised (its first start with 6.12 is over). */
+export function integrityInitialised(root: string): boolean {
+  return existsSync(markerPath(root));
+}
+
+function writeMarker(root: string, source: "first-start" | "manifest"): void {
+  const file = markerPath(root);
+  if (existsSync(file)) return;
+  const body = { v: 1, root: resolve(root), at: Date.now(), source };
+  const key = (() => { try { return derivedKey("speech-marker"); } catch { return null; } })();
+  const mac = key ? createHmac("sha256", key).update(JSON.stringify([body.v, body.root, body.at, body.source])).digest("hex") : undefined;
+  try {
+    mkdirSync(storageDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(file, JSON.stringify({ ...body, ...(mac ? { mac } : {}) }), { mode: 0o600, flag: "wx" });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") console.warn(`[speech] could not write ${file} (${(err as Error).message}): the next start records the installed models again`);
+  }
+}
+
+/**
+ * 6.12 review S02: the one-time migration. Before the marker exists (the
+ * first start with 6.12 — or a fresh server), every installed model of
+ * `models` that the manifest does not know is recorded as it is (source
+ * "first-load": trust on first use, once), then the marker is set. Returns
+ * the models it recorded, or null when integrity was initialised already.
+ * A manifest that does not verify is not touched (the error propagates).
+ */
+export async function initialiseIntegrity(root: string, models: ReadonlyArray<{ id: string; url: string }>): Promise<{ recorded: string[] } | null> {
+  if (integrityInitialised(root)) return null;
+  const manifest = readManifest(root);
+  const recorded: string[] = [];
+  for (const { id, url } of models) {
+    const dir = join(root, id);
+    if (manifest[id] || !existsSync(dir)) continue;
+    manifest[id] = { url, archive: "", archiveBytes: 0, files: await hashTree(dir), at: Date.now(), source: "first-load" };
+    recorded.push(id);
+  }
+  if (recorded.length) writeManifest(root, manifest);
+  else writeMarker(root, "first-start");
+  return { recorded };
 }
 
 /** An operator pin (SPEECH_MODEL_PINS) or the catalogue's, for a model's archive. */
@@ -91,12 +167,36 @@ export function pinnedArchiveHash(id: string, catalogue?: string): string | null
   return catalogue && /^[0-9a-f]{64}$/.test(catalogue) ? catalogue : null;
 }
 
-/** Refuses an archive that does not match a pin or the hash recorded at the first download. */
+/** 6.12 review S02: an operator pin of a model's installed files, SPEECH_MODEL_PINS "<id>=files:<sha256>" (treeDigest). */
+export function pinnedFilesDigest(id: string): string | null {
+  for (const part of (process.env.SPEECH_MODEL_PINS ?? "").split(",")) {
+    const [k, v] = part.split("=").map((s) => s.trim());
+    const m = /^files:([0-9a-fA-F]{64})$/.exec(v ?? "");
+    if (k === id && m) return m[1].toLowerCase();
+  }
+  return null;
+}
+
+/** The digest of a model's files (what a "files:" pin names): SHA-256 over the sorted [path, sha256] pairs. */
+export function treeDigest(files: Record<string, string>): string {
+  return createHash("sha256").update(JSON.stringify(Object.keys(files).sort().map((f) => [f, files[f]]))).digest("hex");
+}
+
+/** Model folders under `root` (an unpacked model is a folder named by its id; downloads in progress start with "."). */
+function installedModels(root: string): string[] {
+  try { return readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => e.name); } catch { return []; }
+}
+
+/** Refuses an archive that does not match a pin or the hash recorded at the first download. 6.12 review S02:
+ *  with models installed and the manifest gone, no download is trusted on first use either (only a pin). */
 export function checkArchive(root: string, id: string, sha256: string, catalogue?: string): "pinned" | "first-download" | "known" {
   const pin = pinnedArchiveHash(id, catalogue);
   if (pin) {
     if (pin !== sha256) throw new SpeechIntegrityError(`the download of ${id} does not match its pinned SHA-256 (expected ${pin}, got ${sha256}) — refused`);
     return "pinned";
+  }
+  if (!existsSync(manifestPath(root)) && installedModels(root).length) {
+    throw new SpeechIntegrityError(`${manifestPath(root)} is missing although models are installed (${installedModels(root).slice(0, 3).join(", ")}): what was recorded at their first downloads is gone, so the download of ${id} is not trusted — restore the manifest, trust the installed models in the console (AI & speech → Offline speech), or pin the archive (SPEECH_MODEL_PINS=${id}=<sha256>)`);
   }
   const known = readManifest(root)[id]?.archive;
   if (known && known !== sha256) throw new SpeechIntegrityError(`the download of ${id} differs from the one recorded at its first download (expected ${known}, got ${sha256}) — refused; remove its entry from ${manifestPath(root)} to accept a new release`);
@@ -134,17 +234,38 @@ export async function recordInstall(root: string, id: string, url: string, archi
 }
 
 /**
- * Before a model is loaded: its files must be exactly the ones recorded.
- * A model installed before 6.12 is recorded now (trust on first load).
+ * Before a model is loaded: its files must be exactly the ones recorded (or
+ * the operator's "files:" pin). 6.12 review S02: files nothing vouches for —
+ * no entry in the manifest (after the first start with 6.12: a manifest
+ * someone deleted) — are refused, never recorded by themselves; the operator
+ * trusts them in the console (trustInstalled) or pins them.
  */
 export async function verifyInstalled(root: string, id: string, url: string): Promise<"verified" | "recorded"> {
+  const dir = join(root, id);
+  const filesPin = pinnedFilesDigest(id);
+  if (filesPin) {
+    const now = await hashTree(dir);
+    const digest = treeDigest(now);
+    if (digest !== filesPin) {
+      console.warn(`[speech] ${id} does not match its operator pin (SPEECH_MODEL_PINS files:${filesPin.slice(0, 12)}…, the files are ${digest.slice(0, 12)}…): not loaded`);
+      throw new SpeechIntegrityError(`The model ${id} does not match its operator pin (SPEECH_MODEL_PINS ${id}=files:…). It was not loaded.`);
+    }
+    // The pin vouches for the files; the manifest only keeps a record of it (one that does not verify stays as it is).
+    let models: Record<string, ModelRecord>;
+    try { models = readManifest(root); } catch { return "verified"; }
+    if (models[id] && treeDigest(models[id].files) === digest) return "verified";
+    models[id] = { url, archive: models[id]?.archive ?? "", archiveBytes: models[id]?.archiveBytes ?? 0, files: now, at: Date.now(), source: "pinned-files" };
+    writeManifest(root, models);
+    console.warn(`[speech] ${id}: recorded its files as the operator pinned them (SPEECH_MODEL_PINS files:…)`);
+    return "recorded";
+  }
   const models = readManifest(root);
   const rec = models[id];
-  const dir = join(root, id);
   if (!rec) {
-    await recordInstall(root, id, url, "", 0, "first-load");
-    console.warn(`[speech] ${id} had no recorded hashes (installed before 6.12): recorded them now — later loads must match`);
-    return "recorded";
+    const digest = treeDigest(await hashTree(dir));
+    const why = existsSync(manifestPath(root)) ? "it has no entry in the manifest (added to the folder after the first start?)" : `${manifestPath(root)} is missing`;
+    console.warn(`[speech] ${id}: no recorded hashes — ${why}; not loaded until the operator trusts its files (console: AI & speech → Offline speech → Trust installed files, or SPEECH_MODEL_PINS=${id}=files:${digest})`);
+    throw new SpeechIntegrityError(`The model ${id} has no recorded hashes (${why}). It was not loaded: if these are the files you installed, trust them in AI & speech → Offline speech (owner), or reinstall the model.`);
   }
   const now = await hashTree(dir);
   const changed = Object.keys(rec.files).filter((f) => now[f] !== rec.files[f]);
@@ -155,6 +276,27 @@ export async function verifyInstalled(root: string, id: string, url: string): Pr
     throw new SpeechIntegrityError(`The model ${id} does not match the hashes recorded when it was installed (${what}). It was not loaded — reinstall it (AI & speech → Offline speech).`);
   }
   return "verified";
+}
+
+/**
+ * 6.12 review S02: the operator's explicit action (console, owner role) —
+ * records the files installed for `id` as they are now (source "operator"),
+ * after a lost manifest or files the manifest does not know. A manifest that
+ * does not verify is replaced only when `replaceInvalid` (the console asks);
+ * the other models' entries are kept when it verifies.
+ */
+export async function trustInstalled(root: string, id: string, url: string, opts: { replaceInvalid?: boolean } = {}): Promise<ModelRecord> {
+  const dir = join(root, id);
+  if (!existsSync(dir)) throw new SpeechIntegrityError(`The model ${id} is not installed.`);
+  let models: Record<string, ModelRecord>;
+  try { models = readManifest(root); } catch (err) {
+    if (!opts.replaceInvalid) throw err;
+    models = {};
+  }
+  const files = await hashTree(dir);
+  models[id] = { url, archive: models[id]?.archive ?? "", archiveBytes: models[id]?.archiveBytes ?? 0, files, at: Date.now(), source: "operator" };
+  writeManifest(root, models);
+  return models[id];
 }
 
 /** Drops a model's files from the manifest but keeps its archive hash (a re-download must match it). */
