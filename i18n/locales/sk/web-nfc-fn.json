@@ -1,0 +1,12 @@
+{
+ "nfcfn.done": "Hotovo.",
+ "nfcfn.noReader": "Toto zariadenie nemá čítačku NFC.",
+ "nfcfn.status.auth-failed": "Overenie karty zlyhalo",
+ "nfcfn.status.denied": "Prístup k NFC odmietnutý",
+ "nfcfn.status.error": "Chyba NFC: {message}",
+ "nfcfn.status.no-card": "Žiadna karta",
+ "nfcfn.status.ok": "Hotovo",
+ "nfcfn.status.timeout": "Karta nebola priložená včas",
+ "nfcfn.status.unsupported": "Nepodporované na tomto zariadení",
+ "nfcfn.waiting": "Priložte kartu k zariadeniu…"
+}
