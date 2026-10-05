@@ -43,11 +43,19 @@ enum PeopleParts {
     private static let lock = PeopleLock()
 
     static func install(into model: AppModel) {
+        // The address book and the people records (Platform/Contacts): the vault's user tier behind the store
+        // (people.links, people.verified — the same store the rooms' verifiedDevice reads), the picker and
+        // links, and the window side of "message / call via M5cet".
+        let service = ContactsService.shared
+        if let center = SecurityCenter.shared { service.store.setVault(SecurityPeopleVault(vault: center.vault)) }
+        PeopleModel.shared.store = service.store
+        PeopleModel.shared.contacts = service
+        service.reach.host = PeopleReach.shared
         #if DEBUG
         // Sample mode (-M5Screen): the sample core's people, an in-memory card and records.
         if DebugLaunch.screen != nil {
             profiles = MemoryProfiles(card: MemoryProfiles.sampleCard())
-            PeopleModel.shared.store = PeopleStore(records: MemoryPeopleRecords())
+            PeopleModel.shared.store = PeopleStore(vault: PeopleMemoryVault())
             let d = UserDefaults.standard
             UserPanelState.shared = UserPanelState.sample(dock: d.string(forKey: "M5UsersDock"), autoHide: d.bool(forKey: "M5UsersAutoHide"))
         }
@@ -62,8 +70,10 @@ enum PeopleParts {
         self.services = services
         services.slots.register("userPanel") { ctx in
             ensureVariables()
+            PeopleReach.shared.host = ctx.host
             return AnyView(UserPanelView(ctx: ctx))
         }
+        services.actions.onEnterApp { host in PeopleReach.shared.host = host }
         services.slots.register("userList") { ctx in AnyView(UserListView(users: ctx.scope["users"].arrayValue ?? [])) }
         services.actions.register(actions) { action, ctx in handle(action, ctx) }
         services.actions.shownUsername = { PeopleModel.shared.shownUsername() }
@@ -96,6 +106,7 @@ enum PeopleParts {
         let host = ctx.host
         ensureVariables()
         ProfileEditor.shared.host = host
+        PeopleReach.shared.host = host
         switch action {
         case .peopleOpen(let s), .peopleSelect(let s), .peopleAll(let s), .peopleNone(let s), .peopleMessage(let s), .peopleCall(let s),
              .peopleVideo(let s), .peopleVerify(let s), .peopleLink(let s), .peopleUnlink(let s), .peopleUnlinkAll(let s):

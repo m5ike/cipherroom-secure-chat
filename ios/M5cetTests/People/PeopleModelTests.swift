@@ -29,7 +29,7 @@ final class PeopleModelTests: XCTestCase {
         XCTAssertEqual(alice.bool("selectable"), true)
         XCTAssertEqual(alice.bool("selected"), false)
         XCTAssertEqual(alice.bool("verified"), true)
-        XCTAssertEqual(alice.optString("kid"), PeopleSafety.keyId(PeopleSafetyTests.b))
+        XCTAssertEqual(alice.optString("kid"), Safety.keyId(PeopleKeys.b))
         XCTAssertEqual(alice.bool("nameFlag"), false)
         // A guest (no account) is "light", a slower round trip fewer bars.
         let bob = try XCTUnwrap(users.first { $0.optString("id") == "peer-bob" })
@@ -72,7 +72,7 @@ final class PeopleModelTests: XCTestCase {
         XCTAssertEqual(p.optString("traffic"), "84.2 kB / 91.6 kB")
         XCTAssertEqual(p.optString("security"), "AES-GCM 256 (E2EE) · DTLS 1.2 · AES_CM_128_HMAC_SHA1_80")
         XCTAssertEqual(p.optString("dtls"), "sha-256 3A:5F:00")
-        XCTAssertEqual(p.optString("fingerprint"), PeopleSafety.fingerprint(PeopleSafetyTests.b))
+        XCTAssertEqual(p.optString("fingerprint"), Safety.fingerprint(PeopleKeys.b))
         XCTAssertEqual(p.bool("hasSafety"), true)
         XCTAssertEqual(p.optString("safety"), "13286 60170 84613 24995\n23962 36648 18264 48418\n04707 59157 69365 29038")
         XCTAssertEqual(p.optString("sinceText"), "12 " + w.host.peopleText("people.m") + " 5 " + w.host.peopleText("people.s"))
@@ -141,10 +141,10 @@ final class PeopleModelTests: XCTestCase {
 
     func testVerifyingMarksTheKeyAndTellsTheRoom() throws {
         let w = PeopleWorld.make()
-        let kid = PeopleSafety.keyId(PeopleSafetyTests.b)
+        let kid = Safety.keyId(PeopleKeys.b)
         w.people.setVerified("peer-alice", kid: kid, name: "Alice", on: true, scanned: false, host: w.host)
         XCTAssertTrue(w.people.store.verified(kid))
-        XCTAssertEqual(w.records.records[PeopleStore.verifiedRecord]?.has(kid), true)
+        XCTAssertNotNil(w.vault.readRecord(PeopleStore.verifiedRecord).flatMap { String(data: $0, encoding: .utf8) }?.range(of: kid))
         XCTAssertEqual(w.room.verifiedCalls.last?.0, "peer-alice")
         XCTAssertEqual(w.room.verifiedCalls.last?.1, true)
         XCTAssertEqual(w.person("peer-alice")?.bool("safetyVerified"), true)
@@ -161,6 +161,7 @@ final class PeopleModelTests: XCTestCase {
     func testLinkingAContact() async throws {
         let w = PeopleWorld.make()
         _ = w.host.userSetSetting("people.contacts", .bool(true))
+        w.contacts.book.access = .notDetermined // the system's question comes with the first link (for the photos)
         XCTAssertEqual(w.person("peer-alice")?.bool("canLink"), true)
         w.people.run("people.link", "peer-alice", host: w.host)
         await PeopleWorld.settle()
@@ -174,7 +175,19 @@ final class PeopleModelTests: XCTestCase {
         w.people.run("people.unlink", "peer-alice", host: w.host)
         await PeopleWorld.settle()
         XCTAssertNil(w.people.store.link("alice-novak"))
-        XCTAssertEqual(w.contacts.removed, ["alice-novak"])
+        // The system's suggestions for her: donated with the link, gone with it.
+        XCTAssertEqual(w.contacts.donations.donated, ["alice-novak"])
+        XCTAssertEqual(w.contacts.donations.removed, ["alice-novak"])
+        XCTAssertEqual(w.contacts.book.asked, 1)
+        XCTAssertEqual(w.host.flashes.last?.text, w.host.peopleText("people.unlinked"))
+        // people.contacts off: the suggestions go, the links stay.
+        w.people.run("people.link", "peer-alice", host: w.host)
+        await PeopleWorld.settle()
+        w.people.contactsSettingChanged(on: false)
+        XCTAssertNotNil(w.people.store.link("alice-novak"))
+        XCTAssertEqual(w.contacts.donations.removed.count, 2)
+        w.people.unlinkAllNow(w.host)
+        XCTAssertNil(w.people.store.link("alice-novak"))
         // A guest cannot be linked; with the integration off nothing is.
         w.people.run("people.link", "peer-bob", host: w.host)
         XCTAssertEqual(w.host.flashes.last?.text, w.host.peopleText("people.linkOnlyAccounts"))
@@ -186,9 +199,9 @@ final class PeopleModelTests: XCTestCase {
     func testTheLockForgetsTheCopies() {
         let w = PeopleWorld.make()
         w.people.store.setVerified("kid-1", true)
-        w.records.unlocked = false
+        w.vault.setUnlocked(false)
         XCTAssertFalse(w.people.store.verified("kid-1"))
-        w.records.unlocked = true
+        w.vault.setUnlocked(true)
         w.people.forget()
         XCTAssertTrue(w.people.store.verified("kid-1"))
     }
@@ -263,7 +276,7 @@ final class PeopleModelTests: XCTestCase {
         let core = PreviewCore.install()
         defer { CoreModels.shared = CoreModels(rooms: NoRooms(), account: NoAccount()) }
         let host = RendererTestSupport.host()
-        let people = PeopleModel(store: PeopleStore(records: MemoryPeopleRecords()))
+        let people = PeopleModel(store: PeopleStore(vault: PeopleMemoryVault()))
         people.core = { core }
         let users = people.users(core.rooms.active, form: host.form, settings: host.settings, t: host.peopleText)
         XCTAssertEqual(users.map { $0.optString("name") }, ["Mike", "Alice", "Bob", "Eva"])

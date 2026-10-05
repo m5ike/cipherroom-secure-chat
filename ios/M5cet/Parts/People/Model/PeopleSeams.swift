@@ -4,14 +4,34 @@
 //
 //   PeopleRoomExtras     a room's WebRTC statistics and a forward verified by key (RoomSession.peerStats,
 //                        forwardVerified) — the core's RoomController conforms
-//   PeopleContacts       the address book (Platform/Contacts, ContactsService)
+//   PeopleContacts       the address book (Platform/Contacts' ContactsService conforms)
 //   DetailsHiding        hiding / deleting a message in this view and the audit (ui/bubble/Hides, MessageAudit)
 //   PeopleProfileService the signed-in account's profile card (profile/Profiles: vault + /api/profile)
 
+import Contacts
+import ContactsUI
 import Foundation
 import M5Core
 import M5Crypto
 import M5Proto
+import os
+
+/// The part's log lines (os.Logger, subsystem cz.m5cet.app, category people) — never a name or a key.
+enum PeopleLog {
+    static let logger = os.Logger(subsystem: "cz.m5cet.app", category: "people")
+    static func warn(_ s: String) { logger.notice("\(s, privacy: .public)") }
+}
+
+/// org.json's lenient number reads the Java code relies on (optDouble then a cast).
+enum PeopleJSON {
+    /// `(long) o.optDouble(key, fallback)`: a number truncated toward zero, else the fallback.
+    static func long(_ o: JSONObject, _ key: String, _ fallback: Int64 = 0) -> Int64 {
+        guard let d = o.double(key), d.isFinite else { return fallback }
+        if d >= 9.2e18 { return Int64.max }
+        if d <= -9.2e18 { return Int64.min }
+        return Int64(d)
+    }
+}
 
 /// What People needs of a room beyond the RoomModel contract. A room without it shows its peers'
 /// connection as "connecting" and a forward without the key check.
@@ -27,28 +47,62 @@ protocol PeopleRoomExtras: AnyObject {
 
 // MARK: - the address book
 
-/// A contact the person picked for a link.
-struct PeopleContactPick: Sendable, Equatable {
-    /// The contact's name as the address book shows it.
-    let name: String
-    /// Its stable identifier (CNContact.identifier — Android's lookup key).
-    let identifier: String
-}
-
-/// The phone's contacts as People uses them (Android contacts/AddressBook + LinkActivity). iOS lets no app
-/// put rows into the Contacts app; a link lives in the vault (`people.links`) with the contact's identifier.
+/// The phone's contacts as People uses them (Android contacts/AddressBook + LinkActivity + Store) — the
+/// app's ContactsService (Platform/Contacts) conforms below. iOS lets no app put rows into the Contacts app:
+/// a link lives in the vault (`people.links`, the contact's identifier) and the system's suggestions
+/// (donated interactions) stand in for Android's "Message / Call via M5cet" rows.
 @MainActor
 protocol PeopleContacts: AnyObject {
-    /// "Link to a contact": the person picks a contact for this M5cet username (nil: cancelled).
-    func pickContact(for username: String, messageLabel: String, callLabel: String) async throws -> PeopleContactPick?
-    /// A linked contact's photo (image data), nil without one or without access.
-    func photo(identifier: String) async -> Data?
-    /// What the app put into the address book for this username goes (the contact itself stays).
-    func remove(username: String) async
-    /// Every trace of the app in the address book goes (people.contacts off, unlink all, a wipe).
-    func removeAll() async
-    /// people.contacts on again: the links kept in the vault back where the address book needs them.
-    func restore(links: [JSONObject]) async
+    /// The system's question for reading contacts (only when never asked) — on the person's action.
+    func requestAccess() async -> Bool
+    /// The person picks a contact (the system's picker: out of process, no permission needed); nil = cancelled.
+    func pickContact() async -> ContactCard?
+    /// Links an account's username with the picked contact: the contact's name, nil when it cannot be linked.
+    @discardableResult func link(username: String, signedIn: Bool, contact: ContactCard, enabled: Bool) -> String?
+    func unlink(username: String)
+    func unlinkAll()
+    /// people.contacts switched (off: the suggestions go, the links stay).
+    func setEnabled(_ on: Bool)
+    /// A linked contact's photo (image data), read off the main actor; nil without one or without access.
+    func contactPhoto(of username: String) async -> Data?
+}
+
+extension ContactsService: PeopleContacts {
+    func pickContact() async -> ContactCard? { await ContactPicker.pick() }
+
+    func contactPhoto(of username: String) async -> Data? {
+        guard let id = identifier(of: username) else { return nil }
+        let access = contacts
+        return await Task.detached(priority: .utility) { access.contact(id)?.thumbnail }.value
+    }
+}
+
+/// "Link to a contact": the system's contact picker (CNContactPickerViewController) over the app.
+@MainActor
+enum ContactPicker {
+    private static var delegate: Delegate?
+
+    static func pick() async -> ContactCard? {
+        guard let top = SecureDialog.topController() else { return nil }
+        return await withCheckedContinuation { (done: CheckedContinuation<ContactCard?, Never>) in
+            let d = Delegate { card in
+                delegate = nil
+                done.resume(returning: card)
+            }
+            delegate = d
+            let picker = CNContactPickerViewController()
+            picker.delegate = d
+            top.present(picker, animated: true)
+        }
+    }
+
+    @MainActor
+    private final class Delegate: NSObject, @preconcurrency CNContactPickerDelegate {
+        let done: @MainActor (ContactCard?) -> Void
+        init(done: @escaping @MainActor (ContactCard?) -> Void) { self.done = done }
+        func contactPickerDidCancel(_ picker: CNContactPickerViewController) { done(nil) }
+        func contactPicker(_ picker: CNContactPickerViewController, didSelect contact: CNContact) { done(SystemContactStore.card(of: contact)) }
+    }
 }
 
 // MARK: - hiding and deleting (MsgDetails)

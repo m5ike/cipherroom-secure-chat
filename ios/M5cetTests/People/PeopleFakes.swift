@@ -28,7 +28,7 @@ final class PeopleFakeRoom: RoomModel, PeopleRoomExtras {
     var revealRequest: String?
     let myId = "peer-me"
     let myName = "Mike"
-    let myPublicKey = PeopleSafetyTests.a
+    let myPublicKey = PeopleKeys.a
     var people: [PersonItem] = []
     var peers: [PeerRef] { people.filter { !$0.me && $0.channel == "open" }.map { PeerRef(id: $0.id, name: $0.name) } }
     var userCount: Int { people.filter { $0.channel == "open" }.count }
@@ -79,8 +79,8 @@ final class PeopleFakeRoom: RoomModel, PeopleRoomExtras {
     static func samplePeople() -> [PersonItem] {
         [person("away:acc-eva", "Eva", channel: "away", user: "eva-1234", lastSeen: t0 - 20 * 60_000, foreground: false),
          person("peer-bob", "Bob", proto: "legacy", rtt: 180),
-         person("peer-me", "Mike", me: true, user: "bystry-sokol-7k3q", key: PeopleSafetyTests.a, trust: "verified"),
-         person("peer-alice", "Alice", user: "alice-novak", key: PeopleSafetyTests.b, trust: "verified", rtt: 38)]
+         person("peer-me", "Mike", me: true, user: "bystry-sokol-7k3q", key: PeopleKeys.a, trust: "verified"),
+         person("peer-alice", "Alice", user: "alice-novak", key: PeopleKeys.b, trust: "verified", rtt: 38)]
     }
 
     func message(_ id: String) -> ChatMessage? { messages.last { $0.id == id } }
@@ -90,7 +90,7 @@ final class PeopleFakeRoom: RoomModel, PeopleRoomExtras {
     func profile(of peerId: String) -> JSONObject? { profiles[peerId] }
     func accountKey(of peerId: String) -> String { accountKeys[peerId] ?? "" }
     func safetyKeys(_ peerId: String) -> SafetyKeys { SafetyKeys(mine: myPublicKey, theirs: people.first { $0.id == peerId }?.publicKey ?? "") }
-    func safetyNumber(_ peerId: String) -> String { PeopleSafety.number(myPublicKey, safetyKeys(peerId).theirs) }
+    func safetyNumber(_ peerId: String) -> String { Safety.number(myPublicKey, safetyKeys(peerId).theirs) }
     func canPrivate(_ peerId: String) -> Bool { peers.contains { $0.id == peerId } }
 
     @discardableResult func send(_ o: Outgoing) -> String { "" }
@@ -163,23 +163,47 @@ final class PeopleFakeAccount: AccountModel {
     func bearer() async -> String { "" }
 }
 
+/// The address book with one contact the person picks (Alice's card), readable in full.
+final class PeopleFakeAddressBook: ContactStoreAccess, @unchecked Sendable {
+    var access: ContactsAccess = .full
+    var cards: [String: ContactCard] = ["ABC-123": ContactCard(identifier: "ABC-123", name: "Alice Nováková", thumbnail: nil)]
+    var asked = 0
+    func requestAccess() async -> Bool { asked += 1; return true }
+    func contact(_ identifier: String) -> ContactCard? { cards[identifier] }
+}
+
+/// The system's suggestions, counted.
 @MainActor
-final class PeopleFakeContacts: PeopleContacts {
-    var pick: PeopleContactPick? = PeopleContactPick(name: "Alice Nováková", identifier: "ABC-123")
-    var fail = false
-    var photoData: Data?
+final class PeopleFakeDonations: PeopleDonating {
+    var donated: [String] = []
     var removed: [String] = []
     var removedAll = 0
-    var restored: [[JSONObject]] = []
+    func donate(username: String, contact: ContactCard) { donated.append(username) }
+    func remove(username: String) { removed.append(username) }
+    func removeAll() { removedAll += 1 }
+}
 
-    func pickContact(for username: String, messageLabel: String, callLabel: String) async throws -> PeopleContactPick? {
-        if fail { throw ProfileServiceError.unavailable }
-        return pick
+/// The app's ContactsService over the test's store, with the picker answering as told.
+@MainActor
+final class PeopleFakeContacts: PeopleContacts {
+    let service: ContactsService
+    let book = PeopleFakeAddressBook()
+    let donations = PeopleFakeDonations()
+    var pick: ContactCard? = ContactCard(identifier: "ABC-123", name: "Alice Nováková", thumbnail: nil)
+
+    init(store: PeopleStore) {
+        service = ContactsService(store: store, contacts: book, donations: donations)
     }
-    func photo(identifier: String) async -> Data? { photoData }
-    func remove(username: String) async { removed.append(username) }
-    func removeAll() async { removedAll += 1 }
-    func restore(links: [JSONObject]) async { restored.append(links) }
+
+    func requestAccess() async -> Bool { await service.requestAccess() }
+    func pickContact() async -> ContactCard? { pick }
+    func link(username: String, signedIn: Bool, contact: ContactCard, enabled: Bool) -> String? {
+        service.link(username: username, signedIn: signedIn, contact: contact, enabled: enabled)
+    }
+    func unlink(username: String) { service.unlink(username: username) }
+    func unlinkAll() { service.unlinkAll() }
+    func setEnabled(_ on: Bool) { service.setEnabled(on) }
+    func contactPhoto(of username: String) async -> Data? { await service.contactPhoto(of: username) }
 }
 
 /// A test core: the fake rooms, an account, People's services in memory, a window host with its own settings.
@@ -191,7 +215,7 @@ struct PeopleWorld {
     let host: DesignHost
     let people: PeopleModel
     let profiles: MemoryProfiles
-    let records: MemoryPeopleRecords
+    let vault: PeopleMemoryVault
     let contacts: PeopleFakeContacts
 
     static func make(card: JSONObject? = MemoryProfiles.sampleCard()) -> PeopleWorld {
@@ -199,17 +223,18 @@ struct PeopleWorld {
         let rooms = PeopleFakeRooms([room])
         let core = CoreModels(rooms: rooms, account: PeopleFakeAccount())
         CoreModels.shared = core
-        let records = MemoryPeopleRecords()
-        let people = PeopleModel(store: PeopleStore(records: records, now: { 1_760_000_100_000 }))
+        let vault = PeopleMemoryVault()
+        let store = PeopleStore(vault: vault, clock: ClosureClock { 1_760_000_100_000 })
+        let people = PeopleModel(store: store)
         let profiles = MemoryProfiles(card: card)
         people.profiles = { profiles }
         people.now = { PeopleFakeRoom.t0 }
         people.core = { core }
-        let contacts = PeopleFakeContacts()
+        let contacts = PeopleFakeContacts(store: store)
         people.contacts = contacts
         PeopleParts.profiles = profiles
         let host = RendererTestSupport.host(state: StubScreenState(AppRouteState(enrolled: true, lockSetUp: true, locked: false, hasActiveRoom: true)))
-        return PeopleWorld(core: core, room: room, rooms: rooms, host: host, people: people, profiles: profiles, records: records, contacts: contacts)
+        return PeopleWorld(core: core, room: room, rooms: rooms, host: host, people: people, profiles: profiles, vault: vault, contacts: contacts)
     }
 
     func users() -> [JSONObject] { people.users(room, form: host.form, settings: host.settings, t: host.peopleText) }

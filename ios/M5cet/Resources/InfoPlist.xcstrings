@@ -368,55 +368,55 @@
         "cs" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Když pro místnost zapnete sdílení polohy, M5cet do ní posílá vaši polohu i tehdy, když je aplikace na pozadí. Sdílení můžete kdykoli vypnout."
+            "value" : "Když v Nastavení zapnete sledování polohy, M5cet posílá polohu tohoto zařízení na váš server M5cet, i když je aplikace na pozadí. Sledování můžete kdykoli vypnout."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Wenn Sie die Standortfreigabe für einen Raum einschalten, sendet M5cet Ihren Standort weiter an diesen Raum, auch wenn die App im Hintergrund läuft. Sie können sie jederzeit ausschalten."
+            "value" : "Wenn Sie in den Einstellungen die Standortverfolgung einschalten, sendet M5cet den Standort dieses Geräts an Ihren M5cet-Server, auch wenn die App im Hintergrund läuft. Sie können sie jederzeit ausschalten."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "When you turn on location sharing for a room, M5cet keeps sending your position to that room, also while the app is in the background. You can turn it off at any time."
+            "value" : "When you turn on location tracking in Settings, M5cet sends this device's position to your M5cet server, also while the app is in the background. You can turn it off at any time."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Si activas la ubicación compartida en una sala, M5cet sigue enviando tu posición a esa sala, también con la app en segundo plano. Puedes desactivarla en cualquier momento."
+            "value" : "Si activas el seguimiento de ubicación en Ajustes, M5cet envía la posición de este dispositivo a tu servidor M5cet, también con la app en segundo plano. Puedes desactivarlo en cualquier momento."
           }
         },
         "fi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Kun sijainnin jakaminen on päällä huoneessa, M5cet lähettää sijainnin huoneeseen myös sovelluksen ollessa taustalla. Jakamisen voi lopettaa milloin tahansa."
+            "value" : "Kun sijainnin seuranta on päällä asetuksissa, M5cet lähettää tämän laitteen sijainnin M5cet-palvelimellesi myös sovelluksen ollessa taustalla. Seurannan voi lopettaa milloin tahansa."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Si vous activez le partage de position pour une salle, M5cet continue d’envoyer votre position à cette salle, même lorsque l’app est en arrière-plan. Vous pouvez le désactiver à tout moment."
+            "value" : "Si vous activez le suivi de position dans les Réglages, M5cet envoie la position de cet appareil à votre serveur M5cet, même lorsque l’app est en arrière-plan. Vous pouvez le désactiver à tout moment."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Se attivi la condivisione della posizione per una stanza, M5cet continua a inviare la tua posizione a quella stanza, anche con l’app in background. Puoi disattivarla in qualsiasi momento."
+            "value" : "Se attivi il tracciamento della posizione nelle Impostazioni, M5cet invia la posizione di questo dispositivo al tuo server M5cet, anche con l’app in background. Puoi disattivarlo in qualsiasi momento."
           }
         },
         "sk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Keď pre miestnosť zapnete zdieľanie polohy, M5cet do nej posiela vašu polohu aj vtedy, keď je aplikácia na pozadí. Zdieľanie môžete kedykoľvek vypnúť."
+            "value" : "Keď v Nastaveniach zapnete sledovanie polohy, M5cet posiela polohu tohto zariadenia na váš server M5cet, aj keď je aplikácia na pozadí. Sledovanie môžete kedykoľvek vypnúť."
           }
         },
         "sl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ko za sobo vklopite deljenje lokacije, M5cet vanjo pošilja vaš položaj tudi, ko je aplikacija v ozadju. Deljenje lahko kadar koli izklopite."
+            "value" : "Ko v nastavitvah vklopite sledenje lokaciji, M5cet pošilja položaj te naprave na vaš strežnik M5cet, tudi ko je aplikacija v ozadju. Sledenje lahko kadar koli izklopite."
           }
         }
       }
@@ -608,55 +608,55 @@
         "cs" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "M5cet převádí vaši řeč na text, když diktujete zprávu nebo zadáváte hlasový příkaz."
+            "value" : "M5cet převádí řeč na text přímo v zařízení, když diktujete zprávu, zadáváte hlasový příkaz nebo v hovoru používáte převod hlasu na text (ten přepisuje i ostatní účastníky)."
           }
         },
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "M5cet wandelt Ihre Sprache in Text um, wenn Sie eine Nachricht diktieren oder einen Sprachbefehl geben."
+            "value" : "M5cet wandelt Sprache direkt auf diesem Gerät in Text um, wenn Sie eine Nachricht diktieren, einen Sprachbefehl geben oder im Anruf Sprache zu Text nutzen (das auch die anderen Teilnehmenden transkribiert)."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "M5cet turns your speech into text when you dictate a message or give a voice command."
+            "value" : "M5cet turns speech into text on this device when you dictate a message, give a voice command or use voice-to-text in a call (which also transcribes the other participants)."
           }
         },
         "es" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "M5cet convierte tu voz en texto cuando dictas un mensaje o das un comando de voz."
+            "value" : "M5cet convierte la voz en texto en este dispositivo cuando dictas un mensaje, das un comando de voz o usas voz a texto en una llamada (que también transcribe a los demás participantes)."
           }
         },
         "fi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "M5cet muuttaa puheen tekstiksi viestejä sanellessa ja äänikomentoja annettaessa."
+            "value" : "M5cet muuttaa puheen tekstiksi tällä laitteella, kun sanelet viestin, annat äänikomennon tai käytät puhelussa puheesta tekstiksi -toimintoa (joka litteroi myös muiden osallistujien puheen)."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "M5cet transforme votre voix en texte lorsque vous dictez un message ou donnez une commande vocale."
+            "value" : "M5cet transforme la voix en texte sur cet appareil lorsque vous dictez un message, donnez une commande vocale ou utilisez la transcription pendant un appel (qui transcrit aussi les autres participants)."
           }
         },
         "it" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "M5cet trasforma la tua voce in testo quando detti un messaggio o dai un comando vocale."
+            "value" : "M5cet trasforma la voce in testo su questo dispositivo quando detti un messaggio, dai un comando vocale o usi la trascrizione vocale in una chiamata (che trascrive anche gli altri partecipanti)."
           }
         },
         "sk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "M5cet prevádza vašu reč na text, keď diktujete správu alebo zadávate hlasový príkaz."
+            "value" : "M5cet prevádza reč na text priamo v zariadení, keď diktujete správu, zadávate hlasový príkaz alebo v hovore používate prevod hlasu na text (ten prepisuje aj ostatných účastníkov)."
           }
         },
         "sl" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "M5cet pretvori vaš govor v besedilo, ko narekujete sporočilo ali izgovorite glasovni ukaz."
+            "value" : "M5cet pretvarja govor v besedilo kar v tej napravi, ko narekujete sporočilo, izgovorite glasovni ukaz ali v klicu uporabljate pretvorbo govora v besedilo (ki prepisuje tudi druge udeležence)."
           }
         }
       }

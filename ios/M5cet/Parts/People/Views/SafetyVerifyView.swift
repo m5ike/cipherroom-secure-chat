@@ -7,8 +7,6 @@
 // it is about the keys being compared.
 
 import AVFoundation
-import CoreImage
-import CoreImage.CIFilterBuiltins
 import M5Design
 import SwiftUI
 import UIKit
@@ -46,7 +44,7 @@ struct SafetyVerifyView: View {
                         .accessibilityLabel(Text(verbatim: host.peopleText("nav.close")))
                         .accessibilityIdentifier("people.verify.close")
                 }
-                Text(verbatim: PeopleSafety.lines(number))
+                Text(verbatim: Safety.lines(number))
                     .font(.system(size: 19, weight: .bold, design: .monospaced))
                     .lineSpacing(5)
                     .foregroundStyle(fg)
@@ -56,14 +54,14 @@ struct SafetyVerifyView: View {
                 if scanning {
                     QRScannerView { text in
                         scanning = false
-                        let ok = PeopleSafety.qrMatches(text, number: number)
+                        let ok = SafetyQR.matches(text, number: number)
                         result = ok ? "match" : "mismatch"
                         if ok && !verified { onVerify(true, true) }
                     }
                     .frame(maxWidth: .infinity)
                     .frame(height: 260)
                     .clipShape(RoundedRectangle(cornerRadius: 16))
-                } else if let image = SafetyQR.image(PeopleSafety.qrPayload(number)) {
+                } else if let image = SafetyQR.image(SafetyQR.payload(number)) {
                     Image(uiImage: image)
                         .interpolation(.none)
                         .resizable()
@@ -157,26 +155,6 @@ struct PeoplePill: View {
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-    }
-}
-
-/// A QR code of a text (CoreImage, error correction M as the web's uqr), sharp pixels.
-enum SafetyQR {
-    static func image(_ text: String, scale: CGFloat = 8) -> UIImage? {
-        guard !text.isEmpty else { return nil }
-        let f = CIFilter.qrCodeGenerator()
-        f.message = Data(text.utf8)
-        f.correctionLevel = "M"
-        guard let out = f.outputImage?.transformed(by: CGAffineTransform(scaleX: scale, y: scale)),
-              let cg = CIContext(options: [.useSoftwareRenderer: false]).createCGImage(out, from: out.extent) else { return nil }
-        return UIImage(cgImage: cg)
-    }
-
-    /// What a QR image says (CoreImage's detector) — tests read the code back.
-    static func read(_ image: UIImage) -> String? {
-        guard let ci = CIImage(image: image),
-              let d = CIDetector(ofType: CIDetectorTypeQRCode, context: nil, options: [CIDetectorAccuracy: CIDetectorAccuracyHigh]) else { return nil }
-        return d.features(in: ci).compactMap { ($0 as? CIQRCodeFeature)?.messageString }.first
     }
 }
 

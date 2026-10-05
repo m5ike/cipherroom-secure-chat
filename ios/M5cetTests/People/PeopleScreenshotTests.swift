@@ -64,11 +64,11 @@ final class PeopleScreenshotTests: XCTestCase {
         }
         // People's shared model for the parts on screen.
         let people = PeopleModel.shared
-        people.store = PeopleStore(records: MemoryPeopleRecords())
+        people.store = PeopleStore(vault: PeopleMemoryVault())
         people.profiles = { w.profiles }
         people.core = { w.core }
         people.now = { PeopleFakeRoom.t0 }
-        people.store.putLink(username: "alice-novak", contactName: "Alice Nováková", lookup: "ABC-123")
+        people.store.putLink(username: "alice-novak", contactName: "Alice Nováková", identifier: "ABC-123")
         UserPanelState.shared = UserPanelState.sample(dock: "right", autoHide: false)
         ProfileEditor.shared.profiles = { w.profiles }
         ProfileEditor.shared.account = { w.core.account }
@@ -115,7 +115,7 @@ final class PeopleScreenshotTests: XCTestCase {
                 try dialog(MsgDetailsView(room: w.room, messageId: "m8", hides: DetailsHides(), now: { PeopleFakeRoom.t0 + 600_000 },
                                           timeZone: TimeZone(identifier: "Europe/Prague")),
                            host: host, device: device, dark: dark, name: "msg-info", out: out)
-                let number = PeopleSafety.number(PeopleSafetyTests.a, PeopleSafetyTests.b)
+                let number = Safety.number(PeopleKeys.a, PeopleKeys.b)
                 try dialog(SafetyVerifyView(name: "Alice", number: number, verified: false, ktAlert: "", onVerify: { _, _ in }, canScan: true),
                            host: host, device: device, dark: dark, name: "safety-number", out: out)
                 let field = ProfileFieldSheet.Field(type: "phone", label: "Mobil", value: "+420 777 123 456", audience: "room")

@@ -24,4 +24,19 @@ enum PeopleDebug {
         }
     }
 }
+
+/// The people records in memory (sample mode, tests): an always-open vault.
+final class PeopleMemoryVault: PeopleVault, @unchecked Sendable {
+    private let lock = NSLock()
+    private var records: [String: Data] = [:]
+    private var open = true
+
+    var isUnlocked: Bool { lock.withLock { open } }
+
+    func setUnlocked(_ on: Bool) { lock.withLock { open = on } }
+
+    func readRecord(_ name: String) -> Data? { lock.withLock { open ? records[name] : nil } }
+
+    func writeRecord(_ name: String, _ data: Data) throws { lock.withLock { if open { records[name] = data } } }
+}
 #endif

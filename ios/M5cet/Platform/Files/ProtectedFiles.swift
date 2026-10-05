@@ -102,8 +102,10 @@ struct SecurityPaths: Sendable {
     var bioWrap: URL { root.appendingPathComponent("user.bio") }
     var lockbox: URL { root.appendingPathComponent("lockbox", isDirectory: true) }
     var files: URL { root.appendingPathComponent("files", isDirectory: true) }
-    /// The software stand-in of the Keychain (unsigned simulator builds only).
-    var devKeychain: URL { shared.appendingPathComponent("dev-keychain", isDirectory: true) }
+    /// The software stand-ins of the Keychain (unsigned simulator builds only): the app-only group's
+    /// in the app's container, the shared group's on the App Group side.
+    var devKeychain: URL { root.appendingPathComponent("dev-keychain", isDirectory: true) }
+    var devSharedKeychain: URL { shared.appendingPathComponent("dev-keychain", isDirectory: true) }
 
     /// The app's real locations.
     static func system() -> SecurityPaths {

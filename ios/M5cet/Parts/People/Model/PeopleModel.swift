@@ -39,7 +39,7 @@ final class PeopleModel {
     @ObservationIgnored private var fresh = 0
 
     init(store: PeopleStore? = nil) {
-        self.store = store ?? PeopleStore(records: VaultPeopleRecords())
+        self.store = store ?? ContactsService.shared.store
     }
 
     private func touch() { revision &+= 1 }
@@ -66,8 +66,8 @@ final class PeopleModel {
             list.append(decorate(r, u)) // 6.7: a shared profile photo
         }
         list = list.enumerated().sorted { a, b in
-            let ka = a.element.bool("me") == true ? -1 : PeoplePresence.rank(a.element.optString("status"))
-            let kb = b.element.bool("me") == true ? -1 : PeoplePresence.rank(b.element.optString("status"))
+            let ka = a.element.bool("me") == true ? -1 : Presence.rank(a.element.optString("status"))
+            let kb = b.element.bool("me") == true ? -1 : Presence.rank(b.element.optString("status"))
             return ka != kb ? ka < kb : a.offset < b.offset
         }.map(\.element)
         Self.flagLookalikes(&list)
@@ -97,35 +97,35 @@ final class PeopleModel {
     private func enrich(_ u: inout JSONObject, sel: [String], contactsOn: Bool, t: (String) -> String, now at: Int64) {
         let id = u.optString("id"), name = u.optString("name"), username = u.optString("username"), channel = u.optString("channel")
         let me = u.bool("me") ?? false, signedIn = u.bool("signedIn") ?? false, open = channel == "open"
-        let status = PeoplePresence.status(channel, signedIn: signedIn, audio: u.optString("audio"))
+        let status = Presence.status(channel: channel, signedIn: signedIn, audio: u.optString("audio"))
         let rtt = PeopleJSON.long(u, "rtt", -1)
-        let bars = PeoplePresence.bars(open: open, rttMs: rtt)
-        let kid = PeopleSafety.keyId(u.optString("publicKey"))
+        let bars = Presence.bars(open: open, rttMs: rtt)
+        let kid = Safety.keyId(u.optString("publicKey"))
         let link = me || !signedIn || username.isEmpty ? nil : store.link(username)
         u["status"] = .string(status)
-        u["statusIcon"] = .string(PeoplePresence.icon(status))
-        u["statusColor"] = .string(PeoplePresence.color(status))
+        u["statusIcon"] = .string(Presence.icon(status))
+        u["statusColor"] = .string(Presence.color(status))
         u["statusLabel"] = .string(t("people.status." + status))
         u["signal"] = .double(Double(bars))
-        u["signalIcon"] = .string(PeoplePresence.signalIcon(bars))
-        u["signalColor"] = .string(PeoplePresence.signalColor(bars))
+        u["signalIcon"] = .string(Presence.signalIcon(bars))
+        u["signalColor"] = .string(Presence.signalColor(bars))
         u["rttText"] = .string(rtt >= 0 ? "\(rtt) ms" : "—")
-        u["glyph"] = .string(PeopleAvatars.glyph(name, nil))
-        u["avatarBg"] = .string(PeopleAvatars.background(name))
-        u["avatarFg"] = .string(PeopleAvatars.foreground(name))
+        u["glyph"] = .string(Avatars.glyph(name: name, avatar: nil))
+        u["avatarBg"] = .string(Avatars.background(name))
+        u["avatarFg"] = .string(Avatars.foreground(name))
         u["selectable"] = .bool(!me && open)
         u["selected"] = .bool(!me && open && sel.contains(id))
         u["linked"] = .bool(link != nil)
         u["contact"] = .string(link?.optString("contact") ?? "")
         u["photo"] = .string(link != nil && contactsOn ? photo(username, link: link!) : "")
-        u["canLink"] = .bool(!me && contactsOn && PeopleMatch.canLink(username, signedIn: signedIn))
+        u["canLink"] = .bool(!me && contactsOn && Match.canLink(username, signedIn: signedIn))
         u["kid"] = .string(kid)
         u["safetyVerified"] = .bool(!me && store.verified(kid))
         // The 6.0 trees: a valid hello with an unchanged key; "away" as a flag.
         u["verified"] = .bool((u.bool("signed") ?? false) && !(u.bool("changed") ?? false))
-        u["away"] = .bool(status == PeoplePresence.away)
+        u["away"] = .bool(status == Presence.away)
         // 6.7: the status dot and "last seen …" (online / away / far away).
-        PeopleLastSeen.decorate(&u, t: t, now: at)
+        u = LastSeen.decorate(u, words: t, now: at)
     }
 
     /// ProfileUi.decorate: a member without a contact photo shows the photo they share with the room.
@@ -161,20 +161,20 @@ final class PeopleModel {
         if let st, st.dtlsState == "connected" {
             security += " · " + (st.dtlsVersion.isEmpty ? "DTLS" : st.dtlsVersion) + (st.srtpCipher.isEmpty ? "" : " · " + st.srtpCipher)
         }
-        let number = safety ? PeopleSafety.number(keys.mine, keys.theirs) : ""
+        let number = safety ? Safety.number(keys.mine, keys.theirs) : ""
         u["peerShort"] = .string(id.utf16.count > 16 ? String(id.suffix(16)) : id)
-        u["sinceText"] = .string(since > 0 ? PeoplePresence.duration(at - since, h: t("people.h"), m: t("people.m"), s: t("people.s")) : "—")
+        u["sinceText"] = .string(since > 0 ? Presence.duration(at - since, h: t("people.h"), m: t("people.m"), s: t("people.s")) : "—")
         u["transport"] = .string(transport)
         u["transportLabel"] = .string(t("people.transport." + transport))
         u["candidates"] = .string(candidates)
         u["remote"] = .string(st?.remoteAddress ?? "")
         u["codec"] = .string(st?.codecs ?? "")
-        u["traffic"] = .string(st.map { PeoplePresence.bytes($0.bytesSent) + " / " + PeoplePresence.bytes($0.bytesReceived) } ?? "—")
+        u["traffic"] = .string(st.map { Presence.bytes($0.bytesSent) + " / " + Presence.bytes($0.bytesReceived) } ?? "—")
         u["security"] = .string(security)
         u["dtls"] = .string(st?.dtlsFingerprint ?? "")
-        u["fingerprint"] = .string(PeopleSafety.fingerprint(me ? mine : theirs))
+        u["fingerprint"] = .string(Safety.fingerprint(me ? mine : theirs))
         u["hasSafety"] = .bool(safety)
-        u["safety"] = .string(PeopleSafety.lines(number))
+        u["safety"] = .string(Safety.lines(number))
         u["safetyNumber"] = .string(number)
         u["room"] = .string(r.label)
         u["contactsOn"] = .bool(settings.bool("people.contacts"))
@@ -184,14 +184,12 @@ final class PeopleModel {
 
     /// A linked contact's photo as a data: URL ("" until it is read, or without one); read once, in the background.
     private func photo(_ username: String, link: JSONObject) -> String {
-        let k = PeopleMatch.key(username)
+        let k = Match.key(username)
         if let p = photos[k] { return p }
-        guard let contacts, !loading.contains(k) else { return "" }
-        let identifier = link.optString("lookup")
-        guard !identifier.isEmpty else { return "" }
+        guard let contacts, !loading.contains(k), !link.optString("lookup").isEmpty else { return "" }
         loading.insert(k)
         Task { @MainActor [weak self] in
-            let data = await contacts.photo(identifier: identifier)
+            let data = await contacts.contactPhoto(of: username)
             guard let self else { return }
             let url = data.flatMap { Self.small($0) }.map { "data:image/jpeg;base64," + $0.base64EncodedString() } ?? ""
             self.photos[k] = url
@@ -366,64 +364,57 @@ final class PeopleModel {
         guard p.bool("canLink") == true else { host.flash(title: "", text: host.peopleText("people.linkOnlyAccounts"), level: .warn); return }
         let username = p.optString("username"), name = p.optString("name")
         guard let contacts else { host.flash(title: "", text: host.peopleText("people.linkFailed"), level: .error); return }
+        let signedIn = p.bool("signedIn") ?? false
         Task { @MainActor [weak self, weak host] in
-            do {
-                guard let pick = try await contacts.pickContact(for: username, messageLabel: host?.peopleText("people.contact.message") ?? "",
-                                                                callLabel: host?.peopleText("people.contact.call") ?? "") else { return }
-                guard let self, let host else { return }
-                self.store.putLink(username: username, contactName: pick.name, lookup: pick.identifier)
-                self.photos[PeopleMatch.key(username)] = nil
-                host.flash(title: "", text: PeopleTexts.fill(host.peopleText("people.linked"), name: name, other: pick.name), level: .success)
-                self.refreshAll(host)
-            } catch {
-                host?.flash(title: "", text: host?.peopleText("people.linkFailed") ?? "", level: .error)
+            // Android asks for the contacts first (READ_CONTACTS): here only to show the linked contact's photo
+            // later — the picker itself needs no permission.
+            _ = await contacts.requestAccess()
+            guard let card = await contacts.pickContact() else { return }
+            guard let self, let host else { return }
+            guard let linked = contacts.link(username: username, signedIn: signedIn, contact: card, enabled: host.settings.bool("people.contacts")) else {
+                host.flash(title: "", text: host.peopleText("people.linkFailed"), level: .error)
+                return
             }
-        }
-    }
-
-    /// "Unlink": the app's traces go from the contact (the contact itself stays).
-    private func unlink(_ id: String, host: DesignHost) {
-        let p = person(core().rooms.active, id, form: host.form, settings: host.settings, t: host.peopleText)
-        let username = p?.optString("username") ?? id
-        guard store.link(username) != nil else { return }
-        let contacts = contacts
-        Task { @MainActor [weak self, weak host] in
-            await contacts?.remove(username: username)
-            guard let self else { return }
-            self.store.removeLink(username)
-            self.photos[PeopleMatch.key(username)] = nil
-            host?.flash(title: "", text: host?.peopleText("people.unlinked") ?? "", level: .success)
+            self.photos[Match.key(username)] = nil
+            host.flash(title: "", text: PeopleTexts.fill(host.peopleText("people.linked"), name: name, other: linked), level: .success)
             self.refreshAll(host)
         }
     }
 
-    /// Settings › People: every link goes (from the address book and from the app).
+    /// "Unlink": the link goes (the contact itself stays).
+    private func unlink(_ id: String, host: DesignHost) {
+        let p = person(core().rooms.active, id, form: host.form, settings: host.settings, t: host.peopleText)
+        let username = p?.optString("username") ?? id
+        guard store.link(username) != nil else { return }
+        if let contacts { contacts.unlink(username: username) } else { store.removeLink(username) }
+        photos[Match.key(username)] = nil
+        host.flash(title: "", text: host.peopleText("people.unlinked"), level: .success)
+        refreshAll(host)
+    }
+
+    /// Settings › People: every link goes (and what the system suggests for them).
     private func unlinkAll(host: DesignHost) {
         SecureDialog.alert(host: host, title: nil, message: host.peopleText("people.unlinkAllAsk"), actions: [
             .init(label: host.peopleText("people.unlinkAll"), role: .destructive) { [weak self, weak host] in
                 guard let self else { return }
-                let contacts = self.contacts
-                Task { @MainActor [weak self, weak host] in
-                    await contacts?.removeAll()
-                    guard let self else { return }
-                    self.store.clearLinks()
-                    self.photos = [:]
-                    host?.flash(title: "", text: host?.peopleText("people.unlinked") ?? "", level: .success)
-                    self.refreshAll(host)
-                }
+                self.unlinkAllNow(host)
             },
             .init(label: host.peopleText("nav.close"), role: .cancel),
         ])
     }
 
-    /// people.contacts off: what the app put into the address book goes (the links stay in the vault);
-    /// on again: it comes back, where the contact still is.
+    func unlinkAllNow(_ host: DesignHost?) {
+        if let contacts { contacts.unlinkAll() } else { store.clearLinks() }
+        photos = [:]
+        host?.flash(title: "", text: host?.peopleText("people.unlinked") ?? "", level: .success)
+        refreshAll(host)
+    }
+
+    /// people.contacts off: the system's suggestions for the links go (the links stay in the vault);
+    /// on again: they come back, where the contact still is.
     func contactsSettingChanged(on: Bool) {
         photos = [:]
         touch()
-        guard let contacts else { return }
-        if !on { Task { await contacts.removeAll() }; return }
-        let links = store.allLinks().compactMap { $0.value.objectValue }
-        Task { await contacts.restore(links: links) }
+        contacts?.setEnabled(on)
     }
 }
