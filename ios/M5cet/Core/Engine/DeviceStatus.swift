@@ -122,9 +122,8 @@ final class CoreDeviceService: DeviceEnrolling {
 
     static func description(name: String) -> DeviceDescription {
         let d = UIDevice.current
-        var sys = utsname()
-        uname(&sys)
-        let model = withUnsafeBytes(of: &sys.machine) { String(decoding: $0.prefix { $0 != 0 }, as: UTF8.self) }
+        // The model identifier ("iPhone18,3"; on a simulator the simulated device's, not "arm64").
+        let model = SystemDeviceFacts.modelIdentifier
         return DeviceDescription(name: name.isEmpty ? d.name : name, model: model, modelName: d.model, idiom: d.userInterfaceIdiom == .pad ? "pad" : "phone",
                                  os: "iOS", osVersion: d.systemVersion, appVersion: AppInfo.version, appCode: Int(AppInfo.build) ?? 0,
                                  locale: Locale.preferredLanguages.first ?? "en", sdk: 0, manufacturer: "Apple")

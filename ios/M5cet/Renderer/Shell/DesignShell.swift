@@ -143,14 +143,27 @@ struct ScreenView: View {
         let ctx = host.renderContext(animateEnter: animate)
         Group {
             if let node = host.resolve(screen, scope: host.scope(for: screen), context: ctx) {
+                let fill = node.box.fill.flatMap { $0.alpha > 0 ? $0 : nil }
                 NodeView(node: node)
                     .environment(\.designRenderContext, ctx)
+                    // iOS: a screen's own background reaches under the bars (the call screen's dark one left light
+                    // strips at the top and bottom), and where the system's bar text would not read on it, the
+                    // status bar steps aside.
+                    .background { if let fill { fill.color.ignoresSafeArea() } }
+                    .statusBarHidden(fill.map { Self.barTextUnreadable(on: $0, dark: host.isDark) } ?? false)
             } else {
                 Color.clear
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear { host.router.enterPending = false }
+    }
+
+    /// The status bar's text follows the tone (dark text when light); on a background that wants the other
+    /// text colour (a dark call screen in the light tone) it would not read.
+    static func barTextUnreadable(on fill: DesignColor, dark: Bool) -> Bool {
+        let wantsLightText = Palette.onColor(fill) == .white
+        return wantsLightText != dark
     }
 }
 

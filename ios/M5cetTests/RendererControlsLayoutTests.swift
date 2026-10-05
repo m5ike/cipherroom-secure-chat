@@ -84,6 +84,36 @@ final class RendererControlsLayoutTests: XCTestCase {
         XCTAssertEqual(ids.contains { $0.hasSuffix("/watch-hint") }, DesignHost.pairsWithWatch)
     }
 
+    /// A dark full screen (the call) in the light tone: its background goes under the bars and the status bar,
+    /// whose text would be dark on it, steps aside; the ordinary screens keep it.
+    func testTheStatusBarStepsAsideOnlyWhereItsTextWouldNotRead() {
+        let call = DesignColor(argb: 0xFF10_1418), light = DesignColor(argb: 0xFFF2_F2F7), black = DesignColor(argb: 0xFF00_0000)
+        XCTAssertTrue(ScreenView.barTextUnreadable(on: call, dark: false))
+        XCTAssertFalse(ScreenView.barTextUnreadable(on: call, dark: true))
+        XCTAssertFalse(ScreenView.barTextUnreadable(on: light, dark: false))
+        XCTAssertFalse(ScreenView.barTextUnreadable(on: black, dark: true))
+        XCTAssertTrue(ScreenView.barTextUnreadable(on: light, dark: true))
+    }
+
+    /// An App Store release has no download size: its notice says the version only (not "· 0 B"); a bundle's says both.
+    func testTheUpdateNoticeNamesASizeOnlyWhenThereIsOne() throws {
+        let host = RendererTestSupport.host()
+        func texts(_ update: DesignValue) throws -> [String: String] {
+            var scope = host.scope(for: "update")
+            scope = Scope(scope.variables.merging(["update": update]) { _, new in new })
+            let node = try XCTUnwrap(host.resolve("update", scope: scope, context: host.renderContext()))
+            var out: [String: String] = [:]
+            for n in node.all() { if case .text(let t) = n.content { out[String(n.id.split(separator: "/").last ?? "")] = t.text } }
+            return out
+        }
+        let release = try texts(["kind": "release", "version": "6.15.0", "size": 0, "notes": "", "state": "ready"])
+        XCTAssertNil(release["version"])
+        XCTAssertEqual(release["version-only"], host.translator.t("update.version") + " 6.15.0")
+        let bundle = try texts(["kind": "bundle", "version": "6.14-b2", "size": 181_862, "notes": "", "state": "ready"])
+        XCTAssertNil(bundle["version-only"])
+        XCTAssertTrue(bundle["version"]?.hasSuffix("· 177.6 kB") == true, bundle["version"] ?? "")
+    }
+
     func testEverySettingsScreensSwitchesAreUnclippedOnAPhoneAndAnIPad() {
         let state = SampleScreenState()
         let screens = DesignAssets.builtIn.document.screens.keys.filter { $0.hasPrefix("settings") }.sorted()

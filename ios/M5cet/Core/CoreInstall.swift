@@ -84,7 +84,10 @@ enum CoreInstall {
                 return DesignValue(any: n.prefs.scope(pushEnabled: core?.pushMode == "apns", linked: n.prefs.linked))
             }
         }
-        if let d = PushCenter.shared?.device { core.pushModeSource = { [weak d] in d?.pushMode ?? "poll" } }
+        if let d = PushCenter.shared?.device {
+            core.pushModeSource = { [weak d] in d?.pushMode ?? "poll" }
+            core.lastCheckinSource = { [weak d] in d?.lastCheckinAt ?? 0 }
+        }
 
         // Platform/Location.
         let loc = LocationService.shared

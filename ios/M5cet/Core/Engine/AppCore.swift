@@ -109,7 +109,11 @@ final class AppCore {
     /// (CoreInstall) — "apns" once the server has APNs and this device a push token.
     @ObservationIgnored var pushModeSource: @MainActor () -> String = { "poll" }
     var pushMode: String { pushModeSource() }
-    @ObservationIgnored private(set) var lastCheckin: Int64 = 0
+    /// The last good check-in (Settings › User › Connection): the core's own, or Platform/Push's (its background and
+    /// scheduled check-ins are not the core's — CoreInstall), whichever is later.
+    @ObservationIgnored private var ownLastCheckin: Int64 = 0
+    @ObservationIgnored var lastCheckinSource: (@MainActor () -> Int64)?
+    var lastCheckin: Int64 { max(ownLastCheckin, lastCheckinSource?() ?? 0) }
     @ObservationIgnored var iceCount = 0
     /// The device key's id (what the server calls its kid).
     @ObservationIgnored private(set) var deviceKid = "—"
@@ -224,7 +228,7 @@ final class AppCore {
 
     /// A check-in (the policy, $define); the time of the last good one for Settings › User.
     func checkIn(_ reason: String) async {
-        if await device.checkIn(reason: reason) { lastCheckin = EpochMs.now }
+        if await device.checkIn(reason: reason) { ownLastCheckin = EpochMs.now }
     }
 
     private func policyChanged(_ st: DeviceState) {

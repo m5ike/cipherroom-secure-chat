@@ -16,7 +16,7 @@ enum CoreSlots {
         registry.register("lockPad") { ctx in AnyView(LockPadPart(ctx: ctx, state: state, core: core)) }
         registry.register("enrollForm") { ctx in AnyView(EnrollFormPart(ctx: ctx, core: core, state: state)) }
         registry.register("joinForm") { ctx in AnyView(JoinFormPart(ctx: ctx, core: core, state: state, actions: actions)) }
-        registry.register("roomList") { ctx in AnyView(RoomListPart(ctx: ctx, rooms: core.rooms)) }
+        registry.register("roomList") { ctx in AnyView(RoomListPart(ctx: ctx)) }
         registry.register("roomTabs") { ctx in AnyView(RoomTabsPart(ctx: ctx, rooms: core.rooms, actions: actions)) }
         registry.register("callControls") { ctx in AnyView(CallControlsPart(ctx: ctx, rooms: core.rooms)) }
         registry.register("callVideo") { ctx in AnyView(CallVideoPart(ctx: ctx, rooms: core.rooms)) }
@@ -216,10 +216,11 @@ private struct JoinFormPart: View {
 
 private struct RoomListPart: View {
     let ctx: SlotContext
-    let rooms: RoomsController
 
     var body: some View {
-        let items = rooms.items
+        // The core in use (CoreModels.shared): the engine's rooms — or the sample core's in a DEBUG preview, where
+        // the engine has none (a part never knows which core it runs on).
+        let items = CoreModels.shared.rooms.items
         ZStack {
             if items.isEmpty {
                 Text(ctx.t("rooms.empty"))
