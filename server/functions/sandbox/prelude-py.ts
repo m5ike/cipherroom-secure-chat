@@ -763,7 +763,7 @@ def _setup(ctx):
             delete=lambda url, **o: _acall("http.request", {**o, "method": "DELETE", "url": url}),
             head=lambda url, **o: _acall("http.request", {**o, "method": "HEAD", "url": url}),
         ),
-        dns=_NS(resolve=lambda name, type="A": _acall("dns.resolve", name, type)),
+        dns=_NS(resolve=lambda name, type="A", timeout_ms=None: _acall("dns.resolve", name, type, {"timeoutMs": timeout_ms} if timeout_ms else None)),
         webhook=_NS(
             create=lambda **spec: _acall("webhook.create", spec),
             wait=lambda hook, timeout_ms=0: _acall("webhook.wait", hook["token"] if isinstance(hook, dict) else hook, timeout_ms),

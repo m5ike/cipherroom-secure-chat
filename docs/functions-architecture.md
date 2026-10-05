@@ -219,7 +219,7 @@ světem, je asynchronní. Typy pro našeptávání v IDE generuje jeden zdroj
 | `m5.prompt / m5.form` | dotaz za běhu (text, volba, potvrzení) a formulář ze schématu; živé čekání |
 | `m5.expect / m5.webhook` | očekávaná událost pro trvalé pokračování; `webhook.create({ ttl, once, secret })` → URL vázaná na běh a session; `webhook.wait(...)` |
 | `m5.http` | `get/post/put/patch/delete/request`: hlavičky, cookie jar (v rámci session), JSON, `FormData` (i soubory), raw tělo, přesměrování, časový limit, velikost; jen hosté povolení modelem, ochrana SSRF |
-| `m5.dns` | `resolve(name, type)` A/AAAA/CNAME/MX/TXT/SRV/CAA/NS/PTR, DoH nebo systémový resolver |
+| `m5.dns` | `resolve(name, type, { timeoutMs })` A/AAAA/CNAME/MX/TXT/SRV/CAA/NS/PTR, DoH nebo systémový resolver; od 6.11 s časovým limitem (výchozí 4 s, viz níže) |
 | `m5.crypto` | hash (SHA-2/3, BLAKE2/3), HMAC, HKDF, PBKDF2, scrypt, Argon2id; náhoda; AES-GCM, ChaCha20-Poly1305; RSA, ECDSA/ECDH (P-256/384), Ed25519/X25519: klíče, podpis, ověření, šifrování; X.509 (parsování, ověření řetězce), CSR; **OpenSSH** klíče (formáty, otisky, podpis `ssh-keygen -Y`); **OpenPGP** (klíče, šifrování, podpis, ověření — OpenPGP.js); JWT/JWS/JWE |
 | `m5.id` | UUID v4/v7, ULID, nanoid, krátké tagy, slug, hash-ID, čítače (přes cache) |
 | `m5.codec` | base64/base64url/base32/base58/hex, URL (encode, parse, build), HTML escape, JSON/YAML/TOML/CSV/XML, `pack/unpack` (struct formáty), gzip/deflate/brotli/zstd, bzip2 (WASM), zip/tar, MIME, UTF-8/16, quoted-printable |
@@ -235,6 +235,25 @@ Implementace: čisté pomocníky (`codec`, `id`, část `crypto`, `codes`) běž
 **uvnitř sandboxu** jako přibalené knihovny (rychlé, žádný přechod
 k hostiteli); vše s I/O a tajemstvími běží **u hostitele** v TypeScriptu —
 jednou, pro oba jazyky.
+
+**Časové limity volání hostitele (6.11).** Čekání na hostitele se do
+výpočetního limitu běhu (`wallMs`) nepočítá (hlídač se pozastaví) — každé
+takové volání proto musí skončit samo:
+
+- `m5.dns.resolve` — každý dotaz má limit **4 s** (`FUNCTIONS_DNS_TIMEOUT_MS`,
+  250 ms – 15 s; volání může chtít vlastní `{ timeoutMs }`, v Pythonu
+  `timeout_ms=`). Dřív dotaz bez odpovědi držel běh, dokud to c-ares nevzdal
+  (několik pokusů po několika sekundách, za VPN déle). Bez odpovědi v limitu
+  dotaz skončí chybou s kódem **`timeout`** („no answer in time: example.com
+  TXT (4000 ms)“), kterou funkce zachytí a pokračuje s tím, co odpovědělo.
+  `FUNCTIONS_DNS_SERVERS` („1.1.1.1, 8.8.8.8:53“) určí jmenné servery pro
+  funkce (jinak systémové).
+- `m5.http` — limit požadavku (15 s výchozí, max. 120 s) nově pokrývá i
+  překlad jména (dřív `getaddrinfo` čekal bez limitu).
+- `m5.ai` (limity prvního bajtu a nečinnosti), `m5.telephony` (limit
+  poskytovatele), `m5adm` (15 s) limity měly; `m5.prompt / m5.form` 5 min,
+  `m5.webhook.wait` svým limitem, vše dohromady nejvýš 10 min čekání.
+- Zrušený běh (volající odešel, kap. 8.1) přeruší své HTTP a AI požadavky.
 
 ## 6. Balíčky, soubory, importy, verze
 
@@ -293,6 +312,33 @@ files:    index.js · dns.js · http.js · README.md · tests/*.js
   (Light / Server-enhanced), executor.
 - **Revize modelu**: každé uložení je verze (jako historie rozvržení ve 4.13).
 
+### 7.1 Ikona a návod modelu (6.11, hotovo)
+
+- **`icon`** — avatar odpovědí modelu v chatu: odpovědi chodí jako příchozí
+  zprávy od interního odesílatele **„system-messenger“** se jménem modelu a
+  jeho ikonou (`client/src/lib/system-messenger.ts`). Je to jméno ikony
+  [lucide](https://lucide.dev) (`[a-z0-9-]{1,40}`, např. `mail`) **nebo jedno
+  emoji** (jeden grafém: piktogram, vlajka, keycap); prázdná = aplikace ji
+  vybere podle klíčového slova (`DEFAULT_MODEL_ICONS`, jinak `bot`). Jiná
+  hodnota → `400 bad-icon`.
+- **`usage`** — vlastní krátký návod modelu s příklady (prostý text, konce
+  řádků zůstávají, řídicí znaky pryč, nejvýš **500 znaků**, jinak
+  `400 bad-usage`). Aplikace ho ukáže u chybného volání a v našeptávači,
+  `/help <příkaz>` ho vypíše.
+- Úložiště: sloupce `models.icon` a `models.usage` (`TEXT NOT NULL DEFAULT
+  ''`) — starší databáze je dostane migrací (prázdné); jsou i v revizích
+  modelu. Uložení, které je nepošle, je ponechá.
+- Konzole: *Functions › Models* má pole **Icon** (výběr z běžných ikon
+  lucide a několika emoji, pole pro libovolné jméno nebo emoji, živý náhled
+  „odesílatele“ s barvou podle klíčového slova) a **Usage** (počítadlo
+  0 / 500). Nápověda pod klíčovým slovem ukazuje celý řádek použití
+  (`/check <n> [host]`). Modely se samostatně neexportují — exportní balíček
+  `.m5pkg` nese jen balíček; ikona a návod jsou v databázi a jejích zálohách.
+- `GET /api/functions/commands` vrací u každého příkazu `icon` a `usage`
+  (prázdné, když nejsou) a u vstupů i jejich kontroly `pattern`, `min`,
+  `max`, takže klient pozná chybnou hodnotu dřív, než ji pošle.
+  `m5.functions.list()` je má také.
+
 ## 8. Executory
 
 ### 8.1 Chat — `/klíčové-slovo`
@@ -318,6 +364,84 @@ files:    index.js · dns.js · http.js · README.md · tests/*.js
    seznamu, např. Místnost, Moje připojení) jdou jen volajícímu.
 7. **Dialog**: `m5.prompt/form` se ukáže jako karta v chatu volajícího;
    odpověď jde jako událost běhu.
+
+### 8.1.1 Chybné parametry, konec streamu, odchod volajícího (6.11, hotovo)
+
+**Chybné parametry.** Server ověří **všechny** vstupy (ne jen do první
+chyby) a odmítne běh jednou odpovědí `bad-input`, která nese, co je špatně,
+definici modelu a návod — klient ji ukáže („co je špatně + definice +
+návod“). `POST /api/functions/run` (bez `stream`) odpoví `400`:
+
+```json
+{
+  "ok": false, "code": "bad-input",
+  "message": "Count: is required; Host: must be a hostname",
+  "problems": [
+    { "input": "n", "label": "Count", "problem": "missing", "expected": "a whole number 1–10", "message": "is required" },
+    { "input": "host", "label": "Host", "problem": "type", "expected": "a host name (example.com)", "message": "must be a hostname" }
+  ],
+  "command": { "keyword": "check", "name": "Checker", "summary": "…", "runtime": "server", "visibility": "caller", "mine": true,
+               "inputs": [{ "name": "n", "type": "integer", "label": "Count", "required": true, "min": 1, "max": 10, "help": "…" }, …],
+               "events": [], "model": "g-check", "icon": "shield-check", "usage": "/check 5 example.com — …" },
+  "usageLine": "/check <n> [host] [code]"
+}
+```
+
+- `problems[]` má tvar klientského `InputProblem`
+  (`system-messenger.ts`: `input`, `label`, `problem` = `missing` · `type` ·
+  `pattern` · `range` · `values`, `expected`) a navíc `message` — slova
+  serveru. `command` je model jako příkaz (stejný tvar jako v
+  `GET /commands`), `usageLine` je podpis z jeho vstupů (povinné v `<>`,
+  volitelné v `[]`, jako `commandUsage()` klienta).
+- Se `stream: true` je totéž **jediná** událost `error` (bez `start`):
+  `{ code, message, problems, command, usageLine }`.
+- Odpovědi jiných entry pointů (`/api/functions/event`), webhooků a API
+  nesou při `bad-input` jen `problems`.
+- Prázdné volání modelu, jehož vstupy jsou volitelné, server nechá projít —
+  model odpoví sám (typicky formulářem, jako `/mail` nebo `/hlr`).
+
+**Konec streamu.** Každý streamovaný běh skončí **právě jednou** událostí
+`done` nebo `error` — nikdy obojím ani dvakrát (selhání při skládání
+odpovědi už není druhý konec). Funkce, která spadla, je `done` s `error`
+(a s odpovědí error entry pointu); běh, který nešel spustit (nepublikovaný
+balíček, chybný vstup), je `error`. Udržovací `: ping` jde každých 15 s
+(`FUNCTIONS_SSE_PING_MS`).
+
+**Ohlášené čekání.** Aplikace vzdá běh, od kterého 30 s nepřišla žádná
+událost (pingy se nepočítají, otevřený dotaz hodiny zastaví). Když běh čeká
+na hostitele (DNS, HTTP, AI, telefonie, m5adm, kryptografie, kódy, webhook —
+hlídač výpočtu tam stojí) a jeho nejstarší takové volání čeká aspoň 10 s
+(`FUNCTIONS_WAIT_NOTICE_MS`) a volající aspoň 10 s nic nedostal
+(`FUNCTIONS_WAIT_EVERY_MS`), runner pošle událost `progress`, co čeká:
+
+```
+event: progress
+data: {"runId":"run_…","type":"progress","p":0.2,"text":"Waiting for DNS answers (3 of 17)…",
+       "waiting":{"kind":"dns","pending":3,"total":17,"ms":12034}}
+```
+
+`p` je poslední `p`, které běh sám ohlásil (jinak `null`), `waiting.kind`
+je `dns` · `http` · `ai` · `telephony` · `adm` · `crypto` · `codes` ·
+`webhook` (nejstarší čekání; text jmenuje nejvýš dva druhy), `pending` / `total`
+počet volání toho druhu, která ještě čekají / byla položena, než všechna
+doběhla, `ms` jak dlouho čeká nejstarší. Běh, který sám hlásí průběh nebo
+posílá výstupy, ani rychlá volání ohlášení nedostanou; skutečně zaseknuté
+spojení aplikace dál pozná (žádné události).
+
+**Odchod volajícího.** Odpojení se pozná podle `close` **odpovědi** před
+jejím koncem — `close` požadavku od Node 16 přijde, jakmile se přečte tělo,
+takže dřívější úklid na něm se při skutečném odpojení nespustil. Běh se pak
+**zruší**: jeho otevřené dotazy (`m5.prompt / m5.form`, NFC) skončí, HTTP a
+AI požadavky se přeruší, sandbox dostane `cancel` (a do 2 s skončí, jinak
+ho runner zabije) a běh se zapíše se stavem **`cancelled`** (chyba
+`Cancelled`); error entry point se nespouští — odpověď by neměl kdo číst.
+Běh zrušený dřív, než ho sandbox převzal, se už nespustí.
+
+**Chyby mimo handler.** Tělo, které není JSON, nebo je příliš velké, má
+pod `/api/functions` také JSON s kódem: `400 { ok: false, code: "bad-json",
+message }`, `413 … "too-large"` (obecný handler služby kód nedává). Ostatní
+odpovědi `/api/functions/*` kód mají (`no-command`, `off`, `rate`,
+`bad-request`, `unauthorized`, …).
 
 ### 8.2 Webhook
 
@@ -705,6 +829,48 @@ jako toky z nástrojů NFC.EMV / NFC.e-ID (`script/gen-nfc-flows.ts`):
 zařízení volajícího a použije ho jen pro toto čtení; na server klíč nejde,
 model dostane, co vrátí čip — výpis, fotografii). Jako ostatní balíčky NFC se
 instalují **vypnuté**, s viditelností *caller* (viz [`nfc.md`](nfc.md)).
+
+6.11 (vestavěné balíčky 1.4.0, `tel-hlr` 1.1.0):
+
+- **Ikona a návod** (kap. 7.1) má každý vestavěný model; kde je klíčové
+  slovo v `DEFAULT_MODEL_ICONS`, je ikona stejná:
+
+  | Příkaz | Ikona | | Příkaz | Ikona |
+  |---|---|---|---|---|
+  | `/help` | `circle-help` | | `/sms` | `message-square-text` |
+  | `/whois`, `/dns` | `globe` | | `/whatsapp` | `message-circle` |
+  | `/web` | `app-window` | | `/viber` | `message-circle-more` |
+  | `/mail` | `mail` | | `/messenger` | `messages-square` |
+  | `/domain` | `server` | | `/lookup` | `search` |
+  | `/call` | `phone-call` | | `/hlr` | `phone` |
+  | `/phone-bridge` | `phone-forwarded` | | `/nfc-scan` | `scan-line` |
+  | `/nfc-uid` | `fingerprint-pattern` | | `/nfc-open` | `nfc` |
+  | `/emv` | `credit-card` | | `/emv-history` | `receipt` |
+  | `/eid` | `id-card` | | | |
+
+  Instalace, která už model má, doplní jen chybějící ikonu / návod
+  (nastavené operátorem zůstanou); jednou na instalaci se doplní i
+  modelům, jejichž balíček se nemění (značka `<balíček>#meta` v
+  `builtins.json`). Oprava: vestavěný model nainstalovaný **vypnutý**
+  (telefonie, NFC) dostával při každé aktualizaci druhý model — hledal se
+  jen mezi zapnutými; teď se najde i vypnutý a přesune na novou verzi.
+- **`/hlr`** bere číslo přímo: vstup `number` (volitelný, `string` bez
+  `pattern` — kontroluje ho model). `/hlr +420603123456` (i s mezerami,
+  pomlčkami, tečkami, závorkami nebo `00` na začátku) hned zjistí HLR a
+  ukáže výsledek stejně jako odeslaný formulář (JSON „HLR“); `/hlr` samo odpoví formulářem;
+  číslo, které není v mezinárodním tvaru, odpoví chybou (flash) a
+  formulářem **předvyplněným** tím, co volající napsal. Tok
+  (`script/gen-telephony-flows.ts`, `direct: "number"`) má v `execute`
+  Input → úpravu čísla → porovnání s E.164 → If (HLR a výsledek / kód
+  s formulářem). Balíček se instaluje dál vypnutý.
+- **`/mail`** skončí vždy: kontroly běží najednou v rozpočtu
+  (`netkit.MAIL_BUDGET_MS` 20 s, každý dotaz nejvýš 4 s; MX, TXT, DMARC,
+  MTA-STS, TLS-RPT, BIMI a 25 selektorů DKIM paralelně, pak adresy MX a
+  politika MTA-STS), co DNS nezodpoví včas, je v tabulce „⏱ no answer in
+  time“, ve výčtu na konci a ve varovném flash — a nepočítá se jako chybějící
+  záznam (žádná rada „No SPF record“, když DNS jen mlčel). `mailInfo()`
+  vrací navíc `timeouts` a `late`; `lookup(name, type, timeoutMs)` vrací
+  `{ ok, records, error, timeout }`. `/help <příkaz>` ukáže návod modelu.
 
 ## 12. Bezpečnost
 

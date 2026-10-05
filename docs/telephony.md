@@ -313,7 +313,10 @@ Práva: běh člověka potřebuje jeho Telephony & SIP práva (`call`, `sms`,
 nespustil (webhook, plán, API), grant modelu (Functions › model › *Beyond
 the caller* › m5.telephony). Vestavěné balíčky `tel-*` (`/call`, `/sms`,
 `/whatsapp`, `/viber`, `/messenger`, `/lookup`, `/hlr`, `/phone-bridge`) se
-instalují vypnuté. Konzole: karta *m5.telephony* na stránce Telephony
+instalují vypnuté. Od 6.11 bere `/hlr` číslo i přímo: `/hlr +420603123456`
+hned ukáže výsledek, `/hlr` samo formulář, chybné číslo chybu a formulář
+předvyplněný tím, co volající napsal (viz `functions-architecture.md`,
+kap. 11.5). Konzole: karta *m5.telephony* na stránce Telephony
 (`GET /api/admin/telephony/sdk`, `GET …/sdk/calls/:id`,
 `POST …/sdk/bridges/:id/release`).
 

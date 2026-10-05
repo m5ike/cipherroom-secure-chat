@@ -843,6 +843,19 @@ textarea.input--sm { min-height: 0; }
 .fn-groups { display: flex; flex-wrap: wrap; gap: 6px; }
 .fn-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 999px; font-size: 12px; cursor: pointer; }
 .fn-chip--on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
+/* 6.11: a model's icon — the avatar of its answers in the chat — and its preview */
+.fn-icon-row { align-items: center; }
+.fn-icon-row > .fn-icon-input { flex: 0 0 150px; }
+.fn-icon-preview { display: inline-flex; align-items: center; gap: 8px; padding: 4px 10px 4px 4px; border: 1px solid var(--border); border-radius: 999px; }
+.fn-avatar { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 30px; height: 30px; border-radius: 50%; color: #fff; font-size: 16px; line-height: 1; }
+.fn-avatar .ico { width: 17px; height: 17px; }
+.fn-avatar__txt { font-size: 11px; font-weight: 700; text-transform: uppercase; }
+.fn-icon-picker { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.fn-icon-opt { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-sm); background: transparent; color: inherit; font-size: 15px; cursor: pointer; }
+.fn-icon-opt:hover:not(:disabled) { border-color: var(--accent); }
+.fn-icon-opt--on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-2); }
+.fn-icon-opt:disabled { cursor: default; opacity: .6; }
+.fn-icon-note--err { color: var(--err); }
 .fn-inputs { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
 .fn-input-row { display: grid; grid-template-columns: 1.2fr 1fr 1.2fr 1fr auto auto; gap: 6px; align-items: center; }
 .fn-req { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--muted); }

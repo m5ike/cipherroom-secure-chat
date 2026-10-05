@@ -91,8 +91,19 @@ function ipv6Hextets(ip: string): number[] | null {
 // server); never set this in production — it turns the SSRF guard off.
 const allowLocal = () => process.env.FUNCTIONS_HTTP_ALLOW_LOCAL === "1";
 
+/** Waits for `p`, but no longer than the signal allows (6.11: getaddrinfo cannot be cancelled — the request stops waiting for it). */
+function untilAborted<T>(p: Promise<T>, signal: AbortSignal | undefined, onAbort: () => Error): Promise<T> {
+  if (!signal) return p;
+  if (signal.aborted) return Promise.reject(onAbort());
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(onAbort());
+    signal.addEventListener("abort", stop, { once: true });
+    p.then((v) => { signal.removeEventListener("abort", stop); resolve(v); }, (e) => { signal.removeEventListener("abort", stop); reject(e); });
+  });
+}
+
 /** Resolves a hostname and returns a safe address to connect to, or throws. */
-async function resolveSafe(rawHostname: string): Promise<{ address: string; family: number }> {
+async function resolveSafe(rawHostname: string, signal?: AbortSignal, onAbort: () => Error = () => new NetError("timeout", "the request ran out of time")): Promise<{ address: string; family: number }> {
   const ok = allowLocal();
   // URL.hostname keeps an IPv6 literal's brackets ("[::1]").
   const hostname = rawHostname.replace(/^\[|\]$/g, "");
@@ -101,8 +112,8 @@ async function resolveSafe(rawHostname: string): Promise<{ address: string; fami
     return { address: hostname, family: isIP(hostname) };
   }
   let records: Array<{ address: string; family: number }>;
-  try { records = await dnsp.lookup(hostname, { all: true }); }
-  catch (err) { throw new NetError("dns", `cannot resolve ${hostname}: ${(err as Error).message}`); }
+  try { records = await untilAborted(dnsp.lookup(hostname, { all: true }), signal, onAbort); }
+  catch (err) { if (err instanceof NetError) throw err; throw new NetError("dns", `cannot resolve ${hostname}: ${(err as Error).message}`); }
   if (!records.length) throw new NetError("dns", `cannot resolve ${hostname}`);
   if (!ok) for (const r of records) if (isBlockedIp(r.address)) throw new NetError("ssrf", `${hostname} resolves to a private or reserved address (${r.address})`);
   return records[0];
@@ -127,8 +138,9 @@ const clampInt = (v: unknown, def: number, max: number) => {
 
 const FORBIDDEN_HEADERS = new Set(["host", "content-length", "connection"]);
 
-/** Makes one HTTP request with the SSRF guard and size / time limits. */
-export async function httpRequest(spec: HttpSpec, bytesOf: (v: unknown) => Buffer | null): Promise<Record<string, unknown>> {
+/** Makes one HTTP request with the SSRF guard and size / time limits.
+ *  6.11: the time limit covers the name lookup too, and `cancel` (the run was cancelled) stops it. */
+export async function httpRequest(spec: HttpSpec, bytesOf: (v: unknown) => Buffer | null, cancel?: AbortSignal): Promise<Record<string, unknown>> {
   if (typeof spec?.url !== "string") throw new NetError("bad-argument", "url is required");
   const method = String(spec.method ?? "GET").toUpperCase();
   if (!/^(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)$/.test(method)) throw new NetError("bad-argument", `unsupported method ${method}`);
@@ -149,24 +161,26 @@ export async function httpRequest(spec: HttpSpec, bytesOf: (v: unknown) => Buffe
   const started = Date.now();
   let url = spec.url;
   let hops = 0;
-  const deadline = AbortSignal.timeout(timeout);
+  const timer = AbortSignal.timeout(timeout);
+  const deadline = cancel ? AbortSignal.any([timer, cancel]) : timer;
+  const stopped = () => (cancel?.aborted && !timer.aborted ? new NetError("cancelled", "the run was cancelled") : new NetError("timeout", `the request took longer than ${timeout} ms`));
   for (;;) {
     let u: URL;
     try { u = new URL(url); } catch { throw new NetError("bad-argument", `not a URL: ${url.slice(0, 120)}`); }
     if (u.protocol !== "http:" && u.protocol !== "https:") throw new NetError("scheme", "only http(s) is allowed");
-    const pin = await resolveSafe(u.hostname);
+    const pin = await resolveSafe(u.hostname, deadline, stopped);
     // Pin the connection to the checked address (defeats DNS rebinding).
     let res: PinnedResponse;
     try {
       res = await pinnedRequest(u, pin, { method, headers, body, signal: deadline });
     } catch (err) {
-      if (deadline.aborted || (err as Error).name === "TimeoutError") throw new NetError("timeout", `the request took longer than ${timeout} ms`);
+      if (deadline.aborted || (err as Error).name === "TimeoutError") throw stopped();
       throw new NetError("network", (err as Error).message);
     }
     const loc = res.headers.get("location");
     if (res.status >= 300 && res.status < 400 && loc) {
       if (redirect === "error") { res.discard(); throw new NetError("redirect", `the server redirected to ${loc}`); }
-      if (redirect === "manual") return await readResponse(res, u.href, maxBytes, started);
+      if (redirect === "manual") return await readResponse(res, u.href, maxBytes, started).catch((err) => { throw deadline.aborted ? stopped() : err; });
       res.discard();
       if (++hops > maxRedirects) throw new NetError("redirect", "too many redirects");
       const next = new URL(loc, u);
@@ -175,7 +189,7 @@ export async function httpRequest(spec: HttpSpec, bytesOf: (v: unknown) => Buffe
       url = next.href;
       continue;
     }
-    return await readResponse(res, u.href, maxBytes, started);
+    return await readResponse(res, u.href, maxBytes, started).catch((err) => { throw deadline.aborted ? stopped() : err; });
   }
 }
 
@@ -275,16 +289,55 @@ async function readResponse(res: PinnedResponse, finalUrl: string, maxBytes: num
 
 const DNS_TYPES = new Set(["A", "AAAA", "CNAME", "MX", "TXT", "NS", "SRV", "CAA", "PTR", "SOA"]);
 
-export async function dnsResolve(name: unknown, type: unknown): Promise<unknown> {
+/** 6.11: how long one lookup may take — FUNCTIONS_DNS_TIMEOUT_MS (default 4 s); a call may ask for 250 ms – 15 s. */
+export const DNS_MIN_TIMEOUT = 250;
+export const DNS_MAX_TIMEOUT = 15_000;
+export function dnsTimeout(asked?: unknown): number {
+  const env = Number(process.env.FUNCTIONS_DNS_TIMEOUT_MS);
+  const def = Number.isFinite(env) && env > 0 ? Math.min(Math.max(env, DNS_MIN_TIMEOUT), DNS_MAX_TIMEOUT) : 4000;
+  const n = Number(asked);
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.max(Math.floor(n), DNS_MIN_TIMEOUT), DNS_MAX_TIMEOUT) : def;
+}
+
+/** 6.11: the name servers functions ask — FUNCTIONS_DNS_SERVERS ("1.1.1.1, 8.8.8.8:53"), else the system's. */
+function dnsServers(): string[] {
+  return String(process.env.FUNCTIONS_DNS_SERVERS ?? "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
+}
+
+/**
+ * m5.dns.resolve(name, type, { timeoutMs }). 6.11: every lookup has a time
+ * limit (dnsTimeout) — a resolver that does not answer used to hold the run
+ * until c-ares gave up (several tries of several seconds, longer behind a
+ * VPN); now the lookup is cancelled and fails with code "timeout" ("no answer
+ * in time"), so a function can go on with what did answer.
+ */
+export async function dnsResolve(name: unknown, type: unknown, opts?: unknown): Promise<unknown> {
   const host = String(name ?? "").trim();
   const t = String(type ?? "A").toUpperCase();
   if (!host) throw new NetError("bad-argument", "a name is required");
   if (!DNS_TYPES.has(t)) throw new NetError("bad-argument", `unsupported record type ${t}`);
+  const ms = dnsTimeout(opts && typeof opts === "object" ? (opts as { timeoutMs?: unknown }).timeoutMs : undefined);
+  // One try per server within the limit; the timer below is the hard stop.
+  const resolver = new dnsp.Resolver({ timeout: ms, tries: 1 });
+  const servers = dnsServers();
+  if (servers.length) {
+    try { resolver.setServers(servers); } catch (err) { throw new NetError("dns", `FUNCTIONS_DNS_SERVERS: ${(err as Error).message}`); }
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { resolver.cancel(); reject(new NetError("timeout", `no answer in time: ${host} ${t} (${ms} ms)`)); }, ms);
+    timer.unref?.();
+  });
   try {
-    if (t === "PTR") return await new Promise((resolve, reject) => dnsp.reverse(host).then(resolve, reject));
-    return await dnsp.resolve(host, t as "A");
+    const lookup = t === "PTR" ? resolver.reverse(host) : resolver.resolve(host, t as "A");
+    return await Promise.race([lookup, limit]);
   } catch (err) {
-    throw new NetError("dns", `cannot resolve ${host} ${t}: ${(err as Error).message}`);
+    if (err instanceof NetError) throw err;
+    const e = err as { code?: string; message?: string };
+    if (e.code === "ETIMEOUT" || e.code === "ECANCELLED") throw new NetError("timeout", `no answer in time: ${host} ${t} (${ms} ms)`);
+    throw new NetError("dns", `cannot resolve ${host} ${t}: ${e.message}`);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 }
 

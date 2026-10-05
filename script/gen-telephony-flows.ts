@@ -29,6 +29,12 @@ type TelPackage = {
   node: { type: string; params?: Record<string, unknown>; wires: Record<string, string> };
   /** How the result is shown. */
   show: { kind: "markdown"; template: string; keys: string[] } | { kind: "json"; title: string };
+  /**
+   * 6.11: the command takes this field's value too ("/hlr +420603123456"): execute checks it
+   * (spaces, dashes, dots, brackets and a leading 00 are tidied away) and calls the function at
+   * once; without it — the form; with a wrong one — an error and the form, prefilled with it.
+   */
+  direct?: string;
 };
 
 const PACKAGES: TelPackage[] = [
@@ -89,6 +95,7 @@ const PACKAGES: TelPackage[] = [
     fields: [tel("number", "Number")],
     node: { type: "tel.hlr", wires: { number: "number" } },
     show: { kind: "json", title: "HLR" },
+    direct: "number",
   },
   {
     name: "tel-did", keyword: "phone-bridge", title: "Phone bridge", summary: "Lend a phone number and a 5-digit code that connect a caller to a room member",
@@ -105,10 +112,49 @@ let seq = 0;
 const node = (type: string, x: number, y: number, params: Record<string, unknown> = {}, values: Record<string, unknown> = {}): FlowNode => ({ id: `n${++seq}`, type, x, y, params, values });
 const edge = (from: FlowNode, fp: string, to: FlowNode, tp: string): FlowEdge => ({ id: `e${++seq}`, from: { node: from.id, port: fp }, to: { node: to.id, port: tp } });
 
+/**
+ * 6.11: execute for a command that takes the number itself — the Input, tidied, checked
+ * against E.164; If it holds: the function and its result (as the form function shows it);
+ * else a Code node answers with the form — prefilled with what was typed, and saying what
+ * is wrong (with an error flash) when something was.
+ */
+function directExecute(p: TelPackage, fieldName: string): { nodes: FlowNode[]; edges: FlowEdge[] } {
+  const field = p.fields.find((f) => f.name === fieldName)!;
+  const input = node("flow.input", 40, 120, { name: fieldName, type: "string", label: String(field.label ?? fieldName), default: "", required: false, values: "" });
+  const typed = node("code.expr", 220, 120, { args: "n", expr: "String(n ?? \"\").trim().slice(0, 40)" }, {});
+  typed.label = "What was typed";
+  const clean = node("code.expr", 400, 120, { args: "t", expr: "t.replace(/[\\s().\\/-]/g, \"\").replace(/^00(?=[1-9])/, \"+\")" }, {});
+  clean.label = "Tidy the number";
+  const valid = node("logic.compare", 580, 60, { op: "matches" }, { b: E164 });
+  valid.label = "International form?";
+  const gate = node("logic.if", 760, 120);
+  const call = node(p.node.type, 940, 60, { ...p.node.params });
+  const shown = p.show.kind === "json" ? node("out.json", 1120, 60, { title: p.show.title }) : null;
+  const form = { name: p.name, title: p.title, text: p.summary, submit: "Send", labels: "top", fields: p.fields };
+  const code = [
+    `const t = String(typed || "");`,
+    `const form = ${JSON.stringify(form)};`,
+    `if (t) await m5.caller.send(m5.out.flash(\`“\${t}” is not a phone number in the international form (+420603123456).\`, "error"));`,
+    `await m5.caller.send(m5.out.form(t ? { ...form, text: \`“\${t}” is not a phone number in the international form — correct it and send.\`, fields: form.fields.map((f) => (f.name === ${JSON.stringify(fieldName)} ? { ...f, default: t } : f)) } : form));`,
+    `return t;`,
+  ].join("\n");
+  const ask = node("code.block", 940, 240, { args: `${fieldName}, typed`, code });
+  ask.label = "The form (prefilled)";
+  const nodes = [input, typed, clean, valid, gate, call, ...(shown ? [shown] : []), ask];
+  const edges = [
+    edge(input, "value", typed, "n"), edge(typed, "result", clean, "t"), edge(clean, "result", valid, "a"),
+    edge(valid, "result", gate, "condition"), edge(clean, "result", gate, "value"),
+    edge(gate, "then", call, p.node.wires[fieldName] ?? fieldName),
+    ...(shown ? [edge(call, "result", shown, "value")] : []),
+    edge(gate, "else", ask, fieldName), edge(typed, "result", ask, "typed"),
+  ];
+  return { nodes, edges };
+}
+
 function flowOf(p: TelPackage): Flow {
   seq = 0;
-  // execute: the form.
-  const form = node("out.form", 80, 120, { form: { name: p.name, title: p.title, text: p.summary, submit: "Send", labels: "top", fields: p.fields } });
+  // execute: the form — or (6.11) the number from the command, checked, else the form.
+  const exec = p.direct ? directExecute(p, p.direct) : { nodes: [node("out.form", 80, 120, { form: { name: p.name, title: p.title, text: p.summary, submit: "Send", labels: "top", fields: p.fields } })], edges: [] as FlowEdge[] };
   // form: its values → the telephony node → the result.
   const ev = node("flow.event", 40, 80);
   const call = node(p.node.type, 380, 80, { ...p.node.params });
@@ -145,14 +191,17 @@ function flowOf(p: TelPackage): Flow {
   const errMsg = node("data.get", 240, 60, { path: "message" });
   const flash = node("out.flash", 460, 60, { level: "error" });
   const errGraph = { nodes: [errEv, errMsg, flash], edges: [edge(errEv, "error", errMsg, "object"), edge(errMsg, "value", flash, "text")] };
-  return parseFlow({ format: "m5flow", version: 1, lang: "js", name: p.title, summary: p.summary, nodes: [form], edges: [], functions: { form: g, error: errGraph } });
+  return parseFlow({ format: "m5flow", version: 1, lang: "js", name: p.title, summary: p.summary, nodes: exec.nodes, edges: exec.edges, functions: { form: g, error: errGraph } });
 }
 
 export function telephonyPackages() {
   return PACKAGES.map((p) => {
     const flow = flowOf(p);
     const c = compileFlow(flow);
-    const readme = `# ${p.title}\n\n${p.description}\n\nChat: \`/${p.keyword}\` — a form; sending it runs the \`form\` function.\n\nBuilt as a flow: open it in Functions › Builder (flow.m5flow.json); index.js is what it compiles to.\n\nNeeds the Telephony & SIP module (a provider configured, and your rights: Modules & groups). Its model starts switched off: it costs money.\n`;
+    const chat = p.direct
+      ? `Chat: \`/${p.keyword} +420603123456\` — the ${p.title} of that number at once (spaces, dashes and a leading 00 are fine); \`/${p.keyword}\` alone — a form, sending it runs the \`form\` function; a number that is not in the international form — an error and the form, prefilled with what was typed.`
+      : `Chat: \`/${p.keyword}\` — a form; sending it runs the \`form\` function.`;
+    const readme = `# ${p.title}\n\n${p.description}\n\n${chat}\n\nBuilt as a flow: open it in Functions › Builder (flow.m5flow.json); index.js is what it compiles to.\n\nNeeds the Telephony & SIP module (a provider configured, and your rights: Modules & groups). Its model starts switched off: it costs money.\n`;
     return { ...p, files: { "flow.m5flow.json": `${JSON.stringify(flow, null, 2)}\n`, [c.file]: `${c.code}\n`, "README.md": readme } };
   });
 }

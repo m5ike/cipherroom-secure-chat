@@ -42,7 +42,8 @@ function taggedBytes(v: unknown): Buffer | null {
 }
 
 export class RunRefused extends Error {
-  constructor(readonly code: string, message: string) {
+  /** 6.11: more for the caller — bad-input: { problems } (inputs.ts InputProblem[]). */
+  constructor(readonly code: string, message: string, readonly details?: Record<string, unknown>) {
     super(message);
     this.name = "RunRefused";
   }
@@ -212,6 +213,147 @@ export function openInteractions(runId: string): Array<{ id: string; kind: strin
 /** Public: cancel a run's open questions because the caller went away. */
 export function endInteractionsFor(runId: string): void { endInteractions(runId, "the caller left"); }
 
+/** 6.11: a run's network work (m5.http, m5.ai) — aborted when the run is cancelled. */
+const runAborts = new Map<string, AbortController>();
+/** 6.11: runs cancelled before their sandbox took them (the caller left at once): run id → when. */
+const cancelRequests = new Map<string, { at: number; why: string }>();
+const CANCEL_REQUEST_TTL_MS = 10 * 60_000;
+/** Runs told to stop while in their sandbox (run id → why): however the sandbox then ends, a run that did not finish was cancelled. */
+const cancelling = new Map<string, string>();
+
+/**
+ * 6.11: stops a run — its caller went away (the chat's stream closed): its
+ * open questions are cancelled, its HTTP / AI calls aborted, and its sandbox
+ * stops; the run is recorded as "cancelled" (and its error entry point does
+ * not run — nobody is there for its answer). A run that has not reached its
+ * sandbox yet is stopped as it gets there. True when a running run was told.
+ */
+export function cancelRun(runId: string, why = "the run was cancelled"): boolean {
+  if (pool?.cancel(runId, why)) {
+    cancelling.set(runId, why);
+    endInteractions(runId, why);
+    runAborts.get(runId)?.abort(new Error(why));
+    return true;
+  }
+  endInteractions(runId, why);
+  const now = Date.now();
+  for (const [id, r] of cancelRequests) if (now - r.at > CANCEL_REQUEST_TTL_MS) cancelRequests.delete(id);
+  cancelRequests.set(runId, { at: now, why });
+  return false;
+}
+
+/* ------------------------------------------- 6.11: "still waiting" notices */
+
+/**
+ * While a run waits on the host (DNS, HTTP, AI, telephony, m5adm, a webhook…)
+ * its compute watchdog is paused — and its caller hears nothing. The chat
+ * gives up on a run that sends no event for 30 s (pings do not count), so a
+ * run whose oldest host call has waited WAIT_NOTICE_MS, and that has sent
+ * nothing for WAIT_EVERY_MS, gets a `progress` event naming what it waits for:
+ *   { runId, type: "progress", p: <its last p, or null>, text: "Waiting for DNS answers (3 of 17)…",
+ *     waiting: { kind: "dns", pending: 3, total: 17, ms: 12000 } }
+ * A run that reports progress itself, or calls that answer quickly, get none.
+ * The caller's own questions (m5.prompt / m5.form / NFC) are not counted: the
+ * chat pauses its clock while one is open.
+ */
+export type WaitKind = "dns" | "http" | "ai" | "telephony" | "adm" | "crypto" | "codes" | "webhook";
+const WAIT_TEXT: Record<WaitKind, [one: string, many: string]> = {
+  dns: ["a DNS answer", "DNS answers"],
+  http: ["a web server", "web servers"],
+  ai: ["the AI model", "the AI model"],
+  telephony: ["the telephony provider", "the telephony provider"],
+  adm: ["the administration", "the administration"],
+  crypto: ["a cryptographic operation", "cryptographic operations"],
+  codes: ["a code to be drawn", "codes to be drawn"],
+  webhook: ["a webhook", "webhooks"],
+};
+/** Read at each check, so an operator (or a test) may tune them: the first notice after this much waiting… */
+const waitNoticeMs = () => Math.max(50, Number(process.env.FUNCTIONS_WAIT_NOTICE_MS) || 10_000);
+/** …and then at most this long without any event to the caller. */
+const waitEveryMs = () => Math.max(50, Number(process.env.FUNCTIONS_WAIT_EVERY_MS) || 10_000);
+
+type RunWaits = {
+  calls: Map<number, { kind: WaitKind; since: number }>;
+  batches: Map<WaitKind, { total: number; pending: number }>;
+  timer: ReturnType<typeof setInterval> | null;
+  lastP: number | null;
+  /** The last event the caller got (a progress, an output, a question, a notice). */
+  lastEvent: number;
+};
+const runWaits = new Map<string, RunWaits>();
+let waitSeq = 0;
+
+function waitsOf(runId: string): RunWaits {
+  let w = runWaits.get(runId);
+  if (!w) { w = { calls: new Map(), batches: new Map(), timer: null, lastP: null, lastEvent: Date.now() }; runWaits.set(runId, w); }
+  return w;
+}
+/** The run told its caller something (it counts as a sign of life). */
+function runActivity(runId: string, p?: number): void {
+  const w = runWaits.get(runId);
+  if (!w) return;
+  w.lastEvent = Date.now();
+  if (typeof p === "number" && Number.isFinite(p)) w.lastP = p;
+}
+/** The text of a notice: the oldest kind first ("Waiting for DNS answers (3 of 17) and a web server…"). */
+function waitText(w: RunWaits): { text: string; kind: WaitKind; pending: number; total: number } {
+  const byAge = [...w.calls.values()].sort((a, b) => a.since - b.since);
+  const kinds = [...new Set(byAge.map((c) => c.kind))].slice(0, 2);
+  const part = (k: WaitKind) => { const b = w.batches.get(k) ?? { total: 1, pending: 1 }; return b.total > 1 ? `${WAIT_TEXT[k][1]} (${b.pending} of ${b.total})` : WAIT_TEXT[k][0]; };
+  const first = w.batches.get(kinds[0]) ?? { total: 1, pending: 1 };
+  return { text: `Waiting for ${kinds.map(part).join(" and ")}…`, kind: kinds[0], pending: first.pending, total: first.total };
+}
+function waitTick(runId: string, w: RunWaits): void {
+  if (!w.calls.size) return;
+  const now = Date.now();
+  const oldest = Math.min(...[...w.calls.values()].map((c) => c.since));
+  if (now - oldest < waitNoticeMs() || now - w.lastEvent < waitEveryMs()) return;
+  const t = waitText(w);
+  w.lastEvent = now;
+  runEvents.emit("run", { runId, type: "progress", p: w.lastP, text: t.text, waiting: { kind: t.kind, pending: t.pending, total: t.total, ms: now - oldest } });
+}
+/** Counts a host call the run waits on (see above); the notices stop when nothing is pending. */
+function hostWait<T>(runId: string, kind: WaitKind, p: Promise<T>): Promise<T> {
+  const w = waitsOf(runId);
+  const id = ++waitSeq;
+  w.calls.set(id, { kind, since: Date.now() });
+  const batch = w.batches.get(kind) ?? { total: 0, pending: 0 };
+  batch.total++; batch.pending++;
+  w.batches.set(kind, batch);
+  if (!w.timer) {
+    w.timer = setInterval(() => waitTick(runId, w), Math.max(25, Math.min(waitNoticeMs(), waitEveryMs()) / 4));
+    w.timer.unref?.();
+  }
+  const done = () => {
+    w.calls.delete(id);
+    if (--batch.pending <= 0 && w.batches.get(kind) === batch) w.batches.delete(kind);
+    if (!w.calls.size && w.timer) { clearInterval(w.timer); w.timer = null; }
+  };
+  return p.then((v) => { done(); return v; }, (e) => { done(); throw e; });
+}
+function endWaits(runId: string): void {
+  const w = runWaits.get(runId);
+  if (w?.timer) clearInterval(w.timer);
+  runWaits.delete(runId);
+}
+
+/** Runs the spec in a sandbox — unless the run was cancelled before it got there. */
+async function runSandboxed(spec: RunSpec, handlers: RunHandlers): Promise<Awaited<ReturnType<SandboxPool["run"]>>> {
+  const early = cancelRequests.get(spec.id);
+  if (early) { cancelRequests.delete(spec.id); return { ok: false, error: { type: "Cancelled", message: early.why }, ms: 0, memMb: 0, engine: "" }; }
+  runAborts.set(spec.id, new AbortController());
+  waitsOf(spec.id).lastEvent = Date.now();
+  try {
+    const r = await thePool().run(spec, handlers);
+    const why = cancelling.get(spec.id);
+    // A question that failed, a call that was cut: the run stopped because it was cancelled.
+    return why !== undefined && !r.ok ? { ...r, error: { type: "Cancelled", message: why } } : r;
+  } finally { runAborts.delete(spec.id); cancelling.delete(spec.id); endWaits(spec.id); }
+}
+
+/** A finished sandbox run's status. */
+const statusOf = (r: Awaited<ReturnType<SandboxPool["run"]>>): Run["status"] => (r.ok ? "done" : r.error.type === "TimeLimit" ? "timed-out" : r.error.type === "Cancelled" ? "cancelled" : "failed");
+
 /** Cancels every open question of a run (it finished, failed or was cancelled). */
 function endInteractions(runId: string, why: string): void {
   const forRun = interactions.get(runId);
@@ -235,6 +377,7 @@ function ask(runId: string, kind: InteractionKind, spec: unknown, control: Param
     let forRun = interactions.get(runId);
     if (!forRun) { forRun = new Map(); interactions.set(runId, forRun); }
     forRun.set(id, { resolve, reject, timer, kind, spec, at: Date.now() });
+    runActivity(runId);
     runEvents.emit("run", { runId, type: "interaction", interaction: { id, kind, spec } });
   }));
 }
@@ -341,21 +484,23 @@ function admContext(model: Model, caller: Caller, runId: string): AdmContext {
 function hostHandler(model: Model, sessionId: string, runId: string, caller: Caller, chain?: { id: string; sessionId: string }): RunHandlers["host"] {
   return async (fn, args, control) => {
     if (fn === "prompt" || fn === "form") return ask(runId, fn, args[0] ?? {}, control);
-    if (fn === "http.request") return control.wait(httpRequest(args[0] as never, taggedBytes));
-    if (fn === "dns.resolve") return control.wait(dnsResolve(args[0], args[1]));
-    if (fn === "crypto") return control.wait(hostCrypto(String(args[0]), args.slice(1)));
-    if (fn === "codes") return control.wait(hostCode((args[0] ?? {}) as never));
+    // 6.11: a cancelled run's requests stop too; a long wait is announced to the caller (hostWait).
+    if (fn === "http.request") return control.wait(hostWait(runId, "http", httpRequest(args[0] as never, taggedBytes, runAborts.get(runId)?.signal)));
+    // 6.11: a lookup has a time limit (4 s by default; { timeoutMs } within 250 ms – 15 s).
+    if (fn === "dns.resolve") return control.wait(hostWait(runId, "dns", dnsResolve(args[0], args[1], args[2])));
+    if (fn === "crypto") return control.wait(hostWait(runId, "crypto", hostCrypto(String(args[0]), args.slice(1))));
+    if (fn === "codes") return control.wait(hostWait(runId, "codes", hostCode((args[0] ?? {}) as never)));
     if (fn === "ai") {
       if ((aiTokens.get(runId) ?? 0) >= AI_RUN_TOKEN_CAP) throw new RunRefused("ai-budget", "this run has reached its AI token budget");
-      return control.wait(hostAi(String(args[0]), args.slice(1), caller, (t) => aiTokens.set(runId, (aiTokens.get(runId) ?? 0) + t)));
+      return control.wait(hostWait(runId, "ai", hostAi(String(args[0]), args.slice(1), caller, (t) => aiTokens.set(runId, (aiTokens.get(runId) ?? 0) + t), runAborts.get(runId)?.signal)));
     }
     // 5.2: the commands the caller may run (for /help and menus).
     if (fn === "functions.list") return commandsFor(caller);
     // 6.0: the administration, as the owner granted it (host-adm.ts → /api/admin/*).
-    if (fn === "adm") return control.wait(hostAdm(String(args[0] ?? ""), String(args[1] ?? ""), Array.isArray(args[2]) ? args[2] : [], admContext(model, caller, runId)));
+    if (fn === "adm") return control.wait(hostWait(runId, "adm", hostAdm(String(args[0] ?? ""), String(args[1] ?? ""), Array.isArray(args[2]) ? args[2] : [], admContext(model, caller, runId))));
     if (fn === "adm.info") return admInfo(admContext(model, caller, runId));
     // 6.0: m5.telephony — calls, SMS, chat messages, lookups, the audio bridge.
-    if (fn === "telephony") return control.wait(hostTelephony(String(args[0] ?? ""), Array.isArray(args[1]) ? args[1] : [], { model, caller, runId, chainId: chain?.id ?? "" }));
+    if (fn === "telephony") return control.wait(hostWait(runId, "telephony", hostTelephony(String(args[0] ?? ""), Array.isArray(args[1]) ? args[1] : [], { model, caller, runId, chainId: chain?.id ?? "" })));
     // 6.3: m5.nfc — the op runs on the caller's DEVICE. Gate (a person's own NFC
     // access, or the model's grant for a run nobody started), strip any raw key /
     // PIN, then ask the device as an "nfc" interaction and wait for the NfcResult.
@@ -370,7 +515,7 @@ function hostHandler(model: Model, sessionId: string, runId: string, caller: Cal
       return ask(runId, "nfc", { command }, control, ttlMs).then((result) => { cardRuns.add(runId); return sanitizeNfcResult(result); });
     }
     if (fn === "webhook.create") return makeWebhook(runId, (args[0] ?? {}) as { once?: boolean; durable?: boolean; ttl?: unknown }, model, sessionId, caller);
-    if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return waitWebhook(token, Number(args[1]) || 0, control); }
+    if (fn === "webhook.wait") { const token = String(args[0] ?? ""); return hostWait(runId, "webhook", waitWebhook(token, Number(args[1]) || 0, control)); }
     const scopeName = (raw: unknown): string => {
       const s = String(raw ?? "model");
       // 5.3: "chain" — m5.model.cache, the processing session's own cache.
@@ -514,12 +659,12 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
   const handlers: RunHandlers = {
     host: hostHandler(model, sessionId, runId, caller, { id: chain.id, sessionId: chain.sessionId }),
     onLog: (level, msg, fields) => log(level as RunLog["level"], msg, fields),
-    onOutput: (out) => { outputs.push(out); runEvents.emit("run", { runId, type: "output", output: out }); },
-    onProgress: (p, text) => runEvents.emit("run", { runId, type: "progress", p, text }),
+    onOutput: (out) => { outputs.push(out); runActivity(runId); runEvents.emit("run", { runId, type: "output", output: out }); },
+    onProgress: (p, text) => { runActivity(runId, p); runEvents.emit("run", { runId, type: "progress", p, text }); },
     onRejected: (reason) => { rejectedLive.push(reason); log("error", `a sent output was left out: ${reason}`); },
   };
 
-  const result = await thePool().run(spec, handlers);
+  const result = await runSandboxed(spec, handlers);
   endInteractions(runId, "the run ended");
   endWebhooks(runId);
   endAdmRun(runId);
@@ -528,9 +673,10 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
   const values = result.ok ? result.values : [];
   const rejected: Rejected[] = result.ok ? result.rejected : [];
   for (const r of rejected) log("error", `result[${r.index}] was left out: ${r.reason}`, { index: r.index });
+  if (!result.ok && result.error.type === "Cancelled") log("warn", `cancelled: ${result.error.message}`);
   flush();
   const finalOutputs = [...outputs, ...values];
-  run.status = result.ok ? "done" : result.error.type === "TimeLimit" ? "timed-out" : "failed";
+  run.status = statusOf(result);
   run.outputs = finalOutputs;
   run.error = result.ok ? null : result.error;
   run.finishedAt = Date.now();
@@ -544,7 +690,8 @@ export async function execute(model: Model, rawInputs: Record<string, unknown>, 
 
   const out: ExecuteResult = { run, outputs: finalOutputs, value: values[0] ?? null, values, result: result.ok ? result.result : null, chain: chain.id, call: callId };
   // The error entry point: the function failed, or returned something that is not an output.
-  if (!opts.noErrorEndpoint && callType !== "error" && (run.error || problems.length)) {
+  // (6.11: not for a cancelled run — its caller is gone.)
+  if (!opts.noErrorEndpoint && callType !== "error" && run.status !== "cancelled" && (run.error || problems.length)) {
     const errEp = endpointOf(model, "error");
     if (errEp) {
       const error = run.error ?? { type: "BadResult", message: problems.join("; ").slice(0, 2000) };
@@ -639,11 +786,11 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
   const runHandlers: RunHandlers = {
     host: hostHandler({ id: "__adhoc__", onEvent: "" } as Model, sessionId, runId, caller, { id: chain.id, sessionId: chain.sessionId }),
     onLog: logLine,
-    onOutput: (out) => { outputs.push(out); runEvents.emit("run", { runId, type: "output", output: out }); handlers?.onOutput?.(out); },
-    onProgress: (p, text) => { runEvents.emit("run", { runId, type: "progress", p, text }); handlers?.onProgress?.(p, text); },
+    onOutput: (out) => { outputs.push(out); runActivity(runId); runEvents.emit("run", { runId, type: "output", output: out }); handlers?.onOutput?.(out); },
+    onProgress: (p, text) => { runActivity(runId, p); runEvents.emit("run", { runId, type: "progress", p, text }); handlers?.onProgress?.(p, text); },
     onRejected: (reason) => { rejectedLive.push(reason); logLine("error", `a sent output was left out: ${reason}`); },
   };
-  const result = await thePool().run(full, runHandlers);
+  const result = await runSandboxed(full, runHandlers);
   endInteractions(runId, "the run ended");
   endWebhooks(runId);
   endAdmRun(runId);
@@ -651,7 +798,7 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
   const rejected = result.ok ? result.rejected : [];
   for (const r of rejected) logLine("error", `result[${r.index}] was left out: ${r.reason}`, { index: r.index });
   const finalOutputs = [...outputs, ...values];
-  run.status = result.ok ? "done" : result.error.type === "TimeLimit" ? "timed-out" : "failed";
+  run.status = statusOf(result);
   run.outputs = finalOutputs; run.error = result.ok ? null : result.error; run.finishedAt = Date.now(); run.ms = result.ms; run.memMb = result.memMb;
   if (cardRuns.delete(runId)) run.sensitive = true;
   functionsStore.saveRun(run);
@@ -660,7 +807,7 @@ export async function runAdhoc(spec: AdhocSpec, caller: Caller, handlers?: Parti
   closeCall(chain.id, callId, { status: run.status, err_msg: run.error ? run.error.message : problems.join("; "), result: result.ok ? result.result : null });
   const out: ExecuteResult = { run, outputs: finalOutputs, value: values[0] ?? null, values, result: result.ok ? result.result : null, chain: chain.id, call: callId };
   // The draft's own error function, when it has one.
-  if (type !== "error" && (run.error || problems.length) && draftTypes.includes("error")) {
+  if (type !== "error" && run.status !== "cancelled" && (run.error || problems.length) && draftTypes.includes("error")) {
     const error = run.error ?? { type: "BadResult", message: problems.join("; ").slice(0, 2000) };
     const handled = await runAdhoc({ ...spec, runId: undefined, entry: { file: spec.entry.file, fn: "error" }, inputs: { error, failed: { call: callId, type, parms: spec.inputs }, source: "server" }, chainId: chain.id, type: "error" }, caller).catch(() => null);
     if (handled) out.handled = { run: handled.run, outputs: handled.outputs };

@@ -7,30 +7,60 @@ const __get = (o, path) => String(path).split(".").filter(Boolean).reduce((a, k)
 const __clean = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== ""));
 
 export async function execute(inputs = {}) {
-  // n1 · Form
-  const n_n1 = await m5.caller.send(m5.out.form({"name":"tel-hlr","title":"HLR","text":"Ask a number's home network: reachable, roaming, ported","submit":"Send","labels":"top","fields":[{"name":"number","type":"tel","label":"Number","required":true,"pattern":"^\\+[1-9][0-9]{6,14}$","placeholder":"+420603123456","help":"In the international form: +420603123456"}]}));
+  // n1 · Input “number”
+  const n_n1 = inputs["number"];
+  // n2 · What was typed
+  const n_n2 = ((n) => (String(n ?? "").trim().slice(0, 40)))(n_n1);
+  // n3 · Tidy the number
+  const n_n3 = ((t) => (t.replace(/[\s().\/-]/g, "").replace(/^00(?=[1-9])/, "+")))(n_n2);
+  // n4 · International form?
+  const n_n4 = new RegExp(__str("^\\+[1-9][0-9]{6,14}$")).test(__str(n_n3));
+  // n5 · If
+  const n_n5 = n_n3;
+  const n_n5_c = Boolean(n_n4);
+  // n6 · HLR
+  let n_n6;
+  if (n_n5_c) {
+    n_n6 = await m5.telephony.hlr(__str(n_n5), __clean({ provider: "" }));
+  }
+  // n8 · The form (prefilled)
+  let n_n8;
+  if (!n_n5_c) {
+    n_n8 = await (async (number, typed) => {
+        const t = String(typed || "");
+        const form = {"name":"tel-hlr","title":"HLR","text":"Ask a number's home network: reachable, roaming, ported","submit":"Send","labels":"top","fields":[{"name":"number","type":"tel","label":"Number","required":true,"pattern":"^\\+[1-9][0-9]{6,14}$","placeholder":"+420603123456","help":"In the international form: +420603123456"}]};
+        if (t) await m5.caller.send(m5.out.flash(`“${t}” is not a phone number in the international form (+420603123456).`, "error"));
+        await m5.caller.send(m5.out.form(t ? { ...form, text: `“${t}” is not a phone number in the international form — correct it and send.`, fields: form.fields.map((f) => (f.name === "number" ? { ...f, default: t } : f)) } : form));
+        return t;
+      })(n_n5, n_n2);
+  }
+  // n7 · Send JSON
+  let n_n7;
+  if (n_n5_c) {
+    n_n7 = await m5.caller.send(m5.out.json(n_n6, { title: "HLR" }));
+  }
   return null;
 }
 
 export async function form(inputs = {}) {
-  // n2 · Entry point data
-  const n_n2 = inputs;
-  // n5 · Get field
-  const n_n5 = __get(n_n2.values, "number");
-  // n3 · HLR
-  const n_n3 = await m5.telephony.hlr(__str(n_n5), __clean({ provider: "" }));
-  // n8 · Send JSON
-  const n_n8 = await m5.caller.send(m5.out.json(n_n3, { title: "HLR" }));
+  // n18 · Entry point data
+  const n_n18 = inputs;
+  // n21 · Get field
+  const n_n21 = __get(n_n18.values, "number");
+  // n19 · HLR
+  const n_n19 = await m5.telephony.hlr(__str(n_n21), __clean({ provider: "" }));
+  // n24 · Send JSON
+  const n_n24 = await m5.caller.send(m5.out.json(n_n19, { title: "HLR" }));
   return null;
 }
 
 export async function error(inputs = {}) {
-  // n10 · Entry point data
-  const n_n10 = inputs;
-  // n11 · Get field
-  const n_n11 = __get(n_n10.error, "message");
-  // n12 · Flash
-  const n_n12 = await m5.caller.flash(__str(n_n11), "error");
+  // n26 · Entry point data
+  const n_n26 = inputs;
+  // n27 · Get field
+  const n_n27 = __get(n_n26.error, "message");
+  // n28 · Flash
+  const n_n28 = await m5.caller.flash(__str(n_n27), "error");
   return null;
 }
 

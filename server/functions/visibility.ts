@@ -49,6 +49,9 @@ export function commandsFor(caller: Caller) {
       // 5.3: what a reply, a click or a form of its messages reaches.
       events: endpointTypes(m).filter((t) => t !== "execute" && t !== "webhook"),
       api: Boolean(m.executors.api?.enabled),
-      inputs: m.inputs.map((i) => ({ name: i.name, type: i.type, label: i.label ?? "", help: i.help ?? "", required: Boolean(i.required), default: i.default ?? null, values: i.values ?? [] })),
+      inputs: m.inputs.map((i) => ({ name: i.name, type: i.type, label: i.label ?? "", help: i.help ?? "", required: Boolean(i.required), default: i.default ?? null, values: i.values ?? [], pattern: i.pattern ?? "", min: i.min ?? null, max: i.max ?? null })),
+      // 6.11: its avatar ("" — by its keyword) and its own guide.
+      icon: m.icon ?? "",
+      usage: m.usage ?? "",
     }));
 }

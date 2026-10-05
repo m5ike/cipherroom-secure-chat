@@ -220,6 +220,12 @@ export type Model = {
   groups: string[];
   /** 6.0: m5adm and m5.telephony beyond the caller (see ModelGrants). */
   grants?: ModelGrants;
+  /** 6.11: the model's icon — a lucide icon name ("mail") or one emoji; "" = by its keyword
+   *  (client/src/lib/system-messenger.ts DEFAULT_MODEL_ICONS). Its avatar as the sender of its answers. */
+  icon?: string;
+  /** 6.11: the model's own short guide with examples (plain text, ≤ 500 characters) — shown with a
+   *  wrong call and in the suggester. */
+  usage?: string;
   enabled: boolean;
   revision: number;
   createdAt: number;
@@ -346,6 +352,19 @@ export const ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const KEYWORD_RE = /^[a-z0-9][a-z0-9_-]{0,39}$/;
 export const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 export const SEMVER_RE = /^\d{1,6}\.\d{1,6}\.\d{1,6}$/;
+/** 6.11: a model's icon — a lucide icon name… */
+export const ICON_NAME_RE = /^[a-z0-9-]{1,40}$/;
+/** …or one emoji (a single grapheme that is a pictograph, a keycap or a flag). */
+const EMOJI_RE = /^(?:\p{Extended_Pictographic}|\p{Regional_Indicator}{2}|[#*0-9]️?⃣)/u;
+const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+export function isModelIcon(v: string): boolean {
+  if (ICON_NAME_RE.test(v)) return true;
+  if (!v || v.length > 32) return false;
+  const parts = [...graphemes.segment(v)];
+  return parts.length === 1 && EMOJI_RE.test(v);
+}
+/** 6.11: how long a model's usage text may be. */
+export const USAGE_MAX = 500;
 
 /** "package@version:file#fn" → its parts, or null when it is malformed. */
 export function parseEntry(entry: string): { pkg: string; version: string; file: string; fn: string } | null {

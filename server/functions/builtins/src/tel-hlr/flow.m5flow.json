@@ -7,38 +7,201 @@
   "nodes": [
     {
       "id": "n1",
-      "type": "out.form",
-      "x": 80,
+      "type": "flow.input",
+      "x": 40,
       "y": 120,
       "params": {
-        "form": {
-          "name": "tel-hlr",
-          "title": "HLR",
-          "text": "Ask a number's home network: reachable, roaming, ported",
-          "submit": "Send",
-          "labels": "top",
-          "fields": [
-            {
-              "name": "number",
-              "type": "tel",
-              "label": "Number",
-              "required": true,
-              "pattern": "^\\+[1-9][0-9]{6,14}$",
-              "placeholder": "+420603123456",
-              "help": "In the international form: +420603123456"
-            }
-          ]
-        }
+        "name": "number",
+        "type": "string",
+        "label": "Number",
+        "default": "",
+        "required": false,
+        "values": ""
       },
       "values": {}
+    },
+    {
+      "id": "n2",
+      "type": "code.expr",
+      "x": 220,
+      "y": 120,
+      "params": {
+        "args": "n",
+        "expr": "String(n ?? \"\").trim().slice(0, 40)"
+      },
+      "values": {},
+      "label": "What was typed"
+    },
+    {
+      "id": "n3",
+      "type": "code.expr",
+      "x": 400,
+      "y": 120,
+      "params": {
+        "args": "t",
+        "expr": "t.replace(/[\\s().\\/-]/g, \"\").replace(/^00(?=[1-9])/, \"+\")"
+      },
+      "values": {},
+      "label": "Tidy the number"
+    },
+    {
+      "id": "n4",
+      "type": "logic.compare",
+      "x": 580,
+      "y": 60,
+      "params": {
+        "op": "matches"
+      },
+      "values": {
+        "b": "^\\+[1-9][0-9]{6,14}$"
+      },
+      "label": "International form?"
+    },
+    {
+      "id": "n5",
+      "type": "logic.if",
+      "x": 760,
+      "y": 120,
+      "params": {},
+      "values": {}
+    },
+    {
+      "id": "n6",
+      "type": "tel.hlr",
+      "x": 940,
+      "y": 60,
+      "params": {},
+      "values": {}
+    },
+    {
+      "id": "n7",
+      "type": "out.json",
+      "x": 1120,
+      "y": 60,
+      "params": {
+        "title": "HLR"
+      },
+      "values": {}
+    },
+    {
+      "id": "n8",
+      "type": "code.block",
+      "x": 940,
+      "y": 240,
+      "params": {
+        "args": "number, typed",
+        "code": "const t = String(typed || \"\");\nconst form = {\"name\":\"tel-hlr\",\"title\":\"HLR\",\"text\":\"Ask a number's home network: reachable, roaming, ported\",\"submit\":\"Send\",\"labels\":\"top\",\"fields\":[{\"name\":\"number\",\"type\":\"tel\",\"label\":\"Number\",\"required\":true,\"pattern\":\"^\\\\+[1-9][0-9]{6,14}$\",\"placeholder\":\"+420603123456\",\"help\":\"In the international form: +420603123456\"}]};\nif (t) await m5.caller.send(m5.out.flash(`“${t}” is not a phone number in the international form (+420603123456).`, \"error\"));\nawait m5.caller.send(m5.out.form(t ? { ...form, text: `“${t}” is not a phone number in the international form — correct it and send.`, fields: form.fields.map((f) => (f.name === \"number\" ? { ...f, default: t } : f)) } : form));\nreturn t;"
+      },
+      "values": {},
+      "label": "The form (prefilled)"
     }
   ],
-  "edges": [],
+  "edges": [
+    {
+      "id": "e9",
+      "from": {
+        "node": "n1",
+        "port": "value"
+      },
+      "to": {
+        "node": "n2",
+        "port": "n"
+      }
+    },
+    {
+      "id": "e10",
+      "from": {
+        "node": "n2",
+        "port": "result"
+      },
+      "to": {
+        "node": "n3",
+        "port": "t"
+      }
+    },
+    {
+      "id": "e11",
+      "from": {
+        "node": "n3",
+        "port": "result"
+      },
+      "to": {
+        "node": "n4",
+        "port": "a"
+      }
+    },
+    {
+      "id": "e12",
+      "from": {
+        "node": "n4",
+        "port": "result"
+      },
+      "to": {
+        "node": "n5",
+        "port": "condition"
+      }
+    },
+    {
+      "id": "e13",
+      "from": {
+        "node": "n3",
+        "port": "result"
+      },
+      "to": {
+        "node": "n5",
+        "port": "value"
+      }
+    },
+    {
+      "id": "e14",
+      "from": {
+        "node": "n5",
+        "port": "then"
+      },
+      "to": {
+        "node": "n6",
+        "port": "number"
+      }
+    },
+    {
+      "id": "e15",
+      "from": {
+        "node": "n6",
+        "port": "result"
+      },
+      "to": {
+        "node": "n7",
+        "port": "value"
+      }
+    },
+    {
+      "id": "e16",
+      "from": {
+        "node": "n5",
+        "port": "else"
+      },
+      "to": {
+        "node": "n8",
+        "port": "number"
+      }
+    },
+    {
+      "id": "e17",
+      "from": {
+        "node": "n2",
+        "port": "result"
+      },
+      "to": {
+        "node": "n8",
+        "port": "typed"
+      }
+    }
+  ],
   "functions": {
     "form": {
       "nodes": [
         {
-          "id": "n2",
+          "id": "n18",
           "type": "flow.event",
           "x": 40,
           "y": 80,
@@ -46,7 +209,7 @@
           "values": {}
         },
         {
-          "id": "n3",
+          "id": "n19",
           "type": "tel.hlr",
           "x": 380,
           "y": 80,
@@ -54,7 +217,7 @@
           "values": {}
         },
         {
-          "id": "n5",
+          "id": "n21",
           "type": "data.get",
           "x": 200,
           "y": 130,
@@ -64,7 +227,7 @@
           "values": {}
         },
         {
-          "id": "n8",
+          "id": "n24",
           "type": "out.json",
           "x": 640,
           "y": 80,
@@ -76,46 +239,46 @@
       ],
       "edges": [
         {
-          "id": "e4",
+          "id": "e20",
           "from": {
-            "node": "n2",
+            "node": "n18",
             "port": "values"
           },
           "to": {
-            "node": "n3",
+            "node": "n19",
             "port": "options"
           }
         },
         {
-          "id": "e6",
+          "id": "e22",
           "from": {
-            "node": "n2",
+            "node": "n18",
             "port": "values"
           },
           "to": {
-            "node": "n5",
+            "node": "n21",
             "port": "object"
           }
         },
         {
-          "id": "e7",
+          "id": "e23",
           "from": {
-            "node": "n5",
+            "node": "n21",
             "port": "value"
           },
           "to": {
-            "node": "n3",
+            "node": "n19",
             "port": "number"
           }
         },
         {
-          "id": "e9",
+          "id": "e25",
           "from": {
-            "node": "n3",
+            "node": "n19",
             "port": "result"
           },
           "to": {
-            "node": "n8",
+            "node": "n24",
             "port": "value"
           }
         }
@@ -124,7 +287,7 @@
     "error": {
       "nodes": [
         {
-          "id": "n10",
+          "id": "n26",
           "type": "flow.event",
           "x": 40,
           "y": 60,
@@ -132,7 +295,7 @@
           "values": {}
         },
         {
-          "id": "n11",
+          "id": "n27",
           "type": "data.get",
           "x": 240,
           "y": 60,
@@ -142,7 +305,7 @@
           "values": {}
         },
         {
-          "id": "n12",
+          "id": "n28",
           "type": "out.flash",
           "x": 460,
           "y": 60,
@@ -154,24 +317,24 @@
       ],
       "edges": [
         {
-          "id": "e13",
+          "id": "e29",
           "from": {
-            "node": "n10",
+            "node": "n26",
             "port": "error"
           },
           "to": {
-            "node": "n11",
+            "node": "n27",
             "port": "object"
           }
         },
         {
-          "id": "e14",
+          "id": "e30",
           "from": {
-            "node": "n11",
+            "node": "n27",
             "port": "value"
           },
           "to": {
-            "node": "n12",
+            "node": "n28",
             "port": "text"
           }
         }
