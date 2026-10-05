@@ -127,7 +127,9 @@ enum WatchWire {
     // MARK: the UI strings
 
     /// The texts the watch shows, in English (the watch's fallback; the phone sends them from the design in the
-    /// user's language). The keys without the `watch.` prefix are the design's own (default-design.json).
+    /// user's language). The keys without the `watch.` prefix are Android's design's own; the `watch.*` ones are the
+    /// iOS design's (server/ios/design.ts IOS_STRINGS, nine languages — test/ios-assets.test.ts keeps this English
+    /// equal to the design's).
     static let english: [String: String] = [
         "app": "M5cet",
         "rooms.title": "Rooms",
