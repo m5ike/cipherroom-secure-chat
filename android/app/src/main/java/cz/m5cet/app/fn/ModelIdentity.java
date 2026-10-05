@@ -151,6 +151,6 @@ public final class ModelIdentity {
 
     /** An id only this app gives — system-messenger and the older "function:&lt;keyword&gt;"; never a peer's (validate.ts isReservedSender). */
     public static boolean reservedSender(String id) {
-        return id != null && (id.equals(SYSTEM_MESSENGER_ID) || id.startsWith("function:"));
+        return id != null && (id.equals(SYSTEM_MESSENGER_ID) || id.startsWith(SYSTEM_MESSENGER_ID + ":") || id.startsWith("function:"));
     }
 }

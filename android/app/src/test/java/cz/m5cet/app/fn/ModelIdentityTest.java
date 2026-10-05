@@ -95,6 +95,7 @@ public class ModelIdentityTest {
     @Test public void theAppsOwnSendersArentAPeers() throws Exception {
         assertTrue(ModelIdentity.reservedSender("system-messenger"));
         assertTrue(ModelIdentity.reservedSender("function:mail"));
+        assertTrue(ModelIdentity.reservedSender("system-messenger:mail"));
         assertFalse(ModelIdentity.reservedSender("peer-1"));
         assertFalse(ModelIdentity.reservedSender(null));
         assertEquals(30_000, ModelIdentity.FN_RUN_TIMEOUT_MS);
